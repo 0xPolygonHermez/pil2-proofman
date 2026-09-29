@@ -1,0 +1,1403 @@
+# Especificació: backend fflonk per a PIL2 a pil2-proofman
+
+**Estat:** esborrany v4 (29-09-2026). Aquesta versió incorpora una revisió completa feta per cinc agents contra el codi.
+
+**Base de codi de la implementació:**
+- `pil2-proofman`: `pre-develop-1.4.0-alpha` (`ff0ff959`), que ja té el setup STARK en Rust.
+- `../pil2-compiler`: `develop-0.14.0` (`503862c`), amb els canvis d'aquest projecte a la branca local `develop-0.14.0-pil2-fflonk` (§4.1). El setup fixa la branca `develop-0.14.0` a `setup/pil2-stark/package.json`; el commit concret queda al `package-lock.json`, que no es versiona.
+
+**Nom.** Tots els components nous porten el prefix **`pilfflonk`** (el nom del projecte original), per no confondre'ls amb el *wrap* final fflonk que ja existeix. Aquests noms ja estan agafats: `namespace Fflonk` (`FflonkProver`, `FflonkSetup`), `fflonk_setup_c`, `generate_fflonk_zkey_c`, `SnarkProtocol::Fflonk`, `zkey_fflonk.*`, el target `fflonkSetup` del Makefile, `FflonkVerifier.sol` i el directori `pil2-stark/src/fflonk_setup/`.
+
+**Convenció de rutes.** Cada ruta és relativa a l'arrel del seu repositori. Les de pil2-proofman no porten prefix; les dels altres repositoris porten el nom del repositori (`pil-fflonk/…`, `pil2-compiler/…`, `pil-stark/…`, `shplonkjs/…`).
+
+## Com llegir aquest document
+
+El document va del *què* al *com* i segueix el camí de les dades, del programa PIL2 fins a la prova verificada. Es llegeix de dalt a baix:
+
+1. **Què volem aconseguir** (§1)
+2. **El flux complet en una pàgina** (§2)
+3. **D'on partim:** el sistema antic, el repositori actual i el compilador (§3)
+4. **Com funcionarà cada pas del flux** (§4)
+5. **On viu el codi** (§5)
+6. **En quin ordre es construeix** (§6)
+7. **Què està decidit i què no** (§7)
+
+Els annexos són la referència detallada per a qui implementi:
+- **A:** el protocol normatiu;
+- **B:** el mapatge PIL1 → PIL2;
+- **C:** l'inventari del sistema antic;
+- **D:** els fitxers clau;
+- **E:** la base analitzada;
+- **F:** les troballes col·laterals;
+- **G:** el programa PIL1 de la fixture de pil-fflonk.
+
+### Glossari
+
+| Terme | Significat |
+|---|---|
+| `r`, `Fr` | L'ordre del grup de BN254 i el seu camp escalar. Tots els valors dels polinomis són elements d'`Fr`. |
+| KZG, SRS, `ptau` | KZG és l'esquema de compromisos polinomials sobre corba el·líptica. L'SRS són les potències `[τ^i]₁` i `[τ]₂`, i el fitxer `ptau` de snarkjs les conté. |
+| fflonk, `f_i`, `k`, *layout* | fflonk empaqueta `k` polinomis `p_j` en un de sol, `f_i(X) = Σ_j p_j(X^k)·X^j`. El *layout* és la llista de `f_i` d'una AIR. |
+| SHPLONK, `W`, `W'` | L'esquema d'obertura que obre molts polinomis en molts punts amb dos commitments, `W` i `W'`, i un sol *pairing*. |
+| `xiSeed`, `ξ`, `powerW` | `xiSeed` és el repte que surt del transcript. El punt d'avaluació és `ξ = xiSeed^powerW`, on `powerW` és el mínim comú múltiple de tots els `k`. |
+| `std_vc`, `std_xi` | Reptes que afegeix el setup: `std_vc` plega les restriccions, i `std_xi` és el repte del punt d'avaluació (aquí, `xiSeed`). |
+| AIR, airgroup, instància | Una AIR és una traça amb les seves restriccions; les AIRs s'agrupen en airgroups, i cada AIR pot tenir diverses instàncies en una mateixa prova. |
+| stage | Cada ronda de commitments. Els reptes de l'stage `s+1` depenen de tot el que s'ha compromès fins a l'stage `s`. |
+| *hint* | Metadada que la std posa al `pilout` per dir com es calcula una columna (per exemple, `gsum_col`). |
+| bus (de suma o de producte) | La manera com la std expressa lookups, permutacions i connexions: una columna acumulada que ha de quadrar globalment. |
+| im pols | Polinomis intermedis que el setup introdueix per mantenir baix el grau de les restriccions. No s'han de confondre amb les columnes `im_col` que declara la std. |
+| `evMap` | La llista ordenada de parelles `(columna, offset)` que s'avaluen al punt `ξ·ω^offset`. |
+| *zerofier* `Z_D` | El polinomi que s'anul·la exactament a les files del domini `D` d'una restricció. |
+| *coset*, LDE | Avaluar un polinomi sobre `g·H'`, un subgrup desplaçat més gran que la traça, per poder dividir punt a punt. |
+| `provingKey/` | El directori de sortidqa del setup. Té la mateixa estructura que el del STARK (§4.2.6). |
+| *digest* | L'empremta Keccak-256 de la vkey (`pilfflonk.vkey.json`), que conté tot el que afecta la verificació (A.6). |
+| ordre canònic | Les AIRs s'ordenen per `(airgroupId, airId)` i les instàncies per `(airgroupId, airId, índex d'instància)`, que és l'ordre en què les dona el `WitnessSource`. |
+| *golden* | Un test que compara una sortida amb una referència desada, byte a byte. |
+
+---
+
+## 1. Què volem aconseguir
+
+**Objectiu:** poder provar programes PIL2 amb **fflonk sobre BN254** dins de pil2-proofman: setup, prova i verificació.
+
+**Què és fflonk, en poques paraules.** És un sistema de prova basat en compromisos KZG sobre la corba BN254. Té tres trets clau:
+- **Empaqueta polinomis:** en compromet `k` amb una sola multiplicació multiescalar (MSM).
+- **Obre tots els polinomis alhora amb SHPLONK:** la prova són uns quants punts i escalars, i es verifica amb un sol *pairing*, que és barat a Ethereum.
+- **Tot és sobre `Fr` de BN254**, a diferència del camí STARK, que fa servir Goldilocks i FRI.
+
+**Punt de partida.** Ja existeix un prover fflonk per a PIL1, a `../pil-fflonk`. No es pot fer servir tal com està, per dos motius:
+- parla PIL1, i pil2-proofman treballa amb PIL2;
+- depèn d'un altre repositori, `pil-stark` (JS, branca `pilfflonk`): pil-stark hi posa els programes, la compilació, la generació de `fflonkinfo`, l'agrupació i l'únic verificador que existeix, i pil-fflonk hi posa el prover i un setup C++ parcial. Els fitxers de `pil-fflonk/config/` són la sortida d'un exemple de pil-stark (§3.1 i Annex G).
+
+**Dins d'abast**
+- Compilar programes PIL2 sobre BN254 amb `../pil2-compiler`.
+- Setup en Rust, al costat del setup STARK.
+- Prover. **La v1 reprodueix el que fa pil-fflonk, però amb PIL2 (D2):**
+  - una AIR i una instància;
+  - stages arbitraris;
+  - els busos de la std, en mode `STD_MODE_ONE_INSTANCE`;
+  - publics.
+
+  Diverses AIRs i instàncies, els air, airgroup i proof values i les restriccions globals queden per a una versió futura.
+- Verificador JS, com el del FFLONK existent, que es verifica amb snarkjs. S'adapta del verificador de pil-fflonk (D8). En una fase posterior, verificador Solidity.
+
+**Fora d'abast**
+- **Canviar el comportament del camí STARK.** Algunes peces compartides sí que es toquen (les passades simbòliques del setup, la std, `libstarks`, el Makefile i els *bindings*), però amb una garantia: les sortides STARK surten idèntiques byte a byte. Aquesta és la porta de la Fase 1.
+- Recursió o agregació amb proves STARK. El *wrap* final SNARK actual no es modifica.
+- Custom commits, periodic columns i public tables. El setup els rebutja amb un error clar.
+- Prova distribuïda (MPI).
+- Verificador natiu: el FFLONK existent tampoc no en té (D3).
+- Compatibilitat amb els formats de pil-fflonk, que es deixarà de fer servir en favor de pilfflonk (P4).
+- Els dominis de restricció nous del `pilout` v2 (branca `feature/domain-constraints` del compilador). Els quatre tipus de restricció del v1 (`everyRow`, `firstRow`, `lastRow`, `everyFrame`) sí que hi entren.
+
+**Criteri d'èxit de la v1.** Els exemples de pil-fflonk portats a PIL2 (Annex G) compleixen tres condicions. Per exemple, `all`, que combina Fibonacci, connection, permutation i plookup en una sola AIR.
+- es proven amb `proofman-cli pilfflonk prove`;
+- el verificador JS i, a la Fase 4, el contracte Solidity n'accepten la prova;
+- qualsevol mutació de la prova, dels publics o del witness es rebutja.
+
+---
+
+## 2. El flux complet
+
+```
+   programa.pil
+        │
+        │  PAS 1 · Compilar ─ proofman-setup compile-pil -P (prime = r de BN254)
+        ▼
+   programa.pilout
+        │
+        │  PAS 2 · Setup ─ proofman-setup setup-pilfflonk (Rust) + fitxer ptau
+        ▼
+   provingKey/   (mateixa estructura que el del setup STARK, §4.2.6)
+        │
+        │  PAS 3 · Witness ─ columnes i air values de l'stage 1, publics i proof values (en Fr)
+        │  PAS 4 · Prova ─ proofman-cli pilfflonk prove (Rust orquestra, C++/ffiasm calcula)
+        ▼
+   proof.json · publics.json
+        │
+        │  PAS 5 · Verificació ─ proofman-cli pilfflonk verify (verificador JS), o el contracte Solidity
+        ▼
+   acceptada / rebutjada
+```
+
+| Pas | Què fa | Qui ho fa | Entrada | Sortida |
+|---|---|---|---|---|
+| 1. Compilar | Converteix el PIL2 en un `pilout` sobre el camp BN254 | `pil2com` de `../pil2-compiler`, amb la std adaptada | `.pil` | `.pilout` |
+| 2. Setup | Analitza les restriccions, agrupa els polinomis i genera les claus | `proofman-setup setup-pilfflonk` (Rust, amb ffiasm per FFI) | `.pilout`, `.ptau` | `provingKey/` (§4.2.6) |
+| 3. Witness | Aporta els valors de l'stage 1 | Una font de witness: un fitxer, i més endavant una biblioteca | Programa i entrades | Columnes, air values, publics i proof values en `Fr` |
+| 4. Prova | Executa els stages, compromet i obre | `proofman-cli pilfflonk prove` | `provingKey/` i witness | `proof.json`, `publics.json` |
+| 5. Verificació | Refà el transcript, comprova les restriccions i fa el *pairing* | `proofman-cli pilfflonk verify`, que crida el verificador JS com `verify-snark` crida snarkjs, o Solidity | `pilfflonk.vkey.json`, prova i publics | Sí o no |
+
+### 2.1 Principis que guien el disseny
+
+1. **Un camí germà, no una generalització.** El runtime STARK no es toca. El camí pilfflonk en comparteix el `pilout`, les passades simbòliques del setup, els binaris `proofman-setup` i `proofman-cli`, i `libstarks`.
+2. **Rust orquestra i C++ calcula.** L'aritmètica pesada de BN254 del prover (MSM, NTT, polinomis) és C++ amb **ffiasm**, i la de GPU és `pil2-stark/src/bn128/src/{msm,ntt}`. S'exposa amb FFI escrita a mà, amb el mateix patró que el camí STARK, i no s'hi afegeix cap biblioteca de corbes nova. En Rust només hi ha aritmètica d'enters grans al setup (`num-bigint`) i, si es tria D4(a), un tipus `Fr` per calcular el witness.
+3. **El setup és en Rust, al costat del STARK.** Les passades simbòliques (restriccions, im pols, mapes, codegen) són una sola implementació, parametritzada pel camp.
+4. **El setup decideix i el prover executa.** Els graus, l'agrupació i el bytecode es fixen al setup. El prover no pren cap decisió.
+5. **Errors explícits.** No hi ha estat global nou, ni `panic!`, ni crides a `exit()` en codi de biblioteca. Tot allò que no se suporta falla **al setup**, no en provar.
+6. **Verificació independent.** Com al FFLONK existent, on el prover és el C++ de rapidsnark i la verificació la fa snarkjs, el verificador és JS i no comparteix codi amb el prover (D3, D8).
+   - Té el seu propi camí per a la seqüència del transcript, `Q(ξ)`, la comprovació SHPLONK i el *pairing* (`ffjavascript`).
+   - Calcula `Q(ξ)` amb el `qVerifier` que el setup posa a la vkey, com el verificador STARK, i no amb el bytecode del prover.
+   - Només comparteix amb el prover el codegen del setup. Per compensar-ho, els tests contrasten els valors amb un recorregut directe del `pilout`.
+7. **A partir de la Fase 1, cada fase acaba amb una prova end-to-end** verificada per codi que no l'ha produïda, i amb tests de rebuig.
+
+---
+
+## 3. D'on partim
+
+### 3.1 El sistema antic: pil-fflonk, pil-stark i shplonkjs
+
+El prover fflonk actual es reparteix en tres repositoris. Al commit `b385c38`, pil-fflonk no conté cap fitxer `.pil`: els programes i els seus generadors eren a pil-stark. Ara n'hi ha una còpia local a `pil-fflonk/pil/` (Annex G).
+
+| Peça | Llenguatge | Què aporta |
+|---|---|---|
+| `../pil-fflonk` | C++17 sobre ffiasm | **Prover** d'una sola AIR PIL1 sobre `Fr` de BN254, amb transcript Keccak-256. Inclou:<br>- **el SHPLONK complet de la banda del prover** (`src/shplonk.cpp`, classe `ShPlonkProver`): empaquetat dels `f_i`, commits, `R`, `Z_T`, `L`, `W`, `W'`, arrels, reptes i inversa en lot;<br>- una **NTT multicolumna de CPU** (`src/ntt_bn128.hpp`);<br>- un **setup C++** (`pfSetup`) que genera la `zkey` a partir d'un `shkey` ja calculat;<br>- una via de witness amb circom (`.exec`, `.dat` i `zkin`).<br>**No té verificador.** |
+| `pil-stark`, branca `pilfflonk` | JS | **Preprocessament:** `fflonkinfo.json`, la **decisió de les classes** d'agrupació (`src/fflonk/helpers/fflonk_shkey.js`), la `zkey`, la `vkey` i el codi C++ específic de cada circuit (*chelpers*).<br>**Verificador:** és l'únic que existeix (`src/fflonk/helpers/fflonk_verify.js`); el mateix pil-fflonk verifica amb `node ../pil-stark/src/fflonk/main_verifier.js` (`tools/test_examples.sh:30`).<br>**Solidity:** el contracte `PilFflonkVerifier` (`src/fflonk/solidity/`).<br>**Un prover JS complet** (`src/fflonk/helpers/fflonk_prover.js`), útil com a font de vectors de referència. |
+| `shplonkjs` | JS | La **repartició** dels grups en `f_i` (`getFCustom`, `applyExtraScalarMuls` a `src/helpers/setup.js`), les arrels, la verificació SHPLONK (`verifyOpenings`) i el contracte `ShPlonkVerifier`, que és on es fa el *pairing* (`src/solidity/verifier.sol.ejs`) |
+
+```
+── repositori pil-stark (JS, branca pilfflonk) ─────────────────────────────────────────────
+ test/state_machines/sm_*/*.pil           (els programes PIL1 d'exemple)
+ test/state_machines/{sm,sm_*}/sm_*.js    (els generadors de constants i witness, en JS)
+        │  test/cfiles/fflonk_gen_*_files.js   (un test mocha per a cada grup d'exemples)
+        │    pilcom compile (camp BN254, en memòria)
+        │    fflonkInfoGen → fflonkinfo.json      fflonk_shkey + shplonkjs → shkey.json
+        │    fflonkSetup + ptau → .zkey → .vkey    const/commit → .const/.commit
+        │    main_buildchelpers.js → *.chelpers.*.cpp
+        ▼
+ tmp/<exemple>.*
+        │  pil-fflonk/tools/copy_generated_files.sh (a config/pilfflonk.* i src/chelpers/)
+── repositori pil-fflonk (C++) ─────────────────────────────────────────────────────────────
+ config/pilfflonk.*  +  src/chelpers/*.cpp  →  make  →  pfProver  →  runtime/proof.json
+        │
+── de tornada a pil-stark ──────────────────────────────────────────────────────────────────
+ node ../pil-stark/src/fflonk/main_verifier.js  →  OK / FAIL
+```
+
+**D'on surt `pil-fflonk/config/`.** Coincideix amb l'exemple `all` de pil-stark:
+- **Programa i generador.** El programa és `test/state_machines/sm_all/all_main.pil` (Fibonacci, Connection, Permutation i Plookup). El generador és `test/cfiles/fflonk_gen_all_files.js`, amb `extraMuls: 2`, `maxQDegree: 0` i entrades de Fibonacci `[1, 2]`.
+- **Mides:** `N = 2^8`, 9 constants, 15 columnes compromeses, 3 publics (`in1`, `in2`, `out`) i 9 `f_i` amb `powerW = 12`. Els noms per stage del `shkey` també coincideixen.
+- **Publics:** `runtime/public.json` és `[1, 2, out]`.
+- **Versió de pil-stark.** La fixture és una mica anterior a `5e20f57`, perquè el seu `shkey` no té els camps `primeQ`/`n8q`/`primeR`/`n8r`. Per això `pfSetup` hi falla.
+
+**Com funciona el prover** (`pilfflonk_prover.cpp:287-432`). Els stages són fixos:
+
+| Stage | Què fa |
+|---|---|
+| 0 | Constants i publics |
+| 1 | Witness |
+| 2 | `h1` i `h2` del plookup |
+| 3 | Grans productes `Z` i polinomis intermedis |
+| 4 | El quocient `Q` |
+
+Després ve l'obertura SHPLONK.
+
+**Blinding.** Cada columna compromesa dels stages 1–3 que forma part d'un `f_i` rep `nOpenings+1` termes aleatoris `b·X^j·(X^N−1)`. `nOpenings` és el nombre de punts d'obertura del seu `f_i`, comptat després de les fusions. Els afegeix en forma de coeficients, després de la INTT (`pilfflonk_prover.cpp:735-765`). Les constants no en reben, i `Q` només en rep quan es parteix.
+
+**Què n'aprofitem i què no.** Regla: abans de copiar res de pil-fflonk, es comprova si ja existeix en aquest repositori o en alguna dependència. Si existeix, es fa servir com a dependència.
+- **Ja existeix a pil2-proofman, i es fa servir tal com és:**
+  - **ffiasm:** `Fr`, G1, G2, FFT i MSM.
+  - **rapidsnark:**
+    - `Polynomial`: `fromEvaluations` amb espai per al blinding, `blindCoefficients` (que suma `(X^N−1)·b(X)`), `divByMonic`, `divByVanishing`, `lagrangePolynomialInterpolation`, `zerofierPolynomial` i `fastEvaluate`;
+    - `Evaluations`, per a l'extensió amb la FFT;
+    - `CPolynomial`, l'empaquetat fflonk `f(X) = Σ_j p_j(X^n)·X^j`;
+    - `Keccak256Transcript`;
+    - la lectura del `ptau` amb `BinFile` (`fflonk_setup.cpp:46-49, 527-531`).
+
+  El `FflonkProver` de rapidsnark conté les mateixes peces de SHPLONK (`computeR*`, `computeZT`, `computeL`, `getMontgomeryBatchedInverse`), però fixades per al fflonk de R1CS: tres polinomis `C0`/`C1`/`C2` amb `k` fix.
+- **Només existeix a pil-fflonk, i s'adapta:** l'orquestració **genèrica** de SHPLONK sobre una llista arbitrària de `f_i` (`src/shplonk.cpp`, `ShPlonkProver`): les arrels, `R`, `Z_T`, `L`, `W` i `W'`, la inversa en lot i les avaluacions. S'escriu sobre les peces de rapidsnark que acabem de citar, i se'n corregeixen els defectes de l'Annex C.3.
+- **Es descarta de pil-fflonk,** perquè ja existeix aquí o no cal:
+  - la NTT multicolumna (`ntt_bn128`): la versió de CPU fa servir la FFT d'ffiasm columna a columna, i la de GPU té NTT pròpia;
+  - `extend`: el substitueixen `fromEvaluations` i `blindCoefficients`;
+  - `computeFCommitments`: el substitueixen `CPolynomial` i `multiMulByScalar`, com fa rapidsnark;
+  - el seu `Polynomial`;
+  - el seu transcript.
+- **Es porta de JS** el que no existeix en cap altre llenguatge:
+  - el verificador (`fflonk_verify.js` i `verifyOpenings`), que es queda en JS però s'adapta als canvis de pilfflonk (§4.5, D8);
+  - l'algorisme d'agrupació (`fflonk_shkey.js` i `shplonkjs/src/helpers/setup.js`), a Rust;
+  - les plantilles Solidity (EJS) de `PilFflonkVerifier` i `ShPlonkVerifier`, a `tera`.
+
+  L'agrupació i les plantilles es reescriuen. El verificador s'adapta i continua en JS, com el del FFLONK existent. `../pil-stark` és la referència de lectura. A banda del verificador, l'únic JS és el compilador PIL2, que ja forma part de la cadena actual.
+- **Descartem el que depèn de PIL1:**
+  - els stages fixos;
+  - el C++ generat per circuit;
+  - la maquinària `h1`/`h2`/`Z`.
+- **Correcció de *soundness*.** El verificador JS fa el *pairing* amb els commitments de constants que porta la prova, en lloc dels de la vkey. El disseny nou ho corregeix (§4.5).
+
+L'inventari detallat és a l'**Annex C**.
+
+### 3.2 pil2-proofman avui
+
+**Setup STARK en Rust.** El crate és `pil2-stark-setup` (`setup/pil2-stark`) i el binari, `proofman-setup`. Té els subcomandaments `setup`, `stats`, `setup-snark`, `setup-compressed-final`, `setup-recursive-test`, `rebuild-witness-libs`, `compile-pil` i `gen-exps` (`setup/pil2-stark/src/main.rs:23-43`). El setup pilfflonk n'ha de seguir tres patrons:
+- **Orquestració en Rust i càlcul en C++ via FFI.** Per exemple, `compute_const_tree_c` → `build_const_tree_c` (`proving_key/bctree.rs`) i `generate_fflonk_zkey_c` → `fflonk_setup_c` (`proving_key/snark_setup.rs:496`).
+  - La funció C captura les excepcions i retorna un codi d'estat (`pil2-stark/src/api/starks_api.cpp:1284-1295`).
+  - Rust valida les entrades abans de fer la crida (`bctree.rs:24-42`).
+  - Hi ha dos detalls que no s'han de copiar: `fflonk_setup_c` fa servir `new`/`delete` sense RAII, i l'embolcall Rust `compute_const_tree_c` fa `panic!` si rep un estat d'error (`provers/starks-lib-c/src/ffi_starks.rs:70-73`).
+- **Compilació amb `pil2com`.** `commands/compile_pil.rs:46-66` el crida sense cap primer. `ensure_pil2com_exec` (`proving_key/recursive.rs:1106`) el localitza, i abans que res mira la variable `PIL2C_EXEC`.
+- **Solidity amb `tera`.** Les plantilles `tera` (`setup/stark-recurser/stark2circom/circuit_templates/`) només generen l'embolcall i la interfície. El verificador del *wrap* surt de la plantilla de snarkjs (`snark_setup.rs:512-518`). A més, `render()` és `pub(super)` i `tera` només és dependència de `pil2-stark-recurser`, de manera que el patró es copia però no es crida.
+
+Les passades simbòliques fan `panic!` en lloc de retornar errors (p. ex. `pil/prepare.rs:70-80`). Això **no** s'ha de copiar.
+
+**Les passades simbòliques** són a `setup/pil2-stark/src/pil/` (`prepare`, `constraint_poly`, `im_polynomials`, `map`, `codegen`, `cse`, `gen_code`, `info`, `fri_poly`), `expr/` i `types/pilout_info.rs`. Només depenen de `pil2-pilout`, `indexmap`, `serde` i `tracing`.
+
+Tenen dos lligams amb STARK:
+- `StarkStruct`, només a `prepare.rs` i `info.rs`;
+- FRI, a `gen_code.rs`:
+  - el polinomi FRI (`:344-358`);
+  - el `queryVerifier` (`:369-397`);
+  - `friExp` (`:439-522`);
+  - i `challenges_map`, que fa servir el tipus de `fri_poly`.
+
+També estan lligades a Goldilocks:
+- `pub const FIELD_EXTENSION: usize = 3` (`types/pilout_info.rs:11`), usat en uns 45 llocs. Hi ha còpies privades a `io/parser_args.rs:7` i `verifier_hashes.rs:294`, i el `qDim` del `starkinfo` està fixat a 3 (`output/stark_info.rs:278`).
+- `NEG_ONE` de Goldilocks (`expr/helpers.rs:5`).
+- El grau màxim es deriva del *blowup* FRI (`pil/info.rs:61`).
+- **Truncacions silencioses que corromprien BN254:**
+  - les constants del `pilout` es descodifiquen amb un `u128` (`types/pilout_info.rs:126-135`);
+  - els números es desen com a `u64` amb `unwrap_or(0)` (`types/stark_info.rs:254, 425, 524-533, 582-593`; `io/bin_file.rs:268, 338, 365`; `output/global_constraints.rs:108, 137`);
+  - `bytes_to_u64_be` es queda els 8 bytes **alts** en escriure el `.const` a partir dels valors del `pilout` (`io/fixed_cols.rs:297-305`).
+- **Els *golden tests* actuals no protegeixen les passades.** Només n'hi ha tres, d'AIRs de ZisK; comparen `.bin` a partir de JSON ja fets, i quan falta `setup/golden_reference/` se salten imprimint un avís que cargo amaga (`output/global_info.rs:717-812`).
+
+**El runtime està lligat a Goldilocks:**
+- **Camp.** `F: PrimeField64`, que només implementa `Goldilocks`, a `common`, `proofman`, `witness`, `hints` i la std.
+- **`ProofMan`.** Exigeix `GoldilocksQuinticExtension` (`proofman/src/proofman.rs:689-690, 834-836`).
+- **`StepsParams`.** Són punters sense tipus (`common/src/air_instance.rs:19-33`), que el C++ interpreta com a `Goldilocks::Element*` (`pil2-stark/src/starkpil/steps.hpp:6-20`). Els *hints* fixen `CubicExtensionField<F>` (`hints/src/hints.rs:177-181`).
+- **CLI.** L'enum `Field` només té Goldilocks (`cli/src/commands/field.rs:7-10`).
+- **Traces.** S'emmagatzemen fila per fila (`common/src/trace.rs:37-47`).
+- **`GlobalInfo`** (`common/src/global_info.rs`). `from_file` valida quatre coses:
+  - que `hash` sigui `Poseidon1`, `Poseidon2` o `blake3` (`:162-168`);
+  - que hi hagi `curve`, un enum obligatori `None|EcGFp5|EcMasFp5` (`:49-63`);
+  - que `transcriptArity` sigui coherent amb el hash;
+  - i crida `set_hash_family_c`, que fixa estat global de C++.
+
+  Per tant, un `globalInfo` de pilfflonk **no** es pot llegir amb aquest tipus.
+
+**El prover C++:**
+- Una taula de funcions, `StarksBackend` (`pil2-stark/src/api/starks_backend.hpp:11-103`), tria CPU o GPU en temps d'execució. Hi ha les entrades del prover STARK i també les del SNARK final.
+- `genProof` té fixats `TranscriptGL`, la NTT de Goldilocks i `ExpressionsPack` (`starkpil/gen_proof.hpp:73-86`).
+- El nou backend **no entra** en aquesta taula.
+
+**Els càlculs de l'stage 2 només existeixen per a Goldilocks:**
+- `calculateImHints` (`gen_proof.hpp:27`) calcula `im_col` i `im_airval`.
+- `calculateWitnessSTD` (`:57`) calcula `gsum_col` i `gprod_col`.
+- El bin d'expressions (`"chps"` versió 1) desa els números com a `u64` de Goldilocks (`starkpil/expressions/expressions_bin.hpp:75`).
+- El repte global combina les contribucions de les instàncies (`proofman/src/challenge_accumulation.rs`). Amb les claus actuals (`"curve": "None"`, `latticeSize` 368) fa una suma de reticle en lloc de corbes. Tot plegat està lligat a Goldilocks.
+
+**BN254 només existeix en C++**, i tot es compila dins de `libstarks`:
+- **ffiasm** (`pil2-stark/src/bn128/src/ffiasm/`). És iden3/ffiasm 0.1.5 (`0830252a`) amb pedaços locals: fitxers `.c.hpp`, constructors afegits i una bifurcació `__USE_ASSEMBLY__`. Ofereix:
+  - `Fr`, `Fq`, F2, G1 i G2;
+  - la FFT `fft`/`ifft`, que és d'un sol vector, sense API de *coset* i amb el `nqr` privat (`fft.hpp:10`; l'API pública és a `:22-28`);
+  - la MSM `multiMulByScalar`, que espera escalars **canònics** *little-endian* (`curve.hpp:120-128`, `multiexp.c.hpp:23-34`).
+- **MSM i NTT per GPU** (`pil2-stark/src/bn128/src/{msm,ntt}`, sobre sppark). Ara mateix només les fa servir `rapidsnark/plonk_prover_gpu`.
+- **rapidsnark** (`pil2-stark/src/rapidsnark/`):
+  - els provers `Fflonk::FflonkProver` i `Plonk::PlonkProver` (CPU i GPU), els seus setups, i un prover Groth16 (sense verificador);
+  - `Keccak256Transcript`, amb un error: amb el punt zero, esborra els primers 64 bytes ja escrits del buffer i no n'afegeix cap (`keccak_256_transcript.c.hpp:63-65`);
+  - `Polynomial` i `Evaluations`;
+  - utilitats de binfile i zkey.
+- **No hi ha cap *pairing*,** ni F6 ni F12, enlloc de `pil2-stark/src`.
+
+**El *wrap* final SNARK:**
+- `SnarkWrapper` (`proofman/src/snark_wrapper.rs`) prova una R1CS de circom. El C++ tria `FflonkProver` o `PlonkProver` segons l'id de protocol de la zkey (`starks_api.cpp:1043-1068`).
+- La verificació es delega a `snarkjs` (`snark_wrapper.rs:580-638`). En Rust no hi ha cap verificador SNARK.
+- No hi ha cap job de CI end-to-end per al SNARK.
+
+**Compilació i FFI:**
+- `provers/starks-lib-c/build.rs` executa `make starks_lib` o `starks_lib_gpu`.
+- El Makefile llista **directoris arrel**, i dins de cadascun `find` compila tots els `*.cpp`, `*.c`, `*.cc` i `*.asm`, i també els `*.cu` a GPU (`pil2-stark/Makefile:228, 231, 234`).
+- Els cossos de les plantilles C++ van en fitxers `.c.hpp`.
+- Tots els directoris de `src/` són al camí d'*includes* (`:150`). Ja hi ha col·lisions que només es resolen per l'ordre de les opcions `-I`, com `alt_bn128.hpp` entre ffiasm i sppark.
+- Les declaracions `extern "C"` s'escriuen a mà a `provers/starks-lib-c/bindings_starks.rs`, i `src/ffi_starks.rs` les inclou amb `include!` i hi defineix els embolcalls `*_c`.
+- La GPU es detecta en compilar (`nvcc`) i es tria en temps d'execució amb `--gpu`. Hi ha la *feature* `cpu-only`, i `mpi` és una *feature* per defecte.
+
+### 3.3 El compilador: `../pil2-compiler`
+
+El compilador PIL2 (JS, `pil2com`) genera el `pilout`. El setup Rust l'invoca des de `compile-pil`.
+
+**El que ja funciona, sense tocar res:**
+- **El format.** El `pilout.proto` admet altres camps: `baseField` és de tipus `bytes` i les constants tenen longitud variable. El de `develop-0.14.0` és idèntic a `pilout/src/pilout.proto`. **Al `pilout` no cal cap canvi.**
+- **El camp.** El nucli rep el camp com a paràmetre (`compile(Fr, …)`, `pil2-compiler/src/compiler.js:215`). El *builtin* `PRIME` surt de `Fr.p` (`src/processor.js:66, 221`), i el `baseField` s'escriu a partir de `Fr.p` (`src/proto_out.js:124`).
+- **El descodificador.** `buf2bint` descodifica bé els valors de diversos trossos (`src/proto_out.js:734-740`, que avança de 8 en 8).
+- **El codi per a valors fixos grans** existeix, però està desactivat o incomplet (vegeu el bloquejador 3).
+
+**Els bloquejadors reals a `develop-0.14.0`.** S'han verificat amb experiments, i les correccions són a §4.1.
+1. **No hi ha manera de triar el primer.** `src/pil.js:129` construeix el camp de Goldilocks sense condicions; no hi ha cap opció de CLI, ni `-O`, ni camp al JSON de `-P`.
+   - `compile()` es pot cridar com a biblioteca des de `src/compiler.js`, però no és una entrada oficial: el `package.json` declara `main: index.js`, i aquest fitxer no existeix.
+2. **`bint2buf` escriu cada tros de 64 bits a l'*offset* `index` en lloc d'`index*8`** (`src/proto_out.js:720`).
+   - Per aquest codificador passen el `baseField`, les constants i els valors fixos (`src/proto_out.js:380`).
+   - Resultat mesurat: `r` i `r−1` queden corromputs, i `2^64` es codifica buit, és a dir, com a `0`.
+   - L'alternativa `bint2uint8` tampoc no serviria: `ProtoOut` es crea sempre sense opcions (`src/processor.js:174`) i, a més, `bint2uint8` barreja `BigInt` i `Number` i falla.
+3. **Els valors fixos `≥ 2^64` no funcionen.** Afecta tot negatiu en una columna fixa (`−k ≡ r−k`) i les potències de `GEN`. Resultat mesurat a BN254, amb 1 i 2 corregits:
+
+   | Cas | Resultat a `develop-0.14.0` |
+   |---|---|
+   | Seqüència geomètrica, com `ID = [1,GEN[BITS]..*..]` de `std_connection` | Error de compilació (`conversion problem`) |
+   | Seqüència amb negatius: aritmètica (`[0, -1..+..]`) o de rang (`[min..max]`, a `std_range_check.pil:291`) | Error de compilació |
+   | Llista amb un valor gran o negatiu (`[-1, 7]...`) | **Truncament silenciós** als 64 bits baixos |
+   | Assignació fila a fila, quan l'únic valor gran és a la primera escriptura | **Truncament silenciós** |
+   | Assignació fila a fila amb més valors grans | Error en llegir (`Out-of-bounds … [0..false]`) |
+   | `Tables.copy` des d'una columna gran amb files sense escriure (`std_range_check.pil:334`) | Error: `Row … is not defined` |
+   | `Tables.fill` amb un negatiu | **Truncament silenciós** a `2^64 − k` |
+
+   Les causes:
+   - **Seqüències.** `src/sequence.js:112` fixa `bytes = 8`. La crida a `getMaxBytes()` (`src/sequence/size_of.js:108`), que retorna `true` a partir de `2^64`, es va desactivar al commit `9fdab4a` (04-08-2025, "force bytes to 8"). A més, `expr()` només posa el sufix `n` quan `bytes === 8` (`src/sequence/fast_code_gen.js:186`).
+   - **Columnes fixes** (`src/definition_items/fixed_col.js`):
+     - quan una columna passa a enter gran, `size` val `false` i el control `row >= this.size` (`:238`) falla sempre;
+     - la primera escriptura no crida `checkIfResize` (`#setRowValue`);
+     - `createBuffer` crea arrays amb forats (`undefined`) allà on les versions tipades tenen `0`;
+     - `fillRowsFrom` no redueix el valor al cos ni redimensiona la columna.
+
+**Limitacions acceptades.**
+- L'escriptor `fixed-to-file` (`src/fixed_file.js:35, 47`) treballa amb `u64` i redueix pel primer de Goldilocks.
+- El pragma `#pragma extern_fixed_file` (`src/processor.js:528-531`, `src/extern_fixed_file.js`) també llegeix `u64`.
+- Al camí BN254 no es fan servir; `fixed-to-file` hi dona un error explícit (C4).
+
+**Fora del compilador, a la std de pil2-proofman.** Només té constants de camp per a Goldilocks:
+- `std_constants.pil:1` fa `require "goldilocks.pil"`.
+- El `switch (ACTIVE_FIELD)` que copia `GEN[]` i `k_coset` (`:131-153`) només coneix `FIELD_GOLDILOCKS`.
+- `GEN` i `k_coset` només es fan servir a `std_connection.pil` (línies 101, 143, 516, 526 i 540). La resta de la std és genèrica, perquè treballa amb `PRIME`.
+
+**Tests del compilador.** Tots fan servir Goldilocks (`test/**`, `F1Field(0xffffffff00000001n)`), i per això no cobreixen aquestes vies. A més, a `develop-0.14.0` n'hi ha dos que ja fallen per motius aliens: `test/basic.js`, per la paraula clau obsoleta `subproof`, i `test/features/sequence.test.js`, que no forma part de l'execució per defecte.
+
+### 3.4 Què canvia de PIL1 a PIL2
+
+Aquests són els sis canvis que condicionen el disseny. La taula completa és a l'**Annex B**.
+
+1. **Diverses AIRs i instàncies.** PIL1 té una sola traça. PIL2 té `airGroups[].airs[]`, cadascuna amb la seva `N`, i múltiples instàncies. Els busos de la std només quadren si les instàncies comparteixen els reptes de l'stage 2.
+2. **Stages i reptes arbitraris.** Els reptes fixos de PIL1 (α, β, γ, δ i `a`) passen a ser `numChallenges[stage]`. El setup hi afegeix `std_vc`, per plegar les restriccions, i `std_xi`, el repte del punt d'avaluació, que aquí és `xiSeed` (`setup/pil2-stark/src/pil/constraint_poly.rs:46, 203`).
+3. **Els arguments no són nadius.** Lookup, permutation i connection es converteixen en busos de la std, de dos tipus:
+   - **LogUp de suma** (`gsum`), el tipus per defecte (`std_permutation.pil:32`);
+   - **de producte** (`gprod`).
+
+   Els busos generen *hints*, de dues menes:
+   - **del prover:** `gsum_col`, `gprod_col`, `im_col` i `im_airval`;
+   - **del witness o de depuració:** `gsum/gprod_debug_data(_global)`, `range_def`, `specified_ranges(_data)`, `virtual_table_data(_global)` i `std_{sum,prod,rc}_users`. El prover els ignora, i els consumeix `pil2-components/lib/std/rs/src/`.
+4. **Nous valors a la prova:** air values, airgroup values (agregats per SUM o PROD), proof values i restriccions globals.
+5. **Offsets de fila arbitraris i amb signe.** PIL1 només té `'`, és a dir, `ξ` i `ξω`. PIL2 admet qualsevol `rowOffset`, i per tant qualsevol punt `ξ·ω^s`.
+6. **Restriccions amb domini.** El `pilout` preveu quatre dominis (`everyRow`, `firstRow`, `lastRow` i `everyFrame`), cadascun amb el seu *zerofier*. Però a `develop-0.14.0` el compilador **només emet `everyRow`**: `processor.js:2040` crida `constraints.define(…, false, …)`, i `when` s'analitza però no s'executa. Per tant, les vores es poden expressar amb columnes fixes com `L1`, i els altres tres dominis només s'exerciten amb `pilout` sintètics (Fase 1).
+
+---
+
+## 4. Com funcionarà, pas a pas
+
+### 4.1 Pas 1: compilar sobre BN254
+
+**Què canvia al compilador** (`../pil2-compiler`). L'objectiu és tocar el mínim, **i al `pilout.proto` no cal canviar-hi res**.
+
+**Estat.** Implementat a la branca local **`develop-0.14.0-pil2-fflonk`**, creada des de `develop-0.14.0` (`503862c`).
+- Encara no té commit ni s'ha pujat, i està pendent de revisió.
+- Tots els canvis són a l'índex (*staged*), i l'arbre de treball hi coincideix (comprovat el 29-09-2026).
+- En total, `src/` té +29/−10 línies en 6 fitxers, i hi ha 2 fitxers de test nous.
+
+| # | Canvi (estat actual de l'arbre de treball) | Efecte a Goldilocks |
+|---|---|---|
+| C1 | **Triar el primer** amb el canal de configuració que ja existeix, `-P <config.json>`. `src/pil.js` fa servir `config.prime` si hi és, i Goldilocks si no. `prime` **ha de ser una cadena**, decimal o hexadecimal; si és un número JSON, el compilador dona un error, perquè perdria precisió. No s'afegeix cap opció de CLI. | Cap |
+| C2 | **`bint2buf`:** `writeBigUInt64BE(…, index * 8)` (`src/proto_out.js:720`). Queda simètric amb `buf2bint`. | Cap: els valors `< 2^64` només tenen un tros |
+| C3 | **Valors fixos `≥ 2^64`.** S'activa la via d'enters grans que ja existeix i se'n corregeixen els errors:<br>- `src/sequence.js:112`: tornar a fer servir `getMaxBytes()`;<br>- `src/sequence/fast_code_gen.js`: sufix `n` sempre que `useBigInt()`;<br>- `src/definition_items/fixed_col.js`: el control de límits quan `size === false`, `checkIfResize` també a la primera escriptura (`#setRowValue`) i `fill(0n)` a la branca `bytes === true` de `createBuffer`. | Cap als programes reals. Només canvien les columnes amb `#pragma fixed_bytes 1/2/4`, que abans truncaven la primera escriptura i ara es redimensionen. Cap `.pil` de pil2-proofman no fa servir aquest pragma. |
+| C4 | **Cap truncament silenciós conegut:**<br>- **Seqüències.** Al codi generat, el llaç parcial comprova l'escriptura, i els literals es comproven en generar el codi (`fast_code_gen.js`).<br>- **`Tables.fill`** (`fixed_col.js`, `fillRowsFrom`). Redueix el valor al cos, redimensiona la columna i manté `maxRow`. Si la columna és una seqüència de 64 bits i el valor no hi cap, dona un error.<br>- **`fixed-to-file`** (`fixed_file.js`). Dona un error si el cos té més de 64 bits, abans d'escriure res. | Només canvia `Tables.fill` amb un negatiu (abans el `pilout` tenia `4294967294` en lloc de `p−1`; Annex F.7), o amb un valor a `[p, 2^64)` (canvia la memòria i la sortida `fixed-to-file`, però no el `pilout`). `Tables.fill` sobre columnes `fixed_bytes 1/2/4` abans fallava i ara funciona. |
+
+**Tests nous al compilador:** `test/bn254_fixed.js` i `test/bn254/big_fixed.pil`.
+- **Què fan.** Compilen el mateix PIL sobre Goldilocks i sobre BN254 (C1) i llegeixen el `pilout` (C2).
+- **Què comproven:**
+  - el `baseField`;
+  - vuit columnes fixes: seqüència geomètrica, llista, negatiu, seqüència aritmètica, assignació fila a fila, `Tables.fill`, redimensionament després d'un `fill`, i `Tables.copy`;
+  - i que `fixed-to-file` falla a BN254.
+- **Resultats.** Són 19 tests, i amb el codi de `develop-0.14.0` en fallen 11. La suite completa dona 24 tests correctes (inclosos els 19 nous) i 1 error, `test/basic.js`, el mateix que abans.
+- **Casos sense test encara** (comprovats a mà, i funcionen): l'error per `prime` numèric, l'error de `Tables.fill` sobre una seqüència, les constants d'expressió, les seqüències de rang negatives i el llaç parcial.
+
+**Validació** (compilador de la branca contra el de `develop-0.14.0`):
+- **BN254:** compilen els 10 programes de la CI de pil2-proofman (`fibonacci-square` i 9 tests de `pil2-components`), amb la std actual i `baseField == r`.
+- **Goldilocks:** els mateixos 10 programes generen `pilout` **idèntics byte a byte**, amb el mateix sha256.
+- **`fixed-to-file`:** a `fibonacci-square` també s'ha comparat amb `fixed-to-file`, incloent-hi els tres `.fixed`. Es va mesurar amb una versió anterior de la branca, però els canvis posteriors no afecten Goldilocks.
+- **Cost de la via d'enters grans:** en un PIL amb dues columnes grans de `2^20` files (una seqüència geomètrica i una assignació fila a fila), BN254 triga un 6 % més que Goldilocks (30,9 s contra 29,2 s) i fa servir un 16 % més de memòria (1,50 GB contra 1,29 GB). Amb `fibonacci-square` no hi ha diferència.
+
+**Documentació.** El `README.md` del compilador explica l'opció `prime` del `-P` i que `fixed-to-file` falla amb camps de més de 64 bits.
+
+**C2 i C3 no tenen alternativa.** La mateixa std genera valors `≥ 2^64` a BN254 (els rangs negatius de `std_range_check` i les potències de `GEN` de `std_connection`), i la via fila a fila, que hauria pogut servir per esquivar les seqüències, també estava afectada.
+
+**Què canvia a la std** (`pil2-components/lib/std/pil/`, a pil2-proofman). És tot PIL, sense tocar el compilador, i aprofita el `switch (ACTIVE_FIELD)` que ja existeix:
+- Afegir `FIELD_BN254` i derivar `ACTIVE_FIELD` del *builtin* `PRIME`, que la std ja consulta (`std_range_check.pil:51`, `std_virtual_table.pil:20`).
+- Afegir un `bn254.pil` amb `Bn254_Gen[i] = 5^((r−1)/2^i)` per a `i ≤ 28`.
+  - BN254 té 2-adicitat 28, i 5 és el no-residu quadràtic més petit.
+  - `Bn254_Gen[28]` és l'arrel estàndard 19103219067921713944291392827692070036145651957329286315305642004821462161904.
+  - També cal un `Bn254_k` que generi *cosets* disjunts.
+- **Només cal per a les connexions** (Fase 2): és l'única part de la std que fa servir `GEN` i `k_coset`. Sense aquest canvi, les connexions compilen igualment, però amb els generadors de Goldilocks, i es perd la garantia de *soundness* de l'argument de còpia (P10, §7.1).
+
+**Integració amb pil2-proofman** (§7.1):
+- **P8.** Es fa servir el compilador local amb `PIL2C_EXEC`. `setup/pil2-stark/package.json` (que apunta a `develop-0.14.0`) només es canvia si cal, i la branca del compilador no es fa *commit* sense demanar-ho a l'usuari.
+- **P9.** `proofman-setup compile-pil` rep un paràmetre nou, `-P, --config <json>`, igual que el de `pil2com` (com ja passa amb `-o`, `-I` i `-u`), i el passa tal qual. Per defecte no hi és i el comportament és l'actual (Goldilocks). És un camp `config: Option<String>` a `CompilePilOptions`, amb `None` als 11 llocs on es construeix (la CI, els `build.rs` de `pil2-components` i `proving_key/recursive.rs:1033`).
+
+**Garanties:**
+- el `pilout` BN254 té `baseField = r`;
+- els `pilout` Goldilocks surten idèntics byte a byte, llevat dels casos límit de C3 i C4.
+
+### 4.2 Pas 2: setup (Rust)
+
+**Comanda:**
+
+```
+proofman-setup setup-pilfflonk -a <pilout> -b <build_dir> --powers-of-tau <ptau>
+    [--max-constraint-degree D]   (per defecte 9, D5)
+    [--extra-muls E]              (per defecte 2, com pil-stark)
+    [--max-q-degree M]            (per defecte 0: Q no es parteix)
+    [--solidity]                  (Fase 4)
+    [--no-packing]                (només per a tests: força k = 1)
+```
+
+Els noms d'arguments són els de `setup` (`-a`, `-b`) i `setup-snark` (`--powers-of-tau`). **No** hi ha `-u <fixed_dir>`: al STARK, aquesta opció copia `.fixed` de 8 bytes, i a BN254 no hi ha cap productor de fitxers així (C4).
+
+El setup és una seqüència de passos. Tots són funcions pures amb tests propis, llevat de dos: la lectura i escriptura de fitxers (§4.2.1, §4.2.6) i els compromisos fixos (§4.2.5), que criden C++.
+
+#### 4.2.1 Llegir i validar
+
+Es descodifica el `pilout` i el setup s'atura amb un error clar en qualsevol d'aquests casos:
+- el `baseField` no és el `r` de BN254;
+- hi ha custom commits, periodic columns o public tables;
+- hi ha un *hint* de prover desconegut. Els *hints* de witness i de depuració de la llista de §3.4 s'ignoren de manera explícita;
+- alguna columna de l'stage 2 o superior no la produeix cap *hint* suportat;
+- alguna constant és `≥ r`;
+- el domini estès no cap en la 2-adicitat, és a dir, `nBitsExt > 28` (A.1);
+- el `ptau` té menys de `max grau(f_i) + 1` punts.
+
+Del `ptau` només es llegeixen les seccions 2 (`[τ^i]₁`) i 3 (`[τ^i]₂`). No cal que estigui preparat per a la fase 2 (secció 12), a diferència del que demana `fflonk_setup.cpp:51`.
+
+#### 4.2.2 Informació simbòlica (compartida amb el setup STARK)
+
+**Què es reutilitza.** Les passades de `setup/pil2-stark/src/{pil,expr}` i `types/pilout_info.rs`: preparació d'expressions, graus, *offsets*, mapes de columnes, `evMap`/obertures, codegen i informació de les restriccions globals.
+
+**Nou crate compartit, `pil-info`** (`setup/pil-info`, decisió D1). Hi passen:
+- les passades simbòliques;
+- el contenidor binari `"chps"` (`io/bin_file_writer.rs`);
+- l'assignació de temporals (`io/parser_args.rs:85-205`, que ara és privada i té `dim == 3` fixat);
+- la generació de `pilout.globalConstraints.json`.
+
+Així el setup pilfflonk no depèn de `pil2-stark-setup` i no hi ha cap cicle (§5.2).
+
+**Paràmetres.** Les passades reben un context, `PilInfoCfg`, amb tres paràmetres:
+- **el mòdul del camp:** per reduir constants i representar `neg`, sense el `NEG_ONE` cablejat;
+- **la dimensió d'extensió:** 3 per a Goldilocks i 1 per a BN254. Substitueix els ~45 usos de `FIELD_EXTENSION`;
+- **una política de grau:** el STARK la deriva del *blowup*, i pilfflonk fa servir la seva (§4.2.3).
+
+**Canvis que el STARK també aprofita:**
+- descodificar les constants amb un enter gran (`num-bigint`, que ja és al *workspace*), no amb `u128`;
+- no truncar els números a `u64` fins al moment d'escriure'ls;
+- que les passades retornin `Result` en lloc de fer `panic!`.
+
+**Parts del STARK que no es fan servir:**
+- el polinomi FRI i el `queryVerifier`, que a `gen_code` passen a ser un ganxo d'obertura;
+- les validacions de `StarkStruct` de `prepare`;
+- la seguretat FRI, els arbres de constants i la recursió.
+
+#### 4.2.3 Polinomi de restriccions i polinomis intermedis
+
+- **Plegat.** Les restriccions d'una AIR es pleguen amb `std_vc` pel mètode de Horner, en l'ordre del `pilout`, i cadascuna es divideix pel *zerofier* del seu domini:
+
+  ```
+  Q(X) = Σ_{i=0..n−1} std_vc^(n−1−i) · c_i(X) / Z_{D_i}(X)
+  ```
+
+  És la mateixa semàntica que el STARK (`constraint_poly.rs:136-147`). La primera restricció rep la potència més alta. Els detalls, incloent-hi el comptatge de grau dels *zerofiers*, són a l'Annex A.1.
+- **Selecció d'im pols.** El setup tria els polinomis intermedis que minimitzen `nImPols + qDeg`, amb un grau màxim configurable (per defecte 9, com pil-stark; D5).
+  - Els im pols van a **l'últim stage de l'AIR**, com al STARK (`im_polynomials.rs:539`). A la Fase 1, amb `nStages = 1`, doncs, viuen a l'stage 1.
+  - Els calcula el prover amb el bytecode, abans de comprometre aquell stage.
+  - No s'han de confondre amb les columnes `im_col` que declara la std, que es calculen a partir de *hints*.
+- **Partició de `Q`.** Si `qDeg` supera `--max-q-degree` (i aquest no és 0), `Q` es parteix en trossos. En aquest cas, els trossos reben blinding i les seves avaluacions van a la prova (A.1, A.3).
+
+#### 4.2.4 Agrupació fflonk
+
+És una funció pura: `group(polinomis, paràmetres) → Layout`.
+- **Entrada:** cada polinomi compromès, amb el seu stage, la fita de grau i el conjunt d'*offsets* on s'obre.
+- **Sortida:** la llista de polinomis empaquetats `f_i`. Cada `f_i` és d'un sol stage i d'un sol conjunt d'obertura, i conté els seus polinomis en un ordre fix, amb un factor `k` vàlid.
+
+**Regles.** Són les del sistema antic, generalitzades a *offsets* amb signe:
+1. **Classes i fusió** (com `pil-stark/src/fflonk/helpers/fflonk_shkey.js`). Els polinomis es classifiquen per `(stage, O)`. Una classe petita puja a la unió dels *offsets* del seu stage, i les classes que ja són aquesta unió no es mouen mai.
+2. **Q.** Té el seu propi `f`.
+3. **Repartició d'`extraMuls`** (com `shplonkjs/src/helpers/setup.js`). Es fa en dos nivells: primer dins de cada grup, i després entre grups.
+4. **`k` vàlid:** cada `k` ha de complir `k | r−1` i `kN | r−1`.
+
+**Compatibilitat.** Per a *offsets* dins de `{0, 1}`, el resultat ha de coincidir exactament amb el del sistema antic. El detall normatiu és a l'Annex A.2.
+
+#### 4.2.5 Bytecode, compromisos fixos i claus
+
+- **Bytecode del prover** (`<air>.bin`). El codegen compartit genera per a cada AIR el bytecode `Fr` que executarà el prover: expressions dels *hints*, im pols i `Q`.
+  - Les constants ocupen 32 bytes.
+  - El codificador és **propi**: la disposició de buffers del bin STARK (`io/parser_args.rs`) és l'ABI del prover STARK.
+  - Es reaprofiten el contenidor `"chps"` i l'assignació de temporals, que viuen a `pil-info`.
+  - El fitxer té una versió i una mida d'element pròpies.
+- **Codi del verificador** (el `qVerifier` de `<air>.verifierinfo.json`). És el codi que calcula `Q(ξ)` a partir de les avaluacions, sense `queryVerifier`. Surt del mateix codegen, en el format JSON del STARK, i el setup en copia el `qVerifier` a la vkey. No hi ha `.verifier.bin`, perquè no hi ha verificador natiu (D3).
+- **Restriccions globals.**
+  - `pilout.globalConstraints.json` surt de `pil-info`, en el mateix format que el STARK.
+  - No cal cap `.bin`: el verificador JS llegeix el JSON. A la v1 el fitxer no té cap restricció (D2).
+- **SRS** (`pilfflonk.srs.bin`). El setup n'extreu del `ptau` les potències G1 que calen, fins a `max grau(f_i) + 1`, i `[τ]₂`.
+- **Compromisos fixos** (`<air>.verkey.json`). El setup crida una funció C nova, `pilfflonk_commit_fixed`. C++ fa la INTT de les columnes fixes amb ffiasm, n'empaqueta els `f_i` i fa la MSM.
+  - S'escriu sobre `Polynomial::fromEvaluations`, `CPolynomial` (empaquetat) i `multiMulByScalar`, que ja existeixen a rapidsnark i ffiasm. `PilFflonkSetup::computeFCommitments` (`pil-fflonk/src/pilfflonk_setup.cpp:270`) només serveix de referència del resultat esperat, i no es copia.
+  - Del patró de `fflonk_setup_c` es copien dues coses: C++ captura les excepcions i retorna un codi d'estat, i Rust valida les mides abans de la crida.
+  - Però, a diferència d'aquell patró, el C++ fa servir RAII i l'embolcall Rust retorna `Result`, no fa `panic!`.
+- **Vkey** (`pilfflonk.vkey.json`). És autocontinguda, com la `verification_key.json` de snarkjs: conté tot el que necessita el verificador, i res més (A.6). El setup l'escriu al final, amb el *digest*. El verificador JS i el Solidity (Fase 4) només llegeixen aquest fitxer.
+
+#### 4.2.6 Sortida: un `provingKey/` com el del setup STARK
+
+El setup escriu un directori `provingKey/` amb la mateixa jerarquia que genera `proofman-setup setup` (`commands/setup.rs:150-313`, `common/src/global_info.rs:202-245`). Els noms de fitxer són els mateixos sempre que el contingut té el mateix paper; els que depenen del sistema de prova canvien.
+
+```
+<build>/provingKey/
+├── pilout.globalInfo.json             la part comuna de l'esquema STARK, més "backend": "pilfflonk" (A.6)
+├── pilout.globalConstraints.json      el mateix format que el STARK (el genera pil-info)
+└── <name>/                            <name> = nom del pilout
+    ├── pilfflonk/                     fitxers globals del backend (convenció de get_setup_path)
+    │   ├── pilfflonk.srs.bin          potències G1 del ptau que calen, i [τ]₂
+    │   ├── pilfflonk.vkey.json        la vkey autocontinguda del verificador, amb el digest (A.6)
+    │   └── pilfflonk.verifier.sol     el contracte verificador (Fase 4)
+    └── <airgroup>/airs/<air>/air/
+        ├── <air>.const                columnes fixes, Fr canònic de 32 bytes little-endian (al STARK, 8 bytes)
+        ├── <air>.pilfflonkinfo.json   fa el paper del starkinfo.json: mapes i layout dels f_i
+        ├── <air>.expressionsinfo.json el format del STARK, amb dimensió 1
+        ├── <air>.verifierinfo.json    el format del STARK, només qVerifier (el llegeix el verificador JS)
+        ├── <air>.bin                  bytecode del prover i hints (contenidor "chps", versió pilfflonk)
+        └── <air>.verkey.json          commitments dels f_i fixos (al STARK, l'arrel Merkle de .const); també són a la vkey
+```
+
+- **Dades derivades.** Els coeficients i les avaluacions esteses de les columnes fixes, les arrels i `powerW` es recalculen en carregar, igual que el STARK recalcula `.consttree` a partir de `.const`.
+- **Fitxers que no hi són.** No hi ha `<air>.verkey.bin`: al STARK és la còpia binària de l'arrel Merkle, i aquí no té equivalent.
+- **Lectura del `globalInfo`.**
+  - El runtime pilfflonk el llegeix amb un tipus propi (a `proofman-pilfflonk`), no amb `common::GlobalInfo`, perquè aquest valida `hash`, `curve` i `transcriptArity` i fixa estat global de C++ (§3.2).
+  - Com que `curve` és obligatori per al STARK, les eines STARK rebutgen aquest fitxer per si soles, i no hi ha perill que el carreguin per error.
+
+**Correspondència amb els fitxers de setup originals** (pil-stark / pil-fflonk):
+
+| Fitxer original | Què contenia | On va a parar |
+|---|---|---|
+| `NAME.fflonkinfo.json` | Mapes de seccions, `evMap`, contextos d'arguments, codi pas a pas, `qDeg`, publics | **Global:** `pilout.globalInfo.json`.<br>**Per AIR:** `<air>.pilfflonkinfo.json`.<br>**Codi:** `<air>.expressionsinfo.json`, `<air>.verifierinfo.json` i `<air>.bin`. |
+| `NAME.shkey.json` | Agrupació en `f_i`, `powerW`, arrels `w*` | L'agrupació passa al camp `layout` de `<air>.pilfflonkinfo.json`; `powerW` i les arrels es deriven |
+| `NAME.zkey` (12 seccions) | Capçalera, definicions i commitments de `f`, noms per stage, constants (avaluacions, coeficients i extensió), `x_n`, `x_ext`, omegas, PTau | Es reparteix així:<br>- capçalera i definicions → `<air>.pilfflonkinfo.json`;<br>- commitments fixos → `<air>.verkey.json`;<br>- avaluacions de les constants → `<air>.const`;<br>- coeficients, extensió, `x_n`, `x_ext` i omegas → es deriven;<br>- PTau → `pilfflonk.srs.bin`. |
+| `NAME.vkey` | `[τ]₂`, commitments de constants, arrels, `polsMap` | `pilfflonk.vkey.json`, amb el mateix paper; els commitments fixos també van a `<air>.verkey.json` |
+| `NAME.const` | Constants en `Fr` | `<air>.const`, un per AIR |
+| `NAME.chelpers.*.cpp` | C++ generat per a cada circuit | `<air>.bin`, bytecode. Ja no cal recompilar el prover. |
+| `NAME.commit` / `NAME.exec` | Witness | No és setup: és una entrada del prover (§4.3) |
+
+### 4.3 Pas 3: witness
+
+**Què rep el prover de fora:**
+- les columnes de l'**stage 1** de cada instància;
+- els **air values** de l'stage 1;
+- els **publics**;
+- els **proof values** de l'stage 1.
+
+Les columnes de l'**stage 2 i posteriors** i els im pols no els aporta ningú de fora: els calcula el prover (§4.4).
+
+**Format.** Els valors són `Fr` canònics de 32 bytes *little-endian*, fila per fila, com a les traces actuals. Les conversions a la forma de Montgomery de ffiasm es fan dins del C++.
+
+**Ordre de les instàncies.** Les instàncies es donen en ordre canònic (glossari), que és el que fixen el transcript i la prova.
+
+**D'on surt el witness:**
+- **Fases 1 i 2:** d'un fitxer per instància, llegit per un `WitnessSource`, que generen petits generadors de fixtures.
+- **Fase 3:** de programes reals. Els `WitnessLibrary<F: PrimeField64>` actuals no poden calcular en BN254: convertir valors de Goldilocks a `Fr` no és correcte per a negatius ni inverses. Cal una font de witness en `Fr` (D4).
+
+### 4.4 Pas 4: prova
+
+**Repartiment de feina:**
+- **Rust (crate `proofman-pilfflonk`).** Carrega el `provingKey/`, decideix l'ordre de les operacions i quins valors s'absorbeixen, i escriu la prova.
+- **C++ (`pil2-stark/src/pilfflonk/`).** Conté els buffers de polinomis i l'objecte transcript, i fa tots els càlculs amb ffiasm:
+  - **Escalars.** La MSM de ffiasm vol escalars canònics, i per això la conversió des de Montgomery es fa just abans de cada MSM, com a pil-fflonk.
+  - **NTT.** A la versió de CPU, la FFT d'ffiasm columna a columna, a través de `Polynomial::fromEvaluations` i `Evaluations`. Una NTT multicolumna optimitzada, o la de GPU, vindrà després.
+  - **Coset.** pil-fflonk no en fa servir: divideix per `Z_H` en forma de coeficients. Els *zerofiers* per domini, en canvi, demanen dividir punt a punt, i per això `Q` s'avalua sobre un *coset* estès. La FFT d'ffiasm no té API de *coset*, de manera que l'LDE multiplica pels poders del desplaçament abans de la FFT. El desplaçament és `g = 5`, el no-residu quadràtic més petit, que és el `nqr` de la FFT d'ffiasm i el generador de les arrels: no és a cap subgrup d'ordre `2^k`, i per tant `g·H'` no talla `H`. És intern del prover: el verificador no el veu.
+  - **Transcript.** Es fa servir, sense modificar-lo i com a dependència, el `Keccak256Transcript` de `pil2-stark/src/rapidsnark/`, exactament el mateix que el FFLONK existent (P6, `fflonk_prover.c.hpp:831-851`):
+    - `addScalar`: `Fr` en 32 bytes *big-endian* canònics;
+    - `addPolCommitment`: G1 afí `x‖y`, en *big-endian*;
+    - `getChallenge`: `keccak256` reduït a `Fr`;
+    - `reset()` i llavor amb el repte anterior a cada ronda.
+
+    Té tres peculiaritats que aquí no fan mal:
+    - **El punt zero.** El codifica malament (§3.2), però totes les G1 que s'absorbeixen són commitments amb blinding, o `W` i `W'`, i per tant no es dona a la pràctica. L'API el rebutja amb un error (M4).
+    - **Coordenades petites.** `RawFq::toRprBE` d'ffiasm (`fq.cpp:324-339`) exporta paraules de 8 bytes sense alinear-les a la dreta: una coordenada `< 2^192` s'escriu com un nombre més gran, i no com 32 bytes *big-endian*. `RawFr::toRprBE` sí que ho fa bé (`fr.cpp:312`), i per això els escalars no hi estan afectats. Un punt aleatori té una coordenada així amb probabilitat `≈ 2^-61`. L'API rebutja aquests punts amb `PILFFLONK_ERR_INVALID_POINT` (M4), de manera que tot el que s'absorbeix es codifica exactament com diu A.4, i com ho fa el verificador JS.
+    - **El buffer és un VLA a la pila** (`getChallenge`). Només seria un problema amb transcripts de molts megabytes. Si passa, es corregeix a la mateixa classe, i el *wrap* final també se'n beneficia.
+
+**La seqüència.** La normativa exacta del transcript és a l'Annex A.4.
+
+1. **Preparar.**
+   - La comanda és `proofman-cli pilfflonk prove -k <provingKey> -o <dir>`, amb els mateixos noms d'arguments que `prove`.
+   - Carregar el `provingKey/`: `globalInfo`, `pilfflonk.vkey.json` (per al *digest*), `pilfflonk.srs.bin` i, per a cada AIR, `pilfflonkinfo`, `.bin` i `.const`.
+   - Rebre les instàncies en ordre canònic.
+   - Iniciar el transcript, que és únic per a tota la prova, i absorbir-hi el *digest*, el nombre d'instàncies per AIR i els publics.
+2. **Per a cada stage `s = 1 … nStages`:**
+   1. Per a cada instància, el C++ fa aquests passos:
+      - calcula les columnes de l'stage: a l'stage 1, les del witness; a partir del 2, les dels *hints*, amb els reptes;
+      - a l'últim stage, calcula també els im pols;
+      - en fa la INTT (`Polynomial::fromEvaluations`, amb espai per al blinding);
+      - hi afegeix el blinding **en forma de coeficients** (`blindCoefficients`), perquè `(X^N−1)·b` s'anul·la a `H`;
+      - empaqueta els `f_i` (`CPolynomial`);
+      - els compromet (MSM).
+   2. Rust fa absorbir els commitments i els valors de l'stage i, si `s < nStages`, en treu els reptes de l'stage `s+1`.
+
+   Com que el transcript és únic, **els reptes de l'stage 2 són compartits per totes les instàncies**, i els busos entre instàncies quadren sense cap mecanisme de repte global (D2).
+3. **Quocient.**
+   1. Treure `std_vc`.
+   2. Per a cada instància, el C++ avalua `Q` sobre el *coset* estès amb el bytecode, en torna a obtenir els coeficients, el parteix si cal (amb blinding entre els trossos) i en compromet els `f_i`.
+   3. Absorbir els commitments de `Q` i treure `xiSeed`. El punt d'avaluació és `ξ = xiSeed^powerW`.
+4. **Avaluacions.**
+   - El C++ avalua cada polinomi obert als seus punts `ξ·ω^s`.
+   - Les columnes fixes s'avaluen una vegada per AIR, i la resta, per instància.
+   - Si `Q` està partit, també s'avaluen els seus trossos.
+   - Rust fa absorbir les avaluacions.
+5. **Obertura.**
+   - El C++ fa una única obertura SHPLONK sobre tots els `f_i`, en l'ordre global de l'Annex A.5. `pilfflonk_open` comença fent `squeeze` d'`α_S` (les avaluacions ja s'han absorbit al pas 4), absorbeix `W`, treu `y`, i produeix `W` i `W'`.
+   - La base del codi és l'orquestració de `ShPlonkProver` (`pil-fflonk/src/shplonk.cpp`), generalitzada a *offsets* amb signe i a diverses instàncies. Això implica tres feines:
+     - **`Polynomial`:** es fa servir el de rapidsnark. `divByXSubValue`, que només existeix a pil-fflonk, se substitueix per `divByMonic(1, β)` (`rapidsnark/polynomial/polynomial.c.hpp:423`), i `fromCoefficients` no cal.
+     - **Dependències a substituir:** `PilFflonkZkey` passa a ser el context carregat del `provingKey/`, i `PilFflonkTranscript` passa a ser el `Keccak256Transcript` de rapidsnark. També en depenen `zklog`, les macros de temps i `nlohmann::json`.
+     - **La MSM** (`multiMulByScalar` amb `nx`/`x`) ja és compatible amb el ffiasm vendoritzat.
+6. **Escriure la prova.** Rust escriu `proof.json` i `publics.json` (A.6).
+
+**Depuració.** `proofman-cli pilfflonk check` comprova el witness fila a fila, sense provar res, i diu quina restricció i quina fila fallen. L'equivalent STARK més proper és `verify-constraints`.
+
+### 4.5 Pas 5: verificació
+
+**Verificador JS** (D3, D8). pilfflonk no té verificador natiu, igual que el FFLONK existent, que es verifica amb `proofman-cli verify-snark`: aquesta comanda crida `snarkjs fflonk verify` (`proofman/src/snark_wrapper.rs:580-638`). De la mateixa manera, `proofman-cli pilfflonk verify` crida el verificador JS de pilfflonk, que rep tres fitxers com `snarkjs fflonk verify`: la vkey (`pilfflonk.vkey.json`), els publics i la prova.
+- **On viu:** a `pilfflonk/js/`, dins de pil2-proofman. És el primer codi JS del repositori. pil-fflonk i el seu verificador es deixaran de fer servir (P4).
+- **Plantilla: el verificador fflonk de snarkjs** (`snarkjs/src/fflonk_verify.js`), el del FFLONK existent. En copia la interfície (`verify(vkey, publics, proof, logger)` → cert o fals), els passos 1–3 (commitments a G1, avaluacions i publics a `F`), el patró del transcript, el càlcul de `F`, `E` i `J` i el `pairingEq` final. Només en difereix on snarkjs és específic del circuit PLONK de circom:
+  - snarkjs té fixats tres polinomis (`C0`, `C1` i `C2`, amb `k` = 8, 4 i 3) i els seus punts d'obertura; pilfflonk llegeix la llista de `f_i`, amb els seus `k` i *offsets*, de la vkey, i generalitza `computeR0/1/2` com fa `verifyOpenings` de shplonkjs;
+  - snarkjs té la identitat de PLONK escrita al codi; pilfflonk calcula `Q(ξ)` amb el `qVerifier` del setup;
+  - snarkjs té fixats els reptes `β`, `γ`, `α` i `y`; pilfflonk treu els de cada stage de `numChallenges` (A.4).
+
+  snarkjs només exporta la seva API pública, i per tant el transcript i les funcions auxiliars es copien. snarkjs és de l'equip, i no cal cap capçalera de llicència.
+- **D'on surt la resta:** de `pil-stark/src/fflonk/helpers/fflonk_verify.js` i de `verifyOpenings` (`shplonkjs/src/helpers/verifier.js`), amb els canvis de pilfflonk:
+  - la seqüència del transcript d'A.4, amb el *digest* i els reptes de `numChallenges`;
+  - els *offsets* amb signe;
+  - la partició de `Q`;
+  - el format de la prova de D7;
+  - la vkey autocontinguda.
+- **Dependències:** `ffjavascript` (BN254 i `pairingEq`) i `@noble/hashes` (Keccak-256), les mateixes que fa servir snarkjs 0.7.6. Es declaren a `pilfflonk/js/package.json` i s'instal·len amb el mateix mecanisme que snarkjs (`node_deps::ensure_node_deps`).
+- **El transcript JS** reprodueix el `Keccak256Transcript` de rapidsnark, igual que el de snarkjs ho fa per al FFLONK existent.
+
+**Passos:**
+1. Valida la forma de l'entrada: punts sobre la corba (el cofactor de G1 és 1), escalars `< r` i longituds que quadren amb la vkey. Recalcula el *digest* de la vkey (A.6) i el compara amb el que porta.
+2. Refà la seqüència del transcript (A.4).
+3. Calcula `Q(ξ)` a partir de les avaluacions amb el `qVerifier` de la vkey, el mateix mecanisme que el verificador STARK. Si `Q` està partit, comprova que `Σ ξ^(i·M·N)·Q_i(ξ) = Q(ξ)` (A.1).
+4. Fa la comprovació SHPLONK amb un *pairing* (A.5), sempre amb els commitments fixos de la vkey. La prova no en porta cap. Això corregeix el defecte de `fflonk_verify.js`, que feia servir els de la prova (C.3.1).
+5. Acaba amb un codi de sortida diferent de 0 si la prova no verifica. El `main_verifier.js` antic surt amb 0 també quan falla (Annex C), i això no es copia.
+
+Quan hi hagi diverses instàncies i restriccions globals, en una versió futura (D2), el verificador també agregarà els airgroup values i comprovarà les restriccions de `pilout.globalConstraints.json`.
+
+**Sense *pairing* a C++.** Com que no hi ha verificador natiu, no es porten F6, F12 ni el *pairing* a `pil2-stark`, i ffiasm no es toca.
+
+**Verificador Solidity** (Fase 4). `proofman-setup setup-pilfflonk --solidity` genera `pilfflonk.verifier.sol` amb plantilles `tera` noves.
+- **Mecanisme.** Es copia el patró de `setup/stark-recurser/stark2circom/circuit_templates/templates.rs` (`render()` i `include_str!`). Com que aquell `render()` és `pub(super)`, `setup/pilfflonk` afegeix `tera` com a dependència pròpia.
+- **Referència estructural:** els dos contractes del sistema antic.
+  - **`PilFflonkVerifier`** (`pil-stark/src/fflonk/solidity/verifier_pilfflonk.sol.ejs`) desplega les restriccions en Yul i crida el segon contracte amb `staticcall`.
+  - **`ShPlonkVerifier`** (`shplonkjs/src/solidity/verifier.sol.ejs`) fa el *pairing* amb el precompilat `0x08`.
+- **Calldata.** Un codificador calcula les inverses auxiliars que el contracte necessita.
+
+---
+
+## 5. On viu el codi
+
+### 5.1 Mapa de components
+
+| Component | Crate / ubicació | Llenguatge | Responsabilitat |
+|---|---|---|---|
+| Compilador | `../pil2-compiler` (branca `develop-0.14.0-pil2-fflonk`) | JS | `pilout` sobre BN254 (§4.1) |
+| Constants de camp | `pil2-components/lib/std/pil/` (nou `bn254.pil`) | PIL | `GEN` i `k_coset` per a BN254 (només connexions) |
+| Informació simbòlica | crate `pil-info`, a `setup/pil-info/` (nou; extret de `setup/pil2-stark`; D1) | Rust | Passades simbòliques parametritzades pel camp, contenidor `"chps"`, assignació de temporals i `globalConstraints.json` |
+| Setup pilfflonk | crate `pilfflonk-setup`, a `setup/pilfflonk/` (nou) | Rust | Validar, agrupar, generar el bytecode, les claus, el `provingKey/`, el *digest* i el Solidity |
+| Subcomandament | `proofman-setup setup-pilfflonk`, al crate `pil2-stark-setup` | Rust | Crida `pilfflonk-setup` |
+| Tipus i orquestrador | crate `proofman-pilfflonk`, a `pilfflonk/` (nou) | Rust | Tipus dels fitxers propis, càrrega, instàncies, bucle d'stages, `WitnessSource`, escriptura de la prova |
+| Nucli BN254 | `pil2-stark/src/pilfflonk/` (nou). De pil-fflonk només adapta l'orquestració SHPLONK genèrica, i reutilitza `Polynomial`, `Evaluations`, `CPolynomial`, `Keccak256Transcript` i `BinFile` de rapidsnark i la FFT i la MSM d'ffiasm. | C++ (ffiasm) | Intèrpret `Fr`, LDE sobre *coset*, blinding, empaquetat, MSM, `Q`, avaluacions i SHPLONK (la banda del prover) |
+| Verificador | `pilfflonk/js/` (nou) | JS (Node; `ffjavascript`, `@noble/hashes`) | Transcript, `Q(ξ)`, SHPLONK i *pairing*. El crida `proofman-cli pilfflonk verify` (§4.5). |
+| API C | `pil2-stark/src/api/pilfflonk_api.{hpp,cpp}` (nou) | C++ | La superfície C que veu Rust. Retorna codis d'estat i mai no crida `exitProcess`. |
+| *Bindings* | `provers/starks-lib-c/bindings_pilfflonk.rs` (declaracions `extern "C"`, incloses amb `include!`) i `provers/starks-lib-c/src/ffi_pilfflonk.rs` (embolcalls), tots dos nous; a `src/lib.rs` s'hi afegeixen `mod ffi_pilfflonk; pub use ffi_pilfflonk::*;` | Rust | FFI escrita a mà, amb el mateix patró que `bindings_starks.rs` i `ffi_starks.rs` |
+| CLI | `cli/` | Rust | `proofman-cli pilfflonk prove \| verify \| check`, com a subcomandament niat, seguint el patró de `Pilout` (`cli/src/commands/pilout/mod.rs`) |
+| GPU (Fase 5) | `pil2-stark/src/bn128/src/{msm,ntt}` (ja existeix) | CUDA | MSM i NTT, amb `--gpu` quan la compilació ha detectat `nvcc` |
+
+### 5.2 Dependències
+
+```
+proofman-cli ─────────────► proofman-pilfflonk ──────────► proofman-starks-lib-c ──► libstarks (C++, ffiasm)
+                                    ▲                               ▲
+pil2-stark-setup ─► pilfflonk-setup ┘───────────────────────────────┘  (compromisos fixos)
+ (proofman-setup)     │     │
+       │              │     └──► pil2-pilout
+       └──────────────┴────────► pil-info ──► pil2-pilout
+```
+
+- **No hi ha cicles.** `pilfflonk-setup` depèn de `pil-info`, `proofman-pilfflonk` i `proofman-starks-lib-c`, però no de `pil2-stark-setup`. `pil2-stark-setup` depèn de `pil-info`, per les passades, i de `pilfflonk-setup`, per allotjar el subcomandament.
+- **Què guanya dependències noves.** Només el binari de setup STARK (`pil-info` i `pilfflonk-setup`). El runtime STARK no en guanya cap.
+- **Propietat dels fitxers.**
+  - Els tipus dels fitxers propis de pilfflonk tenen un sol propietari, `proofman-pilfflonk`: el setup els escriu i el prover els llegeix.
+  - `pilout.globalConstraints.json` el genera `pil-info` per als dos backends.
+- **Verificador JS.** No depèn de cap crate: llegeix la vkey, la prova i els publics. Un test E2E garanteix que llegeix els fitxers com els escriu Rust.
+- **Lectura des del C++.** El C++ llegeix `<air>.pilfflonkinfo.json` amb `nlohmann/json`, igual que avui llegeix `starkinfo.json`. Un test d'anada i tornada Rust ↔ C++ garanteix que les dues bandes llegeixen el mateix.
+
+### 5.3 Interfícies (esbós)
+
+**API C** (`pil2-stark/src/api/pilfflonk_api.hpp`). Convencions:
+- **Codificació.** Els escalars es passen com a 32 bytes canònics *little-endian*, i els punts G1 com a 64 bytes (`x‖y`, *little-endian*). El transcript fa servir *big-endian* internament (A.4).
+- **Handles.** Tots els objectes són opacs i tenen una funció `_free`.
+- **Errors.** Les funcions que creen objectes retornen `NULL` si hi ha un error, i la resta retornen un codi d'estat `int`. Mai no es crida `exitProcess`.
+- **Transcript.** Rust decideix què s'absorbeix i quan, i també absorbeix les avaluacions. L'objecte és de C++, i `pilfflonk_open` fa `squeeze` d'`α_S`, absorbeix `W` i treu `y` (A.4).
+- **Pendent de tancar (N4 del pla).** Falten encara els publics i els proof values que calen per calcular `Q`, la llavor del generador aleatori i el missatge de l'últim error.
+
+```c
+void* pilfflonk_ctx_new(const char* proving_key_dir);                     // carrega globalInfo, vkey (digest), srs i les AIRs
+void  pilfflonk_ctx_free(void* ctx);
+void* pilfflonk_transcript_new(void);
+void  pilfflonk_transcript_free(void* t);
+int   pilfflonk_transcript_absorb(void* t, const uint8_t* data, uint64_t n, uint32_t kind); // kind: Fr | G1
+int   pilfflonk_transcript_squeeze(void* t, uint8_t out[32]);
+void* pilfflonk_instance_new(void* ctx, uint64_t airgroup_id, uint64_t air_id,
+                             const uint8_t* stage1, const uint8_t* air_values);
+void  pilfflonk_instance_free(void* inst);
+int   pilfflonk_commit_stage(void* inst, uint32_t stage, const uint8_t* challenges, uint8_t* out_g1);
+int   pilfflonk_commit_q(void* inst, const uint8_t* challenges, uint8_t* out_g1);
+int   pilfflonk_evaluate(void* ctx, void** insts, uint64_t n, const uint8_t xi_seed[32], uint8_t* out_evals);
+int   pilfflonk_open(void* ctx, void** insts, uint64_t n, void* t, uint8_t* out_w_wp);
+int   pilfflonk_commit_fixed(const char* pilfflonkinfo, const char* const_file, const char* srs, uint8_t* out_g1); // setup
+```
+
+**Rust:**
+
+```rust
+pub trait WitnessSource {
+    fn instances(&self) -> Vec<AirInstanceRef>;                                       // en ordre canònic
+    fn stage1(&self, instance: usize) -> Result<Stage1Witness, WitnessError>;        // columnes + air values en Fr (bytes)
+    fn publics(&self) -> Result<Vec<FrBytes>, WitnessError>;
+    fn proof_values(&self) -> Result<Vec<FrBytes>, WitnessError>;
+}
+pub fn group(pols: &[CommittedPol], params: &GroupingParams) -> Result<Layout, GroupingError>; // funció pura
+```
+
+### 5.4 Convencions
+
+- **Errors:**
+  - **biblioteques** (`pil-info`, `proofman-pilfflonk` i la part de `pilfflonk-setup` que fa de biblioteca): `thiserror`, amb el patró de `common/src/error_manager.rs`;
+  - **comandes de setup:** `anyhow`, com ara;
+  - **CLI:** `Box<dyn Error + Send + Sync>`, com les altres comandes.
+  - No es fa servir `panic!` ni `exit()` en codi de biblioteca. Això inclou les passades que es mouen a `pil-info` i que avui fan `panic!`.
+- **C++:**
+  - no s'hi afegeix estat global; la memòria es gestiona amb RAII, i els errors es retornen a través de l'API C;
+  - els cossos de les plantilles van en fitxers `.c.hpp`, perquè el Makefile compila tots els `*.cpp` dels directoris que llista;
+  - els noms de fitxer porten el prefix `pilfflonk_` i el namespace és `PilFflonk`, perquè tots els directoris són al camí d'*includes*.
+- **Compilació:** cal afegir `./src/api/pilfflonk_api.*` i `./src/pilfflonk` a les tres llistes de fonts del Makefile (`pil2-stark/Makefile:228, 231, 234`). Sense aquest pas, les llibreries de CPU i GPU no inclouen els símbols. No cal tocar `build.rs`.
+- **Registre i temps:** `tracing` i les macros de temps de `util`.
+- **Format i lints:** `rustfmt` (`max_width = 120`) i `clippy -D warnings`.
+- **Tests:**
+  - unitaris;
+  - de propietats (`group`, passades simbòliques);
+  - *golden*: l'agrupació contra el sistema antic, i totes les sortides del setup STARK abans i després d'extreure `pil-info`;
+  - end-to-end;
+  - de rebuig.
+- **CI:** un job end-to-end nou amb una fixture BN254 (compilar, `setup-pilfflonk`, `prove`, `verify`). Avui no hi ha cap job end-to-end SNARK.
+
+---
+
+## 6. En quin ordre es construeix
+
+**Prioritat:** primer una versió CPU funcional (fases 0 a 3); després, de manera incremental, la GPU (Fase 5) i les millores. A partir de la Fase 1, cada fase acaba amb una prova end-to-end verificada per codi que no l'ha produïda, amb `fmt`, `clippy`, els tests i la CI en verd. El pla d'execució incremental detallat és a `pla-pilfflonk.md`.
+
+| Fase | Lliurable | Validació clau |
+|---|---|---|
+| 0 | Compilador BN254 (fet); transcript; LDE; KZG i SHPLONK (prover C++, verificador JS) | El verificador JS accepta les obertures SHPLONK del prover C++ |
+| 1 | Una AIR, una instància, sense busos | Prova end-to-end i tests de rebuig; setup STARK idèntic byte a byte |
+| 2 | Busos de la std en una instància | Lookup, permutation, range check i connection verifiquen |
+| 3 | Witness en `Fr` i rendiment | Els exemples de pil-fflonk, amb witness de biblioteca; informe de rendiment |
+| 4 | Verificador Solidity | Foundry accepta totes les proves; el verificador JS i el Solidity coincideixen |
+| 5 | GPU (necessària, després de la versió CPU) | Resultats idèntics bit a bit als de CPU |
+
+### Fase 0: fonaments
+
+**Abast:**
+- **Compilador BN254** (§4.1). **Fet** a la branca `develop-0.14.0-pil2-fflonk`, sense commit a 29-09-2026. Al `pilout.proto`, cap canvi.
+- **A `pil2-stark`:**
+  - l'LDE sobre *coset* amb la FFT d'ffiasm (`Polynomial`/`Evaluations` de rapidsnark);
+  - l'accés al transcript: s'exposa per l'API C el `Keccak256Transcript` de rapidsnark, sense modificar-lo;
+  - el lector de `ptau`;
+  - el commit KZG;
+  - SHPLONK sobre polinomis aleatoris i conjunts de punts arbitraris: el prover (C++) s'adapta de `ShPlonkProver`.
+- **Verificador JS, la base** (`pilfflonk/js/`): el transcript i la verificació SHPLONK, adaptada de `verifyOpenings`.
+- **Bastida:** l'API C, els *bindings*, les entrades al Makefile i els esquelets dels crates.
+
+**Fora d'abast:**
+- qualsevol semàntica de PIL, de manera que en aquesta fase encara no hi ha prova end-to-end;
+- la std BN254 (Fase 2).
+
+**Validació:**
+1. **Compilador.** A BN254, `−1` fa el viatge d'anada i tornada com a `r−1` en cinc llocs: una llista amb un negatiu, una seqüència geomètrica, una seqüència aritmètica decreixent, una columna fixa assignada fila a fila i un `Tables.fill`/`Tables.copy`. A més, `baseField = r`. (Fet; les constants d'expressió s'han comprovat a mà.)
+2. **Programes de la CI a BN254.** Els 10 programes de la CI de pil2-proofman compilen. (Fet.)
+3. **Regressió a Goldilocks.** Els mateixos 10 programes surten idèntics byte a byte. (Fet.)
+4. **Transcript C++ ↔ JS.** El `Keccak256Transcript` de rapidsnark i el transcript JS donen els mateixos reptes per a seqüències que barregen `Fr` i G1.
+5. **SHPLONK.** El verificador JS accepta les obertures del prover C++ i les rebutja si se'n canvia qualsevol bit, també amb *offsets* amb signe i conjunts d'arrels repetits.
+6. **Transcript.** El `Keccak256Transcript` exposat coincideix amb un càlcul independent: la codificació d'A.4, el `keccak_wrapper` de C++ i la reducció mòdul `r`.
+7. **LDE.** L'LDE sobre el *coset* coincideix amb l'avaluació de Horner.
+8. **Wrap final intacte.** `git diff` buit a `pil2-stark/src/bn128/src/ffiasm/`: com que ffiasm no es toca (D3), el *wrap* final no pot canviar.
+
+### Fase 1: una AIR, una instància, sense busos
+
+**Abast:**
+- **Referències *golden* del setup STARK, noves**, generades **abans** d'extreure `pil-info`.
+  - Cobreixen totes les sortides (`starkinfo`, `expressionsinfo`, `verifierinfo`, `.bin`, `.verifier.bin`, `globalInfo` i `globalConstraints`) dels programes de la CI.
+  - Les actuals no serveixen (§3.2). Com que els `*.pilout` no es versionen, la CI els ha de regenerar.
+- **Extracció de `pil-info`:** extreure i parametritzar les passades simbòliques (D1). Abans cal esborrar el fitxer orfe `setup/pil2-stark/src/pilout_info.rs`.
+- **`setup-pilfflonk`:** validació, restriccions amb els quatre tipus de domini, im pols a l'stage 1, *offsets* amb signe, agrupació, blinding, bytecode, codi del verificador, SRS, commits, *digest* i `provingKey/`.
+- **Prover:** l'stage 1 (amb els im pols), `Q` (sense partir) i l'obertura.
+- **Verificador JS** (§4.5).
+- **Depuració:** `check`.
+- **CLI.**
+- **Witness:** `WitnessSource` sobre fitxer.
+
+**Fixtures:**
+- **El Fibonacci de l'Annex G portat a PIL2.**
+  - És la mateixa aritmètica que la fixture de pil-fflonk: columnes fixes `L1`/`LLAST`, perquè el compilador només emet `everyRow` (§3.4), i els publics lligats per restriccions.
+  - La còpia de l'original és a `pil-fflonk/pil/sm_fibonacci/`, i l'original, a pil-stark `test/state_machines/sm_fibonacci/`.
+- **`pilout` sintètics** construïts amb `prost`, per exercitar `firstRow`, `lastRow` i `everyFrame`.
+- **Una AIR sintètica** amb *offsets* `{−1, 0, 1, 2}` i una restricció de grau ≥ 4, que força im pols.
+
+**Fora d'abast:**
+- stages ≥ 2 i *hints*;
+- air values i airgroup values;
+- diverses instàncies;
+- la partició de `Q`;
+- Solidity;
+- rendiment.
+
+**Validació:**
+1. **Prova end-to-end.** La prova verifica, i també verifica amb `--no-packing` (`k = 1`, KZG en lot sense empaquetar).
+2. **STARK intacte.** Després de l'extracció, el setup STARK genera **sortides idèntiques byte a byte** a les referències *golden*.
+3. **Witness mutat.** Amb un witness mutat, `check` indica la fila que falla i `verify` rebutja la prova.
+4. **Manipulació.** Una prova o uns publics manipulats es rebutgen, i també una vkey modificada (el *digest* no quadra).
+5. **Tres implementacions, un resultat.**
+   - A totes les files, els numeradors de les restriccions calculats pel bytecode del prover coincideixen amb els d'un recorregut directe del `pilout`.
+   - En punts aleatoris fora de `H`, el `Q(ξ)` del codi del verificador coincideix amb el d'aquest recorregut.
+6. **Agrupació.** `group` coincideix amb el sistema antic en els exemples de pil-stark.
+
+### Fase 2: busos de la std en una instància
+
+**Abast:**
+- **Std BN254:** `bn254.pil` i `ACTIVE_FIELD` (§4.1).
+- **Reptes de l'stage 2.**
+- ***Hints* del prover:** `gsum_col`, `gprod_col`, `im_col` i `im_airval`, amb la semàntica de `calculateImHints` i `calculateWitnessSTD` (`pil2-stark/src/starkpil/gen_proof.hpp:27, 57`).
+- **La std en mode `STD_MODE_ONE_INSTANCE`** (D2): els busos es tanquen dins de l'AIR, sense airgroup values ni restriccions globals.
+- **Partició de `Q`** (`--max-q-degree`), amb blinding i avaluacions dels trossos.
+
+**Fixtures:**
+- els exemples Plookup, Permutation i Connection de l'Annex G, portats a PIL2 amb la std: `lookup_assumes`/`lookup_proves`, `permutation_*` i `connection`;
+- un range check;
+- cadascun en variant de bus de suma i de bus de producte, dins d'una sola AIR;
+- l'exemple `all` de l'Annex G, amb Fibonacci, connection, permutation i plookup en una sola AIR.
+
+**Validació:**
+1. Totes les fixtures proven i verifiquen, també amb `Q` partit.
+2. Amb una multiplicitat incorrecta, `check` indica la restricció del bus que falla i `verify` rebutja la prova.
+3. Les columnes de l'stage 2 coincideixen amb una referència seqüencial ingènua.
+
+### Fase 3: witness en `Fr` i rendiment
+
+**Abast:**
+- una font de witness en `Fr` per a programes reals (D4);
+- un informe de temps i memòria.
+
+**Validació:**
+1. Els exemples de pil-fflonk es proven amb el witness que calcula la biblioteca, sense fitxers.
+2. Es genera un informe de temps i memòria fins al límit de P2 (`N ≤ 2^24`).
+
+### Fase 4: verificador Solidity
+
+**Abast:** generació de `pilfflonk.verifier.sol` amb `tera` a partir de `pilfflonk.vkey.json`, com fa snarkjs amb la seva vkey, i el codificador de calldata.
+
+**Validació:**
+1. Foundry, l'entorn de proves de Solidity, accepta totes les proves de les fases 1 a 3.
+2. Amb *fuzzing* diferencial sobre proves mutades, el verificador JS i el Solidity coincideixen sempre a l'hora d'acceptar o rebutjar.
+3. Es genera un informe de gas.
+
+### Fase 5: GPU
+
+Caldrà, però després d'una versió CPU funcional (§7.1). L'informe de rendiment de la Fase 3 en fixa les prioritats.
+
+**Abast:** fer servir `pil2-stark/src/bn128/src/{msm,ntt}` quan s'executa amb `--gpu` i la compilació ha detectat `nvcc`. La MSM de GPU accepta escalars en forma de Montgomery (`mont=true`). Si cal, també es porta l'intèrpret a GPU.
+
+**Validació:** els resultats són idèntics bit a bit als de CPU, i es genera un informe de l'acceleració.
+
+### Després de la v1: diverses AIRs i instàncies (D2)
+
+**Abast:**
+- llista d'instàncies en ordre canònic, amb una `N` per a cada AIR;
+- un únic transcript i una única obertura, amb `powerW` com a mínim comú múltiple de tots els `k`;
+- air, airgroup i proof values, i l'agregació SUM i PROD;
+- la std en el mode per defecte, amb restriccions globals al verificador JS.
+
+**Validació prevista:**
+1. Verifiquen dos casos: una fixture de dues AIRs amb bus (la variant BN254 de `fibonacci-square`, sense el custom commit `rom`) i M instàncies d'una mateixa AIR.
+2. Si s'elimina, es duplica o es reordena una instància, la prova es rebutja.
+3. Un bus que només quadra entre instàncies passa, i un de desequilibrat falla.
+
+---
+
+## 7. Què està decidit i què no
+
+### 7.1 Decisions preses
+
+| Decisió | Origen |
+|---|---|
+| El setup és en Rust, al costat del setup STARK, i en reutilitza les passades | Usuari |
+| L'aritmètica BN254 es fa amb ffiasm (C++). No es fa servir arkworks. | Usuari |
+| La base és `pil2-proofman` `pre-develop-1.4.0-alpha`, i la del compilador, `develop-0.14.0` amb el `pilout` v1. El v2 queda fora d'abast. | Usuari |
+| La branca `feat/pil2-fflonk` no es fa servir com a referència | Usuari |
+| La sortida del setup té la forma d'un `provingKey/` com el del STARK | Usuari |
+| El prefix dels components nous és `pilfflonk` | Especificació (evita col·lisions) |
+| **P7:** la llicència és l'actual | Usuari (29-09-2026) |
+| **D1:** no és un camí totalment paral·lel. El codi que es pugui compartir és una dependència allà on calgui: les passades simbòliques passen al crate `pil-info`, i ffiasm, rapidsnark (el transcript) i les utilitats es fan servir com a dependència | Usuari (29-09-2026) |
+| **P1:** l'objectiu són proves directes que millorin les agregacions | Usuari (29-09-2026) |
+| **P6:** el transcript és exactament el del FFLONK existent (`Keccak256Transcript` de rapidsnark) | Usuari (29-09-2026) |
+| **D2 / abast de la v1:** de moment es reprodueix el que fa pil-fflonk, però amb PIL2: una AIR, una instància i una sola prova. Com a pil-fflonk, no hi ha air values, airgroup values, proof values ni restriccions globals; la std es fa servir en mode `STD_MODE_ONE_INSTANCE` (`std_constants.pil:13`), que tanca els busos dins de l'AIR. Diverses AIRs i diverses instàncies queden per a una versió futura. | Usuari (29-09-2026) |
+| **D4:** (a), un tipus `Fr` al crate `fields` i una biblioteca de witness en `Fr`, a la Fase 3 | Usuari (29-09-2026) |
+| **D5:** es busquen els graus de 2 a 9 (com pil-stark) i es tria el que minimitza `nImPols + qDeg`; `--max-constraint-degree` canvia el límit | Usuari (29-09-2026) |
+| **P2:** `2^28` és el grau màxim que hi pot haver, el del `ptau` més gran disponible (`powersOfTau28_hez_final.ptau`). No és el `ptau` que es farà servir: només fixa el límit superior. Amb la 2-adicitat de BN254, això vol dir `N·2^extendBits ≤ 2^28` i grau de cada `f_i` `< 2^28`: amb `qDeg` fins a 8, `N ≤ 2^24`.<br>El `ptau` és una entrada del setup (`--powers-of-tau`). Els de la cerimònia Hermez són a la llista del README de snarkjs (`github.com/iden3/snarkjs`). **No se'n baixa cap**, perquè són molt grans. Els tests generen un `ptau` petit amb una `τ` fixa, amb ffiasm i sense JS (N13 del pla). | Usuari (29-09-2026) |
+| **P5:** el que tingui pil-fflonk, és a dir, cap custom commit. El setup els rebutja. | Usuari (29-09-2026) |
+| **P8:** es fa servir el compilador local (`PIL2C_EXEC`). `package.json` només es fixa si cal. La branca del compilador encara no es fa *commit*: si cal, s'ha de demanar a l'usuari. | Usuari (29-09-2026) |
+| **P10:** d'acord amb afegir la std de BN254 (`bn254.pil`, `ACTIVE_FIELD`). Entra a la v1 quan es portin els exemples de connexió de pil-fflonk. | Usuari (29-09-2026) |
+| **D6:** el blinding sempre és actiu, també als tests i a la CI, de manera que tots tenen els mateixos graus i el mateix *layout*. Als tests i a la CI el blinding és **fix**: el generador rep una llavor fixa (`randombytes_buf_deterministic`) i la prova surt igual a cada execució. A producció el blinding és aleatori (libsodium). La llavor fixa només s'accepta si es demana explícitament, perquè treu el *zero-knowledge*. | Usuari (29-09-2026) |
+| **Prioritat:** primer una versió CPU funcional; després, de manera incremental, GPU i millores. La GPU caldrà (Fase 5), però més endavant. | Usuari (29-09-2026) |
+| **Reutilització:** abans de copiar codi de pil-fflonk, cal comprovar que no existeixi ja en aquest repositori o en una dependència | Usuari (29-09-2026) |
+| **Referència JS:** `../pil-stark`, una còpia retallada amb només el necessari. Només es llegeix. | Usuari (29-09-2026) |
+| **D3:** no hi ha verificador natiu, igual que el FFLONK existent, que es verifica amb snarkjs. No es porta cap *pairing* a C++, i ffiasm no es toca. | Usuari (29-09-2026) |
+| **D8:** el verificador és JS, com el del FFLONK existent. S'adapta del de pil-fflonk (`fflonk_verify.js` + `verifyOpenings`) als canvis de pilfflonk, viu a `pilfflonk/js/` i el crida `proofman-cli pilfflonk verify` (§4.5). | Usuari (29-09-2026) |
+| **P4:** pil-fflonk es deixarà de fer servir en favor de pilfflonk. No cal cap compatibilitat amb els seus formats ni amb el seu verificador; del seu sistema es manté la forma de la prova (D7). | Usuari (29-09-2026) |
+| **Vkey autocontinguda:** el setup escriu `pilfflonk.vkey.json`, com la `verification_key.json` de snarkjs, i el verificador rep vkey, publics i prova, com `snarkjs fflonk verify`. El *digest* és el de la vkey (A.6). | Usuari (29-09-2026) |
+| **P9:** `proofman-setup compile-pil` rep un paràmetre nou, `-P, --config <json>`, amb el mateix nom i el mateix fitxer que el `-P, --config` de `pil2com`, i el passa tal qual. Per defecte no hi és, i el comportament és l'actual (Goldilocks). | Usuari (29-09-2026) |
+| **D7:** el format de la prova és equivalent a l'actual:<br>- la prova són bytes: primer els commitments G1 (`x‖y`) i després les avaluacions, tot en *big-endian* i en un ordre fix;<br>- la vista JSON és d'estil snarkjs: `protocol`, `curve`, `polynomials` (`[x, y, "1"]`) i `evaluations`, com a pil-fflonk (`shplonk.cpp:948-976`) i al *wrap* final (`pil2-stark/src/starkpil/final_snark_proof.hpp`, `snark_proof_to_json`);<br>- els publics són un array de cadenes decimals. | Usuari (29-09-2026) |
+| Compilador:<br>- C1 amb `config.prime` al `-P`;<br>- els 8 bytes forçats a `9fdab4a` s'expliquen perquè sempre es feia servir Goldilocks;<br>- els canvis van a la branca `develop-0.14.0-pil2-fflonk`;<br>- s'hi afegeixen tests BN254 (els dos que ja fallaven queden fora d'abast);<br>- s'accepta la limitació de `fixed-to-file` i `extern_fixed_file`;<br>- s'hi afegeixen proteccions contra el truncament (C4). | Usuari |
+
+### 7.2 Propostes pendents de confirmar
+
+No n'hi ha cap.
+
+### 7.3 Preguntes obertes
+
+No n'hi ha cap. Totes les preguntes (P1–P10) estan decidides (§7.1).
+
+**Context de P7 (llicències).** La llicència és l'actual. Per a la traçabilitat, es mantenen les capçaleres del codi que es porta.
+- El ffiasm 0.1.5 vendoritzat ja és GPL-3.0.
+- pil-fflonk, d'on s'adapta codi, té `LICENSE` AGPL-3.0 i, des de `0132359`, també `LICENSE-APACHE` i `LICENSE-MIT`.
+- `pil2-stark/LICENSE` és AGPL-3.0, mentre que el *workspace* declara `MIT OR Apache-2.0`.
+
+### 7.4 Riscos
+
+| Risc | Mitigació |
+|---|---|
+| Extreure i parametritzar les passades simbòliques trenca el setup STARK | Referències *golden* noves de totes les sortides, generades abans de l'extracció, i sortides idèntiques byte a byte com a porta de la Fase 1 |
+| L'agrupació amb *offsets* arbitraris és complexa: moltes classes, `k` limitat per la 2-adicitat, grau limitat per l'SRS | Una funció pura amb tests de propietats (cada parella `(polinomi, offset)` coberta, un sol stage per `f`, determinisme); tests *golden* contra el sistema antic; errors explícits al setup |
+| Un error de *soundness* compartit entre prover i verificador | Commitments fixos presos només de la vkey; *digest* de la vkey; camí de verificació propi; contrast amb el `pilout`; Solidity com a segon verificador; revisió externa de les equacions |
+| El transcript del prover (C++) i el del verificador (JS) divergeixen | És la mateixa parella que el FFLONK existent: el `Keccak256Transcript` de rapidsnark al prover i snarkjs al verificador. Test creuat C++ ↔ JS a la Fase 0 (validació 4). |
+| Col·lisions de símbols, capçaleres o noms dins de `libstarks`, o fonts que no s'arriben a compilar | Prefix `pilfflonk` i namespace `PilFflonk` a tot arreu; entrades a les tres llistes de fonts del Makefile; test d'enllaç a CPU i a GPU |
+| Adaptar el codi de pil-fflonk n'arrossega els defectes | Llista de defectes a corregir (Annex C.3); tests del SHPLONK aïllat abans d'integrar-lo; revisió sota ASan/UBSan |
+| El compilador corromp valors amples, a vegades sense avisar | C2–C4, ja fets; els tests BN254 del compilador; comprovació del `baseField` i de les constants `≥ r` al setup |
+| L'esquema dels fitxers divergeix entre Rust i C++ | Un sol propietari (`proofman-pilfflonk`) i tests d'anada i tornada Rust ↔ C++ |
+| Rendiment i memòria en CPU | La versió CPU va primer i ha de ser funcional, no òptima. Informe a la Fase 3, avaluació per blocs, i la GPU (Fase 5) sobre el codi MSM/NTT que ja existeix. |
+| Discrepàncies de codificació amb Solidity (*endianness*, punt a l'infinit, reducció mòdul `r`) | Codificació fixada a l'Annex A.4 i vectors de test des de la Fase 0 |
+| La regla d'agrupació generalitzada no es comporta bé amb conjunts d'*offsets* grans | Tests de propietats i mètriques de grau per a les fixtures de les fases 1 a 3; la regla és una sola funció pura, fàcil de canviar |
+
+---
+
+## Annex A. Protocol (normatiu)
+
+### A.1 Polinomi de restriccions
+
+Per a cada AIR, amb les `n` restriccions en l'ordre del `pilout`:
+
+```
+Q(X) = Σ_{i=0..n−1} std_vc^(n−1−i) · c_i(X) / Z_{D_i}(X)
+```
+
+És el plegat de Horner del STARK (`setup/pil2-stark/src/pil/constraint_poly.rs:136-147`): `acc = acc·std_vc + c_i·(Z_H/Z_{D_i})`, i al final es divideix per `Z_H`.
+
+| Domini | `Z_D(X)` |
+|---|---|
+| `everyRow` | `X^N − 1` |
+| `firstRow` | `X − 1` |
+| `lastRow` | `X − ω^{N−1}` |
+| `everyFrame{min,max}` | `(X^N − 1)` dividit pels factors `(X − ω^j)` de les files excloses |
+
+El compilador de `develop-0.14.0` només emet `everyRow` (§3.4). Els altres tres dominis s'implementen perquè el format els preveu, i es proven amb `pilout` sintètics.
+
+**Grau:**
+- **`qDeg`.** `qDeg = max_i(deg c_i + δ_i) − 1`, en unitats de `N`, després d'introduir els im pols. Aquí `δ_i = 1` si la restricció no és `everyRow`, i `0` si ho és: el factor `Z_H/Z_{D_i}` suma gairebé `N` al grau (`constraint_poly.rs:245-250`).
+- **Política de cerca.** Amb la política de cerca `max = D`, el setup prova els graus de 2 a `D` i es queda amb el que minimitza `nImPols + qDeg`.
+- **Coeficients de `Q`.** Si `|O|_max` és el màxim de `|O|` de les columnes que tenen blinding (després de les fusions), `Q` té com a molt `qDeg·N + (qDeg+1)·|O|_max + 1` coeficients.
+- **Domini estès.** És la potència de dos més petita que és `≥` el nombre de coeficients de `Q`, i ha de complir `nBitsExt ≤ 28`.
+
+**Partició de `Q`.** Per defecte `maxQDegree = 0`, i `Q` no es parteix. Si `maxQDegree > 0` i `qDeg > maxQDegree`:
+- **Trossos.** `Q` es parteix en `m = ⌈qDeg/maxQDegree⌉` trossos `Q_0 … Q_{m−1}` de `M·N` coeficients (`M = maxQDegree`), que comparteixen un mateix `f`.
+- **Blinding.** Els trossos en reben com a PLONK: cada frontera entre trossos rep dos coeficients aleatoris que es compensen, i per això cada tros llevat de l'últim té `M·N + 2` coeficients (A.3).
+- **Avaluacions.** Els valors `Q_i(ξ)` van a la prova i s'absorbeixen al transcript (A.4).
+- **Comprovació.** El verificador comprova que `Σ_i ξ^(i·M·N)·Q_i(ξ) = Q(ξ)`.
+
+**Sense partició:**
+- El prover calcula `Q` sobre el *coset* estès.
+- El verificador no rep `Q(ξ)`, sinó que el calcula a partir de les avaluacions i de `Z_D(ξ)`.
+
+### A.2 Agrupació
+
+**Entrada.** Els polinomis compromesos, cadascun amb `{nom, stage, fita de grau, conjunt d'offsets O}`.
+- **Unitat de grau.** Totes les fites de grau es donen en **nombre de coeficients**:
+  - constants: `N`;
+  - columnes amb blinding: `N + |O| + 1`, amb l'`O` final del seu `f`;
+  - `Q`: A.1.
+
+  El sistema antic feia servir el grau inclusiu per a `Q`, que és un de menys. Això no afecta l'agrupació, perquè `Q` va sempre sol, però sí la mida de l'SRS.
+- **Columnes que no s'obren.** Les columnes que no s'obren a cap punt no es comprometen, i el setup n'emet un avís.
+
+**Regles:**
+1. **Classes i fusió.** Es generalitza `fixFIndex` (`pil-stark/src/fflonk/helpers/fflonk_shkey.js:244-290`, `minPols = 3`):
+   - els polinomis es classifiquen per `(stage, O)`;
+   - per a cada stage, sigui `U` la unió dels `O` de les seves classes;
+   - tota classe amb menys de `minPols` polinomis i `O ≠ U` passa a `U`, i es fusiona amb la classe `U` si ja existeix;
+   - les classes amb `O = U` no es mouen mai.
+
+   Per a `O ⊆ {0, 1}`, la regla coincideix exactament amb el sistema antic. Per exemple, `{0}:4, {0,1}:2` es queda en dues classes, i `{0}:5, {1}:1` dona `{0}×5` i `{0,1}×1`.
+2. **Q.** `Q`, o els seus trossos, forma un `f` propi.
+3. **Repartició d'`extraMuls`.** Es generalitza `applyExtraScalarMuls` (`shplonkjs/src/helpers/setup.js:212-250`).
+   - **Nombre de `f`.** El total és `#grups + extraMuls`. Cada grup `g` es parteix en `c_g + 1` trossos consecutius, amb `Σ c_g = extraMuls`.
+   - **Mida vàlida.** Cada tros té una mida `k` que ha de complir `k | r−1` i `v₂(k) + nBits ≤ 28`, és a dir, `kN | r−1`. shplonkjs no ho comprova (`setup.js:341-353`); aquí sí que es comprova.
+   - **Particions possibles.** Només s'enumeren les seqüències de mides que no decreixen (`shplonkjs/src/utils.js:39-53`).
+   - **Cost.** El d'un tros és `max_j(deg_j·k + j)`, i el d'un grup és el màxim dels seus trossos.
+   - **Dins d'un grup.** Per a cada nombre de trossos, es tria la partició de cost mínim; si n'hi ha diverses, la primera que s'enumera (`setup.js:19-45`).
+   - **Entre grups.** Cada combinació dona un vector amb el cost de cada grup. Aquest vector s'ordena de més gran a més petit i es compara lexicogràficament. Una combinació només substitueix la millor si és estrictament millor (`setup.js:87-99`).
+   - **Errors.** Si cap partició és vàlida, o si `extraMuls > #pols − #grups`, el setup dona un error.
+4. **Composició:** `f_i(X) = Σ_j p_j(X^k)·X^j`. Dins de cada grup, els polinomis van en ordre invers d'inserció (`setup.js:183`).
+5. **Arrels.** No es desen: es deriven en carregar.
+   - `w_k = 5^((r−1)/k)`. El 5 és el no-residu quadràtic més petit, i és el que fan servir ffjavascript i la FFT d'ffiasm.
+   - `powerW` és el mínim comú múltiple de tots els `k` de tots els `f_i`, i `ξ = xiSeed^powerW`.
+   - Per a l'*offset* `s`, les arrels són els `x` tals que `x^k = ξ·ω_N^s`, és a dir, `x_j = xiSeed^(powerW/k) · ω_{kN}^s · w_k^j`. També val per a `s` negatiu.
+6. **Compatibilitat.** Per a `O ⊆ {0, 1}`, el resultat (classes, particions, ordre i arrels) ha de coincidir exactament amb el del sistema antic.
+
+### A.3 Blinding
+
+Tota columna compromesa no fixa `p` amb conjunt d'obertura `O` es transforma així:
+
+```
+p'(X) = p(X) + (X^N − 1)·b(X)
+```
+
+- `b(X)` té `|O|+1` coeficients aleatoris, i s'afegeix en forma de coeficients, després de la INTT.
+- Les constants no tenen blinding.
+- `Q` sense partir no té blinding: la seva fita de grau ja inclou la contribució del blinding de les columnes (A.1).
+- Els trossos de `Q` partit reben el blinding de PLONK (A.1), com el sistema antic (`pil-fflonk/src/pilfflonk_prover.cpp:697-720`).
+- El generador aleatori s'injecta. Als tests i a la CI rep una llavor fixa i el blinding és fix; a producció és aleatori (D6).
+
+### A.4 Transcript (Keccak-256)
+
+Es fa servir el `Keccak256Transcript` de `pil2-stark/src/rapidsnark/`, el mateix que el FFLONK existent (P6). Aquest annex en descriu la codificació i fixa la seqüència d'absorcions pròpia de pilfflonk.
+
+**Codificació al transcript:**
+- `Fr`: 32 bytes *big-endian* en forma canònica.
+- G1: `x‖y`, 64 bytes *big-endian*. El punt a l'infinit i els punts amb alguna coordenada `< 2^192` no s'absorbeixen mai: el prover els rebutja, perquè `Keccak256Transcript` no els codifica així (§4.4). A la pràctica no es donen.
+- Enters: es codifiquen com a `Fr`.
+
+**`squeeze`:** `h = keccak256(buf) mod r`, i després `buf := enc(h)`. Això és equivalent al `reset()` + `addScalar(h)` del sistema antic.
+
+**Ordre global.** És l'ordre canònic de les AIRs i de les instàncies (glossari). L'ordre global dels `f_i` és el d'A.5.
+
+**Seqüència, amb un únic transcript per prova:**
+1. Absorbir:
+   - el *digest* de la clau (A.6), com a `Fr`;
+   - el nombre d'instàncies de cada AIR, en ordre canònic d'AIRs;
+   - els publics.
+2. Per a cada `s = 1 … nStages`:
+   1. absorbir els commitments dels `f_i` no fixos de l'stage `s`, en l'ordre global;
+   2. absorbir, en ordre canònic, els air values de l'stage `s` de cada instància; després, els airgroup values de l'stage `s`; i després, els proof values de l'stage `s`;
+   3. si `s < nStages`, fer `squeeze` dels `numChallenges` reptes de l'stage `s+1`, un per crida.
+3. Fer `squeeze` de `std_vc` (l'stage `nStages+1`). Absorbir els commitments de `Q` en l'ordre global i fer `squeeze` de `xiSeed`, que és el `std_xi` de l'stage `nStages+2`.
+4. Absorbir les avaluacions:
+   1. per a cada AIR en ordre canònic, les de les seves columnes fixes, en l'ordre de l'`evMap`;
+   2. per a cada instància en ordre canònic, les de la resta de columnes, en l'ordre de l'`evMap`;
+   3. si `Q` està partit, a continuació, els `Q_i(ξ)` de cada instància.
+5. SHPLONK: fer `squeeze` d'`α_S`, absorbir `W` i fer `squeeze` de `y`.
+
+`α_S` és el repte de SHPLONK, i no té res a veure amb l'α de PIL1.
+
+### A.5 Verificació SHPLONK
+
+**Ordre global dels `f_i`:**
+1. Primer, els `f_i` fixos de cada AIR que té alguna instància, en ordre canònic d'AIRs i en l'ordre del seu *layout*. Com que són comuns a totes les instàncies de l'AIR, s'obren una sola vegada.
+2. Després, per a cada instància en ordre canònic, els seus `f_i` no fixos en l'ordre del *layout*: per stage ascendent, i `Q` al final.
+
+`f_0` és el primer d'aquesta llista.
+
+La comprovació final és:
+
+```
+e(F − E − J + y·W', [1]₂) = e(W', [τ]₂)
+```
+
+on:
+- `F = [f_0] + Σ_{i≥1} q_i·[f_i]`;
+- `E = (r_0(y) + Σ_{i≥1} q_i·r_i(y))·G1`;
+- `J = q_0·[W]`;
+- `q_0 = Z_{T_0}(y)` i `q_i = α_S^i·Z_{T_0}(y)/Z_{T_i}(y)`, on `T_i` és el conjunt d'arrels de l'`f_i` (A.2);
+- `r_i` és el polinomi que interpola els valors de l'`f_i` a `T_i`. Per a cada arrel `x` de l'*offset* `s`, el valor és `f_i(x) = Σ_j p_j(ξ·ω^s)·x^j` (`shplonkjs/src/helpers/verifier.js:107-138`).
+
+El prover fa servir la mateixa convenció. `Z_T` és el producte de tots els `Z_{T_i}`, repeticions incloses, i `W' = L/(Z_{T∖T_0}(y)·(X − y))` (`pil-fflonk/src/shplonk.cpp:83-101, 263-270`).
+
+**Regla:** els commitments dels `f` fixos surten **sempre** de la vkey, mai de la prova.
+
+**Referències:** `pil-stark/src/fflonk/helpers/fflonk_verify.js`, `shplonkjs/src/helpers/verifier.js` i `pil-fflonk/src/shplonk.cpp` (la banda del prover).
+
+### A.6 Fitxers del `provingKey/`, de la prova i el *digest* (versió de format 1)
+
+| Fitxer | Camps |
+|---|---|
+| `pilout.globalInfo.json` | **La part comuna de l'esquema STARK:** `name`, `airs`, `air_groups`, `aggTypes`, `nPublics`, `numChallenges`, `numProofValues`, `proofValuesMap`, `publicsMap`.<br>**Camps nous:** `"backend": "pilfflonk"`, `"field": "bn254"`, `"modulus"` (decimal), `"transcript": "keccak256"`, `"formatVersion": 1` i els paràmetres del setup.<br>**No hi són** `hash`, `curve`, `transcriptArity`, `aggregationArity`, `latticeSize` ni `hasCompressedFinal`. Per això `common::GlobalInfo` el rebutja. |
+| `pilout.globalConstraints.json` | El format del STARK (el genera `pil-info`) |
+| `<air>.pilfflonkinfo.json` | **Camps equivalents del `starkinfo`:** `nStages`, `nConstants`, `cmPolsMap`, `constPolsMap`, `challengesMap`, `airValuesMap`, `airgroupValuesMap`, `evMap`, `openingPoints`, `boundaries`, `qDeg`, `cExpId` i `mapSectionsN`, amb `qDim = 1`.<br>**Camps nous:** `nBits`, que al STARK és dins de `starkStruct`; `maxQDegree`; i `layout`, una llista de `f_i {stage, pols, k, offsets, grau}`.<br>**No hi són** `starkStruct` ni res de FRI. |
+| `<air>.expressionsinfo.json` | El format del STARK, amb dimensió 1 per a tots els operands i les constants en decimal |
+| `<air>.verifierinfo.json` | El format del STARK: només `qVerifier`, sense `queryVerifier`. El llegeix el verificador JS. |
+| `<air>.bin` | Bytecode `Fr` (*hints*, im pols, `Q`), dins del contenidor `"chps"`, amb una versió pròpia i constants de 32 bytes |
+| `<air>.const` | Columnes fixes, fila per fila, en `Fr` canònic de 32 bytes *little-endian* |
+| `<air>.verkey.json` | Els commitments G1 dels `f_i` fixos de l'AIR, com a cadenes decimals `[x, y]`. Són els mateixos que a la vkey. |
+| `pilfflonk.srs.bin` | Contenidor binfile amb les potències G1 fins a `max grau(f_i) + 1` i `[τ]₂`. Proposta (N6 del pla): copiar les seccions del `ptau` (punts afins en Montgomery *little-endian*, com fa la zkey). |
+| `pilfflonk.vkey.json` | **Autocontinguda,** com la `verification_key.json` de snarkjs: tot el que necessita el verificador.<br>`protocol` (`"pilfflonk"`), `curve` (`"bn128"`), `formatVersion`, `nPublic`, `power` (`nBits`), `powerW`, `X_2` (`[τ]₂`), `numChallenges`, `evMap`, `layout` (els `f_i` amb `stage`, `pols`, `k`, *offsets* i grau), els commitments fixos (`f<i>`), `qDeg`, `maxQDegree`, el `qVerifier` i `digest` (hexadecimal).<br>Els enters grans i els punts, com a cadenes decimals. |
+| La prova (no és del `provingKey/`) | **Format equivalent a l'actual (D7):** bytes, com a `gen_final_snark_proof`, i una vista JSON d'estil snarkjs, com a `snark_proof_to_json`.<br>**Bytes, en ordre:**<br>- els commitments G1 (`x‖y`, 32+32 bytes *big-endian*) dels `f` no fixos, en l'ordre global (A.5);<br>- `W` i `W'`;<br>- les avaluacions (32 bytes *big-endian*): primer les fixes per AIR, després les de cada instància en l'ordre de l'`evMap`, i els `Q_i(ξ)` si `Q` està partit;<br>- els air values, els airgroup values i els proof values;<br>- `inv` i `invZh`, com a pil-fflonk.<br>**JSON:** `{"protocol": "pilfflonk", "curve": "bn128", "polynomials": {nom: [x, y, "1"]}, "evaluations": {nom: valor}}`, amb els noms de pil-fflonk (`f<i>`, `W`, `Wp`, `<pol>`, `<pol>w`) i la mateixa convenció estesa per als altres *offsets* i instàncies.<br>**Diferència obligada:** els commitments fixos no hi són, perquè surten de la `verkey` (C.3.1). |
+| `publics.json` | Un array de cadenes decimals, en l'ordre de `publicsMap`, com a pil-fflonk i al *wrap* final |
+
+**El *digest*, normatiu.** Es calcula sobre la vkey:
+
+```
+digest = keccak256( "pilfflonk-v1" ‖ canònic(vkey sense el camp digest) )
+```
+
+- **Què és `canònic(·)`.** El JSON amb les claus ordenades, sense espais, i amb els enters grans i els punts com a cadenes decimals. Rust (`serde_json::Value`, que ordena les claus) i JS (un `stringify` amb claus ordenades) l'han de produir byte a byte igual.
+- **Per què només la vkey.** Conté tot el que intervé en la verificació, i el verificador no rep cap altre fitxer. `<air>.bin`, `<air>.const` i `pilfflonk.srs.bin` no hi intervenen; les constants hi queden lligades a través dels commitments fixos.
+- **Ús al transcript.** Hi entra `digest mod r`, com a `Fr`.
+
+---
+
+## Annex B. Mapatge PIL1 → PIL2
+
+| Concepte PIL1 | Ús a pil-fflonk | Equivalent PIL2 (`pilout/src/pilout.proto`) | Canvi |
+|---|---|---|---|
+| Columnes compromeses | Tres seccions fixes, `cm1`–`cm3` | `Air.stageWidths[]`, `Operand.WitnessCol{stage, colIdx, rowOffset}` | Dimensionar a partir de `stageWidths`; dimensió 1 |
+| Constants | Seccions 6–8 de la zkey | `Air.fixedCols[]`, `Operand.FixedCol` | Llegir-les com a `Fr` |
+| Polinomis intermedis | `imExps`, a l'stage 3 | No són al `pilout`: els tria el setup (els im pols, a l'últim stage). Són diferents de les columnes `im_col` que declara la std, que es calculen a partir de *hints*. | El setup els tria segons la política de grau |
+| Identitats | Plegades amb `a` en C++ generat | `Constraint.{EveryRow, FirstRow, LastRow, EveryFrame}` | Plegar-les amb `std_vc` i dividir pel *zerofier* (A.1) |
+| Plookup | `h1`/`h2`, `Z` | Bus de suma de la std (`std_lookup.pil`, `std_sum.pil`) | Eliminar; calcular `gsum` a partir de *hints* |
+| Permutation | `Z` | Bus de suma per defecte; bus de producte opcional (`std_prod.pil`) | Igual |
+| Connection | `S1..S3`, `k1`/`k2` | Permutació sobre `[col, k^i·ID]` (`std_connection.pil`) | Cal `bn254.pil` |
+| Publics | `(polId, fila)` o `publicsCode` | `Operand.PublicValue`; l'usuari els lliga amb restriccions | Són una entrada |
+| Una AIR, una `N` | Tot el programa comparteix `N` | `airGroups[].airs[]`, instàncies | Llista d'instàncies dins d'una sola prova |
+| Reptes fixos | α, β, γ, δ, `a` | `numChallenges[stage]`, `std_vc`, `std_xi` (`xiSeed`) | Transcript guiat per dades (A.4) |
+| Valors i restriccions globals | No existeixen | `airValues`, `airGroupValues{SUM\|PROD}`, `numProofValues`, `PilOut.constraints` | Nous elements a la prova i al transcript |
+| *Offsets* | `'` (ξ, ξω) | `rowOffset` (`sint32`) | Punts `ξ·ω^s` qualssevol |
+| Grau | `extendBits = ⌈log2(qDeg+1)⌉`, `nBitsZK` | El setup STARK el deriva del *blowup* | Política de grau pròpia (A.1) |
+| Avaluació d'expressions | C++ generat per circuit | Bytecode interpretat (`ExpressionsPack`, Goldilocks) | Bytecode i intèrpret `Fr` |
+
+---
+
+## Annex C. Inventari del sistema antic
+
+### C.1 Binaris i scripts
+
+| Nom | Fitxer | Entrades → sortides | Observacions |
+|---|---|---|---|
+| `pfProver` | `pil-fflonk/src/main.cpp` | zkey, fflonkinfo i, o bé `.commit`, o bé `.exec` + circom `verifier.dat` + `*.zkin.json` → `proof.json`, `public.json` | El `.commit` és `Fr` en forma de Montgomery, fila per fila. A la fixture, `pilfflonk.exec` fa 0 bytes, i per tant el mode `.exec` no s'hi pot fer servir. |
+| `pfSetup` | `pil-fflonk/src/main_setup.cpp`, `pilfflonk_setup.cpp` | ptau, shkey, fflonkinfo, `.const` → `.zkey` | No agrupa. Falla amb la fixture perquè al `shkey` li falten claus (`pilfflonk_setup.cpp:171-180`). |
+| `pfProverTest` | `pil-fflonk/test/` | — | Només hi ha tests de NTT i de `Polynomial` |
+| `copy_generated_files.sh`, `test_examples.sh` | `pil-fflonk/tools/` | `../pil-stark/tmp` → `config/` i `src/chelpers/` | Recorren 14 exemples i verifiquen amb JS |
+| `main_fflonkinfo.js` | `pil-stark/src/fflonk/` | `.pil` → `fflonkinfo.json` | Reaprofita `src/pil_info/` amb `stark=false` |
+| `main_shkey.js` | ídem | `.pil`, fflonkinfo, ptau, `extraMuls`, `maxQDegree` → `shkey.json` | Les classes es decideixen a `fflonk_shkey.js`, i la repartició es fa a shplonkjs |
+| `main_setup.js`, `main_exportVerificationKey.js` | ídem | → `.zkey`, `.vkey` | La zkey té 12 seccions (`pil-fflonk/src/zkey_pilfflonk.hpp:18-33`). Per defecte, `extraMuls = 2` i `maxQDegree = 0`. |
+| `main_prover.js` | ídem (`helpers/fflonk_prover.js`) | → prova | Prover JS complet: font de vectors de referència |
+| `main_verifier.js` | ídem (`helpers/fflonk_verify.js`) | vkey, fflonkinfo, proof, public → OK/FAIL | Surt amb codi 0 també quan falla |
+| `main_exportSolidityVerifier.js`, `main_exportCalldata.js` | ídem (`solidity/`) | → 2 contractes; calldata | `PilFflonkVerifier` i `ShPlonkVerifier`, aquest amb la plantilla de shplonkjs |
+| `main_buildchelpers.js` | `pil-stark/src/fflonk/` (la lògica és a `chelpers/fflonk_chelpers.js`) | fflonkinfo → `*.chelpers.*.cpp` | `N` i els *strides* queden fixats al codi |
+
+### C.2 Destí de cada peça
+
+| Peça | Destí |
+|---|---|
+| L'orquestració SHPLONK genèrica de `ShPlonkProver` (`pil-fflonk/src/shplonk.cpp`) | **Adaptar** a `pil2-stark/src/pilfflonk/`, sobre el `Polynomial` i el `CPolynomial` de rapidsnark. Cal generalitzar-la a *offsets* amb signe i a diverses instàncies, i corregir-ne els defectes de C.3. |
+| La NTT multicolumna (`ntt_bn128.*`) | **No cal** a la versió de CPU (s'usa la FFT d'ffiasm); per a GPU ja hi ha `bn128/src/ntt` |
+| `extend` i el blinding | **Substituir** per `Polynomial::fromEvaluations` i `blindCoefficients` de rapidsnark |
+| `computeFCommitments` i `getCommittedPolynomial` | **Substituir** per `CPolynomial` i `multiMulByScalar`, com fa rapidsnark |
+| `Polynomial` de pil-fflonk | **Descartar**: s'usa el de rapidsnark (`divByMonic` en lloc de `divByXSubValue`) |
+| Flux per stages (`pilfflonk_prover.cpp`) | **Reescriure**: els stages passen a estar guiats per `pilfflonkinfo` |
+| Divisió per `Z_H` en coeficients (`divZh`) | **No cal**: `Q` es calcula sobre un *coset* |
+| Agrupació (`fflonk_shkey.js` i shplonkjs) | **Portar** a Rust com a funció pura, generalitzada (A.2) |
+| Verificador (`fflonk_verify.js` i `verifyOpenings`) | **Adaptar** en JS a `pilfflonk/js/` (D8), amb el *pairing* d'`ffjavascript` |
+| Plantilles Solidity (`verifier_pilfflonk.sol.ejs` i la de shplonkjs) | **Referència** per a les plantilles `tera` |
+| Prover JS (`fflonk_prover.js`) | **No s'utilitza:** l'únic JS que es manté és el verificador (D8) |
+| Plookup `h1`/`h2`, `Z`, `puCtx`/`peCtx`/`ciCtx` | **Descartar**: ara són busos de la std |
+| Chelpers, el codi pas a pas de `fflonkinfo` (`Step`/`StepOperation`, `fflonk_info.hpp:186-251`) i els formats zkey/shkey/fflonkinfo | **Substituir** pel `provingKey/` (§4.2.6) |
+| `.commit`/`.exec` i la via de witness amb circom | **Descartar**: el witness és una entrada del prover (§4.3) |
+| El transcript de pil-fflonk (`pilfflonk_transcript.*`) | **Descartar**: es fa servir el `Keccak256Transcript` de rapidsnark (P6) |
+| `logger`, `zklog`, `exit_process` | **Descartar** |
+| `FflonkProver` de rapidsnark (R1CS) | **No tocar**: pertany al *wrap* final |
+
+### C.3 Defectes que no s'han de portar
+
+1. **El *pairing* es fa amb les constants de la prova.** `fflonk_verify.js:121-128` substitueix els commitments de la vkey pels de la prova, i `verifyOpenings` els fa servir en el *pairing* (`shplonkjs/src/shplonk.js:203-206`). Mentrestant, el transcript absorbeix els de la vkey (`:51-54`).
+2. **A `Q` li pot faltar un coeficient.** `maxPolsOpenings` es calcula abans de les fusions, i el grau de `Q` és inclusiu mentre que la resta de graus són nombres de coeficients. Si una fusió fa passar `|O|` màxim d'1 a 2, el coeficient més alt de `Q` es pot perdre sense avís.
+3. **Els polinomis compromesos que no s'obren a cap punt es descarten en silenci** (`fflonk_shkey.js:239-241`).
+4. **Error de precedència** al camí `maxQDegree > 0` (`pilfflonk_prover.cpp:703`).
+5. **Publics mal indexats.** `publics_first` rep `polId` com a fila (`pilfflonk_prover.cpp:461`), i el codi generat escriu `publicInputs[i]` indexat per fila (`chelpers/pilfflonk.chelpers.publics.cpp:4-8`).
+6. **Lectura equivocada.** `fflonk_info.cpp:183-219` llegeix `publicsCode` quan hauria de llegir `step2prev`.
+7. **Tipus de `powerW`.** Es serialitza com a cadena quan només hi ha un valor de `k` (`shplonkjs/src/utils.js:11-22`).
+8. **Defectes que cal corregir en adaptar el codi C++:**
+   - **Doble alliberament.** La `zkey` s'allibera dues vegades (`pilfflonk_prover.cpp:39` i `shplonk.cpp:21`).
+   - ***Leaks*:** els buffers d'escalars de la MSM (`shplonk.cpp:901`, `pilfflonk_setup.cpp:380`), `alphas`, els `fTmp` de cada `f`, els arrays de `rootsMap` (`reset()` només fa `clear()`), `polQ` i `CommitmentAndPolynomial`.
+   - **Estat global i sortides abruptes.** Hi ha estat global (`zklog`, el *singleton* `AltBn128::Engine::engine`, `bExitingProcess`), i des de biblioteca es criden `exit()` i `exitProcess()` (`pilfflonk_prover.cpp:254, 430, 895`).
+   - **Excepcions mal llançades.** `throw new runtime_error(...)` llança un punter, que `catch (const std::exception&)` no captura (`pilfflonk_setup.cpp:69, 84`).
+   - **VLA a la pila:** `u_int8_t data[length]` (`pilfflonk_transcript.cpp:44`, i el mateix a rapidsnark) i `FrElement res[nThreads*4]` (`shplonk.cpp:642-643`). Poden desbordar la pila si hi ha moltes instàncies.
+   - **Truncació a 32 bits:** `PTauBytes` (`pilfflonk_prover.cpp:205`), `pos`/`index` (`shplonk.cpp:654-655, 819`) i `polDegree` (`shplonk.cpp:807`, `pilfflonk_setup.cpp:310`).
+   - **Arrays no inicialitzats.** `lengths` i `polsIds` no s'inicialitzen (`pilfflonk_setup.cpp:290-291`), i `lengths[j] >= 0` sobre un `u64` és sempre cert.
+   - **Codi duplicat** entre el setup i `shplonk.cpp` (`find`, `multiExponentiation`, `polynomialFromMontgomery`).
+   - **Paral·lelisme perdut, sense conseqüències.** `omp_get_num_threads()/2` fora d'una regió paral·lela val 0, i `ThreadUtils` el passa a 1, de manera que les còpies es fan en sèrie.
+
+---
+
+## Annex D. Fitxers clau
+
+- **Codi a adaptar (pil-fflonk, C++):** `pil-fflonk/src/shplonk.cpp` (`ShPlonkProver`, només l'orquestració genèrica).
+- **Codi que es reutilitza tal com és:**
+  - `pil2-stark/src/rapidsnark/polynomial/{polynomial,cpolynomial,evaluations}.{hpp,c.hpp}`
+  - `pil2-stark/src/rapidsnark/keccak_256_transcript.{hpp,c.hpp}`
+  - `pil2-stark/src/rapidsnark/binfile_utils.hpp`
+  - `pil2-stark/src/rapidsnark/fflonk_setup.cpp` (lectura del `ptau`)
+  - `pil2-stark/src/bn128/src/ffiasm/`
+- **Protocol de referència (JS):**
+  - `pil-stark/src/fflonk/helpers/{fflonk_info,fflonk_shkey,fflonk_setup,fflonk_verify,fflonk_prover}.js`
+  - `shplonkjs/src/helpers/{setup,verifier,prover}.js`, `shplonkjs/src/utils.js`
+  - La còpia de referència és a `../pil-stark` (només el necessari; vegeu-ne el `README.md`)
+- **Solidity:**
+  - `pil-stark/src/fflonk/solidity/verifier_pilfflonk.sol.ejs`
+  - `shplonkjs/src/solidity/verifier.sol.ejs` (*pairing*)
+  - `setup/stark-recurser/stark2circom/circuit_templates/templates.rs` (patró `tera`)
+- **Setup Rust:**
+  - `setup/pil2-stark/src/{pil,expr}/`
+  - `setup/pil2-stark/src/types/pilout_info.rs`
+  - `setup/pil2-stark/src/io/{parser_args,bin_file,bin_file_writer,fixed_cols}.rs`
+  - `setup/pil2-stark/src/output/{global_info,global_constraints,stark_info}.rs`
+  - `setup/pil2-stark/src/proving_key/{bctree,snark_setup,recursive}.rs` (patró FFI, `ensure_pil2com_exec`)
+  - `setup/pil2-stark/src/commands/{setup,compile_pil}.rs`
+- **Runtime:**
+  - `common/src/global_info.rs`
+  - `common/src/hash_family.rs`
+  - `proofman/src/challenge_accumulation.rs`
+- **Format PIL2:** `pilout/src/pilout.proto`
+- **Witness de l'stage 2:**
+  - `pil2-stark/src/starkpil/gen_proof.hpp` (`calculateImHints` :27, `calculateWitnessSTD` :57)
+  - `pil2-components/lib/std/pil/{std_sum,std_prod,std_lookup,std_permutation,std_connection,std_constants,goldilocks}.pil`
+- **BN254 en C++:**
+  - `pil2-stark/src/bn128/src/ffiasm/{alt_bn128,f2field,curve,fft,multiexp}.hpp`
+  - `pil2-stark/src/bn128/src/{msm,ntt}/`
+  - `pil2-stark/src/rapidsnark/{polynomial/,binfile_utils.hpp,keccak_256_transcript.{hpp,c.hpp}}` (el transcript es reutilitza)
+- **Verificador JS (base):**
+  - `setup/pil2-stark/node_modules/snarkjs/src/Keccak256Transcript.js` (el transcript JS del FFLONK existent)
+  - `setup/pil2-stark/node_modules/ffjavascript/src/engine_pairing.js` (`pairingEq`)
+  - `proofman/src/snark_wrapper.rs:580-638` (com es crida un verificador JS)
+- **FFI i compilació:**
+  - `provers/starks-lib-c/bindings_starks.rs`, `provers/starks-lib-c/src/{lib,ffi_starks}.rs` (patró)
+  - `pil2-stark/src/api/starks_api.{hpp,cpp}` (patró de codis d'estat)
+  - `pil2-stark/Makefile:150, 180, 228-234`
+- **CLI:** `cli/src/main.rs:33-82`, `cli/src/commands/pilout/mod.rs` (patró de subcomandament niat)
+- **Compilador** (branca `develop-0.14.0-pil2-fflonk`):
+  - `pil2-compiler/src/{pil.js,compiler.js,processor.js,proto_out.js,sequence.js,fixed_file.js,extern_fixed_file.js}`
+  - `pil2-compiler/src/sequence/{fast_code_gen,size_of}.js`
+  - `pil2-compiler/src/definition_items/fixed_col.js`
+  - `pil2-compiler/src/pilout.proto`
+  - `pil2-compiler/test/{bn254_fixed.js,bn254/big_fixed.pil}`
+
+---
+
+## Annex E. Base analitzada
+
+| Repositori | Commit | Paper |
+|---|---|---|
+| `../pil-fflonk` | `b385c38` (`main`), més `pil/`, nou i sense commit | Prover fflonk PIL1 (C++, amb SHPLONK) |
+| `pil-stark` (github.com/0xPolygonHermez/pil-stark) | `5e20f57` (`pilfflonk`) | `fflonkinfo`, classes d'agrupació, setup, verificador JS i Solidity, prover JS |
+| `shplonkjs` | `7824640` (la versió fixada per pil-stark) | Repartició, arrels, verificació SHPLONK, contracte `ShPlonkVerifier` |
+| `pil2-proofman` | `ff0ff959` (`pre-develop-1.4.0-alpha`) | Repositori destí |
+| `../pil2-compiler` | `503862c` (`develop-0.14.0`), més la branca local `develop-0.14.0-pil2-fflonk`, sense commit | Compilador PIL2 |
+| `iden3/ffiasm` | `0830252a` (0.1.5, vendoritzat) | Aritmètica BN254 del prover |
+| `snarkjs` / `ffjavascript` | 0.7.6 / 0.3.1 (a `setup/pil2-stark/node_modules`) | Transcript i *pairing* del verificador JS |
+
+La branca `feat/pil2-fflonk` no s'ha fet servir com a referència, de manera deliberada.
+
+---
+
+## Annex F. Troballes col·laterals
+
+Aquests problemes no bloquegen el backend nou, però han sortit durant l'anàlisi. Alguns queden resolts dins d'aquest projecte, i s'indica on.
+
+1. **El *wrap* final sempre es desa com a PLONK.** `SnarkWrapper.protocol` està fixat a `SnarkProtocol::Plonk` (`proofman/src/snark_wrapper.rs:269`), mentre que `setup-snark` genera fflonk per defecte i `get_snark_protocol_id_c` no es crida mai. Per tant, les proves fflonk es desen i es verifiquen com si fossin PLONK.
+2. **`CPolynomial::multiExponentiation` no té `return`** (`pil2-stark/src/rapidsnark/polynomial/cpolynomial.c.hpp:69-75`).
+3. **El target `binfile` del Makefile és erroni.** Fa servir `TARGET_BINFILE`, que no està definit; la variable real és `TARGET_BIN_FILE` (`pil2-stark/Makefile:113`).
+4. **Fitxers orfes o sobrers:**
+   - `setup/pil2-stark/src/pilout_info.rs` no es compila; s'esborra a la Fase 1 (D1);
+   - `pil2-stark/src/bn128/src/ffiasm/{fq.o,fr_asm.o}` estan versionats a git;
+   - `pil2-stark/src/config/zkglobals.hpp` declara `fec` i `fnec`, però no es defineixen enlloc.
+5. **Els *golden tests* del setup no protegeixen les passades.** Només cobreixen tres AIRs de ZisK i no s'executen si falta `setup/golden_reference/`. A la Fase 1 se'n fan de nous.
+6. **`Keccak256Transcript` de rapidsnark corromp el transcript amb el punt zero** (`keccak_256_transcript.c.hpp:63-65`). Es fa servir als provers del *wrap* final (`fflonk_prover.c.hpp:318`, `plonk_prover.c.hpp:387`, `plonk_prover_gpu.c.cuh:545`), de manera que és un risc de compatibilitat amb snarkjs. Hi ha un segon cas que afecta els mateixos provers: `RawFq::toRprBE` d'ffiasm (`fq.cpp:324-339`) codifica malament les coordenades `< 2^192`, amb probabilitat `≈ 2^-61` per punt, i llavors snarkjs rebutjaria la prova. Tots dos es podrien corregir amb un canvi d'una línia (a `fq.cpp`, l'`mpz_export` amb paraules de `bytes` com a `fr.cpp:312`), però toca ffiasm i el *wrap* final, i queda fora d'abast. pilfflonk reutilitza la classe tal com és i rebutja aquests punts a l'API (§4.4).
+7. **`Tables.fill` amb un valor negatiu ja era incorrecte a Goldilocks.** Per a `-1`, el `pilout` acabava amb `4294967294` en lloc de `p−1` (`pil2-compiler/src/definition_items/fixed_col.js`, `fillRowsFrom`). Queda corregit a la branca del compilador (C4).
+8. **Possible error al *zerofier* `lastRow` del prover STARK, no verificat.** `pil2-stark/src/starkpil/setup_ctx.hpp:104` crida `buildOneRowZerofierInv(..., N)`, que faria servir l'arrel `ω^N = 1`, mentre que `:47-56` fa servir `ω^{N−1}`. A més, `:57` sembla comprovar `everyRow` on hauria de ser `everyFrame`. Com que el compilador de `develop-0.14.0` només emet `everyRow` (§3.4), probablement cap AIR real no hi arriba.
+
+---
+
+## Annex G. El programa PIL1 de la fixture de pil-fflonk
+
+**Origen.** És l'exemple `all` de pil-stark (branca `pilfflonk`), `test/state_machines/sm_all/all_main.pil`, més els fitxers que inclou. El genera `test/cfiles/fflonk_gen_all_files.js`.
+
+**On s'ha desat.** Els PIL dels 14 exemples de `tools/test_examples.sh`, juntament amb els generadors JS de constants i witness (`sm_*.js` i `sm/sm_global.js`), s'han desat a **`pil-fflonk/pil/`**:
+- són còpies idèntiques de pil-stark `5e20f57` (`test/state_machines/`);
+- es manté l'estructura de directoris, de manera que els `include` continuen funcionant;
+- hi ha un `README.md` amb la taula d'exemples i els paràmetres de generació (`extraMuls`, `maxQDegree`, entrades);
+- encara no tenen commit.
+
+```
+constant %N = 2**8;
+
+namespace Global(%N);
+    pol constant L1;
+
+// ../sm_fibonacci/fibonacci.pil
+namespace Fibonacci(%N);
+    pol constant L1, LLAST;
+    pol commit l1, l2;
+    pol l2c = l2;
+    public in1 = l2c(0);
+    public in2 = l1(0);
+    public out = l1(%N-1);
+    (l2' - l1)*(1-LLAST) = 0;
+    pol next = l1*l1 + l2*l2;
+    (l1' - next)*(1-LLAST) = 0;
+    L1 * (l2 - :in1) = 0;
+    L1 * (l1 - :in2) = 0;
+    LLAST * (l1 - :out) = 0;
+
+// ../sm_connection/connection.pil
+namespace Connection(%N);
+    pol constant S1, S2, S3;
+    pol commit a, b, c;
+    {a, b, c} connect {S1, S2, S3};
+
+// ../sm_permutation/permutation.pil
+namespace Permutation(%N);
+    pol commit a, b;
+    pol commit c, d;
+    pol commit selC, selD;
+    selC {c, c} is selD {d, d};
+
+// ../sm_plookup/plookup.pil
+namespace Plookup(%N);
+    pol commit sel, a, b;
+    pol commit cc;
+    pol constant SEL, A, B;
+    sel {a, b', a*b'} in SEL {A, B, cc};
+```
+
+**Com surt la fixture d'aquest programa:**
+- **Constants i witness.** Els calculen en JS `sm/sm_global.js`, `sm_fibonacci/sm_fibonacci.js` (amb entrades `[1, 2]`), `sm_connection/sm_connection.js`, `sm_permutation/sm_permutation.js` i `sm_plookup/sm_plookup.js`, tots a `test/state_machines/`.
+- **Columnes que desapareixen.** `Permutation.a` i `Permutation.b` no apareixen en cap restricció, i per tant no es comprometen (defecte 3 de C.3).
+- **Columnes que afegeix pil-stark:**
+  - `Plookup.H1_0` i `Plookup.H2_0`, a l'stage 2;
+  - `Plookup.Z0`, `Permutation.Z0` i `Connection.Z0`, més l'intermedi `Im28`, a l'stage 3;
+  - `Q`, a l'stage 4.
+
+**Ús en aquest projecte.** Portat a PIL2, és la font de les fixtures de les fases 1 i 2:
+- el Fibonacci, sense busos, a la Fase 1;
+- Plookup, Permutation i Connection, amb la std, a la Fase 2.
