@@ -9,12 +9,22 @@ homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 
+[features]
+# The Rust test oracle, `proofman_pilfflonk::oracle` (plan M14, R8). For tests only: nothing but this
+# crate's tests turns it on, through the dev-dependency on itself below.
+oracle = ["dep:pil2-pilout"]
+
 [dependencies]
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 num-bigint = { workspace = true }
+pil2-pilout = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Only to check that the STARK loader refuses a pilfflonk globalInfo (spec §4.2.6).
 proofman-common = { workspace = true }
+# Turns the oracle on for the tests of this crate.
+proofman-pilfflonk = { path = ".", features = ["oracle"] }
+# The tests read compiled pilouts and build others in code.
+pil2-pilout = { workspace = true }

@@ -1495,7 +1495,9 @@ name = "proofman-pilfflonk"
 version = "1.4.0-alpha"
 dependencies = [
  "num-bigint",
+ "pil2-pilout",
  "proofman-common",
+ "proofman-pilfflonk",
  "serde",
  "serde_json",
  "thiserror",

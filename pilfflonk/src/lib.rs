@@ -13,10 +13,17 @@
 //! | `pilfflonk.vkey.json` | [`Vkey`] |
 //! | the proof: bytes and `proof.json` | [`Proof`], [`ProofJson`], named by [`ProofNames`] |
 //! | `publics.json` | [`Publics`] |
+//! | the witness directory: `instances.json`, `instance_<ag>_<a>_<t>.bin`, `proof_values.json` | [`Witness`], read by [`FileWitnessSource`] |
 //!
 //! Each JSON file type is a [`JsonFile`]: it is validated when it is read and before it is
 //! written, and written deterministically. [`canonical_json`] is the canonical form the digest of
 //! the vkey is computed over.
+//!
+//! The prover takes its witness from a [`WitnessSource`] (spec §4.3, §5.3).
+//!
+//! With the feature `oracle`, the module `oracle` is the Rust test oracle (plan M14, R8): an
+//! evaluation of a pilout's constraints and of `Q` (A.1) with `num-bigint`, independent of
+//! `pil-info`. It is for tests only; the crate's own tests turn it on.
 
 pub mod error;
 pub mod field;
@@ -29,6 +36,10 @@ pub mod proof;
 pub mod tag;
 pub mod verkey;
 pub mod vkey;
+pub mod witness;
+
+#[cfg(feature = "oracle")]
+pub mod oracle;
 
 pub use error::{PilfflonkError, PilfflonkResult};
 pub use field::{Digest, FqBytes, FrBytes, G1Affine, G2Affine, BN254_Q, BN254_R};
@@ -39,3 +50,7 @@ pub use pilfflonk_info::{Boundary, ChallengeMapEntry, EvMapEntry, NameStageEntry
 pub use proof::{Proof, ProofJson, ProofNames, ProofShape, Publics, SnarkjsG1};
 pub use verkey::AirVerkey;
 pub use vkey::{FixedCommitments, Vkey, DIGEST_DOMAIN};
+pub use witness::{
+    AirInstanceRef, AirShape, FileWitnessSource, InstanceWitness, ProofValues, Stage1Witness, Witness, WitnessShape,
+    WitnessSource,
+};
