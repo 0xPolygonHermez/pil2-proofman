@@ -19,7 +19,8 @@
 //! written, and written deterministically. [`canonical_json`] is the canonical form the digest of
 //! the vkey is computed over.
 //!
-//! The prover takes its witness from a [`WitnessSource`] (spec §4.3, §5.3).
+//! The prover takes its witness from a [`WitnessSource`] (spec §4.3, §5.3). [`prover`] is the
+//! orchestration of a proof over the C++ core (spec §4.4): [`ProvingKey::load`] and [`prove`].
 //!
 //! The verifier is JS (`js/`, spec §4.5, D8): [`js_verifier::verify`] runs it with Node.
 //!
@@ -27,6 +28,7 @@
 //! evaluation of a pilout's constraints and of `Q` (A.1) with `num-bigint`, independent of
 //! `pil-info`. It is for tests only; the crate's own tests turn it on.
 
+pub mod degrees;
 pub mod error;
 pub mod field;
 pub mod global_info;
@@ -36,6 +38,7 @@ pub mod layout;
 pub mod names;
 pub mod pilfflonk_info;
 pub mod proof;
+pub mod prover;
 mod q_verifier;
 pub mod tag;
 pub mod verkey;
@@ -45,6 +48,7 @@ pub mod witness;
 #[cfg(feature = "oracle")]
 pub mod oracle;
 
+pub use degrees::Degrees;
 pub use error::{PilfflonkError, PilfflonkResult};
 pub use field::{Digest, FqBytes, FrBytes, G1Affine, G2Affine, BN254_Q, BN254_R};
 pub use global_info::{AggType, AirFile, GlobalInfoAir, PilfflonkGlobalInfo, SetupParams, FORMAT_VERSION};
@@ -52,6 +56,7 @@ pub use json::{canonical_json, JsonFile};
 pub use layout::{Layout, LayoutEntry, LayoutPol};
 pub use pilfflonk_info::{Boundary, ChallengeMapEntry, EvMapEntry, NameStageEntry, PilfflonkInfo, PolMapEntry, PolType};
 pub use proof::{Proof, ProofJson, ProofNames, ProofShape, Publics, SnarkjsG1};
+pub use prover::{prove, ProofChallenges, ProofOutput, ProveOptions, ProvingKey};
 pub use verkey::AirVerkey;
 pub use vkey::{FixedCommitments, Vkey, DIGEST_DOMAIN};
 pub use witness::{

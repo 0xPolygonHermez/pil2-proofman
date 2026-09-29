@@ -41,6 +41,7 @@ void runPolynomialTests();
 void runShplonkTests();
 void runInfoTests();
 void runExpressionsTests();
+void runProverTests();
 
 } // namespace PilFflonkTest
 

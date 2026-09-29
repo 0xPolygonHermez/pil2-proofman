@@ -150,6 +150,37 @@ export function computeR(curve, f, roots, evaluations, zerofiers, y) {
     });
 }
 
+// The denominators this verifier inverts in the SHPLONK check at y, in the order of the proof's inv
+// (A.6), as the prover lists them (verifierDenominators, pil2-stark/src/pilfflonk/
+// pilfflonk_shplonk_prover.hpp):
+//   1. Z_{T_i}(y) for i = 1 … n − 1: those of the q_i (computeQuotients);
+//   2. for each f_i, i = 0 … n − 1, and each root x_m of T_i in its order (offset-major, as
+//      computeRoots gives them): (y − x_m)·Π_{l≠m} (x_m − x_l), those of the Lagrange basis of
+//      r_i(y) (computeR).
+export function computeInverseDenominators(curve, roots, zerofiers, y) {
+    const Fr = curve.Fr;
+    const denominators = zerofiers.slice(1);
+    for (const { roots: T } of roots) {
+        for (let m = 0; m < T.length; m++) {
+            let den = Fr.sub(y, T[m]);
+            for (let l = 0; l < T.length; l++) {
+                if (l !== m) den = Fr.mul(den, Fr.sub(T[m], T[l]));
+            }
+            denominators.push(den);
+        }
+    }
+    return denominators;
+}
+
+// Whether inv is the inverse of the product of the denominators, inv·Π = 1: the check snarkjs'
+// Solidity fflonk verifier makes before it uses its own inv (templates/verifier_fflonk.sol.ejs,
+// inverseArray), with which a verifier gets every inverse by Montgomery's trick.
+export function isValidInverse(curve, denominators, inv) {
+    const Fr = curve.Fr;
+    const product = denominators.reduce((acc, d) => Fr.mul(acc, d), Fr.one);
+    return Fr.eq(Fr.mul(product, inv), Fr.one);
+}
+
 // q_0 = Z_{T_0}(y), q_i = α^i·Z_{T_0}(y)/Z_{T_i}(y) (A.5): the i-th power of α for the i-th f of the
 // global order.
 export function computeQuotients(curve, zerofiers, alpha) {

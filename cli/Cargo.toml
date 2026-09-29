@@ -38,8 +38,10 @@ regex = "1.12.2"
 toml = "0.9.8"
 
 [dev-dependencies]
-# The keys and the ptau with τ = 1 of the `pilfflonk verify` test (plan N13, M19).
+# The keys and the test ptaus of the `pilfflonk verify` and `pilfflonk prove` tests (plan N13, M19, M18).
 pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
+# The Rust oracle (M14), which the `pilfflonk prove` test checks the prover against.
+proofman-pilfflonk = { workspace = true, features = ["oracle"] }
 serde_json = { workspace = true }
 num-bigint = { workspace = true }
 

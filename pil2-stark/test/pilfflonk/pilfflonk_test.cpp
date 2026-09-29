@@ -108,6 +108,7 @@ int main() {
     PilFflonkTest::runShplonkTests();
     PilFflonkTest::runInfoTests();
     PilFflonkTest::runExpressionsTests();
+    PilFflonkTest::runProverTests();
     std::printf("pilfflonk_test: all tests passed\n");
     return 0;
 }

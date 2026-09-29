@@ -141,6 +141,43 @@ impl Algebra for Point<'_> {
     }
 }
 
+/// One point `z`, the columns given at it: a column at offset `s` is the value `values` has for it,
+/// as a verifier reads the evaluations of a proof.
+pub(super) struct Given<'a> {
+    pub values: &'a BTreeMap<(ColumnRef, i32), Fr>,
+}
+
+impl Algebra for Given<'_> {
+    type V = Fr;
+
+    fn constant(&self, c: &Fr) -> Fr {
+        c.clone()
+    }
+
+    fn column(&mut self, col: ColumnRef, offset: i32) -> PilfflonkResult<Fr> {
+        match self.values.get(&(col, offset)) {
+            Some(v) => Ok(v.clone()),
+            None => invalid!("no value is given for column {col:?} at offset {offset}"),
+        }
+    }
+
+    fn add(&self, a: &Fr, b: &Fr) -> Fr {
+        a + b
+    }
+
+    fn sub(&self, a: &Fr, b: &Fr) -> Fr {
+        a - b
+    }
+
+    fn mul(&self, a: &Fr, b: &Fr) -> Fr {
+        a * b
+    }
+
+    fn neg(&self, a: &Fr) -> Fr {
+        -a
+    }
+}
+
 /// Polynomials in coefficient form: a column at offset `s` is `p(ω^s·X)`, `p` its interpolant
 /// over `H`.
 pub(super) struct Coefficients<'a> {

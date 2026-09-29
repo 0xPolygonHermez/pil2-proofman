@@ -21,6 +21,13 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// The witness does not satisfy the AIR's constraints: the constraint polynomial Q computed from it
+// is not a polynomial of its degree bound (spec A.1). PILFFLONK_ERR_UNSATISFIED.
+class UnsatisfiedError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 } // namespace PilFflonk
 
 #endif

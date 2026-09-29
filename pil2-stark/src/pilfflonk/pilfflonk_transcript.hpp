@@ -32,6 +32,11 @@ AbsorbError decodeFr(const uint8_t bytes[FR_BYTES], FrElement &out);
 // Writes `element` as a canonical little-endian scalar.
 void encodeFr(const FrElement &element, uint8_t out[FR_BYTES]);
 
+// The Montgomery form of a scalar the caller knows to be canonical (firstNonCanonicalFr): its limbs
+// as they are, then ffiasm's toMontgomery. Unlike decodeFr it does not go through GMP, so that whole
+// columns can be decoded, in parallel.
+FrElement fromCanonicalFr(const uint8_t bytes[FR_BYTES]);
+
 // Decodes an affine point x‖y of canonical little-endian coordinates that the transcript hashes as
 // A.4 encodes it; `out` is unspecified on error. BN254's G1 has cofactor 1, so a point on the curve
 // is in the r-torsion group.

@@ -120,18 +120,42 @@ bool isZero(const Poly &p) {
     return p.getDegree() == 0 && Engine::engine.fr.isZero(p.coef[0]);
 }
 
-// a := a / (X^m - β), which must be exact: throws std::logic_error, naming `what`, otherwise.
-// rapidsnark's divByMonic computes only the quotient, so the remainder a_j + β·q_j (j < m) is
-// checked here. It also needs deg a >= m (it writes below its buffer otherwise) and a that owns its
-// buffer (it swaps it for one it allocates, which a borrowed one would leak), and a's degree up to
-// date.
+} // namespace
+
 void divideExactly(Poly &a, uint64_t m, const FrElement &beta, const std::string &what) {
     Engine &E = Engine::engine;
-    if (a.getDegree() < m) {
+    if (m == 0) {
+        throw std::invalid_argument("divideExactly: X^0 - β is not monic of degree at least 1");
+    }
+    const uint64_t d = a.getDegree();
+    if (d < m) {
         // The quotient is 0 and the remainder a itself.
         if (!isZero(a)) {
             throw std::logic_error("ShplonkProver: " + what + " is not divisible");
         }
+        return;
+    }
+    if (d < 2 * m - 1) {
+        // Here divByMonic writes below its buffer: it stores the m top coefficients of the quotient,
+        // which has only d - m + 1 < m. The quotient is q_j = a_{j+m} for j <= d - m, with no term
+        // β·q_{j+m} (j + m > d - m), and the remainder a_j + β·q_j for j < m.
+        for (uint64_t j = 0; j < m; ++j) {
+            FrElement remainder = a.coef[j];
+            if (j <= d - m) {
+                E.fr.add(remainder, remainder, E.fr.mul(beta, a.coef[j + m]));
+            }
+            if (!E.fr.isZero(remainder)) {
+                throw std::logic_error("ShplonkProver: " + what + " is not divisible");
+            }
+        }
+        // Increasing j reads a_{j+m}, with j + m >= m > d - m, before anything overwrites it.
+        for (uint64_t j = 0; j <= d - m; ++j) {
+            a.coef[j] = a.coef[j + m];
+        }
+        for (uint64_t j = d - m + 1; j <= d; ++j) {
+            a.coef[j] = E.fr.zero();
+        }
+        a.fixDegree();
         return;
     }
     const std::vector<FrElement> low(a.coef, a.coef + m);
@@ -145,8 +169,6 @@ void divideExactly(Poly &a, uint64_t m, const FrElement &beta, const std::string
         }
     }
 }
-
-} // namespace
 
 ShplonkProver::ShplonkProver(ShplonkOpening opening) {
 #ifndef __USE_ASSEMBLY__
@@ -355,7 +377,7 @@ std::unique_ptr<Poly> ShplonkProver::quotientW(const Interpolants &r, const FrEl
 
     const std::unique_ptr<FrElement[]> scratch(new FrElement[scratchLength()]);
     // Every term fits in it, so add() never has to grow W (which it does without updating W's
-    // length, and leaking a borrowed buffer).
+    // length).
     std::unique_ptr<Poly> W(new Poly(E, workLength()));
     FrElement alphaPower = E.fr.one();
     for (uint64_t i = 0; i < fs.size(); ++i) {
@@ -501,6 +523,45 @@ ShplonkProof ShplonkProver::open(const Srs &srs, Transcript &transcript) const {
     W.reset();
     proof.wp = srs.commit(Wp->coef, Wp->getDegree() + 1);
     return proof;
+}
+
+std::vector<FrElement> verifierDenominators(const ShplonkProver &prover, const FrElement &y) {
+    Engine &E = Engine::engine;
+    std::vector<FrElement> denominators;
+    for (uint64_t i = 1; i < prover.size(); ++i) {
+        FrElement z = E.fr.one();
+        for (const FrElement &x : prover.roots(i)) {
+            E.fr.mul(z, z, E.fr.sub(y, x));
+        }
+        denominators.push_back(z);
+    }
+    for (uint64_t i = 0; i < prover.size(); ++i) {
+        const std::vector<FrElement> &T = prover.roots(i);
+        for (uint64_t m = 0; m < T.size(); ++m) {
+            FrElement den = E.fr.sub(y, T[m]);
+            for (uint64_t l = 0; l < T.size(); ++l) {
+                if (l != m) {
+                    E.fr.mul(den, den, E.fr.sub(T[m], T[l]));
+                }
+            }
+            denominators.push_back(den);
+        }
+    }
+    return denominators;
+}
+
+FrElement verifierInverse(const ShplonkProver &prover, const FrElement &y) {
+    Engine &E = Engine::engine;
+    FrElement product = E.fr.one();
+    for (const FrElement &d : verifierDenominators(prover, y)) {
+        E.fr.mul(product, product, d);
+    }
+    if (E.fr.isZero(product)) {
+        throw std::runtime_error("verifierInverse: a denominator of the verifier is zero: y is a root of some f_i");
+    }
+    FrElement inverse;
+    E.fr.inv(inverse, product);
+    return inverse;
 }
 
 } // namespace PilFflonk

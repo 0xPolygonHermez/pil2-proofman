@@ -1,13 +1,14 @@
-// Keys and proofs for the verifier's tests, before the prover exists (M18):
+// Keys and proofs for the verifier's tests, independent of the prover (M18):
 // - sampleVkey(): the vkey of M15's pinned digest vector (setup/pilfflonk/tests/setup/digest.rs);
 // - syntheticVkey(): a vkey of two stages, packing, signed offsets, every domain of A.1 and every
 //   operand of the qVerifier;
 // - forgeProof(): a proof that verifies against a vkey whose [τ]₂ is [1]₂, the vkeys of the ptau
 //   with τ = 1 of the tests (plan N13). Knowing τ, anyone can open anything: random commitments and
-//   evaluations, the challenges they give, and W' = (F − E − J)/(1 − y), which makes the pairing
-//   of A.5 hold, e(F − E − J + y·W', [1]₂) = e(W', [1]₂). It is not a prover and says nothing about
-//   the prover's agreement with the verifier (M20 does): it runs the whole verifier on a proof it
-//   accepts, so that each change to it can be shown to be rejected;
+//   evaluations, the challenges they give, W' = (F − E − J)/(1 − y), which makes the pairing of
+//   A.5 hold, e(F − E − J + y·W', [1]₂) = e(W', [1]₂), and the inv those give. It is not a prover
+//   and says nothing about the prover's agreement with the verifier (M18's and M20's end-to-end
+//   tests do): it runs the whole verifier on a proof it accepts, so that each change to it can be
+//   shown to be rejected;
 // - RecordingTranscript and recordingLogger, to observe what the verifier does.
 
 import { keccak_256 } from "@noble/hashes/sha3";
@@ -20,6 +21,7 @@ import { fromObjectProof, fromObjectPublics } from "../src/proof.js";
 import {
     computeE,
     computeF,
+    computeInverseDenominators,
     computeJ,
     computeQuotients,
     computeR,
@@ -262,6 +264,9 @@ export function forgeProof(curve, vkeyObject, publicsObject, seed = "proof") {
     const FEJ = G1.sub(G1.sub(F, E), J);
     const Wp = G1.timesFr(FEJ, Fr.inv(Fr.sub(Fr.one, challenges.y)));
     polynomials[WP] = pointObject(Wp);
+    // inv, which nothing absorbs: the inverse of the SHPLONK check's denominators (A.6).
+    const denominators = computeInverseDenominators(curve, roots, zerofiers, challenges.y);
+    evaluations[INV] = frToObject(curve, Fr.inv(denominators.reduce((acc, d) => Fr.mul(acc, d), Fr.one)));
     return draft;
 }
 

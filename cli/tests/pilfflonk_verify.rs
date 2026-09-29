@@ -1,6 +1,7 @@
 //! `proofman-cli pilfflonk verify` (spec §4.5, plan M19) on the keys of the Fibonacci fixture,
-//! set up with the ptau of `τ = 1` (plan N13). Until the prover exists (M18), the proof is forged
-//! by `forgeProof` of `pilfflonk/js/test/proofs.js`, which opens anything since it knows `τ`. The
+//! set up with the ptau of `τ = 1` (plan N13). The proof is forged by `forgeProof` of
+//! `pilfflonk/js/test/proofs.js`, which opens anything since it knows `τ`; the prover's proofs are
+//! verified with a full-width `τ` in `pilfflonk_prove.rs` (M18). The
 //! command must exit with 0 on it, and with another status on a tampered copy, on malformed files
 //! and on every vkey `Vkey::validate` refuses, which the JS verifier must refuse too.
 //!

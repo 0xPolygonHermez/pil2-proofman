@@ -17,6 +17,9 @@
 #include "pilfflonk_error.hpp"
 #include "pilfflonk_fr.hpp"
 #include "pilfflonk_lde.hpp"
+#include "pilfflonk_prover.hpp"
+#include "pilfflonk_proving_key.hpp"
+#include "pilfflonk_rng.hpp"
 #include "pilfflonk_srs.hpp"
 #include "pilfflonk_transcript.hpp"
 
@@ -58,6 +61,8 @@ int failWithCurrentException(const char *function) noexcept {
         return fail(PILFFLONK_ERR_IO, function, "%s", e.what());
     } catch (const PilFflonk::FormatError &e) {
         return fail(PILFFLONK_ERR_FORMAT, function, "%s", e.what());
+    } catch (const PilFflonk::UnsatisfiedError &e) {
+        return fail(PILFFLONK_ERR_UNSATISFIED, function, "%s", e.what());
     } catch (const std::exception &e) {
         return fail(PILFFLONK_ERR_INTERNAL, function, "%s", e.what());
     } catch (...) {
@@ -128,36 +133,32 @@ int failAbsorb(const char *function, PilFflonk::AbsorbError error, uint64_t elem
     return fail(PILFFLONK_ERR_INTERNAL, function, "element %" PRIu64 " refused for no reason", element);
 }
 
-// The index of the first of the n scalars at `bytes` that is not below r, or n if all are.
-// isCanonicalFr throws only where ffiasm has no assembly backend: call this after something that
-// throws there first, as no exception may leave the parallel region.
-uint64_t firstNonCanonicalFr(const uint8_t *bytes, uint64_t n) {
-    uint64_t first = n;
-#pragma omp parallel for reduction(min : first)
-    for (uint64_t i = 0; i < n; ++i) {
-        if (!PilFflonk::isCanonicalFr(bytes + i * PilFflonk::FR_BYTES)) {
-            first = std::min(first, i);
-        }
-    }
-    return first;
-}
-
-// n canonical little-endian scalars into Montgomery form, in parallel: the limbs as they are, then
-// ffiasm's toMontgomery (decodeFr goes through GMP, too slow for whole columns).
+// n canonical little-endian scalars into Montgomery form, in parallel (fromCanonicalFr): the caller
+// checks them first (firstNonCanonicalFr).
 void decodeCanonicalFr(const uint8_t *bytes, uint64_t n, PilFflonk::FrElement *out) {
-    AltBn128::Engine &E = AltBn128::Engine::engine;
 #pragma omp parallel for
     for (uint64_t i = 0; i < n; ++i) {
-        const uint8_t *scalar = bytes + i * PilFflonk::FR_BYTES;
-        PilFflonk::FrElement canonical;
-        for (int limb = 0; limb < RawFr::N64; ++limb) {
-            uint64_t value = 0;
-            for (int byte = 7; byte >= 0; --byte) {
-                value = (value << 8) | scalar[limb * 8 + byte];
-            }
-            canonical.v[limb] = value;
+        out[i] = PilFflonk::fromCanonicalFr(bytes + i * PilFflonk::FR_BYTES);
+    }
+}
+
+// The n scalars at `bytes` (canonical little-endian, 32 bytes each) into `out`, or false with the
+// index of the first one not below r in `refused`.
+bool decodeScalars(const uint8_t *bytes, uint64_t n, std::vector<PilFflonk::FrElement> &out, uint64_t &refused) {
+    out.resize(n);
+    for (uint64_t i = 0; i < n; ++i) {
+        if (PilFflonk::decodeFr(bytes + i * PilFflonk::FR_BYTES, out[i]) != PilFflonk::AbsorbError::None) {
+            refused = i;
+            return false;
         }
-        E.fr.toMontgomery(out[i], canonical);
+    }
+    return true;
+}
+
+// Writes the n points to `out`, 64 bytes each (encodeG1).
+void encodePoints(const std::vector<PilFflonk::G1Point> &points, uint8_t *out) {
+    for (size_t i = 0; i < points.size(); ++i) {
+        PilFflonk::encodeG1(points[i], out + i * PilFflonk::G1_BYTES);
     }
 }
 
@@ -372,11 +373,10 @@ int pilfflonk_commit_fixed(const void *srs, uint64_t n_bits, uint64_t k, const u
                         " powers [τ^i]₁ of the SRS",
                         k, N, s.nG1());
         }
-        // Throws where ffiasm has no assembly backend, before firstNonCanonicalFr would.
         const PilFflonk::Lde lde(n_bits, n_bits);
 
         const uint64_t n = k * N;
-        const uint64_t refused = firstNonCanonicalFr(evals, n);
+        const uint64_t refused = PilFflonk::firstNonCanonicalFr(evals, n);
         if (refused < n) {
             return fail(PILFFLONK_ERR_NON_CANONICAL, function,
                         "scalar %" PRIu64 " (column %" PRIu64 ", row %" PRIu64 ") is not below r", refused,
@@ -391,6 +391,261 @@ int pilfflonk_commit_fixed(const void *srs, uint64_t n_bits, uint64_t k, const u
 
         PilFflonk::G1Point commitment = PilFflonk::commitFixed(s, lde, columns.data(), k);
         PilFflonk::encodeG1(commitment, out_g1);
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+// -------------------------------------------------------------------------------------------------
+// The prover
+// -------------------------------------------------------------------------------------------------
+
+void *pilfflonk_ctx_new(const char *proving_key_dir) {
+    const char *function = __func__;
+    return guardNew(function, [&]() -> void * {
+        if (proving_key_dir == nullptr) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "proving_key_dir is NULL");
+            return nullptr;
+        }
+        return PilFflonk::ProvingKey::load(proving_key_dir).release();
+    });
+}
+
+void pilfflonk_ctx_free(void *ctx) {
+    clearLastError();
+    delete static_cast<PilFflonk::ProvingKey *>(ctx);
+}
+
+int pilfflonk_ctx_n_bits_ext(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t *out) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (ctx == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx is NULL");
+        }
+        if (out == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out is NULL");
+        }
+        *out = static_cast<const PilFflonk::ProvingKey *>(ctx)->air(airgroup_id, air_id).degrees().nBitsExt;
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+void *pilfflonk_instance_new(const void *ctx, uint64_t airgroup_id, uint64_t air_id, const uint8_t *stage1,
+                             uint64_t stage1_len, const uint8_t *air_values, uint64_t n_air_values,
+                             const uint8_t *publics, uint64_t n_publics, const uint8_t *proof_values,
+                             uint64_t n_proof_values, const uint8_t *insecure_blinding_seed) {
+    const char *function = __func__;
+    return guardNew(function, [&]() -> void * {
+        if (ctx == nullptr) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx is NULL");
+            return nullptr;
+        }
+        const struct {
+            const uint8_t *data;
+            uint64_t n;
+            const char *name;
+        } arrays[] = {{stage1, stage1_len, "stage1"},
+                      {air_values, n_air_values, "air_values"},
+                      {publics, n_publics, "publics"},
+                      {proof_values, n_proof_values, "proof_values"}};
+        for (const auto &array : arrays) {
+            if (array.data == nullptr && array.n != 0) {
+                fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "%s is NULL", array.name);
+                return nullptr;
+            }
+        }
+        const PilFflonk::ProvingKey &pk = *static_cast<const PilFflonk::ProvingKey *>(ctx);
+        const PilFflonk::AirKey &air = pk.air(airgroup_id, air_id);
+
+        // The witness's scalars are checked here, to report them as not canonical; the rest of its
+        // shape, by the Instance.
+        const uint64_t nCols = air.witnessColumns().size();
+        if (stage1_len % PilFflonk::FR_BYTES != 0) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "stage1_len = %" PRIu64 " is not a whole number of scalars",
+                 stage1_len);
+            return nullptr;
+        }
+        const uint64_t nScalars = stage1_len / PilFflonk::FR_BYTES;
+        const uint64_t refusedCell = PilFflonk::firstNonCanonicalFr(stage1, nScalars);
+        if (refusedCell < nScalars) {
+            fail(PILFFLONK_ERR_NON_CANONICAL, function,
+                 "the stage-1 witness at row %" PRIu64 ", column %" PRIu64 " is not below r",
+                 nCols == 0 ? 0 : refusedCell / nCols, nCols == 0 ? 0 : refusedCell % nCols);
+            return nullptr;
+        }
+        std::vector<PilFflonk::FrElement> values[3];
+        const uint8_t *bytes[3] = {air_values, publics, proof_values};
+        const uint64_t counts[3] = {n_air_values, n_publics, n_proof_values};
+        const char *names[3] = {"air_values", "publics", "proof_values"};
+        for (int i = 0; i < 3; ++i) {
+            uint64_t refused = 0;
+            if (!decodeScalars(bytes[i], counts[i], values[i], refused)) {
+                fail(PILFFLONK_ERR_NON_CANONICAL, function, "%s[%" PRIu64 "] is not below r", names[i], refused);
+                return nullptr;
+            }
+        }
+        std::unique_ptr<PilFflonk::BlindingSource> blinding =
+            insecure_blinding_seed == nullptr ? std::make_unique<PilFflonk::BlindingRng>()
+                                              : std::make_unique<PilFflonk::BlindingRng>(insecure_blinding_seed);
+        return new PilFflonk::Instance(pk, airgroup_id, air_id, stage1, stage1_len, std::move(values[0]),
+                                       std::move(values[1]), std::move(values[2]), std::move(blinding));
+    });
+}
+
+void pilfflonk_instance_free(void *instance) {
+    clearLastError();
+    delete static_cast<PilFflonk::Instance *>(instance);
+}
+
+namespace {
+
+// commit_stage and commit_q: their arguments, the call, and the commitments written out.
+template <typename Commit>
+int commitCall(const char *function, void *instance, uint64_t stage, const uint8_t *challenges, uint64_t n_challenges,
+               uint8_t *out_g1, uint64_t n_out, Commit commit) {
+    if (instance == nullptr) {
+        return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "instance is NULL");
+    }
+    if (challenges == nullptr && n_challenges != 0) {
+        return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "challenges is NULL");
+    }
+    if (out_g1 == nullptr && n_out != 0) {
+        return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out_g1 is NULL");
+    }
+    PilFflonk::Instance &inst = *static_cast<PilFflonk::Instance *>(instance);
+    const uint64_t expected = inst.nCommitments(stage);
+    if (n_out != expected) {
+        return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function,
+                    "n_out = %" PRIu64 ", and stage %" PRIu64 " has %" PRIu64 " f to commit", n_out, stage, expected);
+    }
+    std::vector<PilFflonk::FrElement> values;
+    uint64_t refused = 0;
+    if (!decodeScalars(challenges, n_challenges, values, refused)) {
+        return fail(PILFFLONK_ERR_NON_CANONICAL, function, "challenges[%" PRIu64 "] is not below r", refused);
+    }
+    encodePoints(commit(inst, values), out_g1);
+    return static_cast<int>(PILFFLONK_OK);
+}
+
+} // namespace
+
+int pilfflonk_commit_stage(void *instance, uint32_t stage, const uint8_t *challenges, uint64_t n_challenges,
+                           uint8_t *out_g1, uint64_t n_out) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        return commitCall(function, instance, stage, challenges, n_challenges, out_g1, n_out,
+                          [&](PilFflonk::Instance &inst, const std::vector<PilFflonk::FrElement> &values) {
+                              return inst.commitStage(stage, values);
+                          });
+    });
+}
+
+int pilfflonk_commit_q(void *instance, const uint8_t *challenges, uint64_t n_challenges, uint8_t *out_g1,
+                       uint64_t n_out) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        const uint64_t qStage =
+            instance == nullptr ? 0 : static_cast<PilFflonk::Instance *>(instance)->air().info().qStage();
+        return commitCall(function, instance, qStage, challenges, n_challenges, out_g1, n_out,
+                          [&](PilFflonk::Instance &inst, const std::vector<PilFflonk::FrElement> &values) {
+                              return inst.commitQ(values);
+                          });
+    });
+}
+
+void *pilfflonk_opening_new(const void *const *instances, uint64_t n_instances, const uint8_t xi_seed[32]) {
+    const char *function = __func__;
+    return guardNew(function, [&]() -> void * {
+        if (instances == nullptr) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "instances is NULL");
+            return nullptr;
+        }
+        if (xi_seed == nullptr) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "xi_seed is NULL");
+            return nullptr;
+        }
+        PilFflonk::FrElement seed;
+        if (PilFflonk::decodeFr(xi_seed, seed) != PilFflonk::AbsorbError::None) {
+            fail(PILFFLONK_ERR_NON_CANONICAL, function, "xi_seed is not below r");
+            return nullptr;
+        }
+        std::vector<const PilFflonk::Instance *> list(n_instances);
+        for (uint64_t i = 0; i < n_instances; ++i) {
+            list[i] = static_cast<const PilFflonk::Instance *>(instances[i]);
+        }
+        return new PilFflonk::Opening(list, seed);
+    });
+}
+
+void pilfflonk_opening_free(void *opening) {
+    clearLastError();
+    delete static_cast<PilFflonk::Opening *>(opening);
+}
+
+uint64_t pilfflonk_opening_n_evaluations(const void *opening) {
+    clearLastError();
+    if (opening == nullptr) {
+        fail(PILFFLONK_ERR_INVALID_ARGUMENT, __func__, "opening is NULL");
+        return 0;
+    }
+    return static_cast<const PilFflonk::Opening *>(opening)->evaluations().size();
+}
+
+int pilfflonk_opening_evaluations(const void *opening, uint64_t n, uint8_t *out) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (opening == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "opening is NULL");
+        }
+        if (out == nullptr && n != 0) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out is NULL");
+        }
+        const std::vector<PilFflonk::FrElement> &evaluations =
+            static_cast<const PilFflonk::Opening *>(opening)->evaluations();
+        if (n != evaluations.size()) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "n = %" PRIu64 ", and the proof has %zu evaluations",
+                        n, evaluations.size());
+        }
+        for (uint64_t i = 0; i < n; ++i) {
+            PilFflonk::encodeFr(evaluations[i], out + i * PilFflonk::FR_BYTES);
+        }
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_opening_q(const void *opening, uint64_t instance, uint8_t out[32]) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (opening == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "opening is NULL");
+        }
+        if (out == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out is NULL");
+        }
+        PilFflonk::encodeFr(static_cast<const PilFflonk::Opening *>(opening)->q(instance), out);
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_opening_open(const void *opening, void *transcript, uint8_t out_w[64], uint8_t out_wp[64],
+                           uint8_t out_inv[32], uint8_t out_inv_zh[32]) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        const struct {
+            const void *pointer;
+            const char *name;
+        } arguments[] = {{opening, "opening"},     {transcript, "transcript"}, {out_w, "out_w"},
+                         {out_wp, "out_wp"},       {out_inv, "out_inv"},       {out_inv_zh, "out_inv_zh"}};
+        for (const auto &argument : arguments) {
+            if (argument.pointer == nullptr) {
+                return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "%s is NULL", argument.name);
+            }
+        }
+        const PilFflonk::Opening::Proof proof = static_cast<const PilFflonk::Opening *>(opening)->open(
+            *static_cast<PilFflonk::Transcript *>(transcript));
+        PilFflonk::encodeG1(proof.shplonk.w, out_w);
+        PilFflonk::encodeG1(proof.shplonk.wp, out_wp);
+        PilFflonk::encodeFr(proof.inv, out_inv);
+        PilFflonk::encodeFr(proof.invZh, out_inv_zh);
         return static_cast<int>(PILFFLONK_OK);
     });
 }

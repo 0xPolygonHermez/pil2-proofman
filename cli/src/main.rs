@@ -67,6 +67,7 @@ fn main() {
                 PiloutSubcommands::Inspect(args) => args.run(),
             },
             Commands::Pilfflonk(args) => match &args.pilfflonk_commands {
+                PilfflonkSubcommands::Prove(args) => args.run(),
                 PilfflonkSubcommands::Verify(args) => args.run(),
             },
             Commands::CheckSetup(args) => args.run(),

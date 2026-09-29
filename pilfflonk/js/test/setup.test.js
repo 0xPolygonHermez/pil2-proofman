@@ -169,7 +169,7 @@ function run(dir) {
             p.polynomials[name] = [other[0], other[1], "1"];
             assert.equal((await check(vkey(), PUBLICS, p)).result, false, name);
         }
-        for (const name of Object.keys(proof.evaluations).filter((n) => n !== "inv")) {
+        for (const name of Object.keys(proof.evaluations)) {
             const p = structuredClone(proof);
             p.evaluations[name] = plusOne(p.evaluations[name]);
             assert.equal((await check(vkey(), PUBLICS, p)).result, false, name);

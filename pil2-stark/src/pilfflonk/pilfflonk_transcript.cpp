@@ -38,6 +38,20 @@ AbsorbError decodeFr(const uint8_t bytes[FR_BYTES], FrElement &out) {
     return AbsorbError::None;
 }
 
+FrElement fromCanonicalFr(const uint8_t bytes[FR_BYTES]) {
+    FrElement canonical;
+    for (int limb = 0; limb < RawFr::N64; ++limb) {
+        uint64_t value = 0;
+        for (int byte = 7; byte >= 0; --byte) {
+            value = (value << 8) | bytes[limb * 8 + byte];
+        }
+        canonical.v[limb] = value;
+    }
+    FrElement out;
+    AltBn128::Engine::engine.fr.toMontgomery(out, canonical);
+    return out;
+}
+
 void encodeFr(const FrElement &element, uint8_t out[FR_BYTES]) {
     // toRprLE writes only the significant bytes.
     std::memset(out, 0, FR_BYTES);

@@ -48,4 +48,21 @@ bool isCanonicalFq(const uint8_t bytes[FQ_BYTES]) {
 #endif
 }
 
+uint64_t firstNonCanonicalFr(const uint8_t *bytes, uint64_t n) {
+#ifdef __USE_ASSEMBLY__
+    uint64_t first = n;
+#pragma omp parallel for reduction(min : first)
+    for (uint64_t i = 0; i < n; ++i) {
+        if (!isBelow(bytes + i * FR_BYTES, Fr_rawq)) {
+            first = i < first ? i : first;
+        }
+    }
+    return first;
+#else
+    (void)bytes;
+    (void)n;
+    throw std::runtime_error("the BN254 scalar field needs ffiasm's assembly backend, not built on this platform");
+#endif
+}
+
 } // namespace PilFflonk

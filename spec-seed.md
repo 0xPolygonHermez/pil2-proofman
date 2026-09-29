@@ -954,6 +954,7 @@ Cada prova té una sola instància d'una sola AIR. Diverses instàncies, diverse
 | **Prioritat:** primer una versió CPU funcional; després, de manera incremental, GPU i millores. La GPU caldrà (Fase 5), però més endavant. | Usuari (29-09-2026) |
 | **Reutilització:** abans de copiar codi de pil-fflonk, cal comprovar que no existeixi ja en aquest repositori o en una dependència | Usuari (29-09-2026) |
 | **Referència JS:** `../pil-stark`, una còpia retallada amb només el necessari. Només es llegeix. | Usuari (29-09-2026) |
+| **`inv` de la prova (29-09-2026):** la prova porta `inv`, com la de snarkjs (`fflonk_prove.js:245`): la inversa del producte de tots els denominadors que inverteix el verificador a la comprovació SHPLONK, en un ordre fix. A diferència del verificador JS de snarkjs, el de pilfflonk el recalcula i rebutja la prova si no quadra, de manera que la prova no és mal·leable. La definició exacta la fixa M18. | Usuari (29-09-2026) |
 | **D3:** no hi ha verificador natiu, igual que el FFLONK existent, que es verifica amb snarkjs. No es porta cap *pairing* a C++, i ffiasm no es toca. | Usuari (29-09-2026) |
 | **D8:** el verificador és JS, com el del FFLONK existent. S'adapta del de pil-fflonk (`fflonk_verify.js` + `verifyOpenings`) als canvis de pilfflonk, viu a `pilfflonk/js/` i el crida `proofman-cli pilfflonk verify` (§4.5). | Usuari (29-09-2026) |
 | **P4:** pil-fflonk es deixarà de fer servir en favor de pilfflonk. No cal cap compatibilitat amb els seus formats ni amb el seu verificador; del seu sistema es manté la forma de la prova (D7). | Usuari (29-09-2026) |
@@ -1085,7 +1086,7 @@ p'(X) = p(X) + (X^N − 1)·b(X)
 - Les constants no tenen blinding.
 - `Q` sense partir no té blinding: la seva fita de grau ja inclou la contribució del blinding de les columnes (A.1).
 - Els trossos de `Q` partit reben el blinding de PLONK (A.1), com el sistema antic (`pil-fflonk/src/pilfflonk_prover.cpp:697-720`).
-- El generador aleatori s'injecta. Als tests i a la CI rep una llavor fixa i el blinding és fix; a producció és aleatori (D6).
+- El generador aleatori s'injecta. Als tests i a la CI rep una llavor fixa i el blinding és fix; a producció és aleatori (D6). Implementació (M18, `pilfflonk_rng`): sense llavor, `randombytes_buf` de libsodium; amb llavor, blocs de 4096 bytes de `randombytes_buf_deterministic` amb una subllavor per bloc (BLAKE2b-256 de l'índex, amb la llavor com a clau). Cada element de `Fr` es treu per rebuig (32 bytes amb els dos bits alts a zero, acceptat si és `< r`). A la CLI, `--insecure-blinding-seed <64 hex>`, que avisa que la prova no és *zero-knowledge*.
 
 ### A.4 Transcript (Keccak-256)
 
@@ -1142,6 +1143,12 @@ on:
 El prover fa servir la mateixa convenció. `Z_T` és el producte de tots els `Z_{T_i}`, repeticions incloses, i `W' = L/(Z_{T∖T_0}(y)·(X − y))` (`pil-fflonk/src/shplonk.cpp:83-101, 263-270`).
 
 **Regla:** els commitments dels `f` fixos surten **sempre** de la vkey, mai de la prova.
+
+**`inv` i `invZh` (M18).** `invZh = 1/Z_H(ξ)`, i el verificador comprova `Z_H(ξ)·invZh = 1`. `inv = 1/Π`, on `Π` és el producte d'aquesta llista, en aquest ordre (els `f_i` en l'ordre global, `n` el seu nombre):
+1. `Z_{T_i}(y) = Π_{x∈T_i}(y − x)`, per a `i = 1 … n−1` (els denominadors dels `q_i`);
+2. per a cada `f_i` (`i = 0 … n−1`) i cada arrel `x_m` de `T_i` en ordre *offset*-major (`x_{m·k+j} = xiSeed^{powerW/k}·ω_{kN}^{s_m}·w_k^j`): `(y − x_m)·Π_{l≠m}(x_m − x_l)` (els denominadors de Lagrange dels `r_i(y)`).
+
+El verificador JS recalcula `Π` i rebutja la prova si `inv·Π ≠ 1` (decisió de l'usuari). Al Fibonacci són 13 factors.
 
 **Referències:** `pil-stark/src/fflonk/helpers/fflonk_verify.js`, `shplonkjs/src/helpers/verifier.js` i `pil-fflonk/src/shplonk.cpp` (la banda del prover).
 

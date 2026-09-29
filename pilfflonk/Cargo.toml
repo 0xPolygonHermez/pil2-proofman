@@ -20,6 +20,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 num-bigint = { workspace = true }
 tracing = { workspace = true }
+proofman-starks-lib-c = { workspace = true }
 pil2-pilout = { workspace = true, optional = true }
 
 [dev-dependencies]

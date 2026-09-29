@@ -2,6 +2,7 @@
 
 use std::ffi::{CStr, CString};
 use std::fmt;
+use std::marker::PhantomData;
 use std::os::raw::{c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -32,6 +33,9 @@ pub enum PilFflonkErrorKind {
     Io,
     /// A file is not in the format expected.
     Format,
+    /// The witness does not satisfy the AIR's constraints: its constraint polynomial `Q` is not of
+    /// its degree (spec A.1).
+    Unsatisfied,
     /// A status these bindings do not know: they are out of sync with `pilfflonk_api.hpp`.
     Unknown(i32),
 }
@@ -69,6 +73,7 @@ fn error_kind(status: c_int) -> Option<PilFflonkErrorKind> {
         PILFFLONK_ERR_INVALID_POINT => PilFflonkErrorKind::InvalidPoint,
         PILFFLONK_ERR_IO => PilFflonkErrorKind::Io,
         PILFFLONK_ERR_FORMAT => PilFflonkErrorKind::Format,
+        PILFFLONK_ERR_UNSATISFIED => PilFflonkErrorKind::Unsatisfied,
         other => PilFflonkErrorKind::Unknown(other),
     })
 }
@@ -256,6 +261,258 @@ impl Drop for PilFflonkSrs {
     fn drop(&mut self) {
         // SAFETY: the handle came from `pilfflonk_srs_load` and is released only here.
         unsafe { pilfflonk_srs_free(self.handle.as_ptr()) }
+    }
+}
+
+/// `n` points of [`PILFFLONK_G1_BYTES`] from a buffer the C side wrote.
+fn points(bytes: &[u8]) -> Vec<[u8; PILFFLONK_G1_BYTES]> {
+    bytes
+        .chunks_exact(PILFFLONK_G1_BYTES)
+        .map(|chunk| {
+            let mut point = [0u8; PILFFLONK_G1_BYTES];
+            point.copy_from_slice(chunk);
+            point
+        })
+        .collect()
+}
+
+/// A slice's pointer for the C side, NULL for an empty one: the C API reads nothing then, and a
+/// dangling pointer of an empty slice is not one to hand it.
+fn ptr_or_null<T>(slice: &[T]) -> *const u8 {
+    if slice.is_empty() {
+        std::ptr::null()
+    } else {
+        slice.as_ptr().cast()
+    }
+}
+
+/// The proving key of the prover (spec §4.4, step 1), owned by the C++ side: the `provingKey/`
+/// that `setup-pilfflonk` writes, loaded, with the fixed columns interpolated. Immutable.
+#[derive(Debug)]
+pub struct PilFflonkProverCtx {
+    handle: NonNull<c_void>,
+}
+
+impl PilFflonkProverCtx {
+    /// Loads the `provingKey/` at `dir`: `pilout.globalInfo.json`, the SRS and every AIR's
+    /// pilfflonkinfo, `.bin` and `.const` (not the vkey, whose digest the caller absorbs). Fails with
+    /// [`Io`](PilFflonkErrorKind::Io) if a file cannot be read, [`Format`](PilFflonkErrorKind::Format)
+    /// if one is not what it should be or they do not agree.
+    pub fn load(dir: &Path) -> Result<Self, PilFflonkError> {
+        let path = c_path("pilfflonk_ctx_new", dir)?;
+        // SAFETY: `path` is a NUL-terminated string that outlives the call; the result is either
+        // NULL or a handle this value then owns.
+        let handle = unsafe { pilfflonk_ctx_new(path.as_ptr()) };
+        NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
+    }
+
+    /// The `nBitsExt` of an AIR (spec A.1), as the C++ side derives it.
+    pub fn n_bits_ext(&self, airgroup_id: u64, air_id: u64) -> Result<u64, PilFflonkError> {
+        let mut out = 0u64;
+        // SAFETY: the handle is live and `out` is a u64 the call writes.
+        check_status(unsafe { pilfflonk_ctx_n_bits_ext(self.handle.as_ptr(), airgroup_id, air_id, &mut out) })?;
+        Ok(out)
+    }
+}
+
+impl Drop for PilFflonkProverCtx {
+    fn drop(&mut self) {
+        // SAFETY: the handle came from `pilfflonk_ctx_new` and is released only here; the instances
+        // that borrow it are gone.
+        unsafe { pilfflonk_ctx_free(self.handle.as_ptr()) }
+    }
+}
+
+/// What an instance is made of (`pilfflonk_instance_new`): scalars are canonical little-endian.
+#[derive(Clone, Copy, Debug)]
+pub struct PilFflonkInstanceInputs<'a> {
+    pub airgroup_id: u64,
+    pub air_id: u64,
+    /// The stage-1 witness, as the witness directory's `.bin` holds it (spec A.6): row after row,
+    /// the stage-1 columns of each row.
+    pub stage1: &'a [u8],
+    /// The stage-1 air values, publics and stage-1 proof values.
+    pub air_values: &'a [[u8; PILFFLONK_FR_BYTES]],
+    pub publics: &'a [[u8; PILFFLONK_FR_BYTES]],
+    pub proof_values: &'a [[u8; PILFFLONK_FR_BYTES]],
+    /// `None` for a real proof, blinded with the OS's randomness. `Some(seed)` fixes the blinding
+    /// (decision D6): for tests and CI only, as whoever knows the seed can remove the blinding.
+    pub insecure_blinding_seed: Option<&'a [u8; 32]>,
+}
+
+/// An instance of an AIR being proved (spec §4.4, steps 2 and 3), owned by the C++ side. It
+/// borrows the context it was made from.
+#[derive(Debug)]
+pub struct PilFflonkInstance<'ctx> {
+    handle: NonNull<c_void>,
+    _ctx: PhantomData<&'ctx PilFflonkProverCtx>,
+}
+
+impl<'ctx> PilFflonkInstance<'ctx> {
+    /// Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if there is no such AIR
+    /// or a count or the size of the witness is not the AIR's, and
+    /// [`NonCanonical`](PilFflonkErrorKind::NonCanonical) if a scalar is not below r.
+    pub fn new(ctx: &'ctx PilFflonkProverCtx, inputs: &PilFflonkInstanceInputs<'_>) -> Result<Self, PilFflonkError> {
+        let seed = inputs.insecure_blinding_seed.map_or(std::ptr::null(), |seed| seed.as_ptr());
+        // SAFETY: every pointer is NULL with a count of 0 or holds the count of 32-byte scalars (or
+        // the bytes of stage1) the call reads, the seed is NULL or 32 bytes, and the context is live;
+        // the result is either NULL or a handle this value then owns.
+        let handle = unsafe {
+            pilfflonk_instance_new(
+                ctx.handle.as_ptr(),
+                inputs.airgroup_id,
+                inputs.air_id,
+                ptr_or_null(inputs.stage1),
+                inputs.stage1.len() as u64,
+                ptr_or_null(inputs.air_values),
+                inputs.air_values.len() as u64,
+                ptr_or_null(inputs.publics),
+                inputs.publics.len() as u64,
+                ptr_or_null(inputs.proof_values),
+                inputs.proof_values.len() as u64,
+                seed,
+            )
+        };
+        NonNull::new(handle).map(|handle| Self { handle, _ctx: PhantomData }).ok_or_else(last_failure)
+    }
+
+    /// Commits stage `stage` with its challenges (none for stage 1): the commitments of its `n_out`
+    /// f, in the order of the layout.
+    pub fn commit_stage(
+        &mut self,
+        stage: u32,
+        challenges: &[[u8; PILFFLONK_FR_BYTES]],
+        n_out: usize,
+    ) -> Result<Vec<[u8; PILFFLONK_G1_BYTES]>, PilFflonkError> {
+        let mut out = vec![0u8; n_out * PILFFLONK_G1_BYTES];
+        // SAFETY: `challenges` holds the scalars and `out` the room for the points the call reads
+        // and writes, and the handle is live.
+        check_status(unsafe {
+            pilfflonk_commit_stage(
+                self.handle.as_ptr(),
+                stage,
+                ptr_or_null(challenges),
+                challenges.len() as u64,
+                out.as_mut_ptr(),
+                n_out as u64,
+            )
+        })?;
+        Ok(points(&out))
+    }
+
+    /// Commits `Q` with the challenges of its stage (`std_vc`): the commitments of its `n_out` f.
+    /// Fails with [`Unsatisfied`](PilFflonkErrorKind::Unsatisfied) if the witness does not satisfy
+    /// the AIR's constraints.
+    pub fn commit_q(
+        &mut self,
+        challenges: &[[u8; PILFFLONK_FR_BYTES]],
+        n_out: usize,
+    ) -> Result<Vec<[u8; PILFFLONK_G1_BYTES]>, PilFflonkError> {
+        let mut out = vec![0u8; n_out * PILFFLONK_G1_BYTES];
+        // SAFETY: as in commit_stage.
+        check_status(unsafe {
+            pilfflonk_commit_q(
+                self.handle.as_ptr(),
+                ptr_or_null(challenges),
+                challenges.len() as u64,
+                out.as_mut_ptr(),
+                n_out as u64,
+            )
+        })?;
+        Ok(points(&out))
+    }
+}
+
+impl Drop for PilFflonkInstance<'_> {
+    fn drop(&mut self) {
+        // SAFETY: the handle came from `pilfflonk_instance_new` and is released only here; the
+        // openings that borrow it are gone.
+        unsafe { pilfflonk_instance_free(self.handle.as_ptr()) }
+    }
+}
+
+/// What the SHPLONK opening adds to the proof (spec A.4 step 5, A.6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PilFflonkOpeningProof {
+    pub w: [u8; PILFFLONK_G1_BYTES],
+    pub wp: [u8; PILFFLONK_G1_BYTES],
+    /// The inverse of the product of the denominators the verifier inverts in its SHPLONK check
+    /// (`verifierInverse`, `pil2-stark/src/pilfflonk/pilfflonk_shplonk_prover.hpp`).
+    pub inv: [u8; PILFFLONK_FR_BYTES],
+    /// `1/Z_H(ξ)`.
+    pub inv_zh: [u8; PILFFLONK_FR_BYTES],
+}
+
+/// The opening of a proof (spec §4.4, steps 4 and 5), owned by the C++ side: every f of its
+/// instances evaluated at `ξ = xiSeed^powerW`. It borrows the instances.
+#[derive(Debug)]
+pub struct PilFflonkOpening<'a> {
+    handle: NonNull<c_void>,
+    _instances: PhantomData<&'a ()>,
+}
+
+impl<'a> PilFflonkOpening<'a> {
+    /// The opening of `instances`, in canonical order and with `Q` committed, at `xi_seed`.
+    pub fn new(
+        instances: &[&'a PilFflonkInstance<'_>],
+        xi_seed: &[u8; PILFFLONK_FR_BYTES],
+    ) -> Result<Self, PilFflonkError> {
+        let handles: Vec<*const c_void> = instances.iter().map(|i| i.handle.as_ptr().cast_const()).collect();
+        // SAFETY: `handles` holds live instance handles, which the borrow keeps alive and unchanged
+        // while the opening is; the result is either NULL or a handle this value then owns.
+        let handle = unsafe { pilfflonk_opening_new(handles.as_ptr(), handles.len() as u64, xi_seed.as_ptr()) };
+        NonNull::new(handle).map(|handle| Self { handle, _instances: PhantomData }).ok_or_else(last_failure)
+    }
+
+    /// The evaluations of the proof, in the order of spec A.4 step 4 and of the proof.
+    pub fn evaluations(&self) -> Result<Vec<[u8; PILFFLONK_FR_BYTES]>, PilFflonkError> {
+        // SAFETY: the handle is live.
+        let n = unsafe { pilfflonk_opening_n_evaluations(self.handle.as_ptr()) } as usize;
+        let mut out = vec![[0u8; PILFFLONK_FR_BYTES]; n];
+        // SAFETY: `out` has room for the `n` scalars the call writes, and the handle is live.
+        check_status(unsafe {
+            pilfflonk_opening_evaluations(self.handle.as_ptr(), n as u64, out.as_flattened_mut().as_mut_ptr())
+        })?;
+        Ok(out)
+    }
+
+    /// `Q(ξ)` of instance `instance`: for tests and diagnostics, not part of the proof.
+    pub fn q(&self, instance: u64) -> Result<[u8; PILFFLONK_FR_BYTES], PilFflonkError> {
+        let mut out = [0u8; PILFFLONK_FR_BYTES];
+        // SAFETY: `out` has the 32 bytes the call writes, and the handle is live.
+        check_status(unsafe { pilfflonk_opening_q(self.handle.as_ptr(), instance, out.as_mut_ptr()) })?;
+        Ok(out)
+    }
+
+    /// SHPLONK on `transcript`, which must hold everything absorbed before it (the evaluations
+    /// last): squeezes `α_S`, absorbs `[W]₁`, squeezes `y`. On a failure after the transcript has
+    /// moved on, the proof must be abandoned.
+    pub fn open(&self, transcript: &mut PilFflonkTranscript) -> Result<PilFflonkOpeningProof, PilFflonkError> {
+        let mut proof = PilFflonkOpeningProof {
+            w: [0; PILFFLONK_G1_BYTES],
+            wp: [0; PILFFLONK_G1_BYTES],
+            inv: [0; PILFFLONK_FR_BYTES],
+            inv_zh: [0; PILFFLONK_FR_BYTES],
+        };
+        // SAFETY: both handles are live, and each output has the bytes the call writes.
+        check_status(unsafe {
+            pilfflonk_opening_open(
+                self.handle.as_ptr(),
+                transcript.handle.as_ptr(),
+                proof.w.as_mut_ptr(),
+                proof.wp.as_mut_ptr(),
+                proof.inv.as_mut_ptr(),
+                proof.inv_zh.as_mut_ptr(),
+            )
+        })?;
+        Ok(proof)
+    }
+}
+
+impl Drop for PilFflonkOpening<'_> {
+    fn drop(&mut self) {
+        // SAFETY: the handle came from `pilfflonk_opening_new` and is released only here.
+        unsafe { pilfflonk_opening_free(self.handle.as_ptr()) }
     }
 }
 

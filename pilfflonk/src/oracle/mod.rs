@@ -72,7 +72,7 @@ use crate::field::r;
 use crate::global_info::MAX_NBITS;
 use crate::witness::{AirInstanceRef, AirShape, WitnessShape, WitnessSource};
 
-use eval::{Algebra, Coefficients, Columns, Evaluator, Point, Rows};
+use eval::{Algebra, Coefficients, Columns, Evaluator, Given, Point, Rows};
 pub use fr::{omega, Fr};
 
 /// A column of an AIR.
@@ -518,6 +518,34 @@ impl AirOracle {
             weights: BTreeMap::new(),
         };
         let mut ev = Evaluator::new(point, &self.expressions, values, im.keys().copied().collect());
+        let mut acc = Fr::zero();
+        for (term, domain) in self.terms(im_pols) {
+            let numerator = self.numerator(&mut ev, term)?;
+            let quotient = &numerator * &domain.zerofier_at(z, self.n_bits)?.inv()?;
+            acc = &(&acc * std_vc) + &quotient;
+        }
+        Ok(acc)
+    }
+
+    /// `Q(z)` for `z ∉ H` from the columns' values at `z·ω^s` (`values[(column, s)]`, the im pols
+    /// as [`ColumnRef::Im`]), as a verifier computes it from the evaluations of a proof: the fold of
+    /// `q_at`, with each column read from `values` instead of interpolated over `H`. The scalars
+    /// (publics, challenges, …) are those of `scalars`; its columns are not read.
+    ///
+    /// With a proof's evaluations, which are those of blinded polynomials (A.3), it is the `Q(ξ)`
+    /// the verifier derives and the prover's `Q` must take at `ξ`, and not `q_at`'s.
+    pub fn q_from_evaluations(
+        &self,
+        scalars: &Values,
+        values: &BTreeMap<(ColumnRef, i32), Fr>,
+        im_pols: &[usize],
+        std_vc: &Fr,
+        z: &Fr,
+    ) -> PilfflonkResult<Fr> {
+        if z.pow_u64(self.n as u64) == Fr::one() {
+            return invalid!("Q is not defined on H, and {z} is in H");
+        }
+        let mut ev = Evaluator::new(Given { values }, &self.expressions, scalars, im_pols.iter().copied().collect());
         let mut acc = Fr::zero();
         for (term, domain) in self.terms(im_pols) {
             let numerator = self.numerator(&mut ev, term)?;

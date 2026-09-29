@@ -33,6 +33,19 @@ pub enum PilfflonkError {
     /// `npm install` unable to install them, inputs it cannot read, or a failure of its own.
     #[error("JS verifier: {0}")]
     JsVerifier(String),
+
+    /// The witness does not satisfy the AIR's constraints: the prover's constraint polynomial `Q` is
+    /// not a polynomial of its degree (A.1). The C++ core's message says where.
+    #[error("{0}")]
+    Unsatisfied(String),
+
+    /// A call to the C++ core failed; `context` says which.
+    #[error("{context}: {source}")]
+    Native {
+        context: String,
+        #[source]
+        source: proofman_starks_lib_c::PilFflonkError,
+    },
 }
 
 pub type PilfflonkResult<T> = Result<T, PilfflonkError>;

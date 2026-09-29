@@ -249,6 +249,10 @@ struct Case {
     // Every component of f_i for i in `constants` has a single coefficient: f_i then has fewer
     // coefficients than roots when |T_i| > k, so that f_i = r_i and it adds nothing to W.
     std::vector<uint64_t> constants = {};
+    // f_i for i in `lowDegree` has p_0 of degree 1 and the other components constant: f_i has degree
+    // k, and with one offset f_i − r_i too, which divideExactly divides by X^k − ξ·ω^s in the range
+    // k <= deg < 2k − 1 where rapidsnark's divByMonic writes below its buffer.
+    std::vector<uint64_t> lowDegree = {};
 };
 
 // What the verifier gets from the proof and the key, and the transcript it replays (A.4 in
@@ -427,9 +431,21 @@ struct Result {
 
 // Components of f with k and O: k columns of up to N + |O| + 1 coefficients (a blinded column's
 // bound, A.2), of assorted degrees: full, half, full minus one, and one all zero when k > 2.
-std::vector<std::unique_ptr<Poly>> componentsOf(const Shape &f, uint64_t N, bool constant, Random &random) {
+std::vector<std::unique_ptr<Poly>> componentsOf(const Shape &f, uint64_t N, bool constant, bool lowDegree,
+                                                Random &random) {
     const uint64_t length = N + f.offsets.size() + 1;
     std::vector<std::unique_ptr<Poly>> components;
+    if (lowDegree) {
+        for (uint64_t j = 0; j < f.k; ++j) {
+            std::unique_ptr<Poly> p(new Poly(E, j == 0 ? 2 : 1));
+            for (uint64_t i = 0; i < p->getLength(); ++i) {
+                p->coef[i] = random.element();
+            }
+            p->fixDegree();
+            components.push_back(std::move(p));
+        }
+        return components;
+    }
     for (uint64_t j = 0; j < f.k; ++j) {
         std::unique_ptr<Poly> p(new Poly(E, constant ? 1 : length));
         const uint64_t degrees[] = {length - 1, length / 2, length - 2, length - 1};
@@ -477,7 +493,8 @@ Result prove(const Case &c, uint64_t seed) {
         const Shape &f = c.shapes[i];
         ks.push_back(f.k);
         const bool constant = std::find(c.constants.begin(), c.constants.end(), i) != c.constants.end();
-        components.push_back(componentsOf(f, N, constant, random));
+        const bool lowDegree = std::find(c.lowDegree.begin(), c.lowDegree.end(), i) != c.lowDegree.end();
+        components.push_back(componentsOf(f, N, constant, lowDegree, random));
         fs.push_back(packedOf(components.back(), f.k * f.offsets.size()));
         o.commitments.push_back(srs.commit(fs.back()->coef, fs.back()->getDegree() + 1));
         // [f_i] = f_i(τ)·G, and one the transcript can absorb (A.4).
@@ -823,6 +840,8 @@ std::vector<Case> cases() {
         {"k134_0", 4, {{1, {0}}, {3, {0}}, {4, {0}}}},
         {"k134_01", 4, {{1, {0, 1}}, {3, {0, 1}}, {4, {0, 1}}, {3, {0}}}},
         {"k134_m1012", 4, {{1, {-1, 0, 1, 2}}, {3, {-1, 0, 1, 2}}, {4, {-1, 0, 1, 2}}}},
+        // f_i of degree k with one offset (see Case::lowDegree), for every k >= 2.
+        {"lowdegree", 4, {{2, {0}}, {3, {0}}, {4, {0}}, {6, {0}}, {12, {1}}, {1, {0, 1}}}, {}, {0, 1, 2, 3, 4}},
     };
 }
 
@@ -1062,9 +1081,59 @@ void testFailuresAfterSqueezing() {
     }
 }
 
+// divideExactly against the definition: for X^m − β with m in {1, 2, 3, 4, 6}, a = q·(X^m − β) of
+// every degree d up to 3m is divided back to q, whatever the length of its buffer; a + ρ, ρ of degree
+// below m not zero, is refused. In particular the degrees m <= d < 2m − 1, where rapidsnark's
+// divByMonic writes below its buffer (under ASan: heap-buffer-overflow), are divided here.
+void testDivideExactly() {
+    Random random(6001);
+    for (uint64_t m : {1, 2, 3, 4, 6}) {
+        const FrElement beta = random.element();
+        for (uint64_t d = 0; d <= 3 * m; ++d) {
+            for (uint64_t extra : {0, 3}) {
+                // q of degree d − m (none if d < m: a is then 0, the only multiple of that degree).
+                const uint64_t qLength = d >= m ? d - m + 1 : 0;
+                Column q(qLength);
+                for (FrElement &c : q) {
+                    c = random.element();
+                }
+                if (qLength > 0 && E.fr.isZero(q.back())) {
+                    q.back() = E.fr.one();
+                }
+                // a = q·X^m − β·q, in room for ρ below (m coefficients at least).
+                std::unique_ptr<Poly> a(new Poly(E, std::max(d + 1, m) + extra));
+                for (uint64_t j = 0; j < qLength; ++j) {
+                    E.fr.add(a->coef[j + m], a->coef[j + m], q[j]);
+                    E.fr.sub(a->coef[j], a->coef[j], E.fr.mul(beta, q[j]));
+                }
+                a->fixDegree();
+                assert(qLength == 0 || a->getDegree() == d);
+
+                std::unique_ptr<Poly> refused = copyOf(*a, a->getLength());
+                PilFflonk::divideExactly(*a, m, beta, "a");
+                for (uint64_t j = 0; j < a->getLength(); ++j) {
+                    assert(equal(a->coef[j], j < qLength ? q[j] : E.fr.zero()));
+                }
+                assert(a->getDegree() == (qLength > 0 ? qLength - 1 : 0));
+
+                // Not divisible: the remainder ρ is checked, whatever the degree.
+                FrElement rho = random.element();
+                E.fr.add(refused->coef[m - 1], refused->coef[m - 1], rho);
+                refused->fixDegree();
+                expectThrows<std::logic_error>([&] { PilFflonk::divideExactly(*refused, m, beta, "a + ρ"); },
+                                               "ShplonkProver: a + ρ is not divisible");
+            }
+        }
+    }
+    std::unique_ptr<Poly> a(new Poly(E, 2));
+    expectThrows<std::invalid_argument>([&] { PilFflonk::divideExactly(*a, 0, E.fr.one(), "a"); },
+                                        "X^0 - β is not monic");
+}
+
 } // namespace
 
 void runShplonkTests() {
+    testDivideExactly();
     testOpenings();
     testTamperingBreaksTheIdentity();
     testDeterminism();

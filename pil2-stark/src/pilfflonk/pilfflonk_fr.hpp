@@ -25,6 +25,11 @@ bool isCanonicalFr(const uint8_t bytes[FR_BYTES]);
 // Throws std::runtime_error where ffiasm has no assembly backend (its modulus is then a mock).
 bool isCanonicalFq(const uint8_t bytes[FQ_BYTES]);
 
+// The index of the first of the n scalars of FR_BYTES bytes at `bytes` that is not below r, or n if
+// every one is. Checks them in parallel. Throws std::runtime_error, before it reads any, where
+// ffiasm has no assembly backend.
+uint64_t firstNonCanonicalFr(const uint8_t *bytes, uint64_t n);
+
 } // namespace PilFflonk
 
 #endif

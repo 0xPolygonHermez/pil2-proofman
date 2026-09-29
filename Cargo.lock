@@ -1508,6 +1508,7 @@ dependencies = [
  "pil2-pilout",
  "proofman-common",
  "proofman-pilfflonk",
+ "proofman-starks-lib-c",
  "serde",
  "serde_json",
  "thiserror",

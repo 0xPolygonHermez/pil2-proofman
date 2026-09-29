@@ -1,6 +1,7 @@
 // verify(vkey, publics, proof, logger) and bin/verify.js on the synthetic vkeys (proofs.js), whose
 // τ is 1: a forged proof verifies, and each change to it, to the publics or to the vkey is
-// rejected -- the rejections M19 asks for, before the prover exists. Every malformed input gives
+// rejected -- the rejections M19 asks for, independently of the prover (whose proofs
+// cli/tests/pilfflonk_prove.rs verifies, M18). Every malformed input gives
 // false with a logged reason (verify.js), and the CLI exits with 0 only on a proof that verifies.
 
 import assert from "node:assert/strict";
@@ -67,8 +68,7 @@ test("it rejects the proof if any commitment, evaluation, W or W' changes", asyn
             changed.polynomials[name] = anotherPoint();
             assert.equal((await verdict(vkey, publics, changed)).result, false, name);
         }
-        // inv is carried but not checked (verify.js): see the test below.
-        for (const name of Object.keys(proof.evaluations).filter((n) => n !== "inv")) {
+        for (const name of Object.keys(proof.evaluations)) {
             const changed = structuredClone(proof);
             changed.evaluations[name] = plusOne(changed.evaluations[name]);
             assert.equal((await verdict(vkey, publics, changed)).result, false, name);
@@ -87,11 +87,26 @@ test("invZh must be 1/Z_H(ξ), and the pieces of a split Q add up to Q(ξ)", asy
     assert.deepEqual((await verdict(vkey, publics, changed)).errors, ["The pieces of Q do not add up to Q(ξ) (A.1)"]);
 });
 
-test("inv is carried but not checked: nothing defines it before the Solidity verifier (open point)", async () => {
+test("inv must be the inverse of the SHPLONK check's denominators: off by one or by any bit, it is rejected", async () => {
+    for (const vkey of [sampleVkey(), syntheticVkey(curve), syntheticVkey(curve, { maxQDegree: 1, qDeg: 2 })]) {
+        const { publics, proof } = forged(vkey);
+        const changed = structuredClone(proof);
+        changed.evaluations.inv = plusOne(proof.evaluations.inv);
+        assert.deepEqual((await verdict(vkey, publics, changed)).errors, [
+            "inv is not the inverse of the SHPLONK check's denominators (A.6)",
+        ]);
+    }
+    // Every bit of the 254 of a scalar flipped: another inverse, or a value not below r.
     const { vkey, publics, proof } = forged(syntheticVkey(curve));
-    const changed = structuredClone(proof);
-    changed.evaluations.inv = plusOne(proof.evaluations.inv);
-    assert.equal((await verdict(vkey, publics, changed)).result, true);
+    const inv = BigInt(proof.evaluations.inv);
+    for (let bit = 0n; bit < 254n; bit++) {
+        const changed = structuredClone(proof);
+        changed.evaluations.inv = (inv ^ (1n << bit)).toString();
+        const { result, errors } = await verdict(vkey, publics, changed);
+        assert.equal(result, false, `bit ${bit}`);
+        assert.equal(errors.length, 1, `bit ${bit}`);
+        assert.match(errors[0], /inv is not the inverse|inv is not an element of F|not below r/, `bit ${bit}`);
+    }
 });
 
 test("it rejects the proof if any public changes", async () => {

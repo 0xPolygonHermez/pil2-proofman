@@ -8,7 +8,9 @@
 // 5.   Z_H(ξ) with ξ = xiSeed^powerW, checked against the proof's invZh as pil-stark's fflonk
 //      verifier checks it; Q(ξ) from the evaluations with the vkey's qVerifier (qverifier.js),
 //      and, if Q is split, Σ_i ξ^(i·M·N)·Q_i(ξ) = Q(ξ) (A.1);
-// 6.   the SHPLONK opening with a pairing (shplonk.js, A.5), the fixed commitments always the
+// 6.   the proof's inv: the inverse of the product of the denominators the SHPLONK check inverts
+//      (shplonk.js, computeInverseDenominators; A.6), as snarkjs' Solidity verifier checks its own;
+// 7.   the SHPLONK opening with a pairing (shplonk.js, A.5), the fixed commitments always the
 //      vkey's, never the proof's (C.3.1), and Q(ξ) the evaluation of Q's f at ξ.
 //
 // Arguments are the parsed JSON of pilfflonk.vkey.json, publics.json and proof.json. Every input it
@@ -16,8 +18,7 @@
 // checks; it throws only on a failure of its own. The logger, optional, has snarkjs' methods
 // (debug, info, warn, error).
 //
-// Not checked: the proof's inv, the batched inverse of the Solidity verifier (A.6, D7), whose
-// definition is that verifier's (Fase 4). Nothing absorbs it either: it is not bound to the proof.
+// Neither inv nor invZh is absorbed (A.4): each is checked against what it must be the inverse of.
 
 import { buildBn128 } from "ffjavascript";
 
@@ -25,7 +26,14 @@ import { challengeOf, computeChallenges } from "./challenges.js";
 import { PilFflonkInputError } from "./elements.js";
 import { fromObjectProof, fromObjectPublics } from "./proof.js";
 import { computeZi, executeCode, joinQPieces } from "./qverifier.js";
-import { verifyOpening } from "./shplonk.js";
+import {
+    checkLayout,
+    computeInverseDenominators,
+    computeRoots,
+    computeZerofiers,
+    isValidInverse,
+    verifyOpening,
+} from "./shplonk.js";
 import { fromObjectVk, qPieceIndex, vkeyDigest } from "./vkey.js";
 
 let curvePromise;
@@ -135,6 +143,22 @@ async function run(curve, vkObject, publicsObject, proofObject, logger) {
     }
 
     // STEP 6
+    info("> Checking inv");
+    const layout = { nBits: vk.power, powerW: vk.powerW, f: vk.layout.map(({ k, offsets }) => ({ k, offsets })) };
+    checkLayout(curve, layout);
+    const { f: roots } = computeRoots(curve, layout, challenges.xiSeed);
+    const denominators = computeInverseDenominators(
+        curve,
+        roots,
+        computeZerofiers(curve, roots, challenges.y),
+        challenges.y,
+    );
+    if (!isValidInverse(curve, denominators, proof.inv)) {
+        if (logger) logger.error("inv is not the inverse of the SHPLONK check's denominators (A.6)");
+        return false;
+    }
+
+    // STEP 7
     info("> Checking the SHPLONK opening");
     const res = await verifyOpening(
         curve,

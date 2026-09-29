@@ -18,6 +18,9 @@
 //! `N + |O|_max + 1`, the coefficients of the column with the most blinding, which the prover also
 //! extends to it: `nBitsExt`, at most 28 (checked by `validate::check_extended_domain`).
 //!
+//! The bounds and the extended domain are [`proofman_pilfflonk::degrees`]'s, re-exported here: the
+//! prover derives them from the pilfflonkinfo with the same functions.
+//!
 //! **The layout.** [`unpacked_layout`] is the one of `--no-packing` (plan R1): one `f_i` per
 //! polynomial, `k = 1`, its `O` and its bound as `degree` (A.2's cost `max_j(deg_j·k + j)` for
 //! `k = 1`), in the order of A.5 within an AIR: by stage, the fixed `f_i` first and `Q`'s last,
@@ -26,7 +29,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use proofman_pilfflonk::global_info::MAX_NBITS;
+pub use proofman_pilfflonk::degrees::{column_coefficients, n_bits_ext, q_coefficients, Degrees};
 use proofman_pilfflonk::names::column_name;
 use proofman_pilfflonk::{EvMapEntry, Layout, LayoutEntry, LayoutPol, PolMapEntry, PolType};
 
@@ -55,73 +58,6 @@ pub struct Committed {
     /// The names of the columns the evMap never opens, which are not committed (A.2).
     pub unopened: Vec<String>,
     pub degrees: Degrees,
-}
-
-/// The degrees of A.1 for an AIR.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Degrees {
-    /// `N = 2^nBits`.
-    pub n_bits: u64,
-    /// `|O|_max`: the most offsets a column with blinding is opened at.
-    pub max_openings: u64,
-    /// The bound on `Q`'s coefficients.
-    pub q_coefficients: u64,
-    /// The extended domain has `2^nBitsExt` points.
-    pub n_bits_ext: u64,
-}
-
-fn overflow(what: &str) -> SetupError {
-    SetupError::Layout(format!("{what} does not fit in 64 bits"))
-}
-
-/// The bound on the coefficients of a column of stage `stage` opened at `n_offsets` offsets, on
-/// `2^n_bits` rows: `N` for a fixed column, which has no blinding, and `N + |O| + 1` for a
-/// committed one, whose blinding `(X^N − 1)·b(X)` has `|O| + 1` coefficients (A.3).
-pub fn column_coefficients(n_bits: u64, stage: u64, n_offsets: u64) -> Result<u64, SetupError> {
-    if n_bits > MAX_NBITS {
-        return Err(SetupError::NBits { n_bits });
-    }
-    let n = 1u64 << n_bits;
-    if stage == 0 {
-        Ok(n)
-    } else {
-        n.checked_add(n_offsets).and_then(|c| c.checked_add(1)).ok_or_else(|| overflow("a column's bound"))
-    }
-}
-
-/// The bound on the coefficients of `Q` not split (A.1): `qDeg·N + (qDeg+1)·|O|_max + 1`.
-pub fn q_coefficients(n_bits: u64, q_deg: u64, max_openings: u64) -> Result<u64, SetupError> {
-    if n_bits > MAX_NBITS {
-        return Err(SetupError::NBits { n_bits });
-    }
-    let blinding = q_deg.checked_add(1).and_then(|d| d.checked_mul(max_openings));
-    q_deg
-        .checked_mul(1u64 << n_bits)
-        .zip(blinding)
-        .and_then(|(q, b)| q.checked_add(b))
-        .and_then(|c| c.checked_add(1))
-        .ok_or_else(|| overflow("Q's bound"))
-}
-
-/// `nBitsExt` (A.1): the smallest power of two `≥` `Q`'s coefficients and `≥ N + |O|_max + 1`,
-/// the coefficients of the column with the most blinding. It is not checked against the
-/// 2-adicity here: `validate::check_extended_domain` does.
-pub fn n_bits_ext(n_bits: u64, q_coefficients: u64, max_openings: u64) -> Result<u64, SetupError> {
-    let column = column_coefficients(n_bits, 1, max_openings)?;
-    let points =
-        q_coefficients.max(column).checked_next_power_of_two().ok_or_else(|| overflow("the extended domain"))?;
-    Ok(u64::from(points.trailing_zeros()))
-}
-
-impl Degrees {
-    /// The degrees of an AIR of `2^n_bits` rows whose constraint polynomial has degree `q_deg`
-    /// (A.1), and whose committed columns (stage ≥ 1) are opened at `max_openings` offsets at
-    /// most.
-    pub fn new(n_bits: u64, q_deg: u64, max_openings: u64) -> Result<Self, SetupError> {
-        let q_coefficients = q_coefficients(n_bits, q_deg, max_openings)?;
-        let n_bits_ext = n_bits_ext(n_bits, q_coefficients, max_openings)?;
-        Ok(Degrees { n_bits, max_openings, q_coefficients, n_bits_ext })
-    }
 }
 
 /// The committed polynomials of an AIR (see [the module](self)): the columns of `const_pols_map`
@@ -226,49 +162,4 @@ pub fn unpacked_layout(pols: &[CommittedPol]) -> Layout {
 /// The largest `degree` of `layout`: the powers `[τ^i]₁` the SRS must hold (M12).
 pub fn max_degree(layout: &Layout) -> u64 {
     layout.0.iter().map(|f| f.degree).max().unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn columns_have_n_coefficients_and_their_blinding() {
-        assert_eq!(column_coefficients(8, 0, 1).unwrap(), 256);
-        assert_eq!(column_coefficients(8, 0, 3).unwrap(), 256, "fixed columns have no blinding");
-        assert_eq!(column_coefficients(8, 1, 1).unwrap(), 258);
-        assert_eq!(column_coefficients(8, 1, 4).unwrap(), 261);
-        assert!(matches!(column_coefficients(29, 1, 1), Err(SetupError::NBits { n_bits: 29 })));
-    }
-
-    #[test]
-    fn q_has_the_bound_of_a1() {
-        // The Fibonacci: N = 256, qDeg = 1, |O|_max = 2.
-        assert_eq!(q_coefficients(8, 1, 2).unwrap(), 256 + 2 * 2 + 1);
-        // qDeg = 0: Q = c/Z_H of a linear c has |O|_max + 1 coefficients.
-        assert_eq!(q_coefficients(3, 0, 1).unwrap(), 2);
-        assert_eq!(q_coefficients(10, 3, 4).unwrap(), 3 * 1024 + 4 * 4 + 1);
-        assert!(q_coefficients(28, u64::MAX / 4, 1).is_err());
-    }
-
-    #[test]
-    fn the_extended_domain_holds_q_and_the_most_blinded_column() {
-        // Q decides: 261 coefficients, 2^9.
-        assert_eq!(n_bits_ext(8, 261, 2).unwrap(), 9);
-        // Q exactly a power of two.
-        assert_eq!(n_bits_ext(8, 512, 2).unwrap(), 9);
-        assert_eq!(n_bits_ext(8, 513, 2).unwrap(), 10);
-        // The column decides: with qDeg = 0, Q has 2 coefficients and a column N + 2 (M5).
-        assert_eq!(n_bits_ext(3, 2, 1).unwrap(), 4);
-        assert_eq!(
-            Degrees::new(3, 0, 1).unwrap(),
-            Degrees { n_bits: 3, max_openings: 1, q_coefficients: 2, n_bits_ext: 4 }
-        );
-        // qDeg = 1 and |O|_max = 0 (only fixed columns opened): Q has N + 1, the domain 2N.
-        assert_eq!(Degrees::new(3, 1, 0).unwrap().n_bits_ext, 4);
-        // At the 2-adicity: N = 2^27 and qDeg = 1 give 2^27 + 3 coefficients, 2^28 points; N =
-        // 2^28 gives 2^29, which validate::check_extended_domain refuses.
-        assert_eq!(Degrees::new(27, 1, 1).unwrap().n_bits_ext, 28);
-        assert_eq!(Degrees::new(28, 1, 1).unwrap().n_bits_ext, 29);
-    }
 }

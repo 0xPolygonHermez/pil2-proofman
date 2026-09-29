@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "alt_bn128.hpp"
@@ -91,9 +92,7 @@ public:
     // s = O_i[m], from which the verifier rebuilds f_i(x) = Σ_j p_j(ξ·ω_N^s)·x^j on the roots of
     // s. Offset-major, as the roots. The prover absorbs them before the opening (spec A.4 step 4).
     //
-    // Not computed here: the `inv` helper of the Solidity verifier (D7), the inverse of the product
-    // of every denominator the verifier needs. Which denominators, and in what order, depends on
-    // how that verifier computes, so it is left to it.
+    // The proof's `inv` (D7) is not computed here: see verifierInverse below.
     const Evaluations &evaluations() const { return evals; }
 
     // The opening, spec A.4 step 5: α_S = squeeze(); W and [W]₁; absorb [W]₁; y = squeeze(); W'
@@ -144,6 +143,32 @@ private:
     std::vector<Entry> fs;
     Evaluations evals;
 };
+
+// a := a / (X^m − β), m >= 1, which must be exact: throws std::logic_error, naming `what`, if it is
+// not, leaving `a` unspecified. a's degree must be up to date (Poly::fixDegree) and a must own its
+// buffer, which may be replaced. rapidsnark's divByMonic computes only the quotient, so the
+// remainder a_j + β·q_j (j < m) is checked here, and it writes below its buffer unless
+// deg a >= 2m − 1: of lower degrees, the quotient is computed here. Throws std::invalid_argument
+// for m = 0. Used by ShplonkProver; public for its tests.
+void divideExactly(Poly &a, uint64_t m, const FrElement &beta, const std::string &what);
+
+// The denominators the verifier inverts in its SHPLONK check at y (pilfflonk/js/src/shplonk.js),
+// in this order, for the n f_i of `prover`:
+//   1. Z_{T_i}(y) = Π_{x ∈ T_i} (y − x) for i = 1 … n − 1: those of q_i = α^i·Z_{T_0}(y)/Z_{T_i}(y)
+//      (computeQuotients);
+//   2. for each f_i, i = 0 … n − 1, and each root x_m of T_i in its order (offset-major, as
+//      roots(i)): (y − x_m)·Π_{l≠m} (x_m − x_l), that of the Lagrange basis
+//      L_m(y) = Z_{T_i}(y)/((y − x_m)·Π_{l≠m} (x_m − x_l)) of r_i(y) (computeR).
+// None is zero if y is in no T_i, which ShplonkProver::open checks.
+std::vector<FrElement> verifierDenominators(const ShplonkProver &prover, const FrElement &y);
+
+// The proof's `inv` (spec A.6, D7): the inverse of the product of verifierDenominators(prover, y),
+// as snarkjs' fflonk prover computes its own (fflonk_prove.js, getMontgomeryBatchedInverse) for its
+// Solidity verifier, which checks inv·Π = 1 and recovers every inverse from it with Montgomery's
+// trick. Whether the proof keeps it, and with which denominators, is pending a decision (plan §8):
+// this function is all there is of it. The JS verifier ignores it, as snarkjs' does. Throws
+// std::runtime_error if a denominator is zero.
+FrElement verifierInverse(const ShplonkProver &prover, const FrElement &y);
 
 } // namespace PilFflonk
 
