@@ -3,168 +3,180 @@
 //! say which constraint fails on which row. [`write_air_bin`] writes it from what
 //! `pil_info::run(…, &PilInfoCfg::bn254(), …)` returns, and [`Bytecode::read`] reads it back.
 //!
-//! # Format, revision 1
+//! # Format, revision 2
 //!
-//! The container is the STARK's `"chps"` binfile, written with `pil-info`'s `BinFileWriter`. The
-//! content is pilfflonk's own. The STARK's layout of the operands (`io/parser_args.rs` in
-//! `pil2-stark-setup`) is the ABI of the STARK prover's buffers, and this file does not copy it. An
-//! operand here says what it is and which one, and the interpreter finds the value in its own
-//! buffers. Every integer is little-endian.
+//! The file follows the STARK's prover `.bin` field by field, with every value of dimension 1.
+//! That is the file that `setup/pil2-stark/src/io/bin_file.rs` writes, with the ops and args of
+//! `io/parser_args.rs`, that `pil2-stark/src/starkpil/expressions/expressions_bin.cpp` reads and
+//! that `expressions_pack.hpp` runs. It departs from the STARK's only where BN254 and dimension 1
+//! force it to:
+//!
+//! - **The dimension fields go:** `destDim`, `nTemp3` and `maxTmp3`, and with them the
+//!   temporaries of the extension field.
+//! - **The args are u32:** the STARK's u16 truncates an index above 65535 without a word.
+//! - **The numbers are 32-byte canonical `Fr`, little-endian:** the STARK's u64 cannot hold them.
+//! - **Section 1 starts with a prefix:** pilfflonk's version, `n8`, `r` and `nStages`.
+//! - **A copy is written as `add(a, 0)`.** The STARK writes a copy as an add without its second
+//!   operand, three args short, and its interpreter, which reads 8 args per op, cannot run that.
+//!
+//! Every integer is little-endian. The container is the STARK's `"chps"` binfile, written with
+//! `pil-info`'s `BinFileWriter`, with the STARK's three sections:
 //!
 //! ```text
 //! "chps"      4 bytes
-//! version     u32     0x7066_0001: "pf" in the high half, revision 1 in the low half
-//! nSections   u32     4
-//! 4 × { id u32, size u64, payload }, in the order 1, 2, 3, 4
+//! version     u32     0x7066_0002: "pf" in the high half, revision 2 in the low half
+//! nSections   u32     3
+//! 3 × { id u32, size u64, payload }, in the order 1, 2, 3
 //! ```
 //!
 //! The version is pilfflonk's own and much larger than the STARK's (1), so the STARK's reader
 //! (`BinFileUtils::openExisting(…, "chps", 1)`) refuses this file. rapidsnark's `BinFile` only
-//! checks the version against a maximum and does not expose it, so section 1 repeats the version
-//! for pilfflonk's reader to check for equality.
+//! checks the version against a maximum and does not expose it, so section 1 repeats it for
+//! pilfflonk's reader to check for equality: with that check it refuses a STARK `.bin`.
 //!
-//! **Section 1, header.**
-//!
-//! ```text
-//! version     u32     0x7066_0001, the container's
-//! n8          u32     32: the bytes of an element
-//! r           32 bytes, the modulus of Fr, little-endian
-//! ```
-//!
-//! **Section 2, expressions.** Every expression the passes generate code for (`expressionsCode`):
-//! the intermediate polynomials, `Q`, and the expressions the hints refer to.
+//! **Section 1, expressions.** Every expression the passes generate code for (`expressionsCode`):
+//! the intermediate polynomials, `Q`, and the expressions the hints refer to. As in the STARK, the
+//! prover finds the code of an intermediate polynomial by the `expId` of its `cmPolsMap` entry,
+//! and that of `Q` by `cExpId` (`pilfflonkinfo.json`).
 //!
 //! ```text
+//! version      u32    0x7066_0002, the container's                    ┐
+//! n8           u32    32, the bytes of an element                     │ pilfflonk's prefix
+//! r            32 bytes, the modulus of Fr                            │
+//! nStages      u32    the AIR's: the operand types depend on it       ┘
+//! maxTmp       u32    the largest nTemp of sections 1 and 2
+//! maxArgs      u32    the largest nArgs of sections 1 and 2
+//! maxOps       u32    the largest nOps of sections 1 and 2
+//! nOps         u32    in the section
+//! nArgs        u32    in the section: 8 per op
+//! nNumbers     u32
 //! nExpressions u32
-//! nOps         u32    op records in the section
-//! nConstants   u32
-//! maxTemps     u32    the largest nTemps in the section
 //! nExpressions × {
-//!   expId      u32    the expression, as expressionsinfo numbers it; the prover looks code up by it
+//!   expId      u32
+//!   destId     u32    the temporary the value is in after the last op: that op's dest
 //!   stage      u32
-//!   destType   u32    1 (cm): an intermediate polynomial, its values over H are column destId
-//!                     15 (q): Q, its values over the extended coset are what the prover commits
-//!                     2 (tmp): a plain value, such as an expression a hint refers to
-//!   destId     u32    the cmPolsMap index when destType is cm, 0 otherwise
-//!   nTemps     u32    temporaries the code uses: slots 0 … nTemps − 1
-//!   result     u32    the slot holding the value once the last op has run
-//!   opsOffset  u32    the entry's first op record; each entry's follow the previous entry's
+//!   nTemp      u32    the temporaries the code uses, 0 … nTemp − 1
 //!   nOps       u32    at least 1
+//!   opsOffset  u32    each entry's ops and args follow the previous entry's
+//!   nArgs      u32
+//!   argsOffset u32
 //!   line       string the PIL it comes from, UTF-8, NUL-terminated
 //! }
-//! nOps × op record
-//! nConstants × 32 bytes, each a canonical Fr (< r), little-endian
+//! ops          nOps × u8
+//! args         nArgs × u32
+//! numbers      nNumbers × 32 bytes, each a canonical Fr (< r), little-endian
 //! ```
 //!
-//! **Section 3, constraints**, for debugging (`pilfflonk check`): every constraint, the ones the
-//! intermediate polynomials add included. The value of a constraint's code at a row is its
-//! numerator, which is 0 on every row the constraint holds on.
+//! **Section 2, constraints**, for debugging (`pilfflonk check`): every constraint, including the
+//! ones the intermediate polynomials add. The value of a constraint's code at a row is its
+//! numerator, which is 0 on every row the constraint holds on. Its maxima are in section 1.
 //!
 //! ```text
-//! nConstraints u32
-//! nOps, nConstants, maxTemps   u32, as in section 2
+//! nOps, nArgs, nNumbers, nConstraints   u32
 //! nConstraints × {
 //!   stage      u32
-//!   firstRow   u32    the rows it holds on: firstRow ≤ i < lastRow. everyRow: 0 and N; firstRow:
-//!   lastRow    u32    0 and 1; lastRow: N − 1 and N; everyFrame: offsetMin and N − offsetMax
+//!   destId     u32
+//!   firstRow   u32    the rows it holds on, firstRow ≤ i < lastRow: everyRow 0 and N,
+//!   lastRow    u32    firstRow 0 and 1, lastRow N − 1 and N, everyFrame offsetMin and N − offsetMax
+//!   nTemp, nOps, opsOffset, nArgs, argsOffset   u32
 //!   imPol      u32    1 for the constraint that defines an intermediate polynomial, 0 otherwise
-//!   nTemps, result, opsOffset, nOps   u32, as in section 2
 //!   line       string
 //! }
-//! nOps × op record
-//! nConstants × 32 bytes
+//! ops, args, numbers, as in section 1
 //! ```
 //!
-//! **Section 4, hints.** `nHints u32`, 0 in this revision, whose reader refuses any other value.
-//! Fase 1 has no prover hints: the setup refuses them, and the witness and debug hints are not the
-//! prover's (§4.2.1). Fase 2 will define the hint records after `nHints`.
+//! **Section 3, hints.** `nHints u32`, and nothing else in this revision. Its reader refuses any
+//! other value than 0. Fase 1 has no prover hints: the setup refuses them, and the witness and debug
+//! hints are not the prover's (§4.2.1). Fase 2 will write each hint after `nHints` as the STARK does.
 //!
-//! **Op record**, 8 words of u32 (32 bytes):
+//! **Ops.** One byte per op: in the STARK, the index of its combination of dimensions. Here it is
+//! always 0, which is `dim1 = dim1 ∘ dim1`.
 //!
-//! ```text
-//! opcode  dest  aKind aIndex aOffset  bKind bIndex bOffset
-//! ```
+//! **Args**, 8 per op: `opType dest aType aArg1 aArg2 bType bArg1 bArg2`.
 //!
-//! - `opcode`: 0 add (`a + b`), 1 sub (`a − b`) and 2 mul (`a · b`), the STARK's codes; 4 copy
-//!   (`a`), with `b` written as three zeros and not read. Every value is an `Fr`, so neither the
-//!   STARK's dimension combinations (its `ops` array) nor its operand swap (`sub_swap`, code 3)
-//!   has anything to choose, and neither is in the file. The STARK has no way to write a copy: it
-//!   gives it code 0 and a single operand, a record shorter than the others.
-//! - `dest`: the slot the op writes. The temporaries are allocated by `pil-info`
-//!   (`io/temporaries.rs`, which the STARK uses too): temporaries whose lifetimes do not overlap
-//!   share a slot, and an op may write the slot it reads. `dest` can therefore be the slot of `a`
-//!   or `b`, and the interpreter must allow it.
-//! - Words, not the STARK's 16-bit arguments: indices of 2^16 and more fit.
+//! - `opType`: the STARK's codes. 0 is add (`a + b`), 1 is sub (`a − b`), 2 is mul (`a · b`) and
+//!   3 is sub_swap (`b − a`).
+//! - `dest`: the temporary the op writes. The temporaries are allocated by `pil-info`
+//!   (`io/temporaries.rs`), as the STARK's are: temporaries whose lifetimes do not overlap share
+//!   one, and an op may write the one it reads.
+//! - **The sources, in the STARK's order.** Every kind has a rank: const, cm and Zi 0; tmp 1;
+//!   public 2; number 3; airvalue 4; proofvalue 5; airgroupvalue 9; challenge 11; eval 12. The
+//!   encoder puts first the source of the lower rank, and a sub whose sources it swaps becomes a
+//!   sub_swap. `rank(a) ≤ rank(b)` therefore always holds.
 //!
-//! **Operand**, `(kind, index, offset)`. The kind is the value of the C++ `opType`
-//! (`pil2-stark/src/starkpil/stark_info.hpp`), which `pil-info`'s `OpType` mirrors. The maps are
-//! those of `<air>.pilfflonkinfo.json` and `pilout.globalInfo.json`.
+//! **Operands**, `(type, arg1, arg2)`. The type is the index of the STARK's buffer. It depends on
+//! `nStages`, and pilfflonk has no custom commits (P5), so the tmp buffer is `bs = nStages + 4`.
+//! Where the STARK multiplies an index by 3, the dimension, here it is the index itself.
 //!
-//! | kind | operand | index | offset |
+//! | type | operand | arg1 | arg2 |
 //! |---|---|---|---|
-//! | 0 `const` | fixed column | `constPolsMap` id: the column of `<air>.const` | row offset, as i32 |
-//! | 1 `cm` | committed column | `cmPolsMap` id | row offset, as i32 |
-//! | 2 `tmp` | temporary | slot, `< nTemps` | 0 |
-//! | 3 `public` | public input | `publicsMap` id | 0 |
-//! | 4 `airgroupvalue` | airgroup value | `airgroupValuesMap` id | 0 |
-//! | 5 `challenge` | challenge | `challengesMap` id | 0 |
-//! | 6 `number` | constant | its index among the section's constants | 0 |
-//! | 8 `airvalue` | air value | `airValuesMap` id | 0 |
-//! | 9 `proofvalue` | proof value | `proofValuesMap` id | 0 |
-//! | 12 `Zi` | zerofier term of a boundary | `boundaries` index | 0 |
-//! | 13 `eval` | evaluation | `evMap` index | 0 |
+//! | 0 | fixed column | its column in `<air>.const` (`constPolsMap` id) | `openingPoints` index |
+//! | 1 … nStages + 1 | committed column of that stage | its `stagePos` in `cmPolsMap` | `openingPoints` index |
+//! | nStages + 2 | `Zi` of a boundary | 1 + its index in `boundaries` | 0 |
+//! | bs | tmp | the temporary | 0 |
+//! | bs + 2 | public | `publicsMap` id | 0 |
+//! | bs + 3 | number | its index in the section's numbers | 0 |
+//! | bs + 4 | air value | `airValuesMap` id | 0 |
+//! | bs + 5 | proof value | `proofValuesMap` id | 0 |
+//! | bs + 6 | airgroup value | `airgroupValuesMap` id | 0 |
+//! | bs + 7 | challenge | `challengesMap` id | 0 |
+//! | bs + 8 | evaluation | `evMap` id | 0 |
 //!
-//! No other kind is an operand. pilfflonk has no custom commits (P5) and no FRI (`xDivXSubXi`,
-//! `f`), the passes emit no `x`, and `q` is only a `destType`.
+//! Some values of the STARK's are never written here:
+//! - `bs + 1`, the tmp3 buffer (dimension 3);
+//! - `nStages + 3`, `xDivXSubXi` (FRI);
+//! - the custom commits;
+//! - `x`, `nStages + 2` with arg1 0 (PIL1).
 //!
-//! **Domains.** An expression whose `destType` is `q` runs over the extended coset `g·H'` (§4.4),
-//! point by point. Every other expression, and every constraint, runs over `H`, row by row. On a
-//! domain of `M = 2^e·N` points (`e = 0` on `H`), a column at offset `o` is read at point
-//! `(i + 2^e·o) mod M`. For boundary 0 (`everyRow`), `Zi` is `1/Z_H(X)`. For any other boundary
-//! `D` it is `Z_H(X)/Z_D(X)`, with `Z_D` as A.1 defines it: for `lastRow` that is `X − ω^(N−1)`,
-//! not the STARK prover's `X − ω^N` (Annex F.8). `X` is the point of the domain. `Q`'s code is
-//! `(Horner fold of the constraints) · Zi(everyRow)`, so it already divides by `Z_H` (A.1).
-//! `eval` belongs to code evaluated at `ξ`, as the `qVerifier` is (in its JSON). The code of this
-//! file is the prover's and has no `eval`, but the format has room for code of that form, for the
-//! interpreter's verifier mode (M17); there `Zi` is taken at `ξ`.
+//! Because the types keep the STARK's values, the STARK's test for a source that is the same for
+//! every point still works: `type > bs + 1`. The maps are those of `<air>.pilfflonkinfo.json` and
+//! `pilout.globalInfo.json`, which keep `pil-info`'s. Only the code `Q` runs has `Zi` operands. An
+//! evaluation belongs to code evaluated at `ξ`, as the `qVerifier` is, in its JSON. This file holds
+//! the prover's code and has none, but the format can carry that code for the interpreter's verifier
+//! mode (M17).
+//!
+//! **Semantics.**
+//!
+//! - **Domains.** As in the STARK, `Q`'s code (`cExpId`) runs over the extended coset `g·H'` (§4.4),
+//!   point by point. Every other expression, and every constraint, runs over `H`, row by row.
+//! - **Row offsets.** On a domain of `M = 2^e·N` points (`e = 0` on `H`), a column at the opening
+//!   point `o = openingPoints[arg2]` is read at point `(i + 2^e·o) mod M`.
+//! - **Zerofiers.** `Zi` of boundary 0 (`everyRow`) is `1/Z_H(X)`. For any other boundary `D` it is
+//!   `Z_H(X)/Z_D(X)`, with `Z_D` as A.1 defines it: for `lastRow` that is `X − ω^(N−1)`, not the
+//!   STARK prover's `X − ω^N` (Annex F.8). `X` is the point of the domain.
+//! - **Q.** `Q`'s code is `(Horner fold of the constraints) · Zi(everyRow)`, so it already divides
+//!   by `Z_H` (A.1).
 //!
 //! # From `pil-info`'s code to the file
 //!
-//! - **Dimension 1.** Every operand and destination has `dim` 1, or the encoder refuses the code.
-//!   The result of `PilInfoCfg::goldilocks` does not fit.
-//! - **The result.** The last op's destination (the intermediate polynomial's `cm`, `q`, or a
-//!   `tmp`) becomes a new temporary, `result`, as the STARK encoder does. What the value is for is
-//!   `destType`/`destId`. Every other destination must be a `tmp`.
-//! - **Temporaries**: `pil_info::io::temporaries::get_id_maps`, with extension dimension 1.
-//! - **Constants** are encoded from `CodeRef.value`, a decimal string, into 32 bytes. They must be
-//!   canonical (`< r`), with no reduction. The STARK's `CodeType.value` is a `u64`, so constants do
-//!   not go through it. A section keeps each distinct constant once, in the order the code first
-//!   uses it.
+//! As `prepare_expressions_bin` and `get_parser_args` do for the STARK:
 //!
-//! The encoding is deterministic: the same `PilInfoResult` gives the same bytes.
+//! - **The last destination.** The last op of an intermediate polynomial's code or of `Q`'s writes a
+//!   new temporary, the one numbered `tmpUsed`, which is the `destId`. In every other code the last
+//!   destination must be a tmp already, and every other destination must be a tmp.
+//! - **Temporaries.** They are allocated with `pil_info::io::temporaries::get_id_maps`, with
+//!   extension dimension 1.
+//! - **Numbers.** They are encoded from `CodeRef.value`, a decimal string, into 32 bytes. They must
+//!   be canonical (`< r`) and are not reduced. The STARK's `CodeType.value` is a `u64`, so the
+//!   numbers do not go through it. Each section keeps each distinct number once, in the order its
+//!   code first uses it.
+//! - **Refusals.** Every operand has `dim` 1, or the encoder refuses the code, so a
+//!   `PilInfoCfg::goldilocks` result does not fit.
+//! - **Determinism.** The same `PilInfoResult` gives the same bytes.
 //!
 //! # Reading it (M17)
 //!
-//! The interpreter needs no `ParserArgs`. It keeps `maxTemps` slots of one block of points per
-//! thread, and it can turn the constants into Montgomery form once, at load time. It runs the ops of an
-//! entry in order: it loads `a` and `b` by kind, applies the opcode and writes `dest`. After the
-//! last op the value is in slot `result`. Loading by kind:
-//! - `const` and `cm`: the column's values on the current domain, at the shifted point.
-//! - `tmp`: the slot.
-//! - `number`: the constant.
-//! - `public`, `challenge`, `airvalue`, `airgroupvalue` and `proofvalue`: a scalar, the same for
-//!   every point.
-//! - `Zi`: its helper vector over the domain.
-//! - `eval`: the evaluation.
+//! It is `ExpressionsBin::loadExpressionsBin` without the dimension fields:
+//! - read and check the prefix;
+//! - read args as u32;
+//! - read the numbers as 32-byte elements, converted to Montgomery form once, at load time.
 //!
-//! The interpreter resolves each `(kind, index)` with its own tables, built from
-//! `pilfflonkinfo.json` (for example, from a `cmPolsMap` id to the buffer of that column's stage),
-//! and not with offsets written by the setup. In the prover, the expressions are looked up by
-//! `expId`. The intermediate polynomials are those of `destType` cm (`cmPolsMap` has them with
-//! `imPol`), and `Q` is the one of `destType` q (the `cExpId` of `pilfflonkinfo.json`).
+//! The interpreter is `expressions_pack.hpp`'s over `Fr`, with the case of op 0 only: 8 args per
+//! op and the same buffer types. As the STARK's allocation does, the temporaries let an op's `dest`
+//! be one of its sources, and the interpreter must allow it.
 //!
-//! `cmPolsMap` also has the STARK's pieces of the quotient, `Q0 … Q{qDeg−1}` at stage
-//! `nStages + 1`. No operand refers to them: `Q`'s code computes the whole `Q`, not its pieces.
+//! `cmPolsMap` also has the pieces of the quotient, at stage `nStages + 1`. No operand refers to
+//! them: `Q`'s code computes the whole `Q`.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -182,19 +194,19 @@ use proofman_pilfflonk::field::{FrBytes, FIELD_BYTES};
 pub const BIN_FILE_TYPE: &str = "chps";
 
 /// pilfflonk's version of the container: `"pf"` in the high half, the revision in the low half.
-pub const BIN_VERSION: u32 = 0x7066_0001;
+pub const BIN_VERSION: u32 = 0x7066_0002;
 
-pub const HEADER_SECTION: u32 = 1;
-pub const EXPRESSIONS_SECTION: u32 = 2;
-pub const CONSTRAINTS_SECTION: u32 = 3;
-pub const HINTS_SECTION: u32 = 4;
-pub const N_SECTIONS: u32 = 4;
+/// The STARK's sections (`CHELPERS_*_SECTION`).
+pub const EXPRESSIONS_SECTION: u32 = 1;
+pub const CONSTRAINTS_SECTION: u32 = 2;
+pub const HINTS_SECTION: u32 = 3;
+pub const N_SECTIONS: u32 = 3;
 
 /// The sections, in the order the file has them.
-const SECTIONS: [u32; N_SECTIONS as usize] = [HEADER_SECTION, EXPRESSIONS_SECTION, CONSTRAINTS_SECTION, HINTS_SECTION];
+const SECTIONS: [u32; N_SECTIONS as usize] = [EXPRESSIONS_SECTION, CONSTRAINTS_SECTION, HINTS_SECTION];
 
-/// Words of an op record.
-pub const OP_WORDS: usize = 8;
+/// Args of an op, as in the STARK.
+pub const ARGS_PER_OP: usize = 8;
 
 /// The errors of the bytecode (spec §5.4: `thiserror`, following `common/src/error_manager.rs`).
 #[derive(Debug, thiserror::Error)]
@@ -203,7 +215,7 @@ pub enum BytecodeError {
     #[error("Cannot encode {0}")]
     Encode(String),
 
-    /// The file is not a revision-1 pilfflonk bytecode, or it is inconsistent.
+    /// The file is not a revision-2 pilfflonk bytecode, or it is inconsistent.
     #[error("Invalid bytecode: {0}")]
     Format(String),
 
@@ -234,16 +246,25 @@ fn format_error<T>(what: impl fmt::Display) -> BytecodeResult<T> {
     Err(BytecodeError::Format(what.to_string()))
 }
 
+fn to_u32<T: Copy + fmt::Display + TryInto<u32>>(value: T, what: impl fmt::Display) -> BytecodeResult<u32> {
+    match value.try_into() {
+        Ok(v) => Ok(v),
+        Err(_) => encode_error(format!("{what}: {value} does not fit in 32 bits")),
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The content of the file
 // ---------------------------------------------------------------------------------------------
 
-/// The content of `<air>.bin`. Section 4 (hints) is empty in this revision and has no field.
+/// The content of `<air>.bin`. Section 3 (hints) is empty in this revision and has no field.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Bytecode {
-    /// Section 2.
+    /// The AIR's number of stages, on which the operand types depend.
+    pub n_stages: u32,
+    /// Section 1.
     pub expressions: Vec<ExpressionBin>,
-    /// Section 3.
+    /// Section 2.
     pub constraints: Vec<ConstraintBin>,
 }
 
@@ -251,20 +272,8 @@ pub struct Bytecode {
 pub struct ExpressionBin {
     pub exp_id: u32,
     pub stage: u32,
-    pub dest: ExpressionDest,
     pub line: String,
     pub code: Code,
-}
-
-/// What an expression's value is for: `destType` and `destId`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExpressionDest {
-    /// An intermediate polynomial: its values over `H` are this `cmPolsMap` column.
-    ImPol { cm_id: u32 },
-    /// `Q`, over the extended coset.
-    Quotient,
-    /// A plain value.
-    Value,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -279,20 +288,23 @@ pub struct ConstraintBin {
     pub code: Code,
 }
 
-/// A code block after temporary allocation: its ops, the slots they use and the slot of its value.
+/// A code block after temporary allocation: its ops, the temporaries they use and the one the
+/// value ends in, the last op's `dest`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Code {
     pub ops: Vec<Op>,
-    pub n_temps: u32,
-    pub result: u32,
+    pub n_temp: u32,
+    pub dest_id: u32,
 }
 
+/// The STARK's operation codes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Opcode {
     Add,
     Sub,
     Mul,
-    Copy,
+    /// `b − a`.
+    SubSwap,
 }
 
 impl Opcode {
@@ -301,7 +313,7 @@ impl Opcode {
             Opcode::Add => 0,
             Opcode::Sub => 1,
             Opcode::Mul => 2,
-            Opcode::Copy => 4,
+            Opcode::SubSwap => 3,
         }
     }
 
@@ -310,118 +322,137 @@ impl Opcode {
             0 => Some(Opcode::Add),
             1 => Some(Opcode::Sub),
             2 => Some(Opcode::Mul),
-            4 => Some(Opcode::Copy),
+            3 => Some(Opcode::SubSwap),
             _ => None,
-        }
-    }
-
-    fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "add" => Some(Opcode::Add),
-            "sub" => Some(Opcode::Sub),
-            "mul" => Some(Opcode::Mul),
-            "copy" => Some(Opcode::Copy),
-            _ => None,
-        }
-    }
-
-    /// Its name in `pil-info`'s code.
-    pub fn name(self) -> &'static str {
-        match self {
-            Opcode::Add => "add",
-            Opcode::Sub => "sub",
-            Opcode::Mul => "mul",
-            Opcode::Copy => "copy",
         }
     }
 }
 
-/// `dest = a <opcode> b`, or `dest = a` for a copy: `b` is `None` exactly for a copy.
+/// `dest = a <opcode> b`, with `rank(a) ≤ rank(b)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Op {
     pub opcode: Opcode,
     pub dest: u32,
     pub a: Operand,
-    pub b: Option<Operand>,
+    pub b: Operand,
 }
 
 /// An operand: the rows of the table in the module's documentation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Operand {
-    Const { id: u32, offset: i32 },
-    Cm { id: u32, offset: i32 },
+    /// A fixed column, the `id`-th of `<air>.const`, at `openingPoints[opening]`.
+    Const {
+        id: u32,
+        opening: u32,
+    },
+    /// A committed column of `stage`, at its `stagePos`, at `openingPoints[opening]`.
+    Cm {
+        stage: u32,
+        stage_pos: u32,
+        opening: u32,
+    },
+    /// The zerofier term of `boundaries[boundary]`.
+    Zi {
+        boundary: u32,
+    },
     Tmp(u32),
     Public(u32),
-    AirgroupValue(u32),
-    Challenge(u32),
     Number(FrBytes),
     AirValue(u32),
     ProofValue(u32),
-    Zi(u32),
+    AirgroupValue(u32),
+    Challenge(u32),
     Eval(u32),
 }
 
-/// The C++ `opType` of each kind, which `pil-info`'s `OpType` mirrors in the same order.
-fn op_type_code(op_type: OpType) -> u32 {
-    match op_type {
-        OpType::Const => 0,
-        OpType::Cm => 1,
-        OpType::Tmp => 2,
-        OpType::Public => 3,
-        OpType::Airgroupvalue => 4,
-        OpType::Challenge => 5,
-        OpType::Number => 6,
-        OpType::StringVal => 7,
-        OpType::Airvalue => 8,
-        OpType::Proofvalue => 9,
-        OpType::Custom => 10,
-        OpType::X => 11,
-        OpType::Zi => 12,
-        OpType::Eval => 13,
-        OpType::XDivXSubXi => 14,
-        OpType::Q => 15,
-        OpType::F => 16,
+impl Operand {
+    /// The STARK's rank of the operand's kind (`operations_map_value` of `io/parser_args.rs`, for
+    /// dimension 1): the source of the lower rank goes first.
+    pub fn rank(&self) -> u32 {
+        match self {
+            Operand::Const { .. } | Operand::Cm { .. } | Operand::Zi { .. } => 0,
+            Operand::Tmp(_) => 1,
+            Operand::Public(_) => 2,
+            Operand::Number(_) => 3,
+            Operand::AirValue(_) => 4,
+            Operand::ProofValue(_) => 5,
+            Operand::AirgroupValue(_) => 9,
+            Operand::Challenge(_) => 11,
+            Operand::Eval(_) => 12,
+        }
     }
 }
 
-fn op_type_from_code(code: u32) -> Option<OpType> {
-    const ALL: [OpType; 17] = [
-        OpType::Const,
-        OpType::Cm,
-        OpType::Tmp,
-        OpType::Public,
-        OpType::Airgroupvalue,
-        OpType::Challenge,
-        OpType::Number,
-        OpType::StringVal,
-        OpType::Airvalue,
-        OpType::Proofvalue,
-        OpType::Custom,
-        OpType::X,
-        OpType::Zi,
-        OpType::Eval,
-        OpType::XDivXSubXi,
-        OpType::Q,
-        OpType::F,
-    ];
-    ALL.into_iter().find(|&t| op_type_code(t) == code)
+/// The STARK's buffer types for an AIR of `n_stages` stages and no custom commits.
+#[derive(Clone, Copy)]
+struct Types {
+    n_stages: u32,
 }
 
-impl Operand {
-    /// Its kind, as `pil-info` names it.
-    pub fn op_type(&self) -> OpType {
-        match self {
-            Operand::Const { .. } => OpType::Const,
-            Operand::Cm { .. } => OpType::Cm,
-            Operand::Tmp(_) => OpType::Tmp,
-            Operand::Public(_) => OpType::Public,
-            Operand::AirgroupValue(_) => OpType::Airgroupvalue,
-            Operand::Challenge(_) => OpType::Challenge,
-            Operand::Number(_) => OpType::Number,
-            Operand::AirValue(_) => OpType::Airvalue,
-            Operand::ProofValue(_) => OpType::Proofvalue,
-            Operand::Zi(_) => OpType::Zi,
-            Operand::Eval(_) => OpType::Eval,
+/// The most stages an AIR can have for its types, up to `bs + 8`, to fit in a u32.
+const MAX_N_STAGES: u32 = u32::MAX - 12;
+
+impl Types {
+    fn new(n_stages: u32) -> Option<Self> {
+        (n_stages <= MAX_N_STAGES).then_some(Self { n_stages })
+    }
+
+    fn zi(self) -> u32 {
+        self.n_stages + 2
+    }
+
+    /// `bs`: the tmp buffer, after the stages, the zerofiers, `xDivXSubXi` and no custom commit.
+    fn tmp(self) -> u32 {
+        self.n_stages + 4
+    }
+
+    /// `(type, arg1, arg2)`, the number already an index. `None` for a `Zi` of the last boundary
+    /// a u32 can count, whose arg1 would not fit.
+    fn words(self, t: &Operand, number: u32) -> Option<[u32; 3]> {
+        let bs = self.tmp();
+        Some(match *t {
+            Operand::Const { id, opening } => [0, id, opening],
+            Operand::Cm { stage, stage_pos, opening } => [stage, stage_pos, opening],
+            Operand::Zi { boundary } => [self.zi(), boundary.checked_add(1)?, 0],
+            Operand::Tmp(slot) => [bs, slot, 0],
+            Operand::Public(id) => [bs + 2, id, 0],
+            Operand::Number(_) => [bs + 3, number, 0],
+            Operand::AirValue(id) => [bs + 4, id, 0],
+            Operand::ProofValue(id) => [bs + 5, id, 0],
+            Operand::AirgroupValue(id) => [bs + 6, id, 0],
+            Operand::Challenge(id) => [bs + 7, id, 0],
+            Operand::Eval(id) => [bs + 8, id, 0],
+        })
+    }
+
+    fn operand(self, [ty, arg1, arg2]: [u32; 3], numbers: &[FrBytes], context: &str) -> BytecodeResult<Operand> {
+        let bs = self.tmp();
+        let scalar = |t: Operand| {
+            if arg2 == 0 {
+                Ok(t)
+            } else {
+                format_error(format!("{context}: an operand of type {ty} with arg2 {arg2}"))
+            }
+        };
+        match ty {
+            0 => Ok(Operand::Const { id: arg1, opening: arg2 }),
+            s if s <= self.n_stages + 1 => Ok(Operand::Cm { stage: s, stage_pos: arg1, opening: arg2 }),
+            t if t == self.zi() && arg1 >= 1 => scalar(Operand::Zi { boundary: arg1 - 1 }),
+            t if t == bs => scalar(Operand::Tmp(arg1)),
+            t if t == bs + 2 => scalar(Operand::Public(arg1)),
+            t if t == bs + 3 => match numbers.get(arg1 as usize) {
+                Some(value) => scalar(Operand::Number(*value)),
+                None => format_error(format!("{context}: number {arg1}, of {}", numbers.len())),
+            },
+            t if t == bs + 4 => scalar(Operand::AirValue(arg1)),
+            t if t == bs + 5 => scalar(Operand::ProofValue(arg1)),
+            t if t == bs + 6 => scalar(Operand::AirgroupValue(arg1)),
+            t if t == bs + 7 => scalar(Operand::Challenge(arg1)),
+            t if t == bs + 8 => scalar(Operand::Eval(arg1)),
+            _ => format_error(format!(
+                "{context}: ({ty}, {arg1}, {arg2}) is no operand of an AIR of {} stages",
+                self.n_stages
+            )),
         }
     }
 }
@@ -435,74 +466,84 @@ pub fn write_air_bin(result: &PilInfoResult, path: &Path) -> BytecodeResult<()> 
     Bytecode::from_pil_info(result)?.write(path)
 }
 
-fn to_u32<T: Copy + fmt::Display + TryInto<u32>>(value: T, what: impl fmt::Display) -> BytecodeResult<u32> {
-    match value.try_into() {
-        Ok(v) => Ok(v),
-        Err(_) => encode_error(format!("{what}: {value} does not fit in 32 bits")),
+/// What encoding an operand needs to know of the AIR: its stages, where each committed column is,
+/// and its opening points.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeContext {
+    pub n_stages: u32,
+    /// `(stage, stagePos)` of each `cmPolsMap` entry.
+    pub cm_pols: Vec<(u32, u32)>,
+    pub opening_points: Vec<i64>,
+}
+
+impl CodeContext {
+    pub fn from_pil_info(result: &PilInfoResult) -> BytecodeResult<Self> {
+        let setup = &result.setup;
+        let cm_pols = setup
+            .cm_pols_map
+            .iter()
+            .enumerate()
+            .map(|(i, p)| match (p.stage, p.stage_pos) {
+                (Some(stage), Some(stage_pos)) => {
+                    Ok((to_u32(stage, format!("cmPolsMap[{i}]"))?, to_u32(stage_pos, format!("cmPolsMap[{i}]"))?))
+                }
+                _ => encode_error(format!("cmPolsMap[{i}] ({}) has no stage or no stagePos", p.name)),
+            })
+            .collect::<BytecodeResult<_>>()?;
+        Ok(Self { n_stages: to_u32(setup.n_stages, "nStages")?, cm_pols, opening_points: setup.opening_points.clone() })
     }
 }
 
 impl Bytecode {
     /// The bytecode of the result of `pil_info::run` with `PilInfoCfg::bn254()`.
     ///
-    /// The hints the passes collected are not encoded (section 4 is empty in Fase 1): the setup
+    /// The hints the passes collected are not encoded (section 3 is empty in Fase 1): the setup
     /// refuses the prover hints and ignores the others (§4.2.1).
     pub fn from_pil_info(result: &PilInfoResult) -> BytecodeResult<Self> {
         if result.fri_exp_id.is_some() {
             return encode_error("a result with a FRI polynomial: pilfflonk opens with SHPLONK (PilInfoCfg::bn254())");
         }
+        let context = CodeContext::from_pil_info(result)?;
         let info = &result.pil_code.expressions_info;
         let expressions =
-            info.expressions_code.iter().map(|e| expression_bin(e, result)).collect::<BytecodeResult<Vec<_>>>()?;
+            info.expressions_code.iter().map(|e| expression_bin(e, result, &context)).collect::<BytecodeResult<_>>()?;
         let n = 1u64 << result.setup.pil_power;
-        let constraints =
-            info.constraints.iter().enumerate().map(|(i, c)| constraint_bin(i, c, n)).collect::<BytecodeResult<_>>()?;
-        Ok(Bytecode { expressions, constraints })
+        let constraints = info
+            .constraints
+            .iter()
+            .enumerate()
+            .map(|(i, c)| constraint_bin(i, c, n, &context))
+            .collect::<BytecodeResult<_>>()?;
+        Ok(Bytecode { n_stages: context.n_stages, expressions, constraints })
     }
 }
 
-fn expression_bin(entry: &ExpressionCodeEntry, result: &PilInfoResult) -> BytecodeResult<ExpressionBin> {
-    let context = format!("expression {}", entry.exp_id);
-    let last_dest = entry.code.last().map(|c| c.dest.ref_type.as_str());
-    let dest = if entry.exp_id == result.c_exp_id {
-        if last_dest != Some("q") {
-            return encode_error(format!("{context}: the constraint polynomial's code does not end writing q"));
-        }
-        ExpressionDest::Quotient
-    } else if let Some(d) = &entry.dest {
-        let is_im_pol = result.setup.cm_pols_map.get(d.id).is_some_and(|p| p.im_pol);
-        if d.op != "cm" || !is_im_pol {
-            return encode_error(format!(
-                "{context}: its destination ({} {}) is not an intermediate polynomial of cmPolsMap",
-                d.op, d.id
-            ));
-        }
-        ExpressionDest::ImPol { cm_id: to_u32(d.id, &context)? }
-    } else {
-        ExpressionDest::Value
-    };
-    if dest != ExpressionDest::Quotient && last_dest == Some("q") {
-        return encode_error(format!("{context}: only the constraint polynomial ({}) writes q", result.c_exp_id));
-    }
-    if let Some(last) = entry.code.last().filter(|c| c.dest.ref_type == "cm") {
-        if !matches!(dest, ExpressionDest::ImPol { cm_id } if cm_id as usize == last.dest.id) {
-            return encode_error(format!(
-                "{context}: its code writes cm {}, and its destination is {dest:?}",
-                last.dest.id
-            ));
-        }
-    }
+fn expression_bin(
+    entry: &ExpressionCodeEntry,
+    result: &PilInfoResult,
+    context: &CodeContext,
+) -> BytecodeResult<ExpressionBin> {
+    let what = format!("expression {}", entry.exp_id);
+    // The STARK's `is_special`: Q and the intermediate polynomials, whose value goes to a new
+    // temporary.
+    let special = entry.exp_id == result.c_exp_id
+        || result.setup.cm_pols_map.iter().any(|p| p.im_pol && p.exp_id == Some(entry.exp_id));
+    let redirect = special.then_some(entry.tmp_used);
     Ok(ExpressionBin {
-        exp_id: to_u32(entry.exp_id, &context)?,
-        stage: to_u32(entry.stage, &context)?,
-        dest,
+        exp_id: to_u32(entry.exp_id, &what)?,
+        stage: to_u32(entry.stage, &what)?,
         line: entry.line.clone(),
-        code: lower(&entry.code, &context)?,
+        code: lower(&entry.code, context, redirect, &what)?,
     })
 }
 
-fn constraint_bin(index: usize, entry: &ConstraintCodeEntry, n: u64) -> BytecodeResult<ConstraintBin> {
-    let context = format!("constraint {index}");
+fn constraint_bin(
+    index: usize,
+    entry: &ConstraintCodeEntry,
+    n: u64,
+    context: &CodeContext,
+) -> BytecodeResult<ConstraintBin> {
+    let what = format!("constraint {index}");
     let (first_row, last_row) = match (entry.boundary.as_str(), entry.offset_min, entry.offset_max) {
         ("everyRow", _, _) => (0, n),
         ("firstRow", _, _) => (0, 1),
@@ -512,143 +553,168 @@ fn constraint_bin(index: usize, entry: &ConstraintCodeEntry, n: u64) -> Bytecode
         }
         (boundary, min, max) => {
             return encode_error(format!(
-                "{context}: boundary {boundary} (offsets {min:?}, {max:?}) on {n} rows is none of \
+                "{what}: boundary {boundary} (offsets {min:?}, {max:?}) on {n} rows is none of \
                  everyRow, firstRow, lastRow and everyFrame within the trace"
             ))
         }
     };
     Ok(ConstraintBin {
-        stage: to_u32(entry.stage, &context)?,
-        first_row: to_u32(first_row, format!("{context}: first row"))?,
-        last_row: to_u32(last_row, format!("{context}: last row"))?,
+        stage: to_u32(entry.stage, &what)?,
+        first_row: to_u32(first_row, format!("{what}: first row"))?,
+        last_row: to_u32(last_row, format!("{what}: last row"))?,
         im_pol: entry.im_pol != 0,
         line: entry.line.clone().unwrap_or_default(),
-        code: lower(&entry.code, &context)?,
+        code: lower(&entry.code, context, None, &what)?,
     })
 }
 
 impl Code {
-    /// Lower a block of `pil-info`'s code (dimension 1) into the format: its last destination
-    /// becomes the result, and its temporaries are allocated.
-    pub fn from_entries(code: &[CodeEntry]) -> BytecodeResult<Self> {
-        lower(code, "the code")
+    /// Lower a block of `pil-info`'s code (dimension 1) into the format. With `redirect`, the last
+    /// op writes a new temporary with that id, as the STARK does for `Q` and the intermediate
+    /// polynomials (their last destination may be a `q` or a `cm`); without it, its destination
+    /// must be a tmp.
+    pub fn from_entries(code: &[CodeEntry], context: &CodeContext, redirect: Option<usize>) -> BytecodeResult<Self> {
+        lower(code, context, redirect, "the code")
     }
 }
 
-/// An operand before temporary allocation: a `Tmp` holds `pil-info`'s id, not a slot.
-type RawOp = (Opcode, usize, Operand, Option<Operand>);
+/// An op before temporary allocation: a `Tmp` holds `pil-info`'s id, not the allocated one.
+type RawOp = (Opcode, u32, Operand, Operand);
 
-fn lower(code: &[CodeEntry], context: &str) -> BytecodeResult<Code> {
+/// `a <op> b` in the STARK's order of sources: the higher rank second, a sub becoming a sub_swap.
+fn ordered(opcode: Opcode, a: Operand, b: Operand) -> (Opcode, Operand, Operand) {
+    if a.rank() > b.rank() {
+        let opcode = if opcode == Opcode::Sub { Opcode::SubSwap } else { opcode };
+        (opcode, b, a)
+    } else {
+        (opcode, a, b)
+    }
+}
+
+fn lower(code: &[CodeEntry], context: &CodeContext, redirect: Option<usize>, what: &str) -> BytecodeResult<Code> {
     let Some(last) = code.len().checked_sub(1) else {
-        return encode_error(format!("{context}: it has no ops"));
+        return encode_error(format!("{what}: it has no ops"));
     };
-
-    // The last op writes a new temporary, the result.
-    let max_tmp = code
-        .iter()
-        .flat_map(|c| std::iter::once(&c.dest).chain(&c.src))
-        .filter(|r| r.ref_type == "tmp")
-        .map(|r| r.id)
-        .max();
-    let result_tmp = max_tmp.map_or(0, |id| id + 1);
+    if let Some(id) = redirect {
+        let taken =
+            code.iter().flat_map(|c| std::iter::once(&c.dest).chain(&c.src)).any(|r| r.ref_type == "tmp" && r.id >= id);
+        if taken {
+            return encode_error(format!("{what}: a temporary numbered tmpUsed ({id}) or above"));
+        }
+    }
 
     let mut raw: Vec<RawOp> = Vec::with_capacity(code.len());
     for (i, entry) in code.iter().enumerate() {
-        let context = format!("{context}, op {i}");
-        let Some(opcode) = Opcode::from_name(&entry.op) else {
-            return encode_error(format!("{context}: unknown operation {}", entry.op));
+        let what = format!("{what}, op {i}");
+        check_dim(&entry.dest, &what)?;
+        let dest = match (i == last, redirect) {
+            (true, Some(id)) => to_u32(id, &what)?,
+            _ if entry.dest.ref_type == "tmp" => to_u32(entry.dest.id, &what)?,
+            _ => return encode_error(format!("{what}: it writes a {}, not a tmp", entry.dest.ref_type)),
         };
-        let arity = if opcode == Opcode::Copy { 1 } else { 2 };
-        if entry.src.len() != arity {
-            return encode_error(format!("{context}: {} with {} operands", entry.op, entry.src.len()));
-        }
-        check_dim(&entry.dest, &context)?;
-        let dest = if i == last {
-            if !matches!(entry.dest.ref_type.as_str(), "tmp" | "cm" | "q") {
-                return encode_error(format!("{context}: the result is written to a {}", entry.dest.ref_type));
-            }
-            result_tmp
-        } else if entry.dest.ref_type == "tmp" {
-            entry.dest.id
-        } else {
-            return encode_error(format!("{context}: an op before the last writes a {}", entry.dest.ref_type));
+        let operands = entry.src.iter().map(|s| operand(s, context, &what)).collect::<BytecodeResult<Vec<_>>>()?;
+        let (opcode, a, b) = match (entry.op.as_str(), operands.as_slice()) {
+            ("add", [a, b]) => ordered(Opcode::Add, *a, *b),
+            ("sub", [a, b]) => ordered(Opcode::Sub, *a, *b),
+            ("mul", [a, b]) => ordered(Opcode::Mul, *a, *b),
+            // The STARK's add without a second operand, completed with 0.
+            ("copy", [a]) => ordered(Opcode::Add, *a, Operand::Number(FrBytes::ZERO)),
+            (op, operands) => return encode_error(format!("{what}: {op} with {} operands", operands.len())),
         };
-        let a = operand(&entry.src[0], &context)?;
-        let b = entry.src.get(1).map(|s| operand(s, &context)).transpose()?;
         raw.push((opcode, dest, a, b));
     }
 
     // pil-info's allocation, the STARK's too. Its input is `CodeOperation`, of which it reads the
-    // kind, the id and the dim of each operand: the constants, which `CodeType` would truncate to
-    // a u64, are not part of it.
-    let slot_of = |t: &Operand| match *t {
-        Operand::Tmp(id) => id as usize,
-        _ => 0,
+    // kind, the id and the dim of each operand: the numbers, which `CodeType` would truncate to a
+    // u64, are not part of it.
+    let code_type = |t: &Operand| match *t {
+        Operand::Tmp(id) => CodeType { op_type: OpType::Tmp, id: u64::from(id), dim: 1, ..Default::default() },
+        _ => CodeType { op_type: OpType::Number, dim: 1, ..Default::default() },
     };
-    let code_type = |op_type: OpType, id: usize| CodeType { op_type, id: id as u64, dim: 1, ..Default::default() };
-    let operation = |(opcode, dest, a, b): &RawOp| CodeOperation {
-        op: opcode.name().to_string(),
-        dest: code_type(OpType::Tmp, *dest),
-        src: std::iter::once(a).chain(b).map(|s| code_type(s.op_type(), slot_of(s))).collect(),
-    };
-    let operations: Vec<CodeOperation> = raw.iter().map(operation).collect();
-    let max_id = result_tmp + 1;
+    let operations: Vec<CodeOperation> = raw
+        .iter()
+        .map(|(_, dest, a, b)| CodeOperation {
+            op: String::new(),
+            dest: code_type(&Operand::Tmp(*dest)),
+            src: vec![code_type(a), code_type(b)],
+        })
+        .collect();
+    let max_id = raw
+        .iter()
+        .flat_map(|(_, dest, a, b)| {
+            let tmp = |t: &Operand| if let Operand::Tmp(id) = *t { Some(id as usize) } else { None };
+            [Some(*dest as usize), tmp(a), tmp(b)]
+        })
+        .flatten()
+        .max()
+        .map_or(0, |id| id + 1);
     let mut slots = vec![-1i64; max_id];
     let mut unused = vec![-1i64; max_id];
-    let (n_temps, n_ext_temps) = get_id_maps(max_id, &mut slots, &mut unused, &operations, 1);
-    if n_ext_temps != 0 {
-        return encode_error(format!("{context}: temporaries of the extension field"));
+    let (n_temp, n_temp_ext) = get_id_maps(max_id, &mut slots, &mut unused, &operations, 1);
+    if n_temp_ext != 0 {
+        return encode_error(format!("{what}: temporaries of the extension field"));
     }
 
-    let slot = |id: usize| -> BytecodeResult<u32> {
-        match u32::try_from(slots[id]) {
+    let slot = |id: u32| -> BytecodeResult<u32> {
+        match u32::try_from(slots[id as usize]) {
             Ok(s) => Ok(s),
-            Err(_) => encode_error(format!("{context}: temporary {id} has no slot")),
+            Err(_) => encode_error(format!("{what}: temporary {id} has no slot")),
         }
     };
     let allocate = |t: Operand| -> BytecodeResult<Operand> {
         match t {
-            Operand::Tmp(id) => Ok(Operand::Tmp(slot(id as usize)?)),
+            Operand::Tmp(id) => Ok(Operand::Tmp(slot(id)?)),
             other => Ok(other),
         }
     };
     let ops = raw
         .into_iter()
-        .map(|(opcode, dest, a, b)| {
-            Ok(Op { opcode, dest: slot(dest)?, a: allocate(a)?, b: b.map(allocate).transpose()? })
-        })
-        .collect::<BytecodeResult<Vec<_>>>()?;
-    let code = Code { ops, n_temps: to_u32(n_temps, context)?, result: slot(result_tmp)? };
+        .map(|(opcode, dest, a, b)| Ok(Op { opcode, dest: slot(dest)?, a: allocate(a)?, b: allocate(b)? }))
+        .collect::<BytecodeResult<Vec<Op>>>()?;
+    let dest_id = ops[last].dest;
+    let code = Code { ops, n_temp: to_u32(n_temp, what)?, dest_id };
     // What the reader checks, so that a file the encoder writes is one it reads.
-    code.check().or_else(|why| encode_error(format!("{context}: {why}")))?;
+    code.check().or_else(|why| encode_error(format!("{what}: {why}")))?;
     Ok(code)
 }
 
-fn check_dim(r: &CodeRef, context: &str) -> BytecodeResult<()> {
+fn check_dim(r: &CodeRef, what: &str) -> BytecodeResult<()> {
     if r.dim == 1 {
         Ok(())
     } else {
         encode_error(format!(
-            "{context}: a {} of dimension {}; over BN254 every value has dimension 1 (PilInfoCfg::bn254())",
+            "{what}: a {} of dimension {}; over BN254 every value has dimension 1 (PilInfoCfg::bn254())",
             r.ref_type, r.dim
         ))
     }
 }
 
-fn operand(r: &CodeRef, context: &str) -> BytecodeResult<Operand> {
-    check_dim(r, context)?;
-    let id = || to_u32(r.id, format!("{context}: {} id", r.ref_type));
-    let offset = || match i32::try_from(r.prime.unwrap_or(0)) {
-        Ok(o) => Ok(o),
-        Err(_) => encode_error(format!("{context}: row offset {:?} does not fit in 32 bits", r.prime)),
+fn operand(r: &CodeRef, context: &CodeContext, what: &str) -> BytecodeResult<Operand> {
+    check_dim(r, what)?;
+    let id = || to_u32(r.id, format!("{what}: {} id", r.ref_type));
+    let opening = || {
+        let prime = r.prime.unwrap_or(0);
+        match context.opening_points.iter().position(|&p| p == prime) {
+            Some(i) => to_u32(i, what),
+            None => encode_error(format!(
+                "{what}: {} {} at {prime}, which is not an opening point ({:?})",
+                r.ref_type, r.id, context.opening_points
+            )),
+        }
     };
     let op_type = match OpType::parse(&r.ref_type) {
         Ok(t) => t,
-        Err(_) => return encode_error(format!("{context}: unknown operand {}", r.ref_type)),
+        Err(_) => return encode_error(format!("{what}: unknown operand {}", r.ref_type)),
     };
     Ok(match op_type {
-        OpType::Const => Operand::Const { id: id()?, offset: offset()? },
-        OpType::Cm => Operand::Cm { id: id()?, offset: offset()? },
+        OpType::Const => Operand::Const { id: id()?, opening: opening()? },
+        OpType::Cm => match context.cm_pols.get(r.id) {
+            Some(&(stage, stage_pos)) if (1..=context.n_stages + 1).contains(&stage) => {
+                Operand::Cm { stage, stage_pos, opening: opening()? }
+            }
+            Some((stage, _)) => return encode_error(format!("{what}: cm {} is of stage {stage}", r.id)),
+            None => return encode_error(format!("{what}: cm {} is not in cmPolsMap", r.id)),
+        },
         OpType::Tmp => Operand::Tmp(id()?),
         OpType::Public => Operand::Public(id()?),
         OpType::Airgroupvalue => Operand::AirgroupValue(id()?),
@@ -657,56 +723,54 @@ fn operand(r: &CodeRef, context: &str) -> BytecodeResult<Operand> {
             let value = r.value.as_deref().unwrap_or_default();
             match FrBytes::from_decimal(value) {
                 Ok(v) => Operand::Number(v),
-                Err(_) => return encode_error(format!("{context}: number {value:?} is not a canonical Fr (below r)")),
+                Err(_) => return encode_error(format!("{what}: number {value:?} is not a canonical Fr (below r)")),
             }
         }
         OpType::Airvalue => Operand::AirValue(id()?),
         OpType::Proofvalue => Operand::ProofValue(id()?),
         OpType::Zi => match r.boundary_id {
-            Some(b) => Operand::Zi(to_u32(b, format!("{context}: boundary"))?),
-            None => return encode_error(format!("{context}: a Zi without a boundary")),
+            Some(b) => Operand::Zi { boundary: to_u32(b, format!("{what}: boundary"))? },
+            None => return encode_error(format!("{what}: a Zi without a boundary")),
         },
         OpType::Eval => Operand::Eval(id()?),
         OpType::StringVal | OpType::Custom | OpType::X | OpType::XDivXSubXi | OpType::Q | OpType::F => {
-            return encode_error(format!("{context}: a {} is not an operand of the pilfflonk bytecode", r.ref_type))
+            return encode_error(format!("{what}: a {} is not an operand of the pilfflonk bytecode", r.ref_type))
         }
     })
 }
 
 impl Code {
-    /// What the reader requires of a block, beyond the ranges of its indices: every op has the
-    /// operands its opcode takes, every slot is below `n_temps` and written before it is read,
-    /// and the result is written. `Err` says why not.
+    /// What the reader requires of a block, beyond the ranges of its indices: no more temporaries
+    /// than ops, every temporary below `n_temp` and written before it is read, the sources in the
+    /// STARK's order, and `dest_id` the last op's `dest`. `Err` says why not.
     fn check(&self) -> Result<(), String> {
-        if self.ops.is_empty() {
+        let Some(last) = self.ops.last() else {
             return Err("a code block with no ops".to_string());
+        };
+        // Each temporary holds a value some op writes.
+        if self.n_temp as usize > self.ops.len() {
+            return Err(format!("{} temporaries for {} ops", self.n_temp, self.ops.len()));
         }
-        // Each slot holds a temporary some op writes.
-        if self.n_temps as usize > self.ops.len() {
-            return Err(format!("{} slots for {} ops", self.n_temps, self.ops.len()));
+        if self.dest_id != last.dest {
+            return Err(format!("destId {} is not the last op's dest, {}", self.dest_id, last.dest));
         }
-        let mut written = vec![false; self.n_temps as usize];
+        let mut written = vec![false; self.n_temp as usize];
         let read = |t: &Operand, written: &[bool]| match *t {
             Operand::Tmp(s) if !written.get(s as usize).copied().unwrap_or(false) => {
-                Err(format!("slot {s} is read before it is written, or is not below nTemps"))
+                Err(format!("temporary {s} is read before it is written, or is not below nTemp"))
             }
             _ => Ok(()),
         };
         for (i, op) in self.ops.iter().enumerate() {
-            if (op.opcode == Opcode::Copy) != op.b.is_none() {
-                return Err(format!("op {i}: {} with the wrong number of operands", op.opcode.name()));
+            if op.a.rank() > op.b.rank() {
+                return Err(format!("op {i}: its sources are not in the STARK's order"));
             }
             read(&op.a, &written).map_err(|why| format!("op {i}: {why}"))?;
-            if let Some(b) = &op.b {
-                read(b, &written).map_err(|why| format!("op {i}: {why}"))?;
-            }
+            read(&op.b, &written).map_err(|why| format!("op {i}: {why}"))?;
             match written.get_mut(op.dest as usize) {
                 Some(w) => *w = true,
-                None => return Err(format!("op {i}: slot {} is not below nTemps", op.dest)),
+                None => return Err(format!("op {i}: temporary {} is not below nTemp", op.dest)),
             }
-        }
-        if !written.get(self.result as usize).copied().unwrap_or(false) {
-            return Err(format!("the result, slot {}, is not written", self.result));
         }
         Ok(())
     }
@@ -725,91 +789,105 @@ fn put_string(out: &mut Vec<u8>, s: &str) {
     out.push(0);
 }
 
-/// A section's constants: each distinct value once, in the order the code first uses it.
+/// A section's numbers: each distinct value once, in the order the code first uses it.
 #[derive(Default)]
-struct Constants {
+struct Numbers {
     values: Vec<FrBytes>,
     index: HashMap<FrBytes, u32>,
 }
 
-impl Constants {
-    fn index_of(&mut self, value: FrBytes) -> BytecodeResult<u32> {
+impl Numbers {
+    fn index_of(&mut self, t: &Operand) -> BytecodeResult<u32> {
+        let Operand::Number(value) = *t else {
+            return Ok(0);
+        };
         if let Some(&i) = self.index.get(&value) {
             return Ok(i);
         }
-        let i = to_u32(self.values.len(), "the constants of a section")?;
+        let i = to_u32(self.values.len(), "the numbers of a section")?;
         self.values.push(value);
         self.index.insert(value, i);
         Ok(i)
     }
 }
 
-/// `(kind, index, offset)`.
-fn operand_words(t: &Operand, constants: &mut Constants) -> BytecodeResult<[u32; 3]> {
-    let kind = op_type_code(t.op_type());
-    Ok(match *t {
-        Operand::Const { id, offset } | Operand::Cm { id, offset } => [kind, id, offset as u32],
-        Operand::Number(value) => [kind, constants.index_of(value)?, 0],
-        Operand::Tmp(i)
-        | Operand::Public(i)
-        | Operand::AirgroupValue(i)
-        | Operand::Challenge(i)
-        | Operand::AirValue(i)
-        | Operand::ProofValue(i)
-        | Operand::Zi(i)
-        | Operand::Eval(i) => [kind, i, 0],
-    })
+/// A section's code, as the STARK's `write_expressions_section` and `write_constraints_section`
+/// lay it out, each entry's fields written by `fields` around its code's.
+struct CodeTable {
+    headers: Vec<u8>,
+    ops: Vec<u8>,
+    args: Vec<u8>,
+    numbers: Numbers,
+    n_ops: u32,
+    n_args: u32,
+    max_temp: u32,
+    max_args: u32,
+    max_ops: u32,
 }
 
-/// A code table, sections 2 and 3: the counts, the entries (each written by `entry` after its own
-/// fields and before the code's), the op records and the constants.
-fn code_table<E>(
-    entries: &[E],
-    code_of: impl Fn(&E) -> &Code,
-    line_of: impl Fn(&E) -> &str,
-    fields: impl Fn(&E, &mut Vec<u8>),
-) -> BytecodeResult<Vec<u8>> {
-    let mut constants = Constants::default();
-    let mut records: Vec<u8> = Vec::new();
-    let mut headers: Vec<u8> = Vec::new();
-    let mut n_ops: u32 = 0;
-    let mut max_temps: u32 = 0;
-    for entry in entries {
-        let code = code_of(entry);
-        code.check().or_else(encode_error)?;
-        let entry_ops = to_u32(code.ops.len(), "the ops of an entry")?;
-        fields(entry, &mut headers);
-        put_u32(&mut headers, code.n_temps);
-        put_u32(&mut headers, code.result);
-        put_u32(&mut headers, n_ops);
-        put_u32(&mut headers, entry_ops);
-        put_string(&mut headers, line_of(entry));
-        for op in &code.ops {
-            put_u32(&mut records, op.opcode.code());
-            put_u32(&mut records, op.dest);
-            let a = operand_words(&op.a, &mut constants)?;
-            let b = op.b.as_ref().map(|b| operand_words(b, &mut constants)).transpose()?.unwrap_or([0; 3]);
-            for w in a.into_iter().chain(b) {
-                put_u32(&mut records, w);
-            }
-        }
-        n_ops = match n_ops.checked_add(entry_ops) {
-            Some(n) => n,
-            None => return encode_error("more than 2^32 ops in a section"),
+impl CodeTable {
+    fn new<'a, F: FnOnce(&mut Vec<u8>, [u32; 5])>(
+        types: Types,
+        entries: impl Iterator<Item = (&'a Code, F)>,
+    ) -> BytecodeResult<Self> {
+        let mut table = CodeTable {
+            headers: Vec::new(),
+            ops: Vec::new(),
+            args: Vec::new(),
+            numbers: Numbers::default(),
+            n_ops: 0,
+            n_args: 0,
+            max_temp: 0,
+            max_args: 0,
+            max_ops: 0,
         };
-        max_temps = max_temps.max(code.n_temps);
+        for (code, fields) in entries {
+            code.check().or_else(encode_error)?;
+            let n_ops = to_u32(code.ops.len(), "the ops of an entry")?;
+            let n_args = match n_ops.checked_mul(ARGS_PER_OP as u32) {
+                Some(n) => n,
+                None => return encode_error("more than 2^32 args in an entry"),
+            };
+            fields(&mut table.headers, [code.n_temp, n_ops, table.n_ops, n_args, table.n_args]);
+            for op in &code.ops {
+                table.ops.push(0);
+                let mut operand = |t: &Operand| -> BytecodeResult<[u32; 3]> {
+                    let words = types.words(t, table.numbers.index_of(t)?);
+                    // A stage out of 1 … nStages + 1, for one, would read as another operand.
+                    match words {
+                        Some(w) if types.operand(w, &table.numbers.values, "").ok().as_ref() == Some(t) => Ok(w),
+                        _ => encode_error(format!("{t:?} in an AIR of {} stages", types.n_stages)),
+                    }
+                };
+                let (a, b) = (operand(&op.a)?, operand(&op.b)?);
+                for w in [op.opcode.code(), op.dest].into_iter().chain(a).chain(b) {
+                    put_u32(&mut table.args, w);
+                }
+            }
+            table.n_ops = match table.n_ops.checked_add(n_ops) {
+                Some(n) => n,
+                None => return encode_error("more than 2^32 ops in a section"),
+            };
+            table.n_args = match table.n_args.checked_add(n_args) {
+                Some(n) => n,
+                None => return encode_error("more than 2^32 args in a section"),
+            };
+            table.max_temp = table.max_temp.max(code.n_temp);
+            table.max_args = table.max_args.max(n_args);
+            table.max_ops = table.max_ops.max(n_ops);
+        }
+        Ok(table)
     }
-    let mut out = Vec::with_capacity(16 + headers.len() + records.len() + FIELD_BYTES * constants.values.len());
-    put_u32(&mut out, to_u32(entries.len(), "the entries of a section")?);
-    put_u32(&mut out, n_ops);
-    put_u32(&mut out, to_u32(constants.values.len(), "the constants of a section")?);
-    put_u32(&mut out, max_temps);
-    out.extend_from_slice(&headers);
-    out.extend_from_slice(&records);
-    for value in &constants.values {
-        out.extend_from_slice(&value.to_le_bytes());
+
+    /// The headers, then the ops, the args and the numbers.
+    fn write_body(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.headers);
+        out.extend_from_slice(&self.ops);
+        out.extend_from_slice(&self.args);
+        for value in &self.numbers.values {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
     }
-    Ok(out)
 }
 
 /// `r`, little-endian: the modulus of the field `PilInfoCfg::bn254()` runs the passes over.
@@ -820,49 +898,83 @@ fn r_le() -> [u8; FIELD_BYTES] {
     bytes
 }
 
-fn dest_words(dest: ExpressionDest) -> (u32, u32) {
-    match dest {
-        ExpressionDest::ImPol { cm_id } => (op_type_code(OpType::Cm), cm_id),
-        ExpressionDest::Quotient => (op_type_code(OpType::Q), 0),
-        ExpressionDest::Value => (op_type_code(OpType::Tmp), 0),
-    }
-}
-
 impl Bytecode {
-    /// The payloads of the four sections, in order.
+    /// The payloads of the three sections, in order.
     fn sections(&self) -> BytecodeResult<[Vec<u8>; N_SECTIONS as usize]> {
-        let mut header = Vec::with_capacity(8 + FIELD_BYTES);
-        put_u32(&mut header, BIN_VERSION);
-        put_u32(&mut header, FIELD_BYTES as u32);
-        header.extend_from_slice(&r_le());
-
-        let expressions = code_table(
-            &self.expressions,
-            |e| &e.code,
-            |e| &e.line,
-            |e, out| {
-                let (dest_type, dest_id) = dest_words(e.dest);
-                for w in [e.exp_id, e.stage, dest_type, dest_id] {
-                    put_u32(out, w);
-                }
-            },
-        )?;
-        let constraints = code_table(
-            &self.constraints,
-            |c| &c.code,
-            |c| &c.line,
-            |c, out| {
-                for w in [c.stage, c.first_row, c.last_row, u32::from(c.im_pol)] {
-                    put_u32(out, w);
-                }
-            },
-        )?;
+        let Some(types) = Types::new(self.n_stages) else {
+            return encode_error(format!("{} stages", self.n_stages));
+        };
         if let Some((i, c)) = self.constraints.iter().enumerate().find(|(_, c)| c.first_row > c.last_row) {
             return encode_error(format!("constraint {i}: rows {}..{}", c.first_row, c.last_row));
         }
-        let mut hints = Vec::with_capacity(4);
-        put_u32(&mut hints, 0);
-        Ok([header, expressions, constraints, hints])
+
+        // Per expression: expId, destId, stage, nTemp, nOps, opsOffset, nArgs, argsOffset, line.
+        let expressions = CodeTable::new(
+            types,
+            self.expressions.iter().map(|e| {
+                let fields = move |out: &mut Vec<u8>, [n_temp, n_ops, ops_offset, n_args, args_offset]: [u32; 5]| {
+                    for w in [e.exp_id, e.code.dest_id, e.stage, n_temp, n_ops, ops_offset, n_args, args_offset] {
+                        put_u32(out, w);
+                    }
+                    put_string(out, &e.line);
+                };
+                (&e.code, fields)
+            }),
+        )?;
+        // Per constraint: stage, destId, firstRow, lastRow, nTemp, nOps, opsOffset, nArgs,
+        // argsOffset, imPol, line.
+        let constraints = CodeTable::new(
+            types,
+            self.constraints.iter().map(|c| {
+                let fields = move |out: &mut Vec<u8>, [n_temp, n_ops, ops_offset, n_args, args_offset]: [u32; 5]| {
+                    for w in [
+                        c.stage,
+                        c.code.dest_id,
+                        c.first_row,
+                        c.last_row,
+                        n_temp,
+                        n_ops,
+                        ops_offset,
+                        n_args,
+                        args_offset,
+                    ] {
+                        put_u32(out, w);
+                    }
+                    put_u32(out, u32::from(c.im_pol));
+                    put_string(out, &c.line);
+                };
+                (&c.code, fields)
+            }),
+        )?;
+
+        let mut section1 = Vec::new();
+        for w in [BIN_VERSION, FIELD_BYTES as u32] {
+            put_u32(&mut section1, w);
+        }
+        section1.extend_from_slice(&r_le());
+        put_u32(&mut section1, self.n_stages);
+        // The STARK's maxima cover both sections.
+        let max_temp = expressions.max_temp.max(constraints.max_temp);
+        let max_args = expressions.max_args.max(constraints.max_args);
+        let max_ops = expressions.max_ops.max(constraints.max_ops);
+        let n_numbers = to_u32(expressions.numbers.values.len(), "the numbers of section 1")?;
+        let n_expressions = to_u32(self.expressions.len(), "the expressions")?;
+        for w in [max_temp, max_args, max_ops, expressions.n_ops, expressions.n_args, n_numbers, n_expressions] {
+            put_u32(&mut section1, w);
+        }
+        expressions.write_body(&mut section1);
+
+        let mut section2 = Vec::new();
+        let n_numbers = to_u32(constraints.numbers.values.len(), "the numbers of section 2")?;
+        let n_constraints = to_u32(self.constraints.len(), "the constraints")?;
+        for w in [constraints.n_ops, constraints.n_args, n_numbers, n_constraints] {
+            put_u32(&mut section2, w);
+        }
+        constraints.write_body(&mut section2);
+
+        let mut section3 = Vec::with_capacity(4);
+        put_u32(&mut section3, 0);
+        Ok([section1, section2, section3])
     }
 
     /// Write the file at `path`.
@@ -920,6 +1032,14 @@ impl<'a> Reader<'a> {
         Ok(u64::from_le_bytes(word))
     }
 
+    fn words<const N: usize>(&mut self) -> BytecodeResult<[u32; N]> {
+        let mut words = [0u32; N];
+        for w in words.iter_mut() {
+            *w = self.u32()?;
+        }
+        Ok(words)
+    }
+
     fn fr(&mut self) -> BytecodeResult<[u8; FIELD_BYTES]> {
         let mut bytes = [0u8; FIELD_BYTES];
         bytes.copy_from_slice(self.take(FIELD_BYTES)?);
@@ -948,141 +1068,104 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// The fields of an entry of a code table that are not its code's.
-struct EntryHeader<F> {
-    fields: F,
-    n_temps: u32,
-    result: u32,
-    ops_offset: u32,
-    n_ops: u32,
+/// An entry of a code table as the file has it: its own fields, its code's counts and offsets
+/// (`nTemp`, `nOps`, `opsOffset`, `nArgs`, `argsOffset`) and its line.
+struct EntryHeader<const N: usize> {
+    fields: [u32; N],
+    code: [u32; 5],
+    dest_id: u32,
     line: String,
 }
 
-/// Read a code table whose entries have `N_FIELDS` words of their own.
-fn read_code_table<const N_FIELDS: usize>(
-    bytes: &[u8],
-    what: &'static str,
-) -> BytecodeResult<Vec<([u32; N_FIELDS], String, Code)>> {
-    let mut r = Reader::new(bytes, what);
-    let n_entries = r.u32()?;
-    let n_ops = r.u32()?;
-    let n_constants = r.u32()?;
-    let max_temps = r.u32()?;
+/// The maxima a section 1 states, which cover both code tables.
+#[derive(Default)]
+struct Maxima {
+    temp: u32,
+    args: u32,
+    ops: u32,
+}
 
-    let mut headers: Vec<EntryHeader<[u32; N_FIELDS]>> = Vec::new();
-    let mut expected_offset: u64 = 0;
-    for i in 0..n_entries {
-        let mut fields = [0u32; N_FIELDS];
-        for f in fields.iter_mut() {
-            *f = r.u32()?;
+/// The entries of a code table whose ops, args and numbers `r` is at, and their codes.
+fn read_code<const N: usize>(
+    r: &mut Reader,
+    types: Types,
+    headers: Vec<EntryHeader<N>>,
+    [n_ops, n_args, n_numbers]: [u32; 3],
+    maxima: &mut Maxima,
+    what: &str,
+) -> BytecodeResult<Vec<([u32; N], String, Code)>> {
+    let (mut ops_offset, mut args_offset) = (0u64, 0u64);
+    for (i, h) in headers.iter().enumerate() {
+        let [n_temp, entry_ops, entry_ops_offset, entry_args, entry_args_offset] = h.code;
+        if u64::from(entry_ops_offset) != ops_offset || u64::from(entry_args_offset) != args_offset {
+            return format_error(format!("{what}, entry {i}: its ops or args do not follow the previous entry's"));
         }
-        let header = EntryHeader {
-            fields,
-            n_temps: r.u32()?,
-            result: r.u32()?,
-            ops_offset: r.u32()?,
-            n_ops: r.u32()?,
-            line: r.string()?,
-        };
-        if u64::from(header.ops_offset) != expected_offset {
-            return format_error(format!(
-                "{what}, entry {i}: its ops start at {}, not {expected_offset}",
-                header.ops_offset
-            ));
+        if u64::from(entry_args) != u64::from(entry_ops) * ARGS_PER_OP as u64 {
+            return format_error(format!("{what}, entry {i}: {entry_args} args for {entry_ops} ops"));
         }
-        expected_offset += u64::from(header.n_ops);
-        headers.push(header);
+        ops_offset += u64::from(entry_ops);
+        args_offset += u64::from(entry_args);
+        maxima.temp = maxima.temp.max(n_temp);
+        maxima.args = maxima.args.max(entry_args);
+        maxima.ops = maxima.ops.max(entry_ops);
     }
-    if expected_offset != u64::from(n_ops) {
-        return format_error(format!("{what}: the entries have {expected_offset} ops, and nOps is {n_ops}"));
-    }
-    if headers.iter().map(|h| h.n_temps).max().unwrap_or(0) != max_temps {
-        return format_error(format!("{what}: maxTemps is {max_temps}, which is not the largest nTemps"));
+    if ops_offset != u64::from(n_ops) || args_offset != u64::from(n_args) {
+        return format_error(format!(
+            "{what}: the entries have {ops_offset} ops and {args_offset} args, not {n_ops} and {n_args}"
+        ));
     }
 
-    let record_bytes = (n_ops as usize).checked_mul(4 * OP_WORDS);
-    let records = match record_bytes {
+    let ops = r.take(n_ops as usize)?;
+    if let Some(i) = ops.iter().position(|&o| o != 0) {
+        return format_error(format!("{what}: op {i} is of dimensions {}, and every value has dimension 1", ops[i]));
+    }
+    let args = match (n_args as usize).checked_mul(4) {
         Some(n) => r.take(n)?,
-        None => return format_error(format!("{what}: too many ops")),
+        None => return format_error(format!("{what}: too many args")),
     };
-    let mut constants = Vec::new();
-    for i in 0..n_constants {
+    let mut numbers = Vec::new();
+    for i in 0..n_numbers {
         match FrBytes::from_le_bytes(r.fr()?) {
-            Ok(v) => constants.push(v),
-            Err(_) => return format_error(format!("{what}: constant {i} is not below r")),
+            Ok(v) => numbers.push(v),
+            Err(_) => return format_error(format!("{what}: number {i} is not below r")),
         }
     }
     r.finish()?;
 
-    let mut words = records.chunks_exact(4).map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]));
-    let mut used = vec![false; constants.len()];
+    let mut words = args.chunks_exact(4).map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]));
+    let mut used = vec![false; numbers.len()];
     let mut entries = Vec::with_capacity(headers.len());
     for (i, h) in headers.into_iter().enumerate() {
-        let mut ops = Vec::with_capacity(h.n_ops as usize);
-        for j in 0..h.n_ops {
-            let mut record = [0u32; OP_WORDS];
+        let [n_temp, entry_ops, ..] = h.code;
+        let mut ops = Vec::with_capacity(entry_ops as usize);
+        for j in 0..entry_ops {
+            let mut record = [0u32; ARGS_PER_OP];
             for w in record.iter_mut() {
                 *w = words.next().unwrap_or_default();
             }
             let context = format!("{what}, entry {i}, op {j}");
             let Some(opcode) = Opcode::from_code(record[0]) else {
-                return format_error(format!("{context}: unknown opcode {}", record[0]));
+                return format_error(format!("{context}: unknown opType {}", record[0]));
             };
-            let a = read_operand(&record[2..5], &constants, &mut used, &context)?;
-            let b = if opcode == Opcode::Copy {
-                if record[5..] != [0, 0, 0] {
-                    return format_error(format!("{context}: a copy's second operand is not three zeros"));
+            let mut source = |words: &[u32]| -> BytecodeResult<Operand> {
+                let t = types.operand([words[0], words[1], words[2]], &numbers, &context)?;
+                if words[0] == types.tmp() + 3 {
+                    used[words[1] as usize] = true;
                 }
-                None
-            } else {
-                Some(read_operand(&record[5..], &constants, &mut used, &context)?)
+                Ok(t)
             };
+            let a = source(&record[2..5])?;
+            let b = source(&record[5..8])?;
             ops.push(Op { opcode, dest: record[1], a, b });
         }
-        let code = Code { ops, n_temps: h.n_temps, result: h.result };
+        let code = Code { ops, n_temp, dest_id: h.dest_id };
         code.check().or_else(|why| format_error(format!("{what}, entry {i}: {why}")))?;
         entries.push((h.fields, h.line, code));
     }
     if let Some(i) = used.iter().position(|u| !u) {
-        return format_error(format!("{what}: constant {i} is not used"));
+        return format_error(format!("{what}: number {i} is not used"));
     }
     Ok(entries)
-}
-
-fn read_operand(words: &[u32], constants: &[FrBytes], used: &mut [bool], context: &str) -> BytecodeResult<Operand> {
-    let (kind, index, offset) = (words[0], words[1], words[2]);
-    let Some(op_type) = op_type_from_code(kind) else {
-        return format_error(format!("{context}: kind {kind} is not an operand"));
-    };
-    let scalar = |t: Operand| {
-        if offset == 0 {
-            Ok(t)
-        } else {
-            format_error(format!("{context}: a {} with offset {offset}", op_type.to_str()))
-        }
-    };
-    match op_type {
-        OpType::Const => Ok(Operand::Const { id: index, offset: offset as i32 }),
-        OpType::Cm => Ok(Operand::Cm { id: index, offset: offset as i32 }),
-        OpType::Tmp => scalar(Operand::Tmp(index)),
-        OpType::Public => scalar(Operand::Public(index)),
-        OpType::Airgroupvalue => scalar(Operand::AirgroupValue(index)),
-        OpType::Challenge => scalar(Operand::Challenge(index)),
-        OpType::Number => {
-            let Some(value) = constants.get(index as usize) else {
-                return format_error(format!("{context}: constant {index}, of {}", constants.len()));
-            };
-            used[index as usize] = true;
-            scalar(Operand::Number(*value))
-        }
-        OpType::Airvalue => scalar(Operand::AirValue(index)),
-        OpType::Proofvalue => scalar(Operand::ProofValue(index)),
-        OpType::Zi => scalar(Operand::Zi(index)),
-        OpType::Eval => scalar(Operand::Eval(index)),
-        OpType::StringVal | OpType::Custom | OpType::X | OpType::XDivXSubXi | OpType::Q | OpType::F => {
-            format_error(format!("{context}: kind {kind} ({}) is not an operand", op_type.to_str()))
-        }
-    }
 }
 
 impl Bytecode {
@@ -1119,52 +1202,78 @@ impl Bytecode {
             sections.push(payload);
         }
         r.finish()?;
-        let [header, expressions, constraints, hints] = sections[..] else {
+        let [expressions, constraints, hints] = sections[..] else {
             return format_error("the sections");
         };
 
-        let mut header = Reader::new(header, "the header");
-        let header_version = header.u32()?;
-        let n8 = header.u32()?;
-        let modulus = header.fr()?;
-        header.finish()?;
-        if header_version != BIN_VERSION || n8 != FIELD_BYTES as u32 || modulus != r_le() {
+        // Section 1: the prefix, the counts and the entries.
+        let mut r1 = Reader::new(expressions, "the expressions");
+        let [prefix_version, n8] = r1.words()?;
+        let modulus = r1.fr()?;
+        if prefix_version != BIN_VERSION || n8 != FIELD_BYTES as u32 || modulus != r_le() {
             return format_error(format!(
-                "the header (version {header_version:#x}, n8 {n8}) is not that of a revision-1 bytecode over BN254"
+                "section 1 starts with version {prefix_version:#x} and n8 {n8}, not those of a revision-2 \
+                 bytecode over BN254"
+            ));
+        }
+        let [n_stages] = r1.words()?;
+        let Some(types) = Types::new(n_stages) else {
+            return format_error(format!("{n_stages} stages"));
+        };
+        let [max_temp, max_args, max_ops, n_ops, n_args, n_numbers, n_expressions] = r1.words()?;
+        let mut headers = Vec::new();
+        for _ in 0..n_expressions {
+            let [exp_id, dest_id, stage] = r1.words()?;
+            headers.push(EntryHeader { fields: [exp_id, stage], code: r1.words()?, dest_id, line: r1.string()? });
+        }
+        let mut maxima = Maxima::default();
+        let expressions =
+            read_code(&mut r1, types, headers, [n_ops, n_args, n_numbers], &mut maxima, "the expressions")?
+                .into_iter()
+                .map(|([exp_id, stage], line, code)| ExpressionBin { exp_id, stage, line, code })
+                .collect();
+
+        // Section 2.
+        let mut r2 = Reader::new(constraints, "the constraints");
+        let [n_ops, n_args, n_numbers, n_constraints] = r2.words()?;
+        let mut headers = Vec::new();
+        for _ in 0..n_constraints {
+            let [stage, dest_id, first_row, last_row] = r2.words()?;
+            let code = r2.words()?;
+            let [im_pol] = r2.words()?;
+            headers.push(EntryHeader {
+                fields: [stage, first_row, last_row, im_pol],
+                code,
+                dest_id,
+                line: r2.string()?,
+            });
+        }
+        let constraints =
+            read_code(&mut r2, types, headers, [n_ops, n_args, n_numbers], &mut maxima, "the constraints")?
+                .into_iter()
+                .enumerate()
+                .map(|(i, ([stage, first_row, last_row, im_pol], line, code))| {
+                    if first_row > last_row || im_pol > 1 {
+                        return format_error(format!("constraint {i}: rows {first_row}..{last_row}, imPol {im_pol}"));
+                    }
+                    Ok(ConstraintBin { stage, first_row, last_row, im_pol: im_pol == 1, line, code })
+                })
+                .collect::<BytecodeResult<Vec<_>>>()?;
+        if (max_temp, max_args, max_ops) != (maxima.temp, maxima.args, maxima.ops) {
+            return format_error(format!(
+                "maxTmp, maxArgs and maxOps are {max_temp}, {max_args} and {max_ops}, and the code's are {}, {} and {}",
+                maxima.temp, maxima.args, maxima.ops
             ));
         }
 
-        let expressions = read_code_table::<4>(expressions, "the expressions")?
-            .into_iter()
-            .enumerate()
-            .map(|(i, ([exp_id, stage, dest_type, dest_id], line, code))| {
-                let dest = match (dest_type, dest_id) {
-                    (t, id) if t == op_type_code(OpType::Cm) => ExpressionDest::ImPol { cm_id: id },
-                    (t, 0) if t == op_type_code(OpType::Q) => ExpressionDest::Quotient,
-                    (t, 0) if t == op_type_code(OpType::Tmp) => ExpressionDest::Value,
-                    _ => return format_error(format!("expression {i}: destination ({dest_type}, {dest_id})")),
-                };
-                Ok(ExpressionBin { exp_id, stage, dest, line, code })
-            })
-            .collect::<BytecodeResult<Vec<_>>>()?;
-        let constraints = read_code_table::<4>(constraints, "the constraints")?
-            .into_iter()
-            .enumerate()
-            .map(|(i, ([stage, first_row, last_row, im_pol], line, code))| {
-                if first_row > last_row || im_pol > 1 {
-                    return format_error(format!("constraint {i}: rows {first_row}..{last_row}, imPol {im_pol}"));
-                }
-                Ok(ConstraintBin { stage, first_row, last_row, im_pol: im_pol == 1, line, code })
-            })
-            .collect::<BytecodeResult<Vec<_>>>()?;
-
-        let mut hints = Reader::new(hints, "the hints");
-        let n_hints = hints.u32()?;
-        hints.finish()?;
+        // Section 3.
+        let mut r3 = Reader::new(hints, "the hints");
+        let [n_hints] = r3.words()?;
+        r3.finish()?;
         if n_hints != 0 {
-            return format_error(format!("{n_hints} hints: revision 1 has none"));
+            return format_error(format!("{n_hints} hints: revision 2 has none"));
         }
-        Ok(Bytecode { expressions, constraints })
+        Ok(Bytecode { n_stages, expressions, constraints })
     }
 }
 
@@ -1173,48 +1282,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn operand_kinds_are_the_cpp_op_types() {
-        // pil2-stark/src/starkpil/stark_info.hpp: typedef enum { const_ = 0, cm = 1, … } opType.
-        let cpp = [
-            ("const", 0),
-            ("cm", 1),
-            ("tmp", 2),
-            ("public", 3),
-            ("airgroupvalue", 4),
-            ("challenge", 5),
-            ("number", 6),
-            ("string", 7),
-            ("airvalue", 8),
-            ("proofvalue", 9),
-            ("custom", 10),
-            ("x", 11),
-            ("Zi", 12),
-            ("eval", 13),
-            ("xDivXSubXi", 14),
-            ("q", 15),
-            ("f", 16),
-        ];
-        for (name, code) in cpp {
-            let op_type = OpType::parse(name).unwrap();
-            assert_eq!(op_type_code(op_type), code, "{name}");
-            assert_eq!(op_type_from_code(code), Some(op_type), "{name}");
-        }
-        assert_eq!(op_type_from_code(17), None);
-    }
-
-    #[test]
-    fn opcodes_are_the_starks_and_copy() {
-        for (opcode, code) in [(Opcode::Add, 0), (Opcode::Sub, 1), (Opcode::Mul, 2), (Opcode::Copy, 4)] {
+    fn opcodes_are_the_starks() {
+        for (opcode, code) in [(Opcode::Add, 0), (Opcode::Sub, 1), (Opcode::Mul, 2), (Opcode::SubSwap, 3)] {
             assert_eq!(opcode.code(), code);
             assert_eq!(Opcode::from_code(code), Some(opcode));
-            assert_eq!(Opcode::from_name(opcode.name()), Some(opcode));
         }
-        // The STARK's sub_swap has nothing to swap here.
-        assert_eq!(Opcode::from_code(3), None);
+        assert_eq!(Opcode::from_code(4), None);
+    }
+
+    /// `operations_map_value` of `setup/pil2-stark/src/io/parser_args.rs`, for the keys of
+    /// dimension 1.
+    #[test]
+    fn ranks_are_the_starks() {
+        let one = FrBytes::from_u64(1);
+        let ranks = [
+            (Operand::Const { id: 0, opening: 0 }, 0),               // "const"
+            (Operand::Cm { stage: 1, stage_pos: 0, opening: 0 }, 0), // "commit1"
+            (Operand::Zi { boundary: 0 }, 0),                        // "Zi"
+            (Operand::Tmp(0), 1),                                    // "tmp1"
+            (Operand::Public(0), 2),                                 // "public"
+            (Operand::Number(one), 3),                               // "number"
+            (Operand::AirValue(0), 4),                               // "airvalue1"
+            (Operand::ProofValue(0), 5),                             // "proofvalue1"
+            (Operand::AirgroupValue(0), 9),                          // "airgroupvalue"
+            (Operand::Challenge(0), 11),                             // "challenge"
+            (Operand::Eval(0), 12),                                  // "eval"
+        ];
+        for (t, rank) in ranks {
+            assert_eq!(t.rank(), rank, "{t:?}");
+        }
+    }
+
+    /// The buffer types of `push_args`, for an AIR of 2 stages and no custom commits
+    /// (`buffer_size = 1 + 2 + 3 = 6`), and back.
+    #[test]
+    fn types_are_the_starks_buffers() {
+        let types = Types::new(2).unwrap();
+        let wide = FrBytes::from_u64(7);
+        let cases = [
+            (Operand::Const { id: 5, opening: 1 }, [0, 5, 1]),
+            (Operand::Cm { stage: 1, stage_pos: 4, opening: 2 }, [1, 4, 2]),
+            (Operand::Cm { stage: 3, stage_pos: 0, opening: 0 }, [3, 0, 0]),
+            (Operand::Zi { boundary: 0 }, [4, 1, 0]),
+            (Operand::Tmp(9), [6, 9, 0]),
+            (Operand::Public(1), [8, 1, 0]),
+            (Operand::Number(wide), [9, 0, 0]),
+            (Operand::AirValue(2), [10, 2, 0]),
+            (Operand::ProofValue(3), [11, 3, 0]),
+            (Operand::AirgroupValue(4), [12, 4, 0]),
+            (Operand::Challenge(5), [13, 5, 0]),
+            (Operand::Eval(6), [14, 6, 0]),
+        ];
+        for (t, words) in cases {
+            assert_eq!(types.words(&t, 0), Some(words), "{t:?}");
+            assert_eq!(types.operand(words, &[wide], "").unwrap(), t);
+        }
+        // x, xDivXSubXi, tmp3 and beyond evals are not operands here.
+        for words in [[4, 0, 0], [5, 0, 0], [7, 0, 0], [15, 0, 0]] {
+            assert!(types.operand(words, &[wide], "").is_err(), "{words:?}");
+        }
     }
 
     #[test]
-    fn the_header_modulus_is_r() {
+    fn the_prefix_modulus_is_r() {
         let r = num_bigint::BigUint::from_bytes_le(&r_le());
         assert_eq!(r.to_string(), proofman_pilfflonk::field::BN254_R);
     }

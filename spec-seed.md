@@ -521,7 +521,7 @@ Així el setup pilfflonk no depèn de `pil2-stark-setup` i no hi ha cap cicle (�
 
 - **Bytecode del prover** (`<air>.bin`). El codegen compartit genera per a cada AIR el bytecode `Fr` que executarà el prover: expressions dels *hints*, im pols i `Q`.
   - Les constants ocupen 32 bytes.
-  - El codificador és **propi**: la disposició de buffers del bin STARK (`io/parser_args.rs`) és l'ABI del prover STARK.
+  - El format és el del `.bin` STARK amb dimensió 1 (revisió 2, A.6): els mateixos camps, seccions i tipus de buffer d'`io/parser_args.rs`, sense els camps de dimensió, amb args de 32 bits i constants de 32 bytes.
   - Es reaprofiten el contenidor `"chps"` i l'assignació de temporals, que viuen a `pil-info`.
   - El fitxer té una versió i una mida d'element pròpies.
 - **Codi del verificador** (el `qVerifier` de `<air>.verifierinfo.json`). És el codi que calcula `Q(ξ)` a partir de les avaluacions, sense `queryVerifier`. Surt del mateix codegen, en el format JSON del STARK, i el setup en copia el `qVerifier` a la vkey. No hi ha `.verifier.bin`, perquè no hi ha verificador natiu (D3).
@@ -1146,7 +1146,7 @@ El prover fa servir la mateixa convenció. `Z_T` és el producte de tots els `Z_
 | `<air>.pilfflonkinfo.json` | **Camps equivalents del `starkinfo`:** `nStages`, `nConstants`, `cmPolsMap`, `constPolsMap`, `challengesMap`, `airValuesMap`, `airgroupValuesMap`, `evMap`, `openingPoints`, `boundaries`, `qDeg`, `cExpId` i `mapSectionsN`, amb `qDim = 1`.<br>**Camps nous:** `nBits`, que al STARK és dins de `starkStruct`; `maxQDegree`; i `layout`, una llista de `f_i {stage, pols, k, offsets, degree}`. El `degree` és el cost d'A.2 en nombre de coeficients, i l'SRS n'ha de tenir el màxim (no el màxim més 1).<br>**No hi són** `starkStruct` ni res de FRI.<br>L'ordre exacte dels camps i la forma de les entrades (mapes, `evMap`, *boundaries*) són els de `pilfflonk/src/pilfflonk_info.rs` (M12). |
 | `<air>.expressionsinfo.json` | El format del STARK, amb dimensió 1 per a tots els operands i les constants en decimal |
 | `<air>.verifierinfo.json` | El format del STARK: només `qVerifier`, sense `queryVerifier`. El llegeix el verificador JS. |
-| `<air>.bin` | Bytecode `Fr` del prover (im pols, `Q` i les expressions a què es refereixen els *hints*) i de depuració de restriccions, dins del contenidor `"chps"`, versió `0x7066_0001`, constants de 32 bytes *little-endian*. Vegeu "Format de `<air>.bin`", sota la taula (M11). |
+| `<air>.bin` | Bytecode `Fr` del prover (im pols, `Q` i les expressions a què es refereixen els *hints*) i de depuració de restriccions, amb el format del `.bin` STARK i dimensió 1: contenidor `"chps"`, versió `0x7066_0002`, args de 32 bits i constants de 32 bytes *little-endian*. Vegeu "Format de `<air>.bin`", sota la taula (M11). |
 | `<air>.const` | Columnes fixes, fila per fila, en `Fr` canònic de 32 bytes *little-endian* |
 | `<air>.verkey.json` | Els commitments G1 dels `f_i` fixos de l'AIR, com a cadenes decimals `[x, y]`. Són els mateixos que a la vkey. |
 | `pilfflonk.srs.bin` | Contenidor binfile de rapidsnark, tipus `"pfsr"`, versió 1 (M6):<br>- **secció 1** (capçalera, 88 bytes): `u32 n8q = 32`, `q` (LE), `u32 n8r = 32`, `r` (LE), `u64 nG1` (entre 1 i `2^32−1`, el límit de la MSM), `u64 nG2 = 2`;<br>- **secció 2:** `[τ^i]₁` per a `i < nG1`, 64 bytes cadascun;<br>- **secció 3:** `[1]₂` i `[τ]₂`, 128 bytes cadascun (`Fq2` com a `c0‖c1`).<br>Els punts són afins `x‖y`, amb cada coordenada en Montgomery *little-endian*, copiats byte a byte de les seccions 2 i 3 del `ptau`. |
@@ -1155,43 +1155,41 @@ El prover fa servir la mateixa convenció. `Z_T` és el producte de tots els `Z_
 | `publics.json` | Un array de cadenes decimals, en l'ordre de `publicsMap`, com a pil-fflonk i al *wrap* final |
 | Directori de witness (entrada del prover, no és del `provingKey/`; M13, `pilfflonk/src/witness.rs`) | Exactament aquests fitxers, i cap més:<br>- `instances.json`: un array no buit d'`{"airgroupId", "airId", "airValues": [...]}` en ordre canònic; els `airValues` són els de l'stage 1, en l'ordre de l'`airValuesMap` (buits a la v1);<br>- `instance_<ag>_<a>_<t>.bin`: les columnes de l'stage 1 d'una instància, sense capçalera, fila per fila, cada valor de 32 bytes *little-endian* canònic; la columna `c` de la fila `i` és al byte `(i·C + c)·32`, i el fitxer té exactament `N·C·32` bytes (`C` = columnes de witness de l'stage 1, sense els im pols);<br>- `publics.json` (com el de la prova) i `proof_values.json` (els de l'stage 1; buit a la v1).<br>Tots els valors JSON són cadenes decimals canòniques `< r`. El lector rebutja fitxers de més, mides incorrectes i valors `≥ r`. |
 
-**Format de `<air>.bin` (revisió 1, M11; l'implementa `setup/pilfflonk/src/bytecode.rs`).** Contenidor binfile `"chps"` (el `BinFileWriter` de `pil-info`). Tots els enters són *little-endian*:
+**Format de `<air>.bin` (revisió 2, M11; l'implementa `setup/pilfflonk/src/bytecode.rs`).** És el `.bin` del prover STARK camp per camp (decisió de l'usuari, 29-09-2026): l'escriu `setup/pil2-stark/src/io/bin_file.rs` amb els ops i args de `io/parser_args.rs`, el llegeix `expressions_bin.cpp` i l'executa `expressions_pack.hpp`. Tots els valors tenen dimensió 1, i només se n'aparta on BN254 i la dimensió 1 ho obliguen:
+- **Camps de dimensió:** no hi ha `destDim`, `nTemp3` ni `maxTmp3`, ni temporals de l'extensió.
+- **Args:** u32, no u16, perquè u16 trunca sense avisar els índexs de més de 65535.
+- **Constants:** `Fr` canònics de 32 bytes *little-endian*, no u64.
+- **Prefix:** la secció 1 comença amb `version u32`, `n8 u32 = 32`, `r` (32 bytes LE) i `nStages u32`. La versió es repeteix perquè el `BinFile` de rapidsnark només en comprova un màxim; el lector pilfflonk la compara per igualtat i rebutja un `.bin` STARK. `nStages` hi és perquè els tipus d'operand en depenen (el STARK el pren del `starkinfo`), i així el fitxer es pot descodificar sol.
+- **Còpies:** una còpia s'escriu com a `add(a, 0)`; el STARK l'escriu com un `add` sense el segon operand, que el seu intèrpret, de 8 args per operació, no pot executar.
 
 ```
-"chps" | version u32 = 0x7066_0001 ("pf" a la meitat alta, revisió 1 a la baixa) | nSections u32 = 4
-4 × { id u32, size u64, payload }, en l'ordre 1, 2, 3, 4
+"chps" | version u32 = 0x7066_0002 ("pf" a la meitat alta, revisió 2 a la baixa) | nSections u32 = 3
+3 × { id u32, size u64, payload }, en l'ordre 1, 2, 3
 ```
 
-La versió és molt més gran que la del STARK (1), de manera que el lector STARK rebutja el fitxer. El `BinFile` de rapidsnark només compara la versió amb un màxim i no l'exposa; per això la secció 1 la repeteix, i el lector pilfflonk la compara per igualtat.
-- **Secció 1, capçalera:** `version u32` (la mateixa), `n8 u32 = 32` i `r` (32 bytes LE).
-- **Secció 2, expressions** (totes les de `expressionsCode`):
-  - `nExpressions`, `nOps`, `nConstants` i `maxTemps` (u32);
-  - per a cada expressió: `expId`, `stage`, `destType`, `destId`, `nTemps`, `result`, `opsOffset` i `nOps` (u32), i `line` (UTF-8 acabada en NUL);
-  - després, els `nOps` registres d'operació i les `nConstants` constants (32 bytes, `Fr` canònic LE);
-  - `destType` és l'`opType` del destí: 1 (`cm`) per a un im pol, amb `destId` = índex a `cmPolsMap`; 15 (`q`) per a `Q`; 2 (`tmp`) per a un valor. Si no és `cm`, `destId` = 0;
-  - `result` és el temporal que té el valor després de l'última operació; les operacions de cada entrada van just després de les de l'anterior.
-- **Secció 3, restriccions** (depuració, `pilfflonk check`): el mateix esquema, amb `stage`, `firstRow`, `lastRow` i `imPol` en lloc de `expId`, `stage`, `destType` i `destId`. La restricció val a les files `firstRow ≤ i < lastRow` (`everyRow` 0..N, `firstRow` 0..1, `lastRow` N−1..N, `everyFrame` offsetMin..N−offsetMax), i el codi en dona el numerador, que hi ha de valer 0.
-- **Secció 4, *hints*:** `nHints u32 = 0`. La Fase 1 no en té cap (§4.2.1), i el lector de la revisió 1 rebutja qualsevol altre valor.
+- **Secció 1, expressions:** el prefix; `maxTmp`, `maxArgs` i `maxOps` (els màxims de les seccions 1 i 2), `nOps`, `nArgs`, `nNumbers` i `nExpressions`; per a cada expressió `expId`, `destId`, `stage`, `nTemp`, `nOps`, `opsOffset`, `nArgs`, `argsOffset` (u32) i `line` (UTF-8 acabada en NUL); i al final `ops` (u8), `args` (u32) i `numbers` (32 bytes). Com al STARK, el prover troba el codi d'un im pol per l'`expId` de la seva entrada de `cmPolsMap`, i el de `Q` per `cExpId`.
+- **Secció 2, restriccions** (depuració): `nOps`, `nArgs`, `nNumbers` i `nConstraints`; per a cada restricció `stage`, `destId`, `firstRow`, `lastRow`, `nTemp`, `nOps`, `opsOffset`, `nArgs`, `argsOffset`, `imPol` i `line`; i al final `ops`, `args` i `numbers`. La restricció val a les files `firstRow ≤ i < lastRow`.
+- **Secció 3, *hints*:** `nHints u32 = 0` a la Fase 1; a la Fase 2 cada *hint* s'escriurà com al STARK.
 
-**Registre d'operació:** 8 × u32: `opcode dest aKind aIndex aOffset bKind bIndex bOffset`. `opcode`: 0 `add`, 1 `sub` (a − b), 2 `mul` (els codis del STARK) i 4 `copy` (b = 0 0 0, que no es llegeix). No hi ha dimensions ni `sub_swap` (3): tot és `Fr`. Els temporals els assigna `get_id_maps` de `pil-info`, i una operació pot escriure el temporal que llegeix.
+**Ops i args.** Un op (u8) per operació, que al STARK és la combinació de dimensions i aquí sempre val 0. 8 args per operació: `opType dest aType aArg1 aArg2 bType bArg1 bArg2`, amb els `opType` del STARK (0 `add`, 1 `sub`, 2 `mul`, 3 `sub_swap`) i l'ordre d'operands del STARK (per rang de tipus; un `sub` intercanviat passa a `sub_swap`). Els temporals els assigna `get_id_maps` de `pil-info`.
 
-**Operand** `(kind, index, offset)`, amb `kind` = l'`opType` del C++. L'`offset` (fila relativa, i32) només és diferent de 0 per a les columnes:
+**Operands** `(type, arg1, arg2)`: el tipus és l'índex de buffer del STARK, amb `bs = nStages + 4` (no hi ha *custom commits*, P5). On el STARK multiplica per 3 (la dimensió), aquí és l'índex:
 
-| kind | index |
-|---|---|
-| 0 `const` | `constPolsMap` |
-| 1 `cm` | `cmPolsMap` |
-| 2 `tmp` | temporal |
-| 3 `public` | `publicsMap` |
-| 4 `airgroupvalue` | `airgroupValuesMap` |
-| 5 `challenge` | `challengesMap` |
-| 6 `number` | constant de la secció |
-| 8 `airvalue` | `airValuesMap` |
-| 9 `proofvalue` | `proofValuesMap` |
-| 12 `Zi` | `boundaries` |
-| 13 `eval` | `evMap` (només en codi avaluat a ξ) |
+| type | operand | arg1 | arg2 |
+|---|---|---|---|
+| 0 | columna fixa | columna de `<air>.const` | índex a `openingPoints` |
+| 1 … nStages+1 | columna compromesa d'aquest stage | `stagePos` a `cmPolsMap` | índex a `openingPoints` |
+| nStages+2 | `Zi` | 1 + índex a `boundaries` | 0 |
+| bs | `tmp` | temporal | 0 |
+| bs+2 | `public` | `publicsMap` | 0 |
+| bs+3 | `number` | índex a `numbers` | 0 |
+| bs+4 | `airvalue` | `airValuesMap` | 0 |
+| bs+5 | `proofvalue` | `proofValuesMap` | 0 |
+| bs+6 | `airgroupvalue` | `airgroupValuesMap` | 0 |
+| bs+7 | `challenge` | `challengesMap` | 0 |
+| bs+8 | `eval` | `evMap` (només en codi avaluat a ξ) | 0 |
 
-**Semàntica.** L'expressió de destí `q` s'avalua punt a punt sobre el *coset* estès; la resta, i les restriccions, sobre `H`. En un domini de `M = 2^e·N` punts, una columna a l'*offset* `o` es llegeix al punt `(i + 2^e·o) mod M`. `Zi` de la frontera 0 (`everyRow`) és `1/Z_H(X)`, i el d'una altra frontera `D` és `Z_H(X)/Z_D(X)` (A.1; per a `lastRow`, `X − ω^{N−1}`); el codi de `Q` acaba multiplicant per `Zi(everyRow)`. Les constants es codifiquen a partir de la cadena decimal, sense reduir (han de ser `< r`), una sola vegada per secció. La codificació és determinista.
+**Semàntica.** El codi de `Q` (`cExpId`) s'avalua punt a punt sobre el *coset* estès; la resta, i les restriccions, sobre `H`. En un domini de `M = 2^e·N` punts, una columna a `o = openingPoints[arg2]` es llegeix al punt `(i + 2^e·o) mod M`. `Zi` de la frontera 0 (`everyRow`) és `1/Z_H(X)`, i el d'una altra frontera `D` és `Z_H(X)/Z_D(X)` (A.1); el codi de `Q` acaba multiplicant per `Zi(everyRow)`. L'última operació del codi d'un im pol o de `Q` escriu un temporal nou (`tmpUsed`), com al STARK. La codificació és determinista.
 
 **El *digest*, normatiu.** Es calcula sobre la vkey:
 
