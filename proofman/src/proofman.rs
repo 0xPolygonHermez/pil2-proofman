@@ -5173,6 +5173,24 @@ where
                         if arrivals_done && pending.iter().all(|p| p.is_empty()) {
                             break;
                         }
+                        // Nothing more can arrive and nothing runs to open the gate, so what is left
+                        // (gated `Last` work) never will: the phase aborted before announcing it all.
+                        if arrivals_done && in_flight.lock().unwrap().values().all(|&n| n == 0) {
+                            // Re-read after the slots: a witness counts itself before freeing its slot,
+                            // so a completion that opened the gate since `scope` is visible here.
+                            let scope_now =
+                                crate::bands_in_scope(witness_done_clone.value(), last_gate.load(Ordering::Acquire));
+                            if scope_now == WitnessPriority::BANDS {
+                                continue;
+                            }
+                            let stranded: Vec<usize> = pending.iter().flatten().copied().collect();
+                            let msg = format!(
+                                "witness instances {stranded:?} can never be admitted: no more arrivals, none in \
+                                 flight, and the `Last` gate still closed"
+                            );
+                            cancellation_info_clone.write_recover().cancel(Some(ProofmanError::ProofmanError(msg)));
+                            break;
+                        }
                         // Wait on every event that can make work admissible -- an arrival on
                         // the channel, or a freed slot -- rather than polling. Was a flat 1 ms
                         // sleep: measured at ~8 ms per witness, 540 ms over a phase.
@@ -5238,6 +5256,16 @@ where
                     // The buffer carries its own wait, whichever worker blocked for it. Read
                     // before the counter, so nothing touches the trace once the phase may proceed.
                     let waited = proofman_common::take_buffer_wait(pctx_clone.get_air_instance_trace_ptr(instance_id));
+                    // Cleanup before the counter: the completion that opens the `Last` gate must mean
+                    // this witness is done, shared buffer back in the pool included.
+                    if stats {
+                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                        if is_shared_buffer {
+                            if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
+                                cancellation_info_clone.write_recover().cancel(Some(e));
+                            }
+                        }
+                    }
                     // Counter before the slot: dropping the slot is what wakes admission, and that
                     // wake must not arrive ahead of the completion that may open the `Last` gate,
                     // or the gate sits out an `ADMISSION_WAIT` it has no reason to.
@@ -5251,14 +5279,6 @@ where
                         airgroup_id,
                         air_id
                     );
-                    if stats {
-                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                        if is_shared_buffer {
-                            if let Err(e) = memory_handler_clone.release_buffer(witness_buffer) {
-                                cancellation_info_clone.write_recover().cancel(Some(e));
-                            }
-                        }
-                    }
                 });
                 if !stats && !gpu {
                     handle.join().unwrap();

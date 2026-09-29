@@ -957,12 +957,14 @@ impl DistributionCtx {
         // decides, so its cost goes on that node's books before anything else is placed. Credited
         // where it is appended instead -- after the loop below -- it stays invisible while every
         // other instance is balanced, and the pinned node ends the phase over its share by it.
-        // Only a reference already placed by `add_instance` can be credited here; one left to the
-        // loop has no node yet and is credited on append, which `prepaid` keeps from doubling.
+        // Only a reference already placed by `add_instance` can be credited here. One left to the
+        // loop carries its tables' weight into it (`late_pins`): credited where it lands and held
+        // there, so the append pass, which `prepaid` keeps from doubling, finds them paid.
         // The head count goes to `local_process_count`, the balancing tally, and not to
         // `process_count`, which numbers local indices: this table takes its own when appended.
         let mut local_process_count = self.process_count.clone();
         let mut prepaid = vec![false; self.aux_tables.len()];
+        let mut late_pins: HashMap<usize, (u64, u32)> = HashMap::new();
         let pinned: Vec<(usize, u64, usize)> = self
             .aux_tables
             .iter()
@@ -974,6 +976,13 @@ impl DistributionCtx {
         for (table_idx, weight, ref_gid) in pinned {
             // A bogus or unplaced reference is the append loop's error to report, not this one's.
             let Some(&ref_partition) = self.instance_partition.get(ref_gid) else { continue };
+            if ref_partition == -1 {
+                let pin = late_pins.entry(ref_gid).or_default();
+                pin.0 += weight;
+                pin.1 += 1;
+                prepaid[table_idx] = true;
+                continue;
+            }
             if ref_partition < 0 {
                 continue;
             }
@@ -991,7 +1000,8 @@ impl DistributionCtx {
         let mut unassigned_instances = Vec::new();
         for (gid, &partition_id) in self.instance_partition.iter().enumerate() {
             if partition_id == -1 {
-                unassigned_instances.push((gid, self.instances[gid].total_weight()));
+                let pinned = late_pins.get(&gid).map_or(0, |p| p.0);
+                unassigned_instances.push((gid, self.instances[gid].total_weight() + pinned));
             }
         }
 
@@ -1003,10 +1013,15 @@ impl DistributionCtx {
 
         let mut instances_assigned_partition = vec![HashMap::<(usize, usize), usize>::new(); self.n_partitions];
         let mut instances_assigned_process = vec![HashMap::<(usize, usize), usize>::new(); self.n_processes];
+        // Where each `late_pins` reference was credited. Kept out of the per-air quotas, so the chunk
+        // pass below cannot hand that slot to another instance of the same air.
+        let mut reserved_partition: HashMap<usize, usize> = HashMap::new();
+        let mut reserved_process: HashMap<usize, usize> = HashMap::new();
 
-        for (gid, _) in &unassigned_instances {
-            let (airgroup_id, air_id) = self.get_instance_info(*gid)?;
-            let has_compressor = self.instances[*gid].has_compressor();
+        for &(gid, weight) in &unassigned_instances {
+            let (airgroup_id, air_id) = self.get_instance_info(gid)?;
+            let has_compressor = self.instances[gid].has_compressor();
+            let pins = late_pins.get(&gid).map_or(0, |p| p.1);
 
             // Select target partition: least loaded first (see least_loaded_partition)
             let min_weight_idx = self.least_loaded_partition();
@@ -1014,9 +1029,13 @@ impl DistributionCtx {
                 self.partition_compressor_count[min_weight_idx] += 1;
             }
 
-            *instances_assigned_partition[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
-            self.partition_count[min_weight_idx] += 1;
-            self.partition_weight[min_weight_idx] += self.instances[*gid].total_weight();
+            if pins > 0 {
+                reserved_partition.insert(gid, min_weight_idx);
+            } else {
+                *instances_assigned_partition[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
+            }
+            self.partition_count[min_weight_idx] += 1 + pins;
+            self.partition_weight[min_weight_idx] += weight;
             if self.partition_mask[min_weight_idx] {
                 // Select target process with the same criterion as the partition above
                 let min_weight_process_idx = self.least_loaded_process(&local_process_count);
@@ -1024,12 +1043,16 @@ impl DistributionCtx {
                     self.process_compressor_count[min_weight_process_idx] += 1;
                 }
 
-                local_process_count[min_weight_process_idx] += 1;
-                self.process_weight[min_weight_process_idx] += self.instances[*gid].total_weight();
-                instances_assigned_process[min_weight_process_idx]
-                    .entry((airgroup_id, air_id))
-                    .and_modify(|c| *c += 1)
-                    .or_insert(1);
+                local_process_count[min_weight_process_idx] += 1 + pins as usize;
+                self.process_weight[min_weight_process_idx] += weight;
+                if pins > 0 {
+                    reserved_process.insert(gid, min_weight_process_idx);
+                } else {
+                    instances_assigned_process[min_weight_process_idx]
+                        .entry((airgroup_id, air_id))
+                        .and_modify(|c| *c += 1)
+                        .or_insert(1);
+                }
             }
         }
 
@@ -1041,26 +1064,30 @@ impl DistributionCtx {
         for (gid, _) in &unassigned_instances {
             let chunks = &self.instances_chunks[*gid].chunks;
             let (airgroup_id, air_id) = self.get_instance_info(*gid)?;
-            let mut min_chunks = usize::MAX;
-            let mut min_chunks_idx = 0;
-            for partition_id in 0..self.n_partitions {
-                if instances_assigned_partition[partition_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
-                    let mut new_chunks_added = 0;
-                    for chunk in chunks {
-                        if !partitions_chunks[partition_id].contains(chunk) {
-                            new_chunks_added += 1;
+            let min_chunks_idx = if let Some(&reserved) = reserved_partition.get(gid) {
+                reserved
+            } else {
+                let mut min_chunks = usize::MAX;
+                let mut min_chunks_idx = 0;
+                for partition_id in 0..self.n_partitions {
+                    if instances_assigned_partition[partition_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
+                        let mut new_chunks_added = 0;
+                        for chunk in chunks {
+                            if !partitions_chunks[partition_id].contains(chunk) {
+                                new_chunks_added += 1;
+                            }
+                        }
+                        if new_chunks_added < min_chunks {
+                            min_chunks = new_chunks_added;
+                            min_chunks_idx = partition_id;
                         }
                     }
-                    if new_chunks_added < min_chunks {
-                        min_chunks = new_chunks_added;
-                        min_chunks_idx = partition_id;
-                    }
                 }
-            }
-
-            if let Some(c) = instances_assigned_partition[min_chunks_idx].get_mut(&(airgroup_id, air_id)) {
-                *c -= 1;
-            }
+                if let Some(c) = instances_assigned_partition[min_chunks_idx].get_mut(&(airgroup_id, air_id)) {
+                    *c -= 1;
+                }
+                min_chunks_idx
+            };
 
             self.instance_partition[*gid] = min_chunks_idx as i32;
 
@@ -1070,22 +1097,30 @@ impl DistributionCtx {
 
             if self.partition_mask[min_chunks_idx] {
                 self.worker_instances.push(*gid);
-                let mut min_chunks = usize::MAX;
-                let mut min_process_id = 0;
-                for process_id in 0..self.n_processes {
-                    if instances_assigned_process[process_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
-                        let mut new_chunks_added = 0;
-                        for chunk in chunks {
-                            if !process_chunks[process_id].contains(chunk) {
-                                new_chunks_added += 1;
+                let min_process_id = if let Some(&reserved) = reserved_process.get(gid) {
+                    reserved
+                } else {
+                    let mut min_chunks = usize::MAX;
+                    let mut min_process_id = 0;
+                    for process_id in 0..self.n_processes {
+                        if instances_assigned_process[process_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
+                            let mut new_chunks_added = 0;
+                            for chunk in chunks {
+                                if !process_chunks[process_id].contains(chunk) {
+                                    new_chunks_added += 1;
+                                }
+                            }
+                            if new_chunks_added < min_chunks {
+                                min_chunks = new_chunks_added;
+                                min_process_id = process_id;
                             }
                         }
-                        if new_chunks_added < min_chunks {
-                            min_chunks = new_chunks_added;
-                            min_process_id = process_id;
-                        }
                     }
-                }
+                    if let Some(c) = instances_assigned_process[min_process_id].get_mut(&(airgroup_id, air_id)) {
+                        *c -= 1;
+                    }
+                    min_process_id
+                };
 
                 for chunk in chunks {
                     process_chunks[min_process_id].insert(*chunk);
@@ -1098,9 +1133,6 @@ impl DistributionCtx {
                 self.instance_process[*gid].0 = min_process_id as i32;
                 self.instance_process[*gid].1 = self.process_count[min_process_id];
                 self.process_count[min_process_id] += 1;
-                if let Some(c) = instances_assigned_process[min_process_id].get_mut(&(airgroup_id, air_id)) {
-                    *c -= 1;
-                }
             }
         }
 
@@ -1580,7 +1612,7 @@ mod tests {
         }
     }
 
-    /// A reference left for `assign_instances` gets no pre-pass, so append credits it -- once.
+    /// A reference left for `assign_instances` is credited while it is balanced -- once.
     #[test]
     fn pinned_table_on_a_late_reference_is_credited_once() {
         let mut dctx = ctx(1);
@@ -1592,6 +1624,44 @@ mod tests {
         assert_eq!(dctx.partition_weight[0], 600);
         assert_eq!(dctx.partition_count[0], 2);
         assert_eq!(dctx.process_weight[0], 600);
+    }
+
+    /// The late-reference case of `pinned_table_weight_steers_the_instances_placed_after_it`: the
+    /// table's weight must count while the rest is balanced, not only once it is appended.
+    #[test]
+    fn a_late_reference_carries_its_pinned_table_into_the_balancing() {
+        let mut dctx = ctx(2);
+        let rom = dctx.add_instance_no_assign(7, 0, 100, 0, WitnessPriority::default()).expect("add rom");
+        dctx.add_table(7, 1, 500).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        let a = dctx.add_instance_no_assign(7, 2, 200, 0, WitnessPriority::default()).expect("add a");
+        let b = dctx.add_instance_no_assign(7, 3, 100, 0, WitnessPriority::default()).expect("add b");
+        dctx.assign_instances().expect("assign_instances");
+
+        let rom_partition = dctx.instance_partition[rom] as usize;
+        assert_ne!(dctx.instance_partition[a] as usize, rom_partition, "heaviest must avoid the pinned partition");
+        assert_ne!(dctx.instance_partition[b] as usize, rom_partition);
+        assert_eq!(dctx.partition_weight[rom_partition], 600, "the table is on the partition's books");
+        assert_eq!(dctx.partition_weight[1 - rom_partition], 300);
+        assert_eq!(dctx.partition_count[rom_partition], 2, "and in its head count");
+    }
+
+    /// Another instance of the reference's air must not take the slot its table was credited to.
+    #[test]
+    fn a_late_reference_lands_where_its_table_was_credited() {
+        let mut dctx = ctx(2);
+        let rom = dctx.add_instance_no_assign(7, 0, 100, 0, WitnessPriority::default()).expect("add rom");
+        let rom2 = dctx.add_instance_no_assign(7, 0, 100, 0, WitnessPriority::default()).expect("add rom2");
+        dctx.add_table(7, 1, 500).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        dctx.assign_instances().expect("assign_instances");
+
+        let rom_partition = dctx.instance_partition[rom] as usize;
+        let table_gid = dctx.get_table_instance_idx(0).expect("table idx");
+        assert_eq!(dctx.instance_partition[table_gid] as usize, rom_partition, "the table follows its reference");
+        assert_ne!(dctx.instance_partition[rom2] as usize, rom_partition);
+        assert_eq!(dctx.partition_weight[rom_partition], 600, "credited where the reference and table are");
+        assert_eq!(dctx.partition_weight[1 - rom_partition], 100);
     }
 }
 
