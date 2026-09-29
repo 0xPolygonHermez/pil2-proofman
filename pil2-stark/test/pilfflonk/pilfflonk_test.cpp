@@ -104,6 +104,7 @@ int main() {
     PilFflonkTest::runLdeTests();
     PilFflonkTest::runSrsTests();
     PilFflonkTest::runCommitTests();
+    PilFflonkTest::runPolynomialTests();
     PilFflonkTest::runShplonkTests();
     PilFflonkTest::runInfoTests();
     PilFflonkTest::runExpressionsTests();

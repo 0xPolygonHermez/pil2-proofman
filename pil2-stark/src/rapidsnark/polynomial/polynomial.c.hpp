@@ -234,6 +234,8 @@ void Polynomial<Engine>::add(Polynomial<Engine> &polynomial) {
     if (resize) {
         if(createBuffer) delete[] this->coef;
         this->coef = newCoef;
+        // newCoef is this polynomial's own, even if the buffer it replaces was a reserved one
+        this->createBuffer = true;
     }
 
     fixDegree();
@@ -279,6 +281,8 @@ void Polynomial<Engine>::addBlinding(Polynomial<Engine> &polynomial, FrElement &
         if (createBuffer)
             delete[] this->coef;
         this->coef = newCoef;
+        // newCoef is this polynomial's own, even if the buffer it replaces was a reserved one
+        this->createBuffer = true;
     }
 
     fixDegree();
@@ -362,6 +366,10 @@ void Polynomial<Engine>::byXSubValue(FrElement &value) {
     // Swap buffers
     if(this->createBuffer) delete[] this->coef;
     this->coef = pol->coef;
+    // pol's buffer is this polynomial's own now, even if the one it replaces was a reserved one
+    this->createBuffer = true;
+    pol->coef = nullptr;
+    delete pol;
 
     fixDegree();
 }
@@ -403,6 +411,9 @@ Polynomial<Engine> *Polynomial<Engine>::divBy(Polynomial<Engine> &polynomial) {
     FrElement *ptr = this->coef;
     this->coef = polR->coef;
     polR->coef = ptr;
+    // Ownership follows the buffers: this owns the new one, polR the old one only if this did
+    polR->createBuffer = this->createBuffer;
+    this->createBuffer = true;
 
     FrElement val = polynomial.coef[degreeB];
     for (int64_t i = degreeA - degreeB; i >= 0; i--) {
@@ -441,12 +452,17 @@ void Polynomial<Engine>::divByMonic(uint32_t m, FrElement beta) {
             polResult->coef[i] = bArr[idx];
         }
     }
+    delete[] bArr;
 
     // Swap buffers
     if(createBuffer) {
         delete[] this->coef;
     }
     this->coef = polResult->coef;
+    // polResult's buffer is this polynomial's own now, even if the one it replaces was a reserved one
+    this->createBuffer = true;
+    polResult->coef = nullptr;
+    delete polResult;
 
     fixDegree();
 }
@@ -461,6 +477,9 @@ Polynomial<Engine> *Polynomial<Engine>::divByVanishing(uint32_t m, FrElement bet
     FrElement *ptr = this->coef;
     this->coef = polR->coef;
     polR->coef = ptr;
+    // Ownership follows the buffers: this owns the new one, polR the old one only if this did
+    polR->createBuffer = this->createBuffer;
+    this->createBuffer = true;
 
     #pragma omp parallel for
     for (int k = 0; k < m; k++) {
@@ -607,6 +626,7 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
             }
         }
     }
+    delete polTmp;
 
     fixDegreeFrom(this->degree+1);
 }
@@ -743,6 +763,7 @@ Polynomial<Engine>::lagrangePolynomialInterpolation(FrElement xArr[], FrElement 
     for (u_int64_t i = 1; i < length; i++) {
         Polynomial<Engine> *polynomialI = computeLagrangePolynomial(i, xArr, yArr, length);
         polynomial->add(*polynomialI);
+        delete polynomialI;
     }
 
     return polynomial;

@@ -37,6 +37,7 @@ void runTranscriptTests();
 void runLdeTests();
 void runSrsTests();
 void runCommitTests();
+void runPolynomialTests();
 void runShplonkTests();
 void runInfoTests();
 void runExpressionsTests();
