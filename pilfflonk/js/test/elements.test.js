@@ -5,6 +5,7 @@ import { before, test } from "node:test";
 
 import {
     PilFflonkInputError,
+    decimalFromObject,
     frFromObject,
     frToObject,
     g1FromObject,
@@ -37,6 +38,14 @@ test("integers: decimal strings, bigints and safe integers, never negative", () 
     assert.equal(toBigInt(123, "v"), 123n);
     for (const bad of ["-1", "0x10", "1.5", "", " 1", -1n, -1, 1.5, 2 ** 53, null, undefined, [1], {}]) {
         assert.throws(() => toBigInt(bad, "v"), PilFflonkInputError, String(bad));
+    }
+});
+
+test("integers as pilfflonk's files spell them: decimal strings without sign or leading zeros", () => {
+    assert.equal(decimalFromObject("0", "v"), 0n);
+    assert.equal(decimalFromObject("1230", "v"), 1230n);
+    for (const bad of ["01", "00", "-1", "+1", " 1", "1 ", "1e3", "0x1", "1.0", "", 1, 1n, null, ["1"]]) {
+        assert.throws(() => decimalFromObject(bad, "v"), PilFflonkInputError, String(bad));
     }
 });
 

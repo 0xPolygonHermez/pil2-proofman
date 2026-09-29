@@ -18,6 +18,7 @@ export class PilFflonkInputError extends Error {
 }
 
 const DECIMAL = /^[0-9]+$/;
+const CANONICAL_DECIMAL = /^(0|[1-9][0-9]*)$/;
 
 // A non-negative integer from a decimal string, a bigint or a safe integer.
 export function toBigInt(value, what) {
@@ -25,6 +26,19 @@ export function toBigInt(value, what) {
     if (typeof value === "string" && DECIMAL.test(value)) return BigInt(value);
     if (Number.isSafeInteger(value) && value >= 0) return BigInt(value);
     throw new PilFflonkInputError(`${what}: ${String(value)} is not a non-negative decimal integer`);
+}
+
+// A non-negative integer as pilfflonk's files spell one (pilfflonk/src/field.rs): a decimal
+// string of digits only, without sign or leading zeros. The Rust side reads nothing else, so a
+// value has a single spelling: a proof, publics or a vkey the verifier accepts are ones Rust reads.
+export function decimalFromObject(value, what) {
+    if (typeof value === "string" && CANONICAL_DECIMAL.test(value)) return BigInt(value);
+    throw new PilFflonkInputError(`${what}: ${show(value)} is not a decimal string without sign or leading zeros`);
+}
+
+// A value as an error message shows it: its JSON, bigints included, which JSON.stringify refuses.
+export function show(value) {
+    return JSON.stringify(value, (_, v) => (typeof v === "bigint" ? `${v}n` : v));
 }
 
 // A scalar below r, as an element of curve.Fr.

@@ -2,10 +2,11 @@
   "name": "pilfflonk-verifier",
   "private": true,
   "type": "module",
-  "description": "JS verifier of the pilfflonk backend (spec-seed.md §4.5): the Keccak-256 transcript and the SHPLONK opening check",
+  "description": "JS verifier of the pilfflonk backend (spec-seed.md §4.5): verify(vkey, publics, proof) and bin/verify.js",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "test:fixtures": "sh test/fixtures.sh"
+    "test:fixtures": "sh test/fixtures.sh",
+    "test:setup": "sh test/setup-fixtures.sh"
   },
   "engines": {
     "node": ">=18"

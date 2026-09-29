@@ -1502,6 +1502,7 @@ version = "1.4.0-alpha"
 dependencies = [
  "num-bigint",
  "pil2-pilout",
+ "pilfflonk-setup",
  "proofman-common",
  "proofman-pilfflonk",
  "serde",
