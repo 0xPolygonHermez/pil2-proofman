@@ -116,7 +116,7 @@ proofman-cli pilfflonk verify -k build/provingKey -p build/proof/proof.json -u b
 | Partició de `Q` (§4.2.3, A.1) | No | M33 |
 | Agrupació fflonk (§4.2.4, A.2) | No: al tall, *layout* amb `k = 1` (drecera R1) | M21, M22 |
 | Bytecode, `verifierinfo.json`, SRS, commits fixos i *digest* (§4.2.5) | Sí | M11, M15, M16 |
-| Restriccions globals | No: `globalConstraints.json` té 0 entrades a la v1 (D2) | Després de la v1 |
+| Restriccions globals | No: `globalConstraints.json` té 0 entrades (D2) | Fora d'abast |
 | `provingKey/` complet (§4.2.6, A.6) | Sí: tots els camps, amb llistes buides quan toca | M12, M15, M16 |
 | `WitnessSource` sobre fitxer (§4.3) | Sí | M13 |
 | Witness en `Fr` (D4) | No | M38 |
@@ -545,8 +545,8 @@ Cap d'aquestes dreceres canvia el transcript, els formats ni el *digest* de l'An
 | R1 | *Layout* amb `k = 1` (`--no-packing`) al tall | Treu M21 (L) del camí crític | `--no-packing` ja és una opció de test (§4.2), i el *layout* és una dada de `pilfflonkinfo` | M22: l'empaquetat passa a ser el comportament per defecte, i `--no-packing` es manté com a opció de test |
 | R2 | Només l'stage 1; stages ≥ 2 i *hints* de prover donen un error clar | No cal res de la std | És l'abast de la Fase 1, i el setup ja ha de fallar amb el que no suporta | M30, M31 |
 | R3 | `Q` sense partir; `--max-q-degree > 0` dona error | Treu la partició de `Q` del tall | És l'abast de la Fase 1 | M33 |
-| R4 | Una sola instància; més d'una dona error | Treu la complexitat de diverses instàncies | El transcript ja absorbeix el nombre d'instàncies i la prova en porta la llista (A.4, A.6) | M35 |
-| R5 | `globalConstraints.json` amb 0 entrades | No cal res de restriccions globals | A la v1 no n'hi ha (D2) | Després de la v1 (M37) |
+| R4 | Una sola instància; més d'una dona error | Treu la complexitat de diverses instàncies | El transcript ja absorbeix el nombre d'instàncies i la prova en porta la llista (A.4, A.6) | Es queda: diverses instàncies són fora d'abast |
+| R5 | `globalConstraints.json` amb 0 entrades | No cal res de restriccions globals | No n'hi ha (D2) | Fora d'abast |
 | R6 | Els `panic!` de les passades i les truncacions `u64` dels escriptors STARK es queden | Treu M27 del camí crític | No afecta cap format, i pilfflonk té escriptors propis | M27, abans de tancar la Fase 1 |
 | R7 | Sense `check`; es depura amb l'oracle | Una fita menys al tall | És una eina de depuració | M25 |
 | R8 | Oracle Rust amb `num-bigint`, només a `dev-dependencies` | Depuració més ràpida i la validació 5 | És només de test i no entra al camí de producció (principi 2) | Es queda com a test |
@@ -576,7 +576,6 @@ M28 ──► M30 ──► M31 ─────────┬──► M34  FAS
         M30 ──► M33 ──────────┤
 M29 [P10] ────────────────────┘   (M29 és PIL pur: es pot fer en qualsevol moment)
 M34 ──► M38 [D4] ──► M39  FASE 3
-M39 ──► M35 ──► M36 ──► M37  DESPRÉS DE LA v1 (D2)
 M28 ──► M40 ──► M41 ──► M42  FASE 4  [P1]  (el criteri de sortida necessita M39)
 M39 ──► M43  FASE 5 (GPU, després de la versió CPU)
 ```
@@ -627,13 +626,9 @@ M21 només depèn de M1 i dels fitxers que ja hi ha a `pil-fflonk/config/`, i é
 |---|---|---|
 | M43 | MSM i NTT de `pil2-stark/src/bn128/src/{msm,ntt}` amb `--gpu` (la MSM amb `mont=true`), i l'intèrpret a GPU si cal. Els resultats han de ser idèntics bit a bit als de CPU. | L+ |
 
-### 6.6 Després de la v1: diverses AIRs i instàncies (D2)
+### 6.6 Fora d'abast: diverses instàncies (D2)
 
-| Fita | Contingut | Mida |
-|---|---|---|
-| M35 M instàncies d'una AIR | - ordre canònic, un transcript i una obertura;<br>- les columnes fixes s'obren una sola vegada per AIR;<br>- rebuig si s'elimina, es duplica o es reordena una instància | M–L |
-| M36 Diverses AIRs | - `N` per AIR i `powerW` com a mínim comú múltiple de tots els `k`;<br>- la variant BN254 de `fibonacci-square` **sense** el custom commit `rom` (N15) | M–L |
-| M37 Valors, agregació i restriccions globals | Air, airgroup i proof values a la prova i al transcript (A.4, pas 2.2); SUM i PROD; la std en el mode per defecte; el verificador JS agrega els airgroup values i avalua `pilout.globalConstraints.json` | M–L |
+M35 (diverses instàncies d'una AIR), M36 (diverses AIRs) i M37 (air/airgroup/proof values, agregació i restriccions globals) s'eliminen: cada prova té una sola instància d'una sola AIR (usuari, 29-09-2026).
 
 ---
 
@@ -657,7 +652,7 @@ La columna "Avançar?" diu si es pot continuar treballant assumint la recomanaci
 |---|---|---|---|---|---|
 | ~~P7~~ | **Decidit (29-09-2026):** la llicència és l'actual | — | — | — | — |
 | ~~D1~~ | **Decidit (29-09-2026):** el codi compartit és una dependència. Crate `pil-info`: primer una extracció mecànica i després la parametrització (§2.4). | — | M9 | — | — |
-| ~~D2~~ | **Decidit (29-09-2026):** la v1 reprodueix pil-fflonk amb PIL2: una AIR, una instància, una prova; sense air/airgroup/proof values ni restriccions globals (std en `STD_MODE_ONE_INSTANCE`). Diverses AIRs o instàncies (M35), en una versió futura. | — | M18, M35 | — | — |
+| ~~D2~~ | **Decidit (29-09-2026):** la v1 reprodueix pil-fflonk amb PIL2: una AIR, una instància, una prova; sense air/airgroup/proof values ni restriccions globals (std en `STD_MODE_ONE_INSTANCE`). Diverses instàncies (i AIRs), fora d'abast (usuari, 29-09-2026): M35–M37 eliminades. | — | M18 | — | — |
 | ~~D3~~ | **Decidit (29-09-2026):** no hi ha verificador natiu, com el FFLONK existent. Cap *pairing* a C++; ffiasm no es toca. M2 i M3, eliminades. | — | — | — | — |
 | ~~D8~~ | **Decidit (29-09-2026):** verificador JS adaptat del de pil-fflonk (`fflonk_verify.js` + `verifyOpenings`) als canvis de pilfflonk, a `pilfflonk/js/`, cridat per `proofman-cli pilfflonk verify` | — | M8, M19 | — | — |
 | ~~D4~~ | **Decidit (29-09-2026):** (a), un tipus `Fr` a `fields` i una biblioteca de witness, a la Fase 3 | — | M38 | — | — |
@@ -686,7 +681,7 @@ La columna "Avançar?" diu si es pot continuar treballant assumint la recomanaci
 | N12 | E2E a la CI abans de P8 | `#[ignore]` i un job que clona el compilador de la branca fixant el commit. Cal que l'usuari hagi pujat la branca. L'alternativa és versionar el `pilout` de la fixture. | M28 | Sí | Abans de M28 |
 | N13 | `ptau` dels tests | No es baixa cap `ptau` (l'usuari: són molt grans) ni es fa servir JS. Un ajudant de test en C++ genera un `ptau` petit amb una `τ` fixa (`[τ^i]₁` i `[τ^i]₂` amb ffiasm), en el format binfile de snarkjs i amb només les seccions 2 i 3, que són les que es llegeixen. És determinista, es desa a `target/` i no es versiona. `PILFFLONK_TEST_PTAU` permet fer servir un altre fitxer. Fora dels tests, el `ptau` és una entrada (`--powers-of-tau`) de com a molt `2^28` (P2). | M6, M20, M28 | Sí | Abans de M6 |
 | N14 | On van les fixtures, els generadors i els E2E | `pilfflonk/tests/{fixtures,data}/` i `pilfflonk/tests/e2e_*.rs` | M13 | Sí | Abans de M13 |
-| N15 | La variant BN254 de `fibonacci-square` | `fibonaccisq.pil:21` declara `commit stage(0) public(rom_root) rom`, un custom commit que és fora d'abast. Cal una variant sense `rom`. | M36 | Sí | Abans de M36 |
+| ~~N15~~ | **Ja no cal:** era per a M36 (diverses AIRs), que queda fora d'abast | — | — | — | — |
 
 ---
 

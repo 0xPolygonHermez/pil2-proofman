@@ -78,7 +78,7 @@ Els annexos són la referència detallada per a qui implementi:
   - els busos de la std, en mode `STD_MODE_ONE_INSTANCE`;
   - publics.
 
-  Diverses AIRs i instàncies, els air, airgroup i proof values i les restriccions globals queden per a una versió futura.
+  Diverses instàncies (i, per tant, diverses AIRs), els air, airgroup i proof values i les restriccions globals queden **fora d'abast** (usuari, 29-09-2026).
 - Verificador JS, com el del FFLONK existent, que es verifica amb snarkjs. S'adapta del verificador de pil-fflonk (D8). En una fase posterior, verificador Solidity.
 
 **Fora d'abast**
@@ -674,7 +674,7 @@ Les columnes de l'**stage 2 i posteriors** i els im pols no els aporta ningú de
 4. Fa la comprovació SHPLONK amb un *pairing* (A.5), sempre amb els commitments fixos de la vkey. La prova no en porta cap. Això corregeix el defecte de `fflonk_verify.js`, que feia servir els de la prova (C.3.1).
 5. Acaba amb un codi de sortida diferent de 0 si la prova no verifica. El `main_verifier.js` antic surt amb 0 també quan falla (Annex C), i això no es copia.
 
-Quan hi hagi diverses instàncies i restriccions globals, en una versió futura (D2), el verificador també agregarà els airgroup values i comprovarà les restriccions de `pilout.globalConstraints.json`.
+Diverses instàncies i restriccions globals queden fora d'abast (D2): el verificador no agrega airgroup values ni avalua `pilout.globalConstraints.json`, que a la v1 no té cap restricció.
 
 **Sense *pairing* a C++.** Com que no hi ha verificador natiu, no es porten F6, F12 ni el *pairing* a `pil2-stark`, i ffiasm no es toca.
 
@@ -918,18 +918,9 @@ Caldrà, però després d'una versió CPU funcional (§7.1). L'informe de rendim
 
 **Validació:** els resultats són idèntics bit a bit als de CPU, i es genera un informe de l'acceleració.
 
-### Després de la v1: diverses AIRs i instàncies (D2)
+### Fora d'abast: diverses instàncies (D2)
 
-**Abast:**
-- llista d'instàncies en ordre canònic, amb una `N` per a cada AIR;
-- un únic transcript i una única obertura, amb `powerW` com a mínim comú múltiple de tots els `k`;
-- air, airgroup i proof values, i l'agregació SUM i PROD;
-- la std en el mode per defecte, amb restriccions globals al verificador JS.
-
-**Validació prevista:**
-1. Verifiquen dos casos: una fixture de dues AIRs amb bus (la variant BN254 de `fibonacci-square`, sense el custom commit `rom`) i M instàncies d'una mateixa AIR.
-2. Si s'elimina, es duplica o es reordena una instància, la prova es rebutja.
-3. Un bus que només quadra entre instàncies passa, i un de desequilibrat falla.
+Cada prova té una sola instància d'una sola AIR. Diverses instàncies, diverses AIRs, els air, airgroup i proof values, l'agregació i les restriccions globals queden fora d'abast (usuari, 29-09-2026). Els formats ja deixen el lloc (el transcript absorbeix el nombre d'instàncies, i els noms de la prova preveuen prefixos), però no s'implementen.
 
 ---
 
@@ -949,7 +940,7 @@ Caldrà, però després d'una versió CPU funcional (§7.1). L'informe de rendim
 | **D1:** no és un camí totalment paral·lel. El codi que es pugui compartir és una dependència allà on calgui: les passades simbòliques passen al crate `pil-info`, i ffiasm, rapidsnark (el transcript) i les utilitats es fan servir com a dependència | Usuari (29-09-2026) |
 | **P1:** l'objectiu són proves directes que millorin les agregacions | Usuari (29-09-2026) |
 | **P6:** el transcript és exactament el del FFLONK existent (`Keccak256Transcript` de rapidsnark) | Usuari (29-09-2026) |
-| **D2 / abast de la v1:** de moment es reprodueix el que fa pil-fflonk, però amb PIL2: una AIR, una instància i una sola prova. Com a pil-fflonk, no hi ha air values, airgroup values, proof values ni restriccions globals; la std es fa servir en mode `STD_MODE_ONE_INSTANCE` (`std_constants.pil:13`), que tanca els busos dins de l'AIR. Diverses AIRs i diverses instàncies queden per a una versió futura. | Usuari (29-09-2026) |
+| **D2 / abast de la v1:** de moment es reprodueix el que fa pil-fflonk, però amb PIL2: una AIR, una instància i una sola prova. Com a pil-fflonk, no hi ha air values, airgroup values, proof values ni restriccions globals; la std es fa servir en mode `STD_MODE_ONE_INSTANCE` (`std_constants.pil:13`), que tanca els busos dins de l'AIR. Diverses instàncies, i per tant diverses AIRs, queden **fora d'abast**: cada prova té una sola instància d'una sola AIR. | Usuari (29-09-2026) |
 | **D4:** (a), un tipus `Fr` al crate `fields` i una biblioteca de witness en `Fr`, a la Fase 3 | Usuari (29-09-2026) |
 | **D5:** es busquen els graus de 2 a 9 (com pil-stark) i es tria el que minimitza `nImPols + qDeg`; `--max-constraint-degree` canvia el límit | Usuari (29-09-2026) |
 | **P2:** `2^28` és el grau màxim que hi pot haver, el del `ptau` més gran disponible (`powersOfTau28_hez_final.ptau`). No és el `ptau` que es farà servir: només fixa el límit superior. Amb la 2-adicitat de BN254, això vol dir `N·2^extendBits ≤ 2^28` i grau de cada `f_i` `< 2^28`: amb `qDeg` fins a 8, `N ≤ 2^24`.<br>El `ptau` és una entrada del setup (`--powers-of-tau`). Els de la cerimònia Hermez són a la llista del README de snarkjs (`github.com/iden3/snarkjs`). **No se'n baixa cap**, perquè són molt grans. Els tests generen un `ptau` petit amb una `τ` fixa, amb ffiasm i sense JS (N13 del pla). | Usuari (29-09-2026) |
