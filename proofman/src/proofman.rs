@@ -17,7 +17,6 @@ use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
     free_device_buffers_c, use_packed_trace_c, register_instruction_table_c, is_first_gpu_buffer_borrowed_c,
 };
-use crate::add_publics_circom;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
@@ -4180,8 +4179,7 @@ where
                     // Verified from the proving key, not from a committed Rust
                     // verifier: the aggregator binds the application's publics
                     // into q_verify, so a verifier generated for one application
-                    // rejects proofs another's correct prover produced. Same
-                    // mechanism verify_agg_proof already uses for recursive1/2.
+                    // rejects proofs another's correct prover produced.
                     let setup = match options.compressed {
                         true => self.setups.setup_vadcop_final_compressed.as_ref().unwrap(),
                         false => self.setups.setup_vadcop_final.as_ref().unwrap(),
@@ -4377,6 +4375,8 @@ where
                 }
             }
 
+            // No CPU verification (slow): the fold's circuit verifies this proof, and canonical publics
+            // keep that verification switched on (see agg_publics_are_canonical).
             if !self.agg_publics_are_canonical(proof.airgroup_id as usize, &proof.proof) {
                 self.cancellation_info
                     .write_recover()
@@ -5500,46 +5500,6 @@ where
             return false;
         }
         true
-    }
-
-    #[allow(dead_code)]
-    fn verify_agg_proof(&self, airgroup_id: usize, proof_data: &[u64]) -> ProofmanResult<bool> {
-        let publics_aggregation = n_publics_aggregation(&self.pctx, airgroup_id);
-        // Repeated from the caller so this stays correct standalone; it is a handful of compares.
-        if !self.agg_publics_are_canonical(airgroup_id, proof_data) {
-            return Ok(false);
-        }
-        let (publics, rec_proof) = proof_data.split_at(publics_aggregation);
-        let circuit_type = publics[0];
-        if circuit_type == 0 {
-            return Ok(true);
-        }
-        let (setup, setup_path) = if circuit_type == 1 {
-            (
-                self.setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0)?,
-                self.pctx.global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2),
-            )
-        } else {
-            let air_id = circuit_type as usize - 2;
-            (
-                self.setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id)?,
-                self.pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1),
-            )
-        };
-        let mut publics_extended = vec![0u64; setup.stark_info.n_publics as usize];
-        publics_extended[0..publics.len()].copy_from_slice(publics);
-        add_publics_circom(&mut publics_extended, publics_aggregation, &self.pctx, Some(&setup.verkey));
-        let publics_f: Vec<F> = publics_extended.iter().map(|&x| F::from_u64(x)).collect();
-        let base = setup_path.display().to_string();
-        Ok(verify_proof::<F>(
-            rec_proof,
-            base.clone() + ".starkinfo.json",
-            base.clone() + ".verifier.bin",
-            base + ".verkey.json",
-            Some(publics_f),
-            None,
-            None,
-        ))
     }
 
     #[allow(clippy::too_many_arguments)]
