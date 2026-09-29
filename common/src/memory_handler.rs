@@ -546,6 +546,7 @@ pub struct MemoryHandlerRecursive<F: PrimeField64 + Send + Sync + 'static> {
     trace: Pool<F>,
     signal_values: Option<SignalValuesPool>,
     witness_threads: usize,
+    agg_witness_threads: usize,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -554,7 +555,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
     /// recursive kind including the compressor: they share one pool, so a compressor and a
     /// recursive proof in flight together just take two of the same buffers.
     pub fn new(n_buffers: usize, buffer_size_trace: usize) -> Self {
-        Self::new_with_signal_pool(n_buffers, buffer_size_trace, None, 8)
+        Self::new_with_signal_pool(n_buffers, buffer_size_trace, None, 8, 8)
     }
 
     pub fn new_with_signal_pool(
@@ -562,6 +563,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         buffer_size_trace: usize,
         signal_pool: Option<(usize, usize)>,
         witness_threads: usize,
+        agg_witness_threads: usize,
     ) -> Self {
         let cancelled = Arc::new(AtomicBool::new(false));
         // One pool for every recursive kind, the compressor included. Traces are H2D sources so it
@@ -578,9 +580,14 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
         let signal_values = signal_pool.map(|(cap, n)| SignalValuesPool::new(cap, n, cancelled.clone()));
 
         let witness_threads = witness_threads.max(1);
-        tracing::info!("MemoryHandlerRecursive::circom solve threads per recursive witness: {}", witness_threads);
+        let agg_witness_threads = agg_witness_threads.max(1);
+        tracing::info!(
+            "MemoryHandlerRecursive::circom solve threads per recursive witness: {} ({} for outer aggregation)",
+            witness_threads,
+            agg_witness_threads
+        );
 
-        Self { trace, signal_values, witness_threads, cancelled }
+        Self { trace, signal_values, witness_threads, agg_witness_threads, cancelled }
     }
 
     /// Unblock any thread parked in a pooled `take()`. Called on the abort path so a failed proof
@@ -591,6 +598,20 @@ impl<F: PrimeField64 + Send + Sync + 'static> MemoryHandlerRecursive<F> {
 
     pub fn witness_threads(&self) -> usize {
         self.witness_threads
+    }
+
+    /// Threads for an outer-aggregation witness.
+    ///
+    /// Higher than [`Self::witness_threads`]: that cap exists because a phase-2 witness overlaps a
+    /// saturated GPU, where extra threads deschedule the ones driving it. An aggregation fold is
+    /// serial -- witness, then launch, then prove -- and the GPU idles throughout the witness, so
+    /// there is nothing to deschedule and the cores are free.
+    ///
+    /// That holds for *one* fold. Folds of different airgroups take different locks and would
+    /// otherwise run at once, each asking for this many threads, so the caller serialises the
+    /// witnesses (`agg_witness_permit`). Handing out every core is only sound behind that permit.
+    pub fn agg_witness_threads(&self) -> usize {
+        self.agg_witness_threads
     }
 
     pub fn take_buffer_signal_values(&self, needed: usize) -> Vec<u64> {
@@ -1008,7 +1029,7 @@ mod tests {
     // ---- signalValues pool ----
 
     fn signal_handler(cap: usize, n: usize) -> MemoryHandlerRecursive<F> {
-        MemoryHandlerRecursive::new_with_signal_pool(1, 8, Some((cap, n)), 4)
+        MemoryHandlerRecursive::new_with_signal_pool(1, 8, Some((cap, n)), 4, 4)
     }
 
     #[test]
