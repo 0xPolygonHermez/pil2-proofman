@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use proofman_pilfflonk::{PilfflonkError, BN254_R};
 use proofman_starks_lib_c::PilFflonkError;
 
+use crate::grouping::GroupingError;
+
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
     // --- What the setup refuses in a pilout (spec §4.2.1) -------------------------------------
@@ -117,9 +119,11 @@ pub enum SetupError {
     #[error("--max-q-degree {0}: splitting Q is not implemented yet, leave it at 0")]
     QSplitting(u64),
 
-    /// The grouping packs nothing yet (plan R1, until M22).
-    #[error("packing the f_i is not implemented yet: pass --no-packing, which forces k = 1")]
-    Packing,
+    /// The grouping of the committed polynomials in `f_i` (spec §4.2.4, A.2) refused them with
+    /// this `--extra-muls`: too many, a search too large, or no valid partition. Its messages say
+    /// which, and what `--extra-muls` would do.
+    #[error(transparent)]
+    Grouping(#[from] GroupingError),
 
     // --- Files and the C++ core --------------------------------------------------------------
     #[error("IO error on {}: {source}", path.display())]

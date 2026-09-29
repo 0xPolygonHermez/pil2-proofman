@@ -35,7 +35,8 @@ use proofman_pilfflonk::{
 };
 use serde_json::{json, Map, Value};
 
-/// The powers `[τ^i]₁` of the ptau: more than the Fibonacci's largest degree, 261 (plan M16).
+/// The powers `[τ^i]₁` of the ptau: more than the Fibonacci's largest degree, 513 grouped (plan
+/// M22), 261 unpacked (plan M16).
 const PTAU_G1: usize = 1024;
 
 /// The fixture's size and inputs, as `pilfflonk/tests/fibonacci.rs` (spec Annex G).

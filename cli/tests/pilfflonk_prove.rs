@@ -1,6 +1,14 @@
-//! `proofman-cli pilfflonk prove` (spec §4.4, plan M18) end to end on the Fibonacci fixture: the
-//! setup (`setup-pilfflonk --no-packing`), the prover's CLI and the JS verifier's (`pilfflonk
-//! verify`, M19), and the prover against the Rust oracle (M14).
+//! `proofman-cli pilfflonk prove` (spec §4.4, plan M18) end to end: the setup (`setup-pilfflonk`),
+//! the prover's CLI and the JS verifier's (`pilfflonk verify`, M19), and the prover against the Rust
+//! oracle (M14), on two fixtures and three layouts (plan M22):
+//!
+//! - the Fibonacci, grouped with the default `--extra-muls 2` (its fixed columns in one `f` of
+//!   `k = 2`, `powerW = 2`), with `--extra-muls 0` (its committed columns in one `f` of `k = 3`, the
+//!   im pol fused into it, `powerW = 6`), and with `--no-packing` (`k = 1`, `powerW = 1`);
+//! - `pilfflonk/tests/fixtures/packed`, a synthetic AIR whose default grouping packs six fixed
+//!   columns in one `f`, splits its eleven committed columns in `f` of `k = 3, 4, 4` (`powerW =
+//!   12`), and fuses a fixed column and two committed ones, which adds their evaluations at the
+//!   offsets they gain to the end of the evMap.
 //!
 //! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
 //! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`, plan N13):
@@ -8,7 +16,7 @@
 //! verifies. With it, the verifier accepts the prover's proofs only if they are sound, and rejects
 //! every change to one.
 //!
-//! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
+//! Pilouts are not versioned: the test compiles the fixtures with the compiler `PIL2C_EXEC` names,
 //! which must honour `prime`, and is `#[ignore]` without it. It needs Node.js:
 //!
 //! ```text
@@ -18,6 +26,8 @@
 
 #[path = "../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
+#[path = "../../pilfflonk/tests/data/packed.rs"]
+mod packed;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -31,16 +41,16 @@ use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::oracle::{AirOracle, ColumnRef, Fr};
 use proofman_pilfflonk::{
-    prove, AirFile, Vkey, FileWitnessSource, FrBytes, PilfflonkError, PilfflonkGlobalInfo, PolType, ProveOptions,
-    ProvingKey, Witness, WitnessSource, BN254_R,
+    prove, AirFile, FileWitnessSource, FrBytes, JsonFile, PilfflonkError, PilfflonkGlobalInfo, PilfflonkInfo, PolType,
+    ProveOptions, ProvingKey, Vkey, Witness, WitnessSource, BN254_R,
 };
 use serde_json::{json, Value};
 
 const SEED_A: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 const SEED_B: &str = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100";
 
-/// The expression of the Fibonacci's im pol, `l1' − (l1² + l2²)` (`pilfflonk/tests/fibonacci.rs`).
-const IM_POL: usize = 6;
+/// `in1` of the synthetic fixture's witness.
+const PACKED_IN1: u64 = 5;
 
 /// A fresh directory for the test under the target's temporary directory, removed when dropped.
 struct TestDir(PathBuf);
@@ -73,12 +83,36 @@ fn output(out: &Output) -> String {
     format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
 }
 
-/// Compiles the Fibonacci fixture over BN254 to `pilout` with `PIL2C_EXEC`.
-fn compile_fibonacci(pilout: &Path) {
+/// A fixture of the tests: its PIL and its witness generator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Program {
+    Fibonacci,
+    Packed,
+}
+
+impl Program {
+    fn pil(self) -> &'static str {
+        match self {
+            Program::Fibonacci => "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil",
+            Program::Packed => "pilfflonk/tests/fixtures/packed/packed.pil",
+        }
+    }
+
+    /// M13's generator for the Fibonacci (inputs [1, 2]), `tests/data/packed.rs` for the other.
+    fn witness(self) -> Witness {
+        match self {
+            Program::Fibonacci => fibonacci::witness(8, [1, 2]),
+            Program::Packed => packed::witness(PACKED_IN1),
+        }
+    }
+}
+
+/// Compiles `program` over BN254 to `pilout` with `PIL2C_EXEC`.
+fn compile(program: Program, pilout: &Path) {
     let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that honours `prime`");
     let out = Command::new(compiler)
         .current_dir(repo_root())
-        .arg("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil")
+        .arg(program.pil())
         .args(["-I", "pil2-components/lib/std/pil", "-P", "pilfflonk/tests/fixtures/fibonacci/bn254.json", "-o"])
         .arg(pilout)
         .output()
@@ -120,18 +154,28 @@ fn plus_one(value: &Value) -> Value {
     json!(((v + 1u32) % r).to_string())
 }
 
-/// The ptau of the test (see the module), with more powers than the Fibonacci's largest degree,
-/// 261 (plan M16).
+/// The ptau of the test (see the module), with more powers than the largest degree of every
+/// layout here: 779, the Fibonacci's `f` of `k = 3` (`setup/pil2-stark/tests/setup_pilfflonk.rs`).
 fn ptau(dir: &TestDir) -> PathBuf {
     match std::env::var_os("PILFFLONK_TEST_PTAU") {
         Some(path) => PathBuf::from(path),
         None => {
             let path = dir.file("fixed_tau.ptau");
-            write_fixed_tau_ptau(&path, 512, &test_tau()).unwrap();
+            write_fixed_tau_ptau(&path, 1024, &test_tau()).unwrap();
             path
         }
     }
 }
+
+/// How the setup lays out the `f`: grouped with `--extra-muls`, or `--no-packing`.
+#[derive(Clone, Copy, Debug)]
+enum Packing {
+    ExtraMuls(u64),
+    NoPacking,
+}
+
+/// The default of the command: grouped with `--extra-muls 2`.
+const DEFAULT: Packing = Packing::ExtraMuls(DEFAULT_EXTRA_MULS);
 
 struct Fixture {
     dir: TestDir,
@@ -139,34 +183,64 @@ struct Fixture {
     proving_key: PathBuf,
     vkey: PathBuf,
     witness: PathBuf,
+    /// The publics of the witness, as `publics.json` has them.
+    publics: Value,
 }
 
-/// The Fibonacci compiled, set up and its witness written (M13's generator, inputs [1, 2]).
-fn fixture(name: &str) -> Fixture {
-    let dir = TestDir::new(name);
-    let opts = SetupPilfflonkOptions {
-        airout_path: dir.file("fibonacci.pilout"),
-        build_dir: dir.file("build"),
-        powers_of_tau: ptau(&dir),
-        max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
-        extra_muls: DEFAULT_EXTRA_MULS,
-        max_q_degree: DEFAULT_MAX_Q_DEGREE,
-        no_packing: true,
+impl Fixture {
+    fn info(&self) -> PilfflonkInfo {
+        let global_info = PilfflonkGlobalInfo::from_proving_key(&self.proving_key).unwrap();
+        PilfflonkInfo::read(&global_info.air_file(&self.proving_key, 0, 0, AirFile::PilfflonkInfo).unwrap()).unwrap()
+    }
+
+    /// Each `f` of the layout as `(stage, k, offsets, degree)`.
+    fn layout(&self) -> Vec<(u64, u64, Vec<i64>, u64)> {
+        self.info().layout.0.iter().map(|f| (f.stage, f.k, f.offsets.clone(), f.degree)).collect()
+    }
+}
+
+/// The options of a setup in `dir`, of the pilout `program.pilout` there and with the test's ptau,
+/// laid out as `packing` says.
+fn setup_options(dir: &TestDir, packing: Packing) -> SetupPilfflonkOptions {
+    let (extra_muls, no_packing) = match packing {
+        Packing::ExtraMuls(extra_muls) => (extra_muls, false),
+        Packing::NoPacking => (DEFAULT_EXTRA_MULS, true),
     };
-    compile_fibonacci(&opts.airout_path);
+    SetupPilfflonkOptions {
+        airout_path: dir.file("program.pilout"),
+        build_dir: dir.file("build"),
+        powers_of_tau: ptau(dir),
+        max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
+        extra_muls,
+        max_q_degree: DEFAULT_MAX_Q_DEGREE,
+        no_packing,
+    }
+}
+
+/// `program` compiled, set up as `packing` says, and its witness written.
+fn fixture(name: &str, program: Program, packing: Packing) -> Fixture {
+    let dir = TestDir::new(name);
+    let opts = setup_options(&dir, packing);
+    compile(program, &opts.airout_path);
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
     let vkey = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap().vkey_path(&proving_key);
     let witness = dir.file("witness");
     let shape = ProvingKey::load(&proving_key).unwrap().witness_shape().unwrap();
-    fibonacci::witness(8, [1, 2]).write(&witness, &shape).unwrap();
-    Fixture { pilout: opts.airout_path, dir, proving_key, vkey, witness }
+    let generated = program.witness();
+    generated.write(&witness, &shape).unwrap();
+    let publics = json!(generated.publics.iter().map(FrBytes::to_decimal).collect::<Vec<_>>());
+    Fixture { pilout: opts.airout_path, dir, proving_key, vkey, witness, publics }
 }
 
-#[test]
-#[ignore = "needs PIL2C_EXEC and Node.js"]
-fn the_prover_proves_the_fibonacci_and_the_verifier_rejects_every_change() {
-    let f = fixture("e2e");
+/// Proves the witness of `f` four times (twice with one seed, once with another, once with the
+/// OS's randomness), and checks that:
+/// - the same seed gives the same proof, and another seed other commitments;
+/// - the proof holds the commitments `commitments` (the non-fixed `f`, `W` and `W'`) and the
+///   evaluations `evaluations`, by name, and the witness's publics;
+/// - the verifier accepts every proof, and rejects any change to a commitment, `W`, `W'`, an
+///   evaluation, `inv`, `invZh` or a public, and the evaluations of another proof.
+fn proves_and_rejects_every_change(f: &Fixture, commitments: &[&str], evaluations: &[&str]) {
     let (a1, a2, b, random) = (f.dir.file("a1"), f.dir.file("a2"), f.dir.file("b"), f.dir.file("random"));
     for (out, seed) in [(&a1, Some(SEED_A)), (&a2, Some(SEED_A)), (&b, Some(SEED_B)), (&random, None)] {
         let run = prove_cli(&f.proving_key, &f.witness, out, seed);
@@ -183,19 +257,14 @@ fn the_prover_proves_the_fibonacci_and_the_verifier_rejects_every_change() {
     let (pa, pb, pr) =
         (read_json(&a1.join("proof.json")), read_json(&b.join("proof.json")), read_json(&random.join("proof.json")));
     let polynomials = pa["polynomials"].as_object().unwrap();
-    // The non-fixed f (f2 … f5: l1, l2, the im pol and Q), W and W'; the fixed ones are the vkey's.
-    assert_eq!(polynomials.keys().collect::<Vec<_>>(), ["W", "Wp", "f2", "f3", "f4", "f5"]);
+    assert_eq!(polynomials.keys().map(String::as_str).collect::<Vec<_>>(), commitments);
     for name in polynomials.keys() {
         assert_ne!(pa["polynomials"][name], pb["polynomials"][name], "{name} with another seed");
         assert_ne!(pa["polynomials"][name], pr["polynomials"][name], "{name} with the OS's randomness");
     }
-    let evaluations = pa["evaluations"].as_object().unwrap();
-    let names: Vec<&String> = evaluations.keys().collect();
-    assert_eq!(
-        names,
-        ["Fibonacci.ImPol[0]", "Fibonacci.L1", "Fibonacci.LLAST", "inv", "invZh", "l1", "l1w", "l2", "l2w"]
-    );
-    assert_eq!(read_json(&a1.join("publics.json")), json!(["1", "2", fibonacci_out()]));
+    let names = pa["evaluations"].as_object().unwrap();
+    assert_eq!(names.keys().map(String::as_str).collect::<Vec<_>>(), evaluations);
+    assert_eq!(read_json(&a1.join("publics.json")), f.publics);
 
     // Every one verifies.
     for dir in [&a1, &b, &random] {
@@ -219,14 +288,14 @@ fn the_prover_proves_the_fibonacci_and_the_verifier_rejects_every_change() {
         write_json(&other, &tampered);
         rejected(&publics, &other, name);
     }
-    for name in evaluations.keys() {
+    for name in names.keys() {
         let mut tampered = pa.clone();
         tampered["evaluations"][name] = plus_one(&pa["evaluations"][name]);
         write_json(&other, &tampered);
         rejected(&publics, &other, name);
     }
     let public_values = read_json(&publics);
-    for i in 0..3 {
+    for i in 0..public_values.as_array().unwrap().len() {
         let mut tampered = public_values.clone();
         tampered[i] = plus_one(&public_values[i]);
         write_json(&other, &tampered);
@@ -239,15 +308,133 @@ fn the_prover_proves_the_fibonacci_and_the_verifier_rejects_every_change() {
     rejected(&publics, &other, "the evaluations of another proof");
 }
 
-/// `out` of the Fibonacci for [1, 2] (`pil-fflonk/runtime/public.json`).
-fn fibonacci_out() -> &'static str {
-    "590308608561184158373097535019708483037277117989374906445627411437315467687"
+/// The Fibonacci grouped by default (plan M22): `L1` and `LLAST` in `f0`, of `k = 2`, the vkey's;
+/// the im pol, fused to `{0, 1}`, `l2` and `l1` in `f1` to `f3`, and `Q` in `f4`. The im pol's
+/// evaluation at `ξ·ω`, the pair its fusion adds, is in the proof.
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_the_grouped_fibonacci_and_the_verifier_rejects_every_change() {
+    let f = fixture("e2e", Program::Fibonacci, DEFAULT);
+    assert_eq!(
+        f.layout(),
+        [
+            (0, 2, vec![0], 513),
+            (1, 1, vec![0, 1], 259),
+            (1, 1, vec![0, 1], 259),
+            (1, 1, vec![0, 1], 259),
+            (2, 1, vec![0], 261)
+        ]
+    );
+    assert_eq!(f.info().layout.power_w().unwrap(), 2);
+    proves_and_rejects_every_change(
+        &f,
+        &["W", "Wp", "f1", "f2", "f3", "f4"],
+        &[
+            "Fibonacci.ImPol[0]",
+            "Fibonacci.ImPol[0]w",
+            "Fibonacci.L1",
+            "Fibonacci.LLAST",
+            "inv",
+            "invZh",
+            "l1",
+            "l1w",
+            "l2",
+            "l2w",
+        ],
+    );
+}
+
+/// The Fibonacci with `--extra-muls 0`: its three committed columns in one `f` of `k = 3`, opened at
+/// the six roots of `ξ·ω^0` and `ξ·ω^1`, and `powerW = 6`.
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_the_fibonacci_with_its_columns_in_one_f() {
+    let f = fixture("e2e_k3", Program::Fibonacci, Packing::ExtraMuls(0));
+    assert_eq!(f.layout(), [(0, 2, vec![0], 513), (1, 3, vec![0, 1], 779), (2, 1, vec![0], 261)]);
+    assert_eq!(f.info().layout.power_w().unwrap(), 6);
+    proves_and_rejects_every_change(
+        &f,
+        &["W", "Wp", "f1", "f2"],
+        &[
+            "Fibonacci.ImPol[0]",
+            "Fibonacci.ImPol[0]w",
+            "Fibonacci.L1",
+            "Fibonacci.LLAST",
+            "inv",
+            "invZh",
+            "l1",
+            "l1w",
+            "l2",
+            "l2w",
+        ],
+    );
+}
+
+/// The Fibonacci with `--no-packing` (plan R1, the first slice's layout): an `f` of `k = 1` per
+/// column, `L1` and `LLAST` in `f0` and `f1`.
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_the_unpacked_fibonacci_and_the_verifier_rejects_every_change() {
+    let f = fixture("e2e_unpacked", Program::Fibonacci, Packing::NoPacking);
+    assert!(f.layout().iter().all(|(_, k, _, _)| *k == 1));
+    assert_eq!(f.info().layout.power_w().unwrap(), 1);
+    proves_and_rejects_every_change(
+        &f,
+        &["W", "Wp", "f2", "f3", "f4", "f5"],
+        &["Fibonacci.ImPol[0]", "Fibonacci.L1", "Fibonacci.LLAST", "inv", "invZh", "l1", "l1w", "l2", "l2w"],
+    );
+}
+
+/// The synthetic fixture (`tests/fixtures/packed`) grouped by default: six fixed columns in one `f`
+/// of `k = 6`; `S`, opened at `{1}`, fused to `{0, 1}`; the eleven committed columns (`b` and the im
+/// pol fused to `{0, 1}`) split in three `f` of `k = 3, 4, 4`; `powerW = 12`. The evMap ends with
+/// the pairs the fusions add, `S` at 0, `b` and the im pol at 1, and the proof has them. With no
+/// extra mul the eleven have no valid split, and the setup says to raise `--extra-muls`.
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_a_layout_that_packs_and_splits_groups() {
+    let f = fixture("e2e_packed", Program::Packed, DEFAULT);
+    let info = f.info();
+    assert_eq!(
+        f.layout(),
+        [
+            (0, 6, vec![0], 6 * 16 + 5),
+            (0, 1, vec![0, 1], 16),
+            (1, 3, vec![0, 1], 3 * 19 + 2),
+            (1, 4, vec![0, 1], 4 * 19 + 3),
+            (1, 4, vec![0, 1], 4 * 19 + 3),
+            (2, 1, vec![0], 16 + 2 * 2 + 1),
+        ]
+    );
+    assert_eq!(info.layout.power_w().unwrap(), 12);
+    let appended: Vec<(PolType, &str, i64)> = info.ev_map[info.ev_map.len() - 3..]
+        .iter()
+        .map(|e| (e.pol_type, info.pol(e.pol_type, e.id).unwrap().name.as_str(), e.prime))
+        .collect();
+    assert_eq!(appended, [(PolType::Const, "Packed.S", 0), (PolType::Cm, "b", 1), (PolType::Cm, "Packed.ImPol", 1)]);
+
+    let mut evaluations: Vec<String> =
+        ["Packed.L1", "Packed.LLAST", "Packed.S", "Packed.Sw", "inv", "invZh"].iter().map(|s| s.to_string()).collect();
+    evaluations.extend((0..4).map(|i| format!("Packed.K[{i}]")));
+    evaluations.extend((0..8).flat_map(|i| [format!("a[{i}]"), format!("a[{i}]w")]));
+    evaluations.extend(["b", "bw", "c", "cw", "Packed.ImPol[0]", "Packed.ImPol[0]w"].map(String::from));
+    evaluations.sort();
+    let evaluations: Vec<&str> = evaluations.iter().map(String::as_str).collect();
+    proves_and_rejects_every_change(&f, &["W", "Wp", "f2", "f3", "f4", "f5"], &evaluations);
+
+    // No valid split of the eleven without an extra mul (A.2): the setup refuses, and says why.
+    let dir = TestDir::new("packed_no_extra_muls");
+    let opts = SetupPilfflonkOptions { airout_path: f.pilout.clone(), ..setup_options(&dir, Packing::ExtraMuls(0)) };
+    let err = format!("{:#}", run_setup_pilfflonk(&opts).unwrap_err());
+    // 19 polynomials in 4 groups: 15 extra muls at most.
+    assert!(err.contains("a larger --extra-muls, up to 15, allows smaller chunks"), "{err}");
+    assert!(!opts.build_dir.exists());
 }
 
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn a_witness_that_breaks_a_constraint_is_refused() {
-    let f = fixture("unsatisfied");
+    let f = fixture("unsatisfied", Program::Fibonacci, DEFAULT);
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
     let mut witness = Witness::from_source(&source).unwrap();
@@ -281,17 +468,18 @@ fn big(v: &FrBytes) -> num_bigint::BigUint {
     num_bigint::BigUint::from_bytes_le(&v.to_le_bytes())
 }
 
-#[test]
-#[ignore = "needs PIL2C_EXEC"]
-fn the_prover_agrees_with_the_oracle() {
-    let f = fixture("oracle");
+/// The prover of the grouped `f` agrees with the oracle at `ξ = xiSeed^powerW` (A.2, rule 5): every
+/// evaluation of a fixed column, at each offset its `f` opens it at (those a fusion adds too), is
+/// the oracle's exactly; a committed one is blinded, and is not; and `Q(ξ)`, folded by the oracle
+/// over the proof's evaluations, is the prover's.
+fn agrees_with_the_oracle(f: &Fixture) {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
     let options = ProveOptions { insecure_blinding_seed: Some([5; 32]) };
     let out = prove(&pk, &source, &options).unwrap();
     let info = pk.air(source.instances()[0]).unwrap();
-    assert_eq!(info.layout.power_w().unwrap(), 1, "ξ is xiSeed");
-    let xi = Fr::from(out.challenges.xi_seed);
+    let power_w = info.layout.power_w().unwrap();
+    let xi = Fr::from(out.challenges.xi_seed).pow_u64(power_w);
     let std_vc = Fr::from(out.challenges.std_vc);
 
     let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
@@ -326,32 +514,50 @@ fn the_prover_agrees_with_the_oracle() {
     assert_eq!(at_xi.len(), out.proof.evaluations.len());
 
     // The fixed columns have no blinding: their evaluations are the oracle's, exactly.
-    for id in 0..2 {
-        let expected = oracle.column_at(&values, ColumnRef::Fixed(id), 0, &xi).unwrap();
-        assert_eq!(at_xi[&(ColumnRef::Fixed(id), 0)], expected, "fixed column {id} at ξ");
+    let fixed: Vec<(ColumnRef, i32)> =
+        at_xi.keys().filter(|(c, _)| matches!(c, ColumnRef::Fixed(_))).copied().collect();
+    assert!(!fixed.is_empty());
+    for (c, offset) in fixed {
+        let expected = oracle.column_at(&values, c, offset, &xi).unwrap();
+        assert_eq!(at_xi[&(c, offset)], expected, "{c:?} at ξ·ω^{offset}");
     }
     // The committed ones are blinded (A.3): not the oracle's interpolants at ξ …
-    assert_ne!(
-        at_xi[&(ColumnRef::Witness { stage: 1, idx: 0 }, 0)],
-        oracle.column_at(&values, ColumnRef::Witness { stage: 1, idx: 0 }, 0, &xi).unwrap()
-    );
+    let first = ColumnRef::Witness { stage: 1, idx: 0 };
+    assert_ne!(at_xi[&(first, 0)], oracle.column_at(&values, first, 0, &xi).unwrap());
     // … but Q(ξ), as the oracle folds the constraints over the proof's evaluations, is the prover's Q
     // at ξ: the value the verifier computes, and SHPLONK opens Q's f at.
-    let q = oracle.q_from_evaluations(&values, &at_xi, &[IM_POL], &std_vc, &xi).unwrap();
+    let im_pols: Vec<usize> =
+        info.cm_pols_map.iter().filter(|p| p.im_pol).map(|p| p.exp_id.unwrap() as usize).collect();
+    let q = oracle.q_from_evaluations(&values, &at_xi, &im_pols, &std_vc, &xi).unwrap();
     assert_eq!(q, Fr::from(out.challenges.q_at_xi));
     // Another evaluation, another Q(ξ).
     let mut changed = at_xi.clone();
-    let l1w = changed.get_mut(&(ColumnRef::Witness { stage: 1, idx: 0 }, 1)).unwrap();
-    *l1w = &*l1w + &Fr::one();
-    assert_ne!(oracle.q_from_evaluations(&values, &changed, &[IM_POL], &std_vc, &xi).unwrap(), q);
+    let next = changed.get_mut(&(first, 1)).unwrap();
+    *next = &*next + &Fr::one();
+    assert_ne!(oracle.q_from_evaluations(&values, &changed, &im_pols, &std_vc, &xi).unwrap(), q);
     // invZh = 1/Z_H(ξ).
-    assert_eq!(&Fr::from(out.proof.inv_zh) * &(&xi.pow_u64(256) - &Fr::one()), Fr::one());
+    assert_eq!(&Fr::from(out.proof.inv_zh) * &(&xi.pow_u64(1 << info.n_bits) - &Fr::one()), Fr::one());
+}
+
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_prover_agrees_with_the_oracle() {
+    for (name, program, packing, power_w) in [
+        ("oracle", Program::Fibonacci, DEFAULT, 2),
+        ("oracle_k3", Program::Fibonacci, Packing::ExtraMuls(0), 6),
+        ("oracle_unpacked", Program::Fibonacci, Packing::NoPacking, 1),
+        ("oracle_packed", Program::Packed, DEFAULT, 12),
+    ] {
+        let f = fixture(name, program, packing);
+        assert_eq!(f.info().layout.power_w().unwrap(), power_w, "{name}");
+        agrees_with_the_oracle(&f);
+    }
 }
 
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_prover_refuses_a_proving_key_whose_files_disagree() {
-    let f = fixture("disagree");
+    let f = fixture("disagree", Program::Fibonacci, DEFAULT);
     let original = fs::read_to_string(&f.vkey).unwrap();
     let load_error = || ProvingKey::load(&f.proving_key).unwrap_err().to_string();
 
@@ -377,6 +583,13 @@ fn the_prover_refuses_a_proving_key_whose_files_disagree() {
         v["boundaries"].as_array_mut().unwrap().push(frame);
     });
     assert!(load_error().contains("the vkey's boundaries"), "{}", load_error());
+    // The evMap without the pair of the fusion: the layout opens the im pol at ξ·ω, and the vkey
+    // no longer says so.
+    resealed(|v| {
+        v["evMap"].as_array_mut().unwrap().pop();
+    });
+    let err = load_error();
+    assert!(err.contains("which the evMap does not have"), "{err}");
 
     // The vkey restored, the C++ loader's refusals come through: a .const cut short.
     fs::write(&f.vkey, &original).unwrap();

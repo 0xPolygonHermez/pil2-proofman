@@ -33,7 +33,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use num_bigint::BigUint;
-use pilfflonk_setup::grouping::{fuse, group, GroupingError, GroupingParams, MIN_POLS};
+use pilfflonk_setup::grouping::{fuse, group, GroupingError, GroupingParams, MAX_SEARCH_STEPS, MIN_POLS};
 use pilfflonk_setup::layout::CommittedPol;
 use proofman_pilfflonk::layout::is_valid_k;
 use proofman_pilfflonk::{Layout, BN254_R};
@@ -411,7 +411,10 @@ fn a_chunk_has_k_with_k_times_n_dividing_r_minus_1() {
     };
     // v₂(4) + 26 ≤ 28, but not + 27: then 4 = 2 + 2.
     assert_eq!(four(26, 0).unwrap(), [4, 1]);
-    assert_eq!(four(27, 0), Err(GroupingError::NoValidPartition { n_groups: 2, extra_muls: 0, n_bits: 27 }));
+    assert_eq!(
+        four(27, 0),
+        Err(GroupingError::NoValidPartition { n_groups: 2, extra_muls: 0, n_bits: 27, max_extra_muls: 3 })
+    );
     assert_eq!(four(27, 1).unwrap(), [2, 2, 1]);
     // With N = 2^28 only odd k: 4 = 1 + 3.
     assert_eq!(four(28, 1).unwrap(), [1, 3, 1]);
@@ -431,7 +434,8 @@ fn what_cannot_be_grouped_is_refused() {
     let refuse = |pols: Vec<CommittedPol>, params: GroupingParams| {
         let error = group(&pols, &params).unwrap_err();
         let fused = fuse(&pols, &params);
-        if !matches!(error, GroupingError::NoQ { .. } | GroupingError::TooManyExtraMuls { .. }) {
+        let of_rule_3 = matches!(error, GroupingError::TooManyExtraMuls { .. } | GroupingError::SearchTooLarge { .. });
+        if !matches!(error, GroupingError::NoQ { .. }) && !of_rule_3 {
             assert_eq!(fused, Err(error.clone()), "fuse refuses it too");
         }
         error
@@ -464,12 +468,78 @@ fn what_cannot_be_grouped_is_refused() {
         GroupingError::TooManyExtraMuls { extra_muls: 2, n_pols: 3, n_groups: 2 }
     );
 
+    // A search too large (the bound itself is in no_search_is_larger_than_the_bound).
+    let mut pols: Vec<CommittedPol> =
+        (0..40u64).flat_map(|s| (0..8).map(move |i| column(&format!("p{s}_{i}"), 1 + s, 8 * s + i, &[0], 3))).collect();
+    pols.push(pol("Q", 41, 320, &[0], 5));
+    assert!(matches!(refuse(pols, params(3, 100, 41)), GroupingError::SearchTooLarge { extra_muls: 100, .. }));
+
     // A bound that overflows: 2·(2^64 − 1).
     let pols = vec![pol("a", 1, 0, &[0], u64::MAX), pol("b", 1, 1, &[0], u64::MAX), q()];
     assert_eq!(group(&pols, &params(3, 0, 2)), Err(GroupingError::Overflow));
     // Or when the fusion adds its coefficient.
     let pols = vec![pol("a", 1, 0, &[0], u64::MAX), column("b", 1, 1, &[0, 1], 3), q()];
     assert_eq!(fuse(&pols, &params(3, 0, 2)), Err(GroupingError::Overflow));
+}
+
+/// A class of 5, 7, 10, 11, … columns cannot be one chunk (A.2): with too few extra muls there is
+/// no valid partition, and the message says that more `--extra-muls` allow one.
+#[test]
+fn no_valid_partition_says_more_extra_muls_help() {
+    // Three classes of five (stages 1 to 3), and Q: each needs one extra chunk at least.
+    let mut pols: Vec<CommittedPol> =
+        (0..3u64).flat_map(|s| (0..5).map(move |i| column(&format!("p{s}_{i}"), 1 + s, 5 * s + i, &[0], 8))).collect();
+    pols.push(pol("Q", 4, 15, &[0], 300));
+    for extra_muls in [0, 1, 2] {
+        let error = group(&pols, &params(8, extra_muls, 4)).unwrap_err();
+        assert_eq!(
+            error,
+            GroupingError::NoValidPartition { n_groups: 4, extra_muls, n_bits: 8, max_extra_muls: 12 },
+            "{extra_muls} extra muls"
+        );
+        let message = error.to_string();
+        assert!(message.contains("a larger --extra-muls, up to 12, allows smaller chunks"), "{message}");
+    }
+    // Three: [2,3] in each class.
+    let layout = group(&pols, &params(8, 3, 4)).unwrap();
+    assert_eq!(layout.0.iter().map(|f| f.k).collect::<Vec<_>>(), [2, 3, 2, 3, 2, 3, 1]);
+    // And too many is refused with its own message.
+    let error = group(&pols, &params(8, 13, 4)).unwrap_err();
+    assert_eq!(error, GroupingError::TooManyExtraMuls { extra_muls: 13, n_pols: 16, n_groups: 4 });
+    assert!(error.to_string().contains("so at most 12 extra muls (A.2, rule 3): lower --extra-muls"), "{error}");
+}
+
+/// The exhaustive search of rule 3 is bounded (`MAX_SEARCH_STEPS`): an `extraMuls` that would
+/// make it too large is refused before anything is enumerated, with a message that says to lower
+/// it, and the defaults stay far below the bound, also for large AIRs.
+#[test]
+fn no_search_is_larger_than_the_bound() {
+    // Forty stages of eight columns: 280 extra muls are possible, and the combinations of a
+    // hundred of them (compositions of 100 in 40 parts of at most 7) are astronomically many.
+    let mut pols: Vec<CommittedPol> =
+        (0..40u64).flat_map(|s| (0..8).map(move |i| column(&format!("p{s}_{i}"), 1 + s, 8 * s + i, &[0], 3))).collect();
+    pols.push(pol("Q", 41, 320, &[0], 5));
+    let started = std::time::Instant::now();
+    let error = group(&pols, &params(3, 100, 41)).unwrap_err();
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "refused in {:?}", started.elapsed());
+    match &error {
+        GroupingError::SearchTooLarge { extra_muls: 100, steps, limit } => {
+            assert_eq!(*limit, MAX_SEARCH_STEPS);
+            assert!(*steps > MAX_SEARCH_STEPS);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(error.to_string().contains("lower --extra-muls"), "{error}");
+    // With the default, the same AIR is grouped: two of its classes are split once.
+    let layout = group(&pols, &params(3, 2, 41)).unwrap();
+    assert_eq!(layout.0.len(), 41 + 2);
+
+    // A class of 500 columns (a large AIR's stage) with the default extra muls: within the bound.
+    let mut pols: Vec<CommittedPol> = (0..500).map(|i| column(&format!("a{i}"), 1, i, &[0, 1], 10)).collect();
+    pols.push(pol("Q", 2, 500, &[0], 3000));
+    let layout = group(&pols, &params(10, 2, 2)).unwrap();
+    assert_eq!(layout.0.iter().map(|f| f.pols.len()).sum::<usize>(), 501);
+    assert_eq!(layout.0.len(), 1 + 3);
 }
 
 // --- Properties ---------------------------------------------------------------------------------

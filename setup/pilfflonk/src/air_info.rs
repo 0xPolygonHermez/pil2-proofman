@@ -18,6 +18,9 @@
 //!   their evaluations would share a name in the proof (`names`). Here the im pols of an AIR are
 //!   the array `<air>.ImPol`: the `k`-th of `cmPolsMap` has `lengths: [k]`, so its name in the
 //!   proof and in the layout is `<air>.ImPol[k]`.
+//! - **The evMap.** `pil-info`'s, followed by the pairs the fusions of the grouping add
+//!   (`layout::ev_map_of`): the indices of `pil-info`'s entries, which the `qVerifier` refers to,
+//!   do not change.
 //!
 //! The stage-1 columns keep `pil-info`'s order: the pilout's columns at `stageId 0 … C−1`, and
 //! the im pols after them, which is what the witness files hold (`WitnessShape`).
@@ -32,7 +35,7 @@ use proofman_pilfflonk::{
 };
 
 use crate::error::SetupError;
-use crate::layout::{committed_pols, unpacked_layout, Committed};
+use crate::layout::{committed_pols, ev_map_of, Committed, Packing};
 
 /// The name of the piece `i` of `Q` in `cmPolsMap`: `Q0` for `Q` not split.
 pub fn q_piece_name(i: u64) -> String {
@@ -240,14 +243,16 @@ fn ev_map(result: &PilInfoResult) -> Result<Vec<EvMapEntry>, SetupError> {
 }
 
 /// The pilfflonkinfo of `air` (of the pilout, the one [`crate::validate::validate`] returned) from
-/// the result of the passes on it, with the unpacked layout (plan R1) and `Q` split in pieces of
-/// `max_q_degree` (0: not split, the only case yet). It is validated (`JsonFile::validate`) before
-/// it is returned, so that nothing is written for a pilfflonkinfo that cannot be.
+/// the result of the passes on it, with the layout `packing` says (`layout::committed_pols`) and
+/// `Q` split in pieces of `max_q_degree` (0: not split, the only case yet). It is validated
+/// (`JsonFile::validate`) before it is returned, so that nothing is written for a pilfflonkinfo
+/// that cannot be.
 pub fn air_setup(
     result: &PilInfoResult,
     air_ref: AirRef,
     air: &pb::Air,
     max_q_degree: u64,
+    packing: Packing,
 ) -> Result<AirSetup, SetupError> {
     if result.fri_exp_id.is_some() {
         return passes_output("a FRI polynomial: the passes must run with PilInfoCfg::bn254()".to_string());
@@ -261,7 +266,8 @@ pub fn air_setup(
     let const_pols_map = const_pols_map(result, air)?;
     let cm_pols_map = cm_pols_map(result, air, q_pieces(q_deg, max_q_degree))?;
     let ev_map = ev_map(result)?;
-    let committed = committed_pols(n_bits, q_deg, q_stage, &const_pols_map, &cm_pols_map, &ev_map)?;
+    let committed = committed_pols(n_bits, q_deg, q_stage, &const_pols_map, &cm_pols_map, &ev_map, packing)?;
+    let ev_map = ev_map_of(&ev_map, &committed.layout, q_stage, &setup.opening_points)?;
 
     let mut map_sections_n = std::collections::BTreeMap::new();
     map_sections_n.insert("const".to_string(), const_pols_map.len() as u64);
@@ -289,7 +295,7 @@ pub fn air_setup(
         q_dim: 1,
         max_q_degree,
         c_exp_id: result.c_exp_id as u64,
-        layout: unpacked_layout(&committed.pols),
+        layout: committed.layout.clone(),
     };
     info.validate()?;
     Ok(AirSetup { info, committed })

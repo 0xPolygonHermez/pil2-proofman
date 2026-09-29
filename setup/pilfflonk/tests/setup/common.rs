@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
-use proofman_pilfflonk::{FqBytes, FrBytes, G1Affine, BN254_R};
+use proofman_pilfflonk::{FqBytes, FrBytes, G1Affine, Layout, BN254_R};
 
 pub const R_MINUS_ONE: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
 /// 2^200 + 7: a value of more than 64 bits.
@@ -167,6 +167,18 @@ pub fn pilout() -> pb::PilOut {
 
 pub fn the_air(pilout: &mut pb::PilOut) -> &mut pb::Air {
     &mut pilout.air_groups[0].airs[0]
+}
+
+/// An `f` of a layout as `(stage, the names of its polynomials, k, offsets, degree)`.
+pub type FShape<'a> = (u64, Vec<&'a str>, u64, Vec<i64>, u64);
+
+/// Each `f` of `layout` as an [`FShape`].
+pub fn f_shapes(layout: &Layout) -> Vec<FShape<'_>> {
+    layout
+        .0
+        .iter()
+        .map(|f| (f.stage, f.pols.iter().map(|p| p.name.as_str()).collect(), f.k, f.offsets.clone(), f.degree))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------------------------

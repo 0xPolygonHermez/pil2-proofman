@@ -12,18 +12,20 @@ use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE
 use pilfflonk_setup::digest::keccak256;
 use pilfflonk_setup::fixed::FixedColumns;
 use pilfflonk_setup::global_info::global_info;
+use pilfflonk_setup::layout::Packing;
 use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupError, SetupPilfflonkOptions};
 use prost::Message;
 use proofman_pilfflonk::global_info::GLOBAL_CONSTRAINTS_FILE;
 use proofman_pilfflonk::{
     AggType, AirFile, AirVerkey, FqBytes, G2Affine, GlobalInfoAir, JsonFile, NameStageEntry, PilfflonkGlobalInfo,
-    PilfflonkInfo, ProofNames, SetupParams, Vkey, WitnessShape,
+    PilfflonkInfo, PolType, ProofNames, SetupParams, Vkey, WitnessShape,
 };
 use proofman_starks_lib_c::PilFflonkSrs;
 
 use crate::common::*;
 
+/// The arguments of the command with its defaults: grouped with `--extra-muls 2`.
 fn options(dir: &TestDir) -> SetupPilfflonkOptions {
     SetupPilfflonkOptions {
         airout_path: dir.file("synthetic.pilout"),
@@ -32,7 +34,7 @@ fn options(dir: &TestDir) -> SetupPilfflonkOptions {
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
-        no_packing: true,
+        no_packing: false,
     }
 }
 
@@ -69,20 +71,24 @@ fn the_defaults_are_those_of_spec_4_2() {
     let opts = options(&dir);
     assert_eq!(
         opts.setup_params(),
-        SetupParams { max_constraint_degree: 9, extra_muls: 2, max_q_degree: 0, packing: false }
+        SetupParams { max_constraint_degree: 9, extra_muls: 2, max_q_degree: 0, packing: true }
     );
+    assert_eq!(opts.packing(), Packing::Grouped { extra_muls: 2 });
     opts.check().unwrap();
+    let unpacked = SetupPilfflonkOptions { no_packing: true, ..opts };
+    assert_eq!(unpacked.packing(), Packing::Unpacked);
+    assert!(!unpacked.setup_params().packing);
+    unpacked.check().unwrap();
 }
 
-/// What the arguments cannot ask for: a degree search below 2, and, until they are implemented,
-/// splitting Q (plan R3) and packing (plan R1).
+/// What the arguments cannot ask for: a degree search below 2, and, until it is implemented,
+/// splitting Q (plan R3). Packing is the default (plan M22).
 #[test]
 fn the_arguments_the_setup_cannot_do_are_refused() {
     let dir = TestDir::new("arguments");
     for (change, expected) in [
         ((|o| o.max_constraint_degree = 1) as fn(&mut SetupPilfflonkOptions), "--max-constraint-degree 1"),
         (|o| o.max_q_degree = 3, "--max-q-degree 3"),
-        (|o| o.no_packing = false, "--no-packing"),
     ] {
         let mut opts = options(&dir);
         change(&mut opts);
@@ -144,12 +150,12 @@ fn the_global_info_has_the_common_part_and_pilfflonks_fields() {
     assert!(matches!(global_info(&pilout, params), Err(SetupError::InvalidPilout(_))));
 }
 
-/// The `provingKey/` of spec §4.2.6, every file readable by its type, the same bytes on a second
-/// run.
+/// The `provingKey/` of spec §4.2.6 with `--no-packing`, every file readable by its type, the same
+/// bytes on a second run.
 #[test]
 fn the_command_writes_the_files_of_the_proving_key() {
     let dir = TestDir::new("command");
-    let opts = inputs(&dir, &pilout(), 64);
+    let opts = SetupPilfflonkOptions { no_packing: true, ..inputs(&dir, &pilout(), 64) };
     run_setup_pilfflonk(&opts).unwrap();
 
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
@@ -298,17 +304,98 @@ fn the_command_refuses_a_vkey_the_verifier_would_refuse() {
     assert!(!opts.build_dir.exists());
 }
 
-/// A ptau with fewer powers than the largest degree of the layout, Q's 11, is refused before any
-/// file is written; 11 are enough.
+/// A ptau with fewer powers than the largest degree of the layout is refused before any file is
+/// written: grouped, the 17 of the fixed f of `C[0]` and `L1`, and unpacked, Q's 11.
 #[test]
 fn the_command_refuses_a_ptau_too_small_for_the_layout() {
     let dir = TestDir::new("command_small_ptau");
-    let opts = inputs(&dir, &pilout(), 10);
+    for (no_packing, largest) in [(false, 17), (true, 11)] {
+        let opts = SetupPilfflonkOptions { no_packing, ..inputs(&dir, &pilout(), largest - 1) };
+        let err = run_setup_pilfflonk(&opts).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains(&format!("fewer than the {largest} requested")), "{message}");
+        assert_eq!(files(&opts.build_dir), Vec::<String>::new());
+
+        let opts = SetupPilfflonkOptions { no_packing, ..inputs(&dir, &pilout(), largest) };
+        run_setup_pilfflonk(&opts).unwrap();
+        fs::remove_dir_all(&opts.build_dir).unwrap();
+    }
+}
+
+/// The `provingKey/` of the grouping, the default (plan M22): the pilout's fixed columns `L1`,
+/// `C[0]` and `C[1]` make one group, split in two `f`; `a`, opened at `{0}`, and `b`, at `{1}`,
+/// move to `{0, 1}` (A.2, rule 1) and are one group, split in two; `Q` is alone. The fusions raise
+/// `|O|_max` from 1 to 2, and `Q`'s bound with it (spec C.3.2), and add the evaluations of `b` at 0
+/// and `a` at 1 to the end of the evMap. Every file is consistent, and a second run writes the same
+/// bytes.
+#[test]
+fn the_command_groups_the_polynomials_by_default() {
+    let dir = TestDir::new("command_grouped");
+    let opts = inputs(&dir, &pilout(), 64);
+    run_setup_pilfflonk(&opts).unwrap();
+    let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
+    let gi = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap();
+    assert!(gi.setup_params.packing);
+    let air_file = |file| gi.air_file(&proving_key, 0, 0, file).unwrap();
+    let info = PilfflonkInfo::read(&air_file(AirFile::PilfflonkInfo)).unwrap();
+
+    // Degrees (A.1–A.3): N = 8 for a fixed column; a and b opened at {0, 1}, 8 + 2 + 1 = 11; Q,
+    // qDeg = 1 and |O|_max = 2, 8 + 2·2 + 1 = 13. An f of k polynomials costs max_j(deg_j·k + j).
+    let layout = f_shapes(&info.layout);
+    assert_eq!(
+        layout,
+        [
+            (0, vec!["Sample.C[1]"], 1, vec![0], 8),
+            (0, vec!["Sample.C[0]", "Sample.L1"], 2, vec![0], 8 * 2 + 1),
+            (1, vec!["Sample.b"], 1, vec![0, 1], 11),
+            (1, vec!["Sample.a"], 1, vec![0, 1], 11),
+            (2, vec!["Q0"], 1, vec![0], 13),
+        ]
+    );
+    assert_eq!(info.layout.power_w().unwrap(), 2);
+    let degrees = info.degrees().unwrap();
+    assert_eq!((degrees.max_openings, degrees.q_coefficients, degrees.n_bits_ext), (2, 13, 4));
+
+    // The evMap: pil-info's, then b at 0 and a at 1, by opening point.
+    let pairs: Vec<(PolType, u64, i64)> = info.ev_map.iter().map(|e| (e.pol_type, e.id, e.prime)).collect();
+    let n = pairs.len();
+    assert_eq!(pairs[n - 2..], [(PolType::Cm, 1, 0), (PolType::Cm, 0, 1)]);
+    let names = ProofNames::new(&gi, &[&info]).unwrap();
+    assert_eq!(names.evaluations()[n - 2..], ["Sample.b", "Sample.aw"]);
+
+    // The SRS holds the 17 powers of the largest f.
+    let srs_bytes = fs::read(gi.srs_path(&proving_key)).unwrap();
+    assert_eq!(srs_bytes.len(), 12 + 3 * 12 + 88 + 17 * 64 + 2 * 128);
+    // τ = 1: [f] = Σ_j p_j(1)·G, the first rows of the columns it packs: 3 for C[1], 2 + 1 for C[0]
+    // and L1.
+    let verkey = AirVerkey::read(&air_file(AirFile::Verkey)).unwrap();
+    assert_eq!(verkey, AirVerkey(vec![multiple_of_g(3), multiple_of_g(3)]));
+    let vkey = Vkey::read(&gi.vkey_path(&proving_key)).unwrap();
+    assert!(vkey.digest_matches(|data| keccak256(data).unwrap()).unwrap());
+    assert_eq!((&vkey.layout, &vkey.ev_map, vkey.power_w), (&info.layout, &info.ev_map, 2));
+    assert_eq!(vkey.fixed_commitments.0, verkey.0);
+    WitnessShape::from_proving_key(&gi, &[&info]).unwrap();
+
+    let before: Vec<Vec<u8>> = files(&proving_key).iter().map(|f| fs::read(proving_key.join(f)).unwrap()).collect();
+    run_setup_pilfflonk(&opts).unwrap();
+    let after: Vec<Vec<u8>> = files(&proving_key).iter().map(|f| fs::read(proving_key.join(f)).unwrap()).collect();
+    assert_eq!(before, after);
+}
+
+/// An `--extra-muls` the AIR cannot take is refused, with the grouping's reason and the pilout's
+/// path, before any file is written: here 6 polynomials in 3 groups take 3 at most.
+#[test]
+fn the_command_refuses_an_extra_muls_the_air_cannot_take() {
+    let dir = TestDir::new("command_extra_muls");
+    let opts = SetupPilfflonkOptions { extra_muls: 4, ..inputs(&dir, &pilout(), 64) };
     let err = run_setup_pilfflonk(&opts).unwrap_err();
     let message = format!("{err:#}");
-    assert!(message.contains("fewer than the 11 requested"), "{message}");
-    assert_eq!(files(&opts.build_dir), Vec::<String>::new());
-
-    let opts = inputs(&dir, &pilout(), 11);
-    run_setup_pilfflonk(&opts).unwrap();
+    assert!(
+        message.contains("synthetic.pilout cannot be set up")
+            && message.contains("so at most 3 extra muls (A.2, rule 3): lower --extra-muls"),
+        "{message}"
+    );
+    assert!(!opts.build_dir.exists());
+    // --no-packing does not group: --extra-muls is unused.
+    run_setup_pilfflonk(&SetupPilfflonkOptions { no_packing: true, ..opts }).unwrap();
 }

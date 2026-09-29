@@ -24,7 +24,7 @@ use prost::Message;
 use proofman_pilfflonk::global_info::GLOBAL_CONSTRAINTS_FILE;
 use proofman_pilfflonk::{
     AirFile, AirVerkey, FqBytes, FrBytes, G1Affine, GlobalInfoAir, JsonFile, NameStageEntry, PilfflonkGlobalInfo,
-    PilfflonkInfo, ProofNames, SetupParams, Vkey, WitnessShape,
+    PilfflonkInfo, PolType, ProofNames, SetupParams, Vkey, WitnessShape,
 };
 
 const BN254_R_BE: [u8; 32] = [
@@ -154,6 +154,18 @@ fn proving_key_files(name: &str, airgroup: &str, air: &str) -> Vec<String> {
     files
 }
 
+/// An `f` of a layout as `(stage, the names of its polynomials, k, offsets, degree)`.
+type FShape<'a> = (u64, Vec<&'a str>, u64, Vec<i64>, u64);
+
+/// Each `f` of the layout of `info` as an [`FShape`].
+fn f_shapes(info: &PilfflonkInfo) -> Vec<FShape<'_>> {
+    info.layout
+        .0
+        .iter()
+        .map(|f| (f.stage, f.pols.iter().map(|p| p.name.as_str()).collect(), f.k, f.offsets.clone(), f.degree))
+        .collect()
+}
+
 /// The layout of `info` as `(stage, id, name, offsets, degree)` for each `f`, all of `k = 1`.
 fn layout(info: &PilfflonkInfo) -> Vec<(u64, u64, String, Vec<i64>, u64)> {
     assert!(info.layout.0.iter().all(|f| f.k == 1 && f.pols.len() == 1));
@@ -264,9 +276,20 @@ fn it_writes_the_proving_key_of_a_pilout() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(contents(&proving_key), before);
 
-    // What the setup cannot do yet fails with the reason, and a non-zero status.
+    // Grouped, the default (plan M22): with no extra mul, the same f, one per class, and the same
+    // SRS; the default --extra-muls 2 is more than its 3 polynomials in 3 groups allow.
+    let grouped = dir.file("grouped");
+    let args_grouped =
+        ["setup-pilfflonk", "-a", path(&pilout_path), "-b", path(&grouped), "--powers-of-tau", path(&ptau)];
+    let out = proofman_setup(&[&args_grouped[..], &["--max-constraint-degree", "4", "--extra-muls", "0"]].concat());
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let (gi, grouped_info, _) = check_proving_key(&grouped.join("provingKey"));
+    assert_eq!(grouped_info.layout, info.layout);
+    assert!(gi.setup_params.packing);
+
+    // What the setup cannot do fails with the reason, and a non-zero status.
     for (extra, expected) in [
-        (&[][..], "pass --no-packing"),
+        (&[][..], "so at most 0 extra muls (A.2, rule 3): lower --extra-muls"),
         (&["--no-packing", "--max-q-degree", "2"][..], "--max-q-degree 2"),
         (&["--no-packing", "--max-constraint-degree", "1"][..], "--max-constraint-degree 1"),
     ] {
@@ -393,4 +416,90 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
     let out = proofman_setup(&args);
     assert!(out.status.success(), "setup-pilfflonk: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(contents(&proving_key), before);
+
+    // Grouped, the default (plan M22), with `--extra-muls 2` and 0: the same pilfflonkinfo but for
+    // its layout and evMap, and the same files.
+    let unpacked = info;
+    for (extra_muls, expected, power_w) in [
+        // L1 and LLAST in one f of k = 2, 256·2 + 1; the im pol, opened at {0}, alone in its class
+        // of stage 1, moves to {0, 1} and joins l1 and l2 (A.2, rule 1): 256 + 2 + 1 each, and Q's
+        // bound does not change (|O|_max was 2). The two extra muls split the group of three.
+        (
+            "2",
+            vec![
+                (0, vec!["Fibonacci.LLAST", "Fibonacci.L1"], 2, vec![0], 513),
+                (1, vec!["Fibonacci.ImPol[0]"], 1, vec![0, 1], 259),
+                (1, vec!["l2"], 1, vec![0, 1], 259),
+                (1, vec!["l1"], 1, vec![0, 1], 259),
+                (2, vec!["Q0"], 1, vec![0], 261),
+            ],
+            2,
+        ),
+        // With none, the three in one f of k = 3: 259·3 + 2.
+        (
+            "0",
+            vec![
+                (0, vec!["Fibonacci.LLAST", "Fibonacci.L1"], 2, vec![0], 513),
+                (1, vec!["Fibonacci.ImPol[0]", "l2", "l1"], 3, vec![0, 1], 779),
+                (2, vec!["Q0"], 1, vec![0], 261),
+            ],
+            6,
+        ),
+    ] {
+        let grouped = dir.file(&format!("grouped_{extra_muls}"));
+        let args = [
+            "setup-pilfflonk",
+            "-a",
+            path(&pilout_path),
+            "-b",
+            path(&grouped),
+            "--powers-of-tau",
+            path(&ptau),
+            "--extra-muls",
+            extra_muls,
+        ];
+        let out = proofman_setup(&args);
+        assert!(out.status.success(), "setup-pilfflonk: {}", String::from_utf8_lossy(&out.stderr));
+        let proving_key = grouped.join("provingKey");
+        let mut expected_files = proving_key_files("fibonacci", "Fibonacci", "Fibonacci");
+        expected_files.sort();
+        assert_eq!(files(&proving_key), expected_files);
+        let (gi, info, vkey) = check_proving_key(&proving_key);
+        let layout = f_shapes(&info);
+        assert_eq!(layout, expected, "--extra-muls {extra_muls}");
+        assert_eq!((vkey.power_w, info.layout.power_w().unwrap()), (power_w, power_w));
+        // The evMap: the unpacked one, and then the im pol at 1, the pair its fusion adds.
+        assert_eq!(info.ev_map[..7], unpacked.ev_map[..]);
+        assert_eq!(
+            info.ev_map[7..].iter().map(|e| (e.pol_type, e.id, e.prime, e.opening_pos)).collect::<Vec<_>>(),
+            [(PolType::Cm, 2, 1, 1)]
+        );
+        let names = ProofNames::new(&gi, &[&info]).unwrap();
+        assert_eq!(names.evaluations().last().map(String::as_str), Some("Fibonacci.ImPol[0]w"));
+        // Everything else is the unpacked pilfflonkinfo's, and the degrees of A.1.
+        let without_layout =
+            |i: &PilfflonkInfo| PilfflonkInfo { layout: Default::default(), ev_map: vec![], ..i.clone() };
+        assert_eq!(without_layout(&info), without_layout(&unpacked));
+        assert_eq!(info.degrees().unwrap(), unpacked.degrees().unwrap());
+        assert_eq!(
+            gi.setup_params,
+            SetupParams {
+                max_constraint_degree: 9,
+                extra_muls: extra_muls.parse().unwrap(),
+                max_q_degree: 0,
+                packing: true
+            }
+        );
+        // τ = 1: the fixed f of LLAST and L1 commits to (LLAST(1) + L1(1))·G = G.
+        assert_eq!(vkey.fixed_commitments.0, [g()]);
+        // The SRS holds the powers of the largest f.
+        let largest = expected.iter().map(|f| f.4).max().unwrap();
+        let srs = fs::read(gi.srs_path(&proving_key)).unwrap();
+        assert_eq!(srs.len() as u64, 12 + 3 * 12 + 88 + largest * 64 + 2 * 128);
+        // Deterministic.
+        let before = contents(&proving_key);
+        let out = proofman_setup(&args);
+        assert!(out.status.success(), "setup-pilfflonk: {}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(contents(&proving_key), before);
+    }
 }

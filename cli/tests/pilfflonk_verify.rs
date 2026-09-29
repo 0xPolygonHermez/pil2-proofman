@@ -1,7 +1,7 @@
 //! `proofman-cli pilfflonk verify` (spec §4.5, plan M19) on the keys of the Fibonacci fixture,
-//! set up with the ptau of `τ = 1` (plan N13). The proof is forged by `forgeProof` of
-//! `pilfflonk/js/test/proofs.js`, which opens anything since it knows `τ`; the prover's proofs are
-//! verified with a full-width `τ` in `pilfflonk_prove.rs` (M18). The
+//! set up (grouped, the default, plan M22) with the ptau of `τ = 1` (plan N13). The proof is
+//! forged by `forgeProof` of `pilfflonk/js/test/proofs.js`, which opens anything since it knows
+//! `τ`; the prover's proofs are verified with a full-width `τ` in `pilfflonk_prove.rs` (M18). The
 //! command must exit with 0 on it, and with another status on a tampered copy, on malformed files
 //! and on every vkey `Vkey::validate` refuses, which the JS verifier must refuse too.
 //!
@@ -147,10 +147,11 @@ fn it_verifies_a_proof_of_the_fibonacci_and_rejects_every_change() {
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
-        no_packing: true,
+        no_packing: false,
     };
     compile_fibonacci(&opts.airout_path);
-    // More powers than the Fibonacci's largest degree, 261 (plan M16).
+    // More powers than the Fibonacci's largest degree, grouped by default: 513, the f of L1 and
+    // LLAST (plan M22).
     write_tau_one_ptau(&opts.powers_of_tau, 1024).unwrap();
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
@@ -242,9 +243,9 @@ fn it_verifies_a_proof_of_the_fibonacci_and_rejects_every_change() {
         },
         Refusal {
             name: "an evaluation out of the evMap",
-            change: |v| first_operand(v, "eval")["id"] = json!(7),
-            rust: "eval 7 is not one of the 7",
-            js: "eval 7 is not one of the 7",
+            change: |v| first_operand(v, "eval")["id"] = json!(8),
+            rust: "eval 8 is not one of the 8",
+            js: "eval 8 is not one of the 8",
         },
     ];
     for Refusal { name, change, rust, js } in refusals {

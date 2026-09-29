@@ -50,6 +50,12 @@
 //!   `utils.js:55-67`). Each gives the vector of its groups' costs, which is sorted in decreasing
 //!   order and compared lexicographically; a combination replaces the best only if it is strictly
 //!   better (`compareSplits`, `setup.js:87-99`). No combination is an error.
+//! - **The size of the search.** Both enumerations are exhaustive, as the old system's, so that the
+//!   tie-breaks are its own: nothing is pruned but what cannot complete. Their size grows fast with
+//!   `extraMuls` (a group of `n` polynomials has about `n^c / c!` splits in `c + 1` chunks, and the
+//!   combinations are the compositions of `extraMuls`). Before it enumerates anything, [`group`]
+//!   counts what it would walk (`search_steps`) and refuses more than [`MAX_SEARCH_STEPS`] with
+//!   [`GroupingError::SearchTooLarge`], which says to lower `--extra-muls`, rather than prune.
 //!
 //! **Rule 5, the roots,** are not in the layout: whoever loads it derives them from its `k` and
 //! offsets and `N`, and `powerW` is [`Layout::power_w`].
@@ -71,6 +77,11 @@ use crate::layout::CommittedPol;
 /// `minPols` of `fixFIndex` (`fflonk_shkey.js:244`): a class of fewer polynomials moves to the
 /// union of its stage's offsets (A.2, rule 1).
 pub const MIN_POLS: usize = 3;
+
+/// The most steps the exhaustive search of rule 3 may take (`search_steps`): `2^26`, under a
+/// second in a release build. Above it, [`group`] refuses rather than prune (see [the
+/// module](self)).
+pub const MAX_SEARCH_STEPS: u64 = 1 << 26;
 
 /// What the grouping of an AIR depends on besides its polynomials.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,19 +133,28 @@ pub enum GroupingError {
     /// A.2, rule 3 (`setup.js:231-232`).
     #[error(
         "{extra_muls} extra muls: {n_pols} polynomials in {n_groups} groups make at most {} f_i, so at most {} \
-         extra muls (A.2, rule 3)",
+         extra muls (A.2, rule 3): lower --extra-muls",
         n_pols,
         n_pols - n_groups
     )]
     TooManyExtraMuls { extra_muls: u64, n_pols: u64, n_groups: u64 },
 
     /// A.2, rule 3: no combination of splits in chunks of `k·N | r − 1` makes `#groups +
-    /// extraMuls` `f_i`. There is one with `extraMuls = #pols − #groups`, every chunk of `k = 1`.
+    /// extraMuls` `f_i`: a group of 5, 7, 10, 11, … polynomials cannot be one chunk. There is one
+    /// with `extraMuls = #pols − #groups`, every chunk of `k = 1`.
     #[error(
         "no split of the {n_groups} groups in {n_groups} + {extra_muls} f_i has chunks of k with k·2^{n_bits} \
-         dividing r - 1 (A.2, rule 3); more extra muls allow smaller chunks, down to k = 1"
+         dividing r - 1 (A.2, rule 3): a larger --extra-muls, up to {max_extra_muls}, allows smaller chunks, down \
+         to k = 1"
     )]
-    NoValidPartition { n_groups: u64, extra_muls: u64, n_bits: u64 },
+    NoValidPartition { n_groups: u64, extra_muls: u64, n_bits: u64, max_extra_muls: u64 },
+
+    /// A.2, rule 3: the exhaustive search would take more than [`MAX_SEARCH_STEPS`] steps.
+    #[error(
+        "{extra_muls} extra muls make the exhaustive search of A.2's rule 3 take {steps} steps or more, above the \
+         {limit} the setup allows: lower --extra-muls"
+    )]
+    SearchTooLarge { extra_muls: u64, steps: u64, limit: u64 },
 
     #[error("the bound of an f_i does not fit in 64 bits")]
     Overflow,
@@ -153,6 +173,10 @@ pub fn fuse(pols: &[CommittedPol], params: &GroupingParams) -> Result<Vec<Commit
 
 /// The layout of `pols` (see [the module](self)): its `f_i` by stage, each with its polynomials in
 /// the order of the composition, its `k`, its offsets and its bound (A.2's cost).
+///
+/// Refuses, in this order, polynomials that break the input's rules (offsets, stages, ids,
+/// names), no `Q`, too many extra muls, a search of more than [`MAX_SEARCH_STEPS`] steps and no
+/// valid partition: see [`GroupingError`].
 pub fn group(pols: &[CommittedPol], params: &GroupingParams) -> Result<Layout, GroupingError> {
     check(pols, params)?;
     if !pols.iter().any(|p| p.stage == params.q_stage) {
@@ -169,11 +193,17 @@ pub fn group(pols: &[CommittedPol], params: &GroupingParams) -> Result<Layout, G
 
     let longest = groups.iter().map(Vec::len).max().unwrap_or(0);
     let sizes: Vec<usize> = (1..=longest).filter(|&k| is_valid_k(k as u64, params.n_bits)).collect();
+    let lengths: Vec<usize> = groups.iter().map(Vec::len).collect();
+    let steps = search_steps(&lengths, params.extra_muls, &sizes);
+    if steps > MAX_SEARCH_STEPS {
+        return Err(GroupingError::SearchTooLarge { extra_muls: params.extra_muls, steps, limit: MAX_SEARCH_STEPS });
+    }
     let bounds: Vec<Vec<u64>> = groups.iter().map(|g| g.iter().map(|p| p.coefficients).collect()).collect();
     let splits = choose_splits(&bounds, params.extra_muls, &sizes)?.ok_or(GroupingError::NoValidPartition {
         n_groups,
         extra_muls: params.extra_muls,
         n_bits: params.n_bits,
+        max_extra_muls: n_pols - n_groups,
     })?;
 
     let mut layout = Vec::with_capacity(groups.len() + params.extra_muls as usize);
@@ -443,6 +473,84 @@ impl<'a> Combinations<'a> {
     }
 }
 
+/// What the counting of `search_steps` charges for each count it holds, at least: it allocates
+/// them and adds one per chunk size to each. So the counting never holds more than
+/// `MAX_SEARCH_STEPS / 16` counts (32 MiB).
+const STEPS_PER_COUNT: u64 = 16;
+
+/// The number of splits of a group of `len` polynomials in `p` chunks of the sizes `sizes`
+/// (increasing), for each `p` from 0 to `max_parts`: the non-decreasing sequences of `p` sizes that
+/// add up to `len`, which `best_split` evaluates. Saturating.
+fn split_counts(len: usize, max_parts: usize, sizes: &[usize]) -> Vec<u64> {
+    // ways[p][n]: the multisets of p of the sizes added so far that add up to n. Adding the size
+    // k, any number of times: ways'[p][n] = ways[p][n] + ways'[p − 1][n − k], by increasing p.
+    let mut ways = vec![vec![0u64; len + 1]; max_parts + 1];
+    ways[0][0] = 1;
+    for &k in sizes.iter().take_while(|&&k| k <= len) {
+        for p in 1..=max_parts {
+            let (done, rest) = ways.split_at_mut(p);
+            if let (Some(previous), Some(current)) = (done.last(), rest.first_mut()) {
+                for (count, &fewer) in current[k..].iter_mut().zip(previous.iter()) {
+                    *count = count.saturating_add(fewer);
+                }
+            }
+        }
+    }
+    ways.iter().map(|w| w[len]).collect()
+}
+
+/// The steps of rule 3's search (see [the module](self)) for groups of `lengths` polynomials,
+/// `extra_muls` and the chunk sizes `sizes`, saturating: [`group`] refuses more than
+/// [`MAX_SEARCH_STEPS`] before it enumerates anything. They are, for each group of `n`
+/// polynomials, which can have up to `c_max = min(extraMuls, n − 1)` extra chunks:
+/// - the counting itself: `STEPS_PER_COUNT` (or `|sizes|` if more) for each of the
+///   `(c_max + 2)·(n + 1)` counts of the group's splits, and 1 for each prefix sum times each `c`
+///   for the combinations'; once they are too many, the rest is not counted;
+/// - `n` for each split `best_split` evaluates (`split_cost` walks the group);
+///
+/// and then 1 for each node the walk over the combinations visits (a prefix of the groups' `c`
+/// that adds up to `extraMuls` at most: `Combinations::walk` breaks at the first `c` above what is
+/// left), and the number of groups for each complete combination, which `consider` sorts and
+/// compares. A count of the work, not an exact tally of the loops: `best_split` also visits the
+/// prefixes of splits that cannot complete, a few per split.
+fn search_steps(lengths: &[usize], extra_muls: u64, sizes: &[usize]) -> u64 {
+    let limit = usize::try_from(extra_muls).unwrap_or(usize::MAX);
+    let mut steps = 0u64;
+    // prefixes[s]: the prefixes of the groups walked so far whose c add up to s; none above
+    // extraMuls, which `group` checked is at most the number of polynomials.
+    let mut prefixes = vec![1u64];
+    let mut visited = 1u64;
+    for &n in lengths {
+        let c_max = limit.min(n.saturating_sub(1));
+        let counts = (c_max as u64 + 2).saturating_mul(n as u64 + 1);
+        steps = steps.saturating_add(counts.saturating_mul(STEPS_PER_COUNT.max(sizes.len() as u64)));
+        if steps > MAX_SEARCH_STEPS {
+            return steps;
+        }
+        let splits = split_counts(n, c_max + 1, sizes);
+        steps = steps.saturating_add((c_max as u64 + 1).saturating_mul(prefixes.len() as u64));
+        if steps > MAX_SEARCH_STEPS {
+            return steps;
+        }
+        let mut next = vec![0u64; (prefixes.len() + c_max).min(limit.saturating_add(1))];
+        for (c, &count) in splits.iter().skip(1).enumerate() {
+            steps = steps.saturating_add(count.saturating_mul(n as u64));
+            if count == 0 {
+                continue;
+            }
+            for (sum, &ways) in prefixes.iter().enumerate() {
+                if let Some(slot) = next.get_mut(sum + c) {
+                    *slot = slot.saturating_add(ways);
+                }
+            }
+        }
+        prefixes = next;
+        visited = prefixes.iter().fold(visited, |v, &p| v.saturating_add(p));
+    }
+    let complete = prefixes.get(limit).copied().unwrap_or(0);
+    steps.saturating_add(visited).saturating_add(complete.saturating_mul(lengths.len() as u64))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,5 +600,50 @@ mod tests {
         assert_eq!(best_split(&[1; 4], 1, &[1, 2, 3]).unwrap(), None);
         // More chunks than polynomials.
         assert_eq!(best(&[1; 2], 3), None);
+    }
+
+    /// The non-decreasing sequences of `parts` sizes that add up to `len`, enumerated.
+    fn brute_counts(len: usize, parts: usize, sizes: &[usize]) -> u64 {
+        fn walk(left: usize, parts: usize, sizes: &[usize]) -> u64 {
+            match parts {
+                0 => u64::from(left == 0),
+                _ => (0..sizes.len())
+                    .map(|i| if sizes[i] <= left { walk(left - sizes[i], parts - 1, &sizes[i..]) } else { 0 })
+                    .sum(),
+            }
+        }
+        walk(len, parts, sizes)
+    }
+
+    #[test]
+    fn the_splits_are_counted_as_best_split_enumerates_them() {
+        // Nine in three: [1,2,6], [1,4,4], [2,3,4], [3,3,3]; in two: [1,8], [3,6].
+        assert_eq!(split_counts(9, 3, &SIZES), [0, 1, 2, 4]);
+        assert_eq!(split_counts(4, 4, &[1, 2, 3, 4]), [0, 1, 2, 1, 1]);
+        assert_eq!(split_counts(0, 1, &SIZES), [1, 0]);
+        for len in 0..30 {
+            let counts = split_counts(len, 8, &SIZES);
+            for (parts, &count) in counts.iter().enumerate() {
+                assert_eq!(count, brute_counts(len, parts, &SIZES), "{len} in {parts}");
+            }
+        }
+        // Sizes above the length are not counted.
+        assert_eq!(split_counts(3, 2, &[1, 2, 4, 8]), [0, 0, 1]);
+    }
+
+    #[test]
+    fn the_search_steps_count_the_counting_the_splits_and_the_combinations() {
+        // A group of 2 (c ≤ 1) and one of 1 (c = 0), one extra mul, sizes 1 and 2:
+        // - the counting: 3·3 and 2·2 counts of splits, 16 steps each, 144 + 64, and of the
+        //   combinations 2 c by 1 prefix sum, then 1 c by 2: 2 + 2;
+        // - the splits: [2] and [1,1] of the first, 2 each, and [1] of the second: 4 + 1;
+        // - the walk: the root, (0), (1), (0,0), (1,0): 5; and the one complete, (1,0), 2.
+        assert_eq!(search_steps(&[2, 1], 1, &[1, 2]), 144 + 64 + 2 + 2 + 4 + 1 + 5 + 2);
+        // No extra mul: one split per group, one combination.
+        assert_eq!(search_steps(&[2, 1], 0, &[1, 2]), 2 * 3 * 16 + 2 * 2 * 16 + 1 + 1 + 2 + 1 + 3 + 2);
+        // Forty groups of eight and a hundred extra muls: the combinations alone are too many, and
+        // the count saturates rather than overflow.
+        assert!(search_steps(&[8; 40], 100, &SIZES) > MAX_SEARCH_STEPS);
+        assert_eq!(search_steps(&[8; 400], 2000, &SIZES), u64::MAX);
     }
 }

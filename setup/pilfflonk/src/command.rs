@@ -42,7 +42,7 @@ use crate::error::SetupError;
 use crate::fixed::FixedColumns;
 use crate::global_info::global_info;
 use crate::keys::{air_verkey, load_srs, write_srs, x_2};
-use crate::layout::max_degree;
+use crate::layout::{max_degree, Packing};
 use crate::passes::run_passes;
 use crate::validate::{check_extended_domain, validate};
 
@@ -73,7 +73,8 @@ pub struct SetupPilfflonkOptions {
     pub extra_muls: u64,
     /// `--max-q-degree`: 0 does not split `Q` (A.1).
     pub max_q_degree: u64,
-    /// `--no-packing`: every `f_i` packs one polynomial, `k = 1`. For tests only.
+    /// `--no-packing`: every `f_i` packs one polynomial, `k = 1`, and `--extra-muls` is unused. For
+    /// tests only.
     pub no_packing: bool,
 }
 
@@ -88,17 +89,25 @@ impl SetupPilfflonkOptions {
         }
     }
 
+    /// How the committed polynomials go into `f_i`: grouped with `--extra-muls` (A.2), or one per
+    /// `f` with `--no-packing`.
+    pub fn packing(&self) -> Packing {
+        if self.no_packing {
+            Packing::Unpacked
+        } else {
+            Packing::Grouped { extra_muls: self.extra_muls }
+        }
+    }
+
     /// Refuses what the setup cannot do with these arguments: a degree search below 2, and, until
-    /// they are implemented, splitting `Q` (plan R3, M33) and packing (plan R1, M22).
+    /// it is implemented, splitting `Q` (plan R3, M33). What `--extra-muls` can do depends on the
+    /// AIR: the grouping refuses it ([`SetupError::Grouping`]).
     pub fn check(&self) -> Result<(), SetupError> {
         if self.max_constraint_degree < 2 {
             return Err(SetupError::MaxConstraintDegree(self.max_constraint_degree));
         }
         if self.max_q_degree != 0 {
             return Err(SetupError::QSplitting(self.max_q_degree));
-        }
-        if !self.no_packing {
-            return Err(SetupError::Packing);
         }
         Ok(())
     }
@@ -133,9 +142,11 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     let air_ref = AirRef { name: &global_info.air(airgroup_id, air_id)?.name, airgroup_id, air_id };
 
     // The passes (spec §4.2.2, §4.2.3), and what follows from them: the committed polynomials,
-    // their bounds and the unpacked layout (§4.2.4, A.1–A.3, plan R1), in the pilfflonkinfo.
+    // their bounds and their layout, grouped unless --no-packing (§4.2.4, A.1–A.3), in the
+    // pilfflonkinfo.
     let result = run_passes(&pilout, air, opts.max_constraint_degree).with_context(refused)?;
-    let AirSetup { info, committed } = air_setup(&result, air_ref, air.air, opts.max_q_degree).with_context(refused)?;
+    let AirSetup { info, committed } =
+        air_setup(&result, air_ref, air.air, opts.max_q_degree, opts.packing()).with_context(refused)?;
     for name in &committed.unopened {
         tracing::warn!("column {name} is never opened: it is not committed (spec A.2)");
     }
@@ -164,13 +175,17 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     )
     .with_context(refused)?;
     let n_g1 = max_degree(&info.layout);
+    let ks: Vec<u64> = info.layout.0.iter().map(|f| f.k).collect();
     tracing::info!(
-        "air {}: nBits {} | qDeg {} | {} im pols | {} f of k = 1 | |O|max {} | nBitsExt {} | {} powers [τ^i]₁",
+        "air {}: nBits {} | qDeg {} | {} im pols | {} f, k {:?} | powerW {} | |O|max {} | nBitsExt {} | {} powers \
+         [τ^i]₁",
         info.name,
         info.n_bits,
         info.q_deg,
         info.cm_pols_map.iter().filter(|p| p.im_pol).count(),
         info.layout.0.len(),
+        ks,
+        info.layout.power_w()?,
         degrees.max_openings,
         degrees.n_bits_ext,
         n_g1

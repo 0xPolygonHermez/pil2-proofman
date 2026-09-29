@@ -7,7 +7,8 @@
 # 1. `cargo test --test js_fixtures tau_one_ptau` writes <dir>/tau_one.ptau, τ = 1 (plan N13);
 # 2. `proofman-setup compile-pil` compiles pilfflonk/tests/fixtures/fibonacci over BN254 with the
 #    compiler PIL2C_EXEC names, which must honour `prime` (the pinned one silently compiles over
-#    Goldilocks), and `proofman-setup setup-pilfflonk --no-packing` writes <dir>/build/provingKey;
+#    Goldilocks), and `proofman-setup setup-pilfflonk` writes <dir>/build/provingKey, grouped as it
+#    does by default (plan M22);
 # 3. `cargo test --test js_fixtures q_at_xi` writes <dir>/q_at_xi.json from the Rust oracle;
 # 4. `node --test` runs every JS test with PILFFLONK_JS_FIXTURES=<dir>.
 #
@@ -43,7 +44,7 @@ setup() {
 js_fixtures tau_one_ptau
 setup compile-pil -p pilfflonk/tests/fixtures/fibonacci/fibonacci.pil -I ./pil2-components/lib/std/pil \
     -P pilfflonk/tests/fixtures/fibonacci/bn254.json -o "$dir/fibonacci.pilout"
-setup setup-pilfflonk -a "$dir/fibonacci.pilout" -b "$dir/build" --powers-of-tau "$dir/tau_one.ptau" --no-packing
+setup setup-pilfflonk -a "$dir/fibonacci.pilout" -b "$dir/build" --powers-of-tau "$dir/tau_one.ptau"
 js_fixtures q_at_xi
 
 if [ ! -d "$js/node_modules" ]; then
