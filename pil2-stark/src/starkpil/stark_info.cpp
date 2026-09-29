@@ -653,16 +653,15 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN + maxSizeHelper;   
 
     uint64_t LEvSize = mapOffsets[std::make_pair("f", true)];
+    // Opening 0's Lagrange vector serves every opening point (evmap).
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
-    uint64_t maxOpenings = std::min(uint64_t(openingPoints.size()), EVALS_OPENING_BATCH);
-    LEvSize += maxOpenings * N * FIELD_EXTENSION;
-    if(!gpu) {
-        mapOffsets[std::make_pair("buff_helper_fft_lev", false)] = LEvSize;
-        LEvSize += maxOpenings * N * FIELD_EXTENSION;
-    } else {    
-        // Scratch for the evaluations step 
+    LEvSize += N * FIELD_EXTENSION;
+    if(gpu) {
+        // Opening 0's shifted point and factor (computeLEv_inplace), then the stripe partials.
         mapOffsets[std::make_pair("lev_helper", false)] = LEvSize;
-        LEvSize += 2 * maxOpenings * FIELD_EXTENSION + evMap.size() * EVALS_HELPER_CHUNKS * FIELD_EXTENSION;
+        LEvSize += 2 * FIELD_EXTENSION;
+        mapOffsets[std::make_pair("evals_partials", false)] = LEvSize;
+        LEvSize += evMap.size() * EVALS_HELPER_CHUNKS * FIELD_EXTENSION;
     }
 
     maxTotalN = std::max(maxTotalN, LEvSize);

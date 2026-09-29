@@ -18,6 +18,7 @@
 #include "cuda_utils.cuh"
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
+#include "eval_groups.hpp"
 #include <limits.h>
 #include "fr.hpp"
 #endif
@@ -66,9 +67,8 @@ struct AirInstanceInfo {
     ExpressionsGPU *expressions_gpu;
     int64_t *opening_points;
 
-    uint64_t numBatchesEvals;
-    EvalInfo **evalsInfo;
-    uint64_t *evalsInfoSizes;
+    EvalGroup *evalGroups = nullptr;
+    uint64_t nEvalGroups = 0;
 
     EvalInfo **evalsInfoFRI;
     uint64_t *evalsInfoFRISizes;
@@ -181,56 +181,11 @@ struct AirInstanceInfo {
         CHECKCUDAERR(cudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
 
 
-        uint64_t size_eval = setupCtx->starkInfo.evMap.size();
-        uint64_t num_batches = (setupCtx->starkInfo.openingPoints.size() + EVALS_OPENING_BATCH - 1) / EVALS_OPENING_BATCH;
-
-        evalsInfo = new EvalInfo*[num_batches];
-        evalsInfoSizes = new uint64_t[num_batches];
-        numBatchesEvals = num_batches;
-
-        uint64_t count = 0;
-        for(uint64_t i = 0; i < setupCtx->starkInfo.openingPoints.size(); i += EVALS_OPENING_BATCH) {
-            std::vector<int64_t> openingPoints;
-            for(uint64_t j = 0; j < EVALS_OPENING_BATCH; ++j) {
-                if(i + j < setupCtx->starkInfo.openingPoints.size()) {
-                    openingPoints.push_back(setupCtx->starkInfo.openingPoints[i + j]);
-                }
-            }
-            
-            EvalInfo* evalsInfoHost = new EvalInfo[size_eval];
-
-            uint64_t nEvals = 0;
-
-            for (uint64_t k = 0; k < size_eval; k++)
-            {
-                EvMap ev = setupCtx->starkInfo.evMap[k];
-                auto it = std::find(openingPoints.begin(), openingPoints.end(), ev.prime);
-                bool containsOpening = it != openingPoints.end();
-                if(!containsOpening) continue;
-                string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom"
-                                                                                                : "fixed";
-                PolMap polInfo = type == "cm" ? setupCtx->starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id]
-                                                                                                            : setupCtx->starkInfo.constPolsMap[ev.id];
-                evalsInfoHost[nEvals].type = type == "cm" ? 0 : type == "custom" ? 1
-                                                                        : 2;
-                std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx->starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
-                evalsInfoHost[nEvals].stagePos = polInfo.stagePos;
-                evalsInfoHost[nEvals].offset = setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)];
-                evalsInfoHost[nEvals].stageCols = setupCtx->starkInfo.mapSectionsN[stage];
-                evalsInfoHost[nEvals].dim = polInfo.dim;
-                evalsInfoHost[nEvals].openingPos = std::distance(openingPoints.begin(), it);
-                evalsInfoHost[nEvals].evalPos = k;
-                nEvals++;
-            }
-
-            EvalInfo* d_evalsInfo = nullptr;
-            CHECKCUDAERR(cudaMalloc(&d_evalsInfo, nEvals * sizeof(EvalInfo)));
-            CHECKCUDAERR(cudaMemcpy(d_evalsInfo, evalsInfoHost, nEvals * sizeof(EvalInfo), cudaMemcpyHostToDevice));
-
-            evalsInfo[count] = d_evalsInfo;
-            evalsInfoSizes[count] = nEvals;
-            delete[] evalsInfoHost;
-            count++;
+        const std::vector<EvalGroup> groups = buildEvalGroups(setupCtx->starkInfo);
+        nEvalGroups = groups.size();
+        if (nEvalGroups != 0) {
+            CHECKCUDAERR(cudaMalloc(&evalGroups, nEvalGroups * sizeof(EvalGroup)));
+            CHECKCUDAERR(cudaMemcpy(evalGroups, groups.data(), nEvalGroups * sizeof(EvalGroup), cudaMemcpyHostToDevice));
         }
 
         uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
@@ -341,14 +296,7 @@ struct AirInstanceInfo {
 
         delete expressions_gpu;
 
-        for (uint64_t i = 0; i < numBatchesEvals; ++i) {
-            if (evalsInfo[i] != nullptr) {
-                CHECKCUDAERR(cudaFree(evalsInfo[i]));
-            }
-        }
-
-        delete[] evalsInfoSizes;
-        delete[] evalsInfo;
+        if (evalGroups != nullptr) CHECKCUDAERR(cudaFree(evalGroups));
         CHECKCUDAERR(cudaFree(d_num_packed_words));
 
         if (evalsInfoFRI != nullptr) {

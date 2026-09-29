@@ -54,19 +54,6 @@ __global__ void computeX_kernel(gl64_t *x, uint64_t NExtended, Goldilocks::Eleme
 __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset, uint64_t stride, Goldilocks::Element *d_pol, uint64_t dim, uint64_t N);
 
 
-__global__ void computeEvals_v2(
-    uint64_t domainSize,
-    uint64_t extendBits,
-    uint64_t size_eval,
-    uint64_t N,
-    uint64_t openingsSize,
-    uint64_t LEv_offset,
-    gl64_t *d_evals,
-    EvalInfo *d_evalInfo,
-    gl64_t *d_cmPols,
-    gl64_t *d_customComits,
-    gl64_t *d_fixedPols);
-
 __device__ void intt_tinny(gl64_t *data, uint32_t N, uint32_t logN, gl64_t *d_twiddles, uint32_t ncols);
 
 
@@ -86,7 +73,7 @@ __global__ void moduleQueries(uint64_t* d_friQueries, uint64_t nQueries, uint64_
 void unpack_trace(AirInstanceInfo *air_instance_info, uint64_t* src, uint64_t* dst, uint64_t nCols, uint64_t nRows, cudaStream_t stream, TimerGPU &timer);
 void unpack_fixed(uint64_t* num_packed_words,uint64_t* d_unpack_info,uint64_t* src,uint64_t* dst,uint64_t nCols,uint64_t nRows,cudaStream_t stream,TimerGPU &timer);
 
-void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_LEv, TimerGPU &timer, cudaStream_t stream);
+void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, gl64_t *d_shiftedValues, gl64_t *d_LEv, TimerGPU &timer, cudaStream_t stream);
 
 void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, int64_t *d_openingPoints, Goldilocks::Element *d_xiChallenge, cudaStream_t stream);
 
@@ -98,7 +85,7 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL
 
 void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt, cudaStream_t stream);
 
-void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t chunk, uint64_t nOpeningPoints, int64_t *openingPoints, AirInstanceInfo *air_instance_info, Goldilocks::Element *d_LEv, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream);
+void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, AirInstanceInfo *air_instance_info, Goldilocks::Element *d_LEv, TimerGPU &timer, cudaStream_t stream);
 
 void fold_inplace(uint64_t step, uint64_t friPol_offset, Goldilocks::Element *challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream);
 
