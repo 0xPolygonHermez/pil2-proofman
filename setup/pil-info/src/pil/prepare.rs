@@ -1,5 +1,6 @@
 use pil2_pilout::pilout as pb;
 
+use crate::cfg::FieldCfg;
 use crate::pil::constraint_poly::{generate_constraint_polynomial, Boundary, ConstraintPolyResult};
 use crate::expr::expression::Expression;
 use crate::expr::helpers::add_info_expressions;
@@ -41,8 +42,10 @@ pub struct PreparePilResult {
 /// 3. Calls add_info_expressions on all constraints and remaining expressions
 /// 4. Computes opening points
 /// 5. Calls generate_constraint_polynomial
-pub fn prepare_pil(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize) -> PreparePilResult {
-    let mut setup = crate::types::pilout_info::get_pilout_info(pilout, airgroup_id, air_id);
+///
+/// Every step computes over `field`; `pil_info` must then run with the same field.
+pub fn prepare_pil(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize, field: &FieldCfg) -> PreparePilResult {
+    let mut setup = crate::types::pilout_info::get_pilout_info(pilout, airgroup_id, air_id, field);
 
     // Set all expression stages to 1 (mirrors JS: pil.expressions[i].stage = 1)
     for expr in setup.expressions.iter_mut() {
@@ -63,14 +66,14 @@ pub fn prepare_pil(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize) -> Pr
 
     // Run add_info_expressions on all constraints
     for i in 0..constraints.len() {
-        add_info_expressions(&mut expressions, constraints[i].e);
+        add_info_expressions(&mut expressions, constraints[i].e, field);
         constraints[i].stage = Some(expressions[constraints[i].e].stage);
     }
 
     // Run add_info_expressions on remaining expressions that have not been processed.
     for i in 0..expressions.len() {
         if expressions[i].op != "__placeholder__" {
-            add_info_expressions(&mut expressions, i);
+            add_info_expressions(&mut expressions, i, field);
         }
     }
 
@@ -90,8 +93,14 @@ pub fn prepare_pil(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize) -> Pr
     let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
 
     // Generate constraint polynomial
-    let constraint_poly =
-        generate_constraint_polynomial(setup.n_stages, &mut expressions, &mut symbols, &constraints, &mut boundaries);
+    let constraint_poly = generate_constraint_polynomial(
+        setup.n_stages,
+        &mut expressions,
+        &mut symbols,
+        &constraints,
+        &mut boundaries,
+        field,
+    );
 
     PreparePilResult { setup, expressions, constraints, symbols, hints, boundaries, constraint_poly }
 }

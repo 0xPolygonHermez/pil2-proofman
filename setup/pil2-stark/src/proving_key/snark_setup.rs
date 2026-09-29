@@ -318,7 +318,7 @@ pub fn gen_snark_setup(
         &si_loaded_rf,
         &ei_rf,
     )?;
-    let vi_rf_loaded = crate::types::stark_info::VerifierInfo::from(verifier_info_rf);
+    let vi_rf_loaded = crate::types::stark_info::VerifierInfo::try_from(verifier_info_rf)?;
     crate::io::bin_file::write_verifier_expressions_bin_file(
         recursivef_dir.join("recursivef.verifier.bin").to_str().unwrap(),
         &si_loaded_rf,

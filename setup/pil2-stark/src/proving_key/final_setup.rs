@@ -416,7 +416,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
             &expressions_loaded,
         )?;
 
-        let verifier_loaded = crate::types::stark_info::VerifierInfo::from(verifier_info_ref);
+        let verifier_loaded = crate::types::stark_info::VerifierInfo::try_from(verifier_info_ref)?;
         crate::io::bin_file::write_verifier_expressions_bin_file(
             files_dir.join("vadcop_final.verifier.bin").to_str().unwrap(),
             &stark_info_loaded,

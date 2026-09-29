@@ -3,10 +3,11 @@
 //! Produces code blocks for:
 //! - Expression computations (witness polynomials, intermediate polynomials)
 //! - Constraint polynomial (Q stage)
-//! - FRI polynomial
+//! - FRI polynomial (the FRI opening only)
 //! - Verifier evaluations
 //! - Hint computations
 
+use crate::cfg::{FieldCfg, Opening};
 use crate::pil::cse;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -16,7 +17,7 @@ use crate::pil::codegen::{build_code, pil_code_gen, rebuild_ev_map_index, CalcEn
 use crate::expr::expression::Expression;
 use crate::pil::fri_poly::{self, ChallengeMapEntry};
 use crate::expr::helpers::{add_info_expressions_symbols, EvMapItem};
-use crate::types::pilout_info::{ConstraintInfo, HintFieldValue, HintInfo, SymbolInfo, FIELD_EXTENSION};
+use crate::types::pilout_info::{ConstraintInfo, HintFieldValue, HintInfo, SymbolInfo};
 use crate::expr::print::PrintCtx;
 
 /// Build a HashMap from (exp_id, air_id, airgroup_id) -> symbol index
@@ -228,15 +229,18 @@ pub struct ProcessedHint {
 #[derive(Debug, Clone)]
 pub struct VerifierInfo {
     pub q_verifier: ExpressionCodeEntry,
-    pub query_verifier: ExpressionCodeEntry,
+    /// The FRI polynomial's code, evaluated at each query: `None` unless the opening is FRI.
+    pub query_verifier: Option<ExpressionCodeEntry>,
 }
 
 impl Serialize for VerifierInfo {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
-        let mut map = s.serialize_map(Some(2))?;
+        let mut map = s.serialize_map(Some(1 + usize::from(self.query_verifier.is_some())))?;
         map.serialize_entry("qVerifier", &QVerifierView(&self.q_verifier))?;
-        map.serialize_entry("queryVerifier", &QueryVerifierView(&self.query_verifier))?;
+        if let Some(query_verifier) = &self.query_verifier {
+            map.serialize_entry("queryVerifier", &QueryVerifierView(query_verifier))?;
+        }
         map.end()
     }
 }
@@ -284,9 +288,10 @@ pub struct PilCodeResult {
     pub verifier_info: VerifierInfo,
     /// The evaluation map built during verifier code generation.
     pub ev_map: Vec<EvMapRef>,
-    /// The FRI polynomial expression ID (may differ from c_exp_id).
-    pub fri_exp_id: usize,
-    /// Updated challenges map (with FRI challenges appended).
+    /// The FRI polynomial expression ID (may differ from c_exp_id): `None` unless the opening is
+    /// FRI.
+    pub fri_exp_id: Option<usize>,
+    /// Updated challenges map (with FRI challenges appended; empty unless the opening is FRI).
     pub challenges_map: Vec<ChallengeMapEntry>,
 }
 
@@ -301,12 +306,18 @@ pub struct CodeGenParams {
     pub airgroup_id: usize,
     pub n_stages: usize,
     pub c_exp_id: usize,
-    pub fri_exp_id: usize,
+    /// Set by `generate_pil_code`: the FRI polynomial's expression, `None` unless the opening is FRI.
+    pub fri_exp_id: Option<usize>,
     pub q_deg: usize,
     pub q_dim: usize,
     pub opening_points: Vec<i64>,
     pub cm_pols_map: Vec<SymbolInfo>,
     pub custom_commits_count: usize,
+    /// The field the code computes over.
+    pub field: FieldCfg,
+    /// How the committed polynomials are opened: FRI adds the FRI polynomial and the quotient's
+    /// evaluations.
+    pub opening: Opening,
 }
 
 // ---------------------------------------------------------------------------
@@ -315,7 +326,9 @@ pub struct CodeGenParams {
 
 /// Orchestrate code generation for all stages.
 ///
-/// Mirrors JS `generatePilCode(res, symbols, constraints, expressions, hints, debug)`.
+/// Mirrors JS `generatePilCode(res, symbols, constraints, expressions, hints, debug)`. The opening
+/// hook: only `Opening::Fri` generates the FRI polynomial, sets `fri_exp_id` and builds the
+/// `queryVerifier`.
 pub fn generate_pil_code(
     params: &mut CodeGenParams,
     symbols: &mut Vec<SymbolInfo>,
@@ -331,7 +344,7 @@ pub fn generate_pil_code(
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
 
-    // In non-debug mode: generate verifier code, then FRI polynomial
+    // In non-debug mode: generate verifier code, then, for FRI, the FRI polynomial
     let q_verifier = if !debug {
         let qv = generate_constraint_polynomial_verifier_code(
             params,
@@ -341,24 +354,40 @@ pub fn generate_pil_code(
             &witness_index,
         );
 
-        // Generate FRI polynomial (mirrors JS: generateFRIPolynomial(res, symbols, expressions))
-        let ev_map_for_fri: Vec<EvMapItem> = ev_map_items
-            .iter()
-            .map(|e| EvMapItem { entry_type: e.entry_type.clone(), id: e.id, prime: e.prime, commit_id: e.commit_id })
-            .collect();
+        params.fri_exp_id = match params.opening {
+            Opening::Fri => {
+                // Generate FRI polynomial (mirrors JS: generateFRIPolynomial(res, symbols, expressions))
+                let ev_map_for_fri: Vec<EvMapItem> = ev_map_items
+                    .iter()
+                    .map(|e| EvMapItem {
+                        entry_type: e.entry_type.clone(),
+                        id: e.id,
+                        prime: e.prime,
+                        commit_id: e.commit_id,
+                    })
+                    .collect();
 
-        let fri_result = fri_poly::generate_fri_polynomial(
-            params.n_stages,
-            expressions,
-            symbols,
-            &ev_map_for_fri,
-            &params.opening_points,
-            &mut challenges_map,
-        );
-        params.fri_exp_id = fri_result.fri_exp_id;
+                let fri_result = fri_poly::generate_fri_polynomial(
+                    params.n_stages,
+                    expressions,
+                    symbols,
+                    &ev_map_for_fri,
+                    &params.opening_points,
+                    &mut challenges_map,
+                    &params.field,
+                );
+                Some(fri_result.fri_exp_id)
+            }
+            Opening::Shplonk => None,
+        };
 
         qv
     } else {
+        // Debug mode builds no FRI polynomial; for FRI, cExpId stands in for it (as in the JS setup).
+        params.fri_exp_id = match params.opening {
+            Opening::Fri => Some(params.c_exp_id),
+            Opening::Shplonk => None,
+        };
         ExpressionCodeEntry { tmp_used: 0, code: Vec::new(), exp_id: 0, stage: 0, dest: None, line: String::new() }
     };
 
@@ -370,17 +399,17 @@ pub fn generate_pil_code(
     // In JS, `find` returns a reference, so modifying the found element also
     // modifies the `expressionsCode` array. We replicate this by modifying
     // the entry in-place in `expressions_code` first, then cloning.
-    let fri_entry_idx =
-        expressions_code.iter().position(|e| e.exp_id == params.fri_exp_id).expect("FRI expression code not found");
+    let query_verifier = params.fri_exp_id.map(|fri_exp_id| {
+        let fri_entry_idx =
+            expressions_code.iter().position(|e| e.exp_id == fri_exp_id).expect("FRI expression code not found");
 
-    // Overwrite last dest to be a tmp with FIELD_EXTENSION dim (in-place)
-    {
+        // Overwrite last dest to be a tmp with the extension's dim (in-place)
         let fri_entry = &mut expressions_code[fri_entry_idx];
         if let Some(last) = fri_entry.code.last_mut() {
             last.dest = CodeRef {
                 ref_type: "tmp".to_string(),
                 id: fri_entry.tmp_used - 1,
-                dim: FIELD_EXTENSION,
+                dim: params.field.ext_dim(),
                 prime: None,
                 value: None,
                 stage: None,
@@ -392,9 +421,9 @@ pub fn generate_pil_code(
                 exp_id: None,
             };
         }
-    }
 
-    let query_verifier = expressions_code[fri_entry_idx].clone();
+        fri_entry.clone()
+    });
 
     let constraints_code = generate_constraints_debug_code(params, symbols, constraints, expressions, &witness_index);
 
@@ -404,7 +433,9 @@ pub fn generate_pil_code(
     // recursion circuit, none of which is the prover's cExp.
     let mut q_verifier = q_verifier;
     let mut query_verifier = query_verifier;
-    for (name, entry) in [("qVerifier", &mut q_verifier), ("queryVerifier", &mut query_verifier)] {
+    let verifier_entries = std::iter::once(("qVerifier", &mut q_verifier))
+        .chain(query_verifier.as_mut().map(|entry| ("queryVerifier", entry)));
+    for (name, entry) in verifier_entries {
         let result = cse::cse_code(&entry.code);
         tracing::debug!("CSE {name}: {} -> {} ops", entry.code.len(), result.code.len());
         entry.code = result.code;
@@ -436,17 +467,19 @@ fn generate_expressions_code(
 
     for j in 0..expressions.len() {
         let exp = &expressions[j];
-        let dominated = !exp.keep.unwrap_or(false) && !exp.im_pol && j != params.c_exp_id && j != params.fri_exp_id;
+        let is_fri_exp = params.fri_exp_id == Some(j);
+        let dominated = !exp.keep.unwrap_or(false) && !exp.im_pol && j != params.c_exp_id && !is_fri_exp;
         if dominated {
             continue;
         }
 
-        let dom = if j == params.c_exp_id || j == params.fri_exp_id { "ext" } else { "n" };
+        let dom = if j == params.c_exp_id || is_fri_exp { "ext" } else { "n" };
 
-        let mut ctx = CodeGenCtx::new(params.air_id, params.airgroup_id, exp.stage, dom, false, Vec::new(), Vec::new());
+        let mut ctx =
+            CodeGenCtx::new(params.air_id, params.airgroup_id, exp.stage, dom, false, Vec::new(), &params.field);
         ctx.witness_by_exp_id = Arc::clone(witness_index);
 
-        if j == params.fri_exp_id {
+        if is_fri_exp {
             ctx.opening_points = params.opening_points.clone();
         }
 
@@ -499,12 +532,12 @@ fn generate_expressions_code(
             }
         }
 
-        if j == params.fri_exp_id {
+        if is_fri_exp {
             if let Some(last) = block.code.last_mut() {
                 last.dest = CodeRef {
                     ref_type: "f".to_string(),
                     id: 0,
-                    dim: FIELD_EXTENSION,
+                    dim: params.field.ext_dim(),
                     prime: None,
                     value: None,
                     stage: None,
@@ -560,7 +593,7 @@ fn generate_constraints_debug_code(
 
     for constraint in constraints {
         let mut ctx =
-            CodeGenCtx::new(params.air_id, params.airgroup_id, params.n_stages, "n", false, Vec::new(), Vec::new());
+            CodeGenCtx::new(params.air_id, params.airgroup_id, params.n_stages, "n", false, Vec::new(), &params.field);
         ctx.witness_by_exp_id = Arc::clone(witness_index);
 
         // Pre-mark imPol expressions as calculated
@@ -625,7 +658,7 @@ fn generate_constraint_polynomial_verifier_code(
         "n",
         true,
         params.opening_points.clone(),
-        Vec::new(),
+        &params.field,
     );
     ctx.witness_by_exp_id = Arc::clone(witness_index);
 
@@ -663,21 +696,24 @@ fn generate_constraint_polynomial_verifier_code(
         ctx.ev_map.push(rf);
     }
 
-    // Add Q polynomial columns to ev_map
-    let q_index = params
-        .cm_pols_map
-        .iter()
-        .position(|p| p.stage == Some(params.n_stages + 1) && p.stage_id == Some(0))
-        .unwrap_or(0);
-    let opening_pos = params.opening_points.iter().position(|&p| p == 0).unwrap_or(0);
-    for i in 0..params.q_deg {
-        ctx.ev_map.push(EvMapRef {
-            entry_type: "cm".to_string(),
-            id: q_index + i,
-            prime: 0,
-            opening_pos,
-            commit_id: None,
-        });
+    // Add Q polynomial columns to ev_map. FRI opens the quotient's pieces and the verifier checks
+    // their evaluations against Q(xi); with SHPLONK the verifier computes Q(xi) itself (spec A.1).
+    if params.opening == Opening::Fri {
+        let q_index = params
+            .cm_pols_map
+            .iter()
+            .position(|p| p.stage == Some(params.n_stages + 1) && p.stage_id == Some(0))
+            .unwrap_or(0);
+        let opening_pos = params.opening_points.iter().position(|&p| p == 0).unwrap_or(0);
+        for i in 0..params.q_deg {
+            ctx.ev_map.push(EvMapRef {
+                entry_type: "cm".to_string(),
+                id: q_index + i,
+                prime: 0,
+                opening_pos,
+                commit_id: None,
+            });
+        }
     }
 
     // Sort ev_map by (openingPos, reverse type order, id, prime)
@@ -899,12 +935,14 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 2,
-            fri_exp_id: 3,
+            fri_exp_id: Some(3),
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
             cm_pols_map: vec![SymbolInfo { stage: Some(2), stage_id: Some(0), ..Default::default() }],
             custom_commits_count: 0,
+            field: FieldCfg::goldilocks(),
+            opening: Opening::Fri,
         }
     }
 
@@ -925,12 +963,14 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 999, // not matching any expr
-            fri_exp_id: 998,
+            fri_exp_id: Some(998),
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
             cm_pols_map: Vec::new(),
             custom_commits_count: 0,
+            field: FieldCfg::goldilocks(),
+            opening: Opening::Fri,
         };
 
         let wi = build_witness_index(&symbols, 0, 0);
@@ -987,12 +1027,14 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 2,
-            fri_exp_id: 999,
+            fri_exp_id: Some(999),
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
             cm_pols_map: Vec::new(),
             custom_commits_count: 0,
+            field: FieldCfg::goldilocks(),
+            opening: Opening::Fri,
         };
 
         let wi2 = build_witness_index(&symbols, 0, 0);

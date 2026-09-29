@@ -291,7 +291,7 @@ pub fn verifier_hashes(geom: &VerifierGeometry, family: &str) -> HashCounts {
 }
 
 /// Field-extension degree: every challenge, evaluation and FRI value is this many elements.
-const FIELD_EXTENSION: u64 = 3;
+const FIELD_EXTENSION: u64 = crate::types::FIELD_EXTENSION as u64;
 
 /// Replays the absorb/squeeze sequence of `starkVerify`, statement by statement. The order is what
 /// makes this exact rather than approximate: a squeeze right after an absorb costs a permutation

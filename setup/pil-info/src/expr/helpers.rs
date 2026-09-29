@@ -1,8 +1,5 @@
+use crate::cfg::FieldCfg;
 use crate::expr::expression::{ExprChild, Expression};
-use crate::types::pilout_info::FIELD_EXTENSION;
-
-/// Goldilocks field negation of 1: p - 1 = 2^64 - 2^32 + 1 - 1 = 18446744069414584320
-const NEG_ONE: &str = "18446744069414584320";
 
 // ---------------------------------------------------------------------------
 // add_info_expressions
@@ -16,7 +13,11 @@ const NEG_ONE: &str = "18446744069414584320";
 ///
 /// For arena-indexed expressions, call with the arena index. For expressions
 /// with inline children, the inline children are processed recursively.
-pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize) {
+///
+/// Challenges, evaluations and the values of stages past the first get the
+/// field's extension dimension, and a `neg` becomes a multiplication by the
+/// field's `modulus − 1`.
+pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize, field: &FieldCfg) {
     // Guard: already processed (mirrors JS `if("expDeg" in exp) return;`)
     if expressions[idx].info_computed {
         return;
@@ -27,7 +28,7 @@ pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize) {
     match op.as_str() {
         "exp" => {
             let ref_id = expressions[idx].id.unwrap_or(0);
-            add_info_expressions(expressions, ref_id);
+            add_info_expressions(expressions, ref_id, field);
 
             let exp_deg = expressions[ref_id].exp_deg;
             let rows_offsets = expressions[ref_id].rows_offsets.clone();
@@ -73,18 +74,18 @@ pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize) {
         }
         "challenge" | "eval" => {
             expressions[idx].exp_deg = 0;
-            expressions[idx].dim = FIELD_EXTENSION;
+            expressions[idx].dim = field.ext_dim();
         }
         "airgroupvalue" | "proofvalue" => {
             expressions[idx].exp_deg = 0;
             if expressions[idx].dim <= 1 {
-                expressions[idx].dim = if expressions[idx].stage != 1 { FIELD_EXTENSION } else { 1 };
+                expressions[idx].dim = if expressions[idx].stage != 1 { field.ext_dim() } else { 1 };
             }
         }
         "airvalue" => {
             expressions[idx].exp_deg = 0;
             if expressions[idx].dim <= 1 {
-                expressions[idx].dim = if expressions[idx].stage != 1 { FIELD_EXTENSION } else { 1 };
+                expressions[idx].dim = if expressions[idx].stage != 1 { field.ext_dim() } else { 1 };
             }
         }
         "public" => {
@@ -102,7 +103,7 @@ pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize) {
             }
         }
         "add" | "sub" | "mul" | "neg" => {
-            handle_binary_or_neg(expressions, idx);
+            handle_binary_or_neg(expressions, idx, field);
         }
         _ => {
             panic!("Exp op not defined: {}", op);
@@ -114,7 +115,7 @@ pub fn add_info_expressions(expressions: &mut Vec<Expression>, idx: usize) {
 /// Compute info (exp_deg, dim, stage, rows_offsets) on a standalone
 /// Expression that is NOT in the arena. Inline children are processed
 /// recursively; `exp` references are resolved via the arena.
-pub fn add_info_expression_inline(expressions: &mut Vec<Expression>, expr: &mut Expression) {
+pub fn add_info_expression_inline(expressions: &mut Vec<Expression>, expr: &mut Expression, field: &FieldCfg) {
     if expr.info_computed {
         return;
     }
@@ -124,7 +125,7 @@ pub fn add_info_expression_inline(expressions: &mut Vec<Expression>, expr: &mut 
     match op.as_str() {
         "exp" => {
             let ref_id = expr.id.unwrap_or(0);
-            add_info_expressions(expressions, ref_id);
+            add_info_expressions(expressions, ref_id, field);
 
             expr.exp_deg = expressions[ref_id].exp_deg;
             expr.rows_offsets = expressions[ref_id].rows_offsets.clone();
@@ -163,18 +164,18 @@ pub fn add_info_expression_inline(expressions: &mut Vec<Expression>, expr: &mut 
         }
         "challenge" | "eval" => {
             expr.exp_deg = 0;
-            expr.dim = FIELD_EXTENSION;
+            expr.dim = field.ext_dim();
         }
         "airgroupvalue" | "proofvalue" => {
             expr.exp_deg = 0;
             if expr.dim <= 1 {
-                expr.dim = if expr.stage != 1 { FIELD_EXTENSION } else { 1 };
+                expr.dim = if expr.stage != 1 { field.ext_dim() } else { 1 };
             }
         }
         "airvalue" => {
             expr.exp_deg = 0;
             if expr.dim <= 1 {
-                expr.dim = if expr.stage != 1 { FIELD_EXTENSION } else { 1 };
+                expr.dim = if expr.stage != 1 { field.ext_dim() } else { 1 };
             }
         }
         "public" => {
@@ -192,7 +193,7 @@ pub fn add_info_expression_inline(expressions: &mut Vec<Expression>, expr: &mut 
             }
         }
         "add" | "sub" | "mul" | "neg" => {
-            handle_binary_or_neg_inline(expressions, expr);
+            handle_binary_or_neg_inline(expressions, expr, field);
         }
         _ => {
             panic!("Exp op not defined: {}", op);
@@ -204,15 +205,15 @@ pub fn add_info_expression_inline(expressions: &mut Vec<Expression>, expr: &mut 
 /// Handle add/sub/mul/neg operations in add_info_expressions.
 /// Mirrors the JS logic including neg->mul transformation and
 /// zero-constant optimizations.
-fn handle_binary_or_neg(expressions: &mut Vec<Expression>, idx: usize) {
+fn handle_binary_or_neg(expressions: &mut Vec<Expression>, idx: usize, field: &FieldCfg) {
     let op = expressions[idx].op.clone();
 
-    // neg -> mul by NEG_ONE  (inline, NOT pushed to arena — matches JS behaviour)
+    // neg -> mul by modulus - 1  (inline, NOT pushed to arena — matches JS behaviour)
     if op == "neg" {
         expressions[idx].op = "mul".to_string();
         let neg_one = Expression {
             op: "number".to_string(),
-            value: Some(NEG_ONE.to_string()),
+            value: Some(field.neg_one().to_string()),
             exp_deg: 0,
             stage: 0,
             dim: 1,
@@ -272,10 +273,10 @@ fn handle_binary_or_neg(expressions: &mut Vec<Expression>, idx: usize) {
     for i in 0..expressions[idx].values.len() {
         match expressions[idx].values[i].clone() {
             ExprChild::Id(child_id) => {
-                add_info_expressions(expressions, child_id);
+                add_info_expressions(expressions, child_id, field);
             }
             ExprChild::Inline(mut child) => {
-                add_info_expression_inline(expressions, &mut child);
+                add_info_expression_inline(expressions, &mut child, field);
                 expressions[idx].values[i] = ExprChild::Inline(child);
             }
         }
@@ -308,15 +309,15 @@ fn handle_binary_or_neg(expressions: &mut Vec<Expression>, idx: usize) {
 }
 
 /// Handle add/sub/mul/neg for inline expressions (not in the arena).
-fn handle_binary_or_neg_inline(expressions: &mut Vec<Expression>, expr: &mut Expression) {
+fn handle_binary_or_neg_inline(expressions: &mut Vec<Expression>, expr: &mut Expression, field: &FieldCfg) {
     let op = expr.op.clone();
 
-    // neg -> mul by NEG_ONE
+    // neg -> mul by modulus - 1
     if op == "neg" {
         expr.op = "mul".to_string();
         let neg_one = Expression {
             op: "number".to_string(),
-            value: Some(NEG_ONE.to_string()),
+            value: Some(field.neg_one().to_string()),
             exp_deg: 0,
             stage: 0,
             dim: 1,
@@ -368,10 +369,10 @@ fn handle_binary_or_neg_inline(expressions: &mut Vec<Expression>, expr: &mut Exp
     for i in 0..expr.values.len() {
         match expr.values[i].clone() {
             ExprChild::Id(child_id) => {
-                add_info_expressions(expressions, child_id);
+                add_info_expressions(expressions, child_id, field);
             }
             ExprChild::Inline(mut child) => {
-                add_info_expression_inline(expressions, &mut child);
+                add_info_expression_inline(expressions, &mut child, field);
                 expr.values[i] = ExprChild::Inline(child);
             }
         }
@@ -407,11 +408,11 @@ fn handle_binary_or_neg_inline(expressions: &mut Vec<Expression>, expr: &mut Exp
 // ---------------------------------------------------------------------------
 
 /// Get the field dimension of an expression, mirroring JS `getExpDim`.
-pub fn get_exp_dim(expressions: &[Expression], exp_id: usize) -> usize {
-    get_exp_dim_inner(expressions, &expressions[exp_id])
+pub fn get_exp_dim(expressions: &[Expression], exp_id: usize, field: &FieldCfg) -> usize {
+    get_exp_dim_inner(expressions, &expressions[exp_id], field)
 }
 
-fn get_exp_dim_inner(expressions: &[Expression], exp: &Expression) -> usize {
+fn get_exp_dim_inner(expressions: &[Expression], exp: &Expression, field: &FieldCfg) -> usize {
     if exp.dim > 0 && exp.op != "add" && exp.op != "sub" && exp.op != "mul" {
         return exp.dim;
     }
@@ -421,7 +422,7 @@ fn get_exp_dim_inner(expressions: &[Expression], exp: &Expression) -> usize {
             let mut max_dim = 0;
             for child in &exp.values {
                 let child_expr = child.resolve(expressions);
-                let child_dim = get_exp_dim_inner(expressions, child_expr);
+                let child_dim = get_exp_dim_inner(expressions, child_expr, field);
                 if child_dim > max_dim {
                     max_dim = child_dim;
                 }
@@ -430,7 +431,7 @@ fn get_exp_dim_inner(expressions: &[Expression], exp: &Expression) -> usize {
         }
         "exp" => {
             let id = exp.id.unwrap_or(0);
-            get_exp_dim_inner(expressions, &expressions[id])
+            get_exp_dim_inner(expressions, &expressions[id], field)
         }
         "cm" | "custom" => {
             if exp.dim > 0 {
@@ -440,7 +441,7 @@ fn get_exp_dim_inner(expressions: &[Expression], exp: &Expression) -> usize {
             }
         }
         "const" | "number" | "public" | "Zi" => 1,
-        "challenge" | "eval" | "xDivXSubXi" => FIELD_EXTENSION,
+        "challenge" | "eval" | "xDivXSubXi" => field.ext_dim(),
         _ => panic!("Exp op not defined: {}", exp.op),
     }
 }
@@ -579,7 +580,7 @@ mod tests {
     #[test]
     fn test_add_info_number() {
         let mut exprs = vec![make_number("42")];
-        add_info_expressions(&mut exprs, 0);
+        add_info_expressions(&mut exprs, 0, &FieldCfg::goldilocks());
         assert_eq!(exprs[0].exp_deg, 0);
         assert_eq!(exprs[0].dim, 1);
         assert_eq!(exprs[0].stage, 0);
@@ -588,7 +589,7 @@ mod tests {
     #[test]
     fn test_add_info_cm() {
         let mut exprs = vec![make_cm(0, 1)];
-        add_info_expressions(&mut exprs, 0);
+        add_info_expressions(&mut exprs, 0, &FieldCfg::goldilocks());
         assert_eq!(exprs[0].exp_deg, 1);
         assert_eq!(exprs[0].dim, 1);
         assert_eq!(exprs[0].stage, 1);
@@ -605,7 +606,7 @@ mod tests {
             ..Default::default()
         };
         let mut exprs = vec![cm1, cm2, mul_expr];
-        add_info_expressions(&mut exprs, 2);
+        add_info_expressions(&mut exprs, 2, &FieldCfg::goldilocks());
         assert_eq!(exprs[2].exp_deg, 2);
         assert_eq!(exprs[2].dim, 1);
         assert_eq!(exprs[2].stage, 1);
@@ -615,13 +616,62 @@ mod tests {
     fn test_get_exp_dim_number() {
         let exprs =
             vec![Expression { op: "number".to_string(), value: Some("1".to_string()), dim: 1, ..Default::default() }];
-        assert_eq!(get_exp_dim(&exprs, 0), 1);
+        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::goldilocks()), 1);
     }
 
     #[test]
     fn test_get_exp_dim_challenge() {
-        let exprs = vec![Expression { op: "challenge".to_string(), dim: FIELD_EXTENSION, ..Default::default() }];
-        assert_eq!(get_exp_dim(&exprs, 0), FIELD_EXTENSION);
+        let exprs = vec![Expression { op: "challenge".to_string(), dim: 3, ..Default::default() }];
+        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::goldilocks()), 3);
+    }
+
+    /// A challenge whose dimension is not yet known takes the field's extension dimension.
+    #[test]
+    fn test_get_exp_dim_challenge_follows_the_field() {
+        let exprs = vec![Expression { op: "challenge".to_string(), dim: 0, ..Default::default() }];
+        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::goldilocks()), 3);
+        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::bn254()), 1);
+    }
+
+    /// `challenge * cm2` (a stage-2 column): extension-valued over Goldilocks, base-valued over BN254.
+    #[test]
+    fn test_add_info_dims_follow_the_field() {
+        for (field, dim) in [(FieldCfg::goldilocks(), 3), (FieldCfg::bn254(), 1)] {
+            let mut exprs = vec![
+                Expression { op: "challenge".to_string(), stage: 2, ..Default::default() },
+                Expression { op: "airvalue".to_string(), stage: 2, ..Default::default() },
+                Expression {
+                    op: "mul".to_string(),
+                    values: vec![ExprChild::Id(0), ExprChild::Id(1)],
+                    ..Default::default()
+                },
+            ];
+            add_info_expressions(&mut exprs, 2, &field);
+            assert_eq!(exprs[0].dim, dim);
+            assert_eq!(exprs[1].dim, dim);
+            assert_eq!(exprs[2].dim, dim);
+        }
+    }
+
+    /// `neg(x)` becomes `mul(modulus − 1, x)`, in the arena and inline.
+    #[test]
+    fn test_neg_is_a_multiplication_by_modulus_minus_one() {
+        for field in [FieldCfg::goldilocks(), FieldCfg::bn254()] {
+            let mut exprs = vec![
+                make_cm(0, 1),
+                Expression { op: "neg".to_string(), values: vec![ExprChild::Id(0)], ..Default::default() },
+            ];
+            add_info_expressions(&mut exprs, 1, &field);
+            assert_eq!(exprs[1].op, "mul");
+            let lhs = exprs[1].values[0].resolve(&exprs);
+            assert_eq!(lhs.op, "number");
+            assert_eq!(lhs.value.as_deref(), Some(field.neg_one()));
+
+            let mut inline = Expression { op: "neg".to_string(), values: vec![ExprChild::Id(0)], ..Default::default() };
+            add_info_expression_inline(&mut exprs, &mut inline, &field);
+            assert_eq!(inline.op, "mul");
+            assert_eq!(inline.values[0].resolve(&exprs).value.as_deref(), Some(field.neg_one()));
+        }
     }
 
     #[test]

@@ -1,6 +1,7 @@
+use crate::cfg::FieldCfg;
 use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::{add_info_expression_inline, get_exp_dim};
-use crate::types::pilout_info::{ConstraintInfo, SymbolInfo, FIELD_EXTENSION};
+use crate::types::pilout_info::{ConstraintInfo, SymbolInfo};
 
 /// Result of constraint polynomial generation, attached to the setup result.
 #[derive(Debug, Clone)]
@@ -34,8 +35,9 @@ pub fn generate_constraint_polynomial(
     symbols: &mut Vec<SymbolInfo>,
     constraints: &[ConstraintInfo],
     boundaries: &mut Vec<Boundary>,
+    field: &FieldCfg,
 ) -> ConstraintPolyResult {
-    let dim = FIELD_EXTENSION;
+    let dim = field.ext_dim();
     let stage = n_stages + 1;
 
     // Create std_vc challenge
@@ -147,7 +149,7 @@ pub fn generate_constraint_polynomial(
                 values: vec![ExprChild::Inline(Box::new(vc_expr.clone())), ExprChild::Inline(Box::new(prev_exp_ref))],
                 ..Default::default()
             };
-            add_info_expression_inline(expressions, &mut weighted);
+            add_info_expression_inline(expressions, &mut weighted, field);
             expressions.push(weighted);
             let weighted_id = expressions.len() - 1;
 
@@ -172,7 +174,7 @@ pub fn generate_constraint_polynomial(
                 values: vec![ExprChild::Inline(Box::new(weighted_ref)), ExprChild::Inline(Box::new(constraint_ref))],
                 ..Default::default()
             };
-            add_info_expression_inline(expressions, &mut accumulated);
+            add_info_expression_inline(expressions, &mut accumulated, field);
             expressions.push(accumulated);
             let accumulated_id = expressions.len() - 1;
 
@@ -192,7 +194,7 @@ pub fn generate_constraint_polynomial(
             return ConstraintPolyResult { c_exp_id, q_dim: 1, initial_q_degree: 0 };
         }
     };
-    let q_dim = get_exp_dim(expressions, c_exp_id);
+    let q_dim = get_exp_dim(expressions, c_exp_id, field);
 
     // Create std_xi challenge for evaluation
     let xi_id =
@@ -202,7 +204,7 @@ pub fn generate_constraint_polynomial(
         sym_type: "challenge".to_string(),
         name: "std_xi".to_string(),
         stage: Some(stage + 1),
-        dim: FIELD_EXTENSION,
+        dim: field.ext_dim(),
         stage_id: Some(0),
         id: Some(xi_id),
         pol_id: None,
@@ -396,7 +398,14 @@ mod tests {
         }];
         let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
 
-        let result = generate_constraint_polynomial(1, &mut expressions, &mut symbols, &constraints, &mut boundaries);
+        let result = generate_constraint_polynomial(
+            1,
+            &mut expressions,
+            &mut symbols,
+            &constraints,
+            &mut boundaries,
+            &FieldCfg::goldilocks(),
+        );
 
         // With one everyRow constraint, c_exp_id is the original expression
         assert_eq!(result.c_exp_id, 0);
@@ -440,11 +449,54 @@ mod tests {
         ];
         let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
 
-        let result = generate_constraint_polynomial(1, &mut expressions, &mut symbols, &constraints, &mut boundaries);
+        let result = generate_constraint_polynomial(
+            1,
+            &mut expressions,
+            &mut symbols,
+            &constraints,
+            &mut boundaries,
+            &FieldCfg::goldilocks(),
+        );
 
         // With two constraints: 2 original + 1 weighted + 1 accumulated = 4 total
         assert_eq!(result.c_exp_id, 3);
         assert!(result.q_dim >= 1);
+    }
+
+    /// The folding challenge, and so the constraint polynomial, lives in the field's extension:
+    /// dimension 3 over Goldilocks, 1 over BN254.
+    #[test]
+    fn test_folding_follows_the_field() {
+        for (field, dim) in [(FieldCfg::goldilocks(), 3), (FieldCfg::bn254(), 1)] {
+            let mut expressions = vec![make_cm(0, 1), make_cm(1, 1)];
+            let mut symbols = Vec::new();
+            let every_row = |e| ConstraintInfo {
+                boundary: "everyRow".to_string(),
+                e,
+                line: None,
+                offset_min: None,
+                offset_max: None,
+                stage: None,
+                im_pol: false,
+            };
+            let constraints = vec![every_row(0), every_row(1)];
+            let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
+
+            let result = generate_constraint_polynomial(
+                1,
+                &mut expressions,
+                &mut symbols,
+                &constraints,
+                &mut boundaries,
+                &field,
+            );
+
+            assert_eq!(result.q_dim, dim);
+            for name in ["std_vc", "std_xi"] {
+                let challenge = symbols.iter().find(|s| s.name == name).expect("challenge added");
+                assert_eq!(challenge.dim, dim, "{name}");
+            }
+        }
     }
 
     #[test]
@@ -463,7 +515,14 @@ mod tests {
         }];
         let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
 
-        let result = generate_constraint_polynomial(1, &mut expressions, &mut symbols, &constraints, &mut boundaries);
+        let result = generate_constraint_polynomial(
+            1,
+            &mut expressions,
+            &mut symbols,
+            &constraints,
+            &mut boundaries,
+            &FieldCfg::goldilocks(),
+        );
 
         // Should have added "firstRow" boundary
         assert!(boundaries.iter().any(|b| b.name == "firstRow"));

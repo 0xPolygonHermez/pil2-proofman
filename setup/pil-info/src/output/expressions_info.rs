@@ -90,17 +90,20 @@ pub fn build_verifier_info_json(info: &crate::pil::gen_code::VerifierInfo) -> se
     qv.insert("code".to_string(), code_entries_to_json(&info.q_verifier.code));
     qv.insert("line".to_string(), json!(""));
 
-    // queryVerifier: {tmpUsed, code, expId, stage, line}
-    let mut qr = serde_json::Map::new();
-    qr.insert("tmpUsed".to_string(), json!(info.query_verifier.tmp_used));
-    qr.insert("code".to_string(), code_entries_to_json(&info.query_verifier.code));
-    qr.insert("expId".to_string(), json!(info.query_verifier.exp_id));
-    qr.insert("stage".to_string(), json!(info.query_verifier.stage));
-    qr.insert("line".to_string(), json!(info.query_verifier.line));
-
     let mut result = serde_json::Map::new();
     result.insert("qVerifier".to_string(), serde_json::Value::Object(qv));
-    result.insert("queryVerifier".to_string(), serde_json::Value::Object(qr));
+
+    // queryVerifier: {tmpUsed, code, expId, stage, line}, for the FRI opening only
+    if let Some(query_verifier) = &info.query_verifier {
+        let mut qr = serde_json::Map::new();
+        qr.insert("tmpUsed".to_string(), json!(query_verifier.tmp_used));
+        qr.insert("code".to_string(), code_entries_to_json(&query_verifier.code));
+        qr.insert("expId".to_string(), json!(query_verifier.exp_id));
+        qr.insert("stage".to_string(), json!(query_verifier.stage));
+        qr.insert("line".to_string(), json!(query_verifier.line));
+        result.insert("queryVerifier".to_string(), serde_json::Value::Object(qr));
+    }
+
     serde_json::Value::Object(result)
 }
 

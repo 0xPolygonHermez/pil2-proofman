@@ -4,16 +4,15 @@ use anyhow::Result;
 use pil2_pilout::pilout as pb;
 use serde_json::json;
 
+use crate::cfg::FieldCfg;
 use crate::output::expressions_info::{code_entries_to_json, hint_value_to_json};
 
-/// Build the globalConstraints JSON from pilout data.
-pub fn build_global_constraints_json(pilout: &pb::PilOut) -> Result<serde_json::Value> {
+/// Build the globalConstraints JSON from pilout data, computing over `field`.
+pub fn build_global_constraints_json(pilout: &pb::PilOut, field: &FieldCfg) -> Result<serde_json::Value> {
     use crate::pil::codegen::{build_code, pil_code_gen, CodeGenCtx};
-    use crate::pil::gen_code::CodeGenParams;
     use crate::expr::helpers::add_info_expressions;
     use crate::types::pilout_info::{
         format_global_constraints, format_global_expressions, format_global_hints, format_global_symbols, SymbolInfo,
-        FIELD_EXTENSION,
     };
     use crate::expr::print::PrintCtx;
 
@@ -22,13 +21,14 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut) -> Result<serde_json::
         return Ok(json!({"constraints": [], "hints": []}));
     }
 
-    let mut expressions = format_global_expressions(&pilout.expressions, &pilout.num_challenges, &pilout.air_groups);
+    let mut expressions =
+        format_global_expressions(&pilout.expressions, &pilout.num_challenges, &pilout.air_groups, field);
 
     let constraints = format_global_constraints(&pilout.constraints);
-    let symbols = format_global_symbols(&pilout.symbols, &pilout.num_challenges);
+    let symbols = format_global_symbols(&pilout.symbols, &pilout.num_challenges, field);
 
     for constraint in &constraints {
-        add_info_expressions(&mut expressions, constraint.e);
+        add_info_expressions(&mut expressions, constraint.e, field);
     }
 
     let publics_map: Vec<SymbolInfo> = symbols.iter().filter(|s| s.sym_type == "public").cloned().collect();
@@ -73,7 +73,7 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut) -> Result<serde_json::
             name: String::new(),
             sym_type: "challenge".to_string(),
             stage: Some(1),
-            dim: FIELD_EXTENSION,
+            dim: field.ext_dim(),
             id: None,
             pol_id: None,
             stage_id: None,
@@ -102,7 +102,7 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut) -> Result<serde_json::
             name: String::new(),
             sym_type: "airgroupvalue".to_string(),
             stage: None,
-            dim: FIELD_EXTENSION,
+            dim: field.ext_dim(),
             id: None,
             pol_id: None,
             stage_id: None,
@@ -169,7 +169,7 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut) -> Result<serde_json::
 
     let n_stages = if !pilout.num_challenges.is_empty() { pilout.num_challenges.len() } else { 1 };
 
-    let mut ctx = CodeGenCtx::new(0, 0, n_stages, "n", false, Vec::new(), Vec::new());
+    let mut ctx = CodeGenCtx::new(0, 0, n_stages, "n", false, Vec::new(), field);
 
     let mut constraints_json = Vec::new();
 
@@ -189,22 +189,9 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut) -> Result<serde_json::
         constraints_json.push(serde_json::Value::Object(obj));
     }
 
-    let hints = format_global_hints(pilout, &mut expressions);
+    let hints = format_global_hints(pilout, &mut expressions, field);
 
-    let global_params = CodeGenParams {
-        air_id: 0,
-        airgroup_id: 0,
-        n_stages,
-        c_exp_id: 0,
-        fri_exp_id: 0,
-        q_deg: 0,
-        q_dim: FIELD_EXTENSION,
-        opening_points: Vec::new(),
-        cm_pols_map: Vec::new(),
-        custom_commits_count: 0,
-    };
-
-    let processed_hints = process_global_hints(&global_params, &mut expressions, &hints, Some(&print_ctx));
+    let processed_hints = process_global_hints(&mut expressions, &hints, Some(&print_ctx));
 
     let hints_json: Vec<serde_json::Value> = processed_hints
         .iter()
@@ -231,7 +218,6 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut) -> Result<serde_json::
 
 /// Process global hints into flat hint field values.
 fn process_global_hints(
-    params: &crate::pil::gen_code::CodeGenParams,
     expressions: &mut Vec<crate::expr::expression::Expression>,
     hints: &[crate::types::pilout_info::HintInfo],
     print_ctx: Option<&crate::expr::print::PrintCtx>,
@@ -244,7 +230,7 @@ fn process_global_hints(
         let mut processed_fields = Vec::new();
 
         for field in &hint.fields {
-            let flat_values = process_global_hint_values(&field.values, params, expressions, &[], print_ctx);
+            let flat_values = process_global_hint_values(&field.values, expressions, &[], print_ctx);
 
             let mut entry = ProcessedHintFieldEntry { name: field.name.clone(), values: flat_values };
 
@@ -266,7 +252,6 @@ fn process_global_hints(
 /// Recursively flatten global hint field values.
 fn process_global_hint_values(
     values: &[crate::types::pilout_info::HintFieldValue],
-    params: &crate::pil::gen_code::CodeGenParams,
     expressions: &mut Vec<crate::expr::expression::Expression>,
     pos: &[usize],
     print_ctx: Option<&crate::expr::print::PrintCtx>,
@@ -281,11 +266,11 @@ fn process_global_hint_values(
 
         match field {
             HintFieldValue::Array(arr) => {
-                let inner = process_global_hint_values(arr, params, expressions, &current_pos, print_ctx);
+                let inner = process_global_hint_values(arr, expressions, &current_pos, print_ctx);
                 result.extend(inner);
             }
             HintFieldValue::Single(expr) => {
-                let processed = process_global_single_hint_field(expr, params, expressions, &current_pos, print_ctx);
+                let processed = process_global_single_hint_field(expr, expressions, &current_pos, print_ctx);
                 result.push(processed);
             }
         }
@@ -297,7 +282,6 @@ fn process_global_hint_values(
 /// Process a single global hint field value.
 fn process_global_single_hint_field(
     expr: &crate::expr::expression::Expression,
-    _params: &crate::pil::gen_code::CodeGenParams,
     #[allow(clippy::ptr_arg)] expressions: &mut Vec<crate::expr::expression::Expression>,
     pos: &[usize],
     print_ctx: Option<&crate::expr::print::PrintCtx>,

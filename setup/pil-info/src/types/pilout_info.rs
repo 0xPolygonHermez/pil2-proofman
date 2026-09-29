@@ -1,14 +1,13 @@
 use indexmap::IndexMap;
+use num_bigint::BigUint;
 
 use pil2_pilout::pilout::{
     self as pb, constraint, expression as expr_mod, global_expression as gexpr_mod, global_operand, hint_field,
     operand, SymbolType,
 };
 
+use crate::cfg::FieldCfg;
 use crate::expr::expression::{ExprChild, Expression, ExpressionArena};
-
-/// Constant for field extension dimension (Goldilocks cubic extension).
-pub const FIELD_EXTENSION: usize = 3;
 
 // ---------------------------------------------------------------------------
 // Intermediate result types
@@ -122,16 +121,9 @@ pub struct SetupResult {
 // Byte buffer -> big-integer string (mirrors JS `ProtoOut.buf2bint`)
 // ---------------------------------------------------------------------------
 
-/// Convert a big-endian byte buffer to a decimal string.
+/// Convert a big-endian byte buffer of any length to a decimal string (an empty buffer is 0).
 fn buf_to_bigint_string(buf: &[u8]) -> String {
-    if buf.is_empty() {
-        return "0".to_string();
-    }
-    let mut value: u128 = 0;
-    for &b in buf {
-        value = (value << 8) | (b as u128);
-    }
-    value.to_string()
+    BigUint::from_bytes_be(buf).to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +132,7 @@ fn buf_to_bigint_string(buf: &[u8]) -> String {
 
 /// Context for converting protobuf expressions into arena-indexed Expressions.
 struct FormatCtx<'a> {
+    field: &'a FieldCfg,
     air_expressions: &'a [pb::Expression],
     stage_widths: &'a [u32],
     num_challenges: &'a [u32],
@@ -176,7 +169,7 @@ impl<'a> FormatCtx<'a> {
                 let stage = wc.stage as usize;
                 let id = stage_id
                     + self.stage_widths.iter().take(stage.saturating_sub(1)).map(|w| *w as usize).sum::<usize>();
-                let dim = if stage <= 1 { 1 } else { FIELD_EXTENSION };
+                let dim = if stage <= 1 { 1 } else { self.field.ext_dim() };
                 Expression {
                     op: "cm".to_string(),
                     id: Some(id),
@@ -195,7 +188,7 @@ impl<'a> FormatCtx<'a> {
                 let stage = cc.stage as usize;
                 let id = stage_id
                     + custom_stage_widths.iter().take(stage.saturating_sub(1)).map(|w| *w as usize).sum::<usize>();
-                let dim = if stage <= 1 { 1 } else { FIELD_EXTENSION };
+                let dim = if stage <= 1 { 1 } else { self.field.ext_dim() };
                 Expression {
                     op: "custom".to_string(),
                     id: Some(id),
@@ -226,13 +219,13 @@ impl<'a> FormatCtx<'a> {
             operand::Operand::AirGroupValue(agv) => {
                 let id = agv.idx as usize;
                 let stage = self.air_group_values.get(id).map(|v| v.stage as usize).unwrap_or(0);
-                let dim = if stage == 1 { 1 } else { FIELD_EXTENSION };
+                let dim = if stage == 1 { 1 } else { self.field.ext_dim() };
                 Expression { op: "airgroupvalue".to_string(), id: Some(id), dim, stage, ..Default::default() }
             }
             operand::Operand::AirValue(av) => {
                 let id = av.idx as usize;
                 let stage = self.air_values.get(id).map(|v| v.stage as usize).unwrap_or(0);
-                let dim = if stage == 1 { 1 } else { FIELD_EXTENSION };
+                let dim = if stage == 1 { 1 } else { self.field.ext_dim() };
                 Expression { op: "airvalue".to_string(), id: Some(id), stage, dim, ..Default::default() }
             }
             operand::Operand::Challenge(ch) => {
@@ -251,7 +244,7 @@ impl<'a> FormatCtx<'a> {
             operand::Operand::ProofValue(pv) => {
                 let id = pv.idx as usize;
                 let stage = pv.stage as usize;
-                let dim = if stage == 1 { 1 } else { FIELD_EXTENSION };
+                let dim = if stage == 1 { 1 } else { self.field.ext_dim() };
                 Expression { op: "proofvalue".to_string(), id: Some(id), stage, dim, ..Default::default() }
             }
             operand::Operand::PeriodicCol(pc) => {
@@ -357,10 +350,12 @@ pub fn format_expressions(
     air_values: &[pb::AirValue],
     air_group_values: &[pb::AirGroupValue],
     custom_commits: &[pb::CustomCommit],
+    field: &FieldCfg,
 ) -> Vec<Expression> {
     let n = air_expressions.len();
 
     let mut ctx = FormatCtx {
+        field,
         air_expressions,
         stage_widths,
         num_challenges,
@@ -390,6 +385,7 @@ pub fn format_expressions(
 
 /// Context for converting global protobuf expressions into Expressions.
 struct GlobalFormatCtx<'a> {
+    field: &'a FieldCfg,
     global_expressions: &'a [pb::GlobalExpression],
     num_challenges: &'a [u32],
     air_groups: &'a [pb::AirGroup],
@@ -430,7 +426,7 @@ impl<'a> GlobalFormatCtx<'a> {
                     .and_then(|ag| ag.air_group_values.get(id))
                     .map(|v| v.stage as usize)
                     .unwrap_or(0);
-                let dim = if stage == 1 { 1 } else { FIELD_EXTENSION };
+                let dim = if stage == 1 { 1 } else { self.field.ext_dim() };
                 Expression {
                     op: "airgroupvalue".to_string(),
                     id: Some(id),
@@ -456,7 +452,7 @@ impl<'a> GlobalFormatCtx<'a> {
             global_operand::Operand::ProofValue(pv) => {
                 let id = pv.idx as usize;
                 let stage = pv.stage as usize;
-                let dim = if stage == 1 { 1 } else { FIELD_EXTENSION };
+                let dim = if stage == 1 { 1 } else { self.field.ext_dim() };
                 Expression { op: "proofvalue".to_string(), id: Some(id), stage, dim, ..Default::default() }
             }
             global_operand::Operand::PublicTableAggregatedValue(ptav) => {
@@ -547,10 +543,12 @@ pub fn format_global_expressions(
     global_expressions: &[pb::GlobalExpression],
     num_challenges: &[u32],
     air_groups: &[pb::AirGroup],
+    field: &FieldCfg,
 ) -> Vec<Expression> {
     let n = global_expressions.len();
 
-    let mut ctx = GlobalFormatCtx { global_expressions, num_challenges, air_groups, arena: Vec::with_capacity(n) };
+    let mut ctx =
+        GlobalFormatCtx { field, global_expressions, num_challenges, air_groups, arena: Vec::with_capacity(n) };
 
     // Reserve the first N slots with placeholders.
     for _ in 0..n {
@@ -591,7 +589,7 @@ pub fn format_global_constraints(constraints: &[pb::GlobalConstraint]) -> Vec<Co
 /// Format global symbols (symbols not tied to a specific air).
 ///
 /// In global mode, filters out AIR_VALUE, CUSTOM_COL, FIXED_COL, WITNESS_COL.
-pub fn format_global_symbols(all_symbols: &[pb::Symbol], _num_challenges: &[u32]) -> Vec<SymbolInfo> {
+pub fn format_global_symbols(all_symbols: &[pb::Symbol], _num_challenges: &[u32], field: &FieldCfg) -> Vec<SymbolInfo> {
     let mut result = Vec::new();
 
     for s in all_symbols {
@@ -608,7 +606,7 @@ pub fn format_global_symbols(all_symbols: &[pb::Symbol], _num_challenges: &[u32]
 
         if stype == SymbolType::ProofValue as i32 {
             let stage = s.stage.unwrap_or(1) as usize;
-            let dim = if stage == 1 { 1 } else { FIELD_EXTENSION };
+            let dim = if stage == 1 { 1 } else { field.ext_dim() };
             if s.dim == 0 {
                 result.push(SymbolInfo {
                     name: s.name.clone(),
@@ -644,7 +642,7 @@ pub fn format_global_symbols(all_symbols: &[pb::Symbol], _num_challenges: &[u32]
                 name: s.name.clone(),
                 sym_type: "challenge".to_string(),
                 stage: Some(stage),
-                dim: FIELD_EXTENSION,
+                dim: field.ext_dim(),
                 id: Some(id),
                 pol_id: None,
                 stage_id: Some(s.id as usize),
@@ -681,7 +679,7 @@ pub fn format_global_symbols(all_symbols: &[pb::Symbol], _num_challenges: &[u32]
             }
         } else if stype == SymbolType::AirGroupValue as i32 {
             // In global mode, stage is undefined (not set from airGroupValues)
-            let dim = FIELD_EXTENSION;
+            let dim = field.ext_dim();
             if s.dim == 0 {
                 result.push(SymbolInfo {
                     name: s.name.clone(),
@@ -719,7 +717,7 @@ pub fn format_global_symbols(all_symbols: &[pb::Symbol], _num_challenges: &[u32]
 ///
 /// Uses the same hint formatting as air-level hints but processes only
 /// global hints from the pilout.
-pub fn format_global_hints(pilout: &pb::PilOut, expressions: &mut [Expression]) -> Vec<HintInfo> {
+pub fn format_global_hints(pilout: &pb::PilOut, expressions: &mut [Expression], field: &FieldCfg) -> Vec<HintInfo> {
     // Filter hints that are global (no airGroupId and no airId)
     let global_hints: Vec<&pb::Hint> =
         pilout.hints.iter().filter(|h| h.air_group_id.is_none() && h.air_id.is_none()).collect();
@@ -741,9 +739,9 @@ pub fn format_global_hints(pilout: &pb::PilOut, expressions: &mut [Expression]) 
         };
 
         let mut fields = Vec::new();
-        for field in inner_fields {
-            let name = field.name.clone().unwrap_or_default();
-            let (values, lengths) = process_global_hint_field(field, pilout, expressions);
+        for hint_field in inner_fields {
+            let name = hint_field.name.clone().unwrap_or_default();
+            let (values, lengths) = process_global_hint_field(hint_field, pilout, expressions, field);
             let entry = if lengths.is_none() {
                 HintFieldEntry { name, values: vec![values], lengths: None }
             } else {
@@ -772,6 +770,7 @@ fn process_global_hint_field(
     hint_field: &pb::HintField,
     pilout: &pb::PilOut,
     expressions: &mut [Expression],
+    field: &FieldCfg,
 ) -> (HintFieldValue, Option<Vec<usize>>) {
     match &hint_field.value {
         Some(hint_field::Value::HintFieldArray(arr)) => {
@@ -779,8 +778,8 @@ fn process_global_hint_field(
             let mut result_fields = Vec::new();
             let mut lengths: Vec<usize> = Vec::new();
 
-            for field in fields {
-                let (values, sub_lengths) = process_global_hint_field(field, pilout, expressions);
+            for sub_field in fields {
+                let (values, sub_lengths) = process_global_hint_field(sub_field, pilout, expressions, field);
                 result_fields.push(values);
 
                 if lengths.is_empty() {
@@ -803,7 +802,7 @@ fn process_global_hint_field(
         }
         Some(hint_field::Value::Operand(op_msg)) => {
             if let Some(ref op) = op_msg.operand {
-                let value = format_global_hint_operand(op, pilout);
+                let value = format_global_hint_operand(op, pilout, field);
                 // If the value is an "exp" reference, mark keep=true
                 if value.op == "exp" {
                     if let Some(id) = value.id {
@@ -840,7 +839,7 @@ fn process_global_hint_field(
 ///
 /// Global hints use the regular Operand type but some fields
 /// (like airGroupValue) need global-mode resolution.
-fn format_global_hint_operand(op: &operand::Operand, pilout: &pb::PilOut) -> Expression {
+fn format_global_hint_operand(op: &operand::Operand, pilout: &pb::PilOut, field: &FieldCfg) -> Expression {
     match op {
         operand::Operand::Expression(expr_ref) => {
             let id = expr_ref.idx as usize;
@@ -848,7 +847,7 @@ fn format_global_hint_operand(op: &operand::Operand, pilout: &pb::PilOut) -> Exp
             // Mirrors JS formatExpression behavior for expression references
             if let Some(gexpr) = pilout.expressions.get(id) {
                 if let Some(ref operation) = gexpr.operation {
-                    if let Some(unwrapped) = try_unwrap_global_hint_zero_rhs(operation, pilout) {
+                    if let Some(unwrapped) = try_unwrap_global_hint_zero_rhs(operation, pilout, field) {
                         return unwrapped;
                     }
                 }
@@ -868,7 +867,7 @@ fn format_global_hint_operand(op: &operand::Operand, pilout: &pb::PilOut) -> Exp
             // In global mode for hints, airGroupValue doesn't have airGroupId
             // in the Operand type (only GlobalOperand has it).
             // The stage comes from the expression context.
-            Expression { op: "airgroupvalue".to_string(), id: Some(id), dim: FIELD_EXTENSION, ..Default::default() }
+            Expression { op: "airgroupvalue".to_string(), id: Some(id), dim: field.ext_dim(), ..Default::default() }
         }
         operand::Operand::Challenge(ch) => {
             let stage_id_val = ch.idx as usize;
@@ -886,7 +885,7 @@ fn format_global_hint_operand(op: &operand::Operand, pilout: &pb::PilOut) -> Exp
         operand::Operand::ProofValue(pv) => {
             let id = pv.idx as usize;
             let stage = pv.stage as usize;
-            let dim = if stage == 1 { 1 } else { FIELD_EXTENSION };
+            let dim = if stage == 1 { 1 } else { field.ext_dim() };
             Expression { op: "proofvalue".to_string(), id: Some(id), stage, dim, ..Default::default() }
         }
         operand::Operand::AirValue(av) => {
@@ -908,7 +907,11 @@ fn format_global_hint_operand(op: &operand::Operand, pilout: &pb::PilOut) -> Exp
 /// When a hint field operand is an expression reference, and the referenced
 /// global expression is add/sub(LHS, 0) where LHS is not an expression ref,
 /// return the LHS operand directly instead of the expression reference.
-fn try_unwrap_global_hint_zero_rhs(operation: &gexpr_mod::Operation, pilout: &pb::PilOut) -> Option<Expression> {
+fn try_unwrap_global_hint_zero_rhs(
+    operation: &gexpr_mod::Operation,
+    pilout: &pb::PilOut,
+    field: &FieldCfg,
+) -> Option<Expression> {
     let (lhs_operand, rhs_operand) = match operation {
         gexpr_mod::Operation::Add(add) => (add.lhs.as_ref()?, add.rhs.as_ref()?),
         gexpr_mod::Operation::Sub(sub) => (sub.lhs.as_ref()?, sub.rhs.as_ref()?),
@@ -927,7 +930,7 @@ fn try_unwrap_global_hint_zero_rhs(operation: &gexpr_mod::Operation, pilout: &pb
         let val = buf_to_bigint_string(&c.value);
         if val == "0" {
             // Convert the GlobalOperand LHS to an Expression
-            return Some(convert_global_operand_to_expression(lhs_op, pilout));
+            return Some(convert_global_operand_to_expression(lhs_op, pilout, field));
         }
     }
 
@@ -935,14 +938,18 @@ fn try_unwrap_global_hint_zero_rhs(operation: &gexpr_mod::Operation, pilout: &pb
 }
 
 /// Convert a GlobalOperand to an Expression for hint field processing.
-fn convert_global_operand_to_expression(op: &global_operand::Operand, pilout: &pb::PilOut) -> Expression {
+fn convert_global_operand_to_expression(
+    op: &global_operand::Operand,
+    pilout: &pb::PilOut,
+    field: &FieldCfg,
+) -> Expression {
     match op {
         global_operand::Operand::Expression(expr_ref) => {
             let id = expr_ref.idx as usize;
             // Recursively try to unwrap
             if let Some(gexpr) = pilout.expressions.get(id) {
                 if let Some(ref operation) = gexpr.operation {
-                    if let Some(unwrapped) = try_unwrap_global_hint_zero_rhs(operation, pilout) {
+                    if let Some(unwrapped) = try_unwrap_global_hint_zero_rhs(operation, pilout, field) {
                         return unwrapped;
                     }
                 }
@@ -966,7 +973,7 @@ fn convert_global_operand_to_expression(op: &global_operand::Operand, pilout: &p
                 .and_then(|ag| ag.air_group_values.get(id))
                 .map(|v| v.stage as usize)
                 .unwrap_or(0);
-            let dim = if stage == 1 { 1 } else { FIELD_EXTENSION };
+            let dim = if stage == 1 { 1 } else { field.ext_dim() };
             Expression {
                 op: "airgroupvalue".to_string(),
                 id: Some(id),
@@ -992,7 +999,7 @@ fn convert_global_operand_to_expression(op: &global_operand::Operand, pilout: &p
         global_operand::Operand::ProofValue(pv) => {
             let id = pv.idx as usize;
             let stage = pv.stage as usize;
-            let dim = if stage == 1 { 1 } else { FIELD_EXTENSION };
+            let dim = if stage == 1 { 1 } else { field.ext_dim() };
             Expression { op: "proofvalue".to_string(), id: Some(id), stage, dim, ..Default::default() }
         }
         global_operand::Operand::PublicTableAggregatedValue(ptav) => {
@@ -1068,6 +1075,7 @@ pub fn format_symbols(
     _num_challenges: &[u32],
     air_group_values: &[pb::AirGroupValue],
     air_values: &[pb::AirValue],
+    field: &FieldCfg,
 ) -> Vec<SymbolInfo> {
     let mut result = Vec::new();
 
@@ -1095,7 +1103,7 @@ pub fn format_symbols(
                 "witness"
             };
 
-            let dim = if stage <= 1 { 1 } else { FIELD_EXTENSION };
+            let dim = if stage <= 1 { 1 } else { field.ext_dim() };
             let pol_id = compute_pol_id(all_symbols, s);
 
             if s.dim == 0 {
@@ -1125,7 +1133,7 @@ pub fn format_symbols(
             }
         } else if stype == SymbolType::ProofValue as i32 {
             let stage = s.stage.unwrap_or(1) as usize;
-            let dim = if stage == 1 { 1 } else { FIELD_EXTENSION };
+            let dim = if stage == 1 { 1 } else { field.ext_dim() };
 
             if s.dim == 0 {
                 result.push(SymbolInfo {
@@ -1164,7 +1172,7 @@ pub fn format_symbols(
                 name: s.name.clone(),
                 sym_type: "challenge".to_string(),
                 stage: Some(stage),
-                dim: FIELD_EXTENSION,
+                dim: field.ext_dim(),
                 id: Some(id),
                 stage_id: Some(s.id as usize),
                 pol_id: None,
@@ -1207,7 +1215,7 @@ pub fn format_symbols(
                     name: s.name.clone(),
                     sym_type: "airgroupvalue".to_string(),
                     stage,
-                    dim: FIELD_EXTENSION,
+                    dim: field.ext_dim(),
                     id: Some(s.id as usize),
                     airgroup_id: s.air_group_id.map(|v| v as usize),
                     pol_id: None,
@@ -1231,14 +1239,14 @@ pub fn format_symbols(
                     s,
                     "airgroupvalue",
                     stage.unwrap_or(0),
-                    FIELD_EXTENSION,
+                    field.ext_dim(),
                     s.id as usize,
                     0,
                 );
             }
         } else if stype == SymbolType::AirValue as i32 {
             let stage = air_values.get(s.id as usize).map(|v| v.stage as usize).unwrap_or(0);
-            let dim = if stage != 1 { FIELD_EXTENSION } else { 1 };
+            let dim = if stage != 1 { field.ext_dim() } else { 1 };
 
             if s.dim == 0 {
                 result.push(SymbolInfo {
@@ -1355,6 +1363,7 @@ pub fn format_hints(
     air_group_values: &[pb::AirGroupValue],
     custom_commits: &[pb::CustomCommit],
     expressions: &mut [Expression],
+    field: &FieldCfg,
 ) -> Vec<HintInfo> {
     let mut hints = Vec::new();
 
@@ -1373,10 +1382,10 @@ pub fn format_hints(
         };
 
         let mut fields = Vec::new();
-        for field in inner_fields {
-            let name = field.name.clone().unwrap_or_default();
+        for hint_field in inner_fields {
+            let name = hint_field.name.clone().unwrap_or_default();
             let (values, lengths) = process_hint_field(
-                field,
+                hint_field,
                 air_expressions,
                 stage_widths,
                 num_challenges,
@@ -1384,6 +1393,7 @@ pub fn format_hints(
                 air_group_values,
                 custom_commits,
                 expressions,
+                field,
             );
             let entry = if lengths.is_none() {
                 HintFieldEntry { name, values: vec![values], lengths: None }
@@ -1416,6 +1426,7 @@ fn process_hint_field(
     air_group_values: &[pb::AirGroupValue],
     custom_commits: &[pb::CustomCommit],
     expressions: &mut [Expression],
+    field: &FieldCfg,
 ) -> (HintFieldValue, Option<Vec<usize>>) {
     match &hint_field.value {
         Some(hint_field::Value::HintFieldArray(arr)) => {
@@ -1423,9 +1434,9 @@ fn process_hint_field(
             let mut result_fields = Vec::new();
             let mut lengths: Vec<usize> = Vec::new();
 
-            for field in fields {
+            for sub_field in fields {
                 let (values, sub_lengths) = process_hint_field(
-                    field,
+                    sub_field,
                     air_expressions,
                     stage_widths,
                     num_challenges,
@@ -1433,6 +1444,7 @@ fn process_hint_field(
                     air_group_values,
                     custom_commits,
                     expressions,
+                    field,
                 );
                 result_fields.push(values);
 
@@ -1460,6 +1472,7 @@ fn process_hint_field(
                 // Hint field operands produce standalone Expression objects
                 // (they are not inserted into the main expression arena).
                 let mut ctx = FormatCtx {
+                    field,
                     air_expressions,
                     stage_widths,
                     num_challenges,
@@ -1507,7 +1520,7 @@ fn process_hint_field(
 // ---------------------------------------------------------------------------
 
 /// Extract pilout info for a single air, mirroring JS `getPiloutInfo`.
-pub fn get_pilout_info(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize) -> SetupResult {
+pub fn get_pilout_info(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize, field: &FieldCfg) -> SetupResult {
     let airgroup = &pilout.air_groups[airgroup_id];
     let air = &airgroup.airs[air_id];
 
@@ -1524,6 +1537,7 @@ pub fn get_pilout_info(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize) -
         &air.air_values,
         &airgroup.air_group_values,
         &air.custom_commits,
+        field,
     );
 
     // Gather symbols for this air from the global pilout symbols list
@@ -1539,7 +1553,7 @@ pub fn get_pilout_info(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize) -
         .collect();
 
     let mut all_symbols =
-        format_symbols(&air_symbols, &pilout.num_challenges, &airgroup.air_group_values, &air.air_values);
+        format_symbols(&air_symbols, &pilout.num_challenges, &airgroup.air_group_values, &air.air_values, field);
 
     // Filter: keep only witness/fixed that match this air
     all_symbols.retain(|s| {
@@ -1585,6 +1599,7 @@ pub fn get_pilout_info(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize) -
         &airgroup.air_group_values,
         &air.custom_commits,
         &mut expressions,
+        field,
     );
 
     // Build custom commits info
@@ -1651,4 +1666,35 @@ pub fn build_arena(exprs: Vec<Expression>) -> ExpressionArena {
         arena.push(e);
     }
     arena
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buf_to_bigint_string_reads_big_endian() {
+        assert_eq!(buf_to_bigint_string(&[]), "0");
+        assert_eq!(buf_to_bigint_string(&[0]), "0");
+        assert_eq!(buf_to_bigint_string(&[0x01, 0x00]), "256");
+        // Goldilocks p − 1, the widest value a STARK pilout holds.
+        assert_eq!(buf_to_bigint_string(&[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0]), "18446744069414584320");
+    }
+
+    #[test]
+    fn buf_to_bigint_string_keeps_values_wider_than_128_bits() {
+        // BN254 r − 1: 32 bytes, which a u128 accumulator silently truncated.
+        let r_minus_one: [u8; 32] = [
+            0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d, 0x28, 0x33,
+            0xe8, 0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(
+            buf_to_bigint_string(&r_minus_one),
+            "21888242871839275222246405745257275088548364400416034343698204186575808495616"
+        );
+        // Leading zero bytes do not change the value.
+        let mut padded = vec![0u8; 8];
+        padded.extend_from_slice(&r_minus_one);
+        assert_eq!(buf_to_bigint_string(&padded), buf_to_bigint_string(&r_minus_one));
+    }
 }

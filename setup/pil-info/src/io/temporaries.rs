@@ -3,8 +3,6 @@
 
 use crate::types::code::{CodeOperation, OpType};
 
-const FIELD_EXTENSION: u64 = 3;
-
 /// Determines if two lifetime segments overlap (open intervals on the right).
 fn is_intersecting(seg1: &[i64; 3], seg2: &[i64; 3]) -> bool {
     seg2[0] < seg1[1] && seg1[0] < seg2[1]
@@ -41,8 +39,15 @@ fn temporals_subsets(segments: &mut [[i64; 3]]) -> Vec<Vec<[i64; 3]>> {
     subsets
 }
 
-/// Analyses tmp variable lifetimes and assigns compacted IDs.
-pub fn get_id_maps(maxid: usize, id1d: &mut [i64], id3d: &mut [i64], code: &[CodeOperation]) -> (u64, u64) {
+/// Analyses tmp variable lifetimes and assigns compacted IDs: `id1d` for the base-field tmps and
+/// `id3d` for those in the extension of dimension `ext_dim` (none when `ext_dim` is 1).
+pub fn get_id_maps(
+    maxid: usize,
+    id1d: &mut [i64],
+    id3d: &mut [i64],
+    code: &[CodeOperation],
+    ext_dim: u64,
+) -> (u64, u64) {
     let mut ini1d = vec![-1i64; maxid];
     let mut end1d = vec![-1i64; maxid];
     let mut ini3d = vec![-1i64; maxid];
@@ -62,7 +67,7 @@ pub fn get_id_maps(maxid: usize, id1d: &mut [i64], id3d: &mut [i64], code: &[Cod
                     end1d[id] = j;
                 }
             } else {
-                assert_eq!(r.dest.dim, FIELD_EXTENSION);
+                assert_eq!(r.dest.dim, ext_dim);
                 if ini3d[id] == -1 {
                     ini3d[id] = j;
                     end3d[id] = j;
@@ -84,7 +89,7 @@ pub fn get_id_maps(maxid: usize, id1d: &mut [i64], id3d: &mut [i64], code: &[Cod
                         end1d[id] = j;
                     }
                 } else {
-                    assert_eq!(src.dim, FIELD_EXTENSION);
+                    assert_eq!(src.dim, ext_dim);
                     if ini3d[id] == -1 {
                         ini3d[id] = j;
                         end3d[id] = j;

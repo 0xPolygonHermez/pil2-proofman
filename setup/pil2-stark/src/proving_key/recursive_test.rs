@@ -320,7 +320,7 @@ pub fn gen_recursive_test_setup(
         &expressions_loaded,
     )?;
 
-    let verifier_loaded = crate::types::stark_info::VerifierInfo::from(vi_ref);
+    let verifier_loaded = crate::types::stark_info::VerifierInfo::try_from(vi_ref)?;
     crate::io::bin_file::write_verifier_expressions_bin_file(
         files_dir.join(format!("{}.verifier.bin", NAME_FILE)).to_str().unwrap(),
         &stark_info_loaded,

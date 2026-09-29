@@ -1,11 +1,15 @@
-//! Orchestrates the symbolic passes that follow `prepare_pil` for a single air.
+//! Orchestrates the symbolic passes for a single air: `run` from a pilout, or `pil_info` after
+//! `prepare_pil`.
 
+use pil2_pilout::pilout as pb;
+
+use crate::cfg::PilInfoCfg;
 use crate::pil::constraint_poly::Boundary;
 use crate::pil::gen_code::{CodeGenParams, PilCodeResult};
 use crate::pil::im_polynomials::{add_im_polynomials, calculate_intermediate_polynomials};
 use crate::pil::map;
 use crate::types::pilout_info::SetupResult;
-use crate::pil::prepare::{PrepareOptions, PreparePilResult};
+use crate::pil::prepare::{prepare_pil, PrepareOptions, PreparePilResult};
 use crate::expr::print::PrintCtx;
 
 /// The result of the passes, as returned by `pil_info`.
@@ -16,18 +20,30 @@ pub struct PilInfoResult {
     pub im_pols_info: (Vec<String>, Vec<String>),
     /// Constraint polynomial expression ID.
     pub c_exp_id: usize,
-    /// FRI polynomial expression ID (distinct from c_exp_id).
-    pub fri_exp_id: usize,
+    /// FRI polynomial expression ID (distinct from c_exp_id): `None` unless the opening is FRI.
+    pub fri_exp_id: Option<usize>,
     /// Polynomial Q degree.
     pub q_deg: i64,
     /// Boundary definitions.
     pub boundaries: Vec<Boundary>,
 }
 
-/// Run the passes on the output of `prepare_pil`.
+/// Prepare the air and run every pass on it for `cfg`: `prepare_pil` then `pil_info`.
+pub fn run(
+    pilout: &pb::PilOut,
+    airgroup_id: usize,
+    air_id: usize,
+    cfg: &PilInfoCfg,
+    options: &PrepareOptions,
+) -> PilInfoResult {
+    let prepared = prepare_pil(pilout, airgroup_id, air_id, &cfg.field);
+    pil_info(prepared, airgroup_id, air_id, cfg, options)
+}
+
+/// Run the passes on the output of `prepare_pil`, which must have been prepared over `cfg.field`.
 ///
 /// Steps:
-/// 1. calculate_intermediate_polynomials, bounded by `max_deg`
+/// 1. calculate_intermediate_polynomials, as `cfg.degree_policy` says
 /// 2. add_intermediate_polynomials
 /// 3. map
 /// 4. generate_pil_code
@@ -35,7 +51,7 @@ pub fn pil_info(
     prepared: PreparePilResult,
     airgroup_id: usize,
     air_id: usize,
-    max_deg: usize,
+    cfg: &PilInfoCfg,
     options: &PrepareOptions,
 ) -> PilInfoResult {
     let mut setup = prepared.setup;
@@ -50,7 +66,7 @@ pub fn pil_info(
     let q_dim = constraint_poly.q_dim;
 
     // Calculate intermediate polynomials
-    let im_result = calculate_intermediate_polynomials(&expressions, c_exp_id, max_deg, q_dim, &symbols);
+    let im_result = calculate_intermediate_polynomials(&expressions, c_exp_id, &cfg.degree_policy, q_dim, &symbols);
     let im_exps = im_result.im_exps;
     let q_deg = im_result.q_deg;
 
@@ -76,6 +92,7 @@ pub fn pil_info(
         q_deg,
         options.im_pols_stages,
         &boundary_tuples,
+        &cfg.field,
     );
     setup.n_commitments = n_commitments;
 
@@ -113,18 +130,19 @@ pub fn pil_info(
 
     // Build code-gen params
     let n_stages = setup.n_stages;
-    // fri_exp_id will be updated by generate_pil_code after FRI polynomial generation
     let mut params = CodeGenParams {
         air_id,
         airgroup_id,
         n_stages,
         c_exp_id,
-        fri_exp_id: c_exp_id, // placeholder; will be overwritten
+        fri_exp_id: None, // set by generate_pil_code, as cfg.opening says
         q_deg: q_deg as usize,
         q_dim: q_dim_final,
         opening_points: opening_points.clone(),
         cm_pols_map: setup.cm_pols_map.clone(),
         custom_commits_count: setup.custom_commits.len(),
+        field: cfg.field.clone(),
+        opening: cfg.opening,
     };
 
     // Store hints back into setup for generate_pil_code

@@ -7,7 +7,8 @@
 use serde_json::json;
 
 use crate::pil::gen_code::PilCodeResult;
-use crate::types::pilout_info::{SetupResult, FIELD_EXTENSION};
+use crate::types::pilout_info::SetupResult;
+use crate::types::FIELD_EXTENSION;
 use crate::types::security;
 use crate::types::stark_struct::StarkStruct;
 use crate::types::output::{

@@ -6,10 +6,12 @@ use pil2_pilout::pilout as pb;
 
 use crate::pil::constraint_poly::Boundary;
 use crate::pil::gen_code::PilCodeResult;
-use crate::types::pilout_info::{SetupResult, FIELD_EXTENSION};
+use crate::types::pilout_info::SetupResult;
 use crate::pil::prepare::{prepare_pil, PrepareOptions};
 use crate::types::stark_struct::StarkStruct;
+use crate::types::FIELD_EXTENSION;
 use pil_info::pil::info as passes;
+use pil_info::{FieldCfg, PilInfoCfg};
 
 /// The assembled pil info result returned by `pil_info`.
 pub struct PilInfoResult {
@@ -43,7 +45,7 @@ pub fn pil_info(
     stark_struct: &StarkStruct,
     options: &PrepareOptions,
 ) -> PilInfoResult {
-    let prepared = prepare_pil(pilout, airgroup_id, air_id);
+    let prepared = prepare_pil(pilout, airgroup_id, air_id, &FieldCfg::goldilocks());
 
     // Validate starkStruct
     if !options.debug {
@@ -62,10 +64,12 @@ pub fn pil_info(
         }
     }
 
-    let max_deg = (1usize << (stark_struct.n_bits_ext - stark_struct.n_bits)) + 1;
+    // The degree bound comes from the blowup: (1 << (nBitsExt - nBits)) + 1.
+    let cfg = PilInfoCfg::goldilocks(stark_struct.n_bits_ext - stark_struct.n_bits);
 
     let passes::PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, fri_exp_id, q_deg, boundaries } =
-        passes::pil_info(prepared, airgroup_id, air_id, max_deg, options);
+        passes::pil_info(prepared, airgroup_id, air_id, &cfg, options);
+    let fri_exp_id = fri_exp_id.expect("the FRI opening always yields friExpId");
     let n_stages = setup.n_stages;
     let opening_points = &setup.opening_points;
 

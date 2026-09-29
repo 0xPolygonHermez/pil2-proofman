@@ -429,7 +429,7 @@ fn write_bin_files_from_pil_code(
     let ei = crate::types::stark_info::ExpressionsInfo::from(expressions_info);
     crate::io::bin_file::write_expressions_bin_file(bin_output.to_str().unwrap_or(""), &stark_info, &ei)?;
 
-    let vi = crate::types::stark_info::VerifierInfo::from(verifier_info);
+    let vi = crate::types::stark_info::VerifierInfo::try_from(verifier_info)?;
     crate::io::bin_file::write_verifier_expressions_bin_file(
         verifier_bin_output.to_str().unwrap_or(""),
         &stark_info,

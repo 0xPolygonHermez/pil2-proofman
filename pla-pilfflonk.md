@@ -71,7 +71,7 @@ Aquesta secció és per als agents que implementen el pla. Es treballa a la bran
 | M7 | Feta (decisió pendent) | `PilFflonk::ShplonkProver` (`pilfflonk_shplonk_prover.*`): arrels d'A.2.5 amb *offsets* amb signe, avaluacions dels components, `r_i`, `W`, `W'` amb el transcript de M4 i `Srs::commit`. La identitat d'A.5 es compleix en escalars i en G1 amb `τ` coneguda, per a `k` ∈ {1,2,3,4,6,12} i *offsets* `{0}`, `{0,1}`, `{−1,0,1,2}`. Genera *fixtures* JSON per a M8 (`PILFFLONK_SHPLONK_FIXTURES`). **Pendent:** les funcions de `Polynomial` de rapidsnark que fa servir tenen fuites (spec Annex F.9); ASan passa amb tres supressions. |
 | M8 | Feta | `pilfflonk/js/` (ESM; `ffjavascript` 0.3.1 i `@noble/hashes`): `transcript.js` (A.4, igual que el C++), `elements.js` (descodificació amb les comprovacions de snarkjs), `shplonk.js` (`verifyOpening`, estructura de `fflonk_verify.js` de snarkjs: `computeF`/`E`/`J`, `isValidPairing`). Accepta les 10 obertures del prover C++, en rebutja 720 de manipulades, i reprodueix els reptes del C++ i el vector fixat de M4. `test/fixtures.sh` regenera les *fixtures* i executa `node --test`. Troballa: error de signe a `G1.sub` d'ffjavascript (spec Annex F.9). Tanca la **Fase 0**. |
 | M9 | Feta | Extracció mecànica a `setup/pil-info`: la majoria de fitxers es mouen sense cap canvi; el STARK conserva `StarkStruct`, la validació, la fita de grau, `get_prover_memory` i el resum. `pil-info` no depèn de `pil2-stark-setup`. *Golden* 499/499. S'ha fet en un *worktree* propi i s'ha portat a la branca amb `cherry-pick`. |
-| M10 | En curs (*worktree*) | |
+| M10 | Feta | `PilInfoCfg { field, degree_policy, opening }` (`pil-info/src/cfg.rs`), `pil_info::run` per a M16. Goldilocks: dimensió 3, `FromBlowup`, FRI; BN254: dimensió 1, `Search { max: 9 }`, sense FRI ni trossos de `Q` a l'`evMap`. Desempat de la cerca: el grau més baix, com pil-stark (spec A.1). *Golden* 499/499. Per a M16: el `cmPolsMap` encara té els `Q0..Q{qDeg−1}` del STARK, i `qDim` = 1. Per a M11: les constants s'han de codificar a partir de les cadenes decimals. |
 | M12 | En curs (*worktree*) | |
 | Llicències (context de P7) | - `pil2-stark/LICENSE` és AGPL-3.0, però el *workspace* declara `MIT OR Apache-2.0`.<br>- `pil-fflonk` té `LICENSE` AGPL-3.0 i, des de `0132359`, també `LICENSE-APACHE` i `LICENSE-MIT`. |
 
@@ -85,7 +85,7 @@ Aquesta secció és per als agents que implementen el pla. Es treballa a la bran
 - columnes fixes `L1` i `LLAST`, i columnes de witness `l1` i `l2`;
 - publics `in1`, `in2` i `out`;
 - 5 restriccions, totes `everyRow` (N1);
-- grau màxim 3: `qDeg = 2` i, amb D = 9, no calen im pols;
+- grau màxim 3; amb D = 9 i el desempat de pil-stark (el grau més baix), el setup tria 1 im pol i `qDeg = 1` (troballa de M10; spec A.1), de manera que el tall ja calcula un im pol a l'stage 1;
 - *offsets* `{0, 1}`.
 
 **Criteri de fet**, escrit com a runbook. Les comandes són les de §4.2 i §4.4 de l'especificació, i alguns arguments són [SUPÒSIT N9, N13, N14].
@@ -110,7 +110,7 @@ proofman-cli pilfflonk verify -k build/provingKey -p build/proof/proof.json -u b
 | Extracció de `pil-info` i `PilInfoCfg`: mòdul, `neg`, dimensió, política de grau, constants grans, ganxo FRI (§4.2.2) | Sí | M9, M10 |
 | `Result` en lloc de `panic!` i truncacions `u64` als escriptors STARK (§4.2.2) | No | M27 |
 | Plegat amb `std_vc` i *zerofier* `everyRow` (§4.2.3, A.1) | Sí | M10, M16, M17 |
-| Selecció d'im pols (§4.2.3) | La passada ja existeix, però el tall no l'exercita | M23 |
+| Selecció d'im pols (§4.2.3) | Sí: el Fibonacci en fa servir 1 (M10). Els casos amb *offsets* amb signe i grau alt queden per a M23. | M10, M23 |
 | Dominis `firstRow`, `lastRow` i `everyFrame` (A.1) | No: el compilador no els emet (N1) | M24 |
 | Partició de `Q` (§4.2.3, A.1) | No | M33 |
 | Agrupació fflonk (§4.2.4, A.2) | No: al tall, *layout* amb `k = 1` (drecera R1) | M21, M22 |
