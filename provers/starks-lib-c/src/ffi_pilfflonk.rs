@@ -1,8 +1,10 @@
 //! Safe wrappers over the pilfflonk C API: every fallible call returns a `Result`.
 
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::fmt;
 use std::os::raw::{c_int, c_void};
+use std::os::unix::ffi::OsStrExt;
+use std::path::Path;
 use std::ptr::NonNull;
 
 include!("../bindings_pilfflonk.rs");
@@ -21,6 +23,10 @@ pub enum PilFflonkErrorKind {
     NonCanonical,
     Internal,
     InvalidPoint,
+    /// A file cannot be opened, read or written.
+    Io,
+    /// A file is not in the format expected.
+    Format,
     /// A status these bindings do not know: they are out of sync with `pilfflonk_api.hpp`.
     Unknown(i32),
 }
@@ -48,17 +54,43 @@ fn last_error(kind: PilFflonkErrorKind) -> PilFflonkError {
     PilFflonkError { kind, message }
 }
 
-/// Maps the status of the pilfflonk call just made on this thread to a `Result`.
-fn check_status(status: c_int) -> Result<(), PilFflonkError> {
-    let kind = match status {
-        PILFFLONK_OK => return Ok(()),
+/// The kind of a failure status; `None` for `PILFFLONK_OK`.
+fn error_kind(status: c_int) -> Option<PilFflonkErrorKind> {
+    Some(match status {
+        PILFFLONK_OK => return None,
         PILFFLONK_ERR_INVALID_ARGUMENT => PilFflonkErrorKind::InvalidArgument,
         PILFFLONK_ERR_NON_CANONICAL => PilFflonkErrorKind::NonCanonical,
         PILFFLONK_ERR_INTERNAL => PilFflonkErrorKind::Internal,
         PILFFLONK_ERR_INVALID_POINT => PilFflonkErrorKind::InvalidPoint,
+        PILFFLONK_ERR_IO => PilFflonkErrorKind::Io,
+        PILFFLONK_ERR_FORMAT => PilFflonkErrorKind::Format,
         other => PilFflonkErrorKind::Unknown(other),
-    };
-    Err(last_error(kind))
+    })
+}
+
+/// Maps the status of the pilfflonk call just made on this thread to a `Result`.
+fn check_status(status: c_int) -> Result<(), PilFflonkError> {
+    error_kind(status).map_or(Ok(()), |kind| Err(last_error(kind)))
+}
+
+/// The failure of the pilfflonk call just made on this thread, which returned NULL: its status
+/// comes from `pilfflonk_last_status`.
+fn last_failure() -> PilFflonkError {
+    // SAFETY: no arguments; it reads this thread's status of the latest call.
+    let status = unsafe { pilfflonk_last_status() };
+    // A NULL with PILFFLONK_OK would mean the C side and these bindings disagree.
+    last_error(error_kind(status).unwrap_or(PilFflonkErrorKind::Unknown(status)))
+}
+
+/// A refusal decided on this side, before any call: it reads like the C side's.
+fn invalid_argument(function: &str, message: String) -> PilFflonkError {
+    PilFflonkError { kind: PilFflonkErrorKind::InvalidArgument, message: format!("{function}: {message}") }
+}
+
+/// `path` as the C side takes it: its bytes, NUL-terminated.
+fn c_path(function: &str, path: &Path) -> Result<CString, PilFflonkError> {
+    CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| invalid_argument(function, format!("{} contains a NUL byte", path.display())))
 }
 
 /// Checks that `scalar`, read as a little-endian integer, is below the BN254 scalar modulus r.
@@ -117,6 +149,87 @@ impl Drop for PilFflonkTranscript {
     fn drop(&mut self) {
         // SAFETY: the handle came from `pilfflonk_transcript_new` and is released only here.
         unsafe { pilfflonk_transcript_free(self.handle.as_ptr()) }
+    }
+}
+
+/// Reads the first `n_g1` powers `[τ^i]₁`, and `[1]₂` and `[τ]₂`, of the snarkjs powers-of-tau file
+/// at `ptau_path` (only those points, from sections 1 to 3), and writes them to `srs_path` as
+/// `pilfflonk.srs.bin` (spec §4.2.5 and A.6), replacing any file there.
+///
+/// Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if `n_g1` is 0 or above
+/// 2^32 - 1, or the ptau holds fewer powers; [`Io`](PilFflonkErrorKind::Io) if a file cannot be
+/// opened, read or written; [`Format`](PilFflonkErrorKind::Format) if the ptau is not a BN254 one,
+/// is cut short or holds a point that is not valid.
+pub fn pilfflonk_srs_from_ptau_c(ptau_path: &Path, n_g1: u64, srs_path: &Path) -> Result<(), PilFflonkError> {
+    const FUNCTION: &str = "pilfflonk_srs_from_ptau";
+    let ptau = c_path(FUNCTION, ptau_path)?;
+    let srs = c_path(FUNCTION, srs_path)?;
+    // SAFETY: both paths are NUL-terminated strings that outlive the call.
+    check_status(unsafe { pilfflonk_srs_from_ptau(ptau.as_ptr(), n_g1, srs.as_ptr()) })
+}
+
+/// The structured reference string of a proof, owned by the C++ side: the powers `[τ^i]₁` and
+/// `[1]₂`, `[τ]₂` loaded from `pilfflonk.srs.bin`, whose points are checked as they are read.
+#[derive(Debug)]
+pub struct PilFflonkSrs {
+    handle: NonNull<c_void>,
+}
+
+impl PilFflonkSrs {
+    /// Loads `pilfflonk.srs.bin`. Fails with [`Io`](PilFflonkErrorKind::Io) if the file cannot be
+    /// opened or read, [`Format`](PilFflonkErrorKind::Format) if it is not such a file.
+    pub fn load(srs_path: &Path) -> Result<Self, PilFflonkError> {
+        let path = c_path("pilfflonk_srs_load", srs_path)?;
+        // SAFETY: `path` is a NUL-terminated string that outlives the call; the result is either
+        // NULL or a handle this value then owns.
+        let handle = unsafe { pilfflonk_srs_load(path.as_ptr()) };
+        NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
+    }
+
+    /// The KZG commitment `[f(τ)]₁` of a fixed `f(X) = Σ_{j<k} p_j(X^k)·X^j` (spec §4.2.5), where
+    /// `p_j` interpolates column `j` on the domain of `N = 2^n_bits` points: `evals` holds the `k`
+    /// columns one after another, `N` canonical scalars each, in the domain's natural order. The
+    /// commitment is affine `x‖y`, canonical little-endian coordinates; the point at infinity is
+    /// all zeros.
+    ///
+    /// Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if `evals` does not
+    /// hold `k·2^n_bits` scalars (checked here, before the call), if `k` is 0, `n_bits` exceeds
+    /// 28 or `k·N` exceeds the SRS's powers; [`NonCanonical`](PilFflonkErrorKind::NonCanonical) if
+    /// a scalar is not below r.
+    pub fn commit_fixed(
+        &self,
+        n_bits: u64,
+        k: u64,
+        evals: &[[u8; PILFFLONK_FR_BYTES]],
+    ) -> Result<[u8; PILFFLONK_G1_BYTES], PilFflonkError> {
+        let expected =
+            u32::try_from(n_bits).ok().and_then(|bits| 1u64.checked_shl(bits)).and_then(|n| k.checked_mul(n));
+        if expected != Some(evals.len() as u64) {
+            return Err(invalid_argument(
+                "pilfflonk_commit_fixed",
+                format!("evals holds {} scalars, not the k·2^n_bits = {k}·2^{n_bits} the call reads", evals.len()),
+            ));
+        }
+        let mut commitment = [0u8; PILFFLONK_G1_BYTES];
+        // SAFETY: `evals` holds the k·2^n_bits scalars the call reads, `commitment` has the 64 bytes
+        // it writes, and the handle is live.
+        check_status(unsafe {
+            pilfflonk_commit_fixed(
+                self.handle.as_ptr(),
+                n_bits,
+                k,
+                evals.as_flattened().as_ptr(),
+                commitment.as_mut_ptr(),
+            )
+        })?;
+        Ok(commitment)
+    }
+}
+
+impl Drop for PilFflonkSrs {
+    fn drop(&mut self) {
+        // SAFETY: the handle came from `pilfflonk_srs_load` and is released only here.
+        unsafe { pilfflonk_srs_free(self.handle.as_ptr()) }
     }
 }
 

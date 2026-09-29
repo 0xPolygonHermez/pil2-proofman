@@ -35,6 +35,8 @@ struct Bytes32 {
 
 void runTranscriptTests();
 void runLdeTests();
+void runSrsTests();
+void runCommitTests();
 
 } // namespace PilFflonkTest
 

@@ -7,6 +7,8 @@ pub const PILFFLONK_ERR_INVALID_ARGUMENT: ::std::os::raw::c_int = 1;
 pub const PILFFLONK_ERR_NON_CANONICAL: ::std::os::raw::c_int = 2;
 pub const PILFFLONK_ERR_INTERNAL: ::std::os::raw::c_int = 3;
 pub const PILFFLONK_ERR_INVALID_POINT: ::std::os::raw::c_int = 4;
+pub const PILFFLONK_ERR_IO: ::std::os::raw::c_int = 5;
+pub const PILFFLONK_ERR_FORMAT: ::std::os::raw::c_int = 6;
 
 // What `pilfflonk_transcript_absorb` reads (`enum pilfflonk_transcript_kind`).
 pub const PILFFLONK_TRANSCRIPT_FR: u32 = 0;
@@ -14,6 +16,8 @@ pub const PILFFLONK_TRANSCRIPT_G1: u32 = 1;
 
 extern "C" {
     pub fn pilfflonk_last_error() -> *const ::std::os::raw::c_char;
+
+    pub fn pilfflonk_last_status() -> ::std::os::raw::c_int;
 
     pub fn pilfflonk_fr_check_canonical(scalar: *const u8) -> ::std::os::raw::c_int;
 
@@ -30,4 +34,22 @@ extern "C" {
 
     pub fn pilfflonk_transcript_squeeze(transcript: *mut ::std::os::raw::c_void, out: *mut u8)
         -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_srs_from_ptau(
+        ptau_path: *const ::std::os::raw::c_char,
+        n_g1: u64,
+        srs_path: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_srs_load(srs_path: *const ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
+
+    pub fn pilfflonk_srs_free(srs: *mut ::std::os::raw::c_void);
+
+    pub fn pilfflonk_commit_fixed(
+        srs: *const ::std::os::raw::c_void,
+        n_bits: u64,
+        k: u64,
+        evals: *const u8,
+        out_g1: *mut u8,
+    ) -> ::std::os::raw::c_int;
 }

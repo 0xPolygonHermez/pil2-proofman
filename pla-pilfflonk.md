@@ -67,7 +67,8 @@ Aquesta secció és per als agents que implementen el pla. Es treballa a la bran
 | M13 (part 1) | Feta | `compile-pil -P, --config` (sense `-P`, sortida idèntica a l'anterior) i `pilfflonk/tests/fixtures/fibonacci/` (PIL2 i `bn254.json`). Queden el generador de witness i `FileWitnessSource` (després de M12). |
 | M4 | Feta | `pilfflonk_transcript_{new,free,absorb,squeeze}` sobre el `Keccak256Transcript` de rapidsnark, sense tocar-lo; `guardNew` (N4). L'API rebutja escalars i coordenades no canòniques, punts fora de la corba, el punt a l'infinit i punts amb coordenades `< 2^192` (troballa: `RawFq::toRprBE`, spec §4.4). Els reptes coincideixen amb un càlcul independent d'A.4. El *golden* STARK continua verd (499/499). |
 | M5 | Feta | `PilFflonk::Lde` (`pilfflonk_lde.*`): INTT amb espai per al blinding (`Polynomial::fromEvaluations`), extensió al *coset* `g·H'` amb `g = 5` i la inversa, sobre la FFT d'ffiasm; en paral·lel per columnes quan n'hi ha prou. Coincideix amb Horner i les anades i tornades són exactes. Pendent per a M17/M18: mapar `std::invalid_argument` a `PILFFLONK_ERR_INVALID_ARGUMENT`. Nota de rendiment: cada FFT obre diverses regions OpenMP i, amb 256 fils en una màquina carregada, els tests triguen uns 2 minuts. |
-| M6 | En curs | |
+| M6 | Feta | `pilfflonk_srs.*` (lector del `ptau` amb `BinFile`, només seccions 1–3; `pilfflonk.srs.bin` tipus `"pfsr"`), `pilfflonk_commit.*` (commit KZG amb `multiMulByScalar` i escalars canònics, empaquetat amb `CPolynomial`, `commitFixed`). API C: `pilfflonk_srs_{from_ptau,load,free}`, `pilfflonk_commit_fixed` en memòria i `pilfflonk_last_status`. Ajudant de test que genera un `ptau` amb `τ` fixa (N13). Comprovat també amb un `ptau` real de snarkjs de `2^15`. Defectes de rapidsnark/ffiasm trobats: spec Annex F.9. |
+| M7 | En curs | |
 | Llicències (context de P7) | - `pil2-stark/LICENSE` és AGPL-3.0, però el *workspace* declara `MIT OR Apache-2.0`.<br>- `pil-fflonk` té `LICENSE` AGPL-3.0 i, des de `0132359`, també `LICENSE-APACHE` i `LICENSE-MIT`. |
 
 ---
@@ -425,7 +426,7 @@ No hi ha verificador natiu (D3). El *pairing* el fa `ffjavascript` dins del veri
   - `SetupPilfflonkOptions` i el subcomandament `setup-pilfflonk` a `setup/pil2-stark/src/main.rs`, amb els arguments de §4.2;
   - la validació de §4.2.1: tots els *hints* de prover es rebutgen, i els de witness i de depuració s'ignoren;
   - `<air>.const`, en 32 bytes *little-endian*, amb descodificació `num-bigint`;
-  - `pilfflonk.srs.bin` [SUPÒSIT N6];
+  - `pilfflonk.srs.bin`, amb `pilfflonk_srs_from_ptau` de M6; per a l'`X_2` de la vkey cal un accessor C de `[τ]₂` en forma canònica (per exemple, `pilfflonk_srs_g2`), que M6 no té;
   - `<air>.verkey.json`, per mitjà de `pilfflonk_commit_fixed`;
   - `pilout.globalInfo.json`;
   - la funció de *digest* d'A.6, sobre el JSON canònic de la vkey [SUPÒSIT N10].

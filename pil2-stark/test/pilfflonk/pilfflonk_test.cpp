@@ -55,6 +55,8 @@ int main() {
     testSuccessClearsLastError();
     PilFflonkTest::runTranscriptTests();
     PilFflonkTest::runLdeTests();
+    PilFflonkTest::runSrsTests();
+    PilFflonkTest::runCommitTests();
     std::printf("pilfflonk_test: all tests passed\n");
     return 0;
 }

@@ -748,7 +748,12 @@ int   pilfflonk_commit_stage(void* inst, uint32_t stage, const uint8_t* challeng
 int   pilfflonk_commit_q(void* inst, const uint8_t* challenges, uint8_t* out_g1);
 int   pilfflonk_evaluate(void* ctx, void** insts, uint64_t n, const uint8_t xi_seed[32], uint8_t* out_evals);
 int   pilfflonk_open(void* ctx, void** insts, uint64_t n, void* t, uint8_t* out_w_wp);
-int   pilfflonk_commit_fixed(const char* pilfflonkinfo, const char* const_file, const char* srs, uint8_t* out_g1); // setup
+int   pilfflonk_last_status(void);                                         // estat de l'última crida d'aquest fil
+int   pilfflonk_srs_from_ptau(const char* ptau_path, uint64_t n_g1, const char* srs_path); // setup
+void* pilfflonk_srs_load(const char* srs_path);                            // NULL si falla; pilfflonk_last_status en diu el motiu
+void  pilfflonk_srs_free(void* srs);
+int   pilfflonk_commit_fixed(const void* srs, uint64_t n_bits, uint64_t k,
+                             const uint8_t* evals, uint8_t out_g1[64]);    // setup; un f fix per crida (M6)
 ```
 
 **Rust:**
@@ -1150,7 +1155,7 @@ El prover fa servir la mateixa convenció. `Z_T` és el producte de tots els `Z_
 | `<air>.bin` | Bytecode `Fr` (*hints*, im pols, `Q`), dins del contenidor `"chps"`, amb una versió pròpia i constants de 32 bytes |
 | `<air>.const` | Columnes fixes, fila per fila, en `Fr` canònic de 32 bytes *little-endian* |
 | `<air>.verkey.json` | Els commitments G1 dels `f_i` fixos de l'AIR, com a cadenes decimals `[x, y]`. Són els mateixos que a la vkey. |
-| `pilfflonk.srs.bin` | Contenidor binfile amb les potències G1 fins a `max grau(f_i) + 1` i `[τ]₂`. Proposta (N6 del pla): copiar les seccions del `ptau` (punts afins en Montgomery *little-endian*, com fa la zkey). |
+| `pilfflonk.srs.bin` | Contenidor binfile de rapidsnark, tipus `"pfsr"`, versió 1 (M6):<br>- **secció 1** (capçalera, 88 bytes): `u32 n8q = 32`, `q` (LE), `u32 n8r = 32`, `r` (LE), `u64 nG1` (entre 1 i `2^32−1`, el límit de la MSM), `u64 nG2 = 2`;<br>- **secció 2:** `[τ^i]₁` per a `i < nG1`, 64 bytes cadascun;<br>- **secció 3:** `[1]₂` i `[τ]₂`, 128 bytes cadascun (`Fq2` com a `c0‖c1`).<br>Els punts són afins `x‖y`, amb cada coordenada en Montgomery *little-endian*, copiats byte a byte de les seccions 2 i 3 del `ptau`. |
 | `pilfflonk.vkey.json` | **Autocontinguda,** com la `verification_key.json` de snarkjs: tot el que necessita el verificador.<br>`protocol` (`"pilfflonk"`), `curve` (`"bn128"`), `formatVersion`, `nPublic`, `power` (`nBits`), `powerW`, `X_2` (`[τ]₂`), `numChallenges`, `evMap`, `layout` (els `f_i` amb `stage`, `pols`, `k`, *offsets* i grau), els commitments fixos (`f<i>`), `qDeg`, `maxQDegree`, el `qVerifier` i `digest` (hexadecimal).<br>Els enters grans i els punts, com a cadenes decimals. |
 | La prova (no és del `provingKey/`) | **Format equivalent a l'actual (D7):** bytes, com a `gen_final_snark_proof`, i una vista JSON d'estil snarkjs, com a `snark_proof_to_json`.<br>**Bytes, en ordre:**<br>- els commitments G1 (`x‖y`, 32+32 bytes *big-endian*) dels `f` no fixos, en l'ordre global (A.5);<br>- `W` i `W'`;<br>- les avaluacions (32 bytes *big-endian*): primer les fixes per AIR, després les de cada instància en l'ordre de l'`evMap`, i els `Q_i(ξ)` si `Q` està partit;<br>- els air values, els airgroup values i els proof values;<br>- `inv` i `invZh`, com a pil-fflonk.<br>**JSON:** `{"protocol": "pilfflonk", "curve": "bn128", "polynomials": {nom: [x, y, "1"]}, "evaluations": {nom: valor}}`, amb els noms de pil-fflonk (`f<i>`, `W`, `Wp`, `<pol>`, `<pol>w`) i la mateixa convenció estesa per als altres *offsets* i instàncies.<br>**Diferència obligada:** els commitments fixos no hi són, perquè surten de la `verkey` (C.3.1). |
 | `publics.json` | Un array de cadenes decimals, en l'ordre de `publicsMap`, com a pil-fflonk i al *wrap* final |
@@ -1335,6 +1340,12 @@ Aquests problemes no bloquegen el backend nou, però han sortit durant l'anàlis
 6. **`Keccak256Transcript` de rapidsnark corromp el transcript amb el punt zero** (`keccak_256_transcript.c.hpp:63-65`). Es fa servir als provers del *wrap* final (`fflonk_prover.c.hpp:318`, `plonk_prover.c.hpp:387`, `plonk_prover_gpu.c.cuh:545`), de manera que és un risc de compatibilitat amb snarkjs. Hi ha un segon cas que afecta els mateixos provers: `RawFq::toRprBE` d'ffiasm (`fq.cpp:324-339`) codifica malament les coordenades `< 2^192`, amb probabilitat `≈ 2^-61` per punt, i llavors snarkjs rebutjaria la prova. Tots dos es podrien corregir amb un canvi d'una línia (a `fq.cpp`, l'`mpz_export` amb paraules de `bytes` com a `fr.cpp:312`), però toca ffiasm i el *wrap* final, i queda fora d'abast. pilfflonk reutilitza la classe tal com és i rebutja aquests punts a l'API (§4.4).
 7. **`Tables.fill` amb un valor negatiu ja era incorrecte a Goldilocks.** Per a `-1`, el `pilout` acabava amb `4294967294` en lloc de `p−1` (`pil2-compiler/src/definition_items/fixed_col.js`, `fillRowsFrom`). Queda corregit a la branca del compilador (C4).
 8. **Possible error al *zerofier* `lastRow` del prover STARK, no verificat.** `pil2-stark/src/starkpil/setup_ctx.hpp:104` crida `buildOneRowZerofierInv(..., N)`, que faria servir l'arrel `ω^N = 1`, mentre que `:47-56` fa servir `ω^{N−1}`. A més, `:57` sembla comprovar `everyRow` on hauria de ser `everyFrame`. Com que el compilador de `develop-0.14.0` només emet `everyRow` (§3.4), probablement cap AIR real no hi arriba.
+9. **Defectes de rapidsnark i ffiasm trobats a M6.** No es toquen; pilfflonk els esquiva:
+   - `CPolynomial::getPolynomial` té comportament indefinit quan el grau és menor que 2 (fa `std::log2(0)`), i quan el grau empaquetat és una potència de dos retorna un polinomi amb un coeficient de menys. A més, esborra un prefix d'una potència de dos del buffer. `PilFflonk::pack` ho té en compte.
+   - `binfile_writer.cpp:41` fa `delete[]` d'objectes creats amb `new`.
+   - `multiexp.c.hpp:30` fa una lectura de 8 bytes desalineada a cada MSM (UBSan).
+   - El mode *direct read* de `BinFile`: `readU32LE` i similars desreferencien un punter nul, i `readSectionToParallel` llança una excepció dins d'un `std::thread`, que acaba el procés. pilfflonk només fa servir `readSectionTo`.
+   - `fflonk_setup.cpp` fa `throw new runtime_error(...)`, és a dir, llança un punter.
 
 ---
 
