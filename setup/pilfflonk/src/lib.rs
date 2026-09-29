@@ -11,6 +11,7 @@
 //! | `pilout.globalInfo.json` | [`global_info`] |
 //! | the symbolic passes over BN254 (§4.2.2, §4.2.3) | [`passes`] |
 //! | the committed polynomials, their bounds, `nBitsExt` and the layout (§4.2.4, A.1–A.3) | [`layout`] |
+//! | the grouping of the committed polynomials in `f_i` (§4.2.4, A.2) | [`grouping`] |
 //! | `<air>.pilfflonkinfo.json` from the passes' result | [`air_info`] |
 //! | `pilfflonk.srs.bin`, `<air>.verkey.json` and `[τ]₂` | [`keys`] |
 //! | the vkey's digest (A.6) | [`digest`] |
@@ -25,6 +26,7 @@ pub mod digest;
 pub mod error;
 pub mod fixed;
 pub mod global_info;
+pub mod grouping;
 pub mod keys;
 pub mod layout;
 pub mod passes;

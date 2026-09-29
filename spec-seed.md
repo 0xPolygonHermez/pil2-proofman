@@ -1065,6 +1065,14 @@ El compilador de `develop-0.14.0` només emet `everyRow` (§3.4). Els altres tre
    - Per a l'*offset* `s`, les arrels són els `x` tals que `x^k = ξ·ω_N^s`, és a dir, `x_j = xiSeed^(powerW/k) · ω_{kN}^s · w_k^j`. També val per a `s` negatiu.
 6. **Compatibilitat.** Per a `O ⊆ {0, 1}`, el resultat (classes, particions, ordre i arrels) ha de coincidir exactament amb el del sistema antic.
 
+**Com ho implementa M21 (`setup/pilfflonk/src/grouping.rs`), i on el JS antic no coincideix amb aquest annex:**
+- **Ordre global dels `f`.** El JS els numera per primera aparició a les llistes d'*offsets*, que no sempre va per stage (per exemple, amb 3 o més columnes fixes obertes només a 1). A.5 demana ordre per stage: `group()` ordena de manera estable per stage, però enumera els desempats en l'ordre antic dels grups, de manera que les particions són les del sistema antic. Per a l'exemple `all` tots dos ordres coincideixen.
+- **Els trossos de `Q`.** El JS els posa tots en un mateix grup, que `extraMuls` pot partir en diversos `f`; M21 fa el mateix (qüestió oberta per a M33).
+- **Un sol `f`.** El JS n'exigeix com a mínim dos (`shplonk.js:27`); `group()` n'accepta un.
+- **`kN | r−1`.** Les mides invàlides no s'arriben a enumerar; el resultat és el mateix que comprovar-ho després.
+- **Generalització a *offsets* amb signe:** les llistes van per *offset* creixent (−1 primer), i els moviments de la regla 1 per stage, per `O` lexicogràfic i per ordre d'entrada; per a `O ⊆ {0, 1}` es redueix al JS.
+- **Errors clars** (`NoValidPartition`, cota 0) on el JS falla amb una excepció. Una classe de 5, 7, 10, 11, … columnes no pot ser un sol tros, i amb `extraMuls = 2` tres classes així no tenen partició vàlida: el missatge suggereix més `--extra-muls`.
+
 ### A.3 Blinding
 
 Tota columna compromesa no fixa `p` amb conjunt d'obertura `O` es transforma així:

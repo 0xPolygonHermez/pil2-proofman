@@ -1,0 +1,63 @@
+{
+ "source": "pil-fflonk/config/pilfflonk.{fflonkinfo,shkey}.json, example all; derived as setup/pilfflonk/tests/grouping.rs says",
+ "nBits": 8,
+ "extraMuls": 2,
+ "qStage": 4,
+ "pols": [
+  {"name": "Global.L1", "stage": 0, "id": 0, "offsets": [0], "coefficients": 256},
+  {"name": "Fibonacci.L1", "stage": 0, "id": 1, "offsets": [0], "coefficients": 256},
+  {"name": "Fibonacci.LLAST", "stage": 0, "id": 2, "offsets": [0], "coefficients": 256},
+  {"name": "Connection.S1", "stage": 0, "id": 3, "offsets": [0], "coefficients": 256},
+  {"name": "Connection.S2", "stage": 0, "id": 4, "offsets": [0], "coefficients": 256},
+  {"name": "Connection.S3", "stage": 0, "id": 5, "offsets": [0], "coefficients": 256},
+  {"name": "Plookup.SEL", "stage": 0, "id": 6, "offsets": [0, 1], "coefficients": 256},
+  {"name": "Plookup.A", "stage": 0, "id": 7, "offsets": [0, 1], "coefficients": 256},
+  {"name": "Plookup.B", "stage": 0, "id": 8, "offsets": [0, 1], "coefficients": 256},
+  {"name": "Fibonacci.l1", "stage": 1, "id": 0, "offsets": [0, 1], "coefficients": 259},
+  {"name": "Fibonacci.l2", "stage": 1, "id": 1, "offsets": [0, 1], "coefficients": 259},
+  {"name": "Connection.a", "stage": 1, "id": 2, "offsets": [0], "coefficients": 258},
+  {"name": "Connection.b", "stage": 1, "id": 3, "offsets": [0], "coefficients": 258},
+  {"name": "Connection.c", "stage": 1, "id": 4, "offsets": [0], "coefficients": 258},
+  {"name": "Permutation.c", "stage": 1, "id": 7, "offsets": [0], "coefficients": 258},
+  {"name": "Permutation.d", "stage": 1, "id": 8, "offsets": [0], "coefficients": 258},
+  {"name": "Permutation.selC", "stage": 1, "id": 9, "offsets": [0], "coefficients": 258},
+  {"name": "Permutation.selD", "stage": 1, "id": 10, "offsets": [0], "coefficients": 258},
+  {"name": "Plookup.sel", "stage": 1, "id": 11, "offsets": [0], "coefficients": 258},
+  {"name": "Plookup.a", "stage": 1, "id": 12, "offsets": [0], "coefficients": 258},
+  {"name": "Plookup.b", "stage": 1, "id": 13, "offsets": [1], "coefficients": 258},
+  {"name": "Plookup.cc", "stage": 1, "id": 14, "offsets": [0, 1], "coefficients": 259},
+  {"name": "Plookup.H1_0", "stage": 2, "id": 15, "offsets": [0, 1], "coefficients": 259},
+  {"name": "Plookup.H2_0", "stage": 2, "id": 16, "offsets": [0], "coefficients": 258},
+  {"name": "Plookup.Z0", "stage": 3, "id": 17, "offsets": [0, 1], "coefficients": 259},
+  {"name": "Permutation.Z0", "stage": 3, "id": 18, "offsets": [0, 1], "coefficients": 259},
+  {"name": "Connection.Z0", "stage": 3, "id": 19, "offsets": [0, 1], "coefficients": 259},
+  {"name": "Im28", "stage": 3, "id": 20, "offsets": [0], "coefficients": 258},
+  {"name": "Q", "stage": 4, "id": 21, "offsets": [0], "coefficients": 780}
+ ],
+ "unopened": ["Permutation.a", "Permutation.b"],
+ "expected": {
+  "f": [
+   {"stage": 0, "offsets": [0], "degree": 1541, "pols": [{"name": "Connection.S3", "coefficients": 256}, {"name": "Connection.S2", "coefficients": 256}, {"name": "Connection.S1", "coefficients": 256}, {"name": "Fibonacci.LLAST", "coefficients": 256}, {"name": "Fibonacci.L1", "coefficients": 256}, {"name": "Global.L1", "coefficients": 256}]},
+   {"stage": 0, "offsets": [0, 1], "degree": 770, "pols": [{"name": "Plookup.B", "coefficients": 256}, {"name": "Plookup.A", "coefficients": 256}, {"name": "Plookup.SEL", "coefficients": 256}]},
+   {"stage": 1, "offsets": [0, 1], "degree": 1039, "pols": [{"name": "Plookup.b", "coefficients": 259}, {"name": "Plookup.cc", "coefficients": 259}, {"name": "Fibonacci.l2", "coefficients": 259}, {"name": "Fibonacci.l1", "coefficients": 259}]},
+   {"stage": 1, "offsets": [0], "degree": 776, "pols": [{"name": "Plookup.a", "coefficients": 258}, {"name": "Plookup.sel", "coefficients": 258}, {"name": "Permutation.selD", "coefficients": 258}]},
+   {"stage": 1, "offsets": [0], "degree": 776, "pols": [{"name": "Permutation.selC", "coefficients": 258}, {"name": "Permutation.d", "coefficients": 258}, {"name": "Permutation.c", "coefficients": 258}]},
+   {"stage": 1, "offsets": [0], "degree": 776, "pols": [{"name": "Connection.c", "coefficients": 258}, {"name": "Connection.b", "coefficients": 258}, {"name": "Connection.a", "coefficients": 258}]},
+   {"stage": 2, "offsets": [0, 1], "degree": 519, "pols": [{"name": "Plookup.H2_0", "coefficients": 259}, {"name": "Plookup.H1_0", "coefficients": 259}]},
+   {"stage": 3, "offsets": [0, 1], "degree": 1039, "pols": [{"name": "Im28", "coefficients": 259}, {"name": "Connection.Z0", "coefficients": 259}, {"name": "Permutation.Z0", "coefficients": 259}, {"name": "Plookup.Z0", "coefficients": 259}]},
+   {"stage": 4, "offsets": [0], "degree": 780, "pols": [{"name": "Q", "coefficients": 780}]}
+  ],
+  "powerW": 12,
+  "roots": {
+   "w1": "1",
+   "w2": "21888242871839275222246405745257275088548364400416034343698204186575808495616",
+   "w2_1d2": "6837567842312086091520287814181175430087169027974246751610506942214842701774",
+   "w3": "4407920970296243842393367215006156084916469457145843978461",
+   "w3_1d3": "7893008526474614989282376550582713669440542763891908783290097886313069160279",
+   "w4": "21888242871839275217838484774961031246007050428528088939761107053157389710902",
+   "w4_1d4": "3161067157621608152362653341354432744960400845131437947728257924963983317266",
+   "w6": "4407920970296243842393367215006156084916469457145843978462",
+   "w1_1d1": "3478517300119284901893091970156912948790432420133812234316178878452092729974"
+  }
+ }
+}
