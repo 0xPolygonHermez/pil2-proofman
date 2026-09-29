@@ -1,0 +1,17 @@
+{
+  "name": "pilfflonk-verifier",
+  "private": true,
+  "type": "module",
+  "description": "JS verifier of the pilfflonk backend (spec-seed.md §4.5): the Keccak-256 transcript and the SHPLONK opening check",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:fixtures": "sh test/fixtures.sh"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.7.1",
+    "ffjavascript": "0.3.1"
+  }
+}
