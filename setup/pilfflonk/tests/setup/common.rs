@@ -1,8 +1,10 @@
 //! What the tests share: pilouts built in code (pilouts are not versioned), a
-//! directory of their own, and the points a ptau with `τ = 1` commits to.
+//! directory of their own, the points a ptau with `τ = 1` commits to, and the lock of the tests
+//! that call the C++ core.
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
@@ -184,6 +186,22 @@ pub fn f_shapes(layout: &Layout) -> Vec<FShape<'_>> {
 // ---------------------------------------------------------------------------------------------
 // Directories and points
 // ---------------------------------------------------------------------------------------------
+
+/// Held for the whole of every test that calls the C++ core's OpenMP code (the SRS, the fixed
+/// commitments, `run_setup_pilfflonk`), so that those tests run one at a time (plan M26).
+///
+/// Each test runs on a thread of its own, which OpenMP makes a root with its own team, a thread per
+/// CPU, kept until that thread exits. Enough such tests at once outgrow libomp's table of threads
+/// (4 per CPU at first): libomp 14, Ubuntu 22.04's, then allocates a larger table and frees the old
+/// one while the workers it has just started may still be reading it (their stack-overlap check),
+/// and the process dies of SIGSEGV now and then (4 runs of this binary in 262 on 256 CPUs, the
+/// worker scanning a freed `__kmp_threads`). With this lock, the teams alive are at most those of the
+/// test that holds it and of the one that has just let it go, and the table never grows.
+pub fn cpp_core() -> MutexGuard<'static, ()> {
+    static CPP_CORE: Mutex<()> = Mutex::new(());
+    // A test that failed while holding it poisoned it; the next ones run all the same.
+    CPP_CORE.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// A fresh directory for one test under the target's temporary directory, removed when it is
 /// dropped (a failed test leaves it behind, under target/).

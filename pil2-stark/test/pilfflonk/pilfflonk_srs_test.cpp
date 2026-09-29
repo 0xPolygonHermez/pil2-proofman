@@ -59,6 +59,33 @@ bool identical(const Point &a, const Point &b) {
     return std::memcmp(&a, &b, sizeof(Point)) == 0;
 }
 
+// A point of the twist y^2 = x^3 + 3/(9+u) outside G2, its r-torsion group (the twist's cofactor is
+// not 1): x = 1, the smallest x of Fq for which x^3 + b is a square in Fq2 (the first x that
+// pilfflonk/js/test/elements.test.js tries), and y a square root of it. Both, and that r times the
+// point is not the point at infinity, computed apart with Python's integers.
+G2PointAffine twistPointOutsideG2() {
+    G2PointAffine p;
+    E.f1.fromString(p.x.a, "1");
+    E.f1.fromString(p.x.b, "0");
+    E.f1.fromString(p.y.a, "18278151005453108793778860132295291098363647455926340152056652516292830556603");
+    E.f1.fromString(p.y.b, "5912654199736721486680175016176231956195085055698687135131307249486702594212");
+    // On the twist, so that what refuses it is the subgroup check.
+    Engine::F2Element y2, x3, rhs;
+    E.f2.square(y2, p.y);
+    E.f2.square(x3, p.x);
+    E.f2.mul(x3, x3, p.x);
+    E.f2.add(rhs, x3, E.g2.b());
+    assert(E.f2.eq(y2, rhs));
+    return p;
+}
+
+// A point as the files store it (SRS_G2_BYTES bytes).
+template <typename Point>
+std::vector<uint8_t> pointBytes(const Point &p) {
+    const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&p);
+    return std::vector<uint8_t>(bytes, bytes + sizeof(Point));
+}
+
 FrElement power(const FrElement &base, uint64_t exponent) {
     FrElement result = E.fr.one();
     for (uint64_t i = 0; i < exponent; ++i) {
@@ -336,6 +363,27 @@ void testPtauErrors() {
     sections[2].second.erase(sections[2].second.begin(), sections[2].second.begin() + 128); // [τ]₂ first
     writeBinFile(bad, "ptau", 1, sections);
     expectThrows<FormatError>(fromPtau, "[1]₂ is not the generator of G2");
+    // A [τ]₂ on the twist but outside G2, which the verifier refuses as the vkey's X_2.
+    sections = ptauSections(8);
+    const Bytes outside = pointBytes(twistPointOutsideG2());
+    std::copy(outside.begin(), outside.end(), sections[2].second.begin() + 128);
+    writeBinFile(bad, "ptau", 1, sections);
+    expectThrows<FormatError>(fromPtau, "[τ^1]₂ is a point of the G2 twist not in the r-torsion group");
+    // Its negation is outside G2 too; [τ]₂ of the test ptau, and its negation, are in it.
+    G2PointAffine negated = twistPointOutsideG2();
+    E.f1.neg(negated.y.a, negated.y.a);
+    E.f1.neg(negated.y.b, negated.y.b);
+    const Bytes outsideNegated = pointBytes(negated);
+    std::copy(outsideNegated.begin(), outsideNegated.end(), sections[2].second.begin() + 128);
+    writeBinFile(bad, "ptau", 1, sections);
+    expectThrows<FormatError>(fromPtau, "not in the r-torsion group");
+    G2PointAffine minusTau = g2Times(testTau());
+    E.f1.neg(minusTau.y.a, minusTau.y.a);
+    E.f1.neg(minusTau.y.b, minusTau.y.b);
+    const Bytes inside = pointBytes(minusTau);
+    std::copy(inside.begin(), inside.end(), sections[2].second.begin() + 128);
+    writeBinFile(bad, "ptau", 1, sections);
+    assert(identical(Srs::fromPtau(bad, 8).g2(1), minusTau));
 }
 
 void testSrsFileRoundTrip() {
@@ -436,6 +484,8 @@ void testSrsFileErrors() {
     expectPatched(SRS_G1, slice(SRS_G1 + 64, 64), "[1]₁ is not the generator (1, 2) of G1");
     expectPatched(srsG2(8) + 128 + 100, flipped(srsG2(8) + 128 + 100), "[τ^1]₂ is not a point of the G2 twist");
     expectPatched(srsG2(8), slice(srsG2(8) + 128, 128), "[1]₂ is not the generator of G2");
+    expectPatched(srsG2(8) + 128, pointBytes(twistPointOutsideG2()),
+                  "[τ^1]₂ is a point of the G2 twist not in the r-torsion group");
 
     // Writing.
     const std::string nowhere = dir.path() + "/no/such/dir/pilfflonk.srs.bin";
@@ -525,6 +575,14 @@ void testApi() {
                  "fewer than the 65 requested");
     expectStatus(pilfflonk_srs_from_ptau(missing.c_str(), 8, srs.c_str()), PILFFLONK_ERR_IO, "missing: open");
     expectStatus(pilfflonk_srs_from_ptau(zkey.c_str(), 8, srs.c_str()), PILFFLONK_ERR_FORMAT, "Invalid file type");
+    // A [τ]₂ outside G2: the setup writes no SRS, and so no vkey the verifier would refuse.
+    const std::string outside = dir.file("outside.ptau");
+    Sections sections = ptauSections(8);
+    const Bytes point = pointBytes(twistPointOutsideG2());
+    std::copy(point.begin(), point.end(), sections[2].second.begin() + 128);
+    writeBinFile(outside, "ptau", 1, sections);
+    expectStatus(pilfflonk_srs_from_ptau(outside.c_str(), 8, srs.c_str()), PILFFLONK_ERR_FORMAT,
+                 "not in the r-torsion group");
     expectStatus(pilfflonk_srs_from_ptau(ptau.c_str(), 8, nowhere.c_str()), PILFFLONK_ERR_IO,
                  "No such file or directory");
     assert(!exists(srs));

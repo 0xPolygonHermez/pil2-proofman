@@ -147,9 +147,8 @@ bool isValidG1(const G1PointAffine &p) {
     return E.f1.eq(y2, rhs);
 }
 
-// Whether `p` is on the twist y^2 = x^3 + 3/(9+u) with reduced coordinates. Membership of the
-// order-r subgroup (G2 has a cofactor) is not checked: [1]₂ must be the generator, and a wrong
-// [τ]₂ is a wrong τ, which only a pairing check against [τ]₁ can reveal.
+// Whether `p` is on the twist y^2 = x^3 + 3/(9+u) with reduced coordinates. That is not enough to
+// be a point of G2, the order-r subgroup of the twist (whose cofactor is not 1): inG2 checks that.
 bool isValidG2(const G2PointAffine &p) {
     if (!isReduced(p.x.a) || !isReduced(p.x.b) || !isReduced(p.y.a) || !isReduced(p.y.b)) {
         return false;
@@ -162,6 +161,21 @@ bool isValidG2(const G2PointAffine &p) {
     E.f2.mul(x3, x2, x);
     E.f2.add(rhs, x3, E.g2.b());
     return E.f2.eq(y2, rhs);
+}
+
+// Whether `p`, a point of the twist (isValidG2), is in G2: r·p is the point at infinity. The JS
+// verifier refuses a vkey whose [τ]₂ is not (pilfflonk/js/src/elements.js, g2FromObject), so the
+// setup must not write one. A point of the twist outside G2 is not a power of any τ: only a pairing
+// check against [τ]₁ tells a wrong τ from the right one, but this is a malformed file.
+bool inG2(const G2PointAffine &p) {
+    Engine &E = Engine::engine;
+    uint8_t r[N8];
+    modulusBytes(Fr_rawq, r);
+    // Curve::mulByScalar takes its base by non-const reference.
+    G2PointAffine base = p;
+    Engine::G2Point product;
+    E.g2.mulByScalar(product, base, r, N8);
+    return E.g2.isZero(product);
 }
 
 // The index of the first point that is not a point of G1, or n if every one is.
@@ -383,6 +397,14 @@ void Srs::checkPoints(const std::string &source) const {
     G2PointAffine oneG2 = g2Powers[0];
     if (!E.g2.eq(oneG2, E.g2.oneAffine())) {
         throw FormatError(source + ": [1]₂ is not the generator of G2");
+    }
+    // [1]₂, the generator, is in G2; [τ]₂ must be too.
+    for (uint64_t i = 1; i < N_G2; ++i) {
+        if (!inG2(g2Powers[i])) {
+            throw FormatError(source + ": [τ^" + std::to_string(i) +
+                              "]₂ is a point of the G2 twist not in the r-torsion group (r times it is not the "
+                              "point at infinity)");
+        }
     }
 }
 

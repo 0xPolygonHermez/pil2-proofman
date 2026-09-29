@@ -46,8 +46,9 @@ PtauHeader readPtauHeader(const std::string &path);
 // The structured reference string of a proof (spec §4.2.5, "SRS"): the powers [τ^i]₁ for i < nG1,
 // and [1]₂ and [τ]₂, as a snarkjs ptau holds them. KZG commitments are MSMs over its G1 powers.
 //
-// Every point is checked when it is read: each coordinate below q, on its curve, and [1]₁ and [1]₂
-// equal to the generators. That catches a corrupt or truncated file; it cannot tell whether the
+// Every point is checked when it is read: each coordinate below q, on its curve, [1]₁ and [1]₂
+// equal to the generators, and [τ]₂ in the r-torsion group G2 of the twist, as the JS verifier
+// requires of the vkey's X_2. That catches a corrupt or truncated file; it cannot tell whether the
 // points are consistent powers of one τ, which takes pairings (snarkjs's `powersoftau verify`).
 //
 // pilfflonk.srs.bin, version 1 (spec A.6, decision N6 of the plan): a binfile container, as

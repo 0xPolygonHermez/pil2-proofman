@@ -129,6 +129,15 @@ public:
     // The number of f of the layout of stage 0 (the fixed ones), which come first (spec A.5).
     uint64_t nFixedF() const { return nFixed; }
 
+    // The commitments [f(τ)]₁ of the fixed f, in the order of the layout, from the fixed columns of
+    // the .const: their interpolants packed (pack()) and committed with `srs`, as the setup commits
+    // them for the vkey (commitFixed; nothing is blinded, spec A.3). One MSM per f, of its k·N
+    // coefficients. The prover never needs them, the verifier takes them from the vkey: the
+    // orchestrator compares them, so that a .const the vkey was not set up with is refused instead
+    // of giving proofs that do not verify. Throws std::invalid_argument if an f has more
+    // coefficients than `srs` has powers (a ProvingKey checks that its SRS has enough).
+    std::vector<G1Point> fixedCommitments(const Srs &srs) const;
+
     // The layout entry of Q (not split).
     uint64_t qF() const { return qEntry; }
 

@@ -154,6 +154,7 @@ fn the_global_info_has_the_common_part_and_pilfflonks_fields() {
 /// bytes on a second run.
 #[test]
 fn the_command_writes_the_files_of_the_proving_key() {
+    let _cpp = cpp_core();
     let dir = TestDir::new("command");
     let opts = SetupPilfflonkOptions { no_packing: true, ..inputs(&dir, &pilout(), 64) };
     run_setup_pilfflonk(&opts).unwrap();
@@ -267,6 +268,7 @@ fn the_command_writes_the_files_of_the_proving_key() {
 /// nothing.
 #[test]
 fn the_command_refuses_a_pilout_the_setup_does_not_support() {
+    let _cpp = cpp_core();
     let dir = TestDir::new("command_refuses");
     let mut goldilocks = pilout();
     goldilocks.base_field = 0xFFFF_FFFF_0000_0001u64.to_be_bytes().to_vec();
@@ -291,6 +293,7 @@ fn the_command_refuses_a_pilout_the_setup_does_not_support() {
 /// written: here, a challenge of stage 1, which A.4 never squeezes.
 #[test]
 fn the_command_refuses_a_vkey_the_verifier_would_refuse() {
+    let _cpp = cpp_core();
     let dir = TestDir::new("command_refuses_vkey");
     let mut pilout = pilout();
     pilout.num_challenges = vec![1];
@@ -308,6 +311,7 @@ fn the_command_refuses_a_vkey_the_verifier_would_refuse() {
 /// written: grouped, the 17 of the fixed f of `C[0]` and `L1`, and unpacked, Q's 11.
 #[test]
 fn the_command_refuses_a_ptau_too_small_for_the_layout() {
+    let _cpp = cpp_core();
     let dir = TestDir::new("command_small_ptau");
     for (no_packing, largest) in [(false, 17), (true, 11)] {
         let opts = SetupPilfflonkOptions { no_packing, ..inputs(&dir, &pilout(), largest - 1) };
@@ -330,6 +334,7 @@ fn the_command_refuses_a_ptau_too_small_for_the_layout() {
 /// bytes.
 #[test]
 fn the_command_groups_the_polynomials_by_default() {
+    let _cpp = cpp_core();
     let dir = TestDir::new("command_grouped");
     let opts = inputs(&dir, &pilout(), 64);
     run_setup_pilfflonk(&opts).unwrap();
@@ -386,6 +391,7 @@ fn the_command_groups_the_polynomials_by_default() {
 /// path, before any file is written: here 6 polynomials in 3 groups take 3 at most.
 #[test]
 fn the_command_refuses_an_extra_muls_the_air_cannot_take() {
+    let _cpp = cpp_core();
     let dir = TestDir::new("command_extra_muls");
     let opts = SetupPilfflonkOptions { extra_muls: 4, ..inputs(&dir, &pilout(), 64) };
     let err = run_setup_pilfflonk(&opts).unwrap_err();

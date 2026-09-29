@@ -69,6 +69,16 @@ extern "C" {
         out: *mut u64,
     ) -> ::std::os::raw::c_int;
 
+    pub fn pilfflonk_ctx_srs_g2(ctx: *const ::std::os::raw::c_void, i: u64, out_g2: *mut u8) -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_ctx_fixed_commitments(
+        ctx: *const ::std::os::raw::c_void,
+        airgroup_id: u64,
+        air_id: u64,
+        out_g1: *mut u8,
+        n: u64,
+    ) -> ::std::os::raw::c_int;
+
     pub fn pilfflonk_instance_new(
         ctx: *const ::std::os::raw::c_void,
         airgroup_id: u64,

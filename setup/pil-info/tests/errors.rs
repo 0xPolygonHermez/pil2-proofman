@@ -234,3 +234,54 @@ fn global_references_to_nothing_are_refused() {
     let err = build_global_constraints_json(&pilout, &FieldCfg::goldilocks()).unwrap_err();
     assert_eq!(invalid_pilout(&err), "global expression 0 refers to global expression 9, and the pilout has 1");
 }
+
+/// Was a recursion until the stack overflowed, which aborted the process (plan M26): expressions
+/// that refer to each other in a cycle, which no pilout can mean. Refused before any pass runs,
+/// whether a constraint reaches the cycle or not, for the air's expressions and the global ones.
+#[test]
+fn expressions_that_refer_to_each_other_in_a_cycle_are_refused() {
+    // Expression 0 is a·exp(2) and the new expression 2 is b·exp(0): the constraint, L1·exp(0),
+    // reaches the cycle 0 → 2 → 0.
+    let mut pilout = pilout();
+    let air = the_air(&mut pilout);
+    air.expressions[0] = mul(witness(0), exp(2));
+    air.expressions.push(mul(witness(1), exp(0)));
+    for cfg in cfgs() {
+        let err = run_err(&pilout, &cfg);
+        assert_eq!(invalid_pilout(&err), "expression 0 refers to itself, through the references 0 → 2 → 0");
+    }
+
+    // An expression that refers to itself, which no constraint reaches.
+    let mut pilout = self::pilout();
+    the_air(&mut pilout).expressions.push(mul(witness(1), exp(2)));
+    for cfg in cfgs() {
+        let err = run_err(&pilout, &cfg);
+        assert_eq!(invalid_pilout(&err), "expression 2 refers to itself, through the references 2 → 2");
+    }
+
+    // References that meet without a cycle are no cycle: 2 and 3 both refer to 0.
+    let add = |lhs, rhs| pb::Expression { operation: Some(expression::Operation::Add(expression::Add { lhs, rhs })) };
+    let mut pilout = self::pilout();
+    let air = the_air(&mut pilout);
+    air.expressions.push(add(exp(0), exp(0)));
+    air.expressions.push(add(exp(2), exp(0)));
+    air.constraints.push(every_row(3));
+    for cfg in cfgs() {
+        run(&pilout, &cfg).unwrap();
+    }
+
+    // The global expressions: 0 → 1 → 0.
+    let constant = Some(pb::GlobalOperand {
+        operand: Some(global_operand::Operand::Constant(global_operand::Constant { value: vec![1] })),
+    });
+    let global_mul = |lhs, rhs| pb::GlobalExpression {
+        operation: Some(global_expression::Operation::Mul(global_expression::Mul { lhs, rhs })),
+    };
+    let mut pilout = self::pilout();
+    pilout.expressions = vec![global_mul(constant.clone(), global_ref(1)), global_mul(constant, global_ref(0))];
+    pilout
+        .constraints
+        .push(pb::GlobalConstraint { expression_idx: Some(global_operand::Expression { idx: 0 }), debug_line: None });
+    let err = build_global_constraints_json(&pilout, &FieldCfg::goldilocks()).unwrap_err();
+    assert_eq!(invalid_pilout(&err), "global expression 0 refers to itself, through the references 0 → 1 → 0");
+}

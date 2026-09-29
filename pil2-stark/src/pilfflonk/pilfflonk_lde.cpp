@@ -78,16 +78,6 @@ void forEachColumn(uint64_t nCols, const Body &body) {
     }
 }
 
-FrElement power(const FrElement &base, uint64_t exponent) {
-    uint8_t littleEndian[sizeof(exponent)];
-    for (size_t i = 0; i < sizeof(exponent); ++i) {
-        littleEndian[i] = static_cast<uint8_t>(exponent >> (8 * i));
-    }
-    FrElement result;
-    Engine::engine.fr.exp(result, base, littleEndian, sizeof(littleEndian));
-    return result;
-}
-
 // dst[j] = src[j] · base^j for j < n; dst may be src. Each thread starts its chunk from
 // base^begin, so the powers are the same whatever the team.
 void mulByPowers(FrElement *dst, const FrElement *src, uint64_t n, const FrElement &base) {
@@ -109,6 +99,16 @@ void mulByPowers(FrElement *dst, const FrElement *src, uint64_t n, const FrEleme
 }
 
 } // namespace
+
+FrElement power(const FrElement &base, uint64_t exponent) {
+    uint8_t littleEndian[sizeof(exponent)];
+    for (size_t i = 0; i < sizeof(exponent); ++i) {
+        littleEndian[i] = static_cast<uint8_t>(exponent >> (8 * i));
+    }
+    FrElement result;
+    Engine::engine.fr.exp(result, base, littleEndian, sizeof(littleEndian));
+    return result;
+}
 
 Lde::Lde(uint64_t _nBits, uint64_t _nBitsExt) {
     if (_nBitsExt > MAX_NBITS_EXT) {

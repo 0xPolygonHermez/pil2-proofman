@@ -20,16 +20,6 @@ std::invalid_argument invalid(const char *function, const std::string &message) 
     return std::invalid_argument(std::string("Expressions::") + function + ": " + message);
 }
 
-FrElement power(const FrElement &base, uint64_t exponent) {
-    uint8_t littleEndian[sizeof(exponent)];
-    for (size_t i = 0; i < sizeof(exponent); ++i) {
-        littleEndian[i] = static_cast<uint8_t>(exponent >> (8 * i));
-    }
-    FrElement result;
-    Engine::engine.fr.exp(result, base, littleEndian, sizeof(littleEndian));
-    return result;
-}
-
 FrElement fromUI(uint64_t value) {
     FrElement e;
     Engine::engine.fr.fromUI(e, value);

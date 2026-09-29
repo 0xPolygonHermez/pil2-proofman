@@ -368,7 +368,8 @@ fn zero_rhs_lhs(operation: &expr_mod::Operation) -> Option<&operand::Operand> {
 /// as inline `ExprChild::Inline` values within each expression, matching
 /// the JS representation where child nodes are nested objects.
 ///
-/// Fails on a reference to an expression or a custom commit the air does not have.
+/// Fails on a reference to an expression or a custom commit the air does not have, and on
+/// expressions that refer to each other in a cycle.
 pub fn format_expressions(
     air_expressions: &[pb::Expression],
     stage_widths: &[u32],
@@ -402,7 +403,85 @@ pub fn format_expressions(
         ctx.arena[i] = formatted;
     }
 
+    check_reference_cycles(&ctx.arena, "expression")?;
     Ok(ctx.arena)
+}
+
+// ---------------------------------------------------------------------------
+// Reference cycles
+// ---------------------------------------------------------------------------
+
+/// The expressions `e` refers to, `exp` operands at any depth of its children, in the order of
+/// its operands.
+fn references(e: &Expression) -> Vec<usize> {
+    let mut refs = Vec::new();
+    let mut pending: Vec<&ExprChild> = e.values.iter().rev().collect();
+    while let Some(child) = pending.pop() {
+        match child {
+            ExprChild::Id(id) => refs.push(*id),
+            ExprChild::Inline(inner) => {
+                if inner.op == "exp" {
+                    refs.extend(inner.id);
+                }
+                pending.extend(inner.values.iter().rev());
+            }
+        }
+    }
+    refs
+}
+
+/// Refuses formatted expressions that refer to each other in a cycle, which a pilout cannot mean:
+/// an expression would be defined by itself. Every pass follows the references recursively, and a
+/// cycle recursed until the stack overflowed, which aborts the process. `what` names the
+/// expressions in the error: `"expression"` or `"global expression"`.
+///
+/// A depth-first search with an explicit stack, so that a long chain of references cannot
+/// overflow the stack here either.
+fn check_reference_cycles(expressions: &[Expression], what: &str) -> Result<()> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Visit {
+        New,
+        OnPath,
+        Done,
+    }
+    let refs: Vec<Vec<usize>> = expressions.iter().map(references).collect();
+    let mut visit = vec![Visit::New; expressions.len()];
+    for root in 0..expressions.len() {
+        if visit[root] != Visit::New {
+            continue;
+        }
+        // The path from `root`, each expression with the index of the next reference to follow.
+        let mut path: Vec<(usize, usize)> = vec![(root, 0)];
+        visit[root] = Visit::OnPath;
+        while let Some(top) = path.last_mut() {
+            let node = top.0;
+            let Some(&next) = refs[node].get(top.1) else {
+                visit[node] = Visit::Done;
+                path.pop();
+                continue;
+            };
+            top.1 += 1;
+            // An index beyond the expressions is refused where it is formatted; here it is no
+            // cycle.
+            match visit.get(next) {
+                Some(Visit::New) => {
+                    visit[next] = Visit::OnPath;
+                    path.push((next, 0));
+                }
+                Some(Visit::OnPath) => {
+                    let start = path.iter().position(|&(e, _)| e == next).unwrap_or(0);
+                    let cycle: Vec<String> =
+                        path[start..].iter().map(|&(e, _)| e.to_string()).chain([next.to_string()]).collect();
+                    return Err(PilInfoError::InvalidPilout(format!(
+                        "{what} {next} refers to itself, through the references {}",
+                        cycle.join(" → ")
+                    )));
+                }
+                Some(Visit::Done) | None => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -580,7 +659,8 @@ impl<'a> GlobalFormatCtx<'a> {
 /// Format all pilout-level global expressions into a flat `Vec<Expression>`.
 ///
 /// Mirrors JS `formatExpressions(pilout, true)` for global mode. Fails on a reference to a global
-/// expression the pilout does not have.
+/// expression the pilout does not have, and on global expressions that refer to each other in a
+/// cycle.
 pub fn format_global_expressions(
     global_expressions: &[pb::GlobalExpression],
     num_challenges: &[u32],
@@ -603,6 +683,7 @@ pub fn format_global_expressions(
         ctx.arena[i] = formatted;
     }
 
+    check_reference_cycles(&ctx.arena, "global expression")?;
     Ok(ctx.arena)
 }
 

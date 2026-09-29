@@ -4,7 +4,8 @@
 //! [`ProvingKey::load`] reads the `provingKey/` (spec §4.2.6): this crate's types read and validate
 //! the globalInfo, the vkey (its digest checked) and each AIR's pilfflonkinfo, and check that they
 //! agree; the C++ side loads the same files for its computations (the SRS, the bytecode, the fixed
-//! columns) and derives the degrees of A.1, which must be [`PilfflonkInfo::degrees`]'s.
+//! columns) and derives the degrees of A.1, which must be [`PilfflonkInfo::degrees`]'s; its `[τ]₂`
+//! and the commitments of its fixed columns must be the vkey's.
 //!
 //! [`prove`] runs A.4 for a proof of one instance (v1, D2; plan R4):
 //!
@@ -38,7 +39,7 @@ use proofman_starks_lib_c::{
 };
 
 use crate::error::{invalid, PilfflonkError, PilfflonkResult};
-use crate::field::{FrBytes, G1Affine};
+use crate::field::{FrBytes, G1Affine, G2Affine};
 use crate::global_info::{AirFile, PilfflonkGlobalInfo};
 use crate::json::JsonFile;
 use crate::pilfflonk_info::PilfflonkInfo;
@@ -74,8 +75,10 @@ impl ProvingKey {
     /// Reads the `provingKey/` at `dir`, checks it, and loads it into the C++ core.
     ///
     /// Refuses a vkey whose digest is not that of its contents, a vkey and a pilfflonkinfo that do
-    /// not describe the same AIR (the vkey of format 1 describes one), and a C++ core that derives
-    /// other degrees than this crate.
+    /// not describe the same AIR (the vkey of format 1 describes one), an SRS whose `[τ]₂` is not
+    /// the vkey's `X_2` and a `.const` whose fixed columns do not commit to the vkey's fixed
+    /// commitments (files of other setups), and a C++ core that derives other degrees than this
+    /// crate.
     pub fn load(dir: &Path) -> PilfflonkResult<Self> {
         let global_info = PilfflonkGlobalInfo::from_proving_key(dir)?;
         let vkey_path = global_info.vkey_path(dir);
@@ -114,6 +117,7 @@ impl ProvingKey {
                 degrees.n_bits_ext
             );
         }
+        check_srs_and_fixed(&ctx, &vkey, info, &global_info, dir)?;
         Ok(Self { dir: dir.to_path_buf(), global_info, vkey, airs, ctx })
     }
 
@@ -221,6 +225,44 @@ fn check_vkey(vkey: &Vkey, info: &PilfflonkInfo, global_info: &PilfflonkGlobalIn
     }
     if vkey.q_deg != info.q_deg || vkey.max_q_degree != info.max_q_degree {
         return differs("qDeg or maxQDegree");
+    }
+    Ok(())
+}
+
+/// That the SRS and the `.const` the C++ core loaded are those the vkey was set up with (plan M26):
+/// `[τ]₂` of the SRS is the vkey's `X_2`, and the fixed columns commit to its fixed commitments. The
+/// prover uses neither `X_2` nor those commitments, and the verifier takes both from the vkey: a
+/// `provingKey/` whose files come from different setups would give proofs that do not verify, and
+/// nothing would say why.
+///
+/// Always checked: the commitments cost one MSM per fixed f, of its `k·N` points, once per key
+/// loaded, no more than the prover's own commitment of as many columns of stage 1.
+fn check_srs_and_fixed(
+    ctx: &PilFflonkProverCtx,
+    vkey: &Vkey,
+    info: &PilfflonkInfo,
+    global_info: &PilfflonkGlobalInfo,
+    dir: &Path,
+) -> PilfflonkResult<()> {
+    let tau_g2 = ctx.srs_tau_g2().map_err(native("reading [τ]₂ of the SRS"))?;
+    if G2Affine::from_le_bytes(&tau_g2)? != vkey.x_2 {
+        return Err(PilfflonkError::InvalidFormat(
+            "its [τ]₂ is not the vkey's X_2: this SRS is not of the ptau the vkey was set up with".into(),
+        )
+        .in_file(&global_info.srs_path(dir)));
+    }
+    let committed = ctx
+        .fixed_commitments(info.airgroup_id, info.air_id, vkey.fixed_commitments.0.len())
+        .map_err(native("committing the fixed columns of the .const"))?;
+    for (i, (point, expected)) in committed.iter().zip(&vkey.fixed_commitments.0).enumerate() {
+        if G1Affine::from_le_bytes(point)? != *expected {
+            let const_path = global_info.air_file(dir, info.airgroup_id, info.air_id, AirFile::Const)?;
+            return Err(PilfflonkError::InvalidFormat(format!(
+                "its fixed columns commit to another f{i} than the vkey's: this .const is not the one the vkey was \
+                 set up with (or the SRS is not)"
+            ))
+            .in_file(&const_path));
+        }
     }
     Ok(())
 }

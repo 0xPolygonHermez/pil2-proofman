@@ -30,8 +30,17 @@
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p proofman-cli --features proofman-starks-lib-c/cpu-only \
-//!     --test pilfflonk_prove -- --ignored
+//!     --test pilfflonk_prove -- --ignored --test-threads 2
 //! ```
+//!
+//! Its tests call the C++ core in this process, each from its own thread, which OpenMP makes a root
+//! with a team of one thread per CPU, kept while that thread lives. libomp 14 (Ubuntu 22.04's) can
+//! crash with SIGSEGV once the teams outgrow its first table of threads (4 per CPU): it replaces the
+//! table while the workers it has just started may still be reading the old one (plan M26; the lock of
+//! `setup/pilfflonk/tests/setup/common.rs`, `cpp_core`, has the details). It has not happened in
+//! these tests, but nothing rules it out: run them with `--test-threads 2`, as above (and CI,
+//! plan M28), which keeps the teams alive, counting those of tests that are just ending, within
+//! that table.
 
 #[path = "../../pilfflonk/tests/data/domains.rs"]
 mod domains;
@@ -50,6 +59,8 @@ use std::process::{Command, Output};
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::digest::seal_vkey;
+use pilfflonk_setup::keys::write_srs;
+use pilfflonk_setup::layout::max_degree;
 use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::oracle::{AirOracle, ColumnRef, Domain, Fr};
@@ -1015,7 +1026,8 @@ fn the_prover_refuses_a_proving_key_whose_files_disagree() {
     ProvingKey::load(&f.proving_key).unwrap();
     let global_info = PilfflonkGlobalInfo::from_proving_key(&f.proving_key).unwrap();
     let constants = global_info.air_file(&f.proving_key, 0, 0, AirFile::Const).unwrap();
-    let mut bytes = fs::read(&constants).unwrap();
+    let good_constants = fs::read(&constants).unwrap();
+    let mut bytes = good_constants.clone();
     bytes.truncate(bytes.len() - 32);
     fs::write(&constants, bytes).unwrap();
     let err = load_error();
@@ -1023,4 +1035,39 @@ fn the_prover_refuses_a_proving_key_whose_files_disagree() {
         err.contains("loading the provingKey/ into the C++ prover") && err.contains(".const has 16352 bytes"),
         "{err}"
     );
+
+    // A .const of the right size and canonical values, but not the one the vkey was set up with
+    // (plan M26): the prover would make proofs that do not verify, and refuses the key instead.
+    // Row 5 of its first fixed column, 0 in both L1 and LLAST, becomes 1.
+    let mut bytes = good_constants.clone();
+    let n_fixed = f.info().const_pols_map.len();
+    assert_eq!(bytes[5 * n_fixed * 32], 0);
+    bytes[5 * n_fixed * 32] = 1;
+    fs::write(&constants, &bytes).unwrap();
+    let err = load_error();
+    assert!(
+        err.contains(&constants.display().to_string())
+            && err.contains("its fixed columns commit to another f0 than the vkey's: this .const is not the one"),
+        "{err}"
+    );
+    let out = prove_cli(&f.proving_key, &f.witness, &f.dir.file("tampered_const"), Some(SEED_A));
+    assert!(!out.status.success(), "prove: {}", output(&out));
+    assert!(output(&out).contains("commit to another f0 than the vkey's"), "{}", output(&out));
+    fs::write(&constants, &good_constants).unwrap();
+    ProvingKey::load(&f.proving_key).unwrap();
+
+    // The SRS of another ptau, of another τ: [τ]₂ is not the vkey's X_2.
+    let srs = global_info.srs_path(&f.proving_key);
+    let good_srs = fs::read(&srs).unwrap();
+    let other_ptau = f.dir.file("other_tau.ptau");
+    write_fixed_tau_ptau(&other_ptau, 1024, &(test_tau() + 1u32)).unwrap();
+    write_srs(&other_ptau, max_degree(&f.info().layout), &srs).unwrap();
+    let err = load_error();
+    assert!(
+        err.contains(&srs.display().to_string())
+            && err.contains("its [τ]₂ is not the vkey's X_2: this SRS is not of the ptau the vkey was set up with"),
+        "{err}"
+    );
+    fs::write(&srs, &good_srs).unwrap();
+    ProvingKey::load(&f.proving_key).unwrap();
 }

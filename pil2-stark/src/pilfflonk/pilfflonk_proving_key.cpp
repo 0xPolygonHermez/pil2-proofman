@@ -407,6 +407,21 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
     }
 }
 
+std::vector<G1Point> AirKey::fixedCommitments(const Srs &srs) const {
+    std::vector<G1Point> commitments;
+    commitments.reserve(nFixed);
+    for (uint64_t f = 0; f < nFixed; ++f) {
+        const LayoutEntry &entry = pilfflonkInfo.layout[f];
+        std::vector<Poly *> components;
+        components.reserve(entry.pols.size());
+        for (const LayoutPol &pol : entry.pols) {
+            components.push_back(fixedPolynomial(pol.id));
+        }
+        commitments.push_back(commitPacked(srs, components.data(), components.size()));
+    }
+    return commitments;
+}
+
 uint64_t AirKey::blindLength(uint64_t f) const {
     const LayoutEntry &entry = pilfflonkInfo.layout.at(f);
     return entry.stage >= 1 && entry.stage <= pilfflonkInfo.nStages ? entry.offsets.size() + 1 : 0;

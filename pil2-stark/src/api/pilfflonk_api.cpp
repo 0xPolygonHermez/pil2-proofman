@@ -326,21 +326,30 @@ void pilfflonk_srs_free(void *srs) {
     delete static_cast<PilFflonk::Srs *>(srs);
 }
 
+namespace {
+
+// pilfflonk_srs_g2 and pilfflonk_ctx_srs_g2, once the SRS is found.
+int srsG2(const char *function, const PilFflonk::Srs &srs, uint64_t i, uint8_t *out_g2) {
+    if (out_g2 == nullptr) {
+        return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out_g2 is NULL");
+    }
+    if (i >= PilFflonk::Srs::N_G2) {
+        return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function,
+                    "i = %" PRIu64 ": an SRS holds [1]₂ (i = 0) and [τ]₂ (i = 1) only", i);
+    }
+    encodeG2(srs.g2(i), out_g2);
+    return static_cast<int>(PILFFLONK_OK);
+}
+
+} // namespace
+
 int pilfflonk_srs_g2(const void *srs, uint64_t i, uint8_t out_g2[128]) {
     const char *function = __func__;
     return guard(function, [&] {
         if (srs == nullptr) {
             return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "srs is NULL");
         }
-        if (out_g2 == nullptr) {
-            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out_g2 is NULL");
-        }
-        if (i >= PilFflonk::Srs::N_G2) {
-            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function,
-                        "i = %" PRIu64 ": an SRS holds [1]₂ (i = 0) and [τ]₂ (i = 1) only", i);
-        }
-        encodeG2(static_cast<const PilFflonk::Srs *>(srs)->g2(i), out_g2);
-        return static_cast<int>(PILFFLONK_OK);
+        return srsG2(function, *static_cast<const PilFflonk::Srs *>(srs), i, out_g2);
     });
 }
 
@@ -425,6 +434,37 @@ int pilfflonk_ctx_n_bits_ext(const void *ctx, uint64_t airgroup_id, uint64_t air
             return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out is NULL");
         }
         *out = static_cast<const PilFflonk::ProvingKey *>(ctx)->air(airgroup_id, air_id).degrees().nBitsExt;
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_ctx_srs_g2(const void *ctx, uint64_t i, uint8_t out_g2[128]) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (ctx == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx is NULL");
+        }
+        return srsG2(function, static_cast<const PilFflonk::ProvingKey *>(ctx)->srs(), i, out_g2);
+    });
+}
+
+int pilfflonk_ctx_fixed_commitments(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint8_t *out_g1,
+                                    uint64_t n) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (ctx == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx is NULL");
+        }
+        if (out_g1 == nullptr && n != 0) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out_g1 is NULL");
+        }
+        const PilFflonk::ProvingKey &pk = *static_cast<const PilFflonk::ProvingKey *>(ctx);
+        const PilFflonk::AirKey &air = pk.air(airgroup_id, air_id);
+        if (n != air.nFixedF()) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "n = %" PRIu64 ", and %s has %" PRIu64 " fixed f", n,
+                        air.name().c_str(), air.nFixedF());
+        }
+        encodePoints(air.fixedCommitments(pk.srs()), out_g1);
         return static_cast<int>(PILFFLONK_OK);
     });
 }

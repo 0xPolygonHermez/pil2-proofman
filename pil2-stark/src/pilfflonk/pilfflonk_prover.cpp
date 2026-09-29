@@ -24,16 +24,6 @@ std::invalid_argument invalid(const char *function, const std::string &message) 
     return std::invalid_argument(std::string(function) + ": " + message);
 }
 
-FrElement power(const FrElement &base, uint64_t exponent) {
-    uint8_t littleEndian[sizeof(exponent)];
-    for (size_t i = 0; i < sizeof(exponent); ++i) {
-        littleEndian[i] = static_cast<uint8_t>(exponent >> (8 * i));
-    }
-    FrElement result;
-    Engine::engine.fr.exp(result, base, littleEndian, sizeof(littleEndian));
-    return result;
-}
-
 // The values of stage 1 among all of a map's, by the stages of its entries: given[i] at the i-th entry
 // of stage 1, zero at the others (of later stages, which the prover computes).
 std::vector<FrElement> stageOneValues(const std::vector<uint64_t> &stages, std::vector<FrElement> given,
@@ -51,18 +41,6 @@ std::vector<FrElement> stageOneValues(const std::vector<uint64_t> &stages, std::
         }
     }
     return values;
-}
-
-// The committed polynomial of a column, packed into its f with the others and committed.
-G1Point commitPacked(const Srs &srs, const std::vector<Poly *> &components) {
-    uint64_t maxLength = 0;
-    for (const Poly *p : components) {
-        maxLength = std::max(maxLength, p->getLength());
-    }
-    const uint64_t length = packedBufferLength(components.size(), maxLength);
-    std::unique_ptr<FrElement[]> packed(new FrElement[length]);
-    const uint64_t nCoefs = pack(components.data(), components.size(), packed.get(), length);
-    return srs.commit(packed.get(), nCoefs);
 }
 
 } // namespace
@@ -251,7 +229,7 @@ std::vector<G1Point> Instance::commitF(uint64_t stage) {
             components[j] = interpolants[j].get();
             polys[entry.pols[j].id] = std::move(interpolants[j]);
         }
-        commitments.push_back(commitPacked(pk.srs(), components));
+        commitments.push_back(commitPacked(pk.srs(), components.data(), k));
     }
     return commitments;
 }
@@ -341,7 +319,8 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
     qPoly->fixDegree();
 
     // Q alone in its f, unblinded (spec A.3).
-    std::vector<G1Point> commitments{commitPacked(pk.srs(), {qPoly.get()})};
+    Poly *qComponent = qPoly.get();
+    std::vector<G1Point> commitments{commitPacked(pk.srs(), &qComponent, 1)};
     q = std::move(qPoly);
     ++next;
     return commitments;

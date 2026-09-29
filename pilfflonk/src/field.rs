@@ -32,6 +32,9 @@ pub const FIELD_BYTES: usize = 32;
 /// Bytes of an affine G1 point `x‖y`.
 pub const G1_BYTES: usize = 2 * FIELD_BYTES;
 
+/// Bytes of an affine G2 point `x.c0‖x.c1‖y.c0‖y.c1` at the C API.
+pub const G2_BYTES: usize = 4 * FIELD_BYTES;
+
 fn modulus(cell: &'static OnceLock<BigUint>, decimal: &str) -> &'static BigUint {
     cell.get_or_init(|| BigUint::parse_bytes(decimal.as_bytes(), 10).unwrap_or_default())
 }
@@ -244,6 +247,21 @@ impl<'de> Deserialize<'de> for G1Affine {
 pub struct G2Affine {
     pub x: [FqBytes; 2],
     pub y: [FqBytes; 2],
+}
+
+impl G2Affine {
+    /// `x.c0‖x.c1‖y.c0‖y.c1`, each coordinate 32 bytes little-endian: the C API's encoding
+    /// (`pilfflonk_srs_g2`). Refuses a coordinate that is not below `q`.
+    pub fn from_le_bytes(bytes: &[u8; G2_BYTES]) -> PilfflonkResult<Self> {
+        let mut coordinates = [FqBytes::ZERO; 4];
+        for (coordinate, chunk) in coordinates.iter_mut().zip(bytes.chunks_exact(FIELD_BYTES)) {
+            let mut le = [0u8; FIELD_BYTES];
+            le.copy_from_slice(chunk);
+            *coordinate = FqBytes::from_le_bytes(le)?;
+        }
+        let [x_c0, x_c1, y_c0, y_c1] = coordinates;
+        Ok(Self { x: [x_c0, x_c1], y: [y_c0, y_c1] })
+    }
 }
 
 impl Serialize for G2Affine {

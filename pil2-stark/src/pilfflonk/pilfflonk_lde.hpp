@@ -24,6 +24,9 @@ constexpr uint64_t MAX_NBITS_EXT = 28;
 // sees it.
 constexpr unsigned int COSET_SHIFT = 5;
 
+// base^exponent, in Montgomery form, by ffiasm's square-and-multiply.
+FrElement power(const FrElement &base, uint64_t exponent);
+
 // Moves BN254 columns between evaluations on the trace domain H (N = 2^nBits points), their
 // coefficients, and evaluations on the extended coset g·H' (N' = 2^nBitsExt points, N <= N').
 // It has no NTT of its own: the INTT is rapidsnark's Polynomial::fromEvaluations, and the coset

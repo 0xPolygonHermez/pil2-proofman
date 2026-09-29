@@ -30,6 +30,11 @@ uint64_t packedBufferLength(uint64_t k, uint64_t n);
 // counts in an int), if polys or a p_j is null or has no coefficients, or if the buffer is short.
 uint64_t pack(Poly *const *polys, uint64_t k, FrElement *packed, uint64_t bufferLength);
 
+// The commitment [f(τ)]₁ of f(X) = Σ_{j<k} p_j(X^k)·X^j, p_j = polys[j]: pack() into a buffer of
+// its own, then srs.commit(). Throws std::invalid_argument as pack() does, if polys or a p_j is
+// null, and as Srs::commit if f has more coefficients than the SRS has powers.
+G1Point commitPacked(const Srs &srs, Poly *const *polys, uint64_t k);
+
 // The commitment [f(τ)]₁ of a fixed f (spec §4.2.5, "Compromisos fixos"): evals[j] holds the N
 // evaluations on H, in natural order and Montgomery form, of column j, the p_j of
 // f(X) = Σ_{j<k} p_j(X^k)·X^j. Its coefficients come from lde.intt with no room for blinding

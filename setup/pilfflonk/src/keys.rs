@@ -3,9 +3,8 @@
 
 use std::path::Path;
 
-use proofman_pilfflonk::field::FIELD_BYTES;
-use proofman_pilfflonk::{AirVerkey, FqBytes, G1Affine, G2Affine, Layout};
-use proofman_starks_lib_c::{pilfflonk_srs_from_ptau_c, PilFflonkSrs, PILFFLONK_G2_BYTES};
+use proofman_pilfflonk::{AirVerkey, G1Affine, G2Affine, Layout};
+use proofman_starks_lib_c::{pilfflonk_srs_from_ptau_c, PilFflonkSrs};
 
 use crate::error::SetupError;
 use crate::fixed::FixedColumns;
@@ -33,14 +32,7 @@ pub fn load_srs(srs_path: &Path) -> Result<PilFflonkSrs, SetupError> {
 /// `[τ]₂` of the SRS: the vkey's `X_2` (A.6).
 pub fn x_2(srs: &PilFflonkSrs) -> Result<G2Affine, SetupError> {
     let bytes = srs.g2(1).map_err(SetupError::native("cannot read [τ]₂ of the SRS"))?;
-    let mut coordinates = [FqBytes::ZERO; PILFFLONK_G2_BYTES / FIELD_BYTES];
-    for (coordinate, chunk) in coordinates.iter_mut().zip(bytes.chunks_exact(FIELD_BYTES)) {
-        let mut le = [0u8; FIELD_BYTES];
-        le.copy_from_slice(chunk);
-        *coordinate = FqBytes::from_le_bytes(le)?;
-    }
-    let [x_c0, x_c1, y_c0, y_c1] = coordinates;
-    Ok(G2Affine { x: [x_c0, x_c1], y: [y_c0, y_c1] })
+    Ok(G2Affine::from_le_bytes(&bytes)?)
 }
 
 /// The commitment `[f(τ)]₁` of the fixed `f(X) = Σ_j p_j(X^k)·X^j` whose `p_j` interpolates the

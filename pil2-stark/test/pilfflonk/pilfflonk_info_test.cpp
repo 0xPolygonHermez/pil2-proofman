@@ -16,6 +16,8 @@
 #include <utility>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "pilfflonk_error.hpp"
 #include "pilfflonk_info.hpp"
 #include "pilfflonk_test_ptau.hpp"
@@ -210,6 +212,11 @@ void testRefusesWhatIsNotAPilfflonkinfo() {
     expectFormatError(mutated(text, "\"stage\": 3,", "\"stage\": 4,"), "cmPolsMap[6]");
     expectFormatError(mutated(text, "\"stagePos\": 3", "\"stagePos\": 4"), "cmPolsMap[3].stagePos");
     expectFormatError(mutated(text, "\"offsets\": [\n    0\n   ],", "\"offsets\": [],"), "layout[0].offsets");
+    // Each f well formed, but the fixed one after one of stage 1: the prover takes the fixed f to be
+    // the first ones (spec A.5).
+    nlohmann::json swapped = nlohmann::json::parse(text);
+    std::swap(swapped["layout"][0], swapped["layout"][1]);
+    expectFormatError(swapped.dump(), "layout[1].stage: must not be below the stage of the f before it");
 }
 
 void testLoadNamesTheFile() {

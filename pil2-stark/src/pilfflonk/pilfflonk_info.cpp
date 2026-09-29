@@ -257,6 +257,12 @@ void checkIndices(const PilfflonkInfo &info) {
         if (f.stage > info.qStage()) {
             fail(at(at("layout", i), "stage"), "must be at most nStages + 1");
         }
+        // The prover takes the fixed f to be the first ones, and the others in the global order of
+        // spec A.5: the Rust reader refuses any other order too (Layout::check).
+        if (i > 0 && f.stage < info.layout[i - 1].stage) {
+            fail(at(at("layout", i), "stage"),
+                 "must not be below the stage of the f before it: the layout goes by ascending stage (spec A.5)");
+        }
         const std::vector<PolMapEntry> &map = f.stage == 0 ? info.constPolsMap : info.cmPolsMap;
         for (size_t j = 0; j < f.pols.size(); ++j) {
             if (f.pols[j].id >= map.size() || map[f.pols[j].id].stage != f.stage) {

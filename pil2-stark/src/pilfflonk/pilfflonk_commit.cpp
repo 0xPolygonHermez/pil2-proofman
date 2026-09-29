@@ -90,6 +90,24 @@ uint64_t pack(Poly *const *polys, uint64_t k, FrElement *packed, uint64_t buffer
     return maxDegree + 1;
 }
 
+G1Point commitPacked(const Srs &srs, Poly *const *polys, uint64_t k) {
+    if (polys == nullptr) {
+        throw invalid("commitPacked", "polys is null");
+    }
+    uint64_t maxLength = 0;
+    for (uint64_t j = 0; j < k; ++j) {
+        if (polys[j] == nullptr) {
+            throw invalid("commitPacked", "polys[" + std::to_string(j) + "] is null");
+        }
+        maxLength = std::max(maxLength, polys[j]->getLength());
+    }
+    // Throws if k or every length is 0, before anything is allocated.
+    const uint64_t length = packedBufferLength(k, maxLength);
+    std::unique_ptr<FrElement[]> packed(new FrElement[length]);
+    const uint64_t nCoefs = pack(polys, k, packed.get(), length);
+    return srs.commit(packed.get(), nCoefs);
+}
+
 G1Point commitFixed(const Srs &srs, const Lde &lde, FrElement *const *evals, uint64_t k) {
     const uint64_t N = lde.domainSize();
     if (k == 0) {
@@ -112,11 +130,7 @@ G1Point commitFixed(const Srs &srs, const Lde &lde, FrElement *const *evals, uin
     for (uint64_t j = 0; j < k; ++j) {
         packing[j] = polys[j].get();
     }
-
-    const uint64_t length = packedBufferLength(k, N);
-    std::unique_ptr<FrElement[]> packed(new FrElement[length]);
-    const uint64_t nCoefs = pack(packing.data(), k, packed.get(), length);
-    return srs.commit(packed.get(), nCoefs);
+    return commitPacked(srs, packing.data(), k);
 }
 
 } // namespace PilFflonk

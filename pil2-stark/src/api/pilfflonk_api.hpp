@@ -100,8 +100,9 @@ extern "C" {
     // The structured reference string (spec §4.2.5, "SRS"): the powers [τ^i]₁ for i < n_g1, and [1]₂
     // and [τ]₂, of a snarkjs powers-of-tau file. The setup extracts them into pilfflonk.srs.bin
     // (spec A.6; the format is in src/pilfflonk/pilfflonk_srs.hpp) and the prover loads that file.
-    // Every point is checked as it is read: coordinates below q, on the curve, and [1]₁ and [1]₂
-    // the generators.
+    // Every point is checked as it is read: coordinates below q, on the curve, [1]₁ and [1]₂ the
+    // generators, and [τ]₂ in the r-torsion group G2 of the twist (the JS verifier refuses a vkey
+    // whose X_2 is not).
 
     // Reads the first n_g1 powers [τ^i]₁, and [1]₂ and [τ]₂, of the ptau at ptau_path -- only
     // those points, from sections 1 to 3 (section 12 is not needed, spec §4.2.1) -- and writes them
@@ -181,6 +182,23 @@ extern "C" {
     // derives it, for the orchestrator to check against its own. PILFFLONK_ERR_INVALID_ARGUMENT if a
     // pointer is NULL or there is no such AIR.
     int pilfflonk_ctx_n_bits_ext(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t *out);
+
+    // Writes to out_g2 the power [τ^i]₂ of the ctx's SRS, as pilfflonk_srs_g2 does. The orchestrator
+    // compares [τ]₂ with the vkey's X_2, so that the SRS of a ptau other than the vkey's is refused.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or i is neither 0 nor 1.
+    int pilfflonk_ctx_srs_g2(const void *ctx, uint64_t i, uint8_t out_g2[128]);
+
+    // Writes to out_g1 the n commitments [f(τ)]₁ of the fixed f of air air_id of airgroup
+    // airgroup_id, the first n entries of its layout, computed from its .const as the ctx holds it:
+    // its columns interpolated, packed and committed with the SRS, as setup-pilfflonk commits them
+    // for the vkey (pilfflonk_commit_fixed). The prover never needs them and the verifier takes
+    // them from the vkey: the orchestrator compares them with the vkey's f<i>, so that a .const
+    // other than the one the vkey was set up with is refused rather than giving proofs that do not
+    // verify. One MSM per f, of its k·N points; computed at each call. out_g1 may be NULL if n is 0.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL as it may not be, if there is no such AIR,
+    // or if n is not its number of fixed f.
+    int pilfflonk_ctx_fixed_commitments(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint8_t *out_g1,
+                                        uint64_t n);
 
     // An instance of air air_id of airgroup airgroup_id, or NULL.
     // - stage1 holds its stage-1 witness as the witness directory's instance file does (spec A.6):

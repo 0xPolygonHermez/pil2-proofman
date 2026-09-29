@@ -494,6 +494,34 @@ void testLoadsTheFibonaccisKey() {
     assert(pilfflonk_ctx_n_bits_ext(ctx, 0, 0, &nBitsExt) == PILFFLONK_OK && nBitsExt == 9);
     assert(pilfflonk_ctx_n_bits_ext(ctx, 0, 1, &nBitsExt) == PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(pilfflonk_ctx_n_bits_ext(ctx, 0, 0, nullptr) == PILFFLONK_ERR_INVALID_ARGUMENT);
+
+    // The commitments of the fixed f, unpacked here (k = 1): [p(τ)]₁ of each fixed column's
+    // interpolant, what the setup writes in the vkey, from AirKey and through the C API.
+    const std::vector<G1Point> fixed = air.fixedCommitments(fib.pk->srs());
+    assert(fixed.size() == 2);
+    std::vector<uint8_t> fixedBytes(2 * PilFflonk::G1_BYTES);
+    assert(pilfflonk_ctx_fixed_commitments(ctx, 0, 0, fixedBytes.data(), 2) == PILFFLONK_OK);
+    for (uint64_t c = 0; c < 2; ++c) {
+        const G1Point expected = g1Times(air.fixedPolynomial(c)->evaluate(testTau()));
+        assert(samePoint(fixed[c], expected));
+        uint8_t encoded[PilFflonk::G1_BYTES];
+        PilFflonk::encodeG1(expected, encoded);
+        assert(std::equal(encoded, encoded + PilFflonk::G1_BYTES, fixedBytes.begin() + c * PilFflonk::G1_BYTES));
+    }
+    assert(pilfflonk_ctx_fixed_commitments(ctx, 0, 0, fixedBytes.data(), 1) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "n = 1, and Fibonacci has 2 fixed f"));
+    assert(pilfflonk_ctx_fixed_commitments(ctx, 0, 1, fixedBytes.data(), 2) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_ctx_fixed_commitments(ctx, 0, 0, nullptr, 2) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_ctx_fixed_commitments(nullptr, 0, 0, fixedBytes.data(), 2) == PILFFLONK_ERR_INVALID_ARGUMENT);
+
+    // [τ]₂ of its SRS, as pilfflonk_srs_g2 writes it.
+    uint8_t g2[PilFflonk::SRS_G2_BYTES], expectedG2[PilFflonk::SRS_G2_BYTES];
+    assert(pilfflonk_ctx_srs_g2(ctx, 1, g2) == PILFFLONK_OK);
+    assert(pilfflonk_srs_g2(&fib.pk->srs(), 1, expectedG2) == PILFFLONK_OK);
+    assert(std::equal(g2, g2 + sizeof(g2), expectedG2));
+    assert(pilfflonk_ctx_srs_g2(ctx, 2, g2) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_ctx_srs_g2(ctx, 1, nullptr) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_ctx_srs_g2(nullptr, 1, g2) == PILFFLONK_ERR_INVALID_ARGUMENT);
     pilfflonk_ctx_free(ctx);
     pilfflonk_ctx_free(nullptr);
     assert(pilfflonk_ctx_new(nullptr) == nullptr && pilfflonk_last_status() == PILFFLONK_ERR_INVALID_ARGUMENT);

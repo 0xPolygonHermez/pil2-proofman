@@ -313,6 +313,39 @@ impl PilFflonkProverCtx {
         check_status(unsafe { pilfflonk_ctx_n_bits_ext(self.handle.as_ptr(), airgroup_id, air_id, &mut out) })?;
         Ok(out)
     }
+
+    /// `[τ]₂` of the context's SRS, as [`PilFflonkSrs::g2`] gives it: the vkey's `X_2` must be it.
+    pub fn srs_tau_g2(&self) -> Result<[u8; PILFFLONK_G2_BYTES], PilFflonkError> {
+        let mut out = [0u8; PILFFLONK_G2_BYTES];
+        // SAFETY: the handle is live and `out` has the 128 bytes the call writes.
+        check_status(unsafe { pilfflonk_ctx_srs_g2(self.handle.as_ptr(), 1, out.as_mut_ptr()) })?;
+        Ok(out)
+    }
+
+    /// The commitments of the `n` fixed f of an AIR, the first `n` of its layout, computed from its
+    /// `.const` as the context holds it, as the setup commits them for the vkey: one MSM per f.
+    /// Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if there is no such AIR
+    /// or `n` is not its number of fixed f.
+    pub fn fixed_commitments(
+        &self,
+        airgroup_id: u64,
+        air_id: u64,
+        n: usize,
+    ) -> Result<Vec<[u8; PILFFLONK_G1_BYTES]>, PilFflonkError> {
+        let mut out = vec![0u8; n * PILFFLONK_G1_BYTES];
+        // SAFETY: `out` has room for the `n` points the call writes (NULL if none), and the handle is
+        // live.
+        check_status(unsafe {
+            pilfflonk_ctx_fixed_commitments(
+                self.handle.as_ptr(),
+                airgroup_id,
+                air_id,
+                mut_ptr_or_null(&mut out),
+                n as u64,
+            )
+        })?;
+        Ok(points(&out))
+    }
 }
 
 impl Drop for PilFflonkProverCtx {

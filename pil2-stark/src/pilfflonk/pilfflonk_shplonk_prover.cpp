@@ -57,16 +57,6 @@ FrElement power(const FrElement &base, const Mpz &e) {
     return result;
 }
 
-FrElement power(const FrElement &base, uint64_t e) {
-    uint8_t bytes[sizeof(e)];
-    for (size_t i = 0; i < sizeof(e); ++i) {
-        bytes[i] = static_cast<uint8_t>(e >> (8 * i));
-    }
-    FrElement result;
-    Engine::engine.fr.exp(result, base, bytes, sizeof(bytes));
-    return result;
-}
-
 bool dividesRMinusOne(uint64_t n) {
     Mpz m;
     rMinusOne(m);

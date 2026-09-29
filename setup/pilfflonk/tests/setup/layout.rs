@@ -247,6 +247,23 @@ fn what_the_passes_refuse_is_an_error() {
     assert!(err.to_string().starts_with("the symbolic passes (pil-info) failed: invalid pilout: "), "{err}");
 }
 
+/// Expressions that refer to each other in a cycle (plan M26) are refused by the passes with an
+/// error, where they used to recurse until the stack overflowed and the process aborted.
+#[test]
+fn expressions_in_a_cycle_are_an_error_not_a_stack_overflow() {
+    let mut pilout = offsets_pilout();
+    let air = the_air(&mut pilout);
+    air.expressions.push(sub(exp(7), witness(0, 0))); // 6
+    air.expressions.push(mul(fixed(0), exp(6))); // 7
+    air.constraints.push(every_row(7));
+    let err = setup_air(&pilout, 9).unwrap_err();
+    assert!(
+        matches!(&err, SetupError::Passes(PilInfoError::InvalidPilout(m))
+            if m == "expression 6 refers to itself, through the references 6 → 7 → 6"),
+        "{err}"
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // committed_pols and unpacked_layout on maps built by hand
 // ---------------------------------------------------------------------------------------------

@@ -14,8 +14,17 @@
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p proofman-cli --features proofman-starks-lib-c/cpu-only \
-//!     --test pilfflonk_check -- --ignored
+//!     --test pilfflonk_check -- --ignored --test-threads 2
 //! ```
+//!
+//! Its tests call the C++ core in this process, each from its own thread, which OpenMP makes a root
+//! with a team of one thread per CPU, kept while that thread lives. libomp 14 (Ubuntu 22.04's) can
+//! crash with SIGSEGV once the teams outgrow its first table of threads (4 per CPU): it replaces the
+//! table while the workers it has just started may still be reading the old one (plan M26; the lock of
+//! `setup/pilfflonk/tests/setup/common.rs`, `cpp_core`, has the details). It has not happened in
+//! these tests, but nothing rules it out: run them with `--test-threads 2`, as above (and CI,
+//! plan M28), which keeps the teams alive, counting those of tests that are just ending, within
+//! that table.
 
 #[path = "../../pilfflonk/tests/data/domains.rs"]
 mod domains;
