@@ -52,10 +52,25 @@ fn check_fixture(name: &str, bytes: &[u8]) {
     assert!(fixture == bytes, "{} is not what the test computes: regenerate it (see the module)", path.display());
 }
 
+/// The fixture's text, with the object keys sorted explicitly: serde_json keeps insertion order
+/// instead when `preserve_order` is on, which Cargo turns on for the whole build whenever a crate
+/// that enables it (`setup/stark-recurser`) is part of it.
 fn json_text(value: &Value) -> Vec<u8> {
-    let mut text = serde_json::to_string_pretty(value).unwrap();
+    let mut text = serde_json::to_string_pretty(&sorted(value)).unwrap();
     text.push('\n');
     text.into_bytes()
+}
+
+fn sorted(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            Value::Object(keys.into_iter().map(|k| (k.clone(), sorted(&map[k]))).collect())
+        }
+        Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
+        other => other.clone(),
+    }
 }
 
 fn dec(v: &Fr) -> Value {
