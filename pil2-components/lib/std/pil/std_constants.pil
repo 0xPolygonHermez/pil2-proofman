@@ -1,4 +1,5 @@
 require "goldilocks.pil"
+require "bn254.pil"
 
 /*
 Available std modes:
@@ -126,11 +127,25 @@ function set_array_size(const int limit) {
     name    | code | note
 ------------|------|-------------------------------------------------------------------------- 
  Goldilocks |  0   | 2^64 - 2^32 + 1
+ BN254      |  1   | r, the order of the groups of the BN254 curve
 */
 
 const int FIELD_GOLDILOCKS = 0;
+const int FIELD_BN254 = 1;
 
-int ACTIVE_FIELD = FIELD_GOLDILOCKS;
+function get_field_code(const int prime): int {
+    switch (prime) {
+        case Goldilocks_p:
+            return FIELD_GOLDILOCKS;
+        case Bn254_r:
+            return FIELD_BN254;
+        default:
+            error(`Unknown field of order ${prime}: the std supports Goldilocks and BN254`);
+    }
+}
+
+// The field the program is compiled over, which pil2com takes from the `prime` of its -P config (Goldilocks by default)
+const int ACTIVE_FIELD = get_field_code(PRIME);
 
 int GEN[256];
 for (int i = 0; i < length(GEN); i++) {
@@ -148,6 +163,15 @@ switch (ACTIVE_FIELD) {
         }
 
         k_coset = Goldilocks_k;
+
+    case FIELD_BN254:
+        assert(length(Bn254_Gen) <= length(GEN));
+
+        for (int i = 0; i < length(Bn254_Gen); i++) {
+            GEN[i] = Bn254_Gen[i];
+        }
+
+        k_coset = Bn254_k;
 
     default:
         error("Unknown field");

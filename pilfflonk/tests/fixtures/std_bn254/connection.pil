@@ -1,0 +1,55 @@
+// The std's connections over the field of the compilation (tests/std_bn254.rs, plan M29): compiled over BN254
+// and over Goldilocks, the pilout must carry that field's roots of unity and coset generator. Compile-only.
+require "std_constants.pil"
+require "std_connection.pil"
+
+// connection(), with the permutations in fixed columns built from the std's GEN and k_coset, and a[0] = b[1].
+// This air comes first, so that connection() computes its ks without proof.std.connect.
+airtemplate Offline(const int N = 2**4) {
+    col witness a, b, c;
+
+    col fixed S1, S2, S3;
+    int w = 1;
+    for (int i = 0; i < N; i++) {
+        S1[i] = w;
+        S2[i] = k_coset * w;
+        S3[i] = k_coset**2 * w;
+        w = w * GEN[BITS] % PRIME;
+    }
+    const int tmp = S1[0];
+    S1[0] = S2[1];
+    S2[1] = tmp;
+
+    connection(1, [a, b, c], [S1, S2, S3]);
+}
+
+// connection_init(), which builds the permutations itself, with a[0] = b[1].
+airtemplate Online(const int N = 2**5) {
+    col witness a, b, c, d;
+
+    connection_init(2, [a, b, c, d]);
+    connection_update_one_cell(2, [a, 0, b, 1]);
+    connection_connect(2);
+}
+
+// connection() again, now that proof.std.connect exists: it reuses Online's ks and computes k^4. Identity permutations.
+airtemplate Reused(const int N = 2**3) {
+    col witness a[5];
+
+    col fixed S[5];
+    int w = 1;
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < 5; j++) {
+            S[j][i] = k_coset**j * w;
+        }
+        w = w * GEN[BITS] % PRIME;
+    }
+
+    connection(3, a, S);
+}
+
+airgroup StdConnection {
+    Offline();
+    Online();
+    Reused();
+}
