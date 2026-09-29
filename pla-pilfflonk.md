@@ -66,7 +66,8 @@ Aquesta secció és per als agents que implementen el pla. Es treballa a la bran
 | M1 | Feta | API C amb `guard` i últim error per fil, `pilfflonk_fr_check_canonical`, *bindings*, `pilfflonk_test` al Makefile i els crates `pil-info`, `pilfflonk-setup` i `proofman-pilfflonk`. Enllaça a CPU i a GPU. |
 | M13 (part 1) | Feta | `compile-pil -P, --config` (sense `-P`, sortida idèntica a l'anterior) i `pilfflonk/tests/fixtures/fibonacci/` (PIL2 i `bn254.json`). Queden el generador de witness i `FileWitnessSource` (després de M12). |
 | M4 | Feta | `pilfflonk_transcript_{new,free,absorb,squeeze}` sobre el `Keccak256Transcript` de rapidsnark, sense tocar-lo; `guardNew` (N4). L'API rebutja escalars i coordenades no canòniques, punts fora de la corba, el punt a l'infinit i punts amb coordenades `< 2^192` (troballa: `RawFq::toRprBE`, spec §4.4). Els reptes coincideixen amb un càlcul independent d'A.4. El *golden* STARK continua verd (499/499). |
-| M5 | En curs | |
+| M5 | Feta | `PilFflonk::Lde` (`pilfflonk_lde.*`): INTT amb espai per al blinding (`Polynomial::fromEvaluations`), extensió al *coset* `g·H'` amb `g = 5` i la inversa, sobre la FFT d'ffiasm; en paral·lel per columnes quan n'hi ha prou. Coincideix amb Horner i les anades i tornades són exactes. Pendent per a M17/M18: mapar `std::invalid_argument` a `PILFFLONK_ERR_INVALID_ARGUMENT`. Nota de rendiment: cada FFT obre diverses regions OpenMP i, amb 256 fils en una màquina carregada, els tests triguen uns 2 minuts. |
+| M6 | En curs | |
 | Llicències (context de P7) | - `pil2-stark/LICENSE` és AGPL-3.0, però el *workspace* declara `MIT OR Apache-2.0`.<br>- `pil-fflonk` té `LICENSE` AGPL-3.0 i, des de `0132359`, també `LICENSE-APACHE` i `LICENSE-MIT`. |
 
 ---
@@ -442,7 +443,7 @@ No hi ha verificador natiu (D3). El *pairing* el fa `ffjavascript` dins del veri
   - `pil_info` amb `bn254()` i `Search { max: D }`;
   - els polinomis compromesos (stage, fita en coeficients i `O`), derivats de l'`evMap`. Les columnes que no s'obren no es comprometen, amb un avís;
   - el *layout* sense empaquetar (R1);
-  - `nBitsExt` segons A.1;
+  - `nBitsExt` segons A.1, que també ha de cobrir `N + |O|_max + 1` (troballa de M5);
   - la comprovació que l'SRS té almenys `max grau(f_i) + 1` punts;
   - els fitxers `<air>.pilfflonkinfo.json`, `expressionsinfo.json`, `verifierinfo.json` (sense `queryVerifier`; el llegeix el verificador JS), `.bin` i `pilout.globalConstraints.json`;
   - `pilfflonk.vkey.json`, amb el *digest*, al final de tot.

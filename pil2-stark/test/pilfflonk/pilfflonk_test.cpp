@@ -54,6 +54,7 @@ int main() {
     testNullScalar();
     testSuccessClearsLastError();
     PilFflonkTest::runTranscriptTests();
+    PilFflonkTest::runLdeTests();
     std::printf("pilfflonk_test: all tests passed\n");
     return 0;
 }

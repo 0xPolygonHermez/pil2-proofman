@@ -1019,7 +1019,7 @@ El compilador de `develop-0.14.0` només emet `everyRow` (§3.4). Els altres tre
 - **`qDeg`.** `qDeg = max_i(deg c_i + δ_i) − 1`, en unitats de `N`, després d'introduir els im pols. Aquí `δ_i = 1` si la restricció no és `everyRow`, i `0` si ho és: el factor `Z_H/Z_{D_i}` suma gairebé `N` al grau (`constraint_poly.rs:245-250`).
 - **Política de cerca.** Amb la política de cerca `max = D`, el setup prova els graus de 2 a `D` i es queda amb el que minimitza `nImPols + qDeg`.
 - **Coeficients de `Q`.** Si `|O|_max` és el màxim de `|O|` de les columnes que tenen blinding (després de les fusions), `Q` té com a molt `qDeg·N + (qDeg+1)·|O|_max + 1` coeficients.
-- **Domini estès.** És la potència de dos més petita que és `≥` el nombre de coeficients de `Q`, i ha de complir `nBitsExt ≤ 28`.
+- **Domini estès.** És la potència de dos més petita que és `≥` el nombre de coeficients de `Q` i `≥` `N + |O|_max + 1`, perquè les columnes amb blinding també s'hi estenen (troballa de M5: amb `qDeg` petit, la primera condició sola podria donar un domini massa petit). Ha de complir `nBitsExt ≤ 28`.
 
 **Partició de `Q`.** Per defecte `maxQDegree = 0`, i `Q` no es parteix. Si `maxQDegree > 0` i `qDeg > maxQDegree`:
 - **Trossos.** `Q` es parteix en `m = ⌈qDeg/maxQDegree⌉` trossos `Q_0 … Q_{m−1}` de `M·N` coeficients (`M = maxQDegree`), que comparteixen un mateix `f`.

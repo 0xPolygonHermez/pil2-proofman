@@ -1,8 +1,8 @@
 #ifndef PILFFLONK_TEST_HPP
 #define PILFFLONK_TEST_HPP
 
-// Shared by the pilfflonk C API tests: plain asserts, one file per module, run from main() in
-// pilfflonk_test.cpp. Include this header first: it turns asserts on.
+// Shared by the pilfflonk tests, of the C API and of the C++ modules: plain asserts, one file per
+// module, run from main() in pilfflonk_test.cpp. Include this header first: it turns asserts on.
 #undef NDEBUG
 #include <cassert>
 #include <cstdint>
@@ -34,6 +34,7 @@ struct Bytes32 {
 };
 
 void runTranscriptTests();
+void runLdeTests();
 
 } // namespace PilFflonkTest
 
