@@ -76,6 +76,18 @@ AbsorbError decodeG1(const uint8_t bytes[G1_BYTES], G1Point &out) {
     return AbsorbError::None;
 }
 
+void encodeG1(const G1Point &point, uint8_t out[G1_BYTES]) {
+    AltBn128::Engine &E = AltBn128::Engine::engine;
+    // ffiasm's curve functions take their points as non-const.
+    G1Point projective = point;
+    AltBn128::Engine::G1PointAffine affine;
+    E.g1.copy(affine, projective);
+    // toRprLE writes only the significant bytes.
+    std::memset(out, 0, G1_BYTES);
+    E.f1.toRprLE(affine.x, out, FQ_BYTES);
+    E.f1.toRprLE(affine.y, out + FQ_BYTES, FQ_BYTES);
+}
+
 Transcript::Transcript() : transcript(AltBn128::Engine::engine) {
 #ifndef __USE_ASSEMBLY__
     throw std::runtime_error("the transcript needs ffiasm's assembly backend, not built on this platform");

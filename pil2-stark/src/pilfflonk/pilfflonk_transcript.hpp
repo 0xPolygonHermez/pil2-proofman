@@ -37,6 +37,11 @@ void encodeFr(const FrElement &element, uint8_t out[FR_BYTES]);
 // is in the r-torsion group.
 AbsorbError decodeG1(const uint8_t bytes[G1_BYTES], G1Point &out);
 
+// Writes `point` affine, as x‖y of canonical little-endian coordinates; the point at infinity as
+// (0, 0), ffiasm's affine form of it. decodeG1 of the result tells whether the transcript can
+// absorb the point.
+void encodeG1(const G1Point &point, uint8_t out[G1_BYTES]);
+
 // The Fiat-Shamir transcript of a proof (A.4): rapidsnark's Keccak256Transcript, unmodified,
 // driven as FflonkProver drives it (spec P6). Absorbing only appends elements; squeeze hashes
 // them. Not safe to use from several threads at once.

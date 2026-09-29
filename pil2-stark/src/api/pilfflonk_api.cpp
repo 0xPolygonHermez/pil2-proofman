@@ -4,7 +4,6 @@
 #include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
-#include <cstring>
 #include <exception>
 #include <memory>
 #include <new>
@@ -157,18 +156,6 @@ void decodeCanonicalFr(const uint8_t *bytes, uint64_t n, PilFflonk::FrElement *o
         }
         E.fr.toMontgomery(out[i], canonical);
     }
-}
-
-// Writes `point` as the C API passes G1 points: affine x‖y, canonical little-endian coordinates;
-// the point at infinity as (0, 0), ffiasm's affine form of it.
-void encodeG1(PilFflonk::G1Point &point, uint8_t out[PilFflonk::G1_BYTES]) {
-    AltBn128::Engine &E = AltBn128::Engine::engine;
-    PilFflonk::G1PointAffine affine;
-    E.g1.copy(affine, point);
-    // toRprLE writes only the significant bytes.
-    std::memset(out, 0, PilFflonk::G1_BYTES);
-    E.f1.toRprLE(affine.x, out, PilFflonk::FQ_BYTES);
-    E.f1.toRprLE(affine.y, out + PilFflonk::FQ_BYTES, PilFflonk::FQ_BYTES);
 }
 
 } // namespace
@@ -346,7 +333,7 @@ int pilfflonk_commit_fixed(const void *srs, uint64_t n_bits, uint64_t k, const u
         }
 
         PilFflonk::G1Point commitment = PilFflonk::commitFixed(s, lde, columns.data(), k);
-        encodeG1(commitment, out_g1);
+        PilFflonk::encodeG1(commitment, out_g1);
         return static_cast<int>(PILFFLONK_OK);
     });
 }

@@ -1346,6 +1346,8 @@ Aquests problemes no bloquegen el backend nou, però han sortit durant l'anàlis
    - `multiexp.c.hpp:30` fa una lectura de 8 bytes desalineada a cada MSM (UBSan).
    - El mode *direct read* de `BinFile`: `readU32LE` i similars desreferencien un punter nul, i `readSectionToParallel` llança una excepció dins d'un `std::thread`, que acaba el procés. pilfflonk només fa servir `readSectionTo`.
    - `fflonk_setup.cpp` fa `throw new runtime_error(...)`, és a dir, llança un punter.
+   - **Fuites de memòria a `Polynomial` (M7):** `divByMonic` no allibera ni l'objecte `polResult` (del qual es queda el buffer) ni `bArr` (`polynomial.c.hpp:425-426`); `lagrangePolynomialInterpolation` no allibera els polinomis de base per a `i ≥ 1`; `byXSubValue` no allibera el seu temporal. Afecta pilfflonk (uns 40–160 KB per polinomi obert i per prova) i també el `FflonkProver` del *wrap* final. Pendent de decisió de l'usuari: corregir-ho a rapidsnark o esquivar aquestes funcions.
+   - **Altres casos límit de `Polynomial` (M7):** `lagrangePolynomialInterpolation` falla amb un sol punt; `divByMonic` escriu abans del buffer si el grau és menor que `m` i no comprova el residu; `add()` creix sense actualitzar la longitud; `sub()` desborda si l'altre polinomi és més llarg; `mulScalar`/`subScalar` no actualitzen el grau; `fixDegree` amb longitud 0 llegeix fora de límits; `divByZerofier` dona resultats incorrectes si hi ha menys fils que `n` i `n` no és potència de dos.
 
 ---
 
