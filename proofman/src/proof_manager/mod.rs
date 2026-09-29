@@ -109,6 +109,12 @@ impl Counter {
         new_val
     }
 
+    /// The count so far. Acquire, to pair with `increment`'s Release.
+    #[inline(always)]
+    pub fn value(&self) -> usize {
+        self.counter.load(Ordering::Acquire)
+    }
+
     pub fn wait_until_value_and_check_streams<F: FnMut()>(
         &self,
         value: usize,

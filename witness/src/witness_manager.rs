@@ -149,7 +149,7 @@ impl<F: PrimeField64> WitnessManager<F> {
         Ok(())
     }
 
-    /// Takes no ownership: the default impl queues through `set_witness_ready`, which needs the
+    /// Takes no ownership: the default impl queues through `announce_witness_ready`, which needs the
     /// instance still queueable. The old `!calculated` filter read the channel backlog as untouched.
     /// Like `calculate_witness`, only stage 1 is filtered by the lifecycle.
     pub fn pre_calculate_witness(
