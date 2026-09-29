@@ -14,6 +14,7 @@ use crate::global_info::{FORMAT_VERSION, MAX_NBITS};
 use crate::json::{canonical_json, serialize_sorted, JsonFile};
 use crate::layout::{q_pieces, Layout, LayoutCheck};
 use crate::pilfflonk_info::{Boundary, EvMapEntry, PilfflonkInfo};
+use crate::q_verifier::{check_q_verifier, QVerifierShape};
 use crate::tag::{Curve, Protocol};
 use crate::verkey::AirVerkey;
 
@@ -43,10 +44,13 @@ pub struct Vkey {
     /// `[τ]₂`.
     #[serde(rename = "X_2")]
     pub x_2: G2Affine,
-    /// The challenges of each stage, as the globalInfo's `numChallenges`.
+    /// The challenges of each stage, as the globalInfo's `numChallenges`: one entry per stage, and
+    /// none of stage 1 (A.4 squeezes no challenge before its commitments).
     pub num_challenges: Vec<u64>,
     pub ev_map: Vec<EvMapEntry>,
     pub layout: Layout,
+    /// The AIR's boundaries: `everyRow` first, whose `Zi` is `1/Z_H` (A.6), and each `everyFrame`
+    /// leaving a row.
     pub boundaries: Vec<Boundary>,
     /// The commitments of the fixed `f_i`, the AIR's verkey: keys `f0`, `f1`, … as in snarkjs's
     /// and pil-fflonk's vkeys, `f<i>` for layout entry `i`, which in a proof of one AIR is also its
@@ -56,7 +60,8 @@ pub struct Vkey {
     pub q_deg: u64,
     pub max_q_degree: u64,
     /// The `qVerifier` of `<air>.verifierinfo.json`, as `pil-info` writes it (the STARK's format),
-    /// copied as it is: this crate does not look into it. Written with its keys sorted.
+    /// copied as it is. This crate does not run it, but checks that the verifier can
+    /// (`crate::q_verifier`). Written with its keys sorted.
     #[serde(serialize_with = "serialize_sorted")]
     pub q_verifier: Value,
     /// `keccak256("pilfflonk-v1" ‖ canonical(vkey without digest))` (A.6).
@@ -216,15 +221,44 @@ impl JsonFile for Vkey {
                 self.layout.n_fixed()
             );
         }
+
+        // What the verifier needs to replay A.4 and compute Q(ξ), as it checks it
+        // (pilfflonk/js/src/vkey.js, fromObjectVk).
+        let n_stages = q_stage - 1;
+        if self.num_challenges.len() as u64 != n_stages {
+            return invalid!("numChallenges has {} stages, and the layout {n_stages}", self.num_challenges.len());
+        }
+        if self.num_challenges.first() != Some(&0) {
+            return invalid!(
+                "numChallenges {:?} must start with 0: A.4 squeezes no challenge of stage 1",
+                self.num_challenges
+            );
+        }
+        if self.boundaries.first() != Some(&Boundary::EveryRow) {
+            return invalid!("boundaries[0] must be everyRow, whose Zi is 1/Z_H (A.6)");
+        }
+        let n_rows = 1u64 << self.power;
         for (i, b) in self.boundaries.iter().enumerate() {
             if self.boundaries[..i].contains(b) {
                 return invalid!("boundary {b:?} is there twice");
             }
+            if let Boundary::EveryFrame { offset_min, offset_max } = *b {
+                if offset_min.checked_add(offset_max).is_none_or(|excluded| excluded >= n_rows) {
+                    return invalid!(
+                        "boundaries[{i}] is everyFrame {{{offset_min}, {offset_max}}}: no row of {n_rows} is left"
+                    );
+                }
+            }
         }
-        if !self.q_verifier.is_object() {
-            return invalid!("qVerifier must be an object, the code block of verifierinfo.json");
-        }
-        Ok(())
+        check_q_verifier(
+            &self.q_verifier,
+            &QVerifierShape {
+                n_evaluations: self.ev_map.len(),
+                n_public: self.n_public,
+                n_boundaries: self.boundaries.len(),
+                num_challenges: &self.num_challenges,
+            },
+        )
     }
 }
 

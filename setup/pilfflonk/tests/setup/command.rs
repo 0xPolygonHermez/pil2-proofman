@@ -281,6 +281,23 @@ fn the_command_refuses_a_pilout_the_setup_does_not_support() {
     assert!(format!("{err:#}").contains("is not a pilout"), "{err:#}");
 }
 
+/// A pilout whose vkey the verifier would refuse (`Vkey::validate`) is refused before any file is
+/// written: here, a challenge of stage 1, which A.4 never squeezes.
+#[test]
+fn the_command_refuses_a_vkey_the_verifier_would_refuse() {
+    let dir = TestDir::new("command_refuses_vkey");
+    let mut pilout = pilout();
+    pilout.num_challenges = vec![1];
+    let opts = inputs(&dir, &pilout, 64);
+    let err = run_setup_pilfflonk(&opts).unwrap_err();
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("A.4 squeezes no challenge of stage 1") && message.contains("synthetic.pilout"),
+        "{message}"
+    );
+    assert!(!opts.build_dir.exists());
+}
+
 /// A ptau with fewer powers than the largest degree of the layout, Q's 11, is refused before any
 /// file is written; 11 are enough.
 #[test]

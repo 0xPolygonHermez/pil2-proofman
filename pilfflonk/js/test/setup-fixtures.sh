@@ -34,7 +34,7 @@ export PILFFLONK_JS_FIXTURES="$dir"
 
 cd "$repo"
 js_fixtures() {
-    cargo test -q -p proofman-pilfflonk --features proofman-common/cpu-only --test js_fixtures -- --ignored --exact "$1"
+    cargo test -q -p pilfflonk-setup --features proofman-starks-lib-c/cpu-only --test js_fixtures -- --ignored --exact "$1"
 }
 setup() {
     cargo run -q --features proofman-starks-lib-c/cpu-only --bin proofman-setup -- "$@"

@@ -16,10 +16,10 @@
 //! ```
 //!
 //! Everything that can be refused is refused before the first file is written: the pilout
-//! (§4.2.1), what the passes return, the extended domain, the names of the proof and the shape of
-//! the witness. The SRS is the first file, so that a ptau with too few powers writes nothing else;
-//! the vkey is the last, with its digest (A.6). The files depend only on the inputs: two runs
-//! write the same bytes.
+//! (§4.2.1), what the passes return, the extended domain, the names of the proof, the shape of
+//! the witness and what the verifier would refuse of the vkey. The SRS is the first file, so that
+//! a ptau with too few powers writes nothing else; the vkey is the last, with its digest (A.6).
+//! The files depend only on the inputs: two runs write the same bytes.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,7 +31,9 @@ use pil_info::FieldCfg;
 use prost::Message;
 use proofman_pilfflonk::global_info::{GLOBAL_CONSTRAINTS_FILE, GLOBAL_INFO_FILE};
 use proofman_pilfflonk::json::to_json_string;
-use proofman_pilfflonk::{AirFile, JsonFile, ProofNames, SetupParams, Vkey, WitnessShape};
+use proofman_pilfflonk::{
+    AirFile, AirVerkey, FixedCommitments, G1Affine, G2Affine, JsonFile, ProofNames, SetupParams, Vkey, WitnessShape,
+};
 
 use crate::air_info::{air_setup, AirRef, AirSetup};
 use crate::bytecode::write_air_bin;
@@ -143,6 +145,24 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     // the proof's values must not collide, and the witness must have the shape of the pilout's.
     ProofNames::new(&global_info, &[&info]).with_context(refused)?;
     WitnessShape::from_proving_key(&global_info, &[&info]).with_context(refused)?;
+    // The vkey (§4.2.5, A.6) but for its points, [τ]₂ and the fixed commitments, which need the
+    // SRS: Vkey::new checks what the verifier would refuse of it (the challenges, the boundaries,
+    // the qVerifier of the verifierinfo, which it can run). The points and the digest are set last.
+    let pil_code = &result.pil_code;
+    let q_verifier = serde_json::to_value(&pil_code.verifier_info)?
+        .get("qVerifier")
+        .cloned()
+        .ok_or_else(|| SetupError::PassesOutput("the verifierinfo has no qVerifier".to_string()))?;
+    let no_points = AirVerkey(vec![G1Affine::INFINITY; info.layout.n_fixed()]);
+    let vkey = Vkey::new(
+        &info,
+        global_info.n_publics,
+        global_info.num_challenges.clone(),
+        G2Affine::default(),
+        &no_points,
+        q_verifier,
+    )
+    .with_context(refused)?;
     let n_g1 = max_degree(&info.layout);
     tracing::info!(
         "air {}: nBits {} | qDeg {} | {} im pols | {} f of k = 1 | |O|max {} | nBitsExt {} | {} powers [τ^i]₁",
@@ -187,7 +207,6 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
 
     // The code, in the STARK's formats with dimension 1 (A.6), as pil-info serialises it for the
     // STARK setup; the verifierinfo has only the qVerifier (Opening::Shplonk).
-    let pil_code = &result.pil_code;
     write_text(&air_file(AirFile::ExpressionsInfo)?, &to_json_string(&pil_code.expressions_info)?)?;
     write_text(&air_file(AirFile::VerifierInfo)?, &to_json_string(&pil_code.verifier_info)?)?;
     let bin_path = air_file(AirFile::Bin)?;
@@ -197,15 +216,9 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     let global_constraints = build_global_constraints_json(&pilout, &FieldCfg::bn254())?;
     write_text(&proving_key.join(GLOBAL_CONSTRAINTS_FILE), &to_json_string(&global_constraints)?)?;
 
-    // Last, the vkey (§4.2.5, A.6): the qVerifier of the verifierinfo, the fixed commitments of
-    // the verkey and [τ]₂ of the SRS, sealed with its digest.
-    let verifier_info = serde_json::to_value(&pil_code.verifier_info)?;
-    let q_verifier = verifier_info
-        .get("qVerifier")
-        .cloned()
-        .ok_or_else(|| SetupError::PassesOutput("the verifierinfo has no qVerifier".to_string()))?;
-    let vkey =
-        Vkey::new(&info, global_info.n_publics, global_info.num_challenges.clone(), x_2(&srs)?, &verkey, q_verifier)?;
+    // Last, the vkey (§4.2.5, A.6), with [τ]₂ of the SRS and the fixed commitments of the verkey,
+    // sealed with its digest.
+    let vkey = Vkey { x_2: x_2(&srs)?, fixed_commitments: FixedCommitments(verkey.0), ..vkey };
     let vkey = seal_vkey(vkey)?;
     let vkey_path = global_info.vkey_path(&proving_key);
     vkey.write(&vkey_path)?;

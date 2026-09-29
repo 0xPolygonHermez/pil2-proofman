@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 num-bigint = { workspace = true }
+tracing = { workspace = true }
 pil2-pilout = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -28,5 +29,3 @@ proofman-common = { workspace = true }
 proofman-pilfflonk = { path = ".", features = ["oracle"] }
 # The tests read compiled pilouts and build others in code.
 pil2-pilout = { workspace = true }
-# The ptau with τ = 1 of the JS verifier's fixtures (tests/js_fixtures.rs, plan N13, M19).
-pilfflonk-setup = { workspace = true, features = ["test-ptau"] }

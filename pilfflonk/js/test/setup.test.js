@@ -3,8 +3,8 @@
 // - the digest the JS computes over pilfflonk.vkey.json is the one Rust sealed it with, and any
 //   change to the vkey changes it;
 // - the vkey's qVerifier, run on the evaluations of the Rust oracle (M14) at a point ξ
-//   (pilfflonk/tests/js_fixtures.rs), gives the oracle's Q(ξ): the conventions of the im pols,
-//   the challenges and the fold agree;
+//   (setup/pilfflonk/tests/js_fixtures.rs), gives the oracle's Q(ξ): the conventions of the im
+//   pols, the challenges and the fold agree;
 // - a forged proof (proofs.js) verifies against the real vkey, and each change M19 lists is
 //   rejected, through verify() and through bin/verify.js.
 // Skipped, saying why, unless PILFFLONK_JS_FIXTURES names the directory.

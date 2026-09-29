@@ -21,6 +21,8 @@
 //!
 //! The prover takes its witness from a [`WitnessSource`] (spec §4.3, §5.3).
 //!
+//! The verifier is JS (`js/`, spec §4.5, D8): [`js_verifier::verify`] runs it with Node.
+//!
 //! With the feature `oracle`, the module `oracle` is the Rust test oracle (plan M14, R8): an
 //! evaluation of a pilout's constraints and of `Q` (A.1) with `num-bigint`, independent of
 //! `pil-info`. It is for tests only; the crate's own tests turn it on.
@@ -28,11 +30,13 @@
 pub mod error;
 pub mod field;
 pub mod global_info;
+pub mod js_verifier;
 pub mod json;
 pub mod layout;
 pub mod names;
 pub mod pilfflonk_info;
 pub mod proof;
+mod q_verifier;
 pub mod tag;
 pub mod verkey;
 pub mod vkey;

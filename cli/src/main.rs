@@ -16,6 +16,7 @@ use commands::verify_snark::VerifySnark;
 use commands::prove_air::ProveAirCmd;
 use commands::execute::ExecuteCmd;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
+use commands::pilfflonk::{PilfflonkSubcommands, PilfflonkCmd};
 use commands::setup::CheckSetupCmd;
 use commands::setup_snark::CheckSetupSnarkCmd;
 use commands::soundness::SoundnessCmd;
@@ -32,6 +33,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     Pilout(PiloutCmd),
+    Pilfflonk(PilfflonkCmd),
     CheckSetup(CheckSetupCmd),
     CheckSetupSnark(CheckSetupSnarkCmd),
     Soundness(SoundnessCmd),
@@ -63,6 +65,9 @@ fn main() {
         .spawn(move || match &cli.command {
             Commands::Pilout(args) => match &args.pilout_commands {
                 PiloutSubcommands::Inspect(args) => args.run(),
+            },
+            Commands::Pilfflonk(args) => match &args.pilfflonk_commands {
+                PilfflonkSubcommands::Verify(args) => args.run(),
             },
             Commands::CheckSetup(args) => args.run(),
             Commands::CheckSetupSnark(args) => args.run(),

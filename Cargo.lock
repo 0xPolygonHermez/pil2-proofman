@@ -1398,11 +1398,14 @@ dependencies = [
  "colored",
  "convert_case",
  "libloading",
+ "num-bigint",
  "pil2-pilout",
+ "pilfflonk-setup",
  "proofman",
  "proofman-common",
  "proofman-exps-codegen",
  "proofman-fields",
+ "proofman-pilfflonk",
  "proofman-soundness",
  "proofman-starks-lib-c",
  "proofman-util",
@@ -1410,6 +1413,7 @@ dependencies = [
  "proofman-witness",
  "regex",
  "serde",
+ "serde_json",
  "tinytemplate",
  "toml",
  "tracing",
@@ -1502,12 +1506,12 @@ version = "1.4.0-alpha"
 dependencies = [
  "num-bigint",
  "pil2-pilout",
- "pilfflonk-setup",
  "proofman-common",
  "proofman-pilfflonk",
  "serde",
  "serde_json",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]

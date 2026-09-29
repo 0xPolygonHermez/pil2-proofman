@@ -48,7 +48,7 @@ fn q() -> &'static BigUint {
 
 /// The integer a decimal string spells, if it is in canonical form: digits only, and no leading
 /// zero unless the number is 0.
-fn parse_canonical_decimal(s: &str) -> Option<BigUint> {
+pub(crate) fn parse_canonical_decimal(s: &str) -> Option<BigUint> {
     let well_formed = !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s == "0" || !s.starts_with('0'));
     if well_formed {
         BigUint::parse_bytes(s.as_bytes(), 10)

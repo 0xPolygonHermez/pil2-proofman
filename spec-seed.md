@@ -665,7 +665,7 @@ Les columnes de l'**stage 2 i posteriors** i els im pols no els aporta ningú de
   - la partició de `Q`;
   - el format de la prova de D7;
   - la vkey autocontinguda.
-- **Dependències:** `ffjavascript` (BN254 i `pairingEq`) i `@noble/hashes` (Keccak-256), les mateixes que fa servir snarkjs 0.7.6. Es declaren a `pilfflonk/js/package.json` i s'instal·len amb el mateix mecanisme que snarkjs (`node_deps::ensure_node_deps`).
+- **Dependències:** `ffjavascript` (BN254 i `pairingEq`) i `@noble/hashes` (Keccak-256), les mateixes que fa servir snarkjs 0.7.6. Es declaren a `pilfflonk/js/package.json`. `proofman_pilfflonk::js_verifier` les busca com ho fa Node (el `node_modules/` del directori del verificador o d'un pare) i, si en falta alguna, fa `npm install` en aquell directori, com el pas 2 de `node_deps::ensure_node_deps`. No reutilitza `node_deps`, perquè està lligat a `setup/pil2-stark` i perquè Node només resol els mòduls ES des del directori del verificador (M19). `PILFFLONK_JS` permet apuntar a una còpia del verificador.
 - **El transcript JS** reprodueix el `Keccak256Transcript` de rapidsnark, igual que el de snarkjs ho fa per al FFLONK existent.
 
 **Passos:**

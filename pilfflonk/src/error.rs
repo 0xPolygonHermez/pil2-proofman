@@ -28,6 +28,11 @@ pub enum PilfflonkError {
         #[source]
         source: Box<PilfflonkError>,
     },
+
+    /// The JS verifier (spec §4.5) cannot give a verdict: no Node.js, its dependencies missing and
+    /// `npm install` unable to install them, inputs it cannot read, or a failure of its own.
+    #[error("JS verifier: {0}")]
+    JsVerifier(String),
 }
 
 pub type PilfflonkResult<T> = Result<T, PilfflonkError>;

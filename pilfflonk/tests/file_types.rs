@@ -493,6 +493,77 @@ fn the_vkey_refuses_what_does_not_match_its_layout() {
     }
 }
 
+/// What the JS verifier refuses in a vkey the layout alone allows (`pilfflonk/js/src/vkey.js`,
+/// `fromObjectVk`), refused here too, with the reason: neither read nor written. The sample has
+/// two stages, 16 rows and the boundaries everyRow, firstRow and everyFrame {1, 2}.
+#[test]
+fn the_vkey_refuses_what_the_verifier_refuses() {
+    let with = |change: &dyn Fn(&mut Vkey)| {
+        let mut vkey = sample_vkey();
+        change(&mut vkey);
+        vkey
+    };
+    // A qVerifier that copies `operand` to its one temporary.
+    let code = |operand: Value| {
+        let dest = json!({"type": "tmp", "id": 0, "dim": 1});
+        json!({"tmpUsed": 1, "code": [{"op": "copy", "dest": dest, "src": [operand]}]})
+    };
+    for (vkey, reason) in [
+        (with(&|v| v.num_challenges = vec![0]), "numChallenges has 1 stages, and the layout 2"),
+        (with(&|v| v.num_challenges = vec![0, 2, 0]), "numChallenges has 3 stages, and the layout 2"),
+        (with(&|v| v.num_challenges = vec![1, 2]), "A.4 squeezes no challenge of stage 1"),
+        (with(&|v| v.boundaries.clear()), "boundaries[0] must be everyRow"),
+        (with(&|v| v.boundaries.swap(0, 1)), "boundaries[0] must be everyRow"),
+        (
+            with(&|v| v.boundaries.push(Boundary::EveryFrame { offset_min: 8, offset_max: 8 })),
+            "boundaries[3] is everyFrame {8, 8}: no row of 16 is left",
+        ),
+        (
+            with(&|v| v.boundaries[2] = Boundary::EveryFrame { offset_min: u64::MAX, offset_max: 1 }),
+            "no row of 16 is left",
+        ),
+        (with(&|v| v.q_verifier = json!({"tmpUsed": 1, "code": []})), "qVerifier: no code"),
+        (with(&|v| v.q_verifier = code(json!({"type": "eval", "id": 13, "dim": 1}))), "eval 13 is not one of the 13"),
+        (with(&|v| v.q_verifier = code(json!({"type": "public", "id": 2, "dim": 1}))), "public 2 is not one of the 2"),
+        (
+            with(&|v| v.q_verifier = code(json!({"type": "Zi", "id": 0, "boundaryId": 3, "dim": 1}))),
+            "Zi of boundary 3, and there are 3",
+        ),
+        // std_vc is challenge 2 of challengesMap [0, 2]: after the two of stage 2.
+        (
+            with(&|v| v.q_verifier = code(json!({"type": "challenge", "id": 0, "stage": 3, "stageId": 0, "dim": 1}))),
+            "the challenge of stage 3, stageId 0 is 2, not 0",
+        ),
+        (
+            with(&|v| v.q_verifier = code(json!({"type": "challenge", "id": 2, "stage": 2, "stageId": 2, "dim": 1}))),
+            "no challenge of stage 2 has stageId 2",
+        ),
+    ] {
+        let err = vkey.validate().expect_err(reason).to_string();
+        assert!(err.contains(reason), "{reason}: {err}");
+        assert!(vkey.to_json_string().is_err(), "{reason}: it is not written");
+    }
+
+    // What they allow: an everyFrame that leaves one row, and every challenge at its position.
+    let everyframe = with(&|v| v.boundaries.push(Boundary::EveryFrame { offset_min: 8, offset_max: 7 }));
+    assert!(everyframe.validate().is_ok());
+    for (id, stage, stage_id) in [(0, 2, 0), (1, 2, 1), (2, 3, 0), (3, 4, 0)] {
+        let challenge = json!({"type": "challenge", "id": id, "stage": stage, "stageId": stage_id, "dim": 1});
+        assert!(with(&|v| v.q_verifier = code(challenge.clone())).validate().is_ok(), "challenge {id}");
+    }
+
+    // And on reading.
+    let text = sample_vkey().to_json_string().unwrap();
+    for (from, to) in [
+        ("\"numChallenges\": [\n  0,\n  2\n ]", "\"numChallenges\": [1, 2]"),
+        ("\"boundaries\": [\n  {\n   \"name\": \"everyRow\"\n  },", "\"boundaries\": ["),
+        ("\"op\": \"mul\"", "\"op\": \"div\""),
+    ] {
+        assert!(text.contains(from), "{from}");
+        assert!(Vkey::from_json_str(&text.replacen(from, to, 1)).is_err(), "{to}");
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The digest's preimage (A.6).
 // ---------------------------------------------------------------------------------------------

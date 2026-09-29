@@ -9,16 +9,20 @@
 //!    proof names it (`ProofNames`), and the oracle's `Q(ξ)` from the same columns. The JS test
 //!    evaluates the vkey's `qVerifier` on them and must obtain that `Q(ξ)`.
 //!
-//! Both are `#[ignore]`: they only write fixtures, and only when asked.
+//! Both are `#[ignore]`: they only write fixtures, and only when asked. Run without
+//! `PILFFLONK_JS_FIXTURES` (as `--include-ignored` runs them), they say so and write nothing.
 //!
 //! ```text
-//! PILFFLONK_JS_FIXTURES=<dir> cargo test -p proofman-pilfflonk --features proofman-common/cpu-only \
+//! PILFFLONK_JS_FIXTURES=<dir> cargo test -p pilfflonk-setup --features proofman-starks-lib-c/cpu-only \
 //!     --test js_fixtures -- --ignored --exact tau_one_ptau
 //! ```
+//!
+//! They are this crate's, not `proofman-pilfflonk`'s, because the ptau is (`test_ptau`): this crate
+//! depends on `proofman-pilfflonk`, and a dev-dependency back on this one would be a cycle.
 
-mod data {
-    pub mod fibonacci;
-}
+/// M13's generator, `proofman-pilfflonk`'s test module, included as it is.
+#[path = "../../../pilfflonk/tests/data/fibonacci.rs"]
+mod fibonacci;
 
 use std::fs;
 use std::path::PathBuf;
@@ -31,19 +35,24 @@ use proofman_pilfflonk::{
 };
 use serde_json::{json, Map, Value};
 
-use data::fibonacci;
-
 /// The powers `[τ^i]₁` of the ptau: more than the Fibonacci's largest degree, 261 (plan M16).
 const PTAU_G1: usize = 1024;
 
-/// The fixture's size and inputs, as `tests/fibonacci.rs` (spec Annex G).
+/// The fixture's size and inputs, as `pilfflonk/tests/fibonacci.rs` (spec Annex G).
 const N_BITS: u32 = 8;
 const INPUTS: [u64; 2] = [1, 2];
 
-/// The directory the fixtures go to.
-fn fixtures_dir() -> PathBuf {
-    let dir = std::env::var("PILFFLONK_JS_FIXTURES").expect("PILFFLONK_JS_FIXTURES must name the fixtures' directory");
-    PathBuf::from(dir)
+/// The directory the fixtures go to, if they are asked for.
+fn fixtures_dir() -> Option<PathBuf> {
+    match std::env::var_os("PILFFLONK_JS_FIXTURES") {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => {
+            eprintln!(
+                "PILFFLONK_JS_FIXTURES is not set: no fixture is written (see pilfflonk/js/test/setup-fixtures.sh)"
+            );
+            None
+        }
+    }
 }
 
 fn decimal(v: &Fr) -> String {
@@ -53,13 +62,14 @@ fn decimal(v: &Fr) -> String {
 #[test]
 #[ignore = "writes the JS verifier's fixtures into PILFFLONK_JS_FIXTURES"]
 fn tau_one_ptau() {
-    write_tau_one_ptau(&fixtures_dir().join("tau_one.ptau"), PTAU_G1).unwrap();
+    let Some(dir) = fixtures_dir() else { return };
+    write_tau_one_ptau(&dir.join("tau_one.ptau"), PTAU_G1).unwrap();
 }
 
 /// The column of the oracle an evaluation is of: a fixed column by its index, which is the
 /// pilout's, and a committed one by its stage and `stageId`, the pilout's index within the stage
-/// (`tests/fibonacci.rs`); an im pol by its `expId`, the index of its expression in the pilout
-/// (the setup's numbering, which `setup/pil2-stark/tests/setup_pilfflonk.rs` checks).
+/// (`pilfflonk/tests/fibonacci.rs`); an im pol by its `expId`, the index of its expression in the
+/// pilout (the setup's numbering, which `setup/pil2-stark/tests/setup_pilfflonk.rs` checks).
 fn column_of(info: &PilfflonkInfo, e: &EvMapEntry) -> ColumnRef {
     let pol = info.pol(e.pol_type, e.id).expect("an evMap entry of the pilfflonkinfo");
     match (e.pol_type, pol.exp_id) {
@@ -107,7 +117,7 @@ impl Air<'_> {
 #[test]
 #[ignore = "writes the JS verifier's fixtures into PILFFLONK_JS_FIXTURES"]
 fn q_at_xi() {
-    let dir = fixtures_dir();
+    let Some(dir) = fixtures_dir() else { return };
     let pilout = PilOutProxy::new(dir.join("fibonacci.pilout").to_str().expect("a UTF-8 path")).unwrap().pilout;
     let proving_key = dir.join("build").join("provingKey");
     let global_info = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap();
