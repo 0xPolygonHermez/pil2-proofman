@@ -1294,6 +1294,12 @@ dependencies = [
 name = "pilfflonk-setup"
 version = "1.4.0-alpha"
 dependencies = [
+ "anyhow",
+ "num-bigint",
+ "pil-info",
+ "pil2-pilout",
+ "proofman-pilfflonk",
+ "serde_json",
  "thiserror",
 ]
 

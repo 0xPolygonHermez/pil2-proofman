@@ -11,3 +11,11 @@ categories = { workspace = true }
 
 [dependencies]
 thiserror = { workspace = true }
+anyhow = { workspace = true }
+pil-info = { workspace = true }
+proofman-pilfflonk = { workspace = true }
+
+[dev-dependencies]
+num-bigint = { workspace = true }
+pil2-pilout = { workspace = true }
+serde_json = { workspace = true }

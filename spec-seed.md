@@ -1143,13 +1143,51 @@ El prover fa servir la mateixa convenció. `Z_T` és el producte de tots els `Z_
 | `<air>.pilfflonkinfo.json` | **Camps equivalents del `starkinfo`:** `nStages`, `nConstants`, `cmPolsMap`, `constPolsMap`, `challengesMap`, `airValuesMap`, `airgroupValuesMap`, `evMap`, `openingPoints`, `boundaries`, `qDeg`, `cExpId` i `mapSectionsN`, amb `qDim = 1`.<br>**Camps nous:** `nBits`, que al STARK és dins de `starkStruct`; `maxQDegree`; i `layout`, una llista de `f_i {stage, pols, k, offsets, degree}`. El `degree` és el cost d'A.2 en nombre de coeficients, i l'SRS n'ha de tenir el màxim (no el màxim més 1).<br>**No hi són** `starkStruct` ni res de FRI.<br>L'ordre exacte dels camps i la forma de les entrades (mapes, `evMap`, *boundaries*) són els de `pilfflonk/src/pilfflonk_info.rs` (M12). |
 | `<air>.expressionsinfo.json` | El format del STARK, amb dimensió 1 per a tots els operands i les constants en decimal |
 | `<air>.verifierinfo.json` | El format del STARK: només `qVerifier`, sense `queryVerifier`. El llegeix el verificador JS. |
-| `<air>.bin` | Bytecode `Fr` (*hints*, im pols, `Q`), dins del contenidor `"chps"`, amb una versió pròpia i constants de 32 bytes |
+| `<air>.bin` | Bytecode `Fr` del prover (im pols, `Q` i les expressions a què es refereixen els *hints*) i de depuració de restriccions, dins del contenidor `"chps"`, versió `0x7066_0001`, constants de 32 bytes *little-endian*. Vegeu "Format de `<air>.bin`", sota la taula (M11). |
 | `<air>.const` | Columnes fixes, fila per fila, en `Fr` canònic de 32 bytes *little-endian* |
 | `<air>.verkey.json` | Els commitments G1 dels `f_i` fixos de l'AIR, com a cadenes decimals `[x, y]`. Són els mateixos que a la vkey. |
 | `pilfflonk.srs.bin` | Contenidor binfile de rapidsnark, tipus `"pfsr"`, versió 1 (M6):<br>- **secció 1** (capçalera, 88 bytes): `u32 n8q = 32`, `q` (LE), `u32 n8r = 32`, `r` (LE), `u64 nG1` (entre 1 i `2^32−1`, el límit de la MSM), `u64 nG2 = 2`;<br>- **secció 2:** `[τ^i]₁` per a `i < nG1`, 64 bytes cadascun;<br>- **secció 3:** `[1]₂` i `[τ]₂`, 128 bytes cadascun (`Fq2` com a `c0‖c1`).<br>Els punts són afins `x‖y`, amb cada coordenada en Montgomery *little-endian*, copiats byte a byte de les seccions 2 i 3 del `ptau`. |
 | `pilfflonk.vkey.json` | **Autocontinguda,** com la `verification_key.json` de snarkjs: tot el que necessita el verificador.<br>`protocol` (`"pilfflonk"`), `curve` (`"bn128"`), `formatVersion`, `nPublic`, `power` (`nBits`), `powerW`, `X_2` (`[τ]₂`), `numChallenges`, `evMap`, `layout` (els `f_i` amb `stage`, `pols: [{id, name}]`, `k`, *offsets* i `degree`), `boundaries` (el `qVerifier` hi fa referència per índex), els commitments fixos (`f<i>`, per índex del *layout*), `qDeg`, `maxQDegree`, el `qVerifier` i `digest` (`0x` i 64 dígits hexadecimals; al transcript entra com a `digest mod r`, llegit *big-endian*). `X_2` és `[[x.c0, x.c1], [y.c0, y.c1]]`. L'ordre dels camps és el de `pilfflonk/src/vkey.rs` (M12).<br>Els enters grans i els punts, com a cadenes decimals. |
 | La prova (no és del `provingKey/`) | **Format equivalent a l'actual (D7):** bytes, com a `gen_final_snark_proof`, i una vista JSON d'estil snarkjs, com a `snark_proof_to_json`.<br>**Bytes, en ordre:**<br>- els commitments G1 (`x‖y`, 32+32 bytes *big-endian*) dels `f` no fixos, en l'ordre global (A.5);<br>- `W` i `W'`;<br>- les avaluacions (32 bytes *big-endian*): primer les fixes per AIR, després les de cada instància en l'ordre de l'`evMap`, i els `Q_i(ξ)` si `Q` està partit;<br>- els air values, els airgroup values i els proof values;<br>- `inv` i `invZh`, com a pil-fflonk.<br>**JSON:** `{"protocol": "pilfflonk", "curve": "bn128", "polynomials": {nom: [x, y, "1"]}, "evaluations": {nom: valor}}`, amb els noms de pil-fflonk (`f<i>`, `W`, `Wp`, `<pol>`, `<pol>w`) i la mateixa convenció estesa per als altres *offsets* i instàncies.<br>**Noms de les avaluacions (M12, `pilfflonk/src/names.rs`):** el nom de la columna al mapa, amb `[i]` per a cada entrada de `lengths`, i el sufix d'*offset*: res per a 0, `w` per a 1 i `w` seguit del decimal amb signe per a la resta (`w2`, `w-1`). Els trossos de `Q` partit (`Q0`, `Q1`, …) van al final. Amb diverses instàncies (després de la v1), els noms porten prefix: `<ag>.<a>:` per als fixos, `<ag>.<a>.<t>:` per als de cada instància i `<ag>:` per als airgroup values. Si dos noms col·lideixen, el setup ho rebutja.<br>**Diferència obligada:** els commitments fixos no hi són, perquè surten de la `verkey` (C.3.1). |
 | `publics.json` | Un array de cadenes decimals, en l'ordre de `publicsMap`, com a pil-fflonk i al *wrap* final |
+
+**Format de `<air>.bin` (revisió 1, M11; l'implementa `setup/pilfflonk/src/bytecode.rs`).** Contenidor binfile `"chps"` (el `BinFileWriter` de `pil-info`). Tots els enters són *little-endian*:
+
+```
+"chps" | version u32 = 0x7066_0001 ("pf" a la meitat alta, revisió 1 a la baixa) | nSections u32 = 4
+4 × { id u32, size u64, payload }, en l'ordre 1, 2, 3, 4
+```
+
+La versió és molt més gran que la del STARK (1), de manera que el lector STARK rebutja el fitxer. El `BinFile` de rapidsnark només compara la versió amb un màxim i no l'exposa; per això la secció 1 la repeteix, i el lector pilfflonk la compara per igualtat.
+- **Secció 1, capçalera:** `version u32` (la mateixa), `n8 u32 = 32` i `r` (32 bytes LE).
+- **Secció 2, expressions** (totes les de `expressionsCode`):
+  - `nExpressions`, `nOps`, `nConstants` i `maxTemps` (u32);
+  - per a cada expressió: `expId`, `stage`, `destType`, `destId`, `nTemps`, `result`, `opsOffset` i `nOps` (u32), i `line` (UTF-8 acabada en NUL);
+  - després, els `nOps` registres d'operació i les `nConstants` constants (32 bytes, `Fr` canònic LE);
+  - `destType` és l'`opType` del destí: 1 (`cm`) per a un im pol, amb `destId` = índex a `cmPolsMap`; 15 (`q`) per a `Q`; 2 (`tmp`) per a un valor. Si no és `cm`, `destId` = 0;
+  - `result` és el temporal que té el valor després de l'última operació; les operacions de cada entrada van just després de les de l'anterior.
+- **Secció 3, restriccions** (depuració, `pilfflonk check`): el mateix esquema, amb `stage`, `firstRow`, `lastRow` i `imPol` en lloc de `expId`, `stage`, `destType` i `destId`. La restricció val a les files `firstRow ≤ i < lastRow` (`everyRow` 0..N, `firstRow` 0..1, `lastRow` N−1..N, `everyFrame` offsetMin..N−offsetMax), i el codi en dona el numerador, que hi ha de valer 0.
+- **Secció 4, *hints*:** `nHints u32 = 0`. La Fase 1 no en té cap (§4.2.1), i el lector de la revisió 1 rebutja qualsevol altre valor.
+
+**Registre d'operació:** 8 × u32: `opcode dest aKind aIndex aOffset bKind bIndex bOffset`. `opcode`: 0 `add`, 1 `sub` (a − b), 2 `mul` (els codis del STARK) i 4 `copy` (b = 0 0 0, que no es llegeix). No hi ha dimensions ni `sub_swap` (3): tot és `Fr`. Els temporals els assigna `get_id_maps` de `pil-info`, i una operació pot escriure el temporal que llegeix.
+
+**Operand** `(kind, index, offset)`, amb `kind` = l'`opType` del C++. L'`offset` (fila relativa, i32) només és diferent de 0 per a les columnes:
+
+| kind | index |
+|---|---|
+| 0 `const` | `constPolsMap` |
+| 1 `cm` | `cmPolsMap` |
+| 2 `tmp` | temporal |
+| 3 `public` | `publicsMap` |
+| 4 `airgroupvalue` | `airgroupValuesMap` |
+| 5 `challenge` | `challengesMap` |
+| 6 `number` | constant de la secció |
+| 8 `airvalue` | `airValuesMap` |
+| 9 `proofvalue` | `proofValuesMap` |
+| 12 `Zi` | `boundaries` |
+| 13 `eval` | `evMap` (només en codi avaluat a ξ) |
+
+**Semàntica.** L'expressió de destí `q` s'avalua punt a punt sobre el *coset* estès; la resta, i les restriccions, sobre `H`. En un domini de `M = 2^e·N` punts, una columna a l'*offset* `o` es llegeix al punt `(i + 2^e·o) mod M`. `Zi` de la frontera 0 (`everyRow`) és `1/Z_H(X)`, i el d'una altra frontera `D` és `Z_H(X)/Z_D(X)` (A.1; per a `lastRow`, `X − ω^{N−1}`); el codi de `Q` acaba multiplicant per `Zi(everyRow)`. Les constants es codifiquen a partir de la cadena decimal, sense reduir (han de ser `< r`), una sola vegada per secció. La codificació és determinista.
 
 **El *digest*, normatiu.** Es calcula sobre la vkey:
 
@@ -1340,6 +1378,7 @@ Aquests problemes no bloquegen el backend nou, però han sortit durant l'anàlis
    - **Fuites de memòria a `Polynomial` (M7):** `divByMonic` no allibera ni l'objecte `polResult` (del qual es queda el buffer) ni `bArr` (`polynomial.c.hpp:425-426`); `lagrangePolynomialInterpolation` no allibera els polinomis de base per a `i ≥ 1`; `byXSubValue` no allibera el seu temporal. Afecta pilfflonk (uns 40–160 KB per polinomi obert i per prova) i també el `FflonkProver` del *wrap* final. Pendent de decisió de l'usuari: corregir-ho a rapidsnark o esquivar aquestes funcions.
    - **`final_snark_proof.hpp:160-168` (M12):** llegeix les coordenades G1 (que són de `Fq`) amb `AltBn128::Fr.fromRprBE`; una coordenada a `[r, q)` sortiria malament (probabilitat `≈ 2^-127`).
    - **`CodeRef` de `pil-info` (M12):** el seu `Deserialize` espera claus en *snake_case* i un `id` obligatori, però escriu `stageId`, `expId`…, i per tant no pot llegir el que escriu. La vkey guarda el `qVerifier` com a JSON opac.
+   - **L'encoder de bytecode STARK (M11, no verificat):** el registre de `copy` té 5 arguments u16, però `expressions_pack.hpp` en llegeix 8 per operació; i `bin_file.rs` converteix tots els arguments a u16 sense avisar, de manera que un índex `≥ 65536` es truncaria.
    - **ffjavascript 0.3.1 (M8):** `G1.sub(a, b)` amb `a` afí i `b` jacobià retorna `b − a` (`src/wasm_curve.js:104`, `op2("_subMixed", b, a)`). snarkjs no hi passa; el `computeF` de shplonkjs sí que hi passaria amb un sol `f`. El verificador JS de pilfflonk treballa en coordenades jacobianes per evitar-ho. A més, `Fr.e(v)` no redueix `v = p`, i per això els descodificadors comproven `< r` i `< q` ells mateixos.
    - **Altres casos límit de `Polynomial` (M7):** `lagrangePolynomialInterpolation` falla amb un sol punt; `divByMonic` escriu abans del buffer si el grau és menor que `m` i no comprova el residu; `add()` creix sense actualitzar la longitud; `sub()` desborda si l'altre polinomi és més llarg; `mulScalar`/`subScalar` no actualitzen el grau; `fixDegree` amb longitud 0 llegeix fora de límits; `divByZerofier` dona resultats incorrectes si hi ha menys fils que `n` i `n` no és potència de dos.
 

@@ -74,7 +74,8 @@ Aquesta secció és per als agents que implementen el pla. Es treballa a la bran
 | M9 | Feta | Extracció mecànica a `setup/pil-info`: la majoria de fitxers es mouen sense cap canvi; el STARK conserva `StarkStruct`, la validació, la fita de grau, `get_prover_memory` i el resum. `pil-info` no depèn de `pil2-stark-setup`. *Golden* 499/499. S'ha fet en un *worktree* propi i s'ha portat a la branca amb `cherry-pick`. |
 | M10 | Feta | `PilInfoCfg { field, degree_policy, opening }` (`pil-info/src/cfg.rs`), `pil_info::run` per a M16. Goldilocks: dimensió 3, `FromBlowup`, FRI; BN254: dimensió 1, `Search { max: 9 }`, sense FRI ni trossos de `Q` a l'`evMap`. Desempat de la cerca: el grau més baix, com pil-stark (spec A.1). *Golden* 499/499. Per a M16: el `cmPolsMap` encara té els `Q0..Q{qDeg−1}` del STARK, i `qDim` = 1. Per a M11: les constants s'han de codificar a partir de les cadenes decimals. |
 | M12 | Feta | `proofman-pilfflonk`: `PilfflonkGlobalInfo`, `PilfflonkInfo` + `Layout`, `AirVerkey`, `Vkey` (autocontinguda; preimatge del *digest* en JSON canònic), `Proof` (bytes i JSON) i `Publics`, validats en llegir i en escriure. Lector C++ `PilFflonk::PilfflonkInfo`. Troballes: `serde_json` té `preserve_order` activat al *workspace* (el JSON canònic ordena explícitament); la vkey necessita `boundaries`; l'SRS necessita el `degree` màxim, no el màxim més 1 (spec A.6 actualitzada). Per a M15: `Vkey::new(...).seal(keccak256)` i l'accessor de `[τ]₂`. |
-| M11 | En curs | |
+| M11 | Feta | Format de `<air>.bin` revisió 1 (spec A.6) i `setup/pilfflonk/src/bytecode.rs`: `write_air_bin(&PilInfoResult, path)`, lector estricte, *fixture* `setup/pilfflonk/tests/fixtures/bytecode/Sample.bin` per al test creuat amb M17. Anada i tornada del Fibonacci compilat i de codi amb constants de 254 bits. Per a M16: els `Q0..Q{qDeg−1}` del `cmPolsMap` no els fa servir cap operand. |
+| M17 | En curs | |
 
 ---
 
