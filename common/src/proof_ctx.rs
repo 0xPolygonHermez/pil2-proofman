@@ -639,7 +639,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         Ok(())
     }
 
-    /// Basic proof alone: the whole cost only for tables, which trigger no recursion
+    /// Basic proof alone; the recursion chain and the compressor are booked apart
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
@@ -931,16 +931,19 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight, priority)
     }
 
+    /// Booked like an instance: a table's proof runs the same recursion chain.
     pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_table(airgroup_id, air_id, weight)
+        let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
+        let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        dctx.add_table(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn add_table_all(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_table_all(airgroup_id, air_id, weight)
+        let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
+        let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        dctx.add_table_all(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn assign_table_to(&self, airgroup_id: usize, air_id: usize, gid: usize) -> ProofmanResult<()> {
