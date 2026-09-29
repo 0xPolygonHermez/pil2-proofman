@@ -21,6 +21,8 @@ extern "C" {
 
     pub fn pilfflonk_fr_check_canonical(scalar: *const u8) -> ::std::os::raw::c_int;
 
+    pub fn pilfflonk_keccak256(data: *const u8, len: u64, out: *mut u8) -> ::std::os::raw::c_int;
+
     pub fn pilfflonk_transcript_new() -> *mut ::std::os::raw::c_void;
 
     pub fn pilfflonk_transcript_free(transcript: *mut ::std::os::raw::c_void);
@@ -44,6 +46,8 @@ extern "C" {
     pub fn pilfflonk_srs_load(srs_path: *const ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
 
     pub fn pilfflonk_srs_free(srs: *mut ::std::os::raw::c_void);
+
+    pub fn pilfflonk_srs_g2(srs: *const ::std::os::raw::c_void, i: u64, out_g2: *mut u8) -> ::std::os::raw::c_int;
 
     pub fn pilfflonk_commit_fixed(
         srs: *const ::std::os::raw::c_void,

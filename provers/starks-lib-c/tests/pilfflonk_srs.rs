@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use proofman_starks_lib_c::{
     pilfflonk_srs_from_ptau_c, PilFflonkErrorKind, PilFflonkSrs, PILFFLONK_FR_BYTES, PILFFLONK_G1_BYTES,
+    PILFFLONK_G2_BYTES,
 };
 
 /// 32 bytes from 64 hex digits in byte order: little-endian as they are written.
@@ -160,6 +161,37 @@ fn commits_fixed_columns_with_a_tau_one_srs() {
     }
     // Using an SRS only reads it: again, the same.
     assert_eq!(srs.commit_fixed(2, 1, &evals(&[&[1, 7, 8, 9]])).unwrap(), point(P1));
+}
+
+/// The generator of G2, canonical big-endian coordinates `x.c0, x.c1, y.c0, y.c1`, as every
+/// BN254 library writes them.
+const G2_CANONICAL: [&str; 4] = [
+    "1800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed",
+    "198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c2",
+    "12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa",
+    "090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b",
+];
+
+#[test]
+fn gives_the_g2_powers_canonical() {
+    let dir = TestDir::new("g2");
+    let ptau = dir.file("tau_one.ptau");
+    let srs_path = dir.file("pilfflonk.srs.bin");
+    fs::write(&ptau, ptau_of_tau_one(4)).unwrap();
+    pilfflonk_srs_from_ptau_c(&ptau, 4, &srs_path).unwrap();
+    let srs = PilFflonkSrs::load(&srs_path).unwrap();
+
+    // With τ = 1, [1]₂ and [τ]₂ are both the generator.
+    let mut generator = [0u8; PILFFLONK_G2_BYTES];
+    for (chunk, coordinate) in generator.chunks_exact_mut(32).zip(G2_CANONICAL) {
+        chunk.copy_from_slice(&from_hex(coordinate));
+    }
+    assert_eq!(srs.g2(0).unwrap(), generator);
+    assert_eq!(srs.g2(1).unwrap(), generator);
+
+    let err = srs.g2(2).unwrap_err();
+    assert_eq!(err.kind, PilFflonkErrorKind::InvalidArgument, "{err}");
+    assert!(err.message.contains("pilfflonk_srs_g2: i = 2"), "{err}");
 }
 
 #[test]

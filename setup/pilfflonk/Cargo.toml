@@ -9,13 +9,23 @@ homepage = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 
+[features]
+# `pilfflonk_setup::test_ptau`: a powers-of-tau file with τ = 1 (plan N13). For tests only: nothing
+# but tests turns it on, this crate's through the dev-dependency on itself below.
+test-ptau = []
+
 [dependencies]
 thiserror = { workspace = true }
 anyhow = { workspace = true }
+num-bigint = { workspace = true }
+prost = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+pil2-pilout = { workspace = true }
 pil-info = { workspace = true }
 proofman-pilfflonk = { workspace = true }
+proofman-starks-lib-c = { workspace = true }
 
 [dev-dependencies]
-num-bigint = { workspace = true }
-pil2-pilout = { workspace = true }
-serde_json = { workspace = true }
+# Turns the test ptau on for the tests of this crate.
+pilfflonk-setup = { path = ".", features = ["test-ptau"] }

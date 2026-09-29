@@ -16,6 +16,7 @@
 #include "alt_bn128.hpp"
 #include "pilfflonk_api.hpp"
 #include "pilfflonk_error.hpp"
+#include "pilfflonk_fr.hpp"
 #include "pilfflonk_srs.hpp"
 #include "pilfflonk_test_ptau.hpp"
 
@@ -471,6 +472,40 @@ void expectLoadFails(const char *path, int expected, const char *text) {
     assert(lastErrorMentions("pilfflonk_srs_load"));
 }
 
+// pilfflonk_srs_g2 on an SRS of the test ptau: [1]₂ and [τ]₂, canonical, in the vkey's order.
+void testG2Api(const void *srs) {
+    constexpr size_t N_COORDINATES = PilFflonk::SRS_G2_BYTES / PilFflonk::FQ_BYTES;
+    uint8_t out[PilFflonk::SRS_G2_BYTES];
+
+    // [1]₂: the generator's x.c0, x.c1, y.c0, y.c1, as every BN254 library writes them, in hex.
+    const Bytes32 generator[N_COORDINATES] = {
+        Bytes32("1800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed"),
+        Bytes32("198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c2"),
+        Bytes32("12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa"),
+        Bytes32("090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b"),
+    };
+    expectOk(pilfflonk_srs_g2(srs, 0, out));
+    for (size_t c = 0; c < N_COORDINATES; ++c) {
+        assert(std::memcmp(out + c * PilFflonk::FQ_BYTES, generator[c].bytes, PilFflonk::FQ_BYTES) == 0);
+    }
+
+    // [τ]₂: each coordinate canonical, and the one of τ·G2.
+    expectOk(pilfflonk_srs_g2(srs, 1, out));
+    const G2PointAffine tau = g2Times(testTau());
+    const Engine::F1Element expected[N_COORDINATES] = {tau.x.a, tau.x.b, tau.y.a, tau.y.b};
+    for (size_t c = 0; c < N_COORDINATES; ++c) {
+        const uint8_t *coordinate = out + c * PilFflonk::FQ_BYTES;
+        assert(PilFflonk::isCanonicalFq(coordinate));
+        Engine::F1Element decoded;
+        E.f1.fromRprLE(decoded, coordinate, PilFflonk::FQ_BYTES);
+        assert(E.f1.eq(decoded, expected[c]));
+    }
+
+    expectStatus(pilfflonk_srs_g2(srs, 2, out), PILFFLONK_ERR_INVALID_ARGUMENT, "pilfflonk_srs_g2: i = 2");
+    expectStatus(pilfflonk_srs_g2(nullptr, 0, out), PILFFLONK_ERR_INVALID_ARGUMENT, "srs is NULL");
+    expectStatus(pilfflonk_srs_g2(srs, 0, nullptr), PILFFLONK_ERR_INVALID_ARGUMENT, "out_g2 is NULL");
+}
+
 void testApi() {
     TestDir dir;
     const std::string ptau = dir.file("api.ptau");
@@ -504,6 +539,7 @@ void testApi() {
     const Srs &loaded = *static_cast<const Srs *>(handle);
     assert(loaded.nG1() == 64 && identical(loaded.g1(0), g1Generator()));
     assert(identical(loaded.g1(63), g1Times(power(testTau(), 63))) && identical(loaded.g2(1), g2Times(testTau())));
+    testG2Api(handle);
 
     // Freeing clears the last error, like every other call.
     expectLoadFails(missing.c_str(), PILFFLONK_ERR_IO, "open");

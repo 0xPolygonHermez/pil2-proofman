@@ -452,6 +452,7 @@ El setup és una seqüència de passos. Tots són funcions pures amb tests propi
 Es descodifica el `pilout` i el setup s'atura amb un error clar en qualsevol d'aquests casos:
 - el `baseField` no és el `r` de BN254;
 - hi ha custom commits, periodic columns o public tables;
+- hi ha més d'una AIR, air values, airgroup values, proof values o restriccions globals (D2: fora d'abast);
 - hi ha un *hint* de prover desconegut. Els *hints* de witness i de depuració de la llista de §3.4 s'ignoren de manera explícita;
 - alguna columna de l'stage 2 o superior no la produeix cap *hint* suportat;
 - alguna constant és `≥ r`;
@@ -750,6 +751,8 @@ int   pilfflonk_evaluate(void* ctx, void** insts, uint64_t n, const uint8_t xi_s
 int   pilfflonk_open(void* ctx, void** insts, uint64_t n, void* t, uint8_t* out_w_wp);
 int   pilfflonk_last_status(void);                                         // estat de l'última crida d'aquest fil
 int   pilfflonk_srs_from_ptau(const char* ptau_path, uint64_t n_g1, const char* srs_path); // setup
+int   pilfflonk_srs_g2(const void* srs, uint64_t i, uint8_t out_g2[128]);     // [1]₂ o [τ]₂, canònic x.c0‖x.c1‖y.c0‖y.c1 (M15)
+int   pilfflonk_keccak256(const uint8_t* data, uint64_t len, uint8_t out[32]); // el keccak_wrapper de rapidsnark (M15, N10)
 void* pilfflonk_srs_load(const char* srs_path);                            // NULL si falla; pilfflonk_last_status en diu el motiu
 void  pilfflonk_srs_free(void* srs);
 int   pilfflonk_commit_fixed(const void* srs, uint64_t n_bits, uint64_t k,

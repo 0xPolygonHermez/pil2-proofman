@@ -4,12 +4,15 @@
 #include <cinttypes>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <new>
 #include <stdexcept>
 #include <vector>
 
+#include "keccak_wrapper.hpp"
 #include "pilfflonk_commit.hpp"
 #include "pilfflonk_error.hpp"
 #include "pilfflonk_fr.hpp"
@@ -158,6 +161,18 @@ void decodeCanonicalFr(const uint8_t *bytes, uint64_t n, PilFflonk::FrElement *o
     }
 }
 
+// Writes an affine G2 point of the SRS (Montgomery form) as x.c0‖x.c1‖y.c0‖y.c1, each coordinate
+// canonical little-endian.
+void encodeG2(const PilFflonk::G2PointAffine &point, uint8_t out[PilFflonk::SRS_G2_BYTES]) {
+    AltBn128::Engine &E = AltBn128::Engine::engine;
+    // toRprLE writes only the significant bytes.
+    std::memset(out, 0, PilFflonk::SRS_G2_BYTES);
+    E.f1.toRprLE(point.x.a, out, PilFflonk::FQ_BYTES);
+    E.f1.toRprLE(point.x.b, out + PilFflonk::FQ_BYTES, PilFflonk::FQ_BYTES);
+    E.f1.toRprLE(point.y.a, out + 2 * PilFflonk::FQ_BYTES, PilFflonk::FQ_BYTES);
+    E.f1.toRprLE(point.y.b, out + 3 * PilFflonk::FQ_BYTES, PilFflonk::FQ_BYTES);
+}
+
 } // namespace
 
 const char *pilfflonk_last_error(void) {
@@ -176,6 +191,30 @@ int pilfflonk_fr_check_canonical(const uint8_t scalar[32]) {
         }
         if (!PilFflonk::isCanonicalFr(scalar)) {
             return fail(PILFFLONK_ERR_NON_CANONICAL, function, "scalar is not below the BN254 scalar modulus r");
+        }
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_keccak256(const uint8_t *data, uint64_t len, uint8_t out[32]) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (out == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out is NULL");
+        }
+        if (data == nullptr && len != 0) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "data is NULL");
+        }
+        // keccak() takes the size as an int64_t.
+        if (len > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "len = %" PRIu64 " exceeds 2^63 - 1", len);
+        }
+        // keccak() only reads its input, although it takes it as non-const; with len = 0 it reads
+        // nothing, so any pointer will do.
+        uint8_t nothing = 0;
+        void *input = data == nullptr ? &nothing : const_cast<uint8_t *>(data);
+        if (keccak(input, static_cast<int64_t>(len), out, 32) != 32) {
+            return fail(PILFFLONK_ERR_INTERNAL, function, "keccak_wrapper refused a 32-byte output");
         }
         return static_cast<int>(PILFFLONK_OK);
     });
@@ -284,6 +323,24 @@ void *pilfflonk_srs_load(const char *srs_path) {
 void pilfflonk_srs_free(void *srs) {
     clearLastError();
     delete static_cast<PilFflonk::Srs *>(srs);
+}
+
+int pilfflonk_srs_g2(const void *srs, uint64_t i, uint8_t out_g2[128]) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (srs == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "srs is NULL");
+        }
+        if (out_g2 == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out_g2 is NULL");
+        }
+        if (i >= PilFflonk::Srs::N_G2) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function,
+                        "i = %" PRIu64 ": an SRS holds [1]₂ (i = 0) and [τ]₂ (i = 1) only", i);
+        }
+        encodeG2(static_cast<const PilFflonk::Srs *>(srs)->g2(i), out_g2);
+        return static_cast<int>(PILFFLONK_OK);
+    });
 }
 
 int pilfflonk_commit_fixed(const void *srs, uint64_t n_bits, uint64_t k, const uint8_t *evals, uint8_t out_g1[64]) {

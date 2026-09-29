@@ -16,6 +16,11 @@ pub const PILFFLONK_FR_BYTES: usize = 32;
 /// integer of 32 bytes.
 pub const PILFFLONK_G1_BYTES: usize = 64;
 
+/// Size of a G2 point at the C API: affine `x‖y`, each coordinate an `Fq2` element `c0 + c1·u`
+/// written `c0‖c1`, and each of the four `Fq` values a canonical (< q) little-endian integer of 32
+/// bytes: `x.c0‖x.c1‖y.c0‖y.c1`.
+pub const PILFFLONK_G2_BYTES: usize = 128;
+
 /// The status code of a failed pilfflonk call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PilFflonkErrorKind {
@@ -97,6 +102,17 @@ fn c_path(function: &str, path: &Path) -> Result<CString, PilFflonkError> {
 pub fn pilfflonk_fr_check_canonical_c(scalar: &[u8; PILFFLONK_FR_BYTES]) -> Result<(), PilFflonkError> {
     // SAFETY: `scalar` points to the 32 bytes the function reads.
     check_status(unsafe { pilfflonk_fr_check_canonical(scalar.as_ptr()) })
+}
+
+/// The Keccak-256 hash of `data` (Keccak's original padding, as Ethereum and snarkjs use it, not
+/// SHA3-256): rapidsnark's `keccak_wrapper`, the hash of the transcript (spec A.4) and of the
+/// vkey's digest (A.6).
+pub fn pilfflonk_keccak256_c(data: &[u8]) -> Result<[u8; 32], PilFflonkError> {
+    let mut hash = [0u8; 32];
+    // SAFETY: `data` holds the `data.len()` bytes the call reads, and `hash` has the 32 bytes it
+    // writes.
+    check_status(unsafe { pilfflonk_keccak256(data.as_ptr(), data.len() as u64, hash.as_mut_ptr()) })?;
+    Ok(hash)
 }
 
 /// The Fiat-Shamir transcript of a proof (spec A.4), owned by the C++ side: rapidsnark's
@@ -184,6 +200,16 @@ impl PilFflonkSrs {
         // NULL or a handle this value then owns.
         let handle = unsafe { pilfflonk_srs_load(path.as_ptr()) };
         NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
+    }
+
+    /// `[τ^i]₂` for `i` = 0 (`[1]₂`) or 1 (`[τ]₂`), as [`PILFFLONK_G2_BYTES`] describes: the points of
+    /// the verifier's pairing (spec A.5), and `[τ]₂` the vkey's `X_2` (A.6). Fails with
+    /// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) for any other `i`.
+    pub fn g2(&self, i: u64) -> Result<[u8; PILFFLONK_G2_BYTES], PilFflonkError> {
+        let mut point = [0u8; PILFFLONK_G2_BYTES];
+        // SAFETY: `point` has the 128 bytes the call writes, and the handle is live.
+        check_status(unsafe { pilfflonk_srs_g2(self.handle.as_ptr(), i, point.as_mut_ptr()) })?;
+        Ok(point)
     }
 
     /// The KZG commitment `[f(τ)]₁` of a fixed `f(X) = Σ_{j<k} p_j(X^k)·X^j` (spec §4.2.5), where
@@ -362,6 +388,32 @@ mod tests {
             }
         });
         assert_eq!(challenges, PINNED.map(from_hex));
+    }
+
+    /// 32 bytes from 64 hex digits in the order they are written: a hash as Keccak outputs it.
+    fn hash(hex: &str) -> [u8; 32] {
+        let mut bytes = from_hex(hex);
+        bytes.reverse();
+        bytes
+    }
+
+    /// Keccak-256, not SHA3-256: "" and "abc" are the published vectors; the others, bytes `i mod
+    /// 256` of the lengths around the rate (136 bytes), are those of @noble/hashes' `keccak_256`, an
+    /// implementation independent of this one. The C++ test pins the same ones.
+    #[test]
+    fn keccak256_gives_the_pinned_hashes() {
+        let counting: Vec<u8> = (0..272u32).map(|i| i as u8).collect();
+        let vectors: [(&[u8], &str); 6] = [
+            (b"", "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
+            (b"abc", "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45"),
+            (&counting[..135], "cbdfd9dee5faad3818d6b06f95a219fd290b0e1706f6a82e5a595b9ce9faca62"),
+            (&counting[..136], "7ce759f1ab7f9ce437719970c26b0a66ff11fe3e38e17df89cf5d29c7d7f807e"),
+            (&counting[..137], "ac73d4fae68b8453f764007c1a20ce95994187861f0c3227a3a8e99a73a3b1db"),
+            (&counting, "fdf2ec49e749960d3c8521a0219af8d03e30e2b3bf19bd16150ee0eaf133d66e"),
+        ];
+        for (data, expected) in vectors {
+            assert_eq!(pilfflonk_keccak256_c(data).unwrap(), hash(expected), "{} bytes", data.len());
+        }
     }
 
     #[test]

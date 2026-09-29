@@ -7,6 +7,8 @@ use pil2_stark_setup::commands::stats::{self as stats_cmd, StatsOptions};
 use pil2_stark_setup::commands::setup_compressed_final::{self as compressed_final_cmd, SetupCompressedFinalOptions};
 use pil2_stark_setup::commands::setup_recursive_test::{self as recursive_test_cmd, SetupRecursiveTestOptions};
 use pil2_stark_setup::commands::setup_snark::{self as snark_cmd, SetupSnarkOptions};
+use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE};
+use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 
 // Uses the default system allocator (glibc malloc). After each AIR,
 // setup_cmd calls malloc_trim(0) to return freed pages to the OS and
@@ -27,6 +29,9 @@ enum Commands {
     Stats(StatsArgs),
     /// Generate final SNARK setup (recursivef + fflonk/plonk final).
     SetupSnark(SetupSnarkArgs),
+    /// Set up a BN254 pilout for the pilfflonk backend (one AIR, one instance): write its
+    /// provingKey/.
+    SetupPilfflonk(SetupPilfflonkArgs),
     /// Run only the `vadcop_final_compressed` stage on top of an existing
     /// provingKey/<name>/vadcop_final/. Useful for iterating on this stage.
     SetupCompressedFinal(SetupCompressedFinalArgs),
@@ -181,6 +186,38 @@ struct SetupSnarkArgs {
     /// Only generate the recursivef step; skip the final SNARK
     #[arg(long)]
     only_recursive_final: bool,
+}
+
+#[derive(Parser)]
+struct SetupPilfflonkArgs {
+    /// Path to the compiled .pilout file, over BN254
+    #[arg(short = 'a', long)]
+    airout: String,
+
+    /// Build output directory: the provingKey/ goes in it
+    #[arg(short = 'b', long)]
+    build_dir: String,
+
+    /// Powers-of-tau (.ptau) file, as snarkjs writes it. Only its powers [τ^i]₁ and [τ]₂ are
+    /// read; it need not be prepared for phase 2
+    #[arg(long)]
+    powers_of_tau: String,
+
+    /// Largest constraint degree the intermediate-polynomial search tries, from 2
+    #[arg(long, default_value_t = DEFAULT_MAX_CONSTRAINT_DEGREE)]
+    max_constraint_degree: u64,
+
+    /// Extra scalar multiplications the fflonk grouping may spend to split its groups
+    #[arg(long, default_value_t = DEFAULT_EXTRA_MULS)]
+    extra_muls: u64,
+
+    /// Split Q into pieces of this degree; 0 does not split it
+    #[arg(long, default_value_t = DEFAULT_MAX_Q_DEGREE)]
+    max_q_degree: u64,
+
+    /// Pack no polynomials together: k = 1 in every f (for tests)
+    #[arg(long)]
+    no_packing: bool,
 }
 
 #[derive(Parser)]
@@ -441,6 +478,23 @@ fn main() -> anyhow::Result<()> {
                 only_recursive_final: args.only_recursive_final,
             };
             snark_cmd::run_setup_snark(&opts)
+        }
+
+        Commands::SetupPilfflonk(args) => {
+            tracing::info!("proofman-setup setup-pilfflonk: starting");
+            tracing::info!("  airout: {}", args.airout);
+            tracing::info!("  build_dir: {}", args.build_dir);
+            tracing::info!("  powers_of_tau: {}", args.powers_of_tau);
+            let opts = SetupPilfflonkOptions {
+                airout_path: args.airout.into(),
+                build_dir: args.build_dir.into(),
+                powers_of_tau: args.powers_of_tau.into(),
+                max_constraint_degree: args.max_constraint_degree,
+                extra_muls: args.extra_muls,
+                max_q_degree: args.max_q_degree,
+                no_packing: args.no_packing,
+            };
+            run_setup_pilfflonk(&opts)
         }
 
         Commands::SetupCompressedFinal(args) => {

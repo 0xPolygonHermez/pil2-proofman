@@ -1258,9 +1258,11 @@ dependencies = [
  "pil-info",
  "pil2-pilout",
  "pil2-stark-recurser",
+ "pilfflonk-setup",
  "proofman-common",
  "proofman-exps-codegen",
  "proofman-fields",
+ "proofman-pilfflonk",
  "proofman-starks-lib-c",
  "proofman-util",
  "prost",
@@ -1298,9 +1300,13 @@ dependencies = [
  "num-bigint",
  "pil-info",
  "pil2-pilout",
+ "pilfflonk-setup",
  "proofman-pilfflonk",
+ "proofman-starks-lib-c",
+ "prost",
  "serde_json",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
