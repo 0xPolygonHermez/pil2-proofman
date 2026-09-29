@@ -119,14 +119,23 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
-    /// Write an executable fake-npm shell script and return its path.
+    /// A child another test forks while a script is still open for writing keeps that fd until its
+    /// own exec, and running the script meanwhile fails with ETXTBSY: tests that run npm take turns.
+    static NPM_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn npm_turn() -> std::sync::MutexGuard<'static, ()> {
+        NPM_TESTS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Write an executable fake-npm shell script and return its path, holding the npm turn.
     /// The script runs with cwd set to the install root and appends a line to
     /// `runs.log` there, so tests can assert how many times npm was invoked.
-    fn fake_npm(dir: &Path, extra: &str) -> String {
+    fn fake_npm(dir: &Path, extra: &str) -> (String, std::sync::MutexGuard<'static, ()>) {
+        let turn = npm_turn();
         let p = dir.join("fake-npm.sh");
         std::fs::write(&p, format!("#!/bin/sh\necho run >> runs.log\n{extra}\n")).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-        p.to_string_lossy().into_owned()
+        (p.to_string_lossy().into_owned(), turn)
     }
 
     fn npm_runs(root: &Path) -> usize {
@@ -158,7 +167,7 @@ mod tests {
     fn cache_bootstrap_writes_manifest_and_installs() {
         let tmp = tempfile::tempdir().unwrap();
         let cache = tmp.path().join("cache");
-        let npm = fake_npm(tmp.path(), "mkdir -p node_modules/.bin && touch node_modules/.bin/pil2com");
+        let (npm, _turn) = fake_npm(tmp.path(), "mkdir -p node_modules/.bin && touch node_modules/.bin/pil2com");
 
         let got = ensure_cache_deps(&cache, "{\"v\":1}", &npm, ".bin/pil2com").unwrap();
         assert_eq!(got, cache);
@@ -174,7 +183,7 @@ mod tests {
         std::fs::create_dir_all(cache.join("node_modules/.bin")).unwrap();
         std::fs::write(cache.join("node_modules/.bin/pil2com"), "").unwrap();
         std::fs::write(cache.join("package.json"), "{\"v\":1}").unwrap();
-        let npm = fake_npm(tmp.path(), "");
+        let (npm, _turn) = fake_npm(tmp.path(), "");
 
         let got = ensure_cache_deps(&cache, "{\"v\":1}", &npm, ".bin/pil2com").unwrap();
         assert_eq!(got, cache);
@@ -189,7 +198,7 @@ mod tests {
         std::fs::write(cache.join("node_modules/.bin/pil2com"), "").unwrap();
         std::fs::write(cache.join("package.json"), "{\"v\":1}").unwrap();
         std::fs::write(cache.join("package-lock.json"), "{}").unwrap();
-        let npm = fake_npm(tmp.path(), "mkdir -p node_modules/.bin && touch node_modules/.bin/pil2com");
+        let (npm, _turn) = fake_npm(tmp.path(), "mkdir -p node_modules/.bin && touch node_modules/.bin/pil2com");
 
         let got = ensure_cache_deps(&cache, "{\"v\":2}", &npm, ".bin/pil2com").unwrap();
         assert_eq!(got, cache);
@@ -203,7 +212,7 @@ mod tests {
     fn cache_fails_when_npm_fails() {
         let tmp = tempfile::tempdir().unwrap();
         let cache = tmp.path().join("cache");
-        let npm = fake_npm(tmp.path(), "exit 1");
+        let (npm, _turn) = fake_npm(tmp.path(), "exit 1");
         assert!(ensure_cache_deps(&cache, "{}", &npm, ".bin/pil2com").is_none());
     }
 
@@ -213,6 +222,7 @@ mod tests {
     #[test]
     #[ignore]
     fn real_npm_bootstrap_of_embedded_manifest() {
+        let _turn = npm_turn();
         let tmp = tempfile::tempdir().unwrap();
         let cache = tmp.path().join("node-deps");
         let got = ensure_cache_deps(&cache, EMBEDDED_PACKAGE_JSON, "npm", ".bin/pil2com").unwrap();
@@ -225,7 +235,7 @@ mod tests {
     fn cache_fails_when_npm_does_not_produce_probe() {
         let tmp = tempfile::tempdir().unwrap();
         let cache = tmp.path().join("cache");
-        let npm = fake_npm(tmp.path(), "");
+        let (npm, _turn) = fake_npm(tmp.path(), "");
         assert!(ensure_cache_deps(&cache, "{}", &npm, ".bin/pil2com").is_none());
     }
 }
