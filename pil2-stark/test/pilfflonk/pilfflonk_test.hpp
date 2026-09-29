@@ -38,6 +38,7 @@ void runLdeTests();
 void runSrsTests();
 void runCommitTests();
 void runShplonkTests();
+void runInfoTests();
 
 } // namespace PilFflonkTest
 

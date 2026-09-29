@@ -1488,6 +1488,10 @@ dependencies = [
 name = "proofman-pilfflonk"
 version = "1.4.0-alpha"
 dependencies = [
+ "num-bigint",
+ "proofman-common",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

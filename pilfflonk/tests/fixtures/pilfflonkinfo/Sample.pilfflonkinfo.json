@@ -1,0 +1,346 @@
+{
+ "name": "Sample",
+ "airgroupId": 0,
+ "airId": 0,
+ "nBits": 4,
+ "nStages": 2,
+ "nConstants": 3,
+ "cmPolsMap": [
+  {
+   "stage": 1,
+   "name": "Sample.a",
+   "dim": 1,
+   "polsMapId": 0,
+   "stageId": 0,
+   "stagePos": 0
+  },
+  {
+   "stage": 1,
+   "name": "Sample.b",
+   "dim": 1,
+   "polsMapId": 1,
+   "stageId": 1,
+   "stagePos": 1
+  },
+  {
+   "stage": 1,
+   "name": "Sample.c",
+   "dim": 1,
+   "polsMapId": 2,
+   "stageId": 2,
+   "lengths": [
+    0
+   ],
+   "stagePos": 2
+  },
+  {
+   "stage": 1,
+   "name": "Sample.c",
+   "dim": 1,
+   "polsMapId": 3,
+   "stageId": 3,
+   "lengths": [
+    1
+   ],
+   "stagePos": 3
+  },
+  {
+   "stage": 2,
+   "name": "Sample.gsum",
+   "dim": 1,
+   "polsMapId": 4,
+   "stageId": 0,
+   "stagePos": 0
+  },
+  {
+   "stage": 2,
+   "name": "Sample.im",
+   "dim": 1,
+   "polsMapId": 5,
+   "stageId": 1,
+   "imPol": true,
+   "expId": 3,
+   "stagePos": 1
+  },
+  {
+   "stage": 3,
+   "name": "Q0",
+   "dim": 1,
+   "polsMapId": 6,
+   "stageId": 0,
+   "stagePos": 0
+  }
+ ],
+ "constPolsMap": [
+  {
+   "stage": 0,
+   "name": "Sample.L1",
+   "dim": 1,
+   "polsMapId": 0,
+   "stageId": 0,
+   "stagePos": 0
+  },
+  {
+   "stage": 0,
+   "name": "Sample.C",
+   "dim": 1,
+   "polsMapId": 1,
+   "stageId": 1,
+   "lengths": [
+    0
+   ],
+   "stagePos": 1
+  },
+  {
+   "stage": 0,
+   "name": "Sample.C",
+   "dim": 1,
+   "polsMapId": 2,
+   "stageId": 2,
+   "lengths": [
+    1
+   ],
+   "stagePos": 2
+  }
+ ],
+ "challengesMap": [
+  {
+   "name": "std_alpha",
+   "stage": 2,
+   "dim": 1,
+   "stageId": 0
+  },
+  {
+   "name": "std_gamma",
+   "stage": 2,
+   "dim": 1,
+   "stageId": 1
+  },
+  {
+   "name": "std_vc",
+   "stage": 3,
+   "dim": 1,
+   "stageId": 0
+  },
+  {
+   "name": "std_xi",
+   "stage": 4,
+   "dim": 1,
+   "stageId": 0
+  }
+ ],
+ "airValuesMap": [
+  {
+   "name": "Sample.av",
+   "stage": 1
+  }
+ ],
+ "airgroupValuesMap": [
+  {
+   "name": "Sample.gsum_result",
+   "stage": 2
+  }
+ ],
+ "mapSectionsN": {
+  "cm1": 4,
+  "cm2": 2,
+  "cm3": 1,
+  "const": 3
+ },
+ "openingPoints": [
+  -1,
+  0,
+  1
+ ],
+ "boundaries": [
+  {
+   "name": "everyRow"
+  },
+  {
+   "name": "firstRow"
+  },
+  {
+   "name": "everyFrame",
+   "offsetMin": 1,
+   "offsetMax": 2
+  }
+ ],
+ "evMap": [
+  {
+   "type": "cm",
+   "id": 4,
+   "prime": -1,
+   "openingPos": 0
+  },
+  {
+   "type": "cm",
+   "id": 5,
+   "prime": -1,
+   "openingPos": 0
+  },
+  {
+   "type": "const",
+   "id": 0,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "const",
+   "id": 1,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "const",
+   "id": 2,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 0,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 1,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 2,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 3,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 4,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 5,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 0,
+   "prime": 1,
+   "openingPos": 2
+  },
+  {
+   "type": "cm",
+   "id": 1,
+   "prime": 1,
+   "openingPos": 2
+  }
+ ],
+ "qDeg": 2,
+ "qDim": 1,
+ "maxQDegree": 0,
+ "cExpId": 7,
+ "layout": [
+  {
+   "stage": 0,
+   "pols": [
+    {
+     "id": 0,
+     "name": "Sample.L1"
+    },
+    {
+     "id": 1,
+     "name": "Sample.C[0]"
+    },
+    {
+     "id": 2,
+     "name": "Sample.C[1]"
+    }
+   ],
+   "k": 3,
+   "offsets": [
+    0
+   ],
+   "degree": 50
+  },
+  {
+   "stage": 1,
+   "pols": [
+    {
+     "id": 0,
+     "name": "Sample.a"
+    },
+    {
+     "id": 1,
+     "name": "Sample.b"
+    }
+   ],
+   "k": 2,
+   "offsets": [
+    0,
+    1
+   ],
+   "degree": 39
+  },
+  {
+   "stage": 1,
+   "pols": [
+    {
+     "id": 2,
+     "name": "Sample.c[0]"
+    },
+    {
+     "id": 3,
+     "name": "Sample.c[1]"
+    }
+   ],
+   "k": 2,
+   "offsets": [
+    0
+   ],
+   "degree": 37
+  },
+  {
+   "stage": 2,
+   "pols": [
+    {
+     "id": 4,
+     "name": "Sample.gsum"
+    },
+    {
+     "id": 5,
+     "name": "Sample.im"
+    }
+   ],
+   "k": 2,
+   "offsets": [
+    -1,
+    0
+   ],
+   "degree": 39
+  },
+  {
+   "stage": 3,
+   "pols": [
+    {
+     "id": 6,
+     "name": "Q0"
+    }
+   ],
+   "k": 1,
+   "offsets": [
+    0
+   ],
+   "degree": 39
+  }
+ ]
+}

@@ -57,6 +57,7 @@ Aquesta secció és per als agents que implementen el pla. Es treballa a la bran
 | Referències JS | - La còpia retallada de pil-stark i shplonkjs és a `../pil-stark`. **Només es llegeix**, per adaptar-ne el verificador (D8) i portar-ne l'agrupació.<br>- El JS de pil2-proofman serà el compilador PIL2 (`pil2com`) i, a partir de M8, el verificador `pilfflonk/js/`. `ffjavascript` 0.3.1 i `@noble/hashes` ja són a `setup/pil2-stark/node_modules`, a través de snarkjs 0.7.6. |
 | Codi pilfflonk | Branca `feature/pilfflonk`, sense commit. Vegeu la taula de progrés de sota.<br>- Al *workspace* no hi ha cap crate de Keccak.<br>- `num-bigint` i `thiserror` sí que hi són; `tera` només hi és a través de `pil2-stark-recurser`. |
 | Entorn | `nvcc` és a `/usr/local/cuda/bin/nvcc` (CUDA 12.9), fora del `PATH`, i no hi ha driver de GPU: el codi CUDA compila i enllaça però no s'executa. Per això `provers/starks-lib-c/build.rs` tria GPU per defecte; `--features cpu-only` enllaça `libstarks.a`. |
+| Llicències (context de P7) | - `pil2-stark/LICENSE` és AGPL-3.0, però el *workspace* declara `MIT OR Apache-2.0`.<br>- `pil-fflonk` té `LICENSE` AGPL-3.0 i, des de `0132359`, també `LICENSE-APACHE` i `LICENSE-MIT`. |
 
 **Progrés** (cada fita, amb auditoria independent passada):
 
@@ -72,8 +73,8 @@ Aquesta secció és per als agents que implementen el pla. Es treballa a la bran
 | M8 | Feta | `pilfflonk/js/` (ESM; `ffjavascript` 0.3.1 i `@noble/hashes`): `transcript.js` (A.4, igual que el C++), `elements.js` (descodificació amb les comprovacions de snarkjs), `shplonk.js` (`verifyOpening`, estructura de `fflonk_verify.js` de snarkjs: `computeF`/`E`/`J`, `isValidPairing`). Accepta les 10 obertures del prover C++, en rebutja 720 de manipulades, i reprodueix els reptes del C++ i el vector fixat de M4. `test/fixtures.sh` regenera les *fixtures* i executa `node --test`. Troballa: error de signe a `G1.sub` d'ffjavascript (spec Annex F.9). Tanca la **Fase 0**. |
 | M9 | Feta | Extracció mecànica a `setup/pil-info`: la majoria de fitxers es mouen sense cap canvi; el STARK conserva `StarkStruct`, la validació, la fita de grau, `get_prover_memory` i el resum. `pil-info` no depèn de `pil2-stark-setup`. *Golden* 499/499. S'ha fet en un *worktree* propi i s'ha portat a la branca amb `cherry-pick`. |
 | M10 | Feta | `PilInfoCfg { field, degree_policy, opening }` (`pil-info/src/cfg.rs`), `pil_info::run` per a M16. Goldilocks: dimensió 3, `FromBlowup`, FRI; BN254: dimensió 1, `Search { max: 9 }`, sense FRI ni trossos de `Q` a l'`evMap`. Desempat de la cerca: el grau més baix, com pil-stark (spec A.1). *Golden* 499/499. Per a M16: el `cmPolsMap` encara té els `Q0..Q{qDeg−1}` del STARK, i `qDim` = 1. Per a M11: les constants s'han de codificar a partir de les cadenes decimals. |
-| M12 | En curs (*worktree*) | |
-| Llicències (context de P7) | - `pil2-stark/LICENSE` és AGPL-3.0, però el *workspace* declara `MIT OR Apache-2.0`.<br>- `pil-fflonk` té `LICENSE` AGPL-3.0 i, des de `0132359`, també `LICENSE-APACHE` i `LICENSE-MIT`. |
+| M12 | Feta | `proofman-pilfflonk`: `PilfflonkGlobalInfo`, `PilfflonkInfo` + `Layout`, `AirVerkey`, `Vkey` (autocontinguda; preimatge del *digest* en JSON canònic), `Proof` (bytes i JSON) i `Publics`, validats en llegir i en escriure. Lector C++ `PilFflonk::PilfflonkInfo`. Troballes: `serde_json` té `preserve_order` activat al *workspace* (el JSON canònic ordena explícitament); la vkey necessita `boundaries`; l'SRS necessita el `degree` màxim, no el màxim més 1 (spec A.6 actualitzada). Per a M15: `Vkey::new(...).seal(keccak256)` i l'accessor de `[τ]₂`. |
+| M11 | En curs | |
 
 ---
 
@@ -449,7 +450,7 @@ No hi ha verificador natiu (D3). El *pairing* el fa `ffjavascript` dins del veri
   - els polinomis compromesos (stage, fita en coeficients i `O`), derivats de l'`evMap`. Les columnes que no s'obren no es comprometen, amb un avís;
   - el *layout* sense empaquetar (R1);
   - `nBitsExt` segons A.1, que també ha de cobrir `N + |O|_max + 1` (troballa de M5);
-  - la comprovació que l'SRS té almenys `max grau(f_i) + 1` punts;
+  - la comprovació que l'SRS té almenys tants punts com el `degree` més gran del *layout* (M12);
   - els fitxers `<air>.pilfflonkinfo.json`, `expressionsinfo.json`, `verifierinfo.json` (sense `queryVerifier`; el llegeix el verificador JS), `.bin` i `pilout.globalConstraints.json`;
   - `pilfflonk.vkey.json`, amb el *digest*, al final de tot.
 - **Dependències:** M10, M11, M15.

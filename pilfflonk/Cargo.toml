@@ -11,3 +11,10 @@ categories = { workspace = true }
 
 [dependencies]
 thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+num-bigint = { workspace = true }
+
+[dev-dependencies]
+# Only to check that the STARK loader refuses a pilfflonk globalInfo (spec §4.2.6).
+proofman-common = { workspace = true }

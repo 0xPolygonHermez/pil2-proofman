@@ -58,6 +58,7 @@ int main() {
     PilFflonkTest::runSrsTests();
     PilFflonkTest::runCommitTests();
     PilFflonkTest::runShplonkTests();
+    PilFflonkTest::runInfoTests();
     std::printf("pilfflonk_test: all tests passed\n");
     return 0;
 }
