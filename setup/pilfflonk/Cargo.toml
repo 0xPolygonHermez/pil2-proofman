@@ -29,3 +29,5 @@ proofman-starks-lib-c = { workspace = true }
 [dev-dependencies]
 # Turns the test ptau on for the tests of this crate.
 pilfflonk-setup = { path = ".", features = ["test-ptau"] }
+# The Rust oracle (M14), which the fixtures of the C++ interpreter's tests (M17) are computed with.
+proofman-pilfflonk = { workspace = true, features = ["oracle"] }

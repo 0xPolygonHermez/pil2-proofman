@@ -33,6 +33,9 @@ use pilfflonk_setup::bytecode::{
 };
 use proofman_pilfflonk::field::FrBytes;
 
+#[path = "bytecode/interpreter.rs"]
+mod interpreter;
+
 const R: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
 const R_MINUS_ONE: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
 const R_MINUS_TWO: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495615";
@@ -751,8 +754,11 @@ fn repo_root() -> PathBuf {
 fn compile_bn254(pil: &str) -> pb::PilOut {
     let compiler = std::env::var("PIL2C_EXEC")
         .expect("PIL2C_EXEC must name a pil2com that honours `prime` (e.g. <pil2-compiler>/src/pil.js)");
+    // A path of each call's own: the tests run in parallel, and compile the same PIL.
+    static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let stem = Path::new(pil).file_stem().unwrap().to_string_lossy().into_owned();
-    let out = tmp_path(&format!("{stem}.bn254.pilout"));
+    let out = tmp_path(&format!("{stem}.{call}.bn254.pilout"));
     let status = Command::new(compiler)
         .current_dir(repo_root())
         .arg(pil)

@@ -52,7 +52,7 @@
 //! nNumbers     u32
 //! nExpressions u32
 //! nExpressions × {
-//!   expId      u32
+//!   expId      u32    each once: the prover looks code up by it, as the STARK's does
 //!   destId     u32    the temporary the value is in after the last op: that op's dest
 //!   stage      u32
 //!   nTemp      u32    the temporaries the code uses, 0 … nTemp − 1
@@ -890,6 +890,12 @@ impl CodeTable {
     }
 }
 
+/// An `expId` that two expressions have, if any.
+fn repeated_exp_id(expressions: &[ExpressionBin]) -> Option<u32> {
+    let mut seen = std::collections::HashSet::new();
+    expressions.iter().map(|e| e.exp_id).find(|&id| !seen.insert(id))
+}
+
 /// `r`, little-endian: the modulus of the field `PilInfoCfg::bn254()` runs the passes over.
 fn r_le() -> [u8; FIELD_BYTES] {
     let mut bytes = [0u8; FIELD_BYTES];
@@ -906,6 +912,9 @@ impl Bytecode {
         };
         if let Some((i, c)) = self.constraints.iter().enumerate().find(|(_, c)| c.first_row > c.last_row) {
             return encode_error(format!("constraint {i}: rows {}..{}", c.first_row, c.last_row));
+        }
+        if let Some(exp_id) = repeated_exp_id(&self.expressions) {
+            return encode_error(format!("expression {exp_id} is there twice"));
         }
 
         // Per expression: expId, destId, stage, nTemp, nOps, opsOffset, nArgs, argsOffset, line.
@@ -1227,11 +1236,15 @@ impl Bytecode {
             headers.push(EntryHeader { fields: [exp_id, stage], code: r1.words()?, dest_id, line: r1.string()? });
         }
         let mut maxima = Maxima::default();
-        let expressions =
+        let expressions: Vec<ExpressionBin> =
             read_code(&mut r1, types, headers, [n_ops, n_args, n_numbers], &mut maxima, "the expressions")?
                 .into_iter()
                 .map(|([exp_id, stage], line, code)| ExpressionBin { exp_id, stage, line, code })
                 .collect();
+        // The prover looks code up by expId, as the STARK's does.
+        if let Some(exp_id) = repeated_exp_id(&expressions) {
+            return format_error(format!("expression {exp_id} is there twice"));
+        }
 
         // Section 2.
         let mut r2 = Reader::new(constraints, "the constraints");
