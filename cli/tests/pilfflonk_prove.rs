@@ -12,7 +12,11 @@
 //! - `pilfflonk/tests/fixtures/signed`, a synthetic AIR that reads its columns at the offsets
 //!   `{−1, 0, 1, 2}` and has constraints of degree up to 6, with the im pols the setup chooses by
 //!   default (one, `qDeg = 3`) and with `--max-constraint-degree 3` (three, `qDeg = 2`) and `2`
-//!   (eight, `qDeg = 1`), grouped and with `--no-packing`.
+//!   (eight, `qDeg = 1`), grouped and with `--no-packing`;
+//! - the synthetic pilouts of `pilfflonk/tests/data/domains.rs`, built in code (plan M24), whose
+//!   constraints hold on `firstRow`, `lastRow` and `everyFrame` of several `{offsetMin,
+//!   offsetMax}`: the prover's zerofiers on the coset, the JS verifier's at `ξ` and the oracle's
+//!   agree, and a witness that breaks a constraint at the edge row of its domain is refused.
 //!
 //! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
 //! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`, plan N13):
@@ -21,13 +25,16 @@
 //! every change to one.
 //!
 //! Pilouts are not versioned: the test compiles the fixtures with the compiler `PIL2C_EXEC` names,
-//! which must honour `prime`, and is `#[ignore]` without it. It needs Node.js:
+//! which must honour `prime`, and is `#[ignore]` without it. Those of the domains build their
+//! pilouts in code, and need only Node.js (the E2E) or nothing (`qDeg`). It needs Node.js:
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p proofman-cli --features proofman-starks-lib-c/cpu-only \
 //!     --test pilfflonk_prove -- --ignored
 //! ```
 
+#[path = "../../pilfflonk/tests/data/domains.rs"]
+mod domains;
 #[path = "../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
 #[path = "../../pilfflonk/tests/data/packed.rs"]
@@ -45,11 +52,12 @@ use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE
 use pilfflonk_setup::digest::seal_vkey;
 use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
-use proofman_pilfflonk::oracle::{AirOracle, ColumnRef, Fr};
+use proofman_pilfflonk::oracle::{AirOracle, ColumnRef, Domain, Fr};
 use proofman_pilfflonk::{
-    prove, AirFile, FileWitnessSource, FrBytes, JsonFile, PilfflonkError, PilfflonkGlobalInfo, PilfflonkInfo, PolType,
-    ProveOptions, ProvingKey, Vkey, Witness, WitnessSource, BN254_R,
+    prove, AirFile, Boundary, FileWitnessSource, FrBytes, JsonFile, PilfflonkError, PilfflonkGlobalInfo, PilfflonkInfo,
+    PolType, ProveOptions, ProvingKey, Vkey, Witness, WitnessSource, BN254_R,
 };
+use prost::Message;
 use serde_json::{json, Value};
 
 const SEED_A: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
@@ -98,17 +106,11 @@ enum Program {
     Fibonacci,
     Packed,
     Signed,
+    /// A pilout of `tests/data/domains.rs`, built in code.
+    Domains(domains::Air),
 }
 
 impl Program {
-    fn pil(self) -> &'static str {
-        match self {
-            Program::Fibonacci => "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil",
-            Program::Packed => "pilfflonk/tests/fixtures/packed/packed.pil",
-            Program::Signed => "pilfflonk/tests/fixtures/signed/signed.pil",
-        }
-    }
-
     /// M13's generator for the Fibonacci (inputs [1, 2]), `tests/data/{packed,signed}.rs` for the
     /// others.
     fn witness(self) -> Witness {
@@ -116,16 +118,26 @@ impl Program {
             Program::Fibonacci => fibonacci::witness(8, [1, 2]),
             Program::Packed => packed::witness(PACKED_IN1),
             Program::Signed => signed::witness(SIGNED_INPUTS),
+            Program::Domains(air) => domains::witness(air),
         }
     }
 }
 
-/// Compiles `program` over BN254 to `pilout` with `PIL2C_EXEC`.
+/// Compiles `program` over BN254 to `pilout` with `PIL2C_EXEC`, or writes the pilout it builds.
 fn compile(program: Program, pilout: &Path) {
+    let pil = match program {
+        Program::Fibonacci => "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil",
+        Program::Packed => "pilfflonk/tests/fixtures/packed/packed.pil",
+        Program::Signed => "pilfflonk/tests/fixtures/signed/signed.pil",
+        Program::Domains(air) => {
+            fs::write(pilout, domains::pilout(air).encode_to_vec()).unwrap();
+            return;
+        }
+    };
     let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that honours `prime`");
     let out = Command::new(compiler)
         .current_dir(repo_root())
-        .arg(program.pil())
+        .arg(pil)
         .args(["-I", "pil2-components/lib/std/pil", "-P", "pilfflonk/tests/fixtures/fibonacci/bn254.json", "-o"])
         .arg(pilout)
         .output()
@@ -626,6 +638,198 @@ fn a_witness_that_breaks_a_constraint_across_the_wrap_is_refused() {
     }
 }
 
+/// The setups of each domain AIR the tests go through: `(name, --max-constraint-degree, packing,
+/// im pols, qDeg)`. By default the domain constraints, of degree 2, have degree 3 with their `Zi`
+/// (δ = 1, A.1), and the search keeps them, `qDeg = 2`; with 2, each gets an im pol, `qDeg = 1`.
+fn domain_setups(air: domains::Air) -> Vec<(String, u64, Packing, usize, u64)> {
+    let n_rules = air.rules().len();
+    [
+        ("", 9, DEFAULT, 0, 2),
+        ("_unpacked", 9, Packing::NoPacking, 0, 2),
+        ("_d2", 2, DEFAULT, n_rules, 1),
+        ("_d2_unpacked", 2, Packing::NoPacking, n_rules, 1),
+    ]
+    .into_iter()
+    .map(|(suffix, degree, packing, im_pols, q_deg)| {
+        (format!("{}{suffix}", air.name()), degree, packing, im_pols, q_deg)
+    })
+    .collect()
+}
+
+/// Prints, for each point of its arguments, `Zi` of each boundary at it as the JS verifier's
+/// `computeZi` computes it, in decimal.
+const COMPUTE_ZI: &str = r#"
+import { pathToFileURL } from "node:url";
+
+const [js, nBits, boundaries, ...points] = process.argv.slice(1);
+const { newCurve } = await import(pathToFileURL(`${js}/test/support.js`).href);
+const { computeZi } = await import(pathToFileURL(`${js}/src/qverifier.js`).href);
+const curve = await newCurve();
+const zi = (point) => computeZi(curve, JSON.parse(boundaries), Number(nBits), curve.Fr.e(BigInt(point)));
+console.log(JSON.stringify(points.map((p) => zi(p).map((z) => curve.Fr.toString(z, 10)))));
+"#;
+
+/// `Zi` of each boundary of `info` at each of `points` (spec A.1, A.6): `1/Z_H` for `everyRow` and
+/// `Z_H/Z_D` for the others, as the oracle computes `Z_D` (its closed forms, which its own tests
+/// check against the products over the rows) and as the JS verifier does (`computeZi`). The C++
+/// prover's are on the coset, and the proofs check them: `Q` is a polynomial only if they are
+/// `Z_H/Z_D` there, and `Q(ξ)` is the oracle's.
+fn zerofiers_agree(info: &PilfflonkInfo, points: &[Fr]) {
+    let domain = |b: &Boundary| match *b {
+        Boundary::EveryRow => Domain::EveryRow,
+        Boundary::FirstRow => Domain::FirstRow,
+        Boundary::LastRow => Domain::LastRow,
+        Boundary::EveryFrame { offset_min, offset_max } => {
+            Domain::EveryFrame { offset_min: offset_min as usize, offset_max: offset_max as usize }
+        }
+    };
+    let n_bits = info.n_bits as u32;
+    let oracle: Vec<Vec<String>> = points
+        .iter()
+        .map(|z| {
+            let z_h = Domain::EveryRow.zerofier_at(z, n_bits).unwrap();
+            info.boundaries
+                .iter()
+                .map(|b| {
+                    let zi = match b {
+                        Boundary::EveryRow => z_h.inv().unwrap(),
+                        _ => &z_h * &domain(b).zerofier_at(z, n_bits).unwrap().inv().unwrap(),
+                    };
+                    zi.as_biguint().to_string()
+                })
+                .collect()
+        })
+        .collect();
+    let boundaries = serde_json::to_string(&info.boundaries).unwrap();
+    let out = Command::new("node")
+        .args(["--input-type=module", "-e", COMPUTE_ZI])
+        .arg(repo_root().join("pilfflonk/js"))
+        .args([info.n_bits.to_string(), boundaries])
+        .args(points.iter().map(|z| z.as_biguint().to_string()))
+        .output()
+        .expect("node runs");
+    assert!(out.status.success(), "computeZi: {}", output(&out));
+    let js: Vec<Vec<String>> = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(js, oracle, "{}: the JS verifier's Zi and the oracle's", info.name);
+}
+
+/// The E2E of a domain AIR (plan M24), for each of its [`domain_setups`]: its boundaries are
+/// `boundaries`; the prover proves its witness, the verifier accepts the proofs and rejects every
+/// change to one; the prover agrees with the oracle at `ξ`; the JS verifier's `Zi` are the
+/// oracle's at `ξ` and at other points; and the witness that breaks one rule at the first row of
+/// its domain or at the last, and nowhere else, is refused.
+fn proves_a_domain(air: domains::Air, boundaries: &[Boundary]) {
+    for (name, degree, packing, im_pols, q_deg) in domain_setups(air) {
+        let f = fixture_of_degree(&name, Program::Domains(air), packing, degree);
+        let info = f.info();
+        assert_eq!(info.boundaries, boundaries, "{name}");
+        assert_eq!((n_im_pols(&info), info.q_deg), (im_pols, q_deg), "{name}");
+        proves_its_layout_and_rejects_every_change(&f);
+        let xi = agrees_with_the_oracle(&f);
+        let points = [xi, Fr::from_u64(7), -&Fr::from_u64(3), Fr::from_u64(1 << 40).pow_u64(3)];
+        zerofiers_agree(&info, &points);
+        breaks_at_the_edges_are_refused(&f, air);
+    }
+}
+
+/// Each witness of `air` that breaks one rule at the first or the last row of its domain, and
+/// nowhere else (as the oracle says), is refused by the prover as `Unsatisfied`.
+fn breaks_at_the_edges_are_refused(f: &Fixture, air: domains::Air) {
+    let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
+    let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
+    let pk = ProvingKey::load(&f.proving_key).unwrap();
+    let options = ProveOptions { insecure_blinding_seed: Some([9; 32]) };
+    for rule in 0..air.rules().len() {
+        for edge in [domains::Edge::First, domains::Edge::Last] {
+            let (witness, row) = domains::broken(air, rule, edge);
+            let failures = oracle.check(&oracle.values(&witness, 0).unwrap()).unwrap();
+            let rows: Vec<(usize, usize)> = failures.iter().map(|x| (x.constraint, x.row)).collect();
+            assert_eq!(rows, [(rule, row)], "{}: rule {rule}, {edge:?}", air.name());
+            match prove(&pk, &witness, &options) {
+                Err(PilfflonkError::Unsatisfied(message)) => {
+                    let expected = format!("the witness does not satisfy the constraints of {}", air.name());
+                    assert!(message.contains(&expected), "{message}")
+                }
+                other => {
+                    panic!("{}: rule {rule}, {edge:?}: expected Unsatisfied, got {:?}", air.name(), other.map(|_| ()))
+                }
+            }
+        }
+    }
+}
+
+/// The `δ = 1` of A.1: `qDeg = max_i(deg c_i + δ_i) − 1`. The domain AIRs set up with their
+/// constraints on their domains and, as a control, with every constraint on `everyRow`: by default
+/// `qDeg` is 2 on the domains and 1 on `everyRow`, with no im pols; with `--max-constraint-degree
+/// 2`, each rule's constraint needs an im pol on its domain and none on `everyRow`, and `qDeg = 1`.
+#[test]
+fn a_domain_adds_one_to_the_degree_of_its_constraints() {
+    use pil2_pilout::pilout::constraint::{self, Constraint as C};
+    for air in [domains::Air::FirstRow, domains::Air::LastRow, domains::Air::Frames, domains::Air::All] {
+        let n_rules = air.rules().len();
+        let mut every_row = domains::pilout(air);
+        for c in every_row.air_groups[0].airs[0].constraints.iter_mut() {
+            let (expression_idx, debug_line) = match c.constraint.take().unwrap() {
+                C::FirstRow(c) => (c.expression_idx, c.debug_line),
+                C::LastRow(c) => (c.expression_idx, c.debug_line),
+                C::EveryFrame(c) => (c.expression_idx, c.debug_line),
+                C::EveryRow(c) => (c.expression_idx, c.debug_line),
+            };
+            c.constraint = Some(C::EveryRow(constraint::EveryRow { expression_idx, debug_line }));
+        }
+        for (what, pilout, [default, low]) in
+            [("domains", domains::pilout(air), [(2, 0), (1, n_rules)]), ("everyRow", every_row, [(1, 0), (1, 0)])]
+        {
+            for (degree, (q_deg, im_pols)) in [(9, default), (2, low)] {
+                let dir = TestDir::new(&format!("delta_{}_{what}_{degree}", air.name()));
+                let opts = SetupPilfflonkOptions { max_constraint_degree: degree, ..setup_options(&dir, DEFAULT) };
+                fs::write(&opts.airout_path, pilout.encode_to_vec()).unwrap();
+                run_setup_pilfflonk(&opts).unwrap();
+                let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
+                let global_info = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap();
+                let path = global_info.air_file(&proving_key, 0, 0, AirFile::PilfflonkInfo).unwrap();
+                let info = PilfflonkInfo::read(&path).unwrap();
+                assert_eq!(info.boundaries == [Boundary::EveryRow], what == "everyRow", "{} {what}", air.name());
+                assert_eq!((info.q_deg, n_im_pols(&info)), (q_deg, im_pols), "{} {what}, degree {degree}", air.name());
+            }
+        }
+    }
+}
+
+/// Two `firstRow` constraints, which share their boundary.
+#[test]
+#[ignore = "needs Node.js"]
+fn the_prover_proves_first_row_constraints() {
+    proves_a_domain(domains::Air::FirstRow, &[Boundary::EveryRow, Boundary::FirstRow]);
+}
+
+/// Two `lastRow` constraints: `Z_D = X − ω^(N−1)` (A.1), and not the `ω^N = 1` of spec F.8.
+#[test]
+#[ignore = "needs Node.js"]
+fn the_prover_proves_last_row_constraints() {
+    proves_a_domain(domains::Air::LastRow, &[Boundary::EveryRow, Boundary::LastRow]);
+}
+
+/// Six `everyFrame` constraints of as many `{offsetMin, offsetMax}`, which read the next row or the
+/// previous one, across the wrap too.
+#[test]
+#[ignore = "needs Node.js"]
+fn the_prover_proves_every_frame_constraints() {
+    let frame = |offset_min, offset_max| Boundary::EveryFrame { offset_min, offset_max };
+    proves_a_domain(
+        domains::Air::Frames,
+        &[Boundary::EveryRow, frame(1, 2), frame(0, 3), frame(2, 0), frame(3, 1), frame(1, 0), frame(2, 2)],
+    );
+}
+
+/// One constraint of each domain in one AIR, and two that share an `everyFrame`.
+#[test]
+#[ignore = "needs Node.js"]
+fn the_prover_proves_constraints_of_every_domain() {
+    let frame = Boundary::EveryFrame { offset_min: 1, offset_max: 2 };
+    proves_a_domain(domains::Air::All, &[Boundary::EveryRow, Boundary::FirstRow, Boundary::LastRow, frame]);
+}
+
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn a_witness_that_breaks_a_constraint_is_refused() {
@@ -666,8 +870,8 @@ fn big(v: &FrBytes) -> num_bigint::BigUint {
 /// The prover of the grouped `f` agrees with the oracle at `ξ = xiSeed^powerW` (A.2, rule 5): every
 /// evaluation of a fixed column, at each offset its `f` opens it at (those a fusion adds too), is
 /// the oracle's exactly; a committed one is blinded, and is not; and `Q(ξ)`, folded by the oracle
-/// over the proof's evaluations, is the prover's.
-fn agrees_with_the_oracle(f: &Fixture) {
+/// over the proof's evaluations, is the prover's. Returns that `ξ`.
+fn agrees_with_the_oracle(f: &Fixture) -> Fr {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
     let options = ProveOptions { insecure_blinding_seed: Some([5; 32]) };
@@ -727,11 +931,12 @@ fn agrees_with_the_oracle(f: &Fixture) {
     assert_eq!(q, Fr::from(out.challenges.q_at_xi));
     // Another evaluation, another Q(ξ).
     let mut changed = at_xi.clone();
-    let next = changed.get_mut(&(first, 1)).unwrap();
-    *next = &*next + &Fr::one();
+    let value = changed.get_mut(&(first, 0)).unwrap();
+    *value = &*value + &Fr::one();
     assert_ne!(oracle.q_from_evaluations(&values, &changed, &im_pols, &std_vc, &xi).unwrap(), q);
     // invZh = 1/Z_H(ξ).
     assert_eq!(&Fr::from(out.proof.inv_zh) * &(&xi.pow_u64(1 << info.n_bits) - &Fr::one()), Fr::one());
+    xi
 }
 
 #[test]

@@ -26,7 +26,7 @@ use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil_info::types::output::{CodeEntry, CodeRef};
-use pil_info::{PilInfoCfg, PilInfoResult};
+use pil_info::{DegreePolicy, PilInfoCfg, PilInfoResult};
 use pilfflonk_setup::bytecode::{
     write_air_bin, Bytecode, BytecodeError, Code, CodeContext, ConstraintBin, ExpressionBin, Op, Opcode, Operand,
     BIN_VERSION,
@@ -741,6 +741,73 @@ fn the_passes_code_round_trips() {
     // The passes run twice give the same file.
     let (_, second) = check_air_bin(&run_bn254(&wide_constants_pilout()), "wide_constants_in_code_2");
     assert_eq!(first, second);
+}
+
+/// One BN254 air of 16 rows: `a·a − b` on `firstRow` (a public-free stand-in for `x·x − p`) and
+/// `b − a` on `everyRow`. With its `Zi`, the first has degree 3; with `--max-constraint-degree 2`
+/// the search promotes its whole expression to an im pol, whose code `pil-info` leaves empty for
+/// the constraint (it marks the im pols as computed before it generates the constraints' code).
+fn im_pol_constraint_pilout() -> pb::PilOut {
+    use expression::{Mul, Operation, Sub};
+    let expressions = vec![
+        binary(Operation::Mul(Mul { lhs: witness(0, 0), rhs: witness(0, 0) })), // 0
+        binary(Operation::Sub(Sub { lhs: exp(0), rhs: witness(1, 0) })),        // 1: a·a − b
+        binary(Operation::Sub(Sub { lhs: witness(1, 0), rhs: witness(0, 0) })), // 2: b − a
+    ];
+    let first_row = pb::Constraint {
+        constraint: Some(constraint::Constraint::FirstRow(constraint::FirstRow {
+            expression_idx: Some(operand::Expression { idx: 1 }),
+            debug_line: Some("a*a - b".to_string()),
+        })),
+    };
+    let air = pb::Air {
+        name: Some("Synthetic".to_string()),
+        num_rows: Some(16),
+        stage_widths: vec![2],
+        expressions,
+        constraints: vec![first_row, every_row(2)],
+        ..Default::default()
+    };
+    pb::PilOut {
+        name: Some("synthetic".to_string()),
+        base_field: big_be(R),
+        air_groups: vec![pb::AirGroup { name: Some("Synthetic".to_string()), airs: vec![air], ..Default::default() }],
+        num_challenges: vec![0],
+        symbols: vec![
+            column_symbol("a", SymbolType::WitnessCol, 1, 0),
+            column_symbol("b", SymbolType::WitnessCol, 1, 1),
+        ],
+        ..Default::default()
+    }
+}
+
+/// Regression (plan M24): a constraint whose whole expression is an im pol has the code of a copy
+/// of the im pol's column at the row, not an empty one, which the reader refuses and the setup
+/// failed on ("Cannot encode constraint 0: it has no ops").
+#[test]
+fn a_constraint_that_is_an_im_pol_is_a_copy_of_its_column() {
+    let cfg = PilInfoCfg { degree_policy: DegreePolicy::Search { max: 2 }, ..PilInfoCfg::bn254() };
+    let result = pil_info::run(&im_pol_constraint_pilout(), 0, 0, &cfg, &Default::default()).unwrap();
+    let setup = &result.setup;
+    let im = setup.cm_pols_map.iter().position(|p| p.im_pol).expect("the search chooses an im pol");
+    assert_eq!(setup.cm_pols_map[im].exp_id, Some(setup.constraints[0].e), "the whole constraint is the im pol");
+    assert!(result.pil_code.expressions_info.constraints[0].code.is_empty(), "pil-info leaves its code empty");
+
+    let path = tmp_path("im_pol_constraint.bin");
+    write_air_bin(&result, &path).unwrap();
+    let bytecode = Bytecode::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    let context = CodeContext::from_pil_info(&result).unwrap();
+    let stage_pos = context.cm_pols[im].1;
+    let at_0 = setup.opening_points.iter().position(|&p| p == 0).unwrap() as u32;
+    let c = &bytecode.constraints[0];
+    assert_eq!((c.first_row, c.last_row, c.im_pol, c.line.as_str()), (0, 1, false, "a*a - b == 0"));
+    let copy = bin_op(Opcode::Add, 0, cm(1, stage_pos, at_0), Operand::Number(FrBytes::ZERO));
+    assert_eq!(c.code, Code { ops: vec![copy], n_temp: 1, dest_id: 0 });
+    // The other constraints are pil-info's code, the im pol's too.
+    for (bin, entry) in bytecode.constraints.iter().zip(&result.pil_code.expressions_info.constraints).skip(1) {
+        assert_same_code(&entry.code, &bin.code, &context);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

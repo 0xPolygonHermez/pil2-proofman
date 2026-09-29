@@ -44,6 +44,8 @@ pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
 proofman-pilfflonk = { workspace = true, features = ["oracle"] }
 serde_json = { workspace = true }
 num-bigint = { workspace = true }
+# Encodes the synthetic pilouts of the domains tests (plan M24), built in code.
+prost = { workspace = true }
 
 [features]
 default = ["mpi"]

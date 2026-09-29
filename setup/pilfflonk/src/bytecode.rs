@@ -509,11 +509,18 @@ impl Bytecode {
         let expressions =
             info.expressions_code.iter().map(|e| expression_bin(e, result, &context)).collect::<BytecodeResult<_>>()?;
         let n = 1u64 << result.setup.pil_power;
+        if info.constraints.len() != result.setup.constraints.len() {
+            return encode_error(format!(
+                "{} constraint code blocks for {} constraints",
+                info.constraints.len(),
+                result.setup.constraints.len()
+            ));
+        }
         let constraints = info
             .constraints
             .iter()
             .enumerate()
-            .map(|(i, c)| constraint_bin(i, c, n, &context))
+            .map(|(i, c)| constraint_bin(i, c, result, n, &context))
             .collect::<BytecodeResult<_>>()?;
         Ok(Bytecode { n_stages: context.n_stages, expressions, constraints })
     }
@@ -541,10 +548,18 @@ fn expression_bin(
 fn constraint_bin(
     index: usize,
     entry: &ConstraintCodeEntry,
+    result: &PilInfoResult,
     n: u64,
     context: &CodeContext,
 ) -> BytecodeResult<ConstraintBin> {
     let what = format!("constraint {index}");
+    let im_pol_code;
+    let code = if entry.code.is_empty() {
+        im_pol_code = im_pol_copy(index, result, &what)?;
+        &im_pol_code
+    } else {
+        &entry.code
+    };
     let (first_row, last_row) = match (entry.boundary.as_str(), entry.offset_min, entry.offset_max) {
         ("everyRow", _, _) => (0, n),
         ("firstRow", _, _) => (0, 1),
@@ -565,8 +580,40 @@ fn constraint_bin(
         last_row: to_u32(last_row, format!("{what}: last row"))?,
         im_pol: entry.im_pol != 0,
         line: entry.line.clone().unwrap_or_default(),
-        code: lower(&entry.code, context, None, &what)?,
+        code: lower(code, context, None, &what)?,
     })
+}
+
+/// The code of constraint `index` when its whole expression is an intermediate polynomial: a
+/// copy of the im pol's column at the row. `pil-info` leaves that code empty, since it marks the
+/// im pols' expressions as computed before it generates the constraints' (`gen_code.rs`,
+/// `generate_constraints_debug_code`). It happens to a constraint not on `everyRow` whose
+/// expression the search promotes, because its `Zi` adds 1 to its degree (A.1): `x·x − p` on
+/// `firstRow` with `--max-constraint-degree 2` (plan M24).
+fn im_pol_copy(index: usize, result: &PilInfoResult, what: &str) -> BytecodeResult<Vec<CodeEntry>> {
+    let setup = &result.setup;
+    let e = match setup.constraints.get(index) {
+        Some(c) => c.e,
+        None => return encode_error(format!("{what}: it is not a constraint of the AIR")),
+    };
+    let Some(cm) = setup.cm_pols_map.iter().position(|p| p.im_pol && p.exp_id == Some(e)) else {
+        return encode_error(format!("{what}: it has no ops, and its expression {e} is no intermediate polynomial"));
+    };
+    let reference = |ref_type: &str, id: usize| CodeRef {
+        ref_type: ref_type.to_string(),
+        id,
+        dim: 1,
+        prime: Some(0),
+        value: None,
+        stage: None,
+        stage_id: None,
+        commit_id: None,
+        opening: None,
+        boundary_id: None,
+        airgroup_id: None,
+        exp_id: None,
+    };
+    Ok(vec![CodeEntry { op: "copy".to_string(), dest: reference("tmp", 0), src: vec![reference("cm", cm)] }])
 }
 
 impl Code {

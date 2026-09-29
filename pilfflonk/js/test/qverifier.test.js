@@ -1,8 +1,10 @@
 // Q(ξ) from the qVerifier (qverifier.js): the code it accepts and runs, the zerofiers of A.1 against
-// a product over the rows of each domain, and the check of a split Q. The comparison with the Rust
-// oracle's Q(ξ) on the Fibonacci's real vkey is in setup.test.js.
+// a product over the rows of each domain and against the Rust oracle's and the C++'s at one point,
+// and the check of a split Q. The comparison with the Rust oracle's Q(ξ) on the Fibonacci's real
+// vkey is in setup.test.js.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { before, test } from "node:test";
 
 import { PilFflonkInputError } from "../src/elements.js";
@@ -181,6 +183,21 @@ test("Zi of every domain: 1/Z_H(ξ) for everyRow and Z_H(ξ)/Z_D(ξ) for the oth
             assert.ok(Fr.eq(Fr.mul(zi[i + 1], zd), zh), JSON.stringify(b));
         });
     }
+});
+
+// The interpreter's fixture, written by setup/pilfflonk/tests/bytecode/interpreter.rs with the Rust
+// oracle's values: its Zi at ξ for everyRow, firstRow, lastRow and everyFrame {1, 2}, which the C++
+// zerofiersAt reproduces (pil2-stark/test/pilfflonk/pilfflonk_expressions_test.cpp).
+const INTERPRETER_FIXTURE = new URL(
+    "../../../setup/pilfflonk/tests/fixtures/bytecode/Sample.expected.json",
+    import.meta.url,
+);
+
+test("Zi at the ξ of the interpreter's fixture: the Rust oracle's and the C++'s (plan M24)", () => {
+    const fixture = JSON.parse(readFileSync(INTERPRETER_FIXTURE, "utf8"));
+    assert.deepEqual(fixture.boundaries.map((b) => b.name), ["everyRow", "firstRow", "lastRow", "everyFrame"]);
+    const zi = computeZi(curve, fixture.boundaries, fixture.nBits, curve.Fr.e(BigInt(fixture.xi)));
+    assert.deepEqual(zi.map((z) => curve.Fr.toString(z, 10)), fixture.expected.xiZerofiers);
 });
 
 test("Q is not defined on H", () => {

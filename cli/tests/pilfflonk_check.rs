@@ -3,16 +3,22 @@
 //! Rust oracle (M14) says, with its values, through the library (`proofman_pilfflonk::check`) and
 //! the CLI, whose output is `verify-constraints`'s (plan validation 3). And on the fixture of the
 //! signed offsets (plan M23), whose constraints read the rows −1 to 2 around each row, across the
-//! wrap too, with the im pols the setup chooses for each `--max-constraint-degree`.
+//! wrap too, with the im pols the setup chooses for each `--max-constraint-degree`. And on the
+//! pilouts of `tests/data/domains.rs`, built in code (plan M24): each constraint is checked on the
+//! rows of its domain only, `firstRow ≤ i < lastRow`, and a witness that breaks it at the edge row
+//! of its domain is found there.
 //!
 //! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
-//! which must honour `prime`, and is `#[ignore]` without it:
+//! which must honour `prime`, and is `#[ignore]` without it. Those of the domains build their
+//! pilouts in code, and always run:
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p proofman-cli --features proofman-starks-lib-c/cpu-only \
 //!     --test pilfflonk_check -- --ignored
 //! ```
 
+#[path = "../../pilfflonk/tests/data/domains.rs"]
+mod domains;
 #[path = "../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
 #[path = "../../pilfflonk/tests/data/signed.rs"]
@@ -29,6 +35,7 @@ use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::oracle::{AirOracle, Fr};
 use proofman_pilfflonk::{check, CheckOptions, CheckReport, FileWitnessSource, FrBytes, ProvingKey, Witness};
+use prost::Message;
 
 const N: usize = 256;
 const L1: usize = 0;
@@ -65,11 +72,35 @@ fn output(out: &Output) -> String {
     format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
 }
 
-const FIBONACCI_PIL: &str = "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil";
-const SIGNED_PIL: &str = "pilfflonk/tests/fixtures/signed/signed.pil";
+/// A fixture's pilout: compiled from a PIL, or built in code.
+#[derive(Clone, Copy, Debug)]
+enum Program {
+    Pil(&'static str),
+    Domains(domains::Air),
+}
 
-/// Compiles the fixture `pil` over BN254 to `pilout` with `PIL2C_EXEC`.
-fn compile(pil: &str, pilout: &Path) {
+const FIBONACCI: Program = Program::Pil("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
+const SIGNED: Program = Program::Pil("pilfflonk/tests/fixtures/signed/signed.pil");
+
+impl Program {
+    /// The name of its pilout file: that of the PIL, or `domains`.
+    fn pilout_file(self) -> String {
+        match self {
+            Program::Pil(pil) => format!("{}.pilout", Path::new(pil).file_stem().unwrap().to_str().unwrap()),
+            Program::Domains(_) => "domains.pilout".to_string(),
+        }
+    }
+}
+
+/// Compiles `program` over BN254 to `pilout` with `PIL2C_EXEC`, or writes the pilout it builds.
+fn compile(program: Program, pilout: &Path) {
+    let pil = match program {
+        Program::Pil(pil) => pil,
+        Program::Domains(air) => {
+            fs::write(pilout, domains::pilout(air).encode_to_vec()).unwrap();
+            return;
+        }
+    };
     let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that honours `prime`");
     let out = Command::new(compiler)
         .current_dir(repo_root())
@@ -93,16 +124,15 @@ struct Fixture {
 /// The Fibonacci compiled and set up (`--no-packing`; the check commits nothing, so the ptau of
 /// `τ = 1` does), and its witness written.
 fn fixture(name: &str) -> Fixture {
-    fixture_of(name, FIBONACCI_PIL, fibonacci::witness(8, [1, 2]), DEFAULT_MAX_CONSTRAINT_DEGREE, true)
+    fixture_of(name, FIBONACCI, fibonacci::witness(8, [1, 2]), DEFAULT_MAX_CONSTRAINT_DEGREE, true)
 }
 
-/// `pil` compiled and set up with `--max-constraint-degree max_constraint_degree`, grouped or with
-/// `--no-packing`, and `witness` written.
-fn fixture_of(name: &str, pil: &str, witness: Witness, max_constraint_degree: u64, no_packing: bool) -> Fixture {
+/// `program` compiled and set up with `--max-constraint-degree max_constraint_degree`, grouped or
+/// with `--no-packing`, and `witness` written.
+fn fixture_of(name: &str, program: Program, witness: Witness, max_constraint_degree: u64, no_packing: bool) -> Fixture {
     let dir = TestDir::new(name);
-    let stem = Path::new(pil).file_stem().unwrap().to_str().unwrap();
     let opts = SetupPilfflonkOptions {
-        airout_path: dir.file(&format!("{stem}.pilout")),
+        airout_path: dir.file(&program.pilout_file()),
         build_dir: dir.file("build"),
         powers_of_tau: dir.file("tau_one.ptau"),
         max_constraint_degree,
@@ -110,7 +140,7 @@ fn fixture_of(name: &str, pil: &str, witness: Witness, max_constraint_degree: u6
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
         no_packing,
     };
-    compile(pil, &opts.airout_path);
+    compile(program, &opts.airout_path);
     write_tau_one_ptau(&opts.powers_of_tau, 512).unwrap();
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
@@ -397,7 +427,7 @@ fn the_check_finds_the_rows_the_signed_offsets_read() {
         ("signed_d2", 2, false, 8),
         ("signed_d2_unpacked", 2, true, 8),
     ] {
-        let f = fixture_of(name, SIGNED_PIL, witness.clone(), degree, no_packing);
+        let f = fixture_of(name, SIGNED, witness.clone(), degree, no_packing);
         let pk = ProvingKey::load(&f.proving_key).unwrap();
         let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
         let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
@@ -468,7 +498,7 @@ fn the_check_finds_the_rows_the_signed_offsets_read() {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_cli_says_which_rows_the_signed_offsets_break() {
-    let f = fixture_of("signed_cli", SIGNED_PIL, signed::witness(SIGNED_INPUTS), DEFAULT_MAX_CONSTRAINT_DEGREE, false);
+    let f = fixture_of("signed_cli", SIGNED, signed::witness(SIGNED_INPUTS), DEFAULT_MAX_CONSTRAINT_DEGREE, false);
     let shape = ProvingKey::load(&f.proving_key).unwrap().witness_shape().unwrap();
     let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
     let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
@@ -495,4 +525,97 @@ fn the_cli_says_which_rows_the_signed_offsets_break() {
         assert!(!text.contains(holds), "{holds} without -v:\n{text}");
     }
     println!("{text}");
+}
+
+/// The domain AIRs of `tests/data/domains.rs`, with no im pols (the default) and with one per
+/// rule (`--max-constraint-degree 2`, where the whole constraint of each rule is an im pol),
+/// grouped and with `--no-packing`: every constraint is checked on the rows of its domain, and the
+/// witness, which breaks each rule on every row out of its domain, passes; a witness that breaks a
+/// rule at the first or the last row of its domain, and nowhere else, fails there, with the
+/// oracle's value.
+#[test]
+fn the_check_finds_the_edge_rows_of_every_domain() {
+    use domains::{Air, Edge};
+    for air in [Air::FirstRow, Air::LastRow, Air::Frames, Air::All] {
+        let rules = air.rules();
+        let n = 1usize << domains::N_BITS;
+        for (degree, no_packing, n_im_pols) in [(9, false, 0), (2, false, rules.len()), (2, true, rules.len())] {
+            let name = format!("{}_{degree}_{no_packing}", air.name());
+            let f = fixture_of(&name, Program::Domains(air), domains::witness(air), degree, no_packing);
+            let pk = ProvingKey::load(&f.proving_key).unwrap();
+            let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
+            let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
+
+            // The rules' constraints, on their rows; y − x0·K and the im pols' on every row.
+            let report = check(&pk, &f.witness, &CheckOptions::default()).unwrap();
+            assert!(report.holds(), "{name}");
+            assert_eq!(report.constraints.len(), rules.len() + 1 + n_im_pols, "{name}");
+            for (c, constraint) in report.constraints.iter().enumerate() {
+                let rows = rules.get(c).map_or(0..n, |rule| rule.rows());
+                assert_eq!(
+                    (constraint.first_row, constraint.last_row),
+                    (rows.start as u64, rows.end as u64),
+                    "{name}: {c}"
+                );
+                assert_eq!(constraint.im_pol, c > rules.len(), "{name}: {c}");
+            }
+            // Each rule's expression is not 0 on any row out of its domain: the check reads its
+            // domain's rows and no other.
+            let numerators = oracle.numerators(&oracle.values(&f.witness, 0).unwrap()).unwrap();
+            for (j, rule) in rules.iter().enumerate() {
+                let out: Vec<usize> = (0..n).filter(|i| !rule.rows().contains(i)).collect();
+                assert!(out.iter().all(|&i| !numerators[j][i].is_zero()), "{name}: rule {j} out of {:?}", rule.rows());
+            }
+
+            for (j, _) in rules.iter().enumerate() {
+                for edge in [Edge::First, Edge::Last] {
+                    let (witness, row) = domains::broken(air, j, edge);
+                    let report = check(&pk, &witness, &CheckOptions { max_rows: n }).unwrap();
+                    let expected: BTreeSet<(usize, usize, String)> = oracle
+                        .check(&oracle.values(&witness, 0).unwrap())
+                        .unwrap()
+                        .into_iter()
+                        .map(|failure| (failure.constraint, failure.row, failure.value.to_bytes().to_decimal()))
+                        .collect();
+                    assert_eq!(expected.iter().map(|(c, r, _)| (*c, *r)).collect::<Vec<_>>(), [(j, row)], "{name}");
+                    assert_eq!(found(&report), expected, "{name}: rule {j}, {edge:?}");
+                }
+            }
+        }
+    }
+}
+
+/// The CLI names the constraint of a domain and its edge row: `Domains`, with `x0·x0 − p0` on
+/// `firstRow` broken at row 0 and `x2' − x2·x2 − K` on `everyFrame {1, 2}` at its last row, N − 3.
+#[test]
+fn the_cli_names_the_edge_row_of_a_domain() {
+    use domains::{Air, Edge};
+    let f = fixture_of("domains_cli", Program::Domains(Air::All), domains::witness(Air::All), 9, false);
+    let shape = ProvingKey::load(&f.proving_key).unwrap().witness_shape().unwrap();
+    let out = check_cli(&f.proving_key, &f.witness_dir, &[]);
+    assert!(out.status.success(), "{}", output(&out));
+
+    for (rule, edge, expected) in [
+        (
+            0,
+            Edge::First,
+            ["Constraint #0 (stage 1) has 1 invalid rows -> Domains: x0*x0 - p0 == 0", "Failed at row 0 "],
+        ),
+        (
+            2,
+            Edge::Last,
+            ["Constraint #2 (stage 1) has 1 invalid rows -> Domains: x2' - x2*x2 - K == 0", "Failed at row 13 "],
+        ),
+    ] {
+        let (witness, _) = domains::broken(Air::All, rule, edge);
+        let dir = f.dir.file(&format!("broken_{rule}"));
+        witness.write(&dir, &shape).unwrap();
+        let out = check_cli(&f.proving_key, &dir, &[]);
+        let text = output(&out);
+        assert_eq!(out.status.code(), Some(1), "{text}");
+        for expected in expected {
+            assert!(text.contains(expected), "{expected:?} not in:\n{text}");
+        }
+        assert_eq!(text.matches("Failed at row").count(), 1, "{text}");
+    }
 }

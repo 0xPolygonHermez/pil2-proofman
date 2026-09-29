@@ -1410,6 +1410,7 @@ dependencies = [
  "proofman-util",
  "proofman-verifier",
  "proofman-witness",
+ "prost",
  "regex",
  "serde",
  "serde_json",
