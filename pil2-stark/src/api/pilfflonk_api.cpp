@@ -649,3 +649,138 @@ int pilfflonk_opening_open(const void *opening, void *transcript, uint8_t out_w[
         return static_cast<int>(PILFFLONK_OK);
     });
 }
+
+// -------------------------------------------------------------------------------------------------
+// The check
+// -------------------------------------------------------------------------------------------------
+
+namespace {
+
+// Constraint `index` of section 2 of the .bin of an AIR of ctx (not NULL). Throws
+// std::invalid_argument if there is no such AIR or constraint.
+const PilFflonk::ParserParams &constraintOf(const void *ctx, uint64_t airgroupId, uint64_t airId, uint64_t index) {
+    const PilFflonk::AirKey &air = static_cast<const PilFflonk::ProvingKey *>(ctx)->air(airgroupId, airId);
+    const std::vector<PilFflonk::ParserParams> &constraints = air.bin().constraintsInfoDebug;
+    if (index >= constraints.size()) {
+        throw std::invalid_argument(air.name() + " has no constraint " + std::to_string(index) + ", of " +
+                                    std::to_string(constraints.size()));
+    }
+    return constraints[index];
+}
+
+} // namespace
+
+int pilfflonk_ctx_n_constraints(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t *out) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (ctx == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx is NULL");
+        }
+        if (out == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out is NULL");
+        }
+        const PilFflonk::AirKey &air = static_cast<const PilFflonk::ProvingKey *>(ctx)->air(airgroup_id, air_id);
+        *out = air.bin().constraintsInfoDebug.size();
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_ctx_constraint(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t index,
+                             uint64_t *stage, uint64_t *first_row, uint64_t *last_row, uint32_t *im_pol,
+                             uint64_t *line_len) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        const struct {
+            const void *pointer;
+            const char *name;
+        } arguments[] = {{ctx, "ctx"},           {stage, "stage"},   {first_row, "first_row"},
+                         {last_row, "last_row"}, {im_pol, "im_pol"}, {line_len, "line_len"}};
+        for (const auto &argument : arguments) {
+            if (argument.pointer == nullptr) {
+                return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "%s is NULL", argument.name);
+            }
+        }
+        const PilFflonk::ParserParams &constraint = constraintOf(ctx, airgroup_id, air_id, index);
+        *stage = constraint.stage;
+        *first_row = constraint.firstRow;
+        *last_row = constraint.lastRow;
+        *im_pol = constraint.imPol ? 1 : 0;
+        *line_len = constraint.line.size();
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_ctx_constraint_line(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t index,
+                                  uint8_t *out, uint64_t n) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (ctx == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx is NULL");
+        }
+        if (out == nullptr && n != 0) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out is NULL");
+        }
+        const std::string &line = constraintOf(ctx, airgroup_id, air_id, index).line;
+        if (n != line.size()) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function,
+                        "n = %" PRIu64 ", and the line of constraint %" PRIu64 " has %zu bytes", n, index,
+                        line.size());
+        }
+        if (n != 0) {
+            std::copy(line.begin(), line.end(), out);
+        }
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_check(void *instance, uint64_t max_rows, uint64_t n_constraints, uint64_t *out_n_failed,
+                    uint64_t *out_rows, uint8_t *out_values) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (instance == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "instance is NULL");
+        }
+        if (out_n_failed == nullptr && n_constraints != 0) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out_n_failed is NULL");
+        }
+        // Also bounds every offset into out_rows and out_values below.
+        const uint64_t fitting = std::numeric_limits<uint64_t>::max() / PilFflonk::FR_BYTES;
+        if (n_constraints != 0 && max_rows > fitting / n_constraints) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function,
+                        "n_constraints·max_rows = %" PRIu64 "·%" PRIu64 " scalars exceed 2^64 bytes", n_constraints,
+                        max_rows);
+        }
+        const bool entries = n_constraints != 0 && max_rows != 0;
+        if (entries && out_rows == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out_rows is NULL");
+        }
+        if (entries && out_values == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out_values is NULL");
+        }
+        PilFflonk::Instance &inst = *static_cast<PilFflonk::Instance *>(instance);
+        const uint64_t expected = inst.air().bin().constraintsInfoDebug.size();
+        if (n_constraints != expected) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "n_constraints = %" PRIu64 ", and %s has %" PRIu64,
+                        n_constraints, inst.air().name().c_str(), expected);
+        }
+
+        const std::vector<PilFflonk::ConstraintCheck> checks = inst.check(max_rows);
+        for (uint64_t c = 0; c < n_constraints; ++c) {
+            out_n_failed[c] = checks[c].nFailed;
+            if (!entries) {
+                continue;
+            }
+            const std::vector<PilFflonk::FailedRow> &rows = checks[c].rows;
+            uint64_t *rowsOut = out_rows + c * max_rows;
+            uint8_t *valuesOut = out_values + c * max_rows * PilFflonk::FR_BYTES;
+            for (uint64_t j = 0; j < rows.size(); ++j) {
+                rowsOut[j] = rows[j].row;
+                PilFflonk::encodeFr(rows[j].value, valuesOut + j * PilFflonk::FR_BYTES);
+            }
+            std::fill(rowsOut + rows.size(), rowsOut + max_rows, uint64_t(0));
+            std::fill(valuesOut + rows.size() * PilFflonk::FR_BYTES, valuesOut + max_rows * PilFflonk::FR_BYTES,
+                      uint8_t(0));
+        }
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}

@@ -69,6 +69,7 @@ fn main() {
             Commands::Pilfflonk(args) => match &args.pilfflonk_commands {
                 PilfflonkSubcommands::Prove(args) => args.run(),
                 PilfflonkSubcommands::Verify(args) => args.run(),
+                PilfflonkSubcommands::Check(args) => args.run(),
             },
             Commands::CheckSetup(args) => args.run(),
             Commands::CheckSetupSnark(args) => args.run(),

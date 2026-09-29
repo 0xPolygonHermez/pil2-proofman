@@ -75,8 +75,9 @@ std::vector<ColumnRead> columnsRead(const ExpressionsBin &bin, uint64_t expId);
 // opening), with what the prover derives from them. Immutable once built.
 //
 // Checks, besides what each reader checks: the files agree (the .bin's stages and the .const's size
-// are the pilfflonkinfo's), and what this prover supports: Q not split, and a layout that packs
-// every committed column once, Q in an f of its own with k = 1.
+// are the pilfflonkinfo's, and the rows of the .bin's constraints lie in the trace), and what this
+// prover supports: Q not split, and a layout that packs every committed column once, Q in an f of
+// its own with k = 1.
 class AirKey {
 public:
     // From the files' contents. `name` is what the errors call the AIR. Throws FormatError.

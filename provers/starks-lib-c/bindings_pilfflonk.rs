@@ -133,4 +133,41 @@ extern "C" {
         out_inv: *mut u8,
         out_inv_zh: *mut u8,
     ) -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_ctx_n_constraints(
+        ctx: *const ::std::os::raw::c_void,
+        airgroup_id: u64,
+        air_id: u64,
+        out: *mut u64,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_ctx_constraint(
+        ctx: *const ::std::os::raw::c_void,
+        airgroup_id: u64,
+        air_id: u64,
+        index: u64,
+        stage: *mut u64,
+        first_row: *mut u64,
+        last_row: *mut u64,
+        im_pol: *mut u32,
+        line_len: *mut u64,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_ctx_constraint_line(
+        ctx: *const ::std::os::raw::c_void,
+        airgroup_id: u64,
+        air_id: u64,
+        index: u64,
+        out: *mut u8,
+        n: u64,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_check(
+        instance: *mut ::std::os::raw::c_void,
+        max_rows: u64,
+        n_constraints: u64,
+        out_n_failed: *mut u64,
+        out_rows: *mut u64,
+        out_values: *mut u8,
+    ) -> ::std::os::raw::c_int;
 }

@@ -44,11 +44,11 @@ use crate::json::JsonFile;
 use crate::pilfflonk_info::PilfflonkInfo;
 use crate::proof::{Proof, ProofJson, ProofNames, Publics, PROOF_FILE, PUBLICS_FILE};
 use crate::vkey::Vkey;
-use crate::witness::{AirInstanceRef, WitnessShape, WitnessSource};
+use crate::witness::{AirInstanceRef, Stage1Witness, WitnessShape, WitnessSource};
 
 /// A call to the C++ core that failed, with what it was doing; a witness that does not satisfy the
 /// constraints is [`PilfflonkError::Unsatisfied`].
-fn native(context: &'static str) -> impl FnOnce(PilFflonkError) -> PilfflonkError {
+pub(crate) fn native(context: &'static str) -> impl FnOnce(PilFflonkError) -> PilfflonkError {
     move |source| match source.kind {
         PilFflonkErrorKind::Unsatisfied => PilfflonkError::Unsatisfied(source.message),
         _ => PilfflonkError::Native { context: context.to_string(), source },
@@ -141,6 +141,56 @@ impl ProvingKey {
     pub fn witness_shape(&self) -> PilfflonkResult<WitnessShape> {
         let infos: Vec<&PilfflonkInfo> = self.airs.iter().collect();
         WitnessShape::from_proving_key(&self.global_info, &infos)
+    }
+
+    /// The C++ core's key.
+    pub(crate) fn ctx(&self) -> &PilFflonkProverCtx {
+        &self.ctx
+    }
+}
+
+/// The one instance of a witness (v1, D2; plan R4), read: what its C++ instance is made of.
+pub(crate) struct WitnessInstance {
+    pub(crate) air: AirInstanceRef,
+    pub(crate) stage1: Stage1Witness,
+    pub(crate) publics: Vec<FrBytes>,
+    pub(crate) proof_values: Vec<FrBytes>,
+}
+
+impl WitnessInstance {
+    /// Refuses a witness of other than one instance.
+    pub(crate) fn read(witness: &impl WitnessSource) -> PilfflonkResult<Self> {
+        let instances = witness.instances();
+        let [air] = instances.as_slice() else {
+            return invalid!("the witness has {} instances, and a pilfflonk proof holds one (D2)", instances.len());
+        };
+        Ok(Self {
+            air: *air,
+            stage1: witness.stage1(0)?,
+            publics: witness.publics()?,
+            proof_values: witness.proof_values()?,
+        })
+    }
+
+    /// Its C++ instance, on `pk`, blinded as `insecure_blinding_seed` says ([`ProveOptions`]).
+    pub(crate) fn instance<'pk>(
+        &self,
+        pk: &'pk ProvingKey,
+        insecure_blinding_seed: Option<&[u8; 32]>,
+    ) -> PilfflonkResult<PilFflonkInstance<'pk>> {
+        PilFflonkInstance::new(
+            &pk.ctx,
+            &PilFflonkInstanceInputs {
+                airgroup_id: self.air.airgroup_id,
+                air_id: self.air.air_id,
+                stage1: self.stage1.trace_bytes(),
+                air_values: &le(self.stage1.air_values()),
+                publics: &le(&self.publics),
+                proof_values: &le(&self.proof_values),
+                insecure_blinding_seed,
+            },
+        )
+        .map_err(native("creating the instance"))
     }
 }
 
@@ -255,32 +305,16 @@ impl Transcript {
 
 /// A proof of the one instance of `witness` (see [the module](self)).
 pub fn prove(pk: &ProvingKey, witness: &impl WitnessSource, options: &ProveOptions) -> PilfflonkResult<ProofOutput> {
-    let instances = witness.instances();
-    let [air] = instances.as_slice() else {
-        return invalid!("the witness has {} instances, and a pilfflonk proof holds one (D2)", instances.len());
-    };
-    let info = pk.air(*air)?;
+    let read = WitnessInstance::read(witness)?;
+    let air = read.air;
+    let info = pk.air(air)?;
     let global_info = pk.global_info();
     let names = ProofNames::new(global_info, &[info])?;
-    let stage1 = witness.stage1(0)?;
-    let publics = witness.publics()?;
-    let proof_values = witness.proof_values()?;
     let n_stages = info.n_stages;
     let n_f = |stage: u64| info.layout.0.iter().filter(|f| f.stage == stage).count();
 
-    let mut instance = PilFflonkInstance::new(
-        &pk.ctx,
-        &PilFflonkInstanceInputs {
-            airgroup_id: air.airgroup_id,
-            air_id: air.air_id,
-            stage1: stage1.trace_bytes(),
-            air_values: &le(stage1.air_values()),
-            publics: &le(&publics),
-            proof_values: &le(&proof_values),
-            insecure_blinding_seed: options.insecure_blinding_seed.as_ref(),
-        },
-    )
-    .map_err(native("creating the instance"))?;
+    let mut instance = read.instance(pk, options.insecure_blinding_seed.as_ref())?;
+    let WitnessInstance { stage1, publics, proof_values, .. } = read;
 
     // Step 1: the digest, the number of instances of each AIR, the publics.
     let mut transcript = Transcript::new()?;

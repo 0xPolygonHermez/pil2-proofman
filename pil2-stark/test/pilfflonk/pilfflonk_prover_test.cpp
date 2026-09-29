@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -902,6 +903,305 @@ void testCApi() {
     pilfflonk_ctx_free(ctx);
 }
 
+// ---------------------------------------------------------------------------------------------
+// The check (plan M25)
+// ---------------------------------------------------------------------------------------------
+
+// The constraints of the Fibonacci's .bin: the pilout's five, then its im pol's.
+const char *const FIBONACCI_LINES[] = {
+    "fibonacci.pil:24 (l2'-l1)*(1-Fibonacci.LLAST) == 0",
+    "fibonacci.pil:27 (l1'-((l1*l1)+(l2*l2)))*(1-Fibonacci.LLAST) == 0",
+    "fibonacci.pil:29 Fibonacci.L1*(l2-in1) == 0",
+    "fibonacci.pil:30 Fibonacci.L1*(l1-in2) == 0",
+    "fibonacci.pil:31 Fibonacci.LLAST*(l1-out) == 0",
+    "(Fibonacci.ImPol0 - (l1' - ((l1 * l1) + (l2 * l2)))) == 0",
+};
+constexpr uint64_t N_CONSTRAINTS = 6;
+constexpr uint64_t L1 = 0, L2 = 1;
+
+FrElement cell(const std::vector<uint8_t> &trace, uint64_t row, uint64_t column) {
+    return PilFflonk::fromCanonicalFr(trace.data() + (row * 2 + column) * 32);
+}
+
+// The trace with its cell (row, column) plus one.
+std::vector<uint8_t> plusOne(const std::vector<uint8_t> &trace, uint64_t row, uint64_t column) {
+    std::vector<uint8_t> out = trace;
+    PilFflonk::encodeFr(E.fr.add(cell(trace, row, column), E.fr.one()), out.data() + (row * 2 + column) * 32);
+    return out;
+}
+
+using Failures = std::vector<std::pair<uint64_t, uint64_t>>; // (constraint, row)
+
+// Every (constraint, row) a check reports, in order; the check must have kept every failed row.
+Failures failures(const std::vector<PilFflonk::ConstraintCheck> &checks) {
+    assert(checks.size() == N_CONSTRAINTS);
+    Failures out;
+    for (uint64_t c = 0; c < checks.size(); ++c) {
+        assert(checks[c].rows.size() == checks[c].nFailed);
+        for (const PilFflonk::FailedRow &r : checks[c].rows) {
+            assert(!E.fr.isZero(r.value));
+            out.push_back({c, r.row});
+        }
+    }
+    return out;
+}
+
+std::vector<PilFflonk::ConstraintCheck> checkOf(const Fibonacci &fib, const std::vector<uint8_t> &trace,
+                                                const std::vector<FrElement> &publics, uint64_t maxRows) {
+    Instance inst(*fib.pk, 0, 0, trace.data(), trace.size(), {}, publics, {}, std::make_unique<ZeroBlinding>());
+    return inst.check(maxRows);
+}
+
+void testCheckReadsTheConstraints() {
+    const Fibonacci fib;
+    const std::vector<PilFflonk::ParserParams> &constraints = fib.air().bin().constraintsInfoDebug;
+    assert(constraints.size() == N_CONSTRAINTS);
+    for (uint64_t c = 0; c < N_CONSTRAINTS; ++c) {
+        assert(constraints[c].line == FIBONACCI_LINES[c]);
+        assert(constraints[c].stage == 1 && constraints[c].firstRow == 0 && constraints[c].lastRow == 256);
+        assert(constraints[c].imPol == (c == 5));
+    }
+    // The generator's witness satisfies them all, im pol's included.
+    const std::vector<PilFflonk::ConstraintCheck> checks = checkOf(fib, fib.witness, fib.publics, 10);
+    assert(failures(checks).empty());
+}
+
+// A mutated cell or public fails exactly the (constraint, row) the oracle says (M14:
+// pilfflonk/tests/fibonacci.rs, a_mutated_cell_fails_exactly_the_constraints_and_rows_that_read_it),
+// with the values of its numerators there.
+void testCheckFindsTheOraclesRows() {
+    const Fibonacci fib;
+    const struct {
+        uint64_t column, row;
+        Failures expected;
+    } cases[] = {
+        {L1, 100, {{0, 100}, {1, 99}, {1, 100}}}, {L2, 100, {{0, 99}, {1, 100}}},
+        {L1, 0, {{0, 0}, {1, 0}, {3, 0}}},        {L2, 0, {{1, 0}, {2, 0}}},
+        {L1, 255, {{1, 254}, {4, 255}}},          {L2, 255, {{0, 254}}},
+        {L1, 1, {{0, 1}, {1, 0}, {1, 1}}},
+    };
+    for (const auto &m : cases) {
+        const std::vector<PilFflonk::ConstraintCheck> checks =
+            checkOf(fib, plusOne(fib.witness, m.row, m.column), fib.publics, 256);
+        if (failures(checks) != m.expected) {
+            std::fprintf(stderr, "column %" PRIu64 ", row %" PRIu64 ": not the oracle's failures\n", m.column, m.row);
+            assert(!"the check does not find what the oracle does");
+        }
+    }
+
+    // l1[100] + 1: (l2' − l1)(1 − LLAST) = −1 at row 100, l1' − next = 1 at row 99, and at row 100
+    // l1' − ((l1 + 1)² + l2²) = −(2·l1 + 1).
+    const std::vector<PilFflonk::ConstraintCheck> checks =
+        checkOf(fib, plusOne(fib.witness, 100, L1), fib.publics, 256);
+    const FrElement minusOne = E.fr.neg(E.fr.one());
+    const FrElement l1 = cell(fib.witness, 100, L1);
+    assert(eq(checks[0].rows[0].value, minusOne));
+    assert(eq(checks[1].rows[0].value, E.fr.one()));
+    assert(eq(checks[1].rows[1].value, E.fr.neg(E.fr.add(E.fr.add(l1, l1), E.fr.one()))));
+
+    // The publics: out (constraint 4 at N − 1, LLAST·(l1 − out) = −1) and in1 (constraint 2 at 0).
+    std::vector<FrElement> publics = fib.publics;
+    publics[2] = E.fr.add(publics[2], E.fr.one());
+    const std::vector<PilFflonk::ConstraintCheck> out = checkOf(fib, fib.witness, publics, 256);
+    assert((failures(out) == Failures{{4, 255}}) && eq(out[4].rows[0].value, minusOne));
+    publics = fib.publics;
+    publics[0] = E.fr.add(publics[0], E.fr.one());
+    assert((failures(checkOf(fib, fib.witness, publics, 256)) == Failures{{2, 0}}));
+}
+
+// maxRows keeps the first rows and counts them all.
+void testCheckCapsTheRows() {
+    const Fibonacci fib;
+    // Every l1 + 1: l2' − l1 = −1 on the 255 rows 1 − LLAST keeps, L1·(l1 − in2) = 1 at row 0 and
+    // LLAST·(l1 − out) = 1 at row 255; l2 and the im pol's constraint still hold.
+    std::vector<uint8_t> trace = fib.witness;
+    for (uint64_t row = 0; row < 256; ++row) {
+        trace = plusOne(trace, row, L1);
+    }
+    for (uint64_t maxRows : {uint64_t(0), uint64_t(3), uint64_t(1000)}) {
+        const std::vector<PilFflonk::ConstraintCheck> checks = checkOf(fib, trace, fib.publics, maxRows);
+        assert(checks[0].nFailed == 255 && checks[2].nFailed == 0 && checks[3].nFailed == 1 &&
+               checks[4].nFailed == 1 && checks[5].nFailed == 0);
+        for (const PilFflonk::ConstraintCheck &check : checks) {
+            assert(check.rows.size() == std::min(check.nFailed, maxRows));
+            for (uint64_t j = 0; j < check.rows.size(); ++j) {
+                assert(j == 0 || check.rows[j - 1].row < check.rows[j].row);
+            }
+        }
+        for (uint64_t j = 0; j < checks[0].rows.size(); ++j) {
+            assert(checks[0].rows[j].row == j);
+        }
+        if (maxRows > 0) {
+            assert(checks[3].rows[0].row == 0 && checks[4].rows[0].row == 255);
+        }
+    }
+}
+
+// Before, between or after the commits, the check finds the same, and the proof is the one without it.
+void testCheckLeavesTheProofAsItWas() {
+    const Fibonacci fib;
+    uint8_t seed[32] = {7};
+    const FrElement stdVc = fr(fib.oracle["stdVc"]);
+    std::unique_ptr<Instance> plain = fib.instance(std::make_unique<BlindingRng>(seed));
+    std::vector<G1Point> expected = plain->commitStage(1, {});
+    const std::vector<G1Point> expectedQ = plain->commitQ({stdVc});
+    expected.insert(expected.end(), expectedQ.begin(), expectedQ.end());
+
+    std::unique_ptr<Instance> checked = fib.instance(std::make_unique<BlindingRng>(seed));
+    assert(failures(checked->check(1)).empty());
+    std::vector<G1Point> commitments = checked->commitStage(1, {});
+    assert(failures(checked->check(1)).empty());
+    const std::vector<G1Point> q = checked->commitQ({stdVc});
+    assert(failures(checked->check(1)).empty());
+    commitments.insert(commitments.end(), q.begin(), q.end());
+    assert(commitments.size() == expected.size());
+    for (uint64_t i = 0; i < commitments.size(); ++i) {
+        assert(samePoint(commitments[i], expected[i]));
+    }
+
+    // A mutated witness: the same rows after its stage 1 is committed.
+    const std::vector<uint8_t> mutated = plusOne(fib.witness, 100, L1);
+    std::unique_ptr<Instance> inst = fib.instance(std::make_unique<ZeroBlinding>(), mutated);
+    inst->commitStage(1, {});
+    assert((failures(inst->check(10)) == Failures{{0, 100}, {1, 99}, {1, 100}}));
+}
+
+// The offset in a .bin of word `word` (0 stage, 1 destId, 2 firstRow, 3 lastRow) of the entry of
+// constraint c in section 2 (the format: setup/pilfflonk/src/bytecode.rs).
+uint64_t constraintWord(const std::vector<uint8_t> &bin, uint64_t c, uint64_t word) {
+    uint64_t size1 = 0;
+    std::memcpy(&size1, bin.data() + 12 + 4, sizeof(size1)); // after "chps", version, nSections, id 1
+    uint64_t at = 12 + 12 + size1 + 12 + 16;                  // section 2's entries, after its four counts
+    for (uint64_t i = 0; i < c; ++i) {
+        at += 10 * 4; // stage … argsOffset, imPol
+        at = std::find(bin.begin() + at, bin.end(), uint8_t(0)) - bin.begin() + 1;
+    }
+    return at + 4 * word;
+}
+
+void setWord(std::vector<uint8_t> &bin, uint64_t at, uint32_t value) {
+    std::memcpy(bin.data() + at, &value, sizeof(value));
+}
+
+void testCheckRefusals() {
+    // A constraint of stage 2 (whose columns the std's hints compute, M30): refused before anything.
+    {
+        KeyFiles files;
+        for (uint64_t c = 0; c < N_CONSTRAINTS; ++c) {
+            uint32_t stage = 0, lastRow = 0;
+            std::memcpy(&stage, files.bin.data() + constraintWord(files.bin, c, 0), sizeof(stage));
+            std::memcpy(&lastRow, files.bin.data() + constraintWord(files.bin, c, 3), sizeof(lastRow));
+            assert(stage == 1 && lastRow == 256);
+        }
+        setWord(files.bin, constraintWord(files.bin, 1, 0), 2);
+        const KeyDir dir(files);
+        const std::unique_ptr<ProvingKey> pk = ProvingKey::load(dir.path());
+        const std::vector<uint8_t> witness = readBytes(fixture("Fibonacci.witness.bin"));
+        const std::vector<FrElement> publics = frs(json::parse(readBytes(fixture("Fibonacci.oracle.json")))["publics"]);
+        Instance inst(*pk, 0, 0, witness.data(), witness.size(), {}, publics, {}, std::make_unique<ZeroBlinding>());
+        const std::string message = thrown<std::invalid_argument>([&] { inst.check(10); });
+        assert(contains(message, std::string("constraint 1 (") + FIBONACCI_LINES[1] + ") is of stage 2"));
+        assert(contains(message, "(plan M30)"));
+    }
+    // A constraint's rows beyond the trace: the key is refused.
+    KeyFiles files;
+    setWord(files.bin, constraintWord(files.bin, 4, 3), 257);
+    expectRefused(files, PILFFLONK_ERR_FORMAT,
+                  "Fibonacci: .bin: constraint 4 holds on the rows 0 <= i < 257, and the trace has 256");
+}
+
+void testCheckCApi() {
+    const Fibonacci fib;
+    void *ctx = pilfflonk_ctx_new(fib.dir.path().c_str());
+    assert(ctx != nullptr);
+    uint64_t n = 0;
+    assert(pilfflonk_ctx_n_constraints(ctx, 0, 0, &n) == PILFFLONK_OK && n == N_CONSTRAINTS);
+    assert(pilfflonk_ctx_n_constraints(ctx, 0, 1, &n) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_ctx_n_constraints(nullptr, 0, 0, &n) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_ctx_n_constraints(ctx, 0, 0, nullptr) == PILFFLONK_ERR_INVALID_ARGUMENT);
+
+    uint64_t stage = 0, firstRow = 0, lastRow = 0, lineLen = 0;
+    uint32_t imPol = 2;
+    for (uint64_t c = 0; c < N_CONSTRAINTS; ++c) {
+        assert(pilfflonk_ctx_constraint(ctx, 0, 0, c, &stage, &firstRow, &lastRow, &imPol, &lineLen) == PILFFLONK_OK);
+        assert(stage == 1 && firstRow == 0 && lastRow == 256 && imPol == (c == 5 ? 1 : 0));
+        assert(lineLen == std::strlen(FIBONACCI_LINES[c]));
+        std::vector<uint8_t> line(lineLen);
+        assert(pilfflonk_ctx_constraint_line(ctx, 0, 0, c, line.data(), lineLen) == PILFFLONK_OK);
+        assert(std::string(line.begin(), line.end()) == FIBONACCI_LINES[c]);
+        assert(pilfflonk_ctx_constraint_line(ctx, 0, 0, c, line.data(), lineLen - 1) == PILFFLONK_ERR_INVALID_ARGUMENT);
+        assert(contains(pilfflonk_last_error(), "and the line of constraint " + std::to_string(c) + " has " +
+                                                    std::to_string(lineLen) + " bytes"));
+    }
+    assert(pilfflonk_ctx_constraint(ctx, 0, 0, 6, &stage, &firstRow, &lastRow, &imPol, &lineLen) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "Fibonacci has no constraint 6, of 6"));
+    assert(pilfflonk_ctx_constraint(ctx, 1, 0, 0, &stage, &firstRow, &lastRow, &imPol, &lineLen) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_ctx_constraint(ctx, 0, 0, 0, &stage, &firstRow, nullptr, &imPol, &lineLen) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "last_row is NULL"));
+    assert(pilfflonk_ctx_constraint_line(ctx, 0, 0, 6, nullptr, 0) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_ctx_constraint_line(ctx, 0, 0, 0, nullptr, 3) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_ctx_constraint_line(nullptr, 0, 0, 0, nullptr, 0) == PILFFLONK_ERR_INVALID_ARGUMENT);
+
+    // l1[100] + 1, two rows kept per constraint: what Instance::check finds, the rest zeroed.
+    const std::vector<uint8_t> mutated = plusOne(fib.witness, 100, L1);
+    const std::vector<uint8_t> publics = scalars(fib.publics);
+    uint8_t seed[32] = {1};
+    void *inst = pilfflonk_instance_new(ctx, 0, 0, mutated.data(), mutated.size(), nullptr, 0, publics.data(), 3,
+                                        nullptr, 0, seed);
+    assert(inst != nullptr);
+    constexpr uint64_t MAX_ROWS = 2;
+    std::vector<uint64_t> nFailed(N_CONSTRAINTS, 99), rows(N_CONSTRAINTS * MAX_ROWS, 99);
+    std::vector<uint8_t> values(N_CONSTRAINTS * MAX_ROWS * 32, 0xff);
+    assert(pilfflonk_check(inst, MAX_ROWS, N_CONSTRAINTS, nFailed.data(), rows.data(), values.data()) == PILFFLONK_OK);
+    assert(pilfflonk_last_error()[0] == '\0');
+    const std::vector<PilFflonk::ConstraintCheck> expected = checkOf(fib, mutated, fib.publics, MAX_ROWS);
+    for (uint64_t c = 0; c < N_CONSTRAINTS; ++c) {
+        assert(nFailed[c] == expected[c].nFailed);
+        for (uint64_t j = 0; j < MAX_ROWS; ++j) {
+            const uint64_t e = c * MAX_ROWS + j;
+            const std::vector<uint8_t> value(values.begin() + e * 32, values.begin() + (e + 1) * 32);
+            if (j < expected[c].rows.size()) {
+                assert(rows[e] == expected[c].rows[j].row && value == scalars({expected[c].rows[j].value}));
+            } else {
+                assert(rows[e] == 0 && value == std::vector<uint8_t>(32, 0));
+            }
+        }
+    }
+    assert((nFailed == std::vector<uint64_t>{1, 2, 0, 0, 0, 0}));
+    assert(rows[0] == 100 && rows[2] == 99 && rows[3] == 100);
+    // Counting only.
+    std::fill(nFailed.begin(), nFailed.end(), 99);
+    assert(pilfflonk_check(inst, 0, N_CONSTRAINTS, nFailed.data(), nullptr, nullptr) == PILFFLONK_OK);
+    assert((nFailed == std::vector<uint64_t>{1, 2, 0, 0, 0, 0}));
+    // The instance still proves as one the check never saw: its Q is not a polynomial.
+    uint8_t out[4 * 64];
+    assert(pilfflonk_commit_stage(inst, 1, nullptr, 0, out, 3) == PILFFLONK_OK);
+    const Bytes32 stdVc("0000000000000000000000000000000000000000000000000000000000000002");
+    assert(pilfflonk_commit_q(inst, stdVc.bytes, 1, out, 1) == PILFFLONK_ERR_UNSATISFIED);
+
+    // Refusals.
+    assert(pilfflonk_check(nullptr, 1, N_CONSTRAINTS, nFailed.data(), rows.data(), values.data()) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_check(inst, 1, 5, nFailed.data(), rows.data(), values.data()) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "pilfflonk_check: n_constraints = 5, and Fibonacci has 6"));
+    assert(pilfflonk_check(inst, 1, N_CONSTRAINTS, nullptr, rows.data(), values.data()) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "out_n_failed is NULL"));
+    assert(pilfflonk_check(inst, 1, N_CONSTRAINTS, nFailed.data(), nullptr, values.data()) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_check(inst, 1, N_CONSTRAINTS, nFailed.data(), rows.data(), nullptr) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "out_values is NULL"));
+    assert(pilfflonk_check(inst, uint64_t(1) << 60, N_CONSTRAINTS, nFailed.data(), rows.data(), values.data()) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "scalars exceed 2^64 bytes"));
+    pilfflonk_instance_free(inst);
+    pilfflonk_ctx_free(ctx);
+}
+
 } // namespace
 
 void runProverTests() {
@@ -913,6 +1213,12 @@ void runProverTests() {
     testMutatedWitnessIsUnsatisfied();
     testRefusesArguments();
     testCApi();
+    testCheckReadsTheConstraints();
+    testCheckFindsTheOraclesRows();
+    testCheckCapsTheRows();
+    testCheckLeavesTheProofAsItWas();
+    testCheckRefusals();
+    testCheckCApi();
 }
 
 } // namespace PilFflonkTest

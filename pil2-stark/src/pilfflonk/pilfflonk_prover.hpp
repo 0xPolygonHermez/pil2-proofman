@@ -14,6 +14,20 @@
 
 namespace PilFflonk {
 
+// A row where a constraint does not hold: the value of its numerator there, not 0.
+struct FailedRow {
+    uint64_t row;
+    FrElement value;
+};
+
+// What Instance::check finds of one constraint.
+struct ConstraintCheck {
+    // The rows firstRow <= i < lastRow of the constraint where its numerator is not 0.
+    uint64_t nFailed = 0;
+    // The first min(nFailed, maxRows) of them, in increasing order.
+    std::vector<FailedRow> rows;
+};
+
 // The prover side of one instance of an AIR (spec §4.4, steps 2 and 3): its columns, their
 // committed polynomials and Q. The orchestrator drives it in the order of the transcript (A.4):
 // commitStage(1), …, commitStage(nStages), then commitQ; the challenges each step needs come from
@@ -34,6 +48,10 @@ namespace PilFflonk {
 //   the values, back to coefficients (Lde::interpolateCoset), and committed unblinded (spec A.3,
 //   Q not split). Its coefficients from the bound of spec A.1 on must be zero: if not, the witness
 //   does not satisfy the constraints, and commitQ throws UnsatisfiedError.
+// check:
+//   pilfflonk check (spec §4.4, "Depuració"; plan M25), which proves nothing: the im pols of stage 1
+//   as commitStage(1) computes them, then the numerator of each constraint of the .bin (section 2)
+//   on H, with the bytecode, and the rows of its domain where it is not 0.
 //
 // Elements are in Montgomery form. Refused arguments throw std::invalid_argument before anything
 // changes. Not safe to use from several threads at once; the ProvingKey, which must outlive it, may
@@ -80,6 +98,14 @@ public:
     // stays uncommitted) if the witness does not satisfy the AIR's constraints.
     std::vector<G1Point> commitQ(const std::vector<FrElement> &challenges);
 
+    // The check of the witness against every constraint of section 2 of the AIR's .bin, in its order
+    // (the pilout's constraints, then those of the im pols, im − e): for each, the rows of its domain
+    // where it does not hold, the first maxRows of them with the value there. It changes nothing
+    // the commits depend on, and may run before, between or after them. Throws std::invalid_argument,
+    // before computing anything, if a constraint is of a stage >= 2, whose columns come from the std's
+    // prover hints (plan M30).
+    std::vector<ConstraintCheck> check(uint64_t maxRows);
+
     // p_j of f (a non-fixed entry of the layout) once its stage is committed; null before. Not const
     // as rapidsnark's API takes it, but never changed.
     Poly *polynomial(uint64_t f, uint64_t j) const;
@@ -94,6 +120,8 @@ private:
     const AirKey &key;
     std::unique_ptr<BlindingSource> blinding;
     uint64_t next = 1;
+    // The im pols of stages 1 … imPolsComputed are in columns: computeImPols does each stage once.
+    uint64_t imPolsComputed = 0;
     std::vector<FrElement> publicValues;
     std::vector<FrElement> airValueValues;
     std::vector<FrElement> proofValueValues;

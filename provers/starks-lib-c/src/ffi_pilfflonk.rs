@@ -516,6 +516,136 @@ impl Drop for PilFflonkOpening<'_> {
     }
 }
 
+/// A mutable slice's pointer for the C side, NULL for an empty one (see [`ptr_or_null`]).
+fn mut_ptr_or_null<T, U>(slice: &mut [T]) -> *mut U {
+    if slice.is_empty() {
+        std::ptr::null_mut()
+    } else {
+        slice.as_mut_ptr().cast()
+    }
+}
+
+/// A constraint of an AIR, what `pilfflonk check` checks (spec §4.4, "Depuració"): section 2 of its
+/// `<air>.bin`, which holds the pilout's constraints in its order and then one per intermediate
+/// polynomial, `im − e`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PilFflonkConstraint {
+    pub stage: u64,
+    /// It holds on the rows `first_row ≤ i < last_row`.
+    pub first_row: u64,
+    pub last_row: u64,
+    /// The constraint of an intermediate polynomial, which the prover computes.
+    pub im_pol: bool,
+    /// The PIL it comes from.
+    pub line: String,
+}
+
+impl PilFflonkProverCtx {
+    /// The constraints of an AIR, in their order. Fails with
+    /// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if there is no such AIR, and
+    /// [`Format`](PilFflonkErrorKind::Format) if a line is not UTF-8.
+    pub fn constraints(&self, airgroup_id: u64, air_id: u64) -> Result<Vec<PilFflonkConstraint>, PilFflonkError> {
+        let mut n = 0u64;
+        // SAFETY: the handle is live and `n` is a u64 the call writes.
+        check_status(unsafe { pilfflonk_ctx_n_constraints(self.handle.as_ptr(), airgroup_id, air_id, &mut n) })?;
+        (0..n).map(|index| self.constraint(airgroup_id, air_id, index)).collect()
+    }
+
+    fn constraint(&self, airgroup_id: u64, air_id: u64, index: u64) -> Result<PilFflonkConstraint, PilFflonkError> {
+        let (mut stage, mut first_row, mut last_row, mut im_pol, mut line_len) = (0u64, 0u64, 0u64, 0u32, 0u64);
+        // SAFETY: the handle is live and each output is a value of the type the call writes.
+        check_status(unsafe {
+            pilfflonk_ctx_constraint(
+                self.handle.as_ptr(),
+                airgroup_id,
+                air_id,
+                index,
+                &mut stage,
+                &mut first_row,
+                &mut last_row,
+                &mut im_pol,
+                &mut line_len,
+            )
+        })?;
+        let mut line = vec![0u8; line_len as usize];
+        // SAFETY: `line` has the `line_len` bytes the call writes (NULL if none), and the handle is live.
+        check_status(unsafe {
+            pilfflonk_ctx_constraint_line(
+                self.handle.as_ptr(),
+                airgroup_id,
+                air_id,
+                index,
+                mut_ptr_or_null(&mut line),
+                line_len,
+            )
+        })?;
+        let line = String::from_utf8(line).map_err(|_| PilFflonkError {
+            kind: PilFflonkErrorKind::Format,
+            message: format!("pilfflonk_ctx_constraint_line: the line of constraint {index} is not UTF-8"),
+        })?;
+        Ok(PilFflonkConstraint { stage, first_row, last_row, im_pol: im_pol == 1, line })
+    }
+}
+
+/// What `pilfflonk check` found of one constraint of an instance.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PilFflonkConstraintCheck {
+    /// The rows of the constraint's domain where its numerator is not 0.
+    pub n_failed: u64,
+    /// The first of them, at most the `max_rows` of the call, in increasing order: each row, and the
+    /// numerator there as a canonical little-endian scalar.
+    pub rows: Vec<(u64, [u8; PILFFLONK_FR_BYTES])>,
+}
+
+impl PilFflonkInstance<'_> {
+    /// Checks the witness of the instance against the `n_constraints` constraints of its AIR
+    /// ([`PilFflonkProverCtx::constraints`]), row by row, proving nothing: the im pols of stage 1 as
+    /// [`commit_stage`](Self::commit_stage) computes them, then each constraint's numerator on the
+    /// trace. Keeps the first `max_rows` rows where each fails. The instance may still be committed.
+    ///
+    /// Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if `n_constraints` is not
+    /// the AIR's, if the results do not fit in memory, and for a constraint of a stage ≥ 2 (plan M30).
+    pub fn check(
+        &mut self,
+        n_constraints: usize,
+        max_rows: usize,
+    ) -> Result<Vec<PilFflonkConstraintCheck>, PilFflonkError> {
+        let entries = n_constraints
+            .checked_mul(max_rows)
+            .filter(|entries| entries.checked_mul(PILFFLONK_FR_BYTES).is_some())
+            .ok_or_else(|| {
+                invalid_argument(
+                    "pilfflonk_check",
+                    format!("{max_rows} rows of each of {n_constraints} constraints do not fit in memory"),
+                )
+            })?;
+        let mut n_failed = vec![0u64; n_constraints];
+        let mut rows = vec![0u64; entries];
+        let mut values = vec![[0u8; PILFFLONK_FR_BYTES]; entries];
+        // SAFETY: `n_failed`, `rows` and `values` have the room for the `n_constraints` counts, and the
+        // `n_constraints·max_rows` rows and scalars, the call writes (each NULL if it writes none), and
+        // the handle is live.
+        check_status(unsafe {
+            pilfflonk_check(
+                self.handle.as_ptr(),
+                max_rows as u64,
+                n_constraints as u64,
+                mut_ptr_or_null(&mut n_failed),
+                mut_ptr_or_null(&mut rows),
+                mut_ptr_or_null(values.as_flattened_mut()),
+            )
+        })?;
+        Ok(n_failed
+            .iter()
+            .enumerate()
+            .map(|(c, &n)| {
+                let entries = c * max_rows..c * max_rows + n.min(max_rows as u64) as usize;
+                PilFflonkConstraintCheck { n_failed: n, rows: entries.map(|e| (rows[e], values[e])).collect() }
+            })
+            .collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -176,6 +176,9 @@ ProverValues Instance::valuesOnTrace() const {
 }
 
 void Instance::computeImPols(uint64_t stage) {
+    if (stage <= imPolsComputed) {
+        return;
+    }
     const PilfflonkInfo &info = key.info();
     const uint64_t N = key.n();
     std::vector<uint64_t> pending;
@@ -188,6 +191,7 @@ void Instance::computeImPols(uint64_t stage) {
         }
     }
     if (pending.empty()) {
+        imPolsComputed = stage;
         return;
     }
     const ProverValues values = valuesOnTrace();
@@ -215,6 +219,7 @@ void Instance::computeImPols(uint64_t stage) {
         }
         pending = std::move(waiting);
     }
+    imPolsComputed = stage;
 }
 
 std::vector<G1Point> Instance::commitF(uint64_t stage) {
@@ -340,6 +345,48 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
     q = std::move(qPoly);
     ++next;
     return commitments;
+}
+
+std::vector<ConstraintCheck> Instance::check(uint64_t maxRows) {
+    const PilfflonkInfo &info = key.info();
+    const std::vector<ParserParams> &constraints = key.bin().constraintsInfoDebug;
+    for (uint64_t c = 0; c < constraints.size(); ++c) {
+        if (constraints[c].stage >= 2) {
+            throw invalid("Instance::check",
+                          "constraint " + std::to_string(c) + " (" + constraints[c].line + ") is of stage " +
+                              std::to_string(constraints[c].stage) +
+                              ", whose columns come from the std's prover hints, which this prover does not "
+                              "compute yet (plan M30)");
+        }
+    }
+    computeImPols(1);
+    const ProverValues values = valuesOnTrace();
+    const ExpressionsDomain trace = ExpressionsDomain::trace(info.nBits);
+    Engine::Fr &fr = Engine::engine.fr;
+    std::vector<FrElement> numerator(key.n());
+    std::vector<ConstraintCheck> checks(constraints.size());
+    for (uint64_t c = 0; c < constraints.size(); ++c) {
+        // AirKey checked that its rows lie in H: lastRow <= N.
+        const uint64_t firstRow = constraints[c].firstRow, lastRow = constraints[c].lastRow;
+        key.expressions().calculateConstraint(c, trace, values, numerator.data());
+        uint64_t failed = 0;
+#pragma omp parallel for reduction(+ : failed)
+        for (uint64_t i = firstRow; i < lastRow; ++i) {
+            if (!fr.isZero(numerator[i])) {
+                ++failed;
+            }
+        }
+        ConstraintCheck &result = checks[c];
+        result.nFailed = failed;
+        const uint64_t kept = std::min(failed, maxRows);
+        result.rows.reserve(kept);
+        for (uint64_t i = firstRow; result.rows.size() < kept; ++i) {
+            if (!fr.isZero(numerator[i])) {
+                result.rows.push_back(FailedRow{i, numerator[i]});
+            }
+        }
+    }
+    return checks;
 }
 
 Poly *Instance::polynomial(uint64_t f, uint64_t j) const {

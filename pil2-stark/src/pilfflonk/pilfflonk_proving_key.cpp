@@ -256,6 +256,16 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
     const uint64_t N = airDegrees_.n;
     extension = std::make_unique<Lde>(info.nBits, airDegrees_.nBitsExt);
 
+    // The rows of each constraint of the .bin (section 2, which check runs) lie in the trace; its
+    // reader checked firstRow <= lastRow.
+    for (uint64_t c = 0; c < expressionsBin.constraintsInfoDebug.size(); ++c) {
+        const ParserParams &p = expressionsBin.constraintsInfoDebug[c];
+        if (p.lastRow > N) {
+            fail(".bin: constraint " + std::to_string(c) + " holds on the rows " + std::to_string(p.firstRow) +
+                 " <= i < " + std::to_string(p.lastRow) + ", and the trace has " + std::to_string(N));
+        }
+    }
+
     // The layout: each column committed once, Q (its one piece) alone in the last f, with k = 1.
     constPositions.assign(info.constPolsMap.size(), LayoutPosition{NOT_COMMITTED, 0});
     cmPositions.assign(info.cmPolsMap.size(), LayoutPosition{NOT_COMMITTED, 0});

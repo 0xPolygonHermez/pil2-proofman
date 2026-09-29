@@ -21,6 +21,7 @@
 //!
 //! The prover takes its witness from a [`WitnessSource`] (spec §4.3, §5.3). [`prover`] is the
 //! orchestration of a proof over the C++ core (spec §4.4): [`ProvingKey::load`] and [`prove`].
+//! [`check`](mod@check) checks a witness row by row without proving (§4.4, "Depuració"): [`check()`].
 //!
 //! The verifier is JS (`js/`, spec §4.5, D8): [`js_verifier::verify`] runs it with Node.
 //!
@@ -28,6 +29,7 @@
 //! evaluation of a pilout's constraints and of `Q` (A.1) with `num-bigint`, independent of
 //! `pil-info`. It is for tests only; the crate's own tests turn it on.
 
+pub mod check;
 pub mod degrees;
 pub mod error;
 pub mod field;
@@ -48,6 +50,7 @@ pub mod witness;
 #[cfg(feature = "oracle")]
 pub mod oracle;
 
+pub use check::{check, CheckOptions, CheckReport, ConstraintCheck, FailedRow, DEFAULT_MAX_ROWS};
 pub use degrees::Degrees;
 pub use error::{PilfflonkError, PilfflonkResult};
 pub use field::{Digest, FqBytes, FrBytes, G1Affine, G2Affine, BN254_Q, BN254_R};
