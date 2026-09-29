@@ -27,6 +27,9 @@ members = [
   "setup/stark-recurser",
   "setup/pil2-stark",
   "setup/exps-codegen",
+  "setup/pil-info",
+  "setup/pilfflonk",
+  "pilfflonk",
 
   # PIL2 components library
   "pil2-components/lib/std/rs",

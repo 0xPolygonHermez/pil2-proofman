@@ -1,0 +1,13 @@
+[package]
+name = "proofman-pilfflonk"
+description = "Prover orchestration for the pilfflonk backend: its file types, instances, stage loop and proof output"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+[dependencies]
+thiserror = { workspace = true }

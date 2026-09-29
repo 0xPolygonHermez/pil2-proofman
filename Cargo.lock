@@ -1208,6 +1208,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pil-info"
+version = "1.4.0-alpha"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "pil2-pilout"
 version = "1.4.0-alpha"
 dependencies = [
@@ -1273,6 +1280,13 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "pilfflonk-setup"
+version = "1.4.0-alpha"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]
@@ -1460,6 +1474,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "proofman-pilfflonk"
+version = "1.4.0-alpha"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]
