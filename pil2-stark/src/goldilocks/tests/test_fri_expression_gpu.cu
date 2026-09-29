@@ -27,7 +27,7 @@ struct FriCase {
 
     std::vector<FriTerm> terms;   // opening-major
     std::vector<uint64_t> termStart;
-    std::vector<Goldilocks::Element> cm, custom, fixed, evals, xis, x, vf1, vf2;
+    std::vector<Goldilocks::Element> cm, custom, fixed, evals, xi, xis, x, vf1, vf2;   // xis: reference only
 
     void build(uint64_t seed)
     {
@@ -43,7 +43,7 @@ struct FriCase {
         for (uint64_t r = 1; r < n; r++) x[r] = Goldilocks::mul(x[r - 1], wExt);
         if (openings.empty())
             for (uint64_t o = 0; o < nOpenings(); o++) openings.push_back((int64_t)o - 2);
-        const Goldilocks::Element xi[FIELD_EXTENSION] = {rnd(), rnd(), rnd()};
+        xi = {rnd(), rnd(), rnd()};
         xis.resize(nOpenings() * FIELD_EXTENSION);
         for (uint64_t o = 0; o < nOpenings(); o++) {
             Goldilocks::Element wo = Goldilocks::pow(w, (uint64_t)std::abs(openings[o]));
@@ -113,12 +113,12 @@ T *upload(const std::vector<T> &v)
     return d;
 }
 
-// Both kernels, as calculateFRIExpression launches them (256 threads).
+// Either kernel, as calculateFRIExpression launches them (256 threads).
 std::vector<Goldilocks::Element> runKernel(const FriCase &c, bool shifted)
 {
     const uint64_t n = c.domainSize(), O = c.nOpenings(), nThreads = 256;
     gl64_t *cm = (gl64_t *)upload(c.cm), *custom = (gl64_t *)upload(c.custom), *fixed = (gl64_t *)upload(c.fixed);
-    gl64_t *evals = (gl64_t *)upload(c.evals), *xis = (gl64_t *)upload(c.xis), *x = (gl64_t *)upload(c.x);
+    gl64_t *evals = (gl64_t *)upload(c.evals), *xi = (gl64_t *)upload(c.xi), *x = (gl64_t *)upload(c.x);
     gl64_t *vf1 = (gl64_t *)upload(c.vf1), *vf2 = (gl64_t *)upload(c.vf2);
     int64_t *openings = upload(c.openings);
     uint64_t *termStart = upload(c.termStart);
@@ -136,17 +136,17 @@ std::vector<Goldilocks::Element> runKernel(const FriCase &c, bool shifted)
         const uint64_t window = friShiftedWindow(oMin, oMax, c.extendBits, nThreads);
         EXPECT_NE(window, 0u);
         computeFRIExpressionShifted<<<n / nThreads, nThreads, window * sizeof(Goldilocks3GPU::Element)>>>(
-            n, c.extendBits, O, openings, oMax, window, termStart, terms, coef, k, cm, custom, fixed, xis, x, fri);
+            n, c.extendBits, O, openings, oMax, window, termStart, terms, coef, k, cm, custom, fixed, xi, x, fri);
     } else {
         // Fewer blocks than rows / nThreads, so the grid-stride loop runs.
         computeFRIExpressionFolded<<<2, nThreads>>>(n, c.extendBits, O, openings, termStart, terms, coef, k, cm,
-                                                   custom, fixed, xis, x, fri);
+                                                   custom, fixed, xi, x, fri);
     }
     CHECKCUDAERR(cudaDeviceSynchronize());
 
     std::vector<Goldilocks::Element> out(n * FIELD_EXTENSION);
     CHECKCUDAERR(cudaMemcpy(out.data(), fri, out.size() * sizeof(gl64_t), cudaMemcpyDeviceToHost));
-    for (void *p : {(void *)cm, (void *)custom, (void *)fixed, (void *)evals, (void *)xis, (void *)x, (void *)vf1,
+    for (void *p : {(void *)cm, (void *)custom, (void *)fixed, (void *)evals, (void *)xi, (void *)x, (void *)vf1,
                     (void *)vf2, (void *)openings, (void *)termStart, (void *)terms, (void *)coef, (void *)k, (void *)fri})
         cudaFree(p);
     return out;
@@ -184,7 +184,7 @@ INSTANTIATE_TEST_SUITE_P(Shapes, FriExpressionShapes,
                                          std::vector<uint64_t>{2, 3, 4, 5, 6, 7, 8, 9}),
                        ::testing::Bool(), ::testing::Values(0, 1, 2)));
 
-// Openings with gaps and the first one not the smallest, like the recursive compressors.
+// Openings with gaps and out of order, like the recursive compressors.
 TEST(FriExpression, MatchesHostReferenceWithOpeningGaps)
 {
     for (bool shifted : {false, true}) {
@@ -196,6 +196,17 @@ TEST(FriExpression, MatchesHostReferenceWithOpeningGaps)
         SCOPED_TRACE(shifted ? "shifted" : "folded");
         expectMatches(c, shifted);
     }
+}
+
+// A range too wide for the shifted kernel's window: calculateFRIExpression takes the fallback.
+TEST(FriExpression, FallbackMatchesWhenWindowDoesNotFit)
+{
+    FriCase c;
+    c.counts = {2, 3, 1, 4, 2};
+    c.openings = {-1000, -400, -3, 0, 5};
+    c.build(0xfa11);
+    ASSERT_EQ(friShiftedWindow(-1000, 5, c.extendBits, 256), 0u);
+    expectMatches(c, false);
 }
 
 // Keccakf-like: openings -144..5, rows reaching around the domain.
@@ -294,7 +305,7 @@ void runBench(const BenchShape &sh)
         for (auto &v : h) v = rng() % GOLDILOCKS_PRIME;
         return (gl64_t *)upload(h);
     };
-    gl64_t *evals = random(sh.nEvals * FIELD_EXTENSION), *x = random(n), *xis = random(sh.nOpenings * FIELD_EXTENSION);
+    gl64_t *evals = random(sh.nEvals * FIELD_EXTENSION), *x = random(n), *xi = random(FIELD_EXTENSION);
     gl64_t *vf1 = random(FIELD_EXTENSION), *vf2 = random(FIELD_EXTENSION);
     gl64_t *coef = nullptr, *k = nullptr, *fri = nullptr;
     CHECKCUDAERR(cudaMalloc(&coef, sh.nEvals * FIELD_EXTENSION * sizeof(gl64_t)));
@@ -328,18 +339,18 @@ void runBench(const BenchShape &sh)
     const float folded = timeMs([&] {
         constants();
         computeFRIExpressionFolded<<<n / nThreads, nThreads>>>(n, extendBits, sh.nOpenings, dOps, dStart, dTerms, coef, k,
-                                                              pols, pols, pols, xis, x, fri);
+                                                              pols, pols, pols, xi, x, fri);
     });
     const float shifted = window == 0 ? 0.f : timeMs([&] {
         constants();
         computeFRIExpressionShifted<<<n / nThreads, nThreads, window * sizeof(Goldilocks3GPU::Element)>>>(
-            n, extendBits, sh.nOpenings, dOps, ops.back(), window, dStart, dTerms, coef, k, pols, pols, pols, xis, x, fri);
+            n, extendBits, sh.nOpenings, dOps, ops.back(), window, dStart, dTerms, coef, k, pols, pols, pols, xi, x, fri);
     });
     printf("[bench] %-14s O=%-3lu evals=%-5lu cols=%-5lu  folded %8.3f ms  shifted %8.3f ms (window %lu)\n", sh.name,
            sh.nOpenings, sh.nEvals, sh.nCols, folded, shifted, window);
     fflush(stdout);
 
-    for (void *p : {(void *)pols, (void *)evals, (void *)x, (void *)xis, (void *)vf1, (void *)vf2, (void *)coef,
+    for (void *p : {(void *)pols, (void *)evals, (void *)x, (void *)xi, (void *)vf1, (void *)vf2, (void *)coef,
                     (void *)k, (void *)fri, (void *)dOps, (void *)dStart, (void *)dTerms})
         cudaFree(p);
 }

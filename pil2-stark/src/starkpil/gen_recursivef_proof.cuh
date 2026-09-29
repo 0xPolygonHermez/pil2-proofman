@@ -93,7 +93,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     uint64_t offsetProofValues = setupCtx.starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
     uint64_t offsetEvals = setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)];
     uint64_t offsetChallenges = setupCtx.starkInfo.mapOffsets[std::make_pair("challenges", false)];
-    uint64_t offsetXDivXSub = setupCtx.starkInfo.mapOffsets[std::make_pair("xdivxsub", false)];
     uint64_t offsetFriQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("fri_queries", false)];
     uint64_t offsetChallenge = setupCtx.starkInfo.mapOffsets[std::make_pair("challenge", false)];
     uint64_t offsetNonce = setupCtx.starkInfo.mapOffsets[std::make_pair("nonce", false)];
@@ -114,7 +113,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         airgroupValues : (Goldilocks::Element *)d_aux_trace + offsetAirgroupValues,
         airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
         evals : (Goldilocks::Element *)d_aux_trace + offsetEvals,
-        xDivXSub : (Goldilocks::Element *)d_aux_trace + offsetXDivXSub,
+        xDivXSub : nullptr,
         pConstPolsAddress: (Goldilocks::Element *)d_aux_trace + offsetConstPols,
         pConstPolsExtendedTreeAddress:d_constTree,
         pCustomCommitsFixed: pCustomCommitsFixed,
@@ -244,7 +243,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
             d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
-    calculateXis_inplace(setupCtx, h_params, air_instance_info->opening_points, d_xiChallenge, stream);    
     uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
     dim3 threads(256);
     dim3 blocks((NExtended + threads.x - 1) / threads.x);
@@ -252,7 +250,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     TimerStopCategoryGPU(timer, FRI);
     TimerStartGPU(timer, STARK_FRI_POLYNOMIAL);
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    calculateFRIExpression(setupCtx, h_params, air_instance_info, stream);
+    calculateFRIExpression(setupCtx, h_params, air_instance_info, d_xiChallenge, stream);
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 
     TimerStopGPU(timer, STARK_FRI_POLYNOMIAL);    

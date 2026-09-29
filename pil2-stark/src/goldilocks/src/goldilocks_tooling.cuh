@@ -73,6 +73,7 @@ struct AirInstanceInfo {
     // FRI terms opening-major (friTermStart has nOpenings + 1 bounds), for fri_expression.cuh.
     FriTerm *friTerms = nullptr;
     uint64_t *friTermStart = nullptr;
+    uint64_t friWindow = 0;   // rows of D per block (friShiftedWindow); 0 runs computeFRIExpressionFolded
     
     SetupCtx *setupCtx;
 
@@ -197,9 +198,23 @@ struct AirInstanceInfo {
         // Only for proof-generating setups: the verify and verify-constraints branches of
         // StarkInfo::load lay out their own arena and never reach FRI, so the region is
         // legitimately absent there.
-        if (!setupCtx->starkInfo.verify_constraints && !setupCtx->starkInfo.verify &&
-            setupCtx->starkInfo.mapOffsets.count(std::make_pair("fri_folded", false)) == 0) {
-            throw std::runtime_error("AirInstanceInfo: aux_trace has no fri_folded region (StarkInfo not loaded for gpu)");
+        // The FRI kernel's window of D is sized here for the same reason.
+        if (!setupCtx->starkInfo.verify_constraints && !setupCtx->starkInfo.verify) {
+            if (setupCtx->starkInfo.mapOffsets.count(std::make_pair("fri_folded", false)) == 0) {
+                zklog.error("AirInstanceInfo: aux_trace has no fri_folded region (StarkInfo not loaded for gpu)");
+                exitProcess();
+            }
+            const auto &openings = setupCtx->starkInfo.openingPoints;
+            const auto [oMin, oMax] = std::minmax_element(openings.begin(), openings.end());
+            const uint64_t extendBits = setupCtx->starkInfo.starkStruct.nBitsExt - setupCtx->starkInfo.starkStruct.nBits;
+            friWindow = friShiftedWindow(*oMin, *oMax, extendBits,
+                                         friThreads(setupCtx->starkInfo.nrowsPack, 1ULL << setupCtx->starkInfo.starkStruct.nBitsExt));
+            if (friWindow == 0) {
+                zklog.warning("AirInstanceInfo: airgroup " + std::to_string(airgroupId) + " air " + std::to_string(airId) +
+                              " opens rows " + std::to_string(*oMin) + ".." + std::to_string(*oMax) + " at blowup " +
+                              std::to_string(1ULL << extendBits) + ": the FRI window of D does not fit 48 KiB of shared "
+                              "memory, so its FRI polynomial takes the slower per-row inversions");
+            }
         }
 
         // Each opening's terms in eval-map order, which its vf2 powers follow.
@@ -216,7 +231,10 @@ struct AirInstanceInfo {
                                                : "const";
             const Layout layout = src == 0 ? resolveLayout(setupCtx->starkInfo.starkStruct.nBits, setupCtx->starkInfo.mapSectionsN[stage])
                                            : fixedLayout();
-            if (layout != Layout::ColMajor) throw std::runtime_error("AirInstanceInfo: FRI terms need ColMajor sections");
+            if (layout != Layout::ColMajor) {
+                zklog.error("AirInstanceInfo: FRI terms need ColMajor sections");
+                exitProcess();
+            }
             byOpening[ev.openingPos].push_back(FriTerm{setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)] + pol.stagePos * NExt,
                                                        (uint32_t)i, src, (uint16_t)pol.dim});
         }
