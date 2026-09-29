@@ -221,20 +221,9 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     Goldilocks::Element *d_xiChallenge = &h_params.challenges[xiChallengeIndex * FIELD_EXTENSION];
     gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
-    CHECKCUDAERR(cudaMemsetAsync(h_params.evals, 0, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), stream));
-    uint64_t count = 0;
     TimerStopCategoryGPU(timer, EVALS);
-    for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += EVALS_OPENING_BATCH) {
-        std::vector<int64_t> openingPoints;
-        for(uint64_t j = 0; j < EVALS_OPENING_BATCH; ++j) {
-            if(i + j < setupCtx.starkInfo.openingPoints.size()) {
-                openingPoints.push_back(setupCtx.starkInfo.openingPoints[i + j]);
-            }
-        }
-        uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("lev_helper", false)];
-        computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), &air_instance_info->opening_points[i], (gl64_t*) d_aux_trace, offset_helper, d_LEv, timer, stream);
-        evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), air_instance_info, (Goldilocks::Element*)d_LEv, offset_helper, timer, stream);
-    }
+    computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, (gl64_t*) d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("lev_helper", false)], d_LEv, timer, stream);
+    evmap_inplace(setupCtx, h_params, air_instance_info, (Goldilocks::Element*)d_LEv, timer, stream);
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         d_transcript.put(h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream, &timer);
     } else {
