@@ -1,6 +1,6 @@
 //! `proofman-cli pilfflonk prove` (spec §4.4, plan M18) end to end: the setup (`setup-pilfflonk`),
 //! the prover's CLI and the JS verifier's (`pilfflonk verify`, M19), and the prover against the Rust
-//! oracle (M14), on two fixtures and three layouts (plan M22):
+//! oracle (M14), on three fixtures and their layouts (plans M22, M23):
 //!
 //! - the Fibonacci, grouped with the default `--extra-muls 2` (its fixed columns in one `f` of
 //!   `k = 2`, `powerW = 2`), with `--extra-muls 0` (its committed columns in one `f` of `k = 3`, the
@@ -8,7 +8,11 @@
 //! - `pilfflonk/tests/fixtures/packed`, a synthetic AIR whose default grouping packs six fixed
 //!   columns in one `f`, splits its eleven committed columns in `f` of `k = 3, 4, 4` (`powerW =
 //!   12`), and fuses a fixed column and two committed ones, which adds their evaluations at the
-//!   offsets they gain to the end of the evMap.
+//!   offsets they gain to the end of the evMap;
+//! - `pilfflonk/tests/fixtures/signed`, a synthetic AIR that reads its columns at the offsets
+//!   `{−1, 0, 1, 2}` and has constraints of degree up to 6, with the im pols the setup chooses by
+//!   default (one, `qDeg = 3`) and with `--max-constraint-degree 3` (three, `qDeg = 2`) and `2`
+//!   (eight, `qDeg = 1`), grouped and with `--no-packing`.
 //!
 //! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
 //! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`, plan N13):
@@ -28,6 +32,8 @@
 mod fibonacci;
 #[path = "../../pilfflonk/tests/data/packed.rs"]
 mod packed;
+#[path = "../../pilfflonk/tests/data/signed.rs"]
+mod signed;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -51,6 +57,9 @@ const SEED_B: &str = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433
 
 /// `in1` of the synthetic fixture's witness.
 const PACKED_IN1: u64 = 5;
+
+/// `[in1, in2]` of the witness of the fixture of the signed offsets.
+const SIGNED_INPUTS: [u64; 2] = [3, 5];
 
 /// A fresh directory for the test under the target's temporary directory, removed when dropped.
 struct TestDir(PathBuf);
@@ -88,6 +97,7 @@ fn output(out: &Output) -> String {
 enum Program {
     Fibonacci,
     Packed,
+    Signed,
 }
 
 impl Program {
@@ -95,14 +105,17 @@ impl Program {
         match self {
             Program::Fibonacci => "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil",
             Program::Packed => "pilfflonk/tests/fixtures/packed/packed.pil",
+            Program::Signed => "pilfflonk/tests/fixtures/signed/signed.pil",
         }
     }
 
-    /// M13's generator for the Fibonacci (inputs [1, 2]), `tests/data/packed.rs` for the other.
+    /// M13's generator for the Fibonacci (inputs [1, 2]), `tests/data/{packed,signed}.rs` for the
+    /// others.
     fn witness(self) -> Witness {
         match self {
             Program::Fibonacci => fibonacci::witness(8, [1, 2]),
             Program::Packed => packed::witness(PACKED_IN1),
+            Program::Signed => signed::witness(SIGNED_INPUTS),
         }
     }
 }
@@ -219,8 +232,13 @@ fn setup_options(dir: &TestDir, packing: Packing) -> SetupPilfflonkOptions {
 
 /// `program` compiled, set up as `packing` says, and its witness written.
 fn fixture(name: &str, program: Program, packing: Packing) -> Fixture {
+    fixture_of_degree(name, program, packing, DEFAULT_MAX_CONSTRAINT_DEGREE)
+}
+
+/// [`fixture`], set up with `--max-constraint-degree max_constraint_degree`.
+fn fixture_of_degree(name: &str, program: Program, packing: Packing, max_constraint_degree: u64) -> Fixture {
     let dir = TestDir::new(name);
-    let opts = setup_options(&dir, packing);
+    let opts = SetupPilfflonkOptions { max_constraint_degree, ..setup_options(&dir, packing) };
     compile(program, &opts.airout_path);
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
@@ -231,6 +249,14 @@ fn fixture(name: &str, program: Program, packing: Packing) -> Fixture {
     generated.write(&witness, &shape).unwrap();
     let publics = json!(generated.publics.iter().map(FrBytes::to_decimal).collect::<Vec<_>>());
     Fixture { pilout: opts.airout_path, dir, proving_key, vkey, witness, publics }
+}
+
+/// The keys of `map`, sorted: serde_json keeps the order of the file instead when its
+/// `preserve_order` is on, which Cargo's feature unification can turn on for the whole build.
+fn sorted_keys(map: &serde_json::Map<String, Value>) -> Vec<&str> {
+    let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    keys
 }
 
 /// Proves the witness of `f` four times (twice with one seed, once with another, once with the
@@ -257,13 +283,13 @@ fn proves_and_rejects_every_change(f: &Fixture, commitments: &[&str], evaluation
     let (pa, pb, pr) =
         (read_json(&a1.join("proof.json")), read_json(&b.join("proof.json")), read_json(&random.join("proof.json")));
     let polynomials = pa["polynomials"].as_object().unwrap();
-    assert_eq!(polynomials.keys().map(String::as_str).collect::<Vec<_>>(), commitments);
+    assert_eq!(sorted_keys(polynomials), commitments);
     for name in polynomials.keys() {
         assert_ne!(pa["polynomials"][name], pb["polynomials"][name], "{name} with another seed");
         assert_ne!(pa["polynomials"][name], pr["polynomials"][name], "{name} with the OS's randomness");
     }
     let names = pa["evaluations"].as_object().unwrap();
-    assert_eq!(names.keys().map(String::as_str).collect::<Vec<_>>(), evaluations);
+    assert_eq!(sorted_keys(names), evaluations);
     assert_eq!(read_json(&a1.join("publics.json")), f.publics);
 
     // Every one verifies.
@@ -431,6 +457,175 @@ fn the_prover_proves_a_layout_that_packs_and_splits_groups() {
     assert!(!opts.build_dir.exists());
 }
 
+/// The number of im pols the setup chose.
+fn n_im_pols(info: &PilfflonkInfo) -> usize {
+    info.cm_pols_map.iter().filter(|p| p.im_pol).count()
+}
+
+/// The names of the evaluations of a proof of `info`, sorted: the evMap's `(column, offset)`, named
+/// as spec A.6 says (`<column>` and `[i]` per entry of its lengths, then `""` for `ξ`, `w` for
+/// `ξ·ω` and `w<s>` for `ξ·ω^s`), and `inv` and `invZh`.
+fn evaluation_names(info: &PilfflonkInfo) -> Vec<String> {
+    let mut names: Vec<String> = info
+        .ev_map
+        .iter()
+        .map(|e| {
+            let pol = info.pol(e.pol_type, e.id).unwrap();
+            let indices: String = pol.lengths.iter().map(|i| format!("[{i}]")).collect();
+            let suffix = match e.prime {
+                0 => String::new(),
+                1 => "w".to_string(),
+                s => format!("w{s}"),
+            };
+            format!("{}{indices}{suffix}", pol.name)
+        })
+        .chain(["inv", "invZh"].map(String::from))
+        .collect();
+    names.sort();
+    names
+}
+
+/// The names of the commitments of a proof of `info`, sorted: `W`, `Wp` and `f<g>` for each `f` not
+/// of the fixed columns (A.5, A.6).
+fn commitment_names(info: &PilfflonkInfo) -> Vec<String> {
+    let fs = info.layout.0.iter().enumerate().filter(|(_, f)| f.stage > 0).map(|(g, _)| format!("f{g}"));
+    let mut names: Vec<String> = ["W", "Wp"].map(String::from).into_iter().chain(fs).collect();
+    names.sort();
+    names
+}
+
+/// [`proves_and_rejects_every_change`] with the commitments and evaluations of the layout.
+fn proves_its_layout_and_rejects_every_change(f: &Fixture) {
+    let info = f.info();
+    let (commitments, evaluations) = (commitment_names(&info), evaluation_names(&info));
+    let commitments: Vec<&str> = commitments.iter().map(String::as_str).collect();
+    let evaluations: Vec<&str> = evaluations.iter().map(String::as_str).collect();
+    proves_and_rejects_every_change(f, &commitments, &evaluations);
+}
+
+/// The offsets the signed fixture reads its columns at.
+const SIGNED_OFFSETS: [i64; 4] = [-1, 0, 1, 2];
+
+/// The fixture of the signed offsets (`tests/fixtures/signed`, plan M23), grouped by default and
+/// with the im pol the setup chooses by default: one, `'a·a·a'·a'2`, which brings the constraint of
+/// degree 6 down to the 4 of the next one, and `qDeg = 3`. `K`, read at −1 only, and `P`, at 2
+/// only, are fused to `{−1, 0, 2}` in an `f` of `k = 2`; `L1`, `LLAST` and `WIN` are in one of
+/// `k = 3`. Every committed column of stage 1, the im pol too, is fused to `{−1, 0, 1, 2}` (the im
+/// pol, which the prover computes on `H` from rows that wrap around, is opened at `ξ·ω^−1`, `ξ·ω`
+/// and `ξ·ω^2` as well), and they go in `f` of `k = 1, 3, 3`: `powerW = 6`. The evMap interleaves
+/// fixed and committed columns, and ends with the pairs the fusions add, of both. `Q` has
+/// `qDeg·N + (qDeg + 1)·|O|max + 1` coefficients (A.1).
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_signed_offsets_with_the_im_pol_the_setup_chooses() {
+    let f = fixture("e2e_signed", Program::Signed, DEFAULT);
+    let info = f.info();
+    assert_eq!((n_im_pols(&info), info.q_deg), (1, 3));
+    assert_eq!(info.opening_points, SIGNED_OFFSETS);
+    let (n, blinded) = (32, 32 + 4 + 1);
+    let all = SIGNED_OFFSETS.to_vec();
+    assert_eq!(
+        f.layout(),
+        [
+            (0, 2, vec![-1, 0, 2], 2 * n + 1),
+            (0, 3, vec![0], 3 * n + 2),
+            (1, 1, all.clone(), blinded),
+            (1, 3, all.clone(), 3 * blinded + 2),
+            (1, 3, all, 3 * blinded + 2),
+            (2, 1, vec![0], 3 * n + 4 * 4 + 1),
+        ]
+    );
+    assert_eq!(info.layout.power_w().unwrap(), 6);
+
+    // Every committed column at the four points, K and P at three.
+    let mut evaluations: Vec<String> =
+        ["Signed.L1", "Signed.LLAST", "Signed.WIN", "inv", "invZh"].map(String::from).to_vec();
+    for column in ["Signed.K", "Signed.P"] {
+        evaluations.extend(["w-1", "", "w2"].map(|suffix| format!("{column}{suffix}")));
+    }
+    for column in ["a", "b", "c", "d", "e", "g", "Signed.ImPol[0]"] {
+        evaluations.extend(["w-1", "", "w", "w2"].map(|suffix| format!("{column}{suffix}")));
+    }
+    evaluations.sort();
+    assert_eq!(evaluation_names(&info), evaluations);
+    assert_eq!(commitment_names(&info), ["W", "Wp", "f2", "f3", "f4", "f5"]);
+    proves_its_layout_and_rejects_every_change(&f);
+}
+
+/// The fixture of the signed offsets with a lower `--max-constraint-degree`, which forces more im
+/// pols and a lower `qDeg`: 3 im pols and `qDeg = 2` with 3, 8 and `qDeg = 1` with 2. Between
+/// them the im pols read `a` at every offset of `{−1, 0, 1, 2}` (and with 2, `K` at −1), and they
+/// are opened at `{0}`, in `f` of their own and `d`'s.
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_signed_offsets_with_more_im_pols_under_a_lower_max_constraint_degree() {
+    for (name, degree, im_pols, q_deg, power_w) in [("e2e_signed_d3", 3, 3, 2, 6), ("e2e_signed_d2", 2, 8, 1, 6)] {
+        let f = fixture_of_degree(name, Program::Signed, DEFAULT, degree);
+        let info = f.info();
+        assert_eq!((n_im_pols(&info), info.q_deg), (im_pols, q_deg), "{name}");
+        assert_eq!(info.layout.power_w().unwrap(), power_w, "{name}");
+        let im_pol_offsets: Vec<&[i64]> = info
+            .layout
+            .0
+            .iter()
+            .filter(|f| f.pols.iter().any(|p| info.cm_pols_map[p.id as usize].im_pol))
+            .map(|f| f.offsets.as_slice())
+            .collect();
+        assert!(!im_pol_offsets.is_empty() && im_pol_offsets.iter().all(|o| *o == [0]), "{name}: {im_pol_offsets:?}");
+        proves_its_layout_and_rejects_every_change(&f);
+    }
+}
+
+/// The fixture of the signed offsets with `--no-packing`: an `f` of `k = 1` per column, each at the
+/// offsets its column is read at (no fusion), by default and with `--max-constraint-degree 2`. `K`,
+/// `P` and `g` are opened at a single point, not `ξ`: `ξ·ω^−1`, `ξ·ω^2` and `ξ·ω^2`.
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_signed_offsets_unpacked() {
+    for (name, degree, im_pols) in [("e2e_signed_unpacked", 9, 1), ("e2e_signed_unpacked_d2", 2, 8)] {
+        let f = fixture_of_degree(name, Program::Signed, Packing::NoPacking, degree);
+        let info = f.info();
+        assert_eq!(n_im_pols(&info), im_pols, "{name}");
+        assert!(f.layout().iter().all(|(_, k, _, _)| *k == 1), "{name}");
+        let offsets = |column: &str| {
+            let f = info.layout.0.iter().find(|f| f.pols[0].name == column).unwrap();
+            f.offsets.clone()
+        };
+        assert_eq!(
+            ["a", "b", "c", "d", "e", "g", "Signed.K", "Signed.P"].map(offsets),
+            [SIGNED_OFFSETS.to_vec(), vec![0, 2], vec![0, 1], vec![0], vec![0, 1], vec![2], vec![-1], vec![2]],
+            "{name}"
+        );
+        proves_its_layout_and_rejects_every_change(&f);
+    }
+}
+
+/// The witness of the fixture of the signed offsets that breaks `L1·(c − 'a)` (constraint 9) at row
+/// 0 only, which reads `a` at row N − 1 across the wrap: the oracle finds that row alone, and the
+/// prover refuses it, whatever the layout.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn a_witness_that_breaks_a_constraint_across_the_wrap_is_refused() {
+    let witness = signed::witness_broken_across_the_wrap(SIGNED_INPUTS);
+    for (name, degree, packing) in [("wrap", 9, DEFAULT), ("wrap_d2_unpacked", 2, Packing::NoPacking)] {
+        let f = fixture_of_degree(name, Program::Signed, packing, degree);
+        let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
+        let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
+        let failures = oracle.check(&oracle.values(&witness, 0).unwrap()).unwrap();
+        let rows: Vec<(usize, usize)> = failures.iter().map(|x| (x.constraint, x.row)).collect();
+        assert_eq!(rows, [(9, 0)], "{name}");
+
+        let pk = ProvingKey::load(&f.proving_key).unwrap();
+        let options = ProveOptions { insecure_blinding_seed: Some([3; 32]) };
+        match prove(&pk, &witness, &options) {
+            Err(PilfflonkError::Unsatisfied(message)) => {
+                assert!(message.contains("the witness does not satisfy the constraints of Signed"), "{message}")
+            }
+            other => panic!("{name}: expected Unsatisfied, got {:?}", other.map(|_| ())),
+        }
+    }
+}
+
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn a_witness_that_breaks_a_constraint_is_refused() {
@@ -550,6 +745,25 @@ fn the_prover_agrees_with_the_oracle() {
     ] {
         let f = fixture(name, program, packing);
         assert_eq!(f.info().layout.power_w().unwrap(), power_w, "{name}");
+        agrees_with_the_oracle(&f);
+    }
+}
+
+/// The prover agrees with the oracle on the fixture of the signed offsets, for each choice of im
+/// pols and layout: the evaluations of the fixed columns at `ξ·ω^−1`, `ξ` and `ξ·ω^2`, and `Q(ξ)`
+/// folded over the pilout's constraints and the im pols' in the order of `cmPolsMap`.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_prover_agrees_with_the_oracle_on_signed_offsets() {
+    for (name, degree, packing, im_pols) in [
+        ("oracle_signed", 9, DEFAULT, 1),
+        ("oracle_signed_d3", 3, DEFAULT, 3),
+        ("oracle_signed_d2", 2, DEFAULT, 8),
+        ("oracle_signed_unpacked", 9, Packing::NoPacking, 1),
+        ("oracle_signed_unpacked_d2", 2, Packing::NoPacking, 8),
+    ] {
+        let f = fixture_of_degree(name, Program::Signed, packing, degree);
+        assert_eq!(n_im_pols(&f.info()), im_pols, "{name}");
         agrees_with_the_oracle(&f);
     }
 }
