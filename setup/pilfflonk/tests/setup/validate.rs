@@ -172,12 +172,12 @@ fn public_tables_are_refused() {
 
 // --- Hints ---------------------------------------------------------------------------------
 
-/// The prover hints of spec §3.4 the setup supports (plan M30), `gsum_col` and `gprod_col`, pass
-/// by name if they are of the AIR: what they give, `check_prover_hints` checks after the passes
-/// (`tests/bytecode.rs`). Of the pilout, they are of no AIR.
+/// The prover hints of spec §3.4 the setup supports (plans M30, M31), `im_col`, `gprod_col` and
+/// `gsum_col`, pass by name if they are of the AIR: what they give, `check_prover_hints` checks after
+/// the passes (`tests/bytecode.rs`). Of the pilout, they are of no AIR.
 #[test]
 fn the_supported_prover_hints_pass_by_name_if_they_are_of_the_air() {
-    assert_eq!(SUPPORTED_PROVER_HINTS, ["gsum_col", "gprod_col"]);
+    assert_eq!(SUPPORTED_PROVER_HINTS, ["im_col", "gprod_col", "gsum_col"], "the STARK's order");
     for name in SUPPORTED_PROVER_HINTS {
         assert!(PROVER_HINTS.contains(&name));
         let mut pilout = pilout();
@@ -189,22 +189,19 @@ fn the_supported_prover_hints_pass_by_name_if_they_are_of_the_air() {
     }
 }
 
-/// The other prover hints are refused, of the AIR or of the pilout, each saying why: `im_col` waits
-/// for plan M31, `im_airval` computes an air value (D2).
+/// The other prover hint, `im_airval`, is refused, of the AIR or of the pilout, saying why: it
+/// computes an air value (D2).
 #[test]
 fn the_other_prover_hints_are_refused() {
     for (of_air, where_) in [(true, "air Sample"), (false, "the pilout")] {
         let mut pilout = pilout();
-        pilout.hints = vec![hint("range_def", true), hint("im_col", of_air)];
-        let err = refusal(&pilout);
-        assert!(matches!(&err, SetupError::ImColHint { location } if location == where_), "{err}");
-        assert!(err.to_string().contains("plan M31"), "{err}");
-        pilout.hints = vec![hint("im_airval", of_air)];
+        pilout.hints = vec![hint("range_def", true), hint("im_airval", of_air)];
         let err = refusal(&pilout);
         assert!(matches!(&err, SetupError::ImAirvalHint { location } if location == where_), "{err}");
         assert!(err.to_string().contains("D2"), "{err}");
     }
-    assert_eq!(PROVER_HINTS.len(), SUPPORTED_PROVER_HINTS.len() + 2);
+    assert_eq!(PROVER_HINTS.len(), SUPPORTED_PROVER_HINTS.len() + 1);
+    assert!(!SUPPORTED_PROVER_HINTS.contains(&"im_airval"));
 }
 
 /// The hints are checked before the values, so that `im_airval` is told about rather than the air
@@ -273,10 +270,12 @@ fn a_prover_hint_is_reported_before_the_columns_it_would_produce() {
     let mut pilout = pilout();
     the_air(&mut pilout).stage_widths = vec![2, 1];
     pilout.num_challenges = vec![0, 2];
-    pilout.hints = vec![hint("gsum_col", true)];
-    validate(&pilout).unwrap();
-    pilout.hints = vec![hint("im_col", true)];
-    assert!(matches!(refusal(&pilout), SetupError::ImColHint { .. }));
+    for name in SUPPORTED_PROVER_HINTS {
+        pilout.hints = vec![hint(name, true)];
+        validate(&pilout).unwrap();
+    }
+    pilout.hints = vec![hint("im_airval", true)];
+    assert!(matches!(refusal(&pilout), SetupError::ImAirvalHint { .. }));
 }
 
 // --- Constants below r ---------------------------------------------------------------------

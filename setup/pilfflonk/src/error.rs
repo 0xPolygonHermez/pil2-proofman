@@ -63,14 +63,6 @@ pub enum SetupError {
     #[error("the pilout has {n} public tables, which pilfflonk does not support")]
     PublicTables { n: usize },
 
-    /// The prover hint `im_col` (spec §3.4): the std adds it when a bus's terms exceed its
-    /// `MAX_CONSTRAINT_DEGREE`. Not yet (plan M31).
-    #[error(
-        "{location} has the prover hint `im_col`, whose column pilfflonk does not compute yet (plan M31): the std \
-         adds one when the terms of a bus exceed its MAX_CONSTRAINT_DEGREE (set_max_constraint_degree)"
-    )]
-    ImColHint { location: String },
-
     /// The prover hint `im_airval` (spec §3.4), which computes an air value: v1 has none (D2).
     #[error(
         "{location} has the prover hint `im_airval`, which computes an air value, and pilfflonk has none (spec D2): \
@@ -78,8 +70,8 @@ pub enum SetupError {
     )]
     ImAirvalHint { location: String },
 
-    /// A `gsum_col` or `gprod_col` that the prover cannot compute as the STARK's
-    /// `calculateWitnessSTD` does (`crate::validate::check_prover_hints`).
+    /// An `im_col`, `gsum_col` or `gprod_col` that the prover cannot compute as the STARK's
+    /// `calculateImHints` and `calculateWitnessSTD` do (`crate::validate::check_prover_hints`).
     #[error("air {air}: its hint `{hint}` cannot be computed: {reason}")]
     ProverHint { hint: String, air: String, reason: String },
 

@@ -222,10 +222,11 @@ extern "C" {
     void pilfflonk_instance_free(void *instance);
 
     // Commits stage `stage` of the instance (spec §4.4 step 2): its columns (the witness's for stage
-    // 1, and for a stage >= 2 those its std prover hints give, gsum_col and gprod_col, as the STARK's
-    // calculateWitnessSTD computes them: plan M30), its intermediate polynomials (with the AIR's
-    // bytecode on H), and for each f of the stage in the layout, its columns interpolated, blinded as
-    // spec A.3 says (p' = p + (X^N − 1)·b, b of |O_f| + 1 coefficients), packed and committed.
+    // 1, and for a stage >= 2 those its std prover hints give, im_col and then gsum_col and gprod_col,
+    // as the STARK's calculateImHints and calculateWitnessSTD compute them: plans M30, M31), its
+    // intermediate polynomials (with the AIR's bytecode on H), and for each f of the stage in the
+    // layout, its columns interpolated, blinded as spec A.3 says (p' = p + (X^N − 1)·b, b of |O_f| + 1
+    // coefficients), packed and committed.
     // `challenges` holds the n_challenges challenges of the stage by stageId (none for stage 1);
     // out_g1 receives the n_out commitments of the stage's f, in the order of the layout, n_out being
     // their number.

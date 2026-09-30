@@ -40,15 +40,10 @@
   },
   {
    "stage": 2,
-   "name": "SumBus.ImPol",
+   "name": "im_single",
    "dim": 1,
    "polsMapId": 4,
    "stageId": 1,
-   "lengths": [
-    0
-   ],
-   "imPol": true,
-   "expId": 4,
    "stagePos": 1
   },
   {
@@ -58,10 +53,10 @@
    "polsMapId": 5,
    "stageId": 2,
    "lengths": [
-    1
+    0
    ],
    "imPol": true,
-   "expId": 15,
+   "expId": 13,
    "stagePos": 2
   },
   {
@@ -214,7 +209,7 @@
  "qDeg": 1,
  "qDim": 1,
  "maxQDegree": 0,
- "cExpId": 49,
+ "cExpId": 44,
  "layout": [
   {
    "stage": 0,
@@ -321,7 +316,7 @@
    "pols": [
     {
      "id": 4,
-     "name": "SumBus.ImPol[0]"
+     "name": "im_single"
     }
    ],
    "k": 1,
@@ -335,7 +330,7 @@
    "pols": [
     {
      "id": 5,
-     "name": "SumBus.ImPol[1]"
+     "name": "SumBus.ImPol[0]"
     }
    ],
    "k": 1,

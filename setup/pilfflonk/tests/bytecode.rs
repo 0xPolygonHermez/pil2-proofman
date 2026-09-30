@@ -16,7 +16,7 @@
 //! ```
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -988,56 +988,129 @@ fn wide_constants_fixture_round_trips() {
     }
 }
 
-/// The fixtures of the std's buses (plan M30), `pilfflonk/tests/fixtures/{sum_bus,prod_bus}`: the
-/// setup accepts their prover hint (`check_prover_hints`), and section 3 has it, and only it, of the
-/// passes' hints, as `pil-info` processes it: its reference the column of stage 2 (`cmPolsMap` index
-/// C, after the C of stage 1) at the row itself, `numerator_air` and `denominator_air` expressions
-/// of section 1, and the numbers of the direct fields and `result` of `STD_MODE_ONE_INSTANCE`.
+/// The fixtures of the std's buses (plans M30, M31), `pilfflonk/tests/fixtures/{sum_bus,prod_bus,
+/// prod_bus_im}`: the setup accepts their prover hints (`check_prover_hints`), and section 3 has them,
+/// and only them, of the passes' hints, in the pilout's order, as `pil-info` processes them: each
+/// reference a column of stage 2 that is not an im pol, at the row itself, each another; the
+/// numerator and the denominator (`numerator` and `denominator` of an `im_col`, `numerator_air` and
+/// `denominator_air` of a `gsum_col` or `gprod_col`) an expression of section 1, a column or a number;
+/// and the numbers of the direct fields and `result` of `STD_MODE_ONE_INSTANCE`. The bus's own column
+/// is the first of stage 2, `cmPolsMap` index C after the C of stage 1. With the std's default
+/// `MAX_CONSTRAINT_DEGREE`, the sum bus has an `im_col` before its `gsum_col`, whose numerator reads
+/// it, and the product bus of `prod_bus_im` two, the second's numerator reading the first; with 4
+/// (`sum_bus_degree4.pil`), and in `prod_bus`, there is none.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_bus_fixtures_hints_round_trip() {
-    for (pil, name, n_stage_1, prover_hint, numbers) in [
-        ("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil", "SumBus", 3, "gsum_col", ["0", "1", "0"]),
-        ("pilfflonk/tests/fixtures/prod_bus/prod_bus.pil", "ProdBus", 4, "gprod_col", ["1", "1", "1"]),
+    for (pil, name, n_stage_1, prover_hints) in [
+        ("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil", "SumBus", 3, &["im_col", "gsum_col"][..]),
+        ("pilfflonk/tests/fixtures/sum_bus/sum_bus_degree4.pil", "SumBus", 3, &["gsum_col"][..]),
+        ("pilfflonk/tests/fixtures/prod_bus/prod_bus.pil", "ProdBus", 4, &["gprod_col"][..]),
+        (
+            "pilfflonk/tests/fixtures/prod_bus_im/prod_bus_im.pil",
+            "ProdBusIm",
+            6,
+            &["im_col", "im_col", "gprod_col"][..],
+        ),
     ] {
         let result = run_bn254(&compile_bn254(pil));
         check_prover_hints(&result, name).unwrap();
         let (bytecode, _) = check_air_bin(&result, name);
-        assert_eq!(bytecode.n_stages, 2, "{name}");
+        assert_eq!(bytecode.n_stages, 2, "{pil}");
         let passes: Vec<&str> = result.pil_code.expressions_info.hints_info.iter().map(|h| h.name.as_str()).collect();
-        assert!(passes.len() > 1 && passes.contains(&prover_hint), "{name}: {passes:?}");
-        assert_eq!(bytecode.hints.len(), 1, "{name}: the witness and debug hints are not written");
-        let hint = &bytecode.hints[0];
-        assert_eq!(hint.name, prover_hint);
-        let fields: Vec<&str> = hint.fields.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(
-            fields,
-            ["reference", "numerator_air", "denominator_air", "numerator_direct", "denominator_direct", "result"]
-        );
-        let value = |f: usize| {
-            assert_eq!(hint.fields[f].values.len(), 1);
-            assert!(hint.fields[f].values[0].pos.is_empty());
-            hint.fields[f].values[0].operand.clone()
-        };
+        assert!(passes.len() > prover_hints.len(), "{pil}: {passes:?}");
+        let names: Vec<&str> = bytecode.hints.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(names, prover_hints, "{pil}: the witness and debug hints are not written");
         let at_0 = result.setup.opening_points.iter().position(|&o| o == 0).unwrap() as u32;
-        assert_eq!(value(0), HintOperand::Cm { id: n_stage_1, opening: at_0 }, "{name}");
-        assert_eq!(result.setup.cm_pols_map[n_stage_1 as usize].stage, Some(2));
-        for f in [1, 2] {
-            let HintOperand::Tmp(exp_id) = value(f) else { panic!("{name}: field {f} is not an expression") };
-            assert!(bytecode.expressions.iter().any(|e| e.exp_id == exp_id), "{name}: expression {exp_id}");
+        let cm_pols = &result.setup.cm_pols_map;
+
+        let mut references = Vec::new();
+        // The columns of stage 2 (stagePos) each hint's numerator reads.
+        let mut numerator_reads = Vec::new();
+        for hint in &bytecode.hints {
+            let value = |f: usize| {
+                assert_eq!(hint.fields[f].values.len(), 1, "{pil}");
+                assert!(hint.fields[f].values[0].pos.is_empty());
+                hint.fields[f].values[0].operand.clone()
+            };
+            let fields: Vec<&str> = hint.fields.iter().map(|f| f.name.as_str()).collect();
+            if hint.name == "im_col" {
+                assert_eq!(fields, ["reference", "numerator", "denominator"], "{pil}");
+            } else {
+                assert_eq!(
+                    fields,
+                    [
+                        "reference",
+                        "numerator_air",
+                        "denominator_air",
+                        "numerator_direct",
+                        "denominator_direct",
+                        "result"
+                    ],
+                    "{pil}"
+                );
+                let numbers = if hint.name == "gsum_col" { ["0", "1", "0"] } else { ["1", "1", "1"] };
+                for (f, number) in (3..6).zip(numbers) {
+                    assert_eq!(value(f), HintOperand::Number(fr(number)), "{pil}: field {f}");
+                }
+            }
+            let HintOperand::Cm { id, opening } = value(0) else { panic!("{pil}: a reference that is not a column") };
+            assert_eq!(opening, at_0, "{pil}");
+            assert_eq!(cm_pols[id as usize].stage, Some(2), "{pil}");
+            assert!(!cm_pols[id as usize].im_pol, "{pil}");
+            references.push(id);
+            for f in [1, 2] {
+                match value(f) {
+                    HintOperand::Tmp(exp_id) => {
+                        let e = bytecode.expressions.iter().find(|e| e.exp_id == exp_id);
+                        let e = e.unwrap_or_else(|| panic!("{pil}: expression {exp_id}"));
+                        if f == 1 {
+                            let reads = e.code.ops.iter().flat_map(|op| [&op.a, &op.b]).filter_map(|o| match o {
+                                Operand::Cm { stage: 2, stage_pos, .. } => Some(*stage_pos),
+                                _ => None,
+                            });
+                            numerator_reads.push(reads.collect::<BTreeSet<u32>>());
+                        }
+                    }
+                    HintOperand::Cm { id, .. } => {
+                        if f == 1 {
+                            let p = &cm_pols[id as usize];
+                            let stage_2 = p.stage == Some(2);
+                            numerator_reads.push(stage_2.then(|| p.stage_pos.unwrap() as u32).into_iter().collect());
+                        }
+                    }
+                    HintOperand::Const { .. } | HintOperand::Number(_) => {
+                        if f == 1 {
+                            numerator_reads.push(BTreeSet::new());
+                        }
+                    }
+                    other => panic!("{pil}: field {f} is {other:?}"),
+                }
+            }
         }
-        for (f, number) in (3..6).zip(numbers) {
-            assert_eq!(value(f), HintOperand::Number(fr(number)), "{name}: field {f}");
-        }
+        assert_eq!(*references.last().unwrap(), n_stage_1, "{pil}: the bus's column is the first of stage 2");
+        assert_eq!(references.iter().collect::<BTreeSet<_>>().len(), references.len(), "{pil}: each gives another");
+        // What the numerators read of stage 2: the im_col columns before them, by stagePos.
+        let stage_pos = |id: u32| cm_pols[id as usize].stage_pos.unwrap() as u32;
+        let expected: Vec<BTreeSet<u32>> = match name {
+            "SumBus" if prover_hints.len() == 2 => vec![BTreeSet::new(), BTreeSet::from([stage_pos(references[0])])],
+            "ProdBusIm" => vec![
+                BTreeSet::new(),
+                BTreeSet::from([stage_pos(references[0])]),
+                BTreeSet::from([stage_pos(references[1])]),
+            ],
+            _ => vec![BTreeSet::new()],
+        };
+        assert_eq!(numerator_reads, expected, "{pil}");
     }
 }
 
 /// What the prover could not compute of a prover hint is refused, after the passes
-/// (`check_prover_hints`) or as it is encoded: the sum bus's `gsum_col`, changed.
+/// (`check_prover_hints`) or as it is encoded: the `gsum_col` of the sum bus of degree 4, changed.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn a_prover_hint_the_prover_cannot_compute_is_refused() {
-    let pilout = compile_bn254("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil");
+    let pilout = compile_bn254("pilfflonk/tests/fixtures/sum_bus/sum_bus_degree4.pil");
     // The passes again for each case: their result is not Clone.
     let fresh = || run_bn254(&pilout);
     let result = fresh();
@@ -1063,8 +1136,8 @@ fn a_prover_hint_the_prover_cannot_compute_is_refused() {
     let im_pol = result.setup.cm_pols_map.iter().position(|p| p.im_pol).unwrap();
     refused(&with("reference", &move |v| v.id = Some(im_pol)), "not a column of stage 2 or above");
     refused(&with("reference", &|v| v.row_offset = Some(-1)), "at its own row");
-    // numerator_air and denominator_air: what reads the reference's stage (gsum, cmPolsMap 3), an
-    // air value, a column at no opening point.
+    // numerator_air and denominator_air: what reads a column of the reference's stage not computed
+    // before it (gsum itself, cmPolsMap 3), an air value, a column at no opening point.
     refused(
         &with("numerator_air", &|v| {
             *v = ProcessedHintField {
@@ -1075,7 +1148,9 @@ fn a_prover_hint_the_prover_cannot_compute_is_refused() {
                 ..v.clone()
             }
         }),
-        "reads cm 3, which is not of a stage before its reference's (2)",
+        "its numerator_air reads cm 3, which is not computed before it: of stage 2, the prover computes the \
+         columns of the im_col hints in their order, then the gprod_col ones and the gsum_col ones, and the im pols \
+         last",
     );
     refused(&with("denominator_air", &|v| v.op = "airvalue".into()), "its denominator_air is a airvalue");
     refused(
@@ -1114,13 +1189,101 @@ fn a_prover_hint_the_prover_cannot_compute_is_refused() {
     assert!(err.contains("2 hints produce column gsum"), "{err}");
 
     // The encoder: a hint the prover does not compute, and a column at no opening point.
-    let mut im_col = fresh();
-    im_col.pil_code.expressions_info.hints_info[gsum].name = "im_col".into();
-    let err = Bytecode::from_pil_info(&im_col).unwrap_err().to_string();
-    assert!(err.contains("hint `im_col`: it is not one the prover computes"), "{err}");
+    let mut im_airval = fresh();
+    im_airval.pil_code.expressions_info.hints_info[gsum].name = "im_airval".into();
+    let err = Bytecode::from_pil_info(&im_airval).unwrap_err().to_string();
+    assert!(err.contains("hint `im_airval`: it is not one the prover computes"), "{err}");
     let off = with("reference", &|v| v.row_offset_index = Some(-1));
     let err = Bytecode::from_pil_info(&off).unwrap_err().to_string();
     assert!(err.contains("which is not an opening point"), "{err}");
+}
+
+/// The `im_col` hints (plan M31) the prover could not compute are refused after the passes
+/// (`check_prover_hints`), on the sum bus of the std's default degree, whose `im_col` gives
+/// `im_single` (`cmPolsMap` 4) and whose `gsum_col` reads it, and on `prod_bus_im`, whose second
+/// `im_col` reads the first's column. The prover computes the hints of a stage in the STARK's order,
+/// the `im_col` ones in the pilout's order and then the `gprod_col` and `gsum_col` ones, and a hint
+/// may read only the columns of the stage computed before it: the `gsum_col` may come first in the
+/// pilout, but an `im_col` may not read `gsum`, itself, an `im_col` after it or an im pol, and none
+/// is computed in an AIR without a `gsum_col` or `gprod_col`.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn an_im_col_the_prover_cannot_compute_is_refused() {
+    let pilout = compile_bn254("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil");
+    let fresh = || run_bn254(&pilout);
+    let result = fresh();
+    let hints = &result.pil_code.expressions_info.hints_info;
+    let position = |name: &str| hints.iter().position(|h| h.name == name).unwrap();
+    let (im_col, gsum) = (position("im_col"), position("gsum_col"));
+    assert!(im_col < gsum);
+    let cm = |name: &str| result.setup.cm_pols_map.iter().position(|p| p.name == name).unwrap();
+    assert_eq!((cm("gsum"), cm("im_single")), (3, 4));
+    let im_pol = result.setup.cm_pols_map.iter().position(|p| p.im_pol && p.stage == Some(2)).unwrap();
+    // The value of field `name` of hint h set to the column cm id at its own row.
+    let reading = |h: usize, name: &str, id: usize| {
+        let mut r = fresh();
+        let hint = &mut r.pil_code.expressions_info.hints_info[h];
+        let value = &mut hint.fields.iter_mut().find(|f| f.name == name).unwrap().values[0];
+        let at_0 = result.setup.opening_points.iter().position(|&o| o == 0).unwrap();
+        *value = ProcessedHintField {
+            op: "cm".into(),
+            id: Some(id),
+            row_offset: Some(0),
+            row_offset_index: Some(at_0 as isize),
+            ..value.clone()
+        };
+        r
+    };
+    let refused = |r: &PilInfoResult, hint: &str, why: &str| {
+        let err = check_prover_hints(r, "SumBus").unwrap_err();
+        assert!(matches!(&err, SetupError::ProverHint { hint: h, .. } if h == hint), "{err}");
+        assert!(err.to_string().contains(why), "{why:?} not in {err}");
+    };
+    check_prover_hints(&result, "SumBus").unwrap();
+
+    // What an im_col reads of stage 2: gsum, which is computed after it, and its own column.
+    let why = "which is not computed before it: of stage 2, the prover computes the columns of the im_col hints in \
+               their order, then the gprod_col ones and the gsum_col ones, and the im pols last";
+    refused(&reading(im_col, "numerator", 3), "im_col", &format!("its numerator reads cm 3, {why}"));
+    refused(&reading(im_col, "denominator", 4), "im_col", "its denominator reads cm 4, which is not computed");
+    // What gsum_col reads: im_single, computed before it, at another row too; the im pol, after it.
+    check_prover_hints(&reading(gsum, "denominator_air", 4), "SumBus").unwrap();
+    refused(&reading(gsum, "denominator_air", im_pol), "gsum_col", &format!("reads cm {im_pol}, {why}"));
+    // The pilout's order of different kinds does not matter: gsum_col first is computed after.
+    let mut swapped = fresh();
+    swapped.pil_code.expressions_info.hints_info.swap(im_col, gsum);
+    check_prover_hints(&swapped, "SumBus").unwrap();
+    // Its fields: numerator and denominator, what addHintField takes, no result.
+    let mut no_field = fresh();
+    no_field.pil_code.expressions_info.hints_info[im_col].fields.retain(|f| f.name != "denominator");
+    refused(&no_field, "im_col", "it has no field `denominator`");
+    let mut air_value = fresh();
+    air_value.pil_code.expressions_info.hints_info[im_col].fields[1].values[0].op = "airvalue".into();
+    refused(&air_value, "im_col", "its numerator is a airvalue");
+    let mut reference = fresh();
+    reference.pil_code.expressions_info.hints_info[im_col].fields[0].values[0].id = Some(im_pol);
+    refused(&reference, "im_col", "not a column of stage 2 or above at its own row");
+    // Without the gsum_col, the STARK's calculateImHints computes no im_col.
+    let mut alone = fresh();
+    alone.pil_code.expressions_info.hints_info.remove(gsum);
+    refused(&alone, "im_col", "the AIR has no gsum_col or gprod_col");
+    // Twice the same column.
+    let mut twice = fresh();
+    twice.pil_code.expressions_info.hints_info.push(hints[im_col].clone());
+    let err = check_prover_hints(&twice, "SumBus").unwrap_err().to_string();
+    assert!(err.contains("2 hints produce column im_single"), "{err}");
+
+    // prod_bus_im: its second im_col reads the first's column; in the other order, it is not there.
+    let pilout = compile_bn254("pilfflonk/tests/fixtures/prod_bus_im/prod_bus_im.pil");
+    let mut result = run_bn254(&pilout);
+    check_prover_hints(&result, "ProdBusIm").unwrap();
+    let hints = &mut result.pil_code.expressions_info.hints_info;
+    let ims: Vec<usize> = hints.iter().enumerate().filter(|(_, h)| h.name == "im_col").map(|(i, _)| i).collect();
+    assert_eq!(ims.len(), 2);
+    let first = hints[ims[0]].fields[0].values[0].id.unwrap();
+    hints.swap(ims[0], ims[1]);
+    let err = check_prover_hints(&result, "ProdBusIm").unwrap_err().to_string();
+    assert!(err.contains(&format!("its numerator reads cm {first}, which is not computed before it")), "{err}");
 }
 
 // ---------------------------------------------------------------------------------------------

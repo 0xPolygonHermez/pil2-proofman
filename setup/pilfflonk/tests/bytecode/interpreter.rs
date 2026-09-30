@@ -11,14 +11,15 @@
 //!   directory), the `qVerifier` encoded as a bytecode of one expression (`Fibonacci.qverifier.bin`),
 //!   and what the oracle (M14) gives at a point `ξ` (`Fibonacci.oracle.json`): the evaluations of
 //!   the evMap, the zerofier terms and `Q(ξ)`.
-//! - `sum_bus/`: the lookup on the std's sum bus of plan M30, `N = 32`, of two stages. It has what
-//!   `setup-pilfflonk --no-packing` writes for it (`SumBus.bin`, whose section 3 has the hint
-//!   `gsum_col`, `.pilfflonkinfo.json`, `.const`), the stage-1 traces of its generator's witness
-//!   (`SumBus.witness.bin`) and of the one that looks up a value the table does not provide
-//!   (`SumBus.broken.bin`), and what the oracle gives for stage 2 with fixed challenges
+//! - `sum_bus/`: the lookup on the std's sum bus of plan M30, `N = 32`, of two stages, with the
+//!   std's default `MAX_CONSTRAINT_DEGREE` (plan M31). It has what `setup-pilfflonk --no-packing`
+//!   writes for it (`SumBus.bin`, whose section 3 has the hints `im_col` and `gsum_col`, which reads
+//!   the column of the first; `.pilfflonkinfo.json`, `.const`), the stage-1 traces of its
+//!   generator's witness (`SumBus.witness.bin`) and of the one that looks up a value the table does
+//!   not provide (`SumBus.broken.bin`), and what the oracle gives for stage 2 with fixed challenges
 //!   (`SumBus.oracle.json`): the challenges, `std_alpha` and `std_gamma`, the publics, and every
-//!   column of stage 2 by `stagePos`, `gsum` from the pilout's hint and the im pols from their
-//!   expressions.
+//!   column of stage 2 by `stagePos`, `gsum` and `im_single` from the pilout's hints and the im pols
+//!   from their expressions.
 //!
 //! The tests below check that the checked-in files are what they compute, and write them with
 //! `PILFFLONK_UPDATE_FIXTURES=1`, as the Sample.bin test does. The Fibonacci one needs `PIL2C_EXEC`.
@@ -516,7 +517,8 @@ fn the_sum_bus_fixtures_are_the_setups_and_the_oracles() {
     let info = PilfflonkInfo::read(&air_file(AirFile::PilfflonkInfo)).unwrap();
     assert_eq!(info.n_stages, 2);
     let bin = fs::read(air_file(AirFile::Bin)).unwrap();
-    assert_eq!(Bytecode::from_bytes(&bin).unwrap().hints.len(), 1);
+    let names: Vec<String> = Bytecode::from_bytes(&bin).unwrap().hints.into_iter().map(|h| h.name).collect();
+    assert_eq!(names, ["im_col", "gsum_col"], "the std's default degree adds an im_col (plan M31)");
 
     // The oracle's stage 2, with the fixture's challenges.
     let witness = sum_bus::witness();

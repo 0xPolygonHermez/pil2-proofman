@@ -15,10 +15,12 @@
 //   is the verifier's, the qVerifier's at the blinded evaluations.
 // - A mutated witness makes commitQ fail with UnsatisfiedError (PILFFLONK_ERR_UNSATISFIED).
 //
-// And an AIR of two stages (plan M30), the lookup on the std's sum bus of
-// setup/pilfflonk/tests/fixtures/bytecode/sum_bus/: its hint gsum_col as AirKey reads and checks it,
-// its stage-2 columns as commitStage(2) computes them, which are the oracle's for the same
-// challenges, a denominator 0 on a row, a broken bus, and the hints AirKey refuses.
+// And an AIR of two stages (plans M30, M31), the lookup on the std's sum bus of
+// setup/pilfflonk/tests/fixtures/bytecode/sum_bus/, with the std's default MAX_CONSTRAINT_DEGREE: its
+// hints im_col and gsum_col as AirKey reads and checks them, in the STARK's order whatever the
+// .bin's, its stage-2 columns as commitStage(2) computes them, which are the oracle's for the same
+// challenges, a denominator 0 on a row of each hint, a broken bus, and the hints AirKey refuses: what
+// it cannot compute, and what reads a column not computed before it.
 #include "pilfflonk_test.hpp"
 #include "pilfflonk_test_ptau.hpp"
 
@@ -64,6 +66,7 @@ using PilFflonk::ExpressionsBin;
 using PilFflonk::FormatError;
 using PilFflonk::FrElement;
 using PilFflonk::G1Point;
+using PilFflonk::GlobalInfo;
 using PilFflonk::HintFieldValue;
 using PilFflonk::HintInput;
 using PilFflonk::HintOp;
@@ -1422,17 +1425,24 @@ void testCheckCApi() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Stage 2 (plan M30): the sum bus
+// Stage 2 (plans M30, M31): the sum bus
 // ---------------------------------------------------------------------------------------------
 
 constexpr const char *SUM_BUS = "SumBus";
 constexpr uint64_t SUM_BUS_N = 32;
-// Its columns of stage 1 (a, b, mul), and those of stage 2: gsum at stagePos 0, then the im pols.
+// Its columns of stage 1 (a, b, mul), and those of stage 2: gsum at stagePos 0, im_single at 1 (the
+// std's intermediate column of the table's term), then the setup's im pol.
 constexpr uint64_t SUM_BUS_A = 0;
 constexpr uint64_t SUM_BUS_B = 1;
 constexpr uint64_t SUM_BUS_COLUMNS = 3;
-// cmPolsMap: a, b, mul, gsum, the two im pols, Q0.
+// cmPolsMap: a, b, mul, gsum, im_single, the im pol, Q0.
 constexpr uint64_t GSUM = 3;
+constexpr uint64_t IM_SINGLE = 4;
+constexpr uint64_t IM_SINGLE_POS = 1;
+constexpr uint64_t IM_POL = 5;
+// Its hints, in the .bin's order: im_col (of im_single), then gsum_col (of gsum).
+constexpr uint64_t IM_COL_HINT = 0;
+constexpr uint64_t GSUM_COL_HINT = 1;
 
 KeyFiles sumBusFiles() {
     KeyFiles files;
@@ -1475,24 +1485,91 @@ void setTraceValue(std::vector<uint8_t> &trace, uint64_t row, uint64_t column, c
     PilFflonk::encodeFr(v, trace.data() + (row * SUM_BUS_COLUMNS + column) * 32);
 }
 
-// The key reads the hint, gsum_col, as the std writes it: gsum's column (stage 2, stagePos 0) from
-// two expressions of the .bin; the im pols of stage 2, the setup's, are no hint's.
-void testTheSumBusHint() {
-    const SumBus bus;
-    const std::vector<StdHint> &hints = bus.air().stdHints();
-    assert(hints.size() == 1);
-    const StdHint &h = hints[0];
-    assert(h.name == "gsum_col" && !h.prod && h.stage == 2 && h.stagePos == 0 && h.cmId == GSUM);
-    assert(h.numerator.kind == HintInput::Kind::Expression && h.denominator.kind == HintInput::Kind::Expression);
-    assert(bus.air().bin().expressionsInfo.count(h.numerator.expId) == 1);
-    assert(bus.air().bin().expressionsInfo.count(h.denominator.expId) == 1);
-    assert(bus.air().info().cmPolsMap[GSUM].name == "gsum");
+// The value of field `name` of hint h of `bin`, which holds one.
+HintFieldValue &hintField(ExpressionsBin &bin, uint64_t h, const std::string &name) {
+    for (PilFflonk::HintField &f : bin.hints[h].fields) {
+        if (f.name == name) return f.values[0];
+    }
+    assert(!"no such field");
+    return bin.hints[h].fields[0].values[0];
 }
 
-// commitStage(2) computes gsum from the hint, and then the im pols, which read it: every column of
-// stage 2 is the oracle's, with the same challenges, blinded or not (the blinding is of the
-// polynomials, not of the columns on H). The last row of gsum is 0: the bus balances, and Q is a
-// polynomial of its degree.
+// The index in openingPoints of the row offset 0, the one a column at its own row is read at.
+uint32_t atItsOwnRow(const AirKey &air) {
+    const std::vector<int64_t> &points = air.info().openingPoints;
+    const auto at = std::find(points.begin(), points.end(), int64_t(0));
+    assert(at != points.end());
+    return static_cast<uint32_t>(at - points.begin());
+}
+
+// The sum bus's provingKey with its .bin changed in memory by `change` (and the SRS of `bus`'s).
+std::unique_ptr<ProvingKey> changedSumBusKey(const SumBus &bus, const std::function<void(ExpressionsBin &)> &change) {
+    const KeyFiles files = sumBusFiles();
+    ExpressionsBin bin = ExpressionsBin::parse(files.bin.data(), files.bin.size(), "SumBus.bin");
+    change(bin);
+    std::vector<std::vector<std::unique_ptr<AirKey>>> airs(1);
+    airs[0].push_back(std::make_unique<AirKey>(PilfflonkInfo::parse(std::string(files.info.begin(), files.info.end())),
+                                               std::move(bin), files.constants.data(), files.constants.size(),
+                                               SUM_BUS));
+    return std::make_unique<ProvingKey>(GlobalInfo::parse(globalInfoJson("pilfflonk", SUM_BUS_N, SUM_BUS, 1)),
+                                        Srs::load(bus.dir.path() + "/" + NAME + "/pilfflonk/pilfflonk.srs.bin"),
+                                        std::move(airs));
+}
+
+// The key reads the hints as the std writes them (plan M31), in the order the prover computes them,
+// the STARK's: im_col, the table's term mul/(T + TT·α … + γ) into im_single (stage 2, stagePos 1),
+// its numerator the column mul and its denominator an expression of the fixed columns, and then
+// gsum_col, gsum (stagePos 0), from two expressions, the numerator reading im_single. The im pol of
+// stage 2, the setup's, is no hint's.
+void testTheSumBusHints() {
+    const SumBus bus;
+    const std::vector<StdHint> &hints = bus.air().stdHints();
+    assert(hints.size() == 2);
+    const StdHint &im = hints[0], &gsum = hints[1];
+    assert(im.hint == IM_COL_HINT && im.name == "im_col" && im.kind == StdHint::Kind::ImCol && im.stage == 2 &&
+           im.stagePos == IM_SINGLE_POS && im.cmId == IM_SINGLE);
+    assert(gsum.hint == GSUM_COL_HINT && gsum.name == "gsum_col" && gsum.kind == StdHint::Kind::Sum &&
+           gsum.stage == 2 && gsum.stagePos == 0 && gsum.cmId == GSUM);
+    assert(im.numerator.kind == HintInput::Kind::Column && im.numerator.column == (ColumnRead{1, 2}) &&
+           im.numerator.offset == 0 && bus.air().info().cmPolsMap[2].name == "mul");
+    assert(im.denominator.kind == HintInput::Kind::Expression);
+    for (const ColumnRead &c : PilFflonk::columnsRead(bus.air().bin(), im.denominator.expId)) {
+        assert(c.type == 0);
+    }
+    assert(gsum.numerator.kind == HintInput::Kind::Expression && gsum.denominator.kind == HintInput::Kind::Expression);
+    assert(bus.air().bin().expressionsInfo.count(gsum.denominator.expId) == 1);
+    const std::vector<ColumnRead> reads = PilFflonk::columnsRead(bus.air().bin(), gsum.numerator.expId);
+    assert(std::find(reads.begin(), reads.end(), (ColumnRead{2, IM_SINGLE_POS})) != reads.end());
+    assert(bus.air().info().cmPolsMap[GSUM].name == "gsum");
+    assert(bus.air().info().cmPolsMap[IM_SINGLE].name == "im_single" && !bus.air().info().cmPolsMap[IM_SINGLE].imPol);
+    assert(bus.air().info().cmPolsMap[IM_POL].imPol);
+}
+
+// The prover computes the hints in the STARK's order, im_col first, whatever the .bin's: with gsum_col
+// before im_col in the file, the key has the same order, and stage 2 the same columns, the oracle's.
+void testTheHintsGoInTheStarksOrder() {
+    const SumBus bus;
+    std::unique_ptr<ProvingKey> pk =
+        changedSumBusKey(bus, [](ExpressionsBin &b) { std::swap(b.hints[IM_COL_HINT], b.hints[GSUM_COL_HINT]); });
+    const std::vector<StdHint> &hints = pk->air(0, 0).stdHints();
+    assert(hints.size() == 2 && hints[0].name == "im_col" && hints[0].hint == GSUM_COL_HINT);
+    assert(hints[1].name == "gsum_col" && hints[1].hint == IM_COL_HINT);
+    Instance inst(*pk, 0, 0, bus.witness.data(), bus.witness.size(), {}, bus.publics, {},
+                  std::make_unique<ZeroBlinding>());
+    inst.commitStage(1, {});
+    inst.commitStage(2, bus.challenges);
+    for (uint64_t p = 0; p < bus.oracle["stage2"].size(); ++p) {
+        const std::vector<FrElement> column = frs(bus.oracle["stage2"][p]);
+        for (uint64_t row = 0; row < SUM_BUS_N; ++row) {
+            assert(eq(inst.column(2, p)[row], column[row]));
+        }
+    }
+}
+
+// commitStage(2) computes im_single and then gsum from the hints, and then the im pol, which reads
+// them: every column of stage 2 is the oracle's, with the same challenges, blinded or not (the
+// blinding is of the polynomials, not of the columns on H). The last row of gsum is 0: the bus
+// balances, and Q is a polynomial of its degree.
 void testStage2IsTheOracles() {
     const SumBus bus;
     const json &expected = bus.oracle["stage2"];
@@ -1574,9 +1651,9 @@ void testCheckComputesStage2Itself() {
 }
 
 // A denominator 0 on a row: a[5] such that the pair (a[5], b[5]) compressed, 1 + a·α + b·α² (busid
-// 1, std_tools.pil), plus γ, is 0. The column has no value there: UnsatisfiedError, naming the hint,
-// the column and the row, and the stage stays uncommitted; through the C API,
-// PILFFLONK_ERR_UNSATISFIED.
+// 1, std_tools.pil), plus γ, is 0, the denominator of gsum_col (the lookup's term, which is not
+// im_single's). The column has no value there: UnsatisfiedError, naming the hint, the column and the
+// row, and the stage stays uncommitted; through the C API, PILFFLONK_ERR_UNSATISFIED.
 void testAZeroDenominatorIsAnError() {
     const SumBus bus;
     const FrElement &alpha = bus.challenges[0], &gamma = bus.challenges[1];
@@ -1594,10 +1671,10 @@ void testAZeroDenominatorIsAnError() {
     std::unique_ptr<Instance> inst = bus.instance(trace);
     // check, with the same challenges, and then commitStage(2).
     const std::string checked = thrown<UnsatisfiedError>([&] { inst->check(10, bus.challenges); });
-    assert(contains(checked, "SumBus: the denominator of hint 0 (gsum_col, column gsum) is 0 at row 5"));
+    assert(contains(checked, "SumBus: the denominator of hint 1 (gsum_col, column gsum) is 0 at row 5"));
     inst->commitStage(1, {});
     const std::string message = thrown<UnsatisfiedError>([&] { inst->commitStage(2, bus.challenges); });
-    assert(contains(message, "SumBus: the denominator of hint 0 (gsum_col, column gsum) is 0 at row 5"));
+    assert(contains(message, "SumBus: the denominator of hint 1 (gsum_col, column gsum) is 0 at row 5"));
     assert(inst->nextStage() == 2);
 
     void *ctx = pilfflonk_ctx_new(bus.dir.path().c_str());
@@ -1607,7 +1684,7 @@ void testAZeroDenominatorIsAnError() {
     void *c = pilfflonk_instance_new(ctx, 0, 0, trace.data(), trace.size(), nullptr, 0, publics.data(), 1, nullptr, 0,
                                      seed);
     assert(c != nullptr);
-    // Unpacked: a, b and mul in f of their own, and gsum and the two im pols.
+    // Unpacked: a, b and mul in f of their own, and gsum, im_single and the im pol.
     std::vector<uint8_t> out(3 * 64);
     const std::vector<uint8_t> challenges = scalars(bus.challenges);
     const uint64_t nConstraints = bus.air().bin().constraintsInfoDebug.size();
@@ -1620,6 +1697,32 @@ void testAZeroDenominatorIsAnError() {
     assert(contains(pilfflonk_last_error(), "is 0 at row 5"));
     pilfflonk_instance_free(c);
     pilfflonk_ctx_free(ctx);
+}
+
+// A denominator 0 on a row of an im_col (plan M31): its denominator the column a, which the
+// generator's witness has 0 at row 2 (a[2] = 13 mod 13; the std's denominator depends on the fixed
+// columns only). The prover computes im_single first, and it is its column that has no value there:
+// UnsatisfiedError naming it and the row, from check and from commitStage(2), and the stage stays
+// uncommitted.
+void testAZeroDenominatorOfAnImColIsAnError() {
+    const SumBus bus;
+    std::unique_ptr<ProvingKey> pk = changedSumBusKey(bus, [&](ExpressionsBin &b) {
+        HintFieldValue &den = hintField(b, IM_COL_HINT, "denominator");
+        den.op = HintOp::Cm;
+        den.id = SUM_BUS_A;
+        den.rowOffsetIndex = atItsOwnRow(bus.air());
+    });
+    for (uint64_t row = 0; row < 2; ++row) {
+        assert(!E.fr.isZero(traceValue(bus.witness, row, SUM_BUS_A)));
+    }
+    assert(E.fr.isZero(traceValue(bus.witness, 2, SUM_BUS_A)));
+    Instance inst(*pk, 0, 0, bus.witness.data(), bus.witness.size(), {}, bus.publics, {},
+                  std::make_unique<ZeroBlinding>());
+    const std::string expected = "SumBus: the denominator of hint 0 (im_col, column im_single) is 0 at row 2";
+    assert(contains(thrown<UnsatisfiedError>([&] { inst.check(10, bus.challenges); }), expected));
+    inst.commitStage(1, {});
+    assert(contains(thrown<UnsatisfiedError>([&] { inst.commitStage(2, bus.challenges); }), expected));
+    assert(inst.nextStage() == 2);
 }
 
 // A broken bus, a value looked up that no row of the table provides (a[7] = N): the stage-2
@@ -1654,7 +1757,9 @@ void testABrokenBusIsCheckedAndRefused() {
                     "the witness does not satisfy the constraints of SumBus"));
 }
 
-// The hints AirKey refuses, the sum bus's gsum_col changed: every refusal names the AIR and the hint.
+// The hints AirKey refuses, the sum bus's changed: every refusal names the AIR and the hint. What it
+// cannot compute of gsum_col or of im_col, and what reads a column the prover does not compute before
+// it (plan M31): of stage 2, im_single (the im_col's) is before gsum, and the im pol after both.
 void testRefusedHints() {
     const std::vector<uint8_t> infoText = readBytes(busFixture("SumBus.pilfflonkinfo.json"));
     const std::vector<uint8_t> binBytes = readBytes(busFixture("SumBus.bin"));
@@ -1671,60 +1776,99 @@ void testRefusedHints() {
         }
         assert(contains(message, "SumBus: .bin: "));
     };
-    auto field = [](ExpressionsBin &bin, const std::string &name) -> HintFieldValue & {
-        for (PilFflonk::HintField &f : bin.hints[0].fields) {
-            if (f.name == name) return f.values[0];
-        }
-        assert(!"no such field");
-        return bin.hints[0].fields[0].values[0];
+    auto gsum = [](ExpressionsBin &bin, const std::string &name) -> HintFieldValue & {
+        return hintField(bin, GSUM_COL_HINT, name);
     };
-    refused([](ExpressionsBin &b) { b.hints[0].name = "im_col"; }, "hint 0 (im_col) gives an intermediate column, "
-                                                                   "which this prover does not compute yet (plan M31)");
-    refused([](ExpressionsBin &b) { b.hints[0].name = "im_airval"; }, "gives an air value, and pilfflonk has none");
-    refused([](ExpressionsBin &b) { b.hints[0].name = "gsum_debug_data"; }, "is none this prover computes");
-    refused([&](ExpressionsBin &b) { field(b, "reference").id = 0; }, "has as reference a (stage 1)");
-    refused([&](ExpressionsBin &b) { field(b, "reference").rowOffsetIndex = 0; }, "read at its own row");
-    refused([&](ExpressionsBin &b) { field(b, "reference").op = HintOp::Tmp; }, "not a committed column");
-    refused([&](ExpressionsBin &b) { field(b, "numerator_air").op = HintOp::AirValue; },
+    auto im = [](ExpressionsBin &bin, const std::string &name) -> HintFieldValue & {
+        return hintField(bin, IM_COL_HINT, name);
+    };
+    // v, a committed column: cmPolsMap[cmId] at openingPoints[rowOffsetIndex] (of −1, 0 and 1).
+    auto stage2Column = [](HintFieldValue &v, uint64_t cmId, uint64_t rowOffsetIndex) {
+        v.op = HintOp::Cm;
+        v.id = cmId;
+        v.rowOffsetIndex = rowOffsetIndex;
+    };
+    refused([](ExpressionsBin &b) { b.hints[GSUM_COL_HINT].name = "im_airval"; },
+            "hint 1 (im_airval) gives an air value, and pilfflonk has none");
+    refused([](ExpressionsBin &b) { b.hints[GSUM_COL_HINT].name = "gsum_debug_data"; },
+            "is none this prover computes: im_col, gsum_col and gprod_col");
+    // gsum_col.
+    refused([&](ExpressionsBin &b) { gsum(b, "reference").id = 0; }, "has as reference a (stage 1)");
+    refused([&](ExpressionsBin &b) { gsum(b, "reference").rowOffsetIndex = 0; }, "read at its own row");
+    refused([&](ExpressionsBin &b) { gsum(b, "reference").op = HintOp::Tmp; }, "not a committed column");
+    refused([&](ExpressionsBin &b) { gsum(b, "numerator_air").op = HintOp::AirValue; },
             "reads an air value in its field numerator_air");
-    refused([&](ExpressionsBin &b) { field(b, "numerator_air").op = HintOp::Challenge; },
+    refused([&](ExpressionsBin &b) { gsum(b, "numerator_air").op = HintOp::Challenge; },
             "a value that is no expression, column or number");
+    refused([&](ExpressionsBin &b) { stage2Column(gsum(b, "denominator_air"), GSUM, 0); },
+            "hint 1 (gsum_col) reads in its field denominator_air the column of stage 2 at stagePos 0, which is not "
+            "computed before it");
+    refused([&](ExpressionsBin &b) { stage2Column(gsum(b, "denominator_air"), IM_POL, 1); },
+            "hint 1 (gsum_col) reads in its field denominator_air the column of stage 2 at stagePos 2, which is not "
+            "computed before it (of stage 2, the prover computes the columns of the im_col hints in their order, then "
+            "the gprod_col ones and the gsum_col ones, and the im pols last)");
     refused(
         [&](ExpressionsBin &b) {
-            HintFieldValue &v = field(b, "denominator_air");
-            v.op = HintOp::Cm;
-            v.id = GSUM;
-            v.rowOffsetIndex = 1;
-        },
-        "reads in its field denominator_air the column of stage 2 at stagePos 0, which is not computed before stage 2");
-    refused(
-        [&](ExpressionsBin &b) {
-            HintFieldValue &v = field(b, "denominator_air");
+            HintFieldValue &v = gsum(b, "denominator_air");
             v.op = HintOp::Const;
             v.id = 0;
             v.rowOffsetIndex = 7;
         },
         "a column at opening point 7");
-    refused([&](ExpressionsBin &b) { field(b, "result").op = HintOp::AirgroupValue; }, "updates an airgroup value");
-    refused([](ExpressionsBin &b) { b.hints[0].fields.erase(b.hints[0].fields.begin() + 2); },
+    refused([&](ExpressionsBin &b) { gsum(b, "result").op = HintOp::AirgroupValue; }, "updates an airgroup value");
+    refused([](ExpressionsBin &b) { b.hints[GSUM_COL_HINT].fields.erase(b.hints[GSUM_COL_HINT].fields.begin() + 2); },
             "has no field denominator_air");
-    refused([](ExpressionsBin &b) { b.hints[0].fields[1].values.push_back(b.hints[0].fields[1].values[0]); },
-            "holds an array in its field numerator_air");
+    refused(
+        [](ExpressionsBin &b) {
+            std::vector<PilFflonk::HintFieldValue> &values = b.hints[GSUM_COL_HINT].fields[1].values;
+            values.push_back(values[0]);
+        },
+        "holds an array in its field numerator_air");
+    // im_col: its own column, gsum's (after it) and the im pol's are not computed before it; nor is
+    // it computed in an AIR without a gsum_col or gprod_col, as calculateImHints computes none there.
+    refused([&](ExpressionsBin &b) { stage2Column(im(b, "numerator"), IM_SINGLE, 1); },
+            "hint 0 (im_col) reads in its field numerator the column of stage 2 at stagePos 1, which is not computed "
+            "before it");
+    refused([&](ExpressionsBin &b) { stage2Column(im(b, "denominator"), GSUM, 0); },
+            "hint 0 (im_col) reads in its field denominator the column of stage 2 at stagePos 0, which is not "
+            "computed before it");
+    refused([&](ExpressionsBin &b) { stage2Column(im(b, "numerator"), IM_POL, 1); },
+            "hint 0 (im_col) reads in its field numerator the column of stage 2 at stagePos 2");
+    refused([&](ExpressionsBin &b) { im(b, "reference").id = 0; }, "hint 0 (im_col) has as reference a (stage 1)");
+    refused([&](ExpressionsBin &b) { im(b, "reference").id = IM_POL; }, "has as reference SumBus.ImPol");
+    refused([&](ExpressionsBin &b) { im(b, "denominator").op = HintOp::AirValue; },
+            "reads an air value in its field denominator");
+    refused([](ExpressionsBin &b) { b.hints[IM_COL_HINT].fields.pop_back(); }, "hint 0 (im_col) has no field denominator");
+    refused([](ExpressionsBin &b) { b.hints.erase(b.hints.begin() + GSUM_COL_HINT); },
+            "hint 0 (im_col) is of an AIR with no gsum_col or gprod_col, where the STARK's calculateImHints computes "
+            "none");
+    // What gives the columns.
     refused([](ExpressionsBin &b) { b.hints.clear(); }, "0 hints give the column gsum of stage 2");
-    refused([](ExpressionsBin &b) { b.hints.push_back(b.hints[0]); }, "2 hints give the column gsum");
+    refused([](ExpressionsBin &b) { b.hints.push_back(b.hints[GSUM_COL_HINT]); }, "2 hints give the column gsum");
+    refused([](ExpressionsBin &b) { b.hints.push_back(b.hints[IM_COL_HINT]); }, "2 hints give the column im_single");
 
-    // A column read at another row, and a number: what addHintField takes too.
+    // What addHintField takes too: a column read at another row and a number; and for gsum_col,
+    // im_single at another row, which is computed before it.
     ExpressionsBin bin = ExpressionsBin::parse(binBytes.data(), binBytes.size(), "SumBus.bin");
-    field(bin, "numerator_air").op = HintOp::Number;
-    HintFieldValue &den = field(bin, "denominator_air");
+    gsum(bin, "numerator_air").op = HintOp::Number;
+    HintFieldValue &den = gsum(bin, "denominator_air");
     den.op = HintOp::Cm;
     den.id = SUM_BUS_B;
     den.rowOffsetIndex = 0; // openingPoints[0] = −1
+    stage2Column(im(bin, "denominator"), SUM_BUS_B, 2); // openingPoints[2] = 1
     const PilfflonkInfo info = PilfflonkInfo::parse(std::string(infoText.begin(), infoText.end()));
     const AirKey key(info, std::move(bin), constants.data(), constants.size(), SUM_BUS);
-    const StdHint &h = key.stdHints()[0];
+    const StdHint &h = key.stdHints()[1];
+    assert(h.name == "gsum_col");
     assert(h.numerator.kind == HintInput::Kind::Number && h.denominator.kind == HintInput::Kind::Column);
     assert(h.denominator.column == (ColumnRead{1, SUM_BUS_B}) && h.denominator.offset == -1);
+    assert(key.stdHints()[0].denominator.column == (ColumnRead{1, SUM_BUS_B}) &&
+           key.stdHints()[0].denominator.offset == 1);
+    ExpressionsBin reading = ExpressionsBin::parse(binBytes.data(), binBytes.size(), "SumBus.bin");
+    stage2Column(gsum(reading, "denominator_air"), IM_SINGLE, 0);
+    const AirKey readsIt(info, std::move(reading), constants.data(), constants.size(), SUM_BUS);
+    assert(readsIt.stdHints()[1].denominator.column == (ColumnRead{2, IM_SINGLE_POS}));
+    assert(readsIt.stdHints()[1].denominator.offset == -1);
 }
 
 // pilfflonk_check_column: the column pilfflonk_check computes with the challenges it is given, the
@@ -1822,9 +1966,11 @@ void runProverTests() {
     testCheckLeavesTheProofAsItWas();
     testCheckRefusals();
     testCheckCApi();
-    testTheSumBusHint();
+    testTheSumBusHints();
+    testTheHintsGoInTheStarksOrder();
     testStage2IsTheOracles();
     testAZeroDenominatorIsAnError();
+    testAZeroDenominatorOfAnImColIsAnError();
     testABrokenBusIsCheckedAndRefused();
     testRefusedHints();
     testInstanceColumnCApi();

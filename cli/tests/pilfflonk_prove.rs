@@ -20,12 +20,14 @@
 //! - `Q` split (plan M33): the fixture of the signed offsets, `qDeg = 3`, with `--max-q-degree 1`
 //!   and `2` (three pieces and two), grouped and with `--no-packing`; and a `--max-q-degree` that
 //!   does not split `Q`, which sets up the key of `Q` whole;
-//! - stage 2 (plan M30): `pilfflonk/tests/fixtures/{sum_bus,prod_bus}`, a lookup on the std's sum bus
-//!   and a permutation on its product bus, in `STD_MODE_ONE_INSTANCE`, grouped and with
-//!   `--no-packing`: the prover computes their stage-2 columns from the hints `gsum_col` and
-//!   `gprod_col` with the challenges of stage 2, which are the transcript's (A.4) and the JS
-//!   verifier's; the columns are the oracle's; the verifier accepts the proofs and rejects every
-//!   change to one; and a witness that breaks the bus is refused.
+//! - stage 2 (plans M30, M31): `pilfflonk/tests/fixtures/{sum_bus,prod_bus,prod_bus_im}`, a lookup on
+//!   the std's sum bus, with the std's default `MAX_CONSTRAINT_DEGREE` (an `im_col`) and with 4
+//!   (none), and a permutation on its product bus, without `im_col` and split by selectors into two
+//!   (two chained `im_col`), in `STD_MODE_ONE_INSTANCE`, grouped and with `--no-packing`: the prover
+//!   computes their stage-2 columns from the hints `im_col`, then `gprod_col` and `gsum_col`, with
+//!   the challenges of stage 2, which are the transcript's (A.4) and the JS verifier's; the columns
+//!   are the oracle's; the verifier accepts the proofs and rejects every change to one; and a
+//!   witness that breaks the bus is refused.
 //!
 //! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
 //! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`, plan N13):
@@ -59,6 +61,8 @@ mod fibonacci;
 mod packed;
 #[path = "../../pilfflonk/tests/data/prod_bus.rs"]
 mod prod_bus;
+#[path = "../../pilfflonk/tests/data/prod_bus_im.rs"]
+mod prod_bus_im;
 #[path = "../../pilfflonk/tests/data/signed.rs"]
 mod signed;
 #[path = "../../pilfflonk/tests/data/sum_bus.rs"]
@@ -76,11 +80,12 @@ use pilfflonk_setup::keys::write_srs;
 use pilfflonk_setup::layout::max_degree;
 use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
-use proofman_pilfflonk::oracle::{AirOracle, ColumnRef, Domain, Fr};
+use proofman_pilfflonk::oracle::{AirOracle, ColumnRef, Domain, Fr, HintKind};
 use proofman_pilfflonk::oracle::Values;
 use proofman_pilfflonk::{
     prove, stage_columns, AirFile, Boundary, FileWitnessSource, FrBytes, JsonFile, PilfflonkError, PilfflonkGlobalInfo,
-    PilfflonkInfo, PolType, ProofChallenges, ProveOptions, ProvingKey, Vkey, Witness, WitnessSource, BN254_R,
+    PilfflonkInfo, PolMapEntry, PolType, ProofChallenges, ProveOptions, ProvingKey, Vkey, Witness, WitnessSource,
+    BN254_R,
 };
 use prost::Message;
 use serde_json::{json, Value};
@@ -131,10 +136,17 @@ enum Program {
     Fibonacci,
     Packed,
     Signed,
-    /// A lookup on the std's sum bus (`tests/fixtures/sum_bus`, plan M30).
+    /// A lookup on the std's sum bus (`tests/fixtures/sum_bus`, plan M30), with the std's default
+    /// `MAX_CONSTRAINT_DEGREE`: an `im_col` (plan M31).
     SumBus,
+    /// The same with the std's `MAX_CONSTRAINT_DEGREE` raised to 4 (`sum_bus_degree4.pil`): no
+    /// `im_col`.
+    SumBusDegree4,
     /// A permutation on the std's product bus (`tests/fixtures/prod_bus`, plan M30).
     ProdBus,
+    /// A permutation on the product bus split by selectors, with two chained `im_col`
+    /// (`tests/fixtures/prod_bus_im`, plan M31).
+    ProdBusIm,
     /// A pilout of `tests/data/domains.rs`, built in code.
     Domains(domains::Air),
 }
@@ -147,8 +159,9 @@ impl Program {
             Program::Fibonacci => fibonacci::witness(8, [1, 2]),
             Program::Packed => packed::witness(PACKED_IN1),
             Program::Signed => signed::witness(SIGNED_INPUTS),
-            Program::SumBus => sum_bus::witness(),
+            Program::SumBus | Program::SumBusDegree4 => sum_bus::witness(),
             Program::ProdBus => prod_bus::witness(),
+            Program::ProdBusIm => prod_bus_im::witness(),
             Program::Domains(air) => domains::witness(air),
         }
     }
@@ -161,7 +174,9 @@ fn compile(program: Program, pilout: &Path) {
         Program::Packed => "pilfflonk/tests/fixtures/packed/packed.pil",
         Program::Signed => "pilfflonk/tests/fixtures/signed/signed.pil",
         Program::SumBus => "pilfflonk/tests/fixtures/sum_bus/sum_bus.pil",
+        Program::SumBusDegree4 => "pilfflonk/tests/fixtures/sum_bus/sum_bus_degree4.pil",
         Program::ProdBus => "pilfflonk/tests/fixtures/prod_bus/prod_bus.pil",
+        Program::ProdBusIm => "pilfflonk/tests/fixtures/prod_bus_im/prod_bus_im.pil",
         Program::Domains(air) => {
             fs::write(pilout, domains::pilout(air).encode_to_vec()).unwrap();
             return;
@@ -1338,19 +1353,25 @@ fn stage_columns_are_the_oracles(f: &Fixture) -> Vec<Vec<FrBytes>> {
     stages.columns[1].clone()
 }
 
-/// The stage-2 fixtures (plan M30): a lookup of pairs on the std's sum bus and a permutation of
-/// pairs on its product bus, each with its hint (`gsum_col`, `gprod_col`), in `STD_MODE_ONE_INSTANCE`.
-/// Two stages, with the challenges `std_alpha` and `std_gamma` of stage 2: `numChallenges = [0, 2]`.
+/// The stage-2 fixtures (plans M30, M31): a lookup of pairs on the std's sum bus and a permutation of
+/// pairs on its product bus, each with its hint (`gsum_col`, `gprod_col`), in `STD_MODE_ONE_INSTANCE`,
+/// and the `im_col` hints of the std's default `MAX_CONSTRAINT_DEGREE` (3): the sum bus has one, which
+/// its `gsum_col` reads, and with the degree raised to 4 none; the product bus of `prod_bus` none, and
+/// that of `prod_bus_im` two, the second reading the first and its `gprod_col` the second. Two
+/// stages, with the challenges `std_alpha` and `std_gamma` of stage 2: `numChallenges = [0, 2]`.
 /// Grouped by default and with `--no-packing`: the prover proves, the verifier accepts the proof and
 /// rejects any change to it or to its public; the prover's transcript is the JS verifier's; its
-/// stage-2 columns, and `Q(ξ)`, the oracle's. The running sum of the sum bus ends at 0, and the
-/// running product of the product bus at 1, but no column is constant.
+/// stage-2 columns, the `im_col` ones too, and `Q(ξ)`, the oracle's. The running sum of the sum bus
+/// ends at 0, and the running product of the product bus at 1, but no column is constant.
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_std_buses_of_stage_2() {
-    for (name, program, bus, last) in [
-        ("e2e_sum_bus", Program::SumBus, "gsum", FrBytes::ZERO),
-        ("e2e_prod_bus", Program::ProdBus, "gprod", FrBytes::from_u64(1)),
+    use HintKind::{GprodCol, GsumCol, ImCol};
+    for (name, program, bus, last, hints) in [
+        ("e2e_sum_bus", Program::SumBus, "gsum", FrBytes::ZERO, &[ImCol, GsumCol][..]),
+        ("e2e_sum_bus_degree4", Program::SumBusDegree4, "gsum", FrBytes::ZERO, &[GsumCol][..]),
+        ("e2e_prod_bus", Program::ProdBus, "gprod", FrBytes::from_u64(1), &[GprodCol][..]),
+        ("e2e_prod_bus_im", Program::ProdBusIm, "gprod", FrBytes::from_u64(1), &[ImCol, ImCol, GprodCol][..]),
     ] {
         for (suffix, packing) in [("", DEFAULT), ("_unpacked", Packing::NoPacking)] {
             let name = format!("{name}{suffix}");
@@ -1361,8 +1382,12 @@ fn the_prover_proves_the_std_buses_of_stage_2() {
             assert_eq!(challenges, [("std_alpha", 2), ("std_gamma", 2), ("std_vc", 3), ("std_xi", 4)], "{name}");
             let global_info = PilfflonkGlobalInfo::from_proving_key(&f.proving_key).unwrap();
             assert_eq!(global_info.num_challenges, [0, 2], "{name}");
-            let column = info.cm_pols_map.iter().find(|p| p.stage == 2 && !p.im_pol).unwrap();
-            assert_eq!(column.name, bus, "{name}");
+            let column = info.cm_pols_map.iter().find(|p| p.name == bus).unwrap();
+            assert!(column.stage == 2 && !column.im_pol, "{name}");
+            let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
+            let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
+            let kinds: Vec<HintKind> = oracle.bus_hints().iter().map(|h| h.kind).collect();
+            assert_eq!(kinds, hints, "{name}: the std's hints");
             // Its f opens it at ξ·ω^−1 too: the bus reads its previous row.
             let f_of = info.layout.0.iter().find(|entry| entry.pols.iter().any(|p| p.name == bus)).unwrap();
             assert!(f_of.stage == 2 && f_of.offsets.contains(&-1), "{name}: {:?}", f_of.offsets);
@@ -1376,20 +1401,39 @@ fn the_prover_proves_the_std_buses_of_stage_2() {
             let bus_column = &stage_2[column.stage_pos as usize];
             assert_eq!(bus_column.last(), Some(&last), "{name}: the bus balances");
             assert!(bus_column.iter().any(|v| *v != last), "{name}: {bus} is not constant");
+            for hint in oracle.bus_hints().iter().filter(|h| h.kind == ImCol) {
+                let of_hint = |p: &&PolMapEntry| p.stage == 2 && !p.im_pol && p.stage_id == hint.idx as u64;
+                let p = info.cm_pols_map.iter().find(of_hint).unwrap();
+                let im = &stage_2[p.stage_pos as usize];
+                assert!(im.iter().any(|v| *v != im[0]), "{name}: the im_col column {} is not constant", p.name);
+            }
         }
     }
 }
 
-/// A witness that breaks the bus: a lookup of a pair the table does not provide, and a pair of `(b,
-/// d)` that is no row of `(a, c)`. Each row's running sum or product holds by construction, and the
-/// constraint that breaks is the last row's (`L1'·…`), as the oracle says with the prover's columns;
-/// the prover refuses the witness, whatever the layout.
+/// A witness that breaks the bus: a lookup of a pair the table does not provide, with and without the
+/// sum bus's `im_col`; a pair of `(b, d)` that is no row of `(a, c)`; and, with the product bus's two
+/// `im_col`, a pair moved to the other permutation. Each row's running sum or product, and each
+/// `im_col`, holds by construction, and the constraint that breaks is the last row's (`L1'·…`), as the
+/// oracle says with the prover's columns; the prover refuses the witness, whatever the layout.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn a_witness_that_breaks_a_bus_is_refused() {
     for (name, program, witness, line) in [
         ("bus_sum", Program::SumBus, sum_bus::witness_looking_up_what_is_not_provided(), "__L1__'*(0-gsum)"),
+        (
+            "bus_sum_degree4",
+            Program::SumBusDegree4,
+            sum_bus::witness_looking_up_what_is_not_provided(),
+            "__L1__'*(0-gsum)",
+        ),
         ("bus_prod", Program::ProdBus, prod_bus::witness_not_a_permutation(), "__L1__'*(1-gprod)"),
+        (
+            "bus_prod_im",
+            Program::ProdBusIm,
+            prod_bus_im::witness_with_a_pair_in_the_other_permutation(),
+            "__L1__'*(1-gprod)",
+        ),
     ] {
         for (suffix, packing) in [("", DEFAULT), ("_unpacked", Packing::NoPacking)] {
             let name = format!("{name}{suffix}");

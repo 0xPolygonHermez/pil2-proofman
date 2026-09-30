@@ -1,6 +1,6 @@
 //! `<air>.bin`: the prover bytecode over `Fr` (spec §4.2.5, A.6). It is the code the prover runs
 //! to compute the intermediate polynomials and `Q` (§4.4), the prover hints that compute the
-//! columns of stage 2 and above (plan M30), and the code `pilfflonk check` runs to say which
+//! columns of stage 2 and above (plans M30, M31), and the code `pilfflonk check` runs to say which
 //! constraint fails on which row. [`write_air_bin`] writes it from what
 //! `pil_info::run(…, &PilInfoCfg::bn254(), …)` returns, and [`Bytecode::read`] reads it back.
 //!
@@ -89,10 +89,12 @@
 //! ops, args, numbers, as in section 1
 //! ```
 //!
-//! **Section 3, hints.** The prover hints the setup supports, `gsum_col` and `gprod_col`
+//! **Section 3, hints.** The prover hints the setup supports, `im_col`, `gprod_col` and `gsum_col`
 //! (`crate::validate::SUPPORTED_PROVER_HINTS`), in the pilout's order, as `pil-info` processes
 //! them (`addHintsInfo`) and the STARK's `write_hints_section` writes them. The witness and debug
-//! hints are not the prover's, and the setup ignores them (§4.2.1): they are not written.
+//! hints are not the prover's, and the setup ignores them (§4.2.1): they are not written. The
+//! prover looks the hints up by name, so `im_col` (plan M31) needed no new revision: a revision-3
+//! reader that did not compute it refused a key with it, and the setup did not write one.
 //!
 //! ```text
 //! nHints u32

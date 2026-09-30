@@ -35,13 +35,18 @@ struct ConstraintCheck {
 //
 // commitStage(s):
 //   1. the columns of stage s: the witness's for s = 1; for s >= 2, those the std's prover hints give
-//      (AirKey::stdHints, plan M30) with the stage's challenges, as the STARK's calculateWitnessSTD
-//      does (pil2-stark/src/starkpil/gen_proof.hpp): the gprod_col hints, then the gsum_col ones,
-//      each accMulHintFields (hints.cpp) on H: numerator_air/denominator_air on every row, with one
-//      batch inversion, accumulated row after row into its reference column, a running product or
-//      a running sum. As in calculateWitnessSTD with no airgroup value (v1 has none, D2), result,
-//      numerator_direct and denominator_direct are not read. A denominator that is 0 on a row
-//      throws UnsatisfiedError: the column has no value there;
+//      (AirKey::stdHints, plans M30 and M31) with the stage's challenges, in the STARK's order
+//      (pil2-stark/src/starkpil/gen_proof.hpp), each on H with one batch inversion:
+//      - the im_col hints, as calculateImHints does (multiplyHintFields, hints.cpp): its reference
+//        column is numerator/denominator on every row;
+//      - then the gprod_col hints and the gsum_col ones, as calculateWitnessSTD does
+//        (accMulHintFields): numerator_air/denominator_air on every row, accumulated row after row
+//        into its reference column, a running product or a running sum. As in calculateWitnessSTD
+//        with no airgroup value (v1 has none, D2), result, numerator_direct and denominator_direct
+//        are not read.
+//      Each reads the columns of the hints before it (AirKey checked that it reads no other of the
+//      stage). A denominator that is 0 on a row throws UnsatisfiedError: the column has no value
+//      there;
 //   2. the intermediate polynomials of stage s, with the bytecode on H (ExpressionsDomain::trace):
 //      each once the columns its code reads are, in any order that allows it (the hints' columns
 //      of stage s are, as step 1 computes them first);

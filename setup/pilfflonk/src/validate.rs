@@ -3,10 +3,11 @@
 //! [`validate`] checks a whole pilout at once, but for three of §4.2.1's cases, which need what
 //! only the passes and the layout know (`crate::layout`):
 //!
-//! - the prover hints the setup supports, `gsum_col` and `gprod_col`, must produce every column of
-//!   stage 2 or above, each once, from what the stages before it hold: [`check_prover_hints`], on
-//!   the hints as the passes process them (the ones `<air>.bin` holds, `crate::bytecode`);
-//!   [`validate`] only checks their names, and that a stage with columns has some hint;
+//! - the prover hints the setup supports, `im_col`, `gsum_col` and `gprod_col`, must produce every
+//!   column of stage 2 or above, each once, from what the prover computes before them:
+//!   [`check_prover_hints`], on the hints as the passes process them (the ones `<air>.bin` holds,
+//!   `crate::bytecode`); [`validate`] only checks their names, and that a stage with columns has
+//!   some hint;
 //! - the extended domain must fit in the 2-adicity of BN254: [`check_extended_domain`], called
 //!   with the `nBitsExt` of A.1 (`layout::Degrees`);
 //! - the ptau must hold as many powers `[τ^i]₁` as the largest `degree` of the layout:
@@ -44,11 +45,14 @@ pub const WITNESS_AND_DEBUG_HINTS: [&str; 12] = [
 /// The prover hints of spec §3.4, those of the std's buses.
 pub const PROVER_HINTS: [&str; 4] = ["gsum_col", "gprod_col", "im_col", "im_airval"];
 
-/// The prover hints the setup supports (plan M30): the std's running sum (`gsum_col`) and product
-/// (`gprod_col`), which produce the columns of stage 2. The prover computes them as the STARK's
-/// `calculateWitnessSTD` does (`pil2-stark/src/starkpil/gen_proof.hpp`). Of the other two,
-/// `im_col` waits for plan M31 and `im_airval` computes an air value, which v1 has none of (D2).
-pub const SUPPORTED_PROVER_HINTS: [&str; 2] = ["gsum_col", "gprod_col"];
+/// The prover hints the setup supports (plans M30, M31): the intermediate columns of the terms of
+/// the std's buses (`im_col`), and their running product (`gprod_col`) and sum (`gsum_col`), which
+/// produce the columns of stage 2. In the order the prover computes the hints of a stage in, the
+/// STARK's (`pil2-stark/src/starkpil/gen_proof.hpp`): the `im_col` ones (`calculateImHints`), then
+/// the `gprod_col` ones and the `gsum_col` ones (`calculateWitnessSTD`), each in the pilout's order
+/// (`getHintIdsByName`). The other one, `im_airval`, computes an air value, which v1 has none of
+/// (D2).
+pub const SUPPORTED_PROVER_HINTS: [&str; 3] = ["im_col", "gprod_col", "gsum_col"];
 
 /// The AIR of a pilout that passed [`validate`]: its only one.
 #[derive(Clone, Copy, Debug)]
@@ -164,9 +168,9 @@ fn only_air(pilout: &pb::PilOut) -> Result<ValidAir<'_>, SetupError> {
     }
 }
 
-/// The hints of the pilout by name (spec §3.4): the witness and debug ones are ignored, `gsum_col`
-/// and `gprod_col` must be of the AIR, and the others are refused. Returns the number of
-/// `gsum_col` and `gprod_col`.
+/// The hints of the pilout by name (spec §3.4): the witness and debug ones are ignored, `im_col`,
+/// `gsum_col` and `gprod_col` must be of the AIR, and the others are refused. Returns the number of
+/// `im_col`, `gsum_col` and `gprod_col`.
 fn check_hints(pilout: &pb::PilOut) -> Result<usize, SetupError> {
     let mut n_supported = 0;
     for hint in &pilout.hints {
@@ -193,7 +197,6 @@ fn check_hints(pilout: &pb::PilOut) -> Result<usize, SetupError> {
                 }
                 n_supported += 1;
             }
-            "im_col" => return Err(SetupError::ImColHint { location }),
             "im_airval" => return Err(SetupError::ImAirvalHint { location }),
             _ => return Err(SetupError::UnknownHint { name: name.to_string(), location }),
         }
@@ -216,19 +219,40 @@ fn single<'a>(hint: &'a ProcessedHint, field: &str, label: &str) -> Result<Optio
     }
 }
 
-/// Checks the prover hints of the passes' result (the `gsum_col` and `gprod_col` of the AIR, spec
-/// §4.2.1, plan M30) against what the prover computes of them, as the STARK's
-/// `calculateWitnessSTD` does with `accMulHintFields` (`pil2-stark/src/starkpil/hints.cpp`):
+/// A supported prover hint, as [`check_prover_hints`] reads it: where the prover computes it, and
+/// what it reads.
+struct ProverHint<'a> {
+    hint: &'a ProcessedHint,
+    /// Its kind's place in [`SUPPORTED_PROVER_HINTS`], the order of the STARK.
+    order: usize,
+    /// Its reference: the column's `cmPolsMap` index, and its stage.
+    column: usize,
+    stage: usize,
+    /// The columns (`cmPolsMap` indices) its numerator and its denominator read, by field.
+    reads: [(&'static str, Vec<usize>); 2],
+}
+
+/// Checks the prover hints of the passes' result (the `im_col`, `gsum_col` and `gprod_col` of the
+/// AIR, spec §4.2.1, plans M30 and M31) against what the prover computes of them, as the STARK's
+/// `calculateImHints` does with `multiplyHintFields` and `calculateWitnessSTD` with
+/// `accMulHintFields` (`pil2-stark/src/starkpil/hints.cpp`):
 ///
 /// - `reference` is a column of stage 2 or above, read at its own row, and not an im pol: the
-///   running sum or product of `numerator_air/denominator_air` goes there;
-/// - `numerator_air` and `denominator_air` are each an expression, a column at an opening point or
-///   a number (the operands the STARK's `addHintField` takes, air values aside: v1 has none, D2),
-///   and read no column of the reference's stage or after, which it is computed before;
-/// - `result`, if the hint has it, is a number: it is the airgroup value the column's last row
-///   updates otherwise, with `numerator_direct/denominator_direct`, and v1 has none (D2). The std
-///   writes a number there in `STD_MODE_ONE_INSTANCE`, and the prover ignores the three fields, as
-///   `calculateWitnessSTD` does when the AIR has no airgroup value;
+///   quotient `numerator/denominator` of an `im_col` goes there, and the running sum or product of
+///   `numerator_air/denominator_air` of a `gsum_col` or `gprod_col`;
+/// - the numerator and the denominator are each an expression, a column at an opening point or a
+///   number (the operands the STARK's `addHintField` takes, air values aside: v1 has none, D2), and
+///   read only columns the prover computes before the hint: fixed ones, those of the stages before
+///   the reference's, and of its stage those of the hints before it in the STARK's order
+///   ([`SUPPORTED_PROVER_HINTS`]): an `im_col` may read the `im_col` columns before it, which the std's product
+///   bus chains, and a `gsum_col` or `gprod_col` those of the `im_col` hints, but none reads an im
+///   pol of its stage, which the prover computes last;
+/// - an `im_col` is of an AIR with a `gsum_col` or a `gprod_col`: the STARK's `calculateImHints`
+///   computes none otherwise;
+/// - `result`, if a `gsum_col` or `gprod_col` has it, is a number: it is the airgroup value the
+///   column's last row updates otherwise, with `numerator_direct/denominator_direct`, and v1 has none
+///   (D2). The std writes a number there in `STD_MODE_ONE_INSTANCE`, and the prover ignores the three
+///   fields, as `calculateWitnessSTD` does when the AIR has no airgroup value;
 /// - every column of stage 2 or above but the im pols is the reference of one hint exactly.
 ///
 /// `label` is what the errors call the AIR. [`validate`] has checked the hints' names.
@@ -236,35 +260,54 @@ pub fn check_prover_hints(result: &PilInfoResult, label: &str) -> Result<(), Set
     let setup = &result.setup;
     let cm_pols = &setup.cm_pols_map;
     let code = &result.pil_code.expressions_info.expressions_code;
+    let all = &result.pil_code.expressions_info.hints_info;
+    let refuse = |hint: &ProcessedHint, reason: String| SetupError::ProverHint {
+        hint: hint.name.clone(),
+        air: label.to_string(),
+        reason,
+    };
+    let has_bus = all.iter().any(|h| h.name == "gsum_col" || h.name == "gprod_col");
+
+    let mut hints = Vec::new();
     let mut produced = vec![0usize; cm_pols.len()];
-    for hint in result.pil_code.expressions_info.hints_info.iter() {
-        if !SUPPORTED_PROVER_HINTS.contains(&hint.name.as_str()) {
+    for hint in all.iter() {
+        let Some(order) = SUPPORTED_PROVER_HINTS.iter().position(|name| *name == hint.name) else {
             continue;
-        }
-        let refuse =
-            |reason: String| SetupError::ProverHint { hint: hint.name.clone(), air: label.to_string(), reason };
+        };
+        let refuse = |reason: String| refuse(hint, reason);
         let field = |name: &str| -> Result<&ProcessedHintField, SetupError> {
             single(hint, name, label)?.ok_or_else(|| refuse(format!("it has no field `{name}`")))
         };
+        let im_col = hint.name == "im_col";
+        if im_col && !has_bus {
+            return Err(refuse(
+                "the AIR has no gsum_col or gprod_col, and the STARK's calculateImHints computes im_col only in one \
+                 that has"
+                    .to_string(),
+            ));
+        }
 
         let reference = field("reference")?;
-        let target = match (reference.op.as_str(), reference.id.and_then(|id| cm_pols.get(id).map(|p| (id, p)))) {
-            ("cm", Some((id, p))) if p.stage.unwrap_or(0) >= 2 && !p.im_pol && reference.row_offset == Some(0) => {
-                (id, p.stage.unwrap_or(0))
-            }
-            (op, _) => {
-                return Err(refuse(format!(
-                    "its reference is {op} {:?}, not a column of stage 2 or above at its own row",
-                    reference.id
-                )))
-            }
-        };
-        produced[target.0] += 1;
+        let (column, stage) =
+            match (reference.op.as_str(), reference.id.and_then(|id| cm_pols.get(id).map(|p| (id, p)))) {
+                ("cm", Some((id, p))) if p.stage.unwrap_or(0) >= 2 && !p.im_pol && reference.row_offset == Some(0) => {
+                    (id, p.stage.unwrap_or(0))
+                }
+                (op, _) => {
+                    return Err(refuse(format!(
+                        "its reference is {op} {:?}, not a column of stage 2 or above at its own row",
+                        reference.id
+                    )))
+                }
+            };
+        produced[column] += 1;
 
-        for name in ["numerator_air", "denominator_air"] {
+        let fields = if im_col { ["numerator", "denominator"] } else { ["numerator_air", "denominator_air"] };
+        let mut reads = fields.map(|name| (name, Vec::new()));
+        for (name, read) in reads.iter_mut() {
             let value = field(name)?;
             // The columns the operand reads: its own, or those its expression's code does.
-            let reads: Vec<usize> = match value.op.as_str() {
+            *read = match value.op.as_str() {
                 "number" | "const" => vec![],
                 "cm" => value.id.into_iter().collect(),
                 "tmp" => match code.iter().find(|e| Some(e.exp_id) == value.id) {
@@ -282,25 +325,41 @@ pub fn check_prover_hints(result: &PilInfoResult, label: &str) -> Result<(), Set
             if matches!(value.op.as_str(), "cm" | "const") && value.row_offset_index.is_none_or(|i| i < 0) {
                 return Err(refuse(format!("its {name} reads a column at an offset that is not an opening point")));
             }
-            if let Some(&id) =
-                reads.iter().find(|&&id| cm_pols.get(id).is_none_or(|p| p.stage.unwrap_or(0) >= target.1))
-            {
-                return Err(refuse(format!(
-                    "its {name} reads cm {id}, which is not of a stage before its reference's ({}): the std adds \
-                     such columns with im_col (plan M31)",
-                    target.1
-                )));
+        }
+        if !im_col {
+            if let Some(result) = single(hint, "result", label)? {
+                if result.op != "number" {
+                    return Err(refuse(format!(
+                        "its result is a {}: it updates an airgroup value, which pilfflonk does not support (spec \
+                         D2); compile the std with set_std_mode(STD_MODE_ONE_INSTANCE)",
+                        result.op
+                    )));
+                }
             }
         }
-        if let Some(result) = single(hint, "result", label)? {
-            if result.op != "number" {
-                return Err(refuse(format!(
-                    "its result is a {}: it updates an airgroup value, which pilfflonk does not support (spec D2); \
-                     compile the std with set_std_mode(STD_MODE_ONE_INSTANCE)",
-                    result.op
-                )));
+        hints.push(ProverHint { hint, order, column, stage, reads });
+    }
+
+    // The order the prover computes them in: stage by stage, and in each the STARK's. A column is there
+    // before a hint if it is of an earlier stage, or a column of its stage an earlier hint gives.
+    hints.sort_by_key(|h| (h.stage, h.order));
+    let mut computed = vec![false; cm_pols.len()];
+    for h in &hints {
+        for (name, reads) in &h.reads {
+            let before = |id: usize| computed[id] || cm_pols[id].stage.unwrap_or(0) < h.stage;
+            if let Some(&id) = reads.iter().find(|&&id| id >= cm_pols.len() || !before(id)) {
+                return Err(refuse(
+                    h.hint,
+                    format!(
+                        "its {name} reads cm {id}, which is not computed before it: of stage {}, the prover computes \
+                         the columns of the im_col hints in their order, then the gprod_col ones and the gsum_col \
+                         ones, and the im pols last",
+                        h.stage
+                    ),
+                ));
             }
         }
+        computed[h.column] = true;
     }
 
     for (id, p) in cm_pols.iter().enumerate() {
@@ -310,7 +369,7 @@ pub fn check_prover_hints(result: &PilInfoResult, label: &str) -> Result<(), Set
         }
         if produced[id] > 1 {
             return Err(SetupError::ProverHint {
-                hint: "gsum_col/gprod_col".to_string(),
+                hint: "im_col/gsum_col/gprod_col".to_string(),
                 air: label.to_string(),
                 reason: format!("{} hints produce column {}", produced[id], p.name),
             });

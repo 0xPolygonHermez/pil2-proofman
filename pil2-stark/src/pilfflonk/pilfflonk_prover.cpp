@@ -168,7 +168,8 @@ void Instance::computeHintColumns(uint64_t stage, std::vector<std::vector<FrElem
     const PilfflonkInfo &info = key.info();
     const uint64_t N = key.n();
     Engine::Fr &fr = Engine::engine.fr;
-    // The hints read the stages before this one (AirKey checked it), and the challenges of this one.
+    // The hints read the stages before this one and, of this one, the columns of the hints before
+    // them (AirKey checked it), which are in cols as they are computed; and the challenges of this one.
     const ProverValues values = valuesOn(cols, challenges);
     const ExpressionsDomain trace = ExpressionsDomain::trace(info.nBits);
     // An operand on every row of H, as addHintField reads it: a column at row i + offset, cyclically.
@@ -193,34 +194,37 @@ void Instance::computeHintColumns(uint64_t stage, std::vector<std::vector<FrElem
         }
     };
     std::vector<FrElement> numerator(N), denominator(N), inverse(N);
-    // calculateWitnessSTD's order: the products, then the sums (gen_proof.hpp).
-    for (const bool prod : {true, false}) {
-        for (const StdHint &hint : hints) {
-            if (hint.stage != stage || hint.prod != prod) {
-                continue;
-            }
-            evaluate(hint.numerator, numerator.data());
-            evaluate(hint.denominator, denominator.data());
-            if (!batchInverse(inverse.data(), denominator.data(), N)) {
-                const uint64_t row = std::find_if(denominator.begin(), denominator.end(),
-                                                  [&](const FrElement &d) { return fr.isZero(d); }) -
-                                     denominator.begin();
-                throw UnsatisfiedError(key.name() + ": the denominator of hint " + std::to_string(hint.hint) + " (" +
-                                       hint.name + ", column " + info.cmPolsMap[hint.cmId].name + ") is 0 at row " +
-                                       std::to_string(row) + ": the column has no value there");
-            }
-            // accMulHintFields: vals[i] = numerator[i]/denominator[i], then vals[i] = vals[i] ∘ vals[i − 1].
-            FrElement *dest = cols[stage].data() + hint.stagePos * N;
+    // In the STARK's order, which stdHints() has (gen_proof.hpp): calculateImHints, then
+    // calculateWitnessSTD for the products and for the sums.
+    for (const StdHint &hint : hints) {
+        if (hint.stage != stage) {
+            continue;
+        }
+        evaluate(hint.numerator, numerator.data());
+        evaluate(hint.denominator, denominator.data());
+        if (!batchInverse(inverse.data(), denominator.data(), N)) {
+            const uint64_t row = std::find_if(denominator.begin(), denominator.end(),
+                                              [&](const FrElement &d) { return fr.isZero(d); }) -
+                                 denominator.begin();
+            throw UnsatisfiedError(key.name() + ": the denominator of hint " + std::to_string(hint.hint) + " (" +
+                                   hint.name + ", column " + info.cmPolsMap[hint.cmId].name + ") is 0 at row " +
+                                   std::to_string(row) + ": the column has no value there");
+        }
+        // multiplyHintFields (im_col) and accMulHintFields: vals[i] = numerator[i]/denominator[i]; the
+        // latter then accumulates, vals[i] = vals[i] ∘ vals[i − 1].
+        FrElement *dest = cols[stage].data() + hint.stagePos * N;
 #pragma omp parallel for
-            for (uint64_t i = 0; i < N; ++i) {
-                fr.mul(dest[i], numerator[i], inverse[i]);
-            }
-            for (uint64_t i = 1; i < N; ++i) {
-                if (prod) {
-                    fr.mul(dest[i], dest[i], dest[i - 1]);
-                } else {
-                    fr.add(dest[i], dest[i], dest[i - 1]);
-                }
+        for (uint64_t i = 0; i < N; ++i) {
+            fr.mul(dest[i], numerator[i], inverse[i]);
+        }
+        if (hint.kind == StdHint::Kind::ImCol) {
+            continue;
+        }
+        for (uint64_t i = 1; i < N; ++i) {
+            if (hint.kind == StdHint::Kind::Prod) {
+                fr.mul(dest[i], dest[i], dest[i - 1]);
+            } else {
+                fr.add(dest[i], dest[i], dest[i - 1]);
             }
         }
     }

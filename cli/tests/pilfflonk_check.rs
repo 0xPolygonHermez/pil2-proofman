@@ -6,11 +6,11 @@
 //! wrap too, with the im pols the setup chooses for each `--max-constraint-degree`. And on the
 //! pilouts of `tests/data/domains.rs`, built in code (plan M24): each constraint is checked on the
 //! rows of its domain only, `firstRow ≤ i < lastRow`, and a witness that breaks it at the edge row
-//! of its domain is found there. And on the stage-2 fixtures of the std's buses (plan M30), whose
-//! challenges of stage 2 the check takes from a transcript of fixed elements, as the STARK's
-//! `verify-constraints` does, committing nothing: its columns are the oracle's with them, and a
-//! witness that breaks the bus fails the last row of its running sum or product with the oracle's
-//! value, and the CLI names it.
+//! of its domain is found there. And on the stage-2 fixtures of the std's buses (plans M30, M31),
+//! with and without `im_col`, whose challenges of stage 2 the check takes from a transcript of fixed
+//! elements, as the STARK's `verify-constraints` does, committing nothing: its columns, the
+//! `im_col` ones too, are the oracle's with them, and a witness that breaks the bus fails the last
+//! row of its running sum or product with the oracle's value, and the CLI names it.
 //!
 //! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
 //! which must honour `prime`, and is `#[ignore]` without it. Those of the domains build their
@@ -36,6 +36,8 @@ mod domains;
 mod fibonacci;
 #[path = "../../pilfflonk/tests/data/prod_bus.rs"]
 mod prod_bus;
+#[path = "../../pilfflonk/tests/data/prod_bus_im.rs"]
+mod prod_bus_im;
 #[path = "../../pilfflonk/tests/data/signed.rs"]
 mod signed;
 #[path = "../../pilfflonk/tests/data/sum_bus.rs"]
@@ -103,7 +105,9 @@ enum Program {
 const FIBONACCI: Program = Program::Pil("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
 const SIGNED: Program = Program::Pil("pilfflonk/tests/fixtures/signed/signed.pil");
 const SUM_BUS: Program = Program::Pil("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil");
+const SUM_BUS_DEGREE4: Program = Program::Pil("pilfflonk/tests/fixtures/sum_bus/sum_bus_degree4.pil");
 const PROD_BUS: Program = Program::Pil("pilfflonk/tests/fixtures/prod_bus/prod_bus.pil");
+const PROD_BUS_IM: Program = Program::Pil("pilfflonk/tests/fixtures/prod_bus_im/prod_bus_im.pil");
 
 impl Program {
     /// The name of its pilout file: that of the PIL, or `domains`.
@@ -659,27 +663,43 @@ fn fixed_element_challenges() -> Vec<FrBytes> {
     (0..2).map(|_| FrBytes::from_le_bytes(t.squeeze().unwrap()).unwrap()).collect()
 }
 
-/// The stage-2 fixtures of the std's buses (plan M30): a lookup on the sum bus and a permutation
-/// on the product bus, grouped and with `--no-packing`. The check takes the challenges of stage 2
-/// from fixed elements, as the STARK's `verify-constraints` does, and commits nothing: they are
-/// those of a transcript of `[0, 1, 2, r − 1]`, and the columns it checks, the oracle's with them.
-/// The generator's witness passes, and every constraint is checked, the bus's of stage 2 too; a
-/// witness that breaks the bus fails the last row of its running sum or product, `L1'·…` at row
-/// N − 1, and nothing else, with the oracle's value; a denominator 0 on a row is `Unsatisfied`. Twice
-/// the same witness, twice the same report.
+/// The stage-2 fixtures of the std's buses (plans M30, M31): a lookup on the sum bus, with an
+/// `im_col` (the std's default `MAX_CONSTRAINT_DEGREE`) and without (4), and a permutation on the
+/// product bus, without `im_col` and split by selectors, with two chained ones; grouped and with
+/// `--no-packing`. The check takes the challenges of stage 2 from fixed elements, as the STARK's
+/// `verify-constraints` does, and commits nothing: they are those of a transcript of `[0, 1, 2, r −
+/// 1]`, and the columns it checks, the `im_col` ones too, the oracle's with them. The generator's
+/// witness passes, and every constraint is checked, the bus's of stage 2 too; a witness that breaks
+/// the bus fails the last row of its running sum or product, `L1'·…` at row N − 1, and nothing else,
+/// with the oracle's value; a denominator 0 on a row is `Unsatisfied`, naming the hint whose it is.
+/// Twice the same witness, twice the same report.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_check_takes_the_challenges_of_stage_2_from_fixed_elements() {
     let challenges = fixed_element_challenges();
-    for (name, program, witness, broken, line) in [
+    // Each fixture, its witness and one that breaks the bus, the bus's last constraint, and the term
+    // made 0 at row 5: its busid (prod_bus_im's row 5 is of opid 2, sa[5] = 0) and the hint whose
+    // denominator it is in (the sum bus's lookup is a direct term of gsum_col's, not an im_col's).
+    let sum = || (sum_bus::witness(), sum_bus::witness_looking_up_what_is_not_provided());
+    for (name, program, (witness, broken), line, busid, zero_hint) in [
+        ("sum_bus", SUM_BUS, sum(), "__L1__'*(0-gsum) == 0", 1, "(gsum_col, column gsum)"),
+        ("sum_bus_degree4", SUM_BUS_DEGREE4, sum(), "__L1__'*(0-gsum) == 0", 1, "(gsum_col, column gsum)"),
         (
-            "sum_bus",
-            SUM_BUS,
-            sum_bus::witness(),
-            sum_bus::witness_looking_up_what_is_not_provided(),
-            "__L1__'*(0-gsum) == 0",
+            "prod_bus",
+            PROD_BUS,
+            (prod_bus::witness(), prod_bus::witness_not_a_permutation()),
+            "__L1__'*(1-gprod) == 0",
+            1,
+            "(gprod_col, column gprod)",
         ),
-        ("prod_bus", PROD_BUS, prod_bus::witness(), prod_bus::witness_not_a_permutation(), "__L1__'*(1-gprod) == 0"),
+        (
+            "prod_bus_im",
+            PROD_BUS_IM,
+            (prod_bus_im::witness(), prod_bus_im::witness_with_a_pair_in_the_other_permutation()),
+            "__L1__'*(1-gprod) == 0",
+            2,
+            "(im_col, column im_low)",
+        ),
     ] {
         for no_packing in [false, true] {
             let name = format!("{name}_{no_packing}");
@@ -730,15 +750,16 @@ fn the_check_takes_the_challenges_of_stage_2_from_fixed_elements() {
             assert_eq!(found(&report), expected, "{name}");
 
             // A denominator 0 on a row, with the check's challenges: the first term's (a, …)
-            // compressed, busid 1 + a·α + e·α², plus γ, is 0 at row 5, e the second expression.
+            // compressed, busid + a·α + e·α², plus γ, is 0 at row 5, e the second expression.
             let (alpha, gamma) = (Fr::from(&challenges[0]), Fr::from(&challenges[1]));
             let mut zero = witness.clone();
             let e = Fr::from(&zero.instances[0].stage1.get(5, 1).unwrap());
-            let a = -&(&(&(&Fr::one() + &(&e * &(&alpha * &alpha))) + &gamma) * &alpha.inv().unwrap());
+            let busid = Fr::from_u64(busid);
+            let a = -&(&(&(&busid + &(&e * &(&alpha * &alpha))) + &gamma) * &alpha.inv().unwrap());
             zero.instances[0].stage1.set(5, 0, a.to_bytes()).unwrap();
             match check(&pk, &zero, &options) {
                 Err(PilfflonkError::Unsatisfied(message)) => {
-                    assert!(message.contains("is 0 at row 5"), "{name}: {message}")
+                    assert!(message.contains(&format!("{zero_hint} is 0 at row 5")), "{name}: {message}")
                 }
                 other => panic!("{name}: expected Unsatisfied, got {:?}", other.map(|_| ())),
             }

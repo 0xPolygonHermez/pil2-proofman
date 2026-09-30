@@ -1,0 +1,44 @@
+// A product bus whose terms need im_col (plan M31): the permutation of prod_bus.pil, the pairs
+// (a, c) into the pairs (b, d), split by the selectors sa and sb into two permutations of the same
+// pairs, on the std's grand-product bus (gprod, PIOP_BUS_PROD) in STD_MODE_ONE_INSTANCE, which has no
+// airgroup value (D2). One air, one instance, N = 2^5.
+//
+// - Opid 1 takes the rows where sa (of (a, c)) and sb (of (b, d)) are 1, and opid 2, with the
+//   selectors 1 − sa and 1 − sb, the others: both balance if (b, d) and sb are (a, c) and sa with
+//   their rows permuted alike.
+// - Each term, sel·(e + γ − 1) + 1 with e the pair compressed (busid + e_1·α + e_2·α², std_tools.pil),
+//   has degree 2, and two in the numerator and two in the denominator exceed the std's default
+//   MAX_CONSTRAINT_DEGREE (3). The std (std_prod.pil, piop_gprod_air, the low-degree terms) chains
+//   two intermediate columns with the hint im_col: im_low[0] = P_1/A_1, and im_low[1] = im_low[0]·P_2/A_2,
+//   which reads the first one, P_i and A_i the terms of opid i. The hint gprod_col gives `gprod` as
+//   the running product of im_low[1]/1: its last row is 1 if and only if the bus balances,
+//   `L1'·(1 − gprod) === 0`.
+// - No term is a constant, so there is no im_airval. A term of degree above 3 would take the std's
+//   other path, im_high, which this compiler refuses (spec Annex F.11).
+// - `first` is a[0], so that a public ties the witness.
+//
+// Compile over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its
+// bn254.json and -I pil2-components/lib/std/pil. The witness generator is tests/data/prod_bus_im.rs.
+require "std_constants.pil"
+require "std_permutation.pil"
+
+set_std_mode(STD_MODE_ONE_INSTANCE);
+set_permutation_bus_type(PIOP_BUS_PROD);
+
+public first;
+
+airtemplate ProdBusIm(const int N = 2**5) {
+    col witness a, c, b, d, sa, sb;
+
+    permutation_assumes(1, [a, c], sa);
+    permutation_proves(1, [b, d], sb);
+    permutation_assumes(2, [a, c], 1 - sa);
+    permutation_proves(2, [b, d], 1 - sb);
+
+    const expr L1 = get_L1();
+    L1 * (a - first) === 0;
+}
+
+airgroup ProdBusIm {
+    ProdBusIm();
+}

@@ -216,8 +216,17 @@ std::vector<ColumnRead> columnsRead(const ExpressionsBin &bin, uint64_t expId) {
 
 namespace {
 
-// The gsum_col and gprod_col hints of `bin`, checked against `info` as AirKey says (plan M30). cmIds is
-// AirKey::cmIds(). Throws FormatError, naming the AIR, the hint and what is wrong.
+// The fields of a hint of `kind` whose quotient gives its column: im_col's numerator and
+// denominator, which calculateImHints reads, and gsum_col's and gprod_col's numerator_air and
+// denominator_air, which calculateWitnessSTD does.
+std::pair<const char *, const char *> quotientFields(StdHint::Kind kind) {
+    return kind == StdHint::Kind::ImCol ? std::make_pair("numerator", "denominator")
+                                        : std::make_pair("numerator_air", "denominator_air");
+}
+
+// The im_col, gsum_col and gprod_col hints of `bin`, checked against `info` as AirKey says (plans M30,
+// M31), in the order AirKey::stdHints() has them. cmIds is AirKey::cmIds(). Throws FormatError, naming
+// the AIR, the hint and what is wrong.
 std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &info,
                                 const std::vector<std::vector<uint64_t>> &cmIds, const std::string &name) {
     std::vector<StdHint> hints;
@@ -226,14 +235,17 @@ std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &
         auto refused = [&](const std::string &what) {
             return FormatError(name + ": .bin: hint " + std::to_string(h) + " (" + hint.name + ") " + what);
         };
+        StdHint entry;
         if (hint.name == "im_col") {
-            throw refused("gives an intermediate column, which this prover does not compute yet (plan M31)");
-        }
-        if (hint.name == "im_airval") {
+            entry.kind = StdHint::Kind::ImCol;
+        } else if (hint.name == "gprod_col") {
+            entry.kind = StdHint::Kind::Prod;
+        } else if (hint.name == "gsum_col") {
+            entry.kind = StdHint::Kind::Sum;
+        } else if (hint.name == "im_airval") {
             throw refused("gives an air value, and pilfflonk has none (spec D2)");
-        }
-        if (hint.name != "gsum_col" && hint.name != "gprod_col") {
-            throw refused("is none this prover computes: gsum_col and gprod_col");
+        } else {
+            throw refused("is none this prover computes: im_col, gsum_col and gprod_col");
         }
         // The value of a field of one value, or null if the hint has no such field.
         auto single = [&](const std::string &field) -> const HintFieldValue * {
@@ -262,10 +274,8 @@ std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &
             return info.openingPoints[v.rowOffsetIndex];
         };
 
-        StdHint entry;
         entry.hint = h;
         entry.name = hint.name;
-        entry.prod = hint.name == "gprod_col";
         // reference: a column of stage 2 or above, at its own row, not an im pol.
         const HintFieldValue &reference = required("reference");
         if (reference.op != HintOp::Cm || reference.id >= info.cmPolsMap.size()) {
@@ -280,19 +290,10 @@ std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &
         entry.stagePos = column.stagePos;
         entry.cmId = reference.id;
 
-        // numerator_air and denominator_air: what addHintField takes, reading only the stages before.
+        // The numerator and the denominator: what addHintField takes. What they read, the order of the
+        // hints checks below.
         auto input = [&](const std::string &field) {
             const HintFieldValue &v = required(field);
-            auto readsEarlier = [&](const ColumnRead &c) {
-                const bool earlier = c.type == 0 ? c.index < info.constPolsMap.size()
-                                                 : c.type < entry.stage && c.index < cmIds[c.type].size() &&
-                                                       cmIds[c.type][c.index] != AirKey::NOT_COMMITTED;
-                if (!earlier) {
-                    throw refused("reads in its field " + field + " the column of stage " + std::to_string(c.type) +
-                                  " at stagePos " + std::to_string(c.index) + ", which is not computed before stage " +
-                                  std::to_string(entry.stage));
-                }
-            };
             HintInput in;
             if (v.op == HintOp::Cm || v.op == HintOp::Const) {
                 const bool cm = v.op == HintOp::Cm;
@@ -303,13 +304,9 @@ std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &
                 const PolMapEntry *p = cm ? &info.cmPolsMap[v.id] : nullptr;
                 in.column = cm ? ColumnRead{uint32_t(p->stage), uint32_t(p->stagePos)} : ColumnRead{0, uint32_t(v.id)};
                 in.offset = offsetOf(v, field);
-                readsEarlier(in.column);
             } else if (v.op == HintOp::Tmp) {
                 in.kind = HintInput::Kind::Expression;
                 in.expId = v.id;
-                for (const ColumnRead &c : columnsRead(bin, v.id)) {
-                    readsEarlier(c);
-                }
             } else if (v.op == HintOp::Number) {
                 in.kind = HintInput::Kind::Number;
                 in.number = v.value;
@@ -320,17 +317,69 @@ std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &
             }
             return in;
         };
-        entry.numerator = input("numerator_air");
-        entry.denominator = input("denominator_air");
+        const auto [numerator, denominator] = quotientFields(entry.kind);
+        entry.numerator = input(numerator);
+        entry.denominator = input(denominator);
         // result updates an airgroup value (updateAirgroupValue), and v1 has none (D2): the STARK's
         // calculateWitnessSTD reads it, and numerator_direct and denominator_direct, only if the AIR has
-        // airgroup values; the std writes a number in STD_MODE_ONE_INSTANCE.
-        const HintFieldValue *result = single("result");
+        // airgroup values; the std writes a number in STD_MODE_ONE_INSTANCE. im_col has none of them.
+        const HintFieldValue *result = entry.kind == StdHint::Kind::ImCol ? nullptr : single("result");
         if (!info.airgroupValuesMap.empty() || (result != nullptr && result->op != HintOp::Number)) {
             throw refused("updates an airgroup value, and pilfflonk has none (spec D2): the std has one unless it is "
                           "in STD_MODE_ONE_INSTANCE");
         }
         hints.push_back(std::move(entry));
+    }
+
+    // The order of the STARK: calculateImHints, and calculateWitnessSTD for the products and then the sums
+    // (gen_proof.hpp), each by getHintIdsByName, in the .bin's order. calculateImHints computes nothing in
+    // an AIR with no gsum_col or gprod_col.
+    std::stable_sort(hints.begin(), hints.end(), [](const StdHint &a, const StdHint &b) { return a.kind < b.kind; });
+    if (!hints.empty() && hints.back().kind == StdHint::Kind::ImCol) {
+        failAir(name, ".bin: hint " + std::to_string(hints.front().hint) +
+                          " (im_col) is of an AIR with no gsum_col or gprod_col, where the STARK's calculateImHints "
+                          "computes none");
+    }
+
+    // What each hint reads is computed before it: the fixed columns, the columns of the stages before
+    // its own, and of its own those of the hints before it in that order.
+    for (uint64_t s = 2; s <= info.nStages; ++s) {
+        std::vector<bool> computed(cmIds[s].size(), false);
+        auto computedBefore = [&](const ColumnRead &c) {
+            if (c.type == 0) {
+                return c.index < info.constPolsMap.size();
+            }
+            if (c.type < s) {
+                return c.index < cmIds[c.type].size() && cmIds[c.type][c.index] != AirKey::NOT_COMMITTED;
+            }
+            return c.type == s && c.index < computed.size() && computed[c.index];
+        };
+        for (const StdHint &hint : hints) {
+            if (hint.stage != s) {
+                continue;
+            }
+            const auto [numeratorField, denominatorField] = quotientFields(hint.kind);
+            for (const auto &[field, in] :
+                 {std::make_pair(numeratorField, &hint.numerator), std::make_pair(denominatorField, &hint.denominator)}) {
+                std::vector<ColumnRead> reads;
+                if (in->kind == HintInput::Kind::Column) {
+                    reads.push_back(in->column);
+                } else if (in->kind == HintInput::Kind::Expression) {
+                    reads = columnsRead(bin, in->expId);
+                }
+                for (const ColumnRead &c : reads) {
+                    if (!computedBefore(c)) {
+                        failAir(name, ".bin: hint " + std::to_string(hint.hint) + " (" + hint.name +
+                                          ") reads in its field " + field + " the column of stage " +
+                                          std::to_string(c.type) + " at stagePos " + std::to_string(c.index) +
+                                          ", which is not computed before it (of stage " + std::to_string(s) +
+                                          ", the prover computes the columns of the im_col hints in their order, then "
+                                          "the gprod_col ones and the gsum_col ones, and the im pols last)");
+                    }
+                }
+            }
+            computed[hint.stagePos] = true;
+        }
     }
 
     // Each column of stages 2 … nStages but the im pols, the reference of one hint.
@@ -342,7 +391,7 @@ std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &
         const PolMapEntry &p = info.cmPolsMap[id];
         if (p.stage >= 2 && p.stage <= info.nStages && !p.imPol && produced[id] != 1) {
             failAir(name, ".bin: " + std::to_string(produced[id]) + " hints give the column " + p.name + " of stage " +
-                              std::to_string(p.stage) + ", which one gsum_col or gprod_col must");
+                              std::to_string(p.stage) + ", which one im_col, gsum_col or gprod_col must");
         }
     }
     return hints;

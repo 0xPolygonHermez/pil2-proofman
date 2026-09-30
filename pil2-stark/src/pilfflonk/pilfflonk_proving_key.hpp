@@ -92,14 +92,22 @@ struct HintInput {
     FrElement number;        // Number, in Montgomery form
 };
 
-// A gsum_col or gprod_col hint of the .bin (section 3; plan M30): the column it gives, reference, of
-// stage `stage` >= 2 at stagePos (cmPolsMap[cmId]), and numerator_air and denominator_air, whose
-// quotient on each row of H the column accumulates, as the STARK's accMulHintFields does: a running
-// sum for gsum_col, a running product for gprod_col (spec §4.4).
+// A prover hint of the std in the .bin (section 3; plans M30, M31): the column it gives, reference,
+// of stage `stage` >= 2 at stagePos (cmPolsMap[cmId]), from the quotient numerator/denominator on
+// each row of H (spec §4.4):
+// - im_col (Kind::ImCol), with the fields numerator and denominator: the column is the quotient
+//   itself, as the STARK's calculateImHints computes it with multiplyHintFields;
+// - gprod_col and gsum_col (Kind::Prod, Kind::Sum), with numerator_air and denominator_air: the
+//   column accumulates the quotient, a running product or a running sum, as the STARK's
+//   calculateWitnessSTD computes it with accMulHintFields.
 struct StdHint {
+    // In the order the prover computes the hints of a stage, the STARK's (gen_proof.hpp): the im_col
+    // hints (calculateImHints), then the gprod_col ones and the gsum_col ones (calculateWitnessSTD).
+    enum class Kind { ImCol, Prod, Sum };
+
     uint64_t hint; // its index in the .bin's hints
     std::string name;
-    bool prod;
+    Kind kind;
     uint64_t stage;
     uint64_t stagePos;
     uint64_t cmId;
@@ -116,9 +124,10 @@ struct StdHint {
 // prover supports: a layout that packs every committed column once, and every piece of Q once, the
 // pieces Q0 … Q<m−1> of cmPolsMap (Q0 alone if Q is not split, piece i at stageId and stagePos i), in f
 // of their own opened at ξ, each f of the degree the pieces' bounds give it (A.2's cost); and hints
-// that are gsum_col and gprod_col only (im_col waits for plan M31, and im_airval computes an air
-// value, D2), which give every column of stages 2 and above but the im pols, each once, from
-// operands that read the stages before it, and update no airgroup value (stdHints()).
+// that are im_col, gsum_col and gprod_col only (im_airval computes an air value, D2), which give
+// every column of stages 2 and above but the im pols, each once, from operands that read only what
+// is computed before them (stdHints()), and update no airgroup value; im_col ones only in an AIR
+// with a gsum_col or gprod_col, as the STARK's calculateImHints computes them only then.
 class AirKey {
 public:
     // From the files' contents. `name` is what the errors call the AIR. Throws FormatError.
@@ -185,8 +194,13 @@ public:
     uint64_t nQPieces() const { return qPositions.size(); }
     const LayoutPosition &qPosition(uint64_t piece) const { return qPositions.at(piece); }
 
-    // The gsum_col and gprod_col hints of the .bin, in its order, checked against the pilfflonkinfo:
-    // the prover computes each column of stages 2 and above that is not an im pol from one of them.
+    // The im_col, gsum_col and gprod_col hints of the .bin, checked against the pilfflonkinfo: the
+    // prover computes each column of stages 2 and above that is not an im pol from one of them. In
+    // the order it computes them, the STARK's (StdHint::Kind): the im_col hints, then the gprod_col
+    // ones and then the gsum_col ones, each in the .bin's order (getHintIdsByName). The operands of
+    // a hint of stage s read fixed columns, columns of the stages before s, and of stage s only the
+    // columns of the hints before it in this order: an im_col may read the im_col columns before it
+    // (the std's product bus chains them), and a gsum_col or gprod_col those of the im_col hints.
     const std::vector<StdHint> &stdHints() const { return hints; }
 
 private:
