@@ -357,7 +357,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let (snark_proof_bytes, snark_publics_bytes) = generate_snark_proof(
             snark_prover,
             &self.setup_snark_path,
-            recursivef_proof,
+            recursivef_proof.as_ptr(),
             prealloc_handle,
             self.d_buffers_recursivef,
         )?;
@@ -558,12 +558,12 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     let mut publics: Vec<F> = vadcop_final_verkey[0..4].iter().map(|&x| F::from_u64(x)).collect();
     publics.extend(proof[1..1 + proof[0] as usize].iter().map(|&x| F::from_u64(x)));
 
-    let is_valid = verify_proof_bn128(recursivef_proof, &setup_recursivef, Some(publics));
+    let is_valid = verify_proof_bn128(recursivef_proof.as_ptr(), &setup_recursivef, Some(publics));
     timer_stop_and_log_info!(VERIFY_RECURSIVE_F_PROOF);
 
     let setup_snark_path = PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "final", "final"));
     if setup_snark_path.parent().is_some_and(|p| p.exists()) {
-        generate_witness_final_snark(recursivef_proof, &setup_snark_path)?;
+        generate_witness_final_snark(recursivef_proof.as_ptr(), &setup_snark_path)?;
     }
 
     free_device_buffers_recursivef_c(d_buffers_recursivef);
