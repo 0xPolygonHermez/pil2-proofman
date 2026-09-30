@@ -1,0 +1,55 @@
+// PIL2 port of the pil-fflonk example `all` (plan M34, spec-seed.md Annex G), the program of
+// pil-fflonk's config/: pil-fflonk/pil/sm_all/all_main.pil, which includes the Fibonacci, Connection,
+// Permutation and Plookup state machines in one trace of N = 2^8 rows. Here they are one AIR too.
+//
+// - The Fibonacci is that of tests/fixtures/fibonacci/fibonacci.pil, its columns and constraints,
+//   written here again (that fixture is an airtemplate of its own), with its publics in1, in2 and
+//   out; the others are the state machines of tests/fixtures/{connection,permutation,plookup}, each
+//   over its own columns, on one bus of the std (`bus_type`).
+// - PIL1 kept each state machine in a namespace, and a column's name was qualified by it
+//   (`Connection.a`, `Permutation.a`, `Plookup.a`). A PIL2 AIR has one scope, and the proof names
+//   each evaluation by its column (spec A.6), so the witness columns take the name of their state
+//   machine as a prefix instead: `connection_a`, `permutation_a`, `plookup_a`. The fixed ones are
+//   unique already.
+// - PIL1's Global.L1 is the std's __L1__, and the Fibonacci's L1 is its own, as in PIL1.
+//
+// all_sum.pil and all_prod.pil are the programs to compile, over BN254 as the Fibonacci, with its
+// bn254.json and -I pil2-components/lib/std/pil. The witness generator is tests/data/all.rs.
+require "std_constants.pil"
+require "../connection/connection.pil"
+require "../permutation/permutation.pil"
+require "../plookup/plookup.pil"
+
+public in1;
+public in2;
+public out;
+
+airtemplate All(const int N = 2**8, const int bus_type = PIOP_BUS_SUM) {
+    // Fibonacci
+    col fixed L1 = [1, 0...];
+    col fixed LLAST = [0:(N-1), 1];
+    col witness l1, l2;
+
+    (l2' - l1) * (1 - LLAST) === 0;
+    expr next = l1*l1 + l2*l2;
+    (l1' - next) * (1 - LLAST) === 0;
+    L1 * (l2 - in1) === 0;
+    L1 * (l1 - in2) === 0;
+    LLAST * (l1 - out) === 0;
+
+    // Connection
+    col witness connection_a, connection_b, connection_c;
+    sm_connection(connection_a, connection_b, connection_c, bus_type);
+
+    // Permutation
+    col witness permutation_a, permutation_b;
+    col witness permutation_c, permutation_d;
+    col witness permutation_selC, permutation_selD;
+    sm_permutation(permutation_c, permutation_d, permutation_selC, permutation_selD, bus_type);
+
+    // Plookup
+    col witness plookup_sel, plookup_a, plookup_b;
+    col witness plookup_cc;
+    col witness plookup_mul;
+    sm_plookup(plookup_sel, plookup_a, plookup_b, plookup_cc, plookup_mul, bus_type);
+}

@@ -10,7 +10,9 @@
 //! with and without `im_col`, whose challenges of stage 2 the check takes from a transcript of fixed
 //! elements, as the STARK's `verify-constraints` does, committing nothing: its columns, the
 //! `im_col` ones too, are the oracle's with them, and a witness that breaks the bus fails the last
-//! row of its running sum or product with the oracle's value, and the CLI names it.
+//! row of its running sum or product with the oracle's value, and the CLI names it. And the same on
+//! the pil-fflonk examples ported to PIL2 (plan M34), on the sum and on the product bus, with a wrong
+//! multiplicity, a broken permutation or connection, or a value out of a range.
 //!
 //! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
 //! which must honour `prime`, and is `#[ignore]` without it. Those of the domains build their
@@ -30,14 +32,24 @@
 //! plan M28), which keeps the teams alive, counting those of tests that are just ending, within
 //! that table.
 
+#[path = "../../pilfflonk/tests/data/all.rs"]
+mod all;
+#[path = "../../pilfflonk/tests/data/connection.rs"]
+mod connection;
 #[path = "../../pilfflonk/tests/data/domains.rs"]
 mod domains;
 #[path = "../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
+#[path = "../../pilfflonk/tests/data/permutation.rs"]
+mod permutation;
+#[path = "../../pilfflonk/tests/data/plookup.rs"]
+mod plookup;
 #[path = "../../pilfflonk/tests/data/prod_bus.rs"]
 mod prod_bus;
 #[path = "../../pilfflonk/tests/data/prod_bus_im.rs"]
 mod prod_bus_im;
+#[path = "../../pilfflonk/tests/data/range_check.rs"]
+mod range_check;
 #[path = "../../pilfflonk/tests/data/signed.rs"]
 mod signed;
 #[path = "../../pilfflonk/tests/data/sum_bus.rs"]
@@ -108,6 +120,16 @@ const SUM_BUS: Program = Program::Pil("pilfflonk/tests/fixtures/sum_bus/sum_bus.
 const SUM_BUS_DEGREE4: Program = Program::Pil("pilfflonk/tests/fixtures/sum_bus/sum_bus_degree4.pil");
 const PROD_BUS: Program = Program::Pil("pilfflonk/tests/fixtures/prod_bus/prod_bus.pil");
 const PROD_BUS_IM: Program = Program::Pil("pilfflonk/tests/fixtures/prod_bus_im/prod_bus_im.pil");
+const PLOOKUP_SUM: Program = Program::Pil("pilfflonk/tests/fixtures/plookup/plookup_sum.pil");
+const PLOOKUP_PROD: Program = Program::Pil("pilfflonk/tests/fixtures/plookup/plookup_prod.pil");
+const PERMUTATION_SUM: Program = Program::Pil("pilfflonk/tests/fixtures/permutation/permutation_sum.pil");
+const PERMUTATION_PROD: Program = Program::Pil("pilfflonk/tests/fixtures/permutation/permutation_prod.pil");
+const CONNECTION_SUM: Program = Program::Pil("pilfflonk/tests/fixtures/connection/connection_sum.pil");
+const CONNECTION_PROD: Program = Program::Pil("pilfflonk/tests/fixtures/connection/connection_prod.pil");
+const RANGE_CHECK_SUM: Program = Program::Pil("pilfflonk/tests/fixtures/range_check/range_check_sum.pil");
+const RANGE_CHECK_PROD: Program = Program::Pil("pilfflonk/tests/fixtures/range_check/range_check_prod.pil");
+const ALL_SUM: Program = Program::Pil("pilfflonk/tests/fixtures/all/all_sum.pil");
+const ALL_PROD: Program = Program::Pil("pilfflonk/tests/fixtures/all/all_prod.pil");
 
 impl Program {
     /// The name of its pilout file: that of the PIL, or `domains`.
@@ -168,7 +190,8 @@ fn fixture_of(name: &str, program: Program, witness: Witness, max_constraint_deg
         no_packing,
     };
     compile(program, &opts.airout_path);
-    write_tau_one_ptau(&opts.powers_of_tau, 512).unwrap();
+    // More powers than the largest degree of every layout here: 3083, the Connection's of N = 2^10.
+    write_tau_one_ptau(&opts.powers_of_tau, 4096).unwrap();
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
     let witness_dir = dir.file("witness");
@@ -649,9 +672,6 @@ fn the_cli_names_the_edge_row_of_a_domain() {
     }
 }
 
-/// The rows of the stage-2 fixtures (plan M30).
-const BUS_N: usize = 32;
-
 /// The challenges of stage 2 of `check`, by hand (A.4, `_verify_proof_constraints`): a transcript
 /// that absorbs the STARK's `dummy_element` `[0, 1, 2, r − 1]` and squeezes two.
 fn fixed_element_challenges() -> Vec<FrBytes> {
@@ -663,138 +683,218 @@ fn fixed_element_challenges() -> Vec<FrBytes> {
     (0..2).map(|_| FrBytes::from_le_bytes(t.squeeze().unwrap()).unwrap()).collect()
 }
 
-/// The stage-2 fixtures of the std's buses (plans M30, M31): a lookup on the sum bus, with an
-/// `im_col` (the std's default `MAX_CONSTRAINT_DEGREE`) and without (4), and a permutation on the
-/// product bus, without `im_col` and split by selectors, with two chained ones; grouped and with
-/// `--no-packing`. The check takes the challenges of stage 2 from fixed elements, as the STARK's
-/// `verify-constraints` does, and commits nothing: they are those of a transcript of `[0, 1, 2, r −
-/// 1]`, and the columns it checks, the `im_col` ones too, the oracle's with them. The generator's
-/// witness passes, and every constraint is checked, the bus's of stage 2 too; a witness that breaks
-/// the bus fails the last row of its running sum or product, `L1'·…` at row N − 1, and nothing else,
-/// with the oracle's value; a denominator 0 on a row is `Unsatisfied`, naming the hint whose it is.
-/// Twice the same witness, twice the same report.
-#[test]
-#[ignore = "needs PIL2C_EXEC"]
-fn the_check_takes_the_challenges_of_stage_2_from_fixed_elements() {
+/// The last constraint of the sum bus and of the product bus: its running sum is 0 at the last
+/// row, and its running product 1.
+const SUM_BUS_LAST: &str = "__L1__'*(0-gsum) == 0";
+const PROD_BUS_LAST: &str = "__L1__'*(1-gprod) == 0";
+
+/// A term of a bus that is 0 at row 5: its busid, and the hint whose denominator it is in (see
+/// [`checks_a_bus_with_fixed_challenges`]).
+struct ZeroTerm {
+    busid: u64,
+    hint: &'static str,
+}
+
+/// A stage-2 fixture of the std's buses, grouped and with `--no-packing`: the check takes the
+/// challenges of stage 2 from fixed elements, as the STARK's `verify-constraints` does, and commits
+/// nothing: they are those of a transcript of `[0, 1, 2, r − 1]`, and the columns it checks, the
+/// `im_col` ones too, the oracle's with them. `witness` passes, and every constraint is checked, of
+/// the stages `stages`, the bus's of stage 2 too, whose last is `line`; `broken`, which breaks the
+/// bus, fails the last row of
+/// its running sum or product, `L1'·…` at row N − 1, and nothing else, with the oracle's value; and,
+/// with `zero`, the first term of the bus made 0 at row 5, a denominator 0 on a row is
+/// `Unsatisfied`, naming the hint whose it is. Twice the same witness, twice the same report.
+fn checks_a_bus_with_fixed_challenges(
+    name: &str,
+    program: Program,
+    (witness, broken): (Witness, Witness),
+    stages: &[u64],
+    line: &str,
+    zero: Option<ZeroTerm>,
+) {
     let challenges = fixed_element_challenges();
-    // Each fixture, its witness and one that breaks the bus, the bus's last constraint, and the term
-    // made 0 at row 5: its busid (prod_bus_im's row 5 is of opid 2, sa[5] = 0) and the hint whose
-    // denominator it is in (the sum bus's lookup is a direct term of gsum_col's, not an im_col's).
-    let sum = || (sum_bus::witness(), sum_bus::witness_looking_up_what_is_not_provided());
-    for (name, program, (witness, broken), line, busid, zero_hint) in [
-        ("sum_bus", SUM_BUS, sum(), "__L1__'*(0-gsum) == 0", 1, "(gsum_col, column gsum)"),
-        ("sum_bus_degree4", SUM_BUS_DEGREE4, sum(), "__L1__'*(0-gsum) == 0", 1, "(gsum_col, column gsum)"),
-        (
-            "prod_bus",
-            PROD_BUS,
-            (prod_bus::witness(), prod_bus::witness_not_a_permutation()),
-            "__L1__'*(1-gprod) == 0",
-            1,
-            "(gprod_col, column gprod)",
-        ),
-        (
-            "prod_bus_im",
-            PROD_BUS_IM,
-            (prod_bus_im::witness(), prod_bus_im::witness_with_a_pair_in_the_other_permutation()),
-            "__L1__'*(1-gprod) == 0",
-            2,
-            "(im_col, column im_low)",
-        ),
-    ] {
-        for no_packing in [false, true] {
-            let name = format!("{name}_{no_packing}");
-            let f = fixture_of(&name, program, witness.clone(), DEFAULT_MAX_CONSTRAINT_DEGREE, no_packing);
-            let pk = ProvingKey::load(&f.proving_key).unwrap();
-            let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
-            let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
-            let info = pk.air(witness.instances[0].air).unwrap();
-            let oracle_values = |w: &Witness| {
-                let mut values = oracle.values(w, 0).unwrap();
-                values.challenges[1] = challenges.iter().map(Fr::from).collect();
-                oracle.fill_hint_columns(&mut values, 2).unwrap();
-                values
+    for no_packing in [false, true] {
+        let name = format!("{name}_{no_packing}");
+        let f = fixture_of(&name, program, witness.clone(), DEFAULT_MAX_CONSTRAINT_DEGREE, no_packing);
+        let pk = ProvingKey::load(&f.proving_key).unwrap();
+        let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
+        let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
+        let info = pk.air(witness.instances[0].air).unwrap();
+        let n = 1usize << info.n_bits;
+        let oracle_values = |w: &Witness| {
+            let mut values = oracle.values(w, 0).unwrap();
+            values.challenges[1] = challenges.iter().map(Fr::from).collect();
+            oracle.fill_hint_columns(&mut values, 2).unwrap();
+            values
+        };
+
+        // The columns the check checks, and its challenges.
+        let columns = check_columns(&pk, &f.witness).unwrap();
+        assert_eq!(columns.challenges, std::slice::from_ref(&challenges), "{name}: the fixed elements' challenges");
+        let values = oracle_values(&witness);
+        for p in info.cm_pols_map.iter().filter(|p| p.stage <= info.n_stages) {
+            let checked: Vec<Fr> =
+                columns.columns[p.stage as usize - 1][p.stage_pos as usize].iter().map(Fr::from).collect();
+            let expected = if p.im_pol {
+                oracle.expression_rows(&values, p.exp_id.unwrap() as usize).unwrap()
+            } else {
+                values.witness[p.stage as usize - 1][p.stage_id as usize].clone()
             };
+            assert_eq!(checked, expected, "{name}: column {} of stage {}", p.name, p.stage);
+        }
 
-            // The columns the check checks, and its challenges.
-            let columns = check_columns(&pk, &f.witness).unwrap();
-            assert_eq!(columns.challenges, std::slice::from_ref(&challenges), "{name}: the fixed elements' challenges");
-            let values = oracle_values(&witness);
-            for p in info.cm_pols_map.iter().filter(|p| p.stage <= info.n_stages) {
-                let checked: Vec<Fr> =
-                    columns.columns[p.stage as usize - 1][p.stage_pos as usize].iter().map(Fr::from).collect();
-                let expected = if p.im_pol {
-                    oracle.expression_rows(&values, p.exp_id.unwrap() as usize).unwrap()
-                } else {
-                    values.witness[p.stage as usize - 1][p.stage_id as usize].clone()
-                };
-                assert_eq!(checked, expected, "{name}: column {} of stage {}", p.name, p.stage);
+        let report = check(&pk, &f.witness, &CheckOptions::default()).unwrap();
+        assert!(report.holds(), "{name}");
+        let checked: BTreeSet<u64> = report.constraints.iter().map(|c| c.stage).collect();
+        assert_eq!(checked, stages.iter().copied().collect(), "{name}");
+        let last = report.constraints.iter().position(|c| c.line.ends_with(line)).unwrap();
+        assert_eq!(report.constraints[last].stage, 2, "{name}");
+
+        let options = CheckOptions { max_rows: n };
+        let report = check(&pk, &broken, &options).unwrap();
+        assert_eq!(check(&pk, &broken, &options).unwrap(), report, "{name}: the same witness, the same report");
+        let expected: BTreeSet<(usize, usize, String)> = oracle
+            .check(&oracle_values(&broken))
+            .unwrap()
+            .into_iter()
+            .map(|failure| (failure.constraint, failure.row, failure.value.to_bytes().to_decimal()))
+            .collect();
+        assert_eq!(expected.iter().map(|(c, r, _)| (*c, *r)).collect::<Vec<_>>(), [(last, n - 1)], "{name}");
+        assert_eq!(found(&report), expected, "{name}");
+
+        // A denominator 0 on a row, with the check's challenges: the first term's (a, …)
+        // compressed, busid + a·α + e·α², plus γ, is 0 at row 5, e the second expression.
+        let Some(ZeroTerm { busid, hint }) = &zero else { continue };
+        let (alpha, gamma) = (Fr::from(&challenges[0]), Fr::from(&challenges[1]));
+        let mut zeroed = witness.clone();
+        let e = Fr::from(&zeroed.instances[0].stage1.get(5, 1).unwrap());
+        let busid = Fr::from_u64(*busid);
+        let a = -&(&(&(&busid + &(&e * &(&alpha * &alpha))) + &gamma) * &alpha.inv().unwrap());
+        zeroed.instances[0].stage1.set(5, 0, a.to_bytes()).unwrap();
+        match check(&pk, &zeroed, &options) {
+            Err(PilfflonkError::Unsatisfied(message)) => {
+                assert!(message.contains(&format!("{hint} is 0 at row 5")), "{name}: {message}")
             }
-
-            let report = check(&pk, &f.witness, &CheckOptions::default()).unwrap();
-            assert!(report.holds(), "{name}");
-            let stages: BTreeSet<u64> = report.constraints.iter().map(|c| c.stage).collect();
-            assert_eq!(stages, BTreeSet::from([1, 2]), "{name}");
-            let last = report.constraints.iter().position(|c| c.line.ends_with(line)).unwrap();
-            assert_eq!(report.constraints[last].stage, 2, "{name}");
-
-            let options = CheckOptions { max_rows: BUS_N };
-            let report = check(&pk, &broken, &options).unwrap();
-            assert_eq!(check(&pk, &broken, &options).unwrap(), report, "{name}: the same witness, the same report");
-            let expected: BTreeSet<(usize, usize, String)> = oracle
-                .check(&oracle_values(&broken))
-                .unwrap()
-                .into_iter()
-                .map(|failure| (failure.constraint, failure.row, failure.value.to_bytes().to_decimal()))
-                .collect();
-            assert_eq!(expected.iter().map(|(c, r, _)| (*c, *r)).collect::<Vec<_>>(), [(last, BUS_N - 1)], "{name}");
-            assert_eq!(found(&report), expected, "{name}");
-
-            // A denominator 0 on a row, with the check's challenges: the first term's (a, …)
-            // compressed, busid + a·α + e·α², plus γ, is 0 at row 5, e the second expression.
-            let (alpha, gamma) = (Fr::from(&challenges[0]), Fr::from(&challenges[1]));
-            let mut zero = witness.clone();
-            let e = Fr::from(&zero.instances[0].stage1.get(5, 1).unwrap());
-            let busid = Fr::from_u64(busid);
-            let a = -&(&(&(&busid + &(&e * &(&alpha * &alpha))) + &gamma) * &alpha.inv().unwrap());
-            zero.instances[0].stage1.set(5, 0, a.to_bytes()).unwrap();
-            match check(&pk, &zero, &options) {
-                Err(PilfflonkError::Unsatisfied(message)) => {
-                    assert!(message.contains(&format!("{zero_hint} is 0 at row 5")), "{name}: {message}")
-                }
-                other => panic!("{name}: expected Unsatisfied, got {:?}", other.map(|_| ())),
-            }
+            other => panic!("{name}: expected Unsatisfied, got {:?}", other.map(|_| ())),
         }
     }
 }
 
-/// The CLI on the sum bus (plan M30): the generator's witness passes; a lookup of a pair the table
-/// does not provide fails the bus's last row, which it names, of stage 2, at row N − 1; twice the same
-/// output, the challenges being fixed.
+/// The stage-2 fixtures of the std's buses (plans M30, M31), with
+/// [`checks_a_bus_with_fixed_challenges`]: a lookup on the sum bus, with an `im_col` (the std's
+/// default `MAX_CONSTRAINT_DEGREE`) and without (4), and a permutation on the product bus, without
+/// `im_col` and split by selectors, with two chained ones. The term made 0 at row 5 is the first
+/// one: its busid (prod_bus_im's row 5 is of opid 2, sa[5] = 0) and the hint whose denominator it is
+/// in (the sum bus's lookup is a direct term of gsum_col's, not an im_col's).
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_check_takes_the_challenges_of_stage_2_from_fixed_elements() {
+    let sum = || (sum_bus::witness(), sum_bus::witness_looking_up_what_is_not_provided());
+    let zero = |busid, hint| Some(ZeroTerm { busid, hint });
+    checks_a_bus_with_fixed_challenges(
+        "sum_bus",
+        SUM_BUS,
+        sum(),
+        &[1, 2],
+        SUM_BUS_LAST,
+        zero(1, "(gsum_col, column gsum)"),
+    );
+    checks_a_bus_with_fixed_challenges(
+        "sum_bus_degree4",
+        SUM_BUS_DEGREE4,
+        sum(),
+        &[1, 2],
+        SUM_BUS_LAST,
+        zero(1, "(gsum_col, column gsum)"),
+    );
+    checks_a_bus_with_fixed_challenges(
+        "prod_bus",
+        PROD_BUS,
+        (prod_bus::witness(), prod_bus::witness_not_a_permutation()),
+        &[1, 2],
+        PROD_BUS_LAST,
+        zero(1, "(gprod_col, column gprod)"),
+    );
+    checks_a_bus_with_fixed_challenges(
+        "prod_bus_im",
+        PROD_BUS_IM,
+        (prod_bus_im::witness(), prod_bus_im::witness_with_a_pair_in_the_other_permutation()),
+        &[1, 2],
+        PROD_BUS_LAST,
+        zero(2, "(im_col, column im_low)"),
+    );
+}
+
+/// The pil-fflonk examples ported to PIL2 (plan M34), on the std's sum bus and on its product bus,
+/// with [`checks_a_bus_with_fixed_challenges`] (validations 2 and 3 of the spec's Fase 2): the
+/// check's stage-2 columns are the oracle's, and a wrong multiplicity (Plookup, `all`), a broken
+/// permutation or connection, or a value out of the range fails the last row of the bus, which the
+/// check names, and nothing else. The Connection and the range check on the sum bus have no
+/// constraint of stage 1: the std adds none for them.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_check_finds_a_broken_bus_in_the_pil_fflonk_examples() {
+    // Each example, its programs on the sum and the product bus, and the witnesses of each: one that
+    // holds and one that breaks the bus.
+    type Witnesses = fn() -> (Witness, Witness);
+    let plookup: Witnesses = || (plookup::witness(), plookup::witness_with_a_wrong_multiplicity());
+    let permutation: Witnesses = || (permutation::witness(), permutation::witness_not_a_permutation());
+    let connection: Witnesses = || (connection::witness(), connection::witness_not_connected());
+    let range_check_sum: Witnesses = || (range_check::sum_witness(), range_check::sum_witness_out_of_range());
+    let range_check_prod: Witnesses = || (range_check::prod_witness(), range_check::prod_witness_out_of_range());
+    let all: Witnesses = || (all::witness(), all::witness_with_a_wrong_multiplicity());
+    let (both, second): (&[u64], &[u64]) = (&[1, 2], &[2]);
+    for (name, (sum, on_sum, sum_stages), (prod, on_prod, prod_stages)) in [
+        ("plookup", (PLOOKUP_SUM, plookup, both), (PLOOKUP_PROD, plookup, both)),
+        ("permutation", (PERMUTATION_SUM, permutation, both), (PERMUTATION_PROD, permutation, both)),
+        ("connection", (CONNECTION_SUM, connection, second), (CONNECTION_PROD, connection, second)),
+        ("range_check", (RANGE_CHECK_SUM, range_check_sum, second), (RANGE_CHECK_PROD, range_check_prod, both)),
+        ("all", (ALL_SUM, all, both), (ALL_PROD, all, both)),
+    ] {
+        checks_a_bus_with_fixed_challenges(&format!("{name}_sum"), sum, on_sum(), sum_stages, SUM_BUS_LAST, None);
+        checks_a_bus_with_fixed_challenges(&format!("{name}_prod"), prod, on_prod(), prod_stages, PROD_BUS_LAST, None);
+    }
+}
+
+/// The CLI on a broken bus (plans M30, M34): the sum bus of M30, and pil-fflonk's `all` on the sum
+/// and the product bus. The generator's witness passes; one that breaks the bus (a lookup of a pair
+/// the table does not provide, a wrong multiplicity) fails the bus's last row, which it names, of
+/// stage 2, at row N − 1; twice the same output, the challenges being fixed.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_cli_names_the_constraint_of_a_broken_bus() {
-    let f = fixture_of("sum_bus_cli", SUM_BUS, sum_bus::witness(), DEFAULT_MAX_CONSTRAINT_DEGREE, false);
-    let shape = ProvingKey::load(&f.proving_key).unwrap().witness_shape().unwrap();
-    let out = check_cli(&f.proving_key, &f.witness_dir, &[]);
-    assert!(out.status.success(), "{}", output(&out));
-    assert!(output(&out).contains("✓ All constraints for Instance #0 of SumBus were verified"), "{}", output(&out));
-
-    let dir = f.dir.file("broken");
-    sum_bus::witness_looking_up_what_is_not_provided().write(&dir, &shape).unwrap();
-    let out = check_cli(&f.proving_key, &dir, &[]);
-    let text = output(&out);
-    assert_eq!(out.status.code(), Some(1), "{text}");
-    for expected in [
-        "(stage 2) has 1 invalid rows -> std_sum.pil:",
-        "__L1__'*(0-gsum) == 0",
-        "✗ Failed at row 31 with value: ",
-        "✗ Not all constraints for Instance #0 of SumBus were verified",
+    let sum_bus = (sum_bus::witness(), sum_bus::witness_looking_up_what_is_not_provided());
+    let all = || (all::witness(), all::witness_with_a_wrong_multiplicity());
+    for (name, program, (witness, broken), air, (file, line), n) in [
+        ("sum_bus_cli", SUM_BUS, sum_bus, "SumBus", ("std_sum.pil:", SUM_BUS_LAST), 32),
+        ("all_sum_cli", ALL_SUM, all(), "All", ("std_sum.pil:", SUM_BUS_LAST), 256),
+        ("all_prod_cli", ALL_PROD, all(), "All", ("std_prod.pil:", PROD_BUS_LAST), 256),
     ] {
-        assert!(text.contains(expected), "{expected:?} not in:\n{text}");
+        let f = fixture_of(name, program, witness, DEFAULT_MAX_CONSTRAINT_DEGREE, false);
+        let shape = ProvingKey::load(&f.proving_key).unwrap().witness_shape().unwrap();
+        let out = check_cli(&f.proving_key, &f.witness_dir, &[]);
+        assert!(out.status.success(), "{name}: {}", output(&out));
+        let verified = format!("✓ All constraints for Instance #0 of {air} were verified");
+        assert!(output(&out).contains(&verified), "{name}: {}", output(&out));
+
+        let dir = f.dir.file("broken");
+        broken.write(&dir, &shape).unwrap();
+        let out = check_cli(&f.proving_key, &dir, &[]);
+        let text = output(&out);
+        assert_eq!(out.status.code(), Some(1), "{name}: {text}");
+        for expected in [
+            &format!("(stage 2) has 1 invalid rows -> {file}"),
+            line,
+            &format!("✗ Failed at row {} with value: ", n - 1),
+            &format!("✗ Not all constraints for Instance #0 of {air} were verified"),
+        ] {
+            assert!(text.contains(expected), "{name}: {expected:?} not in:\n{text}");
+        }
+        assert_eq!(text.matches("Failed at row").count(), 1, "{name}: {text}");
+        println!("{text}");
+        // The line of the failed row, without the log's timestamp.
+        let failed = |text: &str| text.lines().find_map(|l| l.find("Failed at row").map(|at| l[at..].to_string()));
+        let again = check_cli(&f.proving_key, &dir, &[]);
+        assert_eq!(failed(&output(&again)), failed(&text), "{name}: the same witness, the same value");
     }
-    assert_eq!(text.matches("Failed at row").count(), 1, "{text}");
-    // The line of the failed row, without the log's timestamp.
-    let failed = |text: &str| text.lines().find_map(|l| l.find("Failed at row").map(|at| l[at..].to_string()));
-    let again = check_cli(&f.proving_key, &dir, &[]);
-    assert_eq!(failed(&output(&again)), failed(&text), "the same witness, the same value");
 }

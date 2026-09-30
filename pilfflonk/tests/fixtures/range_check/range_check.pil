@@ -1,0 +1,56 @@
+// A range check in one AIR (plan M34): every row of the witness column `v` is in [0, R), R = 2^4,
+// through a lookup into the fixed table T = [0, 1, …, R − 1], padded with R − 1 to N = 2^6 rows.
+// pil-fflonk has no range check example; spec-seed.md's Fase 2 asks for one.
+//
+// - Not the std's range_check (std_range_check.pil): it proves its ranges in a table AIR of its own
+//   (U8Air, U16Air or SpecifiedRanges, or a virtual table's), two AIRs where a pilfflonk proof holds
+//   one (D2), and in STD_MODE_ONE_INSTANCE each would close its half of the bus alone. The table is
+//   in this AIR instead, and the checks are the std's lookup or permutation, as `bus_type` says.
+// - On the sum bus (PIOP_BUS_SUM): the std's lookup, LogUp, `v` into T with the multiplicity `mul`,
+//   the times each row of T is looked up.
+// - A product bus takes no multiplicity, and `v` repeats values. On PIOP_BUS_PROD it is plookup's
+//   (and PIL1's) way: `h1` followed by `h2`, 2N values, is the values of `v` and T sorted, which the
+//   std's permutation checks (v and T assumed, h1 and h2 proved), and the constraints make it go from
+//   0 to R − 1 in steps of 0 or 1, h1's last row to h2's first too. Then every value of h1 and h2,
+//   and so every one of `v`, is in [0, R): 2N − 1 steps of at most 1 do not wrap around the field.
+//
+// range_check_sum.pil and range_check_prod.pil are the programs to compile, over BN254 as the
+// Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its bn254.json and
+// -I pil2-components/lib/std/pil. The witness generator is tests/data/range_check.rs.
+require "std_constants.pil"
+require "std_lookup.pil"
+require "std_permutation.pil"
+
+const int RANGE_CHECK_OPID = 4;
+
+airtemplate RangeCheck(const int N = 2**6, const int R = 2**4, const int bus_type = PIOP_BUS_SUM) {
+    col fixed T = [0..(R - 1), (R - 1)...];
+
+    col witness v;
+
+    switch (bus_type) {
+        case PIOP_BUS_SUM:
+            col witness mul;
+            lookup_assumes(RANGE_CHECK_OPID, [v]);
+            lookup_proves(RANGE_CHECK_OPID, [T], mul);
+        case PIOP_BUS_PROD:
+            col fixed LLAST = [0:(N - 1), 1];
+            const expr L1 = get_L1();
+            col witness h1, h2;
+
+            // h1 and h2 go up in steps of 0 or 1, h1's last row to h2's first too, from 0 to R − 1.
+            (1 - LLAST) * (h1' - h1) * (h1' - h1 - 1) === 0;
+            (1 - LLAST) * (h2' - h2) * (h2' - h2 - 1) === 0;
+            LLAST * (h2' - h1) * (h2' - h1 - 1) === 0;
+            L1 * h1 === 0;
+            LLAST * (h2 - (R - 1)) === 0;
+
+            // And they are the values of v and T.
+            permutation_assumes(RANGE_CHECK_OPID, [v], bus_type: PIOP_BUS_PROD);
+            permutation_assumes(RANGE_CHECK_OPID, [T], bus_type: PIOP_BUS_PROD);
+            permutation_proves(RANGE_CHECK_OPID, [h1], bus_type: PIOP_BUS_PROD);
+            permutation_proves(RANGE_CHECK_OPID, [h2], bus_type: PIOP_BUS_PROD);
+        default:
+            error(`Unknown bus type: ${bus_type}`);
+    }
+}

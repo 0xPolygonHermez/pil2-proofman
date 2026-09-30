@@ -1,0 +1,67 @@
+// PIL2 port of the pil-fflonk Plookup example (plan M34, spec-seed.md Annex G):
+// pil-fflonk/pil/sm_plookup/plookup.pil, `sel {a, b', a*b'} in SEL {A, B, cc}`, with the constants
+// of its generator sm_plookup.js (`buildConstants`). N = 2^8, as its plookup_main.pil and `all`.
+//
+// - `sm_plookup` is the state machine: the fixed table (A, B) = (i, j) for the 16·16 rows 16·i + j,
+//   and SEL = 1 on them (0 on any row past 256, none at N = 2^8); the committed `cc` completes the
+//   table's rows, and the generator writes i·j there. It is a function of the witness columns, which
+//   its caller declares, so that tests/fixtures/all/all.pil takes it into one AIR with the others.
+// - PIL1's plookup (h1/h2 and Z, spec Annex B) is the std's bus: `mul` is new, the times each row of
+//   the table is looked up, and `(1 − SEL)·mul` keeps the table to the rows of SEL, as PIL1 kept
+//   them by moving the others to a random value (pil-stark, pil_info/step2.js). The std makes `sel`
+//   binary (`lookup_assumes`); PIL1 did not constrain it.
+// - On the sum bus (PIOP_BUS_SUM) it is the std's lookup, LogUp with the multiplicity `mul`. The
+//   std's lookup has no product bus, since a product bus cannot take a multiplicity: on
+//   PIOP_BUS_PROD the same tuples go on the std's permutation, with `mul` the selector of the table
+//   (binary, which the std enforces), so that each row of the table is looked up once at most. The
+//   generator's ten lookups are ten different rows of the table, and hold on both.
+//
+// plookup_sum.pil and plookup_prod.pil are the programs to compile, over BN254 as the Fibonacci
+// (tests/fixtures/fibonacci/fibonacci.pil), with its bn254.json and -I pil2-components/lib/std/pil.
+// The witness generator is tests/data/plookup.rs.
+require "std_constants.pil"
+require "std_lookup.pil"
+require "std_permutation.pil"
+
+const int PLOOKUP_OPID = 1;
+
+// The Plookup state machine over the witness columns sel, a, b, cc and mul of the caller's AIR, on
+// the bus `bus_type`: its fixed columns SEL, A and B, and its constraints.
+function sm_plookup(const expr sel, const expr a, const expr b, const expr cc, const expr mul, const int bus_type) {
+    col fixed SEL, A, B;
+    int p = 0;
+    for (int i = 0; i < 16; i++) {
+        for (int j = 0; j < 16; j++) {
+            A[p] = i;
+            B[p] = j;
+            SEL[p] = 1;
+            p = p + 1;
+        }
+    }
+    while (p < N) {
+        A[p] = 0;
+        B[p] = 0;
+        SEL[p] = 0;
+        p = p + 1;
+    }
+
+    (1 - SEL) * mul === 0;
+    switch (bus_type) {
+        case PIOP_BUS_SUM:
+            lookup_assumes(PLOOKUP_OPID, [a, b', a * b'], sel);
+            lookup_proves(PLOOKUP_OPID, [A, B, cc], mul);
+        case PIOP_BUS_PROD:
+            permutation_assumes(PLOOKUP_OPID, [a, b', a * b'], sel, bus_type: PIOP_BUS_PROD);
+            permutation_proves(PLOOKUP_OPID, [A, B, cc], mul, bus_type: PIOP_BUS_PROD);
+        default:
+            error(`Unknown bus type: ${bus_type}`);
+    }
+}
+
+airtemplate Plookup(const int N = 2**8, const int bus_type = PIOP_BUS_SUM) {
+    col witness sel, a, b;
+    col witness cc;
+    col witness mul;
+
+    sm_plookup(sel, a, b, cc, mul, bus_type);
+}

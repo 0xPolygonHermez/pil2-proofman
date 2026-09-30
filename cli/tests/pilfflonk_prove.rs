@@ -27,7 +27,11 @@
 //!   computes their stage-2 columns from the hints `im_col`, then `gprod_col` and `gsum_col`, with
 //!   the challenges of stage 2, which are the transcript's (A.4) and the JS verifier's; the columns
 //!   are the oracle's; the verifier accepts the proofs and rejects every change to one; and a
-//!   witness that breaks the bus is refused.
+//!   witness that breaks the bus is refused;
+//! - the pil-fflonk examples ported to PIL2 (plan M34, spec Annex G), `pilfflonk/tests/fixtures/
+//!   {plookup,permutation,connection,range_check,all}`, each on the std's sum bus and on its product
+//!   bus: grouped with pil-fflonk's `extraMuls`, as the stage-2 fixtures (and a broken bus is
+//!   refused), with `--no-packing`, and with `Q` split; `all`'s publics are pil-fflonk's.
 //!
 //! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
 //! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`, plan N13):
@@ -53,16 +57,26 @@
 //! plan M28), which keeps the teams alive, counting those of tests that are just ending, within
 //! that table.
 
+#[path = "../../pilfflonk/tests/data/all.rs"]
+mod all;
+#[path = "../../pilfflonk/tests/data/connection.rs"]
+mod connection;
 #[path = "../../pilfflonk/tests/data/domains.rs"]
 mod domains;
 #[path = "../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
 #[path = "../../pilfflonk/tests/data/packed.rs"]
 mod packed;
+#[path = "../../pilfflonk/tests/data/permutation.rs"]
+mod permutation;
+#[path = "../../pilfflonk/tests/data/plookup.rs"]
+mod plookup;
 #[path = "../../pilfflonk/tests/data/prod_bus.rs"]
 mod prod_bus;
 #[path = "../../pilfflonk/tests/data/prod_bus_im.rs"]
 mod prod_bus_im;
+#[path = "../../pilfflonk/tests/data/range_check.rs"]
+mod range_check;
 #[path = "../../pilfflonk/tests/data/signed.rs"]
 mod signed;
 #[path = "../../pilfflonk/tests/data/sum_bus.rs"]
@@ -149,6 +163,93 @@ enum Program {
     ProdBusIm,
     /// A pilout of `tests/data/domains.rs`, built in code.
     Domains(domains::Air),
+    /// A pil-fflonk example ported to PIL2 on a bus of the std (plan M34),
+    /// `tests/fixtures/<example>/<example>_<bus>.pil`.
+    Example(Example, Bus),
+}
+
+/// The pil-fflonk examples ported to PIL2 (plan M34, spec Annex G), in `STD_MODE_ONE_INSTANCE`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Example {
+    Plookup,
+    Permutation,
+    Connection,
+    /// A range check, which pil-fflonk has no example of.
+    RangeCheck,
+    /// Fibonacci, Connection, Permutation and Plookup in one AIR.
+    All,
+}
+
+impl Example {
+    /// Its directory under `pilfflonk/tests/fixtures`, and the stem of its programs.
+    fn name(self) -> &'static str {
+        match self {
+            Example::Plookup => "plookup",
+            Example::Permutation => "permutation",
+            Example::Connection => "connection",
+            Example::RangeCheck => "range_check",
+            Example::All => "all",
+        }
+    }
+
+    /// The `extraMuls` pil-fflonk set it up with (`pil-fflonk/pil/README.md`), and the default for the
+    /// range check.
+    fn extra_muls(self) -> u64 {
+        match self {
+            Example::Plookup => 3,
+            Example::Permutation | Example::Connection => 1,
+            Example::RangeCheck | Example::All => DEFAULT_EXTRA_MULS,
+        }
+    }
+
+    /// The witness of its generator on `bus` (`tests/data/<example>.rs`), and one that breaks the
+    /// bus: a wrong multiplicity (the Plookup and `all`), a permutation or a connection broken, or a
+    /// value out of the range.
+    fn witnesses(self, bus: Bus) -> (Witness, Witness) {
+        match (self, bus) {
+            (Example::Plookup, _) => (plookup::witness(), plookup::witness_with_a_wrong_multiplicity()),
+            (Example::Permutation, _) => (permutation::witness(), permutation::witness_not_a_permutation()),
+            (Example::Connection, _) => (connection::witness(), connection::witness_not_connected()),
+            (Example::RangeCheck, Bus::Sum) => (range_check::sum_witness(), range_check::sum_witness_out_of_range()),
+            (Example::RangeCheck, Bus::Prod) => (range_check::prod_witness(), range_check::prod_witness_out_of_range()),
+            (Example::All, _) => (all::witness(), all::witness_with_a_wrong_multiplicity()),
+        }
+    }
+}
+
+/// A bus of the std (`std_constants.pil`, `PIOP_BUS_SUM` and `PIOP_BUS_PROD`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Bus {
+    /// LogUp: its running sum, `gsum`, is 0 at the last row.
+    Sum,
+    /// A grand product: its running product, `gprod`, is 1 at the last row.
+    Prod,
+}
+
+impl Bus {
+    /// The suffix of the programs on it.
+    fn name(self) -> &'static str {
+        match self {
+            Bus::Sum => "sum",
+            Bus::Prod => "prod",
+        }
+    }
+
+    /// Its stage-2 column, and the column's value at the last row.
+    fn column(self) -> (&'static str, FrBytes) {
+        match self {
+            Bus::Sum => ("gsum", FrBytes::ZERO),
+            Bus::Prod => ("gprod", FrBytes::from_u64(1)),
+        }
+    }
+
+    /// The line of its last constraint: its column's value at the last row.
+    fn last_constraint(self) -> &'static str {
+        match self {
+            Bus::Sum => "__L1__'*(0-gsum)",
+            Bus::Prod => "__L1__'*(1-gprod)",
+        }
+    }
 }
 
 impl Program {
@@ -163,6 +264,18 @@ impl Program {
             Program::ProdBus => prod_bus::witness(),
             Program::ProdBusIm => prod_bus_im::witness(),
             Program::Domains(air) => domains::witness(air),
+            Program::Example(example, bus) => example.witnesses(bus).0,
+        }
+    }
+
+    /// The powers of the ptau of its setups, more than the largest degree of each of its layouts:
+    /// 1024 for the fixtures other than the examples, whose largest is 779 (the Fibonacci's `f` of
+    /// `k = 3`, `setup/pil2-stark/tests/setup_pilfflonk.rs`), and 4096 for the examples, whose largest
+    /// is 3083, the Connection's of `N = 2^10` (2312 for `all` with `--max-constraint-degree 3`).
+    fn ptau_powers(self) -> usize {
+        match self {
+            Program::Example(..) => 4096,
+            _ => 1024,
         }
     }
 }
@@ -170,13 +283,16 @@ impl Program {
 /// Compiles `program` over BN254 to `pilout` with `PIL2C_EXEC`, or writes the pilout it builds.
 fn compile(program: Program, pilout: &Path) {
     let pil = match program {
-        Program::Fibonacci => "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil",
-        Program::Packed => "pilfflonk/tests/fixtures/packed/packed.pil",
-        Program::Signed => "pilfflonk/tests/fixtures/signed/signed.pil",
-        Program::SumBus => "pilfflonk/tests/fixtures/sum_bus/sum_bus.pil",
-        Program::SumBusDegree4 => "pilfflonk/tests/fixtures/sum_bus/sum_bus_degree4.pil",
-        Program::ProdBus => "pilfflonk/tests/fixtures/prod_bus/prod_bus.pil",
-        Program::ProdBusIm => "pilfflonk/tests/fixtures/prod_bus_im/prod_bus_im.pil",
+        Program::Fibonacci => "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil".to_string(),
+        Program::Packed => "pilfflonk/tests/fixtures/packed/packed.pil".to_string(),
+        Program::Signed => "pilfflonk/tests/fixtures/signed/signed.pil".to_string(),
+        Program::SumBus => "pilfflonk/tests/fixtures/sum_bus/sum_bus.pil".to_string(),
+        Program::SumBusDegree4 => "pilfflonk/tests/fixtures/sum_bus/sum_bus_degree4.pil".to_string(),
+        Program::ProdBus => "pilfflonk/tests/fixtures/prod_bus/prod_bus.pil".to_string(),
+        Program::ProdBusIm => "pilfflonk/tests/fixtures/prod_bus_im/prod_bus_im.pil".to_string(),
+        Program::Example(example, bus) => {
+            format!("pilfflonk/tests/fixtures/{0}/{0}_{1}.pil", example.name(), bus.name())
+        }
         Program::Domains(air) => {
             fs::write(pilout, domains::pilout(air).encode_to_vec()).unwrap();
             return;
@@ -227,14 +343,14 @@ fn plus_one(value: &Value) -> Value {
     json!(((v + 1u32) % r).to_string())
 }
 
-/// The ptau of the test (see the module), with more powers than the largest degree of every
-/// layout here: 779, the Fibonacci's `f` of `k = 3` (`setup/pil2-stark/tests/setup_pilfflonk.rs`).
-fn ptau(dir: &TestDir) -> PathBuf {
+/// The ptau of the test (see the module), of `n_g1` powers, more than the largest degree of the
+/// layouts of its setups ([`Program::ptau_powers`]).
+fn ptau(dir: &TestDir, n_g1: usize) -> PathBuf {
     match std::env::var_os("PILFFLONK_TEST_PTAU") {
         Some(path) => PathBuf::from(path),
         None => {
             let path = dir.file("fixed_tau.ptau");
-            write_fixed_tau_ptau(&path, 1024, &test_tau()).unwrap();
+            write_fixed_tau_ptau(&path, n_g1, &test_tau()).unwrap();
             path
         }
     }
@@ -272,9 +388,9 @@ impl Fixture {
     }
 }
 
-/// The options of a setup in `dir`, of the pilout `program.pilout` there and with the test's ptau,
-/// laid out as `packing` says.
-fn setup_options(dir: &TestDir, packing: Packing) -> SetupPilfflonkOptions {
+/// The options of a setup of `program` in `dir`, of the pilout `program.pilout` there and with the
+/// test's ptau, laid out as `packing` says.
+fn setup_options(dir: &TestDir, program: Program, packing: Packing) -> SetupPilfflonkOptions {
     let (extra_muls, no_packing) = match packing {
         Packing::ExtraMuls(extra_muls) => (extra_muls, false),
         Packing::NoPacking => (DEFAULT_EXTRA_MULS, true),
@@ -282,7 +398,7 @@ fn setup_options(dir: &TestDir, packing: Packing) -> SetupPilfflonkOptions {
     SetupPilfflonkOptions {
         airout_path: dir.file("program.pilout"),
         build_dir: dir.file("build"),
-        powers_of_tau: ptau(dir),
+        powers_of_tau: ptau(dir, program.ptau_powers()),
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
@@ -309,7 +425,7 @@ fn fixture_split(
     max_q_degree: u64,
 ) -> Fixture {
     let dir = TestDir::new(name);
-    let opts = SetupPilfflonkOptions { max_constraint_degree, max_q_degree, ..setup_options(&dir, packing) };
+    let opts = SetupPilfflonkOptions { max_constraint_degree, max_q_degree, ..setup_options(&dir, program, packing) };
     compile(program, &opts.airout_path);
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
@@ -521,7 +637,10 @@ fn the_prover_proves_a_layout_that_packs_and_splits_groups() {
 
     // No valid split of the eleven without an extra mul (A.2): the setup refuses, and says why.
     let dir = TestDir::new("packed_no_extra_muls");
-    let opts = SetupPilfflonkOptions { airout_path: f.pilout.clone(), ..setup_options(&dir, Packing::ExtraMuls(0)) };
+    let opts = SetupPilfflonkOptions {
+        airout_path: f.pilout.clone(),
+        ..setup_options(&dir, Program::Packed, Packing::ExtraMuls(0))
+    };
     let err = format!("{:#}", run_setup_pilfflonk(&opts).unwrap_err());
     // 19 polynomials in 4 groups: 15 extra muls at most.
     assert!(err.contains("a larger --extra-muls, up to 15, allows smaller chunks"), "{err}");
@@ -954,7 +1073,10 @@ fn a_domain_adds_one_to_the_degree_of_its_constraints() {
         {
             for (degree, (q_deg, im_pols)) in [(9, default), (2, low)] {
                 let dir = TestDir::new(&format!("delta_{}_{what}_{degree}", air.name()));
-                let opts = SetupPilfflonkOptions { max_constraint_degree: degree, ..setup_options(&dir, DEFAULT) };
+                let opts = SetupPilfflonkOptions {
+                    max_constraint_degree: degree,
+                    ..setup_options(&dir, Program::Domains(air), DEFAULT)
+                };
                 fs::write(&opts.airout_path, pilout.encode_to_vec()).unwrap();
                 run_setup_pilfflonk(&opts).unwrap();
                 let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
@@ -1095,8 +1217,12 @@ fn agrees_with_the_oracle(f: &Fixture) -> Fr {
         let expected = oracle.column_at(&values, c, offset, &xi).unwrap();
         assert_eq!(at_xi[&(c, offset)], expected, "{c:?} at ξ·ω^{offset}");
     }
-    // The committed ones are blinded (A.3): not the oracle's interpolants at ξ …
-    let first = ColumnRef::Witness { stage: 1, idx: 0 };
+    // The committed ones are blinded (A.3): not the oracle's interpolants at ξ (the first column of
+    // stage 1 the proof opens there, as a column no constraint reads is not committed, spec A.2) …
+    let first = at_xi
+        .keys()
+        .find_map(|&(c, offset)| (matches!(c, ColumnRef::Witness { stage: 1, .. }) && offset == 0).then_some(c))
+        .unwrap();
     assert_ne!(at_xi[&(first, 0)], oracle.column_at(&values, first, 0, &xi).unwrap());
     // … but Q(ξ), as the oracle folds the constraints over the proof's evaluations, is the prover's Q
     // at ξ: the value the verifier computes, and SHPLONK opens Q's f at.
@@ -1353,118 +1479,234 @@ fn stage_columns_are_the_oracles(f: &Fixture) -> Vec<Vec<FrBytes>> {
     stages.columns[1].clone()
 }
 
+/// A fixture of the std's buses of stage 2 (plans M30, M31, M34), whose bus has the stage-2 column
+/// `bus` and the hints `hints` (the std's, in the pilout's order): two stages, with the challenges
+/// `std_alpha` and `std_gamma` of stage 2, `numChallenges = [0, 2]`. The prover proves, the verifier
+/// accepts the proof and rejects any change to it or to its publics; the prover's transcript is the
+/// JS verifier's; its stage-2 columns, the `im_col` ones too, and `Q(ξ)`, the oracle's. The bus's
+/// column ends at `last`, 0 for a running sum and 1 for a running product, but neither it nor any
+/// `im_col` column is constant.
+fn proves_a_bus_of_stage_2(f: &Fixture, name: &str, bus: &str, last: FrBytes, hints: &[HintKind]) {
+    let info = f.info();
+    assert_eq!(info.n_stages, 2, "{name}");
+    let challenges: Vec<(&str, u64)> = info.challenges_map.iter().map(|c| (c.name.as_str(), c.stage)).collect();
+    assert_eq!(challenges, [("std_alpha", 2), ("std_gamma", 2), ("std_vc", 3), ("std_xi", 4)], "{name}");
+    let global_info = PilfflonkGlobalInfo::from_proving_key(&f.proving_key).unwrap();
+    assert_eq!(global_info.num_challenges, [0, 2], "{name}");
+    let column = info.cm_pols_map.iter().find(|p| p.name == bus).unwrap();
+    assert!(column.stage == 2 && !column.im_pol, "{name}");
+    let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
+    let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
+    let kinds: Vec<HintKind> = oracle.bus_hints().iter().map(|h| h.kind).collect();
+    assert_eq!(kinds, hints, "{name}: the std's hints");
+    // Its f opens it at ξ·ω^−1 too: the bus reads its previous row.
+    let f_of = info.layout.0.iter().find(|entry| entry.pols.iter().any(|p| p.name == bus)).unwrap();
+    assert!(f_of.stage == 2 && f_of.offsets.contains(&-1), "{name}: {:?}", f_of.offsets);
+
+    proves_its_layout_and_rejects_every_change(f);
+    let challenges = the_transcripts_agree(f);
+    assert_eq!(challenges.stages.len(), 1, "{name}");
+    assert_eq!(challenges.stages[0].len(), 2, "{name}");
+    agrees_with_the_oracle(f);
+    let stage_2 = stage_columns_are_the_oracles(f);
+    let bus_column = &stage_2[column.stage_pos as usize];
+    assert_eq!(bus_column.last(), Some(&last), "{name}: the bus balances");
+    assert!(bus_column.iter().any(|v| *v != last), "{name}: {bus} is not constant");
+    for hint in oracle.bus_hints().iter().filter(|h| h.kind == HintKind::ImCol) {
+        let of_hint = |p: &&PolMapEntry| p.stage == 2 && !p.im_pol && p.stage_id == hint.idx as u64;
+        let p = info.cm_pols_map.iter().find(of_hint).unwrap();
+        let im = &stage_2[p.stage_pos as usize];
+        assert!(im.iter().any(|v| *v != im[0]), "{name}: the im_col column {} is not constant", p.name);
+    }
+}
+
 /// The stage-2 fixtures (plans M30, M31): a lookup of pairs on the std's sum bus and a permutation of
 /// pairs on its product bus, each with its hint (`gsum_col`, `gprod_col`), in `STD_MODE_ONE_INSTANCE`,
 /// and the `im_col` hints of the std's default `MAX_CONSTRAINT_DEGREE` (3): the sum bus has one, which
 /// its `gsum_col` reads, and with the degree raised to 4 none; the product bus of `prod_bus` none, and
-/// that of `prod_bus_im` two, the second reading the first and its `gprod_col` the second. Two
-/// stages, with the challenges `std_alpha` and `std_gamma` of stage 2: `numChallenges = [0, 2]`.
-/// Grouped by default and with `--no-packing`: the prover proves, the verifier accepts the proof and
-/// rejects any change to it or to its public; the prover's transcript is the JS verifier's; its
-/// stage-2 columns, the `im_col` ones too, and `Q(ξ)`, the oracle's. The running sum of the sum bus
-/// ends at 0, and the running product of the product bus at 1, but no column is constant.
+/// that of `prod_bus_im` two, the second reading the first and its `gprod_col` the second. Grouped by
+/// default and with `--no-packing`, each as [`proves_a_bus_of_stage_2`] says.
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_std_buses_of_stage_2() {
     use HintKind::{GprodCol, GsumCol, ImCol};
-    for (name, program, bus, last, hints) in [
-        ("e2e_sum_bus", Program::SumBus, "gsum", FrBytes::ZERO, &[ImCol, GsumCol][..]),
-        ("e2e_sum_bus_degree4", Program::SumBusDegree4, "gsum", FrBytes::ZERO, &[GsumCol][..]),
-        ("e2e_prod_bus", Program::ProdBus, "gprod", FrBytes::from_u64(1), &[GprodCol][..]),
-        ("e2e_prod_bus_im", Program::ProdBusIm, "gprod", FrBytes::from_u64(1), &[ImCol, ImCol, GprodCol][..]),
+    for (name, program, bus, hints) in [
+        ("e2e_sum_bus", Program::SumBus, Bus::Sum, &[ImCol, GsumCol][..]),
+        ("e2e_sum_bus_degree4", Program::SumBusDegree4, Bus::Sum, &[GsumCol][..]),
+        ("e2e_prod_bus", Program::ProdBus, Bus::Prod, &[GprodCol][..]),
+        ("e2e_prod_bus_im", Program::ProdBusIm, Bus::Prod, &[ImCol, ImCol, GprodCol][..]),
     ] {
         for (suffix, packing) in [("", DEFAULT), ("_unpacked", Packing::NoPacking)] {
             let name = format!("{name}{suffix}");
-            let f = fixture(&name, program, packing);
-            let info = f.info();
-            assert_eq!(info.n_stages, 2, "{name}");
-            let challenges: Vec<(&str, u64)> = info.challenges_map.iter().map(|c| (c.name.as_str(), c.stage)).collect();
-            assert_eq!(challenges, [("std_alpha", 2), ("std_gamma", 2), ("std_vc", 3), ("std_xi", 4)], "{name}");
-            let global_info = PilfflonkGlobalInfo::from_proving_key(&f.proving_key).unwrap();
-            assert_eq!(global_info.num_challenges, [0, 2], "{name}");
-            let column = info.cm_pols_map.iter().find(|p| p.name == bus).unwrap();
-            assert!(column.stage == 2 && !column.im_pol, "{name}");
-            let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
-            let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
-            let kinds: Vec<HintKind> = oracle.bus_hints().iter().map(|h| h.kind).collect();
-            assert_eq!(kinds, hints, "{name}: the std's hints");
-            // Its f opens it at ξ·ω^−1 too: the bus reads its previous row.
-            let f_of = info.layout.0.iter().find(|entry| entry.pols.iter().any(|p| p.name == bus)).unwrap();
-            assert!(f_of.stage == 2 && f_of.offsets.contains(&-1), "{name}: {:?}", f_of.offsets);
-
-            proves_its_layout_and_rejects_every_change(&f);
-            let challenges = the_transcripts_agree(&f);
-            assert_eq!(challenges.stages.len(), 1, "{name}");
-            assert_eq!(challenges.stages[0].len(), 2, "{name}");
-            agrees_with_the_oracle(&f);
-            let stage_2 = stage_columns_are_the_oracles(&f);
-            let bus_column = &stage_2[column.stage_pos as usize];
-            assert_eq!(bus_column.last(), Some(&last), "{name}: the bus balances");
-            assert!(bus_column.iter().any(|v| *v != last), "{name}: {bus} is not constant");
-            for hint in oracle.bus_hints().iter().filter(|h| h.kind == ImCol) {
-                let of_hint = |p: &&PolMapEntry| p.stage == 2 && !p.im_pol && p.stage_id == hint.idx as u64;
-                let p = info.cm_pols_map.iter().find(of_hint).unwrap();
-                let im = &stage_2[p.stage_pos as usize];
-                assert!(im.iter().any(|v| *v != im[0]), "{name}: the im_col column {} is not constant", p.name);
-            }
+            let (column, last) = bus.column();
+            proves_a_bus_of_stage_2(&fixture(&name, program, packing), &name, column, last, hints);
         }
     }
 }
 
-/// A witness that breaks the bus: a lookup of a pair the table does not provide, with and without the
-/// sum bus's `im_col`; a pair of `(b, d)` that is no row of `(a, c)`; and, with the product bus's two
-/// `im_col`, a pair moved to the other permutation. Each row's running sum or product, and each
-/// `im_col`, holds by construction, and the constraint that breaks is the last row's (`L1'·…`), as the
-/// oracle says with the prover's columns; the prover refuses the witness, whatever the layout.
+/// `witness` breaks the bus of the fixture `f`: each row's running sum or product, and each
+/// `im_col`, holds by construction, and the constraint that breaks is the last row's (`line`,
+/// `L1'·…`), as the oracle says with the prover's columns; the prover refuses the witness.
+fn a_broken_bus_is_refused(f: &Fixture, name: &str, witness: &Witness, line: &str) {
+    let pk = ProvingKey::load(&f.proving_key).unwrap();
+    let options = ProveOptions { insecure_blinding_seed: Some([3; 32]) };
+    let stages = stage_columns(&pk, witness, &options).unwrap();
+
+    let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
+    let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
+    let info = f.info();
+    let challenges = ProofChallenges {
+        stages: stages.challenges.clone(),
+        std_vc: FrBytes::ZERO,
+        xi_seed: FrBytes::ZERO,
+        q_at_xi: FrBytes::ZERO,
+    };
+    let values = oracle_values(&oracle, witness, &info, &challenges);
+    let failures = oracle.check(&values).unwrap();
+    let n = 1usize << info.n_bits;
+    let rows: Vec<(usize, usize)> = failures.iter().map(|x| (x.constraint, x.row)).collect();
+    let last = oracle.constraints().iter().position(|c| c.debug_line.contains(line)).unwrap();
+    assert_eq!(rows, [(last, n - 1)], "{name}");
+
+    match prove(&pk, witness, &options) {
+        Err(PilfflonkError::Unsatisfied(message)) => {
+            let expected = format!("the witness does not satisfy the constraints of {}", info.name);
+            assert!(message.contains(&expected), "{name}: {message}")
+        }
+        other => panic!("{name}: expected Unsatisfied, got {:?}", other.map(|_| ())),
+    }
+}
+
+/// A witness that breaks the bus, with [`a_broken_bus_is_refused`], grouped and unpacked: a lookup of
+/// a pair the table does not provide, with and without the sum bus's `im_col`; a pair of `(b, d)`
+/// that is no row of `(a, c)`; and, with the product bus's two `im_col`, a pair moved to the other
+/// permutation.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn a_witness_that_breaks_a_bus_is_refused() {
+    let (sum, prod) = (Bus::Sum.last_constraint(), Bus::Prod.last_constraint());
     for (name, program, witness, line) in [
-        ("bus_sum", Program::SumBus, sum_bus::witness_looking_up_what_is_not_provided(), "__L1__'*(0-gsum)"),
-        (
-            "bus_sum_degree4",
-            Program::SumBusDegree4,
-            sum_bus::witness_looking_up_what_is_not_provided(),
-            "__L1__'*(0-gsum)",
-        ),
-        ("bus_prod", Program::ProdBus, prod_bus::witness_not_a_permutation(), "__L1__'*(1-gprod)"),
-        (
-            "bus_prod_im",
-            Program::ProdBusIm,
-            prod_bus_im::witness_with_a_pair_in_the_other_permutation(),
-            "__L1__'*(1-gprod)",
-        ),
+        ("bus_sum", Program::SumBus, sum_bus::witness_looking_up_what_is_not_provided(), sum),
+        ("bus_sum_degree4", Program::SumBusDegree4, sum_bus::witness_looking_up_what_is_not_provided(), sum),
+        ("bus_prod", Program::ProdBus, prod_bus::witness_not_a_permutation(), prod),
+        ("bus_prod_im", Program::ProdBusIm, prod_bus_im::witness_with_a_pair_in_the_other_permutation(), prod),
     ] {
         for (suffix, packing) in [("", DEFAULT), ("_unpacked", Packing::NoPacking)] {
             let name = format!("{name}{suffix}");
-            let f = fixture(&name, program, packing);
-            let pk = ProvingKey::load(&f.proving_key).unwrap();
-            let options = ProveOptions { insecure_blinding_seed: Some([3; 32]) };
-            let stages = stage_columns(&pk, &witness, &options).unwrap();
-
-            let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
-            let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
-            let info = f.info();
-            let challenges = ProofChallenges {
-                stages: stages.challenges.clone(),
-                std_vc: FrBytes::ZERO,
-                xi_seed: FrBytes::ZERO,
-                q_at_xi: FrBytes::ZERO,
-            };
-            let values = oracle_values(&oracle, &witness, &info, &challenges);
-            let failures = oracle.check(&values).unwrap();
-            let n = 1usize << info.n_bits;
-            let rows: Vec<(usize, usize)> = failures.iter().map(|x| (x.constraint, x.row)).collect();
-            let last = oracle.constraints().iter().position(|c| c.debug_line.contains(line)).unwrap();
-            assert_eq!(rows, [(last, n - 1)], "{name}");
-
-            match prove(&pk, &witness, &options) {
-                Err(PilfflonkError::Unsatisfied(message)) => {
-                    let expected = format!("the witness does not satisfy the constraints of {}", info.name);
-                    assert!(message.contains(&expected), "{name}: {message}")
-                }
-                other => panic!("{name}: expected Unsatisfied, got {:?}", other.map(|_| ())),
-            }
+            a_broken_bus_is_refused(&fixture(&name, program, packing), &name, &witness, line);
         }
     }
+}
+
+/// Proves the witness of `f` with a fixed seed: the verifier accepts the proof, and rejects it with
+/// its first evaluation changed.
+fn proves_and_verifies(f: &Fixture, name: &str) {
+    let out = f.dir.file("proof");
+    let run = prove_cli(&f.proving_key, &f.witness, &out, Some(SEED_A));
+    assert!(run.status.success(), "{name}: prove: {}", output(&run));
+    let (publics, proof) = (out.join("publics.json"), out.join("proof.json"));
+    let verified = verify(&f.vkey, &publics, &proof);
+    assert!(verified.status.success(), "{name}: {}", output(&verified));
+    assert!(output(&verified).contains("OK: the proof verifies"), "{name}: {}", output(&verified));
+
+    let mut tampered = read_json(&proof);
+    let first = tampered["evaluations"].as_object().unwrap().keys().next().unwrap().clone();
+    tampered["evaluations"][&first] = plus_one(&tampered["evaluations"][&first]);
+    let other = f.dir.file("tampered.json");
+    write_json(&other, &tampered);
+    let rejected = verify(&f.vkey, &publics, &other);
+    assert!(!rejected.status.success(), "{name}: {first} + 1: {}", output(&rejected));
+    assert!(output(&rejected).contains("INVALID: the proof does not verify"), "{name}: {}", output(&rejected));
+}
+
+/// Pil-fflonk's publics of `all`, `runtime/public.json`: `[in1, in2, out]` for the inputs `[1, 2]`
+/// (plan M20).
+const PIL_FFLONK_PUBLICS: [&str; 3] =
+    ["1", "2", "590308608561184158373097535019708483037277117989374906445627411437315467687"];
+
+/// The validations of the spec's Fase 2 (plan M34) on a pil-fflonk example ported to PIL2, on the
+/// std's sum bus and on its product bus, whose hints are `hints` (the std's, in the pilout's order)
+/// and whose `Q` splits in `pieces` with `--max-constraint-degree 3 --max-q-degree 1`:
+///
+/// - validation 1: grouped with pil-fflonk's `extraMuls`, with `--no-packing`, and with `Q` split,
+///   the prover proves and the verifier accepts the proof; grouped, it rejects any change to it or to
+///   its publics (and unpacked or split, a changed evaluation), and the prover's transcript is the JS
+///   verifier's; split, the pieces add up to the oracle's `Q(ξ)`. `Q` has one piece if `qDeg = 1`:
+///   the search of A.1 chooses one im pol and `qDeg = 1` over none and 2 whatever the
+///   `--max-constraint-degree`, and a `--max-q-degree` of 1 sets `Q` up whole (plan M33);
+/// - validation 2: a witness that breaks the bus fails its last row only, as the oracle says, and
+///   the prover refuses it: there is no proof of it for the verifier to reject (`check` names the
+///   constraint, `pilfflonk_check.rs`);
+/// - validation 3: the prover's stage-2 columns are the oracle's.
+fn proves_a_pil_fflonk_example(example: Example, hints: [&[HintKind]; 2], pieces: [usize; 2]) {
+    for ((bus, hints), pieces) in [Bus::Sum, Bus::Prod].into_iter().zip(hints).zip(pieces) {
+        let program = Program::Example(example, bus);
+        let name = format!("e2e_{}_{}", example.name(), bus.name());
+        let (column, last) = bus.column();
+        let (_, broken) = example.witnesses(bus);
+
+        let f = fixture(&name, program, Packing::ExtraMuls(example.extra_muls()));
+        proves_a_bus_of_stage_2(&f, &name, column, last, hints);
+        a_broken_bus_is_refused(&f, &name, &broken, bus.last_constraint());
+        if example == Example::All {
+            assert_eq!(f.publics, json!(PIL_FFLONK_PUBLICS), "{name}: pil-fflonk's publics");
+        }
+
+        let unpacked = format!("{name}_unpacked");
+        let f = fixture(&unpacked, program, Packing::NoPacking);
+        assert!(f.layout().iter().all(|(_, k, _, _)| *k == 1), "{unpacked}");
+        proves_and_verifies(&f, &unpacked);
+
+        let split = format!("{name}_split");
+        let f = fixture_split(&split, program, DEFAULT, 3, 1);
+        let info = f.info();
+        assert_eq!((info.q_deg as usize, info.q_split().unwrap().n_pieces() as usize), (pieces, pieces), "{split}");
+        proves_and_verifies(&f, &split);
+        agrees_with_the_oracle(&f);
+    }
+}
+
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_the_pil_fflonk_plookup() {
+    use HintKind::{GprodCol, GsumCol, ImCol};
+    proves_a_pil_fflonk_example(Example::Plookup, [&[ImCol, GsumCol], &[ImCol, GprodCol]], [2, 2]);
+}
+
+/// Its `a` and `b` are read by no constraint, and not committed (spec A.2).
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_the_pil_fflonk_permutation() {
+    use HintKind::{GprodCol, GsumCol, ImCol};
+    proves_a_pil_fflonk_example(Example::Permutation, [&[ImCol, GsumCol], &[ImCol, GprodCol]], [1, 2]);
+}
+
+/// On the sum bus, with the std's `MAX_CONSTRAINT_DEGREE` raised to 4: an `im_cluster` and an
+/// `im_single` (`connection_sum.pil`).
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_the_pil_fflonk_connection() {
+    use HintKind::{GprodCol, GsumCol, ImCol};
+    proves_a_pil_fflonk_example(Example::Connection, [&[ImCol, ImCol, GsumCol], &[ImCol, GprodCol]], [2, 2]);
+}
+
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_a_range_check() {
+    use HintKind::{GprodCol, GsumCol, ImCol};
+    proves_a_pil_fflonk_example(Example::RangeCheck, [&[ImCol, GsumCol], &[ImCol, GprodCol]], [1, 2]);
+}
+
+/// The v1's criterion of success (spec §1): pil-fflonk's `all`, with its publics. On the sum bus,
+/// with the std's `MAX_CONSTRAINT_DEGREE` raised to 6: an `im_cluster` and an `im_single`
+/// (`all_sum.pil`); on the product bus, a chain of four `im_col`.
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_the_pil_fflonk_all() {
+    use HintKind::{GprodCol, GsumCol, ImCol};
+    proves_a_pil_fflonk_example(
+        Example::All,
+        [&[ImCol, ImCol, GsumCol], &[ImCol, ImCol, ImCol, ImCol, GprodCol]],
+        [2, 2],
+    );
 }

@@ -1,0 +1,9 @@
+// The Permutation of permutation.pil on the std's sum bus (LogUp), in STD_MODE_ONE_INSTANCE (plan
+// M34). The std's default MAX_CONSTRAINT_DEGREE (3) gives one im_col.
+require "permutation.pil"
+
+set_std_mode(STD_MODE_ONE_INSTANCE);
+
+airgroup Permutation {
+    Permutation(bus_type: PIOP_BUS_SUM);
+}

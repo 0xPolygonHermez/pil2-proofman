@@ -1,0 +1,9 @@
+// The Connection of connection.pil on the std's product bus (a grand product), in
+// STD_MODE_ONE_INSTANCE (plan M34). The std's default MAX_CONSTRAINT_DEGREE (3) gives one im_col.
+require "connection.pil"
+
+set_std_mode(STD_MODE_ONE_INSTANCE);
+
+airgroup Connection {
+    Connection(bus_type: PIOP_BUS_PROD);
+}
