@@ -314,14 +314,47 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
                 std::to_string(bound) + " coefficients if it does (spec A.1)");
         }
     }
-    std::unique_ptr<Poly> qPoly(new Poly(Engine::engine, bound));
-    ThreadUtils::parcpy(qPoly->coef, qValues.data(), bound * sizeof(FrElement), omp_get_max_threads());
-    qPoly->fixDegree();
 
-    // Q alone in its f, unblinded (spec A.3).
-    Poly *qComponent = qPoly.get();
-    std::vector<G1Point> commitments{commitPacked(pk.srs(), &qComponent, 1)};
-    q = std::move(qPoly);
+    // Its pieces (spec A.1, A.3): each its S coefficients of Q (the last one the rest up to the bound),
+    // and each boundary b0·X^S + b1·X^(S+1) in the piece below it, b0 + b1·X out of the one above.
+    // Unsplit, the one piece is Q, unblinded. AirDegrees gives every piece 2 coefficients at least.
+    Engine::Fr &fr = Engine::engine.fr;
+    const AirDegrees &d = key.degrees();
+    const uint64_t m = d.qPieceCoefficients.size();
+    std::vector<std::unique_ptr<Poly>> pieces(m);
+    for (uint64_t i = 0; i < m; ++i) {
+        const uint64_t start = i * d.qStride;
+        const uint64_t length = i + 1 < m ? d.qStride : bound - start;
+        pieces[i].reset(new Poly(Engine::engine, d.qPieceCoefficients[i]));
+        ThreadUtils::parcpy(pieces[i]->coef, qValues.data() + start, length * sizeof(FrElement),
+                            omp_get_max_threads());
+    }
+    FrElement factors[2];
+    for (uint64_t i = 0; i + 1 < m; ++i) {
+        blinding->fill(factors, 2);
+        FrElement *below = pieces[i]->coef + d.qStride, *above = pieces[i + 1]->coef;
+        below[0] = factors[0];
+        below[1] = factors[1];
+        fr.sub(above[0], above[0], factors[0]);
+        fr.sub(above[1], above[1], factors[1]);
+    }
+    for (const std::unique_ptr<Poly> &piece : pieces) {
+        piece->fixDegree();
+    }
+
+    // Each f of Q's stage, its pieces packed.
+    std::vector<G1Point> commitments;
+    for (const LayoutEntry &entry : info.layout) {
+        if (entry.stage != info.qStage()) {
+            continue;
+        }
+        std::vector<Poly *> components(entry.k);
+        for (uint64_t j = 0; j < entry.k; ++j) {
+            components[j] = pieces[info.cmPolsMap[entry.pols[j].id].stagePos].get();
+        }
+        commitments.push_back(commitPacked(pk.srs(), components.data(), entry.k));
+    }
+    qPieces = std::move(pieces);
     ++next;
     return commitments;
 }
@@ -375,10 +408,12 @@ Poly *Instance::polynomial(uint64_t f, uint64_t j) const {
         return nullptr;
     }
     if (entry.stage == info.qStage()) {
-        return q.get();
+        return qPiece(info.cmPolsMap[entry.pols[j].id].stagePos);
     }
     return polys[entry.pols[j].id].get();
 }
+
+Poly *Instance::qPiece(uint64_t i) const { return i < qPieces.size() ? qPieces[i].get() : nullptr; }
 
 // ---------------------------------------------------------------------------------------------
 // Opening
@@ -454,7 +489,6 @@ Opening::Opening(const std::vector<const Instance *> &instances, const FrElement
             p.offsets = entry.offsets;
             opening.polynomials.push_back(std::move(p));
         }
-        qGlobal.push_back(instanceStart[i] + air.qF());
     }
     uint64_t powerW = 1;
     for (const ShplonkPolynomial &p : opening.polynomials) {
@@ -511,13 +545,38 @@ Opening::Opening(const std::vector<const Instance *> &instances, const FrElement
             }
         }
     }
+
+    // A.4 step 4.3: the Q_i(ξ) of each instance whose Q is split, in the order of its layout; and Q(ξ)
+    // of every instance, Σ_i ξ^(i·S)·Q_i(ξ), by Horner from the last piece (Q_0(ξ) = Q(ξ) unsplit).
+    for (uint64_t i = 0; i < instances.size(); ++i) {
+        const AirKey &air = instances[i]->air();
+        const std::vector<LayoutEntry> &layout = air.info().layout;
+        const uint64_t m = air.nQPieces();
+        if (m > 1) {
+            for (uint64_t f = 0; f < layout.size(); ++f) {
+                if (layout[f].stage == air.info().qStage()) {
+                    for (uint64_t j = 0; j < layout[f].k; ++j) {
+                        proofEvaluations.push_back(evals[instanceStart[i] + f][j]);
+                    }
+                }
+            }
+        }
+        const FrElement shift = power(shplonk->xi(), air.degrees().qStride);
+        FrElement q = fr.zero();
+        for (uint64_t piece = m; piece-- > 0;) {
+            const LayoutPosition &at = air.qPosition(piece);
+            fr.mul(q, q, shift);
+            fr.add(q, q, evals[instanceStart[i] + at.f][at.j]);
+        }
+        qValues.push_back(q);
+    }
 }
 
 FrElement Opening::q(uint64_t instance) const {
-    if (instance >= qGlobal.size()) {
+    if (instance >= qValues.size()) {
         throw invalid("Opening::q", "there is no instance " + std::to_string(instance));
     }
-    return shplonk->evaluations()[qGlobal[instance]][0];
+    return qValues[instance];
 }
 
 Opening::Proof Opening::open(Transcript &transcript) const {

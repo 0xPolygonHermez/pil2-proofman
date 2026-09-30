@@ -16,7 +16,10 @@
 //! - the synthetic pilouts of `pilfflonk/tests/data/domains.rs`, built in code (plan M24), whose
 //!   constraints hold on `firstRow`, `lastRow` and `everyFrame` of several `{offsetMin,
 //!   offsetMax}`: the prover's zerofiers on the coset, the JS verifier's at `ξ` and the oracle's
-//!   agree, and a witness that breaks a constraint at the edge row of its domain is refused.
+//!   agree, and a witness that breaks a constraint at the edge row of its domain is refused;
+//! - `Q` split (plan M33): the fixture of the signed offsets, `qDeg = 3`, with `--max-q-degree 1`
+//!   and `2` (three pieces and two), grouped and with `--no-packing`; and a `--max-q-degree` that
+//!   does not split `Q`, which sets up the key of `Q` whole.
 //!
 //! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
 //! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`, plan N13):
@@ -260,8 +263,19 @@ fn fixture(name: &str, program: Program, packing: Packing) -> Fixture {
 
 /// [`fixture`], set up with `--max-constraint-degree max_constraint_degree`.
 fn fixture_of_degree(name: &str, program: Program, packing: Packing, max_constraint_degree: u64) -> Fixture {
+    fixture_split(name, program, packing, max_constraint_degree, DEFAULT_MAX_Q_DEGREE)
+}
+
+/// [`fixture_of_degree`], set up with `--max-q-degree max_q_degree` too.
+fn fixture_split(
+    name: &str,
+    program: Program,
+    packing: Packing,
+    max_constraint_degree: u64,
+    max_q_degree: u64,
+) -> Fixture {
     let dir = TestDir::new(name);
-    let opts = SetupPilfflonkOptions { max_constraint_degree, ..setup_options(&dir, packing) };
+    let opts = SetupPilfflonkOptions { max_constraint_degree, max_q_degree, ..setup_options(&dir, packing) };
     compile(program, &opts.airout_path);
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
@@ -487,8 +501,10 @@ fn n_im_pols(info: &PilfflonkInfo) -> usize {
 
 /// The names of the evaluations of a proof of `info`, sorted: the evMap's `(column, offset)`, named
 /// as spec A.6 says (`<column>` and `[i]` per entry of its lengths, then `""` for `ξ`, `w` for
-/// `ξ·ω` and `w<s>` for `ξ·ω^s`), and `inv` and `invZh`.
+/// `ξ·ω` and `w<s>` for `ξ·ω^s`), the pieces `Q0 … Q<m−1>` if `Q` is split, and `inv` and `invZh`.
 fn evaluation_names(info: &PilfflonkInfo) -> Vec<String> {
+    let m = info.q_split().unwrap().n_pieces();
+    let pieces = (0..m).filter(|_| m > 1).map(|i| format!("Q{i}"));
     let mut names: Vec<String> = info
         .ev_map
         .iter()
@@ -502,6 +518,7 @@ fn evaluation_names(info: &PilfflonkInfo) -> Vec<String> {
             };
             format!("{}{indices}{suffix}", pol.name)
         })
+        .chain(pieces)
         .chain(["inv", "invZh"].map(String::from))
         .collect();
     names.sort();
@@ -620,6 +637,116 @@ fn the_prover_proves_signed_offsets_unpacked() {
             "{name}"
         );
         proves_its_layout_and_rejects_every_change(&f);
+    }
+}
+
+/// Each `f` of `Q`'s stage as `(its pieces, k, degree)`.
+fn q_layout(info: &PilfflonkInfo) -> Vec<(Vec<&str>, u64, u64)> {
+    let fs = info.layout.0.iter().filter(|f| f.stage == info.q_stage());
+    fs.map(|f| (f.pols.iter().map(|p| p.name.as_str()).collect(), f.k, f.degree)).collect()
+}
+
+/// `Q` split (spec A.1, A.3; plan M33): the fixture of the signed offsets, `qDeg = 3` on `N = 32`
+/// with `|O|_max = 4` (`Q` of `3·32 + 4·4 + 1 = 113` coefficients), with `--max-q-degree 1`, three
+/// pieces of `32 + 2`, `32 + 2` and `113 − 64 = 49` coefficients, and `2`, two of `64 + 2` and `49`.
+/// Grouped by default, the pieces are one `f` (their group is not split: the extra muls go to the
+/// committed columns, as without the split), `Q2, Q1, Q0` of `k = 3` and `Q1, Q0` of `k = 2`, of
+/// A.2's cost; unpacked, an `f` each. The proof holds a commitment per `f` and each `Q_i(ξ)`, after
+/// the other evaluations; the verifier accepts it, checks that the pieces add up to `Q(ξ)` and
+/// rejects any change, to a piece's commitment or evaluation too; and the pieces add up to the
+/// oracle's `Q(ξ)`.
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_a_split_q_and_the_verifier_rejects_every_change() {
+    let m1_pieces = vec![34, 34, 49];
+    let m2_pieces = vec![66, 49];
+    for (name, max_q_degree, packing, pieces, q_fs) in [
+        ("e2e_split_m1", 1, DEFAULT, m1_pieces.clone(), vec![(vec!["Q2", "Q1", "Q0"], 3, 49 * 3)]),
+        (
+            "e2e_split_m1_unpacked",
+            1,
+            Packing::NoPacking,
+            m1_pieces,
+            vec![(vec!["Q0"], 1, 34), (vec!["Q1"], 1, 34), (vec!["Q2"], 1, 49)],
+        ),
+        ("e2e_split_m2", 2, DEFAULT, m2_pieces.clone(), vec![(vec!["Q1", "Q0"], 2, 66 * 2 + 1)]),
+        ("e2e_split_m2_unpacked", 2, Packing::NoPacking, m2_pieces, vec![(vec!["Q0"], 1, 66), (vec!["Q1"], 1, 49)]),
+    ] {
+        let f = fixture_split(name, Program::Signed, packing, DEFAULT_MAX_CONSTRAINT_DEGREE, max_q_degree);
+        let info = f.info();
+        assert_eq!((info.q_deg, info.max_q_degree), (3, max_q_degree), "{name}");
+        let split = info.q_split().unwrap();
+        let n_pieces = split.n_pieces();
+        assert_eq!((split.stride, split.coefficients), (max_q_degree * 32, pieces), "{name}");
+        assert_eq!(q_layout(&info), q_fs, "{name}");
+        let vkey = Vkey::read(&f.vkey).unwrap();
+        assert_eq!((vkey.q_deg, vkey.max_q_degree, &vkey.layout), (3, max_q_degree, &info.layout), "{name}");
+        proves_its_layout_and_rejects_every_change(&f);
+        agrees_with_the_oracle(&f);
+
+        // The verifier checks that the pieces add up to Q(ξ) (A.1) before the opening: any Q_i(ξ) off
+        // by one fails there.
+        let proof = f.dir.file("pieces");
+        let run = prove_cli(&f.proving_key, &f.witness, &proof, Some(SEED_A));
+        assert!(run.status.success(), "{name}: prove: {}", output(&run));
+        let tampered = f.dir.file("pieces.json");
+        for i in 0..n_pieces {
+            let mut json = read_json(&proof.join("proof.json"));
+            let piece = format!("Q{i}");
+            json["evaluations"][&piece] = plus_one(&json["evaluations"][&piece]);
+            write_json(&tampered, &json);
+            let out = verify(&f.vkey, &proof.join("publics.json"), &tampered);
+            assert!(!out.status.success(), "{name}: {piece}");
+            assert!(output(&out).contains("The pieces of Q do not add up to Q(ξ) (A.1)"), "{name}: {}", output(&out));
+        }
+    }
+}
+
+/// A `--max-q-degree` that does not split `Q` (`qDeg ≤ maxQDegree`, A.1): the fixture of the signed
+/// offsets with `--max-constraint-degree 3` (`qDeg = 2`) and `--max-q-degree 2`, and the Fibonacci
+/// (`qDeg = 1`) with `--max-q-degree 1`, grouped and unpacked, write the key of `Q` whole, byte for
+/// byte, with `maxQDegree = 0`, but for the globalInfo, which records the option; and it proves and
+/// verifies.
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn a_max_q_degree_that_does_not_split_q_sets_up_q_whole() {
+    for (name, program, degree, max_q_degree, packing) in [
+        ("whole_signed_d3", Program::Signed, 3, 2, DEFAULT),
+        ("whole_fibonacci", Program::Fibonacci, DEFAULT_MAX_CONSTRAINT_DEGREE, 1, DEFAULT),
+        ("whole_fibonacci_unpacked", Program::Fibonacci, DEFAULT_MAX_CONSTRAINT_DEGREE, 1, Packing::NoPacking),
+    ] {
+        let whole = fixture_split(&format!("{name}_0"), program, packing, degree, 0);
+        let f = fixture_split(name, program, packing, degree, max_q_degree);
+        let info = f.info();
+        assert_eq!((info.max_q_degree, info.q_split().unwrap().n_pieces()), (0, 1), "{name}");
+        assert!(info.q_deg <= max_q_degree, "{name}");
+        let files = |root: &Path| {
+            let mut out = BTreeMap::new();
+            let mut dirs = vec![root.to_path_buf()];
+            while let Some(dir) = dirs.pop() {
+                for entry in fs::read_dir(&dir).unwrap() {
+                    let path = entry.unwrap().path();
+                    if path.is_dir() {
+                        dirs.push(path);
+                    } else {
+                        out.insert(path.strip_prefix(root).unwrap().to_path_buf(), fs::read(&path).unwrap());
+                    }
+                }
+            }
+            out
+        };
+        let (mut a, mut b) = (files(&whole.proving_key), files(&f.proving_key));
+        let global_info = Path::new("pilout.globalInfo.json");
+        let (ga, gb) = (a.remove(global_info).unwrap(), b.remove(global_info).unwrap());
+        assert_eq!(a, b, "{name}: the key of Q whole");
+        let setup_params = |bytes: &[u8]| serde_json::from_slice::<PilfflonkGlobalInfo>(bytes).unwrap().setup_params;
+        assert_eq!((setup_params(&ga).max_q_degree, setup_params(&gb).max_q_degree), (0, max_q_degree), "{name}");
+
+        let out = f.dir.file("proof");
+        let run = prove_cli(&f.proving_key, &f.witness, &out, Some(SEED_A));
+        assert!(run.status.success(), "{name}: prove: {}", output(&run));
+        let verified = verify(&f.vkey, &out.join("publics.json"), &out.join("proof.json"));
+        assert!(verified.status.success(), "{name}: {}", output(&verified));
     }
 }
 
@@ -881,7 +1008,9 @@ fn big(v: &FrBytes) -> num_bigint::BigUint {
 /// The prover of the grouped `f` agrees with the oracle at `ξ = xiSeed^powerW` (A.2, rule 5): every
 /// evaluation of a fixed column, at each offset its `f` opens it at (those a fusion adds too), is
 /// the oracle's exactly; a committed one is blinded, and is not; and `Q(ξ)`, folded by the oracle
-/// over the proof's evaluations, is the prover's. Returns that `ξ`.
+/// over the proof's evaluations, is the prover's, and, if `Q` is split, `Σ_i ξ^(i·M·N)·Q_i(ξ)` of the
+/// proof's pieces (A.1), which follow the columns' evaluations in the order of the layout. Returns
+/// that `ξ`.
 fn agrees_with_the_oracle(f: &Fixture) -> Fr {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
@@ -917,11 +1046,12 @@ fn agrees_with_the_oracle(f: &Fixture) -> Fr {
         .iter()
         .filter(|e| e.pol_type == PolType::Const)
         .chain(info.ev_map.iter().filter(|e| e.pol_type == PolType::Cm));
+    let n_columns = info.ev_map.len();
     let mut at_xi = BTreeMap::new();
-    for (e, value) in entries.zip(&out.proof.evaluations) {
+    for (e, value) in entries.zip(&out.proof.evaluations[..n_columns]) {
         at_xi.insert((column(e.pol_type, e.id), e.prime as i32), Fr::from(*value));
     }
-    assert_eq!(at_xi.len(), out.proof.evaluations.len());
+    assert_eq!(at_xi.len(), n_columns);
 
     // The fixed columns have no blinding: their evaluations are the oracle's, exactly.
     let fixed: Vec<(ColumnRef, i32)> =
@@ -940,6 +1070,23 @@ fn agrees_with_the_oracle(f: &Fixture) -> Fr {
         info.cm_pols_map.iter().filter(|p| p.im_pol).map(|p| p.exp_id.unwrap() as usize).collect();
     let q = oracle.q_from_evaluations(&values, &at_xi, &im_pols, &std_vc, &xi).unwrap();
     assert_eq!(q, Fr::from(out.challenges.q_at_xi));
+    // Split, the pieces' Q_i(ξ) follow, in the order of the layout, and add up to it: Q_0(ξ) + ξ^S·(
+    // Q_1(ξ) + ξ^S·(…)), S = M·N.
+    let split = info.q_split().unwrap();
+    let pieces = &out.proof.evaluations[n_columns..];
+    if split.n_pieces() == 1 {
+        assert!(pieces.is_empty());
+    } else {
+        let order = info.layout.0.iter().filter(|f| f.stage == info.q_stage()).flat_map(|f| &f.pols);
+        let mut by_index = vec![Fr::zero(); split.n_pieces()];
+        for (pol, value) in order.zip(pieces) {
+            by_index[info.cm_pols_map[pol.id as usize].stage_pos as usize] = Fr::from(*value);
+        }
+        assert_eq!(pieces.len(), split.n_pieces());
+        let shift = xi.pow_u64(split.stride);
+        let joined = by_index.iter().rev().fold(Fr::zero(), |acc, piece| &(&acc * &shift) + piece);
+        assert_eq!(joined, q, "the pieces of Q add up to the oracle's Q(ξ)");
+    }
     // Another evaluation, another Q(ξ).
     let mut changed = at_xi.clone();
     let value = changed.get_mut(&(first, 0)).unwrap();

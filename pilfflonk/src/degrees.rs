@@ -8,14 +8,20 @@
 //! - A fixed column has `N` coefficients: it has no blinding (A.3).
 //! - A committed column opened at `|O|` offsets has `N + |O| + 1`, of which `|O| + 1` are its
 //!   blinding's, `(X^N − 1)·b(X)` (A.3).
-//! - `Q`, not split, has `qDeg·N + (qDeg+1)·|O|_max + 1` (A.1), `|O|_max` the most offsets of a
-//!   committed column (with packing, of an `f` of a committed stage).
+//! - `Q` has `qDeg·N + (qDeg+1)·|O|_max + 1` (A.1), `|O|_max` the most offsets of a committed
+//!   column (with packing, of an `f` of a committed stage).
+//! - Split (`maxQDegree = M > 0` and `qDeg > M`), `Q` is committed as `m = ⌈qDeg/M⌉` pieces of `M·N`
+//!   coefficients, `Q(X) = Σ_i X^{i·M·N}·Q_i(X)`, and each boundary between two pieces adds two
+//!   random coefficients that cancel (A.3): each piece but the last has `M·N + 2` coefficients, and
+//!   the last one the rest of `Q`'s ([`QSplit`]).
 //! - The extended domain is the smallest power of two `≥` `Q`'s coefficients and `≥ N + |O|_max +
 //!   1`, the coefficients of the column with the most blinding, which the prover also extends to
 //!   it: `2^nBitsExt` points, `nBitsExt ≤ 28` for BN254's roots of unity (checked by the callers).
+//!   It is `Q`'s, split or not: the prover computes `Q` whole on it before it splits it.
 
 use crate::error::{invalid, PilfflonkResult};
 use crate::global_info::MAX_NBITS;
+use crate::layout::q_pieces;
 use crate::pilfflonk_info::PilfflonkInfo;
 
 /// The degrees of A.1 for an AIR.
@@ -57,7 +63,7 @@ pub fn column_coefficients(n_bits: u64, stage: u64, n_offsets: u64) -> Pilfflonk
     }
 }
 
-/// The bound on the coefficients of `Q` not split (A.1): `qDeg·N + (qDeg+1)·|O|_max + 1`.
+/// The bound on the coefficients of `Q` (A.1): `qDeg·N + (qDeg+1)·|O|_max + 1`.
 pub fn q_coefficients(n_bits: u64, q_deg: u64, max_openings: u64) -> PilfflonkResult<u64> {
     check_n_bits(n_bits)?;
     let blinding = q_deg.checked_add(1).and_then(|d| d.checked_mul(max_openings));
@@ -93,14 +99,63 @@ impl Degrees {
     }
 }
 
+/// The pieces `Q_0 … Q_{m−1}` `Q` is committed as (A.1, A.3), `m = q_pieces(qDeg, maxQDegree)`:
+/// `Q(X) = Σ_i X^{i·stride}·Q_i(X)`.
+///
+/// Not split (`m = 1`), the one piece is `Q`, unblinded. Split, with `S = stride = M·N` (`M =
+/// maxQDegree`), piece `i` holds the coefficients `i·S … (i+1)·S − 1` of `Q`, and the last one those
+/// from `(m−1)·S` to its bound; and each boundary between pieces `i` and `i + 1` has two random
+/// coefficients `b_0, b_1` that cancel, as PLONK's (`pil-fflonk/src/pilfflonk_prover.cpp:697-720`):
+/// `b_0·X^S + b_1·X^{S+1}` added to piece `i` and `b_0 + b_1·X` subtracted from piece `i + 1`. So
+/// each piece but the last has `S + 2` coefficients, and the last `qCoefficients − (m−1)·S`, at least
+/// `N + 1` (its first `qDeg − (m−1)·M ≥ 1` of `N`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QSplit {
+    /// `S = M·N`, the power of `X` piece 1 is multiplied by; 0 when `Q` is not split.
+    pub stride: u64,
+    /// The bound on the coefficients of each piece, `Q_0`'s first: of the pieces' `f` (A.2).
+    pub coefficients: Vec<u64>,
+}
+
+impl QSplit {
+    /// The pieces of `Q` of degree `q_deg` (A.1) on `2^n_bits` rows whose committed columns are
+    /// opened at `max_openings` offsets at most, split by `max_q_degree` (0 does not split it).
+    pub fn new(n_bits: u64, q_deg: u64, max_openings: u64, max_q_degree: u64) -> PilfflonkResult<Self> {
+        let q_coefficients = q_coefficients(n_bits, q_deg, max_openings)?;
+        let m = q_pieces(q_deg, max_q_degree);
+        if m == 1 {
+            return Ok(QSplit { stride: 0, coefficients: vec![q_coefficients] });
+        }
+        // max_q_degree < q_deg, so (m − 1)·S < qDeg·N < q_coefficients, which fits.
+        let stride = max_q_degree << n_bits;
+        let last = q_coefficients - (m - 1) * stride;
+        let mut coefficients = vec![stride + 2; m as usize - 1];
+        coefficients.push(last);
+        Ok(QSplit { stride, coefficients })
+    }
+
+    /// `m`: 1 if `Q` is not split.
+    pub fn n_pieces(&self) -> usize {
+        self.coefficients.len()
+    }
+}
+
 impl PilfflonkInfo {
     /// The degrees of the AIR (A.1), from its layout: `|O|_max` is the most offsets of an `f` of a
     /// committed stage (`1 … nStages`). What the setup derived them from, and so what its layout's
     /// degrees are made of.
     pub fn degrees(&self) -> PilfflonkResult<Degrees> {
+        Degrees::new(self.n_bits, self.q_deg, self.max_openings())
+    }
+
+    /// The pieces `Q` of the AIR is committed as (A.1), with `|O|_max` as [`PilfflonkInfo::degrees`].
+    pub fn q_split(&self) -> PilfflonkResult<QSplit> {
+        QSplit::new(self.n_bits, self.q_deg, self.max_openings(), self.max_q_degree)
+    }
+
+    fn max_openings(&self) -> u64 {
         let committed = self.layout.0.iter().filter(|f| f.stage >= 1 && f.stage <= self.n_stages);
-        let max_openings = committed.map(|f| f.offsets.len() as u64).max().unwrap_or(0);
-        Degrees::new(self.n_bits, self.q_deg, max_openings)
+        committed.map(|f| f.offsets.len() as u64).max().unwrap_or(0)
     }
 }
 
@@ -147,5 +202,40 @@ mod tests {
         // 2^28 gives 2^29, which the callers refuse.
         assert_eq!(Degrees::new(27, 1, 1).unwrap().n_bits_ext, 28);
         assert_eq!(Degrees::new(28, 1, 1).unwrap().n_bits_ext, 29);
+    }
+
+    #[test]
+    fn q_not_split_is_one_piece_of_its_bound() {
+        let whole = QSplit { stride: 0, coefficients: vec![3 * 32 + 4 * 4 + 1] };
+        for max_q_degree in [0, 3, 4, 100] {
+            assert_eq!(QSplit::new(5, 3, 4, max_q_degree).unwrap(), whole, "maxQDegree {max_q_degree}");
+        }
+        assert_eq!(QSplit::new(3, 0, 1, 1).unwrap(), QSplit { stride: 0, coefficients: vec![2] });
+        assert_eq!(whole.n_pieces(), 1);
+    }
+
+    #[test]
+    fn the_pieces_of_q_have_m_n_coefficients_and_the_blinding_of_their_boundary() {
+        // The fixture of the signed offsets: N = 32, qDeg = 3, |O|_max = 4, Q of 96 + 16 + 1 = 113.
+        // M = 1: three pieces of 32 + 2, and the last 113 − 64 = 49, the blinding of the columns in it.
+        let split = QSplit::new(5, 3, 4, 1).unwrap();
+        assert_eq!(split, QSplit { stride: 32, coefficients: vec![34, 34, 49] });
+        assert_eq!(split.n_pieces(), 3);
+        // M = 2: two, of 64 + 2 and 113 − 64.
+        assert_eq!(QSplit::new(5, 3, 4, 2).unwrap(), QSplit { stride: 64, coefficients: vec![66, 49] });
+        // qDeg a multiple of M: the last piece has M·N and Q's blinding, (qDeg + 1)·|O|_max + 1.
+        assert_eq!(QSplit::new(8, 4, 2, 2).unwrap(), QSplit { stride: 512, coefficients: vec![514, 512 + 5 * 2 + 1] });
+        // The pieces cover Q: (m − 1)·S plus the last is Q's bound.
+        for (n_bits, q_deg, max_openings, max_q_degree) in [(5, 3, 4, 1), (8, 7, 3, 2), (1, 9, 0, 4), (0, 5, 1, 1)] {
+            let split = QSplit::new(n_bits, q_deg, max_openings, max_q_degree).unwrap();
+            let m = split.n_pieces() as u64;
+            assert_eq!(m, q_deg.div_ceil(max_q_degree));
+            assert_eq!(split.stride, max_q_degree << n_bits);
+            assert!(split.coefficients[..m as usize - 1].iter().all(|&c| c == split.stride + 2));
+            let last = *split.coefficients.last().unwrap();
+            assert_eq!((m - 1) * split.stride + last, q_coefficients(n_bits, q_deg, max_openings).unwrap());
+            assert!(last > 1 << n_bits, "the last piece holds a row of N at least, and Q's blinding");
+        }
+        assert!(QSplit::new(29, 3, 1, 1).is_err());
     }
 }

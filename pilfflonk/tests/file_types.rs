@@ -434,6 +434,39 @@ fn the_pilfflonkinfo_refuses_what_a6_and_the_layout_rules_forbid() {
     );
     assert_refused(with(&|i| i.layout.0[4].offsets = vec![0, 1]), "Q is opened at ξ only");
     assert_refused(with(&|i| i.max_q_degree = 1), "Q split in two needs two pieces");
+    for max_q_degree in [2, 3] {
+        assert_refused(with(&|i| i.max_q_degree = max_q_degree), "maxQDegree is 0 unless it splits Q (plan M33)");
+    }
+    // Split, the pieces are Q0 and Q1 in this order, at stageId and stagePos 0 and 1.
+    let with_split = |change: &dyn Fn(&mut PilfflonkInfo)| {
+        let mut info = split_q_info();
+        change(&mut info);
+        info
+    };
+    assert_refused(
+        with_split(&|i| {
+            i.cm_pols_map[6].name = "Q1".into();
+            i.cm_pols_map[7].name = "Q0".into();
+            i.layout.0[4].pols[0].name = "Q1".into();
+            i.layout.0[4].pols[1].name = "Q0".into();
+        }),
+        "piece i of Q is named Q<i>",
+    );
+    assert_refused(
+        with_split(&|i| {
+            i.cm_pols_map[7].name = "Q2".into();
+            i.layout.0[4].pols[1].name = "Q2".into();
+        }),
+        "the pieces of Q are Q0 … Q<m−1>",
+    );
+    assert_refused(with_split(&|i| i.cm_pols_map[7].lengths = vec![0]), "a piece of Q is no array");
+    assert_refused(
+        with_split(&|i| {
+            i.cm_pols_map[6].stage_pos = 1;
+            i.cm_pols_map[7].stage_pos = 0;
+        }),
+        "piece i of Q is at stagePos i",
+    );
 }
 
 #[test]
@@ -475,6 +508,8 @@ fn the_vkey_refuses_what_does_not_match_its_layout() {
         ),
         (with(&|v| v.q_verifier = json!([])), "qVerifier is a code block"),
         (with(&|v| v.layout.0[1].k = 1), "k is the number of polynomials"),
+        (with(&|v| v.max_q_degree = 2), "maxQDegree is 0 unless it splits Q"),
+        (with(&|v| v.max_q_degree = 1), "Q split in two needs two pieces"),
     ] {
         assert!(vkey.validate().is_err(), "{why}");
     }

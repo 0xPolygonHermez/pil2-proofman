@@ -8,9 +8,13 @@
 //!   no blinding (A.3);
 //! - a committed column, im pols included: stage `1 … nStages`, `O` as a fixed one's, and
 //!   `N + |O| + 1` coefficients, of which `|O| + 1` are its blinding's (A.3);
-//! - `Q`, not split: stage `nStages + 1`, `O = {0}`, and `qDeg·N + (qDeg+1)·|O|_max + 1`
-//!   coefficients (A.1), `|O|_max` the largest `|O|` of the columns with blinding (the committed
-//!   ones) *after the fusions* of A.2's rule 1.
+//! - `Q`: stage `nStages + 1`, `O = {0}`, and `qDeg·N + (qDeg+1)·|O|_max + 1` coefficients (A.1),
+//!   `|O|_max` the largest `|O|` of the columns with blinding (the committed ones) *after the
+//!   fusions* of A.2's rule 1. Split (`--max-q-degree M`, `0 < M < qDeg`), its pieces `Q_0 …
+//!   Q_{m−1}` instead, `m = ⌈qDeg/M⌉`, each but the last of `M·N + 2` coefficients, its `M·N` of
+//!   `Q` and two of the blinding of its boundary with the next (A.3), and the last the rest of `Q`'s
+//!   (`QSplit`). They are the polynomials of `Q`'s stage, which the grouping puts in a group of their
+//!   own, as the old system does (A.2, rule 2): in one `f`, unless `--extra-muls` splits it.
 //!
 //! A column the evMap never opens is not committed (A.2), and [`committed_pols`] says which ones.
 //!
@@ -40,8 +44,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-pub use proofman_pilfflonk::degrees::{column_coefficients, n_bits_ext, q_coefficients, Degrees};
-use proofman_pilfflonk::names::column_name;
+pub use proofman_pilfflonk::degrees::{column_coefficients, n_bits_ext, q_coefficients, Degrees, QSplit};
+use proofman_pilfflonk::layout::q_pieces;
+use proofman_pilfflonk::names::{column_name, q_piece_name};
 use proofman_pilfflonk::{EvMapEntry, Layout, LayoutEntry, LayoutPol, PolMapEntry, PolType};
 
 use crate::error::SetupError;
@@ -75,8 +80,8 @@ pub struct CommittedPol {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Committed {
     /// The committed polynomials before any fusion, each with its own offsets and the bound for
-    /// them, in the order of [`unpacked_layout`]'s `f_i`: the input of the grouping. `Q`'s bound is
-    /// that of the layout's `|O|_max`.
+    /// them, in the order of [`unpacked_layout`]'s `f_i`: the input of the grouping. The bounds of
+    /// `Q`'s pieces are those of the layout's `|O|_max`.
     pub pols: Vec<CommittedPol>,
     /// Their layout, grouped or not.
     pub layout: Layout,
@@ -84,25 +89,36 @@ pub struct Committed {
     pub unopened: Vec<String>,
     /// A.1's, with the layout's `|O|_max`.
     pub degrees: Degrees,
+    /// The pieces of `Q` (A.1), with the layout's `|O|_max`: one if it is not split.
+    pub q_split: QSplit,
+}
+
+/// `Q` as the setup knows it before the layout (A.1): of stage `nStages + 1`, of degree `qDeg`, and
+/// split in pieces of degree `maxQDegree`, 0 if it is not (`layout::split_max_q_degree`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QShape {
+    pub stage: u64,
+    pub q_deg: u64,
+    pub max_q_degree: u64,
 }
 
 /// The committed polynomials of an AIR of `2^n_bits` rows and their layout (see [the
-/// module](self)): the columns of `const_pols_map` and `cm_pols_map` that `ev_map` opens, and `Q`,
-/// whose pieces (one if it is not split) are the entries of `cm_pols_map` of stage `q_stage`, laid
-/// out as `packing` says. `q_deg` is A.1's; `Q` is not split.
+/// module](self)): the columns of `const_pols_map` and `cm_pols_map` that `ev_map` opens, and the
+/// pieces of `Q` as `q` says, `Q0 … Q<m−1>` (one, `Q0`, if it is not split), the entries of
+/// `cm_pols_map` of its stage, in this order; laid out as `packing` says.
 ///
 /// Refuses an evaluation of a column that is not in its map, or of a piece of `Q`, which the
-/// verifier computes (A.1), a `Q` of other than one piece, and what the grouping refuses
-/// ([`SetupError::Grouping`]).
+/// verifier computes (A.1) or reads from the proof (split), pieces of `Q` other than those of `q`,
+/// and what the grouping refuses ([`SetupError::Grouping`]).
 pub fn committed_pols(
     n_bits: u64,
-    q_deg: u64,
-    q_stage: u64,
+    q: QShape,
     const_pols_map: &[PolMapEntry],
     cm_pols_map: &[PolMapEntry],
     ev_map: &[EvMapEntry],
     packing: Packing,
 ) -> Result<Committed, SetupError> {
+    let q_stage = q.stage;
     let mut offsets: BTreeMap<(PolType, u64), BTreeSet<i64>> = BTreeMap::new();
     for (i, e) in ev_map.iter().enumerate() {
         let map = match e.pol_type {
@@ -120,7 +136,7 @@ pub fn committed_pols(
             }
             Some(p) if p.stage == q_stage => {
                 return Err(SetupError::PassesOutput(format!(
-                    "evMap[{i}] is {} ({}), a piece of Q, which the verifier computes (A.1)",
+                    "evMap[{i}] is {} ({}), a piece of Q, which the verifier computes (A.1) or reads from the proof",
                     e.id, p.name
                 )))
             }
@@ -131,14 +147,14 @@ pub fn committed_pols(
 
     let mut columns = Vec::new();
     let mut unopened = Vec::new();
-    let mut q_pieces = Vec::new();
+    let mut pieces = Vec::new();
     let maps = [(PolType::Const, const_pols_map), (PolType::Cm, cm_pols_map)];
     for (pol_type, map) in maps {
         for (id, entry) in map.iter().enumerate() {
             let id = id as u64;
             let name = column_name(&entry.name, &entry.lengths);
             if entry.stage == q_stage {
-                q_pieces.push((id, name));
+                pieces.push((id, name));
                 continue;
             }
             match offsets.get(&(pol_type, id)) {
@@ -148,18 +164,28 @@ pub fn committed_pols(
         }
     }
 
-    let [(q_id, q_name)] = <[_; 1]>::try_from(q_pieces).map_err(|pieces| {
-        SetupError::PassesOutput(format!("Q is not split, and cmPolsMap has {} pieces of it", pieces.len()))
-    })?;
+    let n_pieces = q_pieces(q.q_deg, q.max_q_degree);
+    if pieces.len() as u64 != n_pieces {
+        return Err(SetupError::PassesOutput(format!(
+            "Q is made of {n_pieces} pieces (A.1), and cmPolsMap has {}",
+            pieces.len()
+        )));
+    }
+    if let Some((i, (_, name))) = pieces.iter().enumerate().find(|(i, (_, name))| *name != q_piece_name(*i as u64)) {
+        return Err(SetupError::PassesOutput(format!(
+            "piece {i} of Q in cmPolsMap is {name}, not {}",
+            q_piece_name(i as u64)
+        )));
+    }
 
-    let mut pols = Vec::with_capacity(columns.len() + 1);
+    let mut pols = Vec::with_capacity(columns.len() + pieces.len());
     for (stage, id, name, offsets) in columns {
         let coefficients = column_coefficients(n_bits, stage, offsets.len() as u64)?;
         pols.push(CommittedPol { stage, id, name, offsets, coefficients });
     }
     // The order of the f_i (A.5): by stage, and within a stage by index. cmPolsMap has the im pols
-    // after the columns of every stage, so its order is not by stage when there are several. Q,
-    // of the last stage, goes last.
+    // after the columns of every stage, so its order is not by stage when there are several. Q's
+    // pieces, of the last stage, go last, Q0 first.
     pols.sort_by_key(|p| (p.stage, p.id));
 
     // |O|_max of the columns with blinding as the layout opens them: after the fusions of A.2's
@@ -171,20 +197,18 @@ pub fn committed_pols(
         Packing::Grouped { extra_muls } => max_openings(&fuse(&pols, &params(extra_muls))?),
         Packing::Unpacked => max_openings(&pols),
     };
-    let degrees = Degrees::new(n_bits, q_deg, max_openings.unwrap_or(0))?;
-    pols.push(CommittedPol {
-        stage: q_stage,
-        id: q_id,
-        name: q_name,
-        offsets: vec![0],
-        coefficients: degrees.q_coefficients,
-    });
+    let max_openings = max_openings.unwrap_or(0);
+    let degrees = Degrees::new(n_bits, q.q_deg, max_openings)?;
+    let q_split = QSplit::new(n_bits, q.q_deg, max_openings, q.max_q_degree)?;
+    for ((id, name), &coefficients) in pieces.into_iter().zip(&q_split.coefficients) {
+        pols.push(CommittedPol { stage: q_stage, id, name, offsets: vec![0], coefficients });
+    }
 
     let layout = match packing {
         Packing::Grouped { extra_muls } => group(&pols, &params(extra_muls))?,
         Packing::Unpacked => unpacked_layout(&pols),
     };
-    Ok(Committed { pols, layout, unopened, degrees })
+    Ok(Committed { pols, layout, unopened, degrees, q_split })
 }
 
 /// The evMap of a layout (see [the module](self)): `ev_map`, the passes', followed by each

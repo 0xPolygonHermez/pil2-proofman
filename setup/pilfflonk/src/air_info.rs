@@ -9,11 +9,14 @@
 //! - **`Q`.** `pil-info` ends `cmPolsMap` with the STARK's pieces of the quotient, `Q0 …
 //!   Q{qDeg−1}` at stage `nStages + 1` (`qDeg` of them, of `N` coefficients each: what the STARK
 //!   commits), and none if `qDeg = 0`. pilfflonk commits `Q` whole unless it is split (A.1): the
-//!   pieces are replaced by `layout::q_pieces(qDeg, maxQDegree)` entries, `Q0 …`, which is one,
-//!   `Q0`, when `Q` is not split. They are the last entries of `cmPolsMap`, after every column
-//!   and im pol, and no operand of the code refers to them (M11): no index the code uses
-//!   changes. `mapSectionsN.cm{nStages+1}` counts the new entries. The evMap has no piece of `Q`
-//!   (`Opening::Shplonk`), and the layout has `Q0` in the last `f`, opened at `ξ` only.
+//!   pieces are replaced by `layout::q_pieces(qDeg, maxQDegree)` entries, `Q0 … Q<m−1>`, piece `i`
+//!   at stageId and stagePos `i`, which is one, `Q0`, when `Q` is not split. They are the last
+//!   entries of `cmPolsMap`, after every column and im pol, and no operand of the code refers to
+//!   them (M11): no index the code uses changes. `mapSectionsN.cm{nStages+1}` counts the new
+//!   entries. The evMap has no piece of `Q` (`Opening::Shplonk`), and the layout has the pieces in
+//!   the last `f` (or `f`, if `--extra-muls` splits their group, A.2), opened at `ξ` only.
+//!   `maxQDegree` is the `--max-q-degree` that splits `Q`, and 0 if it does not
+//!   (`layout::split_max_q_degree`).
 //! - **The names of the im pols.** `pil-info` names every im pol of an AIR `<air>.ImPol`, and
 //!   their evaluations would share a name in the proof (`names`). Here the im pols of an AIR are
 //!   the array `<air>.ImPol`: the `k`-th of `cmPolsMap` has `lengths: [k]`, so its name in the
@@ -29,18 +32,14 @@ use pil2_pilout::pilout as pb;
 use pil_info::pil::constraint_poly::Boundary as PassesBoundary;
 use pil_info::types::pilout_info::SymbolInfo;
 use pil_info::PilInfoResult;
-use proofman_pilfflonk::layout::q_pieces;
+use proofman_pilfflonk::layout::{q_pieces, split_max_q_degree};
+pub use proofman_pilfflonk::names::q_piece_name;
 use proofman_pilfflonk::{
     Boundary, ChallengeMapEntry, EvMapEntry, JsonFile, NameStageEntry, PilfflonkInfo, PolMapEntry, PolType,
 };
 
 use crate::error::SetupError;
-use crate::layout::{committed_pols, ev_map_of, Committed, Packing};
-
-/// The name of the piece `i` of `Q` in `cmPolsMap`: `Q0` for `Q` not split.
-pub fn q_piece_name(i: u64) -> String {
-    format!("Q{i}")
-}
+use crate::layout::{committed_pols, ev_map_of, Committed, Packing, QShape};
 
 /// The AIR the pilfflonkinfo describes, as the globalInfo names it.
 #[derive(Clone, Copy, Debug)]
@@ -244,9 +243,9 @@ fn ev_map(result: &PilInfoResult) -> Result<Vec<EvMapEntry>, SetupError> {
 
 /// The pilfflonkinfo of `air` (of the pilout, the one [`crate::validate::validate`] returned) from
 /// the result of the passes on it, with the layout `packing` says (`layout::committed_pols`) and
-/// `Q` split in pieces of `max_q_degree` (0: not split, the only case yet). It is validated
-/// (`JsonFile::validate`) before it is returned, so that nothing is written for a pilfflonkinfo
-/// that cannot be.
+/// `Q` split in pieces of degree `max_q_degree` if its degree is above it (A.1; 0 does not split
+/// it). It is validated (`JsonFile::validate`) before it is returned, so that nothing is written for
+/// a pilfflonkinfo that cannot be.
 pub fn air_setup(
     result: &PilInfoResult,
     air_ref: AirRef,
@@ -262,11 +261,13 @@ pub fn air_setup(
     let n_stages = setup.n_stages as u64;
     let q_stage = n_stages + 1;
     let n_bits = u64::from(setup.pil_power);
+    let max_q_degree = split_max_q_degree(q_deg, max_q_degree);
+    let q = QShape { stage: q_stage, q_deg, max_q_degree };
 
     let const_pols_map = const_pols_map(result, air)?;
     let cm_pols_map = cm_pols_map(result, air, q_pieces(q_deg, max_q_degree))?;
     let ev_map = ev_map(result)?;
-    let committed = committed_pols(n_bits, q_deg, q_stage, &const_pols_map, &cm_pols_map, &ev_map, packing)?;
+    let committed = committed_pols(n_bits, q, &const_pols_map, &cm_pols_map, &ev_map, packing)?;
     let ev_map = ev_map_of(&ev_map, &committed.layout, q_stage, &setup.opening_points)?;
 
     let mut map_sections_n = std::collections::BTreeMap::new();

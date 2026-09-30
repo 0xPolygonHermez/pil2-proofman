@@ -227,6 +227,34 @@ struct KeyFiles {
     std::vector<uint8_t> constants = readBytes(fixture("Fibonacci.const"));
 };
 
+// The Fibonacci's key with Q split in two (spec A.1): qDeg raised to 2 and maxQDegree 1. Its Q, of
+// fewer than 261 coefficients, is a Q of qDeg 2 too, whose bound is 2·256 + 3·2 + 1 = 519 and
+// extended domain 2^10; S = 256, and the pieces are Q0, of 256 + 2 coefficients, and Q1, of 519 − 256
+// = 263. Unpacked, each in an f of its own, f5 and f6; packed, both in f5, of k = 2, Q1 first as the
+// grouping puts them (A.2, rule 4), of degree max(263·2 + 0, 258·2 + 1) = 526, for an SRS of 1024.
+KeyFiles splitQFiles(bool packed) {
+    KeyFiles files;
+    json info = json::parse(files.info);
+    info["qDeg"] = 2;
+    info["maxQDegree"] = 1;
+    info["cmPolsMap"].push_back(
+        json{{"stage", 2}, {"name", "Q1"}, {"dim", 1}, {"polsMapId", 4}, {"stageId", 1}, {"stagePos", 1}});
+    info["mapSectionsN"]["cm2"] = 2;
+    json &layout = info["layout"];
+    const json q0 = json{{"id", 3}, {"name", "Q0"}}, q1 = json{{"id", 4}, {"name", "Q1"}};
+    if (packed) {
+        layout[5] = json{{"stage", 2}, {"pols", json::array({q1, q0})}, {"k", 2}, {"offsets", json::array({0})},
+                         {"degree", 526}};
+        files.srs = srsBytes(1024);
+    } else {
+        layout[5]["degree"] = 258;
+        layout.push_back(
+            json{{"stage", 2}, {"pols", json::array({q1})}, {"k", 1}, {"offsets", json::array({0})}, {"degree", 263}});
+    }
+    files.info = text(info.dump());
+    return files;
+}
+
 // A provingKey/ in a fresh directory next to the test binary, removed with it.
 class KeyDir {
 public:
@@ -261,6 +289,8 @@ private:
 
 // What every test of the Fibonacci starts from.
 struct Fibonacci {
+    explicit Fibonacci(const KeyFiles &files = KeyFiles()) : dir(files) {}
+
     KeyDir dir;
     std::unique_ptr<ProvingKey> pk = ProvingKey::load(dir.path());
     json oracle = json::parse(readBytes(fixture("Fibonacci.oracle.json")));
@@ -340,8 +370,8 @@ FrElement qVerifierAt(const Fibonacci &fib, const std::vector<FrElement> &evalua
 
 // The verifier's SHPLONK check of A.5 with τ known (every f has k = 1, as --no-packing's layout):
 // F − E − J + y·W' = τ·W', with the challenges α and y the opening squeezed, the fixed commitments
-// computed here, and the value of Q's f at ξ the verifier's.
-bool shplonkIdentityHolds(const Fibonacci &fib, const Proved &p) {
+// computed here, and the value of Q's f at ξ the verifier's, or, if Q is split, the proof's Q_i(ξ).
+bool shplonkIdentityHolds(const Fibonacci &fib, const Proved &p, const std::vector<FrElement> &evaluations) {
     const AirKey &air = fib.air();
     const std::vector<LayoutEntry> &layout = air.info().layout;
     const uint64_t N = air.n();
@@ -364,13 +394,24 @@ bool shplonkIdentityHolds(const Fibonacci &fib, const Proved &p) {
         }
     }
     const std::vector<std::pair<uint64_t, int64_t>> places = evaluationPlaces(air);
-    const std::vector<FrElement> &evaluations = p.opening->evaluations();
     for (uint64_t e = 0; e < places.size(); ++e) {
         const std::vector<int64_t> &offsets = layout[places[e].first].offsets;
         const uint64_t m = std::find(offsets.begin(), offsets.end(), places[e].second) - offsets.begin();
         values[places[e].first][m] = evaluations[e];
     }
-    values[air.qF()][0] = qVerifierAt(fib, evaluations, p.stdVc, p.xiSeed, xi);
+    if (air.nQPieces() == 1) {
+        values[air.qPosition(0).f][0] = qVerifierAt(fib, evaluations, p.stdVc, p.xiSeed, xi);
+    } else {
+        // Split, Q's f are opened at the proof's Q_i(ξ), after the columns' evaluations (A.4 step 4.3).
+        uint64_t e = places.size();
+        for (uint64_t f = 0; f < layout.size(); ++f) {
+            if (layout[f].stage == air.info().qStage()) {
+                assert(layout[f].k == 1);
+                values[f][0] = evaluations[e++];
+            }
+        }
+        assert(e == evaluations.size());
+    }
 
     // Z_{T_i}(y), r_i(y) by Lagrange, and q_i.
     std::vector<FrElement> z(layout.size()), r(layout.size()), q(layout.size());
@@ -403,6 +444,11 @@ bool shplonkIdentityHolds(const Fibonacci &fib, const Proved &p) {
     const G1Point lhs =
         add(sub(sub(F, g1Times(e)), times(p.proof.shplonk.w, q[0])), times(p.proof.shplonk.wp, y));
     return samePoint(lhs, times(p.proof.shplonk.wp, testTau()));
+}
+
+// The same, with the proof's evaluations.
+bool shplonkIdentityHolds(const Fibonacci &fib, const Proved &p) {
+    return shplonkIdentityHolds(fib, p, p.opening->evaluations());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -464,8 +510,10 @@ void testLoadsTheFibonaccisKey() {
     // A.1: N = 256, |O|max = 2 (l1 and l2 at {0, 1}), qDeg = 1: 256 + 2·2 + 1 = 261 coefficients,
     // 2^9 points; M16's nBitsExt.
     assert(d.n == 256 && d.maxOpenings == 2 && d.qCoefficients == 261 && d.nBitsExt == 9);
+    // Q not split: one piece, Q itself, alone in f5.
+    assert(d.qStride == 0 && (d.qPieceCoefficients == std::vector<uint64_t>{261}));
     assert(air.lde().domainSize() == 256 && air.lde().extendedSize() == 512);
-    assert(air.nFixedF() == 2 && air.qF() == 5);
+    assert(air.nFixedF() == 2 && air.nQPieces() == 1 && air.qPosition(0).f == 5 && air.qPosition(0).j == 0);
     assert((air.witnessColumns() == std::vector<uint64_t>{0, 1}));
     // The blinding of A.3, |O| + 1 per committed column: M16's degree − N.
     const uint64_t blind[] = {0, 0, 3, 3, 2, 0};
@@ -585,10 +633,32 @@ void testRefusesBrokenKeys() {
                   "holds Q with a degree of 262, not the bound of spec A.1, 261");
     expectRefused(withInfo([](json &j) { j["layout"][2]["degree"] = 258; }), PILFFLONK_ERR_FORMAT,
                   "layout f2 has a degree of 258, below the 1 polynomials of 259 coefficients");
-    expectRefused(withInfo([](json &j) { j["maxQDegree"] = 1; j["qDeg"] = 2; }), PILFFLONK_ERR_FORMAT,
-                  "Q is split");
     expectRefused(withInfo([](json &j) { j["layout"][3]["pols"][0]["id"] = 0; }), PILFFLONK_ERR_FORMAT,
                   "layout f3 packs cm 0, which an earlier f packs too");
+
+    // The pieces of Q (spec A.1): maxQDegree is 0 unless it splits Q, and split, cmPolsMap and the
+    // layout have its pieces, Q0 … Q<m−1>, with the degrees their bounds give (splitQFiles).
+    expectRefused(withInfo([](json &j) { j["maxQDegree"] = 1; }), PILFFLONK_ERR_FORMAT,
+                  "maxQDegree = 1 does not split Q of qDeg = 1, and then it is 0");
+    expectRefused(withInfo([](json &j) { j["maxQDegree"] = 1; j["qDeg"] = 2; }), PILFFLONK_ERR_FORMAT,
+                  "cmPolsMap has 1 pieces of Q, and Q is made of 2 (spec A.1)");
+    auto withSplitInfo = [](bool packed, const std::function<void(json &)> &change) {
+        KeyFiles f = splitQFiles(packed);
+        json info = json::parse(f.info);
+        change(info);
+        f.info = text(info.dump());
+        return f;
+    };
+    expectRefused(withSplitInfo(false, [](json &j) { j["cmPolsMap"][4]["name"] = "Q2"; }), PILFFLONK_ERR_FORMAT,
+                  "cmPolsMap 4 (Q2) is at stagePos 1 of Q's stage: it must be piece Q1, of stageId 1");
+    expectRefused(withSplitInfo(false, [](json &j) { j["layout"].erase(6); }), PILFFLONK_ERR_FORMAT,
+                  "the layout does not pack piece Q1 of Q");
+    expectRefused(withSplitInfo(false, [](json &j) { j["layout"][6]["degree"] = 261; }), PILFFLONK_ERR_FORMAT,
+                  "layout f6 holds pieces of Q with a degree of 261, not the bound of spec A.1, 263");
+    expectRefused(withSplitInfo(true, [](json &j) { j["layout"][5]["degree"] = 525; }), PILFFLONK_ERR_FORMAT,
+                  "layout f5 holds pieces of Q with a degree of 525, not the bound of spec A.1, 526");
+    expectRefused(withSplitInfo(true, [](json &j) { j["layout"][5]["offsets"] = json::array({0, 1}); }),
+                  PILFFLONK_ERR_FORMAT, "layout f5 holds Q, which is opened at ξ only");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -712,6 +782,97 @@ void testBlindedProof() {
     Proved tampered = prove(fib, std::make_unique<BlindingRng>(seed));
     tampered.proof.shplonk.w = add(tampered.proof.shplonk.w, g1Times(E.fr.one()));
     assert(!shplonkIdentityHolds(fib, tampered));
+}
+
+// Q split in two (spec A.1, A.3), on the keys of splitQFiles, unpacked and packed, with the seed of an
+// unsplit proof, which blinds the columns as it does (the pieces' factors come after theirs):
+// - the pieces have the bounds of A.1, and the factors of their boundary, which cancel: Σ_i
+//   X^(i·S)·Q_i(X) is the unsplit proof's Q, coefficient by coefficient;
+// - each f of Q's stage commits to [f(τ)]₁ of its pieces packed;
+// - the evaluations end with the pieces' Q_i(ξ), in the order of the layout, and q(0), the verifier's
+//   Q(ξ), is Q_0(ξ) + ξ^S·Q_1(ξ);
+// - unpacked, the SHPLONK identity of A.5 holds with the pieces' f, and breaks with a Q_i(ξ) off by one.
+// Unblinded, the pieces are Q's coefficients, split at S, and q(0) is the oracle's Q(ξ).
+void testSplitQ() {
+    const Fibonacci whole;
+    uint8_t seed[32] = {11};
+    const Proved unsplit = prove(whole, std::make_unique<BlindingRng>(seed));
+    const Poly &q = *unsplit.instance->qPiece(0);
+    assert(q.getLength() == 261 && unsplit.instance->qPiece(1) == nullptr);
+    const FrElement tau = testTau();
+
+    for (bool packed : {false, true}) {
+        const Fibonacci fib(splitQFiles(packed));
+        const AirKey &air = fib.air();
+        const PilFflonk::AirDegrees &d = air.degrees();
+        assert(d.qCoefficients == 519 && d.nBitsExt == 10 && d.qStride == 256);
+        assert((d.qPieceCoefficients == std::vector<uint64_t>{258, 263}));
+        assert(air.nQPieces() == 2);
+        assert(air.qPosition(0).f == 5 && air.qPosition(0).j == (packed ? 1 : 0));
+        assert(air.qPosition(1).f == (packed ? 5 : 6) && air.qPosition(1).j == 0);
+
+        const Proved p = prove(fib, std::make_unique<BlindingRng>(seed));
+        assert(p.commitments.size() == (packed ? 4 : 5));
+        for (uint64_t i = 0; i < 3; ++i) assert(samePoint(p.commitments[i], unsplit.commitments[i]));
+        const Poly &q0 = *p.instance->qPiece(0), &q1 = *p.instance->qPiece(1);
+        assert(q0.getLength() == 258 && q1.getLength() == 263);
+        assert(p.instance->polynomial(5, 0) == (packed ? &q1 : &q0));
+        assert(!E.fr.isZero(q0.coef[256]) && !E.fr.isZero(q0.coef[257]));
+        for (uint64_t c = 0; c < 519; ++c) {
+            FrElement joined = c < 258 ? q0.coef[c] : E.fr.zero();
+            if (c >= 256) E.fr.add(joined, joined, q1.coef[c - 256]);
+            assert(eq(joined, c < q.getLength() ? q.coef[c] : E.fr.zero()));
+        }
+
+        if (packed) {
+            // f5(X) = Q1(X^2) + X·Q0(X^2).
+            const FrElement tau2 = E.fr.square(tau);
+            const FrElement f = E.fr.add(q1.evaluate(tau2), E.fr.mul(tau, q0.evaluate(tau2)));
+            assert(samePoint(p.commitments[3], g1Times(f)));
+        } else {
+            assert(samePoint(p.commitments[3], g1Times(q0.evaluate(tau))));
+            assert(samePoint(p.commitments[4], g1Times(q1.evaluate(tau))));
+        }
+
+        const FrElement xi = p.opening->xi();
+        assert(eq(xi, packed ? E.fr.square(p.xiSeed) : p.xiSeed)); // powerW = 2 packed
+        const std::vector<FrElement> &evaluations = p.opening->evaluations();
+        assert(evaluations.size() == 7 + 2);
+        const Poly &first = packed ? q1 : q0, &second = packed ? q0 : q1;
+        assert(eq(evaluations[7], first.evaluate(xi)) && eq(evaluations[8], second.evaluate(xi)));
+        const FrElement joined = E.fr.add(q0.evaluate(xi), E.fr.mul(power(xi, 256), q1.evaluate(xi)));
+        assert(eq(p.opening->q(0), joined));
+        const std::vector<FrElement> columns(evaluations.begin(), evaluations.begin() + 7);
+        assert(eq(p.opening->q(0), qVerifierAt(fib, columns, p.stdVc, p.xiSeed, xi)));
+        if (!packed) {
+            assert(shplonkIdentityHolds(fib, p));
+        }
+    }
+
+    // A piece's evaluation off by one breaks the identity.
+    const Fibonacci fib(splitQFiles(false));
+    const Proved p = prove(fib, std::make_unique<BlindingRng>(seed));
+    for (uint64_t e : {7, 8}) {
+        std::vector<FrElement> tampered = p.opening->evaluations();
+        E.fr.add(tampered[e], tampered[e], E.fr.one());
+        assert(!shplonkIdentityHolds(fib, p, tampered));
+    }
+
+    // Unblinded: Q's coefficients, split at S; Q(ξ) the oracle's.
+    std::unique_ptr<Instance> inst = fib.instance(std::make_unique<ZeroBlinding>());
+    std::unique_ptr<Instance> ref = whole.instance(std::make_unique<ZeroBlinding>());
+    for (Instance *i : {inst.get(), ref.get()}) {
+        i->commitStage(1, {});
+        i->commitQ({fr(fib.oracle["stdVc"])});
+    }
+    const Poly &q0 = *inst->qPiece(0), &q1 = *inst->qPiece(1), &plain = *ref->qPiece(0);
+    for (uint64_t c = 0; c < 519; ++c) {
+        const FrElement &piece = c < 256 ? q0.coef[c] : q1.coef[c - 256];
+        assert(eq(piece, c < plain.getLength() ? plain.coef[c] : E.fr.zero()));
+    }
+    assert(E.fr.isZero(q0.coef[256]) && E.fr.isZero(q0.coef[257]));
+    const Opening opening({inst.get()}, fr(fib.oracle["xi"]));
+    assert(eq(opening.q(0), fr(fib.oracle["q"])));
 }
 
 void testMutatedWitnessIsUnsatisfied() {
@@ -1238,6 +1399,7 @@ void runProverTests() {
     testRefusesBrokenKeys();
     testUnblindedIsTheOracle();
     testBlindedProof();
+    testSplitQ();
     testMutatedWitnessIsUnsatisfied();
     testRefusesArguments();
     testCApi();

@@ -146,6 +146,10 @@ test("every vkey the verifier refuses, with the reason", () => {
             (v) => (v.maxQDegree = 1),
             /the layout packs 1 polynomials of Q, and Q is made of 2/,
         ],
+        "a maxQDegree that does not split Q": [
+            (v) => (v.maxQDegree = 2),
+            /maxQDegree is 2 and qDeg 2: Q is not split, and then maxQDegree is 0/,
+        ],
         "challenges for no stage": [(v) => (v.numChallenges = [0, 1]), /numChallenges has 2 stages, and the layout 1/],
         "challenges of stage 1": [(v) => (v.numChallenges = [1]), /stage 1 has challenges, which A.4 never squeezes/],
         "no boundary": [(v) => (v.boundaries = []), /boundaries\[0\] is not everyRow/],

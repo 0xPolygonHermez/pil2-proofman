@@ -11,7 +11,9 @@
 //     the commitments of stage 1;
 //   - boundaries[0] is everyRow, the Zi that A.6 makes 1/Z_H, and an everyFrame leaves a row;
 //   - the qVerifier is code the verifier can run (qverifier.js);
-//   - the names of the evaluations (names.js) do not collide.
+//   - the names of the evaluations (names.js) do not collide;
+//   - maxQDegree is 0 unless it splits Q (layout.rs, split_max_q_degree), and split, the pieces of Q
+//     in the layout are Q0 … Q<m-1>.
 // The digest (A.6) is keccak256("pilfflonk-v1" ‖ canonical(vkey without digest)), json.js the
 // canonical JSON. Anything else is a PilFflonkInputError naming what is wrong.
 
@@ -224,6 +226,9 @@ export function fromObjectVk(curve, vkObject) {
     if (vk.power > MAX_NBITS) fail(`power ${vk.power} is above ${MAX_NBITS}`);
     vk.N = 2 ** vk.power;
     vk.qPieces = qPieces(vk.qDeg, vk.maxQDegree);
+    if (vk.maxQDegree > 0 && vk.qPieces === 1) {
+        fail(`maxQDegree is ${vk.maxQDegree} and qDeg ${vk.qDeg}: Q is not split, and then maxQDegree is 0 (A.1)`);
+    }
 
     const X2 = coordinates(
         vkObject.X_2,

@@ -225,9 +225,10 @@ AirDegrees airDegrees(const PilfflonkInfo &info, const std::string &name) {
             d.maxOpenings = std::max<uint64_t>(d.maxOpenings, f.offsets.size());
         }
     }
-    // qDeg·N + (qDeg+1)·|O|_max + 1, each step checked: N <= 2^28 and |O|_max <= N.
+    // qDeg·N + (qDeg+1)·|O|_max + 1 <= (2·qDeg + 1)·2^28 + 1, with N <= 2^28 and |O|_max <= N: below
+    // 2^63 if qDeg < 2^34. A larger qDeg has an extended domain above 2^28 anyway.
     const uint64_t max = std::numeric_limits<uint64_t>::max();
-    if (info.qDeg > (max >> MAX_NBITS_EXT) - 2 || d.maxOpenings > d.n) {
+    if (info.qDeg > (max >> (MAX_NBITS_EXT + 2)) || d.maxOpenings > d.n) {
         throw FormatError(name + ": qDeg = " + std::to_string(info.qDeg) + " and |O|max = " +
                           std::to_string(d.maxOpenings) + " give a Q bound that does not fit in 64 bits");
     }
@@ -237,6 +238,23 @@ AirDegrees airDegrees(const PilfflonkInfo &info, const std::string &name) {
         throw FormatError(name + ": the extended domain has 2^" + std::to_string(d.nBitsExt) +
                           " points, and BN254's roots of unity allow at most 2^28 (spec A.1)");
     }
+
+    // The pieces of Q. maxQDegree < qDeg when it splits Q, so (m − 1)·qStride < qDeg·N < qCoefficients:
+    // no product overflows, and the last piece keeps N + 1 coefficients at least.
+    const uint64_t M = info.maxQDegree;
+    if (M == 0 || M >= info.qDeg) {
+        if (M != 0) {
+            throw FormatError(name + ": maxQDegree = " + std::to_string(M) + " does not split Q of qDeg = " +
+                              std::to_string(info.qDeg) + ", and then it is 0 (spec A.1)");
+        }
+        d.qStride = 0;
+        d.qPieceCoefficients = {d.qCoefficients};
+        return d;
+    }
+    const uint64_t m = (info.qDeg + M - 1) / M;
+    d.qStride = M * d.n;
+    d.qPieceCoefficients.assign(m - 1, d.qStride + 2);
+    d.qPieceCoefficients.push_back(d.qCoefficients - (m - 1) * d.qStride);
     return d;
 }
 
@@ -246,11 +264,6 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
     const PilfflonkInfo &info = pilfflonkInfo;
     auto fail = [&](const std::string &what) { failAir(name, what); };
 
-    // What this prover does not support yet: a split Q (plan R3, M33).
-    if (info.maxQDegree > 0 && info.qDeg > info.maxQDegree) {
-        fail("Q is split (maxQDegree = " + std::to_string(info.maxQDegree) + " < qDeg = " + std::to_string(info.qDeg) +
-             "), which this prover does not support yet (plan M33)");
-    }
     interpreter = std::make_unique<Expressions>(expressionsBin, info);
     airDegrees_ = airDegrees(info, name);
     const uint64_t N = airDegrees_.n;
@@ -266,10 +279,9 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
         }
     }
 
-    // The layout: each column committed once, Q (its one piece) alone in the last f, with k = 1.
+    // The layout: each column committed once.
     constPositions.assign(info.constPolsMap.size(), LayoutPosition{NOT_COMMITTED, 0});
     cmPositions.assign(info.cmPolsMap.size(), LayoutPosition{NOT_COMMITTED, 0});
-    uint64_t nQ = 0;
     for (uint64_t f = 0; f < info.layout.size(); ++f) {
         const LayoutEntry &entry = info.layout[f];
         std::vector<LayoutPosition> &positions = entry.stage == 0 ? constPositions : cmPositions;
@@ -282,25 +294,11 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
             positions[id] = LayoutPosition{f, j};
         }
         if (entry.stage == info.qStage()) {
-            if (entry.k != 1 || entry.offsets != std::vector<int64_t>{0}) {
-                fail("layout f" + std::to_string(f) + " holds Q: it must be Q alone (k = 1), opened at ξ");
-            }
-            if (entry.degree != airDegrees_.qCoefficients) {
-                fail("layout f" + std::to_string(f) + " holds Q with a degree of " + std::to_string(entry.degree) +
-                     ", not the bound of spec A.1, " + std::to_string(airDegrees_.qCoefficients));
-            }
-            qEntry = f;
-            ++nQ;
+            continue; // below, with the pieces of Q
         }
-    }
-    if (nQ != 1) {
-        fail("the layout has " + std::to_string(nQ) + " f of Q, and Q not split has one");
-    }
-    for (uint64_t f = 0; f < info.layout.size(); ++f) {
-        const LayoutEntry &entry = info.layout[f];
         // Its k columns fit in its bound: N coefficients for a fixed one, N + |O| + 1 for a committed
         // one (spec A.2), and so k·coefficients once packed (pack()'s max_j(k·deg p_j + j) + 1).
-        const uint64_t coefficients = entry.stage == info.qStage() ? airDegrees_.qCoefficients : N + blindLength(f);
+        const uint64_t coefficients = N + blindLength(f);
         if (entry.k > entry.degree / coefficients) {
             fail("layout f" + std::to_string(f) + " has a degree of " + std::to_string(entry.degree) + ", below the " +
                  std::to_string(entry.k) + " polynomials of " + std::to_string(coefficients) +
@@ -345,6 +343,51 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
         cmIdsByStage[p.stage][p.stagePos] = id;
     }
     nFixed = std::count_if(info.layout.begin(), info.layout.end(), [](const LayoutEntry &f) { return f.stage == 0; });
+
+    // The pieces of Q (spec A.1): Q0 … Q<m−1> at stagePos (and stageId) 0 … m − 1 of its stage, each
+    // packed once (the positions above), in f opened at ξ whose degree is A.2's cost max_j(k·c_j + j)
+    // of their pieces' bounds c_j, the one the setup gives them.
+    const std::vector<uint64_t> &pieceBounds = airDegrees_.qPieceCoefficients;
+    const std::vector<uint64_t> &pieces = cmIdsByStage[info.qStage()];
+    if (pieces.size() != pieceBounds.size()) {
+        fail("cmPolsMap has " + std::to_string(pieces.size()) + " pieces of Q, and Q is made of " +
+             std::to_string(pieceBounds.size()) + " (spec A.1)");
+    }
+    qPositions.assign(pieces.size(), LayoutPosition{NOT_COMMITTED, 0});
+    for (uint64_t i = 0; i < pieces.size(); ++i) {
+        const PolMapEntry &p = info.cmPolsMap[pieces[i]];
+        if (p.name != "Q" + std::to_string(i) || p.stageId != i || p.imPol) {
+            fail("cmPolsMap " + std::to_string(pieces[i]) + " (" + p.name + ") is at stagePos " + std::to_string(i) +
+                 " of Q's stage: it must be piece Q" + std::to_string(i) + ", of stageId " + std::to_string(i));
+        }
+        qPositions[i] = cmPositions[pieces[i]];
+        if (qPositions[i].f == NOT_COMMITTED) {
+            fail("the layout does not pack piece Q" + std::to_string(i) + " of Q");
+        }
+    }
+    for (uint64_t f = 0; f < info.layout.size(); ++f) {
+        const LayoutEntry &entry = info.layout[f];
+        if (entry.stage != info.qStage()) {
+            continue;
+        }
+        if (entry.offsets != std::vector<int64_t>{0}) {
+            fail("layout f" + std::to_string(f) + " holds Q, which is opened at ξ only");
+        }
+        uint64_t degree = 0;
+        for (uint64_t j = 0; j < entry.k; ++j) {
+            const uint64_t bound = pieceBounds[info.cmPolsMap[entry.pols[j].id].stagePos];
+            if (bound > (std::numeric_limits<uint64_t>::max() - j) / entry.k) {
+                fail("layout f" + std::to_string(f) + " packs " + std::to_string(entry.k) +
+                     " pieces of Q, whose degree does not fit in 64 bits");
+            }
+            degree = std::max(degree, bound * entry.k + j);
+        }
+        if (entry.degree != degree) {
+            fail("layout f" + std::to_string(f) + " holds " + (pieceBounds.size() > 1 ? "pieces of Q" : "Q") +
+                 " with a degree of " + std::to_string(entry.degree) + ", not the bound of spec A.1, " +
+                 std::to_string(degree));
+        }
+    }
 
     // What the code reads: the columns of the stages computed before it, and only committed ones for
     // Q, whose columns are extended from their committed polynomials.

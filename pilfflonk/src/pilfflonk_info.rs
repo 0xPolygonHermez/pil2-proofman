@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::{invalid, PilfflonkResult};
 use crate::global_info::MAX_NBITS;
 use crate::json::JsonFile;
-use crate::layout::{q_pieces, Layout, LayoutCheck};
+use crate::layout::{q_pieces, split_max_q_degree, Layout, LayoutCheck};
+use crate::names::{column_name, q_piece_name};
 
 /// `<air>.pilfflonkinfo.json`. Its fields keep the meaning they have in `starkinfo.json`, with
 /// every dimension 1: BN254 has no extension field.
@@ -28,7 +29,8 @@ pub struct PilfflonkInfo {
     pub n_bits: u64,
     pub n_stages: u64,
     pub n_constants: u64,
-    /// The committed columns of stages `1 … nStages`, and the pieces of `Q` as stage `nStages + 1`.
+    /// The committed columns of stages `1 … nStages`, and the pieces of `Q` as stage `nStages + 1`:
+    /// `Q0 … Q<m−1>` (one, `Q0`, if `Q` is not split), piece `i` at stageId and stagePos `i`.
     pub cm_pols_map: Vec<PolMapEntry>,
     /// The fixed columns, stage 0.
     pub const_pols_map: Vec<PolMapEntry>,
@@ -46,7 +48,8 @@ pub struct PilfflonkInfo {
     pub q_deg: u64,
     /// Always 1.
     pub q_dim: u64,
-    /// 0 when `Q` is not split (A.1).
+    /// `M`: `Q` is split in `⌈qDeg/M⌉` pieces (A.1). 0 when it is not, and only then
+    /// (`layout::split_max_q_degree`).
     pub max_q_degree: u64,
     /// The expression of the constraint polynomial.
     pub c_exp_id: u64,
@@ -322,6 +325,13 @@ impl JsonFile for PilfflonkInfo {
             }
         }
 
+        if split_max_q_degree(self.q_deg, self.max_q_degree) != self.max_q_degree {
+            return invalid!(
+                "maxQDegree is {} and qDeg {}: Q is not split, and then maxQDegree is 0 (A.1)",
+                self.max_q_degree,
+                self.q_deg
+            );
+        }
         self.layout.check(&LayoutCheck {
             n_bits: self.n_bits,
             q_stage: self.q_stage(),
@@ -329,12 +339,23 @@ impl JsonFile for PilfflonkInfo {
             ev_map: &self.ev_map,
             pol_maps: Some((&self.const_pols_map, &self.cm_pols_map)),
         })?;
-        let q_columns = self.cm_pols_map.iter().filter(|p| p.stage == self.q_stage()).count() as u64;
-        if q_columns != q_pieces(self.q_deg, self.max_q_degree) {
-            return invalid!(
-                "cmPolsMap has {q_columns} pieces of Q, and Q is made of {}",
-                q_pieces(self.q_deg, self.max_q_degree)
-            );
+        // The pieces of Q are Q0 … Q<m−1>, in this order: piece i, the one the verifier multiplies by
+        // ξ^(i·M·N) (A.1), is the one named Q<i>, at stageId and stagePos i.
+        let n_pieces = q_pieces(self.q_deg, self.max_q_degree);
+        let pieces: Vec<&PolMapEntry> = self.cm_pols_map.iter().filter(|p| p.stage == self.q_stage()).collect();
+        if pieces.len() as u64 != n_pieces {
+            return invalid!("cmPolsMap has {} pieces of Q, and Q is made of {n_pieces}", pieces.len());
+        }
+        for (i, p) in pieces.iter().enumerate() {
+            let i = i as u64;
+            if p.name != q_piece_name(i) || p.stage_id != i || p.stage_pos != i || !p.lengths.is_empty() || p.im_pol {
+                return invalid!(
+                    "cmPolsMap[{}] ({}) is piece {i} of Q, which is {}, of stageId and stagePos {i}",
+                    p.pols_map_id,
+                    column_name(&p.name, &p.lengths),
+                    q_piece_name(i)
+                );
+            }
         }
         Ok(())
     }

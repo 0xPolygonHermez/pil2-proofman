@@ -10,7 +10,7 @@ use pilfflonk_setup::air_info::{air_setup, q_piece_name, AirRef, AirSetup};
 use pilfflonk_setup::global_info::global_info;
 use pilfflonk_setup::grouping::GroupingError;
 use pilfflonk_setup::layout::{
-    committed_pols, ev_map_of, max_degree, unpacked_layout, Committed, CommittedPol, Degrees, Packing,
+    committed_pols, ev_map_of, max_degree, unpacked_layout, Committed, CommittedPol, Degrees, Packing, QShape, QSplit,
 };
 use pilfflonk_setup::passes::run_passes;
 use pilfflonk_setup::validate::validate;
@@ -23,12 +23,22 @@ use proofman_pilfflonk::{
 use crate::common::*;
 
 /// The passes and [`air_setup`] on the one AIR of `pilout`, searching degrees 2 to `max_degree`,
-/// laid out as `packing` says.
-fn setup_air_with(pilout: &pb::PilOut, max_degree: u64, packing: Packing) -> Result<AirSetup, SetupError> {
+/// laid out as `packing` says, with `Q` split by `--max-q-degree max_q_degree`.
+fn setup_air_split(
+    pilout: &pb::PilOut,
+    max_degree: u64,
+    packing: Packing,
+    max_q_degree: u64,
+) -> Result<AirSetup, SetupError> {
     let air = validate(pilout)?;
     let result = run_passes(pilout, air, max_degree)?;
     let name = air.air.name.clone().unwrap();
-    air_setup(&result, AirRef { name: &name, airgroup_id: 0, air_id: 0 }, air.air, 0, packing)
+    air_setup(&result, AirRef { name: &name, airgroup_id: 0, air_id: 0 }, air.air, max_q_degree, packing)
+}
+
+/// [`setup_air_split`] with `Q` whole.
+fn setup_air_with(pilout: &pb::PilOut, max_degree: u64, packing: Packing) -> Result<AirSetup, SetupError> {
+    setup_air_split(pilout, max_degree, packing, 0)
 }
 
 /// [`setup_air_with`] unpacked, `--no-packing`.
@@ -286,9 +296,14 @@ fn ev(pol_type: PolType, id: u64, prime: i64) -> EvMapEntry {
     EvMapEntry { pol_type, id, prime, opening_pos: 0 }
 }
 
+/// `Q` of stage 2 and degree `q_deg`, whole.
+fn whole(q_deg: u64) -> QShape {
+    QShape { stage: 2, q_deg, max_q_degree: 0 }
+}
+
 fn committed(cm: &[PolMapEntry], ev_map: &[EvMapEntry]) -> Result<Committed, SetupError> {
     let consts = [pol(0, "F0", 0), pol(0, "F1", 1)];
-    committed_pols(3, 2, 2, &consts, cm, ev_map, Packing::Unpacked)
+    committed_pols(3, whole(2), &consts, cm, ev_map, Packing::Unpacked)
 }
 
 #[test]
@@ -349,8 +364,8 @@ fn what_the_layout_cannot_hold_is_refused() {
     passes_output(committed(&cm, &[ev(PolType::Cm, 2, 0)]), "not in its pol map");
     passes_output(committed(&cm, &[ev(PolType::Const, 2, 0)]), "not in its pol map");
     // Q not split is one piece.
-    passes_output(committed(&cm[..1], &[]), "0 pieces");
-    passes_output(committed(&[pol(1, "a", 0), pol(2, "Q0", 1), pol(2, "Q1", 2)], &[]), "2 pieces");
+    passes_output(committed(&cm[..1], &[]), "Q is made of 1 pieces (A.1), and cmPolsMap has 0");
+    passes_output(committed(&[pol(1, "a", 0), pol(2, "Q0", 1), pol(2, "Q1", 2)], &[]), "and cmPolsMap has 2");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -445,8 +460,8 @@ fn the_bounds_are_those_of_the_fused_offsets() {
     let consts = [pol(0, "F0", 0)];
     let cm = [pol(1, "a", 0), pol(1, "b", 1), pol(2, "Q0", 2)];
     let ev_map = [ev(PolType::Const, 0, 0), ev(PolType::Cm, 0, 0), ev(PolType::Cm, 1, 1)];
-    let unpacked = committed_pols(3, 2, 2, &consts, &cm, &ev_map, Packing::Unpacked).unwrap();
-    let grouped = committed_pols(3, 2, 2, &consts, &cm, &ev_map, Packing::Grouped { extra_muls: 0 }).unwrap();
+    let unpacked = committed_pols(3, whole(2), &consts, &cm, &ev_map, Packing::Unpacked).unwrap();
+    let grouped = committed_pols(3, whole(2), &consts, &cm, &ev_map, Packing::Grouped { extra_muls: 0 }).unwrap();
     // |O|_max 1: Q has 2·8 + 3·1 + 1 = 20 coefficients; fused, |O|_max 2: 2·8 + 3·2 + 1 = 23.
     assert_eq!(unpacked.degrees, Degrees { n_bits: 3, max_openings: 1, q_coefficients: 20, n_bits_ext: 5 });
     assert_eq!(grouped.degrees, Degrees { n_bits: 3, max_openings: 2, q_coefficients: 23, n_bits_ext: 5 });
@@ -464,7 +479,7 @@ fn the_bounds_are_those_of_the_fused_offsets() {
     assert_eq!(grouped.pols[3].coefficients, 23);
 
     // What the grouping refuses is an error of the setup, with the grouping's message.
-    let err = committed_pols(3, 2, 2, &consts, &cm, &ev_map, Packing::Grouped { extra_muls: 2 }).unwrap_err();
+    let err = committed_pols(3, whole(2), &consts, &cm, &ev_map, Packing::Grouped { extra_muls: 2 }).unwrap_err();
     assert!(
         matches!(&err, SetupError::Grouping(GroupingError::TooManyExtraMuls { extra_muls: 2, n_pols: 4, n_groups: 3 })),
         "{err}"
@@ -503,4 +518,180 @@ fn the_pairs_of_the_fusions_are_appended_to_the_ev_map() {
     // An offset that is not an opening point of the AIR.
     let err = ev_map_of(&passes, &layout, 2, &[-1, 0]).unwrap_err();
     assert!(matches!(&err, SetupError::PassesOutput(m) if m.contains("at offset 1")), "{err}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The pieces of Q (A.1, A.3, plan M33)
+// ---------------------------------------------------------------------------------------------
+
+/// `Q` of stage 2 and degree `q_deg`, split by `--max-q-degree max_q_degree`.
+fn split(q_deg: u64, max_q_degree: u64) -> QShape {
+    QShape { stage: 2, q_deg, max_q_degree }
+}
+
+/// `a` at `{0, 1}` and `c` at `{0}` of stage 1, `F1` at `{0}`, and the pieces of `Q` given, of stage
+/// 2, at ids 2, 3, …
+fn with_pieces(pieces: &[&str]) -> (Vec<PolMapEntry>, Vec<EvMapEntry>) {
+    let mut cm = vec![pol(1, "a", 0), pol(1, "c", 1)];
+    cm.extend(pieces.iter().enumerate().map(|(i, name)| pol(2, name, 2 + i as u64)));
+    let ev_map = vec![ev(PolType::Const, 1, 0), ev(PolType::Cm, 0, 0), ev(PolType::Cm, 1, 0), ev(PolType::Cm, 0, 1)];
+    (cm, ev_map)
+}
+
+/// `qDeg = 3` split by `M = 1` on `N = 8`, `|O|_max = 2`: `Q` has `3·8 + 4·2 + 1 = 33` coefficients,
+/// and its three pieces `8 + 2`, `8 + 2` and `33 − 2·8 = 17`, which is what the grouping takes them
+/// for. Unpacked, an `f` each, `Q0` first. Grouped, they are a group of their own (A.2, rule 2), in
+/// reverse, `Q2, Q1, Q0` (rule 4): one `f` of `k = 3` with no extra mul, and with one, the split of
+/// that group of least cost, `[Q2]` and `[Q1, Q0]` (rule 3), as the old system splits it
+/// (`extraMuls` may split every group, `Q`'s too).
+#[test]
+fn the_pieces_of_q_have_the_bounds_of_a1_and_a_group_of_their_own() {
+    let consts = [pol(0, "F0", 0), pol(0, "F1", 1)];
+    let (cm, ev_map) = with_pieces(&["Q0", "Q1", "Q2"]);
+    let unpacked = committed_pols(3, split(3, 1), &consts, &cm, &ev_map, Packing::Unpacked).unwrap();
+    assert_eq!(unpacked.degrees, Degrees { n_bits: 3, max_openings: 2, q_coefficients: 33, n_bits_ext: 6 });
+    assert_eq!(unpacked.q_split, QSplit { stride: 8, coefficients: vec![10, 10, 17] });
+    let pieces: Vec<(u64, &str, u64)> =
+        unpacked.pols.iter().filter(|p| p.stage == 2).map(|p| (p.id, p.name.as_str(), p.coefficients)).collect();
+    assert_eq!(pieces, [(2, "Q0", 10), (3, "Q1", 10), (4, "Q2", 17)]);
+    assert_eq!(
+        f_shapes(&unpacked.layout),
+        [
+            (0, vec!["F1"], 1, vec![0], 8),
+            (1, vec!["a"], 1, vec![0, 1], 11),
+            (1, vec!["c"], 1, vec![0], 10),
+            (2, vec!["Q0"], 1, vec![0], 10),
+            (2, vec!["Q1"], 1, vec![0], 10),
+            (2, vec!["Q2"], 1, vec![0], 17),
+        ]
+    );
+
+    // Grouped: c fused to {0, 1} with a (rule 1), which leaves |O|_max, and so Q, as they were.
+    let grouped = committed_pols(3, split(3, 1), &consts, &cm, &ev_map, Packing::Grouped { extra_muls: 0 }).unwrap();
+    assert_eq!((grouped.degrees, &grouped.q_split), (unpacked.degrees, &unpacked.q_split));
+    assert_eq!(
+        f_shapes(&grouped.layout),
+        [
+            (0, vec!["F1"], 1, vec![0], 8),
+            (1, vec!["c", "a"], 2, vec![0, 1], 11 * 2 + 1),
+            (2, vec!["Q2", "Q1", "Q0"], 3, vec![0], 17 * 3),
+        ]
+    );
+    assert_eq!(grouped.layout.power_w().unwrap(), 6);
+    // One extra mul: splitting the pieces' group ([23, 21, 8]) is better than splitting a and c's
+    // ([51, 11, 8]).
+    let one = committed_pols(3, split(3, 1), &consts, &cm, &ev_map, Packing::Grouped { extra_muls: 1 }).unwrap();
+    assert_eq!(
+        f_shapes(&one.layout),
+        [
+            (0, vec!["F1"], 1, vec![0], 8),
+            (1, vec!["c", "a"], 2, vec![0, 1], 23),
+            (2, vec!["Q2"], 1, vec![0], 17),
+            (2, vec!["Q1", "Q0"], 2, vec![0], 10 * 2 + 1),
+        ]
+    );
+
+    // M = 2: two pieces, 16 + 2 and 33 − 16.
+    let (cm, ev_map) = with_pieces(&["Q0", "Q1"]);
+    let two = committed_pols(3, split(3, 2), &consts, &cm, &ev_map, Packing::Unpacked).unwrap();
+    assert_eq!(two.q_split, QSplit { stride: 16, coefficients: vec![18, 17] });
+    assert_eq!(max_degree(&two.layout), 18);
+}
+
+/// What the pieces of `Q` must be: as many as `qDeg` and `maxQDegree` make, `Q0 … Q<m−1>` in this
+/// order; and as many as the grouping can split in chunks of `kN | r − 1`: five pieces are no
+/// chunk, and need an extra mul.
+#[test]
+fn the_pieces_of_q_are_refused_unless_they_are_those_of_a1() {
+    let consts = [pol(0, "F0", 0), pol(0, "F1", 1)];
+    let passes_output = |r: Result<Committed, SetupError>, what: &str| match r {
+        Err(SetupError::PassesOutput(m)) => assert!(m.contains(what), "{m}"),
+        other => panic!("{other:?}"),
+    };
+    let (cm, ev_map) = with_pieces(&["Q0", "Q1"]);
+    passes_output(
+        committed_pols(3, split(3, 1), &consts, &cm, &ev_map, Packing::Unpacked),
+        "Q is made of 3 pieces (A.1), and cmPolsMap has 2",
+    );
+    let (cm, ev_map) = with_pieces(&["Q0", "Q2", "Q1"]);
+    passes_output(
+        committed_pols(3, split(3, 1), &consts, &cm, &ev_map, Packing::Unpacked),
+        "piece 1 of Q in cmPolsMap is Q2, not Q1",
+    );
+    // An evaluation of a piece, which the proof carries apart from the evMap.
+    let (cm, mut ev_map) = with_pieces(&["Q0", "Q1", "Q2"]);
+    ev_map.push(ev(PolType::Cm, 3, 0));
+    passes_output(committed_pols(3, split(3, 1), &consts, &cm, &ev_map, Packing::Unpacked), "a piece of Q");
+
+    let (cm, ev_map) = with_pieces(&["Q0", "Q1", "Q2", "Q3", "Q4"]);
+    let err = committed_pols(3, split(5, 1), &consts, &cm, &ev_map, Packing::Grouped { extra_muls: 0 }).unwrap_err();
+    assert!(matches!(&err, SetupError::Grouping(GroupingError::NoValidPartition { .. })), "{err}");
+    assert!(err.to_string().contains("a larger --extra-muls"), "{err}");
+    let one = committed_pols(3, split(5, 1), &consts, &cm, &ev_map, Packing::Grouped { extra_muls: 1 }).unwrap();
+    let q_ks: Vec<u64> = one.layout.0.iter().filter(|f| f.stage == 2).map(|f| f.k).collect();
+    assert_eq!(q_ks.iter().sum::<u64>(), 5);
+    assert!(q_ks.iter().all(|&k| k != 5), "{q_ks:?}");
+}
+
+/// Two constraints of degree 3, `a³ − b` and `b³ − a`, on `2^4` rows: an im pol would bring each
+/// down to degree 2 at the cost of the degree it saves, so the search keeps them, with `qDeg = 2`.
+fn cubic_pilout() -> pb::PilOut {
+    let mut pilout = offsets_pilout();
+    let air = the_air(&mut pilout);
+    air.expressions = vec![
+        mul(witness(0, 0), witness(0, 0)), // 0: a²
+        mul(exp(0), witness(0, 0)),        // 1: a³
+        sub(exp(1), witness(1, 0)),        // 2
+        mul(witness(1, 0), witness(1, 0)), // 3: b²
+        mul(exp(3), witness(1, 0)),        // 4: b³
+        sub(exp(4), witness(0, 0)),        // 5
+    ];
+    air.constraints = vec![every_row(2), every_row(5)];
+    pilout
+}
+
+/// The pilfflonkinfo of `Q` split (`--max-q-degree 1` and `qDeg = 2`): `maxQDegree = 1`, the pieces
+/// `Q0` and `Q1` at the end of `cmPolsMap`, at stageId and stagePos 0 and 1, and in the layout, of
+/// `16 + 2` and `2·16 + 3·1 + 1 − 16 = 20` coefficients; the proof names their evaluations, after the
+/// columns', in the order of the layout. A `--max-q-degree` of `qDeg` or more does not split `Q`, and
+/// the pilfflonkinfo says `maxQDegree = 0`, whatever the option was.
+#[test]
+fn the_pilfflonkinfo_has_the_pieces_of_a_split_q() {
+    let pilout = cubic_pilout();
+    let whole = setup_air(&pilout, 9).unwrap();
+    assert_eq!((whole.info.q_deg, whole.info.cm_pols_map.iter().filter(|p| p.im_pol).count()), (2, 0));
+    for max_q_degree in [2, 3, 100] {
+        let AirSetup { info, .. } = setup_air_split(&pilout, 9, Packing::Unpacked, max_q_degree).unwrap();
+        assert_eq!(info, whole.info, "--max-q-degree {max_q_degree}");
+        assert_eq!(info.max_q_degree, 0);
+    }
+
+    let params = SetupParams { max_constraint_degree: 9, extra_muls: 0, max_q_degree: 1, packing: false };
+    let gi = global_info(&pilout, params).unwrap();
+    for (packing, q_fs) in [
+        (Packing::Unpacked, vec![(vec!["Q0"], 18), (vec!["Q1"], 20)]),
+        (Packing::Grouped { extra_muls: 0 }, vec![(vec!["Q1", "Q0"], 20 * 2)]),
+        (Packing::Grouped { extra_muls: 2 }, vec![(vec!["Q1"], 20), (vec!["Q0"], 18)]),
+    ] {
+        let AirSetup { info, committed } = setup_air_split(&pilout, 9, packing, 1).unwrap();
+        assert_eq!((info.q_deg, info.max_q_degree), (2, 1), "{packing:?}");
+        assert_eq!(committed.q_split, QSplit { stride: 16, coefficients: vec![18, 20] });
+        assert_eq!(info.q_split().unwrap(), committed.q_split, "the prover derives the same pieces");
+        let pieces: Vec<(&str, u64, u64)> = info
+            .cm_pols_map
+            .iter()
+            .filter(|p| p.stage == 2)
+            .map(|p| (p.name.as_str(), p.stage_id, p.stage_pos))
+            .collect();
+        assert_eq!(pieces, [("Q0", 0, 0), ("Q1", 1, 1)]);
+        assert_eq!(info.map_sections_n.get("cm2"), Some(&2));
+        let shapes: Vec<(Vec<&str>, u64)> =
+            f_shapes(&info.layout).into_iter().filter(|f| f.0 == 2).map(|f| (f.1, f.4)).collect();
+        assert_eq!(shapes, q_fs, "{packing:?}");
+        // The proof's evaluations end with the pieces', in the order of the layout.
+        let names = ProofNames::new(&gi, &[&info]).unwrap();
+        let order: Vec<&str> = q_fs.iter().flat_map(|(pols, _)| pols.iter().copied()).collect();
+        assert_eq!(names.evaluations()[names.evaluations().len() - 2..], order[..], "{packing:?}");
+        check_readers(&pilout, &info);
+    }
 }

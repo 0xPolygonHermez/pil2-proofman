@@ -15,10 +15,11 @@
 //!    packing, MSM); absorb the commitments of its f in the global order of A.5 (the layout's), then
 //!    its air values, airgroup values and proof values of stage `s` (none in v1), and if
 //!    `s < nStages` squeeze the `numChallenges[s]` challenges of stage `s + 1`, one per squeeze;
-//! 3. squeeze `std_vc`; the C++ commits `Q`; absorb its commitments; squeeze `xiSeed`;
+//! 3. squeeze `std_vc`; the C++ commits `Q`, or its pieces if it is split (A.1, A.3); absorb the
+//!    commitments of its f; squeeze `xiSeed`;
 //! 4. the C++ evaluates every f at the roots of `ξ·ω^s`, `ξ = xiSeed^powerW`; absorb the evaluations
-//!    of the proof, the fixed columns' then the others', each in the order of the evMap (no pieces of
-//!    `Q`: it is not split);
+//!    of the proof, the fixed columns' then the others', each in the order of the evMap, and then, if
+//!    `Q` is split, its pieces' `Q_i(ξ)`, in the order of the layout;
 //! 5. the C++ opens: squeezes `α_S`, absorbs `[W]₁`, squeezes `y`, and gives `[W']₁`, `inv` and
 //!    `invZh`.
 //!
@@ -284,7 +285,8 @@ pub struct ProofChallenges {
     pub stages: Vec<Vec<FrBytes>>,
     pub std_vc: FrBytes,
     pub xi_seed: FrBytes,
-    /// `Q(ξ)` of the instance, the value the verifier computes from the evaluations (A.1).
+    /// `Q(ξ)` of the instance, the value the verifier computes from the evaluations (A.1): if `Q` is
+    /// split, `Σ_i ξ^(i·M·N)·Q_i(ξ)` of the proof's `Q_i(ξ)`, which the verifier checks it against.
     pub q_at_xi: FrBytes,
 }
 

@@ -12,7 +12,7 @@ use crate::error::{invalid, PilfflonkResult};
 use crate::field::{Digest, G1Affine, G2Affine};
 use crate::global_info::{FORMAT_VERSION, MAX_NBITS};
 use crate::json::{canonical_json, serialize_sorted, JsonFile};
-use crate::layout::{q_pieces, Layout, LayoutCheck};
+use crate::layout::{q_pieces, split_max_q_degree, Layout, LayoutCheck};
 use crate::pilfflonk_info::{Boundary, EvMapEntry, PilfflonkInfo};
 use crate::q_verifier::{check_q_verifier, QVerifierShape};
 use crate::tag::{Curve, Protocol};
@@ -58,6 +58,8 @@ pub struct Vkey {
     #[serde(flatten)]
     pub fixed_commitments: FixedCommitments,
     pub q_deg: u64,
+    /// `M`, 0 when `Q` is not split and only then (A.1): split, `Q(ξ) = Σ_i ξ^(i·M·N)·Q_i(ξ)` with
+    /// the proof's `Q_i(ξ)`, and the pieces are the layout's `Q0 … Q<m−1>`.
     pub max_q_degree: u64,
     /// The `qVerifier` of `<air>.verifierinfo.json`, as `pil-info` writes it (the STARK's format),
     /// copied as it is. This crate does not run it, but checks that the verifier can
@@ -199,6 +201,13 @@ impl JsonFile for Vkey {
         let q_stage = self.layout.0.last().map_or(0, |f| f.stage);
         if q_stage == 0 {
             return invalid!("the layout has no f for Q");
+        }
+        if split_max_q_degree(self.q_deg, self.max_q_degree) != self.max_q_degree {
+            return invalid!(
+                "maxQDegree is {} and qDeg {}: Q is not split, and then maxQDegree is 0 (A.1)",
+                self.max_q_degree,
+                self.q_deg
+            );
         }
         self.layout.check(&LayoutCheck {
             n_bits: self.power,

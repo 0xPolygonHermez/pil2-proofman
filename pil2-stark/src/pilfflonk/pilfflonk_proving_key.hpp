@@ -45,15 +45,26 @@ struct LayoutPosition {
 };
 
 // The degrees of A.1 for an AIR, derived from its pilfflonkinfo as the setup derives them
-// (setup/pilfflonk/src/layout.rs; pilfflonk/src/degrees.rs in Rust): they are not stored.
+// (setup/pilfflonk/src/layout.rs; pilfflonk/src/degrees.rs in Rust, Degrees and QSplit): they are not
+// stored.
 struct AirDegrees {
     uint64_t n;           // N = 2^nBits
     uint64_t maxOpenings; // |O|_max: the most offsets of an f of a committed stage (1 … nStages)
     uint64_t qCoefficients; // Q's bound, qDeg·N + (qDeg+1)·|O|_max + 1
     uint64_t nBitsExt;      // the smallest power of two >= Q's bound and >= N + |O|_max + 1
+    // The pieces Q_0 … Q_{m−1} Q is committed as (spec A.1, A.3), Q(X) = Σ_i X^(i·qStride)·Q_i(X): m =
+    // ⌈qDeg/maxQDegree⌉ if 0 < maxQDegree < qDeg, and otherwise 1, Q itself, with qStride 0. Split,
+    // qStride = maxQDegree·N, and piece i holds the coefficients i·qStride … (i+1)·qStride − 1 of Q (the
+    // last one those up to Q's bound), and each boundary two random ones that cancel: b0·X^qStride +
+    // b1·X^(qStride+1) added to the piece below it, b0 + b1·X subtracted from the one above.
+    uint64_t qStride;
+    // The bound on the coefficients of each piece: qStride + 2 but the last, qCoefficients −
+    // (m−1)·qStride.
+    std::vector<uint64_t> qPieceCoefficients;
 };
 
-// Throws FormatError, naming `name`, if nBitsExt exceeds 28.
+// Throws FormatError, naming `name`, if nBitsExt exceeds 28, or maxQDegree is not 0 while it does not
+// split Q (maxQDegree >= qDeg: the setup writes 0 then).
 AirDegrees airDegrees(const PilfflonkInfo &info, const std::string &name);
 
 // A column an expression's code reads: an operand (type, arg1) with bin.types().isColumn(type),
@@ -76,8 +87,9 @@ std::vector<ColumnRead> columnsRead(const ExpressionsBin &bin, uint64_t expId);
 //
 // Checks, besides what each reader checks: the files agree (the .bin's stages and the .const's size
 // are the pilfflonkinfo's, and the rows of the .bin's constraints lie in the trace), and what this
-// prover supports: Q not split, and a layout that packs every committed column once, Q in an f of
-// its own with k = 1.
+// prover supports: a layout that packs every committed column once, and every piece of Q once, the
+// pieces Q0 … Q<m−1> of cmPolsMap (Q0 alone if Q is not split, piece i at stageId and stagePos i), in f
+// of their own opened at ξ, each f of the degree the pieces' bounds give it (A.2's cost).
 class AirKey {
 public:
     // From the files' contents. `name` is what the errors call the AIR. Throws FormatError.
@@ -112,7 +124,8 @@ public:
     static constexpr uint64_t NOT_COMMITTED = UINT64_MAX;
 
     // The coefficients of b(X) of the blinding of every column of f (spec A.3): |O_f| + 1 for an f
-    // of a committed stage, 0 for a fixed one and for Q's (not split).
+    // of a committed stage, 0 for a fixed one and for Q's (whose pieces, if it is split, are blinded
+    // at their boundaries instead: AirDegrees).
     uint64_t blindLength(uint64_t f) const;
 
     // The witness of an instance: the stagePos in stage 1 of each of its C columns, column c being
@@ -138,8 +151,10 @@ public:
     // coefficients than `srs` has powers (a ProvingKey checks that its SRS has enough).
     std::vector<G1Point> fixedCommitments(const Srs &srs) const;
 
-    // The layout entry of Q (not split).
-    uint64_t qF() const { return qEntry; }
+    // The number of pieces of Q, m (1 if it is not split), and where the layout commits piece i: its
+    // f, of stage nStages + 1, and its index j in it.
+    uint64_t nQPieces() const { return qPositions.size(); }
+    const LayoutPosition &qPosition(uint64_t piece) const { return qPositions.at(piece); }
 
 private:
     std::string airName;
@@ -157,7 +172,7 @@ private:
     std::vector<std::vector<uint64_t>> cmIdsByStage;
     std::vector<ColumnRead> qColumns;
     uint64_t nFixed = 0;
-    uint64_t qEntry = 0;
+    std::vector<LayoutPosition> qPositions; // by piece
 };
 
 // The proving key of a proof (spec §4.4, step 1; §4.2.6's provingKey/): the globalInfo, the SRS and

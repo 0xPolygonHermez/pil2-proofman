@@ -287,10 +287,20 @@ fn it_writes_the_proving_key_of_a_pilout() {
     assert_eq!(grouped_info.layout, info.layout);
     assert!(gi.setup_params.packing);
 
+    // Every --max-q-degree is one (plan M33): qDeg = 0 is not split by 2, and the key is that of Q
+    // whole, maxQDegree = 0; the globalInfo records the option.
+    let whole = dir.file("max_q_degree");
+    let args_whole = ["setup-pilfflonk", "-a", path(&pilout_path), "-b", path(&whole), "--powers-of-tau", path(&ptau)];
+    let options = ["--no-packing", "--max-constraint-degree", "4", "--extra-muls", "0", "--max-q-degree", "2"];
+    let out = proofman_setup(&[&args_whole[..], &options[..]].concat());
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let (whole_gi, whole_info, _) = check_proving_key(&whole.join("provingKey"));
+    assert_eq!((whole_info.max_q_degree, whole_gi.setup_params.max_q_degree), (0, 2));
+    assert_eq!(whole_info, info);
+
     // What the setup cannot do fails with the reason, and a non-zero status.
     for (extra, expected) in [
         (&[][..], "so at most 0 extra muls (A.2, rule 3): lower --extra-muls"),
-        (&["--no-packing", "--max-q-degree", "2"][..], "--max-q-degree 2"),
         (&["--no-packing", "--max-constraint-degree", "1"][..], "--max-constraint-degree 1"),
     ] {
         let out = proofman_setup(&[&args[..], extra].concat());

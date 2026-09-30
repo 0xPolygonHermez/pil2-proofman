@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{invalid, PilfflonkResult};
 use crate::field::r;
 use crate::global_info::MAX_NBITS;
-use crate::names::column_name;
+use crate::names::{column_name, q_piece_name};
 use crate::pilfflonk_info::{EvMapEntry, PolMapEntry, PolType};
 
 /// The `f_i` of an AIR, in order: by ascending stage, the fixed ones (stage 0) first, and `Q`'s
@@ -72,6 +72,18 @@ pub fn q_pieces(q_deg: u64, max_q_degree: u64) -> u64 {
     }
 }
 
+/// The `maxQDegree` a pilfflonkinfo and a vkey hold for `--max-q-degree max_q_degree` and `Q` of
+/// degree `q_deg`: `max_q_degree` if it splits `Q` (A.1), and 0 if it does not, as the old system's
+/// setup (`fflonk_shkey.js:162-163`). So `maxQDegree > 0` if and only if `Q` is split, and a key of
+/// `Q` whole is the same whatever the option was (the globalInfo keeps the option).
+pub fn split_max_q_degree(q_deg: u64, max_q_degree: u64) -> u64 {
+    if q_pieces(q_deg, max_q_degree) > 1 {
+        max_q_degree
+    } else {
+        0
+    }
+}
+
 /// Whether `k·2^n_bits` divides `r - 1`: `k` is a valid factor of an `f_i` of an AIR of `2^n_bits`
 /// rows (A.2, rule 3), so the roots of A.2's rule 5 exist.
 pub fn is_valid_k(k: u64, n_bits: u64) -> bool {
@@ -122,6 +134,7 @@ impl Layout {
         let mut packed = BTreeSet::new();
         let mut opened = BTreeSet::new();
         let mut n_q = 0u64;
+        let mut q_names = BTreeSet::new();
         for (i, f) in self.0.iter().enumerate() {
             if f.stage < previous_stage || f.stage > c.q_stage {
                 return invalid!(
@@ -184,7 +197,9 @@ impl Layout {
                         );
                     }
                 }
-                if !is_q {
+                if is_q {
+                    q_names.insert(pol.name.clone());
+                } else {
                     for &offset in &f.offsets {
                         opened.insert((pol_type, pol.id, offset));
                     }
@@ -193,6 +208,12 @@ impl Layout {
         }
         if n_q != c.q_pieces {
             return invalid!("the layout packs {n_q} polynomials of Q, and Q is made of {}", c.q_pieces);
+        }
+        // Split, piece i of Q, the one multiplied by X^(i·M·N) (A.1), is named Q<i>: the verifier, which
+        // has no pol maps, knows the pieces by their names (whole, it computes Q(ξ) and reads no name).
+        let expected: BTreeSet<String> = (0..c.q_pieces).map(q_piece_name).collect();
+        if c.q_pieces > 1 && q_names != expected {
+            return invalid!("the pieces of Q in the layout are named {q_names:?}, not {expected:?} (A.6)");
         }
 
         // Every evaluation of the proof is opened by SHPLONK, and SHPLONK opens every polynomial of
@@ -253,5 +274,17 @@ mod tests {
         assert_eq!(q_pieces(3, 4), 1);
         assert_eq!(q_pieces(4, 3), 2);
         assert_eq!(q_pieces(7, 2), 4);
+        assert_eq!((q_pieces(3, 1), q_pieces(3, 2)), (3, 2));
+        assert_eq!(q_pieces(0, 1), 1);
+    }
+
+    #[test]
+    fn max_q_degree_is_0_unless_it_splits_q() {
+        assert_eq!(split_max_q_degree(3, 0), 0);
+        assert_eq!(split_max_q_degree(3, 3), 0);
+        assert_eq!(split_max_q_degree(3, 7), 0);
+        assert_eq!(split_max_q_degree(0, 1), 0);
+        assert_eq!(split_max_q_degree(3, 1), 1);
+        assert_eq!(split_max_q_degree(3, 2), 2);
     }
 }

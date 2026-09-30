@@ -9,7 +9,7 @@
 //    3. if s < nStages, squeeze the numChallenges[s] challenges of stage s + 1, one per call;
 // 3. squeeze std_vc; absorb the commitments of Q; squeeze xiSeed (std_xi);
 // 4. absorb the evaluations: the fixed columns', then the others', each in the order of the evMap;
-//    then the pieces Q_i(ξ) if Q is split;
+//    then the pieces Q_i(ξ) if Q is split, in the order of the layout (vk.qPieceNames);
 // 5. squeeze α_S; absorb [W]₁; squeeze y.
 //
 // The fixed commitments are not absorbed: the digest binds them, with the rest of the vkey.

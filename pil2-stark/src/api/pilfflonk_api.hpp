@@ -172,7 +172,7 @@ extern "C" {
     // transcript absorbs, is the orchestrator's. Returns NULL on failure: PILFFLONK_ERR_INVALID_ARGUMENT
     // if proving_key_dir is NULL, PILFFLONK_ERR_IO if a file cannot be read, PILFFLONK_ERR_FORMAT if one
     // is not what it should be or they do not agree (an AIR that is not the globalInfo's, a layout
-    // needing more powers than the SRS holds, a split Q, which this prover does not support yet).
+    // needing more powers than the SRS holds, pieces of Q other than those of spec A.1).
     void *pilfflonk_ctx_new(const char *proving_key_dir);
 
     // Releases a ctx, which no instance may still use. NULL is a no-op.
@@ -235,12 +235,14 @@ extern "C" {
                                uint8_t *out_g1, uint64_t n_out);
 
     // Commits Q (spec §4.4 step 3), once every stage is: the columns it reads extended to the coset,
-    // Q (the AIR's cExpId) there, and its coefficients, committed unblinded (spec A.3). `challenges`
-    // holds the challenges of stage nStages + 1, std_vc; out_g1 receives the n_out commitments of Q's
-    // f (1: Q not split). PILFFLONK_ERR_UNSATISFIED if the witness does not satisfy the AIR's
-    // constraints: Q has a coefficient not zero beyond its bound of spec A.1. Otherwise as
-    // pilfflonk_commit_stage, and PILFFLONK_ERR_INVALID_ARGUMENT if a stage is not committed yet or Q
-    // is committed already.
+    // Q (the AIR's cExpId) there, and its coefficients, committed unblinded if it is not split (spec
+    // A.3); split, its pieces, each boundary between two blinded with two random coefficients that
+    // cancel (spec A.1, A.3). `challenges` holds the challenges of stage nStages + 1, std_vc; out_g1
+    // receives the n_out commitments of the f of Q's stage, in the order of the layout (one f, unless
+    // the grouping splits the pieces' group). PILFFLONK_ERR_UNSATISFIED if the witness does not
+    // satisfy the AIR's constraints: Q has a coefficient not zero beyond its bound of spec A.1.
+    // Otherwise as pilfflonk_commit_stage, and PILFFLONK_ERR_INVALID_ARGUMENT if a stage is not
+    // committed yet or Q is committed already.
     int pilfflonk_commit_q(void *instance, const uint8_t *challenges, uint64_t n_challenges, uint8_t *out_g1,
                            uint64_t n_out);
 
@@ -263,12 +265,14 @@ extern "C" {
     // Writes to out the n evaluations of the proof, in the order of spec A.4 step 4 and of the proof
     // (A.6): for each AIR with an instance its fixed columns, then for each instance its other
     // columns, each in the order of the AIR's evMap, whose entry (type, id, prime) is its column at
-    // ξ·ω^prime. The orchestrator absorbs them before pilfflonk_opening_open.
+    // ξ·ω^prime; then, for each instance whose Q is split, its pieces' Q_i(ξ) in the order of its
+    // layout. The orchestrator absorbs them before pilfflonk_opening_open.
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or n is not their number.
     int pilfflonk_opening_evaluations(const void *opening, uint64_t n, uint8_t *out);
 
     // Writes to out Q(ξ) of instance `instance` of the opening: the value the verifier computes from
-    // the evaluations (spec A.1), for tests and diagnostics; it is not part of the proof.
+    // the evaluations (spec A.1), Σ_i ξ^(i·maxQDegree·N)·Q_i(ξ) of its pieces if Q is split, for tests
+    // and diagnostics; it is not part of the proof.
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no such instance.
     int pilfflonk_opening_q(const void *opening, uint64_t instance, uint8_t out[32]);
 

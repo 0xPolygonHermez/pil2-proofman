@@ -28,7 +28,7 @@ pub const PUBLICS_FILE: &str = "publics.json";
 /// 2. `w` and `wp`: SHPLONK's `W` and `W'`;
 /// 3. `evaluations`: those of the fixed columns of each AIR, then those of the other columns of
 ///    each instance, each in the order of its AIR's evMap, then the `Q_i(ξ)` of each instance if
-///    `Q` is split (A.4, step 4);
+///    `Q` is split, in the order of its layout (A.4, step 4);
 /// 4. `air_values` (of each instance, in the order of its AIR's `airValuesMap`), `airgroup_values`
 ///    (of each airgroup with an instance, in the order of its `airgroupValuesMap`) and
 ///    `proof_values` (in the order of the globalInfo's `proofValuesMap`);

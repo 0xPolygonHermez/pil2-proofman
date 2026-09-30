@@ -14,7 +14,8 @@
 //!     each entry `i` of its `lengths`: `Fibonacci.l1`, `Main.a[0]`, `Main.b[1][0]`;
 //!   - `<suffix>` is empty for `s = 0`, `w` for `s = 1`, and `w` followed by `s` in decimal, sign
 //!     included, otherwise: `w2`, `w-1`, `w-2`. For `s >= 0` these are pil-fflonk's names.
-//! - `<column>` of each piece of a split `Q`: its `Q_i(ξ)`.
+//! - `Q<i>` for the piece `i` of a split `Q` ([`q_piece_name`]): its `Q_i(ξ)`, after the other
+//!   evaluations of its instance, in the order of the layout (A.4 step 4).
 //! - `<value>`: an air value, an airgroup value or a proof value, by its name in its map with the
 //!   same `[i]` suffixes.
 //! - `inv` and `invZh`, as pil-fflonk.
@@ -57,6 +58,12 @@ pub fn offset_suffix(offset: i64) -> String {
 /// The name of the evaluation of `column` at `ξ·ω^offset`.
 pub fn evaluation_name(column: &str, offset: i64) -> String {
     format!("{column}{}", offset_suffix(offset))
+}
+
+/// The name of the piece `i` of `Q` (A.1, A.6): its name in `cmPolsMap` and the layout, and of its
+/// `Q_i(ξ)` in the proof if `Q` is split. `Q` whole is its one piece, `Q0`.
+pub fn q_piece_name(i: u64) -> String {
+    format!("Q{i}")
 }
 
 /// The name of the commitment of the `f` at position `global_index` of the global order (A.5).
@@ -103,6 +110,11 @@ mod tests {
         assert_eq!(evaluation_name("Fibonacci.l1", 2), "Fibonacci.l1w2");
         assert_eq!(evaluation_name("Fibonacci.l1", -1), "Fibonacci.l1w-1");
         assert_eq!(evaluation_name("Fibonacci.l1", -12), "Fibonacci.l1w-12");
+    }
+
+    #[test]
+    fn the_pieces_of_q_are_q_and_their_index() {
+        assert_eq!((q_piece_name(0), q_piece_name(1), q_piece_name(12)), ("Q0".into(), "Q1".into(), "Q12".into()));
     }
 
     #[test]

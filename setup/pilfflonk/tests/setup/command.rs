@@ -81,28 +81,27 @@ fn the_defaults_are_those_of_spec_4_2() {
     unpacked.check().unwrap();
 }
 
-/// What the arguments cannot ask for: a degree search below 2, and, until it is implemented,
-/// splitting Q (plan R3). Packing is the default (plan M22).
+/// What the arguments cannot ask for: a degree search below 2. Packing is the default (plan M22),
+/// and every `--max-q-degree` is one (plan M33): it splits `Q` only if `qDeg` is above it (A.1).
 #[test]
 fn the_arguments_the_setup_cannot_do_are_refused() {
     let dir = TestDir::new("arguments");
-    for (change, expected) in [
-        ((|o| o.max_constraint_degree = 1) as fn(&mut SetupPilfflonkOptions), "--max-constraint-degree 1"),
-        (|o| o.max_q_degree = 3, "--max-q-degree 3"),
-    ] {
-        let mut opts = options(&dir);
-        change(&mut opts);
-        let err = opts.check().unwrap_err();
-        assert!(err.to_string().contains(expected), "{err}");
-        // The command refuses them before it reads anything.
-        let err = run_setup_pilfflonk(&opts).unwrap_err();
-        assert!(err.to_string().contains(expected), "{err}");
-    }
+    let mut opts = options(&dir);
+    opts.max_constraint_degree = 1;
+    let err = opts.check().unwrap_err();
+    assert!(matches!(err, SetupError::MaxConstraintDegree(1)), "{err}");
+    assert!(err.to_string().contains("--max-constraint-degree 1"), "{err}");
+    // The command refuses it before it reads anything.
+    let err = run_setup_pilfflonk(&opts).unwrap_err();
+    assert!(err.to_string().contains("--max-constraint-degree 1"), "{err}");
+
     let mut opts = options(&dir);
     opts.max_constraint_degree = 2;
     opts.extra_muls = 0;
     opts.check().unwrap();
-    assert!(matches!(SetupPilfflonkOptions { max_q_degree: 1, ..opts }.check(), Err(SetupError::QSplitting(1))));
+    for max_q_degree in [1, 2, 3, u64::MAX] {
+        SetupPilfflonkOptions { max_q_degree, ..opts.clone() }.check().unwrap();
+    }
 }
 
 #[test]

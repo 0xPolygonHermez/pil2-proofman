@@ -125,10 +125,6 @@ pub enum SetupError {
     #[error("--max-constraint-degree {0}: the degree search starts at 2 (spec A.1, D5)")]
     MaxConstraintDegree(u64),
 
-    /// Splitting `Q` is not implemented yet (plan R3, until M33).
-    #[error("--max-q-degree {0}: splitting Q is not implemented yet, leave it at 0")]
-    QSplitting(u64),
-
     /// The grouping of the committed polynomials in `f_i` (spec §4.2.4, A.2) refused them with
     /// this `--extra-muls`: too many, a search too large, or no valid partition. Its messages say
     /// which, and what `--extra-muls` would do.

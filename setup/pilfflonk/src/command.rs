@@ -71,7 +71,8 @@ pub struct SetupPilfflonkOptions {
     pub max_constraint_degree: u64,
     /// `--extra-muls` (A.2, rule 3).
     pub extra_muls: u64,
-    /// `--max-q-degree`: 0 does not split `Q` (A.1).
+    /// `--max-q-degree`: `Q` is split in pieces of this degree if its own is above it (A.1); 0 does
+    /// not split it.
     pub max_q_degree: u64,
     /// `--no-packing`: every `f_i` packs one polynomial, `k = 1`, and `--extra-muls` is unused. For
     /// tests only.
@@ -99,15 +100,13 @@ impl SetupPilfflonkOptions {
         }
     }
 
-    /// Refuses what the setup cannot do with these arguments: a degree search below 2, and, until
-    /// it is implemented, splitting `Q` (plan R3, M33). What `--extra-muls` can do depends on the
-    /// AIR: the grouping refuses it ([`SetupError::Grouping`]).
+    /// Refuses what the setup cannot do with these arguments: a degree search below 2. Every
+    /// `--max-q-degree` is one: `Q` is split only if its degree is above it (A.1). What
+    /// `--extra-muls` can do depends on the AIR, and on the pieces of `Q` too: the grouping refuses
+    /// it ([`SetupError::Grouping`]).
     pub fn check(&self) -> Result<(), SetupError> {
         if self.max_constraint_degree < 2 {
             return Err(SetupError::MaxConstraintDegree(self.max_constraint_degree));
-        }
-        if self.max_q_degree != 0 {
-            return Err(SetupError::QSplitting(self.max_q_degree));
         }
         Ok(())
     }
@@ -177,11 +176,12 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     let n_g1 = max_degree(&info.layout);
     let ks: Vec<u64> = info.layout.0.iter().map(|f| f.k).collect();
     tracing::info!(
-        "air {}: nBits {} | qDeg {} | {} im pols | {} f, k {:?} | powerW {} | |O|max {} | nBitsExt {} | {} powers \
-         [τ^i]₁",
+        "air {}: nBits {} | qDeg {} in {} pieces | {} im pols | {} f, k {:?} | powerW {} | |O|max {} | nBitsExt {} | \
+         {} powers [τ^i]₁",
         info.name,
         info.n_bits,
         info.q_deg,
+        committed.q_split.n_pieces(),
         info.cm_pols_map.iter().filter(|p| p.im_pol).count(),
         info.layout.0.len(),
         ks,

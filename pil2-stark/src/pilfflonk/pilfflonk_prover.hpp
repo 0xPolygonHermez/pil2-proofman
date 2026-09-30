@@ -45,9 +45,14 @@ struct ConstraintCheck {
 // commitQ:
 //   every column Q's code reads extended to the coset g·H' from its committed polynomial
 //   (Lde::extendCoset, the blinding included), Q (cExpId) on the coset with the challenges and
-//   the values, back to coefficients (Lde::interpolateCoset), and committed unblinded (spec A.3,
-//   Q not split). Its coefficients from the bound of spec A.1 on must be zero: if not, the witness
-//   does not satisfy the constraints, and commitQ throws UnsatisfiedError.
+//   the values, and back to coefficients (Lde::interpolateCoset). Its coefficients from the bound of
+//   spec A.1 on must be zero: if not, the witness does not satisfy the constraints, and commitQ
+//   throws UnsatisfiedError. Then Q in its pieces (AirDegrees): Q itself, unblinded, if it is not
+//   split (spec A.3); split, piece i its coefficients i·S … of Q, S = maxQDegree·N, and each boundary
+//   between pieces i and i + 1 two factors b0, b1 from the BlindingSource, boundary by boundary and
+//   b0 first, after the columns' ones: b0·X^S + b1·X^(S+1) added to piece i and b0 + b1·X subtracted
+//   from piece i + 1, so that Σ_i X^(i·S)·Q_i(X) = Q(X) (spec A.1, A.3, as pil-fflonk's
+//   pilfflonk_prover.cpp:697-720). Each f of Q's stage packs its pieces and is committed.
 // check:
 //   pilfflonk check (spec §4.4, "Depuració"; plan M25), which proves nothing: the im pols of stage 1
 //   as commitStage(1) computes them, then the numerator of each constraint of the .bin (section 2)
@@ -93,9 +98,10 @@ public:
     // at most nStages, and for a stage >= 2 (plan M30).
     std::vector<G1Point> commitStage(uint64_t stage, const std::vector<FrElement> &challenges);
 
-    // Q, with the challenges of stage nStages + 1 (std_vc): the commitments of Q's f. Throws
-    // std::invalid_argument unless every stage is committed and Q is not, and UnsatisfiedError (Q
-    // stays uncommitted) if the witness does not satisfy the AIR's constraints.
+    // Q, with the challenges of stage nStages + 1 (std_vc): the commitments of the f of Q's pieces, in
+    // the order of the layout. Throws std::invalid_argument unless every stage is committed and Q is
+    // not, and UnsatisfiedError (Q stays uncommitted) if the witness does not satisfy the AIR's
+    // constraints.
     std::vector<G1Point> commitQ(const std::vector<FrElement> &challenges);
 
     // The check of the witness against every constraint of section 2 of the AIR's .bin, in its order
@@ -106,9 +112,12 @@ public:
     // prover hints (plan M30).
     std::vector<ConstraintCheck> check(uint64_t maxRows);
 
-    // p_j of f (a non-fixed entry of the layout) once its stage is committed; null before. Not const
-    // as rapidsnark's API takes it, but never changed.
+    // p_j of f (a non-fixed entry of the layout) once its stage is committed; null before. Of Q's
+    // stage, the piece of Q it packs. Not const as rapidsnark's API takes it, but never changed.
     Poly *polynomial(uint64_t f, uint64_t j) const;
+
+    // Piece i of Q (the whole Q if it is not split) once Q is committed; null before.
+    Poly *qPiece(uint64_t i) const;
 
 private:
     void setChallenges(uint64_t stage, const std::vector<FrElement> &given);
@@ -131,7 +140,7 @@ private:
     // By cmPolsMap index: the committed polynomial of a column, and its buffer.
     std::vector<std::unique_ptr<FrElement[]>> coefBuffers;
     std::vector<std::unique_ptr<Poly>> polys;
-    std::unique_ptr<Poly> q;
+    std::vector<std::unique_ptr<Poly>> qPieces; // by piece, once Q is committed
 };
 
 // The opening of a proof (spec §4.4, steps 4 and 5; A.5): every f of its instances in the global
@@ -153,11 +162,13 @@ public:
     // The evaluations of the proof, in the order of A.4 step 4 and of the proof (A.6): for each AIR
     // with an instance, those of its fixed columns, and then for each instance those of its other
     // columns, each in the order of the AIR's evMap: evMap entry (type, id, prime) is its column at
-    // ξ·ω^prime.
+    // ξ·ω^prime. Then, for each instance whose Q is split, its pieces' Q_i(ξ), in the order of its
+    // layout (its f of Q's stage, and each one's pieces in order).
     const std::vector<FrElement> &evaluations() const { return proofEvaluations; }
 
-    // Q(ξ) of instance i: the value the verifier computes from the evaluations (spec A.1) and SHPLONK
-    // opens Q's f at. For tests and diagnostics; not part of the proof.
+    // Q(ξ) of instance i: the value the verifier computes from the evaluations (spec A.1), and, split,
+    // Σ_i ξ^(i·S)·Q_i(ξ) of its pieces, which it checks against it. For tests and diagnostics; not
+    // part of the proof.
     FrElement q(uint64_t instance) const;
 
     const FrElement &xi() const { return shplonk->xi(); }
@@ -177,7 +188,8 @@ private:
     uint64_t nBits = 0;
     std::unique_ptr<ShplonkProver> shplonk;
     std::vector<FrElement> proofEvaluations;
-    std::vector<uint64_t> qGlobal; // the global index of each instance's Q f
+    // Q(ξ) of each instance.
+    std::vector<FrElement> qValues;
 };
 
 } // namespace PilFflonk
