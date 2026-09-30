@@ -142,6 +142,16 @@ static void stageExpsSlot(Goldilocks::Element *pinned_exps_params, Goldilocks::E
     CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, argsSlot, sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 }
 
+// A dest param's expression. Only a tmp param has one; the others (cm, const, number...) get an empty
+// entry. Never operator[]: this map is shared by every stream proving the air, so an insert on a
+// missing id is a data race that corrupts it.
+static const ParserParams &parserParamsOf(SetupCtx &setupCtx, const Params &p, bool constraints) {
+    static const ParserParams none{};
+    if (p.op != opType::tmp) return none;
+    return constraints ? setupCtx.expressionsBin.constraintsInfoDebug.at(p.expId)
+                       : setupCtx.expressionsBin.expressionsInfo.at(p.expId);
+}
+
 void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints)
 {
     // Generated-kernel fast path for trace-domain dests: a single covered
@@ -228,9 +238,7 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
-        ParserParams &parserParams = constraints 
-            ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[k].expId]
-            : setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
+        const ParserParams &parserParams = parserParamsOf(setupCtx, dest.params[k], constraints);
         if (parserParams.nTemp1*h_expsArgs.nRowsPack > h_expsArgs.maxTemp1Size) {
             h_expsArgs.maxTemp1Size = parserParams.nTemp1*h_expsArgs.nRowsPack;
         }
@@ -255,9 +263,7 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
 
-        ParserParams &parserParams = constraints 
-            ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[j].expId]
-            : setupCtx.expressionsBin.expressionsInfo[dest.params[j].expId];
+        const ParserParams &parserParams = parserParamsOf(setupCtx, dest.params[j], constraints);
         h_dest_params[j].dim = dest.params[j].dim;
         h_dest_params[j].stage = dest.params[j].stage;
         h_dest_params[j].stagePos = dest.params[j].stagePos;
@@ -330,7 +336,7 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
-        ParserParams &parserParams = setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
+        const ParserParams &parserParams = parserParamsOf(setupCtx, dest.params[k], false);
         if (parserParams.nTemp1*h_expsArgs.nRowsPack > h_expsArgs.maxTemp1Size) {
             h_expsArgs.maxTemp1Size = parserParams.nTemp1*h_expsArgs.nRowsPack;
         }
@@ -356,7 +362,7 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
 
-        ParserParams &parserParams = setupCtx.expressionsBin.expressionsInfo[dest.params[j].expId];
+        const ParserParams &parserParams = parserParamsOf(setupCtx, dest.params[j], false);
         h_dest_params[j].dim = dest.params[j].dim;
         h_dest_params[j].stage = dest.params[j].stage;
         h_dest_params[j].stagePos = dest.params[j].stagePos;
