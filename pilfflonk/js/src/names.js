@@ -5,7 +5,9 @@
 // are the vkey's, under the same names), W and Wp.
 // evaluations: <column><suffix> for a column at ξ·ω^s, <column> its name in the layout of the
 // vkey and <suffix> "" for s = 0, "w" for s = 1 and "w" and s in decimal, sign included,
-// otherwise; the pieces of a split Q by their column names; inv and invZh.
+// otherwise; the pieces of a split Q by their column names; inv and invZh. The layout's names are
+// the setup's, indices included (im pols and columns named alike, `im_cluster[1]`), and are taken
+// as they are.
 
 export const W = "W";
 export const WP = "Wp";

@@ -843,6 +843,23 @@ fn names_that_collide_are_refused() {
     assert!(info.validate().is_ok());
     let err = ProofNames::new(&sample_global_info(), &[&info]).unwrap_err();
     assert!(err.to_string().contains("\"Sample.aw\""), "{err}");
+
+    // Two columns named alike, as the std names its `im_cluster`, without the index the setup gives
+    // each (spec A.6, plan M34b); with it, `Sample.a[0]` and `Sample.a[1]`, they are named apart.
+    let mut info = sample_info();
+    info.cm_pols_map[1].name = "Sample.a".into();
+    info.layout.0[1].pols[1].name = "Sample.a".into();
+    assert!(info.validate().is_ok());
+    let err = ProofNames::new(&sample_global_info(), &[&info]).unwrap_err();
+    assert!(err.to_string().contains("\"Sample.a\""), "{err}");
+    for (i, name) in ["Sample.a[0]", "Sample.a[1]"].into_iter().enumerate() {
+        info.cm_pols_map[i].lengths = vec![i as u64];
+        info.layout.0[1].pols[i].name = name.into();
+    }
+    assert!(info.validate().is_ok());
+    let names = ProofNames::new(&sample_global_info(), &[&info]).unwrap();
+    assert_eq!(names.evaluations()[5..7], ["Sample.a[0]", "Sample.a[1]"]);
+    assert_eq!(names.evaluations()[11..], ["Sample.a[0]w", "Sample.a[1]w"]);
 }
 
 // ---------------------------------------------------------------------------------------------

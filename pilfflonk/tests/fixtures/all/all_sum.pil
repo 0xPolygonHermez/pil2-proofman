@@ -1,16 +1,14 @@
 // The `all` of all.pil on the std's sum bus (LogUp), in STD_MODE_ONE_INSTANCE (plan M34), with the
-// std's MAX_CONSTRAINT_DEGREE raised to 6.
+// std's default MAX_CONSTRAINT_DEGREE (3).
 //
-// Its state machines put ten terms on the bus, and with the std's default degree (3) its sum bus
-// (std_sum.pil, piop_gsum_air) groups them in four im_col columns named `im_cluster` and one
-// `im_single`, declared in a loop under the same name, whose evaluations the proof would name alike
-// (spec A.6), which the setup refuses. With 6 they take one `im_cluster` and one `im_single` (spec
-// Annex F.12); with 4 and 5, still two `im_cluster` or more. The degree is set before the air is
-// instantiated: the std reads it when it closes the AIR's bus.
+// Its state machines put ten terms on the bus, and its sum bus (std_sum.pil, piop_gsum_air) groups
+// them in four im_col columns named `im_cluster` and one `im_single`, declared in a loop under those
+// names. The setup names the four `im_cluster` by their order in the pilout, `im_cluster[0]` to
+// `im_cluster[3]`, so that the proof names their evaluations apart (spec A.6, Annex F.12, plan
+// M34b).
 require "all.pil"
 
 set_std_mode(STD_MODE_ONE_INSTANCE);
-set_max_constraint_degree(6);
 
 airgroup All {
     All(bus_type: PIOP_BUS_SUM);

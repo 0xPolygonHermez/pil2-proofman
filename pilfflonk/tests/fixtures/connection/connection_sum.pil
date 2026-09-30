@@ -1,16 +1,14 @@
 // The Connection of connection.pil on the std's sum bus (LogUp), in STD_MODE_ONE_INSTANCE (plan
-// M34), with the std's MAX_CONSTRAINT_DEGREE raised to 4.
+// M34), with the std's default MAX_CONSTRAINT_DEGREE (3).
 //
-// The connection puts six terms on the bus, and with the std's default degree (3) its sum bus
-// (std_sum.pil, piop_gsum_air) takes five of them in three im_col columns, two `im_cluster` of two
-// terms each and an `im_single`, declared in a loop under those names: two columns named
-// `im_cluster`, whose evaluations the proof would name alike (spec A.6), which the setup refuses.
-// With 4 they take one `im_cluster` and one `im_single` (spec Annex F.12). The degree is set before
-// the air is instantiated: the std reads it when it closes the AIR's bus.
+// The connection puts six terms on the bus, and its sum bus (std_sum.pil, piop_gsum_air) takes five
+// of them in three im_col columns, two `im_cluster` of two terms each and an `im_single`, declared
+// in a loop under those names. The setup names the two `im_cluster` by their order in the pilout,
+// `im_cluster[0]` and `im_cluster[1]`, so that the proof names their evaluations apart (spec A.6,
+// Annex F.12, plan M34b).
 require "connection.pil"
 
 set_std_mode(STD_MODE_ONE_INSTANCE);
-set_max_constraint_degree(4);
 
 airgroup Connection {
     Connection(bus_type: PIOP_BUS_SUM);

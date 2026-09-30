@@ -4,7 +4,7 @@
 //! **From `pil-info` to `PilfflonkInfo`.** The maps, the evMap, the opening points, the
 //! boundaries (the ones the code's `Zi` operands index), `qDeg` and `cExpId` are `pil-info`'s
 //! as they are, with every dimension 1 (the `stagePos` of a fixed column, which `pil-info` does
-//! not set, is its index), but for two things:
+//! not set, is its index), but for these:
 //!
 //! - **`Q`.** `pil-info` ends `cmPolsMap` with the STARK's pieces of the quotient, `Q0 …
 //!   Q{qDeg−1}` at stage `nStages + 1` (`qDeg` of them, of `N` coefficients each: what the STARK
@@ -21,18 +21,33 @@
 //!   their evaluations would share a name in the proof (`names`). Here the im pols of an AIR are
 //!   the array `<air>.ImPol`: the `k`-th of `cmPolsMap` has `lengths: [k]`, so its name in the
 //!   proof and in the layout is `<air>.ImPol[k]`.
+//! - **The names of the columns named alike** (plan M34b). The std declares some columns in a
+//!   loop, under one name and without an index (the sum bus's `im_cluster` and `im_single`,
+//!   `std_sum.pil`), and a pilout can have several columns of that name. As the im pols, the
+//!   columns of a pol map that share a name, none of them with `lengths`, are the array of that
+//!   name: the `k`-th of them in the map has `lengths: [k]`, `im_cluster[0]`, `im_cluster[1]`, …
+//!   ([`index_names_alike`]). A name that a column with `lengths` has is left as it is: the
+//!   elements of an array share their name and differ in their indices.
 //! - **The evMap.** `pil-info`'s, followed by the pairs the fusions of the grouping add
 //!   (`layout::ev_map_of`): the indices of `pil-info`'s entries, which the `qVerifier` refers to,
 //!   do not change.
 //!
+//! Every column of the AIR, fixed or committed, im pols and pieces of `Q` included, then has a
+//! name of its own (`names::column_name`), or the AIR is refused ([`check_names`]): two arrays
+//! of the same name, or a column named as the setup names another.
+//!
 //! The stage-1 columns keep `pil-info`'s order: the pilout's columns at `stageId 0 … C−1`, and
 //! the im pols after them, which is what the witness files hold (`WitnessShape`).
+
+use std::collections::btree_map::Entry;
+use std::collections::BTreeMap;
 
 use pil2_pilout::pilout as pb;
 use pil_info::pil::constraint_poly::Boundary as PassesBoundary;
 use pil_info::types::pilout_info::SymbolInfo;
 use pil_info::PilInfoResult;
 use proofman_pilfflonk::layout::{q_pieces, split_max_q_degree};
+use proofman_pilfflonk::names::column_name;
 pub use proofman_pilfflonk::names::q_piece_name;
 use proofman_pilfflonk::{
     Boundary, ChallengeMapEntry, EvMapEntry, JsonFile, NameStageEntry, PilfflonkInfo, PolMapEntry, PolType,
@@ -65,6 +80,53 @@ fn lengths(symbol: &SymbolInfo) -> Vec<u64> {
     symbol.lengths.iter().flatten().map(|&l| l as u64).collect()
 }
 
+/// The columns of `map` that share a name, none of them with `lengths` (see [the module](self)):
+/// each gets `lengths: [k]`, `k` its position among them in the map. A name that only one column
+/// has, or that a column with `lengths` has, does not change.
+fn index_names_alike(map: &mut [PolMapEntry]) {
+    // For each name, how many columns have it, and whether one of them has lengths.
+    let mut names: BTreeMap<String, (usize, bool)> = BTreeMap::new();
+    for p in map.iter() {
+        let (count, indexed) = names.entry(p.name.clone()).or_default();
+        *count += 1;
+        *indexed |= !p.lengths.is_empty();
+    }
+    let mut next: BTreeMap<String, u64> = BTreeMap::new();
+    for p in map.iter_mut() {
+        if names.get(&p.name).is_some_and(|&(count, indexed)| count > 1 && !indexed) {
+            let k = next.entry(p.name.clone()).or_default();
+            p.lengths = vec![*k];
+            *k += 1;
+        }
+    }
+}
+
+/// Refuses two columns of `air` that the proof and the layout would name alike (see [the
+/// module](self)): every entry of the pol maps, pieces of `Q` included, must have a name of its
+/// own (`names::column_name`).
+fn check_names(air: &str, const_pols_map: &[PolMapEntry], cm_pols_map: &[PolMapEntry]) -> Result<(), SetupError> {
+    let mut named: BTreeMap<String, String> = BTreeMap::new();
+    for (map_name, map) in [("constPolsMap", const_pols_map), ("cmPolsMap", cm_pols_map)] {
+        for (i, p) in map.iter().enumerate() {
+            let entry = format!("{map_name}[{i}]");
+            match named.entry(column_name(&p.name, &p.lengths)) {
+                Entry::Vacant(vacant) => {
+                    vacant.insert(entry);
+                }
+                Entry::Occupied(first) => {
+                    return Err(SetupError::ColumnName {
+                        air: air.to_string(),
+                        name: first.key().clone(),
+                        first: first.get().clone(),
+                        second: entry,
+                    })
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The stage and the `stageId` of a column of a pol map of `pil-info`, which must have dimension
 /// 1, or an error naming it.
 fn column(symbol: &SymbolInfo, what: &str, i: usize) -> Result<(u64, u64), SetupError> {
@@ -87,7 +149,8 @@ fn const_pols_map(result: &PilInfoResult, air: &pb::Air) -> Result<Vec<PolMapEnt
             map.iter().filter(|s| s.sym_type == "fixed").count()
         )));
     }
-    map.iter()
+    let mut const_pols_map = map
+        .iter()
         .enumerate()
         .map(|(i, s)| {
             let (stage, stage_id) = column(s, "constPolsMap", i)?;
@@ -106,11 +169,13 @@ fn const_pols_map(result: &PilInfoResult, air: &pb::Air) -> Result<Vec<PolMapEnt
                 stage_pos: i as u64,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    index_names_alike(&mut const_pols_map);
+    Ok(const_pols_map)
 }
 
-/// `cmPolsMap`: the columns and im pols of `pil-info`'s, then the pieces of `Q` (see [the
-/// module](self)).
+/// `cmPolsMap`: the columns and im pols of `pil-info`'s, the columns named alike indexed, then the
+/// pieces of `Q` (see [the module](self)).
 fn cm_pols_map(result: &PilInfoResult, air: &pb::Air, q_pieces: u64) -> Result<Vec<PolMapEntry>, SetupError> {
     let setup = &result.setup;
     let q_stage = setup.n_stages + 1;
@@ -163,6 +228,8 @@ fn cm_pols_map(result: &PilInfoResult, air: &pb::Air, q_pieces: u64) -> Result<V
             )));
         }
     }
+    // The im pols have lengths already: a name of theirs does not change.
+    index_names_alike(&mut map);
     for i in 0..q_pieces {
         map.push(PolMapEntry {
             stage: q_stage as u64,
@@ -266,6 +333,7 @@ pub fn air_setup(
 
     let const_pols_map = const_pols_map(result, air)?;
     let cm_pols_map = cm_pols_map(result, air, q_pieces(q_deg, max_q_degree))?;
+    check_names(air_ref.name, &const_pols_map, &cm_pols_map)?;
     let ev_map = ev_map(result)?;
     let committed = committed_pols(n_bits, q, &const_pols_map, &cm_pols_map, &ev_map, packing)?;
     let ev_map = ev_map_of(&ev_map, &committed.layout, q_stage, &setup.opening_points)?;

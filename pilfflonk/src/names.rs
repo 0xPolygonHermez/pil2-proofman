@@ -11,7 +11,10 @@
 //! `evaluations`:
 //! - `<column><suffix>`: the evaluation of a column at `ξ·ω^s`, where
 //!   - `<column>` is the column's name in `cmPolsMap` or `constPolsMap`, followed by `[i]` for
-//!     each entry `i` of its `lengths`: `Fibonacci.l1`, `Main.a[0]`, `Main.b[1][0]`;
+//!     each entry `i` of its `lengths`: `Fibonacci.l1`, `Main.a[0]`, `Main.b[1][0]`. The setup
+//!     gives the `k`-th im pol `lengths: [k]`, and the `k`-th of the columns of a map that share a
+//!     name and have no `lengths` too (the std's `im_cluster`, plan M34b), so that each has a name
+//!     of its own: `Fibonacci.ImPol[0]`, `im_cluster[1]`;
 //!   - `<suffix>` is empty for `s = 0`, `w` for `s = 1`, and `w` followed by `s` in decimal, sign
 //!     included, otherwise: `w2`, `w-1`, `w-2`. For `s >= 0` these are pil-fflonk's names.
 //! - `Q<i>` for the piece `i` of a split `Q` ([`q_piece_name`]): its `Q_i(ξ)`, after the other

@@ -271,7 +271,7 @@ impl Program {
     /// The powers of the ptau of its setups, more than the largest degree of each of its layouts:
     /// 1024 for the fixtures other than the examples, whose largest is 779 (the Fibonacci's `f` of
     /// `k = 3`, `setup/pil2-stark/tests/setup_pilfflonk.rs`), and 4096 for the examples, whose largest
-    /// is 3083, the Connection's of `N = 2^10` (2312 for `all` with `--max-constraint-degree 3`).
+    /// is 3080, the Connection's of `N = 2^10` (2312 for `all`).
     fn ptau_powers(self) -> usize {
         match self {
             Program::Example(..) => 4096,
@@ -1624,9 +1624,21 @@ fn proves_and_verifies(f: &Fixture, name: &str) {
 const PIL_FFLONK_PUBLICS: [&str; 3] =
     ["1", "2", "590308608561184158373097535019708483037277117989374906445627411437315467687"];
 
+/// The names of the columns of stage 2 of `info` but the im pols, the std's, as the layout and the
+/// proof name them (A.6): `<name>` and `[i]` per entry of its lengths, in the order of `cmPolsMap`.
+fn stage_2_columns(info: &PilfflonkInfo) -> Vec<String> {
+    info.cm_pols_map
+        .iter()
+        .filter(|p| p.stage == 2 && !p.im_pol)
+        .map(|p| format!("{}{}", p.name, p.lengths.iter().map(|i| format!("[{i}]")).collect::<String>()))
+        .collect()
+}
+
 /// The validations of the spec's Fase 2 (plan M34) on a pil-fflonk example ported to PIL2, on the
-/// std's sum bus and on its product bus, whose hints are `hints` (the std's, in the pilout's order)
-/// and whose `Q` splits in `pieces` with `--max-constraint-degree 3 --max-q-degree 1`:
+/// std's sum bus and on its product bus, whose hints are `hints` (the std's, in the pilout's order),
+/// whose stage-2 columns are named `columns` ([`stage_2_columns`]: the setup indexes those the std
+/// names alike, plan M34b) and whose `Q` splits in `pieces` with `--max-constraint-degree 3
+/// --max-q-degree 1`:
 ///
 /// - validation 1: grouped with pil-fflonk's `extraMuls`, with `--no-packing`, and with `Q` split,
 ///   the prover proves and the verifier accepts the proof; grouped, it rejects any change to it or to
@@ -1638,14 +1650,15 @@ const PIL_FFLONK_PUBLICS: [&str; 3] =
 ///   the prover refuses it: there is no proof of it for the verifier to reject (`check` names the
 ///   constraint, `pilfflonk_check.rs`);
 /// - validation 3: the prover's stage-2 columns are the oracle's.
-fn proves_a_pil_fflonk_example(example: Example, hints: [&[HintKind]; 2], pieces: [usize; 2]) {
-    for ((bus, hints), pieces) in [Bus::Sum, Bus::Prod].into_iter().zip(hints).zip(pieces) {
+fn proves_a_pil_fflonk_example(example: Example, hints: [&[HintKind]; 2], columns: [&[&str]; 2], pieces: [usize; 2]) {
+    for (((bus, hints), columns), pieces) in [Bus::Sum, Bus::Prod].into_iter().zip(hints).zip(columns).zip(pieces) {
         let program = Program::Example(example, bus);
         let name = format!("e2e_{}_{}", example.name(), bus.name());
         let (column, last) = bus.column();
         let (_, broken) = example.witnesses(bus);
 
         let f = fixture(&name, program, Packing::ExtraMuls(example.extra_muls()));
+        assert_eq!(stage_2_columns(&f.info()), columns, "{name}");
         proves_a_bus_of_stage_2(&f, &name, column, last, hints);
         a_broken_bus_is_refused(&f, &name, &broken, bus.last_constraint());
         if example == Example::All {
@@ -1666,11 +1679,16 @@ fn proves_a_pil_fflonk_example(example: Example, hints: [&[HintKind]; 2], pieces
     }
 }
 
+/// The stage-2 columns of a bus of the std with one intermediate column, on the sum bus and on the
+/// product bus: those of the Plookup, the Permutation and the range check (and the Connection's on
+/// the product bus).
+const ONE_IM_COL: [&[&str]; 2] = [&["gsum", "im_single"], &["gprod", "im_low[0]"]];
+
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_pil_fflonk_plookup() {
     use HintKind::{GprodCol, GsumCol, ImCol};
-    proves_a_pil_fflonk_example(Example::Plookup, [&[ImCol, GsumCol], &[ImCol, GprodCol]], [2, 2]);
+    proves_a_pil_fflonk_example(Example::Plookup, [&[ImCol, GsumCol], &[ImCol, GprodCol]], ONE_IM_COL, [2, 2]);
 }
 
 /// Its `a` and `b` are read by no constraint, and not committed (spec A.2).
@@ -1678,35 +1696,46 @@ fn the_prover_proves_the_pil_fflonk_plookup() {
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_pil_fflonk_permutation() {
     use HintKind::{GprodCol, GsumCol, ImCol};
-    proves_a_pil_fflonk_example(Example::Permutation, [&[ImCol, GsumCol], &[ImCol, GprodCol]], [1, 2]);
+    proves_a_pil_fflonk_example(Example::Permutation, [&[ImCol, GsumCol], &[ImCol, GprodCol]], ONE_IM_COL, [1, 2]);
 }
 
-/// On the sum bus, with the std's `MAX_CONSTRAINT_DEGREE` raised to 4: an `im_cluster` and an
-/// `im_single` (`connection_sum.pil`).
+/// On the sum bus, with the std's default `MAX_CONSTRAINT_DEGREE` (`connection_sum.pil`): two
+/// `im_cluster`, which the std names alike and the setup `im_cluster[0]` and `im_cluster[1]` (plan
+/// M34b), and an `im_single`.
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_pil_fflonk_connection() {
     use HintKind::{GprodCol, GsumCol, ImCol};
-    proves_a_pil_fflonk_example(Example::Connection, [&[ImCol, ImCol, GsumCol], &[ImCol, GprodCol]], [2, 2]);
+    proves_a_pil_fflonk_example(
+        Example::Connection,
+        [&[ImCol, ImCol, ImCol, GsumCol], &[ImCol, GprodCol]],
+        [&["gsum", "im_cluster[0]", "im_cluster[1]", "im_single"], &["gprod", "im_low[0]"]],
+        [2, 2],
+    );
 }
 
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_a_range_check() {
     use HintKind::{GprodCol, GsumCol, ImCol};
-    proves_a_pil_fflonk_example(Example::RangeCheck, [&[ImCol, GsumCol], &[ImCol, GprodCol]], [1, 2]);
+    proves_a_pil_fflonk_example(Example::RangeCheck, [&[ImCol, GsumCol], &[ImCol, GprodCol]], ONE_IM_COL, [1, 2]);
 }
 
 /// The v1's criterion of success (spec §1): pil-fflonk's `all`, with its publics. On the sum bus,
-/// with the std's `MAX_CONSTRAINT_DEGREE` raised to 6: an `im_cluster` and an `im_single`
-/// (`all_sum.pil`); on the product bus, a chain of four `im_col`.
+/// with the std's default `MAX_CONSTRAINT_DEGREE` (`all_sum.pil`): four `im_cluster`, which the std
+/// names alike and the setup `im_cluster[0]` to `im_cluster[3]` (plan M34b), and an `im_single`; on
+/// the product bus, a chain of four `im_col`.
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_pil_fflonk_all() {
     use HintKind::{GprodCol, GsumCol, ImCol};
     proves_a_pil_fflonk_example(
         Example::All,
-        [&[ImCol, ImCol, GsumCol], &[ImCol, ImCol, ImCol, ImCol, GprodCol]],
+        [&[ImCol, ImCol, ImCol, ImCol, ImCol, GsumCol], &[ImCol, ImCol, ImCol, ImCol, GprodCol]],
+        [
+            &["gsum", "im_cluster[0]", "im_cluster[1]", "im_cluster[2]", "im_cluster[3]", "im_single"],
+            &["gprod", "im_low[0]", "im_low[1]", "im_low[2]", "im_low[3]"],
+        ],
         [2, 2],
     );
 }

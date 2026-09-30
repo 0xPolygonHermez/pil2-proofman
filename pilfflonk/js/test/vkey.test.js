@@ -175,6 +175,10 @@ test("every vkey the verifier refuses, with the reason", () => {
             (v) => (v.layout[2].pols[0].name = "aw-1"),
             /two values of the proof are named "aw-1"/,
         ],
+        "two columns named alike, without the setup's index": [
+            (v) => (v.layout[2].pols[0].name = "a"),
+            /two values of the proof are named "a"/,
+        ],
         "an evaluation named inv": [(v) => (v.layout[2].pols[1].name = "inv"), /named "inv"/],
         "a digest in capitals": [
             (v) => (v.digest = v.digest.toUpperCase().replace("0X", "0x")),
@@ -195,6 +199,20 @@ test("every vkey the verifier refuses, with the reason", () => {
     }
     assert.throws(() => fromObjectVk(curve, []), /vkey: not an object/);
     assert.throws(() => fromObjectVk(curve, null), /vkey: not an object/);
+});
+
+// The setup names the columns that share a name, as the std's im_cluster, by their index in the
+// pilout (spec A.6, plan M34b): the vkey's layout has those names, and the verifier takes them as
+// they are.
+test("columns named by the setup's index are named apart", () => {
+    const vkey = sampleVkey();
+    vkey.layout[1].pols[0].name = "im_cluster[0]";
+    vkey.layout[2].pols[0].name = "im_cluster[1]";
+    const vk = fromObjectVk(curve, vkey);
+    assert.deepEqual(
+        vk.evMap.map((e) => e.name),
+        ["L1", "im_cluster[0]w-1", "im_cluster[0]", "im_cluster[1]", "c"],
+    );
 });
 
 test("a split Q needs pieces named Q0 … Q<m-1>", () => {

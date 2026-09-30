@@ -91,6 +91,15 @@ pub enum SetupError {
     #[error("{location} is {value}, which is not below r")]
     ConstantNotBelowR { location: String, value: String },
 
+    /// Two columns that the proof and the layout would name alike (spec A.6), with the im pols and
+    /// the columns that share a name and have no indices already indexed (`crate::air_info`): two
+    /// arrays of the same name, or a column named as the setup names another.
+    #[error(
+        "air {air}: {first} and {second} are both named {name}, and the proof names each evaluation by its column \
+         (spec A.6); the setup only indexes the im pols and the columns that share a name and have no indices"
+    )]
+    ColumnName { air: String, name: String, first: String, second: String },
+
     /// The extended domain does not fit in the 2-adicity of BN254 (spec A.1).
     #[error("the extended domain has 2^{n_bits_ext} points, and BN254's roots of unity allow at most 2^28")]
     ExtendedDomain { n_bits_ext: u64 },

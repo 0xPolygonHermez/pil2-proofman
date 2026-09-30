@@ -190,7 +190,7 @@ fn fixture_of(name: &str, program: Program, witness: Witness, max_constraint_deg
         no_packing,
     };
     compile(program, &opts.airout_path);
-    // More powers than the largest degree of every layout here: 3083, the Connection's of N = 2^10.
+    // More powers than the largest degree of every layout here: 3080, the Connection's of N = 2^10.
     write_tau_one_ptau(&opts.powers_of_tau, 4096).unwrap();
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);

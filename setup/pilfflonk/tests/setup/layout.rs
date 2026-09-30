@@ -274,6 +274,129 @@ fn expressions_in_a_cycle_are_an_error_not_a_stack_overflow() {
     );
 }
 
+/// An AIR of `2^4` rows whose columns share names, as the std's sum bus declares its `im_cluster`
+/// and `im_single` in a loop (plan M34b): the fixed `F` twice, and the witness `a`, `x` twice and
+/// `u` twice, with the constraints `x·x − a'` and `F·(a − F)`, the second `F` the second column.
+/// The `u` are in none.
+fn alike_pilout() -> pb::PilOut {
+    let rows = 16;
+    let air = pb::Air {
+        name: Some("Alike".into()),
+        num_rows: Some(rows),
+        fixed_cols: vec![first_row_column(rows), first_row_column(rows)],
+        stage_widths: vec![5],
+        expressions: vec![
+            mul(witness(1, 0), witness(2, 0)), // 0
+            sub(exp(0), witness(0, 1)),        // 1
+            sub(witness(0, 0), fixed(1)),      // 2
+            mul(fixed(0), exp(2)),             // 3
+        ],
+        constraints: vec![every_row(1), every_row(3)],
+        ..Default::default()
+    };
+    pb::PilOut {
+        name: Some("alike".into()),
+        base_field: r().to_bytes_be(),
+        air_groups: vec![pb::AirGroup { name: Some("Alike".into()), air_group_values: vec![], airs: vec![air] }],
+        num_challenges: vec![0],
+        symbols: vec![
+            symbol("Alike.F", SymbolType::FixedCol, 0, Some(0), true),
+            symbol("Alike.F", SymbolType::FixedCol, 1, Some(0), true),
+            symbol("a", SymbolType::WitnessCol, 0, Some(1), true),
+            symbol("x", SymbolType::WitnessCol, 1, Some(1), true),
+            symbol("x", SymbolType::WitnessCol, 2, Some(1), true),
+            symbol("u", SymbolType::WitnessCol, 3, Some(1), true),
+            symbol("u", SymbolType::WitnessCol, 4, Some(1), true),
+        ],
+        ..Default::default()
+    }
+}
+
+/// The columns of a pol map that share a name and have no `lengths` are the array of that name
+/// (spec A.6, plan M34b), as the im pols are: the `k`-th in the map is `<name>[k]` in the pol map,
+/// the layout and the proof, the fixed columns as the committed ones, and those not committed too.
+/// Grouped or not, twice the same pilfflonkinfo.
+#[test]
+fn columns_named_alike_are_indexed_in_the_order_of_the_map() {
+    let pilout = alike_pilout();
+    let AirSetup { info, committed } = setup_air(&pilout, 9).unwrap();
+    let names = |map: &[PolMapEntry]| -> Vec<(String, Vec<u64>)> {
+        map.iter().map(|p| (p.name.clone(), p.lengths.clone())).collect()
+    };
+    let s = |name: &str, lengths: &[u64]| (name.to_string(), lengths.to_vec());
+    assert_eq!(names(&info.const_pols_map), [s("Alike.F", &[0]), s("Alike.F", &[1])]);
+    assert_eq!(
+        names(&info.cm_pols_map),
+        [s("a", &[]), s("x", &[0]), s("x", &[1]), s("u", &[0]), s("u", &[1]), s("Q0", &[])]
+    );
+    let in_layout: Vec<&str> = info.layout.0.iter().flat_map(|f| f.pols.iter().map(|p| p.name.as_str())).collect();
+    assert_eq!(in_layout, ["Alike.F[0]", "Alike.F[1]", "a", "x[0]", "x[1]", "Q0"]);
+    assert_eq!(committed.unopened, ["u[0]", "u[1]"]);
+
+    let params = SetupParams { max_constraint_degree: 9, extra_muls: 0, max_q_degree: 0, packing: false };
+    let names = ProofNames::new(&global_info(&pilout, params).unwrap(), &[&info]).unwrap();
+    assert_eq!(names.evaluations(), ["Alike.F[0]", "Alike.F[1]", "a", "x[0]", "x[1]", "aw"]);
+    check_readers(&pilout, &info);
+
+    let grouped = setup_air_with(&pilout, 9, Packing::Grouped { extra_muls: 0 }).unwrap().info;
+    assert_eq!((&grouped.const_pols_map, &grouped.cm_pols_map), (&info.const_pols_map, &info.cm_pols_map));
+    let in_layout: Vec<&str> = grouped.layout.0.iter().flat_map(|f| f.pols.iter().map(|p| p.name.as_str())).collect();
+    assert!(["x[0]", "x[1]"].iter().all(|name| in_layout.contains(name)), "{in_layout:?}");
+    check_readers(&pilout, &grouped);
+
+    let again = setup_air(&pilout, 9).unwrap().info;
+    assert_eq!(again.to_json_string().unwrap(), info.to_json_string().unwrap());
+}
+
+/// Names that still collide once the columns named alike are indexed are refused, grouped or not,
+/// before the layout: a column named as the setup names another (`x[0]` and the two `x`), two arrays
+/// of the same name (their entries have `lengths` already), and a name that one column has with
+/// `lengths` and two without (the setup indexes a name only when no column that has it has any).
+#[test]
+fn names_that_still_collide_are_refused() {
+    let with_symbols = |symbols: &[(&str, u32, u32)]| {
+        let mut pilout = alike_pilout();
+        pilout.symbols.retain(|s| s.r#type != SymbolType::WitnessCol as i32);
+        for &(name, id, length) in symbols {
+            let column = match length {
+                0 => symbol(name, SymbolType::WitnessCol, id, Some(1), true),
+                length => array_symbol(name, SymbolType::WitnessCol, id, 1, length),
+            };
+            pilout.symbols.push(column);
+        }
+        pilout
+    };
+    let named_as_indexed = with_symbols(&[("x[0]", 0, 0), ("x", 1, 0), ("x", 2, 0), ("u", 3, 0), ("u", 4, 0)]);
+    let two_arrays = with_symbols(&[("a", 0, 0), ("v", 1, 2), ("v", 3, 2)]);
+    let an_array_and_two_alike = with_symbols(&[("a", 0, 0), ("x", 1, 0), ("x", 2, 0), ("x", 3, 2)]);
+    for (pilout, name, first, second) in [
+        (named_as_indexed, "x[0]", "cmPolsMap[0]", "cmPolsMap[1]"),
+        (two_arrays, "v[0]", "cmPolsMap[1]", "cmPolsMap[3]"),
+        (an_array_and_two_alike, "x", "cmPolsMap[1]", "cmPolsMap[2]"),
+    ] {
+        for packing in [Packing::Unpacked, Packing::Grouped { extra_muls: 0 }] {
+            let err = setup_air_with(&pilout, 9, packing).unwrap_err();
+            assert!(
+                matches!(&err, SetupError::ColumnName { air, name: n, first: f, second: s }
+                    if air == "Alike" && n == name && f == first && s == second),
+                "{name}: {err}"
+            );
+            let message = err.to_string();
+            assert!(message.contains(&format!("{first} and {second} are both named {name}")), "{message}");
+        }
+    }
+
+    // A fixed column and a committed one are named alike in the proof too.
+    let mut pilout = alike_pilout();
+    pilout.symbols[2].name = "Alike.F[1]".into();
+    let err = setup_air(&pilout, 9).unwrap_err();
+    assert!(
+        matches!(&err, SetupError::ColumnName { name, first, second, .. }
+            if name == "Alike.F[1]" && first == "constPolsMap[1]" && second == "cmPolsMap[0]"),
+        "{err}"
+    );
+}
+
 // ---------------------------------------------------------------------------------------------
 // committed_pols and unpacked_layout on maps built by hand
 // ---------------------------------------------------------------------------------------------
