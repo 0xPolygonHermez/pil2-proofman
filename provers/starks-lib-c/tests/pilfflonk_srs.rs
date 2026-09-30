@@ -11,8 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use proofman_starks_lib_c::{
-    pilfflonk_srs_from_ptau_c, PilFflonkErrorKind, PilFflonkSrs, PILFFLONK_FR_BYTES, PILFFLONK_G1_BYTES,
-    PILFFLONK_G2_BYTES,
+    pilfflonk_g2_check_c, pilfflonk_srs_from_ptau_c, PilFflonkErrorKind, PilFflonkSrs, PILFFLONK_FR_BYTES,
+    PILFFLONK_G1_BYTES, PILFFLONK_G2_BYTES,
 };
 
 /// 32 bytes from 64 hex digits in byte order: little-endian as they are written.
@@ -192,6 +192,62 @@ fn gives_the_g2_powers_canonical() {
     let err = srs.g2(2).unwrap_err();
     assert_eq!(err.kind, PilFflonkErrorKind::InvalidArgument, "{err}");
     assert!(err.message.contains("pilfflonk_srs_g2: i = 2"), "{err}");
+}
+
+/// A G2 point from canonical big-endian coordinates `x.c0, x.c1, y.c0, y.c1`, as the C API takes it.
+fn g2(coordinates: [&str; 4]) -> [u8; PILFFLONK_G2_BYTES] {
+    let mut point = [0u8; PILFFLONK_G2_BYTES];
+    for (chunk, coordinate) in point.chunks_exact_mut(32).zip(coordinates) {
+        chunk.copy_from_slice(&from_hex(coordinate));
+    }
+    point
+}
+
+/// A point of the twist outside G2, its r-torsion group: `x = 2 + u` and a square root of
+/// `x³ + 3/(9+u)`, found with ffjavascript (`G2.isValid`, and `r·P ≠ 0`).
+const TWIST_NOT_G2: [&str; 4] = [
+    "0000000000000000000000000000000000000000000000000000000000000002",
+    "0000000000000000000000000000000000000000000000000000000000000001",
+    "101f7278419308b95099eca02dcee0c5381f4d26d1d62313f057167f064101ce",
+    "2b76c179599bb92a963dac85546a005a777f7c13f6a7b75d5918b6b5808f5fde",
+];
+
+/// `pilfflonk_g2_check`: what the JS verifier requires of the vkey's X_2 (elements.js,
+/// g2FromObject), a point of G2 other than the point at infinity (plan M40, review).
+#[test]
+fn checks_g2_points_as_the_js_verifier_does() {
+    pilfflonk_g2_check_c(&g2(G2_CANONICAL)).unwrap();
+    let mut off_twist = g2(G2_CANONICAL);
+    off_twist[64] ^= 1;
+    let mut non_canonical = g2(G2_CANONICAL);
+    non_canonical[32..64].copy_from_slice(&le_bytes(Q));
+    for (point, kind, text) in [
+        ([0u8; PILFFLONK_G2_BYTES], PilFflonkErrorKind::InvalidPoint, "the point at infinity"),
+        (off_twist, PilFflonkErrorKind::InvalidPoint, "not on the twist"),
+        (g2(TWIST_NOT_G2), PilFflonkErrorKind::InvalidPoint, "not in G2"),
+        (non_canonical, PilFflonkErrorKind::NonCanonical, "coordinate 1 is not below"),
+    ] {
+        let err = pilfflonk_g2_check_c(&point).unwrap_err();
+        assert_eq!(err.kind, kind, "{err}");
+        assert!(err.message.contains("pilfflonk_g2_check") && err.message.contains(text), "{err}");
+    }
+}
+
+/// A ptau whose [τ]₂ is the point at infinity (τ = 0) is refused, and says so (plan M40, review).
+#[test]
+fn refuses_a_ptau_whose_tau_g2_is_the_point_at_infinity() {
+    let dir = TestDir::new("tau_g2_infinity");
+    let ptau = dir.file("tau_g2_infinity.ptau");
+    let srs_path = dir.file("pilfflonk.srs.bin");
+    let mut file = ptau_of_tau_one(4);
+    // The last 128 bytes are section 3's second point, [τ]₂.
+    let at = file.len() - PILFFLONK_G2_BYTES;
+    file[at..].fill(0);
+    fs::write(&ptau, file).unwrap();
+    let err = pilfflonk_srs_from_ptau_c(&ptau, 4, &srs_path).unwrap_err();
+    assert_eq!(err.kind, PilFflonkErrorKind::Format, "{err}");
+    assert!(err.message.contains("[τ^1]₂ is the point at infinity"), "{err}");
+    assert!(!srs_path.exists());
 }
 
 #[test]

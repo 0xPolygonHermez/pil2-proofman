@@ -216,6 +216,7 @@ fn the_librarys_witness_proves_and_verifies() {
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
         no_packing: false,
+        solidity: false,
     };
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);

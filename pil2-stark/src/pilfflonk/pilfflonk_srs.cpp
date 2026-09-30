@@ -388,24 +388,47 @@ void Srs::checkPoints(const std::string &source) const {
     if (!E.g1.eq(one, E.g1.oneAffine())) {
         throw FormatError(source + ": [1]₁ is not the generator (1, 2) of G1");
     }
-    for (uint64_t i = 0; i < N_G2; ++i) {
-        if (!isValidG2(g2Powers[i])) {
-            throw FormatError(source + ": [τ^" + std::to_string(i) +
-                              "]₂ is not a point of the G2 twist (a coordinate not below q, or off the curve)");
-        }
+    // [1]₂ here; [τ]₂ below, with checkG2.
+    if (!isValidG2(g2Powers[0])) {
+        throw FormatError(source + ": [τ^0]₂ is not a point of the G2 twist (a coordinate not below q, or off the curve)");
     }
     G2PointAffine oneG2 = g2Powers[0];
     if (!E.g2.eq(oneG2, E.g2.oneAffine())) {
         throw FormatError(source + ": [1]₂ is not the generator of G2");
     }
-    // [1]₂, the generator, is in G2; [τ]₂ must be too.
+    // [1]₂, the generator, is in G2; [τ]₂ must be too, and not the point at infinity (which the
+    // twist's equation already refuses: (0, 0) is not on it; said here by its name).
     for (uint64_t i = 1; i < N_G2; ++i) {
-        if (!inG2(g2Powers[i])) {
+        switch (checkG2(g2Powers[i])) {
+        case G2Error::None:
+            break;
+        case G2Error::Infinity:
+            throw FormatError(source + ": [τ^" + std::to_string(i) + "]₂ is the point at infinity (τ = 0)");
+        case G2Error::NotOnTwist:
+            throw FormatError(source + ": [τ^" + std::to_string(i) +
+                              "]₂ is not a point of the G2 twist (a coordinate not below q, or off the curve)");
+        case G2Error::NotInG2:
             throw FormatError(source + ": [τ^" + std::to_string(i) +
                               "]₂ is a point of the G2 twist not in the r-torsion group (r times it is not the "
                               "point at infinity)");
         }
     }
+}
+
+G2Error checkG2(const G2PointAffine &p) {
+    Engine &E = Engine::engine;
+    // Curve::isZero takes its point by non-const reference.
+    G2PointAffine point = p;
+    if (E.g2.isZero(point)) {
+        return G2Error::Infinity;
+    }
+    if (!isValidG2(p)) {
+        return G2Error::NotOnTwist;
+    }
+    if (!inG2(p)) {
+        return G2Error::NotInG2;
+    }
+    return G2Error::None;
 }
 
 G1Point Srs::commit(const FrElement *coefs, uint64_t nCoefs) const {

@@ -1,0 +1,26 @@
+# The Foundry project of the pilfflonk Solidity verifier's tests (spec-seed.md §4.5, plan M40).
+#
+# setup/pilfflonk/tests/solidity.rs runs it: for each key, it copies this file and test/ to a
+# directory of its own under target/, writes the key's generated pilfflonk.verifier.sol as
+# src/PilfflonkVerifier.sol and the cases (proofs, mutated ones, and what the JS verifier says of
+# each) as cases/cases.json, and runs `forge test` there. Nothing is built in this directory.
+#
+# The tools are pinned (spec §4.5, "Eines"): Foundry v1.8.3 and solc 0.8.37, which the tests find in
+# PILFFLONK_FORGE and PILFFLONK_SOLC. Foundry never downloads a compiler: `offline` is set, and `solc`
+# is the pinned version, which the tests give as a path with FOUNDRY_SOLC=$PILFFLONK_SOLC (the
+# environment overrides this file). By hand, in such a directory:
+#
+#   FOUNDRY_SOLC=$PILFFLONK_SOLC $PILFFLONK_FORGE test
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+cache_path = "cache"
+libs = []
+offline = true
+solc = "0.8.37"
+# The verifier's size is below EIP-170's 24576 bytes with the optimizer (spec §4.5).
+optimizer = true
+optimizer_runs = 200
+# The test reads the cases and writes their results there.
+fs_permissions = [{ access = "read-write", path = "./cases" }]

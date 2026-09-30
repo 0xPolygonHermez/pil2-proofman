@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use proofman_starks_lib_c::pilfflonk_g2_check_c;
 use serde::de::{Error as _, MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -197,6 +198,12 @@ impl JsonFile for Vkey {
         }
         if self.power > MAX_NBITS {
             return invalid!("power {} is above {MAX_NBITS}", self.power);
+        }
+        // X_2 = [τ]₂ as the JS verifier reads it (elements.js, g2FromObject): a point of G2, and not the
+        // point at infinity. With [τ]₂ = ∞, which the pairing precompile of the Solidity verifier takes
+        // (EIP-197), the check of A.5 holds for a W' anyone can compute, whatever the statement.
+        if let Err(e) = pilfflonk_g2_check_c(&self.x_2.to_le_bytes()) {
+            return invalid!("X_2 is not a point of G2 other than the point at infinity: {}", e.message);
         }
         let q_stage = self.layout.0.last().map_or(0, |f| f.stage);
         if q_stage == 0 {

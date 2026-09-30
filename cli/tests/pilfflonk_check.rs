@@ -195,6 +195,7 @@ fn fixture_of(name: &str, program: Program, witness: Witness, max_constraint_deg
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
         no_packing,
+        solidity: false,
     };
     compile(program, &opts.airout_path);
     // More powers than the largest degree of every layout here: 3080, the Connection's of N = 2^10.

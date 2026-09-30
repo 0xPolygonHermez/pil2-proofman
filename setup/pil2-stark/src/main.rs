@@ -8,6 +8,7 @@ use pil2_stark_setup::commands::setup_compressed_final::{self as compressed_fina
 use pil2_stark_setup::commands::setup_recursive_test::{self as recursive_test_cmd, SetupRecursiveTestOptions};
 use pil2_stark_setup::commands::setup_snark::{self as snark_cmd, SetupSnarkOptions};
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE};
+use pilfflonk_setup::solidity::export_verifier_sol;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 
 // Uses the default system allocator (glibc malloc). After each AIR,
@@ -32,6 +33,9 @@ enum Commands {
     /// Set up a BN254 pilout for the pilfflonk backend (one AIR, one instance): write its
     /// provingKey/.
     SetupPilfflonk(SetupPilfflonkArgs),
+    /// Write the Solidity verifier of an existing pilfflonk vkey (pilfflonk.vkey.json), as
+    /// `setup-pilfflonk --solidity` writes it with the key.
+    PilfflonkSolidity(PilfflonkSolidityArgs),
     /// Run only the `vadcop_final_compressed` stage on top of an existing
     /// provingKey/<name>/vadcop_final/. Useful for iterating on this stage.
     SetupCompressedFinal(SetupCompressedFinalArgs),
@@ -218,6 +222,21 @@ struct SetupPilfflonkArgs {
     /// Pack no polynomials together: k = 1 in every f (for tests)
     #[arg(long)]
     no_packing: bool,
+
+    /// Also write the Solidity verifier of the vkey, pilfflonk.verifier.sol, next to it
+    #[arg(long)]
+    solidity: bool,
+}
+
+#[derive(Parser)]
+struct PilfflonkSolidityArgs {
+    /// The pilfflonk vkey, pilfflonk.vkey.json
+    #[arg(short = 'k', long)]
+    vkey: String,
+
+    /// The Solidity file to write
+    #[arg(short = 'o', long)]
+    output: String,
 }
 
 #[derive(Parser)]
@@ -493,8 +512,18 @@ fn main() -> anyhow::Result<()> {
                 extra_muls: args.extra_muls,
                 max_q_degree: args.max_q_degree,
                 no_packing: args.no_packing,
+                solidity: args.solidity,
             };
             run_setup_pilfflonk(&opts)
+        }
+
+        Commands::PilfflonkSolidity(args) => {
+            tracing::info!("proofman-setup pilfflonk-solidity: starting");
+            tracing::info!("  vkey: {}", args.vkey);
+            tracing::info!("  output: {}", args.output);
+            export_verifier_sol(args.vkey.as_ref(), args.output.as_ref())?;
+            tracing::info!("wrote {}", args.output);
+            Ok(())
         }
 
         Commands::SetupCompressedFinal(args) => {

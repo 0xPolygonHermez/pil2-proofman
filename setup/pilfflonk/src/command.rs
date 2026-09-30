@@ -10,7 +10,7 @@
 //! ├── pilout.globalInfo.json
 //! ├── pilout.globalConstraints.json
 //! └── <name>/
-//!     ├── pilfflonk/{pilfflonk.srs.bin, pilfflonk.vkey.json}
+//!     ├── pilfflonk/{pilfflonk.srs.bin, pilfflonk.vkey.json[, pilfflonk.verifier.sol]}
 //!     └── <airgroup>/airs/<air>/air/<air>.{const, pilfflonkinfo.json, expressionsinfo.json,
 //!                                           verifierinfo.json, bin, verkey.json}
 //! ```
@@ -19,7 +19,9 @@
 //! (§4.2.1), what the passes return (the prover hints among it), the extended domain, the names of the proof, the shape of
 //! the witness and what the verifier would refuse of the vkey. The SRS is the first file, so that
 //! a ptau with too few powers writes nothing else; the vkey is the last, with its digest (A.6).
-//! The files depend only on the inputs: two runs write the same bytes.
+//! With `--solidity`, `pilfflonk.verifier.sol` follows it: it is made from the vkey
+//! ([`crate::solidity`]) before the vkey is written, so that a vkey it cannot be made of is not
+//! written either. The files depend only on the inputs: two runs write the same bytes.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,6 +46,7 @@ use crate::global_info::global_info;
 use crate::keys::{air_verkey, load_srs, write_srs, x_2};
 use crate::layout::{max_degree, Packing};
 use crate::passes::run_passes;
+use crate::solidity::{verifier_sol, VERIFIER_SOL_FILE};
 use crate::validate::{check_extended_domain, check_prover_hints, validate};
 
 /// The directory the setup writes under the build directory.
@@ -77,6 +80,9 @@ pub struct SetupPilfflonkOptions {
     /// `--no-packing`: every `f_i` packs one polynomial, `k = 1`, and `--extra-muls` is unused. For
     /// tests only.
     pub no_packing: bool,
+    /// `--solidity`: also write `pilfflonk.verifier.sol`, the Solidity verifier of the vkey (spec
+    /// §4.5, Fase 4). It changes no other file: the globalInfo does not record it.
+    pub solidity: bool,
 }
 
 impl SetupPilfflonkOptions {
@@ -159,7 +165,8 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     WitnessShape::from_proving_key(&global_info, &[&info]).with_context(refused)?;
     // The vkey (§4.2.5, A.6) but for its points, [τ]₂ and the fixed commitments, which need the
     // SRS: Vkey::new checks what the verifier would refuse of it (the challenges, the boundaries,
-    // the qVerifier of the verifierinfo, which it can run). The points and the digest are set last.
+    // the qVerifier of the verifierinfo, which it can run). The points and the digest are set last;
+    // until then [τ]₂ is [1]₂, a point of G2 as X_2 must be (Vkey::validate).
     let pil_code = &result.pil_code;
     let q_verifier = serde_json::to_value(&pil_code.verifier_info)?
         .get("qVerifier")
@@ -170,7 +177,7 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
         &info,
         global_info.n_publics,
         global_info.num_challenges.clone(),
-        G2Affine::default(),
+        G2Affine::generator()?,
         &no_points,
         q_verifier,
     )
@@ -237,8 +244,14 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     // sealed with its digest.
     let vkey = Vkey { x_2: x_2(&srs)?, fixed_commitments: FixedCommitments(verkey.0), ..vkey };
     let vkey = seal_vkey(vkey)?;
+    // With --solidity, the verifier of this vkey, made before the vkey is written: a vkey it cannot
+    // be made of is refused as the setup refuses the rest.
+    let verifier = if opts.solidity { Some(verifier_sol(&vkey).with_context(refused)?) } else { None };
     let vkey_path = global_info.vkey_path(&proving_key);
     vkey.write(&vkey_path)?;
     tracing::info!("wrote {} (digest {})", vkey_path.display(), vkey.digest.to_hex());
+    if let Some(verifier) = verifier {
+        write_text(&global_info.backend_dir(&proving_key).join(VERIFIER_SOL_FILE), &verifier)?;
+    }
     Ok(())
 }

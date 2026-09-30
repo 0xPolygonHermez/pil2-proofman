@@ -16,7 +16,7 @@
 use std::path::Path;
 
 use num_bigint::BigUint;
-use proofman_pilfflonk::{BN254_Q, BN254_R};
+use proofman_pilfflonk::{FqBytes, G1Affine, G2Affine, BN254_Q, BN254_R};
 
 /// BN254's base field modulus `q`, little-endian, in hex: byte by byte as it is stored.
 const Q_LE: &str = "47fd7cd8168c203c8dca7168916a81975d588181b64550b829a031e1724e6430";
@@ -297,6 +297,29 @@ pub fn write_fixed_tau_ptau(path: &Path, n_g1: usize, tau: &BigUint) -> std::io:
     std::fs::write(path, fixed_tau_ptau(n_g1, tau))
 }
 
+/// `s·G`, `G = (1, 2)` the generator of G1, with this module's arithmetic: for a test that builds a
+/// proof by hand, knowing `τ` (plan M40). The point at infinity, `(0, 0)`, for `s ≡ 0 mod r`.
+pub fn g1_times(s: &BigUint) -> G1Affine {
+    let q = decimal(BN254_Q);
+    let g = (Fq(BigUint::from(1u32)), Fq(BigUint::from(2u32)));
+    let fq = |c: &Fq| FqBytes::from_decimal(&c.0.to_str_radix(10)).unwrap_or_default();
+    match scalar_mul(&g, &(s % decimal(BN254_R)), &q) {
+        Some((x, y)) => G1Affine { x: fq(&x), y: fq(&y) },
+        None => G1Affine::INFINITY,
+    }
+}
+
+/// `s·[1]₂`, as [`g1_times`]: the `X_2 = [τ]₂` of a vkey of `τ = s`. All zeros for `s ≡ 0 mod r`.
+pub fn g2_times(s: &BigUint) -> G2Affine {
+    let q = decimal(BN254_Q);
+    let [xc0, xc1, yc0, yc1] = G2_GENERATOR.map(|c| Fq(decimal(c)));
+    let fq = |c: &Fq| FqBytes::from_decimal(&c.0.to_str_radix(10)).unwrap_or_default();
+    match scalar_mul(&(Fq2(xc0, xc1), Fq2(yc0, yc1)), &(s % decimal(BN254_R)), &q) {
+        Some((x, y)) => G2Affine { x: [fq(&x.0), fq(&x.1)], y: [fq(&y.0), fq(&y.1)] },
+        None => G2Affine::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,6 +354,25 @@ mod tests {
             at += 12 + size;
         }
         panic!("no section {id}");
+    }
+
+    #[test]
+    fn the_multiples_are_the_ptaus_points() {
+        let tau = test_tau();
+        let file = fixed_tau_ptau(2, &tau);
+        let q = decimal(BN254_Q);
+        // The ptau's [τ]₁ and [τ]₂, out of Montgomery form (c·R⁻¹ mod q, R = 2^256).
+        let r_inv = (BigUint::from(1u32) << 256u32).modpow(&(&q - 2u32), &q);
+        let canonical = |le: &[u8]| (BigUint::from_bytes_le(le) * &r_inv % &q).to_str_radix(10);
+        let (g1, g2) = (section(&file, 2), section(&file, 3));
+        let p = g1_times(&tau);
+        assert_eq!((p.x.to_decimal(), p.y.to_decimal()), (canonical(&g1[64..96]), canonical(&g1[96..128])));
+        let x2 = g2_times(&tau);
+        let coordinates = [x2.x[0], x2.x[1], x2.y[0], x2.y[1]].map(|c| c.to_decimal());
+        let expected: Vec<String> = (0..4).map(|c| canonical(&g2[128 + 32 * c..160 + 32 * c])).collect();
+        assert_eq!(coordinates.to_vec(), expected);
+        assert!(g1_times(&BigUint::ZERO).is_infinity());
+        assert_eq!(g2_times(&decimal(BN254_R)), G2Affine::default());
     }
 
     #[test]

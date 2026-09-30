@@ -16,6 +16,7 @@
 //! | `pilfflonk.srs.bin`, `<air>.verkey.json` and `[τ]₂` | [`keys`] |
 //! | the vkey's digest (A.6) | [`digest`] |
 //! | `<air>.bin` | [`bytecode`] |
+//! | `pilfflonk.verifier.sol`, with `--solidity` (§4.5, Fase 4) | [`solidity`] |
 //!
 //! With the feature `test-ptau`, the module `test_ptau` writes a ptau with `τ = 1`, for tests only.
 
@@ -30,6 +31,7 @@ pub mod grouping;
 pub mod keys;
 pub mod layout;
 pub mod passes;
+pub mod solidity;
 pub mod validate;
 
 #[cfg(feature = "test-ptau")]

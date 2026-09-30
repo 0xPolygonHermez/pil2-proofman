@@ -1,0 +1,6 @@
+# What Foundry and the tests would write if the project were run in place (see foundry.toml):
+# the verifier and cases of a key, and the build.
+src/
+cases/
+out/
+cache/

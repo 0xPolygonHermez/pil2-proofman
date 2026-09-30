@@ -12,6 +12,7 @@ use proofman_pilfflonk::{
     canonical_json, AggType, AirVerkey, Boundary, ChallengeMapEntry, EvMapEntry, FqBytes, FrBytes, G1Affine, G2Affine,
     GlobalInfoAir, JsonFile, Layout, LayoutEntry, LayoutPol, NameStageEntry, PilfflonkGlobalInfo, PilfflonkInfo,
     PolMapEntry, PolType, Proof, ProofJson, ProofNames, Publics, SetupParams, Vkey, DIGEST_DOMAIN, FORMAT_VERSION,
+    G2_GENERATOR,
 };
 use serde_json::{json, Value};
 
@@ -182,7 +183,8 @@ fn fake_hash(preimage: &[u8]) -> [u8; 32] {
 }
 
 fn sample_vkey() -> Vkey {
-    let x_2 = G2Affine { x: [FqBytes::from_u64(10), FqBytes::from_u64(11)], y: [FqBytes::from_u64(12), FqBytes::ZERO] };
+    // A point of G2, as X_2 must be (Vkey::validate): [1]₂.
+    let x_2 = G2Affine::generator().unwrap();
     let verkey = AirVerkey(vec![point(100)]);
     Vkey::new(&sample_info(), 2, vec![0, 2], x_2, &verkey, q_verifier()).unwrap().seal(fake_hash).unwrap()
 }
@@ -343,7 +345,8 @@ fn the_vkey_has_the_fields_of_a6_in_a_fixed_order() {
     assert_eq!(value["power"], 4);
     assert_eq!(value["powerW"], 6, "the lcm of k = 3, 2, 2, 2, 1");
     assert_eq!(value["f0"], json!(["100", "101"]));
-    assert_eq!(value["X_2"], json!([["10", "11"], ["12", "0"]]));
+    let [x_c0, x_c1, y_c0, y_c1] = G2_GENERATOR;
+    assert_eq!(value["X_2"], json!([[x_c0, x_c1], [y_c0, y_c1]]));
     assert!(value["digest"].as_str().unwrap().starts_with("0x"));
     // qVerifier is written with its keys sorted, whatever order it came in.
     let q = text.find("\"qVerifier\"").unwrap();
@@ -420,6 +423,11 @@ fn the_pilfflonkinfo_refuses_what_a6_and_the_layout_rules_forbid() {
     assert_refused(with(&|i| i.n_bits = 28), "k·N divides r - 1: k = 2 does not with N = 2^28");
     assert_refused(with(&|i| i.layout.0[1].offsets = vec![1, 0]), "offsets are increasing");
     assert_refused(with(&|i| i.layout.0[1].offsets.clear()), "an f is opened somewhere");
+    // As the JS's checkLayout (plan M40, review): each offset a row, |s| < N = 16, and no two the
+    // same row modulo N.
+    assert_refused(with(&|i| i.layout.0[1].offsets = vec![0, 16]), "an offset is below N in absolute value");
+    assert_refused(with(&|i| i.layout.0[1].offsets = vec![-16, 0]), "an offset is below N in absolute value");
+    assert_refused(with(&|i| i.layout.0[1].offsets = vec![-1, 15]), "no two offsets are the same row modulo N");
     assert_refused(with(&|i| i.layout.0[1].degree = 0), "an f has a degree");
     assert_refused(with(&|i| i.layout.0[1].pols[1].name = "Sample.x".into()), "the name is the column's");
     assert_refused(with(&|i| i.layout.0[2].pols[0].name = "Sample.c".into()), "an array column carries its index");
@@ -513,6 +521,16 @@ fn the_vkey_refuses_what_does_not_match_its_layout() {
     ] {
         assert!(vkey.validate().is_err(), "{why}");
     }
+    // The offsets as the JS's checkLayout reads them (plan M40, review), with the reason.
+    for (offsets, reason) in [
+        (vec![0, 17], "offset 17, and an offset must be below N = 16 in absolute value"),
+        (vec![-17, 0], "offset -17, and an offset must be below N = 16 in absolute value"),
+        (vec![-1, 15], "two of them the same row modulo N = 16"),
+    ] {
+        let vkey = with(&|v| v.layout.0[1].offsets = offsets.clone());
+        let err = vkey.validate().unwrap_err().to_string();
+        assert!(err.contains(reason), "{offsets:?}: {err}");
+    }
 
     let text = sample_vkey().to_json_string().unwrap();
     for (from, to) in [
@@ -543,7 +561,24 @@ fn the_vkey_refuses_what_the_verifier_refuses() {
         let dest = json!({"type": "tmp", "id": 0, "dim": 1});
         json!({"tmpUsed": 1, "code": [{"op": "copy", "dest": dest, "src": [operand]}]})
     };
+    // A point of the twist outside G2, its r-torsion group: x = 2 + u (found with ffjavascript).
+    let twist_not_g2 = G2Affine {
+        x: [FqBytes::from_u64(2), FqBytes::from_u64(1)],
+        y: [
+            FqBytes::from_decimal("7292567877523311580221095596750716176434782432868683424513645834767876293070")
+                .unwrap(),
+            FqBytes::from_decimal("19659275751359636165940301690575149581329631496732780143538578556285923319774")
+                .unwrap(),
+        ],
+    };
     for (vkey, reason) in [
+        // X_2 as elements.js, g2FromObject, reads it (plan M40, review): the point at infinity, with
+        // which anyone could forge a proof on the Solidity verifier, a point off the twist, and one
+        // on it but not in G2.
+        (with(&|v| v.x_2 = G2Affine::default()), "X_2 is not a point of G2 other than the point at infinity"),
+        (with(&|v| v.x_2 = G2Affine::default()), "the point at infinity of G2"),
+        (with(&|v| v.x_2.y[1] = FqBytes::from_u64(1)), "not on the twist"),
+        (with(&|v| v.x_2 = twist_not_g2), "not in G2"),
         (with(&|v| v.num_challenges = vec![0]), "numChallenges has 1 stages, and the layout 2"),
         (with(&|v| v.num_challenges = vec![0, 2, 0]), "numChallenges has 3 stages, and the layout 2"),
         (with(&|v| v.num_challenges = vec![1, 2]), "A.4 squeezes no challenge of stage 1"),
@@ -610,7 +645,9 @@ fn the_digest_preimage_is_the_canonical_vkey_without_its_digest() {
     assert!(preimage.starts_with(DIGEST_DOMAIN) && DIGEST_DOMAIN == b"pilfflonk-v1");
     let canonical = std::str::from_utf8(&preimage[DIGEST_DOMAIN.len()..]).unwrap();
     assert!(!canonical.contains("digest") && !canonical.contains(' ') && !canonical.contains('\n'));
-    assert!(canonical.starts_with("{\"X_2\":[[\"10\",\"11\"],[\"12\",\"0\"]],\"boundaries\":"), "{canonical}");
+    let [x_c0, x_c1, y_c0, y_c1] = G2_GENERATOR;
+    let x_2 = format!("{{\"X_2\":[[\"{x_c0}\",\"{x_c1}\"],[\"{y_c0}\",\"{y_c1}\"]],\"boundaries\":");
+    assert!(canonical.starts_with(&x_2), "{canonical}");
 
     // The canonical form of the file, parsed and less its digest, is the same text.
     let mut value: Value = serde_json::from_str(&vkey.to_json_string().unwrap()).unwrap();

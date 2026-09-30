@@ -218,11 +218,13 @@ fn the_subcommand_takes_the_arguments_of_spec_4_2() {
         "--max-q-degree <MAX_Q_DEGREE>",
         "[default: 0]",
         "--no-packing",
+        // Fase 4 (spec §4.5, plan M40).
+        "--solidity",
     ] {
         assert!(help.contains(arg), "{arg} missing from:\n{help}");
     }
     // No -u: at BN254 nothing produces the STARK's 8-byte .fixed files (spec §4.2, C4).
-    assert!(!help.contains("-u,") && !help.contains("--solidity"), "{help}");
+    assert!(!help.contains("-u,"), "{help}");
 
     // -a, -b and --powers-of-tau are required.
     let out = proofman_setup(&["setup-pilfflonk", "-a", "x.pilout", "-b", "build"]);
@@ -317,6 +319,58 @@ fn it_writes_the_proving_key_of_a_pilout() {
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("over Goldilocks") && stderr.contains("PIL2C_EXEC"), "{stderr}");
+}
+
+/// `setup-pilfflonk --solidity` writes `pilfflonk.verifier.sol` next to the vkey and changes no
+/// other file, and `pilfflonk-solidity` writes the same from the vkey alone (spec §4.5, plan M40).
+#[test]
+fn it_writes_the_solidity_verifier_of_the_vkey() {
+    let out = proofman_setup(&["pilfflonk-solidity", "--help"]);
+    assert!(out.status.success());
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.contains("-k, --vkey <VKEY>") && help.contains("-o, --output <OUTPUT>"), "{help}");
+
+    let dir = TestDir::new("solidity");
+    let pilout_path = dir.file("tiny.pilout");
+    let ptau = dir.file("tau_one.ptau");
+    fs::write(&pilout_path, pilout().encode_to_vec()).unwrap();
+    write_tau_one_ptau(&ptau, 16).unwrap();
+    let run = |build: &Path, solidity: bool| {
+        let mut args = vec!["setup-pilfflonk", "-a", path(&pilout_path), "-b", path(build), "--powers-of-tau"];
+        args.extend([path(&ptau), "--no-packing", "--max-constraint-degree", "4", "--extra-muls", "0"]);
+        if solidity {
+            args.push("--solidity");
+        }
+        let out = proofman_setup(&args);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        build.join("provingKey")
+    };
+    let without = run(&dir.file("without"), false);
+    let with = run(&dir.file("with"), true);
+    let mut expected = proving_key_files("tiny", "TinyGroup", "Tiny");
+    expected.push("tiny/pilfflonk/pilfflonk.verifier.sol".into());
+    expected.sort();
+    assert_eq!(files(&with), expected);
+    let sol = with.join("tiny/pilfflonk/pilfflonk.verifier.sol");
+    let others: Vec<_> = contents(&with).into_iter().filter(|(name, _)| !name.ends_with(".sol")).collect();
+    assert_eq!(others, contents(&without));
+
+    let exported = dir.file("exported.sol");
+    let vkey = with.join("tiny/pilfflonk/pilfflonk.vkey.json");
+    let out = proofman_setup(&["pilfflonk-solidity", "-k", path(&vkey), "-o", path(&exported)]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(fs::read(&exported).unwrap(), fs::read(&sol).unwrap());
+    let text = String::from_utf8(fs::read(&sol).unwrap()).unwrap();
+    assert!(text.contains("contract PilfflonkVerifier {"), "{text}");
+
+    // A vkey whose digest is not its own is refused, with a non-zero status.
+    let mut tampered = Vkey::read(&vkey).unwrap();
+    tampered.digest.0[31] ^= 1;
+    fs::write(&vkey, tampered.to_json_string().unwrap()).unwrap();
+    let out = proofman_setup(&["pilfflonk-solidity", "-k", path(&vkey), "-o", path(&dir.file("refused.sol"))]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("digest"), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!dir.file("refused.sol").exists());
 }
 
 /// The Fibonacci fixture (plan M13), compiled over BN254: the `provingKey/` of spec §4.2.6, with

@@ -186,6 +186,11 @@ pub enum SetupError {
     #[error(transparent)]
     Pilfflonk(#[from] PilfflonkError),
 
+    /// The Solidity verifier (spec §4.5, Fase 4) cannot be generated from the vkey: one the JS
+    /// verifier accepts no proof of, or a template that does not render.
+    #[error("cannot generate the Solidity verifier: {0}")]
+    Solidity(String),
+
     /// A call to the C++ core failed; `context` says which and on what.
     #[error("{context}: {source}")]
     Native {

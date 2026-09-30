@@ -50,6 +50,8 @@ extern "C" {
 
     pub fn pilfflonk_srs_g2(srs: *const ::std::os::raw::c_void, i: u64, out_g2: *mut u8) -> ::std::os::raw::c_int;
 
+    pub fn pilfflonk_g2_check(g2: *const u8) -> ::std::os::raw::c_int;
+
     pub fn pilfflonk_commit_fixed(
         srs: *const ::std::os::raw::c_void,
         n_bits: u64,

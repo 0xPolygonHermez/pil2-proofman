@@ -1,0 +1,550 @@
+{#
+    The Solidity verifier of a pilfflonk vkey (spec-seed.md §4.5, Fase 4), rendered by
+    setup/pilfflonk/src/solidity.rs. Its structure is snarkjs 0.7.6's fflonk verifier
+    (templates/verifier_fflonk.sol.ejs): one contract, verifyProof(bytes32[W], uint256[P]), one
+    assembly block of Yul functions, the Montgomery batch inversion with the proof's inv, the
+    precompiles 0x06, 0x07 and 0x08. What snarkjs writes out for its three polynomials C0, C1 and C2
+    is generalised as the JS verifier (pilfflonk/js/src/verify.js, D8) generalises snarkjs's
+    fflonk_verify.js, and every step names the JS function it does.
+-#}
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity >=0.7.0 <0.9.0;
+
+/// @title PilfflonkVerifier
+/// @notice Verifies the pilfflonk proofs of the vkey with digest {{ digest }}: its
+///         pilfflonk.vkey.json, from which `proofman-setup setup-pilfflonk --solidity` or
+///         `proofman-setup pilfflonk-solidity` generated it.
+/// @dev    spec-seed.md §4.5. It accepts exactly the proofs the JS verifier (pilfflonk/js,
+///         verify.js) accepts, and its steps are the JS's. Calldata: `proof` is the proof's bytes
+///         (A.6: the commitments of the non-fixed f_i, W, W', the evaluations, the Q_i(xi) if Q is
+///         split, inv and invZh) as {{ proof_words }} big-endian words{% if words > proof_words %}, followed by
+///         {{ words - proof_words }} auxiliary inverses of the calldata, 1/(xi - w^j) of the firstRow and lastRow
+///         boundaries{% endif %}; `pubSignals`, the publics.
+contract PilfflonkVerifier {
+    uint32 constant n = {{ n }}; // Domain size, N = 2^{{ power }}
+
+    // Scalar field size
+    uint256 constant q    = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+    // Base field size
+    uint256 constant qf   = 21888242871839275222246405745257275088696311157297823662689037894645226208583;
+    // [1]_1
+    uint256 constant G1x  = 1;
+    uint256 constant G1y  = 2;
+    // [1]_2
+    uint256 constant G2x1 = 10857046999023057135944570762232829481370756359578518086990519993285655852781;
+    uint256 constant G2x2 = 11559732032986387107991004021392285783925812861821192530917403151452391805634;
+    uint256 constant G2y1 = 8495653923123431417604973247489272438418190587263600148770280649306958101930;
+    uint256 constant G2y2 = 4082367875863433681332203403145435568316851327593401208105741076214120093531;
+
+    // Verifier preprocessed input x·[1]_2: the vkey's X_2, [tau]_2
+    uint256 constant X2x1 = {{ x2[0][0] }};
+    uint256 constant X2x2 = {{ x2[0][1] }};
+    uint256 constant X2y1 = {{ x2[1][0] }};
+    uint256 constant X2y2 = {{ x2[1][1] }};
+
+    // The vkey's digest mod r, the first value of the transcript (A.4, A.6)
+    uint256 constant DIGEST = {{ digest_fr }};
+{% if fixed %}
+    // The commitments of the fixed f_i, the vkey's: never the proof's (A.5)
+{%- for f in fixed %}
+    uint256 constant f{{ f.index }}x = {{ f.x }};
+    uint256 constant f{{ f.index }}y = {{ f.y }};
+{%- endfor %}
+{% endif %}
+    // Proof calldata: the byte offset of every value (proof.rs, Proof::to_bytes)
+{%- for s in calldata %}
+    uint256 constant {{ s.name }} = {{ s.offset }}; // {{ s.comment }}
+{%- endfor %}
+    // The publics, pubSignals, follow at {{ p_public }}.
+
+    // Memory data, from pMem
+{%- for s in memory %}
+    uint256 constant {{ s.name }} = {{ s.offset }}; // {{ s.comment }}
+{%- endfor %}
+    uint256 constant lastMem = {{ last_mem }};
+
+    function verifyProof(bytes32[{{ words }}] calldata proof{% if n_public > 0 %}, uint256[{{ n_public }}] calldata pubSignals{% endif %}) public view returns (bool) {
+        assembly {
+            // The proof is rejected: verifyProof returns false.
+            function fail() {
+                mstore(0, 0)
+                return(0, 0x20)
+            }
+
+            // elements.js, frFromObject: a scalar below r.
+            function checkField(v) {
+                if iszero(lt(v, q)) {
+                    fail()
+                }
+            }
+
+            // elements.js, g1FromObject: a point of G1, affine, its coordinates below the base
+            // field's q, not the point at infinity (0, 0), and on y^2 = x^3 + 3, which is G1: its
+            // cofactor is 1.
+            function checkPointBelongsToBN128Curve(p) {
+                let x := calldataload(p)
+                let y := calldataload(add(p, 32))
+                if iszero(and(lt(x, qf), lt(y, qf))) {
+                    fail()
+                }
+                if iszero(or(x, y)) {
+                    fail()
+                }
+                if iszero(eq(mulmod(y, y, qf), addmod(mulmod(x, mulmod(x, x, qf), qf), 3, qf))) {
+                    fail()
+                }
+            }
+
+            // transcript.js, addPolCommitment: a point the transcript absorbs has no coordinate
+            // below 2^192 (spec A.4).
+            function checkAbsorbed(p) {
+                if or(iszero(shr(192, calldataload(p))), iszero(shr(192, calldataload(add(p, 32))))) {
+                    fail()
+                }
+            }
+
+            // STEPS 1-3 (verify.js; proof.js, fromObjectProof and fromObjectPublics): the
+            // commitments, W and W' in G1; the evaluations, the pieces of Q, inv, invZh (and the
+            // auxiliary inverses) and the publics in Fr. The lengths are the vkey's, fixed by the
+            // types of the arguments; the vkey is this contract's constants.
+            function checkInput(pProof{% if n_public > 0 %}, pPublic{% endif %}) {
+                for { let p := pProof } lt(p, add(pProof, {{ p_points_end - 4 }})) { p := add(p, 64) } {
+                    checkPointBelongsToBN128Curve(p)
+                }
+                // Those the transcript absorbs: the commitments and W (challenges.js).
+                for { let p := pProof } lt(p, add(pProof, {{ p_absorbed_end - 4 }})) { p := add(p, 64) } {
+                    checkAbsorbed(p)
+                }
+                for { let p := add(pProof, {{ p_scalars - 4 }}) } lt(p, add(pProof, {{ p_scalars_end - 4 }})) { p := add(p, 32) } {
+                    checkField(calldataload(p))
+                }
+{%- if n_public > 0 %}
+                for { let p := pPublic } lt(p, add(pPublic, {{ n_public * 32 }})) { p := add(p, 32) } {
+                    checkField(calldataload(p))
+                }
+{%- endif %}
+            }
+
+            // STEP 4: challenges.js, computeChallenges, the transcript of A.4. Its buffer, pT,
+            // holds what is absorbed since the last squeeze, which is keccak256 of it mod r and
+            // then the buffer's only value (transcript.js, squeeze).
+            function computeChallenges(pMem{% if n_public > 0 %}, pPublic{% endif %}) {
+                let pT := mload(0x40)
+                let c
+{%- for line in transcript %}
+                {{ line }}
+{%- endfor %}
+            }
+
+            // b^e mod r.
+            function powMod(b, e) -> result {
+                result := 1
+                for { } gt(e, 0) { e := shr(1, e) } {
+                    if and(e, 1) {
+                        result := mulmod(result, b, q)
+                    }
+                    b := mulmod(b, b, q)
+                }
+            }
+
+            // STEP 5 (verify.js): xi = xiSeed^powerW, and Z_H(xi) = xi^N - 1 checked against the
+            // proof's invZh.
+            function computeZh(pMem) {
+                let xi := powMod(mload(add(pMem, pXiSeed)), {{ power_w }})
+                mstore(add(pMem, pXi), xi)
+                let xin := xi
+{%- for i in range(end=power) %}
+                xin := mulmod(xin, xin, q)
+{%- endfor %}
+                mstore(add(pMem, pXiN), xin)
+                let zh := addmod(xin, sub(q, 1), q)
+                mstore(add(pMem, pZh), zh)
+                if iszero(eq(mulmod(zh, calldataload(pInvZh), q), 1)) {
+                    fail()
+                }
+            }
+
+            // STEP 5: qverifier.js, computeZi, Zi(D) at xi for each boundary D (A.1, A.6):
+            // 1/Z_H(xi) for everyRow, Z_H(xi)/Z_D(xi) for the others.
+            function computeZi(pMem) {
+                let xi := mload(add(pMem, pXi))
+                let zh := mload(add(pMem, pZh))
+{%- for b in zi %}
+                // boundaries[{{ b.index }}], {{ b.kind }}: {{ b.comment }}
+{%- if b.kind == "everyRow" %}
+                mstore(add(pMem, {{ b.slot }}), calldataload(pInvZh))
+{%- elif b.kind == "everyFrame" %}
+                {
+                    let z := 1
+{%- for neg in b.neg_rows %}
+                    z := mulmod(z, addmod(xi, {{ neg }}, q), q)
+{%- endfor %}
+                    mstore(add(pMem, {{ b.slot }}), z)
+                }
+{%- else %}
+                {
+                    // The calldata's 1/(xi - w^j), checked as inv is.
+                    let a := calldataload({{ b.aux }})
+                    if iszero(eq(mulmod(addmod(xi, {{ b.neg_root }}, q), a, q), 1)) {
+                        fail()
+                    }
+                    mstore(add(pMem, {{ b.slot }}), mulmod(zh, a, q))
+                }
+{%- endif %}
+{%- endfor %}
+            }
+
+            // STEP 5: verify.js, computeQ, and qverifier.js, executeCode: Q(xi) with the vkey's
+            // qVerifier, the STARK's fold of A.1 over the evaluations.
+            function computeQ(pMem{% if n_public > 0 %}, pPublic{% endif %}) {
+{%- for line in q_code %}
+                {{ line }}
+{%- endfor %}
+            }
+{% if q_split %}
+            // STEP 5 (verify.js): Q is split in pieces of M = {{ q_split.max_q_degree }}, and
+            // sum_i xi^(i·M·N)·Q_i(xi) = Q(xi) (qverifier.js, joinQPieces; A.1).
+            function checkQPieces(pMem) {
+                let shift := powMod(mload(add(pMem, pXiN)), {{ q_split.max_q_degree }})
+                let acc := 0
+{%- for p in q_split.pieces_desc %}
+                acc := addmod(mulmod(acc, shift, q), calldataload({{ p }}), q)
+{%- endfor %}
+                if iszero(eq(acc, mload(add(pMem, pQ)))) {
+                    fail()
+                }
+            }
+{% endif %}
+            // shplonk.js, computeRoots: the k roots x_j = x_0·w_k^j of an offset, from x_0.
+            function fillRoots(pRoots, x, w, k) {
+                for { let j := 0 } lt(j, k) { j := add(j, 1) } {
+                    mstore(add(pRoots, mul(j, 32)), x)
+                    x := mulmod(x, w, q)
+                }
+            }
+
+            // STEP 6 (verify.js); shplonk.js, computeRoots: the roots T_i of every f_i, offset-major,
+            // x_j = xiSeed^(powerW/k)·w_{kN}^s·w_k^j, whose k-th power is z = xi·w_N^s (A.2, rule
+            // 5); every f_i of the same k and offsets has the same.
+            function computeRoots(pMem) {
+                let xiSeed := mload(add(pMem, pXiSeed))
+                // shplonk.js, checkOpening: xiSeed is not zero.
+                if iszero(xiSeed) {
+                    fail()
+                }
+                let xi := mload(add(pMem, pXi))
+                let y := mload(add(pMem, pY))
+{%- for k in ks %}
+                mstore(add(pMem, {{ k.p_seed }}), {% if k.exponent == 1 %}xiSeed{% else %}powMod(xiSeed, {{ k.exponent }}){% endif %})
+                mstore(add(pMem, {{ k.p_yk }}), {% if k.k == 1 %}y{% else %}powMod(y, {{ k.k }}){% endif %})
+{%- endfor %}
+{%- for set in root_sets %}
+                // k = {{ set.k }}, offsets {{ set.offsets }}
+{%- for row in set.rows %}
+                // offset {{ row.s }}
+{%- if set.k == 1 %}
+                mstore(add(pMem, {{ row.roots }}), {% if row.omega_n_s %}mulmod(mload(add(pMem, {{ set.p_seed }})), {{ row.omega_n_s }}, q){% else %}mload(add(pMem, {{ set.p_seed }})){% endif %})
+{%- else %}
+                fillRoots(add(pMem, {{ row.roots }}), {% if row.omega_kn_s %}mulmod(mload(add(pMem, {{ set.p_seed }})), {{ row.omega_kn_s }}, q){% else %}mload(add(pMem, {{ set.p_seed }})){% endif %}, {{ set.w_k }}, {{ set.k }})
+{%- endif %}
+                mstore(add(pMem, {{ row.z }}), {% if row.omega_n_s %}mulmod(xi, {{ row.omega_n_s }}, q){% else %}xi{% endif %})
+{%- endfor %}
+{%- endfor %}
+            }
+
+            // shplonk.js, computeInverseDenominators, for the k roots x_j of an offset: the Lagrange
+            // denominator (y - x_j)·prod_{x' != x_j} (x_j - x') is (y - x_j)·k·x_j^(k-1)·prod_{s' != s}
+            // (z - z'), where k·x^(k-1) is the derivative of X^k - z, whose roots are those of the
+            // offset (snarkjs's computeLiS0), and x_j^k - z' = z - z' the product over the roots of
+            // another offset s'. den1 = k·x_0^(k-1)·prod (z - z'); x_j^(k-1) = x_0^(k-1)·w_k^(-j).
+            function fillDens(pDen, pRoots, den1, wInv, k, y) {
+                let b := den1
+                for { let j := 0 } lt(j, k) { j := add(j, 1) } {
+                    mstore(add(pDen, mul(j, 32)), mulmod(b, addmod(y, sub(q, mload(add(pRoots, mul(j, 32)))), q), q))
+                    b := mulmod(b, wInv, q)
+                }
+            }
+
+            // snarkjs's inverseArray, in loops (shplonkjs's verifier.sol.ejs without extendLoops):
+            // the inverse of each of the len values from pVals, with one inverse, the proof's inv,
+            // which it checks first (shplonk.js, isValidInverse: inv·prod = 1).
+            function inverseArray(pVals, len) {
+                let pAux := mload(0x40)
+                let acc := mload(pVals)
+                mstore(pAux, acc)
+                for { let i := 1 } lt(i, len) { i := add(i, 1) } {
+                    acc := mulmod(acc, mload(add(pVals, mul(i, 32))), q)
+                    mstore(add(pAux, mul(i, 32)), acc)
+                }
+                let inv := calldataload(pInv)
+                if iszero(eq(1, mulmod(acc, inv, q))) {
+                    fail()
+                }
+                acc := inv
+                for { let i := sub(len, 1) } gt(i, 0) { i := sub(i, 1) } {
+                    let pV := add(pVals, mul(i, 32))
+                    let v := mload(pV)
+                    mstore(pV, mulmod(acc, mload(add(pAux, mul(sub(i, 1), 32))), q))
+                    acc := mulmod(acc, v, q)
+                }
+                mstore(pVals, acc)
+            }
+
+            // STEP 6 (verify.js): shplonk.js, computeZerofiers and computeInverseDenominators, in the
+            // order of the proof's inv (A.5), inverted with it. Z_T(y) = prod_{x in T} (y - x) =
+            // prod_s (y^k - z_s): the roots of each offset s are those of X^k - z_s.
+            function computeInversions(pMem) {
+                let y := mload(add(pMem, pY))
+                let d
+{%- for set in root_sets %}
+                // k = {{ set.k }}, offsets {{ set.offsets }}
+                d := 1
+{%- for row in set.rows %}
+                d := mulmod(d, addmod(mload(add(pMem, {{ set.p_yk }})), sub(q, mload(add(pMem, {{ row.z }}))), q), q)
+{%- endfor %}
+                // shplonk.js, verifyOpening: y is not a root of an f_i (inv·prod = 1 checks it too).
+                if iszero(d) {
+                    fail()
+                }
+                mstore(add(pMem, {{ set.p_zt }}), d)
+{%- for row in set.rows %}
+{%- if set.k == 1 %}
+                d := 1
+{%- elif set.k == 2 %}
+                d := mulmod(2, mload(add(pMem, {{ row.roots }})), q)
+{%- else %}
+                d := mulmod({{ set.k }}, powMod(mload(add(pMem, {{ row.roots }})), {{ set.k_minus_1 }}), q)
+{%- endif %}
+{%- for z in row.other_z %}
+                d := mulmod(d, addmod(mload(add(pMem, {{ row.z }})), sub(q, mload(add(pMem, {{ z }}))), q), q)
+{%- endfor %}
+                mstore(add(pMem, {{ row.den1 }}), d)
+{%- endfor %}
+{%- endfor %}
+                // A.5, 1: Z_{T_i}(y), i = 1 … n - 1
+{%- for f in fs %}{% if f.p_inv_zt %}
+                mstore(add(pMem, {{ f.p_inv_zt }}), mload(add(pMem, {{ f.p_zt }})))
+{%- endif %}{% endfor %}
+                // A.5, 2: the Lagrange denominators of each f_i, in the order of its roots
+{%- for f in fs %}
+{%- for row in f.rows %}
+{%- if f.k == 1 %}
+                mstore(add(pMem, {{ row.inv_den }}), mulmod(mload(add(pMem, {{ row.den1 }})), addmod(y, sub(q, mload(add(pMem, {{ row.roots }}))), q), q))
+{%- else %}
+                fillDens(add(pMem, {{ row.inv_den }}), add(pMem, {{ row.roots }}), mload(add(pMem, {{ row.den1 }})), {{ f.w_k_inv }}, {{ f.k }}, y)
+{%- endif %}
+{%- endfor %}
+{%- endfor %}
+                inverseArray(add(pMem, pInvs), {{ n_inv }})
+            }
+
+            // STEP 7 (verify.js, openingEvaluations; shplonk.js, computeR): r_i(y) =
+            // Z_{T_i}(y)·sum_x f_i(x)/den_x over the roots x of f_i, f_i(x) = sum_j p_j(xi·w^s)·x^j
+            // at a root of offset s, p_j(xi·w^s) the proof's evaluations and, for Q's f, Q(xi)
+            // computed or the proof's Q_i(xi) if Q is split.
+            function computeR(pMem) {
+                let acc
+{%- for f in fs %}
+                // f{{ f.index }}: stage {{ f.stage }}, k = {{ f.k }}, offsets {{ f.offsets }}
+                acc := 0
+{%- for row in f.rows %}
+{%- if f.k == 1 %}
+                acc := addmod(acc, mulmod({{ row.horner_first }}, mload(add(pMem, {{ row.inv_den }})), q), q)
+{%- else %}
+                for { let j := 0 } lt(j, {{ f.k }}) { j := add(j, 1) } {
+                    let x := mload(add(add(pMem, {{ row.roots }}), mul(j, 32)))
+                    let v := {{ row.horner_first }}
+{%- for e in row.horner_rest %}
+                    v := addmod(mulmod(v, x, q), {{ e }}, q)
+{%- endfor %}
+                    acc := addmod(acc, mulmod(v, mload(add(add(pMem, {{ row.inv_den }}), mul(j, 32))), q), q)
+                }
+{%- endif %}
+{%- endfor %}
+                mstore(add(pMem, {{ f.p_r }}), mulmod(acc, mload(add(pMem, {{ f.p_zt }})), q))
+{%- endfor %}
+            }
+
+            // Whether a call to the precompile 0x06 or 0x07 succeeded and returned a point: 64 bytes.
+            // snarkjs checks success only; on a chain where the precompile is missing, the call
+            // succeeds and returns nothing (Annex F.13).
+            function checkPointResult(success) {
+                if iszero(and(success, eq(returndatasize(), 64))) {
+                    fail()
+                }
+            }
+
+            // G1 function to accumulate a G1 value to an address
+            function g1_acc(pR, pP) {
+                let mIn := mload(0x40)
+                mstore(mIn, mload(pR))
+                mstore(add(mIn, 32), mload(add(pR, 32)))
+                mstore(add(mIn, 64), mload(pP))
+                mstore(add(mIn, 96), mload(add(pP, 32)))
+
+                let success := staticcall(sub(gas(), 2000), 6, mIn, 128, pR, 64)
+
+                checkPointResult(success)
+            }
+
+            // G1 function to multiply a G1 value (in the calldata at pP) to value in an address
+            function g1_mulAcc(pR, pP, s) {
+                let success
+                let mIn := mload(0x40)
+                mstore(mIn, calldataload(pP))
+                mstore(add(mIn, 32), calldataload(add(pP, 32)))
+                mstore(add(mIn, 64), s)
+
+                success := staticcall(sub(gas(), 2000), 7, mIn, 96, mIn, 64)
+
+                checkPointResult(success)
+
+                mstore(add(mIn, 64), mload(pR))
+                mstore(add(mIn, 96), mload(add(pR, 32)))
+
+                success := staticcall(sub(gas(), 2000), 6, mIn, 128, pR, 64)
+
+                checkPointResult(success)
+            }
+
+            // G1 function to multiply a G1 value (x, y) to value in an address
+            function g1_mulAccC(pR, x, y, s) {
+                let success
+                let mIn := mload(0x40)
+                mstore(mIn, x)
+                mstore(add(mIn, 32), y)
+                mstore(add(mIn, 64), s)
+
+                success := staticcall(sub(gas(), 2000), 7, mIn, 96, mIn, 64)
+
+                checkPointResult(success)
+
+                mstore(add(mIn, 64), mload(pR))
+                mstore(add(mIn, 96), mload(add(pR, 32)))
+
+                success := staticcall(sub(gas(), 2000), 6, mIn, 128, pR, 64)
+
+                checkPointResult(success)
+            }
+
+            // G1 function to write s·(x, y) to an address
+            function g1_mulSetC(pR, x, y, s) {
+                let mIn := mload(0x40)
+                mstore(mIn, x)
+                mstore(add(mIn, 32), y)
+                mstore(add(mIn, 64), s)
+
+                let success := staticcall(sub(gas(), 2000), 7, mIn, 96, pR, 64)
+
+                checkPointResult(success)
+            }
+
+            // STEP 7: shplonk.js, computeQuotients, computeF, computeE and computeJ (A.5):
+            // q_0 = Z_{T_0}(y), q_i = alpha^i·Z_{T_0}(y)/Z_{T_i}(y), F = [f_0] + sum_i q_i·[f_i],
+            // E = (r_0(y) + sum_i q_i·r_i(y))·[1]_1, J = q_0·[W]; the fixed [f_i] are the vkey's.
+            function computeFEJ(pMem) {
+{%- set f0 = fs | first %}
+                let zt0 := mload(add(pMem, {{ f0.p_zt }}))
+                let alpha := mload(add(pMem, pAlpha))
+                let alphaPow := 1
+                let quotient
+                let e := mload(add(pMem, {{ f0.p_r }}))
+{%- if f0.fixed %}
+                mstore(add(pMem, pF), {{ f0.commitment }}x)
+                mstore(add(pMem, add(pF, 32)), {{ f0.commitment }}y)
+{%- else %}
+                calldatacopy(add(pMem, pF), {{ f0.commitment }}, 64)
+{%- endif %}
+{%- for f in fs %}{% if not loop.first %}
+                // f{{ f.index }}
+                alphaPow := mulmod(alphaPow, alpha, q)
+                quotient := mulmod(alphaPow, mulmod(zt0, mload(add(pMem, {{ f.p_inv_zt }})), q), q)
+{%- if f.fixed %}
+                g1_mulAccC(add(pMem, pF), {{ f.commitment }}x, {{ f.commitment }}y, quotient)
+{%- else %}
+                g1_mulAcc(add(pMem, pF), {{ f.commitment }}, quotient)
+{%- endif %}
+                e := addmod(e, mulmod(quotient, mload(add(pMem, {{ f.p_r }})), q), q)
+{%- endif %}{% endfor %}
+
+                // Compute group-encoded batch evaluation [E]_1
+                g1_mulSetC(add(pMem, pE), G1x, G1y, e)
+
+                // Compute the full difference [J]_1
+                g1_mulSetC(add(pMem, pJ), calldataload(pW), calldataload(add(pW, 32)), zt0)
+            }
+
+            // STEP 7: shplonk.js, isValidPairing: e([F]_1 - [E]_1 - [J]_1 + y·[W']_1, [1]_2) ==
+            // e([W']_1, [x]_2)
+            function checkPairing(pMem) -> isOk {
+                let mIn := mload(0x40)
+
+                // First pairing value
+                // Compute -E
+                mstore(add(add(pMem, pE), 32), mod(sub(qf, mload(add(add(pMem, pE), 32))), qf))
+                // Compute -J
+                mstore(add(add(pMem, pJ), 32), mod(sub(qf, mload(add(add(pMem, pJ), 32))), qf))
+                // F = F - E - J + y·W'
+                g1_acc(add(pMem, pF), add(pMem, pE))
+                g1_acc(add(pMem, pF), add(pMem, pJ))
+                g1_mulAcc(add(pMem, pF), pWp, mload(add(pMem, pY)))
+
+                mstore(mIn, mload(add(pMem, pF)))
+                mstore(add(mIn, 32), mload(add(add(pMem, pF), 32)))
+
+                // Second pairing value
+                mstore(add(mIn, 64), G2x2)
+                mstore(add(mIn, 96), G2x1)
+                mstore(add(mIn, 128), G2y2)
+                mstore(add(mIn, 160), G2y1)
+
+                // Third pairing value
+                // Compute -W'
+                mstore(add(mIn, 192), calldataload(pWp))
+                let s := calldataload(add(pWp, 32))
+                s := mod(sub(qf, s), qf)
+                mstore(add(mIn, 224), s)
+
+                // Fourth pairing value
+                mstore(add(mIn, 256), X2x2)
+                mstore(add(mIn, 288), X2x1)
+                mstore(add(mIn, 320), X2y2)
+                mstore(add(mIn, 352), X2y1)
+
+                let success := staticcall(sub(gas(), 2000), 8, mIn, 384, mIn, 0x20)
+
+                // The precompile's answer, 32 bytes, is 1 (snarkjs takes any non-zero word; Annex F.13).
+                isOk := and(and(success, eq(returndatasize(), 0x20)), eq(mload(mIn), 1))
+            }
+
+            let pMem := mload(0x40)
+            mstore(0x40, add(pMem, lastMem))
+
+            // STEPS 1-3: the proof and the publics are well-formed
+            checkInput(proof{% if n_public > 0 %}, pubSignals{% endif %})
+
+            // STEP 4: the challenges
+            computeChallenges(pMem{% if n_public > 0 %}, pubSignals{% endif %})
+
+            // STEP 5: Z_H(xi), the Zi and Q(xi)
+            computeZh(pMem)
+            computeZi(pMem)
+            computeQ(pMem{% if n_public > 0 %}, pubSignals{% endif %})
+{%- if q_split %}
+            checkQPieces(pMem)
+{%- endif %}
+
+            // STEP 6: the roots, and inv
+            computeRoots(pMem)
+            computeInversions(pMem)
+
+            // STEP 7: the SHPLONK opening, with a pairing
+            computeR(pMem)
+            computeFEJ(pMem)
+            let isValid := checkPairing(pMem)
+
+            mstore(0, isValid)
+            return(0, 0x20)
+        }
+    }
+}

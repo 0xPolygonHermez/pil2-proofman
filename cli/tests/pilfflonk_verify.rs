@@ -148,6 +148,7 @@ fn it_verifies_a_proof_of_the_fibonacci_and_rejects_every_change() {
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
         no_packing: false,
+        solidity: false,
     };
     compile_fibonacci(&opts.airout_path);
     // More powers than the Fibonacci's largest degree, grouped by default: 513, the f of L1 and

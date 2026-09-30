@@ -35,6 +35,7 @@ fn options(dir: &TestDir) -> SetupPilfflonkOptions {
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
         no_packing: false,
+        solidity: false,
     }
 }
 

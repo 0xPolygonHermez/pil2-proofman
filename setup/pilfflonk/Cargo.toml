@@ -19,7 +19,10 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 num-bigint = { workspace = true }
 prost = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
+# The Solidity verifier's template (`solidity`), as `pil2-stark-recurser` renders its own.
+tera = "1"
 tracing = { workspace = true }
 pil2-pilout = { workspace = true }
 pil-info = { workspace = true }

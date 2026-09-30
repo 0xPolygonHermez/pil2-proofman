@@ -59,7 +59,7 @@ pub use check::{
 };
 pub use degrees::Degrees;
 pub use error::{PilfflonkError, PilfflonkResult};
-pub use field::{Digest, FqBytes, FrBytes, G1Affine, G2Affine, BN254_Q, BN254_R};
+pub use field::{Digest, FqBytes, FrBytes, G1Affine, G2Affine, BN254_Q, BN254_R, G2_GENERATOR};
 pub use global_info::{AggType, AirFile, GlobalInfoAir, PilfflonkGlobalInfo, SetupParams, FORMAT_VERSION};
 pub use json::{canonical_json, JsonFile};
 pub use layout::{Layout, LayoutEntry, LayoutPol};

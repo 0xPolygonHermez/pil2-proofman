@@ -193,6 +193,7 @@ fn the_rows_are_the_stage_1_columns_of_the_keys() {
             extra_muls: DEFAULT_EXTRA_MULS,
             max_q_degree: DEFAULT_MAX_Q_DEGREE,
             no_packing: false,
+            solidity: false,
         };
         // More powers than the largest degree of the layout, 3080 (`cli/tests/pilfflonk_prove.rs`); the
         // check commits nothing, so the ptau of τ = 1 does.

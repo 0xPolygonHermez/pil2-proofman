@@ -402,6 +402,7 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
         no_packing: true,
+        solidity: false,
     };
     fs::write(&opts.airout_path, pilout.encode_to_vec()).unwrap();
     write_tau_one_ptau(&opts.powers_of_tau, 1024).unwrap();
@@ -507,6 +508,7 @@ fn the_sum_bus_fixtures_are_the_setups_and_the_oracles() {
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
         no_packing: true,
+        solidity: false,
     };
     fs::write(&opts.airout_path, pilout.encode_to_vec()).unwrap();
     write_tau_one_ptau(&opts.powers_of_tau, 1024).unwrap();

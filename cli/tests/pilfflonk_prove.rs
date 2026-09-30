@@ -418,6 +418,7 @@ fn setup_options(dir: &TestDir, program: Program, packing: Packing) -> SetupPilf
         extra_muls,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
         no_packing,
+        solidity: false,
     }
 }
 

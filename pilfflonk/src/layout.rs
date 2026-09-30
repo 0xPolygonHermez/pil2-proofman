@@ -158,6 +158,19 @@ impl Layout {
             if f.offsets.is_empty() || f.offsets.windows(2).any(|w| w[0] >= w[1]) {
                 return invalid!("f{i} has offsets {:?}: they must be at least one, increasing", f.offsets);
             }
+            // As the JS verifier's checkLayout (shplonk.js) and the prover's ShplonkProver: each offset
+            // a row of the domain, |s| < N, and no two the same row modulo N. Otherwise two offsets
+            // give the same opening point, and T has a root twice.
+            let n_rows = 1i128 << c.n_bits;
+            let mut rows = BTreeSet::new();
+            for &s in &f.offsets {
+                if i128::from(s).abs() >= n_rows {
+                    return invalid!("f{i} has offset {s}, and an offset must be below N = {n_rows} in absolute value");
+                }
+                if !rows.insert(i128::from(s).rem_euclid(n_rows)) {
+                    return invalid!("f{i} has offsets {:?}, two of them the same row modulo N = {n_rows}", f.offsets);
+                }
+            }
             if f.degree == 0 {
                 return invalid!("f{i} has degree 0");
             }

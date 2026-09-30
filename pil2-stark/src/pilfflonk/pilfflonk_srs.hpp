@@ -43,6 +43,19 @@ struct PtauHeader {
 // std::runtime_error where ffiasm has no assembly backend.
 PtauHeader readPtauHeader(const std::string &path);
 
+// What checkG2 finds wrong with a point of the G2 twist, if anything.
+enum class G2Error {
+    None,
+    Infinity,   // (0, 0), ffiasm's affine point at infinity
+    NotOnTwist, // a coordinate not below q, or off y^2 = x^3 + 3/(9+u)
+    NotInG2,    // on the twist, but r times it is not the point at infinity
+};
+
+// Whether `p` (Montgomery form) is a point of G2 other than the point at infinity: its coordinates
+// below q, on the twist, and in its r-torsion group G2. What the JS verifier requires of the vkey's
+// X_2 (pilfflonk/js/src/elements.js, g2FromObject), and so of the SRS's [τ]₂.
+G2Error checkG2(const G2PointAffine &p);
+
 // The structured reference string of a proof (spec §4.2.5, "SRS"): the powers [τ^i]₁ for i < nG1,
 // and [1]₂ and [τ]₂, as a snarkjs ptau holds them. KZG commitments are MSMs over its G1 powers.
 //

@@ -353,6 +353,39 @@ int pilfflonk_srs_g2(const void *srs, uint64_t i, uint8_t out_g2[128]) {
     });
 }
 
+int pilfflonk_g2_check(const uint8_t g2[128]) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (g2 == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "g2 is NULL");
+        }
+        for (uint64_t c = 0; c < 4; ++c) {
+            if (!PilFflonk::isCanonicalFq(g2 + c * PilFflonk::FQ_BYTES)) {
+                return fail(PILFFLONK_ERR_NON_CANONICAL, function,
+                            "coordinate %" PRIu64 " is not below the BN254 base field modulus q", c);
+            }
+        }
+        AltBn128::Engine &E = AltBn128::Engine::engine;
+        PilFflonk::G2PointAffine point;
+        E.f1.fromRprLE(point.x.a, g2, PilFflonk::FQ_BYTES);
+        E.f1.fromRprLE(point.x.b, g2 + PilFflonk::FQ_BYTES, PilFflonk::FQ_BYTES);
+        E.f1.fromRprLE(point.y.a, g2 + 2 * PilFflonk::FQ_BYTES, PilFflonk::FQ_BYTES);
+        E.f1.fromRprLE(point.y.b, g2 + 3 * PilFflonk::FQ_BYTES, PilFflonk::FQ_BYTES);
+        switch (PilFflonk::checkG2(point)) {
+        case PilFflonk::G2Error::None:
+            return static_cast<int>(PILFFLONK_OK);
+        case PilFflonk::G2Error::Infinity:
+            return fail(PILFFLONK_ERR_INVALID_POINT, function, "the point at infinity of G2");
+        case PilFflonk::G2Error::NotOnTwist:
+            return fail(PILFFLONK_ERR_INVALID_POINT, function, "not on the twist y^2 = x^3 + 3/(9+u)");
+        case PilFflonk::G2Error::NotInG2:
+            return fail(PILFFLONK_ERR_INVALID_POINT, function,
+                        "on the twist but not in G2, its r-torsion group (r times it is not the point at infinity)");
+        }
+        return fail(PILFFLONK_ERR_INTERNAL, function, "unknown G2 check result");
+    });
+}
+
 int pilfflonk_commit_fixed(const void *srs, uint64_t n_bits, uint64_t k, const uint8_t *evals, uint8_t out_g1[64]) {
     const char *function = __func__;
     return guard(function, [&] {

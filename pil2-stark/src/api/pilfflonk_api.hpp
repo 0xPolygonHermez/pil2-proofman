@@ -132,6 +132,15 @@ extern "C" {
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or i is neither 0 nor 1.
     int pilfflonk_srs_g2(const void *srs, uint64_t i, uint8_t out_g2[128]);
 
+    // PILFFLONK_OK if `g2`, a point x.c0‖x.c1‖y.c0‖y.c1 as pilfflonk_srs_g2 writes one (each
+    // coordinate canonical little-endian), is a point of G2 other than the point at infinity: on the
+    // twist and in its r-torsion group. What the JS verifier requires of the vkey's X_2
+    // (pilfflonk/js/src/elements.js, g2FromObject), and the SRS of its [τ]₂: Vkey::validate calls it.
+    // PILFFLONK_ERR_NON_CANONICAL if a coordinate is not below q; PILFFLONK_ERR_INVALID_POINT if the
+    // point is (0, 0), the point at infinity, off the twist, or not in G2 (the last error says which);
+    // PILFFLONK_ERR_INVALID_ARGUMENT if g2 is NULL.
+    int pilfflonk_g2_check(const uint8_t g2[128]);
+
     // Writes to out_g1 the KZG commitment [f(τ)]₁ of a fixed f (spec §4.2.5, "Compromisos fixos"):
     // f(X) = Σ_{j<k} p_j(X^k)·X^j, where p_j is the polynomial of degree < N = 2^n_bits whose
     // evaluations on H are column j. `evals` holds the k columns one after another, each the N

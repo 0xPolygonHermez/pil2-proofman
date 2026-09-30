@@ -265,7 +265,36 @@ pub struct G2Affine {
     pub y: [FqBytes; 2],
 }
 
+/// `[1]₂`, the generator of G2, as `x.c0, x.c1, y.c0, y.c1` in decimal: the `[1]₂` of every BN254
+/// library and every ptau, and the `[τ]₂` of a ptau with `τ = 1`.
+pub const G2_GENERATOR: [&str; 4] = [
+    "10857046999023057135944570762232829481370756359578518086990519993285655852781",
+    "11559732032986387107991004021392285783925812861821192530917403151452391805634",
+    "8495653923123431417604973247489272438418190587263600148770280649306958101930",
+    "4082367875863433681332203403145435568316851327593401208105741076214120093531",
+];
+
 impl G2Affine {
+    /// `[1]₂` ([`G2_GENERATOR`]).
+    pub fn generator() -> PilfflonkResult<Self> {
+        let [x_c0, x_c1, y_c0, y_c1] = G2_GENERATOR;
+        Ok(Self {
+            x: [FqBytes::from_decimal(x_c0)?, FqBytes::from_decimal(x_c1)?],
+            y: [FqBytes::from_decimal(y_c0)?, FqBytes::from_decimal(y_c1)?],
+        })
+    }
+
+    /// `x.c0‖x.c1‖y.c0‖y.c1`, each coordinate 32 bytes little-endian: the C API's encoding, which
+    /// `pilfflonk_g2_check` reads.
+    pub fn to_le_bytes(&self) -> [u8; G2_BYTES] {
+        let mut bytes = [0u8; G2_BYTES];
+        for (chunk, coordinate) in bytes.chunks_exact_mut(FIELD_BYTES).zip([self.x[0], self.x[1], self.y[0], self.y[1]])
+        {
+            chunk.copy_from_slice(&coordinate.to_le_bytes());
+        }
+        bytes
+    }
+
     /// `x.c0‖x.c1‖y.c0‖y.c1`, each coordinate 32 bytes little-endian: the C API's encoding
     /// (`pilfflonk_srs_g2`). Refuses a coordinate that is not below `q`.
     pub fn from_le_bytes(bytes: &[u8; G2_BYTES]) -> PilfflonkResult<Self> {
@@ -458,6 +487,10 @@ mod tests {
         let json = serde_json::to_string(&g2).unwrap();
         assert_eq!(json, r#"[["1","2"],["3","0"]]"#);
         assert_eq!(serde_json::from_str::<G2Affine>(&json).unwrap(), g2);
+        assert_eq!(G2Affine::from_le_bytes(&g2.to_le_bytes()).unwrap(), g2);
+        let generator = G2Affine::generator().unwrap();
+        assert_eq!(G2Affine::from_le_bytes(&generator.to_le_bytes()).unwrap(), generator);
+        assert_eq!(generator.x[0].to_decimal(), G2_GENERATOR[0]);
     }
 
     #[test]

@@ -109,6 +109,14 @@ pub fn pilfflonk_fr_check_canonical_c(scalar: &[u8; PILFFLONK_FR_BYTES]) -> Resu
     check_status(unsafe { pilfflonk_fr_check_canonical(scalar.as_ptr()) })
 }
 
+/// Checks that `g2`, a point `x.c0‖x.c1‖y.c0‖y.c1` with canonical little-endian coordinates (the
+/// encoding of [`PilFflonkSrs::g2`]), is a point of G2 other than the point at infinity: on the twist
+/// and in its r-torsion group, as the JS verifier requires of the vkey's `X_2`.
+pub fn pilfflonk_g2_check_c(g2: &[u8; PILFFLONK_G2_BYTES]) -> Result<(), PilFflonkError> {
+    // SAFETY: `g2` points to the 128 bytes the function reads.
+    check_status(unsafe { pilfflonk_g2_check(g2.as_ptr()) })
+}
+
 /// The Keccak-256 hash of `data` (Keccak's original padding, as Ethereum and snarkjs use it, not
 /// SHA3-256): rapidsnark's `keccak_wrapper`, the hash of the transcript (spec A.4) and of the
 /// vkey's digest (A.6).
