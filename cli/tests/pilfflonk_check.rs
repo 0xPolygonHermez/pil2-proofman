@@ -12,7 +12,11 @@
 //! `im_col` ones too, are the oracle's with them, and a witness that breaks the bus fails the last
 //! row of its running sum or product with the oracle's value, and the CLI names it. And the same on
 //! the pil-fflonk examples ported to PIL2 (plan M34), on the sum and on the product bus, with a wrong
-//! multiplicity, a broken permutation or connection, or a value out of a range.
+//! multiplicity, a broken permutation or connection, or a value out of a range. And on the witness a
+//! witness library computes (plan M38c, D4), `--witness-lib` in place of `--witness`: that of the
+//! libraries of the Fibonacci, the Connection and `all` passes, as their generators' does, and the
+//! command refuses a STARK witness library, a library that is not there, and the flags that do not go
+//! together.
 //!
 //! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
 //! which must honour `prime`, and is `#[ignore]` without it. Those of the domains build their
@@ -54,6 +58,8 @@ mod range_check;
 mod signed;
 #[path = "../../pilfflonk/tests/data/sum_bus.rs"]
 mod sum_bus;
+#[path = "../../pilfflonk/tests/data/witness_libraries.rs"]
+mod witness_libraries;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -71,6 +77,7 @@ use proofman_pilfflonk::{
 };
 use proofman_starks_lib_c::PilFflonkTranscript;
 use prost::Message;
+use witness_libraries::built_library;
 
 const N: usize = 256;
 const L1: usize = 0;
@@ -306,8 +313,15 @@ fn the_check_finds_what_the_oracle_does() {
 }
 
 fn check_cli(key: &Path, witness: &Path, extra: &[&str]) -> Output {
+    check_from(key, &["--witness", witness.to_str().unwrap()], extra)
+}
+
+/// `proofman-cli pilfflonk check -k <key> <source> <extra>`, with the witness where `source` says:
+/// `--witness <dir>`, or `--witness-lib <library> [--public-inputs <json>]`.
+fn check_from(key: &Path, source: &[&str], extra: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_proofman-cli"))
-        .args(["pilfflonk", "check", "-k", key.to_str().unwrap(), "--witness", witness.to_str().unwrap()])
+        .args(["pilfflonk", "check", "-k", key.to_str().unwrap()])
+        .args(source)
         .args(extra)
         .output()
         .expect("proofman-cli runs")
@@ -896,5 +910,96 @@ fn the_cli_names_the_constraint_of_a_broken_bus() {
         let failed = |text: &str| text.lines().find_map(|l| l.find("Failed at row").map(|at| l[at..].to_string()));
         let again = check_cli(&f.proving_key, &dir, &[]);
         assert_eq!(failed(&output(&again)), failed(&text), "{name}: the same witness, the same value");
+    }
+}
+
+/// The lines of the constraints in the output of `check -v`, without the log's timestamps.
+fn constraint_lines(text: &str) -> Vec<String> {
+    text.lines().filter_map(|l| l.find("Constraint #").map(|at| l[at..].to_string())).collect()
+}
+
+/// The witness a library computes (plan M38c): `check --witness-lib` passes on that of the libraries
+/// of the Fibonacci (with pil-fflonk's inputs), the Connection and `all` (on the sum bus), constraint
+/// by constraint as `check --witness` on their generators' witness directories.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_cli_checks_the_witness_a_library_computes() {
+    // Each fixture, set up with its generator's witness, and its library, AIR and public inputs.
+    type Setup = fn() -> Fixture;
+    let fibonacci: Setup = || fixture("lib_fibonacci");
+    let connection: Setup =
+        || fixture_of("lib_connection", CONNECTION_SUM, connection::witness(), DEFAULT_MAX_CONSTRAINT_DEGREE, false);
+    let all: Setup = || fixture_of("lib_all", ALL_SUM, all::witness(), DEFAULT_MAX_CONSTRAINT_DEGREE, false);
+    let inputs = Some(r#"{"in1": "1", "in2": "2"}"#);
+    for (setup, library, air, inputs) in [
+        (fibonacci, "pilfflonk_fibonacci", "Fibonacci", inputs),
+        (connection, "pilfflonk_connection", "Connection", None),
+        (all, "pilfflonk_all", "All", inputs),
+    ] {
+        let f = setup();
+        let library = built_library(library);
+        let mut source = vec!["--witness-lib", library.to_str().unwrap()];
+        let inputs_file = f.dir.file("inputs.json");
+        if let Some(inputs) = inputs {
+            fs::write(&inputs_file, inputs).unwrap();
+            source.extend(["--public-inputs", inputs_file.to_str().unwrap()]);
+        }
+        let out = check_from(&f.proving_key, &source, &["-v"]);
+        let text = output(&out);
+        assert!(out.status.success(), "{air}: {text}");
+        let verified = format!("✓ All constraints for Instance #0 of {air} were verified");
+        assert!(text.contains(&verified), "{air}: {text}");
+
+        let from_dir = check_cli(&f.proving_key, &f.witness_dir, &["-v"]);
+        assert!(from_dir.status.success(), "{air}: {}", output(&from_dir));
+        assert!(!constraint_lines(&text).is_empty(), "{air}: {text}");
+        assert_eq!(constraint_lines(&text), constraint_lines(&output(&from_dir)), "{air}");
+    }
+}
+
+/// `check --witness-lib` refuses a STARK witness library and a library that is not there, as
+/// `prove --witness-lib` does (`pilfflonk_prove.rs`), with an error and no report.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_cli_refuses_what_is_not_a_pilfflonk_witness_library() {
+    let f = fixture("lib_refusals");
+    let stark = built_library("fibonacci_square");
+    let missing = f.dir.file("missing.so");
+    for (library, expected) in [
+        (&stark, format!("witness library {}: it is a STARK witness library", stark.display())),
+        (&missing, format!("witness library {}: there is no such file", missing.display())),
+    ] {
+        let out = check_from(&f.proving_key, &["--witness-lib", library.to_str().unwrap()], &[]);
+        let text = output(&out);
+        assert_eq!(out.status.code(), Some(1), "{text}");
+        assert!(text.contains(&expected), "{expected:?} not in:\n{text}");
+        assert!(!text.contains("Instance #0"), "{text}");
+    }
+}
+
+/// The flags of the witness (plan M38c), as `prove`'s (`pilfflonk_prove.rs`): exactly one of
+/// `--witness` and `--witness-lib`, and `--public-inputs` only with `--witness-lib`. clap refuses the
+/// others, with exit code 2, before anything is read.
+#[test]
+fn the_cli_takes_one_witness() {
+    let key = Path::new("provingKey");
+    for (source, expected) in [
+        (
+            &["--witness", "witness", "-w", "library.so"][..],
+            "the argument '--witness <WITNESS>' cannot be used with '--witness-lib <WITNESS_LIB>'",
+        ),
+        (
+            &[],
+            "the following required arguments were not provided:\n  <--witness <WITNESS>|--witness-lib <WITNESS_LIB>>",
+        ),
+        (
+            &["--witness", "witness", "-i", "inputs.json"],
+            "the argument '--witness <WITNESS>' cannot be used with '--public-inputs <PUBLIC_INPUTS>'",
+        ),
+        (&["--public-inputs", "inputs.json"], "<--witness <WITNESS>|--witness-lib <WITNESS_LIB>>"),
+    ] {
+        let out = check_from(key, source, &[]);
+        assert_eq!(out.status.code(), Some(2), "{source:?}: {}", output(&out));
+        assert!(output(&out).contains(expected), "{expected:?} not in:\n{}", output(&out));
     }
 }

@@ -29,7 +29,13 @@ pub const INPUTS: [u64; 2] = [1, 2];
 /// The witness of the fixture: one instance of air 0 of airgroup 0, with the columns of the four
 /// state machines and the publics `[in1, in2, out]`.
 pub fn witness() -> Witness {
-    generate(plookup::columns(N_BITS))
+    witness_of_inputs(INPUTS)
+}
+
+/// [`witness`] for the Fibonacci's inputs `inputs` instead of [`INPUTS`], as the witness library of
+/// the fixture computes it from its public inputs (plan M38c).
+pub fn witness_of_inputs(inputs: [u64; 2]) -> Witness {
+    generate(inputs, plookup::columns(N_BITS))
 }
 
 /// [`witness`], but with the Plookup's wrong multiplicity of `tests/data/plookup.rs`
@@ -37,13 +43,13 @@ pub fn witness() -> Witness {
 pub fn witness_with_a_wrong_multiplicity() -> Witness {
     let mut plookup = plookup::columns(N_BITS);
     plookup::move_a_multiplicity(&mut plookup[4]);
-    generate(plookup)
+    generate(INPUTS, plookup)
 }
 
-/// The witness with the Plookup's columns `plookup`.
-fn generate(plookup: Vec<Vec<u64>>) -> Witness {
+/// The witness for the Fibonacci's inputs `inputs`, with the Plookup's columns `plookup`.
+fn generate(inputs: [u64; 2], plookup: Vec<Vec<u64>>) -> Witness {
     let n = 1usize << N_BITS;
-    let fibonacci = fibonacci::witness(N_BITS, INPUTS);
+    let fibonacci = fibonacci::witness(N_BITS, inputs);
     let fr = |col: Vec<Vec<u64>>| -> Vec<Vec<FrBytes>> {
         col.iter().map(|c| c.iter().map(|&v| FrBytes::from_u64(v)).collect()).collect()
     };

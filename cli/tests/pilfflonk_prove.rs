@@ -31,7 +31,12 @@
 //! - the pil-fflonk examples ported to PIL2 (plan M34, spec Annex G), `pilfflonk/tests/fixtures/
 //!   {plookup,permutation,connection,range_check,all}`, each on the std's sum bus and on its product
 //!   bus: grouped with pil-fflonk's `extraMuls`, as the stage-2 fixtures (and a broken bus is
-//!   refused), with `--no-packing`, and with `Q` split; `all`'s publics are pil-fflonk's.
+//!   refused), with `--no-packing`, and with `Q` split; `all`'s publics are pil-fflonk's;
+//! - the witness a witness library computes (plan M38c, D4), `--witness-lib` in place of
+//!   `--witness`: the libraries of `pilfflonk/tests/fixtures/{fibonacci,connection,all}/rs` prove the
+//!   same proofs as their generators' witness directories, which verify; and the command refuses a
+//!   STARK witness library, a file that is not a library, and public inputs the library cannot read,
+//!   and the flags that do not go together.
 //!
 //! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
 //! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`, plan N13):
@@ -81,6 +86,8 @@ mod range_check;
 mod signed;
 #[path = "../../pilfflonk/tests/data/sum_bus.rs"]
 mod sum_bus;
+#[path = "../../pilfflonk/tests/data/witness_libraries.rs"]
+mod witness_libraries;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -103,6 +110,7 @@ use proofman_pilfflonk::{
 };
 use prost::Message;
 use serde_json::{json, Value};
+use witness_libraries::built_library;
 
 const SEED_A: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 const SEED_B: &str = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100";
@@ -315,7 +323,14 @@ fn cli(args: &[&str], paths: &[&Path]) -> Output {
 
 /// `proofman-cli pilfflonk prove -k <key> --witness <witness> -o <out> [--insecure-blinding-seed <seed>]`.
 fn prove_cli(key: &Path, witness: &Path, out: &Path, seed: Option<&str>) -> Output {
-    let mut args = vec!["pilfflonk", "prove", "-k", key.to_str().unwrap(), "--witness", witness.to_str().unwrap()];
+    prove_from(key, &["--witness", witness.to_str().unwrap()], out, seed)
+}
+
+/// `proofman-cli pilfflonk prove -k <key> <source> -o <out> [--insecure-blinding-seed <seed>]`, with the
+/// witness where `source` says: `--witness <dir>`, or `--witness-lib <library> [--public-inputs <json>]`.
+fn prove_from(key: &Path, source: &[&str], out: &Path, seed: Option<&str>) -> Output {
+    let mut args = vec!["pilfflonk", "prove", "-k", key.to_str().unwrap()];
+    args.extend(source);
     args.extend(["-o", out.to_str().unwrap()]);
     if let Some(seed) = seed {
         args.extend(["--insecure-blinding-seed", seed]);
@@ -1738,4 +1753,134 @@ fn the_prover_proves_the_pil_fflonk_all() {
         ],
         [2, 2],
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// The witness of a witness library (plan M38c, D4)
+// ---------------------------------------------------------------------------------------------
+
+/// The public inputs of the Fibonacci's and `all`'s libraries for the inputs `[1, 2]`, pil-fflonk's,
+/// as decimal strings.
+const PIL_FFLONK_INPUTS: &str = r#"{"in1": "1", "in2": "2"}"#;
+
+/// Phase 3's validation 1 (spec §6): the libraries of the Fibonacci, the Connection and `all`
+/// (`pilfflonk/tests/fixtures/<fixture>/rs`), on either bus, compute the witness of their
+/// generators, and prove with `--witness-lib` the proof of their generators' witness directories
+/// with `--witness`, byte for byte with the same seed; it verifies, and `all`'s publics are
+/// pil-fflonk's. The Connection has no publics, and its library takes no public inputs.
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_the_witness_a_library_computes() {
+    use Example::{All, Connection};
+    for (program, library, inputs) in [
+        (Program::Fibonacci, "pilfflonk_fibonacci", Some(PIL_FFLONK_INPUTS)),
+        (Program::Example(Connection, Bus::Sum), "pilfflonk_connection", None),
+        (Program::Example(Connection, Bus::Prod), "pilfflonk_connection", None),
+        (Program::Example(All, Bus::Sum), "pilfflonk_all", Some(PIL_FFLONK_INPUTS)),
+        (Program::Example(All, Bus::Prod), "pilfflonk_all", Some(PIL_FFLONK_INPUTS)),
+    ] {
+        let (name, packing) = match program {
+            Program::Example(example, bus) => {
+                (format!("lib_{}_{}", example.name(), bus.name()), Packing::ExtraMuls(example.extra_muls()))
+            }
+            _ => ("lib_fibonacci".to_string(), DEFAULT),
+        };
+        let f = fixture(&name, program, packing);
+        let library = built_library(library);
+        let mut source = vec!["--witness-lib", library.to_str().unwrap()];
+        let inputs_file = f.dir.file("inputs.json");
+        if let Some(inputs) = inputs {
+            fs::write(&inputs_file, inputs).unwrap();
+            source.extend(["--public-inputs", inputs_file.to_str().unwrap()]);
+        }
+
+        let (from_library, from_dir) = (f.dir.file("from_library"), f.dir.file("from_dir"));
+        let run = prove_from(&f.proving_key, &source, &from_library, Some(SEED_A));
+        assert!(run.status.success(), "{name}: prove --witness-lib: {}", output(&run));
+        let run = prove_cli(&f.proving_key, &f.witness, &from_dir, Some(SEED_A));
+        assert!(run.status.success(), "{name}: prove --witness: {}", output(&run));
+        for file in ["proof.json", "publics.json"] {
+            let (library, dir) = (fs::read(from_library.join(file)).unwrap(), fs::read(from_dir.join(file)).unwrap());
+            assert!(library == dir, "{name}: {file} of the library is not that of the directory");
+        }
+        assert_eq!(read_json(&from_library.join("publics.json")), f.publics, "{name}");
+        if inputs.is_some() {
+            assert_eq!(f.publics, json!(PIL_FFLONK_PUBLICS), "{name}: pil-fflonk's publics");
+        }
+
+        let (publics, proof) = (from_library.join("publics.json"), from_library.join("proof.json"));
+        let verified = verify(&f.vkey, &publics, &proof);
+        assert!(verified.status.success(), "{name}: {}", output(&verified));
+        assert!(output(&verified).contains("OK: the proof verifies"), "{name}: {}", output(&verified));
+    }
+}
+
+/// `pilfflonk prove --witness-lib` on the Fibonacci's key refuses, with an error that says why and no
+/// proof: a STARK witness library, a library that is not there, a file that is not a library, and
+/// public inputs the library cannot read (a JSON number, a value not below `r`, a file that is not
+/// there).
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_prover_refuses_what_is_not_a_pilfflonk_witness_library() {
+    let f = fixture("lib_refusals", Program::Fibonacci, DEFAULT);
+    let fibonacci = built_library("pilfflonk_fibonacci");
+    let stark = built_library("fibonacci_square");
+    let (missing, not_a_library) = (f.dir.file("missing.so"), f.dir.file("not_a_library.so"));
+    fs::write(&not_a_library, "not an ELF file").unwrap();
+    let inputs = |name: &str, text: &str| {
+        let path = f.dir.file(name);
+        fs::write(&path, text).unwrap();
+        path
+    };
+    let (number, too_big) =
+        (inputs("number.json", r#"{"in1": 1}"#), inputs("r.json", &format!(r#"{{"in2": "{BN254_R}"}}"#)));
+    let no_inputs = f.dir.file("no_inputs.json");
+
+    for (library, public_inputs, expected) in [
+        (&stark, None, format!("witness library {}: it is a STARK witness library", stark.display())),
+        (&missing, None, format!("witness library {}: there is no such file", missing.display())),
+        (&not_a_library, None, format!("witness library {}: it cannot be loaded", not_a_library.display())),
+        (&fibonacci, Some(&number), format!("{}: JSON error: ", number.display())),
+        (&fibonacci, Some(&too_big), format!("{}: JSON error: ", too_big.display())),
+        (&fibonacci, Some(&no_inputs), format!("IO error on {}", no_inputs.display())),
+    ] {
+        let mut source = vec!["--witness-lib", library.to_str().unwrap()];
+        if let Some(path) = public_inputs {
+            source.extend(["--public-inputs", path.to_str().unwrap()]);
+        }
+        let out = f.dir.file("proof");
+        let run = prove_from(&f.proving_key, &source, &out, None);
+        let text = output(&run);
+        assert_eq!(run.status.code(), Some(1), "{source:?}: {text}");
+        assert!(text.contains(&expected), "{expected:?} not in:\n{text}");
+        assert!(!out.exists(), "{source:?}: a proof");
+        println!("{text}");
+    }
+}
+
+/// The flags of the witness (plan M38c): exactly one of `--witness` and `--witness-lib`, and
+/// `--public-inputs` only with `--witness-lib`. clap refuses the others, with exit code 2, before
+/// anything is read.
+#[test]
+fn the_prover_takes_one_witness() {
+    let (key, out) = (Path::new("provingKey"), Path::new("proof"));
+    for (source, expected) in [
+        (
+            &["--witness", "witness", "--witness-lib", "library.so"][..],
+            "the argument '--witness <WITNESS>' cannot be used with '--witness-lib <WITNESS_LIB>'",
+        ),
+        (
+            &[],
+            "the following required arguments were not provided:\n  <--witness <WITNESS>|--witness-lib <WITNESS_LIB>>",
+        ),
+        (
+            &["--witness", "witness", "--public-inputs", "inputs.json"],
+            "the argument '--witness <WITNESS>' cannot be used with '--public-inputs <PUBLIC_INPUTS>'",
+        ),
+        (&["-i", "inputs.json"], "<--witness <WITNESS>|--witness-lib <WITNESS_LIB>>"),
+    ] {
+        let run = prove_from(key, source, out, None);
+        assert_eq!(run.status.code(), Some(2), "{source:?}: {}", output(&run));
+        assert!(output(&run).contains(expected), "{expected:?} not in:\n{}", output(&run));
+    }
 }

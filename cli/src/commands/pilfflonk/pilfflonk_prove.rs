@@ -1,11 +1,14 @@
 use clap::Args;
 use colored::Colorize;
 use proofman_common::initialize_logger;
-use proofman_pilfflonk::{prove, FileWitnessSource, ProveOptions, ProvingKey};
+use proofman_pilfflonk::{prove, ProveOptions, ProvingKey};
 use std::path::PathBuf;
 
-// The prover of spec §4.4: the provingKey/ of setup-pilfflonk and a witness directory (spec A.6) in,
-// proof.json and publics.json out, with the argument names of `prove`.
+use super::PilfflonkWitnessArgs;
+
+// The prover of spec §4.4: the provingKey/ of setup-pilfflonk and a witness directory (spec A.6) or a
+// witness library (D4, plan M38c) in, proof.json and publics.json out, with the argument names of
+// `prove`.
 /// Prove a pilfflonk witness: writes proof.json and publics.json
 #[derive(Args)]
 pub struct PilfflonkProveCmd {
@@ -13,9 +16,8 @@ pub struct PilfflonkProveCmd {
     #[clap(short = 'k', long)]
     pub proving_key: PathBuf,
 
-    /// The witness directory: instances.json, instance_<ag>_<a>_<t>.bin, publics.json and proof_values.json
-    #[clap(long)]
-    pub witness: PathBuf,
+    #[clap(flatten)]
+    pub witness: PilfflonkWitnessArgs,
 
     /// Where proof.json and publics.json go (created if it does not exist)
     #[clap(short = 'o', long, visible_alias = "output")]
@@ -62,7 +64,7 @@ impl PilfflonkProveCmd {
             );
         }
         let pk = ProvingKey::load(&self.proving_key)?;
-        let witness = FileWitnessSource::open(&self.witness, &pk.witness_shape()?)?;
+        let witness = self.witness.open(&pk, self.verbose)?;
         let options = ProveOptions { insecure_blinding_seed: self.insecure_blinding_seed };
         let output = prove(&pk, &witness, &options)?;
         output.write(&self.output_dir)?;

@@ -1,0 +1,31 @@
+[package]
+name = "pilfflonk-all"
+description = "The pilfflonk witness library of pil-fflonk's example `all`, over BN254's Fr (D4): a test of the witness-library API"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+publish = false
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+proofman-pilfflonk = { workspace = true }
+# The rows `pil_helpers` generates: `GenericTrace`, `trace_row!` and `values!`; and the logger.
+proofman-common = { workspace = true }
+proofman-macros = { workspace = true }
+proofman-fields = { workspace = true }
+serde = { workspace = true }
+serde_arrays = { workspace = true }
+
+[dev-dependencies]
+# Regenerates `src/pil_helpers` to check it is what pil-helpers writes.
+proofman-cli = { workspace = true }
+# Sets up the fixture's keys, with the ptau of `τ = 1` (plan N13).
+pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
+# The Fibonacci's generator, `pilfflonk/tests/data/fibonacci.rs`, which that of `all` is made of.
+num-bigint = { workspace = true }

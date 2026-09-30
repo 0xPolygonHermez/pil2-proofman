@@ -47,6 +47,13 @@ proofman-pilfflonk = { workspace = true, features = ["oracle"] }
 serde_json = { workspace = true }
 # Encodes the synthetic pilouts of the domains tests (plan M24), built in code.
 prost = { workspace = true }
+# The pilfflonk witness libraries of the fixtures, which `pilfflonk prove` and `pilfflonk check` load
+# with `--witness-lib` (plan M38c), and a STARK one, which they refuse: Cargo builds them beside the
+# tests.
+pilfflonk-fibonacci = { path = "../pilfflonk/tests/fixtures/fibonacci/rs" }
+pilfflonk-connection = { path = "../pilfflonk/tests/fixtures/connection/rs" }
+pilfflonk-all = { path = "../pilfflonk/tests/fixtures/all/rs" }
+fibonacci-square = { path = "../examples/fibonacci-square" }
 
 [features]
 default = ["mpi"]

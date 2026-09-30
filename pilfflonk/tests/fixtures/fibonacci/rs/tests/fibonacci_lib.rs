@@ -16,8 +16,9 @@
 
 #[path = "../../../../data/fibonacci.rs"]
 mod fibonacci;
+#[path = "../../../../data/witness_libraries.rs"]
+mod witness_libraries;
 
-use std::env::consts::{DLL_PREFIX, DLL_SUFFIX};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -31,6 +32,7 @@ use proofman_pilfflonk::{
     compute_witness, js_verifier, load_witness_library, prove, AirShape, FrBytes, JsonFile, PilfflonkError,
     PilfflonkGlobalInfo, ProveOptions, ProvingKey, Publics, WitnessShape, BN254_R,
 };
+use witness_libraries::built_library;
 
 /// The fixture's size, and the inputs of pil-fflonk's `all` example (spec Annex G).
 const N_BITS: u32 = 8;
@@ -67,15 +69,6 @@ impl Drop for TestDir {
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../..").canonicalize().unwrap()
-}
-
-/// The dynamic library `name` that Cargo built for this test, beside its binary
-/// (`target/<profile>/deps`): this crate's, or a dependency's.
-fn built_library(name: &str) -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    let path = exe.parent().unwrap().join(format!("{DLL_PREFIX}{name}{DLL_SUFFIX}"));
-    assert!(path.is_file(), "{} is not built", path.display());
-    path
 }
 
 /// The library of this crate.

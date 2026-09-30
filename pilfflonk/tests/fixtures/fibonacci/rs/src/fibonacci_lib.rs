@@ -3,7 +3,7 @@ use std::path::Path;
 use proofman_common::trace::Values;
 use proofman_fields::Bn254;
 use proofman_pilfflonk::{
-    pilfflonk_witness_library, read_public_inputs, AirInstanceRef, InstanceWitness, PilfflonkError, PilfflonkResult,
+    pilfflonk_witness_library, read_public_inputs, AirInstanceRef, InstanceWitness, PilfflonkResult,
     PilfflonkWitnessLibrary, Stage1Witness, Witness, WitnessShape,
 };
 
@@ -21,17 +21,7 @@ type Trace = FibonacciTrace<Bn254>;
 impl PilfflonkWitnessLibrary for WitnessLib {
     fn witness(&mut self, shape: &WitnessShape, public_inputs: Option<&Path>) -> PilfflonkResult<Witness> {
         let air = AirInstanceRef { airgroup_id: Trace::AIRGROUP_ID as u64, air_id: Trace::AIR_ID as u64 };
-        let air_shape = shape.air(air)?;
-        // NUM_ROWS is a power of two.
-        if (air_shape.n_bits, air_shape.n_cols) != (u64::from(Trace::NUM_ROWS.trailing_zeros()), Trace::ROW_SIZE) {
-            return Err(PilfflonkError::InvalidFormat(format!(
-                "the Fibonacci has {} rows and {} columns, and the key's AIR 2^{} and {}",
-                Trace::NUM_ROWS,
-                Trace::ROW_SIZE,
-                air_shape.n_bits,
-                air_shape.n_cols
-            )));
-        }
+        shape.check_trace("Fibonacci", air, Trace::NUM_ROWS, Trace::ROW_SIZE)?;
 
         let inputs: FibonacciPublics = read_public_inputs(public_inputs)?;
         let mut trace = Trace::new_zeroes();

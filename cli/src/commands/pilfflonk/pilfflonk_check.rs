@@ -1,11 +1,13 @@
 use clap::Args;
 use colored::Colorize;
 use proofman_common::initialize_logger;
-use proofman_pilfflonk::{check, CheckOptions, CheckReport, FileWitnessSource, ProvingKey, DEFAULT_MAX_ROWS};
+use proofman_pilfflonk::{check, CheckOptions, CheckReport, ProvingKey, DEFAULT_MAX_ROWS};
 use std::path::PathBuf;
 
-// The check of spec §4.4 ("Depuració"): the witness of prove, row by row against the constraints of
-// its AIR, without proving; its output is verify-constraints'.
+use super::PilfflonkWitnessArgs;
+
+// The check of spec §4.4 ("Depuració"): the witness of prove, from a directory or a witness library,
+// row by row against the constraints of its AIR, without proving; its output is verify-constraints'.
 /// Check a pilfflonk witness row by row against its constraints, without proving: exits with 0 only if every constraint holds
 #[derive(Args)]
 pub struct PilfflonkCheckCmd {
@@ -13,9 +15,8 @@ pub struct PilfflonkCheckCmd {
     #[clap(short = 'k', long)]
     pub proving_key: PathBuf,
 
-    /// The witness directory: instances.json, instance_<ag>_<a>_<t>.bin, publics.json and proof_values.json
-    #[clap(long)]
-    pub witness: PathBuf,
+    #[clap(flatten)]
+    pub witness: PilfflonkWitnessArgs,
 
     /// The failing rows printed of each constraint, the first ones (all are counted)
     #[clap(long, value_name = "N", default_value_t = DEFAULT_MAX_ROWS)]
@@ -34,7 +35,7 @@ impl PilfflonkCheckCmd {
         initialize_logger(self.verbose.into(), None);
 
         let pk = ProvingKey::load(&self.proving_key)?;
-        let witness = FileWitnessSource::open(&self.witness, &pk.witness_shape()?)?;
+        let witness = self.witness.open(&pk, self.verbose)?;
         let report = check(&pk, &witness, &CheckOptions { max_rows: self.max_rows })?;
         log_report(&report);
         if report.holds() {

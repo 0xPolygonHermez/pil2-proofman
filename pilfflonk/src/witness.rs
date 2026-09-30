@@ -343,6 +343,21 @@ impl WitnessShape {
         }
     }
 
+    /// Checks that `air` has traces of `n_rows` rows and `n_cols` columns: what a witness library
+    /// checks before it computes its traces, whose size is that of the rows `pil-helpers` generated
+    /// for its pilout. `name` is the library's program, for the error.
+    pub fn check_trace(&self, name: &str, air: AirInstanceRef, n_rows: usize, n_cols: usize) -> PilfflonkResult<()> {
+        let shape = self.air(air)?;
+        if (shape.n_rows(), shape.n_cols) != (n_rows, n_cols) {
+            return invalid!(
+                "the {name} has {n_rows} rows and {n_cols} columns, and the key's AIR 2^{} and {}",
+                shape.n_bits,
+                shape.n_cols
+            );
+        }
+        Ok(())
+    }
+
     /// Checks the instances and their air values, and returns the file name of each instance.
     fn check_instances(&self, instances: &[(AirInstanceRef, usize)]) -> PilfflonkResult<Vec<String>> {
         if instances.is_empty() {
@@ -695,6 +710,30 @@ mod tests {
         w.set(0, 0, FrBytes::from_u64(7)).unwrap();
         assert_eq!(w.get(0, 0), Some(FrBytes::from_u64(7)));
         assert!(w.set(1, 0, FrBytes::ZERO).is_err());
+    }
+
+    /// What a library checks before it computes a trace: the size of its AIR in the key.
+    #[test]
+    fn a_trace_is_checked_against_the_size_of_its_air() {
+        let air = AirInstanceRef { airgroup_id: 0, air_id: 0 };
+        let shape = WitnessShape::new(
+            vec![AirShape { airgroup_id: 0, air_id: 0, n_bits: 3, n_cols: 2, n_air_values: 0 }],
+            0,
+            0,
+        )
+        .unwrap();
+        shape.check_trace("Program", air, 8, 2).unwrap();
+        for (n_rows, n_cols) in [(4, 2), (16, 2), (8, 1), (8, 3)] {
+            let err = shape.check_trace("Program", air, n_rows, n_cols).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "Invalid format: the Program has {n_rows} rows and {n_cols} columns, and the key's AIR 2^3 and 2"
+                )
+            );
+        }
+        let other = AirInstanceRef { airgroup_id: 0, air_id: 1 };
+        assert!(shape.check_trace("Program", other, 8, 2).unwrap_err().to_string().contains("air 0/1"));
     }
 
     #[test]

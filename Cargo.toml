@@ -49,6 +49,8 @@ members = [
 
   # pilfflonk witness-library tests (D4)
   "pilfflonk/tests/fixtures/fibonacci/rs",
+  "pilfflonk/tests/fixtures/connection/rs",
+  "pilfflonk/tests/fixtures/all/rs",
 
   # Examples
   "examples/fibonacci-square",
