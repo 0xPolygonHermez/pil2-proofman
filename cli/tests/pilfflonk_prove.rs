@@ -461,9 +461,40 @@ fn sorted_keys(map: &serde_json::Map<String, Value>) -> Vec<&str> {
     keys
 }
 
+/// The bytes of a seed of `--insecure-blinding-seed`, in the order they are written.
+fn seed_bytes(hex: &str) -> [u8; 32] {
+    let mut seed = [0u8; 32];
+    for (i, byte) in seed.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap();
+    }
+    seed
+}
+
+/// That `Q` evaluated in parts of every size, from one coset of `H` to the whole extended coset
+/// (plan M39, `ProveOptions::q_part_bits`), gives the proof in `dir`, which `pilfflonk prove`
+/// made with `seed` and its default parts, byte for byte: the same `Q`, and so the same proof.
+fn the_parts_of_q_give_the_same_proof(f: &Fixture, seed: &str, dir: &Path) {
+    let pk = ProvingKey::load(&f.proving_key).unwrap();
+    let witness = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
+    let info = f.info();
+    let n_bits_ext = info.degrees().unwrap().n_bits_ext;
+    let expected = fs::read(dir.join("proof.json")).unwrap();
+    let options = |bits| ProveOptions { insecure_blinding_seed: Some(seed_bytes(seed)), q_part_bits: Some(bits) };
+    for bits in info.n_bits..=n_bits_ext {
+        let out = f.dir.file(&format!("q_parts_{bits}"));
+        prove(&pk, &witness, &options(bits)).unwrap().write(&out).unwrap();
+        assert_eq!(fs::read(out.join("proof.json")).unwrap(), expected, "Q in parts of 2^{bits} points");
+    }
+    for bits in [info.n_bits - 1, n_bits_ext + 1] {
+        let refused = prove(&pk, &witness, &options(bits)).unwrap_err().to_string();
+        assert!(refused.contains(&format!("parts of 2^{bits} points")), "{refused}");
+    }
+}
+
 /// Proves the witness of `f` four times (twice with one seed, once with another, once with the
 /// OS's randomness), and checks that:
 /// - the same seed gives the same proof, and another seed other commitments;
+/// - `Q` in parts of any size gives the same proof ([`the_parts_of_q_give_the_same_proof`]);
 /// - the proof holds the commitments `commitments` (the non-fixed `f`, `W` and `W'`) and the
 ///   evaluations `evaluations`, by name, and the witness's publics;
 /// - the verifier accepts every proof, and rejects any change to a commitment, `W`, `W'`, an
@@ -481,6 +512,7 @@ fn proves_and_rejects_every_change(f: &Fixture, commitments: &[&str], evaluation
     // The same seed, the same proof, byte for byte; another seed, other commitments.
     let proof = |dir: &Path| fs::read(dir.join("proof.json")).unwrap();
     assert_eq!(proof(&a1), proof(&a2));
+    the_parts_of_q_give_the_same_proof(f, SEED_A, &a1);
     assert_eq!(fs::read(a1.join("publics.json")).unwrap(), fs::read(b.join("publics.json")).unwrap());
     let (pa, pb, pr) =
         (read_json(&a1.join("proof.json")), read_json(&b.join("proof.json")), read_json(&random.join("proof.json")));
@@ -934,7 +966,7 @@ fn a_witness_that_breaks_a_constraint_across_the_wrap_is_refused() {
         assert_eq!(rows, [(9, 0)], "{name}");
 
         let pk = ProvingKey::load(&f.proving_key).unwrap();
-        let options = ProveOptions { insecure_blinding_seed: Some([3; 32]) };
+        let options = ProveOptions { insecure_blinding_seed: Some([3; 32]), ..ProveOptions::default() };
         match prove(&pk, &witness, &options) {
             Err(PilfflonkError::Unsatisfied(message)) => {
                 assert!(message.contains("the witness does not satisfy the constraints of Signed"), "{message}")
@@ -1044,7 +1076,7 @@ fn breaks_at_the_edges_are_refused(f: &Fixture, air: domains::Air) {
     let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
     let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
     let pk = ProvingKey::load(&f.proving_key).unwrap();
-    let options = ProveOptions { insecure_blinding_seed: Some([9; 32]) };
+    let options = ProveOptions { insecure_blinding_seed: Some([9; 32]), ..ProveOptions::default() };
     for rule in 0..air.rules().len() {
         for edge in [domains::Edge::First, domains::Edge::Last] {
             let (witness, row) = domains::broken(air, rule, edge);
@@ -1159,7 +1191,7 @@ fn a_witness_that_breaks_a_constraint_is_refused() {
     let rows: Vec<(usize, usize)> = failures.iter().map(|x| (x.constraint, x.row)).collect();
     assert_eq!(rows, [(0, 100), (1, 99), (1, 100)]);
 
-    let options = ProveOptions { insecure_blinding_seed: Some([3; 32]) };
+    let options = ProveOptions { insecure_blinding_seed: Some([3; 32]), ..ProveOptions::default() };
     match prove(&pk, &witness, &options) {
         Err(PilfflonkError::Unsatisfied(message)) => {
             assert!(message.contains("the witness does not satisfy the constraints of Fibonacci"), "{message}")
@@ -1185,7 +1217,7 @@ fn big(v: &FrBytes) -> num_bigint::BigUint {
 fn agrees_with_the_oracle(f: &Fixture) -> Fr {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
-    let options = ProveOptions { insecure_blinding_seed: Some([5; 32]) };
+    let options = ProveOptions { insecure_blinding_seed: Some([5; 32]), ..ProveOptions::default() };
     let out = prove(&pk, &source, &options).unwrap();
     let info = pk.air(source.instances()[0]).unwrap();
     let power_w = info.layout.power_w().unwrap();
@@ -1438,7 +1470,8 @@ console.log(JSON.stringify({ stages, stdVc: s(c.stdVc), xiSeed: s(c.xiSeed) }));
 fn the_transcripts_agree(f: &Fixture) -> ProofChallenges {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
-    let out = prove(&pk, &source, &ProveOptions { insecure_blinding_seed: Some([7; 32]) }).unwrap();
+    let out = prove(&pk, &source, &ProveOptions { insecure_blinding_seed: Some([7; 32]), ..ProveOptions::default() })
+        .unwrap();
     let proof = f.dir.file("transcript");
     out.write(&proof).unwrap();
     let run = Command::new("node")
@@ -1467,7 +1500,7 @@ fn the_transcripts_agree(f: &Fixture) -> ProofChallenges {
 fn stage_columns_are_the_oracles(f: &Fixture) -> Vec<Vec<FrBytes>> {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
-    let options = ProveOptions { insecure_blinding_seed: Some([11; 32]) };
+    let options = ProveOptions { insecure_blinding_seed: Some([11; 32]), ..ProveOptions::default() };
     let stages = stage_columns(&pk, &source, &options).unwrap();
     let proof = prove(&pk, &source, &options).unwrap();
     assert_eq!(stages.challenges, proof.challenges.stages, "the challenges of the proof of the same seed");
@@ -1564,7 +1597,7 @@ fn the_prover_proves_the_std_buses_of_stage_2() {
 /// `L1'·…`), as the oracle says with the prover's columns; the prover refuses the witness.
 fn a_broken_bus_is_refused(f: &Fixture, name: &str, witness: &Witness, line: &str) {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
-    let options = ProveOptions { insecure_blinding_seed: Some([3; 32]) };
+    let options = ProveOptions { insecure_blinding_seed: Some([3; 32]), ..ProveOptions::default() };
     let stages = stage_columns(&pk, witness, &options).unwrap();
 
     let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
@@ -1613,12 +1646,14 @@ fn a_witness_that_breaks_a_bus_is_refused() {
     }
 }
 
-/// Proves the witness of `f` with a fixed seed: the verifier accepts the proof, and rejects it with
-/// its first evaluation changed.
+/// Proves the witness of `f` with a fixed seed: `Q` in parts of any size gives the same proof
+/// ([`the_parts_of_q_give_the_same_proof`]), and the verifier accepts it, and rejects it with its
+/// first evaluation changed.
 fn proves_and_verifies(f: &Fixture, name: &str) {
     let out = f.dir.file("proof");
     let run = prove_cli(&f.proving_key, &f.witness, &out, Some(SEED_A));
     assert!(run.status.success(), "{name}: prove: {}", output(&run));
+    the_parts_of_q_give_the_same_proof(f, SEED_A, &out);
     let (publics, proof) = (out.join("publics.json"), out.join("proof.json"));
     let verified = verify(&f.vkey, &publics, &proof);
     assert!(verified.status.success(), "{name}: {}", output(&verified));

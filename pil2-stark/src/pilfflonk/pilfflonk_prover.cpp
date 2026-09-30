@@ -13,6 +13,7 @@
 #include "pilfflonk_error.hpp"
 #include "pilfflonk_fr.hpp"
 #include "thread_utils.hpp"
+#include "timer.hpp"
 
 namespace PilFflonk {
 
@@ -54,6 +55,7 @@ Instance::Instance(const ProvingKey &_pk, uint64_t airgroupId, uint64_t airId, c
                    std::vector<FrElement> proofValues, std::unique_ptr<BlindingSource> _blinding)
     : pk(_pk), key(_pk.air(airgroupId, airId)), blinding(std::move(_blinding)) {
     const char *function = "Instance";
+    TimerStart(PILFFLONK_INSTANCE);
     const PilfflonkInfo &info = key.info();
     const GlobalInfo &global = pk.globalInfo();
     if (!blinding) {
@@ -101,6 +103,7 @@ Instance::Instance(const ProvingKey &_pk, uint64_t airgroupId, uint64_t airId, c
     challengeValues.assign(info.challengesMap.size(), Engine::engine.fr.zero());
     coefBuffers.resize(info.cmPolsMap.size());
     polys.resize(info.cmPolsMap.size());
+    TimerStopAndLog(PILFFLONK_INSTANCE);
 }
 
 uint64_t Instance::nCommitments(uint64_t stage) const {
@@ -299,7 +302,9 @@ std::vector<G1Point> Instance::commitF(uint64_t stage) {
             coefBuffers[id].reset(new FrElement[N + b]);
             coefs[j] = coefBuffers[id].get();
         }
+        TimerStartExpr(PILFFLONK_INTT, f);
         std::vector<std::unique_ptr<Poly>> interpolants = key.lde().intt(evals.data(), coefs.data(), k, b);
+        TimerStopAndLogExpr(PILFFLONK_INTT, f);
         // p'(X) = p(X) + (X^N − 1)·b(X): blindCoefficients adds b_i at N + i and subtracts it at i
         // (spec A.3). The factors are drawn f by f, and column by column within an f.
         std::vector<FrElement> factors(b);
@@ -310,7 +315,9 @@ std::vector<G1Point> Instance::commitF(uint64_t stage) {
             components[j] = interpolants[j].get();
             polys[entry.pols[j].id] = std::move(interpolants[j]);
         }
+        TimerStartExpr(PILFFLONK_COMMIT, f);
         commitments.push_back(commitPacked(pk.srs(), components.data(), k));
+        TimerStopAndLogExpr(PILFFLONK_COMMIT, f);
     }
     return commitments;
 }
@@ -327,9 +334,15 @@ std::vector<G1Point> Instance::commitStage(uint64_t stage, const std::vector<FrE
                                     std::to_string(next));
     }
     setChallenges(stage, challenges);
+    TimerStartExpr(PILFFLONK_STAGE, stage);
+    TimerStartExpr(PILFFLONK_HINT_COLUMNS, stage);
     computeHintColumns(stage, columns, challengeValues);
+    TimerStopAndLogExpr(PILFFLONK_HINT_COLUMNS, stage);
+    TimerStartExpr(PILFFLONK_IM_POLS, stage);
     computeImPols(stage);
+    TimerStopAndLogExpr(PILFFLONK_IM_POLS, stage);
     std::vector<G1Point> commitments = commitF(stage);
+    TimerStopAndLogExpr(PILFFLONK_STAGE, stage);
     ++next;
     return commitments;
 }
@@ -342,13 +355,20 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
                                                      : "Q is committed already");
     }
     setChallenges(info.qStage(), challenges);
+    TimerStart(PILFFLONK_Q);
 
-    // Every column Q's code reads, from its committed polynomial to the coset (Lde::extendCoset),
-    // those with as many coefficients in one call.
+    // Q on the extended coset g·H' part by part (plan M39): each part the 2^partBits points of
+    // Lde::extendCosetPart and ExpressionsDomain::cosetPart, and every column Q's code reads on it,
+    // from its committed polynomial, those with as many coefficients in one call. Point i of part p
+    // is point p + nParts·i of the coset, where Q's value goes.
     const Lde &lde = key.lde();
     const uint64_t M = lde.extendedSize();
+    const uint64_t nBitsExt = key.degrees().nBitsExt;
+    const uint64_t partBits = qPartBits == 0 ? info.nBits : qPartBits;
+    const uint64_t S = uint64_t(1) << partBits;
+    const uint64_t nParts = M / S;
     const std::vector<ColumnRead> &reads = key.qReads();
-    std::vector<std::vector<FrElement>> coset(reads.size(), std::vector<FrElement>(M));
+    std::vector<std::vector<FrElement>> partColumns(reads.size(), std::vector<FrElement>(S));
     ProverValues values;
     values.columns.resize(info.nStages + 1);
     values.columns[0].assign(info.nConstants, nullptr);
@@ -361,12 +381,8 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
         const Poly *p = c.type == 0 ? key.fixedPolynomial(c.index) : polys[key.cmIds()[c.type][c.index]].get();
         auto &group = byLength[p->getLength()];
         group.first.push_back(p->coef);
-        group.second.push_back(coset[r].data());
-        values.columns[c.type][c.index] = coset[r].data();
-    }
-    for (auto &group : byLength) {
-        lde.extendCoset(group.second.first.data(), group.second.second.data(), group.second.first.size(),
-                        group.first);
+        group.second.push_back(partColumns[r].data());
+        values.columns[c.type][c.index] = partColumns[r].data();
     }
     values.publics = publicValues;
     values.challenges = challengeValues;
@@ -374,12 +390,38 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
     values.proofValues = proofValueValues;
     values.airgroupValues.assign(info.airgroupValuesMap.size(), Engine::engine.fr.zero());
 
-    const ExpressionsDomain domain = ExpressionsDomain::coset(info.nBits, key.degrees().nBitsExt, info.boundaries);
     std::vector<FrElement> qValues(M);
-    key.expressions().calculateExpression(info.cExpId, domain, values, qValues.data());
-    coset.clear();
+    // One part is the whole coset, in its order: Q goes straight into qValues.
+    std::vector<FrElement> qPart(nParts > 1 ? S : 0);
+    for (uint64_t part = 0; part < nParts; ++part) {
+        TimerStartExpr(PILFFLONK_Q_EXTEND, part);
+        for (auto &group : byLength) {
+            lde.extendCosetPart(group.second.first.data(), group.second.second.data(), group.second.first.size(),
+                                group.first, partBits, part);
+        }
+        TimerStopAndLogExpr(PILFFLONK_Q_EXTEND, part);
+        TimerStartExpr(PILFFLONK_Q_DOMAIN, part);
+        const ExpressionsDomain domain =
+            ExpressionsDomain::cosetPart(info.nBits, nBitsExt, partBits, part, info.boundaries);
+        TimerStopAndLogExpr(PILFFLONK_Q_DOMAIN, part);
+        TimerStartExpr(PILFFLONK_Q_EVALUATE, part);
+        FrElement *dest = nParts > 1 ? qPart.data() : qValues.data();
+        key.expressions().calculateExpression(info.cExpId, domain, values, dest);
+        if (nParts > 1) {
+#pragma omp parallel for schedule(static)
+            for (uint64_t i = 0; i < S; ++i) {
+                qValues[part + nParts * i] = qPart[i];
+            }
+        }
+        TimerStopAndLogExpr(PILFFLONK_Q_EVALUATE, part);
+    }
+    // Their memory back before the interpolation.
+    std::vector<std::vector<FrElement>>().swap(partColumns);
+    std::vector<FrElement>().swap(qPart);
     FrElement *qBuffer = qValues.data();
+    TimerStart(PILFFLONK_Q_INTERPOLATE);
     lde.interpolateCoset(&qBuffer, &qBuffer, 1);
+    TimerStopAndLog(PILFFLONK_Q_INTERPOLATE);
 
     // Q is a polynomial of its bound (spec A.1) if and only if every constraint holds on its rows.
     const uint64_t bound = key.degrees().qCoefficients;
@@ -420,6 +462,7 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
     }
 
     // Each f of Q's stage, its pieces packed.
+    TimerStart(PILFFLONK_Q_COMMIT);
     std::vector<G1Point> commitments;
     for (const LayoutEntry &entry : info.layout) {
         if (entry.stage != info.qStage()) {
@@ -431,6 +474,8 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
         }
         commitments.push_back(commitPacked(pk.srs(), components.data(), entry.k));
     }
+    TimerStopAndLog(PILFFLONK_Q_COMMIT);
+    TimerStopAndLog(PILFFLONK_Q);
     qPieces = std::move(pieces);
     ++next;
     return commitments;
@@ -540,6 +585,16 @@ Poly *Instance::polynomial(uint64_t f, uint64_t j) const {
 
 Poly *Instance::qPiece(uint64_t i) const { return i < qPieces.size() ? qPieces[i].get() : nullptr; }
 
+void Instance::setQPartBits(uint64_t partBits) {
+    const uint64_t nBits = key.info().nBits, nBitsExt = key.degrees().nBitsExt;
+    if (partBits < nBits || partBits > nBitsExt) {
+        throw invalid("Instance::setQPartBits", "parts of 2^" + std::to_string(partBits) +
+                                                    " points, and Q's are of 2^" + std::to_string(nBits) + " to 2^" +
+                                                    std::to_string(nBitsExt));
+    }
+    qPartBits = partBits;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Opening
 // ---------------------------------------------------------------------------------------------
@@ -625,7 +680,9 @@ Opening::Opening(const std::vector<const Instance *> &instances, const FrElement
         powerW = powerW / gcd * k;
     }
     opening.powerW = powerW;
+    TimerStart(PILFFLONK_EVALUATIONS);
     shplonk = std::make_unique<ShplonkProver>(std::move(opening));
+    TimerStopAndLog(PILFFLONK_EVALUATIONS);
 
     Engine::Fr &fr = Engine::engine.fr;
     FrElement zh;
@@ -707,7 +764,9 @@ FrElement Opening::q(uint64_t instance) const {
 Opening::Proof Opening::open(Transcript &transcript) const {
     Engine::Fr &fr = Engine::engine.fr;
     Proof proof;
+    TimerStart(PILFFLONK_OPEN);
     proof.shplonk = shplonk->open(pk->srs(), transcript);
+    TimerStopAndLog(PILFFLONK_OPEN);
     proof.inv = verifierInverse(*shplonk, proof.shplonk.y);
     FrElement zh;
     fr.sub(zh, power(shplonk->xi(), uint64_t(1) << nBits), fr.one());

@@ -339,9 +339,13 @@ struct Proved {
     Opening::Proof proof;
 };
 
-Proved prove(const Fibonacci &fib, std::unique_ptr<BlindingSource> blinding) {
+// qPartBits, if not 0, the parts commitQ evaluates Q in (Instance::setQPartBits).
+Proved prove(const Fibonacci &fib, std::unique_ptr<BlindingSource> blinding, uint64_t qPartBits = 0) {
     Proved p;
     p.instance = fib.instance(std::move(blinding));
+    if (qPartBits != 0) {
+        p.instance->setQPartBits(qPartBits);
+    }
     Transcript t;
     t.absorb(std::vector<FrElement>{E.fr.one()});
     t.absorb(fib.publics);
@@ -895,6 +899,47 @@ void testSplitQ() {
     assert(eq(opening.q(0), fr(fib.oracle["q"])));
 }
 
+// Q in parts (plan M39): whatever the size of the parts, from one coset of H (the default) to the
+// whole extended coset, the same Q (its pieces' coefficients), commitments, evaluations and opening,
+// bit for bit, whole and split, packed and not. A size out of range is refused.
+void testQInParts() {
+    const uint8_t seed[32] = {13};
+    for (const KeyFiles &files : {KeyFiles(), splitQFiles(false), splitQFiles(true)}) {
+        const Fibonacci fib(files);
+        const AirKey &air = fib.air();
+        const uint64_t nBits = air.info().nBits, nBitsExt = air.degrees().nBitsExt;
+        assert(nBitsExt > nBits);
+        // The whole coset at once, against the default (0) and every smaller part.
+        const Proved whole = prove(fib, std::make_unique<BlindingRng>(seed), nBitsExt);
+        std::vector<uint64_t> sizes = {0};
+        for (uint64_t bits = nBits; bits < nBitsExt; ++bits) {
+            sizes.push_back(bits);
+        }
+        for (uint64_t bits : sizes) {
+            const Proved p = prove(fib, std::make_unique<BlindingRng>(seed), bits);
+            for (uint64_t i = 0; i < air.nQPieces(); ++i) {
+                const Poly &a = *p.instance->qPiece(i), &b = *whole.instance->qPiece(i);
+                assert(a.getLength() == b.getLength());
+                assert(std::memcmp(a.coef, b.coef, a.getLength() * sizeof(FrElement)) == 0);
+            }
+            assert(p.commitments.size() == whole.commitments.size());
+            for (size_t c = 0; c < p.commitments.size(); ++c) {
+                assert(samePoint(p.commitments[c], whole.commitments[c]));
+            }
+            const std::vector<FrElement> &ea = p.opening->evaluations(), &eb = whole.opening->evaluations();
+            assert(ea.size() == eb.size() && std::memcmp(ea.data(), eb.data(), ea.size() * sizeof(FrElement)) == 0);
+            assert(samePoint(p.proof.shplonk.w, whole.proof.shplonk.w));
+            assert(samePoint(p.proof.shplonk.wp, whole.proof.shplonk.wp));
+            assert(eq(p.proof.inv, whole.proof.inv) && eq(p.proof.invZh, whole.proof.invZh));
+        }
+        std::unique_ptr<Instance> inst = fib.instance(std::make_unique<BlindingRng>(seed));
+        for (uint64_t bits : {nBits - 1, nBitsExt + 1}) {
+            assert(contains(thrown<std::invalid_argument>([&] { inst->setQPartBits(bits); }),
+                            "Instance::setQPartBits: parts of 2^" + std::to_string(bits)));
+        }
+    }
+}
+
 void testMutatedWitnessIsUnsatisfied() {
     const Fibonacci fib;
     std::vector<uint8_t> mutated = fib.witness;
@@ -1077,6 +1122,12 @@ void testCApi() {
     const void *instances[] = {inst};
     assert(pilfflonk_opening_new(instances, 1, xiSeed.bytes) == nullptr);
     assert(pilfflonk_last_status() == PILFFLONK_ERR_INVALID_ARGUMENT && contains(pilfflonk_last_error(), "Q yet"));
+    // The parts Q is evaluated in: from nBits = 8 to nBitsExt = 9 (testQInParts has what they change).
+    assert(pilfflonk_instance_set_q_part_bits(nullptr, 8) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_instance_set_q_part_bits(inst, 7) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "parts of 2^7 points, and Q's are of 2^8 to 2^9"));
+    assert(pilfflonk_instance_set_q_part_bits(inst, 10) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_instance_set_q_part_bits(inst, 9) == PILFFLONK_OK && pilfflonk_last_error()[0] == '\0');
     assert(pilfflonk_commit_q(inst, xiSeed.bytes, 1, out, 1) == PILFFLONK_OK);
     assert(pilfflonk_commit_q(inst, xiSeed.bytes, 1, out, 1) == PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(pilfflonk_opening_new(instances, 1, r.bytes) == nullptr &&
@@ -1957,6 +2008,7 @@ void runProverTests() {
     testUnblindedIsTheOracle();
     testBlindedProof();
     testSplitQ();
+    testQInParts();
     testMutatedWitnessIsUnsatisfied();
     testRefusesArguments();
     testCApi();

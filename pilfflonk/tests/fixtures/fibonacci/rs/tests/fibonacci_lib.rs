@@ -225,7 +225,7 @@ fn the_librarys_witness_proves_and_verifies() {
     let mut library = load_witness_library(&fibonacci_library(), 0).unwrap();
     let inputs = public_inputs(&dir, "1", "2");
     let witness = compute_witness(&mut *library, &pk.witness_shape().unwrap(), Some(&inputs)).unwrap();
-    let options = ProveOptions { insecure_blinding_seed: Some(SEED) };
+    let options = ProveOptions { insecure_blinding_seed: Some(SEED), ..ProveOptions::default() };
     let output = prove(&pk, &witness, &options).unwrap();
     let generated = prove(&pk, &fibonacci::witness(N_BITS, INPUTS), &options).unwrap();
     assert_eq!(output.proof, generated.proof);

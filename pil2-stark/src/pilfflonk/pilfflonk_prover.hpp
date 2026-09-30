@@ -55,16 +55,18 @@ struct ConstraintCheck {
 //      b_j from the BlindingSource (spec A.3), in the order of the layout and of f's columns; then f
 //      packed (pack(), spec A.2) and committed (Srs::commit).
 // commitQ:
-//   every column Q's code reads extended to the coset g·H' from its committed polynomial
-//   (Lde::extendCoset, the blinding included), Q (cExpId) on the coset with the challenges and
-//   the values, and back to coefficients (Lde::interpolateCoset). Its coefficients from the bound of
-//   spec A.1 on must be zero: if not, the witness does not satisfy the constraints, and commitQ
-//   throws UnsatisfiedError. Then Q in its pieces (AirDegrees): Q itself, unblinded, if it is not
-//   split (spec A.3); split, piece i its coefficients i·S … of Q, S = maxQDegree·N, and each boundary
-//   between pieces i and i + 1 two factors b0, b1 from the BlindingSource, boundary by boundary and
-//   b0 first, after the columns' ones: b0·X^S + b1·X^(S+1) added to piece i and b0 + b1·X subtracted
-//   from piece i + 1, so that Σ_i X^(i·S)·Q_i(X) = Q(X) (spec A.1, A.3, as pil-fflonk's
-//   pilfflonk_prover.cpp:697-720). Each f of Q's stage packs its pieces and is committed.
+//   Q (cExpId) on the coset g·H' with the challenges and the values, one part of it at a time
+//   (setQPartBits, plan M39): on each part, every column Q's code reads extended to it from its
+//   committed polynomial (Lde::extendCosetPart, the blinding included) and Q evaluated there
+//   (ExpressionsDomain::cosetPart); then Q back to coefficients (Lde::interpolateCoset). Its
+//   coefficients from the bound of spec A.1 on must be zero: if not, the witness does not satisfy
+//   the constraints, and commitQ throws UnsatisfiedError. Then Q in its pieces (AirDegrees): Q
+//   itself, unblinded, if it is not split (spec A.3); split, piece i its coefficients i·S … of Q,
+//   S = maxQDegree·N, and each boundary between pieces i and i + 1 two factors b0, b1 from the
+//   BlindingSource, boundary by boundary and b0 first, after the columns' ones: b0·X^S + b1·X^(S+1)
+//   added to piece i and b0 + b1·X subtracted from piece i + 1, so that Σ_i X^(i·S)·Q_i(X) = Q(X)
+//   (spec A.1, A.3, as pil-fflonk's pilfflonk_prover.cpp:697-720). Each f of Q's stage packs its
+//   pieces and is committed.
 // check:
 //   pilfflonk check (spec §4.4, "Depuració"; plan M25), which proves nothing: the im pols of stage 1
 //   as commitStage(1) computes them, then the numerator of each constraint of the .bin (section 2)
@@ -149,6 +151,15 @@ public:
     // Piece i of Q (the whole Q if it is not split) once Q is committed; null before.
     Poly *qPiece(uint64_t i) const;
 
+    // How commitQ evaluates Q on the extended coset of N' = 2^nBitsExt points (plan M39): in
+    // parts of 2^partBits points, one after another, each the union of 2^(partBits − nBits)
+    // cosets of H, so that the columns Q reads are held on one part at a time, 32·2^partBits
+    // bytes each, and not on all N'. By default partBits = nBits, one coset of H per part, the
+    // least memory; nBitsExt evaluates Q on the whole coset at once. Q, and so the proof, is the
+    // same bit for bit whatever the parts. Throws std::invalid_argument unless nBits <= partBits
+    // <= nBitsExt.
+    void setQPartBits(uint64_t partBits);
+
 private:
     // The columns of stages 1 … nStages and the challenges (challengesMap order) check computes them with.
     struct CheckTrace {
@@ -179,6 +190,8 @@ private:
     const AirKey &key;
     std::unique_ptr<BlindingSource> blinding;
     uint64_t next = 1;
+    // setQPartBits; 0 is nBits.
+    uint64_t qPartBits = 0;
     // The im pols of stages 1 … imPolsComputed are in columns: computeImPols does each stage once.
     uint64_t imPolsComputed = 0;
     std::vector<FrElement> publicValues;

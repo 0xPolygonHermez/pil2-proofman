@@ -29,7 +29,8 @@ Els annexos són la referència detallada per a qui implementi:
 - **D:** els fitxers clau;
 - **E:** la base analitzada;
 - **F:** les troballes col·laterals;
-- **G:** el programa PIL1 de la fixture de pil-fflonk.
+- **G:** el programa PIL1 de la fixture de pil-fflonk;
+- **H:** el rendiment de la versió CPU (M39).
 
 ### Glossari
 
@@ -687,7 +688,7 @@ Les columnes de l'**stage 2 i posteriors** i els im pols no els aporta ningú de
    Com que el transcript és únic, **els reptes de l'stage 2 són compartits per totes les instàncies**, i els busos entre instàncies quadren sense cap mecanisme de repte global (D2).
 3. **Quocient.**
    1. Treure `std_vc`.
-   2. Per a cada instància, el C++ avalua `Q` sobre el *coset* estès amb el bytecode, en torna a obtenir els coeficients, el parteix si cal (amb blinding entre els trossos) i en compromet els `f_i`.
+   2. Per a cada instància, el C++ avalua `Q` sobre el *coset* estès amb el bytecode, en torna a obtenir els coeficients, el parteix si cal (amb blinding entre els trossos) i en compromet els `f_i`. L'avalua part per part, per defecte un *coset* de `H` cada vegada, amb les columnes que llegeix esteses només a aquella part: `Q` i la prova són els mateixos bit a bit sigui quina sigui la mida de les parts, i la memòria de les columnes esteses passa a ser la d'una part (M39, Annex H.6).
    3. Absorbir els commitments de `Q` i treure `xiSeed`. El punt d'avaluació és `ξ = xiSeed^powerW`.
 4. **Avaluacions.**
    - El C++ avalua cada polinomi obert als seus punts `ξ·ω^s`.
@@ -963,7 +964,7 @@ pub fn group(pols: &[CommittedPol], params: &GroupingParams) -> Result<Layout, G
 
 **Validació:**
 1. Els exemples de pil-fflonk es proven amb el witness que calcula la biblioteca, sense fitxers. **M38c:** el Fibonacci, la Connection i `all` (les quatre màquines d'estats de pil-fflonk en una AIR), en bus de suma i de producte, amb `--witness-lib`, i la prova és la del directori del generador (`cli/tests/pilfflonk_prove.rs`). La Permutation i el Plookup per separat no tenen biblioteca pròpia: les seves columnes les calcula la d'`all`.
-2. Es genera un informe de temps i memòria fins al límit de P2 (`N ≤ 2^24`).
+2. Es genera un informe de temps i memòria fins al límit de P2 (`N ≤ 2^24`). **M39:** l'Annex H.
 
 ### Fase 4: verificador Solidity
 
@@ -1050,7 +1051,7 @@ No n'hi ha cap. Totes les preguntes (P1–P10) estan decidides (§7.1).
 | Adaptar el codi de pil-fflonk n'arrossega els defectes | Llista de defectes a corregir (Annex C.3); tests del SHPLONK aïllat abans d'integrar-lo; revisió sota ASan/UBSan |
 | El compilador corromp valors amples, a vegades sense avisar | C2–C4, ja fets; els tests BN254 del compilador; comprovació del `baseField` i de les constants `≥ r` al setup |
 | L'esquema dels fitxers divergeix entre Rust i C++ | Un sol propietari (`proofman-pilfflonk`) i tests d'anada i tornada Rust ↔ C++ |
-| Rendiment i memòria en CPU | La versió CPU va primer i ha de ser funcional, no òptima. Informe a la Fase 3, avaluació per blocs, i la GPU (Fase 5) sobre el codi MSM/NTT que ja existeix. |
+| Rendiment i memòria en CPU | La versió CPU va primer i ha de ser funcional, no òptima. Informe a la Fase 3 (Annex H), avaluació de `Q` per parts (M39), i la GPU (Fase 5) sobre el codi MSM/NTT que ja existeix. |
 | Discrepàncies de codificació amb Solidity (*endianness*, punt a l'infinit, reducció mòdul `r`) | Codificació fixada a l'Annex A.4 i vectors de test des de la Fase 0 |
 | La regla d'agrupació generalitzada no es comporta bé amb conjunts d'*offsets* grans | Tests de propietats i mètriques de grau per a les fixtures de les fases 1 a 3; la regla és una sola funció pura, fàcil de canviar |
 
@@ -1576,3 +1577,388 @@ namespace Plookup(%N);
 **Comprovació creuada amb pil-fflonk (M34).** Les 9 columnes fixes de `all`, compilades per `pil2com`, coincideixen valor per valor amb les de `pil-fflonk/config/pilfflonk.const`, també les `S1`–`S3` de la connexió. Les 15 columnes de witness de PIL1 que escriu `data/all.rs` coincideixen amb `pilfflonk.commit`, i els publics amb `runtime/public.json`. El valor d'`out` s'ha recalculat també de manera independent, a partir de les restriccions del Fibonacci. Els scripts són fora del repositori, perquè els fitxers de pil-fflonk no hi són; els tests fixen els publics de `all`.
 
 **Columnes de l'stage 2.** Les afegeix la std, no el setup: `gsum` i els `im_single`/`im_cluster` del bus de suma, o `gprod` i els `im_low` del de producte, cadascuna amb el seu *hint* (§3.4). Per exemple, `all` en té 6 en bus de suma (`gsum`, quatre `im_cluster` i un `im_single`) i 5 en bus de producte (`gprod` i quatre `im_low` encadenats), on PIL1 en tenia 6 (`H1_0`, `H2_0`, tres `Z0` i `Im28`).
+
+---
+
+## Annex H. Rendiment de la versió CPU (M39)
+
+Aquest annex és l'informe de temps i memòria de la Fase 3 (validació 2): el setup, el prover per fases i el verificador JS, fins al límit de P2 (`N ≤ 2^24`), amb el que se n'ha tret (l'avaluació de `Q` per parts, H.6) i el que queda per fer (H.9). Les xifres són del 30-09-2026, amb el codi de M39.
+
+### H.1 La màquina i el mètode
+
+**La màquina.** 2 × AMD EPYC 7773X (64 nuclis per sòcol, 2 fils per nucli: 256 fils; 2 nodes NUMA; 1,5 GB de L3), 1 TB de RAM, Ubuntu 22.04.5 (Linux 5.15). GCC 11.4 amb `-O3` i AVX2 (la CPU no té AVX-512), rustc 1.97.1, Node 22.20 i libomp 14 (el de l'Ubuntu, el que enllacen els binaris Rust).
+
+**Condicions.** La màquina és compartida, i cada execució desa la càrrega (1 minut) de la màquina a l'inici: la dels altres usuaris i la cua de l'execució anterior. Les taules en donen el rang, que va de 6 a 225. Una sola mesura alhora, mai en paral·lel amb una altra, i cap procés d'altres usuaris tocat. Les compilacions d'`all_sum` a `2^23` i `2^24` (H.8), d'un sol fil, van coincidir amb una part de les mesures: 1 fil de 256.
+
+**Els binaris.** `cargo build --release --features proofman-starks-lib-c/cpu-only`, amb el compilador de `PIL2C_EXEC` (branca `develop-0.14.0-pil2-fflonk`). Per defecte, OpenMP fa servir els 256 fils; alguns punts es repeteixen amb `OMP_NUM_THREADS=64` (H.7).
+
+**Què es mesura.** L'eina és `pilfflonk/bench/bench.sh` (H.10). Per a cada programa i mida:
+- **`pil2com`**, una vegada: temps, pic de RSS i mida del `pilout`;
+- **`setup-pilfflonk`**, amb el *layout* empaquetat per defecte (`--extra-muls 2`) i amb `--no-packing`: temps i pic de RSS, i de la clau, `nBitsExt`, `qDeg`, el nombre de `f`, les potències de l'SRS que necessita (el `degree` màxim del *layout*) i les mides del `.const` i de l'SRS;
+- **`pilfflonk prove`** amb `--witness <dir>` i `-vv`: temps de paret i pic de RSS (`/usr/bin/time -v`), el temps de cada fase i el pic de RSS de cada fase (vegeu sota);
+- **`pilfflonk verify`** de cada prova mesurada: temps i RSS. L'eina s'atura si una prova no verifica: totes les proves de l'informe verifiquen;
+- **la mida de la prova** en bytes (A.6): 64 per punt G1 i 32 per escalar.
+
+**Repeticions.** Tres execucions de cada setup i de cada prova, i dues a `all_sum` `2^22` i `2^23`, a les mides senars, amb 64 fils i a `all_prod`. Les taules en donen la mediana i la dispersió, `(màx − mín)/mediana`, i la memòria en GB de `2^30` bytes.
+
+**Les fases.** El prover C++ té temporitzadors `TimerStart`/`TimerStopAndLog` (`pil2-stark/src/utils/timer.hpp`), els del STARK, amb noms `PILFFLONK_*`: la càrrega de la clau (`LOAD_SRS`, `LOAD_AIRS` amb la INTT de les columnes fixes, `FIXED_COMMITMENTS`), la instància (`INSTANCE`), cada stage (`STAGE_<s>`, amb `HINT_COLUMNS_<s>`, `IM_POLS_<s>` i, per a cada `f`, `INTT_<f>` i `COMMIT_<f>`, la MSM), `Q` (`Q`, amb `Q_EXTEND`, `Q_DOMAIN`, `Q_EVALUATE`, `Q_INTERPOLATE` i `Q_COMMIT`), les avaluacions (`EVALUATIONS`) i l'obertura (`OPEN`, amb `SHPLONK_W`, `SHPLONK_COMMIT_W`, `SHPLONK_WP` i `SHPLONK_COMMIT_WP`). Escriuen al registre del nivell *trace* (`-vv`), com al STARK, i no costen res mesurable: una vintena de crides a `gettimeofday` per prova, i dues per `f`. El temps de llegir el witness surt de les marques de temps de dues línies del registre Rust (`··· Reading the witness` i `··· Committing stage 1`).
+
+**La memòria de cada fase.** L'eina llegeix el `VmRSS` del prover cada 0,2 s, amb l'última marca `PILFFLONK_*` del registre en aquell moment, i en treu el pic de cada fase.
+
+**L'SRS.** Un `ptau` de prova amb la `τ` fixa dels tests (`fixed_tau_ptau` de `setup/pilfflonk/src/test_ptau.rs`, `TEST_TAU`; N13), no cap de baixat: 75.497.536 potències (`9·2^23 + 64`, les que necessita el `layout` empaquetat d'`all` a `2^23`), 4,8 GB, fet en 20,7 min amb 21 GB de RSS. Com que la `τ` és pública, només serveix per mesurar. Un de sol serveix per a totes les mides: el lector de l'SRS només llegeix del `ptau` les potències que cal (M6).
+
+### H.2 Els programes i les mides
+
+Tots són les *fixtures* de les fases 1 i 2 amb `N` com a paràmetre: les variants són a `pilfflonk/bench/` i prenen `N = 2^BENCH_BITS` d'un *define* de `pil2com`, que `bench.sh` passa al `-P` (`"defines": {"BENCH_BITS": <bits>}`) amb el `prime`. Les *fixtures* no canvien. A `2^8`, les claus de les variants són les de les *fixtures* fitxer per fitxer, llevat de les línies de depuració (el fitxer font de cada restricció).
+
+| programa | què és | columnes | `qDeg` | `nBitsExt` |
+|---|---|---|---|---|
+| `fibonacci` | `bench/fibonacci.pil`: l'`airtemplate` de `tests/fixtures/fibonacci/fibonacci.pil` (el seu `airgroup` fixa `2^8`) | stage 1: `l1`, `l2` i 1 im pol; 2 fixes | 1 | `nBits + 1` |
+| `all_sum` | `bench/all_sum.pil`: `tests/fixtures/all/all.pil` (M34) amb el bus de suma | stage 1: 16 (14 compromeses; `permutation_a` i `permutation_b` no les llegeix cap restricció); stage 2: 6 (`gsum`, 4 `im_cluster`, 1 `im_single`); 10 fixes (4 d'amplada completa: `S1`–`S3` i l'`ID` de la connexió) | 2 | `nBits + 2` |
+
+També hi ha `bench/all_prod.pil` (el bus de producte), mesurat en dues mides (H.3).
+
+**El witness.** El dels generadors de les *fixtures* (`pilfflonk/tests/data/{fibonacci,all}.rs`) per a `2^nBits` files, que l'exemple `pilfflonk_bench_inputs` de `proofman-cli` (`pilfflonk/bench/inputs.rs`) escriu com a directori de witness (A.6) a partir de la forma de la clau. Per a `all`, `tests/data/all.rs` té ara `witness_of_size(n_bits, inputs)`, i el witness de sempre n'és el cas de `2^8` (els tests no canvien). Les biblioteques de witness de M38 no hi serveixen: els seus `pil_helpers` fixen `N` al tipus de la traça (`GenericTrace<_, 256>`), i fer-les genèriques en `N` hauria demanat biblioteques noves.
+
+**Els *layouts*.** Amb l'empaquetat, `fibonacci` té 5 `f` (`L1` i `LLAST` en un `f` fix de `k = 2`, tres `f` d'una columna a l'stage 1 i `Q`), i l'SRS n'ha de tenir `2N + 1` potències. `all_sum` en té 9 (els fixos de `k = 9` i `k = 1`; a l'stage 1, de `k` = 3, 3 i 8; a l'stage 2, de `k` = 1, 2 i 3; i `Q`), i l'SRS n'ha de tenir `9N + 8`. Amb `--no-packing`, 6 i 31 `f`, i l'SRS és el de `Q`: `2N + 7` a `all_sum`.
+
+**Les mides.** Totes les parells de `2^10` a `2^24` per al `fibonacci` i de `2^10` a `2^22` per a `all_sum`, més `2^21` i `2^23` al `fibonacci` i `2^23` a `all_sum`, el més gran que el compilador en pot fer (H.8). El `fibonacci` es mesura empaquetat i amb `--no-packing` a totes les mides, i `all_sum` també.
+
+### H.3 Resultats: el setup, la prova i el verificador
+
+Amb el codi final (l'avaluació de `Q` per parts, H.6) i els 256 fils; mediana de les execucions i, entre parèntesis, la dispersió. La càrrega és el rang de la de les execucions.
+
+**`pil2com`**, una compilació per programa i mida (el temps no depèn del *layout*):
+
+| programa | N | s | GB | `pilout` MB |
+|---|---|---|---|---|
+| `fibonacci` | 2^10 | 0,3 | 0,1 | 0,0 |
+| `fibonacci` | 2^12 | 0,3 | 0,1 | 0,0 |
+| `fibonacci` | 2^14 | 0,3 | 0,1 | 0,1 |
+| `fibonacci` | 2^16 | 0,4 | 0,1 | 0,3 |
+| `fibonacci` | 2^18 | 0,8 | 0,3 | 1,0 |
+| `fibonacci` | 2^20 | 2,2 | 0,7 | 4,2 |
+| `fibonacci` | 2^21 | 4,0 | 1,5 | 8,4 |
+| `fibonacci` | 2^22 | 7,0 | 2,7 | 16,8 |
+| `fibonacci` | 2^23 | 12,7 | 5,4 | 33,6 |
+| `fibonacci` | 2^24 | 30,0 | 10,8 | 67,1 |
+| `all_sum` | 2^10 | 1,1 | 0,2 | 0,2 |
+| `all_sum` | 2^12 | 1,9 | 0,2 | 0,6 |
+| `all_sum` | 2^14 | 5,2 | 0,3 | 2,5 |
+| `all_sum` | 2^16 | 18,3 | 0,4 | 9,7 |
+| `all_sum` | 2^18 | 69,8 | 1,3 | 38,8 |
+| `all_sum` | 2^20 | 286,5 | 5,0 | 155,1 |
+| `all_sum` | 2^22 | 1155,6 | 19,5 | 620,4 |
+| `all_prod` | 2^16 | 18,1 | 0,4 | 9,7 |
+| `all_prod` | 2^20 | 267,7 | 5,0 | 155,1 |
+
+`all_sum` a `2^23` i `2^24`: H.8.
+
+**`setup-pilfflonk`:**
+
+| programa | N | *layout* | s (disp. %) | GB | `nBitsExt` | `qDeg` | `f` | potències de l'SRS | `.const` MB | SRS MB |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `fibonacci` | 2^10 | `--no-packing` | 0,39 (51) | 0,0 | 11 | 1 | 6 | 1.029 | 0 | 0 |
+| `fibonacci` | 2^10 | empaquetat | 0,34 (50) | 0,0 | 11 | 1 | 5 | 2.049 | 0 | 0 |
+| `fibonacci` | 2^12 | `--no-packing` | 0,49 (24) | 0,1 | 13 | 1 | 6 | 4.101 | 0 | 0 |
+| `fibonacci` | 2^12 | empaquetat | 0,46 (11) | 0,1 | 13 | 1 | 5 | 8.193 | 0 | 1 |
+| `fibonacci` | 2^14 | `--no-packing` | 0,83 (27) | 0,2 | 15 | 1 | 6 | 16.389 | 1 | 1 |
+| `fibonacci` | 2^14 | empaquetat | 0,60 (28) | 0,5 | 15 | 1 | 5 | 32.769 | 1 | 2 |
+| `fibonacci` | 2^16 | `--no-packing` | 1,26 (23) | 1,0 | 17 | 1 | 6 | 65.541 | 4 | 4 |
+| `fibonacci` | 2^16 | empaquetat | 1,10 (5) | 2,0 | 17 | 1 | 5 | 131.073 | 4 | 8 |
+| `fibonacci` | 2^18 | `--no-packing` | 1,91 (6) | 2,1 | 19 | 1 | 6 | 262.149 | 17 | 17 |
+| `fibonacci` | 2^18 | empaquetat | 1,44 (10) | 2,1 | 19 | 1 | 5 | 524.289 | 17 | 34 |
+| `fibonacci` | 2^20 | `--no-packing` | 2,80 (1) | 2,4 | 21 | 1 | 6 | 1.048.581 | 67 | 67 |
+| `fibonacci` | 2^20 | empaquetat | 2,30 (0) | 2,6 | 21 | 1 | 5 | 2.097.153 | 67 | 134 |
+| `fibonacci` | 2^21 | `--no-packing` | 3,89 (2) | 2,7 | 22 | 1 | 6 | 2.097.157 | 134 | 134 |
+| `fibonacci` | 2^21 | empaquetat | 3,62 (4) | 3,2 | 22 | 1 | 5 | 4.194.305 | 134 | 268 |
+| `fibonacci` | 2^22 | `--no-packing` | 5,78 (11) | 3,4 | 23 | 1 | 6 | 4.194.309 | 268 | 268 |
+| `fibonacci` | 2^22 | empaquetat | 6,24 (7) | 4,3 | 23 | 1 | 5 | 8.388.609 | 268 | 537 |
+| `fibonacci` | 2^23 | `--no-packing` | 9,86 (1) | 4,9 | 24 | 1 | 6 | 8.388.613 | 537 | 537 |
+| `fibonacci` | 2^23 | empaquetat | 11,37 (3) | 6,6 | 24 | 1 | 5 | 16.777.217 | 537 | 1074 |
+| `fibonacci` | 2^24 | `--no-packing` | 16,70 (2) | 7,8 | 25 | 1 | 6 | 16.777.221 | 1074 | 1074 |
+| `fibonacci` | 2^24 | empaquetat | 20,18 (4) | 11,2 | 25 | 1 | 5 | 33.554.433 | 1074 | 2147 |
+| `all_sum` | 2^10 | `--no-packing` | 1,40 (4) | 0,0 | 12 | 2 | 31 | 2.055 | 0 | 0 |
+| `all_sum` | 2^10 | empaquetat | 0,80 (6) | 0,1 | 12 | 2 | 9 | 9.224 | 0 | 1 |
+| `all_sum` | 2^12 | `--no-packing` | 1,41 (12) | 0,1 | 14 | 2 | 31 | 8.199 | 1 | 1 |
+| `all_sum` | 2^12 | empaquetat | 0,98 (22) | 0,5 | 14 | 2 | 9 | 36.872 | 1 | 2 |
+| `all_sum` | 2^14 | `--no-packing` | 1,93 (11) | 0,3 | 16 | 2 | 31 | 32.775 | 5 | 2 |
+| `all_sum` | 2^14 | empaquetat | 1,29 (7) | 2,0 | 16 | 2 | 9 | 147.464 | 5 | 9 |
+| `all_sum` | 2^16 | `--no-packing` | 3,67 (16) | 1,1 | 18 | 2 | 31 | 131.079 | 21 | 8 |
+| `all_sum` | 2^16 | empaquetat | 1,91 (3) | 2,2 | 18 | 2 | 9 | 589.832 | 21 | 38 |
+| `all_sum` | 2^18 | `--no-packing` | 8,15 (1) | 2,3 | 20 | 2 | 31 | 524.295 | 84 | 34 |
+| `all_sum` | 2^18 | empaquetat | 3,67 (7) | 2,7 | 20 | 2 | 9 | 2.359.304 | 84 | 151 |
+| `all_sum` | 2^20 | `--no-packing` | 12,17 (3) | 3,1 | 22 | 2 | 31 | 2.097.159 | 336 | 134 |
+| `all_sum` | 2^20 | empaquetat | 8,57 (4) | 5,0 | 22 | 2 | 9 | 9.437.192 | 336 | 604 |
+| `all_sum` | 2^22 | `--no-packing` | 26,30 (5) | 6,2 | 24 | 2 | 31 | 8.388.615 | 1342 | 537 |
+| `all_sum` | 2^22 | empaquetat | 27,19 (12) | 13,8 | 24 | 2 | 9 | 37.748.744 | 1342 | 2416 |
+| `all_sum` | 2^23 | `--no-packing` | 45,73 (19) | 10,4 | 25 | 2 | 31 | 16.777.223 | 2684 | 1074 |
+| `all_sum` | 2^23 | empaquetat | 53,88 (6) | 25,6 | 25 | 2 | 9 | 75.497.480 | 2684 | 4832 |
+| `all_prod` | 2^16 | empaquetat | 2,40 (3) | 2,1 | 18 | 3 | 9 | 524.311 | 21 | 34 |
+| `all_prod` | 2^20 | empaquetat | 14,69 (61) | 4,3 | 22 | 3 | 9 | 8.388.631 | 336 | 537 |
+
+**`pilfflonk prove` i `pilfflonk verify`:**
+
+| programa | N | *layout* | execucions | càrrega | prova s (disp. %) | GB | verificació s | prova (bytes) |
+|---|---|---|---|---|---|---|---|---|
+| `fibonacci` | 2^10 | `--no-packing` | 3 | 85–99 | 1,45 (24) | 0,0 | 0,30 | 672 |
+| `fibonacci` | 2^10 | empaquetat | 3 | 70–70 | 1,38 (44) | 0,0 | 0,30 | 704 |
+| `fibonacci` | 2^12 | `--no-packing` | 3 | 104–117 | 1,31 (15) | 0,1 | 0,31 | 672 |
+| `fibonacci` | 2^12 | empaquetat | 3 | 99–113 | 1,29 (8) | 0,1 | 0,31 | 704 |
+| `fibonacci` | 2^14 | `--no-packing` | 3 | 140–149 | 1,45 (22) | 0,3 | 0,31 | 672 |
+| `fibonacci` | 2^14 | empaquetat | 3 | 117–129 | 1,73 (13) | 0,5 | 0,31 | 704 |
+| `fibonacci` | 2^16 | `--no-packing` | 3 | 166–180 | 3,19 (9) | 1,1 | 0,31 | 672 |
+| `fibonacci` | 2^16 | empaquetat | 3 | 138–158 | 3,42 (6) | 2,0 | 0,30 | 704 |
+| `fibonacci` | 2^18 | `--no-packing` | 3 | 199–212 | 7,08 (6) | 2,2 | 0,30 | 672 |
+| `fibonacci` | 2^18 | empaquetat | 3 | 172–193 | 7,17 (11) | 2,2 | 0,30 | 704 |
+| `fibonacci` | 2^20 | `--no-packing` | 3 | 169–195 | 9,82 (2) | 2,7 | 0,31 | 672 |
+| `fibonacci` | 2^20 | empaquetat | 3 | 162–173 | 9,62 (4) | 2,7 | 0,31 | 704 |
+| `fibonacci` | 2^21 | `--no-packing` | 2 | 135–142 | 14,03 (4) | 3,4 | 0,32 | 672 |
+| `fibonacci` | 2^21 | empaquetat | 2 | 51–98 | 14,37 (5) | 3,5 | 0,30 | 704 |
+| `fibonacci` | 2^22 | `--no-packing` | 3 | 169–180 | 18,63 (16) | 4,8 | 0,30 | 672 |
+| `fibonacci` | 2^22 | empaquetat | 3 | 136–184 | 18,77 (14) | 5,0 | 0,30 | 704 |
+| `fibonacci` | 2^23 | `--no-packing` | 2 | 168–209 | 32,47 (15) | 7,5 | 0,30 | 672 |
+| `fibonacci` | 2^23 | empaquetat | 2 | 83–113 | 39,39 (28) | 8,0 | 0,29 | 704 |
+| `fibonacci` | 2^24 | `--no-packing` | 3 | 117–172 | 55,45 (1) | 13,0 | 0,30 | 672 |
+| `fibonacci` | 2^24 | empaquetat | 3 | 47–152 | 59,12 (15) | 14,0 | 0,30 | 704 |
+| `all_sum` | 2^10 | `--no-packing` | 3 | 175–188 | 3,43 (27) | 0,1 | 0,33 | 2624 |
+| `all_sum` | 2^10 | empaquetat | 3 | 160–168 | 1,83 (84) | 0,1 | 0,31 | 1760 |
+| `all_sum` | 2^12 | `--no-packing` | 3 | 174–181 | 2,64 (9) | 0,1 | 0,33 | 2624 |
+| `all_sum` | 2^12 | empaquetat | 3 | 166–181 | 2,46 (12) | 0,5 | 0,32 | 1760 |
+| `all_sum` | 2^14 | `--no-packing` | 3 | 169–183 | 4,76 (3) | 0,6 | 0,33 | 2624 |
+| `all_sum` | 2^14 | empaquetat | 3 | 153–180 | 4,57 (9) | 2,1 | 0,32 | 1760 |
+| `all_sum` | 2^16 | `--no-packing` | 3 | 202–225 | 13,86 (2) | 2,2 | 0,33 | 2624 |
+| `all_sum` | 2^16 | empaquetat | 3 | 147–179 | 9,54 (12) | 2,3 | 0,31 | 1760 |
+| `all_sum` | 2^18 | `--no-packing` | 3 | 178–210 | 29,16 (3) | 2,8 | 0,33 | 2624 |
+| `all_sum` | 2^18 | empaquetat | 3 | 80–152 | 14,16 (2) | 3,0 | 0,31 | 1760 |
+| `all_sum` | 2^20 | `--no-packing` | 3 | 112–205 | 42,94 (4) | 5,1 | 0,32 | 2624 |
+| `all_sum` | 2^20 | empaquetat | 3 | 21–132 | 26,13 (6) | 5,8 | 0,32 | 1760 |
+| `all_sum` | 2^22 | `--no-packing` | 2 | 161–219 | 91,42 (2) | 15,4 | 0,32 | 2624 |
+| `all_sum` | 2^22 | empaquetat | 2 | 125–173 | 76,00 (1) | 18,1 | 0,31 | 1760 |
+| `all_sum` | 2^23 | `--no-packing` | 2 | 109–207 | 150,19 (5) | 30,8 | 0,33 | 2624 |
+| `all_sum` | 2^23 | empaquetat | 2 | 26–149 | 137,83 (1) | 36,3 | 0,32 | 1760 |
+| `all_prod` | 2^16 | empaquetat | 2 | 142–161 | 9,07 (0) | 2,3 | 0,32 | 1664 |
+| `all_prod` | 2^20 | empaquetat | 2 | 99–155 | 33,90 (12) | 5,6 | 0,32 | 1664 |
+
+**Què en surt:**
+- **La prova i el verificador no depenen de `N`.** La prova fa 704 bytes (el `fibonacci` empaquetat), 672 (sense empaquetar), 1.760 i 2.624 (`all_sum`) i 1.664 (`all_prod`): només en depèn el nombre de `f` i d'avaluacions. El verificador JS triga 0,30–0,33 s a totes les mides, gairebé tot l'arrencada de Node i d'ffjavascript.
+- **La prova més gran**, el `fibonacci` a `2^24`, triga 59 s i fa servir 14 GB; `all_sum` a `2^22`, 76 s i 18 GB, i a `2^23`, 138 s i 36 GB. El setup triga 20 i 27 s, i el que fa créixer la seva memòria és l'SRS (de `2N + 1` i `9N + 8` potències).
+- **L'empaquetat** no canvia gaire el temps del `fibonacci` (només hi empaqueta les dues columnes fixes), i fa `all_sum` un 17–50 % més ràpid (9 `f` en lloc de 31: menys MSM); a canvi, l'SRS és 4,5 vegades més gran, i el setup necessita el doble de memòria.
+- **El bus de producte** (`all_prod`) triga com el de suma a `2^16` i un 30 % més a `2^20`: té `qDeg` 3, i el de suma, 2.
+
+### H.4 Les fases del prover
+
+**Temps (s):**
+
+| programa | N | *layout* | clau | witness | *hints* | im pols | INTT | MSM | `Q`: LDE | `Q`: avaluació | `Q`: INTT | `Q`: MSM | `Q`: resta | avaluacions a ξ | `W`, `W'` | MSM de `W`, `W'` | obertura: resta | resta | total |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `fibonacci` | 2^10 | `--no-packing` | 0,53 | 0,00 | 0,00 | 0,00 | 0,02 | 0,46 | 0,04 | 0,01 | 0,01 | 0,11 | 0,01 | 0,00 | 0,03 | 0,20 | 0,01 | 0,02 | 1,45 |
+| `fibonacci` | 2^10 | empaquetat | 0,38 | 0,00 | 0,00 | 0,01 | 0,02 | 0,51 | 0,04 | 0,01 | 0,00 | 0,11 | 0,01 | 0,00 | 0,02 | 0,19 | 0,01 | 0,02 | 1,38 |
+| `fibonacci` | 2^12 | `--no-packing` | 0,53 | 0,00 | 0,00 | 0,00 | 0,02 | 0,44 | 0,03 | 0,01 | 0,00 | 0,09 | 0,00 | 0,00 | 0,02 | 0,20 | 0,01 | 0,02 | 1,31 |
+| `fibonacci` | 2^12 | empaquetat | 0,40 | 0,00 | 0,00 | 0,00 | 0,02 | 0,46 | 0,04 | 0,01 | 0,00 | 0,12 | 0,01 | 0,00 | 0,01 | 0,12 | 0,00 | 0,02 | 1,29 |
+| `fibonacci` | 2^14 | `--no-packing` | 0,56 | 0,01 | 0,00 | 0,00 | 0,01 | 0,47 | 0,03 | 0,01 | 0,00 | 0,12 | 0,01 | 0,00 | 0,02 | 0,21 | 0,00 | 0,01 | 1,45 |
+| `fibonacci` | 2^14 | empaquetat | 0,67 | 0,02 | 0,00 | 0,01 | 0,01 | 0,57 | 0,03 | 0,01 | 0,00 | 0,11 | 0,00 | 0,00 | 0,02 | 0,23 | 0,00 | 0,02 | 1,73 |
+| `fibonacci` | 2^16 | `--no-packing` | 1,02 | 0,02 | 0,00 | 0,00 | 0,01 | 0,99 | 0,03 | 0,01 | 0,00 | 0,32 | 0,00 | 0,00 | 0,06 | 0,63 | 0,01 | 0,03 | 3,19 |
+| `fibonacci` | 2^16 | empaquetat | 1,00 | 0,02 | 0,00 | 0,00 | 0,02 | 1,08 | 0,02 | 0,02 | 0,00 | 0,33 | 0,00 | 0,00 | 0,06 | 0,71 | 0,02 | 0,03 | 3,42 |
+| `fibonacci` | 2^18 | `--no-packing` | 1,71 | 0,05 | 0,00 | 0,00 | 0,13 | 2,43 | 0,04 | 0,02 | 0,01 | 0,84 | 0,04 | 0,00 | 0,14 | 1,62 | 0,00 | 0,05 | 7,08 |
+| `fibonacci` | 2^18 | empaquetat | 1,17 | 0,07 | 0,00 | 0,00 | 0,14 | 2,39 | 0,06 | 0,02 | 0,01 | 0,81 | 0,05 | 0,01 | 0,20 | 1,71 | 0,01 | 0,06 | 7,17 |
+| `fibonacci` | 2^20 | `--no-packing` | 2,25 | 0,24 | 0,00 | 0,00 | 0,48 | 2,83 | 0,12 | 0,15 | 0,03 | 0,92 | 0,26 | 0,01 | 0,64 | 1,81 | 0,02 | 0,11 | 9,82 |
+| `fibonacci` | 2^20 | empaquetat | 1,60 | 0,23 | 0,00 | 0,00 | 0,47 | 2,90 | 0,13 | 0,15 | 0,03 | 0,91 | 0,30 | 0,01 | 0,78 | 2,07 | 0,00 | 0,10 | 9,62 |
+| `fibonacci` | 2^21 | `--no-packing` | 2,85 | 0,49 | 0,00 | 0,01 | 0,92 | 3,53 | 0,28 | 0,27 | 0,08 | 1,18 | 0,56 | 0,03 | 1,43 | 2,16 | 0,02 | 0,23 | 14,03 |
+| `fibonacci` | 2^21 | empaquetat | 2,17 | 0,48 | 0,00 | 0,01 | 0,94 | 3,48 | 0,35 | 0,41 | 0,11 | 1,16 | 0,66 | 0,02 | 1,67 | 2,68 | 0,04 | 0,20 | 14,37 |
+| `fibonacci` | 2^22 | `--no-packing` | 3,74 | 0,92 | 0,00 | 0,01 | 0,17 | 4,25 | 0,61 | 0,44 | 0,11 | 1,31 | 1,21 | 0,04 | 2,53 | 2,58 | 0,11 | 0,29 | 18,63 |
+| `fibonacci` | 2^22 | empaquetat | 3,09 | 0,86 | 0,00 | 0,01 | 0,16 | 4,09 | 0,68 | 0,43 | 0,14 | 1,32 | 1,12 | 0,02 | 3,04 | 3,26 | 0,00 | 0,32 | 18,77 |
+| `fibonacci` | 2^23 | `--no-packing` | 5,86 | 1,77 | 0,00 | 0,01 | 0,45 | 5,49 | 1,84 | 0,89 | 3,31 | 1,96 | 1,89 | 0,04 | 4,73 | 3,54 | 0,08 | 0,62 | 32,47 |
+| `fibonacci` | 2^23 | empaquetat | 5,87 | 1,73 | 0,00 | 0,01 | 3,79 | 5,58 | 3,13 | 0,94 | 3,00 | 1,99 | 1,88 | 0,09 | 5,22 | 5,24 | 0,14 | 0,78 | 39,39 |
+| `fibonacci` | 2^24 | `--no-packing` | 9,46 | 3,23 | 0,00 | 0,02 | 1,07 | 7,68 | 10,12 | 1,56 | 0,74 | 2,99 | 3,19 | 0,07 | 8,88 | 4,81 | 0,00 | 1,08 | 55,45 |
+| `fibonacci` | 2^24 | empaquetat | 9,47 | 3,14 | 0,00 | 0,02 | 7,47 | 8,37 | 3,56 | 1,60 | 0,74 | 2,55 | 3,29 | 0,10 | 10,73 | 6,96 | 0,32 | 1,18 | 59,12 |
+| `all_sum` | 2^10 | `--no-packing` | 1,33 | 0,01 | 0,01 | 0,00 | 0,06 | 1,57 | 0,28 | 0,02 | 0,00 | 0,08 | 0,04 | 0,01 | 0,08 | 0,14 | 0,01 | 0,02 | 3,43 |
+| `all_sum` | 2^10 | empaquetat | 0,57 | 0,01 | 0,03 | 0,00 | 0,10 | 0,72 | 0,14 | 0,01 | 0,00 | 0,06 | 0,00 | 0,00 | 0,01 | 0,16 | 0,06 | 0,03 | 1,83 |
+| `all_sum` | 2^12 | `--no-packing` | 1,28 | 0,01 | 0,02 | 0,00 | 0,02 | 0,83 | 0,11 | 0,02 | 0,00 | 0,06 | 0,00 | 0,00 | 0,04 | 0,13 | 0,01 | 0,02 | 2,64 |
+| `all_sum` | 2^12 | empaquetat | 0,87 | 0,01 | 0,02 | 0,00 | 0,04 | 0,69 | 0,16 | 0,02 | 0,00 | 0,06 | 0,00 | 0,00 | 0,02 | 0,39 | 0,05 | 0,03 | 2,46 |
+| `all_sum` | 2^14 | `--no-packing` | 1,73 | 0,04 | 0,01 | 0,00 | 0,03 | 1,93 | 0,15 | 0,03 | 0,00 | 0,18 | 0,06 | 0,00 | 0,11 | 0,35 | 0,06 | 0,04 | 4,76 |
+| `all_sum` | 2^14 | empaquetat | 1,08 | 0,03 | 0,02 | 0,00 | 0,04 | 1,43 | 0,17 | 0,03 | 0,00 | 0,17 | 0,02 | 0,00 | 0,07 | 1,45 | 0,02 | 0,05 | 4,57 |
+| `all_sum` | 2^16 | `--no-packing` | 3,69 | 0,14 | 0,04 | 0,00 | 0,14 | 6,65 | 0,25 | 0,04 | 0,00 | 0,76 | 0,07 | 0,01 | 0,30 | 1,55 | 0,03 | 0,07 | 13,86 |
+| `all_sum` | 2^16 | empaquetat | 1,60 | 0,13 | 0,04 | 0,00 | 0,08 | 4,35 | 0,21 | 0,03 | 0,00 | 0,77 | 0,05 | 0,01 | 0,22 | 1,77 | 0,04 | 0,08 | 9,54 |
+| `all_sum` | 2^18 | `--no-packing` | 7,47 | 0,52 | 0,04 | 0,00 | 0,38 | 16,13 | 0,45 | 0,10 | 0,01 | 0,85 | 0,30 | 0,02 | 0,91 | 1,61 | 0,01 | 0,14 | 29,16 |
+| `all_sum` | 2^18 | empaquetat | 2,59 | 0,49 | 0,04 | 0,00 | 0,21 | 5,33 | 0,49 | 0,11 | 0,01 | 0,87 | 0,19 | 0,03 | 0,95 | 2,46 | 0,00 | 0,14 | 14,16 |
+| `all_sum` | 2^20 | `--no-packing` | 10,39 | 1,76 | 0,16 | 0,00 | 1,22 | 19,56 | 1,36 | 0,45 | 0,09 | 1,12 | 1,21 | 0,04 | 2,98 | 2,02 | 0,02 | 0,42 | 42,94 |
+| `all_sum` | 2^20 | empaquetat | 4,80 | 1,69 | 0,12 | 0,00 | 0,28 | 7,71 | 1,47 | 0,43 | 0,07 | 1,18 | 1,15 | 0,05 | 3,22 | 3,52 | 0,10 | 0,45 | 26,13 |
+| `all_sum` | 2^22 | `--no-packing` | 17,87 | 6,62 | 0,58 | 0,00 | 5,01 | 29,37 | 8,22 | 1,26 | 0,37 | 1,75 | 3,57 | 0,08 | 11,82 | 3,37 | 0,07 | 1,46 | 91,42 |
+| `all_sum` | 2^22 | empaquetat | 13,30 | 6,81 | 0,51 | 0,00 | 3,88 | 14,21 | 8,52 | 1,21 | 0,35 | 1,72 | 3,79 | 0,09 | 12,01 | 7,64 | 0,31 | 1,65 | 76,00 |
+| `all_sum` | 2^23 | `--no-packing` | 27,87 | 11,47 | 1,16 | 0,00 | 13,76 | 35,48 | 19,90 | 2,21 | 0,71 | 2,40 | 6,30 | 0,12 | 21,31 | 4,34 | 0,12 | 3,04 | 150,19 |
+| `all_sum` | 2^23 | empaquetat | 23,46 | 11,55 | 0,96 | 0,00 | 8,70 | 18,29 | 22,93 | 2,24 | 0,72 | 2,48 | 6,35 | 0,15 | 24,74 | 11,15 | 0,59 | 3,52 | 137,83 |
+| `all_prod` | 2^16 | empaquetat | 2,36 | 0,13 | 0,03 | 0,00 | 0,06 | 3,44 | 0,19 | 0,03 | 0,00 | 0,77 | 0,06 | 0,02 | 0,21 | 1,66 | 0,04 | 0,07 | 9,07 |
+| `all_prod` | 2^20 | empaquetat | 8,22 | 1,75 | 0,15 | 0,00 | 1,01 | 7,87 | 2,24 | 0,45 | 0,07 | 1,49 | 0,92 | 0,10 | 4,14 | 4,69 | 0,29 | 0,49 | 33,90 |
+
+**Pic de RSS de cada fase (GB):**
+
+| programa | N | *layout* | clau | witness | stage 1 | stage 2 | `Q`: LDE | `Q`: avaluació | `Q`: INTT | `Q`: MSM | avaluacions | obertura | pic |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `fibonacci` | 2^10 | `--no-packing` | 0,0 | – | 0,0 | – | – | – | – | 0,0 | – | 0,0 | 0,0 |
+| `fibonacci` | 2^10 | empaquetat | 0,0 | – | 0,0 | – | – | – | – | 0,0 | – | 0,0 | 0,0 |
+| `fibonacci` | 2^12 | `--no-packing` | 0,1 | – | 0,1 | – | – | – | – | 0,0 | – | 0,0 | 0,1 |
+| `fibonacci` | 2^12 | empaquetat | 0,1 | – | 0,1 | – | 0,0 | – | – | 0,1 | – | 0,0 | 0,1 |
+| `fibonacci` | 2^14 | `--no-packing` | 0,2 | – | 0,2 | – | – | – | – | 0,3 | – | 0,1 | 0,3 |
+| `fibonacci` | 2^14 | empaquetat | 0,5 | – | 0,2 | – | 0,0 | – | – | – | – | 0,2 | 0,5 |
+| `fibonacci` | 2^16 | `--no-packing` | 1,0 | – | 1,0 | – | 0,1 | – | 0,0 | 0,6 | – | 1,0 | 1,1 |
+| `fibonacci` | 2^16 | empaquetat | 2,0 | – | 1,0 | – | 0,1 | – | – | 0,7 | – | 1,0 | 2,0 |
+| `fibonacci` | 2^18 | `--no-packing` | 2,1 | 0,1 | 2,1 | – | 0,2 | – | – | 2,2 | – | 2,2 | 2,2 |
+| `fibonacci` | 2^18 | empaquetat | 2,1 | 0,0 | 2,2 | – | 0,2 | – | – | 2,2 | 0,2 | 2,2 | 2,2 |
+| `fibonacci` | 2^20 | `--no-packing` | 2,3 | 0,3 | 2,6 | – | 0,8 | 0,8 | – | 2,7 | – | 2,6 | 2,7 |
+| `fibonacci` | 2^20 | empaquetat | 2,4 | 0,4 | 2,6 | – | 0,8 | 0,9 | – | 2,7 | – | 2,7 | 2,7 |
+| `fibonacci` | 2^21 | `--no-packing` | 2,6 | 0,7 | 3,2 | – | 1,5 | 1,6 | 1,2 | 3,4 | – | 3,2 | 3,4 |
+| `fibonacci` | 2^21 | empaquetat | 2,9 | 0,8 | 3,3 | – | 1,6 | 1,8 | 1,3 | 3,5 | – | 3,4 | 3,5 |
+| `fibonacci` | 2^22 | `--no-packing` | 3,2 | 1,4 | 4,4 | – | 3,0 | 3,2 | 2,3 | 4,8 | 2,3 | 4,4 | 4,8 |
+| `fibonacci` | 2^22 | empaquetat | 3,7 | 1,7 | 4,6 | – | 3,3 | 3,4 | 2,5 | 5,0 | – | 4,9 | 5,0 |
+| `fibonacci` | 2^23 | `--no-packing` | 4,5 | 3,2 | 6,7 | – | 6,0 | 6,4 | 4,5 | 7,5 | 4,4 | 6,8 | 7,5 |
+| `fibonacci` | 2^23 | empaquetat | 5,5 | 3,7 | 7,3 | – | 6,5 | 6,9 | 5,0 | 8,0 | 4,8 | 7,8 | 8,0 |
+| `fibonacci` | 2^24 | `--no-packing` | 7,0 | 6,3 | 11,5 | – | 12,0 | 12,8 | 9,0 | 13,0 | 9,1 | 11,5 | 13,0 |
+| `fibonacci` | 2^24 | empaquetat | 9,0 | 7,2 | 12,5 | – | 13,0 | 13,8 | 10,0 | 14,0 | 9,6 | 13,5 | 14,0 |
+| `all_sum` | 2^10 | `--no-packing` | 0,0 | – | 0,0 | 0,0 | 0,0 | – | – | 0,1 | – | 0,0 | 0,1 |
+| `all_sum` | 2^10 | empaquetat | 0,1 | – | 0,1 | 0,0 | 0,0 | – | – | 0,0 | – | 0,0 | 0,1 |
+| `all_sum` | 2^12 | `--no-packing` | 0,1 | 0,0 | 0,1 | 0,1 | 0,0 | – | – | 0,1 | – | 0,0 | 0,1 |
+| `all_sum` | 2^12 | empaquetat | 0,5 | – | 0,3 | 0,1 | 0,0 | 0,0 | – | 0,1 | – | 0,5 | 0,5 |
+| `all_sum` | 2^14 | `--no-packing` | 0,3 | 0,0 | 0,3 | 0,3 | 0,1 | – | – | 0,6 | – | 0,2 | 0,6 |
+| `all_sum` | 2^14 | empaquetat | 2,0 | – | 2,0 | 0,6 | 0,1 | 0,1 | – | 0,2 | – | 2,1 | 2,1 |
+| `all_sum` | 2^16 | `--no-packing` | 1,1 | 0,1 | 1,1 | 1,2 | 0,3 | – | – | 2,2 | – | 2,2 | 2,2 |
+| `all_sum` | 2^16 | empaquetat | 2,1 | 0,1 | 2,2 | 2,2 | 0,3 | – | – | 2,3 | – | 2,3 | 2,3 |
+| `all_sum` | 2^18 | `--no-packing` | 2,2 | 0,4 | 2,6 | 2,7 | 1,0 | 1,0 | – | 2,8 | – | 2,7 | 2,8 |
+| `all_sum` | 2^18 | empaquetat | 2,5 | 0,5 | 2,9 | 2,8 | 1,1 | 1,1 | – | 2,9 | – | 3,0 | 3,0 |
+| `all_sum` | 2^20 | `--no-packing` | 2,9 | 1,9 | 4,6 | 4,8 | 3,8 | 3,8 | 2,8 | 5,1 | – | 4,9 | 5,1 |
+| `all_sum` | 2^20 | empaquetat | 4,1 | 2,3 | 5,7 | 5,3 | 4,2 | 4,3 | 3,3 | 5,5 | 3,2 | 5,8 | 5,8 |
+| `all_sum` | 2^22 | `--no-packing` | 5,8 | 8,2 | 12,4 | 13,1 | 15,2 | 15,4 | 11,3 | 14,3 | 11,4 | 13,5 | 15,4 |
+| `all_sum` | 2^22 | empaquetat | 10,4 | 9,8 | 16,8 | 15,4 | 16,9 | 17,1 | 13,0 | 16,0 | 12,7 | 18,1 | 18,1 |
+| `all_sum` | 2^23 | `--no-packing` | 9,5 | 16,5 | 22,7 | 24,2 | 30,3 | 30,7 | 22,5 | 26,5 | 22,9 | 25,0 | 30,8 |
+| `all_sum` | 2^23 | empaquetat | 18,8 | 19,9 | 31,5 | 28,7 | 33,9 | 34,2 | 26,0 | 30,0 | 25,7 | 36,3 | 36,3 |
+| `all_prod` | 2^16 | empaquetat | 2,1 | 0,1 | 2,2 | 2,2 | 0,2 | – | – | 2,3 | – | 2,2 | 2,3 |
+| `all_prod` | 2^20 | empaquetat | 3,7 | 2,3 | 5,6 | 5,4 | 4,1 | 4,1 | 3,2 | 5,4 | – | 5,6 | 5,6 |
+
+Les columnes: la clau és la càrrega de l'SRS i del `.const`, amb la INTT de les columnes fixes, i les MSM de la comprovació dels commitments fixos (M26); el witness, llegir-lo del directori i fer-ne la instància C++; els *hints*, els im pols, la INTT i la MSM, les dels stages; de `Q`, l'LDE de les columnes que llegeix (`Q_EXTEND`), el domini i l'avaluació, la INTT, la MSM i la resta (els seus *buffers* i la comprovació de la fita); les avaluacions a `ξ`; de l'obertura, el càlcul de `W` i `W'`, les seves MSM i la resta (els interpolants `r_i`); i la resta de la prova, que cap temporitzador no cobreix (els JSON de la clau i el *digest* de la vkey, el transcript, els fitxers de la prova i la sortida del procés). La resta es calcula execució per execució: les medianes de les columnes no sempre sumen el total.
+
+### H.5 Com creix amb `N`
+
+- **Per sota de `2^18`, el temps quasi no creix:** 1,3–1,7 s del `fibonacci` de `2^10` a `2^14`, i gairebé tot és MSM i la càrrega de la clau. Cada MSM costa uns 100 ms encara que tingui 2.000 punts: la MSM d'ffiasm (`ParallelMultiexp`) obre unes 300 regions OpenMP per MSM (per cada tros de 16 bits, `processChunk`, `packThreads` i les `reduce` recursives), amb els 256 fils, i en una màquina carregada cada barrera espera el fil més lent. Amb 64 fils, la prova de `2^10` passa d'1,4 s a 0,18 s (H.7).
+- **De `2^20` a `2^24`, el temps creix menys que `N log N`:** el `fibonacci`, ×2,0 de `2^20` a `2^22` i ×3,1 de `2^22` a `2^24` (`N log N` seria ×4,4); `all_sum`, ×1,9 de `2^18` a `2^20` i ×2,9 de `2^20` a `2^22`. La MSM, que és el cost principal, és lineal en `N` (finestres de 16 bits com a molt), amb un cost fix per MSM que es va diluint; les NTT sí que són `N log N`, però en són una part petita. A dalt de tot, el creixement s'acosta a lineal.
+- **La memòria creix linealment a partir de `2^20`:** fins llavors la domina la de les MSM (vegeu H.7), 1,6 GB fixos amb 256 fils. Al capdamunt, uns 900 bytes per fila al `fibonacci` (14 GB a `2^24`) i uns 4,6 KB per fila a `all_sum` (18 GB a `2^22`).
+
+### H.6 L'avaluació de `Q` per parts
+
+**Per què calia.** Fins ara, `commitQ` estenia al *coset* sencer `g·H'` (`N' = 2^nBitsExt` punts) totes les columnes que llegeix el codi de `Q`, i després l'hi avaluava (M17, M18). Són `32·N'` bytes per columna, més `Q` mateix i els punts i els `Zi` del domini. `all_sum` té `qDeg = 2`, de manera que `N' = 4N`, i el codi de `Q` llegeix 30 columnes (14 de l'stage 1, 6 de l'stage 2 i les 10 fixes): a `N = 2^22`, 16 GB de columnes esteses, quatre vegades els coeficients de tots els polinomis compromesos (4 GB). Al `fibonacci` (5 columnes, `N' = 2N`), 5,4 GB a `2^24`, el doble. Les mesures abans del canvi (les mateixes, amb el codi d'abans) ho confirmaven:
+- a `all_sum` `2^22`, el pic de la prova era el de l'avaluació de `Q`: 28,5 GB, contra 16,8 GB de l'stage 1;
+- al `fibonacci` `2^24`, 16,0 GB contra 12,5;
+- i els *buffers* de `Q`, posats a zero en un sol fil, costaven 11 s de 89 a `all_sum` `2^22`.
+
+Això és el cas de M39 (una memòria diverses vegades la dels polinomis compromesos). Cap mida no era inviable en aquesta màquina, però `all_sum` a `2^24` (si el compilador en pogués fer el `pilout`, H.8) hauria necessitat uns 110 GB, dels quals 64 per a les columnes esteses.
+
+**Com es fa ara.** `g·H'` és la unió de `N'/S` parts de `S = 2^partBits` punts, `N ≤ S ≤ N'`: la part `p` són els punts `g·ω_{N'}^(p + (N'/S)·i)`, `i < S`, és a dir `c·ω_S^i` amb `c = g·ω_{N'}^p`, i per defecte cada part és un *coset* de `H` (`S = N`). Per a cada part, `commitQ`:
+1. estén cada columna que `Q` llegeix a la part amb `Lde::extendCosetPart`: el coeficient `j` es multiplica per `c^j` i es plega a `j mod S` (el polinomi té com a molt `N + |O| + 1 ≤ N'` coeficients), i després ve la FFT d'ffiasm de `S` punts;
+2. en construeix el domini amb `ExpressionsDomain::cosetPart`: els punts i els `Zi` de la part, que són els del *coset* sencer als mateixos punts;
+3. hi avalua `Q` amb el mateix intèrpret, per blocs de 128 files com el STARK (`expressions_pack.hpp`, `NROWS_PACK`): una columna a l'*offset* `o` es llegeix `o·S/N` punts més enllà dins de la part, com al *coset* sencer;
+4. i en desa els valors a les posicions `p + (N'/S)·i` de `Q` al *coset*.
+
+Després, la INTT de `Q` i tota la resta no canvien. Les columnes esteses ocupen `32·S` bytes cadascuna en lloc de `32·N'`, i el domini, el mateix. Amb `S = N'`, la part única és el *coset* sencer: `extendCoset` i `ExpressionsDomain::coset` en són ara aquest cas.
+
+**És el mateix `Q`, bit a bit.** Cada valor és el mateix element del cos al mateix punt, calculat amb aritmètica exacta, i la forma de Montgomery d'ffiasm és canònica. Ho comproven:
+- `pilfflonk_lde_test.cpp` (`testExtendCosetParts`): per a cada mida de part i cada part, els valors són els d'`extendCoset` al punt corresponent, byte a byte, amb polinomis de menys, tants i més coeficients que la part, en lot i en un sol lloc;
+- `pilfflonk_expressions_test.cpp`: els `Zi` de cada part, de tots els tipus de domini, són els del *coset* sencer, byte a byte;
+- `pilfflonk_prover_test.cpp` (`testQInParts`): amb el Fibonacci sencer, amb `Q` partit i amb `Q` partit i empaquetat, per a cada mida de part, els coeficients dels trossos de `Q`, els commitments, les avaluacions, `W`, `W'`, `inv` i `invZh` són els de l'avaluació sencera, i l'API C refusa una mida fora de rang;
+- l'E2E de la CLI (`the_parts_of_q_give_the_same_proof`, a `proves_and_rejects_every_change` i `proves_and_verifies`): per a totes les *fixtures* E2E (el Fibonacci empaquetat i no, els *offsets* amb signe, els quatre dominis, `Q` partit, els busos de suma i de producte, i els exemples de pil-fflonk), la prova amb cada mida de part, de `nBits` a `nBitsExt`, és la de `pilfflonk prove` amb la mateixa llavor, byte a byte, i `nBits − 1` i `nBitsExt + 1` es refusen.
+
+**L'API.** `Instance::setQPartBits(bits)` (C++), `pilfflonk_instance_set_q_part_bits` (C) i `ProveOptions::q_part_bits` (Rust, `None` per defecte, que és `nBits`). No canvia res del format ni del protocol: només com el prover recorre `g·H'`.
+
+**Abans i després** (256 fils):
+
+| programa | N | *layout* | pic de `Q`: avaluació (GB) | pic de la prova (GB) | `Q` (s) | prova (s) |
+|---|---|---|---|---|---|---|
+| `fibonacci` | 2^20 | `--no-packing` | 0,9 → 0,8 | 2,7 → 2,7 | 1,71 → 1,47 | 10,63 → 9,82 |
+| `fibonacci` | 2^20 | empaquetat | 0,9 → 0,9 | 2,8 → 2,7 | 1,68 → 1,52 | 9,61 → 9,62 |
+| `fibonacci` | 2^22 | `--no-packing` | 3,7 → 3,2 | 5,0 → 4,8 | 4,36 → 3,69 | 20,05 → 18,63 |
+| `fibonacci` | 2^22 | empaquetat | 4,0 → 3,4 | 5,2 → 5,0 | 4,37 → 3,69 | 19,93 → 18,77 |
+| `fibonacci` | 2^24 | `--no-packing` | 15,0 → 12,8 | 15,0 → 13,0 | 13,48 → 18,60 | 58,42 → 55,45 |
+| `fibonacci` | 2^24 | empaquetat | 16,0 → 13,8 | 16,0 → 14,0 | 14,58 → 11,74 | 63,07 → 59,12 |
+| `all_sum` | 2^20 | `--no-packing` | 6,7 → 3,8 | 6,7 → 5,1 | 6,77 → 4,24 | 47,98 → 42,94 |
+| `all_sum` | 2^20 | empaquetat | 7,1 → 4,3 | 7,2 → 5,8 | 8,17 → 4,31 | 31,40 → 26,13 |
+| `all_sum` | 2^22 | `--no-packing` | 26,8 → 15,4 | 26,8 → 15,4 | 28,83 → 15,18 | 108,06 → 91,42 |
+| `all_sum` | 2^22 | empaquetat | 28,5 → 17,1 | 28,5 → 18,1 | 27,23 → 15,59 | 88,77 → 76,00 |
+
+La memòria de l'avaluació de `Q` baixa un 40 % a `all_sum` i un 15 % al `fibonacci`, i el pic de la prova ja no és el de `Q`: a `all_sum` `2^22`, de l'stage 1 fins a l'obertura, les fases queden entre 15 i 18 GB. `Q` també triga menys (15,6 s en lloc de 27,2 a `all_sum` `2^22`): posa a zero 4 vegades menys memòria (3,8 s en lloc de 10,7) i fa l'LDE en FFT de `N` punts (8,5 s en lloc de 13,1). El `fibonacci` `2^24` sense empaquetar és l'excepció: la primera LDE de la primera part hi triga 8,4 s en lloc d'1,7 a les tres execucions (H.7).
+
+### H.7 Els colls d'ampolla
+
+**On va el temps**, a les mides més grans (empaquetat, 256 fils):
+- **Les MSM: 36–38 %.** Al `fibonacci` `2^24`, 21 s de 59: 8,4 s les de l'stage 1, 2,6 la de `Q`, 7,0 les de `W` i `W'` (de `2N` coeficients) i 3,2 la comprovació dels commitments fixos a la càrrega de la clau. A `all_sum` `2^22`, 29 s de 76. Sense empaquetar, fins al 50 %: `all_sum` en fa 31 en lloc de 9. La MSM d'ffiasm fa uns 6 milions de punts per segon amb 256 fils.
+- **`W` i `W'`: 16–18 %** (11–12 s). Per a cada `f` i cada *offset*, una divisió de `rapidsnark` (`divByMonic`, seqüencial), l'empaquetat i sumes de polinomis de `k·N` coeficients.
+- **La càrrega de la clau: 16–18 %** (9,5 s al `fibonacci` `2^24`, 13 s a `all_sum` `2^22`): llegir l'SRS (2,2 s per 2 GB) i el `.const` (1 GB), la INTT de les columnes fixes i, sobretot, tornar a calcular els commitments fixos a cada prova (M26: 3,2 i 5,1 s).
+- **`Q`: 20 %** (11,7 i 15,6 s): l'LDE de les columnes (3,6 i 8,5 s), la posada a zero dels seus *buffers* i de `Q` (3,3 i 3,8 s), el domini (1,3 s) i la MSM; l'avaluació amb el *bytecode* en si és petita (0,3–0,5 s).
+- **El witness: 5–9 %** (3,1 i 6,8 s): llegir 1–2 GB, comprovar que cada valor és canònic (tres vegades: a Rust, a l'API C i a la instància) i copiar-lo a la instància.
+- **Els *hints* i els im pols** no hi pesen: 0,5 s a `all_sum` `2^22`, tot i que l'acumulació de `gsum`/`gprod` és seqüencial.
+
+**La memòria de les MSM.** Cada fil té els seus 2^16 *buckets* (`PaddedPoint`, 96 bytes): 1,6 GB amb 256 fils, 0,4 GB amb 64. Fins a `2^18`, és gairebé tot el pic de la prova. Al capdamunt, la memòria és la dels polinomis: l'SRS (`64` bytes per potència), els coeficients i les avaluacions a `H` de cada columna (que la instància guarda totes fins al final), el witness (que Rust també guarda fins al final) i, a `Q`, les columnes d'una part.
+
+**Els fils.** Amb `OMP_NUM_THREADS=64` (i les càrregues de les execucions entre parèntesis):
+
+| programa | N | *layout* | 256 fils: s (càrrega) | 64 fils: s (càrrega) | totes les MSM (s) | pic (GB) |
+|---|---|---|---|---|---|---|
+| `fibonacci` | 2^10 | empaquetat | 1,38 (70–70) | 0,18 (194–194) | 1,01 → 0,13 | 0,0 → 0,0 |
+| `fibonacci` | 2^16 | empaquetat | 3,42 (138–158) | 0,83 (184–194) | 2,97 → 0,69 | 2,0 → 0,5 |
+| `fibonacci` | 2^20 | empaquetat | 9,62 (162–173) | 5,37 (166–175) | 6,89 → 3,07 | 2,7 → 1,3 |
+| `fibonacci` | 2^24 | empaquetat | 59,12 (47–152) | 58,31 (47–52) | 21,07 → 18,56 | 14,0 → 14,0 |
+| `all_sum` | 2^16 | empaquetat | 9,54 (147–179) | 2,79 (52–52) | 8,11 → 2,14 | 2,3 → 0,8 |
+| `all_sum` | 2^20 | empaquetat | 26,13 (21–132) | 19,90 (48–54) | 14,91 → 8,90 | 5,8 → 4,5 |
+| `all_sum` | 2^22 | empaquetat | 76,00 (125–173) | 72,66 (22–45) | 28,64 → 23,56 | 18,1 → 18,1 |
+
+Amb 64 fils, les proves petites i mitjanes són de 2 a 7 vegades més ràpides i fan servir 4 vegades menys memòria, perquè la MSM paga menys regions i menys *buckets*; a `2^22` i `2^24`, els dos triguen el mateix. Els 256 fils per defecte d'OpenMP no convenen a la MSM d'ffiasm per sota de `2^22`.
+
+**La variància.** En algunes execucions, una sola FFT gran triga 5–20 vegades més que les altres del mateix tipus (per exemple, una INTT de l'stage 1 de `2^24`, 6,8–7,1 s en lloc de 0,3 s, a dues de tres execucions empaquetades; la primera LDE de `Q` sense empaquetar a totes tres). Sempre és la primera passada amb 256 fils sobre memòria que un sol fil acaba de posar a zero, i la segona part amb els mateixos *buffers* és 5 vegades més ràpida. La causa probable és el balanceig automàtic de NUMA del nucli (`numa_balancing = 1`, 2 nodes), que migra les pàgines; no s'ha pogut confirmar, perquè demanaria `numactl` o permisos de `root`. Afecta la mediana d'alguns punts de `2^23` i `2^24` (la dispersió de la taula).
+
+### H.8 El límit: el compilador, no el prover
+
+El prover arriba a `N = 2^24` (el límit de P2) amb el `fibonacci`, en 59 s i 14 GB, i res no fa pensar que no hi arribi amb programes més grans: `all_sum` a `2^24` necessitaria uns 5 minuts i uns 75 GB, i un SRS de `9·2^24 + 8` potències (`< 2^28`, dins de P2). Qui no hi arriba és `pil2com`:
+
+| programa | N | temps | pic de RSS | `pilout` | resultat |
+|---|---|---|---|---|---|
+| `all_sum` | 2^22 | 19 min 16 s | 19,5 GB | 620 MB | bé |
+| `all_sum` | 2^23 | 47 min 58 s | 40,3 GB | 1.241 MB | bé |
+| `all_sum` | 2^24 | 2 h 31 min | 95,1 GB | 2.482 MB | error en escriure el `pilout` |
+
+- **Per què.** El compilador guarda les columnes fixes dins del `pilout` (sobre BN254, `fixed-to-file` no hi funciona: §3.3), i `all` en té 4 d'amplada completa (`S1`–`S3` i l'`ID` de la connexió de la std): uns 148 bytes per fila. A `2^24`, el `pilout` fa 2.481.667.577 bytes, i Node no en pot escriure més de `2^31 − 1` en una crida: `RangeError [ERR_OUT_OF_RANGE]` a `fs.writeFileSync` (`pil2-compiler/src/proto_out.js:148`, des de `processor.js:303`), després de 2 h 14 min d'execució, gairebé tot als dos bucles de `N` iteracions de `sm_connection` (`connection.pil:32` i `:40`: 41 i 61 min). Tampoc no seria un missatge protobuf vàlid (el límit és 2 GiB).
+- **El temps.** És el del PIL de les *fixtures*: `sm_connection` calcula les permutacions `S1`–`S3` amb bucles del PIL, a 150–220 µs per iteració a `2^24`, i el temps creix més que linealment amb `N`: ×4,0 de `2^20` a `2^22`, però ×2,5 de `2^22` a `2^23` i ×3,2 de `2^23` a `2^24`. Qualsevol programa amb una connexió de la std (`all`, la Connection sola) té el mateix límit.
+- **La decisió** (de l'usuari, 30-09-2026): la compilació de `2^24` no es torna a intentar, i la de `2^23`, amb un límit de temps, va acabar a temps; el programa amb busos queda, doncs, a `N ≤ 2^23`, i `2^24` es mesura només amb el `fibonacci`, que té columnes fixes trivials i cobreix el límit de P2 per al prover. La conclusió: **a aquesta mida, el coll d'ampolla és compilar programes grans de BN254 amb el compilador PIL2 en JS, no provar-los.** Es podria resoldre al compilador (escriure el `pilout` per trossos, o les columnes fixes a part, un `fixed-to-file` per a BN254) o calculant les permutacions fora del PIL.
+- **Memòria.** Cap procés de l'informe no ha passat de 250 GB (el límit per procés en aquesta màquina compartida, per decisió de l'usuari): el més gran és la compilació de `2^24`, 95 GB. `bench.sh` limita el *heap* de Node a 250 GB (`BENCH_NODE_HEAP_MB`).
+
+### H.9 Oportunitats (no implementades)
+
+Per ordre del guany estimat a les mides grans. Cap no canvia la prova ni el protocol:
+
+| oportunitat | on | guany estimat |
+|---|---|---|
+| Una MSM que escali: *buckets* compartits o per grups de fils, finestra segons `n` i els fils, o la MSM de `pil2-stark/src/bn128/src/msm` (Fase 5) | `Srs::commit`, ffiasm `multiexp.c.hpp` | les MSM són el 36–50 %: la meitat del temps, i 1,6 GB de *buckets* |
+| Limitar els fils de cada MSM segons el seu nombre de punts (o fer les MSM d'un stage en paral·lel, cadascuna amb menys fils) | `Srs::commit` | 1,3–7× a les proves de `2^10` a `2^20` (H.7, 64 fils) |
+| No tornar a calcular els commitments fixos a cada prova: fer-ho una vegada per clau i guardar-ne un resum, o només en mode de depuració | `check_srs_and_fixed` (M26) | 3–5 s (5–7 %) a `2^22`–`2^24`; 11 s sense empaquetar a `all_sum` `2^22` |
+| Paral·lelitzar la divisió per `Z_{T_i}` de `W` i `W'` (`X^k − a` es divideix per blocs) i l'empaquetat | `ShplonkProver::quotientW/quotientWp` | la meitat dels 11–12 s de `W` i `W'` (8–10 %) |
+| Reservar sense posar a zero els *buffers* de `Q` (les columnes de la part i `qValues`) i tocar-los per primer cop en paral·lel; alliberar les avaluacions a `H` de les columnes abans de `Q` | `Instance::commitQ`, `commitF` | 3–4 s de `Q` i la variància NUMA de H.7; un 10–20 % del pic a `Q` |
+| No calcular els punts `x` del domini quan totes les restriccions són `everyRow`, i guardar el `Zi` d'`everyRow` com un sol valor per part | `ExpressionsDomain::cosetPart` | 1,3 s i `64·S` bytes a `2^24` |
+| Un sol control de canonicitat del witness (ara el fan Rust, l'API C i la instància), i no guardar la còpia Rust del witness fins al final de la prova | `WitnessInstance`, `pilfflonk_instance_new`, `Instance` | 1–2 s i `32·N·C` bytes (1–2 GB) |
+| Inverses en lot i acumulació en paral·lel (per trossos, amb un prefix) als *hints* | `computeHintColumns` | petit: 0,5 s a `all_sum` `2^22` |
+
+### H.10 Com es reprodueix
+
+Les eines són a `pilfflonk/bench/` (M39):
+- `bench.sh`: `ptau <potències>` escriu el `ptau` de prova; `run <programa> <bits>…` compila (un cop, i en desa el `pilout` a `$BENCH_DIR/pilouts`), fa el setup, el witness, les proves i les verificacions, i ho escriu a `$BENCH_DIR/{compile,setup,prove}.tsv`; `summary` en fa les taules (`summary.mjs`, medianes i dispersió). La capçalera en descriu les variables: `BENCH_DIR`, `BENCH_PTAU`, `BENCH_PACKING`, `BENCH_REPEATS`, `BENCH_KEEP`, `BENCH_NODE_HEAP_MB` i `OMP_NUM_THREADS`.
+- `fibonacci.pil`, `all_sum.pil` i `all_prod.pil`: els programes, amb `N = 2^BENCH_BITS`.
+- `inputs.rs`: l'exemple `pilfflonk_bench_inputs` de `proofman-cli` (el `ptau` de prova i els witness).
+
+```sh
+cargo build --release --features proofman-starks-lib-c/cpu-only \
+    --bin proofman-cli --bin proofman-setup --example pilfflonk_bench_inputs
+export BENCH_DIR=/tmp/pilfflonk-bench PIL2C_EXEC=<pil2-compiler>/src/pil.js
+pilfflonk/bench/bench.sh ptau 75497536          # 9·2^23 + 64 potències: 4,8 GB, uns 20 min
+BENCH_PACKING="packed nopacking" BENCH_REPEATS=3 pilfflonk/bench/bench.sh run fibonacci 10 12 14 16 18 20 22 24
+BENCH_PACKING="packed nopacking" BENCH_REPEATS=3 pilfflonk/bench/bench.sh run all_sum 10 12 14 16 18 20
+OMP_NUM_THREADS=64 BENCH_PACKING=packed BENCH_REPEATS=2 pilfflonk/bench/bench.sh run fibonacci 10 16 20 24
+pilfflonk/bench/bench.sh summary
+rm -rf "$BENCH_DIR"                              # el ptau, els pilouts i els resultats
+```
+
+Per defecte, cada mida esborra les seves claus, el witness i les proves en acabar (`BENCH_KEEP=1` els guarda). Abans d'una mida gran cal comprovar l'espai (`df -h`): a `2^24`, el `fibonacci` necessita uns 5 GB (el `.const` i l'SRS d'una clau, el witness i el `pilout`), a més dels 4,8 GB del `ptau`, i `all_sum` a `2^23`, uns 13 GB.

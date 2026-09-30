@@ -65,7 +65,7 @@ impl PilfflonkProveCmd {
         }
         let pk = ProvingKey::load(&self.proving_key)?;
         let witness = self.witness.open(&pk, self.verbose)?;
-        let options = ProveOptions { insecure_blinding_seed: self.insecure_blinding_seed };
+        let options = ProveOptions { insecure_blinding_seed: self.insecure_blinding_seed, ..ProveOptions::default() };
         let output = prove(&pk, &witness, &options)?;
         output.write(&self.output_dir)?;
         tracing::info!(

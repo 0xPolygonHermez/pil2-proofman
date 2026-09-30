@@ -516,6 +516,33 @@ void testZerofiersOnTheCoset() {
                         [&] { ExpressionsDomain::coset(3, 4, {{BoundaryType::EveryFrame, 5, 4}}); }),
                     "everyFrame excludes 5 + 4 rows of 8"));
     assert(contains(thrown<std::invalid_argument>([] { PilFflonk::rootOfUnity(29); }), "order 2^29"));
+
+    // The coset in parts (plan M39): point i of part p of 2^partBits points is point p + (N'/S)·i
+    // of the coset, Zi and all, bit for bit, and a column at an opening point is read as many
+    // rows later in the part as on the coset (extendBits).
+    for (uint64_t partBits = nBits; partBits <= nBitsExt; ++partBits) {
+        const uint64_t S = uint64_t(1) << partBits, nParts = m / S;
+        for (uint64_t part = 0; part < nParts; ++part) {
+            const ExpressionsDomain piece = ExpressionsDomain::cosetPart(nBits, nBitsExt, partBits, part, boundaries);
+            assert(piece.size() == S && piece.nBits() == nBits && piece.extendBits() == partBits - nBits);
+            assert(piece.nZerofiers() == boundaries.size());
+            for (size_t b = 0; b < boundaries.size(); ++b) {
+                for (uint64_t i = 0; i < S; ++i) {
+                    const FrElement &whole = coset.zerofier(b)[part + nParts * i];
+                    assert(std::memcmp(&piece.zerofier(b)[i], &whole, sizeof(FrElement)) == 0);
+                }
+            }
+        }
+    }
+    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::cosetPart(3, 5, 2, 0, boundaries); }),
+                    "nBits <= partBits <= nBitsExt <= 28"));
+    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::cosetPart(3, 5, 6, 0, boundaries); }),
+                    "nBits <= partBits <= nBitsExt <= 28"));
+    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::cosetPart(3, 5, 4, 2, boundaries); }),
+                    "part 2 of the 2 of 2^4 points"));
+    assert(contains(thrown<std::invalid_argument>(
+                        [&] { ExpressionsDomain::cosetPart(3, 4, 3, 0, {{BoundaryType::EveryFrame, 5, 4}}); }),
+                    "everyFrame excludes 5 + 4 rows of 8"));
 }
 
 // ---------------------------------------------------------------------------------------------

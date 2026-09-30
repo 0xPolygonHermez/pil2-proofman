@@ -278,6 +278,11 @@ pub struct ProveOptions {
     /// same seed gives the same proof, and whoever knows it can remove the blinding. For tests and
     /// CI only: a proof made with it is not zero-knowledge.
     pub insecure_blinding_seed: Option<[u8; 32]>,
+    /// How `Q` is evaluated on the extended coset of `2^nBitsExt` points (plan M39): in parts of
+    /// `2^bits` points, one after another, `nBits <= bits <= nBitsExt`. `None` (the default) is
+    /// `nBits`, one coset of `H` per part, the least memory; `nBitsExt` evaluates `Q` on the whole
+    /// coset at once. The proof is the same bit for bit whatever the parts.
+    pub q_part_bits: Option<u64>,
 }
 
 /// The challenges of a proof and `Q(ξ)`, for tests and diagnostics: the proof does not hold them,
@@ -460,6 +465,7 @@ pub fn stage_columns(
 
 /// A proof of the one instance of `witness` (see [the module](self)).
 pub fn prove(pk: &ProvingKey, witness: &impl WitnessSource, options: &ProveOptions) -> PilfflonkResult<ProofOutput> {
+    tracing::info!("··· Reading the witness");
     let read = WitnessInstance::read(witness)?;
     let info = pk.air(read.air)?;
     let global_info = pk.global_info();
@@ -467,6 +473,9 @@ pub fn prove(pk: &ProvingKey, witness: &impl WitnessSource, options: &ProveOptio
     let n_f = |stage: u64| info.layout.0.iter().filter(|f| f.stage == stage).count();
 
     let mut instance = read.instance(pk, options.insecure_blinding_seed.as_ref())?;
+    if let Some(bits) = options.q_part_bits {
+        instance.set_q_part_bits(bits).map_err(native("choosing the parts Q is evaluated in"))?;
+    }
     // Steps 1 and 2.
     let CommittedStages { mut transcript, mut commitments, challenges: stage_challenges } =
         commit_stages(pk, &read, &mut instance)?;

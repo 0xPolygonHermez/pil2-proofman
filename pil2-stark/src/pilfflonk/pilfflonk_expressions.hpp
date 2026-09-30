@@ -52,6 +52,16 @@ public:
     // nBits <= nBitsExt <= 28, or for an everyFrame that excludes more than N rows.
     static ExpressionsDomain coset(uint64_t nBits, uint64_t nBitsExt, const std::vector<Boundary> &boundaries);
 
+    // Part `part` of that coset (plan M39), the points of Lde::extendCosetPart: its 2^partBits
+    // points g·ω_{N'}^(part + (N'/2^partBits)·i), in that order, and Zi on them, point i the same
+    // bit for bit as point part + (N'/2^partBits)·i of coset(). nBits <= partBits <= nBitsExt, and
+    // extendBits() is partBits − nBits: a column at opening point o is read o rows later in the
+    // part, as on the whole coset. coset() is the one part of partBits = nBitsExt. Throws
+    // std::invalid_argument unless nBits <= partBits <= nBitsExt <= 28 and part < N'/2^partBits,
+    // or for an everyFrame that excludes more than N rows.
+    static ExpressionsDomain cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
+                                       const std::vector<Boundary> &boundaries);
+
     uint64_t nBits() const { return nBits_; }
     uint64_t size() const { return uint64_t(1) << (nBits_ + extendBits_); }
     // e: the domain has 2^e points per row of the trace.

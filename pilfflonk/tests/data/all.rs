@@ -35,7 +35,14 @@ pub fn witness() -> Witness {
 /// [`witness`] for the Fibonacci's inputs `inputs` instead of [`INPUTS`], as the witness library of
 /// the fixture computes it from its public inputs (plan M38c).
 pub fn witness_of_inputs(inputs: [u64; 2]) -> Witness {
-    generate(inputs, plookup::columns(N_BITS))
+    witness_of_size(N_BITS, inputs)
+}
+
+/// [`witness_of_inputs`] for `2^n_bits` rows instead of `2^N_BITS`: each state machine's columns
+/// of its generator for that many rows, as the benchmark of plan M39 (`pilfflonk/bench/`) proves
+/// `all` at every size.
+pub fn witness_of_size(n_bits: u32, inputs: [u64; 2]) -> Witness {
+    generate(n_bits, inputs, plookup::columns(n_bits))
 }
 
 /// [`witness`], but with the Plookup's wrong multiplicity of `tests/data/plookup.rs`
@@ -43,20 +50,21 @@ pub fn witness_of_inputs(inputs: [u64; 2]) -> Witness {
 pub fn witness_with_a_wrong_multiplicity() -> Witness {
     let mut plookup = plookup::columns(N_BITS);
     plookup::move_a_multiplicity(&mut plookup[4]);
-    generate(INPUTS, plookup)
+    generate(N_BITS, INPUTS, plookup)
 }
 
-/// The witness for the Fibonacci's inputs `inputs`, with the Plookup's columns `plookup`.
-fn generate(inputs: [u64; 2], plookup: Vec<Vec<u64>>) -> Witness {
-    let n = 1usize << N_BITS;
-    let fibonacci = fibonacci::witness(N_BITS, inputs);
+/// The witness of `2^n_bits` rows for the Fibonacci's inputs `inputs`, with the Plookup's columns
+/// `plookup`.
+fn generate(n_bits: u32, inputs: [u64; 2], plookup: Vec<Vec<u64>>) -> Witness {
+    let n = 1usize << n_bits;
+    let fibonacci = fibonacci::witness(n_bits, inputs);
     let fr = |col: Vec<Vec<u64>>| -> Vec<Vec<FrBytes>> {
         col.iter().map(|c| c.iter().map(|&v| FrBytes::from_u64(v)).collect()).collect()
     };
     let stage1 = &fibonacci.instances[0].stage1;
     let mut columns: Vec<Vec<FrBytes>> = (0..2).map(|col| stage1.column(col).expect("l1 and l2")).collect();
-    columns.extend(fr(connection::columns(N_BITS)));
-    columns.extend(fr(permutation::columns(N_BITS)));
+    columns.extend(fr(connection::columns(n_bits)));
+    columns.extend(fr(permutation::columns(n_bits)));
     columns.extend(fr(plookup));
     let stage1 = Stage1Witness::from_columns(n, &columns, vec![]).expect("sixteen columns of n rows");
     Witness {

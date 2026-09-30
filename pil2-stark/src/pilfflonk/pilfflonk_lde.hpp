@@ -79,12 +79,28 @@ public:
     // buffer holds N' elements.
     void extendCoset(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs) const;
 
+    // The LDE on one part of g·H' (plan M39): column c, the polynomial with the nCoefs coefficients
+    // in coefs[c] (1 <= nCoefs <= N'), into its S = 2^partBits evaluations on part `part` of the
+    // coset, in evals[c] (S elements), for nBits <= partBits <= nBitsExt and part < N'/S. Part p is
+    // the S points g·ω_N'^(p + (N'/S)·i), i < S: evaluation i of part p is evaluation p + (N'/S)·i
+    // of extendCoset, the same bit for bit, and the N'/S parts are the whole coset; S = N (one
+    // coset of H) is the least memory, and S = N' is extendCoset itself. The points of part p are
+    // c·ω_S^i for its shift c = g·ω_N'^p, so coefficient j is scaled by c^j and folded into
+    // j mod S before ffiasm's FFT of S points. evals[c] may be coefs[c] itself (in place), if that
+    // buffer holds max(nCoefs, S) elements.
+    void extendCosetPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs,
+                         uint64_t partBits, uint64_t part) const;
+
     // The inverse of extendCoset: the N' evaluations on g·H' of column c, in evals[c], into its N'
     // coefficients, in coefs[c]: ffiasm's inverse FFT, then coefficient j scaled by g^-j.
     // coefs[c] may be evals[c] itself (in place).
     void interpolateCoset(const FrElement *const *evals, FrElement *const *coefs, uint64_t nCols) const;
 
 private:
+    // extendCosetPart once its arguments are checked.
+    void extendPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs,
+                    uint64_t partBits, uint64_t part) const;
+
     uint64_t N;
     uint64_t NExtended;
     FrElement shift;

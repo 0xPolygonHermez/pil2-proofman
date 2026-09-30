@@ -113,6 +113,11 @@ extern "C" {
         n_out: u64,
     ) -> ::std::os::raw::c_int;
 
+    pub fn pilfflonk_instance_set_q_part_bits(
+        instance: *mut ::std::os::raw::c_void,
+        part_bits: u64,
+    ) -> ::std::os::raw::c_int;
+
     pub fn pilfflonk_instance_column(
         instance: *const ::std::os::raw::c_void,
         stage: u32,

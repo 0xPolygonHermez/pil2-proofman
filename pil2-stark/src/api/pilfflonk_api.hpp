@@ -249,6 +249,14 @@ extern "C" {
     int pilfflonk_commit_q(void *instance, const uint8_t *challenges, uint64_t n_challenges, uint8_t *out_g1,
                            uint64_t n_out);
 
+    // How pilfflonk_commit_q evaluates Q on the extended coset of N' = 2^nBitsExt points (plan M39):
+    // in parts of 2^part_bits points, one after another (Instance::setQPartBits). The default,
+    // part_bits = nBits, holds the columns Q reads on N points at a time, the least memory; nBitsExt
+    // evaluates Q on the whole coset at once. Q, and so the proof, is the same bit for bit either
+    // way. PILFFLONK_ERR_INVALID_ARGUMENT if instance is NULL or part_bits is not between nBits and
+    // nBitsExt.
+    int pilfflonk_instance_set_q_part_bits(void *instance, uint64_t part_bits);
+
     // Writes to out the n = N values on H of the column of stage `stage` (1 … nStages) at stage_pos of
     // the instance, as scalars, in the order of the rows: as the prover computed it, the witness's, a
     // prover hint's or an im pol's, once its stage is committed. For tests and diagnostics (plan M30:

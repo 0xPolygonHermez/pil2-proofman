@@ -14,6 +14,7 @@
 #include "pilfflonk_error.hpp"
 #include "pilfflonk_fr.hpp"
 #include "pilfflonk_transcript.hpp"
+#include "timer.hpp"
 
 namespace PilFflonk {
 
@@ -632,11 +633,14 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
             evals[c] = fixedEvals.get() + c * N;
             coefs[c] = fixedCoefs.get() + c * N;
         }
+        TimerStart(PILFFLONK_FIXED_INTT);
         fixedPolys = extension->intt(evals.data(), coefs.data(), nConstants);
+        TimerStopAndLog(PILFFLONK_FIXED_INTT);
     }
 }
 
 std::vector<G1Point> AirKey::fixedCommitments(const Srs &srs) const {
+    TimerStart(PILFFLONK_FIXED_COMMITMENTS);
     std::vector<G1Point> commitments;
     commitments.reserve(nFixed);
     for (uint64_t f = 0; f < nFixed; ++f) {
@@ -648,6 +652,7 @@ std::vector<G1Point> AirKey::fixedCommitments(const Srs &srs) const {
         }
         commitments.push_back(commitPacked(srs, components.data(), components.size()));
     }
+    TimerStopAndLog(PILFFLONK_FIXED_COMMITMENTS);
     return commitments;
 }
 
@@ -702,7 +707,10 @@ ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::
 
 std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir) {
     GlobalInfo info = GlobalInfo::load(dir + "/" + GLOBAL_INFO_FILE);
+    TimerStart(PILFFLONK_LOAD_SRS);
     Srs srs = Srs::load(dir + "/" + info.name + "/" + BACKEND_DIR + "/" + SRS_FILE);
+    TimerStopAndLog(PILFFLONK_LOAD_SRS);
+    TimerStart(PILFFLONK_LOAD_AIRS);
     std::vector<std::vector<std::unique_ptr<AirKey>>> airs(info.airs.size());
     for (uint64_t ag = 0; ag < info.airs.size(); ++ag) {
         for (const GlobalInfo::Air &air : info.airs[ag]) {
@@ -710,6 +718,7 @@ std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir) {
             airs[ag].push_back(AirKey::load(airDir, air.name));
         }
     }
+    TimerStopAndLog(PILFFLONK_LOAD_AIRS);
     return std::make_unique<ProvingKey>(std::move(info), std::move(srs), std::move(airs));
 }
 

@@ -130,20 +130,40 @@ ExpressionsDomain ExpressionsDomain::coset(uint64_t nBits, uint64_t nBitsExt, co
         throw std::invalid_argument("ExpressionsDomain::coset: needs nBits <= nBitsExt <= 28, and they are " +
                                     std::to_string(nBits) + " and " + std::to_string(nBitsExt));
     }
+    return cosetPart(nBits, nBitsExt, nBitsExt, 0, boundaries);
+}
+
+ExpressionsDomain ExpressionsDomain::cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
+                                               const std::vector<Boundary> &boundaries) {
+    if (nBitsExt > MAX_NBITS_EXT || nBits > partBits || partBits > nBitsExt) {
+        throw std::invalid_argument("ExpressionsDomain::cosetPart: needs nBits <= partBits <= nBitsExt <= 28, and "
+                                    "they are " +
+                                    std::to_string(nBits) + ", " + std::to_string(partBits) + " and " +
+                                    std::to_string(nBitsExt));
+    }
+    if (part >= (uint64_t(1) << (nBitsExt - partBits))) {
+        throw std::invalid_argument("ExpressionsDomain::cosetPart: part " + std::to_string(part) + " of the " +
+                                    std::to_string(uint64_t(1) << (nBitsExt - partBits)) + " of 2^" +
+                                    std::to_string(partBits) + " points");
+    }
     for (const Boundary &b : boundaries) {
         if (b.type == BoundaryType::EveryFrame) {
             excludedRoots(nBits, b); // throws if it excludes too many rows
         }
     }
     Engine::Fr &fr = Engine::engine.fr;
-    ExpressionsDomain domain(nBits, nBitsExt - nBits);
+    ExpressionsDomain domain(nBits, partBits - nBits);
     const uint64_t n = uint64_t(1) << nBits;
-    const uint64_t m = uint64_t(1) << nBitsExt;
+    const uint64_t m = uint64_t(1) << partBits;
     const uint64_t e = m / n;
 
-    // The points g·ω_{N'}^i, each thread's chunk from g·ω_{N'}^begin.
-    const FrElement g = fromUI(COSET_SHIFT);
-    const FrElement w = rootOfUnity(nBitsExt);
+    // The part's points c·ω_m^i for its shift c = g·ω_{N'}^part (g itself for part 0), each
+    // thread's chunk from c·ω_m^begin.
+    FrElement c = fromUI(COSET_SHIFT);
+    if (part > 0) {
+        fr.mul(c, c, power(rootOfUnity(nBitsExt), part));
+    }
+    const FrElement w = rootOfUnity(partBits);
     std::vector<FrElement> x(m);
 #pragma omp parallel
     {
@@ -153,7 +173,7 @@ ExpressionsDomain ExpressionsDomain::coset(uint64_t nBits, uint64_t nBitsExt, co
         const uint64_t end = std::min(m, begin + chunk);
         if (begin < end) {
             FrElement point;
-            fr.mul(point, g, power(w, begin));
+            fr.mul(point, c, power(w, begin));
             for (uint64_t i = begin; i < end; ++i) {
                 x[i] = point;
                 fr.mul(point, point, w);
@@ -161,18 +181,19 @@ ExpressionsDomain ExpressionsDomain::coset(uint64_t nBits, uint64_t nBitsExt, co
         }
     }
 
-    // Z_H(g·ω_{N'}^i) = g^N·ω_e^i − 1, with ω_e = ω_{N'}^N of order e: e values, repeated.
+    // Z_H(c·ω_m^i) = c^N·ω_e^i − 1, with ω_e = ω_m^N of order e: e values, repeated.
     std::vector<FrElement> zh(e);
-    const FrElement gN = power(g, n);
+    const FrElement cN = power(c, n);
     const FrElement we = power(w, n);
-    FrElement factor = gN;
+    FrElement factor = cN;
     for (uint64_t k = 0; k < e; ++k) {
         fr.sub(zh[k], factor, fr.one());
         fr.mul(factor, factor, we);
     }
     std::vector<FrElement> zhInv(e);
     if (!batchInverse(zhInv.data(), zh.data(), e)) {
-        throw std::logic_error("ExpressionsDomain::coset: Z_H vanishes on the coset: g lies in no subgroup of order 2^k");
+        throw std::logic_error("ExpressionsDomain::cosetPart: Z_H vanishes on the coset: g lies in no subgroup of "
+                               "order 2^k");
     }
 
     std::vector<FrElement> den;
@@ -194,7 +215,7 @@ ExpressionsDomain ExpressionsDomain::coset(uint64_t nBits, uint64_t nBitsExt, co
                 fr.sub(den[i], x[i], root);
             }
             if (!batchInverse(zi.data(), den.data(), m)) {
-                throw std::logic_error("ExpressionsDomain::coset: a point of the coset is a row of H");
+                throw std::logic_error("ExpressionsDomain::cosetPart: a point of the coset is a row of H");
             }
 #pragma omp parallel for schedule(static)
             for (uint64_t i = 0; i < m; ++i) {

@@ -55,6 +55,12 @@ pilfflonk-connection = { path = "../pilfflonk/tests/fixtures/connection/rs" }
 pilfflonk-all = { path = "../pilfflonk/tests/fixtures/all/rs" }
 fibonacci-square = { path = "../examples/fibonacci-square" }
 
+# The inputs of the pilfflonk benchmark (plan M39, pilfflonk/bench/bench.sh): a test ptau and the
+# witnesses of its programs, from the fixtures' generators, as the tests take them.
+[[example]]
+name = "pilfflonk_bench_inputs"
+path = "../pilfflonk/bench/inputs.rs"
+
 [features]
 default = ["mpi"]
 mpi = ["proofman/mpi", "proofman-common/mpi"]

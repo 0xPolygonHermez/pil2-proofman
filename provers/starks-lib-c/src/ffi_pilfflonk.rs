@@ -456,6 +456,17 @@ impl<'ctx> PilFflonkInstance<'ctx> {
         Ok(out)
     }
 
+    /// How [`commit_q`](Self::commit_q) evaluates `Q` on the extended coset of `2^nBitsExt` points
+    /// (plan M39): in parts of `2^part_bits` points, one after another. By default `part_bits` is
+    /// `nBits`, the least memory; `nBitsExt` evaluates `Q` on the whole coset at once. `Q` and the
+    /// proof are the same bit for bit either way. Fails with
+    /// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) unless `nBits <= part_bits <=
+    /// nBitsExt`.
+    pub fn set_q_part_bits(&mut self, part_bits: u64) -> Result<(), PilFflonkError> {
+        // SAFETY: the handle is live.
+        check_status(unsafe { pilfflonk_instance_set_q_part_bits(self.handle.as_ptr(), part_bits) })
+    }
+
     /// Commits `Q` with the challenges of its stage (`std_vc`): the commitments of its `n_out` f.
     /// Fails with [`Unsatisfied`](PilFflonkErrorKind::Unsatisfied) if the witness does not satisfy
     /// the AIR's constraints.

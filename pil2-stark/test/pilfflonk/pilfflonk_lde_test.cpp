@@ -424,6 +424,59 @@ void testBatchMatchesSingleColumns() {
     }
 }
 
+// The coset in parts (plan M39): for every size S = 2^partBits from N to N' and every part p,
+// extendCosetPart gives evaluation p + (N'/S)·i of extendCoset as its i-th, bit for bit, for
+// polynomials of fewer, as many and more coefficients than a part has (their coefficients fold into
+// it), in a batch and one column at a time, and in place.
+void testExtendCosetParts() {
+    Random random(7);
+    struct Case {
+        uint64_t nBits, nBitsExt;
+    };
+    for (const Case &test : std::vector<Case>{{0, 3}, {2, 2}, {3, 5}, {4, 7}, {9, 11}}) {
+        const Lde lde(test.nBits, test.nBitsExt);
+        const uint64_t N = lde.domainSize(), NExt = lde.extendedSize();
+        std::vector<uint64_t> lengths = {1, N, NExt};
+        if (N + 3 <= NExt) {
+            lengths.push_back(N + 3);
+        }
+        if (NExt > 2) {
+            lengths.push_back(NExt - 1);
+        }
+        for (uint64_t nCoefs : lengths) {
+            const std::vector<Column> coefs = {random.column(nCoefs), random.column(nCoefs)};
+            std::vector<Column> whole(2, Column(NExt));
+            for (uint64_t c = 0; c < 2; ++c) {
+                extendCoset(lde, coefs[c].data(), whole[c].data(), nCoefs);
+            }
+            for (uint64_t partBits = test.nBits; partBits <= test.nBitsExt; ++partBits) {
+                const uint64_t S = uint64_t(1) << partBits, nParts = NExt / S;
+                for (uint64_t part = 0; part < nParts; ++part) {
+                    Column expected(S);
+                    for (uint64_t i = 0; i < S; ++i) {
+                        expected[i] = whole[0][part + nParts * i];
+                    }
+                    // A batch of two columns, the first against the whole coset.
+                    std::vector<Column> out(2, Column(S));
+                    const FrElement *in[2] = {coefs[0].data(), coefs[1].data()};
+                    FrElement *dst[2] = {out[0].data(), out[1].data()};
+                    lde.extendCosetPart(in, dst, 2, nCoefs, partBits, part);
+                    assert(identical(out[0].data(), expected.data(), S));
+                    for (uint64_t i = 0; i < S; ++i) {
+                        assert(identical(&out[1][i], &whole[1][part + nParts * i], 1));
+                    }
+                    // In place, in a buffer of max(nCoefs, S) elements.
+                    Column buffer = coefs[0];
+                    buffer.resize(std::max(nCoefs, S));
+                    FrElement *self = buffer.data();
+                    lde.extendCosetPart(&self, &self, 1, nCoefs, partBits, part);
+                    assert(identical(buffer.data(), expected.data(), S));
+                }
+            }
+        }
+    }
+}
+
 template <typename Call>
 void expectInvalid(Call call, const char *message) {
     try {
@@ -479,6 +532,20 @@ void testRefusedArguments() {
     expectInvalid([&] { lde.extendCoset(&constA, &pb, 1, NExt + 1); }, "33 coefficients exceed the 32");
     expectInvalid([&] { lde.extendCoset(&constA, &pb, 1, UINT64_MAX); }, "coefficients exceed the 32");
 
+    // extendCosetPart
+    expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 0, 1, 3, 0); }, "Lde::extendCosetPart: no columns");
+    expectInvalid([&] { lde.extendCosetPart(nullptr, &pb, 1, 1, 3, 0); }, "Lde::extendCosetPart: coefs is null");
+    expectInvalid([&] { lde.extendCosetPart(&constA, nullptr, 1, 1, 3, 0); }, "Lde::extendCosetPart: evals is null");
+    expectInvalid([&] { lde.extendCosetPart(constPair, withNull, 2, 1, 3, 0); },
+                  "Lde::extendCosetPart: evals[1] is null");
+    expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, 0, 3, 0); }, "Lde::extendCosetPart: no coefficients");
+    expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, NExt + 1, 3, 0); }, "33 coefficients exceed the 32");
+    expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, 1, 2, 0); },
+                  "a part of 2^2 points, and the parts have from 8 to 32");
+    expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, 1, 6, 0); }, "a part of 2^6 points");
+    expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, 1, 3, 4); }, "part 4 of the 4 of 2^3 points");
+    expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, 1, 5, 1); }, "part 1 of the 1 of 2^5 points");
+
     // interpolateCoset
     expectInvalid([&] { lde.interpolateCoset(&constA, &pb, 0); }, "Lde::interpolateCoset: no columns");
     expectInvalid([&] { lde.interpolateCoset(nullptr, &pb, 1); }, "Lde::interpolateCoset: evals is null");
@@ -501,6 +568,7 @@ void runLdeTests() {
     testRoundTrips();
     testInttKeepsRoomForBlinding();
     testBatchMatchesSingleColumns();
+    testExtendCosetParts();
     testRefusedArguments();
 }
 

@@ -12,6 +12,7 @@
 
 #include "pilfflonk_lde.hpp"
 #include "thread_utils.hpp"
+#include "timer.hpp"
 
 namespace PilFflonk {
 
@@ -488,8 +489,12 @@ ShplonkProof ShplonkProver::open(const Srs &srs, Transcript &transcript) const {
 
     ShplonkProof proof;
     proof.alpha = transcript.squeeze();
+    TimerStart(PILFFLONK_SHPLONK_W);
     std::unique_ptr<Poly> W = quotientW(r, proof.alpha);
+    TimerStopAndLog(PILFFLONK_SHPLONK_W);
+    TimerStart(PILFFLONK_SHPLONK_COMMIT_W);
     proof.w = srs.commit(W->coef, W->getDegree() + 1);
+    TimerStopAndLog(PILFFLONK_SHPLONK_COMMIT_W);
 
     uint8_t bytes[G1_BYTES];
     encodeG1(proof.w, bytes);
@@ -509,9 +514,13 @@ ShplonkProof ShplonkProver::open(const Srs &srs, Transcript &transcript) const {
     transcript.absorb(std::vector<G1Point>{proof.w});
 
     proof.y = transcript.squeeze();
+    TimerStart(PILFFLONK_SHPLONK_WP);
     const std::unique_ptr<Poly> Wp = quotientWp(r, proof.alpha, proof.y, *W);
+    TimerStopAndLog(PILFFLONK_SHPLONK_WP);
     W.reset();
+    TimerStart(PILFFLONK_SHPLONK_COMMIT_WP);
     proof.wp = srs.commit(Wp->coef, Wp->getDegree() + 1);
+    TimerStopAndLog(PILFFLONK_SHPLONK_COMMIT_WP);
     return proof;
 }
 

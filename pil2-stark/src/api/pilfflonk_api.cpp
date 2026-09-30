@@ -592,6 +592,17 @@ int pilfflonk_commit_q(void *instance, const uint8_t *challenges, uint64_t n_cha
     });
 }
 
+int pilfflonk_instance_set_q_part_bits(void *instance, uint64_t part_bits) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (instance == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "instance is NULL");
+        }
+        static_cast<PilFflonk::Instance *>(instance)->setQPartBits(part_bits);
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
 int pilfflonk_instance_column(const void *instance, uint32_t stage, uint64_t stage_pos, uint8_t *out, uint64_t n) {
     const char *function = __func__;
     return guard(function, [&] {

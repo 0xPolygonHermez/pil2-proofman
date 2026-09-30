@@ -98,6 +98,46 @@ void mulByPowers(FrElement *dst, const FrElement *src, uint64_t n, const FrEleme
     }
 }
 
+// k for n = 2^k.
+uint64_t bitsOf(uint64_t n) { return static_cast<uint64_t>(__builtin_ctzll(n)); }
+
+// dst[r] = Σ_t src[r + t·s]·base^(r + t·s) for r < s, over the terms with r + t·s < n: the n
+// coefficients in src scaled by the powers of base and folded modulo s, which may be below or above
+// n (dst[r] = 0 for n <= r < s). dst may be src: dst[r] is written after src[r] is read, and every
+// other term it reads is at s or beyond, where nothing is written. Each thread starts its chunk from
+// base^begin, as mulByPowers.
+void foldByPowers(FrElement *dst, const FrElement *src, uint64_t n, uint64_t s, const FrElement &base) {
+    Engine::Fr &fr = Engine::engine.fr;
+    const FrElement baseS = power(base, s);
+#pragma omp parallel
+    {
+        const uint64_t nThreads = omp_get_num_threads();
+        const uint64_t chunk = (s + nThreads - 1) / nThreads;
+        const uint64_t begin = std::min(s, omp_get_thread_num() * chunk);
+        const uint64_t end = std::min(s, begin + chunk);
+        if (begin < end) {
+            FrElement factor = power(base, begin);
+            for (uint64_t r = begin; r < end; ++r) {
+                if (r >= n) {
+                    dst[r] = fr.zero();
+                    continue;
+                }
+                // src[r]·base^r, and then each term of r + t·s, base^(r + t·s) a factor base^s apart.
+                FrElement acc, f = factor;
+                fr.mul(acc, src[r], f);
+                for (uint64_t j = r + s; j < n; j += s) {
+                    FrElement term;
+                    fr.mul(f, f, baseS);
+                    fr.mul(term, src[j], f);
+                    fr.add(acc, acc, term);
+                }
+                dst[r] = acc;
+                fr.mul(factor, factor, base);
+            }
+        }
+    }
+}
+
 } // namespace
 
 FrElement power(const FrElement &base, uint64_t exponent) {
@@ -198,12 +238,45 @@ void Lde::extendCoset(const FrElement *const *coefs, FrElement *const *evals, ui
                                          " of the extended domain");
     }
 
-    forEachColumn(nCols, [&](uint64_t c) {
-        mulByPowers(evals[c], coefs[c], nCoefs, shift);
-        if (nCoefs < NExtended) {
-            ThreadUtils::parset(evals[c] + nCoefs, 0, (NExtended - nCoefs) * sizeof(FrElement), omp_get_max_threads());
-        }
-        fft->fft(evals[c], NExtended);
+    extendPart(coefs, evals, nCols, nCoefs, bitsOf(NExtended), 0);
+}
+
+void Lde::extendCosetPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs,
+                          uint64_t partBits, uint64_t part) const {
+    checkBuffers("extendCosetPart", "coefs", coefs, nCols);
+    checkBuffers("extendCosetPart", "evals", evals, nCols);
+    if (nCoefs == 0) {
+        throw invalid("extendCosetPart", "no coefficients");
+    }
+    if (nCoefs > NExtended) {
+        throw invalid("extendCosetPart", std::to_string(nCoefs) + " coefficients exceed the " +
+                                             std::to_string(NExtended) + " of the extended domain");
+    }
+    if (partBits < bitsOf(N) || partBits > bitsOf(NExtended)) {
+        throw invalid("extendCosetPart", "a part of 2^" + std::to_string(partBits) +
+                                             " points, and the parts have from " + std::to_string(N) + " to " +
+                                             std::to_string(NExtended));
+    }
+    if (part >= NExtended >> partBits) {
+        throw invalid("extendCosetPart", "part " + std::to_string(part) + " of the " +
+                                             std::to_string(NExtended >> partBits) + " of 2^" +
+                                             std::to_string(partBits) + " points");
+    }
+    extendPart(coefs, evals, nCols, nCoefs, partBits, part);
+}
+
+void Lde::extendPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs,
+                     uint64_t partBits, uint64_t part) const {
+    Engine::Fr &fr = Engine::engine.fr;
+    const uint64_t S = uint64_t(1) << partBits;
+    // c = g·ω_N'^part; part 0 is g itself, extendCoset's scaling.
+    FrElement c = shift;
+    if (part > 0) {
+        fr.mul(c, shift, power(fft->root(static_cast<uint32_t>(bitsOf(NExtended)), 1), part));
+    }
+    forEachColumn(nCols, [&](uint64_t col) {
+        foldByPowers(evals[col], coefs[col], nCoefs, S, c);
+        fft->fft(evals[col], S);
     });
 }
 
