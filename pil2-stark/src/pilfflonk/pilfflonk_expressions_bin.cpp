@@ -244,7 +244,7 @@ ExpressionsBin ExpressionsBin::parse(const uint8_t *data, uint64_t size, const s
     const uint32_t version = file.u32();
     if (version != EXPRESSIONS_BIN_VERSION) {
         file.fail("version " + hex(version) + ", and pilfflonk's is " + hex(EXPRESSIONS_BIN_VERSION) +
-                  ": not a pilfflonk bytecode of revision 2");
+                  ": not a pilfflonk bytecode of revision 3");
     }
     if (file.u32() != EXPRESSIONS_BIN_N_SECTIONS) {
         file.fail("it does not have 3 sections");
@@ -269,7 +269,7 @@ ExpressionsBin ExpressionsBin::parse(const uint8_t *data, uint64_t size, const s
     if (prefixVersion != EXPRESSIONS_BIN_VERSION || n8 != FR_BYTES ||
         std::memcmp(modulus, FR_MODULUS_LE, FR_BYTES) != 0) {
         r1.fail("section 1 starts with version " + hex(prefixVersion) + " and n8 " + std::to_string(n8) +
-                ", not those of a revision-2 bytecode over BN254");
+                ", not those of a revision-3 bytecode over BN254");
     }
     bin.nStages = r1.u32();
     if (bin.nStages > EXPRESSIONS_BIN_MAX_N_STAGES) {
@@ -340,14 +340,75 @@ ExpressionsBin ExpressionsBin::parse(const uint8_t *data, uint64_t size, const s
                 std::to_string(maxArgs) + " and " + std::to_string(maxOps));
     }
 
-    // Section 3: no hints in revision 2.
+    // Section 3: the hints, as the STARK's loadExpressionsBin reads them but for dimension 1 (the
+    // Rust reader's read_hints).
     Reader r3(sections[2], sizes[2], name, "the hints");
     const uint32_t nHints = r3.u32();
-    r3.finish();
-    if (nHints != 0) {
-        r3.fail(std::to_string(nHints) + " hints: revision 2 has none");
+    for (uint32_t h = 0; h < nHints; ++h) {
+        Hint hint;
+        hint.name = r3.string();
+        const uint32_t nFields = r3.u32();
+        for (uint32_t f = 0; f < nFields; ++f) {
+            HintField field;
+            field.name = r3.string();
+            const std::string what = "hint " + std::to_string(h) + " (`" + hint.name + "`), field `" + field.name + "`";
+            const uint32_t nValues = r3.u32();
+            for (uint32_t v = 0; v < nValues; ++v) {
+                HintFieldValue value;
+                const std::string op = r3.string();
+                if (op == "cm" || op == "const") {
+                    value.op = op == "cm" ? HintOp::Cm : HintOp::Const;
+                    value.id = r3.u32();
+                    value.rowOffsetIndex = r3.u32();
+                } else if (op == "tmp") {
+                    value.op = HintOp::Tmp;
+                    value.id = r3.u32();
+                    if (bin.expressionsInfo.count(value.id) == 0) {
+                        r3.fail(what + ": expression " + std::to_string(value.id) + ", which section 1 does not have");
+                    }
+                } else if (op == "number") {
+                    value.op = HintOp::Number;
+                    const uint8_t *bytes = r3.take(FR_BYTES);
+                    if (!isCanonicalFr(bytes)) {
+                        r3.fail(what + ": a number not below r");
+                    }
+                    Engine::engine.fr.fromRprLE(value.value, bytes, FR_BYTES);
+                } else if (op == "string") {
+                    value.op = HintOp::String;
+                    value.stringValue = r3.string();
+                } else if (op == "public" || op == "challenge" || op == "airvalue" || op == "airgroupvalue" ||
+                           op == "proofvalue") {
+                    value.op = op == "public"          ? HintOp::Public
+                               : op == "challenge"     ? HintOp::Challenge
+                               : op == "airvalue"      ? HintOp::AirValue
+                               : op == "airgroupvalue" ? HintOp::AirgroupValue
+                                                       : HintOp::ProofValue;
+                    value.id = r3.u32();
+                } else {
+                    r3.fail(what + ": unknown value kind \"" + op + "\"");
+                }
+                const uint32_t nPos = r3.u32();
+                for (uint32_t p = 0; p < nPos; ++p) {
+                    value.pos.push_back(r3.u32());
+                }
+                field.values.push_back(std::move(value));
+            }
+            hint.fields.push_back(std::move(field));
+        }
+        bin.hints.push_back(std::move(hint));
     }
+    r3.finish();
     return bin;
+}
+
+std::vector<uint64_t> ExpressionsBin::hintIds(const std::string &name) const {
+    std::vector<uint64_t> ids;
+    for (uint64_t h = 0; h < hints.size(); ++h) {
+        if (hints[h].name == name) {
+            ids.push_back(h);
+        }
+    }
+    return ids;
 }
 
 const ParserParams &ExpressionsBin::expression(uint64_t expId) const {

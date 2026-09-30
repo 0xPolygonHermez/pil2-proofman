@@ -592,6 +592,29 @@ int pilfflonk_commit_q(void *instance, const uint8_t *challenges, uint64_t n_cha
     });
 }
 
+int pilfflonk_instance_column(const void *instance, uint32_t stage, uint64_t stage_pos, uint8_t *out, uint64_t n) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (instance == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "instance is NULL");
+        }
+        if (out == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out is NULL");
+        }
+        const PilFflonk::Instance &inst = *static_cast<const PilFflonk::Instance *>(instance);
+        const uint64_t N = inst.air().n();
+        if (n != N) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "n = %" PRIu64 ", and %s has %" PRIu64 " rows", n,
+                        inst.air().name().c_str(), N);
+        }
+        const PilFflonk::FrElement *values = inst.column(stage, stage_pos);
+        for (uint64_t i = 0; i < N; ++i) {
+            PilFflonk::encodeFr(values[i], out + i * PilFflonk::FR_BYTES);
+        }
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
 void *pilfflonk_opening_new(const void *const *instances, uint64_t n_instances, const uint8_t xi_seed[32]) {
     const char *function = __func__;
     return guardNew(function, [&]() -> void * {
@@ -773,12 +796,35 @@ int pilfflonk_ctx_constraint_line(const void *ctx, uint64_t airgroup_id, uint64_
     });
 }
 
-int pilfflonk_check(void *instance, uint64_t max_rows, uint64_t n_constraints, uint64_t *out_n_failed,
-                    uint64_t *out_rows, uint8_t *out_values) {
+namespace {
+
+// Decodes the challenges pilfflonk_check and pilfflonk_check_column take: PILFFLONK_OK, or the
+// failure, said.
+int checkChallenges(const char *function, const uint8_t *challenges, uint64_t n_challenges,
+                    std::vector<PilFflonk::FrElement> &values) {
+    if (challenges == nullptr && n_challenges != 0) {
+        return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "challenges is NULL");
+    }
+    uint64_t refused = 0;
+    if (!decodeScalars(challenges, n_challenges, values, refused)) {
+        return fail(PILFFLONK_ERR_NON_CANONICAL, function, "challenges[%" PRIu64 "] is not below r", refused);
+    }
+    return static_cast<int>(PILFFLONK_OK);
+}
+
+} // namespace
+
+int pilfflonk_check(void *instance, const uint8_t *challenges, uint64_t n_challenges, uint64_t max_rows,
+                    uint64_t n_constraints, uint64_t *out_n_failed, uint64_t *out_rows, uint8_t *out_values) {
     const char *function = __func__;
     return guard(function, [&] {
         if (instance == nullptr) {
             return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "instance is NULL");
+        }
+        std::vector<PilFflonk::FrElement> values;
+        const int decoded = checkChallenges(function, challenges, n_challenges, values);
+        if (decoded != PILFFLONK_OK) {
+            return decoded;
         }
         if (out_n_failed == nullptr && n_constraints != 0) {
             return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out_n_failed is NULL");
@@ -804,7 +850,7 @@ int pilfflonk_check(void *instance, uint64_t max_rows, uint64_t n_constraints, u
                         n_constraints, inst.air().name().c_str(), expected);
         }
 
-        const std::vector<PilFflonk::ConstraintCheck> checks = inst.check(max_rows);
+        const std::vector<PilFflonk::ConstraintCheck> checks = inst.check(max_rows, values);
         for (uint64_t c = 0; c < n_constraints; ++c) {
             out_n_failed[c] = checks[c].nFailed;
             if (!entries) {
@@ -820,6 +866,40 @@ int pilfflonk_check(void *instance, uint64_t max_rows, uint64_t n_constraints, u
             std::fill(rowsOut + rows.size(), rowsOut + max_rows, uint64_t(0));
             std::fill(valuesOut + rows.size() * PilFflonk::FR_BYTES, valuesOut + max_rows * PilFflonk::FR_BYTES,
                       uint8_t(0));
+        }
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_check_column(void *instance, const uint8_t *challenges, uint64_t n_challenges, uint32_t stage,
+                           uint64_t stage_pos, uint8_t *out, uint64_t n) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (instance == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "instance is NULL");
+        }
+        if (out == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out is NULL");
+        }
+        std::vector<PilFflonk::FrElement> values;
+        const int decoded = checkChallenges(function, challenges, n_challenges, values);
+        if (decoded != PILFFLONK_OK) {
+            return decoded;
+        }
+        PilFflonk::Instance &inst = *static_cast<PilFflonk::Instance *>(instance);
+        const uint64_t N = inst.air().n();
+        if (n != N) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "n = %" PRIu64 ", and %s has %" PRIu64 " rows", n,
+                        inst.air().name().c_str(), N);
+        }
+        if (stage == 0 || stage > inst.air().info().nStages || stage_pos >= inst.air().cmIds()[stage].size()) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "%s has no column of stage %" PRIu32
+                        " at stagePos %" PRIu64, inst.air().name().c_str(), stage, stage_pos);
+        }
+        const std::vector<std::vector<PilFflonk::FrElement>> columns = inst.checkColumns(values);
+        const PilFflonk::FrElement *column = columns[stage].data() + stage_pos * N;
+        for (uint64_t i = 0; i < N; ++i) {
+            PilFflonk::encodeFr(column[i], out + i * PilFflonk::FR_BYTES);
         }
         return static_cast<int>(PILFFLONK_OK);
     });

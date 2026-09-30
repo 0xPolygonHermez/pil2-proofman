@@ -113,7 +113,8 @@ uint64_t Instance::nChallenges(uint64_t stage) const {
     return std::count_if(map.begin(), map.end(), [&](const ChallengeMapEntry &c) { return c.stage == stage; });
 }
 
-void Instance::setChallenges(uint64_t stage, const std::vector<FrElement> &given) {
+void Instance::placeChallenges(uint64_t stage, const std::vector<FrElement> &given,
+                               std::vector<FrElement> &values) const {
     const std::vector<ChallengeMapEntry> &map = key.info().challengesMap;
     if (given.size() != nChallenges(stage)) {
         throw invalid("Instance", std::to_string(given.size()) + " challenges for the " +
@@ -127,12 +128,17 @@ void Instance::setChallenges(uint64_t stage, const std::vector<FrElement> &given
     }
     for (uint64_t i = 0; i < map.size(); ++i) {
         if (map[i].stage == stage) {
-            challengeValues[i] = given[map[i].stageId];
+            values[i] = given[map[i].stageId];
         }
     }
 }
 
-ProverValues Instance::valuesOnTrace() const {
+void Instance::setChallenges(uint64_t stage, const std::vector<FrElement> &given) {
+    placeChallenges(stage, given, challengeValues);
+}
+
+ProverValues Instance::valuesOn(const std::vector<std::vector<FrElement>> &cols,
+                                const std::vector<FrElement> &challenges) const {
     const PilfflonkInfo &info = key.info();
     const uint64_t N = key.n();
     ProverValues v;
@@ -142,21 +148,94 @@ ProverValues Instance::valuesOnTrace() const {
     }
     for (uint64_t s = 1; s <= info.nStages; ++s) {
         for (uint64_t p = 0; p < key.cmIds()[s].size(); ++p) {
-            v.columns[s].push_back(columns[s].data() + p * N);
+            v.columns[s].push_back(cols[s].data() + p * N);
         }
     }
     v.publics = publicValues;
-    v.challenges = challengeValues;
+    v.challenges = challenges;
     v.airValues = airValueValues;
     v.proofValues = proofValueValues;
     v.airgroupValues.assign(info.airgroupValuesMap.size(), Engine::engine.fr.zero());
     return v;
 }
 
+void Instance::computeHintColumns(uint64_t stage, std::vector<std::vector<FrElement>> &cols,
+                                  const std::vector<FrElement> &challenges) const {
+    const std::vector<StdHint> &hints = key.stdHints();
+    if (std::none_of(hints.begin(), hints.end(), [&](const StdHint &h) { return h.stage == stage; })) {
+        return;
+    }
+    const PilfflonkInfo &info = key.info();
+    const uint64_t N = key.n();
+    Engine::Fr &fr = Engine::engine.fr;
+    // The hints read the stages before this one (AirKey checked it), and the challenges of this one.
+    const ProverValues values = valuesOn(cols, challenges);
+    const ExpressionsDomain trace = ExpressionsDomain::trace(info.nBits);
+    // An operand on every row of H, as addHintField reads it: a column at row i + offset, cyclically.
+    auto evaluate = [&](const HintInput &in, FrElement *dest) {
+        switch (in.kind) {
+        case HintInput::Kind::Expression:
+            key.expressions().calculateExpression(in.expId, trace, values, dest);
+            break;
+        case HintInput::Kind::Column: {
+            const FrElement *source = in.column.type == 0 ? key.fixedEvaluations(in.column.index)
+                                                          : cols[in.column.type].data() + in.column.index * N;
+            const uint64_t shift = static_cast<uint64_t>(((in.offset % int64_t(N)) + int64_t(N)) % int64_t(N));
+#pragma omp parallel for
+            for (uint64_t i = 0; i < N; ++i) {
+                dest[i] = source[(i + shift) % N];
+            }
+            break;
+        }
+        case HintInput::Kind::Number:
+            std::fill(dest, dest + N, in.number);
+            break;
+        }
+    };
+    std::vector<FrElement> numerator(N), denominator(N), inverse(N);
+    // calculateWitnessSTD's order: the products, then the sums (gen_proof.hpp).
+    for (const bool prod : {true, false}) {
+        for (const StdHint &hint : hints) {
+            if (hint.stage != stage || hint.prod != prod) {
+                continue;
+            }
+            evaluate(hint.numerator, numerator.data());
+            evaluate(hint.denominator, denominator.data());
+            if (!batchInverse(inverse.data(), denominator.data(), N)) {
+                const uint64_t row = std::find_if(denominator.begin(), denominator.end(),
+                                                  [&](const FrElement &d) { return fr.isZero(d); }) -
+                                     denominator.begin();
+                throw UnsatisfiedError(key.name() + ": the denominator of hint " + std::to_string(hint.hint) + " (" +
+                                       hint.name + ", column " + info.cmPolsMap[hint.cmId].name + ") is 0 at row " +
+                                       std::to_string(row) + ": the column has no value there");
+            }
+            // accMulHintFields: vals[i] = numerator[i]/denominator[i], then vals[i] = vals[i] ∘ vals[i − 1].
+            FrElement *dest = cols[stage].data() + hint.stagePos * N;
+#pragma omp parallel for
+            for (uint64_t i = 0; i < N; ++i) {
+                fr.mul(dest[i], numerator[i], inverse[i]);
+            }
+            for (uint64_t i = 1; i < N; ++i) {
+                if (prod) {
+                    fr.mul(dest[i], dest[i], dest[i - 1]);
+                } else {
+                    fr.add(dest[i], dest[i], dest[i - 1]);
+                }
+            }
+        }
+    }
+}
+
 void Instance::computeImPols(uint64_t stage) {
     if (stage <= imPolsComputed) {
         return;
     }
+    computeImPols(stage, columns, challengeValues);
+    imPolsComputed = stage;
+}
+
+void Instance::computeImPols(uint64_t stage, std::vector<std::vector<FrElement>> &cols,
+                             const std::vector<FrElement> &challenges) const {
     const PilfflonkInfo &info = key.info();
     const uint64_t N = key.n();
     std::vector<uint64_t> pending;
@@ -169,10 +248,9 @@ void Instance::computeImPols(uint64_t stage) {
         }
     }
     if (pending.empty()) {
-        imPolsComputed = stage;
         return;
     }
-    const ProverValues values = valuesOnTrace();
+    const ProverValues values = valuesOn(cols, challenges);
     const ExpressionsDomain trace = ExpressionsDomain::trace(info.nBits);
     // Each im pol once every column its code reads is: those of earlier stages are, and of this
     // stage the witness columns and the im pols computed so far (AirKey checked there is nothing else).
@@ -188,7 +266,7 @@ void Instance::computeImPols(uint64_t stage) {
                 waiting.push_back(id);
                 continue;
             }
-            key.expressions().calculateExpression(p.expId, trace, values, columns[stage].data() + p.stagePos * N);
+            key.expressions().calculateExpression(p.expId, trace, values, cols[stage].data() + p.stagePos * N);
             ready[p.stagePos] = true;
         }
         if (waiting.size() == pending.size()) {
@@ -197,7 +275,6 @@ void Instance::computeImPols(uint64_t stage) {
         }
         pending = std::move(waiting);
     }
-    imPolsComputed = stage;
 }
 
 std::vector<G1Point> Instance::commitF(uint64_t stage) {
@@ -245,12 +322,8 @@ std::vector<G1Point> Instance::commitStage(uint64_t stage, const std::vector<FrE
         throw invalid(function, "stage " + std::to_string(stage) + " out of order: the next stage is " +
                                     std::to_string(next));
     }
-    if (stage >= 2) {
-        throw invalid(function, "the columns of stage " + std::to_string(stage) +
-                                    " come from the std's prover hints, which this prover does not compute yet "
-                                    "(plan M30)");
-    }
     setChallenges(stage, challenges);
+    computeHintColumns(stage, columns, challengeValues);
     computeImPols(stage);
     std::vector<G1Point> commitments = commitF(stage);
     ++next;
@@ -359,20 +432,56 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
     return commitments;
 }
 
-std::vector<ConstraintCheck> Instance::check(uint64_t maxRows) {
+Instance::CheckTrace Instance::checkTrace(const std::vector<FrElement> &challenges) {
+    const PilfflonkInfo &info = key.info();
+    uint64_t expected = 0;
+    for (uint64_t s = 2; s <= info.nStages; ++s) {
+        expected += nChallenges(s);
+    }
+    if (challenges.size() != expected) {
+        throw invalid("Instance::check", std::to_string(challenges.size()) +
+                                             " challenges for the stages after the first, which have " +
+                                             std::to_string(expected));
+    }
+    // Stage 1's im pols as commitStage(1) computes them, in the instance: they read no challenge.
+    computeImPols(1);
+    CheckTrace t;
+    if (info.nStages == 1) {
+        return t;
+    }
+    t.columns = columns;
+    t.challenges = challengeValues;
+    uint64_t at = 0;
+    for (uint64_t s = 2; s <= info.nStages; ++s) {
+        const uint64_t n = nChallenges(s);
+        placeChallenges(s, std::vector<FrElement>(challenges.begin() + at, challenges.begin() + at + n), t.challenges);
+        at += n;
+    }
+    for (uint64_t s = 2; s <= info.nStages; ++s) {
+        computeHintColumns(s, t.columns, t.challenges);
+        computeImPols(s, t.columns, t.challenges);
+    }
+    return t;
+}
+
+std::vector<std::vector<FrElement>> Instance::checkColumns(const std::vector<FrElement> &challenges) {
+    CheckTrace t = checkTrace(challenges);
+    return key.info().nStages == 1 ? columns : std::move(t.columns);
+}
+
+std::vector<ConstraintCheck> Instance::check(uint64_t maxRows, const std::vector<FrElement> &challenges) {
     const PilfflonkInfo &info = key.info();
     const std::vector<ParserParams> &constraints = key.bin().constraintsInfoDebug;
     for (uint64_t c = 0; c < constraints.size(); ++c) {
-        if (constraints[c].stage >= 2) {
-            throw invalid("Instance::check",
-                          "constraint " + std::to_string(c) + " (" + constraints[c].line + ") is of stage " +
-                              std::to_string(constraints[c].stage) +
-                              ", whose columns come from the std's prover hints, which this prover does not "
-                              "compute yet (plan M30)");
+        if (constraints[c].stage > info.nStages) {
+            throw invalid("Instance::check", "constraint " + std::to_string(c) + " (" + constraints[c].line +
+                                                 ") is of stage " + std::to_string(constraints[c].stage) + ", and " +
+                                                 key.name() + " has " + std::to_string(info.nStages) + " stages");
         }
     }
-    computeImPols(1);
-    const ProverValues values = valuesOnTrace();
+    const CheckTrace t = checkTrace(challenges);
+    const ProverValues values =
+        info.nStages == 1 ? valuesOn(columns, challengeValues) : valuesOn(t.columns, t.challenges);
     const ExpressionsDomain trace = ExpressionsDomain::trace(info.nBits);
     Engine::Fr &fr = Engine::engine.fr;
     std::vector<FrElement> numerator(key.n());
@@ -399,6 +508,18 @@ std::vector<ConstraintCheck> Instance::check(uint64_t maxRows) {
         }
     }
     return checks;
+}
+
+const FrElement *Instance::column(uint64_t stage, uint64_t stagePos) const {
+    if (stage == 0 || stage >= next || stage > key.info().nStages) {
+        throw invalid("Instance::column", "stage " + std::to_string(stage) + " is not committed");
+    }
+    if (stagePos >= key.cmIds()[stage].size()) {
+        throw invalid("Instance::column", "stage " + std::to_string(stage) + " has " +
+                                              std::to_string(key.cmIds()[stage].size()) + " columns, and no stagePos " +
+                                              std::to_string(stagePos));
+    }
+    return columns[stage].data() + stagePos * key.n();
 }
 
 Poly *Instance::polynomial(uint64_t f, uint64_t j) const {

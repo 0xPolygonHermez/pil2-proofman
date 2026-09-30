@@ -19,7 +19,13 @@
 //!   agree, and a witness that breaks a constraint at the edge row of its domain is refused;
 //! - `Q` split (plan M33): the fixture of the signed offsets, `qDeg = 3`, with `--max-q-degree 1`
 //!   and `2` (three pieces and two), grouped and with `--no-packing`; and a `--max-q-degree` that
-//!   does not split `Q`, which sets up the key of `Q` whole.
+//!   does not split `Q`, which sets up the key of `Q` whole;
+//! - stage 2 (plan M30): `pilfflonk/tests/fixtures/{sum_bus,prod_bus}`, a lookup on the std's sum bus
+//!   and a permutation on its product bus, in `STD_MODE_ONE_INSTANCE`, grouped and with
+//!   `--no-packing`: the prover computes their stage-2 columns from the hints `gsum_col` and
+//!   `gprod_col` with the challenges of stage 2, which are the transcript's (A.4) and the JS
+//!   verifier's; the columns are the oracle's; the verifier accepts the proofs and rejects every
+//!   change to one; and a witness that breaks the bus is refused.
 //!
 //! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
 //! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`, plan N13):
@@ -51,8 +57,12 @@ mod domains;
 mod fibonacci;
 #[path = "../../pilfflonk/tests/data/packed.rs"]
 mod packed;
+#[path = "../../pilfflonk/tests/data/prod_bus.rs"]
+mod prod_bus;
 #[path = "../../pilfflonk/tests/data/signed.rs"]
 mod signed;
+#[path = "../../pilfflonk/tests/data/sum_bus.rs"]
+mod sum_bus;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -67,9 +77,10 @@ use pilfflonk_setup::layout::max_degree;
 use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::oracle::{AirOracle, ColumnRef, Domain, Fr};
+use proofman_pilfflonk::oracle::Values;
 use proofman_pilfflonk::{
-    prove, AirFile, Boundary, FileWitnessSource, FrBytes, JsonFile, PilfflonkError, PilfflonkGlobalInfo, PilfflonkInfo,
-    PolType, ProveOptions, ProvingKey, Vkey, Witness, WitnessSource, BN254_R,
+    prove, stage_columns, AirFile, Boundary, FileWitnessSource, FrBytes, JsonFile, PilfflonkError, PilfflonkGlobalInfo,
+    PilfflonkInfo, PolType, ProofChallenges, ProveOptions, ProvingKey, Vkey, Witness, WitnessSource, BN254_R,
 };
 use prost::Message;
 use serde_json::{json, Value};
@@ -120,6 +131,10 @@ enum Program {
     Fibonacci,
     Packed,
     Signed,
+    /// A lookup on the std's sum bus (`tests/fixtures/sum_bus`, plan M30).
+    SumBus,
+    /// A permutation on the std's product bus (`tests/fixtures/prod_bus`, plan M30).
+    ProdBus,
     /// A pilout of `tests/data/domains.rs`, built in code.
     Domains(domains::Air),
 }
@@ -132,6 +147,8 @@ impl Program {
             Program::Fibonacci => fibonacci::witness(8, [1, 2]),
             Program::Packed => packed::witness(PACKED_IN1),
             Program::Signed => signed::witness(SIGNED_INPUTS),
+            Program::SumBus => sum_bus::witness(),
+            Program::ProdBus => prod_bus::witness(),
             Program::Domains(air) => domains::witness(air),
         }
     }
@@ -143,6 +160,8 @@ fn compile(program: Program, pilout: &Path) {
         Program::Fibonacci => "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil",
         Program::Packed => "pilfflonk/tests/fixtures/packed/packed.pil",
         Program::Signed => "pilfflonk/tests/fixtures/signed/signed.pil",
+        Program::SumBus => "pilfflonk/tests/fixtures/sum_bus/sum_bus.pil",
+        Program::ProdBus => "pilfflonk/tests/fixtures/prod_bus/prod_bus.pil",
         Program::Domains(air) => {
             fs::write(pilout, domains::pilout(air).encode_to_vec()).unwrap();
             return;
@@ -1023,7 +1042,7 @@ fn agrees_with_the_oracle(f: &Fixture) -> Fr {
 
     let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
     let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
-    let values = oracle.values(&source, 0).unwrap();
+    let values = oracle_values(&oracle, &source, info, &out.challenges);
     assert!(oracle.check(&values).unwrap().is_empty(), "the generator's witness satisfies the AIR");
 
     // Each evaluation of the proof, by its column (the oracle's) and offset: the evMap's const
@@ -1095,6 +1114,23 @@ fn agrees_with_the_oracle(f: &Fixture) -> Fr {
     // invZh = 1/Z_H(ξ).
     assert_eq!(&Fr::from(out.proof.inv_zh) * &(&xi.pow_u64(1 << info.n_bits) - &Fr::one()), Fr::one());
     xi
+}
+
+/// The oracle's values of the instance of `source`: its stage-1 columns and publics, and for each
+/// stage `s` from 2 on, the challenges of the proof (`challenges`) and the columns the std's hints
+/// give with them (plan M30).
+fn oracle_values(
+    oracle: &AirOracle,
+    source: &impl WitnessSource,
+    info: &PilfflonkInfo,
+    challenges: &ProofChallenges,
+) -> Values {
+    let mut values = oracle.values(source, 0).unwrap();
+    for stage in 2..=info.n_stages as usize {
+        values.challenges[stage - 1] = challenges.stages[stage - 2].iter().map(Fr::from).collect();
+        oracle.fill_hint_columns(&mut values, stage).unwrap();
+    }
+    values
 }
 
 #[test]
@@ -1217,4 +1253,174 @@ fn the_prover_refuses_a_proving_key_whose_files_disagree() {
     );
     fs::write(&srs, &good_srs).unwrap();
     ProvingKey::load(&f.proving_key).unwrap();
+}
+
+/// Prints, for a vkey, publics and proof, the challenges the JS verifier's `computeChallenges`
+/// derives from them (A.4): those of each stage from 2 on, `std_vc` and `xiSeed`, in decimal.
+const COMPUTE_CHALLENGES: &str = r#"
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
+const [js, vkeyPath, publicsPath, proofPath] = process.argv.slice(1);
+const load = async (file) => import(pathToFileURL(`${js}/${file}`).href);
+const { newCurve } = await load("test/support.js");
+const { computeChallenges } = await load("src/challenges.js");
+const { fromObjectProof, fromObjectPublics } = await load("src/proof.js");
+const { fromObjectVk } = await load("src/vkey.js");
+const read = (path) => JSON.parse(readFileSync(path, "utf8"));
+const curve = await newCurve();
+const vk = fromObjectVk(curve, read(vkeyPath));
+const c = computeChallenges(curve, vk, fromObjectPublics(curve, read(publicsPath), vk), fromObjectProof(curve, read(proofPath), vk));
+const s = (e) => curve.Fr.toString(e, 10);
+const stages = [];
+for (let stage = 2; stage <= vk.nStages; stage++) stages.push((c.stages[stage] ?? []).map(s));
+console.log(JSON.stringify({ stages, stdVc: s(c.stdVc), xiSeed: s(c.xiSeed) }));
+"#;
+
+/// The challenges of the prover's transcript are the JS verifier's on its proof (A.4): of stage 2
+/// (`numChallenges[1]` of them), `std_vc` and `xiSeed`. Returns the prover's.
+fn the_transcripts_agree(f: &Fixture) -> ProofChallenges {
+    let pk = ProvingKey::load(&f.proving_key).unwrap();
+    let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
+    let out = prove(&pk, &source, &ProveOptions { insecure_blinding_seed: Some([7; 32]) }).unwrap();
+    let proof = f.dir.file("transcript");
+    out.write(&proof).unwrap();
+    let run = Command::new("node")
+        .args(["--input-type=module", "-e", COMPUTE_CHALLENGES])
+        .arg(repo_root().join("pilfflonk/js"))
+        .args([&f.vkey, &proof.join("publics.json"), &proof.join("proof.json")])
+        .output()
+        .expect("node runs");
+    assert!(run.status.success(), "computeChallenges: {}", output(&run));
+    let js: Value = serde_json::from_slice(&run.stdout).unwrap();
+    let decimal = |v: &FrBytes| json!(v.to_decimal());
+    let rust = json!({
+        "stages": out.challenges.stages.iter().map(|s| s.iter().map(decimal).collect::<Vec<_>>()).collect::<Vec<_>>(),
+        "stdVc": decimal(&out.challenges.std_vc),
+        "xiSeed": decimal(&out.challenges.xi_seed),
+    });
+    assert_eq!(js, rust, "the JS verifier's challenges and the prover's");
+    out.challenges
+}
+
+/// The prover's columns of every stage (`stage_columns`, with the seed of a proof: the same
+/// challenges as its) are the oracle's (plan M30): the witness's of stage 1, and from stage 2 on,
+/// with the challenges of that proof, the columns the std's hints give, which the oracle computes
+/// from the pilout's hints alone, row after row, and the im pols, the values of their expressions.
+/// Returns the prover's stage-2 columns.
+fn stage_columns_are_the_oracles(f: &Fixture) -> Vec<Vec<FrBytes>> {
+    let pk = ProvingKey::load(&f.proving_key).unwrap();
+    let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
+    let options = ProveOptions { insecure_blinding_seed: Some([11; 32]) };
+    let stages = stage_columns(&pk, &source, &options).unwrap();
+    let proof = prove(&pk, &source, &options).unwrap();
+    assert_eq!(stages.challenges, proof.challenges.stages, "the challenges of the proof of the same seed");
+    let info = pk.air(source.instances()[0]).unwrap();
+    assert!(info.n_stages >= 2 && stages.challenges.iter().all(|c| !c.is_empty()));
+
+    let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
+    let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
+    let values = oracle_values(&oracle, &source, info, &proof.challenges);
+    assert!(oracle.check(&values).unwrap().is_empty(), "{}: the oracle's columns satisfy the AIR", info.name);
+    let rows = |column: &[FrBytes]| column.iter().map(Fr::from).collect::<Vec<_>>();
+    let mut n_hint_columns = 0;
+    for p in info.cm_pols_map.iter().filter(|p| p.stage <= info.n_stages) {
+        let prover = rows(&stages.columns[p.stage as usize - 1][p.stage_pos as usize]);
+        let expected = if p.im_pol {
+            oracle.expression_rows(&values, p.exp_id.unwrap() as usize).unwrap()
+        } else {
+            values.witness[p.stage as usize - 1][p.stage_id as usize].clone()
+        };
+        assert_eq!(prover, expected, "{}: column {} of stage {}", info.name, p.name, p.stage);
+        n_hint_columns += usize::from(p.stage >= 2 && !p.im_pol);
+    }
+    assert_eq!(n_hint_columns, oracle.bus_hints().len(), "{}: a column per hint", info.name);
+    stages.columns[1].clone()
+}
+
+/// The stage-2 fixtures (plan M30): a lookup of pairs on the std's sum bus and a permutation of
+/// pairs on its product bus, each with its hint (`gsum_col`, `gprod_col`), in `STD_MODE_ONE_INSTANCE`.
+/// Two stages, with the challenges `std_alpha` and `std_gamma` of stage 2: `numChallenges = [0, 2]`.
+/// Grouped by default and with `--no-packing`: the prover proves, the verifier accepts the proof and
+/// rejects any change to it or to its public; the prover's transcript is the JS verifier's; its
+/// stage-2 columns, and `Q(ξ)`, the oracle's. The running sum of the sum bus ends at 0, and the
+/// running product of the product bus at 1, but no column is constant.
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_the_std_buses_of_stage_2() {
+    for (name, program, bus, last) in [
+        ("e2e_sum_bus", Program::SumBus, "gsum", FrBytes::ZERO),
+        ("e2e_prod_bus", Program::ProdBus, "gprod", FrBytes::from_u64(1)),
+    ] {
+        for (suffix, packing) in [("", DEFAULT), ("_unpacked", Packing::NoPacking)] {
+            let name = format!("{name}{suffix}");
+            let f = fixture(&name, program, packing);
+            let info = f.info();
+            assert_eq!(info.n_stages, 2, "{name}");
+            let challenges: Vec<(&str, u64)> = info.challenges_map.iter().map(|c| (c.name.as_str(), c.stage)).collect();
+            assert_eq!(challenges, [("std_alpha", 2), ("std_gamma", 2), ("std_vc", 3), ("std_xi", 4)], "{name}");
+            let global_info = PilfflonkGlobalInfo::from_proving_key(&f.proving_key).unwrap();
+            assert_eq!(global_info.num_challenges, [0, 2], "{name}");
+            let column = info.cm_pols_map.iter().find(|p| p.stage == 2 && !p.im_pol).unwrap();
+            assert_eq!(column.name, bus, "{name}");
+            // Its f opens it at ξ·ω^−1 too: the bus reads its previous row.
+            let f_of = info.layout.0.iter().find(|entry| entry.pols.iter().any(|p| p.name == bus)).unwrap();
+            assert!(f_of.stage == 2 && f_of.offsets.contains(&-1), "{name}: {:?}", f_of.offsets);
+
+            proves_its_layout_and_rejects_every_change(&f);
+            let challenges = the_transcripts_agree(&f);
+            assert_eq!(challenges.stages.len(), 1, "{name}");
+            assert_eq!(challenges.stages[0].len(), 2, "{name}");
+            agrees_with_the_oracle(&f);
+            let stage_2 = stage_columns_are_the_oracles(&f);
+            let bus_column = &stage_2[column.stage_pos as usize];
+            assert_eq!(bus_column.last(), Some(&last), "{name}: the bus balances");
+            assert!(bus_column.iter().any(|v| *v != last), "{name}: {bus} is not constant");
+        }
+    }
+}
+
+/// A witness that breaks the bus: a lookup of a pair the table does not provide, and a pair of `(b,
+/// d)` that is no row of `(a, c)`. Each row's running sum or product holds by construction, and the
+/// constraint that breaks is the last row's (`L1'·…`), as the oracle says with the prover's columns;
+/// the prover refuses the witness, whatever the layout.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn a_witness_that_breaks_a_bus_is_refused() {
+    for (name, program, witness, line) in [
+        ("bus_sum", Program::SumBus, sum_bus::witness_looking_up_what_is_not_provided(), "__L1__'*(0-gsum)"),
+        ("bus_prod", Program::ProdBus, prod_bus::witness_not_a_permutation(), "__L1__'*(1-gprod)"),
+    ] {
+        for (suffix, packing) in [("", DEFAULT), ("_unpacked", Packing::NoPacking)] {
+            let name = format!("{name}{suffix}");
+            let f = fixture(&name, program, packing);
+            let pk = ProvingKey::load(&f.proving_key).unwrap();
+            let options = ProveOptions { insecure_blinding_seed: Some([3; 32]) };
+            let stages = stage_columns(&pk, &witness, &options).unwrap();
+
+            let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
+            let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
+            let info = f.info();
+            let challenges = ProofChallenges {
+                stages: stages.challenges.clone(),
+                std_vc: FrBytes::ZERO,
+                xi_seed: FrBytes::ZERO,
+                q_at_xi: FrBytes::ZERO,
+            };
+            let values = oracle_values(&oracle, &witness, &info, &challenges);
+            let failures = oracle.check(&values).unwrap();
+            let n = 1usize << info.n_bits;
+            let rows: Vec<(usize, usize)> = failures.iter().map(|x| (x.constraint, x.row)).collect();
+            let last = oracle.constraints().iter().position(|c| c.debug_line.contains(line)).unwrap();
+            assert_eq!(rows, [(last, n - 1)], "{name}");
+
+            match prove(&pk, &witness, &options) {
+                Err(PilfflonkError::Unsatisfied(message)) => {
+                    let expected = format!("the witness does not satisfy the constraints of {}", info.name);
+                    assert!(message.contains(&expected), "{name}: {message}")
+                }
+                other => panic!("{name}: expected Unsatisfied, got {:?}", other.map(|_| ())),
+            }
+        }
+    }
 }

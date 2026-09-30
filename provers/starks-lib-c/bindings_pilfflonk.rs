@@ -113,6 +113,14 @@ extern "C" {
         n_out: u64,
     ) -> ::std::os::raw::c_int;
 
+    pub fn pilfflonk_instance_column(
+        instance: *const ::std::os::raw::c_void,
+        stage: u32,
+        stage_pos: u64,
+        out: *mut u8,
+        n: u64,
+    ) -> ::std::os::raw::c_int;
+
     pub fn pilfflonk_opening_new(
         instances: *const *const ::std::os::raw::c_void,
         n_instances: u64,
@@ -174,10 +182,22 @@ extern "C" {
 
     pub fn pilfflonk_check(
         instance: *mut ::std::os::raw::c_void,
+        challenges: *const u8,
+        n_challenges: u64,
         max_rows: u64,
         n_constraints: u64,
         out_n_failed: *mut u64,
         out_rows: *mut u64,
         out_values: *mut u8,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_check_column(
+        instance: *mut ::std::os::raw::c_void,
+        challenges: *const u8,
+        n_challenges: u64,
+        stage: u32,
+        stage_pos: u64,
+        out: *mut u8,
+        n: u64,
     ) -> ::std::os::raw::c_int;
 }

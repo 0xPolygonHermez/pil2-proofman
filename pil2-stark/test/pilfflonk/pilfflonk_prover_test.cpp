@@ -14,6 +14,11 @@
 //   each committed polynomial still is its column on H, has its |O| + 1 more coefficients, and Q(ξ)
 //   is the verifier's, the qVerifier's at the blinded evaluations.
 // - A mutated witness makes commitQ fail with UnsatisfiedError (PILFFLONK_ERR_UNSATISFIED).
+//
+// And an AIR of two stages (plan M30), the lookup on the std's sum bus of
+// setup/pilfflonk/tests/fixtures/bytecode/sum_bus/: its hint gsum_col as AirKey reads and checks it,
+// its stage-2 columns as commitStage(2) computes them, which are the oracle's for the same
+// challenges, a denominator 0 on a row, a broken bus, and the hints AirKey refuses.
 #include "pilfflonk_test.hpp"
 #include "pilfflonk_test_ptau.hpp"
 
@@ -59,6 +64,10 @@ using PilFflonk::ExpressionsBin;
 using PilFflonk::FormatError;
 using PilFflonk::FrElement;
 using PilFflonk::G1Point;
+using PilFflonk::HintFieldValue;
+using PilFflonk::HintInput;
+using PilFflonk::HintOp;
+using PilFflonk::StdHint;
 using PilFflonk::Instance;
 using PilFflonk::IoError;
 using PilFflonk::LayoutEntry;
@@ -91,6 +100,11 @@ std::string fixture(const std::string &name) {
     const char *root = std::getenv("PILFFLONK_REPO_ROOT");
     const std::string repo = root != nullptr ? std::string(root) : exeDir() + "/../..";
     return repo + "/setup/pilfflonk/tests/fixtures/bytecode/fibonacci/" + name;
+}
+
+// A file of the sum bus's fixture (plan M30).
+std::string busFixture(const std::string &name) {
+    return fixture("../sum_bus/" + name);
 }
 
 std::vector<uint8_t> readBytes(const std::string &path) {
@@ -191,16 +205,17 @@ public:
 // ---------------------------------------------------------------------------------------------
 
 constexpr const char *NAME = "fib";
-constexpr const char *AIRGROUP = "Fibonacci";
 constexpr const char *AIR = "Fibonacci";
 constexpr uint64_t N_G1 = 512;
 
-std::string globalInfoJson(const std::string &backend = "pilfflonk", uint64_t numRows = 256) {
-    return "{\"name\": \"" + std::string(NAME) + "\", \"airs\": [[{\"name\": \"" + AIR +
-           "\", \"num_rows\": " + std::to_string(numRows) + "}]], \"air_groups\": [\"" + AIRGROUP +
+// The globalInfo of an AIR `air` of an airgroup of that name (the Fibonacci's by default).
+std::string globalInfoJson(const std::string &backend = "pilfflonk", uint64_t numRows = 256,
+                           const std::string &air = AIR, uint64_t nPublics = 3) {
+    return "{\"name\": \"" + std::string(NAME) + "\", \"airs\": [[{\"name\": \"" + air +
+           "\", \"num_rows\": " + std::to_string(numRows) + "}]], \"air_groups\": [\"" + air +
            "\"], \"aggTypes\": [[]], \"backend\": \"" + backend +
-           "\", \"formatVersion\": 1, \"field\": \"bn254\", \"nPublics\": 3, \"numChallenges\": [0], "
-           "\"numProofValues\": [], \"proofValuesMap\": [], \"publicsMap\": []}";
+           "\", \"formatVersion\": 1, \"field\": \"bn254\", \"nPublics\": " + std::to_string(nPublics) +
+           ", \"numChallenges\": [0], \"numProofValues\": [], \"proofValuesMap\": [], \"publicsMap\": []}";
 }
 
 // The SRS of the test ptau, with its first nG1 powers.
@@ -255,24 +270,25 @@ KeyFiles splitQFiles(bool packed) {
     return files;
 }
 
-// A provingKey/ in a fresh directory next to the test binary, removed with it.
+// A provingKey/ in a fresh directory next to the test binary, removed with it: of an AIR `air`, of
+// an airgroup of that name (the Fibonacci's by default).
 class KeyDir {
 public:
-    explicit KeyDir(const KeyFiles &files = KeyFiles()) {
+    explicit KeyDir(const KeyFiles &files = KeyFiles(), const std::string &air = AIR) : airName(air) {
         std::string pattern = exeDir() + "/pilfflonk_prover.XXXXXX";
         std::vector<char> buffer(pattern.begin(), pattern.end());
         buffer.push_back('\0');
         assert(mkdtemp(buffer.data()) != nullptr);
         root = buffer.data();
         const std::string backend = root + "/" + NAME + "/pilfflonk";
-        const std::string air = root + "/" + NAME + "/" + AIRGROUP + "/airs/" + AIR + "/air";
+        const std::string airDir = root + "/" + NAME + "/" + air + "/airs/" + air + "/air";
         fs::create_directories(backend);
-        fs::create_directories(air);
+        fs::create_directories(airDir);
         writeBytes(root + "/pilout.globalInfo.json", files.globalInfo);
         writeBytes(backend + "/pilfflonk.srs.bin", files.srs);
-        writeBytes(air + "/" + AIR + ".pilfflonkinfo.json", files.info);
-        writeBytes(air + "/" + AIR + ".bin", files.bin);
-        writeBytes(air + "/" + AIR + ".const", files.constants);
+        writeBytes(airDir + "/" + air + ".pilfflonkinfo.json", files.info);
+        writeBytes(airDir + "/" + air + ".bin", files.bin);
+        writeBytes(airDir + "/" + air + ".const", files.constants);
     }
     ~KeyDir() { fs::remove_all(root); }
     KeyDir(const KeyDir &) = delete;
@@ -280,11 +296,12 @@ public:
 
     const std::string &path() const { return root; }
     std::string airFile(const std::string &extension) const {
-        return root + "/" + NAME + "/" + AIRGROUP + "/airs/" + AIR + "/air/" + AIR + "." + extension;
+        return root + "/" + NAME + "/" + airName + "/airs/" + airName + "/air/" + airName + "." + extension;
     }
 
 private:
     std::string root;
+    std::string airName;
 };
 
 // What every test of the Fibonacci starts from.
@@ -1121,9 +1138,10 @@ std::vector<uint8_t> plusOne(const std::vector<uint8_t> &trace, uint64_t row, ui
 
 using Failures = std::vector<std::pair<uint64_t, uint64_t>>; // (constraint, row)
 
-// Every (constraint, row) a check reports, in order; the check must have kept every failed row.
-Failures failures(const std::vector<PilFflonk::ConstraintCheck> &checks) {
-    assert(checks.size() == N_CONSTRAINTS);
+// Every (constraint, row) a check reports, in order; the check must have kept every failed row, of
+// each of the nConstraints of the AIR (the Fibonacci's by default).
+Failures failures(const std::vector<PilFflonk::ConstraintCheck> &checks, uint64_t nConstraints = N_CONSTRAINTS) {
+    assert(checks.size() == nConstraints);
     Failures out;
     for (uint64_t c = 0; c < checks.size(); ++c) {
         assert(checks[c].rows.size() == checks[c].nFailed);
@@ -1138,7 +1156,7 @@ Failures failures(const std::vector<PilFflonk::ConstraintCheck> &checks) {
 std::vector<PilFflonk::ConstraintCheck> checkOf(const Fibonacci &fib, const std::vector<uint8_t> &trace,
                                                 const std::vector<FrElement> &publics, uint64_t maxRows) {
     Instance inst(*fib.pk, 0, 0, trace.data(), trace.size(), {}, publics, {}, std::make_unique<ZeroBlinding>());
-    return inst.check(maxRows);
+    return inst.check(maxRows, {});
 }
 
 void testCheckReadsTheConstraints() {
@@ -1237,11 +1255,11 @@ void testCheckLeavesTheProofAsItWas() {
     expected.insert(expected.end(), expectedQ.begin(), expectedQ.end());
 
     std::unique_ptr<Instance> checked = fib.instance(std::make_unique<BlindingRng>(seed));
-    assert(failures(checked->check(1)).empty());
+    assert(failures(checked->check(1, {})).empty());
     std::vector<G1Point> commitments = checked->commitStage(1, {});
-    assert(failures(checked->check(1)).empty());
+    assert(failures(checked->check(1, {})).empty());
     const std::vector<G1Point> q = checked->commitQ({stdVc});
-    assert(failures(checked->check(1)).empty());
+    assert(failures(checked->check(1, {})).empty());
     commitments.insert(commitments.end(), q.begin(), q.end());
     assert(commitments.size() == expected.size());
     for (uint64_t i = 0; i < commitments.size(); ++i) {
@@ -1252,7 +1270,7 @@ void testCheckLeavesTheProofAsItWas() {
     const std::vector<uint8_t> mutated = plusOne(fib.witness, 100, L1);
     std::unique_ptr<Instance> inst = fib.instance(std::make_unique<ZeroBlinding>(), mutated);
     inst->commitStage(1, {});
-    assert((failures(inst->check(10)) == Failures{{0, 100}, {1, 99}, {1, 100}}));
+    assert((failures(inst->check(10, {})) == Failures{{0, 100}, {1, 99}, {1, 100}}));
 }
 
 // The offset in a .bin of word `word` (0 stage, 1 destId, 2 firstRow, 3 lastRow) of the entry of
@@ -1273,7 +1291,8 @@ void setWord(std::vector<uint8_t> &bin, uint64_t at, uint32_t value) {
 }
 
 void testCheckRefusals() {
-    // A constraint of stage 2 (whose columns the std's hints compute, M30): refused before anything.
+    // A constraint of stage 2 (whose columns the std's hints compute with its challenges, M30), of an
+    // AIR of one stage: refused before anything, before its stage 1 is committed and after.
     {
         KeyFiles files;
         for (uint64_t c = 0; c < N_CONSTRAINTS; ++c) {
@@ -1288,9 +1307,14 @@ void testCheckRefusals() {
         const std::vector<uint8_t> witness = readBytes(fixture("Fibonacci.witness.bin"));
         const std::vector<FrElement> publics = frs(json::parse(readBytes(fixture("Fibonacci.oracle.json")))["publics"]);
         Instance inst(*pk, 0, 0, witness.data(), witness.size(), {}, publics, {}, std::make_unique<ZeroBlinding>());
-        const std::string message = thrown<std::invalid_argument>([&] { inst.check(10); });
-        assert(contains(message, std::string("constraint 1 (") + FIBONACCI_LINES[1] + ") is of stage 2"));
-        assert(contains(message, "(plan M30)"));
+        for (int committed = 0; committed < 2; ++committed) {
+            const std::string message = thrown<std::invalid_argument>([&] { inst.check(10, {}); });
+            assert(contains(message, std::string("constraint 1 (") + FIBONACCI_LINES[1] +
+                                         ") is of stage 2, and Fibonacci has 1 stages"));
+            if (committed == 0) {
+                inst.commitStage(1, {});
+            }
+        }
     }
     // A constraint's rows beyond the trace: the key is refused.
     KeyFiles files;
@@ -1344,7 +1368,8 @@ void testCheckCApi() {
     constexpr uint64_t MAX_ROWS = 2;
     std::vector<uint64_t> nFailed(N_CONSTRAINTS, 99), rows(N_CONSTRAINTS * MAX_ROWS, 99);
     std::vector<uint8_t> values(N_CONSTRAINTS * MAX_ROWS * 32, 0xff);
-    assert(pilfflonk_check(inst, MAX_ROWS, N_CONSTRAINTS, nFailed.data(), rows.data(), values.data()) == PILFFLONK_OK);
+    assert(pilfflonk_check(inst, nullptr, 0, MAX_ROWS, N_CONSTRAINTS, nFailed.data(), rows.data(), values.data()) ==
+           PILFFLONK_OK);
     assert(pilfflonk_last_error()[0] == '\0');
     const std::vector<PilFflonk::ConstraintCheck> expected = checkOf(fib, mutated, fib.publics, MAX_ROWS);
     for (uint64_t c = 0; c < N_CONSTRAINTS; ++c) {
@@ -1363,7 +1388,7 @@ void testCheckCApi() {
     assert(rows[0] == 100 && rows[2] == 99 && rows[3] == 100);
     // Counting only.
     std::fill(nFailed.begin(), nFailed.end(), 99);
-    assert(pilfflonk_check(inst, 0, N_CONSTRAINTS, nFailed.data(), nullptr, nullptr) == PILFFLONK_OK);
+    assert(pilfflonk_check(inst, nullptr, 0, 0, N_CONSTRAINTS, nFailed.data(), nullptr, nullptr) == PILFFLONK_OK);
     assert((nFailed == std::vector<uint64_t>{1, 2, 0, 0, 0, 0}));
     // The instance still proves as one the check never saw: its Q is not a polynomial.
     uint8_t out[4 * 64];
@@ -1372,21 +1397,409 @@ void testCheckCApi() {
     assert(pilfflonk_commit_q(inst, stdVc.bytes, 1, out, 1) == PILFFLONK_ERR_UNSATISFIED);
 
     // Refusals.
-    assert(pilfflonk_check(nullptr, 1, N_CONSTRAINTS, nFailed.data(), rows.data(), values.data()) ==
+    assert(pilfflonk_check(nullptr, nullptr, 0, 1, N_CONSTRAINTS, nFailed.data(), rows.data(), values.data()) ==
            PILFFLONK_ERR_INVALID_ARGUMENT);
-    assert(pilfflonk_check(inst, 1, 5, nFailed.data(), rows.data(), values.data()) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_check(inst, nullptr, 0, 1, 5, nFailed.data(), rows.data(), values.data()) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(contains(pilfflonk_last_error(), "pilfflonk_check: n_constraints = 5, and Fibonacci has 6"));
-    assert(pilfflonk_check(inst, 1, N_CONSTRAINTS, nullptr, rows.data(), values.data()) ==
+    // A challenge for the Fibonacci, of one stage.
+    assert(pilfflonk_check(inst, stdVc.bytes, 1, 1, N_CONSTRAINTS, nFailed.data(), rows.data(), values.data()) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "1 challenges for the stages after the first, which have 0"));
+    assert(pilfflonk_check(inst, nullptr, 0, 1, N_CONSTRAINTS, nullptr, rows.data(), values.data()) ==
            PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(contains(pilfflonk_last_error(), "out_n_failed is NULL"));
-    assert(pilfflonk_check(inst, 1, N_CONSTRAINTS, nFailed.data(), nullptr, values.data()) ==
+    assert(pilfflonk_check(inst, nullptr, 0, 1, N_CONSTRAINTS, nFailed.data(), nullptr, values.data()) ==
            PILFFLONK_ERR_INVALID_ARGUMENT);
-    assert(pilfflonk_check(inst, 1, N_CONSTRAINTS, nFailed.data(), rows.data(), nullptr) ==
+    assert(pilfflonk_check(inst, nullptr, 0, 1, N_CONSTRAINTS, nFailed.data(), rows.data(), nullptr) ==
            PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(contains(pilfflonk_last_error(), "out_values is NULL"));
-    assert(pilfflonk_check(inst, uint64_t(1) << 60, N_CONSTRAINTS, nFailed.data(), rows.data(), values.data()) ==
-           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_check(inst, nullptr, 0, uint64_t(1) << 60, N_CONSTRAINTS, nFailed.data(), rows.data(),
+                           values.data()) == PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(contains(pilfflonk_last_error(), "scalars exceed 2^64 bytes"));
+    pilfflonk_instance_free(inst);
+    pilfflonk_ctx_free(ctx);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Stage 2 (plan M30): the sum bus
+// ---------------------------------------------------------------------------------------------
+
+constexpr const char *SUM_BUS = "SumBus";
+constexpr uint64_t SUM_BUS_N = 32;
+// Its columns of stage 1 (a, b, mul), and those of stage 2: gsum at stagePos 0, then the im pols.
+constexpr uint64_t SUM_BUS_A = 0;
+constexpr uint64_t SUM_BUS_B = 1;
+constexpr uint64_t SUM_BUS_COLUMNS = 3;
+// cmPolsMap: a, b, mul, gsum, the two im pols, Q0.
+constexpr uint64_t GSUM = 3;
+
+KeyFiles sumBusFiles() {
+    KeyFiles files;
+    files.globalInfo = text(globalInfoJson("pilfflonk", SUM_BUS_N, SUM_BUS, 1));
+    files.info = readBytes(busFixture("SumBus.pilfflonkinfo.json"));
+    files.bin = readBytes(busFixture("SumBus.bin"));
+    files.constants = readBytes(busFixture("SumBus.const"));
+    return files;
+}
+
+// What every test of the sum bus starts from.
+struct SumBus {
+    explicit SumBus(const KeyFiles &files = sumBusFiles()) : dir(files, SUM_BUS) {}
+
+    KeyDir dir;
+    std::unique_ptr<ProvingKey> pk = ProvingKey::load(dir.path());
+    json oracle = json::parse(readBytes(busFixture("SumBus.oracle.json")));
+    std::vector<uint8_t> witness = readBytes(busFixture("SumBus.witness.bin"));
+    std::vector<FrElement> publics = frs(oracle["publics"]);
+    std::vector<FrElement> challenges = frs(oracle["challenges"]); // std_alpha, std_gamma
+
+    const AirKey &air() const { return pk->air(0, 0); }
+
+    std::unique_ptr<Instance> instance(
+        const std::vector<uint8_t> &trace,
+        std::unique_ptr<BlindingSource> blinding = std::make_unique<ZeroBlinding>()) const {
+        return std::make_unique<Instance>(*pk, 0, 0, trace.data(), trace.size(), std::vector<FrElement>{}, publics,
+                                          std::vector<FrElement>{}, std::move(blinding));
+    }
+};
+
+// The value of the stage-1 trace at (row, column).
+FrElement traceValue(const std::vector<uint8_t> &trace, uint64_t row, uint64_t column) {
+    FrElement v;
+    E.fr.fromRprLE(v, trace.data() + (row * SUM_BUS_COLUMNS + column) * 32, 32);
+    return v;
+}
+
+void setTraceValue(std::vector<uint8_t> &trace, uint64_t row, uint64_t column, const FrElement &v) {
+    PilFflonk::encodeFr(v, trace.data() + (row * SUM_BUS_COLUMNS + column) * 32);
+}
+
+// The key reads the hint, gsum_col, as the std writes it: gsum's column (stage 2, stagePos 0) from
+// two expressions of the .bin; the im pols of stage 2, the setup's, are no hint's.
+void testTheSumBusHint() {
+    const SumBus bus;
+    const std::vector<StdHint> &hints = bus.air().stdHints();
+    assert(hints.size() == 1);
+    const StdHint &h = hints[0];
+    assert(h.name == "gsum_col" && !h.prod && h.stage == 2 && h.stagePos == 0 && h.cmId == GSUM);
+    assert(h.numerator.kind == HintInput::Kind::Expression && h.denominator.kind == HintInput::Kind::Expression);
+    assert(bus.air().bin().expressionsInfo.count(h.numerator.expId) == 1);
+    assert(bus.air().bin().expressionsInfo.count(h.denominator.expId) == 1);
+    assert(bus.air().info().cmPolsMap[GSUM].name == "gsum");
+}
+
+// commitStage(2) computes gsum from the hint, and then the im pols, which read it: every column of
+// stage 2 is the oracle's, with the same challenges, blinded or not (the blinding is of the
+// polynomials, not of the columns on H). The last row of gsum is 0: the bus balances, and Q is a
+// polynomial of its degree.
+void testStage2IsTheOracles() {
+    const SumBus bus;
+    const json &expected = bus.oracle["stage2"];
+    for (int blinded = 0; blinded < 2; ++blinded) {
+        uint8_t seed[32] = {9};
+        std::unique_ptr<BlindingSource> blinding;
+        if (blinded == 1) {
+            blinding = std::make_unique<BlindingRng>(seed);
+        } else {
+            blinding = std::make_unique<ZeroBlinding>();
+        }
+        std::unique_ptr<Instance> inst = bus.instance(bus.witness, std::move(blinding));
+        assert(contains(thrown<std::invalid_argument>([&] { inst->column(1, 0); }), "stage 1 is not committed"));
+        inst->commitStage(1, {});
+        for (uint64_t row = 0; row < SUM_BUS_N; ++row) {
+            assert(eq(inst->column(1, SUM_BUS_B)[row], traceValue(bus.witness, row, SUM_BUS_B)));
+        }
+        assert(contains(thrown<std::invalid_argument>([&] { inst->column(2, 0); }), "stage 2 is not committed"));
+        assert(contains(thrown<std::invalid_argument>([&] { inst->commitStage(2, {bus.challenges[0]}); }),
+                        "1 challenges for the 2 of stage 2"));
+        inst->commitStage(2, bus.challenges);
+        assert(expected.size() == 3);
+        for (uint64_t p = 0; p < expected.size(); ++p) {
+            const std::vector<FrElement> column = frs(expected[p]);
+            for (uint64_t row = 0; row < SUM_BUS_N; ++row) {
+                assert(eq(inst->column(2, p)[row], column[row]));
+            }
+        }
+        assert(E.fr.isZero(inst->column(2, 0)[SUM_BUS_N - 1]) && !E.fr.isZero(inst->column(2, 0)[0]));
+        assert(contains(thrown<std::invalid_argument>([&] { inst->column(2, 3); }), "no stagePos 3"));
+        assert(contains(thrown<std::invalid_argument>([&] { inst->column(3, 0); }), "stage 3 is not committed"));
+        assert(failures(inst->check(10, bus.challenges), bus.air().bin().constraintsInfoDebug.size()).empty());
+        inst->commitQ({power(bus.challenges[0], 3)});
+    }
+}
+
+// check computes the columns of stage 2 itself, with the challenges it is given, as commitStage(2)
+// does, and commits nothing (plan M30): checkColumns is the oracle's before any commit, and after
+// the stages are committed with other challenges, when the instance's are those, not check's; check
+// changes none of them, and the proof is the one without it.
+void testCheckComputesStage2Itself() {
+    const SumBus bus;
+    const json &expected = bus.oracle["stage2"];
+    auto isTheOracles = [&](const std::vector<std::vector<FrElement>> &columns) {
+        for (uint64_t p = 0; p < expected.size(); ++p) {
+            const std::vector<FrElement> column = frs(expected[p]);
+            for (uint64_t row = 0; row < SUM_BUS_N; ++row) {
+                if (!eq(columns[2][p * SUM_BUS_N + row], column[row])) return false;
+            }
+        }
+        return true;
+    };
+    const std::vector<FrElement> other = {power(bus.challenges[0], 2), power(bus.challenges[1], 2)};
+    uint8_t seed[32] = {5};
+    std::unique_ptr<Instance> plain = bus.instance(bus.witness, std::make_unique<BlindingRng>(seed));
+    std::vector<G1Point> expectedCommitments = plain->commitStage(1, {});
+    const std::vector<G1Point> plain2 = plain->commitStage(2, other);
+    expectedCommitments.insert(expectedCommitments.end(), plain2.begin(), plain2.end());
+
+    std::unique_ptr<Instance> inst = bus.instance(bus.witness, std::make_unique<BlindingRng>(seed));
+    assert(isTheOracles(inst->checkColumns(bus.challenges)));
+    assert(failures(inst->check(10, bus.challenges), 5).empty());
+    std::vector<G1Point> commitments = inst->commitStage(1, {});
+    assert(failures(inst->check(10, bus.challenges), 5).empty());
+    const std::vector<G1Point> stage2 = inst->commitStage(2, other);
+    commitments.insert(commitments.end(), stage2.begin(), stage2.end());
+    assert(commitments.size() == expectedCommitments.size());
+    for (uint64_t i = 0; i < commitments.size(); ++i) {
+        assert(samePoint(commitments[i], expectedCommitments[i]));
+    }
+    assert(isTheOracles(inst->checkColumns(bus.challenges)));
+    assert(!eq(inst->column(2, 0)[0], frs(expected[0])[0]) && eq(inst->column(2, 0)[0], plain->column(2, 0)[0]));
+    assert(failures(inst->check(10, bus.challenges), 5).empty());
+    assert(eq(inst->column(2, 0)[0], plain->column(2, 0)[0]));
+    assert(contains(thrown<std::invalid_argument>([&] { inst->check(10, {bus.challenges[0]}); }),
+                    "1 challenges for the stages after the first, which have 2"));
+    assert(contains(thrown<std::invalid_argument>([&] { inst->checkColumns({}); }),
+                    "0 challenges for the stages after the first, which have 2"));
+}
+
+// A denominator 0 on a row: a[5] such that the pair (a[5], b[5]) compressed, 1 + a·α + b·α² (busid
+// 1, std_tools.pil), plus γ, is 0. The column has no value there: UnsatisfiedError, naming the hint,
+// the column and the row, and the stage stays uncommitted; through the C API,
+// PILFFLONK_ERR_UNSATISFIED.
+void testAZeroDenominatorIsAnError() {
+    const SumBus bus;
+    const FrElement &alpha = bus.challenges[0], &gamma = bus.challenges[1];
+    std::vector<uint8_t> trace = bus.witness;
+    const uint64_t row = 5;
+    FrElement e;
+    E.fr.mul(e, traceValue(trace, row, SUM_BUS_B), power(alpha, 2));
+    E.fr.add(e, e, E.fr.one());
+    E.fr.add(e, e, gamma);
+    E.fr.neg(e, e);
+    FrElement a;
+    E.fr.mul(a, e, inverse(alpha));
+    setTraceValue(trace, row, SUM_BUS_A, a);
+
+    std::unique_ptr<Instance> inst = bus.instance(trace);
+    // check, with the same challenges, and then commitStage(2).
+    const std::string checked = thrown<UnsatisfiedError>([&] { inst->check(10, bus.challenges); });
+    assert(contains(checked, "SumBus: the denominator of hint 0 (gsum_col, column gsum) is 0 at row 5"));
+    inst->commitStage(1, {});
+    const std::string message = thrown<UnsatisfiedError>([&] { inst->commitStage(2, bus.challenges); });
+    assert(contains(message, "SumBus: the denominator of hint 0 (gsum_col, column gsum) is 0 at row 5"));
+    assert(inst->nextStage() == 2);
+
+    void *ctx = pilfflonk_ctx_new(bus.dir.path().c_str());
+    assert(ctx != nullptr);
+    const std::vector<uint8_t> publics = scalars(bus.publics);
+    uint8_t seed[32] = {1};
+    void *c = pilfflonk_instance_new(ctx, 0, 0, trace.data(), trace.size(), nullptr, 0, publics.data(), 1, nullptr, 0,
+                                     seed);
+    assert(c != nullptr);
+    // Unpacked: a, b and mul in f of their own, and gsum and the two im pols.
+    std::vector<uint8_t> out(3 * 64);
+    const std::vector<uint8_t> challenges = scalars(bus.challenges);
+    const uint64_t nConstraints = bus.air().bin().constraintsInfoDebug.size();
+    std::vector<uint64_t> nFailed(nConstraints);
+    assert(pilfflonk_check(c, challenges.data(), 2, 0, nConstraints, nFailed.data(), nullptr, nullptr) ==
+           PILFFLONK_ERR_UNSATISFIED);
+    assert(contains(pilfflonk_last_error(), "is 0 at row 5"));
+    assert(pilfflonk_commit_stage(c, 1, nullptr, 0, out.data(), 3) == PILFFLONK_OK);
+    assert(pilfflonk_commit_stage(c, 2, challenges.data(), 2, out.data(), 3) == PILFFLONK_ERR_UNSATISFIED);
+    assert(contains(pilfflonk_last_error(), "is 0 at row 5"));
+    pilfflonk_instance_free(c);
+    pilfflonk_ctx_free(ctx);
+}
+
+// A broken bus, a value looked up that no row of the table provides (a[7] = N): the stage-2
+// columns are computed, each row of the running sum holds, and its last one is not 0: check finds
+// the bus's last-row constraint at row N − 1, with the value −gsum[N − 1], and nothing else, before
+// any commit and after; and commitQ refuses the witness.
+void testABrokenBusIsCheckedAndRefused() {
+    const SumBus bus;
+    const std::vector<uint8_t> broken = readBytes(busFixture("SumBus.broken.bin"));
+    std::unique_ptr<Instance> inst = bus.instance(broken);
+    uint64_t lastRow = bus.air().bin().constraintsInfoDebug.size();
+    for (uint64_t c = 0; c < bus.air().bin().constraintsInfoDebug.size(); ++c) {
+        if (contains(bus.air().bin().constraintsInfoDebug[c].line, "__L1__'*(0-gsum)")) {
+            lastRow = c;
+        }
+    }
+    assert(lastRow < bus.air().bin().constraintsInfoDebug.size());
+    FrElement minusLast;
+    E.fr.neg(minusLast, inst->checkColumns(bus.challenges)[2][SUM_BUS_N - 1]);
+    assert(!E.fr.isZero(minusLast));
+    for (int committed = 0; committed < 2; ++committed) {
+        const std::vector<PilFflonk::ConstraintCheck> checks = inst->check(10, bus.challenges);
+        assert((failures(checks, checks.size()) == Failures{{lastRow, SUM_BUS_N - 1}}));
+        assert(eq(checks[lastRow].rows[0].value, minusLast));
+        if (committed == 0) {
+            inst->commitStage(1, {});
+            inst->commitStage(2, bus.challenges);
+        }
+    }
+    assert(!E.fr.isZero(inst->column(2, 0)[SUM_BUS_N - 1]));
+    assert(contains(thrown<UnsatisfiedError>([&] { inst->commitQ({E.fr.one()}); }),
+                    "the witness does not satisfy the constraints of SumBus"));
+}
+
+// The hints AirKey refuses, the sum bus's gsum_col changed: every refusal names the AIR and the hint.
+void testRefusedHints() {
+    const std::vector<uint8_t> infoText = readBytes(busFixture("SumBus.pilfflonkinfo.json"));
+    const std::vector<uint8_t> binBytes = readBytes(busFixture("SumBus.bin"));
+    const std::vector<uint8_t> constants = readBytes(busFixture("SumBus.const"));
+    auto refused = [&](const std::function<void(ExpressionsBin &)> &change, const std::string &why) {
+        ExpressionsBin bin = ExpressionsBin::parse(binBytes.data(), binBytes.size(), "SumBus.bin");
+        change(bin);
+        const PilfflonkInfo info = PilfflonkInfo::parse(std::string(infoText.begin(), infoText.end()));
+        const std::string message = thrown<FormatError>(
+            [&] { AirKey(info, std::move(bin), constants.data(), constants.size(), SUM_BUS); });
+        if (!contains(message, why)) {
+            std::fprintf(stderr, "expected \"%s\" in \"%s\"\n", why.c_str(), message.c_str());
+            assert(false);
+        }
+        assert(contains(message, "SumBus: .bin: "));
+    };
+    auto field = [](ExpressionsBin &bin, const std::string &name) -> HintFieldValue & {
+        for (PilFflonk::HintField &f : bin.hints[0].fields) {
+            if (f.name == name) return f.values[0];
+        }
+        assert(!"no such field");
+        return bin.hints[0].fields[0].values[0];
+    };
+    refused([](ExpressionsBin &b) { b.hints[0].name = "im_col"; }, "hint 0 (im_col) gives an intermediate column, "
+                                                                   "which this prover does not compute yet (plan M31)");
+    refused([](ExpressionsBin &b) { b.hints[0].name = "im_airval"; }, "gives an air value, and pilfflonk has none");
+    refused([](ExpressionsBin &b) { b.hints[0].name = "gsum_debug_data"; }, "is none this prover computes");
+    refused([&](ExpressionsBin &b) { field(b, "reference").id = 0; }, "has as reference a (stage 1)");
+    refused([&](ExpressionsBin &b) { field(b, "reference").rowOffsetIndex = 0; }, "read at its own row");
+    refused([&](ExpressionsBin &b) { field(b, "reference").op = HintOp::Tmp; }, "not a committed column");
+    refused([&](ExpressionsBin &b) { field(b, "numerator_air").op = HintOp::AirValue; },
+            "reads an air value in its field numerator_air");
+    refused([&](ExpressionsBin &b) { field(b, "numerator_air").op = HintOp::Challenge; },
+            "a value that is no expression, column or number");
+    refused(
+        [&](ExpressionsBin &b) {
+            HintFieldValue &v = field(b, "denominator_air");
+            v.op = HintOp::Cm;
+            v.id = GSUM;
+            v.rowOffsetIndex = 1;
+        },
+        "reads in its field denominator_air the column of stage 2 at stagePos 0, which is not computed before stage 2");
+    refused(
+        [&](ExpressionsBin &b) {
+            HintFieldValue &v = field(b, "denominator_air");
+            v.op = HintOp::Const;
+            v.id = 0;
+            v.rowOffsetIndex = 7;
+        },
+        "a column at opening point 7");
+    refused([&](ExpressionsBin &b) { field(b, "result").op = HintOp::AirgroupValue; }, "updates an airgroup value");
+    refused([](ExpressionsBin &b) { b.hints[0].fields.erase(b.hints[0].fields.begin() + 2); },
+            "has no field denominator_air");
+    refused([](ExpressionsBin &b) { b.hints[0].fields[1].values.push_back(b.hints[0].fields[1].values[0]); },
+            "holds an array in its field numerator_air");
+    refused([](ExpressionsBin &b) { b.hints.clear(); }, "0 hints give the column gsum of stage 2");
+    refused([](ExpressionsBin &b) { b.hints.push_back(b.hints[0]); }, "2 hints give the column gsum");
+
+    // A column read at another row, and a number: what addHintField takes too.
+    ExpressionsBin bin = ExpressionsBin::parse(binBytes.data(), binBytes.size(), "SumBus.bin");
+    field(bin, "numerator_air").op = HintOp::Number;
+    HintFieldValue &den = field(bin, "denominator_air");
+    den.op = HintOp::Cm;
+    den.id = SUM_BUS_B;
+    den.rowOffsetIndex = 0; // openingPoints[0] = −1
+    const PilfflonkInfo info = PilfflonkInfo::parse(std::string(infoText.begin(), infoText.end()));
+    const AirKey key(info, std::move(bin), constants.data(), constants.size(), SUM_BUS);
+    const StdHint &h = key.stdHints()[0];
+    assert(h.numerator.kind == HintInput::Kind::Number && h.denominator.kind == HintInput::Kind::Column);
+    assert(h.denominator.column == (ColumnRead{1, SUM_BUS_B}) && h.denominator.offset == -1);
+}
+
+// pilfflonk_check_column: the column pilfflonk_check computes with the challenges it is given, the
+// oracle's for the fixture's; refused with the wrong challenges, size or pointers.
+void testCheckColumnCApi() {
+    const SumBus bus;
+    void *ctx = pilfflonk_ctx_new(bus.dir.path().c_str());
+    assert(ctx != nullptr);
+    const std::vector<uint8_t> publics = scalars(bus.publics);
+    void *inst = pilfflonk_instance_new(ctx, 0, 0, bus.witness.data(), bus.witness.size(), nullptr, 0, publics.data(),
+                                        1, nullptr, 0, nullptr);
+    assert(inst != nullptr);
+    const std::vector<uint8_t> challenges = scalars(bus.challenges);
+    std::vector<uint8_t> out(SUM_BUS_N * 32);
+    for (uint64_t p = 0; p < 3; ++p) {
+        assert(pilfflonk_check_column(inst, challenges.data(), 2, 2, p, out.data(), SUM_BUS_N) == PILFFLONK_OK);
+        assert(out == scalars(frs(bus.oracle["stage2"][p])));
+    }
+    assert(pilfflonk_check_column(inst, challenges.data(), 2, 1, SUM_BUS_A, out.data(), SUM_BUS_N) == PILFFLONK_OK);
+    assert(std::equal(out.begin(), out.begin() + 32, bus.witness.begin()));
+    assert(pilfflonk_check_column(inst, challenges.data(), 1, 2, 0, out.data(), SUM_BUS_N) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "1 challenges for the stages after the first, which have 2"));
+    assert(pilfflonk_check_column(inst, nullptr, 2, 2, 0, out.data(), SUM_BUS_N) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    std::vector<uint8_t> nonCanonical = challenges;
+    std::fill(nonCanonical.begin() + 32, nonCanonical.end(), 0xff);
+    assert(pilfflonk_check_column(inst, nonCanonical.data(), 2, 2, 0, out.data(), SUM_BUS_N) ==
+           PILFFLONK_ERR_NON_CANONICAL);
+    assert(contains(pilfflonk_last_error(), "challenges[1] is not below r"));
+    assert(pilfflonk_check_column(inst, challenges.data(), 2, 3, 0, out.data(), SUM_BUS_N) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "SumBus has no column of stage 3 at stagePos 0"));
+    assert(pilfflonk_check_column(inst, challenges.data(), 2, 2, 0, out.data(), SUM_BUS_N - 1) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_check_column(inst, challenges.data(), 2, 2, 0, nullptr, SUM_BUS_N) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    const uint64_t nConstraints = 5;
+    std::vector<uint64_t> nFailed(nConstraints, 9);
+    assert(pilfflonk_check(inst, challenges.data(), 2, 0, nConstraints, nFailed.data(), nullptr, nullptr) ==
+           PILFFLONK_OK);
+    assert(nFailed == std::vector<uint64_t>(nConstraints, 0));
+    assert(pilfflonk_check(inst, nullptr, 0, 0, nConstraints, nFailed.data(), nullptr, nullptr) ==
+           PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "0 challenges for the stages after the first, which have 2"));
+    pilfflonk_instance_free(inst);
+    pilfflonk_ctx_free(ctx);
+}
+
+// pilfflonk_instance_column: once the stage is committed, the column on H, as Instance::column has
+// it; refused before, and with the wrong size or pointers.
+void testInstanceColumnCApi() {
+    const SumBus bus;
+    void *ctx = pilfflonk_ctx_new(bus.dir.path().c_str());
+    assert(ctx != nullptr);
+    const std::vector<uint8_t> publics = scalars(bus.publics);
+    uint8_t seed[32] = {3};
+    void *inst = pilfflonk_instance_new(ctx, 0, 0, bus.witness.data(), bus.witness.size(), nullptr, 0, publics.data(),
+                                        1, nullptr, 0, seed);
+    assert(inst != nullptr);
+    std::vector<uint8_t> out(SUM_BUS_N * 32);
+    assert(pilfflonk_instance_column(inst, 1, 0, out.data(), SUM_BUS_N) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "stage 1 is not committed"));
+    std::vector<uint8_t> commitments(3 * 64);
+    assert(pilfflonk_commit_stage(inst, 1, nullptr, 0, commitments.data(), 3) == PILFFLONK_OK);
+    const std::vector<uint8_t> challenges = scalars(bus.challenges);
+    assert(pilfflonk_commit_stage(inst, 2, challenges.data(), 2, commitments.data(), 3) == PILFFLONK_OK);
+    assert(pilfflonk_instance_column(inst, 2, 0, out.data(), SUM_BUS_N) == PILFFLONK_OK);
+    assert(out == scalars(frs(bus.oracle["stage2"][0])));
+    assert(pilfflonk_instance_column(inst, 1, SUM_BUS_A, out.data(), SUM_BUS_N) == PILFFLONK_OK);
+    assert(std::equal(out.begin(), out.begin() + 32, bus.witness.begin()));
+    assert(pilfflonk_instance_column(inst, 2, 0, out.data(), SUM_BUS_N - 1) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "n = 31, and SumBus has 32 rows"));
+    assert(pilfflonk_instance_column(inst, 2, 9, out.data(), SUM_BUS_N) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_instance_column(inst, 2, 0, nullptr, SUM_BUS_N) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_instance_column(nullptr, 2, 0, out.data(), SUM_BUS_N) == PILFFLONK_ERR_INVALID_ARGUMENT);
     pilfflonk_instance_free(inst);
     pilfflonk_ctx_free(ctx);
 }
@@ -1409,6 +1822,14 @@ void runProverTests() {
     testCheckLeavesTheProofAsItWas();
     testCheckRefusals();
     testCheckCApi();
+    testTheSumBusHint();
+    testStage2IsTheOracles();
+    testAZeroDenominatorIsAnError();
+    testABrokenBusIsCheckedAndRefused();
+    testRefusedHints();
+    testInstanceColumnCApi();
+    testCheckComputesStage2Itself();
+    testCheckColumnCApi();
 }
 
 } // namespace PilFflonkTest

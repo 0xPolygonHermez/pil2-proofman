@@ -1,5 +1,5 @@
-//! `<air>.bin` (M11, revision 2: the STARK's `.bin` with dimension 1): the encoder, the reader
-//! and the fixture M17's C++ tests read.
+//! `<air>.bin` (M11, revision 3: the STARK's `.bin` with dimension 1, and its hints since M30):
+//! the encoder, the reader and the fixture M17's C++ tests read.
 //!
 //! Every round trip checks two things. Encoding and decoding gives back the same [`Bytecode`]. And
 //! the decoded code is the same code as `pil-info`'s: the same ops and operands, but for the
@@ -27,10 +27,13 @@ use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolTyp
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil_info::types::output::{CodeEntry, CodeRef};
 use pil_info::{DegreePolicy, PilInfoCfg, PilInfoResult};
+use pil_info::pil::gen_code::{ProcessedHint, ProcessedHintField};
 use pilfflonk_setup::bytecode::{
-    write_air_bin, Bytecode, BytecodeError, Code, CodeContext, ConstraintBin, ExpressionBin, Op, Opcode, Operand,
-    BIN_VERSION,
+    write_air_bin, Bytecode, BytecodeError, Code, CodeContext, ConstraintBin, ExpressionBin, HintBin, HintFieldBin,
+    HintOperand, HintValueBin, Op, Opcode, Operand, BIN_VERSION,
 };
+use pilfflonk_setup::validate::check_prover_hints;
+use pilfflonk_setup::SetupError;
 use proofman_pilfflonk::field::FrBytes;
 
 #[path = "bytecode/interpreter.rs"]
@@ -320,6 +323,7 @@ fn small_code_round_trips() {
             line: String::new(),
             code,
         }],
+        hints: Vec::new(),
     };
     let (read, bytes) = write_and_read(&bytecode, "small.bin");
     assert_eq!(read, bytecode);
@@ -405,6 +409,24 @@ fn the_layout_is_the_documented_one() {
                 dest_id: 0,
             },
         }],
+        hints: vec![HintBin {
+            name: "gsum_col".into(),
+            fields: vec![
+                HintFieldBin {
+                    name: "reference".into(),
+                    values: vec![HintValueBin { operand: HintOperand::Cm { id: 4, opening: 1 }, pos: vec![] }],
+                },
+                HintFieldBin {
+                    name: "terms".into(),
+                    values: vec![
+                        HintValueBin { operand: HintOperand::Tmp(7), pos: vec![0] },
+                        HintValueBin { operand: HintOperand::Number(fr(R_MINUS_ONE)), pos: vec![1] },
+                        HintValueBin { operand: HintOperand::String("x".into()), pos: vec![2] },
+                        HintValueBin { operand: HintOperand::AirgroupValue(2), pos: vec![3] },
+                    ],
+                },
+            ],
+        }],
     };
     let (_, bytes) = write_and_read(&bytecode, "layout.bin");
 
@@ -420,11 +442,11 @@ fn the_layout_is_the_documented_one() {
     };
     let mut expected: Vec<u8> = Vec::new();
     expected.extend_from_slice(b"chps");
-    u32s(&mut expected, &[0x7066_0002, 3]);
+    u32s(&mut expected, &[0x7066_0003, 3]);
 
     // With one stage, bs = 5: Zi is type 3 and a number type 8.
     let mut expressions = Vec::new();
-    u32s(&mut expressions, &[0x7066_0002, 32]); // version, n8
+    u32s(&mut expressions, &[0x7066_0003, 32]); // version, n8
     expressions.extend_from_slice(&modulus().to_bytes_le()); // r
     u32s(&mut expressions, &[1]); // nStages
                                   // maxTmp, maxArgs, maxOps, nOps, nArgs, nNumbers, nExpressions.
@@ -450,9 +472,30 @@ fn the_layout_is_the_documented_one() {
     constraints.extend_from_slice(&[0; 32]);
     section(&mut expected, 2, &constraints);
 
-    section(&mut expected, 3, &0u32.to_le_bytes());
+    // nHints; the hint's name and nFields; each field's name, nValues, and each value's op, its
+    // data (cm: id and rowOffsetIndex; tmp, airgroupvalue: id; number: 32 bytes; string) and pos.
+    let mut hints = Vec::new();
+    u32s(&mut hints, &[1]);
+    hints.extend_from_slice(b"gsum_col\0");
+    u32s(&mut hints, &[2]);
+    hints.extend_from_slice(b"reference\0");
+    u32s(&mut hints, &[1]);
+    hints.extend_from_slice(b"cm\0");
+    u32s(&mut hints, &[4, 1, 0]);
+    hints.extend_from_slice(b"terms\0");
+    u32s(&mut hints, &[4]);
+    hints.extend_from_slice(b"tmp\0");
+    u32s(&mut hints, &[7, 1, 0]);
+    hints.extend_from_slice(b"number\0");
+    hints.extend_from_slice(&fr(R_MINUS_ONE).to_le_bytes());
+    u32s(&mut hints, &[1, 1]);
+    hints.extend_from_slice(b"string\0x\0");
+    u32s(&mut hints, &[1, 2]);
+    hints.extend_from_slice(b"airgroupvalue\0");
+    u32s(&mut hints, &[2, 1, 3]);
+    section(&mut expected, 3, &hints);
     assert_eq!(bytes, expected);
-    assert_eq!(BIN_VERSION, 0x7066_0002);
+    assert_eq!(BIN_VERSION, 0x7066_0003);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -508,12 +551,26 @@ fn a_bytecode_the_reader_would_refuse_is_not_written() {
         n_stages: 1,
         expressions: vec![ExpressionBin { exp_id: 0, stage: 1, line: String::new(), code }],
         constraints: Vec::new(),
+        hints: Vec::new(),
     };
 
     let good = one_op(op(Opcode::Add, 0, cm(1), cm(1)), 1);
     let reversed_rows =
         ConstraintBin { stage: 1, first_row: 2, last_row: 1, im_pol: false, line: String::new(), code: good.clone() };
-    refused(Bytecode { n_stages: 1, expressions: Vec::new(), constraints: vec![reversed_rows] }, "rows 2..1");
+    refused(
+        Bytecode { n_stages: 1, expressions: Vec::new(), constraints: vec![reversed_rows], hints: Vec::new() },
+        "rows 2..1",
+    );
+    // A hint of an expression section 1 does not have, and one whose strings would not read back.
+    let hint = |operand: HintOperand, field: &str| HintBin {
+        name: "gsum_col".into(),
+        fields: vec![HintFieldBin { name: field.into(), values: vec![HintValueBin { operand, pos: vec![] }] }],
+    };
+    let with_hint = |h: HintBin| Bytecode { hints: vec![h], ..expression(good.clone()) };
+    refused(with_hint(hint(HintOperand::Tmp(3), "numerator_air")), "expression 3, which section 1 does not have");
+    write_and_read(&with_hint(hint(HintOperand::Tmp(0), "numerator_air")), "hint_of_expression_0.bin");
+    refused(with_hint(hint(HintOperand::String("a\0b".into()), "name")), "a string with a NUL");
+    refused(with_hint(hint(HintOperand::Public(0), "re\0ference")), "a string with a NUL");
     refused(expression(one_op(op(Opcode::Add, 0, cm(1), Operand::Tmp(0)), 1)), "read before it is written");
     refused(expression(one_op(op(Opcode::Add, 0, Operand::Public(0), cm(1)), 1)), "not in the STARK's order");
     refused(expression(one_op(op(Opcode::Add, 0, cm(1), cm(1)), 2)), "2 temporaries for 1 ops");
@@ -593,9 +650,44 @@ fn a_file_that_is_not_this_bytecode_is_refused() {
     let err = format_error(&patched(SECTION_1 + 44, &9u32.to_le_bytes()));
     assert!(err.contains("maxTmp, maxArgs and maxOps"), "{err}");
 
-    // Hints: revision 2 has none.
-    let err = format_error(&patched(bytes.len() - 4, &1u32.to_le_bytes()));
-    assert!(err.contains("1 hints"), "{err}");
+    // A revision-2 file: its version, and its prefix's.
+    let mut revision_2 = patched(4, &0x7066_0002u32.to_le_bytes());
+    revision_2[SECTION_1..SECTION_1 + 4].copy_from_slice(&0x7066_0002u32.to_le_bytes());
+    assert!(format_error(&revision_2).contains("version 0x70660002, and pilfflonk's is 0x70660003"));
+
+    // The hints (section 3, the last of the file): the sample's last hint ends with the value
+    // `number` r − 1 of no position, and before it its op.
+    let tail = bytes.len() - 4 - 32;
+    assert_eq!(&bytes[tail..tail + 32], fr(R_MINUS_ONE).to_le_bytes());
+    let err = format_error(&patched(tail, &modulus().to_bytes_le()));
+    assert!(err.contains("hint 1 (`gprod_col`), field `result`: a number not below r"), "{err}");
+    let op = tail - b"number\0".len();
+    assert_eq!(&bytes[op..tail], b"number\0");
+    let err = format_error(&patched(op, b"custom\0"));
+    assert!(err.contains("unknown value kind \"custom\""), "{err}");
+    // A tmp of an expression section 1 does not have: the first hint's numerator is expression 9.
+    let nine = [b"tmp\0".as_slice(), &9u32.to_le_bytes()].concat();
+    let at = bytes.windows(nine.len()).position(|w| w == nine).unwrap() + 4;
+    let err = format_error(&patched(at, &10u32.to_le_bytes()));
+    assert!(err.contains("expression 10, which section 1 does not have"), "{err}");
+    // More hints than there are: the name of the third is not there.
+    let hints_start = bytes.len() - hints_len(&bytes);
+    let err = format_error(&patched(hints_start, &3u32.to_le_bytes()));
+    assert!(err.contains("a string of the hints has no end"), "{err}");
+    // Fewer: the second is left over.
+    let err = format_error(&patched(hints_start, &1u32.to_le_bytes()));
+    assert!(err.contains("the hints has"), "{err}");
+}
+
+/// The size of the payload of section 3, the last of the file.
+fn hints_len(bytes: &[u8]) -> usize {
+    let mut at = 12;
+    let mut size = 0;
+    for _ in 0..3 {
+        size = u64::from_le_bytes(bytes[at + 4..at + 12].try_into().unwrap()) as usize;
+        at += 12 + size;
+    }
+    size
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -896,6 +988,141 @@ fn wide_constants_fixture_round_trips() {
     }
 }
 
+/// The fixtures of the std's buses (plan M30), `pilfflonk/tests/fixtures/{sum_bus,prod_bus}`: the
+/// setup accepts their prover hint (`check_prover_hints`), and section 3 has it, and only it, of the
+/// passes' hints, as `pil-info` processes it: its reference the column of stage 2 (`cmPolsMap` index
+/// C, after the C of stage 1) at the row itself, `numerator_air` and `denominator_air` expressions
+/// of section 1, and the numbers of the direct fields and `result` of `STD_MODE_ONE_INSTANCE`.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_bus_fixtures_hints_round_trip() {
+    for (pil, name, n_stage_1, prover_hint, numbers) in [
+        ("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil", "SumBus", 3, "gsum_col", ["0", "1", "0"]),
+        ("pilfflonk/tests/fixtures/prod_bus/prod_bus.pil", "ProdBus", 4, "gprod_col", ["1", "1", "1"]),
+    ] {
+        let result = run_bn254(&compile_bn254(pil));
+        check_prover_hints(&result, name).unwrap();
+        let (bytecode, _) = check_air_bin(&result, name);
+        assert_eq!(bytecode.n_stages, 2, "{name}");
+        let passes: Vec<&str> = result.pil_code.expressions_info.hints_info.iter().map(|h| h.name.as_str()).collect();
+        assert!(passes.len() > 1 && passes.contains(&prover_hint), "{name}: {passes:?}");
+        assert_eq!(bytecode.hints.len(), 1, "{name}: the witness and debug hints are not written");
+        let hint = &bytecode.hints[0];
+        assert_eq!(hint.name, prover_hint);
+        let fields: Vec<&str> = hint.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            fields,
+            ["reference", "numerator_air", "denominator_air", "numerator_direct", "denominator_direct", "result"]
+        );
+        let value = |f: usize| {
+            assert_eq!(hint.fields[f].values.len(), 1);
+            assert!(hint.fields[f].values[0].pos.is_empty());
+            hint.fields[f].values[0].operand.clone()
+        };
+        let at_0 = result.setup.opening_points.iter().position(|&o| o == 0).unwrap() as u32;
+        assert_eq!(value(0), HintOperand::Cm { id: n_stage_1, opening: at_0 }, "{name}");
+        assert_eq!(result.setup.cm_pols_map[n_stage_1 as usize].stage, Some(2));
+        for f in [1, 2] {
+            let HintOperand::Tmp(exp_id) = value(f) else { panic!("{name}: field {f} is not an expression") };
+            assert!(bytecode.expressions.iter().any(|e| e.exp_id == exp_id), "{name}: expression {exp_id}");
+        }
+        for (f, number) in (3..6).zip(numbers) {
+            assert_eq!(value(f), HintOperand::Number(fr(number)), "{name}: field {f}");
+        }
+    }
+}
+
+/// What the prover could not compute of a prover hint is refused, after the passes
+/// (`check_prover_hints`) or as it is encoded: the sum bus's `gsum_col`, changed.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn a_prover_hint_the_prover_cannot_compute_is_refused() {
+    let pilout = compile_bn254("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil");
+    // The passes again for each case: their result is not Clone.
+    let fresh = || run_bn254(&pilout);
+    let result = fresh();
+    let gsum = result.pil_code.expressions_info.hints_info.iter().position(|h| h.name == "gsum_col").unwrap();
+    // The result with the hint, or the value of one of its fields, changed.
+    let changed = |change: &dyn Fn(&mut ProcessedHint)| {
+        let mut r = fresh();
+        change(&mut r.pil_code.expressions_info.hints_info[gsum]);
+        r
+    };
+    let with = |name: &str, set: &dyn Fn(&mut ProcessedHintField)| {
+        changed(&|h: &mut ProcessedHint| set(&mut h.fields.iter_mut().find(|f| f.name == name).unwrap().values[0]))
+    };
+    let refused = |r: &PilInfoResult, why: &str| {
+        let err = check_prover_hints(r, "SumBus").unwrap_err();
+        assert!(matches!(err, SetupError::ProverHint { .. }), "{err}");
+        assert!(err.to_string().contains(why), "{why:?} not in {err}");
+    };
+
+    // The reference: an expression, a column of stage 1, an im pol, another row.
+    refused(&with("reference", &|v| v.op = "tmp".into()), "its reference is tmp");
+    refused(&with("reference", &|v| v.id = Some(0)), "not a column of stage 2 or above at its own row");
+    let im_pol = result.setup.cm_pols_map.iter().position(|p| p.im_pol).unwrap();
+    refused(&with("reference", &move |v| v.id = Some(im_pol)), "not a column of stage 2 or above");
+    refused(&with("reference", &|v| v.row_offset = Some(-1)), "at its own row");
+    // numerator_air and denominator_air: what reads the reference's stage (gsum, cmPolsMap 3), an
+    // air value, a column at no opening point.
+    refused(
+        &with("numerator_air", &|v| {
+            *v = ProcessedHintField {
+                op: "cm".into(),
+                id: Some(3),
+                row_offset: Some(0),
+                row_offset_index: Some(1),
+                ..v.clone()
+            }
+        }),
+        "reads cm 3, which is not of a stage before its reference's (2)",
+    );
+    refused(&with("denominator_air", &|v| v.op = "airvalue".into()), "its denominator_air is a airvalue");
+    refused(
+        &with("numerator_air", &|v| {
+            *v = ProcessedHintField {
+                op: "cm".into(),
+                id: Some(0),
+                row_offset: Some(5),
+                row_offset_index: Some(-1),
+                ..v.clone()
+            }
+        }),
+        "at an offset that is not an opening point",
+    );
+    refused(&with("numerator_air", &|v| v.id = Some(10_000)), "which has no code");
+    // result: an airgroup value (the std's default mode).
+    refused(&with("result", &|v| v.op = "airgroupvalue".into()), "updates an airgroup value");
+    // A field missing, or an array.
+    refused(&changed(&|h| h.fields.retain(|f| f.name != "denominator_air")), "it has no field `denominator_air`");
+    refused(
+        &changed(&|h| {
+            let value = h.fields[1].values[0].clone();
+            h.fields[1].values.push(value)
+        }),
+        "holds an array",
+    );
+
+    // A column of stage 2 no hint gives, and one two give.
+    let mut none = fresh();
+    none.pil_code.expressions_info.hints_info.remove(gsum);
+    let err = check_prover_hints(&none, "SumBus").unwrap_err();
+    assert!(matches!(err, SetupError::StageWithoutHint { stage: 2, n_columns: 1, .. }), "{err}");
+    let mut twice = fresh();
+    twice.pil_code.expressions_info.hints_info.push(result.pil_code.expressions_info.hints_info[gsum].clone());
+    let err = check_prover_hints(&twice, "SumBus").unwrap_err().to_string();
+    assert!(err.contains("2 hints produce column gsum"), "{err}");
+
+    // The encoder: a hint the prover does not compute, and a column at no opening point.
+    let mut im_col = fresh();
+    im_col.pil_code.expressions_info.hints_info[gsum].name = "im_col".into();
+    let err = Bytecode::from_pil_info(&im_col).unwrap_err().to_string();
+    assert!(err.contains("hint `im_col`: it is not one the prover computes"), "{err}");
+    let off = with("reference", &|v| v.row_offset_index = Some(-1));
+    let err = Bytecode::from_pil_info(&off).unwrap_err().to_string();
+    assert!(err.contains("which is not an opening point"), "{err}");
+}
+
 // ---------------------------------------------------------------------------------------------
 // The fixture of the Rust → file → C++ round trip (M17)
 // ---------------------------------------------------------------------------------------------
@@ -916,10 +1143,11 @@ fn cm(stage: u32, stage_pos: u32, opening: u32) -> Operand {
 
 /// An AIR of `N = 8` rows and 2 stages, with opening points −2, −1, 0, 1 and 2 (indices 0 to 4).
 /// Its columns are `a`, `b` and the intermediate polynomial `im` of stage 1 (`stagePos` 0, 1 and
-/// 2), and `c` of stage 2. It has constraints on the rows of everyRow, firstRow, lastRow and
-/// `everyFrame{1, 2}`. The sample has every opcode, every operand type, every opening, temporaries
-/// written by the op that reads them, a copy (an add of 0), and numbers of 254 bits, some twice in
-/// a section.
+/// 2, `cmPolsMap` 0 to 2), and `c` of stage 2 (`cmPolsMap` 3). It has constraints on the rows of
+/// everyRow, firstRow, lastRow and `everyFrame{1, 2}`. The sample has every opcode, every operand
+/// type, every opening, temporaries written by the op that reads them, a copy (an add of 0), and
+/// numbers of 254 bits, some twice in a section. Its two hints have every kind of value, an array
+/// field of two dimensions and one of one, and the `gsum_col` fields of the std.
 fn sample() -> Bytecode {
     use Opcode::{Add, Mul, Sub, SubSwap};
     let (at_m2, at_m1, at_0, at_1, at_2) = (0, 1, 2, 3, 4);
@@ -1049,7 +1277,56 @@ fn sample() -> Bytecode {
                 ),
             },
         ],
+        hints: sample_hints(),
     }
+}
+
+/// The hints of [`sample`]: a `gsum_col` as the std writes it in `STD_MODE_ONE_INSTANCE`, of the
+/// sample's `c` and its expression 9, and a `gprod_col` with every other kind of value, ending with
+/// the number `r − 1`.
+fn sample_hints() -> Vec<HintBin> {
+    let (at_m1, at_0, at_2) = (1, 2, 4);
+    let value = |operand: HintOperand, pos: &[u32]| HintValueBin { operand, pos: pos.to_vec() };
+    let field = |name: &str, values: Vec<HintValueBin>| HintFieldBin { name: name.into(), values };
+    let one = |name: &str, operand: HintOperand| field(name, vec![value(operand, &[])]);
+    vec![
+        HintBin {
+            name: "gsum_col".into(),
+            fields: vec![
+                one("reference", HintOperand::Cm { id: 3, opening: at_0 }),
+                one("numerator_air", HintOperand::Tmp(9)),
+                one("denominator_air", HintOperand::Const { id: 0, opening: at_m1 }),
+                one("numerator_direct", HintOperand::Number(FrBytes::ZERO)),
+                one("denominator_direct", HintOperand::Number(fr("1"))),
+                one("result", HintOperand::Number(FrBytes::ZERO)),
+            ],
+        },
+        HintBin {
+            name: "gprod_col".into(),
+            fields: vec![
+                one("reference", HintOperand::Cm { id: 3, opening: at_2 }),
+                field(
+                    "terms",
+                    vec![
+                        value(HintOperand::Challenge(1), &[0, 0]),
+                        value(HintOperand::Public(0), &[0, 1]),
+                        value(HintOperand::AirValue(0), &[1, 0]),
+                        value(HintOperand::ProofValue(1), &[1, 1]),
+                    ],
+                ),
+                field(
+                    "names",
+                    vec![
+                        value(HintOperand::String("Sample".into()), &[0]),
+                        value(HintOperand::String(String::new()), &[1]),
+                    ],
+                ),
+                one("wide", HintOperand::Number(fr(WIDE_254))),
+                one("group", HintOperand::AirgroupValue(0)),
+                one("result", HintOperand::Number(fr(R_MINUS_ONE))),
+            ],
+        },
+    ]
 }
 
 #[test]

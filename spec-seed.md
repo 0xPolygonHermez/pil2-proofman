@@ -369,7 +369,7 @@ Aquests són els sis canvis que condicionen el disseny. La taula completa és a 
    - **de producte** (`gprod`).
 
    Els busos generen *hints*, de dues menes:
-   - **del prover:** `gsum_col`, `gprod_col`, `im_col` i `im_airval`;
+   - **del prover:** `gsum_col`, `gprod_col`, `im_col` i `im_airval`. El setup accepta els dos primers, que donen les columnes de l'stage 2 (M30, §4.2.1 i §4.4); `im_col` espera M31, i `im_airval` calcula un air value, que la v1 no té (D2);
    - **del witness o de depuració:** `gsum/gprod_debug_data(_global)`, `range_def`, `specified_ranges(_data)`, `virtual_table_data(_global)` i `std_{sum,prod,rc}_users`. El prover els ignora, i els consumeix `pil2-components/lib/std/rs/src/`.
 4. **Nous valors a la prova:** air values, airgroup values (agregats per SUM o PROD), proof values i restriccions globals.
 5. **Offsets de fila arbitraris i amb signe.** PIL1 només té `'`, és a dir, `ξ` i `ξω`. PIL2 admet qualsevol `rowOffset`, i per tant qualsevol punt `ξ·ω^s`.
@@ -453,8 +453,11 @@ Es descodifica el `pilout` i el setup s'atura amb un error clar en qualsevol d'a
 - el `baseField` no és el `r` de BN254;
 - hi ha custom commits, periodic columns o public tables;
 - hi ha més d'una AIR, air values, airgroup values, proof values o restriccions globals (D2: fora d'abast);
-- hi ha un *hint* de prover desconegut. Els *hints* de witness i de depuració de la llista de §3.4 s'ignoren de manera explícita;
-- alguna columna de l'stage 2 o superior no la produeix cap *hint* suportat;
+- hi ha un *hint* de prover que no és `gsum_col` ni `gprod_col` (M30): `im_col` espera M31, `im_airval` calcula un air value (D2), i un nom desconegut es rebutja. Els *hints* de witness i de depuració de la llista de §3.4 s'ignoren de manera explícita, i no van al `<air>.bin`. Els *hints* es comproven abans que els valors, perquè un `im_airval` es digui pel seu nom i no per l'air value que porta;
+- alguna columna de l'stage 2 o superior no la produeix exactament un `gsum_col` o `gprod_col`. Com que el que diu un *hint* és el que en processa `pil-info`, aquesta comprovació es fa després de les passades (`validate::check_prover_hints`), sobre els *hints* que van al `<air>.bin`:
+  - la `reference` ha de ser una columna d'un stage ≥ 2, llegida a la seva fila, que no sigui un im pol;
+  - `numerator_air` i `denominator_air` han de ser una expressió, una columna en un punt d'obertura o un número (els operands que pren l'`addHintField` del STARK, sense els air values, D2), i no poden llegir cap columna de l'stage de la `reference` o posterior (la std les hi posa amb `im_col`, M31);
+  - `result`, si hi és, ha de ser un número, com l'escriu la std en `STD_MODE_ONE_INSTANCE`; si no, és un airgroup value (D2). Abans, el `pilout` ja s'ha rebutjat pels seus airgroup values, i l'error ho diu;
 - alguna constant és `≥ r`;
 - el domini estès no cap en la 2-adicitat, és a dir, `nBitsExt > 28` (A.1);
 - el `ptau` té menys punts que el `degree` més gran del *layout* (el nombre de coeficients de l'`f_i` més gran, M12).
@@ -521,7 +524,7 @@ Així el setup pilfflonk no depèn de `pil2-stark-setup` i no hi ha cap cicle (�
 
 - **Bytecode del prover** (`<air>.bin`). El codegen compartit genera per a cada AIR el bytecode `Fr` que executarà el prover: expressions dels *hints*, im pols i `Q`.
   - Les constants ocupen 32 bytes.
-  - El format és el del `.bin` STARK amb dimensió 1 (revisió 2, A.6): els mateixos camps, seccions i tipus de buffer d'`io/parser_args.rs`, sense els camps de dimensió, amb args de 32 bits i constants de 32 bytes.
+  - El format és el del `.bin` STARK amb dimensió 1 (revisió 3, A.6): els mateixos camps, seccions i tipus de buffer d'`io/parser_args.rs`, sense els camps de dimensió, amb args de 32 bits i constants de 32 bytes, i els *hints* del prover a la secció 3 (M30).
   - Es reaprofiten el contenidor `"chps"` i l'assignació de temporals, que viuen a `pil-info`.
   - El fitxer té una versió i una mida d'element pròpies.
 - **Codi del verificador** (el `qVerifier` de `<air>.verifierinfo.json`). És el codi que calcula `Q(ξ)` a partir de les avaluacions, sense `queryVerifier`. Surt del mateix codegen, en el format JSON del STARK, i el setup en copia el `qVerifier` a la vkey. No hi ha `.verifier.bin`, perquè no hi ha verificador natiu (D3).
@@ -621,8 +624,11 @@ Les columnes de l'**stage 2 i posteriors** i els im pols no els aporta ningú de
    - Iniciar el transcript, que és únic per a tota la prova, i absorbir-hi el *digest*, el nombre d'instàncies per AIR i els publics.
 2. **Per a cada stage `s = 1 … nStages`:**
    1. Per a cada instància, el C++ fa aquests passos:
-      - calcula les columnes de l'stage: a l'stage 1, les del witness; a partir del 2, les dels *hints*, amb els reptes;
-      - a l'últim stage, calcula també els im pols;
+      - calcula les columnes de l'stage: a l'stage 1, les del witness; a partir del 2, les dels *hints* `gsum_col` i `gprod_col`, amb els reptes de l'stage i la semàntica de `calculateWitnessSTD` (`gen_proof.hpp:57`; M30):
+        - primer els `gprod_col` i després els `gsum_col`, cadascun com `accMulHintFields` (`hints.cpp`): `numerator_air/denominator_air` a cada fila de `H`, amb una sola inversió en lot, i acumulat fila a fila a la columna `reference`, com una suma (`gsum_col`) o com un producte (`gprod_col`). La std en fa una sola de cada per AIR; si n'hi hagués més, es calculen totes, i el STARK només calcula la primera;
+        - com que la v1 no té airgroup values (D2), `result`, `numerator_direct` i `denominator_direct` no es llegeixen, com fa `calculateWitnessSTD` quan `hintFieldNameAirgroupVal` és buit. La clau rebutja un *hint* amb un `result` que no és un número;
+        - un denominador 0 en alguna fila és un error clar (`UnsatisfiedError`, `PILFFLONK_ERR_UNSATISFIED`), que diu el *hint*, la columna i la fila: la columna no hi té valor;
+      - a l'últim stage, calcula també els im pols, després de les columnes dels *hints*, que poden llegir (el de `gsum − 'gsum·(1 − L1)`, per exemple);
       - en fa la INTT (`Polynomial::fromEvaluations`, amb espai per al blinding);
       - hi afegeix el blinding **en forma de coeficients** (`blindCoefficients`), perquè `(X^N−1)·b` s'anul·la a `H`;
       - empaqueta els `f_i` (`CPolynomial`);
@@ -648,6 +654,8 @@ Les columnes de l'**stage 2 i posteriors** i els im pols no els aporta ningú de
 6. **Escriure la prova.** Rust escriu `proof.json` i `publics.json` (A.6).
 
 **Depuració.** `proofman-cli pilfflonk check` comprova el witness fila a fila, sense provar res, i diu quina restricció i quina fila fallen. L'equivalent STARK més proper és `verify-constraints`.
+- **Stages ≥ 2 (M30).** Les seves columnes depenen dels reptes, i `check` els treu com el `verify-constraints` del STARK (`proofman/src/proofman.rs`, `_verify_proof_constraints`): d'un transcript d'elements fixos, sense cap commitment, cap MSM ni cap blinding. Un transcript d'A.4 (el `Keccak256Transcript`, amb la mateixa regla de `squeeze`) absorbeix el `dummy_element` del STARK, `[0, 1, 2, r − 1]`, com a `Fr`; després, per a cada `s = 1 … nStages − 1`, en treu els `numChallenges[s]` reptes de l'stage `s + 1`, un per crida, i torna a absorbir `[0, 1, 2, r − 1]`, com el STARK el torna a posar després del repte global (`check::check_challenges`).
+- **Les columnes.** El C++ calcula les de cada stage ≥ 2 amb aquests reptes com ho fa el prover, primer les dels *hints* i després els im pols, en buffers propis (`pilfflonk_check` rep els reptes dels stages 2 … `nStages`): no es compromet res, i una instància es pot provar abans o després igual que si el `check` no s'hagués fet. Els reptes són fixos, i per tant el mateix witness dona sempre el mateix informe. Un denominador 0 hi és el mateix error que al prover.
 
 ### 4.5 Pas 5: verificació
 
@@ -1127,6 +1135,8 @@ Es fa servir el `Keccak256Transcript` de `pil2-stark/src/rapidsnark/`, el mateix
 
 `α_S` és el repte de SHPLONK, i no té res a veure amb l'α de PIL1.
 
+**Diversos stages (M30).** Amb els busos de la std, `nStages = 2` i `numChallenges = [0, 2]`: després de l'stage 1 es treuen `std_alpha` i `std_gamma`, en l'ordre de `stageId`, i el C++ calcula l'stage 2 amb ells. Els reptes del prover (`ProofChallenges::stages`) són els que el verificador JS refà (`computeChallenges`) sobre la mateixa prova, i un test creuat ho comprova (`cli/tests/pilfflonk_prove.rs`, `the_transcripts_agree`), a més de `std_vc` i `xiSeed`.
+
 ### A.5 Verificació SHPLONK
 
 **Ordre global dels `f_i`:**
@@ -1169,7 +1179,7 @@ El verificador JS recalcula `Π` i rebutja la prova si `inv·Π ≠ 1` (decisió
 | `<air>.pilfflonkinfo.json` | **Camps equivalents del `starkinfo`:** `nStages`, `nConstants`, `cmPolsMap`, `constPolsMap`, `challengesMap`, `airValuesMap`, `airgroupValuesMap`, `evMap`, `openingPoints`, `boundaries`, `qDeg`, `cExpId` i `mapSectionsN`, amb `qDim = 1`.<br>**Camps nous:** `nBits`, que al STARK és dins de `starkStruct`; `maxQDegree` (0 si `Q` no es parteix, A.1); i `layout`, una llista de `f_i {stage, pols, k, offsets, degree}`. El `degree` és el cost d'A.2 en nombre de coeficients, i l'SRS n'ha de tenir el màxim (no el màxim més 1).<br>**No hi són** `starkStruct` ni res de FRI.<br>L'ordre exacte dels camps i la forma de les entrades (mapes, `evMap`, *boundaries*) són els de `pilfflonk/src/pilfflonk_info.rs` (M12). L'`evMap` és el de `pil-info` seguit dels parells que afegeixen les fusions (A.2, "Com l'usa el setup"). |
 | `<air>.expressionsinfo.json` | El format del STARK, amb dimensió 1 per a tots els operands i les constants en decimal |
 | `<air>.verifierinfo.json` | El format del STARK: només `qVerifier`, sense `queryVerifier`. El llegeix el verificador JS. |
-| `<air>.bin` | Bytecode `Fr` del prover (im pols, `Q` i les expressions a què es refereixen els *hints*) i de depuració de restriccions, amb el format del `.bin` STARK i dimensió 1: contenidor `"chps"`, versió `0x7066_0002`, args de 32 bits i constants de 32 bytes *little-endian*. Vegeu "Format de `<air>.bin`", sota la taula (M11). |
+| `<air>.bin` | Bytecode `Fr` del prover (im pols, `Q` i les expressions a què es refereixen els *hints*), de depuració de restriccions i els *hints* del prover, amb el format del `.bin` STARK i dimensió 1: contenidor `"chps"`, versió `0x7066_0003`, args de 32 bits i constants de 32 bytes *little-endian*. Vegeu "Format de `<air>.bin`", sota la taula (M11, M30). |
 | `<air>.const` | Columnes fixes, fila per fila, en `Fr` canònic de 32 bytes *little-endian* |
 | `<air>.verkey.json` | Els commitments G1 dels `f_i` fixos de l'AIR, com a cadenes decimals `[x, y]`. Són els mateixos que a la vkey. |
 | `pilfflonk.srs.bin` | Contenidor binfile de rapidsnark, tipus `"pfsr"`, versió 1 (M6):<br>- **secció 1** (capçalera, 88 bytes): `u32 n8q = 32`, `q` (LE), `u32 n8r = 32`, `r` (LE), `u64 nG1` (entre 1 i `2^32−1`, el límit de la MSM), `u64 nG2 = 2`;<br>- **secció 2:** `[τ^i]₁` per a `i < nG1`, 64 bytes cadascun;<br>- **secció 3:** `[1]₂` i `[τ]₂`, 128 bytes cadascun (`Fq2` com a `c0‖c1`).<br>Els punts són afins `x‖y`, amb cada coordenada en Montgomery *little-endian*, copiats byte a byte de les seccions 2 i 3 del `ptau`. |
@@ -1178,21 +1188,23 @@ El verificador JS recalcula `Π` i rebutja la prova si `inv·Π ≠ 1` (decisió
 | `publics.json` | Un array de cadenes decimals, en l'ordre de `publicsMap`, com a pil-fflonk i al *wrap* final |
 | Directori de witness (entrada del prover, no és del `provingKey/`; M13, `pilfflonk/src/witness.rs`) | Exactament aquests fitxers, i cap més:<br>- `instances.json`: un array no buit d'`{"airgroupId", "airId", "airValues": [...]}` en ordre canònic; els `airValues` són els de l'stage 1, en l'ordre de l'`airValuesMap` (buits a la v1);<br>- `instance_<ag>_<a>_<t>.bin`: les columnes de l'stage 1 d'una instància, sense capçalera, fila per fila, cada valor de 32 bytes *little-endian* canònic; la columna `c` de la fila `i` és al byte `(i·C + c)·32`, i el fitxer té exactament `N·C·32` bytes (`C` = columnes de witness de l'stage 1, sense els im pols);<br>- `publics.json` (com el de la prova) i `proof_values.json` (els de l'stage 1; buit a la v1).<br>Tots els valors JSON són cadenes decimals canòniques `< r`. El lector rebutja fitxers de més, mides incorrectes i valors `≥ r`. |
 
-**Format de `<air>.bin` (revisió 2, M11; l'implementa `setup/pilfflonk/src/bytecode.rs`).** És el `.bin` del prover STARK camp per camp (decisió de l'usuari, 29-09-2026): l'escriu `setup/pil2-stark/src/io/bin_file.rs` amb els ops i args de `io/parser_args.rs`, el llegeix `expressions_bin.cpp` i l'executa `expressions_pack.hpp`. Tots els valors tenen dimensió 1, i només se n'aparta on BN254 i la dimensió 1 ho obliguen:
-- **Camps de dimensió:** no hi ha `destDim`, `nTemp3` ni `maxTmp3`, ni temporals de l'extensió.
+**Format de `<air>.bin` (revisió 3, M11 i M30; l'implementa `setup/pilfflonk/src/bytecode.rs`).** És el `.bin` del prover STARK camp per camp (decisió de l'usuari, 29-09-2026): l'escriu `setup/pil2-stark/src/io/bin_file.rs` amb els ops i args de `io/parser_args.rs`, el llegeix `expressions_bin.cpp` i l'executa `expressions_pack.hpp`. Tots els valors tenen dimensió 1, i només se n'aparta on BN254 i la dimensió 1 ho obliguen:
+- **Camps de dimensió:** no hi ha `destDim`, `nTemp3` ni `maxTmp3`, ni temporals de l'extensió; als *hints*, tampoc el `dim` d'una expressió.
 - **Args:** u32, no u16, perquè u16 trunca sense avisar els índexs de més de 65535.
-- **Constants:** `Fr` canònics de 32 bytes *little-endian*, no u64.
+- **Constants:** `Fr` canònics de 32 bytes *little-endian*, no u64, al codi i als *hints*.
+- ***Hints*:** només els del prover que el setup accepta (`gsum_col` i `gprod_col`); els de witness i de depuració no hi van, perquè el setup els ignora (§4.2.1). Tampoc hi ha el `commitId` d'una columna *custom* (P5).
+- **Revisions:** la revisió 2 (M11) tenia la secció 3 buida (`nHints = 0`); la 3 (M30) hi escriu els *hints*. Els lectors comparen la versió per igualtat, i per tant una clau de la revisió 2 s'ha de tornar a generar.
 - **Prefix:** la secció 1 comença amb `version u32`, `n8 u32 = 32`, `r` (32 bytes LE) i `nStages u32`. La versió es repeteix perquè el `BinFile` de rapidsnark només en comprova un màxim; el lector pilfflonk la compara per igualtat i rebutja un `.bin` STARK. `nStages` hi és perquè els tipus d'operand en depenen (el STARK el pren del `starkinfo`), i així el fitxer es pot descodificar sol.
 - **Còpies:** una còpia s'escriu com a `add(a, 0)`; el STARK l'escriu com un `add` sense el segon operand, que el seu intèrpret, de 8 args per operació, no pot executar.
 
 ```
-"chps" | version u32 = 0x7066_0002 ("pf" a la meitat alta, revisió 2 a la baixa) | nSections u32 = 3
+"chps" | version u32 = 0x7066_0003 ("pf" a la meitat alta, revisió 3 a la baixa) | nSections u32 = 3
 3 × { id u32, size u64, payload }, en l'ordre 1, 2, 3
 ```
 
 - **Secció 1, expressions:** el prefix; `maxTmp`, `maxArgs` i `maxOps` (els màxims de les seccions 1 i 2), `nOps`, `nArgs`, `nNumbers` i `nExpressions`; per a cada expressió `expId`, `destId`, `stage`, `nTemp`, `nOps`, `opsOffset`, `nArgs`, `argsOffset` (u32) i `line` (UTF-8 acabada en NUL); i al final `ops` (u8), `args` (u32) i `numbers` (32 bytes). Com al STARK, el prover troba el codi d'un im pol per l'`expId` de la seva entrada de `cmPolsMap`, i el de `Q` per `cExpId`.
 - **Secció 2, restriccions** (depuració): `nOps`, `nArgs`, `nNumbers` i `nConstraints`; per a cada restricció `stage`, `destId`, `firstRow`, `lastRow`, `nTemp`, `nOps`, `opsOffset`, `nArgs`, `argsOffset`, `imPol` i `line`; i al final `ops`, `args` i `numbers`. La restricció val a les files `firstRow ≤ i < lastRow`.
-- **Secció 3, *hints*:** `nHints u32 = 0` a la Fase 1; a la Fase 2 cada *hint* s'escriurà com al STARK.
+- **Secció 3, *hints*:** `nHints u32` i, per a cada *hint*, com el `write_hints_section` del STARK: `name`; `nFields u32` i, per a cada camp, `name` i `nValues u32` (un, o els elements d'un camp que és un vector); i per a cada valor, `op` (el nom del STARK: `cm`, `const`, `tmp`, `number`, `string`, `public`, `challenge`, `airvalue`, `airgroupvalue` o `proofvalue`), el valor (`number`: 32 bytes, un `Fr` canònic *little-endian*; `string`: una cadena; la resta: `id u32`), `rowOffsetIndex u32` per a `cm` i `const`, i `nPos u32` seguit de les `pos` (u32), la posició al vector; cap per a un sol valor. L'`id` és el del STARK: l'índex a `cmPolsMap` d'una `cm` (no el `stagePos`), a `constPolsMap` d'una `const`, l'`expId` d'una `tmp` (una expressió de la secció 1, que el lector exigeix), i l'índex al seu mapa de la resta. El prover els busca pel nom, com `getHintIdsByName`, i en comprova els operands contra el `pilfflonkinfo` en carregar la clau (§4.2.1).
 - **Restricció que és sencera un im pol (M24):** quan la cerca promou tota l'expressió d'una restricció a im pol (passa amb un domini que no és `everyRow`, perquè el seu `Zi` hi suma 1 de grau), `pil-info` en deixa el codi de depuració buit. El codificador l'escriu com una còpia de la columna de l'im pol a la fila, que és el que `pil_code_gen` emet per a qualsevol altra expressió que no és un temporal.
 
 **Ops i args.** Un op (u8) per operació, que al STARK és la combinació de dimensions i aquí sempre val 0. 8 args per operació: `opType dest aType aArg1 aArg2 bType bArg1 bArg2`, amb els `opType` del STARK (0 `add`, 1 `sub`, 2 `mul`, 3 `sub_swap`) i l'ordre d'operands del STARK (per rang de tipus; un `sub` intercanviat passa a `sub_swap`). Els temporals els assigna `get_id_maps` de `pil-info`.
@@ -1411,6 +1423,13 @@ Aquests problemes no bloquegen el backend nou, però han sortit durant l'anàlis
    - **Codi de depuració buit a `pil-info` (M24, no verificat al STARK):** `generate_constraints_debug_code` deixa buit el codi d'una restricció que és sencera un im pol; el `bin_file.rs` STARK escriuria una restricció de 0 operacions. Només passa amb restriccions que no són `everyRow`, que el compilador de `develop-0.14.0` no emet mai.
    - **ffjavascript 0.3.1 (M8):** `G1.sub(a, b)` amb `a` afí i `b` jacobià retorna `b − a` (`src/wasm_curve.js:104`, `op2("_subMixed", b, a)`). snarkjs no hi passa; el `computeF` de shplonkjs sí que hi passaria amb un sol `f`. El verificador JS de pilfflonk treballa en coordenades jacobianes per evitar-ho. A més, `Fr.e(v)` no redueix `v = p`, i per això els descodificadors comproven `< r` i `< q` ells mateixos.
    - **Altres casos límit de `Polynomial` (M7):** `lagrangePolynomialInterpolation` falla amb un sol punt; `divByMonic` escriu abans del buffer si el grau és menor que `m` i no comprova el residu; `add()` creix sense actualitzar la longitud; `sub()` desborda si l'altre polinomi és més llarg; `mulScalar`/`subScalar` no actualitzen el grau; `fixDegree` amb longitud 0 llegeix fora de límits; `divByZerofier` dona resultats incorrectes si hi ha menys fils que `n` i `n` no és potència de dos.
+
+10. **Troballes de M30 (el STARK i la std; no es toquen):**
+   - `string2opType` (`pil2-stark/src/starkpil/stark_info.cpp:797`) no coneix `proofvalue`: el lector STARK no pot llegir un *hint* amb un proof value. El format pilfflonk l'admet; la v1 no en té.
+   - `calculateWitnessSTD` (`gen_proof.hpp:57`) només calcula el primer `gsum_col` i el primer `gprod_col` d'una AIR (`getHintIdsByName` a `hint[1]`). La std en fa un de cada; pilfflonk els calcula tots.
+   - El `write_hints_section` del STARK (`setup/pil2-stark/src/io/bin_file.rs`) escriu `id` i `row_offset_index` amb `as u32`: el `rowOffsetIndex` −1 d'un *offset* que no és punt d'obertura (`gen_code.rs`, `process_single_hint_field`) sortiria com `0xFFFFFFFF`. El codificador pilfflonk el rebutja.
+   - Amb el `MAX_CONSTRAINT_DEGREE` per defecte (3), el bus de suma no admet dos termes de denominador de grau 1 en una sola fracció (`std_sum.pil`, `piop_gsum_air`: `2 + grau ≤ MAX`), i un lookup `assumes` + `proves` dins d'una AIR necessita un `im_col`. La fixture `sum_bus` puja el grau a 4 amb `set_max_constraint_degree` (els `im_col` són M31); la del bus de producte hi cap amb 3.
+   - Possible, no verificat: amb `PROD_EXPRESSIONS_IM_NON_REDUCED ≠ 0`, el `gprod_col` de `std_prod.pil` (`piop_gprod_air`) passa `numerator`/`denominator` sense els termes no reduïts que la restricció sí que multiplica (`numerator_non_reduced`, `denominator_non_reduced`), i la columna no la satisfaria. Per defecte val 0 i no passa.
 
 ---
 

@@ -20,7 +20,8 @@
 //! the vkey is computed over.
 //!
 //! The prover takes its witness from a [`WitnessSource`] (spec §4.3, §5.3). [`prover`] is the
-//! orchestration of a proof over the C++ core (spec §4.4): [`ProvingKey::load`] and [`prove`].
+//! orchestration of a proof over the C++ core (spec §4.4): [`ProvingKey::load`] and [`prove`], and,
+//! for tests and diagnostics, [`stage_columns`], the columns its stages commit.
 //! [`check`](mod@check) checks a witness row by row without proving (§4.4, "Depuració"): [`check()`].
 //!
 //! The verifier is JS (`js/`, spec §4.5, D8): [`js_verifier::verify`] runs it with Node.
@@ -50,7 +51,9 @@ pub mod witness;
 #[cfg(feature = "oracle")]
 pub mod oracle;
 
-pub use check::{check, CheckOptions, CheckReport, ConstraintCheck, FailedRow, DEFAULT_MAX_ROWS};
+pub use check::{
+    check, check_challenges, check_columns, CheckOptions, CheckReport, ConstraintCheck, FailedRow, DEFAULT_MAX_ROWS,
+};
 pub use degrees::Degrees;
 pub use error::{PilfflonkError, PilfflonkResult};
 pub use field::{Digest, FqBytes, FrBytes, G1Affine, G2Affine, BN254_Q, BN254_R};
@@ -59,7 +62,7 @@ pub use json::{canonical_json, JsonFile};
 pub use layout::{Layout, LayoutEntry, LayoutPol};
 pub use pilfflonk_info::{Boundary, ChallengeMapEntry, EvMapEntry, NameStageEntry, PilfflonkInfo, PolMapEntry, PolType};
 pub use proof::{Proof, ProofJson, ProofNames, ProofShape, Publics, SnarkjsG1};
-pub use prover::{prove, ProofChallenges, ProofOutput, ProveOptions, ProvingKey};
+pub use prover::{prove, stage_columns, ProofChallenges, ProofOutput, ProveOptions, ProvingKey, StageColumns};
 pub use verkey::AirVerkey;
 pub use vkey::{FixedCommitments, Vkey, DIGEST_DOMAIN};
 pub use witness::{

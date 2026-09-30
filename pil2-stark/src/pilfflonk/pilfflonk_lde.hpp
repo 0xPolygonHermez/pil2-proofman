@@ -27,6 +27,12 @@ constexpr unsigned int COSET_SHIFT = 5;
 // base^exponent, in Montgomery form, by ffiasm's square-and-multiply.
 FrElement power(const FrElement &base, uint64_t exponent);
 
+// out[i] = 1/values[i] for i < n, with one inversion per thread (Montgomery's trick on each
+// thread's chunk, which keeps its prefix products in out: out and values must not overlap). Returns
+// false, leaving out unspecified, if some value is 0. Allocates nothing: nothing in its parallel
+// region can throw.
+bool batchInverse(FrElement *out, const FrElement *values, uint64_t n);
+
 // Moves BN254 columns between evaluations on the trace domain H (N = 2^nBits points), their
 // coefficients, and evaluations on the extended coset g·H' (N' = 2^nBitsExt points, N <= N').
 // It has no NTT of its own: the INTT is rapidsnark's Polynomial::fromEvaluations, and the coset

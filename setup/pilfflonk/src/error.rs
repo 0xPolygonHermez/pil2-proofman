@@ -31,8 +31,12 @@ pub enum SetupError {
     #[error("air {air} has {n} air values, which pilfflonk does not support (spec D2)")]
     AirValues { air: String, n: usize },
 
-    /// Airgroup values (spec §7.1, D2).
-    #[error("the pilout has {n} airgroup values, which pilfflonk does not support (spec D2)")]
+    /// Airgroup values (spec §7.1, D2). The std's buses declare one each unless the std is in
+    /// `STD_MODE_ONE_INSTANCE`.
+    #[error(
+        "the pilout has {n} airgroup values, which pilfflonk does not support (spec D2); the std's buses declare \
+         them unless it is compiled with set_std_mode(STD_MODE_ONE_INSTANCE)"
+    )]
     AirgroupValues { n: usize },
 
     /// Proof values (spec §7.1, D2).
@@ -59,21 +63,36 @@ pub enum SetupError {
     #[error("the pilout has {n} public tables, which pilfflonk does not support")]
     PublicTables { n: usize },
 
-    /// A prover hint (spec §3.4). Fase 1 supports none of them (plan R2).
+    /// The prover hint `im_col` (spec §3.4): the std adds it when a bus's terms exceed its
+    /// `MAX_CONSTRAINT_DEGREE`. Not yet (plan M31).
     #[error(
-        "{location} has the prover hint `{name}`, which pilfflonk does not support yet: it proves stage 1 only, \
-         with no prover hint (the std's buses come in Fase 2)"
+        "{location} has the prover hint `im_col`, whose column pilfflonk does not compute yet (plan M31): the std \
+         adds one when the terms of a bus exceed its MAX_CONSTRAINT_DEGREE (set_max_constraint_degree)"
     )]
-    UnsupportedProverHint { name: String, location: String },
+    ImColHint { location: String },
+
+    /// The prover hint `im_airval` (spec §3.4), which computes an air value: v1 has none (D2).
+    #[error(
+        "{location} has the prover hint `im_airval`, which computes an air value, and pilfflonk has none (spec D2): \
+         the std adds one for a term of a bus that is a constant"
+    )]
+    ImAirvalHint { location: String },
+
+    /// A `gsum_col` or `gprod_col` that the prover cannot compute as the STARK's
+    /// `calculateWitnessSTD` does (`crate::validate::check_prover_hints`).
+    #[error("air {air}: its hint `{hint}` cannot be computed: {reason}")]
+    ProverHint { hint: String, air: String, reason: String },
 
     /// A hint that is neither a prover hint nor one of the witness and debug hints the setup
     /// ignores (spec §3.4).
     #[error("{location} has the hint `{name}`, which is neither a prover hint nor a witness or debug hint")]
     UnknownHint { name: String, location: String },
 
+    /// Columns of stage 2 or above that no `gsum_col` or `gprod_col` produces: the prover computes
+    /// those stages from the hints alone (spec §4.2.1).
     #[error(
-        "air {air} has {n_columns} columns of stage {stage}, and no hint pilfflonk supports produces them: it \
-         proves stage 1 only"
+        "air {air} has {n_columns} columns of stage {stage} that no hint pilfflonk supports (gsum_col, gprod_col) \
+         produces"
     )]
     StageWithoutHint { air: String, stage: usize, n_columns: u32 },
 

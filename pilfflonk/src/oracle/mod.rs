@@ -17,6 +17,7 @@
 //! oracle.column_at(&values, ColumnRef::Witness { stage: 1, idx: 0 }, 1, &xi)?;   // l1(ξ·ω)
 //! oracle.q_at(&values, &im_pols, &std_vc, &xi)?;                // Q(ξ), as the verifier computes it
 //! oracle.q_polynomial(&values, &im_pols, &std_vc)?;             // Q itself, by exact division
+//! oracle.fill_hint_columns(&mut values, 2)?;                    // stage 2, from the std's hints
 //! ```
 //!
 //! # What it computes
@@ -44,6 +45,15 @@
 //!   - `q_polynomial` computes it as a polynomial: each numerator in coefficient form, divided by
 //!     `Z_D = Π_{j ∈ D}(X − ω^j)`. It is exact, and so `Q` a polynomial, if and only if every
 //!     constraint holds on every row of its domain; `QPolynomial` keeps the remainders.
+//!
+//! - **The std's prover hints** (plan M30). The columns of stage 2 and above are not the witness's:
+//!   the std's `gsum_col` and `gprod_col` hints give them, from the pilout's hints and nothing else.
+//!   Each hint's `reference` column is, row after row, the running sum (`gsum_col`) or product
+//!   (`gprod_col`) of `numerator_air/denominator_air`, each row's quotient with its own inversion:
+//!   a naive sequential reference for the prover's, which inverts in a batch (`hint_columns`).
+//!   `result` and the direct fields update an airgroup value, which v1 has none of (D2): the
+//!   column does not depend on them. The other prover hints (`im_col`, `im_airval`) it does not
+//!   compute.
 //!
 //! The im pols are given as the indices of their expressions in the pilout (`expId` of the
 //! `imPol` entries of `cmPolsMap`, in their order there), which assumes that the setup numbers the
@@ -195,6 +205,19 @@ enum Term {
     Im(usize),
 }
 
+/// A `gsum_col` or `gprod_col` hint of the AIR (see the module): its column, `reference`, and the
+/// operands of `numerator_air` and `denominator_air`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BusHint {
+    /// `gprod_col`: a running product; `gsum_col`: a running sum.
+    pub prod: bool,
+    /// The witness column of the reference: `(stage, idx)`.
+    pub stage: usize,
+    pub idx: usize,
+    pub numerator: Option<pb::Operand>,
+    pub denominator: Option<pb::Operand>,
+}
+
 /// The oracle of one AIR of a pilout (see the module).
 #[derive(Clone, Debug)]
 pub struct AirOracle {
@@ -212,6 +235,7 @@ pub struct AirOracle {
     n_publics: usize,
     proof_value_stages: Vec<u32>,
     num_challenges: Vec<u32>,
+    bus_hints: Vec<BusHint>,
 }
 
 /// The number of rows of an AIR, `2^nBits`.
@@ -258,6 +282,70 @@ pub fn witness_shape(pilout: &pb::PilOut) -> PilfflonkResult<WitnessShape> {
     }
     let n_proof_values = proof_value_stages(pilout)?.iter().filter(|s| **s == 1).count();
     WitnessShape::new(airs, pilout.num_public_values as usize, n_proof_values)
+}
+
+/// The `gsum_col` and `gprod_col` hints of air `air_id` of airgroup `airgroup_id`, whose `expressions`
+/// they refer to (see the module).
+fn bus_hints(
+    pilout: &pb::PilOut,
+    airgroup_id: usize,
+    air_id: usize,
+    expressions: &[pb::Expression],
+) -> PilfflonkResult<Vec<BusHint>> {
+    use pil2_pilout::pilout::{expression, hint_field, operand};
+    let mut hints = Vec::new();
+    for hint in &pilout.hints {
+        let of_air = hint.air_group_id == Some(airgroup_id as u32) && hint.air_id == Some(air_id as u32);
+        let prod = match hint.name.as_str() {
+            "gsum_col" => false,
+            "gprod_col" => true,
+            _ => continue,
+        };
+        if !of_air {
+            continue;
+        }
+        // Its fields are those of the array of its first field (the compiler's layout of a hint).
+        let fields = match hint.hint_fields.first().and_then(|f| f.value.as_ref()) {
+            Some(hint_field::Value::HintFieldArray(array)) => &array.hint_fields,
+            _ => return invalid!("hint {} has no array of fields", hint.name),
+        };
+        let field = |name: &str| -> PilfflonkResult<Option<pb::Operand>> {
+            match fields.iter().find(|f| f.name.as_deref() == Some(name)).and_then(|f| f.value.as_ref()) {
+                Some(hint_field::Value::Operand(o)) => Ok(Some(o.clone())),
+                _ => invalid!("hint {} has no operand {name}", hint.name),
+            }
+        };
+        // The compiler writes the column of `reference` as the expression `column + 0`.
+        let reference = field("reference")?;
+        let witness_col = |o: &Option<pb::Operand>| match o.as_ref().and_then(|o| o.operand.as_ref()) {
+            Some(operand::Operand::WitnessCol(c)) => Some(*c),
+            _ => None,
+        };
+        let is_zero = |o: &Option<pb::Operand>| match o.as_ref().and_then(|o| o.operand.as_ref()) {
+            Some(operand::Operand::Constant(c)) => c.value.iter().all(|&b| b == 0),
+            _ => false,
+        };
+        let column = match reference.as_ref().and_then(|o| o.operand.as_ref()) {
+            Some(operand::Operand::Expression(e)) => {
+                match expressions.get(e.idx as usize).and_then(|x| x.operation.as_ref()) {
+                    Some(expression::Operation::Add(add)) if is_zero(&add.rhs) => witness_col(&add.lhs),
+                    _ => None,
+                }
+            }
+            _ => witness_col(&reference),
+        };
+        let Some(column) = column.filter(|c| c.row_offset == 0 && c.stage >= 2) else {
+            return invalid!("the reference of hint {} is not a column of stage 2 or above at its own row", hint.name);
+        };
+        hints.push(BusHint {
+            prod,
+            stage: column.stage as usize,
+            idx: column.col_idx as usize,
+            numerator: field("numerator_air")?,
+            denominator: field("denominator_air")?,
+        });
+    }
+    Ok(hints)
 }
 
 fn read_column(values: &[Vec<u8>], what: &str) -> PilfflonkResult<Vec<Fr>> {
@@ -345,7 +433,67 @@ impl AirOracle {
             n_publics: pilout.num_public_values as usize,
             proof_value_stages: proof_value_stages(pilout)?,
             num_challenges: pilout.num_challenges.clone(),
+            bus_hints: bus_hints(pilout, airgroup_id, air_id, &air.expressions)?,
         })
+    }
+
+    /// The `gsum_col` and `gprod_col` hints of the AIR, in the pilout's order.
+    pub fn bus_hints(&self) -> &[BusHint] {
+        &self.bus_hints
+    }
+
+    /// The columns of stage `stage` the std's hints give (see the module), by their `idx`: for each
+    /// hint of that stage, row after row, `acc_i = acc_{i−1} ∘ numerator_i/denominator_i` from the
+    /// identity (0 for a sum, 1 for a product), each quotient with an inversion of its own. They read
+    /// `values`, but not its columns of stage `stage` or after, which may be empty. A denominator that
+    /// is 0 on a row is an error.
+    pub fn hint_columns(&self, values: &Values, stage: usize) -> PilfflonkResult<BTreeMap<usize, Vec<Fr>>> {
+        let none = BTreeMap::new();
+        let mut rows = self.rows(values, &none);
+        let mut columns = BTreeMap::new();
+        for hint in self.bus_hints.iter().filter(|h| h.stage == stage) {
+            let numerator = rows.operand(&hint.numerator)?;
+            let denominator = rows.operand(&hint.denominator)?;
+            let mut acc = if hint.prod { Fr::one() } else { Fr::zero() };
+            let mut column = Vec::with_capacity(self.n);
+            for (row, (num, den)) in numerator.iter().zip(&denominator).enumerate() {
+                let Ok(inverse) = den.inv() else {
+                    return invalid!(
+                        "the denominator of the hint of column {} of stage {stage} is 0 at row {row}",
+                        hint.idx
+                    );
+                };
+                let term = num * &inverse;
+                acc = if hint.prod { &acc * &term } else { &acc + &term };
+                column.push(acc.clone());
+            }
+            if columns.insert(hint.idx, column).is_some() {
+                return invalid!("two hints give column {} of stage {stage}", hint.idx);
+            }
+        }
+        Ok(columns)
+    }
+
+    /// Sets the columns of stage `stage` of `values` to those the std's hints give
+    /// ([`hint_columns`](Self::hint_columns)): every column of the stage must be one.
+    pub fn fill_hint_columns(&self, values: &mut Values, stage: usize) -> PilfflonkResult<()> {
+        let width = stage.checked_sub(1).and_then(|s| self.stage_widths.get(s)).copied().unwrap_or(0) as usize;
+        let mut columns = self.hint_columns(values, stage)?;
+        let mut filled = Vec::with_capacity(width);
+        for idx in 0..width {
+            match columns.remove(&idx) {
+                Some(column) => filled.push(column),
+                None => return invalid!("no gsum_col or gprod_col hint gives column {idx} of stage {stage}"),
+            }
+        }
+        if let Some(idx) = columns.keys().next() {
+            return invalid!("a hint gives column {idx} of stage {stage}, which has {width}");
+        }
+        if values.witness.len() < stage {
+            values.witness.resize(stage, Vec::new());
+        }
+        values.witness[stage - 1] = filled;
+        Ok(())
     }
 
     pub fn n_bits(&self) -> u32 {

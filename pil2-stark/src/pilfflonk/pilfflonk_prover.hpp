@@ -34,10 +34,17 @@ struct ConstraintCheck {
 // the transcript between them. An Opening then evaluates and opens the committed polynomials.
 //
 // commitStage(s):
-//   1. the columns of stage s: the witness's for s = 1 (stages >= 2 come from the std's prover
-//      hints, not supported yet: plan M30);
+//   1. the columns of stage s: the witness's for s = 1; for s >= 2, those the std's prover hints give
+//      (AirKey::stdHints, plan M30) with the stage's challenges, as the STARK's calculateWitnessSTD
+//      does (pil2-stark/src/starkpil/gen_proof.hpp): the gprod_col hints, then the gsum_col ones,
+//      each accMulHintFields (hints.cpp) on H: numerator_air/denominator_air on every row, with one
+//      batch inversion, accumulated row after row into its reference column, a running product or
+//      a running sum. As in calculateWitnessSTD with no airgroup value (v1 has none, D2), result,
+//      numerator_direct and denominator_direct are not read. A denominator that is 0 on a row
+//      throws UnsatisfiedError: the column has no value there;
 //   2. the intermediate polynomials of stage s, with the bytecode on H (ExpressionsDomain::trace):
-//      each once the columns its code reads are, in any order that allows it;
+//      each once the columns its code reads are, in any order that allows it (the hints' columns
+//      of stage s are, as step 1 computes them first);
 //   3. for each f of stage s in the layout: the INTT of each column p_j with room for its blinding
 //      (Lde::intt), the blinding p_j'(X) = p_j(X) + (X^N − 1)·b_j(X) with |O_f| + 1 coefficients of
 //      b_j from the BlindingSource (spec A.3), in the order of the layout and of f's columns; then f
@@ -56,7 +63,10 @@ struct ConstraintCheck {
 // check:
 //   pilfflonk check (spec §4.4, "Depuració"; plan M25), which proves nothing: the im pols of stage 1
 //   as commitStage(1) computes them, then the numerator of each constraint of the .bin (section 2)
-//   on H, with the bytecode, and the rows of its domain where it is not 0.
+//   on H, with the bytecode, and the rows of its domain where it is not 0. The columns of the stages
+//   s >= 2 need their challenges, which check is given (pilfflonk check derives them from fixed
+//   elements, as the STARK's verify-constraints does; plan M30): it computes them as commitStage(s)
+//   does, the hints' and then the im pols, into buffers of its own, and commits nothing.
 //
 // Elements are in Montgomery form. Refused arguments throw std::invalid_argument before anything
 // changes. Not safe to use from several threads at once; the ProvingKey, which must outlive it, may
@@ -95,7 +105,8 @@ public:
 
     // Stage `stage`, with its challenges (nChallenges(stage) of them, by stageId): the commitments of
     // its f, in the order of the layout. Throws std::invalid_argument unless stage is nextStage() and
-    // at most nStages, and for a stage >= 2 (plan M30).
+    // at most nStages, and UnsatisfiedError (the stage stays uncommitted) if a hint's denominator is
+    // 0 on a row.
     std::vector<G1Point> commitStage(uint64_t stage, const std::vector<FrElement> &challenges);
 
     // Q, with the challenges of stage nStages + 1 (std_vc): the commitments of the f of Q's pieces, in
@@ -106,11 +117,25 @@ public:
 
     // The check of the witness against every constraint of section 2 of the AIR's .bin, in its order
     // (the pilout's constraints, then those of the im pols, im − e): for each, the rows of its domain
-    // where it does not hold, the first maxRows of them with the value there. It changes nothing
-    // the commits depend on, and may run before, between or after them. Throws std::invalid_argument,
-    // before computing anything, if a constraint is of a stage >= 2, whose columns come from the std's
-    // prover hints (plan M30).
-    std::vector<ConstraintCheck> check(uint64_t maxRows);
+    // where it does not hold, the first maxRows of them with the value there. `challenges` are those
+    // of stages 2 … nStages, by stage and then by stageId (none for an AIR of one stage), which the
+    // columns of those stages are computed with (checkColumns). It changes nothing the commits depend
+    // on, and may run before, between or after them. Throws std::invalid_argument, before computing
+    // anything, if a constraint is of a stage the AIR does not have or the number of challenges is
+    // not theirs, and UnsatisfiedError if a hint's denominator is 0 on a row.
+    std::vector<ConstraintCheck> check(uint64_t maxRows, const std::vector<FrElement> &challenges);
+
+    // The columns of stages 1 … nStages on H that check checks, by stage then stagePos: stage 1's as
+    // commitStage(1) computes them, and each later stage's as commitStage computes it, with
+    // `challenges` (as check takes them), into new buffers. For tests and diagnostics; throws as
+    // check does.
+    std::vector<std::vector<FrElement>> checkColumns(const std::vector<FrElement> &challenges);
+
+    // The N values on H of the column of stage `stage` at stagePos, as the prover computed them: the
+    // witness's, a hint's or an im pol's. For tests and diagnostics (plan M30: the oracle checks the
+    // hints' columns against them); not part of the proof. Throws std::invalid_argument unless the
+    // stage is committed and has such a column.
+    const FrElement *column(uint64_t stage, uint64_t stagePos) const;
 
     // p_j of f (a non-fixed entry of the layout) once its stage is committed; null before. Of Q's
     // stage, the piece of Q it packs. Not const as rapidsnark's API takes it, but never changed.
@@ -120,9 +145,29 @@ public:
     Poly *qPiece(uint64_t i) const;
 
 private:
+    // The columns of stages 1 … nStages and the challenges (challengesMap order) check computes them with.
+    struct CheckTrace {
+        std::vector<std::vector<FrElement>> columns;
+        std::vector<FrElement> challenges;
+    };
+
+    // The challenges of stage `stage` (by stageId) into `values`, of challengesMap order.
+    void placeChallenges(uint64_t stage, const std::vector<FrElement> &given, std::vector<FrElement> &values) const;
     void setChallenges(uint64_t stage, const std::vector<FrElement> &given);
-    ProverValues valuesOnTrace() const;
+    // What the bytecode reads of `cols` (columns[s] as columns has them) and `challenges`.
+    ProverValues valuesOn(const std::vector<std::vector<FrElement>> &cols,
+                          const std::vector<FrElement> &challenges) const;
+    // The columns of stage `stage` its hints give, into cols[stage], with `challenges`.
+    void computeHintColumns(uint64_t stage, std::vector<std::vector<FrElement>> &cols,
+                            const std::vector<FrElement> &challenges) const;
+    // The im pols of stage `stage`, into columns, once (imPolsComputed).
     void computeImPols(uint64_t stage);
+    // The same, into cols[stage], with `challenges`.
+    void computeImPols(uint64_t stage, std::vector<std::vector<FrElement>> &cols,
+                       const std::vector<FrElement> &challenges) const;
+    // Stage 1's im pols into columns, and, for an AIR of several stages, a copy of columns with the
+    // later stages computed with `challenges` (empty for one stage).
+    CheckTrace checkTrace(const std::vector<FrElement> &challenges);
     std::vector<G1Point> commitF(uint64_t stage);
 
     const ProvingKey &pk;

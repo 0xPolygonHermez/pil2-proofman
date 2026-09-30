@@ -302,7 +302,8 @@ impl<'a, A: Algebra> Evaluator<'a, A> {
         }
     }
 
-    fn operand(&mut self, operand: &Option<pb::Operand>) -> PilfflonkResult<A::V> {
+    /// An operand of the AIR, as an expression's or a hint field's.
+    pub fn operand(&mut self, operand: &Option<pb::Operand>) -> PilfflonkResult<A::V> {
         use operand::Operand;
         let values = self.values;
         let at = |list: &[Fr], i: u32| list.get(i as usize).cloned();

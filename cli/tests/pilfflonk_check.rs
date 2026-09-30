@@ -6,7 +6,11 @@
 //! wrap too, with the im pols the setup chooses for each `--max-constraint-degree`. And on the
 //! pilouts of `tests/data/domains.rs`, built in code (plan M24): each constraint is checked on the
 //! rows of its domain only, `firstRow ≤ i < lastRow`, and a witness that breaks it at the edge row
-//! of its domain is found there.
+//! of its domain is found there. And on the stage-2 fixtures of the std's buses (plan M30), whose
+//! challenges of stage 2 the check takes from a transcript of fixed elements, as the STARK's
+//! `verify-constraints` does, committing nothing: its columns are the oracle's with them, and a
+//! witness that breaks the bus fails the last row of its running sum or product with the oracle's
+//! value, and the CLI names it.
 //!
 //! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
 //! which must honour `prime`, and is `#[ignore]` without it. Those of the domains build their
@@ -30,8 +34,12 @@
 mod domains;
 #[path = "../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
+#[path = "../../pilfflonk/tests/data/prod_bus.rs"]
+mod prod_bus;
 #[path = "../../pilfflonk/tests/data/signed.rs"]
 mod signed;
+#[path = "../../pilfflonk/tests/data/sum_bus.rs"]
+mod sum_bus;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -43,7 +51,11 @@ use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE
 use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::oracle::{AirOracle, Fr};
-use proofman_pilfflonk::{check, CheckOptions, CheckReport, FileWitnessSource, FrBytes, ProvingKey, Witness};
+use proofman_pilfflonk::{
+    check, check_columns, CheckOptions, CheckReport, FileWitnessSource, FrBytes, PilfflonkError, ProvingKey, Witness,
+    BN254_R,
+};
+use proofman_starks_lib_c::PilFflonkTranscript;
 use prost::Message;
 
 const N: usize = 256;
@@ -90,6 +102,8 @@ enum Program {
 
 const FIBONACCI: Program = Program::Pil("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
 const SIGNED: Program = Program::Pil("pilfflonk/tests/fixtures/signed/signed.pil");
+const SUM_BUS: Program = Program::Pil("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil");
+const PROD_BUS: Program = Program::Pil("pilfflonk/tests/fixtures/prod_bus/prod_bus.pil");
 
 impl Program {
     /// The name of its pilout file: that of the PIL, or `domains`.
@@ -372,9 +386,11 @@ fn constraint_stage_offset(bin: &[u8], c: usize) -> usize {
     at
 }
 
+/// A constraint of a stage the AIR does not have: the Fibonacci's, of one stage, with a constraint
+/// of stage 2.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
-fn a_constraint_of_stage_2_is_refused() {
+fn a_constraint_of_a_stage_the_air_does_not_have_is_refused() {
     let f = fixture("stage2");
     let bin = f.proving_key.join("fibonacci/Fibonacci/airs/Fibonacci/air/Fibonacci.bin");
     let mut bytes = fs::read(&bin).unwrap();
@@ -390,7 +406,7 @@ fn a_constraint_of_stage_2_is_refused() {
     let err = check(&pk, &f.witness, &CheckOptions::default()).unwrap_err().to_string();
     let expected = "constraint 1 (fibonacci.pil:27 (l1'-((l1*l1)+(l2*l2)))*(1-Fibonacci.LLAST) == 0) is of stage 2";
     assert!(err.contains("checking the witness row by row") && err.contains(expected), "{err}");
-    assert!(err.contains("(plan M30)"), "{err}");
+    assert!(err.contains("is of stage 2, and Fibonacci has 1 stages"), "{err}");
     let out = check_cli(&f.proving_key, &f.witness_dir, &[]);
     assert_eq!(out.status.code(), Some(1), "{}", output(&out));
     assert!(output(&out).contains(expected), "{}", output(&out));
@@ -627,4 +643,137 @@ fn the_cli_names_the_edge_row_of_a_domain() {
         }
         assert_eq!(text.matches("Failed at row").count(), 1, "{text}");
     }
+}
+
+/// The rows of the stage-2 fixtures (plan M30).
+const BUS_N: usize = 32;
+
+/// The challenges of stage 2 of `check`, by hand (A.4, `_verify_proof_constraints`): a transcript
+/// that absorbs the STARK's `dummy_element` `[0, 1, 2, r − 1]` and squeezes two.
+fn fixed_element_challenges() -> Vec<FrBytes> {
+    let r = num_bigint::BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap();
+    let minus_one = FrBytes::from_decimal(&(r - 1u32).to_string()).unwrap();
+    let mut t = PilFflonkTranscript::new().unwrap();
+    let dummy = [FrBytes::ZERO, FrBytes::from_u64(1), FrBytes::from_u64(2), minus_one];
+    t.absorb_fr(&dummy.map(|v| v.to_le_bytes())).unwrap();
+    (0..2).map(|_| FrBytes::from_le_bytes(t.squeeze().unwrap()).unwrap()).collect()
+}
+
+/// The stage-2 fixtures of the std's buses (plan M30): a lookup on the sum bus and a permutation
+/// on the product bus, grouped and with `--no-packing`. The check takes the challenges of stage 2
+/// from fixed elements, as the STARK's `verify-constraints` does, and commits nothing: they are
+/// those of a transcript of `[0, 1, 2, r − 1]`, and the columns it checks, the oracle's with them.
+/// The generator's witness passes, and every constraint is checked, the bus's of stage 2 too; a
+/// witness that breaks the bus fails the last row of its running sum or product, `L1'·…` at row
+/// N − 1, and nothing else, with the oracle's value; a denominator 0 on a row is `Unsatisfied`. Twice
+/// the same witness, twice the same report.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_check_takes_the_challenges_of_stage_2_from_fixed_elements() {
+    let challenges = fixed_element_challenges();
+    for (name, program, witness, broken, line) in [
+        (
+            "sum_bus",
+            SUM_BUS,
+            sum_bus::witness(),
+            sum_bus::witness_looking_up_what_is_not_provided(),
+            "__L1__'*(0-gsum) == 0",
+        ),
+        ("prod_bus", PROD_BUS, prod_bus::witness(), prod_bus::witness_not_a_permutation(), "__L1__'*(1-gprod) == 0"),
+    ] {
+        for no_packing in [false, true] {
+            let name = format!("{name}_{no_packing}");
+            let f = fixture_of(&name, program, witness.clone(), DEFAULT_MAX_CONSTRAINT_DEGREE, no_packing);
+            let pk = ProvingKey::load(&f.proving_key).unwrap();
+            let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
+            let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
+            let info = pk.air(witness.instances[0].air).unwrap();
+            let oracle_values = |w: &Witness| {
+                let mut values = oracle.values(w, 0).unwrap();
+                values.challenges[1] = challenges.iter().map(Fr::from).collect();
+                oracle.fill_hint_columns(&mut values, 2).unwrap();
+                values
+            };
+
+            // The columns the check checks, and its challenges.
+            let columns = check_columns(&pk, &f.witness).unwrap();
+            assert_eq!(columns.challenges, std::slice::from_ref(&challenges), "{name}: the fixed elements' challenges");
+            let values = oracle_values(&witness);
+            for p in info.cm_pols_map.iter().filter(|p| p.stage <= info.n_stages) {
+                let checked: Vec<Fr> =
+                    columns.columns[p.stage as usize - 1][p.stage_pos as usize].iter().map(Fr::from).collect();
+                let expected = if p.im_pol {
+                    oracle.expression_rows(&values, p.exp_id.unwrap() as usize).unwrap()
+                } else {
+                    values.witness[p.stage as usize - 1][p.stage_id as usize].clone()
+                };
+                assert_eq!(checked, expected, "{name}: column {} of stage {}", p.name, p.stage);
+            }
+
+            let report = check(&pk, &f.witness, &CheckOptions::default()).unwrap();
+            assert!(report.holds(), "{name}");
+            let stages: BTreeSet<u64> = report.constraints.iter().map(|c| c.stage).collect();
+            assert_eq!(stages, BTreeSet::from([1, 2]), "{name}");
+            let last = report.constraints.iter().position(|c| c.line.ends_with(line)).unwrap();
+            assert_eq!(report.constraints[last].stage, 2, "{name}");
+
+            let options = CheckOptions { max_rows: BUS_N };
+            let report = check(&pk, &broken, &options).unwrap();
+            assert_eq!(check(&pk, &broken, &options).unwrap(), report, "{name}: the same witness, the same report");
+            let expected: BTreeSet<(usize, usize, String)> = oracle
+                .check(&oracle_values(&broken))
+                .unwrap()
+                .into_iter()
+                .map(|failure| (failure.constraint, failure.row, failure.value.to_bytes().to_decimal()))
+                .collect();
+            assert_eq!(expected.iter().map(|(c, r, _)| (*c, *r)).collect::<Vec<_>>(), [(last, BUS_N - 1)], "{name}");
+            assert_eq!(found(&report), expected, "{name}");
+
+            // A denominator 0 on a row, with the check's challenges: the first term's (a, …)
+            // compressed, busid 1 + a·α + e·α², plus γ, is 0 at row 5, e the second expression.
+            let (alpha, gamma) = (Fr::from(&challenges[0]), Fr::from(&challenges[1]));
+            let mut zero = witness.clone();
+            let e = Fr::from(&zero.instances[0].stage1.get(5, 1).unwrap());
+            let a = -&(&(&(&Fr::one() + &(&e * &(&alpha * &alpha))) + &gamma) * &alpha.inv().unwrap());
+            zero.instances[0].stage1.set(5, 0, a.to_bytes()).unwrap();
+            match check(&pk, &zero, &options) {
+                Err(PilfflonkError::Unsatisfied(message)) => {
+                    assert!(message.contains("is 0 at row 5"), "{name}: {message}")
+                }
+                other => panic!("{name}: expected Unsatisfied, got {:?}", other.map(|_| ())),
+            }
+        }
+    }
+}
+
+/// The CLI on the sum bus (plan M30): the generator's witness passes; a lookup of a pair the table
+/// does not provide fails the bus's last row, which it names, of stage 2, at row N − 1; twice the same
+/// output, the challenges being fixed.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_cli_names_the_constraint_of_a_broken_bus() {
+    let f = fixture_of("sum_bus_cli", SUM_BUS, sum_bus::witness(), DEFAULT_MAX_CONSTRAINT_DEGREE, false);
+    let shape = ProvingKey::load(&f.proving_key).unwrap().witness_shape().unwrap();
+    let out = check_cli(&f.proving_key, &f.witness_dir, &[]);
+    assert!(out.status.success(), "{}", output(&out));
+    assert!(output(&out).contains("✓ All constraints for Instance #0 of SumBus were verified"), "{}", output(&out));
+
+    let dir = f.dir.file("broken");
+    sum_bus::witness_looking_up_what_is_not_provided().write(&dir, &shape).unwrap();
+    let out = check_cli(&f.proving_key, &dir, &[]);
+    let text = output(&out);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    for expected in [
+        "(stage 2) has 1 invalid rows -> std_sum.pil:",
+        "__L1__'*(0-gsum) == 0",
+        "✗ Failed at row 31 with value: ",
+        "✗ Not all constraints for Instance #0 of SumBus were verified",
+    ] {
+        assert!(text.contains(expected), "{expected:?} not in:\n{text}");
+    }
+    assert_eq!(text.matches("Failed at row").count(), 1, "{text}");
+    // The line of the failed row, without the log's timestamp.
+    let failed = |text: &str| text.lines().find_map(|l| l.find("Failed at row").map(|at| l[at..].to_string()));
+    let again = check_cli(&f.proving_key, &dir, &[]);
+    assert_eq!(failed(&output(&again)), failed(&text), "the same witness, the same value");
 }

@@ -16,7 +16,7 @@
 //! ```
 //!
 //! Everything that can be refused is refused before the first file is written: the pilout
-//! (§4.2.1), what the passes return, the extended domain, the names of the proof, the shape of
+//! (§4.2.1), what the passes return (the prover hints among it), the extended domain, the names of the proof, the shape of
 //! the witness and what the verifier would refuse of the vkey. The SRS is the first file, so that
 //! a ptau with too few powers writes nothing else; the vkey is the last, with its digest (A.6).
 //! The files depend only on the inputs: two runs write the same bytes.
@@ -44,7 +44,7 @@ use crate::global_info::global_info;
 use crate::keys::{air_verkey, load_srs, write_srs, x_2};
 use crate::layout::{max_degree, Packing};
 use crate::passes::run_passes;
-use crate::validate::{check_extended_domain, validate};
+use crate::validate::{check_extended_domain, check_prover_hints, validate};
 
 /// The directory the setup writes under the build directory.
 pub const PROVING_KEY_DIR: &str = "provingKey";
@@ -144,6 +144,8 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     // their bounds and their layout, grouped unless --no-packing (§4.2.4, A.1–A.3), in the
     // pilfflonkinfo.
     let result = run_passes(&pilout, air, opts.max_constraint_degree).with_context(refused)?;
+    // The prover hints, as the passes process them: each column of stage 2 or above produced by one.
+    check_prover_hints(&result, air_ref.name).with_context(refused)?;
     let AirSetup { info, committed } =
         air_setup(&result, air_ref, air.air, opts.max_q_degree, opts.packing()).with_context(refused)?;
     for name in &committed.unopened {

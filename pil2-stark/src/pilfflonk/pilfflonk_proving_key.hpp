@@ -81,6 +81,32 @@ struct ColumnRead {
 // std::invalid_argument if bin has no such expression.
 std::vector<ColumnRead> columnsRead(const ExpressionsBin &bin, uint64_t expId);
 
+// An operand of a std prover hint the prover reads on H: one of those the STARK's addHintField takes
+// (hints.cpp), but for an air value (v1 has none, D2).
+struct HintInput {
+    enum class Kind { Column, Expression, Number };
+    Kind kind = Kind::Number;
+    ColumnRead column{0, 0}; // Column: a fixed one (type 0) or a committed one of an earlier stage
+    int64_t offset = 0;      // Column: read at row i + offset, cyclically
+    uint64_t expId = 0;      // Expression: its code in the .bin's section 1
+    FrElement number;        // Number, in Montgomery form
+};
+
+// A gsum_col or gprod_col hint of the .bin (section 3; plan M30): the column it gives, reference, of
+// stage `stage` >= 2 at stagePos (cmPolsMap[cmId]), and numerator_air and denominator_air, whose
+// quotient on each row of H the column accumulates, as the STARK's accMulHintFields does: a running
+// sum for gsum_col, a running product for gprod_col (spec §4.4).
+struct StdHint {
+    uint64_t hint; // its index in the .bin's hints
+    std::string name;
+    bool prod;
+    uint64_t stage;
+    uint64_t stagePos;
+    uint64_t cmId;
+    HintInput numerator;
+    HintInput denominator;
+};
+
 // The proving key of one AIR (spec §4.4, step 1): its pilfflonkinfo, its bytecode, and its fixed
 // columns, both on H (for the intermediate polynomials) and as polynomials (for Q's coset and the
 // opening), with what the prover derives from them. Immutable once built.
@@ -89,7 +115,10 @@ std::vector<ColumnRead> columnsRead(const ExpressionsBin &bin, uint64_t expId);
 // are the pilfflonkinfo's, and the rows of the .bin's constraints lie in the trace), and what this
 // prover supports: a layout that packs every committed column once, and every piece of Q once, the
 // pieces Q0 … Q<m−1> of cmPolsMap (Q0 alone if Q is not split, piece i at stageId and stagePos i), in f
-// of their own opened at ξ, each f of the degree the pieces' bounds give it (A.2's cost).
+// of their own opened at ξ, each f of the degree the pieces' bounds give it (A.2's cost); and hints
+// that are gsum_col and gprod_col only (im_col waits for plan M31, and im_airval computes an air
+// value, D2), which give every column of stages 2 and above but the im pols, each once, from
+// operands that read the stages before it, and update no airgroup value (stdHints()).
 class AirKey {
 public:
     // From the files' contents. `name` is what the errors call the AIR. Throws FormatError.
@@ -156,6 +185,10 @@ public:
     uint64_t nQPieces() const { return qPositions.size(); }
     const LayoutPosition &qPosition(uint64_t piece) const { return qPositions.at(piece); }
 
+    // The gsum_col and gprod_col hints of the .bin, in its order, checked against the pilfflonkinfo:
+    // the prover computes each column of stages 2 and above that is not an im pol from one of them.
+    const std::vector<StdHint> &stdHints() const { return hints; }
+
 private:
     std::string airName;
     PilfflonkInfo pilfflonkInfo;
@@ -173,6 +206,7 @@ private:
     std::vector<ColumnRead> qColumns;
     uint64_t nFixed = 0;
     std::vector<LayoutPosition> qPositions; // by piece
+    std::vector<StdHint> hints;
 };
 
 // The proving key of a proof (spec §4.4, step 1; §4.2.6's provingKey/): the globalInfo, the SRS and

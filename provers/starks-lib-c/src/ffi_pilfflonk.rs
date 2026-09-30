@@ -410,7 +410,8 @@ impl<'ctx> PilFflonkInstance<'ctx> {
     }
 
     /// Commits stage `stage` with its challenges (none for stage 1): the commitments of its `n_out`
-    /// f, in the order of the layout.
+    /// f, in the order of the layout. Fails with [`Unsatisfied`](PilFflonkErrorKind::Unsatisfied) if
+    /// the denominator of a prover hint of the stage is 0 on a row.
     pub fn commit_stage(
         &mut self,
         stage: u32,
@@ -431,6 +432,28 @@ impl<'ctx> PilFflonkInstance<'ctx> {
             )
         })?;
         Ok(points(&out))
+    }
+
+    /// The `n_rows` values on H of the column of stage `stage` at `stage_pos`, as the prover
+    /// computed them once the stage is committed: for tests and diagnostics, not part of the proof.
+    pub fn column(
+        &self,
+        stage: u32,
+        stage_pos: u64,
+        n_rows: usize,
+    ) -> Result<Vec<[u8; PILFFLONK_FR_BYTES]>, PilFflonkError> {
+        let mut out = vec![[0u8; PILFFLONK_FR_BYTES]; n_rows];
+        // SAFETY: `out` has room for the `n_rows` scalars the call writes, and the handle is live.
+        check_status(unsafe {
+            pilfflonk_instance_column(
+                self.handle.as_ptr(),
+                stage,
+                stage_pos,
+                out.as_flattened_mut().as_mut_ptr(),
+                n_rows as u64,
+            )
+        })?;
+        Ok(out)
     }
 
     /// Commits `Q` with the challenges of its stage (`std_vc`): the commitments of its `n_out` f.
@@ -633,13 +656,17 @@ pub struct PilFflonkConstraintCheck {
 impl PilFflonkInstance<'_> {
     /// Checks the witness of the instance against the `n_constraints` constraints of its AIR
     /// ([`PilFflonkProverCtx::constraints`]), row by row, proving nothing: the im pols of stage 1 as
-    /// [`commit_stage`](Self::commit_stage) computes them, then each constraint's numerator on the
+    /// [`commit_stage`](Self::commit_stage) computes them, the columns of each later stage as it
+    /// computes them with `challenges` (those of stages 2 … nStages, by stage and then by stageId;
+    /// none for an AIR of one stage), committing nothing, then each constraint's numerator on the
     /// trace. Keeps the first `max_rows` rows where each fails. The instance may still be committed.
     ///
     /// Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if `n_constraints` is not
-    /// the AIR's, if the results do not fit in memory, and for a constraint of a stage ≥ 2 (plan M30).
+    /// the AIR's, nor the challenges its stages', or if the results do not fit in memory, and with
+    /// [`Unsatisfied`](PilFflonkErrorKind::Unsatisfied) if a prover hint's denominator is 0 on a row.
     pub fn check(
         &mut self,
+        challenges: &[[u8; PILFFLONK_FR_BYTES]],
         n_constraints: usize,
         max_rows: usize,
     ) -> Result<Vec<PilFflonkConstraintCheck>, PilFflonkError> {
@@ -655,12 +682,14 @@ impl PilFflonkInstance<'_> {
         let mut n_failed = vec![0u64; n_constraints];
         let mut rows = vec![0u64; entries];
         let mut values = vec![[0u8; PILFFLONK_FR_BYTES]; entries];
-        // SAFETY: `n_failed`, `rows` and `values` have the room for the `n_constraints` counts, and the
-        // `n_constraints·max_rows` rows and scalars, the call writes (each NULL if it writes none), and
-        // the handle is live.
+        // SAFETY: `challenges` holds the scalars the call reads; `n_failed`, `rows` and `values` have the
+        // room for the `n_constraints` counts, and the `n_constraints·max_rows` rows and scalars, the
+        // call writes (each NULL if it writes none), and the handle is live.
         check_status(unsafe {
             pilfflonk_check(
                 self.handle.as_ptr(),
+                ptr_or_null(challenges),
+                challenges.len() as u64,
                 max_rows as u64,
                 n_constraints as u64,
                 mut_ptr_or_null(&mut n_failed),
@@ -676,6 +705,32 @@ impl PilFflonkInstance<'_> {
                 PilFflonkConstraintCheck { n_failed: n, rows: entries.map(|e| (rows[e], values[e])).collect() }
             })
             .collect())
+    }
+
+    /// The `n_rows` values on H of the column of stage `stage` at `stage_pos` as [`check`](Self::check)
+    /// computes it with `challenges`: for tests and diagnostics, not part of a proof.
+    pub fn check_column(
+        &mut self,
+        challenges: &[[u8; PILFFLONK_FR_BYTES]],
+        stage: u32,
+        stage_pos: u64,
+        n_rows: usize,
+    ) -> Result<Vec<[u8; PILFFLONK_FR_BYTES]>, PilFflonkError> {
+        let mut out = vec![[0u8; PILFFLONK_FR_BYTES]; n_rows];
+        // SAFETY: `challenges` holds the scalars the call reads, `out` has room for the `n_rows` it
+        // writes, and the handle is live.
+        check_status(unsafe {
+            pilfflonk_check_column(
+                self.handle.as_ptr(),
+                ptr_or_null(challenges),
+                challenges.len() as u64,
+                stage,
+                stage_pos,
+                out.as_flattened_mut().as_mut_ptr(),
+                n_rows as u64,
+            )
+        })?;
+        Ok(out)
     }
 }
 

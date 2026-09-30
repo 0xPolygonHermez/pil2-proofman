@@ -222,15 +222,17 @@ extern "C" {
     void pilfflonk_instance_free(void *instance);
 
     // Commits stage `stage` of the instance (spec §4.4 step 2): its columns (the witness's for stage
-    // 1), its intermediate polynomials (with the AIR's bytecode on H), and for each f of the stage in
-    // the layout, its columns interpolated, blinded as spec A.3 says (p' = p + (X^N − 1)·b, b of
-    // |O_f| + 1 coefficients), packed and committed. `challenges` holds the n_challenges challenges of
-    // the stage by stageId (none for stage 1); out_g1 receives the n_out commitments of the stage's f,
-    // in the order of the layout, n_out being their number.
+    // 1, and for a stage >= 2 those its std prover hints give, gsum_col and gprod_col, as the STARK's
+    // calculateWitnessSTD computes them: plan M30), its intermediate polynomials (with the AIR's
+    // bytecode on H), and for each f of the stage in the layout, its columns interpolated, blinded as
+    // spec A.3 says (p' = p + (X^N − 1)·b, b of |O_f| + 1 coefficients), packed and committed.
+    // `challenges` holds the n_challenges challenges of the stage by stageId (none for stage 1);
+    // out_g1 receives the n_out commitments of the stage's f, in the order of the layout, n_out being
+    // their number.
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL with a count other than 0, if stage is not the
-    // next stage to commit (1, 2, … nStages in turn), if a count is not the stage's, or for a stage >= 2,
-    // whose columns come from prover hints this prover does not compute yet (plan M30);
-    // PILFFLONK_ERR_NON_CANONICAL if a challenge is not below r.
+    // next stage to commit (1, 2, … nStages in turn), or if a count is not the stage's;
+    // PILFFLONK_ERR_NON_CANONICAL if a challenge is not below r; PILFFLONK_ERR_UNSATISFIED if the
+    // denominator of a hint is 0 on a row, where its column has no value (the stage stays uncommitted).
     int pilfflonk_commit_stage(void *instance, uint32_t stage, const uint8_t *challenges, uint64_t n_challenges,
                                uint8_t *out_g1, uint64_t n_out);
 
@@ -245,6 +247,15 @@ extern "C" {
     // committed yet or Q is committed already.
     int pilfflonk_commit_q(void *instance, const uint8_t *challenges, uint64_t n_challenges, uint8_t *out_g1,
                            uint64_t n_out);
+
+    // Writes to out the n = N values on H of the column of stage `stage` (1 … nStages) at stage_pos of
+    // the instance, as scalars, in the order of the rows: as the prover computed it, the witness's, a
+    // prover hint's or an im pol's, once its stage is committed. For tests and diagnostics (plan M30:
+    // the Rust oracle checks the hints' columns against it); it is not part of the proof.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL, if the stage is not committed yet or has no
+    // column at stage_pos, or if n is not N.
+    int pilfflonk_instance_column(const void *instance, uint32_t stage, uint64_t stage_pos, uint8_t *out,
+                                  uint64_t n);
 
     // The opening of a proof (spec §4.4 steps 4 and 5), or NULL: every f of the instances, in the
     // global order of spec A.5, evaluated at ξ = xi_seed^powerW (powerW the lcm of every k). The
@@ -297,7 +308,11 @@ extern "C" {
     //   n = pilfflonk_ctx_n_constraints(ctx, …)
     //   pilfflonk_ctx_constraint(ctx, …, c, …), pilfflonk_ctx_constraint_line(ctx, …, c, …), c < n
     //   inst = pilfflonk_instance_new(ctx, …)
-    //   pilfflonk_check(inst, max_rows, n, …)
+    //   pilfflonk_check(inst, challenges of stages 2 … nStages, max_rows, n, …)
+    //
+    // The columns of the stages after the first need the challenges of their stages, which the check
+    // is given: proofman_pilfflonk::check derives them from fixed elements, as the STARK's
+    // verify-constraints does (spec §4.4, "Depuració"; plan M30). Nothing is committed.
     // ---------------------------------------------------------------------------------------------
 
     // Writes to out the number of constraints of air air_id of airgroup airgroup_id.
@@ -320,20 +335,32 @@ extern "C" {
                                       uint8_t *out, uint64_t n);
 
     // Checks the witness of the instance: computes its intermediate polynomials of stage 1 as
-    // pilfflonk_commit_stage does, and then each constraint's numerator on H with the AIR's bytecode.
-    // For each constraint c of the n_constraints of its AIR, writes to out_n_failed[c] the number of
-    // rows of its domain where the numerator is not 0 and, for the first min(out_n_failed[c],
-    // max_rows) of them in increasing order, entry c·max_rows + j of out_rows (the row) and of
-    // out_values (the numerator there, a scalar); its other entries up to (c + 1)·max_rows are zeroed.
+    // pilfflonk_commit_stage does; for each stage >= 2, its columns as pilfflonk_commit_stage computes
+    // them (its prover hints' and then its intermediate polynomials), with `challenges`, the
+    // n_challenges challenges of stages 2 … nStages by stage and then by stageId (none for an AIR of
+    // one stage), into buffers of its own; and then each constraint's numerator on H with the AIR's
+    // bytecode. For each constraint c of the n_constraints of its AIR, writes to out_n_failed[c] the
+    // number of rows of its domain where the numerator is not 0 and, for the first
+    // min(out_n_failed[c], max_rows) of them in increasing order, entry c·max_rows + j of out_rows (the
+    // row) and of out_values (the numerator there, a scalar); its other entries up to
+    // (c + 1)·max_rows are zeroed.
     // The instance may be committed before, between or after, as if the check had not run.
     // PILFFLONK_OK whether or not every constraint holds: out_n_failed says. With max_rows = 0 it only
     // counts, and out_rows and out_values may be NULL; out_n_failed may be NULL if n_constraints is 0.
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL as it may not be, if n_constraints is not the
-    // AIR's number of constraints, if n_constraints·max_rows scalars exceed 2^64 bytes, or, before
-    // anything is computed, for a constraint of a stage >= 2, whose columns come from prover hints
-    // this prover does not compute yet (plan M30).
-    int pilfflonk_check(void *instance, uint64_t max_rows, uint64_t n_constraints, uint64_t *out_n_failed,
-                        uint64_t *out_rows, uint8_t *out_values);
+    // AIR's number of constraints or n_challenges the number of challenges of its stages 2 … nStages,
+    // if n_constraints·max_rows scalars exceed 2^64 bytes, or, before anything is computed, for a
+    // constraint of a stage the AIR does not have; PILFFLONK_ERR_NON_CANONICAL if a challenge is not
+    // below r; PILFFLONK_ERR_UNSATISFIED if the denominator of a prover hint is 0 on a row.
+    int pilfflonk_check(void *instance, const uint8_t *challenges, uint64_t n_challenges, uint64_t max_rows,
+                        uint64_t n_constraints, uint64_t *out_n_failed, uint64_t *out_rows, uint8_t *out_values);
+
+    // Writes to out the n = N values on H of the column of stage `stage` (1 … nStages) at stage_pos, as
+    // pilfflonk_check computes it with the same challenges. For tests and diagnostics (plan M30: the
+    // Rust oracle checks the check's columns against it). Errors as pilfflonk_check, and
+    // PILFFLONK_ERR_INVALID_ARGUMENT if out is NULL, the stage has no column at stage_pos, or n is not N.
+    int pilfflonk_check_column(void *instance, const uint8_t *challenges, uint64_t n_challenges, uint32_t stage,
+                               uint64_t stage_pos, uint8_t *out, uint64_t n);
 
 #ifdef __cplusplus
 }

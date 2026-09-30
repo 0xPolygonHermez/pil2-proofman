@@ -4,8 +4,8 @@
 // check that they are what they compute:
 //
 // - Sample.bin: the bytecode of sample() in bytecode.rs, whose every field testReadsTheRustSample
-//   checks; Sample.expected.json: inputs for its codes, and what the Rust evaluator (num-bigint)
-//   gives them.
+//   checks, its hints (revision 3, plan M30) too; Sample.expected.json: inputs for its codes, and
+//   what the Rust evaluator (num-bigint) gives them.
 // - fibonacci/: the Fibonacci of M13 as setup-pilfflonk writes it, M13's witness, the qVerifier as a
 //   bytecode, and the oracle's (M14) evaluations and Q at a point.
 //
@@ -18,6 +18,7 @@
 #include <omp.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +33,7 @@
 #include "pilfflonk_error.hpp"
 #include "pilfflonk_expressions.hpp"
 #include "pilfflonk_expressions_bin.hpp"
+#include "pilfflonk_fr.hpp"
 #include "pilfflonk_info.hpp"
 #include "pilfflonk_lde.hpp"
 
@@ -47,6 +49,9 @@ using PilFflonk::ExpressionsBin;
 using PilFflonk::ExpressionsDomain;
 using PilFflonk::FormatError;
 using PilFflonk::FrElement;
+using PilFflonk::Hint;
+using PilFflonk::HintFieldValue;
+using PilFflonk::HintOp;
 using PilFflonk::IoError;
 using PilFflonk::Lde;
 using PilFflonk::ParserArgs;
@@ -216,10 +221,54 @@ void testReadsTheRustSample() {
                 {Op{2, 0, 1, 0, 3, 1, 1, 2}, Op{0, 0, 0, 0, 1, 6, 0, 0}, Op{1, 0, 6, 0, 0, 9, 1, 0},
                  Op{1, 0, 1, 2, 2, 6, 0, 0}, Op{0, 1, 2, 0, 0, 9, 2, 0}, Op{0, 0, 6, 0, 0, 6, 1, 0}});
     assert(contains(thrown<std::invalid_argument>([&] { bin.expression(4); }), "no expression 4"));
+
+    // The hints: sample_hints() of bytecode.rs. Openings −1, 0 and 2 are indices 1, 2 and 4.
+    assert(bin.hints.size() == 2);
+    assert(bin.hintIds("gsum_col") == std::vector<uint64_t>{0});
+    assert(bin.hintIds("gprod_col") == std::vector<uint64_t>{1});
+    assert(bin.hintIds("im_col").empty());
+    auto expectValue = [&](const HintFieldValue &v, HintOp op, uint64_t id, const std::vector<uint64_t> &pos) {
+        assert(v.op == op && v.pos == pos);
+        if (op != HintOp::Number && op != HintOp::String) assert(v.id == id);
+    };
+    auto only = [&](const Hint &h, size_t f, const std::string &name) -> const HintFieldValue & {
+        assert(h.fields[f].name == name && h.fields[f].values.size() == 1);
+        return h.fields[f].values[0];
+    };
+    const Hint &gsum = bin.hints[0];
+    assert(gsum.name == "gsum_col" && gsum.fields.size() == 6);
+    expectValue(only(gsum, 0, "reference"), HintOp::Cm, 3, {});
+    assert(only(gsum, 0, "reference").rowOffsetIndex == 2);
+    expectValue(only(gsum, 1, "numerator_air"), HintOp::Tmp, 9, {});
+    expectValue(only(gsum, 2, "denominator_air"), HintOp::Const, 0, {});
+    assert(only(gsum, 2, "denominator_air").rowOffsetIndex == 1);
+    const char *numbers3[3][2] = {{"numerator_direct", "0"}, {"denominator_direct", "1"}, {"result", "0"}};
+    for (size_t f = 3; f < 6; ++f) {
+        const HintFieldValue &v = only(gsum, f, numbers3[f - 3][0]);
+        assert(v.op == HintOp::Number && F().toString(v.value) == numbers3[f - 3][1]);
+    }
+    const Hint &gprod = bin.hints[1];
+    assert(gprod.name == "gprod_col" && gprod.fields.size() == 6);
+    expectValue(only(gprod, 0, "reference"), HintOp::Cm, 3, {});
+    assert(only(gprod, 0, "reference").rowOffsetIndex == 4);
+    const std::vector<HintFieldValue> &terms = gprod.fields[1].values;
+    assert(gprod.fields[1].name == "terms" && terms.size() == 4);
+    expectValue(terms[0], HintOp::Challenge, 1, {0, 0});
+    expectValue(terms[1], HintOp::Public, 0, {0, 1});
+    expectValue(terms[2], HintOp::AirValue, 0, {1, 0});
+    expectValue(terms[3], HintOp::ProofValue, 1, {1, 1});
+    const std::vector<HintFieldValue> &names = gprod.fields[2].values;
+    assert(gprod.fields[2].name == "names" && names.size() == 2);
+    expectValue(names[0], HintOp::String, 0, {0});
+    expectValue(names[1], HintOp::String, 0, {1});
+    assert(names[0].stringValue == "Sample" && names[1].stringValue.empty());
+    assert(F().toString(only(gprod, 3, "wide").value) == WIDE);
+    expectValue(only(gprod, 4, "group"), HintOp::AirgroupValue, 0, {});
+    assert(F().toString(only(gprod, 5, "result").value) == R_MINUS_ONE);
 }
 
 // What the Rust reader refuses, the C++ one refuses too.
-void testRefusesWhatIsNotRevision2() {
+void testRefusesWhatIsNotRevision3() {
     const std::vector<uint8_t> bytes = readBytes(fixture("Sample.bin"));
     auto refused = [&](std::vector<uint8_t> b, const std::string &why) {
         const std::string message = thrown<FormatError>([&] { ExpressionsBin::parse(b.data(), b.size(), "Sample.bin"); });
@@ -242,8 +291,25 @@ void testRefusesWhatIsNotRevision2() {
     std::vector<uint8_t> longer = bytes;
     longer.push_back(0);
     refused(longer, "after its content");
-    refused(patched(bytes.size() - 4, {1, 0, 0, 0}), "1 hints");
     refused(patched(section1 + 44, {9, 0, 0, 0}), "maxTmp, maxArgs and maxOps"); // maxTmp
+    // A revision-2 file: its version, and its prefix's.
+    std::vector<uint8_t> revision2 = patched(4, {2, 0, 0x66, 0x70});
+    std::copy_n(revision2.begin() + 4, 4, revision2.begin() + section1);
+    refused(revision2, "version 0x70660002, and pilfflonk's is 0x70660003: not a pilfflonk bytecode of revision 3");
+
+    // The hints, section 3, the last of the file: its last value is the number r − 1 of no position.
+    const size_t tail = bytes.size() - 4 - 32;
+    refused(patched(tail, std::vector<uint8_t>(PilFflonk::FR_MODULUS_LE, PilFflonk::FR_MODULUS_LE + 32)),
+            "hint 1 (`gprod_col`), field `result`: a number not below r");
+    const std::string number = "number";
+    assert(std::string(bytes.begin() + tail - 7, bytes.begin() + tail - 1) == number);
+    refused(patched(tail - 7, {'c', 'u', 's', 't', 'o', 'm'}), "unknown value kind \"custom\"");
+    refused(patched(bytes.size() - 4, {1, 0, 0, 0}), "the hints: it ends before its content does"); // nPos 1
+    // The numerator of the first hint, expression 9, becomes one section 1 does not have.
+    const std::vector<uint8_t> tmp9 = {'t', 'm', 'p', 0, 9, 0, 0, 0};
+    const size_t at = std::search(bytes.begin(), bytes.end(), tmp9.begin(), tmp9.end()) - bytes.begin();
+    assert(at < bytes.size());
+    refused(patched(at + 4, {10, 0, 0, 0}), "expression 10, which section 1 does not have");
 
     // The first op of section 1: after the prefix, the counts and the four entries.
     size_t pos = section1 + 44 + 28;
@@ -631,7 +697,7 @@ void testTheFibonaccisQVerifierIsTheOracles() {
 
 void runExpressionsTests() {
     testReadsTheRustSample();
-    testRefusesWhatIsNotRevision2();
+    testRefusesWhatIsNotRevision3();
     testSampleGivesTheRustEvaluatorsValues();
     testZerofiersOnTheCoset();
     testTheFibonaccisQIsAPolynomialOfItsDegree();

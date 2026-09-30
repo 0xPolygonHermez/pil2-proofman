@@ -11,6 +11,14 @@
 //!   directory), the `qVerifier` encoded as a bytecode of one expression (`Fibonacci.qverifier.bin`),
 //!   and what the oracle (M14) gives at a point `ξ` (`Fibonacci.oracle.json`): the evaluations of
 //!   the evMap, the zerofier terms and `Q(ξ)`.
+//! - `sum_bus/`: the lookup on the std's sum bus of plan M30, `N = 32`, of two stages. It has what
+//!   `setup-pilfflonk --no-packing` writes for it (`SumBus.bin`, whose section 3 has the hint
+//!   `gsum_col`, `.pilfflonkinfo.json`, `.const`), the stage-1 traces of its generator's witness
+//!   (`SumBus.witness.bin`) and of the one that looks up a value the table does not provide
+//!   (`SumBus.broken.bin`), and what the oracle gives for stage 2 with fixed challenges
+//!   (`SumBus.oracle.json`): the challenges, `std_alpha` and `std_gamma`, the publics, and every
+//!   column of stage 2 by `stagePos`, `gsum` from the pilout's hint and the im pols from their
+//!   expressions.
 //!
 //! The tests below check that the checked-in files are what they compute, and write them with
 //! `PILFFLONK_UPDATE_FIXTURES=1`, as the Sample.bin test does. The Fibonacci one needs `PIL2C_EXEC`.
@@ -35,6 +43,9 @@ use super::*;
 /// M13's generator, `proofman-pilfflonk`'s test module, included as it is.
 #[path = "../../../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
+/// The generator of the sum bus (plan M30).
+#[path = "../../../../pilfflonk/tests/data/sum_bus.rs"]
+mod sum_bus;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bytecode");
 
@@ -415,6 +426,7 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
             code: q_verifier.clone(),
         }],
         constraints: Vec::new(),
+        hints: Vec::new(),
     };
     let q_verifier_path = dir.0.join("Fibonacci.qverifier.bin");
     q_verifier_bin.write(&q_verifier_path).unwrap();
@@ -469,4 +481,77 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
     check_fixture("fibonacci/Fibonacci.witness.bin", witness.instances[0].stage1.trace_bytes());
     check_fixture("fibonacci/Fibonacci.qverifier.bin", &fs::read(&q_verifier_path).unwrap());
     check_fixture("fibonacci/Fibonacci.oracle.json", &json_text(&oracle_json));
+}
+
+// ---------------------------------------------------------------------------------------------
+// sum_bus/
+// ---------------------------------------------------------------------------------------------
+
+/// The challenges of stage 2 of the sum bus's fixture, `[std_alpha, std_gamma]`: fixed, so that the
+/// fixture is deterministic, as good as random.
+fn sum_bus_challenges() -> Vec<Fr> {
+    vec![Fr::from_u64(0xa1fa).pow_u64(55), Fr::from_u64(0x9a33a).pow_u64(66)]
+}
+
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_sum_bus_fixtures_are_the_setups_and_the_oracles() {
+    let pilout = compile_bn254("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil");
+    let dir = Scratch::new("sum_bus");
+    let opts = SetupPilfflonkOptions {
+        airout_path: dir.0.join("sum_bus.pilout"),
+        build_dir: dir.0.join("build"),
+        powers_of_tau: dir.0.join("tau_one.ptau"),
+        max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
+        extra_muls: DEFAULT_EXTRA_MULS,
+        max_q_degree: DEFAULT_MAX_Q_DEGREE,
+        no_packing: true,
+    };
+    fs::write(&opts.airout_path, pilout.encode_to_vec()).unwrap();
+    write_tau_one_ptau(&opts.powers_of_tau, 1024).unwrap();
+    run_setup_pilfflonk(&opts).unwrap();
+    let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
+    let gi = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap();
+    let air_file = |file| gi.air_file(&proving_key, 0, 0, file).unwrap();
+    let info = PilfflonkInfo::read(&air_file(AirFile::PilfflonkInfo)).unwrap();
+    assert_eq!(info.n_stages, 2);
+    let bin = fs::read(air_file(AirFile::Bin)).unwrap();
+    assert_eq!(Bytecode::from_bytes(&bin).unwrap().hints.len(), 1);
+
+    // The oracle's stage 2, with the fixture's challenges.
+    let witness = sum_bus::witness();
+    let witness_dir = dir.0.join("witness");
+    fs::create_dir_all(&witness_dir).unwrap();
+    let shape = oracle::witness_shape(&pilout).unwrap();
+    witness.write(&witness_dir, &shape).unwrap();
+    let air_oracle = AirOracle::new(&pilout, 0, 0).unwrap();
+    let source = FileWitnessSource::open(&witness_dir, &shape).unwrap();
+    let mut values = air_oracle.values(&source, 0).unwrap();
+    let challenges = sum_bus_challenges();
+    values.challenges[1] = challenges.clone();
+    air_oracle.fill_hint_columns(&mut values, 2).unwrap();
+    assert!(air_oracle.check(&values).unwrap().is_empty(), "the generator's witness satisfies the AIR");
+    let mut stage_2 = vec![Value::Null; info.map_sections_n["cm2"] as usize];
+    for p in info.cm_pols_map.iter().filter(|p| p.stage == 2) {
+        let column = if p.im_pol {
+            air_oracle.expression_rows(&values, p.exp_id.unwrap() as usize).unwrap()
+        } else {
+            values.witness[1][p.stage_id as usize].clone()
+        };
+        stage_2[p.stage_pos as usize] = decs(&column);
+    }
+    assert!(stage_2.iter().all(|c| !c.is_null()));
+    let publics: Vec<Fr> = witness.publics.iter().map(from_bytes).collect();
+    let oracle_json = json!({
+        "challenges": decs(&challenges),
+        "publics": decs(&publics),
+        "stage2": stage_2,
+    });
+    check_fixture("sum_bus/SumBus.bin", &bin);
+    check_fixture("sum_bus/SumBus.pilfflonkinfo.json", &fs::read(air_file(AirFile::PilfflonkInfo)).unwrap());
+    check_fixture("sum_bus/SumBus.const", &fs::read(air_file(AirFile::Const)).unwrap());
+    check_fixture("sum_bus/SumBus.witness.bin", witness.instances[0].stage1.trace_bytes());
+    let broken = sum_bus::witness_looking_up_what_is_not_provided();
+    check_fixture("sum_bus/SumBus.broken.bin", broken.instances[0].stage1.trace_bytes());
+    check_fixture("sum_bus/SumBus.oracle.json", &json_text(&oracle_json));
 }

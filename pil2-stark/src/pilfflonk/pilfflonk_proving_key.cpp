@@ -214,6 +214,142 @@ std::vector<ColumnRead> columnsRead(const ExpressionsBin &bin, uint64_t expId) {
     return reads;
 }
 
+namespace {
+
+// The gsum_col and gprod_col hints of `bin`, checked against `info` as AirKey says (plan M30). cmIds is
+// AirKey::cmIds(). Throws FormatError, naming the AIR, the hint and what is wrong.
+std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &info,
+                                const std::vector<std::vector<uint64_t>> &cmIds, const std::string &name) {
+    std::vector<StdHint> hints;
+    for (uint64_t h = 0; h < bin.hints.size(); ++h) {
+        const Hint &hint = bin.hints[h];
+        auto refused = [&](const std::string &what) {
+            return FormatError(name + ": .bin: hint " + std::to_string(h) + " (" + hint.name + ") " + what);
+        };
+        if (hint.name == "im_col") {
+            throw refused("gives an intermediate column, which this prover does not compute yet (plan M31)");
+        }
+        if (hint.name == "im_airval") {
+            throw refused("gives an air value, and pilfflonk has none (spec D2)");
+        }
+        if (hint.name != "gsum_col" && hint.name != "gprod_col") {
+            throw refused("is none this prover computes: gsum_col and gprod_col");
+        }
+        // The value of a field of one value, or null if the hint has no such field.
+        auto single = [&](const std::string &field) -> const HintFieldValue * {
+            const auto it = std::find_if(hint.fields.begin(), hint.fields.end(),
+                                         [&](const HintField &f) { return f.name == field; });
+            if (it == hint.fields.end()) {
+                return nullptr;
+            }
+            if (it->values.size() != 1 || !it->values[0].pos.empty()) {
+                throw refused("holds an array in its field " + field + ", and the std's holds one value");
+            }
+            return &it->values[0];
+        };
+        auto required = [&](const std::string &field) -> const HintFieldValue & {
+            const HintFieldValue *v = single(field);
+            if (v == nullptr) {
+                throw refused("has no field " + field);
+            }
+            return *v;
+        };
+        auto offsetOf = [&](const HintFieldValue &v, const std::string &field) {
+            if (v.rowOffsetIndex >= info.openingPoints.size()) {
+                throw refused("reads in its field " + field + " a column at opening point " +
+                              std::to_string(v.rowOffsetIndex) + ", of " + std::to_string(info.openingPoints.size()));
+            }
+            return info.openingPoints[v.rowOffsetIndex];
+        };
+
+        StdHint entry;
+        entry.hint = h;
+        entry.name = hint.name;
+        entry.prod = hint.name == "gprod_col";
+        // reference: a column of stage 2 or above, at its own row, not an im pol.
+        const HintFieldValue &reference = required("reference");
+        if (reference.op != HintOp::Cm || reference.id >= info.cmPolsMap.size()) {
+            throw refused("has a reference that is not a committed column");
+        }
+        const PolMapEntry &column = info.cmPolsMap[reference.id];
+        if (column.stage < 2 || column.stage > info.nStages || column.imPol || offsetOf(reference, "reference") != 0) {
+            throw refused("has as reference " + column.name + " (stage " + std::to_string(column.stage) +
+                          "), which is not a column of stages 2 … nStages, read at its own row, that is not an im pol");
+        }
+        entry.stage = column.stage;
+        entry.stagePos = column.stagePos;
+        entry.cmId = reference.id;
+
+        // numerator_air and denominator_air: what addHintField takes, reading only the stages before.
+        auto input = [&](const std::string &field) {
+            const HintFieldValue &v = required(field);
+            auto readsEarlier = [&](const ColumnRead &c) {
+                const bool earlier = c.type == 0 ? c.index < info.constPolsMap.size()
+                                                 : c.type < entry.stage && c.index < cmIds[c.type].size() &&
+                                                       cmIds[c.type][c.index] != AirKey::NOT_COMMITTED;
+                if (!earlier) {
+                    throw refused("reads in its field " + field + " the column of stage " + std::to_string(c.type) +
+                                  " at stagePos " + std::to_string(c.index) + ", which is not computed before stage " +
+                                  std::to_string(entry.stage));
+                }
+            };
+            HintInput in;
+            if (v.op == HintOp::Cm || v.op == HintOp::Const) {
+                const bool cm = v.op == HintOp::Cm;
+                if (v.id >= (cm ? info.cmPolsMap.size() : info.constPolsMap.size())) {
+                    throw refused("has in its field " + field + " a column its maps do not have");
+                }
+                in.kind = HintInput::Kind::Column;
+                const PolMapEntry *p = cm ? &info.cmPolsMap[v.id] : nullptr;
+                in.column = cm ? ColumnRead{uint32_t(p->stage), uint32_t(p->stagePos)} : ColumnRead{0, uint32_t(v.id)};
+                in.offset = offsetOf(v, field);
+                readsEarlier(in.column);
+            } else if (v.op == HintOp::Tmp) {
+                in.kind = HintInput::Kind::Expression;
+                in.expId = v.id;
+                for (const ColumnRead &c : columnsRead(bin, v.id)) {
+                    readsEarlier(c);
+                }
+            } else if (v.op == HintOp::Number) {
+                in.kind = HintInput::Kind::Number;
+                in.number = v.value;
+            } else if (v.op == HintOp::AirValue) {
+                throw refused("reads an air value in its field " + field + ", and pilfflonk has none (spec D2)");
+            } else {
+                throw refused("has in its field " + field + " a value that is no expression, column or number");
+            }
+            return in;
+        };
+        entry.numerator = input("numerator_air");
+        entry.denominator = input("denominator_air");
+        // result updates an airgroup value (updateAirgroupValue), and v1 has none (D2): the STARK's
+        // calculateWitnessSTD reads it, and numerator_direct and denominator_direct, only if the AIR has
+        // airgroup values; the std writes a number in STD_MODE_ONE_INSTANCE.
+        const HintFieldValue *result = single("result");
+        if (!info.airgroupValuesMap.empty() || (result != nullptr && result->op != HintOp::Number)) {
+            throw refused("updates an airgroup value, and pilfflonk has none (spec D2): the std has one unless it is "
+                          "in STD_MODE_ONE_INSTANCE");
+        }
+        hints.push_back(std::move(entry));
+    }
+
+    // Each column of stages 2 … nStages but the im pols, the reference of one hint.
+    std::vector<uint64_t> produced(info.cmPolsMap.size(), 0);
+    for (const StdHint &hint : hints) {
+        ++produced[hint.cmId];
+    }
+    for (uint64_t id = 0; id < info.cmPolsMap.size(); ++id) {
+        const PolMapEntry &p = info.cmPolsMap[id];
+        if (p.stage >= 2 && p.stage <= info.nStages && !p.imPol && produced[id] != 1) {
+            failAir(name, ".bin: " + std::to_string(produced[id]) + " hints give the column " + p.name + " of stage " +
+                              std::to_string(p.stage) + ", which one gsum_col or gprod_col must");
+        }
+    }
+    return hints;
+}
+
+} // namespace
+
 AirDegrees airDegrees(const PilfflonkInfo &info, const std::string &name) {
     AirDegrees d{};
     if (info.nBits > MAX_NBITS_EXT) {
@@ -420,6 +556,7 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
             }
         }
     }
+    hints = stdHintsOf(expressionsBin, info, cmIdsByStage, name);
     qColumns = readsOf(info.cExpId, "Q (cExpId)");
     for (const ColumnRead &c : qColumns) {
         const bool committed =

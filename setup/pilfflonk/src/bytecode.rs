@@ -1,9 +1,10 @@
 //! `<air>.bin`: the prover bytecode over `Fr` (spec §4.2.5, A.6). It is the code the prover runs
-//! to compute the intermediate polynomials and `Q` (§4.4), and the code `pilfflonk check` runs to
-//! say which constraint fails on which row. [`write_air_bin`] writes it from what
+//! to compute the intermediate polynomials and `Q` (§4.4), the prover hints that compute the
+//! columns of stage 2 and above (plan M30), and the code `pilfflonk check` runs to say which
+//! constraint fails on which row. [`write_air_bin`] writes it from what
 //! `pil_info::run(…, &PilInfoCfg::bn254(), …)` returns, and [`Bytecode::read`] reads it back.
 //!
-//! # Format, revision 2
+//! # Format, revision 3
 //!
 //! The file follows the STARK's prover `.bin` field by field, with every value of dimension 1.
 //! That is the file that `setup/pil2-stark/src/io/bin_file.rs` writes, with the ops and args of
@@ -12,19 +13,22 @@
 //! force it to:
 //!
 //! - **The dimension fields go:** `destDim`, `nTemp3` and `maxTmp3`, and with them the
-//!   temporaries of the extension field.
+//!   temporaries of the extension field; in the hints, the `dim` of an expression.
 //! - **The args are u32:** the STARK's u16 truncates an index above 65535 without a word.
-//! - **The numbers are 32-byte canonical `Fr`, little-endian:** the STARK's u64 cannot hold them.
+//! - **The numbers are 32-byte canonical `Fr`, little-endian:** the STARK's u64 cannot hold them,
+//!   in the code and in the hints.
 //! - **Section 1 starts with a prefix:** pilfflonk's version, `n8`, `r` and `nStages`.
 //! - **A copy is written as `add(a, 0)`.** The STARK writes a copy as an add without its second
 //!   operand, three args short, and its interpreter, which reads 8 args per op, cannot run that.
+//!
+//! Revision 2 had no hints: its section 3 was `nHints = 0`. Revision 3 writes them (plan M30).
 //!
 //! Every integer is little-endian. The container is the STARK's `"chps"` binfile, written with
 //! `pil-info`'s `BinFileWriter`, with the STARK's three sections:
 //!
 //! ```text
 //! "chps"      4 bytes
-//! version     u32     0x7066_0002: "pf" in the high half, revision 2 in the low half
+//! version     u32     0x7066_0003: "pf" in the high half, revision 3 in the low half
 //! nSections   u32     3
 //! 3 × { id u32, size u64, payload }, in the order 1, 2, 3
 //! ```
@@ -40,7 +44,7 @@
 //! and that of `Q` by `cExpId` (`pilfflonkinfo.json`).
 //!
 //! ```text
-//! version      u32    0x7066_0002, the container's                    ┐
+//! version      u32    0x7066_0003, the container's                    ┐
 //! n8           u32    32, the bytes of an element                     │ pilfflonk's prefix
 //! r            32 bytes, the modulus of Fr                            │
 //! nStages      u32    the AIR's: the operand types depend on it       ┘
@@ -85,9 +89,34 @@
 //! ops, args, numbers, as in section 1
 //! ```
 //!
-//! **Section 3, hints.** `nHints u32`, and nothing else in this revision. Its reader refuses any
-//! other value than 0. Fase 1 has no prover hints: the setup refuses them, and the witness and debug
-//! hints are not the prover's (§4.2.1). Fase 2 will write each hint after `nHints` as the STARK does.
+//! **Section 3, hints.** The prover hints the setup supports, `gsum_col` and `gprod_col`
+//! (`crate::validate::SUPPORTED_PROVER_HINTS`), in the pilout's order, as `pil-info` processes
+//! them (`addHintsInfo`) and the STARK's `write_hints_section` writes them. The witness and debug
+//! hints are not the prover's, and the setup ignores them (§4.2.1): they are not written.
+//!
+//! ```text
+//! nHints u32
+//! nHints × {
+//!   name       string
+//!   nFields    u32
+//!   nFields × {
+//!     name     string
+//!     nValues  u32    one, or the elements of an array field, each with its position
+//!     nValues × {
+//!       op     string one of the STARK's: cm const tmp number string public challenge
+//!                     airvalue airgroupvalue proofvalue (no custom, P5)
+//!       number: 32 bytes, a canonical Fr, little-endian; string: string; the others: id u32
+//!       rowOffsetIndex u32   cm and const only: the index of its row offset in openingPoints
+//!       nPos   u32, pos u32 × nPos   its position in the field's array; none for a single value
+//!     }
+//!   }
+//! }
+//! ```
+//!
+//! The `id` is the STARK's: the `cmPolsMap` index of a cm, the `constPolsMap` index of a const,
+//! the `expId` of a tmp (an expression of section 1, which the reader requires), and the index in
+//! its map of the rest. The STARK's `dim` of a tmp and `commitId` of a custom column are not
+//! written: every value has dimension 1, and there are no custom commits.
 //!
 //! **Ops.** One byte per op: in the STARK, the index of its combination of dimensions. Here it is
 //! always 0, which is `dim1 = dim1 ∘ dim1`.
@@ -169,7 +198,9 @@
 //! It is `ExpressionsBin::loadExpressionsBin` without the dimension fields:
 //! - read and check the prefix;
 //! - read args as u32;
-//! - read the numbers as 32-byte elements, converted to Montgomery form once, at load time.
+//! - read the numbers as 32-byte elements, converted to Montgomery form once, at load time;
+//! - read the hints as the STARK's, with 32-byte numbers and no `dim`; the prover looks them up by
+//!   name (`getHintIdsByName`) and checks their operands against the pilfflonkinfo (M30).
 //!
 //! The interpreter is `expressions_pack.hpp`'s over `Fr`, with the case of op 0 only: 8 args per
 //! op and the same buffer types. As the STARK's allocation does, the temporaries let an op's `dest`
@@ -185,17 +216,19 @@ use std::path::{Path, PathBuf};
 use pil_info::io::bin_file_writer::BinFileWriter;
 use pil_info::BinFileError;
 use pil_info::io::temporaries::get_id_maps;
-use pil_info::pil::gen_code::{ConstraintCodeEntry, ExpressionCodeEntry};
+use pil_info::pil::gen_code::{ConstraintCodeEntry, ExpressionCodeEntry, ProcessedHint, ProcessedHintField};
 use pil_info::types::code::{CodeOperation, CodeType, OpType};
 use pil_info::types::output::{CodeEntry, CodeRef};
 use pil_info::{FieldCfg, PilInfoResult};
 use proofman_pilfflonk::field::{FrBytes, FIELD_BYTES};
 
+use crate::validate::{SUPPORTED_PROVER_HINTS, WITNESS_AND_DEBUG_HINTS};
+
 /// The container's type, the STARK's.
 pub const BIN_FILE_TYPE: &str = "chps";
 
 /// pilfflonk's version of the container: `"pf"` in the high half, the revision in the low half.
-pub const BIN_VERSION: u32 = 0x7066_0002;
+pub const BIN_VERSION: u32 = 0x7066_0003;
 
 /// The STARK's sections (`CHELPERS_*_SECTION`).
 pub const EXPRESSIONS_SECTION: u32 = 1;
@@ -216,7 +249,7 @@ pub enum BytecodeError {
     #[error("Cannot encode {0}")]
     Encode(String),
 
-    /// The file is not a revision-2 pilfflonk bytecode, or it is inconsistent.
+    /// The file is not a revision-3 pilfflonk bytecode, or it is inconsistent.
     #[error("Invalid bytecode: {0}")]
     Format(String),
 
@@ -258,7 +291,7 @@ fn to_u32<T: Copy + fmt::Display + TryInto<u32>>(value: T, what: impl fmt::Displ
 // The content of the file
 // ---------------------------------------------------------------------------------------------
 
-/// The content of `<air>.bin`. Section 3 (hints) is empty in this revision and has no field.
+/// The content of `<air>.bin`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Bytecode {
     /// The AIR's number of stages, on which the operand types depend.
@@ -267,6 +300,8 @@ pub struct Bytecode {
     pub expressions: Vec<ExpressionBin>,
     /// Section 2.
     pub constraints: Vec<ConstraintBin>,
+    /// Section 3.
+    pub hints: Vec<HintBin>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -287,6 +322,70 @@ pub struct ConstraintBin {
     pub im_pol: bool,
     pub line: String,
     pub code: Code,
+}
+
+/// A hint of section 3: the STARK's `Hint`, of named fields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HintBin {
+    pub name: String,
+    pub fields: Vec<HintFieldBin>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HintFieldBin {
+    pub name: String,
+    /// One value, or the elements of an array, each with its position.
+    pub values: Vec<HintValueBin>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HintValueBin {
+    pub operand: HintOperand,
+    /// Its position in the field's array: empty for a field of one value.
+    pub pos: Vec<u32>,
+}
+
+/// A value of a hint field: the STARK's `HintFieldValue`, with the ids of the STARK (the
+/// `cmPolsMap` index of a committed column, not its `stagePos`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HintOperand {
+    /// A committed column, `cmPolsMap[id]`, at `openingPoints[opening]`.
+    Cm {
+        id: u32,
+        opening: u32,
+    },
+    /// A fixed column, `constPolsMap[id]`, at `openingPoints[opening]`.
+    Const {
+        id: u32,
+        opening: u32,
+    },
+    /// The expression of section 1 of this `expId`.
+    Tmp(u32),
+    Number(FrBytes),
+    String(String),
+    Public(u32),
+    Challenge(u32),
+    AirValue(u32),
+    AirgroupValue(u32),
+    ProofValue(u32),
+}
+
+impl HintOperand {
+    /// The STARK's name of its kind (`opType2string`).
+    pub fn op(&self) -> &'static str {
+        match self {
+            HintOperand::Cm { .. } => "cm",
+            HintOperand::Const { .. } => "const",
+            HintOperand::Tmp(_) => "tmp",
+            HintOperand::Number(_) => "number",
+            HintOperand::String(_) => "string",
+            HintOperand::Public(_) => "public",
+            HintOperand::Challenge(_) => "challenge",
+            HintOperand::AirValue(_) => "airvalue",
+            HintOperand::AirgroupValue(_) => "airgroupvalue",
+            HintOperand::ProofValue(_) => "proofvalue",
+        }
+    }
 }
 
 /// A code block after temporary allocation: its ops, the temporaries they use and the one the
@@ -498,8 +597,9 @@ impl CodeContext {
 impl Bytecode {
     /// The bytecode of the result of `pil_info::run` with `PilInfoCfg::bn254()`.
     ///
-    /// The hints the passes collected are not encoded (section 3 is empty in Fase 1): the setup
-    /// refuses the prover hints and ignores the others (§4.2.1).
+    /// Of the hints the passes collected, section 3 has the prover hints the setup supports; the
+    /// witness and debug hints are not the prover's, and the setup ignores them (§4.2.1). Any other
+    /// hint is refused: it is none the prover computes.
     pub fn from_pil_info(result: &PilInfoResult) -> BytecodeResult<Self> {
         if result.fri_exp_id.is_some() {
             return encode_error("a result with a FRI polynomial: pilfflonk opens with SHPLONK (PilInfoCfg::bn254())");
@@ -522,8 +622,97 @@ impl Bytecode {
             .enumerate()
             .map(|(i, c)| constraint_bin(i, c, result, n, &context))
             .collect::<BytecodeResult<_>>()?;
-        Ok(Bytecode { n_stages: context.n_stages, expressions, constraints })
+        let mut hints = Vec::new();
+        for hint in &info.hints_info {
+            let name = hint.name.as_str();
+            if SUPPORTED_PROVER_HINTS.contains(&name) {
+                hints.push(hint_bin(hint, result, &context)?);
+            } else if !WITNESS_AND_DEBUG_HINTS.contains(&name) {
+                return encode_error(format!("hint `{name}`: it is not one the prover computes"));
+            }
+        }
+        Ok(Bytecode { n_stages: context.n_stages, expressions, constraints, hints })
     }
+}
+
+/// A prover hint of the passes, `pil-info`'s `addHintsInfo` of it, as section 3 holds it.
+fn hint_bin(hint: &ProcessedHint, result: &PilInfoResult, context: &CodeContext) -> BytecodeResult<HintBin> {
+    let fields = hint
+        .fields
+        .iter()
+        .map(|field| {
+            let what = format!("hint `{}`, field `{}`", hint.name, field.name);
+            let values = field
+                .values
+                .iter()
+                .map(|v| {
+                    let pos = v.pos.iter().map(|&p| to_u32(p, &what)).collect::<BytecodeResult<_>>()?;
+                    Ok(HintValueBin { operand: hint_operand(v, result, context, &what)?, pos })
+                })
+                .collect::<BytecodeResult<_>>()?;
+            Ok(HintFieldBin { name: field.name.clone(), values })
+        })
+        .collect::<BytecodeResult<_>>()?;
+    Ok(HintBin { name: hint.name.clone(), fields })
+}
+
+/// A value of a hint field, as the STARK's `write_hints_section` writes it: a column with the index
+/// of its offset in `openingPoints`, an expression by its `expId`, a number canonical.
+fn hint_operand(
+    v: &ProcessedHintField,
+    result: &PilInfoResult,
+    context: &CodeContext,
+    what: &str,
+) -> BytecodeResult<HintOperand> {
+    if matches!(v.op.as_str(), "cm" | "const" | "tmp") && v.dim != Some(1) {
+        return encode_error(format!(
+            "{what}: a {} of dimension {:?}; over BN254 every value has dimension 1",
+            v.op, v.dim
+        ));
+    }
+    let id = || match v.id {
+        Some(id) => to_u32(id, what),
+        None => encode_error(format!("{what}: a {} without its id", v.op)),
+    };
+    // A column's offset must be an opening point: the prover reads it there.
+    let opening = |n: usize, map: &str| -> BytecodeResult<(u32, u32)> {
+        let id = id()?;
+        if id as usize >= n {
+            return encode_error(format!("{what}: {} {id} is not in {map}", v.op));
+        }
+        match v.row_offset_index {
+            Some(i) if i >= 0 && (i as usize) < context.opening_points.len() => Ok((id, to_u32(i as usize, what)?)),
+            _ => encode_error(format!(
+                "{what}: {} {id} at row offset {:?}, which is not an opening point ({:?})",
+                v.op, v.row_offset, context.opening_points
+            )),
+        }
+    };
+    Ok(match v.op.as_str() {
+        "cm" => {
+            let (id, opening) = opening(context.cm_pols.len(), "cmPolsMap")?;
+            HintOperand::Cm { id, opening }
+        }
+        "const" => {
+            let (id, opening) = opening(result.setup.const_pols_map.len(), "constPolsMap")?;
+            HintOperand::Const { id, opening }
+        }
+        "tmp" => HintOperand::Tmp(id()?),
+        "number" => {
+            let value = v.value.as_deref().unwrap_or_default();
+            match FrBytes::from_decimal(value) {
+                Ok(n) => HintOperand::Number(n),
+                Err(_) => return encode_error(format!("{what}: number {value:?} is not a canonical Fr (below r)")),
+            }
+        }
+        "string" => HintOperand::String(v.value.clone().unwrap_or_default()),
+        "public" => HintOperand::Public(id()?),
+        "challenge" => HintOperand::Challenge(id()?),
+        "airvalue" => HintOperand::AirValue(id()?),
+        "airgroupvalue" => HintOperand::AirgroupValue(id()?),
+        "proofvalue" => HintOperand::ProofValue(id()?),
+        op => return encode_error(format!("{what}: a {op} is not a value of a pilfflonk hint")),
+    })
 }
 
 fn expression_bin(
@@ -840,6 +1029,15 @@ fn put_string(out: &mut Vec<u8>, s: &str) {
     out.push(0);
 }
 
+/// `put_string`, but refusing a string with a NUL, which would read back as a shorter one.
+fn put_hint_string(out: &mut Vec<u8>, s: &str, what: &str) -> BytecodeResult<()> {
+    if s.as_bytes().contains(&0) {
+        return encode_error(format!("{what}: a string with a NUL, {s:?}"));
+    }
+    put_string(out, s);
+    Ok(())
+}
+
 /// A section's numbers: each distinct value once, in the order the code first uses it.
 #[derive(Default)]
 struct Numbers {
@@ -1032,9 +1230,52 @@ impl Bytecode {
         }
         constraints.write_body(&mut section2);
 
-        let mut section3 = Vec::with_capacity(4);
-        put_u32(&mut section3, 0);
+        let mut section3 = Vec::new();
+        self.write_hints(&mut section3)?;
         Ok([section1, section2, section3])
+    }
+
+    /// Section 3, as the STARK's `write_hints_section` lays it out (see [the module](self)).
+    fn write_hints(&self, out: &mut Vec<u8>) -> BytecodeResult<()> {
+        let count = |n: usize, what: &str| to_u32(n, what);
+        put_u32(out, count(self.hints.len(), "the hints")?);
+        for hint in &self.hints {
+            put_hint_string(out, &hint.name, "a hint's name")?;
+            put_u32(out, count(hint.fields.len(), "the fields of a hint")?);
+            for field in &hint.fields {
+                let what = format!("hint `{}`, field `{}`", hint.name, field.name);
+                put_hint_string(out, &field.name, &what)?;
+                put_u32(out, count(field.values.len(), "the values of a hint field")?);
+                for value in &field.values {
+                    let t = &value.operand;
+                    if let HintOperand::Tmp(exp_id) = *t {
+                        if !self.expressions.iter().any(|e| e.exp_id == exp_id) {
+                            return encode_error(format!("{what}: expression {exp_id}, which section 1 does not have"));
+                        }
+                    }
+                    put_string(out, t.op());
+                    match t {
+                        HintOperand::Number(n) => out.extend_from_slice(&n.to_le_bytes()),
+                        HintOperand::String(text) => put_hint_string(out, text, &what)?,
+                        HintOperand::Cm { id, opening } | HintOperand::Const { id, opening } => {
+                            put_u32(out, *id);
+                            put_u32(out, *opening);
+                        }
+                        HintOperand::Tmp(id)
+                        | HintOperand::Public(id)
+                        | HintOperand::Challenge(id)
+                        | HintOperand::AirValue(id)
+                        | HintOperand::AirgroupValue(id)
+                        | HintOperand::ProofValue(id) => put_u32(out, *id),
+                    }
+                    put_u32(out, count(value.pos.len(), "the positions of a hint value")?);
+                    for &p in &value.pos {
+                        put_u32(out, p);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Write the file at `path`.
@@ -1273,7 +1514,7 @@ impl Bytecode {
         let modulus = r1.fr()?;
         if prefix_version != BIN_VERSION || n8 != FIELD_BYTES as u32 || modulus != r_le() {
             return format_error(format!(
-                "section 1 starts with version {prefix_version:#x} and n8 {n8}, not those of a revision-2 \
+                "section 1 starts with version {prefix_version:#x} and n8 {n8}, not those of a revision-3 \
                  bytecode over BN254"
             ));
         }
@@ -1333,13 +1574,72 @@ impl Bytecode {
 
         // Section 3.
         let mut r3 = Reader::new(hints, "the hints");
-        let [n_hints] = r3.words()?;
+        let hints = read_hints(&mut r3, &expressions)?;
         r3.finish()?;
-        if n_hints != 0 {
-            return format_error(format!("{n_hints} hints: revision 2 has none"));
-        }
-        Ok(Bytecode { n_stages, expressions, constraints })
+        Ok(Bytecode { n_stages, expressions, constraints, hints })
     }
+}
+
+/// Section 3 (see [the module](self)): each expression a hint refers to must be one of section 1.
+fn read_hints(r: &mut Reader, expressions: &[ExpressionBin]) -> BytecodeResult<Vec<HintBin>> {
+    let [n_hints] = r.words()?;
+    let mut hints = Vec::new();
+    for h in 0..n_hints {
+        let name = r.string()?;
+        let [n_fields] = r.words()?;
+        let mut fields = Vec::new();
+        for _ in 0..n_fields {
+            let field = r.string()?;
+            let what = format!("hint {h} (`{name}`), field `{field}`");
+            let [n_values] = r.words()?;
+            let mut values = Vec::new();
+            for _ in 0..n_values {
+                let op = r.string()?;
+                let operand = match op.as_str() {
+                    "cm" | "const" => {
+                        let [id, opening] = r.words()?;
+                        if op == "cm" {
+                            HintOperand::Cm { id, opening }
+                        } else {
+                            HintOperand::Const { id, opening }
+                        }
+                    }
+                    "tmp" => {
+                        let [exp_id] = r.words()?;
+                        if !expressions.iter().any(|e| e.exp_id == exp_id) {
+                            return format_error(format!("{what}: expression {exp_id}, which section 1 does not have"));
+                        }
+                        HintOperand::Tmp(exp_id)
+                    }
+                    "number" => match FrBytes::from_le_bytes(r.fr()?) {
+                        Ok(n) => HintOperand::Number(n),
+                        Err(_) => return format_error(format!("{what}: a number not below r")),
+                    },
+                    "string" => HintOperand::String(r.string()?),
+                    "public" | "challenge" | "airvalue" | "airgroupvalue" | "proofvalue" => {
+                        let [id] = r.words()?;
+                        match op.as_str() {
+                            "public" => HintOperand::Public(id),
+                            "challenge" => HintOperand::Challenge(id),
+                            "airvalue" => HintOperand::AirValue(id),
+                            "airgroupvalue" => HintOperand::AirgroupValue(id),
+                            _ => HintOperand::ProofValue(id),
+                        }
+                    }
+                    _ => return format_error(format!("{what}: unknown value kind {op:?}")),
+                };
+                let [n_pos] = r.words()?;
+                let mut pos = Vec::new();
+                for _ in 0..n_pos {
+                    pos.push(r.u32()?);
+                }
+                values.push(HintValueBin { operand, pos });
+            }
+            fields.push(HintFieldBin { name: field, values });
+        }
+        hints.push(HintBin { name, fields });
+    }
+    Ok(hints)
 }
 
 #[cfg(test)]

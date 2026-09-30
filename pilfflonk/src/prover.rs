@@ -11,10 +11,12 @@
 //!
 //! 1. absorb `digest mod r`, the number of instances of each AIR of the globalInfo in canonical
 //!    order (1), and the publics;
-//! 2. for each stage `s = 1 … nStages`: the C++ commits the stage (its columns, im pols, blinding,
-//!    packing, MSM); absorb the commitments of its f in the global order of A.5 (the layout's), then
-//!    its air values, airgroup values and proof values of stage `s` (none in v1), and if
-//!    `s < nStages` squeeze the `numChallenges[s]` challenges of stage `s + 1`, one per squeeze;
+//! 2. for each stage `s = 1 … nStages`: the C++ commits the stage (its columns, the witness's for
+//!    stage 1 and, with the stage's challenges, the std's prover hints' for the others, plan M30;
+//!    im pols, blinding, packing, MSM); absorb the commitments of its f in the global order of A.5
+//!    (the layout's), then its air values, airgroup values and proof values of stage `s` (none in
+//!    v1), and if `s < nStages` squeeze the `numChallenges[s]` challenges of stage `s + 1`, one per
+//!    squeeze;
 //! 3. squeeze `std_vc`; the C++ commits `Q`, or its pieces if it is split (A.1, A.3); absorb the
 //!    commitments of its f; squeeze `xiSeed`;
 //! 4. the C++ evaluates every f at the roots of `ξ·ω^s`, `ξ = xiSeed^powerW`; absorb the evaluations
@@ -24,6 +26,7 @@
 //!    `invZh`.
 //!
 //! It is `pilfflonk/js/src/challenges.js` (`computeChallenges`), the verifier's replay, step by step.
+//! Steps 1 and 2 are `commit_stages`, which [`stage_columns`] runs too.
 //! The proof holds the commitments of the non-fixed f (the fixed ones are the vkey's), `W`, `W'`, the
 //! evaluations, `inv` and `invZh` (A.6), and [`ProofOutput::write`] writes `proof.json` and
 //! `publics.json`.
@@ -313,11 +316,11 @@ impl ProofOutput {
     }
 }
 
-fn fr(bytes: [u8; 32]) -> PilfflonkResult<FrBytes> {
+pub(crate) fn fr(bytes: [u8; 32]) -> PilfflonkResult<FrBytes> {
     FrBytes::from_le_bytes(bytes)
 }
 
-fn le(values: &[FrBytes]) -> Vec<[u8; 32]> {
+pub(crate) fn le(values: &[FrBytes]) -> Vec<[u8; 32]> {
     values.iter().map(FrBytes::to_le_bytes).collect()
 }
 
@@ -326,14 +329,14 @@ fn g1(points: Vec<[u8; 64]>) -> PilfflonkResult<Vec<G1Affine>> {
 }
 
 /// The transcript of A.4, with its errors in this crate's terms.
-struct Transcript(PilFflonkTranscript);
+pub(crate) struct Transcript(PilFflonkTranscript);
 
 impl Transcript {
-    fn new() -> PilfflonkResult<Self> {
+    pub(crate) fn new() -> PilfflonkResult<Self> {
         PilFflonkTranscript::new().map(Self).map_err(native("creating the transcript"))
     }
 
-    fn scalars(&mut self, values: &[FrBytes]) -> PilfflonkResult<()> {
+    pub(crate) fn scalars(&mut self, values: &[FrBytes]) -> PilfflonkResult<()> {
         self.0.absorb_fr(&le(values)).map_err(native("absorbing scalars into the transcript"))
     }
 
@@ -342,23 +345,36 @@ impl Transcript {
         self.0.absorb_g1(&bytes).map_err(native("absorbing commitments into the transcript"))
     }
 
-    fn squeeze(&mut self) -> PilfflonkResult<FrBytes> {
+    pub(crate) fn squeeze(&mut self) -> PilfflonkResult<FrBytes> {
         fr(self.0.squeeze().map_err(native("squeezing the transcript"))?)
     }
 }
 
-/// A proof of the one instance of `witness` (see [the module](self)).
-pub fn prove(pk: &ProvingKey, witness: &impl WitnessSource, options: &ProveOptions) -> PilfflonkResult<ProofOutput> {
-    let read = WitnessInstance::read(witness)?;
-    let air = read.air;
+/// What steps 1 and 2 of A.4 leave (`commit_stages`).
+struct CommittedStages {
+    /// The transcript, which has absorbed everything up to the last stage's commitments and values.
+    transcript: Transcript,
+    /// The commitments of the non-fixed f of stages `1 … nStages`, in the order of the layout.
+    commitments: Vec<G1Affine>,
+    /// `challenges[s - 2]`: the challenges of stage `s`, for `2 ≤ s ≤ nStages`.
+    challenges: Vec<Vec<FrBytes>>,
+}
+
+/// Steps 1 and 2 of A.4 (see [the module](self)) on `instance`, which is `witness`'s: a new
+/// transcript absorbs the digest, the number of instances of each AIR and the publics; then each
+/// stage `s` is committed, with the challenges the transcript gave for it (none for stage 1), and
+/// the transcript absorbs its commitments and its values, and squeezes the `numChallenges[s]`
+/// challenges of stage `s + 1` if `s < nStages`.
+fn commit_stages(
+    pk: &ProvingKey,
+    witness: &WitnessInstance,
+    instance: &mut PilFflonkInstance<'_>,
+) -> PilfflonkResult<CommittedStages> {
+    let air = witness.air;
     let info = pk.air(air)?;
     let global_info = pk.global_info();
-    let names = ProofNames::new(global_info, &[info])?;
     let n_stages = info.n_stages;
     let n_f = |stage: u64| info.layout.0.iter().filter(|f| f.stage == stage).count();
-
-    let mut instance = read.instance(pk, options.insecure_blinding_seed.as_ref())?;
-    let WitnessInstance { stage1, publics, proof_values, .. } = read;
 
     // Step 1: the digest, the number of instances of each AIR, the publics.
     let mut transcript = Transcript::new()?;
@@ -373,7 +389,7 @@ pub fn prove(pk: &ProvingKey, witness: &impl WitnessSource, options: &ProveOptio
         })
         .collect();
     transcript.scalars(&counts)?;
-    transcript.scalars(&publics)?;
+    transcript.scalars(&witness.publics)?;
 
     // Step 2: the stages. The air values, airgroup values and proof values of stage s follow its
     // commitments; v1 has none but the stage-1 ones the witness gives (none either, D2).
@@ -389,8 +405,8 @@ pub fn prove(pk: &ProvingKey, witness: &impl WitnessSource, options: &ProveOptio
         transcript.points(&points)?;
         commitments.extend(points);
         if stage == 1 {
-            transcript.scalars(stage1.air_values())?;
-            transcript.scalars(&proof_values)?;
+            transcript.scalars(witness.stage1.air_values())?;
+            transcript.scalars(&witness.proof_values)?;
         }
         if stage < n_stages {
             let count = global_info.num_challenges.get(stage as usize).copied().unwrap_or(0);
@@ -398,6 +414,63 @@ pub fn prove(pk: &ProvingKey, witness: &impl WitnessSource, options: &ProveOptio
             stage_challenges.push(challenges.clone());
         }
     }
+    Ok(CommittedStages { transcript, commitments, challenges: stage_challenges })
+}
+
+/// The columns of every stage of an instance as the prover computes them, and the challenges it
+/// computes them with ([`stage_columns`]; `check::check_columns` for the check's).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StageColumns {
+    /// `challenges[s - 2]`: the challenges of stage `s`, for `2 ≤ s ≤ nStages`, as
+    /// [`ProofChallenges::stages`].
+    pub challenges: Vec<Vec<FrBytes>>,
+    /// `columns[s - 1][p]`: the column of stage `s` at `stagePos` `p` of `cmPolsMap`, row by row: the
+    /// witness's, a prover hint's or an im pol's.
+    pub columns: Vec<Vec<Vec<FrBytes>>>,
+}
+
+/// The columns of every stage `1 … nStages` of the one instance of `witness`, as the prover computes
+/// them before it commits `Q`: steps 1 and 2 of [`prove`] with the same `options`, and so, with the
+/// same blinding seed, the same challenges and columns as its proof. For tests and diagnostics (plan
+/// M30: the oracle checks the prover hints' columns against them); a proof holds none of it.
+pub fn stage_columns(
+    pk: &ProvingKey,
+    witness: &impl WitnessSource,
+    options: &ProveOptions,
+) -> PilfflonkResult<StageColumns> {
+    let read = WitnessInstance::read(witness)?;
+    let info = pk.air(read.air)?;
+    let mut instance = read.instance(pk, options.insecure_blinding_seed.as_ref())?;
+    let committed = commit_stages(pk, &read, &mut instance)?;
+    let n_rows = 1usize << info.n_bits;
+    let mut columns = Vec::new();
+    for stage in 1..=info.n_stages {
+        let width = info.map_sections_n.get(&format!("cm{stage}")).copied().unwrap_or(0);
+        let stage_u32 = u32::try_from(stage).map_err(|_| PilfflonkError::InvalidFormat("too many stages".into()))?;
+        let stage_columns = (0..width)
+            .map(|p| {
+                let values = instance.column(stage_u32, p, n_rows).map_err(native("reading a column"))?;
+                values.into_iter().map(fr).collect::<PilfflonkResult<Vec<_>>>()
+            })
+            .collect::<PilfflonkResult<_>>()?;
+        columns.push(stage_columns);
+    }
+    Ok(StageColumns { challenges: committed.challenges, columns })
+}
+
+/// A proof of the one instance of `witness` (see [the module](self)).
+pub fn prove(pk: &ProvingKey, witness: &impl WitnessSource, options: &ProveOptions) -> PilfflonkResult<ProofOutput> {
+    let read = WitnessInstance::read(witness)?;
+    let info = pk.air(read.air)?;
+    let global_info = pk.global_info();
+    let names = ProofNames::new(global_info, &[info])?;
+    let n_f = |stage: u64| info.layout.0.iter().filter(|f| f.stage == stage).count();
+
+    let mut instance = read.instance(pk, options.insecure_blinding_seed.as_ref())?;
+    // Steps 1 and 2.
+    let CommittedStages { mut transcript, mut commitments, challenges: stage_challenges } =
+        commit_stages(pk, &read, &mut instance)?;
+    let WitnessInstance { stage1, publics, proof_values, .. } = read;
 
     // Step 3: Q.
     let std_vc = transcript.squeeze()?;
