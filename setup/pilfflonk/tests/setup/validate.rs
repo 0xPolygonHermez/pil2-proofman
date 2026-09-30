@@ -216,6 +216,20 @@ fn a_prover_hint_is_reported_before_the_values_it_brings() {
     assert!(matches!(refusal(&pilout), SetupError::AirValues { n: 1, .. }));
 }
 
+/// `witness_bits`, the hint of a column declared with `bits(n)`, asks for packed trace rows, which
+/// pilfflonk does not accept yet (plan M38b): it is refused, saying so, of the AIR or of the pilout.
+#[test]
+fn a_packed_trace_is_refused() {
+    for (of_air, where_) in [(true, "air Sample"), (false, "the pilout")] {
+        let mut pilout = pilout();
+        pilout.hints = vec![hint("range_def", true), hint("witness_bits", of_air)];
+        let err = refusal(&pilout);
+        assert!(matches!(&err, SetupError::PackedTrace { location } if location == where_), "{err}");
+        assert!(err.to_string().contains("pilfflonk does not accept packed traces yet"), "{err}");
+    }
+    assert!(!PROVER_HINTS.contains(&"witness_bits") && !WITNESS_AND_DEBUG_HINTS.contains(&"witness_bits"));
+}
+
 #[test]
 fn unknown_hints_are_refused() {
     let mut pilout = pilout();

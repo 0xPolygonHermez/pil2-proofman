@@ -1292,6 +1292,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilfflonk-fibonacci"
+version = "1.4.0-alpha"
+dependencies = [
+ "fibonacci-square",
+ "libloading",
+ "num-bigint",
+ "pilfflonk-setup",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-fields",
+ "proofman-macros",
+ "proofman-pilfflonk",
+ "serde",
+ "serde_arrays",
+]
+
+[[package]]
 name = "pilfflonk-setup"
 version = "1.4.0-alpha"
 dependencies = [
@@ -1505,6 +1522,7 @@ dependencies = [
 name = "proofman-pilfflonk"
 version = "1.4.0-alpha"
 dependencies = [
+ "libloading",
  "num-bigint",
  "pil2-pilout",
  "proofman-common",

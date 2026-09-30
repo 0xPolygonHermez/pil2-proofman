@@ -30,6 +30,8 @@ libloading.workspace = true
 blake3.workspace = true
 colored.workspace = true
 serde.workspace = true
+# pil-helpers tells a BN254 pilout by its `baseField` (a big-endian integer).
+num-bigint.workspace = true
 
 clap = { version = "4.5.38", features = ["derive", "env"] }
 tinytemplate = "1.1"
@@ -43,7 +45,6 @@ pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
 # The Rust oracle (M14), which the `pilfflonk prove` test checks the prover against.
 proofman-pilfflonk = { workspace = true, features = ["oracle"] }
 serde_json = { workspace = true }
-num-bigint = { workspace = true }
 # Encodes the synthetic pilouts of the domains tests (plan M24), built in code.
 prost = { workspace = true }
 

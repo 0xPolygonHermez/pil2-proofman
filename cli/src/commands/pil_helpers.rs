@@ -9,6 +9,8 @@ use pil2_pilout::pilout::hint_field::Value::StringValue;
 use pil2_pilout::pilout::hint_field::Value::Operand;
 use pil2_pilout::pilout::operand::Operand::Constant;
 use proofman_common::initialize_logger;
+use proofman_pilfflonk::BN254_R;
+use num_bigint::BigUint;
 use serde::Serialize;
 use tinytemplate::TinyTemplate;
 use std::{fs, path::PathBuf};
@@ -55,6 +57,8 @@ struct ProofCtx {
     publics: Vec<ValuesCtx>,
     has_packed: bool,
     packed_info: Vec<PackInfo>,
+    /// The pilout is over BN254's `Fr` ([`is_bn254`]).
+    is_bn254: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -113,6 +117,14 @@ struct StageColumnCtx {
     columns: Vec<ColumnCtx>,
 }
 
+/// Whether `pilout` is over BN254's `Fr`, the field of `setup-pilfflonk` (spec §4.2.1), from its
+/// `baseField` as the pilfflonk setup reads it. Its helpers are then those of a pilfflonk witness
+/// library (D4): rows over `Bn254` with no packed rows, which pilfflonk does not accept yet; values
+/// of dimension 1, as BN254 has no extension field (spec A.6); and publics that are `Bn254` values.
+fn is_bn254(pilout: &pil2_pilout::pilout::PilOut) -> bool {
+    BigUint::parse_bytes(BN254_R.as_bytes(), 10).is_some_and(|r| BigUint::from_bytes_be(&pilout.base_field) == r)
+}
+
 impl PilHelpersCmd {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         initialize_logger(self.verbose.into(), None);
@@ -150,6 +162,11 @@ impl PilHelpersCmd {
 
         // Read the pilout file
         let pilout = PilOutProxy::new(&self.pilout.display().to_string())?;
+        let is_bn254 = is_bn254(&pilout);
+        // BN254 has no extension field: every value has dimension 1.
+        let extension = if is_bn254 { "F" } else { "FieldExtension<F>" };
+        // The type of a public in the public inputs a library reads, and its zero.
+        let (public_type, public_zero) = if is_bn254 { ("Bn254", "Bn254::default()") } else { ("u64", "0") };
 
         let mut wcctxs = Vec::new();
         let mut constant_airgroups: Vec<(String, usize)> = Vec::new();
@@ -181,7 +198,7 @@ impl PilHelpersCmd {
                             has_packed: has_witness_bits,
                             columns: Vec::new(),
                             fixed: Vec::new(),
-                            stages_columns: vec![StageColumnCtx::default(); pilout.num_challenges.len() - 1],
+                            stages_columns: vec![StageColumnCtx::default(); pilout.num_stages() as usize - 1],
                             custom_columns: Vec::new(),
                             air_values: Vec::new(),
                             airgroup_values: Vec::new(),
@@ -210,6 +227,18 @@ impl PilHelpersCmd {
             }
         }
 
+        // The packed rows of `witness_bits` are 64-bit, and pilfflonk does not accept packed traces yet.
+        if is_bn254 {
+            if let Some(air) = wcctxs.iter().flat_map(|airgroup| &airgroup.airs).find(|air| air.has_packed) {
+                return Err(format!(
+                    "air {} has `witness_bits` hints, from columns declared with `bits(n)`, which ask for packed trace \
+                     rows, and pilfflonk does not accept packed traces yet",
+                    air.name
+                )
+                .into());
+            }
+        }
+
         let mut publics: Vec<ValuesCtx> = Vec::new();
         let mut proof_values: Vec<ValuesCtx> = Vec::new();
 
@@ -228,14 +257,10 @@ impl PilHelpersCmd {
                     symbol.lengths.iter().rev().fold("F".to_string(), |acc, &length| format!("[{acc}; {length}]"))
                 };
                 let ext_type = if symbol.lengths.is_empty() {
-                    "FieldExtension<F>".to_string() // Case when lengths.len() == 0
+                    extension.to_string() // Case when lengths.len() == 0
                 } else {
                     // Start with "F" and apply each length in reverse order
-                    symbol
-                        .lengths
-                        .iter()
-                        .rev()
-                        .fold("FieldExtension<F>".to_string(), |acc, &length| format!("[{acc}; {length}]"))
+                    symbol.lengths.iter().rev().fold(extension.to_string(), |acc, &length| format!("[{acc}; {length}]"))
                 };
                 if symbol.r#type == SymbolType::ProofValue as i32 {
                     if proof_values.is_empty() {
@@ -268,12 +293,16 @@ impl PilHelpersCmd {
                     }
                     publics[0].values.push(ColumnCtx { name: name.to_owned(), r#type, type_packed: String::new() });
                     let r#type_64 = if symbol.lengths.is_empty() {
-                        "u64".to_string() // Case when lengths.len() == 0
+                        public_type.to_string() // Case when lengths.len() == 0
                     } else {
-                        // Start with "u64" and apply each length in reverse order
-                        symbol.lengths.iter().rev().fold("u64".to_string(), |acc, &length| format!("[{acc}; {length}]"))
+                        // Start with the public's type and apply each length in reverse order
+                        symbol
+                            .lengths
+                            .iter()
+                            .rev()
+                            .fold(public_type.to_string(), |acc, &length| format!("[{acc}; {length}]"))
                     };
-                    let default = "0".to_string();
+                    let default = public_zero.to_string();
                     let r#type_default = if symbol.lengths.is_empty() {
                         default // Case when lengths.len() == 0
                     } else {
@@ -434,14 +463,14 @@ impl PilHelpersCmd {
                             String::new()
                         };
                         let ext_type = if symbol.lengths.is_empty() {
-                            "FieldExtension<F>".to_string() // Case when lengths.len() == 0
+                            extension.to_string() // Case when lengths.len() == 0
                         } else {
                             // Start with "F" and apply each length in reverse order
                             symbol
                                 .lengths
                                 .iter()
                                 .rev()
-                                .fold("FieldExtension<F>".to_string(), |acc, &length| format!("[{acc}; {length}]"))
+                                .fold(extension.to_string(), |acc, &length| format!("[{acc}; {length}]"))
                         };
                         if symbol.r#type == SymbolType::WitnessCol as i32 {
                             if symbol.stage.unwrap() == 1 {
@@ -519,6 +548,7 @@ impl PilHelpersCmd {
             proof_values,
             has_packed,
             packed_info,
+            is_bn254,
         };
 
         const MOD_RS: &str = include_str!("../../assets/templates/pil_helpers_mod.rs.tt");
@@ -539,5 +569,159 @@ impl PilHelpersCmd {
         )?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pil2_pilout::pilout::{self as pb, hint_field};
+    use prost::Message;
+
+    /// Goldilocks, `2^64 − 2^32 + 1`.
+    const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+
+    /// A fresh directory of its own for a test, removed when it is dropped.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(test: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("proofman_cli_pil_helpers_{test}_{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            TempDir(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn symbol(name: &str, kind: SymbolType, stage: u32, lengths: &[u32]) -> pb::Symbol {
+        let of_air = !matches!(kind, SymbolType::PublicValue | SymbolType::ProofValue);
+        pb::Symbol {
+            name: name.to_string(),
+            air_group_id: of_air.then_some(0),
+            air_id: (of_air && kind != SymbolType::AirGroupValue).then_some(0),
+            r#type: kind as i32,
+            stage: Some(stage),
+            lengths: lengths.to_vec(),
+            ..Default::default()
+        }
+    }
+
+    /// A pilout of one AIR, `Main`, of stage 1 only (no challenges, as a program without the std's
+    /// buses has), with every kind of value pil-helpers writes: witness and fixed columns, publics,
+    /// an air value, an airgroup value and a proof value of stage 2, over the field `base_field`.
+    fn pilout(base_field: Vec<u8>) -> pb::PilOut {
+        let air = pb::Air { name: Some("Main".into()), num_rows: Some(8), stage_widths: vec![3], ..Default::default() };
+        pb::PilOut {
+            name: Some("Program".into()),
+            base_field,
+            air_groups: vec![pb::AirGroup { name: Some("Group".into()), airs: vec![air], ..Default::default() }],
+            symbols: vec![
+                symbol("Main.a", SymbolType::WitnessCol, 1, &[]),
+                symbol("Main.b", SymbolType::WitnessCol, 1, &[2]),
+                symbol("Main.L1", SymbolType::FixedCol, 0, &[]),
+                symbol("p", SymbolType::PublicValue, 1, &[]),
+                symbol("q", SymbolType::PublicValue, 1, &[2]),
+                symbol("Main.av", SymbolType::AirValue, 2, &[]),
+                symbol("Group.agv", SymbolType::AirGroupValue, 2, &[]),
+                symbol("pv", SymbolType::ProofValue, 2, &[]),
+            ],
+            ..Default::default()
+        }
+    }
+
+    fn bn254() -> Vec<u8> {
+        BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap().to_bytes_be()
+    }
+
+    /// The `witness_bits` hint `col witness bits(8) a` gives.
+    fn witness_bits() -> pb::Hint {
+        let field = |name: &str, value| pb::HintField { name: Some(name.to_string()), value: Some(value) };
+        let bits =
+            pb::Operand { operand: Some(pb::operand::Operand::Constant(pb::operand::Constant { value: vec![8] })) };
+        let fields = vec![field("name", hint_field::Value::StringValue("a".into())), field("bits", Operand(bits))];
+        pb::Hint {
+            name: "witness_bits".into(),
+            hint_fields: vec![pb::HintField {
+                name: None,
+                value: Some(HintFieldArray(pb::HintFieldArray { hint_fields: fields })),
+            }],
+            air_group_id: Some(0),
+            air_id: Some(0),
+        }
+    }
+
+    /// Runs pil-helpers on `pilout` in `dir`, and returns its `traces.rs`. One test at a time: the
+    /// command sets up the global logger, which two threads cannot both do.
+    fn pil_helpers(dir: &TempDir, pilout: &pb::PilOut) -> Result<String, String> {
+        static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let path = dir.0.join("program.pilout");
+        fs::write(&path, pilout.encode_to_vec()).unwrap();
+        let out = dir.0.join("src");
+        let cmd = PilHelpersCmd { pilout: path, path: out.clone(), overide: true, verbose: 0 };
+        cmd.run().map_err(|e| e.to_string())?;
+        Ok(fs::read_to_string(out.join("pil_helpers").join("traces.rs")).unwrap())
+    }
+
+    #[test]
+    fn a_bn254_pilout_gives_rows_over_bn254() {
+        let dir = TempDir::new("bn254");
+        let traces = pil_helpers(&dir, &pilout(bn254())).unwrap();
+
+        // No extension field: the values of stage 2 have dimension 1.
+        assert!(!traces.contains("FieldExtension"), "{traces}");
+        for value in [" av: F,", " agv: F,", " pv: F,"] {
+            assert!(traces.contains(value), "{value}: {traces}");
+        }
+        // The publics a library reads are Bn254 values, zero by default.
+        assert!(traces.contains("use proofman_fields::Bn254;\n"), "{traces}");
+        assert!(traces.contains("    pub p: Bn254,\n") && traces.contains("    pub q: [Bn254; 2],\n"), "{traces}");
+        assert!(traces.contains("fn default_array_q() -> [Bn254; 2] {\n    [Bn254::default(); 2]\n}"), "{traces}");
+        assert!(traces.contains("values!(ProgramPublicValues<F> {\n p: F, q: [F; 2],\n});"), "{traces}");
+        // Plain rows over the pilout's columns, and no packed trace.
+        assert!(traces.contains("trace_row!(MainTraceRow<F> {\n a:F, b:[F; 2],\n});"), "{traces}");
+        assert!(traces.contains("pub type MainTrace<F> = GenericTrace<MainTraceRow<F>, 8, 0, 0>;"), "{traces}");
+        assert!(!traces.contains("PACKED_INFO") && !traces.contains("PackedInfoConst"), "{traces}");
+        assert!(traces.contains("(0, 0, \"Main\"),"), "{traces}");
+    }
+
+    /// The same program over Goldilocks keeps its extension field, its `u64` publics and its
+    /// `PACKED_INFO`: the STARK's helpers do not change.
+    #[test]
+    fn a_goldilocks_pilout_keeps_the_starks_helpers() {
+        let dir = TempDir::new("goldilocks");
+        let traces = pil_helpers(&dir, &pilout(BigUint::from(GOLDILOCKS).to_bytes_be())).unwrap();
+        assert!(traces.contains("#[allow(dead_code)]\ntype FieldExtension<F> = [F; 3];\n"), "{traces}");
+        for value in [" av: FieldExtension<F>,", " agv: FieldExtension<F>,", " pv: FieldExtension<F>,"] {
+            assert!(traces.contains(value), "{value}: {traces}");
+        }
+        assert!(traces.contains("    pub p: u64,\n") && traces.contains("    pub q: [u64; 2],\n"), "{traces}");
+        assert!(!traces.contains("Bn254"), "{traces}");
+        assert!(traces.contains("use proofman_common::PackedInfoConst;\n"), "{traces}");
+        assert!(traces.contains("pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[\n];"), "{traces}");
+    }
+
+    /// pilfflonk does not accept packed traces yet: a BN254 pilout with a `witness_bits` hint is
+    /// refused, and nothing is written.
+    #[test]
+    fn a_bn254_pilout_with_packed_columns_is_refused() {
+        let dir = TempDir::new("bn254_packed");
+        let mut pilout = pilout(bn254());
+        pilout.hints.push(witness_bits());
+        let err = pil_helpers(&dir, &pilout).unwrap_err();
+        assert!(err.contains("air Main") && err.contains("pilfflonk does not accept packed traces yet"), "{err}");
+        assert!(!dir.0.join("src").join("pil_helpers").join("traces.rs").exists());
+
+        // Over Goldilocks the same hint packs the column.
+        pilout.base_field = BigUint::from(GOLDILOCKS).to_bytes_be();
+        let traces = pil_helpers(&dir, &pilout).unwrap();
+        assert!(traces.contains("trace_row!(MainTraceRow<F> {\n a:u8, b:[u64; 2],\n});"), "{traces}");
+        assert!(traces.contains("pub type MainTrace<R> = GenericTrace<R, 8, 0, 0>;"), "{traces}");
     }
 }

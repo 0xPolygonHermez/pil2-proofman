@@ -75,6 +75,14 @@ pub enum SetupError {
     #[error("air {air}: its hint `{hint}` cannot be computed: {reason}")]
     ProverHint { hint: String, air: String, reason: String },
 
+    /// The hint `witness_bits` of a column declared with `bits(n)`, which asks for packed trace rows
+    /// (plan M38b): pilfflonk does not accept packed traces yet, so no key is made for such an AIR.
+    #[error(
+        "{location} has the hint `witness_bits`, from a column declared with `bits(n)`, which asks for packed trace \
+         rows, and pilfflonk does not accept packed traces yet"
+    )]
+    PackedTrace { location: String },
+
     /// A hint that is neither a prover hint nor one of the witness and debug hints the setup
     /// ignores (spec §3.4).
     #[error("{location} has the hint `{name}`, which is neither a prover hint nor a witness or debug hint")]

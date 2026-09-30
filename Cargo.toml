@@ -47,6 +47,9 @@ members = [
   "pil2-components/test/virtual_tables/rs",
   "pil2-components/test/common/rs",
 
+  # pilfflonk witness-library tests (D4)
+  "pilfflonk/tests/fixtures/fibonacci/rs",
+
   # Examples
   "examples/fibonacci-square",
   "examples/hashes",

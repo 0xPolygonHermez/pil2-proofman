@@ -169,7 +169,8 @@ fn only_air(pilout: &pb::PilOut) -> Result<ValidAir<'_>, SetupError> {
 }
 
 /// The hints of the pilout by name (spec §3.4): the witness and debug ones are ignored, `im_col`,
-/// `gsum_col` and `gprod_col` must be of the AIR, and the others are refused. Returns the number of
+/// `gsum_col` and `gprod_col` must be of the AIR, and the others are refused, `witness_bits` among
+/// them: the packed trace rows it asks for are not accepted yet (plan M38b). Returns the number of
 /// `im_col`, `gsum_col` and `gprod_col`.
 fn check_hints(pilout: &pb::PilOut) -> Result<usize, SetupError> {
     let mut n_supported = 0;
@@ -198,6 +199,7 @@ fn check_hints(pilout: &pb::PilOut) -> Result<usize, SetupError> {
                 n_supported += 1;
             }
             "im_airval" => return Err(SetupError::ImAirvalHint { location }),
+            "witness_bits" => return Err(SetupError::PackedTrace { location }),
             _ => return Err(SetupError::UnknownHint { name: name.to_string(), location }),
         }
     }

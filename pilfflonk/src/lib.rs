@@ -19,7 +19,9 @@
 //! written, and written deterministically. [`canonical_json`] is the canonical form the digest of
 //! the vkey is computed over.
 //!
-//! The prover takes its witness from a [`WitnessSource`] (spec §4.3, §5.3). [`prover`] is the
+//! The prover takes its witness from a [`WitnessSource`] (spec §4.3, §5.3): a witness directory,
+//! or the [`Witness`] a witness library computes over `Fr` (D4, [`witness_library`]), loaded with
+//! [`load_witness_library`] and exported with [`pilfflonk_witness_library!`]. [`prover`] is the
 //! orchestration of a proof over the C++ core (spec §4.4): [`ProvingKey::load`] and [`prove`], and,
 //! for tests and diagnostics, [`stage_columns`], the columns its stages commit.
 //! [`check`](mod@check) checks a witness row by row without proving (§4.4, "Depuració"): [`check()`].
@@ -47,6 +49,7 @@ pub mod tag;
 pub mod verkey;
 pub mod vkey;
 pub mod witness;
+pub mod witness_library;
 
 #[cfg(feature = "oracle")]
 pub mod oracle;
@@ -68,4 +71,7 @@ pub use vkey::{FixedCommitments, Vkey, DIGEST_DOMAIN};
 pub use witness::{
     AirInstanceRef, AirShape, FileWitnessSource, InstanceWitness, ProofValues, Stage1Witness, Witness, WitnessShape,
     WitnessSource,
+};
+pub use witness_library::{
+    compute_witness, load_witness_library, read_public_inputs, PilfflonkWitnessLibInitFn, PilfflonkWitnessLibrary,
 };

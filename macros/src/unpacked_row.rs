@@ -12,14 +12,32 @@ pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceF
     } else {
         quote! {}
     };
+    // An unpacked row holds one `F` per column and asks nothing else of it, so a row over any
+    // field works, BN254's `Fr` too.
     let generics_with_bounds = if let Some(g) = generic {
+        quote! { <#g: Copy + Default + Send> }
+    } else {
+        quote! {}
+    };
+    let typed_generics_with_bounds = if let Some(g) = generic {
         quote! { <#g: PrimeField64 + Copy + Default + Send> }
     } else {
         quote! {}
     };
 
     let unpacked_fields = get_unpacked_fields(fields);
-    let setter_getters = get_unpacked_setters_getters(fields);
+    let (setter_getters, typed_setter_getters) = get_unpacked_setters_getters(fields);
+    // The accessors of the `bit`/`ubit(N)`/`u8`… fields convert with `F::from_u8`… and
+    // `as_canonical_u64`: a 64-bit prime field's, so they get an impl of their own.
+    let typed_impl = if typed_setter_getters.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            impl #typed_generics_with_bounds #name #generics {
+                #(#typed_setter_getters)*
+            }
+        }
+    };
 
     // Calculate the total number of F elements in the row
     let row_size = calculate_row_size(fields);
@@ -44,6 +62,8 @@ pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceF
         impl #generics_with_bounds #name #generics {
             #(#setter_getters)*
         }
+
+        #typed_impl
 
         impl #generics_with_bounds proofman_common::trace::TraceRow for #name #generics {
             const ROW_SIZE: usize = #row_size; // Total number of F elements
@@ -71,8 +91,10 @@ fn get_unpacked_fields(fields: &[TraceField]) -> Vec<TokenStream> {
     unpacked_fields
 }
 
-fn get_unpacked_setters_getters(fields: &[TraceField]) -> Vec<TokenStream> {
+/// The accessors of the generic fields, and those of the typed ones, which need `PrimeField64`.
+fn get_unpacked_setters_getters(fields: &[TraceField]) -> (Vec<TokenStream>, Vec<TokenStream>) {
     let mut setter_getters = vec![];
+    let mut typed_setter_getters = vec![];
 
     for f in fields.iter() {
         if contains_generic(&f.ty) {
@@ -84,14 +106,14 @@ fn get_unpacked_setters_getters(fields: &[TraceField]) -> Vec<TokenStream> {
         } else {
             // For non-generic fields, generate F field accessors with conversion
             if is_array(&f.ty) {
-                add_unpacked_array_setter_getter(&f.name, &f.ty, &mut setter_getters);
+                add_unpacked_array_setter_getter(&f.name, &f.ty, &mut typed_setter_getters);
             } else {
-                add_unpacked_setter_getter(&f.name, &f.ty, &mut setter_getters);
+                add_unpacked_setter_getter(&f.name, &f.ty, &mut typed_setter_getters);
             }
         }
     }
 
-    setter_getters
+    (setter_getters, typed_setter_getters)
 }
 
 fn add_unpacked_generic_setter_getter(field_name: &Ident, setter_getters: &mut Vec<TokenStream>) {

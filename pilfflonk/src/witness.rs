@@ -3,8 +3,9 @@
 //! [`WitnessSource`]; stages 2 and later, and the im pols, are the prover's to compute.
 //!
 //! In phases 1 and 2 it comes from a directory (plan N9), read by [`FileWitnessSource`] and
-//! written by [`Witness::write`], which the fixture generators call. Phase 3 adds a source that
-//! computes it over `Fr` (D4).
+//! written by [`Witness::write`], which the fixture generators call. In phase 3 a witness library
+//! computes it over `Fr` (D4, [`crate::witness_library`]), from the rows over [`Bn254`] that
+//! `pil-helpers` generates, which [`Stage1Witness::from_rows`] takes.
 //!
 //! # The witness directory (version 1)
 //!
@@ -55,6 +56,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use proofman_fields::Bn254;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{invalid, PilfflonkError, PilfflonkResult};
@@ -130,6 +132,31 @@ impl Stage1Witness {
             if FrBytes::from_le_bytes(bytes).is_err() {
                 return invalid!("the value of row {}, column {} is not below r", i / n_cols, i % n_cols);
             }
+        }
+        Ok(Self { n_rows, n_cols, trace, air_values })
+    }
+
+    /// From its values in `Fr`, row after row, each row the values of its `n_cols` columns in
+    /// order: the layout of the rows over [`Bn254`] that `pil-helpers` generates for a BN254 pilout
+    /// (a `#[repr(C)]` struct of `Bn254` fields, arrays flattened), which a typed trace's buffer
+    /// holds. Refuses a number of values other than `n_rows·n_cols`; every `Bn254` is below `r`.
+    pub fn from_rows(
+        n_rows: usize,
+        n_cols: usize,
+        values: &[Bn254],
+        air_values: Vec<FrBytes>,
+    ) -> PilfflonkResult<Self> {
+        let len = trace_len(n_rows, n_cols)?;
+        if values.len() != len / FIELD_BYTES {
+            return invalid!(
+                "a trace of {n_rows} rows and {n_cols} columns has {} values, and this one has {}",
+                len / FIELD_BYTES,
+                values.len()
+            );
+        }
+        let mut trace = Vec::with_capacity(len);
+        for value in values {
+            trace.extend_from_slice(&value.to_le_bytes());
         }
         Ok(Self { n_rows, n_cols, trace, air_values })
     }
@@ -633,6 +660,26 @@ mod tests {
         assert_eq!(w.get(2, 0), None);
         assert_eq!(w.get(0, 2), None);
         assert_eq!(Stage1Witness::new(2, 2, bytes.to_vec(), vec![]).unwrap(), w);
+    }
+
+    /// The flat buffer of a typed trace over `Bn254`, two rows of the columns `[a, b]`, is the trace
+    /// `from_columns` makes of the same values.
+    #[test]
+    fn rows_of_bn254_values_are_the_trace_row_after_row() {
+        use proofman_fields::{Field, QuotientMap};
+
+        let values = [Bn254::from_int(1u64), Bn254::from_int(0x0304u64), Bn254::from_int(2u64), Bn254::NEG_ONE];
+        let w = Stage1Witness::from_rows(2, 2, &values, vec![]).unwrap();
+        let a = vec![FrBytes::from_u64(1), FrBytes::from_u64(2)];
+        let b = vec![FrBytes::from_u64(0x0304), FrBytes::from(Bn254::NEG_ONE)];
+        assert_eq!(w, Stage1Witness::from_columns(2, &[a, b], vec![]).unwrap());
+        assert_eq!((w.n_rows(), w.n_cols()), (2, 2));
+        assert_eq!(Bn254::from(w.get(1, 1).unwrap()), -Bn254::ONE, "r − 1, canonical");
+
+        let err = Stage1Witness::from_rows(2, 2, &values[..3], vec![]).unwrap_err();
+        assert!(err.to_string().contains("has 4 values, and this one has 3"), "{err}");
+        assert!(Stage1Witness::from_rows(usize::MAX, 2, &values, vec![]).is_err());
+        assert_eq!(Stage1Witness::from_rows(0, 3, &[], vec![]).unwrap().trace_bytes(), &[] as &[u8]);
     }
 
     #[test]

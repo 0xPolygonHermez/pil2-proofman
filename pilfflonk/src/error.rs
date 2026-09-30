@@ -34,6 +34,11 @@ pub enum PilfflonkError {
     #[error("JS verifier: {0}")]
     JsVerifier(String),
 
+    /// A witness library (spec §4.3, D4, `crate::witness_library`) that cannot be loaded, or that is
+    /// not a pilfflonk one.
+    #[error("witness library {}: {reason}", path.display())]
+    WitnessLibrary { path: PathBuf, reason: String },
+
     /// The witness does not satisfy the AIR's constraints: the prover's constraint polynomial `Q` is
     /// not a polynomial of its degree (A.1). The C++ core's message says where.
     #[error("{0}")]
