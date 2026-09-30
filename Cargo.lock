@@ -1478,6 +1478,7 @@ dependencies = [
  "proofman-starks-lib-c",
  "rand 0.10.3",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1507,6 +1508,7 @@ dependencies = [
  "num-bigint",
  "pil2-pilout",
  "proofman-common",
+ "proofman-fields",
  "proofman-pilfflonk",
  "proofman-starks-lib-c",
  "serde",

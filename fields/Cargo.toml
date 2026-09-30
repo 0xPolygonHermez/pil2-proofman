@@ -26,6 +26,8 @@ verify = []
 
 [dev-dependencies]
 rand = { workspace = true }
+# Only for the serde tests of `Bn254`.
+serde_json = { workspace = true }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [

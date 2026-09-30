@@ -14,6 +14,7 @@ use std::fmt;
 use std::sync::OnceLock;
 
 use num_bigint::BigUint;
+use proofman_fields::Bn254;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -167,6 +168,21 @@ field_element!(
     r,
     "r"
 );
+
+/// A `Bn254` is an element of `Fr` in the type a witness is computed in (D4). It is always below
+/// `r`, as an `FrBytes` is, so the conversions cannot fail: they only change the representation.
+impl From<Bn254> for FrBytes {
+    fn from(value: Bn254) -> Self {
+        Self(value.to_le_bytes())
+    }
+}
+
+impl From<FrBytes> for Bn254 {
+    fn from(value: FrBytes) -> Self {
+        // Below r, so it is a Bn254.
+        Bn254::from_le_bytes(value.0).unwrap_or_default()
+    }
+}
 
 field_element!(
     /// A canonical element of `Fq` (`< q`): a coordinate of a point.
@@ -371,6 +387,34 @@ mod tests {
         assert!(FrBytes::from_le_bytes(r_le).is_err());
         assert!(FrBytes::from_be_bytes(reversed(r_le)).is_err());
         assert!(FrBytes::from_le_bytes([0xff; 32]).is_err());
+    }
+
+    #[test]
+    fn a_bn254_is_an_fr_bytes() {
+        use proofman_fields::{Field, QuotientMap};
+
+        let r_minus_1 = (r() - 1u32).to_str_radix(10);
+        let values = [
+            Bn254::ZERO,
+            Bn254::ONE,
+            Bn254::NEG_ONE,
+            Bn254::GENERATOR,
+            Bn254::from_int(-2),
+            Bn254::W[28],
+            Bn254::W[28].inverse(),
+        ];
+        for x in values {
+            let bytes = FrBytes::from(x);
+            assert_eq!(bytes.to_le_bytes(), x.to_le_bytes());
+            assert_eq!(Bn254::from(bytes), x);
+            assert_eq!(bytes.to_decimal(), x.to_string());
+            // The two JSON forms are the same (A.6).
+            assert_eq!(serde_json::to_string(&bytes).unwrap(), serde_json::to_string(&x).unwrap());
+        }
+        assert_eq!(FrBytes::from(Bn254::NEG_ONE).to_decimal(), r_minus_1);
+        assert_eq!(Bn254::from(FrBytes::from_decimal(&r_minus_1).unwrap()), Bn254::NEG_ONE);
+        assert_eq!(Bn254::from(FrBytes::from_u64(u64::MAX)), Bn254::from_int(u64::MAX));
+        assert_eq!(Bn254::from(Digest([0xff; 32]).to_fr()).to_string(), Digest([0xff; 32]).to_fr().to_decimal());
     }
 
     #[test]

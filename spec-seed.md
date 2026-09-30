@@ -131,7 +131,7 @@ Els annexos són la referència detallada per a qui implementi:
 ### 2.1 Principis que guien el disseny
 
 1. **Un camí germà, no una generalització.** El runtime STARK no es toca. El camí pilfflonk en comparteix el `pilout`, les passades simbòliques del setup, els binaris `proofman-setup` i `proofman-cli`, i `libstarks`.
-2. **Rust orquestra i C++ calcula.** L'aritmètica pesada de BN254 del prover (MSM, NTT, polinomis) és C++ amb **ffiasm**, i la de GPU és `pil2-stark/src/bn128/src/{msm,ntt}`. S'exposa amb FFI escrita a mà, amb el mateix patró que el camí STARK, i no s'hi afegeix cap biblioteca de corbes nova. En Rust només hi ha aritmètica d'enters grans al setup (`num-bigint`) i, si es tria D4(a), un tipus `Fr` per calcular el witness.
+2. **Rust orquestra i C++ calcula.** L'aritmètica pesada de BN254 del prover (MSM, NTT, polinomis) és C++ amb **ffiasm**, i la de GPU és `pil2-stark/src/bn128/src/{msm,ntt}`. S'exposa amb FFI escrita a mà, amb el mateix patró que el camí STARK, i no s'hi afegeix cap biblioteca de corbes nova. En Rust només hi ha aritmètica d'enters grans al setup (`num-bigint`) i, per D4(a), el tipus `Bn254` de `proofman-fields` per calcular el witness en `Fr` (§4.3).
 3. **El setup és en Rust, al costat del STARK.** Les passades simbòliques (restriccions, im pols, mapes, codegen) són una sola implementació, parametritzada pel camp.
 4. **El setup decideix i el prover executa.** Els graus, l'agrupació i el bytecode es fixen al setup. El prover no pren cap decisió.
 5. **Errors explícits.** No hi ha estat global nou, ni `panic!`, ni crides a `exit()` en codi de biblioteca. Tot allò que no se suporta falla **al setup**, no en provar.
@@ -598,6 +598,16 @@ Les columnes de l'**stage 2 i posteriors** i els im pols no els aporta ningú de
 **D'on surt el witness:**
 - **Fases 1 i 2:** d'un fitxer per instància, llegit per un `WitnessSource`, que generen petits generadors de fixtures.
 - **Fase 3:** de programes reals. Els `WitnessLibrary<F: PrimeField64>` actuals no poden calcular en BN254: convertir valors de Goldilocks a `Fr` no és correcte per a negatius ni inverses. Cal una font de witness en `Fr` (D4).
+
+**El tipus `Bn254` (M38a).** És `proofman_fields::Bn254` (`fields/src/bn254.rs`): el camp escalar `Fr` de BN254, d'ordre `r`, i no el camp base `Fq`. Es diu com la corba, igual que `Goldilocks` es diu com el seu primer. És en Rust pur i sense cap biblioteca de corbes. Només serveix per calcular el witness: el prover continua fent l'aritmètica de BN254 amb ffiasm.
+- **Representació.** Forma de Montgomery, `a·2^256 mod r`, en quatre *limbs* de 64 bits *little-endian*, sempre reduïda (`< r`). És la mateixa de `RawFr::Element` d'ffiasm. Com que els *limbs* són únics, la igualtat i el *hash* hi treballen directament; l'ordre (`Ord`) és el dels valors canònics.
+- **Aritmètica.** Multiplicació de Montgomery CIOS; inversa per Fermat (`a^(r−2)`, amb finestres de 4 bits), i `exp_u256` per a exponents de 256 bits. Dividir per 0 fa `panic!`, com `Field::inverse` a Goldilocks; `try_inverse` torna `None`. En *release*, a la màquina de desenvolupament (AMD EPYC 7773X), una multiplicació triga uns 22 ns i una inversa uns 7,5 µs.
+- **Traits.** `Field` i `PrimeField`, però no `PrimeField64`, que és de 64 bits. `QuotientMap` per a tots els enters fins a 128 bits (i `usize`/`isize`): un negatiu `x` és `r − |x|`, i tots són canònics, de manera que `from_canonical_checked` no torna mai `None`. Com que els `from_u64` de `PrimeField64` no hi són, un enter es converteix amb `Bn254::from_int`.
+- **Constants.** `GENERATOR = 5`, el no-residu quadràtic més petit: el generador d'ffjavascript i d'ffiasm i el desplaçament del *coset* de §4.4. `TWO_ADICITY = 28`, i `W[i] = 5^((r−1)/2^i)` per a `i ≤ 28`, que són els `Bn254_Gen[i]` de la std (`bn254.pil`, M29) i les arrels de la FFT d'ffiasm.
+- **Bytes.** `to_le_bytes` i `from_le_bytes` fan servir els 32 bytes *little-endian* canònics del witness i del `.const` (A.6); `from_le_bytes` torna `None` per a un valor `≥ r`.
+- **Serde: cadena decimal canònica.** És la codificació JSON d'A.6, la mateixa que `FrBytes`. Només es llegeix aquesta grafia: sense signe, espais ni zeros a l'esquerra, i `< r`. Un número JSON es rebutja. **Diferència amb Goldilocks:** el trait només demana `Serialize + DeserializeOwned`, i Goldilocks es serialitza com a número JSON, però molts lectors no poden llegir un número JSON de 254 bits. `Display` i `Debug` també escriuen el decimal canònic.
+- **Conversions.** `From<Bn254> for FrBytes` i `From<FrBytes> for Bn254`, a `pilfflonk/src/field.rs`. Cap de les dues pot fallar, perquè els dos tipus són sempre `< r`: només canvien la representació. `proofman-pilfflonk` depèn de `proofman-fields`, i no al revés.
+- **Tests.** Cada operació es compara amb `num-bigint` en valors aleatoris i de vora. Un vector calculat amb el `RawFr` d'ffiasm i també amb Python, que coincideixen, queda fixat al test, amb la forma de Montgomery inclosa. `pilfflonk/tests/std_bn254.rs` compara `W` i `GENERATOR` amb `bn254.pil`.
 
 ### 4.4 Pas 4: prova
 

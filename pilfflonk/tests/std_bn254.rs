@@ -18,6 +18,7 @@ use std::process::{Command, Output};
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, operand, SymbolType};
 use pil2_pilout::pilout_proxy::PilOutProxy;
+use proofman_fields::{Bn254, Field, PrimeField};
 use proofman_pilfflonk::global_info::MAX_NBITS;
 use proofman_pilfflonk::{oracle, BN254_Q, BN254_R};
 
@@ -215,6 +216,18 @@ fn bn254_gen_are_the_roots_of_unity_of_order_a_power_of_two() {
     }
     assert_eq!(f.gen[0], f.one());
     assert_eq!(f.gen[28], big(BN254_ROOT_28));
+}
+
+#[test]
+fn bn254_has_the_roots_of_unity_and_the_coset_generator_of_the_std() {
+    let f = FieldConstants::bn254();
+    assert_eq!(Bn254::TWO_ADICITY as u64, MAX_NBITS);
+    assert_eq!(Bn254::W.len(), f.gen.len());
+    for (i, (w, g)) in Bn254::W.iter().zip(&f.gen).enumerate() {
+        assert_eq!(w.as_canonical_biguint(), *g, "Bn254::W[{i}] is Bn254_Gen[{i}]");
+    }
+    assert_eq!(Bn254::GENERATOR.as_canonical_biguint(), BigUint::from(5u32));
+    assert_eq!(Bn254::GENERATOR.exp_power_of_2(Bn254::TWO_ADICITY).as_canonical_biguint(), f.k, "Bn254_k = 5^(2^28)");
 }
 
 #[test]
