@@ -6,7 +6,11 @@
 //!    zkin;
 //! 2. the circuit's BN254 `.exec`, which plonk2pil writes, gathers the stage-1 columns and the
 //!    publics out of it, with the STARK's `getCommitedPols` semantics
-//!    ([`ExecFile::committed_pols`](proofman_common::exec_format::ExecFile::committed_pols)).
+//!    ([`ExecFile::committed_pols`](proofman_common::exec_format::ExecFile::committed_pols));
+//! 3. if the AIR has range checks (circom's `Num2Bytes`), the multiplicity of their table,
+//!    `RANGE_MUL`, is counted from the chunk cells of the rows the exec's range-check bands name
+//!    ([`RANGE_CHECK_BAND_KIND`](proofman_common::exec_format::RANGE_CHECK_BAND_KIND)), into the
+//!    stage-1 column its band section's aux word names.
 //!
 //! pilfflonk proves the AIR as any other, and knows nothing of circom or of the exec: this crate is
 //! the wrap's, between the three. It is used in two ways:
@@ -22,9 +26,10 @@
 //!   lives in that build, not beside the circuit's files in `provingKeySnark/`, and `-i` names them.
 //!
 //! What it cannot compute is an error, not a panic: a file missing, an exec that is not over BN254,
-//! has gate bands or does not fit the circuit's witness or the AIR, a key whose shape is not one AIR
-//! with no air values or proof values, a zkin that is not a JSON object, and a zkin the calculator
-//! fails on. A key of the zkin that is not an input of the circuit is the exception: circom's
+//! has gate bands that are not the wrap's range checks or does not fit the circuit's witness or the
+//! AIR, a chunk of a range check that is not below 2^16, a key whose shape is not one AIR with no
+//! air values or proof values, a zkin that is not a JSON object, and a zkin the calculator fails
+//! on. A key of the zkin that is not an input of the circuit is the exception: circom's
 //! calculator stops the process on it, as it does in the PLONK and FFLONK wraps.
 
 mod artifacts;

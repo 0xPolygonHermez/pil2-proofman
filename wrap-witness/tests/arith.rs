@@ -3,7 +3,7 @@
 //! its `input.json` as the zkin.
 //!
 //! The circuit's files are laid out as setup-snark lays out `provingKeySnark/final/`,
-//! `final/final.{so,dat,exec}`:
+//! `final/final.{so,dat,exec}` (`tests/common`):
 //! - it is compiled with the committed circom (`setup/circom`), for BN254;
 //! - its witness calculator is built as setup-snark builds `final.so`: `WitnessTracker`, with the
 //!   Makefile of `setup/final_snark_circom/`;
@@ -29,6 +29,8 @@
 #[path = "../../pilfflonk/tests/data/witness_libraries.rs"]
 mod witness_libraries;
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -38,7 +40,6 @@ use pil2_stark_recurser::plonk2pil::field::PlonkField;
 use pil2_stark_recurser::plonk2pil::r1cs::to_plonk::{r1cs2plonk, PlonkAddition, PlonkConstraint};
 use pil2_stark_recurser::plonk2pil::r1cs::types::{read_r1cs_from_bytes, GateBand, GateBandKind};
 use pil2_stark_recurser::plonk2pil::write_exec_file;
-use pil2_stark_setup::output::witness_gen::WitnessTracker;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
@@ -48,6 +49,7 @@ use proofman_pilfflonk::{
     check, compute_witness, js_verifier, load_witness_library, prove, AirShape, CheckOptions, FrBytes, JsonFile,
     PilfflonkError, PilfflonkGlobalInfo, ProveOptions, ProvingKey, Publics, Witness, WitnessShape,
 };
+use common::{build_final, fixture, missing_prerequisite, repo_root, run, snarkjs_witness};
 use witness_libraries::built_library;
 
 /// The circuit's publics: its 4 outputs and its 2 public inputs, wires 1 to 6.
@@ -59,48 +61,9 @@ const N_COLS: usize = 4;
 /// The blinding seed of the proof (pilfflonk/docs/protocol.md#blinding).
 const SEED: [u8; 32] = [0x51; 32];
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").canonicalize().expect("the repository root")
-}
-
-fn fixture(name: &str) -> PathBuf {
-    repo_root().join("setup/stark-recurser/tests/fixtures/bn254").join(name)
-}
-
 /// The zkin: the circuit's `input.json`.
 fn zkin() -> PathBuf {
     fixture("input.json")
-}
-
-/// The committed circom, as plonk2pil's BN254 test picks it.
-fn circom() -> PathBuf {
-    repo_root().join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" })
-}
-
-fn snarkjs() -> PathBuf {
-    repo_root().join("setup/pil2-stark/node_modules/snarkjs/build/cli.cjs")
-}
-
-/// What the reference witness needs and is missing, if anything.
-fn missing_prerequisite() -> Option<String> {
-    let node = Command::new("node").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
-    if !node {
-        return Some("node not on PATH".into());
-    }
-    if !snarkjs().is_file() {
-        return Some(format!("{} not present (npm install in setup/pil2-stark)", snarkjs().display()));
-    }
-    None
-}
-
-fn run(cmd: &mut Command, what: &str) {
-    let out = cmd.output().unwrap_or_else(|e| panic!("{what}: {e}"));
-    assert!(
-        out.status.success(),
-        "{what} failed:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 /// The circuit, its files and its reference, built once for the tests of this binary.
@@ -171,33 +134,9 @@ fn build_circuit() -> Circuit {
     if dir.exists() {
         fs::remove_dir_all(&dir).unwrap();
     }
-    let (build, files) = (dir.join("build"), dir.join("final"));
-    fs::create_dir_all(&build).unwrap();
+    let r1cs_bytes = build_final(&dir, &fixture("arith.circom"), &[]);
 
-    // As setup-snark compiles the final circuit (snark_setup.rs), for BN254, with the wasm for
-    // snarkjs. --O1 keeps the linear constraints, which plonk2pil's sum gates take.
-    run(
-        Command::new(circom())
-            .args(["--O1", "--r1cs", "--c", "--wasm", "--prime", "bn128"])
-            .arg(fixture("arith.circom"))
-            .arg("-o")
-            .arg(&build),
-        "circom",
-    );
-    // As setup-snark builds final.so and copies final.dat.
-    let helpers = repo_root().join("setup/final_snark_circom");
-    let tracker = WitnessTracker::new();
-    tracker.run_witness_library_generation(
-        dir.to_str().unwrap(),
-        files.to_str().unwrap(),
-        "arith",
-        "final",
-        helpers.to_str().unwrap(),
-    );
-    tracker.await_all().expect("final.so builds");
-    fs::copy(build.join("arith_cpp/arith.dat"), files.join("final.dat")).unwrap();
-
-    let r1cs = read_r1cs_from_bytes::<Bn254>(&fs::read(build.join("arith.r1cs")).unwrap()).unwrap();
+    let r1cs = read_r1cs_from_bytes::<Bn254>(&r1cs_bytes).unwrap();
     assert_eq!(r1cs.header.n_outputs as usize + r1cs.header.n_pub_inputs as usize, N_PUBLICS);
     let (gates, additions) = r1cs2plonk(&r1cs);
     assert!(!additions.is_empty(), "the circuit's wide sum must introduce additions");
@@ -213,19 +152,11 @@ fn build_circuit() -> Circuit {
         }
     }
 
-    // snarkjs's witness of the zkin, from the wasm, as JSON.
-    let (wtns, json) = (dir.join("arith.wtns"), dir.join("arith.wtns.json"));
-    let node = |args: &[&str], paths: &[&Path], what: &str| {
-        run(Command::new("node").arg(snarkjs()).args(args).args(paths), what);
-    };
-    node(&["wtns", "calculate"], &[&build.join("arith_js/arith.wasm"), &zkin(), &wtns], "snarkjs wtns calculate");
-    node(&["wtns", "export", "json"], &[&wtns, &json], "snarkjs wtns export json");
-    let values: Vec<String> = serde_json::from_slice(&fs::read(&json).unwrap()).unwrap();
-    let reference: Vec<Bn254> = values.iter().map(|v| Bn254::from_decimal(v).expect("a canonical value")).collect();
+    let reference = snarkjs_witness(&dir, "arith", &zkin());
     assert_eq!(reference.len(), r1cs.header.n_vars as usize);
 
     let circuit = Circuit { dir, gates, additions, s_map, n_bits: n_rows.trailing_zeros() as u64, reference };
-    circuit.write_exec(&files.join("final.exec"), &circuit.additions, &[]);
+    circuit.write_exec(&circuit.artifacts().exec, &circuit.additions, &[]);
     circuit
 }
 
@@ -345,7 +276,8 @@ fn the_dynamic_library_computes_the_same_witness() {
     assert!(matches!(&err, PilfflonkError::Io { path, .. } if path.ends_with("none.json")), "{err}");
 }
 
-/// A file missing, an exec of another field or with gate bands, and a key that is not the wrap's.
+/// A file missing, an exec of another field or with a gate band of the STARK's, and a key that is
+/// not the wrap's.
 #[test]
 fn files_and_keys_that_do_not_fit_are_refused() {
     let Some(circuit) = circuit() else { return };
@@ -361,7 +293,7 @@ fn files_and_keys_that_do_not_fit_are_refused() {
         }
     }
 
-    // A Goldilocks exec, and a BN254 one with a gate band.
+    // A Goldilocks exec, and a BN254 one with a gate band of the STARK's.
     let goldilocks = circuit.file("goldilocks.exec");
     circuit.write_exec::<Goldilocks>(&goldilocks, &[], &[]);
     let err = WrapWitness::load(&WrapArtifacts { exec: goldilocks, ..artifacts.clone() }).unwrap_err();
@@ -371,7 +303,7 @@ fn files_and_keys_that_do_not_fit_are_refused() {
     let band = GateBand { row: 0, kind: GateBandKind::Poseidon1CompressorSponge, payload: 0 };
     circuit.write_exec(&banded, &circuit.additions, &[band]);
     let err = WrapWitness::load(&WrapArtifacts { exec: banded, ..artifacts.clone() }).unwrap_err();
-    assert!(err.to_string().contains("has 1 gate bands"), "{err}");
+    assert!(err.to_string().contains("has a gate band of kind 1 at row 0, which only the STARK's"), "{err}");
 
     // Keys whose AIR the map does not fit, with publics past the witness, or not the wrap's.
     let wrap = WrapWitness::load(&artifacts).unwrap();
