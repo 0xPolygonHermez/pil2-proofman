@@ -14,7 +14,7 @@ use std::io::Read;
 use std::ffi::c_void;
 use crate::check_const_tree;
 use proofman_starks_lib_c::{
-    init_final_snark_prover_c, free_final_snark_prover_c, snark_proof_bytes_to_json_c,
+    init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
     get_unified_buffer_gpu_for_recursivef_c, pre_allocate_final_snark_prover_c, free_device_buffers_recursivef_c,
     gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c,
 };
@@ -64,6 +64,19 @@ impl SnarkProtocol {
             _ => Err(ProofmanError::InvalidConfiguration(format!("Unsupported snark protocol id: {}", protocol_id))),
         }
     }
+
+    /// The protocol of a loaded final SNARK prover: the one its zkey names.
+    fn from_snark_prover(snark_prover: *mut c_void) -> ProofmanResult<Self> {
+        Self::from_protocol_id(get_snark_protocol_id_c(snark_prover))
+    }
+
+    /// What `snarkjs <protocol> verify` prints when the proof verifies.
+    fn verified_message(&self) -> &'static str {
+        match self {
+            SnarkProtocol::Plonk => "OK",
+            SnarkProtocol::Fflonk => "PROOF VERIFIED SUCCESSFULLY",
+        }
+    }
 }
 
 pub struct SnarkWrapper<F: PrimeField64> {
@@ -78,7 +91,6 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub snark_prover: Option<*mut c_void>,
     pub d_buffers_recursivef: *mut c_void,
     pub proving_key_path: PathBuf,
-    pub protocol: SnarkProtocol,
     pub memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     pub gpu: bool,
 }
@@ -128,8 +140,9 @@ impl SnarkProof {
     pub fn convert_to_json(
         &self,
     ) -> Result<(serde_json::Value, serde_json::Value), Box<dyn std::error::Error + Send + Sync>> {
+        let protocol = SnarkProtocol::from_protocol_id(self.protocol_id)?;
         let (proof_json, publics_json) =
-            snark_proof_bytes_to_json_c(&self.proof_bytes, &self.public_snark_bytes, self.protocol_id as i32);
+            snark_proof_bytes_to_json_c(&self.proof_bytes, &self.public_snark_bytes, protocol.protocol_id() as i32);
 
         let proof_json_value: serde_json::Value = serde_json::from_str(&proof_json)?;
         let publics_json_value: serde_json::Value = serde_json::from_str(&publics_json)?;
@@ -266,7 +279,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             setup_snark_path,
             snark_prover,
             proving_key_path: proving_key_path.to_path_buf(),
-            protocol: SnarkProtocol::Plonk, // Default to Plonk, can be changed later if needed
             vadcop_final_verkey,
             d_buffers,
             d_buffers_recursivef,
@@ -337,6 +349,16 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             }
         };
 
+        let protocol = match SnarkProtocol::from_snark_prover(snark_prover) {
+            Ok(protocol) => protocol,
+            Err(e) => {
+                if self.snark_prover.is_none() {
+                    free_final_snark_prover_c(snark_prover);
+                }
+                return Err(e);
+            }
+        };
+
         //  Spawn GPU pre-allocation on a separate thread so it overlaps with CPU witness computation
         let prealloc_handle = {
             let snark_prover = snark_prover as usize;
@@ -366,8 +388,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
         let public_bytes = get_public_bytes_solidity(&publics_info, &proof[1..1 + proof[0] as usize])?;
-        let snark_proof =
-            SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, self.protocol.protocol_id());
+        let snark_proof = SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, protocol.protocol_id());
 
         timer_stop_and_log_debug!(GENERATING_SNARK_PROOF);
 
@@ -624,7 +645,7 @@ pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> Proofma
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.contains("OK") {
+        if stdout.contains(protocol.verified_message()) {
             tracing::info!("    {}", "\u{2713} SNARK proof was verified".bright_green().bold());
             Ok(())
         } else {
@@ -640,3 +661,163 @@ pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> Proofma
 
 unsafe impl<F: PrimeField64> Send for SnarkWrapper<F> {}
 unsafe impl<F: PrimeField64> Sync for SnarkWrapper<F> {}
+
+#[cfg(test)]
+mod tests {
+    use super::{SnarkProof, SnarkProtocol};
+    use proofman_starks_lib_c::{
+        free_final_snark_prover_c, generate_fflonk_zkey_c, generate_plonk_zkey_c, init_final_snark_prover_c,
+    };
+    use serde_json::json;
+
+    /// 32 little-endian bytes from 64 hex digits of a big-endian number.
+    fn le_from_hex(hex: &str) -> Vec<u8> {
+        let mut bytes: Vec<u8> = (0..32).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect();
+        bytes.reverse();
+        bytes
+    }
+
+    /// BN254's base field modulus q and scalar field modulus r.
+    const Q: &str = "30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47";
+    const R: &str = "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001";
+
+    /// A binfile as snarkjs and rapidsnark write them: type, version, sections as (id, bytes).
+    fn binfile(file_type: &[u8; 4], sections: &[(u32, Vec<u8>)]) -> Vec<u8> {
+        let mut bytes = file_type.to_vec();
+        bytes.extend(1u32.to_le_bytes());
+        bytes.extend((sections.len() as u32).to_le_bytes());
+        for (id, contents) in sections {
+            bytes.extend(id.to_le_bytes());
+            bytes.extend((contents.len() as u64).to_le_bytes());
+            bytes.extend(contents);
+        }
+        bytes
+    }
+
+    /// A ptau of `n_g1` G1 points and two G2 points, all zero: rapidsnark's setup copies and
+    /// commits with them without checking them, and the protocol of the zkey does not depend on
+    /// them. Section 12 is empty: the setup only checks that it exists.
+    fn zero_ptau(n_g1: usize) -> Vec<u8> {
+        let mut header = 32u32.to_le_bytes().to_vec();
+        header.extend(le_from_hex(Q));
+        header.extend(8u32.to_le_bytes());
+        header.extend(8u32.to_le_bytes());
+        binfile(b"ptau", &[(1, header), (2, vec![0; 64 * n_g1]), (3, vec![0; 2 * 128]), (12, vec![])])
+    }
+
+    /// The r1cs of `x * x = y`: wire 0 is the constant 1, wire 1 the public output y, wire 2 the
+    /// private input x.
+    fn square_r1cs() -> Vec<u8> {
+        let mut header = 32u32.to_le_bytes().to_vec();
+        header.extend(le_from_hex(R));
+        for count in [3u32, 1, 0, 1] {
+            header.extend(count.to_le_bytes()); // wires, outputs, public inputs, private inputs
+        }
+        header.extend(3u64.to_le_bytes()); // labels
+        header.extend(1u32.to_le_bytes()); // constraints
+        let one = le_from_hex(&format!("{:064x}", 1));
+        let mut constraints = Vec::new();
+        for wire in [2u32, 2, 1] {
+            constraints.extend(1u32.to_le_bytes());
+            constraints.extend(wire.to_le_bytes());
+            constraints.extend(&one);
+        }
+        let wire_to_label = (0..3u64).flat_map(u64::to_le_bytes).collect();
+        binfile(b"r1cs", &[(1, header), (2, constraints), (3, wire_to_label)])
+    }
+
+    #[test]
+    fn protocol_ids_map_to_protocols() {
+        assert!(matches!(SnarkProtocol::from_protocol_id(2), Ok(SnarkProtocol::Plonk)));
+        assert!(matches!(SnarkProtocol::from_protocol_id(10), Ok(SnarkProtocol::Fflonk)));
+        for protocol in [SnarkProtocol::Plonk, SnarkProtocol::Fflonk] {
+            let id = protocol.protocol_id();
+            assert_eq!(
+                SnarkProtocol::from_protocol_id(id).map(|p| p.protocol_name()).ok(),
+                Some(protocol.protocol_name())
+            );
+        }
+        assert_eq!(SnarkProtocol::Plonk.protocol_name(), "plonk");
+        assert_eq!(SnarkProtocol::Fflonk.protocol_name(), "fflonk");
+        for id in [0, 1, 3, 9, 11, u64::MAX] {
+            assert!(SnarkProtocol::from_protocol_id(id).is_err(), "protocol id {id}");
+        }
+    }
+
+    /// rapidsnark's own setup writes a tiny zkey of each protocol, and the prover loaded from each
+    /// reports the protocol that zkey names.
+    #[test]
+    fn the_protocol_is_the_one_the_zkey_names() {
+        let dir = std::env::temp_dir().join(format!("proofman_snark_protocol_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let r1cs = dir.join("square.r1cs");
+        let ptau = dir.join("zero.ptau");
+        std::fs::write(&r1cs, square_r1cs()).unwrap();
+        std::fs::write(&ptau, zero_ptau(256)).unwrap();
+
+        type ZkeySetup = fn(&str, &str, &str) -> i32;
+        let setups: [(ZkeySetup, SnarkProtocol); 2] =
+            [(generate_plonk_zkey_c, SnarkProtocol::Plonk), (generate_fflonk_zkey_c, SnarkProtocol::Fflonk)];
+        for (setup, expected) in setups {
+            let zkey = dir.join(format!("{}.zkey", expected.protocol_name()));
+            let zkey = zkey.to_str().unwrap();
+            assert_eq!(setup(r1cs.to_str().unwrap(), ptau.to_str().unwrap(), zkey), 0, "{zkey}");
+
+            let prover = init_final_snark_prover_c(zkey, std::ptr::null_mut());
+            assert!(!prover.is_null(), "{zkey}");
+            let protocol = SnarkProtocol::from_snark_prover(prover).map(|p| p.protocol_id());
+            free_final_snark_prover_c(prover);
+            assert_eq!(protocol.ok(), Some(expected.protocol_id()), "{zkey}");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_prover_that_is_not_loaded_has_no_protocol() {
+        assert!(SnarkProtocol::from_snark_prover(std::ptr::null_mut()).is_err());
+    }
+
+    /// 24 words 1, 2, ..., 24: 9 commitments and 6 evaluations for PLONK, 4 and 16 for FFLONK.
+    fn proof_of_words(protocol_id: u64) -> SnarkProof {
+        let word = |value: u8| {
+            let mut word = [0u8; 32];
+            word[31] = value;
+            word
+        };
+        SnarkProof::new((1..=24).flat_map(word).collect(), vec![], word(25).to_vec(), protocol_id)
+    }
+
+    #[test]
+    fn a_plonk_proof_converts_to_snarkjs_plonk_json() {
+        let (proof, publics) = proof_of_words(2).convert_to_json().unwrap();
+        assert_eq!(proof["protocol"], "plonk");
+        assert_eq!(proof["curve"], "bn128");
+        assert_eq!(proof["A"], json!(["1", "2", "1"]));
+        assert_eq!(proof["Wxiw"], json!(["17", "18", "1"]));
+        assert_eq!(proof["eval_a"], "19");
+        assert_eq!(proof["eval_zw"], "24");
+        assert_eq!(proof.as_object().unwrap().len(), 9 + 6 + 2);
+        assert_eq!(publics, json!(["25"]));
+    }
+
+    #[test]
+    fn an_fflonk_proof_converts_to_snarkjs_fflonk_json() {
+        let (proof, publics) = proof_of_words(10).convert_to_json().unwrap();
+        assert_eq!(proof["protocol"], "fflonk");
+        assert_eq!(proof["curve"], "bn128");
+        assert_eq!(proof["polynomials"]["C1"], json!(["1", "2", "1"]));
+        assert_eq!(proof["polynomials"]["W2"], json!(["7", "8", "1"]));
+        assert_eq!(proof["evaluations"]["ql"], "9");
+        assert_eq!(proof["evaluations"]["inv"], "24");
+        assert_eq!(proof["polynomials"].as_object().unwrap().len(), 4);
+        assert_eq!(proof["evaluations"].as_object().unwrap().len(), 16);
+        assert_eq!(proof.as_object().unwrap().len(), 4);
+        assert_eq!(publics, json!(["25"]));
+    }
+
+    #[test]
+    fn a_proof_of_an_unknown_protocol_does_not_convert() {
+        assert!(proof_of_words(7).convert_to_json().is_err());
+    }
+}
