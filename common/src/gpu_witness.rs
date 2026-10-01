@@ -20,7 +20,8 @@ use crate::{AirInstance, ProofmanError, ProofmanResult, TraceInfo};
 /// `decl` is the prover's declaration (`ProofCtx::gpu_witness_air`): the commit uploads
 /// `ops * decl.bytes_per_op` bytes and stages at most `decl.input_bytes_per_instance`, so `Op`
 /// must be exactly `bytes_per_op` wide and the ops must fit that bound. The buffer is used as raw bytes (`Goldilocks` is
-/// not `repr(transparent)`), so ops are written through a raw pointer.
+/// not `repr(transparent)`), so ops are written through a raw pointer. `Op` must be `Copy` (no drop
+/// glue: the buffer is later dropped as `F`) and should be a `#[repr(C)]` mirror of the kernel's op struct.
 ///
 /// `n_cols` is the air's real column count and does not match `trace.len()`;
 /// the commit path takes its geometry from the setup.
@@ -32,6 +33,7 @@ pub fn stage_gpu_witness<F: PrimeField64, Op, I>(
     inputs: &[Vec<I>],
 ) -> ProofmanResult<(AirInstance<F>, u64)>
 where
+    Op: Copy,
     for<'a> Op: From<&'a I>,
 {
     let (airgroup_id, air_id) = (decl.airgroup_id, decl.air_id);
@@ -275,6 +277,7 @@ mod tests {
     #[test]
     fn an_op_count_that_overflows_is_refused() {
         #[allow(dead_code)] // only its size matters
+        #[derive(Clone, Copy)]
         struct Op(u64);
         impl From<&()> for Op {
             fn from(_: &()) -> Self {
@@ -292,6 +295,7 @@ mod tests {
     #[test]
     fn an_empty_operation_set_is_refused() {
         #[allow(dead_code)] // only its size matters
+        #[derive(Clone, Copy)]
         struct Op(u64);
         impl From<&u32> for Op {
             fn from(v: &u32) -> Self {
@@ -307,6 +311,7 @@ mod tests {
     #[test]
     fn an_op_wider_or_narrower_than_declared_is_refused() {
         #[allow(dead_code)] // only its size matters
+        #[derive(Clone, Copy)]
         struct Op(u64);
         impl From<&u32> for Op {
             fn from(v: &u32) -> Self {
@@ -323,6 +328,7 @@ mod tests {
     #[test]
     fn staging_past_the_declared_bound_is_refused_even_in_a_bigger_buffer() {
         #[allow(dead_code)] // only its size matters
+        #[derive(Clone, Copy)]
         struct Op(u64);
         impl From<&u32> for Op {
             fn from(v: &u32) -> Self {
