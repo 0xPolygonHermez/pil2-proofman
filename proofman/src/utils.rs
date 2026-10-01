@@ -15,7 +15,7 @@ use proofman_common::{
 use proofman_starks_lib_c::{
     configure_const_slot_cache_c, load_device_const_pols_c, load_host_const_pols_c, reserve_custom_commit_slot_c,
 };
-use proofman_starks_lib_c::get_unified_buffer_gpu_c;
+use proofman_starks_lib_c::{get_layout_offset_c, get_unified_buffer_gpu_c, invalidate_stream_contexts_c};
 use proofman_starks_lib_c::verify_root_bn128_from_tree_c;
 use proofman_starks_lib_c::pack_const_pols_c;
 use proofman_starks_lib_c::{
@@ -329,6 +329,34 @@ pub fn needs_const_tree_regeneration<F: PrimeField64>(setup: &Setup<F>) -> Proof
     Ok(false)
 }
 
+/// Device scratch for the const-tree regeneration helpers: the aux area of the unified buffer.
+fn const_tree_scratch<F: PrimeField64>(setup: &Setup<F>, d_buffers: *mut c_void) -> ProofmanResult<*mut c_void> {
+    let base = get_unified_buffer_gpu_c(d_buffers);
+    if base.is_null() {
+        return Ok(base);
+    }
+    let ss = &setup.stark_info.stark_struct;
+    let n_const = setup.stark_info.n_constants;
+    let (n, n_ext) = (1u64 << ss.n_bits, 1u64 << ss.n_bits_ext);
+    // GL: prepare_blocks then calculate_const_tree; BN128: tile_const_pols.
+    let need = 8 * if ss.verification_hash_type == "GL" {
+        (2 * n * n_const).max(n_ext * n_const + setup.const_tree_size as u64)
+    } else {
+        2 * n_ext * n_const
+    };
+    let (aux, agg) = (get_layout_offset_c(d_buffers, 2), get_layout_offset_c(d_buffers, 4));
+    if need > agg.saturating_sub(aux) {
+        return Err(ProofmanError::InvalidConfiguration(format!(
+            "const-tree regeneration of {} needs {} of device scratch but the aux area holds {}",
+            setup.setup_path.display(),
+            format_bytes(need as f64),
+            format_bytes(agg.saturating_sub(aux) as f64),
+        )));
+    }
+    // Byte 0 holds the basic fixed pols; aux is idle here.
+    Ok((base as *mut u8).wrapping_add(aux as usize) as *mut c_void)
+}
+
 pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*mut c_void>) -> ProofmanResult<()> {
     if !setup.needs_const_tree_file() {
         return Ok(());
@@ -438,8 +466,10 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*m
         let const_tree: Vec<F> = create_buffer_fast(const_pols_tree_size);
         let p_stark_info = setup.p_setup.p_stark_info;
 
-        let unified_buffer_gpu =
-            if let Some(d_buffers) = d_buffers { get_unified_buffer_gpu_c(*d_buffers) } else { std::ptr::null_mut() };
+        let unified_buffer_gpu = match d_buffers {
+            Some(d) => const_tree_scratch(setup, *d)?,
+            None => std::ptr::null_mut(),
+        };
 
         if setup.stark_info.stark_struct.verification_hash_type == "GL" {
             if setup.gpu {
@@ -484,6 +514,11 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*m
                     unified_buffer_gpu,
                 );
             }
+        }
+
+        // The scratch overwrote aux, where streams keep their cached const pols/trees.
+        if let (Some(d), false) = (d_buffers, unified_buffer_gpu.is_null()) {
+            invalidate_stream_contexts_c(*d);
         }
 
         tracing::trace!("Successfully generated constant tree file '{}'", const_pols_tree_path);
@@ -1067,31 +1102,8 @@ pub fn load_device_const_pols<F: PrimeField64>(
         let mut recursive1_slots: HashMap<(usize, usize), u64> = HashMap::new();
         let mut recursive2_slots: HashMap<(usize, usize), u64> = HashMap::new();
 
-        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-            for (air_id, _) in air_group.iter().enumerate() {
-                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                    let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
-                    let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
-                    if setup.gpu {
-                        let group = fixed_group_or_own(Some(sctx_compressor), airgroup_id, air_id);
-                        load_const_pols_slot(
-                            d_buffers,
-                            setup,
-                            group,
-                            airgroup_id,
-                            air_id,
-                            only_first_gpu,
-                            &mut compressor_slots,
-                            &mut offset_aggregation,
-                        );
-                    }
-                }
-            }
-        }
-
-        // Recursive1: a slot cache instead of resident slots (SetupCtx::const_slot_cache_slots). The
-        // packed sets stay on the host (pinned) and the loader carves the cache region here, in the
-        // same position the resident slots occupied, so the sizing stays in lockstep.
+        // Recursive1 first: a slot cache (SetupCtx::const_slot_cache_slots) of host-pinned sets. At
+        // offset 0, a borrow just past aggBase costs only its tags.
         let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
         if sctx_recursive1.const_slot_cache_slots > 0 {
             for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
@@ -1128,6 +1140,28 @@ pub fn load_device_const_pols<F: PrimeField64>(
                             air_id,
                             only_first_gpu,
                             &mut recursive1_slots,
+                            &mut offset_aggregation,
+                        );
+                    }
+                }
+            }
+        }
+
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
+                    let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
+                    if setup.gpu {
+                        let group = fixed_group_or_own(Some(sctx_compressor), airgroup_id, air_id);
+                        load_const_pols_slot(
+                            d_buffers,
+                            setup,
+                            group,
+                            airgroup_id,
+                            air_id,
+                            only_first_gpu,
+                            &mut compressor_slots,
                             &mut offset_aggregation,
                         );
                     }

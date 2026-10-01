@@ -709,6 +709,9 @@ extern "C" {
         unifiedBufferPadArea: u64,
         prefetchRegionArea: u64,
         phaseAAliasOffset: u64,
+        lateRegionBytes: u64,
+        nSlots: u64,
+        slotBytes: u64,
     );
 
     pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64);
@@ -751,12 +754,28 @@ extern "C" {
     pub fn get_first_gpu_id(d_buffers: *mut ::std::os::raw::c_void) -> u32;
     pub fn get_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
-    pub fn get_const_pols_aggregation_offset(d_buffers: *mut ::std::os::raw::c_void) -> u64;
+    pub fn get_layout_offset(d_buffers: *mut ::std::os::raw::c_void, which: u32) -> u64;
+    pub fn reload_aggregation_const_pols(d_buffers: *mut ::std::os::raw::c_void, to_agg_byte: u64) -> u64;
+    pub fn set_debug_clobber_top(d_buffers: *mut ::std::os::raw::c_void, top_byte: u64);
+    pub fn debug_clobber_unified(d_buffers: *mut ::std::os::raw::c_void);
+    pub fn late_region_invalidate(d_buffers: *mut ::std::os::raw::c_void);
+    pub fn invalidate_stream_contexts(d_buffers: *mut ::std::os::raw::c_void);
     pub fn get_stream_commit_slots(d_buffers: *mut ::std::os::raw::c_void) -> u64;
     pub fn get_stream_commit_gpus(d_buffers: *mut ::std::os::raw::c_void) -> u64;
-    pub fn get_stream_commit_floor(d_buffers: *mut ::std::os::raw::c_void) -> u64;
-    pub fn stream_commit_slot_bytes(n_bits: u64, n_bits_ext: u64, n_cols: u64, words_per_row: u64, input_bytes: u64) -> u64;
-    pub fn configure_stream_commit_slots(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64);
+    pub fn stream_commit_slot_layout(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        nBits: u64,
+        nBitsExt: u64,
+        nCols: u64,
+        wordsPerRow: u64,
+        inputBytes: u64,
+        packed: u64,
+        indexed: u64,
+        out: *mut u64,
+    ) -> u64;
+    pub fn configure_stream_commit_slots(d_buffers: *mut ::std::os::raw::c_void);
     pub fn commit_witness_streaming(
         d_buffers: *mut ::std::os::raw::c_void,
         slot_idx: u64,
@@ -808,6 +827,7 @@ extern "C" {
         airgroup_id: u64,
         air_id: u64,
         bytes_per_op: u64,
+        input_bytes_max: u64,
         emits: ::std::os::raw::c_int,
         fill: crate::GpuWitnessFillFn,
     );
@@ -828,6 +848,7 @@ extern "C" {
         auxReady: u64,
     );
     pub fn mul_air_has_jobs(pSetupCtx: *mut ::std::os::raw::c_void, airgroupId: u64, airId: u64) -> u64;
+    pub fn late_region_bytes(withPeers: u64) -> u64;
     pub fn mul_air_reads_aux(pSetupCtx: *mut ::std::os::raw::c_void, airgroupId: u64, airId: u64) -> u64;
     pub fn mul_air_plan_error(
         pSetupCtx: *mut ::std::os::raw::c_void,

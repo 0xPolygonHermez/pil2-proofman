@@ -12,8 +12,8 @@ extern "C" {
 /// Declare that `airgroupId:airId`'s stage-1 witness comes from `fill` rather
 /// than a host upload. `emits` is a `GpuWitnessLayout`.
 void gpu_witness_register(void *d_buffers, uint64_t airgroupId, uint64_t airId, uint64_t bytesPerOp,
-                          int emits, GpuWitnessFillFn fill) {
-    gpu_witness_register_impl(d_buffers, airgroupId, airId, bytesPerOp, emits, fill);
+                          uint64_t inputBytesMax, int emits, GpuWitnessFillFn fill) {
+    gpu_witness_register_impl(d_buffers, airgroupId, airId, bytesPerOp, inputBytesMax, emits, fill);
 }
 
 /// Forget this prover's registrations.

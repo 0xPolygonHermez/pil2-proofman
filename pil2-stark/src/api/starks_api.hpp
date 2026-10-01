@@ -61,7 +61,12 @@ extern "C" {
     // Count one instance's lookups from a filled witness, for the paths that never commit.
     void mul_scatter(void *pSetupCtx, void *params, uint64_t airgroupId, uint64_t airId, uint64_t auxReady);
     uint64_t mul_air_has_jobs(void *pSetupCtx, uint64_t airgroupId, uint64_t airId);
+    uint64_t late_region_bytes(uint64_t withPeers);
+    void stream_commit_scratch_elems(void *pSetupCtx, uint64_t airgroupId, uint64_t airId,
+                                     uint64_t *side, uint64_t *cons, uint64_t *custom);
     uint64_t mul_air_reads_aux(void *pSetupCtx, uint64_t airgroupId, uint64_t airId);
+    uint64_t mul_scatter_wants_colmajor(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t wordsPerRow,
+                                        uint64_t indexed);
     uint64_t mul_air_plan_error(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, char *out, uint64_t cap);
     void mul_clear_registry();
     // A table air's proves-side lookups, evaluated from its fixed columns (stateless).
@@ -240,7 +245,7 @@ extern "C" {
     void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
     void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_,  void *packedInfo, uint64_t *execData, uint64_t execWords);
     uint64_t gen_device_streams(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
-    void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset);
+    void alloc_device_large_buffers(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset, uint64_t lateRegionBytes, uint64_t nSlots, uint64_t slotBytes);
     void reset_device_streams(void *d_buffers_);
     uint64_t check_device_memory(uint32_t node_rank, uint32_t node_size);
     uint64_t get_num_gpus();
@@ -251,12 +256,19 @@ extern "C" {
     uint32_t is_first_gpu_buffer_borrowed(void *d_buffers_);
     uint32_t get_first_gpu_id(void *d_buffers_);
     void *get_first_gpu_buffer(void *d_buffers_);
-    uint64_t get_const_pols_aggregation_offset(void *d_buffers_);
+    uint64_t get_layout_offset(void *d_buffers_, uint32_t which);
+    uint64_t reload_aggregation_const_pols(void *d_buffers_, uint64_t toAggByte);
+    void set_debug_clobber_top(void *d_buffers_, uint64_t topByte);
+    void debug_clobber_unified(void *d_buffers_);
+    void late_region_invalidate(void *d_buffers_);
+    void invalidate_stream_contexts(void *d_buffers_);
     uint64_t get_stream_commit_slots(void *d_buffers_);
     uint64_t get_stream_commit_gpus(void *d_buffers_);
-    uint64_t get_stream_commit_floor(void *d_buffers_);
-    uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes);
-    void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
+    // One air's slot layout (bytes): out = {commit area, side, const, custom, end}; returns end, 0 = not committable.
+    uint64_t stream_commit_slot_layout(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits,
+                                       uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes,
+                                       uint64_t packed, uint64_t indexed, uint64_t *out);
+    void configure_stream_commit_slots(void *d_buffers_);
     void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes);
     int64_t stage_witness(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size, bool hostSync);
     void release_staged_witness(void *d_buffers_, uint64_t instanceId);

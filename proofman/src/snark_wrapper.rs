@@ -1,6 +1,7 @@
 use proofman_common::{
-    GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark,
-    load_const_pols_recursivef, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode, initialize_logger,
+    format_bytes, GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup,
+    calculate_fixed_tree_snark, load_const_pols_recursivef, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode,
+    initialize_logger,
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 use proofman_verifier::VadcopFinalProof;
@@ -16,7 +17,7 @@ use crate::check_const_tree;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, snark_proof_bytes_to_json_c,
     get_unified_buffer_gpu_for_recursivef_c, pre_allocate_final_snark_prover_c, free_device_buffers_recursivef_c,
-    gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c,
+    gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c, get_unified_buffer_gpu_size_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
@@ -227,6 +228,18 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let verkey_str: String = serde_json::from_str(&contents)
             .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
 
+        if gpu && !d_buffers_vadcop.is_null() {
+            let need = 8 * (setup_recursivef.const_tree_size as u64 + setup_recursivef.prover_buffer_size);
+            let total = get_unified_buffer_gpu_size_c(d_buffers_vadcop);
+            if need > total {
+                return Err(ProofmanError::InvalidConfiguration(format!(
+                    "recursiveF needs {} of device memory but the unified buffer holds {}",
+                    format_bytes(need as f64),
+                    format_bytes(total as f64),
+                )));
+            }
+        }
+
         let d_buffers_recursivef = gen_device_buffers_recursivef_c(
             p_setup as *mut u8,
             setup_recursivef.prover_buffer_size,
@@ -305,6 +318,13 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         // wrapper transcript (VerifyPoW aborts).
         let verkey = verkey_override.unwrap_or(&self.vadcop_final_verkey);
 
+        // Before recursiveF's first write, so every exit path below gets the restore.
+        if self.d_buffers.is_some() {
+            if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
+                reload_flag.store(true, Ordering::SeqCst);
+            }
+        }
+
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
             &self.memory_handler_recursive_witness,
@@ -373,8 +393,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
-        // The snark's carve overwrote the const-pols regions inside the unified buffer; the
-        // flag is consumed after the next wcm.execute() and re-uploads them before any proof.
+        // Again at the end: a reset() that ran mid-snark consumed the first store.
         if self.d_buffers.is_some() {
             if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
                 reload_flag.store(true, Ordering::SeqCst);
