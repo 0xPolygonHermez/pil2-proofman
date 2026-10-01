@@ -131,6 +131,7 @@ extern "C" {
     // placed. No-op on an exec file written without a band section. Returns bands expanded.
     uint64_t expand_gate_bands(void *witness, uint64_t* execData, uint64_t nCols, uint64_t execWords, uint64_t N);
     void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
+    void free_recursivef_proof(void *zkin);
     void get_stream_proofs(void *d_buffers_);
     void get_stream_proofs_non_blocking(void *d_buffers_);
     void get_stream_id_proof(void *d_buffers_, uint64_t streamId);

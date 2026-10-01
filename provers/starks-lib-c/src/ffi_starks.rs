@@ -1245,6 +1245,10 @@ pub fn get_snark_protocol_id_c(snark_prover: *mut c_void) -> u64 {
     unsafe { get_snark_protocol_id(snark_prover) }
 }
 
+pub fn free_recursivef_proof_c(zkin: *mut c_void) {
+    unsafe { free_recursivef_proof(zkin) }
+}
+
 pub fn free_final_snark_prover_c(snark_prover: *mut c_void) {
     unsafe { free_final_snark_prover(snark_prover) }
 }

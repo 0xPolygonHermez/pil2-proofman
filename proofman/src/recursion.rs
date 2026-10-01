@@ -847,7 +847,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     vadcop_final_verkey: &[u64],
     prover_buffer_size: usize,
     d_buffers_recursivef: *mut c_void,
-) -> ProofmanResult<*mut c_void> {
+) -> ProofmanResult<RecursivefProof> {
     timer_start_info!(GENERATE_RECURSIVEF);
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
@@ -929,7 +929,21 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     timer_stop_and_log_info!(GENERATE_RECURSIVEF);
 
-    Ok(p_prove)
+    Ok(RecursivefProof(p_prove))
+}
+
+pub struct RecursivefProof(*mut c_void);
+
+impl RecursivefProof {
+    pub fn as_ptr(&self) -> *mut c_void {
+        self.0
+    }
+}
+
+impl Drop for RecursivefProof {
+    fn drop(&mut self) {
+        free_recursivef_proof_c(self.0);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
