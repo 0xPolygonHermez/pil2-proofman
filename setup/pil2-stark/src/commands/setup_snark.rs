@@ -170,6 +170,7 @@ mod tests {
 
     use pil2_stark_recurser::plonk2pil::r1cs_types::read_r1cs_from_bytes;
     use pilfflonk_setup::command::PROVING_KEY_DIR;
+    use pilfflonk_setup::layout::max_degree;
     use pilfflonk_setup::solidity::VERIFIER_SOL_FILE;
     use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
     use proofman_fields::Bn254;
@@ -177,7 +178,7 @@ mod tests {
     use proofman_pilfflonk::{AirFile, CalldataLayout, JsonFile, PilfflonkGlobalInfo, Vkey};
 
     use super::*;
-    use crate::proving_key::snark_setup::tests::assert_exec_gathers_the_air_columns;
+    use crate::proving_key::snark_setup::tests::{assert_exec_gathers_the_air_columns, assert_set_up_at_the_family_knobs};
 
     fn options(build_dir: &str, final_snark: &str) -> SetupSnarkOptions {
         SetupSnarkOptions {
@@ -204,9 +205,9 @@ mod tests {
     }
 
     /// The powers `[τ^i]₁` of the test ptau [`pilfflonk_final_circuit`] writes: fibonacci-square's
-    /// final circuit is an AIR of 2^22 rows, whose layout needs `12·2^22 + 11`, and this is `16·N`,
-    /// as plonk2pil's wrap tests size theirs.
-    const TEST_PTAU_POWERS: usize = 16 << 22;
+    /// final circuit is an AIR of 2^19 rows, whose layout needs `13·2^19 + 12` with range checks,
+    /// and this is `14·N`, as plonk2pil's wrap tests size theirs.
+    const TEST_PTAU_POWERS: usize = 14 << 19;
 
     /// setup-snark for pilfflonk on the `vadcop_final` of a real program: the recursivef with custom
     /// trees and `lastLevelVerification` 0, the final circuit with custom templates, which the
@@ -221,9 +222,9 @@ mod tests {
     /// file there, the test writes a ptau of [`TEST_PTAU_POWERS`] powers there, with the fixed τ of
     /// the tests (`pilfflonk_setup::test_ptau`), never to be used for a real key. The PIL of the AIR
     /// is compiled over BN254 with `PIL2C_EXEC`, which must honour `prime`
-    /// (pilfflonk/docs/README.md#compile-pil). With fibonacci-square on 64 threads, that takes some
-    /// 5 minutes and 16 GB, most of it the build of the final circuit's witness library; the test
-    /// ptau takes some 40 minutes and 19 GB more, and 4.3 GB on disk:
+    /// (pilfflonk/docs/README.md#compile-pil). With fibonacci-square and the Hermez ptau of 2^24 on
+    /// 32 threads, that takes some 4 minutes and 3.5 GB, most of it the build of the final
+    /// circuit's witness library; the test ptau holds 0.47 GB on disk:
     ///
     /// ```text
     /// SETUP_SNARK_BUILD_DIR=<dir> SETUP_SNARK_PUBLICS_INFO=$PWD/examples/fibonacci-square/src/publics_info.json \
@@ -232,7 +233,7 @@ mod tests {
     ///     --lib pilfflonk_final_circuit -- --ignored --nocapture
     /// ```
     #[test]
-    #[ignore = "a recursivef and a final circuit of millions of constraints, for SETUP_SNARK_BUILD_DIR"]
+    #[ignore = "a recursivef and a final circuit of 2^19 rows, for SETUP_SNARK_BUILD_DIR"]
     fn pilfflonk_final_circuit() {
         let Ok(build_dir) = std::env::var("SETUP_SNARK_BUILD_DIR") else {
             eprintln!("skipped: SETUP_SNARK_BUILD_DIR does not name a recursive setup's build dir");
@@ -320,9 +321,13 @@ mod tests {
         }
         assert!(!final_dir.join("final.zkey").exists(), "a rapidsnark zkey for pilfflonk");
 
+        // At the wrap family's knobs, the layout of an AIR with range checks.
+        assert_set_up_at_the_family_knobs(&global_info);
         let vkey = Vkey::read(&global_info.vkey_path(&proving_key)).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(vkey.n_public, 1, "the final circuit's one public, its publics hash");
-        assert_exec_gathers_the_air_columns(&final_dir.join("final.exec"), &proving_key);
+        let degree = max_degree(&vkey.layout);
+        assert_eq!(degree, 13 * (1 << vkey.power) + 12, "the largest degree of layout L1 with range checks");
+        assert_exec_gathers_the_air_columns(&final_dir.join("final.exec"), &proving_key, range_checks);
 
         // The project's verifier extends the key's, from where it is, with a proof of its calldata.
         let words = CalldataLayout::of(&vkey).words();
@@ -334,6 +339,10 @@ mod tests {
         ] {
             assert!(project.contains(&line), "{line} missing from {contract}");
         }
-        eprintln!("pilfflonk key: 2^{} rows, {} f, {words} calldata words", vkey.power, vkey.layout.0.len());
+        eprintln!(
+            "pilfflonk key: 2^{} rows, {} f, {degree} powers [τ^i]₁, {words} calldata words",
+            vkey.power,
+            vkey.layout.0.len()
+        );
     }
 }

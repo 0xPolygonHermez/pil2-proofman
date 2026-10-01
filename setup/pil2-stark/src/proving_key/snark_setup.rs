@@ -17,8 +17,9 @@ use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
+use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::wrap;
 use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
-use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
+use pilfflonk_setup::command::{DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::solidity::VERIFIER_SOL_FILE;
 use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
 use proofman_common::hash_family::BN254_WRAP_FAMILY;
@@ -686,15 +687,21 @@ impl WrapKey {
 /// Sets up the AIR plonk2pil makes of the circuit `r1cs`, over BN254, for pilfflonk, writing
 /// `files` and `provingKey/` under `key_dir`:
 /// 1. plonk2pil lays out the r1cs in the final SNARK wrap's family ([`BN254_WRAP_FAMILY`],
-///    PoseidonBN254 in layout L1), and its PIL and exec are written;
+///    PoseidonBN254 in layout L1, with range checks), and its PIL and exec are written. The PIL has
+///    the std group its buses' terms to the family's degree, [`wrap::MAX_CONSTRAINT_DEGREE`],
+///    plonk2pil's by default;
 /// 2. pil2com compiles the PIL over BN254, with `includes` (plonk2pil's PIL and the std): `-P` with
 ///    a `prime` of r, which only a pil2com that honours `prime` does (`PIL2C_EXEC`,
 ///    pilfflonk/docs/README.md#compile-pil). One that ignores it compiles over Goldilocks, and the
 ///    setup refuses the pilout, saying so;
 /// 3. setup-pilfflonk sets the pilout up with plonk2pil's fixed columns, which the pilout declares
-///    `#pragma fixed_external`, and writes its Solidity verifier. It refuses a ptau with fewer
-///    powers `[τ^i]₁` than the layout's largest degree, `12·N + 11` in L1, saying how many it holds
-///    and how many it needs, before it writes any file of the key.
+///    `#pragma fixed_external`, at the family's knobs, and writes its Solidity verifier. Its degree
+///    search goes up to the PIL's degree, [`wrap::MAX_CONSTRAINT_DEGREE`], which the AIR's own
+///    constraints reach: there `Q` needs no im pol, where a lower bound adds some (9 at 5 and 49 at
+///    2 for fibonacci-square's final circuit), and a higher one finds the same. Its `--extra-muls`
+///    is [`wrap::EXTRA_MULS`]. It refuses a ptau with fewer powers `[τ^i]₁` than the layout's
+///    largest degree, `13·N + 12` with range checks, saying how many it holds and how many it
+///    needs, before it writes any file of the key.
 fn set_up_wrap_air(
     r1cs: &Path,
     files: &WrapAirFiles,
@@ -729,8 +736,8 @@ fn set_up_wrap_air(
         airout_path: files.pilout.clone(),
         build_dir: key_dir.to_path_buf(),
         powers_of_tau: powers_of_tau.to_path_buf(),
-        max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
-        extra_muls: DEFAULT_EXTRA_MULS,
+        max_constraint_degree: wrap::MAX_CONSTRAINT_DEGREE as u64,
+        extra_muls: wrap::EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
         no_packing: false,
         solidity: true,
@@ -941,8 +948,9 @@ pub(crate) mod tests {
 
     use pilfflonk_setup::layout::max_degree;
     use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau, write_tau_one_ptau};
-    use proofman_common::exec_format::{ExecFile, EXEC_FORMAT_VERSION_WIDE};
-    use proofman_pilfflonk::{AirFile, PilfflonkInfo, WitnessShape};
+    use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::wrap::RANGE_MUL_COLUMN;
+    use proofman_common::exec_format::{ExecFile, EXEC_FORMAT_VERSION_WIDE, RANGE_CHECK_BAND_KIND};
+    use proofman_pilfflonk::{AirFile, PilfflonkInfo, SetupParams, WitnessShape};
 
     use super::*;
 
@@ -950,21 +958,44 @@ pub(crate) mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
     }
 
-    /// The exec at `exec` is over BN254 (version 3), has no gate band, which the wrap's witness
-    /// refuses, and gathers exactly the stage-1 columns of the AIR of the key at `proving_key`, in
-    /// its rows.
-    pub(crate) fn assert_exec_gathers_the_air_columns(exec: &Path, proving_key: &Path) {
+    /// The exec at `exec` is over BN254 (version 3), its gate bands are `n_range_checks` range-check
+    /// rows, the only bands the wrap's witness takes, and it gathers the stage-1 columns of the AIR
+    /// of the key at `proving_key`, in its rows: all of them, but for the range checks'
+    /// multiplicity `RANGE_MUL` if there are range checks, the column after the map's, which the
+    /// band section's aux word names and the witness counts.
+    pub(crate) fn assert_exec_gathers_the_air_columns(exec: &Path, proving_key: &Path, n_range_checks: usize) {
         let exec = ExecFile::<Bn254>::read(exec).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(exec.layout.version(), EXEC_FORMAT_VERSION_WIDE);
         assert_eq!(exec.layout.coef_words(), 4);
-        assert!(exec.bands.is_empty(), "{} gate bands", exec.bands.len());
+        assert_eq!(exec.bands.len(), n_range_checks, "gate bands, one per range check");
+        assert!(exec.bands.iter().all(|band| band.kind == RANGE_CHECK_BAND_KIND), "a gate band not a range check");
+        let (band_aux, n_cols) = if n_range_checks == 0 {
+            (0, exec.layout.map_cols())
+        } else {
+            assert_eq!(exec.layout.map_cols(), RANGE_MUL_COLUMN, "RANGE_MUL is the column after the map's");
+            (RANGE_MUL_COLUMN as u64, RANGE_MUL_COLUMN + 1)
+        };
+        assert_eq!(exec.band_aux, band_aux, "the band section's aux word");
         let global_info = PilfflonkGlobalInfo::from_proving_key(proving_key).unwrap();
         let info_path = global_info.air_file(proving_key, 0, 0, AirFile::PilfflonkInfo).unwrap();
         let info = PilfflonkInfo::read(&info_path).unwrap();
         let shape = WitnessShape::from_proving_key(&global_info, &[&info]).unwrap();
         let air = shape.airs()[0];
-        assert_eq!(exec.layout.map_cols(), air.n_cols, "the exec's columns and the AIR's stage-1 ones");
+        assert_eq!(n_cols, air.n_cols, "the exec's columns, RANGE_MUL with range checks, and the AIR's stage-1 ones");
         assert!(exec.layout.map_rows() <= 1 << air.n_bits, "{} rows of 2^{}", exec.layout.map_rows(), air.n_bits);
+    }
+
+    /// The key whose globalInfo is `global_info` was set up at the wrap family's knobs, as
+    /// [`set_up_wrap_air`] sets it up: its degree search up to [`wrap::MAX_CONSTRAINT_DEGREE`],
+    /// [`wrap::EXTRA_MULS`], and `Q` whole.
+    pub(crate) fn assert_set_up_at_the_family_knobs(global_info: &PilfflonkGlobalInfo) {
+        let knobs = SetupParams {
+            max_constraint_degree: wrap::MAX_CONSTRAINT_DEGREE as u64,
+            extra_muls: wrap::EXTRA_MULS,
+            max_q_degree: DEFAULT_MAX_Q_DEGREE,
+            packing: true,
+        };
+        assert_eq!(global_info.setup_params, knobs, "the wrap family's knobs");
     }
 
     /// M49's end-to-end circuit, `setup/stark-recurser/tests/fixtures/bn254/wrap.circom`: a
@@ -985,9 +1016,12 @@ pub(crate) mod tests {
         dir.join("wrap.r1cs")
     }
 
-    /// The pilfflonk wrap of a small circuit: a ptau with fewer powers than the layout's largest
-    /// degree, `12·N + 11` in L1, is refused, saying how many it holds and how many it needs; with
-    /// enough, the key is set up, with its vkey, its Solidity verifier and the exec of its AIR.
+    /// The pilfflonk wrap of a small circuit, with no range check: a ptau with fewer powers than the
+    /// layout's largest degree is refused, saying how many it holds and how many it needs; with
+    /// enough, the key is set up at the family's knobs, with its vkey, its Solidity verifier and the
+    /// exec of its AIR. That degree is `8·N + 7`: at the family's knobs, the 24 fixed columns opened
+    /// at ξ alone of an AIR with no range check go into three `f` of 8 (with range checks, 26 go
+    /// into two of 13, `13·N + 12`).
     ///
     /// Needs `PIL2C_EXEC`, a pil2com that honours `prime` (pilfflonk/docs/README.md#compile-pil);
     /// without it the test says so and passes.
@@ -1022,10 +1056,11 @@ pub(crate) mod tests {
         let key_dir = dir.join("key");
         let key = set_up_wrap_air(&r1cs, &files, &includes, &ptau, &key_dir).unwrap_or_else(|e| panic!("{e:#}"));
         let needed = max_degree(&key.vkey.layout);
-        assert_eq!(needed, 12 * (1 << key.vkey.power) + 11, "the largest degree of layout L1");
+        assert_eq!(needed, 8 * (1 << key.vkey.power) + 7, "the largest degree of layout L1 with no range check");
         assert!(refused.contains(&format!("fewer than the {needed} requested")), "{refused}");
 
-        assert_exec_gathers_the_air_columns(&files.exec, &key_dir.join(PROVING_KEY_DIR));
+        assert_set_up_at_the_family_knobs(&key.global_info);
+        assert_exec_gathers_the_air_columns(&files.exec, &key_dir.join(PROVING_KEY_DIR), 0);
         assert_eq!(key.vkey.n_public, 1);
         let source = "./provingKey/wrap/pilfflonk/pilfflonk.verifier.sol";
         let words = CalldataLayout::of(&key.vkey).words();

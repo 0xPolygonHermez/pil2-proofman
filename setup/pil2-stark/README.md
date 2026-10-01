@@ -109,10 +109,12 @@ With `pilfflonk`, the final circuit is laid out as a PIL2 AIR over BN254 by
 plonk2pil, compiled with `-P` and a `prime` of BN254's `r` (`PIL2C_EXEC` must
 name a pil2-compiler that honours `prime`, see
 [pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)), and set
-up with `setup-pilfflonk`'s steps: `provingKeySnark/final/` gets the circuit's
-witness calculator and `.exec`, the pilfflonk `provingKey/` and the Solidity
-verifiers. The ptau needs at least as many powers `[τ^i]₁` as the layout's
-largest degree: `12·N + 11` for the wrap's AIR of `N` rows. `proofman-cli
+up with `setup-pilfflonk`'s steps at the wrap family's knobs (plonk2pil's
+`wrap::MAX_CONSTRAINT_DEGREE` and `wrap::EXTRA_MULS`): `provingKeySnark/final/`
+gets the circuit's witness calculator and `.exec`, the pilfflonk `provingKey/`
+and the Solidity verifiers. The ptau needs at least as many powers `[τ^i]₁` as
+the layout's largest degree: `13·N + 12` for the wrap's AIR of `N` rows with
+range checks (fibonacci-square's: `N = 2^19`, 6,815,756 powers). `proofman-cli
 prove-snark` and `verify-snark` prove and verify with that key
 ([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#prove-snark-and-verify-snark)).
 
