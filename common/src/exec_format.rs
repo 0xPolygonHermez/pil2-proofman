@@ -16,6 +16,10 @@
 //! - the gate bands: [`GATE_BAND_FORMAT_VERSION`], the band count, a per-air aux word, then
 //!   `(row, kind, payload)` per band.
 //!
+//! A band of the STARK's kinds is rows whose interior its trace expander rebuilds; the pilfflonk
+//! wrap's kind, [`RANGE_CHECK_BAND_KIND`], is a row the map gathers whole, which the wrap's witness
+//! counts into a column the map does not have.
+//!
 //! The two versions differ only in the width of a coefficient:
 //! - version 2, [`EXEC_FORMAT_VERSION`], is Goldilocks': one word per coefficient, implied. Every
 //!   STARK recursion air carries one, and it is the only version the STARK prover reads.
@@ -67,6 +71,28 @@ pub const GATE_BAND_HEADER_WORDS: usize = 3;
 
 /// Words of one band: `row`, `kind`, `payload`.
 pub const GATE_BAND_WORDS: usize = 3;
+
+/// The band kind of a range-check row of the pilfflonk wrap (plonk2pil's
+/// `GateBandKind::PoseidonBn254WrapRangeCheck`): a use of circom's `Num2Bytes(nBits)`, its `in` at
+/// column 0 and its `⌈nBits/16⌉` chunks from column 1 ([`RANGE_CHECK_CHUNK_COLS`]), the other
+/// chunk cells empty. `payload` is its number of chunks, and the section's aux word the stage-1
+/// column of the multiplicity, `RANGE_MUL`, which no map entry fills.
+///
+/// It has no interior to rebuild: the map gathers the whole row. The band says which rows look
+/// their chunk cells up in the AIR's table, every one of them, so that the wrap's witness can count
+/// how many times each value of the table is looked up.
+///
+/// A new kind and not a new layout, so [`GATE_BAND_FORMAT_VERSION`] stays 2: the section's words
+/// are as they were, and a reader of the section that does not know a kind refuses its band, as
+/// `is_known_kind` does in pil2-stark's gate_bands.hpp, and the wrap's witness does. Only the wrap
+/// writes it, in exec files of version 3, which the C++ readers refuse whole.
+pub const RANGE_CHECK_BAND_KIND: u64 = 12;
+
+/// The chunk cells of a range-check row, `a[1..=5]`: up to 5 chunks, `nBits ≤ 80`.
+pub const RANGE_CHECK_CHUNK_COLS: std::ops::Range<usize> = 1..6;
+
+/// Bits of a chunk: the range checks' table is `[0, 2^16)`.
+pub const RANGE_CHECK_CHUNK_BITS: u32 = 16;
 
 /// A field an exec file's coefficients are elements of, and how it writes one.
 pub trait ExecField: Copy {
@@ -286,12 +312,14 @@ pub struct ExecAddition<F> {
 }
 
 /// A gate band, as written: rows whose interior a trace expander rebuilds from the boundary rather
-/// than the map gathering it. `kind` is plonk2pil's `GateBandKind` discriminant.
+/// than the map gathering it, or a range-check row of the pilfflonk wrap
+/// ([`RANGE_CHECK_BAND_KIND`]). `kind` is plonk2pil's `GateBandKind` discriminant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExecGateBand {
     pub row: u64,
     pub kind: u64,
-    /// A per-block constant the expander cannot read off the trace: BLAKE3's `flags`, 0 otherwise.
+    /// A per-block constant the expander cannot read off the trace: BLAKE3's `flags`, a range
+    /// check's number of chunks, 0 otherwise.
     pub payload: u64,
 }
 
@@ -304,7 +332,8 @@ pub struct ExecFile<F> {
     /// 0 for a cell that gathers none. See [`ExecFile::map_entry`].
     pub map: Vec<u32>,
     /// The band section's per-air word: BLAKE3 packs its LANES and band width in it, Poseidon
-    /// writes 0.
+    /// writes 0, and the pilfflonk wrap the stage-1 column of its range checks' multiplicity, if it
+    /// has range-check rows (0 if not).
     pub band_aux: u64,
     pub bands: Vec<ExecGateBand>,
 }

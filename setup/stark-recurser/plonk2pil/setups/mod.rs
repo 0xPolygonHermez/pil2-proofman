@@ -143,9 +143,10 @@ mod tests {
             template_file: "poseidon_bn254/wrap",
             template_name: "Wrap",
             namespace_name: "Wrap",
-            n_bits: 10,
+            n_bits: 16,
             n_publics: 1,
-            max_constraint_degree: 3,
+            n_range_checks: 1,
+            max_constraint_degree: 6,
         };
         assert_no_drift("poseidon_bn254/wrap.pil", "Wrap", &super::poseidon_bn254::gen_pil_str(&p));
     }

@@ -9,6 +9,8 @@
 // Each test crate that includes it uses some of it.
 #![allow(dead_code)]
 
+pub mod wrap_key;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -1,5 +1,7 @@
 //! The final SNARK wrap's family, PoseidonBN254 (`plonk2pil/setups/poseidon_bn254`), against
-//! pilfflonk, on circuits circom compiles for BN254 with the custom gate `PoseidonT(5)`:
+//! pilfflonk, on circuits circom compiles for BN254 with the custom gates `PoseidonT(5)` and
+//! `Num2Bytes(nBits)`, set up with the family's knobs (`wrap::MAX_CONSTRAINT_DEGREE` in the PIL,
+//! `wrap::EXTRA_MULS`):
 //!
 //! 1. **The gate.** `fixtures/bn254/poseidon_chain.circom`, three permutations in a chain, on random
 //!    inputs (a fixed seed). `pilfflonk check` holds on the trace, whose bands are circom's own `in`,
@@ -11,9 +13,18 @@
 //!    copies: plonk2pil, pil2com over BN254, the pilfflonk setup with plonk2pil's fixed columns, the
 //!    trace from circom's witness and the `.exec`; `pilfflonk check` holds and fails with a cell
 //!    changed, and the JS verifier accepts a proof of it and refuses it with another public.
+//! 3. **The range checks.** `fixtures/bn254/num2bytes.circom`, uses of `Num2Bytes` of whole and
+//!    partial chunks: `pilfflonk check` holds on the trace, and fails on each attack on a range
+//!    check, a chunk outside the table, the original's free cell (`in + 2^64` with `a[5] = 1`), a
+//!    wrong multiplicity and a wrong chunk; the JS verifier accepts a proof. The AIR has the
+//!    connection on the std's product bus and the lookup on its sum bus.
+//! 4. **More publics than a row.** `fixtures/bn254/publics.circom`, 14 publics on two public rows,
+//!    each with a selector of its own, opened at its row alone: the AIR sets up at the family's
+//!    knobs, `pilfflonk check` holds and fails with any public changed, and the JS verifier accepts
+//!    a proof and refuses it with another public.
 //!
-//! The trace is the witness through the `.exec` by [`naive_trace`], the naive reference, until the
-//! wrap's witness library (M51) replaces it.
+//! The trace is the witness through the `.exec`, and the range checks' multiplicity counted, by
+//! [`naive_trace`], the naive reference of the wrap's witness library (`wrap-witness`).
 //!
 //! They need what the witness needs (`common`), `PIL2C_EXEC` (a pil2com that honours `prime`) and
 //! the JS verifier (`PILFFLONK_JS`, or `pilfflonk/js`); without the first two they say why and
@@ -25,26 +36,23 @@ mod common;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use num_bigint::BigUint;
 use pil2_stark_recurser::plonk2pil::field::modulus;
 use pil2_stark_recurser::plonk2pil::r1cs::types::{read_r1cs_header, PlonkOptions};
 use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::constants::ROUNDS;
-use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::wrap::BAND_ROWS;
+use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::wrap::{BAND_ROWS, RANGE_MUL_COLUMN};
 use pil2_stark_recurser::plonk2pil::{plonk2pil, PlonkResult};
-use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
-use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
-use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
-use proofman_common::exec_format::ExecFile;
+use proofman_common::exec_format::{ExecFile, RANGE_CHECK_BAND_KIND, RANGE_CHECK_CHUNK_BITS, RANGE_CHECK_CHUNK_COLS};
 use proofman_common::hash_family::BN254_WRAP_FAMILY;
-use proofman_fields::{Bn254, Field};
+use proofman_fields::{Bn254, Field, PrimeField, QuotientMap};
 use proofman_pilfflonk::{
     check, js_verifier, prove, AirInstanceRef, CheckOptions, CheckReport, FrBytes, InstanceWitness, JsonFile,
-    PilfflonkGlobalInfo, ProveOptions, ProvingKey, Publics, Stage1Witness, Witness,
+    PilfflonkGlobalInfo, PolType, ProveOptions, ProvingKey, Publics, Stage1Witness, Witness,
 };
 
+use common::wrap_key::{set_up_key, Ptau};
 use common::{compile_and_witness, manifest, missing_prerequisite, read_wtns, repo_root, Scratch};
 
 /// The blinding seed of the proofs (pilfflonk/docs/protocol.md#blinding).
@@ -107,8 +115,8 @@ struct Wrap {
 
 impl Wrap {
     /// Compiles `circuit` and computes its witness of `input` (JSON), runs plonk2pil's wrap on it,
-    /// compiles the PIL over BN254 and sets it up with the fixed columns plonk2pil computed.
-    fn set_up(name: &str, circuit: &str, input: &str) -> Self {
+    /// and sets up its key with `ptau` ([`set_up_key`]).
+    fn set_up(name: &str, circuit: &str, input: &str, ptau: Ptau) -> Self {
         let scratch = Scratch::new(name);
         let input_path = scratch.file("input.json");
         fs::write(&input_path, input).unwrap();
@@ -119,32 +127,7 @@ impl Wrap {
 
         let options = PlonkOptions { hash_id: BN254_WRAP_FAMILY.into(), ..Default::default() };
         let res: PlonkResult<Bn254> = plonk2pil(&r1cs, "wrap", &options).unwrap();
-
-        let pilout = compile_pil(&scratch, &res.pil_str);
-        let ptau = scratch.file("fixed_tau.ptau");
-        // More powers than the layout's largest degree, 12·N + 11 for L1 (M45).
-        write_fixed_tau_ptau(&ptau, 16 << res.n_bits, &test_tau()).unwrap();
-        let setup = SetupPilfflonkOptions {
-            airout_path: pilout,
-            build_dir: scratch.file("build"),
-            powers_of_tau: ptau,
-            max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
-            extra_muls: DEFAULT_EXTRA_MULS,
-            max_q_degree: DEFAULT_MAX_Q_DEGREE,
-            no_packing: false,
-            solidity: false,
-        };
-        let external = res
-            .fixed_pols
-            .iter()
-            .map(|p| ExternalFixedColumn {
-                name: p.name.clone(),
-                index: p.index,
-                values: p.values.iter().map(|&v| FrBytes::from(v)).collect(),
-            })
-            .collect();
-        run_setup_pilfflonk_with_external_fixed(&setup, external).unwrap_or_else(|e| panic!("{e:#}"));
-        let proving_key = setup.build_dir.join(PROVING_KEY_DIR);
+        let proving_key = set_up_key(&repo_root(), &scratch.0, &res, ptau);
         Self { witness: read_wtns(&wtns), n_publics, res, proving_key, scratch }
     }
 
@@ -163,34 +146,12 @@ impl Wrap {
     }
 }
 
-/// Compiles `pil` with `PIL2C_EXEC` over BN254 (`-P`), with plonk2pil's PIL and the std on the
-/// include path, as the pilfflonk fixtures are compiled.
-fn compile_pil(scratch: &Scratch, pil: &str) -> PathBuf {
-    let (source, config, pilout) = (scratch.file("wrap.pil"), scratch.file("bn254.json"), scratch.file("wrap.pilout"));
-    fs::write(&source, pil).unwrap();
-    fs::write(&config, format!("{{\"prime\": \"{}\"}}", modulus::<Bn254>())).unwrap();
-    let includes = [manifest().join("plonk2pil/pil"), repo_root().join("pil2-components/lib/std/pil")];
-    let includes: Vec<String> = includes.iter().map(|p| p.display().to_string()).collect();
-    let out = Command::new(std::env::var("PIL2C_EXEC").unwrap())
-        .arg(&source)
-        .arg("-I")
-        .arg(includes.join(","))
-        .arg("-P")
-        .arg(&config)
-        .arg("-o")
-        .arg(&pilout)
-        .output()
-        .expect("PIL2C_EXEC runs");
-    let log = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(out.status.success(), "pil2com: {log}");
-    pilout
-}
-
-/// THE NAIVE REFERENCE of the wrap's witness, until the wrap's witness library (M51) replaces it:
-/// circom's witness through the `.exec`, as the STARK prover's `getCommitedPols` reads its own. The
-/// additions extend the witness in order, each wire `n_vars + i`; a cell of the map's live extent
-/// is the witness at its signal, but for the sentinel 0, which is 0; every other cell is 0. The
-/// publics are wires `1..=n_publics`.
+/// THE NAIVE REFERENCE of the wrap's witness: circom's witness through the `.exec`, as the STARK
+/// prover's `getCommitedPols` reads its own, and the range checks' multiplicity. The additions
+/// extend the witness in order, each wire `n_vars + i`; a cell of the map's live extent is the
+/// witness at its signal, but for the sentinel 0, which is 0; every other cell is 0. With
+/// range-check bands, the column the band section's aux word names is [`range_multiplicity`] of
+/// their rows. The publics are wires `1..=n_publics`.
 fn naive_trace(exec: &[u64], witness: &[Bn254], n: usize, n_publics: usize) -> (Vec<Vec<Bn254>>, Vec<Bn254>) {
     let file = ExecFile::<Bn254>::from_words(exec).unwrap_or_else(|e| panic!("{e}"));
     let mut w = witness.to_vec();
@@ -208,13 +169,39 @@ fn naive_trace(exec: &[u64], witness: &[Bn254], n: usize, n_publics: usize) -> (
             }
         }
     }
+    if !file.bands.is_empty() {
+        assert!(file.bands.iter().all(|b| b.kind == RANGE_CHECK_BAND_KIND), "the wrap's bands are range checks");
+        assert_eq!(file.band_aux, trace.len() as u64, "RANGE_MUL is the column after the wires");
+        let multiplicity = range_multiplicity(&trace, &range_check_rows(&file));
+        trace.push(multiplicity);
+    }
     (trace, w[1..=n_publics].to_vec())
 }
 
-/// The witness of the AIR's one instance: its stage-1 columns `a[0..8]` and the publics.
+/// The range-check rows of an exec: the rows of its bands.
+fn range_check_rows(file: &ExecFile<Bn254>) -> Vec<usize> {
+    file.bands.iter().map(|b| b.row as usize).collect()
+}
+
+/// `RANGE_MUL` of `trace`: at row `v < 2^16`, how many of the chunk cells of `rows` hold `v`; every
+/// cell of `a[1..=5]` counts, as the AIR looks them all up, and a cell outside the table nowhere.
+fn range_multiplicity(trace: &[Vec<Bn254>], rows: &[usize]) -> Vec<Bn254> {
+    let mut counts = vec![0u64; trace[0].len()];
+    for &row in rows {
+        for col in RANGE_CHECK_CHUNK_COLS {
+            if let Ok(v) = u16::try_from(&trace[col][row].as_canonical_biguint()) {
+                counts[v as usize] += 1;
+            }
+        }
+    }
+    counts.into_iter().map(Bn254::from_int).collect()
+}
+
+/// The witness of the AIR's one instance: its stage-1 columns, `a[0..8]` and `RANGE_MUL` if it has
+/// range checks, and the publics.
 fn pilfflonk_witness(n: usize, trace: &[Vec<Bn254>], publics: &[Bn254]) -> Witness {
     let columns: Vec<Vec<FrBytes>> = trace.iter().map(|c| c.iter().map(|&v| FrBytes::from(v)).collect()).collect();
-    let stage1 = Stage1Witness::from_columns(n, &columns, vec![]).expect("nine columns of n rows");
+    let stage1 = Stage1Witness::from_columns(n, &columns, vec![]).expect("columns of n rows");
     Witness {
         instances: vec![InstanceWitness { air: AirInstanceRef { airgroup_id: 0, air_id: 0 }, stage1 }],
         publics: publics.iter().map(|&v| FrBytes::from(v)).collect(),
@@ -239,7 +226,7 @@ fn the_rounds_hold_on_circoms_intermediates_and_fail_on_any_other() {
     let initial_state = inputs.element();
     let blocks: Vec<String> = (0..N_HASHES).map(|_| json_list(&inputs.elements(4))).collect();
     let input = format!("{{\"initialState\": \"{initial_state}\", \"in\": [{}]}}", blocks.join(", "));
-    let wrap = Wrap::set_up("poseidon_bn254_gate", "poseidon_chain.circom", &input);
+    let wrap = Wrap::set_up("poseidon_bn254_gate", "poseidon_chain.circom", &input, Ptau::TauOne);
     assert!(wrap.res.n_used >= N_HASHES * BAND_ROWS);
 
     let pk = ProvingKey::load(&wrap.proving_key).unwrap();
@@ -275,7 +262,7 @@ fn a_small_wrap_checks_proves_and_verifies() {
     let mut inputs = Inputs(INPUT_SEED + 1);
     let [a, b] = [inputs.element(), inputs.element()];
     let input = format!("{{\"a\": \"{a}\", \"b\": \"{b}\", \"x\": {}}}", json_list(&inputs.elements(4)));
-    let wrap = Wrap::set_up("poseidon_bn254_wrap", "wrap.circom", &input);
+    let wrap = Wrap::set_up("poseidon_bn254_wrap", "wrap.circom", &input, Ptau::FixedTau);
     assert_eq!(wrap.n_publics, 1);
     assert!(wrap.res.n_used > BAND_ROWS + 1, "PLONK rows past the band, to check gates 0 and 1 too");
 
@@ -291,16 +278,162 @@ fn a_small_wrap_checks_proves_and_verifies() {
     let rows: BTreeSet<u64> = failures(&report).iter().flat_map(|(_, rows)| rows.clone()).collect();
     assert!(rows.contains(&(BAND_ROWS as u64)), "a changed PLONK cell: {:?}", failures(&report));
 
+    assert_eq!(
+        js_verifies(&wrap, &pk, &trace, &publics, 0),
+        [true, false],
+        "the JS verifier: the proof, another public"
+    );
+}
+
+/// Proves `trace` and the publics, writes the proof, and asks the JS verifier of the key, with the
+/// publics and with `publics[changed] + 1`: whether it accepts each.
+fn js_verifies(wrap: &Wrap, pk: &ProvingKey, trace: &[Vec<Bn254>], publics: &[Bn254], changed: usize) -> [bool; 2] {
     let options = ProveOptions { insecure_blinding_seed: Some(SEED), q_part_bits: None };
-    let out = prove(&pk, &pilfflonk_witness(wrap.n(), &trace, &publics), &options).unwrap_or_else(|e| panic!("{e}"));
+    let out = prove(pk, &pilfflonk_witness(wrap.n(), trace, publics), &options).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(out.publics.0, publics.iter().map(|&p| FrBytes::from(p)).collect::<Vec<_>>());
     let (proof, publics_path) = (wrap.scratch.file("proof.json"), wrap.scratch.file("publics.json"));
     out.proof_json().unwrap().write(&proof).unwrap();
     out.publics.write(&publics_path).unwrap();
-    assert_eq!(out.publics.0, vec![FrBytes::from(publics[0])], "the public is circom's output");
     let vkey = PilfflonkGlobalInfo::from_proving_key(&wrap.proving_key).unwrap().vkey_path(&wrap.proving_key);
-    assert!(js_verifier::verify(&vkey, &publics_path, &proof).unwrap(), "the JS verifier accepts the proof");
 
-    let other = wrap.scratch.file("other_publics.json");
-    Publics(vec![FrBytes::from(publics[0] + Bn254::ONE)]).write(&other).unwrap();
-    assert!(!js_verifier::verify(&vkey, &other, &proof).unwrap(), "the JS verifier refuses another public");
+    let mut other = publics.to_vec();
+    other[changed] += Bn254::ONE;
+    let other_path = wrap.scratch.file("other_publics.json");
+    Publics(other.into_iter().map(FrBytes::from).collect()).write(&other_path).unwrap();
+    [&publics_path, &other_path].map(|path| js_verifier::verify(&vkey, path, &proof).unwrap())
+}
+
+/// `n_bits` random bits, `mask` or'ed in.
+fn bits(inputs: &mut Inputs, n_bits: u32, mask: u128) -> u128 {
+    let word = u128::from(inputs.next_word()) | (u128::from(inputs.next_word()) << 64);
+    (word & ((1 << n_bits) - 1)) | mask
+}
+
+#[test]
+fn range_checks_hold_and_every_attack_on_them_fails() {
+    if let Some(why) = missing() {
+        eprintln!("skipping the Num2Bytes test: {why}");
+        return;
+    }
+    let _cpp = cpp_core();
+    let mut inputs = Inputs(INPUT_SEED + 2);
+    // x's chunks are all nonzero, so that one can lend 2^16 to the one below it.
+    let x = bits(&mut inputs, 64, 0x0001_0001_0001_0001);
+    let [y, a, b, c] = [70, 64, 80, 3].map(|n| bits(&mut inputs, n, 0));
+    let input = format!(
+        "{{\"x\": \"{x}\", \"y\": \"{y}\", \"a\": \"{a}\", \"b\": \"{b}\", \"c\": \"{c}\", \"s\": {}}}",
+        json_list(&inputs.elements(4))
+    );
+    let wrap = Wrap::set_up("poseidon_bn254_num2bytes", "num2bytes.circom", &input, Ptau::FixedTau);
+    assert_eq!((wrap.n_publics, wrap.res.n_bits), (1, RANGE_CHECK_CHUNK_BITS as usize), "the table's 2^16 rows");
+
+    let file = ExecFile::<Bn254>::from_words(&wrap.res.exec).unwrap();
+    let rows = range_check_rows(&file);
+    let mut payloads: Vec<u64> = file.bands.iter().map(|b| b.payload).collect();
+    payloads.sort_unstable();
+    assert_eq!(payloads, [1, 1, 2, 4, 4, 4, 5, 5], "the chunks of the 8 uses, of 3 to 80 bits");
+
+    let pk = ProvingKey::load(&wrap.proving_key).unwrap();
+    let info = pk.air(AirInstanceRef { airgroup_id: 0, air_id: 0 }).unwrap();
+    let column_9 = info.cm_pols_map.iter().find(|p| p.stage == 1 && p.stage_id == RANGE_MUL_COLUMN as u64).unwrap();
+    assert!(column_9.name.ends_with("RANGE_MUL"), "stage-1 column {RANGE_MUL_COLUMN} is {}", column_9.name);
+    let (trace, publics) = wrap.trace();
+    let report = wrap.check(&pk, &trace, &publics);
+    assert!(report.holds(), "the trace of circom's witness: {:?}", failures(&report));
+
+    // The isolated uses: x's row, of 4 chunks, and y's, of 5.
+    let row_of = |value: u128| rows.iter().copied().find(|&row| trace[0][row] == Bn254::from_int(value)).unwrap();
+    let (x_row, y_row) = (row_of(x), row_of(y));
+    let chunk_size = Bn254::from_int(1u64 << RANGE_CHECK_CHUNK_BITS);
+    // The trace changed by `change`, with RANGE_MUL counted again: what a prover would commit.
+    let attack = |change: &dyn Fn(&mut Vec<Vec<Bn254>>)| {
+        let mut wrong = trace.clone();
+        change(&mut wrong);
+        wrong[RANGE_MUL_COLUMN] = range_multiplicity(&wrong, &rows);
+        failures(&wrap.check(&pk, &wrong, &publics))
+    };
+    let in_the_sum_bus = |failures: &[(String, Vec<u64>)]| {
+        !failures.is_empty() && failures.iter().all(|(line, _)| line.contains("std_sum.pil"))
+    };
+    let recomposition_at = |failures: &[(String, Vec<u64>)], row: usize| matches!(failures, [(line, rows)] if line.contains("num2bytes.pil") && *rows == [row as u64]);
+
+    // A chunk outside the table, with the sum unchanged: 2^16 more in chunk 0, 1 less in chunk 1.
+    let outside = attack(&|t| {
+        t[1][x_row] += chunk_size;
+        t[2][x_row] -= Bn254::ONE;
+    });
+    assert!(in_the_sum_bus(&outside), "a chunk of 2^16 or more fails the lookup alone: {outside:?}");
+
+    // The original's free cell: a 64-bit check of in + 2^64, with the fifth chunk cell 1.
+    let free_cell = attack(&|t| {
+        t[0][x_row] += Bn254::from_int(1u128 << 64);
+        t[5][x_row] = Bn254::ONE;
+    });
+    assert!(recomposition_at(&free_cell, x_row), "a cell past the chunks weighs 0: {free_cell:?}");
+
+    // A wrong chunk, in range.
+    let wrong_chunk = attack(&|t| t[3][y_row] += Bn254::ONE);
+    assert!(recomposition_at(&wrong_chunk, y_row), "a wrong chunk: {wrong_chunk:?}");
+
+    // A wrong multiplicity, the chunks honest.
+    let mut wrong = trace.clone();
+    wrong[RANGE_MUL_COLUMN][7] += Bn254::ONE;
+    let wrong_multiplicity = failures(&wrap.check(&pk, &wrong, &publics));
+    assert!(in_the_sum_bus(&wrong_multiplicity), "a wrong multiplicity: {wrong_multiplicity:?}");
+
+    assert_eq!(
+        js_verifies(&wrap, &pk, &trace, &publics, 0),
+        [true, false],
+        "the JS verifier: the proof, another public"
+    );
+}
+
+#[test]
+fn more_publics_than_a_row_check_prove_and_verify() {
+    if let Some(why) = missing() {
+        eprintln!("skipping the publics test: {why}");
+        return;
+    }
+    let _cpp = cpp_core();
+    let mut inputs = Inputs(INPUT_SEED + 3);
+    let [s, k] = [inputs.element(), inputs.element()];
+    let input = format!("{{\"s\": \"{s}\", \"k\": \"{k}\", \"x\": {}}}", json_list(&inputs.elements(4)));
+    let wrap = Wrap::set_up("poseidon_bn254_publics", "publics.circom", &input, Ptau::FixedTau);
+    assert_eq!(wrap.n_publics, 14);
+
+    let pk = ProvingKey::load(&wrap.proving_key).unwrap();
+    let info = pk.air(AirInstanceRef { airgroup_id: 0, air_id: 0 }).unwrap();
+    // A selector for each public row, each opened at its row alone.
+    let publics_rows: Vec<(u64, i64)> = info
+        .ev_map
+        .iter()
+        .filter(|e| {
+            e.pol_type == PolType::Const && info.pol(PolType::Const, e.id).unwrap().name.ends_with("PUBLICS_ROW")
+        })
+        .map(|e| (e.id, e.prime))
+        .collect();
+    assert_eq!(publics_rows.len(), 2, "{publics_rows:?}");
+    assert!(publics_rows.iter().all(|&(_, prime)| prime == 0), "PUBLICS_ROW at another row: {publics_rows:?}");
+    let (trace, publics) = wrap.trace();
+    let report = wrap.check(&pk, &trace, &publics);
+    assert!(report.holds(), "the trace of circom's witness: {:?}", failures(&report));
+
+    // Public i is on public row i / 9, the last two rows.
+    let first_public_row = wrap.res.n_used - 2;
+    for i in [0, 8, 9, 13] {
+        let mut other = publics.clone();
+        other[i] += Bn254::ONE;
+        let failures = failures(&wrap.check(&pk, &trace, &other));
+        let row = (first_public_row + i / 9) as u64;
+        assert!(
+            !failures.is_empty() && failures.iter().all(|(line, rows)| line.contains("wrap.pil") && *rows == [row]),
+            "public {i} changed: {failures:?}"
+        );
+    }
+
+    assert_eq!(
+        js_verifies(&wrap, &pk, &trace, &publics, 10),
+        [true, false],
+        "the JS verifier: the proof, another public"
+    );
 }

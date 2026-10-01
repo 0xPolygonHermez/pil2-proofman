@@ -26,12 +26,17 @@ pub fn witness() -> Witness {
     generate(columns(N_BITS))
 }
 
-/// [`witness`], but with `c[1] + 1`: `c[1]` is connected to `b[2]` (and `a[4]`), and no longer
-/// equal to them.
+/// [`witness`], but [`disconnect`]ed.
 pub fn witness_not_connected() -> Witness {
     let mut columns = columns(N_BITS);
-    columns[2][1] += 1;
+    disconnect(&mut columns);
     generate(columns)
+}
+
+/// `c[1] + 1` in the columns `[a, b, c]`: `c[1]` is connected to `b[2]` (and `a[4]`), and no longer
+/// equal to them. Also the broken Connection of `tests/data/mixed_bus.rs`.
+pub fn disconnect(columns: &mut [Vec<u64>]) {
+    columns[2][1] += 1;
 }
 
 /// The columns `[a, b, c]` of `2^n_bits` rows, those of `execute`. Also the Connection of

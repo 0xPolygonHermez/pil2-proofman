@@ -3,35 +3,50 @@ require "std_connection.pil";
 
 require "circuits/plonk.pil";
 require "circuits/poseidon_bn254.pil";
+require "circuits/num2bytes.pil";
 
 // ============================================================================
 // PoseidonBN254 WRAP
 //
 // The AIR of the final SNARK wrap, over BN254, proved with pilfflonk: the circom verifier of the
-// last STARK (`final.circom`, with custom templates) as PLONK gates and the custom gate
-// `PoseidonT(5)`. Layout L1 (M45):
+// last STARK (`final.circom`, with custom templates) as PLONK gates and the custom gates
+// `PoseidonT(5)` and `Num2Bytes(nBits)`. Layout L1 (M45), with the range checks of M56a:
 //
 //   - 3 PLONK gates a row, gate g on a[3g..3g+2], all three with the row's one coefficient set C;
 //   - a PoseidonT(5) use is a band of 69 rows, one round a row on a[0..4]: row r holds the state
 //     before round r (the gate's `in` on row 0, `im[r - 1]` after), row 68 its `out`. PLONK gates 0
 //     and 1 are off in the band, whose lanes they would read; gate 2 stays on, on a[6..8];
-//   - the std's connection over every wire, a[0..8], on the product bus;
+//   - a Num2Bytes(nBits) use is a row: its `in` on a[0], its ⌈nBits/16⌉ chunks of 16 bits from
+//     a[1], zeros up to a[5] (circuits/num2bytes.pil). PLONK gates 0 and 1 are off, gate 2 on;
+//   - the std's connection over every wire, a[0..8], on the product bus, and the range checks'
+//     lookup of every chunk cell into the table RANGE, on the sum bus;
 //   - the publics, each bound to a cell of the rows that follow the gates.
 //
-//   rows                 | a[0..4]               | a[5]       | a[6..8]      | selectors
-//   ---------------------+-----------------------+------------+--------------+---------------------------
-//   band row r, r < 68   | the state before r    | -          | PLONK gate 2 | POSEIDON, FULL or PARTIAL
-//   band row 68          | out                   | -          | PLONK gate 2 | POSEIDON
-//   PLONK rows           | PLONK gates 0 and 1 (a[0..5])      | PLONK gate 2 |
-//   public rows          | the publics, 9 a row                              | PUBLICS_ROW on the first
+//   rows                 | a[0..4]                         | a[5]  | a[6..8]      | selectors
+//   ---------------------+---------------------------------+-------+--------------+-------------------------
+//   band row r, r < 68   | the state before r              | -     | PLONK gate 2 | POSEIDON, FULL or PARTIAL
+//   band row 68          | out                             | -     | PLONK gate 2 | POSEIDON
+//   range-check rows     | in, then the chunks and zeros (a[0..5]) | PLONK gate 2 | RANGE_CHECK
+//   PLONK rows           | PLONK gates 0 and 1 (a[0..5])           | PLONK gate 2 |
+//   public rows          | the publics, 9 a row                                   | PUBLICS_ROW[k] on the k-th
+//
+// The row's constants K are a band row's round constants, and a range-check row's chunk weights:
+// no round reads them there. RANGE, the range checks' table, holds `i mod 2^16` on row i, and
+// RANGE_MUL how many times the chunk cells look up its row i < 2^16 (0 on the rows after), which
+// the wrap's witness counts. With no Num2Bytes use (nRangeChecks = 0), the AIR has none of the
+// three, nor the sum bus.
 //
 // Every fixed column but the std's own (the connection's ID and __L1__) is computed by plonk2pil
-// and given to the setup, `#pragma fixed_external`: the AIR's 2^22 rows would put the values of
-// all of them above the 2 GiB a pilout can hold (M45). A row without a PLONK constraint has C = 0,
-// so its gates hold whatever the row's cells.
+// and given to the setup, `#pragma fixed_external`: at the 2^22 rows of M45's circuit, the values
+// of all of them were above the 2 GiB a pilout can hold. A row without a PLONK constraint has
+// C = 0, so its gates hold whatever the row's cells.
 // ============================================================================
-airtemplate Wrap (const int N, const int nPublics) {
+airtemplate Wrap (const int N, const int nPublics, const int nRangeChecks) {
     const int nWires = 9;
+
+    // The std's buses: the connection's, a product, and the range checks' lookup, a sum.
+    const int CONNECTION_OPID = 1;
+    const int RANGE_CHECK_OPID = 2;
 
     col witness a[nWires];
 
@@ -42,9 +57,10 @@ airtemplate Wrap (const int N, const int nPublics) {
     #pragma fixed_external
     col fixed C[5];
 
-    // The round constants of the row's round: C[5·r + j] of POSEIDON_C_ORIGINAL(5) on band row r.
+    // The row's constants: on band row r, the round constants C[5·r + j] of POSEIDON_C_ORIGINAL(5);
+    // on a range-check row of n chunks, the chunk weights, 2^(16·k) for k < n and 0 for k >= n.
     #pragma fixed_external
-    col fixed POSEIDON_RC[POSEIDON_BN254_WIDTH];
+    col fixed K[POSEIDON_BN254_WIDTH];
 
     // 1 on every row of a band; 1 on the rows of a full round, and of a partial round.
     #pragma fixed_external
@@ -54,18 +70,55 @@ airtemplate Wrap (const int N, const int nPublics) {
     #pragma fixed_external
     col fixed POSEIDON_PARTIAL_ROUND;
 
-    if (nPublics > 0) {
-        // 1 on the first public row: public i is a[i % 9] of the (i / 9)-th row from it.
+    // The rows PLONK gates 0 and 1 are off on: a band's and a range check's.
+    expr customGateRow = POSEIDON;
+    if (nRangeChecks > 0) {
+        if (N < 2**NUM2BYTES_CHUNK_BITS) {
+            error(`the range checks' table needs N >= 2^${NUM2BYTES_CHUNK_BITS}, and N = ${N}`);
+        }
+        // 1 on every range-check row.
         #pragma fixed_external
-        col fixed PUBLICS_ROW;
+        col fixed RANGE_CHECK;
+        // i mod 2^16 on row i.
+        #pragma fixed_external
+        col fixed RANGE;
+        col witness RANGE_MUL;
+
+        const expr chunks[NUM2BYTES_CHUNKS];
+        for (int k = 0; k < NUM2BYTES_CHUNKS; k++) {
+            chunks[k] = a[1 + k];
+        }
+        num2bytes(RANGE_CHECK_OPID, a[0], chunks, K, RANGE_CHECK, RANGE, RANGE_MUL);
+        customGateRow = POSEIDON + RANGE_CHECK;
+    }
+
+    // The publics, 9 a row from the first public row: public i is a[i % 9] of public row i / 9,
+    // where PUBLICS_ROW[i / 9] is 1. A selector for each public row, rather than one selector read
+    // i / 9 rows back, keeps every fixed column opened at the row alone: an opening at another
+    // offset is a group of its own, which the setup cannot always place. One public row has a
+    // column, not an array of one.
+    if (nPublics > 0) {
+        const int nPublicRows = (nPublics + nWires - 1) / nWires;
+        const expr publicsRow[nPublicRows];
+        if (nPublicRows == 1) {
+            #pragma fixed_external
+            col fixed PUBLICS_ROW;
+            publicsRow[0] = PUBLICS_ROW;
+        } else {
+            #pragma fixed_external
+            col fixed PUBLICS_ROW[nPublicRows];
+            for (int k = 0; k < nPublicRows; k++) {
+                publicsRow[k] = PUBLICS_ROW[k];
+            }
+        }
         for (int i = 0; i < nPublics; i++) {
-            (i / nWires)'PUBLICS_ROW * (a[i % nWires] - publics[i]) === 0;
+            publicsRow[i / nWires] * (a[i % nWires] - publics[i]) === 0;
         }
     }
 
     const expr q[5] = [C[0], C[1], C[2], C[3], C[4]];
-    plonk([a[0], a[1], a[2]], q, 1 - POSEIDON);
-    plonk([a[3], a[4], a[5]], q, 1 - POSEIDON);
+    plonk([a[0], a[1], a[2]], q, 1 - customGateRow);
+    plonk([a[3], a[4], a[5]], q, 1 - customGateRow);
     plonk([a[6], a[7], a[8]], q, 1);
 
     const expr state[POSEIDON_BN254_WIDTH];
@@ -74,7 +127,7 @@ airtemplate Wrap (const int N, const int nPublics) {
     for (int j = 0; j < POSEIDON_BN254_WIDTH; j++) {
         state[j] = a[j];
         next[j] = a[j]';
-        rc[j] = POSEIDON_RC[j];
+        rc[j] = K[j];
     }
     poseidonBn254Round(state, next, rc, POSEIDON_FULL_ROUND, POSEIDON_PARTIAL_ROUND);
 
@@ -82,5 +135,5 @@ airtemplate Wrap (const int N, const int nPublics) {
     for (int i = 0; i < nWires; i++) {
         wires[i] = a[i];
     }
-    connection(1, wires, S, PIOP_BUS_PROD);
+    connection(CONNECTION_OPID, wires, S, PIOP_BUS_PROD);
 }

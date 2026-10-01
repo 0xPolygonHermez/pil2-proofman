@@ -29,7 +29,10 @@
 //!   columns from the hints `im_col`, then `gprod_col` and `gsum_col`, with the challenges of
 //!   stage 2, which are the transcript's (pilfflonk/docs/protocol.md#transcript) and the JS
 //!   verifier's; the columns are the oracle's; the verifier accepts the proofs and rejects every
-//!   change to one; and a witness that breaks the bus is refused;
+//!   change to one; and a witness that breaks the bus is refused. And
+//!   `pilfflonk/tests/fixtures/mixed_bus`, both buses in one AIR, the Connection on the product bus
+//!   and the Plookup on the sum bus, as plonk2pil's BN254 wrap has them: each closes on its own,
+//!   and breaking either is refused;
 //! - the pil-fflonk examples ported to PIL2 (pilfflonk/docs/README.md#fixtures),
 //!   `pilfflonk/tests/fixtures/{plookup,permutation,connection,range_check,all}`, each on the std's
 //!   sum bus and on its product bus: grouped with pil-fflonk's `extraMuls`, as the stage-2 fixtures
@@ -90,6 +93,8 @@ mod fibonacci;
 mod foundry;
 #[path = "../../pilfflonk/tests/data/fuzz.rs"]
 mod fuzz;
+#[path = "../../pilfflonk/tests/data/mixed_bus.rs"]
+mod mixed_bus;
 #[path = "../../pilfflonk/tests/data/mutations.rs"]
 mod mutations;
 #[path = "../../pilfflonk/tests/data/packed.rs"]
@@ -192,6 +197,9 @@ enum Program {
     /// A permutation on the product bus split by selectors, with two chained `im_col`
     /// (`tests/fixtures/prod_bus_im`).
     ProdBusIm,
+    /// The Connection on the product bus and the Plookup on the sum bus, in one AIR
+    /// (`tests/fixtures/mixed_bus`).
+    MixedBus,
     /// A pilout of `tests/data/domains.rs`, built in code.
     Domains(domains::Air),
     /// A pil-fflonk example ported to PIL2 on a bus of the std,
@@ -295,18 +303,20 @@ impl Program {
             Program::SumBus | Program::SumBusDegree4 => sum_bus::witness(),
             Program::ProdBus => prod_bus::witness(),
             Program::ProdBusIm => prod_bus_im::witness(),
+            Program::MixedBus => mixed_bus::witness(),
             Program::Domains(air) => domains::witness(air),
             Program::Example(example, bus) => example.witnesses(bus).0,
         }
     }
 
     /// The powers of the ptau of its setups, more than the largest degree of each of its layouts:
-    /// 1024 for the fixtures other than the examples, whose largest is 779 (the Fibonacci's `f` of
-    /// `k = 3`, `setup/pil2-stark/tests/setup_pilfflonk.rs`), and 4096 for the examples, whose largest
-    /// is 3080, the Connection's of `N = 2^10` (2312 for `all`).
+    /// 1024 for the fixtures other than the examples and `mixed_bus`, whose largest is 779 (the
+    /// Fibonacci's `f` of `k = 3`, `setup/pil2-stark/tests/setup_pilfflonk.rs`), and 4096 for the
+    /// examples, whose largest is 3080, the Connection's of `N = 2^10` (2312 for `all`), and for
+    /// `mixed_bus`, two of them at `N = 2^8`.
     fn ptau_powers(self) -> usize {
         match self {
-            Program::Example(..) => 4096,
+            Program::Example(..) | Program::MixedBus => 4096,
             _ => 1024,
         }
     }
@@ -322,6 +332,7 @@ fn compile(program: Program, pilout: &Path) {
         Program::SumBusDegree4 => "pilfflonk/tests/fixtures/sum_bus/sum_bus_degree4.pil".to_string(),
         Program::ProdBus => "pilfflonk/tests/fixtures/prod_bus/prod_bus.pil".to_string(),
         Program::ProdBusIm => "pilfflonk/tests/fixtures/prod_bus_im/prod_bus_im.pil".to_string(),
+        Program::MixedBus => "pilfflonk/tests/fixtures/mixed_bus/mixed_bus.pil".to_string(),
         Program::Example(example, bus) => {
             format!("pilfflonk/tests/fixtures/{0}/{0}_{1}.pil", example.name(), bus.name())
         }
@@ -1738,6 +1749,44 @@ fn a_broken_bus_is_refused(f: &Fixture, name: &str, witness: &Witness, line: &st
             assert!(message.contains(&expected), "{name}: {message}")
         }
         other => panic!("{name}: expected Unsatisfied, got {:?}", other.map(|_| ())),
+    }
+}
+
+/// The std's two buses in one AIR (`tests/fixtures/mixed_bus`): the Connection on the product bus
+/// and the Plookup on the sum bus, as plonk2pil's BN254 wrap has its connection and the lookup of
+/// its range checks. Grouped by default and with `--no-packing`: the prover proves, the verifier
+/// accepts the proof and rejects any change to it ([`proves_its_layout_and_rejects_every_change`]);
+/// the prover's transcript is the JS verifier's, and its `Q(ξ)` and stage-2 columns, the std's hints
+/// of both buses, the oracle's; each bus closes on its own; and a witness that breaks either bus
+/// fails that bus's last row alone, and the prover refuses it ([`a_broken_bus_is_refused`]).
+#[test]
+#[ignore = "needs PIL2C_EXEC and Node.js"]
+fn the_prover_proves_both_buses_in_one_air() {
+    for (suffix, packing) in [("", DEFAULT), ("_unpacked", Packing::NoPacking)] {
+        let name = format!("e2e_mixed_bus{suffix}");
+        let f = fixture(&name, Program::MixedBus, packing);
+        proves_its_layout_and_rejects_every_change(&f);
+        the_transcripts_agree(&f);
+        agrees_with_the_oracle(&f);
+        let stage_2 = stage_columns_are_the_oracles(&f);
+        let info = f.info();
+        for bus in [Bus::Sum, Bus::Prod] {
+            let (column, last) = bus.column();
+            let p = info.cm_pols_map.iter().find(|p| p.stage == 2 && p.name == column).unwrap();
+            assert_eq!(stage_2[p.stage_pos as usize].last(), Some(&last), "{name}: {column} closes");
+        }
+        let broken = [
+            (mixed_bus::witness_not_connected(), Bus::Prod),
+            (mixed_bus::witness_with_a_wrong_multiplicity(), Bus::Sum),
+        ];
+        for (witness, bus) in broken {
+            a_broken_bus_is_refused(
+                &f,
+                &format!("{name}, the {} bus broken", bus.name()),
+                &witness,
+                bus.last_constraint(),
+            );
+        }
     }
 }
 

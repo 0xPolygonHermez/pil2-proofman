@@ -155,9 +155,10 @@ mod sealed {
 ///
 /// The map is stored at its live extent, not the trace's: the packers fill rows from 0 and leave
 /// the power-of-two padding untouched, and the columns a gate band fills are never mapped -- the
-/// expander writes those from the band's boundary. `getCommitedPols` zeroes everything outside the
-/// extent, which is what those cells held anyway. Both bounds are measured rather than assumed, so
-/// a packer that starts using a row or column cannot silently have it dropped.
+/// expander writes those from the band's boundary, and the BN254 wrap's witness the multiplicity of
+/// its range-check bands, whose own cells the map gathers. `getCommitedPols` zeroes everything
+/// outside the extent, which is what those cells held anyway. Both bounds are measured rather than
+/// assumed, so a packer that starts using a row or column cannot silently have it dropped.
 ///
 /// Public so that a caller can write the exec of rows it places itself, as the tests of the pilfflonk
 /// wrap's witness (`pilfflonk-wrap-witness`) do over BN254.

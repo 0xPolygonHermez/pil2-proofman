@@ -227,6 +227,9 @@ pub struct CustomGatesInfo<F> {
     /// `PoseidonT(t)` widths, per gate id: circom mints one gate id per width, so this role, like
     /// Fft4, has no single id. Which widths a family places is the family's to check.
     pub poseidon_t_widths: HashMap<u32, F>,
+    /// `Num2Bytes(nBits)` bits, per gate id: one gate id per nBits, as for `PoseidonT`. Which
+    /// widths a family places is the family's to check.
+    pub range_check_bits: HashMap<u32, F>,
     pub n_per_role: HashMap<GateRole, usize>,
     pub n_plonk_rows: usize,
 }
@@ -273,6 +276,15 @@ pub fn get_custom_gates_info<F: Field>(r1cs: &R1csFile<F>) -> CustomGatesInfo<F>
                 );
                 info.poseidon_t_widths.insert(i, gate.parameters[0]);
             }
+            GateRole::RangeCheck => {
+                assert_eq!(
+                    gate.parameters.len(),
+                    1,
+                    "Num2Bytes is Num2Bytes(nBits); gate {i} has {} parameters",
+                    gate.parameters.len()
+                );
+                info.range_check_bits.insert(i, gate.parameters[0]);
+            }
             _ => {
                 assert!(gate.parameters.is_empty(), "{name} expected to be parameter-less");
                 if let Some(prev) = info.gate_ids.insert(role, i) {
@@ -301,6 +313,8 @@ pub fn get_custom_gates_info<F: Field>(r1cs: &R1csFile<F>) -> CustomGatesInfo<F>
             GateRole::Blake3Compress
         } else if info.poseidon_t_widths.contains_key(&cgu.id) {
             GateRole::PoseidonT
+        } else if info.range_check_bits.contains_key(&cgu.id) {
+            GateRole::RangeCheck
         } else {
             panic!("Custom gate not defined: {}", cgu.id);
         };
@@ -472,6 +486,25 @@ mod tests {
         assert_eq!(cgi.poseidon_t_widths, HashMap::from([(0, Bn254::from_int(5u64)), (1, Bn254::from_int(3u64))]));
         assert_eq!(cgi.n(GateRole::PoseidonT), 3);
         assert_eq!(cgi.role_id(GateRole::PoseidonT), None, "no single id, as for FFT4");
+    }
+
+    /// `Num2Bytes(nBits)` has a parameter, its bits: each is a gate id of the role, beside the
+    /// wrap's `PoseidonT`, and the uses of every one of them are the role's.
+    #[test]
+    fn num2bytes_is_a_role_with_its_bits() {
+        let gate = |name: &str, p: u64| CustomGate { template_name: name.into(), parameters: vec![Bn254::from_int(p)] };
+        let mut r1cs = make_r1cs::<Bn254>(vec![], 4);
+        r1cs.custom_gates = vec![gate("Num2Bytes", 64), gate("PoseidonT", 5), gate("Num2Bytes", 70)];
+        r1cs.custom_gates_uses = vec![
+            CustomGateUse { id: 0, signals: vec![1; 5] },
+            CustomGateUse { id: 2, signals: vec![1; 6] },
+            CustomGateUse { id: 1, signals: vec![1; 345] },
+            CustomGateUse { id: 0, signals: vec![1; 5] },
+        ];
+        let cgi = get_custom_gates_info(&r1cs);
+        assert_eq!(cgi.range_check_bits, HashMap::from([(0, Bn254::from_int(64u64)), (2, Bn254::from_int(70u64))]));
+        assert_eq!((cgi.n(GateRole::RangeCheck), cgi.n(GateRole::PoseidonT)), (3, 1));
+        assert_eq!(cgi.role_id(GateRole::RangeCheck), None, "no single id, as for PoseidonT");
     }
 
     /// The key is `{:x}` of each canonical coefficient, as it always was for Goldilocks.

@@ -435,6 +435,9 @@ with `im_low` on the product bus), each with its hint.
 - `signed/`: columns read at the rows `−1` to `2`, and a constraint of degree ≥ 4 that needs an im pol.
 - `sum_bus/`, `prod_bus/`, `prod_bus_im/`: one bus of the std each, of two stages; `prod_bus_im` with
   `im_col` columns.
+- `mixed_bus/`: both buses of the std in one AIR, the Connection on the product bus and the Plookup on
+  the sum bus, as plonk2pil's BN254 wrap has its connection and its range checks' lookup. Each closes
+  on its own.
 - `pilfflonk/tests/data/domains.rs`: pilouts built in code with `prost`, for the domains the compiler
   does not emit (`firstRow`, `lastRow` and `everyFrame`).
 - `std_bn254/`: the std's connections over BN254, against `bn254.pil`.
