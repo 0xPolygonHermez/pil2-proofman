@@ -26,6 +26,7 @@ use super::calculate_hashes::gen_calculate_hashes;
 use super::verify_global_challenge::gen_verify_global_challenge;
 use super::verify_global_constraints::gen_verify_global_constraints;
 use super::CircomGenOptions;
+use crate::stark2circom::circom_verifier::bn128::uses_custom_templates;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -103,6 +104,9 @@ pub fn gen_recursion_final(
     let n_publics_proof = n_publics.saturating_sub(5);
 
     let mut ctx = TeraCtx::new();
+    // The circuit includes the recursivef's verifier: when that one uses custom templates, circom
+    // wants the pragma here too.
+    ctx.insert("custom_templates", &uses_custom_templates(stark_info));
     ctx.insert("verifier_filenames", verifier_filenames);
     ctx.insert("sha256_template", &sha256_template);
     ctx.insert("stark_signals", &stark_signals);
@@ -537,4 +541,151 @@ pub fn gen_vadcop_final(
     ctx.insert("n_airgroups", &agg_types.len());
 
     render(VADCOP_FINAL_TMPL, &ctx)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
+
+    use super::*;
+    use crate::stark2circom::circom_verifier::{gen_stark_verifier_bn128, Pil2CircomOptions};
+    use crate::plonk2pil::r1cs_types::read_r1cs_header;
+    use serde_json::json;
+
+    /// A recursivef starkinfo, whose trees are custom or not, with what the final circuit and the
+    /// head of its verifier read.
+    fn recursivef_stark_info(merkle_tree_custom: bool) -> Value {
+        json!({
+            "starkStruct": {
+                "verificationHashType": "BN128",
+                "nQueries": 4,
+                "nBits": 6,
+                "nBitsExt": 10,
+                "powBits": 0,
+                "merkleTreeArity": 4,
+                "merkleTreeCustom": merkle_tree_custom,
+                "lastLevelVerification": 0,
+                "hashCommits": false,
+                "steps": [{"nBits": 10}, {"nBits": 6}]
+            },
+            "nStages": 2,
+            "nPublics": 6,
+            "nConstants": 3,
+            "evMap": [],
+            "cmPolsMap": [],
+            "customCommits": [],
+            "customCommitsMap": [],
+            "challengesMap": [],
+            "boundaries": [{"name": "everyRow"}],
+            "airgroupValuesMap": [],
+            "airValuesMap": [],
+            "proofValuesMap": [],
+            "mapSectionsN": {"cm1": 2, "cm2": 2, "cm3": 2},
+            "openingPoints": [],
+            "qDeg": 1
+        })
+    }
+
+    /// The final circuit around a recursivef whose trees are custom or not.
+    fn final_circuit(merkle_tree_custom: bool) -> String {
+        let opts = CircomGenOptions {
+            airgroup_id: None,
+            has_compressor: false,
+            has_recursion: false,
+            is_final: true,
+            agg_arity: 0,
+        };
+        let verifiers = ["recursivef.verifier.circom".to_string()];
+        gen_recursion_final(&recursivef_stark_info(merkle_tree_custom), &verifiers, Some(&Value::Null), &opts).unwrap()
+    }
+
+    #[test]
+    fn final_declares_custom_templates_for_custom_trees() {
+        let out = final_circuit(true);
+        assert!(
+            out.starts_with(
+                "pragma circom 2.1.0;\npragma custom_templates;\n\n    include \"recursivef.verifier.circom\";\n"
+            ),
+            "out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn final_without_custom_trees_is_unchanged() {
+        let out = final_circuit(false);
+        assert!(
+            out.starts_with("pragma circom 2.1.0;\n\n    include \"recursivef.verifier.circom\";\n"),
+            "out:\n{out}"
+        );
+        assert!(!out.contains("custom_templates"), "out:\n{out}");
+    }
+
+    /// The include graph of the final circuit around a recursivef with custom trees, which circom
+    /// checks before anything else: every file on the way to a custom template declares
+    /// `pragma custom_templates;` (CG04 otherwise), and no template is defined twice (T2008). The
+    /// final circuit's head (its pragmas, the verifier's include and the publics hash, with its own
+    /// includes) and the verifier's (its pragmas and includes), as the templates render them, are
+    /// compiled over the libraries of the snark setup, with a main that instantiates
+    /// `CustomPoseidon` and `LessThanGoldilocks`. The whole circuit, from a real recursivef, is
+    /// compiled by setup-snark's `pilfflonk_final_circuit` test.
+    ///
+    /// Needs circomlib, from `npm install` in `setup/pil2-stark`; without it the test says so and
+    /// passes.
+    #[test]
+    fn custom_final_includes_compile() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let circomlib = root.join("setup/pil2-stark/node_modules/circomlib/circuits");
+        if !circomlib.is_dir() {
+            eprintln!("skipped: {} not present (npm install in setup/pil2-stark)", circomlib.display());
+            return;
+        }
+        let circom = root.join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" });
+        let libraries = Path::new(env!("CARGO_MANIFEST_DIR")).join("stark2circom/circom_verifier");
+
+        let stark_info = recursivef_stark_info(true);
+        let verifier_info = json!({ "qVerifier": { "code": [] }, "queryVerifier": { "code": [] } });
+        let opts = Pil2CircomOptions { skip_main: true, ..Pil2CircomOptions::default() };
+        let root_c = ["1".to_string(), "0".to_string(), "0".to_string(), "0".to_string()];
+        let verifier = gen_stark_verifier_bn128(Some(&root_c), &stark_info, &verifier_info, &opts).unwrap();
+        let verifier_head = &verifier[..verifier.find("\ntemplate ").expect("a template in the verifier")];
+        let circuit = final_circuit(true);
+        let circuit_head = &circuit[..circuit.find("template Main()").expect("the final circuit's Main")];
+
+        let dir = std::env::temp_dir().join(format!("custom_final_includes_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("recursivef.verifier.circom"), verifier_head).unwrap();
+        const MAIN: &str = r#"template Main() {
+    signal input in[4];
+    signal output hash[5] <== CustomPoseidon(4)(in, 0);
+    signal output gl <== LessThanGoldilocks()(in[0]);
+}
+
+component main = Main();
+"#;
+        fs::write(dir.join("final.circom"), format!("{circuit_head}{MAIN}")).unwrap();
+
+        // The libraries of `snark_setup.rs`'s final compile, in its order.
+        let out = Command::new(&circom)
+            .arg(dir.join("final.circom"))
+            .args(["--O1", "--r1cs", "-o"])
+            .arg(&dir)
+            .arg("-l")
+            .arg(libraries.join("helper_circuits"))
+            .arg("-l")
+            .arg(libraries.join("circuits.bn128"))
+            .arg("-l")
+            .arg(&circomlib)
+            .output()
+            .unwrap_or_else(|e| panic!("run {}: {e}", circom.display()));
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "circom failed:\n{stderr}{}", String::from_utf8_lossy(&out.stdout));
+
+        // The custom templates are compiled as such: the r1cs has the custom-gate sections.
+        let header = read_r1cs_header(&fs::read(dir.join("final.r1cs")).unwrap()).unwrap();
+        assert!(header.use_custom_gates);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

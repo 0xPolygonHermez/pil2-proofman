@@ -1,7 +1,8 @@
-//! Final SNARK setup: recursivef (GL→BN128 bridge) + final (fflonk/plonk) steps.
+//! Final SNARK setup: recursivef (GL→BN128 bridge) + final (fflonk/plonk/pilfflonk) steps.
 
+use std::fmt;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
@@ -17,6 +18,63 @@ use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
 use pil2_stark_recurser::plonk2pil;
 use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
+
+/// The protocol that proves the final circuit, the verifier of the recursivef. It decides how the
+/// recursivef commits to its trees, and with that the final circuit
+/// ([`FinalSnark::recursivef_settings`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FinalSnark {
+    /// rapidsnark's FFLONK, over the final circuit's r1cs.
+    Fflonk,
+    /// rapidsnark's PLONK, over the final circuit's r1cs.
+    Plonk,
+    /// pilfflonk, over the AIR plonk2pil makes of the final circuit with custom gates. Its setup
+    /// builds the recursivef, the final circuit and the circuit's witness library, and not yet the
+    /// pilfflonk proving key.
+    Pilfflonk,
+}
+
+impl FinalSnark {
+    /// The recursivef's stark struct settings, which decide the final circuit as well: stark2circom
+    /// writes the recursivef's verifier, and the final circuit that includes it, with circom custom
+    /// templates exactly when the recursivef's trees are custom.
+    ///
+    /// Every protocol gets arity-4 Poseidon trees over BN128, a blowup of 6 and 19 bits of grinding:
+    /// the JS's settings (`generateFinalSnarkSetup.js`), which grind 17. They differ in how the final
+    /// circuit checks the trees:
+    /// - PLONK and FFLONK: with circomlib's Poseidon, and Merkle paths that stop 2 levels short of
+    ///   the root, at a published 16-node level (`lastLevelVerification` 2, which the JS never
+    ///   implemented for BN128);
+    /// - pilfflonk: with custom templates, one `PoseidonT(5)` custom gate per hash for plonk2pil to
+    ///   lay out, and whole Merkle paths (`lastLevelVerification` 0, as the JS):
+    ///   `circuits.bn128/custom/` has no last-level templates.
+    fn recursivef_settings(self) -> StarkSettings {
+        let (merkle_tree_custom, last_level_verification) = match self {
+            FinalSnark::Fflonk | FinalSnark::Plonk => (false, 2),
+            FinalSnark::Pilfflonk => (true, 0),
+        };
+        StarkSettings {
+            verification_hash_type: Some("BN128".to_string()),
+            blowup_factor: Some(6),
+            merkle_tree_arity: Some(4),
+            merkle_tree_custom: Some(merkle_tree_custom),
+            last_level_verification: Some(last_level_verification),
+            pow_bits: Some(19),
+            ..Default::default()
+        }
+    }
+}
+
+/// The protocol's name, as `--final-snark` spells it, and snarkjs for PLONK and FFLONK.
+impl fmt::Display for FinalSnark {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            FinalSnark::Fflonk => "fflonk",
+            FinalSnark::Plonk => "plonk",
+            FinalSnark::Pilfflonk => "pilfflonk",
+        })
+    }
+}
 
 /// Configuration for the final SNARK setup.
 pub struct SnarkSetupConfig<'a> {
@@ -42,10 +100,11 @@ pub struct SnarkSetupConfig<'a> {
     /// Directory containing BN128 fr.cpp/fr.asm and Makefile for the `final` SNARK witness library.
     /// Corresponds to `final_snark_circom/`
     pub final_snark_circom_helpers_dir: &'a str,
-    /// Powers-of-tau (.ptau) file for snarkjs final setup (required if !only_recursive_final).
+    /// Powers-of-tau (.ptau) file for snarkjs final setup (required for PLONK and FFLONK if
+    /// !only_recursive_final).
     pub powers_of_tau: Option<&'a str>,
-    /// "fflonk" or "plonk".
-    pub final_snark: &'a str,
+    /// The protocol that proves the final circuit.
+    pub final_snark: FinalSnark,
     /// Optional publics hash info JSON value.
     pub publics_info: Option<Value>,
     /// When true, only run the recursivef step and stop before the final SNARK.
@@ -55,7 +114,8 @@ pub struct SnarkSetupConfig<'a> {
 /// Run the final SNARK setup pipeline.
 ///
 /// Phase 1 (recursivef): GL → BN128 bridge circuit.
-/// Phase 2 (final):      BN128 R1CS → SNARK zkey + Solidity verifiers.
+/// Phase 2 (final):      BN128 R1CS → SNARK zkey + Solidity verifiers (PLONK and FFLONK); for
+///                       pilfflonk, so far, the final circuit and its witness library.
 pub fn gen_snark_setup(
     config: &SnarkSetupConfig<'_>,
     witness_tracker: &WitnessTracker,
@@ -220,20 +280,7 @@ pub fn gen_snark_setup(
         }
     };
 
-    // BN128 stark struct settings (matches JS: blowupFactor=6, powBits=17, arity=4).
-    let bn128_settings = StarkSettings {
-        verification_hash_type: Some("BN128".to_string()),
-        blowup_factor: Some(6),
-        merkle_tree_arity: Some(4),
-        merkle_tree_custom: Some(false),
-        // Diverges from JS (which never implemented lastLevelVerification for
-        // BN128): drop 2 Poseidon-BN128 levels per query per tree in the final
-        // circuit, checked against a 16-node (arity^2) published last level.
-        last_level_verification: Some(2),
-        pow_bits: Some(19),
-        ..Default::default()
-    };
-    let stark_struct_rf = generate_stark_struct(&bn128_settings, n_bits_rf, config.hash);
+    let stark_struct_rf = generate_stark_struct(&config.final_snark.recursivef_settings(), n_bits_rf, config.hash);
 
     let pil_result_rf = crate::pil::info::pil_info(pilout_inner, 0, 0, &stark_struct_rf, &Default::default())?;
 
@@ -459,6 +506,38 @@ pub fn gen_snark_setup(
         bail!("final.r1cs not found at {}: circom compilation may have failed", r1cs_final.display());
     }
 
+    match config.final_snark {
+        FinalSnark::Fflonk | FinalSnark::Plonk => {
+            gen_rapidsnark_key(config, witness_tracker, &r1cs_final, &final_dir, const_root)?
+        }
+        FinalSnark::Pilfflonk => gen_pilfflonk_key(config, witness_tracker, &final_dir)?,
+    }
+
+    // Write publics_info.json if provided.
+    if let Some(ref pi) = config.publics_info {
+        fs::write(snark_dir.join("publics_info.json"), serde_json::to_string_pretty(pi)?)?;
+    }
+
+    tracing::info!("Final SNARK setup complete");
+    Ok(())
+}
+
+/// The PLONK or FFLONK key of the final circuit: rapidsnark's zkey of its r1cs, snarkjs's
+/// verification key and Solidity verifier, the project's Solidity verifier around that one, and
+/// the circuit's witness library.
+fn gen_rapidsnark_key(
+    config: &SnarkSetupConfig<'_>,
+    witness_tracker: &WitnessTracker,
+    r1cs_final: &Path,
+    final_dir: &Path,
+    const_root: &[u64; 4],
+) -> Result<()> {
+    let fflonk = match config.final_snark {
+        FinalSnark::Fflonk => true,
+        FinalSnark::Plonk => false,
+        FinalSnark::Pilfflonk => bail!("the pilfflonk final circuit has no rapidsnark key"),
+    };
+
     if let Some((n_constraints, n_additions)) = get_plonk_circuit_stats_c(r1cs_final.to_str().unwrap()) {
         let circuit_power = std::cmp::max(3, 64 - (n_constraints + 1).leading_zeros() as u64);
         tracing::info!(
@@ -481,18 +560,10 @@ pub fn gen_snark_setup(
     // Launch witness library generation (make) in background, then run the
     // zkey FFI setup concurrently on this thread — both only need the circom
     // output and produce independent artifacts.
-    // The `final` circuit is BN128-based and requires fr.cpp/fr.asm — use the
-    // dedicated final_snark_circom helpers dir, not the goldilocks circom one.
-    witness_tracker.run_witness_library_generation(
-        config.build_dir,
-        final_dir.to_str().unwrap_or(""),
-        "final",
-        "final",
-        config.final_snark_circom_helpers_dir,
-    );
+    run_final_witness_library_generation(config, witness_tracker, final_dir);
 
     tracing::info!("Running {} setup via FFI (parallel with make)...", config.final_snark);
-    let ret = if config.final_snark == "fflonk" {
+    let ret = if fflonk {
         generate_fflonk_zkey_c(r1cs_final.to_str().unwrap(), powers_of_tau, zkey_final.to_str().unwrap())
     } else {
         generate_plonk_zkey_c(r1cs_final.to_str().unwrap(), powers_of_tau, zkey_final.to_str().unwrap())
@@ -510,11 +581,11 @@ pub fn gen_snark_setup(
 
     // Export Solidity verifier (snarkjs.zKey.exportSolidityVerifier) via Node.js.
     tracing::info!("Exporting Solidity verifier...");
-    let snark_verifier_sol = if config.final_snark == "fflonk" { "FflonkVerifier.sol" } else { "PlonkVerifier.sol" };
+    let snark_verifier_sol = if fflonk { "FflonkVerifier.sol" } else { "PlonkVerifier.sol" };
     run_snarkjs_export_solidity(
         zkey_final.to_str().unwrap(),
         final_dir.join(snark_verifier_sol).to_str().unwrap(),
-        config.final_snark,
+        &config.final_snark.to_string(),
     )?;
 
     // Generate project-specific Solidity verifier (pure Rust — no Node.js required).
@@ -528,19 +599,40 @@ pub fn gen_snark_setup(
                 Some(f) => f.to_uppercase().to_string() + c.as_str(),
             }
         };
-        let sol = gen_solidity(config.name, const_root, publics_ref, config.final_snark == "fflonk");
+        let sol = gen_solidity(config.name, const_root, publics_ref, fflonk);
         let isol = gen_iverifier(config.name, publics_ref);
         fs::write(final_dir.join(format!("{camel}Verifier.sol")), sol)?;
         fs::write(final_dir.join(format!("I{camel}Verifier.sol")), isol)?;
     }
 
-    // Write publics_info.json if provided.
-    if let Some(ref pi) = config.publics_info {
-        fs::write(snark_dir.join("publics_info.json"), serde_json::to_string_pretty(pi)?)?;
-    }
-
-    tracing::info!("Final SNARK setup complete");
     Ok(())
+}
+
+/// What there is so far of the pilfflonk key of the final circuit: the circuit's witness library.
+/// The AIR plonk2pil makes of the circuit over BN254, and pilfflonk's setup of it, are not built
+/// yet.
+fn gen_pilfflonk_key(config: &SnarkSetupConfig<'_>, witness_tracker: &WitnessTracker, final_dir: &Path) -> Result<()> {
+    run_final_witness_library_generation(config, witness_tracker, final_dir);
+    witness_tracker.await_all()?;
+    tracing::warn!("pilfflonk: built the final circuit and its witness library, not yet its pilfflonk proving key");
+    Ok(())
+}
+
+/// Launch the build of the final circuit's witness library, `final.so`, in the background. The
+/// circuit is BN128-based and requires fr.cpp/fr.asm: it takes the dedicated final_snark_circom
+/// helpers dir, not the goldilocks circom one.
+fn run_final_witness_library_generation(
+    config: &SnarkSetupConfig<'_>,
+    witness_tracker: &WitnessTracker,
+    final_dir: &Path,
+) {
+    witness_tracker.run_witness_library_generation(
+        config.build_dir,
+        final_dir.to_str().unwrap_or(""),
+        "final",
+        "final",
+        config.final_snark_circom_helpers_dir,
+    );
 }
 
 /// Find the snarkjs package root, checking (in order):

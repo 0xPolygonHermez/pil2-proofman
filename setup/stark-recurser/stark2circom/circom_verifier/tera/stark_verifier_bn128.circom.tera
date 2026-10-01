@@ -4,7 +4,7 @@ pragma circom 2.1.0;
 {% if custom %}include "custom/evalpol.circom";
 include "custom/fft.circom";
 include "custom/gl.circom";
-include "custom/lessthangl.circom";
+include "lessthangl.circom";
 include "custom/merklehash.circom";
 include "custom/poseidon.circom";
 {% else %}include "evalpol.circom";

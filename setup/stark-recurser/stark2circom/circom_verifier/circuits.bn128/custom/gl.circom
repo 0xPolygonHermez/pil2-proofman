@@ -1,7 +1,7 @@
 pragma circom 2.1.0;
 
 include "../bitifyT.circom";
-include "lessthangl.circom";
+include "../lessthangl.circom";
 include "utils.circom";
 
 // Given an integer a, computes a % GL

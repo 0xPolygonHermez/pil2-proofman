@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
 use crate::output::witness_gen::WitnessTracker;
-use crate::proving_key::snark_setup::{gen_snark_setup, SnarkSetupConfig};
+use crate::proving_key::snark_setup::{gen_snark_setup, FinalSnark, SnarkSetupConfig};
 use crate::commands::recursive_setup::{resolve_circom_exec, resolve_path_env};
 
 /// Options for the setup-snark subcommand.
@@ -26,6 +26,20 @@ pub struct SetupSnarkOptions {
 
 /// Run the setup-snark pipeline.
 pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
+    let final_snark = match opts.final_snark.as_str() {
+        "fflonk" => FinalSnark::Fflonk,
+        "plonk" => FinalSnark::Plonk,
+        // Not offered until its setup builds the pilfflonk proving key: today it would stop at the
+        // final circuit.
+        "pilfflonk" => bail!("--final-snark pilfflonk is not available yet: its setup is not complete"),
+        other => bail!("unknown --final-snark {other:?}: expected fflonk or plonk"),
+    };
+    setup_snark(opts, final_snark)
+}
+
+/// [`run_setup_snark`] for `final_snark`, which stands for the name in `opts.final_snark`. It takes
+/// pilfflonk as well: that is how the tests reach its setup while the command does not offer it.
+fn setup_snark(opts: &SetupSnarkOptions, final_snark: FinalSnark) -> Result<()> {
     let build_dir = &opts.build_dir;
 
     // Read globalInfo to get the name.
@@ -132,7 +146,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
         circom_helpers_dir: &circom_helpers_dir,
         final_snark_circom_helpers_dir: &final_snark_circom_helpers_dir,
         powers_of_tau: opts.powers_of_tau.as_deref(),
-        final_snark: &opts.final_snark,
+        final_snark,
         publics_info,
         only_recursive_final: opts.only_recursive_final,
     };
@@ -156,4 +170,94 @@ fn parse_const_root(json: &Value) -> Result<[u64; 4]> {
             .ok_or_else(|| anyhow::anyhow!("verkey.json element {} is not a valid u64: {}", idx, v))
     };
     Ok([parse_one(&arr[0], 0)?, parse_one(&arr[1], 1)?, parse_one(&arr[2], 2)?, parse_one(&arr[3], 3)?])
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use pil2_stark_recurser::plonk2pil::r1cs_types::read_r1cs_from_bytes;
+    use proofman_fields::Bn254;
+
+    use super::*;
+
+    fn options(build_dir: &str, final_snark: &str) -> SetupSnarkOptions {
+        SetupSnarkOptions {
+            build_dir: build_dir.to_string(),
+            powers_of_tau: None,
+            final_snark: final_snark.to_string(),
+            publics_info: None,
+            only_recursive_final: false,
+        }
+    }
+
+    /// The command takes PLONK and FFLONK only, and refuses anything else before it reads the build
+    /// dir.
+    #[test]
+    fn refuses_other_final_snarks_up_front() {
+        let missing = "/nonexistent/setup-snark/build";
+        let err = run_setup_snark(&options(missing, "pilfflonk")).unwrap_err().to_string();
+        assert!(err.contains("pilfflonk is not available yet"), "{err}");
+        let err = run_setup_snark(&options(missing, "groth16")).unwrap_err().to_string();
+        assert!(err.contains("unknown --final-snark \"groth16\""), "{err}");
+        // One it takes gets as far as the build dir.
+        let err = run_setup_snark(&options(missing, "plonk")).unwrap_err().to_string();
+        assert!(err.contains("Global info file not found"), "{err}");
+    }
+
+    /// setup-snark for pilfflonk on the `vadcop_final` of a real program: the recursivef with custom
+    /// trees and `lastLevelVerification` 0, the final circuit with custom templates, which the
+    /// committed circom compiles over BN254, and the circuit's witness library.
+    ///
+    /// `SETUP_SNARK_BUILD_DIR` names the build dir of a recursive setup (`proofman-setup setup -r`
+    /// with a poseidon family; fibonacci-square's takes some 11 minutes), and the test writes the
+    /// outputs of setup-snark into it, as `setup-snark -b` does. `SETUP_SNARK_PUBLICS_INFO`, if set,
+    /// is the `--publics-info`. That takes some 2 minutes and 5 GB:
+    ///
+    /// ```text
+    /// SETUP_SNARK_BUILD_DIR=<dir> SETUP_SNARK_PUBLICS_INFO=$PWD/examples/fibonacci-square/src/publics_info.json \
+    ///     cargo test --release -p pil2-stark-setup --features proofman-starks-lib-c/cpu-only \
+    ///     --lib pilfflonk_final_circuit -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "a recursivef and a final circuit of millions of constraints, for SETUP_SNARK_BUILD_DIR"]
+    fn pilfflonk_final_circuit() {
+        let Ok(build_dir) = std::env::var("SETUP_SNARK_BUILD_DIR") else {
+            eprintln!("skipped: SETUP_SNARK_BUILD_DIR does not name a recursive setup's build dir");
+            return;
+        };
+        let opts = SetupSnarkOptions {
+            publics_info: std::env::var("SETUP_SNARK_PUBLICS_INFO").ok(),
+            ..options(&build_dir, "pilfflonk")
+        };
+        setup_snark(&opts, FinalSnark::Pilfflonk).expect("setup-snark for pilfflonk");
+
+        let dir = Path::new(&build_dir);
+        let starkinfo: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("provingKeySnark/recursivef/recursivef.starkinfo.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(starkinfo["starkStruct"]["merkleTreeCustom"], true);
+        assert_eq!(starkinfo["starkStruct"]["lastLevelVerification"], 0);
+
+        let circuit = fs::read_to_string(dir.join("circom/final.circom")).unwrap();
+        let head: Vec<&str> = circuit.lines().take(2).collect();
+        assert_eq!(head, ["pragma circom 2.1.0;", "pragma custom_templates;"]);
+
+        let final_dir = dir.join("provingKeySnark/final");
+        let library = if cfg!(target_os = "macos") { "final.dylib" } else { "final.so" };
+        for file in ["final.dat", library] {
+            assert!(final_dir.join(file).is_file(), "{file} missing from {}", final_dir.display());
+        }
+        assert!(!final_dir.join("final.zkey").exists(), "a rapidsnark zkey for pilfflonk");
+
+        // read_r1cs_from_bytes refuses an r1cs that is not over BN254.
+        let r1cs = read_r1cs_from_bytes::<Bn254>(&fs::read(dir.join("build/final.r1cs")).unwrap()).unwrap();
+        let poseidon = r1cs.custom_gates.iter().position(|g| g.template_name == "PoseidonT").expect("PoseidonT");
+        assert_eq!(r1cs.custom_gates.len(), 1, "custom gates other than PoseidonT");
+        assert_eq!(r1cs.custom_gates[poseidon].parameters, [Bn254::from_decimal("5").unwrap()]);
+        let uses = r1cs.custom_gates_uses.len();
+        assert!(uses > 0, "no PoseidonT(5) uses");
+        eprintln!("final circuit: {} r1cs constraints, {uses} PoseidonT(5) uses", r1cs.header.n_constraints);
+    }
 }
