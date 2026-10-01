@@ -137,6 +137,31 @@ Montgomery form, below `r`. The MSM returns a Jacobian point `(X, Y, Z)`, ffiasm
 `(X, Y, Z², Z³)`, and a commitment leaves the prover in affine coordinates, which are unique. So every
 value is the same element at the same place, and the proof is the same bit for bit.
 
+### The shifted MSM
+
+sppark's Pippenger is fast when the scalars look random and slow when many of them repeat: in each
+window, every point whose scalar has the same digit goes to one bucket, and few threads sum it. Fixed
+polynomials repeat: every coefficient of `L1` is `1/N`. On the RTX 5090, with the same 8,388,608
+points:
+
+| Scalars | GPU, unshifted | GPU, shifted | CPU (ffiasm, 32 threads) |
+|---|---|---|---|
+| random | 0.047 s | 0.063 s | 2.39 s |
+| all equal | 25.79 s | 0.070 s | 1.17 s |
+| every other one equal | 14.02 s | 0.060 s | 1.85 s |
+
+So `Gpu::msm` shifts its scalars. For a fixed `h`, `ρ_i = h^(i+1)`, and it computes
+
+```
+Σ s_i·[τ^i]₁ = Σ (s_i + ρ_i)·[τ^i]₁ − Σ ρ_i·[τ^i]₁
+```
+
+`s + ρ` looks random whatever `s` is, and `Σ ρ_i·[τ^i]₁` depends only on the length `n`, so it is
+computed once for each `n` and kept. The difference is the same point, so the commitment, in affine
+coordinates, is the CPU's bit for bit. The cost is the `n` additions `s_i + ρ_i` on the CPU, and one
+more MSM the first time a length appears: a prover that makes several proofs with one key pays it once.
+`ρ` needs to be neither secret nor random, as it changes how the point is computed, not the point.
+
 ### Selection, memory and errors
 
 - **Selection.** `-g/--gpu`, the CPU by default, in a build that found `nvcc`
@@ -149,13 +174,14 @@ value is the same element at the same place, and the proof is the same bit for b
   without `--gpu` is the CPU, and the CPU library has no GPU code at all (`__USE_CUDA__`).
 - **Memory.** The SRS is copied to the device once, when the key loads (timer `PILFFLONK_GPU_SRS`), for
   every MSM of the key and its proofs, as the PLONK prover's `d_ptau`. One device buffer, grown to the
-  largest request, holds the scalars of an MSM or the data of an NTT; every call holds a lock on it, so a
-  key shared by several threads stays safe. Device 0. The device holds `64·nG1` bytes of SRS, 32 bytes
+  largest request, holds the scalars of an MSM or the data of an NTT, and one host buffer the shifted
+  scalars; every call holds a lock on them and on the shift's sums, so a key shared by several threads
+  stays safe. Device 0. The device holds `64·nG1` bytes of SRS, 32 bytes
   per buffer element (up to `max(nG1, N')`), and what sppark's MSM reserves per call.
 - **Errors.** A CUDA failure inside the reused helpers (no device memory, a lost device) aborts the
   process, as in the PLONK GPU prover (`CHECKCUDAERR`): the one exception to the C API's rule. sppark's
-  MSM reports its own failure as the point at infinity; `Gpu::msm` turns that, for scalars not all zero,
-  into an error rather than a proof that does not verify.
+  MSM reports its own failure as the point at infinity; `Gpu::msm` turns that, for shifted scalars not
+  all zero or for the shift itself, into an error rather than a proof that does not verify.
 
 ### GPU results
 
@@ -165,26 +191,27 @@ byte, and the JS verifier accepts them. Seconds, CPU → GPU:
 
 | Program | N | Proof | Fixed commitments | Stage MSMs | `Q` MSM | `W`, `W'` MSMs | Opening |
 |---|---|---|---|---|---|---|---|
-| `fibonacci` | 2^16 | 0.74 → 0.52 (1.42×) | 0.19 → 0.21 | 0.205 → 0.012 | 0.068 → 0.003 | 0.18 → 0.011 | 0.21 → 0.03 |
-| `fibonacci` | 2^18 | 1.95 → 1.34 (1.46×) | 0.26 → 0.81 | 0.581 → 0.035 | 0.177 → 0.011 | 0.58 → 0.022 | 0.67 → 0.11 |
-| `fibonacci` | 2^20 | 5.67 → 4.87 (1.16×) | 0.67 → 3.49 | 1.515 → 0.062 | 0.484 → 0.019 | 1.65 → 0.036 | 2.04 → 0.43 |
-| `fibonacci` | 2^22 | 18.02 → 17.17 (1.05×) | 2.02 → 12.95 | 4.155 → 0.173 | 1.374 → 0.059 | 4.81 → 0.094 | 6.47 → 1.59 |
-| `all_sum` | 2^16 | 2.57 → 1.22 (2.11×) | 0.38 → 0.42 | 0.940 → 0.053 | 0.132 → 0.006 | 0.58 → 0.024 | 0.68 → 0.13 |
-| `all_sum` | 2^18 | 7.30 → 3.89 (1.88×) | 0.96 → 1.91 | 2.377 → 0.111 | 0.266 → 0.016 | 1.77 → 0.039 | 2.26 → 0.51 |
-| `all_sum` | 2^20 | 23.47 → 12.97 (1.81×) | 2.68 → 6.80 | 6.800 → 0.268 | 0.856 → 0.033 | 5.36 → 0.103 | 7.08 → 1.90 |
-| `all_prod` | 2^18 | 7.26 → 3.82 (1.90×) | 1.08 → 1.91 | 2.264 → 0.089 | 0.396 → 0.013 | 1.65 → 0.036 | 2.10 → 0.50 |
+| `fibonacci` | 2^16 | 0.77 → 0.42 (1.83×) | 0.20 → 0.019 | 0.218 → 0.027 | 0.071 → 0.011 | 0.19 → 0.024 | 0.21 → 0.06 |
+| `fibonacci` | 2^18 | 1.87 → 0.66 (2.83×) | 0.26 → 0.026 | 0.557 → 0.050 | 0.178 → 0.023 | 0.55 → 0.047 | 0.64 → 0.14 |
+| `fibonacci` | 2^20 | 5.77 → 1.71 (3.37×) | 0.66 → 0.054 | 1.520 → 0.078 | 0.522 → 0.036 | 1.70 → 0.102 | 2.13 → 0.58 |
+| `fibonacci` | 2^22 | 17.96 → 4.82 (3.73×) | 2.00 → 0.147 | 4.149 → 0.236 | 1.396 → 0.103 | 4.75 → 0.241 | 6.43 → 1.86 |
+| `all_sum` | 2^16 | 2.66 → 0.90 (2.96×) | 0.37 → 0.040 | 1.028 → 0.102 | 0.135 → 0.012 | 0.59 → 0.052 | 0.70 → 0.15 |
+| `all_sum` | 2^18 | 7.39 → 2.23 (3.31×) | 0.96 → 0.094 | 2.448 → 0.179 | 0.274 → 0.036 | 1.82 → 0.093 | 2.27 → 0.54 |
+| `all_sum` | 2^20 | 23.38 → 6.90 (3.39×) | 2.68 → 0.262 | 6.792 → 0.481 | 0.839 → 0.061 | 5.29 → 0.289 | 6.95 → 2.04 |
+| `all_prod` | 2^18 | 7.39 → 2.28 (3.24×) | 1.11 → 0.139 | 2.293 → 0.199 | 0.402 → 0.015 | 1.69 → 0.086 | 2.14 → 0.57 |
 
-- **The MSMs** of the stages, of `Q` and of `W` and `W'` are 15–52× faster, and the transforms of the
-  stages and of `Q` 2–7×.
-- **The whole proof** is 1.05–2.1× faster: what stays on the CPU (the SHPLONK divisions, the
-  interpreter, the transfers around each transform, the witness) and the check below dominate.
-- **The fixed-commitment check** when the key loads is up to 6.4× *slower* on the GPU: 12.95 s against
-  2.02 s at `fibonacci` `2^22`, where it costs as much as the MSMs save. This is open and under
-  investigation.
+- **The whole proof** is 1.8–3.7× faster. What dominates the GPU's time now stays on the CPU: the
+  SHPLONK divisions for `W` and `W'` (1.1–1.7 s at the largest sizes), loading the key and the witness,
+  `Q`'s LDE around its transforms (the folding and the transfers) and the interpreter.
+- **The MSMs** of the stages, of `Q` and of `W` and `W'` are 8–20× faster. Without the shift they were
+  15–52× faster, but the fixed-commitment check was up to 6.4× slower than the CPU (12.95 s against
+  2.02 s at `fibonacci` `2^22`), and the whole proof only 1.05–2.1× faster; with it, that check takes
+  0.15 s.
+- **The transforms** of the stages and of `Q` are 2–7× faster.
 
 ### Open
 
-- The fixed-commitment check on the GPU, above.
+- The SHPLONK divisions (`divByMonic`) on the GPU: now the largest phase of a GPU proof.
 - A coset on the device: the transforms of `Lde` make a host-to-device round trip per column, as the
   elementwise work is on the CPU. sppark has `NTT::Type::coset` with `group_gen = 5`, but no entry point
   of `ntt_bn128.cu` exposes it: that needs a new entry point or a kernel.

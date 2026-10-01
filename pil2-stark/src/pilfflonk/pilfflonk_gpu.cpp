@@ -1,11 +1,15 @@
-// pilfflonk's GPU path (plan M43): compiled into the GPU library only (libstarksgpu.a, the Makefile's
-// %_gpu.cpp rule), with g++, as final_snark_proof_gpu.cpp. It calls the GPU entry points of
-// pil2-stark through their C linkage, as plonk_prover_gpu.c.cuh does, and has no kernel of its own.
+// pilfflonk's GPU path (pilfflonk/docs/performance.md#gpu): compiled into the GPU library only
+// (libstarksgpu.a, the Makefile's %_gpu.cpp rule), with g++, as final_snark_proof_gpu.cpp. It calls
+// the GPU entry points of pil2-stark through their C linkage, as plonk_prover_gpu.c.cuh does, and
+// has no kernel of its own.
 #include "pilfflonk_gpu.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+
+#include "pilfflonk_lde.hpp"
 
 // The MSM and the NTTs (bn128/src/msm/msm_bn128.cu, bn128/src/ntt/ntt_bn128.cu) and the device
 // memory helpers (rapidsnark/plonk_prover.cu), declared as plonk_prover_gpu.c.cuh declares them; and
@@ -47,6 +51,38 @@ bool allZero(const FrElement *values, uint64_t n) {
         zero = zero && fr.isZero(values[i]);
     }
     return zero;
+}
+
+// h, the ratio of the shift ρ_i = h^(i+1) (pilfflonk_gpu.hpp). Any element of large order does; a
+// fixed one makes every intermediate value the same from run to run.
+const FrElement &shiftRatio() {
+    static const FrElement ratio = [] {
+        FrElement h;
+        Engine::engine.fr.fromString(h, "6277101735386680763835789423207666416102355444464034512659");
+        return h;
+    }();
+    return ratio;
+}
+
+// out[i] = scalars[i] + ρ_i, or ρ_i if scalars is null, for i < n. out may be scalars. In chunks,
+// each of which starts from its first ρ (one exponentiation) and multiplies by h from there.
+void shifted(FrElement *out, const FrElement *scalars, uint64_t n) {
+    Engine::Fr &fr = Engine::engine.fr;
+    constexpr uint64_t CHUNK = uint64_t(1) << 14;
+    const FrElement &h = shiftRatio();
+#pragma omp parallel for schedule(static)
+    for (uint64_t start = 0; start < n; start += CHUNK) {
+        FrElement rho = power(h, start + 1);
+        const uint64_t end = std::min(n, start + CHUNK);
+        for (uint64_t i = start; i < end; ++i) {
+            if (scalars != nullptr) {
+                fr.add(out[i], scalars[i], rho);
+            } else {
+                out[i] = rho;
+            }
+            fr.mul(rho, rho, h);
+        }
+    }
 }
 
 } // namespace
@@ -100,30 +136,66 @@ G1Point Gpu::msm(const FrElement *scalars, uint64_t n) const {
         throw invalid("msm", "scalars is null");
     }
 
+    const std::lock_guard<std::mutex> guard(lock);
+    gpu_plonk_set_device(DEVICE);
+    FrElement *shiftedScalars = staging(n);
+    auto shiftSum = shiftSums.find(n);
+    if (shiftSum == shiftSums.end()) {
+        shifted(shiftedScalars, nullptr, n);
+        G1Point sum = deviceMsm(shiftedScalars, n);
+        if (E.g1.isZero(sum)) {
+            throw std::runtime_error("Gpu::msm: the GPU's MSM of the shift of " + std::to_string(n) +
+                                     " points gave the point at infinity: msm_bn128_gpu_dev_ptr failed (or τ is a "
+                                     "root of the shift's polynomial)");
+        }
+        shiftSum = shiftSums.emplace(n, sum).first;
+    }
+    shifted(shiftedScalars, scalars, n);
+    G1Point shiftedSum = deviceMsm(shiftedScalars, n);
+    if (E.g1.isZero(shiftedSum) && !allZero(shiftedScalars, n)) {
+        throw std::runtime_error("Gpu::msm: the GPU's MSM of " + std::to_string(n) +
+                                 " points gave the point at infinity for shifted scalars that are not all zero: "
+                                 "msm_bn128_gpu_dev_ptr failed (or τ is a root of the shifted polynomial)");
+    }
+    E.g1.sub(result, shiftedSum, shiftSum->second);
+    return result;
+}
+
+void Gpu::shift(FrElement *out, uint64_t n) {
+    if (out == nullptr && n > 0) {
+        throw invalid("shift", "out is null");
+    }
+    shifted(out, nullptr, n);
+}
+
+G1Point Gpu::deviceMsm(const FrElement *scalars, uint64_t n) const {
+    Engine &E = Engine::engine;
     // sppark's jacobian_t<fp_t>: (X, Y, Z) in Montgomery form, the point (X/Z², Y/Z³).
     struct Jacobian {
         Engine::F1Element X, Y, Z;
     } jacobian;
-    {
-        const std::lock_guard<std::mutex> guard(lock);
-        gpu_plonk_set_device(DEVICE);
-        void *dScalars = scratch(n);
-        gpu_plonk_memcpy_h2d(dScalars, scalars, n * sizeof(FrElement));
-        // The copy is on the default stream, and sppark's MSM on streams of its own.
-        gpu_plonk_cuda_device_sync();
-        msm_bn128_gpu_dev_ptr(&jacobian, devicePoints, dScalars, n, true);
-    }
+    void *dScalars = scratch(n);
+    gpu_plonk_memcpy_h2d(dScalars, scalars, n * sizeof(FrElement));
+    // The copy is on the default stream, and sppark's MSM on streams of its own.
+    gpu_plonk_cuda_device_sync();
+    msm_bn128_gpu_dev_ptr(&jacobian, devicePoints, dScalars, n, true);
     // ffiasm's extended Jacobian point: (x, y, zz, zzz) is (x/zz, y/zzz), zz = Z² and zzz = Z³.
+    G1Point result;
     result.x = jacobian.X;
     result.y = jacobian.Y;
     E.f1.square(result.zz, jacobian.Z);
     E.f1.mul(result.zzz, result.zz, jacobian.Z);
-    if (E.g1.isZero(result) && !allZero(scalars, n)) {
-        throw std::runtime_error("Gpu::msm: the GPU's MSM of " + std::to_string(n) +
-                                 " points gave the point at infinity for scalars that are not all zero: "
-                                 "msm_bn128_gpu_dev_ptr failed (or τ is a root of the polynomial)");
-    }
     return result;
+}
+
+FrElement *Gpu::staging(uint64_t n) const {
+    if (n > stagingElements) {
+        hostStaging.reset();
+        stagingElements = 0;
+        hostStaging.reset(new FrElement[n]);
+        stagingElements = n;
+    }
+    return hostStaging.get();
 }
 
 void Gpu::transform(const FrElement *in, FrElement *out, uint64_t bits, bool inverse) const {
