@@ -108,13 +108,20 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
             continue;
         }
 
-        // Degree zero in tuple and selector: counted once per instance, not per row. Read from
-        // the hint, since an expression over airvalues is degree 0 too.
-        const uint64_t rows = (fDx->values[0].value == 0 && fDs->values[0].value == 0) ? 1ULL : nRows;
+        // Only lookups into prover-owned tables are compiled, so a std-owned one cannot fail the plan
+        // or widen `srcMask`.
+        bool feedsOwned = false;
+        for (const auto& ov : fOp->values)
+            feedsOwned |= ov.operand == opType::number && mulDecoderFor(ov.value) != nullptr;
+        if (!feedsOwned) continue;
+
         const HintField* fSel = fld("num_reps");
         const bool selConst1 = isNum(fSel) && fSel->values[0].value == 1;
         // Several opids, or a computed busid, means the bus is chosen per row.
         const bool dynBus = fOp->values.size() > 1 || (fld("busid") != nullptr && !isNum(fld("busid")));
+        // Degree zero in tuple and selector on a fixed bus (a direct update): counted once per
+        // instance, not per row. Read from the hint, since an expression over airvalues is degree 0 too.
+        const uint64_t rows = (!dynBus && fDx->values[0].value == 0 && fDs->values[0].value == 0) ? 1ULL : nRows;
 
         // Append a program to `plan.prog`, deduplicated by instruction bytes (call sites get
         // fresh expression ids). Identical programs must share an offset so the kernel can
