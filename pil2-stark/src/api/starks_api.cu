@@ -3722,6 +3722,10 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             zklog.error("gpu witness: air " + std::to_string(airgroupId) + ":" +
                         std::to_string(airId) + " kernel returned " + std::to_string(gwRc));
             timer.stopCategory("GW_KERNEL");
+            // Drain the queued work before another stream may reuse the region; keep -24 on a drain error.
+            const cudaError_t drain = cudaStreamSynchronize(gwStream);
+            if (drain != cudaSuccess)
+                zklog.error("gpu witness: draining the failed commit stream: " + std::string(cudaGetErrorString(drain)));
             streamCommitReleaseRegion(d_buffers, gl);
             return -24;
         }
