@@ -322,8 +322,11 @@ fn write_vadcop_final_publics<F: PrimeField64>(proof: &mut Proof<F>, n_publics: 
     }
 }
 
+/// # Safety
+/// `new_proof` must point to a proof buffer large enough for this proof type, and it must stay
+/// allocated until the GPU has written the proof (after this returns).
 #[allow(clippy::too_many_arguments)]
-pub fn generate_recursive_proof<F: PrimeField64>(
+pub unsafe fn generate_recursive_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
     setups: &SetupsVadcop<F>,
@@ -539,7 +542,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             gen_witness_aggregation::<F>(pctx, memory_handler_recursive_witness, setups, &chunk_refs)?;
                         witness_proof.global_idx = Some(rank);
 
-                        let recursive2_proof = match gen_recursive_proof_size::<F>(pctx, setups, &witness_proof) {
+                        let mut recursive2_proof = match gen_recursive_proof_size::<F>(pctx, setups, &witness_proof) {
                             Ok(p) => p,
                             Err(e) => {
                                 // generate_recursive_proof (which pools the trace) isn't reached;
@@ -552,19 +555,22 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             }
                         };
 
-                        let (stream_id, _) = generate_recursive_proof::<F>(
-                            pctx,
-                            memory_handler_recursive_witness,
-                            setups,
-                            &mut witness_proof,
-                            recursive2_proof.proof.as_ptr() as *mut u64,
-                            prover_buffer,
-                            const_tree,
-                            const_pols,
-                            false,
-                            u64::MAX, // one-off launch: reserve stream internally
-                            None,
-                        )?;
+                        // SAFETY: sized for this proof type; get_stream_id_proof_c below waits for the GPU write.
+                        let (stream_id, _) = unsafe {
+                            generate_recursive_proof::<F>(
+                                pctx,
+                                memory_handler_recursive_witness,
+                                setups,
+                                &mut witness_proof,
+                                recursive2_proof.proof.as_mut_ptr(),
+                                prover_buffer,
+                                const_tree,
+                                const_pols,
+                                false,
+                                u64::MAX, // one-off launch: reserve stream internally
+                                None,
+                            )
+                        }?;
 
                         get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
 
@@ -711,19 +717,22 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
             return Err(e);
         }
     };
-    let (stream_id, publics) = generate_recursive_proof::<F>(
-        pctx,
-        memory_handler_recursive_witness,
-        setups,
-        &mut witness_final_proof,
-        final_proof.proof.as_ptr() as *mut u64,
-        prover_buffer,
-        const_tree,
-        const_pols,
-        false,
-        u64::MAX, // one-off launch: reserve stream internally
-        Some(calculate_fixed_tree_handle),
-    )?;
+    // SAFETY: sized for this proof type; get_stream_id_proof_c below waits for the GPU write.
+    let (stream_id, publics) = unsafe {
+        generate_recursive_proof::<F>(
+            pctx,
+            memory_handler_recursive_witness,
+            setups,
+            &mut witness_final_proof,
+            final_proof.proof.as_mut_ptr(),
+            prover_buffer,
+            const_tree,
+            const_pols,
+            false,
+            u64::MAX, // one-off launch: reserve stream internally
+            Some(calculate_fixed_tree_handle),
+        )
+    }?;
     get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
 
     // Write the public section from the circuit's OUTPUT publics returned by generate_recursive_proof
@@ -801,19 +810,22 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
             return Err(e);
         }
     };
-    let (stream_id, publics) = generate_recursive_proof::<F>(
-        pctx,
-        memory_handler_recursive_witness,
-        setups,
-        &mut witness_final_proof,
-        final_proof.proof.as_ptr() as *mut u64,
-        prover_buffer,
-        const_tree,
-        const_pols,
-        false,
-        u64::MAX, // one-off launch: reserve stream internally
-        Some(calculate_fixed_tree_handle),
-    )?;
+    // SAFETY: sized for this proof type; get_stream_id_proof_c below waits for the GPU write.
+    let (stream_id, publics) = unsafe {
+        generate_recursive_proof::<F>(
+            pctx,
+            memory_handler_recursive_witness,
+            setups,
+            &mut witness_final_proof,
+            final_proof.proof.as_mut_ptr(),
+            prover_buffer,
+            const_tree,
+            const_pols,
+            false,
+            u64::MAX, // one-off launch: reserve stream internally
+            Some(calculate_fixed_tree_handle),
+        )
+    }?;
     get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
 
     // Write the compressed proof's public section from the circuit's OUTPUT publics

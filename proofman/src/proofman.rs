@@ -3838,7 +3838,7 @@ where
 
                     let force_recursive_stream = stream_id >= n_streams_non_recursive;
 
-                    let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
+                    let mut new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                         Ok(p) => p,
                         Err(e) => {
                             // generate_recursive_proof (which normally returns the witness buffer to its
@@ -3853,7 +3853,7 @@ where
                     let new_proof_type = new_proof.proof_type;
 
                     let id = new_proof.global_idx.unwrap();
-                    let new_proof_ptr = new_proof.proof.as_ptr() as *mut u64;
+                    let new_proof_ptr = new_proof.proof.as_mut_ptr();
                     if new_proof_type == ProofType::Recursive2 {
                         recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
                     } else if new_proof_type == ProofType::Compressor {
@@ -3862,19 +3862,22 @@ where
                         *recursive1_proofs_clone[id].write().unwrap() = Some(new_proof);
                     }
 
-                    if let Err(e) = generate_recursive_proof(
-                        &pctx_clone,
-                        &memory_handler_recursive_witness,
-                        &setups_clone,
-                        &mut witness,
-                        new_proof_ptr,
-                        &aux_trace_clone,
-                        &const_tree_clone,
-                        &const_pols_clone,
-                        force_recursive_stream,
-                        reserved_stream,
-                        None,
-                    ) {
+                    // SAFETY: the Vec's heap buffer survives the move into its slot, which is only taken on completion.
+                    if let Err(e) = unsafe {
+                        generate_recursive_proof(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &mut witness,
+                            new_proof_ptr,
+                            &aux_trace_clone,
+                            &const_tree_clone,
+                            &const_pols_clone,
+                            force_recursive_stream,
+                            reserved_stream,
+                            None,
+                        )
+                    } {
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         break;
                     }
@@ -4664,7 +4667,7 @@ where
 
                 witness.global_idx = Some(id);
 
-                let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
+                let mut new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                     Ok(p) => p,
                     Err(e) => {
                         // generate_recursive_proof (which returns the buffer to its pool) isn't reached
@@ -4675,22 +4678,25 @@ where
                     }
                 };
 
-                let new_proof_ptr = new_proof.proof.as_ptr() as *mut u64;
+                let new_proof_ptr = new_proof.proof.as_mut_ptr();
                 recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
 
-                if let Err(e) = generate_recursive_proof(
-                    &pctx_clone,
-                    &memory_handler_recursive_witness,
-                    &setups_clone,
-                    &mut witness,
-                    new_proof_ptr,
-                    &aux_trace_clone,
-                    &const_tree_clone,
-                    &const_pols_clone,
-                    false,
-                    u64::MAX, // one-off launch: reserve stream internally
-                    None,
-                ) {
+                // SAFETY: the Vec's heap buffer survives the move into its slot, which is only taken on completion.
+                if let Err(e) = unsafe {
+                    generate_recursive_proof(
+                        &pctx_clone,
+                        &memory_handler_recursive_witness,
+                        &setups_clone,
+                        &mut witness,
+                        new_proof_ptr,
+                        &aux_trace_clone,
+                        &const_tree_clone,
+                        &const_pols_clone,
+                        false,
+                        u64::MAX, // one-off launch: reserve stream internally
+                        None,
+                    )
+                } {
                     cancellation_info_clone.write_recover().cancel(Some(e));
                     break;
                 }
@@ -4867,7 +4873,7 @@ where
 
                     witness.global_idx = Some(id);
 
-                    let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
+                    let mut new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                         Ok(p) => p,
                         Err(e) => {
                             // generate_recursive_proof (which returns the buffer to its pool) is not
@@ -4879,22 +4885,25 @@ where
                     };
 
                     let id = new_proof.global_idx.unwrap();
-                    let new_proof_ptr = new_proof.proof.as_ptr() as *mut u64;
+                    let new_proof_ptr = new_proof.proof.as_mut_ptr();
                     recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
 
-                    if let Err(e) = generate_recursive_proof(
-                        &pctx_clone,
-                        &memory_handler_recursive_witness,
-                        &setups_clone,
-                        &mut witness,
-                        new_proof_ptr,
-                        &aux_trace_clone,
-                        &const_tree_clone,
-                        &const_pols_clone,
-                        false,
-                        u64::MAX, // one-off launch: reserve stream internally
-                        None,
-                    ) {
+                    // SAFETY: the Vec's heap buffer survives the move into its slot, which is only taken on completion.
+                    if let Err(e) = unsafe {
+                        generate_recursive_proof(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &mut witness,
+                            new_proof_ptr,
+                            &aux_trace_clone,
+                            &const_tree_clone,
+                            &const_pols_clone,
+                            false,
+                            u64::MAX, // one-off launch: reserve stream internally
+                            None,
+                        )
+                    } {
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         break;
                     };
