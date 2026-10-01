@@ -112,7 +112,9 @@ name a pil2-compiler that honours `prime`, see
 up with `setup-pilfflonk`'s steps: `provingKeySnark/final/` gets the circuit's
 witness calculator and `.exec`, the pilfflonk `provingKey/` and the Solidity
 verifiers. The ptau needs at least as many powers `[τ^i]₁` as the layout's
-largest degree: `12·N + 11` for the wrap's AIR of `N` rows.
+largest degree: `12·N + 11` for the wrap's AIR of `N` rows. `proofman-cli
+prove-snark` and `verify-snark` prove and verify with that key
+([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#prove-snark-and-verify-snark)).
 
 ## `setup-recursive-test`
 

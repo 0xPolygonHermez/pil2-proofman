@@ -297,6 +297,13 @@ a JSON view in snarkjs's style, as `snark_proof_to_json` writes.
 The bytes alone do not say where a part ends; the vkey's names do. A file whose name ends in `.bin`
 holds these bytes (`Proof::read`).
 
+**In the wrap**, `prove-snark` writes a pilfflonk proof in `snark_proof.bin` as it writes a PLONK or
+FFLONK one (`proofman::SnarkProof`, bincode): `proof_bytes` are these bytes, `public_snark_bytes` the
+publics, each 32 bytes big-endian as rapidsnark writes them (the wrap has one, the final circuit's
+publics hash), `public_bytes` the vadcop publics the Solidity verifier hashes, and `protocol_id`
+`0x7066`, proofman's own (`PILFFLONK_PROTOCOL_ID`: a zkey names PLONK 2 and FFLONK 10). Its JSON views
+need the vkey (`SnarkProof::convert_to_json_with_vkey`), and are `proof.json` and `publics.json`.
+
 **`proof.json`**: `{"protocol": "pilfflonk", "curve": "bn128", "polynomials": {name: [x, y, "1"]},
 "evaluations": {name: value}}`, keys sorted.
 

@@ -267,6 +267,31 @@ Gives the arguments of the Solidity verifier's `verifyProof` for a proof, as sna
 [verifier.md#calldata-encoder](verifier.md#calldata-encoder) and the layout in
 [formats.md#calldata](formats.md#calldata).
 
+### prove-snark and verify-snark
+
+```
+proofman-cli prove-snark -p <vadcop_final_proof.bin> -k <provingKeySnark> -o <dir> [-g/--gpu]
+proofman-cli verify-snark -p <dir>/snark_proof.bin -k <provingKeySnark>/final/provingKey/<name>/pilfflonk/pilfflonk.vkey.json
+```
+
+The wrap of `setup-snark --final-snark pilfflonk`, beside the PLONK and FFLONK ones, which do not
+change. `prove-snark` takes the final SNARK from the files of `provingKeySnark/final/`: `final.zkey`
+is rapidsnark's, which names PLONK or FFLONK, and `provingKey/` a pilfflonk key, whose globalInfo says
+`"backend": "pilfflonk"`; with both or neither it stops, saying so. With pilfflonk it proves the
+recursivef, computes the wrap's witness from the recursivef proof in the same process
+(`pilfflonk-wrap-witness`, with `final.so`, `final.dat` and `final.exec`), and proves it, on the CPU
+or, with `--gpu`, as `pilfflonk prove --gpu` does. `snark_proof.bin` holds the proof's bytes and its
+one public, the final circuit's publics hash ([formats.md#proof](formats.md#proof)). `verify-snark`
+names the bytes with the vkey and runs the JS verifier, as `pilfflonk verify`.
+
+On the GPU, each proof allocates the recursivef's device buffers and frees them before pilfflonk
+proves. The key, which `prove-snark` loads before the recursivef proves (`SnarkWrapper` with
+`preload`), keeps its SRS on the device; without `preload` it loads after those buffers are freed.
+A wrapper built on
+proofman's unified GPU buffer (`new_with_preallocated_buffers` with `d_buffers`) still lets pilfflonk
+allocate beside it: the PLONK prover carves its buffers out of it (`pre_allocate_final_snark_prover`),
+and pilfflonk does not yet.
+
 ## Witness
 
 The prover takes from outside the stage-1 columns of the instance, its stage-1 air values, the
@@ -319,6 +344,8 @@ witnesses only: the prover's arithmetic is ffiasm's.
 | Solidity template | `setup/pilfflonk/src/tera/verifier_pilfflonk.sol.tera` | Tera, Solidity | the contract `setup/pilfflonk/src/solidity.rs` renders |
 | Foundry project | `pilfflonk/solidity/` | Solidity | the contract's tests and the fuzzer's harness |
 | Benchmarks | `pilfflonk/bench/` | shell, PIL, Rust | `bench.sh` and `gpu_check.sh` ([performance.md](performance.md)) |
+| Wrap's witness | `pilfflonk-wrap-witness`, `wrap-witness/` | Rust, C++ | the stage-1 columns of the wrap's AIR from a recursivef proof or zkin: the final circuit's `final.so` and plonk2pil's `.exec` |
+| Wrap | `proofman`, `proofman/src/{snark_wrapper,pilfflonk_wrap}.rs` | Rust | `prove-snark` and `verify-snark` with pilfflonk as the final SNARK ([prove-snark and verify-snark](#prove-snark-and-verify-snark)) |
 
 **Dependencies.** There are no cycles:
 
@@ -332,8 +359,10 @@ pil2-stark-setup ─► pilfflonk-setup ┘────────────�
 ```
 
 `pilfflonk-setup` depends on `pil-info`, `proofman-pilfflonk` and `proofman-starks-lib-c`, but not
-on `pil2-stark-setup`, which depends on it to host its commands. Only the setup binary gains
-dependencies; the STARK runtime gains none.
+on `pil2-stark-setup`, which depends on it to host its commands. The STARK runtime gains
+dependencies only for the wrap: `proofman`, which holds the final SNARK's wrapper, depends on
+`proofman-pilfflonk` and on `pilfflonk-wrap-witness` (which depends on `proofman-pilfflonk` and
+`proofman-common`), and neither of them on `proofman`.
 
 **File ownership.** Every pilfflonk file has one owner, `proofman-pilfflonk`: the setup writes it and
 the prover reads it, both through its types. The C++ core reads `<air>.pilfflonkinfo.json` with
