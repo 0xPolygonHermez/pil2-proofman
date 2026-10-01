@@ -449,12 +449,16 @@ the root `ω^N = 1`, where `:47-56` uses `ω^(N−1)`; and `:57` seems to test `
 
 - `CPolynomial::getPolynomial` has undefined behaviour below degree 2 (`std::log2(0)`), returns one
   coefficient short when the packed degree is a power of two, and clears a power-of-two prefix of the
-  buffer. `PilFflonk::pack` packs as it does, without calling it.
+  buffer. `PilFflonk::pack` calls `CPolynomial::getCoefficients`, added to rapidsnark next to it,
+  which packs the same coefficients without these.
 - `Polynomial` leaked memory in `divByMonic`, `lagrangePolynomialInterpolation`, `byXSubValue`,
   `fastDivByVanishing` and when it took ownership of a reserved buffer. **Fixed in rapidsnark**,
   without changing any result; the wrap's `FflonkProver` benefits too.
-- `divByMonic` writes before its buffer when the degree is below `2m − 1`, and does not check the
-  remainder; pilfflonk divides with its own (`PilFflonk::divideExactly`).
+- `divByMonic` writes before its buffer when the degree is below `2m − 1`, does not check the
+  remainder, and runs on `m` threads; `PilFflonk::divideExactly` calls
+  `Polynomial::divByMonicInPlace`, added to rapidsnark next to it, which gives the same quotient at
+  every degree, in place and in parallel, and whether the remainder is zero
+  ([performance.md#the-shplonk-division](performance.md#the-shplonk-division)).
 - `BinFile`'s direct-read mode dereferences a null pointer, and `readSectionToParallel` throws inside a
   `std::thread`; pilfflonk only uses `readSectionTo`.
 - `multiexp.c.hpp:30` reads 8 unaligned bytes on every MSM (UBSan).

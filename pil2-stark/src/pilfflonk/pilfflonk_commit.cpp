@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "cpolynomial.hpp"
+
 namespace PilFflonk {
 
 namespace {
@@ -66,27 +68,13 @@ uint64_t pack(Poly *const *polys, uint64_t k, FrElement *packed, uint64_t buffer
                                   " polynomials of up to " + std::to_string(maxLength) + " coefficients need");
     }
 
-    // CPolynomial's degree bound, max_j(k·deg p_j + j), which is above deg f if the top
-    // coefficients are zero.
-    std::vector<uint64_t> degrees(k);
-    uint64_t maxDegree = 0;
+    // CPolynomial::getCoefficients writes f in one parallel pass of its coefficients only, and
+    // returns their count, 1 + CPolynomial's degree bound max_j(k·deg p_j + j).
+    CPolynomial<Engine> cpolynomial(Engine::engine, static_cast<int>(k));
     for (uint64_t j = 0; j < k; ++j) {
-        degrees[j] = polys[j]->getDegree();
-        maxDegree = std::max(maxDegree, degrees[j] * k + j);
+        cpolynomial.addPolynomial(static_cast<int>(j), polys[j]);
     }
-    // f row by row, a row of k coefficients being a coefficient of every p_j: what
-    // CPolynomial::getPolynomial writes, in one pass of f's coefficients only (it clears a
-    // power-of-two prefix of the buffer first, and scans it for the degree after).
-    const uint64_t n = maxDegree + 1;
-    const FrElement zero = Engine::engine.fr.zero();
-#pragma omp parallel for
-    for (uint64_t row = 0; row < (n + k - 1) / k; ++row) {
-        const uint64_t end = std::min(k, n - row * k);
-        for (uint64_t j = 0; j < end; ++j) {
-            packed[row * k + j] = row <= degrees[j] ? polys[j]->coef[row] : zero;
-        }
-    }
-    return n;
+    return cpolynomial.getCoefficients(packed);
 }
 
 G1Point commitPacked(const Srs &srs, Poly *const *polys, uint64_t k) {

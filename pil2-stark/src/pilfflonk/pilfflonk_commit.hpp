@@ -18,10 +18,10 @@ using Poly = Polynomial<AltBn128::Engine>;
 uint64_t packedBufferLength(uint64_t k, uint64_t n);
 
 // The fflonk packing f(X) = Σ_{j<k} p_j(X^k)·X^j of p_j = polys[j]
-// (pilfflonk/docs/protocol.md#layout), as rapidsnark's CPolynomial packs: coefficient i·k + j of f
-// is coefficient i of p_j, and zero for i > deg p_j. Each p_j's degree must be up to date
-// (Poly::fixDegree, which every constructor from evaluations calls): coefficients are copied up to
-// it only.
+// (pilfflonk/docs/protocol.md#layout), by rapidsnark's CPolynomial::getCoefficients: coefficient
+// i·k + j of f is coefficient i of p_j, and zero for i > deg p_j. Each p_j's degree must be up to
+// date (Poly::fixDegree, which every constructor from evaluations calls): coefficients are copied
+// up to it only.
 //
 // Writes f's coefficients to packed[0, n), in parallel, and returns n = 1 + max_j(k·deg p_j + j),
 // the degree bound CPolynomial computes (above deg f if the top coefficients are zero); the rest of

@@ -110,9 +110,9 @@ proof's peak.
 `W` divides each `f_i − r_i` by `X^k − ξ·ω^s` once per offset `s`, and `W'` divides `L` by `X − y`
 ([protocol.md#shplonk-opening](protocol.md#shplonk-opening)). rapidsnark's `divByMonic` runs the
 recurrence `q_j = a_{j+m} + β·q_{j+m}` of the quotient by `X^m − β` on `m` threads, one per residue of
-`j` mod `m`: on one thread for `W'` and for every `f` of `k = 1`. `PilFflonk::divideExactly` runs it
-as a blocked scan, over blocks of about `2^12` coefficients of the quotient, a whole number `R` of rows
-of `m`:
+`j` mod `m`: on one thread for `W'` and for every `f` of `k = 1`. `Polynomial::divByMonicInPlace`, a
+method added to rapidsnark next to it, which `PilFflonk::divideExactly` calls, runs it as a blocked
+scan, over blocks of about `2^12` coefficients of the quotient, a whole number `R` of rows of `m`:
 
 1. every block but the lowest, in parallel, from zero carries: the lowest `m` coefficients it gives,
    and the lowest `m` coefficients of the dividend it is about to overwrite;
@@ -121,13 +121,17 @@ of `m`:
 3. every block again, in parallel, from its true carries, in place.
 
 It is twice the serial work, on every thread, in place (`divByMonic` clears a second polynomial), and
-it gives the serial quotient: the quotient is unique and the arithmetic exact. The remainder is checked
-as before. `W` and `W'` also pack each `f_i` into one buffer, where `W` divides it, instead of
-allocating, clearing and copying a polynomial per `f_i`; and `pack()` interleaves `f` as
-`CPolynomial` does in one parallel pass over its coefficients, without clearing a power-of-two buffer
-and scanning it for the degree, which every commitment gains from too. On the CPU, 32 threads
-(`OMP_NUM_THREADS=32 taskset -c 0-31` on the 256-thread machine), packed keys, the median of three
-proofs, before → after, in seconds; every proof the same, byte for byte:
+it gives the serial quotient: the quotient is unique and the arithmetic exact. It returns whether the
+remainder is zero, which `divideExactly` checks as before. `W` and `W'` also pack each `f_i` into one
+buffer, where `W` divides it as a polynomial over it that does not clear it
+(`Polynomial::fromReservedBuffer`), instead of allocating, clearing and copying a polynomial per
+`f_i`; and `pack()` calls `CPolynomial::getCoefficients`, added next to `getPolynomial`, which
+interleaves `f` in one parallel pass over its coefficients, without clearing a power-of-two buffer and
+scanning it for the degree, which every commitment gains from too. pilfflonk has no division or
+packing of its own: it calls these rapidsnark methods, and rapidsnark's existing ones are unchanged
+for their other callers. On the CPU, 32 threads (`OMP_NUM_THREADS=32 taskset -c 0-31` on the
+256-thread machine), packed keys, the median of three proofs, before → after, in seconds; every proof
+the same, byte for byte:
 
 | Program | N | `W` | `W'` | Opening |
 |---|---|---|---|---|

@@ -152,15 +152,12 @@ private:
 
 // a := a / (X^m − β), m >= 1, which must be exact: throws std::logic_error, naming `what`, if it is
 // not, leaving `a` unspecified. a's degree must be up to date (Poly::fixDegree), so that the
-// coefficients above it are zero. In place, in a's buffer, owned or not, and in parallel over
-// blocks of the quotient's coefficients (pilfflonk/docs/performance.md#the-shplonk-division): the
-// quotient, from the top down, and then the remainder a_j + β·q_j (j < m), which must be zero.
-// Throws std::invalid_argument for m = 0. Used by ShplonkProver; public for its tests.
+// coefficients above it are zero. By rapidsnark's Polynomial::divByMonicInPlace where deg a >= m:
+// in place, in a's buffer, owned or not, in parallel over blocks of the quotient's coefficients,
+// and with the remainder a_j + β·q_j (j < m), which must be zero
+// (pilfflonk/docs/performance.md#the-shplonk-division). Throws std::invalid_argument for m = 0.
+// Used by ShplonkProver; public for its tests.
 void divideExactly(Poly &a, uint64_t m, const FrElement &beta, const std::string &what);
-
-// The coefficients of a block of divideExactly's division by X^m − β, m >= 1: a whole number of
-// rows of m, about 2^12. Public for the tests, which divide around the boundaries of the blocks.
-uint64_t divisionBlockLength(uint64_t m);
 
 // The denominators the verifier inverts in its SHPLONK check at y (pilfflonk/js/src/shplonk.js),
 // in this order, for the n f_i of `prover`:

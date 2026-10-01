@@ -74,4 +74,34 @@ typename Engine::G1Point CPolynomial<Engine>::multiExponentiation(G1PointAffine 
 //    G1Point C2 = multiExponentiation(polynomials["C2"], 3, lengths);
 }
 
+template<typename Engine>
+u_int64_t CPolynomial<Engine>::getCoefficients(FrElement *buffer) const {
+    // The coefficients of each p_i to copy, deg p_i + 1, or none where no polynomial was added.
+    std::vector<const FrElement *> coefs(n);
+    std::vector<u_int64_t> lengths(n);
+    for (int i = 0; i < n; i++) {
+        coefs[i] = polynomials[i] == NULL ? NULL : polynomials[i]->coef;
+        lengths[i] = polynomials[i] == NULL ? 0 : polynomials[i]->getDegree() + 1;
+    }
+
+    const u_int64_t nCoefs = this->getDegree() + 1;
+    const FrElement zero = E.fr.zero();
+    if (n == 0) {
+        buffer[0] = zero;
+        return nCoefs;
+    }
+    const u_int64_t k = n;
+
+    // Row c of f, its coefficients c * n + i, is coefficient c of every p_i.
+    #pragma omp parallel for
+    for (u_int64_t c = 0; c < (nCoefs + k - 1) / k; c++) {
+        const u_int64_t end = std::min(k, nCoefs - c * k);
+        for (u_int64_t i = 0; i < end; i++) {
+            buffer[c * k + i] = c < lengths[i] ? coefs[i][c] : zero;
+        }
+    }
+
+    return nCoefs;
+}
+
 #endif

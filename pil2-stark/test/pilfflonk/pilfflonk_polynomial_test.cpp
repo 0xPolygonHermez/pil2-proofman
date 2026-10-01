@@ -9,16 +9,25 @@
 //   and 6 points, and ZT and ZTS2 vanish on 18 and 10.
 // Under LeakSanitizer they also show that these calls free everything they allocate, on owned and
 // on reserved buffers alike.
+//
+// The methods added for pilfflonk (pilfflonk/docs/performance.md#the-shplonk-division) are checked
+// against what they replace: Polynomial::divByMonicInPlace against divByMonic and the serial
+// division, Polynomial::fromReservedBuffer against the constructor on a reserved buffer, and
+// CPolynomial::getCoefficients against the packing written out and against getPolynomial.
 #include "pilfflonk_test.hpp"
+
+#include <omp.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "alt_bn128.hpp"
+#include "cpolynomial.hpp"
 #include "pilfflonk_api.hpp"
 #include "polynomial.hpp"
 
@@ -391,6 +400,312 @@ void testZerofier() {
     }
 }
 
+// A polynomial owning a copy of p's coefficients, of p's length, with its degree fixed.
+std::unique_ptr<Poly> copyOf(const Poly &p) {
+    std::unique_ptr<Poly> copy(new Poly(E, p.getLength()));
+    std::copy(p.coef, p.coef + p.getLength(), copy->coef);
+    copy->fixDegree();
+    return copy;
+}
+
+// a = q·(X^m − β) in `extra` more coefficients than it has.
+std::unique_ptr<Poly> multiple(const Column &q, uint64_t m, const FrElement &beta, uint64_t extra) {
+    std::unique_ptr<Poly> a(new Poly(E, q.size() + m + extra));
+    for (uint64_t j = 0; j < q.size(); ++j) {
+        E.fr.add(a->coef[j + m], a->coef[j + m], q[j]);
+        E.fr.sub(a->coef[j], a->coef[j], E.fr.mul(beta, q[j]));
+    }
+    a->fixDegree();
+    return a;
+}
+
+bool sameCoefficients(const Poly &a, const Poly &b) {
+    if (a.getLength() != b.getLength() || a.getDegree() != b.getDegree()) {
+        return false;
+    }
+    for (uint64_t j = 0; j < a.getLength(); ++j) {
+        if (!equal(a.coef[j], b.coef[j])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+template <typename Call>
+void expectRuntimeError(Call call, const char *message) {
+    try {
+        call();
+    } catch (const std::runtime_error &e) {
+        if (std::strstr(e.what(), message) == nullptr) {
+            std::fprintf(stderr, "unexpected message: %s\n", e.what());
+            assert(!"the exception does not say what was expected");
+        }
+        return;
+    }
+    assert(!"expected std::runtime_error");
+}
+
+// The division by X^m − β, deg a >= m, serially: divByMonic, or for m <= deg a < 2m − 1, where it
+// writes below its buffer, q_j = a_{j+m} by hand; then the remainder a_j + β·q_j (j < m). a is
+// its quotient; returns whether the remainder is zero.
+bool serialDivByMonic(Poly &a, uint64_t m, const FrElement &beta) {
+    const uint64_t d = a.getDegree();
+    assert(d >= m);
+    const Column low(a.coef, a.coef + m);
+    if (d >= 2 * m - 1) {
+        a.divByMonic(static_cast<uint32_t>(m), beta);
+    } else {
+        for (uint64_t j = 0; j <= d; ++j) {
+            a.coef[j] = j <= d - m ? a.coef[j + m] : E.fr.zero();
+        }
+        a.fixDegree();
+    }
+    for (uint64_t j = 0; j < m; ++j) {
+        if (!E.fr.isZero(E.fr.add(low[j], E.fr.mul(beta, a.coef[j])))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// divByMonicInPlace's blocked scan against the serial division (serialDivByMonic) and against
+// divByMonic, coefficient by coefficient, the length and the degree too, on 1, 2 and 32 threads.
+// For m in {1, 2, 3, 5, 9}, a = q·(X^m − β) with q of 1, m, 2m − 1 and 2m coefficients, of a block,
+// one more and one less, two and three blocks around their boundaries, and 2^20 + 3; q random, all
+// ones, or zero but its top and bottom; β random, 0, 1 or −1. Each a is divided back to q, in its
+// own buffer, with a zero remainder; a + ρ·X^j, for a j below m and one in the top block, has the
+// serial quotient and a remainder that is not zero (unless β = 0 for the top one).
+void testDivByMonicInPlace() {
+    const int threads = omp_get_max_threads();
+    Random random(6002);
+    const FrElement betas[] = {random.element(), E.fr.zero(), E.fr.one(), E.fr.negOne()};
+    for (uint64_t m : {1, 2, 3, 5, 9}) {
+        const uint64_t block = Poly::divByMonicInPlaceBlockLength(m);
+        assert(block % m == 0 && block >= 4096 - m && block <= 4096);
+        const uint64_t lengths[] = {1,         m,         2 * m - 1, 2 * m,     block - 1, block,     block + 1,
+                                    2 * block - 1, 2 * block, 2 * block + 1, 3 * block + m, (uint64_t(1) << 20) + 3};
+        for (uint64_t qLength : lengths) {
+            const bool large = qLength > 4 * block;
+            for (int kind = 0; kind < (large ? 1 : 3); ++kind) {
+                Column q(qLength, E.fr.zero());
+                for (uint64_t j = 0; j < qLength; ++j) {
+                    if (kind == 0) {
+                        q[j] = random.element();
+                    } else if (kind == 1) {
+                        q[j] = E.fr.one();
+                    }
+                }
+                q.front() = kind == 2 ? E.fr.one() : q.front();
+                q.back() = E.fr.isZero(q.back()) || kind == 2 ? E.fr.one() : q.back();
+                for (const FrElement &beta : betas) {
+                    if (large && &beta != &betas[0]) {
+                        continue;
+                    }
+                    const std::unique_ptr<Poly> a = multiple(q, m, beta, 2);
+                    assert(a->getDegree() == qLength - 1 + m);
+
+                    std::unique_ptr<Poly> serial = copyOf(*a);
+                    assert(serialDivByMonic(*serial, m, beta));
+                    assert(serial->getDegree() == qLength - 1);
+                    for (uint64_t j = 0; j < serial->getLength(); ++j) {
+                        assert(equal(serial->coef[j], j < qLength ? q[j] : E.fr.zero()));
+                    }
+                    if (a->getDegree() >= 2 * m - 1) {
+                        std::unique_ptr<Poly> byMonic = copyOf(*a);
+                        byMonic->divByMonic(static_cast<uint32_t>(m), beta);
+                        assert(sameCoefficients(*byMonic, *serial));
+                    }
+
+                    // Not divisible: ρ·X^j, j < m, adds ρ to the remainder; at j in the top block,
+                    // β^((j − j mod m)/m)·ρ·X^(j mod m) (or nothing if β = 0), through every carry.
+                    std::unique_ptr<Poly> low = copyOf(*a);
+                    E.fr.add(low->coef[m - 1], low->coef[m - 1], random.element());
+                    low->fixDegree();
+                    std::unique_ptr<Poly> lowSerial = copyOf(*low);
+                    assert(!serialDivByMonic(*lowSerial, m, beta));
+                    std::unique_ptr<Poly> high = copyOf(*a);
+                    E.fr.add(high->coef[a->getDegree() - 1], high->coef[a->getDegree() - 1], E.fr.one());
+                    high->fixDegree();
+                    const bool highDivisible = E.fr.isZero(beta) && a->getDegree() - 1 >= m;
+                    std::unique_ptr<Poly> highSerial = copyOf(*high);
+                    assert(serialDivByMonic(*highSerial, m, beta) == highDivisible);
+
+                    for (int t : {1, 2, 32}) {
+                        omp_set_num_threads(t);
+                        std::unique_ptr<Poly> parallel = copyOf(*a);
+                        const FrElement *buffer = parallel->coef;
+                        assert(parallel->divByMonicInPlace(m, beta));
+                        assert(parallel->coef == buffer && sameCoefficients(*parallel, *serial));
+
+                        std::unique_ptr<Poly> refused = copyOf(*low);
+                        assert(!refused->divByMonicInPlace(m, beta));
+                        assert(sameCoefficients(*refused, *lowSerial));
+                        std::unique_ptr<Poly> top = copyOf(*high);
+                        assert(top->divByMonicInPlace(m, beta) == highDivisible);
+                        assert(sameCoefficients(*top, *highSerial));
+                    }
+                    omp_set_num_threads(threads);
+                }
+            }
+        }
+    }
+
+    // In place, in a buffer it does not own, which it keeps: divByMonic moves to one of its own.
+    const uint64_t m = 3;
+    Column q(2 * Poly::divByMonicInPlaceBlockLength(m) + 7);
+    for (FrElement &c : q) {
+        c = random.element();
+    }
+    q.back() = E.fr.one();
+    const FrElement beta = random.element();
+    const std::unique_ptr<Poly> a = multiple(q, m, beta, 0);
+    Column reserved(a->getLength());
+    Poly borrowed(E, reserved.data(), reserved.size());
+    std::copy(a->coef, a->coef + a->getLength(), borrowed.coef);
+    borrowed.fixDegree();
+    assert(borrowed.divByMonicInPlace(m, beta));
+    assert(borrowed.coef == reserved.data() && borrowed.getLength() == reserved.size() &&
+           borrowed.getDegree() == q.size() - 1);
+    for (uint64_t j = 0; j < reserved.size(); ++j) {
+        assert(equal(reserved[j], j < q.size() ? q[j] : E.fr.zero()));
+    }
+
+    // A divisor of degree 0 or above the polynomial's.
+    expectRuntimeError([&] { borrowed.divByMonicInPlace(0, beta); }, "X^0 - beta is not of degree at least 1");
+    expectRuntimeError([] { Poly::divByMonicInPlaceBlockLength(0); }, "X^0 - beta is not of degree at least 1");
+    expectRuntimeError([&] { borrowed.divByMonicInPlace(borrowed.getDegree() + 1, beta); },
+                       "X^m - beta is of a degree above the polynomial's");
+    Poly constant(E, 4);
+    constant.coef[0] = beta;
+    constant.fixDegree();
+    expectRuntimeError([&] { constant.divByMonicInPlace(1, beta); },
+                       "X^m - beta is of a degree above the polynomial's");
+}
+
+// fromReservedBuffer(buffer, n): a polynomial over the n coefficients the buffer holds, which it
+// neither clears nor copies (the constructor on a reserved buffer clears them), with its degree
+// fixed, and which leaves the buffer to its owner; what is beyond n is not touched. Then the
+// SHPLONK prover's use of it, divByMonicInPlace on it, in the same buffer.
+void testFromReservedBuffer() {
+    Random random(0xf2b);
+    const FrElement beta = random.element();
+    const Column q = random.column(9);
+    Column a(16, E.fr.zero());
+    for (uint64_t j = 0; j < q.size(); ++j) {
+        a[j + 3] = E.fr.add(a[j + 3], q[j]);
+        a[j] = E.fr.sub(a[j], E.fr.mul(beta, q[j]));
+    }
+    a[12] = random.element();
+    a[15] = random.element();
+    // a's first 12 coefficients, the multiple q·(X^3 − β) and a zero, then two stale ones.
+    Column buffer = a;
+    {
+        const std::unique_ptr<Poly> p(Poly::fromReservedBuffer(E, buffer.data(), 12));
+        assert(p->coef == buffer.data() && p->getLength() == 12 && p->getDegree() == 11);
+        assert(same(buffer.data(), a));
+        assert(p->divByMonicInPlace(3, beta));
+        assert(p->coef == buffer.data() && p->getDegree() == 8 && holds(*p, q, 12));
+    }
+    assert(same(buffer.data() + 12, Column(a.begin() + 12, a.end())));
+
+    // Zeros at the top: the degree is fixed below them; none at all: degree 0, nothing read.
+    const std::unique_ptr<Poly> zeros(Poly::fromReservedBuffer(E, buffer.data() + 9, 3));
+    assert(zeros->getLength() == 3 && zeros->getDegree() == 0);
+    const std::unique_ptr<Poly> empty(Poly::fromReservedBuffer(E, buffer.data(), 0));
+    assert(empty->getLength() == 0 && empty->getDegree() == 0 && empty->coef == buffer.data());
+}
+
+// The packing of CPolynomial written out (pilfflonk/docs/protocol.md#layout): coefficient c·k + i
+// of f is coefficient c of p_i up to its degree, zero above it and where no p_i was added, in
+// 1 + max_i(k·deg p_i + i) coefficients, over the positions with a polynomial.
+Column interleaved(const std::vector<const Poly *> &polys) {
+    const uint64_t k = polys.size();
+    uint64_t bound = 0;
+    for (uint64_t i = 0; i < k; ++i) {
+        if (polys[i] != nullptr) {
+            bound = std::max(bound, k * polys[i]->getDegree() + i);
+        }
+    }
+    Column f(bound + 1, E.fr.zero());
+    for (uint64_t i = 0; i < k; ++i) {
+        if (polys[i] != nullptr) {
+            for (uint64_t c = 0; c <= polys[i]->getDegree(); ++c) {
+                f[c * k + i] = polys[i]->coef[c];
+            }
+        }
+    }
+    return f;
+}
+
+// CPolynomial::getCoefficients against the packing written out (interleaved: the coefficients and
+// the count pilfflonk's pack() returns) and, where it is defined (a degree bound of 2 or more),
+// against getPolynomial's coefficients, on 1, 2 and 32 threads. k = 1 and 12, constants, zeros,
+// mixed degrees, a degree bound a power of two (getPolynomial's polynomial is one coefficient short
+// then) and above deg f (zero top polynomials), a position with no polynomial, and f of 12,286
+// coefficients. It writes into a buffer of stale data, and nothing beyond the count.
+void testGetCoefficients() {
+    const int threads = omp_get_max_threads();
+    Random random(0xc0f);
+    // The degree of each p_i, or -1 for none; -2 for the zero polynomial.
+    const std::vector<std::vector<int64_t>> cases = {
+        {0}, {1}, {4}, {16}, {1000}, {-2},
+        {0, 0}, {3, 0}, {0, 3}, {-2, -2}, {1, -1},
+        {0, -2, -2}, {5, -1, 2}, {4095, 4094, 100},
+        {7, 2, 0, 5},
+        {63, 62, 7, 0, -2, 63, 62, 7, 0, -2, 1, -1},
+    };
+    for (const std::vector<int64_t> &degrees : cases) {
+        const uint64_t k = degrees.size();
+        std::vector<std::unique_ptr<Poly>> owned;
+        std::vector<const Poly *> polys;
+        CPolynomial<Engine> cpolynomial(E, static_cast<int>(k));
+        for (uint64_t i = 0; i < k; ++i) {
+            if (degrees[i] == -1) {
+                polys.push_back(nullptr);
+                continue;
+            }
+            // Two coefficients more than the degree, which are zero.
+            const uint64_t degree = degrees[i] < 0 ? 0 : static_cast<uint64_t>(degrees[i]);
+            owned.emplace_back(new Poly(E, degree + 3));
+            Poly &p = *owned.back();
+            if (degrees[i] >= 0) {
+                for (uint64_t c = 0; c <= degree; ++c) {
+                    p.coef[c] = random.element();
+                }
+                p.coef[degree] = E.fr.isZero(p.coef[degree]) ? E.fr.one() : p.coef[degree];
+            }
+            p.fixDegree();
+            assert(p.getDegree() == degree);
+            polys.push_back(&p);
+            cpolynomial.addPolynomial(static_cast<int>(i), &p);
+        }
+        const Column expected = interleaved(polys);
+        const uint64_t bound = expected.size() - 1;
+        assert(cpolynomial.getDegree() == bound);
+
+        const Column stale = random.column(expected.size() + 5);
+        for (int t : {1, 2, 32}) {
+            omp_set_num_threads(t);
+            Column buffer = stale;
+            assert(cpolynomial.getCoefficients(buffer.data()) == expected.size());
+            assert(same(buffer.data(), expected));
+            for (uint64_t j = expected.size(); j < buffer.size(); ++j) {
+                assert(equal(buffer[j], stale[j]));
+            }
+        }
+        omp_set_num_threads(threads);
+
+        // getPolynomial clears 2^(floor(log2(bound − 1)) + 1) <= 2·bound elements, then writes up to
+        // coefficient `bound`.
+        if (bound >= 2) {
+            Column reserved = random.column(2 * bound + 2);
+            const std::unique_ptr<Poly> f(cpolynomial.getPolynomial(reserved.data()));
+            assert(f->coef == reserved.data());
+            assert(same(reserved.data(), expected));
+        }
+    }
+}
+
 } // namespace
 
 void runPolynomialTests() {
@@ -400,6 +715,9 @@ void runPolynomialTests() {
     testDivBy();
     testLagrangeInterpolation();
     testZerofier();
+    testDivByMonicInPlace();
+    testFromReservedBuffer();
+    testGetCoefficients();
     assert(mismatches == 0);
 }
 
