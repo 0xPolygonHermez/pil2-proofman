@@ -281,18 +281,8 @@ fn map_find(kv: &[u64], kw: &[u64]) -> Option<u64> {
 fn fit_exact_map(keys: &[u64], rows: &[u64], width: usize) -> Option<(usize, Vec<u64>, u64)> {
     let n = rows.len();
     let tuple = |i: usize| &keys[i * width..(i + 1) * width];
-    // Constant trailing columns are group padding (a COL_* group is as wide as its widest table),
-    // not part of this table's key.
-    let mut nkey = width;
-    while nkey > 1 {
-        let c = nkey - 1;
-        let first = keys[c];
-        if (0..n).into_par_iter().all(|i| keys[i * width + c] == first) {
-            nkey -= 1;
-        } else {
-            break;
-        }
-    }
+    // Constant columns stay in the key: they pack into zero bits, and their value is still checked.
+    let nkey = width;
 
     let Some(shape) = MapShape::new(keys, rows, width, nkey) else {
         tracing::debug!("exact map: {nkey} key columns need more than {MUL_MAP_MAX_WORDS} words");
@@ -1258,6 +1248,17 @@ mod tests {
         assert_eq!(probe(&kv, &[100, 200]), None);
         // Inside each column's range but not a table tuple.
         assert_eq!(probe(&kv, &[1, 4]), None);
+    }
+
+    /// A constant trailing column is still part of the key: a lookup that differs only there is not in
+    /// the table.
+    #[test]
+    fn fit_exact_map_checks_constant_trailing_columns() {
+        let samples: Vec<(Vec<u64>, u64)> = (0..8u64).map(|i| (vec![i, 7], i)).collect();
+        let (nkey, kv, _) = fit(&samples, 2).expect("must fit");
+        assert_eq!(nkey, 2);
+        assert_eq!(probe(&kv, &[3, 7]), Some(3));
+        assert_eq!(probe(&kv, &[3, 8]), None, "same prefix, other constant");
     }
 
     /// Duplicate tuples: all credit lands on the first row written.
