@@ -633,9 +633,10 @@ mod tests {
         let out = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap();
         assert!(out.contains("include \"custom/poseidon.circom\";"), "out:\n{out}");
         assert!(out.contains("include \"custom/merklehash.circom\";"), "out:\n{out}");
-        // One LessThanGoldilocks for both modes: the final circuit's publics hash includes it too.
-        assert!(out.contains("include \"lessthangl.circom\";"), "out:\n{out}");
-        assert!(!out.contains("custom/lessthangl"), "out:\n{out}");
+        // LessThanGoldilocks with Num2Bytes gates, and not the other one as well: they define the
+        // same templates. The final circuit's publics hash includes the same file.
+        assert!(out.contains("include \"custom/lessthangl.circom\";"), "out:\n{out}");
+        assert!(!out.contains("include \"lessthangl.circom\";"), "out:\n{out}");
         assert!(out.starts_with("pragma circom 2.1.0;\npragma custom_templates;\n"), "out:\n{out}");
     }
 

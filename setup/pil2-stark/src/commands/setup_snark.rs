@@ -251,13 +251,30 @@ mod tests {
         }
         assert!(!final_dir.join("final.zkey").exists(), "a rapidsnark zkey for pilfflonk");
 
-        // read_r1cs_from_bytes refuses an r1cs that is not over BN254.
+        // read_r1cs_from_bytes refuses an r1cs that is not over BN254. Its custom gates are
+        // PoseidonT(5), for the hashes, and a Num2Bytes(nBits) per width up to 80 bits, for the
+        // range checks of the Goldilocks arithmetic.
         let r1cs = read_r1cs_from_bytes::<Bn254>(&fs::read(dir.join("build/final.r1cs")).unwrap()).unwrap();
-        let poseidon = r1cs.custom_gates.iter().position(|g| g.template_name == "PoseidonT").expect("PoseidonT");
-        assert_eq!(r1cs.custom_gates.len(), 1, "custom gates other than PoseidonT");
-        assert_eq!(r1cs.custom_gates[poseidon].parameters, [Bn254::from_decimal("5").unwrap()]);
-        let uses = r1cs.custom_gates_uses.len();
-        assert!(uses > 0, "no PoseidonT(5) uses");
-        eprintln!("final circuit: {} r1cs constraints, {uses} PoseidonT(5) uses", r1cs.header.n_constraints);
+        let widths = Bn254::from_decimal("1").unwrap()..=Bn254::from_decimal("80").unwrap();
+        for gate in &r1cs.custom_gates {
+            match gate.template_name.as_str() {
+                "PoseidonT" => assert_eq!(gate.parameters, [Bn254::from_decimal("5").unwrap()]),
+                "Num2Bytes" => assert!(
+                    matches!(gate.parameters[..], [n_bits] if widths.contains(&n_bits)),
+                    "Num2Bytes{:?}",
+                    gate.parameters
+                ),
+                other => panic!("a custom gate {other}"),
+            }
+        }
+        let uses = |name: &str| {
+            r1cs.custom_gates_uses.iter().filter(|u| r1cs.custom_gates[u.id as usize].template_name == name).count()
+        };
+        let (hashes, range_checks) = (uses("PoseidonT"), uses("Num2Bytes"));
+        assert!(hashes > 0 && range_checks > 0, "{hashes} PoseidonT(5) uses, {range_checks} Num2Bytes uses");
+        eprintln!(
+            "final circuit: {} r1cs constraints, {hashes} PoseidonT(5) uses, {range_checks} Num2Bytes uses",
+            r1cs.header.n_constraints
+        );
     }
 }

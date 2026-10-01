@@ -95,7 +95,10 @@ pub fn gen_recursion_final(
     let stark_signals = define_stark_inputs(stark_info, "", &def_opts);
     let stark_assign = assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None);
 
-    let sha256_template = publics.map(gen_get_sha256_inputs).unwrap_or_default();
+    // The circuit includes the recursivef's verifier: when that one uses custom templates, circom
+    // wants the pragma here too, and the publics hash takes the verifier's LessThanGoldilocks.
+    let custom_templates = uses_custom_templates(stark_info);
+    let sha256_template = publics.map(|p| gen_get_sha256_inputs(p, custom_templates)).unwrap_or_default();
     let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
     // Incoming `publics` = [rootCVadcopFinal(4) | is_vadcop_final_proof(1) | real publics].
     // rootC takes the first 4, the flag the next 1, and the remaining
@@ -104,9 +107,7 @@ pub fn gen_recursion_final(
     let n_publics_proof = n_publics.saturating_sub(5);
 
     let mut ctx = TeraCtx::new();
-    // The circuit includes the recursivef's verifier: when that one uses custom templates, circom
-    // wants the pragma here too.
-    ctx.insert("custom_templates", &uses_custom_templates(stark_info));
+    ctx.insert("custom_templates", &custom_templates);
     ctx.insert("verifier_filenames", verifier_filenames);
     ctx.insert("sha256_template", &sha256_template);
     ctx.insert("stark_signals", &stark_signals);
@@ -551,7 +552,8 @@ mod tests {
 
     use super::*;
     use crate::stark2circom::circom_verifier::{gen_stark_verifier_bn128, Pil2CircomOptions};
-    use crate::plonk2pil::r1cs_types::read_r1cs_header;
+    use crate::plonk2pil::r1cs_types::read_r1cs_from_bytes;
+    use proofman_fields::Bn254;
     use serde_json::json;
 
     /// A recursivef starkinfo, whose trees are custom or not, with what the final circuit and the
@@ -628,8 +630,9 @@ mod tests {
     /// final circuit's head (its pragmas, the verifier's include and the publics hash, with its own
     /// includes) and the verifier's (its pragmas and includes), as the templates render them, are
     /// compiled over the libraries of the snark setup, with a main that instantiates
-    /// `CustomPoseidon` and `LessThanGoldilocks`. The whole circuit, from a real recursivef, is
-    /// compiled by setup-snark's `pilfflonk_final_circuit` test.
+    /// `CustomPoseidon`, `LessThanGoldilocks` and two `RangeCheck`s, whose custom gates the r1cs
+    /// has. The whole circuit, from a real recursivef, is compiled by setup-snark's
+    /// `pilfflonk_final_circuit` test.
     ///
     /// Needs circomlib, from `npm install` in `setup/pil2-stark`; without it the test says so and
     /// passes.
@@ -661,6 +664,8 @@ mod tests {
     signal input in[4];
     signal output hash[5] <== CustomPoseidon(4)(in, 0);
     signal output gl <== LessThanGoldilocks()(in[0]);
+    RangeCheck(65)(in[1]);
+    RangeCheck(154)(in[2]);
 }
 
 component main = Main();
@@ -683,9 +688,21 @@ component main = Main();
         let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
         assert!(out.status.success(), "circom failed:\n{stderr}{}", String::from_utf8_lossy(&out.stdout));
 
-        // The custom templates are compiled as such: the r1cs has the custom-gate sections.
-        let header = read_r1cs_header(&fs::read(dir.join("final.r1cs")).unwrap()).unwrap();
-        assert!(header.use_custom_gates);
+        // The custom templates are compiled as such, the custom ones of LessThanGoldilocks among
+        // them: a Num2Bytes(64) on its in and one on in + 2^64 - p. RangeCheck(154) takes two, on
+        // its low 80 bits and on the rest.
+        let r1cs = read_r1cs_from_bytes::<Bn254>(&fs::read(dir.join("final.r1cs")).unwrap()).unwrap();
+        let gate = |id: u32| {
+            let gate = &r1cs.custom_gates[id as usize];
+            let parameters: Vec<String> = gate.parameters.iter().map(Bn254::to_string).collect();
+            format!("{}({})", gate.template_name, parameters.join(", "))
+        };
+        let mut uses: Vec<String> = r1cs.custom_gates_uses.iter().map(|gate_use| gate(gate_use.id)).collect();
+        uses.sort();
+        assert_eq!(
+            uses,
+            ["Num2Bytes(64)", "Num2Bytes(64)", "Num2Bytes(65)", "Num2Bytes(74)", "Num2Bytes(80)", "PoseidonT(5)"]
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }
