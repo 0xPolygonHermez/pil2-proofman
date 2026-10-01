@@ -1689,8 +1689,15 @@ pub fn get_stream_commit_floor_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 
     unsafe { get_stream_commit_floor(d_buffers) }
 }
 
-pub fn stream_commit_slot_bytes_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, words_per_row: u64) -> u64 {
-    unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row) }
+/// `input_bytes`: a GPU-witness air's staged-input bound (0 otherwise), which rides in the slot.
+pub fn stream_commit_slot_bytes_c(
+    n_bits: u64,
+    n_bits_ext: u64,
+    n_cols: u64,
+    words_per_row: u64,
+    input_bytes: u64,
+) -> u64 {
+    unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row, input_bytes) }
 }
 
 pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64) {

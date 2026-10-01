@@ -3022,11 +3022,16 @@ static StreamCommitHash streamCommitHashFor(HashFamily f) {
 
 // Byte size of one streaming-commit slot for the given packed-AIR shape (the
 // layout in streamCommitSlotElems). 0 = shape not slot-committable.
+// inputBytes: a GPU-witness air's staged inputs, which the commit places after the packed rows.
 uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt,
-                                      uint64_t nCols, uint64_t wordsPerRow) {
+                                      uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes) {
     if (nCols == 0 || nCols > SC_MAX_COLS || nBitsExt <= nBits || wordsPerRow == 0) return 0;
     StreamCommitDims dims{nBits, nBitsExt, nCols, wordsPerRow};
-    return streamCommitSlotElems(dims, streamCommitHashFor(get_hash_family())) * sizeof(Goldilocks::Element);
+    const uint64_t commitElems = streamCommitSlotElems(dims, streamCommitHashFor(get_hash_family()));
+    // Must match the commit's check: SC_MAX_COLS + packedWords + inputWords <= slotElems.
+    const uint64_t inputElems = SC_MAX_COLS + (1ull << nBits) * wordsPerRow +
+                                inputBytes / sizeof(gl64_t) + (inputBytes % sizeof(gl64_t) != 0);
+    return std::max(commitElems, inputElems) * sizeof(Goldilocks::Element);
 }
 
 // Enable nSlots streaming-commit slots of slotBytes each on every GPU. Called by proofman after

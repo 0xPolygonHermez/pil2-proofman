@@ -599,7 +599,8 @@ fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool
 }
 
 /// Bytes a streaming slot needs to commit this air, or None when it cannot take one.
-fn slot_commit_bytes<F: PrimeField64>(hash: &str, setup: &Setup<F>, pi: &PackedInfo) -> Option<u64> {
+/// `input_bytes` is the air's declared GPU-witness input bound, 0 for a host-filled air.
+fn slot_commit_bytes<F: PrimeField64>(hash: &str, setup: &Setup<F>, pi: &PackedInfo, input_bytes: u64) -> Option<u64> {
     if !stream_commit_eligible(hash, setup) {
         return None;
     }
@@ -607,7 +608,7 @@ fn slot_commit_bytes<F: PrimeField64>(hash: &str, setup: &Setup<F>, pi: &PackedI
     let ss = &setup.stark_info.stark_struct;
     // An unpacked air is the degenerate packing: one word per column.
     let words = if pi.is_packed { pi.num_packed_words } else { n_cols };
-    let bytes = stream_commit_slot_bytes_c(ss.n_bits, ss.n_bits_ext, n_cols, words);
+    let bytes = stream_commit_slot_bytes_c(ss.n_bits, ss.n_bits_ext, n_cols, words, input_bytes);
     if bytes == 0 {
         return None;
     }
@@ -635,7 +636,8 @@ fn slot_commit_airs<F: PrimeField64>(
         for (ai, air) in group.iter().enumerate() {
             let Ok(setup) = sctx.get_setup(ag, ai) else { continue };
             let pi = packed_info.get(&(ag, ai)).unwrap_or(&identity);
-            match slot_commit_bytes(&pctx.global_info.hash, setup, pi) {
+            let input_bytes = pctx.gpu_witness_airs.get(ag, ai).map_or(0, |d| d.input_bytes_per_instance);
+            match slot_commit_bytes(&pctx.global_info.hash, setup, pi, input_bytes) {
                 Some(b) => {
                     slot_bytes = slot_bytes.max(b);
                     airs.insert((ag, ai));

@@ -50,6 +50,12 @@ where
             "air {airgroup_id}:{air_id}: the staged operation count overflows"
         )));
     };
+    // Both commit paths treat a zero-op instance as fatal, so refuse it while it is still recoverable.
+    if num_ops == 0 {
+        return Err(ProofmanError::InvalidParameters(format!(
+            "air {airgroup_id}:{air_id}: no operations to stage; the kernel needs at least one"
+        )));
+    }
     if needed > capacity {
         return Err(ProofmanError::InvalidParameters(format!(
             "air {airgroup_id}:{air_id}: {num_ops} staged operations need {needed} bytes but the \
@@ -281,6 +287,21 @@ mod tests {
         let err = stage_gpu_witness::<Goldilocks, Op, ()>(&decl(128, 8), 8, 4, buffer, &inputs)
             .expect_err("must refuse rather than wrap");
         assert!(err.to_string().contains("overflows"), "{err}");
+    }
+
+    #[test]
+    fn an_empty_operation_set_is_refused() {
+        #[allow(dead_code)] // only its size matters
+        struct Op(u64);
+        impl From<&u32> for Op {
+            fn from(v: &u32) -> Self {
+                Op(*v as u64)
+            }
+        }
+        let buffer = vec![Goldilocks::default(); 16];
+        let err = stage_gpu_witness::<Goldilocks, Op, u32>(&decl(128, 8), 8, 4, buffer, &[vec![], vec![]])
+            .expect_err("an empty batch must not reach the commit");
+        assert!(err.to_string().contains("no operations"), "{err}");
     }
 
     #[test]
