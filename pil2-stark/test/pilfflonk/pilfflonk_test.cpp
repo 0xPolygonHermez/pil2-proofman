@@ -111,6 +111,7 @@ int main() {
     PilFflonkTest::runExpressionsTests();
     PilFflonkTest::runProverTests();
     PilFflonkTest::runGpuTests();
+    PilFflonkTest::runExpressionsGpuTests();
     std::printf("pilfflonk_test: all tests passed\n");
     return 0;
 }

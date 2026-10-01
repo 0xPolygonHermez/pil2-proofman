@@ -26,8 +26,39 @@ FrElement fromUI(uint64_t value) {
     return e;
 }
 
-// The rows an everyFrame excludes, ω^j for its first offsetMin and last offsetMax rows, in the
-// order of the STARK's buildFrameZerofierInv.
+// The values of a scalar operand of `type` in the prover mode, or null if it is no scalar the
+// prover mode has.
+const std::vector<FrElement> *scalarValues(const OperandTypes &types, uint32_t type, const ParserArgs &args,
+                                           const ProverValues &values) {
+    return type == types.numbers() ? &args.numbers : proverScalars(types, type, values);
+}
+
+std::string scalarName(const OperandTypes &types, uint32_t type) {
+    if (type == types.publics()) return "public";
+    if (type == types.airValues()) return "air value";
+    if (type == types.proofValues()) return "proof value";
+    if (type == types.airgroupValues()) return "airgroup value";
+    if (type == types.challenges()) return "challenge";
+    return "number";
+}
+
+// A source of an op on a block: its B values, or one for all of them.
+struct Source {
+    const FrElement *values;
+    bool scalar;
+};
+
+} // namespace
+
+const std::vector<FrElement> *proverScalars(const OperandTypes &types, uint32_t type, const ProverValues &values) {
+    if (type == types.publics()) return &values.publics;
+    if (type == types.airValues()) return &values.airValues;
+    if (type == types.proofValues()) return &values.proofValues;
+    if (type == types.airgroupValues()) return &values.airgroupValues;
+    if (type == types.challenges()) return &values.challenges;
+    return nullptr;
+}
+
 std::vector<FrElement> excludedRoots(uint64_t nBits, const Boundary &b) {
     const uint64_t n = uint64_t(1) << nBits;
     if (b.offsetMin > n || b.offsetMax > n - b.offsetMin) {
@@ -45,20 +76,10 @@ std::vector<FrElement> excludedRoots(uint64_t nBits, const Boundary &b) {
     return roots;
 }
 
-// The root a one-row boundary excludes: ω^0 for firstRow, ω^(N−1) for lastRow
-// (pilfflonk/docs/protocol.md#constraint-polynomial).
 FrElement oneRowRoot(uint64_t nBits, BoundaryType type) {
     const uint64_t n = uint64_t(1) << nBits;
     return type == BoundaryType::FirstRow ? Engine::engine.fr.one() : power(rootOfUnity(nBits), n - 1);
 }
-
-// A source of an op on a block: its B values, or one for all of them.
-struct Source {
-    const FrElement *values;
-    bool scalar;
-};
-
-} // namespace
 
 FrElement rootOfUnity(uint64_t nBits) {
     if (nBits > MAX_NBITS_EXT) {
@@ -134,8 +155,8 @@ ExpressionsDomain ExpressionsDomain::coset(uint64_t nBits, uint64_t nBitsExt, co
     return cosetPart(nBits, nBitsExt, nBitsExt, 0, boundaries);
 }
 
-ExpressionsDomain ExpressionsDomain::cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
-                                               const std::vector<Boundary> &boundaries) {
+CosetPart cosetPartPoints(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
+                          const std::vector<Boundary> &boundaries) {
     if (nBitsExt > MAX_NBITS_EXT || nBits > partBits || partBits > nBitsExt) {
         throw std::invalid_argument("ExpressionsDomain::cosetPart: needs nBits <= partBits <= nBitsExt <= 28, and "
                                     "they are " +
@@ -153,18 +174,44 @@ ExpressionsDomain ExpressionsDomain::cosetPart(uint64_t nBits, uint64_t nBitsExt
         }
     }
     Engine::Fr &fr = Engine::engine.fr;
-    ExpressionsDomain domain(nBits, partBits - nBits);
     const uint64_t n = uint64_t(1) << nBits;
-    const uint64_t m = uint64_t(1) << partBits;
-    const uint64_t e = m / n;
-
-    // The part's points c·ω_m^i for its shift c = g·ω_{N'}^part (g itself for part 0), each
-    // thread's chunk from c·ω_m^begin.
-    FrElement c = fromUI(COSET_SHIFT);
+    const uint64_t e = (uint64_t(1) << partBits) / n;
+    // The part's shift c = g·ω_{N'}^part (g itself for part 0), and ω_m.
+    CosetPart points;
+    points.shift = fromUI(COSET_SHIFT);
     if (part > 0) {
-        fr.mul(c, c, power(rootOfUnity(nBitsExt), part));
+        fr.mul(points.shift, points.shift, power(rootOfUnity(nBitsExt), part));
     }
-    const FrElement w = rootOfUnity(partBits);
+    points.root = rootOfUnity(partBits);
+
+    // Z_H(c·ω_m^i) = c^N·ω_e^i − 1, with ω_e = ω_m^N of order e: e values, repeated.
+    points.zh.resize(e);
+    const FrElement cN = power(points.shift, n);
+    const FrElement we = power(points.root, n);
+    FrElement factor = cN;
+    for (uint64_t k = 0; k < e; ++k) {
+        fr.sub(points.zh[k], factor, fr.one());
+        fr.mul(factor, factor, we);
+    }
+    points.zhInv.resize(e);
+    if (!batchInverse(points.zhInv.data(), points.zh.data(), e)) {
+        throw std::logic_error("ExpressionsDomain::cosetPart: Z_H vanishes on the coset: g lies in no subgroup of "
+                               "order 2^k");
+    }
+    return points;
+}
+
+ExpressionsDomain ExpressionsDomain::cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
+                                               const std::vector<Boundary> &boundaries) {
+    const CosetPart points = cosetPartPoints(nBits, nBitsExt, partBits, part, boundaries);
+    Engine::Fr &fr = Engine::engine.fr;
+    ExpressionsDomain domain(nBits, partBits - nBits);
+    const uint64_t m = uint64_t(1) << partBits;
+    const uint64_t e = points.zh.size();
+
+    // The part's points c·ω_m^i, each thread's chunk from c·ω_m^begin.
+    const FrElement &c = points.shift;
+    const FrElement &w = points.root;
     std::vector<FrElement> x(m);
 #pragma omp parallel
     {
@@ -182,21 +229,6 @@ ExpressionsDomain ExpressionsDomain::cosetPart(uint64_t nBits, uint64_t nBitsExt
         }
     }
 
-    // Z_H(c·ω_m^i) = c^N·ω_e^i − 1, with ω_e = ω_m^N of order e: e values, repeated.
-    std::vector<FrElement> zh(e);
-    const FrElement cN = power(c, n);
-    const FrElement we = power(w, n);
-    FrElement factor = cN;
-    for (uint64_t k = 0; k < e; ++k) {
-        fr.sub(zh[k], factor, fr.one());
-        fr.mul(factor, factor, we);
-    }
-    std::vector<FrElement> zhInv(e);
-    if (!batchInverse(zhInv.data(), zh.data(), e)) {
-        throw std::logic_error("ExpressionsDomain::cosetPart: Z_H vanishes on the coset: g lies in no subgroup of "
-                               "order 2^k");
-    }
-
     std::vector<FrElement> den;
     for (const Boundary &b : boundaries) {
         std::vector<FrElement> zi(m);
@@ -204,7 +236,7 @@ ExpressionsDomain ExpressionsDomain::cosetPart(uint64_t nBits, uint64_t nBitsExt
         case BoundaryType::EveryRow:
 #pragma omp parallel for schedule(static)
             for (uint64_t i = 0; i < m; ++i) {
-                zi[i] = zhInv[i & (e - 1)];
+                zi[i] = points.zhInv[i & (e - 1)];
             }
             break;
         case BoundaryType::FirstRow:
@@ -220,7 +252,7 @@ ExpressionsDomain ExpressionsDomain::cosetPart(uint64_t nBits, uint64_t nBitsExt
             }
 #pragma omp parallel for schedule(static)
             for (uint64_t i = 0; i < m; ++i) {
-                fr.mul(zi[i], zh[i & (e - 1)], zi[i]);
+                fr.mul(zi[i], points.zh[i & (e - 1)], zi[i]);
             }
             break;
         }
@@ -278,46 +310,53 @@ Expressions::Expressions(const ExpressionsBin &_bin, const PilfflonkInfo &info)
 
 void Expressions::calculateExpression(uint64_t expId, const ExpressionsDomain &domain, const ProverValues &values,
                                       FrElement *dest) const {
-    calculate(bin.expression(expId), bin.expressionsBinArgsExpressions, domain, values, dest, "calculateExpression");
+    calculate(checkedExpression(expId, domain.nZerofiers(), values, dest), bin.expressionsBinArgsExpressions, domain,
+              values, dest);
 }
 
 void Expressions::calculateConstraint(uint64_t index, const ExpressionsDomain &domain, const ProverValues &values,
                                       FrElement *dest) const {
+    calculate(checkedConstraint(index, domain.nZerofiers(), values, dest), bin.expressionsBinArgsConstraints, domain,
+              values, dest);
+}
+
+const ParserParams &Expressions::checkedExpression(uint64_t expId, uint64_t nZerofiers, const ProverValues &values,
+                                                   const void *dest) const {
+    const ParserParams &params = bin.expression(expId);
+    checkOperands(params, bin.expressionsBinArgsExpressions, nZerofiers, values, dest, "calculateExpression");
+    return params;
+}
+
+const ParserParams &Expressions::checkedConstraint(uint64_t index, uint64_t nZerofiers, const ProverValues &values,
+                                                   const void *dest) const {
     if (index >= bin.constraintsInfoDebug.size()) {
         throw invalid("calculateConstraint", "no constraint " + std::to_string(index) + " of " +
                                                  std::to_string(bin.constraintsInfoDebug.size()));
     }
-    calculate(bin.constraintsInfoDebug[index], bin.expressionsBinArgsConstraints, domain, values, dest,
-              "calculateConstraint");
+    const ParserParams &params = bin.constraintsInfoDebug[index];
+    checkOperands(params, bin.expressionsBinArgsConstraints, nZerofiers, values, dest, "calculateConstraint");
+    return params;
 }
 
-void Expressions::calculate(const ParserParams &params, const ParserArgs &args, const ExpressionsDomain &domain,
-                            const ProverValues &values, FrElement *dest, const char *what) const {
+std::vector<uint64_t> Expressions::shifts(uint64_t size, uint64_t extendBits) const {
+    // (2^e·o) mod M.
+    std::vector<uint64_t> out(openingPoints.size());
+    for (size_t i = 0; i < openingPoints.size(); ++i) {
+        const int64_t mm = static_cast<int64_t>(size);
+        const uint64_t o = static_cast<uint64_t>(((openingPoints[i] % mm) + mm) % mm);
+        out[i] = (o << extendBits) & (size - 1);
+    }
+    return out;
+}
+
+// Every operand, against what the values and the domain have: nothing is computed before.
+void Expressions::checkOperands(const ParserParams &params, const ParserArgs &args, uint64_t nZerofiers,
+                                const ProverValues &values, const void *dest, const char *what) const {
     if (dest == nullptr) {
         throw invalid(what, "dest is null");
     }
     const OperandTypes types = bin.types();
-    const uint64_t m = domain.size();
     const uint32_t *code = &args.args[params.argsOffset];
-
-    // Every operand, against what the values and the domain have: nothing is computed before.
-    auto scalars = [&](uint32_t type) -> const std::vector<FrElement> * {
-        if (type == types.publics()) return &values.publics;
-        if (type == types.numbers()) return &args.numbers;
-        if (type == types.airValues()) return &values.airValues;
-        if (type == types.proofValues()) return &values.proofValues;
-        if (type == types.airgroupValues()) return &values.airgroupValues;
-        if (type == types.challenges()) return &values.challenges;
-        return nullptr;
-    };
-    auto name = [&](uint32_t type) -> std::string {
-        if (type == types.publics()) return "public";
-        if (type == types.airValues()) return "air value";
-        if (type == types.proofValues()) return "proof value";
-        if (type == types.airgroupValues()) return "airgroup value";
-        if (type == types.challenges()) return "challenge";
-        return "number";
-    };
     for (uint64_t k = 0; k < params.nOps; ++k) {
         const uint32_t *op = code + k * ARGS_PER_OP;
         for (int s = 0; s < 2; ++s) {
@@ -331,29 +370,29 @@ void Expressions::calculate(const ParserParams &params, const ParserArgs &args, 
                                             ", which the values do not have");
                 }
             } else if (type == types.zi()) {
-                if (arg1 - 1 >= domain.nZerofiers()) {
+                if (arg1 - 1 >= nZerofiers) {
                     throw invalid(what, "the code reads Zi of boundary " + std::to_string(arg1 - 1) +
                                             ", which the domain does not have (on H, none)");
                 }
             } else if (type == types.evals()) {
                 throw invalid(what, "the code reads evaluations, which only the verifier mode has");
             } else if (type != types.tmp()) {
-                const std::vector<FrElement> *vector = scalars(type);
+                const std::vector<FrElement> *vector = scalarValues(types, type, args, values);
                 if (arg1 >= vector->size()) {
-                    throw invalid(what, "the code reads " + name(type) + " " + std::to_string(arg1) + ", of " +
-                                            std::to_string(vector->size()));
+                    throw invalid(what, "the code reads " + scalarName(types, type) + " " + std::to_string(arg1) +
+                                            ", of " + std::to_string(vector->size()));
                 }
             }
         }
     }
+}
 
-    // Each opening point's shift on this domain, (2^e·o) mod M.
-    std::vector<uint64_t> shifts(openingPoints.size());
-    for (size_t i = 0; i < openingPoints.size(); ++i) {
-        const int64_t mm = static_cast<int64_t>(m);
-        const uint64_t o = static_cast<uint64_t>(((openingPoints[i] % mm) + mm) % mm);
-        shifts[i] = (o << domain.extendBits()) & (m - 1);
-    }
+void Expressions::calculate(const ParserParams &params, const ParserArgs &args, const ExpressionsDomain &domain,
+                            const ProverValues &values, FrElement *dest) const {
+    const OperandTypes types = bin.types();
+    const uint64_t m = domain.size();
+    const uint32_t *code = &args.args[params.argsOffset];
+    const std::vector<uint64_t> openingShifts = shifts(m, domain.extendBits());
 
     std::vector<const FrElement *> zerofiers(domain.nZerofiers());
     for (uint64_t b = 0; b < zerofiers.size(); ++b) {
@@ -379,7 +418,7 @@ void Expressions::calculate(const ParserParams &params, const ParserArgs &args, 
             const uint32_t type = source[0], arg1 = source[1], arg2 = source[2];
             if (types.isColumn(type)) {
                 const FrElement *column = values.columns[type][arg1];
-                const uint64_t start = (row + shifts[arg2]) & (m - 1);
+                const uint64_t start = (row + openingShifts[arg2]) & (m - 1);
                 if (start + blockRows <= m) {
                     return {column + start, false};
                 }
@@ -394,7 +433,7 @@ void Expressions::calculate(const ParserParams &params, const ParserArgs &args, 
             if (type == types.tmp()) {
                 return {tmp + arg1 * blockRows, false};
             }
-            return {&(*scalars(type))[arg1], true};
+            return {&(*scalarValues(types, type, args, values))[arg1], true};
         };
 
         for (uint64_t k = 0; k < params.nOps; ++k) {

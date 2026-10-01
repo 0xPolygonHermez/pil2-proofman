@@ -39,6 +39,31 @@ FrElement rootOfUnity(uint64_t nBits);
 // excludes. Throws std::invalid_argument if x is in H.
 std::vector<FrElement> zerofiersAt(uint64_t nBits, const std::vector<Boundary> &boundaries, const FrElement &x);
 
+// The rows an everyFrame excludes, ω_N^j for its first offsetMin rows and its last offsetMax, in the
+// order of the STARK's buildFrameZerofierInv: its Zi is Π_j (X − ω_N^j). Throws
+// std::invalid_argument if they are more than N.
+std::vector<FrElement> excludedRoots(uint64_t nBits, const Boundary &boundary);
+
+// The row a firstRow or lastRow boundary excludes: ω_N^0 = 1, or ω_N^(N−1)
+// (pilfflonk/docs/protocol.md#constraint-polynomial).
+FrElement oneRowRoot(uint64_t nBits, BoundaryType type);
+
+// The points of a part of the extended coset (ExpressionsDomain::cosetPart), c·ω_S^i for i < S =
+// 2^partBits, and Z_H on them, which repeats every e = S/N points: what cosetPart computes Zi from,
+// and the device's (ExpressionsDomainGpu) too.
+struct CosetPart {
+    FrElement shift;              // c = g·ω_{N'}^part, g itself for part 0
+    FrElement root;               // ω_S
+    std::vector<FrElement> zh;    // Z_H(c·ω_S^k) = c^N·ω_e^k − 1 for k < e: at point i, zh[i mod e]
+    std::vector<FrElement> zhInv; // 1/zh[k]
+};
+
+// Those of part `part` of 2^partBits points of the coset of 2^nBitsExt. Throws as
+// ExpressionsDomain::cosetPart, for its arguments and its boundaries, and std::logic_error if Z_H
+// vanishes on the coset.
+CosetPart cosetPartPoints(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
+                          const std::vector<Boundary> &boundaries);
+
 // The points of the prover mode, in their order, and the zerofier terms Zi on them.
 class ExpressionsDomain {
 public:
@@ -94,6 +119,11 @@ struct ProverValues {
     std::vector<FrElement> airgroupValues;
 };
 
+// The values of `values` a scalar operand of `type` reads in the prover mode: its publics, air
+// values, proof values, airgroup values or challenges. Null for any other type, the numbers too,
+// which are the code's (ParserArgs::numbers).
+const std::vector<FrElement> *proverScalars(const OperandTypes &types, uint32_t type, const ProverValues &values);
+
 // What the operands of the verifier mode read: no columns, but their evaluations.
 struct PointValues {
     std::vector<FrElement> evals;     // evMap order
@@ -123,12 +153,29 @@ public:
     // Verifier mode: expression expId at one point.
     FrElement evaluateExpressionAt(uint64_t expId, const PointValues &values) const;
 
+    // The code calculateExpression runs for expId on a domain with nZerofiers Zi, once it has checked
+    // what it checks before it computes anything: that there is such an expression, that dest is not
+    // null, and every operand the code reads against `values` and the domain. It throws what
+    // calculateExpression throws then. For the device's prover mode (ExpressionsGpu), whose values
+    // have the same operands.
+    const ParserParams &checkedExpression(uint64_t expId, uint64_t nZerofiers, const ProverValues &values,
+                                          const void *dest) const;
+    // The same of calculateConstraint, for constraint `index` of section 2.
+    const ParserParams &checkedConstraint(uint64_t index, uint64_t nZerofiers, const ProverValues &values,
+                                          const void *dest) const;
+
+    // Each opening point's shift on a domain of `size` points, 2^extendBits per row of the trace: the
+    // prover mode reads a column at openingPoints[k] on point i at point (i + shifts[k]) mod size.
+    std::vector<uint64_t> shifts(uint64_t size, uint64_t extendBits) const;
+
     // Rows per block of the prover mode, the STARK's NROWS_PACK (fewer if the domain is smaller).
     static constexpr uint64_t BLOCK_ROWS = 128;
 
 private:
+    void checkOperands(const ParserParams &params, const ParserArgs &args, uint64_t nZerofiers,
+                       const ProverValues &values, const void *dest, const char *what) const;
     void calculate(const ParserParams &params, const ParserArgs &args, const ExpressionsDomain &domain,
-                   const ProverValues &values, FrElement *dest, const char *what) const;
+                   const ProverValues &values, FrElement *dest) const;
 
     const ExpressionsBin &bin;
     std::vector<int64_t> openingPoints;
