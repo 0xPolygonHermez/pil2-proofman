@@ -1,4 +1,4 @@
-// PIL2 port of the pil-fflonk Plookup example (plan M34, spec-seed.md Annex G):
+// PIL2 port of the pil-fflonk Plookup example (pilfflonk/docs/README.md#fixtures):
 // pil-fflonk/pil/sm_plookup/plookup.pil, `sel {a, b', a*b'} in SEL {A, B, cc}`, with the constants
 // of its generator sm_plookup.js (`buildConstants`). N = 2^8, as its plookup_main.pil and `all`.
 //
@@ -6,10 +6,10 @@
 //   and SEL = 1 on them (0 on any row past 256, none at N = 2^8); the committed `cc` completes the
 //   table's rows, and the generator writes i·j there. It is a function of the witness columns, which
 //   its caller declares, so that tests/fixtures/all/all.pil takes it into one AIR with the others.
-// - PIL1's plookup (h1/h2 and Z, spec Annex B) is the std's bus: `mul` is new, the times each row of
-//   the table is looked up, and `(1 − SEL)·mul` keeps the table to the rows of SEL, as PIL1 kept
-//   them by moving the others to a random value (pil-stark, pil_info/step2.js). The std makes `sel`
-//   binary (`lookup_assumes`); PIL1 did not constrain it.
+// - PIL1's plookup (h1/h2 and Z) is the std's bus: `mul` is new, the times each row of the table is
+//   looked up, and `(1 − SEL)·mul` keeps the table to the rows of SEL, as PIL1 kept them by moving
+//   the others to a random value (pil-stark, pil_info/step2.js). The std makes `sel` binary
+//   (`lookup_assumes`); PIL1 did not constrain it.
 // - On the sum bus (PIOP_BUS_SUM) it is the std's lookup, LogUp with the multiplicity `mul`. The
 //   std's lookup has no product bus, since a product bus cannot take a multiplicity: on
 //   PIOP_BUS_PROD the same tuples go on the std's permutation, with `mul` the selector of the table

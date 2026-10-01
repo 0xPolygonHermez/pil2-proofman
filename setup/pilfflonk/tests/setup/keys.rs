@@ -1,5 +1,6 @@
-//! `pilfflonk.srs.bin`, `[τ]₂` and `<air>.verkey.json` (spec §4.2.5, A.6), on the fixed columns of
-//! `common`'s pilout and a ptau with `τ = 1` (`pilfflonk_setup::test_ptau`).
+//! `pilfflonk.srs.bin`, `[τ]₂` and `<air>.verkey.json` (pilfflonk/docs/formats.md#srs,
+//! pilfflonk/docs/formats.md#verkey), on the fixed columns of `common`'s pilout and a ptau with
+//! `τ = 1` (`pilfflonk_setup::test_ptau`).
 //!
 //! With `τ = 1` the commitment of a fixed `f = Σ_j p_j(X^k)·X^j` is `(Σ_j p_j(1))·G`, the sum of
 //! the first rows of its columns times the generator: the points are known in advance
@@ -49,8 +50,8 @@ fn the_srs_holds_the_powers_the_layout_needs() {
     let path = dir.file("pilfflonk.srs.bin");
     write_tau_one_ptau(&ptau, 32).unwrap();
     write_srs(&ptau, N as u64, &path).unwrap();
-    // The binfile of A.6: "pfsr", version 1, 3 sections; a 88-byte header, N points of 64 bytes
-    // and two of 128 (the section headers are 12 bytes each).
+    // The binfile (pilfflonk/docs/formats.md#srs): "pfsr", version 1, 3 sections; a 88-byte
+    // header, N points of 64 bytes and two of 128 (the section headers are 12 bytes each).
     let bytes = fs::read(&path).unwrap();
     assert_eq!(&bytes[..4], b"pfsr");
     assert_eq!(bytes.len(), 12 + 3 * 12 + 88 + N * 64 + 2 * 128);
@@ -61,8 +62,8 @@ fn the_srs_holds_the_powers_the_layout_needs() {
     assert!(matches!(&err, SetupError::Native { source, .. } if source.kind == PilFflonkErrorKind::InvalidArgument));
 }
 
-/// Spec §4.2.1: a ptau with fewer powers than the largest degree of the layout is refused, and
-/// the error says how many it has.
+/// A ptau with fewer powers than the largest degree of the layout is refused
+/// (pilfflonk/docs/README.md#what-the-setup-refuses), and the error says how many it has.
 #[test]
 fn a_ptau_with_too_few_powers_is_refused() {
     let _cpp = cpp_core();
@@ -88,11 +89,12 @@ fn a_ptau_with_too_few_powers_is_refused() {
     assert!(matches!(&err, SetupError::Native { source, .. } if source.kind == PilFflonkErrorKind::Io), "{err}");
 }
 
-/// A ptau whose `[τ]₂` is on the twist but outside G2, its r-torsion group (plan M26): the JS
-/// verifier refuses such an `X_2`, so the setup writes no SRS, and so no vkey, from it. The point
-/// is `(1, y)`, the twist's point of smallest `x = 1 + 0·u` (the one `pilfflonk/js/test/
-/// elements.test.js` and the C++ SRS tests use), in the Montgomery form a ptau stores (`c·2^256 mod
-/// q`, little-endian), computed apart with Python's integers.
+/// A ptau whose `[τ]₂` is on the twist but outside G2, its r-torsion group
+/// (pilfflonk/docs/README.md#what-the-setup-refuses): the JS verifier refuses such an `X_2`, so
+/// the setup writes no SRS, and so no vkey, from it. The point is `(1, y)`, the twist's point of
+/// smallest `x = 1 + 0·u` (the one `pilfflonk/js/test/elements.test.js` and the C++ SRS tests
+/// use), in the Montgomery form a ptau stores (`c·2^256 mod q`, little-endian), computed apart
+/// with Python's integers.
 #[test]
 fn a_ptau_whose_tau_in_g2_is_outside_the_r_torsion_is_refused() {
     let _cpp = cpp_core();
@@ -144,8 +146,9 @@ fn x_2_is_tau_in_g2_canonical() {
     );
 }
 
-/// The unpacked layout of shortcut R1: one fixed f per column, k = 1, first in the layout. The
-/// verkey has their commitments in that order, and nothing of the other stages.
+/// The unpacked layout (pilfflonk/docs/protocol.md#unpacked-layout): one fixed f per column,
+/// k = 1, first in the layout. The verkey has their commitments in that order, and nothing of the
+/// other stages.
 #[test]
 fn the_verkey_of_the_unpacked_layout_commits_to_each_column() {
     let _cpp = cpp_core();

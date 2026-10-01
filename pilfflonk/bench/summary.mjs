@@ -1,6 +1,6 @@
-// The summary of the pilfflonk benchmark (plan M39, bench.sh summary): for every point (program,
-// size, layout, threads) of $BENCH_DIR/{compile,setup,prove}.tsv, the median of its runs and their
-// spread, as markdown tables.
+// The summary of the pilfflonk benchmark (bench.sh summary,
+// pilfflonk/docs/performance.md#reproducing): for every point (program, size, layout, threads) of
+// $BENCH_DIR/{compile,setup,prove}.tsv, the median of its runs and their spread, as markdown tables.
 //
 //     node pilfflonk/bench/summary.mjs <BENCH_DIR>
 //

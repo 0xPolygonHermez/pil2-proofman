@@ -1,5 +1,5 @@
-// The canonical JSON of spec-seed.md A.6, over which the digest of the vkey is computed: what
-// proofman_pilfflonk::json::canonical_json writes (pilfflonk/src/json.rs, M12):
+// The canonical JSON (pilfflonk/docs/formats.md#digest), over which the digest of the vkey is
+// computed: what proofman_pilfflonk::json::canonical_json writes (pilfflonk/src/json.rs):
 // - no whitespace;
 // - object keys sorted by UTF-16 code units, the order of Array.prototype.sort() without a
 //   comparator. The keys are written here in that order, one by one: JSON.stringify of an object

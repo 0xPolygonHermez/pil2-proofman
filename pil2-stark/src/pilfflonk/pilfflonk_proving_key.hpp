@@ -17,11 +17,11 @@
 
 namespace PilFflonk {
 
-// What the prover reads of pilout.globalInfo.json (spec A.6): where the AIRs' files are, and the
-// counts of the values every instance is given. The file's owner is the Rust type
-// proofman_pilfflonk::PilfflonkGlobalInfo (pilfflonk/src/global_info.rs), which validates all of it
-// before the prover runs; this reader checks the fields it uses (their types, and that the file is
-// a pilfflonk one of format version 1) and ignores the rest.
+// What the prover reads of pilout.globalInfo.json (pilfflonk/docs/formats.md#globalinfo): where the
+// AIRs' files are, and the counts of the values every instance is given. The file's owner is the
+// Rust type proofman_pilfflonk::PilfflonkGlobalInfo (pilfflonk/src/global_info.rs), which validates
+// all of it before the prover runs; this reader checks the fields it uses (their types, and that
+// the file is a pilfflonk one of format version 1) and ignores the rest.
 struct GlobalInfo {
     struct Air {
         std::string name;
@@ -45,19 +45,20 @@ struct LayoutPosition {
     uint64_t j;
 };
 
-// The degrees of A.1 for an AIR, derived from its pilfflonkinfo as the setup derives them
-// (setup/pilfflonk/src/layout.rs; pilfflonk/src/degrees.rs in Rust, Degrees and QSplit): they are not
-// stored.
+// The degrees of an AIR (pilfflonk/docs/protocol.md#degrees), derived from its pilfflonkinfo as the
+// setup derives them (setup/pilfflonk/src/layout.rs; pilfflonk/src/degrees.rs in Rust, Degrees and
+// QSplit): they are not stored.
 struct AirDegrees {
     uint64_t n;           // N = 2^nBits
     uint64_t maxOpenings; // |O|_max: the most offsets of an f of a committed stage (1 … nStages)
     uint64_t qCoefficients; // Q's bound, qDeg·N + (qDeg+1)·|O|_max + 1
     uint64_t nBitsExt;      // the smallest power of two >= Q's bound and >= N + |O|_max + 1
-    // The pieces Q_0 … Q_{m−1} Q is committed as (spec A.1, A.3), Q(X) = Σ_i X^(i·qStride)·Q_i(X): m =
-    // ⌈qDeg/maxQDegree⌉ if 0 < maxQDegree < qDeg, and otherwise 1, Q itself, with qStride 0. Split,
-    // qStride = maxQDegree·N, and piece i holds the coefficients i·qStride … (i+1)·qStride − 1 of Q (the
-    // last one those up to Q's bound), and each boundary two random ones that cancel: b0·X^qStride +
-    // b1·X^(qStride+1) added to the piece below it, b0 + b1·X subtracted from the one above.
+    // The pieces Q_0 … Q_{m−1} Q is committed as (pilfflonk/docs/protocol.md#q-pieces),
+    // Q(X) = Σ_i X^(i·qStride)·Q_i(X): m = ⌈qDeg/maxQDegree⌉ if 0 < maxQDegree < qDeg, and otherwise
+    // 1, Q itself, with qStride 0. Split, qStride = maxQDegree·N, and piece i holds the coefficients
+    // i·qStride … (i+1)·qStride − 1 of Q (the last one those up to Q's bound), and each boundary two
+    // random ones that cancel: b0·X^qStride + b1·X^(qStride+1) added to the piece below it,
+    // b0 + b1·X subtracted from the one above.
     uint64_t qStride;
     // The bound on the coefficients of each piece: qStride + 2 but the last, qCoefficients −
     // (m−1)·qStride.
@@ -83,7 +84,7 @@ struct ColumnRead {
 std::vector<ColumnRead> columnsRead(const ExpressionsBin &bin, uint64_t expId);
 
 // An operand of a std prover hint the prover reads on H: one of those the STARK's addHintField takes
-// (hints.cpp), but for an air value (v1 has none, D2).
+// (hints.cpp), but for an air value (v1 has none, pilfflonk/docs/README.md#scope).
 struct HintInput {
     enum class Kind { Column, Expression, Number };
     Kind kind = Kind::Number;
@@ -93,9 +94,9 @@ struct HintInput {
     FrElement number;        // Number, in Montgomery form
 };
 
-// A prover hint of the std in the .bin (section 3; plans M30, M31): the column it gives, reference,
-// of stage `stage` >= 2 at stagePos (cmPolsMap[cmId]), from the quotient numerator/denominator on
-// each row of H (spec §4.4):
+// A prover hint of the std in the .bin (section 3, pilfflonk/docs/formats.md#bytecode): the column
+// it gives, reference, of stage `stage` >= 2 at stagePos (cmPolsMap[cmId]), from the quotient
+// numerator/denominator on each row of H (pilfflonk/docs/protocol.md#hint-columns):
 // - im_col (Kind::ImCol), with the fields numerator and denominator: the column is the quotient
 //   itself, as the STARK's calculateImHints computes it with multiplyHintFields;
 // - gprod_col and gsum_col (Kind::Prod, Kind::Sum), with numerator_air and denominator_air: the
@@ -116,24 +117,26 @@ struct StdHint {
     HintInput denominator;
 };
 
-// The proving key of one AIR (spec §4.4, step 1): its pilfflonkinfo, its bytecode, and its fixed
-// columns, both on H (for the intermediate polynomials) and as polynomials (for Q's coset and the
-// opening), with what the prover derives from them. Immutable once built.
+// The proving key of one AIR (pilfflonk/docs/protocol.md#proof-sequence, step 1): its
+// pilfflonkinfo, its bytecode, and its fixed columns, both on H (for the intermediate polynomials)
+// and as polynomials (for Q's coset and the opening), with what the prover derives from them.
+// Immutable once built.
 //
 // Checks, besides what each reader checks: the files agree (the .bin's stages and the .const's size
 // are the pilfflonkinfo's, and the rows of the .bin's constraints lie in the trace), and what this
 // prover supports: a layout that packs every committed column once, and every piece of Q once, the
-// pieces Q0 … Q<m−1> of cmPolsMap (Q0 alone if Q is not split, piece i at stageId and stagePos i), in f
-// of their own opened at ξ, each f of the degree the pieces' bounds give it (A.2's cost); and hints
-// that are im_col, gsum_col and gprod_col only (im_airval computes an air value, D2), which give
-// every column of stages 2 and above but the im pols, each once, from operands that read only what
-// is computed before them (stdHints()), and update no airgroup value; im_col ones only in an AIR
-// with a gsum_col or gprod_col, as the STARK's calculateImHints computes them only then.
+// pieces Q0 … Q<m−1> of cmPolsMap (Q0 alone if Q is not split, piece i at stageId and stagePos i),
+// in f of their own opened at ξ, each f of the degree the pieces' bounds give it
+// (pilfflonk/docs/protocol.md#degrees); and hints that are im_col, gsum_col and gprod_col only
+// (im_airval computes an air value, pilfflonk/docs/README.md#scope), which give every column of
+// stages 2 and above but the im pols, each once, from operands that read only what is computed
+// before them (stdHints()), and update no airgroup value; im_col ones only in an AIR with a
+// gsum_col or gprod_col, as the STARK's calculateImHints computes them only then.
 class AirKey {
 public:
     // From the files' contents. `name` is what the errors call the AIR. Throws FormatError. Its Lde
-    // runs its transforms on `gpu` if it is not null (plan M43), the fixed columns' INTT included; the
-    // Gpu must outlive the key.
+    // runs its transforms on `gpu` if it is not null, the fixed columns' INTT included; the Gpu
+    // must outlive the key.
     AirKey(PilfflonkInfo info, ExpressionsBin bin, const uint8_t *constants, uint64_t constantsBytes,
            const std::string &name, const Gpu *gpu = nullptr);
 
@@ -159,18 +162,20 @@ public:
     Poly *fixedPolynomial(uint64_t c) const { return fixedPolys[c].get(); }
 
     // Where the layout commits constPolsMap[id] or cmPolsMap[id]; f = UINT64_MAX if it does not
-    // (a column the evMap never opens, spec A.2).
+    // (a column the evMap never opens, pilfflonk/docs/protocol.md#layout).
     const LayoutPosition &constPosition(uint64_t id) const { return constPositions[id]; }
     const LayoutPosition &cmPosition(uint64_t id) const { return cmPositions[id]; }
     static constexpr uint64_t NOT_COMMITTED = UINT64_MAX;
 
-    // The coefficients of b(X) of the blinding of every column of f (spec A.3): |O_f| + 1 for an f
-    // of a committed stage, 0 for a fixed one and for Q's (whose pieces, if it is split, are blinded
-    // at their boundaries instead: AirDegrees).
+    // The coefficients of b(X) of the blinding of every column of f
+    // (pilfflonk/docs/protocol.md#blinding): |O_f| + 1 for an f of a committed stage, 0 for a fixed
+    // one and for Q's (whose pieces, if it is split, are blinded at their boundaries instead:
+    // AirDegrees).
     uint64_t blindLength(uint64_t f) const;
 
     // The witness of an instance: the stagePos in stage 1 of each of its C columns, column c being
-    // the cmPolsMap entry of stage 1 that is not an im pol and has stageId c (spec A.6).
+    // the cmPolsMap entry of stage 1 that is not an im pol and has stageId c
+    // (pilfflonk/docs/formats.md#witness-directory).
     const std::vector<uint64_t> &witnessColumns() const { return witness; }
 
     // The cmPolsMap index of the column of stage s (1 … nStages + 1) at stagePos p: cmIds()[s][p].
@@ -180,16 +185,17 @@ public:
     // each committed by the layout (checked when the key is built).
     const std::vector<ColumnRead> &qReads() const { return qColumns; }
 
-    // The number of f of the layout of stage 0 (the fixed ones), which come first (spec A.5).
+    // The number of f of the layout of stage 0 (the fixed ones), which come first
+    // (pilfflonk/docs/protocol.md#global-order).
     uint64_t nFixedF() const { return nFixed; }
 
     // The commitments [f(τ)]₁ of the fixed f, in the order of the layout, from the fixed columns of
     // the .const: their interpolants packed (pack()) and committed with `srs`, as the setup commits
-    // them for the vkey (commitFixed; nothing is blinded, spec A.3). One MSM per f, of its k·N
-    // coefficients. The prover never needs them, the verifier takes them from the vkey: the
-    // orchestrator compares them, so that a .const the vkey was not set up with is refused instead
-    // of giving proofs that do not verify. Throws std::invalid_argument if an f has more
-    // coefficients than `srs` has powers (a ProvingKey checks that its SRS has enough).
+    // them for the vkey (commitFixed; nothing is blinded). One MSM per f, of its k·N coefficients.
+    // The prover never needs them, the verifier takes them from the vkey: the orchestrator compares
+    // them, so that a .const the vkey was not set up with is refused instead of giving proofs that
+    // do not verify. Throws std::invalid_argument if an f has more coefficients than `srs` has
+    // powers (a ProvingKey checks that its SRS has enough).
     std::vector<G1Point> fixedCommitments(const Srs &srs) const;
 
     // The number of pieces of Q, m (1 if it is not split), and where the layout commits piece i: its
@@ -226,8 +232,8 @@ private:
     std::vector<StdHint> hints;
 };
 
-// The proving key of a proof (spec §4.4, step 1; §4.2.6's provingKey/): the globalInfo, the SRS and
-// every AIR's key, and, on the GPU (plan M43), the Gpu their MSMs and transforms run on. Immutable
+// The proving key of a proof (pilfflonk/docs/protocol.md#proof-sequence, step 1): the globalInfo,
+// the SRS and every AIR's key, and, on the GPU, the Gpu their MSMs and transforms run on. Immutable
 // once built: proofs may share it, from several threads.
 class ProvingKey {
 public:
@@ -237,17 +243,19 @@ public:
     ProvingKey(GlobalInfo globalInfo, Srs srs, std::vector<std::vector<std::unique_ptr<AirKey>>> airs,
                std::shared_ptr<const Gpu> gpu = nullptr);
 
-    // Reads the provingKey/ at dir, as setup-pilfflonk writes it (spec §4.2.6):
+    // Reads the provingKey/ at dir, as setup-pilfflonk writes it
+    // (pilfflonk/docs/formats.md#provingkey):
     //   <dir>/pilout.globalInfo.json
     //   <dir>/<name>/pilfflonk/pilfflonk.srs.bin
     //   <dir>/<name>/<airgroup>/airs/<air>/air/<air>.{pilfflonkinfo.json, bin, const}
-    // The vkey is not read: the digest the transcript absorbs is the orchestrator's (spec A.4), which
-    // reads and checks the vkey. Throws IoError and FormatError, and FormatError if an AIR's layout
-    // needs more powers [τ^i]₁ than the SRS holds or its pilfflonkinfo is not the globalInfo's AIR.
-    // On Device::Gpu (plan M43), the SRS's powers [τ^i]₁ are copied to the GPU once they are read,
-    // and the MSMs and transforms of the key and its proofs run there, the fixed columns' INTT first;
-    // the proofs are the same bit for bit. Throws std::invalid_argument before it reads anything if
-    // there is no GPU (gpuAvailable()), in a library built without one or on a machine without one.
+    // The vkey is not read: the digest the transcript absorbs is the orchestrator's
+    // (pilfflonk/docs/protocol.md#transcript), which reads and checks the vkey. Throws IoError and
+    // FormatError, and FormatError if an AIR's layout needs more powers [τ^i]₁ than the SRS holds
+    // or its pilfflonkinfo is not the globalInfo's AIR. On Device::Gpu, the SRS's powers [τ^i]₁ are
+    // copied to the GPU once they are read, and the MSMs and transforms of the key and its proofs
+    // run there, the fixed columns' INTT first; the proofs are the same bit for bit. Throws
+    // std::invalid_argument before it reads anything if there is no GPU (gpuAvailable()), in a
+    // library built without one or on a machine without one.
     static std::unique_ptr<ProvingKey> load(const std::string &dir, Device device = Device::Cpu);
 
     ProvingKey(const ProvingKey &) = delete;

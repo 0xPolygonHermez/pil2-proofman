@@ -1,11 +1,12 @@
-//! The witness the prover takes from outside (spec §4.3): the stage-1 columns and the stage-1 air
-//! values of each instance, the publics and the stage-1 proof values. The prover reads it through
-//! [`WitnessSource`]; stages 2 and later, and the im pols, are the prover's to compute.
+//! The witness the prover takes from outside (pilfflonk/docs/README.md#witness): the stage-1 columns
+//! and the stage-1 air values of each instance, the publics and the stage-1 proof values. The
+//! prover reads it through [`WitnessSource`]; stages 2 and later, and the im pols, are the prover's
+//! to compute.
 //!
-//! In phases 1 and 2 it comes from a directory (plan N9), read by [`FileWitnessSource`] and
-//! written by [`Witness::write`], which the fixture generators call. In phase 3 a witness library
-//! computes it over `Fr` (D4, [`crate::witness_library`]), from the rows over [`Bn254`] that
-//! `pil-helpers` generates, which [`Stage1Witness::from_rows`] takes.
+//! It comes from a directory, read by [`FileWitnessSource`] and written by [`Witness::write`],
+//! which the fixture generators call, or a witness library ([`crate::witness_library`]) computes
+//! it over `Fr`, from the rows over [`Bn254`] that `pil-helpers` generates, which
+//! [`Stage1Witness::from_rows`] takes.
 //!
 //! # The witness directory (version 1)
 //!
@@ -20,11 +21,11 @@
 //!
 //! - **`instances.json`**: a JSON array with one object per instance, at least one:
 //!   `{"airgroupId": ag, "airId": a, "airValues": ["v", …]}`, with no other field.
-//!   - **Order**: canonical (spec glossary), non-decreasing in `(airgroupId, airId)`. The
-//!     instances of an AIR are consecutive, and the `t`-th of them (from 0) is instance `t` of
-//!     that AIR.
+//!   - **Order**: canonical (pilfflonk/docs/protocol.md#notation), non-decreasing in
+//!     `(airgroupId, airId)`. The instances of an AIR are consecutive, and the `t`-th of them (from
+//!     0) is instance `t` of that AIR.
 //!   - **`airValues`**: the air values of stage 1 of the instance, in the order their entries of
-//!     stage 1 have in the AIR's `airValuesMap`. Empty in v1 (D2).
+//!     stage 1 have in the AIR's `airValuesMap`. Empty in v1 (pilfflonk/docs/README.md#scope).
 //! - **`instance_<ag>_<a>_<t>.bin`**: one per instance, named by its `airgroupId`, `airId` and `t`
 //!   in decimal (`instance_0_0_0.bin`). Raw bytes, with no header: the `N = 2^nBits` rows of the
 //!   instance, row after row, each the values of its `C` stage-1 columns in order, each value 32
@@ -37,7 +38,7 @@
 //! - **`publics.json`**: the `nPublics` publics, in the order of the globalInfo's `publicsMap`,
 //!   as [`Publics`] writes them.
 //! - **`proof_values.json`**: the proof values of stage 1, in the order their entries of stage 1
-//!   have in the globalInfo's `proofValuesMap`. Empty in v1 (D2).
+//!   have in the globalInfo's `proofValuesMap`. Empty in v1.
 //!
 //! Every value in the JSON files is a decimal string, in the one spelling `crate::field` reads (no
 //! sign, spaces or leading zeros), below `r`. The JSON files have the layout of every
@@ -72,11 +73,11 @@ pub const INSTANCES_FILE: &str = "instances.json";
 /// The file name of the stage-1 proof values.
 pub const PROOF_VALUES_FILE: &str = "proof_values.json";
 
-/// Where the witness of the prover comes from (spec §5.3).
+/// Where the witness of the prover comes from (pilfflonk/docs/README.md#witness).
 ///
-/// The sketch of §5.3, with the crate's errors: a source validates what it holds, and
-/// [`Stage1Witness`] carries the trace as the bytes `pilfflonk_instance_new` takes, with the
-/// stage-1 air values of the instance.
+/// A source validates what it holds and fails with the crate's errors, and [`Stage1Witness`]
+/// carries the trace as the bytes `pilfflonk_instance_new` takes, with the stage-1 air values of
+/// the instance.
 pub trait WitnessSource {
     /// The instances, in canonical order.
     fn instances(&self) -> Vec<AirInstanceRef>;

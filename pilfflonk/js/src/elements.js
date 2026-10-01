@@ -1,6 +1,6 @@
 // What the verifier reads as JSON -- integers as decimal strings, as snarkjs writes them -- turned
 // into ffjavascript elements, with the checks of steps 1-3 of snarkjs' fflonk verifier
-// (src/fflonk_verify.js; spec-seed.md §4.5, step 1):
+// (src/fflonk_verify.js; pilfflonk/docs/verifier.md#steps, steps 1-3):
 // - a scalar is below r;
 // - a G1 point is affine, [x, y] or [x, y, "1"] as snarkjs writes it, with coordinates below q and
 //   on the curve, which puts it in the group: the cofactor of BN254's G1 is 1;

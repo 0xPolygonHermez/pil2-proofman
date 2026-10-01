@@ -4,8 +4,8 @@ use proofman_common::initialize_logger;
 use proofman_pilfflonk::js_verifier;
 use std::path::PathBuf;
 
-// The JS verifier of spec §4.5, run as `verify-snark` runs snarkjs, with the arguments of
-// `snarkjs fflonk verify`.
+// The JS verifier (pilfflonk/docs/verifier.md#js-verifier), run as `verify-snark` runs snarkjs,
+// with the arguments of `snarkjs fflonk verify`.
 /// Verify a pilfflonk proof with the JS verifier (Node.js): exits with 0 only if it verifies
 #[derive(Args)]
 pub struct PilfflonkVerifyCmd {

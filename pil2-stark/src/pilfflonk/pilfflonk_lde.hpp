@@ -14,14 +14,14 @@ namespace PilFflonk {
 using FrElement = AltBn128::Engine::FrElement;
 
 // The 2-adicity of the BN254 scalar field, r - 1 = 2^28 · odd: no domain of roots of unity, and so
-// no FFT, has more than 2^28 points (spec A.1).
+// no FFT, has more than 2^28 points (pilfflonk/docs/protocol.md#notation).
 constexpr uint64_t MAX_NBITS_EXT = 28;
 
-// The shift g of the extended coset g·H' on which Q is evaluated (spec §4.4, "Coset"): 5, the
-// smallest quadratic non-residue mod r. It is the `nqr` that ffiasm's FFT finds and raises to get
-// its roots of unity, and g^(2^28) != 1, so g lies in no subgroup of order 2^k: g·H' meets
-// neither H' nor H, and Z_H does not vanish on it. Internal to the prover; the verifier never
-// sees it.
+// The shift g of the extended coset g·H' on which Q is evaluated
+// (pilfflonk/docs/protocol.md#extended-coset): 5, the smallest quadratic non-residue mod r. It is
+// the `nqr` that ffiasm's FFT finds and raises to get its roots of unity, and g^(2^28) != 1, so g
+// lies in no subgroup of order 2^k: g·H' meets neither H' nor H, and Z_H does not vanish on it.
+// Internal to the prover; the verifier never sees it.
 constexpr unsigned int COSET_SHIFT = 5;
 
 class Gpu; // pilfflonk_gpu.hpp
@@ -40,7 +40,8 @@ bool batchInverse(FrElement *out, const FrElement *values, uint64_t n);
 // It has no NTT of its own: the INTT is rapidsnark's Polynomial::fromEvaluations, and the coset
 // transforms are ffiasm's FFT, which has no coset API, around a scaling by the powers of g.
 //
-// - The roots are ffiasm's, ω_k = 5^((r-1)/k) (spec A.2): H = <ω_N> and H' = <ω_N'>.
+// - The roots are ffiasm's, ω_k = 5^((r-1)/k) (pilfflonk/docs/protocol.md#notation): H = <ω_N>
+//   and H' = <ω_N'>.
 // - Coefficients go in increasing degree. Evaluations go in natural order: the i-th is at ω_N^i on
 //   H, or at g·ω_N'^i on the coset.
 // - Elements are in ffiasm's Montgomery form.
@@ -54,9 +55,9 @@ bool batchInverse(FrElement *out, const FrElement *values, uint64_t n);
 // whole team, and one per thread otherwise (details in pilfflonk_lde.cpp). The results are the
 // same bit for bit either way. The const functions may run concurrently with each other.
 //
-// With a Gpu (plan M43), every FFT and inverse FFT runs on it instead (Gpu::ntt, Gpu::intt), one
-// column after another, and the scalings by the powers of the shift stay here, around them, on the
-// whole team: the results are the same bit for bit.
+// With a Gpu (pilfflonk/docs/performance.md#what-runs-on-the-gpu), every FFT and inverse FFT runs
+// on it instead (Gpu::ntt, Gpu::intt), one column after another, and the scalings by the powers of
+// the shift stay here, around them, on the whole team: the results are the same bit for bit.
 class Lde {
 public:
     using Engine = AltBn128::Engine;
@@ -73,9 +74,10 @@ public:
     const Gpu *gpu() const { return device; }
 
     // INTT: the N evaluations on H of column c, in evals[c], into its N coefficients, followed by
-    // blindLength zero coefficients kept for the blinding (spec A.3, Poly::blindCoefficients).
-    // This is Poly::fromEvaluations with reserved buffers: coefs[c] holds N + blindLength
-    // elements, which must be at most N'. The polynomials wrap coefs[c] and do not own it.
+    // blindLength zero coefficients kept for the blinding (pilfflonk/docs/protocol.md#blinding,
+    // Poly::blindCoefficients). This is Poly::fromEvaluations with reserved buffers: coefs[c] holds
+    // N + blindLength elements, which must be at most N'. The polynomials wrap coefs[c] and do not
+    // own it.
     // evals[c] is only read; it is not const because fromEvaluations does not take it as const.
     // Not in place: fromEvaluations clears coefs[c] before it reads evals[c].
     std::vector<std::unique_ptr<Poly>> intt(FrElement *const *evals, FrElement *const *coefs, uint64_t nCols,
@@ -87,15 +89,15 @@ public:
     // buffer holds N' elements.
     void extendCoset(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs) const;
 
-    // The LDE on one part of g·H' (plan M39): column c, the polynomial with the nCoefs coefficients
-    // in coefs[c] (1 <= nCoefs <= N'), into its S = 2^partBits evaluations on part `part` of the
-    // coset, in evals[c] (S elements), for nBits <= partBits <= nBitsExt and part < N'/S. Part p is
-    // the S points g·ω_N'^(p + (N'/S)·i), i < S: evaluation i of part p is evaluation p + (N'/S)·i
-    // of extendCoset, the same bit for bit, and the N'/S parts are the whole coset; S = N (one
-    // coset of H) is the least memory, and S = N' is extendCoset itself. The points of part p are
-    // c·ω_S^i for its shift c = g·ω_N'^p, so coefficient j is scaled by c^j and folded into
-    // j mod S before ffiasm's FFT of S points. evals[c] may be coefs[c] itself (in place), if that
-    // buffer holds max(nCoefs, S) elements.
+    // The LDE on one part of g·H' (pilfflonk/docs/protocol.md#q-in-parts): column c, the polynomial
+    // with the nCoefs coefficients in coefs[c] (1 <= nCoefs <= N'), into its S = 2^partBits
+    // evaluations on part `part` of the coset, in evals[c] (S elements), for
+    // nBits <= partBits <= nBitsExt and part < N'/S. Part p is the S points g·ω_N'^(p + (N'/S)·i),
+    // i < S: evaluation i of part p is evaluation p + (N'/S)·i of extendCoset, the same bit for bit,
+    // and the N'/S parts are the whole coset; S = N (one coset of H) is the least memory, and
+    // S = N' is extendCoset itself. The points of part p are c·ω_S^i for its shift c = g·ω_N'^p, so
+    // coefficient j is scaled by c^j and folded into j mod S before ffiasm's FFT of S points.
+    // evals[c] may be coefs[c] itself (in place), if that buffer holds max(nCoefs, S) elements.
     void extendCosetPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs,
                          uint64_t partBits, uint64_t part) const;
 

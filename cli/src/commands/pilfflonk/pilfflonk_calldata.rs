@@ -5,9 +5,10 @@ use proofman_pilfflonk::Calldata;
 use std::fs;
 use std::path::PathBuf;
 
-// The calldata encoder of spec §4.5 ("Calldata", plan M41): the arguments of the Solidity verifier's
-// verifyProof for a proof, as snarkjs's `zkey export soliditycalldata` prints those of its FFLONK
-// verifier. It takes the files of `pilfflonk verify`, and reads them as the JS verifier does.
+// The calldata encoder (pilfflonk/docs/verifier.md#calldata-encoder): the arguments of the Solidity
+// verifier's verifyProof for a proof, as snarkjs's `zkey export soliditycalldata` prints those of
+// its FFLONK verifier. It takes the files of `pilfflonk verify`, and reads them as the JS verifier
+// does.
 /// Print the calldata of a pilfflonk proof for its Solidity verifier's verifyProof, as snarkjs's `zkey export soliditycalldata`
 #[derive(Args)]
 pub struct PilfflonkCalldataCmd {
@@ -15,7 +16,8 @@ pub struct PilfflonkCalldataCmd {
     #[clap(short = 'k', long)]
     pub vkey: PathBuf,
 
-    /// The proof: proof.json, or its bytes (spec A.6) in a file whose name ends in .bin
+    /// The proof: proof.json, or its bytes (pilfflonk/docs/formats.md#proof) in a file whose name
+    /// ends in .bin
     #[clap(short = 'p', long)]
     pub proof: PathBuf,
 

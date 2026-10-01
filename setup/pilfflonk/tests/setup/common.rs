@@ -188,7 +188,8 @@ pub fn f_shapes(layout: &Layout) -> Vec<FShape<'_>> {
 // ---------------------------------------------------------------------------------------------
 
 /// Held for the whole of every test that calls the C++ core's OpenMP code (the SRS, the fixed
-/// commitments, `run_setup_pilfflonk`), so that those tests run one at a time (plan M26).
+/// commitments, `run_setup_pilfflonk`), so that those tests run one at a time
+/// (pilfflonk/docs/README.md#tests).
 ///
 /// Each test runs on a thread of its own, which OpenMP makes a root with its own team, a thread per
 /// CPU, kept until that thread exits. Enough such tests at once outgrow libomp's table of threads

@@ -1,6 +1,7 @@
-//! The witness generator of the Plookup fixture (plan M34), `tests/fixtures/plookup/plookup.pil`: a
-//! port of `execute` in pil-fflonk's `pil/sm_plookup/sm_plookup.js`, over BN254's `Fr` (every value
-//! is a small integer). The same witness for the sum and the product bus.
+//! The witness generator of the Plookup fixture (pilfflonk/docs/README.md#fixtures),
+//! `tests/fixtures/plookup/plookup.pil`: a port of `execute` in pil-fflonk's
+//! `pil/sm_plookup/sm_plookup.js`, over BN254's `Fr` (every value is a small integer). The same
+//! witness for the sum and the product bus.
 //!
 //! Its fixed columns are the pilout's: the table `(A, B) = (i, j)` at row `16·i + j`, `SEL` 1 on the
 //! table's 256 rows (and the std's `__L1__`). Its witness columns, in the pilout's order (stage 1,
@@ -13,8 +14,8 @@
 //!   row 0, which no lookup reads): `(p, p + 4, p·(p + 4))` for `p < 9`, and `(9, 10, 90)` at row 9,
 //!   whose `b'` is row 10's `b = 10`;
 //! - every other row has `sel = 0`, `a = 55` and `b = 55` (10 at row 10);
-//! - `mul[16·a + b']` counts the lookups of that row of the table (PIL1 has no such column, spec
-//!   Annex B): the ten are different rows, so it is 0 or 1, as the product bus needs.
+//! - `mul[16·a + b']` counts the lookups of that row of the table (PIL1 has no such column): the
+//!   ten are different rows, so it is 0 or 1, as the product bus needs.
 //!
 //! Include it with `#[path = ".../pilfflonk/tests/data/plookup.rs"] mod plookup;`.
 

@@ -1,24 +1,26 @@
-//! The Solidity verifier on Foundry (spec §4.5, plan M40): `setup-pilfflonk --solidity` writes
-//! `pilfflonk.verifier.sol` for real keys, solc 0.8.37 compiles it, and Foundry runs it on their
-//! proofs and on the same proofs mutated, where it must say what the JS verifier (D8, the
-//! reference) says.
+//! The Solidity verifier on Foundry (pilfflonk/docs/verifier.md#solidity-verifier):
+//! `setup-pilfflonk --solidity` writes `pilfflonk.verifier.sol` for real keys, solc 0.8.37
+//! compiles it, and Foundry runs it on their proofs and on the same proofs mutated, where it must
+//! say what the JS verifier (the reference) says.
 //!
 //! For each key, the test:
 //! 1. sets it up with `--solidity` and checks that `proofman-setup pilfflonk-solidity` writes the
 //!    same verifier from the vkey alone;
 //! 2. compiles the verifier with solc (no warning, and within EIP-170's 24576 bytes);
 //! 3. proves a witness with a fixed blinding seed, and encodes its calldata with the encoder of
-//!    `proofman-cli pilfflonk calldata` (`proofman_pilfflonk::Calldata`, plan M41): the proof's bytes
-//!    and the auxiliary inverses of `firstRow` and `lastRow` (spec §4.5 "Calldata"), of the `ξ` of
-//!    the transcript (A.4) it replays, which must be the prover's;
+//!    `proofman-cli pilfflonk calldata` (`proofman_pilfflonk::Calldata`): the proof's bytes and the
+//!    auxiliary inverses of `firstRow` and `lastRow` (pilfflonk/docs/formats.md#calldata), of the
+//!    `ξ` of the transcript it replays (pilfflonk/docs/protocol.md#transcript), which must be the
+//!    prover's;
 //! 4. makes the cases: the proof; the proof with an evaluation, a commitment, a public or `W'`
 //!    changed, the first three also "fixed up" (`fixup` of `pilfflonk/tests/data/mutations.rs`,
-//!    which the differential fuzzer of M42 shares: `invZh`, `inv` and the auxiliary inverses
-//!    recomputed for the changed transcript, as the M40 review's harness does), so that they get to
-//!    the pairing, or to `checkQPieces` if `Q` is split; split, the pieces of `Q` changed with
-//!    their sum kept (to the pairing) and one changed (to `checkQPieces`); points off the curve or
-//!    that the transcript refuses; and values only the calldata can hold (a coordinate `≥ q`, a
-//!    scalar `≥ r`, a wrong auxiliary inverse, calldata a word short);
+//!    which the differential fuzzer shares: `invZh`, `inv` and the auxiliary inverses recomputed
+//!    for the changed transcript, as the harness of the security review of the Solidity verifier
+//!    did), so that they get to the pairing, or to `checkQPieces` if `Q` is split; split, the
+//!    pieces of `Q` changed with their sum kept (to the pairing) and one changed (to
+//!    `checkQPieces`); points off the curve or that the transcript refuses; and values only the
+//!    calldata can hold (a coordinate `≥ q`, a scalar `≥ r`, a wrong auxiliary inverse, calldata a
+//!    word short);
 //! 5. asks the JS verifier about each case (`js_verifier::verify`), and runs Foundry on all of them
 //!    (`pilfflonk/solidity`, copied to a directory of its own; `pilfflonk/tests/data/foundry.rs`):
 //!    `verifyProof` must return what the JS verifier says, `false` for every calldata-only case but
@@ -27,12 +29,13 @@
 //!    that reaches the pairing must cost about what the proof does.
 //!
 //! A key no pilout gives, a split `Q` and no evaluation, is made by hand with its proof
-//! ([`foundry_verifies_a_split_q_without_evaluations`]). The proofs of every fixture of phases 1 to
-//! 3, with the calldata of the CLI, are `cli/tests/pilfflonk_prove.rs`'s (plan M41).
+//! ([`foundry_verifies_a_split_q_without_evaluations`]). The proofs of every fixture, with the
+//! calldata of the CLI, are `cli/tests/pilfflonk_prove.rs`'s (pilfflonk/docs/verifier.md#tests).
 //!
-//! The tools are pinned (spec §4.5): Foundry v1.8.3 and solc 0.8.37, at the paths `PILFFLONK_FORGE`
-//! and `PILFFLONK_SOLC` name. The tests are `#[ignore]`d without them; those of the compiled
-//! fixtures also need `PIL2C_EXEC`, a compiler that honours `prime`. All need Node.js:
+//! The tools are pinned (pilfflonk/docs/verifier.md#tools): Foundry v1.8.3 and solc 0.8.37, at the
+//! paths `PILFFLONK_FORGE` and `PILFFLONK_SOLC` name. The tests are `#[ignore]`d without them;
+//! those of the compiled fixtures also need `PIL2C_EXEC`, a compiler that honours `prime`. All need
+//! Node.js:
 //!
 //! ```text
 //! PILFFLONK_FORGE=<forge> PILFFLONK_SOLC=<solc> PIL2C_EXEC=<pil2-compiler>/src/pil.js \
@@ -92,11 +95,11 @@ use serde_json::json;
 use foundry::{check_on_foundry, compile_with_solc, Case, Outcome, Tools};
 use mutations::{be_word, big, fixup, fr, fr_inv, fr_sub, piece_position, plus_one, q, r, rebalance_pieces, xi_of};
 
-/// The blinding seed of the proofs (D6: fixed in tests).
+/// The blinding seed of the proofs, fixed in tests (pilfflonk/docs/protocol.md#blinding).
 const SEED: [u8; 32] = [0x5a; 32];
 
 /// Held by each test for its whole run: they call the C++ core's OpenMP code (the setup, the
-/// prover), which must not run from several test threads at once (plan M26).
+/// prover), which must not run from several test threads at once (pilfflonk/docs/README.md#tests).
 fn cpp_core() -> MutexGuard<'static, ()> {
     static CPP_CORE: Mutex<()> = Mutex::new(());
     CPP_CORE.lock().unwrap_or_else(PoisonError::into_inner)
@@ -138,11 +141,11 @@ fn output(out: &std::process::Output) -> String {
 enum Program {
     Fibonacci,
     /// Six fixed columns in an `f`, eleven committed ones in `f` of `k = 3, 4, 4` (`powerW = 12`),
-    /// and fusions (plan M22).
+    /// and fusions.
     Packed,
-    /// Offsets `{−1, 0, 1, 2}` and constraints of degree 6 (plan M23).
+    /// Offsets `{−1, 0, 1, 2}` and constraints of degree 6.
     Signed,
-    /// `all` on the std's sum bus (plan M34): stage 2, a bus, 9 `f`.
+    /// `all` on the std's sum bus: stage 2, a bus, 9 `f`.
     AllSum,
     Domains(domains::Air),
 }
@@ -181,7 +184,7 @@ impl Program {
         }
     }
 
-    /// More powers than the largest degree of its layouts: `all`'s is 2312 (plan M34).
+    /// More powers than the largest degree of its layouts: `all`'s is 2312.
     fn ptau_powers(self) -> usize {
         match self {
             Program::AllSum => 4096,
@@ -240,16 +243,16 @@ impl Key {
     }
 }
 
-/// The calldata of `proof` and `publics` (spec §4.5, "Calldata"), ABI-encoded as `proofman-cli
-/// pilfflonk calldata --format hex` writes it: `Calldata::encode`, the proof's bytes and the
-/// auxiliary inverses of its own `ξ`, and the publics.
+/// The calldata of `proof` and `publics` (pilfflonk/docs/formats.md#calldata), ABI-encoded as
+/// `proofman-cli pilfflonk calldata --format hex` writes it: `Calldata::encode`, the proof's bytes
+/// and the auxiliary inverses of its own `ξ`, and the publics.
 fn calldata(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> Vec<u8> {
     Calldata::encode(vkey, proof, publics).unwrap().to_abi_bytes().unwrap()
 }
 
 /// The calldata of a proof the encoder refuses, because the transcript refuses one of its points
-/// (A.4), which it names: the proof has no `ξ`, and its auxiliary inverses are 0 (the verifier
-/// refuses the point first).
+/// (pilfflonk/docs/protocol.md#transcript), which it names: the proof has no `ξ`, and its auxiliary
+/// inverses are 0 (the verifier refuses the point first).
 fn calldata_without_xi(vkey: &Vkey, proof: &Proof, publics: &[FrBytes], point: &str) -> Vec<u8> {
     let err = Calldata::encode(vkey, proof, publics).unwrap_err().to_string();
     assert!(err.contains(&format!("{point} of the proof is not a point the transcript absorbs")), "{err}");
@@ -347,7 +350,7 @@ fn verify_on_foundry(tools: &Tools, setup: &Setup) {
     short.commitments[0] = G1Affine { x: FqBytes::from_u64(1), y: FqBytes::from_u64(2) };
     add("commitment (1, 2)", &short, publics, false, Some(&first));
 
-    // What only the calldata can hold, which is no proof (the proof's bytes are canonical, A.6): a
+    // What only the calldata can hold, which is no proof (the proof's bytes are canonical): a
     // coordinate x + q, a scalar e + r and, when there are any, a wrong auxiliary inverse, which
     // verifyProof refuses with false; and calldata one word short, which the ABI decoder reverts.
     let layout = CalldataLayout::of(vkey);
@@ -430,9 +433,9 @@ fn foundry_verifies_the_proofs_of_the_fixtures_as_the_js_verifier_does() {
     }
 }
 
-/// The zerofiers of every domain (A.1, plan M24): one rule of each, `firstRow` and `lastRow`
-/// among them, whose calldata has auxiliary inverses; and six `everyFrame`, at offsets −1 and 1,
-/// with `--no-packing` too.
+/// The zerofiers of every domain (pilfflonk/docs/protocol.md#constraint-polynomial): one rule of
+/// each, `firstRow` and `lastRow` among them, whose calldata has auxiliary inverses; and six
+/// `everyFrame`, at offsets −1 and 1, with `--no-packing` too.
 #[test]
 #[ignore = "needs PILFFLONK_FORGE, PILFFLONK_SOLC and Node.js"]
 fn foundry_verifies_the_proofs_of_every_domain() {
@@ -463,13 +466,15 @@ fn foundry_verifies_the_proofs_of_every_domain() {
     }
 }
 
-/// A split `Q` and no evaluation (the M40 review's `mk_noeval.mjs`): one `f`, `Q`'s, of `k = 2` with
-/// its pieces in the order `Q1`, `Q0`, so that the calldata's scalars start with `Q1`, and the
-/// transcript absorbs the pieces from there, not from `Q0` (spec §4.5). No pilout gives such a key:
-/// the vkey and its proof are made here with the test ptau's `τ`, for the statement `public = 5`
-/// (`Q = (p − 5)/Z_H` is then 0, and its pieces only PLONK's blinding, A.1): `f(X) = Q1(X²) +
-/// X·Q0(X²)` with `Q0 = b0·X^N + b1·X^(N+1)` and `Q1 = −b0 − b1·X`, committed as `f(τ)·G`, and `W`
-/// and `W'` as A.5 defines them for one `f`.
+/// A split `Q` and no evaluation (a case of the security review of the Solidity verifier): one `f`,
+/// `Q`'s, of `k = 2` with its pieces in the order `Q1`, `Q0`, so that the calldata's scalars start
+/// with `Q1`, and the transcript absorbs the pieces from there, not from `Q0`
+/// (pilfflonk/docs/verifier.md#steps, step 4). No pilout gives such a key: the vkey and its proof
+/// are made here with the test ptau's `τ`, for the statement `public = 5` (`Q = (p − 5)/Z_H` is
+/// then 0, and its pieces only PLONK's blinding, pilfflonk/docs/protocol.md#q-pieces):
+/// `f(X) = Q1(X²) + X·Q0(X²)` with `Q0 = b0·X^N + b1·X^(N+1)` and `Q1 = −b0 − b1·X`, committed as
+/// `f(τ)·G`, and `W` and `W'` as the prover defines them for one `f`
+/// (pilfflonk/docs/protocol.md#pairing-check).
 #[test]
 #[ignore = "needs PILFFLONK_FORGE, PILFFLONK_SOLC and Node.js"]
 fn foundry_verifies_a_split_q_without_evaluations() {
@@ -529,13 +534,14 @@ fn foundry_verifies_a_split_q_without_evaluations() {
     let h_tau = fr_sub(&f_tau, &r_at(&tau)) * fr_inv(&fr_sub(&pow(&tau, 2), &xi)) % &r;
     proof.w = g1_times(&h_tau);
     let y = big(&verifier_challenges(&vkey, &proof, &publics).unwrap().y);
-    // W' = L/(X − y) at τ, with L = f − r(y) − Z_T(y)·h: q_0 = Z_T(y) for one f (A.5).
+    // W' = L/(X − y) at τ, with L = f − r(y) − Z_T(y)·h: q_0 = Z_T(y) for one f
+    // (pilfflonk/docs/protocol.md#pairing-check).
     let l_tau = fr_sub(&fr_sub(&f_tau, &r_at(&y)), &(fr_sub(&pow(&y, 2), &xi) * &h_tau % &r));
     proof.wp = g1_times(&(l_tau * fr_inv(&fr_sub(&tau, &y)) % &r));
     let proof = fixup(&vkey, proof, &publics);
 
-    // The JSON view, by hand: no pilfflonkinfo names this proof (A.6: f0, W, Wp; Q1, Q0, inv, invZh),
-    // and those are the names of the vkey's.
+    // The JSON view, by hand: no pilfflonkinfo names this proof (f0, W, Wp; Q1, Q0, inv, invZh:
+    // pilfflonk/docs/formats.md#proof-names), and those are the names of the vkey's.
     let names = ProofNames::of_vkey(&vkey).unwrap();
     let point = |p: &G1Affine| json!([p.x.to_decimal(), p.y.to_decimal(), "1"]);
     let js = |label: &str, proof: &Proof, publics: &[FrBytes]| {

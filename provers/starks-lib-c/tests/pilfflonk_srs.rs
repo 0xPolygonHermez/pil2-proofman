@@ -213,7 +213,8 @@ const TWIST_NOT_G2: [&str; 4] = [
 ];
 
 /// `pilfflonk_g2_check`: what the JS verifier requires of the vkey's X_2 (elements.js,
-/// g2FromObject), a point of G2 other than the point at infinity (plan M40, review).
+/// g2FromObject), a point of G2 other than the point at infinity
+/// (pilfflonk/docs/verifier.md#refused-vkeys).
 #[test]
 fn checks_g2_points_as_the_js_verifier_does() {
     pilfflonk_g2_check_c(&g2(G2_CANONICAL)).unwrap();
@@ -233,7 +234,8 @@ fn checks_g2_points_as_the_js_verifier_does() {
     }
 }
 
-/// A ptau whose [τ]₂ is the point at infinity (τ = 0) is refused, and says so (plan M40, review).
+/// A ptau whose [τ]₂ is the point at infinity (τ = 0) is refused, and says so
+/// (pilfflonk/docs/verifier.md#refused-vkeys).
 #[test]
 fn refuses_a_ptau_whose_tau_g2_is_the_point_at_infinity() {
     let dir = TestDir::new("tau_g2_infinity");

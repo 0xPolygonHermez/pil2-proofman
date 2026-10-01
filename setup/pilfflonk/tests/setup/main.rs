@@ -1,7 +1,10 @@
-//! The setup's steps (plan M15, M16), each in its module: what it refuses in a pilout (spec
-//! §4.2.1), the fixed columns and `<air>.const`, the SRS and the verkey, the vkey's digest (A.6),
-//! the committed polynomials and the layout (§4.2.4, A.1–A.3), the command that writes them
-//! in the `provingKey/` (§4.2.6), and the Solidity verifier of `--solidity` (§4.5, plan M40).
+//! The setup's steps (pilfflonk/docs/README.md#setup-pilfflonk), each in its module: what it
+//! refuses in a pilout (pilfflonk/docs/README.md#what-the-setup-refuses), the fixed columns and
+//! `<air>.const`, the SRS and the verkey, the vkey's digest (pilfflonk/docs/formats.md#digest), the
+//! committed polynomials and the layout (pilfflonk/docs/protocol.md#degrees,
+//! pilfflonk/docs/protocol.md#layout), the command that writes them in the `provingKey/`
+//! (pilfflonk/docs/formats.md#provingkey), and the Solidity verifier of `--solidity`
+//! (pilfflonk/docs/verifier.md#solidity-verifier).
 //!
 //! One test crate, so that the pilouts built in code (`common`) are shared.
 

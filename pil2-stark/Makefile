@@ -291,9 +291,10 @@ DEPS_PROVE_PLONK := $(OBJS_PROVE_PLONK:.o=.d)
 SRCS_PILFFLONK_TEST := $(shell find ./test/pilfflonk -name "*.cpp")
 OBJS_PILFFLONK_TEST := $(SRCS_PILFFLONK_TEST:%=$(BUILD_DIR)/%.o)
 DEPS_PILFFLONK_TEST := $(OBJS_PILFFLONK_TEST:.o=.d)
-# The same tests against the GPU archive (plan M43), with __USE_CUDA__: they compare the GPU's MSMs,
-# NTTs and proofs with the CPU's where there is a GPU, and skip that without one. Linked as
-# provers/starks-lib-c/build.rs links the GPU archive: the static CUDA runtime and blst.
+# The same tests against the GPU archive (pilfflonk/docs/performance.md#gpu), with __USE_CUDA__:
+# they compare the GPU's MSMs, NTTs and proofs with the CPU's where there is a GPU, and skip that
+# without one. Linked as provers/starks-lib-c/build.rs links the GPU archive: the static CUDA runtime
+# and blst.
 OBJS_PILFFLONK_GPU_TEST := $(SRCS_PILFFLONK_TEST:%=$(BUILD_DIR_GPU)/%.o)
 DEPS_PILFFLONK_GPU_TEST := $(OBJS_PILFFLONK_GPU_TEST:.o=.d)
 CUDA_LIB_DIR ?= /usr/local/cuda/lib64

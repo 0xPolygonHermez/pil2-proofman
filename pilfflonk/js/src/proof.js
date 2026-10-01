@@ -1,16 +1,16 @@
-// The JSON view of a proof and its publics (spec-seed.md A.6, D7), read against the vkey as
-// pilfflonk/src/proof.rs reads them (ProofJson, ProofNames::from_json; Publics), with the checks of
-// steps 1-3 of snarkjs' fflonk verifier (src/fflonk_verify.js): commitments in G1, evaluations and
-// publics in Fr.
+// The JSON view of a proof and its publics (pilfflonk/docs/formats.md#proof), read against the vkey
+// as pilfflonk/src/proof.rs reads them (ProofJson, ProofNames::from_json; Publics), with the checks
+// of steps 1-3 of snarkjs' fflonk verifier (src/fflonk_verify.js): commitments in G1, evaluations
+// and publics in Fr.
 //
 //   {"protocol": "pilfflonk", "curve": "bn128",
 //    "polynomials": {name: [x, y, "1"]}, "evaluations": {name: value}}
 //
-// polynomials holds exactly the commitments of the non-fixed f_i (f<g>, g the global index of
-// A.5), W and Wp; evaluations exactly the evaluations of the evMap, the pieces Q_i(ξ) if Q is split,
-// inv and invZh (names.js); every value a decimal string without sign or leading zeros. A name
-// that is missing or should not be there, a point off the curve or at infinity, or a scalar not
-// below r is a PilFflonkInputError naming it.
+// polynomials holds exactly the commitments of the non-fixed f_i (f<g>, g the global index:
+// pilfflonk/docs/protocol.md#global-order), W and Wp; evaluations exactly the evaluations of the
+// evMap, the pieces Q_i(ξ) if Q is split, inv and invZh (names.js); every value a decimal string
+// without sign or leading zeros. A name that is missing or should not be there, a point off the
+// curve or at infinity, or a scalar not below r is a PilFflonkInputError naming it.
 
 import { PilFflonkInputError, decimalFromObject, frFromObject, g1FromObject, show } from "./elements.js";
 import { INV, INV_ZH, W, WP } from "./names.js";
@@ -46,7 +46,7 @@ function point(curve, value, what) {
 }
 
 // The proof against the vkey vk (vkey.js, fromObjectVk):
-//   commitments   [f_i]₁ of the non-fixed f_i, in the global order (A.5)
+//   commitments   [f_i]₁ of the non-fixed f_i, in the global order
 //   W, Wp         [W]₁ and [W']₁
 //   evaluations   by evMap index
 //   qPieces       the pieces Q_i(ξ) of a split Q, in the order of vk.qPieceNames, and [] otherwise
@@ -73,7 +73,8 @@ export function fromObjectProof(curve, proofObject, vk) {
     };
 }
 
-// publics.json: nPublic decimal strings below r, in the order of the publicsMap (A.6).
+// publics.json: nPublic decimal strings below r, in the order of the publicsMap
+// (pilfflonk/docs/formats.md#publics).
 export function fromObjectPublics(curve, publicsObject, vk) {
     if (!Array.isArray(publicsObject)) throw new PilFflonkInputError("publics: not an array");
     if (publicsObject.length !== vk.nPublic) {

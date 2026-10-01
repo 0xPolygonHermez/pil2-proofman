@@ -447,7 +447,7 @@ G1Point Srs::commit(const FrElement *coefs, uint64_t nCoefs) const {
 #endif
     Engine &E = Engine::engine;
     // ffiasm's MSM reads each scalar as a little-endian integer, so it must be the canonical value:
-    // Montgomery limbs would commit to p·2^256 instead (spec §4.4, "Escalars").
+    // Montgomery limbs would commit to p·2^256 instead (pilfflonk/docs/protocol.md#commitments).
     std::unique_ptr<FrElement[]> scalars(new FrElement[nCoefs]);
 #pragma omp parallel for
     for (uint64_t i = 0; i < nCoefs; ++i) {

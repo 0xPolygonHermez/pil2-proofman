@@ -1,7 +1,7 @@
-//! Synthetic pilouts for the domains of spec A.1 (plan M24), built in code with `prost`: the
-//! compiler of `develop-0.14.0` emits only `everyRow` (plan N1), so `firstRow`, `lastRow` and
-//! `everyFrame` are reachable no other way. And their witness generators, over BN254's `Fr` with
-//! `num-bigint`.
+//! Synthetic pilouts for the constraint domains (pilfflonk/docs/README.md#fixtures), built in code
+//! with `prost`: the compiler of `develop-0.14.0` emits only `everyRow`, so `firstRow`, `lastRow`
+//! and `everyFrame` are reachable no other way. And their witness generators, over BN254's `Fr`
+//! with `num-bigint`.
 //!
 //! Each AIR has `N = 2^4` rows, a fixed column `K = [1, 2, …, N]`, one witness column `x<j>` per
 //! rule `j` of it (and a public `p<j>` for a `firstRow` or `lastRow` rule), and a witness column `y`
@@ -16,14 +16,16 @@
 //!
 //! An `everyFrame {offsetMin, offsetMax}` holds on the rows `offsetMin ≤ i < N − offsetMax`: it
 //! excludes the first `offsetMin` rows and the last `offsetMax`, as the STARK's zerofier
-//! (`buildFrameZerofierInv`), A.1 and the oracle (M14) say. The pilout's comment on the field
-//! ("frame size is defined as offsetMax − offsetMin + 1") describes something else; nothing here
-//! follows it.
+//! (`buildFrameZerofierInv`), the zerofiers of the constraint polynomial
+//! (pilfflonk/docs/protocol.md#constraint-polynomial) and the oracle say. The pilout's comment on
+//! the field ("frame size is defined as offsetMax − offsetMin + 1") describes something else;
+//! nothing here follows it.
 //!
-//! The constraints of the rules have degree 2, so with the `δ = 1` of their domains (A.1) the
-//! constraint polynomial has degree 3: the search chooses `qDeg = 2` and no im pols by default (an
-//! im pol per rule would cost more), and with `--max-constraint-degree 2` one im pol per rule and
-//! `qDeg = 1`. On `everyRow` the same constraints would give `qDeg = 1`.
+//! The constraints of the rules have degree 2, so with the `δ = 1` of their domains
+//! (pilfflonk/docs/protocol.md#degree-search) the constraint polynomial has degree 3: the search
+//! chooses `qDeg = 2` and no im pols by default (an im pol per rule would cost more), and with
+//! `--max-constraint-degree 2` one im pol per rule and `qDeg = 1`. On `everyRow` the same
+//! constraints would give `qDeg = 1`.
 //!
 //! The witness satisfies each rule on the rows of its domain and breaks it on every other row, so
 //! that a zerofier that vanishes on a row too many or too few makes `Q` no polynomial: `x<j>` is

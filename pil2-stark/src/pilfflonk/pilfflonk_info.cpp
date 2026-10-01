@@ -16,7 +16,7 @@ namespace {
 
 using json = nlohmann::json;
 
-// The largest nBits there is: r - 1 = 2^28 · odd (spec A.1).
+// The largest nBits there is: r - 1 = 2^28 · odd (pilfflonk/docs/protocol.md#notation).
 constexpr uint64_t MAX_NBITS = 28;
 
 // `where` is the field, as a path from the top-level object ("" for that object itself).
@@ -257,11 +257,13 @@ void checkIndices(const PilfflonkInfo &info) {
         if (f.stage > info.qStage()) {
             fail(at(at("layout", i), "stage"), "must be at most nStages + 1");
         }
-        // The prover takes the fixed f to be the first ones, and the others in the global order of
-        // spec A.5: the Rust reader refuses any other order too (Layout::check).
+        // The prover takes the fixed f to be the first ones, and the others in the global order
+        // (pilfflonk/docs/protocol.md#global-order): the Rust reader refuses any other order too
+        // (Layout::check).
         if (i > 0 && f.stage < info.layout[i - 1].stage) {
             fail(at(at("layout", i), "stage"),
-                 "must not be below the stage of the f before it: the layout goes by ascending stage (spec A.5)");
+                 "must not be below the stage of the f before it: the layout goes by ascending stage "
+                 "(pilfflonk/docs/protocol.md#global-order)");
         }
         const std::vector<PolMapEntry> &map = f.stage == 0 ? info.constPolsMap : info.cmPolsMap;
         for (size_t j = 0; j < f.pols.size(); ++j) {

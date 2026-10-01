@@ -1,10 +1,10 @@
-//! What the passes need to know about the backend they run for (spec §4.2.2): the field, how the
-//! constraint degree is bounded and how the committed polynomials are opened.
+//! What the passes need to know about the backend they run for
+//! (pilfflonk/docs/README.md#setup-pilfflonk): the field, how the constraint degree is bounded and
+//! how the committed polynomials are opened.
 //!
 //! The STARK runs the passes over Goldilocks with its cubic extension and opens with FRI; pilfflonk
 //! runs them over the BN254 scalar field, with no extension, and opens with SHPLONK. This is a
-//! run-time value, not a cargo feature, because `proofman-setup` hosts both setups in one binary
-//! (plan §2.4).
+//! run-time value, not a cargo feature, because `proofman-setup` hosts both setups in one binary.
 
 use num_bigint::BigUint;
 
@@ -18,7 +18,8 @@ const BN254_R_BE: [u8; 32] = [
     0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
 ];
 
-/// The largest constraint degree pilfflonk's search tries unless told otherwise (D5, as pil-stark).
+/// The largest constraint degree pilfflonk's search tries unless told otherwise, as pil-stark
+/// (pilfflonk/docs/protocol.md#degree-search).
 pub const DEFAULT_MAX_CONSTRAINT_DEGREE: usize = 9;
 
 /// The field the passes compute over.
@@ -77,8 +78,8 @@ pub enum DegreePolicy {
     /// `2^blowup_bits` times larger (`blowup_bits = nBitsExt − nBits`), so the bound is
     /// `2^blowup_bits + 1`, and the cost of a degree is the base-field columns it adds.
     FromBlowup { blowup_bits: usize },
-    /// pilfflonk's (spec A.1, D5): the bound is `max`, and the cost of a degree is
-    /// `nImPols + qDeg`.
+    /// pilfflonk's (pilfflonk/docs/protocol.md#degree-search): the bound is `max`, and the cost of
+    /// a degree is `nImPols + qDeg`.
     Search { max: usize },
 }
 
@@ -110,8 +111,9 @@ pub enum Opening {
     /// receives and checks against `Q(ξ)`.
     Fri,
     /// pilfflonk's: the prover opens the committed polynomials with SHPLONK outside these passes,
-    /// and the verifier computes `Q(ξ)` rather than receiving it (spec A.1), so there is neither a
-    /// FRI polynomial nor a quotient in the `evMap`.
+    /// and the verifier computes `Q(ξ)` rather than receiving it
+    /// (pilfflonk/docs/protocol.md#constraint-polynomial), so there is neither a FRI polynomial nor
+    /// a quotient in the `evMap`.
     Shplonk,
 }
 
@@ -187,7 +189,7 @@ mod tests {
     fn costs_follow_each_policy() {
         // Two extension-field im pols (6 columns) and a quotient of degree 2 in the extension.
         assert_eq!(DegreePolicy::FromBlowup { blowup_bits: 1 }.cost(2, 6, 2, 3), 12);
-        // pilfflonk counts polynomials, not columns (A.1).
+        // pilfflonk counts polynomials, not columns.
         assert_eq!(DegreePolicy::Search { max: 9 }.cost(2, 2, 2, 1), 4);
     }
 

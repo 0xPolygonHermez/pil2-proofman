@@ -1,9 +1,10 @@
-//! `proofman-cli pilfflonk verify` (spec §4.5, plan M19) on the keys of the Fibonacci fixture,
-//! set up (grouped, the default, plan M22) with the ptau of `τ = 1` (plan N13). The proof is
-//! forged by `forgeProof` of `pilfflonk/js/test/proofs.js`, which opens anything since it knows
-//! `τ`; the prover's proofs are verified with a full-width `τ` in `pilfflonk_prove.rs` (M18). The
-//! command must exit with 0 on it, and with another status on a tampered copy, on malformed files
-//! and on every vkey `Vkey::validate` refuses, which the JS verifier must refuse too.
+//! `proofman-cli pilfflonk verify` (pilfflonk/docs/verifier.md#js-verifier) on the keys of the
+//! Fibonacci fixture, set up (grouped, the default) with the ptau of `τ = 1`
+//! (pilfflonk/docs/README.md#tests). The proof is forged by `forgeProof` of
+//! `pilfflonk/js/test/proofs.js`, which opens anything since it knows `τ`; the prover's proofs are
+//! verified with a full-width `τ` in `pilfflonk_prove.rs`. The command must exit with 0 on it, and
+//! with another status on a tampered copy, on malformed files and on every vkey `Vkey::validate`
+//! refuses, which the JS verifier must refuse too.
 //!
 //! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
 //! which must honour `prime`, and is `#[ignore]` without it. It needs Node.js:
@@ -24,7 +25,7 @@ use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::{JsonFile, PilfflonkGlobalInfo, Vkey, BN254_R};
 use serde_json::{json, Value};
 
-/// The Fibonacci's publics for the inputs 1 and 2 (plan M13, `pil-fflonk/runtime/public.json`).
+/// The Fibonacci's publics for the inputs 1 and 2 (`pil-fflonk/runtime/public.json`).
 const PUBLICS: [&str; 3] = ["1", "2", "590308608561184158373097535019708483037277117989374906445627411437315467687"];
 
 /// Writes the proof `forgeProof` forges for the vkey and the publics at the paths it is given.
@@ -152,7 +153,7 @@ fn it_verifies_a_proof_of_the_fibonacci_and_rejects_every_change() {
     };
     compile_fibonacci(&opts.airout_path);
     // More powers than the Fibonacci's largest degree, grouped by default: 513, the f of L1 and
-    // LLAST (plan M22).
+    // LLAST.
     write_tau_one_ptau(&opts.powers_of_tau, 1024).unwrap();
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
@@ -206,8 +207,8 @@ fn it_verifies_a_proof_of_the_fibonacci_and_rejects_every_change() {
         Refusal {
             name: "a challenge of stage 1",
             change: |v| v["numChallenges"] = json!([1]),
-            rust: "A.4 squeezes no challenge of stage 1",
-            js: "stage 1 has challenges, which A.4 never squeezes",
+            rust: "numChallenges [1] must start with 0",
+            js: "stage 1 has challenges",
         },
         Refusal {
             name: "challenges of a stage the layout does not have",

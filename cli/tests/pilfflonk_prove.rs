@@ -1,6 +1,6 @@
-//! `proofman-cli pilfflonk prove` (spec §4.4, plan M18) end to end: the setup (`setup-pilfflonk`),
-//! the prover's CLI and the JS verifier's (`pilfflonk verify`, M19), and the prover against the Rust
-//! oracle (M14), on three fixtures and their layouts (plans M22, M23):
+//! `proofman-cli pilfflonk prove` (pilfflonk/docs/README.md#pilfflonk-prove) end to end: the setup
+//! (`setup-pilfflonk`), the prover's CLI and the JS verifier's (`pilfflonk verify`), and the prover
+//! against the Rust oracle, on three fixtures and their layouts:
 //!
 //! - the Fibonacci, grouped with the default `--extra-muls 2` (its fixed columns in one `f` of
 //!   `k = 2`, `powerW = 2`), with `--extra-muls 0` (its committed columns in one `f` of `k = 3`, the
@@ -13,47 +13,52 @@
 //!   `{−1, 0, 1, 2}` and has constraints of degree up to 6, with the im pols the setup chooses by
 //!   default (one, `qDeg = 3`) and with `--max-constraint-degree 3` (three, `qDeg = 2`) and `2`
 //!   (eight, `qDeg = 1`), grouped and with `--no-packing`;
-//! - the synthetic pilouts of `pilfflonk/tests/data/domains.rs`, built in code (plan M24), whose
-//!   constraints hold on `firstRow`, `lastRow` and `everyFrame` of several `{offsetMin,
-//!   offsetMax}`: the prover's zerofiers on the coset, the JS verifier's at `ξ` and the oracle's
-//!   agree, and a witness that breaks a constraint at the edge row of its domain is refused;
-//! - `Q` split (plan M33): the fixture of the signed offsets, `qDeg = 3`, with `--max-q-degree 1`
-//!   and `2` (three pieces and two), grouped and with `--no-packing`; and a `--max-q-degree` that
-//!   does not split `Q`, which sets up the key of `Q` whole;
-//! - stage 2 (plans M30, M31): `pilfflonk/tests/fixtures/{sum_bus,prod_bus,prod_bus_im}`, a lookup on
-//!   the std's sum bus, with the std's default `MAX_CONSTRAINT_DEGREE` (an `im_col`) and with 4
-//!   (none), and a permutation on its product bus, without `im_col` and split by selectors into two
-//!   (two chained `im_col`), in `STD_MODE_ONE_INSTANCE`, grouped and with `--no-packing`: the prover
-//!   computes their stage-2 columns from the hints `im_col`, then `gprod_col` and `gsum_col`, with
-//!   the challenges of stage 2, which are the transcript's (A.4) and the JS verifier's; the columns
-//!   are the oracle's; the verifier accepts the proofs and rejects every change to one; and a
-//!   witness that breaks the bus is refused;
-//! - the pil-fflonk examples ported to PIL2 (plan M34, spec Annex G), `pilfflonk/tests/fixtures/
-//!   {plookup,permutation,connection,range_check,all}`, each on the std's sum bus and on its product
-//!   bus: grouped with pil-fflonk's `extraMuls`, as the stage-2 fixtures (and a broken bus is
-//!   refused), with `--no-packing`, and with `Q` split; `all`'s publics are pil-fflonk's;
-//! - the witness a witness library computes (plan M38c, D4), `--witness-lib` in place of
-//!   `--witness`: the libraries of `pilfflonk/tests/fixtures/{fibonacci,connection,all}/rs` prove the
-//!   same proofs as their generators' witness directories, which verify; and the command refuses a
-//!   STARK witness library, a file that is not a library, and public inputs the library cannot read,
-//!   and the flags that do not go together;
-//! - the Solidity verifier (plan M41, spec Fase 4, validation 1): for every fixture above, in the
+//! - the synthetic pilouts of `pilfflonk/tests/data/domains.rs`, built in code, whose constraints
+//!   hold on `firstRow`, `lastRow` and `everyFrame` of several `{offsetMin, offsetMax}`: the
+//!   prover's zerofiers on the coset, the JS verifier's at `ξ` and the oracle's agree, and a
+//!   witness that breaks a constraint at the edge row of its domain is refused;
+//! - `Q` split (pilfflonk/docs/protocol.md#q-pieces): the fixture of the signed offsets,
+//!   `qDeg = 3`, with `--max-q-degree 1` and `2` (three pieces and two), grouped and with
+//!   `--no-packing`; and a `--max-q-degree` that does not split `Q`, which sets up the key of `Q`
+//!   whole;
+//! - stage 2 (pilfflonk/docs/protocol.md#hint-columns):
+//!   `pilfflonk/tests/fixtures/{sum_bus,prod_bus,prod_bus_im}`, a lookup on the std's sum bus, with
+//!   the std's default `MAX_CONSTRAINT_DEGREE` (an `im_col`) and with 4 (none), and a permutation
+//!   on its product bus, without `im_col` and split by selectors into two (two chained `im_col`),
+//!   in `STD_MODE_ONE_INSTANCE`, grouped and with `--no-packing`: the prover computes their stage-2
+//!   columns from the hints `im_col`, then `gprod_col` and `gsum_col`, with the challenges of
+//!   stage 2, which are the transcript's (pilfflonk/docs/protocol.md#transcript) and the JS
+//!   verifier's; the columns are the oracle's; the verifier accepts the proofs and rejects every
+//!   change to one; and a witness that breaks the bus is refused;
+//! - the pil-fflonk examples ported to PIL2 (pilfflonk/docs/README.md#fixtures),
+//!   `pilfflonk/tests/fixtures/{plookup,permutation,connection,range_check,all}`, each on the std's
+//!   sum bus and on its product bus: grouped with pil-fflonk's `extraMuls`, as the stage-2 fixtures
+//!   (and a broken bus is refused), with `--no-packing`, and with `Q` split; `all`'s publics are
+//!   pil-fflonk's;
+//! - the witness a witness library computes (pilfflonk/docs/README.md#witness), `--witness-lib` in
+//!   place of `--witness`: the libraries of
+//!   `pilfflonk/tests/fixtures/{fibonacci,connection,all}/rs` prove the same proofs as their
+//!   generators' witness directories, which verify; and the command refuses a STARK witness
+//!   library, a file that is not a library, and public inputs the library cannot read, and the
+//!   flags that do not go together;
+//! - the Solidity verifier (pilfflonk/docs/verifier.md#tests): for every fixture above, in the
 //!   setups of its end to end, the verifier `pilfflonk-solidity` writes, compiled by solc 0.8.37,
 //!   accepts on Foundry v1.8.3 the prover's proof with the calldata of `pilfflonk calldata`, and
-//!   rejects it changed, as `pilfflonk verify` does (`pilfflonk/tests/data/foundry.rs`). The tools are
-//!   pinned, at the paths `PILFFLONK_FORGE` and `PILFFLONK_SOLC` name (spec §4.5, "Eines"), and the
-//!   test is `#[ignore]` without them;
-//! - the differential fuzzer of the Solidity verifier (plan M42, spec Fase 4, validation 2) on a
-//!   subset of those keys ([`FUZZ_KEYS`]): their proofs mutated in every way of
-//!   `pilfflonk/tests/data/fuzz.rs`, on which Foundry and the JS verifier must agree, and the gas of
-//!   each step of the verifier (validation 3). [`FUZZ_CASES`] cases with a fixed seed by default;
-//!   `PILFFLONK_FUZZ_CASES` sets another number, and `PILFFLONK_FUZZ_SEED` another seed.
+//!   rejects it changed, as `pilfflonk verify` does (`pilfflonk/tests/data/foundry.rs`). The tools
+//!   are pinned, at the paths `PILFFLONK_FORGE` and `PILFFLONK_SOLC` name
+//!   (pilfflonk/docs/verifier.md#tools), and the test is `#[ignore]` without them;
+//! - the differential fuzzer (pilfflonk/docs/verifier.md#differential-fuzzer) of the Solidity
+//!   verifier on a subset of those keys ([`FUZZ_KEYS`]): their proofs mutated in every way of
+//!   `pilfflonk/tests/data/fuzz.rs`, on which Foundry and the JS verifier must agree, and the gas
+//!   of each step of the verifier (pilfflonk/docs/verifier.md#gas). [`FUZZ_CASES`] cases with a
+//!   fixed seed by default; `PILFFLONK_FUZZ_CASES` sets another number, and `PILFFLONK_FUZZ_SEED`
+//!   another seed.
 //!
 //! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
-//! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`, plan N13):
-//! not the ptau of `τ = 1`, under which the blinding vanishes from every commitment and any proof
-//! verifies. With it, the verifier accepts the prover's proofs only if they are sound, and rejects
-//! every change to one.
+//! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`,
+//! pilfflonk/docs/README.md#tests): not the ptau of `τ = 1`, under which the blinding vanishes from
+//! every commitment and any proof verifies. With it, the verifier accepts the prover's proofs only
+//! if they are sound, and rejects every change to one.
 //!
 //! Pilouts are not versioned: the test compiles the fixtures with the compiler `PIL2C_EXEC` names,
 //! which must honour `prime`, and is `#[ignore]` without it. Those of the domains build their
@@ -67,12 +72,11 @@
 //!
 //! Its tests call the C++ core in this process, each from its own thread, which OpenMP makes a root
 //! with a team of one thread per CPU, kept while that thread lives. libomp 14 (Ubuntu 22.04's) can
-//! crash with SIGSEGV once the teams outgrow its first table of threads (4 per CPU): it replaces the
-//! table while the workers it has just started may still be reading the old one (plan M26; the lock of
+//! crash with SIGSEGV once the teams outgrow its first table of threads (4 per CPU): it replaces
+//! the table while the workers it has just started may still be reading the old one (the lock of
 //! `setup/pilfflonk/tests/setup/common.rs`, `cpp_core`, has the details). It has not happened in
-//! these tests, but nothing rules it out: run them with `--test-threads 2`, as above (and CI,
-//! plan M28), which keeps the teams alive, counting those of tests that are just ending, within
-//! that table.
+//! these tests, but nothing rules it out: run them with `--test-threads 2`, as above (and CI),
+//! which keeps the teams alive, counting those of tests that are just ending, within that table.
 
 #[path = "../../pilfflonk/tests/data/all.rs"]
 mod all;
@@ -177,25 +181,26 @@ enum Program {
     Fibonacci,
     Packed,
     Signed,
-    /// A lookup on the std's sum bus (`tests/fixtures/sum_bus`, plan M30), with the std's default
-    /// `MAX_CONSTRAINT_DEGREE`: an `im_col` (plan M31).
+    /// A lookup on the std's sum bus (`tests/fixtures/sum_bus`), with the std's default
+    /// `MAX_CONSTRAINT_DEGREE`: an `im_col`.
     SumBus,
     /// The same with the std's `MAX_CONSTRAINT_DEGREE` raised to 4 (`sum_bus_degree4.pil`): no
     /// `im_col`.
     SumBusDegree4,
-    /// A permutation on the std's product bus (`tests/fixtures/prod_bus`, plan M30).
+    /// A permutation on the std's product bus (`tests/fixtures/prod_bus`).
     ProdBus,
     /// A permutation on the product bus split by selectors, with two chained `im_col`
-    /// (`tests/fixtures/prod_bus_im`, plan M31).
+    /// (`tests/fixtures/prod_bus_im`).
     ProdBusIm,
     /// A pilout of `tests/data/domains.rs`, built in code.
     Domains(domains::Air),
-    /// A pil-fflonk example ported to PIL2 on a bus of the std (plan M34),
+    /// A pil-fflonk example ported to PIL2 on a bus of the std,
     /// `tests/fixtures/<example>/<example>_<bus>.pil`.
     Example(Example, Bus),
 }
 
-/// The pil-fflonk examples ported to PIL2 (plan M34, spec Annex G), in `STD_MODE_ONE_INSTANCE`.
+/// The pil-fflonk examples ported to PIL2 (pilfflonk/docs/README.md#fixtures), in
+/// `STD_MODE_ONE_INSTANCE`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Example {
     Plookup,
@@ -280,7 +285,7 @@ impl Bus {
 }
 
 impl Program {
-    /// M13's generator for the Fibonacci (inputs [1, 2]), `tests/data/{packed,signed}.rs` for the
+    /// The generator of the Fibonacci (inputs [1, 2]), `tests/data/{packed,signed}.rs` for the
     /// others.
     fn witness(self) -> Witness {
         match self {
@@ -491,8 +496,9 @@ fn seed_bytes(hex: &str) -> [u8; 32] {
 }
 
 /// That `Q` evaluated in parts of every size, from one coset of `H` to the whole extended coset
-/// (plan M39, `ProveOptions::q_part_bits`), gives the proof in `dir`, which `pilfflonk prove`
-/// made with `seed` and its default parts, byte for byte: the same `Q`, and so the same proof.
+/// (pilfflonk/docs/protocol.md#q-in-parts, `ProveOptions::q_part_bits`), gives the proof in `dir`,
+/// which `pilfflonk prove` made with `seed` and its default parts, byte for byte: the same `Q`, and
+/// so the same proof.
 fn the_parts_of_q_give_the_same_proof(f: &Fixture, seed: &str, dir: &Path) {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let witness = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
@@ -511,10 +517,11 @@ fn the_parts_of_q_give_the_same_proof(f: &Fixture, seed: &str, dir: &Path) {
     }
 }
 
-/// That `pilfflonk prove --gpu` (spec Fase 5, plan M43) gives the proof in `dir`, which `pilfflonk
-/// prove` made on the CPU with `seed`, `proof.json` and `publics.json` byte for byte, where there is a
-/// GPU ([`gpu_available`]: a build with CUDA, on a machine with one). Without one, that `--gpu` is
-/// refused, saying why, and writes nothing; `PILFFLONK_GPU=1` makes a missing GPU a failure instead.
+/// That `pilfflonk prove --gpu` (pilfflonk/docs/performance.md#gpu) gives the proof in `dir`, which
+/// `pilfflonk prove` made on the CPU with `seed`, `proof.json` and `publics.json` byte for byte,
+/// where there is a GPU ([`gpu_available`]: a build with CUDA, on a machine with one). Without one,
+/// that `--gpu` is refused, saying why, and writes nothing; `PILFFLONK_GPU=1` makes a missing GPU a
+/// failure instead.
 fn the_gpu_gives_the_same_proof(f: &Fixture, seed: &str, dir: &Path) {
     let out = f.dir.file("gpu");
     let (key, witness) = (f.proving_key.to_str().unwrap(), f.witness.to_str().unwrap());
@@ -613,9 +620,9 @@ fn proves_and_rejects_every_change(f: &Fixture, commitments: &[&str], evaluation
     rejected(&publics, &other, "the evaluations of another proof");
 }
 
-/// The Fibonacci grouped by default (plan M22): `L1` and `LLAST` in `f0`, of `k = 2`, the vkey's;
-/// the im pol, fused to `{0, 1}`, `l2` and `l1` in `f1` to `f3`, and `Q` in `f4`. The im pol's
-/// evaluation at `ξ·ω`, the pair its fusion adds, is in the proof.
+/// The Fibonacci grouped by default: `L1` and `LLAST` in `f0`, of `k = 2`, the vkey's; the im pol,
+/// fused to `{0, 1}`, `l2` and `l1` in `f1` to `f3`, and `Q` in `f4`. The im pol's evaluation at
+/// `ξ·ω`, the pair its fusion adds, is in the proof.
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_grouped_fibonacci_and_the_verifier_rejects_every_change() {
@@ -675,8 +682,8 @@ fn the_prover_proves_the_fibonacci_with_its_columns_in_one_f() {
     );
 }
 
-/// The Fibonacci with `--no-packing` (plan R1, the first slice's layout): an `f` of `k = 1` per
-/// column, `L1` and `LLAST` in `f0` and `f1`.
+/// The Fibonacci with `--no-packing` (pilfflonk/docs/protocol.md#unpacked-layout): an `f` of
+/// `k = 1` per column, `L1` and `LLAST` in `f0` and `f1`.
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_unpacked_fibonacci_and_the_verifier_rejects_every_change() {
@@ -727,7 +734,8 @@ fn the_prover_proves_a_layout_that_packs_and_splits_groups() {
     let evaluations: Vec<&str> = evaluations.iter().map(String::as_str).collect();
     proves_and_rejects_every_change(&f, &["W", "Wp", "f2", "f3", "f4", "f5"], &evaluations);
 
-    // No valid split of the eleven without an extra mul (A.2): the setup refuses, and says why.
+    // No valid split of the eleven without an extra mul
+    // (pilfflonk/docs/protocol.md#grouping-errors): the setup refuses, and says why.
     let dir = TestDir::new("packed_no_extra_muls");
     let opts = SetupPilfflonkOptions {
         airout_path: f.pilout.clone(),
@@ -745,8 +753,9 @@ fn n_im_pols(info: &PilfflonkInfo) -> usize {
 }
 
 /// The names of the evaluations of a proof of `info`, sorted: the evMap's `(column, offset)`, named
-/// as spec A.6 says (`<column>` and `[i]` per entry of its lengths, then `""` for `ξ`, `w` for
-/// `ξ·ω` and `w<s>` for `ξ·ω^s`), the pieces `Q0 … Q<m−1>` if `Q` is split, and `inv` and `invZh`.
+/// as in the proof (pilfflonk/docs/formats.md#proof-names: `<column>` and `[i]` per entry of its
+/// lengths, then `""` for `ξ`, `w` for `ξ·ω` and `w<s>` for `ξ·ω^s`), the pieces `Q0 … Q<m−1>` if
+/// `Q` is split, and `inv` and `invZh`.
 fn evaluation_names(info: &PilfflonkInfo) -> Vec<String> {
     let m = info.q_split().unwrap().n_pieces();
     let pieces = (0..m).filter(|_| m > 1).map(|i| format!("Q{i}"));
@@ -771,7 +780,7 @@ fn evaluation_names(info: &PilfflonkInfo) -> Vec<String> {
 }
 
 /// The names of the commitments of a proof of `info`, sorted: `W`, `Wp` and `f<g>` for each `f` not
-/// of the fixed columns (A.5, A.6).
+/// of the fixed columns (pilfflonk/docs/formats.md#proof-names).
 fn commitment_names(info: &PilfflonkInfo) -> Vec<String> {
     let fs = info.layout.0.iter().enumerate().filter(|(_, f)| f.stage > 0).map(|(g, _)| format!("f{g}"));
     let mut names: Vec<String> = ["W", "Wp"].map(String::from).into_iter().chain(fs).collect();
@@ -791,15 +800,15 @@ fn proves_its_layout_and_rejects_every_change(f: &Fixture) {
 /// The offsets the signed fixture reads its columns at.
 const SIGNED_OFFSETS: [i64; 4] = [-1, 0, 1, 2];
 
-/// The fixture of the signed offsets (`tests/fixtures/signed`, plan M23), grouped by default and
-/// with the im pol the setup chooses by default: one, `'a·a·a'·a'2`, which brings the constraint of
-/// degree 6 down to the 4 of the next one, and `qDeg = 3`. `K`, read at −1 only, and `P`, at 2
-/// only, are fused to `{−1, 0, 2}` in an `f` of `k = 2`; `L1`, `LLAST` and `WIN` are in one of
-/// `k = 3`. Every committed column of stage 1, the im pol too, is fused to `{−1, 0, 1, 2}` (the im
-/// pol, which the prover computes on `H` from rows that wrap around, is opened at `ξ·ω^−1`, `ξ·ω`
-/// and `ξ·ω^2` as well), and they go in `f` of `k = 1, 3, 3`: `powerW = 6`. The evMap interleaves
-/// fixed and committed columns, and ends with the pairs the fusions add, of both. `Q` has
-/// `qDeg·N + (qDeg + 1)·|O|max + 1` coefficients (A.1).
+/// The fixture of the signed offsets (`tests/fixtures/signed`), grouped by default and with the im
+/// pol the setup chooses by default: one, `'a·a·a'·a'2`, which brings the constraint of degree 6
+/// down to the 4 of the next one, and `qDeg = 3`. `K`, read at −1 only, and `P`, at 2 only, are
+/// fused to `{−1, 0, 2}` in an `f` of `k = 2`; `L1`, `LLAST` and `WIN` are in one of `k = 3`. Every
+/// committed column of stage 1, the im pol too, is fused to `{−1, 0, 1, 2}` (the im pol, which the
+/// prover computes on `H` from rows that wrap around, is opened at `ξ·ω^−1`, `ξ·ω` and `ξ·ω^2` as
+/// well), and they go in `f` of `k = 1, 3, 3`: `powerW = 6`. The evMap interleaves fixed and
+/// committed columns, and ends with the pairs the fusions add, of both. `Q` has
+/// `qDeg·N + (qDeg + 1)·|O|max + 1` coefficients (pilfflonk/docs/protocol.md#degrees).
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_signed_offsets_with_the_im_pol_the_setup_chooses() {
@@ -891,15 +900,16 @@ fn q_layout(info: &PilfflonkInfo) -> Vec<(Vec<&str>, u64, u64)> {
     fs.map(|f| (f.pols.iter().map(|p| p.name.as_str()).collect(), f.k, f.degree)).collect()
 }
 
-/// `Q` split (spec A.1, A.3; plan M33): the fixture of the signed offsets, `qDeg = 3` on `N = 32`
-/// with `|O|_max = 4` (`Q` of `3·32 + 4·4 + 1 = 113` coefficients), with `--max-q-degree 1`, three
-/// pieces of `32 + 2`, `32 + 2` and `113 − 64 = 49` coefficients, and `2`, two of `64 + 2` and `49`.
-/// Grouped by default, the pieces are one `f` (their group is not split: the extra muls go to the
-/// committed columns, as without the split), `Q2, Q1, Q0` of `k = 3` and `Q1, Q0` of `k = 2`, of
-/// A.2's cost; unpacked, an `f` each. The proof holds a commitment per `f` and each `Q_i(ξ)`, after
-/// the other evaluations; the verifier accepts it, checks that the pieces add up to `Q(ξ)` and
-/// rejects any change, to a piece's commitment or evaluation too; and the pieces add up to the
-/// oracle's `Q(ξ)`.
+/// `Q` split (pilfflonk/docs/protocol.md#q-pieces): the fixture of the signed offsets, `qDeg = 3`
+/// on `N = 32` with `|O|_max = 4` (`Q` of `3·32 + 4·4 + 1 = 113` coefficients), with
+/// `--max-q-degree 1`, three pieces of `32 + 2`, `32 + 2` and `113 − 64 = 49` coefficients, and
+/// `2`, two of `64 + 2` and `49`. Grouped by default, the pieces are one `f` (their group is not
+/// split: the extra muls go to the committed columns, as without the split), `Q2, Q1, Q0` of
+/// `k = 3` and `Q1, Q0` of `k = 2`, of the grouping's cost
+/// (pilfflonk/docs/protocol.md#grouping-rules); unpacked, an `f` each. The proof holds a commitment
+/// per `f` and each `Q_i(ξ)`, after the other evaluations; the verifier accepts it, checks that the
+/// pieces add up to `Q(ξ)` and rejects any change, to a piece's commitment or evaluation too; and
+/// the pieces add up to the oracle's `Q(ξ)`.
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_a_split_q_and_the_verifier_rejects_every_change() {
@@ -929,8 +939,8 @@ fn the_prover_proves_a_split_q_and_the_verifier_rejects_every_change() {
         proves_its_layout_and_rejects_every_change(&f);
         agrees_with_the_oracle(&f);
 
-        // The verifier checks that the pieces add up to Q(ξ) (A.1) before the opening: any Q_i(ξ) off
-        // by one fails there.
+        // The verifier checks that the pieces add up to Q(ξ) before the opening: any Q_i(ξ) off by
+        // one fails there.
         let proof = f.dir.file("pieces");
         let run = prove_cli(&f.proving_key, &f.witness, &proof, Some(SEED_A));
         assert!(run.status.success(), "{name}: prove: {}", output(&run));
@@ -942,16 +952,16 @@ fn the_prover_proves_a_split_q_and_the_verifier_rejects_every_change() {
             write_json(&tampered, &json);
             let out = verify(&f.vkey, &proof.join("publics.json"), &tampered);
             assert!(!out.status.success(), "{name}: {piece}");
-            assert!(output(&out).contains("The pieces of Q do not add up to Q(ξ) (A.1)"), "{name}: {}", output(&out));
+            assert!(output(&out).contains("The pieces of Q do not add up to Q(ξ)"), "{name}: {}", output(&out));
         }
     }
 }
 
-/// A `--max-q-degree` that does not split `Q` (`qDeg ≤ maxQDegree`, A.1): the fixture of the signed
-/// offsets with `--max-constraint-degree 3` (`qDeg = 2`) and `--max-q-degree 2`, and the Fibonacci
-/// (`qDeg = 1`) with `--max-q-degree 1`, grouped and unpacked, write the key of `Q` whole, byte for
-/// byte, with `maxQDegree = 0`, but for the globalInfo, which records the option; and it proves and
-/// verifies.
+/// A `--max-q-degree` that does not split `Q` (`qDeg ≤ maxQDegree`,
+/// pilfflonk/docs/protocol.md#q-pieces): the fixture of the signed offsets with
+/// `--max-constraint-degree 3` (`qDeg = 2`) and `--max-q-degree 2`, and the Fibonacci (`qDeg = 1`)
+/// with `--max-q-degree 1`, grouped and unpacked, write the key of `Q` whole, byte for byte, with
+/// `maxQDegree = 0`, but for the globalInfo, which records the option; and it proves and verifies.
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn a_max_q_degree_that_does_not_split_q_sets_up_q_whole() {
@@ -1021,9 +1031,10 @@ fn a_witness_that_breaks_a_constraint_across_the_wrap_is_refused() {
     }
 }
 
-/// The setups of each domain AIR the tests go through: `(name, --max-constraint-degree, packing,
-/// im pols, qDeg)`. By default the domain constraints, of degree 2, have degree 3 with their `Zi`
-/// (δ = 1, A.1), and the search keeps them, `qDeg = 2`; with 2, each gets an im pol, `qDeg = 1`.
+/// The setups of each domain AIR the tests go through:
+/// `(name, --max-constraint-degree, packing, im pols, qDeg)`. By default the domain constraints, of
+/// degree 2, have degree 3 with their `Zi` (δ = 1, pilfflonk/docs/protocol.md#degree-search), and
+/// the search keeps them, `qDeg = 2`; with 2, each gets an im pol, `qDeg = 1`.
 fn domain_setups(air: domains::Air) -> Vec<(String, u64, Packing, usize, u64)> {
     let n_rules = air.rules().len();
     [
@@ -1052,11 +1063,12 @@ const zi = (point) => computeZi(curve, JSON.parse(boundaries), Number(nBits), cu
 console.log(JSON.stringify(points.map((p) => zi(p).map((z) => curve.Fr.toString(z, 10)))));
 "#;
 
-/// `Zi` of each boundary of `info` at each of `points` (spec A.1, A.6): `1/Z_H` for `everyRow` and
-/// `Z_H/Z_D` for the others, as the oracle computes `Z_D` (its closed forms, which its own tests
-/// check against the products over the rows) and as the JS verifier does (`computeZi`). The C++
-/// prover's are on the coset, and the proofs check them: `Q` is a polynomial only if they are
-/// `Z_H/Z_D` there, and `Q(ξ)` is the oracle's.
+/// `Zi` of each boundary of `info` at each of `points`
+/// (pilfflonk/docs/protocol.md#constraint-polynomial): `1/Z_H` for `everyRow` and `Z_H/Z_D` for the
+/// others, as the oracle computes `Z_D` (its closed forms, which its own tests check against the
+/// products over the rows) and as the JS verifier does (`computeZi`). The C++ prover's are on the
+/// coset, and the proofs check them: `Q` is a polynomial only if they are `Z_H/Z_D` there, and
+/// `Q(ξ)` is the oracle's.
 fn zerofiers_agree(info: &PilfflonkInfo, points: &[Fr]) {
     let domain = |b: &Boundary| match *b {
         Boundary::EveryRow => Domain::EveryRow,
@@ -1096,11 +1108,11 @@ fn zerofiers_agree(info: &PilfflonkInfo, points: &[Fr]) {
     assert_eq!(js, oracle, "{}: the JS verifier's Zi and the oracle's", info.name);
 }
 
-/// The E2E of a domain AIR (plan M24), for each of its [`domain_setups`]: its boundaries are
-/// `boundaries`; the prover proves its witness, the verifier accepts the proofs and rejects every
-/// change to one; the prover agrees with the oracle at `ξ`; the JS verifier's `Zi` are the
-/// oracle's at `ξ` and at other points; and the witness that breaks one rule at the first row of
-/// its domain or at the last, and nowhere else, is refused.
+/// The E2E of a domain AIR, for each of its [`domain_setups`]: its boundaries are `boundaries`; the
+/// prover proves its witness, the verifier accepts the proofs and rejects every change to one; the
+/// prover agrees with the oracle at `ξ`; the JS verifier's `Zi` are the oracle's at `ξ` and at
+/// other points; and the witness that breaks one rule at the first row of its domain or at the
+/// last, and nowhere else, is refused.
 fn proves_a_domain(air: domains::Air, boundaries: &[Boundary]) {
     for (name, degree, packing, im_pols, q_deg) in domain_setups(air) {
         let f = fixture_of_degree(&name, Program::Domains(air), packing, degree);
@@ -1141,10 +1153,11 @@ fn breaks_at_the_edges_are_refused(f: &Fixture, air: domains::Air) {
     }
 }
 
-/// The `δ = 1` of A.1: `qDeg = max_i(deg c_i + δ_i) − 1`. The domain AIRs set up with their
-/// constraints on their domains and, as a control, with every constraint on `everyRow`: by default
-/// `qDeg` is 2 on the domains and 1 on `everyRow`, with no im pols; with `--max-constraint-degree
-/// 2`, each rule's constraint needs an im pol on its domain and none on `everyRow`, and `qDeg = 1`.
+/// The `δ = 1` of the degree search (pilfflonk/docs/protocol.md#degree-search):
+/// `qDeg = max_i(deg c_i + δ_i) − 1`. The domain AIRs set up with their constraints on their
+/// domains and, as a control, with every constraint on `everyRow`: by default `qDeg` is 2 on the
+/// domains and 1 on `everyRow`, with no im pols; with `--max-constraint-degree 2`, each rule's
+/// constraint needs an im pol on its domain and none on `everyRow`, and `qDeg = 1`.
 #[test]
 fn a_domain_adds_one_to_the_degree_of_its_constraints() {
     use pil2_pilout::pilout::constraint::{self, Constraint as C};
@@ -1189,7 +1202,9 @@ fn the_prover_proves_first_row_constraints() {
     proves_a_domain(domains::Air::FirstRow, &[Boundary::EveryRow, Boundary::FirstRow]);
 }
 
-/// Two `lastRow` constraints: `Z_D = X − ω^(N−1)` (A.1), and not the `ω^N = 1` of spec F.8.
+/// Two `lastRow` constraints: `Z_D = X − ω^(N−1)`
+/// (pilfflonk/docs/protocol.md#constraint-polynomial), and not the `ω^N = 1` of the STARK's
+/// `setup_ctx.hpp` (pilfflonk/docs/README.md#stark-lastrow-zerofier).
 #[test]
 #[ignore = "needs Node.js"]
 fn the_prover_proves_last_row_constraints() {
@@ -1223,7 +1238,7 @@ fn a_witness_that_breaks_a_constraint_is_refused() {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
     let mut witness = Witness::from_source(&source).unwrap();
-    // l1 at row 100: the transition constraints fail at rows 99 and 100 (as the oracle says, M14).
+    // l1 at row 100: the transition constraints fail at rows 99 and 100 (as the oracle says).
     let cell = witness.instances[0].stage1.get(100, 0).unwrap();
     let changed = FrBytes::from_decimal(&(big(&cell) + 1u32).to_string()).unwrap();
     witness.instances[0].stage1.set(100, 0, changed).unwrap();
@@ -1253,12 +1268,13 @@ fn big(v: &FrBytes) -> num_bigint::BigUint {
     num_bigint::BigUint::from_bytes_le(&v.to_le_bytes())
 }
 
-/// The prover of the grouped `f` agrees with the oracle at `ξ = xiSeed^powerW` (A.2, rule 5): every
-/// evaluation of a fixed column, at each offset its `f` opens it at (those a fusion adds too), is
-/// the oracle's exactly; a committed one is blinded, and is not; and `Q(ξ)`, folded by the oracle
-/// over the proof's evaluations, is the prover's, and, if `Q` is split, `Σ_i ξ^(i·M·N)·Q_i(ξ)` of the
-/// proof's pieces (A.1), which follow the columns' evaluations in the order of the layout. Returns
-/// that `ξ`.
+/// The prover of the grouped `f` agrees with the oracle at `ξ = xiSeed^powerW`
+/// (pilfflonk/docs/protocol.md#roots): every evaluation of a fixed column, at each offset its `f`
+/// opens it at (those a fusion adds too), is the oracle's exactly; a committed one is blinded, and
+/// is not; and `Q(ξ)`, folded by the oracle over the proof's evaluations, is the prover's, and, if
+/// `Q` is split, `Σ_i ξ^(i·M·N)·Q_i(ξ)` of the proof's pieces
+/// (pilfflonk/docs/protocol.md#q-pieces), which follow the columns' evaluations in the order of the
+/// layout. Returns that `ξ`.
 fn agrees_with_the_oracle(f: &Fixture) -> Fr {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
@@ -1275,7 +1291,7 @@ fn agrees_with_the_oracle(f: &Fixture) -> Fr {
     assert!(oracle.check(&values).unwrap().is_empty(), "the generator's witness satisfies the AIR");
 
     // Each evaluation of the proof, by its column (the oracle's) and offset: the evMap's const
-    // entries, then its cm ones (A.4 step 4).
+    // entries, then its cm ones (pilfflonk/docs/protocol.md#transcript, step 4).
     let column = |t: PolType, id: u64| -> ColumnRef {
         match t {
             PolType::Const => ColumnRef::Fixed(id as usize),
@@ -1309,8 +1325,9 @@ fn agrees_with_the_oracle(f: &Fixture) -> Fr {
         let expected = oracle.column_at(&values, c, offset, &xi).unwrap();
         assert_eq!(at_xi[&(c, offset)], expected, "{c:?} at ξ·ω^{offset}");
     }
-    // The committed ones are blinded (A.3): not the oracle's interpolants at ξ (the first column of
-    // stage 1 the proof opens there, as a column no constraint reads is not committed, spec A.2) …
+    // The committed ones are blinded (pilfflonk/docs/protocol.md#blinding): not the oracle's
+    // interpolants at ξ (the first column of stage 1 the proof opens there, as a column no
+    // constraint reads is not committed, pilfflonk/docs/protocol.md#layout) …
     let first = at_xi
         .keys()
         .find_map(|&(c, offset)| (matches!(c, ColumnRef::Witness { stage: 1, .. }) && offset == 0).then_some(c))
@@ -1351,7 +1368,7 @@ fn agrees_with_the_oracle(f: &Fixture) -> Fr {
 
 /// The oracle's values of the instance of `source`: its stage-1 columns and publics, and for each
 /// stage `s` from 2 on, the challenges of the proof (`challenges`) and the columns the std's hints
-/// give with them (plan M30).
+/// give with them (pilfflonk/docs/protocol.md#hint-columns).
 fn oracle_values(
     oracle: &AirOracle,
     source: &impl WitnessSource,
@@ -1452,9 +1469,9 @@ fn the_prover_refuses_a_proving_key_whose_files_disagree() {
         "{err}"
     );
 
-    // A .const of the right size and canonical values, but not the one the vkey was set up with
-    // (plan M26): the prover would make proofs that do not verify, and refuses the key instead.
-    // Row 5 of its first fixed column, 0 in both L1 and LLAST, becomes 1.
+    // A .const of the right size and canonical values, but not the one the vkey was set up with:
+    // the prover would make proofs that do not verify, and refuses the key instead. Row 5 of its
+    // first fixed column, 0 in both L1 and LLAST, becomes 1.
     let mut bytes = good_constants.clone();
     let n_fixed = f.info().const_pols_map.len();
     assert_eq!(bytes[5 * n_fixed * 32], 0);
@@ -1489,7 +1506,8 @@ fn the_prover_refuses_a_proving_key_whose_files_disagree() {
 }
 
 /// Prints, for a vkey, publics and proof, the challenges the JS verifier's `computeChallenges`
-/// derives from them (A.4): those of each stage from 2 on, `std_vc` and `xiSeed`, in decimal.
+/// derives from them (pilfflonk/docs/protocol.md#transcript): those of each stage from 2 on,
+/// `std_vc` and `xiSeed`, in decimal.
 const COMPUTE_CHALLENGES: &str = r#"
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -1510,8 +1528,9 @@ for (let stage = 2; stage <= vk.nStages; stage++) stages.push((c.stages[stage] ?
 console.log(JSON.stringify({ stages, stdVc: s(c.stdVc), xiSeed: s(c.xiSeed) }));
 "#;
 
-/// The challenges of the prover's transcript are the JS verifier's on its proof (A.4): of stage 2
-/// (`numChallenges[1]` of them), `std_vc` and `xiSeed`. Returns the prover's.
+/// The challenges of the prover's transcript are the JS verifier's on its proof
+/// (pilfflonk/docs/protocol.md#transcript): of stage 2 (`numChallenges[1]` of them), `std_vc` and
+/// `xiSeed`. Returns the prover's.
 fn the_transcripts_agree(f: &Fixture) -> ProofChallenges {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
@@ -1538,10 +1557,10 @@ fn the_transcripts_agree(f: &Fixture) -> ProofChallenges {
 }
 
 /// The prover's columns of every stage (`stage_columns`, with the seed of a proof: the same
-/// challenges as its) are the oracle's (plan M30): the witness's of stage 1, and from stage 2 on,
-/// with the challenges of that proof, the columns the std's hints give, which the oracle computes
-/// from the pilout's hints alone, row after row, and the im pols, the values of their expressions.
-/// Returns the prover's stage-2 columns.
+/// challenges as its) are the oracle's: the witness's of stage 1, and from stage 2 on, with the
+/// challenges of that proof, the columns the std's hints give, which the oracle computes from the
+/// pilout's hints alone, row after row, and the im pols, the values of their expressions. Returns
+/// the prover's stage-2 columns.
 fn stage_columns_are_the_oracles(f: &Fixture) -> Vec<Vec<FrBytes>> {
     let pk = ProvingKey::load(&f.proving_key).unwrap();
     let source = FileWitnessSource::open(&f.witness, &pk.witness_shape().unwrap()).unwrap();
@@ -1572,11 +1591,11 @@ fn stage_columns_are_the_oracles(f: &Fixture) -> Vec<Vec<FrBytes>> {
     stages.columns[1].clone()
 }
 
-/// A fixture of the std's buses of stage 2 (plans M30, M31, M34), whose bus has the stage-2 column
-/// `bus` and the hints `hints` (the std's, in the pilout's order): two stages, with the challenges
-/// `std_alpha` and `std_gamma` of stage 2, `numChallenges = [0, 2]`. The prover proves, the verifier
-/// accepts the proof and rejects any change to it or to its publics; the prover's transcript is the
-/// JS verifier's; its stage-2 columns, the `im_col` ones too, and `Q(ξ)`, the oracle's. The bus's
+/// A fixture of the std's buses of stage 2, whose bus has the stage-2 column `bus` and the hints
+/// `hints` (the std's, in the pilout's order): two stages, with the challenges `std_alpha` and
+/// `std_gamma` of stage 2, `numChallenges = [0, 2]`. The prover proves, the verifier accepts the
+/// proof and rejects any change to it or to its publics; the prover's transcript is the JS
+/// verifier's; its stage-2 columns, the `im_col` ones too, and `Q(ξ)`, the oracle's. The bus's
 /// column ends at `last`, 0 for a running sum and 1 for a running product, but neither it nor any
 /// `im_col` column is constant.
 fn proves_a_bus_of_stage_2(f: &Fixture, name: &str, bus: &str, last: FrBytes, hints: &[HintKind]) {
@@ -1613,12 +1632,12 @@ fn proves_a_bus_of_stage_2(f: &Fixture, name: &str, bus: &str, last: FrBytes, hi
     }
 }
 
-/// The stage-2 fixtures (plans M30, M31): a lookup of pairs on the std's sum bus and a permutation of
-/// pairs on its product bus, each with its hint (`gsum_col`, `gprod_col`), in `STD_MODE_ONE_INSTANCE`,
-/// and the `im_col` hints of the std's default `MAX_CONSTRAINT_DEGREE` (3): the sum bus has one, which
-/// its `gsum_col` reads, and with the degree raised to 4 none; the product bus of `prod_bus` none, and
-/// that of `prod_bus_im` two, the second reading the first and its `gprod_col` the second. Grouped by
-/// default and with `--no-packing`, each as [`proves_a_bus_of_stage_2`] says.
+/// The stage-2 fixtures: a lookup of pairs on the std's sum bus and a permutation of pairs on its
+/// product bus, each with its hint (`gsum_col`, `gprod_col`), in `STD_MODE_ONE_INSTANCE`, and the
+/// `im_col` hints of the std's default `MAX_CONSTRAINT_DEGREE` (3): the sum bus has one, which its
+/// `gsum_col` reads, and with the degree raised to 4 none; the product bus of `prod_bus` none, and
+/// that of `prod_bus_im` two, the second reading the first and its `gprod_col` the second. Grouped
+/// by default and with `--no-packing`, each as [`proves_a_bus_of_stage_2`] says.
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_std_buses_of_stage_2() {
@@ -1715,13 +1734,13 @@ fn proves_and_verifies(f: &Fixture, name: &str) {
     assert!(output(&rejected).contains("INVALID: the proof does not verify"), "{name}: {}", output(&rejected));
 }
 
-/// Pil-fflonk's publics of `all`, `runtime/public.json`: `[in1, in2, out]` for the inputs `[1, 2]`
-/// (plan M20).
+/// Pil-fflonk's publics of `all`, `runtime/public.json`: `[in1, in2, out]` for the inputs `[1, 2]`.
 const PIL_FFLONK_PUBLICS: [&str; 3] =
     ["1", "2", "590308608561184158373097535019708483037277117989374906445627411437315467687"];
 
 /// The names of the columns of stage 2 of `info` but the im pols, the std's, as the layout and the
-/// proof name them (A.6): `<name>` and `[i]` per entry of its lengths, in the order of `cmPolsMap`.
+/// proof name them (pilfflonk/docs/formats.md#proof-names): `<name>` and `[i]` per entry of its
+/// lengths, in the order of `cmPolsMap`.
 fn stage_2_columns(info: &PilfflonkInfo) -> Vec<String> {
     info.cm_pols_map
         .iter()
@@ -1730,22 +1749,23 @@ fn stage_2_columns(info: &PilfflonkInfo) -> Vec<String> {
         .collect()
 }
 
-/// The validations of the spec's Fase 2 (plan M34) on a pil-fflonk example ported to PIL2, on the
-/// std's sum bus and on its product bus, whose hints are `hints` (the std's, in the pilout's order),
-/// whose stage-2 columns are named `columns` ([`stage_2_columns`]: the setup indexes those the std
-/// names alike, plan M34b) and whose `Q` splits in `pieces` with `--max-constraint-degree 3
-/// --max-q-degree 1`:
+/// A pil-fflonk example ported to PIL2 (pilfflonk/docs/README.md#fixtures), on the std's sum bus
+/// and on its product bus, whose hints are `hints` (the std's, in the pilout's order), whose
+/// stage-2 columns are named `columns` ([`stage_2_columns`]: the setup indexes those the std names
+/// alike, pilfflonk/docs/formats.md#proof-names) and whose `Q` splits in `pieces` with
+/// `--max-constraint-degree 3 --max-q-degree 1`:
 ///
-/// - validation 1: grouped with pil-fflonk's `extraMuls`, with `--no-packing`, and with `Q` split,
-///   the prover proves and the verifier accepts the proof; grouped, it rejects any change to it or to
-///   its publics (and unpacked or split, a changed evaluation), and the prover's transcript is the JS
+/// - grouped with pil-fflonk's `extraMuls`, with `--no-packing`, and with `Q` split, the prover
+///   proves and the verifier accepts the proof; grouped, it rejects any change to it or to its
+///   publics (and unpacked or split, a changed evaluation), and the prover's transcript is the JS
 ///   verifier's; split, the pieces add up to the oracle's `Q(ξ)`. `Q` has one piece if `qDeg = 1`:
-///   the search of A.1 chooses one im pol and `qDeg = 1` over none and 2 whatever the
-///   `--max-constraint-degree`, and a `--max-q-degree` of 1 sets `Q` up whole (plan M33);
-/// - validation 2: a witness that breaks the bus fails its last row only, as the oracle says, and
-///   the prover refuses it: there is no proof of it for the verifier to reject (`check` names the
-///   constraint, `pilfflonk_check.rs`);
-/// - validation 3: the prover's stage-2 columns are the oracle's.
+///   the degree search (pilfflonk/docs/protocol.md#degree-search) chooses one im pol and `qDeg = 1`
+///   over none and 2 whatever the `--max-constraint-degree`, and a `--max-q-degree` of 1 sets `Q`
+///   up whole;
+/// - a witness that breaks the bus fails its last row only, as the oracle says, and the prover
+///   refuses it: there is no proof of it for the verifier to reject (`check` names the constraint,
+///   `pilfflonk_check.rs`);
+/// - the prover's stage-2 columns are the oracle's.
 fn proves_a_pil_fflonk_example(example: Example, hints: [&[HintKind]; 2], columns: [&[&str]; 2], pieces: [usize; 2]) {
     for (((bus, hints), columns), pieces) in [Bus::Sum, Bus::Prod].into_iter().zip(hints).zip(columns).zip(pieces) {
         let program = Program::Example(example, bus);
@@ -1787,7 +1807,8 @@ fn the_prover_proves_the_pil_fflonk_plookup() {
     proves_a_pil_fflonk_example(Example::Plookup, [&[ImCol, GsumCol], &[ImCol, GprodCol]], ONE_IM_COL, [2, 2]);
 }
 
-/// Its `a` and `b` are read by no constraint, and not committed (spec A.2).
+/// Its `a` and `b` are read by no constraint, and not committed
+/// (pilfflonk/docs/protocol.md#layout).
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_pil_fflonk_permutation() {
@@ -1796,8 +1817,8 @@ fn the_prover_proves_the_pil_fflonk_permutation() {
 }
 
 /// On the sum bus, with the std's default `MAX_CONSTRAINT_DEGREE` (`connection_sum.pil`): two
-/// `im_cluster`, which the std names alike and the setup `im_cluster[0]` and `im_cluster[1]` (plan
-/// M34b), and an `im_single`.
+/// `im_cluster`, which the std names alike and the setup `im_cluster[0]` and `im_cluster[1]`
+/// (pilfflonk/docs/formats.md#proof-names), and an `im_single`.
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_pil_fflonk_connection() {
@@ -1817,10 +1838,11 @@ fn the_prover_proves_a_range_check() {
     proves_a_pil_fflonk_example(Example::RangeCheck, [&[ImCol, GsumCol], &[ImCol, GprodCol]], ONE_IM_COL, [1, 2]);
 }
 
-/// The v1's criterion of success (spec §1): pil-fflonk's `all`, with its publics. On the sum bus,
-/// with the std's default `MAX_CONSTRAINT_DEGREE` (`all_sum.pil`): four `im_cluster`, which the std
-/// names alike and the setup `im_cluster[0]` to `im_cluster[3]` (plan M34b), and an `im_single`; on
-/// the product bus, a chain of four `im_col`.
+/// The criterion of success (pilfflonk/docs/README.md#scope): pil-fflonk's `all`, with its publics.
+/// On the sum bus, with the std's default `MAX_CONSTRAINT_DEGREE` (`all_sum.pil`): four
+/// `im_cluster`, which the std names alike and the setup `im_cluster[0]` to `im_cluster[3]`
+/// (pilfflonk/docs/formats.md#proof-names), and an `im_single`; on the product bus, a chain of four
+/// `im_col`.
 #[test]
 #[ignore = "needs PIL2C_EXEC and Node.js"]
 fn the_prover_proves_the_pil_fflonk_all() {
@@ -1837,14 +1859,14 @@ fn the_prover_proves_the_pil_fflonk_all() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The witness of a witness library (plan M38c, D4)
+// The witness of a witness library (pilfflonk/docs/README.md#witness)
 // ---------------------------------------------------------------------------------------------
 
 /// The public inputs of the Fibonacci's and `all`'s libraries for the inputs `[1, 2]`, pil-fflonk's,
 /// as decimal strings.
 const PIL_FFLONK_INPUTS: &str = r#"{"in1": "1", "in2": "2"}"#;
 
-/// Phase 3's validation 1 (spec §6): the libraries of the Fibonacci, the Connection and `all`
+/// The libraries of the Fibonacci, the Connection and `all`
 /// (`pilfflonk/tests/fixtures/<fixture>/rs`), on either bus, compute the witness of their
 /// generators, and prove with `--witness-lib` the proof of their generators' witness directories
 /// with `--witness`, byte for byte with the same seed; it verifies, and `all`'s publics are
@@ -1939,9 +1961,8 @@ fn the_prover_refuses_what_is_not_a_pilfflonk_witness_library() {
     }
 }
 
-/// The flags of the witness (plan M38c): exactly one of `--witness` and `--witness-lib`, and
-/// `--public-inputs` only with `--witness-lib`. clap refuses the others, with exit code 2, before
-/// anything is read.
+/// The flags of the witness: exactly one of `--witness` and `--witness-lib`, and `--public-inputs`
+/// only with `--witness-lib`. clap refuses the others, with exit code 2, before anything is read.
 #[test]
 fn the_prover_takes_one_witness() {
     let (key, out) = (Path::new("provingKey"), Path::new("proof"));
@@ -1967,11 +1988,11 @@ fn the_prover_takes_one_witness() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The Solidity verifier (plan M41): Foundry on the proofs of every fixture
+// The Solidity verifier (pilfflonk/docs/verifier.md#tests): Foundry on the proofs of every fixture
 // ---------------------------------------------------------------------------------------------
 
 impl Program {
-    /// The witness library of the fixture, if it has one (plan M38c), and its public inputs.
+    /// The witness library of the fixture, if it has one, and its public inputs.
     fn witness_library(self) -> Option<(&'static str, Option<&'static str>)> {
         match self {
             Program::Fibonacci => Some(("pilfflonk_fibonacci", Some(PIL_FFLONK_INPUTS))),
@@ -2010,8 +2031,8 @@ struct SolidityKey {
     max_q_degree: u64,
 }
 
-/// Every fixture of phases 1 to 3 in the setups of the end to end above: grouped as it is by
-/// default (with pil-fflonk's `extraMuls` for its examples), with `--no-packing`, with the
+/// Every fixture, in the setups of the end to end above: grouped as it is by default (with
+/// pil-fflonk's `extraMuls` for its examples), with `--no-packing`, with the
 /// `--max-constraint-degree` and `--extra-muls` of its tests, and with `Q` split wherever `qDeg`
 /// allows it (`qDeg ≥ 2`).
 fn solidity_keys() -> Vec<SolidityKey> {
@@ -2024,8 +2045,8 @@ fn solidity_keys() -> Vec<SolidityKey> {
         max_q_degree,
     };
     let mut keys = Vec::new();
-    // Phase 1: the Fibonacci (M13, M22), the packing (M22), the signed offsets and their im pols
-    // (M23), Q split (M33) and the domains (M24).
+    // Without buses: the Fibonacci, the packing, the signed offsets and their im pols, Q split and
+    // the domains.
     for (name, program, packing, degree, max_q_degree) in [
         ("fibonacci", Program::Fibonacci, DEFAULT, d, 0),
         ("fibonacci_k3", Program::Fibonacci, Packing::ExtraMuls(0), d, 0),
@@ -2058,7 +2079,7 @@ fn solidity_keys() -> Vec<SolidityKey> {
         d,
         1,
     ));
-    // Phase 2: the std's buses of stage 2 (M30, M31), and prod_bus_im, of qDeg = 2, split.
+    // The std's buses of stage 2, and prod_bus_im, of qDeg = 2, split.
     for (name, program) in [
         ("sum_bus", Program::SumBus),
         ("sum_bus_degree4", Program::SumBusDegree4),
@@ -2069,7 +2090,7 @@ fn solidity_keys() -> Vec<SolidityKey> {
         keys.push(key(format!("{name}_unpacked"), program, Packing::NoPacking, d, 0));
     }
     keys.push(key("prod_bus_im_split".into(), Program::ProdBusIm, DEFAULT, d, 1));
-    // The examples of pil-fflonk (M34) on both buses, split as their end to end splits them
+    // The examples of pil-fflonk on both buses, split as their end to end splits them
     // (`--max-constraint-degree 3 --max-q-degree 1`) where that gives Q two pieces, and all_prod, of
     // qDeg = 3 by default, in three.
     for example in [Example::Plookup, Example::Permutation, Example::Connection, Example::RangeCheck, Example::All] {
@@ -2091,9 +2112,9 @@ fn solidity_keys() -> Vec<SolidityKey> {
 /// What the Foundry end to end measures of a key: the size of its verifier and calldata, and the
 /// gas of the call to `verifyProof` with its proof (as the Foundry test measures it, `gasleft()`
 /// around the call, without the transaction's 21000) and of its calldata (EIP-2028); and what the
-/// gas grows with besides the `f` (plan M42, the gas report's model): the roots of the `f`,
-/// `Σ_i k_i·|O_i|` (a Lagrange denominator each, and a value of `r_i(y)`), the products of
-/// Horner's rule, `Σ_i k_i²·|O_i|`, and the entries of the `qVerifier`.
+/// gas grows with besides the `f` (the gas report's model, pilfflonk/docs/verifier.md#gas): the
+/// roots of the `f`, `Σ_i k_i·|O_i|` (a Lagrange denominator each, and a value of `r_i(y)`), the
+/// products of Horner's rule, `Σ_i k_i²·|O_i|`, and the entries of the `qVerifier`.
 struct GasRow {
     name: String,
     n_f: usize,
@@ -2181,7 +2202,8 @@ fn verifies_on_foundry(tools: &foundry::Tools, set_up: &SetUpKey) -> GasRow {
 
     let (proof, publics) = prove_for_foundry(set_up, SEED_A, &f.dir.file("proof"));
 
-    // The proof's bytes (A.6) give the calldata of its JSON view, and its Solidity form the same words.
+    // The proof's bytes (pilfflonk/docs/formats.md#proof) give the calldata of its JSON view, and
+    // its Solidity form the same words.
     let hex = calldata_cli(f, &proof, &publics, "hex");
     let bin = f.dir.file("proof.bin");
     fs::write(&bin, Proof::read(&proof, names).unwrap().to_bytes()).unwrap();
@@ -2286,10 +2308,10 @@ fn on_foundry_workers<R: Send>(keys: Vec<SolidityKey>, work: impl Fn(&SetUpKey) 
     results.into_iter().map(|(_, r)| r).collect()
 }
 
-/// Phase 4's validation 1 (spec §6, plan M41): Foundry accepts the proof of every fixture of phases 1
-/// to 3 ([`solidity_keys`]) with the calldata of `pilfflonk calldata`, and rejects it with an
-/// evaluation, a commitment or a public changed, as the JS verifier (`pilfflonk verify`) does. Prints
-/// the gas of every proof's call, and the time.
+/// Foundry accepts the proof of every fixture ([`solidity_keys`]) with the calldata of
+/// `pilfflonk calldata`, and rejects it with an evaluation, a commitment or a public changed, as
+/// the JS verifier (`pilfflonk verify`) does (pilfflonk/docs/verifier.md#tests). Prints the gas of
+/// every proof's call, and the time.
 ///
 /// The keys are set up on the test's thread, one after another, and [`verifies_on_foundry`], which
 /// runs programs only (the CLI, Node.js, solc and Foundry), runs on [`FOUNDRY_WORKERS`] threads for
@@ -2326,11 +2348,12 @@ fn foundry_accepts_the_proof_of_every_fixture() {
     println!("\n{} keys, every proof accepted, in {:.0} s", rows.len(), start.elapsed().as_secs_f64());
 }
 
-/// The keys of the differential fuzzer (plan M42), a subset of [`solidity_keys`]: the Fibonacci, the
-/// packing and the signed offsets with `Q` in three pieces, each grouped and with `--no-packing`;
-/// `Domains`, whose calldata has the auxiliary inverses of `firstRow` and `lastRow`, grouped and,
-/// split, unpacked; the buses of stage 2, `sum_bus` grouped and `prod_bus` unpacked; and `all` on
-/// both buses with `Q` split, and unpacked, the key whose verifier costs the most gas.
+/// The keys of the differential fuzzer (pilfflonk/docs/verifier.md#differential-fuzzer), a subset
+/// of [`solidity_keys`]: the Fibonacci, the packing and the signed offsets with `Q` in three
+/// pieces, each grouped and with `--no-packing`; `Domains`, whose calldata has the auxiliary
+/// inverses of `firstRow` and `lastRow`, grouped and, split, unpacked; the buses of stage 2,
+/// `sum_bus` grouped and `prod_bus` unpacked; and `all` on both buses with `Q` split, and unpacked,
+/// the key whose verifier costs the most gas.
 const FUZZ_KEYS: [&str; 13] = [
     "fibonacci",
     "fibonacci_unpacked",
@@ -2348,7 +2371,7 @@ const FUZZ_KEYS: [&str; 13] = [
 ];
 
 /// The cases of the fuzzer's run in CI, over all its keys; `PILFFLONK_FUZZ_CASES` sets another
-/// number: 10,000 or more for the extended run (spec §4.5, "Validació de M42").
+/// number: 10,000 or more for the extended run (pilfflonk/docs/verifier.md#differential-fuzzer).
 const FUZZ_CASES: u64 = 400;
 
 /// The seed of the fuzzer's mutations; `PILFFLONK_FUZZ_SEED` sets another.
@@ -2408,12 +2431,13 @@ fn fuzzes_on_foundry(
     fuzz::run_key(tools, &key, &honest, cases.saturating_sub(n_honest) as usize, key_seed, stopped)
 }
 
-/// Phase 4's validations 2 and 3 (spec §6, plan M42): the differential fuzzer of the Solidity verifier
-/// on [`FUZZ_KEYS`] (`pilfflonk/tests/data/fuzz.rs`). On every case, Foundry and the JS verifier say
-/// the same, the contract returns `false` for every case it refuses (only calldata shorter than its
-/// arguments reverts), the check that refuses each is the same, and each family reaches the checks it
-/// targets. Prints the cases of each family and what refused them, and the gas of each step of the
-/// verifier for the honest proof of each key: the gas report's (spec §4.5, "Informe de gas").
+/// The differential fuzzer (pilfflonk/docs/verifier.md#differential-fuzzer) of the Solidity
+/// verifier on [`FUZZ_KEYS`] (`pilfflonk/tests/data/fuzz.rs`). On every case, Foundry and the JS
+/// verifier say the same, the contract returns `false` for every case it refuses (only calldata
+/// shorter than its arguments reverts), the check that refuses each is the same, and each family
+/// reaches the checks it targets. Prints the cases of each family and what refused them, and the
+/// gas of each step of the verifier for the honest proof of each key: the gas report's
+/// (pilfflonk/docs/verifier.md#gas).
 ///
 /// [`FUZZ_CASES`] cases with the seed [`FUZZ_SEED`], split between the keys; `PILFFLONK_FUZZ_CASES`
 /// and `PILFFLONK_FUZZ_SEED` set others. The keys are set up as [`foundry_accepts_the_proof_of_every_fixture`]

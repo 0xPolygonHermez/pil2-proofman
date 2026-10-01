@@ -1,6 +1,7 @@
-//! The errors of `pil-info` (spec §5.4: `thiserror`, following `common/src/error_manager.rs`):
-//! [`PilInfoError`] for the passes and the code types, [`BinFileError`] for the `"chps"`
-//! container's writer. The setups report them with their own errors.
+//! The errors of `pil-info`, with `thiserror` following `common/src/error_manager.rs`
+//! (pilfflonk/docs/README.md#conventions): [`PilInfoError`] for the passes and the code types,
+//! [`BinFileError`] for the `"chps"` container's writer. The setups report them with their own
+//! errors.
 
 /// What the passes refuse in a pilout, or find broken in what they build themselves.
 #[derive(Debug, thiserror::Error)]

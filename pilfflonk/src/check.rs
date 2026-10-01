@@ -1,14 +1,15 @@
-//! `pilfflonk check` (spec §4.4, "Depuració"; plan M25): the witness of an instance checked row by
-//! row against the constraints of its AIR, without proving anything. It is the pilfflonk
+//! `pilfflonk check` (pilfflonk/docs/README.md#pilfflonk-check): the witness of an instance checked
+//! row by row against the constraints of its AIR, without proving anything. It is the pilfflonk
 //! counterpart of the STARK's `verify-constraints`.
 //!
-//! The constraints are those of section 2 of the AIR's `<air>.bin` (spec A.6): the pilout's, in its
-//! order, then one per intermediate polynomial, `im − e`, which holds by construction since the
-//! prover computes `im` from `e`. The C++ core computes the intermediate polynomials of stage 1 as
-//! the prover does, then each constraint's numerator on the trace with the bytecode (M17), and
-//! reports the rows `firstRow ≤ i < lastRow` where it is not 0.
+//! The constraints are those of section 2 of the AIR's `<air>.bin`
+//! (pilfflonk/docs/formats.md#bytecode): the pilout's, in its order, then one per intermediate
+//! polynomial, `im − e`, which holds by construction since the prover computes `im` from `e`. The
+//! C++ core computes the intermediate polynomials of stage 1 as the prover does, then each
+//! constraint's numerator on the trace with the bytecode, and reports the rows
+//! `firstRow ≤ i < lastRow` where it is not 0.
 //!
-//! **Stages ≥ 2** (plan M30). Their columns are those the std's prover hints give with the stage's
+//! **Stages ≥ 2**. Their columns are those the std's prover hints give with the stage's
 //! challenges. As the STARK's `verify-constraints` does (`proofman/src/proofman.rs`,
 //! `_verify_proof_constraints`), the check takes those challenges from a transcript of fixed
 //! elements and not from any commitment: nothing is committed, and the blinding is never drawn
@@ -51,11 +52,11 @@ fn dummy_element() -> PilfflonkResult<[FrBytes; 4]> {
 
 /// The challenges the check computes the stages after the first with: `challenges[s − 2]` those of
 /// stage `s`, for `2 ≤ s ≤ nStages` (as `ProofChallenges::stages`), of an AIR of `n_stages` stages
-/// of `global_info`. As `_verify_proof_constraints` does, from fixed elements: a transcript of A.4
-/// (`Keccak256Transcript`, the prover's) absorbs `dummy_element`, the STARK's; then, for each stage
-/// `s = 1 … nStages − 1`, it squeezes the `numChallenges[s]` challenges of stage `s + 1`, one per
-/// squeeze, and absorbs the fixed elements again, as the STARK absorbs them again after its global
-/// challenge. None for an AIR of one stage.
+/// of `global_info`. As `_verify_proof_constraints` does, from fixed elements: a transcript
+/// (`Keccak256Transcript`, the prover's; pilfflonk/docs/protocol.md#transcript) absorbs
+/// `dummy_element`, the STARK's; then, for each stage `s = 1 … nStages − 1`, it squeezes the
+/// `numChallenges[s]` challenges of stage `s + 1`, one per squeeze, and absorbs the fixed elements
+/// again, as the STARK absorbs them again after its global challenge. None for an AIR of one stage.
 pub fn check_challenges(global_info: &PilfflonkGlobalInfo, n_stages: u64) -> PilfflonkResult<Vec<Vec<FrBytes>>> {
     if n_stages <= 1 {
         return Ok(Vec::new());
@@ -168,7 +169,7 @@ pub fn check(pk: &ProvingKey, witness: &impl WitnessSource, options: &CheckOptio
 
 /// The columns of every stage `1 … nStages` of the one instance of `witness` that [`check`] checks,
 /// and its challenges ([`check_challenges`]): stage 1's, and each later stage's as the prover
-/// computes it with those challenges. For tests and diagnostics (plan M30: the oracle checks them).
+/// computes it with those challenges. For tests and diagnostics (the oracle checks them).
 pub fn check_columns(pk: &ProvingKey, witness: &impl WitnessSource) -> PilfflonkResult<StageColumns> {
     let read = WitnessInstance::read(witness)?;
     let info = pk.air(read.air)?;

@@ -1,5 +1,6 @@
-//! The witness generator of the synthetic fixture of the im pols and the signed offsets (plan M23),
-//! `tests/fixtures/signed/signed.pil`, over BN254's `Fr` with `num-bigint`.
+//! The witness generator of the synthetic fixture of the im pols and the signed offsets
+//! (pilfflonk/docs/README.md#fixtures), `tests/fixtures/signed/signed.pil`, over BN254's `Fr` with
+//! `num-bigint`.
 //!
 //! Its fixed columns are the pilout's: `L1`, `LLAST`, `WIN` (1 on rows 1 to N − 3),
 //! `K = [1, 2, …, N]` and `P = [5, 6, …, N + 4]`. Its witness columns, in the pilout's order

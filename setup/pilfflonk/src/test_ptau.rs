@@ -1,6 +1,7 @@
 //! For tests only (feature `test-ptau`): powers-of-tau files written here, instead of downloading
-//! one or running snarkjs (plan N13). Each holds only what pilfflonk reads, sections 1 to 3, as the
-//! C++ test ptau does (`pil2-stark/test/pilfflonk/pilfflonk_test_ptau.hpp`).
+//! one or running snarkjs (pilfflonk/docs/README.md#tests). Each holds only what pilfflonk reads,
+//! sections 1 to 3, as the C++ test ptau does
+//! (`pil2-stark/test/pilfflonk/pilfflonk_test_ptau.hpp`).
 //!
 //! - [`tau_one_ptau`]: `τ = 1`. Every power `[τ^i]₁` is the generator `G` of G1, and `[τ]₂` the
 //!   generator of G2, so the commitment of a fixed `f = Σ_j p_j(X^k)·X^j` is `f(1)·G = (Σ_j
@@ -298,7 +299,7 @@ pub fn write_fixed_tau_ptau(path: &Path, n_g1: usize, tau: &BigUint) -> std::io:
 }
 
 /// `s·G`, `G = (1, 2)` the generator of G1, with this module's arithmetic: for a test that builds a
-/// proof by hand, knowing `τ` (plan M40). The point at infinity, `(0, 0)`, for `s ≡ 0 mod r`.
+/// proof by hand, knowing `τ`. The point at infinity, `(0, 0)`, for `s ≡ 0 mod r`.
 pub fn g1_times(s: &BigUint) -> G1Affine {
     let q = decimal(BN254_Q);
     let g = (Fq(BigUint::from(1u32)), Fq(BigUint::from(2u32)));

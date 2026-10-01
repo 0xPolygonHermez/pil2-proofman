@@ -50,7 +50,7 @@ string_tag!(
 );
 
 string_tag!(
-    /// `"transcript"` of the globalInfo (A.4).
+    /// `"transcript"` of the globalInfo (pilfflonk/docs/protocol.md#transcript).
     Transcript = "keccak256"
 );
 

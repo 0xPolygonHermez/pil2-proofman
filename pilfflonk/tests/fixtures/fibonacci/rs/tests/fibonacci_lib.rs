@@ -1,7 +1,7 @@
-//! The Fibonacci's witness library (plan M38b, D4), loaded as a dynamic library: its witness is the
-//! generator's (`pilfflonk/tests/data/fibonacci.rs`, plan M13) byte for byte, and proves and
-//! verifies; a STARK witness library is not taken for a pilfflonk one, nor the other way round; and
-//! `src/pil_helpers` is what pil-helpers writes for the fixture's BN254 pilout.
+//! The Fibonacci's witness library (pilfflonk/docs/README.md#witness), loaded as a dynamic library:
+//! its witness is the generator's (`pilfflonk/tests/data/fibonacci.rs`) byte for byte, and proves
+//! and verifies; a STARK witness library is not taken for a pilfflonk one, nor the other way round;
+//! and `src/pil_helpers` is what pil-helpers writes for the fixture's BN254 pilout.
 //!
 //! The library is this crate's, `libpilfflonk_fibonacci.so`, which Cargo builds for its tests, and the
 //! STARK one `examples/fibonacci-square`'s, a dev-dependency built for the same reason.
@@ -34,7 +34,8 @@ use proofman_pilfflonk::{
 };
 use witness_libraries::built_library;
 
-/// The fixture's size, and the inputs of pil-fflonk's `all` example (spec Annex G).
+/// The fixture's size, and the inputs of pil-fflonk's `all` example
+/// (pilfflonk/docs/README.md#fixtures).
 const N_BITS: u32 = 8;
 const INPUTS: [u64; 2] = [1, 2];
 
@@ -82,7 +83,8 @@ fn fibonacci_shape() -> WitnessShape {
     WitnessShape::new(vec![air], 3, 0).unwrap()
 }
 
-/// The public inputs file of `in1` and `in2`, as `--public-inputs` names it (plan M38c).
+/// The public inputs file of `in1` and `in2`, as `--public-inputs` names it
+/// (pilfflonk/docs/README.md#witness).
 fn public_inputs(dir: &TestDir, in1: &str, in2: &str) -> PathBuf {
     let path = dir.file("inputs.json");
     fs::write(&path, format!(r#"{{"in1": "{in1}", "in2": "{in2}"}}"#)).unwrap();

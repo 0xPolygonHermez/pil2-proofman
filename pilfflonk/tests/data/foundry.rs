@@ -1,15 +1,16 @@
-//! The Solidity verifier on Foundry, for the tests (spec §4.5, plans M40, M41 and M42): the pinned
+//! The Solidity verifier on Foundry, for the tests (pilfflonk/docs/verifier.md#tests): the pinned
 //! tools, solc's compilation of a verifier, and runs of the Foundry project `pilfflonk/solidity` on
 //! cases, each the calldata of a call to `verifyProof` and what the call must do. The Solidity tests
 //! of `pilfflonk-setup` (`setup/pilfflonk/tests/solidity.rs`) and the CLI's end to end
-//! (`cli/tests/pilfflonk_prove.rs`) share it. The differential fuzzer (`fuzz.rs`, M42) runs the
-//! project's other test, `fuzz/PilfflonkFuzz.t.sol`, with [`FuzzProject`]: the verifier and its
-//! probe on every case, whose outcomes it reads and does not check.
+//! (`cli/tests/pilfflonk_prove.rs`) share it. The differential fuzzer (`fuzz.rs`,
+//! pilfflonk/docs/verifier.md#differential-fuzzer) runs the project's other test,
+//! `fuzz/PilfflonkFuzz.t.sol`, with [`FuzzProject`]: the verifier and its probe on every case,
+//! whose outcomes it reads and does not check.
 //!
 //! Include it with `#[path = ".../pilfflonk/tests/data/foundry.rs"] mod foundry;`.
 //!
-//! The tools are pinned (spec §4.5, "Eines"): Foundry v1.8.3 and solc 0.8.37, at the paths
-//! `PILFFLONK_FORGE` and `PILFFLONK_SOLC` name. Foundry downloads nothing: the project's
+//! The tools are pinned (pilfflonk/docs/verifier.md#tools): Foundry v1.8.3 and solc 0.8.37, at the
+//! paths `PILFFLONK_FORGE` and `PILFFLONK_SOLC` name. Foundry downloads nothing: the project's
 //! `foundry.toml` is `offline`, and `FOUNDRY_SOLC` gives it the pinned solc, so nothing goes to
 //! `~/.svm`. The project is copied to a directory of the test's for each run: nothing is built in the
 //! repository.
@@ -23,7 +24,7 @@ use serde_json::{json, Value};
 /// EIP-170: the largest runtime code of a contract.
 pub const MAX_CODE_SIZE: usize = 24576;
 
-/// Foundry's `forge` and solc, pinned (spec §4.5), from `PILFFLONK_FORGE` and `PILFFLONK_SOLC`.
+/// Foundry's `forge` and solc, pinned, from `PILFFLONK_FORGE` and `PILFFLONK_SOLC`.
 pub struct Tools {
     pub forge: PathBuf,
     pub solc: PathBuf,
@@ -44,7 +45,7 @@ impl Tools {
 /// What `verifyProof` must do with a case: return `true`, return `false`, or revert (the ABI
 /// decoder, on calldata shorter than its arguments). `BadReturn`, a call that returns something
 /// other than a bool, is never what a case must do: the fuzzer's Foundry test reports it, and the
-/// M40 test fails on it.
+/// verifier's (`test/PilfflonkVerifier.t.sol`) fails on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Accept,
@@ -224,8 +225,8 @@ pub struct FuzzRun {
     pub probe: Option<Vec<u64>>,
 }
 
-/// The Foundry project of the differential fuzzer for one key (plan M42), in `dir/fuzz`: the key's
-/// verifier and its probe (an instrumented copy that the fuzzer makes, `fuzz.rs`), and the test
+/// The Foundry project of the differential fuzzer for one key, in `dir/fuzz`: the key's verifier
+/// and its probe (an instrumented copy that the fuzzer makes, `fuzz.rs`), and the test
 /// `fuzz/PilfflonkFuzz.t.sol`, which calls both on each case. A project is run on as many batches
 /// of cases as the fuzzer likes; solc compiles it once.
 pub struct FuzzProject {
@@ -244,9 +245,10 @@ impl FuzzProject {
     /// Runs the test on `cases`, the calldata of each call, as the cases `first`, `first + 1`, …: it
     /// writes each as `cases/<i>.bin`. Foundry runs it without isolation (`FOUNDRY_ISOLATE=false`):
     /// every call is a call of the test's transaction, to a contract it has called before, as the
-    /// first call of the M40 test is with isolation (Foundry's default); with isolation, Foundry
-    /// makes each call a transaction of its own, and every call after the first costs 2500 more
-    /// (EIP-2929, a cold account), which a gas of the cases could not be compared with.
+    /// first call of the verifier's test (`test/PilfflonkVerifier.t.sol`) is with isolation
+    /// (Foundry's default); with isolation, Foundry makes each call a transaction of its own, and
+    /// every call after the first costs 2500 more (EIP-2929, a cold account), which a gas of the
+    /// cases could not be compared with.
     pub fn run(&self, tools: &Tools, first: usize, cases: &[Vec<u8>]) -> Vec<FuzzRun> {
         let dir = self.project.join("cases");
         let _ = fs::remove_dir_all(&dir);

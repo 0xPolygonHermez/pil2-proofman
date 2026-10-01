@@ -1,4 +1,5 @@
-//! `pilfflonk.vkey.json` (A.6, §4.2.5): the self-contained verification key, and its digest.
+//! `pilfflonk.vkey.json` (pilfflonk/docs/formats.md#vkey): the self-contained verification key, and
+//! its digest.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -20,18 +21,18 @@ use crate::q_verifier::{check_q_verifier, QVerifierShape};
 use crate::tag::{Curve, Protocol};
 use crate::verkey::AirVerkey;
 
-/// What the digest's preimage starts with (A.6).
+/// What the digest's preimage starts with (pilfflonk/docs/formats.md#digest).
 pub const DIGEST_DOMAIN: &[u8] = b"pilfflonk-v1";
 
 /// `pilfflonk.vkey.json`: everything the verifier needs, and nothing else, as snarkjs's
-/// `verification_key.json` (A.6). Big integers and points are decimal strings.
+/// `verification_key.json` (pilfflonk/docs/formats.md#vkey). Big integers and points are decimal
+/// strings.
 ///
-/// Format version 1 holds one AIR (the v1 scope, D2): its evMap, layout, degrees and code are
-/// the AIR's, and `power` is its `nBits`.
+/// Format version 1 holds one AIR (the v1 scope, pilfflonk/docs/README.md#scope): its evMap,
+/// layout, degrees and code are the AIR's, and `power` is its `nBits`.
 ///
-/// It also holds the AIR's `boundaries`, which A.6's list leaves out: the `qVerifier` code refers
-/// to the zerofiers `Z_D(ξ)` by their index in them (its `Zi` operands), and the verifier cannot
-/// compute `Q(ξ)` without them.
+/// It also holds the AIR's `boundaries`: the `qVerifier` code refers to the zerofiers `Z_D(ξ)` by
+/// their index in them (its `Zi` operands), and the verifier cannot compute `Q(ξ)` without them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Vkey {
@@ -41,34 +42,37 @@ pub struct Vkey {
     pub n_public: u64,
     /// `nBits` of the AIR.
     pub power: u64,
-    /// The least common multiple of the layout's `k`: `ξ = xiSeed^powerW` (A.2, rule 5).
+    /// The least common multiple of the layout's `k`: `ξ = xiSeed^powerW`
+    /// (pilfflonk/docs/protocol.md#roots).
     pub power_w: u64,
     /// `[τ]₂`.
     #[serde(rename = "X_2")]
     pub x_2: G2Affine,
     /// The challenges of each stage, as the globalInfo's `numChallenges`: one entry per stage, and
-    /// none of stage 1 (A.4 squeezes no challenge before its commitments).
+    /// none of stage 1 (the transcript squeezes no challenge before its commitments).
     pub num_challenges: Vec<u64>,
     pub ev_map: Vec<EvMapEntry>,
     pub layout: Layout,
-    /// The AIR's boundaries: `everyRow` first, whose `Zi` is `1/Z_H` (A.6), and each `everyFrame`
-    /// leaving a row.
+    /// The AIR's boundaries: `everyRow` first, whose `Zi` is `1/Z_H`
+    /// (pilfflonk/docs/protocol.md#constraint-polynomial), and each `everyFrame` leaving a row.
     pub boundaries: Vec<Boundary>,
     /// The commitments of the fixed `f_i`, the AIR's verkey: keys `f0`, `f1`, … as in snarkjs's
     /// and pil-fflonk's vkeys, `f<i>` for layout entry `i`, which in a proof of one AIR is also its
-    /// global index (A.5). The verifier takes them from here and never from the proof (A.5).
+    /// global index (pilfflonk/docs/protocol.md#global-order). The verifier takes them from here and
+    /// never from the proof (pilfflonk/docs/protocol.md#pairing-check).
     #[serde(flatten)]
     pub fixed_commitments: FixedCommitments,
     pub q_deg: u64,
-    /// `M`, 0 when `Q` is not split and only then (A.1): split, `Q(ξ) = Σ_i ξ^(i·M·N)·Q_i(ξ)` with
-    /// the proof's `Q_i(ξ)`, and the pieces are the layout's `Q0 … Q<m−1>`.
+    /// `M`, 0 when `Q` is not split and only then (pilfflonk/docs/protocol.md#q-pieces): split,
+    /// `Q(ξ) = Σ_i ξ^(i·M·N)·Q_i(ξ)` with the proof's `Q_i(ξ)`, and the pieces are the layout's
+    /// `Q0 … Q<m−1>`.
     pub max_q_degree: u64,
     /// The `qVerifier` of `<air>.verifierinfo.json`, as `pil-info` writes it (the STARK's format),
     /// copied as it is. This crate does not run it, but checks that the verifier can
     /// (`crate::q_verifier`). Written with its keys sorted.
     #[serde(serialize_with = "serialize_sorted")]
     pub q_verifier: Value,
-    /// `keccak256("pilfflonk-v1" ‖ canonical(vkey without digest))` (A.6).
+    /// `keccak256("pilfflonk-v1" ‖ canonical(vkey without digest))` (pilfflonk/docs/formats.md#digest).
     pub digest: Digest,
 }
 
@@ -166,7 +170,8 @@ impl Vkey {
         Ok(vkey)
     }
 
-    /// `"pilfflonk-v1" ‖ canonical(vkey without digest)`: what the digest hashes (A.6).
+    /// `"pilfflonk-v1" ‖ canonical(vkey without digest)`: what the digest hashes
+    /// (pilfflonk/docs/formats.md#digest).
     pub fn digest_preimage(&self) -> PilfflonkResult<Vec<u8>> {
         let mut value = serde_json::to_value(self)?;
         if let Value::Object(map) = &mut value {
@@ -199,7 +204,7 @@ impl Vkey {
         if self.digest_matches(|_| digest)? {
             Ok(())
         } else {
-            invalid!("the digest of the vkey is not the digest of its contents (A.6)")
+            invalid!("the digest of the vkey is not the digest of its contents (pilfflonk/docs/formats.md#digest)")
         }
     }
 }
@@ -217,7 +222,8 @@ impl JsonFile for Vkey {
         }
         // X_2 = [τ]₂ as the JS verifier reads it (elements.js, g2FromObject): a point of G2, and not the
         // point at infinity. With [τ]₂ = ∞, which the pairing precompile of the Solidity verifier takes
-        // (EIP-197), the check of A.5 holds for a W' anyone can compute, whatever the statement.
+        // (EIP-197), the pairing check holds for a W' anyone can compute, whatever the statement
+        // (pilfflonk/docs/verifier.md#refused-vkeys).
         if let Err(e) = pilfflonk_g2_check_c(&self.x_2.to_le_bytes()) {
             return invalid!("X_2 is not a point of G2 other than the point at infinity: {}", e.message);
         }
@@ -227,7 +233,8 @@ impl JsonFile for Vkey {
         }
         if split_max_q_degree(self.q_deg, self.max_q_degree) != self.max_q_degree {
             return invalid!(
-                "maxQDegree is {} and qDeg {}: Q is not split, and then maxQDegree is 0 (A.1)",
+                "maxQDegree is {} and qDeg {}: Q is not split, and then maxQDegree is 0 \
+                 (pilfflonk/docs/protocol.md#q-pieces)",
                 self.max_q_degree,
                 self.q_deg
             );
@@ -254,7 +261,7 @@ impl JsonFile for Vkey {
             );
         }
 
-        // What the verifier needs to replay A.4 and compute Q(ξ), as it checks it
+        // What the verifier needs to replay the transcript and compute Q(ξ), as it checks it
         // (pilfflonk/js/src/vkey.js, fromObjectVk).
         let n_stages = q_stage - 1;
         if self.num_challenges.len() as u64 != n_stages {
@@ -262,12 +269,15 @@ impl JsonFile for Vkey {
         }
         if self.num_challenges.first() != Some(&0) {
             return invalid!(
-                "numChallenges {:?} must start with 0: A.4 squeezes no challenge of stage 1",
+                "numChallenges {:?} must start with 0: the transcript squeezes no challenge of stage 1 \
+                 (pilfflonk/docs/protocol.md#transcript)",
                 self.num_challenges
             );
         }
         if self.boundaries.first() != Some(&Boundary::EveryRow) {
-            return invalid!("boundaries[0] must be everyRow, whose Zi is 1/Z_H (A.6)");
+            return invalid!(
+                "boundaries[0] must be everyRow, whose Zi is 1/Z_H (pilfflonk/docs/protocol.md#constraint-polynomial)"
+            );
         }
         let n_rows = 1u64 << self.power;
         for (i, b) in self.boundaries.iter().enumerate() {

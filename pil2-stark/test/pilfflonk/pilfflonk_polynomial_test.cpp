@@ -1,5 +1,5 @@
 // Tests for the methods of rapidsnark's Polynomial that pilfflonk's SHPLONK prover and the final
-// wrap's FflonkProver call, and that used to leak (spec Annex F.9):
+// wrap's FflonkProver call, and that used to leak (pilfflonk/docs/README.md#rapidsnark-and-ffiasm):
 // - each result (its length, its degree and its coefficients) is pinned by a Keccak-256 to what the
 //   code gave before the leaks were fixed, quirks included: add() and byXSubValue() grow the buffer
 //   without updating the length, and a polynomial on a reserved buffer moves to one of its own;

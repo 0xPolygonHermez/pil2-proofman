@@ -1,7 +1,7 @@
-//! `setup-pilfflonk --solidity` and `proofman-setup pilfflonk-solidity` (spec §4.5, plan M40) on
-//! `common`'s pilout: the verifier goes next to the vkey and no other file changes, what the
-//! generator refuses, and the calldata it reads. Foundry runs verifiers on real proofs in
-//! `tests/solidity.rs`, with the pinned tools.
+//! `setup-pilfflonk --solidity` and `proofman-setup pilfflonk-solidity`
+//! (pilfflonk/docs/verifier.md#solidity-verifier) on `common`'s pilout: the verifier goes next to
+//! the vkey and no other file changes, what the generator refuses, and the calldata it reads.
+//! Foundry runs verifiers on real proofs in `tests/solidity.rs`, with the pinned tools.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -121,7 +121,8 @@ fn the_verifier_of_a_vkey_the_js_verifier_accepts_nothing_of_is_refused() {
     let (vkey_path, vkey) = vkey_of(&setup(&dir, "build", false));
     let refused = |vkey: &Vkey| verifier_sol(vkey).unwrap_err().to_string();
 
-    // A digest that is not the digest of the vkey (A.6): the JS verifier rejects every proof.
+    // A digest that is not the digest of the vkey (pilfflonk/docs/formats.md#digest): the JS
+    // verifier rejects every proof.
     let mut wrong_digest = vkey.clone();
     wrong_digest.digest.0[0] ^= 1;
     let err = refused(&wrong_digest);
@@ -150,9 +151,9 @@ fn the_verifier_of_a_vkey_the_js_verifier_accepts_nothing_of_is_refused() {
     assert!(err.contains("powerW"), "{err}");
 }
 
-/// The calldata's auxiliary inverses (spec §4.5): `1/(ξ − ω^j)`, one per `firstRow` (`j = 0`) or
-/// `lastRow` (`j = N − 1`) boundary, in the order of the boundaries, after the proof's words; none
-/// for `everyRow` and `everyFrame`.
+/// The calldata's auxiliary inverses (pilfflonk/docs/formats.md#calldata): `1/(ξ − ω^j)`, one per
+/// `firstRow` (`j = 0`) or `lastRow` (`j = N − 1`) boundary, in the order of the boundaries, after
+/// the proof's words; none for `everyRow` and `everyFrame`.
 #[test]
 fn the_calldata_has_an_inverse_per_first_row_and_last_row_boundary() {
     let _cpp = cpp_core();
@@ -171,9 +172,10 @@ fn the_calldata_has_an_inverse_per_first_row_and_last_row_boundary() {
     assert_eq!(layout.proof_words(), CalldataLayout::of(&vkey).proof_words());
 }
 
-/// X_2 as the JS verifier reads it (elements.js, g2FromObject; M40 review, `forge_x2.mjs`): the
-/// point at infinity of G2, for which a forged proof passes the pairing precompile, is refused by
-/// `Vkey::validate`, and so by the generator and by the reader of the vkey, digest right or not.
+/// X_2 as the JS verifier reads it (elements.js, g2FromObject;
+/// pilfflonk/docs/verifier.md#refused-vkeys): the point at infinity of G2, for which a forged proof
+/// passes the pairing precompile, is refused by `Vkey::validate`, and so by the generator and by
+/// the reader of the vkey, digest right or not.
 #[test]
 fn a_vkey_whose_x_2_is_not_a_point_of_g2_is_refused() {
     let _cpp = cpp_core();
@@ -198,7 +200,7 @@ fn a_vkey_whose_x_2_is_not_a_point_of_g2_is_refused() {
 }
 
 /// The setup refuses a ptau whose [τ]₂ is the point at infinity (τ = 0 in G2), before it writes a
-/// vkey with it (M40 review).
+/// vkey with it (pilfflonk/docs/verifier.md#refused-vkeys).
 #[test]
 fn a_ptau_whose_tau_g2_is_the_point_at_infinity_is_refused() {
     let _cpp = cpp_core();
@@ -225,8 +227,9 @@ fn a_ptau_whose_tau_g2_is_the_point_at_infinity_is_refused() {
     assert!(!proving_key.join("Synthetic/pilfflonk/pilfflonk.vkey.json").exists());
 }
 
-/// Offsets as the JS verifier's checkLayout reads them (shplonk.js; M40 review, `mk_off.mjs`): an
-/// offset of `N + 1` in place of 1, with its evMap entries and the digest to match, is refused.
+/// Offsets as the JS verifier's checkLayout reads them (shplonk.js;
+/// pilfflonk/docs/verifier.md#refused-vkeys): an offset of `N + 1` in place of 1, with its evMap
+/// entries and the digest to match, is refused.
 #[test]
 fn a_vkey_with_an_offset_of_n_or_more_is_refused() {
     let _cpp = cpp_core();

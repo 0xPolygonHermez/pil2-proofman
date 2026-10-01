@@ -1,21 +1,24 @@
-// The SHPLONK opening check of pilfflonk (spec-seed.md A.5), with the structure of snarkjs' fflonk
-// verifier (src/fflonk_verify.js: computeF, computeE, computeJ, isValidPairing). snarkjs has three
-// fixed polynomials C0, C1 and C2 and their roots written out; here they are the list of f_i, each
-// with its k and signed offsets, and r_i(y) and q_i are generalised as shplonkjs' verifyOpenings
-// does (shplonkjs/src/helpers/verifier.js:107-138). It checks
+// The SHPLONK opening check of pilfflonk (pilfflonk/docs/protocol.md#pairing-check), with the
+// structure of snarkjs' fflonk verifier (src/fflonk_verify.js: computeF, computeE, computeJ,
+// isValidPairing). snarkjs has three fixed polynomials C0, C1 and C2 and their roots written out;
+// here they are the list of f_i, each with its k and signed offsets, and r_i(y) and q_i are
+// generalised as shplonkjs' verifyOpenings does (shplonkjs/src/helpers/verifier.js:107-138).
+// It checks
 //
 //     e(F - E - J + y·[W'], [1]₂) = e([W'], [τ]₂)
 //
 //     F = [f_0] + Σ_{i≥1} q_i·[f_i],   E = (r_0(y) + Σ_{i≥1} q_i·r_i(y))·G1,   J = q_0·[W],
 //     q_0 = Z_{T_0}(y),   q_i = α^i·Z_{T_0}(y)/Z_{T_i}(y),
 //
-// with T_i the roots of f_i (A.2.5) and r_i the polynomial that interpolates f_i on T_i. The
-// prover's Z_T = Π_i Z_{T_i} counts a root once per f_i that has it, repetitions included
-// (pilfflonk_shplonk_prover.cpp, quotientWp; pil-fflonk/src/shplonk.cpp:83-101, 263-270), and it
-// scales W' by 1/Z_{T∖T_0}(y) = 1/Π_{i≥1} Z_{T_i}(y): that leaves q_0 = Z_T(y)/Z_{T∖T_0}(y) =
-// Z_{T_0}(y) and the q_i above, each Z_{T_i} over every root of T_i, shared with another f_j or not.
+// with T_i the roots of f_i (pilfflonk/docs/protocol.md#roots) and r_i the polynomial that
+// interpolates f_i on T_i. The prover's Z_T = Π_i Z_{T_i} counts a root once per f_i that has it,
+// repetitions included (pilfflonk_shplonk_prover.cpp, quotientWp; pil-fflonk/src/shplonk.cpp:83-101,
+// 263-270), and it scales W' by 1/Z_{T∖T_0}(y) = 1/Π_{i≥1} Z_{T_i}(y): that leaves q_0 =
+// Z_T(y)/Z_{T∖T_0}(y) = Z_{T_0}(y) and the q_i above, each Z_{T_i} over every root of T_i, shared
+// with another f_j or not.
 //
-// Every input is explicit: the transcript replay that gives xiSeed, α and y (A.4) is the caller's.
+// Every input is explicit: the transcript replay that gives xiSeed, α and y
+// (pilfflonk/docs/protocol.md#transcript) is the caller's.
 
 import { PilFflonkInputError } from "./elements.js";
 
@@ -32,8 +35,8 @@ function gcd(a, b) {
 }
 
 // 5^((r-1)/n), a primitive n-th root of unity for n (a bigint) dividing r - 1: w_k for n = k, ω_N
-// for n = N and ω_{kN} for n = kN (A.2.5). 5 is the smallest quadratic non-residue, the generator
-// ffiasm's FFT and ffjavascript raise, so ω_N generates the H they use.
+// for n = N and ω_{kN} for n = kN (pilfflonk/docs/protocol.md#roots). 5 is the smallest quadratic
+// non-residue, the generator ffiasm's FFT and ffjavascript raise, so ω_N generates the H they use.
 export function rootOfUnity(curve, n) {
     const order = curve.r - 1n;
     if (order % n !== 0n) {
@@ -94,8 +97,8 @@ export function checkLayout(curve, { nBits, powerW, f }) {
 }
 
 // ξ = xiSeed^powerW and, for each f_i, the points ξ·ω_N^s of its offsets and its roots T_i,
-// offset-major (A.2.5): x_j = xiSeed^(powerW/k)·ω_{kN}^s·w_k^j, so that x_j^k = ξ·ω_N^s, also for
-// s < 0.
+// offset-major (pilfflonk/docs/protocol.md#roots): x_j = xiSeed^(powerW/k)·ω_{kN}^s·w_k^j, so that
+// x_j^k = ξ·ω_N^s, also for s < 0.
 export function computeRoots(curve, { nBits, powerW, f }, xiSeed) {
     const Fr = curve.Fr;
     const N = 2 ** nBits;
@@ -126,9 +129,9 @@ export function computeZerofiers(curve, roots, y) {
     return roots.map(({ roots: T }) => T.reduce((z, x) => Fr.mul(z, Fr.sub(y, x)), Fr.one));
 }
 
-// r_i(y) for each f_i (A.5): on each root x of offset s, f_i(x) = Σ_j p_j(ξ·ω_N^s)·x^j, and r_i(y)
-// = Σ_m f_i(x_m)·L_m(y) in the Lagrange basis of T_i, L_m(y) = Z_{T_i}(y) / ((y - x_m)·Π_{l≠m}
-// (x_m - x_l)). y must not be in T_i: Z_{T_i}(y) ≠ 0.
+// r_i(y) for each f_i (pilfflonk/docs/protocol.md#pairing-check): on each root x of offset s,
+// f_i(x) = Σ_j p_j(ξ·ω_N^s)·x^j, and r_i(y) = Σ_m f_i(x_m)·L_m(y) in the Lagrange basis of T_i,
+// L_m(y) = Z_{T_i}(y) / ((y - x_m)·Π_{l≠m} (x_m - x_l)). y must not be in T_i: Z_{T_i}(y) ≠ 0.
 export function computeR(curve, f, roots, evaluations, zerofiers, y) {
     const Fr = curve.Fr;
     return f.map(({ k }, i) => {
@@ -151,8 +154,8 @@ export function computeR(curve, f, roots, evaluations, zerofiers, y) {
 }
 
 // The denominators this verifier inverts in the SHPLONK check at y, in the order of the proof's inv
-// (A.6), as the prover lists them (verifierDenominators, pil2-stark/src/pilfflonk/
-// pilfflonk_shplonk_prover.hpp):
+// (pilfflonk/docs/protocol.md#inverses), as the prover lists them (verifierDenominators,
+// pil2-stark/src/pilfflonk/pilfflonk_shplonk_prover.hpp):
 //   1. Z_{T_i}(y) for i = 1 … n − 1: those of the q_i (computeQuotients);
 //   2. for each f_i, i = 0 … n − 1, and each root x_m of T_i in its order (offset-major, as
 //      computeRoots gives them): (y − x_m)·Π_{l≠m} (x_m − x_l), those of the Lagrange basis of
@@ -181,8 +184,8 @@ export function isValidInverse(curve, denominators, inv) {
     return Fr.eq(Fr.mul(product, inv), Fr.one);
 }
 
-// q_0 = Z_{T_0}(y), q_i = α^i·Z_{T_0}(y)/Z_{T_i}(y) (A.5): the i-th power of α for the i-th f of the
-// global order.
+// q_0 = Z_{T_0}(y), q_i = α^i·Z_{T_0}(y)/Z_{T_i}(y) (pilfflonk/docs/protocol.md#pairing-check): the
+// i-th power of α for the i-th f of the global order.
 export function computeQuotients(curve, zerofiers, alpha) {
     const Fr = curve.Fr;
     const quotients = [zerofiers[0]];
@@ -267,14 +270,14 @@ function checkOpening(curve, opening) {
     if (!X2 || !isPoint(curve.G2, X2.one) || !isPoint(curve.G2, X2.tau)) fail("[1]₂ or [τ]₂ is not a point of G2");
 }
 
-// Whether the SHPLONK opening verifies (A.5):
+// Whether the SHPLONK opening verifies (pilfflonk/docs/protocol.md#shplonk-opening):
 //   nBits, powerW       N = 2^nBits; powerW, the lcm of every k
-//   f                   [{k, offsets}]: the layout, in the global order of A.5, f_0 first
+//   f                   [{k, offsets}]: the layout, in the global order, f_0 first
 //   fixedCommitments    [f_i]₁ of the first fixedCommitments.length f_i, the fixed ones: from the
-//                       vkey, never from the proof (A.5)
+//                       vkey, never from the proof
 //   commitments         [f_i]₁ of the others, in order: from the proof
 //   evaluations         evaluations[i][m][j] = p_j(ξ·ω_N^s), with s = f[i].offsets[m]
-//   xiSeed, alpha, y    the challenges, from the caller's transcript replay (A.4)
+//   xiSeed, alpha, y    the challenges, from the caller's transcript replay
 //   W, Wp               [W]₁ and [W']₁, from the proof
 //   X2                  {one: [1]₂, tau: [τ]₂}, from the vkey
 // Scalars are elements of curve.Fr and points of curve.G1 and curve.G2 (see elements.js). An input

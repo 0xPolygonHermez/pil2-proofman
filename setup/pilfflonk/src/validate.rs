@@ -1,7 +1,8 @@
-//! Reading a pilout for pilfflonk: what the setup refuses before any pass runs (spec §4.2.1).
+//! Reading a pilout for pilfflonk: what the setup refuses before any pass runs
+//! (pilfflonk/docs/README.md#what-the-setup-refuses).
 //!
-//! [`validate`] checks a whole pilout at once, but for three of §4.2.1's cases, which need what
-//! only the passes and the layout know (`crate::layout`):
+//! [`validate`] checks a whole pilout at once, but for three of those cases, which need what only
+//! the passes and the layout know (`crate::layout`):
 //!
 //! - the prover hints the setup supports, `im_col`, `gsum_col` and `gprod_col`, must produce every
 //!   column of stage 2 or above, each once, from what the prover computes before them:
@@ -9,7 +10,7 @@
 //!   `crate::bytecode`); [`validate`] only checks their names, and that a stage with columns has
 //!   some hint;
 //! - the extended domain must fit in the 2-adicity of BN254: [`check_extended_domain`], called
-//!   with the `nBitsExt` of A.1 (`layout::Degrees`);
+//!   with the `nBitsExt` of `layout::Degrees` (pilfflonk/docs/protocol.md#degrees);
 //! - the ptau must hold as many powers `[τ^i]₁` as the largest `degree` of the layout:
 //!   [`crate::keys::write_srs`] asks the C++ reader for exactly that many, and the reader refuses a
 //!   ptau with fewer before it reads a point.
@@ -25,8 +26,8 @@ use proofman_pilfflonk::global_info::MAX_NBITS;
 
 use crate::error::SetupError;
 
-/// The witness and debug hints of spec §3.4: the std's witness computation and debugging read
-/// them, the prover does not. The setup ignores them.
+/// The witness and debug hints (pilfflonk/docs/README.md#what-the-setup-refuses): the std's
+/// witness computation and debugging read them, the prover does not. The setup ignores them.
 pub const WITNESS_AND_DEBUG_HINTS: [&str; 12] = [
     "gsum_debug_data",
     "gsum_debug_data_global",
@@ -42,16 +43,16 @@ pub const WITNESS_AND_DEBUG_HINTS: [&str; 12] = [
     "std_rc_users",
 ];
 
-/// The prover hints of spec §3.4, those of the std's buses.
+/// The prover hints, those of the std's buses.
 pub const PROVER_HINTS: [&str; 4] = ["gsum_col", "gprod_col", "im_col", "im_airval"];
 
-/// The prover hints the setup supports (plans M30, M31): the intermediate columns of the terms of
-/// the std's buses (`im_col`), and their running product (`gprod_col`) and sum (`gsum_col`), which
-/// produce the columns of stage 2. In the order the prover computes the hints of a stage in, the
-/// STARK's (`pil2-stark/src/starkpil/gen_proof.hpp`): the `im_col` ones (`calculateImHints`), then
-/// the `gprod_col` ones and the `gsum_col` ones (`calculateWitnessSTD`), each in the pilout's order
-/// (`getHintIdsByName`). The other one, `im_airval`, computes an air value, which v1 has none of
-/// (D2).
+/// The prover hints the setup supports (pilfflonk/docs/protocol.md#hint-columns): the intermediate
+/// columns of the terms of the std's buses (`im_col`), and their running product (`gprod_col`) and
+/// sum (`gsum_col`), which produce the columns of stage 2. In the order the prover computes the
+/// hints of a stage in, the STARK's (`pil2-stark/src/starkpil/gen_proof.hpp`): the `im_col` ones
+/// (`calculateImHints`), then the `gprod_col` ones and the `gsum_col` ones (`calculateWitnessSTD`),
+/// each in the pilout's order (`getHintIdsByName`). The other one, `im_airval`, computes an air
+/// value, which v1 has none of (pilfflonk/docs/README.md#scope).
 pub const SUPPORTED_PROVER_HINTS: [&str; 3] = ["im_col", "gprod_col", "gsum_col"];
 
 /// The AIR of a pilout that passed [`validate`]: its only one.
@@ -75,12 +76,13 @@ pub(crate) fn air_label(air: &pb::Air, airgroup_id: usize, air_id: usize) -> Str
     air.name.clone().unwrap_or_else(|| format!("{air_id} of airgroup {airgroup_id}"))
 }
 
-/// Checks `pilout` against spec §4.2.1, but for what [the module](self) leaves to others, and
-/// returns its AIR. In order: the base field; more than one AIR (D2); the hints, before the values
-/// that `im_airval` brings, so that it is told about; what else v1 leaves out (D2): air values,
-/// airgroup values, proof values and global constraints; the AIR's number of rows; custom commits,
-/// periodic columns and public tables; the columns of stage 2 or above; and the constants of the
-/// expressions.
+/// Checks `pilout` against what the setup refuses
+/// (pilfflonk/docs/README.md#what-the-setup-refuses), but for what [the module](self) leaves to
+/// others, and returns its AIR. In order: the base field; more than one AIR; the hints, before the
+/// values that `im_airval` brings, so that it is told about; what else v1 leaves out
+/// (pilfflonk/docs/README.md#scope): air values, airgroup values, proof values and global
+/// constraints; the AIR's number of rows; custom commits, periodic columns and public tables; the
+/// columns of stage 2 or above; and the constants of the expressions.
 pub fn validate(pilout: &pb::PilOut) -> Result<ValidAir<'_>, SetupError> {
     check_base_field(pilout)?;
     let valid = only_air(pilout)?;
@@ -113,8 +115,9 @@ pub fn validate(pilout: &pb::PilOut) -> Result<ValidAir<'_>, SetupError> {
     Ok(valid)
 }
 
-/// Checks that the extended domain of A.1, of `2^n_bits_ext` points, fits in the 2-adicity of
-/// BN254 (spec §4.2.1). The command calls it with the `nBitsExt` of `layout::Degrees`.
+/// Checks that the extended domain, of `2^n_bits_ext` points, fits in the 2-adicity of BN254
+/// (pilfflonk/docs/protocol.md#degrees). The command calls it with the `nBitsExt` of
+/// `layout::Degrees`.
 pub fn check_extended_domain(n_bits_ext: u64) -> Result<(), SetupError> {
     if n_bits_ext > MAX_NBITS {
         return Err(SetupError::ExtendedDomain { n_bits_ext });
@@ -133,9 +136,9 @@ fn check_base_field(pilout: &pb::PilOut) -> Result<(), SetupError> {
     }
 }
 
-/// What v1 leaves out besides other AIRs (spec §4.2.1, D2): air values, airgroup values, proof
-/// values and global constraints. The values are counted where the pilout declares them and by
-/// their symbols, so that either one is enough to refuse them.
+/// What v1 leaves out besides other AIRs (pilfflonk/docs/README.md#scope): air values, airgroup
+/// values, proof values and global constraints. The values are counted where the pilout declares
+/// them and by their symbols, so that either one is enough to refuse them.
 fn check_values(pilout: &pb::PilOut, air: &pb::Air, label: &str) -> Result<(), SetupError> {
     let symbols = |kind: pb::SymbolType| pilout.symbols.iter().filter(|s| s.r#type == kind as i32).count();
     let air_values = air.air_values.len().max(symbols(pb::SymbolType::AirValue));
@@ -168,10 +171,10 @@ fn only_air(pilout: &pb::PilOut) -> Result<ValidAir<'_>, SetupError> {
     }
 }
 
-/// The hints of the pilout by name (spec §3.4): the witness and debug ones are ignored, `im_col`,
-/// `gsum_col` and `gprod_col` must be of the AIR, and the others are refused, `witness_bits` among
-/// them: the packed trace rows it asks for are not accepted yet (plan M38b). Returns the number of
-/// `im_col`, `gsum_col` and `gprod_col`.
+/// The hints of the pilout by name (pilfflonk/docs/README.md#what-the-setup-refuses): the witness
+/// and debug ones are ignored, `im_col`, `gsum_col` and `gprod_col` must be of the AIR, and the
+/// others are refused, `witness_bits` among them: the packed trace rows it asks for are not
+/// accepted yet. Returns the number of `im_col`, `gsum_col` and `gprod_col`.
 fn check_hints(pilout: &pb::PilOut) -> Result<usize, SetupError> {
     let mut n_supported = 0;
     for hint in &pilout.hints {
@@ -235,26 +238,27 @@ struct ProverHint<'a> {
 }
 
 /// Checks the prover hints of the passes' result (the `im_col`, `gsum_col` and `gprod_col` of the
-/// AIR, spec §4.2.1, plans M30 and M31) against what the prover computes of them, as the STARK's
-/// `calculateImHints` does with `multiplyHintFields` and `calculateWitnessSTD` with
-/// `accMulHintFields` (`pil2-stark/src/starkpil/hints.cpp`):
+/// AIR: pilfflonk/docs/README.md#what-the-setup-refuses) against what the prover computes of them
+/// (pilfflonk/docs/protocol.md#hint-columns), as the STARK's `calculateImHints` does with
+/// `multiplyHintFields` and `calculateWitnessSTD` with `accMulHintFields`
+/// (`pil2-stark/src/starkpil/hints.cpp`):
 ///
 /// - `reference` is a column of stage 2 or above, read at its own row, and not an im pol: the
 ///   quotient `numerator/denominator` of an `im_col` goes there, and the running sum or product of
 ///   `numerator_air/denominator_air` of a `gsum_col` or `gprod_col`;
 /// - the numerator and the denominator are each an expression, a column at an opening point or a
-///   number (the operands the STARK's `addHintField` takes, air values aside: v1 has none, D2), and
+///   number (the operands the STARK's `addHintField` takes, air values aside: v1 has none), and
 ///   read only columns the prover computes before the hint: fixed ones, those of the stages before
 ///   the reference's, and of its stage those of the hints before it in the STARK's order
-///   ([`SUPPORTED_PROVER_HINTS`]): an `im_col` may read the `im_col` columns before it, which the std's product
-///   bus chains, and a `gsum_col` or `gprod_col` those of the `im_col` hints, but none reads an im
-///   pol of its stage, which the prover computes last;
+///   ([`SUPPORTED_PROVER_HINTS`]): an `im_col` may read the `im_col` columns before it, which the
+///   std's product bus chains, and a `gsum_col` or `gprod_col` those of the `im_col` hints, but
+///   none reads an im pol of its stage, which the prover computes last;
 /// - an `im_col` is of an AIR with a `gsum_col` or a `gprod_col`: the STARK's `calculateImHints`
 ///   computes none otherwise;
 /// - `result`, if a `gsum_col` or `gprod_col` has it, is a number: it is the airgroup value the
-///   column's last row updates otherwise, with `numerator_direct/denominator_direct`, and v1 has none
-///   (D2). The std writes a number there in `STD_MODE_ONE_INSTANCE`, and the prover ignores the three
-///   fields, as `calculateWitnessSTD` does when the AIR has no airgroup value;
+///   column's last row updates otherwise, with `numerator_direct/denominator_direct`, and v1 has
+///   none. The std writes a number there in `STD_MODE_ONE_INSTANCE`, and the prover ignores the
+///   three fields, as `calculateWitnessSTD` does when the AIR has no airgroup value;
 /// - every column of stage 2 or above but the im pols is the reference of one hint exactly.
 ///
 /// `label` is what the errors call the AIR. [`validate`] has checked the hints' names.
@@ -332,8 +336,8 @@ pub fn check_prover_hints(result: &PilInfoResult, label: &str) -> Result<(), Set
             if let Some(result) = single(hint, "result", label)? {
                 if result.op != "number" {
                     return Err(refuse(format!(
-                        "its result is a {}: it updates an airgroup value, which pilfflonk does not support (spec \
-                         D2); compile the std with set_std_mode(STD_MODE_ONE_INSTANCE)",
+                        "its result is a {}: it updates an airgroup value, which pilfflonk does not support \
+                         (pilfflonk/docs/README.md#scope); compile the std with set_std_mode(STD_MODE_ONE_INSTANCE)",
                         result.op
                     )));
                 }
@@ -411,7 +415,8 @@ fn global_operands(e: &pb::GlobalExpression) -> [Option<&pb::GlobalOperand>; 2] 
 }
 
 /// The constants of the AIR's expressions and of the global ones must be below `r`: a pilout
-/// over BN254 has none that is not, and reducing one would hide a compiler bug (spec §4.1, C4).
+/// over BN254 has none that is not, and reducing one would hide a compiler bug
+/// (pilfflonk/docs/README.md#compile-pil).
 /// The expressions the hints refer to are the AIR's; the numbers of the prover hints' own fields,
 /// the bytecode checks as it encodes them (`crate::bytecode`).
 fn check_constants(pilout: &pb::PilOut, air: &pb::Air, label: &str) -> Result<(), SetupError> {

@@ -1,6 +1,6 @@
 [package]
 name = "pilfflonk-connection"
-description = "The pilfflonk witness library of the Connection fixture, over BN254's Fr (D4): a test of the witness-library API"
+description = "The pilfflonk witness library of the Connection fixture, over BN254's Fr: a test of the witness-library API"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
@@ -24,5 +24,5 @@ proofman-fields = { workspace = true }
 [dev-dependencies]
 # Regenerates `src/pil_helpers` to check it is what pil-helpers writes.
 proofman-cli = { workspace = true }
-# Sets up the fixture's keys, with the ptau of `τ = 1` (plan N13).
+# Sets up the fixture's keys, with the ptau of `τ = 1` (pilfflonk/docs/README.md#tests).
 pilfflonk-setup = { workspace = true, features = ["test-ptau"] }

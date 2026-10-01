@@ -2,7 +2,7 @@
   "name": "pilfflonk-verifier",
   "private": true,
   "type": "module",
-  "description": "JS verifier of the pilfflonk backend (spec-seed.md §4.5): verify(vkey, publics, proof) and bin/verify.js",
+  "description": "JS verifier of the pilfflonk backend (pilfflonk/docs/verifier.md#js-verifier): verify(vkey, publics, proof) and bin/verify.js",
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:fixtures": "sh test/fixtures.sh",

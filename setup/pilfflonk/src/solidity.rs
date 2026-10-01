@@ -1,26 +1,29 @@
-//! `pilfflonk.verifier.sol`: the Solidity verifier of a vkey (spec §4.5, "Verificador Solidity";
-//! Fase 4), which `setup-pilfflonk --solidity` writes next to `pilfflonk.vkey.json` and
-//! `proofman-setup pilfflonk-solidity` writes from a vkey alone.
+//! `pilfflonk.verifier.sol`: the Solidity verifier of a vkey
+//! (pilfflonk/docs/verifier.md#solidity-verifier), which `setup-pilfflonk --solidity` writes next
+//! to `pilfflonk.vkey.json` and `proofman-setup pilfflonk-solidity` writes from a vkey alone.
 //!
 //! The template, `tera/verifier_pilfflonk.sol.tera`, is rendered with `tera` as the STARK's Solidity
 //! and circom templates are (`setup/stark-recurser/stark2circom/circuit_templates/templates.rs`:
 //! `include_str!` and one `render`). It is snarkjs 0.7.6's fflonk verifier
-//! (`templates/verifier_fflonk.sol.ejs`) generalised as the JS verifier (`pilfflonk/js/src/
-//! verify.js`, D8) generalises snarkjs's `fflonk_verify.js`, and it accepts exactly the proofs the
-//! JS verifier accepts. This module computes what the template takes from the vkey:
+//! (`templates/verifier_fflonk.sol.ejs`) generalised as the JS verifier
+//! (`pilfflonk/js/src/verify.js`, pilfflonk/docs/verifier.md#js-verifier) generalises snarkjs's
+//! `fflonk_verify.js`, and it accepts exactly the proofs the JS verifier accepts. This module
+//! computes what the template takes from the vkey:
 //! - the constants: `[τ]₂`, the fixed commitments, `digest mod r` and the roots of unity;
 //! - where each value is in the calldata ([`CalldataLayout`]) and in memory;
-//! - the transcript of A.4 (`challenges.js`) and the vkey's `qVerifier` (`qverifier.js`), as
-//!   straight-line Yul.
+//! - the transcript (`challenges.js`, pilfflonk/docs/protocol.md#transcript) and the vkey's
+//!   `qVerifier` (`qverifier.js`), as straight-line Yul.
 //!
-//! **Calldata.** `verifyProof(bytes32[W] calldata proof, uint256[P] calldata pubSignals)`, as snarkjs's
-//! `FflonkVerifier`, with `P = nPublic` (no `pubSignals` if it is 0) and `W` the words of
-//! [`CalldataLayout`]: the proof's bytes (A.6, `Proof::to_bytes`) as 32-byte words, followed by one
-//! auxiliary inverse `1/(ξ − ω^j)` for each `firstRow` (`j = 0`) or `lastRow` (`j = N − 1`) boundary,
-//! in the order of the boundaries (spec §4.5, "Calldata"). The contract checks each, as it checks
-//! `inv` and `invZh`. A vkey without those boundaries, as every compiled PIL2 program (§3.4), has none,
-//! and the calldata is the proof. `proofman_pilfflonk::calldata` encodes it for a proof, and
-//! `proofman-cli pilfflonk calldata` prints it.
+//! **Calldata.** `verifyProof(bytes32[W] calldata proof, uint256[P] calldata pubSignals)`, as
+//! snarkjs's `FflonkVerifier`, with `P = nPublic` (no `pubSignals` if it is 0) and `W` the words of
+//! [`CalldataLayout`]: the proof's bytes (`Proof::to_bytes`, pilfflonk/docs/formats.md#proof) as
+//! 32-byte words, followed by one auxiliary inverse `1/(ξ − ω^j)` for each `firstRow` (`j = 0`) or
+//! `lastRow` (`j = N − 1`) boundary, in the order of the boundaries
+//! (pilfflonk/docs/formats.md#calldata). The contract checks each, as it checks `inv` and `invZh`.
+//! A vkey without those boundaries, as every compiled PIL2 program
+//! (pilfflonk/docs/protocol.md#constraint-polynomial), has none, and the calldata is the proof.
+//! `proofman_pilfflonk::calldata` encodes it for a proof, and `proofman-cli pilfflonk calldata`
+//! prints it.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -39,7 +42,7 @@ use crate::digest::vkey_digest;
 use crate::error::SetupError;
 
 /// The file name of the verifier, in the backend directory of the `provingKey/`, next to the vkey
-/// (spec §4.2.6).
+/// (pilfflonk/docs/formats.md#provingkey).
 pub const VERIFIER_SOL_FILE: &str = "pilfflonk.verifier.sol";
 
 /// The template (see the module).
@@ -267,7 +270,7 @@ struct RootRow {
     other_z: Vec<String>,
 }
 
-/// One `f_i` of the layout, in the global order of A.5.
+/// One `f_i` of the layout, in the global order (pilfflonk/docs/protocol.md#global-order).
 #[derive(Serialize)]
 struct F {
     index: usize,
@@ -301,7 +304,7 @@ struct FRow {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The transcript (A.4, `challenges.js`)
+// The transcript (`challenges.js`, pilfflonk/docs/protocol.md#transcript)
 // ---------------------------------------------------------------------------------------------
 
 /// The Yul of the transcript: its buffer `pT` holds what was absorbed since the last squeeze, which
@@ -541,7 +544,7 @@ impl Context {
             }
         }
         let after_pieces = cd.first_scalar() + cd.n_evaluations + cd.n_q_pieces;
-        cd_slot("pInv".into(), after_pieces, "inv (A.5)".into());
+        cd_slot("pInv".into(), after_pieces, "inv = 1/(the product of the pInvs values)".into());
         cd_slot("pInvZh".into(), after_pieces + 1, "invZh = 1/Z_H(xi)".into());
         let aux_slots: Vec<String> = cd
             .aux_rows
@@ -642,10 +645,10 @@ impl Context {
             set_of.push(index);
         }
 
-        // The array the proof's inv inverts, in its order (A.5): Z_{T_i}(y) for i ≥ 1, then the
-        // Lagrange denominators of each f_i.
+        // The array the proof's inv inverts, in its order (pilfflonk/docs/protocol.md#inverses):
+        // Z_{T_i}(y) for i ≥ 1, then the Lagrange denominators of each f_i.
         let n_inv = (layout.len() as u64 - 1) + layout.iter().map(|f| f.k * f.offsets.len() as u64).sum::<u64>();
-        mem.alloc("pInvs".into(), 0, format!("the {n_inv} values the proof's inv inverts (A.5), below"));
+        mem.alloc("pInvs".into(), 0, format!("the {n_inv} values the proof's inv inverts, below"));
         let p_inv_zt: Vec<Option<String>> = (0..layout.len())
             .map(|i| (i > 0).then(|| mem.alloc(format!("pInvZt{i}"), 1, format!("Z_T(y) of f{i}, then its inverse"))))
             .collect();
@@ -668,7 +671,7 @@ impl Context {
         let tmp_used = vkey.q_verifier.get("tmpUsed").and_then(Value::as_u64).unwrap_or(0);
         let tmp = mem.alloc("pTmp".into(), tmp_used, "the temporaries of the qVerifier".into());
 
-        // --- A.4, challenges.js ---------------------------------------------------------------
+        // --- The transcript, challenges.js ----------------------------------------------------
         let mut t = TranscriptCode::default();
         t.comment("Step 1: digest mod r, the number of instances of the AIR (1), the publics");
         t.word("DIGEST");
@@ -880,7 +883,8 @@ pub fn verifier_sol(vkey: &Vkey) -> Result<String, SetupError> {
     vkey.validate()?;
     if vkey_digest(vkey)? != vkey.digest {
         return fail(
-            "the vkey's digest is not the digest of its contents (A.6): the JS verifier accepts no proof of it",
+            "the vkey's digest is not the digest of its contents (pilfflonk/docs/formats.md#digest): the JS verifier \
+             accepts no proof of it",
         );
     }
     if let Some(i) = vkey.fixed_commitments.0.iter().position(|p| !is_g1(p)) {

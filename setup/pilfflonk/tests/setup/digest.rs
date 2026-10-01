@@ -1,5 +1,5 @@
-//! The digest of the vkey (spec A.6, N10): `keccak256("pilfflonk-v1" ‖ canonical(vkey without
-//! digest))`, with Keccak-256 from the C++ core.
+//! The digest of the vkey (pilfflonk/docs/formats.md#digest):
+//! `keccak256("pilfflonk-v1" ‖ canonical(vkey without digest))`, with Keccak-256 from the C++ core.
 
 use std::fs;
 
@@ -15,8 +15,8 @@ use crate::common::*;
 
 /// The digest of [`sample_vkey`], computed by @noble/hashes' `keccak_256` over the canonical JSON
 /// that a JavaScript canonicaliser (keys sorted by `sort()`, `JSON.stringify` of each value) writes
-/// for `pilfflonk.vkey.json` as this test writes it: an implementation of A.6 independent of this
-/// one, and of the Keccak of the C++ core.
+/// for `pilfflonk.vkey.json` as this test writes it: an implementation of the digest
+/// (pilfflonk/docs/formats.md#digest) independent of this one, and of the Keccak of the C++ core.
 const SAMPLE_DIGEST: &str = "0x0d0a871547df85cf3f811d77135800ef101a2538ac40e315441369ee3ae0eb42";
 
 fn f(stage: u64, pols: &[(u64, &str)], offsets: &[i64], degree: u64) -> LayoutEntry {
@@ -95,7 +95,7 @@ fn the_digest_is_keccak256_of_the_preimage() {
     assert_eq!(digest.to_hex(), SAMPLE_DIGEST);
 }
 
-/// `seal_vkey` is M12's `Vkey::seal` with this Keccak-256, and the digest does not depend on the
+/// `seal_vkey` is `Vkey::seal` with this Keccak-256, and the digest does not depend on the
 /// one the vkey had.
 #[test]
 fn sealing_sets_the_digest_and_nothing_else() {

@@ -1,6 +1,6 @@
-//! The symbolic passes over BN254 (spec §4.2.2, §4.2.3): `pil_info::run` with
-//! `PilInfoCfg::bn254()` and the degree search of D5, `Search { max: D }` for
-//! `--max-constraint-degree D`.
+//! The symbolic passes over BN254 (pilfflonk/docs/README.md#setup-pilfflonk): `pil_info::run` with
+//! `PilInfoCfg::bn254()` and the degree search (pilfflonk/docs/protocol.md#degree-search),
+//! `Search { max: D }` for `--max-constraint-degree D`.
 //!
 //! The passes recurse over the expression trees, which in large AIRs are thousands of levels
 //! deep, so they run on a thread of their own with the stack the STARK setup gives them

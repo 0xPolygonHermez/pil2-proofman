@@ -1,10 +1,10 @@
-// A range check in one AIR (plan M34): every row of the witness column `v` is in [0, R), R = 2^4,
-// through a lookup into the fixed table T = [0, 1, …, R − 1], padded with R − 1 to N = 2^6 rows.
-// pil-fflonk has no range check example; spec-seed.md's Fase 2 asks for one.
+// A range check in one AIR (pilfflonk/docs/README.md#fixtures): every row of the witness column `v`
+// is in [0, R), R = 2^4, through a lookup into the fixed table T = [0, 1, …, R − 1], padded with
+// R − 1 to N = 2^6 rows. pil-fflonk has no range check example.
 //
 // - Not the std's range_check (std_range_check.pil): it proves its ranges in a table AIR of its own
 //   (U8Air, U16Air or SpecifiedRanges, or a virtual table's), two AIRs where a pilfflonk proof holds
-//   one (D2), and in STD_MODE_ONE_INSTANCE each would close its half of the bus alone. The table is
+//   one, and in STD_MODE_ONE_INSTANCE each would close its half of the bus alone. The table is
 //   in this AIR instead, and the checks are the std's lookup or permutation, as `bus_type` says.
 // - On the sum bus (PIOP_BUS_SUM): the std's lookup, LogUp, `v` into T with the multiplicity `mul`,
 //   the times each row of T is looked up.

@@ -10,9 +10,9 @@ namespace PilFflonk {
 
 using FrElement = AltBn128::Engine::FrElement;
 
-// Where the prover's blinding factors come from (spec A.3): the coefficients of each b(X) in
-// p'(X) = p(X) + (X^N − 1)·b(X). The prover draws them in a fixed order (Instance::commitStage), so
-// a deterministic source gives the same proof twice.
+// Where the prover's blinding factors come from (pilfflonk/docs/protocol.md#blinding): the
+// coefficients of each b(X) in p'(X) = p(X) + (X^N − 1)·b(X). The prover draws them in a fixed
+// order (Instance::commitStage), so a deterministic source gives the same proof twice.
 class BlindingSource {
 public:
     virtual ~BlindingSource() = default;
@@ -21,7 +21,7 @@ public:
     virtual void fill(FrElement *out, uint64_t n) = 0;
 };
 
-// The blinding of a proof (decision D6: blinding is always on), from libsodium:
+// The blinding of a proof (always on), from libsodium:
 //
 // - random (the default, and the only choice for a real proof): randombytes_buf, the OS's CSPRNG;
 // - seeded (insecure, for tests and CI only): a stream that is a function of the 32-byte seed alone.

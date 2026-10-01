@@ -1,5 +1,6 @@
-//! The Fibonacci fixture (plan M13, M14): the witness generator of `tests/data/fibonacci.rs`
-//! against pil-fflonk's publics, its witness directory, and the Rust oracle on the pilout of
+//! The Fibonacci fixture (pilfflonk/docs/README.md#fixtures): the witness generator of
+//! `tests/data/fibonacci.rs` against pil-fflonk's publics, its witness directory, and the Rust
+//! oracle (pilfflonk/docs/README.md#tests) on the pilout of
 //! `tests/fixtures/fibonacci/fibonacci.pil`.
 //!
 //! Pilouts are not versioned: the `#[ignore]` tests compile the fixture with the compiler
@@ -31,7 +32,8 @@ use proofman_pilfflonk::{
 
 use data::fibonacci;
 
-/// The fixture's size and inputs, those of pil-fflonk's `all` example (spec Annex G).
+/// The fixture's size and inputs, those of pil-fflonk's `all` example
+/// (pilfflonk/docs/README.md#fixtures).
 const N_BITS: u32 = 8;
 const INPUTS: [u64; 2] = [1, 2];
 
@@ -114,7 +116,7 @@ const N: usize = 1 << N_BITS;
 
 /// The expression of `l1' − next`, `next = l1² + l2²`: the im pol the setup chooses at its default
 /// degree (`setup/pil-info/tests/bn254.rs`, `fibonacci_fixture_over_bn254`), which leaves
-/// `qDeg = 1` (spec A.1).
+/// `qDeg = 1` (pilfflonk/docs/protocol.md#degree-search).
 const L1_NEXT_MINUS_NEXT: usize = 6;
 
 /// The fixture compiled over BN254, once for all the tests of this binary.
@@ -274,7 +276,7 @@ fn q_from_barycentric_evaluations_is_the_exact_quotient() {
     }
 
     // With the im pol of `l1' − next`, every term has degree 2: deg Q ≤ 2(N − 1) − N = N − 2,
-    // qDeg = 1, as spec A.1 says of this fixture.
+    // qDeg = 1, as pilfflonk/docs/protocol.md#degree-search says of this fixture.
     let im = [L1_NEXT_MINUS_NEXT];
     let q_im = oracle.q_polynomial(&values, &im, &std_vc).unwrap();
     assert!(q_im.is_exact());

@@ -1,24 +1,26 @@
-//! The prover (spec §4.4): the orchestration of a proof over the C++ core, in the order of the
-//! transcript of spec A.4, which it drives through the C API (`proofman_starks_lib_c`).
+//! The prover (pilfflonk/docs/protocol.md#proof-sequence): the orchestration of a proof over the
+//! C++ core, in the order of the transcript (pilfflonk/docs/protocol.md#transcript), which it drives
+//! through the C API (`proofman_starks_lib_c`).
 //!
-//! [`ProvingKey::load`] reads the `provingKey/` (spec §4.2.6): this crate's types read and validate
-//! the globalInfo, the vkey (its digest checked) and each AIR's pilfflonkinfo, and check that they
-//! agree; the C++ side loads the same files for its computations (the SRS, the bytecode, the fixed
-//! columns) and derives the degrees of A.1, which must be [`PilfflonkInfo::degrees`]'s; its `[τ]₂`
-//! and the commitments of its fixed columns must be the vkey's.
+//! [`ProvingKey::load`] reads the `provingKey/` (pilfflonk/docs/formats.md#provingkey): this crate's
+//! types read and validate the globalInfo, the vkey (its digest checked) and each AIR's
+//! pilfflonkinfo, and check that they agree; the C++ side loads the same files for its computations
+//! (the SRS, the bytecode, the fixed columns) and derives the degrees
+//! (pilfflonk/docs/protocol.md#degrees), which must be [`PilfflonkInfo::degrees`]'s; its `[τ]₂` and
+//! the commitments of its fixed columns must be the vkey's.
 //!
-//! [`prove`] runs A.4 for a proof of one instance (v1, D2; plan R4):
+//! [`prove`] follows the transcript for a proof of one instance (pilfflonk/docs/README.md#scope):
 //!
 //! 1. absorb `digest mod r`, the number of instances of each AIR of the globalInfo in canonical
 //!    order (1), and the publics;
 //! 2. for each stage `s = 1 … nStages`: the C++ commits the stage (its columns, the witness's for
-//!    stage 1 and, with the stage's challenges, the std's prover hints' for the others, plan M30;
-//!    im pols, blinding, packing, MSM); absorb the commitments of its f in the global order of A.5
-//!    (the layout's), then its air values, airgroup values and proof values of stage `s` (none in
-//!    v1), and if `s < nStages` squeeze the `numChallenges[s]` challenges of stage `s + 1`, one per
-//!    squeeze;
-//! 3. squeeze `std_vc`; the C++ commits `Q`, or its pieces if it is split (A.1, A.3); absorb the
-//!    commitments of its f; squeeze `xiSeed`;
+//!    stage 1 and, with the stage's challenges, the std's prover hints' for the others; im pols,
+//!    blinding, packing, MSM); absorb the commitments of its f in the global order (the layout's,
+//!    pilfflonk/docs/protocol.md#global-order), then its air values, airgroup values and proof values
+//!    of stage `s` (none in v1), and if `s < nStages` squeeze the `numChallenges[s]` challenges of
+//!    stage `s + 1`, one per squeeze;
+//! 3. squeeze `std_vc`; the C++ commits `Q`, or its pieces if it is split
+//!    (pilfflonk/docs/protocol.md#q-pieces); absorb the commitments of its f; squeeze `xiSeed`;
 //! 4. the C++ evaluates every f at the roots of `ξ·ω^s`, `ξ = xiSeed^powerW`; absorb the evaluations
 //!    of the proof, the fixed columns' then the others', each in the order of the evMap, and then, if
 //!    `Q` is split, its pieces' `Q_i(ξ)`, in the order of the layout;
@@ -28,14 +30,14 @@
 //! It is `pilfflonk/js/src/challenges.js` (`computeChallenges`), the verifier's replay, step by step.
 //! Steps 1 and 2 are `commit_stages`, which [`stage_columns`] runs too.
 //! The proof holds the commitments of the non-fixed f (the fixed ones are the vkey's), `W`, `W'`, the
-//! evaluations, `inv` and `invZh` (A.6), and [`ProofOutput::write`] writes `proof.json` and
-//! `publics.json`.
+//! evaluations, `inv` and `invZh` (pilfflonk/docs/formats.md#proof), and [`ProofOutput::write`]
+//! writes `proof.json` and `publics.json`.
 //!
-//! **Blinding** (decision D6) is always on: random by default, fixed by
+//! **Blinding** (pilfflonk/docs/protocol.md#blinding) is always on: random by default, fixed by
 //! [`ProveOptions::insecure_blinding_seed`] for tests and CI, never for a real proof.
 //!
-//! **The GPU** (spec Fase 5, plan M43): [`ProvingKey::load_on`] with [`Device::Gpu`] runs the MSMs
-//! and the NTTs of the key and of its proofs on the GPU, with the GPU entry points of
+//! **The GPU** (pilfflonk/docs/performance.md#gpu): [`ProvingKey::load_on`] with [`Device::Gpu`]
+//! runs the MSMs and the NTTs of the key and of its proofs on the GPU, with the GPU entry points of
 //! `pil2-stark/src/bn128/src/{msm,ntt}`, and gives the same proofs, bit for bit. It needs a library
 //! built with CUDA and a GPU ([`gpu_available`]); [`ProvingKey::load`] is the CPU.
 
@@ -56,7 +58,8 @@ use crate::proof::{Proof, ProofJson, ProofNames, Publics, PROOF_FILE, PUBLICS_FI
 use crate::vkey::Vkey;
 use crate::witness::{AirInstanceRef, Stage1Witness, WitnessShape, WitnessSource};
 
-/// Where a [`ProvingKey`] runs the MSMs and the NTTs of its proofs (plan M43).
+/// Where a [`ProvingKey`] runs the MSMs and the NTTs of its proofs
+/// (pilfflonk/docs/performance.md#selection-memory-and-errors).
 pub use proofman_starks_lib_c::PilFflonkDevice as Device;
 
 /// Whether [`Device::Gpu`] can be used here: this library was built with CUDA (`nvcc` found, the
@@ -115,7 +118,8 @@ impl ProvingKey {
         }
         let [info] = airs.as_slice() else {
             return invalid!(
-                "the provingKey/ has {} AIRs, and a pilfflonk proof holds one instance of one AIR (D2)",
+                "the provingKey/ has {} AIRs, and a pilfflonk proof holds one instance of one AIR \
+                 (pilfflonk/docs/README.md#scope)",
                 airs.len()
             );
         };
@@ -129,7 +133,8 @@ impl ProvingKey {
             .map_err(native("reading the C++ prover's extended domain"))?;
         if n_bits_ext != degrees.n_bits_ext {
             return invalid!(
-                "the C++ prover extends {} to 2^{n_bits_ext} points, and A.1 says 2^{} (proofman_pilfflonk::degrees)",
+                "the C++ prover extends {} to 2^{n_bits_ext} points, and this crate to 2^{} \
+                 (proofman_pilfflonk::degrees, pilfflonk/docs/protocol.md#degrees)",
                 info.name,
                 degrees.n_bits_ext
             );
@@ -170,7 +175,8 @@ impl ProvingKey {
     }
 }
 
-/// The one instance of a witness (v1, D2; plan R4), read: what its C++ instance is made of.
+/// The one instance of a witness (pilfflonk/docs/README.md#scope), read: what its C++ instance is
+/// made of.
 pub(crate) struct WitnessInstance {
     pub(crate) air: AirInstanceRef,
     pub(crate) stage1: Stage1Witness,
@@ -183,7 +189,10 @@ impl WitnessInstance {
     pub(crate) fn read(witness: &impl WitnessSource) -> PilfflonkResult<Self> {
         let instances = witness.instances();
         let [air] = instances.as_slice() else {
-            return invalid!("the witness has {} instances, and a pilfflonk proof holds one (D2)", instances.len());
+            return invalid!(
+                "the witness has {} instances, and a pilfflonk proof holds one (pilfflonk/docs/README.md#scope)",
+                instances.len()
+            );
         };
         Ok(Self {
             air: *air,
@@ -246,7 +255,7 @@ fn check_vkey(vkey: &Vkey, info: &PilfflonkInfo, global_info: &PilfflonkGlobalIn
     Ok(())
 }
 
-/// That the SRS and the `.const` the C++ core loaded are those the vkey was set up with (plan M26):
+/// That the SRS and the `.const` the C++ core loaded are those the vkey was set up with:
 /// `[τ]₂` of the SRS is the vkey's `X_2`, and the fixed columns commit to its fixed commitments. The
 /// prover uses neither `X_2` nor those commitments, and the verifier takes both from the vkey: a
 /// `provingKey/` whose files come from different setups would give proofs that do not verify, and
@@ -287,14 +296,15 @@ fn check_srs_and_fixed(
 /// How to prove.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ProveOptions {
-    /// `None` (the default): the blinding is random, from the OS. `Some(seed)` fixes it (D6): the
-    /// same seed gives the same proof, and whoever knows it can remove the blinding. For tests and
-    /// CI only: a proof made with it is not zero-knowledge.
+    /// `None` (the default): the blinding is random, from the OS. `Some(seed)` fixes it
+    /// (pilfflonk/docs/protocol.md#blinding): the same seed gives the same proof, and whoever knows
+    /// it can remove the blinding. For tests and CI only: a proof made with it is not zero-knowledge.
     pub insecure_blinding_seed: Option<[u8; 32]>,
-    /// How `Q` is evaluated on the extended coset of `2^nBitsExt` points (plan M39): in parts of
-    /// `2^bits` points, one after another, `nBits <= bits <= nBitsExt`. `None` (the default) is
-    /// `nBits`, one coset of `H` per part, the least memory; `nBitsExt` evaluates `Q` on the whole
-    /// coset at once. The proof is the same bit for bit whatever the parts.
+    /// How `Q` is evaluated on the extended coset of `2^nBitsExt` points
+    /// (pilfflonk/docs/protocol.md#q-in-parts): in parts of `2^bits` points, one after another,
+    /// `nBits <= bits <= nBitsExt`. `None` (the default) is `nBits`, one coset of `H` per part, the
+    /// least memory; `nBitsExt` evaluates `Q` on the whole coset at once. The proof is the same bit
+    /// for bit whatever the parts.
     pub q_part_bits: Option<u64>,
 }
 
@@ -306,8 +316,9 @@ pub struct ProofChallenges {
     pub stages: Vec<Vec<FrBytes>>,
     pub std_vc: FrBytes,
     pub xi_seed: FrBytes,
-    /// `Q(ξ)` of the instance, the value the verifier computes from the evaluations (A.1): if `Q` is
-    /// split, `Σ_i ξ^(i·M·N)·Q_i(ξ)` of the proof's `Q_i(ξ)`, which the verifier checks it against.
+    /// `Q(ξ)` of the instance, the value the verifier computes from the evaluations
+    /// (pilfflonk/docs/protocol.md#verifier-equations): if `Q` is split, `Σ_i ξ^(i·M·N)·Q_i(ξ)` of
+    /// the proof's `Q_i(ξ)`, which the verifier checks it against.
     pub q_at_xi: FrBytes,
 }
 
@@ -321,7 +332,7 @@ pub struct ProofOutput {
 }
 
 impl ProofOutput {
-    /// `proof.json`: the JSON view of the proof (A.6).
+    /// `proof.json`: the JSON view of the proof (pilfflonk/docs/formats.md#proof).
     pub fn proof_json(&self) -> PilfflonkResult<ProofJson> {
         self.proof.to_json(&self.names)
     }
@@ -346,7 +357,7 @@ fn g1(points: Vec<[u8; 64]>) -> PilfflonkResult<Vec<G1Affine>> {
     points.iter().map(G1Affine::from_le_bytes).collect()
 }
 
-/// The transcript of A.4, with its errors in this crate's terms.
+/// The transcript (pilfflonk/docs/protocol.md#transcript), with its errors in this crate's terms.
 pub(crate) struct Transcript(PilFflonkTranscript);
 
 impl Transcript {
@@ -368,7 +379,7 @@ impl Transcript {
     }
 }
 
-/// What steps 1 and 2 of A.4 leave (`commit_stages`).
+/// What steps 1 and 2 of the transcript leave (`commit_stages`).
 struct CommittedStages {
     /// The transcript, which has absorbed everything up to the last stage's commitments and values.
     transcript: Transcript,
@@ -378,10 +389,10 @@ struct CommittedStages {
     challenges: Vec<Vec<FrBytes>>,
 }
 
-/// Steps 1 and 2 of A.4 (see [the module](self)) on `instance`, which is `witness`'s: a new
-/// transcript absorbs the digest, the number of instances of each AIR and the publics; then each
-/// stage `s` is committed, with the challenges the transcript gave for it (none for stage 1), and
-/// the transcript absorbs its commitments and its values, and squeezes the `numChallenges[s]`
+/// Steps 1 and 2 of the transcript (see [the module](self)) on `instance`, which is `witness`'s: a
+/// new transcript absorbs the digest, the number of instances of each AIR and the publics; then
+/// each stage `s` is committed, with the challenges the transcript gave for it (none for stage 1),
+/// and the transcript absorbs its commitments and its values, and squeezes the `numChallenges[s]`
 /// challenges of stage `s + 1` if `s < nStages`.
 fn commit_stages(
     pk: &ProvingKey,
@@ -410,7 +421,7 @@ fn commit_stages(
     transcript.scalars(&witness.publics)?;
 
     // Step 2: the stages. The air values, airgroup values and proof values of stage s follow its
-    // commitments; v1 has none but the stage-1 ones the witness gives (none either, D2).
+    // commitments; v1 has none but the stage-1 ones the witness gives (none either).
     let mut commitments = Vec::new();
     let mut stage_challenges: Vec<Vec<FrBytes>> = Vec::new();
     let mut challenges: Vec<FrBytes> = Vec::new();
@@ -449,8 +460,8 @@ pub struct StageColumns {
 
 /// The columns of every stage `1 … nStages` of the one instance of `witness`, as the prover computes
 /// them before it commits `Q`: steps 1 and 2 of [`prove`] with the same `options`, and so, with the
-/// same blinding seed, the same challenges and columns as its proof. For tests and diagnostics (plan
-/// M30: the oracle checks the prover hints' columns against them); a proof holds none of it.
+/// same blinding seed, the same challenges and columns as its proof. For tests and diagnostics (the
+/// oracle checks the prover hints' columns against them); a proof holds none of it.
 pub fn stage_columns(
     pk: &ProvingKey,
     witness: &impl WitnessSource,

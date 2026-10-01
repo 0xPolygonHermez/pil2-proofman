@@ -1,5 +1,5 @@
-// The cross-check with the C++ prover (M8; validations 4 and 5 of Fase 0): on every opening M7's
-// tests write,
+// The cross-check with the C++ prover (pilfflonk/docs/README.md#tests): on every opening the C++
+// SHPLONK tests write,
 // - the transcript script, replayed literally, gives the C++ challenges;
 // - the verifier accepts the opening, with its challenges replayed from the proof;
 // - it rejects every tampered copy: an evaluation, a commitment, [W] or [W'] changed by one or by a
@@ -31,7 +31,7 @@ import { Keccak256Transcript } from "../src/transcript.js";
 import { EXPECTED_CASES, FIXTURES_DIR, NO_FIXTURES, loadFixtures, newCurve, openingOf, verifies } from "./support.js";
 
 if (!FIXTURES_DIR) {
-    test("C++ SHPLONK fixtures (M7)", { skip: NO_FIXTURES }, () => {});
+    test("C++ SHPLONK fixtures", { skip: NO_FIXTURES }, () => {});
 } else {
     run(FIXTURES_DIR);
 }

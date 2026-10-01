@@ -164,7 +164,8 @@ void interpolateCoset(const Lde &lde, const FrElement *evals, FrElement *coefs) 
     lde.interpolateCoset(&evals, &coefs, 1);
 }
 
-// Pins what the spec says of g = 5 (§4.4, "Coset") and of ffiasm's roots (A.2).
+// Pins g = 5 (pilfflonk/docs/protocol.md#extended-coset) and ffiasm's roots
+// (pilfflonk/docs/protocol.md#notation).
 void testCosetShift() {
     assert(PilFflonk::COSET_SHIFT == 5);
     assert(PilFflonk::MAX_NBITS_EXT == 28);
@@ -425,10 +426,10 @@ void testBatchMatchesSingleColumns() {
     }
 }
 
-// The coset in parts (plan M39): for every size S = 2^partBits from N to N' and every part p,
-// extendCosetPart gives evaluation p + (N'/S)·i of extendCoset as its i-th, bit for bit, for
-// polynomials of fewer, as many and more coefficients than a part has (their coefficients fold into
-// it), in a batch and one column at a time, and in place.
+// The coset in parts (pilfflonk/docs/protocol.md#q-in-parts): for every size S = 2^partBits from N
+// to N' and every part p, extendCosetPart gives evaluation p + (N'/S)·i of extendCoset as its i-th,
+// bit for bit, for polynomials of fewer, as many and more coefficients than a part has (their
+// coefficients fold into it), in a batch and one column at a time, and in place.
 void testExtendCosetParts() {
     Random random(7);
     struct Case {
@@ -560,11 +561,12 @@ void testRefusedArguments() {
     assert(identical(c.data(), cBefore.data(), NExt));
 }
 
-// The GPU (plan M43), where there is one: Gpu::ntt and Gpu::intt are ffiasm's fft and ifft, and an
-// Lde on the GPU is the Lde on the CPU, bit for bit, Montgomery limbs and all: every size from one
-// point to 2^20, in place and not; intt with and without room for blinding, extendCoset,
-// extendCosetPart at every part size and part, and interpolateCoset, one column at a time and in a
-// batch, in place and not. And the arguments the Gpu refuses.
+// The GPU (pilfflonk/docs/performance.md#why-the-proof-is-the-same), where there is one: Gpu::ntt
+// and Gpu::intt are ffiasm's fft and ifft, and an Lde on the GPU is the Lde on the CPU, bit for bit,
+// Montgomery limbs and all: every size from one point to 2^20, in place and not; intt with and
+// without room for blinding, extendCoset, extendCosetPart at every part size and part, and
+// interpolateCoset, one column at a time and in a batch, in place and not. And the arguments the
+// Gpu refuses.
 void testTheGpuIsTheCpu() {
 #ifdef __USE_CUDA__
     if (!gpuUnderTest("the Lde on the GPU")) {

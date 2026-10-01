@@ -1,14 +1,14 @@
 #!/bin/sh
-# Sets up the Fibonacci fixture (M16) and the oracle's Q(ξ) (M14), and runs the JS tests on them
-# (M19):
+# Sets up the Fibonacci fixture and the oracle's Q(ξ), and runs the JS tests on them
+# (pilfflonk/docs/README.md#tests):
 #
 #     PIL2C_EXEC=<pil2-compiler>/src/pil.js pilfflonk/js/test/setup-fixtures.sh [dir]
 #
-# 1. `cargo test --test js_fixtures tau_one_ptau` writes <dir>/tau_one.ptau, τ = 1 (plan N13);
+# 1. `cargo test --test js_fixtures tau_one_ptau` writes <dir>/tau_one.ptau, τ = 1;
 # 2. `proofman-setup compile-pil` compiles pilfflonk/tests/fixtures/fibonacci over BN254 with the
 #    compiler PIL2C_EXEC names, which must honour `prime` (the pinned one silently compiles over
 #    Goldilocks), and `proofman-setup setup-pilfflonk` writes <dir>/build/provingKey, grouped as it
-#    does by default (plan M22);
+#    does by default;
 # 3. `cargo test --test js_fixtures q_at_xi` writes <dir>/q_at_xi.json from the Rust oracle;
 # 4. `node --test` runs every JS test with PILFFLONK_JS_FIXTURES=<dir>.
 #

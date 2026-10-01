@@ -1,5 +1,6 @@
 #!/bin/sh
-# Regenerates the C++ prover's SHPLONK fixtures (M7) and runs the JS tests on them (M8):
+# Regenerates the C++ prover's SHPLONK fixtures and runs the JS tests on them
+# (pilfflonk/docs/README.md#tests):
 #
 #     pilfflonk/js/test/fixtures.sh [dir]
 #

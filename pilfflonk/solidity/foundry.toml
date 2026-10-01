@@ -1,18 +1,19 @@
-# The Foundry project of the pilfflonk Solidity verifier's tests (spec-seed.md §4.5, plan M40).
+# The Foundry project of the pilfflonk Solidity verifier's tests (pilfflonk/docs/verifier.md#tests).
 #
 # The tests run it (pilfflonk/tests/data/foundry.rs, which setup/pilfflonk/tests/solidity.rs and
 # cli/tests/pilfflonk_prove.rs share): for each key, they copy this file and test/ to a directory of
 # its own under target/, write the key's generated pilfflonk.verifier.sol as
 # src/PilfflonkVerifier.sol and the cases (the calldata of proofs, of mutated ones and of calldata
 # no proof has, and what verifyProof must do with each) as cases/cases.json, and run `forge test`
-# there. The differential fuzzer (plan M42, pilfflonk/tests/data/fuzz.rs) copies this file and
-# fuzz/PilfflonkFuzz.t.sol instead, with the verifier, its instrumented probe and a file per case,
-# cases/<i>.bin. Nothing is built in this directory.
+# there. The differential fuzzer (pilfflonk/tests/data/fuzz.rs,
+# pilfflonk/docs/verifier.md#differential-fuzzer) copies this file and fuzz/PilfflonkFuzz.t.sol
+# instead, with the verifier, its instrumented probe and a file per case, cases/<i>.bin. Nothing is
+# built in this directory.
 #
-# The tools are pinned (spec §4.5, "Eines"): Foundry v1.8.3 and solc 0.8.37, which the tests find in
-# PILFFLONK_FORGE and PILFFLONK_SOLC. Foundry never downloads a compiler: `offline` is set, and `solc`
-# is the pinned version, which the tests give as a path with FOUNDRY_SOLC=$PILFFLONK_SOLC (the
-# environment overrides this file). By hand, in such a directory:
+# The tools are pinned (pilfflonk/docs/verifier.md#tools): Foundry v1.8.3 and solc 0.8.37, which the
+# tests find in PILFFLONK_FORGE and PILFFLONK_SOLC. Foundry never downloads a compiler: `offline` is
+# set, and `solc` is the pinned version, which the tests give as a path with
+# FOUNDRY_SOLC=$PILFFLONK_SOLC (the environment overrides this file). By hand, in such a directory:
 #
 #   FOUNDRY_SOLC=$PILFFLONK_SOLC $PILFFLONK_FORGE test
 [profile.default]
@@ -23,7 +24,8 @@ cache_path = "cache"
 libs = []
 offline = true
 solc = "0.8.37"
-# The verifier's size is below EIP-170's 24576 bytes with the optimizer (spec §4.5).
+# The verifier's size is below EIP-170's 24576 bytes with the optimizer
+# (pilfflonk/docs/verifier.md#solidity-verifier).
 optimizer = true
 optimizer_runs = 200
 # The test reads the cases and writes their results there.

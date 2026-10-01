@@ -1,5 +1,5 @@
-//! `pilout.globalInfo.json` of a pilfflonk `provingKey/` (A.6), and where the other files of the
-//! `provingKey/` go (spec §4.2.6).
+//! `pilout.globalInfo.json` of a pilfflonk `provingKey/` (pilfflonk/docs/formats.md#globalinfo),
+//! and where the other files of the `provingKey/` go (pilfflonk/docs/formats.md#provingkey).
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +14,7 @@ use crate::tag::{Backend, Field, Modulus, Transcript};
 pub const GLOBAL_INFO_FILE: &str = "pilout.globalInfo.json";
 
 /// The file name of the global constraints, at the root of the `provingKey/`: `pil-info` writes
-/// it, in the STARK's format (A.6).
+/// it, in the STARK's format (pilfflonk/docs/formats.md#globalconstraints).
 pub const GLOBAL_CONSTRAINTS_FILE: &str = "pilout.globalConstraints.json";
 
 /// The directory, under `<provingKey>/<name>/`, of the backend's global files (the convention of
@@ -27,19 +27,19 @@ pub const SRS_FILE: &str = "pilfflonk.srs.bin";
 /// The file name of the vkey, in the backend directory.
 pub const VKEY_FILE: &str = "pilfflonk.vkey.json";
 
-/// The version of the formats of Annex A this crate reads and writes: `formatVersion` of the
-/// globalInfo and of the vkey.
+/// The version of the formats this crate reads and writes (pilfflonk/docs/formats.md):
+/// `formatVersion` of the globalInfo and of the vkey.
 pub const FORMAT_VERSION: u64 = 1;
 
 /// The largest `nBits` there is: `r - 1 = 2^28 · odd`, so no domain of roots of unity, and so no
-/// trace, has more than `2^28` points (spec P2, A.1).
+/// trace, has more than `2^28` points (pilfflonk/docs/protocol.md#notation).
 pub const MAX_NBITS: u64 = 28;
 
 /// `pilout.globalInfo.json`: the part of the STARK's schema that does not depend on the backend,
-/// and the pilfflonk fields (A.6). It has no `hash`, `curve`, `transcriptArity`,
-/// `aggregationArity`, `latticeSize` nor `hasCompressedFinal`, so `common::GlobalInfo` refuses it
-/// (spec §4.2.6): the STARK tools cannot load it by mistake, and this is the type the pilfflonk
-/// runtime reads it with.
+/// and the pilfflonk fields (pilfflonk/docs/formats.md#globalinfo). It has no `hash`, `curve`,
+/// `transcriptArity`, `aggregationArity`, `latticeSize` nor `hasCompressedFinal`, so
+/// `common::GlobalInfo` refuses it (pilfflonk/docs/formats.md#provingkey): the STARK tools cannot
+/// load it by mistake, and this is the type the pilfflonk runtime reads it with.
 ///
 /// The common fields keep the STARK's names and meaning (`setup/pil2-stark/src/output/
 /// global_info.rs`); the pilfflonk ones go where the STARK has its own.
@@ -92,21 +92,23 @@ pub struct AggType {
     pub stage: u64,
 }
 
-/// The parameters `setup-pilfflonk` ran with (spec §4.2), which fix the layout and the degrees.
+/// The parameters `setup-pilfflonk` ran with (pilfflonk/docs/README.md#setup-pilfflonk), which fix
+/// the layout and the degrees.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SetupParams {
-    /// `--max-constraint-degree` (D5).
+    /// `--max-constraint-degree` (pilfflonk/docs/protocol.md#degree-search).
     pub max_constraint_degree: u64,
-    /// `--extra-muls` (A.2, rule 3).
+    /// `--extra-muls` (pilfflonk/docs/protocol.md#grouping-rules, rule 3).
     pub extra_muls: u64,
-    /// `--max-q-degree`: 0 does not split `Q` (A.1).
+    /// `--max-q-degree`: 0 does not split `Q` (pilfflonk/docs/protocol.md#q-pieces).
     pub max_q_degree: u64,
-    /// `false` with `--no-packing`, which forces `k = 1` (plan R1).
+    /// `false` with `--no-packing`, which forces `k = 1` (pilfflonk/docs/protocol.md#unpacked-layout).
     pub packing: bool,
 }
 
-/// A file of an AIR, in `<provingKey>/<name>/<airgroup>/airs/<air>/air/` (spec §4.2.6).
+/// A file of an AIR, in `<provingKey>/<name>/<airgroup>/airs/<air>/air/`
+/// (pilfflonk/docs/formats.md#provingkey).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AirFile {
     /// `<air>.const`: the fixed columns.

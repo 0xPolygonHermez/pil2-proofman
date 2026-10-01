@@ -25,7 +25,7 @@ static_assert(sizeof(G1PointAffine) == SRS_G1_BYTES, "ffiasm's affine G1 point m
 static_assert(sizeof(G2PointAffine) == SRS_G2_BYTES, "ffiasm's affine G2 point must be the stored one");
 
 // The most powers [τ^i]₁ an SRS holds: ffiasm's MSM counts its points in an unsigned int. The
-// largest ptau there is, of power 28 (spec P2), has 2^29 - 1.
+// largest ptau there is, of power 28, has 2^29 - 1.
 constexpr uint64_t MAX_SRS_G1 = 0xffffffffu;
 
 // Section 1 of a snarkjs powers-of-tau file, and the sizes of the two sections pilfflonk reads.
@@ -58,15 +58,16 @@ enum class G2Error {
 // X_2 (pilfflonk/js/src/elements.js, g2FromObject), and so of the SRS's [τ]₂.
 G2Error checkG2(const G2PointAffine &p);
 
-// The structured reference string of a proof (spec §4.2.5, "SRS"): the powers [τ^i]₁ for i < nG1,
-// and [1]₂ and [τ]₂, as a snarkjs ptau holds them. KZG commitments are MSMs over its G1 powers.
+// The structured reference string of a proof (pilfflonk/docs/README.md#setup-pilfflonk): the
+// powers [τ^i]₁ for i < nG1, and [1]₂ and [τ]₂, as a snarkjs ptau holds them. KZG commitments are
+// MSMs over its G1 powers.
 //
 // Every point is checked when it is read: each coordinate below q, on its curve, [1]₁ and [1]₂
 // equal to the generators, and [τ]₂ in the r-torsion group G2 of the twist, as the JS verifier
 // requires of the vkey's X_2. That catches a corrupt or truncated file; it cannot tell whether the
 // points are consistent powers of one τ, which takes pairings (snarkjs's `powersoftau verify`).
 //
-// pilfflonk.srs.bin, version 1 (spec A.6, decision N6 of the plan): a binfile container, as
+// pilfflonk.srs.bin, version 1 (pilfflonk/docs/formats.md#srs): a binfile container, as
 // rapidsnark's BinFile and snarkjs read them (4-byte type, u32 version, u32 number of sections,
 // then each section as u32 id, u64 size in bytes and its contents; integers little-endian), of
 // type "pfsr" and with three sections, the ids of their counterparts in the ptau:
@@ -90,11 +91,11 @@ public:
     // The powers [τ^i]₂ an SRS holds: [1]₂ and [τ]₂.
     static constexpr uint64_t N_G2 = 2;
 
-    // The first nG1 powers [τ^i]₁, and [1]₂ and [τ]₂, of the snarkjs ptau at ptauPath (spec
-    // §4.2.1: sections 2 and 3; section 12 is not needed). Reads only those points, never the
-    // whole file. Throws std::invalid_argument unless 1 <= nG1 <= MAX_SRS_G1 and the file holds
-    // nG1 powers [τ^i]₁ (checked before any point is read); IoError and FormatError as
-    // readPtauHeader, and FormatError if a point read is not valid or section 3 has fewer than
+    // The first nG1 powers [τ^i]₁, and [1]₂ and [τ]₂, of the snarkjs ptau at ptauPath (sections 2
+    // and 3, pilfflonk/docs/README.md#setup-pilfflonk; section 12 is not needed). Reads only those
+    // points, never the whole file. Throws std::invalid_argument unless 1 <= nG1 <= MAX_SRS_G1 and
+    // the file holds nG1 powers [τ^i]₁ (checked before any point is read); IoError and FormatError
+    // as readPtauHeader, and FormatError if a point read is not valid or section 3 has fewer than
     // N_G2 points. Throws std::runtime_error where ffiasm has no assembly backend.
     static Srs fromPtau(const std::string &ptauPath, uint64_t nG1);
 
@@ -118,14 +119,15 @@ public:
 
     // The KZG commitment [p(τ)]₁ = Σ_i coefs[i]·[τ^i]₁ of the polynomial with the nCoefs
     // coefficients in `coefs` (Montgomery form, increasing degree): ffiasm's MSM, whose scalars
-    // must be canonical, converted from Montgomery right before it (spec §4.4, "Escalars"), or,
-    // with a Gpu (setGpu), the GPU's, which takes them in Montgomery form (Gpu::msm): the same point.
-    // With nCoefs = 0 it is the point at infinity. Throws std::invalid_argument if nCoefs > nG1().
+    // must be canonical, converted from Montgomery right before it
+    // (pilfflonk/docs/protocol.md#commitments), or, with a Gpu (setGpu), the GPU's, which takes
+    // them in Montgomery form (Gpu::msm): the same point. With nCoefs = 0 it is the point at
+    // infinity. Throws std::invalid_argument if nCoefs > nG1().
     G1Point commit(const FrElement *coefs, uint64_t nCoefs) const;
 
-    // The GPU commit runs on (plan M43), or null, the default, for ffiasm's MSM. It must hold these
-    // powers [τ^i]₁ (Gpu(&g1(0), nG1())) and outlive every commit; ProvingKey::load sets it, before
-    // the key is shared. Only a library built with the GPU uses it.
+    // The GPU commit runs on, or null, the default, for ffiasm's MSM. It must hold these powers
+    // [τ^i]₁ (Gpu(&g1(0), nG1())) and outlive every commit; ProvingKey::load sets it, before the key
+    // is shared. Only a library built with the GPU uses it.
     void setGpu(const Gpu *gpu) { device = gpu; }
     const Gpu *gpu() const { return device; }
 

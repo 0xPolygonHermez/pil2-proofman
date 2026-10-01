@@ -1,6 +1,7 @@
-//! The Rust oracle (plan M14) on a pilout built in code: the four domains of A.1, every kind of
-//! operand, signed offsets that wrap around, im pols, and what it refuses. The Fibonacci fixture
-//! compiled by pil2com is in `tests/fibonacci.rs`.
+//! The Rust oracle (pilfflonk/docs/README.md#tests) on a pilout built in code: the four constraint
+//! domains (pilfflonk/docs/protocol.md#constraint-polynomial), every kind of operand, signed
+//! offsets that wrap around, im pols, and what it refuses. The Fibonacci fixture compiled by
+//! pil2com is in `tests/fibonacci.rs`.
 //!
 //! The AIR, of `N = 8` rows, has the witness columns `a` and `b`, a fixed column `K`, a periodic
 //! column `P` of cycle `[1, 2]`, a public `p0`, a stage-1 air value `av`, a stage-1 proof value

@@ -1,5 +1,6 @@
-//! JSON as pilfflonk writes it: the files, deterministically, and the canonical form the digest of
-//! the vkey is computed over (A.6).
+//! JSON as pilfflonk writes it: the files, deterministically
+//! (pilfflonk/docs/formats.md#json-encoding), and the canonical form the digest of the vkey is
+//! computed over (pilfflonk/docs/formats.md#digest).
 
 use std::cmp::Ordering;
 use std::fs;
@@ -76,7 +77,8 @@ fn js_order(a: &str, b: &str) -> Ordering {
 /// The largest integer JavaScript represents exactly, `Number.MAX_SAFE_INTEGER`.
 pub const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
-/// The canonical JSON of `value` (A.6), over which the digest of the vkey is computed:
+/// The canonical JSON of `value` (pilfflonk/docs/formats.md#digest), over which the digest of the
+/// vkey is computed:
 ///
 /// - no whitespace;
 /// - object keys sorted by UTF-16 code units, the order of JavaScript's default `sort()`; the

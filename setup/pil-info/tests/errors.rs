@@ -1,6 +1,6 @@
-//! What the passes refuse (plan M27): a pilout that breaks its own format, or constraints they
-//! cannot process, is a `PilInfoError` the setups report, where the passes used to `panic!` or
-//! index out of range. The pilouts are built in code, each one well formed but for one piece.
+//! What the passes refuse: a pilout that breaks its own format, or constraints they cannot
+//! process, is a `PilInfoError` the setups report, where the passes used to `panic!` or index out
+//! of range. The pilouts are built in code, each one well formed but for one piece.
 
 use pil2_pilout::pilout::{self as pb, constraint, expression, global_expression, global_operand, operand, SymbolType};
 use pil_info::output::global_constraints::build_global_constraints_json;
@@ -235,9 +235,9 @@ fn global_references_to_nothing_are_refused() {
     assert_eq!(invalid_pilout(&err), "global expression 0 refers to global expression 9, and the pilout has 1");
 }
 
-/// Was a recursion until the stack overflowed, which aborted the process (plan M26): expressions
-/// that refer to each other in a cycle, which no pilout can mean. Refused before any pass runs,
-/// whether a constraint reaches the cycle or not, for the air's expressions and the global ones.
+/// Was a recursion until the stack overflowed, which aborted the process: expressions that refer to
+/// each other in a cycle, which no pilout can mean. Refused before any pass runs, whether a
+/// constraint reaches the cycle or not, for the air's expressions and the global ones.
 #[test]
 fn expressions_that_refer_to_each_other_in_a_cycle_are_refused() {
     // Expression 0 is a·exp(2) and the new expression 2 is b·exp(0): the constraint, L1·exp(0),

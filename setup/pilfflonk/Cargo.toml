@@ -10,8 +10,9 @@ repository = { workspace = true }
 categories = { workspace = true }
 
 [features]
-# `pilfflonk_setup::test_ptau`: a powers-of-tau file with τ = 1 (plan N13). For tests only: nothing
-# but tests turns it on, this crate's through the dev-dependency on itself below.
+# `pilfflonk_setup::test_ptau`: a powers-of-tau file with τ = 1 (pilfflonk/docs/README.md#tests).
+# For tests only: nothing but tests turns it on, this crate's through the dev-dependency on itself
+# below.
 test-ptau = []
 
 [dependencies]
@@ -32,6 +33,6 @@ proofman-starks-lib-c = { workspace = true }
 [dev-dependencies]
 # Turns the test ptau on for the tests of this crate.
 pilfflonk-setup = { path = ".", features = ["test-ptau"] }
-# The Rust oracle (M14), which the fixtures of the C++ interpreter's tests (M17) and of the JS
-# verifier's (tests/js_fixtures.rs, M19) are computed with.
+# The Rust oracle, which the fixtures of the C++ interpreter's tests and of the JS verifier's
+# (tests/js_fixtures.rs) are computed with.
 proofman-pilfflonk = { workspace = true, features = ["oracle"] }

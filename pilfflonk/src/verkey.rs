@@ -1,4 +1,5 @@
-//! `<air>.verkey.json` (A.6): the commitments of the fixed `f_i` of an AIR.
+//! `<air>.verkey.json` (pilfflonk/docs/formats.md#verkey): the commitments of the fixed `f_i` of an
+//! AIR.
 
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +9,7 @@ use crate::json::JsonFile;
 
 /// The commitments `[f_i(τ)]₁` of the fixed `f_i` of an AIR, in the order of its layout (the
 /// fixed `f_i` are its first entries): `[["x", "y"], …]`. The vkey holds the same points, as
-/// `f<i>` (A.6). Where the STARK has the Merkle root of `.const`.
+/// `f<i>` (pilfflonk/docs/formats.md#vkey). Where the STARK has the Merkle root of `.const`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AirVerkey(pub Vec<G1Affine>);

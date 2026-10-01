@@ -1,7 +1,7 @@
 // The JS verifier on a batch of cases, for the differential fuzzer of the Solidity verifier
-// (spec-seed.md §4.5, plan M42; pilfflonk/tests/data/fuzz.rs): one Node process for many cases, each
-// verified by verify() of pilfflonk/js/src/verify.js, the reference (D8), as bin/verify.js verifies
-// one, from its parsed JSON:
+// (pilfflonk/docs/verifier.md#differential-fuzzer; pilfflonk/tests/data/fuzz.rs): one Node process
+// for many cases, each verified by verify() of pilfflonk/js/src/verify.js, the reference, as
+// bin/verify.js verifies one, from its parsed JSON:
 //
 //     node pilfflonk/tests/data/js_batch.mjs <pilfflonk.vkey.json> <requests.jsonl> <responses.jsonl>
 //
@@ -14,9 +14,9 @@
 //   left side of the pairing (shplonk.js, isValidPairing: F - E - J + y·W' = 0), with F, E and J as
 //   the verifier computes them for this proof, whose W' it ignores: {"Wp": [x, y]}, affine, in
 //   decimal. The pairing check is then e(0, [1]_2) = e(W', [x]_2), which holds only if W' is the
-//   point at infinity (F = E + J) or [x]_2 is: the X_2 the M40 review found that a vkey could have
-//   (spec-seed.md §4.5, "Quina vkey es refusa"), which Vkey::validate refuses since. A proof with
-//   this W' must fail at the pairing against an honest vkey.
+//   point at infinity (F = E + J) or [x]_2 is: the X_2 the security review of the Solidity verifier
+//   found that a vkey could have (pilfflonk/docs/verifier.md#refused-vkeys), which Vkey::validate
+//   refuses since. A proof with this W' must fail at the pairing against an honest vkey.
 //
 // Every value of the proof's JSON is a decimal string, as proof.json writes them, whatever it is: a
 // mutated value need not be below r or q, and the verifier checks it.
@@ -82,7 +82,7 @@ async function forgeWp(request) {
     const E = computeE(curve, r, quotients);
     const J = computeJ(curve, proof.W, quotients[0]);
     // In Jacobian coordinates: ffjavascript's G1.sub of an affine point and a Jacobian one returns
-    // their difference the other way round (Annex F.9).
+    // their difference the other way round (pilfflonk/docs/README.md#rapidsnark-and-ffiasm).
     const sum = G1.sub(G1.add(G1.toJacobian(E), G1.toJacobian(J)), G1.toJacobian(F));
     return { Wp: g1ToObject(curve, G1.timesFr(sum, Fr.inv(challenges.y))) };
 }

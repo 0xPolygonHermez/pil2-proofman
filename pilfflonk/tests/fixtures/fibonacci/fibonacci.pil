@@ -1,6 +1,6 @@
 // PIL2 port of the pil-fflonk Fibonacci fixture: pil-fflonk/pil/sm_fibonacci/fibonacci.pil,
-// with N = 2^8 as in its `all` program (spec-seed.md, Annex G). One air, one instance,
-// stage 1 only, no std, no hints.
+// with N = 2^8 as in its `all` program (pilfflonk/docs/README.md#fixtures). One air, one
+// instance, stage 1 only, no std, no hints.
 //
 // Compile over BN254. PIL2C_EXEC must point at a pil2com that honours `prime` (the pinned
 // one ignores it and silently compiles over Goldilocks). compile-pil requires an `-I`, which

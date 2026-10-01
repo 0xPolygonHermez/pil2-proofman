@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The pilfflonk benchmark (plan M39, spec-seed.md Annex H): the time and the peak memory of the
+# The pilfflonk benchmark (pilfflonk/docs/performance.md#cpu): the time and the peak memory of the
 # setup, of the prover, phase by phase, and of the JS verifier, for a benchmark program at
 # N = 2^bits. Every proof it times must verify, or the run stops.
 #
@@ -15,7 +15,8 @@
 #       --bin proofman-cli --bin proofman-setup --example pilfflonk_bench_inputs
 #
 # Environment:
-#   PIL2C_EXEC      pil2com (`run`), a compiler that honours `prime` (spec §4.1)
+#   PIL2C_EXEC      pil2com (`run`), a compiler that honours `prime`
+#                   (pilfflonk/docs/README.md#compile-pil)
 #   BENCH_DIR       where everything goes (default target/tmp/pilfflonk-bench); the results are
 #                   $BENCH_DIR/{compile,setup,prove}.tsv
 #   BENCH_PTAU      the ptau (default $BENCH_DIR/bench.ptau): at least as many powers as the
@@ -34,7 +35,8 @@
 # Each run records the 1- and 5-minute load averages when it starts. The prover runs with -vv, which
 # prints the C++ timers (TimerStart/TimerStopAndLog, PILFFLONK_*), and a sampler reads its VmRSS
 # every 0.2 s: the peak of each phase. The pilout carries the fixed columns (fixed-to-file does not
-# work over BN254, spec §3.3), so pil2com's time and memory grow with N too: `run` records them.
+# work over BN254, pilfflonk/docs/README.md#compile-pil), so pil2com's time and memory grow with N
+# too: `run` records them.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -82,8 +84,9 @@ timed() {
 
 # The VmRSS of the prover (the child of `/usr/bin/time`, pid $1) every 0.2 s, with the last
 # top-level PILFFLONK_* marker of its log ($2) at that moment and the last marker of any timer:
-# `<kB>\t<phase>\t<marker>` lines. The phases are those of the prover's steps (A.4): the key's
-# loading, each stage, Q, the evaluations and the opening.
+# `<kB>\t<phase>\t<marker>` lines. The phases are those of the prover's steps
+# (pilfflonk/docs/protocol.md#proof-sequence): the key's loading, each stage, Q, the evaluations and
+# the opening.
 TOP_MARKERS='(-->|<--) PILFFLONK_(LOAD_SRS|LOAD_AIRS|FIXED_COMMITMENTS|STAGE_[0-9]+|Q|EVALUATIONS|OPEN) '
 sample_rss() {
     local timer="$1" log="$2" pid=""
@@ -169,9 +172,9 @@ rss_phases_of() {
         }' "$1"
 }
 
-# What the key says (tab-separated): nBits, nBitsExt (A.1: of Q's bound and of the columns with the
-# most blinding, as proofman_pilfflonk::degrees), qDeg, the number of f, the SRS powers (the largest
-# f degree) and the sizes of the .const and the SRS in bytes.
+# What the key says (tab-separated): nBits, nBitsExt (of Q's bound and of the columns with the most
+# blinding, as proofman_pilfflonk::degrees; pilfflonk/docs/protocol.md#degrees), qDeg, the number of
+# f, the SRS powers (the largest f degree) and the sizes of the .const and the SRS in bytes.
 key_info() {
     local pk="$1" info srs const
     info="$(find "$pk" -name '*.pilfflonkinfo.json' | head -1)"
@@ -190,7 +193,8 @@ key_info() {
     printf '\t%s\t%s\n' "$(stat -c %s "$const")" "$(stat -c %s "$srs")"
 }
 
-# The size of a proof's bytes (A.6): 64 per G1 point and 32 per scalar of its JSON view.
+# The size of a proof's bytes (pilfflonk/docs/formats.md#proof): 64 per G1 point and 32 per scalar
+# of its JSON view.
 proof_bytes() {
     node -e '
         const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));

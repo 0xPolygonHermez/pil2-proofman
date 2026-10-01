@@ -1,4 +1,4 @@
-//! The witness generator of the fixture of the product bus (plan M30),
+//! The witness generator of the fixture of the product bus (pilfflonk/docs/README.md#fixtures),
 //! `tests/fixtures/prod_bus/prod_bus.pil`, over BN254's `Fr` (every value is a small integer).
 //!
 //! Its witness columns, in the pilout's order (stage 1, `colIdx` 0 to 3), are `a`, `c`, `b` and `d`,

@@ -12,10 +12,11 @@ namespace PilFflonk {
 
 using FrElement = AltBn128::Engine::FrElement;
 
-// <air>.bin, revision 3 (spec A.6): the prover's bytecode over Fr, and its hints. The Rust crate
-// pilfflonk-setup writes it (setup/pilfflonk/src/bytecode.rs, which documents the format field by
-// field) and has the reference reader. The format is the STARK's prover .bin, the one
-// pil2-stark/src/starkpil/expressions/expressions_bin.cpp reads, with every value of dimension 1:
+// <air>.bin, revision 3 (pilfflonk/docs/formats.md#bytecode): the prover's bytecode over Fr, and
+// its hints. The Rust crate pilfflonk-setup writes it (setup/pilfflonk/src/bytecode.rs, which
+// documents the format field by field) and has the reference reader. The format is the STARK's
+// prover .bin, the one pil2-stark/src/starkpil/expressions/expressions_bin.cpp reads, with every
+// value of dimension 1:
 //
 // - no destDim, nTemp3 or maxTmp3, and no dim of a hint's expression;
 // - args of 32 bits, not 16;
@@ -37,7 +38,7 @@ constexpr uint32_t ARGS_PER_OP = 8;
 enum OpCode : uint32_t { OP_ADD = 0, OP_SUB = 1, OP_MUL = 2, OP_SUB_SWAP = 3 };
 
 // The operand types, (type, arg1, arg2), of an AIR of nStages stages: the STARK's buffer indices,
-// with no custom commits (P5).
+// with no custom commits (pilfflonk/docs/README.md#scope).
 //
 // | type | operand | arg1 | arg2 |
 // | 0 | fixed column | its id (column of <air>.const) | openingPoints index |
@@ -92,7 +93,7 @@ struct ParserArgs {
 };
 
 // The kind of a value of a hint field: the STARK's opType names of them (opType2string), but custom
-// (P5).
+// (pilfflonk/docs/README.md#scope).
 enum class HintOp { Cm, Const, Tmp, Number, String, Public, Challenge, AirValue, AirgroupValue, ProofValue };
 
 // A value of a hint field (section 3): the STARK's HintFieldValue, with its ids. id is the cmPolsMap

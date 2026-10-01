@@ -2,8 +2,8 @@
 // generated code, which is why the generated pil-helpers allow clippy wholesale.
 #![allow(clippy::int_plus_one)]
 // Rows over a field that is not 64-bit: BN254's `Fr`, which a pilfflonk witness is computed in
-// (D4). An unpacked row and its `*Ops` trait take any field; only the typed columns' accessors,
-// which convert through 64 bits, and the packed row need `PrimeField64`.
+// (pilfflonk/docs/README.md#witness). An unpacked row and its `*Ops` trait take any field; only the
+// typed columns' accessors, which convert through 64 bits, and the packed row need `PrimeField64`.
 use proofman_common::trace::TraceRow;
 use proofman_common::GenericTrace;
 use proofman_fields::{Bn254, Field, Goldilocks, PrimeField64, QuotientMap};

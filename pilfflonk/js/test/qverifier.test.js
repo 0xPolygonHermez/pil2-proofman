@@ -1,7 +1,7 @@
-// Q(ξ) from the qVerifier (qverifier.js): the code it accepts and runs, the zerofiers of A.1 against
-// a product over the rows of each domain and against the Rust oracle's and the C++'s at one point,
-// and the check of a split Q. The comparison with the Rust oracle's Q(ξ) on the Fibonacci's real
-// vkey is in setup.test.js.
+// Q(ξ) from the qVerifier (qverifier.js): the code it accepts and runs, the zerofiers
+// (pilfflonk/docs/protocol.md#constraint-polynomial) against a product over the rows of each domain
+// and against the Rust oracle's and the C++'s at one point, and the check of a split Q. The
+// comparison with the Rust oracle's Q(ξ) on the Fibonacci's real vkey is in setup.test.js.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -121,12 +121,12 @@ test("the code it refuses, with the reason", () => {
             () => [entry("copy", 0, ref("Zi", { boundaryId: 2 }))],
             /Zi of boundary 2, and there are 2/,
         ],
-        "an air value (D2)": [
+        "an air value": [
             () => [entry("copy", 0, ref("airvalue", { id: 0 }))],
             /airvalues do not exist in format version 1/,
         ],
-        "a proof value (D2)": [() => [entry("copy", 0, ref("proofvalue", { id: 0 }))], /proofvalues do not exist/],
-        "an airgroup value (D2)": [
+        "a proof value": [() => [entry("copy", 0, ref("proofvalue", { id: 0 }))], /proofvalues do not exist/],
+        "an airgroup value": [
             () => [entry("copy", 0, ref("airgroupvalue", { id: 0 }))],
             /airgroupvalues do not exist/,
         ],
@@ -156,7 +156,7 @@ function zerofierByRows(rows, xi, nBits) {
     return rows.reduce((z, j) => Fr.mul(z, Fr.sub(xi, Fr.exp(omega, BigInt(j)))), Fr.one);
 }
 
-test("Zi of every domain: 1/Z_H(ξ) for everyRow and Z_H(ξ)/Z_D(ξ) for the others (A.1, A.6)", () => {
+test("Zi of every domain: 1/Z_H(ξ) for everyRow and Z_H(ξ)/Z_D(ξ) for the others", () => {
     const Fr = curve.Fr;
     const nBits = 3;
     const N = 8;
@@ -193,7 +193,7 @@ const INTERPRETER_FIXTURE = new URL(
     import.meta.url,
 );
 
-test("Zi at the ξ of the interpreter's fixture: the Rust oracle's and the C++'s (plan M24)", () => {
+test("Zi at the ξ of the interpreter's fixture: the Rust oracle's and the C++'s", () => {
     const fixture = JSON.parse(readFileSync(INTERPRETER_FIXTURE, "utf8"));
     assert.deepEqual(fixture.boundaries.map((b) => b.name), ["everyRow", "firstRow", "lastRow", "everyFrame"]);
     const zi = computeZi(curve, fixture.boundaries, fixture.nBits, curve.Fr.e(BigInt(fixture.xi)));
@@ -207,7 +207,7 @@ test("Q is not defined on H", () => {
     }
 });
 
-test("the pieces of a split Q add up as Σ ξ^(i·M·N)·Q_i(ξ) (A.1)", () => {
+test("the pieces of a split Q add up as Σ ξ^(i·M·N)·Q_i(ξ)", () => {
     const Fr = curve.Fr;
     const xi = rand.fr();
     const pieces = [rand.fr(), rand.fr(), rand.fr()];

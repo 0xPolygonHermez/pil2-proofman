@@ -1,9 +1,9 @@
-//! The fixed columns of an AIR, and `<air>.const` (spec §4.2.6, A.6).
+//! The fixed columns of an AIR, and `<air>.const` (pilfflonk/docs/formats.md#fixed-columns).
 //!
 //! `<air>.const` holds the fixed columns row by row, each value a canonical `Fr` of 32 bytes
 //! little-endian, with no header: the value of column `c` at row `i` is at byte `(i·C + c)·32`,
 //! and the file has exactly `N·C·32` bytes. It is the layout of the STARK's `.const` (8 bytes a
-//! value there) and of the witness files (A.6).
+//! value there) and of the witness files (pilfflonk/docs/formats.md#witness-directory).
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -40,9 +40,10 @@ impl FixedColumns {
     }
 
     /// The fixed columns of `air`, decoded from the pilout's values (big-endian bytes of any
-    /// length, none for 0). Refuses a value that is not below `r` (spec §4.2.1): a pilout over
-    /// BN254 has none, and reducing it would hide a compiler bug. `air` must have a power of two
-    /// of rows, of at most `2^28` ([`crate::validate::validate`] checks it).
+    /// length, none for 0). Refuses a value that is not below `r`
+    /// (pilfflonk/docs/README.md#what-the-setup-refuses): a pilout over BN254 has none, and
+    /// reducing it would hide a compiler bug. `air` must have a power of two of rows, of at most
+    /// `2^28` ([`crate::validate::validate`] checks it).
     pub fn from_air(air: &pb::Air) -> Result<Self, SetupError> {
         let num_rows = air.num_rows.unwrap_or(0);
         if !num_rows.is_power_of_two() || u64::from(num_rows.trailing_zeros()) > MAX_NBITS {

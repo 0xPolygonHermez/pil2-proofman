@@ -1,9 +1,9 @@
 //! Prover orchestration for the pilfflonk backend: the types of its own files, instance loading,
 //! the stage loop over the C++ core and proof output.
 //!
-//! This crate owns the types of every pilfflonk file (spec §5.2): the setup (`pilfflonk-setup`)
-//! writes them and the prover reads them, both through these types. They are those of spec
-//! Annex A.6, version 1:
+//! This crate owns the types of every pilfflonk file (pilfflonk/docs/README.md#code-map): the setup
+//! (`pilfflonk-setup`) writes them and the prover reads them, both through these types. Their
+//! formats are version 1 (pilfflonk/docs/formats.md):
 //!
 //! | File | Type |
 //! |---|---|
@@ -19,21 +19,24 @@
 //! written, and written deterministically. [`canonical_json`] is the canonical form the digest of
 //! the vkey is computed over.
 //!
-//! The prover takes its witness from a [`WitnessSource`] (spec §4.3, §5.3): a witness directory,
-//! or the [`Witness`] a witness library computes over `Fr` (D4, [`witness_library`]), loaded with
-//! [`load_witness_library`] and exported with [`pilfflonk_witness_library!`]. [`prover`] is the
-//! orchestration of a proof over the C++ core (spec §4.4): [`ProvingKey::load`] and [`prove`], and,
-//! for tests and diagnostics, [`stage_columns`], the columns its stages commit. On the GPU (spec
-//! Fase 5): [`ProvingKey::load_on`] with [`Device::Gpu`], where [`gpu_available`].
-//! [`check`](mod@check) checks a witness row by row without proving (§4.4, "Depuració"): [`check()`].
+//! The prover takes its witness from a [`WitnessSource`] (pilfflonk/docs/README.md#witness): a
+//! witness directory, or the [`Witness`] a witness library computes over `Fr` ([`witness_library`]),
+//! loaded with [`load_witness_library`] and exported with [`pilfflonk_witness_library!`].
+//! [`prover`] is the orchestration of a proof over the C++ core
+//! (pilfflonk/docs/protocol.md#proof-sequence): [`ProvingKey::load`] and [`prove`], and, for tests
+//! and diagnostics, [`stage_columns`], the columns its stages commit. On the GPU
+//! (pilfflonk/docs/performance.md#gpu): [`ProvingKey::load_on`] with [`Device::Gpu`], where
+//! [`gpu_available`]. [`check`](mod@check) checks a witness row by row without proving
+//! (pilfflonk/docs/README.md#pilfflonk-check): [`check()`].
 //!
-//! The verifier is JS (`js/`, spec §4.5, D8): [`js_verifier::verify`] runs it with Node. The
-//! Solidity verifier (§4.5, Fase 4), which `pilfflonk-setup` generates, takes the calldata
-//! [`calldata`](mod@calldata) encodes for a proof: [`Calldata::read`] and [`Calldata::encode`].
+//! The verifier is JS (`js/`, pilfflonk/docs/verifier.md#js-verifier): [`js_verifier::verify`] runs
+//! it with Node. The Solidity verifier (pilfflonk/docs/verifier.md#solidity-verifier), which
+//! `pilfflonk-setup` generates, takes the calldata [`calldata`](mod@calldata) encodes for a proof:
+//! [`Calldata::read`] and [`Calldata::encode`].
 //!
-//! With the feature `oracle`, the module `oracle` is the Rust test oracle (plan M14, R8): an
-//! evaluation of a pilout's constraints and of `Q` (A.1) with `num-bigint`, independent of
-//! `pil-info`. It is for tests only; the crate's own tests turn it on.
+//! With the feature `oracle`, the module `oracle` is the Rust test oracle
+//! (pilfflonk/docs/README.md#tests): an evaluation of a pilout's constraints and of `Q` with
+//! `num-bigint`, independent of `pil-info`. It is for tests only; the crate's own tests turn it on.
 
 pub mod calldata;
 pub mod check;

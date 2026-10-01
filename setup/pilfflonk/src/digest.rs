@@ -1,9 +1,10 @@
-//! The digest of the vkey (spec A.6, decision N10 of the plan):
+//! The digest of the vkey (pilfflonk/docs/formats.md#digest):
 //! `digest = keccak256("pilfflonk-v1" ‖ canonical(vkey without digest))`.
 //!
 //! The preimage is `Vkey::digest_preimage` (`proofman-pilfflonk`). The hash is Keccak-256, not
 //! SHA3-256, through the C++ core: rapidsnark's `keccak_wrapper`, which the transcript hashes with
-//! too (A.4). The workspace has no Keccak crate, and none is added for this (N10).
+//! too (pilfflonk/docs/protocol.md#transcript). The workspace has no Keccak crate, and none is
+//! added for this.
 
 use proofman_pilfflonk::{Digest, Vkey};
 use proofman_starks_lib_c::pilfflonk_keccak256_c;

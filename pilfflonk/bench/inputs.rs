@@ -1,8 +1,9 @@
-//! The inputs of the pilfflonk benchmark (plan M39, `pilfflonk/bench/bench.sh`, spec-seed.md Annex
-//! H): a test ptau, and the witness directory of a benchmark program at the size of its key. It is
-//! the example `pilfflonk_bench_inputs` of `proofman-cli`, whose dev-dependencies it uses: the test
-//! ptau of `pilfflonk-setup` (feature `test-ptau`, plan N13) and the fixtures' witness generators of
-//! `pilfflonk/tests/data/`, as the CLI tests include them.
+//! The inputs of the pilfflonk benchmark (`pilfflonk/bench/bench.sh`,
+//! pilfflonk/docs/performance.md#reproducing): a test ptau, and the witness directory of a benchmark
+//! program at the size of its key. It is the example `pilfflonk_bench_inputs` of `proofman-cli`,
+//! whose dev-dependencies it uses: the test ptau of `pilfflonk-setup` (feature `test-ptau`,
+//! pilfflonk/docs/README.md#tests) and the fixtures' witness generators of `pilfflonk/tests/data/`,
+//! as the CLI tests include them.
 //!
 //! ```text
 //! cargo run --release --features proofman-starks-lib-c/cpu-only -p proofman-cli \
@@ -15,9 +16,10 @@
 //!   full-width `τ`, so the MSMs see the points of a real SRS. Never a ptau to prove anything with:
 //!   its `τ` is public.
 //! - `witness`: the witness of `pilfflonk/bench/<program>.pil` for the `2^nBits` rows of the key,
-//!   written as a witness directory (spec A.6) for `pilfflonk prove --witness`: the Fibonacci's of
-//!   `tests/data/fibonacci.rs` and `all`'s of `tests/data/all.rs` (`witness_of_size`), both with the
-//!   inputs `[1, 2]`. It reads the key's JSON files only, not its SRS or `.const`.
+//!   written as a witness directory (pilfflonk/docs/formats.md#witness-directory) for
+//!   `pilfflonk prove --witness`: the Fibonacci's of `tests/data/fibonacci.rs` and `all`'s of
+//!   `tests/data/all.rs` (`witness_of_size`), both with the inputs `[1, 2]`. It reads the key's JSON
+//!   files only, not its SRS or `.const`.
 
 #[allow(dead_code)]
 #[path = "../tests/data/all.rs"]

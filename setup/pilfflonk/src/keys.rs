@@ -1,5 +1,6 @@
-//! The SRS and the commitments of the fixed `f_i` (spec §4.2.5, A.6): `pilfflonk.srs.bin`,
-//! `<air>.verkey.json` and the `[τ]₂` of the vkey, all computed by the C++ core (M6).
+//! The SRS and the commitments of the fixed `f_i` (pilfflonk/docs/formats.md#srs,
+//! pilfflonk/docs/formats.md#verkey): `pilfflonk.srs.bin`, `<air>.verkey.json` and the `[τ]₂` of
+//! the vkey, all computed by the C++ core.
 
 use std::path::Path;
 
@@ -10,11 +11,12 @@ use crate::error::SetupError;
 use crate::fixed::FixedColumns;
 
 /// Writes `pilfflonk.srs.bin` at `srs_path`: the first `n_g1` powers `[τ^i]₁` of the ptau at
-/// `ptau`, and `[1]₂`, `[τ]₂` (spec §4.2.5, A.6), replacing any file there. `n_g1` is the largest
-/// `degree` of the layout, the coefficients of its largest `f_i`, which takes exactly that many
-/// powers (M12).
+/// `ptau`, and `[1]₂`, `[τ]₂` (pilfflonk/docs/formats.md#srs), replacing any file there. `n_g1` is
+/// the largest `degree` of the layout, the coefficients of its largest `f_i`, which takes exactly
+/// that many powers.
 ///
-/// This is where the last check of spec §4.2.1 happens: the C++ reader refuses a ptau with fewer
+/// This is where the setup checks that the ptau has enough powers
+/// (pilfflonk/docs/README.md#what-the-setup-refuses): the C++ reader refuses a ptau with fewer
 /// than `n_g1` powers before it reads a point, and the error says how many it has. Only sections
 /// 1 to 3 of the ptau are read.
 pub fn write_srs(ptau: &Path, n_g1: u64, srs_path: &Path) -> Result<(), SetupError> {
@@ -29,15 +31,15 @@ pub fn load_srs(srs_path: &Path) -> Result<PilFflonkSrs, SetupError> {
     PilFflonkSrs::load(srs_path).map_err(SetupError::native(format!("cannot load the SRS {}", srs_path.display())))
 }
 
-/// `[τ]₂` of the SRS: the vkey's `X_2` (A.6).
+/// `[τ]₂` of the SRS: the vkey's `X_2` (pilfflonk/docs/formats.md#vkey).
 pub fn x_2(srs: &PilFflonkSrs) -> Result<G2Affine, SetupError> {
     let bytes = srs.g2(1).map_err(SetupError::native("cannot read [τ]₂ of the SRS"))?;
     Ok(G2Affine::from_le_bytes(&bytes)?)
 }
 
 /// The commitment `[f(τ)]₁` of the fixed `f(X) = Σ_j p_j(X^k)·X^j` whose `p_j` interpolates the
-/// fixed column `columns[j]` (A.2, rule 4), `k` = `columns.len()`: one `pilfflonk_commit_fixed`
-/// call (M6).
+/// fixed column `columns[j]` (pilfflonk/docs/protocol.md#grouping-rules, rule 4),
+/// `k` = `columns.len()`: one `pilfflonk_commit_fixed` call.
 pub fn commit_fixed_f(srs: &PilFflonkSrs, fixed: &FixedColumns, columns: &[u64]) -> Result<G1Affine, SetupError> {
     let mut evals = Vec::with_capacity(columns.len() * fixed.n_rows());
     for &id in columns {
@@ -54,8 +56,8 @@ pub fn commit_fixed_f(srs: &PilFflonkSrs, fixed: &FixedColumns, columns: &[u64])
 }
 
 /// `<air>.verkey.json`: the commitments of the fixed `f_i` of `layout`, its entries of stage 0,
-/// in its order (A.6), each packing the columns its `pols` name (their `constPolsMap` index,
-/// which is the column's index in `fixed`).
+/// in its order (pilfflonk/docs/formats.md#verkey), each packing the columns its `pols` name
+/// (their `constPolsMap` index, which is the column's index in `fixed`).
 pub fn air_verkey(srs: &PilFflonkSrs, fixed: &FixedColumns, layout: &Layout) -> Result<AirVerkey, SetupError> {
     let mut commitments = Vec::with_capacity(layout.n_fixed());
     for (i, f) in layout.0.iter().enumerate().filter(|(_, f)| f.stage == 0) {

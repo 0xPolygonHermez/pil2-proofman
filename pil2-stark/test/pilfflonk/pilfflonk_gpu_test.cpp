@@ -1,9 +1,10 @@
-// Tests of the GPU path's entry points (plan M43), in every build: pilfflonk_gpu_available, and
-// pilfflonk_ctx_new_on and ProvingKey::load, which refuse the GPU, saying why, before they read
-// anything, in a library built without it (make pilfflonk_test) and on a machine without one
-// (make pilfflonk_gpu_test there). Where there is one, the tests of each module compare its GPU path
-// with its CPU one (gpuUnderTest): pilfflonk_lde_test.cpp the transforms, pilfflonk_commit_test.cpp
-// the MSM, pilfflonk_prover_test.cpp whole proofs.
+// Tests of the GPU path's entry points (pilfflonk/docs/performance.md#selection-memory-and-errors),
+// in every build: pilfflonk_gpu_available, and pilfflonk_ctx_new_on and ProvingKey::load, which
+// refuse the GPU, saying why, before they read anything, in a library built without it
+// (make pilfflonk_test) and on a machine without one (make pilfflonk_gpu_test there). Where there is
+// one, the tests of each module compare its GPU path with its CPU one (gpuUnderTest):
+// pilfflonk_lde_test.cpp the transforms, pilfflonk_commit_test.cpp the MSM,
+// pilfflonk_prover_test.cpp whole proofs.
 #include "pilfflonk_test.hpp"
 #include "pilfflonk_test_ptau.hpp"
 

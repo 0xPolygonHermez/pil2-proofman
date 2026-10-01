@@ -1,10 +1,10 @@
-//! Mutated proofs for the tests of the Solidity verifier (spec §4.5, plans M40 and M42): the
+//! Mutated proofs for the tests of the Solidity verifier (pilfflonk/docs/verifier.md#tests): the
 //! arithmetic of `Fr` over `num-bigint` that they need, and [`fixup`], which recomputes `invZh` and
-//! `inv` of a mutated proof for its own transcript (A.5), as the M40 review's harness did
-//! (`review40/harness.mjs`), so that the proof gets past those checks to the deeper ones,
-//! `checkQPieces` and the pairing. The Solidity tests of `pilfflonk-setup`
-//! (`setup/pilfflonk/tests/solidity.rs`) and the differential fuzzer (`fuzz.rs`, which the CLI's
-//! end to end runs) share it.
+//! `inv` of a mutated proof for its own transcript (pilfflonk/docs/protocol.md#inverses), as the
+//! harness of the security review of the Solidity verifier did, so that the proof gets past those
+//! checks to the deeper ones, `checkQPieces` and the pairing. The Solidity tests of
+//! `pilfflonk-setup` (`setup/pilfflonk/tests/solidity.rs`) and the differential fuzzer (`fuzz.rs`,
+//! which the CLI's end to end runs) share it.
 //!
 //! Include it with `#[path = ".../pilfflonk/tests/data/mutations.rs"] mod mutations;`.
 
@@ -83,8 +83,9 @@ pub fn roots(vkey: &Vkey, k: u64, offsets: &[i64], xi_seed: &BigUint) -> Vec<Big
     t
 }
 
-/// `proof` with `invZh` and `inv` recomputed for its own transcript (A.5; `shplonk.js`,
-/// `computeZerofiers` and `computeInverseDenominators`, as `review40/harness.mjs` of the M40 review
+/// `proof` with `invZh` and `inv` recomputed for its own transcript
+/// (pilfflonk/docs/protocol.md#inverses; `shplonk.js`, `computeZerofiers` and
+/// `computeInverseDenominators`, as the harness of the security review of the Solidity verifier
 /// does), so that a mutated proof, with the auxiliary inverses of its `ξ` (`Calldata::encode`), gets
 /// past those checks to the deeper ones: `checkQPieces` and the pairing.
 pub fn fixup(vkey: &Vkey, mut proof: Proof, publics: &[FrBytes]) -> Proof {
@@ -110,7 +111,7 @@ pub fn fixup(vkey: &Vkey, mut proof: Proof, publics: &[FrBytes]) -> Proof {
 }
 
 /// The position of the piece `Q<i>` among the proof's evaluations, if `Q` is split: after the
-/// evMap's, in the order of the layout (A.6).
+/// evMap's, in the order of the layout (pilfflonk/docs/formats.md#proof).
 pub fn piece_position(vkey: &Vkey, piece: u64) -> Option<usize> {
     let q_stage = vkey.layout.0.last()?.stage;
     let names: Vec<&str> = vkey
@@ -128,7 +129,8 @@ pub fn piece_position(vkey: &Vkey, piece: u64) -> Option<usize> {
 }
 
 /// Adds to `proof`'s split `Q` a multiple of `ξ^(M·N)·Q_1 − Q_0` that leaves `Σ_i ξ^(i·M·N)·Q_i(ξ)`
-/// as it is: `Q_0 += ξ^(M·N)·d`, `Q_1 −= d` (A.1). `checkQPieces` passes, and the pairing refuses it.
+/// as it is: `Q_0 += ξ^(M·N)·d`, `Q_1 −= d` (pilfflonk/docs/protocol.md#q-pieces). `checkQPieces`
+/// passes, and the pairing refuses it.
 pub fn rebalance_pieces(vkey: &Vkey, proof: &mut Proof, xi_seed: &BigUint, d: u64) {
     let (Some(q0), Some(q1)) = (piece_position(vkey, 0), piece_position(vkey, 1)) else { return };
     let shift = xi_of(vkey, xi_seed).modpow(&BigUint::from(vkey.max_q_degree << vkey.power), &r());

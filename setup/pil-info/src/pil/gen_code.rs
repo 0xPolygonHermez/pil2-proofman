@@ -703,7 +703,8 @@ fn generate_constraint_polynomial_verifier_code(
     }
 
     // Add Q polynomial columns to ev_map. FRI opens the quotient's pieces and the verifier checks
-    // their evaluations against Q(xi); with SHPLONK the verifier computes Q(xi) itself (spec A.1).
+    // their evaluations against Q(xi); with SHPLONK the verifier computes Q(xi) itself
+    // (pilfflonk/docs/protocol.md#constraint-polynomial).
     if params.opening == Opening::Fri {
         let q_index = params
             .cm_pols_map

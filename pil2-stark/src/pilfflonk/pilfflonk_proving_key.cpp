@@ -22,7 +22,7 @@ namespace {
 
 using json = nlohmann::json;
 
-// The files of spec §4.2.6.
+// The files of the provingKey/ (pilfflonk/docs/formats.md#provingkey).
 const char *const GLOBAL_INFO_FILE = "pilout.globalInfo.json";
 const char *const BACKEND_DIR = "pilfflonk";
 const char *const SRS_FILE = "pilfflonk.srs.bin";
@@ -100,9 +100,9 @@ std::vector<uint8_t> readBytes(const std::string &path, const char *what) {
 // <air>.const
 // ---------------------------------------------------------------------------------------------
 
-// The nCols columns of n rows of `bytes`, row-major canonical little-endian scalars (spec A.6), into
-// column-major Montgomery form: out[c·n + i] is column c at row i. Throws FormatError, naming the
-// first value not below r.
+// The nCols columns of n rows of `bytes`, row-major canonical little-endian scalars
+// (pilfflonk/docs/formats.md#fixed-columns), into column-major Montgomery form: out[c·n + i] is
+// column c at row i. Throws FormatError, naming the first value not below r.
 void decodeColumns(const uint8_t *bytes, uint64_t n, uint64_t nCols, FrElement *out, const std::string &name) {
     const uint64_t total = n * nCols;
     const uint64_t first = firstNonCanonicalFr(bytes, total);
@@ -225,9 +225,9 @@ std::pair<const char *, const char *> quotientFields(StdHint::Kind kind) {
                                         : std::make_pair("numerator_air", "denominator_air");
 }
 
-// The im_col, gsum_col and gprod_col hints of `bin`, checked against `info` as AirKey says (plans M30,
-// M31), in the order AirKey::stdHints() has them. cmIds is AirKey::cmIds(). Throws FormatError, naming
-// the AIR, the hint and what is wrong.
+// The im_col, gsum_col and gprod_col hints of `bin`, checked against `info` as AirKey says, in the
+// order AirKey::stdHints() has them. cmIds is AirKey::cmIds(). Throws FormatError, naming the AIR,
+// the hint and what is wrong.
 std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &info,
                                 const std::vector<std::vector<uint64_t>> &cmIds, const std::string &name) {
     std::vector<StdHint> hints;
@@ -244,7 +244,7 @@ std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &
         } else if (hint.name == "gsum_col") {
             entry.kind = StdHint::Kind::Sum;
         } else if (hint.name == "im_airval") {
-            throw refused("gives an air value, and pilfflonk has none (spec D2)");
+            throw refused("gives an air value, and pilfflonk has none (pilfflonk/docs/README.md#scope)");
         } else {
             throw refused("is none this prover computes: im_col, gsum_col and gprod_col");
         }
@@ -312,7 +312,8 @@ std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &
                 in.kind = HintInput::Kind::Number;
                 in.number = v.value;
             } else if (v.op == HintOp::AirValue) {
-                throw refused("reads an air value in its field " + field + ", and pilfflonk has none (spec D2)");
+                throw refused("reads an air value in its field " + field +
+                              ", and pilfflonk has none (pilfflonk/docs/README.md#scope)");
             } else {
                 throw refused("has in its field " + field + " a value that is no expression, column or number");
             }
@@ -321,13 +322,13 @@ std::vector<StdHint> stdHintsOf(const ExpressionsBin &bin, const PilfflonkInfo &
         const auto [numerator, denominator] = quotientFields(entry.kind);
         entry.numerator = input(numerator);
         entry.denominator = input(denominator);
-        // result updates an airgroup value (updateAirgroupValue), and v1 has none (D2): the STARK's
+        // result updates an airgroup value (updateAirgroupValue), and v1 has none: the STARK's
         // calculateWitnessSTD reads it, and numerator_direct and denominator_direct, only if the AIR has
         // airgroup values; the std writes a number in STD_MODE_ONE_INSTANCE. im_col has none of them.
         const HintFieldValue *result = entry.kind == StdHint::Kind::ImCol ? nullptr : single("result");
         if (!info.airgroupValuesMap.empty() || (result != nullptr && result->op != HintOp::Number)) {
-            throw refused("updates an airgroup value, and pilfflonk has none (spec D2): the std has one unless it is "
-                          "in STD_MODE_ONE_INSTANCE");
+            throw refused("updates an airgroup value, and pilfflonk has none (pilfflonk/docs/README.md#scope): the "
+                          "std has one unless it is in STD_MODE_ONE_INSTANCE");
         }
         hints.push_back(std::move(entry));
     }
@@ -422,7 +423,8 @@ AirDegrees airDegrees(const PilfflonkInfo &info, const std::string &name) {
     d.nBitsExt = ceilLog2(std::max(d.qCoefficients, d.n + d.maxOpenings + 1));
     if (d.nBitsExt > MAX_NBITS_EXT) {
         throw FormatError(name + ": the extended domain has 2^" + std::to_string(d.nBitsExt) +
-                          " points, and BN254's roots of unity allow at most 2^28 (spec A.1)");
+                          " points, and BN254's roots of unity allow at most 2^28 "
+                          "(pilfflonk/docs/protocol.md#degrees)");
     }
 
     // The pieces of Q. maxQDegree < qDeg when it splits Q, so (m − 1)·qStride < qDeg·N < qCoefficients:
@@ -431,7 +433,7 @@ AirDegrees airDegrees(const PilfflonkInfo &info, const std::string &name) {
     if (M == 0 || M >= info.qDeg) {
         if (M != 0) {
             throw FormatError(name + ": maxQDegree = " + std::to_string(M) + " does not split Q of qDeg = " +
-                              std::to_string(info.qDeg) + ", and then it is 0 (spec A.1)");
+                              std::to_string(info.qDeg) + ", and then it is 0 (pilfflonk/docs/protocol.md#q-pieces)");
         }
         d.qStride = 0;
         d.qPieceCoefficients = {d.qCoefficients};
@@ -483,7 +485,8 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
             continue; // below, with the pieces of Q
         }
         // Its k columns fit in its bound: N coefficients for a fixed one, N + |O| + 1 for a committed
-        // one (spec A.2), and so k·coefficients once packed (pack()'s max_j(k·deg p_j + j) + 1).
+        // one (pilfflonk/docs/protocol.md#degrees), and so k·coefficients once packed (pack()'s
+        // max_j(k·deg p_j + j) + 1).
         const uint64_t coefficients = N + blindLength(f);
         if (entry.k > entry.degree / coefficients) {
             fail("layout f" + std::to_string(f) + " has a degree of " + std::to_string(entry.degree) + ", below the " +
@@ -530,14 +533,15 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
     }
     nFixed = std::count_if(info.layout.begin(), info.layout.end(), [](const LayoutEntry &f) { return f.stage == 0; });
 
-    // The pieces of Q (spec A.1): Q0 … Q<m−1> at stagePos (and stageId) 0 … m − 1 of its stage, each
-    // packed once (the positions above), in f opened at ξ whose degree is A.2's cost max_j(k·c_j + j)
-    // of their pieces' bounds c_j, the one the setup gives them.
+    // The pieces of Q (pilfflonk/docs/protocol.md#q-pieces): Q0 … Q<m−1> at stagePos (and
+    // stageId) 0 … m − 1 of its stage, each packed once (the positions above), in f opened at ξ
+    // whose degree is max_j(k·c_j + j) of their pieces' bounds c_j
+    // (pilfflonk/docs/protocol.md#degrees), the one the setup gives them.
     const std::vector<uint64_t> &pieceBounds = airDegrees_.qPieceCoefficients;
     const std::vector<uint64_t> &pieces = cmIdsByStage[info.qStage()];
     if (pieces.size() != pieceBounds.size()) {
         fail("cmPolsMap has " + std::to_string(pieces.size()) + " pieces of Q, and Q is made of " +
-             std::to_string(pieceBounds.size()) + " (spec A.1)");
+             std::to_string(pieceBounds.size()) + " (pilfflonk/docs/protocol.md#q-pieces)");
     }
     qPositions.assign(pieces.size(), LayoutPosition{NOT_COMMITTED, 0});
     for (uint64_t i = 0; i < pieces.size(); ++i) {
@@ -570,8 +574,8 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
         }
         if (entry.degree != degree) {
             fail("layout f" + std::to_string(f) + " holds " + (pieceBounds.size() > 1 ? "pieces of Q" : "Q") +
-                 " with a degree of " + std::to_string(entry.degree) + ", not the bound of spec A.1, " +
-                 std::to_string(degree));
+                 " with a degree of " + std::to_string(entry.degree) + ", not its bound, " + std::to_string(degree) +
+                 " (pilfflonk/docs/protocol.md#degrees)");
         }
     }
 

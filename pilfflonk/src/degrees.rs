@@ -1,19 +1,20 @@
-//! The degrees of spec A.1 for an AIR: the bound on the coefficients of each committed polynomial
-//! and of `Q`, and the extended domain the prover evaluates `Q` on. They are derived, not stored:
-//! the setup derives them before the layout exists (`pilfflonk_setup::layout`), and the prover from
-//! the pilfflonkinfo ([`PilfflonkInfo::degrees`]), both with these functions. The C++ prover
-//! derives them again for itself (`AirDegrees` in `pil2-stark/src/pilfflonk/pilfflonk_proving_key.hpp`),
-//! and the orchestrator checks that it agrees.
+//! The degrees of an AIR (pilfflonk/docs/protocol.md#degrees): the bound on the coefficients of
+//! each committed polynomial and of `Q`, and the extended domain the prover evaluates `Q` on. They
+//! are derived, not stored: the setup derives them before the layout exists
+//! (`pilfflonk_setup::layout`), and the prover from the pilfflonkinfo ([`PilfflonkInfo::degrees`]),
+//! both with these functions. The C++ prover derives them again for itself (`AirDegrees` in
+//! `pil2-stark/src/pilfflonk/pilfflonk_proving_key.hpp`), and the orchestrator checks that it
+//! agrees.
 //!
-//! - A fixed column has `N` coefficients: it has no blinding (A.3).
+//! - A fixed column has `N` coefficients: it has no blinding.
 //! - A committed column opened at `|O|` offsets has `N + |O| + 1`, of which `|O| + 1` are its
-//!   blinding's, `(X^N − 1)·b(X)` (A.3).
-//! - `Q` has `qDeg·N + (qDeg+1)·|O|_max + 1` (A.1), `|O|_max` the most offsets of a committed
-//!   column (with packing, of an `f` of a committed stage).
+//!   blinding's, `(X^N − 1)·b(X)` (pilfflonk/docs/protocol.md#blinding).
+//! - `Q` has `qDeg·N + (qDeg+1)·|O|_max + 1`, `|O|_max` the most offsets of a committed column
+//!   (with packing, of an `f` of a committed stage).
 //! - Split (`maxQDegree = M > 0` and `qDeg > M`), `Q` is committed as `m = ⌈qDeg/M⌉` pieces of `M·N`
 //!   coefficients, `Q(X) = Σ_i X^{i·M·N}·Q_i(X)`, and each boundary between two pieces adds two
-//!   random coefficients that cancel (A.3): each piece but the last has `M·N + 2` coefficients, and
-//!   the last one the rest of `Q`'s ([`QSplit`]).
+//!   random coefficients that cancel (pilfflonk/docs/protocol.md#q-pieces): each piece but the last
+//!   has `M·N + 2` coefficients, and the last one the rest of `Q`'s ([`QSplit`]).
 //! - The extended domain is the smallest power of two `≥` `Q`'s coefficients and `≥ N + |O|_max +
 //!   1`, the coefficients of the column with the most blinding, which the prover also extends to
 //!   it: `2^nBitsExt` points, `nBitsExt ≤ 28` for BN254's roots of unity (checked by the callers).
@@ -24,7 +25,7 @@ use crate::global_info::MAX_NBITS;
 use crate::layout::q_pieces;
 use crate::pilfflonk_info::PilfflonkInfo;
 
-/// The degrees of A.1 for an AIR.
+/// The degrees of an AIR (pilfflonk/docs/protocol.md#degrees).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Degrees {
     /// `N = 2^nBits`.
@@ -50,7 +51,8 @@ fn overflow<T>(what: &str) -> PilfflonkResult<T> {
 
 /// The bound on the coefficients of a column of stage `stage` opened at `n_offsets` offsets, on
 /// `2^n_bits` rows: `N` for a fixed column (stage 0), which has no blinding, and `N + |O| + 1` for a
-/// committed one, whose blinding `(X^N − 1)·b(X)` has `|O| + 1` coefficients (A.3).
+/// committed one, whose blinding `(X^N − 1)·b(X)` has `|O| + 1` coefficients
+/// (pilfflonk/docs/protocol.md#blinding).
 pub fn column_coefficients(n_bits: u64, stage: u64, n_offsets: u64) -> PilfflonkResult<u64> {
     check_n_bits(n_bits)?;
     let n = 1u64 << n_bits;
@@ -63,7 +65,8 @@ pub fn column_coefficients(n_bits: u64, stage: u64, n_offsets: u64) -> Pilfflonk
     }
 }
 
-/// The bound on the coefficients of `Q` (A.1): `qDeg·N + (qDeg+1)·|O|_max + 1`.
+/// The bound on the coefficients of `Q` (pilfflonk/docs/protocol.md#degrees):
+/// `qDeg·N + (qDeg+1)·|O|_max + 1`.
 pub fn q_coefficients(n_bits: u64, q_deg: u64, max_openings: u64) -> PilfflonkResult<u64> {
     check_n_bits(n_bits)?;
     let blinding = q_deg.checked_add(1).and_then(|d| d.checked_mul(max_openings));
@@ -78,9 +81,9 @@ pub fn q_coefficients(n_bits: u64, q_deg: u64, max_openings: u64) -> PilfflonkRe
     }
 }
 
-/// `nBitsExt` (A.1): the smallest power of two `≥` `Q`'s coefficients and `≥ N + |O|_max + 1`,
-/// the coefficients of the column with the most blinding. It is not checked against the
-/// 2-adicity here: the callers do.
+/// `nBitsExt` (pilfflonk/docs/protocol.md#degrees): the smallest power of two `≥` `Q`'s
+/// coefficients and `≥ N + |O|_max + 1`, the coefficients of the column with the most blinding. It
+/// is not checked against the 2-adicity here: the callers do.
 pub fn n_bits_ext(n_bits: u64, q_coefficients: u64, max_openings: u64) -> PilfflonkResult<u64> {
     let column = column_coefficients(n_bits, 1, max_openings)?;
     match q_coefficients.max(column).checked_next_power_of_two() {
@@ -91,7 +94,8 @@ pub fn n_bits_ext(n_bits: u64, q_coefficients: u64, max_openings: u64) -> Pilffl
 
 impl Degrees {
     /// The degrees of an AIR of `2^n_bits` rows whose constraint polynomial has degree `q_deg`
-    /// (A.1), and whose committed columns (stage ≥ 1) are opened at `max_openings` offsets at most.
+    /// (pilfflonk/docs/protocol.md#degree-search), and whose committed columns (stage ≥ 1) are
+    /// opened at `max_openings` offsets at most.
     pub fn new(n_bits: u64, q_deg: u64, max_openings: u64) -> PilfflonkResult<Self> {
         let q_coefficients = q_coefficients(n_bits, q_deg, max_openings)?;
         let n_bits_ext = n_bits_ext(n_bits, q_coefficients, max_openings)?;
@@ -99,8 +103,8 @@ impl Degrees {
     }
 }
 
-/// The pieces `Q_0 … Q_{m−1}` `Q` is committed as (A.1, A.3), `m = q_pieces(qDeg, maxQDegree)`:
-/// `Q(X) = Σ_i X^{i·stride}·Q_i(X)`.
+/// The pieces `Q_0 … Q_{m−1}` `Q` is committed as (pilfflonk/docs/protocol.md#q-pieces),
+/// `m = q_pieces(qDeg, maxQDegree)`: `Q(X) = Σ_i X^{i·stride}·Q_i(X)`.
 ///
 /// Not split (`m = 1`), the one piece is `Q`, unblinded. Split, with `S = stride = M·N` (`M =
 /// maxQDegree`), piece `i` holds the coefficients `i·S … (i+1)·S − 1` of `Q`, and the last one those
@@ -113,12 +117,13 @@ impl Degrees {
 pub struct QSplit {
     /// `S = M·N`, the power of `X` piece 1 is multiplied by; 0 when `Q` is not split.
     pub stride: u64,
-    /// The bound on the coefficients of each piece, `Q_0`'s first: of the pieces' `f` (A.2).
+    /// The bound on the coefficients of each piece, `Q_0`'s first: of the pieces' `f`
+    /// (pilfflonk/docs/protocol.md#layout).
     pub coefficients: Vec<u64>,
 }
 
 impl QSplit {
-    /// The pieces of `Q` of degree `q_deg` (A.1) on `2^n_bits` rows whose committed columns are
+    /// The pieces of `Q` of degree `q_deg` on `2^n_bits` rows whose committed columns are
     /// opened at `max_openings` offsets at most, split by `max_q_degree` (0 does not split it).
     pub fn new(n_bits: u64, q_deg: u64, max_openings: u64, max_q_degree: u64) -> PilfflonkResult<Self> {
         let q_coefficients = q_coefficients(n_bits, q_deg, max_openings)?;
@@ -141,14 +146,15 @@ impl QSplit {
 }
 
 impl PilfflonkInfo {
-    /// The degrees of the AIR (A.1), from its layout: `|O|_max` is the most offsets of an `f` of a
+    /// The degrees of the AIR, from its layout: `|O|_max` is the most offsets of an `f` of a
     /// committed stage (`1 … nStages`). What the setup derived them from, and so what its layout's
     /// degrees are made of.
     pub fn degrees(&self) -> PilfflonkResult<Degrees> {
         Degrees::new(self.n_bits, self.q_deg, self.max_openings())
     }
 
-    /// The pieces `Q` of the AIR is committed as (A.1), with `|O|_max` as [`PilfflonkInfo::degrees`].
+    /// The pieces `Q` of the AIR is committed as ([`QSplit`]), with `|O|_max` as
+    /// [`PilfflonkInfo::degrees`].
     pub fn q_split(&self) -> PilfflonkResult<QSplit> {
         QSplit::new(self.n_bits, self.q_deg, self.max_openings(), self.max_q_degree)
     }
@@ -190,7 +196,7 @@ mod tests {
         // Q exactly a power of two.
         assert_eq!(n_bits_ext(8, 512, 2).unwrap(), 9);
         assert_eq!(n_bits_ext(8, 513, 2).unwrap(), 10);
-        // The column decides: with qDeg = 0, Q has 2 coefficients and a column N + 2 (M5).
+        // The column decides: with qDeg = 0, Q has 2 coefficients and a column N + 2.
         assert_eq!(n_bits_ext(3, 2, 1).unwrap(), 4);
         assert_eq!(
             Degrees::new(3, 0, 1).unwrap(),

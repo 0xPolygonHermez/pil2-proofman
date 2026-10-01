@@ -1,5 +1,5 @@
-//! What the setup refuses in a pilout (spec §4.2.1): one test per error, on pilouts built in
-//! code from the valid one of `common`.
+//! What the setup refuses in a pilout (pilfflonk/docs/README.md#what-the-setup-refuses): one test
+//! per error, on pilouts built in code from the valid one of `common`.
 
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, global_expression, global_operand, SymbolType};
@@ -41,7 +41,7 @@ fn its_air_is_found_in_any_airgroup() {
 // --- The base field ------------------------------------------------------------------------
 
 /// The pilout pil2com writes for `-P bn254.json` when it ignores `prime`, as the pinned compiler
-/// does (plan M13): over Goldilocks. The error says how to compile it.
+/// does (pilfflonk/docs/README.md#compile-pil): over Goldilocks. The error says how to compile it.
 #[test]
 fn a_goldilocks_pilout_is_refused() {
     let mut pilout = pilout();
@@ -65,7 +65,7 @@ fn a_pilout_over_any_other_field_is_refused() {
     }
 }
 
-// --- One instance of one AIR (D2) ----------------------------------------------------------
+// --- One instance of one AIR (pilfflonk/docs/README.md#scope) ------------------------------
 
 #[test]
 fn a_pilout_of_other_than_one_air_is_refused() {
@@ -86,8 +86,8 @@ fn a_pilout_of_other_than_one_air_is_refused() {
     }
 }
 
-/// Air values, airgroup values, proof values and global constraints are out of v1 (D2), whether
-/// the pilout declares them or only has their symbols.
+/// Air values, airgroup values, proof values and global constraints are out of v1
+/// (pilfflonk/docs/README.md#scope), whether the pilout declares them or only has their symbols.
 #[test]
 fn values_and_global_constraints_are_refused() {
     let value_symbol = |kind: SymbolType| pb::Symbol {
@@ -127,7 +127,7 @@ fn values_and_global_constraints_are_refused() {
     p.constraints = vec![pb::GlobalConstraint { expression_idx: None, debug_line: None }; 3];
     let err = refusal(&p);
     assert!(matches!(err, SetupError::GlobalConstraints { n: 3 }), "{err}");
-    assert!(err.to_string().contains("D2"), "{err}");
+    assert!(err.to_string().contains("which pilfflonk does not support"), "{err}");
 }
 
 #[test]
@@ -172,9 +172,10 @@ fn public_tables_are_refused() {
 
 // --- Hints ---------------------------------------------------------------------------------
 
-/// The prover hints of spec §3.4 the setup supports (plans M30, M31), `im_col`, `gprod_col` and
-/// `gsum_col`, pass by name if they are of the AIR: what they give, `check_prover_hints` checks after
-/// the passes (`tests/bytecode.rs`). Of the pilout, they are of no AIR.
+/// The prover hints the setup supports (pilfflonk/docs/README.md#what-the-setup-refuses), `im_col`,
+/// `gprod_col` and `gsum_col`, pass by name if they are of the AIR: what they give,
+/// `check_prover_hints` checks after the passes (`tests/bytecode.rs`). Of the pilout, they are of
+/// no AIR.
 #[test]
 fn the_supported_prover_hints_pass_by_name_if_they_are_of_the_air() {
     assert_eq!(SUPPORTED_PROVER_HINTS, ["im_col", "gprod_col", "gsum_col"], "the STARK's order");
@@ -190,7 +191,7 @@ fn the_supported_prover_hints_pass_by_name_if_they_are_of_the_air() {
 }
 
 /// The other prover hint, `im_airval`, is refused, of the AIR or of the pilout, saying why: it
-/// computes an air value (D2).
+/// computes an air value (pilfflonk/docs/README.md#scope).
 #[test]
 fn the_other_prover_hints_are_refused() {
     for (of_air, where_) in [(true, "air Sample"), (false, "the pilout")] {
@@ -198,7 +199,7 @@ fn the_other_prover_hints_are_refused() {
         pilout.hints = vec![hint("range_def", true), hint("im_airval", of_air)];
         let err = refusal(&pilout);
         assert!(matches!(&err, SetupError::ImAirvalHint { location } if location == where_), "{err}");
-        assert!(err.to_string().contains("D2"), "{err}");
+        assert!(err.to_string().contains("which computes an air value, and pilfflonk has none"), "{err}");
     }
     assert_eq!(PROVER_HINTS.len(), SUPPORTED_PROVER_HINTS.len() + 1);
     assert!(!SUPPORTED_PROVER_HINTS.contains(&"im_airval"));
@@ -217,7 +218,8 @@ fn a_prover_hint_is_reported_before_the_values_it_brings() {
 }
 
 /// `witness_bits`, the hint of a column declared with `bits(n)`, asks for packed trace rows, which
-/// pilfflonk does not accept yet (plan M38b): it is refused, saying so, of the AIR or of the pilout.
+/// pilfflonk does not accept yet (pilfflonk/docs/README.md#scope): it is refused, saying so, of the
+/// AIR or of the pilout.
 #[test]
 fn a_packed_trace_is_refused() {
     for (of_air, where_) in [(true, "air Sample"), (false, "the pilout")] {
@@ -238,7 +240,8 @@ fn unknown_hints_are_refused() {
     assert!(matches!(&err, SetupError::UnknownHint { name, .. } if name == "my_hint"), "{err}");
 }
 
-/// The witness and debug hints of spec §3.4 are not the prover's: the setup ignores them.
+/// The witness and debug hints (pilfflonk/docs/README.md#what-the-setup-refuses) are not the
+/// prover's: the setup ignores them.
 #[test]
 fn witness_and_debug_hints_are_ignored() {
     let mut pilout = pilout();
@@ -352,7 +355,7 @@ fn a_fixed_value_not_below_r_is_refused() {
     }
 }
 
-// --- What the passes and the layout decide (M16) --------------------------------------------
+// --- What the passes and the layout decide -------------------------------------------------
 
 #[test]
 fn an_extended_domain_beyond_the_2_adicity_is_refused() {

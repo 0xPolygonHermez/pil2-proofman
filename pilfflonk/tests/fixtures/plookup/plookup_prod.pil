@@ -1,6 +1,6 @@
 // The Plookup of plookup.pil on the std's product bus (a permutation into the rows of the table, each
-// at most once), in STD_MODE_ONE_INSTANCE (plan M34). The std's default MAX_CONSTRAINT_DEGREE (3)
-// gives one im_col.
+// at most once), in STD_MODE_ONE_INSTANCE. The std's default MAX_CONSTRAINT_DEGREE (3) gives one
+// im_col.
 require "plookup.pil"
 
 set_std_mode(STD_MODE_ONE_INSTANCE);

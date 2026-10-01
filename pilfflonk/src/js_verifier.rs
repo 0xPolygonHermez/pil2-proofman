@@ -1,4 +1,4 @@
-//! The JS verifier (spec §4.5, D8), run with Node as `verify_snark_proof`
+//! The JS verifier (pilfflonk/docs/verifier.md#js-verifier), run with Node as `verify_snark_proof`
 //! (`proofman/src/snark_wrapper.rs`) runs snarkjs: `node <js>/bin/verify.js <vkey> <publics>
 //! <proof>`, the arguments of `snarkjs fflonk verify`, whose exit status is the verdict.
 //! `proofman-cli pilfflonk verify` calls [`verify`].

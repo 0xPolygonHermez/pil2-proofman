@@ -1,5 +1,5 @@
-//! Fixtures for the JS verifier (plan M19), for what only Rust has: the ptau with `τ = 1` (plan
-//! N13) and `Q(ξ)` from the oracle (M14). `pilfflonk/js/test/setup-fixtures.sh` runs them around
+//! Fixtures for the JS verifier, for what only Rust has: the ptau with `τ = 1` and `Q(ξ)` from the
+//! oracle (pilfflonk/docs/README.md#tests). `pilfflonk/js/test/setup-fixtures.sh` runs them around
 //! `proofman-setup`, into the directory `PILFFLONK_JS_FIXTURES` names:
 //!
 //! 1. `tau_one_ptau` writes `tau_one.ptau`, for `proofman-setup setup-pilfflonk`;
@@ -20,7 +20,7 @@
 //! They are this crate's, not `proofman-pilfflonk`'s, because the ptau is (`test_ptau`): this crate
 //! depends on `proofman-pilfflonk`, and a dev-dependency back on this one would be a cycle.
 
-/// M13's generator, `proofman-pilfflonk`'s test module, included as it is.
+/// The Fibonacci's generator, `proofman-pilfflonk`'s test module, included as it is.
 #[path = "../../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
 
@@ -35,11 +35,12 @@ use proofman_pilfflonk::{
 };
 use serde_json::{json, Map, Value};
 
-/// The powers `[τ^i]₁` of the ptau: more than the Fibonacci's largest degree, 513 grouped (plan
-/// M22), 261 unpacked (plan M16).
+/// The powers `[τ^i]₁` of the ptau: more than the Fibonacci's largest degree, 513 grouped, 261
+/// unpacked.
 const PTAU_G1: usize = 1024;
 
-/// The fixture's size and inputs, as `pilfflonk/tests/fibonacci.rs` (spec Annex G).
+/// The fixture's size and inputs, as `pilfflonk/tests/fibonacci.rs`
+/// (pilfflonk/docs/README.md#fixtures).
 const N_BITS: u32 = 8;
 const INPUTS: [u64; 2] = [1, 2];
 
@@ -126,8 +127,8 @@ fn q_at_xi() {
     let vkey = Vkey::read(&global_info.vkey_path(&proving_key)).unwrap();
     assert_eq!(vkey.ev_map, info.ev_map, "the vkey has the evMap of the AIR");
 
-    // The names of the evaluations in the order of the proof (A.6): the fixed columns', then the
-    // others', each in the order of the evMap.
+    // The names of the evaluations in the order of the proof (pilfflonk/docs/formats.md#proof):
+    // the fixed columns', then the others', each in the order of the evMap.
     let ordered = info.ev_map.iter().filter(|e| e.pol_type == PolType::Const);
     let ordered = ordered.chain(info.ev_map.iter().filter(|e| e.pol_type == PolType::Cm));
     let proof_names = ProofNames::new(&global_info, &[&info]).unwrap();

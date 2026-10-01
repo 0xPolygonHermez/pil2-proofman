@@ -1,4 +1,4 @@
-// PIL2 port of the pil-fflonk example `all` (plan M34, spec-seed.md Annex G), the program of
+// PIL2 port of the pil-fflonk example `all` (pilfflonk/docs/README.md#fixtures), the program of
 // pil-fflonk's config/: pil-fflonk/pil/sm_all/all_main.pil, which includes the Fibonacci, Connection,
 // Permutation and Plookup state machines in one trace of N = 2^8 rows. Here they are one AIR too.
 //
@@ -8,9 +8,9 @@
 //   over its own columns, on one bus of the std (`bus_type`).
 // - PIL1 kept each state machine in a namespace, and a column's name was qualified by it
 //   (`Connection.a`, `Permutation.a`, `Plookup.a`). A PIL2 AIR has one scope, and the proof names
-//   each evaluation by its column (spec A.6), so the witness columns take the name of their state
-//   machine as a prefix instead: `connection_a`, `permutation_a`, `plookup_a`. The fixed ones are
-//   unique already.
+//   each evaluation by its column (pilfflonk/docs/formats.md#proof-names), so the witness columns
+//   take the name of their state machine as a prefix instead: `connection_a`, `permutation_a`,
+//   `plookup_a`. The fixed ones are unique already.
 // - PIL1's Global.L1 is the std's __L1__, and the Fibonacci's L1 is its own, as in PIL1.
 //
 // all_sum.pil and all_prod.pil are the programs to compile, over BN254 as the Fibonacci, with its

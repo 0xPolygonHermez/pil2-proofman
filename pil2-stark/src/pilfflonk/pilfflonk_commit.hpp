@@ -17,10 +17,10 @@ using Poly = Polynomial<AltBn128::Engine>;
 // its buffer. Throws std::invalid_argument if k·n is 0 or above 2^63.
 uint64_t packedBufferLength(uint64_t k, uint64_t n);
 
-// The fflonk packing f(X) = Σ_{j<k} p_j(X^k)·X^j of p_j = polys[j] (spec A.2), by rapidsnark's
-// CPolynomial: coefficient i·k + j of f is coefficient i of p_j. Each p_j's degree must be up to
-// date (Poly::fixDegree, which every constructor from evaluations calls): CPolynomial copies
-// coefficients up to it only.
+// The fflonk packing f(X) = Σ_{j<k} p_j(X^k)·X^j of p_j = polys[j]
+// (pilfflonk/docs/protocol.md#layout), by rapidsnark's CPolynomial: coefficient i·k + j of f is
+// coefficient i of p_j. Each p_j's degree must be up to date (Poly::fixDegree, which every
+// constructor from evaluations calls): CPolynomial copies coefficients up to it only.
 //
 // Writes f's coefficients to packed[0, n) and returns n = 1 + max_j(k·deg p_j + j), the degree
 // bound CPolynomial computes (above deg f if the top coefficients are zero); the rest of the buffer
@@ -35,11 +35,11 @@ uint64_t pack(Poly *const *polys, uint64_t k, FrElement *packed, uint64_t buffer
 // null, and as Srs::commit if f has more coefficients than the SRS has powers.
 G1Point commitPacked(const Srs &srs, Poly *const *polys, uint64_t k);
 
-// The commitment [f(τ)]₁ of a fixed f (spec §4.2.5, "Compromisos fixos"): evals[j] holds the N
-// evaluations on H, in natural order and Montgomery form, of column j, the p_j of
+// The commitment [f(τ)]₁ of a fixed f (pilfflonk/docs/README.md#setup-pilfflonk): evals[j] holds
+// the N evaluations on H, in natural order and Montgomery form, of column j, the p_j of
 // f(X) = Σ_{j<k} p_j(X^k)·X^j. Its coefficients come from lde.intt with no room for blinding
-// (constants get none, A.3); then pack() and srs.commit(). N = lde.domainSize(). evals is only
-// read, and lde's extended domain is not used.
+// (constants get none, pilfflonk/docs/protocol.md#blinding); then pack() and srs.commit().
+// N = lde.domainSize(). evals is only read, and lde's extended domain is not used.
 //
 // Throws std::invalid_argument, before any work, if k is 0, if f's k·N coefficients exceed the
 // srs.nG1() powers, or if evals or a column is null.

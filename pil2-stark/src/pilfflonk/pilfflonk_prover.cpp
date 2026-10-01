@@ -306,7 +306,8 @@ std::vector<G1Point> Instance::commitF(uint64_t stage) {
         std::vector<std::unique_ptr<Poly>> interpolants = key.lde().intt(evals.data(), coefs.data(), k, b);
         TimerStopAndLogExpr(PILFFLONK_INTT, f);
         // p'(X) = p(X) + (X^N − 1)·b(X): blindCoefficients adds b_i at N + i and subtracts it at i
-        // (spec A.3). The factors are drawn f by f, and column by column within an f.
+        // (pilfflonk/docs/protocol.md#blinding). The factors are drawn f by f, and column by column
+        // within an f.
         std::vector<FrElement> factors(b);
         std::vector<Poly *> components(k);
         for (uint64_t j = 0; j < k; ++j) {
@@ -357,10 +358,10 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
     setChallenges(info.qStage(), challenges);
     TimerStart(PILFFLONK_Q);
 
-    // Q on the extended coset g·H' part by part (plan M39): each part the 2^partBits points of
-    // Lde::extendCosetPart and ExpressionsDomain::cosetPart, and every column Q's code reads on it,
-    // from its committed polynomial, those with as many coefficients in one call. Point i of part p
-    // is point p + nParts·i of the coset, where Q's value goes.
+    // Q on the extended coset g·H' part by part (pilfflonk/docs/protocol.md#q-in-parts): each part
+    // the 2^partBits points of Lde::extendCosetPart and ExpressionsDomain::cosetPart, and every
+    // column Q's code reads on it, from its committed polynomial, those with as many coefficients in
+    // one call. Point i of part p is point p + nParts·i of the coset, where Q's value goes.
     const Lde &lde = key.lde();
     const uint64_t M = lde.extendedSize();
     const uint64_t nBitsExt = key.degrees().nBitsExt;
@@ -423,20 +424,22 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
     lde.interpolateCoset(&qBuffer, &qBuffer, 1);
     TimerStopAndLog(PILFFLONK_Q_INTERPOLATE);
 
-    // Q is a polynomial of its bound (spec A.1) if and only if every constraint holds on its rows.
+    // Q is a polynomial of its bound if and only if every constraint holds on its rows
+    // (pilfflonk/docs/protocol.md#proof-sequence).
     const uint64_t bound = key.degrees().qCoefficients;
     for (uint64_t j = M; j-- > bound;) {
         if (!Engine::engine.fr.isZero(qValues[j])) {
             throw UnsatisfiedError(
                 "the witness does not satisfy the constraints of " + key.name() +
                 ": Q has a coefficient of degree " + std::to_string(j) + " not zero, and a polynomial of at most " +
-                std::to_string(bound) + " coefficients if it does (spec A.1)");
+                std::to_string(bound) + " coefficients if it does (pilfflonk/docs/protocol.md#degrees)");
         }
     }
 
-    // Its pieces (spec A.1, A.3): each its S coefficients of Q (the last one the rest up to the bound),
-    // and each boundary b0·X^S + b1·X^(S+1) in the piece below it, b0 + b1·X out of the one above.
-    // Unsplit, the one piece is Q, unblinded. AirDegrees gives every piece 2 coefficients at least.
+    // Its pieces (pilfflonk/docs/protocol.md#q-pieces): each its S coefficients of Q (the last one
+    // the rest up to the bound), and each boundary b0·X^S + b1·X^(S+1) in the piece below it,
+    // b0 + b1·X out of the one above. Unsplit, the one piece is Q, unblinded. AirDegrees gives every
+    // piece 2 coefficients at least.
     Engine::Fr &fr = Engine::engine.fr;
     const AirDegrees &d = key.degrees();
     const uint64_t m = d.qPieceCoefficients.size();
@@ -633,7 +636,8 @@ Opening::Opening(const std::vector<const Instance *> &instances, const FrElement
         }
     }
 
-    // The global order of A.5, and where each AIR's fixed f and each instance's other f start in it.
+    // The global order (pilfflonk/docs/protocol.md#global-order), and where each AIR's fixed f and
+    // each instance's other f start in it.
     ShplonkOpening opening;
     opening.nBits = nBits;
     opening.xiSeed = xiSeed;
@@ -691,7 +695,8 @@ Opening::Opening(const std::vector<const Instance *> &instances, const FrElement
         throw std::runtime_error("Opening: ξ is in H, where Z_H vanishes");
     }
 
-    // The evaluations, in the order of A.4 step 4: each at p_j(ξ·ω^prime) of its f.
+    // The evaluations, in the order of the transcript (pilfflonk/docs/protocol.md#transcript,
+    // step 4): each at p_j(ξ·ω^prime) of its f.
     const ShplonkProver::Evaluations &evals = shplonk->evaluations();
     auto evaluation = [&](const AirKey &air, const EvMapEntry &e, uint64_t start) {
         const LayoutPosition &pos = e.type == PolType::Const ? air.constPosition(e.id) : air.cmPosition(e.id);
@@ -728,8 +733,9 @@ Opening::Opening(const std::vector<const Instance *> &instances, const FrElement
         }
     }
 
-    // A.4 step 4.3: the Q_i(ξ) of each instance whose Q is split, in the order of its layout; and Q(ξ)
-    // of every instance, Σ_i ξ^(i·S)·Q_i(ξ), by Horner from the last piece (Q_0(ξ) = Q(ξ) unsplit).
+    // The Q_i(ξ) of each instance whose Q is split, in the order of its layout
+    // (pilfflonk/docs/protocol.md#transcript, step 4.3); and Q(ξ) of every instance,
+    // Σ_i ξ^(i·S)·Q_i(ξ), by Horner from the last piece (Q_0(ξ) = Q(ξ) unsplit).
     for (uint64_t i = 0; i < instances.size(); ++i) {
         const AirKey &air = instances[i]->air();
         const std::vector<LayoutEntry> &layout = air.info().layout;

@@ -1,46 +1,50 @@
-//! The polynomials the prover commits to, their bounds, and their layout in `f_i` (spec §4.2.4,
-//! A.1–A.3, A.5).
+//! The polynomials the prover commits to, their bounds, and their layout in `f_i`
+//! (pilfflonk/docs/protocol.md#degrees, pilfflonk/docs/protocol.md#layout).
 //!
-//! **The committed polynomials** (A.2's input) are the columns the evMap opens and `Q`. Each has
-//! a stage, an opening set `O` and a bound in number of coefficients:
+//! **The committed polynomials** (the grouping's input) are the columns the evMap opens and `Q`.
+//! Each has a stage, an opening set `O` and a bound in number of coefficients:
 //!
 //! - a fixed column: stage 0, `O` the offsets the evMap opens it at, and `N` coefficients: it has
-//!   no blinding (A.3);
+//!   no blinding (pilfflonk/docs/protocol.md#blinding);
 //! - a committed column, im pols included: stage `1 … nStages`, `O` as a fixed one's, and
-//!   `N + |O| + 1` coefficients, of which `|O| + 1` are its blinding's (A.3);
-//! - `Q`: stage `nStages + 1`, `O = {0}`, and `qDeg·N + (qDeg+1)·|O|_max + 1` coefficients (A.1),
+//!   `N + |O| + 1` coefficients, of which `|O| + 1` are its blinding's;
+//! - `Q`: stage `nStages + 1`, `O = {0}`, and `qDeg·N + (qDeg+1)·|O|_max + 1` coefficients,
 //!   `|O|_max` the largest `|O|` of the columns with blinding (the committed ones) *after the
-//!   fusions* of A.2's rule 1. Split (`--max-q-degree M`, `0 < M < qDeg`), its pieces `Q_0 …
-//!   Q_{m−1}` instead, `m = ⌈qDeg/M⌉`, each but the last of `M·N + 2` coefficients, its `M·N` of
-//!   `Q` and two of the blinding of its boundary with the next (A.3), and the last the rest of `Q`'s
-//!   (`QSplit`). They are the polynomials of `Q`'s stage, which the grouping puts in a group of their
-//!   own, as the old system does (A.2, rule 2): in one `f`, unless `--extra-muls` splits it.
+//!   fusions* of the grouping's rule 1. Split (`--max-q-degree M`, `0 < M < qDeg`), its pieces
+//!   `Q_0 … Q_{m−1}` instead, `m = ⌈qDeg/M⌉`, each but the last of `M·N + 2` coefficients, its
+//!   `M·N` of `Q` and two of the blinding of its boundary with the next
+//!   (pilfflonk/docs/protocol.md#q-pieces), and the last the rest of `Q`'s (`QSplit`). They are the
+//!   polynomials of `Q`'s stage, which the grouping puts in a group of their own, as the old system
+//!   does (rule 2): in one `f`, unless `--extra-muls` splits it.
 //!
-//! A column the evMap never opens is not committed (A.2), and [`committed_pols`] says which ones.
+//! A column the evMap never opens is not committed, and [`committed_pols`] says which ones.
 //!
-//! **The extended domain** (A.1) is the smallest power of two that holds `Q`'s coefficients and
+//! **The extended domain** is the smallest power of two that holds `Q`'s coefficients and
 //! `N + |O|_max + 1`, the coefficients of the column with the most blinding, which the prover also
 //! extends to it: `nBitsExt`, at most 28 (checked by `validate::check_extended_domain`).
 //!
 //! The bounds and the extended domain are [`proofman_pilfflonk::degrees`]'s, re-exported here: the
 //! prover derives them from the pilfflonkinfo with the same functions, `|O|_max` from the layout.
 //!
-//! **The layout** ([`Packing`]). By default, the grouping of A.2 ([`crate::grouping::group`], plan
-//! M21) with `--extra-muls`: the fusions of rule 1, the classes and the split of each in `f_i`.
-//! A fusion moves a column to the offsets of its `f`, so `|O|_max`, and with it `Q`'s bound and the
-//! extended domain, are computed from the fused offsets ([`crate::grouping::fuse`]) before `Q` is
-//! grouped, and not from the evMap's (spec C.3.2, a defect of the old system). With
-//! `--no-packing` (plan R1, for tests), [`unpacked_layout`]: one `f_i` per polynomial, `k = 1`, its
-//! own `O` and its bound as `degree` (A.2's cost `max_j(deg_j·k + j)` for `k = 1`), and no fusion.
-//! Either is in the order of A.5 within an AIR: by stage, the fixed `f_i` first and `Q`'s last.
+//! **The layout** ([`Packing`]). By default, the grouping ([`crate::grouping::group`],
+//! pilfflonk/docs/protocol.md#grouping-rules) with `--extra-muls`: the fusions of rule 1, the
+//! classes and the split of each in `f_i`. A fusion moves a column to the offsets of its `f`, so
+//! `|O|_max`, and with it `Q`'s bound and the extended domain, are computed from the fused offsets
+//! ([`crate::grouping::fuse`]) before `Q` is grouped, and not from the evMap's (a defect of the old
+//! system: pilfflonk/docs/protocol.md#bounds-after-fusion). With `--no-packing` (for tests:
+//! pilfflonk/docs/protocol.md#unpacked-layout), [`unpacked_layout`]: one `f_i` per polynomial,
+//! `k = 1`, its own `O` and its bound as `degree` (the grouping's cost `max_j(deg_j·k + j)` for
+//! `k = 1`), and no fusion. Either goes by stage within an AIR, the fixed `f_i` first and `Q`'s
+//! last, as the global order needs (pilfflonk/docs/protocol.md#global-order).
 //!
-//! **The evMap** must be the `(column, offset)` pairs the layout opens (`Layout::check`, A.5): a
-//! fused column is opened at the offsets it gains too. [`ev_map_of`] appends those pairs to the
-//! evMap of the passes, after all of its entries, so that the index of every one of them, which the
-//! `qVerifier`'s `eval` operands are (A.6), does not change. The proof, the transcript (A.4 step 4)
-//! and the verifier list the evaluations as the evMap does, the fixed columns' first: an appended
-//! pair of a fixed column comes after the other fixed ones, and one of a committed column after the
-//! other committed ones, in the same place for all three.
+//! **The evMap** must be the `(column, offset)` pairs the layout opens (`Layout::check`;
+//! pilfflonk/docs/protocol.md#evaluation-map): a fused column is opened at the offsets it gains
+//! too. [`ev_map_of`] appends those pairs to the evMap of the passes, after all of its entries, so
+//! that the index of every one of them, which the `qVerifier`'s `eval` operands are, does not
+//! change. The proof, the transcript (pilfflonk/docs/protocol.md#transcript, step 4) and the
+//! verifier list the evaluations as the evMap does, the fixed columns' first: an appended pair of a
+//! fixed column comes after the other fixed ones, and one of a committed column after the other
+//! committed ones, in the same place for all three.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -55,13 +59,15 @@ use crate::grouping::{fuse, group, GroupingParams};
 /// How the committed polynomials go into `f_i` (see [the module](self)).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Packing {
-    /// The grouping of A.2 with this `--extra-muls`: the default.
+    /// The grouping (pilfflonk/docs/protocol.md#grouping-rules) with this `--extra-muls`: the
+    /// default.
     Grouped { extra_muls: u64 },
-    /// `--no-packing` (plan R1), for tests: an `f` of `k = 1` per polynomial, at its own offsets.
+    /// `--no-packing` (pilfflonk/docs/protocol.md#unpacked-layout), for tests: an `f` of `k = 1`
+    /// per polynomial, at its own offsets.
     Unpacked,
 }
 
-/// A polynomial the prover commits to, as the grouping of A.2 takes it.
+/// A polynomial the prover commits to, as the grouping takes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommittedPol {
     /// 0 for a fixed column, `1 … nStages` for a committed one, `nStages + 1` for `Q`.
@@ -85,16 +91,19 @@ pub struct Committed {
     pub pols: Vec<CommittedPol>,
     /// Their layout, grouped or not.
     pub layout: Layout,
-    /// The names of the columns the evMap never opens, which are not committed (A.2).
+    /// The names of the columns the evMap never opens, which are not committed
+    /// (pilfflonk/docs/protocol.md#layout).
     pub unopened: Vec<String>,
-    /// A.1's, with the layout's `|O|_max`.
+    /// The degrees (pilfflonk/docs/protocol.md#degrees), with the layout's `|O|_max`.
     pub degrees: Degrees,
-    /// The pieces of `Q` (A.1), with the layout's `|O|_max`: one if it is not split.
+    /// The pieces of `Q` (pilfflonk/docs/protocol.md#q-pieces), with the layout's `|O|_max`: one
+    /// if it is not split.
     pub q_split: QSplit,
 }
 
-/// `Q` as the setup knows it before the layout (A.1): of stage `nStages + 1`, of degree `qDeg`, and
-/// split in pieces of degree `maxQDegree`, 0 if it is not (`layout::split_max_q_degree`).
+/// `Q` as the setup knows it before the layout (pilfflonk/docs/protocol.md#q-pieces): of stage
+/// `nStages + 1`, of degree `qDeg`, and split in pieces of degree `maxQDegree`, 0 if it is not
+/// (`layout::split_max_q_degree`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct QShape {
     pub stage: u64,
@@ -108,7 +117,7 @@ pub struct QShape {
 /// `cm_pols_map` of its stage, in this order; laid out as `packing` says.
 ///
 /// Refuses an evaluation of a column that is not in its map, or of a piece of `Q`, which the
-/// verifier computes (A.1) or reads from the proof (split), pieces of `Q` other than those of `q`,
+/// verifier computes or reads from the proof (split), pieces of `Q` other than those of `q`,
 /// and what the grouping refuses ([`SetupError::Grouping`]).
 pub fn committed_pols(
     n_bits: u64,
@@ -136,7 +145,7 @@ pub fn committed_pols(
             }
             Some(p) if p.stage == q_stage => {
                 return Err(SetupError::PassesOutput(format!(
-                    "evMap[{i}] is {} ({}), a piece of Q, which the verifier computes (A.1) or reads from the proof",
+                    "evMap[{i}] is {} ({}), a piece of Q, which the verifier computes or reads from the proof",
                     e.id, p.name
                 )))
             }
@@ -167,7 +176,7 @@ pub fn committed_pols(
     let n_pieces = q_pieces(q.q_deg, q.max_q_degree);
     if pieces.len() as u64 != n_pieces {
         return Err(SetupError::PassesOutput(format!(
-            "Q is made of {n_pieces} pieces (A.1), and cmPolsMap has {}",
+            "Q is made of {n_pieces} pieces, and cmPolsMap has {}",
             pieces.len()
         )));
     }
@@ -183,13 +192,14 @@ pub fn committed_pols(
         let coefficients = column_coefficients(n_bits, stage, offsets.len() as u64)?;
         pols.push(CommittedPol { stage, id, name, offsets, coefficients });
     }
-    // The order of the f_i (A.5): by stage, and within a stage by index. cmPolsMap has the im pols
-    // after the columns of every stage, so its order is not by stage when there are several. Q's
-    // pieces, of the last stage, go last, Q0 first.
+    // The order of the f_i (pilfflonk/docs/protocol.md#global-order): by stage, and within a stage
+    // by index. cmPolsMap has the im pols after the columns of every stage, so its order is not by
+    // stage when there are several. Q's pieces, of the last stage, go last, Q0 first.
     pols.sort_by_key(|p| (p.stage, p.id));
 
-    // |O|_max of the columns with blinding as the layout opens them: after the fusions of A.2's
-    // rule 1 if the polynomials are grouped (spec C.3.2). Q takes no part in them.
+    // |O|_max of the columns with blinding as the layout opens them: after the fusions of the
+    // grouping's rule 1 if the polynomials are grouped
+    // (pilfflonk/docs/protocol.md#bounds-after-fusion). Q takes no part in them.
     let params = |extra_muls| GroupingParams { n_bits, extra_muls, q_stage };
     let max_openings =
         |pols: &[CommittedPol]| pols.iter().filter(|p| p.stage != 0).map(|p| p.offsets.len() as u64).max();
@@ -257,8 +267,8 @@ pub fn ev_map_of(
     Ok(out)
 }
 
-/// The layout of `--no-packing` (plan R1): an `f_i` of `k = 1` for each polynomial of `pols`, in
-/// their order, with its offsets and its bound as `degree`.
+/// The layout of `--no-packing` (pilfflonk/docs/protocol.md#unpacked-layout): an `f_i` of `k = 1`
+/// for each polynomial of `pols`, in their order, with its offsets and its bound as `degree`.
 pub fn unpacked_layout(pols: &[CommittedPol]) -> Layout {
     Layout(
         pols.iter()
@@ -273,7 +283,7 @@ pub fn unpacked_layout(pols: &[CommittedPol]) -> Layout {
     )
 }
 
-/// The largest `degree` of `layout`: the powers `[τ^i]₁` the SRS must hold (M12).
+/// The largest `degree` of `layout`: the powers `[τ^i]₁` the SRS must hold.
 pub fn max_degree(layout: &Layout) -> u64 {
     layout.0.iter().map(|f| f.degree).max().unwrap_or(0)
 }

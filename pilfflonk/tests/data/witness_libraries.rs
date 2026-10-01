@@ -1,8 +1,8 @@
-//! The witness libraries of the tests, as Cargo builds them (plans M38b, M38c): the pilfflonk ones of
-//! the fixtures, `pilfflonk/tests/fixtures/<fixture>/rs` (`pilfflonk_fibonacci`, `pilfflonk_connection`
-//! and `pilfflonk_all`), and a STARK one, `examples/fibonacci-square`'s (`fibonacci_square`), which
-//! the pilfflonk loader refuses. Cargo builds each for the tests of its own crate, and for those of a
-//! crate that has it as a dev-dependency, beside their binaries.
+//! The witness libraries of the tests, as Cargo builds them (pilfflonk/docs/README.md#witness): the
+//! pilfflonk ones of the fixtures, `pilfflonk/tests/fixtures/<fixture>/rs` (`pilfflonk_fibonacci`,
+//! `pilfflonk_connection` and `pilfflonk_all`), and a STARK one, `examples/fibonacci-square`'s
+//! (`fibonacci_square`), which the pilfflonk loader refuses. Cargo builds each for the tests of its
+//! own crate, and for those of a crate that has it as a dev-dependency, beside their binaries.
 //!
 //! Include it with `#[path = ".../pilfflonk/tests/data/witness_libraries.rs"] mod witness_libraries;`.
 

@@ -1,7 +1,7 @@
-// A synthetic AIR for the packing of spec A.2 (plan M22): enough columns of each kind that the
-// default grouping (--extra-muls 2) packs several of them in one f, splits a group in several f,
-// and moves (fuses) columns to the union of their stage's offsets, which adds evaluations to the
-// evMap. One air, one instance, stage 1 only, no std, no hints. N = 2^4.
+// A synthetic AIR for the packing (pilfflonk/docs/protocol.md#layout): enough columns of each kind
+// that the default grouping (--extra-muls 2) packs several of them in one f, splits a group in
+// several f, and moves (fuses) columns to the union of their stage's offsets, which adds
+// evaluations to the evMap. One air, one instance, stage 1 only, no std, no hints. N = 2^4.
 //
 // The committed columns and their offsets:
 // - fixed at {0}: L1, LLAST and K[0..3], six of them: one class;

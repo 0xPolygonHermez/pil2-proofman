@@ -9,9 +9,9 @@
 
 namespace PilFflonk {
 
-// The interpreter of <air>.bin over Fr (plan M17): the case of op 0 (dim1 = dim1 ∘ dim1) of the
-// STARK's expressions_pack.hpp, with the STARK's operand types (OperandTypes) and semantics, and two
-// modes:
+// The interpreter of <air>.bin over Fr (pilfflonk/docs/formats.md#bytecode): the case of op 0
+// (dim1 = dim1 ∘ dim1) of the STARK's expressions_pack.hpp, with the STARK's operand types
+// (OperandTypes) and semantics, and two modes:
 //
 // - Prover: a code block on every point of a domain (ExpressionsDomain), by blocks of rows run in
 //   parallel with OpenMP. The domain is H for the intermediate polynomials, the other expressions
@@ -23,20 +23,20 @@ namespace PilFflonk {
 // is its value at point (i + 2^e·o) mod M: rows are cyclic.
 //
 // As in the STARK, an op may write a temporary one of its sources reads: the allocation lets it.
-// Unlike the STARK prover's, Zi of lastRow is Z_H(X)/(X − ω^(N−1)), not Z_H(X)/(X − ω^N) (spec
-// Annex F.8).
+// Unlike the STARK prover's, Zi of lastRow is Z_H(X)/(X − ω^(N−1)), not Z_H(X)/(X − ω^N)
+// (pilfflonk/docs/README.md#stark-lastrow-zerofier).
 //
 // Elements are in ffiasm's Montgomery form. Everything is checked before anything is written: a
 // bad argument throws std::invalid_argument; a bytecode that does not fit the AIR, FormatError.
 
-// ω_{2^nBits}: ffiasm's root of unity of order 2^nBits, 5^((r − 1)/2^nBits) (spec A.2). Throws
-// std::invalid_argument for nBits > 28.
+// ω_{2^nBits}: ffiasm's root of unity of order 2^nBits, 5^((r − 1)/2^nBits)
+// (pilfflonk/docs/protocol.md#notation). Throws std::invalid_argument for nBits > 28.
 FrElement rootOfUnity(uint64_t nBits);
 
-// Zi of each boundary at a point x ∉ H, as spec A.1 gives Z_D: 1/Z_H(x) for everyRow, and
-// Z_H(x)/Z_D(x) for any other, with Z_H(x) = x^N − 1, Z_D(x) = x − 1 (firstRow), x − ω^(N−1)
-// (lastRow) and Z_H(x)/Π_j (x − ω^j) over the rows j an everyFrame excludes. Throws
-// std::invalid_argument if x is in H.
+// Zi of each boundary at a point x ∉ H (pilfflonk/docs/protocol.md#constraint-polynomial):
+// 1/Z_H(x) for everyRow, and Z_H(x)/Z_D(x) for any other, with Z_H(x) = x^N − 1, Z_D(x) = x − 1
+// (firstRow), x − ω^(N−1) (lastRow) and Z_H(x)/Π_j (x − ω^j) over the rows j an everyFrame
+// excludes. Throws std::invalid_argument if x is in H.
 std::vector<FrElement> zerofiersAt(uint64_t nBits, const std::vector<Boundary> &boundaries, const FrElement &x);
 
 // The points of the prover mode, in their order, and the zerofier terms Zi on them.
@@ -52,13 +52,14 @@ public:
     // nBits <= nBitsExt <= 28, or for an everyFrame that excludes more than N rows.
     static ExpressionsDomain coset(uint64_t nBits, uint64_t nBitsExt, const std::vector<Boundary> &boundaries);
 
-    // Part `part` of that coset (plan M39), the points of Lde::extendCosetPart: its 2^partBits
-    // points g·ω_{N'}^(part + (N'/2^partBits)·i), in that order, and Zi on them, point i the same
-    // bit for bit as point part + (N'/2^partBits)·i of coset(). nBits <= partBits <= nBitsExt, and
-    // extendBits() is partBits − nBits: a column at opening point o is read o rows later in the
-    // part, as on the whole coset. coset() is the one part of partBits = nBitsExt. Throws
-    // std::invalid_argument unless nBits <= partBits <= nBitsExt <= 28 and part < N'/2^partBits,
-    // or for an everyFrame that excludes more than N rows.
+    // Part `part` of that coset (pilfflonk/docs/protocol.md#q-in-parts), the points of
+    // Lde::extendCosetPart: its 2^partBits points g·ω_{N'}^(part + (N'/2^partBits)·i), in that
+    // order, and Zi on them, point i the same bit for bit as point part + (N'/2^partBits)·i of
+    // coset(). nBits <= partBits <= nBitsExt, and extendBits() is partBits − nBits: a column at
+    // opening point o is read o rows later in the part, as on the whole coset. coset() is the one
+    // part of partBits = nBitsExt. Throws std::invalid_argument unless
+    // nBits <= partBits <= nBitsExt <= 28 and part < N'/2^partBits, or for an everyFrame that
+    // excludes more than N rows.
     static ExpressionsDomain cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
                                        const std::vector<Boundary> &boundaries);
 

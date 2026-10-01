@@ -1,6 +1,6 @@
-// The parts of the SHPLONK check that need no prover: the roots of A.2.5, the layouts the prover
-// refuses, and the openings verifyOpening rejects before any pairing. The openings themselves are
-// checked against the C++ prover in fixtures.test.js.
+// The parts of the SHPLONK check that need no prover: the roots (pilfflonk/docs/protocol.md#roots),
+// the layouts the prover refuses, and the openings verifyOpening rejects before any pairing. The
+// openings themselves are checked against the C++ prover in fixtures.test.js.
 
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
@@ -44,7 +44,7 @@ test("roots of unity: 5^((r-1)/n) has order exactly n, and ω_N is ffjavascript'
     }
 });
 
-test("roots of A.2.5: x^k = ξ·ω_N^s for every offset, negative ones too, k·|O| distinct roots", () => {
+test("roots: x^k = ξ·ω_N^s for every offset, negative ones too, k·|O| distinct roots", () => {
     const Fr = curve.Fr;
     const xiSeed = Fr.e(XI_SEED);
     for (const nBits of [1, 2, 4]) {

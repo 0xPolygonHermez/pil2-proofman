@@ -332,7 +332,9 @@ impl<'a, A: Algebra> Evaluator<'a, A> {
                 .algebra
                 .column(ColumnRef::Witness { stage: c.stage as usize, idx: c.col_idx as usize }, c.row_offset),
             Some(Operand::Expression(e)) => self.expression(e.idx as usize),
-            Some(Operand::CustomCol(_)) => invalid!("the AIR has a custom commit, which pilfflonk refuses (P5)"),
+            Some(Operand::CustomCol(_)) => {
+                invalid!("the AIR has a custom commit, which pilfflonk refuses (pilfflonk/docs/README.md#scope)")
+            }
             None => invalid!("an operand is empty"),
         }
     }

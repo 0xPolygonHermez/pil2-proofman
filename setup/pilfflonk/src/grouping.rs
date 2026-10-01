@@ -1,17 +1,19 @@
-//! The grouping of an AIR's committed polynomials in `f_i` (spec §4.2.4, A.2): [`group`], a pure
-//! function from the polynomials ([`CommittedPol`]) to the [`Layout`].
+//! The grouping of an AIR's committed polynomials in `f_i`
+//! (pilfflonk/docs/protocol.md#grouping-rules): [`group`], a pure function from the polynomials
+//! ([`CommittedPol`]) to the [`Layout`].
 //!
-//! It is the old system's grouping, generalised to signed offsets as A.2 says: the classes of
-//! pil-stark's `src/fflonk/helpers/fflonk_shkey.js` and the split in `f_i` of shplonkjs's
+//! It is the old system's grouping, generalised to signed offsets: the classes of pil-stark's
+//! `src/fflonk/helpers/fflonk_shkey.js` and the split in `f_i` of shplonkjs's
 //! `src/helpers/setup.js` and `src/utils.js` (read in `../pil-stark`: pil-stark `5e20f57`,
-//! shplonkjs `7824640`). For offsets in `{0, 1}` the result is the old system's (A.2, rule 6), which
+//! shplonkjs `7824640`). For offsets in `{0, 1}` the result is the old system's (rule 6), which
 //! `tests/grouping.rs` checks against pil-fflonk's example `all`.
 //!
 //! **Input.** The polynomials, in the order the old system inserts them (`setPolDefs`,
 //! `fflonk_shkey.js:34-153`); the setup's is [`crate::layout::committed_pols`]'s, by stage and index.
-//! Each has a stage, its opening set `O` and its bound in coefficients *for its own `O`* (A.2): `N`
-//! for a fixed column, `N + |O| + 1` for one with blinding (stages `1 … nStages`, A.3), and A.1's
-//! for `Q`, whose pieces are the polynomials of stage [`GroupingParams::q_stage`].
+//! Each has a stage, its opening set `O` and its bound in coefficients *for its own `O`*: `N` for a
+//! fixed column, `N + |O| + 1` for one with blinding (stages `1 … nStages`), and `Q`'s for `Q`
+//! (pilfflonk/docs/protocol.md#degrees), whose pieces are the polynomials of stage
+//! [`GroupingParams::q_stage`].
 //!
 //! **Rule 1, classes and fusion** ([`fuse`]; `fixFIndex`, `fflonk_shkey.js:244-274`). The
 //! polynomials of the stages before `Q`'s are classified by `(stage, O)`. A class of fewer than
@@ -19,7 +21,7 @@
 //! the class of `U` if there is one; a class whose `O` is `U` never moves. Class sizes are counted
 //! before any move, as `fiMap` is. A polynomial with blinding that moves gains one coefficient per
 //! offset it gains (`fflonk_shkey.js:256, 268`), since its blinding has `|O| + 1` coefficients for
-//! the `O` of its `f` (A.3); a fixed one keeps `N`.
+//! the `O` of its `f` (pilfflonk/docs/protocol.md#blinding); a fixed one keeps `N`.
 //!
 //! **The groups and their order** (`fflonk_shkey.js:175, 244-286`; `getFCustom`,
 //! `setup.js:163-186`). The old system keeps a list per offset (`polDefs = [polsXi, polsWXi]`),
@@ -29,7 +31,7 @@
 //! inserted in the group of its class, and the first time a class is met its group is numbered.
 //! Generalised: the lists go by increasing offset, and the moves by stage, then by `O`
 //! (lexicographically, which puts `{0}` before `{1}`), then in input order. `Q`'s pieces, which
-//! `fflonk_shkey.js:164` adds after the classes, form the last group (A.2, rule 2). Within a group
+//! `fflonk_shkey.js:164` adds after the classes, form the last group (rule 2). Within a group
 //! the polynomials go in reverse insertion order: `getFCustom` puts each new one first
 //! (`setup.js:183`). That is the order of the composition, `f(X) = Σ_j p_j(X^k)·X^j` (rule 4).
 //!
@@ -38,8 +40,8 @@
 //! `c_g + 1` consecutive chunks, `Σ c_g = extraMuls`, and `extraMuls > #pols − #groups` is an error
 //! (`setup.js:231-232`).
 //! - A chunk has a size `k` with `k·N | r − 1` ([`is_valid_k`]): `k | r − 1`, as `getDivisors`
-//!   checks (`utils.js:24-32`), and `v₂(k) + nBits ≤ 28`, which shplonkjs does not check and A.2
-//!   does. The sizes that fail are not enumerated.
+//!   checks (`utils.js:24-32`), and `v₂(k) + nBits ≤ 28`, which shplonkjs does not check and this
+//!   grouping does. The sizes that fail are not enumerated.
 //! - The splits of a group in `n` chunks are the non-decreasing sequences of `n` sizes that sum to
 //!   its length, in lexicographic order (`calculateSplits`, `utils.js:39-53`). A chunk costs
 //!   `max_j(deg_j·k + j)` over its polynomials `p_j`, and a split the most of its chunks'
@@ -61,10 +63,11 @@
 //! offsets and `N`, and `powerW` is [`Layout::power_w`].
 //!
 //! **The order of the `f_i`.** The old system numbers them by group, and each group's chunks in
-//! order (`setup.js:237-247`). The layout goes by stage (A.5, which `Layout` checks), so the
-//! `f_i` are sorted by stage, stably: within a stage they keep the old order. The groups are split
-//! in the old order, so the tie-breaks of rule 3 are the old ones even where the two orders differ,
-//! which is when a class is first met in the list of an offset other than the first.
+//! order (`setup.js:237-247`). The layout goes by stage (pilfflonk/docs/protocol.md#layout, which
+//! `Layout` checks), so the `f_i` are sorted by stage, stably: within a stage they keep the old
+//! order. The groups are split in the old order, so the tie-breaks of rule 3 are the old ones even
+//! where the two orders differ, which is when a class is first met in the list of an offset other
+//! than the first.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -75,7 +78,7 @@ use proofman_pilfflonk::{Layout, LayoutEntry, LayoutPol};
 use crate::layout::CommittedPol;
 
 /// `minPols` of `fixFIndex` (`fflonk_shkey.js:244`): a class of fewer polynomials moves to the
-/// union of its stage's offsets (A.2, rule 1).
+/// union of its stage's offsets (pilfflonk/docs/protocol.md#grouping-rules, rule 1).
 pub const MIN_POLS: usize = 3;
 
 /// The most steps the exhaustive search of rule 3 may take (`search_steps`): `2^26`, under a
@@ -88,17 +91,20 @@ pub const MAX_SEARCH_STEPS: u64 = 1 << 26;
 pub struct GroupingParams {
     /// The AIR has `N = 2^n_bits` rows; a chunk of `k` polynomials needs `k·N | r − 1`.
     pub n_bits: u64,
-    /// `--extra-muls`: how many `f_i` there are besides one per group (A.2, rule 3).
+    /// `--extra-muls`: how many `f_i` there are besides one per group
+    /// (pilfflonk/docs/protocol.md#grouping-rules, rule 3).
     pub extra_muls: u64,
     /// `nStages + 1`: the stage of `Q`. Its polynomials are `Q`'s pieces (one if `Q` is not split),
-    /// which rule 1 leaves alone and which form the last group (A.2, rule 2).
+    /// which rule 1 leaves alone and which form the last group (rule 2).
     pub q_stage: u64,
 }
 
 /// Why a set of polynomials cannot be grouped.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum GroupingError {
-    #[error("an AIR of 2^{n_bits} rows: BN254's roots of unity allow at most 2^28 (spec P2)")]
+    #[error(
+        "an AIR of 2^{n_bits} rows: BN254's roots of unity allow at most 2^28 (pilfflonk/docs/protocol.md#notation)"
+    )]
     NBits { n_bits: u64 },
 
     #[error("Q is of stage 0, the stage of the fixed columns")]
@@ -107,8 +113,11 @@ pub enum GroupingError {
     #[error("{name} is of stage {stage}, after Q's, {q_stage}")]
     Stage { name: String, stage: u64, q_stage: u64 },
 
-    /// A.2: a column the evMap does not open is not committed.
-    #[error("{name} is opened at no offset, and a column that is not opened is not committed (A.2)")]
+    /// A column the evMap does not open is not committed.
+    #[error(
+        "{name} is opened at no offset, and a column that is not opened is not committed \
+         (pilfflonk/docs/protocol.md#layout)"
+    )]
     NotOpened { name: String },
 
     #[error("{name} has offsets {offsets:?}, which are not increasing")]
@@ -126,33 +135,33 @@ pub enum GroupingError {
     #[error("two polynomials are named {name}")]
     DuplicateName { name: String },
 
-    /// A.2, rule 2: `Q` has an `f` of its own, so there is one at least.
+    /// Rule 2: `Q` has an `f` of its own, so there is one at least.
     #[error("no polynomial is of Q's stage, {q_stage}")]
     NoQ { q_stage: u64 },
 
-    /// A.2, rule 3 (`setup.js:231-232`).
+    /// Rule 3 (`setup.js:231-232`).
     #[error(
         "{extra_muls} extra muls: {n_pols} polynomials in {n_groups} groups make at most {} f_i, so at most {} \
-         extra muls (A.2, rule 3): lower --extra-muls",
+         extra muls (pilfflonk/docs/protocol.md#grouping-errors): lower --extra-muls",
         n_pols,
         n_pols - n_groups
     )]
     TooManyExtraMuls { extra_muls: u64, n_pols: u64, n_groups: u64 },
 
-    /// A.2, rule 3: no combination of splits in chunks of `k·N | r − 1` makes `#groups +
-    /// extraMuls` `f_i`: a group of 5, 7, 10, 11, … polynomials cannot be one chunk. There is one
-    /// with `extraMuls = #pols − #groups`, every chunk of `k = 1`.
+    /// Rule 3: no combination of splits in chunks of `k·N | r − 1` makes `#groups + extraMuls`
+    /// `f_i`: a group of 5, 7, 10, 11, … polynomials cannot be one chunk. There is one with
+    /// `extraMuls = #pols − #groups`, every chunk of `k = 1`.
     #[error(
         "no split of the {n_groups} groups in {n_groups} + {extra_muls} f_i has chunks of k with k·2^{n_bits} \
-         dividing r - 1 (A.2, rule 3): a larger --extra-muls, up to {max_extra_muls}, allows smaller chunks, down \
-         to k = 1"
+         dividing r - 1 (pilfflonk/docs/protocol.md#grouping-errors): a larger --extra-muls, up to \
+         {max_extra_muls}, allows smaller chunks, down to k = 1"
     )]
     NoValidPartition { n_groups: u64, extra_muls: u64, n_bits: u64, max_extra_muls: u64 },
 
-    /// A.2, rule 3: the exhaustive search would take more than [`MAX_SEARCH_STEPS`] steps.
+    /// Rule 3: the exhaustive search would take more than [`MAX_SEARCH_STEPS`] steps.
     #[error(
-        "{extra_muls} extra muls make the exhaustive search of A.2's rule 3 take {steps} steps or more, above the \
-         {limit} the setup allows: lower --extra-muls"
+        "{extra_muls} extra muls make the exhaustive search of the grouping's rule 3 take {steps} steps or more, \
+         above the {limit} the setup allows (pilfflonk/docs/protocol.md#grouping-errors): lower --extra-muls"
     )]
     SearchTooLarge { extra_muls: u64, steps: u64, limit: u64 },
 
@@ -163,16 +172,16 @@ pub enum GroupingError {
 /// Rule 1 (see [the module](self)): `pols` as they end up, each with the `O` of its `f` and its
 /// bound for that `O`, in the same order. `Q`'s pieces do not change.
 ///
-/// The setup needs it before [`group`]: `Q`'s bound (A.1) depends on the most offsets a column
-/// with blinding ends up with, not on the most it had (spec C.3.2), and `Q`'s bound does not take
-/// part in rule 1.
+/// The setup needs it before [`group`]: `Q`'s bound depends on the most offsets a column with
+/// blinding ends up with, not on the most it had (pilfflonk/docs/protocol.md#bounds-after-fusion),
+/// and `Q`'s bound does not take part in rule 1.
 pub fn fuse(pols: &[CommittedPol], params: &GroupingParams) -> Result<Vec<CommittedPol>, GroupingError> {
     check(pols, params)?;
     fused(pols, params.q_stage)
 }
 
 /// The layout of `pols` (see [the module](self)): its `f_i` by stage, each with its polynomials in
-/// the order of the composition, its `k`, its offsets and its bound (A.2's cost).
+/// the order of the composition, its `k`, its offsets and its bound (the cost of rule 3).
 ///
 /// Refuses, in this order, polynomials that break the input's rules (offsets, stages, ids,
 /// names), no `Q`, too many extra muls, a search of more than [`MAX_SEARCH_STEPS`] steps and no
@@ -341,7 +350,7 @@ fn groups<'a>(pols: &[CommittedPol], fused: &'a [CommittedPol], q_stage: u64) ->
 }
 
 /// The cost of a chunk of polynomials of bounds `bounds`, `k = bounds.len()`: `max_j(deg_j·k + j)`
-/// (A.2, rule 3; `setup.js:10-11, 240-241`). It is the bound of the chunk's `f`.
+/// (rule 3; `setup.js:10-11, 240-241`). It is the bound of the chunk's `f`.
 fn chunk_cost(bounds: &[u64]) -> Result<u64, GroupingError> {
     let k = bounds.len() as u64;
     bounds.iter().enumerate().try_fold(0, |cost, (j, &deg)| {

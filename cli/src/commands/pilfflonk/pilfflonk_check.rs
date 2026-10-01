@@ -6,8 +6,9 @@ use std::path::PathBuf;
 
 use super::PilfflonkWitnessArgs;
 
-// The check of spec §4.4 ("Depuració"): the witness of prove, from a directory or a witness library,
-// row by row against the constraints of its AIR, without proving; its output is verify-constraints'.
+// The check (pilfflonk/docs/README.md#pilfflonk-check): the witness of prove, from a directory or a
+// witness library, row by row against the constraints of its AIR, without proving; its output is
+// verify-constraints'.
 /// Check a pilfflonk witness row by row against its constraints, without proving: exits with 0 only if every constraint holds
 #[derive(Args)]
 pub struct PilfflonkCheckCmd {
@@ -49,7 +50,7 @@ impl PilfflonkCheckCmd {
 /// The report as `verify-constraints` logs its own (`proofman/src/verify_constraints.rs`): the
 /// constraints that fail and their first rows at info, the others at debug, the im pols' at trace.
 fn log_report(report: &CheckReport) {
-    // v1 has one instance (D2): instance 0 of its AIR.
+    // A proof has one instance (pilfflonk/docs/README.md#scope): instance 0 of its AIR.
     let instance = format!("Instance #0 of {}", report.air_name);
     tracing::info!("    ► {} [{}:{}]", instance, report.air.airgroup_id, report.air.air_id);
     for c in &report.constraints {

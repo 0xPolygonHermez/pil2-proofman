@@ -1,6 +1,6 @@
-//! `<air>.pilfflonkinfo.json` (A.6): the part of the STARK's `starkinfo.json` pilfflonk keeps, and
-//! the layout of the AIR's `f_i`. `pil2-stark/src/pilfflonk/pilfflonk_info.{hpp,cpp}` reads it for
-//! the prover.
+//! `<air>.pilfflonkinfo.json` (pilfflonk/docs/formats.md#pilfflonkinfo): the part of the STARK's
+//! `starkinfo.json` pilfflonk keeps, and the layout of the AIR's `f_i`.
+//! `pil2-stark/src/pilfflonk/pilfflonk_info.{hpp,cpp}` reads it for the prover.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,10 +15,10 @@ use crate::names::{column_name, q_piece_name};
 /// `<air>.pilfflonkinfo.json`. Its fields keep the meaning they have in `starkinfo.json`, with
 /// every dimension 1: BN254 has no extension field.
 ///
-/// There is no `starkStruct`, nothing of FRI, no custom commits (the setup refuses them, P5) and
-/// no publics or proof values (they are the globalInfo's). `nBits`, which the STARK keeps in
-/// `starkStruct`, is here; `name`, `airgroupId` and `airId` say which AIR it is, as in the
-/// starkinfo.
+/// There is no `starkStruct`, nothing of FRI, no custom commits (the setup refuses them,
+/// pilfflonk/docs/README.md#scope) and no publics or proof values (they are the globalInfo's).
+/// `nBits`, which the STARK keeps in `starkStruct`, is here; `name`, `airgroupId` and `airId` say
+/// which AIR it is, as in the starkinfo.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PilfflonkInfo {
@@ -42,14 +42,15 @@ pub struct PilfflonkInfo {
     /// Every offset some column is opened at, increasing.
     pub opening_points: Vec<i64>,
     pub boundaries: Vec<Boundary>,
-    /// The evaluations of the proof, in the order the proof has them (A.6): each `(column,
-    /// offset)` the layout opens, but `Q`'s.
+    /// The evaluations of the proof, in the order the proof has them
+    /// (pilfflonk/docs/protocol.md#evaluation-map): each `(column, offset)` the layout opens, but
+    /// `Q`'s.
     pub ev_map: Vec<EvMapEntry>,
     pub q_deg: u64,
     /// Always 1.
     pub q_dim: u64,
-    /// `M`: `Q` is split in `⌈qDeg/M⌉` pieces (A.1). 0 when it is not, and only then
-    /// (`layout::split_max_q_degree`).
+    /// `M`: `Q` is split in `⌈qDeg/M⌉` pieces (pilfflonk/docs/protocol.md#q-pieces). 0 when it is
+    /// not, and only then (`layout::split_max_q_degree`).
     pub max_q_degree: u64,
     /// The expression of the constraint polynomial.
     pub c_exp_id: u64,
@@ -71,7 +72,8 @@ pub struct PolMapEntry {
     /// Its indices, if it is an element of an array column.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lengths: Vec<u64>,
-    /// An intermediate polynomial of the setup, `expId` its expression (spec §4.2.3).
+    /// An intermediate polynomial of the setup, `expId` its expression
+    /// (pilfflonk/docs/protocol.md#degree-search).
     #[serde(default, skip_serializing_if = "is_false")]
     pub im_pol: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -136,9 +138,9 @@ pub struct EvMapEntry {
     pub opening_pos: u64,
 }
 
-/// The domain of a constraint (A.1). JSON: `{"name": "everyRow"}`, `{"name": "firstRow"}`,
-/// `{"name": "lastRow"}` and `{"name": "everyFrame", "offsetMin": a, "offsetMax": b}`, as in the
-/// starkinfo.
+/// The domain of a constraint (pilfflonk/docs/protocol.md#constraint-polynomial). JSON:
+/// `{"name": "everyRow"}`, `{"name": "firstRow"}`, `{"name": "lastRow"}` and
+/// `{"name": "everyFrame", "offsetMin": a, "offsetMax": b}`, as in the starkinfo.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "BoundaryRepr", into = "BoundaryRepr")]
 pub enum Boundary {
@@ -313,7 +315,10 @@ impl JsonFile for PilfflonkInfo {
                 return invalid!("evMap[{i}] is {} {}, which is not in the pol map", e.pol_type.as_str(), e.id);
             };
             if pol.stage == self.q_stage() {
-                return invalid!("evMap[{i}] is a piece of Q, which the verifier computes (A.1)");
+                return invalid!(
+                    "evMap[{i}] is a piece of Q, which the verifier computes \
+                     (pilfflonk/docs/protocol.md#constraint-polynomial)"
+                );
             }
             let at_position = usize::try_from(e.opening_pos).ok().and_then(|p| self.opening_points.get(p));
             if at_position != Some(&e.prime) {
@@ -327,7 +332,8 @@ impl JsonFile for PilfflonkInfo {
 
         if split_max_q_degree(self.q_deg, self.max_q_degree) != self.max_q_degree {
             return invalid!(
-                "maxQDegree is {} and qDeg {}: Q is not split, and then maxQDegree is 0 (A.1)",
+                "maxQDegree is {} and qDeg {}: Q is not split, and then maxQDegree is 0 \
+                 (pilfflonk/docs/protocol.md#q-pieces)",
                 self.max_q_degree,
                 self.q_deg
             );
@@ -340,7 +346,7 @@ impl JsonFile for PilfflonkInfo {
             pol_maps: Some((&self.const_pols_map, &self.cm_pols_map)),
         })?;
         // The pieces of Q are Q0 … Q<m−1>, in this order: piece i, the one the verifier multiplies by
-        // ξ^(i·M·N) (A.1), is the one named Q<i>, at stageId and stagePos i.
+        // ξ^(i·M·N), is the one named Q<i>, at stageId and stagePos i.
         let n_pieces = q_pieces(self.q_deg, self.max_q_degree);
         let pieces: Vec<&PolMapEntry> = self.cm_pols_map.iter().filter(|p| p.stage == self.q_stage()).collect();
         if pieces.len() as u64 != n_pieces {

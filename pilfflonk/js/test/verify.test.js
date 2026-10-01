@@ -1,8 +1,8 @@
 // verify(vkey, publics, proof, logger) and bin/verify.js on the synthetic vkeys (proofs.js), whose
 // τ is 1: a forged proof verifies, and each change to it, to the publics or to the vkey is
-// rejected -- the rejections M19 asks for, independently of the prover (whose proofs
-// cli/tests/pilfflonk_prove.rs verifies, M18). Every malformed input gives
-// false with a logged reason (verify.js), and the CLI exits with 0 only on a proof that verifies.
+// rejected, independently of the prover (whose proofs cli/tests/pilfflonk_prove.rs verifies). Every
+// malformed input gives false with a logged reason (verify.js), and the CLI exits with 0 only on a
+// proof that verifies.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -84,7 +84,9 @@ test("invZh must be 1/Z_H(ξ), and the pieces of a split Q add up to Q(ξ)", asy
     // Q0 changed: the transcript and the sum change; the sum is checked first.
     changed.evaluations.invZh = proof.evaluations.invZh;
     changed.evaluations.Q0 = plusOne(proof.evaluations.Q0);
-    assert.deepEqual((await verdict(vkey, publics, changed)).errors, ["The pieces of Q do not add up to Q(ξ) (A.1)"]);
+    assert.deepEqual((await verdict(vkey, publics, changed)).errors, [
+        "The pieces of Q do not add up to Q(ξ) (pilfflonk/docs/protocol.md#q-pieces)",
+    ]);
 });
 
 test("inv must be the inverse of the SHPLONK check's denominators: off by one or by any bit, it is rejected", async () => {
@@ -93,7 +95,7 @@ test("inv must be the inverse of the SHPLONK check's denominators: off by one or
         const changed = structuredClone(proof);
         changed.evaluations.inv = plusOne(proof.evaluations.inv);
         assert.deepEqual((await verdict(vkey, publics, changed)).errors, [
-            "inv is not the inverse of the SHPLONK check's denominators (A.6)",
+            "inv is not the inverse of the SHPLONK check's denominators (pilfflonk/docs/protocol.md#inverses)",
         ]);
     }
     // Every bit of the 254 of a scalar flipped: another inverse, or a value not below r.
@@ -133,7 +135,11 @@ test("it rejects the proof if the vkey changes, sealed again or not", async () =
         const unsealed = await verdict(changed, publics, proof);
         assert.equal(unsealed.result, false, name);
         if (name !== "[τ]₂") {
-            assert.deepEqual(unsealed.errors, ["The digest of the vkey is not the digest of its contents (A.6)"], name);
+            assert.deepEqual(
+                unsealed.errors,
+                ["The digest of the vkey is not the digest of its contents (pilfflonk/docs/formats.md#digest)"],
+                name,
+            );
             assert.equal((await verdict(seal(changed), publics, proof)).result, false, `${name}, sealed`);
         }
     }

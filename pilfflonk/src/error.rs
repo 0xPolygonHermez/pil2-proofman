@@ -1,4 +1,5 @@
-//! The errors of this crate (spec §5.4: `thiserror`, following `common/src/error_manager.rs`).
+//! The errors of this crate: `thiserror`, following `common/src/error_manager.rs`
+//! (pilfflonk/docs/README.md#conventions).
 
 use std::path::PathBuf;
 
@@ -29,18 +30,20 @@ pub enum PilfflonkError {
         source: Box<PilfflonkError>,
     },
 
-    /// The JS verifier (spec §4.5) cannot give a verdict: no Node.js, its dependencies missing and
-    /// `npm install` unable to install them, inputs it cannot read, or a failure of its own.
+    /// The JS verifier (pilfflonk/docs/verifier.md#js-verifier) cannot give a verdict: no Node.js,
+    /// its dependencies missing and `npm install` unable to install them, inputs it cannot read, or a
+    /// failure of its own.
     #[error("JS verifier: {0}")]
     JsVerifier(String),
 
-    /// A witness library (spec §4.3, D4, `crate::witness_library`) that cannot be loaded, or that is
-    /// not a pilfflonk one.
+    /// A witness library (`crate::witness_library`, pilfflonk/docs/README.md#witness) that cannot be
+    /// loaded, or that is not a pilfflonk one.
     #[error("witness library {}: {reason}", path.display())]
     WitnessLibrary { path: PathBuf, reason: String },
 
     /// The witness does not satisfy the AIR's constraints: the prover's constraint polynomial `Q` is
-    /// not a polynomial of its degree (A.1). The C++ core's message says where.
+    /// not a polynomial of its degree (pilfflonk/docs/protocol.md#proof-sequence). The C++ core's
+    /// message says where.
     #[error("{0}")]
     Unsatisfied(String),
 

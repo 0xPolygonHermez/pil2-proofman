@@ -1,8 +1,8 @@
-//! The vkey's `qVerifier` (A.1, A.6): the code the verifier runs over `Fr` to compute `Q(ξ)` from
-//! the evaluations, `pil-info`'s code block in the STARK's format with every dimension 1. This
-//! crate does not run it. It checks that the JS verifier can, with the rules of its
-//! `checkQVerifier` (`pilfflonk/js/src/qverifier.js`), so that no vkey the verifier refuses is
-//! written:
+//! The vkey's `qVerifier` (pilfflonk/docs/formats.md#expressionsinfo-and-verifierinfo): the code the
+//! verifier runs over `Fr` to compute `Q(ξ)` from the evaluations, `pil-info`'s code block in the
+//! STARK's format with every dimension 1. This crate does not run it. It checks that the JS verifier
+//! can, with the rules of its `checkQVerifier` (`pilfflonk/js/src/qverifier.js`), so that no vkey
+//! the verifier refuses is written:
 //!
 //! - an object `{tmpUsed, code}`: `tmpUsed` a count, `code` a list of at least one entry;
 //! - each entry `{op, dest, src}`: `op` one of `add`, `sub`, `mul`, with two operands, and `copy`,
@@ -16,9 +16,10 @@
 //!     its `id` ([`challenge_position`]);
 //!   - `Zi`, the index `boundaryId` of a boundary.
 //!
-//! Air values, airgroup values and proof values do not exist in format version 1 (D2), nor do
-//! custom commits (P5), and `xDivXSubXi` is FRI's: any other operand is refused. Other keys, such
-//! as a block's `line` or a `Zi`'s `id`, are not looked at, as the verifier does not.
+//! Air values, airgroup values and proof values do not exist in format version 1, nor do custom
+//! commits (pilfflonk/docs/README.md#scope), and `xDivXSubXi` is FRI's: any other operand is
+//! refused. Other keys, such as a block's `line` or a `Zi`'s `id`, are not looked at, as the
+//! verifier does not.
 
 use std::collections::HashSet;
 
@@ -39,10 +40,11 @@ pub(crate) struct QVerifierShape<'a> {
 }
 
 /// The position of the challenge `(stage, stage_id)` among an AIR's, the order of its
-/// challengesMap (A.4): the `numChallenges[s − 1]` challenges of each stage `s = 2 … nStages`,
-/// then `std_vc` (stage `nStages + 1`) and `std_xi` (`nStages + 2`), each with `stageId` 0.
-/// Stage 1 has none: A.4 squeezes no challenge before its commitments. `None` if the AIR has no
-/// such challenge. `nStages` is `num_challenges.len()`.
+/// challengesMap: the `numChallenges[s − 1]` challenges of each stage `s = 2 … nStages`, then
+/// `std_vc` (stage `nStages + 1`) and `std_xi` (`nStages + 2`), each with `stageId` 0. Stage 1 has
+/// none: the transcript squeezes no challenge before its commitments
+/// (pilfflonk/docs/protocol.md#transcript). `None` if the AIR has no such challenge. `nStages` is
+/// `num_challenges.len()`.
 ///
 /// `challengesMap` of `qverifier.js`, without listing the challenges.
 pub(crate) fn challenge_position(num_challenges: &[u64], stage: u64, stage_id: u64) -> Option<u64> {
@@ -181,7 +183,7 @@ fn check_operand(value: &Value, at: &str, written: &HashSet<u64>, shape: &QVerif
             }
         }
         Some(kind @ ("airvalue" | "airgroupvalue" | "proofvalue")) => {
-            invalid!("qVerifier: {at}: {kind}s do not exist in format version 1 (D2)")
+            invalid!("qVerifier: {at}: {kind}s do not exist in format version 1 (pilfflonk/docs/README.md#scope)")
         }
         _ => invalid!("qVerifier: {at}: operand type {} is not one of the qVerifier's", show(field("type"))),
     }
@@ -327,17 +329,17 @@ mod tests {
                 "Zi of boundary 2, and there are 2",
             ),
             (
-                "an air value (D2)",
+                "an air value",
                 vec![entry("copy", 0, &[operand("airvalue", json!({"id": 0}))])],
                 "airvalues do not exist in format version 1",
             ),
             (
-                "a proof value (D2)",
+                "a proof value",
                 vec![entry("copy", 0, &[operand("proofvalue", json!({"id": 0}))])],
                 "proofvalues do not exist",
             ),
             (
-                "an airgroup value (D2)",
+                "an airgroup value",
                 vec![entry("copy", 0, &[operand("airgroupvalue", json!({"id": 0}))])],
                 "airgroupvalues do not exist",
             ),

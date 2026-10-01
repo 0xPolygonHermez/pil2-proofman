@@ -1,22 +1,22 @@
-//! `proofman-cli pilfflonk check` (spec §4.4, "Depuració"; plan M25) on the Fibonacci fixture: the
-//! witness of M13's generator passes, and a mutated one fails exactly the constraints and rows the
-//! Rust oracle (M14) says, with its values, through the library (`proofman_pilfflonk::check`) and
-//! the CLI, whose output is `verify-constraints`'s (plan validation 3). And on the fixture of the
-//! signed offsets (plan M23), whose constraints read the rows −1 to 2 around each row, across the
-//! wrap too, with the im pols the setup chooses for each `--max-constraint-degree`. And on the
-//! pilouts of `tests/data/domains.rs`, built in code (plan M24): each constraint is checked on the
-//! rows of its domain only, `firstRow ≤ i < lastRow`, and a witness that breaks it at the edge row
-//! of its domain is found there. And on the stage-2 fixtures of the std's buses (plans M30, M31),
-//! with and without `im_col`, whose challenges of stage 2 the check takes from a transcript of fixed
-//! elements, as the STARK's `verify-constraints` does, committing nothing: its columns, the
-//! `im_col` ones too, are the oracle's with them, and a witness that breaks the bus fails the last
-//! row of its running sum or product with the oracle's value, and the CLI names it. And the same on
-//! the pil-fflonk examples ported to PIL2 (plan M34), on the sum and on the product bus, with a wrong
-//! multiplicity, a broken permutation or connection, or a value out of a range. And on the witness a
-//! witness library computes (plan M38c, D4), `--witness-lib` in place of `--witness`: that of the
-//! libraries of the Fibonacci, the Connection and `all` passes, as their generators' does, and the
-//! command refuses a STARK witness library, a library that is not there, and the flags that do not go
-//! together.
+//! `proofman-cli pilfflonk check` (pilfflonk/docs/README.md#pilfflonk-check) on the Fibonacci
+//! fixture: the witness of its generator passes, and a mutated one fails exactly the constraints
+//! and rows the Rust oracle says, with its values, through the library
+//! (`proofman_pilfflonk::check`) and the CLI, whose output is `verify-constraints`'s. And on the
+//! fixture of the signed offsets, whose constraints read the rows −1 to 2 around each row, across
+//! the wrap too, with the im pols the setup chooses for each `--max-constraint-degree`. And on the
+//! pilouts of `tests/data/domains.rs`, built in code: each constraint is checked on the rows of its
+//! domain only, `firstRow ≤ i < lastRow`, and a witness that breaks it at the edge row of its
+//! domain is found there. And on the stage-2 fixtures of the std's buses, with and without
+//! `im_col`, whose challenges of stage 2 the check takes from a transcript of fixed elements, as
+//! the STARK's `verify-constraints` does, committing nothing: its columns, the `im_col` ones too,
+//! are the oracle's with them, and a witness that breaks the bus fails the last row of its running
+//! sum or product with the oracle's value, and the CLI names it. And the same on the pil-fflonk
+//! examples ported to PIL2 (pilfflonk/docs/README.md#fixtures), on the sum and on the product bus,
+//! with a wrong multiplicity, a broken permutation or connection, or a value out of a range. And on
+//! the witness a witness library computes (pilfflonk/docs/README.md#witness), `--witness-lib` in
+//! place of `--witness`: that of the libraries of the Fibonacci, the Connection and `all` passes,
+//! as their generators' does, and the command refuses a STARK witness library, a library that is
+//! not there, and the flags that do not go together.
 //!
 //! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
 //! which must honour `prime`, and is `#[ignore]` without it. Those of the domains build their
@@ -29,12 +29,12 @@
 //!
 //! Its tests call the C++ core in this process, each from its own thread, which OpenMP makes a root
 //! with a team of one thread per CPU, kept while that thread lives. libomp 14 (Ubuntu 22.04's) can
-//! crash with SIGSEGV once the teams outgrow its first table of threads (4 per CPU): it replaces the
-//! table while the workers it has just started may still be reading the old one (plan M26; the lock of
-//! `setup/pilfflonk/tests/setup/common.rs`, `cpp_core`, has the details). It has not happened in
-//! these tests, but nothing rules it out: run them with `--test-threads 2`, as above (and CI,
-//! plan M28), which keeps the teams alive, counting those of tests that are just ending, within
-//! that table.
+//! crash with SIGSEGV once the teams outgrow its first table of threads (4 per CPU): it replaces
+//! the table while the workers it has just started may still be reading the old one
+//! (pilfflonk/docs/README.md#tests; the lock of `setup/pilfflonk/tests/setup/common.rs`,
+//! `cpp_core`, has the details). It has not happened in these tests, but nothing rules it out: run
+//! them with `--test-threads 2`, as above (and CI), which keeps the teams alive, counting those of
+//! tests that are just ending, within that table.
 
 #[path = "../../pilfflonk/tests/data/all.rs"]
 mod all;
@@ -172,7 +172,7 @@ struct Fixture {
     dir: TestDir,
     pilout: PathBuf,
     proving_key: PathBuf,
-    /// M13's generator's witness for [1, 2], and its directory.
+    /// The witness of the Fibonacci's generator for [1, 2], and its directory.
     witness: Witness,
     witness_dir: PathBuf,
 }
@@ -270,7 +270,8 @@ fn the_check_finds_what_the_oracle_does() {
     }
     assert_eq!(report.constraints[5].line, "(Fibonacci.ImPol0 - (l1' - ((l1 * l1) + (l2 * l2)))) == 0");
 
-    // Mutations: the oracle's own cases (M14), the publics, and random ones of one cell and of several.
+    // Mutations: the oracle's own cases (`pilfflonk/tests/fibonacci.rs`), the publics, and random
+    // ones of one cell and of several.
     let mut cases: Vec<(String, Witness)> = [(L1, 100), (L2, 100), (L1, 0), (L2, 0), (L1, N - 1), (L2, N - 1), (L1, 1)]
         .iter()
         .map(|&(column, row)| (format!("column {column}, row {row}"), mutated(&f.witness, &[(column, row, 1)])))
@@ -304,7 +305,7 @@ fn the_check_finds_what_the_oracle_does() {
     }
     println!("{} mutations, {total} failed rows: the check's, value for value, are the oracle's", cases.len());
 
-    // The oracle's cases, as M14 lists them.
+    // The oracle's cases, as `pilfflonk/tests/fibonacci.rs` lists them.
     let pairs = |report: &CheckReport| -> Vec<(usize, u64)> {
         report.failures().flat_map(|c| c.failed_rows.iter().map(|r| (c.index, r.row))).collect()
     };
@@ -687,8 +688,9 @@ fn the_cli_names_the_edge_row_of_a_domain() {
     }
 }
 
-/// The challenges of stage 2 of `check`, by hand (A.4, `_verify_proof_constraints`): a transcript
-/// that absorbs the STARK's `dummy_element` `[0, 1, 2, r − 1]` and squeezes two.
+/// The challenges of stage 2 of `check`, by hand (pilfflonk/docs/README.md#pilfflonk-check,
+/// `_verify_proof_constraints`): a transcript that absorbs the STARK's `dummy_element`
+/// `[0, 1, 2, r − 1]` and squeezes two.
 fn fixed_element_challenges() -> Vec<FrBytes> {
     let r = num_bigint::BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap();
     let minus_one = FrBytes::from_decimal(&(r - 1u32).to_string()).unwrap();
@@ -795,12 +797,12 @@ fn checks_a_bus_with_fixed_challenges(
     }
 }
 
-/// The stage-2 fixtures of the std's buses (plans M30, M31), with
-/// [`checks_a_bus_with_fixed_challenges`]: a lookup on the sum bus, with an `im_col` (the std's
-/// default `MAX_CONSTRAINT_DEGREE`) and without (4), and a permutation on the product bus, without
-/// `im_col` and split by selectors, with two chained ones. The term made 0 at row 5 is the first
-/// one: its busid (prod_bus_im's row 5 is of opid 2, sa[5] = 0) and the hint whose denominator it is
-/// in (the sum bus's lookup is a direct term of gsum_col's, not an im_col's).
+/// The stage-2 fixtures of the std's buses, with [`checks_a_bus_with_fixed_challenges`]: a lookup
+/// on the sum bus, with an `im_col` (the std's default `MAX_CONSTRAINT_DEGREE`) and without (4),
+/// and a permutation on the product bus, without `im_col` and split by selectors, with two chained
+/// ones. The term made 0 at row 5 is the first one: its busid (prod_bus_im's row 5 is of opid 2,
+/// sa[5] = 0) and the hint whose denominator it is in (the sum bus's lookup is a direct term of
+/// gsum_col's, not an im_col's).
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_check_takes_the_challenges_of_stage_2_from_fixed_elements() {
@@ -840,12 +842,12 @@ fn the_check_takes_the_challenges_of_stage_2_from_fixed_elements() {
     );
 }
 
-/// The pil-fflonk examples ported to PIL2 (plan M34), on the std's sum bus and on its product bus,
-/// with [`checks_a_bus_with_fixed_challenges`] (validations 2 and 3 of the spec's Fase 2): the
-/// check's stage-2 columns are the oracle's, and a wrong multiplicity (Plookup, `all`), a broken
-/// permutation or connection, or a value out of the range fails the last row of the bus, which the
-/// check names, and nothing else. The Connection and the range check on the sum bus have no
-/// constraint of stage 1: the std adds none for them.
+/// The pil-fflonk examples ported to PIL2 (pilfflonk/docs/README.md#fixtures), on the std's sum bus
+/// and on its product bus, with [`checks_a_bus_with_fixed_challenges`]: the check's stage-2 columns
+/// are the oracle's, and a wrong multiplicity (Plookup, `all`), a broken permutation or connection,
+/// or a value out of the range fails the last row of the bus, which the check names, and nothing
+/// else. The Connection and the range check on the sum bus have no constraint of stage 1: the std
+/// adds none for them.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_check_finds_a_broken_bus_in_the_pil_fflonk_examples() {
@@ -871,9 +873,9 @@ fn the_check_finds_a_broken_bus_in_the_pil_fflonk_examples() {
     }
 }
 
-/// The CLI on a broken bus (plans M30, M34): the sum bus of M30, and pil-fflonk's `all` on the sum
-/// and the product bus. The generator's witness passes; one that breaks the bus (a lookup of a pair
-/// the table does not provide, a wrong multiplicity) fails the bus's last row, which it names, of
+/// The CLI on a broken bus: the `sum_bus` fixture, and pil-fflonk's `all` on the sum and the
+/// product bus. The generator's witness passes; one that breaks the bus (a lookup of a pair the
+/// table does not provide, a wrong multiplicity) fails the bus's last row, which it names, of
 /// stage 2, at row N − 1; twice the same output, the challenges being fixed.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
@@ -919,9 +921,10 @@ fn constraint_lines(text: &str) -> Vec<String> {
     text.lines().filter_map(|l| l.find("Constraint #").map(|at| l[at..].to_string())).collect()
 }
 
-/// The witness a library computes (plan M38c): `check --witness-lib` passes on that of the libraries
-/// of the Fibonacci (with pil-fflonk's inputs), the Connection and `all` (on the sum bus), constraint
-/// by constraint as `check --witness` on their generators' witness directories.
+/// The witness a library computes (pilfflonk/docs/README.md#witness): `check --witness-lib` passes
+/// on that of the libraries of the Fibonacci (with pil-fflonk's inputs), the Connection and `all`
+/// (on the sum bus), constraint by constraint as `check --witness` on their generators' witness
+/// directories.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_cli_checks_the_witness_a_library_computes() {
@@ -978,9 +981,9 @@ fn the_cli_refuses_what_is_not_a_pilfflonk_witness_library() {
     }
 }
 
-/// The flags of the witness (plan M38c), as `prove`'s (`pilfflonk_prove.rs`): exactly one of
-/// `--witness` and `--witness-lib`, and `--public-inputs` only with `--witness-lib`. clap refuses the
-/// others, with exit code 2, before anything is read.
+/// The flags of the witness, as `prove`'s (`pilfflonk_prove.rs`): exactly one of `--witness` and
+/// `--witness-lib`, and `--public-inputs` only with `--witness-lib`. clap refuses the others, with
+/// exit code 2, before anything is read.
 #[test]
 fn the_cli_takes_one_witness() {
     let key = Path::new("provingKey");

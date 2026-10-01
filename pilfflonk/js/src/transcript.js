@@ -1,17 +1,18 @@
-// The Fiat-Shamir transcript of pilfflonk (spec-seed.md A.4): rapidsnark's Keccak256Transcript as
-// the C++ prover drives it (PilFflonk::Transcript, pil2-stark/src/pilfflonk/pilfflonk_transcript.cpp),
-// written after snarkjs' src/Keccak256Transcript.js, which is the same transcript on the verifier
-// side of the existing FFLONK (spec P6):
+// The Fiat-Shamir transcript of pilfflonk (pilfflonk/docs/protocol.md#transcript): rapidsnark's
+// Keccak256Transcript as the C++ prover drives it (PilFflonk::Transcript,
+// pil2-stark/src/pilfflonk/pilfflonk_transcript.cpp), written after snarkjs'
+// src/Keccak256Transcript.js, which is the same transcript on the verifier side of the existing
+// FFLONK:
 // - addScalar: an element of Fr as 32 bytes, big-endian, canonical;
 // - addPolCommitment: a G1 point as x‖y, affine, each coordinate 32 bytes big-endian;
 // - getChallenge: keccak256 of everything added since the last reset, mod r;
 // - squeeze: getChallenge, then reset() and addScalar(challenge), as FflonkProver does between
 //   rounds (fflonk_prover.c.hpp:849-851).
 //
-// addPolCommitment refuses, with a PilFflonkInputError, the points the C++ transcript refuses (A.4,
-// spec §4.4): the point at infinity, which Keccak256Transcript does not encode as x‖y, and a point
-// with a coordinate below 2^192, which ffiasm does not write as 32 big-endian bytes. The prover
-// never absorbs either, so no proof it makes has one where the transcript absorbs a point.
+// addPolCommitment refuses, with a PilFflonkInputError, the points the C++ transcript refuses: the
+// point at infinity, which Keccak256Transcript does not encode as x‖y, and a point with a
+// coordinate below 2^192, which ffiasm does not write as 32 big-endian bytes. The prover never
+// absorbs either, so no proof it makes has one where the transcript absorbs a point.
 
 import { Scalar } from "ffjavascript";
 import { keccak_256 } from "@noble/hashes/sha3";
@@ -60,7 +61,9 @@ export class Keccak256Transcript {
             throw new TypeError("Keccak256Transcript: a commitment must be a point of curve.G1");
         }
         if (G1.isZero(point)) {
-            throw new PilFflonkInputError("Keccak256Transcript: the point at infinity is never absorbed (spec A.4)");
+            throw new PilFflonkInputError(
+                "Keccak256Transcript: the point at infinity is never absorbed (pilfflonk/docs/protocol.md#transcript)",
+            );
         }
         if (!G1.isValid(point)) {
             throw new PilFflonkInputError("Keccak256Transcript: the point is not on the curve");
@@ -69,7 +72,8 @@ export class Keccak256Transcript {
         G1.toRprUncompressed(bytes, 0, point);
         if (isShortCoordinate(bytes, 0) || isShortCoordinate(bytes, FQ_BYTES)) {
             throw new PilFflonkInputError(
-                "Keccak256Transcript: a point with a coordinate below 2^192 is never absorbed (spec A.4)",
+                "Keccak256Transcript: a point with a coordinate below 2^192 is never absorbed " +
+                    "(pilfflonk/docs/protocol.md#transcript)",
             );
         }
         this.data.push(bytes);

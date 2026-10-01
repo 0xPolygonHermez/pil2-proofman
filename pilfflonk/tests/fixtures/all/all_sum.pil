@@ -1,11 +1,11 @@
-// The `all` of all.pil on the std's sum bus (LogUp), in STD_MODE_ONE_INSTANCE (plan M34), with the
-// std's default MAX_CONSTRAINT_DEGREE (3).
+// The `all` of all.pil on the std's sum bus (LogUp), in STD_MODE_ONE_INSTANCE, with the std's
+// default MAX_CONSTRAINT_DEGREE (3).
 //
 // Its state machines put ten terms on the bus, and its sum bus (std_sum.pil, piop_gsum_air) groups
 // them in four im_col columns named `im_cluster` and one `im_single`, declared in a loop under those
 // names. The setup names the four `im_cluster` by their order in the pilout, `im_cluster[0]` to
-// `im_cluster[3]`, so that the proof names their evaluations apart (spec A.6, Annex F.12, plan
-// M34b).
+// `im_cluster[3]`, so that the proof names their evaluations apart
+// (pilfflonk/docs/README.md#std-sum-bus-names).
 require "all.pil"
 
 set_std_mode(STD_MODE_ONE_INSTANCE);

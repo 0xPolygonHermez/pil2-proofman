@@ -1,11 +1,12 @@
-//! The names of the JSON view of a proof (A.6, D7): pil-fflonk's (`pil-fflonk/src/shplonk.cpp:
-//! 316-328`, `pil-stark/src/fflonk/helpers/fflonk_verify.js`), extended to signed offsets, to
-//! array columns and to proofs of several instances.
+//! The names of the JSON view of a proof (pilfflonk/docs/formats.md#proof-names): pil-fflonk's
+//! (`pil-fflonk/src/shplonk.cpp:316-328`, `pil-stark/src/fflonk/helpers/fflonk_verify.js`),
+//! extended to signed offsets, to array columns and to proofs of several instances.
 //!
 //! `polynomials`:
-//! - `f<g>`: the commitment of the `f` at position `g` of the global order of A.5, in decimal.
-//!   Only the non-fixed `f` are there; the fixed ones are in the vkey (under the same names in
-//!   a proof of one AIR, the only one vkey format 1 describes).
+//! - `f<g>`: the commitment of the `f` at position `g` of the global order
+//!   (pilfflonk/docs/protocol.md#global-order), in decimal. Only the non-fixed `f` are there; the
+//!   fixed ones are in the vkey (under the same names in a proof of one AIR, the only one vkey
+//!   format 1 describes).
 //! - `W` and `Wp`: SHPLONK's `W` and `W'`.
 //!
 //! `evaluations`:
@@ -13,19 +14,20 @@
 //!   - `<column>` is the column's name in `cmPolsMap` or `constPolsMap`, followed by `[i]` for
 //!     each entry `i` of its `lengths`: `Fibonacci.l1`, `Main.a[0]`, `Main.b[1][0]`. The setup
 //!     gives the `k`-th im pol `lengths: [k]`, and the `k`-th of the columns of a map that share a
-//!     name and have no `lengths` too (the std's `im_cluster`, plan M34b), so that each has a name
-//!     of its own: `Fibonacci.ImPol[0]`, `im_cluster[1]`;
+//!     name and have no `lengths` too (the std's `im_cluster`), so that each has a name of its own:
+//!     `Fibonacci.ImPol[0]`, `im_cluster[1]`;
 //!   - `<suffix>` is empty for `s = 0`, `w` for `s = 1`, and `w` followed by `s` in decimal, sign
 //!     included, otherwise: `w2`, `w-1`, `w-2`. For `s >= 0` these are pil-fflonk's names.
 //! - `Q<i>` for the piece `i` of a split `Q` ([`q_piece_name`]): its `Q_i(ξ)`, after the other
-//!   evaluations of its instance, in the order of the layout (A.4 step 4).
+//!   evaluations of its instance, in the order of the layout
+//!   (pilfflonk/docs/protocol.md#transcript, step 4).
 //! - `<value>`: an air value, an airgroup value or a proof value, by its name in its map with the
 //!   same `[i]` suffixes.
 //! - `inv` and `invZh`, as pil-fflonk.
 //!
-//! **Scopes.** A proof of a single instance (the v1 case, D2) uses the names above as they are.
-//! In a proof of more than one, every name that belongs to an AIR, an instance or an airgroup is
-//! prefixed with where it belongs:
+//! **Scopes.** A proof of a single instance (the v1 case, pilfflonk/docs/README.md#scope) uses the
+//! names above as they are. In a proof of more than one, every name that belongs to an AIR, an
+//! instance or an airgroup is prefixed with where it belongs:
 //! - `<ag>.<a>:` for the evaluations of the fixed columns of AIR `a` of airgroup `ag`;
 //! - `<ag>.<a>.<t>:` for the other evaluations and the air values of instance `t` of that AIR,
 //!   counted from 0 in canonical order;
@@ -63,13 +65,15 @@ pub fn evaluation_name(column: &str, offset: i64) -> String {
     format!("{column}{}", offset_suffix(offset))
 }
 
-/// The name of the piece `i` of `Q` (A.1, A.6): its name in `cmPolsMap` and the layout, and of its
-/// `Q_i(ξ)` in the proof if `Q` is split. `Q` whole is its one piece, `Q0`.
+/// The name of the piece `i` of `Q` (pilfflonk/docs/protocol.md#q-pieces): its name in `cmPolsMap`
+/// and the layout, and of its `Q_i(ξ)` in the proof if `Q` is split. `Q` whole is its one piece,
+/// `Q0`.
 pub fn q_piece_name(i: u64) -> String {
     format!("Q{i}")
 }
 
-/// The name of the commitment of the `f` at position `global_index` of the global order (A.5).
+/// The name of the commitment of the `f` at position `global_index` of the global order
+/// (pilfflonk/docs/protocol.md#global-order).
 pub fn commitment_name(global_index: u64) -> String {
     format!("f{global_index}")
 }

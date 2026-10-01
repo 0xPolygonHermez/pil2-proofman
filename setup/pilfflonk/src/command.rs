@@ -1,9 +1,10 @@
-//! `proofman-setup setup-pilfflonk` (spec §4.2): the command `pil2-stark-setup` hosts, and the
-//! order of its steps. The steps are this crate's library functions; this module reports their
-//! errors with `anyhow`, as the other setup commands do (spec §5.4).
+//! `proofman-setup setup-pilfflonk` (pilfflonk/docs/README.md#setup-pilfflonk): the command
+//! `pil2-stark-setup` hosts, and the order of its steps. The steps are this crate's library
+//! functions; this module reports their errors with `anyhow`, as the other setup commands do
+//! (pilfflonk/docs/README.md#conventions).
 //!
-//! It writes the `provingKey/` of spec §4.2.6 under the build directory, for the one AIR of the
-//! pilout (D2):
+//! It writes the `provingKey/` (pilfflonk/docs/formats.md#provingkey) under the build directory,
+//! for the one AIR of the pilout (pilfflonk/docs/README.md#scope):
 //!
 //! ```text
 //! <build>/provingKey/
@@ -16,12 +17,14 @@
 //! ```
 //!
 //! Everything that can be refused is refused before the first file is written: the pilout
-//! (§4.2.1), what the passes return (the prover hints among it), the extended domain, the names of the proof, the shape of
-//! the witness and what the verifier would refuse of the vkey. The SRS is the first file, so that
-//! a ptau with too few powers writes nothing else; the vkey is the last, with its digest (A.6).
-//! With `--solidity`, `pilfflonk.verifier.sol` follows it: it is made from the vkey
-//! ([`crate::solidity`]) before the vkey is written, so that a vkey it cannot be made of is not
-//! written either. The files depend only on the inputs: two runs write the same bytes.
+//! (pilfflonk/docs/README.md#what-the-setup-refuses), what the passes return (the prover hints
+//! among it), the extended domain, the names of the proof, the shape of the witness and what the
+//! verifier would refuse of the vkey. The SRS is the first file, so that a ptau with too few
+//! powers writes nothing else; the vkey is the last, with its digest
+//! (pilfflonk/docs/formats.md#digest). With `--solidity`, `pilfflonk.verifier.sol` follows it: it
+//! is made from the vkey ([`crate::solidity`]) before the vkey is written, so that a vkey it
+//! cannot be made of is not written either. The files depend only on the inputs: two runs write
+//! the same bytes.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,16 +55,16 @@ use crate::validate::{check_extended_domain, check_prover_hints, validate};
 /// The directory the setup writes under the build directory.
 pub const PROVING_KEY_DIR: &str = "provingKey";
 
-/// `--max-constraint-degree` by default (D5, as pil-stark).
+/// `--max-constraint-degree` by default, as pil-stark (pilfflonk/docs/protocol.md#degree-search).
 pub const DEFAULT_MAX_CONSTRAINT_DEGREE: u64 = pil_info::DEFAULT_MAX_CONSTRAINT_DEGREE as u64;
 
 /// `--extra-muls` by default, as pil-stark.
 pub const DEFAULT_EXTRA_MULS: u64 = 2;
 
-/// `--max-q-degree` by default: `Q` is not split (A.1).
+/// `--max-q-degree` by default: `Q` is not split (pilfflonk/docs/protocol.md#q-pieces).
 pub const DEFAULT_MAX_Q_DEGREE: u64 = 0;
 
-/// The arguments of `setup-pilfflonk` (spec §4.2).
+/// The arguments of `setup-pilfflonk` (pilfflonk/docs/README.md#setup-pilfflonk).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SetupPilfflonkOptions {
     /// `-a`: the pilout, compiled over BN254.
@@ -70,18 +73,19 @@ pub struct SetupPilfflonkOptions {
     pub build_dir: PathBuf,
     /// `--powers-of-tau`: a snarkjs ptau of at least as many powers `[τ^i]₁` as the layout needs.
     pub powers_of_tau: PathBuf,
-    /// `--max-constraint-degree` (D5).
+    /// `--max-constraint-degree` (pilfflonk/docs/protocol.md#degree-search).
     pub max_constraint_degree: u64,
-    /// `--extra-muls` (A.2, rule 3).
+    /// `--extra-muls` (pilfflonk/docs/protocol.md#grouping-rules, rule 3).
     pub extra_muls: u64,
-    /// `--max-q-degree`: `Q` is split in pieces of this degree if its own is above it (A.1); 0 does
-    /// not split it.
+    /// `--max-q-degree`: `Q` is split in pieces of this degree if its own is above it
+    /// (pilfflonk/docs/protocol.md#q-pieces); 0 does not split it.
     pub max_q_degree: u64,
     /// `--no-packing`: every `f_i` packs one polynomial, `k = 1`, and `--extra-muls` is unused. For
     /// tests only.
     pub no_packing: bool,
-    /// `--solidity`: also write `pilfflonk.verifier.sol`, the Solidity verifier of the vkey (spec
-    /// §4.5, Fase 4). It changes no other file: the globalInfo does not record it.
+    /// `--solidity`: also write `pilfflonk.verifier.sol`, the Solidity verifier of the vkey
+    /// (pilfflonk/docs/verifier.md#solidity-verifier). It changes no other file: the globalInfo
+    /// does not record it.
     pub solidity: bool,
 }
 
@@ -96,8 +100,8 @@ impl SetupPilfflonkOptions {
         }
     }
 
-    /// How the committed polynomials go into `f_i`: grouped with `--extra-muls` (A.2), or one per
-    /// `f` with `--no-packing`.
+    /// How the committed polynomials go into `f_i`: grouped with `--extra-muls`
+    /// (pilfflonk/docs/protocol.md#grouping-rules), or one per `f` with `--no-packing`.
     pub fn packing(&self) -> Packing {
         if self.no_packing {
             Packing::Unpacked
@@ -107,9 +111,9 @@ impl SetupPilfflonkOptions {
     }
 
     /// Refuses what the setup cannot do with these arguments: a degree search below 2. Every
-    /// `--max-q-degree` is one: `Q` is split only if its degree is above it (A.1). What
-    /// `--extra-muls` can do depends on the AIR, and on the pieces of `Q` too: the grouping refuses
-    /// it ([`SetupError::Grouping`]).
+    /// `--max-q-degree` is one: `Q` is split only if its degree is above it
+    /// (pilfflonk/docs/protocol.md#q-pieces). What `--extra-muls` can do depends on the AIR, and on
+    /// the pieces of `Q` too: the grouping refuses it ([`SetupError::Grouping`]).
     pub fn check(&self) -> Result<(), SetupError> {
         if self.max_constraint_degree < 2 {
             return Err(SetupError::MaxConstraintDegree(self.max_constraint_degree));
@@ -146,8 +150,9 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     let (airgroup_id, air_id) = (air.airgroup_id as u64, air.air_id as u64);
     let air_ref = AirRef { name: &global_info.air(airgroup_id, air_id)?.name, airgroup_id, air_id };
 
-    // The passes (spec §4.2.2, §4.2.3), and what follows from them: the committed polynomials,
-    // their bounds and their layout, grouped unless --no-packing (§4.2.4, A.1–A.3), in the
+    // The passes (pilfflonk/docs/README.md#setup-pilfflonk), and what follows from them: the
+    // committed polynomials, their bounds and their layout, grouped unless --no-packing
+    // (pilfflonk/docs/protocol.md#degrees, pilfflonk/docs/protocol.md#layout), in the
     // pilfflonkinfo.
     let result = run_passes(&pilout, air, opts.max_constraint_degree).with_context(refused)?;
     // The prover hints, as the passes process them: each column of stage 2 or above produced by one.
@@ -155,7 +160,7 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     let AirSetup { info, committed } =
         air_setup(&result, air_ref, air.air, opts.max_q_degree, opts.packing()).with_context(refused)?;
     for name in &committed.unopened {
-        tracing::warn!("column {name} is never opened: it is not committed (spec A.2)");
+        tracing::warn!("column {name} is never opened: it is not committed (pilfflonk/docs/protocol.md#layout)");
     }
     let degrees = committed.degrees;
     check_extended_domain(degrees.n_bits_ext).with_context(refused)?;
@@ -163,10 +168,11 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     // the proof's values must not collide, and the witness must have the shape of the pilout's.
     ProofNames::new(&global_info, &[&info]).with_context(refused)?;
     WitnessShape::from_proving_key(&global_info, &[&info]).with_context(refused)?;
-    // The vkey (§4.2.5, A.6) but for its points, [τ]₂ and the fixed commitments, which need the
-    // SRS: Vkey::new checks what the verifier would refuse of it (the challenges, the boundaries,
-    // the qVerifier of the verifierinfo, which it can run). The points and the digest are set last;
-    // until then [τ]₂ is [1]₂, a point of G2 as X_2 must be (Vkey::validate).
+    // The vkey (pilfflonk/docs/formats.md#vkey) but for its points, [τ]₂ and the fixed
+    // commitments, which need the SRS: Vkey::new checks what the verifier would refuse of it (the
+    // challenges, the boundaries, the qVerifier of the verifierinfo, which it can run). The points
+    // and the digest are set last; until then [τ]₂ is [1]₂, a point of G2 as X_2 must be
+    // (Vkey::validate).
     let pil_code = &result.pil_code;
     let q_verifier = serde_json::to_value(&pil_code.verifier_info)?
         .get("qVerifier")
@@ -205,8 +211,8 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     create_dir(&global_info.air_dir(&proving_key, airgroup_id, air_id)?)?;
     create_dir(&global_info.backend_dir(&proving_key))?;
 
-    // The SRS first: a ptau with fewer powers than the layout's largest degree is refused (spec
-    // §4.2.1) before any other file is written.
+    // The SRS first: a ptau with fewer powers than the layout's largest degree is refused
+    // (pilfflonk/docs/README.md#what-the-setup-refuses) before any other file is written.
     let srs_path = global_info.srs_path(&proving_key);
     write_srs(&opts.powers_of_tau, n_g1, &srs_path)?;
     tracing::info!("wrote {} ({n_g1} powers [τ^i]₁)", srs_path.display());
@@ -229,19 +235,21 @@ pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
     info.write(&info_path)?;
     tracing::info!("wrote {}", info_path.display());
 
-    // The code, in the STARK's formats with dimension 1 (A.6), as pil-info serialises it for the
-    // STARK setup; the verifierinfo has only the qVerifier (Opening::Shplonk).
+    // The code, in the STARK's formats with dimension 1
+    // (pilfflonk/docs/formats.md#expressionsinfo-and-verifierinfo), as pil-info serialises it for
+    // the STARK setup; the verifierinfo has only the qVerifier (Opening::Shplonk).
     write_text(&air_file(AirFile::ExpressionsInfo)?, &to_json_string(&pil_code.expressions_info)?)?;
     write_text(&air_file(AirFile::VerifierInfo)?, &to_json_string(&pil_code.verifier_info)?)?;
     let bin_path = air_file(AirFile::Bin)?;
     write_air_bin(&result, &bin_path)?;
     tracing::info!("wrote {}", bin_path.display());
-    // No global constraint (D2): the file has none, and the global hints the setup ignores.
+    // No global constraint (pilfflonk/docs/formats.md#globalconstraints): the file has none, and
+    // the global hints the setup ignores.
     let global_constraints = build_global_constraints_json(&pilout, &FieldCfg::bn254()).with_context(refused)?;
     write_text(&proving_key.join(GLOBAL_CONSTRAINTS_FILE), &to_json_string(&global_constraints)?)?;
 
-    // Last, the vkey (§4.2.5, A.6), with [τ]₂ of the SRS and the fixed commitments of the verkey,
-    // sealed with its digest.
+    // Last, the vkey (pilfflonk/docs/formats.md#vkey), with [τ]₂ of the SRS and the fixed
+    // commitments of the verkey, sealed with its digest.
     let vkey = Vkey { x_2: x_2(&srs)?, fixed_commitments: FixedCommitments(verkey.0), ..vkey };
     let vkey = seal_vkey(vkey)?;
     // With --solidity, the verifier of this vkey, made before the vkey is written: a vkey it cannot

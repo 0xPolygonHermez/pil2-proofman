@@ -1,6 +1,6 @@
-// A sum bus in one AIR (plans M30, M31): a lookup of the pairs (a, b) into the fixed table of pairs
-// (T, TT) = (i, i²), each row of the table proved `mul` times, on the std's LogUp bus (gsum) in
-// STD_MODE_ONE_INSTANCE, which has no airgroup value (D2). One air, one instance, N = 2^5.
+// A sum bus in one AIR: a lookup of the pairs (a, b) into the fixed table (T, TT) = (i, i²), each
+// row of the table proved `mul` times, on the std's LogUp bus (gsum) in STD_MODE_ONE_INSTANCE,
+// which has no airgroup value (pilfflonk/docs/README.md#scope). One air, one instance, N = 2^5.
 //
 // - The std's prover hint gsum_col gives the stage-2 column `gsum`, with the challenges std_alpha
 //   and std_gamma: row by row, the running sum of mul/(T + TT·α + 1·α² …) − 1/(a + b·α …), each
@@ -8,8 +8,8 @@
 //   last row is 0 if and only if the bus balances: `L1'·(0 − gsum) === 0`.
 // - With the std's default MAX_CONSTRAINT_DEGREE (3), both terms do not fit in one fraction of
 //   denominator degree 2 (std_sum.pil, piop_gsum_air): the table's term gets an intermediate
-//   column, `im_single` = mul/(T + TT·α … + γ) with its hint im_col (plan M31), and gsum_col reads
-//   it, `gsum = 'gsum·(1 − L1) + im_single − 1/(a + b·α … + γ)`. sum_bus_degree4.pil is the same
+//   column, `im_single` = mul/(T + TT·α … + γ) with its hint im_col, and gsum_col reads it,
+//   `gsum = 'gsum·(1 − L1) + im_single − 1/(a + b·α … + γ)`. sum_bus_degree4.pil is the same
 //   program with the degree raised to 4, where both terms fit and there is no im_col. No term is a
 //   constant, so there is no im_airval either.
 // - `first` is a[0], so that a public ties the witness.

@@ -1,5 +1,6 @@
-//! The witness generator of the synthetic fixture of the packing (plan M22),
-//! `tests/fixtures/packed/packed.pil`, over BN254's `Fr` with `num-bigint`.
+//! The witness generator of the synthetic fixture of the packing
+//! (pilfflonk/docs/README.md#fixtures), `tests/fixtures/packed/packed.pil`, over BN254's `Fr` with
+//! `num-bigint`.
 //!
 //! Its fixed columns are the pilout's: `L1`, `LLAST`, `K[i] = [i+1, i+2, …]` and `S = [3, 4, …]`.
 //! Its witness columns, in the pilout's order (stage 1, `colIdx` 0 to 9), are `a[0..7]`, `c` and

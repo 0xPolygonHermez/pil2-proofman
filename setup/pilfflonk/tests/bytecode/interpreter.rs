@@ -1,25 +1,26 @@
-//! The fixtures of the C++ interpreter's tests (M17, `pil2-stark/test/pilfflonk/
-//! pilfflonk_expressions_test.cpp`), in `tests/fixtures/bytecode/`:
+//! The fixtures of the C++ interpreter's tests
+//! (`pil2-stark/test/pilfflonk/pilfflonk_expressions_test.cpp`), in `tests/fixtures/bytecode/`:
 //!
 //! - `Sample.expected.json`: inputs for the codes of [`sample`] on the trace domain, on the
 //!   extended coset and at a point, and the values the Rust evaluator here gives them over `Fr`
 //!   (`num-bigint`, through the oracle's `Fr`). It also has the zerofier terms on the coset and at
-//!   the point, from the closed forms of A.1 (`Domain::zerofier_at`).
-//! - `fibonacci/`: the Fibonacci of M13, `N = 256`. It has what `setup-pilfflonk --no-packing`
-//!   writes for it (`Fibonacci.bin`, `.pilfflonkinfo.json`, `.const`), the stage-1 trace of M13's
-//!   generator for `[1, 2]` (`Fibonacci.witness.bin`, the `instance_0_0_0.bin` of its witness
-//!   directory), the `qVerifier` encoded as a bytecode of one expression (`Fibonacci.qverifier.bin`),
-//!   and what the oracle (M14) gives at a point `ξ` (`Fibonacci.oracle.json`): the evaluations of
-//!   the evMap, the zerofier terms and `Q(ξ)`.
-//! - `sum_bus/`: the lookup on the std's sum bus of plan M30, `N = 32`, of two stages, with the
-//!   std's default `MAX_CONSTRAINT_DEGREE` (plan M31). It has what `setup-pilfflonk --no-packing`
-//!   writes for it (`SumBus.bin`, whose section 3 has the hints `im_col` and `gsum_col`, which reads
-//!   the column of the first; `.pilfflonkinfo.json`, `.const`), the stage-1 traces of its
-//!   generator's witness (`SumBus.witness.bin`) and of the one that looks up a value the table does
-//!   not provide (`SumBus.broken.bin`), and what the oracle gives for stage 2 with fixed challenges
+//!   the point, from the closed forms of the zerofiers (`Domain::zerofier_at`,
+//!   pilfflonk/docs/protocol.md#constraint-polynomial).
+//! - `fibonacci/`: the Fibonacci, `N = 256`. It has what `setup-pilfflonk --no-packing` writes for
+//!   it (`Fibonacci.bin`, `.pilfflonkinfo.json`, `.const`), the stage-1 trace of its generator for
+//!   `[1, 2]` (`Fibonacci.witness.bin`, the `instance_0_0_0.bin` of its witness directory), the
+//!   `qVerifier` encoded as a bytecode of one expression (`Fibonacci.qverifier.bin`), and what the
+//!   oracle gives at a point `ξ` (`Fibonacci.oracle.json`): the evaluations of the evMap, the
+//!   zerofier terms and `Q(ξ)`.
+//! - `sum_bus/`: the lookup on the std's sum bus, `N = 32`, of two stages, with the std's default
+//!   `MAX_CONSTRAINT_DEGREE`. It has what `setup-pilfflonk --no-packing` writes for it
+//!   (`SumBus.bin`, whose section 3 has the hints `im_col` and `gsum_col`, which reads the column
+//!   of the first; `.pilfflonkinfo.json`, `.const`), the stage-1 traces of its generator's witness
+//!   (`SumBus.witness.bin`) and of the one that looks up a value the table does not provide
+//!   (`SumBus.broken.bin`), and what the oracle gives for stage 2 with fixed challenges
 //!   (`SumBus.oracle.json`): the challenges, `std_alpha` and `std_gamma`, the publics, and every
-//!   column of stage 2 by `stagePos`, `gsum` and `im_single` from the pilout's hints and the im pols
-//!   from their expressions.
+//!   column of stage 2 by `stagePos`, `gsum` and `im_single` from the pilout's hints and the im
+//!   pols from their expressions.
 //!
 //! The tests below check that the checked-in files are what they compute, and write them with
 //! `PILFFLONK_UPDATE_FIXTURES=1`, as the Sample.bin test does. The Fibonacci one needs `PIL2C_EXEC`.
@@ -41,16 +42,17 @@ use proofman_pilfflonk::{
 
 use super::*;
 
-/// M13's generator, `proofman-pilfflonk`'s test module, included as it is.
+/// The Fibonacci's generator, `proofman-pilfflonk`'s test module, included as it is.
 #[path = "../../../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
-/// The generator of the sum bus (plan M30).
+/// The generator of the sum bus.
 #[path = "../../../../pilfflonk/tests/data/sum_bus.rs"]
 mod sum_bus;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bytecode");
 
-/// The shift of the extended coset (spec §4.4, M5's `COSET_SHIFT`).
+/// The shift of the extended coset (pilfflonk/docs/protocol.md#extended-coset), the C++ core's
+/// `COSET_SHIFT`.
 const COSET_SHIFT: u64 = 5;
 
 /// `bytes` is the checked-in fixture `name`, which `PILFFLONK_UPDATE_FIXTURES=1` writes first.
@@ -174,7 +176,8 @@ fn domain(b: &Boundary) -> Domain {
     }
 }
 
-/// `Zi` of `boundary` at `x ∉ H`: `1/Z_H(x)` for everyRow, `Z_H(x)/Z_D(x)` for any other (A.1).
+/// `Zi` of `boundary` at `x ∉ H`: `1/Z_H(x)` for everyRow, `Z_H(x)/Z_D(x)` for any other
+/// (pilfflonk/docs/protocol.md#constraint-polynomial).
 fn zerofier_term(boundary: &Boundary, x: &Fr, n_bits: u32) -> Fr {
     let z_h = &x.pow_u64(1 << n_bits) - &Fr::one();
     match boundary {
@@ -433,7 +436,7 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
     let q_verifier_path = dir.0.join("Fibonacci.qverifier.bin");
     q_verifier_bin.write(&q_verifier_path).unwrap();
 
-    // M13's witness, and the oracle at ξ.
+    // The Fibonacci generator's witness, and the oracle at ξ.
     let witness = fibonacci::witness(FIBONACCI_N_BITS, FIBONACCI_INPUTS);
     let witness_dir = dir.0.join("witness");
     fs::create_dir_all(&witness_dir).unwrap();
@@ -520,7 +523,7 @@ fn the_sum_bus_fixtures_are_the_setups_and_the_oracles() {
     assert_eq!(info.n_stages, 2);
     let bin = fs::read(air_file(AirFile::Bin)).unwrap();
     let names: Vec<String> = Bytecode::from_bytes(&bin).unwrap().hints.into_iter().map(|h| h.name).collect();
-    assert_eq!(names, ["im_col", "gsum_col"], "the std's default degree adds an im_col (plan M31)");
+    assert_eq!(names, ["im_col", "gsum_col"], "the std's default degree adds an im_col");
 
     // The oracle's stage 2, with the fixture's challenges.
     let witness = sum_bus::witness();

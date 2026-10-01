@@ -65,8 +65,8 @@ bool dividesRMinusOne(uint64_t n) {
 }
 
 // 5^((r-1)/n), a primitive n-th root of unity, for n dividing r - 1: w_k for n = k and ω_{kN} for
-// n = kN (spec A.2.5). 5 is the smallest quadratic non-residue, the generator ffiasm's FFT and
-// ffjavascript raise, so ω_N is the generator of H they use.
+// n = kN (pilfflonk/docs/protocol.md#roots). 5 is the smallest quadratic non-residue, the generator
+// ffiasm's FFT and ffjavascript raise, so ω_N is the generator of H they use.
 FrElement rootOfUnity(uint64_t n) {
     Mpz e;
     rMinusOne(e);
@@ -241,7 +241,7 @@ ShplonkProver::ShplonkProver(ShplonkOpening opening) {
                                     ", the lcm of every k");
     }
 
-    // The roots, spec A.2.5.
+    // The roots (pilfflonk/docs/protocol.md#roots).
     challengeXi = power(opening.xiSeed, opening.powerW);
     const FrElement omegaN = rootOfUnity(N);
     fs.reserve(opening.polynomials.size());
@@ -409,7 +409,8 @@ std::unique_ptr<Poly> ShplonkProver::quotientWp(const Interpolants &r, const FrE
         throw invalid("::quotientWp", "W has degree " + std::to_string(W.getDegree()) + ": it is not quotientW's");
     }
 
-    // Z_{T_i}(y), and the scalars of L/Z_{T∖T_0}(y) (spec A.5's q_i):
+    // Z_{T_i}(y), and the scalars of L/Z_{T∖T_0}(y), the q_i
+    // (pilfflonk/docs/protocol.md#pairing-check):
     //     α^i·Z_{T∖T_i}(y)/Z_{T∖T_0}(y) for f_i - r_i(y), and Z_T(y)/Z_{T∖T_0}(y) for W,
     // with Z_T(y) = Π_i Z_{T_i}(y), repetitions included, and Z_{T∖T_i}(y) = Z_T(y)/Z_{T_i}(y).
     std::vector<FrElement> zi(fs.size());
@@ -504,10 +505,10 @@ ShplonkProof ShplonkProver::open(const Srs &srs, Transcript &transcript) const {
         break;
     case AbsorbError::Infinity:
         throw std::runtime_error("ShplonkProver::open: [W]₁ is the point at infinity, which the transcript does "
-                                 "not absorb (spec A.4)");
+                                 "not absorb (pilfflonk/docs/protocol.md#transcript)");
     case AbsorbError::ShortCoordinate:
         throw std::runtime_error("ShplonkProver::open: [W]₁ has a coordinate below 2^192, which the transcript "
-                                 "does not absorb (spec A.4)");
+                                 "does not absorb (pilfflonk/docs/protocol.md#transcript)");
     default:
         throw std::logic_error("ShplonkProver::open: [W]₁ is not a valid point");
     }

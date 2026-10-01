@@ -1,8 +1,9 @@
-// The names of the JSON view of a proof (spec-seed.md A.6, D7), as pilfflonk/src/names.rs writes
-// them for a proof of one instance, the only one vkey format 1 describes (D2): no scope prefixes.
+// The names of the JSON view of a proof (pilfflonk/docs/formats.md#proof-names), as
+// pilfflonk/src/names.rs writes them for a proof of one instance, the only one vkey format 1
+// describes (pilfflonk/docs/README.md#scope): no scope prefixes.
 //
-// polynomials: f<g> for the non-fixed f at position g of the global order of A.5 (the fixed ones
-// are the vkey's, under the same names), W and Wp.
+// polynomials: f<g> for the non-fixed f at position g of the global order (the fixed ones are the
+// vkey's, under the same names; pilfflonk/docs/protocol.md#global-order), W and Wp.
 // evaluations: <column><suffix> for a column at ξ·ω^s, <column> its name in the layout of the
 // vkey and <suffix> "" for s = 0, "w" for s = 1 and "w" and s in decimal, sign included,
 // otherwise; the pieces of a split Q by their column names; inv and invZh. The layout's names are

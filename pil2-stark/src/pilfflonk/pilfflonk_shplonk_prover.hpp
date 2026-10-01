@@ -13,8 +13,8 @@
 
 namespace PilFflonk {
 
-// One polynomial f of a SHPLONK opening (spec A.5): f(X) = Σ_{j<k} p_j(X^k)·X^j, packed as pack()
-// does, opened at ξ·ω_N^s for each offset s in O.
+// One polynomial f of a SHPLONK opening (pilfflonk/docs/protocol.md#shplonk-opening):
+// f(X) = Σ_{j<k} p_j(X^k)·X^j, packed as pack() does, opened at ξ·ω_N^s for each offset s in O.
 struct ShplonkPolynomial {
     // p_j = components[j] for j < k = components.size(). Not owned: they must outlive the
     // ShplonkProver built on them, unchanged. Each one's degree must be up to date
@@ -25,18 +25,20 @@ struct ShplonkPolynomial {
     std::vector<int64_t> offsets;
 };
 
-// What a SHPLONK opening proves: every f_i of the proof, in the global order of spec A.5 (which the
-// caller decides; f_0 is the first), and the challenge ξ they are opened at.
+// What a SHPLONK opening proves: every f_i of the proof, in the global order
+// (pilfflonk/docs/protocol.md#global-order), which the caller decides (f_0 is the first), and the
+// challenge ξ they are opened at.
 struct ShplonkOpening {
     // N = 2^nBits, the size of the trace domain H = <ω_N>.
     uint64_t nBits = 0;
-    // The lcm of the k of every f_i (spec A.2.5): ξ = xiSeed^powerW.
+    // The lcm of the k of every f_i (pilfflonk/docs/protocol.md#roots): ξ = xiSeed^powerW.
     uint64_t powerW = 0;
     FrElement xiSeed = {};
     std::vector<ShplonkPolynomial> polynomials;
 };
 
-// What the opening adds to the proof (spec A.4 step 5 and A.5), besides the evaluations.
+// What the opening adds to the proof (pilfflonk/docs/protocol.md#transcript, step 5), besides the
+// evaluations.
 struct ShplonkProof {
     FrElement alpha = {}; // α_S
     G1Point w = {};       // [W]₁
@@ -44,14 +46,15 @@ struct ShplonkProof {
     G1Point wp = {}; // [W']₁
 };
 
-// The prover side of SHPLONK (spec A.5, §4.4 step 5): pil-fflonk's ShPlonkProver orchestration
-// (shplonk.cpp) for an arbitrary ordered list of packed f_i, each with its own k and signed
-// offsets, on rapidsnark's Polynomial and M6's pack() and Srs::commit.
+// The prover side of SHPLONK (pilfflonk/docs/protocol.md#proof-sequence, step 5): pil-fflonk's
+// ShPlonkProver orchestration (shplonk.cpp) for an arbitrary ordered list of packed f_i, each with
+// its own k and signed offsets, on rapidsnark's Polynomial and pack() and Srs::commit.
 //
-// The roots (spec A.2.5, derived, not stored): w_k = 5^((r-1)/k), and for offset s the k roots of
-// f are x_j = xiSeed^(powerW/k) · ω_{kN}^s · w_k^j, j < k: the x with x^k = ξ·ω_N^s, where
-// ω_{kN} = 5^((r-1)/(kN)) (so ω_{kN}^k = ω_N, the generator of H that ffiasm's FFT uses). T_i
-// is the union of the roots of f_i's offsets, offset-major: T_i[m·k + j] is x_j of offset O_i[m].
+// The roots (derived, not stored; pilfflonk/docs/protocol.md#roots): w_k = 5^((r-1)/k), and for
+// offset s the k roots of f are x_j = xiSeed^(powerW/k) · ω_{kN}^s · w_k^j, j < k: the x with
+// x^k = ξ·ω_N^s, where ω_{kN} = 5^((r-1)/(kN)) (so ω_{kN}^k = ω_N, the generator of H that ffiasm's
+// FFT uses). T_i is the union of the roots of f_i's offsets, offset-major: T_i[m·k + j] is x_j of
+// offset O_i[m].
 //
 // The opening (pil-fflonk's convention, shplonk.cpp:83-101, 263-270): r_i interpolates f_i on
 // T_i, and with α = α_S,
@@ -88,29 +91,31 @@ public:
     // T_i, offset-major (see above).
     const std::vector<FrElement> &roots(uint64_t i) const { return fs[i].roots; }
 
-    // What the proof carries for f_i (spec A.5): evaluations()[i][m·k + j] = p_j(ξ·ω_N^s) for
-    // s = O_i[m], from which the verifier rebuilds f_i(x) = Σ_j p_j(ξ·ω_N^s)·x^j on the roots of
-    // s. Offset-major, as the roots. The prover absorbs them before the opening (spec A.4 step 4).
+    // What the proof carries for f_i (pilfflonk/docs/protocol.md#pairing-check):
+    // evaluations()[i][m·k + j] = p_j(ξ·ω_N^s) for s = O_i[m], from which the verifier rebuilds
+    // f_i(x) = Σ_j p_j(ξ·ω_N^s)·x^j on the roots of s. Offset-major, as the roots. The prover
+    // absorbs them before the opening (pilfflonk/docs/protocol.md#transcript, step 4).
     //
-    // The proof's `inv` (D7) is not computed here: see verifierInverse below.
+    // The proof's `inv` is not computed here: see verifierInverse below.
     const Evaluations &evaluations() const { return evals; }
 
-    // The opening, spec A.4 step 5: α_S = squeeze(); W and [W]₁; absorb [W]₁; y = squeeze(); W'
-    // and [W']₁. The transcript must hold everything absorbed before the opening (the digest,
-    // commitments and evaluations; the caller decides what).
+    // The opening (pilfflonk/docs/protocol.md#transcript, step 5): α_S = squeeze(); W and [W]₁;
+    // absorb [W]₁; y = squeeze(); W' and [W']₁. The transcript must hold everything absorbed before
+    // the opening (the digest, commitments and evaluations; the caller decides what).
     //
     // Throws std::invalid_argument, before the transcript is touched, if it is empty or an earlier
     // failure left it incomplete, or if an f_i has more coefficients than the srs.nG1() powers
     // [τ^i]₁. After that the transcript has moved on, and on any failure the proof must be
     // abandoned: std::runtime_error if [W]₁ is a point the transcript cannot absorb (the point at
-    // infinity, or a coordinate below 2^192, spec A.4) or y is a root of some f_i, each of
-    // negligible probability; std::logic_error if a division that must be exact is not (a bug).
+    // infinity, or a coordinate below 2^192) or y is a root of some f_i, each of negligible
+    // probability; std::logic_error if a division that must be exact is not (a bug).
     ShplonkProof open(const Srs &srs, Transcript &transcript) const;
 
     // The steps of open(), for tests.
     //
     // r_i for each f_i: the polynomial of degree below |T_i| through (x, f_i(x)) for x in T_i, with
-    // f_i(x) = Σ_j p_j(ξ·ω_N^s)·x^j from evaluations() (the verifier's formula, A.5).
+    // f_i(x) = Σ_j p_j(ξ·ω_N^s)·x^j from evaluations() (the verifier's formula,
+    // pilfflonk/docs/protocol.md#pairing-check).
     Interpolants interpolants() const;
     // W for α, as above, in max_i max(nCoefs(i), |T_i|) coefficients. Throws
     // std::invalid_argument if r is not one interpolant per f_i of at most |T_i| coefficients,
@@ -162,12 +167,11 @@ void divideExactly(Poly &a, uint64_t m, const FrElement &beta, const std::string
 // None is zero if y is in no T_i, which ShplonkProver::open checks.
 std::vector<FrElement> verifierDenominators(const ShplonkProver &prover, const FrElement &y);
 
-// The proof's `inv` (spec A.6, D7): the inverse of the product of verifierDenominators(prover, y),
-// as snarkjs' fflonk prover computes its own (fflonk_prove.js, getMontgomeryBatchedInverse) for its
-// Solidity verifier, which checks inv·Π = 1 and recovers every inverse from it with Montgomery's
-// trick. Whether the proof keeps it, and with which denominators, is pending a decision (plan §8):
-// this function is all there is of it. The JS verifier ignores it, as snarkjs' does. Throws
-// std::runtime_error if a denominator is zero.
+// The proof's `inv` (pilfflonk/docs/protocol.md#inverses): the inverse of the product of
+// verifierDenominators(prover, y), as snarkjs' fflonk prover computes its own (fflonk_prove.js,
+// getMontgomeryBatchedInverse) for its Solidity verifier, which checks inv·Π = 1 and recovers every
+// inverse from it with Montgomery's trick. Both pilfflonk verifiers check inv·Π = 1; snarkjs' JS
+// verifier ignores its own. Throws std::runtime_error if a denominator is zero.
 FrElement verifierInverse(const ShplonkProver &prover, const FrElement &y);
 
 } // namespace PilFflonk

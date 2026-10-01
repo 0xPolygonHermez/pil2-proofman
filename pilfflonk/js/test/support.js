@@ -1,4 +1,4 @@
-// The C++ prover's SHPLONK fixtures (M7) as a verifier sees them. They are written by
+// The C++ prover's SHPLONK fixtures as a verifier sees them. They are written by
 // `PILFFLONK_SHPLONK_FIXTURES=<dir> make -C pil2-stark pilfflonk_test` as <dir>/shplonk_<case>.json,
 // in the format documented above writeFixture() in pil2-stark/test/pilfflonk/pilfflonk_shplonk_test.cpp;
 // test/fixtures.sh regenerates them and runs the tests.
@@ -44,9 +44,10 @@ export async function newCurve() {
     return await buildBn128(true);
 }
 
-// The fixture's transcript in terms of its fields rather than its script (A.4 in miniature): the
-// seed standing in for the digest, every [f_i]₁; squeeze xiSeed; every evaluation, f by f,
-// offset-major, p_0 first; squeeze α; [W]₁; squeeze y.
+// The fixture's transcript in terms of its fields rather than its script
+// (pilfflonk/docs/protocol.md#transcript, in miniature): the seed standing in for the digest, every
+// [f_i]₁; squeeze xiSeed; every evaluation, f by f, offset-major, p_0 first; squeeze α; [W]₁;
+// squeeze y.
 export function replayChallenges(curve, { seed, commitments, evaluations, W }) {
     const transcript = new Keccak256Transcript(curve);
     transcript.addScalar(seed);

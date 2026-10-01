@@ -1,6 +1,7 @@
-// The transcript sequence of A.4 (challenges.js), observed through a recording transcript: what is
-// absorbed and squeezed, in order, written out here from the proof's names rather than derived as
-// challenges.js derives it; and the challenges recomputed by hand from what was absorbed.
+// The transcript sequence (challenges.js, pilfflonk/docs/protocol.md#transcript), observed through
+// a recording transcript: what is absorbed and squeezed, in order, written out here from the
+// proof's names rather than derived as challenges.js derives it; and the challenges recomputed by
+// hand from what was absorbed.
 
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
@@ -18,8 +19,8 @@ before(async () => {
     curve = await newCurve();
 });
 
-// The challenges of a transcript log, by hand (A.4): 32 big-endian bytes per scalar, x‖y per
-// point, keccak256 mod r, and after a squeeze the buffer is the challenge alone.
+// The challenges of a transcript log, by hand: 32 big-endian bytes per scalar, x‖y per point,
+// keccak256 mod r, and after a squeeze the buffer is the challenge alone.
 function replayByHand(log) {
     const bigEndian = (v) => {
         const bytes = new Uint8Array(32);
@@ -53,7 +54,7 @@ function record(vkey, publics, proofObject) {
 const s = (e) => curve.Fr.toString(e);
 const point = (p) => p.slice(0, 2);
 
-test("two stages: A.4's sequence, item by item", () => {
+test("two stages: the transcript sequence, item by item", () => {
     const vkey = syntheticVkey(curve);
     const publics = randomPublics(curve, vkey);
     const proof = forgeProof(curve, vkey, publics);
@@ -147,7 +148,7 @@ test("the challenges depend on everything absorbed, and on nothing else", () => 
         "xiSeed is before the evaluations",
     );
 
-    // inv, invZh and W' are not absorbed (A.4).
+    // inv, invZh and W' are not absorbed (pilfflonk/docs/protocol.md#transcript).
     const unabsorbed = structuredClone(proof);
     unabsorbed.evaluations.inv = "1";
     unabsorbed.evaluations.invZh = "2";

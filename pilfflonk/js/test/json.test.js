@@ -1,6 +1,7 @@
-// The canonical JSON and the digest of the vkey (A.6): the cases of pilfflonk/src/json.rs with the
-// same expected text, the order of JavaScript's integer-like keys, and M15's pinned digest vector
-// (setup/pilfflonk/tests/setup/digest.rs), which Rust computes with the C++ Keccak.
+// The canonical JSON and the digest of the vkey (pilfflonk/docs/formats.md#digest): the cases of
+// pilfflonk/src/json.rs with the same expected text, the order of JavaScript's integer-like keys,
+// and the sample vkey's pinned digest vector (setup/pilfflonk/tests/setup/digest.rs), which Rust
+// computes with the C++ Keccak.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -54,7 +55,7 @@ test("what JSON has not, or Rust cannot hold, has no canonical form", () => {
     assert.equal(canonicalJson("\u{1f600}"), '"\u{1f600}"', "a surrogate pair is a character");
 });
 
-test("the digest of M15's sample vkey is its pinned vector", () => {
+test("the digest of the sample vkey is its pinned vector", () => {
     const vkey = sampleVkey();
     assert.equal(vkeyDigest(vkey), SAMPLE_DIGEST);
     // The preimage starts as Rust's does: "pilfflonk-v1" and the first key, X_2.

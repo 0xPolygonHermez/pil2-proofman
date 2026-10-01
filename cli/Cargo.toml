@@ -40,25 +40,28 @@ regex = "1.12.2"
 toml = "0.9.8"
 
 [dev-dependencies]
-# The keys and the test ptaus of the `pilfflonk verify` and `pilfflonk prove` tests (plan N13, M19, M18).
+# The keys and the test ptaus (pilfflonk/docs/README.md#tests) of the `pilfflonk verify` and
+# `pilfflonk prove` tests.
 pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
-# The Rust oracle (M14), which the `pilfflonk prove` test checks the prover against.
+# The Rust oracle, which the `pilfflonk prove` test checks the prover against.
 proofman-pilfflonk = { workspace = true, features = ["oracle"] }
 serde_json = { workspace = true }
-# Encodes the synthetic pilouts of the domains tests (plan M24), built in code.
+# Encodes the synthetic pilouts of the domains tests, built in code.
 prost = { workspace = true }
-# The seeded mutations of the differential fuzzer of the Solidity verifier (plan M42).
+# The seeded mutations of the differential fuzzer of the Solidity verifier
+# (pilfflonk/docs/verifier.md#differential-fuzzer).
 rand = { workspace = true }
-# The pilfflonk witness libraries of the fixtures, which `pilfflonk prove` and `pilfflonk check` load
-# with `--witness-lib` (plan M38c), and a STARK one, which they refuse: Cargo builds them beside the
-# tests.
+# The pilfflonk witness libraries of the fixtures (pilfflonk/docs/README.md#fixtures), which
+# `pilfflonk prove` and `pilfflonk check` load with `--witness-lib`, and a STARK one, which they
+# refuse: Cargo builds them beside the tests.
 pilfflonk-fibonacci = { path = "../pilfflonk/tests/fixtures/fibonacci/rs" }
 pilfflonk-connection = { path = "../pilfflonk/tests/fixtures/connection/rs" }
 pilfflonk-all = { path = "../pilfflonk/tests/fixtures/all/rs" }
 fibonacci-square = { path = "../examples/fibonacci-square" }
 
-# The inputs of the pilfflonk benchmark (plan M39, pilfflonk/bench/bench.sh): a test ptau and the
-# witnesses of its programs, from the fixtures' generators, as the tests take them.
+# The inputs of the pilfflonk benchmark (pilfflonk/bench/bench.sh,
+# pilfflonk/docs/performance.md#reproducing): a test ptau and the witnesses of its programs, from
+# the fixtures' generators, as the tests take them.
 [[example]]
 name = "pilfflonk_bench_inputs"
 path = "../pilfflonk/bench/inputs.rs"

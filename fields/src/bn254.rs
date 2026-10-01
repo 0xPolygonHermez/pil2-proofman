@@ -3,8 +3,8 @@
 //! of the curve's groups. Not its base field `Fq`, where the coordinates of the points live. It is
 //! named after its curve, as `Goldilocks` is after its prime.
 //!
-//! It is for computing a pilfflonk witness in Rust (D4): the BN254 arithmetic of the prover is
-//! ffiasm's, in C++, and this type is not used there.
+//! It is for computing a pilfflonk witness in Rust (pilfflonk/docs/README.md#witness): the BN254
+//! arithmetic of the prover is ffiasm's, in C++, and this type is not used there.
 //!
 //! An element is kept in Montgomery form, `a·2^256 mod r`, in four 64-bit limbs, little-endian, and
 //! always below `r`: ffiasm's representation of an element of `Fr` (`RawFr::Element`). Being always
@@ -13,11 +13,12 @@
 //!
 //! The canonical value leaves the type in two forms:
 //! - 32 bytes little-endian (`to_le_bytes`, `from_le_bytes`): pilfflonk's witness and `.const`
-//!   encoding (spec A.6);
+//!   encoding (pilfflonk/docs/formats.md#witness-directory, pilfflonk/docs/formats.md#fixed-columns);
 //! - a decimal string, without sign, spaces or leading zeros (`Display`, `from_decimal`):
-//!   pilfflonk's JSON encoding (spec A.6), and the one serde uses. The `Field` trait only asks for
-//!   `Serialize` and `DeserializeOwned`: `Goldilocks` is a JSON number, but a JSON number cannot
-//!   hold 254 bits in most readers. Only the canonical spelling is read back, as with `FrBytes`.
+//!   pilfflonk's JSON encoding (pilfflonk/docs/formats.md#json-encoding), and the one serde uses.
+//!   The `Field` trait only asks for `Serialize` and `DeserializeOwned`: `Goldilocks` is a JSON
+//!   number, but a JSON number cannot hold 254 bits in most readers. Only the canonical spelling is
+//!   read back, as with `FrBytes`.
 
 use core::cmp::Ordering;
 use core::fmt;
@@ -428,7 +429,7 @@ impl Field for Bn254 {
         Self::MODULUS[3],
     ]);
     /// 5, the smallest quadratic non-residue: the generator of ffjavascript and ffiasm, and
-    /// pilfflonk's coset shift (spec §4.4).
+    /// pilfflonk's coset shift (pilfflonk/docs/protocol.md#extended-coset).
     const GENERATOR: Self = Self::from_canonical_limbs_unchecked([5, 0, 0, 0]);
 
     /// By Fermat: `self^(r − 2)`.

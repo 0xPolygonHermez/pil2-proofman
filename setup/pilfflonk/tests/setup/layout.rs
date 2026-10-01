@@ -1,6 +1,7 @@
-//! The committed polynomials, their bounds, `nBitsExt` and their layout, unpacked (spec §4.2.4,
-//! A.1–A.3, plan R1) and grouped (A.2, plan M22), and the pilfflonkinfo they go into, from the
-//! passes run on pilouts built in code: offsets `{−1, 0, 1, 2}`, im pols, a column never opened,
+//! The committed polynomials, their bounds, `nBitsExt` and their layout, unpacked
+//! (pilfflonk/docs/protocol.md#unpacked-layout) and grouped
+//! (pilfflonk/docs/protocol.md#grouping-rules), and the pilfflonkinfo they go into, from the passes
+//! run on pilouts built in code: offsets `{−1, 0, 1, 2}`, im pols, a column never opened,
 //! `qDeg = 0`, fusions and the evaluations they add to the evMap.
 
 use num_bigint::BigUint;
@@ -47,7 +48,7 @@ fn setup_air(pilout: &pb::PilOut, max_degree: u64) -> Result<AirSetup, SetupErro
 }
 
 /// What the prover reads of a pilfflonkinfo must accept it: the names of the proof and the shape
-/// of the witness (M12, M13).
+/// of the witness.
 fn check_readers(pilout: &pb::PilOut, info: &PilfflonkInfo) -> WitnessShape {
     let params = SetupParams { max_constraint_degree: 9, extra_muls: 0, max_q_degree: 0, packing: false };
     let gi = global_info(pilout, params).unwrap();
@@ -109,8 +110,9 @@ fn offsets_pilout() -> pb::PilOut {
     }
 }
 
-/// Offsets `{−1, 0, 1, 2}`, and a degree-4 constraint that the search of D5 (2 to 9, the lowest
-/// degree on a tie) brings down to degree 2 with two im pols: `qDeg = 1`.
+/// Offsets `{−1, 0, 1, 2}`, and a degree-4 constraint that the degree search (2 to 9, the lowest
+/// degree on a tie; pilfflonk/docs/protocol.md#degree-search) brings down to degree 2 with two im
+/// pols: `qDeg = 1`.
 #[test]
 fn signed_offsets_and_im_pols_have_their_bounds() {
     let pilout = offsets_pilout();
@@ -179,7 +181,7 @@ fn the_bounds_scale_with_the_rows() {
 }
 
 /// A constraint of degree 1 gives `qDeg = 0`: `pil-info` has no piece of `Q`, the setup its `Q0`,
-/// of `|O|_max + 1` coefficients, and the extended domain is decided by the columns (M5).
+/// of `|O|_max + 1` coefficients, and the extended domain is decided by the columns.
 #[test]
 fn linear_constraints_give_q_deg_0() {
     let mut pilout = offsets_pilout();
@@ -199,7 +201,8 @@ fn linear_constraints_give_q_deg_0() {
     check_readers(&pilout, &info);
 }
 
-/// Constraints on no column give `qDeg = −1` (A.1): there is no `Q` to commit to.
+/// Constraints on no column give `qDeg = −1` (pilfflonk/docs/protocol.md#degree-search): there is
+/// no `Q` to commit to.
 #[test]
 fn constraints_on_no_column_are_refused() {
     let mut pilout = offsets_pilout();
@@ -242,7 +245,7 @@ fn deep_expressions_run_on_the_stack_of_the_passes() {
     assert_eq!(info.q_deg, 0);
 }
 
-/// What the passes refuse (M27: they return it rather than panic) is an error of the setup,
+/// What the passes refuse (they return it rather than panic) is an error of the setup,
 /// with the passes' own error: here a constraint on an expression the air does not have.
 #[test]
 fn what_the_passes_refuse_is_an_error() {
@@ -257,7 +260,7 @@ fn what_the_passes_refuse_is_an_error() {
     assert!(err.to_string().starts_with("the symbolic passes (pil-info) failed: invalid pilout: "), "{err}");
 }
 
-/// Expressions that refer to each other in a cycle (plan M26) are refused by the passes with an
+/// Expressions that refer to each other in a cycle are refused by the passes with an
 /// error, where they used to recurse until the stack overflowed and the process aborted.
 #[test]
 fn expressions_in_a_cycle_are_an_error_not_a_stack_overflow() {
@@ -275,7 +278,7 @@ fn expressions_in_a_cycle_are_an_error_not_a_stack_overflow() {
 }
 
 /// An AIR of `2^4` rows whose columns share names, as the std's sum bus declares its `im_cluster`
-/// and `im_single` in a loop (plan M34b): the fixed `F` twice, and the witness `a`, `x` twice and
+/// and `im_single` in a loop: the fixed `F` twice, and the witness `a`, `x` twice and
 /// `u` twice, with the constraints `x·x − a'` and `F·(a − F)`, the second `F` the second column.
 /// The `u` are in none.
 fn alike_pilout() -> pb::PilOut {
@@ -313,7 +316,7 @@ fn alike_pilout() -> pb::PilOut {
 }
 
 /// The columns of a pol map that share a name and have no `lengths` are the array of that name
-/// (spec A.6, plan M34b), as the im pols are: the `k`-th in the map is `<name>[k]` in the pol map,
+/// (pilfflonk/docs/formats.md#proof-names), as the im pols are: the `k`-th in the map is `<name>[k]` in the pol map,
 /// the layout and the proof, the fixed columns as the committed ones, and those not committed too.
 /// Grouped or not, twice the same pilfflonkinfo.
 #[test]
@@ -487,12 +490,12 @@ fn what_the_layout_cannot_hold_is_refused() {
     passes_output(committed(&cm, &[ev(PolType::Cm, 2, 0)]), "not in its pol map");
     passes_output(committed(&cm, &[ev(PolType::Const, 2, 0)]), "not in its pol map");
     // Q not split is one piece.
-    passes_output(committed(&cm[..1], &[]), "Q is made of 1 pieces (A.1), and cmPolsMap has 0");
+    passes_output(committed(&cm[..1], &[]), "Q is made of 1 pieces, and cmPolsMap has 0");
     passes_output(committed(&[pol(1, "a", 0), pol(2, "Q0", 1), pol(2, "Q1", 2)], &[]), "and cmPolsMap has 2");
 }
 
 // ---------------------------------------------------------------------------------------------
-// The grouped layout (A.2, plan M22): fusions, the bounds after them, and the evMap
+// The grouped layout: fusions, the bounds after them, and the evMap
 // ---------------------------------------------------------------------------------------------
 
 /// `(type, id, prime, openingPos)` of each entry of the evMap.
@@ -501,9 +504,10 @@ fn entries(ev_map: &[EvMapEntry]) -> Vec<(PolType, u64, i64, u64)> {
 }
 
 /// The offsets pilout grouped (`--extra-muls 2`): in stage 1, `a` is opened at `{−1, 0, 1, 2}`,
-/// the union, and every other class is smaller than 3 and moves to it (A.2, rule 1): `b` from
-/// `{0, 1}` and the two im pols from `{0}`. The four make one group, split as `[1, 1, 2]` (A.2,
-/// rule 3), and the evMap gains the eight pairs the fusions open, after pil-info's. The group is
+/// the union, and every other class is smaller than 3 and moves to it
+/// (pilfflonk/docs/protocol.md#grouping-rules, rule 1): `b` from `{0, 1}` and the two im pols from
+/// `{0}`. The four make one group, split as `[1, 1, 2]` (rule 3), and the evMap gains the eight
+/// pairs the fusions open, after pil-info's. The group is
 /// first met in the list of offset −1, where only `a` was and the moved ones follow it, `{0}`'s
 /// class before `{0, 1}`'s: `a`, the im pols, `b`, and the composition is in reverse.
 #[test]
@@ -575,8 +579,9 @@ fn the_grouped_layout_fuses_the_offsets_pilout() {
     WitnessShape::from_proving_key(&gi, &[&info]).unwrap();
 }
 
-/// A fusion that raises `|O|_max` raises `Q`'s bound (A.1) and the extended domain with it: they
-/// are those of the fused offsets, not of the evMap's (spec C.3.2, the old system's defect).
+/// A fusion that raises `|O|_max` raises `Q`'s bound and the extended domain with it: they are
+/// those of the fused offsets, not of the evMap's (the old system's defect:
+/// pilfflonk/docs/protocol.md#bounds-after-fusion).
 #[test]
 fn the_bounds_are_those_of_the_fused_offsets() {
     // N = 8, qDeg = 2; a at {0} and b at {1}, alone in their classes: both move to {0, 1}.
@@ -644,7 +649,7 @@ fn the_pairs_of_the_fusions_are_appended_to_the_ev_map() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The pieces of Q (A.1, A.3, plan M33)
+// The pieces of Q (pilfflonk/docs/protocol.md#q-pieces)
 // ---------------------------------------------------------------------------------------------
 
 /// `Q` of stage 2 and degree `q_deg`, split by `--max-q-degree max_q_degree`.
@@ -663,10 +668,10 @@ fn with_pieces(pieces: &[&str]) -> (Vec<PolMapEntry>, Vec<EvMapEntry>) {
 
 /// `qDeg = 3` split by `M = 1` on `N = 8`, `|O|_max = 2`: `Q` has `3·8 + 4·2 + 1 = 33` coefficients,
 /// and its three pieces `8 + 2`, `8 + 2` and `33 − 2·8 = 17`, which is what the grouping takes them
-/// for. Unpacked, an `f` each, `Q0` first. Grouped, they are a group of their own (A.2, rule 2), in
-/// reverse, `Q2, Q1, Q0` (rule 4): one `f` of `k = 3` with no extra mul, and with one, the split of
-/// that group of least cost, `[Q2]` and `[Q1, Q0]` (rule 3), as the old system splits it
-/// (`extraMuls` may split every group, `Q`'s too).
+/// for. Unpacked, an `f` each, `Q0` first. Grouped, they are a group of their own
+/// (pilfflonk/docs/protocol.md#grouping-rules, rule 2), in reverse, `Q2, Q1, Q0` (rule 4): one `f`
+/// of `k = 3` with no extra mul, and with one, the split of that group of least cost, `[Q2]` and
+/// `[Q1, Q0]` (rule 3), as the old system splits it (`extraMuls` may split every group, `Q`'s too).
 #[test]
 fn the_pieces_of_q_have_the_bounds_of_a1_and_a_group_of_their_own() {
     let consts = [pol(0, "F0", 0), pol(0, "F1", 1)];
@@ -734,7 +739,7 @@ fn the_pieces_of_q_are_refused_unless_they_are_those_of_a1() {
     let (cm, ev_map) = with_pieces(&["Q0", "Q1"]);
     passes_output(
         committed_pols(3, split(3, 1), &consts, &cm, &ev_map, Packing::Unpacked),
-        "Q is made of 3 pieces (A.1), and cmPolsMap has 2",
+        "Q is made of 3 pieces, and cmPolsMap has 2",
     );
     let (cm, ev_map) = with_pieces(&["Q0", "Q2", "Q1"]);
     passes_output(

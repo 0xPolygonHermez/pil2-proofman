@@ -1,7 +1,7 @@
-// A synthetic AIR for the im pols and the signed offsets (plan M23): columns read at the rows
-// −1, 0, 1 and 2 around each row, and constraints of degree up to 6, so that the setup must choose
-// im pols, and more of them the lower --max-constraint-degree is. One air, one instance, stage 1
-// only, no std, no hints. N = 2^5.
+// A synthetic AIR for the im pols and the signed offsets (pilfflonk/docs/README.md#fixtures):
+// columns read at the rows −1, 0, 1 and 2 around each row, and constraints of degree up to 6, so
+// that the setup must choose im pols, and more of them the lower --max-constraint-degree is. One
+// air, one instance, stage 1 only, no std, no hints. N = 2^5.
 //
 // - `a` is read at {−1, 0, 1, 2}, `b` at {0, 2}, `c` and `e` at {0, 1}, `d` at {0} and `g` at {2}
 //   only; the fixed `K` at {−1} only, and `P` at {2} only. The default grouping moves every
@@ -11,10 +11,10 @@
 //   constraints it does not guard hold cyclically, and read rows across the wrap: `d` at row 0
 //   reads `a` at row N − 1, and at row N − 2 `b` at row 0.
 // - The largest degree is 6 (`WIN·(b − 'a·a·a'·a'2·e)`), then 4 (`(1 − LLAST)·(c' − c·b·e − d)`).
-//   The search of spec A.1 (nImPols + qDeg, the lowest degree on ties) chooses degree 4 with one
-//   im pol ('a·a·a'·a'2) and qDeg 3 by default; with --max-constraint-degree 3, three im pols and
-//   qDeg 2; with 2, eight im pols ('a·a, 'a·a·a' and 'a·a·a'·a'2 among them, each inside the next)
-//   and qDeg 1.
+//   The degree search (nImPols + qDeg, the lowest degree on ties;
+//   pilfflonk/docs/protocol.md#degree-search) chooses degree 4 with one im pol ('a·a·a'·a'2) and
+//   qDeg 3 by default; with --max-constraint-degree 3, three im pols and qDeg 2; with 2, eight im
+//   pols ('a·a, 'a·a·a' and 'a·a·a'·a'2 among them, each inside the next) and qDeg 1.
 //
 // Compile over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its
 // bn254.json. The witness generator is tests/data/signed.rs.

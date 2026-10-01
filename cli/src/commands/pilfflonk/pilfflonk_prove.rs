@@ -6,9 +6,9 @@ use std::path::PathBuf;
 
 use super::PilfflonkWitnessArgs;
 
-// The prover of spec §4.4: the provingKey/ of setup-pilfflonk and a witness directory (spec A.6) or a
-// witness library (D4, plan M38c) in, proof.json and publics.json out, with the argument names of
-// `prove`, `-g/--gpu` included (spec Fase 5, plan M43).
+// The prover (pilfflonk/docs/README.md#pilfflonk-prove): the provingKey/ of setup-pilfflonk and a
+// witness directory or a witness library (pilfflonk/docs/README.md#witness) in, proof.json and
+// publics.json out, with the argument names of `prove`, `-g/--gpu` included.
 /// Prove a pilfflonk witness: writes proof.json and publics.json
 #[derive(Args)]
 pub struct PilfflonkProveCmd {

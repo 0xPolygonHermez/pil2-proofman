@@ -1,8 +1,9 @@
 // Tests for PilFflonk::PilfflonkInfo, the C++ side of the Rust → file → C++ round trip of
-// <air>.pilfflonkinfo.json (spec §5.2). The fixture is proofman-pilfflonk's: a Rust test
-// (pilfflonk/tests/file_types.rs, the_cpp_fixture_is_what_the_rust_types_write) checks that it is
-// byte for byte what the Rust type writes for its sample, and this one that the reader gets every
-// value of that sample back. Changing the sample means regenerating the fixture and updating both.
+// <air>.pilfflonkinfo.json (pilfflonk/docs/README.md#code-map). The fixture is proofman-pilfflonk's:
+// a Rust test (pilfflonk/tests/file_types.rs, the_cpp_fixture_is_what_the_rust_types_write) checks
+// that it is byte for byte what the Rust type writes for its sample, and this one that the reader
+// gets every value of that sample back. Changing the sample means regenerating the fixture and
+// updating both.
 #include "pilfflonk_test.hpp"
 
 #include <limits.h>
@@ -213,7 +214,7 @@ void testRefusesWhatIsNotAPilfflonkinfo() {
     expectFormatError(mutated(text, "\"stagePos\": 3", "\"stagePos\": 4"), "cmPolsMap[3].stagePos");
     expectFormatError(mutated(text, "\"offsets\": [\n    0\n   ],", "\"offsets\": [],"), "layout[0].offsets");
     // Each f well formed, but the fixed one after one of stage 1: the prover takes the fixed f to be
-    // the first ones (spec A.5).
+    // the first ones (pilfflonk/docs/protocol.md#global-order).
     nlohmann::json swapped = nlohmann::json::parse(text);
     std::swap(swapped["layout"][0], swapped["layout"][1]);
     expectFormatError(swapped.dump(), "layout[1].stage: must not be below the stage of the f before it");

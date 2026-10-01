@@ -1,15 +1,17 @@
-//! `proofman-cli pilfflonk calldata` (spec §4.5, "Calldata"; plan M41): the arguments of the Solidity
-//! verifier's `verifyProof` for a proof, as snarkjs's `zkey export soliditycalldata` prints them, on
-//! the synthetic pilouts of `pilfflonk/tests/data/domains.rs`, built in code: `Domains`, whose
-//! `firstRow` and `lastRow` give its calldata two auxiliary inverses, and `Frames`, whose
-//! `everyFrame` give none and which has no publics.
+//! `proofman-cli pilfflonk calldata` (pilfflonk/docs/verifier.md#calldata-encoder): the arguments
+//! of the Solidity verifier's `verifyProof` for a proof, as snarkjs's
+//! `zkey export soliditycalldata` prints them, on the synthetic pilouts of
+//! `pilfflonk/tests/data/domains.rs`, built in code: `Domains`, whose `firstRow` and `lastRow` give
+//! its calldata two auxiliary inverses, and `Frames`, whose `everyFrame` give none and which has no
+//! publics.
 //!
-//! The keys are set up with the ptau of the full-width `τ` of the C++ test helper (plan N13), and the
-//! proofs are the prover's, with a fixed blinding seed; the calldata is checked against the prover's
-//! `ξ` and against the selectors solc 0.8.37 gives the signatures (`solc --hashes`). The command must
-//! write the same calldata from the proof's JSON view and from its bytes, print it without `-o`, and
-//! refuse, with exit code 1, a clear message and no file written, inputs that do not go together.
-//! That Foundry accepts the calldata of the proofs of every fixture is `pilfflonk_prove.rs`'s test.
+//! The keys are set up with the ptau of the full-width `τ` of the C++ test helper
+//! (pilfflonk/docs/README.md#tests), and the proofs are the prover's, with a fixed blinding seed;
+//! the calldata is checked against the prover's `ξ` and against the selectors solc 0.8.37 gives the
+//! signatures (`solc --hashes`). The command must write the same calldata from the proof's JSON
+//! view and from its bytes, print it without `-o`, and refuse, with exit code 1, a clear message
+//! and no file written, inputs that do not go together. That Foundry accepts the calldata of the
+//! proofs of every fixture is `pilfflonk_prove.rs`'s test.
 //!
 //! It needs neither `PIL2C_EXEC` nor Node.js nor Foundry, and runs in CI.
 
@@ -34,7 +36,7 @@ use proofman_pilfflonk::{
 use serde_json::{json, Value};
 
 /// Held by each test while it calls the C++ core in this process (the setup, the prover), which must
-/// not run its OpenMP code from several test threads at once (plan M26;
+/// not run its OpenMP code from several test threads at once (pilfflonk/docs/README.md#tests;
 /// `setup/pilfflonk/tests/setup/common.rs`, `cpp_core`).
 fn cpp_core() -> MutexGuard<'static, ()> {
     static CPP_CORE: Mutex<()> = Mutex::new(());
@@ -206,8 +208,8 @@ fn writes_the_calldata(f: &Fixture, selector: &str, aux: &[FrBytes]) {
     assert_eq!((library.to_hex().unwrap(), library.to_solidity()), (abi, solidity));
 }
 
-/// `Domains` (plan M24): `boundaries` everyRow, firstRow, lastRow and everyFrame {1, 2}, `N = 16`,
-/// two publics. Its calldata is the proof's 26 words, `1/(ξ − 1)` and `1/(ξ − ω^15)` for the prover's
+/// `Domains`: `boundaries` everyRow, firstRow, lastRow and everyFrame {1, 2}, `N = 16`, two
+/// publics. Its calldata is the proof's 26 words, `1/(ξ − 1)` and `1/(ξ − ω^15)` for the prover's
 /// `ξ`, and the publics: `verifyProof(bytes32[28],uint256[2])`, whose selector solc gives as
 /// `0x556e1ba3`.
 #[test]
@@ -229,8 +231,8 @@ fn the_calldata_is_the_proof_and_an_inverse_per_first_row_and_last_row() {
     writes_the_calldata(&f, "556e1ba3", &aux);
 }
 
-/// `Frames` (plan M24): six `everyFrame`, no `firstRow` nor `lastRow`, and no publics. Its calldata is
-/// the proof's bytes and nothing else, and `verifyProof` has no `pubSignals`:
+/// `Frames`: six `everyFrame`, no `firstRow` nor `lastRow`, and no publics. Its calldata is the
+/// proof's bytes and nothing else, and `verifyProof` has no `pubSignals`:
 /// `verifyProof(bytes32[34])`, whose selector solc gives as `0xf85fc817`.
 #[test]
 fn the_calldata_of_a_key_without_first_or_last_row_is_the_proof() {
@@ -245,8 +247,8 @@ fn the_calldata_of_a_key_without_first_or_last_row_is_the_proof() {
 /// Inputs that do not go together, which `pilfflonk verify` rejects too, each refused with exit
 /// code 1, a message that says why and no file written: a vkey whose digest is not its contents',
 /// the proof of another key, a proof's bytes of another length, publics of another number or not
-/// below `r`, a proof with a commitment the transcript does not absorb (A.4: off the curve, or
-/// with a coordinate below 2^192), and a file that is not there.
+/// below `r`, a proof with a commitment the transcript (pilfflonk/docs/protocol.md#transcript) does
+/// not absorb (off the curve, or with a coordinate below 2^192), and a file that is not there.
 #[test]
 fn the_calldata_of_inputs_that_do_not_go_together_is_refused() {
     let f = fixture("refused", domains::Air::All);
@@ -280,7 +282,7 @@ fn the_calldata_of_inputs_that_do_not_go_together_is_refused() {
     let off_curve = file("off_curve.json", proof.to_string());
     let missing = f.dir.file("missing.json");
 
-    let absorbs = format!("{first} of the proof is not a point the transcript absorbs (A.4)");
+    let absorbs = format!("{first} of the proof is not a point the transcript absorbs");
     for (label, vkey, proof, publics, expected) in [
         (
             "digest",

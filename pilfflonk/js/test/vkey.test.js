@@ -15,7 +15,7 @@ before(async () => {
     curve = await newCurve();
 });
 
-test("M15's sample vkey decodes", () => {
+test("the sample vkey decodes", () => {
     const vk = fromObjectVk(curve, sampleVkey());
     assert.equal(vk.power, 3);
     assert.equal(vk.N, 8);
@@ -151,7 +151,10 @@ test("every vkey the verifier refuses, with the reason", () => {
             /maxQDegree is 2 and qDeg 2: Q is not split, and then maxQDegree is 0/,
         ],
         "challenges for no stage": [(v) => (v.numChallenges = [0, 1]), /numChallenges has 2 stages, and the layout 1/],
-        "challenges of stage 1": [(v) => (v.numChallenges = [1]), /stage 1 has challenges, which A.4 never squeezes/],
+        "challenges of stage 1": [
+            (v) => (v.numChallenges = [1]),
+            /stage 1 has challenges, which the transcript never squeezes/,
+        ],
         "no boundary": [(v) => (v.boundaries = []), /boundaries\[0\] is not everyRow/],
         "a first boundary that is not everyRow": [
             (v) => v.boundaries.unshift({ name: "lastRow" }),
@@ -170,7 +173,7 @@ test("every vkey the verifier refuses, with the reason", () => {
             (v) => v.boundaries.push({ name: "firstRow", offsetMin: 1 }),
             /has the unknown fields offsetMin/,
         ],
-        "another domain": [(v) => v.boundaries.push({ name: "someRow" }), /"someRow", not a domain of A.1/],
+        "another domain": [(v) => v.boundaries.push({ name: "someRow" }), /"someRow", not a domain/],
         "two evaluations of the same name": [
             (v) => (v.layout[2].pols[0].name = "aw-1"),
             /two values of the proof are named "aw-1"/,
@@ -202,8 +205,8 @@ test("every vkey the verifier refuses, with the reason", () => {
 });
 
 // The setup names the columns that share a name, as the std's im_cluster, by their index in the
-// pilout (spec A.6, plan M34b): the vkey's layout has those names, and the verifier takes them as
-// they are.
+// pilout (pilfflonk/docs/formats.md#proof-names): the vkey's layout has those names, and the
+// verifier takes them as they are.
 test("columns named by the setup's index are named apart", () => {
     const vkey = sampleVkey();
     vkey.layout[1].pols[0].name = "im_cluster[0]";

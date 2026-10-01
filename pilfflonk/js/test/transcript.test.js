@@ -1,5 +1,5 @@
-// The transcript of A.4: the challenges pinned by M4's C++ and Rust tests, the encoding and the
-// squeeze written out by hand, and the points it refuses.
+// The transcript (pilfflonk/docs/protocol.md#transcript): the challenges pinned by the C++ and Rust
+// transcript tests, the encoding and the squeeze written out by hand, and the points it refuses.
 
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
@@ -70,12 +70,12 @@ function pinnedSequence(between = () => {}) {
     return [first, second, third].map(hexOf);
 }
 
-test("reproduces the challenges pinned by the C++ and Rust transcript tests (M4)", () => {
+test("reproduces the challenges pinned by the C++ and Rust transcript tests", () => {
     assert.deepEqual(pinnedSequence(), PINNED);
 });
 
-// A.4 by hand: 32 big-endian bytes per scalar, x‖y per point, keccak256 mod r; a squeeze restarts
-// the buffer as the challenge.
+// The transcript by hand: 32 big-endian bytes per scalar, x‖y per point, keccak256 mod r; a squeeze
+// restarts the buffer as the challenge.
 function bigEndian(value) {
     const bytes = new Uint8Array(32);
     for (let i = 31, v = value; i >= 0; i--, v >>= 8n) bytes[i] = Number(v & 0xffn);
@@ -90,7 +90,7 @@ function hashToFr(values) {
     return value % curve.r;
 }
 
-test("encodes as A.4 says, and a squeeze restarts the buffer from the challenge", () => {
+test("encodes big-endian, and a squeeze restarts the buffer from the challenge", () => {
     const first = hashToFr([1n, fromHex(R_MINUS_ONE), ...P2.map(fromHex), ...P3.map(fromHex)]);
     const second = hashToFr([first, ...P5.map(fromHex)]);
     const third = hashToFr([second]);

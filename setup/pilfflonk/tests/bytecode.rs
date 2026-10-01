@@ -1,5 +1,5 @@
-//! `<air>.bin` (M11, revision 3: the STARK's `.bin` with dimension 1, and its hints since M30):
-//! the encoder, the reader and the fixture M17's C++ tests read.
+//! `<air>.bin` (pilfflonk/docs/formats.md#bytecode; revision 3: the STARK's `.bin` with dimension
+//! 1, and its hints): the encoder, the reader and the fixture the C++ reader's tests read.
 //!
 //! Every round trip checks two things. Encoding and decoding gives back the same [`Bytecode`]. And
 //! the decoded code is the same code as `pil-info`'s: the same ops and operands, but for the
@@ -873,7 +873,7 @@ fn im_pol_constraint_pilout() -> pb::PilOut {
     }
 }
 
-/// Regression (plan M24): a constraint whose whole expression is an im pol has the code of a copy
+/// Regression: a constraint whose whole expression is an im pol has the code of a copy
 /// of the im pol's column at the row, not an empty one, which the reader refuses and the setup
 /// failed on ("Cannot encode constraint 0: it has no ops").
 #[test]
@@ -933,7 +933,7 @@ fn compile_bn254(pil: &str) -> pb::PilOut {
     pilout
 }
 
-/// The M13 Fibonacci fixture: its intermediate polynomial (`l1' − next`, `cmPolsMap[2]`), `Q` and
+/// The Fibonacci fixture: its intermediate polynomial (`l1' − next`, `cmPolsMap[2]`), `Q` and
 /// six constraints over its 256 rows, the one of the intermediate polynomial included.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
@@ -988,7 +988,7 @@ fn wide_constants_fixture_round_trips() {
     }
 }
 
-/// The fixtures of the std's buses (plans M30, M31), `pilfflonk/tests/fixtures/{sum_bus,prod_bus,
+/// The fixtures of the std's buses, `pilfflonk/tests/fixtures/{sum_bus,prod_bus,
 /// prod_bus_im}`: the setup accepts their prover hints (`check_prover_hints`), and section 3 has them,
 /// and only them, of the passes' hints, in the pilout's order, as `pil-info` processes them: each
 /// reference a column of stage 2 that is not an im pol, at the row itself, each another; the
@@ -1198,7 +1198,7 @@ fn a_prover_hint_the_prover_cannot_compute_is_refused() {
     assert!(err.contains("which is not an opening point"), "{err}");
 }
 
-/// The `im_col` hints (plan M31) the prover could not compute are refused after the passes
+/// The `im_col` hints the prover could not compute are refused after the passes
 /// (`check_prover_hints`), on the sum bus of the std's default degree, whose `im_col` gives
 /// `im_single` (`cmPolsMap` 4) and whose `gsum_col` reads it, and on `prod_bus_im`, whose second
 /// `im_col` reads the first's column. The prover computes the hints of a stage in the STARK's order,
@@ -1287,10 +1287,10 @@ fn an_im_col_the_prover_cannot_compute_is_refused() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The fixture of the Rust → file → C++ round trip (M17)
+// The fixture of the Rust → file → C++ round trip
 // ---------------------------------------------------------------------------------------------
 
-/// For the C++ reader's tests (M17), which are to check every value of [`sample`]: the Rust half of
+/// For the C++ reader's tests, which are to check every value of [`sample`]: the Rust half of
 /// the Rust → file → C++ round trip. Regenerate it with
 /// `PILFFLONK_UPDATE_FIXTURES=1 cargo test -p pilfflonk-setup --test bytecode`, and update the C++
 /// tests with it.

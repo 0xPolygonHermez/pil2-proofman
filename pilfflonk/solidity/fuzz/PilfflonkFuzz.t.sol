@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.20;
 
-// The Foundry test of the differential fuzzer of the Solidity verifier (spec-seed.md §4.5, plan
-// M42; pilfflonk/tests/data/fuzz.rs). The fuzzer copies it to the test/ of a project of its own,
-// with the generated verifier of one key as src/PilfflonkVerifier.sol and its probe as
-// src/PilfflonkProbe.sol: a copy of the verifier that the fuzzer instruments (never the generator),
-// which says which check refused a case and the gas left after each step.
+// The Foundry test of the differential fuzzer of the Solidity verifier
+// (pilfflonk/docs/verifier.md#differential-fuzzer; pilfflonk/tests/data/fuzz.rs). The fuzzer copies
+// it to the test/ of a project of its own, with the generated verifier of one key as
+// src/PilfflonkVerifier.sol and its probe as src/PilfflonkProbe.sol: a copy of the verifier that the
+// fuzzer instruments (never the generator), which says which check refused a case and the gas left
+// after each step.
 import {PilfflonkVerifier} from "../src/PilfflonkVerifier.sol";
 import {PilfflonkProbe} from "../src/PilfflonkProbe.sol";
 

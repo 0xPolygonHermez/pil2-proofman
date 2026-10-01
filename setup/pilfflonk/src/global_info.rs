@@ -1,5 +1,6 @@
-//! `pilout.globalInfo.json` of a pilout (spec §4.2.6, A.6): the part of the STARK's schema that
-//! does not depend on the backend, built as the STARK setup builds it, and pilfflonk's fields.
+//! `pilout.globalInfo.json` of a pilout (pilfflonk/docs/formats.md#globalinfo): the part of the
+//! STARK's schema that does not depend on the backend, built as the STARK setup builds it, and
+//! pilfflonk's fields.
 
 use pil2_pilout::pilout as pb;
 use pil_info::output::global_info::{build_global_proof_values_map, build_global_publics_map};
@@ -10,8 +11,8 @@ use proofman_pilfflonk::{
 
 use crate::error::SetupError;
 
-/// The name of the pilout, `<name>` in the `provingKey/` (spec §4.2.6), as the STARK setup names
-/// it (`commands/setup.rs`).
+/// The name of the pilout, `<name>` in the `provingKey/` (pilfflonk/docs/formats.md#provingkey),
+/// as the STARK setup names it (`commands/setup.rs`).
 pub fn pilout_name(pilout: &pb::PilOut) -> String {
     pilout.name.clone().unwrap_or_else(|| "pilout".to_string())
 }

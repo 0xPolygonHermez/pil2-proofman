@@ -1,13 +1,15 @@
-//! The grouping of A.2 (plan M21): the golden of pil-fflonk's example `all`, the rules on small
-//! cases, the errors, and properties of random inputs checked against a brute force.
+//! The grouping (pilfflonk/docs/protocol.md#grouping-rules): the golden of pil-fflonk's example
+//! `all`, the rules on small cases, the errors, and properties of random inputs checked against a
+//! brute force.
 //!
 //! # The golden
 //!
-//! `fixtures/grouping/all.json` holds the input and the output of the old system's grouping for
-//! the example `all`, the one in pil-fflonk's `config/` (spec §3.1; `pil-fflonk/pil/README.md`:
-//! `sm_all/all_main.pil`, pil-stark's `test/cfiles/fflonk_gen_all_files.js`). It was extracted,
-//! without running any JS, from `pil-fflonk/config/pilfflonk.fflonkinfo.json` and
-//! `pilfflonk.shkey.json`, the way `fflonk_shkey.js` builds the input of shplonkjs's `setup`:
+//! `fixtures/grouping/all.json` holds the input and the output of the old system's grouping for the
+//! example `all`, the one in pil-fflonk's `config/` (pilfflonk/docs/README.md#fixtures;
+//! `pil-fflonk/pil/README.md`: `sm_all/all_main.pil`, pil-stark's
+//! `test/cfiles/fflonk_gen_all_files.js`). It was extracted, without running any JS, from
+//! `pil-fflonk/config/pilfflonk.fflonkinfo.json` and `pilfflonk.shkey.json`, the way
+//! `fflonk_shkey.js` builds the input of shplonkjs's `setup`:
 //!
 //! - **The polynomials and their order** are the `setPolDefs` calls (`fflonk_shkey.js:34-153`),
 //!   which the shkey's `polsNamesStage` lists by stage: stages 0 to 3 one after the other, then `Q`
@@ -18,16 +20,16 @@
 //!   `imExp2cm["28"]`. `Q`, which has none, takes the next cm id, 21.
 //! - **Their offsets**: `0` if the fflonkinfo's `evMap` has the column with `prime: false`, `1` if
 //!   with `prime: true` (`:219-220`); `const` in stage 0, `cm` otherwise. `Permutation.a` and
-//!   `Permutation.b` have no entry, and the old system drops them (`:239-241`, spec C.3.3): they are
-//!   listed as `unopened` and not grouped.
+//!   `Permutation.b` have no entry, and the old system drops them (`:239-241`;
+//!   pilfflonk/docs/protocol.md#layout): they are listed as `unopened` and not grouped.
 //! - **Their bounds** (`:216-226`): `N = 2^pilPower = 256` in stage 0, `N + 1 + |O|` in stages 1
 //!   to 3, and for `Q` `qDeg·N + maxPolsOpenings·(qDeg + 1) = 3·256 + 3·4 = 780` (`:159-164`), the
-//!   old system's degree of `Q`, one less than A.1's count (A.2).
+//!   old system's degree of `Q`, one less than its number of coefficients.
 //! - **`extraMuls = 2`**, from pil-stark's test (`README.md`); 9 `f_i` for 7 groups agree.
 //! - **The expected result** is the shkey's `f`, in order: for each `f_i` its stage (the only one
 //!   in `stages`), `openingPoints` as offsets, `degree`, and its polynomials in order with their
-//!   bounds after the fusion (`stages[0].pols`). `powerW` is 12, a number in this shkey (spec C.3.7:
-//!   shplonkjs writes a string when there is one `k`; the test reads either). The roots are the
+//!   bounds after the fusion (`stages[0].pols`). `powerW` is 12, a number in this shkey
+//!   (shplonkjs writes a string when there is one `k`; the test reads either). The roots are the
 //!   shkey's `w*`, which `shkey_roots` derives from the layout.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,7 +47,8 @@ fn pol(name: &str, stage: u64, id: u64, offsets: &[i64], coefficients: u64) -> C
     CommittedPol { stage, id, name: name.to_string(), offsets: offsets.to_vec(), coefficients }
 }
 
-/// A column of stage `stage` whose bound is its own `O`'s, `N + |O| + 1` (A.3), or `N` if fixed.
+/// A column of stage `stage` whose bound is its own `O`'s, `N + |O| + 1`, or `N` if fixed
+/// (pilfflonk/docs/protocol.md#degrees).
 fn column(name: &str, stage: u64, id: u64, offsets: &[i64], n_bits: u64) -> CommittedPol {
     let n = 1u64 << n_bits;
     let coefficients = if stage == 0 { n } else { n + offsets.len() as u64 + 1 };
@@ -101,7 +104,8 @@ fn modulus() -> BigUint {
     BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap()
 }
 
-/// `5^((r−1)/d)`: a primitive `d`-th root of unity, for `d | r − 1` (A.2, rule 5).
+/// `5^((r−1)/d)`: a primitive `d`-th root of unity, for `d | r − 1`
+/// (pilfflonk/docs/protocol.md#roots).
 fn root_of_unity(d: &BigUint) -> BigUint {
     let r = modulus();
     let r_minus_1 = &r - 1u32;
@@ -109,8 +113,8 @@ fn root_of_unity(d: &BigUint) -> BigUint {
     BigUint::from(5u32).modpow(&(r_minus_1 / d), &r)
 }
 
-/// The roots the old system's shkey holds for a layout (`shplonk.js:42-53`), derived as A.2's
-/// rule 5 says: `w{k}` = `w_k = 5^((r−1)/k)` for each `k` of the layout, `w{k}_{s}d{k}` =
+/// The roots the old system's shkey holds for a layout (`shplonk.js:42-53`), derived from it:
+/// `w{k}` = `w_k = 5^((r−1)/k)` for each `k` of the layout, `w{k}_{s}d{k}` =
 /// `ω_{kN}^s` for each offset `s > 0` of an `f_i` of that `k`, and `w1_1d1` = `ω_N`, which
 /// shplonkjs adds whatever the layout (`shplonk.js:53`).
 fn shkey_roots(layout: &Layout, n_bits: u64) -> BTreeMap<String, BigUint> {
@@ -159,7 +163,7 @@ fn example_all_is_grouped_as_the_old_system_did() {
         }
     }
 
-    // powerW, as a number whatever the file holds (spec C.3.7).
+    // powerW, as a number whatever the file holds.
     let power_w = match &expected["powerW"] {
         Value::String(s) => s.parse::<u64>().unwrap(),
         v => v.as_u64().unwrap(),
@@ -177,8 +181,9 @@ fn example_all_is_grouped_as_the_old_system_did() {
     assert_eq!(roots, expected_roots);
 }
 
-/// A.2's rule 5 on the golden's layout: `x_j = xiSeed^(powerW/k)·ω_{kN}^s·w_k^j` are the `k`
-/// distinct roots of `x^k = ξ·ω_N^s`, `ξ = xiSeed^powerW`.
+/// The roots (pilfflonk/docs/protocol.md#roots) on the golden's layout:
+/// `x_j = xiSeed^(powerW/k)·ω_{kN}^s·w_k^j` are the `k` distinct roots of `x^k = ξ·ω_N^s`,
+/// `ξ = xiSeed^powerW`.
 #[test]
 fn the_roots_of_example_all_are_those_of_xi_times_omega_to_the_offset() {
     let Golden { pols, params, .. } = golden();
@@ -354,7 +359,7 @@ fn the_groups_of_a_stage_go_in_the_order_they_are_met() {
 fn the_layout_goes_by_stage_and_the_split_by_the_old_order() {
     // The old system numbers the stage-1 group first, from the list of 0, and the fixed one,
     // opened at 1 only, second. Both cost the same: the extra mul goes to the second in the old
-    // order, the fixed one, and the layout puts it first (A.5).
+    // order, the fixed one, and the layout puts it first (pilfflonk/docs/protocol.md#layout).
     let mut pols: Vec<CommittedPol> = (0..4).map(|i| pol(&format!("c{i}"), 0, i, &[1], 10)).collect();
     pols.extend((0..4).map(|i| pol(&format!("a{i}"), 1, i, &[0], 10)));
     pols.push(pol("Q", 2, 4, &[0], 5));
@@ -482,8 +487,9 @@ fn what_cannot_be_grouped_is_refused() {
     assert_eq!(fuse(&pols, &params(3, 0, 2)), Err(GroupingError::Overflow));
 }
 
-/// A class of 5, 7, 10, 11, … columns cannot be one chunk (A.2): with too few extra muls there is
-/// no valid partition, and the message says that more `--extra-muls` allow one.
+/// A class of 5, 7, 10, 11, … columns cannot be one chunk
+/// (pilfflonk/docs/protocol.md#grouping-errors): with too few extra muls there is no valid
+/// partition, and the message says that more `--extra-muls` allow one.
 #[test]
 fn no_valid_partition_says_more_extra_muls_help() {
     // Three classes of five (stages 1 to 3), and Q: each needs one extra chunk at least.
@@ -506,7 +512,12 @@ fn no_valid_partition_says_more_extra_muls_help() {
     // And too many is refused with its own message.
     let error = group(&pols, &params(8, 13, 4)).unwrap_err();
     assert_eq!(error, GroupingError::TooManyExtraMuls { extra_muls: 13, n_pols: 16, n_groups: 4 });
-    assert!(error.to_string().contains("so at most 12 extra muls (A.2, rule 3): lower --extra-muls"), "{error}");
+    assert!(
+        error
+            .to_string()
+            .contains("so at most 12 extra muls (pilfflonk/docs/protocol.md#grouping-errors): lower --extra-muls"),
+        "{error}"
+    );
 }
 
 /// The exhaustive search of rule 3 is bounded (`MAX_SEARCH_STEPS`): an `extraMuls` that would
@@ -567,7 +578,7 @@ impl Rng {
 
 /// A random AIR: up to 3 stages, up to 14 columns whose offsets come from a small palette (so
 /// that classes have several polynomials and some are small), `Q` in 1 to 3 pieces, and bounds
-/// either A.3's or small random ones (which make ties likely).
+/// either [`column`]'s or small random ones (which make ties likely).
 fn random_input(rng: &mut Rng) -> (Vec<CommittedPol>, GroupingParams) {
     let n_stages = 1 + rng.below(3);
     let q_stage = n_stages + 1;
@@ -601,7 +612,8 @@ fn random_input(rng: &mut Rng) -> (Vec<CommittedPol>, GroupingParams) {
     (pols, params(n_bits, rng.below(5), q_stage))
 }
 
-/// Rule 1, written again from A.2: each polynomial's `O` and bound after the fusion.
+/// Rule 1, written again from its statement (pilfflonk/docs/protocol.md#grouping-rules): each
+/// polynomial's `O` and bound after the fusion.
 fn expected_fusion(pols: &[CommittedPol], q_stage: u64) -> Vec<(Vec<i64>, u64)> {
     pols.iter()
         .map(|p| {

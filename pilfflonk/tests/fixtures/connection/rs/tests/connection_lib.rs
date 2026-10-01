@@ -1,7 +1,7 @@
-//! The Connection's witness library (plan M38c, D4), loaded as a dynamic library: its witness is the
-//! generator's (`pilfflonk/tests/data/connection.rs`, plan M34) byte for byte; its rows are the
-//! stage-1 columns of the keys of the fixture on either bus, in their order; and `src/pil_helpers` is
-//! what pil-helpers writes for the fixture's BN254 pilouts.
+//! The Connection's witness library (pilfflonk/docs/README.md#fixtures), loaded as a dynamic
+//! library: its witness is the generator's (`pilfflonk/tests/data/connection.rs`) byte for byte;
+//! its rows are the stage-1 columns of the keys of the fixture on either bus, in their order; and
+//! `src/pil_helpers` is what pil-helpers writes for the fixture's BN254 pilouts.
 //!
 //! The library is this crate's, `libpilfflonk_connection.so`, which Cargo builds for its tests. A
 //! test cannot link it (a Rust `dylib` would bring a second `std`), so it includes the rows of

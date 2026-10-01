@@ -1,7 +1,7 @@
-//! The pilfflonk file types of spec A.6, through the crate's public API: deterministic JSON, round
-//! trips, what each type refuses, the vkey's digest preimage and the proof's two forms. Also the
-//! Rust side of the Rust → file → C++ round trip of `<air>.pilfflonkinfo.json`, and the check that
-//! the STARK loader refuses a pilfflonk globalInfo.
+//! The pilfflonk file types (pilfflonk/docs/formats.md), through the crate's public API:
+//! deterministic JSON, round trips, what each type refuses, the vkey's digest preimage and the
+//! proof's two forms. Also the Rust side of the Rust → file → C++ round trip of
+//! `<air>.pilfflonkinfo.json`, and the check that the STARK loader refuses a pilfflonk globalInfo.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -120,7 +120,8 @@ fn sample_info() -> PilfflonkInfo {
     }
 }
 
-/// The sample with `Q` split in two pieces (A.1): `maxQDegree = 1 < qDeg = 2`.
+/// The sample with `Q` split in two pieces (pilfflonk/docs/protocol.md#q-pieces):
+/// `maxQDegree = 1 < qDeg = 2`.
 fn split_q_info() -> PilfflonkInfo {
     let mut info = sample_info();
     info.max_q_degree = 1;
@@ -173,7 +174,8 @@ fn q_verifier() -> Value {
     })
 }
 
-/// A stand-in for Keccak-256, which is M15's: these tests only need a function of the preimage.
+/// A stand-in for Keccak-256, which the C API computes (`pilfflonk_keccak256`): these tests only
+/// need a function of the preimage.
 fn fake_hash(preimage: &[u8]) -> [u8; 32] {
     let mut h = [0u8; 32];
     for (i, b) in preimage.iter().enumerate() {
@@ -423,8 +425,8 @@ fn the_pilfflonkinfo_refuses_what_a6_and_the_layout_rules_forbid() {
     assert_refused(with(&|i| i.n_bits = 28), "k·N divides r - 1: k = 2 does not with N = 2^28");
     assert_refused(with(&|i| i.layout.0[1].offsets = vec![1, 0]), "offsets are increasing");
     assert_refused(with(&|i| i.layout.0[1].offsets.clear()), "an f is opened somewhere");
-    // As the JS's checkLayout (plan M40, review): each offset a row, |s| < N = 16, and no two the
-    // same row modulo N.
+    // As the JS's checkLayout (pilfflonk/docs/verifier.md#refused-vkeys): each offset a row,
+    // |s| < N = 16, and no two the same row modulo N.
     assert_refused(with(&|i| i.layout.0[1].offsets = vec![0, 16]), "an offset is below N in absolute value");
     assert_refused(with(&|i| i.layout.0[1].offsets = vec![-16, 0]), "an offset is below N in absolute value");
     assert_refused(with(&|i| i.layout.0[1].offsets = vec![-1, 15]), "no two offsets are the same row modulo N");
@@ -443,7 +445,7 @@ fn the_pilfflonkinfo_refuses_what_a6_and_the_layout_rules_forbid() {
     assert_refused(with(&|i| i.layout.0[4].offsets = vec![0, 1]), "Q is opened at ξ only");
     assert_refused(with(&|i| i.max_q_degree = 1), "Q split in two needs two pieces");
     for max_q_degree in [2, 3] {
-        assert_refused(with(&|i| i.max_q_degree = max_q_degree), "maxQDegree is 0 unless it splits Q (plan M33)");
+        assert_refused(with(&|i| i.max_q_degree = max_q_degree), "maxQDegree is 0 unless it splits Q");
     }
     // Split, the pieces are Q0 and Q1 in this order, at stageId and stagePos 0 and 1.
     let with_split = |change: &dyn Fn(&mut PilfflonkInfo)| {
@@ -521,7 +523,8 @@ fn the_vkey_refuses_what_does_not_match_its_layout() {
     ] {
         assert!(vkey.validate().is_err(), "{why}");
     }
-    // The offsets as the JS's checkLayout reads them (plan M40, review), with the reason.
+    // The offsets as the JS's checkLayout reads them (pilfflonk/docs/verifier.md#refused-vkeys),
+    // with the reason.
     for (offsets, reason) in [
         (vec![0, 17], "offset 17, and an offset must be below N = 16 in absolute value"),
         (vec![-17, 0], "offset -17, and an offset must be below N = 16 in absolute value"),
@@ -572,16 +575,16 @@ fn the_vkey_refuses_what_the_verifier_refuses() {
         ],
     };
     for (vkey, reason) in [
-        // X_2 as elements.js, g2FromObject, reads it (plan M40, review): the point at infinity, with
-        // which anyone could forge a proof on the Solidity verifier, a point off the twist, and one
-        // on it but not in G2.
+        // X_2 as elements.js, g2FromObject, reads it (pilfflonk/docs/verifier.md#refused-vkeys):
+        // the point at infinity, with which anyone could forge a proof on the Solidity verifier, a
+        // point off the twist, and one on it but not in G2.
         (with(&|v| v.x_2 = G2Affine::default()), "X_2 is not a point of G2 other than the point at infinity"),
         (with(&|v| v.x_2 = G2Affine::default()), "the point at infinity of G2"),
         (with(&|v| v.x_2.y[1] = FqBytes::from_u64(1)), "not on the twist"),
         (with(&|v| v.x_2 = twist_not_g2), "not in G2"),
         (with(&|v| v.num_challenges = vec![0]), "numChallenges has 1 stages, and the layout 2"),
         (with(&|v| v.num_challenges = vec![0, 2, 0]), "numChallenges has 3 stages, and the layout 2"),
-        (with(&|v| v.num_challenges = vec![1, 2]), "A.4 squeezes no challenge of stage 1"),
+        (with(&|v| v.num_challenges = vec![1, 2]), "the transcript squeezes no challenge of stage 1"),
         (with(&|v| v.boundaries.clear()), "boundaries[0] must be everyRow"),
         (with(&|v| v.boundaries.swap(0, 1)), "boundaries[0] must be everyRow"),
         (
@@ -635,7 +638,7 @@ fn the_vkey_refuses_what_the_verifier_refuses() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The digest's preimage (A.6).
+// The digest's preimage (pilfflonk/docs/formats.md#digest).
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -882,7 +885,8 @@ fn names_that_collide_are_refused() {
     assert!(err.to_string().contains("\"Sample.aw\""), "{err}");
 
     // Two columns named alike, as the std names its `im_cluster`, without the index the setup gives
-    // each (spec A.6, plan M34b); with it, `Sample.a[0]` and `Sample.a[1]`, they are named apart.
+    // each (pilfflonk/docs/formats.md#proof-names); with it, `Sample.a[0]` and `Sample.a[1]`, they
+    // are named apart.
     let mut info = sample_info();
     info.cm_pols_map[1].name = "Sample.a".into();
     info.layout.0[1].pols[1].name = "Sample.a".into();
@@ -922,7 +926,7 @@ fn the_cpp_fixture_is_what_the_rust_types_write() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The STARK loader refuses a pilfflonk globalInfo (spec §4.2.6, plan M12).
+// The STARK loader refuses a pilfflonk globalInfo (pilfflonk/docs/formats.md#provingkey).
 // ---------------------------------------------------------------------------------------------
 
 #[test]

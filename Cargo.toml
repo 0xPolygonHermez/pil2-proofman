@@ -47,7 +47,7 @@ members = [
   "pil2-components/test/virtual_tables/rs",
   "pil2-components/test/common/rs",
 
-  # pilfflonk witness-library tests (D4)
+  # pilfflonk witness-library tests (pilfflonk/docs/README.md#fixtures)
   "pilfflonk/tests/fixtures/fibonacci/rs",
   "pilfflonk/tests/fixtures/connection/rs",
   "pilfflonk/tests/fixtures/all/rs",

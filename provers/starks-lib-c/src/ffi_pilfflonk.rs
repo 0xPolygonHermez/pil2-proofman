@@ -34,7 +34,7 @@ pub enum PilFflonkErrorKind {
     /// A file is not in the format expected.
     Format,
     /// The witness does not satisfy the AIR's constraints: its constraint polynomial `Q` is not of
-    /// its degree (spec A.1).
+    /// its degree (pilfflonk/docs/protocol.md#proof-sequence).
     Unsatisfied,
     /// A status these bindings do not know: they are out of sync with `pilfflonk_api.hpp`.
     Unknown(i32),
@@ -118,8 +118,9 @@ pub fn pilfflonk_g2_check_c(g2: &[u8; PILFFLONK_G2_BYTES]) -> Result<(), PilFflo
 }
 
 /// The Keccak-256 hash of `data` (Keccak's original padding, as Ethereum and snarkjs use it, not
-/// SHA3-256): rapidsnark's `keccak_wrapper`, the hash of the transcript (spec A.4) and of the
-/// vkey's digest (A.6).
+/// SHA3-256): rapidsnark's `keccak_wrapper`, the hash of the transcript
+/// (pilfflonk/docs/protocol.md#transcript) and of the vkey's digest
+/// (pilfflonk/docs/formats.md#digest).
 pub fn pilfflonk_keccak256_c(data: &[u8]) -> Result<[u8; 32], PilFflonkError> {
     let mut hash = [0u8; 32];
     // SAFETY: `data` holds the `data.len()` bytes the call reads, and `hash` has the 32 bytes it
@@ -128,8 +129,8 @@ pub fn pilfflonk_keccak256_c(data: &[u8]) -> Result<[u8; 32], PilFflonkError> {
     Ok(hash)
 }
 
-/// The Fiat-Shamir transcript of a proof (spec A.4), owned by the C++ side: rapidsnark's
-/// `Keccak256Transcript`, driven as the existing FFLONK prover drives it.
+/// The Fiat-Shamir transcript of a proof (pilfflonk/docs/protocol.md#transcript), owned by the C++
+/// side: rapidsnark's `Keccak256Transcript`, driven as the existing FFLONK prover drives it.
 ///
 /// Absorbing only appends elements; [`squeeze`](Self::squeeze) hashes everything absorbed since
 /// the previous squeeze and seeds the next round with the challenge. A refused absorb leaves the
@@ -154,7 +155,7 @@ impl PilFflonkTranscript {
     }
 
     /// Absorbs affine G1 points on the curve. The C API refuses the point at infinity and points
-    /// with a coordinate below 2^192, which `Keccak256Transcript` does not hash as A.4 encodes them.
+    /// with a coordinate below 2^192, which `Keccak256Transcript` does not encode as `x‖y`.
     pub fn absorb_g1(&mut self, points: &[[u8; PILFFLONK_G1_BYTES]]) -> Result<(), PilFflonkError> {
         self.absorb(points.as_flattened(), points.len(), PILFFLONK_TRANSCRIPT_G1)
     }
@@ -183,7 +184,7 @@ impl Drop for PilFflonkTranscript {
 
 /// Reads the first `n_g1` powers `[τ^i]₁`, and `[1]₂` and `[τ]₂`, of the snarkjs powers-of-tau file
 /// at `ptau_path` (only those points, from sections 1 to 3), and writes them to `srs_path` as
-/// `pilfflonk.srs.bin` (spec §4.2.5 and A.6), replacing any file there.
+/// `pilfflonk.srs.bin` (pilfflonk/docs/formats.md#srs), replacing any file there.
 ///
 /// Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if `n_g1` is 0 or above
 /// 2^32 - 1, or the ptau holds fewer powers; [`Io`](PilFflonkErrorKind::Io) if a file cannot be
@@ -216,7 +217,8 @@ impl PilFflonkSrs {
     }
 
     /// `[τ^i]₂` for `i` = 0 (`[1]₂`) or 1 (`[τ]₂`), as [`PILFFLONK_G2_BYTES`] describes: the points of
-    /// the verifier's pairing (spec A.5), and `[τ]₂` the vkey's `X_2` (A.6). Fails with
+    /// the verifier's pairing (pilfflonk/docs/protocol.md#pairing-check), and `[τ]₂` the vkey's
+    /// `X_2` (pilfflonk/docs/formats.md#vkey). Fails with
     /// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) for any other `i`.
     pub fn g2(&self, i: u64) -> Result<[u8; PILFFLONK_G2_BYTES], PilFflonkError> {
         let mut point = [0u8; PILFFLONK_G2_BYTES];
@@ -225,11 +227,11 @@ impl PilFflonkSrs {
         Ok(point)
     }
 
-    /// The KZG commitment `[f(τ)]₁` of a fixed `f(X) = Σ_{j<k} p_j(X^k)·X^j` (spec §4.2.5), where
-    /// `p_j` interpolates column `j` on the domain of `N = 2^n_bits` points: `evals` holds the `k`
-    /// columns one after another, `N` canonical scalars each, in the domain's natural order. The
-    /// commitment is affine `x‖y`, canonical little-endian coordinates; the point at infinity is
-    /// all zeros.
+    /// The KZG commitment `[f(τ)]₁` of a fixed `f(X) = Σ_{j<k} p_j(X^k)·X^j`
+    /// (pilfflonk/docs/protocol.md#commitments), where `p_j` interpolates column `j` on the domain of
+    /// `N = 2^n_bits` points: `evals` holds the `k` columns one after another, `N` canonical scalars
+    /// each, in the domain's natural order. The commitment is affine `x‖y`, canonical little-endian
+    /// coordinates; the point at infinity is all zeros.
     ///
     /// Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if `evals` does not
     /// hold `k·2^n_bits` scalars (checked here, before the call), if `k` is 0, `n_bits` exceeds
@@ -294,8 +296,8 @@ fn ptr_or_null<T>(slice: &[T]) -> *const u8 {
     }
 }
 
-/// Where a [`PilFflonkProverCtx`] runs the MSMs and the NTTs of its proofs (plan M43): the proofs
-/// are the same, bit for bit, on either.
+/// Where a [`PilFflonkProverCtx`] runs the MSMs and the NTTs of its proofs
+/// (pilfflonk/docs/performance.md#gpu): the proofs are the same, bit for bit, on either.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PilFflonkDevice {
     /// ffiasm's MSM and FFT.
@@ -314,8 +316,9 @@ pub fn pilfflonk_gpu_available_c() -> bool {
     unsafe { pilfflonk_gpu_available() == 1 }
 }
 
-/// The proving key of the prover (spec §4.4, step 1), owned by the C++ side: the `provingKey/`
-/// that `setup-pilfflonk` writes, loaded, with the fixed columns interpolated. Immutable.
+/// The proving key of the prover (pilfflonk/docs/protocol.md#proof-sequence, step 1), owned by the
+/// C++ side: the `provingKey/` that `setup-pilfflonk` writes, loaded, with the fixed columns
+/// interpolated. Immutable.
 #[derive(Debug)]
 pub struct PilFflonkProverCtx {
     handle: NonNull<c_void>,
@@ -334,12 +337,12 @@ impl PilFflonkProverCtx {
         NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
     }
 
-    /// [`load`](Self::load), with the MSMs and the NTTs of the key and of its proofs on `device`
-    /// (plan M43): on the GPU, the SRS's powers `[τ^i]₁` are copied to it once they are read. Fails
-    /// as `load` does, and with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument), before any
-    /// file is read, on the GPU without one ([`pilfflonk_gpu_available_c`]), saying why. On the GPU,
-    /// a CUDA failure (out of device memory, a lost device) aborts the process, as in the PLONK GPU
-    /// prover whose helpers it reuses.
+    /// [`load`](Self::load), with the MSMs and the NTTs of the key and of its proofs on `device`: on
+    /// the GPU, the SRS's powers `[τ^i]₁` are copied to it once they are read. Fails as `load` does,
+    /// and with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument), before any file is read, on
+    /// the GPU without one ([`pilfflonk_gpu_available_c`]), saying why. On the GPU, a CUDA failure
+    /// (out of device memory, a lost device) aborts the process, as in the PLONK GPU prover whose
+    /// helpers it reuses.
     pub fn load_on(dir: &Path, device: PilFflonkDevice) -> Result<Self, PilFflonkError> {
         let path = c_path("pilfflonk_ctx_new_on", dir)?;
         let device = match device {
@@ -352,7 +355,7 @@ impl PilFflonkProverCtx {
         NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
     }
 
-    /// The `nBitsExt` of an AIR (spec A.1), as the C++ side derives it.
+    /// The `nBitsExt` of an AIR (pilfflonk/docs/protocol.md#degrees), as the C++ side derives it.
     pub fn n_bits_ext(&self, airgroup_id: u64, air_id: u64) -> Result<u64, PilFflonkError> {
         let mut out = 0u64;
         // SAFETY: the handle is live and `out` is a u64 the call writes.
@@ -407,20 +410,21 @@ impl Drop for PilFflonkProverCtx {
 pub struct PilFflonkInstanceInputs<'a> {
     pub airgroup_id: u64,
     pub air_id: u64,
-    /// The stage-1 witness, as the witness directory's `.bin` holds it (spec A.6): row after row,
-    /// the stage-1 columns of each row.
+    /// The stage-1 witness, as the witness directory's `.bin` holds it
+    /// (pilfflonk/docs/formats.md#witness-directory): row after row, the stage-1 columns of each row.
     pub stage1: &'a [u8],
     /// The stage-1 air values, publics and stage-1 proof values.
     pub air_values: &'a [[u8; PILFFLONK_FR_BYTES]],
     pub publics: &'a [[u8; PILFFLONK_FR_BYTES]],
     pub proof_values: &'a [[u8; PILFFLONK_FR_BYTES]],
     /// `None` for a real proof, blinded with the OS's randomness. `Some(seed)` fixes the blinding
-    /// (decision D6): for tests and CI only, as whoever knows the seed can remove the blinding.
+    /// (pilfflonk/docs/protocol.md#blinding): for tests and CI only, as whoever knows the seed can
+    /// remove the blinding.
     pub insecure_blinding_seed: Option<&'a [u8; 32]>,
 }
 
-/// An instance of an AIR being proved (spec §4.4, steps 2 and 3), owned by the C++ side. It
-/// borrows the context it was made from.
+/// An instance of an AIR being proved (pilfflonk/docs/protocol.md#proof-sequence, steps 2 and 3),
+/// owned by the C++ side. It borrows the context it was made from.
 #[derive(Debug)]
 pub struct PilFflonkInstance<'ctx> {
     handle: NonNull<c_void>,
@@ -503,11 +507,11 @@ impl<'ctx> PilFflonkInstance<'ctx> {
     }
 
     /// How [`commit_q`](Self::commit_q) evaluates `Q` on the extended coset of `2^nBitsExt` points
-    /// (plan M39): in parts of `2^part_bits` points, one after another. By default `part_bits` is
-    /// `nBits`, the least memory; `nBitsExt` evaluates `Q` on the whole coset at once. `Q` and the
-    /// proof are the same bit for bit either way. Fails with
-    /// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) unless `nBits <= part_bits <=
-    /// nBitsExt`.
+    /// (pilfflonk/docs/protocol.md#q-in-parts): in parts of `2^part_bits` points, one after another.
+    /// By default `part_bits` is `nBits`, the least memory; `nBitsExt` evaluates `Q` on the whole
+    /// coset at once. `Q` and the proof are the same bit for bit either way. Fails with
+    /// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) unless
+    /// `nBits <= part_bits <= nBitsExt`.
     pub fn set_q_part_bits(&mut self, part_bits: u64) -> Result<(), PilFflonkError> {
         // SAFETY: the handle is live.
         check_status(unsafe { pilfflonk_instance_set_q_part_bits(self.handle.as_ptr(), part_bits) })
@@ -544,7 +548,8 @@ impl Drop for PilFflonkInstance<'_> {
     }
 }
 
-/// What the SHPLONK opening adds to the proof (spec A.4 step 5, A.6).
+/// What the SHPLONK opening adds to the proof (pilfflonk/docs/protocol.md#transcript, step 5;
+/// pilfflonk/docs/formats.md#proof).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PilFflonkOpeningProof {
     pub w: [u8; PILFFLONK_G1_BYTES],
@@ -556,8 +561,8 @@ pub struct PilFflonkOpeningProof {
     pub inv_zh: [u8; PILFFLONK_FR_BYTES],
 }
 
-/// The opening of a proof (spec §4.4, steps 4 and 5), owned by the C++ side: every f of its
-/// instances evaluated at `ξ = xiSeed^powerW`. It borrows the instances.
+/// The opening of a proof (pilfflonk/docs/protocol.md#proof-sequence, steps 4 and 5), owned by the
+/// C++ side: every f of its instances evaluated at `ξ = xiSeed^powerW`. It borrows the instances.
 #[derive(Debug)]
 pub struct PilFflonkOpening<'a> {
     handle: NonNull<c_void>,
@@ -577,7 +582,8 @@ impl<'a> PilFflonkOpening<'a> {
         NonNull::new(handle).map(|handle| Self { handle, _instances: PhantomData }).ok_or_else(last_failure)
     }
 
-    /// The evaluations of the proof, in the order of spec A.4 step 4 and of the proof.
+    /// The evaluations of the proof, in the order of the proof and of the transcript
+    /// (pilfflonk/docs/protocol.md#transcript, step 4).
     pub fn evaluations(&self) -> Result<Vec<[u8; PILFFLONK_FR_BYTES]>, PilFflonkError> {
         // SAFETY: the handle is live.
         let n = unsafe { pilfflonk_opening_n_evaluations(self.handle.as_ptr()) } as usize;
@@ -638,9 +644,9 @@ fn mut_ptr_or_null<T, U>(slice: &mut [T]) -> *mut U {
     }
 }
 
-/// A constraint of an AIR, what `pilfflonk check` checks (spec §4.4, "Depuració"): section 2 of its
-/// `<air>.bin`, which holds the pilout's constraints in its order and then one per intermediate
-/// polynomial, `im − e`.
+/// A constraint of an AIR, what `pilfflonk check` checks (pilfflonk/docs/README.md#pilfflonk-check):
+/// section 2 of its `<air>.bin`, which holds the pilout's constraints in its order and then one per
+/// intermediate polynomial, `im − e`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PilFflonkConstraint {
     pub stage: u64,
@@ -859,8 +865,8 @@ mod tests {
     ];
 
     /// The challenges of the sequence in `reproduces_the_pinned_challenges`, as the C++ test
-    /// computes them by hand from A.4 (`PINNED_HEX` in pil2-stark/test/pilfflonk/
-    /// pilfflonk_transcript_test.cpp): keep both in sync.
+    /// computes them by hand from the transcript's encoding (pilfflonk/docs/protocol.md#transcript):
+    /// `PINNED_HEX` in pil2-stark/test/pilfflonk/pilfflonk_transcript_test.cpp. Keep both in sync.
     const PINNED: [&str; 3] = [
         "26ecd6b31f13f24a81bb71f60ef433df1185225122b3b101c736948874b1a41f",
         "11dba4dd6851bff01335d5e5b90efe759da23fce9a86a1c050daefdcd6948c14",

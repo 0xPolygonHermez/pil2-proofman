@@ -1,5 +1,6 @@
 // Tests for pilfflonk_transcript_*: every challenge must equal the one computed by hand from the
-// A.4 encoding, and every refused input must come back as a status, not an abort.
+// transcript's encoding (pilfflonk/docs/protocol.md#transcript), and every refused input must come
+// back as a status, not an abort.
 #include "pilfflonk_test.hpp"
 
 #include <gmp.h>
@@ -78,8 +79,8 @@ void appendBigEndian(std::vector<uint8_t> &buffer, const Bytes32 &value) {
     }
 }
 
-// The A.4 transcript written out by hand: a scalar is 32 big-endian bytes, a point x‖y in 64,
-// and a squeeze hashes the buffer to h and restarts it as enc(h).
+// The transcript written out by hand: a scalar is 32 big-endian bytes, a point x‖y in 64, and a
+// squeeze hashes the buffer to h and restarts it as enc(h).
 class Reference {
 public:
     void addScalar(const Bytes32 &scalar) { appendBigEndian(buffer, scalar); }

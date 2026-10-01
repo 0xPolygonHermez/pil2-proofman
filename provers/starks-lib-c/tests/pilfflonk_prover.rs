@@ -1,5 +1,5 @@
 //! The prover's wrappers on what they refuse before any proof: a `provingKey/` that is not there or
-//! not a pilfflonk one, a path the C side cannot take, and the GPU where there is none (plan M43).
+//! not a pilfflonk one, a path the C side cannot take, and the GPU where there is none.
 //! The prover itself is tested in C++ (`make -C pil2-stark pilfflonk_test`, `pilfflonk_prover_test.cpp`,
 //! and `pilfflonk_gpu_test` against the GPU archive) and end to end in `cli/tests/pilfflonk_prove.rs`.
 

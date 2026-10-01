@@ -1,5 +1,5 @@
-//! The fixed columns of an AIR and `<air>.const` (spec A.6): decoding the pilout's values, the
-//! file's layout, its round trip and what the reader refuses.
+//! The fixed columns of an AIR and `<air>.const` (pilfflonk/docs/formats.md#fixed-columns):
+//! decoding the pilout's values, the file's layout, its round trip and what the reader refuses.
 
 use std::fs;
 

@@ -221,8 +221,8 @@ fn im_pols(result: &PilInfoResult) -> usize {
     result.setup.cm_pols_map.iter().filter(|p| p.im_pol).count()
 }
 
-/// Everything criterion 2 of M10 asks of a pilfflonk run: dimension 1 everywhere, and no trace of
-/// the FRI opening.
+/// Everything a pilfflonk run must give: dimension 1 everywhere, and no trace of the FRI opening
+/// (pilfflonk/docs/README.md#setup-pilfflonk).
 fn assert_bn254_shape(result: &PilInfoResult) {
     let setup = &result.setup;
     let q_stage = setup.n_stages + 1;
@@ -336,7 +336,8 @@ fn bn254_lower_max_constraint_degree_adds_im_pols() {
     assert_bn254_shape(&result);
     assert_eq!(im_pols(&result), 2);
     assert_eq!(result.q_deg, 2);
-    // The im pols live at the last stage of the air (spec §4.2.3): stage 1 here.
+    // The im pols live at the last stage of the air (pilfflonk/docs/protocol.md#degree-search):
+    // stage 1 here.
     for p in result.setup.cm_pols_map.iter().filter(|p| p.im_pol) {
         assert_eq!(p.stage, Some(result.setup.n_stages));
     }
@@ -374,12 +375,12 @@ fn compile_bn254(pil: &str) -> pb::PilOut {
     pilout
 }
 
-/// The M13 Fibonacci fixture (5 `everyRow` constraints of degree up to 3, offsets {0, 1}).
+/// The Fibonacci fixture (5 `everyRow` constraints of degree up to 3, offsets {0, 1}).
 ///
 /// Its degrees tie: at degree 2, `l1' − next` becomes an im pol and `qDeg = 1` (`1 + 1`); at
 /// degree 3 there are no im pols and `qDeg = 2` (`0 + 2`). The search keeps the lowest degree on a
-/// tie, as pil-stark's does (D5), so the result is one im pol and `qDeg = 1`, not the `qDeg = 2`
-/// without im pols that plan §2.1 expects.
+/// tie, as pil-stark's does (pilfflonk/docs/protocol.md#degree-search), so the result is one im
+/// pol and `qDeg = 1`, not the `qDeg = 2` without im pols, which costs the same.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn fibonacci_fixture_over_bn254() {
@@ -393,7 +394,8 @@ fn fibonacci_fixture_over_bn254() {
     assert_eq!(result.setup.opening_points, [0, 1]);
     assert_eq!(im_pols(&result) as i64 + result.q_deg, 2, "the minimum nImPols + qDeg");
     assert_eq!((im_pols(&result), result.q_deg), (1, 1), "the lowest degree wins the tie");
-    // The im pol lives at the last stage of the air (spec §4.2.3), stage 1 here.
+    // The im pol lives at the last stage of the air (pilfflonk/docs/protocol.md#degree-search),
+    // stage 1 here.
     for p in result.setup.cm_pols_map.iter().filter(|p| p.im_pol) {
         assert_eq!(p.stage, Some(1));
     }

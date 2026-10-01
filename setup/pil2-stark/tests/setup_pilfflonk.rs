@@ -1,5 +1,6 @@
-//! `proofman-setup setup-pilfflonk` through the binary: its arguments (spec §4.2) and the files it
-//! writes in the `provingKey/` (§4.2.6), on a pilout built in code and on the compiled Fibonacci
+//! `proofman-setup setup-pilfflonk` through the binary: its arguments
+//! (pilfflonk/docs/README.md#setup-pilfflonk) and the files it writes in the `provingKey/`
+//! (pilfflonk/docs/formats.md#provingkey), on a pilout built in code and on the compiled Fibonacci
 //! fixture. Its steps are tested in `setup/pilfflonk/tests/`.
 //!
 //! Pilouts are not versioned: the `#[ignore]` test compiles the fixture with `compile-pil` and
@@ -140,7 +141,8 @@ fn column_symbol(name: &str, kind: pb::SymbolType, id: u32, stage: u32) -> pb::S
     }
 }
 
-/// The files of the `provingKey/` of spec §4.2.6 for the pilout `name`, its airgroup and its AIR.
+/// The files of the `provingKey/` (pilfflonk/docs/formats.md#provingkey) for the pilout `name`, its
+/// airgroup and its AIR.
 fn proving_key_files(name: &str, airgroup: &str, air: &str) -> Vec<String> {
     let mut files: Vec<String> =
         ["bin", "const", "expressionsinfo.json", "pilfflonkinfo.json", "verifierinfo.json", "verkey.json"]
@@ -218,12 +220,13 @@ fn the_subcommand_takes_the_arguments_of_spec_4_2() {
         "--max-q-degree <MAX_Q_DEGREE>",
         "[default: 0]",
         "--no-packing",
-        // Fase 4 (spec §4.5, plan M40).
+        // The Solidity verifier (pilfflonk/docs/verifier.md#solidity-verifier).
         "--solidity",
     ] {
         assert!(help.contains(arg), "{arg} missing from:\n{help}");
     }
-    // No -u: at BN254 nothing produces the STARK's 8-byte .fixed files (spec §4.2, C4).
+    // No -u: at BN254 nothing produces the STARK's 8-byte .fixed files
+    // (pilfflonk/docs/README.md#compile-pil).
     assert!(!help.contains("-u,"), "{help}");
 
     // -a, -b and --powers-of-tau are required.
@@ -251,8 +254,8 @@ fn it_writes_the_proving_key_of_a_pilout() {
     expected.sort();
     assert_eq!(files(&proving_key), expected);
     let (gi, info, _) = check_proving_key(&proving_key);
-    // a − F0 has degree 1: qDeg = 0, and Q has |O|_max + 1 = 2 coefficients (A.1). F1 is never
-    // opened, and not committed.
+    // a − F0 has degree 1: qDeg = 0, and Q has |O|_max + 1 = 2 coefficients
+    // (pilfflonk/docs/protocol.md#degrees). F1 is never opened, and not committed.
     let s = |name: &str| name.to_string();
     assert_eq!(
         layout(&info),
@@ -278,8 +281,8 @@ fn it_writes_the_proving_key_of_a_pilout() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(contents(&proving_key), before);
 
-    // Grouped, the default (plan M22): with no extra mul, the same f, one per class, and the same
-    // SRS; the default --extra-muls 2 is more than its 3 polynomials in 3 groups allow.
+    // Grouped, the default: with no extra mul, the same f, one per class, and the same SRS; the
+    // default --extra-muls 2 is more than its 3 polynomials in 3 groups allow.
     let grouped = dir.file("grouped");
     let args_grouped =
         ["setup-pilfflonk", "-a", path(&pilout_path), "-b", path(&grouped), "--powers-of-tau", path(&ptau)];
@@ -289,8 +292,8 @@ fn it_writes_the_proving_key_of_a_pilout() {
     assert_eq!(grouped_info.layout, info.layout);
     assert!(gi.setup_params.packing);
 
-    // Every --max-q-degree is one (plan M33): qDeg = 0 is not split by 2, and the key is that of Q
-    // whole, maxQDegree = 0; the globalInfo records the option.
+    // Every --max-q-degree is one (pilfflonk/docs/protocol.md#q-pieces): qDeg = 0 is not split by
+    // 2, and the key is that of Q whole, maxQDegree = 0; the globalInfo records the option.
     let whole = dir.file("max_q_degree");
     let args_whole = ["setup-pilfflonk", "-a", path(&pilout_path), "-b", path(&whole), "--powers-of-tau", path(&ptau)];
     let options = ["--no-packing", "--max-constraint-degree", "4", "--extra-muls", "0", "--max-q-degree", "2"];
@@ -302,7 +305,7 @@ fn it_writes_the_proving_key_of_a_pilout() {
 
     // What the setup cannot do fails with the reason, and a non-zero status.
     for (extra, expected) in [
-        (&[][..], "so at most 0 extra muls (A.2, rule 3): lower --extra-muls"),
+        (&[][..], "so at most 0 extra muls"),
         (&["--no-packing", "--max-constraint-degree", "1"][..], "--max-constraint-degree 1"),
     ] {
         let out = proofman_setup(&[&args[..], extra].concat());
@@ -311,7 +314,8 @@ fn it_writes_the_proving_key_of_a_pilout() {
         assert!(stderr.contains(expected), "{stderr}");
     }
 
-    // A Goldilocks pilout, what the pinned compiler writes for `-P bn254.json` (plan M13).
+    // A Goldilocks pilout, what the pinned compiler writes for `-P bn254.json`
+    // (pilfflonk/docs/README.md#compile-pil).
     let mut goldilocks = pilout();
     goldilocks.base_field = 0xFFFF_FFFF_0000_0001u64.to_be_bytes().to_vec();
     fs::write(&pilout_path, goldilocks.encode_to_vec()).unwrap();
@@ -322,7 +326,8 @@ fn it_writes_the_proving_key_of_a_pilout() {
 }
 
 /// `setup-pilfflonk --solidity` writes `pilfflonk.verifier.sol` next to the vkey and changes no
-/// other file, and `pilfflonk-solidity` writes the same from the vkey alone (spec §4.5, plan M40).
+/// other file, and `pilfflonk-solidity` writes the same from the vkey alone
+/// (pilfflonk/docs/verifier.md#solidity-verifier).
 #[test]
 fn it_writes_the_solidity_verifier_of_the_vkey() {
     let out = proofman_setup(&["pilfflonk-solidity", "--help"]);
@@ -373,8 +378,10 @@ fn it_writes_the_solidity_verifier_of_the_vkey() {
     assert!(!dir.file("refused.sol").exists());
 }
 
-/// The Fibonacci fixture (plan M13), compiled over BN254: the `provingKey/` of spec §4.2.6, with
-/// one im pol and `qDeg = 1` (M10), the bounds of A.1–A.3, and the same bytes on a second run.
+/// The Fibonacci fixture, compiled over BN254: the `provingKey/`
+/// (pilfflonk/docs/formats.md#provingkey), with one im pol and `qDeg = 1`
+/// (pilfflonk/docs/protocol.md#degree-search), the bounds of its polynomials
+/// (pilfflonk/docs/protocol.md#degrees), and the same bytes on a second run.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
@@ -431,8 +438,8 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
     assert_eq!(fixed.column(0).unwrap(), one_at(0).as_slice());
     assert_eq!(fixed.column(1).unwrap(), one_at(255).as_slice());
 
-    // One im pol, l1' − (l1·l1 + l2·l2), after l1 and l2 in stage 1, and qDeg = 1 (M10). Its expId
-    // is the index of that expression in the pilout (the oracle's assumption, M14).
+    // One im pol, l1' − (l1·l1 + l2·l2), after l1 and l2 in stage 1, and qDeg = 1. Its expId is
+    // the index of that expression in the pilout (the oracle's assumption).
     assert_eq!((info.n_bits, info.n_stages, info.q_deg, info.q_dim, info.max_q_degree), (8, 1, 1, 1, 0));
     let names: Vec<(&str, u64, bool)> =
         info.cm_pols_map.iter().map(|p| (p.name.as_str(), p.stage_id, p.im_pol)).collect();
@@ -449,9 +456,9 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
         other => panic!("expression {exp_id} is {other:?}"),
     }
 
-    // The degrees (A.1–A.3): N = 256; l1 and l2 opened at {0, 1} have 256 + 2 + 1 coefficients,
-    // the im pol at {0} 256 + 1 + 1, the fixed columns 256; |O|_max = 2, so Q has
-    // 1·256 + 2·2 + 1 = 261, and the extended domain 2^9.
+    // The degrees (pilfflonk/docs/protocol.md#degrees): N = 256; l1 and l2 opened at {0, 1} have
+    // 256 + 2 + 1 coefficients, the im pol at {0} 256 + 1 + 1, the fixed columns 256; |O|_max = 2,
+    // so Q has 1·256 + 2·2 + 1 = 261, and the extended domain 2^9.
     let s = |name: &str| name.to_string();
     assert_eq!(
         layout(&info),
@@ -481,13 +488,14 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
     assert!(out.status.success(), "setup-pilfflonk: {}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(contents(&proving_key), before);
 
-    // Grouped, the default (plan M22), with `--extra-muls 2` and 0: the same pilfflonkinfo but for
-    // its layout and evMap, and the same files.
+    // Grouped, the default, with `--extra-muls 2` and 0: the same pilfflonkinfo but for its layout
+    // and evMap, and the same files.
     let unpacked = info;
     for (extra_muls, expected, power_w) in [
         // L1 and LLAST in one f of k = 2, 256·2 + 1; the im pol, opened at {0}, alone in its class
-        // of stage 1, moves to {0, 1} and joins l1 and l2 (A.2, rule 1): 256 + 2 + 1 each, and Q's
-        // bound does not change (|O|_max was 2). The two extra muls split the group of three.
+        // of stage 1, moves to {0, 1} and joins l1 and l2
+        // (pilfflonk/docs/protocol.md#grouping-rules, rule 1): 256 + 2 + 1 each, and Q's bound does
+        // not change (|O|_max was 2). The two extra muls split the group of three.
         (
             "2",
             vec![
@@ -540,7 +548,8 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
         );
         let names = ProofNames::new(&gi, &[&info]).unwrap();
         assert_eq!(names.evaluations().last().map(String::as_str), Some("Fibonacci.ImPol[0]w"));
-        // Everything else is the unpacked pilfflonkinfo's, and the degrees of A.1.
+        // Everything else is the unpacked pilfflonkinfo's, and so are its degrees
+        // (pilfflonk/docs/protocol.md#degrees).
         let without_layout =
             |i: &PilfflonkInfo| PilfflonkInfo { layout: Default::default(), ev_map: vec![], ..i.clone() };
         assert_eq!(without_layout(&info), without_layout(&unpacked));

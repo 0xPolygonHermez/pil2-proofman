@@ -1,7 +1,8 @@
-//! The differential fuzzer of the Solidity verifier (spec §4.5, "Validació de M42"; Fase 4,
-//! validation 2): on the proofs of a key, mutated in many ways, the JS verifier (`pilfflonk/js`, the
-//! reference, D8) and the contract the generator writes must say the same, and the contract must
-//! return `false` for every case it refuses: only calldata shorter than its arguments may revert.
+//! The differential fuzzer of the Solidity verifier
+//! (pilfflonk/docs/verifier.md#differential-fuzzer): on the proofs of a key, mutated in many ways,
+//! the JS verifier (`pilfflonk/js`, the reference) and the contract the generator writes must say
+//! the same, and the contract must return `false` for every case it refuses: only calldata shorter
+//! than its arguments may revert.
 //!
 //! For a key, [`run_key`] makes cases in rounds of [`ROUND`] and, for each round:
 //! 1. makes the calldata of each case: the calldata of an honest proof (`Calldata::encode`), with a
@@ -18,7 +19,7 @@
 //!    reverts); the contract's must be the same, and so must the check that refused the case, as the
 //!    JS verifier's messages name it and as the probe's site does. Each family names the checks its
 //!    cases must reach ([`FuzzCase::targets`]); a case refused by the pairing must cost at least
-//!    90 % of the gas of the honest proof (the criterion of M40).
+//!    90 % of the gas of the honest proof.
 //!
 //! A family with a disagreement is fuzzed no more ([`Stopped`]), on any key, and the test reports
 //! the case with its evidence: the words it changed, the JS verifier's messages and the contract's
@@ -56,15 +57,16 @@ use crate::mutations::{be_word, big, fixup, fr, plus_one, q, r, rebalance_pieces
 /// The cases of a round: a batch of the JS verifier and of Foundry.
 pub const ROUND: usize = 250;
 
-/// A case refused by the pairing costs at least this fraction of the honest proof's gas (M40).
+/// A case refused by the pairing costs at least this fraction of the honest proof's gas.
 const PAIRING_GAS: (u64, u64) = (9, 10);
 
 // ---------------------------------------------------------------------------------------------
 // The checks
 // ---------------------------------------------------------------------------------------------
 
-/// The check that refused a case, in the order the contract makes them (§4.5, "Els passos"), or what
-/// the call did otherwise. The JS verifier makes the same checks, and its messages name them.
+/// The check that refused a case, in the order the contract makes them
+/// (pilfflonk/docs/verifier.md#steps), or what the call did otherwise. The JS verifier makes the
+/// same checks, and its messages name them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Check {
     /// Accepted: `verifyProof` returned `true`.
@@ -76,7 +78,7 @@ pub enum Check {
     /// A point not on `y² = x³ + 3`.
     OffCurve,
     /// A point the transcript absorbs with a coordinate below `2^192` (`checkAbsorbed`;
-    /// `transcript.js`, A.4).
+    /// `transcript.js`, pilfflonk/docs/protocol.md#transcript).
     ShortCoordinate,
     /// A scalar, an auxiliary inverse or a public not below `r` (`checkField`; `frFromObject`).
     ScalarNotBelowR,
@@ -373,8 +375,8 @@ pub enum Family {
     SwapEvaluations,
     /// Two points swapped: commitments, `W` and `W'`.
     SwapPoints,
-    /// A public changed: `+ 1`, random, `p + r` (the same in `Fr`, snarkjs's Annex F.13), `r`, or
-    /// any 256 bits.
+    /// A public changed: `+ 1`, random, `p + r` (the same in `Fr`, which snarkjs does not refuse:
+    /// pilfflonk/docs/verifier.md#differences-from-snarkjs), `r`, or any 256 bits.
     Public,
     /// `W` replaced by another point of G1.
     W,
@@ -408,7 +410,7 @@ pub enum Family {
     /// `W' = y⁻¹·(E + J − F)` of a proof that gets past `checkQPieces` (unchanged, or fixed up with
     /// `W` changed and either the pieces of a split `Q` rebalanced or, if it is whole, an evaluation,
     /// a commitment or a public changed), which cancels the left side of the pairing: it must fail
-    /// there, with an honest `X_2` (the forgery of the M40 review).
+    /// there, with an honest `X_2` (pilfflonk/docs/verifier.md#refused-vkeys).
     FixedForgery,
 }
 
@@ -1045,7 +1047,7 @@ impl Generator<'_> {
             _ => {
                 // A proof that gets past checkQPieces, so that the pairing is what sees W': unchanged,
                 // with W changed (only y changes), and with Q's pieces rebalanced if it is split, or an
-                // evaluation, a commitment or a public changed if it is whole (A.1: they change Q(ξ)).
+                // evaluation, a commitment or a public changed if it is whole (they change Q(ξ)).
                 let label = match self.index(3) {
                     0 => "unchanged".to_string(),
                     1 => {
@@ -1082,8 +1084,9 @@ fn data_file(name: &str) -> PathBuf {
     found.unwrap_or_else(|| panic!("no pilfflonk/tests/data/{name} above {}", manifest.display()))
 }
 
-/// The JSON view of the proof whose words are `words` (`proof.json`, A.6), with every value in
-/// decimal, below `r` or `q` or not: the JS verifier checks it.
+/// The JSON view of the proof whose words are `words` (`proof.json`,
+/// pilfflonk/docs/formats.md#proof), with every value in decimal, below `r` or `q` or not: the JS
+/// verifier checks it.
 fn proof_json(shape: &Shape, names: &ProofNames, words: &[Word]) -> Value {
     let decimal = |w: &Word| int(w).to_str_radix(10);
     let mut polynomials = serde_json::Map::new();

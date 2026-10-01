@@ -1,4 +1,4 @@
-//! The witness generator of the Connection fixture (plan M34),
+//! The witness generator of the Connection fixture (pilfflonk/docs/README.md#fixtures),
 //! `tests/fixtures/connection/connection.pil`: a port of `execute` in pil-fflonk's
 //! `pil/sm_connection/sm_connection.js`, over BN254's `Fr` (every value is a small integer). The same
 //! witness for the sum and the product bus.

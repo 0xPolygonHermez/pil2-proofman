@@ -1,8 +1,8 @@
-//! The Rust oracle's reference for the std's prover hints (plans M30, M31) on pilouts built in code:
-//! the columns of stage 2 that `gsum_col`, `gprod_col` and `im_col` give, against a computation here
-//! with `num-bigint` alone (each inverse by Fermat, `x^(r−2)`), and what it refuses. The prover's
-//! columns are checked against the oracle's end to end (`cli/tests/pilfflonk_prove.rs`, on the
-//! fixtures of the std's buses).
+//! The Rust oracle's reference for the std's prover hints (pilfflonk/docs/protocol.md#hint-columns)
+//! on pilouts built in code: the columns of stage 2 that `gsum_col`, `gprod_col` and `im_col` give,
+//! against a computation here with `num-bigint` alone (each inverse by Fermat, `x^(r−2)`), and what
+//! it refuses. The prover's columns are checked against the oracle's end to end
+//! (`cli/tests/pilfflonk_prove.rs`, on the fixtures of the std's buses).
 //!
 //! The AIR, of `N = 8` rows, has the witness column `a` of stage 1, the columns `s` and `p` of stage
 //! 2, and a challenge `g` of stage 2. Its hints are the std's, as pil2com writes them in
@@ -13,8 +13,8 @@
 //! - `gprod_col`: `p = Π (a' + g)/2`, `numerator_air` the expression `a' + g`, which reads the next
 //!   row, across the wrap too, and `denominator_air` the number 2.
 //!
-//! The AIR with im_col (plan M31) has two more columns of stage 2, `m` and `n`, which two `im_col`
-//! hints give, after the others in the pilout, and `gsum_col` reads `m`:
+//! The AIR with im_col has two more columns of stage 2, `m` and `n`, which two `im_col` hints give,
+//! after the others in the pilout, and `gsum_col` reads `m`:
 //!
 //! - `im_col` of `m`: `m = a/(a + g)`, `numerator` the column `a` and `denominator` the expression
 //!   `a + g`;
@@ -278,10 +278,10 @@ fn what_the_oracle_cannot_compute_is_an_error() {
     assert!(AirOracle::new(&no_field, 0, 0).unwrap_err().to_string().contains("has no operand numerator_air"));
 }
 
-/// The im_col columns (plan M31) are computed first, in the pilout's order, although the pilout has
-/// them last, as the STARK's `calculateImHints` does before `calculateWitnessSTD`: `m` is the quotient
-/// on each row, `n` reads `m` at the next row, across the wrap too, and `gsum_col` reads `m`, which
-/// gives the same `s`. `p` does not change.
+/// The im_col columns are computed first (pilfflonk/docs/protocol.md#hint-columns), in the pilout's
+/// order, although the pilout has them last, as the STARK's `calculateImHints` does before
+/// `calculateWitnessSTD`: `m` is the quotient on each row, `n` reads `m` at the next row, across
+/// the wrap too, and `gsum_col` reads `m`, which gives the same `s`. `p` does not change.
 #[test]
 fn the_im_col_columns_are_the_quotients_computed_first() {
     let oracle = AirOracle::new(&im_pilout(), 0, 0).unwrap();

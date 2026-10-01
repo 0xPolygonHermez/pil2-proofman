@@ -1,5 +1,6 @@
-//! The errors of the library part of this crate (spec §5.4: `thiserror`, following
-//! `common/src/error_manager.rs`). The command, [`crate::command`], reports them with `anyhow`.
+//! The errors of the library part of this crate: `thiserror`, following
+//! `common/src/error_manager.rs` (pilfflonk/docs/README.md#conventions). The command,
+//! [`crate::command`], reports them with `anyhow`.
 
 use std::path::PathBuf;
 
@@ -11,9 +12,9 @@ use crate::grouping::GroupingError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
-    // --- What the setup refuses in a pilout (spec §4.2.1) -------------------------------------
+    // --- What the setup refuses in a pilout (pilfflonk/docs/README.md#what-the-setup-refuses) ---
     /// The pilout is over Goldilocks: what pil2com writes when it ignores `prime`, as the pinned
-    /// compiler does (plan M13).
+    /// compiler does (pilfflonk/docs/README.md#compile-pil).
     #[error(
         "the pilout is over Goldilocks, not BN254: compile it with `-P <config>` whose `prime` is r, and with a \
          pil2com that honours `prime` (PIL2C_EXEC); the pinned one ignores it and compiles over Goldilocks"
@@ -23,38 +24,42 @@ pub enum SetupError {
     #[error("the pilout's base field is {base_field}, not BN254's r = {BN254_R}")]
     NotBn254 { base_field: String },
 
-    /// A pilfflonk proof has one instance of one AIR (spec §7.1, D2).
+    /// A pilfflonk proof has one instance of one AIR (pilfflonk/docs/README.md#scope).
     #[error("the pilout has {n_airs} AIRs, and a pilfflonk proof holds exactly one instance of one AIR")]
     AirCount { n_airs: usize },
 
-    /// Air values: pil-fflonk has none, and neither has v1 (spec §7.1, D2).
-    #[error("air {air} has {n} air values, which pilfflonk does not support (spec D2)")]
+    /// Air values: pil-fflonk has none, and neither has v1.
+    #[error("air {air} has {n} air values, which pilfflonk does not support (pilfflonk/docs/README.md#scope)")]
     AirValues { air: String, n: usize },
 
-    /// Airgroup values (spec §7.1, D2). The std's buses declare one each unless the std is in
+    /// Airgroup values. The std's buses declare one each unless the std is in
     /// `STD_MODE_ONE_INSTANCE`.
     #[error(
-        "the pilout has {n} airgroup values, which pilfflonk does not support (spec D2); the std's buses declare \
-         them unless it is compiled with set_std_mode(STD_MODE_ONE_INSTANCE)"
+        "the pilout has {n} airgroup values, which pilfflonk does not support (pilfflonk/docs/README.md#scope); the \
+         std's buses declare them unless it is compiled with set_std_mode(STD_MODE_ONE_INSTANCE)"
     )]
     AirgroupValues { n: usize },
 
-    /// Proof values (spec §7.1, D2).
-    #[error("the pilout has {n} proof values, which pilfflonk does not support (spec D2)")]
+    /// Proof values.
+    #[error("the pilout has {n} proof values, which pilfflonk does not support (pilfflonk/docs/README.md#scope)")]
     ProofValues { n: usize },
 
-    /// Global constraints (spec §7.1, D2): a pilfflonk proof holds one AIR, and its
-    /// `pilout.globalConstraints.json` none.
-    #[error("the pilout has {n} global constraints, which pilfflonk does not support (spec D2)")]
+    /// Global constraints: a pilfflonk proof holds one AIR, and its `pilout.globalConstraints.json`
+    /// none.
+    #[error(
+        "the pilout has {n} global constraints, which pilfflonk does not support (pilfflonk/docs/README.md#scope)"
+    )]
     GlobalConstraints { n: usize },
 
-    #[error("air {air} has {num_rows} rows, not a power of two of at most 2^28 (spec P2)")]
+    #[error("air {air} has {num_rows} rows, not a power of two of at most 2^28 (pilfflonk/docs/protocol.md#notation)")]
     NumRows { air: String, num_rows: u32 },
 
-    #[error("an AIR of 2^{n_bits} rows: BN254's roots of unity allow at most 2^28 (spec P2)")]
+    #[error(
+        "an AIR of 2^{n_bits} rows: BN254's roots of unity allow at most 2^28 (pilfflonk/docs/protocol.md#notation)"
+    )]
     NBits { n_bits: u64 },
 
-    #[error("air {air} has {n} custom commits, which pilfflonk does not support (spec P5)")]
+    #[error("air {air} has {n} custom commits, which pilfflonk does not support (pilfflonk/docs/README.md#scope)")]
     CustomCommits { air: String, n: usize },
 
     #[error("air {air} has {n} periodic columns, which pilfflonk does not support")]
@@ -63,10 +68,11 @@ pub enum SetupError {
     #[error("the pilout has {n} public tables, which pilfflonk does not support")]
     PublicTables { n: usize },
 
-    /// The prover hint `im_airval` (spec §3.4), which computes an air value: v1 has none (D2).
+    /// The prover hint `im_airval` (pilfflonk/docs/README.md#what-the-setup-refuses), which
+    /// computes an air value: v1 has none.
     #[error(
-        "{location} has the prover hint `im_airval`, which computes an air value, and pilfflonk has none (spec D2): \
-         the std adds one for a term of a bus that is a constant"
+        "{location} has the prover hint `im_airval`, which computes an air value, and pilfflonk has none \
+         (pilfflonk/docs/README.md#scope): the std adds one for a term of a bus that is a constant"
     )]
     ImAirvalHint { location: String },
 
@@ -76,7 +82,8 @@ pub enum SetupError {
     ProverHint { hint: String, air: String, reason: String },
 
     /// The hint `witness_bits` of a column declared with `bits(n)`, which asks for packed trace rows
-    /// (plan M38b): pilfflonk does not accept packed traces yet, so no key is made for such an AIR.
+    /// (pilfflonk/docs/README.md#scope): pilfflonk does not accept packed traces yet, so no key is
+    /// made for such an AIR.
     #[error(
         "{location} has the hint `witness_bits`, from a column declared with `bits(n)`, which asks for packed trace \
          rows, and pilfflonk does not accept packed traces yet"
@@ -84,12 +91,12 @@ pub enum SetupError {
     PackedTrace { location: String },
 
     /// A hint that is neither a prover hint nor one of the witness and debug hints the setup
-    /// ignores (spec §3.4).
+    /// ignores (pilfflonk/docs/README.md#what-the-setup-refuses).
     #[error("{location} has the hint `{name}`, which is neither a prover hint nor a witness or debug hint")]
     UnknownHint { name: String, location: String },
 
     /// Columns of stage 2 or above that no `gsum_col` or `gprod_col` produces: the prover computes
-    /// those stages from the hints alone (spec §4.2.1).
+    /// those stages from the hints alone (pilfflonk/docs/README.md#what-the-setup-refuses).
     #[error(
         "air {air} has {n_columns} columns of stage {stage} that no hint pilfflonk supports (gsum_col, gprod_col) \
          produces"
@@ -99,16 +106,18 @@ pub enum SetupError {
     #[error("{location} is {value}, which is not below r")]
     ConstantNotBelowR { location: String, value: String },
 
-    /// Two columns that the proof and the layout would name alike (spec A.6), with the im pols and
-    /// the columns that share a name and have no indices already indexed (`crate::air_info`): two
-    /// arrays of the same name, or a column named as the setup names another.
+    /// Two columns that the proof and the layout would name alike, with the im pols and the columns
+    /// that share a name and have no indices already indexed (`crate::air_info`): two arrays of the
+    /// same name, or a column named as the setup names another.
     #[error(
         "air {air}: {first} and {second} are both named {name}, and the proof names each evaluation by its column \
-         (spec A.6); the setup only indexes the im pols and the columns that share a name and have no indices"
+         (pilfflonk/docs/formats.md#proof-names); the setup only indexes the im pols and the columns that share a \
+         name and have no indices"
     )]
     ColumnName { air: String, name: String, first: String, second: String },
 
-    /// The extended domain does not fit in the 2-adicity of BN254 (spec A.1).
+    /// The extended domain does not fit in the 2-adicity of BN254
+    /// (pilfflonk/docs/protocol.md#degrees).
     #[error("the extended domain has 2^{n_bits_ext} points, and BN254's roots of unity allow at most 2^28")]
     ExtendedDomain { n_bits_ext: u64 },
 
@@ -124,7 +133,7 @@ pub enum SetupError {
     #[error("invalid pilout: {0}")]
     InvalidPilout(String),
 
-    // --- What the passes decide (spec §4.2.2, §4.2.3) ----------------------------------------
+    // --- What the passes decide (pilfflonk/docs/protocol.md#degree-search) ----------------------
     /// The symbolic passes refused the AIR: a pilout that refers to nothing, or constraints they
     /// cannot process.
     #[error("the symbolic passes (pil-info) failed: {0}")]
@@ -145,17 +154,21 @@ pub enum SetupError {
     #[error("the symbolic passes (pil-info) returned what pilfflonk cannot use: {0}")]
     PassesOutput(String),
 
-    /// The constraints' degree in the columns is 0: `qDeg` (A.1) would be negative.
-    #[error("the constraints give qDeg = {0}: some constraint must depend on a column (spec A.1)")]
+    /// The constraints' degree in the columns is 0: `qDeg` would be negative.
+    #[error(
+        "the constraints give qDeg = {0}: some constraint must depend on a column \
+         (pilfflonk/docs/protocol.md#degree-search)"
+    )]
     QDegree(i64),
 
-    // --- What the setup refuses in its arguments (spec §4.2) ----------------------------------
-    #[error("--max-constraint-degree {0}: the degree search starts at 2 (spec A.1, D5)")]
+    // --- What the setup refuses in its arguments (pilfflonk/docs/README.md#setup-pilfflonk) -----
+    #[error("--max-constraint-degree {0}: the degree search starts at 2 (pilfflonk/docs/protocol.md#degree-search)")]
     MaxConstraintDegree(u64),
 
-    /// The grouping of the committed polynomials in `f_i` (spec §4.2.4, A.2) refused them with
-    /// this `--extra-muls`: too many, a search too large, or no valid partition. Its messages say
-    /// which, and what `--extra-muls` would do.
+    /// The grouping of the committed polynomials in `f_i`
+    /// (pilfflonk/docs/protocol.md#grouping-rules) refused them with this `--extra-muls`: too many,
+    /// a search too large, or no valid partition (pilfflonk/docs/protocol.md#grouping-errors). Its
+    /// messages say which, and what `--extra-muls` would do.
     #[error(transparent)]
     Grouping(#[from] GroupingError),
 
@@ -186,8 +199,8 @@ pub enum SetupError {
     #[error(transparent)]
     Pilfflonk(#[from] PilfflonkError),
 
-    /// The Solidity verifier (spec §4.5, Fase 4) cannot be generated from the vkey: one the JS
-    /// verifier accepts no proof of, or a template that does not render.
+    /// The Solidity verifier (pilfflonk/docs/verifier.md#solidity-verifier) cannot be generated
+    /// from the vkey: one the JS verifier accepts no proof of, or a template that does not render.
     #[error("cannot generate the Solidity verifier: {0}")]
     Solidity(String),
 

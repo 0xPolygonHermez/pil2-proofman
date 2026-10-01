@@ -1,7 +1,8 @@
-//! `<air>.bin`: the prover bytecode over `Fr` (spec §4.2.5, A.6). It is the code the prover runs
-//! to compute the intermediate polynomials and `Q` (§4.4), the prover hints that compute the
-//! columns of stage 2 and above (plans M30, M31), and the code `pilfflonk check` runs to say which
-//! constraint fails on which row. [`write_air_bin`] writes it from what
+//! `<air>.bin`: the prover bytecode over `Fr` (pilfflonk/docs/formats.md#bytecode). It is the code
+//! the prover runs to compute the intermediate polynomials and `Q`
+//! (pilfflonk/docs/protocol.md#prover), the prover hints that compute the columns of stage 2 and
+//! above (pilfflonk/docs/protocol.md#hint-columns), and the code `pilfflonk check` runs to say
+//! which constraint fails on which row. [`write_air_bin`] writes it from what
 //! `pil_info::run(…, &PilInfoCfg::bn254(), …)` returns, and [`Bytecode::read`] reads it back.
 //!
 //! # Format, revision 3
@@ -21,7 +22,7 @@
 //! - **A copy is written as `add(a, 0)`.** The STARK writes a copy as an add without its second
 //!   operand, three args short, and its interpreter, which reads 8 args per op, cannot run that.
 //!
-//! Revision 2 had no hints: its section 3 was `nHints = 0`. Revision 3 writes them (plan M30).
+//! Revision 2 had no hints: its section 3 was `nHints = 0`. Revision 3 writes them.
 //!
 //! Every integer is little-endian. The container is the STARK's `"chps"` binfile, written with
 //! `pil-info`'s `BinFileWriter`, with the STARK's three sections:
@@ -92,9 +93,10 @@
 //! **Section 3, hints.** The prover hints the setup supports, `im_col`, `gprod_col` and `gsum_col`
 //! (`crate::validate::SUPPORTED_PROVER_HINTS`), in the pilout's order, as `pil-info` processes
 //! them (`addHintsInfo`) and the STARK's `write_hints_section` writes them. The witness and debug
-//! hints are not the prover's, and the setup ignores them (§4.2.1): they are not written. The
-//! prover looks the hints up by name, so `im_col` (plan M31) needed no new revision: a revision-3
-//! reader that did not compute it refused a key with it, and the setup did not write one.
+//! hints are not the prover's, and the setup ignores them
+//! (pilfflonk/docs/README.md#what-the-setup-refuses): they are not written. The prover looks the
+//! hints up by name, so `im_col` needed no new revision: a revision-3 reader that did not compute
+//! it refused a key with it, and the setup did not write one.
 //!
 //! ```text
 //! nHints u32
@@ -106,7 +108,7 @@
 //!     nValues  u32    one, or the elements of an array field, each with its position
 //!     nValues × {
 //!       op     string one of the STARK's: cm const tmp number string public challenge
-//!                     airvalue airgroupvalue proofvalue (no custom, P5)
+//!                     airvalue airgroupvalue proofvalue (no custom)
 //!       number: 32 bytes, a canonical Fr, little-endian; string: string; the others: id u32
 //!       rowOffsetIndex u32   cm and const only: the index of its row offset in openingPoints
 //!       nPos   u32, pos u32 × nPos   its position in the field's array; none for a single value
@@ -136,8 +138,9 @@
 //!   sub_swap. `rank(a) ≤ rank(b)` therefore always holds.
 //!
 //! **Operands**, `(type, arg1, arg2)`. The type is the index of the STARK's buffer. It depends on
-//! `nStages`, and pilfflonk has no custom commits (P5), so the tmp buffer is `bs = nStages + 4`.
-//! Where the STARK multiplies an index by 3, the dimension, here it is the index itself.
+//! `nStages`, and pilfflonk has no custom commits (pilfflonk/docs/README.md#scope), so the tmp
+//! buffer is `bs = nStages + 4`. Where the STARK multiplies an index by 3, the dimension, here it
+//! is the index itself.
 //!
 //! | type | operand | arg1 | arg2 |
 //! |---|---|---|---|
@@ -164,19 +167,22 @@
 //! `pilout.globalInfo.json`, which keep `pil-info`'s. Only the code `Q` runs has `Zi` operands. An
 //! evaluation belongs to code evaluated at `ξ`, as the `qVerifier` is, in its JSON. This file holds
 //! the prover's code and has none, but the format can carry that code for the interpreter's verifier
-//! mode (M17).
+//! mode.
 //!
 //! **Semantics.**
 //!
-//! - **Domains.** As in the STARK, `Q`'s code (`cExpId`) runs over the extended coset `g·H'` (§4.4),
-//!   point by point. Every other expression, and every constraint, runs over `H`, row by row.
+//! - **Domains.** As in the STARK, `Q`'s code (`cExpId`) runs over the extended coset `g·H'`
+//!   (pilfflonk/docs/protocol.md#extended-coset), point by point. Every other expression, and every
+//!   constraint, runs over `H`, row by row.
 //! - **Row offsets.** On a domain of `M = 2^e·N` points (`e = 0` on `H`), a column at the opening
 //!   point `o = openingPoints[arg2]` is read at point `(i + 2^e·o) mod M`.
 //! - **Zerofiers.** `Zi` of boundary 0 (`everyRow`) is `1/Z_H(X)`. For any other boundary `D` it is
-//!   `Z_H(X)/Z_D(X)`, with `Z_D` as A.1 defines it: for `lastRow` that is `X − ω^(N−1)`, not the
-//!   STARK prover's `X − ω^N` (Annex F.8). `X` is the point of the domain.
+//!   `Z_H(X)/Z_D(X)`, with `Z_D` the zerofier of `D`
+//!   (pilfflonk/docs/protocol.md#constraint-polynomial): for `lastRow` that is `X − ω^(N−1)`, not
+//!   the STARK prover's `X − ω^N` (pilfflonk/docs/README.md#stark-lastrow-zerofier). `X` is the
+//!   point of the domain.
 //! - **Q.** `Q`'s code is `(Horner fold of the constraints) · Zi(everyRow)`, so it already divides
-//!   by `Z_H` (A.1).
+//!   by `Z_H`.
 //!
 //! # From `pil-info`'s code to the file
 //!
@@ -195,14 +201,14 @@
 //!   `PilInfoCfg::goldilocks` result does not fit.
 //! - **Determinism.** The same `PilInfoResult` gives the same bytes.
 //!
-//! # Reading it (M17)
+//! # Reading it
 //!
 //! It is `ExpressionsBin::loadExpressionsBin` without the dimension fields:
 //! - read and check the prefix;
 //! - read args as u32;
 //! - read the numbers as 32-byte elements, converted to Montgomery form once, at load time;
 //! - read the hints as the STARK's, with 32-byte numbers and no `dim`; the prover looks them up by
-//!   name (`getHintIdsByName`) and checks their operands against the pilfflonkinfo (M30).
+//!   name (`getHintIdsByName`) and checks their operands against the pilfflonkinfo.
 //!
 //! The interpreter is `expressions_pack.hpp`'s over `Fr`, with the case of op 0 only: 8 args per
 //! op and the same buffer types. As the STARK's allocation does, the temporaries let an op's `dest`
@@ -244,7 +250,8 @@ const SECTIONS: [u32; N_SECTIONS as usize] = [EXPRESSIONS_SECTION, CONSTRAINTS_S
 /// Args of an op, as in the STARK.
 pub const ARGS_PER_OP: usize = 8;
 
-/// The errors of the bytecode (spec §5.4: `thiserror`, following `common/src/error_manager.rs`).
+/// The errors of the bytecode: `thiserror`, following `common/src/error_manager.rs`
+/// (pilfflonk/docs/README.md#conventions).
 #[derive(Debug, thiserror::Error)]
 pub enum BytecodeError {
     /// `pil-info`'s code has something this format cannot hold.
@@ -600,8 +607,9 @@ impl Bytecode {
     /// The bytecode of the result of `pil_info::run` with `PilInfoCfg::bn254()`.
     ///
     /// Of the hints the passes collected, section 3 has the prover hints the setup supports; the
-    /// witness and debug hints are not the prover's, and the setup ignores them (§4.2.1). Any other
-    /// hint is refused: it is none the prover computes.
+    /// witness and debug hints are not the prover's, and the setup ignores them
+    /// (pilfflonk/docs/README.md#what-the-setup-refuses). Any other hint is refused: it is none the
+    /// prover computes.
     pub fn from_pil_info(result: &PilInfoResult) -> BytecodeResult<Self> {
         if result.fri_exp_id.is_some() {
             return encode_error("a result with a FRI polynomial: pilfflonk opens with SHPLONK (PilInfoCfg::bn254())");
@@ -779,8 +787,9 @@ fn constraint_bin(
 /// copy of the im pol's column at the row. `pil-info` leaves that code empty, since it marks the
 /// im pols' expressions as computed before it generates the constraints' (`gen_code.rs`,
 /// `generate_constraints_debug_code`). It happens to a constraint not on `everyRow` whose
-/// expression the search promotes, because its `Zi` adds 1 to its degree (A.1): `x·x − p` on
-/// `firstRow` with `--max-constraint-degree 2` (plan M24).
+/// expression the search promotes, because its `Zi` adds 1 to its degree
+/// (pilfflonk/docs/protocol.md#degree-search): `x·x − p` on `firstRow` with
+/// `--max-constraint-degree 2` (the `FirstRow` pilout of `pilfflonk/tests/data/domains.rs`).
 fn im_pol_copy(index: usize, result: &PilInfoResult, what: &str) -> BytecodeResult<Vec<CodeEntry>> {
     let setup = &result.setup;
     let e = match setup.constraints.get(index) {

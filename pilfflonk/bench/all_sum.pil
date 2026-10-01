@@ -1,5 +1,5 @@
-// The `all` of tests/fixtures/all/all_sum.pil at N = 2^BENCH_BITS, for the benchmark of plan M39
-// (bench.sh, spec-seed.md Annex H): the fixture's airtemplate, on the std's sum bus in
+// The `all` of tests/fixtures/all/all_sum.pil at N = 2^BENCH_BITS, for the benchmark (bench.sh,
+// pilfflonk/docs/performance.md#cpu): the fixture's airtemplate, on the std's sum bus in
 // STD_MODE_ONE_INSTANCE, with the airgroup taking N from the compiler (the fixture's, 2^8).
 //
 // BENCH_BITS is a define of pil2com: bench.sh compiles with a -P config holding the prime and

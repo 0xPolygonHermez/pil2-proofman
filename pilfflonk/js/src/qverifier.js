@@ -1,23 +1,26 @@
-// Q(ξ) from the evaluations (spec-seed.md §4.5 step 3, A.1): the vkey's qVerifier, the code block of
-// <air>.verifierinfo.json in the STARK's format with every dimension 1 (pil-info's
+// Q(ξ) from the evaluations (pilfflonk/docs/verifier.md#steps, step 5): the vkey's qVerifier, the
+// code block of <air>.verifierinfo.json in the STARK's format with every dimension 1 (pil-info's
 // generate_constraint_polynomial_verifier_code), run over Fr as pil-stark's fflonk verifier runs
 // its verifierCode (src/fflonk/helpers/fflonk_verify.js, executeCode).
 //
 // The code is a list of {op, dest, src}: op one of add, sub (src[0] - src[1]), mul and copy, dest a
-// temporary, and the result the value of the last entry's dest. It is the STARK's fold of A.1,
-// acc = acc·std_vc + c_i·Zi(D_i) over the constraints and then the im pols' im - e, times
-// Zi(everyRow) at the end. The operands it can hold in format version 1:
+// temporary, and the result the value of the last entry's dest. It is the STARK's fold
+// (pilfflonk/docs/protocol.md#constraint-polynomial), acc = acc·std_vc + c_i·Zi(D_i) over the
+// constraints and then the im pols' im - e, times Zi(everyRow) at the end. The operands it can hold
+// in format version 1:
 //   tmp        a temporary the code wrote before
 //   eval       the evaluation of evMap[id] in the proof
 //   public     publics[id]
 //   number     a constant, a decimal string below r
 //   challenge  the challenge of (stage, stageId): stageId-th of stage s ≤ nStages, std_vc for
-//              nStages + 1, xiSeed (std_xi) for nStages + 2 (A.4); its id, the position in the
-//              AIR's challengesMap, must agree
+//              nStages + 1, xiSeed (std_xi) for nStages + 2
+//              (pilfflonk/docs/protocol.md#transcript); its id, the position in the AIR's
+//              challengesMap, must agree
 //   Zi         Zi(boundaries[boundaryId]) at ξ: 1/Z_H(ξ) for everyRow, which is boundary 0, and
-//              Z_H(ξ)/Z_D(ξ) for any other domain D (A.1, A.6)
-// Air values, airgroup values and proof values do not exist in v1 (D2), nor custom commits (P5);
-// xDivXSubXi is FRI's. A vkey whose code has any other op or operand is refused as malformed.
+//              Z_H(ξ)/Z_D(ξ) for any other domain D
+// Air values, airgroup values and proof values do not exist in v1, nor custom commits
+// (pilfflonk/docs/README.md#scope); xDivXSubXi is FRI's. A vkey whose code has any other op or
+// operand is refused as malformed.
 
 import { PilFflonkInputError, decimalFromObject, show } from "./elements.js";
 import { rootOfUnity } from "./shplonk.js";
@@ -34,8 +37,8 @@ function isIndex(v, n) {
 
 // The (stage, stageId) of every challenge of an AIR, in the order of its challengesMap: the
 // numChallenges[s - 1] challenges of each stage s = 2 … nStages, then std_vc (nStages + 1) and
-// std_xi (nStages + 2), each with stageId 0 (A.4). Stage 1 has none: A.4 squeezes no challenge
-// before the first commitments.
+// std_xi (nStages + 2), each with stageId 0 (pilfflonk/docs/protocol.md#transcript). Stage 1 has
+// none: the transcript squeezes no challenge before the first commitments.
 export function challengesMap(numChallenges, nStages) {
     const map = [];
     for (let s = 2; s <= nStages; s++) {
@@ -97,7 +100,7 @@ export function checkQVerifier(curve, qVerifier, shape) {
             case "airvalue":
             case "airgroupvalue":
             case "proofvalue":
-                return fail(`${where}: ${ref.type}s do not exist in format version 1 (D2)`);
+                return fail(`${where}: ${ref.type}s do not exist in format version 1 (pilfflonk/docs/README.md#scope)`);
             default:
                 return fail(`${where}: operand type ${show(ref.type)} is not one of the qVerifier's`);
         }
@@ -120,10 +123,11 @@ export function checkQVerifier(curve, qVerifier, shape) {
     return { tmpUsed, code: checked };
 }
 
-// Zi(D) at ξ for each boundary D (A.1, A.6), N = 2^nBits: 1/Z_H(ξ) for everyRow, and Z_H(ξ)/Z_D(ξ)
-// otherwise, in closed form: Z_H(ξ)/(ξ - 1) for firstRow, Z_H(ξ)/(ξ - ω^(N-1)) for lastRow, and
-// Π_j (ξ - ω^j) over the rows j an everyFrame excludes, the first offsetMin and the last offsetMax.
-// ξ must not be in H: Z_H(ξ) ≠ 0, which also keeps ξ off every other domain.
+// Zi(D) at ξ for each boundary D (pilfflonk/docs/protocol.md#constraint-polynomial), N = 2^nBits:
+// 1/Z_H(ξ) for everyRow, and Z_H(ξ)/Z_D(ξ) otherwise, in closed form: Z_H(ξ)/(ξ - 1) for firstRow,
+// Z_H(ξ)/(ξ - ω^(N-1)) for lastRow, and Π_j (ξ - ω^j) over the rows j an everyFrame excludes, the
+// first offsetMin and the last offsetMax. ξ must not be in H: Z_H(ξ) ≠ 0, which also keeps ξ off
+// every other domain.
 export function computeZi(curve, boundaries, nBits, xi) {
     const Fr = curve.Fr;
     const N = 2 ** nBits;
@@ -148,7 +152,9 @@ export function computeZi(curve, boundaries, nBits, xi) {
                 return zi;
             }
             default:
-                throw new PilFflonkInputError(`boundary ${show(b.name)} is not one of A.1's domains`);
+                throw new PilFflonkInputError(
+                    `boundary ${show(b.name)} is not a domain (pilfflonk/docs/protocol.md#constraint-polynomial)`,
+                );
         }
     });
 }
@@ -199,7 +205,8 @@ export function executeCode(curve, code, ctx) {
     return tmp[code[code.length - 1].dest];
 }
 
-// Σ_i ξ^(i·M·N)·Q_i(ξ): Q(ξ) from the pieces of a split Q, M = maxQDegree (A.1).
+// Σ_i ξ^(i·M·N)·Q_i(ξ): Q(ξ) from the pieces of a split Q, M = maxQDegree
+// (pilfflonk/docs/protocol.md#q-pieces).
 export function joinQPieces(curve, pieces, xi, nBits, maxQDegree) {
     const Fr = curve.Fr;
     const shift = Fr.exp(xi, BigInt(maxQDegree) * (1n << BigInt(nBits)));

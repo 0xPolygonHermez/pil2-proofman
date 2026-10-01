@@ -45,7 +45,8 @@ std::vector<FrElement> excludedRoots(uint64_t nBits, const Boundary &b) {
     return roots;
 }
 
-// The root a one-row boundary excludes: ω^0 for firstRow, ω^(N−1) for lastRow (A.1).
+// The root a one-row boundary excludes: ω^0 for firstRow, ω^(N−1) for lastRow
+// (pilfflonk/docs/protocol.md#constraint-polynomial).
 FrElement oneRowRoot(uint64_t nBits, BoundaryType type) {
     const uint64_t n = uint64_t(1) << nBits;
     return type == BoundaryType::FirstRow ? Engine::engine.fr.one() : power(rootOfUnity(nBits), n - 1);

@@ -1,4 +1,4 @@
-//! The calldata of the Solidity verifier (spec §4.5, "Calldata"; plan M41): the arguments of its
+//! The calldata of the Solidity verifier (pilfflonk/docs/formats.md#calldata): the arguments of its
 //! `verifyProof` for a proof, which `proofman-cli pilfflonk calldata` prints as snarkjs's `zkey
 //! export soliditycalldata` prints those of its FFLONK verifier.
 //!
@@ -6,18 +6,21 @@
 //! `solidity.rs`) has the interface of snarkjs's `FflonkVerifier`,
 //! `verifyProof(bytes32[W] calldata proof, uint256[P] calldata pubSignals)`, with `P = nPublic` (no
 //! `pubSignals` if it is 0) and `W` the words of [`CalldataLayout`]:
-//! - the proof's bytes (A.6, [`Proof::to_bytes`]) as 32-byte words: the commitments of the
-//!   non-fixed `f`, `W`, `W'`, the evaluations, the `Q_i(ξ)` if `Q` is split, `inv` and `invZh`;
+//! - the proof's bytes ([`Proof::to_bytes`], pilfflonk/docs/formats.md#proof) as 32-byte words: the
+//!   commitments of the non-fixed `f`, `W`, `W'`, the evaluations, the `Q_i(ξ)` if `Q` is split,
+//!   `inv` and `invZh`;
 //! - one auxiliary inverse `1/(ξ − ω^j)` per `firstRow` (`j = 0`) or `lastRow` (`j = N − 1`)
 //!   boundary, in the order of the boundaries. The `Zi` of those boundaries is `Z_H(ξ)/(ξ − ω^j)`
-//!   (A.1), the only division of the verifier that neither `inv` nor `invZh` covers; the contract
-//!   checks `(ξ − ω^j)·aux = 1` and `aux < r`, so that a proof has one calldata. They are of the
-//!   calldata only: the proof's format does not change, and a vkey without those boundaries, as
-//!   that of every compiled PIL2 program (§3.4), has none.
+//!   (pilfflonk/docs/protocol.md#constraint-polynomial), the only division of the verifier that
+//!   neither `inv` nor `invZh` covers; the contract checks `(ξ − ω^j)·aux = 1` and `aux < r`, so
+//!   that a proof has one calldata. They are of the calldata only: the proof's format does not
+//!   change, and a vkey without those boundaries, as that of every compiled PIL2 program (the
+//!   compiler emits only `everyRow`), has none.
 //!
-//! `ξ = xiSeed^powerW`, and `xiSeed` is the transcript's (A.4): [`verifier_challenges`] replays the
-//! transcript on the proof as the verifier does (`pilfflonk/js/src/challenges.js`,
-//! `computeChallenges`), with the transcript of the C++ core, the prover's.
+//! `ξ = xiSeed^powerW`, and `xiSeed` is the transcript's (pilfflonk/docs/protocol.md#transcript):
+//! [`verifier_challenges`] replays the transcript on the proof as the verifier does
+//! (`pilfflonk/js/src/challenges.js`, `computeChallenges`), with the transcript of the C++ core,
+//! the prover's.
 //!
 //! [`Calldata::read`] takes the files `pilfflonk verify` takes, and [`Calldata::encode`] their
 //! values; [`Calldata::to_solidity`] and [`Calldata::to_hex`] write the result.
@@ -47,8 +50,8 @@ pub const SELECTOR_BYTES: usize = 4;
 pub struct CalldataLayout {
     /// The commitments of the non-fixed `f_i`, `x` and `y` each a word, from word 0.
     pub n_commitments: u64,
-    /// The evaluations of the evMap, in the order of the proof: the fixed columns' first (A.4,
-    /// step 4; A.6).
+    /// The evaluations of the evMap, in the order of the proof: the fixed columns' first
+    /// (pilfflonk/docs/formats.md#proof).
     pub n_evaluations: u64,
     /// The pieces `Q_i(ξ)` of a split `Q`, and 0 if it is whole.
     pub n_q_pieces: u64,
@@ -80,8 +83,9 @@ impl CalldataLayout {
         }
     }
 
-    /// The words of the proof's bytes (A.6): the commitments, `W`, `W'`, the evaluations, the
-    /// pieces of `Q`, `inv` and `invZh`. Format version 1 has no air, airgroup or proof values.
+    /// The words of the proof's bytes (pilfflonk/docs/formats.md#calldata): the commitments, `W`,
+    /// `W'`, the evaluations, the pieces of `Q`, `inv` and `invZh`. Format version 1 has no air,
+    /// airgroup or proof values.
     pub fn proof_words(&self) -> u64 {
         2 * (self.n_commitments + 2) + self.n_evaluations + self.n_q_pieces + 2
     }
@@ -97,16 +101,16 @@ impl CalldataLayout {
     }
 }
 
-/// The challenges of a proof as the verifier replays them (A.4; `challenges.js`,
-/// `computeChallenges`). Those the prover also gives ([`ProofChallenges`](crate::ProofChallenges))
-/// are the same for its proofs.
+/// The challenges of a proof as the verifier replays them (pilfflonk/docs/protocol.md#transcript;
+/// `challenges.js`, `computeChallenges`). Those the prover also gives
+/// ([`ProofChallenges`](crate::ProofChallenges)) are the same for its proofs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifierChallenges {
     /// `stages[s - 2]`: the challenges of stage `s`, for `2 ≤ s ≤ nStages`.
     pub stages: Vec<Vec<FrBytes>>,
     pub std_vc: FrBytes,
     pub xi_seed: FrBytes,
-    /// SHPLONK's `α_S` and `y` (A.5).
+    /// SHPLONK's `α_S` and `y` (pilfflonk/docs/protocol.md#shplonk-opening).
     pub alpha: FrBytes,
     pub y: FrBytes,
 }
@@ -125,16 +129,17 @@ fn check_shape(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> PilfflonkResu
 }
 
 /// Absorbs `point`, the value `name` of the proof. The transcript refuses a point that is not on
-/// the curve, the point at infinity and a point with a coordinate below 2^192 (A.4), as the JS
-/// verifier's does: then the verifier rejects the proof, and its challenges cannot be replayed.
+/// the curve, the point at infinity and a point with a coordinate below 2^192
+/// (pilfflonk/docs/protocol.md#transcript), as the JS verifier's does: then the verifier rejects
+/// the proof, and its challenges cannot be replayed.
 fn absorb_point(transcript: &mut Transcript, point: &G1Affine, name: &str) -> PilfflonkResult<()> {
     transcript.points(std::slice::from_ref(point)).map_err(|e| match e {
         PilfflonkError::Native { source, .. }
             if matches!(source.kind, PilFflonkErrorKind::InvalidPoint | PilFflonkErrorKind::NonCanonical) =>
         {
             PilfflonkError::InvalidFormat(format!(
-                "{name} of the proof is not a point the transcript absorbs (A.4), so its challenges cannot be \
-                 replayed and the verifier rejects it: {}",
+                "{name} of the proof is not a point the transcript absorbs (pilfflonk/docs/protocol.md#transcript), \
+                 so its challenges cannot be replayed and the verifier rejects it: {}",
                 source.message
             ))
         }
@@ -146,14 +151,15 @@ fn absorb_point(transcript: &mut Transcript, point: &G1Affine, name: &str) -> Pi
 /// [`VerifierChallenges`]):
 ///
 /// 1. absorb `digest mod r`, the number of instances of the AIR (1) and the publics;
-/// 2. for each stage `s = 1 … nStages`: absorb the commitments of its `f`, in the global order of
-///    A.5, and, if `s < nStages`, squeeze the `numChallenges[s]` challenges of stage `s + 1`;
+/// 2. for each stage `s = 1 … nStages`: absorb the commitments of its `f`, in the global order
+///    (pilfflonk/docs/protocol.md#global-order), and, if `s < nStages`, squeeze the
+///    `numChallenges[s]` challenges of stage `s + 1`;
 /// 3. squeeze `std_vc`; absorb the commitments of `Q`; squeeze `xiSeed`;
 /// 4. absorb the evaluations and the pieces of `Q`, in the order of the proof; squeeze `α_S`;
 /// 5. absorb `[W]₁`; squeeze `y`.
 ///
 /// Refuses a proof or publics not of the vkey's shape, and a proof with a point the transcript
-/// refuses (A.4: off the curve, the point at infinity, or with a coordinate below 2^192), which it
+/// refuses (off the curve, the point at infinity, or with a coordinate below 2^192), which it
 /// names.
 pub fn verifier_challenges(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> PilfflonkResult<VerifierChallenges> {
     check_shape(vkey, proof, publics)?;
@@ -256,8 +262,8 @@ impl Calldata {
     /// The calldata of `proof` and `publics`, a proof of `vkey`: the proof's bytes and the
     /// auxiliary inverses of its own `ξ` ([`verifier_challenges`], [`auxiliary_inverses`]), and the
     /// publics. Refuses a proof or publics not of the vkey's shape, a proof whose transcript cannot
-    /// be replayed (a point the transcript refuses, A.4) and, if the calldata has auxiliary inverses,
-    /// a `ξ` that is a row of the domain: the verifier rejects each.
+    /// be replayed (a point the transcript refuses) and, if the calldata has auxiliary inverses, a
+    /// `ξ` that is a row of the domain: the verifier rejects each.
     pub fn encode(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> PilfflonkResult<Self> {
         let challenges = verifier_challenges(vkey, proof, publics)?;
         let aux = auxiliary_inverses(vkey, &challenges.xi_seed)?;

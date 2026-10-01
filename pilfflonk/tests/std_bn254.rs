@@ -1,6 +1,7 @@
-//! The std over BN254 (plan M29, spec §4.1): the constants of `pil2-components/lib/std/pil/bn254.pil`
-//! checked numerically, and `tests/fixtures/std_bn254/connection.pil` compiled over BN254 and over
-//! Goldilocks, whose pilouts must carry the roots of unity and the coset generator of that field.
+//! The std over BN254 (pilfflonk/docs/README.md#compile-pil): the constants of
+//! `pil2-components/lib/std/pil/bn254.pil` checked numerically, and
+//! `tests/fixtures/std_bn254/connection.pil` compiled over BN254 and over Goldilocks, whose pilouts
+//! must carry the roots of unity and the coset generator of that field.
 //!
 //! The `#[ignore]` tests compile the fixture with the compiler `PIL2C_EXEC` names, which must honour
 //! `prime` (the pinned one silently compiles over Goldilocks):

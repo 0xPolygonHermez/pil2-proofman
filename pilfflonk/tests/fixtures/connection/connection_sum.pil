@@ -1,11 +1,11 @@
-// The Connection of connection.pil on the std's sum bus (LogUp), in STD_MODE_ONE_INSTANCE (plan
-// M34), with the std's default MAX_CONSTRAINT_DEGREE (3).
+// The Connection of connection.pil on the std's sum bus (LogUp), in STD_MODE_ONE_INSTANCE, with the
+// std's default MAX_CONSTRAINT_DEGREE (3).
 //
 // The connection puts six terms on the bus, and its sum bus (std_sum.pil, piop_gsum_air) takes five
 // of them in three im_col columns, two `im_cluster` of two terms each and an `im_single`, declared
 // in a loop under those names. The setup names the two `im_cluster` by their order in the pilout,
-// `im_cluster[0]` and `im_cluster[1]`, so that the proof names their evaluations apart (spec A.6,
-// Annex F.12, plan M34b).
+// `im_cluster[0]` and `im_cluster[1]`, so that the proof names their evaluations apart
+// (pilfflonk/docs/README.md#std-sum-bus-names).
 require "connection.pil"
 
 set_std_mode(STD_MODE_ONE_INSTANCE);

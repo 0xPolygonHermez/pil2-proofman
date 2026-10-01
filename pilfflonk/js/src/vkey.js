@@ -1,21 +1,24 @@
-// pilfflonk.vkey.json (spec-seed.md A.6, §4.5 step 1): read and checked as snarkjs' fflonk verifier
-// reads its verification key (src/fflonk_verify.js, fromObjectVk), and its digest.
+// pilfflonk.vkey.json (pilfflonk/docs/formats.md#vkey): read and checked as snarkjs' fflonk
+// verifier reads its verification key (src/fflonk_verify.js, fromObjectVk), and its digest, in
+// steps 1-3 of the verifier (pilfflonk/docs/verifier.md#steps).
 //
-// The format is pilfflonk/src/vkey.rs's (M12), format version 1, for one AIR (D2):
+// The format is pilfflonk/src/vkey.rs's, format version 1, for one AIR:
 //   protocol "pilfflonk", curve "bn128", formatVersion 1, nPublic, power (nBits), powerW,
 //   X_2 ([τ]₂ as [[x.c0, x.c1], [y.c0, y.c1]]), numChallenges, evMap, layout, boundaries,
 //   f0 … f<n-1> (the fixed commitments, [x, y]), qDeg, maxQDegree, qVerifier, digest.
 // A vkey is accepted only if the Rust side would read it (Vkey::validate, Layout::check), with the
 // checks of snarkjs' steps 1-3 on its points (elements.js) and those the verifier needs to run:
-//   - numChallenges has one entry per stage, and stage 1 none: A.4 squeezes no challenge before
-//     the commitments of stage 1;
-//   - boundaries[0] is everyRow, the Zi that A.6 makes 1/Z_H, and an everyFrame leaves a row;
+//   - numChallenges has one entry per stage, and stage 1 none: the transcript squeezes no challenge
+//     before the commitments of stage 1 (pilfflonk/docs/protocol.md#transcript);
+//   - boundaries[0] is everyRow, whose Zi is 1/Z_H
+//     (pilfflonk/docs/protocol.md#constraint-polynomial), and an everyFrame leaves a row;
 //   - the qVerifier is code the verifier can run (qverifier.js);
 //   - the names of the evaluations (names.js) do not collide;
 //   - maxQDegree is 0 unless it splits Q (layout.rs, split_max_q_degree), and split, the pieces of Q
 //     in the layout are Q0 … Q<m-1>.
-// The digest (A.6) is keccak256("pilfflonk-v1" ‖ canonical(vkey without digest)), json.js the
-// canonical JSON. Anything else is a PilFflonkInputError naming what is wrong.
+// The digest (pilfflonk/docs/formats.md#digest) is keccak256("pilfflonk-v1" ‖ canonical(vkey
+// without digest)), json.js the canonical JSON. Anything else is a PilFflonkInputError naming what
+// is wrong.
 
 import { keccak_256 } from "@noble/hashes/sha3";
 import { bytesToHex } from "@noble/hashes/utils";
@@ -102,7 +105,7 @@ function coordinates(value, shape, what) {
 }
 
 // keccak256("pilfflonk-v1" ‖ canonical(vkey without digest)), as "0x" and 64 lowercase
-// hexadecimal digits, of the vkey as JSON.parse returns it (A.6).
+// hexadecimal digits, of the vkey as JSON.parse returns it (pilfflonk/docs/formats.md#digest).
 export function vkeyDigest(vkObject) {
     if (!isPlainObject(vkObject)) fail("not an object");
     const { digest: _digest, ...rest } = vkObject;
@@ -111,7 +114,7 @@ export function vkeyDigest(vkObject) {
 }
 
 // The number of pieces Q is split into (layout.rs, q_pieces): ⌈qDeg / maxQDegree⌉ if maxQDegree > 0
-// and qDeg > maxQDegree, and 1 otherwise, Q whole (A.1).
+// and qDeg > maxQDegree, and 1 otherwise, Q whole (pilfflonk/docs/protocol.md#q-pieces).
 export function qPieces(qDeg, maxQDegree) {
     return maxQDegree > 0 && qDeg > maxQDegree ? Math.ceil(qDeg / maxQDegree) : 1;
 }
@@ -127,7 +130,9 @@ function readBoundary(b, i) {
             offsetMax: count(b.offsetMax, `${what}.offsetMax`),
         };
     }
-    if (!["everyRow", "firstRow", "lastRow"].includes(b.name)) fail(`${what} is ${show(b.name)}, not a domain of A.1`);
+    if (!["everyRow", "firstRow", "lastRow"].includes(b.name)) {
+        fail(`${what} is ${show(b.name)}, not a domain (pilfflonk/docs/protocol.md#constraint-polynomial)`);
+    }
     checkKeys(b, ["name"], what);
     return { name: b.name };
 }
@@ -144,7 +149,9 @@ function checkLayoutOf(curve, vk) {
     const packed = new Map();
     const opened = new Set();
     layout.forEach((f, i) => {
-        if (f.stage < previous) fail(`f${i} is of stage ${f.stage} after one of stage ${previous} (A.5)`);
+        if (f.stage < previous) {
+            fail(`f${i} is of stage ${f.stage} after one of stage ${previous} (pilfflonk/docs/protocol.md#layout)`);
+        }
         previous = f.stage;
         if (f.pols.length === 0 || f.k !== f.pols.length) fail(`f${i} has k = ${f.k} and ${f.pols.length} polynomials`);
         if (f.offsets.length === 0 || f.offsets.some((s, j) => j > 0 && f.offsets[j - 1] >= s)) {
@@ -195,14 +202,16 @@ function checkLayoutOf(curve, vk) {
 //   layout        [{stage, pols: [{id, name}], k, offsets, degree}], f_i at position i
 //   boundaries    [{name, offsetMin?, offsetMax?}]
 //   fixedCommitments  [f_i]₁ of the fixed f_i, the first of the layout
-//   commitmentNames   the proof's names of the other f_i, in the global order of A.5
-//   evaluationOrder   the evMap indices in the order of the proof and of A.4 step 4: the fixed
-//                     columns', then the others', each in the order of the evMap
+//   commitmentNames   the proof's names of the other f_i, in the global order
+//                     (pilfflonk/docs/protocol.md#global-order)
+//   evaluationOrder   the evMap indices in the order of the proof and of the transcript
+//                     (pilfflonk/docs/protocol.md#transcript, step 4): the fixed columns', then the
+//                     others', each in the order of the evMap
 //   qPieceNames       the names of the pieces Q_i(ξ) of a split Q in the order of the proof, and
 //                     [] otherwise
 //   qVerifier     {tmpUsed, code}, checked (qverifier.js)
 //   challenges    the (stage, stageId) of each challenge, in challengesMap order
-//   digest        the hexadecimal string; digestFr, digest mod r (A.4, A.6)
+//   digest        the hexadecimal string; digestFr, digest mod r (pilfflonk/docs/formats.md#digest)
 export function fromObjectVk(curve, vkObject) {
     if (!isPlainObject(vkObject)) fail("not an object");
     const extra = Object.keys(vkObject).filter((k) => !FIELDS.includes(k) && !FIXED_KEY.test(k));
@@ -227,7 +236,10 @@ export function fromObjectVk(curve, vkObject) {
     vk.N = 2 ** vk.power;
     vk.qPieces = qPieces(vk.qDeg, vk.maxQDegree);
     if (vk.maxQDegree > 0 && vk.qPieces === 1) {
-        fail(`maxQDegree is ${vk.maxQDegree} and qDeg ${vk.qDeg}: Q is not split, and then maxQDegree is 0 (A.1)`);
+        fail(
+            `maxQDegree is ${vk.maxQDegree} and qDeg ${vk.qDeg}: Q is not split, and then maxQDegree is 0 ` +
+                "(pilfflonk/docs/protocol.md#q-pieces)",
+        );
     }
 
     const X2 = coordinates(
@@ -276,12 +288,14 @@ export function fromObjectVk(curve, vkObject) {
     if (vk.numChallenges.length !== vk.nStages) {
         fail(`numChallenges has ${vk.numChallenges.length} stages, and the layout ${vk.nStages}`);
     }
-    if (vk.numChallenges[0] !== 0) fail("stage 1 has challenges, which A.4 never squeezes");
+    if (vk.numChallenges[0] !== 0) {
+        fail("stage 1 has challenges, which the transcript never squeezes (pilfflonk/docs/protocol.md#transcript)");
+    }
     vk.challenges = challengesMap(vk.numChallenges, vk.nStages);
 
     vk.boundaries = array(vkObject.boundaries, "boundaries").map(readBoundary);
     if (vk.boundaries.length === 0 || vk.boundaries[0].name !== "everyRow") {
-        fail("boundaries[0] is not everyRow, whose Zi is 1/Z_H (A.6)");
+        fail("boundaries[0] is not everyRow, whose Zi is 1/Z_H (pilfflonk/docs/protocol.md#constraint-polynomial)");
     }
     vk.boundaries.forEach((b, i) => {
         const same = (c) => c.name === b.name && c.offsetMin === b.offsetMin && c.offsetMax === b.offsetMax;
@@ -305,7 +319,8 @@ export function fromObjectVk(curve, vkObject) {
     });
     vk.commitmentNames = vk.layout.slice(nFixed).map((_, i) => commitmentName(nFixed + i));
 
-    // The evaluations' names in the proof (names.js), and their order in it: A.4 step 4.
+    // The evaluations' names in the proof (names.js), and their order in it
+    // (pilfflonk/docs/protocol.md#transcript, step 4).
     vk.evMap.forEach((e) => {
         e.name = evaluationName(packed.get(`${e.type} ${e.id}`), e.prime);
     });
@@ -335,8 +350,9 @@ export function fromObjectVk(curve, vkObject) {
 }
 
 // The names of the pieces of a split Q, in the order of the proof: the polynomials of Q's f in the
-// order of the layout, as ProofNames lists them (proof.rs). A.6 names the pieces Q0 … Q<m-1>, and
-// piece i, the one multiplied by ξ^(i·M·N) (A.1), is the one named Q<i> (qPieceIndex).
+// order of the layout, as ProofNames lists them (proof.rs). The pieces are named Q0 … Q<m-1>
+// (pilfflonk/docs/formats.md#proof-names), and piece i, the one multiplied by ξ^(i·M·N)
+// (pilfflonk/docs/protocol.md#q-pieces), is the one named Q<i> (qPieceIndex).
 function qPieceNames(vk) {
     const names = vk.layout.filter((f) => f.stage === vk.qStage).flatMap((f) => f.pols.map((p) => p.name));
     const expected = Array.from({ length: vk.qPieces }, (_, i) => `Q${i}`);

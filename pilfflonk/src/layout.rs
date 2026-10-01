@@ -1,5 +1,5 @@
-//! The layout of an AIR: its list of `f_i` (spec §4.2.4, A.2), as `<air>.pilfflonkinfo.json` and
-//! the vkey hold it.
+//! The layout of an AIR: its list of `f_i` (pilfflonk/docs/protocol.md#layout), as
+//! `<air>.pilfflonkinfo.json` and the vkey hold it.
 
 use std::collections::BTreeSet;
 
@@ -13,13 +13,13 @@ use crate::names::{column_name, q_piece_name};
 use crate::pilfflonk_info::{EvMapEntry, PolMapEntry, PolType};
 
 /// The `f_i` of an AIR, in order: by ascending stage, the fixed ones (stage 0) first, and `Q`'s
-/// last (stage `nStages + 1`). This is the order within the AIR of the global order of A.5, and
-/// `f_i` is the entry at position `i`.
+/// last (stage `nStages + 1`). This is the order within the AIR of the global order
+/// (pilfflonk/docs/protocol.md#global-order), and `f_i` is the entry at position `i`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Layout(pub Vec<LayoutEntry>);
 
-/// One `f_i(X) = Σ_{j<k} p_j(X^k)·X^j` (A.2, rule 4).
+/// One `f_i(X) = Σ_{j<k} p_j(X^k)·X^j` (pilfflonk/docs/protocol.md#grouping-rules, rule 4).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LayoutEntry {
@@ -27,14 +27,15 @@ pub struct LayoutEntry {
     pub stage: u64,
     /// `p_0 … p_{k-1}`, in the order of the sum: `pols[j]` is multiplied by `X^j`.
     pub pols: Vec<LayoutPol>,
-    /// The number of polynomials packed, `pols.len()`. `k·N` divides `r - 1` (A.2, rule 3).
+    /// The number of polynomials packed, `pols.len()`. `k·N` divides `r - 1`
+    /// (pilfflonk/docs/protocol.md#grouping-rules, rule 3).
     pub k: u64,
     /// The opening set `O`: `f_i` is opened at the `k` roots of `ξ·ω^s` for each `s`, in
-    /// increasing order. Signed (A.2, rule 5).
+    /// increasing order. Signed (pilfflonk/docs/protocol.md#roots).
     pub offsets: Vec<i64>,
-    /// The bound on the number of coefficients of `f_i`: the cost of A.2's rule 3,
-    /// `max_j(deg_j·k + j)` with each `deg_j` the bound of `p_j` in coefficients (A.2). The SRS
-    /// must hold at least this many powers `[τ^i]₁`.
+    /// The bound on the number of coefficients of `f_i`: the cost of the grouping's rule 3,
+    /// `max_j(deg_j·k + j)` with each `deg_j` the bound of `p_j` in coefficients
+    /// (pilfflonk/docs/protocol.md#degrees). The SRS must hold at least this many powers `[τ^i]₁`.
     pub degree: u64,
 }
 
@@ -54,7 +55,7 @@ pub(crate) struct LayoutCheck<'a> {
     pub n_bits: u64,
     /// `nStages + 1`: the stage of `Q`.
     pub q_stage: u64,
-    /// The polynomials `Q` is made of: 1, or its pieces if it is split (A.1).
+    /// The polynomials `Q` is made of: 1, or its pieces if it is split.
     pub q_pieces: u64,
     pub ev_map: &'a [EvMapEntry],
     /// `constPolsMap` and `cmPolsMap`, when the file has them (the pilfflonkinfo; the vkey does
@@ -62,8 +63,8 @@ pub(crate) struct LayoutCheck<'a> {
     pub pol_maps: Option<(&'a [PolMapEntry], &'a [PolMapEntry])>,
 }
 
-/// The number of pieces `Q` is split into (A.1): `⌈qDeg / maxQDegree⌉` if `maxQDegree > 0` and
-/// `qDeg > maxQDegree`, and otherwise 1: `Q` whole.
+/// The number of pieces `Q` is split into (pilfflonk/docs/protocol.md#q-pieces):
+/// `⌈qDeg / maxQDegree⌉` if `maxQDegree > 0` and `qDeg > maxQDegree`, and otherwise 1: `Q` whole.
 pub fn q_pieces(q_deg: u64, max_q_degree: u64) -> u64 {
     if max_q_degree > 0 && q_deg > max_q_degree {
         q_deg.div_ceil(max_q_degree)
@@ -73,9 +74,10 @@ pub fn q_pieces(q_deg: u64, max_q_degree: u64) -> u64 {
 }
 
 /// The `maxQDegree` a pilfflonkinfo and a vkey hold for `--max-q-degree max_q_degree` and `Q` of
-/// degree `q_deg`: `max_q_degree` if it splits `Q` (A.1), and 0 if it does not, as the old system's
-/// setup (`fflonk_shkey.js:162-163`). So `maxQDegree > 0` if and only if `Q` is split, and a key of
-/// `Q` whole is the same whatever the option was (the globalInfo keeps the option).
+/// degree `q_deg`: `max_q_degree` if it splits `Q`, and 0 if it does not, as the old system's setup
+/// (`fflonk_shkey.js:162-163`; pilfflonk/docs/protocol.md#q-pieces). So `maxQDegree > 0` if and
+/// only if `Q` is split, and a key of `Q` whole is the same whatever the option was (the globalInfo
+/// keeps the option).
 pub fn split_max_q_degree(q_deg: u64, max_q_degree: u64) -> u64 {
     if q_pieces(q_deg, max_q_degree) > 1 {
         max_q_degree
@@ -85,7 +87,8 @@ pub fn split_max_q_degree(q_deg: u64, max_q_degree: u64) -> u64 {
 }
 
 /// Whether `k·2^n_bits` divides `r - 1`: `k` is a valid factor of an `f_i` of an AIR of `2^n_bits`
-/// rows (A.2, rule 3), so the roots of A.2's rule 5 exist.
+/// rows (pilfflonk/docs/protocol.md#grouping-rules, rule 3), so the roots exist
+/// (pilfflonk/docs/protocol.md#roots).
 pub fn is_valid_k(k: u64, n_bits: u64) -> bool {
     if k == 0 || n_bits > MAX_NBITS {
         return false;
@@ -107,7 +110,8 @@ impl Layout {
         self.0.iter().filter(|f| f.stage == 0).count()
     }
 
-    /// `powerW`: the least common multiple of the `k` of every `f_i` (A.2, rule 5).
+    /// `powerW`: the least common multiple of the `k` of every `f_i`
+    /// (pilfflonk/docs/protocol.md#roots).
     pub fn power_w(&self) -> PilfflonkResult<u64> {
         let mut lcm = 1u64;
         for f in &self.0 {
@@ -139,7 +143,7 @@ impl Layout {
             if f.stage < previous_stage || f.stage > c.q_stage {
                 return invalid!(
                     "f{i} is of stage {} after one of stage {previous_stage}: the layout goes by ascending stage, \
-                     up to Q's, {} (A.5)",
+                     up to Q's, {} (pilfflonk/docs/protocol.md#layout)",
                     f.stage,
                     c.q_stage
                 );
@@ -153,7 +157,12 @@ impl Layout {
                 );
             }
             if !is_valid_k(f.k, c.n_bits) {
-                return invalid!("f{i} has k = {}, and k·2^{} does not divide r - 1 (A.2, rule 3)", f.k, c.n_bits);
+                return invalid!(
+                    "f{i} has k = {}, and k·2^{} does not divide r - 1 \
+                     (pilfflonk/docs/protocol.md#grouping-rules, rule 3)",
+                    f.k,
+                    c.n_bits
+                );
             }
             if f.offsets.is_empty() || f.offsets.windows(2).any(|w| w[0] >= w[1]) {
                 return invalid!("f{i} has offsets {:?}: they must be at least one, increasing", f.offsets);
@@ -222,17 +231,20 @@ impl Layout {
         if n_q != c.q_pieces {
             return invalid!("the layout packs {n_q} polynomials of Q, and Q is made of {}", c.q_pieces);
         }
-        // Split, piece i of Q, the one multiplied by X^(i·M·N) (A.1), is named Q<i>: the verifier, which
-        // has no pol maps, knows the pieces by their names (whole, it computes Q(ξ) and reads no name).
+        // Split, piece i of Q, the one multiplied by X^(i·M·N), is named Q<i>: the verifier, which has
+        // no pol maps, knows the pieces by their names (whole, it computes Q(ξ) and reads no name).
         let expected: BTreeSet<String> = (0..c.q_pieces).map(q_piece_name).collect();
         if c.q_pieces > 1 && q_names != expected {
-            return invalid!("the pieces of Q in the layout are named {q_names:?}, not {expected:?} (A.6)");
+            return invalid!(
+                "the pieces of Q in the layout are named {q_names:?}, not {expected:?} \
+                 (pilfflonk/docs/formats.md#proof-names)"
+            );
         }
 
         // Every evaluation of the proof is opened by SHPLONK, and SHPLONK opens every polynomial of
-        // an f at every offset of the f (A.2, A.5): the evMap is the set of (column, offset) of the
-        // layout, but Q's, which the verifier computes, or reads from the proof's Q_i(ξ) if it is
-        // split (A.1).
+        // an f at every offset of the f: the evMap is the set of (column, offset) of the layout, but
+        // Q's, which the verifier computes, or reads from the proof's Q_i(ξ) if it is split
+        // (pilfflonk/docs/protocol.md#evaluation-map).
         let mut evaluated = BTreeSet::new();
         for e in c.ev_map {
             if !evaluated.insert((e.pol_type, e.id, e.prime)) {

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# The GPU check of the prover (plan M43, spec-seed.md Fase 5): proves one provingKey/ and witness
-# directory on the CPU and on the GPU, with the same --insecure-blinding-seed, checks that proof.json
-# and publics.json are the same byte for byte, and prints the time of each phase on each, from the
-# prover's PILFFLONK_* timers (-vv, spec Annex H.1). It needs neither Node.js nor the compiler: the
-# key and the witness come from elsewhere (bench.sh with BENCH_KEEP=1, or setup-pilfflonk and
-# pilfflonk_bench_inputs), and the proofs are verified there, with `pilfflonk verify`.
+# The GPU check of the prover (pilfflonk/docs/performance.md#gpu): proves one provingKey/ and
+# witness directory on the CPU and on the GPU, with the same --insecure-blinding-seed, checks that
+# proof.json and publics.json are the same byte for byte, and prints the time of each phase on each,
+# from the prover's PILFFLONK_* timers (-vv, pilfflonk/docs/performance.md#method). It needs neither
+# Node.js nor the compiler: the key and the witness come from elsewhere (bench.sh with BENCH_KEEP=1,
+# or setup-pilfflonk and pilfflonk_bench_inputs), and the proofs are verified there, with
+# `pilfflonk verify`.
 #
 #   pilfflonk/bench/gpu_check.sh <provingKey> <witness dir> [<out dir>]
 #

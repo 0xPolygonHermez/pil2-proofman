@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// Verifies a pilfflonk proof (spec-seed.md §4.5), with the arguments of `snarkjs fflonk verify`:
+// Verifies a pilfflonk proof (pilfflonk/docs/verifier.md#js-verifier), with the arguments of
+// `snarkjs fflonk verify`:
 //
 //     node pilfflonk/js/bin/verify.js <pilfflonk.vkey.json> <publics.json> <proof.json>
 //
 // Exit status: 0 if the proof verifies, 1 if it does not (a malformed input included), 2 if the
 // arguments are wrong or a file cannot be read as JSON. Unlike pil-stark's main_verifier.js, which
-// exits with 0 either way (Annex C), only a proof that verifies gives 0. The steps are logged to
-// stderr, and the verdict is the last line.
+// exits with 0 either way, only a proof that verifies gives 0. The steps are logged to stderr, and
+// the verdict is the last line.
 
 import { readFileSync } from "node:fs";
 import { argv, exit, stderr } from "node:process";

@@ -21,9 +21,9 @@ constexpr size_t G1_BYTES = 2 * FQ_BYTES;
 enum class AbsorbError {
     None,
     NonCanonical,    // a scalar not below r, or a coordinate not below q
-    Infinity,        // (0, 0): ffiasm's affine point at infinity, which Keccak256Transcript does not hash (A.4)
+    Infinity,        // (0, 0): ffiasm's affine point at infinity, which Keccak256Transcript does not hash
     NotOnCurve,      // y^2 != x^3 + 3
-    ShortCoordinate, // a coordinate below 2^192, which ffiasm does not write as 32 big-endian bytes (A.4)
+    ShortCoordinate, // a coordinate below 2^192, which ffiasm does not write as 32 big-endian bytes
 };
 
 // Decodes a canonical little-endian scalar (Montgomery form in `out`); `out` is unspecified on error.
@@ -37,9 +37,9 @@ void encodeFr(const FrElement &element, uint8_t out[FR_BYTES]);
 // columns can be decoded, in parallel.
 FrElement fromCanonicalFr(const uint8_t bytes[FR_BYTES]);
 
-// Decodes an affine point x‖y of canonical little-endian coordinates that the transcript hashes as
-// A.4 encodes it; `out` is unspecified on error. BN254's G1 has cofactor 1, so a point on the curve
-// is in the r-torsion group.
+// Decodes an affine point x‖y of canonical little-endian coordinates, one the transcript can absorb
+// (pilfflonk/docs/protocol.md#transcript); `out` is unspecified on error. BN254's G1 has cofactor
+// 1, so a point on the curve is in the r-torsion group.
 AbsorbError decodeG1(const uint8_t bytes[G1_BYTES], G1Point &out);
 
 // Writes `point` affine, as x‖y of canonical little-endian coordinates; the point at infinity as
@@ -47,9 +47,9 @@ AbsorbError decodeG1(const uint8_t bytes[G1_BYTES], G1Point &out);
 // absorb the point.
 void encodeG1(const G1Point &point, uint8_t out[G1_BYTES]);
 
-// The Fiat-Shamir transcript of a proof (A.4): rapidsnark's Keccak256Transcript, unmodified,
-// driven as FflonkProver drives it (spec P6). Absorbing only appends elements; squeeze hashes
-// them. Not safe to use from several threads at once.
+// The Fiat-Shamir transcript of a proof (pilfflonk/docs/protocol.md#transcript): rapidsnark's
+// Keccak256Transcript, unmodified, driven as FflonkProver drives it. Absorbing only appends
+// elements; squeeze hashes them. Not safe to use from several threads at once.
 class Transcript {
 public:
     // Throws std::runtime_error where ffiasm has no assembly backend.

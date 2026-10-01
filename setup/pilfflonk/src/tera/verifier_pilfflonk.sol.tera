@@ -1,11 +1,12 @@
 {#
-    The Solidity verifier of a pilfflonk vkey (spec-seed.md §4.5, Fase 4), rendered by
-    setup/pilfflonk/src/solidity.rs. Its structure is snarkjs 0.7.6's fflonk verifier
+    The Solidity verifier of a pilfflonk vkey (pilfflonk/docs/verifier.md#solidity-verifier),
+    rendered by setup/pilfflonk/src/solidity.rs. Its structure is snarkjs 0.7.6's fflonk verifier
     (templates/verifier_fflonk.sol.ejs): one contract, verifyProof(bytes32[W], uint256[P]), one
     assembly block of Yul functions, the Montgomery batch inversion with the proof's inv, the
     precompiles 0x06, 0x07 and 0x08. What snarkjs writes out for its three polynomials C0, C1 and C2
-    is generalised as the JS verifier (pilfflonk/js/src/verify.js, D8) generalises snarkjs's
-    fflonk_verify.js, and every step names the JS function it does.
+    is generalised as the JS verifier (pilfflonk/js/src/verify.js,
+    pilfflonk/docs/verifier.md#js-verifier) generalises snarkjs's fflonk_verify.js, and every step
+    names the JS function it does.
 -#}
 // SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity >=0.7.0 <0.9.0;
@@ -14,10 +15,10 @@ pragma solidity >=0.7.0 <0.9.0;
 /// @notice Verifies the pilfflonk proofs of the vkey with digest {{ digest }}: its
 ///         pilfflonk.vkey.json, from which `proofman-setup setup-pilfflonk --solidity` or
 ///         `proofman-setup pilfflonk-solidity` generated it.
-/// @dev    spec-seed.md §4.5. It accepts exactly the proofs the JS verifier (pilfflonk/js,
-///         verify.js) accepts, and its steps are the JS's. Calldata: `proof` is the proof's bytes
-///         (A.6: the commitments of the non-fixed f_i, W, W', the evaluations, the Q_i(xi) if Q is
-///         split, inv and invZh) as {{ proof_words }} big-endian words{% if words > proof_words %}, followed by
+/// @dev    It accepts exactly the proofs the JS verifier (pilfflonk/js, verify.js) accepts, and its
+///         steps are the JS's. Calldata: `proof` is the proof's bytes (the commitments of the
+///         non-fixed f_i, W, W', the evaluations, the Q_i(xi) if Q is split, inv and invZh) as
+///         {{ proof_words }} big-endian words{% if words > proof_words %}, followed by
 ///         {{ words - proof_words }} auxiliary inverses of the calldata, 1/(xi - w^j) of the firstRow and lastRow
 ///         boundaries{% endif %}; `pubSignals`, the publics.
 contract PilfflonkVerifier {
@@ -42,10 +43,10 @@ contract PilfflonkVerifier {
     uint256 constant X2y1 = {{ x2[1][0] }};
     uint256 constant X2y2 = {{ x2[1][1] }};
 
-    // The vkey's digest mod r, the first value of the transcript (A.4, A.6)
+    // The vkey's digest mod r, the first value of the transcript
     uint256 constant DIGEST = {{ digest_fr }};
 {% if fixed %}
-    // The commitments of the fixed f_i, the vkey's: never the proof's (A.5)
+    // The commitments of the fixed f_i, the vkey's: never the proof's
 {%- for f in fixed %}
     uint256 constant f{{ f.index }}x = {{ f.x }};
     uint256 constant f{{ f.index }}y = {{ f.y }};
@@ -96,7 +97,7 @@ contract PilfflonkVerifier {
             }
 
             // transcript.js, addPolCommitment: a point the transcript absorbs has no coordinate
-            // below 2^192 (spec A.4).
+            // below 2^192.
             function checkAbsorbed(p) {
                 if or(iszero(shr(192, calldataload(p))), iszero(shr(192, calldataload(add(p, 32))))) {
                     fail()
@@ -125,7 +126,7 @@ contract PilfflonkVerifier {
 {%- endif %}
             }
 
-            // STEP 4: challenges.js, computeChallenges, the transcript of A.4. Its buffer, pT,
+            // STEP 4: challenges.js, computeChallenges, the transcript. Its buffer, pT,
             // holds what is absorbed since the last squeeze, which is keccak256 of it mod r and
             // then the buffer's only value (transcript.js, squeeze).
             function computeChallenges(pMem{% if n_public > 0 %}, pPublic{% endif %}) {
@@ -164,7 +165,7 @@ contract PilfflonkVerifier {
                 }
             }
 
-            // STEP 5: qverifier.js, computeZi, Zi(D) at xi for each boundary D (A.1, A.6):
+            // STEP 5: qverifier.js, computeZi, Zi(D) at xi for each boundary D:
             // 1/Z_H(xi) for everyRow, Z_H(xi)/Z_D(xi) for the others.
             function computeZi(pMem) {
                 let xi := mload(add(pMem, pXi))
@@ -195,7 +196,7 @@ contract PilfflonkVerifier {
             }
 
             // STEP 5: verify.js, computeQ, and qverifier.js, executeCode: Q(xi) with the vkey's
-            // qVerifier, the STARK's fold of A.1 over the evaluations.
+            // qVerifier, the STARK's fold of the constraints, over the evaluations.
             function computeQ(pMem{% if n_public > 0 %}, pPublic{% endif %}) {
 {%- for line in q_code %}
                 {{ line }}
@@ -203,7 +204,7 @@ contract PilfflonkVerifier {
             }
 {% if q_split %}
             // STEP 5 (verify.js): Q is split in pieces of M = {{ q_split.max_q_degree }}, and
-            // sum_i xi^(i·M·N)·Q_i(xi) = Q(xi) (qverifier.js, joinQPieces; A.1).
+            // sum_i xi^(i·M·N)·Q_i(xi) = Q(xi) (qverifier.js, joinQPieces).
             function checkQPieces(pMem) {
                 let shift := powMod(mload(add(pMem, pXiN)), {{ q_split.max_q_degree }})
                 let acc := 0
@@ -224,8 +225,8 @@ contract PilfflonkVerifier {
             }
 
             // STEP 6 (verify.js); shplonk.js, computeRoots: the roots T_i of every f_i, offset-major,
-            // x_j = xiSeed^(powerW/k)·w_{kN}^s·w_k^j, whose k-th power is z = xi·w_N^s (A.2, rule
-            // 5); every f_i of the same k and offsets has the same.
+            // x_j = xiSeed^(powerW/k)·w_{kN}^s·w_k^j, whose k-th power is z = xi·w_N^s; every f_i
+            // of the same k and offsets has the same.
             function computeRoots(pMem) {
                 let xiSeed := mload(add(pMem, pXiSeed))
                 // shplonk.js, checkOpening: xiSeed is not zero.
@@ -291,7 +292,7 @@ contract PilfflonkVerifier {
             }
 
             // STEP 6 (verify.js): shplonk.js, computeZerofiers and computeInverseDenominators, in the
-            // order of the proof's inv (A.5), inverted with it. Z_T(y) = prod_{x in T} (y - x) =
+            // order of the proof's inv, inverted with it. Z_T(y) = prod_{x in T} (y - x) =
             // prod_s (y^k - z_s): the roots of each offset s are those of X^k - z_s.
             function computeInversions(pMem) {
                 let y := mload(add(pMem, pY))
@@ -321,11 +322,11 @@ contract PilfflonkVerifier {
                 mstore(add(pMem, {{ row.den1 }}), d)
 {%- endfor %}
 {%- endfor %}
-                // A.5, 1: Z_{T_i}(y), i = 1 … n - 1
+                // First Z_{T_i}(y), i = 1 … n - 1
 {%- for f in fs %}{% if f.p_inv_zt %}
                 mstore(add(pMem, {{ f.p_inv_zt }}), mload(add(pMem, {{ f.p_zt }})))
 {%- endif %}{% endfor %}
-                // A.5, 2: the Lagrange denominators of each f_i, in the order of its roots
+                // Then the Lagrange denominators of each f_i, in the order of its roots
 {%- for f in fs %}
 {%- for row in f.rows %}
 {%- if f.k == 1 %}
@@ -367,7 +368,7 @@ contract PilfflonkVerifier {
 
             // Whether a call to the precompile 0x06 or 0x07 succeeded and returned a point: 64 bytes.
             // snarkjs checks success only; on a chain where the precompile is missing, the call
-            // succeeds and returns nothing (Annex F.13).
+            // succeeds and returns nothing.
             function checkPointResult(success) {
                 if iszero(and(success, eq(returndatasize(), 64))) {
                     fail()
@@ -439,7 +440,7 @@ contract PilfflonkVerifier {
                 checkPointResult(success)
             }
 
-            // STEP 7: shplonk.js, computeQuotients, computeF, computeE and computeJ (A.5):
+            // STEP 7: shplonk.js, computeQuotients, computeF, computeE and computeJ:
             // q_0 = Z_{T_0}(y), q_i = alpha^i·Z_{T_0}(y)/Z_{T_i}(y), F = [f_0] + sum_i q_i·[f_i],
             // E = (r_0(y) + sum_i q_i·r_i(y))·[1]_1, J = q_0·[W]; the fixed [f_i] are the vkey's.
             function computeFEJ(pMem) {
@@ -513,7 +514,7 @@ contract PilfflonkVerifier {
 
                 let success := staticcall(sub(gas(), 2000), 8, mIn, 384, mIn, 0x20)
 
-                // The precompile's answer, 32 bytes, is 1 (snarkjs takes any non-zero word; Annex F.13).
+                // The precompile's answer, 32 bytes, is 1 (snarkjs takes any non-zero word).
                 isOk := and(and(success, eq(returndatasize(), 0x20)), eq(mload(mIn), 1))
             }
 

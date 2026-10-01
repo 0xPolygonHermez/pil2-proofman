@@ -1,4 +1,5 @@
-//! The proof (A.6, D7): its bytes, its JSON view in snarkjs's style, and the publics.
+//! The proof (pilfflonk/docs/formats.md#proof): its bytes, its JSON view in snarkjs's style, and the
+//! publics.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -23,18 +24,20 @@ pub const PROOF_FILE: &str = "proof.json";
 /// The file name of the publics.
 pub const PUBLICS_FILE: &str = "publics.json";
 
-/// The extension of a file that holds a proof's bytes (A.6), as `proof.bin`: [`Proof::read`].
+/// The extension of a file that holds a proof's bytes, as `proof.bin`: [`Proof::read`].
 pub const PROOF_BYTES_EXTENSION: &str = "bin";
 
 /// A proof. Its bytes (`to_bytes`), as `gen_final_snark_proof` gives the FFLONK's, are in this
-/// order, each point `x‖y` and each coordinate or scalar 32 bytes big-endian (A.6):
+/// order, each point `x‖y` and each coordinate or scalar 32 bytes big-endian
+/// (pilfflonk/docs/formats.md#proof):
 ///
-/// 1. `commitments`: the non-fixed `f`, in the global order of A.5; the fixed ones are the
-///    vkey's, never the proof's (C.3.1);
+/// 1. `commitments`: the non-fixed `f`, in the global order
+///    (pilfflonk/docs/protocol.md#global-order); the fixed ones are the vkey's, never the proof's
+///    (pilfflonk/docs/protocol.md#pairing-check);
 /// 2. `w` and `wp`: SHPLONK's `W` and `W'`;
 /// 3. `evaluations`: those of the fixed columns of each AIR, then those of the other columns of
 ///    each instance, each in the order of its AIR's evMap, then the `Q_i(ξ)` of each instance if
-///    `Q` is split, in the order of its layout (A.4, step 4);
+///    `Q` is split, in the order of its layout (pilfflonk/docs/protocol.md#transcript, step 4);
 /// 4. `air_values` (of each instance, in the order of its AIR's `airValuesMap`), `airgroup_values`
 ///    (of each airgroup with an instance, in the order of its `airgroupValuesMap`) and
 ///    `proof_values` (in the order of the globalInfo's `proofValuesMap`);
@@ -122,8 +125,8 @@ impl Proof {
         Ok(Proof { commitments, w, wp, evaluations, air_values, airgroup_values, proof_values, inv, inv_zh })
     }
 
-    /// Reads a proof with the values of `names` from the file at `path`: its bytes (A.6,
-    /// [`Proof::from_bytes`]) if the file name ends in [`PROOF_BYTES_EXTENSION`], and its JSON view,
+    /// Reads a proof with the values of `names` from the file at `path`: its bytes
+    /// ([`Proof::from_bytes`]) if the file name ends in [`PROOF_BYTES_EXTENSION`], and its JSON view,
     /// `proof.json` ([`Proof::from_json`]), otherwise.
     pub fn read(path: &Path, names: &ProofNames) -> PilfflonkResult<Self> {
         if path.extension().is_some_and(|extension| extension == PROOF_BYTES_EXTENSION) {
@@ -329,17 +332,18 @@ impl ProofNames {
     }
 
     /// The names of a proof of `vkey`: those [`ProofNames::new`] gives the proof of one instance of
-    /// its AIR, the one a vkey of format 1 describes (D2), from what the vkey holds, as the JS
-    /// verifier names them (`vkey.js`, `fromObjectVk`). The columns are named by the layout
-    /// ([`LayoutPol::name`](crate::LayoutPol)), the `f` by their index in it, and a proof of
-    /// format 1 has no air, airgroup or proof values. Refuses two values of the same name.
+    /// its AIR, the one a vkey of format 1 describes (pilfflonk/docs/formats.md#vkey), from what the
+    /// vkey holds, as the JS verifier names them (`vkey.js`, `fromObjectVk`). The columns are named
+    /// by the layout ([`LayoutPol::name`](crate::LayoutPol)), the `f` by their index in it, and a
+    /// proof of format 1 has no air, airgroup or proof values. Refuses two values of the same name.
     pub fn of_vkey(vkey: &Vkey) -> PilfflonkResult<Self> {
         let layout = &vkey.layout.0;
         let n_fixed = vkey.layout.n_fixed();
         let q_stage = layout.last().map_or(0, |f| f.stage);
         let commitments = (n_fixed..layout.len()).map(|g| commitment_name(g as u64)).collect();
 
-        // The fixed columns are in the f of stage 0, the committed ones in the others (A.2).
+        // The fixed columns are in the f of stage 0, the committed ones in the others
+        // (pilfflonk/docs/protocol.md#layout).
         let column = |pol_type: PolType, id: u64| -> PilfflonkResult<&str> {
             let packs = |f: &&LayoutEntry| (f.stage == 0) == (pol_type == PolType::Const);
             match layout.iter().filter(packs).flat_map(|f| &f.pols).find(|p| p.id == id) {
@@ -416,8 +420,9 @@ impl ProofNames {
 }
 
 /// The JSON view of a proof, `proof.json`: `{"protocol": "pilfflonk", "curve": "bn128",
-/// "polynomials": {name: [x, y, "1"]}, "evaluations": {name: value}}` (A.6, D7), as
-/// `snark_proof_to_json` writes the FFLONK's and pil-fflonk wrote its own. Keys in sorted order.
+/// "polynomials": {name: [x, y, "1"]}, "evaluations": {name: value}}`
+/// (pilfflonk/docs/formats.md#proof), as `snark_proof_to_json` writes the FFLONK's and pil-fflonk
+/// wrote its own. Keys in sorted order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProofJson {
@@ -454,7 +459,7 @@ impl<'de> Deserialize<'de> for SnarkjsG1 {
 }
 
 /// `publics.json`: the publics, as decimal strings in the order of the globalInfo's `publicsMap`
-/// (A.6), as pil-fflonk and the final wrap write them.
+/// (pilfflonk/docs/formats.md#publics), as pil-fflonk and the final wrap write them.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Publics(pub Vec<FrBytes>);

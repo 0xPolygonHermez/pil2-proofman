@@ -2,15 +2,17 @@
 // - the roots are the x with x^k = ξ·ω_N^s (negative s too), derived here independently, and the
 //   evaluations are p_j(ξ·ω_N^s);
 // - r_i agrees with f_i on T_i, each f_i - r_i is divisible by Z_{T_i}, and W and W' are what the
-//   formulas of spec A.5 give when computed literally here (rapidsnark's Euclidean division, the
-//   zerofiers as polynomials), with the expected degrees;
+//   prover's formulas (pilfflonk/docs/protocol.md#pairing-check) give when computed literally here
+//   (rapidsnark's Euclidean division, the zerofiers as polynomials), with the expected degrees;
 // - the verifier's identity F - E - J + y·W' = τ·W', both on the values at τ and on the G1
-//   commitments, with α_S and y replayed from the transcript as a verifier would (A.4);
+//   commitments, with α_S and y replayed from the transcript as a verifier would
+//   (pilfflonk/docs/protocol.md#transcript);
 // - tampering an evaluation, W, W' or a commitment breaks it; bad arguments throw; the same
 //   inputs give the same proof on any number of threads.
 //
 // With PILFFLONK_SHPLONK_FIXTURES=<dir> in the environment, every opening checked here is also
-// written to <dir>/shplonk_<name>.json for the JS verifier (M8); the format is at writeFixture().
+// written to <dir>/shplonk_<name>.json for the JS verifier (pilfflonk/docs/README.md#tests); the
+// format is at writeFixture().
 #include "pilfflonk_test.hpp"
 
 #include <gmp.h>
@@ -255,10 +257,10 @@ struct Case {
     std::vector<uint64_t> lowDegree = {};
 };
 
-// What the verifier gets from the proof and the key, and the transcript it replays (A.4 in
-// miniature): absorb `seed` (standing in for the digest), then every [f_i] in order; squeeze
-// xiSeed; absorb the evaluations, f by f, offset-major, p_0 first within an offset; then the
-// opening: squeeze α_S, absorb [W], squeeze y.
+// What the verifier gets from the proof and the key, and the transcript it replays, the protocol's
+// in miniature (pilfflonk/docs/protocol.md#transcript): absorb `seed` (standing in for the digest),
+// then every [f_i] in order; squeeze xiSeed; absorb the evaluations, f by f, offset-major, p_0 first
+// within an offset; then the opening: squeeze α_S, absorb [W], squeeze y.
 struct Opened {
     uint64_t nBits;
     uint64_t powerW;
@@ -303,7 +305,7 @@ Challenges replay(const Opened &o) {
     return c;
 }
 
-// T_i as spec A.2.5 defines it, offset-major: x_j = xiSeed^(powerW/k)·ω_{kN}^s·w_k^j.
+// T_i (pilfflonk/docs/protocol.md#roots), offset-major: x_j = xiSeed^(powerW/k)·ω_{kN}^s·w_k^j.
 std::vector<Column> rootsOf(uint64_t nBits, uint64_t powerW, const FrElement &xiSeed,
                             const std::vector<Shape> &shapes) {
     const uint64_t N = uint64_t(1) << nBits;
@@ -332,8 +334,8 @@ FrElement zerofierAt(const Column &roots, const FrElement &y) {
     return z;
 }
 
-// r_i(y) as the verifier computes it (A.5): f_i(x) = Σ_j p_j(ξ·ω^s)·x^j on every root x, then the
-// Lagrange basis of T_i at y.
+// r_i(y) as the verifier computes it (pilfflonk/docs/protocol.md#pairing-check):
+// f_i(x) = Σ_j p_j(ξ·ω^s)·x^j on every root x, then the Lagrange basis of T_i at y.
 FrElement interpolantAt(const Column &roots, const Column &evaluations, uint64_t k, const FrElement &y) {
     const uint64_t n = roots.size();
     Column values(n);
@@ -362,8 +364,8 @@ FrElement interpolantAt(const Column &roots, const Column &evaluations, uint64_t
     return result;
 }
 
-// The scalars of spec A.5: q_0 = Z_{T_0}(y), q_i = α^i·Z_{T_0}(y)/Z_{T_i}(y), and
-// e = r_0(y) + Σ_{i>=1} q_i·r_i(y).
+// The scalars of the pairing check (pilfflonk/docs/protocol.md#pairing-check): q_0 = Z_{T_0}(y),
+// q_i = α^i·Z_{T_0}(y)/Z_{T_i}(y), and e = r_0(y) + Σ_{i>=1} q_i·r_i(y).
 struct Quotients {
     Column q;
     FrElement e;
@@ -430,7 +432,8 @@ struct Result {
 };
 
 // Components of f with k and O: k columns of up to N + |O| + 1 coefficients (a blinded column's
-// bound, A.2), of assorted degrees: full, half, full minus one, and one all zero when k > 2.
+// bound, pilfflonk/docs/protocol.md#degrees), of assorted degrees: full, half, full minus one, and
+// one all zero when k > 2.
 std::vector<std::unique_ptr<Poly>> componentsOf(const Shape &f, uint64_t N, bool constant, bool lowDegree,
                                                 Random &random) {
     const uint64_t length = N + f.offsets.size() + 1;
@@ -461,7 +464,7 @@ std::vector<std::unique_ptr<Poly>> componentsOf(const Shape &f, uint64_t N, bool
     return components;
 }
 
-// f packed by M6's pack(), independently of the prover.
+// f packed by pack(), independently of the prover.
 std::unique_ptr<Poly> packedOf(const std::vector<std::unique_ptr<Poly>> &components, uint64_t minLength) {
     std::vector<Poly *> raw;
     uint64_t maxLength = 0;
@@ -497,7 +500,8 @@ Result prove(const Case &c, uint64_t seed) {
         components.push_back(componentsOf(f, N, constant, lowDegree, random));
         fs.push_back(packedOf(components.back(), f.k * f.offsets.size()));
         o.commitments.push_back(srs.commit(fs.back()->coef, fs.back()->getDegree() + 1));
-        // [f_i] = f_i(τ)·G, and one the transcript can absorb (A.4).
+        // [f_i] = f_i(τ)·G, and one the transcript can absorb
+        // (pilfflonk/docs/protocol.md#transcript).
         result.fTau.push_back(fs.back()->evaluate(testTau()));
         assert(samePoint(o.commitments.back(), g1Times(result.fTau.back())));
         uint8_t bytes[PilFflonk::G1_BYTES];
@@ -722,7 +726,7 @@ nlohmann::json scalarsJson(const Column &scalars) {
 //   "name": "<name>", "curve": "bn128", "protocol": "pilfflonk-shplonk",
 //   "nBits": n,                     N = 2^n
 //   "powerW": w,                    the lcm of every k
-//   "f": [                          in the global order of A.5: f_0 first
+//   "f": [                          in the global order: f_0 first
 //     { "k": k, "offsets": [s, ...] (signed integers),
 //       "commitment": ["x", "y"],   [f_i]₁
 //       "points": ["ξ·ω_N^s", ...], one per offset (derived; for debugging)
@@ -744,8 +748,9 @@ nlohmann::json scalarsJson(const Column &scalars) {
 //   ]
 // }
 //
-// A verifier accepts it iff e(F - E - J + y·[W'], [1]₂) = e([W'], [τ]₂) (A.5), with
-// the roots x^k = ξ·ω_N^s of each f, f_i(x) = Σ_j p_j(ξ·ω_N^s)·x^j, and Z_T with repetitions.
+// A verifier accepts it iff e(F - E - J + y·[W'], [1]₂) = e([W'], [τ]₂)
+// (pilfflonk/docs/protocol.md#pairing-check), with the roots x^k = ξ·ω_N^s of each f,
+// f_i(x) = Σ_j p_j(ξ·ω_N^s)·x^j, and Z_T with repetitions.
 void writeFixture(const std::string &dir, const std::string &name, const Result &result) {
     const Opened &o = result.opened;
     const Challenges &c = result.challenges;
@@ -836,7 +841,7 @@ std::vector<Case> cases() {
         {"short", 4, {{3, {0, 1}}, {2, {-1, 0, 1, 2}}, {1, {0, 1}}}, {1}},
         // N = 2: ω_N = -1, and s = -1 is the same row as s = 1.
         {"tiny", 1, {{2, {-1, 0}}, {1, {0}}, {4, {-1}}}},
-        // The fixtures M8 needs at the least: {0}, {0,1} and {-1,0,1,2} with k in {1, 3, 4}.
+        // The fixtures the JS tests need at the least: {0}, {0,1} and {-1,0,1,2} with k in {1, 3, 4}.
         {"k134_0", 4, {{1, {0}}, {3, {0}}, {4, {0}}}},
         {"k134_01", 4, {{1, {0, 1}}, {3, {0, 1}}, {4, {0, 1}}, {3, {0}}}},
         {"k134_m1012", 4, {{1, {-1, 0, 1, 2}}, {3, {-1, 0, 1, 2}}, {4, {-1, 0, 1, 2}}}},

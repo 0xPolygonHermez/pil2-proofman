@@ -1,6 +1,6 @@
-//! The pilfflonk witness library of the Fibonacci fixture, `../fibonacci.pil` (plan M38b, D4): it
-//! computes the witness over BN254's `Fr`, in the rows `pil_helpers` generates for the fixture's
-//! BN254 pilout, and exports it with `pilfflonk_witness_library!`.
+//! The pilfflonk witness library (pilfflonk/docs/README.md#witness) of the Fibonacci fixture,
+//! `../fibonacci.pil`: it computes the witness over BN254's `Fr`, in the rows `pil_helpers`
+//! generates for the fixture's BN254 pilout, and exports it with `pilfflonk_witness_library!`.
 //!
 //! `src/pil_helpers` is generated, and versioned: a BN254 pilout needs a compiler that honours
 //! `prime` (`PIL2C_EXEC`), so it cannot be regenerated on every build, as the STARK's test libraries

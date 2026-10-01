@@ -1,4 +1,4 @@
-// PIL2 port of the pil-fflonk Connection example (plan M34, spec-seed.md Annex G):
+// PIL2 port of the pil-fflonk Connection example (pilfflonk/docs/README.md#fixtures):
 // pil-fflonk/pil/sm_connection/connection.pil, `{a, b, c} connect {S1, S2, S3}`, with the constants
 // of its generator sm_connection.js (`buildConstants`). N = 2^10, as its connection_main.pil (2^8 in
 // `all`).
@@ -9,7 +9,7 @@
 //   the witness columns, which its caller declares, so that tests/fixtures/all/all.pil takes it into
 //   one AIR with the others.
 // - S1, S2 and S3 start as the identity, S_i[row] = k^(i−1)·ω^row, with the std's coset generator
-//   k_coset and root of unity GEN[BITS] of the field (BN254's since plan M29, never Goldilocks_k as
+//   k_coset and root of unity GEN[BITS] of the field (BN254's from bn254.pil, never Goldilocks_k as
 //   pil2-components/test/connection/connection.pil has it). They are the ks of PIL1 (pilcom's
 //   getKs: k, k² for F.k = 5^(2^28)) and its ω (ffjavascript's F.w[BITS]). Then the swaps of
 //   sm_connection.js, in its order: for each row i, the cell (S1, i) with (S2, j) and (S2, i) with

@@ -1,5 +1,6 @@
-//! `<air>.pilfflonkinfo.json` from what the passes return (spec §4.2.6, A.6): the maps of the
-//! STARK's starkinfo that pilfflonk keeps, the committed polynomials and the layout.
+//! `<air>.pilfflonkinfo.json` from what the passes return
+//! (pilfflonk/docs/formats.md#pilfflonkinfo): the maps of the STARK's starkinfo that pilfflonk
+//! keeps, the committed polynomials and the layout.
 //!
 //! **From `pil-info` to `PilfflonkInfo`.** The maps, the evMap, the opening points, the
 //! boundaries (the ones the code's `Zi` operands index), `qDeg` and `cExpId` are `pil-info`'s
@@ -8,26 +9,28 @@
 //!
 //! - **`Q`.** `pil-info` ends `cmPolsMap` with the STARK's pieces of the quotient, `Q0 …
 //!   Q{qDeg−1}` at stage `nStages + 1` (`qDeg` of them, of `N` coefficients each: what the STARK
-//!   commits), and none if `qDeg = 0`. pilfflonk commits `Q` whole unless it is split (A.1): the
-//!   pieces are replaced by `layout::q_pieces(qDeg, maxQDegree)` entries, `Q0 … Q<m−1>`, piece `i`
-//!   at stageId and stagePos `i`, which is one, `Q0`, when `Q` is not split. They are the last
-//!   entries of `cmPolsMap`, after every column and im pol, and no operand of the code refers to
-//!   them (M11): no index the code uses changes. `mapSectionsN.cm{nStages+1}` counts the new
-//!   entries. The evMap has no piece of `Q` (`Opening::Shplonk`), and the layout has the pieces in
-//!   the last `f` (or `f`, if `--extra-muls` splits their group, A.2), opened at `ξ` only.
-//!   `maxQDegree` is the `--max-q-degree` that splits `Q`, and 0 if it does not
+//!   commits), and none if `qDeg = 0`. pilfflonk commits `Q` whole unless it is split
+//!   (pilfflonk/docs/protocol.md#q-pieces): the pieces are replaced by
+//!   `layout::q_pieces(qDeg, maxQDegree)` entries, `Q0 … Q<m−1>`, piece `i` at stageId and
+//!   stagePos `i`, which is one, `Q0`, when `Q` is not split. They are the last entries of
+//!   `cmPolsMap`, after every column and im pol, and no operand of the code refers to them: no
+//!   index the code uses changes. `mapSectionsN.cm{nStages+1}` counts the new entries. The evMap
+//!   has no piece of `Q` (`Opening::Shplonk`), and the layout has the pieces in the last `f` (or
+//!   `f`, if `--extra-muls` splits their group: pilfflonk/docs/protocol.md#grouping-rules), opened
+//!   at `ξ` only. `maxQDegree` is the `--max-q-degree` that splits `Q`, and 0 if it does not
 //!   (`layout::split_max_q_degree`).
 //! - **The names of the im pols.** `pil-info` names every im pol of an AIR `<air>.ImPol`, and
 //!   their evaluations would share a name in the proof (`names`). Here the im pols of an AIR are
 //!   the array `<air>.ImPol`: the `k`-th of `cmPolsMap` has `lengths: [k]`, so its name in the
 //!   proof and in the layout is `<air>.ImPol[k]`.
-//! - **The names of the columns named alike** (plan M34b). The std declares some columns in a
-//!   loop, under one name and without an index (the sum bus's `im_cluster` and `im_single`,
-//!   `std_sum.pil`), and a pilout can have several columns of that name. As the im pols, the
-//!   columns of a pol map that share a name, none of them with `lengths`, are the array of that
-//!   name: the `k`-th of them in the map has `lengths: [k]`, `im_cluster[0]`, `im_cluster[1]`, …
-//!   ([`index_names_alike`]). A name that a column with `lengths` has is left as it is: the
-//!   elements of an array share their name and differ in their indices.
+//! - **The names of the columns named alike** (pilfflonk/docs/formats.md#proof-names). The std
+//!   declares some columns in a loop, under one name and without an index (the sum bus's
+//!   `im_cluster` and `im_single`, `std_sum.pil`), and a pilout can have several columns of that
+//!   name. As the im pols, the columns of a pol map that share a name, none of them with
+//!   `lengths`, are the array of that name: the `k`-th of them in the map has `lengths: [k]`,
+//!   `im_cluster[0]`, `im_cluster[1]`, … ([`index_names_alike`]). A name that a column with
+//!   `lengths` has is left as it is: the elements of an array share their name and differ in
+//!   their indices.
 //! - **The evMap.** `pil-info`'s, followed by the pairs the fusions of the grouping add
 //!   (`layout::ev_map_of`): the indices of `pil-info`'s entries, which the `qVerifier` refers to,
 //!   do not change.
@@ -310,9 +313,10 @@ fn ev_map(result: &PilInfoResult) -> Result<Vec<EvMapEntry>, SetupError> {
 
 /// The pilfflonkinfo of `air` (of the pilout, the one [`crate::validate::validate`] returned) from
 /// the result of the passes on it, with the layout `packing` says (`layout::committed_pols`) and
-/// `Q` split in pieces of degree `max_q_degree` if its degree is above it (A.1; 0 does not split
-/// it). It is validated (`JsonFile::validate`) before it is returned, so that nothing is written for
-/// a pilfflonkinfo that cannot be.
+/// `Q` split in pieces of degree `max_q_degree` if its degree is above it
+/// (pilfflonk/docs/protocol.md#q-pieces; 0 does not split it). It is validated
+/// (`JsonFile::validate`) before it is returned, so that nothing is written for a pilfflonkinfo
+/// that cannot be.
 pub fn air_setup(
     result: &PilInfoResult,
     air_ref: AirRef,

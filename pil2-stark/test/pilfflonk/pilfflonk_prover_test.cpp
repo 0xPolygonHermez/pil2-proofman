@@ -1,26 +1,29 @@
-// Tests for the prover (plan M18): PilFflonk::BlindingRng, AirKey and ProvingKey, Instance, Opening,
-// and the C API over them.
+// Tests for the prover: PilFflonk::BlindingRng, AirKey and ProvingKey, Instance, Opening, and the C
+// API over them.
 //
-// The AIR is the Fibonacci of M13 as setup-pilfflonk writes it, from the fixtures of M17
-// (setup/pilfflonk/tests/fixtures/bytecode/fibonacci/: its pilfflonkinfo, .bin and .const, M13's
-// witness, the qVerifier as a bytecode, and the oracle's (M14) evaluations and Q at a point). Each
-// test writes a provingKey/ around them, with a globalInfo of that AIR and an SRS of the test ptau,
-// whose τ it knows: so it can check every commitment against [p(τ)]₁ and the whole SHPLONK opening
-// against the identity of A.5, F − E − J + y·W' = τ·W', as the verifier's pairing would.
+// The AIR is the Fibonacci (pilfflonk/tests/data/fibonacci.rs) as setup-pilfflonk writes it, from
+// the interpreter's fixtures (setup/pilfflonk/tests/fixtures/bytecode/fibonacci/: its
+// pilfflonkinfo, .bin and .const, the Fibonacci's witness, the qVerifier as a bytecode, and the
+// oracle's evaluations and Q at a point). Each test writes a provingKey/ around them, with a
+// globalInfo of that AIR and an SRS of the test ptau, whose τ it knows: so it can check every
+// commitment against [p(τ)]₁ and the whole SHPLONK opening against the identity
+// F − E − J + y·W' = τ·W' (pilfflonk/docs/protocol.md#pairing-check), as the verifier's pairing
+// would.
 //
 // - With the blinding at zero (a BlindingSource of the tests: the C API has none), the prover's
-//   evaluations at the oracle's ξ and its Q(ξ) are the oracle's (M14), exactly.
-// - With it on (seeded, D6): the same seed gives the same proof, another seed other commitments;
-//   each committed polynomial still is its column on H, has its |O| + 1 more coefficients, and Q(ξ)
-//   is the verifier's, the qVerifier's at the blinded evaluations.
+//   evaluations at the oracle's ξ and its Q(ξ) are the oracle's, exactly.
+// - With it on (seeded, pilfflonk/docs/protocol.md#blinding): the same seed gives the same proof,
+//   another seed other commitments; each committed polynomial still is its column on H, has its
+//   |O| + 1 more coefficients, and Q(ξ) is the verifier's, the qVerifier's at the blinded
+//   evaluations.
 // - A mutated witness makes commitQ fail with UnsatisfiedError (PILFFLONK_ERR_UNSATISFIED).
 //
-// And an AIR of two stages (plans M30, M31), the lookup on the std's sum bus of
-// setup/pilfflonk/tests/fixtures/bytecode/sum_bus/, with the std's default MAX_CONSTRAINT_DEGREE: its
-// hints im_col and gsum_col as AirKey reads and checks them, in the STARK's order whatever the
-// .bin's, its stage-2 columns as commitStage(2) computes them, which are the oracle's for the same
-// challenges, a denominator 0 on a row of each hint, a broken bus, and the hints AirKey refuses: what
-// it cannot compute, and what reads a column not computed before it.
+// And an AIR of two stages (pilfflonk/docs/protocol.md#hint-columns), the lookup on the std's sum
+// bus of setup/pilfflonk/tests/fixtures/bytecode/sum_bus/, with the std's default
+// MAX_CONSTRAINT_DEGREE: its hints im_col and gsum_col as AirKey reads and checks them, in the
+// STARK's order whatever the .bin's, its stage-2 columns as commitStage(2) computes them, which are
+// the oracle's for the same challenges, a denominator 0 on a row of each hint, a broken bus, and
+// the hints AirKey refuses: what it cannot compute, and what reads a column not computed before it.
 #include "pilfflonk_test.hpp"
 #include "pilfflonk_test_ptau.hpp"
 
@@ -107,7 +110,7 @@ std::string fixture(const std::string &name) {
     return repo + "/setup/pilfflonk/tests/fixtures/bytecode/fibonacci/" + name;
 }
 
-// A file of the sum bus's fixture (plan M30).
+// A file of the sum bus's fixture.
 std::string busFixture(const std::string &name) {
     return fixture("../sum_bus/" + name);
 }
@@ -197,7 +200,8 @@ G1Point sub(G1Point a, G1Point b) {
 }
 
 // The blinding factors at zero: the polynomials are then the columns' interpolants, as the oracle
-// computes them. Only a test can do this; the C API always blinds (D6).
+// computes them. Only a test can do this; the C API always blinds
+// (pilfflonk/docs/protocol.md#blinding).
 class ZeroBlinding final : public BlindingSource {
 public:
     void fill(FrElement *out, uint64_t n) override {
@@ -247,11 +251,13 @@ struct KeyFiles {
     std::vector<uint8_t> constants = readBytes(fixture("Fibonacci.const"));
 };
 
-// The Fibonacci's key with Q split in two (spec A.1): qDeg raised to 2 and maxQDegree 1. Its Q, of
-// fewer than 261 coefficients, is a Q of qDeg 2 too, whose bound is 2·256 + 3·2 + 1 = 519 and
-// extended domain 2^10; S = 256, and the pieces are Q0, of 256 + 2 coefficients, and Q1, of 519 − 256
-// = 263. Unpacked, each in an f of its own, f5 and f6; packed, both in f5, of k = 2, Q1 first as the
-// grouping puts them (A.2, rule 4), of degree max(263·2 + 0, 258·2 + 1) = 526, for an SRS of 1024.
+// The Fibonacci's key with Q split in two (pilfflonk/docs/protocol.md#q-pieces): qDeg raised to 2
+// and maxQDegree 1. Its Q, of fewer than 261 coefficients, is a Q of qDeg 2 too, whose bound is
+// 2·256 + 3·2 + 1 = 519 and extended domain 2^10; S = 256, and the pieces are Q0, of 256 + 2
+// coefficients, and Q1, of 519 − 256 = 263. Unpacked, each in an f of its own, f5 and f6; packed,
+// both in f5, of k = 2, Q1 first as the grouping puts them
+// (pilfflonk/docs/protocol.md#grouping-rules, rule 4), of degree max(263·2 + 0, 258·2 + 1) = 526,
+// for an SRS of 1024.
 KeyFiles splitQFiles(bool packed) {
     KeyFiles files;
     json info = json::parse(files.info);
@@ -309,7 +315,7 @@ private:
     std::string airName;
 };
 
-// What every test of the Fibonacci starts from; its key on `device` (plan M43).
+// What every test of the Fibonacci starts from; its key on `device`.
 struct Fibonacci {
     explicit Fibonacci(const KeyFiles &files = KeyFiles(), Device device = Device::Cpu)
         : dir(files), pk(ProvingKey::load(dir.path(), device)) {}
@@ -332,8 +338,9 @@ struct Fibonacci {
     }
 };
 
-// A proof of the Fibonacci's instance as the orchestrator drives it (A.4 in miniature: a scalar in
-// place of the digest and the publics), and everything the checks below need.
+// A proof of the Fibonacci's instance as the orchestrator drives it, the transcript in miniature
+// (pilfflonk/docs/protocol.md#transcript, with a scalar in place of the digest and the publics),
+// and everything the checks below need.
 struct Proved {
     std::unique_ptr<Instance> instance;
     std::unique_ptr<Opening> opening;
@@ -366,8 +373,8 @@ Proved prove(const Fibonacci &fib, std::unique_ptr<BlindingSource> blinding, uin
     return p;
 }
 
-// Where evaluation e of the proof (A.4 step 4 order) is, as (f, offset): the evMap's const entries
-// in order, then its cm entries.
+// Where evaluation e of the proof (pilfflonk/docs/protocol.md#transcript, step 4) is, as
+// (f, offset): the evMap's const entries in order, then its cm entries.
 std::vector<std::pair<uint64_t, int64_t>> evaluationPlaces(const AirKey &air) {
     std::vector<std::pair<uint64_t, int64_t>> places;
     for (PilFflonk::PolType type : {PilFflonk::PolType::Const, PilFflonk::PolType::Cm}) {
@@ -381,7 +388,7 @@ std::vector<std::pair<uint64_t, int64_t>> evaluationPlaces(const AirKey &air) {
     return places;
 }
 
-// The verifier's Q(ξ): the qVerifier (M17's fixture) at ξ from the proof's evaluations.
+// The verifier's Q(ξ): the qVerifier (the interpreter's fixture) at ξ from the proof's evaluations.
 FrElement qVerifierAt(const Fibonacci &fib, const std::vector<FrElement> &evaluations, const FrElement &stdVc,
                       const FrElement &xiSeed, const FrElement &xi) {
     const ExpressionsBin qVerifier = ExpressionsBin::load(fixture("Fibonacci.qverifier.bin"));
@@ -395,9 +402,10 @@ FrElement qVerifierAt(const Fibonacci &fib, const std::vector<FrElement> &evalua
     return expressions.evaluateExpressionAt(fib.air().info().cExpId, point);
 }
 
-// The verifier's SHPLONK check of A.5 with τ known (every f has k = 1, as --no-packing's layout):
-// F − E − J + y·W' = τ·W', with the challenges α and y the opening squeezed, the fixed commitments
-// computed here, and the value of Q's f at ξ the verifier's, or, if Q is split, the proof's Q_i(ξ).
+// The verifier's SHPLONK check (pilfflonk/docs/protocol.md#pairing-check) with τ known (every f has
+// k = 1, as --no-packing's layout): F − E − J + y·W' = τ·W', with the challenges α and y the
+// opening squeezed, the fixed commitments computed here, and the value of Q's f at ξ the
+// verifier's, or, if Q is split, the proof's Q_i(ξ).
 bool shplonkIdentityHolds(const Fibonacci &fib, const Proved &p, const std::vector<FrElement> &evaluations) {
     const AirKey &air = fib.air();
     const std::vector<LayoutEntry> &layout = air.info().layout;
@@ -429,7 +437,8 @@ bool shplonkIdentityHolds(const Fibonacci &fib, const Proved &p, const std::vect
     if (air.nQPieces() == 1) {
         values[air.qPosition(0).f][0] = qVerifierAt(fib, evaluations, p.stdVc, p.xiSeed, xi);
     } else {
-        // Split, Q's f are opened at the proof's Q_i(ξ), after the columns' evaluations (A.4 step 4.3).
+        // Split, Q's f are opened at the proof's Q_i(ξ), after the columns' evaluations
+        // (pilfflonk/docs/protocol.md#transcript, step 4.3).
         uint64_t e = places.size();
         for (uint64_t f = 0; f < layout.size(); ++f) {
             if (layout[f].stage == air.info().qStage()) {
@@ -534,15 +543,16 @@ void testLoadsTheFibonaccisKey() {
     const Fibonacci fib;
     const AirKey &air = fib.air();
     const PilFflonk::AirDegrees &d = air.degrees();
-    // A.1: N = 256, |O|max = 2 (l1 and l2 at {0, 1}), qDeg = 1: 256 + 2·2 + 1 = 261 coefficients,
-    // 2^9 points; M16's nBitsExt.
+    // The degrees (pilfflonk/docs/protocol.md#degrees): N = 256, |O|max = 2 (l1 and l2 at {0, 1}),
+    // qDeg = 1: 256 + 2·2 + 1 = 261 coefficients, 2^9 points; the setup's nBitsExt.
     assert(d.n == 256 && d.maxOpenings == 2 && d.qCoefficients == 261 && d.nBitsExt == 9);
     // Q not split: one piece, Q itself, alone in f5.
     assert(d.qStride == 0 && (d.qPieceCoefficients == std::vector<uint64_t>{261}));
     assert(air.lde().domainSize() == 256 && air.lde().extendedSize() == 512);
     assert(air.nFixedF() == 2 && air.nQPieces() == 1 && air.qPosition(0).f == 5 && air.qPosition(0).j == 0);
     assert((air.witnessColumns() == std::vector<uint64_t>{0, 1}));
-    // The blinding of A.3, |O| + 1 per committed column: M16's degree − N.
+    // The blinding (pilfflonk/docs/protocol.md#blinding), |O| + 1 per committed column: the setup's
+    // degree − N.
     const uint64_t blind[] = {0, 0, 3, 3, 2, 0};
     for (uint64_t f = 0; f < 6; ++f) {
         assert(air.blindLength(f) == blind[f]);
@@ -657,18 +667,19 @@ void testRefusesBrokenKeys() {
         return f;
     };
     expectRefused(withInfo([](json &j) { j["layout"][5]["degree"] = 262; }), PILFFLONK_ERR_FORMAT,
-                  "holds Q with a degree of 262, not the bound of spec A.1, 261");
+                  "holds Q with a degree of 262, not its bound, 261 (pilfflonk/docs/protocol.md#degrees)");
     expectRefused(withInfo([](json &j) { j["layout"][2]["degree"] = 258; }), PILFFLONK_ERR_FORMAT,
                   "layout f2 has a degree of 258, below the 1 polynomials of 259 coefficients");
     expectRefused(withInfo([](json &j) { j["layout"][3]["pols"][0]["id"] = 0; }), PILFFLONK_ERR_FORMAT,
                   "layout f3 packs cm 0, which an earlier f packs too");
 
-    // The pieces of Q (spec A.1): maxQDegree is 0 unless it splits Q, and split, cmPolsMap and the
-    // layout have its pieces, Q0 … Q<m−1>, with the degrees their bounds give (splitQFiles).
+    // The pieces of Q (pilfflonk/docs/protocol.md#q-pieces): maxQDegree is 0 unless it splits Q, and
+    // split, cmPolsMap and the layout have its pieces, Q0 … Q<m−1>, with the degrees their bounds
+    // give (splitQFiles).
     expectRefused(withInfo([](json &j) { j["maxQDegree"] = 1; }), PILFFLONK_ERR_FORMAT,
                   "maxQDegree = 1 does not split Q of qDeg = 1, and then it is 0");
     expectRefused(withInfo([](json &j) { j["maxQDegree"] = 1; j["qDeg"] = 2; }), PILFFLONK_ERR_FORMAT,
-                  "cmPolsMap has 1 pieces of Q, and Q is made of 2 (spec A.1)");
+                  "cmPolsMap has 1 pieces of Q, and Q is made of 2 (pilfflonk/docs/protocol.md#q-pieces)");
     auto withSplitInfo = [](bool packed, const std::function<void(json &)> &change) {
         KeyFiles f = splitQFiles(packed);
         json info = json::parse(f.info);
@@ -681,9 +692,11 @@ void testRefusesBrokenKeys() {
     expectRefused(withSplitInfo(false, [](json &j) { j["layout"].erase(6); }), PILFFLONK_ERR_FORMAT,
                   "the layout does not pack piece Q1 of Q");
     expectRefused(withSplitInfo(false, [](json &j) { j["layout"][6]["degree"] = 261; }), PILFFLONK_ERR_FORMAT,
-                  "layout f6 holds pieces of Q with a degree of 261, not the bound of spec A.1, 263");
+                  "layout f6 holds pieces of Q with a degree of 261, not its bound, 263 "
+                  "(pilfflonk/docs/protocol.md#degrees)");
     expectRefused(withSplitInfo(true, [](json &j) { j["layout"][5]["degree"] = 525; }), PILFFLONK_ERR_FORMAT,
-                  "layout f5 holds pieces of Q with a degree of 525, not the bound of spec A.1, 526");
+                  "layout f5 holds pieces of Q with a degree of 525, not its bound, 526 "
+                  "(pilfflonk/docs/protocol.md#degrees)");
     expectRefused(withSplitInfo(true, [](json &j) { j["layout"][5]["offsets"] = json::array({0, 1}); }),
                   PILFFLONK_ERR_FORMAT, "layout f5 holds Q, which is opened at ξ only");
 }
@@ -693,7 +706,7 @@ void testRefusesBrokenKeys() {
 // ---------------------------------------------------------------------------------------------
 
 // With the blinding at zero, the prover's polynomials are the oracle's interpolants: its evaluations
-// at the oracle's ξ, and Q(ξ), are the oracle's (M14), and every commitment is [p(τ)]₁.
+// at the oracle's ξ, and Q(ξ), are the oracle's, and every commitment is [p(τ)]₁.
 void testUnblindedIsTheOracle() {
     const Fibonacci fib;
     std::unique_ptr<Instance> inst = fib.instance(std::make_unique<ZeroBlinding>());
@@ -711,7 +724,7 @@ void testUnblindedIsTheOracle() {
         const Poly *p = inst->polynomial(f, 0);
         const G1Point &c = f < 5 ? stage1[f - 2] : q[0];
         assert(samePoint(c, g1Times(p->evaluate(testTau()))));
-        // Unblinded, a column has at most N coefficients, and Q at most qDeg·N (A.1).
+        // Unblinded, a column has at most N coefficients, and Q at most qDeg·N.
         assert(p->getDegree() < 256);
     }
     assert(inst->polynomial(0, 0) == nullptr && inst->polynomial(2, 1) == nullptr);
@@ -726,8 +739,8 @@ void testUnblindedIsTheOracle() {
     assert(layout.size() == 6);
 }
 
-// With the blinding on: determinism by seed, the blinding of A.3, the verifier's Q(ξ), inv, invZh,
-// and the identity of A.5.
+// With the blinding on: determinism by seed, the blinding (pilfflonk/docs/protocol.md#blinding), the
+// verifier's Q(ξ), inv, invZh, and the SHPLONK identity (pilfflonk/docs/protocol.md#pairing-check).
 void testBlindedProof() {
     const Fibonacci fib;
     uint8_t seed[32] = {7};
@@ -749,7 +762,7 @@ void testBlindedProof() {
     const AirKey &air = fib.air();
     const FrElement w = PilFflonk::rootOfUnity(8);
     for (const Proved *p : {&a, &c}) {
-        // Each blinded column is still its column on H, with |O| + 1 more coefficients (A.3).
+        // Each blinded column is still its column on H, with |O| + 1 more coefficients.
         for (uint64_t f = 2; f < 5; ++f) {
             const Poly *poly = p->instance->polynomial(f, 0);
             assert(poly->getLength() == 256 + air.blindLength(f) && poly->getDegree() == poly->getLength() - 1);
@@ -802,7 +815,7 @@ void testBlindedProof() {
             }
         }
         assert(eq(E.fr.mul(p->proof.inv, product), E.fr.one()));
-        // The verifier's check of A.5, with τ known.
+        // The verifier's SHPLONK check, with τ known.
         assert(shplonkIdentityHolds(fib, *p));
     }
     // A W off by G breaks it.
@@ -811,14 +824,15 @@ void testBlindedProof() {
     assert(!shplonkIdentityHolds(fib, tampered));
 }
 
-// Q split in two (spec A.1, A.3), on the keys of splitQFiles, unpacked and packed, with the seed of an
-// unsplit proof, which blinds the columns as it does (the pieces' factors come after theirs):
-// - the pieces have the bounds of A.1, and the factors of their boundary, which cancel: Σ_i
-//   X^(i·S)·Q_i(X) is the unsplit proof's Q, coefficient by coefficient;
+// Q split in two (pilfflonk/docs/protocol.md#q-pieces), on the keys of splitQFiles, unpacked and
+// packed, with the seed of an unsplit proof, which blinds the columns as it does (the pieces'
+// factors come after theirs):
+// - the pieces have their bounds, and the factors of their boundary, which cancel:
+//   Σ_i X^(i·S)·Q_i(X) is the unsplit proof's Q, coefficient by coefficient;
 // - each f of Q's stage commits to [f(τ)]₁ of its pieces packed;
 // - the evaluations end with the pieces' Q_i(ξ), in the order of the layout, and q(0), the verifier's
 //   Q(ξ), is Q_0(ξ) + ξ^S·Q_1(ξ);
-// - unpacked, the SHPLONK identity of A.5 holds with the pieces' f, and breaks with a Q_i(ξ) off by one.
+// - unpacked, the SHPLONK identity holds with the pieces' f, and breaks with a Q_i(ξ) off by one.
 // Unblinded, the pieces are Q's coefficients, split at S, and q(0) is the oracle's Q(ξ).
 void testSplitQ() {
     const Fibonacci whole;
@@ -902,9 +916,10 @@ void testSplitQ() {
     assert(eq(opening.q(0), fr(fib.oracle["q"])));
 }
 
-// Q in parts (plan M39): whatever the size of the parts, from one coset of H (the default) to the
-// whole extended coset, the same Q (its pieces' coefficients), commitments, evaluations and opening,
-// bit for bit, whole and split, packed and not. A size out of range is refused.
+// Q in parts (pilfflonk/docs/protocol.md#q-in-parts): whatever the size of the parts, from one coset
+// of H (the default) to the whole extended coset, the same Q (its pieces' coefficients),
+// commitments, evaluations and opening, bit for bit, whole and split, packed and not. A size out of
+// range is refused.
 void testQInParts() {
     const uint8_t seed[32] = {13};
     for (const KeyFiles &files : {KeyFiles(), splitQFiles(false), splitQFiles(true)}) {
@@ -1169,7 +1184,7 @@ void testCApi() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The check (plan M25)
+// The check
 // ---------------------------------------------------------------------------------------------
 
 // The constraints of the Fibonacci's .bin: the pilout's five, then its im pol's.
@@ -1232,8 +1247,8 @@ void testCheckReadsTheConstraints() {
     assert(failures(checks).empty());
 }
 
-// A mutated cell or public fails exactly the (constraint, row) the oracle says (M14:
-// pilfflonk/tests/fibonacci.rs, a_mutated_cell_fails_exactly_the_constraints_and_rows_that_read_it),
+// A mutated cell or public fails exactly the (constraint, row) the oracle says
+// (pilfflonk/tests/fibonacci.rs, a_mutated_cell_fails_exactly_the_constraints_and_rows_that_read_it),
 // with the values of its numerators there.
 void testCheckFindsTheOraclesRows() {
     const Fibonacci fib;
@@ -1350,7 +1365,7 @@ void setWord(std::vector<uint8_t> &bin, uint64_t at, uint32_t value) {
 }
 
 void testCheckRefusals() {
-    // A constraint of stage 2 (whose columns the std's hints compute with its challenges, M30), of an
+    // A constraint of stage 2 (whose columns the std's hints compute with its challenges), of an
     // AIR of one stage: refused before anything, before its stage 1 is committed and after.
     {
         KeyFiles files;
@@ -1481,7 +1496,7 @@ void testCheckCApi() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Stage 2 (plans M30, M31): the sum bus
+// Stage 2: the sum bus
 // ---------------------------------------------------------------------------------------------
 
 constexpr const char *SUM_BUS = "SumBus";
@@ -1509,7 +1524,7 @@ KeyFiles sumBusFiles() {
     return files;
 }
 
-// What every test of the sum bus starts from; its key on `device` (plan M43).
+// What every test of the sum bus starts from; its key on `device`.
 struct SumBus {
     explicit SumBus(const KeyFiles &files = sumBusFiles(), Device device = Device::Cpu)
         : dir(files, SUM_BUS), pk(ProvingKey::load(dir.path(), device)) {}
@@ -1573,11 +1588,11 @@ std::unique_ptr<ProvingKey> changedSumBusKey(const SumBus &bus, const std::funct
                                         std::move(airs));
 }
 
-// The key reads the hints as the std writes them (plan M31), in the order the prover computes them,
-// the STARK's: im_col, the table's term mul/(T + TT·α … + γ) into im_single (stage 2, stagePos 1),
-// its numerator the column mul and its denominator an expression of the fixed columns, and then
-// gsum_col, gsum (stagePos 0), from two expressions, the numerator reading im_single. The im pol of
-// stage 2, the setup's, is no hint's.
+// The key reads the hints as the std writes them, in the order the prover computes them, the
+// STARK's (pilfflonk/docs/protocol.md#hint-columns): im_col, the table's term mul/(T + TT·α … + γ)
+// into im_single (stage 2, stagePos 1), its numerator the column mul and its denominator an
+// expression of the fixed columns, and then gsum_col, gsum (stagePos 0), from two expressions, the
+// numerator reading im_single. The im pol of stage 2, the setup's, is no hint's.
 void testTheSumBusHints() {
     const SumBus bus;
     const std::vector<StdHint> &hints = bus.air().stdHints();
@@ -1664,9 +1679,9 @@ void testStage2IsTheOracles() {
 }
 
 // check computes the columns of stage 2 itself, with the challenges it is given, as commitStage(2)
-// does, and commits nothing (plan M30): checkColumns is the oracle's before any commit, and after
-// the stages are committed with other challenges, when the instance's are those, not check's; check
-// changes none of them, and the proof is the one without it.
+// does, and commits nothing (pilfflonk/docs/README.md#pilfflonk-check): checkColumns is the oracle's
+// before any commit, and after the stages are committed with other challenges, when the instance's
+// are those, not check's; check changes none of them, and the proof is the one without it.
 void testCheckComputesStage2Itself() {
     const SumBus bus;
     const json &expected = bus.oracle["stage2"];
@@ -1756,11 +1771,11 @@ void testAZeroDenominatorIsAnError() {
     pilfflonk_ctx_free(ctx);
 }
 
-// A denominator 0 on a row of an im_col (plan M31): its denominator the column a, which the
-// generator's witness has 0 at row 2 (a[2] = 13 mod 13; the std's denominator depends on the fixed
-// columns only). The prover computes im_single first, and it is its column that has no value there:
-// UnsatisfiedError naming it and the row, from check and from commitStage(2), and the stage stays
-// uncommitted.
+// A denominator 0 on a row of an im_col (pilfflonk/docs/protocol.md#hint-columns): its denominator
+// the column a, which the generator's witness has 0 at row 2 (a[2] = 13 mod 13; the std's
+// denominator depends on the fixed columns only). The prover computes im_single first, and it is
+// its column that has no value there: UnsatisfiedError naming it and the row, from check and from
+// commitStage(2), and the stage stays uncommitted.
 void testAZeroDenominatorOfAnImColIsAnError() {
     const SumBus bus;
     std::unique_ptr<ProvingKey> pk = changedSumBusKey(bus, [&](ExpressionsBin &b) {
@@ -1816,7 +1831,8 @@ void testABrokenBusIsCheckedAndRefused() {
 
 // The hints AirKey refuses, the sum bus's changed: every refusal names the AIR and the hint. What it
 // cannot compute of gsum_col or of im_col, and what reads a column the prover does not compute before
-// it (plan M31): of stage 2, im_single (the im_col's) is before gsum, and the im pol after both.
+// it (pilfflonk/docs/protocol.md#hint-columns): of stage 2, im_single (the im_col's) is before gsum,
+// and the im pol after both.
 void testRefusedHints() {
     const std::vector<uint8_t> infoText = readBytes(busFixture("SumBus.pilfflonkinfo.json"));
     const std::vector<uint8_t> binBytes = readBytes(busFixture("SumBus.bin"));
@@ -2006,7 +2022,7 @@ void testInstanceColumnCApi() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The GPU (plan M43)
+// The GPU (pilfflonk/docs/performance.md#why-the-proof-is-the-same)
 // ---------------------------------------------------------------------------------------------
 
 // Everything a proof made through the classes is, bit for bit: its commitments, evaluations, W, W',

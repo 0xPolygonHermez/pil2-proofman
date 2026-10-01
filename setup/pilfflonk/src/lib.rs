@@ -2,21 +2,22 @@
 //! writes the bytecode, the keys and the `provingKey/` directory.
 //!
 //! The command is [`command::run_setup_pilfflonk`], which `proofman-setup setup-pilfflonk` calls
-//! (`pil2-stark-setup` hosts it; this crate does not depend on that one, spec §5.2). Its steps:
+//! (`pil2-stark-setup` hosts it; this crate does not depend on that one:
+//! pilfflonk/docs/README.md#code-map). Its steps (pilfflonk/docs/README.md#setup-pilfflonk):
 //!
 //! | Step | Module |
 //! |---|---|
-//! | reading and validating the pilout (spec §4.2.1) | [`validate`] |
+//! | reading and validating the pilout (pilfflonk/docs/README.md#what-the-setup-refuses) | [`validate`] |
 //! | the fixed columns and `<air>.const` | [`fixed`] |
 //! | `pilout.globalInfo.json` | [`global_info`] |
-//! | the symbolic passes over BN254 (§4.2.2, §4.2.3) | [`passes`] |
-//! | the committed polynomials, their bounds, `nBitsExt` and the layout (§4.2.4, A.1–A.3) | [`layout`] |
-//! | the grouping of the committed polynomials in `f_i` (§4.2.4, A.2) | [`grouping`] |
+//! | the symbolic passes over BN254 (pilfflonk/docs/protocol.md#degree-search) | [`passes`] |
+//! | the committed polynomials, their bounds, `nBitsExt` and the layout | [`layout`] |
+//! | the grouping of the committed polynomials in `f_i` (pilfflonk/docs/protocol.md#grouping-rules) | [`grouping`] |
 //! | `<air>.pilfflonkinfo.json` from the passes' result | [`air_info`] |
 //! | `pilfflonk.srs.bin`, `<air>.verkey.json` and `[τ]₂` | [`keys`] |
-//! | the vkey's digest (A.6) | [`digest`] |
+//! | the vkey's digest (pilfflonk/docs/formats.md#digest) | [`digest`] |
 //! | `<air>.bin` | [`bytecode`] |
-//! | `pilfflonk.verifier.sol`, with `--solidity` (§4.5, Fase 4) | [`solidity`] |
+//! | `pilfflonk.verifier.sol`, with `--solidity` (pilfflonk/docs/verifier.md#solidity-verifier) | [`solidity`] |
 //!
 //! With the feature `test-ptau`, the module `test_ptau` writes a ptau with `τ = 1`, for tests only.
 

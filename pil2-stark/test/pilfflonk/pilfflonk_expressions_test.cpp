@@ -1,13 +1,14 @@
 // Tests for PilFflonk::ExpressionsBin and PilFflonk::Expressions, the reader and the interpreter of
-// <air>.bin (plan M17). The fixtures are pilfflonk-setup's, in setup/pilfflonk/tests/fixtures/bytecode/,
-// written by its Rust tests (setup/pilfflonk/tests/bytecode.rs and bytecode/interpreter.rs), which
-// check that they are what they compute:
+// <air>.bin (pilfflonk/docs/formats.md#bytecode). The fixtures are pilfflonk-setup's, in
+// setup/pilfflonk/tests/fixtures/bytecode/, written by its Rust tests
+// (setup/pilfflonk/tests/bytecode.rs and bytecode/interpreter.rs), which check that they are what
+// they compute:
 //
 // - Sample.bin: the bytecode of sample() in bytecode.rs, whose every field testReadsTheRustSample
-//   checks, its hints (revision 3, plan M30) too; Sample.expected.json: inputs for its codes, and
-//   what the Rust evaluator (num-bigint) gives them.
-// - fibonacci/: the Fibonacci of M13 as setup-pilfflonk writes it, M13's witness, the qVerifier as a
-//   bytecode, and the oracle's (M14) evaluations and Q at a point.
+//   checks, its hints (revision 3) too; Sample.expected.json: inputs for its codes, and what the
+//   Rust evaluator (num-bigint) gives them.
+// - fibonacci/: the Fibonacci (pilfflonk/tests/data/fibonacci.rs) as setup-pilfflonk writes it, its
+//   witness, the qVerifier as a bytecode, and the oracle's evaluations and Q at a point.
 //
 // Changing them means regenerating them (PILFFLONK_UPDATE_FIXTURES=1, see those files) and updating
 // these tests. The fixtures are found from the test binary, pil2-stark/build/pilfflonkTest, or from
@@ -454,8 +455,9 @@ void testSampleGivesTheRustEvaluatorsValues() {
 // Zi
 // ---------------------------------------------------------------------------------------------
 
-// Zi on the coset against a direct computation of A.1's closed forms, one inversion per point, for
-// every kind of boundary, with ffiasm's FFT's roots.
+// Zi on the coset against a direct computation of its closed forms
+// (pilfflonk/docs/protocol.md#constraint-polynomial), one inversion per point, for every kind of
+// boundary, with ffiasm's FFT's roots.
 void testZerofiersOnTheCoset() {
     const uint64_t nBits = 3, nBitsExt = 5, n = 8, m = 32;
     FFT<Engine::Fr> fft(m);
@@ -484,7 +486,8 @@ void testZerofiersOnTheCoset() {
         const FrElement everyRow = inv(zh);
         F().sub(d, x, F().one());
         const FrElement firstRow = F().mul(zh, inv(d));
-        F().sub(d, x, lastRoot); // X − ω^(N−1), not X − ω^N = X − 1 (spec Annex F.8)
+        // X − ω^(N−1), not X − ω^N = X − 1 (pilfflonk/docs/README.md#stark-lastrow-zerofier)
+        F().sub(d, x, lastRoot);
         const FrElement lastRow = F().mul(zh, inv(d));
         FrElement frame = F().one();
         for (uint64_t j : {uint64_t(0), n - 1, n - 2}) {
@@ -517,9 +520,9 @@ void testZerofiersOnTheCoset() {
                     "everyFrame excludes 5 + 4 rows of 8"));
     assert(contains(thrown<std::invalid_argument>([] { PilFflonk::rootOfUnity(29); }), "order 2^29"));
 
-    // The coset in parts (plan M39): point i of part p of 2^partBits points is point p + (N'/S)·i
-    // of the coset, Zi and all, bit for bit, and a column at an opening point is read as many
-    // rows later in the part as on the coset (extendBits).
+    // The coset in parts (pilfflonk/docs/protocol.md#q-in-parts): point i of part p of 2^partBits
+    // points is point p + (N'/S)·i of the coset, Zi and all, bit for bit, and a column at an opening
+    // point is read as many rows later in the part as on the coset (extendBits).
     for (uint64_t partBits = nBits; partBits <= nBitsExt; ++partBits) {
         const uint64_t S = uint64_t(1) << partBits, nParts = m / S;
         for (uint64_t part = 0; part < nParts; ++part) {
@@ -593,7 +596,8 @@ struct Fibonacci {
     }
 };
 
-// The smallest nBitsExt whose domain holds every f of the layout (spec A.1): Q's bound.
+// The smallest nBitsExt whose domain holds every f of the layout
+// (pilfflonk/docs/protocol.md#degrees): Q's bound.
 uint64_t nBitsExtOf(const PilfflonkInfo &info) {
     uint64_t degree = 0;
     for (const auto &f : info.layout) degree = std::max(degree, f.degree);
@@ -664,10 +668,11 @@ void testTheFibonaccisQIsAPolynomialOfItsDegree() {
         }
     }
 
-    // Q has at most qDeg·N + (qDeg + 1)·|O|max + 1 coefficients (spec A.1), and here, with no
-    // blinding, deg Q <= (qDeg + 1)(N − 1) − N < qDeg·N.
+    // Q has at most qDeg·N + (qDeg + 1)·|O|max + 1 coefficients
+    // (pilfflonk/docs/protocol.md#degrees), and here, with no blinding,
+    // deg Q <= (qDeg + 1)(N − 1) − N < qDeg·N.
     const std::vector<FrElement> q = qCoefficients(fib, expressions, fib.stage1);
-    uint64_t bound = 0; // Q's degree in the layout: A.1's bound, with |O|max = 2 ({0, 1})
+    uint64_t bound = 0; // Q's degree in the layout: that bound, with |O|max = 2 ({0, 1})
     for (const auto &f : fib.info.layout) {
         if (f.stage == fib.info.qStage()) bound = f.degree;
     }
@@ -676,7 +681,7 @@ void testTheFibonaccisQIsAPolynomialOfItsDegree() {
     assert(firstNonZeroFrom(q, bound) == q.size());
     assert(firstNonZeroFrom(q, 0) < fib.n);
 
-    // At ξ it is the oracle's Q(ξ) (M14).
+    // At ξ it is the oracle's Q(ξ).
     const FrElement xi = fr(fib.oracle["xi"]);
     FrElement at = F().zero();
     for (uint64_t j = q.size(); j-- > 0;) {

@@ -2,13 +2,15 @@
 //! the vkey digest.
 //!
 //! In memory a scalar or a coordinate is its canonical 32 bytes, little-endian, as the C API
-//! passes it (spec §5.3). In JSON it is a decimal string (spec A.6), written without sign, spaces
-//! or leading zeros, and read only in that form: a file this crate accepts is one it could have
-//! written, so a value has a single spelling and the digest of the vkey (A.6) is the same whether
-//! it is computed over the file or over the value read from it.
+//! passes it (pilfflonk/docs/README.md#c-api). In JSON it is a decimal string
+//! (pilfflonk/docs/formats.md#json-encoding), written without sign, spaces or leading zeros, and
+//! read only in that form: a file this crate accepts is one it could have written, so a value has a
+//! single spelling and the digest of the vkey (pilfflonk/docs/formats.md#digest) is the same
+//! whether it is computed over the file or over the value read from it.
 //!
 //! Only the ranges are checked (`< r`, `< q`): whether a point is on its curve is for the
-//! verifier to check on its input (spec §4.5, step 1), and for the C++ that computes the points.
+//! verifier to check on its input (pilfflonk/docs/verifier.md#steps, steps 1–3), and for the C++
+//! that computes the points.
 
 use std::fmt;
 use std::sync::OnceLock;
@@ -21,7 +23,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::error::{invalid, PilfflonkResult};
 
 /// `r`: the order of BN254's G1, the modulus of `Fr`, in decimal. It is `"modulus"` in the
-/// globalInfo (A.6).
+/// globalInfo (pilfflonk/docs/formats.md#globalinfo).
 pub const BN254_R: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
 
 /// `q`: the modulus of BN254's base field `Fq`, where the coordinates of the points live.
@@ -85,7 +87,8 @@ macro_rules! field_element {
         impl $name {
             pub const ZERO: Self = Self([0; FIELD_BYTES]);
 
-            /// From its canonical little-endian bytes, the C API's form (spec §5.3).
+            /// From its canonical little-endian bytes, the C API's form
+            /// (pilfflonk/docs/README.md#c-api).
             pub fn from_le_bytes(bytes: [u8; FIELD_BYTES]) -> PilfflonkResult<Self> {
                 if BigUint::from_bytes_le(&bytes) < *$modulus() {
                     Ok(Self(bytes))
@@ -94,7 +97,8 @@ macro_rules! field_element {
                 }
             }
 
-            /// From its canonical big-endian bytes, the form of the proof bytes (A.6).
+            /// From its canonical big-endian bytes, the form of the proof bytes
+            /// (pilfflonk/docs/formats.md#proof).
             pub fn from_be_bytes(bytes: [u8; FIELD_BYTES]) -> PilfflonkResult<Self> {
                 Self::from_le_bytes(reversed(bytes))
             }
@@ -163,14 +167,15 @@ macro_rules! field_element {
 
 field_element!(
     /// A canonical element of `Fr` (`< r`): a column value, an evaluation, a public, a challenge.
-    /// The type spec §5.3 calls `FrBytes`.
+    /// The C API's `FrBytes` (pilfflonk/docs/README.md#c-api).
     FrBytes,
     r,
     "r"
 );
 
-/// A `Bn254` is an element of `Fr` in the type a witness is computed in (D4). It is always below
-/// `r`, as an `FrBytes` is, so the conversions cannot fail: they only change the representation.
+/// A `Bn254` is an element of `Fr` in the type a witness is computed in
+/// (pilfflonk/docs/README.md#witness). It is always below `r`, as an `FrBytes` is, so the
+/// conversions cannot fail: they only change the representation.
 impl From<Bn254> for FrBytes {
     fn from(value: Bn254) -> Self {
         Self(value.to_le_bytes())
@@ -192,8 +197,8 @@ field_element!(
 );
 
 /// An affine point of G1, `(x, y)`. The point at infinity is `(0, 0)`, ffiasm's affine form of it
-/// and what the C API writes for it (`pilfflonk_commit_fixed`). JSON: `["x", "y"]` (A.6, the
-/// verkey and the vkey).
+/// and what the C API writes for it (`pilfflonk_commit_fixed`). JSON: `["x", "y"]`, in the verkey
+/// and the vkey (pilfflonk/docs/formats.md#verkey).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct G1Affine {
     pub x: FqBytes,
@@ -207,8 +212,8 @@ impl G1Affine {
         self.x.is_zero() && self.y.is_zero()
     }
 
-    /// `x‖y`, each coordinate 32 bytes big-endian: the transcript's and the proof's encoding (A.4,
-    /// A.6).
+    /// `x‖y`, each coordinate 32 bytes big-endian: the transcript's and the proof's encoding
+    /// (pilfflonk/docs/protocol.md#transcript, pilfflonk/docs/formats.md#proof).
     pub fn to_be_bytes(&self) -> [u8; G1_BYTES] {
         let mut bytes = [0u8; G1_BYTES];
         bytes[..FIELD_BYTES].copy_from_slice(&self.x.to_be_bytes());
@@ -221,7 +226,8 @@ impl G1Affine {
         Ok(Self { x: FqBytes::from_be_bytes(x)?, y: FqBytes::from_be_bytes(y)? })
     }
 
-    /// `x‖y`, each coordinate 32 bytes little-endian: the C API's encoding (spec §5.3).
+    /// `x‖y`, each coordinate 32 bytes little-endian: the C API's encoding
+    /// (pilfflonk/docs/README.md#c-api).
     pub fn to_le_bytes(&self) -> [u8; G1_BYTES] {
         let mut bytes = [0u8; G1_BYTES];
         bytes[..FIELD_BYTES].copy_from_slice(&self.x.to_le_bytes());
@@ -322,14 +328,14 @@ impl<'de> Deserialize<'de> for G2Affine {
     }
 }
 
-/// The Keccak-256 digest of the vkey (A.6). JSON: `"0x"` and 64 lowercase hexadecimal digits,
-/// the 32 bytes in the order Keccak outputs them.
+/// The Keccak-256 digest of the vkey (pilfflonk/docs/formats.md#digest). JSON: `"0x"` and 64
+/// lowercase hexadecimal digits, the 32 bytes in the order Keccak outputs them.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Digest(pub [u8; 32]);
 
 impl Digest {
-    /// `digest mod r`, what the transcript absorbs (A.4, A.6): the 32 bytes read as a big-endian
-    /// integer, as the hexadecimal string spells it.
+    /// `digest mod r`, what the transcript absorbs (pilfflonk/docs/protocol.md#transcript, step 1):
+    /// the 32 bytes read as a big-endian integer, as the hexadecimal string spells it.
     pub fn to_fr(&self) -> FrBytes {
         let reduced = BigUint::from_bytes_be(&self.0) % r();
         // Below r, so it fits in 32 bytes.
@@ -437,7 +443,7 @@ mod tests {
             assert_eq!(bytes.to_le_bytes(), x.to_le_bytes());
             assert_eq!(Bn254::from(bytes), x);
             assert_eq!(bytes.to_decimal(), x.to_string());
-            // The two JSON forms are the same (A.6).
+            // The two JSON forms are the same.
             assert_eq!(serde_json::to_string(&bytes).unwrap(), serde_json::to_string(&x).unwrap());
         }
         assert_eq!(FrBytes::from(Bn254::NEG_ONE).to_decimal(), r_minus_1);

@@ -1,24 +1,27 @@
-// The pilfflonk verifier (spec-seed.md §4.5): verify(vkey, publics, proof, logger) → true or false,
-// in the shape of snarkjs' fflonk verifier (src/fflonk_verify.js), whose steps it keeps:
+// The pilfflonk verifier (pilfflonk/docs/verifier.md#js-verifier): verify(vkey, publics, proof,
+// logger) → true or false, in the shape of snarkjs' fflonk verifier (src/fflonk_verify.js), whose
+// steps it keeps (pilfflonk/docs/verifier.md#steps):
 //
-// 1-3. decode and check the vkey (vkey.js; its [τ]₂ in the r-torsion), its digest (A.6), the
-//      publics and the proof (proof.js): commitments in G1, evaluations and publics in Fr, and
-//      exactly the values the vkey says;
-// 4.   replay the transcript (challenges.js, A.4);
+// 1-3. decode and check the vkey (vkey.js; its [τ]₂ in the r-torsion), its digest
+//      (pilfflonk/docs/formats.md#digest), the publics and the proof (proof.js): commitments in G1,
+//      evaluations and publics in Fr, and exactly the values the vkey says;
+// 4.   replay the transcript (challenges.js, pilfflonk/docs/protocol.md#transcript);
 // 5.   Z_H(ξ) with ξ = xiSeed^powerW, checked against the proof's invZh as pil-stark's fflonk
 //      verifier checks it; Q(ξ) from the evaluations with the vkey's qVerifier (qverifier.js),
-//      and, if Q is split, Σ_i ξ^(i·M·N)·Q_i(ξ) = Q(ξ) (A.1);
+//      and, if Q is split, Σ_i ξ^(i·M·N)·Q_i(ξ) = Q(ξ) (pilfflonk/docs/protocol.md#q-pieces);
 // 6.   the proof's inv: the inverse of the product of the denominators the SHPLONK check inverts
-//      (shplonk.js, computeInverseDenominators; A.6), as snarkjs' Solidity verifier checks its own;
-// 7.   the SHPLONK opening with a pairing (shplonk.js, A.5), the fixed commitments always the
-//      vkey's, never the proof's (C.3.1), and Q(ξ) the evaluation of Q's f at ξ.
+//      (shplonk.js, computeInverseDenominators; pilfflonk/docs/protocol.md#inverses), as snarkjs'
+//      Solidity verifier checks its own;
+// 7.   the SHPLONK opening with a pairing (shplonk.js, pilfflonk/docs/protocol.md#pairing-check),
+//      the fixed commitments always the vkey's, never the proof's, and Q(ξ) the evaluation of Q's f
+//      at ξ.
 //
 // Arguments are the parsed JSON of pilfflonk.vkey.json, publics.json and proof.json. Every input it
 // rejects, malformed ones included, gives false and a logged reason, as snarkjs does for what it
 // checks; it throws only on a failure of its own. The logger, optional, has snarkjs' methods
 // (debug, info, warn, error).
 //
-// Neither inv nor invZh is absorbed (A.4): each is checked against what it must be the inverse of.
+// Neither inv nor invZh is absorbed: each is checked against what it must be the inverse of.
 
 import { buildBn128 } from "ffjavascript";
 
@@ -103,7 +106,9 @@ async function run(curve, vkObject, publicsObject, proofObject, logger) {
     info("> Checking the verification key");
     const vk = fromObjectVk(curve, vkObject);
     if (vkeyDigest(vkObject) !== vk.digest) {
-        if (logger) logger.error("The digest of the vkey is not the digest of its contents (A.6)");
+        if (logger) {
+            logger.error("The digest of the vkey is not the digest of its contents (pilfflonk/docs/formats.md#digest)");
+        }
         return false;
     }
 
@@ -138,7 +143,7 @@ async function run(curve, vkObject, publicsObject, proofObject, logger) {
     }
     const { q } = computeQ(curve, vk, publics, proof, challenges, xi);
     if (vk.qPieces > 1 && !Fr.eq(joinQPieces(curve, piecesByIndex(vk, proof), xi, vk.power, vk.maxQDegree), q)) {
-        if (logger) logger.error("The pieces of Q do not add up to Q(ξ) (A.1)");
+        if (logger) logger.error("The pieces of Q do not add up to Q(ξ) (pilfflonk/docs/protocol.md#q-pieces)");
         return false;
     }
 
@@ -154,7 +159,11 @@ async function run(curve, vkObject, publicsObject, proofObject, logger) {
         challenges.y,
     );
     if (!isValidInverse(curve, denominators, proof.inv)) {
-        if (logger) logger.error("inv is not the inverse of the SHPLONK check's denominators (A.6)");
+        if (logger) {
+            logger.error(
+                "inv is not the inverse of the SHPLONK check's denominators (pilfflonk/docs/protocol.md#inverses)",
+            );
+        }
         return false;
     }
 

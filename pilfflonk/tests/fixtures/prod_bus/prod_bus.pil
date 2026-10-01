@@ -1,6 +1,6 @@
-// A product bus in one AIR (plan M30): a permutation of the pairs (a, c) into the pairs (b, d), on
-// the std's grand-product bus (gprod, PIOP_BUS_PROD) in STD_MODE_ONE_INSTANCE, which has no
-// airgroup value (D2). One air, one instance, N = 2^5.
+// A product bus in one AIR: a permutation of the pairs (a, c) into the pairs (b, d), on the std's
+// grand-product bus (gprod, PIOP_BUS_PROD) in STD_MODE_ONE_INSTANCE, which has no airgroup value
+// (pilfflonk/docs/README.md#scope). One air, one instance, N = 2^5.
 //
 // - The std's prover hint gprod_col gives the stage-2 column `gprod`, with the challenges std_alpha
 //   and std_gamma: row by row, the running product of (b + d·α + 1·α² … + γ)/(a + c·α … + γ), each

@@ -1,11 +1,11 @@
-//! The Rust test oracle (plan M14, R8): a reference evaluation of an AIR's constraints and of its
-//! constraint polynomial `Q` (spec A.1), from the pilout alone, with `num-bigint`.
+//! The Rust test oracle (pilfflonk/docs/README.md#tests): a reference evaluation of an AIR's
+//! constraints and of its constraint polynomial `Q`
+//! (pilfflonk/docs/protocol.md#constraint-polynomial), from the pilout alone, with `num-bigint`.
 //!
 //! It reads the pilout's protobuf directly (`pil2-pilout`) and none of `pil-info`, the setup or
-//! the C++ core, so that it stays an independent reference for them: the prover's bytecode (M17,
-//! M18), the JS verifier's `qVerifier` (M26) and `pilfflonk check` (M25) are checked against it.
-//! It is for tests only: the feature `oracle` is off by default and only this crate's tests turn
-//! it on.
+//! the C++ core, so that it stays an independent reference for them: the prover's bytecode, the JS
+//! verifier's `qVerifier` and `pilfflonk check` are checked against it. It is for tests only: the
+//! feature `oracle` is off by default and only this crate's tests turn it on.
 //!
 //! # Use
 //!
@@ -26,12 +26,13 @@
 //!   generator of `H` that ffiasm and ffjavascript use ([`omega`]). A column read at offset `s`
 //!   on row `i` is its value at row `(i + s) mod N`: rows are cyclic.
 //! - **Constraints.** `check` evaluates every constraint of the pilout on every row of its domain
-//!   and returns those that are not 0. Domains (A.1): `everyRow` is every row, `firstRow` row 0,
+//!   and returns those that are not 0. Domains: `everyRow` is every row, `firstRow` row 0,
 //!   `lastRow` row `N − 1`, and `everyFrame { offsetMin, offsetMax }` every row but the first
 //!   `offsetMin` and the last `offsetMax`, as the STARK's zerofier excludes them
 //!   (`pil2-stark/src/starkpil/setup_ctx.hpp`, `buildFrameZerofierInv`) and `Boundary::EveryFrame`
-//!   says. The compiler of `develop-0.14.0` only emits `everyRow` (spec §3.4); the other three
-//!   are exercised with pilouts built in code.
+//!   says. The compiler of `develop-0.14.0` only emits `everyRow`
+//!   (pilfflonk/docs/protocol.md#constraint-polynomial); the other three are exercised with pilouts
+//!   built in code.
 //! - **Points.** A column at offset `s` at a point `z` is its interpolant over `H` at `z·ω^s`, by
 //!   barycentric interpolation.
 //! - **`Q`.** `Q(X) = Σ_{i<n} std_vc^(n−1−i)·c_i(X)/Z_{D_i}(X)` over the `n` terms of the fold: the
@@ -40,20 +41,20 @@
 //!   `pil-info/src/pil/{constraint_poly,im_polynomials}.rs`). With im pols, every operand that
 //!   refers to the expression of an im pol reads its column instead, the interpolant of the
 //!   expression's values on `H`; the expression `e_k` of its own term does not.
-//!   - `q_at` computes it at a point `z ∉ H`, from the barycentric evaluations and `Z_D(z)` in the
-//!     closed forms of A.1, as a verifier does;
+//!   - `q_at` computes it at a point `z ∉ H`, from the barycentric evaluations and `Z_D(z)` in
+//!     closed form, as a verifier does;
 //!   - `q_polynomial` computes it as a polynomial: each numerator in coefficient form, divided by
 //!     `Z_D = Π_{j ∈ D}(X − ω^j)`. It is exact, and so `Q` a polynomial, if and only if every
 //!     constraint holds on every row of its domain; `QPolynomial` keeps the remainders.
 //!
-//! - **The std's prover hints** (plans M30, M31). The columns of stage 2 and above are not the
-//!   witness's: the std's `im_col`, `gsum_col` and `gprod_col` hints give them, from the pilout's
-//!   hints and nothing else, each row's quotient with its own inversion: a naive sequential
-//!   reference for the prover's, which inverts in a batch (`hint_columns`).
+//! - **The std's prover hints** (pilfflonk/docs/protocol.md#hint-columns). The columns of stage 2
+//!   and above are not the witness's: the std's `im_col`, `gsum_col` and `gprod_col` hints give
+//!   them, from the pilout's hints and nothing else, each row's quotient with its own inversion: a
+//!   naive sequential reference for the prover's, which inverts in a batch (`hint_columns`).
 //!   - An `im_col` hint's `reference` column is `numerator/denominator` on each row.
 //!   - A `gsum_col` or `gprod_col` hint's is, row after row, the running sum or product of
 //!     `numerator_air/denominator_air`. `result` and the direct fields update an airgroup value,
-//!     which v1 has none of (D2): the column does not depend on them.
+//!     which v1 has none of (pilfflonk/docs/README.md#scope): the column does not depend on them.
 //!   - They are computed in the order of the STARK's `calculateImHints` and `calculateWitnessSTD`:
 //!     the `im_col` hints in the pilout's order, then the `gprod_col` ones and the `gsum_col` ones,
 //!     each reading the columns of the stage computed before it (the std's sum bus reads its
@@ -124,8 +125,10 @@ impl Domain {
         }
     }
 
-    /// `Z_D(z)` as A.1 writes it, for a trace of `2^n_bits` rows: `z^N − 1`, `z − 1`,
-    /// `z − ω^(N−1)`, and `(z^N − 1)/Π_j (z − ω^j)` over the rows `j` an `everyFrame` excludes.
+    /// `Z_D(z)` as the table of zerofiers writes it
+    /// (pilfflonk/docs/protocol.md#constraint-polynomial), for a trace of `2^n_bits` rows: `z^N − 1`,
+    /// `z − 1`, `z − ω^(N−1)`, and `(z^N − 1)/Π_j (z − ω^j)` over the rows `j` an `everyFrame`
+    /// excludes.
     pub fn zerofier_at(&self, z: &Fr, n_bits: u32) -> PilfflonkResult<Fr> {
         let w = omega(n_bits)?;
         let n = 1u64 << n_bits;
@@ -728,8 +731,9 @@ impl AirOracle {
     /// `q_at`, with each column read from `values` instead of interpolated over `H`. The scalars
     /// (publics, challenges, …) are those of `scalars`; its columns are not read.
     ///
-    /// With a proof's evaluations, which are those of blinded polynomials (A.3), it is the `Q(ξ)`
-    /// the verifier derives and the prover's `Q` must take at `ξ`, and not `q_at`'s.
+    /// With a proof's evaluations, which are those of blinded polynomials
+    /// (pilfflonk/docs/protocol.md#blinding), it is the `Q(ξ)` the verifier derives and the prover's
+    /// `Q` must take at `ξ`, and not `q_at`'s.
     pub fn q_from_evaluations(
         &self,
         scalars: &Values,

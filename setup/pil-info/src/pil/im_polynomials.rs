@@ -936,7 +936,8 @@ mod tests {
     }
 
     /// With `Search { max: 9 }` the chosen split has the minimum `nImPols + qDeg` over every
-    /// degree 2..=9 (A.1), here reached with no im pols at degree 4.
+    /// degree 2..=9 (pilfflonk/docs/protocol.md#degree-search), here reached with no im pols at
+    /// degree 4.
     #[test]
     fn test_search_minimises_im_pols_plus_q_deg() {
         let field = FieldCfg::bn254();

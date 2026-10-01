@@ -117,10 +117,12 @@ struct StageColumnCtx {
     columns: Vec<ColumnCtx>,
 }
 
-/// Whether `pilout` is over BN254's `Fr`, the field of `setup-pilfflonk` (spec §4.2.1), from its
-/// `baseField` as the pilfflonk setup reads it. Its helpers are then those of a pilfflonk witness
-/// library (D4): rows over `Bn254` with no packed rows, which pilfflonk does not accept yet; values
-/// of dimension 1, as BN254 has no extension field (spec A.6); and publics that are `Bn254` values.
+/// Whether `pilout` is over BN254's `Fr`, the field of `setup-pilfflonk`
+/// (pilfflonk/docs/README.md#what-the-setup-refuses), from its `baseField` as the pilfflonk setup
+/// reads it. Its helpers are then those of a pilfflonk witness library
+/// (pilfflonk/docs/README.md#witness): rows over `Bn254` with no packed rows, which pilfflonk does
+/// not accept yet; values of dimension 1, as BN254 has no extension field; and publics that are
+/// `Bn254` values.
 fn is_bn254(pilout: &pil2_pilout::pilout::PilOut) -> bool {
     BigUint::parse_bytes(BN254_R.as_bytes(), 10).is_some_and(|r| BigUint::from_bytes_be(&pilout.base_field) == r)
 }

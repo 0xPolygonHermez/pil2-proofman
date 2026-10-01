@@ -1,7 +1,8 @@
-//! The witness generator of the fixture `all` (plan M34), `tests/fixtures/all/all.pil`: pil-fflonk's
-//! `all` (`pil/sm_all/all_main.pil`), whose witness its generators write one state machine after
-//! another, over BN254's `Fr`. The same witness for the sum and the product bus. Each state machine's
-//! columns are those of its own generator for `N = 2^8`:
+//! The witness generator of the fixture `all` (pilfflonk/docs/README.md#fixtures),
+//! `tests/fixtures/all/all.pil`: pil-fflonk's `all` (`pil/sm_all/all_main.pil`), whose witness its
+//! generators write one state machine after another, over BN254's `Fr`. The same witness for the
+//! sum and the product bus. Each state machine's columns are those of its own generator for
+//! `N = 2^8`:
 //!
 //! - `l1`, `l2`: the Fibonacci's, `tests/data/fibonacci.rs` for the inputs `[1, 2]`;
 //! - `connection_a`, `connection_b`, `connection_c`: `tests/data/connection.rs`;
@@ -33,14 +34,14 @@ pub fn witness() -> Witness {
 }
 
 /// [`witness`] for the Fibonacci's inputs `inputs` instead of [`INPUTS`], as the witness library of
-/// the fixture computes it from its public inputs (plan M38c).
+/// the fixture computes it from its public inputs (pilfflonk/docs/README.md#witness).
 pub fn witness_of_inputs(inputs: [u64; 2]) -> Witness {
     witness_of_size(N_BITS, inputs)
 }
 
 /// [`witness_of_inputs`] for `2^n_bits` rows instead of `2^N_BITS`: each state machine's columns
-/// of its generator for that many rows, as the benchmark of plan M39 (`pilfflonk/bench/`) proves
-/// `all` at every size.
+/// of its generator for that many rows, as the benchmark (`pilfflonk/bench/`,
+/// pilfflonk/docs/performance.md#method) proves `all` at every size.
 pub fn witness_of_size(n_bits: u32, inputs: [u64; 2]) -> Witness {
     generate(n_bits, inputs, plookup::columns(n_bits))
 }

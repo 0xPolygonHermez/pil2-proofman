@@ -1,7 +1,7 @@
 //! `setup-pilfflonk` as `proofman-setup` runs it, `run_setup_pilfflonk`, on `common`'s pilout: its
-//! arguments, `pilout.globalInfo.json`, and the files of the `provingKey/` it writes (spec
-//! §4.2.6). The same through the binary, and on the compiled Fibonacci fixture, is in
-//! `setup/pil2-stark/tests/setup_pilfflonk.rs`.
+//! arguments, `pilout.globalInfo.json`, and the files of the `provingKey/` it writes
+//! (pilfflonk/docs/formats.md#provingkey). The same through the binary, and on the compiled
+//! Fibonacci fixture, is in `setup/pil2-stark/tests/setup_pilfflonk.rs`.
 
 use std::fs;
 use std::path::Path;
@@ -82,8 +82,9 @@ fn the_defaults_are_those_of_spec_4_2() {
     unpacked.check().unwrap();
 }
 
-/// What the arguments cannot ask for: a degree search below 2. Packing is the default (plan M22),
-/// and every `--max-q-degree` is one (plan M33): it splits `Q` only if `qDeg` is above it (A.1).
+/// What the arguments cannot ask for: a degree search below 2. Packing is the default, and every
+/// `--max-q-degree` is one: it splits `Q` only if `qDeg` is above it
+/// (pilfflonk/docs/protocol.md#q-pieces).
 #[test]
 fn the_arguments_the_setup_cannot_do_are_refused() {
     let dir = TestDir::new("arguments");
@@ -150,8 +151,8 @@ fn the_global_info_has_the_common_part_and_pilfflonks_fields() {
     assert!(matches!(global_info(&pilout, params), Err(SetupError::InvalidPilout(_))));
 }
 
-/// The `provingKey/` of spec §4.2.6 with `--no-packing`, every file readable by its type, the same
-/// bytes on a second run.
+/// The `provingKey/` (pilfflonk/docs/formats.md#provingkey) with `--no-packing`, every file
+/// readable by its type, the same bytes on a second run.
 #[test]
 fn the_command_writes_the_files_of_the_proving_key() {
     let _cpp = cpp_core();
@@ -185,8 +186,8 @@ fn the_command_writes_the_files_of_the_proving_key() {
     assert_eq!(fixed, FixedColumns::from_air(&pilout().air_groups[0].airs[0]).unwrap());
 
     // The layout: every opened column in an f of its own, U (never opened) in none, Q last. The
-    // degrees (A.1–A.3): N = 8 for the fixed ones, N + |O| + 1 = 10 for a and b, and qDeg = 1
-    // (a·b'), |O|_max = 1: 8 + 2·1 + 1 = 11 for Q.
+    // degrees (pilfflonk/docs/protocol.md#degrees): N = 8 for the fixed ones, N + |O| + 1 = 10 for
+    // a and b, and qDeg = 1 (a·b'), |O|_max = 1: 8 + 2·1 + 1 = 11 for Q.
     let info = PilfflonkInfo::read(&air_file(AirFile::PilfflonkInfo)).unwrap();
     let layout: Vec<(u64, u64, &str, Vec<i64>, u64)> = info
         .layout
@@ -290,7 +291,8 @@ fn the_command_refuses_a_pilout_the_setup_does_not_support() {
 }
 
 /// A pilout whose vkey the verifier would refuse (`Vkey::validate`) is refused before any file is
-/// written: here, a challenge of stage 1, which A.4 never squeezes.
+/// written: here, a challenge of stage 1, which the transcript never squeezes
+/// (pilfflonk/docs/protocol.md#transcript).
 #[test]
 fn the_command_refuses_a_vkey_the_verifier_would_refuse() {
     let _cpp = cpp_core();
@@ -301,7 +303,7 @@ fn the_command_refuses_a_vkey_the_verifier_would_refuse() {
     let err = run_setup_pilfflonk(&opts).unwrap_err();
     let message = format!("{err:#}");
     assert!(
-        message.contains("A.4 squeezes no challenge of stage 1") && message.contains("synthetic.pilout"),
+        message.contains("the transcript squeezes no challenge of stage 1") && message.contains("synthetic.pilout"),
         "{message}"
     );
     assert!(!opts.build_dir.exists());
@@ -326,12 +328,12 @@ fn the_command_refuses_a_ptau_too_small_for_the_layout() {
     }
 }
 
-/// The `provingKey/` of the grouping, the default (plan M22): the pilout's fixed columns `L1`,
-/// `C[0]` and `C[1]` make one group, split in two `f`; `a`, opened at `{0}`, and `b`, at `{1}`,
-/// move to `{0, 1}` (A.2, rule 1) and are one group, split in two; `Q` is alone. The fusions raise
-/// `|O|_max` from 1 to 2, and `Q`'s bound with it (spec C.3.2), and add the evaluations of `b` at 0
-/// and `a` at 1 to the end of the evMap. Every file is consistent, and a second run writes the same
-/// bytes.
+/// The `provingKey/` of the grouping, the default: the pilout's fixed columns `L1`, `C[0]` and
+/// `C[1]` make one group, split in two `f`; `a`, opened at `{0}`, and `b`, at `{1}`, move to
+/// `{0, 1}` (pilfflonk/docs/protocol.md#grouping-rules, rule 1) and are one group, split in two;
+/// `Q` is alone. The fusions raise `|O|_max` from 1 to 2, and `Q`'s bound with it
+/// (pilfflonk/docs/protocol.md#bounds-after-fusion), and add the evaluations of `b` at 0 and `a` at
+/// 1 to the end of the evMap. Every file is consistent, and a second run writes the same bytes.
 #[test]
 fn the_command_groups_the_polynomials_by_default() {
     let _cpp = cpp_core();
@@ -344,8 +346,9 @@ fn the_command_groups_the_polynomials_by_default() {
     let air_file = |file| gi.air_file(&proving_key, 0, 0, file).unwrap();
     let info = PilfflonkInfo::read(&air_file(AirFile::PilfflonkInfo)).unwrap();
 
-    // Degrees (A.1–A.3): N = 8 for a fixed column; a and b opened at {0, 1}, 8 + 2 + 1 = 11; Q,
-    // qDeg = 1 and |O|_max = 2, 8 + 2·2 + 1 = 13. An f of k polynomials costs max_j(deg_j·k + j).
+    // Degrees (pilfflonk/docs/protocol.md#degrees): N = 8 for a fixed column; a and b opened at
+    // {0, 1}, 8 + 2 + 1 = 11; Q, qDeg = 1 and |O|_max = 2, 8 + 2·2 + 1 = 13. An f of k polynomials
+    // costs max_j(deg_j·k + j).
     let layout = f_shapes(&info.layout);
     assert_eq!(
         layout,
@@ -397,8 +400,7 @@ fn the_command_refuses_an_extra_muls_the_air_cannot_take() {
     let err = run_setup_pilfflonk(&opts).unwrap_err();
     let message = format!("{err:#}");
     assert!(
-        message.contains("synthetic.pilout cannot be set up")
-            && message.contains("so at most 3 extra muls (A.2, rule 3): lower --extra-muls"),
+        message.contains("synthetic.pilout cannot be set up") && message.contains("so at most 3 extra muls"),
         "{message}"
     );
     assert!(!opts.build_dir.exists());

@@ -1,5 +1,5 @@
-//! `proofman-cli pilfflonk`: the pilfflonk backend's commands (spec §4.4, §4.5), nested as
-//! `pilout`'s are.
+//! `proofman-cli pilfflonk`: the pilfflonk backend's commands (pilfflonk/docs/README.md#commands),
+//! nested as `pilout`'s are.
 
 pub mod pilfflonk_calldata;
 pub mod pilfflonk_check;
@@ -33,9 +33,10 @@ pub enum PilfflonkSubcommands {
     Calldata(PilfflonkCalldataCmd),
 }
 
-// Where the witness of `prove` and `check` comes from (spec §4.3): a witness directory (spec A.6),
-// or a witness library that computes it over Fr (D4, plan M38c), exactly one, with the flags of
-// `prove` (`-w`, `-i`). The public inputs are the library's.
+// Where the witness of `prove` and `check` comes from (pilfflonk/docs/README.md#witness): a witness
+// directory (pilfflonk/docs/formats.md#witness-directory), or a witness library that computes it
+// over Fr, exactly one, with the flags of `prove` (`-w`, `-i`). The public inputs are the
+// library's.
 #[derive(Args)]
 #[command(group(ArgGroup::new("witness_source").required(true).args(["witness", "witness_lib"])))]
 pub struct PilfflonkWitnessArgs {

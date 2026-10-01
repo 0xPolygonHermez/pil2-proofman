@@ -1,7 +1,8 @@
-//! The witness directory of `proofman_pilfflonk::witness` (plan N9): the files a `Witness` writes,
-//! the round trip through `FileWitnessSource`, and every directory it refuses. The shapes are
-//! the made-up `Sample` AIR of `tests/fixtures/pilfflonkinfo/` (16 rows, 4 stage-1 columns, a
-//! stage-1 air value, 2 publics and a stage-1 proof value) and a made-up set of three AIRs.
+//! The witness directory of `proofman_pilfflonk::witness`
+//! (pilfflonk/docs/formats.md#witness-directory): the files a `Witness` writes, the round trip
+//! through `FileWitnessSource`, and every directory it refuses. The shapes are the made-up `Sample`
+//! AIR of `tests/fixtures/pilfflonkinfo/` (16 rows, 4 stage-1 columns, a stage-1 air value, 2
+//! publics and a stage-1 proof value) and a made-up set of three AIRs.
 
 use std::fs;
 use std::path::{Path, PathBuf};

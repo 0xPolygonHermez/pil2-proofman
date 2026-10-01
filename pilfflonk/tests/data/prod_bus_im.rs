@@ -1,5 +1,6 @@
-//! The witness generator of the fixture of the product bus with im_col (plan M31),
-//! `tests/fixtures/prod_bus_im/prod_bus_im.pil`, over BN254's `Fr` (every value is a small integer).
+//! The witness generator of the fixture of the product bus with im_col
+//! (pilfflonk/docs/README.md#fixtures), `tests/fixtures/prod_bus_im/prod_bus_im.pil`, over BN254's
+//! `Fr` (every value is a small integer).
 //!
 //! Its witness columns, in the pilout's order (stage 1, `colIdx` 0 to 5), are `a`, `c`, `b`, `d`,
 //! `sa` and `sb`, and its public `first`; its only fixed column is the std's `__L1__`. The stage-2

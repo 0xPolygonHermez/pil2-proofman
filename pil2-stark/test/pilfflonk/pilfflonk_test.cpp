@@ -1,5 +1,5 @@
 // Tests for the pilfflonk C API. Run with `make pilfflonk_test`, and against the GPU archive with
-// `make pilfflonk_gpu_test` (plan M43); exits non-zero on the first failure.
+// `make pilfflonk_gpu_test` (pilfflonk/docs/README.md#tests); exits non-zero on the first failure.
 #include "pilfflonk_test.hpp"
 
 #include <cstdio>

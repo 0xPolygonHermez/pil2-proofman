@@ -1,9 +1,10 @@
 #ifndef PILFFLONK_TEST_PTAU_HPP
 #define PILFFLONK_TEST_PTAU_HPP
 
-// Test-only: a small, deterministic powers-of-tau file with a known τ (decision N13 of the plan),
-// instead of downloading a ptau or running snarkjs. For the SRS and KZG tests, and for later ones
-// that need an SRS whose τ they know (SHPLONK's identity, the prover).
+// Test-only: a small, deterministic powers-of-tau file with a known τ
+// (pilfflonk/docs/README.md#tests), instead of downloading a ptau or running snarkjs. For the SRS
+// and KZG tests, and for later ones that need an SRS whose τ they know (SHPLONK's identity, the
+// prover).
 #include <cstdint>
 #include <string>
 #include <utility>
