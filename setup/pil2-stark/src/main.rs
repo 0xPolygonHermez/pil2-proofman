@@ -488,7 +488,9 @@ fn main() -> anyhow::Result<()> {
             let build_dir = args.build_dir.clone();
             if let Some(b) = args.blowup {
                 if !(1..=3).contains(&b) {
-                    anyhow::bail!("--blowup must be in 1..=3 (past 3 the max constraint degree saturates at 8), got {b}");
+                    anyhow::bail!(
+                        "--blowup must be in 1..=3 (past 3 the max constraint degree saturates at 8), got {b}"
+                    );
                 }
                 tracing::info!("  blowup: 2^{b} (overriding the template default)");
             }
