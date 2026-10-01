@@ -6207,6 +6207,10 @@ where
                     "GPU witness airs were declared but this is not a GPU run".into(),
                 ));
             }
+            let airs_per_group: Vec<usize> = pctx.global_info.airs.iter().map(|g| g.len()).collect();
+            options.gpu_witness_airs.validate(&airs_per_group, |ag, ai| {
+                options.packed && options.packed_info.get(&(ag, ai)).is_some_and(|pi| pi.is_packed)
+            })?;
             options.gpu_witness_airs.register(pctx.get_device_buffers_ptr());
             let registered = gpu_witness_count_c(pctx.get_device_buffers_ptr());
             if registered != options.gpu_witness_airs.len() as u64 {

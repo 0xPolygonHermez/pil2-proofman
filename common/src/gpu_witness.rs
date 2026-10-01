@@ -15,13 +15,20 @@ use proofman_fields::PrimeField64;
 
 use crate::{AirInstance, ProofmanError, ProofmanResult, TraceInfo};
 
+/// An op a kernel reads byte for byte off the device.
+///
+/// # Safety
+/// The implementor must be `#[repr(C)]` (or `transparent`), field-for-field the kernel's op struct,
+/// with no padding and no pointers or references: its bytes are copied to the GPU as they are.
+pub unsafe trait GpuWitnessOp: Copy {}
+
 /// Write a kernel's inputs into `buffer` and wrap it as `decl`'s air's `AirInstance`.
 ///
 /// `decl` is the prover's declaration (`ProofCtx::gpu_witness_air`): the commit uploads
 /// `ops * decl.bytes_per_op` bytes and stages at most `decl.input_bytes_per_instance`, so `Op`
 /// must be exactly `bytes_per_op` wide and the ops must fit that bound. The buffer is used as raw bytes (`Goldilocks` is
-/// not `repr(transparent)`), so ops are written through a raw pointer. `Op` must be `Copy` (no drop
-/// glue: the buffer is later dropped as `F`) and should be a `#[repr(C)]` mirror of the kernel's op struct.
+/// not `repr(transparent)`), so ops are written through a raw pointer, which is why `Op` must be a
+/// [`GpuWitnessOp`].
 ///
 /// `n_cols` is the air's real column count and does not match `trace.len()`;
 /// the commit path takes its geometry from the setup.
@@ -33,7 +40,7 @@ pub fn stage_gpu_witness<F: PrimeField64, Op, I>(
     inputs: &[Vec<I>],
 ) -> ProofmanResult<(AirInstance<F>, u64)>
 where
-    Op: Copy,
+    Op: GpuWitnessOp,
     for<'a> Op: From<&'a I>,
 {
     let (airgroup_id, air_id) = (decl.airgroup_id, decl.air_id);
@@ -156,6 +163,27 @@ impl GpuWitnessAirs {
         self.airs.iter().find(|a| a.airgroup_id == airgroup_id && a.air_id == air_id)
     }
 
+    /// Every declaration names an air of the setup (`airs_per_group[airgroup]` airs each) and emits
+    /// the layout the run gives it (`packed(airgroup, air)`): the commit would otherwise exit.
+    pub fn validate(&self, airs_per_group: &[usize], packed: impl Fn(usize, usize) -> bool) -> ProofmanResult<()> {
+        for a in &self.airs {
+            if airs_per_group.get(a.airgroup_id).is_none_or(|&n| a.air_id >= n) {
+                return Err(ProofmanError::InvalidConfiguration(format!(
+                    "GPU witness air {}:{} is not in the setup",
+                    a.airgroup_id, a.air_id
+                )));
+            }
+            let want = if packed(a.airgroup_id, a.air_id) { TraceLayout::PackedCm1 } else { TraceLayout::PlainCm1 };
+            if a.emits != want {
+                return Err(ProofmanError::InvalidConfiguration(format!(
+                    "GPU witness air {}:{} emits {:?} but this run commits it as {want:?}",
+                    a.airgroup_id, a.air_id, a.emits
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Replace this prover's C++ registry (keyed by its `d_buffers`) with these declarations.
     pub fn register(&self, d_buffers: *mut std::ffi::c_void) {
         proofman_starks_lib_c::gpu_witness_clear_c(d_buffers);
@@ -234,6 +262,7 @@ mod tests {
             a: u64,
             b: u64,
         }
+        unsafe impl GpuWitnessOp for Op {}
         impl From<&u32> for Op {
             fn from(v: &u32) -> Self {
                 Op { a: *v as u64, b: (*v as u64) << 32 }
@@ -261,6 +290,7 @@ mod tests {
         #[repr(C)]
         #[derive(Clone, Copy)]
         struct Wide([u64; 8]);
+        unsafe impl GpuWitnessOp for Wide {}
         impl From<&u32> for Wide {
             fn from(v: &u32) -> Self {
                 Wide([*v as u64; 8])
@@ -277,8 +307,10 @@ mod tests {
     #[test]
     fn an_op_count_that_overflows_is_refused() {
         #[allow(dead_code)] // only its size matters
+        #[repr(C)]
         #[derive(Clone, Copy)]
         struct Op(u64);
+        unsafe impl GpuWitnessOp for Op {}
         impl From<&()> for Op {
             fn from(_: &()) -> Self {
                 Op(0)
@@ -295,8 +327,10 @@ mod tests {
     #[test]
     fn an_empty_operation_set_is_refused() {
         #[allow(dead_code)] // only its size matters
+        #[repr(C)]
         #[derive(Clone, Copy)]
         struct Op(u64);
+        unsafe impl GpuWitnessOp for Op {}
         impl From<&u32> for Op {
             fn from(v: &u32) -> Self {
                 Op(*v as u64)
@@ -311,8 +345,10 @@ mod tests {
     #[test]
     fn an_op_wider_or_narrower_than_declared_is_refused() {
         #[allow(dead_code)] // only its size matters
+        #[repr(C)]
         #[derive(Clone, Copy)]
         struct Op(u64);
+        unsafe impl GpuWitnessOp for Op {}
         impl From<&u32> for Op {
             fn from(v: &u32) -> Self {
                 Op(*v as u64)
@@ -328,8 +364,10 @@ mod tests {
     #[test]
     fn staging_past_the_declared_bound_is_refused_even_in_a_bigger_buffer() {
         #[allow(dead_code)] // only its size matters
+        #[repr(C)]
         #[derive(Clone, Copy)]
         struct Op(u64);
+        unsafe impl GpuWitnessOp for Op {}
         impl From<&u32> for Op {
             fn from(v: &u32) -> Self {
                 Op(*v as u64)
@@ -340,6 +378,19 @@ mod tests {
         let err = stage_gpu_witness::<Goldilocks, Op, u32>(&decl(16, 8), 8, 4, buffer, &[vec![1, 2, 3]])
             .expect_err("must refuse past the declaration");
         assert!(err.to_string().contains("allow 16"), "{err}");
+    }
+
+    #[test]
+    fn declarations_are_checked_against_the_setup_and_packing() {
+        let airs = airs(); // 0:36 packed, 0:2 plain
+        let packed_36 = |ag: usize, ai: usize| (ag, ai) == (0, 36);
+        airs.validate(&[40], packed_36).expect("both match");
+        let err = airs.validate(&[30], packed_36).expect_err("0:36 is outside a 30-air group");
+        assert!(err.to_string().contains("not in the setup"), "{err}");
+        let err = airs.validate(&[40], |_, _| false).expect_err("an unpacked run cannot take a packed kernel");
+        assert!(err.to_string().contains("emits PackedCm1"), "{err}");
+        let err = airs.validate(&[], packed_36).expect_err("no airgroup 0");
+        assert!(err.to_string().contains("not in the setup"), "{err}");
     }
 
     #[test]
