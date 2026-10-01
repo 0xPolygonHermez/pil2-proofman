@@ -1,7 +1,10 @@
 //! `setup-pilfflonk` as `proofman-setup` runs it, `run_setup_pilfflonk`, on `common`'s pilout: its
 //! arguments, `pilout.globalInfo.json`, and the files of the `provingKey/` it writes
-//! (pilfflonk/docs/formats.md#provingkey). The same through the binary, and on the compiled
-//! Fibonacci fixture, is in `setup/pil2-stark/tests/setup_pilfflonk.rs`.
+//! (pilfflonk/docs/formats.md#provingkey); and `run_setup_pilfflonk_with_external_fixed`, with the
+//! values of the fixed columns the pilout has none of (pilfflonk/docs/formats.md#fixed-columns).
+//! The same through the binary, and on the compiled Fibonacci fixture, is in
+//! `setup/pil2-stark/tests/setup_pilfflonk.rs`; with external columns on compiled fixtures, in
+//! `external_fixed`.
 
 use std::fs;
 use std::path::Path;
@@ -14,7 +17,7 @@ use pilfflonk_setup::fixed::FixedColumns;
 use pilfflonk_setup::global_info::global_info;
 use pilfflonk_setup::layout::Packing;
 use pilfflonk_setup::test_ptau::write_tau_one_ptau;
-use pilfflonk_setup::{run_setup_pilfflonk, SetupError, SetupPilfflonkOptions};
+use pilfflonk_setup::{run_setup_pilfflonk, run_setup_pilfflonk_with_external_fixed, SetupError, SetupPilfflonkOptions};
 use prost::Message;
 use proofman_pilfflonk::global_info::GLOBAL_CONSTRAINTS_FILE;
 use proofman_pilfflonk::{
@@ -406,4 +409,46 @@ fn the_command_refuses_an_extra_muls_the_air_cannot_take() {
     assert!(!opts.build_dir.exists());
     // --no-packing does not group: --extra-muls is unused.
     run_setup_pilfflonk(&SetupPilfflonkOptions { no_packing: true, ..opts }).unwrap();
+}
+
+/// Every file under `dir`, relative to it, with its bytes.
+fn contents(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    files(dir).into_iter().map(|f| (f.clone(), fs::read(dir.join(&f)).unwrap())).collect()
+}
+
+/// `common`'s pilout without the values of `C[0]`, `C[1]` and `U`, set up with them as external
+/// columns, gives the `provingKey/` of the pilout with them, byte for byte, grouped and unpacked.
+/// What the merge refuses is refused with the pilout's path before any file is written; and
+/// without external columns, the pilout is refused as before.
+#[test]
+fn external_fixed_columns_give_the_proving_key_of_the_pilout_with_their_values() {
+    let _cpp = cpp_core();
+    let dir = TestDir::new("command_external_fixed");
+    let (without_values, external) = pilout_with_external_fixed();
+    for no_packing in [false, true] {
+        let opts = SetupPilfflonkOptions { no_packing, ..inputs(&dir, &pilout(), 64) };
+        run_setup_pilfflonk(&opts).unwrap();
+        let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
+        let inline = contents(&proving_key);
+        fs::remove_dir_all(&opts.build_dir).unwrap();
+
+        fs::write(&opts.airout_path, without_values.encode_to_vec()).unwrap();
+        run_setup_pilfflonk_with_external_fixed(&opts, external.clone()).unwrap();
+        assert_eq!(contents(&proving_key), inline, "no_packing {no_packing}");
+        fs::remove_dir_all(&opts.build_dir).unwrap();
+    }
+
+    let opts = options(&dir);
+    let err = run_setup_pilfflonk_with_external_fixed(&opts, external[..2].to_vec()).unwrap_err();
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("synthetic.pilout cannot be set up") && message.contains("Sample.U (index 0), has no values"),
+        "{message}"
+    );
+    assert!(!opts.build_dir.exists());
+
+    let err = run_setup_pilfflonk(&opts).unwrap_err();
+    let message = format!("{err:#}");
+    assert!(message.contains("fixed column 1 has 0 values, not one per row (8)"), "{message}");
+    assert!(!opts.build_dir.exists());
 }

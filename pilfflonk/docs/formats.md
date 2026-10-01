@@ -178,8 +178,31 @@ new temporary (`tmpUsed`), as in the STARK. The encoding is deterministic.
 
 ## Fixed columns
 
-`<air>.const`: the fixed columns, row after row, each value a canonical `Fr` of 32 bytes,
-little-endian. A pilout value that is not below `r` is refused.
+`<air>.const`: the fixed columns, row after row, in the order of the pilout's `fixedCols` (which is
+`constPolsMap`'s), each value a canonical `Fr` of 32 bytes, little-endian. A pilout value that is
+not below `r` is refused.
+
+The values are the pilout's, but for the columns it declares `#pragma fixed_external`, which pil2com
+writes without values; the std's `connection()` keeps its own column, `ID`, in the pilout. The
+caller of the setup gives those values, as the STARK's recursive setup gives `plonk2pil`'s `S` and
+`C` to `write_const_file`: `run_setup_pilfflonk_with_external_fixed` takes them as
+`ExternalFixedColumn`s, in any order, each with
+
+- `name`, the name of the column's symbol in the pilout, which `constPolsMap` has too
+  (`Connection.S1`);
+- `index`, its position among the fixed columns of the AIR of that name, in the pilout's order: its
+  index in the array, row-major for an array of several dimensions (`plonk2pil`'s
+  `FixedPol::index`), and 0 for a column that is not an array;
+- `values`, its `N` values, `FrBytes`, and so below `r`.
+
+The command line has no option for them: they are for a caller in the same process, as
+`setup-snark` with `plonk2pil`'s columns. They go into `<air>.const`, the fixed commitments and the
+vkey as the pilout's own values do: a pilout set up with its external columns has the `provingKey/`
+of the same pilout with those values in it, byte for byte. Before it writes any file, the setup
+refuses a column without values that no external column fills (without any external column, as any
+column without a value per row); and an external column whose name and index no fixed column of the
+AIR has, one of a column with values in the pilout, two of one column, and one without a value per
+row.
 
 ## Verkey
 

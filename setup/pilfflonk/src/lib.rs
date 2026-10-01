@@ -3,12 +3,15 @@
 //!
 //! The command is [`command::run_setup_pilfflonk`], which `proofman-setup setup-pilfflonk` calls
 //! (`pil2-stark-setup` hosts it; this crate does not depend on that one:
-//! pilfflonk/docs/README.md#code-map). Its steps (pilfflonk/docs/README.md#setup-pilfflonk):
+//! pilfflonk/docs/README.md#code-map). [`command::run_setup_pilfflonk_with_external_fixed`] is the
+//! same with the values of the fixed columns that the pilout declares `#pragma fixed_external`, for
+//! a caller in the same process (pilfflonk/docs/formats.md#fixed-columns). Its steps
+//! (pilfflonk/docs/README.md#setup-pilfflonk):
 //!
 //! | Step | Module |
 //! |---|---|
 //! | reading and validating the pilout (pilfflonk/docs/README.md#what-the-setup-refuses) | [`validate`] |
-//! | the fixed columns and `<air>.const` | [`fixed`] |
+//! | the fixed columns, the pilout's and the external ones, and `<air>.const` | [`fixed`] |
 //! | `pilout.globalInfo.json` | [`global_info`] |
 //! | the symbolic passes over BN254 (pilfflonk/docs/protocol.md#degree-search) | [`passes`] |
 //! | the committed polynomials, their bounds, `nBitsExt` and the layout | [`layout`] |
@@ -38,5 +41,6 @@ pub mod validate;
 #[cfg(feature = "test-ptau")]
 pub mod test_ptau;
 
-pub use command::{run_setup_pilfflonk, SetupPilfflonkOptions};
+pub use command::{run_setup_pilfflonk, run_setup_pilfflonk_with_external_fixed, SetupPilfflonkOptions};
 pub use error::SetupError;
+pub use fixed::ExternalFixedColumn;

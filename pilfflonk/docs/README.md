@@ -95,7 +95,9 @@ it is BN254's `r`:
 The compiler must honour `prime` (`PIL2C_EXEC` points at it): it is `../pil2-compiler` on its branch
 `develop-0.14.0-pil2-fflonk`, which also encodes field values of 64 bits and more correctly. The
 pilout's `baseField` is then `r`. Its writers `fixed-to-file` and `extern_fixed_file` work with `u64`
-and refuse a field wider than 64 bits, so the fixed columns stay in the pilout.
+and refuse a field wider than 64 bits, so the fixed columns stay in the pilout, but for those it
+declares `#pragma fixed_external`: the compiler writes them without values, and the caller of the
+setup gives these ([formats.md#fixed-columns](formats.md#fixed-columns)).
 
 The std works over BN254 through `pil2-components/lib/std/pil/bn254.pil`, selected when `PRIME` is
 `r`: `Bn254_Gen[i] = 5^((r−1)/2^i)` for `i ≤ 28` and `Bn254_k = 5^(2^28)`, the root of unity and the
@@ -119,7 +121,9 @@ the degree of every `f_i` and `N·2^extendBits` by `2^28`: with `qDeg` up to 8, 
 
 The steps, each a pure function but for the file I/O and the fixed commitments:
 
-1. Read the pilout and validate it ([What the setup refuses](#what-the-setup-refuses)).
+1. Read the pilout and validate it ([What the setup refuses](#what-the-setup-refuses)), and its
+   fixed columns, with the values of the external ones if it has any
+   ([formats.md#fixed-columns](formats.md#fixed-columns)).
 2. Run the symbolic passes of `pil-info`, the STARK's, with `PilInfoCfg::bn254()`: field `r`,
    extension dimension 1, the degree search of
    [protocol.md#degree-search](protocol.md#degree-search), and no FRI.
@@ -130,6 +134,11 @@ The steps, each a pure function but for the file I/O and the fixed commitments:
 5. Read the SRS from the ptau, commit the fixed `f_i` in C++
    (`pilfflonk_commit_fixed`), and write the vkey with its digest last
    ([formats.md#vkey](formats.md#vkey)).
+
+A caller in the same process gives the values of the fixed columns that the pilout declares
+`#pragma fixed_external` to `run_setup_pilfflonk_with_external_fixed`, the library entry of the
+command ([formats.md#fixed-columns](formats.md#fixed-columns)); the command line has no option for
+them, and `run_setup_pilfflonk`, which it calls, gives none.
 
 It writes the `provingKey/` of [formats.md#provingkey](formats.md#provingkey), in a deterministic
 order, after validating everything. `--solidity` writes the Solidity verifier next to the vkey and
@@ -171,6 +180,9 @@ The setup stops with an error, before it writes any file, when:
   ([formats.md#proof-names](formats.md#proof-names)); the error names them;
 - a fixed value is not below `r`. A pilout over BN254 has none, and reducing one would hide a
   compiler bug;
+- a fixed column has no values, in the pilout or external; or an external fixed column is not one
+  the pilout has without values, is given twice, or has not one value per row
+  ([formats.md#fixed-columns](formats.md#fixed-columns));
 - the extended domain does not fit in BN254's 2-adicity: `nBitsExt > 28`
   ([protocol.md#degrees](protocol.md#degrees));
 - the grouping has no valid partition, or `--extra-muls` is too large or makes the search too large
@@ -425,6 +437,12 @@ with `im_low` on the product bus), each with its hint.
 - `pilfflonk/tests/data/domains.rs`: pilouts built in code with `prost`, for the domains the compiler
   does not emit (`firstRow`, `lastRow` and `everyFrame`).
 - `std_bn254/`: the std's connections over BN254, against `bn254.pil`.
+- `packed/packed_external.pil` and `connection/connection_external.pil`: `packed.pil` and
+  `connection_prod.pil` with fixed columns declared `#pragma fixed_external` (`K[4]` and `S`;
+  `S1`, `S2` and `S3`), whose values the setup takes from its caller
+  ([formats.md#fixed-columns](formats.md#fixed-columns)). Their pilouts are the others' without
+  those values, source lines aside, and give the same keys and proofs
+  (`setup/pilfflonk/tests/setup/external_fixed.rs`).
 
 **Witness libraries.** `fibonacci/rs`, `connection/rs` and `all/rs` are the witness libraries of
 those fixtures (crates `pilfflonk-fibonacci`, `pilfflonk-connection` and `pilfflonk-all`, `dylib`,

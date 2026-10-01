@@ -1,7 +1,9 @@
 //! `proofman-setup setup-pilfflonk` (pilfflonk/docs/README.md#setup-pilfflonk): the command
 //! `pil2-stark-setup` hosts, and the order of its steps. The steps are this crate's library
 //! functions; this module reports their errors with `anyhow`, as the other setup commands do
-//! (pilfflonk/docs/README.md#conventions).
+//! (pilfflonk/docs/README.md#conventions). A caller in the same process that computes the fixed
+//! columns the pilout declares `#pragma fixed_external` gives them to
+//! [`run_setup_pilfflonk_with_external_fixed`] (pilfflonk/docs/formats.md#fixed-columns).
 //!
 //! It writes the `provingKey/` (pilfflonk/docs/formats.md#provingkey) under the build directory,
 //! for the one AIR of the pilout (pilfflonk/docs/README.md#scope):
@@ -44,7 +46,7 @@ use crate::air_info::{air_setup, AirRef, AirSetup};
 use crate::bytecode::write_air_bin;
 use crate::digest::seal_vkey;
 use crate::error::SetupError;
-use crate::fixed::FixedColumns;
+use crate::fixed::{ExternalFixedColumn, FixedColumns};
 use crate::global_info::global_info;
 use crate::keys::{air_verkey, load_srs, write_srs, x_2};
 use crate::layout::{max_degree, Packing};
@@ -139,13 +141,28 @@ fn write_text(path: &Path, text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Runs `setup-pilfflonk`.
+/// Runs `setup-pilfflonk`, which `proofman-setup setup-pilfflonk` calls: every fixed column has its
+/// values in the pilout.
 pub fn run_setup_pilfflonk(opts: &SetupPilfflonkOptions) -> Result<()> {
+    run_setup_pilfflonk_with_external_fixed(opts, Vec::new())
+}
+
+/// Runs `setup-pilfflonk` with the values of the fixed columns that the pilout declares
+/// `#pragma fixed_external`, and so has none of (pilfflonk/docs/formats.md#fixed-columns): the
+/// entry of a caller in the same process that computes them, as `setup-snark` computes
+/// `plonk2pil`'s; the command line has none. They go into `<air>.const`, the fixed commitments and
+/// the vkey as the pilout's own values do ([`FixedColumns::from_air_with_external`]), and what it
+/// refuses of them is refused, as the pilout is, before any file is written. With none, it is
+/// [`run_setup_pilfflonk`].
+pub fn run_setup_pilfflonk_with_external_fixed(
+    opts: &SetupPilfflonkOptions,
+    external: Vec<ExternalFixedColumn>,
+) -> Result<()> {
     opts.check()?;
     let refused = || format!("{} cannot be set up", opts.airout_path.display());
     let pilout = read_pilout(&opts.airout_path)?;
     let air = validate(&pilout).with_context(refused)?;
-    let fixed = FixedColumns::from_air(air.air).with_context(refused)?;
+    let fixed = FixedColumns::from_air_with_external(&pilout, air, external).with_context(refused)?;
     let global_info = global_info(&pilout, opts.setup_params())?;
     let (airgroup_id, air_id) = (air.airgroup_id as u64, air.air_id as u64);
     let air_ref = AirRef { name: &global_info.air(airgroup_id, air_id)?.name, airgroup_id, air_id };

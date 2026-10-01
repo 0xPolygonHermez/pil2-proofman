@@ -8,6 +8,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
+use pilfflonk_setup::ExternalFixedColumn;
 use proofman_pilfflonk::{FqBytes, FrBytes, G1Affine, Layout, BN254_R};
 
 pub const R_MINUS_ONE: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
@@ -169,6 +170,23 @@ pub fn pilout() -> pb::PilOut {
 
 pub fn the_air(pilout: &mut pb::PilOut) -> &mut pb::Air {
     &mut pilout.air_groups[0].airs[0]
+}
+
+/// [`pilout`] without the values of `C[0]`, `C[1]` and `U`, as pil2com writes the columns it
+/// declares `#pragma fixed_external` (pilfflonk/docs/formats.md#fixed-columns), and those values as
+/// external columns, in the order of the columns.
+pub fn pilout_with_external_fixed() -> (pb::PilOut, Vec<ExternalFixedColumn>) {
+    let mut pilout = pilout();
+    for column in 1..4 {
+        the_air(&mut pilout).fixed_cols[column].values.clear();
+    }
+    let values = fixed_values();
+    let external = |name: &str, index: usize, column: usize| ExternalFixedColumn {
+        name: name.to_string(),
+        index,
+        values: values[column].iter().map(|v| fr(&v.to_str_radix(10))).collect(),
+    };
+    (pilout, vec![external("Sample.C", 0, 1), external("Sample.C", 1, 2), external("Sample.U", 0, 3)])
 }
 
 /// An `f` of a layout as `(stage, the names of its polynomials, k, offsets, degree)`.

@@ -133,6 +133,33 @@ pub enum SetupError {
     #[error("invalid pilout: {0}")]
     InvalidPilout(String),
 
+    // --- The external fixed columns (pilfflonk/docs/formats.md#fixed-columns) ------------------
+    /// A fixed column that the pilout has no values of, as one it declares `#pragma fixed_external`,
+    /// and that no external column fills (`crate::fixed::FixedColumns::from_air_with_external`).
+    #[error(
+        "fixed column {column} of the AIR, {name} (index {index}), has no values in the pilout and no external \
+         column gives them: a column declared `#pragma fixed_external` takes its values from the caller of the \
+         setup (pilfflonk/docs/formats.md#fixed-columns)"
+    )]
+    ExternalFixedMissing { column: usize, name: String, index: usize },
+
+    /// An external fixed column whose name and index are those of no fixed column of the AIR.
+    #[error("the external fixed column {name} (index {index}) is not a fixed column of air {air}")]
+    ExternalFixedUnknown { air: String, name: String, index: usize },
+
+    /// An external fixed column for a column that has its values in the pilout.
+    #[error(
+        "the external fixed column {name} (index {index}) is fixed column {column} of the AIR, which has its values \
+         in the pilout: only a column declared `#pragma fixed_external` takes external values"
+    )]
+    ExternalFixedNotEmpty { name: String, index: usize, column: usize },
+
+    #[error("the external fixed column {name} (index {index}) is given twice")]
+    ExternalFixedTwice { name: String, index: usize },
+
+    #[error("the external fixed column {name} (index {index}) has {n_values} values, not one per row ({n_rows})")]
+    ExternalFixedValues { name: String, index: usize, n_values: usize, n_rows: usize },
+
     // --- What the passes decide (pilfflonk/docs/protocol.md#degree-search) ----------------------
     /// The symbolic passes refused the AIR: a pilout that refers to nothing, or constraints they
     /// cannot process.

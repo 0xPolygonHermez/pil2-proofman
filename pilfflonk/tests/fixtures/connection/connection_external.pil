@@ -1,0 +1,31 @@
+// connection_prod.pil with the permutations S1, S2 and S3 declared `#pragma fixed_external`: the
+// compiler writes no values for them, and the setup takes them from its caller
+// (pilfflonk/docs/formats.md#fixed-columns), as the wrap's AIR takes plonk2pil's S. The std's
+// connection() keeps its own fixed column, ID, with its values. The rest is connection_prod.pil's
+// (the air of connection.pil, but for the values of sm_connection):
+// setup/pilfflonk/tests/setup/external_fixed.rs checks that its pilout is connection_prod.pil's
+// without those values, and that both give the same key.
+//
+// Compile over BN254 as connection_prod.pil. The witness generator is tests/data/connection.rs.
+require "std_constants.pil"
+require "std_connection.pil"
+
+set_std_mode(STD_MODE_ONE_INSTANCE);
+
+airtemplate Connection(const int N = 2**10, const int bus_type = PIOP_BUS_SUM) {
+    col witness a, b, c;
+
+    #pragma fixed_external
+    col fixed S1;
+    #pragma fixed_external
+    col fixed S2;
+    #pragma fixed_external
+    col fixed S3;
+
+    // connection.pil's CONNECTION_OPID.
+    connection(3, [a, b, c], [S1, S2, S3], bus_type);
+}
+
+airgroup Connection {
+    Connection(bus_type: PIOP_BUS_PROD);
+}
