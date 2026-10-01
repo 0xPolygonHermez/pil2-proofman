@@ -1,7 +1,8 @@
 # pilfflonk performance
 
-Time and memory of the setup, the prover and the JS verifier on the CPU, and the GPU path with its
-speed-up. Every proof in these measurements verifies.
+Time and memory of the setup, the prover and the JS verifier on the CPU, the GPU path with its
+speed-up, and the final SNARK wrap with pilfflonk against FFLONK and PLONK. Every proof in these
+measurements verifies.
 
 ## CPU
 
@@ -321,6 +322,227 @@ byte, and the JS verifier accepts them. Seconds, CPU → GPU:
 - Pinned, asynchronous copies, as the PLONK GPU prover overlaps its copies with the computation; this
   path copies synchronously from pageable memory.
 - The interpreter stays on the CPU, as it does not dominate.
+
+## The wrap
+
+The final SNARK of `prove-snark` with pilfflonk, on `examples/fibonacci-square`, against the FFLONK
+and PLONK wraps of the same program. **M** marks a measurement, **E** an estimate.
+
+### Method
+
+- **The chain.** `setup -r --hash Poseidon2` and `prove -a` give the vadcop_final proof.
+  `setup-snark --final-snark pilfflonk` makes the recursivef (BN128 Merkle trees in custom mode), the
+  final circuit with the custom templates `PoseidonT(5)` and `Num2Bytes`, its AIR in plonk2pil's
+  BN254 family (PoseidonBN254, layout L1, with range checks) and the pilfflonk key of that AIR.
+  `prove-snark` proves the recursivef, computes the wrap's witness in its own process and proves it
+  with pilfflonk; `verify-snark` runs the JS verifier.
+- **Machine and build** as in [CPU](#method): release, `--features proofman-starks-lib-c/cpu-only`.
+  64 threads (`OMP_NUM_THREADS=RAYON_NUM_THREADS=64`, `taskset -c 0-63`), and 32 (`taskset -c 0-31`)
+  for the comparison with FFLONK and PLONK, measured at 32. Load average 5–42.
+- **SRS.** The Hermez `powersOfTau28_hez_final_24.ptau` (power 24: 2^25 − 1 powers `[τ^i]₁`, 19 GB;
+  its blake2b is the one snarkjs's README gives), read in place.
+- **Measures.** The wall time and peak RSS of each command (`/usr/bin/time -v`; GB are its kB / 10^6,
+  as for FFLONK and PLONK), the RSS of its process tree once a second, and `prove-snark`'s timers
+  (`-v`; with `-vv` also the prover's `PILFFLONK_*`). Three proofs at each thread count: the tables
+  give medians.
+
+### The end-to-end run
+
+On 64 threads, **M**:
+
+| Step | Time | Peak RSS (GB) |
+|---|---|---|
+| `compile-pil` | 0.99 s | 0.27 |
+| `setup -r --hash Poseidon2` | 11 min 18 s | 3.40 (5.78 with the circom and pil2com it runs) |
+| `gen-custom-commits-fixed` | 1.6 s | 0.74 |
+| `prove -a` (the vadcop_final proof) | 25.2 s | 5.08 |
+| `verify-stark` | 0.13 s | 0.03 |
+| `setup-snark --final-snark pilfflonk` | 3 min 49 s | 3.48 (4.06 with its children) |
+| `prove-snark` | 22.2 s | 6.50 |
+| `verify-snark` | 0.33 s | 0.08 |
+
+- **The key.** The final circuit has 296,115 r1cs constraints and 633,854 PLONK constraints (631,857
+  once copies are merged); its AIR has 2^19 rows, 9 `f` (`k` = [13, 13, 1, 2, 3, 2, 3, 4, 1]), `qDeg`
+  5 and no im pol, and needs 6,815,756 powers of the SRS (`13·N + 12`). The pilfflonk key is 0.89 GB
+  (the SRS, 436 MB, and the `.const`, 453 MB), the final circuit's witness files (`final.so`,
+  `final.dat`, `final.exec`) 73 MB, and the recursivef's `.consttree` 878 MB, written by the first
+  `prove-snark` (28.1 s instead of 22.2 s).
+- **`setup-snark`** spends the last 180 s of its 229 s waiting for the final circuit's witness
+  calculator (`final.so`, g++ on circom's C++), which compiles in the background from the moment
+  circom writes it. Before that: the recursivef's circom 9.1 s, its AIR and constant tree 12.2 s, the
+  final circuit's circom 15.4 s, plonk2pil 1.8 s, pil2com over BN254 3.9 s and setup-pilfflonk 6.1 s,
+  where the peak is.
+- **The key is reproducible.** A fresh `setup -r` and `setup-snark` give the vkey, the
+  `pilfflonk.verifier.sol` and the project contract of an earlier run byte for byte; its `final.exec`
+  differs in the header only, which now records the r1cs's `n_vars`, and has the same body.
+- **`verify-snark`** accepts the proof, and refuses it with a byte of an evaluation or of a commitment
+  changed, with its public changed, against the vkey of the same AIR set up with another SRS (CI's
+  test ptau), and against the vkey of the 2^22 key below ("a proof of this shape has 2048 bytes, not
+  2208").
+
+`prove-snark`'s phases, **M**:
+
+| Phase | 64 threads (s) | 32 threads (s) | Peak RSS (GB) |
+|---|---|---|---|
+| `INITIALIZING_FINAL_SNARK_PROVER`: the pilfflonk key, its fixed commitments checked | 2.69 | 3.28 | 5.3 |
+| `GENERATE_RECURSIVEF` | 9.76 | 17.41 | 4.8 |
+| `CALCULATE_FINAL_WITNESS`: circom 0.53 s, the exec 0.29 s | 0.84 | 0.83 | 5.8 |
+| `CALCULATE_FINAL_PROOF`: the pilfflonk proof | 7.04 | 9.64 | 6.5 |
+| `GENERATING_WRAPPER_SNARK_PROOF`: the three above | 17.65 | 27.91 | 6.5 |
+| The command | 22.2 | 32.9 | 6.50 / 6.29 |
+
+On 32 threads the pilfflonk proof is stage 1 1.60 s, stage 2 0.62 s, `Q` 4.39 s (the LDE of its
+columns 2.50 s, its MSM 0.59 s), the evaluations 0.04 s and the opening 2.72 s (the MSMs of `[W]₁`
+and `[W']₁`, 1.24 s each); loading the key, 2.61 s of the 3.28 s are its fixed commitments.
+
+### Against FFLONK and PLONK
+
+FFLONK and PLONK are rapidsnark's provers on the stock recursivef and final circuit (measured before
+pilfflonk's wrap existed, on the same machine and program, 32 threads; FFLONK with a fixed-`τ` test
+ptau of `9·2^24` powers, as the Hermez one is too small for it). The 2^22 pilfflonk key is the one
+before the range-check gates, whose final circuit checks the Goldilocks ranges bit by bit
+(`Num2Bits`), on 64 threads.
+
+| | pilfflonk, 2^19 | pilfflonk, 2^22, no range checks | FFLONK | PLONK |
+|---|---|---|---|---|
+| Final circuit (r1cs) | 296,115 | 5,379,109 | 7,605,644 | 7,605,644 |
+| PLONK constraints | 633,854 | 10,572,480 | 13,774,131 | 13,774,131 |
+| Key | 0.89 GB | — | 38.7 GB zkey | 25.8 GB zkey |
+| `setup-snark` | 229 s, 3.48 GB (64 thr); 235 s, 3.5 GB (32 thr) | 268 s, 15.9 GB | 360 s, 29.7 GB | 367 s, 16.0 GB |
+| Final proof, CPU 32 threads | **9.64 s** | 62.6 s (64 thr) | 127.8 s | 45.0 s |
+| Wrapper, CPU 32 threads | **27.9 s** | 80.1 s (64 thr) | 146.3 s | 63.9 s |
+| `prove-snark`, CPU 32 threads | 32.9 s | 109 s (64 thr) | 218 s | 73–82 s |
+| Peak RSS | **6.29 GB** | 27.4 GB (64 thr) | 134.4 GB | 54.5 GB |
+| Final proof, RTX 5090 | **1.86 s** | — | no GPU prover | 0.86 s |
+| Wrapper, RTX 5090 | **2.73 s** | — | — | 1.65 s |
+| `prove-snark`, RTX 5090 | 3.98 s | — | — | 3.65 s |
+| Host RSS, RTX 5090 | 4.74 GB | — | — | 13.2 GB |
+| GPU memory | 2.6 GiB | — | — | 29.8 GiB |
+| Proof | 2,208 B, 69 words | 2,048 B, 64 words | 768 B (E: snarkjs's 24 words) | 768 B |
+| `verifyProof` gas | 332,661 | 310,932 | 182,681 | 263,175 |
+| Verifier's runtime | 21,569 B | 19,306 B | 14,078 B | 5,850 B |
+
+All **M** but FFLONK's proof size. On 32 threads the pilfflonk proof is 4.7 times faster than
+PLONK's and 13 times faster than FFLONK's, and the wrapper 2.3 and 5.2 times; its peak memory is
+8.7 and 21 times smaller. Its `verifyProof` costs 1.82 times FFLONK's gas (the limit set for this
+port was twice) and 1.26 times PLONK's. The range checks took the AIR from 2^22 rows to 2^19 and
+the proof from 62.6 s to 7.0 s on 64 threads, for 160 more bytes and 21,729 more gas. On the RTX
+5090 ([On the GPU](#on-the-gpu)), with a GPU prover not yet finished, the pilfflonk proof takes 2.2
+times PLONK's, the wrapper 1.65 times and the whole command 0.33 s more; it needs a third of PLONK's
+host memory and an eleventh of its GPU memory.
+
+### On the GPU
+
+The same `prove-snark`, with `--gpu`, on worker-13: RTX 5090 (`sm_120`), CUDA 13.0, 32 CPU threads
+(`OMP_NUM_THREADS=RAYON_NUM_THREADS=32`), on this run's vadcop_final proof and `provingKeySnark/`.
+Built from `e5dd3060b` (the CPU measurements above are of `8343ef2c4`, whose CPU prover gives the
+same proofs), with the GPU prover half-way through its port: on the device are the key (the SRS,
+the fixed columns' INTT and commitments), each stage's INTT and commitment, `Q`'s LDE,
+interpolation and commitment, and the SHPLONK opening (the evaluations, `W`, `W'` and their
+commitments); on the CPU, still, are the evaluation of `Q`'s bytecode and the zerofiers of its
+domain (their device versions exist, not yet wired in) and the stage-2 hint columns. Three runs
+with an `nvidia-smi` sampler running, which keeps the driver's state up between processes (a warm
+GPU), and one without (cold). Every proof verifies with `verify-snark`, with the CPU proof's publics
+and length. **M**:
+
+| Phase | Warm (s) | Cold (s) |
+|---|---|---|
+| `LOADING_RECURSIVE_F_SETUP` | 0.26 | 0.26 |
+| `INITIALIZING_FINAL_SNARK_PROVER` | 0.69 | 0.76 |
+| `GENERATE_RECURSIVEF` | 0.35 | 0.32 |
+| `CALCULATE_FINAL_WITNESS` | 0.39 | 0.39 |
+| `CALCULATE_FINAL_PROOF` | 1.86 | 1.89 |
+| `GENERATING_WRAPPER_SNARK_PROOF` | 2.73 | 2.72 |
+| The command | 3.98 | 5.27 |
+
+The medians of the warm runs; the first of them also writes the recursivef's `.consttree`
+(`LOADING_RECURSIVE_F_SETUP` 11.48 s, the command 15.16 s). The host's peak RSS is 4.74 GB, and the
+GPU's memory in use peaks at 2,681 MiB.
+
+- **The pilfflonk proof**, 1.86 s (9.64 s on 32 threads of the CPU machine): the instance 0.07 s,
+  stage 1 0.07 s, stage 2 0.20 s (0.17 s of it the hint columns, on the CPU), `Q` 1.36 s and the
+  opening 0.11 s. `Q` is 0.91 s of bytecode and 0.07 s of zerofiers on the CPU over its 8 parts,
+  0.28 s of LDE, 0.02 s of interpolation and 0.06 s of MSM. More than half the proof, 1.15 s, is
+  the work still on the CPU.
+- **The key**, 0.69 s: CUDA's initialisation 0.11 s, the SRS 0.04 s and its copy 0.04 s, and the AIR
+  0.49 s, with the fixed INTT 0.08 s, the shift sums 0.17 s and the fixed commitments 0.09 s.
+- **Against PLONK's GPU wrap** (rapidsnark's GPU prover, measured on the same 5090): its final proof
+  takes 0.86 s, its wrapper 1.65 s and its command 3.50–3.65 s, with 13.2 GB of host RSS and
+  29.8 GiB of GPU memory. With `Q`'s bytecode on the device (0.083 s against 5.10 s on the CPU for
+  the L1 layout's `Q` at 2^21), its zerofiers and the hints there too, the pilfflonk proof would take
+  about 0.8 s (**E**: 1.86 s less the 1.15 s on the CPU, plus about 0.05 s on the device).
+
+### On chain
+
+The project contract `provingKeySnark/final/BuildVerifier.sol` (`BuildVerifier is
+PilfflonkVerifier`), which setup-snark writes beside the key's `pilfflonk.verifier.sol`, with solc
+0.8.37 (optimizer, 200 runs) and Foundry v1.8.3 (offline, evm `osaka`), on the run's proof, **M**.
+The gas is that of the call (`gasleft()` around it), as for FFLONK and PLONK, and that of a
+transaction on anvil (with the intrinsic 21,000 and the calldata):
+
+| Call | Outcome | Gas | Transaction gas |
+|---|---|---|---|
+| `verifyProof(proof, [public])` | `true` | 332,661 | 388,876 |
+| the same, a commitment's `x` plus 1 | `false` | 3,845 | |
+| the same, the last evaluation plus 1 | `false` | 90,468 | |
+| the same, the public plus 1 | `false` | 23,711 | |
+| `verifySnarkProof(programVK, rootCVadcopFinal, publicValues, proof)` | returns | 353,287 | 403,330 |
+| the same, the last evaluation plus 1 | reverts `InvalidProof()` | 108,728 | |
+| the same, a public value changed | reverts | 41,998 | |
+| the same, another `programVK` | reverts | 42,026 | |
+| the same, `publicValues` = `snark_proof.bin`'s `public_bytes` | reverts | 42,053 | |
+
+- **Size.** `BuildVerifier`'s runtime is 22,905 B (initcode 22,933 B), `PilfflonkVerifier`'s alone
+  21,569 B: under EIP-170's 24,576 B, with 1,671 B to spare, and EIP-3860's 49,152 B. One contract
+  is enough; the wrap does not need the original's two (`PilFflonkVerifier` and `ShPlonkVerifier`).
+- **The arguments of `verifySnarkProof`.** `programVK` is the vadcop_final proof's `rom_root` (the
+  publics_info's `verificationKey`), each value big-endian, and `rootCVadcopFinal` the contract's
+  `getRootCVadcopFinal()`. `publicValues` are the other publics as the final circuit hashes them
+  (`getSha256Inputs`): each value's bytes little-endian, `0x1900000000000000…` for `module` = 25.
+  `snark_proof.bin`'s `public_bytes` are big-endian (`get_public_bytes_solidity`:
+  `0x0000000000000019…`), so `hashPublicValues` of them is not the proof's public and the contract
+  refuses them. The PLONK and FFLONK wraps share both the circuit's template and
+  `get_public_bytes_solidity` (not measured here).
+- **`eth_estimateGas` is not a measure of `verifyProof`.** The verifier returns `false` and does not
+  revert, so the least gas that does not revert is one at which a precompile runs out of gas and
+  `verifyProof` returns `false`: 209,223 on anvil, which stops at its second `ecMul`. The 178,137
+  estimated earlier for the 2^22 key on anvil is of that kind: Foundry gives 310,932 for its proof.
+  `verifySnarkProof` reverts on a `false` verdict, so its estimate, 410,211, is that of an accepted
+  call.
+
+### Reproducing the wrap
+
+From the repository root, with the release binaries
+(`cargo build --release -p pil2-stark-setup -p proofman-cli -p fibonacci-square --features
+proofman-starks-lib-c/cpu-only`), circom 2.2.3 on the `PATH` (`setup/circom`) and `PIL2C_EXEC`
+naming a pil2com that honours `prime` ([README.md#compile-pil](README.md#compile-pil)):
+
+```sh
+B=<build dir>
+target/release/proofman-setup compile-pil --pil examples/fibonacci-square/pil/build.pil \
+    -I pil2-components/lib/std/pil -o $B/build.pilout -u $B/build/fixed --fixed-to-file
+target/release/proofman-setup setup -a $B/build.pilout -b $B/build -r -u $B/build/fixed --hash Poseidon2
+target/release/proofman-cli gen-custom-commits-fixed --witness-lib target/release/libfibonacci_square.so \
+    --proving-key $B/build/provingKey/ --custom-commits rom=$B/build/rom.bin
+target/release/proofman-cli prove --witness-lib target/release/libfibonacci_square.so \
+    --proving-key $B/build/provingKey/ --public-inputs examples/fibonacci-square/src/inputs.json \
+    --output-dir $B/proofs --custom-commits rom=$B/build/rom.bin -a
+target/release/proofman-setup setup-snark -b $B/build --final-snark pilfflonk --powers-of-tau <ptau> \
+    --publics-info examples/fibonacci-square/src/publics_info.json
+target/release/proofman-cli prove-snark -p $B/proofs/vadcop_final_proof.bin -k $B/build/provingKeySnark \
+    -o $B/wrap
+target/release/proofman-cli verify-snark -p $B/wrap/snark_proof.bin \
+    -k $B/build/provingKeySnark/final/provingKey/final/pilfflonk/pilfflonk.vkey.json
+```
+
+The ptau needs at least 6,815,756 powers `[τ^i]₁`: Hermez's `powersOfTau28_hez_final_22` (2^23 − 1)
+or a larger one, or, for a test,
+`target/release/examples/pilfflonk_bench_inputs ptau 6815756 <out.ptau>` (a public `τ`; 3 min 23 s
+on 64 threads). The CI job `test-pilfflonk-wrap` runs these steps with that test ptau, and then
+`cli/tests/snark_pilfflonk.rs` on the key and the proof; it waits for the compiler's branch to be
+published (its comment says how to turn it on). On the Solidity side, `proofman-cli pilfflonk
+calldata -k <vkey> -p <proof.bin> --publics <publics.json> --format hex` gives `verifyProof`'s
+calldata from the proof's bytes, and its words are `verifySnarkProof`'s `proofBytes`.
 
 ## Reproducing
 

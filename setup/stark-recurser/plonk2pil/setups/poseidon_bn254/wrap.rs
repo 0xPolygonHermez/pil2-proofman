@@ -76,6 +76,8 @@ const _: () = assert!(RANGE_CHECK_CHUNKS <= WIDTH && RANGE_CHECK_CHUNK_COLS.star
 /// default, 3; with the range checks' sum bus, the AIR cannot be set up at degree 3 and pilfflonk's
 /// default `--extra-muls` (2), and degree 6 with [`EXTRA_MULS`] is the cheapest of the settings
 /// that can to verify (M56a: 337,557 gas against 356,761 at degree 3 and `--extra-muls` 4).
+/// setup-snark also bounds pilfflonk's degree search with it (setup-pilfflonk's
+/// `--max-constraint-degree`): the AIR's own constraints reach it, so `Q` needs no im pol.
 pub const MAX_CONSTRAINT_DEGREE: usize = 6;
 
 /// The `--extra-muls` the wrap's AIR is set up with by pilfflonk (pilfflonk/docs/protocol.md,
