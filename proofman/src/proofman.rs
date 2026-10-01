@@ -843,7 +843,31 @@ impl<F: PrimeField64> ProofMan<F> {
         self.options.clone()
     }
 
+    /// Acquire `computing`, and the process-wide `PROVING` before it. Warns if the wait exceeded 50ms.
+    fn acquire_computing(&self, caller: &'static str) -> (MutexGuard<'_, ()>, MutexGuard<'static, ()>) {
+        // The C++ multiplicity accumulators and commit counter are process-global: two live ProofMans
+        // must not interleave proofs.
+        static PROVING: Mutex<()> = Mutex::new(());
+        let t0 = std::time::Instant::now();
+        let global = PROVING.lock().unwrap_or_else(|e| e.into_inner());
+        let g = self.computing.lock().unwrap_or_else(|e| e.into_inner());
+        let waited = t0.elapsed();
+        if waited.as_millis() > 50 {
+            tracing::warn!("[ProofMan::{caller}] blocked {}ms acquiring `computing`", waited.as_millis());
+        }
+        // Released in field order: this instance's guard first.
+        (g, global)
+    }
+
+    /// Takes `computing` (and the process-wide guard): the multiplicity state it resets is shared by
+    /// every prover in the process.
     pub fn reset(&self) -> ProofmanResult<()> {
+        let _computing = self.acquire_computing("reset");
+        self.reset_unguarded()
+    }
+
+    /// `reset` for callers already holding `computing`.
+    fn reset_unguarded(&self) -> ProofmanResult<()> {
         self.wcm.reset();
         // A cancelled job can leave an instance handed back or deferred; the next job reuses ids.
         for flags in [&self.pctx.dispatch_deferred, &self.pctx.dispatch_pending] {
@@ -898,7 +922,10 @@ impl<F: PrimeField64> ProofMan<F> {
 
         self.worker_contributions.write().unwrap_or_else(|e| e.into_inner()).clear();
         reset_device_streams_c(self.pctx.get_device_buffers_ptr());
-        if self.pctx.gpu {
+        // Not before registration succeeds: its warm-up fills process-wide plan caches, which a prover
+        // dropped after a failed first registration would leave for a different setup.
+        let registered = *self.pctx.prover_multiplicities_registered.lock().unwrap();
+        if self.pctx.gpu && registered {
             unsafe { mul_alloc_c(self.pctx.get_device_buffers_ptr()) };
             // Record which airs the device can produce whole; see `device_owned_table_airs`.
             if let Ok(layouts) = collect_virtual_table_layouts(&self.pctx, &self.sctx) {
@@ -1069,7 +1096,7 @@ where
         } else {
             Err(ProofmanError::Cancelled)
         };
-        self.reset()?;
+        self.reset_unguarded()?;
         error
     }
 
@@ -1084,22 +1111,6 @@ where
     fn cancel_memory_handlers(&self) {
         self.memory_handler.cancel();
         self.memory_handler_recursive_witness.cancel();
-    }
-
-    /// Acquire `computing`, and the process-wide `PROVING` before it. Warns if the wait exceeded 50ms.
-    fn acquire_computing(&self, caller: &'static str) -> (MutexGuard<'_, ()>, MutexGuard<'static, ()>) {
-        // The C++ multiplicity accumulators and commit counter are process-global: two live ProofMans
-        // must not interleave proofs.
-        static PROVING: Mutex<()> = Mutex::new(());
-        let t0 = std::time::Instant::now();
-        let global = PROVING.lock().unwrap_or_else(|e| e.into_inner());
-        let g = self.computing.lock().unwrap_or_else(|e| e.into_inner());
-        let waited = t0.elapsed();
-        if waited.as_millis() > 50 {
-            tracing::warn!("[ProofMan::{caller}] blocked {}ms acquiring `computing`", waited.as_millis());
-        }
-        // Released in field order: this instance's guard first.
-        (g, global)
     }
 
     /// Block until any in-flight proof-generation call has returned. Call
@@ -1215,7 +1226,7 @@ where
         self.set_partition(1, vec![0], 0)?;
 
         self.cancellation_info.write_recover().reset();
-        self.reset()?;
+        self.reset_unguarded()?;
         self.pctx.dctx_reset();
 
         let _ = self.exec()?;
@@ -1514,7 +1525,7 @@ where
         self.set_partition(1, vec![0], 0)?;
 
         self.cancellation_info.write_recover().reset();
-        self.reset()?;
+        self.reset_unguarded()?;
         self.pctx.dctx_reset();
 
         if !options.minimal_memory {
@@ -1631,7 +1642,7 @@ where
 
         self.pctx.set_debug_info(debug_info);
         self.cancellation_info.write_recover().reset();
-        self.reset()?;
+        self.reset_unguarded()?;
         self.pctx.dctx_reset();
 
         self.exec()?;
@@ -1787,7 +1798,7 @@ where
 
         self.pctx.set_debug_info(debug_info);
         self.cancellation_info.write_recover().reset();
-        self.reset()?;
+        self.reset_unguarded()?;
         self.pctx.dctx_reset();
 
         let _ = self.exec()?;
@@ -2151,7 +2162,7 @@ where
 
         self.set_partition(1, vec![0], 0)?;
         self.cancellation_info.write_recover().reset();
-        self.reset()?;
+        self.reset_unguarded()?;
         self.pctx.dctx_reset();
 
         let _ = self.exec()?;
@@ -3230,7 +3241,7 @@ where
             }
 
             self.cancellation_info.write_recover().reset();
-            self.reset()?;
+            self.reset_unguarded()?;
             self.pctx.dctx_reset();
         }
 

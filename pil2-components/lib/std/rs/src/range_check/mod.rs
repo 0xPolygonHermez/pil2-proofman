@@ -50,6 +50,13 @@ pub fn collect_prover_owned_ranges<F: PrimeField64>(
     let num_users = get_global_hint_field_constant_as::<usize, F>(sctx, std_rc_users, "num_users")?;
     let airgroup_ids = get_hint_field_gc_constant_a(sctx, std_rc_users, "airgroup_ids", false)?;
     let air_ids = get_hint_field_gc_constant_a(sctx, std_rc_users, "air_ids", false)?;
+    if airgroup_ids.values.len() < num_users || air_ids.values.len() < num_users {
+        return Err(ProofmanError::StdError(format!(
+            "std_rc_users declares {num_users} users but lists {} airgroup ids and {} air ids",
+            airgroup_ids.values.len(),
+            air_ids.values.len()
+        )));
+    }
 
     let mut owned: Vec<(u64, i64)> = Vec::new();
     for i in 0..num_users {
