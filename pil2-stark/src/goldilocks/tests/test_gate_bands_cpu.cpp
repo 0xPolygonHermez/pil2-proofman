@@ -166,11 +166,19 @@ TEST(GateBands, BandSectionParsingRejectsMalformedBuffers)
 
     // An exec file from a newer setup: the section's offset is unknown, so it is refused as an
     // exec-format problem rather than misread at this build's offset.
-    const uint64_t newerExec = exec_layout::EXEC_MAGIC | (exec_layout::EXEC_FORMAT_VERSION + 1);
+    const uint64_t newerExec = exec_layout::EXEC_MAGIC | (exec_layout::EXEC_FORMAT_VERSION_WIDE + 1);
     std::vector<uint64_t> newerFile{newerExec, 0, 1, 2, M, V, 1, 0, 1};
     auto ev = gate_bands::band_section(newerFile.data(), newerFile.size());
     ASSERT_EQ((int)ev.status, (int)gate_bands::BandSection::UnsupportedExecFormat);
-    ASSERT_EQ(ev.version, exec_layout::EXEC_FORMAT_VERSION + 1);
+    ASSERT_EQ(ev.version, exec_layout::EXEC_FORMAT_VERSION_WIDE + 1);
+
+    // A BN254 exec, with its fifth header word (4-word coefficients): the same refusal, and the
+    // version it carries is what names it in the error.
+    const uint64_t bn254Exec = exec_layout::EXEC_MAGIC | exec_layout::EXEC_FORMAT_VERSION_WIDE;
+    std::vector<uint64_t> bn254File{bn254Exec, 0, 1, 2, 4, M, V, 0, 0};
+    auto bv = gate_bands::band_section(bn254File.data(), bn254File.size());
+    ASSERT_EQ((int)bv.status, (int)gate_bands::BandSection::UnsupportedExecFormat);
+    ASSERT_EQ(bv.version, exec_layout::EXEC_FORMAT_VERSION_WIDE);
 
     // A section from a newer setup is refused, not misparsed.
     std::vector<uint64_t> newer{H, 0, 1, 2, M, V + 1, 1, 0, 1};

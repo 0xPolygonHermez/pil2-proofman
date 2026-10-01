@@ -211,7 +211,7 @@ fn a_bn254_circuit_converts_to_plonk_gates_that_hold_on_its_witness() {
     let (merged_cs, merged_adds, _) = r1cs2plonk_merged(&r1cs, true);
     assert!(plonk_holds(&merged_cs, &merged_adds, &witness), "the copy-merged gates fail on the witness");
 
-    // The entry point still refuses it: the families and the .exec format are Goldilocks-only.
+    // The entry point still refuses it: the families are Goldilocks-only.
     let err = plonk2pil(&r1cs_bytes, "aggregation", &PlonkOptions::default()).unwrap_err().to_string();
     assert!(err.contains("BN254 is not supported yet"), "{err}");
 }

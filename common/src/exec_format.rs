@@ -1,0 +1,481 @@
+//! The `.exec` file: how a recursion air's trace is gathered out of its circom witness. plonk2pil
+//! writes one beside each air it builds (`write_exec_file`, setup/stark-recurser/plonk2pil), and
+//! this module is where its format is defined for Rust: the constants, how each field writes a
+//! coefficient, where each part lies, and [`ExecFile`], a reader of either version. The STARK
+//! prover loads its own with [`load_exec_file`](crate::load_exec_file), which reads version 2 only.
+//! `exec_layout.hpp`, in pil2-stark/src/starkpil/recursion_trace/ and its copy in setup/circom/,
+//! mirrors the constants for the C++ readers.
+//!
+//! Every word is a u64, little-endian on disk:
+//! - the header: `EXEC_MAGIC | version`, `n_adds`, `map_rows`, `map_cols`, and in version 3
+//!   `coef_words`;
+//! - `n_adds` additions, `(sl, sr, coef_l, coef_r)`: a word per wire and `coef_words` per
+//!   coefficient;
+//! - the map: `map_rows * map_cols` u32 entries, the signal of each cell or 0 for none, row-major,
+//!   two to a word (low half first), padded to a whole word;
+//! - the gate bands: [`GATE_BAND_FORMAT_VERSION`], the band count, a per-air aux word, then
+//!   `(row, kind, payload)` per band.
+//!
+//! The two versions differ only in the width of a coefficient:
+//! - version 2, [`EXEC_FORMAT_VERSION`], is Goldilocks': one word per coefficient, implied. Every
+//!   STARK recursion air carries one, and it is the only version the STARK prover reads.
+//! - version 3, [`EXEC_FORMAT_VERSION_WIDE`], records the width in the header, in whole words, and
+//!   writes a coefficient's canonical value least significant word first. plonk2pil writes it over
+//!   BN254, four words (the original pil-fflonk's 32-byte `Fr`), for the pilfflonk wrap.
+//!
+//! The map and the bands do not depend on the field, and are laid out alike in both.
+
+use std::path::Path;
+
+use proofman_fields::{Bn254, Goldilocks, PrimeField64, QuotientMap};
+
+use crate::{ProofmanError, ProofmanResult};
+
+/// "PXEC" in the high half of the first word, tagging the layout. The pre-magic layout opened with
+/// `n_adds`, a small count, so no older file can be mistaken for one carrying it.
+pub const EXEC_MAGIC: u64 = 0x5058_4543_0000_0000;
+
+/// The half of the first word the magic is in. The version is in the other.
+pub const EXEC_MAGIC_MASK: u64 = 0xFFFF_FFFF_0000_0000;
+
+/// The layout over Goldilocks, a word per coefficient. Bump on any change to the header, the map or
+/// their order. Mirrored by `exec_layout::EXEC_FORMAT_VERSION`.
+pub const EXEC_FORMAT_VERSION: u64 = 2;
+
+/// The layout with the coefficient width in the header, for a field wider than a word: BN254, the
+/// pilfflonk wrap's. Mirrored by `exec_layout::EXEC_FORMAT_VERSION_WIDE`, which the C++ readers
+/// only refuse.
+pub const EXEC_FORMAT_VERSION_WIDE: u64 = 3;
+
+/// Words of a version 2 header: `magic|version`, `n_adds`, `map_rows`, `map_cols`.
+pub const EXEC_HEADER_WORDS: usize = 4;
+
+/// Words of a version 3 header: version 2's, then `coef_words`.
+pub const EXEC_WIDE_HEADER_WORDS: usize = 5;
+
+/// Layout version of the gate-band section. Mirrored by `GATE_BAND_FORMAT_VERSION` in
+/// pil2-stark/src/starkpil/recursion_trace/gate_bands/gate_bands.hpp, which reads it.
+pub const GATE_BAND_FORMAT_VERSION: u64 = 2;
+
+/// Words ahead of the bands in their section: the version, the count and the aux word.
+pub const GATE_BAND_HEADER_WORDS: usize = 3;
+
+/// Words of one band: `row`, `kind`, `payload`.
+pub const GATE_BAND_WORDS: usize = 3;
+
+/// A field an exec file's coefficients are elements of, and how it writes one.
+pub trait ExecField: Copy {
+    /// The field's name, for the errors that refuse a file over another.
+    const NAME: &'static str;
+
+    /// The layout version an exec over this field is written in.
+    const EXEC_VERSION: u64;
+
+    /// Words per coefficient.
+    const COEF_WORDS: usize;
+
+    /// Writes the canonical value into `out`, [`COEF_WORDS`](Self::COEF_WORDS) long, least
+    /// significant word first.
+    fn write_exec_words(&self, out: &mut [u64]);
+
+    /// The element whose canonical value `words` holds, least significant word first. `None` if the
+    /// value is not below the prime or `words` is not [`COEF_WORDS`](Self::COEF_WORDS) long.
+    fn read_exec_words(words: &[u64]) -> Option<Self>;
+}
+
+impl ExecField for Goldilocks {
+    const NAME: &'static str = "Goldilocks";
+    const EXEC_VERSION: u64 = EXEC_FORMAT_VERSION;
+    const COEF_WORDS: usize = 1;
+
+    fn write_exec_words(&self, out: &mut [u64]) {
+        out.copy_from_slice(&[self.as_canonical_u64()]);
+    }
+
+    fn read_exec_words(words: &[u64]) -> Option<Self> {
+        match words {
+            [word] => Self::from_canonical_checked(*word),
+            _ => None,
+        }
+    }
+}
+
+impl ExecField for Bn254 {
+    const NAME: &'static str = "BN254";
+    const EXEC_VERSION: u64 = EXEC_FORMAT_VERSION_WIDE;
+    const COEF_WORDS: usize = 4;
+
+    fn write_exec_words(&self, out: &mut [u64]) {
+        let mut words = [0u64; 4];
+        for (word, chunk) in words.iter_mut().zip(self.to_le_bytes().chunks_exact(8)) {
+            let mut bytes = [0u8; 8];
+            bytes.copy_from_slice(chunk);
+            *word = u64::from_le_bytes(bytes);
+        }
+        out.copy_from_slice(&words);
+    }
+
+    fn read_exec_words(words: &[u64]) -> Option<Self> {
+        let words: &[u64; 4] = words.try_into().ok()?;
+        let mut bytes = [0u8; 32];
+        for (chunk, word) in bytes.chunks_exact_mut(8).zip(words) {
+            chunk.copy_from_slice(&word.to_le_bytes());
+        }
+        Self::from_le_bytes(bytes)
+    }
+}
+
+/// What an exec file's header says: its version, the width of a coefficient and the extents of
+/// what follows, and from them where each part lies.
+///
+/// The offsets are plain arithmetic, total on any layout this module hands out: [`ExecLayout::new`]
+/// describes something already in memory, and [`ExecFile`] checks a file's header before it builds
+/// one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecLayout {
+    version: u64,
+    coef_words: usize,
+    n_adds: usize,
+    map_rows: usize,
+    map_cols: usize,
+}
+
+impl ExecLayout {
+    /// The layout of an exec over `F` with `n_adds` additions and a `map_rows x map_cols` map.
+    pub fn new<F: ExecField>(n_adds: usize, map_rows: usize, map_cols: usize) -> Self {
+        // Checked when `F` is compiled in: a version 2 coefficient is a word by definition.
+        const {
+            assert!(
+                (F::EXEC_VERSION == EXEC_FORMAT_VERSION && F::COEF_WORDS == 1)
+                    || (F::EXEC_VERSION == EXEC_FORMAT_VERSION_WIDE && F::COEF_WORDS > 0),
+                "an ExecField's version and coefficient width disagree"
+            )
+        };
+        Self { version: F::EXEC_VERSION, coef_words: F::COEF_WORDS, n_adds, map_rows, map_cols }
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Words per coefficient: recorded in a version 3 header, 1 in version 2.
+    pub fn coef_words(&self) -> usize {
+        self.coef_words
+    }
+
+    pub fn n_adds(&self) -> usize {
+        self.n_adds
+    }
+
+    /// Rows of the map's live extent.
+    pub fn map_rows(&self) -> usize {
+        self.map_rows
+    }
+
+    /// Columns of the map's live extent.
+    pub fn map_cols(&self) -> usize {
+        self.map_cols
+    }
+
+    /// Words of the header, where the additions start.
+    pub fn header_words(&self) -> usize {
+        if self.version == EXEC_FORMAT_VERSION {
+            EXEC_HEADER_WORDS
+        } else {
+            EXEC_WIDE_HEADER_WORDS
+        }
+    }
+
+    /// Words of one addition: two wires and two coefficients.
+    pub fn addition_words(&self) -> usize {
+        2 + 2 * self.coef_words
+    }
+
+    /// First word of the map.
+    pub fn map_at(&self) -> usize {
+        self.header_words() + self.n_adds * self.addition_words()
+    }
+
+    /// First word of the gate-band section: past the map, its entries two to a word.
+    pub fn bands_at(&self) -> usize {
+        self.map_at() + (self.map_rows * self.map_cols).div_ceil(2)
+    }
+
+    /// Writes the header into `out[..header_words()]`.
+    pub fn write_header(&self, out: &mut [u64]) {
+        out[0] = EXEC_MAGIC | self.version;
+        out[1] = self.n_adds as u64;
+        out[2] = self.map_rows as u64;
+        out[3] = self.map_cols as u64;
+        if self.version != EXEC_FORMAT_VERSION {
+            out[4] = self.coef_words as u64;
+        }
+    }
+
+    /// The layout `words` opens with, if its header is one this module reads and everything up to
+    /// the gate-band section's own header fits in `words`. The error completes "exec file ...".
+    fn parse(words: &[u64]) -> Result<Self, String> {
+        let first = words.first().copied().ok_or("is empty, with no header")?;
+        if first & EXEC_MAGIC_MASK != EXEC_MAGIC {
+            return Err("does not open with an exec header; it predates the current layout".into());
+        }
+        let version = first & !EXEC_MAGIC_MASK;
+        let header_words = match version {
+            EXEC_FORMAT_VERSION => EXEC_HEADER_WORDS,
+            EXEC_FORMAT_VERSION_WIDE => EXEC_WIDE_HEADER_WORDS,
+            _ => {
+                return Err(format!(
+                    "is format version {version}, but this build reads versions {EXEC_FORMAT_VERSION} and \
+                     {EXEC_FORMAT_VERSION_WIDE}"
+                ))
+            }
+        };
+        let header = words.get(..header_words).ok_or_else(|| {
+            format!("is {} words, too short for its version {version} header of {header_words}", words.len())
+        })?;
+        let coef_words = if version == EXEC_FORMAT_VERSION { 1 } else { header[4] };
+        if coef_words == 0 {
+            return Err("records coefficients of 0 words".into());
+        }
+        let size = |what: &str, value: u64| {
+            usize::try_from(value).map_err(|_| format!("records {what} {value}, more than this machine addresses"))
+        };
+        let layout = Self {
+            version,
+            coef_words: size("a coefficient width of", coef_words)?,
+            n_adds: size("an addition count of", header[1])?,
+            map_rows: size("a map height of", header[2])?,
+            map_cols: size("a map width of", header[3])?,
+        };
+
+        // Checked here, once, so that the offsets are total on what this returns.
+        let section_end = (|| {
+            let addition_words = layout.coef_words.checked_mul(2)?.checked_add(2)?;
+            let additions = layout.n_adds.checked_mul(addition_words)?;
+            let map = layout.map_rows.checked_mul(layout.map_cols)?.div_ceil(2);
+            header_words.checked_add(additions)?.checked_add(map)?.checked_add(GATE_BAND_HEADER_WORDS)
+        })();
+        match section_end {
+            Some(end) if end <= words.len() => Ok(layout),
+            _ => Err(format!(
+                "is {} words, too short for the {} additions with {coef_words}-word coefficients, the {} x {} \
+                 map and the gate-band section its header claims",
+                words.len(),
+                layout.n_adds,
+                layout.map_rows,
+                layout.map_cols
+            )),
+        }
+    }
+}
+
+/// An addition: the wire it introduces is `coeffs[0]*wires[0] + coeffs[1]*wires[1]`. The `i`-th
+/// addition of a file is wire `n_witness + i`, where `n_witness` is the circom witness's length.
+/// They apply in order: one may read a wire an earlier one introduced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecAddition<F> {
+    /// `[sl, sr]`.
+    pub wires: [u32; 2],
+    /// `[coef_l, coef_r]`.
+    pub coeffs: [F; 2],
+}
+
+/// A gate band, as written: rows whose interior a trace expander rebuilds from the boundary rather
+/// than the map gathering it. `kind` is plonk2pil's `GateBandKind` discriminant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecGateBand {
+    pub row: u64,
+    pub kind: u64,
+    /// A per-block constant the expander cannot read off the trace: BLAKE3's `flags`, 0 otherwise.
+    pub payload: u64,
+}
+
+/// An exec file over `F`, read whole: the header, the additions, the map and the gate bands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecFile<F> {
+    pub layout: ExecLayout,
+    pub additions: Vec<ExecAddition<F>>,
+    /// The signal of each cell of the map's live extent, row-major, `map_rows * map_cols` of them;
+    /// 0 for a cell that gathers none. See [`ExecFile::map_entry`].
+    pub map: Vec<u32>,
+    /// The band section's per-air word: BLAKE3 packs its LANES and band width in it, Poseidon
+    /// writes 0.
+    pub band_aux: u64,
+    pub bands: Vec<ExecGateBand>,
+}
+
+impl<F: ExecField> ExecFile<F> {
+    /// Reads an exec file from its words, as plonk2pil returns them.
+    pub fn from_words(words: &[u64]) -> ProofmanResult<Self> {
+        Self::parse(words).map_err(|e| ProofmanError::InvalidSetup(format!("exec buffer {e}")))
+    }
+
+    /// Reads the exec file at `path`.
+    pub fn read(path: impl AsRef<Path>) -> ProofmanResult<Self> {
+        let path = path.as_ref();
+        let invalid = |e: String| ProofmanError::InvalidSetup(format!("exec file {} {e}", path.display()));
+        let bytes = std::fs::read(path).map_err(|e| invalid(format!("cannot be read: {e}")))?;
+        if bytes.len() % 8 != 0 {
+            return Err(invalid(format!("is {} bytes, not a multiple of 8", bytes.len())));
+        }
+        let words: Vec<u64> = bytes
+            .chunks_exact(8)
+            .map(|chunk| {
+                let mut word = [0u8; 8];
+                word.copy_from_slice(chunk);
+                u64::from_le_bytes(word)
+            })
+            .collect();
+        Self::parse(&words).map_err(invalid)
+    }
+
+    /// The signal the map gathers into `row`, `col` of the trace. 0, no signal, outside the live
+    /// extent: what the trace holds there before any gate band is expanded.
+    pub fn map_entry(&self, row: usize, col: usize) -> u32 {
+        if row < self.layout.map_rows && col < self.layout.map_cols {
+            self.map[row * self.layout.map_cols + col]
+        } else {
+            0
+        }
+    }
+
+    /// The file `words` holds, or why it is not one over `F`. The error completes "exec file ...".
+    fn parse(words: &[u64]) -> Result<Self, String> {
+        let layout = ExecLayout::parse(words)?;
+        if layout.coef_words != F::COEF_WORDS {
+            return Err(format!(
+                "is format version {} with {}-word coefficients, not the {}-word ones of {}",
+                layout.version,
+                layout.coef_words,
+                F::COEF_WORDS,
+                F::NAME
+            ));
+        }
+
+        let additions = words[layout.header_words()..layout.map_at()]
+            .chunks_exact(layout.addition_words())
+            .enumerate()
+            .map(|(i, add)| {
+                let wire = |k: usize| {
+                    u32::try_from(add[k])
+                        .map_err(|_| format!("has addition {i} reading wire {}, which does not fit 32 bits", add[k]))
+                };
+                let coeff = |k: usize| {
+                    let at = 2 + k * F::COEF_WORDS;
+                    F::read_exec_words(&add[at..at + F::COEF_WORDS]).ok_or_else(|| {
+                        format!("has addition {i} with a coefficient that is not an element of {}", F::NAME)
+                    })
+                };
+                Ok(ExecAddition { wires: [wire(0)?, wire(1)?], coeffs: [coeff(0)?, coeff(1)?] })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        let map_at = layout.map_at();
+        let map = (0..layout.map_rows * layout.map_cols)
+            .map(|entry| (words[map_at + entry / 2] >> (32 * (entry % 2))) as u32)
+            .collect();
+
+        // `ExecLayout::parse` saw the section's header inside `words`.
+        let section = &words[layout.bands_at()..];
+        let (version, count, band_aux) = (section[0], section[1], section[2]);
+        if version != GATE_BAND_FORMAT_VERSION {
+            return Err(format!(
+                "has a gate-band section of format version {version}, but this build reads version \
+                 {GATE_BAND_FORMAT_VERSION}"
+            ));
+        }
+        let body = &section[GATE_BAND_HEADER_WORDS..];
+        if count.checked_mul(GATE_BAND_WORDS as u64) != Some(body.len() as u64) {
+            return Err(format!(
+                "has {} words past its gate-band header, not the {count} bands of {GATE_BAND_WORDS} words it claims",
+                body.len()
+            ));
+        }
+        let bands = body
+            .chunks_exact(GATE_BAND_WORDS)
+            .map(|band| ExecGateBand { row: band[0], kind: band[1], payload: band[2] })
+            .collect();
+
+        Ok(Self { layout, additions, map, band_aux, bands })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proofman_fields::Field;
+
+    use super::*;
+
+    /// `r`, BN254's prime, least significant word first.
+    const R: [u64; 4] = [0x43e1f593f0000001, 0x2833e84879b97091, 0xb85045b68181585d, 0x30644e72e131a029];
+
+    /// A coefficient is its canonical value, least significant word first, in the field's width. A
+    /// value at or above the prime, or in another width, is not one.
+    #[test]
+    fn a_coefficient_is_its_canonical_value_in_words() {
+        let mut words = [0u64; 4];
+        Bn254::NEG_ONE.write_exec_words(&mut words);
+        assert_eq!(words, [R[0] - 1, R[1], R[2], R[3]]);
+        assert_eq!(Bn254::read_exec_words(&words), Some(Bn254::NEG_ONE));
+        assert_eq!(Bn254::read_exec_words(&R), None, "r itself");
+        assert_eq!(Bn254::read_exec_words(&words[..3]), None);
+
+        let mut word = [0u64];
+        Goldilocks::NEG_ONE.write_exec_words(&mut word);
+        assert_eq!(word, [0xFFFF_FFFF_0000_0000]);
+        assert_eq!(Goldilocks::read_exec_words(&word), Some(Goldilocks::NEG_ONE));
+        assert_eq!(Goldilocks::read_exec_words(&[0xFFFF_FFFF_0000_0001]), None, "p itself");
+        assert_eq!(Goldilocks::read_exec_words(&[1, 0]), None);
+    }
+
+    /// A version 3 exec over BN254, word by word: one addition, a 1 x 1 map and no bands.
+    fn one_addition() -> Vec<u64> {
+        let mut exec = vec![EXEC_MAGIC | EXEC_FORMAT_VERSION_WIDE, 1, 1, 1, 4];
+        exec.extend([3, 5]); // the wires
+        exec.extend([7, 0, 0, 0]); // coef_l = 7
+        exec.extend([R[0] - 1, R[1], R[2], R[3]]); // coef_r = -1
+        exec.push(9); // the map's one entry
+        exec.extend([GATE_BAND_FORMAT_VERSION, 0, 0]); // no bands, aux 0
+        exec
+    }
+
+    #[test]
+    fn a_version_3_exec_reads_word_by_word() {
+        let file = ExecFile::<Bn254>::from_words(&one_addition()).unwrap();
+        assert_eq!(file.layout, ExecLayout::new::<Bn254>(1, 1, 1));
+        assert_eq!(file.additions, [ExecAddition { wires: [3, 5], coeffs: [Bn254::from_int(7u64), Bn254::NEG_ONE] }]);
+        assert_eq!((file.map_entry(0, 0), file.map_entry(1, 0), file.map_entry(0, 1)), (9, 0, 0));
+        assert_eq!((file.band_aux, file.bands.len()), (0, 0));
+    }
+
+    /// An edit that corrupts [`one_addition`].
+    type Corruption<'a> = &'a dyn Fn(&mut Vec<u64>);
+
+    /// Every corruption is refused saying what is wrong, and none reads past the buffer.
+    #[test]
+    fn a_corrupt_exec_is_refused_saying_why() {
+        let r = R;
+        let cases: [(&str, Corruption); 12] = [
+            ("is empty", &|e| e.clear()),
+            ("does not open with an exec header", &|e| e[0] = 1),
+            ("is format version 4, but this build reads versions 2 and 3", &|e| e[0] = EXEC_MAGIC | 4),
+            ("too short for its version 3 header of 5", &|e| e.truncate(4)),
+            ("records coefficients of 0 words", &|e| e[4] = 0),
+            ("is format version 2 with 1-word coefficients, not the 4-word ones of BN254", &|e| {
+                e[0] = EXEC_MAGIC | EXEC_FORMAT_VERSION
+            }),
+            ("too short for the 1000 additions", &|e| e[1] = 1000),
+            ("too short for the 18446744073709551615 additions", &|e| e[1] = u64::MAX),
+            ("reading wire 4294967296, which does not fit 32 bits", &|e| e[5] = 1 << 32),
+            ("with a coefficient that is not an element of BN254", &|e| e[11..15].copy_from_slice(&r)),
+            ("gate-band section of format version 3", &|e| e[16] = 3),
+            ("has 0 words past its gate-band header, not the 1 bands", &|e| e[17] = 1),
+        ];
+        for (why, corrupt) in cases {
+            let mut exec = one_addition();
+            corrupt(&mut exec);
+            let err = ExecFile::<Bn254>::from_words(&exec).unwrap_err().to_string();
+            assert!(err.contains(why), "expected \"{why}\", got: {err}");
+        }
+    }
+}

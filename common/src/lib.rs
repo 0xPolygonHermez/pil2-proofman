@@ -21,6 +21,7 @@ pub mod fixed_cols;
 pub mod memory_handler;
 pub mod packed_info;
 pub mod error_manager;
+pub mod exec_format;
 
 pub use air_instance::*;
 pub use verbose_mode::*;

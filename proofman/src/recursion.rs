@@ -12,6 +12,7 @@ use proofman_common::{
     CurveType, MpiCtx, MemoryHandlerRecursive, Proof, ProofCtx, ProofType, ProofmanResult, ProofmanError, Setup,
     SetupsVadcop, GetSizeWitnessFunc,
 };
+use proofman_common::exec_format::{EXEC_FORMAT_VERSION, EXEC_HEADER_WORDS, EXEC_MAGIC};
 
 use std::os::raw::{c_void, c_char};
 
@@ -1118,8 +1119,12 @@ pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> Pr
     }
 }
 
-/// Writes the zkin under the name `prove-air --proof` parses, when `PIL2_DUMP_ZKIN` names this
-/// proof type (or `all`). Errors are logged, never returned: this is a diagnostic.
+/// Exec header for [`recursion_trace_stride`]. Empty when a setup carries no exec file, which
+/// makes the stride fall back to the full width.
+fn setup_exec_slice<F: PrimeField64>(setup: &Setup<F>) -> &[u64] {
+    setup.exec_data.as_deref().map_or(&[][..], |e| e.as_slice())
+}
+
 /// Row stride to fill the recursion trace with: the exec map's width when the device widens it, the
 /// air's own width otherwise.
 ///
@@ -1134,20 +1139,11 @@ pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> Pr
 /// because that side decides the same question from the same exec header. Filling wide while it reads
 /// compact hands it `map_cols` columns' worth of an `n_cols`-wide row, and the proof then fails its
 /// evaluations check with nothing pointing at the cause.
-/// Exec header for [`recursion_trace_stride`]. Empty when a setup carries no exec file, which
-/// makes the stride fall back to the full width.
-fn setup_exec_slice<F: PrimeField64>(setup: &Setup<F>) -> &[u64] {
-    setup.exec_data.as_deref().map_or(&[][..], |e| e.as_slice())
-}
-
 pub fn recursion_trace_stride(exec: &[u64], n_cols: u64, gpu: bool) -> u64 {
-    // Mirrors `plonk2pil::{EXEC_MAGIC, EXEC_FORMAT_VERSION, EXEC_HEADER_WORDS}`, which write the
-    // header, and `exec_layout` in pil2-stark/src/starkpil/exec_layout.hpp, which reads it. Spelled
-    // out rather than imported: the prover does not depend on the setup crate.
-    // Header: [magic|version, n_adds, map_rows, map_cols].
-    const EXEC_MAGIC: u64 = 0x5058_4543_0000_0000; // "PXEC" in the high half
-    const EXEC_FORMAT_VERSION: u64 = 2;
-    const EXEC_HEADER_WORDS: usize = 4;
+    // The header is `exec_format`'s version 2, [magic|version, n_adds, map_rows, map_cols], which
+    // `exec_layout` in pil2-stark/src/starkpil/recursion_trace/exec_layout.hpp also reads. No other
+    // version reaches here: `load_exec_file` refuses them, BN254's version 3 by name. One that did
+    // would get the full width, as a buffer without a header does.
     if !gpu {
         return n_cols;
     }
@@ -1163,6 +1159,8 @@ pub fn recursion_trace_stride(exec: &[u64], n_cols: u64, gpu: bool) -> u64 {
     }
 }
 
+/// Writes the zkin under the name `prove-air --proof` parses, when `PIL2_DUMP_ZKIN` names this
+/// proof type (or `all`). Errors are logged, never returned: this is a diagnostic.
 fn dump_zkin_if_requested<F: PrimeField64>(setup: &Setup<F>, instance_id: usize, zkin: &[u64]) {
     let Ok(want) = std::env::var("PIL2_DUMP_ZKIN") else {
         return;
@@ -1447,5 +1445,23 @@ mod arity_tests {
         for n in 1..100 {
             assert_eq!(total_recursive_proofs(n, 2).n_proofs, n - 1, "n={n}");
         }
+    }
+}
+
+#[cfg(test)]
+mod stride_tests {
+    use super::recursion_trace_stride;
+    use proofman_common::exec_format::{EXEC_FORMAT_VERSION, EXEC_FORMAT_VERSION_WIDE, EXEC_MAGIC};
+
+    /// A version 2 header narrows the GPU fill to its map's width. Any other is not read for one,
+    /// BN254's version 3 included, and the fill keeps the air's width.
+    #[test]
+    fn only_a_version_2_header_narrows_the_gpu_fill() {
+        // magic|version, n_adds, map_rows, map_cols, and version 3's coefficient width.
+        let exec = |version| [EXEC_MAGIC | version, 0, 4, 3, 4];
+        assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION), 8, true), 3);
+        assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION), 8, false), 8, "the CPU keeps the air's width");
+        assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION_WIDE), 8, true), 8);
+        assert_eq!(recursion_trace_stride(&[], 8, true), 8, "no exec file");
     }
 }

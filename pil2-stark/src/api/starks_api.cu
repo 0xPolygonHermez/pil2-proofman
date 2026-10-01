@@ -904,10 +904,7 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
             exitProcess();
         }
         if (bandView.status == gate_bands::BandSection::UnsupportedExecFormat) {
-            zklog.error("load_device_setup: " + air + " has exec file format version " +
-                        std::to_string(bandView.version) + ", but this build reads version " +
-                        std::to_string(exec_layout::EXEC_FORMAT_VERSION) +
-                        "; regenerate the proving key with a matching setup");
+            zklog.error("load_device_setup: " + air + ": " + exec_layout::refused_version(bandView.version));
             exitProcess();
         }
         if (bandView.status == gate_bands::BandSection::UnsupportedVersion) {

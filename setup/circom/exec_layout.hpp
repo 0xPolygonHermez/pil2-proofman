@@ -1,23 +1,29 @@
-// COPY of pil2-stark/src/starkpil/recursion_trace/exec_layout.hpp, which owns this format.
+// COPY of pil2-stark/src/starkpil/recursion_trace/exec_layout.hpp, the C++ side of this format.
 // The witness library is built in a temp dir holding only setup/circom + the goldilocks
 // sources, so it cannot include the original. Keep the two in step.
 #ifndef EXEC_LAYOUT_HPP
 #define EXEC_LAYOUT_HPP
 
 // The `.exec` file's layout, shared by the map reader (exec_file.hpp) and the gate-band reader
-// (gate_bands.hpp). Written by `write_exec_file` in plonk2pil/mod.rs, which owns the format.
+// (gate_bands.hpp). Defined by common/src/exec_format.rs, which holds these constants for Rust;
+// written by `write_exec_file` in setup/stark-recurser/plonk2pil/mod.rs.
 //
 //   [0] EXEC_MAGIC | EXEC_FORMAT_VERSION
 //   [1] nAdds   [2] mapRows   [3] mapCols
 //   additions: (sl, sr, coefL, coefR) each
 //   map: mapRows * mapCols u32 entries, row-major, two per word, padded to a whole word
-//   gate bands: version, count, (row, kind) per band
+//   gate bands: version, count, aux, then (row, kind, payload) per band
 //
 // The map covers only the rows and columns that carry placements -- the packers fill rows from 0
 // and leave the power-of-two padding alone, and a gate band's interior columns are never mapped.
 // Every cell outside the extent is zero.
+//
+// That is version 2, Goldilocks', the only one this build reads. Version 3 is the same layout with
+// the coefficient width in a fifth header word, and plonk2pil writes it over BN254 for the
+// pilfflonk wrap; it is refused by name (refused_version).
 
 #include <cstdint>
+#include <string>
 
 namespace exec_layout {
 
@@ -26,8 +32,12 @@ namespace exec_layout {
 constexpr uint64_t EXEC_MAGIC = 0x5058454300000000ull;
 constexpr uint64_t EXEC_MAGIC_MASK = 0xFFFFFFFF00000000ull;
 
-// Mirrors EXEC_FORMAT_VERSION in plonk2pil/mod.rs, which writes it.
+// Mirrors EXEC_FORMAT_VERSION in common/src/exec_format.rs.
 constexpr uint64_t EXEC_FORMAT_VERSION = 2;
+
+// Mirrors EXEC_FORMAT_VERSION_WIDE in common/src/exec_format.rs: 32-byte BN254 coefficients, for
+// the pilfflonk wrap. Never a STARK recursion key's.
+constexpr uint64_t EXEC_FORMAT_VERSION_WIDE = 3;
 
 constexpr uint64_t HEADER_WORDS = 4;
 
@@ -64,6 +74,18 @@ inline Header header(const uint64_t *exec, uint64_t execWords) {
     h.mapCols = mapCols;
     h.valid = true;
     return h;
+}
+
+// Why an exec file of format `version`, which `header` did not read, is refused: completes an
+// error message. A BN254 exec is named as one, since regenerating the key would not change it.
+inline std::string refused_version(uint64_t version) {
+    const std::string seen = "the exec file is format version " + std::to_string(version);
+    if (version == EXEC_FORMAT_VERSION_WIDE) {
+        return seen + ", the BN254 exec plonk2pil writes for the pilfflonk wrap; the STARK prover reads only "
+                      "version " + std::to_string(EXEC_FORMAT_VERSION) + ", over Goldilocks";
+    }
+    return seen + ", but this build reads version " + std::to_string(EXEC_FORMAT_VERSION) +
+           "; regenerate the proving key with a matching setup";
 }
 
 // First word of the map.

@@ -46,6 +46,7 @@ use crate::{custom_commit_reserved_words, custom_commit_words_per_row, GlobalInf
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
+use crate::exec_format::{EXEC_FORMAT_VERSION, EXEC_FORMAT_VERSION_WIDE, EXEC_HEADER_WORDS, EXEC_MAGIC, EXEC_MAGIC_MASK};
 
 pub type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
@@ -136,13 +137,6 @@ impl<F: PrimeField64> Drop for Setup<F> {
     }
 }
 
-/// Magic and layout version of the `.exec` file, mirroring `EXEC_MAGIC` / `EXEC_FORMAT_VERSION`
-/// in stark-recurser's plonk2pil, which writes them, and `exec_layout.hpp`, which also reads them.
-const EXEC_MAGIC: u64 = 0x5058_4543_0000_0000;
-const EXEC_MAGIC_MASK: u64 = 0xFFFF_FFFF_0000_0000;
-const EXEC_FORMAT_VERSION: u64 = 2;
-const EXEC_HEADER_WORDS: usize = 4;
-
 /// Dimensions from a loaded `.exec` buffer's header.
 pub struct ExecHeader {
     pub n_adds: u64,
@@ -164,9 +158,11 @@ pub fn exec_header(exec: &[u64]) -> ExecHeader {
 
 /// Reads a whole `.exec` file into memory and validates its header.
 ///
-/// The layout is `exec_layout.hpp`'s: magic and version, `n_adds`, then the map's row and column
-/// extent, then the additions, the map as u32 pairs, and a gate-band section. This reads to the
-/// end of the file rather than to the map's length, so the band section comes along.
+/// The layout is version 2 of [`exec_format`](crate::exec_format), Goldilocks', the only one the
+/// STARK prover reads: magic and version, `n_adds`, then the map's row and column extent, then the
+/// additions, the map as u32 pairs, and a gate-band section. This reads to the end of the file
+/// rather than to the map's length, so the band section comes along. A version 3 file, the BN254
+/// exec of the pilfflonk wrap, is refused as one.
 pub fn load_exec_file(exec_filename: &str, n_cols: u64) -> ProofmanResult<Vec<u64>> {
     let mut file = File::open(exec_filename)?;
 
@@ -198,6 +194,12 @@ pub fn load_exec_file(exec_filename: &str, n_cols: u64) -> ProofmanResult<Vec<u6
         )));
     }
     let version = header[0] & !EXEC_MAGIC_MASK;
+    if version == EXEC_FORMAT_VERSION_WIDE {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} is format version {version}, the BN254 exec plonk2pil writes for \
+             the pilfflonk wrap; the STARK prover reads only version {EXEC_FORMAT_VERSION}, over Goldilocks"
+        )));
+    }
     if version != EXEC_FORMAT_VERSION {
         return Err(ProofmanError::InvalidSetup(format!(
             "exec file {exec_filename} is format version {version}, but this build reads version \
