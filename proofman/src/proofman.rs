@@ -727,6 +727,10 @@ impl<F: PrimeField64> ProofMan<F> {
         for handle in handles {
             let _ = handle.join();
         }
+        // The owner's harvest skipped launches still enqueueing; now joined, wait for their proof writes.
+        if self.pctx.gpu {
+            get_stream_proofs_c(self.pctx.get_device_buffers_ptr());
+        }
 
         // Generators and consumers are joined, so nothing is producing or consuming any more. A
         // witness the consumers never reached still pins a pooled trace, and the next fold would
