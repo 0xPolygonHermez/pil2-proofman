@@ -23,7 +23,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 (($# <= 1)) || golden_die "usage: $0 [OUT_DIR]"
 out=${1:-${GOLDEN_OUT:-$GOLDEN_DEFAULT_OUT}}
-marker=.golden-setup
 
 # One line per program: name | entry .pil | .pilout file name | fixed columns to
 # files (yes/no) | extra setup flags. The .pil paths and -I are passed from the
@@ -48,29 +47,10 @@ std_include=./pil2-components/lib/std/pil
 air_files=(starkinfo.json expressionsinfo.json verifierinfo.json bin verifier.bin)
 global_files=(pilout.globalInfo.json pilout.globalConstraints.json pilout.globalConstraints.bin)
 
-# Run a command with its output in a log; on failure show the log's tail and stop.
-run_logged() {
-    local log=$1
-    shift
-    if ! "$@" >"$log" 2>&1; then
-        tail -n 50 "$log" >&2
-        golden_die "command failed (full log: $log): $*"
-    fi
-}
-
 # --- Output directory ---------------------------------------------------------
 
-if [[ -e $out ]]; then
-    [[ -d $out ]] || golden_die "$out exists and is not a directory"
-    if [[ -f $out/$marker ]]; then
-        rm -rf -- "$out"
-    elif [[ -n $(ls -A "$out") ]]; then
-        golden_die "$out is not empty and was not created by generate.sh; refusing to wipe it"
-    fi
-fi
-mkdir -p "$out"
+golden_fresh_out "$out" .golden-setup
 out=$(cd "$out" && pwd)
-touch "$out/$marker"
 mkdir -p "$out/programs" "$out/logs"
 
 # --- Tools --------------------------------------------------------------------
@@ -121,9 +101,9 @@ for entry in "${programs[@]}"; do
     setup_args+=(${extra[@]+"${extra[@]}"})
 
     golden_log "$name: compile-pil"
-    run_logged "$out/logs/$name.compile.log" "$setup_bin" "${compile_args[@]}"
+    golden_run_logged "$out/logs/$name.compile.log" "$setup_bin" "${compile_args[@]}"
     golden_log "$name: setup ${setup_args[*]:1}"
-    run_logged "$out/logs/$name.setup.log" "$setup_bin" "${setup_args[@]}"
+    golden_run_logged "$out/logs/$name.setup.log" "$setup_bin" "${setup_args[@]}"
 
     # A setup that exits 0 but skips something must not produce a golden.
     for f in "${global_files[@]}"; do
@@ -141,5 +121,5 @@ for entry in "${programs[@]}"; do
     grep -a 'WARN' "$out/logs/$name.setup.log" | sed "s|^|golden: $name: |" >&2 || true
 done
 
-golden_manifest "$out" >"$out/manifest.sha256"
+golden_manifest "$out/programs" >"$out/manifest.sha256"
 golden_log "wrote $out/manifest.sha256 ($(wc -l <"$out/manifest.sha256" | tr -d ' ') entries)"

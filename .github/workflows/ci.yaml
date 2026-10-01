@@ -137,7 +137,9 @@ jobs:
         run: cargo audit
   golden-setup:
     # The non-recursive STARK setup of the programs in test-fibo and test-std must
-    # stay byte-identical to setup/golden/manifest.sha256 (see setup/golden/README.md).
+    # stay byte-identical to setup/golden/manifest.sha256 (see setup/golden/README.md),
+    # and plonk2pil's outputs for the test-recursive circuits to
+    # setup/golden/plonk2pil/manifest.sha256 (see setup/golden/plonk2pil/README.md).
     name: Golden setup
     runs-on: ubuntu-latest
     steps:
@@ -175,6 +177,25 @@ jobs:
         with:
           name: golden-setup
           path: target/golden-setup
+          retention-days: 7
+
+      # Independent of the check above, so it runs whether that one passed or not.
+      # circom is the committed setup/circom/circom; Node.js is not needed.
+      - name: Check plonk2pil outputs against the golden manifest
+        if: ${{ !cancelled() }}
+        run: ./setup/golden/plonk2pil/check.sh
+
+      # The text outputs only: the execs and fixed columns run to hundreds of MB.
+      - name: Upload plonk2pil outputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-plonk2pil
+          path: |
+            target/golden-plonk2pil/manifest.sha256
+            target/golden-plonk2pil/logs
+            target/golden-plonk2pil/golden/*/air.pil
+            target/golden-plonk2pil/golden/*/result.json
           retention-days: 7
   test-fibo:
     name: Test Fibonacci Square (with aggregation)

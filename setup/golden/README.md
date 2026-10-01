@@ -6,6 +6,10 @@
 `test-std` job. A refactor of the setup passes is correct only if it leaves all
 of it byte-identical, and `check.sh` is how to show that.
 
+`plonk2pil/` holds a second golden, of what plonk2pil returns for the recursive
+test circuits, with its own manifest and scripts (see its README). Both use the
+helpers of `lib.sh`.
+
 ## Usage
 
 ```bash
