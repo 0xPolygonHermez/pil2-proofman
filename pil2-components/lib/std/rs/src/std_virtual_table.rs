@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, RwLock,
@@ -12,13 +12,14 @@ use proofman_fields::PrimeField64;
 use proofman_witness::WitnessComponent;
 use proofman_common::{
     register_host_buffer, unregister_host_buffer, AirInstance, BufferPool, ProofCtx, ProofmanError, ProofmanResult,
-    SetupCtx, TraceInfo, Setup,
+    SetupCtx, TraceInfo,
 };
 use proofman_hints::{get_hint_ids_by_name, HintFieldOptions};
+use proofman_starks_lib_c::{mul_eval_proves_hint_c, mul_proves_hints_c};
 
 use crate::{
     get_global_hint_field_constant_a_as, get_global_hint_field_constant_as, get_hint_field_constant_a_as,
-    get_hint_field_constant_a_as_string, get_hint_field_constant_as, RCMultiplicity, PIOP_TYPE_PROVES,
+    get_hint_field_constant_as, RCMultiplicity, PIOP_TYPE_PROVES,
 };
 
 pub struct StdVirtualTable<F: PrimeField64> {
@@ -83,6 +84,9 @@ pub struct VtFitSummary {
     pub unclaimed_ids: Vec<u64>,
     /// Why each of `unclaimed_ids` did not fit.
     pub unclaimed_why: HashMap<u64, String>,
+    /// Of `unclaimed_ids`, the tables no lookup names by their own id (several tables sharing one
+    /// opid): the prover matches lookups to tables by opid, so the std counts these.
+    pub unaddressed_ids: Vec<u64>,
 }
 
 /// One fitted row map: an exact-match map `(key columns, table, slots)` for `table_id`. Slots is
@@ -436,63 +440,21 @@ fn lookup_arity<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> Hash
     arity
 }
 
-/// The column each tuple element really reads, per proves-side `gsum_debug_data` hint of `tid`
-/// (its `name_exprs`, aliases included).
+/// Recover an exact row map for every virtual table from its air's proves-side lookups.
 ///
-/// `COL_*` names alone are not enough: `simplify_virtual_fixed` drops constant columns and
-/// deduplicates identical ones across groups, leaving holes in a group's `j` sequence.
-fn proves_side_tuple_names<F: PrimeField64>(
-    pctx: &ProofCtx<F>,
-    setup: &Setup<F>,
-    airgroup_id: usize,
-    air_id: usize,
-    tid: u64,
-) -> Vec<Vec<String>> {
-    let mut out = Vec::new();
-    for h in get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "gsum_debug_data") {
-        let o = HintFieldOptions::default();
-        let Ok(ty) =
-            get_hint_field_constant_as::<u64, F>(pctx, setup, airgroup_id, air_id, h as usize, "type_piop", o.clone())
-        else {
-            continue;
-        };
-        if ty != 1 {
-            continue;
-        } // proves side: the table's own rows
-        let Ok(ids) =
-            get_hint_field_constant_a_as::<u64, F>(pctx, setup, airgroup_id, air_id, h as usize, "opids", o.clone())
-        else {
-            continue;
-        };
-        if !ids.contains(&tid) {
-            continue;
-        }
-        let Ok(names) =
-            get_hint_field_constant_a_as_string::<F>(pctx, setup, airgroup_id, air_id, h as usize, "name_exprs", o)
-        else {
-            continue;
-        };
-        if !names.is_empty() {
-            out.push(names);
-        }
-    }
-    out
-}
-
-/// Recover an exact row map for every virtual table from its `COL_*`/`UID_*` fixed columns.
-///
-/// Tables that do not fit are skipped; the caller requires them to be std-owned. Range
-/// tables (no `COL_*` group) are claimed via `collect_prover_owned_ranges` instead.
+/// Tables that do not fit are skipped; the caller requires them to be std-owned. `range_ids`
+/// (`collect_prover_owned_ranges`) are decoded by bias instead, so they are not fitted.
 pub fn fit_virtual_table_maps<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     layouts: &[VtLayout],
+    range_ids: &HashSet<u64>,
 ) -> ProofmanResult<(Vec<VtFittedMap>, VtFitSummary)> {
     let arity = lookup_arity(pctx, sctx);
     let t0 = std::time::Instant::now();
     // Airs, and the tables inside each, fit independently.
     let per_air: Vec<Vec<(u64, Result<VtFittedMap, String>)>> =
-        layouts.par_iter().map(|l| fit_air_maps(pctx, sctx, l, &arity)).collect::<ProofmanResult<_>>()?;
+        layouts.par_iter().map(|l| fit_air_maps(sctx, l, &arity, range_ids)).collect::<ProofmanResult<_>>()?;
     let mut out = Vec::new();
     // Unfitted: range tables or std-owned; the caller tells them apart.
     let (mut unclaimed_ids, mut unclaimed_why) = (Vec::new(), HashMap::new());
@@ -509,11 +471,19 @@ pub fn fit_virtual_table_maps<F: PrimeField64>(
     // A table id another air fitted is claimed.
     let fitted_ids: std::collections::HashSet<u64> = out.iter().map(|m| m.table_id).collect();
     unclaimed_ids.retain(|t| !fitted_ids.contains(t));
+    let unaddressed_ids = unclaimed_ids.iter().copied().filter(|t| !arity.contains_key(t)).collect();
     let exact_bytes = out.iter().map(|m| m.map.1.len() as u64 * 8).sum();
     let considered = out.len() + unclaimed_ids.len();
     Ok((
         out,
-        VtFitSummary { considered, exact_bytes, elapsed_ms: t0.elapsed().as_millis(), unclaimed_ids, unclaimed_why },
+        VtFitSummary {
+            considered,
+            exact_bytes,
+            elapsed_ms: t0.elapsed().as_millis(),
+            unclaimed_ids,
+            unclaimed_why,
+            unaddressed_ids,
+        },
     ))
 }
 
@@ -533,281 +503,129 @@ pub fn global_sum_assumed_tables<F: PrimeField64>(sctx: &SetupCtx<F>) -> Proofma
     Ok(out)
 }
 
-/// COL_* group id -> its (tuple position, const column) pairs and its UID_* column, if any.
-type ColGroups = std::collections::BTreeMap<u64, (Vec<(u64, usize)>, Option<usize>)>;
+/// The air's `.const`, row-major.
+fn read_const_pols(path: &str) -> std::io::Result<Vec<u64>> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let words = f.metadata()?.len() as usize / 8;
+    let mut v = vec![0u64; words];
+    // SAFETY: the byte view covers exactly `v`, and every bit pattern is a u64.
+    f.read_exact(unsafe { std::slice::from_raw_parts_mut(v.as_mut_ptr() as *mut u8, words * 8) })?;
+    Ok(v)
+}
 
-/// Every table of one virtual-table air: `(table id, map)` for each table with a span, or why it does
-/// not fit.
+/// Every table of one virtual-table air: `(table id, map)`, or why it does not fit. `skip`: range
+/// tables, decoded by bias instead.
+///
+/// Accumulator offset `c * num_rows + r` is row `r` of the proves-side lookup crediting multiplicity
+/// column `c`; a table owns the offsets `[base, end)` that carry its bus id. Tuples are evaluated from
+/// the lookup's expressions, not read by `COL_*` name: `simplify_virtual_fixed` may have turned a
+/// column into a constant, a row-index line or a rotated alias.
 fn fit_air_maps<F: PrimeField64>(
-    pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     l: &VtLayout,
     arity: &HashMap<u64, Option<usize>>,
+    skip: &HashSet<u64>,
 ) -> ProofmanResult<Vec<(u64, Result<VtFittedMap, String>)>> {
-    let (airgroup_id, air_id) = (l.airgroup_id as usize, l.air_id as usize);
-    let setup = sctx.get_setup(airgroup_id, air_id)?;
-    let acc_heights = &l.acc_bases;
-    let num_muls = l.num_cols as usize;
-    let num_rows = l.num_rows as usize;
-    let n_const = setup.stark_info.n_constants as usize;
-    let Some(pol_map) = setup.stark_info.const_pols_map.as_ref() else { return Ok(Vec::new()) };
+    let setup = sctx.get_setup(l.airgroup_id as usize, l.air_id as usize)?;
+    let p_setup = &setup.p_setup; // Sync, unlike the raw pointer it converts to
+    let num_rows = l.num_rows;
+    let total = l.num_cols * num_rows;
 
-    // COL_<g>_<base>_<k> and UID_<g>: the group is the tuple, the uid says which table a row
-    // belongs to.
-    let mut groups: ColGroups = Default::default();
-    for (idx, pm) in pol_map.iter().enumerate() {
-        let name = pm.name.as_str();
-        if let Some(rest) = name.strip_prefix("COL_") {
-            let parts: Vec<&str> = rest.split('_').collect();
-            if parts.len() == 3 {
-                if let (Ok(g), Ok(k)) = (parts[0].parse::<u64>(), parts[2].parse::<u64>()) {
-                    groups.entry(g).or_default().0.push((k, idx));
-                }
-            }
-        } else if let Some(rest) = name.strip_prefix("UID_") {
-            if let Ok(g) = rest.parse::<u64>() {
-                groups.entry(g).or_default().1 = Some(idx);
-            }
+    // (table, base, end, key width) for the tables the prover may own; the rest say why not.
+    let mut out = Vec::new();
+    let mut todo = Vec::new();
+    for (&tid, &base) in l.table_ids.iter().zip(&l.acc_bases) {
+        let end = l.acc_bases.iter().copied().filter(|h| *h > base).min().unwrap_or(total);
+        if end == base {
+            continue;
         }
-    }
-    for v in groups.values_mut() {
-        v.0.sort_unstable();
-    }
-    let name_to_idx: HashMap<&str, usize> = pol_map.iter().enumerate().map(|(i, pm)| (pm.name.as_str(), i)).collect();
-    if groups.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // The .const is raw row-major u64 with an n_constants stride, read once for every table.
-    let path = setup.const_pols_path.replace(".const_gpu", ".const");
-    let const_buf = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::debug!("virtual table fit: cannot read {path} ({e}); skipping");
-            return Ok(Vec::new());
-        }
-    };
-    let row_bytes = n_const * 8;
-    let complete_rows = (const_buf.len() / row_bytes).min(num_rows);
-    // Stored words may be unreduced; the scatter's lookup values are canonical.
-    let canon = |v: u64| if v >= F::ORDER_U64 { v - F::ORDER_U64 } else { v };
-    // Each UID-bearing group's rows, bucketed by table id in one pass. A group with no UID column
-    // belongs wholly to one table.
-    let uid_cols: Vec<(u64, usize)> = groups.iter().filter_map(|(g, v)| v.1.map(|u| (*g, u))).collect();
-    let uid_rows: HashMap<u64, HashMap<u64, Vec<usize>>> = uid_cols
-        .par_iter()
-        .map(|&(g, c)| {
-            let mut by_tid: HashMap<u64, Vec<usize>> = HashMap::new();
-            for r in 0..complete_rows {
-                let b = &const_buf[r * row_bytes + c * 8..r * row_bytes + c * 8 + 8];
-                by_tid.entry(canon(u64::from_le_bytes(b.try_into().unwrap()))).or_default().push(r);
-            }
-            (g, by_tid)
-        })
-        .collect();
-
-    let fit_table = |t: usize, tid: u64| -> Option<(u64, Result<VtFittedMap, String>)> {
-        let base = acc_heights[t];
-        let end = acc_heights.iter().copied().filter(|h| *h > base).min().unwrap_or((num_muls * num_rows) as u64);
-        let height = end - base;
-        if height == 0 {
-            return None;
-        }
-        let t_fit = std::time::Instant::now();
-
-        // A table's entries occupy accumulator offsets [base, base+height), each an
-        // (accumulator column, air row) pair.
-        let mut rows_of_table: Vec<(usize, u64, u64)> = Vec::new(); // (air_row, row_in_table, group)
-        let mut widths: Vec<usize> = Vec::new();
-
-        // A table starts at column `base >> shift` and its groups, in ascending group order,
-        // occupy consecutive columns. Derived, not searched (search is ambiguous across columns).
-        let shift = num_rows.trailing_zeros() as u64;
-        let c0 = base >> shift;
-        let c_end = (base + height - 1) >> shift;
-        let mut mine_by_group: Vec<(u64, Vec<usize>)> = Vec::new();
-        for (g, gi) in groups.iter() {
-            match gi.1 {
-                Some(_) => {
-                    let rows_here: Vec<usize> = uid_rows[g].get(&tid).cloned().unwrap_or_default();
-                    if !rows_here.is_empty() {
-                        mine_by_group.push((*g, rows_here));
-                    }
-                }
-                None => mine_by_group.push((*g, Vec::new())), // claimed below only if its column is ours
-            }
-        }
-        mine_by_group.sort_by_key(|(g, _)| *g);
-
-        // What the PIL says each of this table's groups holds.
-        let hint_names = proves_side_tuple_names(pctx, setup, airgroup_id, air_id, tid);
-
-        // Walk the table's columns and the groups together.
-        let mut col = c0;
-        let mut ok = true;
-        for (g, rows_here) in mine_by_group.iter_mut() {
-            if col > c_end {
-                break;
-            }
-            let has_uid = groups[g].1.is_some();
-            debug_assert!(!has_uid || !rows_here.is_empty());
-            if !has_uid {
-                // Only a table that already owns a UID-bearing group may absorb UID-less ones,
-                // or a range table would swallow one and override its working decoder.
-                if widths.is_empty() {
-                    continue;
-                }
-
-                // A UID-less group's column is ours only if it lies inside the table's span.
-                let off0 = col * num_rows as u64;
-                if off0 < base || off0 >= end {
-                    continue;
-                }
-                *rows_here = (0..num_rows).collect();
-            }
-            // A UID-less group of identical rows is filler, not entries. The column counter must
-            // still advance past it, or every later group is off by one.
-            if !has_uid && !rows_here.is_empty() {
-                let cset: Vec<usize> = groups[g].0.iter().map(|(_, c)| *c).collect();
-                let mut first: Option<Vec<u64>> = None;
-                let mut constant = true;
-                for probe in [0usize, 1, num_rows / 2, num_rows - 1] {
-                    if probe >= complete_rows {
-                        break;
-                    }
-                    let buf = &const_buf[probe * row_bytes..(probe + 1) * row_bytes];
-                    let t: Vec<u64> =
-                        cset.iter().map(|c| u64::from_le_bytes(buf[c * 8..c * 8 + 8].try_into().unwrap())).collect();
-                    match &first {
-                        None => first = Some(t),
-                        Some(f0) => {
-                            if *f0 != t {
-                                constant = false;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if constant {
-                    col += 1;
-                    continue;
-                }
-            }
-            for a in rows_here.iter() {
-                let off = col * num_rows as u64 + *a as u64;
-                if off < base || off >= end {
-                    ok = false;
-                    break;
-                }
-                rows_of_table.push((*a, off - base, *g));
-            }
-            // Width is the last column index + 1, not the surviving count (see
-            // `proves_side_tuple_names`); holes are resolved from the hint below.
-            widths.push(groups[g].0.last().map(|(j, _)| *j as usize + 1).unwrap_or(0));
-            col += 1;
-            if !ok {
-                break;
-            }
-        }
-
-        if !ok || rows_of_table.is_empty() || widths.is_empty() || rows_of_table.len() as u64 > height {
-            let why = format!(
-                "its COL_* rows do not lay out its span (in span={ok}, rows={}, height={height}, groups={})",
-                rows_of_table.len(),
-                widths.len()
-            );
-            return Some((tid, Err(why)));
-        }
-
-        // The lookup states how many elements it sends; that is the key width.
         let width = match arity.get(&tid) {
-            Some(Some(w)) => *w,
-            Some(None) => return Some((tid, Err("its lookups send tuples of different widths".into()))),
-            None => return Some((tid, Err("no lookup into it was found".into()))),
+            _ if skip.contains(&tid) => Err("a range table".to_string()),
+            Some(Some(0)) => Err("its lookup sends no elements".into()),
+            Some(Some(w)) => Ok(*w),
+            Some(None) => Err("its lookups send tuples of different widths".into()),
+            None => Err("no lookup into it was found".into()),
         };
-        if width == 0 {
-            return Some((tid, Err("its lookup sends no elements".into())));
+        match width {
+            Ok(w) => todo.push((tid, base, end, w)),
+            Err(why) => out.push((tid, Err(why))),
         }
-        // Bind each group to the proves-side hint whose `name_exprs` matches every column the
-        // group kept, at the same position. Derived, never assumed from ordering.
-        let mut tuple_cols: HashMap<u64, Vec<usize>> = HashMap::new();
-        let mut why = String::new();
-        for (g, rows_here) in mine_by_group.iter() {
-            if rows_here.is_empty() {
-                continue;
-            }
-            let matches: Vec<&Vec<String>> = hint_names
-                .iter()
-                .filter(|names| {
-                    groups[g]
-                        .0
-                        .iter()
-                        .all(|(j, idx)| names.get(*j as usize).map(|n| n.as_str()) == Some(pol_map[*idx].name.as_str()))
-                })
-                .collect();
-            // Exactly one hint must match; otherwise leave the table to the std rather than guess.
-            let [only] = matches[..] else {
-                why = format!("group {g} matches {} proves-side hints, not one", matches.len());
-                ok = false;
-                break;
-            };
-            // Every element's real column, aliases included.
-            let cols: Option<Vec<usize>> = only.iter().map(|n| name_to_idx.get(n.as_str()).copied()).collect();
-            let Some(cols) = cols else {
-                why = format!("group {g} names a column the setup does not hold");
-                ok = false;
-                break;
-            };
-            tuple_cols.insert(*g, cols);
-        }
-        if !ok {
-            return Some((tid, Err(why)));
-        }
-
-        // A padded group may carry more elements than the lookup sends (the key is the leading
-        // `width`), but never fewer.
-        if let Some(short) = tuple_cols.values().map(|c| c.len()).filter(|n| *n < width).min() {
-            return Some((tid, Err(format!("its lookup sends {width} elements but a group carries only {short}"))));
-        }
-
-        // Tuples for this table, in accumulator order, flat.
-        rows_of_table.par_sort_unstable_by_key(|(_, r, _)| *r);
-        if rows_of_table.iter().any(|(air_row, _, _)| *air_row >= complete_rows) {
-            return Some((tid, Err("its proves-side tuple is past the end of the .const file".into())));
-        }
-        let rows: Vec<u64> = rows_of_table.par_iter().map(|(_, r, _)| *r).collect();
-        let mut keys = vec![0u64; rows_of_table.len() * width];
-        keys.par_chunks_mut(width).zip(rows_of_table.par_iter()).for_each(|(t, &(air_row, _, g))| {
-            let buf = &const_buf[air_row * row_bytes..(air_row + 1) * row_bytes];
-            for (e, c) in t.iter_mut().zip(&tuple_cols[&g][..width]) {
-                *e = canon(u64::from_le_bytes(buf[c * 8..c * 8 + 8].try_into().unwrap()));
-            }
-        });
-        drop(rows_of_table);
-
-        match fit_exact_map(&keys, &rows, width) {
-            Some((nkey, kv, slots)) => {
-                tracing::debug!(
-                    "virtual table {tid}: exact map over {} entries, {nkey} key columns, {slots} slots \
-                     ({} MB, {} ms)",
-                    rows.len(),
-                    kv.len() * 8 / 1_000_000,
-                    t_fit.elapsed().as_millis()
-                );
-                Some((tid, Ok(VtFittedMap { table_id: tid, map: (nkey, kv, slots) })))
-            }
-            None => {
-                let maxima: Vec<u64> =
-                    (0..width).map(|j| keys.iter().skip(j).step_by(width).copied().max().unwrap_or(0)).collect();
-                let why = format!(
-                    "no exact map fits its {} entries of {width} columns (column maxima {maxima:?})",
-                    rows.len()
-                );
-                Some((tid, Err(why)))
-            }
-        }
+    }
+    let fail_all = |mut out: Vec<_>, why: String| {
+        out.extend(todo.iter().map(|t| (t.0, Err(why.clone()))));
+        Ok(out)
     };
-    Ok(l.table_ids.par_iter().enumerate().filter_map(|(t, &tid)| fit_table(t, tid)).collect())
+    if todo.is_empty() {
+        return Ok(out);
+    }
+
+    let mut by_col: HashMap<u64, (usize, usize)> = HashMap::new();
+    for (k, (col, len)) in mul_proves_hints_c(p_setup.into()).into_iter().enumerate() {
+        if let Some(c) = col {
+            if by_col.insert(c as u64, (k, len)).is_some() {
+                return fail_all(out, format!("two proves-side lookups credit multiplicity column {c}"));
+            }
+        }
+    }
+    let path = setup.const_pols_path.replace(".const_gpu", ".const");
+    let const_pols = match read_const_pols(&path) {
+        Ok(v) => v,
+        Err(e) => return fail_all(out, format!("cannot read {path} ({e})")),
+    };
+    let fit_table = |&(tid, base, end, width): &(u64, u64, u64, usize)| -> Result<VtFittedMap, String> {
+        let t_fit = std::time::Instant::now();
+        let height = (end - base) as usize;
+        let (mut keys, mut bus) = (vec![0u64; height * width], vec![0u64; height]);
+        // Disjoint pieces, none crossing a column, evaluated in parallel straight into place.
+        const CHUNK: u64 = 1 << 14;
+        let mut pieces = Vec::new();
+        let (mut k_rest, mut b_rest) = (&mut keys[..], &mut bus[..]);
+        let mut o = base;
+        while o < end {
+            let o1 = (o + CHUNK).min(end).min((o / num_rows + 1) * num_rows);
+            let n = (o1 - o) as usize;
+            let (k, kr) = std::mem::take(&mut k_rest).split_at_mut(n * width);
+            let (b, br) = std::mem::take(&mut b_rest).split_at_mut(n);
+            pieces.push((o, k, b));
+            (k_rest, b_rest, o) = (kr, br, o1);
+        }
+        pieces.into_par_iter().try_for_each(|(o, k, b)| {
+            let c = o / num_rows;
+            let &(hint, len) = by_col.get(&c).ok_or_else(|| format!("no proves-side lookup credits column {c}"))?;
+            if len < width {
+                return Err(format!("its lookup sends {width} elements but column {c} carries {len}"));
+            }
+            if !mul_eval_proves_hint_c(p_setup.into(), hint, &const_pols, (o % num_rows) as usize, b, k, width) {
+                return Err(format!("the lookup crediting column {c} does not evaluate from fixed columns"));
+            }
+            Ok(())
+        })?;
+
+        // Its rows carry its first row's bus id. Tables pack densely: only the air's last one may
+        // end in padding, which carries another.
+        let table_bus = bus[0];
+        let n_mine = bus.iter().position(|b| *b != table_bus).unwrap_or(height);
+        if (end < total && n_mine != height) || bus[n_mine..].contains(&table_bus) {
+            return Err(format!("its rows with bus id {table_bus} are not one run from its base"));
+        }
+        keys.truncate(n_mine * width);
+        let rows: Vec<u64> = (0..n_mine as u64).collect();
+        let (nkey, kv, slots) = fit_exact_map(&keys, &rows, width).ok_or_else(|| {
+            let maxima: Vec<u64> =
+                (0..width).map(|j| keys.iter().skip(j).step_by(width).copied().max().unwrap_or(0)).collect();
+            format!("no exact map fits its {} entries of {width} columns (column maxima {maxima:?})", rows.len())
+        })?;
+        tracing::debug!(
+            "virtual table {tid}: exact map over {} entries, {nkey} key columns, {slots} slots ({} MB, {} ms)",
+            rows.len(),
+            kv.len() * 8 / 1_000_000,
+            t_fit.elapsed().as_millis()
+        );
+        Ok(VtFittedMap { table_id: tid, map: (nkey, kv, slots) })
+    };
+    out.par_extend(todo.par_iter().map(|t| (t.0, fit_table(t))));
+    Ok(out)
 }
 
 pub fn collect_virtual_table_layouts<F: PrimeField64>(

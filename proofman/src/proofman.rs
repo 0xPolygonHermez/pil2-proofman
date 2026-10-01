@@ -578,6 +578,18 @@ struct SlotCommitCtx {
     load_bytes: Vec<AtomicU64>,
 }
 
+/// Feed `words`, length-prefixed, to `h`.
+fn hash_words(h: &mut blake3::Hasher, words: &[u64]) {
+    h.update(&(words.len() as u64).to_le_bytes());
+    let mut buf = [0u8; 4096];
+    for c in words.chunks(buf.len() / 8) {
+        for (b, w) in buf.as_chunks_mut::<8>().0.iter_mut().zip(c) {
+            *b = w.to_le_bytes();
+        }
+        h.update(&buf[..c.len() * 8]);
+    }
+}
+
 fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool {
     // witness_calc hints do not disqualify an air: the slot evaluates them (witness_hints_slot.hpp)
     // and refuses, with a reason, only hints it cannot express.
@@ -2873,6 +2885,7 @@ where
     /// in, and record which it accepted. Must run in the host binary: the witness library links its
     /// own copy of libstarks, so a registration made there is invisible to the scatter and fold.
     fn register_prover_multiplicities(&self) -> ProofmanResult<()> {
+        use rayon::prelude::*;
         // Reached from `register_witness` and every `*_from_lib` entry; held throughout so a
         // concurrent caller waits instead of registering twice.
         let mut registered = self.pctx.prover_multiplicities_registered.lock().unwrap();
@@ -2893,17 +2906,22 @@ where
 
         // An exact map over each table's entries, verified against every entry. A table that does not
         // fit must be in `std_owned_tables`.
+        let range_owned: std::collections::HashSet<u64> = range_ids.iter().copied().collect();
         let layouts = collect_virtual_table_layouts(&self.pctx, &self.sctx)?;
-        let (fitted, vt_summary) = fit_virtual_table_maps(&self.pctx, &self.sctx, &layouts)?;
+        let (fitted, vt_summary) = fit_virtual_table_maps(&self.pctx, &self.sctx, &layouts, &range_owned)?;
 
         // Unkept and unclaimed by both the range path and the fitter (`unclaimed_ids` excludes the
         // fitted ones): fail with the ids rather than run a slow path.
-        let range_owned: std::collections::HashSet<u64> = range_ids.iter().copied().collect();
+        let unaddressed: Vec<u64> =
+            vt_summary.unaddressed_ids.iter().copied().filter(|t| !std_owned.contains(t)).collect();
+        if !unaddressed.is_empty() {
+            tracing::info!("Virtual tables {unaddressed:?} are not looked up by their own id; the std counts them");
+        }
         let orphans: Vec<u64> = vt_summary
             .unclaimed_ids
             .iter()
             .copied()
-            .filter(|t| !std_owned.contains(t) && !range_owned.contains(t))
+            .filter(|t| !std_owned.contains(t) && !range_owned.contains(t) && !vt_summary.unaddressed_ids.contains(t))
             .collect();
         if !orphans.is_empty() {
             let why: Vec<String> = orphans
@@ -2932,12 +2950,54 @@ where
             )));
         }
 
-        if !range_ids.is_empty() {
-            mul_register_range_tables_c(&range_ids, &range_biases);
+        // The C++ registries, plans and device maps are process-wide and never reset: a later ProofMan
+        // in this process may only register the very same tables.
+        static REGISTERED: Mutex<Option<blake3::Hash>> = Mutex::new(None);
+        let maps: Vec<_> = fitted.iter().filter(|m| !std_owned.contains(&m.table_id)).collect();
+        let map_hashes: Vec<blake3::Hash> = maps
+            .par_iter()
+            .map(|m| {
+                let mut h = blake3::Hasher::new();
+                hash_words(&mut h, &[m.table_id, m.map.0 as u64, m.map.2]);
+                hash_words(&mut h, &m.map.1);
+                h.finalize()
+            })
+            .collect();
+        let mut h = blake3::Hasher::new();
+        hash_words(&mut h, &range_ids);
+        hash_words(&mut h, &range_biases.iter().map(|b| *b as u64).collect::<Vec<_>>());
+        for mh in &map_hashes {
+            h.update(mh.as_bytes());
         }
-        for m in fitted.iter().filter(|m| !std_owned.contains(&m.table_id)) {
-            let (nkey, kv, slots) = &m.map;
-            mul_register_table_map_c(m.table_id, kv, *nkey, *slots);
+        for l in &layouts {
+            hash_words(&mut h, &[l.airgroup_id, l.air_id, l.num_rows, l.num_cols]);
+            hash_words(&mut h, &l.table_ids);
+            hash_words(&mut h, &l.acc_bases);
+        }
+        let fingerprint = h.finalize();
+        let mut registered_here = REGISTERED.lock().unwrap();
+        match *registered_here {
+            Some(prev) if prev != fingerprint => {
+                return Err(ProofmanError::InvalidSetup(
+                    "this process already registered prover multiplicities for a different setup; the \
+                     registry is process-wide, so use a new process"
+                        .into(),
+                ));
+            }
+            Some(_) => {}
+            None => {
+                if !range_ids.is_empty() {
+                    mul_register_range_tables_c(&range_ids, &range_biases);
+                }
+                for m in &maps {
+                    let (nkey, kv, slots) = &m.map;
+                    mul_register_table_map_c(m.table_id, kv, *nkey, *slots);
+                }
+                for l in &layouts {
+                    register_mul_vt_c(l.airgroup_id, l.air_id, l.num_rows, l.num_cols, &l.table_ids, &l.acc_bases);
+                }
+                *registered_here = Some(fingerprint);
+            }
         }
 
         // Unfitted tables also in `range_ids` are prover-owned via the range path; only the rest are
@@ -2954,10 +3014,6 @@ where
                 fitted.len(),
                 vt_summary.exact_bytes / 1_000_000,
             );
-        }
-
-        for l in &layouts {
-            register_mul_vt_c(l.airgroup_id, l.air_id, l.num_rows, l.num_cols, &l.table_ids, &l.acc_bases);
         }
 
         let migrated = mul_migrated_tables_c();

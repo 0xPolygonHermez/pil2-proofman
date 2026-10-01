@@ -1711,8 +1711,8 @@ pub fn commit_witness_streaming_c(
     words_per_row: u64,
     col_widths: *mut ::std::os::raw::c_void,
     root: *mut ::std::os::raw::c_void,
-    // StepsParams: the slot stages publics and value pools from it. Null refuses the slot to airs
-    // whose lookups read them.
+    // StepsParams: the slot stages publics and value pools from it. Null fails the commit of an air
+    // with values whose lookups or hints are evaluated on the slot.
     params: *mut ::std::os::raw::c_void,
 ) -> i64 {
     unsafe {
@@ -2013,6 +2013,43 @@ pub fn mul_air_has_jobs_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -
 /// Whether such a lookup reads a stage-2 or im-pol value.
 pub fn mul_air_reads_aux_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
     unsafe { mul_air_reads_aux(p_setup, airgroup_id, air_id) != 0 }
+}
+
+/// Per proves-side lookup of a table air, in hint order: the stage-1 column its multiplicity is
+/// (`None` when it is not a plain one) and its tuple length.
+pub fn mul_proves_hints_c(p_setup: *mut c_void) -> Vec<(Option<usize>, usize)> {
+    let n = unsafe { mul_proves_hints(p_setup, std::ptr::null_mut(), std::ptr::null_mut(), 0) } as usize;
+    let (mut cols, mut lens) = (vec![0i64; n], vec![0u64; n]);
+    unsafe { mul_proves_hints(p_setup, cols.as_mut_ptr(), lens.as_mut_ptr(), n as u64) };
+    cols.into_iter().zip(lens).map(|(c, l)| (usize::try_from(c).ok(), l as usize)).collect()
+}
+
+/// Rows `r0..r0 + bus.len()` of proves-side lookup `k`, evaluated from the air's row-major fixed
+/// columns: bus ids into `bus`, the leading `len` tuple elements row-major into `tuple`. False when
+/// a field does not compile or reads anything but fixed columns.
+pub fn mul_eval_proves_hint_c(
+    p_setup: *mut c_void,
+    k: usize,
+    const_pols: &[u64],
+    r0: usize,
+    bus: &mut [u64],
+    tuple: &mut [u64],
+    len: usize,
+) -> bool {
+    assert_eq!(tuple.len(), bus.len() * len, "mul_eval_proves_hint_c: one tuple per bus id");
+    unsafe {
+        mul_eval_proves_hint(
+            p_setup,
+            k as u64,
+            const_pols.as_ptr(),
+            const_pols.len() as u64,
+            r0 as u64,
+            (r0 + bus.len()) as u64,
+            bus.as_mut_ptr(),
+            tuple.as_mut_ptr(),
+            len as u64,
+        ) != 0
+    }
 }
 
 pub fn mul_reset_c() {

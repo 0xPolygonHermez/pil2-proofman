@@ -75,7 +75,7 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, MulPackedLayout layout
             if (f.name != "reference" || f.values.empty()) continue;
             if (f.values[0].operand == opType::airvalue) {
                 intoAirValue[i] = true;
-                computedAirValues.insert(mulAirValuePos(setupCtx.starkInfo, f.values[0].id));   // as terms address it
+                computedAirValues.insert(mulValuePos(setupCtx.starkInfo.airValuesMap, f.values[0].id));   // as terms address it
                 continue;
             }
             if (f.values[0].operand != opType::cm) { plan.why = "hint writes something other than a column"; return plan; }

@@ -3476,9 +3476,11 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // Hints and the scatter must not run against a null value window.
     if ((nHintOps != 0 || needsCount) && aii->setupCtx != nullptr && hVals == nullptr) {
         const StarkInfo &si = aii->setupCtx->starkInfo;
-        if (si.nPublics + si.proofValuesSize + si.airgroupValuesSize + si.airValuesSize > PINNED_AUX_VALUES_MAX) {
-            zklog.error("commit_witness_streaming: air " + std::to_string(airgroupId) + "/" +
-                        std::to_string(airId) + " has more values than PINNED_AUX_VALUES_MAX");
+        const uint64_t n = si.nPublics + si.proofValuesSize + si.airgroupValuesSize + si.airValuesSize;
+        if (n != 0) {
+            zklog.error("commit_witness_streaming: air " + std::to_string(airgroupId) + "/" + std::to_string(airId)
+                        + (n > PINNED_AUX_VALUES_MAX ? " has more values than PINNED_AUX_VALUES_MAX"
+                                                     : " has values but no StepsParams"));
             streamCommitReleaseRegion(d_buffers, gl);
             return -14;
         }

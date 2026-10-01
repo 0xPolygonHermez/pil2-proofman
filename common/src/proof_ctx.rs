@@ -364,7 +364,8 @@ pub struct ProofCtx<F: PrimeField64> {
     /// Held here because the witness library and the host binary each link their own libstarks.
     pub prover_owned_tables: RwLock<Vec<u64>>,
     /// Set once the prover multiplicities are registered; `prover_owned_tables` may legitimately stay
-    /// empty, so it cannot double as the guard. Registration is once per process (the C++ side never resets).
+    /// empty, so it cannot double as the guard. The C++ registry behind it is process-wide (see
+    /// `register_prover_multiplicities`).
     pub prover_multiplicities_registered: Mutex<bool>,
 
     /// Virtual-table airs the device produces end to end: the host must neither build their trace nor

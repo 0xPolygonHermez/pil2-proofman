@@ -12,11 +12,11 @@
 inline const char*& mulProgFailReason() { static const char* r = nullptr; return r; }
 
 // A term's address: prover buffers are flat column-major, so one element offset plus the row.
-// Where air value `id` sits in the air-values buffer: laid out by stage, stage 1 taking one slot and
-// later stages three (as in addHintField).
-inline uint64_t mulAirValuePos(const StarkInfo& si, uint64_t id) {
+// Where value `id` sits in its air-value or airgroup-value pool: stage 1 takes one slot and later
+// stages three (as in addHintField).
+inline uint64_t mulValuePos(const std::vector<PolMap>& values, uint64_t id) {
     uint64_t pos = 0;
-    for (uint64_t i = 0; i < id; ++i) pos += si.airValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+    for (uint64_t i = 0; i < id; ++i) pos += values[i].stage == 1 ? 1 : FIELD_EXTENSION;
     return pos;
 }
 
@@ -199,13 +199,15 @@ inline bool mulOperandOfField(SetupCtx& setupCtx, const HintFieldValue& v, uint6
             t = MulLinTerm{ (uint16_t)(bufferCommitSize + 2), (uint16_t)v.id, 0 };
             modelled = true;
             break;
-        case opType::airgroupvalue:
-            t = MulLinTerm{ (uint16_t)(bufferCommitSize + 6), (uint16_t)v.id, 0 };
+        case opType::airgroupvalue: {
+            if (si.airgroupValuesMap[v.id].stage != 1) break;
+            t = MulLinTerm{ (uint16_t)(bufferCommitSize + 6), (uint16_t)mulValuePos(si.airgroupValuesMap, v.id), 0 };
             modelled = true;
             break;
+        }
         case opType::airvalue: {
             if (si.airValuesMap[v.id].stage != 1) break;
-            t = MulLinTerm{ (uint16_t)(bufferCommitSize + 4), (uint16_t)mulAirValuePos(si, v.id), 0 };
+            t = MulLinTerm{ (uint16_t)(bufferCommitSize + 4), (uint16_t)mulValuePos(si.airValuesMap, v.id), 0 };
             modelled = true;
             break;
         }
