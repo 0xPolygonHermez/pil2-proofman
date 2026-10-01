@@ -31,7 +31,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::atomic::Ordering;
-use std::sync::{LazyLock, Mutex, RwLock};
+use std::sync::{LazyLock, Mutex, MutexGuard, RwLock};
 
 /// Releases an admission slot on drop. A witness thread that panics would otherwise leak one, and a
 /// leaked slot permanently blocks its air once the cap is reached — the admission loop then spins.
@@ -726,7 +726,7 @@ pub struct ProofMan<F: PrimeField64> {
     witness_info: RwLock<WitnessInfo>,
     options: ProofmanOptions,
 
-    /// Serializes proof-generation entry points. Use `acquire_computing()`.
+    /// Serializes proof-generation entry points, across instances too. Use `acquire_computing()`.
     computing: Mutex<()>,
 }
 
@@ -1086,15 +1086,20 @@ where
         self.memory_handler_recursive_witness.cancel();
     }
 
-    /// Acquire `computing`. Warns if the wait exceeded 50ms.
-    fn acquire_computing(&self, caller: &'static str) -> std::sync::MutexGuard<'_, ()> {
+    /// Acquire `computing`, and the process-wide `PROVING` before it. Warns if the wait exceeded 50ms.
+    fn acquire_computing(&self, caller: &'static str) -> (MutexGuard<'_, ()>, MutexGuard<'static, ()>) {
+        // The C++ multiplicity accumulators and commit counter are process-global: two live ProofMans
+        // must not interleave proofs.
+        static PROVING: Mutex<()> = Mutex::new(());
         let t0 = std::time::Instant::now();
+        let global = PROVING.lock().unwrap_or_else(|e| e.into_inner());
         let g = self.computing.lock().unwrap_or_else(|e| e.into_inner());
         let waited = t0.elapsed();
         if waited.as_millis() > 50 {
             tracing::warn!("[ProofMan::{caller}] blocked {}ms acquiring `computing`", waited.as_millis());
         }
-        g
+        // Released in field order: this instance's guard first.
+        (g, global)
     }
 
     /// Block until any in-flight proof-generation call has returned. Call
