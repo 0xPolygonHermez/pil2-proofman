@@ -64,7 +64,9 @@ pub fn collect_prover_owned_ranges<F: PrimeField64>(
                 continue;
             }
             let bias = match hint_data.rc_type {
-                StdRangeType::SpecifiedRanges => -hint_data.min,
+                StdRangeType::SpecifiedRanges => hint_data.min.checked_neg().ok_or_else(|| {
+                    ProofmanError::StdError(format!("Range min {} has no representable bias", hint_data.min))
+                })?,
                 _ => 0,
             };
             owned.push((hint_data.opid, bias));
@@ -111,8 +113,9 @@ fn parse_range_hint<F: PrimeField64>(
     // A negative bound reaches the trace as a field element near p.
     let signed = |val: u64, neg: bool| if neg { val as i128 - F::ORDER_U64 as i128 } else { val as i128 };
     let (min, max) = (signed(min_val, min_neg), signed(max_val, max_neg));
-    if min > i64::MAX as i128 || max > i64::MAX as i128 {
-        return Err(ProofmanError::StdError("Min/Max value is too large".to_string()));
+    let i64_range = i64::MIN as i128..=i64::MAX as i128;
+    if !i64_range.contains(&min) || !i64_range.contains(&max) {
+        return Err(ProofmanError::StdError("Min/Max value does not fit an i64".to_string()));
     }
 
     let rc_type = match rc_type_str.as_str() {

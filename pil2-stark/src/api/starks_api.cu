@@ -1444,14 +1444,16 @@ int64_t stage_witness_gpu(void *d_buffers_, uint64_t instanceId, void *trace, ui
     const uint32_t need = prefetchUnitsFor(d_buffers, total_size);
     static std::atomic<uint32_t> rotate{0};
     const uint32_t first = rotate.fetch_add(1, std::memory_order_relaxed);
-    // Zones with a free run of `need` units first, then most free units (a hint read unlocked; the
-    // claim below is authoritative): free units alone can point at a fragmented zone that fails.
+    // Zones with a free run of `need` units first, then most free units (a hint: the claim below
+    // re-checks under the lock): free units alone can point at a fragmented zone that fails.
     std::vector<std::pair<int, uint32_t>> order;
     for (uint32_t k = 0; k < d_buffers->n_gpus; k++) {
         const uint32_t g = (first + k) % d_buffers->n_gpus;
         int nFree = 0, run = 0, bestRun = 0;
+        PrefetchZone &zr = d_buffers->prefetchZones[g];
+        std::lock_guard<std::mutex> lk(zr.mutex);   // instanceId is written under it, not atomically
         for (uint32_t u = 0; u < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; u++) {
-            const bool isFree = __atomic_load_n(&d_buffers->prefetchZones[g].instanceId[u], __ATOMIC_RELAXED) == -1;
+            const bool isFree = zr.instanceId[u] == -1;
             nFree += isFree;
             run = isFree ? run + 1 : 0;
             bestRun = std::max(bestRun, run);

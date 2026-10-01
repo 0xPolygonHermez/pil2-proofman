@@ -1885,7 +1885,7 @@ pub fn register_mul_vt_c(
     table_ids: &[u64],
     acc_bases: &[u64],
 ) {
-    debug_assert_eq!(table_ids.len(), acc_bases.len());
+    assert_eq!(table_ids.len(), acc_bases.len(), "register_mul_vt_c: one acc base per table id");
     unsafe {
         register_mul_vt(
             airgroup_id,
@@ -1901,7 +1901,7 @@ pub fn register_mul_vt_c(
 
 /// Virtual range-check tables the prover can compute itself, as (table id, bias) pairs.
 pub fn mul_register_range_tables_c(table_ids: &[u64], biases: &[i64]) {
-    debug_assert_eq!(table_ids.len(), biases.len());
+    assert_eq!(table_ids.len(), biases.len(), "mul_register_range_tables_c: one bias per table id");
     unsafe { mul_register_range_tables(table_ids.as_ptr(), biases.as_ptr(), table_ids.len() as u64) }
 }
 /// Hand down an exact-match key->row map.
