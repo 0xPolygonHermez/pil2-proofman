@@ -15,6 +15,7 @@
 #include "thread_utils.hpp"
 #include "timer.hpp"
 #ifdef __USE_CUDA__
+#include "pilfflonk_hints_gpu.hpp"
 #include "pilfflonk_instance_gpu.hpp"
 #include "pilfflonk_lde_gpu.hpp"
 #include "pilfflonk_opening_gpu.hpp"
@@ -72,6 +73,53 @@ void extendQPart(const AirKey &key, const std::vector<std::unique_ptr<Poly>> &po
 
 } // namespace
 
+uint64_t hintRowShift(const HintInput &in, uint64_t N) {
+    return static_cast<uint64_t>(((in.offset % int64_t(N)) + int64_t(N)) % int64_t(N));
+}
+
+std::vector<uint64_t> imPolOrder(const AirKey &air, uint64_t stage) {
+    const PilfflonkInfo &info = air.info();
+    std::vector<uint64_t> pending, order;
+    std::vector<bool> ready(air.cmIds()[stage].size(), true);
+    for (uint64_t id = 0; id < info.cmPolsMap.size(); ++id) {
+        const PolMapEntry &p = info.cmPolsMap[id];
+        if (p.imPol && p.stage == stage) {
+            pending.push_back(id);
+            ready[p.stagePos] = false;
+        }
+    }
+    // Each im pol once every column its code reads is: those of earlier stages are, and of this
+    // stage the witness columns and the im pols computed so far (AirKey checked there is nothing else).
+    while (!pending.empty()) {
+        std::vector<uint64_t> waiting;
+        for (uint64_t id : pending) {
+            const PolMapEntry &p = info.cmPolsMap[id];
+            const std::vector<ColumnRead> reads = columnsRead(air.bin(), p.expId);
+            const bool computable = std::all_of(reads.begin(), reads.end(), [&](const ColumnRead &c) {
+                return c.type != stage || ready[c.index];
+            });
+            if (!computable) {
+                waiting.push_back(id);
+                continue;
+            }
+            order.push_back(id);
+            ready[p.stagePos] = true;
+        }
+        if (waiting.size() == pending.size()) {
+            throw FormatError(air.name() + ": the im pols of stage " + std::to_string(stage) +
+                              " read each other in a cycle, starting with " + info.cmPolsMap[waiting[0]].name);
+        }
+        pending = std::move(waiting);
+    }
+    return order;
+}
+
+UnsatisfiedError zeroDenominatorError(const AirKey &air, const StdHint &hint, uint64_t row) {
+    return UnsatisfiedError(air.name() + ": the denominator of hint " + std::to_string(hint.hint) + " (" + hint.name +
+                            ", column " + air.info().cmPolsMap[hint.cmId].name + ") is 0 at row " +
+                            std::to_string(row) + ": the column has no value there");
+}
+
 // ---------------------------------------------------------------------------------------------
 // Instance
 // ---------------------------------------------------------------------------------------------
@@ -117,11 +165,19 @@ Instance::Instance(const ProvingKey &_pk, uint64_t airgroupId, uint64_t airId, c
 
     columns.resize(info.nStages + 1);
     for (uint64_t s = 1; s <= info.nStages; ++s) {
+#ifdef __USE_CUDA__
+        // On a key on the GPU, the columns of the later stages are on the device only.
+        if (s > 1 && key.device() != nullptr) {
+            continue;
+        }
+#endif
         columns[s].assign(key.cmIds()[s].size() * N, Engine::engine.fr.zero());
     }
 #ifdef __USE_CUDA__
     if (key.device() != nullptr) {
         device = std::make_unique<InstanceGpu>(*key.device(), stage1, columns[1].data());
+        deviceCopies.resize(info.nStages + 1);
+        copied.resize(info.nStages + 1);
     }
     if (device == nullptr)
 #endif
@@ -180,7 +236,7 @@ ProverValues Instance::valuesOn(const std::vector<std::vector<FrElement>> &cols,
                                 const std::vector<FrElement> &challenges) const {
     const PilfflonkInfo &info = key.info();
     const uint64_t N = key.n();
-    ProverValues v;
+    ProverValues v = scalarValues(challenges);
     v.columns.resize(info.nStages + 1);
     for (uint64_t c = 0; c < info.nConstants; ++c) {
         v.columns[0].push_back(key.fixedEvaluations(c));
@@ -190,11 +246,16 @@ ProverValues Instance::valuesOn(const std::vector<std::vector<FrElement>> &cols,
             v.columns[s].push_back(cols[s].data() + p * N);
         }
     }
+    return v;
+}
+
+ProverValues Instance::scalarValues(const std::vector<FrElement> &challenges) const {
+    ProverValues v;
     v.publics = publicValues;
     v.challenges = challenges;
     v.airValues = airValueValues;
     v.proofValues = proofValueValues;
-    v.airgroupValues.assign(info.airgroupValuesMap.size(), Engine::engine.fr.zero());
+    v.airgroupValues.assign(key.info().airgroupValuesMap.size(), Engine::engine.fr.zero());
     return v;
 }
 
@@ -220,7 +281,7 @@ void Instance::computeHintColumns(uint64_t stage, std::vector<std::vector<FrElem
         case HintInput::Kind::Column: {
             const FrElement *source = in.column.type == 0 ? key.fixedEvaluations(in.column.index)
                                                           : cols[in.column.type].data() + in.column.index * N;
-            const uint64_t shift = static_cast<uint64_t>(((in.offset % int64_t(N)) + int64_t(N)) % int64_t(N));
+            const uint64_t shift = hintRowShift(in, N);
 #pragma omp parallel for
             for (uint64_t i = 0; i < N; ++i) {
                 dest[i] = source[(i + shift) % N];
@@ -245,9 +306,7 @@ void Instance::computeHintColumns(uint64_t stage, std::vector<std::vector<FrElem
             const uint64_t row = std::find_if(denominator.begin(), denominator.end(),
                                               [&](const FrElement &d) { return fr.isZero(d); }) -
                                  denominator.begin();
-            throw UnsatisfiedError(key.name() + ": the denominator of hint " + std::to_string(hint.hint) + " (" +
-                                   hint.name + ", column " + info.cmPolsMap[hint.cmId].name + ") is 0 at row " +
-                                   std::to_string(row) + ": the column has no value there");
+            throw zeroDenominatorError(key, hint, row);
         }
         // multiplyHintFields (im_col) and accMulHintFields: vals[i] = numerator[i]/denominator[i]; the
         // latter then accumulates, vals[i] = vals[i] ∘ vals[i − 1].
@@ -281,42 +340,15 @@ void Instance::computeImPols(uint64_t stage, std::vector<std::vector<FrElement>>
                              const std::vector<FrElement> &challenges) const {
     const PilfflonkInfo &info = key.info();
     const uint64_t N = key.n();
-    std::vector<uint64_t> pending;
-    std::vector<bool> ready(key.cmIds()[stage].size(), true);
-    for (uint64_t id = 0; id < info.cmPolsMap.size(); ++id) {
-        const PolMapEntry &p = info.cmPolsMap[id];
-        if (p.imPol && p.stage == stage) {
-            pending.push_back(id);
-            ready[p.stagePos] = false;
-        }
-    }
-    if (pending.empty()) {
+    const std::vector<uint64_t> order = imPolOrder(key, stage);
+    if (order.empty()) {
         return;
     }
     const ProverValues values = valuesOn(cols, challenges);
     const ExpressionsDomain trace = ExpressionsDomain::trace(info.nBits);
-    // Each im pol once every column its code reads is: those of earlier stages are, and of this
-    // stage the witness columns and the im pols computed so far (AirKey checked there is nothing else).
-    while (!pending.empty()) {
-        std::vector<uint64_t> waiting;
-        for (uint64_t id : pending) {
-            const PolMapEntry &p = info.cmPolsMap[id];
-            const std::vector<ColumnRead> reads = columnsRead(key.bin(), p.expId);
-            const bool computable = std::all_of(reads.begin(), reads.end(), [&](const ColumnRead &c) {
-                return c.type != stage || ready[c.index];
-            });
-            if (!computable) {
-                waiting.push_back(id);
-                continue;
-            }
-            key.expressions().calculateExpression(p.expId, trace, values, cols[stage].data() + p.stagePos * N);
-            ready[p.stagePos] = true;
-        }
-        if (waiting.size() == pending.size()) {
-            throw FormatError(key.name() + ": the im pols of stage " + std::to_string(stage) +
-                              " read each other in a cycle, starting with " + info.cmPolsMap[waiting[0]].name);
-        }
-        pending = std::move(waiting);
+    for (uint64_t id : order) {
+        const PolMapEntry &p = info.cmPolsMap[id];
+        key.expressions().calculateExpression(p.expId, trace, values, cols[stage].data() + p.stagePos * N);
     }
 }
 
@@ -398,12 +430,20 @@ std::vector<G1Point> Instance::commitStage(uint64_t stage, const std::vector<FrE
     }
     setChallenges(stage, challenges);
     TimerStartExpr(PILFFLONK_STAGE, stage);
-    TimerStartExpr(PILFFLONK_HINT_COLUMNS, stage);
-    computeHintColumns(stage, columns, challengeValues);
-    TimerStopAndLogExpr(PILFFLONK_HINT_COLUMNS, stage);
-    TimerStartExpr(PILFFLONK_IM_POLS, stage);
-    computeImPols(stage);
-    TimerStopAndLogExpr(PILFFLONK_IM_POLS, stage);
+#ifdef __USE_CUDA__
+    // On a key on the GPU, the columns of a later stage are computed where its commit reads them.
+    if (device != nullptr && stage > 1) {
+        computeStageColumns(*key.device(), stage, scalarValues(challengeValues));
+    } else
+#endif
+    {
+        TimerStartExpr(PILFFLONK_HINT_COLUMNS, stage);
+        computeHintColumns(stage, columns, challengeValues);
+        TimerStopAndLogExpr(PILFFLONK_HINT_COLUMNS, stage);
+        TimerStartExpr(PILFFLONK_IM_POLS, stage);
+        computeImPols(stage);
+        TimerStopAndLogExpr(PILFFLONK_IM_POLS, stage);
+    }
     std::vector<G1Point> commitments = commitF(stage);
     TimerStopAndLogExpr(PILFFLONK_STAGE, stage);
     ++next;
@@ -420,6 +460,7 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
     setChallenges(info.qStage(), challenges);
 #ifdef __USE_CUDA__
     const CopyLog copies(pk.gpuKey(), "Q");
+    qBegun = true;
 #endif
     TimerStart(PILFFLONK_Q);
 
@@ -598,6 +639,8 @@ Instance::CheckTrace Instance::checkTrace(const std::vector<FrElement> &challeng
         at += n;
     }
     for (uint64_t s = 2; s <= info.nStages; ++s) {
+        // Every column of the stage is computed below; on a key on the GPU, the instance has none here.
+        t.columns[s].resize(key.cmIds()[s].size() * key.n(), Engine::engine.fr.zero());
         computeHintColumns(s, t.columns, t.challenges);
         computeImPols(s, t.columns, t.challenges);
     }
@@ -659,7 +702,28 @@ const FrElement *Instance::column(uint64_t stage, uint64_t stagePos) const {
                                               std::to_string(key.cmIds()[stage].size()) + " columns, and no stagePos " +
                                               std::to_string(stagePos));
     }
-    return columns[stage].data() + stagePos * key.n();
+    const uint64_t N = key.n();
+#ifdef __USE_CUDA__
+    if (device != nullptr && stage > 1) {
+        std::vector<FrElement> &copy = deviceCopies[stage];
+        std::vector<bool> &done = copied[stage];
+        if (done.empty()) {
+            copy.resize(key.cmIds()[stage].size() * N);
+            done.assign(key.cmIds()[stage].size(), false);
+        }
+        if (!done[stagePos]) {
+            if (qBegun) {
+                throw invalid("Instance::column", "on a key on the GPU, the columns of stage " + std::to_string(stage) +
+                                                      " are on the device until Q is committed, and Q's commitment "
+                                                      "has begun: ask for them before commitQ");
+            }
+            stageColumnToHost(*key.device(), stage, stagePos, copy.data() + stagePos * N);
+            done[stagePos] = true;
+        }
+        return copy.data() + stagePos * N;
+    }
+#endif
+    return columns[stage].data() + stagePos * N;
 }
 
 Poly *Instance::polynomial(uint64_t f, uint64_t j) const {

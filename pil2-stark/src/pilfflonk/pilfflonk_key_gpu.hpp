@@ -26,7 +26,8 @@
 
 namespace PilFflonk {
 
-class AirKey; // pilfflonk_proving_key.hpp
+class AirKey;         // pilfflonk_proving_key.hpp
+class ExpressionsGpu; // pilfflonk_expressions_gpu.hpp
 
 // Device memory, freed with it.
 class DeviceBuffer {
@@ -91,6 +92,9 @@ private:
 // - the stages': the columns of each stage s on H, column p at evaluations[s] + p·N elements; the
 //   work buffer, which holds the stage-1 witness as the Instance is given it, and then each f packed
 //   and shifted for its MSM (GpuKey::commit); and a stage's blinding factors and coefficient counts;
+//   and from the work buffer on, at `hints`, the scratch of the hints and im pols of a stage s >= 2
+//   (StageScratch, pilfflonk_hints_gpu.hpp), which are computed before the stage's commit uses that
+//   memory;
 // - Q's: at `q`, room for Q's N' values and every column it reads on a part of N points, which
 //   holds the columns of each part as the device extends them (LdeGpu), and then Q's values for
 //   their interpolation; and at `qTables`, the tables of the powers of a shift (ldeTableElements);
@@ -110,6 +114,8 @@ struct ArenaLayout {
     uint64_t factorElements = 0; // the most of a stage, Σ k_f·b_f
     uint64_t counts = 0;
     uint64_t nCounts = 0; // 64-bit counts: the most polynomials of a stage, or the fixed columns
+    uint64_t hints = 0;     // = work
+    uint64_t hintBytes = 0; // the most of a stage (stageScratchBytes)
     uint64_t stageBytes = 0; // the end of the stages' phase
     uint64_t q = 0;
     uint64_t qElements = 0; // N' + N·|qReads|
@@ -128,7 +134,8 @@ uint64_t componentOffset(const AirKey &air, const ArenaLayout &layout, uint64_t 
 
 // The device memory a key on the GPU needs for an AIR, in bytes.
 struct GpuBudget {
-    uint64_t resident = 0;  // held while the key lives: its fixed columns' coefficients, bytecode and tables
+    uint64_t resident = 0;  // held while the key lives: its fixed columns' coefficients, bytecode, interpreter
+                            // (ExpressionsGpu::deviceBytesOf) and tables
     uint64_t arena = 0;     // a proof's arena (ArenaLayout::bytes)
     uint64_t transient = 0; // what a proof allocates besides, while it runs
 };
@@ -281,9 +288,9 @@ private:
 };
 
 // The device side of an AirKey on the GPU: its fixed columns' coefficients, its bytecode (the code
-// of its expressions, for the device's evaluation of them), and the tables its kernels read, all on
-// the device while the key lives; its fixed commitments; and where its proofs keep their data in the
-// GpuKey's arena (ArenaLayout).
+// of its expressions, for the device's evaluation of them) and the interpreter that runs it, and the
+// tables its kernels read, all on the device while the key lives; its fixed commitments; and where
+// its proofs keep their data in the GpuKey's arena (ArenaLayout).
 class GpuAirKey {
 public:
     // `air`'s, whose host side is built (but for its fixed columns' polynomials, which this makes):
@@ -294,6 +301,7 @@ public:
     // FormatError if an f has more coefficients than the SRS has powers (checkSrsFits), and as reserve
     // and GpuKey::commit.
     GpuAirKey(GpuKey &key, const AirKey &air, FrElement *fixedCoefs, std::vector<std::unique_ptr<Poly>> &fixedPolys);
+    ~GpuAirKey();
     GpuAirKey(const GpuAirKey &) = delete;
     GpuAirKey &operator=(const GpuAirKey &) = delete;
 
@@ -315,9 +323,13 @@ public:
     const uint64_t *witnessPositions() const;
     const uint64_t *offsets(uint64_t f) const;
 
+    // The interpreter on the device of the expressions' code above (pilfflonk_expressions_gpu.hpp),
+    // for the holder of the arena: one proof at a time.
+    const ExpressionsGpu &expressions() const { return *interpreter; }
+
     // Runs of consecutive stagePos, (first, count), in increasing order: of the witness columns in
-    // stage 1, and of the columns of stage s the host computes (the im pols of stage 1, and every
-    // column of a later stage).
+    // stage 1, and of the columns of stage s the host computes, the im pols of stage 1 (the device
+    // computes every column of a later stage, computeStageColumns).
     using ColumnRuns = std::vector<std::pair<uint64_t, uint64_t>>;
     const ColumnRuns &witnessColumns() const { return witnessRuns; }
     const ColumnRuns &hostColumns(uint64_t stage) const { return computedOnHost.at(stage); }
@@ -338,6 +350,7 @@ private:
     ColumnRuns witnessRuns;
     std::vector<ColumnRuns> computedOnHost; // by stage
     std::vector<G1Point> fixedPoints;
+    std::unique_ptr<ExpressionsGpu> interpreter;
 };
 
 // The host copy of a polynomial of `length` coefficients just copied from the device to `coefs`,

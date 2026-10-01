@@ -9,6 +9,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "pilfflonk_expressions_gpu.hpp"
+#include "pilfflonk_hints_gpu.hpp"
 #include "pilfflonk_kernels.hpp"
 #include "pilfflonk_lde_gpu.hpp"
 #include "pilfflonk_opening_gpu.hpp"
@@ -270,6 +272,9 @@ ArenaLayout arenaLayout(const AirKey &air) {
     a.factors = carver.take(a.factorElements * sizeof(FrElement));
     a.counts = carver.take(a.nCounts * sizeof(uint64_t));
     a.stageBytes = carver.size();
+    a.hints = a.work;
+    a.hintBytes = stageScratchBytes(air);
+    a.stageBytes = std::max(a.stageBytes, aligned(a.hints + a.hintBytes));
 
     uint64_t pieces = 0;
     for (uint64_t c : air.degrees().qPieceCoefficients) {
@@ -315,7 +320,7 @@ uint64_t spparkMsmBytes(uint64_t n, uint32_t multiprocessors) {
 GpuBudget gpuBudget(const AirKey &air, uint32_t multiprocessors) {
     const uint64_t largest = largestDegree(air);
     GpuBudget budget;
-    budget.resident = residentLayout(air).bytes;
+    budget.resident = residentLayout(air).bytes + ExpressionsGpu::deviceBytesOf(air.bin(), air.info(), multiprocessors);
     budget.arena = arenaLayout(air).bytes;
     budget.transient = spparkMsmBytes(largest, multiprocessors) +
                        std::max(air.lde().extendedSize(), largest) * sizeof(FrElement) + MARGIN_BYTES;
@@ -554,18 +559,20 @@ GpuAirKey::GpuAirKey(GpuKey &_key, const AirKey &_air, FrElement *fixedCoefs,
                      air.witnessColumns().size() * sizeof(uint64_t));
     staging.toDevice(resident.data() + offsetsOffset, table.data(), table.size() * sizeof(uint64_t));
 
-    // What the host computes of each stage: stage 1's im pols, and every column of the later ones.
+    // What the host computes of each stage: stage 1's im pols. The device computes every column of
+    // the later ones (computeStageColumns).
     computedOnHost.assign(info.nStages + 1, {});
     for (uint64_t s = 1; s <= info.nStages; ++s) {
         std::vector<uint64_t> stagePos;
         for (uint64_t p = 0; p < air.cmIds()[s].size(); ++p) {
-            if (s > 1 || info.cmPolsMap[air.cmIds()[s][p]].imPol) {
+            if (s == 1 && info.cmPolsMap[air.cmIds()[s][p]].imPol) {
                 stagePos.push_back(p);
             }
         }
         computedOnHost[s] = runsOf(std::move(stagePos));
     }
     witnessRuns = runsOf(air.witnessColumns());
+    interpreter = std::make_unique<ExpressionsGpu>(air.bin(), info, DeviceCode{args(), numbers()});
 
     interpolateFixed(fixedCoefs, fixedPolys);
     TimerStart(PILFFLONK_GPU_SHIFT_SUMS);
@@ -581,6 +588,8 @@ GpuAirKey::GpuAirKey(GpuKey &_key, const AirKey &_air, FrElement *fixedCoefs,
     TimerStopAndLog(PILFFLONK_GPU_SHIFT_SUMS);
     commitFixed();
 }
+
+GpuAirKey::~GpuAirKey() = default;
 
 void GpuAirKey::interpolateFixed(FrElement *fixedCoefs, std::vector<std::unique_ptr<Poly>> &fixedPolys) {
     const uint64_t nConstants = air.info().nConstants, N = air.n();

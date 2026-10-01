@@ -136,6 +136,11 @@ public:
     // shared memory.
     uint64_t deviceBytes() const { return tables.size() + temporaries.size(); }
 
+    // That of one of `bin` and `info` with sharedBytes, made on a device of `multiprocessors` SMs,
+    // before it is made: for a key's budget (GpuBudget::resident).
+    static uint64_t deviceBytesOf(const ExpressionsBin &bin, const PilfflonkInfo &info, uint32_t multiprocessors,
+                                  uint64_t sharedBytes = MAX_SHARED_BYTES);
+
 private:
     void calculate(const ParserParams &params, const DeviceCode &code, const ExpressionsDomainGpu &domain,
                    const ProverValues &values, FrElement *dest, uint64_t stride, const char *function) const;

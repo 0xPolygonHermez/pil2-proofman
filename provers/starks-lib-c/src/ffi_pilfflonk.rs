@@ -486,6 +486,8 @@ impl<'ctx> PilFflonkInstance<'ctx> {
 
     /// The `n_rows` values on H of the column of stage `stage` at `stage_pos`, as the prover
     /// computed them once the stage is committed: for tests and diagnostics, not part of the proof.
+    /// On a key on the GPU, a column of a stage after the first is read from the device, the first
+    /// time before [`commit_q`](Self::commit_q), which reuses its memory there.
     pub fn column(
         &self,
         stage: u32,

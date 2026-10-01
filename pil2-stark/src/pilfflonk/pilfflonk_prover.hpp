@@ -7,6 +7,7 @@
 
 #include "alt_bn128.hpp"
 #include "pilfflonk_commit.hpp"
+#include "pilfflonk_error.hpp"
 #include "pilfflonk_proving_key.hpp"
 #include "pilfflonk_rng.hpp"
 #include "pilfflonk_shplonk_prover.hpp"
@@ -16,6 +17,24 @@ namespace PilFflonk {
 
 class InstanceGpu; // pilfflonk_instance_gpu.hpp
 class OpeningGpu;  // pilfflonk_opening_gpu.hpp
+
+// What Instance computes of the columns of a stage that the device path computes too
+// (pilfflonk_hints_gpu.hpp), shared by both.
+
+// The shift of a hint's column operand (HintInput::Kind::Column) on H, of N rows: on row i it reads
+// row (i + shift) mod N, shift = offset mod N in [0, N).
+uint64_t hintRowShift(const HintInput &in, uint64_t N);
+
+// The im pols of stage `stage` of `air` (cmPolsMap indices), in the order Instance computes them:
+// rounds over those not computed yet, in cmPolsMap order, each computed in the round where every
+// column its code reads is (of an earlier stage, a witness column or hint column of its own, or an
+// im pol computed before it). Throws FormatError, naming the first left, if they read each other in
+// a cycle.
+std::vector<uint64_t> imPolOrder(const AirKey &air, uint64_t stage);
+
+// What Instance throws when the denominator of `hint` is 0 on row `row` of H, its first such row:
+// the column has no value there.
+UnsatisfiedError zeroDenominatorError(const AirKey &air, const StdHint &hint, uint64_t row);
 
 // A row where a constraint does not hold: the value of its numerator there, not 0.
 struct FailedRow {
@@ -85,12 +104,13 @@ struct ConstraintCheck {
 //
 // On a key on the GPU (ProvingKey::load with Device::Gpu), the witness goes to the device as it is
 // given, and the INTTs, the blinding and the commitments of commitStage run there (InstanceGpu),
-// with the blinding factors drawn here, and so do commitQ's extension of the columns to each part
-// and its interpolation of Q (LdeGpu); the rest runs here, on the copies of the stage-1 columns, of
-// the committed polynomials and of Q's columns and values the device sends back, and the proof is
-// the same bit for bit. Such a key holds the device memory of one proof at a time: an instance
-// holds it until it is destroyed, another thread's waits for it, and a second instance of this
-// thread is refused.
+// with the blinding factors drawn here, and so do the hints and the im pols of the stages after the
+// first, whose columns stay there (computeStageColumns), and commitQ's extension of the columns to
+// each part and its interpolation of Q (LdeGpu); the rest runs here, on the copies of the stage-1
+// columns, of the committed polynomials and of Q's columns and values the device sends back, and
+// the proof is the same bit for bit. Such a key holds the device memory of one proof at a time: an
+// instance holds it until it is destroyed, another thread's waits for it, and a second instance of
+// this thread is refused.
 //
 // Elements are in Montgomery form. Refused arguments throw std::invalid_argument before anything
 // changes. Not safe to use from several threads at once; the ProvingKey, which must outlive it, may
@@ -161,7 +181,10 @@ public:
     // The N values on H of the column of stage `stage` at stagePos, as the prover computed them: the
     // witness's, a hint's or an im pol's. For tests and diagnostics (the oracle checks the hints'
     // columns against them); not part of the proof. Throws std::invalid_argument unless the stage is
-    // committed and has such a column.
+    // committed and has such a column. On a key on the GPU, a column of a stage after the first is
+    // on the device, which computed it (decision D8): it is copied here the first time it is asked
+    // for, and so only before commitQ, which reuses its memory there; asked for the first time after,
+    // it throws std::invalid_argument.
     const FrElement *column(uint64_t stage, uint64_t stagePos) const;
 
     // p_j of f (a non-fixed entry of the layout) once its stage is committed; null before. Of Q's
@@ -193,6 +216,8 @@ private:
     // What the bytecode reads of `cols` (columns[s] as columns has them) and `challenges`.
     ProverValues valuesOn(const std::vector<std::vector<FrElement>> &cols,
                           const std::vector<FrElement> &challenges) const;
+    // Its scalars alone, with `challenges`: no columns.
+    ProverValues scalarValues(const std::vector<FrElement> &challenges) const;
     // The columns of stage `stage` its hints give, into cols[stage], with `challenges`.
     void computeHintColumns(uint64_t stage, std::vector<std::vector<FrElement>> &cols,
                             const std::vector<FrElement> &challenges) const;
@@ -222,12 +247,19 @@ private:
     std::vector<FrElement> airValueValues;
     std::vector<FrElement> proofValueValues;
     std::vector<FrElement> challengeValues; // challengesMap order
-    // columns[s]: the columns of stage s (1 … nStages) on H, column p at [p·N, (p+1)·N).
+    // columns[s]: the columns of stage s (1 … nStages) on H, column p at [p·N, (p+1)·N); on a key on
+    // the GPU, stage 1's only, the later ones being on the device (computeStageColumns).
     std::vector<std::vector<FrElement>> columns;
 #ifdef __USE_CUDA__
     // Its device side, on a key on the GPU. Declared before the polynomials, which may be over the
     // key's mirror (GpuKey::mirror), so that they go before it does.
     std::unique_ptr<InstanceGpu> device;
+    // commitQ has begun: its phase of the arena holds the bytes of the stages' columns from then on.
+    bool qBegun = false;
+    // The copies column() made of the device's columns of each stage s >= 2 (column p at p·N, once
+    // copied[s][p]).
+    mutable std::vector<std::vector<FrElement>> deviceCopies;
+    mutable std::vector<std::vector<bool>> copied;
 #endif
     // By cmPolsMap index: the committed polynomial of a column, and its buffer.
     std::vector<std::unique_ptr<FrElement[]>> coefBuffers;

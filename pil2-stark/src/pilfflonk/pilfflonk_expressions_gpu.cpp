@@ -75,6 +75,13 @@ PartLayout partLayout(uint64_t nBits, uint64_t partBits, const std::vector<Bound
     return l;
 }
 
+// The bytes of a block's temporaries in device memory for the code of `bin`: 0 if they fit in
+// sharedBytes of shared memory.
+uint64_t temporaryBytesPerBlock(const ExpressionsBin &bin, uint64_t sharedBytes) {
+    const uint64_t perBlock = uint64_t(bin.maxTmp) * EXPRESSION_ROWS * OPERAND_BYTES;
+    return perBlock > sharedBytes ? perBlock : 0;
+}
+
 bool isProverScalar(const OperandTypes &types, uint32_t type) {
     return type >= types.publics() && type <= types.challenges() && type != types.numbers();
 }
@@ -261,11 +268,17 @@ ExpressionsGpu::ExpressionsGpu(const ExpressionsBin &bin, const PilfflonkInfo &i
                                     std::to_string(MAX_SHARED_BYTES));
     }
     tables = DeviceBuffer(layout.bytes);
-    const uint64_t perBlock = uint64_t(bin.maxTmp) * EXPRESSION_ROWS * OPERAND_BYTES;
-    if (perBlock > sharedBytes) {
+    const uint64_t perBlock = temporaryBytesPerBlock(bin, sharedBytes);
+    if (perBlock > 0) {
         temporaryBlocks = pilfflonk_gpu_multiprocessors() * TEMPORARY_BLOCKS_PER_SM;
         temporaries = DeviceBuffer(temporaryBlocks * perBlock);
     }
+}
+
+uint64_t ExpressionsGpu::deviceBytesOf(const ExpressionsBin &bin, const PilfflonkInfo &info, uint32_t multiprocessors,
+                                       uint64_t sharedBytes) {
+    return operandLayout(bin, info.openingPoints.size(), info.boundaries.size()).bytes +
+           uint64_t(multiprocessors) * TEMPORARY_BLOCKS_PER_SM * temporaryBytesPerBlock(bin, sharedBytes);
 }
 
 void ExpressionsGpu::calculateExpression(uint64_t expId, const ExpressionsDomainGpu &domain, const ProverValues &values,

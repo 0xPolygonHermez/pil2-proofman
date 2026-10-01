@@ -306,9 +306,11 @@ extern "C" {
     // of the instance, as scalars, in the order of the rows: as the prover computed it, the
     // witness's, a prover hint's or an im pol's, once its stage is committed. For tests and
     // diagnostics (the Rust oracle checks the hints' columns against it); it is not part of the
-    // proof.
+    // proof. On a key on the GPU, a column of a stage after the first is on the device, and is read
+    // from there the first time (Instance::column): before pilfflonk_commit_q, which reuses its memory.
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL, if the stage is not committed yet or has no
-    // column at stage_pos, or if n is not N.
+    // column at stage_pos, if n is not N, or if such a column is read first once Q's commitment has
+    // begun.
     int pilfflonk_instance_column(const void *instance, uint32_t stage, uint64_t stage_pos, uint8_t *out,
                                   uint64_t n);
 
