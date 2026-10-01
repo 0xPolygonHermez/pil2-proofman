@@ -2950,9 +2950,39 @@ where
             )));
         }
 
-        // The C++ registries, plans and device maps are process-wide and never reset: a later ProofMan
-        // in this process may only register the very same tables.
+        // The C++ registries, maps and per-air programs are process-wide and never reset: a later
+        // ProofMan in this process may only bring the very same tables, expressions and packing.
         static REGISTERED: Mutex<Option<blake3::Hash>> = Mutex::new(None);
+        let airs: Vec<(usize, usize)> = self
+            .pctx
+            .global_info
+            .airs
+            .iter()
+            .enumerate()
+            .flat_map(|(ag, a)| (0..a.len()).map(move |ai| (ag, ai)))
+            .collect();
+        let air_hashes: Vec<blake3::Hash> = airs
+            .par_iter()
+            .filter_map(|&(ag, ai)| self.sctx.get_setup(ag, ai).ok().map(|s| (ag, ai, s)))
+            .map(|(ag, ai, setup)| {
+                let mut h = blake3::Hasher::new();
+                for ext in [".bin", ".starkinfo.json"] {
+                    let p = setup.setup_path.display().to_string() + ext;
+                    let bytes =
+                        std::fs::read(&p).map_err(|e| ProofmanError::InvalidSetup(format!("cannot read {p}: {e}")))?;
+                    hash_words(&mut h, &[bytes.len() as u64]);
+                    h.update(&bytes);
+                }
+                if let Some(pi) = self.options.packed_info.get(&(ag, ai)) {
+                    let flags = [pi.is_packed as u64, pi.num_packed_words, pi.index_bits, pi.words_per_entry, pi.lanes];
+                    hash_words(&mut h, &flags);
+                    hash_words(&mut h, &pi.unpack_info);
+                    hash_words(&mut h, &pi.col_source.iter().map(|b| *b as u64).collect::<Vec<_>>());
+                    hash_words(&mut h, &pi.col_lane.iter().map(|b| *b as u64).collect::<Vec<_>>());
+                }
+                Ok(h.finalize())
+            })
+            .collect::<ProofmanResult<_>>()?;
         let maps: Vec<_> = fitted.iter().filter(|m| !std_owned.contains(&m.table_id)).collect();
         let map_hashes: Vec<blake3::Hash> = maps
             .par_iter()
@@ -2966,7 +2996,7 @@ where
         let mut h = blake3::Hasher::new();
         hash_words(&mut h, &range_ids);
         hash_words(&mut h, &range_biases.iter().map(|b| *b as u64).collect::<Vec<_>>());
-        for mh in &map_hashes {
+        for mh in map_hashes.iter().chain(&air_hashes) {
             h.update(mh.as_bytes());
         }
         for l in &layouts {

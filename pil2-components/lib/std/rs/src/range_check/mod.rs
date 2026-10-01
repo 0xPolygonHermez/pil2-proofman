@@ -75,6 +75,13 @@ pub fn collect_prover_owned_ranges<F: PrimeField64>(
 
     owned.sort_unstable();
     owned.dedup();
+    // The C++ registry aborts on this; report it as a setup error instead.
+    if let Some(w) = owned.windows(2).find(|w| w[0].0 == w[1].0) {
+        return Err(ProofmanError::StdError(format!(
+            "Range table {} has two different minimums (biases {} and {})",
+            w[0].0, w[0].1, w[1].1
+        )));
+    }
     Ok(owned)
 }
 

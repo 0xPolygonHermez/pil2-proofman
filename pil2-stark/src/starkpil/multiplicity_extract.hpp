@@ -100,13 +100,13 @@ inline bool mulCompileBytecode(SetupCtx& setupCtx, const MulByteCode& bc, MulPro
     mulProgFailReason() = nullptr;
     auto bail = [&](const char* why) { mulProgFailReason() = why; return false; };
     if (bc.nOps == 0 || bc.ops == nullptr || bc.args == nullptr) return bail("no bytecode");
-    if (bc.nTemp1 + 1 > MUL_PROG_MAX_TEMP) return bail("too many temporaries");
+    if (bc.nTemp1 > MUL_PROG_MAX_TEMP) return bail("too many temporaries");
     const uint32_t nCustom = (uint32_t)setupCtx.starkInfo.customCommits.size();
 
     auto operand = [&](uint16_t type, uint16_t argIdx, uint16_t argOff, MulOperandDev& o) -> bool {
         o = MulOperandDev{};
         if (type == bc.base) {                                   // dim1 temporary
-            if (argIdx > bc.nTemp1) return bail("temp index out of range");
+            if (argIdx >= bc.nTemp1) return bail("temp index out of range");
             o.kind = MUL_OPND_TEMP;
             o.tmp  = argIdx;
             return true;
@@ -135,7 +135,7 @@ inline bool mulCompileBytecode(SetupCtx& setupCtx, const MulByteCode& bc, MulPro
         in.op = (uint8_t)bc.args[i];
         if (in.op > 3) return bail("unknown arithmetic op");
         in.dst = bc.args[i + 1];
-        if (k + 1 != bc.nOps && in.dst > bc.nTemp1) return bail("temp index out of range");
+        if (k + 1 != bc.nOps && in.dst >= bc.nTemp1) return bail("temp index out of range");
         out.insns.push_back(in);
         i += 8;
     }
