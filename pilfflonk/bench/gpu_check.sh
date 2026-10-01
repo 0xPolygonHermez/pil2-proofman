@@ -35,8 +35,11 @@ source "$ROOT/pilfflonk/bench/bench.sh"
 CLI="${PILFFLONK_CLI:-$ROOT/target/release/proofman-cli}"
 SEED="${GPU_CHECK_SEED:-6d34330067707500636865636b0000000000000000000000000000000000002a}"
 REPEATS="${GPU_CHECK_REPEATS:-1}"
-# bench.sh's phases, and the copy of the SRS's powers to the GPU (PILFFLONK_GPU_SRS) after its load.
-CHECK_PHASES="${PHASES/load_srs/load_srs gpu_srs}"
+# bench.sh's phases, the copy of the SRS's powers to the GPU (PILFFLONK_GPU_SRS) after its load, and
+# the start of a proof (pilfflonk/docs/performance.md#the-start-of-a-proof): the Rust reading of the
+# key's files (PILFFLONK_KEY_FILES), what is left of CUDA's initialisation (PILFFLONK_GPU_INIT), the
+# witness's trace read while the key loads (PILFFLONK_WITNESS_READ), and the proof's files.
+CHECK_PHASES="key_files gpu_init ${PHASES/load_srs/load_srs gpu_srs} witness_read write_proof"
 
 fail() {
     echo "gpu_check.sh: $*" >&2

@@ -1,7 +1,7 @@
 use clap::Args;
 use colored::Colorize;
 use proofman_common::initialize_logger;
-use proofman_pilfflonk::{prove, Device, ProveOptions, ProvingKey};
+use proofman_pilfflonk::{prove, Device, ProveOptions};
 use std::path::PathBuf;
 
 use super::PilfflonkWitnessArgs;
@@ -74,8 +74,7 @@ impl PilfflonkProveCmd {
         } else {
             Device::Cpu
         };
-        let pk = ProvingKey::load_on(&self.proving_key, device)?;
-        let witness = self.witness.open(&pk, self.verbose)?;
+        let (pk, witness) = self.witness.load_with_key(&self.proving_key, device, self.verbose)?;
         let options = ProveOptions { insecure_blinding_seed: self.insecure_blinding_seed, ..ProveOptions::default() };
         let output = prove(&pk, &witness, &options)?;
         output.write(&self.output_dir)?;

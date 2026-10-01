@@ -76,8 +76,9 @@ public:
     // one or one of no coefficients; if its k does not divide r - 1 or kN goes beyond the 2-adicity
     // 2^28 of r - 1 (v₂(k) + nBits > 28); if its offsets are none, not distinct modulo N, or some
     // |s| >= N; or if k times the most coefficients of a p_j, or k·|O_i|, exceeds INT_MAX (the
-    // most rapidsnark's Polynomial counts in its division and interpolation). Throws
-    // std::runtime_error where ffiasm has no assembly backend.
+    // most rapidsnark's Polynomial counts in its interpolation, a bound kept for f_i's coefficients
+    // too: the largest ptau has 2^29 - 1 powers). Throws std::runtime_error where ffiasm has no
+    // assembly backend.
     explicit ShplonkProver(ShplonkOpening opening);
 
     uint64_t size() const { return fs.size(); }
@@ -136,9 +137,9 @@ private:
         std::vector<FrElement> roots;
     };
 
-    // f_i as an owning polynomial of `length` >= nCoefs(i) coefficients, packed through `scratch`,
-    // which holds at least scratchLength() elements.
-    std::unique_ptr<Poly> packed(uint64_t i, uint64_t length, FrElement *scratch) const;
+    // f_i packed into `out`, which holds at least scratchLength() elements: its nCoefs(i)
+    // coefficients at out[0, nCoefs(i)), the rest unspecified. Returns nCoefs(i).
+    uint64_t packed(uint64_t i, FrElement *out) const;
     // The buffer pack() needs for the longest f_i.
     uint64_t scratchLength() const;
     // The coefficients W, L and every f_i - r_i fit in: max_i max(nCoefs(i), |T_i|).
@@ -150,12 +151,16 @@ private:
 };
 
 // a := a / (X^m − β), m >= 1, which must be exact: throws std::logic_error, naming `what`, if it is
-// not, leaving `a` unspecified. a's degree must be up to date (Poly::fixDegree) and a must own its
-// buffer, which may be replaced. rapidsnark's divByMonic computes only the quotient, so the
-// remainder a_j + β·q_j (j < m) is checked here, and it writes below its buffer unless
-// deg a >= 2m − 1: of lower degrees, the quotient is computed here. Throws std::invalid_argument
-// for m = 0. Used by ShplonkProver; public for its tests.
+// not, leaving `a` unspecified. a's degree must be up to date (Poly::fixDegree), so that the
+// coefficients above it are zero. In place, in a's buffer, owned or not, and in parallel over
+// blocks of the quotient's coefficients (pilfflonk/docs/performance.md#the-shplonk-division): the
+// quotient, from the top down, and then the remainder a_j + β·q_j (j < m), which must be zero.
+// Throws std::invalid_argument for m = 0. Used by ShplonkProver; public for its tests.
 void divideExactly(Poly &a, uint64_t m, const FrElement &beta, const std::string &what);
+
+// The coefficients of a block of divideExactly's division by X^m − β, m >= 1: a whole number of
+// rows of m, about 2^12. Public for the tests, which divide around the boundaries of the blocks.
+uint64_t divisionBlockLength(uint64_t m);
 
 // The denominators the verifier inverts in its SHPLONK check at y (pilfflonk/js/src/shplonk.js),
 // in this order, for the n f_i of `prover`:

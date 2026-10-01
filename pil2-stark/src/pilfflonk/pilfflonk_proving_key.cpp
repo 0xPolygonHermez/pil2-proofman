@@ -1,8 +1,12 @@
 #include "pilfflonk_proving_key.hpp"
 
+#include <fcntl.h>
 #include <omp.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -84,13 +88,48 @@ std::string readText(const std::string &path, const char *what) {
     return text;
 }
 
-std::vector<uint8_t> readBytes(const std::string &path, const char *what) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
+// The bytes of a file.
+struct FileBytes {
+    std::unique_ptr<uint8_t[]> data;
+    uint64_t size = 0;
+};
+
+// A file's bytes, read by every thread at once, a chunk each: a .const holds N rows of every fixed
+// column, GBs at large N, which one thread copies from the page cache at a fraction of the speed of
+// several, and the buffer is not cleared before (its pages are first touched by the threads that
+// fill them).
+FileBytes readBytes(const std::string &path, const char *what) {
+    const int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) {
         throw IoError(std::string(what) + ": cannot open " + path);
     }
-    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (file.bad()) {
+    struct stat status;
+    if (::fstat(fd, &status) != 0) {
+        ::close(fd);
+        throw IoError(std::string(what) + ": cannot read " + path);
+    }
+    FileBytes bytes;
+    bytes.size = static_cast<uint64_t>(status.st_size);
+    bytes.data.reset(new uint8_t[bytes.size]);
+    constexpr uint64_t CHUNK = uint64_t(1) << 23;
+    const uint64_t nChunks = (bytes.size + CHUNK - 1) / CHUNK;
+    uint8_t *out = bytes.data.get();
+    bool failed = false;
+#pragma omp parallel for schedule(dynamic) reduction(|| : failed)
+    for (uint64_t c = 0; c < nChunks; ++c) {
+        const uint64_t end = std::min(bytes.size, (c + 1) * CHUNK);
+        for (uint64_t at = c * CHUNK; at < end && !failed;) {
+            const ssize_t n = ::pread(fd, out + at, end - at, static_cast<off_t>(at));
+            if (n > 0) {
+                at += static_cast<uint64_t>(n);
+            } else if (n == 0 || errno != EINTR) {
+                // An error, or the end of a file that shrank since fstat.
+                failed = true;
+            }
+        }
+    }
+    ::close(fd);
+    if (failed) {
         throw IoError(std::string(what) + ": cannot read " + path);
     }
     return bytes;
@@ -669,8 +708,8 @@ std::unique_ptr<AirKey> AirKey::load(const std::string &dir, const std::string &
     const std::string base = dir + "/" + name;
     PilfflonkInfo info = PilfflonkInfo::load(base + ".pilfflonkinfo.json");
     ExpressionsBin bin = ExpressionsBin::load(base + ".bin");
-    const std::vector<uint8_t> constants = readBytes(base + ".const", "const");
-    return std::make_unique<AirKey>(std::move(info), std::move(bin), constants.data(), constants.size(), name, gpu);
+    const FileBytes constants = readBytes(base + ".const", "const");
+    return std::make_unique<AirKey>(std::move(info), std::move(bin), constants.data.get(), constants.size, name, gpu);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -722,14 +761,21 @@ ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::
 }
 
 std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device device) {
-    if (device == Device::Gpu && !gpuAvailable()) {
+    if (device == Device::Gpu) {
+        // CUDA's initialisation, on its first call: what is left of it if a warm-up started it
+        // before (pilfflonk/docs/performance.md#the-start-of-a-proof).
+        TimerStart(PILFFLONK_GPU_INIT);
+        const bool available = gpuAvailable();
+        TimerStopAndLog(PILFFLONK_GPU_INIT);
+        if (!available) {
 #ifdef __USE_CUDA__
-        throw std::invalid_argument("ProvingKey::load: no GPU: CUDA sees no device of compute capability 7.0 or "
-                                    "above (or no driver)");
+            throw std::invalid_argument("ProvingKey::load: no GPU: CUDA sees no device of compute capability 7.0 or "
+                                        "above (or no driver)");
 #else
-        throw std::invalid_argument("ProvingKey::load: no GPU: this library was built without it "
-                                    "(provers/starks-lib-c/build.rs found no nvcc, or the feature cpu-only)");
+            throw std::invalid_argument("ProvingKey::load: no GPU: this library was built without it "
+                                        "(provers/starks-lib-c/build.rs found no nvcc, or the feature cpu-only)");
 #endif
+        }
     }
     GlobalInfo info = GlobalInfo::load(dir + "/" + GLOBAL_INFO_FILE);
     TimerStart(PILFFLONK_LOAD_SRS);

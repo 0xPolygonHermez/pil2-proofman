@@ -1135,10 +1135,177 @@ void testDivideExactly() {
                                         "X^0 - β is not monic");
 }
 
+// divideExactly as it was before its division was parallel: rapidsnark's divByMonic, then the
+// remainder a_j + β·q_j (j < m); for m <= d < 2m − 1, where divByMonic writes below its buffer,
+// q_j = a_{j+m} by hand. Whether a was divisible; a is then its quotient.
+bool serialDivideExactly(Poly &a, uint64_t m, const FrElement &beta) {
+    const uint64_t d = a.getDegree();
+    if (d < m) {
+        return d == 0 && E.fr.isZero(a.coef[0]);
+    }
+    if (d < 2 * m - 1) {
+        for (uint64_t j = 0; j < m; ++j) {
+            FrElement remainder = a.coef[j];
+            if (j <= d - m) {
+                E.fr.add(remainder, remainder, E.fr.mul(beta, a.coef[j + m]));
+            }
+            if (!E.fr.isZero(remainder)) {
+                return false;
+            }
+        }
+        for (uint64_t j = 0; j <= d - m; ++j) {
+            a.coef[j] = a.coef[j + m];
+        }
+        for (uint64_t j = d - m + 1; j <= d; ++j) {
+            a.coef[j] = E.fr.zero();
+        }
+        a.fixDegree();
+        return true;
+    }
+    const Column low(a.coef, a.coef + m);
+    a.divByMonic(static_cast<uint32_t>(m), beta);
+    for (uint64_t j = 0; j < m; ++j) {
+        if (!E.fr.isZero(E.fr.add(low[j], E.fr.mul(beta, a.coef[j])))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool sameCoefficients(const Poly &a, const Poly &b) {
+    if (a.getLength() != b.getLength() || a.getDegree() != b.getDegree()) {
+        return false;
+    }
+    for (uint64_t j = 0; j < a.getLength(); ++j) {
+        if (!equal(a.coef[j], b.coef[j])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// a = q·(X^m − β) in `extra` more coefficients than it has.
+std::unique_ptr<Poly> multiple(const Column &q, uint64_t m, const FrElement &beta, uint64_t extra) {
+    std::unique_ptr<Poly> a(new Poly(E, q.size() + m + extra));
+    for (uint64_t j = 0; j < q.size(); ++j) {
+        E.fr.add(a->coef[j + m], a->coef[j + m], q[j]);
+        E.fr.sub(a->coef[j], a->coef[j], E.fr.mul(beta, q[j]));
+    }
+    a->fixDegree();
+    return a;
+}
+
+// divideExactly's blocked scan (pilfflonk/docs/performance.md#the-shplonk-division) against the
+// division it replaced (serialDivideExactly) and against rapidsnark's divByMonic, coefficient by
+// coefficient, the length and the degree too, on 1, 2 and 32 threads. For m in {1, 2, 3, 5, 9}, a
+// = q·(X^m − β) with q of 1, m, 2m − 1 and 2m coefficients, of a block, one more and one less, two
+// and three blocks around their boundaries, and 2^20 + 3; q random, all ones, or zero but its top
+// and bottom; β random, 0, 1 or −1. Each a is divided back to q, and a + ρ·X^j, for a j below m and
+// one in the top block, is refused.
+void testParallelDivision() {
+    const int threads = omp_get_max_threads();
+    Random random(6002);
+    const FrElement betas[] = {random.element(), E.fr.zero(), E.fr.one(), E.fr.negOne()};
+    for (uint64_t m : {1, 2, 3, 5, 9}) {
+        const uint64_t block = PilFflonk::divisionBlockLength(m);
+        assert(block % m == 0 && block >= 4096 - m && block <= 4096);
+        const uint64_t lengths[] = {1,         m,         2 * m - 1, 2 * m,     block - 1, block,     block + 1,
+                                    2 * block - 1, 2 * block, 2 * block + 1, 3 * block + m, (uint64_t(1) << 20) + 3};
+        for (uint64_t qLength : lengths) {
+            const bool large = qLength > 4 * block;
+            for (int kind = 0; kind < (large ? 1 : 3); ++kind) {
+                Column q(qLength, E.fr.zero());
+                for (uint64_t j = 0; j < qLength; ++j) {
+                    if (kind == 0) {
+                        q[j] = random.element();
+                    } else if (kind == 1) {
+                        q[j] = E.fr.one();
+                    }
+                }
+                q.front() = kind == 2 ? E.fr.one() : q.front();
+                q.back() = E.fr.isZero(q.back()) || kind == 2 ? E.fr.one() : q.back();
+                for (const FrElement &beta : betas) {
+                    if (large && &beta != &betas[0]) {
+                        continue;
+                    }
+                    const std::unique_ptr<Poly> a = multiple(q, m, beta, 2);
+                    assert(a->getDegree() == qLength - 1 + m);
+
+                    std::unique_ptr<Poly> serial = copyOf(*a, a->getLength());
+                    assert(serialDivideExactly(*serial, m, beta));
+                    assert(serial->getDegree() == qLength - 1);
+                    for (uint64_t j = 0; j < serial->getLength(); ++j) {
+                        assert(equal(serial->coef[j], j < qLength ? q[j] : E.fr.zero()));
+                    }
+                    if (a->getDegree() >= 2 * m - 1) {
+                        std::unique_ptr<Poly> byMonic = copyOf(*a, a->getLength());
+                        byMonic->divByMonic(static_cast<uint32_t>(m), beta);
+                        assert(sameCoefficients(*byMonic, *serial));
+                    }
+
+                    // Not divisible: ρ·X^j, j < m, adds ρ to the remainder; at j in the top block,
+                    // β^((j − j mod m)/m)·ρ·X^(j mod m) (or nothing if β = 0), through every carry.
+                    std::unique_ptr<Poly> low = copyOf(*a, a->getLength());
+                    E.fr.add(low->coef[m - 1], low->coef[m - 1], random.element());
+                    low->fixDegree();
+                    std::unique_ptr<Poly> high = copyOf(*a, a->getLength());
+                    E.fr.add(high->coef[a->getDegree() - 1], high->coef[a->getDegree() - 1], E.fr.one());
+                    high->fixDegree();
+                    const bool highDivisible = E.fr.isZero(beta) && a->getDegree() - 1 >= m;
+                    std::unique_ptr<Poly> highSerial = copyOf(*high, high->getLength());
+                    assert(serialDivideExactly(*highSerial, m, beta) == highDivisible);
+
+                    for (int t : {1, 2, 32}) {
+                        omp_set_num_threads(t);
+                        std::unique_ptr<Poly> parallel = copyOf(*a, a->getLength());
+                        PilFflonk::divideExactly(*parallel, m, beta, "a");
+                        assert(sameCoefficients(*parallel, *serial));
+
+                        std::unique_ptr<Poly> refused = copyOf(*low, low->getLength());
+                        expectThrows<std::logic_error>(
+                            [&] { PilFflonk::divideExactly(*refused, m, beta, "a + ρ"); },
+                            "ShplonkProver: a + ρ is not divisible");
+                        std::unique_ptr<Poly> top = copyOf(*high, high->getLength());
+                        if (highDivisible) {
+                            PilFflonk::divideExactly(*top, m, beta, "a + X^(d−1)");
+                            assert(sameCoefficients(*top, *highSerial));
+                        } else {
+                            expectThrows<std::logic_error>(
+                                [&] { PilFflonk::divideExactly(*top, m, beta, "a + X^(d−1)"); },
+                                "ShplonkProver: a + X^(d−1) is not divisible");
+                        }
+                    }
+                    omp_set_num_threads(threads);
+                }
+            }
+        }
+    }
+
+    // In place, in a buffer it does not own, which it keeps: divByMonic moved to one of its own.
+    const uint64_t m = 3;
+    Column q(2 * PilFflonk::divisionBlockLength(m) + 7);
+    for (FrElement &c : q) {
+        c = random.element();
+    }
+    q.back() = E.fr.one();
+    const FrElement beta = random.element();
+    const std::unique_ptr<Poly> a = multiple(q, m, beta, 0);
+    Column reserved(a->getLength());
+    Poly borrowed(E, reserved.data(), reserved.size());
+    std::copy(a->coef, a->coef + a->getLength(), borrowed.coef);
+    borrowed.fixDegree();
+    PilFflonk::divideExactly(borrowed, m, beta, "a");
+    assert(borrowed.coef == reserved.data() && borrowed.getDegree() == q.size() - 1);
+    for (uint64_t j = 0; j < reserved.size(); ++j) {
+        assert(equal(reserved[j], j < q.size() ? q[j] : E.fr.zero()));
+    }
+}
+
 } // namespace
 
 void runShplonkTests() {
     testDivideExactly();
+    testParallelDivision();
     testOpenings();
     testTamperingBreaksTheIdentity();
     testDeterminism();

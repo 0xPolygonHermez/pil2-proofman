@@ -7,8 +7,6 @@
 #include <string>
 #include <vector>
 
-#include "cpolynomial.hpp"
-
 namespace PilFflonk {
 
 namespace {
@@ -68,26 +66,27 @@ uint64_t pack(Poly *const *polys, uint64_t k, FrElement *packed, uint64_t buffer
                                   " polynomials of up to " + std::to_string(maxLength) + " coefficients need");
     }
 
-    CPolynomial<Engine> cpolynomial(Engine::engine, static_cast<int>(k));
+    // CPolynomial's degree bound, max_j(k·deg p_j + j), which is above deg f if the top
+    // coefficients are zero.
+    std::vector<uint64_t> degrees(k);
+    uint64_t maxDegree = 0;
     for (uint64_t j = 0; j < k; ++j) {
-        cpolynomial.addPolynomial(static_cast<int>(j), polys[j]);
+        degrees[j] = polys[j]->getDegree();
+        maxDegree = std::max(maxDegree, degrees[j] * k + j);
     }
-    const uint64_t maxDegree = cpolynomial.getDegree();
-    if (maxDegree < 2) {
-        // getPolynomial sizes f as 2^(floor(log2(maxDegree - 1)) + 1), undefined below 2: log2(0)
-        // is -inf, and maxDegree - 1 wraps around at 0. f has then at most two coefficients, from a
-        // p_0 of degree at most 1 (k = 1) or from two constants (k = 2).
-        for (uint64_t m = 0; m <= maxDegree; ++m) {
-            packed[m] = polys[m % k]->coef[m / k];
+    // f row by row, a row of k coefficients being a coefficient of every p_j: what
+    // CPolynomial::getPolynomial writes, in one pass of f's coefficients only (it clears a
+    // power-of-two prefix of the buffer first, and scans it for the degree after).
+    const uint64_t n = maxDegree + 1;
+    const FrElement zero = Engine::engine.fr.zero();
+#pragma omp parallel for
+    for (uint64_t row = 0; row < (n + k - 1) / k; ++row) {
+        const uint64_t end = std::min(k, n - row * k);
+        for (uint64_t j = 0; j < end; ++j) {
+            packed[row * k + j] = row <= degrees[j] ? polys[j]->coef[row] : zero;
         }
-        return maxDegree + 1;
     }
-    // getPolynomial writes f to `packed` and returns a polynomial over it, which does not own it.
-    // Its length is the smallest power of two not below maxDegree: one short when maxDegree is a
-    // power of two, whose coefficient is then in `packed` but beyond that polynomial's length and
-    // its getDegree(). Hence the count returned is CPolynomial's degree bound, not that degree.
-    const std::unique_ptr<Poly> wrapper(cpolynomial.getPolynomial(packed));
-    return maxDegree + 1;
+    return n;
 }
 
 G1Point commitPacked(const Srs &srs, Poly *const *polys, uint64_t k) {

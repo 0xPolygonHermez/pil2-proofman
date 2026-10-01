@@ -1,7 +1,6 @@
 #include "pilfflonk_shplonk_prover.hpp"
 
 #include <gmp.h>
-#include <omp.h>
 
 #include <algorithm>
 #include <climits>
@@ -11,7 +10,6 @@
 #include <utility>
 
 #include "pilfflonk_lde.hpp"
-#include "thread_utils.hpp"
 #include "timer.hpp"
 
 namespace PilFflonk {
@@ -107,58 +105,164 @@ std::vector<FrElement> batchInverse(const std::vector<FrElement> &a) {
     return inverses;
 }
 
-bool isZero(const Poly &p) {
-    return p.getDegree() == 0 && Engine::engine.fr.isZero(p.coef[0]);
+// The coefficients of a block of the parallel division (divideInPlace), about: a block is a whole
+// number of rows of m coefficients. The quotients that cost, of millions of coefficients, have
+// thousands of blocks to share among the threads, and the m carries per block cost nothing next to
+// them; a block fits in a core's L2 cache.
+constexpr uint64_t DIVISION_BLOCK = uint64_t(1) << 12;
+
+// The recurrence of the division by X^m − β, q_j = a_{j+m} + β·q_{j+m}, for j from hi − 1 down to
+// lo. Slot s of `q` and `above` holds q_p and a_p for the p with p ≡ s mod m: on entry those of the
+// p in [hi, hi + m), on exit those of the p in [lo, lo + m) (a slot that no j reaches, when
+// hi − lo < m, keeps its entry). With Write, q_j replaces a_j in place, and `above` keeps a_j for
+// q_{j−m}.
+template <bool Write>
+void recurrence(FrElement *a, uint64_t lo, uint64_t hi, uint64_t m, const FrElement &beta, FrElement *q,
+                FrElement *above) {
+    Engine &E = Engine::engine;
+    uint64_t s = (hi - 1) % m;
+    for (uint64_t j = hi; j-- > lo;) {
+        FrElement qj;
+        E.fr.mul(qj, beta, q[s]);
+        E.fr.add(qj, qj, above[s]);
+        above[s] = a[j];
+        q[s] = qj;
+        if (Write) {
+            a[j] = qj;
+        }
+        s = s == 0 ? m - 1 : s - 1;
+    }
+}
+
+// Slot (from + c) mod m of `slots` := a[from + c], for c < m.
+void loadSlots(FrElement *slots, const FrElement *a, uint64_t from, uint64_t m) {
+    for (uint64_t c = 0; c < m; ++c) {
+        slots[(from + c) % m] = a[from + c];
+    }
+}
+
+// a[0, d] := the quotient q of a(X) = Σ_{j<=d} a_j·X^j by X^m − β, for d >= m >= 1, in place:
+// q_j at j <= d − m, zeros at d − m < j <= d. Returns whether the remainder a_j + β·q_j, j < m, is
+// zero (pilfflonk/docs/performance.md#the-shplonk-division).
+//
+// q_j = a_{j+m} + β·q_{j+m} (q_j = 0 for j > d − m) runs down each residue of j mod m. A blocked
+// scan makes it parallel over blocks of q's d − m + 1 coefficients, not only over the m residues: a
+// block [lo, hi) of R·m coefficients (the top one may be shorter) depends on the blocks above it
+// only through its carries, q_p for p in [hi, hi + m), and linearly. From zero carries its
+// recurrence gives some q'_p for p in [lo, lo + m), and from its true carries
+// q_p = q'_p + β^R·q_{p+R·m}, p + R·m being the carry of p's residue. Three passes:
+//   1. every block but the lowest, in parallel: its q'_p from zero carries, and its a_p, p in
+//      [lo, lo + m), which the block below reads in pass 3 after this block overwrote them;
+//   2. the carries, from the top block's (zero) down: m multiplications and additions per block;
+//   3. every block, in parallel: the recurrence from its carries, writing q in place.
+// Twice the work of the serial recurrence, over every thread. The quotient is unique and the
+// arithmetic exact: q is the serial recurrence's, whatever the blocks and the threads.
+bool divideInPlace(FrElement *a, uint64_t d, uint64_t m, const FrElement &beta) {
+    Engine &E = Engine::engine;
+    const uint64_t nq = d - m + 1;
+    const uint64_t blockLength = divisionBlockLength(m);
+    const uint64_t rows = blockLength / m;
+    const uint64_t nBlocks = nq / blockLength + (nq % blockLength != 0);
+    // Block b is [b·blockLength, min(nq, (b + 1)·blockLength)). Its slots: local[b], q' of its lowest
+    // m positions (pass 1); carry[b], q of the m above it (pass 2); above[b], a of those m positions.
+    std::vector<FrElement> local(nBlocks * m, E.fr.zero());
+    std::vector<FrElement> carry(nBlocks * m, E.fr.zero());
+    std::vector<FrElement> above(nBlocks * m);
+    const std::vector<FrElement> low(a, a + m);
+    // Above the top block: a's top m coefficients, which pass 3 does not overwrite.
+    loadSlots(&above[(nBlocks - 1) * m], a, nq, m);
+
+#pragma omp parallel for schedule(static) if (nBlocks > 1)
+    for (uint64_t b = 1; b < nBlocks; ++b) {
+        const uint64_t lo = b * blockLength;
+        const uint64_t hi = std::min(nq, lo + blockLength);
+        // From the a above this block (no block has written yet) to the a of its lowest m.
+        FrElement *belowAbove = &above[(b - 1) * m];
+        loadSlots(belowAbove, a, hi, m);
+        recurrence<false>(a, lo, hi, m, beta, &local[b * m], belowAbove);
+    }
+
+    // The top block's carries are zero, so its own length, short or not, does not matter.
+    const FrElement betaRows = PilFflonk::power(beta, rows);
+    for (uint64_t b = nBlocks - 1; b > 0; --b) {
+        for (uint64_t s = 0; s < m; ++s) {
+            FrElement shifted;
+            E.fr.mul(shifted, betaRows, carry[b * m + s]);
+            E.fr.add(carry[(b - 1) * m + s], local[b * m + s], shifted);
+        }
+    }
+
+#pragma omp parallel for schedule(static) if (nBlocks > 1)
+    for (uint64_t b = 0; b < nBlocks; ++b) {
+        const uint64_t lo = b * blockLength;
+        const uint64_t hi = std::min(nq, lo + blockLength);
+        recurrence<true>(a, lo, hi, m, beta, &carry[b * m], &above[b * m]);
+    }
+
+    for (uint64_t j = nq; j <= d; ++j) {
+        a[j] = E.fr.zero();
+    }
+    // a[j] is q_j, or 0 for j > d − m.
+    for (uint64_t j = 0; j < m; ++j) {
+        FrElement remainder;
+        E.fr.mul(remainder, beta, a[j]);
+        E.fr.add(remainder, remainder, low[j]);
+        if (!E.fr.isZero(remainder)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// divideExactly on the coefficients a[0, d] of a polynomial of degree d, its top nonzero
+// coefficient (0 for the zero polynomial), those above zero: returns the quotient's degree.
+uint64_t divideCoefficients(FrElement *a, uint64_t d, uint64_t m, const FrElement &beta, const std::string &what) {
+    if (m == 0) {
+        throw std::invalid_argument("divideExactly: X^0 - β is not monic of degree at least 1");
+    }
+    if (d < m) {
+        // The quotient is 0 and the remainder a itself.
+        if (d != 0 || !Engine::engine.fr.isZero(a[0])) {
+            throw std::logic_error("ShplonkProver: " + what + " is not divisible");
+        }
+        return 0;
+    }
+    if (!divideInPlace(a, d, m, beta)) {
+        throw std::logic_error("ShplonkProver: " + what + " is not divisible");
+    }
+    // q_{d−m} = a_d, which is not zero.
+    return d - m;
+}
+
+// The degree of the n >= 1 coefficients at a, as Poly::fixDegree finds it: its top nonzero
+// coefficient, or 0.
+uint64_t degreeOf(const FrElement *a, uint64_t n) {
+    uint64_t degree = n - 1;
+    while (degree > 0 && Engine::engine.fr.isZero(a[degree])) {
+        --degree;
+    }
+    return degree;
+}
+
+// out[j] += s·in[j] for j < n.
+void addScaled(FrElement *out, const FrElement *in, uint64_t n, const FrElement &s) {
+    Engine &E = Engine::engine;
+#pragma omp parallel for
+    for (uint64_t j = 0; j < n; ++j) {
+        FrElement term;
+        E.fr.mul(term, s, in[j]);
+        E.fr.add(out[j], out[j], term);
+    }
 }
 
 } // namespace
 
 void divideExactly(Poly &a, uint64_t m, const FrElement &beta, const std::string &what) {
-    Engine &E = Engine::engine;
-    if (m == 0) {
-        throw std::invalid_argument("divideExactly: X^0 - β is not monic of degree at least 1");
-    }
-    const uint64_t d = a.getDegree();
-    if (d < m) {
-        // The quotient is 0 and the remainder a itself.
-        if (!isZero(a)) {
-            throw std::logic_error("ShplonkProver: " + what + " is not divisible");
-        }
-        return;
-    }
-    if (d < 2 * m - 1) {
-        // Here divByMonic writes below its buffer: it stores the m top coefficients of the quotient,
-        // which has only d - m + 1 < m. The quotient is q_j = a_{j+m} for j <= d - m, with no term
-        // β·q_{j+m} (j + m > d - m), and the remainder a_j + β·q_j for j < m.
-        for (uint64_t j = 0; j < m; ++j) {
-            FrElement remainder = a.coef[j];
-            if (j <= d - m) {
-                E.fr.add(remainder, remainder, E.fr.mul(beta, a.coef[j + m]));
-            }
-            if (!E.fr.isZero(remainder)) {
-                throw std::logic_error("ShplonkProver: " + what + " is not divisible");
-            }
-        }
-        // Increasing j reads a_{j+m}, with j + m >= m > d - m, before anything overwrites it.
-        for (uint64_t j = 0; j <= d - m; ++j) {
-            a.coef[j] = a.coef[j + m];
-        }
-        for (uint64_t j = d - m + 1; j <= d; ++j) {
-            a.coef[j] = E.fr.zero();
-        }
-        a.fixDegree();
-        return;
-    }
-    const std::vector<FrElement> low(a.coef, a.coef + m);
-    a.divByMonic(static_cast<uint32_t>(m), beta);
-    for (uint64_t j = 0; j < m; ++j) {
-        FrElement remainder;
-        E.fr.mul(remainder, beta, a.coef[j]);
-        E.fr.add(remainder, remainder, low[j]);
-        if (!E.fr.isZero(remainder)) {
-            throw std::logic_error("ShplonkProver: " + what + " is not divisible");
-        }
-    }
+    a.fixDegreeFrom(divideCoefficients(a.coef, a.getDegree(), m, beta, what));
+}
+
+uint64_t divisionBlockLength(uint64_t m) {
+    return std::max<uint64_t>(1, DIVISION_BLOCK / m) * m;
 }
 
 ShplonkProver::ShplonkProver(ShplonkOpening opening) {
@@ -299,17 +403,14 @@ uint64_t ShplonkProver::workLength() const {
     return length;
 }
 
-std::unique_ptr<Poly> ShplonkProver::packed(uint64_t i, uint64_t length, FrElement *scratch) const {
+uint64_t ShplonkProver::packed(uint64_t i, FrElement *out) const {
     const Entry &f = fs[i];
     const uint64_t k = f.components.size();
-    const uint64_t n = pack(f.components.data(), k, scratch, packedBufferLength(k, f.maxComponentLength));
+    const uint64_t n = pack(f.components.data(), k, out, packedBufferLength(k, f.maxComponentLength));
     if (n != f.nCoefs) {
         throw std::logic_error("ShplonkProver: the components of " + name(i) + " changed after it was built");
     }
-    std::unique_ptr<Poly> p(new Poly(Engine::engine, length));
-    ThreadUtils::parcpy(p->coef, scratch, n * sizeof(FrElement), omp_get_max_threads());
-    p->fixDegree();
-    return p;
+    return n;
 }
 
 ShplonkProver::Interpolants ShplonkProver::interpolants() const {
@@ -366,25 +467,31 @@ std::unique_ptr<Poly> ShplonkProver::quotientW(const Interpolants &r, const FrEl
         }
     }
 
-    const std::unique_ptr<FrElement[]> scratch(new FrElement[scratchLength()]);
-    // Every term fits in it, so add() never has to grow W (which it does without updating W's
-    // length).
-    std::unique_ptr<Poly> W(new Poly(E, workLength()));
+    // W, and one buffer for every f_i - r_i in turn, packed into it (pack() needs scratchLength()
+    // elements) and divided in place: no polynomial is allocated or copied per f_i.
+    const uint64_t length = workLength();
+    std::unique_ptr<Poly> W(new Poly(E, length));
+    const std::unique_ptr<FrElement[]> term(new FrElement[std::max(scratchLength(), length)]);
     FrElement alphaPower = E.fr.one();
     for (uint64_t i = 0; i < fs.size(); ++i) {
         const Entry &f = fs[i];
         const uint64_t k = f.components.size();
-        // At least |T_i| coefficients: sub() writes as many as the longer operand has.
-        std::unique_ptr<Poly> term = packed(i, std::max<uint64_t>(f.nCoefs, f.roots.size()), scratch.get());
-        term->sub(*r[i]);
+        // f_i - r_i in max(nCoefs(i), |T_i|) coefficients, as r_i has up to |T_i| (checked above).
+        const uint64_t nCoefs = packed(i, term.get());
+        const uint64_t n = std::max<uint64_t>(nCoefs, f.roots.size());
+        std::fill(term.get() + nCoefs, term.get() + n, E.fr.zero());
+        for (uint64_t j = 0; j < r[i]->getLength(); ++j) {
+            E.fr.sub(term[j], term[j], r[i]->coef[j]);
+        }
+        uint64_t degree = degreeOf(term.get(), n);
         // Z_{T_i}(X) = Π_{s in O_i} (X^k - ξ·ω_N^s): the roots of offset s are those of X^k - ξ·ω_N^s.
         for (const FrElement &point : f.points) {
-            divideExactly(*term, k, point, name(i) + " - r_i");
+            degree = divideCoefficients(term.get(), degree, k, point, name(i) + " - r_i");
         }
-        term->mulScalar(alphaPower);
-        W->add(*term);
+        addScaled(W->coef, term.get(), degree + 1, alphaPower);
         E.fr.mul(alphaPower, alphaPower, alpha);
     }
+    W->fixDegree();
     if (W->getDegree() >= wLength) {
         throw std::logic_error("ShplonkProver: W has degree " + std::to_string(W->getDegree()) + ", not below " +
                                std::to_string(wLength));
@@ -435,7 +542,7 @@ std::unique_ptr<Poly> ShplonkProver::quotientWp(const Interpolants &r, const FrE
         E.fr.mul(scale, scale, ziInverse[i]);
     }
 
-    // L starts as -(Z_T(y)/Z_{T∖T_0}(y))·W, as long as every term, so that add() never grows it.
+    // L starts as -(Z_T(y)/Z_{T∖T_0}(y))·W, as long as every term.
     const FrElement wScale = E.fr.neg(E.fr.mul(zT, scale));
     std::unique_ptr<Poly> L(new Poly(E, length));
     const uint64_t wCoefs = W.getDegree() + 1;
@@ -443,24 +550,23 @@ std::unique_ptr<Poly> ShplonkProver::quotientWp(const Interpolants &r, const FrE
     for (uint64_t m = 0; m < wCoefs; ++m) {
         E.fr.mul(L->coef[m], wScale, W.coef[m]);
     }
-    L->fixDegree();
 
+    // Each f_i is packed into the same buffer and added to L from there.
     const std::unique_ptr<FrElement[]> scratch(new FrElement[scratchLength()]);
     uint64_t maxCoefs = 1;
     FrElement alphaPower = E.fr.one();
     for (uint64_t i = 0; i < fs.size(); ++i) {
         const Entry &f = fs[i];
         maxCoefs = std::max(maxCoefs, f.nCoefs);
-        std::unique_ptr<Poly> term = packed(i, f.nCoefs, scratch.get());
-        FrElement ry = r[i]->evaluate(y);
-        term->subScalar(ry);
-        FrElement factor = E.fr.mul(E.fr.mul(alphaPower, zT), E.fr.mul(ziInverse[i], scale));
-        term->mulScalar(factor);
-        L->add(*term);
+        const uint64_t n = packed(i, scratch.get());
+        E.fr.sub(scratch[0], scratch[0], r[i]->evaluate(y));
+        const FrElement factor = E.fr.mul(E.fr.mul(alphaPower, zT), E.fr.mul(ziInverse[i], scale));
+        addScaled(L->coef, scratch.get(), n, factor);
         E.fr.mul(alphaPower, alphaPower, alpha);
     }
+    L->fixDegree();
 
-    // W' = L/(Z_{T∖T_0}(y)·(X - y)): divByMonic(1, y) in place of pil-fflonk's divByXSubValue.
+    // W' = L/(Z_{T∖T_0}(y)·(X - y)): divideExactly(1, y) in place of pil-fflonk's divByXSubValue.
     divideExactly(*L, 1, y, "L");
     // deg L <= max_i deg f_i, so W' has at most max_i nCoefs(i) - 1 coefficients.
     const uint64_t wpLength = std::max<uint64_t>(1, maxCoefs - 1);

@@ -1417,6 +1417,58 @@ fn the_prover_agrees_with_the_oracle_on_signed_offsets() {
     }
 }
 
+/// `prove` and `check` read the witness directory while the C++ core loads the key
+/// (pilfflonk/docs/performance.md#the-start-of-a-proof), and refuse what they refused when they read
+/// it after the key, in the same order: a key the C++ core does not load, whatever the witness; then
+/// a witness directory without its trace; then a trace with a value not below r. Nothing is written.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn the_witness_read_with_the_key_is_refused_after_it() {
+    let f = fixture("read_ahead", Program::Fibonacci, DEFAULT);
+    let copy = |name: &str| {
+        let dir = f.dir.file(name);
+        fs::create_dir_all(&dir).unwrap();
+        for entry in fs::read_dir(&f.witness).unwrap() {
+            let entry = entry.unwrap();
+            fs::copy(entry.path(), dir.join(entry.file_name())).unwrap();
+        }
+        dir
+    };
+    let trace = "instance_0_0_0.bin";
+    let no_trace = copy("no_trace");
+    fs::remove_file(no_trace.join(trace)).unwrap();
+    let r_in_trace = copy("r_in_trace");
+    let mut bytes = fs::read(r_in_trace.join(trace)).unwrap();
+    let r = num_bigint::BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap().to_bytes_le();
+    bytes[..r.len()].copy_from_slice(&r);
+    fs::write(r_in_trace.join(trace), bytes).unwrap();
+    let check = |witness: &Path| {
+        cli(&["pilfflonk", "check", "-k", f.proving_key.to_str().unwrap(), "--witness", witness.to_str().unwrap()], &[])
+    };
+    let refuses = |witness: &Path, message: &str| {
+        let out = f.dir.file("proof");
+        let run = prove_cli(&f.proving_key, witness, &out, Some(SEED_A));
+        assert!(!run.status.success() && output(&run).contains(message), "{}", output(&run));
+        assert!(!out.join("proof.json").exists());
+        let run = check(witness);
+        assert!(!run.status.success() && output(&run).contains(message), "{}", output(&run));
+    };
+    refuses(&no_trace, &format!("{}", no_trace.join(trace).display()));
+    refuses(&r_in_trace, "the value of row 0, column 0 is not below r");
+
+    // A .const cut short: the key's error, before the witness's.
+    let global_info = PilfflonkGlobalInfo::from_proving_key(&f.proving_key).unwrap();
+    let constants = global_info.air_file(&f.proving_key, 0, 0, AirFile::Const).unwrap();
+    let mut short = fs::read(&constants).unwrap();
+    short.truncate(short.len() - 32);
+    fs::write(&constants, short).unwrap();
+    for witness in [&f.witness, &no_trace, &r_in_trace] {
+        refuses(witness, "loading the provingKey/ into the C++ prover");
+        let run = prove_cli(&f.proving_key, witness, &f.dir.file("proof"), Some(SEED_A));
+        assert!(!output(&run).contains(trace), "{}", output(&run));
+    }
+}
+
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_prover_refuses_a_proving_key_whose_files_disagree() {

@@ -1,7 +1,7 @@
 use clap::Args;
 use colored::Colorize;
 use proofman_common::initialize_logger;
-use proofman_pilfflonk::{check, CheckOptions, CheckReport, ProvingKey, DEFAULT_MAX_ROWS};
+use proofman_pilfflonk::{check, CheckOptions, CheckReport, Device, DEFAULT_MAX_ROWS};
 use std::path::PathBuf;
 
 use super::PilfflonkWitnessArgs;
@@ -35,8 +35,7 @@ impl PilfflonkCheckCmd {
 
         initialize_logger(self.verbose.into(), None);
 
-        let pk = ProvingKey::load(&self.proving_key)?;
-        let witness = self.witness.open(&pk, self.verbose)?;
+        let (pk, witness) = self.witness.load_with_key(&self.proving_key, Device::Cpu, self.verbose)?;
         let report = check(&pk, &witness, &CheckOptions { max_rows: self.max_rows })?;
         log_report(&report);
         if report.holds() {

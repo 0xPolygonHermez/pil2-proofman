@@ -66,6 +66,7 @@ use crate::global_info::{PilfflonkGlobalInfo, MAX_NBITS};
 use crate::json::JsonFile;
 use crate::pilfflonk_info::PilfflonkInfo;
 use crate::proof::{Publics, PUBLICS_FILE};
+use crate::prover::timed;
 
 /// The file name of the instances.
 pub const INSTANCES_FILE: &str = "instances.json";
@@ -643,9 +644,11 @@ impl WitnessSource for FileWitnessSource {
         let Some(file) = self.instances.get(instance) else {
             return invalid!("the witness has {} instances, and no instance {instance}", self.instances.len());
         };
-        let trace = fs::read(&file.path).map_err(|source| io_error(&file.path, source))?;
-        Stage1Witness::new(file.n_rows, file.n_cols, trace, file.entry.air_values.clone())
-            .map_err(|e| e.in_file(&file.path))
+        timed("PILFFLONK_WITNESS_READ", || {
+            let trace = fs::read(&file.path).map_err(|source| io_error(&file.path, source))?;
+            Stage1Witness::new(file.n_rows, file.n_cols, trace, file.entry.air_values.clone())
+                .map_err(|e| e.in_file(&file.path))
+        })
     }
 
     fn publics(&self) -> PilfflonkResult<Vec<FrBytes>> {

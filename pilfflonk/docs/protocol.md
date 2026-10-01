@@ -369,7 +369,7 @@ the transcript object, and computes. The steps follow the [transcript](#transcri
      [hint columns](#hint-columns) with the stage's challenges;
    - at the last stage, computes the im pols too, after the hint columns;
    - interpolates each column (`Polynomial::fromEvaluations`, with room for its blinding), adds the
-     [blinding](#blinding) in coefficient form, packs each `f_i` (`CPolynomial`) and commits it
+     [blinding](#blinding) in coefficient form, packs each `f_i` (as `CPolynomial` does) and commits it
      ([Commitments](#commitments)).
 
    Rust absorbs the commitments and squeezes the next stage's challenges. The transcript is one per
@@ -385,7 +385,9 @@ the transcript object, and computes. The steps follow the [transcript](#transcri
 5. **Opening.** One SHPLONK opening of every `f_i` in the global order: `pilfflonk_open` squeezes
    `α_S`, computes `W` and absorbs `[W]₁`, squeezes `y`, and computes `W'`, `inv` and `invZh`. It is
    pil-fflonk's `ShPlonkProver` orchestration, generalised to signed offsets and several instances, on
-   rapidsnark's `Polynomial` (`divByMonic(1, β)` in place of `divByXSubValue`) and `CPolynomial`.
+   rapidsnark's `Polynomial`, with a division by `X^m − β` of its own
+   ([performance.md#the-shplonk-division](performance.md#the-shplonk-division)) in place of
+   `divByXSubValue` and `divByMonic`.
 6. **Output.** Rust writes `proof.json` and `publics.json` ([formats.md#proof](formats.md#proof)).
 
 `Q` has a coefficient beyond its bound exactly when some constraint fails on some row: the prover

@@ -43,6 +43,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use proofman_starks_lib_c::{
     pilfflonk_gpu_available_c, PilFflonkError, PilFflonkErrorKind, PilFflonkInstance, PilFflonkInstanceInputs,
@@ -103,44 +104,10 @@ impl ProvingKey {
     /// [`load`](Self::load), with the MSMs and the NTTs of the key (the fixed columns' INTT and the
     /// commitments it checks) and of its proofs on `device`. On [`Device::Gpu`] the proofs are those
     /// of the CPU, bit for bit; without a GPU ([`gpu_available`]) it is refused before any file of
-    /// the C++ core is read, saying why.
+    /// the C++ core is read, saying why. [`ProvingKeyFiles::read`] and then
+    /// [`ProvingKeyFiles::load_on`].
     pub fn load_on(dir: &Path, device: Device) -> PilfflonkResult<Self> {
-        let global_info = PilfflonkGlobalInfo::from_proving_key(dir)?;
-        let vkey_path = global_info.vkey_path(dir);
-        let vkey = Vkey::read(&vkey_path)?;
-        vkey.check_digest().map_err(|e| e.in_file(&vkey_path))?;
-        let mut airs = Vec::new();
-        for (airgroup_id, group) in global_info.airs.iter().enumerate() {
-            for air_id in 0..group.len() {
-                let path = global_info.air_file(dir, airgroup_id as u64, air_id as u64, AirFile::PilfflonkInfo)?;
-                airs.push(PilfflonkInfo::read(&path)?);
-            }
-        }
-        let [info] = airs.as_slice() else {
-            return invalid!(
-                "the provingKey/ has {} AIRs, and a pilfflonk proof holds one instance of one AIR \
-                 (pilfflonk/docs/README.md#scope)",
-                airs.len()
-            );
-        };
-        check_vkey(&vkey, info, &global_info).map_err(|e| e.in_file(&vkey_path))?;
-
-        let ctx =
-            PilFflonkProverCtx::load_on(dir, device).map_err(native("loading the provingKey/ into the C++ prover"))?;
-        let degrees = info.degrees()?;
-        let n_bits_ext = ctx
-            .n_bits_ext(info.airgroup_id, info.air_id)
-            .map_err(native("reading the C++ prover's extended domain"))?;
-        if n_bits_ext != degrees.n_bits_ext {
-            return invalid!(
-                "the C++ prover extends {} to 2^{n_bits_ext} points, and this crate to 2^{} \
-                 (proofman_pilfflonk::degrees, pilfflonk/docs/protocol.md#degrees)",
-                info.name,
-                degrees.n_bits_ext
-            );
-        }
-        check_srs_and_fixed(&ctx, &vkey, info, &global_info, dir)?;
-        Ok(Self { dir: dir.to_path_buf(), global_info, vkey, airs, ctx })
+        ProvingKeyFiles::read(dir)?.load_on(device)
     }
 
     pub fn dir(&self) -> &Path {
@@ -165,14 +132,104 @@ impl ProvingKey {
 
     /// The shape of the witness of a proof of this key, to open a witness directory with.
     pub fn witness_shape(&self) -> PilfflonkResult<WitnessShape> {
-        let infos: Vec<&PilfflonkInfo> = self.airs.iter().collect();
-        WitnessShape::from_proving_key(&self.global_info, &infos)
+        witness_shape(&self.global_info, &self.airs)
     }
 
     /// The C++ core's key.
     pub(crate) fn ctx(&self) -> &PilFflonkProverCtx {
         &self.ctx
     }
+}
+
+fn witness_shape(global_info: &PilfflonkGlobalInfo, airs: &[PilfflonkInfo]) -> PilfflonkResult<WitnessShape> {
+    let infos: Vec<&PilfflonkInfo> = airs.iter().collect();
+    WitnessShape::from_proving_key(global_info, &infos)
+}
+
+/// The files of a `provingKey/` that this crate reads, read and checked: the first half of
+/// [`ProvingKey::load_on`], before the C++ core loads the rest (the SRS, the bytecode, the fixed
+/// columns). They give the witness's shape, so that the witness can be read while the C++ core
+/// loads (pilfflonk/docs/performance.md#the-start-of-a-proof).
+#[derive(Debug)]
+pub struct ProvingKeyFiles {
+    dir: PathBuf,
+    global_info: PilfflonkGlobalInfo,
+    vkey: Vkey,
+    /// Every AIR of the globalInfo, in canonical order: one.
+    airs: Vec<PilfflonkInfo>,
+}
+
+impl ProvingKeyFiles {
+    /// Reads the globalInfo, the vkey and each AIR's pilfflonkinfo of the `provingKey/` at `dir`,
+    /// and refuses what [`ProvingKey::load`] refuses of them: a vkey whose digest is not that of its
+    /// contents, other than one AIR, and a vkey and a pilfflonkinfo that do not describe the same
+    /// AIR.
+    pub fn read(dir: &Path) -> PilfflonkResult<Self> {
+        timed("PILFFLONK_KEY_FILES", || {
+            let global_info = PilfflonkGlobalInfo::from_proving_key(dir)?;
+            let vkey_path = global_info.vkey_path(dir);
+            let vkey = Vkey::read(&vkey_path)?;
+            vkey.check_digest().map_err(|e| e.in_file(&vkey_path))?;
+            let mut airs = Vec::new();
+            for (airgroup_id, group) in global_info.airs.iter().enumerate() {
+                for air_id in 0..group.len() {
+                    let path = global_info.air_file(dir, airgroup_id as u64, air_id as u64, AirFile::PilfflonkInfo)?;
+                    airs.push(PilfflonkInfo::read(&path)?);
+                }
+            }
+            let [info] = airs.as_slice() else {
+                return invalid!(
+                    "the provingKey/ has {} AIRs, and a pilfflonk proof holds one instance of one AIR \
+                     (pilfflonk/docs/README.md#scope)",
+                    airs.len()
+                );
+            };
+            check_vkey(&vkey, info, &global_info).map_err(|e| e.in_file(&vkey_path))?;
+            Ok(Self { dir: dir.to_path_buf(), global_info, vkey, airs })
+        })
+    }
+
+    /// The shape of the witness of a proof of this key, as [`ProvingKey::witness_shape`].
+    pub fn witness_shape(&self) -> PilfflonkResult<WitnessShape> {
+        witness_shape(&self.global_info, &self.airs)
+    }
+
+    /// The second half of [`ProvingKey::load_on`]: the C++ core loads the key on `device`, and its
+    /// degrees, its SRS and the commitments of its fixed columns are checked against these files.
+    pub fn load_on(self, device: Device) -> PilfflonkResult<ProvingKey> {
+        let Self { dir, global_info, vkey, airs } = self;
+        let [info] = airs.as_slice() else {
+            return invalid!("the provingKey/ has {} AIRs, and read() accepts one", airs.len());
+        };
+        let ctx =
+            PilFflonkProverCtx::load_on(&dir, device).map_err(native("loading the provingKey/ into the C++ prover"))?;
+        let degrees = info.degrees()?;
+        let n_bits_ext = ctx
+            .n_bits_ext(info.airgroup_id, info.air_id)
+            .map_err(native("reading the C++ prover's extended domain"))?;
+        if n_bits_ext != degrees.n_bits_ext {
+            return invalid!(
+                "the C++ prover extends {} to 2^{n_bits_ext} points, and this crate to 2^{} \
+                 (proofman_pilfflonk::degrees, pilfflonk/docs/protocol.md#degrees)",
+                info.name,
+                degrees.n_bits_ext
+            );
+        }
+        check_srs_and_fixed(&ctx, &vkey, info, &global_info, &dir)?;
+        Ok(ProvingKey { dir, global_info, vkey, airs, ctx })
+    }
+}
+
+/// Runs `f` between the two lines the C++ core's timers log at -vv (TimerStart and
+/// TimerStopAndLog, pil2-stark/src/utils/timer.hpp), at trace level: `--> NAME starting...` and
+/// `<-- NAME done: <seconds> s`, so that the phases of the Rust side read as the C++ ones
+/// (pilfflonk/docs/performance.md#method).
+pub(crate) fn timed<T>(name: &str, f: impl FnOnce() -> T) -> T {
+    tracing::trace!("--> {name} starting...");
+    let start = Instant::now();
+    let result = f();
+    tracing::trace!("<-- {name} done: {:.6} s", start.elapsed().as_secs_f64());
+    result
 }
 
 /// The one instance of a witness (pilfflonk/docs/README.md#scope), read: what its C++ instance is
@@ -339,9 +396,11 @@ impl ProofOutput {
 
     /// Writes `proof.json` and `publics.json` to `dir`, which is created if it does not exist.
     pub fn write(&self, dir: &Path) -> PilfflonkResult<()> {
-        fs::create_dir_all(dir).map_err(|source| PilfflonkError::Io { path: dir.to_path_buf(), source })?;
-        self.proof_json()?.write(&dir.join(PROOF_FILE))?;
-        self.publics.write(&dir.join(PUBLICS_FILE))
+        timed("PILFFLONK_WRITE_PROOF", || {
+            fs::create_dir_all(dir).map_err(|source| PilfflonkError::Io { path: dir.to_path_buf(), source })?;
+            self.proof_json()?.write(&dir.join(PROOF_FILE))?;
+            self.publics.write(&dir.join(PUBLICS_FILE))
+        })
     }
 }
 

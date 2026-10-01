@@ -52,6 +52,32 @@ fn q() -> &'static BigUint {
     modulus(&Q, BN254_Q)
 }
 
+fn modulus_le(cell: &'static OnceLock<[u8; FIELD_BYTES]>, modulus: &BigUint) -> &'static [u8; FIELD_BYTES] {
+    cell.get_or_init(|| to_le_array(modulus).unwrap_or_default())
+}
+
+/// `r` as 32 little-endian bytes, to compare scalars with ([`is_below`]).
+fn r_le() -> &'static [u8; FIELD_BYTES] {
+    static R_LE: OnceLock<[u8; FIELD_BYTES]> = OnceLock::new();
+    modulus_le(&R_LE, r())
+}
+
+fn q_le() -> &'static [u8; FIELD_BYTES] {
+    static Q_LE: OnceLock<[u8; FIELD_BYTES]> = OnceLock::new();
+    modulus_le(&Q_LE, q())
+}
+
+/// Whether the little-endian integer `bytes` is below `modulus`, as two 128-bit halves, the high
+/// one first: a witness has millions of values to check, which a `BigUint` each would allocate.
+fn is_below(bytes: &[u8; FIELD_BYTES], modulus: &[u8; FIELD_BYTES]) -> bool {
+    let halves = |b: &[u8; FIELD_BYTES]| {
+        let (low, high) = b.split_at(FIELD_BYTES / 2);
+        let half = |h: &[u8]| u128::from_le_bytes(h.try_into().unwrap_or_default());
+        (half(high), half(low))
+    };
+    halves(bytes) < halves(modulus)
+}
+
 /// The integer a decimal string spells, if it is in canonical form: digits only, and no leading
 /// zero unless the number is 0.
 pub(crate) fn parse_canonical_decimal(s: &str) -> Option<BigUint> {
@@ -79,7 +105,7 @@ fn reversed(mut bytes: [u8; FIELD_BYTES]) -> [u8; FIELD_BYTES] {
 }
 
 macro_rules! field_element {
-    ($(#[$doc:meta])* $name:ident, $modulus:ident, $modulus_name:literal) => {
+    ($(#[$doc:meta])* $name:ident, $modulus:ident, $modulus_le:ident, $modulus_name:literal) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
         pub struct $name([u8; FIELD_BYTES]);
@@ -90,7 +116,7 @@ macro_rules! field_element {
             /// From its canonical little-endian bytes, the C API's form
             /// (pilfflonk/docs/README.md#c-api).
             pub fn from_le_bytes(bytes: [u8; FIELD_BYTES]) -> PilfflonkResult<Self> {
-                if BigUint::from_bytes_le(&bytes) < *$modulus() {
+                if is_below(&bytes, $modulus_le()) {
                     Ok(Self(bytes))
                 } else {
                     invalid!(concat!("a ", stringify!($name), " must be below ", $modulus_name, ", and these bytes are not"))
@@ -170,6 +196,7 @@ field_element!(
     /// The C API's `FrBytes` (pilfflonk/docs/README.md#c-api).
     FrBytes,
     r,
+    r_le,
     "r"
 );
 
@@ -193,6 +220,7 @@ field_element!(
     /// A canonical element of `Fq` (`< q`): a coordinate of a point.
     FqBytes,
     q,
+    q_le,
     "q"
 );
 
@@ -422,6 +450,31 @@ mod tests {
         assert!(FrBytes::from_le_bytes(r_le).is_err());
         assert!(FrBytes::from_be_bytes(reversed(r_le)).is_err());
         assert!(FrBytes::from_le_bytes([0xff; 32]).is_err());
+    }
+
+    /// The comparison by halves agrees with `BigUint`'s around both moduli: in each byte, one below
+    /// and one above them, and with the low half or the high half alone at its extremes.
+    #[test]
+    fn the_range_check_is_the_integer_comparison() {
+        for (modulus, bytes) in [(r(), r_le()), (q(), q_le())] {
+            assert_eq!(BigUint::from_bytes_le(bytes), *modulus);
+            let mut values = vec![*bytes, [0; 32], [0xff; 32]];
+            for i in 0..FIELD_BYTES {
+                for delta in [-1i16, 1] {
+                    let mut v = *bytes;
+                    v[i] = (i16::from(v[i]) + delta).rem_euclid(256) as u8;
+                    values.push(v);
+                }
+            }
+            let mut low_only = [0u8; 32];
+            low_only[..16].copy_from_slice(&[0xff; 16]);
+            let mut high_only = [0u8; 32];
+            high_only[16..].copy_from_slice(&bytes[16..]);
+            values.extend([low_only, high_only]);
+            for v in values {
+                assert_eq!(is_below(&v, bytes), BigUint::from_bytes_le(&v) < *modulus, "{v:?}");
+            }
+        }
     }
 
     #[test]

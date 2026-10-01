@@ -23,10 +23,19 @@ speed-up. Every proof in these measurements verifies.
   (`STAGE_<s>`: `HINT_COLUMNS_<s>`, `IM_POLS_<s>`, and per `f` `INTT_<f>` and `COMMIT_<f>`, its MSM), `Q`
   (`Q_EXTEND`, `Q_DOMAIN`, `Q_EVALUATE`, `Q_INTERPOLATE`, `Q_COMMIT`), `EVALUATIONS` and the opening
   (`OPEN`: `SHPLONK_W`, `SHPLONK_COMMIT_W`, `SHPLONK_WP`, `SHPLONK_COMMIT_WP`). They cost nothing
-  measurable. The memory of a phase is the peak `VmRSS`, sampled every 0.2 s.
+  measurable. The Rust side logs its own the same way: `KEY_FILES` (the globalInfo, the vkey and the
+  pilfflonkinfo), `WITNESS_READ` (a witness directory's trace and its range check, read while the key
+  loads: [the start of a proof](#the-start-of-a-proof)) and `WRITE_PROOF`; with `--gpu`, `GPU_INIT`
+  is what is left of CUDA's initialisation. The memory of a phase is the peak `VmRSS`, sampled every
+  0.2 s.
 - **Repetitions.** Three runs of each setup and proof (two at some points); the tables give medians.
 
 ### CPU results
+
+Measured before [the parallel SHPLONK division](#the-shplonk-division) and
+[the overlapped start of a proof](#the-start-of-a-proof), which make `all_sum` and `all_prod` at
+`2^18`, and every program from `2^20` on, 12–24 % faster on 32 threads: the times of the proofs are
+higher than today's.
 
 | Program | N | Layout | Setup (s) | Setup (GB) | Prove (s) | Prove (GB) | Verify (s) | Proof (bytes) |
 |---|---|---|---|---|---|---|---|---|
@@ -58,12 +67,17 @@ speed-up. Every proof in these measurements verifies.
 
 - MSMs, 36–38 % (up to 50 % unpacked): about 6 million points per second. ffiasm keeps 2^16 buckets of
   96 bytes per thread, 1.6 GB with 256 threads, nearly all the memory of a proof up to `2^18`.
-- `W` and `W'`, 16–18 %: a sequential `divByMonic` per `f` and offset, the packing and the sums.
-- Loading the key, 16–18 %: the SRS, the `.const`, the INTT of the fixed columns and, mostly,
+- `W` and `W'`, 16–18 %: a sequential `divByMonic` per `f` and offset, the packing and the sums. Now
+  parallel: `W` 6–13 times faster from `2^18` on, `W'` about 6 times
+  ([The SHPLONK division](#the-shplonk-division)).
+- Loading the key, 16–18 %: the SRS, the `.const` (both read by one thread then, the `.const` a byte
+  at a time: [The start of a proof](#the-start-of-a-proof)), the INTT of the fixed columns and, mostly,
   recomputing the fixed commitments on every proof (3.2 s at `fibonacci` `2^24`).
 - `Q`, 20 %: the LDE of its columns, zeroing buffers, the domain and the MSM; the bytecode itself takes
   0.3–0.5 s.
-- The witness, 5–9 %: reading 1–2 GB and checking each value three times.
+- The witness, 5–9 %: reading 1–2 GB and checking each value three times. Now read while the key
+  loads, and checked in Rust without a `BigUint` per value
+  ([The start of a proof](#the-start-of-a-proof)).
 
 **Threads.** With `OMP_NUM_THREADS=64`, small and medium proofs are 2 to 7 times faster and use 4 times
 less memory, as the MSM pays fewer regions and buckets (`fibonacci` `2^10`: 1.38 s → 0.18 s); at `2^22`
@@ -91,12 +105,87 @@ committed polynomials. One coset of `H` at a time:
 The memory of `Q` drops 40 % for `all_sum` and 15 % for the `fibonacci`, and `Q` is no longer the
 proof's peak.
 
+### The SHPLONK division
+
+`W` divides each `f_i − r_i` by `X^k − ξ·ω^s` once per offset `s`, and `W'` divides `L` by `X − y`
+([protocol.md#shplonk-opening](protocol.md#shplonk-opening)). rapidsnark's `divByMonic` runs the
+recurrence `q_j = a_{j+m} + β·q_{j+m}` of the quotient by `X^m − β` on `m` threads, one per residue of
+`j` mod `m`: on one thread for `W'` and for every `f` of `k = 1`. `PilFflonk::divideExactly` runs it
+as a blocked scan, over blocks of about `2^12` coefficients of the quotient, a whole number `R` of rows
+of `m`:
+
+1. every block but the lowest, in parallel, from zero carries: the lowest `m` coefficients it gives,
+   and the lowest `m` coefficients of the dividend it is about to overwrite;
+2. the true carries, from the top block down, `m` multiplications per block: from zero carries to the
+   true ones, a block's lowest coefficients move by `β^R` times the carries above it;
+3. every block again, in parallel, from its true carries, in place.
+
+It is twice the serial work, on every thread, in place (`divByMonic` clears a second polynomial), and
+it gives the serial quotient: the quotient is unique and the arithmetic exact. The remainder is checked
+as before. `W` and `W'` also pack each `f_i` into one buffer, where `W` divides it, instead of
+allocating, clearing and copying a polynomial per `f_i`; and `pack()` interleaves `f` as
+`CPolynomial` does in one parallel pass over its coefficients, without clearing a power-of-two buffer
+and scanning it for the degree, which every commitment gains from too. On the CPU, 32 threads
+(`OMP_NUM_THREADS=32 taskset -c 0-31` on the 256-thread machine), packed keys, the median of three
+proofs, before → after, in seconds; every proof the same, byte for byte:
+
+| Program | N | `W` | `W'` | Opening |
+|---|---|---|---|---|
+| `fibonacci` | 2^18 | 0.093 → 0.014 | 0.030 → 0.005 | 0.55 → 0.43 |
+| `fibonacci` | 2^20 | 0.478 → 0.038 | 0.158 → 0.027 | 1.68 → 1.11 |
+| `fibonacci` | 2^22 | 1.680 → 0.150 | 0.615 → 0.097 | 5.41 → 3.37 |
+| `all_sum` | 2^18 | 0.349 → 0.053 | 0.192 → 0.033 | 1.66 → 1.20 |
+| `all_sum` | 2^20 | 1.627 → 0.164 | 0.773 → 0.118 | 5.78 → 3.68 |
+| `all_prod` | 2^18 | 0.408 → 0.050 | 0.179 → 0.032 | 1.59 → 1.09 |
+
+What is left of the opening is the MSMs of `[W]₁` and `[W']₁`.
+
+### The start of a proof
+
+Before stage 1 the prover loads the key and reads the witness. Both were sequential, and the files were
+read by one thread:
+
+- **The SRS and the `.const`** are read by every thread, a chunk of 8 MiB each (one `pread` of the
+  whole section before, and the `.const` a byte at a time through `std::istreambuf_iterator`).
+- **The witness directory** is read while the C++ core loads the key
+  (`PilfflonkWitnessArgs::load_with_key` in the CLI, for `prove` and `check`): the Rust side reads the
+  key's own files first (`ProvingKeyFiles`), which give the witness's shape, and a thread opens the
+  directory and reads the trace (`WITNESS_READ`) meanwhile. The errors are those of before, in the order of before: the key's,
+  then the witness's. A witness library still runs after the key.
+- **The range check** of the trace in Rust compares two 128-bit halves with `r`, where it allocated a
+  `BigUint` per value: 0.7 s for the 16.8 million values of `all_sum` at `2^20`, a few tens of ms now.
+- **CUDA** (`--gpu`): a thread calls `pilfflonk_gpu_available` before any file is read, so that
+  CUDA's initialisation, sppark's device list and its streams, runs while the key's files and the
+  witness are read; the C++ core's first call (`GPU_INIT`) waits only for what is left. `--gpu` is
+  still refused before the SRS is read.
+
+The start is from the first line of the log to stage 1; the witness, from "Reading the witness" to
+stage 1, the instance included (and, before, the read and its check); `WITNESS_READ`, the read, in
+parallel with the key. As above:
+
+| Program | N | Start | `LOAD_SRS` | `LOAD_AIRS` | Witness | `WITNESS_READ` | Proof |
+|---|---|---|---|---|---|---|---|
+| `fibonacci` | 2^20 | 1.51 → 1.01 | 0.101 → 0.059 | 0.361 → 0.087 | 0.167 → 0.049 | 0.049 | 5.28 → 4.04 |
+| `fibonacci` | 2^22 | 3.57 → 2.26 | 0.348 → 0.097 | 1.061 → 0.373 | 0.645 → 0.192 | 0.201 | 15.18 → 11.95 |
+| `all_sum` | 2^18 | 2.08 → 1.21 | 0.114 → 0.051 | 0.474 → 0.113 | 0.357 → 0.101 | 0.094 | 6.55 → 5.17 |
+| `all_sum` | 2^20 | 5.41 → 2.80 | 0.377 → 0.108 | 1.512 → 0.449 | 1.370 → 0.346 | 0.363 | 19.88 → 15.21 |
+| `all_prod` | 2^18 | 1.77 → 1.50 | 0.089 → 0.045 | 0.423 → 0.109 | 0.357 → 0.097 | 0.092 | 5.99 → 5.27 |
+
+What is left of the start on the CPU is mostly `FIXED_COMMITMENTS`, the fixed columns' MSMs, and the
+instance, which copies the trace into the columns of the stages. Below `2^18` nothing changes: the
+proofs take 1–2.5 s, mostly MSMs.
+
 ### Not implemented
 
 None changes the proof or the protocol: an MSM that scales (shared buckets, a window by size and
 threads, or the GPU's); fewer threads per MSM by its number of points (1.3–7× from `2^10` to `2^20`);
-not recomputing the fixed commitments on every proof (5–7 % at `2^22`–`2^24`); a parallel division for
-`W` and `W'`; reserving `Q`'s buffers without zeroing them; a single canonicity check of the witness.
+not recomputing the fixed commitments on every proof (5–7 % at `2^22`–`2^24`); reserving `Q`'s buffers
+without zeroing them; a single canonicity check of the witness; the instance's columns cleared by one
+thread before the parallel copy of the trace (`std::vector::assign`, in `PILFFLONK_INSTANCE`,
+0.19–0.34 s at `fibonacci` `2^22` and `all_sum` `2^20`); one division for the `f_i` of `W` that share
+their `Z_{T_i}` (the three `f` of stage 1 of `fibonacci`: about 0.05 s at `2^22`, but a refused
+division would then name no single `f_i`); not freeing the instance and the key at the end of the
+command (0.25–0.33 s, though the process's exit frees them too).
 
 ## GPU
 
@@ -191,27 +280,37 @@ byte, and the JS verifier accepts them. Seconds, CPU → GPU:
 
 | Program | N | Proof | Fixed commitments | Stage MSMs | `Q` MSM | `W`, `W'` MSMs | Opening |
 |---|---|---|---|---|---|---|---|
-| `fibonacci` | 2^16 | 0.77 → 0.42 (1.83×) | 0.20 → 0.019 | 0.218 → 0.027 | 0.071 → 0.011 | 0.19 → 0.024 | 0.21 → 0.06 |
-| `fibonacci` | 2^18 | 1.87 → 0.66 (2.83×) | 0.26 → 0.026 | 0.557 → 0.050 | 0.178 → 0.023 | 0.55 → 0.047 | 0.64 → 0.14 |
-| `fibonacci` | 2^20 | 5.77 → 1.71 (3.37×) | 0.66 → 0.054 | 1.520 → 0.078 | 0.522 → 0.036 | 1.70 → 0.102 | 2.13 → 0.58 |
-| `fibonacci` | 2^22 | 17.96 → 4.82 (3.73×) | 2.00 → 0.147 | 4.149 → 0.236 | 1.396 → 0.103 | 4.75 → 0.241 | 6.43 → 1.86 |
-| `all_sum` | 2^16 | 2.66 → 0.90 (2.96×) | 0.37 → 0.040 | 1.028 → 0.102 | 0.135 → 0.012 | 0.59 → 0.052 | 0.70 → 0.15 |
-| `all_sum` | 2^18 | 7.39 → 2.23 (3.31×) | 0.96 → 0.094 | 2.448 → 0.179 | 0.274 → 0.036 | 1.82 → 0.093 | 2.27 → 0.54 |
-| `all_sum` | 2^20 | 23.38 → 6.90 (3.39×) | 2.68 → 0.262 | 6.792 → 0.481 | 0.839 → 0.061 | 5.29 → 0.289 | 6.95 → 2.04 |
-| `all_prod` | 2^18 | 7.39 → 2.28 (3.24×) | 1.11 → 0.139 | 2.293 → 0.199 | 0.402 → 0.015 | 1.69 → 0.086 | 2.14 → 0.57 |
+| `fibonacci` | 2^16 | 0.71 → 0.35 (2.03×) | 0.17 → 0.014 | 0.212 → 0.018 | 0.069 → 0.008 | 0.18 → 0.024 | 0.20 → 0.04 |
+| `fibonacci` | 2^18 | 1.80 → 0.50 (3.60×) | 0.26 → 0.026 | 0.576 → 0.045 | 0.175 → 0.022 | 0.55 → 0.045 | 0.57 → 0.07 |
+| `fibonacci` | 2^20 | 5.26 → 1.22 (4.31×) | 0.65 → 0.049 | 1.529 → 0.070 | 0.491 → 0.029 | 1.66 → 0.094 | 1.77 → 0.25 |
+| `fibonacci` | 2^22 | 16.01 → 2.85 (5.62×) | 2.01 → 0.142 | 4.088 → 0.191 | 1.373 → 0.085 | 4.77 → 0.252 | 5.12 → 0.60 |
+| `all_sum` | 2^16 | 2.41 → 0.93 (2.59×) | 0.35 → 0.053 | 0.936 → 0.156 | 0.135 → 0.012 | 0.58 → 0.053 | 0.63 → 0.09 |
+| `all_sum` | 2^18 | 6.78 → 1.75 (3.87×) | 0.93 → 0.087 | 2.393 → 0.188 | 0.275 → 0.027 | 1.81 → 0.105 | 1.94 → 0.27 |
+| `all_sum` | 2^20 | 20.95 → 4.34 (4.83×) | 2.64 → 0.203 | 6.709 → 0.400 | 0.837 → 0.049 | 5.34 → 0.279 | 5.75 → 0.70 |
+| `all_prod` | 2^18 | 6.79 → 1.79 (3.79×) | 1.10 → 0.105 | 2.260 → 0.179 | 0.399 → 0.013 | 1.69 → 0.092 | 1.81 → 0.26 |
 
-- **The whole proof** is 1.8–3.7× faster. What dominates the GPU's time now stays on the CPU: the
-  SHPLONK divisions for `W` and `W'` (1.1–1.7 s at the largest sizes), loading the key and the witness,
-  `Q`'s LDE around its transforms (the folding and the transfers) and the interpreter.
-- **The MSMs** of the stages, of `Q` and of `W` and `W'` are 8–20× faster. Without the shift they were
+- **The whole proof** is 2.0–5.6× faster (`fibonacci` `2^22`: 16.01 s against 2.85 s). On the GPU,
+  the largest phases left are `Q`'s LDE around its transforms (0.27 s at `fibonacci` `2^22`, 0.93 s at
+  `all_sum` `2^20`: the folding and the transfers), what remains of CUDA's initialisation once the
+  warm-up has overlapped what it could (0.28 s), the interpreter (0.14–0.37 s) and `W` and `W'`
+  (0.32–0.39 s together).
+- **The MSMs** of the stages, of `Q` and of `W` and `W'` are 6–31× faster. Without the shift they were
   15–52× faster, but the fixed-commitment check was up to 6.4× slower than the CPU (12.95 s against
   2.02 s at `fibonacci` `2^22`), and the whole proof only 1.05–2.1× faster; with it, that check takes
-  0.15 s.
+  0.14–0.20 s.
 - **The transforms** of the stages and of `Q` are 2–7× faster.
+- Before [the parallel SHPLONK division](#the-shplonk-division) and [the overlapped start of a
+  proof](#the-start-of-a-proof), the GPU proof took 4.82 s at `fibonacci` `2^22` (3.7×) and 6.90 s at
+  `all_sum` `2^20` (3.4×).
 
 ### Open
 
-- The SHPLONK divisions (`divByMonic`) on the GPU: now the largest phase of a GPU proof.
+- The SHPLONK divisions on the GPU: the blocked scan of [The SHPLONK division](#the-shplonk-division)
+  would be a kernel of its own, which pil2-stark does not have. On 32 CPU threads `W` and `W'` take
+  0.25–0.3 s at `fibonacci` `2^22` and `all_sum` `2^20`.
+- CUDA's initialisation in parallel with the SRS's read: `--gpu` would then be refused after the SRS
+  is read, not before.
+- The SRS's copy to the device (`GPU_SRS`) in parallel with the reading of the `.const`.
 - A coset on the device: the transforms of `Lde` make a host-to-device round trip per column, as the
   elementwise work is on the CPU. sppark has `NTT::Type::coset` with `group_gen = 5`, but no entry point
   of `ntt_bn128.cu` exposes it: that needs a new entry point or a kernel.

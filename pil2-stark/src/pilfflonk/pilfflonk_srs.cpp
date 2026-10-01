@@ -91,9 +91,39 @@ uint64_t sectionSize(BinFile &file, const std::string &path, uint32_t id, const 
     return onBinFile(path, [&] { return file.getSectionSize(id); });
 }
 
-// The first `bytes` bytes of section `id`.
-void readSection(BinFile &file, const std::string &path, uint32_t id, void *out, uint64_t bytes) {
-    onBinFile(path, [&] { file.readSectionTo(out, id, 0, bytes); });
+// `bytes` bytes of section `id`, from `offset` on.
+void readSection(BinFile &file, const std::string &path, uint32_t id, void *out, uint64_t bytes,
+                 uint64_t offset = 0) {
+    onBinFile(path, [&] { file.readSectionTo(out, id, offset, bytes); });
+}
+
+// The first `bytes` bytes of section `id`, as readSection reads them, by every thread at once, a
+// chunk each: the powers of an SRS of 2^23 points are 512 MB, which one thread copies from the page
+// cache at a fraction of the speed of several. In direct-read mode BinFile::readSectionTo looks the
+// section up and preads into its buffer, writing nothing of the BinFile, so the chunks are read
+// together; a chunk's failure is caught in its thread (where readSectionToParallel would abort the
+// process) and rethrown here, the lowest chunk's.
+void readSectionInParallel(BinFile &file, const std::string &path, uint32_t id, void *out, uint64_t bytes) {
+    constexpr uint64_t CHUNK = uint64_t(1) << 23;
+    const uint64_t nChunks = (bytes + CHUNK - 1) / CHUNK;
+    uint64_t failedChunk = nChunks;
+    std::exception_ptr failure;
+#pragma omp parallel for schedule(dynamic)
+    for (uint64_t c = 0; c < nChunks; ++c) {
+        const uint64_t offset = c * CHUNK;
+        try {
+            readSection(file, path, id, static_cast<uint8_t *>(out) + offset, std::min(CHUNK, bytes - offset), offset);
+        } catch (...) {
+#pragma omp critical(pilfflonk_srs_read)
+            if (c < failedChunk) {
+                failedChunk = c;
+                failure = std::current_exception();
+            }
+        }
+    }
+    if (failure) {
+        std::rethrow_exception(failure);
+    }
 }
 
 uint64_t readLittleEndian(const uint8_t *bytes, size_t n) {
@@ -267,7 +297,7 @@ Srs Srs::fromPtau(const std::string &ptauPath, uint64_t nG1) {
     }
 
     Srs srs(nG1);
-    readSection(*file, ptauPath, PTAU_G1_SECTION, srs.g1Powers.get(), nG1 * SRS_G1_BYTES);
+    readSectionInParallel(*file, ptauPath, PTAU_G1_SECTION, srs.g1Powers.get(), nG1 * SRS_G1_BYTES);
     readSection(*file, ptauPath, PTAU_G2_SECTION, srs.g2Powers, N_G2 * SRS_G2_BYTES);
     srs.checkPoints(ptauPath);
     return srs;
@@ -317,7 +347,7 @@ Srs Srs::load(const std::string &path) {
     }
 
     Srs srs(nG1);
-    readSection(*file, path, SRS_G1_SECTION, srs.g1Powers.get(), g1Bytes);
+    readSectionInParallel(*file, path, SRS_G1_SECTION, srs.g1Powers.get(), g1Bytes);
     readSection(*file, path, SRS_G2_SECTION, srs.g2Powers, g2Bytes);
     srs.checkPoints(path);
     return srs;
