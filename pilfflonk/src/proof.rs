@@ -1,24 +1,30 @@
 //! The proof (A.6, D7): its bytes, its JSON view in snarkjs's style, and the publics.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
 
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::error::{invalid, PilfflonkResult};
+use crate::error::{invalid, PilfflonkError, PilfflonkResult};
 use crate::field::{FqBytes, FrBytes, G1Affine, FIELD_BYTES, G1_BYTES};
 use crate::global_info::PilfflonkGlobalInfo;
 use crate::json::JsonFile;
-use crate::layout::q_pieces;
+use crate::layout::{q_pieces, LayoutEntry};
 use crate::names::{column_name, commitment_name, evaluation_name, Scope, INV, INV_ZH, W, WP};
 use crate::pilfflonk_info::{PilfflonkInfo, PolType};
 use crate::tag::{Curve, Protocol};
+use crate::vkey::Vkey;
 
 /// The file name of the JSON view of the proof.
 pub const PROOF_FILE: &str = "proof.json";
 
 /// The file name of the publics.
 pub const PUBLICS_FILE: &str = "publics.json";
+
+/// The extension of a file that holds a proof's bytes (A.6), as `proof.bin`: [`Proof::read`].
+pub const PROOF_BYTES_EXTENSION: &str = "bin";
 
 /// A proof. Its bytes (`to_bytes`), as `gen_final_snark_proof` gives the FFLONK's, are in this
 /// order, each point `x‖y` and each coordinate or scalar 32 bytes big-endian (A.6):
@@ -114,6 +120,18 @@ impl Proof {
         let inv = reader.scalar()?;
         let inv_zh = reader.scalar()?;
         Ok(Proof { commitments, w, wp, evaluations, air_values, airgroup_values, proof_values, inv, inv_zh })
+    }
+
+    /// Reads a proof with the values of `names` from the file at `path`: its bytes (A.6,
+    /// [`Proof::from_bytes`]) if the file name ends in [`PROOF_BYTES_EXTENSION`], and its JSON view,
+    /// `proof.json` ([`Proof::from_json`]), otherwise.
+    pub fn read(path: &Path, names: &ProofNames) -> PilfflonkResult<Self> {
+        if path.extension().is_some_and(|extension| extension == PROOF_BYTES_EXTENSION) {
+            let bytes = fs::read(path).map_err(|source| PilfflonkError::Io { path: path.to_path_buf(), source })?;
+            Proof::from_bytes(&bytes, &names.shape()).map_err(|e| e.in_file(path))
+        } else {
+            Proof::from_json(&ProofJson::read(path)?, names).map_err(|e| e.in_file(path))
+        }
     }
 
     /// The JSON view of the proof, with the names of `names` (see `crate::names`).
@@ -307,14 +325,52 @@ impl ProofNames {
         }
         let proof_values = global_info.proof_values_map.iter().map(|v| column_name(&v.name, &v.lengths)).collect();
 
-        let names = ProofNames { commitments, evaluations, air_values, airgroup_values, proof_values };
+        ProofNames { commitments, evaluations, air_values, airgroup_values, proof_values }.unique()
+    }
+
+    /// The names of a proof of `vkey`: those [`ProofNames::new`] gives the proof of one instance of
+    /// its AIR, the one a vkey of format 1 describes (D2), from what the vkey holds, as the JS
+    /// verifier names them (`vkey.js`, `fromObjectVk`). The columns are named by the layout
+    /// ([`LayoutPol::name`](crate::LayoutPol)), the `f` by their index in it, and a proof of
+    /// format 1 has no air, airgroup or proof values. Refuses two values of the same name.
+    pub fn of_vkey(vkey: &Vkey) -> PilfflonkResult<Self> {
+        let layout = &vkey.layout.0;
+        let n_fixed = vkey.layout.n_fixed();
+        let q_stage = layout.last().map_or(0, |f| f.stage);
+        let commitments = (n_fixed..layout.len()).map(|g| commitment_name(g as u64)).collect();
+
+        // The fixed columns are in the f of stage 0, the committed ones in the others (A.2).
+        let column = |pol_type: PolType, id: u64| -> PilfflonkResult<&str> {
+            let packs = |f: &&LayoutEntry| (f.stage == 0) == (pol_type == PolType::Const);
+            match layout.iter().filter(packs).flat_map(|f| &f.pols).find(|p| p.id == id) {
+                Some(pol) => Ok(&pol.name),
+                None => invalid!("the evMap has {} {id}, which no f of the vkey's layout packs", pol_type.as_str()),
+            }
+        };
+        let mut evaluations = Vec::with_capacity(vkey.ev_map.len());
+        for pol_type in [PolType::Const, PolType::Cm] {
+            for e in vkey.ev_map.iter().filter(|e| e.pol_type == pol_type) {
+                evaluations.push(evaluation_name(column(e.pol_type, e.id)?, e.prime));
+            }
+        }
+        if q_pieces(vkey.q_deg, vkey.max_q_degree) > 1 {
+            let pieces = layout.iter().filter(|f| f.stage == q_stage).flat_map(|f| &f.pols);
+            evaluations.extend(pieces.map(|pol| pol.name.clone()));
+        }
+        let none = Vec::new;
+        ProofNames { commitments, evaluations, air_values: none(), airgroup_values: none(), proof_values: none() }
+            .unique()
+    }
+
+    /// Refuses names of which two values share one: the JSON view would lose a value.
+    fn unique(self) -> PilfflonkResult<Self> {
         let mut seen = BTreeSet::new();
-        for name in names.scalars() {
+        for name in self.scalars() {
             if !seen.insert(name) {
                 return invalid!("two values of the proof are named {name:?} in its JSON view (see crate::names)");
             }
         }
-        Ok(names)
+        Ok(self)
     }
 
     pub fn shape(&self) -> ProofShape {

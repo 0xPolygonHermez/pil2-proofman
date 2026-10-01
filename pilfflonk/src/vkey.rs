@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use proofman_starks_lib_c::pilfflonk_g2_check_c;
+use proofman_starks_lib_c::{pilfflonk_g2_check_c, pilfflonk_keccak256_c};
 use serde::de::{Error as _, MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -15,6 +15,7 @@ use crate::global_info::{FORMAT_VERSION, MAX_NBITS};
 use crate::json::{canonical_json, serialize_sorted, JsonFile};
 use crate::layout::{q_pieces, split_max_q_degree, Layout, LayoutCheck};
 use crate::pilfflonk_info::{Boundary, EvMapEntry, PilfflonkInfo};
+use crate::prover::native;
 use crate::q_verifier::{check_q_verifier, QVerifierShape};
 use crate::tag::{Curve, Protocol};
 use crate::verkey::AirVerkey;
@@ -185,6 +186,21 @@ impl Vkey {
     /// Whether `digest` is the digest of the rest of the vkey.
     pub fn digest_matches(&self, keccak256: impl FnOnce(&[u8]) -> [u8; 32]) -> PilfflonkResult<bool> {
         Ok(Digest(keccak256(&self.digest_preimage()?)) == self.digest)
+    }
+
+    /// Refuses a vkey whose `digest` is not the digest of the rest of it ([`digest_matches`] with
+    /// the C++ core's Keccak-256): the JS verifier accepts no proof of it, and the Solidity verifier
+    /// is not generated for it. The prover refuses it too ([`ProvingKey::load`]).
+    ///
+    /// [`digest_matches`]: Vkey::digest_matches
+    /// [`ProvingKey::load`]: crate::ProvingKey::load
+    pub fn check_digest(&self) -> PilfflonkResult<()> {
+        let digest = pilfflonk_keccak256_c(&self.digest_preimage()?).map_err(native("hashing the vkey"))?;
+        if self.digest_matches(|_| digest)? {
+            Ok(())
+        } else {
+            invalid!("the digest of the vkey is not the digest of its contents (A.6)")
+        }
     }
 }
 

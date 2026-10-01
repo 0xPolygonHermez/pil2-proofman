@@ -1,6 +1,7 @@
 //! `proofman-cli pilfflonk`: the pilfflonk backend's commands (spec §4.4, §4.5), nested as
 //! `pilout`'s are.
 
+pub mod pilfflonk_calldata;
 pub mod pilfflonk_check;
 pub mod pilfflonk_prove;
 pub mod pilfflonk_verify;
@@ -13,6 +14,7 @@ use proofman_pilfflonk::{
     Stage1Witness, Witness, WitnessSource,
 };
 
+use self::pilfflonk_calldata::PilfflonkCalldataCmd;
 use self::pilfflonk_check::PilfflonkCheckCmd;
 use self::pilfflonk_prove::PilfflonkProveCmd;
 use self::pilfflonk_verify::PilfflonkVerifyCmd;
@@ -28,6 +30,7 @@ pub enum PilfflonkSubcommands {
     Prove(PilfflonkProveCmd),
     Verify(PilfflonkVerifyCmd),
     Check(PilfflonkCheckCmd),
+    Calldata(PilfflonkCalldataCmd),
 }
 
 // Where the witness of `prove` and `check` comes from (spec §4.3): a witness directory (spec A.6),
@@ -124,7 +127,7 @@ mod tests {
         match parse(args).unwrap().pilfflonk_commands {
             PilfflonkSubcommands::Prove(cmd) => cmd.witness,
             PilfflonkSubcommands::Check(cmd) => cmd.witness,
-            PilfflonkSubcommands::Verify(_) => unreachable!("{args}"),
+            PilfflonkSubcommands::Verify(_) | PilfflonkSubcommands::Calldata(_) => unreachable!("{args}"),
         }
     }
 

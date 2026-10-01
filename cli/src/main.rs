@@ -70,6 +70,7 @@ fn main() {
                 PilfflonkSubcommands::Prove(args) => args.run(),
                 PilfflonkSubcommands::Verify(args) => args.run(),
                 PilfflonkSubcommands::Check(args) => args.run(),
+                PilfflonkSubcommands::Calldata(args) => args.run(),
             },
             Commands::CheckSetup(args) => args.run(),
             Commands::CheckSetupSnark(args) => args.run(),

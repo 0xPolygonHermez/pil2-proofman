@@ -7,9 +7,10 @@
 //! 1. sets it up with `--solidity` and checks that `proofman-setup pilfflonk-solidity` writes the
 //!    same verifier from the vkey alone;
 //! 2. compiles the verifier with solc (no warning, and within EIP-170's 24576 bytes);
-//! 3. proves a witness with a fixed blinding seed, and replays the transcript (A.4) to encode the
-//!    calldata: the proof's bytes and the auxiliary inverses of `firstRow` and `lastRow`
-//!    (`CalldataLayout`, spec §4.5 "Calldata");
+//! 3. proves a witness with a fixed blinding seed, and encodes its calldata with the encoder of
+//!    `proofman-cli pilfflonk calldata` (`proofman_pilfflonk::Calldata`, plan M41): the proof's bytes
+//!    and the auxiliary inverses of `firstRow` and `lastRow` (spec §4.5 "Calldata"), of the `ξ` of
+//!    the transcript (A.4) it replays, which must be the prover's;
 //! 4. makes the cases: the proof; the proof with an evaluation, a commitment, a public or `W'`
 //!    changed, the first three also "fixed up" (`fixup`: `invZh`, `inv` and the auxiliary inverses
 //!    recomputed for the changed transcript, as the M40 review's harness does), so that they get
@@ -18,13 +19,15 @@
 //!    that the transcript refuses; and values only the calldata can hold (a coordinate `≥ q`, a
 //!    scalar `≥ r`, a wrong auxiliary inverse, calldata a word short);
 //! 5. asks the JS verifier about each case (`js_verifier::verify`), and runs Foundry on all of them
-//!    (`pilfflonk/solidity`, copied to a directory of its own): `verifyProof` must return what the
-//!    JS verifier says, `false` for every calldata-only case but the short one, which reverts;
+//!    (`pilfflonk/solidity`, copied to a directory of its own; `pilfflonk/tests/data/foundry.rs`):
+//!    `verifyProof` must return what the JS verifier says, `false` for every calldata-only case but
+//!    the short one, which reverts;
 //! 6. prints the gas of every `verifyProof` call, and the gas of its calldata; the fixed-up case
 //!    that reaches the pairing must cost about what the proof does.
 //!
 //! A key no pilout gives, a split `Q` and no evaluation, is made by hand with its proof
-//! ([`foundry_verifies_a_split_q_without_evaluations`]).
+//! ([`foundry_verifies_a_split_q_without_evaluations`]). The proofs of every fixture of phases 1 to
+//! 3, with the calldata of the CLI, are `cli/tests/pilfflonk_prove.rs`'s (plan M41).
 //!
 //! The tools are pinned (spec §4.5): Foundry v1.8.3 and solc 0.8.37, at the paths `PILFFLONK_FORGE`
 //! and `PILFFLONK_SOLC` name. The tests are `#[ignore]`d without them; those of the compiled
@@ -48,6 +51,8 @@ mod domains;
 #[allow(dead_code)]
 #[path = "../../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
+#[path = "../../../pilfflonk/tests/data/foundry.rs"]
+mod foundry;
 #[allow(dead_code)]
 #[path = "../../../pilfflonk/tests/data/packed.rs"]
 mod packed;
@@ -69,46 +74,27 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use num_bigint::BigUint;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::digest::seal_vkey;
-use pilfflonk_setup::solidity::{export_verifier_sol, CalldataLayout, VERIFIER_SOL_FILE};
+use pilfflonk_setup::solidity::{export_verifier_sol, VERIFIER_SOL_FILE};
 use pilfflonk_setup::test_ptau::{g1_times, g2_times, test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use prost::Message;
+use proofman_pilfflonk::calldata::SELECTOR_BYTES;
 use proofman_pilfflonk::{
-    js_verifier, prove, FqBytes, FrBytes, G1Affine, JsonFile, PilfflonkGlobalInfo, Proof, ProofNames, ProveOptions,
-    ProvingKey, Publics, Vkey, Witness, BN254_Q, BN254_R,
+    js_verifier, prove, verifier_challenges, Calldata, CalldataLayout, FqBytes, FrBytes, G1Affine, JsonFile,
+    PilfflonkGlobalInfo, Proof, ProofNames, ProveOptions, ProvingKey, Publics, Vkey, Witness, BN254_Q, BN254_R,
 };
-use proofman_starks_lib_c::PilFflonkTranscript;
-use serde_json::{json, Value};
+use serde_json::json;
+
+use foundry::{check_on_foundry, compile_with_solc, Case, Outcome, Tools};
 
 /// The blinding seed of the proofs (D6: fixed in tests).
 const SEED: [u8; 32] = [0x5a; 32];
-
-/// EIP-170: the largest runtime code of a contract.
-const MAX_CODE_SIZE: usize = 24576;
 
 /// Held by each test for its whole run: they call the C++ core's OpenMP code (the setup, the
 /// prover), which must not run from several test threads at once (plan M26).
 fn cpp_core() -> MutexGuard<'static, ()> {
     static CPP_CORE: Mutex<()> = Mutex::new(());
     CPP_CORE.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// Foundry's `forge` and solc, pinned (spec §4.5), from `PILFFLONK_FORGE` and `PILFFLONK_SOLC`.
-struct Tools {
-    forge: PathBuf,
-    solc: PathBuf,
-}
-
-impl Tools {
-    fn from_env() -> Self {
-        let path = |var: &str| {
-            let path =
-                PathBuf::from(std::env::var_os(var).unwrap_or_else(|| panic!("{var} must name the pinned tool")));
-            assert!(path.is_file(), "{var} = {} is not a file", path.display());
-            path
-        };
-        Tools { forge: path("PILFFLONK_FORGE"), solc: path("PILFFLONK_SOLC") }
-    }
 }
 
 /// A fresh directory for the test under the target's temporary directory, removed when dropped.
@@ -292,59 +278,6 @@ fn root_of_unity(n: u64) -> BigUint {
     BigUint::from(5u32).modpow(&((r() - 1u32) / n), &r())
 }
 
-/// The challenges the calldata and the fixups need, the transcript of A.4 replayed on rapidsnark's
-/// (the verifier's sequence, `challenges.js`).
-struct Challenges {
-    xi_seed: BigUint,
-    y: BigUint,
-}
-
-/// The challenges of a proof. `None` if the transcript refuses a point of the proof (A.4): off the
-/// curve, or with a coordinate below 2^192.
-fn challenges(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> Option<Challenges> {
-    let le = |values: &[FrBytes]| values.iter().map(FrBytes::to_le_bytes).collect::<Vec<_>>();
-    let mut t = PilFflonkTranscript::new().ok()?;
-    t.absorb_fr(&[vkey.digest.to_fr().to_le_bytes(), FrBytes::from_u64(1).to_le_bytes()]).ok()?;
-    if !publics.is_empty() {
-        t.absorb_fr(&le(publics)).ok()?;
-    }
-    let layout = &vkey.layout.0;
-    let n_fixed = vkey.layout.n_fixed();
-    let q_stage = layout.last()?.stage;
-    let absorb = |t: &mut PilFflonkTranscript, stage: u64| -> Option<()> {
-        let points: Vec<[u8; 64]> = proof
-            .commitments
-            .iter()
-            .zip(&layout[n_fixed..])
-            .filter(|(_, f)| f.stage == stage)
-            .map(|(p, _)| p.to_le_bytes())
-            .collect();
-        if !points.is_empty() {
-            t.absorb_g1(&points).ok()?;
-        }
-        Some(())
-    };
-    for s in 1..q_stage {
-        absorb(&mut t, s)?;
-        if s + 1 < q_stage {
-            for _ in 0..vkey.num_challenges[s as usize] {
-                t.squeeze().ok()?;
-            }
-        }
-    }
-    t.squeeze().ok()?;
-    absorb(&mut t, q_stage)?;
-    let xi_seed = BigUint::from_bytes_le(&t.squeeze().ok()?);
-    // The evaluations, the pieces of Q with them (Proof::evaluations), in the proof's order.
-    if !proof.evaluations.is_empty() {
-        t.absorb_fr(&le(&proof.evaluations)).ok()?;
-    }
-    t.squeeze().ok()?;
-    t.absorb_g1(&[proof.w.to_le_bytes()]).ok()?;
-    let y = BigUint::from_bytes_le(&t.squeeze().ok()?);
-    Some(Challenges { xi_seed, y })
-}
-
 /// `ξ = xiSeed^powerW`.
 fn xi_of(vkey: &Vkey, xi_seed: &BigUint) -> BigUint {
     xi_seed.modpow(&BigUint::from(vkey.power_w), &r())
@@ -373,22 +306,20 @@ fn roots(vkey: &Vkey, k: u64, offsets: &[i64], xi_seed: &BigUint) -> Vec<BigUint
 /// does), so that a mutated proof, with the auxiliary inverses of its `ξ` (`calldata`), gets past
 /// those checks to the deeper ones: `checkQPieces` and the pairing.
 fn fixup(vkey: &Vkey, mut proof: Proof, publics: &[FrBytes]) -> Proof {
-    let ch = challenges(vkey, &proof, publics).expect("a proof whose points the transcript absorbs");
+    let ch = verifier_challenges(vkey, &proof, publics).expect("a proof whose points the transcript absorbs");
+    let (xi_seed, y) = (big(&ch.xi_seed), big(&ch.y));
     let r = r();
-    let xi = xi_of(vkey, &ch.xi_seed);
+    let xi = xi_of(vkey, &xi_seed);
     proof.inv_zh = fr(&fr_inv(&fr_sub(&xi.modpow(&BigUint::from(1u64 << vkey.power), &r), &BigUint::from(1u32))));
     let mut product = BigUint::from(1u32);
     for (i, f) in vkey.layout.0.iter().enumerate() {
-        let t = roots(vkey, f.k, &f.offsets, &ch.xi_seed);
+        let t = roots(vkey, f.k, &f.offsets, &xi_seed);
         if i > 0 {
-            product = t.iter().fold(product, |z, x| z * fr_sub(&ch.y, x) % &r);
+            product = t.iter().fold(product, |z, x| z * fr_sub(&y, x) % &r);
         }
         for (m, x) in t.iter().enumerate() {
-            let den = t
-                .iter()
-                .enumerate()
-                .filter(|&(l, _)| l != m)
-                .fold(fr_sub(&ch.y, x), |d, (_, xl)| d * fr_sub(x, xl) % &r);
+            let den =
+                t.iter().enumerate().filter(|&(l, _)| l != m).fold(fr_sub(&y, x), |d, (_, xl)| d * fr_sub(x, xl) % &r);
             product = product * den % &r;
         }
     }
@@ -396,73 +327,21 @@ fn fixup(vkey: &Vkey, mut proof: Proof, publics: &[FrBytes]) -> Proof {
     proof
 }
 
-/// The auxiliary inverses of the calldata (`CalldataLayout::aux_rows`): `1/(ξ − ω^j)`, with `ω` the
-/// `N`-th root of unity of the domain.
-fn aux_inverses(vkey: &Vkey, xi_seed: &BigUint) -> Vec<BigUint> {
-    let r = r();
-    let xi = xi_of(vkey, xi_seed);
-    let omega = root_of_unity(1u64 << vkey.power);
-    CalldataLayout::of(vkey)
-        .aux_rows
-        .iter()
-        .map(|&j| fr_inv(&fr_sub(&xi, &omega.modpow(&BigUint::from(j), &r))))
-        .collect()
+/// The calldata of `proof` and `publics` (spec §4.5, "Calldata"), ABI-encoded as `proofman-cli
+/// pilfflonk calldata --format hex` writes it: `Calldata::encode`, the proof's bytes and the
+/// auxiliary inverses of its own `ξ`, and the publics.
+fn calldata(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> Vec<u8> {
+    Calldata::encode(vkey, proof, publics).unwrap().to_abi_bytes().unwrap()
 }
 
-/// What `verifyProof` must do with a case: return `true`, return `false`, or revert (the ABI
-/// decoder, on calldata shorter than its arguments).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Outcome {
-    Accept,
-    Reject,
-    Revert,
-}
-
-impl Outcome {
-    fn as_str(self) -> &'static str {
-        match self {
-            Outcome::Accept => "accept",
-            Outcome::Reject => "reject",
-            Outcome::Revert => "revert",
-        }
-    }
-
-    fn of_js(verdict: bool) -> Self {
-        if verdict {
-            Outcome::Accept
-        } else {
-            Outcome::Reject
-        }
-    }
-}
-
-/// A case: a proof and its publics, what the JS verifier says of them, and their calldata.
-struct Case {
-    label: String,
-    /// `None` for a case of the calldata alone, which the JS verifier does not see.
-    js: Option<bool>,
-    expected: Outcome,
-    proof: Vec<u8>,
-    publics: Vec<u8>,
-}
-
-/// The calldata of `proof` and `publics` (spec §4.5, "Calldata"): the proof's bytes and the
-/// auxiliary inverses of its own `ξ`, and the publics as words. A proof whose points the transcript
-/// refuses (A.4) has no `ξ`: its auxiliary inverses are 0, and the verifier refuses the point first.
-fn calldata(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> (Vec<u8>, Vec<u8>) {
-    let mut words = proof.to_bytes();
-    let layout = CalldataLayout::of(vkey);
-    if !layout.aux_rows.is_empty() {
-        let aux = match challenges(vkey, proof, publics) {
-            Some(ch) => aux_inverses(vkey, &ch.xi_seed),
-            None => vec![BigUint::ZERO; layout.aux_rows.len()],
-        };
-        for aux in aux {
-            words.extend_from_slice(&be_word(&aux));
-        }
-    }
-    assert_eq!(words.len() as u64, 32 * layout.words());
-    (words, publics.iter().flat_map(|p| p.to_be_bytes()).collect())
+/// The calldata of a proof the encoder refuses, because the transcript refuses one of its points
+/// (A.4), which it names: the proof has no `ξ`, and its auxiliary inverses are 0 (the verifier
+/// refuses the point first).
+fn calldata_without_xi(vkey: &Vkey, proof: &Proof, publics: &[FrBytes], point: &str) -> Vec<u8> {
+    let err = Calldata::encode(vkey, proof, publics).unwrap_err().to_string();
+    assert!(err.contains(&format!("{point} of the proof is not a point the transcript absorbs")), "{err}");
+    let zeros = vec![FrBytes::ZERO; CalldataLayout::of(vkey).aux_rows.len()];
+    Calldata::with_auxiliary_inverses(vkey, proof, publics, &zeros).unwrap().to_abi_bytes().unwrap()
 }
 
 /// What the JS verifier says of the proof and publics files in `dir`.
@@ -476,98 +355,6 @@ fn js_verdict(key: &Key, names: &ProofNames, dir: &Path, proof: &Proof, publics:
     proof.to_json(names).unwrap().write(&dir.join("proof.json")).unwrap();
     Publics(publics.to_vec()).write(&dir.join("publics.json")).unwrap();
     js_verdict_of(&key.vkey_path, dir)
-}
-
-/// The verifier at `sol` compiled as the Foundry project compiles it, in `dir`: no warning, and its
-/// runtime code, whose size it returns, within EIP-170.
-fn compile_with_solc(tools: &Tools, dir: &Path, sol: &Path) -> usize {
-    let out_dir = dir.join("solc");
-    let out = Command::new(&tools.solc)
-        .args(["--optimize", "--optimize-runs", "200", "--bin-runtime", "--overwrite", "-o"])
-        .arg(&out_dir)
-        .arg(sol)
-        .output()
-        .expect("PILFFLONK_SOLC runs");
-    assert!(out.status.success(), "solc: {}", output(&out));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!stderr.contains("Warning") && !stderr.contains("Error"), "solc: {stderr}");
-    let hex = fs::read_to_string(out_dir.join("PilfflonkVerifier.bin-runtime")).unwrap();
-    let size = hex.trim().len() / 2;
-    assert!(size <= MAX_CODE_SIZE, "the verifier's runtime code has {size} bytes, above EIP-170's {MAX_CODE_SIZE}");
-    size
-}
-
-/// Runs the Foundry project, in `dir`, on `cases` with the verifier at `sol`, and returns what each
-/// call did and its gas.
-fn run_foundry(tools: &Tools, dir: &Path, sol: &Path, cases: &[Case]) -> Vec<(Outcome, u64)> {
-    let project = dir.join("foundry");
-    let template = repo_root().join("pilfflonk/solidity");
-    for sub in ["src", "test", "cases"] {
-        fs::create_dir_all(project.join(sub)).unwrap();
-    }
-    fs::copy(template.join("foundry.toml"), project.join("foundry.toml")).unwrap();
-    fs::copy(template.join("test/PilfflonkVerifier.t.sol"), project.join("test/PilfflonkVerifier.t.sol")).unwrap();
-    fs::copy(sol, project.join("src/PilfflonkVerifier.sol")).unwrap();
-    let hex = |bytes: &[u8]| format!("0x{}", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>());
-    let cases_json = json!({
-        "n": cases.len(),
-        "cases": cases.iter().map(|c| json!({
-            "label": c.label,
-            "proof": hex(&c.proof),
-            "publics": hex(&c.publics),
-            "expected": c.expected.as_str(),
-        })).collect::<Vec<Value>>(),
-    });
-    fs::write(project.join("cases/cases.json"), cases_json.to_string()).unwrap();
-    let _ = fs::remove_file(project.join("cases/results.txt"));
-
-    let out = Command::new(&tools.forge)
-        .args(["test", "--offline", "--root"])
-        .arg(&project)
-        .env("FOUNDRY_SOLC", &tools.solc)
-        .output()
-        .expect("PILFFLONK_FORGE runs");
-    assert!(out.status.success(), "forge test: {}", output(&out));
-    let results = fs::read_to_string(project.join("cases/results.txt")).unwrap();
-    let outcomes: Vec<(Outcome, u64)> = results
-        .lines()
-        .map(|line| {
-            let fields: Vec<&str> = line.split(' ').collect();
-            let outcome = match fields[1] {
-                "accept" => Outcome::Accept,
-                "reject" => Outcome::Reject,
-                "revert" => Outcome::Revert,
-                other => panic!("an outcome {other}"),
-            };
-            (outcome, fields[2].parse().unwrap())
-        })
-        .collect();
-    assert_eq!(outcomes.len(), cases.len(), "{results}");
-    outcomes
-}
-
-/// The gas of the calldata of a call with these arguments (EIP-2028): 16 a non-zero byte, 4 a zero.
-fn calldata_gas(case: &Case) -> u64 {
-    let selector = [0xffu8; 4];
-    selector.iter().chain(&case.proof).chain(&case.publics).map(|&b| if b == 0 { 4 } else { 16 }).sum()
-}
-
-/// Runs `cases` on Foundry, prints a line per case, checks each outcome and returns their gas.
-fn check_on_foundry(tools: &Tools, dir: &Path, sol: &Path, name: &str, cases: &[Case]) -> Vec<u64> {
-    let outcomes = run_foundry(tools, dir, sol, cases);
-    let mut gas = Vec::with_capacity(cases.len());
-    for (case, (outcome, used)) in cases.iter().zip(outcomes) {
-        let js = case.js.map_or("-", |v| if v { "accept" } else { "reject" });
-        println!(
-            "  {:<36} JS {js:<6} Solidity {:<6} verifyProof gas {used:>7}, calldata gas {:>6}",
-            case.label,
-            outcome.as_str(),
-            calldata_gas(case)
-        );
-        assert_eq!(outcome, case.expected, "{} on {name}", case.label);
-        gas.push(used);
-    }
-    gas
 }
 
 /// The position of the piece `Q<i>` among the proof's evaluations, if `Q` is split: after the
@@ -607,104 +394,112 @@ fn verify_on_foundry(tools: &Tools, setup: &Setup) {
     let out = prove(&pk, &setup.program.witness(), &options).unwrap();
     let (proof, publics, names) = (&out.proof, &out.publics.0, &out.names);
     let vkey = &key.vkey;
-    // The transcript the encoder replays is the prover's, and so are the inv and invZh of fixup.
-    let ch = challenges(vkey, proof, publics).unwrap();
-    assert_eq!(fr(&ch.xi_seed), out.challenges.xi_seed);
+    // The transcript the encoder replays is the prover's, and so are the inv and invZh of fixup; the
+    // names of the proof are the vkey's.
+    let ch = verifier_challenges(vkey, proof, publics).unwrap();
+    assert_eq!(
+        (&ch.stages, ch.std_vc, ch.xi_seed),
+        (&out.challenges.stages, out.challenges.std_vc, out.challenges.xi_seed)
+    );
     assert_eq!(&fixup(vkey, proof.clone(), publics), proof, "fixup of the prover's proof is the proof");
+    assert_eq!(&ProofNames::of_vkey(vkey).unwrap(), names, "the names of the vkey and of the pilfflonkinfo");
+    let xi_seed = big(&ch.xi_seed);
 
     let mut cases = Vec::new();
-    let mut add = |label: &str, proof: &Proof, publics: &[FrBytes], expected: bool| {
+    // `refused`: the point of the proof the transcript refuses, if any (calldata_without_xi).
+    let mut add = |label: &str, proof: &Proof, publics: &[FrBytes], expected: bool, refused: Option<&str>| {
         let js = js_verdict(&key, names, &key.dir.file(label), proof, publics);
         assert_eq!(js, expected, "the JS verifier on {label} of {}", setup.name);
-        let (proof, publics) = calldata(vkey, proof, publics);
-        cases.push(Case { label: label.to_string(), js: Some(js), expected: Outcome::of_js(js), proof, publics });
+        let calldata = match refused {
+            None => calldata(vkey, proof, publics),
+            Some(point) => calldata_without_xi(vkey, proof, publics, point),
+        };
+        cases.push(Case { label: label.to_string(), js: Some(js), expected: Outcome::of_js(js), calldata });
     };
-    add("proof", proof, publics, true);
+    add("proof", proof, publics, true, None);
     let mut evaluation = proof.clone();
     evaluation.evaluations[0] = plus_one(&evaluation.evaluations[0]);
-    add("mutated evaluation", &evaluation, publics, false);
+    add("mutated evaluation", &evaluation, publics, false, None);
     // With invZh, inv and the auxiliary inverses of its own transcript: to the pairing if Q is
     // whole, to checkQPieces if it is split (Q(ξ) is not the pieces').
-    add("mutated evaluation, fixed up", &fixup(vkey, evaluation, publics), publics, false);
+    add("mutated evaluation, fixed up", &fixup(vkey, evaluation, publics), publics, false, None);
     // Another point of the curve, whose coordinates the transcript absorbs: W.
     let mut commitment = proof.clone();
     commitment.commitments[0] = commitment.w;
-    add("mutated commitment", &commitment, publics, false);
-    add("mutated commitment, fixed up", &fixup(vkey, commitment, publics), publics, false);
+    add("mutated commitment", &commitment, publics, false, None);
+    add("mutated commitment, fixed up", &fixup(vkey, commitment, publics), publics, false, None);
     if !publics.is_empty() {
         let mut public = publics.clone();
         public[0] = plus_one(&public[0]);
-        add("mutated public", proof, &public, false);
-        add("mutated public, fixed up", &fixup(vkey, proof.clone(), &public), &public, false);
+        add("mutated public", proof, &public, false, None);
+        add("mutated public, fixed up", &fixup(vkey, proof.clone(), &public), &public, false, None);
     }
     // Split, the pieces of Q changed but not their sum: past checkQPieces, to the pairing; and one
     // piece changed, refused by checkQPieces.
     if piece_position(vkey, 1).is_some() {
         let mut pieces = proof.clone();
-        rebalance_pieces(vkey, &mut pieces, &ch.xi_seed, 12345);
-        add("Q pieces rebalanced, fixed up", &fixup(vkey, pieces, publics), publics, false);
+        rebalance_pieces(vkey, &mut pieces, &xi_seed, 12345);
+        add("Q pieces rebalanced, fixed up", &fixup(vkey, pieces, publics), publics, false, None);
         let mut piece = proof.clone();
         let q1 = piece_position(vkey, 1).unwrap();
         piece.evaluations[q1] = plus_one(&piece.evaluations[q1]);
-        add("Q1 + 1, fixed up", &fixup(vkey, piece, publics), publics, false);
+        add("Q1 + 1, fixed up", &fixup(vkey, piece, publics), publics, false, None);
     }
     // W' is not absorbed: only the pairing sees it.
     let mut wp = proof.clone();
     wp.wp = wp.w;
-    add("mutated W'", &wp, publics, false);
-    // Not a point of the curve (elements.js, g1FromObject).
+    add("mutated W'", &wp, publics, false, None);
+    // Not a point of the curve (elements.js, g1FromObject), which the transcript refuses: the encoder
+    // does too.
+    let first = format!("f{}", vkey.layout.n_fixed());
     let mut off_curve = proof.clone();
     let y = BigUint::from_bytes_le(&off_curve.commitments[0].y.to_le_bytes());
     off_curve.commitments[0].y = FqBytes::from_decimal(&((y + 1u32) % q()).to_string()).unwrap();
-    add("commitment off the curve", &off_curve, publics, false);
+    add("commitment off the curve", &off_curve, publics, false, Some(&first));
     // A point the transcript cannot absorb (transcript.js, addPolCommitment): G = (1, 2).
     let mut short = proof.clone();
     short.commitments[0] = G1Affine { x: FqBytes::from_u64(1), y: FqBytes::from_u64(2) };
-    add("commitment (1, 2)", &short, publics, false);
+    add("commitment (1, 2)", &short, publics, false, Some(&first));
 
     // What only the calldata can hold, which is no proof (the proof's bytes are canonical, A.6): a
     // coordinate x + q, a scalar e + r and, when there are any, a wrong auxiliary inverse, which
     // verifyProof refuses with false; and calldata one word short, which the ABI decoder reverts.
     let layout = CalldataLayout::of(vkey);
-    let good = (cases[0].proof.clone(), cases[0].publics.clone());
+    let good = cases[0].calldata.clone();
+    let word_at = |word: u64| SELECTOR_BYTES + 32 * word as usize;
     let mut calldata_only = |label: &str, word: u64, add: &BigUint| {
-        let (mut proof, publics) = good.clone();
-        let at = 32 * word as usize;
-        let value = BigUint::from_bytes_be(&proof[at..at + 32]) + add;
-        proof[at..at + 32].copy_from_slice(&be_word(&value));
-        cases.push(Case { label: label.into(), js: None, expected: Outcome::Reject, proof, publics });
+        let mut calldata = good.clone();
+        let at = word_at(word);
+        let value = BigUint::from_bytes_be(&calldata[at..at + 32]) + add;
+        calldata[at..at + 32].copy_from_slice(&be_word(&value));
+        cases.push(Case { label: label.into(), js: None, expected: Outcome::Reject, calldata });
     };
     calldata_only("coordinate x + q", 0, &q());
-    calldata_only("evaluation + r", 2 * (layout.n_commitments + 2), &r());
+    calldata_only("evaluation + r", layout.first_scalar(), &r());
     if !layout.aux_rows.is_empty() {
         // 1/(ξ − ω^j) + 1 mod r: below r, and not the inverse.
-        let at = 32 * layout.proof_words() as usize;
-        let aux = BigUint::from_bytes_be(&good.0[at..at + 32]);
+        let at = word_at(layout.proof_words());
+        let aux = BigUint::from_bytes_be(&good[at..at + 32]);
         let one = if aux == r() - 1u32 { r() - aux } else { BigUint::from(1u32) };
         calldata_only("wrong auxiliary inverse", layout.proof_words(), &one);
     }
-    let (mut short_proof, mut short_publics) = good.clone();
-    if short_publics.is_empty() {
-        short_proof.truncate(short_proof.len() - 32);
-    } else {
-        short_publics.truncate(short_publics.len() - 32);
-    }
+    let mut short_calldata = good.clone();
+    short_calldata.truncate(good.len() - 32);
     cases.push(Case {
         label: "calldata a word short".into(),
         js: None,
         expected: Outcome::Revert,
-        proof: short_proof,
-        publics: short_publics,
+        calldata: short_calldata,
     });
 
-    println!(
+    let title = format!(
         "{}: {} f, powerW {}, runtime code {size} bytes, {} words of `proof`",
         setup.name,
         vkey.layout.0.len(),
         vkey.power_w,
         layout.words()
     );
-    let gas = check_on_foundry(tools, &key.dir.0, &key.sol, setup.name, &cases);
+    let gas = check_on_foundry(tools, &key.dir.0, &key.sol, &title, &cases);
     // The fixed-up cases get past invZh, inv and the auxiliary inverses: the one that reaches the
     // pairing costs about what the proof does.
     let deep = if piece_position(vkey, 1).is_some() {
@@ -829,17 +624,17 @@ fn foundry_verifies_a_split_q_without_evaluations() {
     let f_tau = (q1(&pow(&tau, 2)) + &tau * q0(&pow(&tau, 2))) % &r;
     let mut proof = Proof {
         commitments: vec![g1_times(&f_tau)],
-        // Any W for now: the transcript absorbs it after xiSeed.
+        // Any W and evaluations for now: the transcript absorbs them after xiSeed.
         w: g1_times(&f_tau),
         wp: g1_times(&BigUint::from(1u32)),
-        evaluations: vec![],
+        evaluations: vec![FrBytes::ZERO; 2],
         air_values: vec![],
         airgroup_values: vec![],
         proof_values: vec![],
         inv: FrBytes::ZERO,
         inv_zh: FrBytes::ZERO,
     };
-    let xi = xi_of(&vkey, &challenges(&vkey, &proof, &publics).unwrap().xi_seed);
+    let xi = xi_of(&vkey, &big(&verifier_challenges(&vkey, &proof, &publics).unwrap().xi_seed));
     let (q1_xi, q0_xi) = (q1(&xi), q0(&xi));
     // The pieces in the order of the layout: Q1, Q0.
     proof.evaluations = vec![fr(&q1_xi), fr(&q0_xi)];
@@ -847,13 +642,15 @@ fn foundry_verifies_a_split_q_without_evaluations() {
     let r_at = |x: &BigUint| (&q1_xi + x * &q0_xi) % &r;
     let h_tau = fr_sub(&f_tau, &r_at(&tau)) * fr_inv(&fr_sub(&pow(&tau, 2), &xi)) % &r;
     proof.w = g1_times(&h_tau);
-    let y = challenges(&vkey, &proof, &publics).unwrap().y;
+    let y = big(&verifier_challenges(&vkey, &proof, &publics).unwrap().y);
     // W' = L/(X − y) at τ, with L = f − r(y) − Z_T(y)·h: q_0 = Z_T(y) for one f (A.5).
     let l_tau = fr_sub(&fr_sub(&f_tau, &r_at(&y)), &(fr_sub(&pow(&y, 2), &xi) * &h_tau % &r));
     proof.wp = g1_times(&(l_tau * fr_inv(&fr_sub(&tau, &y)) % &r));
     let proof = fixup(&vkey, proof, &publics);
 
-    // The JSON view, by hand: no pilfflonkinfo names this proof (A.6: f0, W, Wp; Q1, Q0, inv, invZh).
+    // The JSON view, by hand: no pilfflonkinfo names this proof (A.6: f0, W, Wp; Q1, Q0, inv, invZh),
+    // and those are the names of the vkey's.
+    let names = ProofNames::of_vkey(&vkey).unwrap();
     let point = |p: &G1Affine| json!([p.x.to_decimal(), p.y.to_decimal(), "1"]);
     let js = |label: &str, proof: &Proof, publics: &[FrBytes]| {
         let at = dir.file(label);
@@ -866,6 +663,7 @@ fn foundry_verifies_a_split_q_without_evaluations() {
                 "inv": proof.inv.to_decimal(), "invZh": proof.inv_zh.to_decimal(),
             },
         });
+        assert_eq!(serde_json::to_value(proof.to_json(&names).unwrap()).unwrap(), view, "{label}");
         fs::write(at.join("proof.json"), view.to_string()).unwrap();
         Publics(publics.to_vec()).write(&at.join("publics.json")).unwrap();
         js_verdict_of(&vkey_path, &at)
@@ -874,24 +672,25 @@ fn foundry_verifies_a_split_q_without_evaluations() {
     let mut add = |label: &str, proof: &Proof, publics: &[FrBytes], expected: bool| {
         let verdict = js(label, proof, publics);
         assert_eq!(verdict, expected, "the JS verifier on {label}");
-        let (proof, publics) = calldata(&vkey, proof, publics);
-        cases.push(Case { label: label.into(), js: Some(verdict), expected: Outcome::of_js(verdict), proof, publics });
+        let calldata = calldata(&vkey, proof, publics);
+        cases.push(Case { label: label.into(), js: Some(verdict), expected: Outcome::of_js(verdict), calldata });
     };
     add("proof", &proof, &publics, true);
     let mut piece = proof.clone();
     piece.evaluations[0] = plus_one(&piece.evaluations[0]);
     add("Q1 + 1, fixed up", &fixup(&vkey, piece, &publics), &publics, false);
     let mut pieces = proof.clone();
-    rebalance_pieces(&vkey, &mut pieces, &challenges(&vkey, &proof, &publics).unwrap().xi_seed, 12345);
+    let xi_seed = big(&verifier_challenges(&vkey, &proof, &publics).unwrap().xi_seed);
+    rebalance_pieces(&vkey, &mut pieces, &xi_seed, 12345);
     add("Q pieces rebalanced, fixed up", &fixup(&vkey, pieces, &publics), &publics, false);
     let other = vec![FrBytes::from_u64(6)];
     add("public 6, fixed up", &fixup(&vkey, proof.clone(), &other), &other, false);
 
-    println!(
+    let title = format!(
         "noeval: 1 f, powerW 2, runtime code {size} bytes, {} words of `proof`",
         CalldataLayout::of(&vkey).words()
     );
-    let gas = check_on_foundry(&tools, &dir.0, &sol, "noeval", &cases);
+    let gas = check_on_foundry(&tools, &dir.0, &sol, &title, &cases);
     // The rebalanced pieces pass checkQPieces: the pairing refuses them.
     assert!(
         10 * gas[2] >= 9 * gas[0],

@@ -19,7 +19,8 @@
 //! auxiliary inverse `1/(ξ − ω^j)` for each `firstRow` (`j = 0`) or `lastRow` (`j = N − 1`) boundary,
 //! in the order of the boundaries (spec §4.5, "Calldata"). The contract checks each, as it checks
 //! `inv` and `invZh`. A vkey without those boundaries, as every compiled PIL2 program (§3.4), has none,
-//! and the calldata is the proof.
+//! and the calldata is the proof. `proofman_pilfflonk::calldata` encodes it for a proof, and
+//! `proofman-cli pilfflonk calldata` prints it.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -27,8 +28,9 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use num_bigint::BigUint;
+use proofman_pilfflonk::calldata::SELECTOR_BYTES;
 use proofman_pilfflonk::names::evaluation_name;
-use proofman_pilfflonk::{Boundary, G1Affine, JsonFile, PolType, Vkey, BN254_Q, BN254_R};
+use proofman_pilfflonk::{Boundary, CalldataLayout, G1Affine, JsonFile, PolType, Vkey, BN254_Q, BN254_R};
 use serde::Serialize;
 use serde_json::Value;
 use tera::{Context as TeraContext, Tera};
@@ -45,9 +47,6 @@ const VERIFIER_TEMPLATE: &str = include_str!("tera/verifier_pilfflonk.sol.tera")
 
 /// Bytes of a word of the calldata and of the memory.
 const WORD: u64 = 32;
-
-/// The selector before the arguments of `verifyProof`.
-const SELECTOR_BYTES: u64 = 4;
 
 fn fail<T>(message: impl Into<String>) -> Result<T, SetupError> {
     Err(SetupError::Solidity(message.into()))
@@ -119,64 +118,9 @@ fn is_g1(point: &G1Affine) -> bool {
 // The calldata
 // ---------------------------------------------------------------------------------------------
 
-/// Where the verifier finds each value in its `proof` argument, in words (see the module).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CalldataLayout {
-    /// The commitments of the non-fixed `f_i`, `x` and `y` each a word, from word 0.
-    pub n_commitments: u64,
-    /// The evaluations of the evMap, in the order of the proof: the fixed columns' first (A.4,
-    /// step 4; A.6).
-    pub n_evaluations: u64,
-    /// The pieces `Q_i(ξ)` of a split `Q`, and 0 if it is whole.
-    pub n_q_pieces: u64,
-    /// The rows `j` of the auxiliary inverses `1/(ξ − ω^j)` after the proof: one per `firstRow`
-    /// (`0`) and `lastRow` (`N − 1`) boundary, in the order of the boundaries.
-    pub aux_rows: Vec<u64>,
-}
-
-impl CalldataLayout {
-    pub fn of(vkey: &Vkey) -> Self {
-        let n_fixed = vkey.layout.n_fixed() as u64;
-        let n_rows = 1u64 << vkey.power;
-        let q_stage = vkey.layout.0.last().map_or(0, |f| f.stage);
-        let n_q = vkey.layout.0.iter().filter(|f| f.stage == q_stage).map(|f| f.k).sum::<u64>();
-        let aux_rows = vkey
-            .boundaries
-            .iter()
-            .filter_map(|b| match b {
-                Boundary::FirstRow => Some(0),
-                Boundary::LastRow => Some(n_rows - 1),
-                Boundary::EveryRow | Boundary::EveryFrame { .. } => None,
-            })
-            .collect();
-        CalldataLayout {
-            n_commitments: vkey.layout.0.len() as u64 - n_fixed,
-            n_evaluations: vkey.ev_map.len() as u64,
-            n_q_pieces: if n_q > 1 { n_q } else { 0 },
-            aux_rows,
-        }
-    }
-
-    /// The words of the proof's bytes (A.6): the commitments, `W`, `W'`, the evaluations, the
-    /// pieces of `Q`, `inv` and `invZh`. Format version 1 has no air, airgroup or proof values.
-    pub fn proof_words(&self) -> u64 {
-        2 * (self.n_commitments + 2) + self.n_evaluations + self.n_q_pieces + 2
-    }
-
-    /// The words of the `proof` argument: the proof's and the auxiliary inverses.
-    pub fn words(&self) -> u64 {
-        self.proof_words() + self.aux_rows.len() as u64
-    }
-
-    /// The word of the first scalar, the first evaluation.
-    fn first_scalar(&self) -> u64 {
-        2 * (self.n_commitments + 2)
-    }
-
-    /// The byte offset of `word` in the calldata, after the selector.
-    fn offset(word: u64) -> u64 {
-        SELECTOR_BYTES + WORD * word
-    }
+/// The byte offset of `word` of the `proof` argument in the calldata, after the selector.
+fn calldata_offset(word: u64) -> u64 {
+    SELECTOR_BYTES as u64 + WORD * word
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -543,11 +487,7 @@ impl Context {
         // --- The calldata (proof.rs, Proof::to_bytes; the module's "Calldata") ---------------------
         let mut calldata = Vec::new();
         let mut cd_slot = |name: String, word: u64, comment: String| -> String {
-            calldata.push(Slot {
-                name: name.clone(),
-                offset: CalldataLayout::offset(word),
-                comment: sanitize(&comment),
-            });
+            calldata.push(Slot { name: name.clone(), offset: calldata_offset(word), comment: sanitize(&comment) });
             name
         };
         let mut commitment_of = BTreeMap::new();
@@ -613,7 +553,7 @@ impl Context {
             })
             .collect();
         let mut aux_slots = aux_slots.into_iter();
-        let p_public = CalldataLayout::offset(cd.words());
+        let p_public = calldata_offset(cd.words());
         let public: Vec<String> = (0..vkey.n_public).map(|i| at("pPublic", WORD * i)).collect();
 
         // --- The memory -----------------------------------------------------------------------
@@ -895,10 +835,10 @@ impl Context {
             words: cd.words(),
             proof_words: cd.proof_words(),
             calldata,
-            p_points_end: CalldataLayout::offset(2 * (n_c + 2)),
-            p_absorbed_end: CalldataLayout::offset(2 * (n_c + 1)),
-            p_scalars: CalldataLayout::offset(cd.first_scalar()),
-            p_scalars_end: CalldataLayout::offset(cd.words()),
+            p_points_end: calldata_offset(2 * (n_c + 2)),
+            p_absorbed_end: calldata_offset(2 * (n_c + 1)),
+            p_scalars: calldata_offset(cd.first_scalar()),
+            p_scalars_end: calldata_offset(cd.words()),
             p_public,
             memory: mem.slots,
             last_mem: mem.next,

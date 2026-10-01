@@ -8,11 +8,11 @@ use std::path::{Path, PathBuf};
 
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::digest::seal_vkey;
-use pilfflonk_setup::solidity::{export_verifier_sol, verifier_sol, CalldataLayout, VERIFIER_SOL_FILE};
+use pilfflonk_setup::solidity::{export_verifier_sol, verifier_sol, VERIFIER_SOL_FILE};
 use pilfflonk_setup::test_ptau::{fixed_tau_ptau, test_tau, write_tau_one_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupError, SetupPilfflonkOptions};
 use prost::Message;
-use proofman_pilfflonk::{Boundary, FqBytes, G1Affine, G2Affine, JsonFile, PilfflonkGlobalInfo, Vkey};
+use proofman_pilfflonk::{Boundary, CalldataLayout, FqBytes, G1Affine, G2Affine, JsonFile, PilfflonkGlobalInfo, Vkey};
 
 use crate::common::*;
 

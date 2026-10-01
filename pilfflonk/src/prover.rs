@@ -38,8 +38,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use proofman_starks_lib_c::{
-    pilfflonk_keccak256_c, PilFflonkError, PilFflonkErrorKind, PilFflonkInstance, PilFflonkInstanceInputs,
-    PilFflonkOpening, PilFflonkProverCtx, PilFflonkTranscript,
+    PilFflonkError, PilFflonkErrorKind, PilFflonkInstance, PilFflonkInstanceInputs, PilFflonkOpening,
+    PilFflonkProverCtx, PilFflonkTranscript,
 };
 
 use crate::error::{invalid, PilfflonkError, PilfflonkResult};
@@ -58,10 +58,6 @@ pub(crate) fn native(context: &'static str) -> impl FnOnce(PilFflonkError) -> Pi
         PilFflonkErrorKind::Unsatisfied => PilfflonkError::Unsatisfied(source.message),
         _ => PilfflonkError::Native { context: context.to_string(), source },
     }
-}
-
-fn keccak256(data: &[u8]) -> PilfflonkResult<[u8; 32]> {
-    pilfflonk_keccak256_c(data).map_err(native("hashing the vkey"))
 }
 
 /// The `provingKey/` of a proof, loaded (see [the module](self)).
@@ -87,13 +83,7 @@ impl ProvingKey {
         let global_info = PilfflonkGlobalInfo::from_proving_key(dir)?;
         let vkey_path = global_info.vkey_path(dir);
         let vkey = Vkey::read(&vkey_path)?;
-        let digest = keccak256(&vkey.digest_preimage()?)?;
-        if !vkey.digest_matches(|_| digest)? {
-            return Err(PilfflonkError::InvalidFormat(
-                "the digest of the vkey is not the digest of its contents (A.6)".into(),
-            )
-            .in_file(&vkey_path));
-        }
+        vkey.check_digest().map_err(|e| e.in_file(&vkey_path))?;
         let mut airs = Vec::new();
         for (airgroup_id, group) in global_info.airs.iter().enumerate() {
             for air_id in 0..group.len() {
@@ -345,7 +335,7 @@ impl Transcript {
         self.0.absorb_fr(&le(values)).map_err(native("absorbing scalars into the transcript"))
     }
 
-    fn points(&mut self, points: &[G1Affine]) -> PilfflonkResult<()> {
+    pub(crate) fn points(&mut self, points: &[G1Affine]) -> PilfflonkResult<()> {
         let bytes: Vec<[u8; 64]> = points.iter().map(G1Affine::to_le_bytes).collect();
         self.0.absorb_g1(&bytes).map_err(native("absorbing commitments into the transcript"))
     }

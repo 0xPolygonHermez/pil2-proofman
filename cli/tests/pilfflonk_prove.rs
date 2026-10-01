@@ -36,7 +36,13 @@
 //!   `--witness`: the libraries of `pilfflonk/tests/fixtures/{fibonacci,connection,all}/rs` prove the
 //!   same proofs as their generators' witness directories, which verify; and the command refuses a
 //!   STARK witness library, a file that is not a library, and public inputs the library cannot read,
-//!   and the flags that do not go together.
+//!   and the flags that do not go together;
+//! - the Solidity verifier (plan M41, spec Fase 4, validation 1): for every fixture above, in the
+//!   setups of its end to end, the verifier `pilfflonk-solidity` writes, compiled by solc 0.8.37,
+//!   accepts on Foundry v1.8.3 the prover's proof with the calldata of `pilfflonk calldata`, and
+//!   rejects it changed, as `pilfflonk verify` does (`pilfflonk/tests/data/foundry.rs`). The tools are
+//!   pinned, at the paths `PILFFLONK_FORGE` and `PILFFLONK_SOLC` name (spec §4.5, "Eines"), and the
+//!   test is `#[ignore]` without them.
 //!
 //! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
 //! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`, plan N13):
@@ -49,7 +55,8 @@
 //! pilouts in code, and need only Node.js (the E2E) or nothing (`qDeg`). It needs Node.js:
 //!
 //! ```text
-//! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p proofman-cli --features proofman-starks-lib-c/cpu-only \
+//! PIL2C_EXEC=<pil2-compiler>/src/pil.js PILFFLONK_FORGE=<forge> PILFFLONK_SOLC=<solc> \
+//!     cargo test -p proofman-cli --features proofman-starks-lib-c/cpu-only \
 //!     --test pilfflonk_prove -- --ignored --test-threads 2
 //! ```
 //!
@@ -70,6 +77,8 @@ mod connection;
 mod domains;
 #[path = "../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
+#[path = "../../pilfflonk/tests/data/foundry.rs"]
+mod foundry;
 #[path = "../../pilfflonk/tests/data/packed.rs"]
 mod packed;
 #[path = "../../pilfflonk/tests/data/permutation.rs"]
@@ -99,14 +108,15 @@ use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE
 use pilfflonk_setup::digest::seal_vkey;
 use pilfflonk_setup::keys::write_srs;
 use pilfflonk_setup::layout::max_degree;
+use pilfflonk_setup::solidity::{export_verifier_sol, VERIFIER_SOL_FILE};
 use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::oracle::{AirOracle, ColumnRef, Domain, Fr, HintKind};
 use proofman_pilfflonk::oracle::Values;
 use proofman_pilfflonk::{
-    prove, stage_columns, AirFile, Boundary, FileWitnessSource, FrBytes, JsonFile, PilfflonkError, PilfflonkGlobalInfo,
-    PilfflonkInfo, PolMapEntry, PolType, ProofChallenges, ProveOptions, ProvingKey, Vkey, Witness, WitnessSource,
-    BN254_R,
+    prove, stage_columns, AirFile, Boundary, CalldataLayout, FileWitnessSource, FrBytes, JsonFile, PilfflonkError,
+    PilfflonkGlobalInfo, PilfflonkInfo, PolMapEntry, PolType, Proof, ProofChallenges, ProofNames, ProveOptions,
+    ProvingKey, Vkey, Witness, WitnessSource, BN254_R,
 };
 use prost::Message;
 use serde_json::{json, Value};
@@ -1919,4 +1929,312 @@ fn the_prover_takes_one_witness() {
         assert_eq!(run.status.code(), Some(2), "{source:?}: {}", output(&run));
         assert!(output(&run).contains(expected), "{expected:?} not in:\n{}", output(&run));
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The Solidity verifier (plan M41): Foundry on the proofs of every fixture
+// ---------------------------------------------------------------------------------------------
+
+impl Program {
+    /// The witness library of the fixture, if it has one (plan M38c), and its public inputs.
+    fn witness_library(self) -> Option<(&'static str, Option<&'static str>)> {
+        match self {
+            Program::Fibonacci => Some(("pilfflonk_fibonacci", Some(PIL_FFLONK_INPUTS))),
+            Program::Example(Example::Connection, _) => Some(("pilfflonk_connection", None)),
+            Program::Example(Example::All, _) => Some(("pilfflonk_all", Some(PIL_FFLONK_INPUTS))),
+            _ => None,
+        }
+    }
+}
+
+/// `proofman-cli pilfflonk calldata -k <vkey> -p <proof> --publics <publics> --format <format> -o
+/// <out>`, which must write the calldata: the file's line.
+fn calldata_cli(f: &Fixture, proof: &Path, publics: &Path, format: &str) -> String {
+    let out = f.dir.file(&format!("calldata.{format}"));
+    let _ = fs::remove_file(&out);
+    let run = cli(
+        &["pilfflonk", "calldata", "--format", format, "-k"],
+        &[&f.vkey, Path::new("-p"), proof, Path::new("--publics"), publics, Path::new("-o"), &out],
+    );
+    assert!(run.status.success(), "calldata {}: {}", proof.display(), output(&run));
+    fs::read_to_string(&out).unwrap().trim_end().to_string()
+}
+
+/// The bytes of the calldata `pilfflonk calldata --format hex` writes, `0x` and hexadecimal digits.
+fn abi_bytes(hex: &str) -> Vec<u8> {
+    let digits = hex.strip_prefix("0x").unwrap_or_else(|| panic!("{hex}"));
+    (0..digits.len()).step_by(2).map(|i| u8::from_str_radix(&digits[i..i + 2], 16).unwrap()).collect()
+}
+
+/// A key of the Foundry end to end: a fixture set up as the end to end above sets it up.
+struct SolidityKey {
+    name: String,
+    program: Program,
+    packing: Packing,
+    max_constraint_degree: u64,
+    max_q_degree: u64,
+}
+
+/// Every fixture of phases 1 to 3 in the setups of the end to end above: grouped as it is by
+/// default (with pil-fflonk's `extraMuls` for its examples), with `--no-packing`, with the
+/// `--max-constraint-degree` and `--extra-muls` of its tests, and with `Q` split wherever `qDeg`
+/// allows it (`qDeg ≥ 2`).
+fn solidity_keys() -> Vec<SolidityKey> {
+    let d = DEFAULT_MAX_CONSTRAINT_DEGREE;
+    let key = |name: String, program, packing, max_constraint_degree, max_q_degree| SolidityKey {
+        name,
+        program,
+        packing,
+        max_constraint_degree,
+        max_q_degree,
+    };
+    let mut keys = Vec::new();
+    // Phase 1: the Fibonacci (M13, M22), the packing (M22), the signed offsets and their im pols
+    // (M23), Q split (M33) and the domains (M24).
+    for (name, program, packing, degree, max_q_degree) in [
+        ("fibonacci", Program::Fibonacci, DEFAULT, d, 0),
+        ("fibonacci_k3", Program::Fibonacci, Packing::ExtraMuls(0), d, 0),
+        ("fibonacci_unpacked", Program::Fibonacci, Packing::NoPacking, d, 0),
+        ("packed", Program::Packed, DEFAULT, d, 0),
+        ("packed_unpacked", Program::Packed, Packing::NoPacking, d, 0),
+        ("signed", Program::Signed, DEFAULT, d, 0),
+        ("signed_d3", Program::Signed, DEFAULT, 3, 0),
+        ("signed_d2", Program::Signed, DEFAULT, 2, 0),
+        ("signed_unpacked", Program::Signed, Packing::NoPacking, d, 0),
+        ("signed_unpacked_d2", Program::Signed, Packing::NoPacking, 2, 0),
+        ("signed_split_m1", Program::Signed, DEFAULT, d, 1),
+        ("signed_split_m1_unpacked", Program::Signed, Packing::NoPacking, d, 1),
+        ("signed_split_m2", Program::Signed, DEFAULT, d, 2),
+        ("signed_split_m2_unpacked", Program::Signed, Packing::NoPacking, d, 2),
+    ] {
+        keys.push(key(name.to_string(), program, packing, degree, max_q_degree));
+    }
+    for air in [domains::Air::FirstRow, domains::Air::LastRow, domains::Air::Frames, domains::Air::All] {
+        for (name, degree, packing, _, _) in domain_setups(air) {
+            keys.push(key(format!("domain_{name}"), Program::Domains(air), packing, degree, 0));
+        }
+        // qDeg = 2 by default: Q in two pieces.
+        keys.push(key(format!("domain_{}_split", air.name()), Program::Domains(air), DEFAULT, d, 1));
+    }
+    keys.push(key(
+        "domain_Domains_split_unpacked".into(),
+        Program::Domains(domains::Air::All),
+        Packing::NoPacking,
+        d,
+        1,
+    ));
+    // Phase 2: the std's buses of stage 2 (M30, M31), and prod_bus_im, of qDeg = 2, split.
+    for (name, program) in [
+        ("sum_bus", Program::SumBus),
+        ("sum_bus_degree4", Program::SumBusDegree4),
+        ("prod_bus", Program::ProdBus),
+        ("prod_bus_im", Program::ProdBusIm),
+    ] {
+        keys.push(key(name.to_string(), program, DEFAULT, d, 0));
+        keys.push(key(format!("{name}_unpacked"), program, Packing::NoPacking, d, 0));
+    }
+    keys.push(key("prod_bus_im_split".into(), Program::ProdBusIm, DEFAULT, d, 1));
+    // The examples of pil-fflonk (M34) on both buses, split as their end to end splits them
+    // (`--max-constraint-degree 3 --max-q-degree 1`) where that gives Q two pieces, and all_prod, of
+    // qDeg = 3 by default, in three.
+    for example in [Example::Plookup, Example::Permutation, Example::Connection, Example::RangeCheck, Example::All] {
+        for bus in [Bus::Sum, Bus::Prod] {
+            let program = Program::Example(example, bus);
+            let name = format!("{}_{}", example.name(), bus.name());
+            keys.push(key(name.clone(), program, Packing::ExtraMuls(example.extra_muls()), d, 0));
+            keys.push(key(format!("{name}_unpacked"), program, Packing::NoPacking, d, 0));
+            let q_deg_1 = matches!((example, bus), (Example::Permutation | Example::RangeCheck, Bus::Sum));
+            if !q_deg_1 {
+                keys.push(key(format!("{name}_split"), program, DEFAULT, 3, 1));
+            }
+        }
+    }
+    keys.push(key("all_prod_split3".into(), Program::Example(Example::All, Bus::Prod), DEFAULT, d, 1));
+    keys
+}
+
+/// What the Foundry end to end measures of a key: the size of its verifier and calldata, and the
+/// gas of the call to `verifyProof` with its proof (as the Foundry test measures it, `gasleft()`
+/// around the call, without the transaction's 21000) and of its calldata (EIP-2028).
+struct GasRow {
+    name: String,
+    n_f: usize,
+    words: u64,
+    n_public: u64,
+    code: usize,
+    gas: u64,
+    calldata_gas: u64,
+}
+
+/// A key of the Foundry end to end, set up, with its verifier and the names of its proofs.
+struct SetUpKey {
+    key: SolidityKey,
+    f: Fixture,
+    vkey: Vkey,
+    names: ProofNames,
+    sol: PathBuf,
+}
+
+/// The key set up, and its verifier, as `proofman-setup pilfflonk-solidity` writes it; the names of
+/// its proofs are the vkey's (`ProofNames::of_vkey`) and the pilfflonkinfo's, and `Q` is split if
+/// the key splits it. It calls the C++ core in this process.
+fn set_up_for_foundry(key: SolidityKey) -> SetUpKey {
+    let name = key.name.as_str();
+    let f = fixture_split(name, key.program, key.packing, key.max_constraint_degree, key.max_q_degree);
+    let info = f.info();
+    let vkey = Vkey::read(&f.vkey).unwrap();
+    if key.max_q_degree > 0 {
+        assert!(info.q_split().unwrap().n_pieces() >= 2, "{name}: Q is split");
+    }
+    let global_info = PilfflonkGlobalInfo::from_proving_key(&f.proving_key).unwrap();
+    let names = ProofNames::new(&global_info, &[&info]).unwrap();
+    assert_eq!(ProofNames::of_vkey(&vkey).unwrap(), names, "{name}: the names of the vkey and of the pilfflonkinfo");
+    let sol = f.dir.file(VERIFIER_SOL_FILE);
+    export_verifier_sol(&f.vkey, &sol).unwrap();
+    SetUpKey { key, f, vkey, names, sol }
+}
+
+/// The verifier of a key set up, compiled by solc; the proof of its witness by `pilfflonk prove` (with
+/// a fixed seed, from the fixture's witness library if it has one), and the proof with an evaluation,
+/// a commitment or a public changed, each verified by `pilfflonk verify` and encoded by `pilfflonk
+/// calldata`; and Foundry on the calldata, which must say what the JS verifier says. The calldata of
+/// the proof's bytes and its Solidity form are those of its JSON view. It runs programs only, and
+/// calls no C++ in this process.
+fn verifies_on_foundry(tools: &foundry::Tools, set_up: &SetUpKey) -> GasRow {
+    let SetUpKey { key, f, vkey, names, sol } = set_up;
+    let name = key.name.as_str();
+    let code = foundry::compile_with_solc(tools, &f.dir.0, sol);
+
+    let proof_dir = f.dir.file("proof");
+    let library = key.program.witness_library().map(|(library, inputs)| (built_library(library), inputs));
+    let inputs_file = f.dir.file("inputs.json");
+    let mut source = vec!["--witness", f.witness.to_str().unwrap()];
+    if let Some((library, inputs)) = &library {
+        source = vec!["--witness-lib", library.to_str().unwrap()];
+        if let Some(inputs) = inputs {
+            fs::write(&inputs_file, inputs).unwrap();
+            source.extend(["--public-inputs", inputs_file.to_str().unwrap()]);
+        }
+    }
+    let run = prove_from(&f.proving_key, &source, &proof_dir, Some(SEED_A));
+    assert!(run.status.success(), "{name}: prove: {}", output(&run));
+    let (proof, publics) = (proof_dir.join("proof.json"), proof_dir.join("publics.json"));
+    assert_eq!(read_json(&publics), f.publics, "{name}");
+
+    // The proof's bytes (A.6) give the calldata of its JSON view, and its Solidity form the same words.
+    let hex = calldata_cli(f, &proof, &publics, "hex");
+    let bin = f.dir.file("proof.bin");
+    fs::write(&bin, Proof::read(&proof, names).unwrap().to_bytes()).unwrap();
+    assert_eq!(calldata_cli(f, &bin, &publics, "hex"), hex, "{name}: the calldata of proof.bin");
+    let solidity = calldata_cli(f, &proof, &publics, "solidity");
+    let words: String = solidity.split("0x").skip(1).map(|word| &word[..64]).collect();
+    assert_eq!(words, hex[2 + 8..], "{name}: the Solidity form");
+
+    let mut cases = Vec::new();
+    let mut add = |label: &str, proof: &Path, publics: &Path, expected: bool| {
+        let js = verify(&f.vkey, publics, proof);
+        assert_eq!(js.status.success(), expected, "{name}, {label}: {}", output(&js));
+        let calldata = abi_bytes(&calldata_cli(f, proof, publics, "hex"));
+        cases.push(foundry::Case {
+            label: label.to_string(),
+            js: Some(expected),
+            expected: foundry::Outcome::of_js(expected),
+            calldata,
+        });
+    };
+    add("proof", &proof, &publics, true);
+    let json = read_json(&proof);
+    let mut evaluation = json.clone();
+    let first = evaluation["evaluations"].as_object().unwrap().keys().next().unwrap().clone();
+    evaluation["evaluations"][&first] = plus_one(&json["evaluations"][&first]);
+    let evaluation_file = f.dir.file("mutated_evaluation.json");
+    write_json(&evaluation_file, &evaluation);
+    add("mutated evaluation", &evaluation_file, &publics, false);
+    // Another point of the curve that the transcript absorbs: W.
+    let mut commitment = json.clone();
+    let first = commitment["polynomials"].as_object().unwrap().keys().find(|k| k.starts_with('f')).unwrap().clone();
+    commitment["polynomials"][&first] = json["polynomials"]["W"].clone();
+    let commitment_file = f.dir.file("mutated_commitment.json");
+    write_json(&commitment_file, &commitment);
+    add("mutated commitment", &commitment_file, &publics, false);
+    let public_values = read_json(&publics);
+    if !public_values.as_array().unwrap().is_empty() {
+        let mut public = public_values.clone();
+        public[0] = plus_one(&public_values[0]);
+        let public_file = f.dir.file("mutated_publics.json");
+        write_json(&public_file, &public);
+        add("mutated public", &proof, &public_file, false);
+    }
+
+    let layout = CalldataLayout::of(vkey);
+    let title = format!(
+        "{name}: {} f, powerW {}, runtime code {code} bytes, {} words of `proof`, {} auxiliary inverses",
+        vkey.layout.0.len(),
+        vkey.power_w,
+        layout.words(),
+        layout.aux_rows.len()
+    );
+    let gas = foundry::check_on_foundry(tools, &f.dir.0, sol, &title, &cases);
+    GasRow {
+        name: name.to_string(),
+        n_f: vkey.layout.0.len(),
+        words: layout.words(),
+        n_public: vkey.n_public,
+        code,
+        gas: gas[0],
+        calldata_gas: foundry::calldata_gas(&cases[0]),
+    }
+}
+
+/// The threads of [`foundry_accepts_the_proof_of_every_fixture`] that run the programs of the keys.
+const FOUNDRY_WORKERS: usize = 4;
+
+/// Phase 4's validation 1 (spec §6, plan M41): Foundry accepts the proof of every fixture of phases 1
+/// to 3 ([`solidity_keys`]) with the calldata of `pilfflonk calldata`, and rejects it with an
+/// evaluation, a commitment or a public changed, as the JS verifier (`pilfflonk verify`) does. Prints
+/// the gas of every proof's call, and the time.
+///
+/// The keys are set up on the test's thread, one after another, as the other tests of this file set
+/// theirs up: the setup runs the C++ core's OpenMP code in this process (see the module). What
+/// follows, [`verifies_on_foundry`], runs programs only (the CLI, Node.js, solc and Foundry), and
+/// [`FOUNDRY_WORKERS`] threads run it for the keys set up so far.
+#[test]
+#[ignore = "needs PILFFLONK_FORGE, PILFFLONK_SOLC, PIL2C_EXEC and Node.js"]
+fn foundry_accepts_the_proof_of_every_fixture() {
+    let tools = foundry::Tools::from_env();
+    let start = std::time::Instant::now();
+    let keys = solidity_keys();
+    let order: Vec<String> = keys.iter().map(|key| key.name.clone()).collect();
+    let (sender, receiver) = std::sync::mpsc::channel::<SetUpKey>();
+    let receiver = std::sync::Mutex::new(receiver);
+    let mut rows: Vec<GasRow> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..FOUNDRY_WORKERS)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut rows = Vec::new();
+                    loop {
+                        // The lock is held while receiving only: the statement drops the guard.
+                        let Ok(set_up) = receiver.lock().unwrap().recv() else { break rows };
+                        rows.push(verifies_on_foundry(&tools, &set_up));
+                    }
+                })
+            })
+            .collect();
+        for key in keys {
+            sender.send(set_up_for_foundry(key)).unwrap();
+        }
+        drop(sender);
+        workers.into_iter().flat_map(|worker| worker.join().unwrap()).collect()
+    });
+    rows.sort_by_key(|row| order.iter().position(|name| *name == row.name));
+    assert_eq!(rows.len(), order.len());
+    println!("\n| Key | f | Words of `proof` | Publics | Code (bytes) | Gas of `verifyProof` | Gas of the calldata |");
+    println!("|---|---|---|---|---|---|---|");
+    for row in &rows {
+        println!(
+            "| `{}` | {} | {} | {} | {} | {} | {} |",
+            row.name, row.n_f, row.words, row.n_public, row.code, row.gas, row.calldata_gas
+        );
+    }
+    println!("\n{} keys, every proof accepted, in {:.0} s", rows.len(), start.elapsed().as_secs_f64());
 }

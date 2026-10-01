@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.20;
 
-// The generated verifier of one key (setup/pilfflonk/src/solidity.rs), which
-// setup/pilfflonk/tests/solidity.rs writes here with the cases of that key.
+// The generated verifier of one key (setup/pilfflonk/src/solidity.rs), which the tests
+// (pilfflonk/tests/data/foundry.rs) write here with the cases of that key.
 import {PilfflonkVerifier} from "../src/PilfflonkVerifier.sol";
 
 // The cheatcodes the test uses, declared here: the project has no forge-std, and Foundry answers
@@ -17,13 +17,15 @@ interface Vm {
 }
 
 /// @notice Runs `verifyProof` of the key's verifier on every case of cases/cases.json:
-///         {"n": n, "cases": [{"label", "proof", "publics", "expected"}]}, `proof` and `publics` the
-///         calldata of its two arguments (the words of `bytes32[W]` and of `uint256[P]`, as hex), and
+///         {"n": n, "cases": [{"label", "calldata", "expected"}]}, `calldata` the call's, as hex: the
+///         selector of `verifyProof` and its two arguments ABI-encoded, the words of `bytes32[W]` and
+///         of `uint256[P]`, as `proofman-cli pilfflonk calldata --format hex` writes it; and
 ///         `expected` what the call must do: "accept" (return true, what the JS verifier accepts),
 ///         "reject" (return false: every refusal, a malformed value included) or "revert" (calldata
-///         shorter than the arguments, which the ABI decoder refuses). It writes one line
-///         "<i> <outcome> <gas>" per case to cases/results.txt, the gas that of the call, and fails if
-///         an outcome is not the expected one.
+///         shorter than the arguments, which the ABI decoder refuses). A case whose selector is not
+///         solc's for `verifyProof` is an unexpected outcome. It writes one line "<i> <outcome> <gas>"
+///         per case to cases/results.txt, the gas that of the call, and fails if an outcome is not the
+///         expected one.
 contract PilfflonkVerifierTest {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
@@ -39,11 +41,11 @@ contract PilfflonkVerifierTest {
             string memory c = string.concat(".cases[", vm.toString(i), "]");
             // The ABI encodes the fixed-size arrays in place: the calldata is the selector and the
             // words of both.
-            bytes memory data = abi.encodePacked(
-                PilfflonkVerifier.verifyProof.selector,
-                vm.parseJsonBytes(json, string.concat(c, ".proof")),
-                vm.parseJsonBytes(json, string.concat(c, ".publics"))
-            );
+            bytes memory data = vm.parseJsonBytes(json, string.concat(c, ".calldata"));
+            string memory label = vm.parseJsonString(json, string.concat(c, ".label"));
+            if (data.length < 4 || bytes4(data) != PilfflonkVerifier.verifyProof.selector) {
+                disagreements = string.concat(disagreements, " ", label, " (its selector is not verifyProof's)");
+            }
             uint256 before = gasleft();
             (bool ok, bytes memory ret) = address(verifier).staticcall(data);
             uint256 used = before - gasleft();
@@ -56,7 +58,7 @@ contract PilfflonkVerifierTest {
             vm.writeLine(RESULTS, string.concat(vm.toString(i), " ", outcome, " ", vm.toString(used)));
             string memory expected = vm.parseJsonString(json, string.concat(c, ".expected"));
             if (keccak256(bytes(outcome)) != keccak256(bytes(expected))) {
-                disagreements = string.concat(disagreements, " ", vm.parseJsonString(json, string.concat(c, ".label")));
+                disagreements = string.concat(disagreements, " ", label);
             }
         }
         require(bytes(disagreements).length == 0, string.concat("unexpected outcomes on:", disagreements));
