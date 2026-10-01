@@ -903,7 +903,7 @@ Diverses instàncies i restriccions globals queden fora d'abast (D2): el verific
 
     Dues precaucions: mesurar les mides amb solc i no amb `forge build --sizes`, que escriu a `~/.foundry`; i fer servir la mateixa versió de Foundry, perquè el gas que mesura depèn del seu mode d'aïllament (Annex I.1).
   - **Mida.** El `qVerifier` desplegat creix amb el nombre de restriccions (uns 50 bytes per entrada): una AIR molt més gran que `all` podria passar de l'EIP-170. Llavors caldria partir-lo en dos contractes, com el sistema antic, o avaluar el `qVerifier` amb un bucle sobre el codi.
-  - **Llicència del contracte:** `GPL-3.0`, la de la plantilla de snarkjs (`SPDX-License-Identifier`; sense la capçalera de snarkjs, que és de l'equip). La plantilla Solidity del STARK en fa servir `AGPL-3.0`; si l'usuari en vol una altra, és una línia.
+  - **Llicència del contracte:** `MIT OR Apache-2.0`, la del repositori (`LICENSE-MIT`, `LICENSE-APACHE` i el `license` del *workspace*), com a `SPDX-License-Identifier` del contracte generat i dels tests de Foundry. Ho va decidir l'usuari l'1-10-2026. No porta la capçalera de snarkjs, que és de l'equip.
 
 ---
 

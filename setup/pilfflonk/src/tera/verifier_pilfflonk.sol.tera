@@ -7,7 +7,7 @@
     is generalised as the JS verifier (pilfflonk/js/src/verify.js, D8) generalises snarkjs's
     fflonk_verify.js, and every step names the JS function it does.
 -#}
-// SPDX-License-Identifier: GPL-3.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity >=0.7.0 <0.9.0;
 
 /// @title PilfflonkVerifier

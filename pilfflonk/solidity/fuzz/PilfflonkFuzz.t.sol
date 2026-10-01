@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0
+// SPDX-License-Identifier: MIT OR Apache-2.0
 pragma solidity ^0.8.20;
 
 // The Foundry test of the differential fuzzer of the Solidity verifier (spec-seed.md §4.5, plan

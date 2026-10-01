@@ -92,7 +92,10 @@ fn solidity_writes_the_verifier_next_to_the_vkey_and_changes_nothing_else() {
         CalldataLayout { n_commitments: 3, n_evaluations: vkey.ev_map.len() as u64, n_q_pieces: 0, aux_rows: vec![] }
     );
     assert_eq!(layout.words(), 2 * (3 + 2) + vkey.ev_map.len() as u64 + 2);
-    assert!(sol.starts_with("// SPDX-License-Identifier: GPL-3.0\npragma solidity >=0.7.0 <0.9.0;\n"), "{sol}");
+    assert!(
+        sol.starts_with("// SPDX-License-Identifier: MIT OR Apache-2.0\npragma solidity >=0.7.0 <0.9.0;\n"),
+        "{sol}"
+    );
     assert!(sol.contains("contract PilfflonkVerifier {"), "{sol}");
     let signature = format!(
         "function verifyProof(bytes32[{}] calldata proof, uint256[2] calldata pubSignals) public view returns (bool)",
