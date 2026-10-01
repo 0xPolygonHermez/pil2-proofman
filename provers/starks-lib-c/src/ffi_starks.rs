@@ -2066,3 +2066,8 @@ pub fn mul_eval_proves_hint_c(
 pub fn mul_reset_c() {
     unsafe { mul_reset() }
 }
+
+/// Forget every multiplicity registration; only before any proof allocated from it.
+pub fn mul_clear_registry_c() {
+    unsafe { mul_clear_registry() }
+}

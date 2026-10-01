@@ -147,6 +147,17 @@ uint64_t mul_eval_proves_hint(void *pSetupCtx_, uint64_t k, const uint64_t *cons
     return 1;
 }
 
+// Forget every registration: layouts, range requests, maps, decoders and plans. Only before a proof
+// has allocated anything from them (a registration that failed validation).
+void mul_clear_registry() {
+    mulDecoders().clear();
+    mulOwnedReqs().clear();
+    mulTableMaps().clear();
+    mulVtLayouts().clear();
+    std::lock_guard<std::mutex> lock(mulPlansMutex());
+    mulPlans().clear();
+}
+
 // Record a virtual table's layout, then materialise any decoders that are now complete.
 void register_mul_vt(uint64_t airgroupId, uint64_t airId, uint64_t numRows, uint64_t numCols,
                      const uint64_t *tableIds, const uint64_t *accBases, uint64_t nTables) {

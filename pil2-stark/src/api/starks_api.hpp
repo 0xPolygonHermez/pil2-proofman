@@ -63,6 +63,7 @@ extern "C" {
     uint64_t mul_air_has_jobs(void *pSetupCtx, uint64_t airgroupId, uint64_t airId);
     uint64_t mul_air_reads_aux(void *pSetupCtx, uint64_t airgroupId, uint64_t airId);
     uint64_t mul_air_plan_error(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, char *out, uint64_t cap);
+    void mul_clear_registry();
     // A table air's proves-side lookups, evaluated from its fixed columns (stateless).
     uint64_t mul_proves_hints(void *pSetupCtx, int64_t *cols, uint64_t *lens, uint64_t cap);
     uint64_t mul_eval_proves_hint(void *pSetupCtx, uint64_t k, const uint64_t *constPols, uint64_t constLen,

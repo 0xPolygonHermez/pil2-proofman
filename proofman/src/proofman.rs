@@ -151,10 +151,10 @@ use crate::{
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, mul_scatter_c,
     mul_air_device_owned_c, mul_air_has_jobs_c, mul_air_has_owned_c, mul_air_plan_error_c, mul_air_reads_aux_c,
-    mul_commit_count_c, mul_set_device_export_c, mul_sync_commits_c, MulSync, calculate_witness_expressions_c,
-    launch_callback_c, initialize_instance_c, calculate_trace_instance_c, wait_trace_h2d_done_c,
-    get_stream_commit_slots_c, get_stream_commit_gpus_c, commit_witness_streaming_c, stream_commit_slot_bytes_c,
-    configure_stream_commit_slots_c, get_stream_id_proof_c,
+    mul_clear_registry_c, mul_commit_count_c, mul_set_device_export_c, mul_sync_commits_c, MulSync,
+    calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
+    wait_trace_h2d_done_c, get_stream_commit_slots_c, get_stream_commit_gpus_c, commit_witness_streaming_c,
+    stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
 };
 
 use std::{
@@ -2951,7 +2951,9 @@ where
         }
 
         // The C++ registries, maps and per-air programs are process-wide and never reset: a later
-        // ProofMan in this process may only bring the very same tables, expressions and packing.
+        // ProofMan in this process may only bring the very same setup. Fingerprinted from the fit's
+        // inputs (fixed-column roots, expressions, packing, owned ids), since map slot order is not
+        // deterministic.
         static REGISTERED: Mutex<Option<blake3::Hash>> = Mutex::new(None);
         let airs: Vec<(usize, usize)> = self
             .pctx
@@ -2966,7 +2968,7 @@ where
             .filter_map(|&(ag, ai)| self.sctx.get_setup(ag, ai).ok().map(|s| (ag, ai, s)))
             .map(|(ag, ai, setup)| {
                 let mut h = blake3::Hasher::new();
-                for ext in [".bin", ".starkinfo.json"] {
+                for ext in [".bin", ".starkinfo.json", ".verkey.bin"] {
                     let p = setup.setup_path.display().to_string() + ext;
                     let bytes =
                         std::fs::read(&p).map_err(|e| ProofmanError::InvalidSetup(format!("cannot read {p}: {e}")))?;
@@ -2984,20 +2986,14 @@ where
             })
             .collect::<ProofmanResult<_>>()?;
         let maps: Vec<_> = fitted.iter().filter(|m| !std_owned.contains(&m.table_id)).collect();
-        let map_hashes: Vec<blake3::Hash> = maps
-            .par_iter()
-            .map(|m| {
-                let mut h = blake3::Hasher::new();
-                hash_words(&mut h, &[m.table_id, m.map.0 as u64, m.map.2]);
-                hash_words(&mut h, &m.map.1);
-                h.finalize()
-            })
-            .collect();
+        let mut map_ids: Vec<u64> = maps.iter().map(|m| m.table_id).collect();
+        map_ids.sort_unstable();
         let mut h = blake3::Hasher::new();
         hash_words(&mut h, &range_ids);
         hash_words(&mut h, &range_biases.iter().map(|b| *b as u64).collect::<Vec<_>>());
-        for mh in map_hashes.iter().chain(&air_hashes) {
-            h.update(mh.as_bytes());
+        hash_words(&mut h, &map_ids);
+        for ah in &air_hashes {
+            h.update(ah.as_bytes());
         }
         for l in &layouts {
             hash_words(&mut h, &[l.airgroup_id, l.air_id, l.num_rows, l.num_cols]);
@@ -3006,6 +3002,7 @@ where
         }
         let fingerprint = h.finalize();
         let mut registered_here = REGISTERED.lock().unwrap();
+        let first_registration = registered_here.is_none();
         match *registered_here {
             Some(prev) if prev != fingerprint => {
                 return Err(ProofmanError::InvalidSetup(
@@ -3060,6 +3057,12 @@ where
                     reads_aux.push((airgroup_id, air_id));
                 }
             }
+        }
+        // A rejected first registration is undone, so a retry (say, with more std-owned tables) starts
+        // clean. No proof has allocated anything from it yet.
+        if first_registration && (!plan_errors.is_empty() || !reads_aux.is_empty()) {
+            mul_clear_registry_c();
+            *registered_here = None;
         }
         if !plan_errors.is_empty() {
             return Err(ProofmanError::InvalidSetup(format!(

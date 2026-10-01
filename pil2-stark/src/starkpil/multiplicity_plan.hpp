@@ -226,10 +226,15 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
 }
 
 // One plan per air, built on first use and kept for the process lifetime.
+inline std::map<std::pair<uint64_t,uint64_t>, MulPlan>& mulPlans() {
+    static std::map<std::pair<uint64_t,uint64_t>, MulPlan> m;
+    return m;
+}
+inline std::mutex& mulPlansMutex() { static std::mutex m; return m; }
+
 inline MulPlan& mulPlanFor(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId) {
-    static std::map<std::pair<uint64_t,uint64_t>, MulPlan> plans;
-    static std::mutex mtx;
-    std::lock_guard<std::mutex> lock(mtx);
+    auto& plans = mulPlans();
+    std::lock_guard<std::mutex> lock(mulPlansMutex());
     auto key = std::make_pair(airgroupId, airId);
     auto it = plans.find(key);
     if (it == plans.end()) {
