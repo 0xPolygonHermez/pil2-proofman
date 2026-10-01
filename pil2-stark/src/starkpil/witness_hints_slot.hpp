@@ -6,6 +6,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 #include "multiplicity_job.hpp"
 #include "multiplicity_extract.hpp"
@@ -145,10 +146,10 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, MulPackedLayout layout
 // One plan per air; setup-derived, so it outlives every instance.
 inline SlotHintPlan& slotHintPlanFor(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId,
                                      const MulPackedLayout& layout) {
-    static std::map<std::pair<uint64_t,uint64_t>, SlotHintPlan> plans;
+    static std::map<std::tuple<uint64_t,uint64_t,std::vector<uint64_t>>, SlotHintPlan> plans;
     static std::mutex mtx;
     std::lock_guard<std::mutex> lock(mtx);
-    auto key = std::make_pair(airgroupId, airId);
+    auto key = std::make_tuple(airgroupId, airId, layout.key());
     auto it = plans.find(key);
     if (it == plans.end())
         it = plans.emplace(key, slotHintBuildPlan(setupCtx, layout)).first;

@@ -82,10 +82,11 @@ void slotHintPatchLaunch(uint64_t *dst, uint32_t c0, uint32_t cc, uint64_t dstRo
 
 SlotHintPlanDev slotHintPlanDevice(const SlotHintPlan &plan, uint64_t airgroupId, uint64_t airId,
                                    int gpuId) {
-    static std::map<std::tuple<uint64_t,uint64_t,int>, SlotHintPlanDev> bufs;
+    // By plan too: slotHintPlanFor keeps one per row layout, and its entries never move.
+    static std::map<std::tuple<uint64_t,uint64_t,int,const SlotHintPlan*>, SlotHintPlanDev> bufs;
     static std::mutex mtx;
     std::lock_guard<std::mutex> lock(mtx);
-    auto key = std::make_tuple(airgroupId, airId, gpuId);
+    auto key = std::make_tuple(airgroupId, airId, gpuId, &plan);
     auto it = bufs.find(key);
     if (it != bufs.end()) return it->second;
 

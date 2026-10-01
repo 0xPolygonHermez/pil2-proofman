@@ -4,6 +4,7 @@
 #include <cuda_runtime.h>
 #include <map>
 #include <mutex>
+#include <tuple>
 #include "multiplicity.cuh"
 #include "multiplicity_kernel.cuh"
 #include "multiplicity_plan.hpp"
@@ -57,10 +58,11 @@ struct MulPackedProg { const MulInsnDev* prog = nullptr; bool ok = false; };
 
 inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx& c,
                                          uint64_t airgroupId, uint64_t airId, int gpuId) {
-    static std::map<std::tuple<uint64_t,uint64_t,int>, MulPackedProg> cache;
+    // By layout and hint plan too: the rewrite depends on both.
+    static std::map<std::tuple<uint64_t,uint64_t,int,std::vector<uint64_t>,const SlotHintPlan*>, MulPackedProg> cache;
     static std::mutex mtx;
     std::lock_guard<std::mutex> lock(mtx);
-    auto key = std::make_tuple(airgroupId, airId, gpuId);
+    auto key = std::make_tuple(airgroupId, airId, gpuId, c.layout.key(), c.hintPlan);
     auto it = cache.find(key);
     if (it != cache.end()) return it->second;
 

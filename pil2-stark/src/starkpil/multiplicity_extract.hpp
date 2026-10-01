@@ -267,6 +267,19 @@ struct MulPackedLayout {
         return true;
     }
 
+    // The whole row layout, exactly: caches of programs rewritten through it key on this, so a
+    // later prover with another packing never reuses them.
+    std::vector<uint64_t> key() const {
+        std::vector<uint64_t> k{ wordsPerRow, lanes, indexBits, (uint64_t)indexed() };
+        if (widths != nullptr) k.insert(k.end(), widths->begin(), widths->end());
+        k.push_back(UINT64_MAX);   // separates the widths from the indexed descriptor
+        if (indexed()) {
+            k.insert(k.end(), colSource->begin(), colSource->end());
+            if (colLane != nullptr) k.insert(k.end(), colLane->begin(), colLane->end());
+        }
+        return k;
+    }
+
     // Point a cm1 operand at its packed bits. False when its column has no usable width.
     bool rewrite(MulTermDev& t) const {
         if (t.col >= widths->size() || (*widths)[t.col] == 0 || (*widths)[t.col] > 64) return false;
