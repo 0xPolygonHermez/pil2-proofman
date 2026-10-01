@@ -14,6 +14,7 @@
 #include "fft.hpp"
 #include "pilfflonk_api.hpp"
 #include "pilfflonk_commit.hpp"
+#include "pilfflonk_gpu.hpp"
 #include "pilfflonk_lde.hpp"
 #include "pilfflonk_srs.hpp"
 #include "pilfflonk_test_ptau.hpp"
@@ -572,6 +573,81 @@ void testApiCommitFixed() {
     pilfflonk_srs_free(srs);
 }
 
+// The GPU (plan M43), where there is one: an SRS that commits on it (Srs::setGpu, its Gpu holding
+// its powers) gives ffiasm's commitments, in affine coordinates byte for byte, for lengths around
+// sppark's warp of 32 points and its window for small MSMs (192 points), up to the whole SRS, and for
+// scalars of every size (0, 1, r − 1); zeros and no coefficients commit to the point at infinity on
+// both. commitPacked and commitFixed commit through it, the latter with an Lde on the GPU too.
+void testTheGpuCommitsAsTheCpu() {
+#ifdef __USE_CUDA__
+    if (!gpuUnderTest("commitments on the GPU")) {
+        return;
+    }
+    const Srs &cpu = testSrs();
+    TestDir dir;
+    const std::string ptau = dir.file("gpu.ptau");
+    writeTestPtau(ptau, N_G1);
+    Srs onGpu = Srs::fromPtau(ptau, N_G1);
+    const PilFflonk::Gpu gpu(&onGpu.g1(0), onGpu.nG1());
+    assert(gpu.nPoints() == N_G1 && onGpu.gpu() == nullptr);
+    onGpu.setGpu(&gpu);
+    assert(onGpu.gpu() == &gpu);
+
+    auto affine = [](G1Point p) {
+        G1PointAffine a;
+        E.g1.copy(a, p);
+        return std::vector<uint8_t>(reinterpret_cast<uint8_t *>(&a), reinterpret_cast<uint8_t *>(&a) + sizeof(a));
+    };
+    auto sameCommitment = [&](const Column &coefs, uint64_t n) {
+        return affine(cpu.commit(coefs.data(), n)) == affine(onGpu.commit(coefs.data(), n));
+    };
+
+    Random random(9);
+    for (uint64_t n : {1, 2, 3, 31, 32, 33, 63, 64, 65, 191, 192, 193, 257, 511, 1000, 1023, 1024}) {
+        assert(sameCommitment(random.column(n), n));
+    }
+    const FrElement minusOne = E.fr.negOne();
+    for (const Column &special : {Column(64, minusOne), Column(64, E.fr.one()), Column{E.fr.zero(), minusOne}}) {
+        assert(sameCommitment(special, special.size()));
+    }
+    G1Point none = onGpu.commit(nullptr, 0);
+    assert(E.g1.isZero(none));
+    const Column zeros(100);
+    G1Point zero = onGpu.commit(zeros.data(), zeros.size());
+    assert(E.g1.isZero(zero));
+    assert(sameCommitment(zeros, zeros.size()));
+    const Column tooLong = random.column(N_G1 + 1);
+    expectInvalid([&] { onGpu.commit(tooLong.data(), N_G1 + 1); }, "Srs::commit: 1025 coefficients exceed the 1024");
+
+    // commitPacked, every packing; commitFixed, with the INTT on the GPU as well.
+    for (uint64_t k : PACKINGS) {
+        std::vector<std::unique_ptr<Poly>> owned;
+        for (uint64_t j = 0; j < k; ++j) {
+            owned.push_back(polynomial(random.column(64 - j)));
+        }
+        const std::vector<Poly *> polys = pointers(owned);
+        assert(affine(PilFflonk::commitPacked(cpu, polys.data(), k)) ==
+               affine(PilFflonk::commitPacked(onGpu, polys.data(), k)));
+    }
+    const Lde lde(6, 6), ldeOnGpu(6, 6, &gpu);
+    for (uint64_t k : PACKINGS) {
+        std::vector<Column> columns;
+        std::vector<FrElement *> evals;
+        for (uint64_t j = 0; j < k; ++j) {
+            columns.push_back(random.column(64));
+        }
+        for (Column &c : columns) {
+            evals.push_back(c.data());
+        }
+        assert(affine(PilFflonk::commitFixed(cpu, lde, evals.data(), k)) ==
+               affine(PilFflonk::commitFixed(onGpu, ldeOnGpu, evals.data(), k)));
+    }
+#else
+    // A library built without the GPU: nothing to compare (pilfflonk_gpu_test.cpp tests the refusal).
+    assert(!PilFflonk::gpuAvailable());
+#endif
+}
+
 } // namespace
 
 void runCommitTests() {
@@ -585,6 +661,7 @@ void runCommitTests() {
     testCommitFixedSpecialColumns();
     testCommitFixedRefusesArguments();
     testApiCommitFixed();
+    testTheGpuCommitsAsTheCpu();
 }
 
 } // namespace PilFflonkTest

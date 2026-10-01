@@ -294,6 +294,26 @@ fn ptr_or_null<T>(slice: &[T]) -> *const u8 {
     }
 }
 
+/// Where a [`PilFflonkProverCtx`] runs the MSMs and the NTTs of its proofs (plan M43): the proofs
+/// are the same, bit for bit, on either.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PilFflonkDevice {
+    /// ffiasm's MSM and FFT.
+    #[default]
+    Cpu,
+    /// The GPU's MSM and NTT of `pil2-stark/src/bn128/src/{msm,ntt}`, on CUDA device 0: a library
+    /// built with CUDA ([`pilfflonk_gpu_available_c`]).
+    Gpu,
+}
+
+/// Whether this library has the GPU path (it was built with `nvcc`: `libstarksgpu.a`, see
+/// `provers/starks-lib-c/build.rs`) and sees a GPU it can use. False, without failing, in a library
+/// built without it (`cpu-only`, or no `nvcc`) and where CUDA finds no device or no driver.
+pub fn pilfflonk_gpu_available_c() -> bool {
+    // SAFETY: no arguments; it never fails.
+    unsafe { pilfflonk_gpu_available() == 1 }
+}
+
 /// The proving key of the prover (spec §4.4, step 1), owned by the C++ side: the `provingKey/`
 /// that `setup-pilfflonk` writes, loaded, with the fixed columns interpolated. Immutable.
 #[derive(Debug)]
@@ -311,6 +331,24 @@ impl PilFflonkProverCtx {
         // SAFETY: `path` is a NUL-terminated string that outlives the call; the result is either
         // NULL or a handle this value then owns.
         let handle = unsafe { pilfflonk_ctx_new(path.as_ptr()) };
+        NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
+    }
+
+    /// [`load`](Self::load), with the MSMs and the NTTs of the key and of its proofs on `device`
+    /// (plan M43): on the GPU, the SRS's powers `[τ^i]₁` are copied to it once they are read. Fails
+    /// as `load` does, and with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument), before any
+    /// file is read, on the GPU without one ([`pilfflonk_gpu_available_c`]), saying why. On the GPU,
+    /// a CUDA failure (out of device memory, a lost device) aborts the process, as in the PLONK GPU
+    /// prover whose helpers it reuses.
+    pub fn load_on(dir: &Path, device: PilFflonkDevice) -> Result<Self, PilFflonkError> {
+        let path = c_path("pilfflonk_ctx_new_on", dir)?;
+        let device = match device {
+            PilFflonkDevice::Cpu => PILFFLONK_DEVICE_CPU,
+            PilFflonkDevice::Gpu => PILFFLONK_DEVICE_GPU,
+        };
+        // SAFETY: `path` is a NUL-terminated string that outlives the call, and `device` one of the
+        // C enum's; the result is either NULL or a handle this value then owns.
+        let handle = unsafe { pilfflonk_ctx_new_on(path.as_ptr(), device) };
         NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
     }
 

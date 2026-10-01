@@ -1,14 +1,14 @@
 use clap::Args;
 use colored::Colorize;
 use proofman_common::initialize_logger;
-use proofman_pilfflonk::{prove, ProveOptions, ProvingKey};
+use proofman_pilfflonk::{prove, Device, ProveOptions, ProvingKey};
 use std::path::PathBuf;
 
 use super::PilfflonkWitnessArgs;
 
 // The prover of spec §4.4: the provingKey/ of setup-pilfflonk and a witness directory (spec A.6) or a
 // witness library (D4, plan M38c) in, proof.json and publics.json out, with the argument names of
-// `prove`.
+// `prove`, `-g/--gpu` included (spec Fase 5, plan M43).
 /// Prove a pilfflonk witness: writes proof.json and publics.json
 #[derive(Args)]
 pub struct PilfflonkProveCmd {
@@ -28,6 +28,11 @@ pub struct PilfflonkProveCmd {
     /// proof is not zero-knowledge
     #[clap(long, value_name = "HEX", value_parser = parse_seed)]
     pub insecure_blinding_seed: Option<[u8; 32]>,
+
+    /// Runs the MSMs and the NTTs on the GPU: the same proof, bit for bit. Needs a build with CUDA
+    /// (nvcc found, no feature cpu-only) and a GPU
+    #[clap(short = 'g', long, default_value_t = false)]
+    pub gpu: bool,
 
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
@@ -63,7 +68,13 @@ impl PilfflonkProveCmd {
                     .bold()
             );
         }
-        let pk = ProvingKey::load(&self.proving_key)?;
+        let device = if self.gpu {
+            tracing::info!("··· The MSMs and the NTTs run on the GPU");
+            Device::Gpu
+        } else {
+            Device::Cpu
+        };
+        let pk = ProvingKey::load_on(&self.proving_key, device)?;
         let witness = self.witness.open(&pk, self.verbose)?;
         let options = ProveOptions { insecure_blinding_seed: self.insecure_blinding_seed, ..ProveOptions::default() };
         let output = prove(&pk, &witness, &options)?;

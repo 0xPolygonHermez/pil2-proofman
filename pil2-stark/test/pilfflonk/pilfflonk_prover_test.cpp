@@ -36,6 +36,7 @@
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -61,6 +62,7 @@ using PilFflonk::AirKey;
 using PilFflonk::BlindingRng;
 using PilFflonk::BlindingSource;
 using PilFflonk::ColumnRead;
+using PilFflonk::Device;
 using PilFflonk::Expressions;
 using PilFflonk::ExpressionsBin;
 using PilFflonk::FormatError;
@@ -307,12 +309,13 @@ private:
     std::string airName;
 };
 
-// What every test of the Fibonacci starts from.
+// What every test of the Fibonacci starts from; its key on `device` (plan M43).
 struct Fibonacci {
-    explicit Fibonacci(const KeyFiles &files = KeyFiles()) : dir(files) {}
+    explicit Fibonacci(const KeyFiles &files = KeyFiles(), Device device = Device::Cpu)
+        : dir(files), pk(ProvingKey::load(dir.path(), device)) {}
 
     KeyDir dir;
-    std::unique_ptr<ProvingKey> pk = ProvingKey::load(dir.path());
+    std::unique_ptr<ProvingKey> pk;
     json oracle = json::parse(readBytes(fixture("Fibonacci.oracle.json")));
     std::vector<uint8_t> witness = readBytes(fixture("Fibonacci.witness.bin"));
     std::vector<FrElement> publics = frs(oracle["publics"]);
@@ -1022,10 +1025,12 @@ std::vector<uint8_t> scalars(const std::vector<FrElement> &values) {
     return out;
 }
 
-// The proof `prove` makes, through the C API.
-CApiProof proveThroughTheCApi(const Fibonacci &fib, const uint8_t seed[32]) {
+// The proof `prove` makes, through the C API: with pilfflonk_ctx_new, or pilfflonk_ctx_new_on(device).
+CApiProof proveThroughTheCApi(const Fibonacci &fib, const uint8_t seed[32],
+                              std::optional<uint32_t> device = std::nullopt) {
     CApiProof out;
-    void *ctx = pilfflonk_ctx_new(fib.dir.path().c_str());
+    const char *dir = fib.dir.path().c_str();
+    void *ctx = device ? pilfflonk_ctx_new_on(dir, *device) : pilfflonk_ctx_new(dir);
     assert(ctx != nullptr);
     const std::vector<uint8_t> publics = scalars(fib.publics);
     void *inst = pilfflonk_instance_new(ctx, 0, 0, fib.witness.data(), fib.witness.size(), nullptr, 0,
@@ -1504,12 +1509,13 @@ KeyFiles sumBusFiles() {
     return files;
 }
 
-// What every test of the sum bus starts from.
+// What every test of the sum bus starts from; its key on `device` (plan M43).
 struct SumBus {
-    explicit SumBus(const KeyFiles &files = sumBusFiles()) : dir(files, SUM_BUS) {}
+    explicit SumBus(const KeyFiles &files = sumBusFiles(), Device device = Device::Cpu)
+        : dir(files, SUM_BUS), pk(ProvingKey::load(dir.path(), device)) {}
 
     KeyDir dir;
-    std::unique_ptr<ProvingKey> pk = ProvingKey::load(dir.path());
+    std::unique_ptr<ProvingKey> pk;
     json oracle = json::parse(readBytes(busFixture("SumBus.oracle.json")));
     std::vector<uint8_t> witness = readBytes(busFixture("SumBus.witness.bin"));
     std::vector<FrElement> publics = frs(oracle["publics"]);
@@ -1999,6 +2005,98 @@ void testInstanceColumnCApi() {
     pilfflonk_ctx_free(ctx);
 }
 
+// ---------------------------------------------------------------------------------------------
+// The GPU (plan M43)
+// ---------------------------------------------------------------------------------------------
+
+// Everything a proof made through the classes is, bit for bit: its commitments, evaluations, W, W',
+// inv, invZh and Q(ξ), and the coefficients of every polynomial it committed (the blinded columns'
+// and Q's pieces), with their lengths and degrees.
+std::vector<uint8_t> proofBytes(const Proved &p, const AirKey &air) {
+    std::vector<uint8_t> out = points(p.commitments);
+    auto append = [&out](const std::vector<uint8_t> &bytes) { out.insert(out.end(), bytes.begin(), bytes.end()); };
+    append(scalars(p.opening->evaluations()));
+    append(points({p.proof.shplonk.w, p.proof.shplonk.wp}));
+    append(scalars({p.proof.inv, p.proof.invZh, p.opening->q(0)}));
+    const std::vector<LayoutEntry> &layout = air.info().layout;
+    for (uint64_t f = air.nFixedF(); f < layout.size(); ++f) {
+        for (uint64_t j = 0; j < layout[f].k; ++j) {
+            const Poly *poly = p.instance->polynomial(f, j);
+            const uint8_t *coefs = reinterpret_cast<const uint8_t *>(poly->coef);
+            out.insert(out.end(), coefs, coefs + poly->getLength() * sizeof(FrElement));
+            append(scalars({E.fr.set(static_cast<int>(poly->getLength())),
+                            E.fr.set(static_cast<int>(poly->getDegree()))}));
+        }
+    }
+    return out;
+}
+
+// The fixed columns' interpolants and commitments of a key's AIR, bit for bit.
+std::vector<uint8_t> fixedBytes(const ProvingKey &pk) {
+    const AirKey &air = pk.air(0, 0);
+    std::vector<uint8_t> out = points(air.fixedCommitments(pk.srs()));
+    for (uint64_t c = 0; c < air.info().nConstants; ++c) {
+        const Poly *poly = air.fixedPolynomial(c);
+        const uint8_t *coefs = reinterpret_cast<const uint8_t *>(poly->coef);
+        out.insert(out.end(), coefs, coefs + poly->getLength() * sizeof(FrElement));
+    }
+    return out;
+}
+
+// A proof of the sum bus's instance, of two stages, as `prove` makes the Fibonacci's: the stage-2
+// challenges and std_vc of testStage2IsTheOracles, and ξ from a transcript of the commitments.
+Proved proveTheSumBus(const SumBus &bus, const uint8_t seed[32]) {
+    Proved p;
+    p.instance = bus.instance(bus.witness, std::make_unique<BlindingRng>(seed));
+    Transcript t;
+    t.absorb(bus.publics);
+    p.commitments = p.instance->commitStage(1, {});
+    const std::vector<G1Point> stage2 = p.instance->commitStage(2, bus.challenges);
+    p.commitments.insert(p.commitments.end(), stage2.begin(), stage2.end());
+    p.stdVc = power(bus.challenges[0], 3);
+    const std::vector<G1Point> q = p.instance->commitQ({p.stdVc});
+    p.commitments.insert(p.commitments.end(), q.begin(), q.end());
+    t.absorb(p.commitments);
+    p.xiSeed = t.squeeze();
+    p.opening = std::make_unique<Opening>(std::vector<const Instance *>{p.instance.get()}, p.xiSeed);
+    t.absorb(p.opening->evaluations());
+    p.proof = p.opening->open(t);
+    return p;
+}
+
+// A key on the GPU (ProvingKey::load(…, Device::Gpu)) gives the CPU's proofs bit for bit, with the
+// same seed: its fixed columns' interpolants and commitments, every commitment, the polynomials
+// behind them, the evaluations and the opening (proofBytes). On the Fibonacci, whole, split and split
+// and packed, with Q in its default parts and on the whole coset at once, through the classes and,
+// whole, through the C API (pilfflonk_ctx_new_on); and on the sum bus, of two stages.
+void testTheGpuGivesTheCpusProof() {
+    if (!gpuUnderTest("proofs on the GPU")) {
+        return;
+    }
+    const uint8_t seed[32] = {17};
+    for (const KeyFiles &files : {KeyFiles(), splitQFiles(false), splitQFiles(true)}) {
+        const Fibonacci cpu(files), gpu(files, Device::Gpu);
+        assert(cpu.pk->device() == Device::Cpu && gpu.pk->device() == Device::Gpu);
+        assert(fixedBytes(*cpu.pk) == fixedBytes(*gpu.pk));
+        for (uint64_t bits : {uint64_t(0), cpu.air().degrees().nBitsExt}) {
+            const Proved a = prove(cpu, std::make_unique<BlindingRng>(seed), bits);
+            const Proved b = prove(gpu, std::make_unique<BlindingRng>(seed), bits);
+            assert(proofBytes(a, cpu.air()) == proofBytes(b, gpu.air()));
+        }
+    }
+
+    const Fibonacci fib;
+    const CApiProof onCpu = proveThroughTheCApi(fib, seed);
+    const CApiProof onGpu = proveThroughTheCApi(fib, seed, PILFFLONK_DEVICE_GPU);
+    assert(onCpu.commitments == onGpu.commitments && onCpu.evaluations == onGpu.evaluations && onCpu.q == onGpu.q);
+    assert(onCpu.w == onGpu.w && onCpu.wp == onGpu.wp && onCpu.inv == onGpu.inv && onCpu.invZh == onGpu.invZh);
+
+    const SumBus busOnCpu, busOnGpu(sumBusFiles(), Device::Gpu);
+    assert(fixedBytes(*busOnCpu.pk) == fixedBytes(*busOnGpu.pk));
+    assert(proofBytes(proveTheSumBus(busOnCpu, seed), busOnCpu.air()) ==
+           proofBytes(proveTheSumBus(busOnGpu, seed), busOnGpu.air()));
+}
+
 } // namespace
 
 void runProverTests() {
@@ -2028,6 +2126,7 @@ void runProverTests() {
     testInstanceColumnCApi();
     testCheckComputesStage2Itself();
     testCheckColumnCApi();
+    testTheGpuGivesTheCpusProof();
 }
 
 } // namespace PilFflonkTest

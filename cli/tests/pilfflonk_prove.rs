@@ -123,9 +123,9 @@ use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::oracle::{AirOracle, ColumnRef, Domain, Fr, HintKind};
 use proofman_pilfflonk::oracle::Values;
 use proofman_pilfflonk::{
-    prove, stage_columns, AirFile, Boundary, CalldataLayout, FileWitnessSource, FrBytes, JsonFile, PilfflonkError,
-    PilfflonkGlobalInfo, PilfflonkInfo, PolMapEntry, PolType, Proof, ProofChallenges, ProofNames, ProveOptions,
-    ProvingKey, Publics, Vkey, Witness, WitnessSource, BN254_R,
+    gpu_available, prove, stage_columns, AirFile, Boundary, CalldataLayout, FileWitnessSource, FrBytes, JsonFile,
+    PilfflonkError, PilfflonkGlobalInfo, PilfflonkInfo, PolMapEntry, PolType, Proof, ProofChallenges, ProofNames,
+    ProveOptions, ProvingKey, Publics, Vkey, Witness, WitnessSource, BN254_R,
 };
 use prost::Message;
 use serde_json::{json, Value};
@@ -511,10 +511,34 @@ fn the_parts_of_q_give_the_same_proof(f: &Fixture, seed: &str, dir: &Path) {
     }
 }
 
+/// That `pilfflonk prove --gpu` (spec Fase 5, plan M43) gives the proof in `dir`, which `pilfflonk
+/// prove` made on the CPU with `seed`, `proof.json` and `publics.json` byte for byte, where there is a
+/// GPU ([`gpu_available`]: a build with CUDA, on a machine with one). Without one, that `--gpu` is
+/// refused, saying why, and writes nothing; `PILFFLONK_GPU=1` makes a missing GPU a failure instead.
+fn the_gpu_gives_the_same_proof(f: &Fixture, seed: &str, dir: &Path) {
+    let out = f.dir.file("gpu");
+    let (key, witness) = (f.proving_key.to_str().unwrap(), f.witness.to_str().unwrap());
+    let args = ["pilfflonk", "prove", "-k", key, "--witness", witness, "-o", out.to_str().unwrap()];
+    let run = cli(&[&args[..], &["--insecure-blinding-seed", seed, "--gpu"]].concat(), &[]);
+    if gpu_available() {
+        assert!(run.status.success(), "prove --gpu: {}", output(&run));
+        assert!(output(&run).contains("The MSMs and the NTTs run on the GPU"), "{}", output(&run));
+        for file in ["proof.json", "publics.json"] {
+            assert_eq!(fs::read(out.join(file)).unwrap(), fs::read(dir.join(file)).unwrap(), "{file} on the GPU");
+        }
+    } else {
+        assert_ne!(std::env::var("PILFFLONK_GPU").as_deref(), Ok("1"), "PILFFLONK_GPU=1, and there is no GPU");
+        assert!(!run.status.success(), "prove --gpu without a GPU: {}", output(&run));
+        assert!(output(&run).contains("ProvingKey::load: no GPU"), "{}", output(&run));
+        assert!(!out.exists(), "prove --gpu without a GPU wrote {}", out.display());
+    }
+}
+
 /// Proves the witness of `f` four times (twice with one seed, once with another, once with the
 /// OS's randomness), and checks that:
 /// - the same seed gives the same proof, and another seed other commitments;
-/// - `Q` in parts of any size gives the same proof ([`the_parts_of_q_give_the_same_proof`]);
+/// - `Q` in parts of any size gives the same proof ([`the_parts_of_q_give_the_same_proof`]), and so
+///   does the GPU ([`the_gpu_gives_the_same_proof`]);
 /// - the proof holds the commitments `commitments` (the non-fixed `f`, `W` and `W'`) and the
 ///   evaluations `evaluations`, by name, and the witness's publics;
 /// - the verifier accepts every proof, and rejects any change to a commitment, `W`, `W'`, an
@@ -533,6 +557,7 @@ fn proves_and_rejects_every_change(f: &Fixture, commitments: &[&str], evaluation
     let proof = |dir: &Path| fs::read(dir.join("proof.json")).unwrap();
     assert_eq!(proof(&a1), proof(&a2));
     the_parts_of_q_give_the_same_proof(f, SEED_A, &a1);
+    the_gpu_gives_the_same_proof(f, SEED_A, &a1);
     assert_eq!(fs::read(a1.join("publics.json")).unwrap(), fs::read(b.join("publics.json")).unwrap());
     let (pa, pb, pr) =
         (read_json(&a1.join("proof.json")), read_json(&b.join("proof.json")), read_json(&random.join("proof.json")));
@@ -1667,13 +1692,14 @@ fn a_witness_that_breaks_a_bus_is_refused() {
 }
 
 /// Proves the witness of `f` with a fixed seed: `Q` in parts of any size gives the same proof
-/// ([`the_parts_of_q_give_the_same_proof`]), and the verifier accepts it, and rejects it with its
-/// first evaluation changed.
+/// ([`the_parts_of_q_give_the_same_proof`]), and so does the GPU ([`the_gpu_gives_the_same_proof`]),
+/// and the verifier accepts it, and rejects it with its first evaluation changed.
 fn proves_and_verifies(f: &Fixture, name: &str) {
     let out = f.dir.file("proof");
     let run = prove_cli(&f.proving_key, &f.witness, &out, Some(SEED_A));
     assert!(run.status.success(), "{name}: prove: {}", output(&run));
     the_parts_of_q_give_the_same_proof(f, SEED_A, &out);
+    the_gpu_gives_the_same_proof(f, SEED_A, &out);
     let (publics, proof) = (out.join("publics.json"), out.join("proof.json"));
     let verified = verify(&f.vkey, &publics, &proof);
     assert!(verified.status.success(), "{name}: {}", output(&verified));

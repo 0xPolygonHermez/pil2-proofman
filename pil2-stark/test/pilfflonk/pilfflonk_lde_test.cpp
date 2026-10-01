@@ -15,6 +15,7 @@
 #include "alt_bn128.hpp"
 #include "evaluations.hpp"
 #include "fft.hpp"
+#include "pilfflonk_gpu.hpp"
 #include "pilfflonk_lde.hpp"
 #include "polynomial.hpp"
 
@@ -559,6 +560,123 @@ void testRefusedArguments() {
     assert(identical(c.data(), cBefore.data(), NExt));
 }
 
+// The GPU (plan M43), where there is one: Gpu::ntt and Gpu::intt are ffiasm's fft and ifft, and an
+// Lde on the GPU is the Lde on the CPU, bit for bit, Montgomery limbs and all: every size from one
+// point to 2^20, in place and not; intt with and without room for blinding, extendCoset,
+// extendCosetPart at every part size and part, and interpolateCoset, one column at a time and in a
+// batch, in place and not. And the arguments the Gpu refuses.
+void testTheGpuIsTheCpu() {
+#ifdef __USE_CUDA__
+    if (!gpuUnderTest("the Lde on the GPU")) {
+        return;
+    }
+    using PilFflonk::Gpu;
+    Random random(8);
+    // The MSM's points do not matter here: one.
+    Engine::G1PointAffine generator = E.g1.oneAffine();
+    const Gpu gpu(&generator, 1);
+
+    // The transforms against ffiasm's.
+    const uint64_t maxBits = 20;
+    FFT<Engine::Fr> fft(uint64_t(1) << maxBits);
+    for (uint64_t bits = 0; bits <= maxBits; ++bits) {
+        const uint64_t n = uint64_t(1) << bits;
+        const Column values = random.column(n);
+        for (bool inverse : {false, true}) {
+            Column expected = values;
+            if (inverse) {
+                fft.ifft(expected.data(), n);
+            } else {
+                fft.fft(expected.data(), n);
+            }
+            Column out(n, random.element());
+            Column inPlace = values;
+            if (inverse) {
+                gpu.intt(values.data(), out.data(), bits);
+                gpu.intt(inPlace.data(), inPlace.data(), bits);
+            } else {
+                gpu.ntt(values.data(), out.data(), bits);
+                gpu.ntt(inPlace.data(), inPlace.data(), bits);
+            }
+            assert(identical(out.data(), expected.data(), n));
+            assert(identical(inPlace.data(), expected.data(), n));
+        }
+    }
+
+    // An Lde on each: everything a column goes through, one at a time and in a batch.
+    struct Case {
+        uint64_t nBits, nBitsExt;
+    };
+    for (const Case &test : std::vector<Case>{{0, 0}, {0, 3}, {1, 2}, {4, 7}, {9, 11}, {16, 18}}) {
+        const Lde cpu(test.nBits, test.nBitsExt), onGpu(test.nBits, test.nBitsExt, &gpu);
+        assert(cpu.gpu() == nullptr && onGpu.gpu() == &gpu);
+        const uint64_t N = cpu.domainSize(), NExt = cpu.extendedSize();
+        std::vector<Column> evals;
+        for (uint64_t c = 0; c < 3; ++c) {
+            evals.push_back(random.column(N));
+        }
+        for (uint64_t blindLength : {uint64_t(0), std::min<uint64_t>(3, NExt - N), NExt - N}) {
+            for (bool batched : {false, true}) {
+                expectIdentical(runColumns(cpu, evals, blindLength, batched),
+                                runColumns(onGpu, evals, blindLength, batched));
+            }
+        }
+
+        // extendCosetPart: polynomials of fewer, as many and more coefficients than a part, in a
+        // batch of two and in place.
+        for (uint64_t nCoefs : std::vector<uint64_t>{1, N, (N + NExt + 1) / 2, NExt}) {
+            const std::vector<Column> coefs = {random.column(nCoefs), random.column(nCoefs)};
+            const FrElement *in[2] = {coefs[0].data(), coefs[1].data()};
+            for (uint64_t partBits = test.nBits; partBits <= test.nBitsExt; ++partBits) {
+                const uint64_t S = uint64_t(1) << partBits, nParts = NExt / S;
+                // Every part of the small cases; the first, a middle one and the last of the large.
+                std::vector<uint64_t> parts;
+                for (uint64_t part = 0; part < nParts; ++part) {
+                    if (nParts <= 8 || part == 0 || part == nParts / 2 || part + 1 == nParts) {
+                        parts.push_back(part);
+                    }
+                }
+                for (uint64_t part : parts) {
+                    std::vector<Column> a(2, Column(S)), b(2, Column(S, random.element()));
+                    FrElement *outA[2] = {a[0].data(), a[1].data()};
+                    FrElement *outB[2] = {b[0].data(), b[1].data()};
+                    cpu.extendCosetPart(in, outA, 2, nCoefs, partBits, part);
+                    onGpu.extendCosetPart(in, outB, 2, nCoefs, partBits, part);
+                    assert(identical(a[0].data(), b[0].data(), S) && identical(a[1].data(), b[1].data(), S));
+                    Column buffer = coefs[0];
+                    buffer.resize(std::max(nCoefs, S));
+                    FrElement *self = buffer.data();
+                    onGpu.extendCosetPart(&self, &self, 1, nCoefs, partBits, part);
+                    assert(identical(buffer.data(), a[0].data(), S));
+                }
+            }
+        }
+
+        // interpolateCoset in place.
+        Column onCpu = random.column(NExt);
+        Column there = onCpu;
+        FrElement *pc = onCpu.data();
+        FrElement *pg = there.data();
+        cpu.interpolateCoset(&pc, &pc, 1);
+        onGpu.interpolateCoset(&pg, &pg, 1);
+        assert(identical(onCpu.data(), there.data(), NExt));
+    }
+
+    // What the Gpu refuses.
+    Column one(1);
+    expectInvalid([&] { gpu.ntt(one.data(), one.data(), 29); }, "Gpu::ntt: 2^29 points");
+    expectInvalid([&] { gpu.intt(nullptr, one.data(), 1); }, "Gpu::intt: in is null");
+    expectInvalid([&] { gpu.ntt(one.data(), nullptr, 1); }, "Gpu::ntt: out is null");
+    expectInvalid([&] { Gpu(nullptr, 1); }, "Gpu::Gpu: points is null");
+    expectInvalid([&] { Gpu(&generator, 0); }, "Gpu::Gpu: no points");
+    expectInvalid([&] { gpu.msm(one.data(), 2); }, "Gpu::msm: 2 scalars for the 1 points");
+    expectInvalid([&] { gpu.msm(nullptr, 1); }, "Gpu::msm: scalars is null");
+#else
+    // A library built without the GPU: nothing to compare (pilfflonk_gpu_test.cpp tests the refusal).
+    assert(!PilFflonk::gpuAvailable());
+#endif
+}
+
 } // namespace
 
 void runLdeTests() {
@@ -570,6 +688,7 @@ void runLdeTests() {
     testBatchMatchesSingleColumns();
     testExtendCosetParts();
     testRefusedArguments();
+    testTheGpuIsTheCpu();
 }
 
 } // namespace PilFflonkTest

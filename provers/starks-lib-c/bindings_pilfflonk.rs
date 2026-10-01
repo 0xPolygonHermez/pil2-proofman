@@ -15,6 +15,10 @@ pub const PILFFLONK_ERR_UNSATISFIED: ::std::os::raw::c_int = 7;
 pub const PILFFLONK_TRANSCRIPT_FR: u32 = 0;
 pub const PILFFLONK_TRANSCRIPT_G1: u32 = 1;
 
+// Where a ctx runs its MSMs and NTTs (`enum pilfflonk_device`).
+pub const PILFFLONK_DEVICE_CPU: u32 = 0;
+pub const PILFFLONK_DEVICE_GPU: u32 = 1;
+
 extern "C" {
     pub fn pilfflonk_last_error() -> *const ::std::os::raw::c_char;
 
@@ -61,6 +65,13 @@ extern "C" {
     ) -> ::std::os::raw::c_int;
 
     pub fn pilfflonk_ctx_new(proving_key_dir: *const ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
+
+    pub fn pilfflonk_ctx_new_on(
+        proving_key_dir: *const ::std::os::raw::c_char,
+        device: u32,
+    ) -> *mut ::std::os::raw::c_void;
+
+    pub fn pilfflonk_gpu_available() -> ::std::os::raw::c_int;
 
     pub fn pilfflonk_ctx_free(ctx: *mut ::std::os::raw::c_void);
 

@@ -42,6 +42,12 @@ void runShplonkTests();
 void runInfoTests();
 void runExpressionsTests();
 void runProverTests();
+void runGpuTests();
+
+// Whether the GPU path (plan M43) can be compared with the CPU one here: a library built with the
+// GPU, on a machine with one. Without one it prints that `what` is skipped and returns false, or,
+// with PILFFLONK_GPU=1 in the environment, fails: a GPU run must not pass by skipping.
+bool gpuUnderTest(const char *what);
 
 } // namespace PilFflonkTest
 

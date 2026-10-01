@@ -1,4 +1,5 @@
-// Tests for the pilfflonk C API. Run with `make pilfflonk_test`; exits non-zero on the first failure.
+// Tests for the pilfflonk C API. Run with `make pilfflonk_test`, and against the GPU archive with
+// `make pilfflonk_gpu_test` (plan M43); exits non-zero on the first failure.
 #include "pilfflonk_test.hpp"
 
 #include <cstdio>
@@ -109,6 +110,7 @@ int main() {
     PilFflonkTest::runInfoTests();
     PilFflonkTest::runExpressionsTests();
     PilFflonkTest::runProverTests();
+    PilFflonkTest::runGpuTests();
     std::printf("pilfflonk_test: all tests passed\n");
     return 0;
 }

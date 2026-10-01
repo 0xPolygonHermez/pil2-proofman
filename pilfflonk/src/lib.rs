@@ -23,7 +23,8 @@
 //! or the [`Witness`] a witness library computes over `Fr` (D4, [`witness_library`]), loaded with
 //! [`load_witness_library`] and exported with [`pilfflonk_witness_library!`]. [`prover`] is the
 //! orchestration of a proof over the C++ core (spec §4.4): [`ProvingKey::load`] and [`prove`], and,
-//! for tests and diagnostics, [`stage_columns`], the columns its stages commit.
+//! for tests and diagnostics, [`stage_columns`], the columns its stages commit. On the GPU (spec
+//! Fase 5): [`ProvingKey::load_on`] with [`Device::Gpu`], where [`gpu_available`].
 //! [`check`](mod@check) checks a witness row by row without proving (§4.4, "Depuració"): [`check()`].
 //!
 //! The verifier is JS (`js/`, spec §4.5, D8): [`js_verifier::verify`] runs it with Node. The
@@ -69,7 +70,9 @@ pub use json::{canonical_json, JsonFile};
 pub use layout::{Layout, LayoutEntry, LayoutPol};
 pub use pilfflonk_info::{Boundary, ChallengeMapEntry, EvMapEntry, NameStageEntry, PilfflonkInfo, PolMapEntry, PolType};
 pub use proof::{Proof, ProofJson, ProofNames, ProofShape, Publics, SnarkjsG1};
-pub use prover::{prove, stage_columns, ProofChallenges, ProofOutput, ProveOptions, ProvingKey, StageColumns};
+pub use prover::{
+    gpu_available, prove, stage_columns, Device, ProofChallenges, ProofOutput, ProveOptions, ProvingKey, StageColumns,
+};
 pub use verkey::AirVerkey;
 pub use vkey::{FixedCommitments, Vkey, DIGEST_DOMAIN};
 pub use witness::{

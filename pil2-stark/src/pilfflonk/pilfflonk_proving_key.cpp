@@ -445,7 +445,7 @@ AirDegrees airDegrees(const PilfflonkInfo &info, const std::string &name) {
 }
 
 AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constants, uint64_t constantsBytes,
-               const std::string &name)
+               const std::string &name, const Gpu *gpu)
     : airName(name), pilfflonkInfo(std::move(_info)), expressionsBin(std::move(_bin)) {
     const PilfflonkInfo &info = pilfflonkInfo;
     auto fail = [&](const std::string &what) { failAir(name, what); };
@@ -453,7 +453,7 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
     interpreter = std::make_unique<Expressions>(expressionsBin, info);
     airDegrees_ = airDegrees(info, name);
     const uint64_t N = airDegrees_.n;
-    extension = std::make_unique<Lde>(info.nBits, airDegrees_.nBitsExt);
+    extension = std::make_unique<Lde>(info.nBits, airDegrees_.nBitsExt, gpu);
 
     // The rows of each constraint of the .bin (section 2, which check runs) lie in the trace; its
     // reader checked firstRow <= lastRow.
@@ -661,20 +661,28 @@ uint64_t AirKey::blindLength(uint64_t f) const {
     return entry.stage >= 1 && entry.stage <= pilfflonkInfo.nStages ? entry.offsets.size() + 1 : 0;
 }
 
-std::unique_ptr<AirKey> AirKey::load(const std::string &dir, const std::string &name) {
+std::unique_ptr<AirKey> AirKey::load(const std::string &dir, const std::string &name, const Gpu *gpu) {
     const std::string base = dir + "/" + name;
     PilfflonkInfo info = PilfflonkInfo::load(base + ".pilfflonkinfo.json");
     ExpressionsBin bin = ExpressionsBin::load(base + ".bin");
     const std::vector<uint8_t> constants = readBytes(base + ".const", "const");
-    return std::make_unique<AirKey>(std::move(info), std::move(bin), constants.data(), constants.size(), name);
+    return std::make_unique<AirKey>(std::move(info), std::move(bin), constants.data(), constants.size(), name, gpu);
 }
 
 // ---------------------------------------------------------------------------------------------
 // ProvingKey
 // ---------------------------------------------------------------------------------------------
 
-ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::unique_ptr<AirKey>>> _airs)
-    : info(std::move(_info)), structuredReferenceString(std::move(_srs)), airKeys(std::move(_airs)) {
+ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::unique_ptr<AirKey>>> _airs,
+                       std::shared_ptr<const Gpu> _gpu)
+    : info(std::move(_info)), gpu(std::move(_gpu)), structuredReferenceString(std::move(_srs)),
+      airKeys(std::move(_airs)) {
+    if (gpu && gpu->nPoints() != structuredReferenceString.nG1()) {
+        throw std::invalid_argument("provingKey: its GPU holds " + std::to_string(gpu->nPoints()) +
+                                    " points, and its SRS " + std::to_string(structuredReferenceString.nG1()) +
+                                    " powers [τ^i]₁");
+    }
+    structuredReferenceString.setGpu(gpu.get());
     if (airKeys.size() != info.airs.size()) {
         throw FormatError("provingKey: " + std::to_string(airKeys.size()) + " airgroups of keys for the " +
                           std::to_string(info.airs.size()) + " of the globalInfo");
@@ -687,6 +695,10 @@ ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::
         }
         for (uint64_t a = 0; a < airKeys[ag].size(); ++a) {
             const AirKey &key = *airKeys[ag][a];
+            if (key.lde().gpu() != gpu.get()) {
+                throw std::invalid_argument("provingKey: " + key.name() +
+                                            (gpu ? "'s key is not on the provingKey's GPU" : "'s key is on a GPU"));
+            }
             const PilfflonkInfo &air = key.info();
             const GlobalInfo::Air &expected = info.airs[ag][a];
             if (air.airgroupId != ag || air.airId != a || air.name != expected.name || key.n() != expected.numRows) {
@@ -705,21 +717,38 @@ ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::
     }
 }
 
-std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir) {
+std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device device) {
+    if (device == Device::Gpu && !gpuAvailable()) {
+#ifdef __USE_CUDA__
+        throw std::invalid_argument("ProvingKey::load: no GPU: CUDA sees no device of compute capability 7.0 or "
+                                    "above (or no driver)");
+#else
+        throw std::invalid_argument("ProvingKey::load: no GPU: this library was built without it "
+                                    "(provers/starks-lib-c/build.rs found no nvcc, or the feature cpu-only)");
+#endif
+    }
     GlobalInfo info = GlobalInfo::load(dir + "/" + GLOBAL_INFO_FILE);
     TimerStart(PILFFLONK_LOAD_SRS);
     Srs srs = Srs::load(dir + "/" + info.name + "/" + BACKEND_DIR + "/" + SRS_FILE);
     TimerStopAndLog(PILFFLONK_LOAD_SRS);
+    std::shared_ptr<const Gpu> gpu;
+#ifdef __USE_CUDA__
+    if (device == Device::Gpu) {
+        TimerStart(PILFFLONK_GPU_SRS);
+        gpu = std::make_shared<const Gpu>(&srs.g1(0), srs.nG1());
+        TimerStopAndLog(PILFFLONK_GPU_SRS);
+    }
+#endif
     TimerStart(PILFFLONK_LOAD_AIRS);
     std::vector<std::vector<std::unique_ptr<AirKey>>> airs(info.airs.size());
     for (uint64_t ag = 0; ag < info.airs.size(); ++ag) {
         for (const GlobalInfo::Air &air : info.airs[ag]) {
             const std::string airDir = dir + "/" + info.name + "/" + info.airGroups[ag] + "/airs/" + air.name + "/air";
-            airs[ag].push_back(AirKey::load(airDir, air.name));
+            airs[ag].push_back(AirKey::load(airDir, air.name, gpu.get()));
         }
     }
     TimerStopAndLog(PILFFLONK_LOAD_AIRS);
-    return std::make_unique<ProvingKey>(std::move(info), std::move(srs), std::move(airs));
+    return std::make_unique<ProvingKey>(std::move(info), std::move(srs), std::move(airs), std::move(gpu));
 }
 
 const AirKey &ProvingKey::air(uint64_t airgroupId, uint64_t airId) const {

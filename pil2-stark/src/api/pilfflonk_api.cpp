@@ -16,6 +16,7 @@
 #include "pilfflonk_commit.hpp"
 #include "pilfflonk_error.hpp"
 #include "pilfflonk_fr.hpp"
+#include "pilfflonk_gpu.hpp"
 #include "pilfflonk_lde.hpp"
 #include "pilfflonk_prover.hpp"
 #include "pilfflonk_proving_key.hpp"
@@ -450,6 +451,29 @@ void *pilfflonk_ctx_new(const char *proving_key_dir) {
         }
         return PilFflonk::ProvingKey::load(proving_key_dir).release();
     });
+}
+
+void *pilfflonk_ctx_new_on(const char *proving_key_dir, uint32_t device) {
+    const char *function = __func__;
+    return guardNew(function, [&]() -> void * {
+        if (device != PILFFLONK_DEVICE_CPU && device != PILFFLONK_DEVICE_GPU) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function,
+                 "device %" PRIu32 " is neither the CPU (%d) nor the GPU (%d)", device, PILFFLONK_DEVICE_CPU,
+                 PILFFLONK_DEVICE_GPU);
+            return nullptr;
+        }
+        if (proving_key_dir == nullptr) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "proving_key_dir is NULL");
+            return nullptr;
+        }
+        const PilFflonk::Device on = device == PILFFLONK_DEVICE_GPU ? PilFflonk::Device::Gpu : PilFflonk::Device::Cpu;
+        return PilFflonk::ProvingKey::load(proving_key_dir, on).release();
+    });
+}
+
+int pilfflonk_gpu_available(void) {
+    clearLastError();
+    return PilFflonk::gpuAvailable() ? 1 : 0;
 }
 
 void pilfflonk_ctx_free(void *ctx) {

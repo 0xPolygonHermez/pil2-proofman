@@ -24,6 +24,8 @@ constexpr uint64_t MAX_NBITS_EXT = 28;
 // sees it.
 constexpr unsigned int COSET_SHIFT = 5;
 
+class Gpu; // pilfflonk_gpu.hpp
+
 // base^exponent, in Montgomery form, by ffiasm's square-and-multiply.
 FrElement power(const FrElement &base, uint64_t exponent);
 
@@ -51,6 +53,10 @@ bool batchInverse(FrElement *out, const FrElement *values, uint64_t n);
 // Columns run one after another when there are fewer of them than OpenMP threads, each on the
 // whole team, and one per thread otherwise (details in pilfflonk_lde.cpp). The results are the
 // same bit for bit either way. The const functions may run concurrently with each other.
+//
+// With a Gpu (plan M43), every FFT and inverse FFT runs on it instead (Gpu::ntt, Gpu::intt), one
+// column after another, and the scalings by the powers of the shift stay here, around them, on the
+// whole team: the results are the same bit for bit.
 class Lde {
 public:
     using Engine = AltBn128::Engine;
@@ -58,11 +64,13 @@ public:
 
     // Throws std::invalid_argument unless nBits <= nBitsExt <= MAX_NBITS_EXT, and
     // std::runtime_error where ffiasm has no assembly backend. Builds ffiasm's table of the
-    // N' roots of unity, which takes 32·N' bytes.
-    Lde(uint64_t _nBits, uint64_t _nBitsExt);
+    // N' roots of unity, which takes 32·N' bytes. The transforms run on `gpu` if it is not null; it
+    // must outlive the Lde, and only a library built with the GPU takes one.
+    Lde(uint64_t _nBits, uint64_t _nBitsExt, const Gpu *gpu = nullptr);
 
     uint64_t domainSize() const { return N; }
     uint64_t extendedSize() const { return NExtended; }
+    const Gpu *gpu() const { return device; }
 
     // INTT: the N evaluations on H of column c, in evals[c], into its N coefficients, followed by
     // blindLength zero coefficients kept for the blinding (spec A.3, Poly::blindCoefficients).
@@ -108,6 +116,7 @@ private:
     // Sized for N', it also serves N. Behind a pointer because FFT::fft and FFT::ifft are not
     // const, although they only read the FFT's tables.
     std::unique_ptr<FFT<Engine::Fr>> fft;
+    const Gpu *device;
 };
 
 } // namespace PilFflonk

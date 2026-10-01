@@ -13,7 +13,9 @@
 //   ffiasm and Ethereum's precompiles (EIP-196) do.
 // - Objects are opaque handles, released with their _free function.
 // - Functions that create an object return NULL on failure; every other function returns one of
-//   the status codes below. No function exits or aborts the process.
+//   the status codes below. No function exits or aborts the process, with one exception: on the
+//   GPU (pilfflonk_ctx_new_on), a CUDA failure inside the GPU helpers it reuses (out of device
+//   memory, a lost device) aborts it, as it does in the PLONK GPU prover (plan M43).
 // - After a failure, pilfflonk_last_error() describes it and pilfflonk_last_status() returns its
 //   status, which is how a function that returns NULL tells why.
 
@@ -39,6 +41,13 @@ extern "C" {
     enum pilfflonk_transcript_kind {
         PILFFLONK_TRANSCRIPT_FR = 0, // scalars, 32 bytes each
         PILFFLONK_TRANSCRIPT_G1 = 1, // G1 points, 64 bytes each
+    };
+
+    // Where a ctx runs the MSMs and the NTTs of its proofs (pilfflonk_ctx_new_on; spec Fase 5, plan
+    // M43). The proofs are the same, bit for bit, on either.
+    enum pilfflonk_device {
+        PILFFLONK_DEVICE_CPU = 0, // ffiasm's MSM and FFT: pilfflonk_ctx_new
+        PILFFLONK_DEVICE_GPU = 1, // the GPU's MSM and NTT of src/bn128/src/{msm,ntt}, on CUDA device 0
     };
 
     // Why the most recent other pilfflonk_* call on the calling thread failed; empty if it
@@ -183,6 +192,20 @@ extern "C" {
     // is not what it should be or they do not agree (an AIR that is not the globalInfo's, a layout
     // needing more powers than the SRS holds, pieces of Q other than those of spec A.1).
     void *pilfflonk_ctx_new(const char *proving_key_dir);
+
+    // pilfflonk_ctx_new with the MSMs and the NTTs of the ctx and of its proofs on `device`, one of
+    // enum pilfflonk_device (plan M43). On PILFFLONK_DEVICE_GPU the SRS's powers [τ^i]₁ are copied
+    // to the GPU once they are read, and the commitments and the transforms run there, the fixed
+    // columns' INTT and pilfflonk_ctx_fixed_commitments included; the coset shifts, the blinding,
+    // the packing, Q's bytecode and SHPLONK's divisions stay on the CPU. Returns NULL on failure, as
+    // pilfflonk_ctx_new, and PILFFLONK_ERR_INVALID_ARGUMENT also if device is none of the enum or is
+    // PILFFLONK_DEVICE_GPU and pilfflonk_gpu_available() is 0 (checked before any file is read).
+    void *pilfflonk_ctx_new_on(const char *proving_key_dir, uint32_t device);
+
+    // 1 if this library has the GPU path (it was built with nvcc: libstarksgpu.a) and sees a GPU it
+    // can use (compute capability 7.0 or above), 0 otherwise: in a library built without it, and
+    // where CUDA finds no device or no driver. It never fails.
+    int pilfflonk_gpu_available(void);
 
     // Releases a ctx, which no instance may still use. NULL is a no-op.
     void pilfflonk_ctx_free(void *ctx);

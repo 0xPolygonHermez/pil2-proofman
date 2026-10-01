@@ -330,4 +330,7 @@ main() {
     esac
 }
 
-main "$@"
+# Run when executed; sourced (gpu_check.sh), only its helpers are defined.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main "$@"
+fi

@@ -117,6 +117,7 @@ TARGET_STARKS_LIB_GPU := libstarksgpu.a
 TARGET_SETUP_PLONK := plonkSetup
 TARGET_PROVE_PLONK := plonkProve
 TARGET_PILFFLONK_TEST := pilfflonkTest
+TARGET_PILFFLONK_GPU_TEST := pilfflonkGpuTest
 
 BUILD_DIR := ./build
 BUILD_DIR_GPU := ./build-gpu
@@ -290,6 +291,13 @@ DEPS_PROVE_PLONK := $(OBJS_PROVE_PLONK:.o=.d)
 SRCS_PILFFLONK_TEST := $(shell find ./test/pilfflonk -name "*.cpp")
 OBJS_PILFFLONK_TEST := $(SRCS_PILFFLONK_TEST:%=$(BUILD_DIR)/%.o)
 DEPS_PILFFLONK_TEST := $(OBJS_PILFFLONK_TEST:.o=.d)
+# The same tests against the GPU archive (plan M43), with __USE_CUDA__: they compare the GPU's MSMs,
+# NTTs and proofs with the CPU's where there is a GPU, and skip that without one. Linked as
+# provers/starks-lib-c/build.rs links the GPU archive: the static CUDA runtime and blst.
+OBJS_PILFFLONK_GPU_TEST := $(SRCS_PILFFLONK_TEST:%=$(BUILD_DIR_GPU)/%.o)
+DEPS_PILFFLONK_GPU_TEST := $(OBJS_PILFFLONK_GPU_TEST:.o=.d)
+CUDA_LIB_DIR ?= /usr/local/cuda/lib64
+LDFLAGS_PILFFLONK_GPU_TEST := -L$(CUDA_LIB_DIR) -lcudart_static -ldl -lrt -L./external/blst -lblst
 
 all: $(BUILD_DIR)/$(TARGET_STARKS_LIB) $(GPU_TARGETS)
 
@@ -310,6 +318,9 @@ plonk_prove: $(BUILD_DIR)/$(TARGET_PROVE_PLONK)
 
 pilfflonk_test: $(BUILD_DIR)/$(TARGET_PILFFLONK_TEST)
 	$(BUILD_DIR)/$(TARGET_PILFFLONK_TEST)
+
+pilfflonk_gpu_test: $(BUILD_DIR_GPU)/$(TARGET_PILFFLONK_GPU_TEST)
+	$(BUILD_DIR_GPU)/$(TARGET_PILFFLONK_GPU_TEST)
 
 # Built into a temp file and moved into place: `ar r` on an existing archive keeps members whose
 # source is gone, and a linker reading it mid-rewrite sees a half-updated archive -- which shows
@@ -345,6 +356,10 @@ $(BUILD_DIR)/$(TARGET_PROVE_PLONK): $(OBJS_PROVE_PLONK)
 
 $(BUILD_DIR)/$(TARGET_PILFFLONK_TEST): $(OBJS_PILFFLONK_TEST) $(LIB_DIR)/$(TARGET_STARKS_LIB)
 	$(CXX) $(OBJS_PILFFLONK_TEST) $(LIB_DIR)/$(TARGET_STARKS_LIB) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS)
+
+$(BUILD_DIR_GPU)/$(TARGET_PILFFLONK_GPU_TEST): $(OBJS_PILFFLONK_GPU_TEST) $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
+	$(CXX) $(OBJS_PILFFLONK_GPU_TEST) $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU) $(CXXFLAGS) -o $@ $(LDFLAGS) \
+	    $(LDFLAGS_PILFFLONK_GPU_TEST) $(CFLAGS) $(CPPFLAGS)
 
 # assembly
 $(BUILD_DIR)/%.asm.o: %.asm
@@ -390,7 +405,7 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean clean_cpu clean_gpu pilfflonk_test
+.PHONY: clean clean_cpu clean_gpu pilfflonk_test pilfflonk_gpu_test
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
@@ -406,6 +421,7 @@ clean_gpu:
 -include $(DEPS_SETUP_PLONK)
 -include $(DEPS_PROVE_PLONK)
 -include $(DEPS_PILFFLONK_TEST)
+-include $(DEPS_PILFFLONK_GPU_TEST)
 -include $(DEPS_BCT)
 -include $(DEPS_STARKS_LIB)
 -include $(DEPS_STARKS_LIB_GPU)

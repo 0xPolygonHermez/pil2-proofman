@@ -10,6 +10,7 @@
 #include "pilfflonk_commit.hpp"
 #include "pilfflonk_expressions.hpp"
 #include "pilfflonk_expressions_bin.hpp"
+#include "pilfflonk_gpu.hpp"
 #include "pilfflonk_info.hpp"
 #include "pilfflonk_lde.hpp"
 #include "pilfflonk_srs.hpp"
@@ -130,13 +131,15 @@ struct StdHint {
 // with a gsum_col or gprod_col, as the STARK's calculateImHints computes them only then.
 class AirKey {
 public:
-    // From the files' contents. `name` is what the errors call the AIR. Throws FormatError.
+    // From the files' contents. `name` is what the errors call the AIR. Throws FormatError. Its Lde
+    // runs its transforms on `gpu` if it is not null (plan M43), the fixed columns' INTT included; the
+    // Gpu must outlive the key.
     AirKey(PilfflonkInfo info, ExpressionsBin bin, const uint8_t *constants, uint64_t constantsBytes,
-           const std::string &name);
+           const std::string &name, const Gpu *gpu = nullptr);
 
     // Reads <dir>/<name>.pilfflonkinfo.json, <dir>/<name>.bin and <dir>/<name>.const. Throws
     // IoError and FormatError.
-    static std::unique_ptr<AirKey> load(const std::string &dir, const std::string &name);
+    static std::unique_ptr<AirKey> load(const std::string &dir, const std::string &name, const Gpu *gpu = nullptr);
 
     AirKey(const AirKey &) = delete;
     AirKey &operator=(const AirKey &) = delete;
@@ -224,10 +227,15 @@ private:
 };
 
 // The proving key of a proof (spec §4.4, step 1; §4.2.6's provingKey/): the globalInfo, the SRS and
-// every AIR's key. Immutable once built: proofs may share it, from several threads.
+// every AIR's key, and, on the GPU (plan M43), the Gpu their MSMs and transforms run on. Immutable
+// once built: proofs may share it, from several threads.
 class ProvingKey {
 public:
-    ProvingKey(GlobalInfo globalInfo, Srs srs, std::vector<std::vector<std::unique_ptr<AirKey>>> airs);
+    // With a gpu, which must hold the SRS's powers [τ^i]₁ and be every AIR key's (AirKey's `gpu`),
+    // the SRS commits on it (Srs::setGpu). Throws std::invalid_argument if an AIR key's is another,
+    // or the gpu holds another number of points than the SRS.
+    ProvingKey(GlobalInfo globalInfo, Srs srs, std::vector<std::vector<std::unique_ptr<AirKey>>> airs,
+               std::shared_ptr<const Gpu> gpu = nullptr);
 
     // Reads the provingKey/ at dir, as setup-pilfflonk writes it (spec §4.2.6):
     //   <dir>/pilout.globalInfo.json
@@ -236,19 +244,27 @@ public:
     // The vkey is not read: the digest the transcript absorbs is the orchestrator's (spec A.4), which
     // reads and checks the vkey. Throws IoError and FormatError, and FormatError if an AIR's layout
     // needs more powers [τ^i]₁ than the SRS holds or its pilfflonkinfo is not the globalInfo's AIR.
-    static std::unique_ptr<ProvingKey> load(const std::string &dir);
+    // On Device::Gpu (plan M43), the SRS's powers [τ^i]₁ are copied to the GPU once they are read,
+    // and the MSMs and transforms of the key and its proofs run there, the fixed columns' INTT first;
+    // the proofs are the same bit for bit. Throws std::invalid_argument before it reads anything if
+    // there is no GPU (gpuAvailable()), in a library built without one or on a machine without one.
+    static std::unique_ptr<ProvingKey> load(const std::string &dir, Device device = Device::Cpu);
 
     ProvingKey(const ProvingKey &) = delete;
     ProvingKey &operator=(const ProvingKey &) = delete;
 
     const GlobalInfo &globalInfo() const { return info; }
     const Srs &srs() const { return structuredReferenceString; }
+    Device device() const { return gpu ? Device::Gpu : Device::Cpu; }
 
     // The key of air airId of airgroup airgroupId. Throws std::invalid_argument if there is none.
     const AirKey &air(uint64_t airgroupId, uint64_t airId) const;
 
 private:
     GlobalInfo info;
+    // Before the SRS and the AIR keys, which point to it: it outlives them. A shared_ptr, whose deleter
+    // is the GPU library's, so that a library built without the GPU never needs Gpu's destructor.
+    std::shared_ptr<const Gpu> gpu;
     Srs structuredReferenceString;
     std::vector<std::vector<std::unique_ptr<AirKey>>> airKeys;
 };

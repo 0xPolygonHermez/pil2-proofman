@@ -33,13 +33,18 @@
 //!
 //! **Blinding** (decision D6) is always on: random by default, fixed by
 //! [`ProveOptions::insecure_blinding_seed`] for tests and CI, never for a real proof.
+//!
+//! **The GPU** (spec Fase 5, plan M43): [`ProvingKey::load_on`] with [`Device::Gpu`] runs the MSMs
+//! and the NTTs of the key and of its proofs on the GPU, with the GPU entry points of
+//! `pil2-stark/src/bn128/src/{msm,ntt}`, and gives the same proofs, bit for bit. It needs a library
+//! built with CUDA and a GPU ([`gpu_available`]); [`ProvingKey::load`] is the CPU.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use proofman_starks_lib_c::{
-    PilFflonkError, PilFflonkErrorKind, PilFflonkInstance, PilFflonkInstanceInputs, PilFflonkOpening,
-    PilFflonkProverCtx, PilFflonkTranscript,
+    pilfflonk_gpu_available_c, PilFflonkError, PilFflonkErrorKind, PilFflonkInstance, PilFflonkInstanceInputs,
+    PilFflonkOpening, PilFflonkProverCtx, PilFflonkTranscript,
 };
 
 use crate::error::{invalid, PilfflonkError, PilfflonkResult};
@@ -50,6 +55,15 @@ use crate::pilfflonk_info::PilfflonkInfo;
 use crate::proof::{Proof, ProofJson, ProofNames, Publics, PROOF_FILE, PUBLICS_FILE};
 use crate::vkey::Vkey;
 use crate::witness::{AirInstanceRef, Stage1Witness, WitnessShape, WitnessSource};
+
+/// Where a [`ProvingKey`] runs the MSMs and the NTTs of its proofs (plan M43).
+pub use proofman_starks_lib_c::PilFflonkDevice as Device;
+
+/// Whether [`Device::Gpu`] can be used here: this library was built with CUDA (`nvcc` found, the
+/// feature `proofman-starks-lib-c/cpu-only` off) and sees a GPU. It never fails.
+pub fn gpu_available() -> bool {
+    pilfflonk_gpu_available_c()
+}
 
 /// A call to the C++ core that failed, with what it was doing; a witness that does not satisfy the
 /// constraints is [`PilfflonkError::Unsatisfied`].
@@ -78,8 +92,16 @@ impl ProvingKey {
     /// not describe the same AIR (the vkey of format 1 describes one), an SRS whose `[τ]₂` is not
     /// the vkey's `X_2` and a `.const` whose fixed columns do not commit to the vkey's fixed
     /// commitments (files of other setups), and a C++ core that derives other degrees than this
-    /// crate.
+    /// crate. The MSMs and NTTs run on the CPU: [`load_on`](Self::load_on) with [`Device::Cpu`].
     pub fn load(dir: &Path) -> PilfflonkResult<Self> {
+        Self::load_on(dir, Device::Cpu)
+    }
+
+    /// [`load`](Self::load), with the MSMs and the NTTs of the key (the fixed columns' INTT and the
+    /// commitments it checks) and of its proofs on `device`. On [`Device::Gpu`] the proofs are those
+    /// of the CPU, bit for bit; without a GPU ([`gpu_available`]) it is refused before any file of
+    /// the C++ core is read, saying why.
+    pub fn load_on(dir: &Path, device: Device) -> PilfflonkResult<Self> {
         let global_info = PilfflonkGlobalInfo::from_proving_key(dir)?;
         let vkey_path = global_info.vkey_path(dir);
         let vkey = Vkey::read(&vkey_path)?;
@@ -99,7 +121,8 @@ impl ProvingKey {
         };
         check_vkey(&vkey, info, &global_info).map_err(|e| e.in_file(&vkey_path))?;
 
-        let ctx = PilFflonkProverCtx::load(dir).map_err(native("loading the provingKey/ into the C++ prover"))?;
+        let ctx =
+            PilFflonkProverCtx::load_on(dir, device).map_err(native("loading the provingKey/ into the C++ prover"))?;
         let degrees = info.degrees()?;
         let n_bits_ext = ctx
             .n_bits_ext(info.airgroup_id, info.air_id)
