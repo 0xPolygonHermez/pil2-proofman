@@ -68,7 +68,10 @@ pub struct PlonkResult {
 /// expander writes those from the band's boundary. `getCommitedPols` zeroes everything outside the
 /// extent, which is what those cells held anyway. Both bounds are measured rather than assumed, so
 /// a packer that starts using a row or column cannot silently have it dropped.
-fn write_exec_file<F: PlonkField>(
+///
+/// Public so that a caller can write the exec of rows it places itself, as the tests of the pilfflonk
+/// wrap's witness (`pilfflonk-wrap-witness`) do over BN254.
+pub fn write_exec_file<F: PlonkField>(
     adds: &[r1cs::to_plonk::PlonkAddition<F>],
     s_map: &[Vec<u32>],
     gate_bands: &[r1cs::types::GateBand],

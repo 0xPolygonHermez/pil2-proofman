@@ -1,7 +1,5 @@
 use borsh::{BorshSerialize, BorshDeserialize};
-use libloading::{Library, Symbol};
 use proofman_fields::PrimeField64;
-use std::ffi::CString;
 use std::fmt;
 use proofman_starks_lib_c::*;
 use std::path::Path;
@@ -10,11 +8,12 @@ use std::io::Write;
 
 use proofman_common::{
     CurveType, MpiCtx, MemoryHandlerRecursive, Proof, ProofCtx, ProofType, ProofmanResult, ProofmanError, Setup,
-    SetupsVadcop, GetSizeWitnessFunc,
+    SetupsVadcop,
 };
 use proofman_common::exec_format::{EXEC_FORMAT_VERSION, EXEC_HEADER_WORDS, EXEC_MAGIC};
+use proofman_common::final_witness::FinalWitnessLibrary;
 
-use std::os::raw::{c_void, c_char};
+use std::os::raw::c_void;
 
 use proofman_util::{
     timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
@@ -23,8 +22,7 @@ use proofman_util::{
 
 use crate::{add_publics_circom, add_publics_aggregation};
 
-pub type GetWitnessFinalFunc =
-    unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64) -> i64;
+pub use proofman_common::final_witness::GetWitnessFinalFunc;
 
 /// Joins a background FFI thread on drop, so an early `?` or panic can't detach a thread still
 /// writing shared device state (the const-tree buffer) and let the next proof race it.
@@ -1082,41 +1080,24 @@ pub fn generate_snark_proof(
     Ok((snark_proof, snark_publics))
 }
 
+// `proof` must be the recursivef proof, a nlohmann::json (`FinalWitnessLibrary::witness`). The
+// signature is the one this function always had: the pointer used to reach `getWitness` through a
+// symbol of the library, which clippy does not follow.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> ProofmanResult<Vec<u8>> {
     let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
     let rust_lib_filename = setup_path.display().to_string() + lib_extension;
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
 
-    if !rust_lib_path.exists() {
-        return Err(ProofmanError::InvalidSetup(format!(
-            "Rust lib dynamic library not found at path: {rust_lib_path:?}"
-        )));
-    }
-    let library: Library = unsafe { Library::new(rust_lib_path)? };
-
     let dat_filename = setup_path.display().to_string() + ".dat";
-    let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
-    let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
+    let library = FinalWitnessLibrary::load(rust_lib_path, Path::new(dat_filename.as_str()))?;
 
-    unsafe {
-        timer_start_info!(CALCULATE_FINAL_WITNESS);
+    timer_start_info!(CALCULATE_FINAL_WITNESS);
+    // SAFETY: `proof` is the recursivef proof, the nlohmann::json `gen_recursive_proof_final_c` returns.
+    let witness = unsafe { library.witness(proof) }?;
+    timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
 
-        let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-        let size_witness = get_size_witness();
-
-        let mut witness: Vec<u8> = vec![0; (size_witness * 32) as usize];
-        let witness_ptr = witness.as_mut_ptr();
-
-        let get_witness_final: Symbol<GetWitnessFinalFunc> = library.get(b"getWitness\0")?;
-        let nmutex = std::cmp::min(8, rayon::current_num_threads());
-        let res = get_witness_final(proof, dat_filename_ptr, witness_ptr as *mut c_void, nmutex as u64);
-        if res != 0 {
-            return Err(ProofmanError::InvalidProof("Error generating final witness from rust".into()));
-        }
-        timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
-
-        Ok(witness)
-    }
+    Ok(witness)
 }
 
 /// Exec header for [`recursion_trace_stride`]. Empty when a setup carries no exec file, which

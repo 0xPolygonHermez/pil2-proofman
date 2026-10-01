@@ -24,10 +24,15 @@
 //!   BN254, four words (the original pil-fflonk's 32-byte `Fr`), for the pilfflonk wrap.
 //!
 //! The map and the bands do not depend on the field, and are laid out alike in both.
+//!
+//! [`ExecFile::committed_pols`] applies a file to a circom witness, over either field: the
+//! semantics of the STARK's `getCommitedPols` (pil2-stark/src/starkpil/recursion_trace/exec_file.hpp),
+//! which the STARK prover runs in C++ over Goldilocks. The pilfflonk wrap runs it over BN254.
 
 use std::path::Path;
 
-use proofman_fields::{Bn254, Goldilocks, PrimeField64, QuotientMap};
+use proofman_fields::{Bn254, Field, Goldilocks, PrimeField64, QuotientMap};
+use rayon::prelude::*;
 
 use crate::{ProofmanError, ProofmanResult};
 
@@ -400,10 +405,99 @@ impl<F: ExecField> ExecFile<F> {
     }
 }
 
+/// What an exec file gathers out of a circom witness ([`ExecFile::committed_pols`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommittedPols<F> {
+    /// Wires `1 ..= n_publics` of the witness.
+    pub publics: Vec<F>,
+    /// The `n_rows x n_cols` trace, row after row.
+    pub trace: Vec<F>,
+}
+
+impl<F: ExecField + Field> ExecFile<F> {
+    /// The publics and the trace this file gathers out of `witness`, the circom witness of the
+    /// circuit it was made for, with the semantics of the STARK's `getCommitedPols`
+    /// (pil2-stark/src/starkpil/recursion_trace/exec_file.hpp), over any field:
+    /// - the `n_publics` publics are wires `1 ..= n_publics`, after wire 0, the constant one;
+    /// - the additions run in order, the `i`-th introducing wire `witness.len() + i`, which is
+    ///   `w[sl]·coef_l + w[sr]·coef_r`: one may read a wire an earlier one introduced;
+    /// - the cell at `row`, `col` of the `n_rows x n_cols` trace is the wire its map entry names,
+    ///   and zero for the entry 0 and outside the map's live extent.
+    ///
+    /// The wires are witness indices, the r1cs's, as plonk2pil writes them, and `witness` holds a
+    /// value per witness index, as circom's `getWitness` writes it. They are not circom's signal
+    /// indices: `prepareSignalMap` (setup/circom/main.cpp) folds those in for the STARK's fused
+    /// `getWitnessTrace` only, which reads circom's signal values.
+    ///
+    /// The gate bands are not expanded, as `getCommitedPols` does not expand them: the cells they
+    /// fill come out zero. Where `getCommitedPols` clamps or trusts, this refuses: a map wider or
+    /// taller than the trace, an addition or a map entry reading a wire not defined before it, and
+    /// a witness without its publics.
+    pub fn committed_pols(
+        &self,
+        mut witness: Vec<F>,
+        n_publics: usize,
+        n_rows: usize,
+        n_cols: usize,
+    ) -> ProofmanResult<CommittedPols<F>> {
+        let invalid = |e: String| Err(ProofmanError::InvalidSetup(format!("exec: {e}")));
+        let n_witness = witness.len();
+        if n_publics >= n_witness {
+            return invalid(format!(
+                "the circom witness has {n_witness} wires, too few for wire 0 and {n_publics} publics"
+            ));
+        }
+        let (map_rows, map_cols) = (self.layout.map_rows, self.layout.map_cols);
+        if map_rows > n_rows || map_cols > n_cols {
+            return invalid(format!("the map is {map_rows} x {map_cols}, larger than the trace's {n_rows} x {n_cols}"));
+        }
+        let Some(len) = n_rows.checked_mul(n_cols) else {
+            return invalid(format!("a trace of {n_rows} x {n_cols} does not fit in memory"));
+        };
+        let n_wires = n_witness + self.additions.len();
+        if let Some(entry) = self.map.iter().position(|&wire| wire as usize >= n_wires) {
+            return invalid(format!(
+                "the map's cell at row {}, column {} is wire {}, and there are {n_wires}: {n_witness} of the \
+                 circom witness and {} additions",
+                entry / map_cols,
+                entry % map_cols,
+                self.map[entry],
+                self.additions.len()
+            ));
+        }
+
+        let publics = witness[1..=n_publics].to_vec();
+
+        // In order: an addition may read a wire an earlier one introduced.
+        witness.reserve_exact(self.additions.len());
+        for (i, addition) in self.additions.iter().enumerate() {
+            let wire = n_witness + i;
+            if let Some(&read) = addition.wires.iter().find(|&&read| read as usize >= wire) {
+                return invalid(format!(
+                    "addition {i}, wire {wire}, reads wire {read}, which is not defined before it"
+                ));
+            }
+            let [l, r] = addition.wires.map(|read| witness[read as usize]);
+            witness.push(l * addition.coeffs[0] + r * addition.coeffs[1]);
+        }
+
+        let mut trace = vec![F::ZERO; len];
+        if map_cols > 0 {
+            trace[..map_rows * n_cols].par_chunks_exact_mut(n_cols).enumerate().for_each(|(row, cells)| {
+                let entries = &self.map[row * map_cols..(row + 1) * map_cols];
+                for (cell, &wire) in cells.iter_mut().zip(entries) {
+                    if wire != 0 {
+                        *cell = witness[wire as usize];
+                    }
+                }
+            });
+        }
+        Ok(CommittedPols { publics, trace })
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use proofman_fields::Field;
-
     use super::*;
 
     /// `r`, BN254's prime, least significant word first.
@@ -477,5 +571,80 @@ mod tests {
             let err = ExecFile::<Bn254>::from_words(&exec).unwrap_err().to_string();
             assert!(err.contains(why), "expected \"{why}\", got: {err}");
         }
+    }
+
+    /// A file over `F` with no bands, built as a reader returns one.
+    fn exec<F: ExecField>(
+        additions: Vec<ExecAddition<F>>,
+        map_rows: usize,
+        map_cols: usize,
+        map: Vec<u32>,
+    ) -> ExecFile<F> {
+        assert_eq!(map.len(), map_rows * map_cols);
+        let layout = ExecLayout::new::<F>(additions.len(), map_rows, map_cols);
+        ExecFile { layout, additions, map, band_aux: 0, bands: vec![] }
+    }
+
+    /// The witness `[1, 5, 7, 11, 13]`, two publics, and a file whose second addition reads the
+    /// first and whose 2 x 3 map has an empty cell, applied to a 4 x 4 trace.
+    fn gathered<F: ExecField + Field + QuotientMap<u64>>() -> (CommittedPols<F>, CommittedPols<F>) {
+        let f = |v: u64| F::from_int(v);
+        let witness = vec![f(1), f(5), f(7), f(11), f(13)];
+        let additions = vec![
+            // Wire 5: 2·5 + 3·7 = 31.
+            ExecAddition { wires: [1, 2], coeffs: [f(2), f(3)] },
+            // Wire 6: −1·31 + 1·11 = −20, from the wire the addition before introduced.
+            ExecAddition { wires: [5, 3], coeffs: [F::NEG_ONE, F::ONE] },
+        ];
+        let file = exec(additions, 2, 3, vec![1, 5, 0, 6, 4, 3]);
+        let got = file.committed_pols(witness, 2, 4, 4).unwrap();
+
+        let (zero, minus_20) = (F::ZERO, -f(20));
+        #[rustfmt::skip]
+        let trace = vec![
+            f(5),     f(31), zero,  zero,
+            minus_20, f(13), f(11), zero,
+            zero,     zero,  zero,  zero,
+            zero,     zero,  zero,  zero,
+        ];
+        (got, CommittedPols { publics: vec![f(5), f(7)], trace })
+    }
+
+    /// `getCommitedPols`'s semantics, over both fields: the publics after wire 0, the additions in
+    /// order, the cells the map names, and zeros for its empty cells and outside its extent.
+    #[test]
+    fn an_exec_gathers_the_trace_as_get_commited_pols_does() {
+        let (got, want) = gathered::<Goldilocks>();
+        assert_eq!(got, want);
+        let (got, want) = gathered::<Bn254>();
+        assert_eq!(got, want);
+        // −20 is r − 20 over BN254: the coefficient −1 is four words wide.
+        assert_eq!(
+            got.trace[4].to_string(),
+            "21888242871839275222246405745257275088548364400416034343698204186575808495597"
+        );
+    }
+
+    /// What `getCommitedPols` clamps or trusts is refused, saying why.
+    #[test]
+    fn an_exec_that_does_not_fit_its_witness_or_trace_is_refused() {
+        let f = |v: u64| Bn254::from_int(v);
+        let witness = vec![f(1), f(5), f(7)];
+        let add = |wires| ExecAddition { wires, coeffs: [Bn254::ONE, Bn254::ONE] };
+        let cases: [(&str, ExecFile<Bn254>, usize, usize, usize); 6] = [
+            ("too few for wire 0 and 3 publics", exec(vec![], 0, 0, vec![]), 3, 1, 1),
+            ("the map is 2 x 1, larger than the trace's 1 x 1", exec(vec![], 2, 1, vec![1, 2]), 0, 1, 1),
+            ("the map is 1 x 2, larger than the trace's 2 x 1", exec(vec![], 1, 2, vec![1, 2]), 0, 2, 1),
+            ("row 1, column 0 is wire 4, and there are 4", exec(vec![add([1, 2])], 2, 1, vec![3, 4]), 0, 2, 1),
+            ("addition 0, wire 3, reads wire 3", exec(vec![add([1, 3])], 0, 0, vec![]), 0, 1, 1),
+            ("addition 1, wire 4, reads wire 5", exec(vec![add([1, 2]), add([5, 0])], 0, 0, vec![]), 0, 1, 1),
+        ];
+        for (why, file, n_publics, n_rows, n_cols) in cases {
+            let err = file.committed_pols(witness.clone(), n_publics, n_rows, n_cols).unwrap_err().to_string();
+            assert!(err.contains(why), "expected \"{why}\", got: {err}");
+        }
+        // An empty map gathers nothing: a trace of zeros.
+        let pols = exec::<Bn254>(vec![], 0, 0, vec![]).committed_pols(witness, 2, 2, 3).unwrap();
+        assert_eq!((pols.publics, pols.trace), (vec![f(5), f(7)], vec![Bn254::ZERO; 6]));
     }
 }

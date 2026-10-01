@@ -1,0 +1,41 @@
+[package]
+name = "pilfflonk-wrap-witness"
+description = "The witness of the pilfflonk wrap: the final circuit's circom witness and its BN254 .exec, as the stage-1 columns of a pilfflonk AIR"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+build = "build.rs"
+
+[lib]
+# The rlib for the wrap, which computes the witness in its own process; the cdylib for
+# `pilfflonk prove -w`, which loads it as a pilfflonk witness library.
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+proofman-pilfflonk = { workspace = true }
+# The exec's reader and its application, the final circuit's witness library, and the logger of
+# `pilfflonk_witness_library!`.
+proofman-common = { workspace = true }
+proofman-fields = { workspace = true }
+proofman-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+rayon = { workspace = true }
+
+[build-dependencies]
+# Compiles src/zkin.cpp, which makes the nlohmann::json the final circuit's getWitness takes.
+cc = "1"
+
+[dev-dependencies]
+# The tests' circuit: read as BN254, converted to PLONK gates, and its exec written.
+pil2-stark-recurser = { workspace = true }
+# Builds the circuit's witness library as setup-snark builds final.so.
+pil2-stark-setup = { workspace = true }
+# The end-to-end test's key, with the ptau of the tests (pilfflonk/docs/README.md#tests).
+pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
