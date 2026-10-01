@@ -753,29 +753,6 @@ impl<F: PrimeField64> ProofMan<F> {
     pub fn reset(&self) -> ProofmanResult<()> {
         self.wcm.reset();
 
-        for proof_lock in self.proofs.iter() {
-            let mut proof = proof_lock.write().unwrap_or_else(|e| e.into_inner());
-            *proof = None;
-        }
-
-        for proof_lock in self.compressor_proofs.iter() {
-            let mut proof = proof_lock.write().unwrap_or_else(|e| e.into_inner());
-            *proof = None;
-        }
-
-        for proof_lock in self.recursive1_proofs.iter() {
-            let mut proof = proof_lock.write().unwrap_or_else(|e| e.into_inner());
-            *proof = None;
-        }
-
-        for proof_lock in self.recursive2_proofs.iter() {
-            let mut proofs = proof_lock.write().unwrap_or_else(|e| e.into_inner());
-            proofs.clear();
-        }
-
-        let mut ongoing_proofs = self.recursive2_proofs_ongoing.write().unwrap_or_else(|e| e.into_inner());
-        ongoing_proofs.clear();
-
         self.pctx.set_witness_tx(None);
         self.pctx.set_proof_tx(None);
 
@@ -812,6 +789,21 @@ impl<F: PrimeField64> ProofMan<F> {
 
         self.worker_contributions.write().unwrap_or_else(|e| e.into_inner()).clear();
         reset_device_streams_c(self.pctx.get_device_buffers_ptr());
+
+        // Launches write these through raw pointers: free them only once workers and device are done.
+        for proof_lock in self.proofs.iter() {
+            *proof_lock.write().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+        for proof_lock in self.compressor_proofs.iter() {
+            *proof_lock.write().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+        for proof_lock in self.recursive1_proofs.iter() {
+            *proof_lock.write().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+        for proof_lock in self.recursive2_proofs.iter() {
+            proof_lock.write().unwrap_or_else(|e| e.into_inner()).clear();
+        }
+        self.recursive2_proofs_ongoing.write().unwrap_or_else(|e| e.into_inner()).clear();
 
         for inner_vec in self.received_agg_proofs.write().unwrap_or_else(|e| e.into_inner()).iter_mut() {
             inner_vec.clear();

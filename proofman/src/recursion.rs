@@ -323,7 +323,8 @@ fn write_vadcop_final_publics<F: PrimeField64>(proof: &mut Proof<F>, n_publics: 
 }
 
 /// # Safety
-/// `new_proof` must fit this proof type and outlive the GPU's write, which lands after return.
+/// `new_proof` must fit this proof type and stay allocated, and untouched, until the GPU's write
+/// (which lands after return) is synchronized.
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn generate_recursive_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
