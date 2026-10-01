@@ -1261,11 +1261,36 @@ pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
     }
 }
 
-pub fn print_roots<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
+/// Each instance's stage-1 root. Its commit writes it through `ptr`, possibly from the device after
+/// the call returns, so the cells are interior-mutable; nothing reads one before its commit lands.
+pub struct InstanceRoots<F>(Vec<std::cell::UnsafeCell<[F; 4]>>);
+
+// SAFETY: each cell is written only by its own instance's commit and read once that commit is done.
+unsafe impl<F: Send> Sync for InstanceRoots<F> {}
+
+impl<F: Copy + Default> InstanceRoots<F> {
+    pub fn new(n: usize) -> Self {
+        Self((0..n).map(|_| std::cell::UnsafeCell::new([F::default(); 4])).collect())
+    }
+
+    /// Where instance `i`'s commit writes its root.
+    pub fn ptr(&self, i: usize) -> *mut c_void {
+        self.0[i].get() as *mut c_void
+    }
+
+    /// # Safety
+    /// Instance `i`'s commit, if any, has completed.
+    pub unsafe fn get(&self, i: usize) -> [F; 4] {
+        unsafe { *self.0[i].get() }
+    }
+}
+
+pub fn print_roots<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &InstanceRoots<F>) {
     let instances = pctx.dctx_get_instances();
     for (instance_id, &instance_info) in instances.iter().enumerate() {
         let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
-        let contribution = roots_contributions[instance_id];
+        // SAFETY: called once the contributions are in.
+        let contribution = unsafe { roots_contributions.get(instance_id) };
         tracing::info!(
             "Contribution for instance id {} [{}:{}] is: {:?}",
             instance_id,

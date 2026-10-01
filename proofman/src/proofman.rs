@@ -176,7 +176,7 @@ use crate::{
     get_accumulated_challenge, gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof,
     generate_vadcop_final_proof, generate_vadcop_final_compressed_proof,
 };
-use crate::total_recursive_proofs;
+use crate::{total_recursive_proofs, InstanceRoots};
 use crate::check_const_pols_gpu;
 use crate::check_const_tree;
 use crate::check_tree_paths;
@@ -676,7 +676,7 @@ pub struct ProofMan<F: PrimeField64> {
     recursive1_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>>,
     recursive2_proofs: Arc<Vec<RwLock<Vec<Proof<F>>>>>,
     recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>>,
-    roots_contributions: Arc<Vec<[F; 4]>>,
+    roots_contributions: Arc<InstanceRoots<F>>,
     values_contributions: Arc<Vec<Mutex<Vec<F>>>>,
     aux_trace: Arc<Vec<F>>,
     const_pols: Arc<Vec<F>>,
@@ -2714,7 +2714,7 @@ where
         let values_contributions: Arc<Vec<Mutex<Vec<F>>>> =
             Arc::new((0..MAX_INSTANCES).map(|_| Mutex::new(Vec::<F>::new())).collect());
 
-        let roots_contributions: Arc<Vec<[F; 4]>> = Arc::new((0..MAX_INSTANCES).map(|_| [F::default(); 4]).collect());
+        let roots_contributions = Arc::new(InstanceRoots::new(MAX_INSTANCES as usize));
 
         let thread_budget = Arc::new(ThreadBudget::new(max_num_threads));
 
@@ -6395,7 +6395,7 @@ where
         air_id: usize,
         trace: *mut u8,
         params: *mut u8,
-        roots_contributions: &[[F; 4]],
+        roots_contributions: &InstanceRoots<F>,
         staged: bool,
         staged_gpu: Option<usize>,
     ) -> ProofmanResult<()> {
@@ -6474,7 +6474,7 @@ where
             n_cols,
             words_per_row,
             widths.as_ptr() as *mut c_void,
-            roots_contributions[instance_id].as_ptr() as *mut c_void,
+            roots_contributions.ptr(instance_id),
             params as *mut c_void,
         );
         ctx.load_bytes[pool].fetch_sub(bytes, Ordering::Relaxed);
@@ -6560,7 +6560,7 @@ where
     fn get_contribution_air(
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
-        roots_contributions: &[[F; 4]],
+        roots_contributions: &InstanceRoots<F>,
         values_contributions: &[Mutex<Vec<F>>],
         instance_id: usize,
         aux_trace: &mut [F],
@@ -6629,7 +6629,7 @@ where
                 instance_id as u64,
                 airgroup_id as u64,
                 air_id as u64,
-                roots_contributions[instance_id].as_ptr() as *mut u8,
+                roots_contributions.ptr(instance_id) as *mut u8,
                 pctx.get_device_buffers_ptr(),
                 &custom_commits_fixed_path,
             );

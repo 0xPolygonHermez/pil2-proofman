@@ -409,7 +409,7 @@ pub unsafe fn generate_recursive_proof<F: PrimeField64>(
     // (one-off launches — outer aggregation, vadcop_final, recursers).
     let stream_id = gen_recursive_proof_c(
         p_setup,
-        trace.as_ptr() as *mut u8,
+        trace.as_mut_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
         const_pols_ptr,
         const_tree_ptr,
@@ -907,7 +907,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     // prove
     let p_prove = gen_recursive_proof_final_c(
         p_setup,
-        trace.as_ptr() as *mut u8,
+        trace.as_mut_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
         const_pols.as_ptr() as *mut u8,
         const_tree.as_ptr() as *mut u8,
@@ -1028,7 +1028,7 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
     timer_start_debug!(GENERATE_RECURSER_AGGREGATOR_PROOF);
     let stream_id = gen_recursive_proof_c(
         p_setup,
-        trace.as_ptr() as *mut u8,
+        trace.as_mut_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
         const_pols_ptr,
         const_tree_ptr,

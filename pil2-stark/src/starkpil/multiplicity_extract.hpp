@@ -9,7 +9,7 @@
 #include "setup_ctx.hpp"
 
 // Why the last compile gave up.
-inline const char*& mulProgFailReason() { static const char* r = nullptr; return r; }
+inline const char*& mulProgFailReason() { static thread_local const char* r = nullptr; return r; }
 
 // A term's address: prover buffers are flat column-major, so one element offset plus the row.
 // Where value `id` sits in its air-value or airgroup-value pool: stage 1 takes one slot and later
