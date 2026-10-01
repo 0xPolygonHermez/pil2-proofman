@@ -384,6 +384,9 @@ inline bool mul_export_to_trace(uint64_t airKey, int gpuId, uint64_t* dst,
     // First export of the proof: a tree reduction onto this GPU, pairs in parallel, log2(n) rounds.
     // Later ones (the proof, maybe on another GPU) copy the total from where it landed.
     if (!remote.empty()) {
+        // Exports run on concurrent commit streams; mulFoldedOn and the peer staging are shared.
+        static std::mutex foldMtx;
+        std::lock_guard<std::mutex> foldLock(foldMtx);
         auto folded = mulFoldedOn().find(airKey);
         std::vector<const MulAcc*> used;
         if (folded == mulFoldedOn().end()) {

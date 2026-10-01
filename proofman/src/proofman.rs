@@ -579,6 +579,11 @@ struct SlotCommitCtx {
     load_bytes: Vec<AtomicU64>,
 }
 
+/// A table id the C++ decoders (32-bit `table_id`) would truncate.
+fn first_wide_table_id<'a>(ids: impl IntoIterator<Item = &'a u64>) -> Option<u64> {
+    ids.into_iter().copied().find(|&t| t > u32::MAX as u64)
+}
+
 /// Feed `words`, length-prefixed, to `h`.
 fn hash_words(h: &mut blake3::Hasher, words: &[u64]) {
     h.update(&(words.len() as u64).to_le_bytes());
@@ -2971,6 +2976,12 @@ where
 
         // Checked before anything is registered: the C++ registries are process-wide.
         let hosted: std::collections::HashSet<u64> = layouts.iter().flat_map(|l| l.table_ids.iter().copied()).collect();
+        if let Some(t) = first_wide_table_id(range_ids.iter().chain(&hosted).chain(fitted.iter().map(|m| &m.table_id)))
+        {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "table id {t} does not fit the 32 bits the prover's decoders carry"
+            )));
+        }
         let owning = |t: &u64| {
             hosted.contains(t)
                 && !std_owned.contains(t)
@@ -6765,6 +6776,12 @@ where
 #[cfg(test)]
 mod thread_budget_tests {
     use super::*;
+
+    #[test]
+    fn table_ids_past_32_bits_are_caught() {
+        assert_eq!(first_wide_table_id(&[0, 7, u32::MAX as u64]), None);
+        assert_eq!(first_wide_table_id(&[3, u32::MAX as u64 + 1, 5]), Some(u32::MAX as u64 + 1));
+    }
 
     /// Six acquirers wanting 8 from a 24-token budget. Taking tokens one at a time deadlocks here:
     /// each ends up holding a partial set and waiting for the rest, and none reaches its release.
