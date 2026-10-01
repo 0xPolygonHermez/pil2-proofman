@@ -14,6 +14,7 @@
 //! witness footprint, not the trace's -- the AIR still has those columns.
 
 use proofman_common::hash_family::GateRole;
+use proofman_fields::Field;
 
 use super::merge_copies::r1cs2plonk_merged;
 use super::r1cs::to_plonk::{get_custom_gates_info, r1cs2plonk};
@@ -59,7 +60,7 @@ pub fn cells_per_gate(role: GateRole) -> Option<usize> {
 /// Cells one TreeSelector gate writes, read from the actual signal count of its first
 /// `CustomGateUse` (TreeSelector4 = 17, TreeSelector8 = 30). Falls back to 17 when the
 /// role has no gate uses in this r1cs (count is then 0, so the value is irrelevant).
-fn tree_selector_cells(r1cs: &R1csFile, cgi: &super::r1cs::to_plonk::CustomGatesInfo) -> usize {
+fn tree_selector_cells<F>(r1cs: &R1csFile<F>, cgi: &super::r1cs::to_plonk::CustomGatesInfo<F>) -> usize {
     use super::r1cs::to_plonk::filter_gate_uses;
     filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::TreeSelector))
         .first()
@@ -109,7 +110,7 @@ impl CellEstimate {
 /// Build the per-component breakdown for a given PLONK constraint count. The custom
 /// gates are read from `r1cs` (merging only relabels ids, it never adds or removes
 /// gate placements), so only the PLONK count varies between the raw and merged paths.
-fn estimate_with_plonk_count(r1cs: &R1csFile, n_plonk: usize) -> CellEstimate {
+fn estimate_with_plonk_count<F: Field>(r1cs: &R1csFile<F>, n_plonk: usize) -> CellEstimate {
     let cgi = get_custom_gates_info(r1cs);
     let tree_cells = tree_selector_cells(r1cs, &cgi);
 
@@ -139,7 +140,7 @@ fn estimate_with_plonk_count(r1cs: &R1csFile, n_plonk: usize) -> CellEstimate {
 
 /// Estimate the cells the verifier circuit for `r1cs` actually uses, with a
 /// per-component breakdown. Poseidon is split into Sponge and Compression.
-pub fn estimate_cells(r1cs: &R1csFile) -> CellEstimate {
+pub fn estimate_cells<F: Field>(r1cs: &R1csFile<F>) -> CellEstimate {
     let (plonk_constraints, _adds) = r1cs2plonk(r1cs);
     estimate_with_plonk_count(r1cs, plonk_constraints.len())
 }
@@ -147,7 +148,7 @@ pub fn estimate_cells(r1cs: &R1csFile) -> CellEstimate {
 /// Same as [`estimate_cells`] but after copy-constraint merging
 /// ([`r1cs2plonk_merged`]). Merging drops pure-copy PLONK gates, so the PLONK
 /// component shrinks by `dropped * PLONK_CELLS`; all other components are unchanged.
-pub fn estimate_cells_merged(r1cs: &R1csFile) -> CellEstimate {
+pub fn estimate_cells_merged<F: Field>(r1cs: &R1csFile<F>) -> CellEstimate {
     let (plonk_constraints, _adds, _merge) = r1cs2plonk_merged(r1cs, true);
     estimate_with_plonk_count(r1cs, plonk_constraints.len())
 }
@@ -187,7 +188,7 @@ impl CellComparison {
 }
 
 /// Estimate both the raw and copy-merged verifier circuits and return them together.
-pub fn compare_cells(r1cs: &R1csFile) -> CellComparison {
+pub fn compare_cells<F: Field>(r1cs: &R1csFile<F>) -> CellComparison {
     CellComparison { raw: estimate_cells(r1cs), merged: estimate_cells_merged(r1cs) }
 }
 
@@ -195,20 +196,21 @@ pub fn compare_cells(r1cs: &R1csFile) -> CellComparison {
 mod tests {
     use super::*;
     use crate::plonk2pil::r1cs::types::{R1csConstraint, R1csFile, R1csHeader, LinearCombination};
+    use proofman_fields::Goldilocks;
 
     /// Minimal R1CS: `n_mul` multiplication constraints (a*b=c over fresh signals) and
     /// optional custom-gate uses, for exercising the estimator without a fixture file.
-    fn synthetic_r1cs(n_mul: u32, gates: Vec<crate::plonk2pil::r1cs::types::CustomGateUse>) -> R1csFile {
+    fn synthetic_r1cs(n_mul: u32, gates: Vec<crate::plonk2pil::r1cs::types::CustomGateUse>) -> R1csFile<Goldilocks> {
         use crate::plonk2pil::r1cs::types::CustomGate;
         let mut constraints = Vec::new();
         let mut sid = 1u32;
         for _ in 0..n_mul {
             let mut a = LinearCombination::new();
-            a.insert(sid, 1u64);
+            a.insert(sid, Goldilocks::ONE);
             let mut b = LinearCombination::new();
-            b.insert(sid + 1, 1u64);
+            b.insert(sid + 1, Goldilocks::ONE);
             let mut c = LinearCombination::new();
-            c.insert(sid + 2, 1u64);
+            c.insert(sid + 2, Goldilocks::ONE);
             constraints.push(R1csConstraint { a, b, c });
             sid += 3;
         }
@@ -279,7 +281,7 @@ mod tests {
 
     /// Reporting harness: print the raw-vs-merged cell breakdown for one R1CS.
     /// Point it at any `.r1cs` via the `ESTIMATE_R1CS` env var (no fixture committed):
-    ///   ESTIMATE_R1CS=path/to/x.r1cs cargo test -p stark-recurser estimate_report -- --ignored --nocapture
+    ///   ESTIMATE_R1CS=path/to/x.r1cs cargo test -p pil2-stark-recurser estimate_report -- --ignored --nocapture
     #[test]
     #[ignore]
     fn estimate_report() {
@@ -289,7 +291,7 @@ mod tests {
             return;
         };
         let bytes = std::fs::read(&f).unwrap_or_else(|e| panic!("read {f}: {e}"));
-        let r1cs = read_r1cs_from_bytes(&bytes).unwrap();
+        let r1cs = read_r1cs_from_bytes::<Goldilocks>(&bytes).unwrap();
         let cmp = compare_cells(&r1cs);
         eprintln!("\n=== {f}");
         eprint!("{}", cmp.report());

@@ -4,10 +4,14 @@
 //! It reads R1CS binary files, converts constraints to PLONK format, and runs
 //! one of several setup routines to produce PIL source and fixed polynomials.
 //!
+//! The reader and the PLONK conversion are generic over the r1cs's field ([`field::PlonkField`]:
+//! Goldilocks or BN254). The setup families and the `.exec` format are Goldilocks-only for now.
+//!
 //! The main entry point is [`plonk2pil`], which dispatches to the appropriate
 //! setup variant based on the `setup_type` argument.
 
 pub mod estimate;
+pub mod field;
 pub mod merge_copies;
 pub mod packers;
 pub mod r1cs;
@@ -15,15 +19,16 @@ pub mod setups;
 pub mod utils;
 
 // Re-export old flat module names as aliases for backward compatibility
-pub use r1cs::reader as r1cs_reader;
 pub use r1cs::to_plonk as r1cs2plonk;
 pub use r1cs::types as r1cs_types;
 pub use setups::poseidon1::aggregation as aggregation_setup;
 pub use setups::poseidon1::compressor as compressor_setup;
 
 use anyhow::{bail, Result};
+use proofman_fields::{Goldilocks, PrimeField64};
 
-use r1cs::types::{read_r1cs_from_bytes, PlonkOptions};
+use field::R1csPrime;
+use r1cs::types::{r1cs_prime, read_r1cs_from_bytes, read_r1cs_header, PlonkOptions};
 pub use r1cs::types::{FixedPol, SetupResult};
 
 /// The result returned by [`plonk2pil`], containing everything needed
@@ -34,7 +39,8 @@ pub struct PlonkResult {
     pub exec: Vec<u64>,
     /// Generated PIL source string.
     pub pil_str: String,
-    /// Fixed polynomial values, as a flat list of (name, index, values).
+    /// Fixed polynomial values, as a flat list of (name, index, values), each value the canonical
+    /// word of a Goldilocks element.
     pub fixed_pols: Vec<FixedPol>,
     /// log2(number of rows).
     pub n_bits: usize,
@@ -69,6 +75,9 @@ pub const GATE_BAND_FORMAT_VERSION: u64 = 2;
 
 /// Serialize PLONK additions and the signal map into an exec buffer.
 ///
+/// Goldilocks only: a coefficient is one word, which an element of a wider field is not. The
+/// signature is what keeps one from reaching it.
+///
 /// Layout, all u64 LE:
 /// - `[0]`: [`EXEC_MAGIC`] | [`EXEC_FORMAT_VERSION`]
 /// - `[1]`: number of additions
@@ -83,7 +92,7 @@ pub const GATE_BAND_FORMAT_VERSION: u64 = 2;
 /// extent, which is what those cells held anyway. Both bounds are measured rather than assumed, so
 /// a packer that starts using a row or column cannot silently have it dropped.
 fn write_exec_file(
-    adds: &[r1cs::to_plonk::PlonkAddition],
+    adds: &[r1cs::to_plonk::PlonkAddition<Goldilocks>],
     s_map: &[Vec<u32>],
     gate_bands: &[r1cs::types::GateBand],
     band_aux: u64,
@@ -120,10 +129,10 @@ fn write_exec_file(
 
     for (i, add) in adds.iter().enumerate() {
         let at = EXEC_HEADER_WORDS + i * 4;
-        buff[at] = add[0];
-        buff[at + 1] = add[1];
-        buff[at + 2] = add[2];
-        buff[at + 3] = add[3];
+        buff[at] = add.wires[0] as u64;
+        buff[at + 1] = add.wires[1] as u64;
+        buff[at + 2] = add.coeffs[0].as_canonical_u64();
+        buff[at + 3] = add.coeffs[1].as_canonical_u64();
     }
 
     // Two u32 entries per word, low half first: the order the bytes come out in on a little-endian
@@ -157,14 +166,24 @@ fn write_exec_file(
 ///
 /// # Returns
 /// A [`PlonkResult`] containing the exec buffer, PIL source, and fixed polynomials.
+///
+/// The r1cs must be over Goldilocks: an r1cs over BN254 is refused as not supported yet, since
+/// neither the setups nor the exec format have a BN254 form, and any other prime as unknown.
 pub fn plonk2pil(r1cs_data: &[u8], setup_type: &str, options: &PlonkOptions) -> Result<PlonkResult> {
     if !["compressor", "aggregation"].contains(&setup_type) {
         bail!("Invalid setup type: '{}'. Must be one of: compressor, aggregation", setup_type);
     }
 
-    let r1cs = read_r1cs_from_bytes(r1cs_data)?;
+    match r1cs_prime(&read_r1cs_header(r1cs_data)?)? {
+        R1csPrime::Goldilocks => {}
+        prime => bail!(
+            "plonk2pil: an r1cs over {prime} is not supported yet: the {setup_type} setups and the .exec \
+             format are Goldilocks-only"
+        ),
+    }
+    let r1cs = read_r1cs_from_bytes::<Goldilocks>(r1cs_data)?;
 
-    let res: SetupResult = match setup_type {
+    let res: SetupResult<Goldilocks> = match setup_type {
         "compressor" => packers::pack_compressor(&r1cs, options),
         "aggregation" => packers::pack_aggregation(&r1cs, options),
         _ => unreachable!(),
@@ -175,7 +194,7 @@ pub fn plonk2pil(r1cs_data: &[u8], setup_type: &str, options: &PlonkOptions) -> 
     Ok(PlonkResult {
         exec,
         pil_str: res.pil_str,
-        fixed_pols: res.fixed_pols,
+        fixed_pols: res.fixed_pols.into_iter().map(canonical_words).collect(),
         n_bits: res.n_bits,
         n_bits_natural: res.n_bits_natural,
         n_used: res.n_used,
@@ -184,17 +203,28 @@ pub fn plonk2pil(r1cs_data: &[u8], setup_type: &str, options: &PlonkOptions) -> 
     })
 }
 
+/// A fixed column as the STARK setup takes it: each value its canonical word.
+fn canonical_words(pol: FixedPol<Goldilocks>) -> FixedPol {
+    // `Goldilocks` and `u64` share a layout, so the collect reuses the column's allocation.
+    FixedPol {
+        name: pol.name,
+        index: pol.index,
+        values: pol.values.into_iter().map(|v| v.as_canonical_u64()).collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::r1cs::to_plonk::*;
     use super::r1cs::types::read_r1cs_from_bytes;
     use super::*;
+    use proofman_fields::Field;
 
     /// Run the real compressor packer end-to-end on an r1cs (exercises the row-count
     /// assert + verify_merge_soundness). ESTIMATE_HASH picks the family; it defaults to
     /// `hash_family::DEFAULT_HASH_ID`.
     ///   ESTIMATE_R1CS=/path/x.r1cs [ESTIMATE_HASH=Poseidon2] \
-    ///     cargo test -p stark-recurser run_compressor --release -- --ignored --nocapture
+    ///     cargo test -p pil2-stark-recurser run_compressor --release -- --ignored --nocapture
     #[test]
     #[ignore]
     fn run_compressor() {
@@ -215,14 +245,29 @@ mod tests {
             min_n_bits: None,
         };
         let res = plonk2pil(&bytes, "compressor", &opts).expect("compressor packing failed");
-        let r1cs = read_r1cs_from_bytes(&bytes).unwrap();
+        let r1cs = read_r1cs_from_bytes::<Goldilocks>(&bytes).unwrap();
         let cgi = get_custom_gates_info(&r1cs);
         let n_pos = cgi.n(GateRole::PoseidonCompression) + cgi.n(GateRole::PoseidonSponge);
         eprintln!("\n=== {f}  compressor OK: nBits={} nUsed={} n_pos={}", res.n_bits, res.n_used, n_pos);
     }
 
-    /// Build a minimal R1CS with a single multiplication constraint and no custom gates.
+    /// Build a minimal Goldilocks R1CS with a single multiplication constraint and no custom gates.
     fn build_simple_r1cs_bytes() -> Vec<u8> {
+        r1cs_bytes(&R1csPrime::Goldilocks.modulus_le(), &one(8))
+    }
+
+    /// `1`, little-endian in `n8` bytes.
+    fn one(n8: usize) -> Vec<u8> {
+        let mut bytes = vec![0u8; n8];
+        bytes[0] = 1;
+        bytes
+    }
+
+    /// An R1CS over `prime` (little-endian, its length the `n8`) with the single constraint
+    /// `wire_1 * wire_2 = coeff * wire_3`.
+    fn r1cs_bytes(prime: &[u8], coeff: &[u8]) -> Vec<u8> {
+        let n8 = prime.len();
+        assert_eq!(coeff.len(), n8);
         let mut buf: Vec<u8> = Vec::new();
 
         buf.extend_from_slice(b"r1cs");
@@ -231,8 +276,8 @@ mod tests {
 
         // Header
         let mut hdr: Vec<u8> = Vec::new();
-        hdr.extend_from_slice(&8u32.to_le_bytes());
-        hdr.extend_from_slice(&0xFFFF_FFFF_0000_0001u64.to_le_bytes());
+        hdr.extend_from_slice(&(n8 as u32).to_le_bytes());
+        hdr.extend_from_slice(prime);
         hdr.extend_from_slice(&4u32.to_le_bytes()); // nVars
         hdr.extend_from_slice(&1u32.to_le_bytes()); // nOutputs
         hdr.extend_from_slice(&1u32.to_le_bytes()); // nPubInputs
@@ -244,20 +289,20 @@ mod tests {
         buf.extend_from_slice(&(hdr.len() as u64).to_le_bytes());
         buf.extend_from_slice(&hdr);
 
-        // Constraint: wire_1 * wire_2 = wire_3
+        // Constraint: wire_1 * wire_2 = coeff * wire_3
         let mut cdata: Vec<u8> = Vec::new();
         // A: 1 term (wire=1, coeff=1)
         cdata.extend_from_slice(&1u32.to_le_bytes());
         cdata.extend_from_slice(&1u32.to_le_bytes());
-        cdata.extend_from_slice(&1u64.to_le_bytes());
+        cdata.extend_from_slice(&one(n8));
         // B: 1 term (wire=2, coeff=1)
         cdata.extend_from_slice(&1u32.to_le_bytes());
         cdata.extend_from_slice(&2u32.to_le_bytes());
-        cdata.extend_from_slice(&1u64.to_le_bytes());
-        // C: 1 term (wire=3, coeff=1)
+        cdata.extend_from_slice(&one(n8));
+        // C: 1 term (wire=3, coeff)
         cdata.extend_from_slice(&1u32.to_le_bytes());
         cdata.extend_from_slice(&3u32.to_le_bytes());
-        cdata.extend_from_slice(&1u64.to_le_bytes());
+        cdata.extend_from_slice(coeff);
 
         buf.extend_from_slice(&2u32.to_le_bytes()); // Section type 2 = constraints
         buf.extend_from_slice(&(cdata.len() as u64).to_le_bytes());
@@ -269,13 +314,79 @@ mod tests {
     #[test]
     fn test_r1cs2plonk_basic() {
         let data = build_simple_r1cs_bytes();
-        let r1cs = read_r1cs_from_bytes(&data).unwrap();
+        let r1cs = read_r1cs_from_bytes::<Goldilocks>(&data).unwrap();
         let (constraints, additions) = r1cs2plonk(&r1cs);
 
         assert_eq!(constraints.len(), 1);
         assert!(additions.is_empty());
         // Should be a multiplication gate: qM != 0
-        assert_ne!(constraints[0][3], 0);
+        assert!(!constraints[0].coeffs[0].is_zero());
+    }
+
+    /// The reader takes an element of the file's own width: a BN254 coefficient wider than any
+    /// u64 comes through whole.
+    #[test]
+    fn a_bn254_r1cs_is_read_at_32_bytes() {
+        use num_bigint::BigUint;
+        use proofman_fields::Bn254;
+        let r = R1csPrime::Bn254.modulus_le();
+        let mut minus_two = (BigUint::from_bytes_le(&r) - 2u32).to_bytes_le();
+        minus_two.resize(32, 0);
+        let r1cs = read_r1cs_from_bytes::<Bn254>(&r1cs_bytes(&r, &minus_two)).unwrap();
+        assert_eq!(r1cs.header.n8, 32);
+        assert_eq!(r1cs.constraints[0].c[&3], -Bn254::TWO);
+        let (constraints, _) = r1cs2plonk(&r1cs);
+        assert_eq!(constraints[0].coeffs[3], Bn254::TWO, "qO = -c");
+    }
+
+    /// Reading a file into a field it is not over is an error naming both, never a misread.
+    #[test]
+    fn an_r1cs_is_refused_in_a_field_it_is_not_over() {
+        use proofman_fields::Bn254;
+        let gl = build_simple_r1cs_bytes();
+        let err = read_r1cs_from_bytes::<Bn254>(&gl).unwrap_err().to_string();
+        assert!(err.contains("over Goldilocks") && err.contains("BN254"), "{err}");
+
+        let r = R1csPrime::Bn254.modulus_le();
+        let err = read_r1cs_from_bytes::<Goldilocks>(&r1cs_bytes(&r, &one(32))).unwrap_err().to_string();
+        assert!(err.contains("over BN254") && err.contains("Goldilocks"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_prime_is_refused_naming_it() {
+        let seven = 7u64.to_le_bytes();
+        let err = read_r1cs_header(&r1cs_bytes(&seven, &one(8))).and_then(|h| r1cs_prime(&h)).unwrap_err().to_string();
+        assert!(err.contains("prime 7 (n8 = 8)"), "{err}");
+        let err = plonk2pil(&r1cs_bytes(&seven, &one(8)), "compressor", &PlonkOptions::default()).unwrap_err();
+        assert!(err.to_string().contains("prime 7"), "{err}");
+    }
+
+    /// A coefficient at or above the prime is not an element: refused, not reduced.
+    #[test]
+    fn a_non_canonical_coefficient_is_refused() {
+        let p = R1csPrime::Goldilocks.modulus_le();
+        let err = read_r1cs_from_bytes::<Goldilocks>(&r1cs_bytes(&p, &p)).unwrap_err().to_string();
+        assert!(err.contains("18446744069414584321 is not an element of Goldilocks"), "{err}");
+    }
+
+    /// A truncated file is an error at the read that runs out, whatever length it claims.
+    #[test]
+    fn a_truncated_r1cs_is_an_error() {
+        let data = build_simple_r1cs_bytes();
+        for len in [0, 3, 12, 30, data.len() - 1] {
+            assert!(read_r1cs_from_bytes::<Goldilocks>(&data[..len]).is_err(), "{len} bytes");
+        }
+    }
+
+    /// The families and the exec format are Goldilocks-only, so plonk2pil refuses a BN254 r1cs
+    /// up front, saying so, for both setup types.
+    #[test]
+    fn plonk2pil_refuses_a_bn254_r1cs_as_not_supported_yet() {
+        let bn254 = r1cs_bytes(&R1csPrime::Bn254.modulus_le(), &one(32));
+        for setup_type in ["compressor", "aggregation"] {
+            let err = plonk2pil(&bn254, setup_type, &PlonkOptions::default()).unwrap_err().to_string();
+            assert!(err.contains("BN254 is not supported yet"), "{err}");
+        }
     }
 
     /// One map entry, by row and column, out of the packed u32 pairs.
@@ -286,7 +397,10 @@ mod tests {
 
     #[test]
     fn test_write_exec_file_roundtrip() {
-        let adds: Vec<PlonkAddition> = vec![[10, 20, 30, 40], [50, 60, 70, 80]];
+        let adds: Vec<PlonkAddition<Goldilocks>> = vec![
+            PlonkAddition { wires: [10, 20], coeffs: [Goldilocks::new(30), Goldilocks::new(40)] },
+            PlonkAddition { wires: [50, 60], coeffs: [Goldilocks::new(70), Goldilocks::new(80)] },
+        ];
         let s_map: Vec<Vec<u32>> = vec![vec![1, 2, 3, 4], vec![5, 6, 7, 8]];
 
         let exec = write_exec_file(&adds, &s_map, &[], 0);
@@ -374,7 +488,7 @@ mod tests {
     #[test]
     fn write_exec_file_appends_bands_past_the_map() {
         use r1cs::types::{GateBand, GateBandKind};
-        let adds = vec![[10u64, 20, 1, 1]];
+        let adds = vec![PlonkAddition { wires: [10, 20], coeffs: [Goldilocks::ONE; 2] }];
         // Tall enough to contain both bands: a band's boundary is always inside the live extent.
         let s_map = vec![(1..=12).collect::<Vec<u32>>(), (13..=24).collect::<Vec<u32>>()];
         let bands = vec![

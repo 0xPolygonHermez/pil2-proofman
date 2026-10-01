@@ -92,8 +92,8 @@ one, under `<configuration>/`:
 
 The row placement shows up in the exec map and the fixed columns, and with it
 the two orders that are easiest to move by accident: the sort of the
-constraints by their u64 coefficients in the r1cs reader, and blake3's sort on
-the hex spelling of `ckey`.
+constraints by the canonical values of their coefficients in the r1cs reader,
+and blake3's sort on the hex spelling of `ckey`.
 
 When the manifest was generated, the driver's `air.exec` and `air.pil` were
 checked, for all six configurations, to be byte-identical to the

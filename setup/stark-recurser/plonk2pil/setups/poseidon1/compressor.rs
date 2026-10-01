@@ -6,11 +6,12 @@
 use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
 use crate::plonk2pil::r1cs::types::{GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
 use crate::plonk2pil::utils::{
-    bind_public_signals, build_fixed_pols, build_s_polynomials, log2, mulp, public_rows, PlonkBand,
+    bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, log2, public_rows, PlonkBand,
 };
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use super::{gen_pil_str, PilTemplateParams};
 use proofman_common::hash_family::GateRole;
+use proofman_fields::{Field, Goldilocks};
 use std::collections::HashMap;
 
 const COMMITTED_POLS: usize = 46;
@@ -36,7 +37,7 @@ fn rand_hex() -> String {
 // (row, n_used, max_used)
 type PR = (usize, usize, usize);
 
-pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
+pub fn compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOptions) -> SetupResult<Goldilocks> {
     let (plonk_constraints, plonk_additions, copy_merge) = r1cs2plonk_merged(r1cs, options.merge_copies);
     tracing::info!("Number of plonk constraints: {}", plonk_constraints.len());
 
@@ -153,7 +154,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     tracing::info!("NUsed: {}, nBits: {}, N: {}", n_used, n_bits, n);
 
     let mut s_map: Vec<Vec<u32>> = (0..COMMITTED_POLS).map(|_| vec![0u32; n]).collect();
-    let mut cv: Vec<Vec<u64>> = (0..10).map(|_| vec![0u64; n]).collect();
+    let mut cv: Vec<Vec<Goldilocks>> = (0..10).map(|_| vec![Goldilocks::ZERO; n]).collect();
     let mut band = PlonkBand::new(n);
     // Bands whose interiors the trace expander rebuilds; see GateBand.
     let mut gate_bands: Vec<GateBand> = Vec::new();
@@ -209,7 +210,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let process_poseidon1 = |s: &[u64],
                              is_compression: bool,
                              s_map: &mut [Vec<u32>],
-                             cv: &mut [Vec<u64>],
+                             cv: &mut [Vec<Goldilocks>],
                              ten_extra: &mut Vec<usize>,
                              pr_extra: &mut Vec<usize>,
                              four_extra: &mut Vec<usize>,
@@ -240,7 +241,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
 
         for off in 0..POSEIDON_ROWS {
             for item in cv.iter_mut() {
-                item[r + off] = 0;
+                item[r + off] = Goldilocks::ZERO;
             }
         }
 
@@ -323,7 +324,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
                 item[r] = cgu.signals[i] as u32;
             }
             for item in cv.iter_mut() {
-                item[r] = 0;
+                item[r] = Goldilocks::ZERO;
             }
             cmul_row = r as i64;
             cmul_used = 1;
@@ -339,7 +340,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             item[r] = cgu.signals[i] as u32;
         }
         for item in cv.iter_mut() {
-            item[r] = 0;
+            item[r] = Goldilocks::ZERO;
         }
         three_extra.push(r);
         band.allow(r, G_EVPOL);
@@ -353,29 +354,11 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             item[r] = cgu.signals[i] as u32;
         }
         let p = cgi.fft4_parameters.get(&cgu.id).expect("FFT4 params");
-        let (fft_type, scale, first_w, inc_w) = (p[3], p[2], p[0], p[1]);
-        let fw2 = mulp(first_w, first_w);
-        if fft_type == 4 {
-            cv[0][r] = scale;
-            cv[1][r] = mulp(scale, fw2);
-            cv[2][r] = mulp(scale, first_w);
-            cv[3][r] = mulp(mulp(scale, first_w), fw2);
-            cv[4][r] = mulp(mulp(scale, first_w), inc_w);
-            cv[5][r] = mulp(mulp(mulp(scale, first_w), fw2), inc_w);
-            for item in cv.iter_mut().skip(6) {
-                item[r] = 0;
-            }
-        } else if fft_type == 2 {
-            for item in cv.iter_mut().take(6) {
-                item[r] = 0;
-            }
-            cv[6][r] = scale;
-            cv[7][r] = mulp(scale, first_w);
-            cv[8][r] = mulp(mulp(scale, first_w), inc_w);
-            cv[9][r] = 0;
-        } else {
-            panic!("Invalid FFT4 type: {}", fft_type);
+        // constFFT[0..9] on C[0..9]; C[9] is not one of them.
+        for (col, v) in cv.iter_mut().zip(fft4_constants(p)) {
+            col[r] = v;
         }
+        cv[9][r] = Goldilocks::ZERO;
         r += 1;
     }
 
@@ -391,7 +374,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             item[r] = cgu.signals[i] as u32;
         }
         for item in cv.iter_mut() {
-            item[r] = 0;
+            item[r] = Goldilocks::ZERO;
         }
         r += 1;
     }
@@ -404,7 +387,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             item[r] = cgu.signals[i] as u32;
         }
         for item in cv.iter_mut() {
-            item[r] = 0;
+            item[r] = Goldilocks::ZERO;
         }
         two_extra.push(r);
         band.allow(r, G_SELVAL);
@@ -441,11 +424,11 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         } else if !half.is_empty() {
             let mut pr = half.remove(0);
             let row = pr.0;
-            cv[5][row] = c[3];
-            cv[6][row] = c[4];
-            cv[7][row] = c[5];
-            cv[8][row] = c[6];
-            cv[9][row] = c[7];
+            cv[5][row] = c.coeffs[0];
+            cv[6][row] = c.coeffs[1];
+            cv[7][row] = c.coeffs[2];
+            cv[8][row] = c.coeffs[3];
+            cv[9][row] = c.coeffs[4];
             for i in pr.1..pr.2 {
                 band.put(&mut s_map, row, i, c);
             }
@@ -460,11 +443,11 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             }
         } else if !ten_extra.is_empty() {
             let row = ten_extra.remove(0); // inner Poseidon row: all 10 gates
-            cv[0][row] = c[3];
-            cv[1][row] = c[4];
-            cv[2][row] = c[5];
-            cv[3][row] = c[6];
-            cv[4][row] = c[7];
+            cv[0][row] = c.coeffs[0];
+            cv[1][row] = c.coeffs[1];
+            cv[2][row] = c.coeffs[2];
+            cv[3][row] = c.coeffs[3];
+            cv[4][row] = c.coeffs[4];
             for i in 0..6 {
                 band.put(&mut s_map, row, i, c);
             }
@@ -473,11 +456,11 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             plonk_in_custom += 1;
         } else if !pr_extra.is_empty() {
             let row = pr_extra.remove(0); // PR: q0 gates 0..5 (q1 8,9 handed to `half`)
-            cv[0][row] = c[3];
-            cv[1][row] = c[4];
-            cv[2][row] = c[5];
-            cv[3][row] = c[6];
-            cv[4][row] = c[7];
+            cv[0][row] = c.coeffs[0];
+            cv[1][row] = c.coeffs[1];
+            cv[2][row] = c.coeffs[2];
+            cv[3][row] = c.coeffs[3];
+            cv[4][row] = c.coeffs[4];
             for i in 0..6 {
                 band.put(&mut s_map, row, i, c);
             }
@@ -486,11 +469,11 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             plonk_in_custom += 1;
         } else if !four_extra.is_empty() {
             let row = four_extra.remove(0); // INIT / FINAL: q1 gates 6..9
-            cv[5][row] = c[3];
-            cv[6][row] = c[4];
-            cv[7][row] = c[5];
-            cv[8][row] = c[6];
-            cv[9][row] = c[7];
+            cv[5][row] = c.coeffs[0];
+            cv[6][row] = c.coeffs[1];
+            cv[7][row] = c.coeffs[2];
+            cv[8][row] = c.coeffs[3];
+            cv[9][row] = c.coeffs[4];
             for i in 6..10 {
                 band.put(&mut s_map, row, i, c);
             }
@@ -498,11 +481,11 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             plonk_in_custom += 1;
         } else if !three_extra.is_empty() {
             let row = three_extra.remove(0); // EvPol4: q1 gates 7..9
-            cv[5][row] = c[3];
-            cv[6][row] = c[4];
-            cv[7][row] = c[5];
-            cv[8][row] = c[6];
-            cv[9][row] = c[7];
+            cv[5][row] = c.coeffs[0];
+            cv[6][row] = c.coeffs[1];
+            cv[7][row] = c.coeffs[2];
+            cv[8][row] = c.coeffs[3];
+            cv[9][row] = c.coeffs[4];
             for i in 7..10 {
                 band.put(&mut s_map, row, i, c);
             }
@@ -510,11 +493,11 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             plonk_in_custom += 1;
         } else if !two_extra.is_empty() {
             let row = two_extra.remove(0); // SelectValueArity4: q1 gates 8,9
-            cv[5][row] = c[3];
-            cv[6][row] = c[4];
-            cv[7][row] = c[5];
-            cv[8][row] = c[6];
-            cv[9][row] = c[7];
+            cv[5][row] = c.coeffs[0];
+            cv[6][row] = c.coeffs[1];
+            cv[7][row] = c.coeffs[2];
+            cv[8][row] = c.coeffs[3];
+            cv[9][row] = c.coeffs[4];
             for i in 8..10 {
                 // gate g -> a[3g..3g+2]; gates 8,9 = a[24..26], a[27..29].
                 band.put(&mut s_map, row, i, c);
@@ -525,11 +508,11 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             pure_plonk_rows.insert(r);
             plonk_in_pure += 1;
             band.allow(r, G_ALL);
-            cv[0][r] = c[3];
-            cv[1][r] = c[4];
-            cv[2][r] = c[5];
-            cv[3][r] = c[6];
-            cv[4][r] = c[7];
+            cv[0][r] = c.coeffs[0];
+            cv[1][r] = c.coeffs[1];
+            cv[2][r] = c.coeffs[2];
+            cv[3][r] = c.coeffs[3];
+            cv[4][r] = c.coeffs[4];
             for i in 0..6 {
                 band.put(&mut s_map, r, i, c);
             }

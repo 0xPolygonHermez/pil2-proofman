@@ -1236,7 +1236,6 @@ version = "1.4.0-alpha"
 dependencies = [
  "anyhow",
  "num-bigint",
- "num-traits",
  "proofman-common",
  "proofman-fields",
  "rand 0.10.3",
