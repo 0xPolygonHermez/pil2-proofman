@@ -54,6 +54,9 @@ pub fn cells_per_gate(role: GateRole) -> Option<usize> {
         // takes a cell.
         GateRole::Blake3Node => Some(13),
         GateRole::Blake3Compress => Some(34),
+        // The whole band, not its boundary: the gate's outputs are every round's state, so the
+        // BN254 wrap maps in, the 67 intermediate states and out, 5 lanes each, and recomputes none.
+        GateRole::PoseidonT => Some(345),
     }
 }
 

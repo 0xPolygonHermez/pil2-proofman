@@ -1236,8 +1236,10 @@ version = "1.4.0-alpha"
 dependencies = [
  "anyhow",
  "num-bigint",
+ "pilfflonk-setup",
  "proofman-common",
  "proofman-fields",
+ "proofman-pilfflonk",
  "rand 0.10.3",
  "serde",
  "serde_json",

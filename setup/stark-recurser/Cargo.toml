@@ -25,3 +25,7 @@ tera = "1"
 [dev-dependencies]
 rand = { workspace = true }
 serde_json = { workspace = true }
+# The BN254 wrap's tests (tests/poseidon_bn254_wrap.rs) set up, check and prove its AIR with
+# pilfflonk, on a test ptau.
+pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
+proofman-pilfflonk = { workspace = true }

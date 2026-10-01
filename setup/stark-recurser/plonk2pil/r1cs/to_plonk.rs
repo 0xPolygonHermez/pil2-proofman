@@ -224,6 +224,9 @@ pub struct CustomGatesInfo<F> {
     /// here is what makes that sound -- the alternative was pattern-matching the r1cs constraint
     /// that pins each one.
     pub blake3_compress_parameters: HashMap<u32, Vec<F>>,
+    /// `PoseidonT(t)` widths, per gate id: circom mints one gate id per width, so this role, like
+    /// Fft4, has no single id. Which widths a family places is the family's to check.
+    pub poseidon_t_widths: HashMap<u32, F>,
     pub n_per_role: HashMap<GateRole, usize>,
     pub n_plonk_rows: usize,
 }
@@ -261,6 +264,15 @@ pub fn get_custom_gates_info<F: Field>(r1cs: &R1csFile<F>) -> CustomGatesInfo<F>
                 assert!(is_parent.is_zero() || is_parent.is_one(), "isParent must be 0 or 1, gate {i} has {is_parent}");
                 info.blake3_compress_parameters.insert(i, gate.parameters.clone());
             }
+            GateRole::PoseidonT => {
+                assert_eq!(
+                    gate.parameters.len(),
+                    1,
+                    "PoseidonT is PoseidonT(t); gate {i} has {} parameters",
+                    gate.parameters.len()
+                );
+                info.poseidon_t_widths.insert(i, gate.parameters[0]);
+            }
             _ => {
                 assert!(gate.parameters.is_empty(), "{name} expected to be parameter-less");
                 if let Some(prev) = info.gate_ids.insert(role, i) {
@@ -287,6 +299,8 @@ pub fn get_custom_gates_info<F: Field>(r1cs: &R1csFile<F>) -> CustomGatesInfo<F>
             GateRole::Fft4
         } else if info.blake3_compress_parameters.contains_key(&cgu.id) {
             GateRole::Blake3Compress
+        } else if info.poseidon_t_widths.contains_key(&cgu.id) {
+            GateRole::PoseidonT
         } else {
             panic!("Custom gate not defined: {}", cgu.id);
         };
@@ -438,6 +452,26 @@ mod tests {
     fn conversion_holds_in_both_fields() {
         conversion_holds_on_a_witness::<Goldilocks>();
         conversion_holds_on_a_witness::<Bn254>();
+    }
+
+    /// `PoseidonT(t)` has a parameter, its width: each width is a gate id of the role, and the
+    /// uses of every one of them are the role's.
+    #[test]
+    fn poseidon_t_is_a_role_with_its_width() {
+        let mut r1cs = make_r1cs::<Bn254>(vec![], 4);
+        r1cs.custom_gates = vec![
+            CustomGate { template_name: "PoseidonT".into(), parameters: vec![Bn254::from_int(5u64)] },
+            CustomGate { template_name: "PoseidonT".into(), parameters: vec![Bn254::from_int(3u64)] },
+        ];
+        r1cs.custom_gates_uses = vec![
+            CustomGateUse { id: 0, signals: vec![1; 345] },
+            CustomGateUse { id: 1, signals: vec![1; 207] },
+            CustomGateUse { id: 0, signals: vec![1; 345] },
+        ];
+        let cgi = get_custom_gates_info(&r1cs);
+        assert_eq!(cgi.poseidon_t_widths, HashMap::from([(0, Bn254::from_int(5u64)), (1, Bn254::from_int(3u64))]));
+        assert_eq!(cgi.n(GateRole::PoseidonT), 3);
+        assert_eq!(cgi.role_id(GateRole::PoseidonT), None, "no single id, as for FFT4");
     }
 
     /// The key is `{:x}` of each canonical coefficient, as it always was for Goldilocks.

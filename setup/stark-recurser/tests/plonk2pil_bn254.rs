@@ -4,16 +4,12 @@
 //!
 //! The circuit is `fixtures/bn254/arith.circom`, compiled here with the committed circom
 //! (`setup/circom`), so the r1cs cannot go stale. Its witness is computed from
-//! `fixtures/bn254/input.json` by the circom-generated wasm and the snarkjs of
-//! `setup/pil2-stark/node_modules` (`npm install` there). Without Node.js or that snarkjs the test
-//! says why and passes, as the circom tests of `stark2circom` do.
+//! `fixtures/bn254/input.json` by the circom-generated wasm and snarkjs (`common`). Without Node.js
+//! or that snarkjs the test says why and passes, as the circom tests of `stark2circom` do.
 
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+mod common;
 
-use pil2_stark_recurser::plonk2pil::field::{PlonkField, R1csPrime};
+use pil2_stark_recurser::plonk2pil::field::R1csPrime;
 use pil2_stark_recurser::plonk2pil::merge_copies::r1cs2plonk_merged;
 use pil2_stark_recurser::plonk2pil::r1cs::to_plonk::{r1cs2plonk, PlonkAddition, PlonkConstraint};
 use pil2_stark_recurser::plonk2pil::r1cs::types::{
@@ -22,110 +18,7 @@ use pil2_stark_recurser::plonk2pil::r1cs::types::{
 use pil2_stark_recurser::plonk2pil::plonk2pil;
 use proofman_fields::{Bn254, Field, PrimeField};
 
-fn manifest() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn repo_root() -> PathBuf {
-    manifest().join("../..")
-}
-
-/// The committed circom, as the plonk2pil golden picks it.
-fn circom() -> PathBuf {
-    repo_root().join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" })
-}
-
-fn snarkjs() -> PathBuf {
-    repo_root().join("setup/pil2-stark/node_modules/snarkjs/build/cli.cjs")
-}
-
-/// What the witness needs and is missing, if anything.
-fn missing_prerequisite() -> Option<String> {
-    let node = Command::new("node").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
-    if !node {
-        return Some("node not on PATH".into());
-    }
-    if !snarkjs().is_file() {
-        return Some(format!("{} not present (npm install in setup/pil2-stark)", snarkjs().display()));
-    }
-    None
-}
-
-/// A directory of this test's own under the temporary directory, removed when dropped.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new() -> Self {
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
-        let dir = std::env::temp_dir().join(format!("plonk2pil_bn254_{}_{nanos}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
-        Self(dir)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        // Best effort: a leftover directory in the temporary directory harms nothing.
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-fn run(cmd: &mut Command, what: &str) {
-    let out = cmd.output().unwrap_or_else(|e| panic!("{what}: {e}"));
-    assert!(
-        out.status.success(),
-        "{what} failed:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-/// Compiles the fixture for BN254 into `dir` and computes its witness: the r1cs and the `.wtns`.
-fn compile_and_witness(dir: &Path) -> (Vec<u8>, Vec<u8>) {
-    let src = manifest().join("tests/fixtures/bn254/arith.circom");
-    // --O1 keeps the linear constraints, which are what reach plonk2pil's sum gates.
-    run(
-        Command::new(circom()).args(["--O1", "--r1cs", "--wasm", "--prime", "bn128"]).arg(&src).arg("-o").arg(dir),
-        "circom",
-    );
-    let wtns = dir.join("arith.wtns");
-    run(
-        Command::new("node")
-            .arg(snarkjs())
-            .args(["wtns", "calculate"])
-            .arg(dir.join("arith_js/arith.wasm"))
-            .arg(manifest().join("tests/fixtures/bn254/input.json"))
-            .arg(&wtns),
-        "snarkjs wtns calculate",
-    );
-    let read = |p: PathBuf| fs::read(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
-    (read(dir.join("arith.r1cs")), read(wtns))
-}
-
-/// The witness in a `.wtns` file, as snarkjs's `wtns_utils.js` writes one: the magic `wtns`, a
-/// version and a section count, then sections of `(type: u32, size: u64, data)`. Section 1 is
-/// `n8: u32`, the prime in `n8` bytes and the witness length `u32`; section 2 the values, `n8` bytes
-/// each, canonical and little-endian.
-fn read_wtns<F: PlonkField>(data: &[u8]) -> Vec<F> {
-    let u32_at = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().unwrap()) as usize;
-    let u64_at = |at: usize| u64::from_le_bytes(data[at..at + 8].try_into().unwrap()) as usize;
-    assert_eq!(&data[..4], b"wtns", "not a .wtns file");
-    let mut sections = std::collections::HashMap::new();
-    let mut at = 12;
-    for _ in 0..u32_at(8) {
-        let (kind, size) = (u32_at(at), u64_at(at + 4));
-        sections.insert(kind, &data[at + 12..at + 12 + size]);
-        at += 12 + size;
-    }
-
-    let header = sections[&1];
-    let n8 = u32::from_le_bytes(header[..4].try_into().unwrap()) as usize;
-    assert_eq!(header[4..4 + n8], F::PRIME.modulus_le(), "the witness is not over {}", F::PRIME);
-    let n = u32::from_le_bytes(header[4 + n8..8 + n8].try_into().unwrap()) as usize;
-    let values = sections[&2];
-    assert_eq!(values.len(), n * n8);
-    values.chunks_exact(n8).map(|v| F::from_canonical_le(v).expect("a canonical witness value")).collect()
-}
+use common::{compile_and_witness, manifest, missing_prerequisite, read_wtns, Scratch};
 
 fn eval<F: Field>(lc: &LinearCombination<F>, w: &[F]) -> F {
     lc.iter().fold(F::ZERO, |acc, (&wire, &q)| acc + q * w[wire as usize])
@@ -171,8 +64,10 @@ fn a_bn254_circuit_converts_to_plonk_gates_that_hold_on_its_witness() {
         eprintln!("skipping the BN254 plonk2pil test: {why}");
         return;
     }
-    let scratch = Scratch::new();
-    let (r1cs_bytes, wtns_bytes) = compile_and_witness(&scratch.0);
+    let scratch = Scratch::new("plonk2pil_bn254");
+    let fixtures = manifest().join("tests/fixtures/bn254");
+    let (r1cs_bytes, wtns_bytes) =
+        compile_and_witness(&scratch.0, &fixtures.join("arith.circom"), &fixtures.join("input.json"));
 
     assert_eq!(r1cs_prime(&read_r1cs_header(&r1cs_bytes).unwrap()).unwrap(), R1csPrime::Bn254);
     let r1cs = read_r1cs_from_bytes::<Bn254>(&r1cs_bytes).expect("a BN254 r1cs reads into Bn254");
@@ -211,7 +106,7 @@ fn a_bn254_circuit_converts_to_plonk_gates_that_hold_on_its_witness() {
     let (merged_cs, merged_adds, _) = r1cs2plonk_merged(&r1cs, true);
     assert!(plonk_holds(&merged_cs, &merged_adds, &witness), "the copy-merged gates fail on the witness");
 
-    // The entry point still refuses it: the families are Goldilocks-only.
-    let err = plonk2pil(&r1cs_bytes, "aggregation", &PlonkOptions::default()).unwrap_err().to_string();
-    assert!(err.contains("BN254 is not supported yet"), "{err}");
+    // The STARK recursion's families still refuse it: they are over Goldilocks.
+    let err = plonk2pil::<u64>(&r1cs_bytes, "aggregation", &PlonkOptions::default()).unwrap_err().to_string();
+    assert!(err.contains("an r1cs over BN254 is set up by the PoseidonBN254 family"), "{err}");
 }
