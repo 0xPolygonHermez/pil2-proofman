@@ -16,6 +16,7 @@
 #include "timer.hpp"
 #ifdef __USE_CUDA__
 #include "pilfflonk_instance_gpu.hpp"
+#include "pilfflonk_lde_gpu.hpp"
 #endif
 
 namespace PilFflonk {
@@ -45,6 +46,27 @@ std::vector<FrElement> stageOneValues(const std::vector<uint64_t> &stages, std::
         }
     }
     return values;
+}
+
+// Every column Q's code reads (AirKey::qReads), column r of them from its polynomial (polys, by
+// cmPolsMap index, or the key's fixed one) extended to part `part` of 2^partBits points
+// (Lde::extendCosetPart) into partColumns + r·2^partBits, those of as many coefficients in one call.
+void extendQPart(const AirKey &key, const std::vector<std::unique_ptr<Poly>> &polys, uint64_t partBits,
+                 uint64_t part, FrElement *partColumns) {
+    const std::vector<ColumnRead> &reads = key.qReads();
+    const uint64_t S = uint64_t(1) << partBits;
+    std::map<uint64_t, std::pair<std::vector<const FrElement *>, std::vector<FrElement *>>> byLength;
+    for (uint64_t r = 0; r < reads.size(); ++r) {
+        const ColumnRead &c = reads[r];
+        const Poly *p = c.type == 0 ? key.fixedPolynomial(c.index) : polys[key.cmIds()[c.type][c.index]].get();
+        auto &group = byLength[p->getLength()];
+        group.first.push_back(p->coef);
+        group.second.push_back(partColumns + r * S);
+    }
+    for (auto &group : byLength) {
+        key.lde().extendCosetPart(group.second.first.data(), group.second.second.data(), group.second.first.size(),
+                                  group.first, partBits, part);
+    }
 }
 
 } // namespace
@@ -402,8 +424,10 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
 
     // Q on the extended coset g·H' part by part (pilfflonk/docs/protocol.md#q-in-parts): each part
     // the 2^partBits points of Lde::extendCosetPart and ExpressionsDomain::cosetPart, and every
-    // column Q's code reads on it, from its committed polynomial, those with as many coefficients in
-    // one call. Point i of part p is point p + nParts·i of the coset, where Q's value goes.
+    // column Q's code reads extended to it from its committed polynomial (extendQPart). Point i of
+    // part p is point p + nParts·i of the coset, where Q's value goes. On a key on the GPU, the
+    // columns are extended and Q is interpolated on the device (LdeGpu), and the interpreter reads
+    // and writes their copies in the key's host buffer for Q.
     const Lde &lde = key.lde();
     const uint64_t M = lde.extendedSize();
     const uint64_t nBitsExt = key.degrees().nBitsExt;
@@ -411,21 +435,32 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
     const uint64_t S = uint64_t(1) << partBits;
     const uint64_t nParts = M / S;
     const std::vector<ColumnRead> &reads = key.qReads();
-    std::vector<std::vector<FrElement>> partColumns(reads.size(), std::vector<FrElement>(S));
+    // Q's N' values, and the S values on a part of column r of reads at partColumns + r·S.
+    std::vector<FrElement> qBuffer, columnsBuffer;
+    FrElement *qValues = nullptr, *partColumns = nullptr;
+#ifdef __USE_CUDA__
+    std::unique_ptr<LdeGpu> onDevice;
+    if (device != nullptr) {
+        onDevice = std::make_unique<LdeGpu>(*key.device(), partBits);
+        qValues = onDevice->values();
+        partColumns = onDevice->partColumns();
+    }
+    if (onDevice == nullptr)
+#endif
+    {
+        qBuffer.resize(M);
+        columnsBuffer.resize(reads.size() * S);
+        qValues = qBuffer.data();
+        partColumns = columnsBuffer.data();
+    }
     ProverValues values;
     values.columns.resize(info.nStages + 1);
     values.columns[0].assign(info.nConstants, nullptr);
     for (uint64_t s = 1; s <= info.nStages; ++s) {
         values.columns[s].assign(key.cmIds()[s].size(), nullptr);
     }
-    std::map<uint64_t, std::pair<std::vector<const FrElement *>, std::vector<FrElement *>>> byLength;
     for (uint64_t r = 0; r < reads.size(); ++r) {
-        const ColumnRead &c = reads[r];
-        const Poly *p = c.type == 0 ? key.fixedPolynomial(c.index) : polys[key.cmIds()[c.type][c.index]].get();
-        auto &group = byLength[p->getLength()];
-        group.first.push_back(p->coef);
-        group.second.push_back(partColumns[r].data());
-        values.columns[c.type][c.index] = partColumns[r].data();
+        values.columns[reads[r].type][reads[r].index] = partColumns + r * S;
     }
     values.publics = publicValues;
     values.challenges = challengeValues;
@@ -433,14 +468,18 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
     values.proofValues = proofValueValues;
     values.airgroupValues.assign(info.airgroupValuesMap.size(), Engine::engine.fr.zero());
 
-    std::vector<FrElement> qValues(M);
     // One part is the whole coset, in its order: Q goes straight into qValues.
     std::vector<FrElement> qPart(nParts > 1 ? S : 0);
     for (uint64_t part = 0; part < nParts; ++part) {
         TimerStartExpr(PILFFLONK_Q_EXTEND, part);
-        for (auto &group : byLength) {
-            lde.extendCosetPart(group.second.first.data(), group.second.second.data(), group.second.first.size(),
-                                group.first, partBits, part);
+#ifdef __USE_CUDA__
+        if (onDevice != nullptr) {
+            onDevice->extendPart(part);
+        }
+        if (onDevice == nullptr)
+#endif
+        {
+            extendQPart(key, polys, partBits, part, partColumns);
         }
         TimerStopAndLogExpr(PILFFLONK_Q_EXTEND, part);
         TimerStartExpr(PILFFLONK_Q_DOMAIN, part);
@@ -448,7 +487,7 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
             ExpressionsDomain::cosetPart(info.nBits, nBitsExt, partBits, part, info.boundaries);
         TimerStopAndLogExpr(PILFFLONK_Q_DOMAIN, part);
         TimerStartExpr(PILFFLONK_Q_EVALUATE, part);
-        FrElement *dest = nParts > 1 ? qPart.data() : qValues.data();
+        FrElement *dest = nParts > 1 ? qPart.data() : qValues;
         key.expressions().calculateExpression(info.cExpId, domain, values, dest);
         if (nParts > 1) {
 #pragma omp parallel for schedule(static)
@@ -459,11 +498,18 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
         TimerStopAndLogExpr(PILFFLONK_Q_EVALUATE, part);
     }
     // Their memory back before the interpolation.
-    std::vector<std::vector<FrElement>>().swap(partColumns);
+    std::vector<FrElement>().swap(columnsBuffer);
     std::vector<FrElement>().swap(qPart);
-    FrElement *qBuffer = qValues.data();
     TimerStart(PILFFLONK_Q_INTERPOLATE);
-    lde.interpolateCoset(&qBuffer, &qBuffer, 1);
+#ifdef __USE_CUDA__
+    if (onDevice != nullptr) {
+        onDevice->interpolate();
+    }
+    if (onDevice == nullptr)
+#endif
+    {
+        lde.interpolateCoset(&qValues, &qValues, 1);
+    }
     TimerStopAndLog(PILFFLONK_Q_INTERPOLATE);
 
     // Q is a polynomial of its bound if and only if every constraint holds on its rows
@@ -490,8 +536,7 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
         const uint64_t start = i * d.qStride;
         const uint64_t length = i + 1 < m ? d.qStride : bound - start;
         pieces[i].reset(new Poly(Engine::engine, d.qPieceCoefficients[i]));
-        ThreadUtils::parcpy(pieces[i]->coef, qValues.data() + start, length * sizeof(FrElement),
-                            omp_get_max_threads());
+        ThreadUtils::parcpy(pieces[i]->coef, qValues + start, length * sizeof(FrElement), omp_get_max_threads());
     }
     FrElement factors[2];
     for (uint64_t i = 0; i + 1 < m; ++i) {

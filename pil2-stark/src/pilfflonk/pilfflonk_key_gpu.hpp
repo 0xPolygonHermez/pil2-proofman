@@ -91,10 +91,12 @@ private:
 // - the stages': the columns of each stage s on H, column p at evaluations[s] + p·N elements; the
 //   work buffer, which holds the stage-1 witness as the Instance is given it, and then each f packed
 //   and shifted for its MSM (GpuKey::commit); and a stage's blinding factors and coefficient counts;
-// - Q's and the opening's, which do not run on the device yet: they are given what the device path
-//   will need there (Q's N' values with every column it reads on a part of N points; Q's pieces,
-//   W and L of the largest f, and two elements per coefficient of their division), so that a key
-//   that loads has the memory of its whole proof.
+// - Q's: at `q`, room for Q's N' values and every column it reads on a part of N points, which
+//   holds the columns of each part as the device extends them (LdeGpu), and then Q's values for
+//   their interpolation; and at `qTables`, the tables of the powers of a shift (ldeTableElements);
+// - the opening's, which does not run on the device yet: it is given what the device path will need
+//   there (Q's pieces, W and L of the largest f, and two elements per coefficient of their
+//   division), so that a key that loads has the memory of its whole proof.
 struct ArenaLayout {
     static constexpr uint64_t NONE = UINT64_MAX;
 
@@ -109,7 +111,10 @@ struct ArenaLayout {
     uint64_t counts = 0;
     uint64_t nCounts = 0; // 64-bit counts: the most polynomials of a stage, or the fixed columns
     uint64_t stageBytes = 0; // the end of the stages' phase
-    uint64_t bytes = 0;      // a proof's arena: its largest phase
+    uint64_t q = 0;
+    uint64_t qElements = 0; // N' + N·|qReads|
+    uint64_t qTables = 0;
+    uint64_t bytes = 0; // a proof's arena: its largest phase
 };
 
 ArenaLayout arenaLayout(const AirKey &air);
@@ -152,8 +157,8 @@ struct GpuKeyOptions {
 
 // The GPU side of a ProvingKey: the SRS's powers [τ^i]₁ on the device (in its Gpu, whose MSMs and
 // NTTs the parts that still run on the host use), the tables of the MSM's shift and its sums, the
-// arena where a proof keeps its data (ArenaLayout), a pinned host buffer for the copies of its
-// committed polynomials, and the Staging of its other copies.
+// arena where a proof keeps its data (ArenaLayout), pinned host buffers for the copies of its
+// committed polynomials and of Q's, and the Staging of its other copies.
 //
 // The MSM (commit) shifts its scalars as Gpu::msm does, by ρ_i = h^(i+1), h = msmShiftRatio(), which
 // a kernel adds while it packs them, from the tables h^(256·b) and h^t (t < 256) that
@@ -166,8 +171,9 @@ struct GpuKeyOptions {
 // and how much is free, if the device cannot hold it and a whole proof of it with the key's other
 // data: a key on the GPU never runs out of device memory in the middle of a proof (reserve).
 //
-// One proof at a time uses the arena, the mirror and the Staging: the one whose Instance holds a
-// Lease, which another thread's waits for. Its other const functions are safe from several threads.
+// One proof at a time uses the arena, the host buffers and the Staging: the one whose Instance holds
+// a Lease, which another thread's waits for. Its other const functions are safe from several
+// threads.
 class GpuKey {
 public:
     // Copies the powers [τ^i]₁ of `srs` to the device and builds the shift's tables. Throws
@@ -186,10 +192,11 @@ public:
 
     // While the key loads, before it is shared (GpuAirKey's constructor): room for an AIR whose
     // budget is `budget` and whose proofs copy mirrorElements elements of committed polynomials to
-    // the host. The arena grows to the largest proof's, and the mirror to the most elements. Throws
-    // std::invalid_argument, naming `air`, if the device has not the memory (requireDeviceMemory),
-    // or the arena given in the options is smaller than a proof's.
-    void reserve(const std::string &air, const GpuBudget &budget, uint64_t mirrorElements);
+    // the host, and qElements of Q's (qHost). The arena grows to the largest proof's, and the mirror
+    // and the host buffer for Q to the most elements. Throws std::invalid_argument, naming `air`, if
+    // the device has not the memory (requireDeviceMemory), or the arena given in the options is
+    // smaller than a proof's.
+    void reserve(const std::string &air, const GpuBudget &budget, uint64_t mirrorElements, uint64_t qElements);
     // While the key loads: Σ_{i<n} ρ_i·[τ^i]₁, for commit's MSMs of n scalars, n <= nPowers(), with
     // `work` (n elements on the device) as scratch. Throws std::runtime_error if the MSM fails.
     void addShiftSum(uint64_t n, void *work);
@@ -198,6 +205,10 @@ public:
     uint8_t *arena() const { return options.arena != nullptr ? static_cast<uint8_t *>(options.arena) : owned.data(); }
     FrElement *mirror() const { return hostMirror; }
     Staging &staging() const { return *transfers; }
+    // The host buffer, registered, where Q's values and the columns it reads on a part go to and
+    // from the device (LdeGpu), of n elements at least: the one reserve made, replaced by one of n
+    // elements if a proof's parts need more (Instance::setQPartBits).
+    FrElement *qHost(uint64_t n) const;
 
     // [f(τ)]₁ of f(X) = Σ_{j<k} p_j(X^k)·X^j, for k polynomials of `length` coefficients on the device,
     // p_j at base + offsets[j] elements (offsets on the device), committed with an MSM of n scalars,
@@ -253,6 +264,7 @@ private:
     uint64_t arenaBytes = 0;
     std::unique_ptr<RegisteredHost> mirrorBuffer;
     FrElement *hostMirror = nullptr;
+    mutable std::unique_ptr<RegisteredHost> qBuffer;
     std::unique_ptr<Staging> transfers;
 
     mutable std::mutex leaseLock;

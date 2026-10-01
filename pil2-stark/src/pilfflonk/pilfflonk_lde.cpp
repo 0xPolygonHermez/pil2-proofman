@@ -278,15 +278,19 @@ void Lde::extendCosetPart(const FrElement *const *coefs, FrElement *const *evals
     extendPart(coefs, evals, nCols, nCoefs, partBits, part);
 }
 
-void Lde::extendPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs,
-                     uint64_t partBits, uint64_t part) const {
-    Engine::Fr &fr = Engine::engine.fr;
-    const uint64_t S = uint64_t(1) << partBits;
-    // c = g·ω_N'^part; part 0 is g itself, extendCoset's scaling.
+FrElement Lde::partShift(uint64_t part) const {
     FrElement c = shift;
     if (part > 0) {
-        fr.mul(c, shift, power(fft->root(static_cast<uint32_t>(bitsOf(NExtended)), 1), part));
+        Engine::engine.fr.mul(c, shift, power(fft->root(static_cast<uint32_t>(bitsOf(NExtended)), 1), part));
     }
+    return c;
+}
+
+void Lde::extendPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs,
+                     uint64_t partBits, uint64_t part) const {
+    const uint64_t S = uint64_t(1) << partBits;
+    // Part 0's shift is g, extendCoset's scaling.
+    const FrElement c = partShift(part);
 #ifdef __USE_CUDA__
     if (device != nullptr) {
         for (uint64_t col = 0; col < nCols; ++col) {

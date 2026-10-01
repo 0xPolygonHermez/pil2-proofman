@@ -2092,8 +2092,9 @@ Proved proveTheSumBus(const SumBus &bus, std::unique_ptr<BlindingSource> blindin
 // A key on the GPU (ProvingKey::load(…, Device::Gpu)) gives the CPU's proofs bit for bit, with the
 // same seed: its fixed columns' interpolants and commitments, every commitment, the polynomials
 // behind them, the evaluations and the opening (proofBytes). On the Fibonacci, whole, split and split
-// and packed, with Q in its default parts and on the whole coset at once, through the classes and,
-// whole, through the C API (pilfflonk_ctx_new_on); and on the sum bus, of two stages.
+// and packed, with Q in its default parts of N points, in parts of 2N and on the whole coset at once,
+// through the classes and, whole, through the C API (pilfflonk_ctx_new_on); and on the sum bus, of
+// two stages.
 void testTheGpuGivesTheCpusProof() {
     if (!gpuUnderTest("proofs on the GPU")) {
         return;
@@ -2103,7 +2104,7 @@ void testTheGpuGivesTheCpusProof() {
         const Fibonacci cpu(files), gpu(files, Device::Gpu);
         assert(cpu.pk->device() == Device::Cpu && gpu.pk->device() == Device::Gpu);
         assert(fixedBytes(*cpu.pk) == fixedBytes(*gpu.pk));
-        for (uint64_t bits : {uint64_t(0), cpu.air().degrees().nBitsExt}) {
+        for (uint64_t bits : {uint64_t(0), cpu.air().info().nBits + 1, cpu.air().degrees().nBitsExt}) {
             const Proved a = prove(cpu, std::make_unique<BlindingRng>(seed), bits);
             const Proved b = prove(gpu, std::make_unique<BlindingRng>(seed), bits);
             assert(proofBytes(a, cpu.air()) == proofBytes(b, gpu.air()));
@@ -2275,7 +2276,11 @@ void testAnArenaGivenToTheKey() {
 // What a proof on the GPU copies between the host and the device, which the target of the device
 // path keeps to the witness and a few bytes: the instance sends its witness up and gets its columns
 // back (for the host's im pols and hints); stage 1 sends the im pols and the blinding factors, and
-// gets the committed polynomials (for Q and the opening, still on the host) and their counts.
+// gets the committed polynomials (for the opening, still on the host) and their counts; Q sends no
+// column up, gets the columns its code reads on each part (for the interpreter, still on the host),
+// and sends Q's values up and gets them back, interpolated; and its MSMs, still from the host, send
+// their scalars, and the shift's for a length first seen (Gpu::msm), at most twice the degree bound
+// of each f of Q.
 void testTheGpuCopiesWhatItMust() {
     if (!gpuUnderTest("the copies of a proof on the GPU")) {
         return;
@@ -2306,6 +2311,45 @@ void testTheGpuCopiesWhatItMust() {
     inst->commitStage(1, {});
     const PilFflonk::CopyVolume::Totals committed = volume.totals();
     assert(committed.toDevice - made.toDevice == up && committed.toHost - made.toHost == down);
+
+    const uint64_t NExt = air.lde().extendedSize();
+    uint64_t msmBound = 0;
+    for (const LayoutEntry &f : info.layout) {
+        if (f.stage == info.qStage()) {
+            msmBound += 2 * f.degree * element;
+        }
+    }
+    inst->commitQ({fr(fib.oracle["stdVc"])});
+    const PilFflonk::CopyVolume::Totals q = volume.totals();
+    assert(q.toHost - committed.toHost == (air.qReads().size() + 1) * NExt * element);
+    assert(q.toDevice - committed.toDevice >= NExt * element);
+    assert(q.toDevice - committed.toDevice - NExt * element <= msmBound);
+}
+
+// A witness that does not satisfy the constraints is refused on the GPU as on the CPU: commitQ
+// throws the CPU's UnsatisfiedError, whose degree is that of Q's highest coefficient not zero, in
+// each size of Q's parts, and Q stays uncommitted.
+void testAMutatedWitnessIsUnsatisfiedOnTheGpu() {
+    if (!gpuUnderTest("a witness refused on the GPU")) {
+        return;
+    }
+    const Fibonacci cpu, gpu(KeyFiles(), Device::Gpu);
+    std::vector<uint8_t> mutated = cpu.witness;
+    mutated[(100 * 2 + 0) * 32] ^= 1; // l1 at row 100
+    const uint64_t nBits = cpu.air().info().nBits, nBitsExt = cpu.air().degrees().nBitsExt;
+    for (uint64_t bits = nBits; bits <= nBitsExt; ++bits) {
+        std::string messages[2];
+        const Fibonacci *on[2] = {&cpu, &gpu};
+        for (int d = 0; d < 2; ++d) {
+            std::unique_ptr<Instance> inst = on[d]->instance(std::make_unique<ZeroBlinding>(), mutated);
+            inst->setQPartBits(bits);
+            inst->commitStage(1, {});
+            messages[d] = thrown<UnsatisfiedError>([&] { inst->commitQ({fr(cpu.oracle["stdVc"])}); });
+            assert(!inst->qCommitted());
+        }
+        assert(contains(messages[1], "the witness does not satisfy the constraints of Fibonacci"));
+        assert(messages[0] == messages[1]);
+    }
 }
 
 // What stays on the device while a key on the GPU lives is the host's, byte for byte: the
@@ -2376,6 +2420,7 @@ void runProverTests() {
     testAGpuKeyRefusesWhatItCannotHold();
     testAnArenaGivenToTheKey();
     testTheGpuCopiesWhatItMust();
+    testAMutatedWitnessIsUnsatisfiedOnTheGpu();
     testTheGpuKeyHoldsTheKeysData();
 #endif
 }

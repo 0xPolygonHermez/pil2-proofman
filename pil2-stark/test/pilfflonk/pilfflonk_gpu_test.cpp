@@ -5,9 +5,9 @@
 // one, the tests of each module compare its GPU path with its CPU one (gpuUnderTest):
 // pilfflonk_lde_test.cpp the transforms, pilfflonk_commit_test.cpp the MSM,
 // pilfflonk_prover_test.cpp whole proofs and a key on the GPU; and this file the kernels of the
-// device path (pilfflonk_kernels.hpp) and GpuKey's commitments, byte for byte against the CPU's
-// code on seeded inputs, edge values (0, 1, r − 1, all equal) and sizes around the warp, the block
-// of 256 threads and powers of two.
+// device path (pilfflonk_kernels.hpp, pilfflonk_lde_kernels.hpp), the LDE on the device and GpuKey's
+// commitments, byte for byte against the CPU's code on seeded inputs, edge values (0, 1, r − 1, all
+// equal) and sizes around the warp, the block of 256 threads and powers of two.
 #include "pilfflonk_test.hpp"
 #include "pilfflonk_test_ptau.hpp"
 
@@ -26,6 +26,9 @@
 #include "pilfflonk_commit.hpp"
 #include "pilfflonk_kernels.hpp"
 #include "pilfflonk_key_gpu.hpp"
+#include "pilfflonk_lde.hpp"
+#include "pilfflonk_lde_gpu.hpp"
+#include "pilfflonk_lde_kernels.hpp"
 #include "pilfflonk_srs.hpp"
 #include "pilfflonk_transcript.hpp"
 
@@ -101,6 +104,7 @@ using G1Point = Engine::G1Point;
 using G1PointAffine = Engine::G1PointAffine;
 using Column = std::vector<FrElement>;
 using PilFflonk::DeviceBuffer;
+using PilFflonk::Lde;
 using PilFflonk::Poly;
 
 Engine &E = Engine::engine;
@@ -153,6 +157,8 @@ std::vector<T> download(const DeviceBuffer &device, uint64_t n) {
     gpu_plonk_memcpy_d2h(host.data(), device.data(), n * sizeof(T));
     return host;
 }
+
+FrElement *elementsOf(const DeviceBuffer &device) { return reinterpret_cast<FrElement *>(device.data()); }
 
 bool same(const Column &a, const Column &b) {
     return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(FrElement)) == 0;
@@ -385,6 +391,101 @@ void testTheDeviceCommitsAsTheCpu(Random &random) {
     assert(refused);
 }
 
+// Lde::extendCosetPart on the device (extendCosetPartOnDevice) is the CPU's, byte for byte, at every
+// part of the parts of N, 2N and N' points: for one column of each size of SIZES the coset holds,
+// with fewer, as many and more coefficients than a part (so more than 2S too), and of the real
+// ones, N for a fixed column and N + |O| + 1 for a committed one; each column from a buffer of its
+// own, all in one call, and more of them than a launch of the fold takes.
+void testExtendCosetPartOnDevice(Random &random) {
+    struct Case {
+        uint64_t nBits, nBitsExt;
+    };
+    for (const Case &test : std::vector<Case>{{0, 2}, {3, 5}, {4, 7}, {8, 11}, {18, 21}}) {
+        const Lde lde(test.nBits, test.nBitsExt);
+        const uint64_t N = lde.domainSize(), NExt = lde.extendedSize();
+        std::vector<uint64_t> lengths;
+        for (uint64_t n : SIZES) {
+            if (n <= NExt) {
+                lengths.push_back(n);
+            }
+        }
+        for (uint64_t blind : {uint64_t(0), uint64_t(2), uint64_t(3), uint64_t(4)}) {
+            if (N + blind <= NExt) {
+                lengths.push_back(N + blind);
+            }
+        }
+        while (NExt <= 2048 && lengths.size() <= 32) {
+            const std::vector<uint64_t> again = lengths;
+            lengths.insert(lengths.end(), again.begin(), again.end());
+        }
+        std::vector<Column> columns;
+        std::vector<DeviceBuffer> buffers;
+        std::vector<const FrElement *> sources;
+        for (uint64_t n : lengths) {
+            columns.push_back(random.column(n));
+            buffers.push_back(upload(columns.back()));
+            sources.push_back(elementsOf(buffers.back()));
+        }
+        const DeviceBuffer tables(PilFflonk::ldeTableElements(lde) * sizeof(FrElement));
+        std::vector<uint64_t> partSizes = {test.nBits};
+        for (uint64_t bits : {test.nBits + 1, test.nBitsExt}) {
+            if (bits <= test.nBitsExt && bits != partSizes.back()) {
+                partSizes.push_back(bits);
+            }
+        }
+        for (uint64_t partBits : partSizes) {
+            const uint64_t S = uint64_t(1) << partBits;
+            const DeviceBuffer evals(lengths.size() * S * sizeof(FrElement));
+            for (uint64_t part = 0; part < NExt / S; ++part) {
+                PilFflonk::extendCosetPartOnDevice(lde, sources.data(), lengths.data(), lengths.size(), partBits, part,
+                                                   elementsOf(evals), elementsOf(tables));
+                const Column onGpu = download<FrElement>(evals, lengths.size() * S);
+                for (uint64_t t = 0; t < lengths.size(); ++t) {
+                    Column expected(S);
+                    const FrElement *in = columns[t].data();
+                    FrElement *out = expected.data();
+                    lde.extendCosetPart(&in, &out, 1, lengths[t], partBits, part);
+                    assert(std::memcmp(onGpu.data() + t * S, expected.data(), S * sizeof(FrElement)) == 0);
+                }
+            }
+        }
+    }
+}
+
+// Lde::interpolateCoset on the device (interpolateCosetOnDevice) is the CPU's, byte for byte, on
+// cosets of 1 to 2^21 points; and the scaling by the powers of a base (pilfflonk_gpu_mul_by_powers)
+// is the product by each power, one after another, on every size of SIZES.
+void testInterpolateCosetOnDevice(Random &random) {
+    for (uint64_t nBitsExt : {0, 1, 3, 8, 9, 12, 16, 21}) {
+        const Lde lde(0, nBitsExt);
+        const uint64_t NExt = lde.extendedSize();
+        Column values = random.column(NExt);
+        const DeviceBuffer onDevice = upload(values), tables(PilFflonk::ldeTableElements(lde) * sizeof(FrElement));
+        PilFflonk::interpolateCosetOnDevice(lde, elementsOf(onDevice), elementsOf(tables));
+        FrElement *inPlace = values.data();
+        lde.interpolateCoset(&inPlace, &inPlace, 1);
+        assert(same(download<FrElement>(onDevice, NExt), values));
+    }
+
+    const FrElement base = random.element();
+    const uint64_t nBlocks = (SIZES.back() + 255) / 256;
+    const DeviceBuffer blocks(nBlocks * sizeof(FrElement)), powers(256 * sizeof(FrElement));
+    gpu_plonk_precompute_omega_tables_async(blocks.data(), powers.data(), &base, 256, static_cast<uint32_t>(nBlocks),
+                                            nullptr);
+    for (uint64_t n : SIZES) {
+        const Column data = random.column(n);
+        Column expected(n);
+        FrElement factor = E.fr.one();
+        for (uint64_t i = 0; i < n; ++i) {
+            E.fr.mul(expected[i], data[i], factor);
+            E.fr.mul(factor, factor, base);
+        }
+        const DeviceBuffer onDevice = upload(data);
+        pilfflonk_gpu_mul_by_powers(onDevice.data(), n, blocks.data(), powers.data());
+        assert(same(download<FrElement>(onDevice, n), expected));
+    }
+}
+
 void testDeviceKernels() {
     if (!gpuUnderTest("the device path's kernels")) {
         return;
@@ -395,6 +496,8 @@ void testDeviceKernels() {
     testBlind(random);
     testCountCoefficients(random);
     testTheDeviceCommitsAsTheCpu(random);
+    testExtendCosetPartOnDevice(random);
+    testInterpolateCosetOnDevice(random);
 }
 
 // What a key on the GPU budgets and refuses, which needs no GPU: sppark's MSM's own memory at 50 M

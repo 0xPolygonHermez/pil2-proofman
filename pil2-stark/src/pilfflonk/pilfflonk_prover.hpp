@@ -84,10 +84,12 @@ struct ConstraintCheck {
 //
 // On a key on the GPU (ProvingKey::load with Device::Gpu), the witness goes to the device as it is
 // given, and the INTTs, the blinding and the commitments of commitStage run there (InstanceGpu),
-// with the blinding factors drawn here; the rest runs here, on the copies of the stage-1 columns and
-// of the committed polynomials the device sends back, and the proof is the same bit for bit. Such a
-// key holds the device memory of one proof at a time: an instance holds it until it is destroyed,
-// another thread's waits for it, and a second instance of this thread is refused.
+// with the blinding factors drawn here, and so do commitQ's extension of the columns to each part
+// and its interpolation of Q (LdeGpu); the rest runs here, on the copies of the stage-1 columns, of
+// the committed polynomials and of Q's columns and values the device sends back, and the proof is
+// the same bit for bit. Such a key holds the device memory of one proof at a time: an instance
+// holds it until it is destroyed, another thread's waits for it, and a second instance of this
+// thread is refused.
 //
 // Elements are in Montgomery form. Refused arguments throw std::invalid_argument before anything
 // changes. Not safe to use from several threads at once; the ProvingKey, which must outlive it, may

@@ -106,6 +106,12 @@ public:
     // coefs[c] may be evals[c] itself (in place).
     void interpolateCoset(const FrElement *const *evals, FrElement *const *coefs, uint64_t nCols) const;
 
+    // The shift c = g·ω_N'^part of part `part` of the coset, whatever the size of the parts
+    // (extendCosetPart): part 0's is g itself. For part < N'.
+    FrElement partShift(uint64_t part) const;
+    // g^-1, whose powers interpolateCoset scales by.
+    const FrElement &shiftInverse() const { return shiftInv; }
+
 private:
     // extendCosetPart once its arguments are checked.
     void extendPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs,

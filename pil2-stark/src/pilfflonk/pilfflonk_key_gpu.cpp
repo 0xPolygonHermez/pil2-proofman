@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "pilfflonk_kernels.hpp"
+#include "pilfflonk_lde_gpu.hpp"
 #include "pilfflonk_proving_key.hpp"
 #include "thread_utils.hpp"
 #include "timer.hpp"
@@ -273,7 +274,10 @@ ArenaLayout arenaLayout(const AirKey &air) {
     for (uint64_t c : air.degrees().qPieceCoefficients) {
         pieces += c;
     }
-    const uint64_t q = polysEnd + (air.lde().extendedSize() + N * air.qReads().size()) * sizeof(FrElement);
+    a.q = polysEnd;
+    a.qElements = air.lde().extendedSize() + N * air.qReads().size();
+    a.qTables = aligned(a.q + a.qElements * sizeof(FrElement));
+    const uint64_t q = a.qTables + ldeTableElements(air.lde()) * sizeof(FrElement);
     const uint64_t opening = polysEnd + (pieces + 3 * largest) * sizeof(FrElement);
     a.bytes = std::max({a.stageBytes, aligned(q), aligned(opening)});
     return a;
@@ -395,7 +399,7 @@ uint64_t GpuKey::available() const {
     return free;
 }
 
-void GpuKey::reserve(const std::string &air, const GpuBudget &budget, uint64_t mirrorElements) {
+void GpuKey::reserve(const std::string &air, const GpuBudget &budget, uint64_t mirrorElements, uint64_t qElements) {
     if (options.arena != nullptr && budget.arena > options.arenaBytes) {
         throw std::invalid_argument(air + ": a proof on the GPU needs an arena of " + std::to_string(budget.arena) +
                                     " bytes, and the one given has " + std::to_string(options.arenaBytes));
@@ -417,7 +421,16 @@ void GpuKey::reserve(const std::string &air, const GpuBudget &budget, uint64_t m
         mirrorBuffer = std::make_unique<RegisteredHost>(mirrorElements);
         hostMirror = mirrorBuffer->elements.get();
     }
+    qHost(qElements);
     held += budget.resident;
+}
+
+FrElement *GpuKey::qHost(uint64_t n) const {
+    if (qBuffer == nullptr || n > qBuffer->n) {
+        qBuffer.reset();
+        qBuffer = std::make_unique<RegisteredHost>(n);
+    }
+    return qBuffer->elements.get();
 }
 
 void GpuKey::addShiftSum(uint64_t n, void *work) {
@@ -491,7 +504,7 @@ GpuAirKey::GpuAirKey(GpuKey &_key, const AirKey &_air, FrElement *fixedCoefs,
     const PilfflonkInfo &info = air.info();
     const uint64_t N = air.n();
     checkSrsFits(air, key.nPowers());
-    key.reserve(air.name(), gpuBudget(air, key.multiprocessors()), layout.polyElements);
+    key.reserve(air.name(), gpuBudget(air, key.multiprocessors()), layout.polyElements, layout.qElements);
 
     const ResidentLayout r = residentLayout(air);
     resident = DeviceBuffer(r.bytes);
