@@ -396,6 +396,15 @@ pub struct ProofCtx<F: PrimeField64> {
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
 
+/// `ubl::AUX_ALIGN`: auxBase is rounded up to it.
+const UBL_AUX_ALIGN_BYTES: u64 = 1 << 20;
+
+/// Pad (elements) that brings the buffer to `floor_bytes`, aligning auxBase exactly as `ubl::plan` does.
+fn snark_pad_elems(below_aux_bytes: u64, above_aux_elems: u64, floor_bytes: u64) -> u64 {
+    let end = below_aux_bytes.next_multiple_of(UBL_AUX_ALIGN_BYTES) + above_aux_elems * 8;
+    floor_bytes.saturating_sub(end).div_ceil(8)
+}
+
 /// The phase-B basic stream's size: at least the mops floor, at most all the slack.
 fn phase_b_target(current: usize, unused: usize, floor_minus_agg: usize, headroom_extra: usize, align: usize) -> usize {
     let floor = floor_minus_agg.next_multiple_of(align);
@@ -1431,7 +1440,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         // Wrapping here would carve streams out of a budget the card does not have, and only fail
         // later inside cudaMalloc.
         // + ubl::AUX_ALIGN slack.
-        let late_area = if gpu { (late_region_bytes + (1u64 << 20)).div_ceil(8) } else { 0 };
+        let late_area = if gpu { (late_region_bytes + UBL_AUX_ALIGN_BYTES).div_ceil(8) } else { 0 };
         let max_size_buffer = ((free_memory_gpu / 8.0).floor() as u64)
             .checked_sub(total_const_area + total_const_area_aggregation + late_area)
             .ok_or_else(|| {
@@ -1611,29 +1620,27 @@ impl<F: PrimeField64> ProofCtx<F> {
         // Pad the unified buffer up to the snark floor (see GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES),
         // taking only the layout's unused slack. Runs without a wrapper skip it.
         let unified_buffer_pad_area: u64 = if gpu && final_snark {
-            let predicted_unified_buffer: u64 = aux_trace_sizes.iter().sum::<u64>()
-                + late_area
-                + prefetch_region_area
+            let below_aux_bytes = (total_const_area + prefetch_region_area) * 8 + late_region_bytes;
+            let above_aux_elems = aux_trace_sizes.iter().sum::<u64>()
                 + if self.phase_b {
                     0
                 } else {
                     n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64
                 }
-                + total_const_area_aggregation
-                + total_const_area;
-            let floor_elems = GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES.div_ceil(8);
-            let pad = floor_elems.saturating_sub(predicted_unified_buffer).min(layout.unused as u64);
+                + total_const_area_aggregation;
+            let need = snark_pad_elems(below_aux_bytes, above_aux_elems, GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES);
+            let pad = need.min(layout.unused as u64);
             if pad > 0 {
                 tracing::info!(
                     "Padding the unified buffer by {} to reach the {} snark floor",
                     format_bytes(pad as f64 * 8.0),
                     format_bytes(GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES as f64),
                 );
-                if floor_elems.saturating_sub(predicted_unified_buffer) > layout.unused as u64 {
+                if need > layout.unused as u64 {
                     tracing::warn!(
                         "Snark floor not reachable: layout slack is {} short; the final snark \
                          prover will not fit the unified buffer",
-                        format_bytes((floor_elems - predicted_unified_buffer - layout.unused as u64) as f64 * 8.0),
+                        format_bytes((need - layout.unused as u64) as f64 * 8.0),
                     );
                 }
             }
@@ -1750,6 +1757,21 @@ mod tests {
     use proofman_fields::Goldilocks;
 
     type Pctx = super::ProofCtx<Goldilocks>;
+
+    /// The padded buffer reaches the floor whatever alignment auxBase gets.
+    #[test]
+    fn snark_pad_matches_the_aux_alignment() {
+        const MIB: u64 = 1 << 20;
+        let end = |below: u64, above: u64, pad: u64| below.next_multiple_of(MIB) + (above + pad) * 8;
+        for below in [MIB, MIB + 8, 2 * MIB - 8] {
+            let floor = 64 * MIB + 4;
+            let pad = super::snark_pad_elems(below, 1000, floor);
+            assert!(end(below, 1000, pad) >= floor);
+            assert!(end(below, 1000, pad) < floor + 8);
+        }
+        // Already past the floor: no pad.
+        assert_eq!(super::snark_pad_elems(64 * MIB, 0, 32 * MIB), 0);
+    }
 
     /// At arity 2 a leaf pays for a whole recursive2 proof, at arity 3 for half of one
     #[test]
