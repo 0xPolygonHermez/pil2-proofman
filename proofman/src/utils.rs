@@ -23,7 +23,7 @@ use proofman_starks_lib_c::{
     prepare_blocks_c, tile_const_pols_c, load_const_pols_c,
 };
 use proofman_util::create_buffer_fast;
-use proofman_common::{PackedInfo, VerboseMode, GlobalInfo};
+use proofman_common::{GpuWitnessAirs, PackedInfo, VerboseMode, GlobalInfo};
 
 use pil2_std_lib::Std;
 use proofman_witness::WitnessManager;
@@ -849,16 +849,26 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Set
     Ok(())
 }
 
+/// Size the host trace pool: the largest thing the host still has to hold.
+///
+/// A `gpu_witness_airs` air counts by its staged *inputs*, not its trace: it still takes a
+/// (pinned) pool buffer to stage them from. Taking the max keeps this correct if inputs ever
+/// exceed every remaining trace.
 pub fn calculate_max_witness_trace_size<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
+    gpu_witness_airs: &GpuWitnessAirs,
 ) -> ProofmanResult<(usize, usize)> {
     let mut max_witness_trace_size = 0;
     let mut max_witness_trace_size_packed = 0;
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
+            if gpu_witness_airs.contains(airgroup_id, air_id) {
+                continue;
+            }
             let setup = sctx.get_setup(airgroup_id, air_id)?;
+
             let n = 1 << setup.stark_info.stark_struct.n_bits;
             let num_packed_words =
                 packed_info.get(&(airgroup_id, air_id)).map(|info| info.num_packed_words).unwrap_or(0);
@@ -871,7 +881,9 @@ pub fn calculate_max_witness_trace_size<F: PrimeField64>(
             max_witness_trace_size_packed = max_witness_trace_size_packed.max(trace_size_packed as usize);
         }
     }
-    Ok((max_witness_trace_size, max_witness_trace_size_packed))
+    // In elements (8-byte F), like the traces above.
+    let input_elems = gpu_witness_airs.max_input_bytes().div_ceil(8) as usize;
+    Ok((max_witness_trace_size.max(input_elems), max_witness_trace_size_packed.max(input_elems)))
 }
 
 pub fn load_device_setups<F: PrimeField64>(
@@ -1243,19 +1255,16 @@ pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
     wcm.register_component_std(std.prod_bus.clone());
     wcm.register_component_std(std.sum_bus.clone());
     wcm.register_component_std(std.range_check.clone());
-
-    if std.range_check.u8air.is_some() {
-        wcm.register_component_std(std.range_check.u8air.clone().unwrap());
+    // Only non-virtual ranges have these airs (virtual ones are `None`); the std counts them.
+    if let Some(air) = std.range_check.u8air.clone() {
+        wcm.register_component_std(air);
     }
-
-    if std.range_check.u16air.is_some() {
-        wcm.register_component_std(std.range_check.u16air.clone().unwrap());
+    if let Some(air) = std.range_check.u16air.clone() {
+        wcm.register_component_std(air);
     }
-
-    if std.range_check.specified_ranges_air.is_some() {
-        wcm.register_component_std(std.range_check.specified_ranges_air.clone().unwrap());
+    if let Some(air) = std.range_check.specified_ranges_air.clone() {
+        wcm.register_component_std(air);
     }
-
     wcm.register_component_std(std.virtual_table.clone());
     if std.virtual_table.virtual_table_airs.is_some() {
         for air in std.virtual_table.virtual_table_airs.clone().unwrap() {
@@ -1264,37 +1273,36 @@ pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
     }
 }
 
-pub fn register_std_dev<F: PrimeField64>(
-    wcm: &WitnessManager<F>,
-    std: &Std<F>,
-    register_u8: bool,
-    register_u16: bool,
-    register_specified_ranges: bool,
-) {
-    wcm.register_component_std(std.prod_bus.clone());
-    wcm.register_component_std(std.sum_bus.clone());
-    wcm.register_component_std(std.range_check.clone());
+/// Each instance's stage-1 root. Its commit writes it through `ptr`, possibly from the device after
+/// the call returns, so the cells are interior-mutable; nothing reads one before its commit lands.
+pub struct InstanceRoots<F>(Vec<std::cell::UnsafeCell<[F; 4]>>);
 
-    if register_u8 && std.range_check.u8air.is_some() {
-        wcm.register_component_std(std.range_check.u8air.clone().unwrap());
+// SAFETY: each cell is written only by its own instance's commit and read once that commit is done.
+unsafe impl<F: Send> Sync for InstanceRoots<F> {}
+
+impl<F: Copy + Default> InstanceRoots<F> {
+    pub fn new(n: usize) -> Self {
+        Self((0..n).map(|_| std::cell::UnsafeCell::new([F::default(); 4])).collect())
     }
 
-    if register_u16 && std.range_check.u16air.is_some() {
-        wcm.register_component_std(std.range_check.u16air.clone().unwrap());
+    /// Where instance `i`'s commit writes its root.
+    pub fn ptr(&self, i: usize) -> *mut c_void {
+        self.0[i].get() as *mut c_void
     }
 
-    if register_specified_ranges && std.range_check.specified_ranges_air.is_some() {
-        wcm.register_component_std(std.range_check.specified_ranges_air.clone().unwrap());
+    /// # Safety
+    /// Instance `i`'s commit, if any, has completed.
+    pub unsafe fn get(&self, i: usize) -> [F; 4] {
+        unsafe { *self.0[i].get() }
     }
-
-    wcm.register_component_std(std.virtual_table.clone());
 }
 
-pub fn print_roots<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
+pub fn print_roots<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &InstanceRoots<F>) {
     let instances = pctx.dctx_get_instances();
     for (instance_id, &instance_info) in instances.iter().enumerate() {
         let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
-        let contribution = roots_contributions[instance_id];
+        // SAFETY: called once the contributions are in.
+        let contribution = unsafe { roots_contributions.get(instance_id) };
         tracing::info!(
             "Contribution for instance id {} [{}:{}] is: {:?}",
             instance_id,

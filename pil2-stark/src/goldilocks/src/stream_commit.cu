@@ -11,6 +11,8 @@
 #include "poseidon_goldilocks.cuh"
 #include "cuda_utils.cuh"
 #include "poseidon_goldilocks_constants.hpp"
+#include "poseidon2_goldilocks.cuh"
+#include "poseidon2_goldilocks_constants.hpp"
 #include "blake3_goldilocks.cuh"
 
 // ===========================================================================
@@ -19,7 +21,12 @@
 
 
 using P16 = PoseidonGoldilocksGPU<16>;
+using P2_16 = Poseidon2GoldilocksGPU<16>;
 static constexpr uint32_t SC_TPB = 256;
+// Poseidon2 reuses the Poseidon1 slot layout (data | state, arity-4 nodes): same sponge geometry.
+static_assert(P2_16::RATE == P16::RATE && P2_16::CAPACITY == P16::CAPACITY &&
+              P2_16::SPONGE_WIDTH == P16::SPONGE_WIDTH,
+              "Poseidon2 W=16 must share the Poseidon1 W=16 sponge geometry");
 
 // Digest width shared by the leaf-copy / tree-size / reduction helpers, which
 // run for both families. The assert is what makes that sharing sound.
@@ -27,11 +34,17 @@ static constexpr uint32_t SC_DIGEST = P16::CAPACITY;
 static_assert(Blake3GoldilocksGPU::CAPACITY == SC_DIGEST,
               "shared leaf/tree paths assume equal digest widths");
 
-// The blake3 absorb hashes a row as one or two blake3 chunks joined by a single
-// parent node (per-chunk counters, one parked chaining value). Rows of three or
-// more chunks would need b3_hash_row's general chaining-value stack.
-static_assert(SC_MAX_COLS <= 2 * blake3core::CHUNK_U64,
-              "blake3 slot absorb handles at most two chunks per row");
+// The blake3 absorb parks the chaining values of completed left subtrees on a stack of state
+// slots; the reference (b3_hash_row) holds CV_STACK of them, far above what SC_MAX_COLS needs.
+static constexpr uint32_t scBitLen(uint64_t v) { return v == 0 ? 0 : 1 + scBitLen(v >> 1); }
+static_assert(scBitLen((SC_MAX_COLS + blake3core::CHUNK_U64 - 1) / blake3core::CHUNK_U64 - 1)
+                  <= (uint32_t)blake3core::CV_STACK,
+              "SC_MAX_COLS needs a deeper chaining-value stack than b3_hash_row keeps");
+
+// Shared memory of the indexed unpack: scInfo[nCols] + scStart[nCols] + one accumulator per lane.
+static size_t scIndexedSmemBytes(const StreamCommitDims &dims) {
+    return (2 * dims.nCols + (dims.lanes ? dims.lanes : 1)) * sizeof(uint64_t);
+}
 
 // ===========================================================================
 // Shared kernels: packed-witness unpack (family-agnostic)
@@ -74,6 +87,38 @@ __device__ __forceinline__ static uint64_t scStepBits(
     return val;
 }
 
+// Row-major -> column-major, 32x32 tiles through shared memory: the read walks a row's words
+// and the write walks a word's rows, and both coalesce because a tile is transposed in shared.
+#define SC_TR_TILE 32
+__global__ static void scTransposePackedKernel(const uint64_t *__restrict__ src,
+                                               uint64_t *__restrict__ dst, uint64_t nRows,
+                                               uint64_t wordsPerRow) {
+    // +1 column so the strided read below hits 32 distinct banks.
+    __shared__ uint64_t tile[SC_TR_TILE][SC_TR_TILE + 1];
+    const uint64_t r0 = (uint64_t)blockIdx.x * SC_TR_TILE;
+    const uint64_t w0 = (uint64_t)blockIdx.y * SC_TR_TILE;
+    const uint64_t r = r0 + threadIdx.x;
+    for (uint32_t j = 0; j < SC_TR_TILE; j += blockDim.y) {
+        const uint64_t w = w0 + threadIdx.y + j;
+        tile[threadIdx.y + j][threadIdx.x] =
+            (r < nRows && w < wordsPerRow) ? src[r * wordsPerRow + w] : 0ull;
+    }
+    __syncthreads();
+    for (uint32_t j = 0; j < SC_TR_TILE; j += blockDim.y) {
+        const uint64_t w = w0 + threadIdx.y + j;
+        if (r < nRows && w < wordsPerRow) dst[w * nRows + r] = tile[threadIdx.y + j][threadIdx.x];
+    }
+}
+
+static void scTransposePacked(const uint64_t *src, uint64_t *dst, uint64_t nRows,
+                              uint64_t wordsPerRow, cudaStream_t stream) {
+    const dim3 blk(SC_TR_TILE, 8);
+    const dim3 grid((uint32_t)((nRows + SC_TR_TILE - 1) / SC_TR_TILE),
+                    (uint32_t)((wordsPerRow + SC_TR_TILE - 1) / SC_TR_TILE));
+    scTransposePackedKernel<<<grid, blk, 0, stream>>>(src, dst, nRows, wordsPerRow);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
 // The prover's unpack bit walk (starks_gpu.cu unpack), writing only columns
 // [c0, c0+cc) into cc ColMajor columns of dst (columns before c0 are skipped
 // by advancing the cursor). Widths come from global memory so concurrent
@@ -82,7 +127,9 @@ __global__ static void scUnpackRangeKernel(const uint64_t *__restrict__ src,
                                            const uint64_t *__restrict__ widths,
                                            uint64_t *__restrict__ dst,
                                            uint64_t nCols, uint64_t nRows,
-                                           uint64_t wordsPerRow, uint32_t c0, uint32_t cc)
+                                           uint64_t wordsPerRow, bool colMajor,
+                                           uint32_t c0, uint32_t cc,
+                                           uint64_t dstStride, uint64_t dstOff)
 {
     // Column bit offsets are row-uniform, so scanned once per block.
     extern __shared__ uint64_t scColStart[];
@@ -98,17 +145,19 @@ __global__ static void scUnpackRangeKernel(const uint64_t *__restrict__ src,
 
     uint64_t row = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= nRows) return;
-    const uint64_t *packed_row = src + row * wordsPerRow;
+    // Column-major: consecutive lanes (rows) read consecutive addresses.
+    const uint64_t *packed_row = colMajor ? src + row : src + row * wordsPerRow;
+    const uint64_t wStride = colMajor ? nRows : 1;
 
     for (uint32_t j = 0; j < cc && (uint64_t)c0 + j < nCols; j++) {
         const uint64_t nbits = widths[c0 + j];
         const uint64_t start = scColStart[j];
         const uint64_t widx = start >> 6, boff = start & 63;
-        uint64_t val = packed_row[widx] >> boff;
+        uint64_t val = packed_row[widx * wStride] >> boff;
         // Straddles only when boff > 0, so the shift below is always < 64.
-        if (boff + nbits > 64) val |= packed_row[widx + 1] << (64 - boff);
+        if (boff + nbits > 64) val |= packed_row[(widx + 1) * wStride] << (64 - boff);
         if (nbits < 64) val &= ((1ULL << nbits) - 1ULL);
-        dst[(uint64_t)j * nRows + row] = val;
+        dst[(uint64_t)j * dstStride + dstOff + row] = val;
     }
 }
 
@@ -125,11 +174,12 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
                                                   uint64_t nCols, uint64_t nRows,
                                                   uint64_t wordsPerRow, uint64_t wordsPerEntry,
                                                   uint64_t numEntries, uint64_t indexBits,
-                                                  uint64_t lanes, uint32_t c0, uint32_t cc)
+                                                  uint64_t lanes, uint32_t c0, uint32_t cc,
+                                                  uint64_t dstStride, uint64_t dstOff)
 {
     // Per-column metadata is row-uniform, so stage it once per block: width | source<<32 |
-    // lane<<33 (nbits <= 64, lanes <= 256), one shared read instead of three global ones,
-    // <= 512 B per block. Null map = lane 0. Hygiene: this kernel is DRAM-bound.
+    // lane<<33 (nbits <= 64, lanes <= 256), one shared read instead of three global ones.
+    // Null map = lane 0. Hygiene: this kernel is DRAM-bound.
     // scStart: each column's bit offset within its own stream (the row for an untagged column,
     // its lane's table entry otherwise). Row-uniform, so also staged once per block.
     extern __shared__ uint64_t scShared[];
@@ -189,7 +239,7 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
     for (uint64_t c = c0; c < cEnd; c++) {
         const uint64_t info = scInfo[c];
         if ((info >> 32) & 1ull) continue;
-        dst[(c - c0) * nRows + row] = extractAt(rbase, scStart[c], info & 0xFFFFFFFFull);
+        dst[(c - c0) * dstStride + dstOff + row] = extractAt(rbase, scStart[c], info & 0xFFFFFFFFull);
     }
 
     // One pass per lane; each lane's index sits at a known header offset. The extra passes
@@ -208,7 +258,7 @@ __global__ static void scUnpackRangeIndexedKernel(const uint64_t *__restrict__ s
         for (uint64_t c = c0; c < cEnd; c++) {
             const uint64_t info = scInfo[c];
             if (!((info >> 32) & 1ull) || ((info >> 33) & 0xFFull) != l) continue;
-            dst[(c - c0) * nRows + row] = extractAt(tbase, scStart[c], info & 0xFFFFFFFFull);
+            dst[(c - c0) * dstStride + dstOff + row] = extractAt(tbase, scStart[c], info & 0xFFFFFFFFull);
         }
     }
 }
@@ -298,6 +348,80 @@ __global__ static void scPoseidon1NodeKernel(uint64_t nextN, uint64_t nextIndex,
 }
 
 // ===========================================================================
+// Poseidon2 kernels (W=16 sponge, arity-4 trees)
+// ===========================================================================
+
+// Own copies of the Poseidon2 W=16 round tables, for the same TU-locality reason as Poseidon1's.
+__device__ __constant__ uint64_t SC_POS2_C16[150];
+__device__ __constant__ uint64_t SC_POS2_D16[16];
+
+static void scPoseidon2EnsureConstants()
+{
+    static std::mutex mtx;
+    static bool uploaded[SC_MAX_DEVICES] = {};
+    int dev = 0;
+    CHECKCUDAERR(cudaGetDevice(&dev));
+    const bool memoized = (dev >= 0 && dev < SC_MAX_DEVICES);
+    std::lock_guard<std::mutex> lk(mtx);
+    if (memoized && uploaded[dev]) return;
+    CHECKCUDAERR(cudaMemcpyToSymbol(SC_POS2_C16, Poseidon2GoldilocksConstants::C16, 150 * 8));
+    CHECKCUDAERR(cudaMemcpyToSymbol(SC_POS2_D16, Poseidon2GoldilocksConstants::D16, 16 * 8));
+    if (memoized) uploaded[dev] = true;
+}
+
+template <uint32_t W = P2_16::SPONGE_WIDTH>
+__device__ __forceinline__ void scPoseidon2PermuteSmem()
+{
+    poseidon2PermuteSmem<P2_16::RATE, P2_16::CAPACITY, W, P2_16::N_FULL_ROUNDS_TOTAL,
+                         P2_16::N_PARTIAL_ROUNDS>((const gl64_t *)SC_POS2_C16, (const gl64_t *)SC_POS2_D16);
+}
+
+// Matches Poseidon2's spongeAbsorb (linearHashKernel): rate = the chunk, zero padded; capacity = 0
+// on the first chunk, else the previous digest (the state's first CAPACITY slots).
+__global__ static void scPoseidon2AbsorbChunkKernel(const gl64_t *__restrict__ rate,
+                                                    gl64_t *__restrict__ cap,
+                                                    uint32_t cc, bool first, uint64_t nRows)
+{
+    const uint64_t tid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nRows) return;
+
+    for (uint32_t i = 0; i < P2_16::RATE; ++i)
+        scratchpad[i * blockDim.x + threadIdx.x] =
+            (i < cc) ? rate[(uint64_t)i * nRows + tid] : gl64_t(uint64_t(0));
+#pragma unroll
+    for (uint32_t i = 0; i < P2_16::CAPACITY; ++i)
+        scratchpad[(P2_16::RATE + i) * blockDim.x + threadIdx.x] =
+            first ? gl64_t(uint64_t(0)) : cap[(uint64_t)i * nRows + tid];
+
+    scPoseidon2PermuteSmem();
+
+#pragma unroll
+    for (uint32_t i = 0; i < P2_16::CAPACITY; ++i)
+        cap[(uint64_t)i * nRows + tid] = scratchpad[i * blockDim.x + threadIdx.x];
+}
+
+// Same node hash as Poseidon2's merkleNodeKernel: the arity*CAPACITY children are one W-wide state.
+__global__ static void scPoseidon2NodeKernel(uint64_t nextN, uint64_t nextIndex, uint64_t pending,
+                                             uint32_t arity, uint64_t *cursor)
+{
+    uint64_t tid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nextN) return;
+    const uint32_t stride = arity * P2_16::CAPACITY;
+    const uint64_t base = nextIndex + tid * (uint64_t)stride;
+    const uint32_t n = (stride < P2_16::SPONGE_WIDTH) ? stride : P2_16::SPONGE_WIDTH;
+    for (uint32_t i = 0; i < n; ++i)
+        scratchpad[i * blockDim.x + threadIdx.x] = ((gl64_t *)cursor)[base + i];
+#pragma unroll
+    for (uint32_t i = 0; i < P2_16::SPONGE_WIDTH; ++i)
+        if (i >= n) scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
+    scPoseidon2PermuteSmem();
+    gl64_t *out = (gl64_t *)(&cursor[nextIndex + (pending + tid) * P2_16::CAPACITY]);
+#pragma unroll
+    for (uint32_t i = 0; i < P2_16::CAPACITY; ++i)
+        out[i] = scratchpad[i * blockDim.x + threadIdx.x];
+}
+
+// ===========================================================================
 // blake3 kernels (64-byte blocks, arity-2 trees)
 // ===========================================================================
 
@@ -306,11 +430,12 @@ __global__ static void scPoseidon1NodeKernel(uint64_t nextN, uint64_t nextIndex,
 // b3_hash_row block for block. Launch k is block k % 16 of blake3 chunk
 // k / 16 (the chunk index is the block counter): CHUNK_START on a chunk's
 // first block, CHUNK_END on its last. A row of one chunk (nCols <= 128)
-// carries ROOT on that last block and its CV packs straight to the leaf. A row
-// of two chunks (SC_MAX_COLS = 256) parks chunk 0's final CV raw in `park`,
-// hashes chunk 1 with counter 1 and no ROOT, and the leaf is
-// parent_cv(chunk 0, chunk 1, root) -- b3_hash_row's two-chunk path, where the
-// chaining-value stack holds exactly one entry.
+// carries ROOT on that last block and its CV packs straight to the leaf. A
+// wider row runs b3_hash_row's chunk tree on a stack of CVs parked in `park`:
+// a finished chunk c merges with the stack top while c + 1 has trailing zero
+// bits, then is pushed; the last chunk folds the whole stack, ROOT on the top
+// parent only. The stack depth before chunk c is popcount(c), so no count is
+// carried between launches.
 // The CV is carried RAW (u32 pairs packed per u64) in the state columns --
 // pack4 canonicalizes mod p, which is LOSSY on an intermediate CV (its packed
 // words may exceed p), so it runs only on the leaf, where it is exactly the
@@ -371,28 +496,42 @@ __global__ static void scBlake3AbsorbChunkKernel(const gl64_t *__restrict__ rate
                 (uint64_t)cv[2 * i] | ((uint64_t)cv[2 * i + 1] << 32);
         return;
     }
-    if (!singleChunk && chunk == 0) {
-        // End of chunk 0 of two: park its CV; chunk 1 restarts from the IV.
+    // Chunk tree as b3_hash_row builds it (see the header comment).
+    const uint32_t nChunksRow = (nBlocks + BPC - 1) / BPC;
+    auto slotOf = [&](uint32_t level) { return (uint64_t *)park + (uint64_t)level * SC_DIGEST * nRows; };
+    auto parkStore = [&](uint64_t *dst, const uint32_t *v) {
 #pragma unroll
         for (int i = 0; i < 4; ++i)
-            ((uint64_t *)park)[(uint64_t)i * nRows + tid] =
-                (uint64_t)cv[2 * i] | ((uint64_t)cv[2 * i + 1] << 32);
-        return;
-    }
-    uint32_t leaf[8];
-    if (singleChunk) {
-#pragma unroll
-        for (int i = 0; i < 8; ++i) leaf[i] = cv[i];
-    } else {
-        // End of chunk 1: the leaf is the root parent node over the two chunk CVs.
-        uint32_t left[8];
+            dst[(uint64_t)i * nRows + tid] = (uint64_t)v[2 * i] | ((uint64_t)v[2 * i + 1] << 32);
+    };
+    auto parkLoad = [&](const uint64_t *src, uint32_t *v) {
 #pragma unroll
         for (int i = 0; i < 4; ++i) {
-            uint64_t w = ((const uint64_t *)park)[(uint64_t)i * nRows + tid];
-            left[2 * i]     = (uint32_t)w;
-            left[2 * i + 1] = (uint32_t)(w >> 32);
+            uint64_t w = src[(uint64_t)i * nRows + tid];
+            v[2 * i]     = (uint32_t)w;
+            v[2 * i + 1] = (uint32_t)(w >> 32);
         }
-        blake3core::parent_cv(left, cv, true, leaf);
+    };
+
+    uint32_t leaf[8];
+#pragma unroll
+    for (int i = 0; i < 8; ++i) leaf[i] = cv[i];
+    if (!singleChunk) {
+        uint32_t depth = __popc(chunk);
+        uint32_t left[8];
+        if (chunk != nChunksRow - 1) {
+            for (uint32_t total = chunk + 1; (total & 1u) == 0; total >>= 1) {
+                parkLoad(slotOf(--depth), left);
+                blake3core::parent_cv(left, leaf, false, leaf);
+            }
+            parkStore(slotOf(depth), leaf);
+            return;
+        }
+        while (depth > 0) {
+            parkLoad(slotOf(depth - 1), left);
+            blake3core::parent_cv(left, leaf, depth == 1, leaf);
+            --depth;
+        }
     }
     uint64_t dig[4];
     blake3core::pack4(leaf, dig);
@@ -450,6 +589,9 @@ static void scReduceTree(uint64_t *d_tree, uint64_t nLeaves, uint32_t arity,
         if (hash == StreamCommitHash::Blake3)
             scBlake3NodeKernel<<<blks, tpb, 0, s>>>(nextN, nextIndex,
                                                     pending + extraZeros, arity, d_tree);
+        else if (hash == StreamCommitHash::Poseidon2)
+            scPoseidon2NodeKernel<<<blks, tpb, (size_t)tpb * P2_16::SPONGE_WIDTH * 8, s>>>(
+                nextN, nextIndex, pending + extraZeros, arity, d_tree);
         else
             scPoseidon1NodeKernel<<<blks, tpb, (size_t)tpb * P16::SPONGE_WIDTH * 8, s>>>(
                 nextN, nextIndex, pending + extraZeros, arity, d_tree);
@@ -471,11 +613,19 @@ static uint64_t scTreeNumElements(uint64_t nLeaves, uint32_t arity)
     return total + SC_DIGEST; // root
 }
 
-// blake3 state columns beyond the 8 data columns: the carried CV, plus the
-// parked chunk-0 CV when a row spans two blake3 chunks.
+// Cap + the parked chaining values of a row of C blake3 chunks: b3_hash_row's stack after chunk c
+// holds popcount(c + 1) values, at most bitlen(C - 1).
 static uint32_t scBlake3StateCols(uint64_t nCols)
 {
-    return SC_DIGEST + (nCols > blake3core::CHUNK_U64 ? SC_DIGEST : 0);
+    const uint64_t chunks = (nCols + blake3core::CHUNK_U64 - 1) / blake3core::CHUNK_U64;
+    const uint32_t parks = chunks <= 1 ? 0 : scBitLen(chunks - 1);
+    return SC_DIGEST + parks * SC_DIGEST;
+}
+
+void streamCommitWarmConstants(StreamCommitHash hash)
+{
+    if (hash == StreamCommitHash::Poseidon2) scPoseidon2EnsureConstants();
+    else if (hash == StreamCommitHash::Poseidon1) scPoseidon1EnsureConstants();
 }
 
 uint64_t streamCommitSlotElems(const StreamCommitDims &dims, StreamCommitHash hash)
@@ -487,11 +637,9 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims, StreamCommitHash ha
     return SC_MAX_COLS + N * dims.wordsPerRow + (uint64_t)wsCols * NExt + N;
 }
 
-int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
-                           const uint64_t *colWidths, const void *hPacked,
-                           uint64_t *hRoot, cudaStream_t stream,
-                           const uint8_t *dColSource, const uint8_t *dColLane,
-                           const uint64_t *dTable, StreamCommitHash hash, TimerGPU *timer)
+
+int64_t streamCommitCheck(const StreamCommitDims &dims, const uint8_t *dColSource,
+                          const uint8_t *dColLane, const uint64_t *dTable, StreamCommitHash hash)
 {
     if (dims.nCols == 0 || dims.nCols > SC_MAX_COLS) return -1;
     if (dims.nBitsExt <= dims.nBits) return -2;
@@ -507,7 +655,35 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     if (indexed && (dims.lanes ? dims.lanes : 1) > SC_MAX_LANES) return -7;
     // The kernel reads lane l's index at bit l * indexBits of the row, unguarded.
     if (indexed && (dims.lanes ? dims.lanes : 1) * dims.indexBits > dims.wordsPerRow * 64) return -6;
+    // The indexed unpack stages two words per column in shared memory.
+    if (indexed) {
+        int dev = 0, optin = 0;
+        CHECKCUDAERR(cudaGetDevice(&dev));
+        CHECKCUDAERR(cudaDeviceGetAttribute(&optin, cudaDevAttrMaxSharedMemoryPerBlockOptin, dev));
+        if (scIndexedSmemBytes(dims) > (size_t)optin) return -8;
+    }
 
+    const bool b3 = (hash == StreamCommitHash::Blake3);
+    const uint32_t arity = b3 ? Blake3GoldilocksGPU::ARITY : P16::ARITY;
+    const uint32_t dataCols = b3 ? blake3core::BLOCK_U64 : P16::RATE;
+    const uint64_t NExt = 1ull << dims.nBitsExt;
+    // Tree carved from the dead data region, never touching the state columns:
+    // arity 4 needs 16/3*NExt < 12*NExt, arity 2 needs 8*NExt - 4 <= 8*NExt.
+    if (scTreeNumElements(NExt, arity) > (uint64_t)dataCols * NExt) return -3;
+    return 0;
+}
+
+int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
+                           const uint64_t *colWidths, const void *hPacked,
+                           uint64_t *hRoot, cudaStream_t stream,
+                           const uint8_t *dColSource, const uint8_t *dColLane,
+                           const uint64_t *dTable, StreamCommitHash hash,
+                           StreamCommitHook hook, void *hookUser, TimerGPU *timer,
+                           StreamCommitChunkHook chunkHook, void *chunkUser,
+                           uint64_t slotElems)
+{
+    if (const int64_t rc = streamCommitCheck(dims, dColSource, dColLane, dTable, hash); rc != 0) return rc;
+    const bool indexed = (dColSource != nullptr);
     const bool b3 = (hash == StreamCommitHash::Blake3);
     const uint32_t arity = b3 ? Blake3GoldilocksGPU::ARITY : P16::ARITY;
     const uint32_t chunkCols = b3 ? blake3core::BLOCK_U64 : P16::RATE;
@@ -515,11 +691,10 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
 
     const uint64_t N = 1ull << dims.nBits, NExt = 1ull << dims.nBitsExt;
     const uint64_t treeElems = scTreeNumElements(NExt, arity);
-    // Tree carved from the dead data region, never touching the state columns:
-    // arity 4 needs 16/3*NExt < 12*NExt, arity 2 needs 8*NExt - 4 <= 8*NExt.
-    if (treeElems > (uint64_t)dataCols * NExt) return -3;
 
-    if (!b3) scPoseidon1EnsureConstants();
+    const bool p2 = (hash == StreamCommitHash::Poseidon2);
+    if (p2) scPoseidon2EnsureConstants();
+    else if (!b3) scPoseidon1EnsureConstants();
 
     // Slot layout (see streamCommitSlotElems).
     const uint32_t stateCols = b3 ? scBlake3StateCols(dims.nCols) : SC_DIGEST;
@@ -537,14 +712,30 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
     // Chunked DIRECT copy: the witness pool is host-registered (MemoryHandler),
     // so each block is a plain pinned DMA with no staging memcpy; short blocks
     // keep any single transfer from monopolizing the copy engine.
+    // cudaMemcpyDefault: `hPacked` may be a device pointer into the prefetch zone.
     const uint64_t packedBytes = N * dims.wordsPerRow * 8;
     const uint64_t blockBytes = 32ull << 20;
-    for (uint64_t off = 0; off < packedBytes; off += blockBytes) {
+    // The caller may have landed the rows in place already.
+    for (uint64_t off = 0; hPacked != (const void *)d_packed && off < packedBytes; off += blockBytes) {
         uint64_t len = std::min(blockBytes, packedBytes - off);
         CHECKCUDAERR(cudaMemcpyAsync((uint8_t *)d_packed + off, (const uint8_t *)hPacked + off, len,
-                                     cudaMemcpyHostToDevice, stream));
+                                     cudaMemcpyDefault, stream));
     }
     SC_CAT_STOP(timer, H2D_COPY);
+
+    // Hook runs before the chunk loop, which unpacks and LDEs in place: the last point where the
+    // whole packed witness is intact. An optional column-major copy lands in the slot's unused tail.
+    const uint64_t *d_hookPacked = d_packed;
+    if (dims.colMajorForHook) {
+        // Fit was checked by the caller (streamCommitColMajorFits).
+        const uint64_t need = N * dims.wordsPerRow;
+        uint64_t *d_col = (uint64_t *)slotBase + slotElems - need;
+        SC_CAT_START(timer, TRANSPOSE_PACKED);
+        scTransposePacked(d_packed, d_col, N, dims.wordsPerRow, stream);
+        SC_CAT_STOP(timer, TRANSPOSE_PACKED);
+        d_hookPacked = d_col;
+    }
+    if (hook != nullptr) hook(d_hookPacked, dims, stream, hookUser);
 
     NTTGoldilocksGPU ntt;
     const uint32_t ublk = (uint32_t)((N + SC_TPB - 1) / SC_TPB);
@@ -557,20 +748,26 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                                      : dims.nCols - (uint64_t)k * chunkCols);
         SC_CAT_START(timer, UNPACK_TRACE);
         if (indexed) {
-            // scInfo[nCols] + scStart[nCols] + one accumulator per lane.
-            scUnpackRangeIndexedKernel<<<ublk, SC_TPB,
-                                         (2 * dims.nCols + (dims.lanes ? dims.lanes : 1)) * sizeof(uint64_t),
-                                         stream>>>(
+            const size_t smem = scIndexedSmemBytes(dims);
+            // Past the default 48 KB (about 2900 columns) the launch needs the opt-in, per device.
+            if (smem > 48 * 1024)
+                CHECKCUDAERR(cudaFuncSetAttribute(scUnpackRangeIndexedKernel,
+                                                  cudaFuncAttributeMaxDynamicSharedMemorySize, (int)smem));
+            scUnpackRangeIndexedKernel<<<ublk, SC_TPB, smem, stream>>>(
                 d_packed, dTable, d_widths, dColSource, dColLane, (uint64_t *)d_rate,
                 dims.nCols, N, dims.wordsPerRow, dims.wordsPerEntry, dims.numEntries,
-                dims.indexBits, dims.lanes, (uint32_t)(k * chunkCols), cc);
+                dims.indexBits, dims.lanes, (uint32_t)(k * chunkCols), cc, N, 0);
         } else {
-            scUnpackRangeKernel<<<ublk, SC_TPB, (size_t)cc * sizeof(uint64_t), stream>>>(d_packed, d_widths, (uint64_t *)d_rate,
-                                                             dims.nCols, N, dims.wordsPerRow,
-                                                             (uint32_t)(k * chunkCols), cc);
+            scUnpackRangeKernel<<<ublk, SC_TPB, (size_t)cc * sizeof(uint64_t), stream>>>(
+                d_hookPacked, d_widths, (uint64_t *)d_rate,
+                dims.nCols, N, dims.wordsPerRow, dims.colMajorForHook,
+                (uint32_t)(k * chunkCols), cc, N, 0);
         }
         CHECKCUDAERR(cudaGetLastError());
         SC_CAT_STOP(timer, UNPACK_TRACE);
+        // Last moment these columns are the witness and not its LDE.
+        if (chunkHook != nullptr)
+            chunkHook((uint64_t *)d_rate, (uint32_t)(k * chunkCols), cc, N, stream, chunkUser);
         // In-place spread: src == dst base (equal-base aliasing path);
         // preserve_src must be false under aliasing.
         SC_CAT_START(timer, NTT);
@@ -580,6 +777,9 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
         if (b3)
             scBlake3AbsorbChunkKernel<<<ablk, SC_TPB, 0, stream>>>(
                 d_rate, d_cap, d_park, cc, k, nChunks, NExt);
+        else if (p2)
+            scPoseidon2AbsorbChunkKernel<<<ablk, SC_TPB, (size_t)SC_TPB * P2_16::SPONGE_WIDTH * 8, stream>>>(
+                d_rate, d_cap, cc, k == 0, NExt);
         else
             scPoseidon1AbsorbChunkKernel<<<ablk, SC_TPB, (size_t)SC_TPB * P16::SPONGE_WIDTH * 8, stream>>>(
                 d_rate, d_cap, cc, k == 0, NExt);

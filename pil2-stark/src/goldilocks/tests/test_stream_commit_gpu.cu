@@ -17,6 +17,7 @@
 #include "stream_commit.cuh"
 #include "ntt_goldilocks.cuh"
 #include "poseidon_goldilocks.cuh"
+#include "poseidon2_goldilocks.cuh"
 #include "blake3_goldilocks.cuh"
 #include "cuda_utils.cuh"
 
@@ -105,7 +106,9 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
                                    uint64_t wordsPerRow = MAIN_WORDS)
 {
     using P16 = PoseidonGoldilocksGPU<16>;
+    using P2 = Poseidon2GoldilocksGPU<16>;
     const bool b3 = (hash == StreamCommitHash::Blake3);
+    const bool p2 = (hash == StreamCommitHash::Poseidon2);
     const uint64_t nBitsExt = nBits + 1;
     const uint32_t arity    = b3 ? 2 : 4;
     const uint32_t CAP      = 4;
@@ -113,7 +116,8 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
     const uint64_t N = 1ull << nBits, NExt = 1ull << nBitsExt;
 
     uint32_t gpu = 0; cudaGetDevice((int*)&gpu);
-    if (!b3) P16::initConstants(&gpu, 1);
+    if (p2) P2::initConstants(&gpu, 1);
+    else if (!b3) P16::initConstants(&gpu, 1);
     cudaStream_t s; CHECKCUDAERR(cudaStreamCreate(&s));
     NTTGoldilocksGPU ntt;
 
@@ -148,8 +152,9 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
         const uint32_t ublk = (uint32_t)((N + TPB - 1) / TPB);
         refUnpackKernel<<<ublk, TPB, 0, s>>>(d_packed, (uint64_t*)d_src, nCols, N, wordsPerRow);
         ntt.ldeColMajor(d_ext, d_src, nBits, nBitsExt, nCols, s, true, nullptr);
-        if (b3) Blake3GoldilocksGPU::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
-        else    P16::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
+        if (b3)      Blake3GoldilocksGPU::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
+        else if (p2) P2::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
+        else         P16::merkletree(arity, d_tref, (uint64_t*)d_ext, nCols, NExt, Layout::ColMajor, s);
         CHECKCUDAERR(cudaStreamSynchronize(s));
         CHECKCUDAERR(cudaMemcpy(rootRef.data(), d_tref + treeElems - CAP, CAP*8, cudaMemcpyDeviceToHost));
         CHECKCUDAERR(cudaFree(d_packed)); CHECKCUDAERR(cudaFree(d_src));
@@ -174,7 +179,8 @@ static void runStreamCommitReduced(uint64_t nBits, uint64_t nCols, int reps,
     if (reps > 1) total_ms /= (reps - 1);
 
     printf("[stream-commit] %s nBits=%lu nCols=%lu lib entry (H2D + commit): %.2f ms, slot %.0f MiB\n",
-           b3 ? "blake3" : "poseidon1", nBits, nCols, total_ms, (double)slotElems * 8 / (1 << 20));
+           b3 ? "blake3" : (p2 ? "poseidon2" : "poseidon1"), nBits, nCols, total_ms,
+           (double)slotElems * 8 / (1 << 20));
 
     for (uint32_t i = 0; i < CAP; i++)
         ASSERT_EQ(rootRef[i], rootCmp[i]) << "root element " << i << " differs";
@@ -266,7 +272,7 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
     }
     // Under test: commit the COMPACT trace + table through the indexed slot path.
     {
-        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries};
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, false, INDEX_BITS, entWords, nEntries};
         uint8_t *dCS; CHECKCUDAERR(cudaMalloc(&dCS, nCols));
         CHECKCUDAERR(cudaMemcpy(dCS, colSource.data(), nCols, cudaMemcpyHostToDevice));
         uint64_t *dT; CHECKCUDAERR(cudaMalloc(&dT, table.size() * 8));
@@ -283,7 +289,7 @@ static void runStreamCommitIndexed(uint64_t nBits, uint64_t nCols, uint64_t nEnt
 
     // An incomplete indexed descriptor must be rejected, not silently mis-unpacked.
     {
-        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries};
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, false, INDEX_BITS, entWords, nEntries};
         uint8_t *dCS; CHECKCUDAERR(cudaMalloc(&dCS, nCols));
         gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
         EXPECT_LT(streamCommitPacked(slot, d, MAIN_WIDTHS, hCompact.data(), rootIdx.data(), s, dCS, nullptr, nullptr), 0);
@@ -427,7 +433,7 @@ static void runStreamCommitIndexedLanes(uint64_t nBits, uint64_t lanes, uint64_t
     }
     // Under test: commit the COMPACT trace + table through the indexed slot path.
     {
-        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries, lanes};
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, false, INDEX_BITS, entWords, nEntries, lanes};
         uint8_t *dCS, *dCL;
         CHECKCUDAERR(cudaMalloc(&dCS, nCols)); CHECKCUDAERR(cudaMalloc(&dCL, nCols));
         CHECKCUDAERR(cudaMemcpy(dCS, colSource.data(), nCols, cudaMemcpyHostToDevice));
@@ -449,7 +455,7 @@ static void runStreamCommitIndexedLanes(uint64_t nBits, uint64_t lanes, uint64_t
     // A lane-packed descriptor without its lane map must be rejected: decoding every
     // column from lane 0's entry would be a wrong trace with no other symptom.
     {
-        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, INDEX_BITS, entWords, nEntries, lanes};
+        StreamCommitDims d{nBits, nBitsExt, nCols, rowWords, false, INDEX_BITS, entWords, nEntries, lanes};
         uint8_t *dCS; CHECKCUDAERR(cudaMalloc(&dCS, nCols));
         uint64_t *dT; CHECKCUDAERR(cudaMalloc(&dT, table.size() * 8));
         gl64_t *slot; CHECKCUDAERR(cudaMalloc(&slot, streamCommitSlotElems(d, hash) * 8));
@@ -500,6 +506,13 @@ TEST(GOLDILOCKS_TEST, stream_commit_blake3_two_chunks)
     for (uint64_t nCols : shapes) runStreamCommitReducedWide(14, nCols, 2, StreamCommitHash::Blake3);
 }
 
+// Three and four chunks (257..512): two parked chaining values.
+TEST(GOLDILOCKS_TEST, stream_commit_blake3_four_chunks)
+{
+    const uint64_t shapes[] = {257, 300, 384, 385, 450, 512};
+    for (uint64_t nCols : shapes) runStreamCommitReducedWide(14, nCols, 2, StreamCommitHash::Blake3);
+}
+
 // Lane-packed Main shape on this branch: 245 columns.
 TEST(GOLDILOCKS_TEST, stream_commit_blake3_main_lanes_shape)
 {
@@ -510,4 +523,52 @@ TEST(GOLDILOCKS_TEST, stream_commit_blake3_main_lanes_shape)
 TEST(GOLDILOCKS_TEST, stream_commit_reduced_wide)
 {
     runStreamCommitReducedWide(14, 245, 2, StreamCommitHash::Poseidon1);
+}
+
+// Poseidon2: same shapes, root compared against Poseidon2GoldilocksGPU<16>::merkletree.
+TEST(GOLDILOCKS_TEST, stream_commit_poseidon2_small)
+{
+    runStreamCommitReduced(16, 38, 2, StreamCommitHash::Poseidon2);
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_poseidon2_main_shape)
+{
+    runStreamCommitReduced(22, 38, 4, StreamCommitHash::Poseidon2);
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_poseidon2_wide)
+{
+    runStreamCommitReducedWide(14, 245, 2, StreamCommitHash::Poseidon2);
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_poseidon2_indexed_small)
+{
+    runStreamCommitIndexed(16, 38, 7, StreamCommitHash::Poseidon2);
+}
+
+// Unpacked airs (virtual tables, Rom) take the identity packing: 64 bits per column, one word
+// each. 1 column (Rom), 12 and 22 (the zisk virtual tables), every family.
+static void runStreamCommitIdentity(uint64_t nBits, uint64_t nCols, StreamCommitHash hash)
+{
+    std::vector<uint64_t> widths(nCols, 64);
+    runStreamCommitReduced(nBits, nCols, 2, hash, widths.data(), nCols);
+}
+
+TEST(GOLDILOCKS_TEST, stream_commit_identity_packing)
+{
+    for (StreamCommitHash h : {StreamCommitHash::Poseidon1, StreamCommitHash::Poseidon2, StreamCommitHash::Blake3})
+        for (uint64_t nCols : {1ull, 12ull, 22ull}) runStreamCommitIdentity(15, nCols, h);
+}
+
+// Rows of hundreds to thousands of columns: blake3 runs b3_hash_row's chunk tree on up to five
+// parked chaining values (4096 columns = 32 chunks); Poseidon1/2 absorb one RATE chunk per launch.
+// 1024/1025 and 2048/2049 straddle a power-of-two chunk count, where the tree changes shape.
+TEST(GOLDILOCKS_TEST, stream_commit_very_wide_rows)
+{
+    const uint64_t shapes[] = {600, 1024, 1025, 2048, 2049, 3000, 4096};
+    for (StreamCommitHash h : {StreamCommitHash::Poseidon1, StreamCommitHash::Poseidon2, StreamCommitHash::Blake3})
+        for (uint64_t nCols : shapes) {
+            runStreamCommitReducedWide(10, nCols, 2, h);
+            runStreamCommitIdentity(10, nCols, h);
+        }
 }
