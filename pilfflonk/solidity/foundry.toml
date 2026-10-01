@@ -5,7 +5,9 @@
 # its own under target/, write the key's generated pilfflonk.verifier.sol as
 # src/PilfflonkVerifier.sol and the cases (the calldata of proofs, of mutated ones and of calldata
 # no proof has, and what verifyProof must do with each) as cases/cases.json, and run `forge test`
-# there. Nothing is built in this directory.
+# there. The differential fuzzer (plan M42, pilfflonk/tests/data/fuzz.rs) copies this file and
+# fuzz/PilfflonkFuzz.t.sol instead, with the verifier, its instrumented probe and a file per case,
+# cases/<i>.bin. Nothing is built in this directory.
 #
 # The tools are pinned (spec §4.5, "Eines"): Foundry v1.8.3 and solc 0.8.37, which the tests find in
 # PILFFLONK_FORGE and PILFFLONK_SOLC. Foundry never downloads a compiler: `offline` is set, and `solc`

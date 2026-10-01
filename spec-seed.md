@@ -30,7 +30,8 @@ Els annexos són la referència detallada per a qui implementi:
 - **E:** la base analitzada;
 - **F:** les troballes col·laterals;
 - **G:** el programa PIL1 de la fixture de pil-fflonk;
-- **H:** el rendiment de la versió CPU (M39).
+- **H:** el rendiment de la versió CPU (M39);
+- **I:** el gas del verificador Solidity (M42).
 
 ### Glossari
 
@@ -778,7 +779,7 @@ Diverses instàncies i restriccions globals queden fora d'abast (D2): el verific
   - una clau que cap `pilout` no dona, amb `Q` partit en l'ordre `Q1, Q0` i cap avaluació, amb una prova feta a mà amb la `τ` del `ptau` de test (`foundry_verifies_a_split_q_without_evaluations`): el JS i Foundry l'accepten, i amb el transcript d'abans Foundry la rebutjava;
   - en cada cas diu el mateix que el verificador JS (el test de Foundry falla si no), i el calldata del codificador del test refà el transcript del prover (els `xiSeed` coincideixen). Des de M41 el codificador és el de la CLI (`Calldata::encode`), i els reptes refets (els dels stages, `std_vc` i `xiSeed`) són els del prover;
   - els tests que no necessiten eines (`setup/pilfflonk/tests/setup/solidity.rs`, `setup/pil2-stark/tests/setup_pilfflonk.rs`) comproven que `--solidity` no canvia cap altre fitxer, que `pilfflonk-solidity` escriu els mateixos bytes, què es refusa i la forma del calldata.
-- **Gas** (M40, preliminar; l'informe és de M42). El de la crida a `verifyProof` d'una prova que verifica, mesurat amb `gasleft()` al test de Foundry (sense els 21.000 de la transacció), i el del seu calldata (EIP-2028):
+- **Gas** (M40, preliminar; l'informe és a l'Annex I). El de la crida a `verifyProof` d'una prova que verifica, mesurat amb `gasleft()` al test de Foundry (sense els 21.000 de la transacció), i el del seu calldata (EIP-2028):
 
   | Clau | `f` | Paraules de `proof` | Codi (bytes) | Gas de `verifyProof` | Gas del calldata |
   |---|---|---|---|---|---|
@@ -794,7 +795,7 @@ Diverses instàncies i restriccions globals queden fora d'abast (D2): el verific
   | `frames`, `--no-packing` | 9 | 36 | 7.504 | 216.594 | 18.460 |
   | a mà: `Q` partit, cap avaluació | 1 | 10 | 3.037 | 142.176 | 5.324 |
 
-  Comprovar el que tornen els precompilats (pas 7) costa de 587 a 907 de gas per prova (de 14 a 22 crides) i de 6 a 14 bytes de codi. Una prova refusada per `invZh`, `inv`, les inverses auxiliars o la comprovació de l'entrada costa de 3.000 a 60.000 de gas; una que arriba al *pairing* i falla, uns 2.500 més que una bona.
+  Comprovar el que tornen els precompilats (pas 7) costa de 587 a 907 de gas per prova (de 14 a 22 crides) i de 6 a 14 bytes de codi. Una prova refusada per `invZh`, `inv`, les inverses auxiliars o la comprovació de l'entrada costa de 3.000 a 60.000 de gas; una que arriba al *pairing* i falla, uns 2.500 més que una bona. M42 en troba la causa, que no és el *pairing*: Foundry aïlla cada crida en una transacció pròpia, i les que van després de la primera, com aquesta, costen 2.500 més perquè l'adreça és freda. Mesurada sense aïllament, costa el mateix que la bona (Annex I.1).
 - **Validació de M41** (Fase 4, validació 1):
   - **Foundry sobre totes les *fixtures* de les fases 1 a 3** (`cli/tests/pilfflonk_prove.rs`, `foundry_accepts_the_proof_of_every_fixture`). Hi ha 73 claus: cada *fixture* amb els setups del seu E2E, és a dir, agrupada per defecte (amb l'`extraMuls` de pil-fflonk als exemples), amb `--no-packing`, amb el `--max-constraint-degree` i l'`--extra-muls` dels seus tests i amb `Q` partit on `qDeg ≥ 2` ho permet. Les claus són:
     - el Fibonacci (per defecte, amb `--extra-muls 0` i amb `--no-packing`);
@@ -816,7 +817,7 @@ Diverses instàncies i restriccions globals queden fora d'abast (D2): el verific
     - sobre `Domains` (dues inverses) i `Frames` (cap inversa i cap públic), el calldata és el selector de solc, els bytes de la prova, les inverses de l'`ξ` del prover (`(ξ − ω^j)·aux = 1`, comprovat amb `num-bigint`) i els publics, en les dues formes, de `proof.json` i de `proof.bin`, amb `-o` i sense;
     - la comanda refusa les entrades que no van juntes (vegeu "Codificador de calldata");
     - un test unitari comprova els selectors d'ERC-20 (`transfer`, `balanceOf`).
-- **Gas** (M41; l'informe és de M42). El de la crida a `verifyProof`, mesurat com a M40, per a les 73 claus, agrupades per família (el test imprimeix la de cada clau). El gas creix amb el nombre de `f`: uns 170.000 i uns 7.500 per `f`.
+- **Gas** (M41; l'informe és a l'Annex I). El de la crida a `verifyProof`, mesurat com a M40, per a les 73 claus, agrupades per família (el test imprimeix la de cada clau). El gas creix amb el nombre de `f`: uns 170.000 i uns 7.500 per `f`, un model que M42 corregeix (Annex I.4).
 
   | Família | Claus | `f` | Paraules de `proof` | Codi (bytes) | Gas de `verifyProof` | Gas del calldata |
   |---|---|---|---|---|---|---|
@@ -828,12 +829,79 @@ Diverses instàncies i restriccions globals queden fora d'abast (D2): el verific
   | Exemples de pil-fflonk | 29 | 5–31 | 24–82 | 5.902–15.474 | 186.580 (`permutation_prod`) – 406.897 (`all_sum`, `--no-packing`) | 12.316–42.300 |
 
   El contracte més gran, `all_prod` amb `--no-packing`, té 15.474 bytes, per sota de l'EIP-170.
-- **Obert després de M41:**
-  - **M42:** *fuzzing* diferencial entre el JS i el Solidity, amb les mutacions "arreglades" de M40 (`fixup`) com a base, perquè arribin a `checkQPieces` i al *pairing*. També l'informe de gas i, si cal, optimitzar-lo (els `add(pMem, …)` i els `PUSH32` de `q` que l'optimitzador converteix en `codecopy`). Hi ha peces que ja existeixen:
-    - `Calldata::encode` i `Calldata::with_auxiliary_inverses`, per fer el calldata d'una prova mutada, amb les inverses d'aquesta prova o amb unes altres;
-    - `verifier_challenges`, els reptes que `fixup` necessita;
-    - `pilfflonk/tests/data/foundry.rs`, que executa Foundry sobre qualsevol calldata;
-    - l'E2E de M41, que fa les 73 claus i les seves proves.
+- **Validació de M42** (Fase 4, validació 2): *fuzzing* diferencial entre el JS i el Solidity, a `pilfflonk/tests/data/fuzz.rs` (el test `foundry_and_the_js_verifier_agree_on_mutated_proofs` de `cli/tests/pilfflonk_prove.rs`, que fa servir els *helpers* de M40 i M41: `solidity_keys`, `set_up_for_foundry`, `Calldata::encode`, `verifier_challenges`, `fixup` i l'executor de Foundry de `pilfflonk/tests/data/foundry.rs`).
+  - **Claus.** 13 de les 73 de M41 (`FUZZ_KEYS`):
+    - el Fibonacci, `packed` i `signed` amb `Q` en tres trossos, cadascuna agrupada i amb `--no-packing`;
+    - `Domains`, que té les inverses auxiliars de `firstRow` i `lastRow`: agrupada i, amb `Q` partit, amb `--no-packing`;
+    - els busos de l'stage 2: `sum_bus` agrupada i `prod_bus` amb `--no-packing`;
+    - `all` amb `Q` partit, en bus de suma (dos trossos) i de producte (tres), i `all_sum` amb `--no-packing`, la clau que gasta més gas.
+  - **Casos.** Per a cada clau, unes quantes proves honestes de `pilfflonk prove`: la de la llavor de M41 i les d'altres llavors (dues en total, i una més per cada 400 casos de la clau). Cada mutació en pren una a l'atzar, amb una llavor fixa (`FUZZ_SEED`; `PILFFLONK_FUZZ_SEED` la canvia). Hi ha 25 famílies de mutacions:
+    - **una paraula qualsevol** del calldata (de `proof`, les inverses auxiliars incloses, o de `pubSignals`): un bit canviat, un valor aleatori (de 256 bits, per sota de `q` o per sota de `r`), o un valor de les fronteres dels cossos (0, 1, `r − 1`, `r`, `r + 1`, `q − 1`, `q`, `2^256 − 1`);
+    - **un punt** (un commitment, `W` o `W'`) canviat per un altre punt de G1 (un múltiple aleatori de `[1]₁`, el mateix punt negat o un altre punt de la prova), per un punt fora de la corba amb coordenades per sota de `q`, pel punt a l'infinit `(0, 0)` o per `(1, ±2)`, de coordenada `< 2^192`;
+    - **dos valors intercanviats:** dos escalars de l'stage 4 del transcript (avaluacions o trossos de `Q`), o dos punts;
+    - **un públic:** `+ 1`, aleatori, `p + r` (el mateix element d'`Fr`, l'àlies que snarkjs no refusa, Annex F.13), `r`, o 256 bits qualssevol;
+    - **cada valor amb una comprovació pròpia:** `W` o `W'` per un altre punt de G1; `inv`, `invZh`, una inversa auxiliar o un tros de `Q` amb `+ 1`, un valor aleatori per sota de `r` o `+ r`;
+    - **la longitud del calldata:** més curt que els arguments, que reverteix, o amb bytes de més al final, que el contracte no llegeix (el veredicte és el de la prova);
+    - **"arreglades"** (`fixup`, que passa de l'arnès de M40 a `pilfflonk/tests/data/mutations.rs`, i `Calldata::encode`), perquè passin `invZh`, `inv` i les inverses auxiliars:
+      - una avaluació, un commitment (per un punt aleatori de G1) o un públic canviats, o dues avaluacions o dos commitments intercanviats: arriben a `checkQPieces` o al *pairing*;
+      - `W` per un punt aleatori de G1 (només canvia `y`), i els trossos de `Q` rebalancejats sense canviar-ne la suma: arriben al *pairing*;
+      - un tros de `Q` canviat: arriba a `checkQPieces`;
+      - **`W' = y⁻¹·(E + J − F)`**, la falsificació de la revisió de M40, que anul·la el costat esquerre del *pairing*. És d'una prova que passa `checkQPieces`: honesta, amb `W` canviat i, segons la clau, amb els trossos de `Q` rebalancejats (`Q` partit) o amb una avaluació, un commitment o un públic canviats (`Q` sencer). `F`, `E` i `J` els calcula el JS amb les seves pròpies funcions (`forgeWp` de `js_batch.mjs`). Amb una `X_2` honesta, `e(0, [1]₂) = e(W', [τ]₂)` no es compleix, i el cas ha de fallar al *pairing*.
+  - **Què es compara.** Per a cada cas:
+    - **el veredicte del JS** sobre la prova i els publics que té el calldata, escrits com `proof.json` i `publics.json`, sigui quin sigui el valor de cada paraula (en decimal, i el JS en fa les comprovacions). El calcula `verify()` de `verify.js`, per lots, en un sol procés de Node per ronda: `pilfflonk/tests/data/js_batch.mjs`, que fa el mateix que `bin/verify.js` amb cada prova. El primer cas de cada família i de cada clau (llevat de la de la longitud, que no canvia la prova) també passa per `js_verifier::verify`, el de la CLI, i hi ha de coincidir;
+    - **les comprovacions que només són del calldata:** cada inversa auxiliar ha de ser `1/(ξ − ω^j)` de l'`ξ` de la prova i `< r`, i un calldata més curt que els arguments reverteix;
+    - **el que fa `verifyProof` a Foundry,** que ha de ser el mateix: `true`, `false` o un *revert*, i aquest últim només amb el calldata curt;
+    - **la comprovació que el refusa,** que també ha de ser la mateixa: la que diu el missatge del JS i la que diu una sonda del contracte. La sonda (`Probe`, a `fuzz.rs`) és una còpia instrumentada del contracte generat, que el test escriu al seu directori i que el generador no escriu mai. Cada `fail()` hi diu el seu lloc, i el cos desa el gas que queda després de cada pas. El test comprova que la sonda diu el mateix que el verificador en tots els casos;
+    - **la cobertura:** cada família diu a quines comprovacions han d'arribar els seus casos. Per exemple, un commitment canviat arriba a `invZh`, una `W` canviada a `inv`, i les "arreglades", al *pairing* si `Q` és sencer i a `checkQPieces` o al *pairing* si està partit. A més, un cas que refusa el *pairing* ha de costar com a mínim el 90 % del gas de la prova honesta (el criteri de M40).
+
+    Quan una família té una discrepància, no s'hi fan més casos en cap clau, i el test informa del cas: les paraules que ha canviat, els missatges del JS i el resultat del contracte (el gas i la comprovació).
+  - **Foundry.** El fuzzer copia `pilfflonk/solidity/foundry.toml` i `pilfflonk/solidity/fuzz/PilfflonkFuzz.t.sol` a un projecte propi, amb el verificador, la sonda i un fitxer binari per cas (`cases/<i>.bin`, sense JSON), i l'executa per rondes de 250 casos (`FuzzProject` de `foundry.rs`). L'executa sense aïllament (`FOUNDRY_ISOLATE=false`). Amb aïllament, que és el valor per defecte de Foundry, cada crida és una transacció pròpia, i totes les que van després de la primera costen 2.500 més (EIP-2929, un compte fred). Sense, i amb una primera crida que no es compta i que fa créixer la memòria del test, cada cas es mesura com la primera crida del test de M40: la prova honesta costa exactament el que diu la taula de M41.
+  - **Execucions** (01-10-2026, amb una càrrega de 21 a 28 sobre 256 CPU; els casos i els resultats no canvien d'una execució a l'altra):
+    - **la de la CI:** 400 casos, que són 403 (31 per clau), en 37 s, setups inclosos;
+    - **l'ampliada** (`PILFFLONK_FUZZ_CASES=10400`): 10.400 casos (800 per clau) en 94 s. Cada clau hi passa de 5 a 13 s fent els casos, de 12 a 19 s al JS i de 2 a 5 s a Foundry, en quatre fils.
+
+    **No hi ha cap discrepància.** Tots els veredictes coincideixen, i també la comprovació que refusa cada cas. El contracte només reverteix amb el calldata curt, i no accepta cap prova mutada: les acceptades de la família de la longitud són proves honestes amb bytes de més al final. Cada família arriba a les comprovacions que busca. Els casos de l'execució ampliada són aquests:
+
+    | Família | Casos | D'acord | Refusats per (la comprovació del contracte, que és la del JS) | Gas de `verifyProof` |
+    |---|---|---|---|---|
+    | Honestes | 52 | 52 | acceptada 52 | 180.790–406.897 |
+    | Un bit canviat | 465 | 465 | coordenada `≥ q` 1, fora de la corba 199, escalar `≥ r` 5, `invZh` 42, inversa auxiliar 2, `checkQPieces` 65, `inv` 151 | 1.207–58.204 |
+    | Una paraula aleatòria | 467 | 467 | coordenada `≥ q` 63, fora de la corba 142, escalar `≥ r` 60, `invZh` 31, inversa auxiliar 8, `checkQPieces` 56, `inv` 107 | 1.021–58.204 |
+    | Una frontera dels cossos | 467 | 467 | coordenada `≥ q` 42, fora de la corba 163, escalar `≥ r` 175, `invZh` 9, inversa auxiliar 2, `checkQPieces` 25, `inv` 51 | 1.021–49.416 |
+    | Un altre punt de G1 | 468 | 468 | `invZh` 342, `inv` 59, *pairing* 67 | 7.544–406.897 |
+    | Un punt fora de la corba | 468 | 468 | fora de la corba 468 | 1.207–9.794 |
+    | El punt a l'infinit | 467 | 467 | punt a l'infinit 467 | 1.041–9.628 |
+    | `(1, ±2)` | 467 | 467 | coordenada `< 2^192` 390, *pairing* 77 | 3.293–406.897 |
+    | Dos escalars de l'stage 4 intercanviats | 465 | 465 | `checkQPieces` 155, `inv` 310 | 12.543–49.416 |
+    | Dos punts intercanviats | 466 | 466 | `invZh` 446, `inv` 20 | 7.544–58.204 |
+    | Un públic | 465 | 465 | escalar `≥ r` 277, `invZh` 188 | 5.241–22.470 |
+    | `W` | 465 | 465 | `inv` 465 | 13.400–58.204 |
+    | `W'` | 464 | 464 | *pairing* 464 | 180.790–406.897 |
+    | `inv` | 464 | 464 | escalar `≥ r` 146, `inv` 318 | 4.937–58.204 |
+    | `invZh` | 467 | 467 | escalar `≥ r` 158, `invZh` 309 | 5.070–22.470 |
+    | Una inversa auxiliar | 69 | 69 | escalar `≥ r` 27, inversa auxiliar 42 | 6.136–9.941 |
+    | Un tros de `Q` | 164 | 164 | escalar `≥ r` 57, `checkQPieces` 107 | 6.648–27.550 |
+    | La longitud del calldata | 467 | 467 | acceptada 232, *revert* 235 | 515–406.903 |
+    | Arreglada: una avaluació | 466 | 466 | `checkQPieces` 145, *pairing* 321 | 12.543–406.897 |
+    | Arreglada: un commitment | 465 | 465 | `checkQPieces` 164, *pairing* 301 | 12.543–406.897 |
+    | Arreglada: un públic | 465 | 465 | `checkQPieces` 164, *pairing* 301 | 12.543–406.897 |
+    | Arreglada: dos valors intercanviats | 465 | 465 | `checkQPieces` 160, *pairing* 305 | 12.543–406.897 |
+    | Arreglada: `W` | 466 | 466 | *pairing* 466 | 180.790–406.897 |
+    | Arreglada: els trossos de `Q` rebalancejats | 165 | 165 | *pairing* 165 | 204.560–277.627 |
+    | Arreglada: un tros de `Q` | 165 | 165 | `checkQPieces` 165 | 12.543–27.550 |
+    | Arreglada: `W'` falsificada | 466 | 466 | *pairing* 466 | 180.790–406.897 |
+
+    El fuzzer no pot arribar a tres comprovacions, i no hi arriba: `xiSeed = 0` i `Z_T(y) = 0` demanen que el transcript doni un valor concret (probabilitat `≈ 2^-254`), i la del retorn dels precompilats només falla en una cadena sense els precompilats d'EIP-196 i EIP-197 (Annex F.13).
+  - **Sense eines** (la CI): el test és `#[ignore]` sense `PILFFLONK_FORGE`, `PILFFLONK_SOLC` i `PIL2C_EXEC`, com l'E2E de M41. L'arnès de M40 (`setup/pilfflonk/tests/solidity.rs`) fa servir ara el `fixup` de `mutations.rs`, i dona els mateixos resultats i el mateix gas.
+- **Informe de gas** (Fase 4, validació 3): l'Annex I. Totes les claus, on va el gas de 13 d'elles, com creix, la comparació amb l'`FflonkVerifier` de snarkjs i les oportunitats, que no s'implementen.
+- **Obert després de M42:**
+  - **Gas.** Les oportunitats de l'Annex I.6, que no s'implementen: el contracte es queda com el va revisar M40. N'hi ha dues que no toquen el contracte: el nombre de *runs* de l'optimitzador, que tria qui el desplega (fins a un 5,5 % menys de gas, amb més codi), i l'agrupació del setup (`--extra-muls 0` gasta un 5,5 % menys al Fibonacci). De les dues observacions de M41, els `add(pMem, …)` no estalvien res, i els `PUSH32` de `q` que l'optimitzador converteix en `codecopy` són part del que donen els *runs* (Annex I.6).
+  - **Foundry a la CI (M28).** Els tests de Foundry (de M40, M41 i M42) són `#[ignore]` sense les eines. Perquè la CI els executi, caldria:
+    - instal·lar-hi Foundry v1.8.3 i solc 0.8.37, fixats i comprovats amb el seu sha256;
+    - donar-hi `PILFFLONK_FORGE`, `PILFFLONK_SOLC` i `PIL2C_EXEC`;
+    - executar-los amb `--test-threads 2` (M26). En aquesta màquina, el *fuzzer* de la mida de la CI tarda uns 40 s, i l'E2E de les 73 claus, uns 80 s.
+
+    Dues precaucions: mesurar les mides amb solc i no amb `forge build --sizes`, que escriu a `~/.foundry`; i fer servir la mateixa versió de Foundry, perquè el gas que mesura depèn del seu mode d'aïllament (Annex I.1).
   - **Mida.** El `qVerifier` desplegat creix amb el nombre de restriccions (uns 50 bytes per entrada): una AIR molt més gran que `all` podria passar de l'EIP-170. Llavors caldria partir-lo en dos contractes, com el sistema antic, o avaluar el `qVerifier` amb un bucle sobre el codi.
   - **Llicència del contracte:** `GPL-3.0`, la de la plantilla de snarkjs (`SPDX-License-Identifier`; sense la capçalera de snarkjs, que és de l'equip). La plantilla Solidity del STARK en fa servir `AGPL-3.0`; si l'usuari en vol una altra, és una línia.
 
@@ -1065,12 +1133,18 @@ pub fn group(pols: &[CommittedPol], params: &GroupingParams) -> Result<Layout, G
 
 **Validació:**
 1. Foundry, l'entorn de proves de Solidity, accepta totes les proves de les fases 1 a 3. **Coberta a M41.**
-2. Amb *fuzzing* diferencial sobre proves mutades, el verificador JS i el Solidity coincideixen sempre a l'hora d'acceptar o rebutjar.
-3. Es genera un informe de gas.
+2. Amb *fuzzing* diferencial sobre proves mutades, el verificador JS i el Solidity coincideixen sempre a l'hora d'acceptar o rebutjar. **Coberta a M42.**
+3. Es genera un informe de gas. **Coberta a M42** (Annex I).
 
 **M40** (§4.5, "Verificador Solidity"): `--solidity`, `pilfflonk-solidity`, la plantilla i la definició del calldata, amb Foundry v1.8.3 i solc 0.8.37, i les quatre correccions de la seva revisió de seguretat (`X_2`, els *offsets*, el transcript sense avaluacions i el que tornen els precompilats). Per a la validació 1, Foundry ja accepta les proves de deu claus de les fases 1 i 2 (el Fibonacci, l'empaquetat, els *offsets* amb signe, `all` en bus de suma, `Q` partit i els tres dominis que no són `everyRow`), les refusa mutades i coincideix amb el JS en tots els casos; la resta de les *fixtures* i el codificador de la CLI són de M41, i les validacions 2 i 3, de M42.
 
 **M41** (§4.5, "Codificador de calldata" i "Validació de M41"): `proofman-cli pilfflonk calldata`, el codificador del calldata, a `proofman_pilfflonk::calldata`. És com el `zkey export soliditycalldata` de snarkjs: refà el transcript i afegeix les inverses auxiliars. Foundry accepta les proves de les 73 claus de totes les *fixtures* de les fases 1 a 3, amb el calldata de la CLI, i coincideix amb el JS en les proves canviades. **La validació 1 queda coberta.** Les validacions 2 i 3 són de M42.
+
+**M42** (§4.5, "Validació de M42", i l'Annex I):
+- **El *fuzzing* diferencial entre el JS i el Solidity:** 25 famílies de mutacions sobre 13 claus, a la mida de la CI (403 casos) i ampliat (10.400). No hi ha cap discrepància. El JS i Foundry coincideixen en el veredicte i en la comprovació que refusa cada cas, i el contracte retorna `false`: només reverteix amb el calldata curt.
+- **L'informe de gas:** les 73 claus, on va el gas, un model corregit, la comparació amb snarkjs i les oportunitats.
+
+**Les validacions 2 i 3 queden cobertes: ho estan totes les de la Fase 4.**
 
 ### Fase 5: GPU
 
@@ -1149,7 +1223,7 @@ No n'hi ha cap. Totes les preguntes (P1–P10) estan decidides (§7.1).
 | El compilador corromp valors amples, a vegades sense avisar | C2–C4, ja fets; els tests BN254 del compilador; comprovació del `baseField` i de les constants `≥ r` al setup |
 | L'esquema dels fitxers divergeix entre Rust i C++ | Un sol propietari (`proofman-pilfflonk`) i tests d'anada i tornada Rust ↔ C++ |
 | Rendiment i memòria en CPU | La versió CPU va primer i ha de ser funcional, no òptima. Informe a la Fase 3 (Annex H), avaluació de `Q` per parts (M39), i la GPU (Fase 5) sobre el codi MSM/NTT que ja existeix. |
-| Discrepàncies de codificació amb Solidity (*endianness*, punt a l'infinit, reducció mòdul `r`) | Codificació fixada a l'Annex A.4 i vectors de test des de la Fase 0. A M40, Foundry i el JS coincideixen en proves reals, mutades i amb valors fora de rang (§4.5) |
+| Discrepàncies de codificació amb Solidity (*endianness*, punt a l'infinit, reducció mòdul `r`) | Codificació fixada a l'Annex A.4 i vectors de test des de la Fase 0. A M40, Foundry i el JS coincideixen en proves reals, mutades i amb valors fora de rang (§4.5); a M42, el *fuzzing* diferencial (10.400 casos de 25 famílies sobre 13 claus) no hi troba cap discrepància |
 | La regla d'agrupació generalitzada no es comporta bé amb conjunts d'*offsets* grans | Tests de propietats i mètriques de grau per a les fixtures de les fases 1 a 3; la regla és una sola funció pura, fàcil de canviar |
 
 ---
@@ -1601,6 +1675,7 @@ Aquests problemes no bloquegen el backend nou, però han sortit durant l'anàlis
    - **Els publics no es comproven.** `pubSignals` entren al transcript tal com són i als càlculs mòdul `r`, de manera que un públic `p` i `p + r` són el mateix enunciat amb dos transcripts. El verificador de pilfflonk refusa un públic `≥ r`, com el JS (`fromObjectPublics`).
    - Amb `nPublic = 0`, la plantilla declara `uint256[1] calldata pubSignals` igualment (`Math.max(nPublic, 1)`). pilfflonk no declara `pubSignals` si no hi ha publics.
    - **No es mira què tornen els precompilats** (troballa BAIXA de la revisió de M40, que depèn de la cadena). `g1_acc`, `g1_mulAcc` i `g1_mulAccC` només comproven que la crida a `0x06` o `0x07` hagi anat bé, i `checkPairing` pren `and(success, mload(mIn))`: una paraula qualsevol que no sigui 0. En una cadena sense aquests precompilats, o on no tornin el que diu l'EIP-196/197, una crida a una adreça buida va bé, no torna res, i el verificador llegeix la memòria que hi havia. **Enduriment deliberat respecte de snarkjs:** el verificador de pilfflonk exigeix `returndatasize() = 64` a `0x06` i `0x07` (`checkPointResult`), i `returndatasize() = 32` i una resposta igual a 1 a `0x08`; costa de 587 a 907 de gas per prova (§4.5).
+   - **Un avís de solc** (trobat a M42, en mesurar-ne el gas, Annex I.5). Amb solc 0.8.37, el contracte compila amb l'avís 5667: el paràmetre `proof` de `verifyProof` no es fa servir, perquè el contracte llegeix la prova a posicions fixes del calldata. El de pilfflonk el fa servir (`checkInput(proof, …)`) i compila sense cap avís (§4.5, "Compilació").
 
 ---
 
@@ -2067,3 +2142,232 @@ rm -rf "$BENCH_DIR"                              # el ptau, els pilouts i els re
 ```
 
 Per defecte, cada mida esborra les seves claus, el witness i les proves en acabar (`BENCH_KEEP=1` els guarda). Abans d'una mida gran cal comprovar l'espai (`df -h`): a `2^24`, el `fibonacci` necessita uns 5 GB (el `.const` i l'SRS d'una clau, el witness i el `pilout`), a més dels 4,8 GB del `ptau`, i `all_sum` a `2^23`, uns 13 GB.
+
+## Annex I. Gas del verificador Solidity (M42)
+
+Aquest annex és l'informe de gas de la Fase 4 (validació 3). Recull el gas de `verifyProof` i el del seu calldata per a les 73 claus de M41 (I.2), on va el gas (I.3), com creix (I.4), la comparació amb l'`FflonkVerifier` de snarkjs (I.5) i les oportunitats, que no s'implementen (I.6). Les xifres són de l'01-10-2026, amb el contracte de M40, que no canvia.
+
+### I.1 La mesura
+
+**Les eines.** Foundry v1.8.3 i solc 0.8.37, amb l'optimitzador a 200 *runs* (el `foundry.toml` dels tests) i l'EVM per defecte de solc 0.8.37, que té `PUSH0`. Els precompilats tenen els costos d'Istanbul (EIP-1108): `0x06` 150, `0x07` 6.000, i `0x08` 45.000 més 34.000 per parell.
+
+**El gas de `verifyProof`.** És el de la crida, mesurat amb `gasleft()` abans i després, com fa el test de Foundry de M40 (`test/PilfflonkVerifier.t.sol`). Inclou l'execució del contracte i la crida (100 de gas, perquè l'adreça és calenta), i no inclou els 21.000 de la transacció ni el calldata. Foundry aïlla per defecte cada crida en una transacció pròpia, i així només la primera crida d'un test es mesura d'aquesta manera: les següents costen 2.500 més, perquè l'adreça és freda (EIP-2929). Per això l'E2E de M41 mesura la primera crida de cada clau, i el fuzzer executa Foundry sense aïllament (§4.5, "Validació de M42"). Les dues mesures donen el mateix gas.
+
+**On s'executa.**
+- **Una transacció que crida `verifyProof` directament** costa uns 21.000, més el calldata, més el gas de `verifyProof`, menys els 100 de la crida: de 201.805 (`fibonacci_k3`) a 470.097 (`all_sum_unpacked`).
+- **Un contracte que el crida** la primera vegada en una transacció hi suma els 2.500 de l'adreça freda.
+
+**El calldata** (EIP-2028): 16 per byte que no és zero i 4 per byte zero, del selector i dels arguments. Depèn dels valors de la prova, que aquí són els de la llavor de M41.
+
+**On va el gas.** Ho mesura la sonda del fuzzer (§4.5, "Validació de M42"), amb la prova honesta de cada clau. La sonda és una còpia del contracte que desa `gas()` després de cada pas del cos. La seva crida costa entre 285 i 322 més que la del verificador: són els punts de mesura, que cada pas inclou (uns pocs de gas cadascun), la seva memòria i les 15 paraules que retorna. Com al verificador, el primer pas que escriu a la memòria, i per tant la fa créixer, és el transcript: la sonda guarda a la pila el gas dels dos primers punts fins després del transcript.
+
+### I.2 Les 73 claus
+
+El gas de `verifyProof` i el del calldata de la prova de cada clau de M41 (`foundry_accepts_the_proof_of_every_fixture`, que l'imprimeix). Es mesuren de nou, i coincideixen amb M41: els extrems de cada família de la taula de M41 (§4.5) i els valors de les claus de la taula de M40. A M42, la taula afegeix tres columnes per al model (I.4):
+- **Arrels:** `Σ_i k_i·|O_i|`, les arrels de tots els `f`;
+- **Horner:** `Σ_i k_i²·|O_i|`, els productes de la regla de Horner que dona el valor de cada `f_i` a cada arrel;
+- **`qVerifier`:** les entrades del seu codi.
+
+La columna *model* és la d'I.4.
+
+| Clau | `f` | Arrels | Horner | `qVerifier` | Paraules | Publics | Codi (bytes) | Gas de `verifyProof` | Model | Gas del calldata |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `fibonacci` | 5 | 9 | 11 | 26 | 22 | 3 | 5.290 | 180.790 | 182.006 | 12.108 |
+| `fibonacci_k3` | 3 | 9 | 23 | 26 | 18 | 3 | 5.124 | 170.869 | 169.786 | 10.036 |
+| `fibonacci_unpacked` | 6 | 8 | 8 | 26 | 21 | 3 | 5.252 | 185.168 | 187.116 | 11.596 |
+| `packed` | 6 | 31 | 121 | 62 | 44 | 2 | 8.787 | 229.280 | 232.132 | 22.920 |
+| `packed_unpacked` | 19 | 28 | 28 | 62 | 57 | 2 | 10.094 | 301.425 | 306.162 | 29.528 |
+| `signed` | 6 | 38 | 98 | 57 | 51 | 3 | 11.360 | 236.264 | 238.402 | 26.812 |
+| `signed_d3` | 7 | 34 | 82 | 63 | 49 | 3 | 11.984 | 243.184 | 238.948 | 25.896 |
+| `signed_d2` | 7 | 39 | 119 | 78 | 54 | 3 | 12.662 | 253.359 | 250.738 | 28.420 |
+| `signed_unpacked` | 13 | 19 | 19 | 57 | 40 | 3 | 9.820 | 252.505 | 252.772 | 21.264 |
+| `signed_unpacked_d2` | 20 | 26 | 26 | 78 | 61 | 3 | 11.889 | 313.881 | 311.768 | 32.016 |
+| `signed_split_m1` | 6 | 40 | 106 | 57 | 54 | 3 | 11.537 | 239.509 | 241.802 | 28.408 |
+| `signed_split_m1_unpacked` | 15 | 21 | 21 | 57 | 47 | 3 | 10.397 | 270.324 | 268.992 | 24.788 |
+| `signed_split_m2` | 6 | 39 | 101 | 57 | 53 | 3 | 11.597 | 238.864 | 240.002 | 27.932 |
+| `signed_split_m2_unpacked` | 14 | 20 | 20 | 57 | 44 | 3 | 10.149 | 261.811 | 260.882 | 23.288 |
+| `domain_FirstRow` | 5 | 5 | 5 | 13 | 19 | 2 | 4.030 | 174.065 | 174.828 | 10.084 |
+| `domain_FirstRow_unpacked` | 5 | 5 | 5 | 13 | 19 | 2 | 4.030 | 174.065 | 174.828 | 10.060 |
+| `domain_FirstRow_d2` | 5 | 7 | 11 | 19 | 21 | 2 | 4.521 | 178.939 | 178.664 | 11.108 |
+| `domain_FirstRow_d2_unpacked` | 7 | 7 | 7 | 19 | 25 | 2 | 4.631 | 191.596 | 191.684 | 13.132 |
+| `domain_FirstRow_split` | 5 | 6 | 8 | 13 | 21 | 2 | 4.395 | 177.686 | 176.428 | 11.084 |
+| `domain_LastRow` | 5 | 5 | 5 | 13 | 19 | 2 | 4.030 | 174.065 | 174.828 | 10.060 |
+| `domain_LastRow_unpacked` | 5 | 5 | 5 | 13 | 19 | 2 | 4.030 | 174.065 | 174.828 | 10.096 |
+| `domain_LastRow_d2` | 5 | 7 | 11 | 19 | 21 | 2 | 4.540 | 178.910 | 178.664 | 11.120 |
+| `domain_LastRow_d2_unpacked` | 7 | 7 | 7 | 19 | 25 | 2 | 4.631 | 191.596 | 191.684 | 13.120 |
+| `domain_LastRow_split` | 5 | 6 | 8 | 13 | 21 | 2 | 4.439 | 177.570 | 176.428 | 11.132 |
+| `domain_Frames` | 6 | 19 | 33 | 39 | 34 | 0 | 8.656 | 206.119 | 205.294 | 17.388 |
+| `domain_Frames_unpacked` | 9 | 15 | 15 | 39 | 36 | 0 | 7.504 | 216.594 | 218.424 | 18.460 |
+| `domain_Frames_d2` | 7 | 23 | 55 | 57 | 40 | 0 | 9.270 | 225.208 | 221.312 | 20.436 |
+| `domain_Frames_d2_unpacked` | 15 | 21 | 21 | 57 | 54 | 0 | 9.303 | 269.241 | 268.992 | 27.640 |
+| `domain_Frames_split` | 6 | 20 | 36 | 39 | 36 | 0 | 8.973 | 208.791 | 206.894 | 18.448 |
+| `domain_Domains` | 6 | 11 | 13 | 25 | 28 | 2 | 6.132 | 191.270 | 191.410 | 14.704 |
+| `domain_Domains_unpacked` | 7 | 9 | 9 | 25 | 28 | 2 | 5.941 | 195.379 | 195.120 | 14.668 |
+| `domain_Domains_d2` | 6 | 15 | 33 | 37 | 32 | 2 | 6.952 | 202.262 | 199.882 | 16.704 |
+| `domain_Domains_d2_unpacked` | 11 | 13 | 13 | 37 | 40 | 2 | 7.140 | 230.467 | 228.832 | 20.776 |
+| `domain_Domains_split` | 6 | 12 | 20 | 25 | 30 | 2 | 6.465 | 196.050 | 193.410 | 15.680 |
+| `domain_Domains_split_unpacked` | 8 | 10 | 10 | 25 | 32 | 2 | 6.270 | 204.560 | 203.230 | 16.704 |
+| `sum_bus` | 6 | 16 | 34 | 32 | 31 | 1 | 7.031 | 203.284 | 200.752 | 16.040 |
+| `sum_bus_unpacked` | 10 | 12 | 12 | 32 | 31 | 1 | 6.679 | 219.706 | 220.192 | 16.028 |
+| `sum_bus_degree4` | 6 | 16 | 34 | 34 | 31 | 1 | 7.110 | 203.494 | 200.964 | 16.040 |
+| `sum_bus_degree4_unpacked` | 10 | 12 | 12 | 34 | 31 | 1 | 6.777 | 219.887 | 220.404 | 15.992 |
+| `prod_bus` | 6 | 11 | 15 | 32 | 26 | 1 | 6.064 | 191.791 | 192.352 | 13.480 |
+| `prod_bus_unpacked` | 8 | 10 | 10 | 32 | 29 | 1 | 6.096 | 203.700 | 203.972 | 14.968 |
+| `prod_bus_im` | 6 | 15 | 31 | 67 | 30 | 1 | 7.918 | 203.625 | 202.862 | 15.516 |
+| `prod_bus_im_unpacked` | 11 | 13 | 13 | 67 | 38 | 1 | 7.785 | 232.387 | 232.012 | 19.600 |
+| `prod_bus_im_split` | 6 | 16 | 34 | 67 | 32 | 1 | 8.153 | 206.102 | 204.462 | 16.492 |
+| `plookup_sum` | 9 | 16 | 22 | 39 | 33 | 0 | 7.261 | 218.885 | 220.424 | 16.504 |
+| `plookup_sum_unpacked` | 12 | 14 | 14 | 39 | 35 | 0 | 7.461 | 237.062 | 237.154 | 17.576 |
+| `plookup_sum_split` | 8 | 17 | 29 | 39 | 33 | 0 | 7.384 | 215.373 | 215.714 | 16.564 |
+| `plookup_prod` | 9 | 16 | 22 | 47 | 33 | 0 | 7.518 | 219.564 | 221.272 | 16.516 |
+| `plookup_prod_unpacked` | 12 | 14 | 14 | 47 | 35 | 0 | 7.712 | 237.799 | 238.002 | 17.552 |
+| `plookup_prod_split` | 8 | 17 | 29 | 47 | 33 | 0 | 7.641 | 216.052 | 216.562 | 16.564 |
+| `permutation_sum` | 5 | 13 | 29 | 37 | 26 | 0 | 6.341 | 191.382 | 190.172 | 13.328 |
+| `permutation_sum_unpacked` | 9 | 11 | 11 | 37 | 32 | 0 | 6.436 | 212.497 | 212.612 | 16.388 |
+| `permutation_prod` | 5 | 11 | 19 | 38 | 24 | 0 | 6.178 | 186.580 | 186.678 | 12.316 |
+| `permutation_prod_unpacked` | 8 | 10 | 10 | 38 | 29 | 0 | 6.239 | 204.149 | 204.608 | 14.840 |
+| `permutation_prod_split` | 6 | 12 | 20 | 38 | 28 | 0 | 6.508 | 195.762 | 194.788 | 14.340 |
+| `connection_sum` | 7 | 15 | 31 | 63 | 28 | 0 | 7.851 | 208.979 | 209.148 | 14.352 |
+| `connection_sum_unpacked` | 13 | 15 | 15 | 63 | 36 | 0 | 8.443 | 246.729 | 247.808 | 18.484 |
+| `connection_sum_split` | 8 | 16 | 30 | 63 | 32 | 0 | 8.193 | 218.367 | 217.058 | 16.388 |
+| `connection_prod` | 6 | 14 | 28 | 62 | 25 | 0 | 7.736 | 201.344 | 200.732 | 12.792 |
+| `connection_prod_unpacked` | 11 | 13 | 13 | 62 | 30 | 0 | 7.993 | 229.561 | 231.482 | 15.400 |
+| `connection_prod_split` | 7 | 15 | 27 | 62 | 29 | 0 | 7.866 | 208.104 | 208.642 | 14.852 |
+| `range_check_sum` | 6 | 13 | 19 | 24 | 28 | 0 | 6.032 | 193.847 | 194.504 | 14.352 |
+| `range_check_sum_unpacked` | 8 | 10 | 10 | 24 | 27 | 0 | 5.902 | 202.310 | 203.124 | 13.876 |
+| `range_check_prod` | 6 | 17 | 29 | 62 | 30 | 0 | 7.999 | 202.353 | 204.732 | 15.388 |
+| `range_check_prod_unpacked` | 9 | 13 | 13 | 62 | 30 | 0 | 7.614 | 214.998 | 218.062 | 15.388 |
+| `range_check_prod_split` | 6 | 18 | 32 | 62 | 32 | 0 | 8.234 | 204.830 | 206.332 | 16.364 |
+| `all_sum` | 9 | 36 | 190 | 147 | 55 | 3 | 12.545 | 275.771 | 274.672 | 28.572 |
+| `all_sum_unpacked` | 31 | 35 | 35 | 147 | 82 | 3 | 15.328 | 406.897 | 405.492 | 42.300 |
+| `all_sum_split` | 9 | 37 | 193 | 147 | 57 | 3 | 12.638 | 277.627 | 276.272 | 29.572 |
+| `all_prod` | 9 | 35 | 157 | 158 | 52 | 3 | 12.963 | 270.923 | 271.238 | 27.024 |
+| `all_prod_unpacked` | 30 | 34 | 34 | 158 | 79 | 3 | 15.474 | 399.271 | 398.548 | 40.764 |
+| `all_prod_split` | 9 | 38 | 180 | 164 | 56 | 3 | 13.288 | 276.155 | 278.074 | 29.024 |
+| `all_prod_split3` | 9 | 37 | 165 | 158 | 55 | 3 | 13.125 | 274.139 | 274.638 | 28.560 |
+
+El més car és `all_sum` amb `--no-packing` (31 `f`), i el contracte més gran, `all_prod` amb `--no-packing` (15.474 bytes, per sota dels 24.576 de l'EIP-170). El calldata va de 10.036 a 42.300 de gas.
+
+### I.3 On va el gas
+
+Aquesta taula és de les 13 claus del fuzzer, amb el gas de cada pas del cos del contracte (els passos de §4.5, "Els passos"):
+- **Entrada:** `checkInput`;
+- **Transcript:** `computeChallenges`;
+- **`Z_H`, `invZh`:** `computeZh`;
+- **`Zi`:** `computeZi`, amb les inverses auxiliars;
+- **`Q(ξ)`:** `computeQ`;
+- **Trossos:** `checkQPieces`;
+- **Arrels:** `computeRoots`;
+- **Inverses:** `computeInversions` amb `inverseArray`;
+- **`r_i(y)`:** `computeR`;
+- **F, E, J:** `computeFEJ`;
+- ***Pairing*:** `checkPairing`.
+
+La **resta** és la crida, el *dispatch*, la descodificació ABI dels arguments i el retorn: `verifyProof` menys el cos. Els **precompilats** són el mínim que el protocol gasta en precompilats, `113.000 + 6.150·(f + 2) + 100·(2f + 5)`:
+- `f + 2` multiplicacions: `q_i·[f_i]` per a `f − 1` dels `f`, `E`, `J` i `y·[W']`;
+- `f + 2` sumes;
+- un *pairing* de dos parells;
+- 100 per cada crida.
+
+| Clau | `f` | `verifyProof` | Entrada | Transcript | `Z_H`, `invZh` | `Zi` | `Q(ξ)` | Trossos | Arrels | Inverses | `r_i(y)` | F, E, J | *Pairing* | Resta | Precompilats |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `fibonacci` | 5 | 180.790 | 4.885 | 1.205 | 1.022 | 32 | 1.933 | – | 1.421 | 6.749 | 1.533 | 40.182 | 121.206 | 599 | 157.550 (87 %) |
+| `fibonacci_unpacked` | 6 | 185.168 | 4.752 | 1.175 | 900 | 32 | 1.933 | – | 324 | 6.058 | 1.125 | 47.044 | 121.206 | 596 | 163.900 (89 %) |
+| `packed` | 6 | 229.280 | 7.678 | 2.017 | 1.113 | 32 | 4.600 | – | 6.901 | 23.923 | 14.092 | 47.044 | 121.206 | 651 | 163.900 (71 %) |
+| `packed_unpacked` | 19 | 301.425 | 11.407 | 2.072 | 696 | 32 | 4.600 | – | 568 | 20.155 | 3.669 | 136.306 | 121.206 | 691 | 246.450 (82 %) |
+| `signed_split_m1` | 6 | 239.509 | 9.141 | 2.132 | 1.071 | 32 | 4.160 | 618 | 6.880 | 33.417 | 13.114 | 47.044 | 121.206 | 671 | 163.900 (68 %) |
+| `signed_split_m1_unpacked` | 15 | 270.324 | 9.710 | 1.914 | 747 | 32 | 4.160 | 618 | 1.576 | 18.032 | 2.810 | 108.844 | 121.206 | 652 | 221.050 (82 %) |
+| `domain_Domains` | 6 | 191.270 | 5.800 | 1.260 | 847 | 712 | 1.834 | – | 1.579 | 8.574 | 1.771 | 47.051 | 121.206 | 613 | 163.900 (86 %) |
+| `domain_Domains_split_unpacked` | 8 | 204.560 | 6.832 | 1.304 | 696 | 654 | 1.834 | 521 | 493 | 8.176 | 1.421 | 60.789 | 121.206 | 611 | 176.600 (86 %) |
+| `sum_bus` | 6 | 203.284 | 6.066 | 1.687 | 1.071 | 32 | 2.349 | – | 4.668 | 13.924 | 4.591 | 47.051 | 121.206 | 616 | 163.900 (81 %) |
+| `prod_bus_unpacked` | 8 | 203.700 | 6.300 | 1.563 | 747 | 32 | 2.326 | – | 493 | 8.182 | 1.427 | 60.789 | 121.206 | 612 | 176.600 (87 %) |
+| `all_sum_unpacked` | 31 | 406.897 | 17.115 | 3.548 | 929 | 32 | 10.659 | – | 734 | 28.116 | 5.066 | 218.713 | 121.206 | 756 | 322.650 (79 %) |
+| `all_sum_split` | 9 | 277.627 | 10.290 | 3.353 | 1.712 | 32 | 10.659 | 521 | 10.575 | 29.101 | 21.837 | 67.651 | 121.206 | 667 | 182.950 (66 %) |
+| `all_prod_split3` | 9 | 274.139 | 9.774 | 3.360 | 1.468 | 32 | 11.546 | 618 | 9.280 | 29.406 | 19.121 | 67.644 | 121.206 | 661 | 182.950 (67 %) |
+
+**Què se'n treu:**
+- **Els precompilats són entre el 66 % i el 89 % del gas.** El *pairing* (121.206 a totes les claus) i les multiplicacions de F, E i J en són gairebé tot. `computeFEJ` és `12.716 + 6.866·(f − 1)`: la multiplicació i la suma de cada `f` llevat de `f_0`, que es copia, i les de `E` i `J`.
+- **La resta és Yul, i creix amb l'empaquetat.** Les inverses (de 6.058 a 33.417) i `r_i(y)` (de 1.125 a 21.837) creixen amb les arrels i amb `k`. Per això les claus agrupades amb `k` grans (`packed`, `signed`, `all`) hi gasten un terç del total.
+- **La resta de passos:**
+  - l'entrada costa de 4.752 a 17.115, unes 160–210 per paraula del calldata;
+  - `Q(ξ)` costa uns 75 per entrada del `qVerifier`;
+  - el transcript (de 1.175 a 3.548) inclou el creixement de la memòria;
+  - `Z_H` i els trossos de `Q` costen menys de 2.000 cadascun;
+  - la crida i l'ABI costen de 596 a 756.
+
+### I.4 Com creix
+
+**El model de M41 no n'hi ha prou.** M41 deia que el gas creix "uns 170.000 i uns 7.500 per `f`". Sobre les 73 claus, aquest model s'equivoca entre −33.435 i +40.127 de gas (fins al 19 %, amb una desviació quadràtica mitjana de 22.826). La raó és que el nombre de `f` no ho diu tot: empaquetar redueix els `f`, però afegeix arrels i productes de Horner.
+
+**El model corregit** surt de mínims quadrats sobre les 73 claus:
+
+```
+gas de verifyProof ≈ 132.900 + 6.710·f + 1.300·arrels + 100·Horner + 106·entrades del qVerifier
+```
+
+S'equivoca entre −4.737 i +4.236 (fins a l'1,7 %, desviació quadràtica mitjana de 1.597). Els termes són els d'I.3:
+- **la constant:** el *pairing*, `E` i `J`;
+- **cada `f`:** una multiplicació i una suma de G1;
+- **cada arrel:** un denominador de Lagrange, la seva part de la inversió en lot i el seu terme de `r_i(y)`;
+- **cada producte de Horner** i **cada entrada del `qVerifier`:** les seves instruccions de Yul.
+
+**Per al gas, menys `f` sol ser millor,** encara que hi hagi més arrels:
+- el Fibonacci gasta 170.869 amb `--extra-muls 0` (3 `f`), 180.790 per defecte (5 `f`) i 185.168 amb `--no-packing` (6);
+- `all_sum` gasta 275.771 agrupada (9 `f`) i 406.897 amb `--no-packing` (31).
+
+El calldata creix amb les paraules de la prova: uns 500 de gas per paraula, gairebé totes de bytes que no són zero.
+
+### I.5 Comparació amb l'`FflonkVerifier` de snarkjs
+
+**Com s'ha mesurat.** Tot és local, sense res baixat:
+- snarkjs 0.7.6, el de `setup/pil2-stark/node_modules`, i circom 2.2.0 (`/usr/local/bin/circom`);
+- un `ptau` fet aquí: `powersoftau new bn128 8`, una contribució i `prepare phase2`;
+- dos circuits: `c = a·b`, amb un públic, i `c = a·b`, `d = a + b`, `e = c·d`, amb tres;
+- per a cadascun: `fflonk setup`, `zkey export solidityverifier`, `wtns calculate`, `fflonk prove`, `fflonk verify` i `zkey export soliditycalldata`, codificat en ABI amb `cast calldata`;
+- el contracte, amb el nom canviat, al test de M40, que en mesura la primera crida com mesura la de pilfflonk.
+
+| Verificador | Publics | `f` | Paraules de `proof` | Codi (bytes) | Gas de `verifyProof` | Gas del calldata |
+|---|---|---|---|---|---|---|
+| snarkjs, `c = a·b` | 1 | 3 (`C0`, `C1`, `C2`) | 24 | 13.657 | 181.639 | 11.700 |
+| snarkjs, tres senyals | 3 | 3 | 24 | 14.287 | 183.200 | 12.376 |
+| pilfflonk, Fibonacci, `--extra-muls 0` | 3 | 3 | 18 | 5.124 | 170.869 | 10.036 |
+| pilfflonk, Fibonacci | 3 | 5 | 22 | 5.290 | 180.790 | 12.108 |
+| pilfflonk, `all_sum` | 3 | 9 | 55 | 12.545 | 275.771 | 28.572 |
+
+**Què en surt:**
+- **El de snarkjs gasta el mateix per a qualsevol circuit.** La seva prova sempre té 24 paraules (`C1`, `C2`, `W`, `W'`, 15 avaluacions i `inv`), i la seva F sempre té dues multiplicacions, perquè `C0` és fix. Només els publics el fan créixer: uns 780 de gas per públic.
+- **pilfflonk depèn de l'AIR.** Amb tres `f`, com snarkjs, el Fibonacci gasta un 7 % menys que el de snarkjs amb els mateixos tres publics, perquè té menys avaluacions i un `qVerifier` més curt que la identitat de PLONK de snarkjs. Per defecte (5 `f`) en gasta un 1,3 % menys.
+- **Totes dues són a prop del mínim dels precompilats** (I.3): `113.000 + 6.150·5 + 1.100 = 144.850` per a tres `f`, i snarkjs també fa cinc multiplicacions i cinc sumes.
+- **Els contractes de pilfflonk són més petits** (5,1 kB contra 13,7 kB). snarkjs escriu tot el seu codi en línia recta, sense cap bucle: les arrels de `C0`, `C1` i `C2`, els seus denominadors i la identitat de PLONK.
+
+### I.6 Oportunitats (no implementades)
+
+El contracte es queda tal com el va revisar M40: cap d'aquestes oportunitats no s'implementa. Les mesures s'han fet amb còpies del contracte del Fibonacci i d'`all_sum` amb `--no-packing` al directori de proves, no al generador. Van per ordre de guany:
+
+| Oportunitat | On | Estalvi |
+|---|---|---|
+| Compilar amb més *runs* de l'optimitzador: és una decisió de qui desplega el contracte, perquè el generador no la fixa. Amb 200 *runs*, `q` apareix una sola vegada al codi del Fibonacci, i es llegeix amb `codecopy` (el punt obert de M41); amb 1.000.000, hi apareix 105 vegades com a `PUSH32` | el `foundry.toml` o el `solc` de qui el desplega | Mesurat. Amb 1.000 o 10.000 *runs*: de −928 a −942 (Fibonacci) i de −3.683 a −3.697 (`all_sum_unpacked`), amb 101–132 i 227–258 bytes més. Amb 1.000.000: −5.698 (−3,2 %) i −22.315 (−5,5 %), però amb 2.095 i 8.187 bytes més: `all_sum_unpacked` passa a 23.515 bytes, a 1 kB de l'EIP-170 |
+| Desplegar els bucles i les potències d'exponent conegut: `powMod` amb cadenes d'addició, i `fillRoots`, `fillDens`, `inverseArray` i el bucle de `computeR` desplegats (l'`extendLoops` de shplonkjs) | la plantilla: `checkInput`, `computeZh`, `computeRoots`, `computeInversions`, `computeR` | Estimat, no mesurat. Cada iteració d'un bucle de Yul costa uns 25 de control (la comparació, el salt i l'increment), i una prova en fa de 60 (Fibonacci) a 300 (`all_sum_unpacked`). Una potència d'exponent `e` amb el bucle costa unes 60 per bit, i amb una cadena d'addició, unes 20. En total, de 2.000 a 8.000 (de l'1 % al 2 %), amb més codi |
+| Triar l'agrupació pel gas: una opció del setup que tria els grups amb el model d'I.4 i no amb el cost del prover. Cada `extraMuls` que el prover fa servir per partir un grup costa uns 6.700 de gas a cada verificació | `pilfflonk_setup::grouping`, `setup-pilfflonk` | Mesurat al Fibonacci: −9.921 (−5,5 %) amb `--extra-muls 0`. Ja és possible a mà, amb aquesta opció |
+| No comprovar la corba dels punts que un precompilat ja comprova. `0x06` i `0x07` fallen amb un punt fora de la corba o amb una coordenada `≥ q` (EIP-196), i tots els punts de la prova hi entren: els commitments a F, `W` a J i `W'` al *pairing*. La comprovació del punt a l'infinit s'hauria de mantenir, perquè els precompilats prenen `(0, 0)` com el punt a l'infinit | `checkPointBelongsToBN128Curve` | Mesurat: −996 (Fibonacci) i −3.818 (`all_sum_unpacked`). El veredicte seria el mateix, però la comprovació que refusa un punt fora de la corba ja no seria la del JS: el refusaria després del transcript |
+| No val la pena: `pMem` constant (`let pMem := 0x80`), el punt obert de M41 sobre els `add(pMem, …)` | `verifyProof` | Mesurat: −9. L'optimitzador ja ho fa |
+| No val la pena: comprimir els punts del calldata | el format del calldata | Cada punt estalviaria 32 bytes de calldata (uns 500 de gas), però descomprimir-lo és un `0x05` (EIP-2565, uns 1.350) |
+
+### I.7 Com es reprodueix
+
+Amb les eines fixades (§4.5, "Eines") i el compilador:
+
+```sh
+export PILFFLONK_FORGE=<forge> PILFFLONK_SOLC=<solc> PIL2C_EXEC=<pil2-compiler>/src/pil.js
+# I.2: les 73 claus (imprimeix la taula i el temps)
+cargo test -p proofman-cli --features proofman-starks-lib-c/cpu-only --test pilfflonk_prove \
+    foundry_accepts_the_proof_of_every_fixture -- --ignored --nocapture
+# I.3 i la validació de M42: el fuzzer, a la mida de la CI o ampliat
+cargo test -p proofman-cli --features proofman-starks-lib-c/cpu-only --test pilfflonk_prove \
+    foundry_and_the_js_verifier_agree_on_mutated_proofs -- --ignored --nocapture
+PILFFLONK_FUZZ_CASES=10400 cargo test … foundry_and_the_js_verifier_agree_on_mutated_proofs -- --ignored --nocapture
+```
+
+**Precaucions:**
+- **Mesurar la mida del contracte amb solc** (`--bin-runtime`), com fan els tests (`compile_with_solc`). `forge build --sizes` escriu una memòria cau de selectors a `~/.foundry`.
+- **Tenir en compte l'aïllament de Foundry:** amb aïllament, que és el valor per defecte, una segona crida del mateix test costa 2.500 més (I.1).

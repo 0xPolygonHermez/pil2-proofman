@@ -42,7 +42,12 @@
 //!   accepts on Foundry v1.8.3 the prover's proof with the calldata of `pilfflonk calldata`, and
 //!   rejects it changed, as `pilfflonk verify` does (`pilfflonk/tests/data/foundry.rs`). The tools are
 //!   pinned, at the paths `PILFFLONK_FORGE` and `PILFFLONK_SOLC` name (spec §4.5, "Eines"), and the
-//!   test is `#[ignore]` without them.
+//!   test is `#[ignore]` without them;
+//! - the differential fuzzer of the Solidity verifier (plan M42, spec Fase 4, validation 2) on a
+//!   subset of those keys ([`FUZZ_KEYS`]): their proofs mutated in every way of
+//!   `pilfflonk/tests/data/fuzz.rs`, on which Foundry and the JS verifier must agree, and the gas of
+//!   each step of the verifier (validation 3). [`FUZZ_CASES`] cases with a fixed seed by default;
+//!   `PILFFLONK_FUZZ_CASES` sets another number, and `PILFFLONK_FUZZ_SEED` another seed.
 //!
 //! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
 //! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`, plan N13):
@@ -79,6 +84,10 @@ mod domains;
 mod fibonacci;
 #[path = "../../pilfflonk/tests/data/foundry.rs"]
 mod foundry;
+#[path = "../../pilfflonk/tests/data/fuzz.rs"]
+mod fuzz;
+#[path = "../../pilfflonk/tests/data/mutations.rs"]
+mod mutations;
 #[path = "../../pilfflonk/tests/data/packed.rs"]
 mod packed;
 #[path = "../../pilfflonk/tests/data/permutation.rs"]
@@ -116,7 +125,7 @@ use proofman_pilfflonk::oracle::Values;
 use proofman_pilfflonk::{
     prove, stage_columns, AirFile, Boundary, CalldataLayout, FileWitnessSource, FrBytes, JsonFile, PilfflonkError,
     PilfflonkGlobalInfo, PilfflonkInfo, PolMapEntry, PolType, Proof, ProofChallenges, ProofNames, ProveOptions,
-    ProvingKey, Vkey, Witness, WitnessSource, BN254_R,
+    ProvingKey, Publics, Vkey, Witness, WitnessSource, BN254_R,
 };
 use prost::Message;
 use serde_json::{json, Value};
@@ -2055,7 +2064,10 @@ fn solidity_keys() -> Vec<SolidityKey> {
 
 /// What the Foundry end to end measures of a key: the size of its verifier and calldata, and the
 /// gas of the call to `verifyProof` with its proof (as the Foundry test measures it, `gasleft()`
-/// around the call, without the transaction's 21000) and of its calldata (EIP-2028).
+/// around the call, without the transaction's 21000) and of its calldata (EIP-2028); and what the
+/// gas grows with besides the `f` (plan M42, the gas report's model): the roots of the `f`,
+/// `Σ_i k_i·|O_i|` (a Lagrange denominator each, and a value of `r_i(y)`), the products of
+/// Horner's rule, `Σ_i k_i²·|O_i|`, and the entries of the `qVerifier`.
 struct GasRow {
     name: String,
     n_f: usize,
@@ -2064,6 +2076,19 @@ struct GasRow {
     code: usize,
     gas: u64,
     calldata_gas: u64,
+    roots: u64,
+    horner: u64,
+    q_ops: usize,
+}
+
+impl GasRow {
+    /// The roots, the products of Horner's rule and the entries of the `qVerifier` of `vkey`.
+    fn layout_terms(vkey: &Vkey) -> (u64, u64, usize) {
+        let roots = vkey.layout.0.iter().map(|f| f.k * f.offsets.len() as u64).sum();
+        let horner = vkey.layout.0.iter().map(|f| f.k * f.k * f.offsets.len() as u64).sum();
+        let q_ops = vkey.q_verifier["code"].as_array().map_or(0, Vec::len);
+        (roots, horner, q_ops)
+    }
 }
 
 /// A key of the Foundry end to end, set up, with its verifier and the names of its proofs.
@@ -2094,6 +2119,29 @@ fn set_up_for_foundry(key: SolidityKey) -> SetUpKey {
     SetUpKey { key, f, vkey, names, sol }
 }
 
+/// The proof of the witness of a key set up, by `pilfflonk prove` with the blinding seed `seed`, from
+/// the fixture's witness library if it has one, in `proof_dir`: its `proof.json` and `publics.json`,
+/// whose publics are the fixture's.
+fn prove_for_foundry(set_up: &SetUpKey, seed: &str, proof_dir: &Path) -> (PathBuf, PathBuf) {
+    let SetUpKey { key, f, .. } = set_up;
+    let name = key.name.as_str();
+    let library = key.program.witness_library().map(|(library, inputs)| (built_library(library), inputs));
+    let inputs_file = f.dir.file("inputs.json");
+    let mut source = vec!["--witness", f.witness.to_str().unwrap()];
+    if let Some((library, inputs)) = &library {
+        source = vec!["--witness-lib", library.to_str().unwrap()];
+        if let Some(inputs) = inputs {
+            fs::write(&inputs_file, inputs).unwrap();
+            source.extend(["--public-inputs", inputs_file.to_str().unwrap()]);
+        }
+    }
+    let run = prove_from(&f.proving_key, &source, proof_dir, Some(seed));
+    assert!(run.status.success(), "{name}: prove: {}", output(&run));
+    let (proof, publics) = (proof_dir.join("proof.json"), proof_dir.join("publics.json"));
+    assert_eq!(read_json(&publics), f.publics, "{name}");
+    (proof, publics)
+}
+
 /// The verifier of a key set up, compiled by solc; the proof of its witness by `pilfflonk prove` (with
 /// a fixed seed, from the fixture's witness library if it has one), and the proof with an evaluation,
 /// a commitment or a public changed, each verified by `pilfflonk verify` and encoded by `pilfflonk
@@ -2105,21 +2153,7 @@ fn verifies_on_foundry(tools: &foundry::Tools, set_up: &SetUpKey) -> GasRow {
     let name = key.name.as_str();
     let code = foundry::compile_with_solc(tools, &f.dir.0, sol);
 
-    let proof_dir = f.dir.file("proof");
-    let library = key.program.witness_library().map(|(library, inputs)| (built_library(library), inputs));
-    let inputs_file = f.dir.file("inputs.json");
-    let mut source = vec!["--witness", f.witness.to_str().unwrap()];
-    if let Some((library, inputs)) = &library {
-        source = vec!["--witness-lib", library.to_str().unwrap()];
-        if let Some(inputs) = inputs {
-            fs::write(&inputs_file, inputs).unwrap();
-            source.extend(["--public-inputs", inputs_file.to_str().unwrap()]);
-        }
-    }
-    let run = prove_from(&f.proving_key, &source, &proof_dir, Some(SEED_A));
-    assert!(run.status.success(), "{name}: prove: {}", output(&run));
-    let (proof, publics) = (proof_dir.join("proof.json"), proof_dir.join("publics.json"));
-    assert_eq!(read_json(&publics), f.publics, "{name}");
+    let (proof, publics) = prove_for_foundry(set_up, SEED_A, &f.dir.file("proof"));
 
     // The proof's bytes (A.6) give the calldata of its JSON view, and its Solidity form the same words.
     let hex = calldata_cli(f, &proof, &publics, "hex");
@@ -2175,6 +2209,7 @@ fn verifies_on_foundry(tools: &foundry::Tools, set_up: &SetUpKey) -> GasRow {
         layout.aux_rows.len()
     );
     let gas = foundry::check_on_foundry(tools, &f.dir.0, sol, &title, &cases);
+    let (roots, horner, q_ops) = GasRow::layout_terms(vkey);
     GasRow {
         name: name.to_string(),
         n_f: vkey.layout.0.len(),
@@ -2183,58 +2218,203 @@ fn verifies_on_foundry(tools: &foundry::Tools, set_up: &SetUpKey) -> GasRow {
         code,
         gas: gas[0],
         calldata_gas: foundry::calldata_gas(&cases[0]),
+        roots,
+        horner,
+        q_ops,
     }
 }
 
-/// The threads of [`foundry_accepts_the_proof_of_every_fixture`] that run the programs of the keys.
+/// The threads of the Foundry end to end and of the fuzzer that run the programs of the keys.
 const FOUNDRY_WORKERS: usize = 4;
+
+/// Sets up each of `keys` on the test's thread, one after another, as the other tests of this file
+/// set theirs up (the setup runs the C++ core's OpenMP code in this process, see the module), and
+/// runs `work` on each key set up on [`FOUNDRY_WORKERS`] threads, which must run programs only (or,
+/// in this process, code without OpenMP). Returns what `work` returned for each key, in the order of
+/// `keys`.
+fn on_foundry_workers<R: Send>(keys: Vec<SolidityKey>, work: impl Fn(&SetUpKey) -> R + Sync) -> Vec<R> {
+    let n = keys.len();
+    let (sender, receiver) = std::sync::mpsc::channel::<(usize, SetUpKey)>();
+    let receiver = std::sync::Mutex::new(receiver);
+    let mut results: Vec<(usize, R)> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..FOUNDRY_WORKERS)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut results = Vec::new();
+                    loop {
+                        // The lock is held while receiving only: the statement drops the guard.
+                        let Ok((i, set_up)) = receiver.lock().unwrap().recv() else { break results };
+                        results.push((i, work(&set_up)));
+                    }
+                })
+            })
+            .collect();
+        for (i, key) in keys.into_iter().enumerate() {
+            sender.send((i, set_up_for_foundry(key))).unwrap();
+        }
+        drop(sender);
+        workers.into_iter().flat_map(|worker| worker.join().unwrap()).collect()
+    });
+    results.sort_by_key(|(i, _)| *i);
+    assert_eq!(results.len(), n);
+    results.into_iter().map(|(_, r)| r).collect()
+}
 
 /// Phase 4's validation 1 (spec §6, plan M41): Foundry accepts the proof of every fixture of phases 1
 /// to 3 ([`solidity_keys`]) with the calldata of `pilfflonk calldata`, and rejects it with an
 /// evaluation, a commitment or a public changed, as the JS verifier (`pilfflonk verify`) does. Prints
 /// the gas of every proof's call, and the time.
 ///
-/// The keys are set up on the test's thread, one after another, as the other tests of this file set
-/// theirs up: the setup runs the C++ core's OpenMP code in this process (see the module). What
-/// follows, [`verifies_on_foundry`], runs programs only (the CLI, Node.js, solc and Foundry), and
-/// [`FOUNDRY_WORKERS`] threads run it for the keys set up so far.
+/// The keys are set up on the test's thread, one after another, and [`verifies_on_foundry`], which
+/// runs programs only (the CLI, Node.js, solc and Foundry), runs on [`FOUNDRY_WORKERS`] threads for
+/// the keys set up so far ([`on_foundry_workers`]).
 #[test]
 #[ignore = "needs PILFFLONK_FORGE, PILFFLONK_SOLC, PIL2C_EXEC and Node.js"]
 fn foundry_accepts_the_proof_of_every_fixture() {
     let tools = foundry::Tools::from_env();
     let start = std::time::Instant::now();
     let keys = solidity_keys();
-    let order: Vec<String> = keys.iter().map(|key| key.name.clone()).collect();
-    let (sender, receiver) = std::sync::mpsc::channel::<SetUpKey>();
-    let receiver = std::sync::Mutex::new(receiver);
-    let mut rows: Vec<GasRow> = std::thread::scope(|scope| {
-        let workers: Vec<_> = (0..FOUNDRY_WORKERS)
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut rows = Vec::new();
-                    loop {
-                        // The lock is held while receiving only: the statement drops the guard.
-                        let Ok(set_up) = receiver.lock().unwrap().recv() else { break rows };
-                        rows.push(verifies_on_foundry(&tools, &set_up));
-                    }
-                })
-            })
-            .collect();
-        for key in keys {
-            sender.send(set_up_for_foundry(key)).unwrap();
-        }
-        drop(sender);
-        workers.into_iter().flat_map(|worker| worker.join().unwrap()).collect()
-    });
-    rows.sort_by_key(|row| order.iter().position(|name| *name == row.name));
-    assert_eq!(rows.len(), order.len());
-    println!("\n| Key | f | Words of `proof` | Publics | Code (bytes) | Gas of `verifyProof` | Gas of the calldata |");
-    println!("|---|---|---|---|---|---|---|");
+    let n_keys = keys.len();
+    let rows = on_foundry_workers(keys, |set_up| verifies_on_foundry(&tools, set_up));
+    assert_eq!(rows.len(), n_keys);
+    println!(
+        "\n| Key | f | Words of `proof` | Publics | Code (bytes) | Gas of `verifyProof` | Gas of the calldata | Roots | \
+         Horner | qVerifier |"
+    );
+    println!("|---|---|---|---|---|---|---|---|---|---|");
     for row in &rows {
         println!(
-            "| `{}` | {} | {} | {} | {} | {} | {} |",
-            row.name, row.n_f, row.words, row.n_public, row.code, row.gas, row.calldata_gas
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+            row.name,
+            row.n_f,
+            row.words,
+            row.n_public,
+            row.code,
+            row.gas,
+            row.calldata_gas,
+            row.roots,
+            row.horner,
+            row.q_ops
         );
     }
     println!("\n{} keys, every proof accepted, in {:.0} s", rows.len(), start.elapsed().as_secs_f64());
+}
+
+/// The keys of the differential fuzzer (plan M42), a subset of [`solidity_keys`]: the Fibonacci, the
+/// packing and the signed offsets with `Q` in three pieces, each grouped and with `--no-packing`;
+/// `Domains`, whose calldata has the auxiliary inverses of `firstRow` and `lastRow`, grouped and,
+/// split, unpacked; the buses of stage 2, `sum_bus` grouped and `prod_bus` unpacked; and `all` on
+/// both buses with `Q` split, and unpacked, the key whose verifier costs the most gas.
+const FUZZ_KEYS: [&str; 13] = [
+    "fibonacci",
+    "fibonacci_unpacked",
+    "packed",
+    "packed_unpacked",
+    "signed_split_m1",
+    "signed_split_m1_unpacked",
+    "domain_Domains",
+    "domain_Domains_split_unpacked",
+    "sum_bus",
+    "prod_bus_unpacked",
+    "all_sum_split",
+    "all_prod_split3",
+    "all_sum_unpacked",
+];
+
+/// The cases of the fuzzer's run in CI, over all its keys; `PILFFLONK_FUZZ_CASES` sets another
+/// number: 10,000 or more for the extended run (spec §4.5, "Validació de M42").
+const FUZZ_CASES: u64 = 400;
+
+/// The seed of the fuzzer's mutations; `PILFFLONK_FUZZ_SEED` sets another.
+const FUZZ_SEED: u64 = 0x4d42;
+
+/// The prefix of the names the fuzzer sets its keys up with: their directories are named after the
+/// key ([`TestDir`]), and [`foundry_accepts_the_proof_of_every_fixture`], which may run at the same
+/// time in this process, sets up keys of the same names.
+const FUZZ_PREFIX: &str = "fuzz_";
+
+/// The number in the environment variable `var`, or `default` if it is not set.
+fn env_number(var: &str, default: u64) -> u64 {
+    match std::env::var(var) {
+        Ok(value) => value.parse().unwrap_or_else(|_| panic!("{var} = {value:?} is not a number")),
+        Err(_) => default,
+    }
+}
+
+/// SplitMix64: the seeds of the keys and of their proofs, from the fuzzer's.
+fn split_mix(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
+}
+
+/// The fuzzer on a key set up ([`fuzz::run_key`]), with `cases` cases: the honest proofs, by
+/// `pilfflonk prove`, of [`SEED_A`] (the Foundry end to end's) and of other seeds (one more for every
+/// 400 cases), and mutations of them. The seed of the key is the fuzzer's and its name's. It runs
+/// programs, and the transcript in this process, which has no OpenMP.
+fn fuzzes_on_foundry(
+    tools: &foundry::Tools,
+    set_up: &SetUpKey,
+    cases: u64,
+    seed: u64,
+    stopped: &fuzz::Stopped,
+) -> fuzz::KeyReport {
+    let SetUpKey { key, f, vkey, names, sol } = set_up;
+    let name = key.name.strip_prefix(FUZZ_PREFIX).unwrap_or(&key.name);
+    foundry::compile_with_solc(tools, &f.dir.0, sol);
+    let key_seed = name.bytes().fold(seed, |h, b| split_mix(h ^ u64::from(b)));
+    let n_honest = 2 + cases / 400;
+    let honest: Vec<fuzz::Honest> = (0..n_honest)
+        .map(|i| {
+            let proof_seed = match i {
+                0 => SEED_A.to_string(),
+                _ => (0..4).map(|j| format!("{:016x}", split_mix(key_seed ^ (i << 8) ^ j))).collect(),
+            };
+            let (proof, publics) = prove_for_foundry(set_up, &proof_seed, &f.dir.file(&format!("fuzz_proof_{i}")));
+            let proof = Proof::read(&proof, names).unwrap();
+            let Publics(publics) = Publics::read(&publics).unwrap();
+            fuzz::Honest::new(vkey, format!("the proof of seed {}…", &proof_seed[..8]), proof, publics)
+        })
+        .collect();
+    let dir = f.dir.file("fuzz_work");
+    let key = fuzz::FuzzKey { name, vkey, vkey_path: &f.vkey, names, sol, dir: &dir };
+    fuzz::run_key(tools, &key, &honest, cases.saturating_sub(n_honest) as usize, key_seed, stopped)
+}
+
+/// Phase 4's validations 2 and 3 (spec §6, plan M42): the differential fuzzer of the Solidity verifier
+/// on [`FUZZ_KEYS`] (`pilfflonk/tests/data/fuzz.rs`). On every case, Foundry and the JS verifier say
+/// the same, the contract returns `false` for every case it refuses (only calldata shorter than its
+/// arguments reverts), the check that refuses each is the same, and each family reaches the checks it
+/// targets. Prints the cases of each family and what refused them, and the gas of each step of the
+/// verifier for the honest proof of each key: the gas report's (spec §4.5, "Informe de gas").
+///
+/// [`FUZZ_CASES`] cases with the seed [`FUZZ_SEED`], split between the keys; `PILFFLONK_FUZZ_CASES`
+/// and `PILFFLONK_FUZZ_SEED` set others. The keys are set up as [`foundry_accepts_the_proof_of_every_fixture`]
+/// sets them up ([`on_foundry_workers`]).
+#[test]
+#[ignore = "needs PILFFLONK_FORGE, PILFFLONK_SOLC, PIL2C_EXEC and Node.js"]
+fn foundry_and_the_js_verifier_agree_on_mutated_proofs() {
+    let tools = foundry::Tools::from_env();
+    let start = std::time::Instant::now();
+    let (total, seed) = (env_number("PILFFLONK_FUZZ_CASES", FUZZ_CASES), env_number("PILFFLONK_FUZZ_SEED", FUZZ_SEED));
+    let keys: Vec<SolidityKey> = solidity_keys()
+        .into_iter()
+        .filter(|key| FUZZ_KEYS.contains(&key.name.as_str()))
+        .map(|key| SolidityKey { name: format!("{FUZZ_PREFIX}{}", key.name), ..key })
+        .collect();
+    assert_eq!(keys.len(), FUZZ_KEYS.len(), "every key of FUZZ_KEYS is one of solidity_keys()");
+    let per_key = total.div_ceil(keys.len() as u64);
+    println!("{total} cases, {per_key} for each of {} keys, seed {seed:#x}", keys.len());
+    let stopped = fuzz::Stopped::default();
+    let reports = on_foundry_workers(keys, |set_up| fuzzes_on_foundry(&tools, set_up, per_key, seed, &stopped));
+    let problems = fuzz::print_report(&reports, start.elapsed());
+    let stopped = stopped.into_inner().unwrap();
+    assert!(
+        problems.is_empty(),
+        "{} problems (families stopped: {:?}):\n{}",
+        problems.len(),
+        stopped.iter().map(|f| f.name()).collect::<Vec<_>>(),
+        problems.join("\n")
+    );
 }

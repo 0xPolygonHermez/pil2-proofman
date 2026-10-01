@@ -12,9 +12,10 @@
 //!    and the auxiliary inverses of `firstRow` and `lastRow` (spec §4.5 "Calldata"), of the `ξ` of
 //!    the transcript (A.4) it replays, which must be the prover's;
 //! 4. makes the cases: the proof; the proof with an evaluation, a commitment, a public or `W'`
-//!    changed, the first three also "fixed up" (`fixup`: `invZh`, `inv` and the auxiliary inverses
-//!    recomputed for the changed transcript, as the M40 review's harness does), so that they get
-//!    to the pairing, or to `checkQPieces` if `Q` is split; split, the pieces of `Q` changed with
+//!    changed, the first three also "fixed up" (`fixup` of `pilfflonk/tests/data/mutations.rs`,
+//!    which the differential fuzzer of M42 shares: `invZh`, `inv` and the auxiliary inverses
+//!    recomputed for the changed transcript, as the M40 review's harness does), so that they get to
+//!    the pairing, or to `checkQPieces` if `Q` is split; split, the pieces of `Q` changed with
 //!    their sum kept (to the pairing) and one changed (to `checkQPieces`); points off the curve or
 //!    that the transcript refuses; and values only the calldata can hold (a coordinate `≥ q`, a
 //!    scalar `≥ r`, a wrong auxiliary inverse, calldata a word short);
@@ -51,8 +52,11 @@ mod domains;
 #[allow(dead_code)]
 #[path = "../../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
+#[allow(dead_code)]
 #[path = "../../../pilfflonk/tests/data/foundry.rs"]
 mod foundry;
+#[path = "../../../pilfflonk/tests/data/mutations.rs"]
+mod mutations;
 #[allow(dead_code)]
 #[path = "../../../pilfflonk/tests/data/packed.rs"]
 mod packed;
@@ -81,11 +85,12 @@ use prost::Message;
 use proofman_pilfflonk::calldata::SELECTOR_BYTES;
 use proofman_pilfflonk::{
     js_verifier, prove, verifier_challenges, Calldata, CalldataLayout, FqBytes, FrBytes, G1Affine, JsonFile,
-    PilfflonkGlobalInfo, Proof, ProofNames, ProveOptions, ProvingKey, Publics, Vkey, Witness, BN254_Q, BN254_R,
+    PilfflonkGlobalInfo, Proof, ProofNames, ProveOptions, ProvingKey, Publics, Vkey, Witness,
 };
 use serde_json::json;
 
 use foundry::{check_on_foundry, compile_with_solc, Case, Outcome, Tools};
+use mutations::{be_word, big, fixup, fr, fr_inv, fr_sub, piece_position, plus_one, q, r, rebalance_pieces, xi_of};
 
 /// The blinding seed of the proofs (D6: fixed in tests).
 const SEED: [u8; 32] = [0x5a; 32];
@@ -235,98 +240,6 @@ impl Key {
     }
 }
 
-fn r() -> BigUint {
-    BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap()
-}
-
-fn q() -> BigUint {
-    BigUint::parse_bytes(BN254_Q.as_bytes(), 10).unwrap()
-}
-
-fn big(value: &FrBytes) -> BigUint {
-    BigUint::from_bytes_le(&value.to_le_bytes())
-}
-
-fn plus_one(value: &FrBytes) -> FrBytes {
-    FrBytes::from_decimal(&((big(value) + 1u32) % r()).to_string()).unwrap()
-}
-
-/// The 32 big-endian bytes of `value < 2^256`.
-fn be_word(value: &BigUint) -> [u8; 32] {
-    let bytes = value.to_bytes_be();
-    let mut word = [0u8; 32];
-    word[32 - bytes.len()..].copy_from_slice(&bytes);
-    word
-}
-
-/// `s mod r` as a scalar.
-fn fr(s: &BigUint) -> FrBytes {
-    FrBytes::from_decimal(&(s % r()).to_str_radix(10)).unwrap()
-}
-
-fn fr_inv(a: &BigUint) -> BigUint {
-    a.modpow(&(r() - 2u32), &r())
-}
-
-/// `a − b mod r`.
-fn fr_sub(a: &BigUint, b: &BigUint) -> BigUint {
-    (a + r() - (b % r())) % r()
-}
-
-/// `5^((r−1)/n)`, a primitive `n`-th root of unity (`shplonk.js`, `rootOfUnity`).
-fn root_of_unity(n: u64) -> BigUint {
-    BigUint::from(5u32).modpow(&((r() - 1u32) / n), &r())
-}
-
-/// `ξ = xiSeed^powerW`.
-fn xi_of(vkey: &Vkey, xi_seed: &BigUint) -> BigUint {
-    xi_seed.modpow(&BigUint::from(vkey.power_w), &r())
-}
-
-/// The roots `T` of an `f` of `k` polynomials and these offsets, offset-major (`shplonk.js`,
-/// `computeRoots`): `x_j = xiSeed^(powerW/k)·ω_{kN}^s·w_k^j`.
-fn roots(vkey: &Vkey, k: u64, offsets: &[i64], xi_seed: &BigUint) -> Vec<BigUint> {
-    let r = r();
-    let seed = xi_seed.modpow(&BigUint::from(vkey.power_w / k), &r);
-    let (omega_kn, w_k) = (root_of_unity(k << vkey.power), root_of_unity(k));
-    let mut t = Vec::new();
-    for &s in offsets {
-        let power = omega_kn.modpow(&BigUint::from(s.unsigned_abs()), &r);
-        let mut x = &seed * if s < 0 { fr_inv(&power) } else { power } % &r;
-        for _ in 0..k {
-            t.push(x.clone());
-            x = x * &w_k % &r;
-        }
-    }
-    t
-}
-
-/// `proof` with `invZh` and `inv` recomputed for its own transcript (A.5; `shplonk.js`,
-/// `computeZerofiers` and `computeInverseDenominators`, as `review40/harness.mjs` of the M40 review
-/// does), so that a mutated proof, with the auxiliary inverses of its `ξ` (`calldata`), gets past
-/// those checks to the deeper ones: `checkQPieces` and the pairing.
-fn fixup(vkey: &Vkey, mut proof: Proof, publics: &[FrBytes]) -> Proof {
-    let ch = verifier_challenges(vkey, &proof, publics).expect("a proof whose points the transcript absorbs");
-    let (xi_seed, y) = (big(&ch.xi_seed), big(&ch.y));
-    let r = r();
-    let xi = xi_of(vkey, &xi_seed);
-    proof.inv_zh = fr(&fr_inv(&fr_sub(&xi.modpow(&BigUint::from(1u64 << vkey.power), &r), &BigUint::from(1u32))));
-    let mut product = BigUint::from(1u32);
-    for (i, f) in vkey.layout.0.iter().enumerate() {
-        let t = roots(vkey, f.k, &f.offsets, &xi_seed);
-        if i > 0 {
-            product = t.iter().fold(product, |z, x| z * fr_sub(&y, x) % &r);
-        }
-        for (m, x) in t.iter().enumerate() {
-            let den =
-                t.iter().enumerate().filter(|&(l, _)| l != m).fold(fr_sub(&y, x), |d, (_, xl)| d * fr_sub(x, xl) % &r);
-            product = product * den % &r;
-        }
-    }
-    proof.inv = fr(&fr_inv(&product));
-    proof
-}
-
 /// The calldata of `proof` and `publics` (spec §4.5, "Calldata"), ABI-encoded as `proofman-cli
 /// pilfflonk calldata --format hex` writes it: `Calldata::encode`, the proof's bytes and the
 /// auxiliary inverses of its own `ξ`, and the publics.
@@ -355,33 +268,6 @@ fn js_verdict(key: &Key, names: &ProofNames, dir: &Path, proof: &Proof, publics:
     proof.to_json(names).unwrap().write(&dir.join("proof.json")).unwrap();
     Publics(publics.to_vec()).write(&dir.join("publics.json")).unwrap();
     js_verdict_of(&key.vkey_path, dir)
-}
-
-/// The position of the piece `Q<i>` among the proof's evaluations, if `Q` is split: after the
-/// evMap's, in the order of the layout (A.6).
-fn piece_position(vkey: &Vkey, piece: u64) -> Option<usize> {
-    let q_stage = vkey.layout.0.last()?.stage;
-    let names: Vec<&str> = vkey
-        .layout
-        .0
-        .iter()
-        .filter(|f| f.stage == q_stage)
-        .flat_map(|f| f.pols.iter().map(|p| p.name.as_str()))
-        .collect();
-    if names.len() < 2 {
-        return None;
-    }
-    let name = format!("Q{piece}");
-    names.iter().position(|n| *n == name).map(|at| vkey.ev_map.len() + at)
-}
-
-/// Adds to `proof`'s split `Q` a multiple of `ξ^(M·N)·Q_1 − Q_0` that leaves `Σ_i ξ^(i·M·N)·Q_i(ξ)`
-/// as it is: `Q_0 += ξ^(M·N)·d`, `Q_1 −= d` (A.1). `checkQPieces` passes, and the pairing refuses it.
-fn rebalance_pieces(vkey: &Vkey, proof: &mut Proof, xi_seed: &BigUint, d: u64) {
-    let (Some(q0), Some(q1)) = (piece_position(vkey, 0), piece_position(vkey, 1)) else { return };
-    let shift = xi_of(vkey, xi_seed).modpow(&BigUint::from(vkey.max_q_degree << vkey.power), &r());
-    proof.evaluations[q0] = fr(&(big(&proof.evaluations[q0]) + shift * d));
-    proof.evaluations[q1] = fr(&fr_sub(&big(&proof.evaluations[q1]), &BigUint::from(d)));
 }
 
 /// Sets up, proves, and runs the cases of `setup` on the JS verifier and on Foundry (see the

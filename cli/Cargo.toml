@@ -47,6 +47,8 @@ proofman-pilfflonk = { workspace = true, features = ["oracle"] }
 serde_json = { workspace = true }
 # Encodes the synthetic pilouts of the domains tests (plan M24), built in code.
 prost = { workspace = true }
+# The seeded mutations of the differential fuzzer of the Solidity verifier (plan M42).
+rand = { workspace = true }
 # The pilfflonk witness libraries of the fixtures, which `pilfflonk prove` and `pilfflonk check` load
 # with `--witness-lib` (plan M38c), and a STARK one, which they refuse: Cargo builds them beside the
 # tests.
