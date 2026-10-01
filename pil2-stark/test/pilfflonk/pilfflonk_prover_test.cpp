@@ -2352,6 +2352,38 @@ void testAMutatedWitnessIsUnsatisfiedOnTheGpu() {
     }
 }
 
+// What the opening of a proof on the GPU copies (OpeningGpu), of the Fibonacci whole and split and
+// packed: Q's pieces to the device, up to their degrees, from the instance's on the host until Q is
+// computed on the device; and besides, a few elements each way: the evaluations' descriptors and
+// values, the interpolants, and an element or two of each division and count.
+void testTheGpuOpeningCopiesWhatItMust() {
+    if (!gpuUnderTest("the copies of an opening on the GPU")) {
+        return;
+    }
+    constexpr uint64_t FEW = 16 << 10;
+    for (const KeyFiles &files : {KeyFiles(), splitQFiles(true)}) {
+        const Fibonacci fib(files, Device::Gpu);
+        const PilFflonk::CopyVolume &volume = fib.pk->gpuKey()->copies();
+        const std::unique_ptr<Instance> inst = fib.instance(std::make_unique<ZeroBlinding>());
+        Transcript t;
+        t.absorb(inst->commitStage(1, {}));
+        t.absorb(inst->commitQ({t.squeeze()}));
+        uint64_t pieces = 0;
+        for (uint64_t i = 0; i < fib.air().nQPieces(); ++i) {
+            pieces += (inst->qPiece(i)->getDegree() + 1) * sizeof(FrElement);
+        }
+        const PilFflonk::CopyVolume::Totals before = volume.totals();
+        const Opening opening({inst.get()}, t.squeeze());
+        const PilFflonk::CopyVolume::Totals evaluated = volume.totals();
+        assert(evaluated.toDevice - before.toDevice >= pieces && evaluated.toDevice - before.toDevice < pieces + FEW);
+        assert(evaluated.toHost - before.toHost < FEW);
+        t.absorb(opening.evaluations());
+        opening.open(t);
+        const PilFflonk::CopyVolume::Totals opened = volume.totals();
+        assert(opened.toDevice - evaluated.toDevice < FEW && opened.toHost - evaluated.toHost < FEW);
+    }
+}
+
 // What stays on the device while a key on the GPU lives is the host's, byte for byte: the
 // expressions' code, the witness columns' places, and the fixed columns' coefficients, of which the
 // key's fixed polynomials are the copies.
@@ -2421,6 +2453,7 @@ void runProverTests() {
     testAnArenaGivenToTheKey();
     testTheGpuCopiesWhatItMust();
     testAMutatedWitnessIsUnsatisfiedOnTheGpu();
+    testTheGpuOpeningCopiesWhatItMust();
     testTheGpuKeyHoldsTheKeysData();
 #endif
 }

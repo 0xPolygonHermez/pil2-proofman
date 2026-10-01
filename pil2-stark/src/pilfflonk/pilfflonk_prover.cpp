@@ -17,6 +17,7 @@
 #ifdef __USE_CUDA__
 #include "pilfflonk_instance_gpu.hpp"
 #include "pilfflonk_lde_gpu.hpp"
+#include "pilfflonk_opening_gpu.hpp"
 #endif
 
 namespace PilFflonk {
@@ -771,8 +772,26 @@ Opening::Opening(const std::vector<const Instance *> &instances, const FrElement
         powerW = powerW / gcd * k;
     }
     opening.powerW = powerW;
+#ifdef __USE_CUDA__
+    const CopyLog copies(pk->gpuKey(), "EVALUATIONS");
+#endif
     TimerStart(PILFFLONK_EVALUATIONS);
-    shplonk = std::make_unique<ShplonkProver>(std::move(opening));
+#ifdef __USE_CUDA__
+    if (pk->gpuKey() != nullptr) {
+        // The instance holds the key's device memory, which no other instance does meanwhile.
+        if (instances.size() != 1) {
+            throw std::logic_error("Opening: " + std::to_string(instances.size()) +
+                                   " instances of a key on the GPU, which holds one at a time");
+        }
+        device = OpeningGpu::ofInstance(*instances[0]);
+        shplonk = std::make_unique<ShplonkProver>(
+            std::move(opening), [this](const ShplonkProver &prover) { return device->evaluate(prover); });
+    }
+    if (device == nullptr)
+#endif
+    {
+        shplonk = std::make_unique<ShplonkProver>(std::move(opening));
+    }
     TimerStopAndLog(PILFFLONK_EVALUATIONS);
 
     Engine::Fr &fr = Engine::engine.fr;
@@ -847,6 +866,8 @@ Opening::Opening(const std::vector<const Instance *> &instances, const FrElement
     }
 }
 
+Opening::~Opening() = default;
+
 FrElement Opening::q(uint64_t instance) const {
     if (instance >= qValues.size()) {
         throw invalid("Opening::q", "there is no instance " + std::to_string(instance));
@@ -861,7 +882,15 @@ Opening::Proof Opening::open(Transcript &transcript) const {
     const CopyLog copies(pk->gpuKey(), "OPEN");
 #endif
     TimerStart(PILFFLONK_OPEN);
-    proof.shplonk = shplonk->open(pk->srs(), transcript);
+#ifdef __USE_CUDA__
+    if (device != nullptr) {
+        proof.shplonk = shplonk->open(pk->srs(), transcript, *device);
+    }
+    if (device == nullptr)
+#endif
+    {
+        proof.shplonk = shplonk->open(pk->srs(), transcript);
+    }
     TimerStopAndLog(PILFFLONK_OPEN);
     proof.inv = verifierInverse(*shplonk, proof.shplonk.y);
     FrElement zh;

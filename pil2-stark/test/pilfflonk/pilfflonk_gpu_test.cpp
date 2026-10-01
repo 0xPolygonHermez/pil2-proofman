@@ -14,9 +14,11 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "pilfflonk_api.hpp"
@@ -29,6 +31,8 @@
 #include "pilfflonk_lde.hpp"
 #include "pilfflonk_lde_gpu.hpp"
 #include "pilfflonk_lde_kernels.hpp"
+#include "pilfflonk_opening_gpu.hpp"
+#include "pilfflonk_shplonk_prover.hpp"
 #include "pilfflonk_srs.hpp"
 #include "pilfflonk_transcript.hpp"
 
@@ -160,8 +164,21 @@ std::vector<T> download(const DeviceBuffer &device, uint64_t n) {
 
 FrElement *elementsOf(const DeviceBuffer &device) { return reinterpret_cast<FrElement *>(device.data()); }
 
+Column download(const FrElement *device, uint64_t n) {
+    Column host(n);
+    gpu_plonk_memcpy_d2h(host.data(), device, n * sizeof(FrElement));
+    return host;
+}
+
 bool same(const Column &a, const Column &b) {
     return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(FrElement)) == 0;
+}
+
+// A point in affine coordinates, which are unique, as bytes.
+std::vector<uint8_t> affineBytes(G1Point p) {
+    G1PointAffine a;
+    E.g1.copy(a, p);
+    return std::vector<uint8_t>(reinterpret_cast<uint8_t *>(&a), reinterpret_cast<uint8_t *>(&a) + sizeof(a));
 }
 
 // The h^(256·b) and h^t tables of pilfflonk_gpu_pack_shift, for n scalars.
@@ -351,11 +368,6 @@ void testTheDeviceCommitsAsTheCpu(Random &random) {
     const PilFflonk::Srs srs = PilFflonk::Srs::fromPtau(ptau, N_G1);
     PilFflonk::GpuKey key(srs);
     const DeviceBuffer work(N_G1 * sizeof(FrElement));
-    auto affine = [](G1Point p) {
-        G1PointAffine a;
-        E.g1.copy(a, p);
-        return std::vector<uint8_t>(reinterpret_cast<uint8_t *>(&a), reinterpret_cast<uint8_t *>(&a) + sizeof(a));
-    };
     for (uint64_t k : {uint64_t(1), uint64_t(2), uint64_t(3)}) {
         for (uint64_t length : {uint64_t(1), uint64_t(33), uint64_t(100), uint64_t(255)}) {
             for (bool zero : {false, true}) {
@@ -378,7 +390,7 @@ void testTheDeviceCommitsAsTheCpu(Random &random) {
                 const DeviceBuffer dBase = upload(onDevice), dOffsets = upload(offsets);
                 const G1Point onGpu = key.commit(dBase.data(), reinterpret_cast<const uint64_t *>(dOffsets.data()), k,
                                                  length, n, work.data());
-                assert(affine(onGpu) == affine(PilFflonk::commitPacked(srs, pointers.data(), k)));
+                assert(affineBytes(onGpu) == affineBytes(PilFflonk::commitPacked(srs, pointers.data(), k)));
             }
         }
     }
@@ -500,6 +512,188 @@ void testDeviceKernels() {
     testInterpolateCosetOnDevice(random);
 }
 
+// An f of a SHPLONK opening on the device: its k, its offsets, and its p_j's coefficients, `length`
+// random ones each if not 0, and otherwise N + |O| + 1 (a blinded column's bound) of assorted degrees,
+// as pilfflonk_shplonk_test.cpp's: full, half, full minus one, and none for j = 2 when k > 2.
+struct ShplonkF {
+    uint64_t k;
+    std::vector<int64_t> offsets;
+    uint64_t length = 0;
+};
+
+struct ShplonkCase {
+    uint64_t nBits;
+    std::vector<ShplonkF> fs;
+};
+
+std::vector<ShplonkF> everyK(const std::vector<int64_t> &offsets) {
+    std::vector<ShplonkF> fs;
+    for (uint64_t k : {uint64_t(1), uint64_t(2), uint64_t(3), uint64_t(4), uint64_t(6), uint64_t(12)}) {
+        fs.push_back({k, offsets});
+    }
+    return fs;
+}
+
+// pilfflonk_shplonk_test.cpp's shapes, every k with the offsets of the wrap's layouts, and the degrees
+// at the edges: fewer coefficients than roots (f = r, nothing in W), constants (a component of one
+// coefficient, whose division is that of a constant), p_j of one coefficient above k·|O|; every f = r
+// (W = 0, [W]₁ at infinity); N = 2, where ω_N = −1; and N = 2^11, whose divisions are of more than
+// one block of the scan, L's of about 12 times as many coefficients.
+std::vector<ShplonkCase> shplonkCases() {
+    return {
+        {4, everyK({0})},
+        {4, everyK({0, 1})},
+        {4, everyK({-1, 0, 1, 2})},
+        {3, {{4, {0, 1}}, {4, {0}}, {3, {-1, 0, 1, 2}}, {1, {0}}, {12, {0, 1}}, {2, {-1, 2}}, {6, {1}}}},
+        {4, {{3, {0, 1}, 1}, {2, {-1, 0, 1, 2}}, {4, {0}, 2}, {12, {1}, 2}, {1, {0, 1}, 1}, {1, {0}, 1}, {2, {0}}}},
+        {4, {{3, {0}, 1}, {1, {0}, 1}, {2, {0, 1}, 1}}},
+        {1, {{2, {-1, 0}}, {1, {0}}, {4, {-1}}}},
+        {11, {{1, {0, 1}}, {2, {-1, 0}}, {12, {0}}}},
+    };
+}
+
+std::unique_ptr<Poly> shplonkComponent(const ShplonkF &f, uint64_t j, uint64_t N, Random &random) {
+    const uint64_t length = f.length != 0 ? f.length : N + f.offsets.size() + 1;
+    const uint64_t degrees[] = {length - 1, length / 2, length - 2, length - 1};
+    std::unique_ptr<Poly> p(new Poly(E, length));
+    if (f.length != 0 || f.k <= 2 || j != 2) {
+        for (uint64_t i = 0; i <= (f.length != 0 ? length - 1 : degrees[j % 4]); ++i) {
+            p->coef[i] = random.element();
+        }
+    }
+    p->fixDegree();
+    return p;
+}
+
+// What a call throws, or "" if nothing.
+template <typename Call> std::string thrownBy(Call call) {
+    try {
+        call();
+    } catch (const std::exception &e) {
+        return e.what();
+    }
+    return "";
+}
+
+// A whole opening from a transcript of one element: its proof's α, [W]₁, y and [W']₁, or what it
+// throws.
+template <typename Open> std::vector<uint8_t> openingOutcome(Open open) {
+    PilFflonk::Transcript t;
+    t.absorb(std::vector<FrElement>{E.fr.one()});
+    std::vector<uint8_t> out;
+    const std::string error = thrownBy([&] {
+        const PilFflonk::ShplonkProof proof = open(t);
+        for (const FrElement *e : {&proof.alpha, &proof.y}) {
+            out.insert(out.end(), reinterpret_cast<const uint8_t *>(e), reinterpret_cast<const uint8_t *>(e + 1));
+        }
+        for (const G1Point &p : {proof.w, proof.wp}) {
+            const std::vector<uint8_t> bytes = affineBytes(p);
+            out.insert(out.end(), bytes.begin(), bytes.end());
+        }
+    });
+    return error.empty() ? out : std::vector<uint8_t>(error.begin(), error.end());
+}
+
+// OpeningGpu against ShplonkProver on the host, byte for byte, on a case's p_j on the device: the
+// evaluations; W and W' (quotientW, quotientWp) and their commitments; a whole opening; and, with an
+// interpolant off by one (r_0 at X^0, the last r_i at its top coefficient), the same errors: f_i − r_i
+// is not divisible, nor is L. Its MSMs are of workLength() scalars, more than W's and W''s.
+void testShplonkCase(const ShplonkCase &c, Random &random, const PilFflonk::Srs &srs, PilFflonk::GpuKey &key,
+                     const DeviceBuffer &work) {
+    const uint64_t N = uint64_t(1) << c.nBits;
+    std::vector<std::unique_ptr<Poly>> polys;
+    std::vector<DeviceBuffer> onDevice;
+    PilFflonk::ShplonkOpening opening;
+    opening.nBits = c.nBits;
+    opening.powerW = 1;
+    opening.xiSeed = random.element();
+    PilFflonk::OpeningGpu::Components components;
+    PilFflonk::ShplonkBounds bounds;
+    for (const ShplonkF &f : c.fs) {
+        PilFflonk::ShplonkPolynomial p;
+        p.offsets = f.offsets;
+        components.emplace_back();
+        for (uint64_t j = 0; j < f.k; ++j) {
+            polys.push_back(shplonkComponent(f, j, N, random));
+            const Poly &poly = *polys.back();
+            p.components.push_back(polys.back().get());
+            onDevice.push_back(upload(Column(poly.coef, poly.coef + poly.getLength())));
+            components.back().push_back(reinterpret_cast<const FrElement *>(onDevice.back().data()));
+            bounds.component = std::max(bounds.component, poly.getLength());
+        }
+        bounds.component = std::max<uint64_t>(bounds.component, f.offsets.size());
+        bounds.nEvaluations += f.k * f.offsets.size();
+        bounds.nPoints += f.offsets.size();
+        opening.powerW = std::lcm(opening.powerW, f.k);
+        opening.polynomials.push_back(std::move(p));
+    }
+    const PilFflonk::ShplonkProver host(opening);
+    bounds.length = bounds.wMsm = bounds.wpMsm = host.workLength();
+    key.addShiftSum(bounds.length, work.data());
+    const DeviceBuffer workspace(PilFflonk::shplonkWorkspaceBytes(bounds));
+    PilFflonk::OpeningGpu gpu(key, components, bounds, workspace.data());
+
+    const PilFflonk::ShplonkProver device(opening,
+                                          [&](const PilFflonk::ShplonkProver &prover) { return gpu.evaluate(prover); });
+    assert(device.size() == host.size());
+    for (uint64_t i = 0; i < host.size(); ++i) {
+        assert(same(device.evaluations()[i], host.evaluations()[i]));
+    }
+
+    const PilFflonk::ShplonkProver::Interpolants r = host.interpolants();
+    const FrElement alpha = random.element(), y = random.element();
+    const std::unique_ptr<Poly> W = host.quotientW(r, alpha);
+    gpu.computeW(device, r, alpha);
+    assert(same(download(gpu.quotient(), W->getLength()), Column(W->coef, W->coef + W->getLength())));
+    assert(affineBytes(gpu.commitW()) == affineBytes(srs.commit(W->coef, W->getDegree() + 1)));
+    const std::unique_ptr<Poly> Wp = host.quotientWp(r, alpha, y, *W);
+    gpu.computeWp(device, r, alpha, y);
+    assert(same(download(gpu.quotient(), Wp->getLength()), Column(Wp->coef, Wp->coef + Wp->getLength())));
+    assert(affineBytes(gpu.commitWp()) == affineBytes(srs.commit(Wp->coef, Wp->getDegree() + 1)));
+
+    assert(openingOutcome([&](PilFflonk::Transcript &t) { return device.open(srs, t, gpu); }) ==
+           openingOutcome([&](PilFflonk::Transcript &t) { return host.open(srs, t); }));
+
+    for (uint64_t i : {uint64_t(0), host.size() - 1}) {
+        PilFflonk::ShplonkProver::Interpolants off = host.interpolants();
+        Poly &ri = *off[i];
+        const uint64_t at = i == 0 ? 0 : ri.getLength() - 1;
+        E.fr.add(ri.coef[at], ri.coef[at], E.fr.one());
+        ri.fixDegree();
+        const std::string remainder = thrownBy([&] { host.quotientW(off, alpha); });
+        assert(remainder == "ShplonkProver: f_" + std::to_string(i) + " - r_i is not divisible");
+        assert(thrownBy([&] { gpu.computeW(device, off, alpha); }) == remainder);
+        gpu.computeW(device, r, alpha);
+        const std::string l = thrownBy([&] { host.quotientWp(off, alpha, y, *W); });
+        assert(l == "ShplonkProver: L is not divisible");
+        assert(thrownBy([&] { gpu.computeWp(device, off, alpha, y); }) == l);
+    }
+
+    // Not its opening: refused.
+    const PilFflonk::OpeningGpu other(key, PilFflonk::OpeningGpu::Components(components.begin(), components.end() - 1),
+                                      bounds, workspace.data());
+    assert(contains(thrownBy([&] { other.evaluate(host); }).c_str(),
+                    "OpeningGpu: the opening is not of its components"));
+}
+
+void testShplonkOnTheDevice() {
+    if (!gpuUnderTest("SHPLONK on the device")) {
+        return;
+    }
+    // Enough powers for the longest f, 12·(2^11 + 2) coefficients.
+    constexpr uint64_t N_G1 = uint64_t(1) << 15;
+    TestDir dir;
+    const std::string ptau = dir.file("gpu_shplonk.ptau");
+    writeTestPtau(ptau, N_G1);
+    const PilFflonk::Srs srs = PilFflonk::Srs::fromPtau(ptau, N_G1);
+    PilFflonk::GpuKey key(srs);
+    const DeviceBuffer work(N_G1 * sizeof(FrElement));
+    Random random(62);
+    for (const ShplonkCase &c : shplonkCases()) {
+        testShplonkCase(c, random, srs, key, work);
+    }
+}
+
 // What a key on the GPU budgets and refuses, which needs no GPU: sppark's MSM's own memory at 50 M
 // points on 170 SMs (pippenger.cuh: windows of 18 bits, 15 of them, buckets of 128 bytes, and 4
 // batches of 12.5 M digits and temporaries), and the refusal's message.
@@ -540,6 +734,7 @@ void runGpuTests() {
 #ifdef __USE_CUDA__
     testBudgets();
     testDeviceKernels();
+    testShplonkOnTheDevice();
 #endif
 }
 

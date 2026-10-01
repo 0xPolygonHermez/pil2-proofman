@@ -43,9 +43,9 @@ private:
 // The MSMs and the NTTs of the prover on the GPU from host memory
 // (pilfflonk/docs/performance.md#what-runs-on-the-gpu): each copies its data to the device and its
 // result back. A key on the GPU (GpuKey, pilfflonk_key_gpu.hpp) keeps the data of its stage and
-// fixed commitments on the device instead, and Q's LDE runs there (LdeGpu): it uses this one only
-// for the MSMs of Q, W and W', which still run from the host. It has no kernel: it calls the GPU
-// entry points that pil2-stark already has, as the PLONK GPU prover calls them
+// fixed commitments and of the opening on the device instead, and Q's LDE runs there (LdeGpu): it
+// uses this one only for the MSMs of Q, which still run from the host. It has no kernel: it calls
+// the GPU entry points that pil2-stark already has, as the PLONK GPU prover calls them
 // (rapidsnark/plonk_prover_gpu.c.cuh):
 // - msm_bn128_gpu_dev_ptr (bn128/src/msm/msm_bn128.cu, sppark's Pippenger), with montgomery = true,
 //   on a copy of the SRS's powers [τ^i]₁ kept on the device: the scalars go as ffiasm keeps them,

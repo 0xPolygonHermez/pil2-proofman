@@ -13,13 +13,13 @@
 
 namespace PilFflonk {
 
-// What the device does of an Instance (pilfflonk_prover.hpp) while the hints, the im pols, Q and the
-// opening run on the host: each commits what it gets from the host and copies back what the host
-// needs. The data stay in the arena of the key, which the instance holds from its construction
-// (GpuKey::Lease) to its end, and their copies on the host are the instance's columns of stage 1 and
-// the GpuKey's mirror of the committed polynomials. Everything is the CPU's bit for bit: the same
-// INTTs and MSMs, the same field operations in the same order on each element, and the blinding
-// factors the host drew.
+// What the device does of an Instance (pilfflonk_prover.hpp) while the hints, the im pols and Q run
+// on the host: each commits what it gets from the host and copies back what the host needs. The data
+// stay in the arena of the key, which the instance holds from its construction (GpuKey::Lease) to its
+// end, and where the opening reads them (OpeningGpu); their copies on the host are the instance's
+// columns of stage 1 and the GpuKey's mirror of the committed polynomials. Everything is the CPU's
+// bit for bit: the same INTTs and MSMs, the same field operations in the same order on each element,
+// and the blinding factors the host drew.
 class InstanceGpu {
 public:
     // The device side of an instance of `air`: waits for the key's arena (GpuKey::Lease), copies to

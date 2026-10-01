@@ -94,9 +94,9 @@ private:
 // - Q's: at `q`, room for Q's N' values and every column it reads on a part of N points, which
 //   holds the columns of each part as the device extends them (LdeGpu), and then Q's values for
 //   their interpolation; and at `qTables`, the tables of the powers of a shift (ldeTableElements);
-// - the opening's, which does not run on the device yet: it is given what the device path will need
-//   there (Q's pieces, W and L of the largest f, and two elements per coefficient of their
-//   division), so that a key that loads has the memory of its whole proof.
+// - the opening's (OpeningGpu, pilfflonk_opening_gpu.hpp): Q's pieces at `qPieces`, piece i after
+//   the bounds (AirDegrees::qPieceCoefficients) of those before it, then SHPLONK's workspace at
+//   `shplonk`.
 struct ArenaLayout {
     static constexpr uint64_t NONE = UINT64_MAX;
 
@@ -114,10 +114,17 @@ struct ArenaLayout {
     uint64_t q = 0;
     uint64_t qElements = 0; // N' + N·|qReads|
     uint64_t qTables = 0;
+    uint64_t qPieces = 0;
+    uint64_t shplonk = 0;
     uint64_t bytes = 0; // a proof's arena: its largest phase
 };
 
 ArenaLayout arenaLayout(const AirKey &air);
+
+// Where p_j of f, an f of the layout but Q's, is on the device, in elements: from
+// GpuAirKey::fixedCoefficients() for a fixed f, and from the arena's committed polynomials
+// (ArenaLayout::polys) for the others.
+uint64_t componentOffset(const AirKey &air, const ArenaLayout &layout, uint64_t f, uint64_t j);
 
 // The device memory a key on the GPU needs for an AIR, in bytes.
 struct GpuBudget {

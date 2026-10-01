@@ -2,7 +2,9 @@
 #define PILFFLONK_SHPLONK_PROVER_HPP
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -12,6 +14,8 @@
 #include "pilfflonk_transcript.hpp"
 
 namespace PilFflonk {
+
+class ShplonkQuotients; // below
 
 // One polynomial f of a SHPLONK opening (pilfflonk/docs/protocol.md#shplonk-opening):
 // f(X) = Σ_{j<k} p_j(X^k)·X^j, packed as pack() does, opened at ξ·ω_N^s for each offset s in O.
@@ -69,6 +73,10 @@ class ShplonkProver {
 public:
     using Evaluations = std::vector<std::vector<FrElement>>;
     using Interpolants = std::vector<std::unique_ptr<Poly>>;
+    // The evaluations (evaluations() below) of the prover being built, whose components, k, points
+    // and roots are set: rapidsnark's fastEvaluate on the host, or a device's (OpeningGpu,
+    // pilfflonk_opening_gpu.hpp), which must give the same values.
+    using Evaluator = std::function<Evaluations(const ShplonkProver &prover)>;
 
     // Checks the opening, derives the roots and computes the evaluations. Throws
     // std::invalid_argument, before any work, if there are no polynomials; if nBits exceeds 28;
@@ -80,9 +88,14 @@ public:
     // too: the largest ptau has 2^29 - 1 powers). Throws std::runtime_error where ffiasm has no
     // assembly backend.
     explicit ShplonkProver(ShplonkOpening opening);
+    // The same, with the evaluations `evaluate` gives once the roots are derived. Throws as above,
+    // and std::logic_error if it does not give one per p_j and point.
+    ShplonkProver(ShplonkOpening opening, const Evaluator &evaluate);
 
     uint64_t size() const { return fs.size(); }
     uint64_t k(uint64_t i) const { return fs[i].components.size(); }
+    // The p_j of f_i, as the opening gave them.
+    const std::vector<Poly *> &components(uint64_t i) const { return fs[i].components; }
     // f_i's coefficients as pack() writes them: 1 + max_j(k·deg p_j + j).
     uint64_t nCoefs(uint64_t i) const { return fs[i].nCoefs; }
     // ξ = xiSeed^powerW.
@@ -111,6 +124,10 @@ public:
     // infinity, or a coordinate below 2^192) or y is a root of some f_i, each of negligible
     // probability; std::logic_error if a division that must be exact is not (a bug).
     ShplonkProof open(const Srs &srs, Transcript &transcript) const;
+    // The same, with W, W' and their commitments from `quotients` in place of quotientW, quotientWp
+    // and srs.commit; srs only bounds the coefficients of the f_i. Throws as above, and as
+    // `quotients` does.
+    ShplonkProof open(const Srs &srs, Transcript &transcript, ShplonkQuotients &quotients) const;
 
     // The steps of open(), for tests.
     //
@@ -118,15 +135,37 @@ public:
     // f_i(x) = Σ_j p_j(ξ·ω_N^s)·x^j from evaluations() (the verifier's formula,
     // pilfflonk/docs/protocol.md#pairing-check).
     Interpolants interpolants() const;
-    // W for α, as above, in max_i max(nCoefs(i), |T_i|) coefficients. Throws
-    // std::invalid_argument if r is not one interpolant per f_i of at most |T_i| coefficients,
-    // std::logic_error if an f_i - r_i is not divisible by Z_{T_i}.
+    // W for α, as above, in workLength() coefficients. Throws std::invalid_argument if r is not one
+    // interpolant per f_i of at most |T_i| coefficients, std::logic_error if an f_i - r_i is not
+    // divisible by Z_{T_i}.
     std::unique_ptr<Poly> quotientW(const Interpolants &r, const FrElement &alpha) const;
     // W' for α, y and the W that quotientW(r, alpha) returned. Throws std::invalid_argument if r is
     // not one interpolant per f_i or W does not fit in as many coefficients as quotientW gives it,
     // std::runtime_error if y is in some T_i, std::logic_error if L is not divisible by X - y.
     std::unique_ptr<Poly> quotientWp(const Interpolants &r, const FrElement &alpha, const FrElement &y,
                                      const Poly &W) const;
+
+    // What quotientW and quotientWp compute W and W' from and check them against, for a
+    // ShplonkQuotients that computes them elsewhere and must throw as they do.
+    //
+    // The coefficients W, L and every f_i - r_i fit in: max_i max(nCoefs(i), |T_i|).
+    uint64_t workLength() const;
+    // Throw quotientW's (quotientWp's) std::logic_error unless W's (W''s) degree is below its bound:
+    // max(1, max_i (nCoefs(i) - |T_i|)) coefficients (max(1, max_i nCoefs(i) - 1)).
+    void checkW(uint64_t degree) const;
+    void checkWp(uint64_t degree) const;
+    // Their std::logic_error when a division that must be exact is not: of f_i - r_i by Z_{T_i},
+    // and of L by X - y.
+    static std::logic_error remainderNotDivisible(uint64_t i);
+    static std::logic_error lNotDivisible();
+    // The scalars of L (pilfflonk/docs/protocol.md#pairing-check) for α and y, as quotientWp scales
+    // it by 1/Z_{T∖T_0}(y): L = w·W + Σ_i f[i]·(f_i - r_i(y)), with w = -Z_T(y)/Z_{T∖T_0}(y) and
+    // f[i] = α^i·Z_{T∖T_i}(y)/Z_{T∖T_0}(y). Throws std::runtime_error if y is in some T_i.
+    struct LScalars {
+        FrElement w;
+        std::vector<FrElement> f;
+    };
+    LScalars lScalars(const FrElement &alpha, const FrElement &y) const;
 
 private:
     struct Entry {
@@ -142,12 +181,33 @@ private:
     uint64_t packed(uint64_t i, FrElement *out) const;
     // The buffer pack() needs for the longest f_i.
     uint64_t scratchLength() const;
-    // The coefficients W, L and every f_i - r_i fit in: max_i max(nCoefs(i), |T_i|).
-    uint64_t workLength() const;
+    // The bounds of checkW and checkWp.
+    uint64_t wLength() const;
+    uint64_t wpLength() const;
 
     FrElement challengeXi = {};
     std::vector<Entry> fs;
     Evaluations evals;
+};
+
+// W, W' and their commitments, which ShplonkProver::open asks for in this order, once each:
+// computeW, commitW, computeWp, commitWp. The host's are ShplonkProver::quotientW, quotientWp and
+// Srs::commit; another's (OpeningGpu, pilfflonk_opening_gpu.hpp, on the device) must give the same
+// points bit for bit and throw as they do (ShplonkProver::checkW and the rest).
+class ShplonkQuotients {
+public:
+    virtual ~ShplonkQuotients() = default;
+
+    // W of `prover` for its interpolants r and α (quotientW).
+    virtual void computeW(const ShplonkProver &prover, const ShplonkProver::Interpolants &r,
+                          const FrElement &alpha) = 0;
+    // [W]₁.
+    virtual G1Point commitW() = 0;
+    // W' for r, α, y and the W of computeW (quotientWp).
+    virtual void computeWp(const ShplonkProver &prover, const ShplonkProver::Interpolants &r, const FrElement &alpha,
+                           const FrElement &y) = 0;
+    // [W']₁.
+    virtual G1Point commitWp() = 0;
 };
 
 // a := a / (X^m − β), m >= 1, which must be exact: throws std::logic_error, naming `what`, if it is

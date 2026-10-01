@@ -15,6 +15,7 @@
 namespace PilFflonk {
 
 class InstanceGpu; // pilfflonk_instance_gpu.hpp
+class OpeningGpu;  // pilfflonk_opening_gpu.hpp
 
 // A row where a constraint does not hold: the value of its numerator there, not 0.
 struct FailedRow {
@@ -242,6 +243,10 @@ private:
 // The global order: the fixed f of each AIR with an instance, in canonical order of the AIRs, then
 // the non-fixed f of each instance in canonical order, each in the order of its layout (Q last).
 //
+// On a key on the GPU, whose one instance at a time holds its device memory, the evaluations, W, W'
+// and their commitments are computed on the device (OpeningGpu) from the committed polynomials
+// there, and the proof is the same bit for bit.
+//
 // Keeps pointers to the instances' polynomials: the instances, unchanged, must outlive it.
 class Opening {
 public:
@@ -250,6 +255,10 @@ public:
     // the lcm of the k of every f (pilfflonk/docs/protocol.md#roots). Throws std::invalid_argument
     // if they are not, and std::runtime_error if ξ is in H (probability N/r).
     Opening(const std::vector<const Instance *> &instances, const FrElement &xiSeed);
+    ~Opening();
+
+    Opening(const Opening &) = delete;
+    Opening &operator=(const Opening &) = delete;
 
     // The evaluations of the proof, in the order of the transcript and of the proof
     // (pilfflonk/docs/protocol.md#transcript, step 4; pilfflonk/docs/formats.md#proof): for each AIR
@@ -279,6 +288,10 @@ public:
 private:
     const ProvingKey *pk = nullptr;
     uint64_t nBits = 0;
+#ifdef __USE_CUDA__
+    // Its device side, on a key on the GPU.
+    std::unique_ptr<OpeningGpu> device;
+#endif
     std::unique_ptr<ShplonkProver> shplonk;
     std::vector<FrElement> proofEvaluations;
     // Q(ξ) of each instance.

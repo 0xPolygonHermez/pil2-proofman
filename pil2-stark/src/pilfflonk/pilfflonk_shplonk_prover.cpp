@@ -29,6 +29,21 @@ std::string name(uint64_t i) {
     return "f_" + std::to_string(i);
 }
 
+// What quotientW and quotientWp divide, as their errors name it: f_i - r_i, and L.
+std::string remainder(uint64_t i) {
+    return name(i) + " - r_i";
+}
+constexpr const char *L_DIVIDEND = "L";
+
+std::logic_error notDivisible(const std::string &what) {
+    return std::logic_error("ShplonkProver: " + what + " is not divisible");
+}
+
+std::logic_error degreeNotBelow(const char *what, uint64_t degree, uint64_t bound) {
+    return std::logic_error(std::string("ShplonkProver: ") + what + " has degree " + std::to_string(degree) +
+                            ", not below " + std::to_string(bound));
+}
+
 // An mpz_t that clears itself.
 struct Mpz {
     mpz_t v;
@@ -116,6 +131,44 @@ void addScaled(FrElement *out, const FrElement *in, uint64_t n, const FrElement 
     }
 }
 
+// The host's evaluations: rapidsnark's fastEvaluate on each p_j at each point of its f.
+ShplonkProver::Evaluations hostEvaluations(const ShplonkProver &prover) {
+    ShplonkProver::Evaluations evals(prover.size());
+    for (uint64_t i = 0; i < prover.size(); ++i) {
+        const uint64_t k = prover.k(i);
+        const std::vector<FrElement> &points = prover.points(i);
+        evals[i].resize(points.size() * k);
+        for (uint64_t m = 0; m < points.size(); ++m) {
+            for (uint64_t j = 0; j < k; ++j) {
+                evals[i][m * k + j] = prover.components(i)[j]->fastEvaluate(points[m]);
+            }
+        }
+    }
+    return evals;
+}
+
+// The host's quotients: quotientW, quotientWp and srs.commit.
+class HostQuotients final : public ShplonkQuotients {
+public:
+    explicit HostQuotients(const Srs &_srs) : srs(_srs) {}
+
+    void computeW(const ShplonkProver &prover, const ShplonkProver::Interpolants &r, const FrElement &alpha) override {
+        W = prover.quotientW(r, alpha);
+    }
+    G1Point commitW() override { return srs.commit(W->coef, W->getDegree() + 1); }
+    void computeWp(const ShplonkProver &prover, const ShplonkProver::Interpolants &r, const FrElement &alpha,
+                   const FrElement &y) override {
+        Wp = prover.quotientWp(r, alpha, y, *W);
+        W.reset();
+    }
+    G1Point commitWp() override { return srs.commit(Wp->coef, Wp->getDegree() + 1); }
+
+private:
+    const Srs &srs;
+    std::unique_ptr<Poly> W;
+    std::unique_ptr<Poly> Wp;
+};
+
 } // namespace
 
 void divideExactly(Poly &a, uint64_t m, const FrElement &beta, const std::string &what) {
@@ -125,18 +178,20 @@ void divideExactly(Poly &a, uint64_t m, const FrElement &beta, const std::string
     if (a.getDegree() < m) {
         // The quotient is 0 and the remainder a itself.
         if (a.getDegree() != 0 || !Engine::engine.fr.isZero(a.coef[0])) {
-            throw std::logic_error("ShplonkProver: " + what + " is not divisible");
+            throw notDivisible(what);
         }
         return;
     }
     // rapidsnark's parallel division (pilfflonk/docs/performance.md#the-shplonk-division): the
     // quotient in place, and whether the remainder a_j + β·q_j (j < m) is zero.
     if (!a.divByMonicInPlace(m, beta)) {
-        throw std::logic_error("ShplonkProver: " + what + " is not divisible");
+        throw notDivisible(what);
     }
 }
 
-ShplonkProver::ShplonkProver(ShplonkOpening opening) {
+ShplonkProver::ShplonkProver(ShplonkOpening opening) : ShplonkProver(std::move(opening), hostEvaluations) {}
+
+ShplonkProver::ShplonkProver(ShplonkOpening opening, const Evaluator &evaluate) {
 #ifndef __USE_ASSEMBLY__
     throw std::runtime_error("ShplonkProver needs ffiasm's assembly backend, not built on this platform");
 #endif
@@ -244,17 +299,13 @@ ShplonkProver::ShplonkProver(ShplonkOpening opening) {
         fs.push_back(std::move(entry));
     }
 
-    // The evaluations, rapidsnark's fastEvaluate on each p_j.
-    evals.resize(fs.size());
-    for (uint64_t i = 0; i < fs.size(); ++i) {
-        const Entry &f = fs[i];
-        const uint64_t k = f.components.size();
-        evals[i].resize(f.points.size() * k);
-        for (uint64_t m = 0; m < f.points.size(); ++m) {
-            for (uint64_t j = 0; j < k; ++j) {
-                evals[i][m * k + j] = f.components[j]->fastEvaluate(f.points[m]);
-            }
-        }
+    evals = evaluate(*this);
+    bool shaped = evals.size() == fs.size();
+    for (uint64_t i = 0; shaped && i < fs.size(); ++i) {
+        shaped = evals[i].size() == fs[i].points.size() * fs[i].components.size();
+    }
+    if (!shaped) {
+        throw std::logic_error("ShplonkProver: the evaluator did not give one evaluation per component and point");
     }
 }
 
@@ -272,6 +323,85 @@ uint64_t ShplonkProver::workLength() const {
         length = std::max({length, f.nCoefs, static_cast<uint64_t>(f.roots.size())});
     }
     return length;
+}
+
+uint64_t ShplonkProver::wLength() const {
+    // Each (f_i - r_i)/Z_{T_i} has nCoefs(i) - |T_i| coefficients.
+    uint64_t length = 1;
+    for (const Entry &f : fs) {
+        if (f.nCoefs > f.roots.size()) {
+            length = std::max<uint64_t>(length, f.nCoefs - f.roots.size());
+        }
+    }
+    return length;
+}
+
+uint64_t ShplonkProver::wpLength() const {
+    // deg L <= max_i deg f_i, so W' has at most max_i nCoefs(i) - 1 coefficients.
+    uint64_t maxCoefs = 1;
+    for (const Entry &f : fs) {
+        maxCoefs = std::max(maxCoefs, f.nCoefs);
+    }
+    return std::max<uint64_t>(1, maxCoefs - 1);
+}
+
+void ShplonkProver::checkW(uint64_t degree) const {
+    if (degree >= wLength()) {
+        throw degreeNotBelow("W", degree, wLength());
+    }
+}
+
+void ShplonkProver::checkWp(uint64_t degree) const {
+    if (degree >= wpLength()) {
+        throw degreeNotBelow("W'", degree, wpLength());
+    }
+}
+
+std::logic_error ShplonkProver::remainderNotDivisible(uint64_t i) {
+    return notDivisible(remainder(i));
+}
+
+std::logic_error ShplonkProver::lNotDivisible() {
+    return notDivisible(L_DIVIDEND);
+}
+
+ShplonkProver::LScalars ShplonkProver::lScalars(const FrElement &alpha, const FrElement &y) const {
+    Engine &E = Engine::engine;
+    // Z_{T_i}(y), and the scalars of L/Z_{T∖T_0}(y), the q_i
+    // (pilfflonk/docs/protocol.md#pairing-check):
+    //     α^i·Z_{T∖T_i}(y)/Z_{T∖T_0}(y) for f_i - r_i(y), and Z_T(y)/Z_{T∖T_0}(y) for W,
+    // with Z_T(y) = Π_i Z_{T_i}(y), repetitions included, and Z_{T∖T_i}(y) = Z_T(y)/Z_{T_i}(y).
+    std::vector<FrElement> zi(fs.size());
+    for (uint64_t i = 0; i < fs.size(); ++i) {
+        FrElement z = E.fr.one();
+        for (const FrElement &x : fs[i].roots) {
+            E.fr.mul(z, z, E.fr.sub(y, x));
+        }
+        if (E.fr.isZero(z)) {
+            throw std::runtime_error("ShplonkProver: y is a root of " + name(i));
+        }
+        zi[i] = z;
+    }
+    const std::vector<FrElement> ziInverse = batchInverse(zi);
+    FrElement zT = E.fr.one();
+    for (const FrElement &z : zi) {
+        E.fr.mul(zT, zT, z);
+    }
+    // 1/Z_{T∖T_0}(y) = Π_{i>=1} 1/Z_{T_i}(y)
+    FrElement scale = E.fr.one();
+    for (uint64_t i = 1; i < fs.size(); ++i) {
+        E.fr.mul(scale, scale, ziInverse[i]);
+    }
+
+    LScalars scalars;
+    scalars.w = E.fr.neg(E.fr.mul(zT, scale));
+    scalars.f.resize(fs.size());
+    FrElement alphaPower = E.fr.one();
+    for (uint64_t i = 0; i < fs.size(); ++i) {
+        scalars.f[i] = E.fr.mul(E.fr.mul(alphaPower, zT), E.fr.mul(ziInverse[i], scale));
+        E.fr.mul(alphaPower, alphaPower, alpha);
+    }
+    return scalars;
 }
 
 uint64_t ShplonkProver::packed(uint64_t i, FrElement *out) const {
@@ -326,15 +456,9 @@ std::unique_ptr<Poly> ShplonkProver::quotientW(const Interpolants &r, const FrEl
         throw invalid("::quotientW", std::to_string(r.size()) + " interpolants for " + std::to_string(fs.size()) +
                                          " polynomials");
     }
-    // W's coefficients: max_i (nCoefs(i) - |T_i|), each (f_i - r_i)/Z_{T_i} having that many.
-    uint64_t wLength = 1;
     for (uint64_t i = 0; i < fs.size(); ++i) {
-        const uint64_t nRoots = fs[i].roots.size();
-        if (r[i] == nullptr || r[i]->getLength() > nRoots) {
+        if (r[i] == nullptr || r[i]->getLength() > fs[i].roots.size()) {
             throw invalid("::quotientW", "r[" + std::to_string(i) + "] is not an interpolant of " + name(i));
-        }
-        if (fs[i].nCoefs > nRoots) {
-            wLength = std::max(wLength, fs[i].nCoefs - nRoots);
         }
     }
 
@@ -358,16 +482,13 @@ std::unique_ptr<Poly> ShplonkProver::quotientW(const Interpolants &r, const FrEl
         const std::unique_ptr<Poly> term(Poly::fromReservedBuffer(E, buffer.get(), n));
         // Z_{T_i}(X) = Π_{s in O_i} (X^k - ξ·ω_N^s): the roots of offset s are those of X^k - ξ·ω_N^s.
         for (const FrElement &point : f.points) {
-            divideExactly(*term, k, point, name(i) + " - r_i");
+            divideExactly(*term, k, point, remainder(i));
         }
         addScaled(W->coef, term->coef, term->getDegree() + 1, alphaPower);
         E.fr.mul(alphaPower, alphaPower, alpha);
     }
     W->fixDegree();
-    if (W->getDegree() >= wLength) {
-        throw std::logic_error("ShplonkProver: W has degree " + std::to_string(W->getDegree()) + ", not below " +
-                               std::to_string(wLength));
-    }
+    checkW(W->getDegree());
     return W;
 }
 
@@ -388,68 +509,37 @@ std::unique_ptr<Poly> ShplonkProver::quotientWp(const Interpolants &r, const FrE
         throw invalid("::quotientWp", "W has degree " + std::to_string(W.getDegree()) + ": it is not quotientW's");
     }
 
-    // Z_{T_i}(y), and the scalars of L/Z_{T∖T_0}(y), the q_i
-    // (pilfflonk/docs/protocol.md#pairing-check):
-    //     α^i·Z_{T∖T_i}(y)/Z_{T∖T_0}(y) for f_i - r_i(y), and Z_T(y)/Z_{T∖T_0}(y) for W,
-    // with Z_T(y) = Π_i Z_{T_i}(y), repetitions included, and Z_{T∖T_i}(y) = Z_T(y)/Z_{T_i}(y).
-    std::vector<FrElement> zi(fs.size());
-    for (uint64_t i = 0; i < fs.size(); ++i) {
-        FrElement z = E.fr.one();
-        for (const FrElement &x : fs[i].roots) {
-            E.fr.mul(z, z, E.fr.sub(y, x));
-        }
-        if (E.fr.isZero(z)) {
-            throw std::runtime_error("ShplonkProver: y is a root of " + name(i));
-        }
-        zi[i] = z;
-    }
-    const std::vector<FrElement> ziInverse = batchInverse(zi);
-    FrElement zT = E.fr.one();
-    for (const FrElement &z : zi) {
-        E.fr.mul(zT, zT, z);
-    }
-    // 1/Z_{T∖T_0}(y) = Π_{i>=1} 1/Z_{T_i}(y)
-    FrElement scale = E.fr.one();
-    for (uint64_t i = 1; i < fs.size(); ++i) {
-        E.fr.mul(scale, scale, ziInverse[i]);
-    }
+    const LScalars scalars = lScalars(alpha, y);
 
     // L starts as -(Z_T(y)/Z_{T∖T_0}(y))·W, as long as every term.
-    const FrElement wScale = E.fr.neg(E.fr.mul(zT, scale));
     std::unique_ptr<Poly> L(new Poly(E, length));
     const uint64_t wCoefs = W.getDegree() + 1;
 #pragma omp parallel for
     for (uint64_t m = 0; m < wCoefs; ++m) {
-        E.fr.mul(L->coef[m], wScale, W.coef[m]);
+        E.fr.mul(L->coef[m], scalars.w, W.coef[m]);
     }
 
     // Each f_i is packed into the same buffer and added to L from there.
     const std::unique_ptr<FrElement[]> scratch(new FrElement[scratchLength()]);
-    uint64_t maxCoefs = 1;
-    FrElement alphaPower = E.fr.one();
     for (uint64_t i = 0; i < fs.size(); ++i) {
-        const Entry &f = fs[i];
-        maxCoefs = std::max(maxCoefs, f.nCoefs);
         const uint64_t n = packed(i, scratch.get());
         E.fr.sub(scratch[0], scratch[0], r[i]->evaluate(y));
-        const FrElement factor = E.fr.mul(E.fr.mul(alphaPower, zT), E.fr.mul(ziInverse[i], scale));
-        addScaled(L->coef, scratch.get(), n, factor);
-        E.fr.mul(alphaPower, alphaPower, alpha);
+        addScaled(L->coef, scratch.get(), n, scalars.f[i]);
     }
     L->fixDegree();
 
     // W' = L/(Z_{T∖T_0}(y)·(X - y)): divideExactly(1, y) in place of pil-fflonk's divByXSubValue.
-    divideExactly(*L, 1, y, "L");
-    // deg L <= max_i deg f_i, so W' has at most max_i nCoefs(i) - 1 coefficients.
-    const uint64_t wpLength = std::max<uint64_t>(1, maxCoefs - 1);
-    if (L->getDegree() >= wpLength) {
-        throw std::logic_error("ShplonkProver: W' has degree " + std::to_string(L->getDegree()) + ", not below " +
-                               std::to_string(wpLength));
-    }
+    divideExactly(*L, 1, y, L_DIVIDEND);
+    checkWp(L->getDegree());
     return L;
 }
 
 ShplonkProof ShplonkProver::open(const Srs &srs, Transcript &transcript) const {
+    HostQuotients quotients(srs);
+    return open(srs, transcript, quotients);
+}
+
+ShplonkProof ShplonkProver::open(const Srs &srs, Transcript &transcript, ShplonkQuotients &quotients) const {
     if (transcript.empty()) {
         throw invalid("::open", "the transcript is empty: it must hold what the proof absorbed before the opening");
     }
@@ -469,10 +559,10 @@ ShplonkProof ShplonkProver::open(const Srs &srs, Transcript &transcript) const {
     ShplonkProof proof;
     proof.alpha = transcript.squeeze();
     TimerStart(PILFFLONK_SHPLONK_W);
-    std::unique_ptr<Poly> W = quotientW(r, proof.alpha);
+    quotients.computeW(*this, r, proof.alpha);
     TimerStopAndLog(PILFFLONK_SHPLONK_W);
     TimerStart(PILFFLONK_SHPLONK_COMMIT_W);
-    proof.w = srs.commit(W->coef, W->getDegree() + 1);
+    proof.w = quotients.commitW();
     TimerStopAndLog(PILFFLONK_SHPLONK_COMMIT_W);
 
     uint8_t bytes[G1_BYTES];
@@ -494,11 +584,10 @@ ShplonkProof ShplonkProver::open(const Srs &srs, Transcript &transcript) const {
 
     proof.y = transcript.squeeze();
     TimerStart(PILFFLONK_SHPLONK_WP);
-    const std::unique_ptr<Poly> Wp = quotientWp(r, proof.alpha, proof.y, *W);
+    quotients.computeWp(*this, r, proof.alpha, proof.y);
     TimerStopAndLog(PILFFLONK_SHPLONK_WP);
-    W.reset();
     TimerStart(PILFFLONK_SHPLONK_COMMIT_WP);
-    proof.wp = srs.commit(Wp->coef, Wp->getDegree() + 1);
+    proof.wp = quotients.commitWp();
     TimerStopAndLog(PILFFLONK_SHPLONK_COMMIT_WP);
     return proof;
 }

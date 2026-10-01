@@ -11,6 +11,7 @@
 
 #include "pilfflonk_kernels.hpp"
 #include "pilfflonk_lde_gpu.hpp"
+#include "pilfflonk_opening_gpu.hpp"
 #include "pilfflonk_proving_key.hpp"
 #include "thread_utils.hpp"
 #include "timer.hpp"
@@ -278,9 +279,16 @@ ArenaLayout arenaLayout(const AirKey &air) {
     a.qElements = air.lde().extendedSize() + N * air.qReads().size();
     a.qTables = aligned(a.q + a.qElements * sizeof(FrElement));
     const uint64_t q = a.qTables + ldeTableElements(air.lde()) * sizeof(FrElement);
-    const uint64_t opening = polysEnd + (pieces + 3 * largest) * sizeof(FrElement);
+    a.qPieces = polysEnd;
+    a.shplonk = aligned(a.qPieces + pieces * sizeof(FrElement));
+    const uint64_t opening = a.shplonk + shplonkWorkspaceBytes(shplonkBounds(air));
     a.bytes = std::max({a.stageBytes, aligned(q), aligned(opening)});
     return a;
+}
+
+uint64_t componentOffset(const AirKey &air, const ArenaLayout &layout, uint64_t f, uint64_t j) {
+    const LayoutEntry &entry = air.info().layout[f];
+    return entry.stage == 0 ? entry.pols[j].id * air.n() : layout.slot[f] + j * (air.n() + air.blindLength(f));
 }
 
 uint64_t spparkMsmBytes(uint64_t n, uint32_t multiprocessors) {
@@ -526,7 +534,7 @@ GpuAirKey::GpuAirKey(GpuKey &_key, const AirKey &_air, FrElement *fixedCoefs,
         }
         tableStart[f] = table.size();
         for (uint64_t j = 0; j < entry.k; ++j) {
-            table.push_back(entry.stage == 0 ? entry.pols[j].id * N : layout.slot[f] + j * (N + air.blindLength(f)));
+            table.push_back(componentOffset(air, layout, f, j));
         }
     }
     fixedColumnsStart = table.size();
@@ -566,6 +574,10 @@ GpuAirKey::GpuAirKey(GpuKey &_key, const AirKey &_air, FrElement *fixedCoefs,
             key.addShiftSum(entry.degree, key.arena() + layout.work);
         }
     }
+    // And those of the opening's W and W' (OpeningGpu), of at most the largest degree.
+    const ShplonkBounds opening = shplonkBounds(air);
+    key.addShiftSum(opening.wMsm, key.arena() + layout.work);
+    key.addShiftSum(opening.wpMsm, key.arena() + layout.work);
     TimerStopAndLog(PILFFLONK_GPU_SHIFT_SUMS);
     commitFixed();
 }
