@@ -72,6 +72,15 @@ struct AirDegrees {
 // split Q (maxQDegree >= qDeg: the setup writes 0 then).
 AirDegrees airDegrees(const PilfflonkInfo &info, const std::string &name);
 
+// The coefficients of Q that piece i holds before its boundaries are blinded (AirDegrees): `length`
+// of them from `start` = i·qStride, qStride but in the last piece, which holds those up to Q's bound.
+struct QPieceRange {
+    uint64_t start;
+    uint64_t length;
+};
+
+QPieceRange qPieceRange(const AirDegrees &d, uint64_t i);
+
 // A column an expression's code reads: an operand (type, arg1) with bin.types().isColumn(type),
 // so type 0 is a fixed column (arg1 its constPolsMap index) and type s >= 1 the committed column of
 // stage s at stagePos arg1.
@@ -140,9 +149,9 @@ public:
     // From the files' contents. `name` is what the errors call the AIR. Throws FormatError. With a
     // `gpu` (only in a library built with the GPU), which must outlive the key, the key is on it: its
     // fixed columns are interpolated and committed on the device, where their coefficients stay, and
-    // its proofs commit their stages there (GpuAirKey, pilfflonk_key_gpu.hpp); its Lde runs its
-    // transforms on gpu's Gpu. It throws then as GpuAirKey's constructor too: std::invalid_argument
-    // if the device has not the memory of the key and a proof of the AIR.
+    // its proofs run there (GpuAirKey, pilfflonk_key_gpu.hpp). It throws then as GpuAirKey's
+    // constructor too: std::invalid_argument if the device has not the memory of the key and a proof
+    // of the AIR.
     AirKey(PilfflonkInfo info, ExpressionsBin bin, const uint8_t *constants, uint64_t constantsBytes,
            const std::string &name, GpuKey *gpu = nullptr);
     ~AirKey();
@@ -203,7 +212,8 @@ public:
     // The commitments [f(τ)]₁ of the fixed f, in the order of the layout, from the fixed columns of
     // the .const: their interpolants packed (pack()) and committed with `srs`, as the setup commits
     // them for the vkey (commitFixed; nothing is blinded). One MSM per f, of its k·N coefficients;
-    // on the GPU, those the key computed on the device when it loaded, if `srs` commits there.
+    // on the GPU, those the key computed on the device when it loaded, if `srs` is the SRS whose
+    // powers it holds (GpuKey::holds).
     // The prover never needs them, the verifier takes them from the vkey: the orchestrator compares
     // them, so that a .const the vkey was not set up with is refused instead of giving proofs that
     // do not verify. Throws std::invalid_argument if an f has more coefficients than `srs` has
@@ -256,9 +266,9 @@ void checkSrsFits(const AirKey &air, uint64_t nG1);
 // proofs may share it, from several threads.
 class ProvingKey {
 public:
-    // With a gpu, which must hold the SRS's powers [τ^i]₁ and be every AIR key's (AirKey's `gpu`),
-    // the SRS commits on its Gpu (Srs::setGpu). Throws std::invalid_argument if an AIR key's is
-    // another, or the gpu holds another number of points than the SRS.
+    // With a gpu, which must hold the SRS's powers [τ^i]₁ and be every AIR key's (AirKey's `gpu`).
+    // Throws std::invalid_argument if an AIR key's is another, or the gpu holds another number of
+    // points than the SRS.
     ProvingKey(GlobalInfo globalInfo, Srs srs, std::vector<std::vector<std::unique_ptr<AirKey>>> airs,
                std::shared_ptr<const GpuKey> gpu = nullptr);
 
@@ -271,8 +281,8 @@ public:
     // (pilfflonk/docs/protocol.md#transcript), which reads and checks the vkey. Throws IoError and
     // FormatError, and FormatError if an AIR's layout needs more powers [τ^i]₁ than the SRS holds
     // or its pilfflonkinfo is not the globalInfo's AIR. On Device::Gpu, the SRS's powers [τ^i]₁ are
-    // copied to the GPU once they are read, each AIR's key is on it (AirKey's `gpu`), and the MSMs
-    // and transforms of the key and its proofs run there; the proofs are the same bit for bit.
+    // copied to the GPU once they are read, each AIR's key is on it (AirKey's `gpu`), and its proofs
+    // run there; the proofs are the same bit for bit.
     // Throws std::invalid_argument before it reads anything if there is no GPU (gpuAvailable()), in
     // a library built without one or on a machine without one, and as AirKey's constructor if the
     // device has not the memory of the key and a proof of each AIR.

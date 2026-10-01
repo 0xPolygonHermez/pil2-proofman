@@ -61,9 +61,10 @@ uint64_t log2Floor(uint64_t x) {
     return bits;
 }
 
-// Regions carved one after another from offset 0, each 256-byte aligned.
+// Regions carved one after another from offset `start` (256-byte aligned), each 256-byte aligned.
 class Carver {
 public:
+    explicit Carver(uint64_t start = 0) : end(start) {}
     uint64_t take(uint64_t bytes) {
         const uint64_t start = end;
         end = aligned(end + bytes);
@@ -72,7 +73,7 @@ public:
     uint64_t size() const { return end; }
 
 private:
-    uint64_t end = 0;
+    uint64_t end;
 };
 
 // The largest degree bound of the layout's f: the longest MSM of a proof.
@@ -87,8 +88,8 @@ uint64_t largestDegree(const AirKey &air) {
 // Where GpuAirKey keeps what is on the device while the key lives, as offsets in its buffer.
 struct ResidentLayout {
     uint64_t fixed, ops, args, numbers, positions, offsets;
-    uint64_t tableLength; // entries of the offsets' table: the polynomials of every f but Q's, then
-                          // one per fixed column
+    uint64_t tableLength; // entries of the offsets' table: the polynomials of every f, then one per
+                          // fixed column, then one per piece of Q
     uint64_t bytes;
 };
 
@@ -96,11 +97,9 @@ ResidentLayout residentLayout(const AirKey &air) {
     const PilfflonkInfo &info = air.info();
     const ParserArgs &code = air.bin().expressionsBinArgsExpressions;
     ResidentLayout r{};
-    r.tableLength = info.nConstants;
+    r.tableLength = info.nConstants + air.nQPieces();
     for (const LayoutEntry &f : info.layout) {
-        if (f.stage != info.qStage()) {
-            r.tableLength += f.k;
-        }
+        r.tableLength += f.k;
     }
     Carver carver;
     r.fixed = carver.take(info.nConstants * air.n() * sizeof(FrElement));
@@ -276,24 +275,56 @@ ArenaLayout arenaLayout(const AirKey &air) {
     a.hintBytes = stageScratchBytes(air);
     a.stageBytes = std::max(a.stageBytes, aligned(a.hints + a.hintBytes));
 
-    uint64_t pieces = 0;
-    for (uint64_t c : air.degrees().qPieceCoefficients) {
-        pieces += c;
+    // Q's phase, over the stages' (InstanceGpu::computeQ).
+    const AirDegrees &d = air.degrees();
+    const uint64_t nPieces = d.qPieceCoefficients.size(), NExt = air.lde().extendedSize();
+    Carver q(polysEnd);
+    a.qCounts = q.take((1 + nPieces) * sizeof(uint64_t));
+    a.qFactors = q.take(2 * (nPieces - 1) * sizeof(FrElement));
+    a.q = q.take(NExt * sizeof(FrElement));
+    a.qTables = q.take(ldeTableElements(air.lde()) * sizeof(FrElement));
+    a.qPart = q.take(qPartLayout(air, air.info().nBits).bytes);
+
+    // Q's pieces (InstanceGpu::commitQ): over Q's values if it is not split, after them if it is;
+    // then their commitments' work, and the opening's workspace over it.
+    a.qPieceElements = *std::max_element(d.qPieceCoefficients.begin(), d.qPieceCoefficients.end());
+    a.qPieces = nPieces == 1 ? a.q : aligned(a.q + NExt * sizeof(FrElement));
+    a.shplonk = aligned(a.qPieces + nPieces * a.qPieceElements * sizeof(FrElement));
+    uint64_t qWork = 0;
+    for (const LayoutEntry &f : info.layout) {
+        if (f.stage == info.qStage()) {
+            qWork = std::max<uint64_t>(qWork, f.degree);
+        }
     }
-    a.q = polysEnd;
-    a.qElements = air.lde().extendedSize() + N * air.qReads().size();
-    a.qTables = aligned(a.q + a.qElements * sizeof(FrElement));
-    const uint64_t q = a.qTables + ldeTableElements(air.lde()) * sizeof(FrElement);
-    a.qPieces = polysEnd;
-    a.shplonk = aligned(a.qPieces + pieces * sizeof(FrElement));
-    const uint64_t opening = a.shplonk + shplonkWorkspaceBytes(shplonkBounds(air));
-    a.bytes = std::max({a.stageBytes, aligned(q), aligned(opening)});
+    const uint64_t opening =
+        a.shplonk + std::max(qWork * sizeof(FrElement), shplonkWorkspaceBytes(shplonkBounds(air)));
+    a.bytes = std::max({a.stageBytes, q.size(), aligned(opening)});
     return a;
 }
 
+QPartLayout qPartLayout(const AirKey &air, uint64_t partBits) {
+    Carver carver;
+    QPartLayout l;
+    l.zerofiers = carver.take(ExpressionsDomainGpu::cosetPartBytes(air.info().nBits, partBits, air.info().boundaries));
+    l.columns = carver.take(air.qReads().size() * (uint64_t(1) << partBits) * sizeof(FrElement));
+    l.bytes = carver.size();
+    return l;
+}
+
+uint64_t qPhaseBytes(const AirKey &air, const ArenaLayout &layout, uint64_t partBits) {
+    return layout.qPart + qPartLayout(air, partBits).bytes;
+}
+
 uint64_t componentOffset(const AirKey &air, const ArenaLayout &layout, uint64_t f, uint64_t j) {
-    const LayoutEntry &entry = air.info().layout[f];
-    return entry.stage == 0 ? entry.pols[j].id * air.n() : layout.slot[f] + j * (air.n() + air.blindLength(f));
+    const PilfflonkInfo &info = air.info();
+    const LayoutEntry &entry = info.layout[f];
+    if (entry.stage == 0) {
+        return entry.pols[j].id * air.n();
+    }
+    if (entry.stage == info.qStage()) {
+        return info.cmPolsMap[entry.pols[j].id].stagePos * layout.qPieceElements;
+    }
+    return layout.slot[f] + j * (air.n() + air.blindLength(f));
 }
 
 uint64_t spparkMsmBytes(uint64_t n, uint32_t multiprocessors) {
@@ -318,12 +349,10 @@ uint64_t spparkMsmBytes(uint64_t n, uint32_t multiprocessors) {
 }
 
 GpuBudget gpuBudget(const AirKey &air, uint32_t multiprocessors) {
-    const uint64_t largest = largestDegree(air);
     GpuBudget budget;
     budget.resident = residentLayout(air).bytes + ExpressionsGpu::deviceBytesOf(air.bin(), air.info(), multiprocessors);
     budget.arena = arenaLayout(air).bytes;
-    budget.transient = spparkMsmBytes(largest, multiprocessors) +
-                       std::max(air.lde().extendedSize(), largest) * sizeof(FrElement) + MARGIN_BYTES;
+    budget.transient = spparkMsmBytes(largestDegree(air), multiprocessors) + MARGIN_BYTES;
     return budget;
 }
 
@@ -388,7 +417,8 @@ GpuKey::GpuKey(const Srs &srs, GpuKeyOptions _options) : options(_options) {
     const uint64_t tablesBytes = (nBlocks + 256) * sizeof(FrElement) + 2 * sizeof(uint64_t);
     requireDeviceMemory("the SRS's " + std::to_string(n) + " powers [τ^i]₁ and the tables of the MSMs' shift",
                         powersBytes + tablesBytes, available());
-    transforms = std::make_unique<Gpu>(&srs.g1(0), n, &volume);
+    powers = std::make_unique<Gpu>(&srs.g1(0), n, &volume);
+    hostPowers = &srs.g1(0);
     tables = DeviceBuffer(tablesBytes);
     hBlocks = tables.data();
     hPowers = tables.data() + nBlocks * sizeof(FrElement);
@@ -412,7 +442,7 @@ uint64_t GpuKey::available() const {
     return free;
 }
 
-void GpuKey::reserve(const std::string &air, const GpuBudget &budget, uint64_t mirrorElements, uint64_t qElements) {
+void GpuKey::reserve(const std::string &air, const GpuBudget &budget, uint64_t mirrorElements) {
     if (options.arena != nullptr && budget.arena > options.arenaBytes) {
         throw std::invalid_argument(air + ": a proof on the GPU needs an arena of " + std::to_string(budget.arena) +
                                     " bytes, and the one given has " + std::to_string(options.arenaBytes));
@@ -434,16 +464,7 @@ void GpuKey::reserve(const std::string &air, const GpuBudget &budget, uint64_t m
         mirrorBuffer = std::make_unique<RegisteredHost>(mirrorElements);
         hostMirror = mirrorBuffer->elements.get();
     }
-    qHost(qElements);
     held += budget.resident;
-}
-
-FrElement *GpuKey::qHost(uint64_t n) const {
-    if (qBuffer == nullptr || n > qBuffer->n) {
-        qBuffer.reset();
-        qBuffer = std::make_unique<RegisteredHost>(n);
-    }
-    return qBuffer->elements.get();
 }
 
 void GpuKey::addShiftSum(uint64_t n, void *work) {
@@ -451,7 +472,7 @@ void GpuKey::addShiftSum(uint64_t n, void *work) {
         return;
     }
     pilfflonk_gpu_pack_shift(work, n, nullptr, nullptr, 0, 0, hBlocks, hPowers);
-    G1Point sum = msmOnDevice(transforms->devicePowers(), work, n);
+    G1Point sum = msmOnDevice(powers->devicePowers(), work, n);
     if (Engine::engine.g1.isZero(sum)) {
         throw std::runtime_error("GpuKey: the GPU's MSM of the shift of " + std::to_string(n) +
                                  " points gave the point at infinity: msm_bn128_gpu_dev_ptr failed (or τ is a root "
@@ -474,7 +495,7 @@ G1Point GpuKey::commit(const void *base, const uint64_t *offsets, uint64_t k, ui
         throw std::logic_error("GpuKey::commit: no shift sum for MSMs of " + std::to_string(n) + " scalars");
     }
     pilfflonk_gpu_pack_shift(work, n, base, offsets, k, length, hBlocks, hPowers);
-    G1Point shifted = msmOnDevice(transforms->devicePowers(), work, n);
+    G1Point shifted = msmOnDevice(powers->devicePowers(), work, n);
     Engine &E = Engine::engine;
     if (E.g1.isZero(shifted) && !allZero(work, n)) {
         throw std::runtime_error("GpuKey::commit: the GPU's MSM of " + std::to_string(n) +
@@ -517,7 +538,7 @@ GpuAirKey::GpuAirKey(GpuKey &_key, const AirKey &_air, FrElement *fixedCoefs,
     const PilfflonkInfo &info = air.info();
     const uint64_t N = air.n();
     checkSrsFits(air, key.nPowers());
-    key.reserve(air.name(), gpuBudget(air, key.multiprocessors()), layout.polyElements, layout.qElements);
+    key.reserve(air.name(), gpuBudget(air, key.multiprocessors()), layout.polyElements);
 
     const ResidentLayout r = residentLayout(air);
     resident = DeviceBuffer(r.bytes);
@@ -528,23 +549,24 @@ GpuAirKey::GpuAirKey(GpuKey &_key, const AirKey &_air, FrElement *fixedCoefs,
     positionsOffset = r.positions;
     offsetsOffset = r.offsets;
 
-    // The offsets of the polynomials each f packs: of a fixed f, its columns' in the fixed
-    // coefficients; of a stage's, its slots in the arena.
+    // The offsets of the polynomials each f packs (componentOffset): of a fixed f, its columns' in
+    // the fixed coefficients; of a stage's, its slots in the arena; of Q's, its pieces'. Then the
+    // fixed columns', and Q's pieces' in order.
     std::vector<uint64_t> table;
     tableStart.assign(info.layout.size(), ArenaLayout::NONE);
     for (uint64_t f = 0; f < info.layout.size(); ++f) {
-        const LayoutEntry &entry = info.layout[f];
-        if (entry.stage == info.qStage()) {
-            continue;
-        }
         tableStart[f] = table.size();
-        for (uint64_t j = 0; j < entry.k; ++j) {
+        for (uint64_t j = 0; j < info.layout[f].k; ++j) {
             table.push_back(componentOffset(air, layout, f, j));
         }
     }
     fixedColumnsStart = table.size();
     for (uint64_t c = 0; c < info.nConstants; ++c) {
         table.push_back(c * N);
+    }
+    piecesStart = table.size();
+    for (uint64_t i = 0; i < air.nQPieces(); ++i) {
+        table.push_back(i * layout.qPieceElements);
     }
     if (table.size() != r.tableLength) {
         throw std::logic_error("GpuAirKey: " + air.name() + "'s table of offsets has " + std::to_string(table.size()) +
@@ -577,9 +599,7 @@ GpuAirKey::GpuAirKey(GpuKey &_key, const AirKey &_air, FrElement *fixedCoefs,
     interpolateFixed(fixedCoefs, fixedPolys);
     TimerStart(PILFFLONK_GPU_SHIFT_SUMS);
     for (const LayoutEntry &entry : info.layout) {
-        if (entry.stage != info.qStage()) {
-            key.addShiftSum(entry.degree, key.arena() + layout.work);
-        }
+        key.addShiftSum(entry.degree, key.arena() + layout.work);
     }
     // And those of the opening's W and W' (OpeningGpu), of at most the largest degree.
     const ShplonkBounds opening = shplonkBounds(air);
@@ -645,12 +665,8 @@ const uint64_t *GpuAirKey::witnessPositions() const {
     return reinterpret_cast<const uint64_t *>(resident.data() + positionsOffset);
 }
 
-const uint64_t *GpuAirKey::offsets(uint64_t f) const {
-    if (tableStart.at(f) == ArenaLayout::NONE) {
-        throw std::invalid_argument("GpuAirKey::offsets: f" + std::to_string(f) + " holds Q, which is committed on "
-                                    "the host");
-    }
-    return offsetTable() + tableStart[f];
-}
+const uint64_t *GpuAirKey::offsets(uint64_t f) const { return offsetTable() + tableStart.at(f); }
+
+const uint64_t *GpuAirKey::qPieceOffsets() const { return offsetTable() + piecesStart; }
 
 } // namespace PilFflonk

@@ -51,6 +51,7 @@ using G1PointAffine = Engine::G1PointAffine;
 using G2PointAffine = Engine::G2PointAffine;
 using Poly = Polynomial<Engine>;
 using Column = std::vector<FrElement>;
+using PilFflonk::ShplonkComponent;
 using PilFflonk::ShplonkOpening;
 using PilFflonk::ShplonkPolynomial;
 using PilFflonk::ShplonkProof;
@@ -95,6 +96,11 @@ const Srs &testSrs() {
 
 bool equal(const FrElement &a, const FrElement &b) {
     return E.fr.eq(a, b);
+}
+
+bool equal(const std::vector<FrElement> &a, const std::vector<FrElement> &b) {
+    auto same = [](const FrElement &x, const FrElement &y) { return E.fr.eq(x, y); };
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), same);
 }
 
 FrElement fromUI(uint64_t value) {
@@ -981,6 +987,12 @@ void testRefusesArguments() {
             o.polynomials[1].components[0] = owned.back().get();
         },
         "f_1: component 0 has no coefficients");
+    expectRefused(
+        [](ShplonkOpening &o, Owned &) { o.polynomials[1].components[0] = ShplonkComponent::elsewhere(0, 0); },
+        "f_1: component 0 has no coefficients");
+    expectRefused(
+        [](ShplonkOpening &o, Owned &) { o.polynomials[0].components[1] = ShplonkComponent::elsewhere(19, 19); },
+        "f_0: component 1 has degree 19 and 19 coefficients");
     // k must divide r - 1 = 2^28·3^2·13·29·983·…: 5, 7 and 9·3 = 27 do not.
     for (uint64_t k : {5, 7, 27}) {
         expectRefused(
@@ -1036,6 +1048,44 @@ void testRefusesArguments() {
                                             "ShplonkProver::open: the transcript is empty");
         assert(empty.empty());
     }
+}
+
+// Components elsewhere (ShplonkComponent::elsewhere, as a device keeps them): the prover built on
+// their numbers of coefficients and degrees, with an Evaluator, is the one built on the polynomials
+// themselves, roots, evaluations and bounds; and the host's evaluations and quotients refuse them,
+// open() before the transcript is touched.
+void testComponentsElsewhere() {
+    SmallOpening fixture;
+    const ShplonkProver host(fixture.opening);
+    ShplonkOpening shapes = fixture.opening;
+    for (ShplonkPolynomial &f : shapes.polynomials) {
+        for (ShplonkComponent &c : f.components) {
+            c = ShplonkComponent::elsewhere(c.length(), c.degree());
+        }
+    }
+    const ShplonkProver elsewhere(shapes, [&](const ShplonkProver &) { return host.evaluations(); });
+    assert(elsewhere.size() == host.size() && elsewhere.workLength() == host.workLength());
+    for (uint64_t i = 0; i < host.size(); ++i) {
+        assert(elsewhere.nCoefs(i) == host.nCoefs(i) && elsewhere.components(i)[0].host() == nullptr);
+        assert(equal(elsewhere.roots(i), host.roots(i)) && equal(elsewhere.evaluations()[i], host.evaluations()[i]));
+    }
+    // checkW's bound: max(1, nCoefs(i) − |T_i|) = 3·18 + 2 + 1 − 6 coefficients, f_0's.
+    host.checkW(50);
+    elsewhere.checkW(50);
+    expectThrows<std::logic_error>([&] { host.checkW(51); }, "W has degree 51, not below 51");
+    expectThrows<std::logic_error>([&] { elsewhere.checkW(51); }, "W has degree 51, not below 51");
+
+    expectThrows<std::invalid_argument>([&] { ShplonkProver onHost(shapes); },
+                                        "ShplonkProver: f_0: component 0 is not on the host, whose evaluations");
+    const FrElement alpha = E.fr.set(7);
+    expectThrows<std::invalid_argument>([&] { elsewhere.quotientW(host.interpolants(), alpha); },
+                                        "ShplonkProver::quotientW: f_0: component 0 is not on the host");
+    Transcript t;
+    t.absorb(std::vector<FrElement>{E.fr.one()});
+    Transcript twin = t;
+    expectThrows<std::invalid_argument>([&] { elsewhere.open(testSrs(), t); },
+                                        "ShplonkProver::open: f_0: component 0 is not on the host");
+    assert(equal(t.squeeze(), twin.squeeze()));
 }
 
 // The failures after the transcript has moved on: [W]₁ at infinity (every f_i = r_i, so W = 0),
@@ -1197,6 +1247,7 @@ void runShplonkTests() {
     testTamperingBreaksTheIdentity();
     testDeterminism();
     testRefusesArguments();
+    testComponentsElsewhere();
     testFailuresAfterSqueezing();
 }
 

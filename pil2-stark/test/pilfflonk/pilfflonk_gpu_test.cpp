@@ -4,10 +4,11 @@
 // (make pilfflonk_test) and on a machine without one (make pilfflonk_gpu_test there). Where there is
 // one, the tests of each module compare its GPU path with its CPU one (gpuUnderTest):
 // pilfflonk_lde_test.cpp the transforms, pilfflonk_commit_test.cpp the MSM,
-// pilfflonk_prover_test.cpp whole proofs and a key on the GPU; and this file the kernels of the
-// device path (pilfflonk_kernels.hpp, pilfflonk_lde_kernels.hpp), the LDE on the device and GpuKey's
-// commitments, byte for byte against the CPU's code on seeded inputs, edge values (0, 1, r − 1, all
-// equal) and sizes around the warp, the block of 256 threads and powers of two.
+// pilfflonk_expressions_gpu_test.cpp the interpreter, pilfflonk_prover_test.cpp whole proofs and a
+// key on the GPU; and this file the kernels of the device path (pilfflonk_kernels.hpp,
+// pilfflonk_lde_kernels.hpp), the LDE on the device, GpuKey's commitments and SHPLONK on the device,
+// byte for byte against the CPU's code on seeded inputs, edge values (0, 1, r − 1, all equal) and
+// sizes around the warp, the block of 256 threads and powers of two.
 #include "pilfflonk_test.hpp"
 #include "pilfflonk_test_ptau.hpp"
 
@@ -262,7 +263,10 @@ void testPackShift(Random &random) {
             const uint64_t nCoefs = PilFflonk::pack(pointers.data(), k, packed.data(), packed.size());
             std::fill(packed.begin() + nCoefs, packed.end(), E.fr.zero());
             Column rho(n), expected(n);
-            PilFflonk::Gpu::shift(rho.data(), n);
+            rho[0] = PilFflonk::msmShiftRatio();
+            for (uint64_t i = 1; i < n; ++i) {
+                E.fr.mul(rho[i], rho[i - 1], rho[0]);
+            }
             for (uint64_t i = 0; i < n; ++i) {
                 E.fr.add(expected[i], packed[i], rho[i]);
             }
@@ -355,6 +359,34 @@ void testCountCoefficients(Random &random) {
     pilfflonk_gpu_count_coefficients(reinterpret_cast<uint64_t *>(dCounts.data()), dCoefs.data(),
                                      reinterpret_cast<const uint64_t *>(dOffsets.data()), nPolys, length);
     assert(download<uint64_t>(dCounts, nPolys) == expected);
+}
+
+// The blinding of the boundaries of Q's pieces on the device (pilfflonk_gpu_blind_q_boundaries) is
+// Instance::commitQ's on the host: 1, 2, 3 and 5 pieces, strides from 2 to 256, slots with no
+// coefficient and with some above stride + 2, factors of every size (0, 1, r − 1 among them); one
+// piece is left as it is.
+void testBlindQBoundaries(Random &random) {
+    for (uint64_t m : {uint64_t(1), uint64_t(2), uint64_t(3), uint64_t(5)}) {
+        for (uint64_t stride : {uint64_t(2), uint64_t(3), uint64_t(255), uint64_t(256)}) {
+            for (uint64_t extra : {uint64_t(0), uint64_t(1), uint64_t(7)}) {
+                const uint64_t slot = stride + 2 + extra;
+                // One factor at least, so that the buffer is not empty.
+                const Column pieces = random.column(m * slot),
+                             factors = random.column(std::max<uint64_t>(2 * (m - 1), 1));
+                Column expected = pieces;
+                for (uint64_t t = 0; t + 1 < m; ++t) {
+                    FrElement *below = expected.data() + t * slot + stride, *above = expected.data() + (t + 1) * slot;
+                    for (uint64_t i = 0; i < 2; ++i) {
+                        below[i] = factors[2 * t + i];
+                        E.fr.sub(above[i], above[i], factors[2 * t + i]);
+                    }
+                }
+                const DeviceBuffer dPieces = upload(pieces), dFactors = upload(factors);
+                pilfflonk_gpu_blind_q_boundaries(dPieces.data(), slot, stride, m, dFactors.data());
+                assert(same(download<FrElement>(dPieces, m * slot), expected));
+            }
+        }
+    }
 }
 
 // GpuKey::commit, the MSM from the device with the length of the layout, is commitPacked's point:
@@ -507,6 +539,7 @@ void testDeviceKernels() {
     testPackShift(random);
     testBlind(random);
     testCountCoefficients(random);
+    testBlindQBoundaries(random);
     testTheDeviceCommitsAsTheCpu(random);
     testExtendCosetPartOnDevice(random);
     testInterpolateCosetOnDevice(random);

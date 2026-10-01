@@ -17,7 +17,6 @@
 #include "binfile_utils.hpp"
 #include "binfile_writer.hpp"
 #include "pilfflonk_error.hpp"
-#include "pilfflonk_gpu.hpp"
 
 namespace PilFflonk {
 
@@ -470,11 +469,6 @@ G1Point Srs::commit(const FrElement *coefs, uint64_t nCoefs) const {
     if (coefs == nullptr && nCoefs != 0) {
         throw invalid("commit", "coefs is null");
     }
-#ifdef __USE_CUDA__
-    if (device != nullptr) {
-        return device->msm(coefs, nCoefs);
-    }
-#endif
     Engine &E = Engine::engine;
     // ffiasm's MSM reads each scalar as a little-endian integer, so it must be the canonical value:
     // Montgomery limbs would commit to p·2^256 instead (pilfflonk/docs/protocol.md#commitments).

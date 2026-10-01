@@ -81,6 +81,19 @@ __global__ void blind(Element *base, const uint64_t *offsets, uint64_t nPolys, u
     }
 }
 
+// One thread per boundary: two coefficients of the piece below it and two of the one above, which
+// no other boundary touches (qStride >= 2).
+__global__ void blindQBoundaries(Element *base, uint64_t slot, uint64_t qStride, uint64_t nBoundaries,
+                                 const Element *factors) {
+    for (uint64_t t = firstIndex(); t < nBoundaries; t += stride()) {
+        Element *below = base + t * slot + qStride, *above = base + (t + 1) * slot;
+        for (uint64_t i = 0; i < 2; ++i) {
+            below[i] = factors[2 * t + i];
+            above[i] = Fr::sub(above[i], factors[2 * t + i]);
+        }
+    }
+}
+
 // Each row of blocks one polynomial; each thread the highest non-zero index of its coefficients, the
 // largest of a warp's then folded into counts with atomicMax. Every thread of a warp reaches the
 // shuffle.
@@ -134,6 +147,16 @@ extern "C" void pilfflonk_gpu_blind(void *base, const uint64_t *offsets, uint64_
     }
     blind<<<blocksFor(nPolys), THREADS>>>(static_cast<Element *>(base), offsets, nPolys, n,
                                           static_cast<const Element *>(factors), nFactors);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+extern "C" void pilfflonk_gpu_blind_q_boundaries(void *base, uint64_t slot, uint64_t qStride, uint64_t nPieces,
+                                                 const void *factors) {
+    if (nPieces < 2) {
+        return;
+    }
+    blindQBoundaries<<<blocksFor(nPieces - 1), THREADS>>>(static_cast<Element *>(base), slot, qStride, nPieces - 1,
+                                                          static_cast<const Element *>(factors));
     CHECKCUDAERR(cudaGetLastError());
 }
 

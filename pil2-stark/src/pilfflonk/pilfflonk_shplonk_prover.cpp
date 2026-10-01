@@ -131,8 +131,22 @@ void addScaled(FrElement *out, const FrElement *in, uint64_t n, const FrElement 
     }
 }
 
+// Throws std::invalid_argument, naming `function`, if a component of `prover` is not on the host,
+// whose evaluations and quotients read its coefficients.
+void requireOnHost(const ShplonkProver &prover, const char *function) {
+    for (uint64_t i = 0; i < prover.size(); ++i) {
+        for (uint64_t j = 0; j < prover.k(i); ++j) {
+            if (prover.components(i)[j].host() == nullptr) {
+                throw invalid(function, name(i) + ": component " + std::to_string(j) +
+                                            " is not on the host, whose evaluations and quotients read it");
+            }
+        }
+    }
+}
+
 // The host's evaluations: rapidsnark's fastEvaluate on each p_j at each point of its f.
 ShplonkProver::Evaluations hostEvaluations(const ShplonkProver &prover) {
+    requireOnHost(prover, "");
     ShplonkProver::Evaluations evals(prover.size());
     for (uint64_t i = 0; i < prover.size(); ++i) {
         const uint64_t k = prover.k(i);
@@ -140,7 +154,7 @@ ShplonkProver::Evaluations hostEvaluations(const ShplonkProver &prover) {
         evals[i].resize(points.size() * k);
         for (uint64_t m = 0; m < points.size(); ++m) {
             for (uint64_t j = 0; j < k; ++j) {
-                evals[i][m * k + j] = prover.components(i)[j]->fastEvaluate(points[m]);
+                evals[i][m * k + j] = prover.components(i)[j].host()->fastEvaluate(points[m]);
             }
         }
     }
@@ -170,6 +184,14 @@ private:
 };
 
 } // namespace
+
+ShplonkComponent ShplonkComponent::elsewhere(uint64_t length, uint64_t degree) {
+    ShplonkComponent c;
+    c.isElsewhere = true;
+    c.nCoefficients = length;
+    c.topDegree = degree;
+    return c;
+}
 
 void divideExactly(Poly &a, uint64_t m, const FrElement &beta, const std::string &what) {
     if (m == 0) {
@@ -220,13 +242,19 @@ ShplonkProver::ShplonkProver(ShplonkOpening opening, const Evaluator &evaluate) 
         }
         uint64_t maxLength = 0;
         for (uint64_t j = 0; j < k; ++j) {
-            if (f.components[j] == nullptr) {
+            const ShplonkComponent &c = f.components[j];
+            if (!c.given()) {
                 throw invalid(function, name(i) + ": component " + std::to_string(j) + " is null");
             }
-            if (f.components[j]->getLength() == 0) {
+            if (c.length() == 0) {
                 throw invalid(function, name(i) + ": component " + std::to_string(j) + " has no coefficients");
             }
-            maxLength = std::max(maxLength, f.components[j]->getLength());
+            if (c.degree() >= c.length()) {
+                throw invalid(function, name(i) + ": component " + std::to_string(j) + " has degree " +
+                                            std::to_string(c.degree()) + " and " + std::to_string(c.length()) +
+                                            " coefficients");
+            }
+            maxLength = std::max(maxLength, c.length());
         }
         if (k > static_cast<uint64_t>(INT_MAX) / maxLength) {
             throw invalid(function, name(i) + ": k = " + std::to_string(k) + " components of up to " +
@@ -282,9 +310,9 @@ ShplonkProver::ShplonkProver(ShplonkOpening opening, const Evaluator &evaluate) 
         const FrElement omegaKN = rootOfUnity(k * N);
         const FrElement seed = power(opening.xiSeed, opening.powerW / k);
         for (uint64_t j = 0; j < k; ++j) {
-            entry.maxComponentLength = std::max(entry.maxComponentLength, f.components[j]->getLength());
+            entry.maxComponentLength = std::max(entry.maxComponentLength, f.components[j].length());
             // pack()'s count, CPolynomial's degree bound.
-            entry.nCoefs = std::max(entry.nCoefs, k * f.components[j]->getDegree() + j + 1);
+            entry.nCoefs = std::max(entry.nCoefs, k * f.components[j].degree() + j + 1);
         }
         for (int64_t s : f.offsets) {
             // ξ·ω_N^s, and x_0 = xiSeed^(powerW/k)·ω_{kN}^s: x_0^k = ξ·ω_N^s.
@@ -407,7 +435,11 @@ ShplonkProver::LScalars ShplonkProver::lScalars(const FrElement &alpha, const Fr
 uint64_t ShplonkProver::packed(uint64_t i, FrElement *out) const {
     const Entry &f = fs[i];
     const uint64_t k = f.components.size();
-    const uint64_t n = pack(f.components.data(), k, out, packedBufferLength(k, f.maxComponentLength));
+    std::vector<Poly *> polys(k);
+    for (uint64_t j = 0; j < k; ++j) {
+        polys[j] = f.components[j].host();
+    }
+    const uint64_t n = pack(polys.data(), k, out, packedBufferLength(k, f.maxComponentLength));
     if (n != f.nCoefs) {
         throw std::logic_error("ShplonkProver: the components of " + name(i) + " changed after it was built");
     }
@@ -461,6 +493,7 @@ std::unique_ptr<Poly> ShplonkProver::quotientW(const Interpolants &r, const FrEl
             throw invalid("::quotientW", "r[" + std::to_string(i) + "] is not an interpolant of " + name(i));
         }
     }
+    requireOnHost(*this, "::quotientW");
 
     // W, and one buffer for every f_i - r_i in turn, packed into it (pack() needs scratchLength()
     // elements) and divided in place as a polynomial over it, which does not clear it: no
@@ -508,6 +541,7 @@ std::unique_ptr<Poly> ShplonkProver::quotientWp(const Interpolants &r, const FrE
     if (W.getDegree() >= length) {
         throw invalid("::quotientWp", "W has degree " + std::to_string(W.getDegree()) + ": it is not quotientW's");
     }
+    requireOnHost(*this, "::quotientWp");
 
     const LScalars scalars = lScalars(alpha, y);
 
@@ -535,6 +569,7 @@ std::unique_ptr<Poly> ShplonkProver::quotientWp(const Interpolants &r, const FrE
 }
 
 ShplonkProof ShplonkProver::open(const Srs &srs, Transcript &transcript) const {
+    requireOnHost(*this, "::open");
     HostQuotients quotients(srs);
     return open(srs, transcript, quotients);
 }

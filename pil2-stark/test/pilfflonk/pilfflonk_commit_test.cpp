@@ -8,7 +8,6 @@
 #include <memory>
 #include <random>
 #include <stdexcept>
-#include <thread>
 #include <vector>
 
 #include "alt_bn128.hpp"
@@ -20,6 +19,12 @@
 #include "pilfflonk_srs.hpp"
 #include "pilfflonk_test_ptau.hpp"
 #include "polynomial.hpp"
+#ifdef __USE_CUDA__
+#include "pilfflonk_key_gpu.hpp"
+
+// The PLONK GPU prover's helper (rapidsnark/plonk_prover.cu).
+extern "C" void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
+#endif
 
 namespace PilFflonkTest {
 
@@ -574,34 +579,40 @@ void testApiCommitFixed() {
     pilfflonk_srs_free(srs);
 }
 
-// The GPU (pilfflonk/docs/performance.md#why-the-proof-is-the-same), where there is one: an SRS
-// that commits on it (Srs::setGpu, its Gpu holding its powers) gives ffiasm's commitments, in affine
-// coordinates byte for byte, for lengths around sppark's warp of 32 points and its window for small
-// MSMs (192 points), up to the whole SRS, and for scalars of every size (0, 1, r − 1); zeros and no
-// coefficients commit to the point at infinity on both. commitPacked and commitFixed commit through
-// it, the latter with an Lde on the GPU too.
+// The GPU (pilfflonk/docs/performance.md#why-the-proof-is-the-same), where there is one: the MSM of a
+// key on the GPU (GpuKey::commit, on its copy of the SRS's powers) gives ffiasm's commitments, in
+// affine coordinates byte for byte, for lengths around sppark's warp of 32 points and its window for
+// small MSMs (192 points), up to the whole SRS, and for scalars of every size (0, 1, r − 1); zeros
+// commit to the point at infinity on both. And repeated scalars, which make sppark's Pippenger slow
+// and which the shift of GpuKey::commit spreads out: all equal, as L1's coefficients; every other
+// one; −ρ, whose shifted scalars are all zero, so that the GPU's MSM of them is the point at infinity
+// and the commitment is the shift's negated; and −ρ + 1, all equal once shifted. Each at lengths the
+// shift sums separately, and again at one it has summed.
 void testTheGpuCommitsAsTheCpu() {
 #ifdef __USE_CUDA__
     if (!gpuUnderTest("commitments on the GPU")) {
         return;
     }
     const Srs &cpu = testSrs();
-    TestDir dir;
-    const std::string ptau = dir.file("gpu.ptau");
-    writeTestPtau(ptau, N_G1);
-    Srs onGpu = Srs::fromPtau(ptau, N_G1);
-    const PilFflonk::Gpu gpu(&onGpu.g1(0), onGpu.nG1());
-    assert(gpu.nPoints() == N_G1 && onGpu.gpu() == nullptr);
-    onGpu.setGpu(&gpu);
-    assert(onGpu.gpu() == &gpu);
+    PilFflonk::GpuKey key(cpu);
+    assert(key.nPowers() == N_G1 && key.holds(cpu));
+    const PilFflonk::DeviceBuffer coefs(N_G1 * sizeof(FrElement)), work(N_G1 * sizeof(FrElement)),
+        zero(sizeof(uint64_t));
+    const uint64_t offset = 0;
+    gpu_plonk_memcpy_h2d(zero.data(), &offset, sizeof(offset));
 
     auto affine = [](G1Point p) {
         G1PointAffine a;
         E.g1.copy(a, p);
         return std::vector<uint8_t>(reinterpret_cast<uint8_t *>(&a), reinterpret_cast<uint8_t *>(&a) + sizeof(a));
     };
-    auto sameCommitment = [&](const Column &coefs, uint64_t n) {
-        return affine(cpu.commit(coefs.data(), n)) == affine(onGpu.commit(coefs.data(), n));
+    auto onGpu = [&](const Column &c, uint64_t n) {
+        gpu_plonk_memcpy_h2d(coefs.data(), c.data(), n * sizeof(FrElement));
+        key.addShiftSum(n, work.data());
+        return key.commit(coefs.data(), reinterpret_cast<const uint64_t *>(zero.data()), 1, n, n, work.data());
+    };
+    auto sameCommitment = [&](const Column &c, uint64_t n) {
+        return affine(cpu.commit(c.data(), n)) == affine(onGpu(c, n));
     };
 
     Random random(9);
@@ -612,22 +623,16 @@ void testTheGpuCommitsAsTheCpu() {
     for (const Column &special : {Column(64, minusOne), Column(64, E.fr.one()), Column{E.fr.zero(), minusOne}}) {
         assert(sameCommitment(special, special.size()));
     }
-    G1Point none = onGpu.commit(nullptr, 0);
-    assert(E.g1.isZero(none));
     const Column zeros(100);
-    G1Point zero = onGpu.commit(zeros.data(), zeros.size());
-    assert(E.g1.isZero(zero));
+    G1Point zero100 = onGpu(zeros, zeros.size());
+    assert(E.g1.isZero(zero100));
     assert(sameCommitment(zeros, zeros.size()));
-    const Column tooLong = random.column(N_G1 + 1);
-    expectInvalid([&] { onGpu.commit(tooLong.data(), N_G1 + 1); }, "Srs::commit: 1025 coefficients exceed the 1024");
 
-    // Repeated scalars, which make sppark's Pippenger slow and which the shift of Gpu::msm spreads
-    // out: all equal, as L1's coefficients; every other one; -ρ, whose shifted scalars are all
-    // zero, so that the GPU's MSM of them is the point at infinity and the commitment is the
-    // shift's negated; and -ρ + 1, all equal once shifted. Each at lengths the shift sums
-    // separately, and again at one it has summed.
     Column rho(N_G1);
-    PilFflonk::Gpu::shift(rho.data(), N_G1);
+    rho[0] = PilFflonk::msmShiftRatio();
+    for (uint64_t i = 1; i < N_G1; ++i) {
+        E.fr.mul(rho[i], rho[i - 1], rho[0]);
+    }
     FrElement inverseN;
     E.fr.inv(inverseN, E.fr.set(64));
     Column allEqual(N_G1, inverseN), everyOther = random.column(N_G1), minusRho(N_G1), minusRhoPlusOne(N_G1);
@@ -643,73 +648,19 @@ void testTheGpuCommitsAsTheCpu() {
             assert(sameCommitment(*repeated, n));
         }
     }
-    G1Point minusShift = onGpu.commit(minusRho.data(), N_G1);
+    G1Point minusShift = onGpu(minusRho, N_G1);
     assert(!E.g1.isZero(minusShift));
-
-    // Several threads at once, which take turns on the Gpu's buffers and its sums of the shift.
-    std::vector<Column> columns;
-    std::vector<uint64_t> lengths;
-    std::vector<std::vector<uint8_t>> expected;
-    for (uint64_t t = 0; t < 8; ++t) {
-        columns.push_back(random.column(N_G1));
-        lengths.push_back(t % 2 == 0 ? N_G1 : 100 + 117 * t);
-        expected.push_back(affine(cpu.commit(columns[t].data(), lengths[t])));
-    }
-    std::vector<std::vector<uint8_t>> onThreads(columns.size());
-    std::vector<std::thread> threads;
-    for (uint64_t t = 0; t < columns.size(); ++t) {
-        threads.emplace_back([&, t] { onThreads[t] = affine(onGpu.commit(columns[t].data(), lengths[t])); });
-    }
-    for (std::thread &thread : threads) {
-        thread.join();
-    }
-    assert(onThreads == expected);
-
-    // commitPacked, every packing; commitFixed, with the INTT on the GPU as well.
-    for (uint64_t k : PACKINGS) {
-        std::vector<std::unique_ptr<Poly>> owned;
-        for (uint64_t j = 0; j < k; ++j) {
-            owned.push_back(polynomial(random.column(64 - j)));
-        }
-        const std::vector<Poly *> polys = pointers(owned);
-        assert(affine(PilFflonk::commitPacked(cpu, polys.data(), k)) ==
-               affine(PilFflonk::commitPacked(onGpu, polys.data(), k)));
-    }
-    const Lde lde(6, 6), ldeOnGpu(6, 6, &gpu);
-    for (uint64_t k : PACKINGS) {
-        std::vector<Column> columns;
-        std::vector<FrElement *> evals;
-        for (uint64_t j = 0; j < k; ++j) {
-            columns.push_back(random.column(64));
-        }
-        for (Column &c : columns) {
-            evals.push_back(c.data());
-        }
-        assert(affine(PilFflonk::commitFixed(cpu, lde, evals.data(), k)) ==
-               affine(PilFflonk::commitFixed(onGpu, ldeOnGpu, evals.data(), k)));
-    }
 #else
     // A library built without the GPU: nothing to compare (pilfflonk_gpu_test.cpp tests the refusal).
     assert(!PilFflonk::gpuAvailable());
 #endif
 }
 
-// The shift Gpu::msm adds to its scalars, which needs no GPU: ρ_i = h^(i+1) across the chunks it is
-// computed in, and h's order is not a power of two, so the shift is no root of unity of a domain.
+// The shift of the GPU's MSMs (GpuKey::commit), which needs no GPU: h's order is not a power of two,
+// so ρ_i = h^(i+1) is no root of unity of a domain.
 void testTheGpuShift() {
 #ifdef __USE_CUDA__
-    const uint64_t n = 3 * (uint64_t(1) << 14) + 5;
-    Column rho(n);
-    PilFflonk::Gpu::shift(rho.data(), n);
-    const FrElement h = rho[0];
-    for (uint64_t i = 1; i < n; ++i) {
-        FrElement next;
-        E.fr.mul(next, rho[i - 1], h);
-        assert(E.fr.eq(next, rho[i]));
-    }
-    assert(!E.fr.eq(PilFflonk::power(h, uint64_t(1) << 28), E.fr.one()));
-    PilFflonk::Gpu::shift(nullptr, 0);
-    expectInvalid([] { PilFflonk::Gpu::shift(nullptr, 1); }, "Gpu::shift: out is null");
+    assert(!E.fr.eq(PilFflonk::power(PilFflonk::msmShiftRatio(), uint64_t(1) << 28), E.fr.one()));
 #endif
 }
 

@@ -14,8 +14,6 @@ using G1Point = AltBn128::Engine::G1Point;
 using G1PointAffine = AltBn128::Engine::G1PointAffine;
 using G2PointAffine = AltBn128::Engine::G2PointAffine;
 
-class Gpu; // pilfflonk_gpu.hpp
-
 // A point as a snarkjs ptau, a zkey and pilfflonk.srs.bin store it: affine, x‖y, every Fq
 // coordinate in ffiasm's Montgomery form (x·2^256 mod q), little-endian. A G2 coordinate is an Fq2
 // element c0 + c1·u, stored c0‖c1. These are ffiasm's in-memory affine points, byte for byte.
@@ -84,8 +82,8 @@ G2Error checkG2(const G2PointAffine &p);
 //
 // The points are those of sections 2 and 3 of the ptau, copied as they are (the format above).
 //
-// Immutable once built, so its const functions may run concurrently; a ProvingKey that proves on the
-// GPU gives its SRS a Gpu (setGpu) before it is shared.
+// Immutable once built, so its const functions may run concurrently. A key on the GPU copies the
+// powers [τ^i]₁ to the device (Gpu, pilfflonk_gpu.hpp), which commits there (GpuKey::commit).
 class Srs {
 public:
     // The powers [τ^i]₂ an SRS holds: [1]₂ and [τ]₂.
@@ -120,16 +118,9 @@ public:
     // The KZG commitment [p(τ)]₁ = Σ_i coefs[i]·[τ^i]₁ of the polynomial with the nCoefs
     // coefficients in `coefs` (Montgomery form, increasing degree): ffiasm's MSM, whose scalars
     // must be canonical, converted from Montgomery right before it
-    // (pilfflonk/docs/protocol.md#commitments), or, with a Gpu (setGpu), the GPU's, which takes
-    // them in Montgomery form (Gpu::msm): the same point. With nCoefs = 0 it is the point at
-    // infinity. Throws std::invalid_argument if nCoefs > nG1().
+    // (pilfflonk/docs/protocol.md#commitments). With nCoefs = 0 it is the point at infinity. Throws
+    // std::invalid_argument if nCoefs > nG1().
     G1Point commit(const FrElement *coefs, uint64_t nCoefs) const;
-
-    // The GPU commit runs on, or null, the default, for ffiasm's MSM. It must hold these powers
-    // [τ^i]₁ (Gpu(&g1(0), nG1())) and outlive every commit; ProvingKey::load sets it, before the key
-    // is shared. Only a library built with the GPU uses it.
-    void setGpu(const Gpu *gpu) { device = gpu; }
-    const Gpu *gpu() const { return device; }
 
 private:
     explicit Srs(uint64_t nG1);
@@ -142,7 +133,6 @@ private:
     // it only reads them.
     std::unique_ptr<G1PointAffine[]> g1Powers;
     G2PointAffine g2Powers[N_G2];
-    const Gpu *device = nullptr;
 };
 
 } // namespace PilFflonk

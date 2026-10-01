@@ -7,7 +7,6 @@
 #include <stdexcept>
 #include <string>
 
-#include "pilfflonk_gpu.hpp"
 #include "thread_utils.hpp"
 
 namespace PilFflonk {
@@ -184,7 +183,7 @@ bool batchInverse(FrElement *out, const FrElement *values, uint64_t n) {
     return !zero;
 }
 
-Lde::Lde(uint64_t _nBits, uint64_t _nBitsExt, const Gpu *gpu) : device(gpu) {
+Lde::Lde(uint64_t _nBits, uint64_t _nBitsExt) {
     if (_nBitsExt > MAX_NBITS_EXT) {
         throw invalid("Lde", "nBitsExt = " + std::to_string(_nBitsExt) + " exceeds " + std::to_string(MAX_NBITS_EXT) +
                                  ", the 2-adicity of the BN254 scalar field");
@@ -222,18 +221,6 @@ std::vector<std::unique_ptr<Lde::Poly>> Lde::intt(FrElement *const *evals, FrEle
     }
 
     std::vector<std::unique_ptr<Poly>> polys(nCols);
-#ifdef __USE_CUDA__
-    if (device != nullptr) {
-        // Poly::fromEvaluations with its inverse FFT on the GPU: the polynomial over coefs[c], cleared
-        // to its N + blindLength coefficients, the first N of them the INTT of evals[c], its degree fixed.
-        for (uint64_t c = 0; c < nCols; ++c) {
-            polys[c].reset(new Poly(Engine::engine, coefs[c], N, blindLength));
-            device->intt(evals[c], coefs[c], bitsOf(N));
-            polys[c]->fixDegree();
-        }
-        return polys;
-    }
-#endif
     forEachColumn(nCols, [&](uint64_t c) {
         polys[c].reset(Poly::fromEvaluations(Engine::engine, fft.get(), evals[c], coefs[c], N, blindLength));
     });
@@ -291,15 +278,6 @@ void Lde::extendPart(const FrElement *const *coefs, FrElement *const *evals, uin
     const uint64_t S = uint64_t(1) << partBits;
     // Part 0's shift is g, extendCoset's scaling.
     const FrElement c = partShift(part);
-#ifdef __USE_CUDA__
-    if (device != nullptr) {
-        for (uint64_t col = 0; col < nCols; ++col) {
-            foldByPowers(evals[col], coefs[col], nCoefs, S, c);
-            device->ntt(evals[col], evals[col], partBits);
-        }
-        return;
-    }
-#endif
     forEachColumn(nCols, [&](uint64_t col) {
         foldByPowers(evals[col], coefs[col], nCoefs, S, c);
         fft->fft(evals[col], S);
@@ -310,15 +288,6 @@ void Lde::interpolateCoset(const FrElement *const *evals, FrElement *const *coef
     checkBuffers("interpolateCoset", "evals", evals, nCols);
     checkBuffers("interpolateCoset", "coefs", coefs, nCols);
 
-#ifdef __USE_CUDA__
-    if (device != nullptr) {
-        for (uint64_t c = 0; c < nCols; ++c) {
-            device->intt(evals[c], coefs[c], bitsOf(NExtended));
-            mulByPowers(coefs[c], coefs[c], NExtended, shiftInv);
-        }
-        return;
-    }
-#endif
     forEachColumn(nCols, [&](uint64_t c) {
         if (coefs[c] != evals[c]) {
             ThreadUtils::parcpy(coefs[c], evals[c], NExtended * sizeof(FrElement), omp_get_max_threads());

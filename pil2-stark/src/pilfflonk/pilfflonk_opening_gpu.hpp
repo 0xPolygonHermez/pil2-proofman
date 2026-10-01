@@ -57,9 +57,9 @@ uint64_t shplonkWorkspaceBytes(const ShplonkBounds &bounds);
 // The evaluations: each p_j at each point, Σ_i coefs[i]·x^i with x^i from tables of powers of each
 // distinct point (gpu_plonk_precompute_omega_tables_async), all in one launch.
 //
-// It reads the degree of each p_j from the prover's components (their copies on the host), and
-// copies to the device the r_i and to the host a few elements per division (counted in the key's
-// CopyVolume).
+// It reads the degree of each p_j from the prover's components (ShplonkComponent: a copy on the host,
+// or elsewhere, as Instance::component gives Q's pieces), and copies to the device the r_i and to the
+// host a few elements per division (counted in the key's CopyVolume).
 class OpeningGpu final : public ShplonkQuotients {
 public:
     // By f_i, then j: the p_j of f_i on the device, f_i in the order of the ShplonkProver the opening
@@ -75,9 +75,8 @@ public:
 
     // The device side of an Opening of `instance` alone, which holds its key's arena (GpuKey::Lease):
     // its f in the order of its AIR's layout, the global order for one instance, with its committed
-    // polynomials where InstanceGpu left them, its fixed ones in the GpuAirKey, and Q's pieces copied
-    // from the instance's on the host to ArenaLayout::qPieces (until Q is computed on the device,
-    // which leaves them there); its workspace at ArenaLayout::shplonk.
+    // polynomials and Q's pieces where InstanceGpu left them, and its fixed ones in the GpuAirKey; its
+    // workspace at ArenaLayout::shplonk. Nothing is copied.
     static std::unique_ptr<OpeningGpu> ofInstance(const Instance &instance);
 
     // ShplonkProver's evaluations for `prover` (an Evaluator). Throws std::logic_error if the prover

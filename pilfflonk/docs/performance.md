@@ -196,31 +196,39 @@ command (0.25–0.33 s, though the process's exit frees them too).
 
 ### What runs on the GPU
 
-`proofman-cli pilfflonk prove -g/--gpu` runs the MSMs and the NTTs of the key and of the proof on the
-GPU; everything else stays where it is. No MSM, NTT or kernel of its own: `PilFflonk::Gpu`
-(`pil2-stark/src/pilfflonk/pilfflonk_gpu.{hpp,cpp}`) only calls the GPU entry points pil2-stark has,
-as the PLONK GPU prover calls them (`rapidsnark/plonk_prover_gpu.c.cuh`):
+`proofman-cli pilfflonk prove -g/--gpu` keeps the key and the proof on the device (`GpuKey`,
+`pil2-stark/src/pilfflonk/pilfflonk_key_gpu.hpp`): the SRS's powers `[τ^i]₁`, the fixed columns'
+coefficients and the bytecode while the key lives, and every polynomial of a proof in one arena of
+device memory. On the device:
+
+- at load, the fixed columns' INTT and the fixed commitments, and the sum of the MSM shift for every
+  length of an MSM of the key's proofs;
+- each stage's INTTs, blinding and commitments (`InstanceGpu::commitStage`);
+- all of `Q` (`InstanceGpu::computeQ` and `commitQ`): the LDE of each column it reads on each part of
+  the coset (`LdeGpu`), Zi of the part, its bytecode (`ExpressionsGpu`), its interpolation, the check of
+  its bound, its pieces with their blinding, and their commitments; the pieces stay there for the
+  opening;
+- SHPLONK's evaluations, `W`, `W'` and their commitments (`OpeningGpu`).
+
+On the host: the transcript, the blinding's draws (sent up in the CPU's order), the std's hints and
+the im pols (on copies of the stage columns), and the opening's scalars. The MSMs and the NTTs are the
+GPU entry points pil2-stark has, called as the PLONK GPU prover calls them
+(`rapidsnark/plonk_prover_gpu.c.cuh`):
 
 - `msm_bn128_gpu_dev_ptr` (`bn128/src/msm/msm_bn128.cu`, sppark's Pippenger) with `montgomery = true`,
-  on a copy of the SRS's powers `[τ^i]₁` kept on the device;
+  on the device's copy of the SRS's powers;
 - `ntt_bn128_gpu_dev_ptr` and `intt_bn128_gpu_dev_ptr` (`bn128/src/ntt/ntt_bn128.cu`, sppark's NTT), in
   natural order in and out;
-- `gpu_plonk_cuda_malloc`, `_free`, `gpu_plonk_memcpy_h2d`, `_d2h`, `gpu_plonk_cuda_device_sync` and
-  `gpu_plonk_set_device` (`rapidsnark/plonk_prover.cu`) for the device's memory, and sppark's
-  `cuda_available` to know whether there is a GPU.
+- the PLONK prover's helpers (`rapidsnark/plonk_prover.cu`): device memory, copies, its tables of
+  powers (`gpu_plonk_precompute_omega_tables_async`) and its exact division by `X − β`
+  (`gpu_plonk_compute_div_zerofier`), and sppark's `cuda_available` to know whether there is a GPU.
 
-Two points of the prover go to the GPU, and only two:
-
-- `Srs::commit`, every MSM: the commitments of each stage, of `Q`, of `W` and `W'`, and the fixed
-  commitments checked when the key is loaded;
-- the transforms of `Lde`: the INTT of `Lde::intt` (each stage's columns and, at load, the fixed ones),
-  the FFT of each part in `extendCosetPart`, and the INTT of `interpolateCoset`.
-
-The elementwise work around the transforms (the coset shift and the folding of each part, the scaling
-by `g^−j`, trimming a polynomial to its degree), the blinding and the packing stay on the CPU, so the
-data goes to the device and back on every transform. The PLONK GPU prover has no coset helper on the
-device, and one would be a new kernel. The interpreter, the SHPLONK divisions, the evaluations at `ξ`,
-the hints, the im pols and reading the files stay on the CPU too.
+The elementwise work around them is pilfflonk's own kernels (`pilfflonk_kernels.cu`,
+`pilfflonk_lde.cu`, `pilfflonk_expressions.cu`, `pilfflonk_shplonk.cu`), each tested against the CPU's
+code byte for byte. A proof copies the witness to the device, and back to the host the stage columns
+and the committed polynomials (which the host's hints read, and of which `Instance::polynomial` hands
+out copies), and a few elements per step otherwise; `-vv` logs the bytes of each phase
+(`PILFFLONK_COPIES_<phase>`).
 
 ### Why the proof is the same
 
@@ -244,7 +252,8 @@ points:
 | all equal | 25.79 s | 0.070 s | 1.17 s |
 | every other one equal | 14.02 s | 0.060 s | 1.85 s |
 
-So `Gpu::msm` shifts its scalars. For a fixed `h`, `ρ_i = h^(i+1)`, and it computes
+So the MSM of the device path (`GpuKey::commit`) shifts its scalars. For a fixed `h`,
+`ρ_i = h^(i+1)`, and it computes
 
 ```
 Σ s_i·[τ^i]₁ = Σ (s_i + ρ_i)·[τ^i]₁ − Σ ρ_i·[τ^i]₁
@@ -252,9 +261,10 @@ So `Gpu::msm` shifts its scalars. For a fixed `h`, `ρ_i = h^(i+1)`, and it comp
 
 `s + ρ` looks random whatever `s` is, and `Σ ρ_i·[τ^i]₁` depends only on the length `n`, so it is
 computed once for each `n` and kept. The difference is the same point, so the commitment, in affine
-coordinates, is the CPU's bit for bit. The cost is the `n` additions `s_i + ρ_i` on the CPU, and one
-more MSM the first time a length appears: a prover that makes several proofs with one key pays it once.
-`ρ` needs to be neither secret nor random, as it changes how the point is computed, not the point.
+coordinates, is the CPU's bit for bit. Every MSM has the static length of its `f`'s degree bound in the
+layout (zero scalars add nothing), so the sums are computed when the key loads, one MSM per length;
+the `n` additions `s_i + ρ_i` are in the kernel that packs the scalars. `ρ` needs to be neither secret
+nor random, as it changes how the point is computed, not the point.
 
 ### Selection, memory and errors
 
@@ -266,22 +276,28 @@ more MSM the first time a length appears: a prover that makes several proofs wit
   (C++). `proofman_pilfflonk::gpu_available()` (`pilfflonk_gpu_available`) says whether there is a GPU.
   Without one (a CPU library, or no GPU), `--gpu` is refused before the SRS is read. A GPU library
   without `--gpu` is the CPU, and the CPU library has no GPU code at all (`__USE_CUDA__`).
-- **Memory.** The SRS is copied to the device once, when the key loads (timer `PILFFLONK_GPU_SRS`), for
-  every MSM of the key and its proofs, as the PLONK prover's `d_ptau`. One device buffer, grown to the
-  largest request, holds the scalars of an MSM or the data of an NTT, and one host buffer the shifted
-  scalars; every call holds a lock on them and on the shift's sums, so a key shared by several threads
-  stays safe. Device 0. The device holds `64·nG1` bytes of SRS, 32 bytes
-  per buffer element (up to `max(nG1, N')`), and what sppark's MSM reserves per call.
+- **Memory.** The SRS is copied to the device once, when the key loads (timer `PILFFLONK_GPU_SRS`), as
+  the PLONK prover's `d_ptau`, and so are each AIR's fixed coefficients, bytecode and tables. A proof
+  keeps its data in one arena, whose phases reuse each other's bytes (`ArenaLayout`); one proof at a
+  time uses it, and another thread's waits. The key checks, as it loads each AIR and before it copies
+  anything of it, that the device holds it and a whole proof of it, with what sppark's MSM reserves per
+  call; if not, the load fails, naming the AIR and the bytes it needs and the device has: a proof never
+  runs out of device memory midway, and there is no fallback to the host. The arena holds `Q` in its
+  default parts, of `2^nBits` points; a larger `q_part_bits` whose parts it does not hold is refused
+  when it is set (`pilfflonk_instance_set_q_part_bits`), naming the parts and the bytes they need and
+  the arena has, and never changed to another size. Device 0.
 - **Errors.** A CUDA failure inside the reused helpers (no device memory, a lost device) aborts the
   process, as in the PLONK GPU prover (`CHECKCUDAERR`): the one exception to the C API's rule. sppark's
-  MSM reports its own failure as the point at infinity; `Gpu::msm` turns that, for shifted scalars not
-  all zero or for the shift itself, into an error rather than a proof that does not verify.
+  MSM reports its own failure as the point at infinity; `GpuKey::commit` turns that, for shifted scalars
+  not all zero or for the shift itself, into an error rather than a proof that does not verify. A
+  witness the constraints refuse is refused with the CPU's error, word for word.
 
 ### GPU results
 
-RTX 5090 (`sm_120`), CUDA 13.0, 32 CPU threads (`OMP_NUM_THREADS=32`), packed keys, the median of three
-proofs on each device with the same `--insecure-blinding-seed`. Every GPU proof is the CPU's byte for
-byte, and the JS verifier accepts them. Seconds, CPU → GPU:
+The first GPU path, which ran only the MSMs and the NTTs on the GPU from host memory (before the device
+path above). RTX 5090 (`sm_120`), CUDA 13.0, 32 CPU threads (`OMP_NUM_THREADS=32`), packed keys, the
+median of three proofs on each device with the same `--insecure-blinding-seed`. Every GPU proof is
+the CPU's byte for byte, and the JS verifier accepts them. Seconds, CPU → GPU:
 
 | Program | N | Proof | Fixed commitments | Stage MSMs | `Q` MSM | `W`, `W'` MSMs | Opening |
 |---|---|---|---|---|---|---|---|
@@ -310,18 +326,11 @@ byte, and the JS verifier accepts them. Seconds, CPU → GPU:
 
 ### Open
 
-- The SHPLONK divisions on the GPU: the blocked scan of [The SHPLONK division](#the-shplonk-division)
-  would be a kernel of its own, which pil2-stark does not have. On 32 CPU threads `W` and `W'` take
-  0.25–0.3 s at `fibonacci` `2^22` and `all_sum` `2^20`.
+- The std's hints and the im pols on the device, and with them the copies of the stage columns and
+  of the committed polynomials back to the host.
 - CUDA's initialisation in parallel with the SRS's read: `--gpu` would then be refused after the SRS
   is read, not before.
 - The SRS's copy to the device (`GPU_SRS`) in parallel with the reading of the `.const`.
-- A coset on the device: the transforms of `Lde` make a host-to-device round trip per column, as the
-  elementwise work is on the CPU. sppark has `NTT::Type::coset` with `group_gen = 5`, but no entry point
-  of `ntt_bn128.cu` exposes it: that needs a new entry point or a kernel.
-- Pinned, asynchronous copies, as the PLONK GPU prover overlaps its copies with the computation; this
-  path copies synchronously from pageable memory.
-- The interpreter stays on the CPU, as it does not dominate.
 
 ## The wrap
 

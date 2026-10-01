@@ -17,13 +17,41 @@ namespace PilFflonk {
 
 class ShplonkQuotients; // below
 
+// A p_j of an f of a SHPLONK opening: a polynomial on the host, or one whose coefficients are
+// elsewhere (on a device: OpeningGpu, pilfflonk_opening_gpu.hpp), of which the prover knows only how
+// many coefficients it has and its degree, as rapidsnark's Polynomial counts them (getLength,
+// getDegree). The host's evaluations and quotients read the coefficients, and so take only
+// components on the host; a device's read them where they are.
+class ShplonkComponent {
+public:
+    // On the host: `poly`, or none if it is null (ShplonkProver refuses it). Implicit, so that the
+    // components of an f on the host are given as the Poly * they are.
+    ShplonkComponent(Poly *poly = nullptr) : onHost(poly) {} // NOLINT(google-explicit-constructor)
+
+    // Elsewhere: `length` coefficients, of degree `degree`.
+    static ShplonkComponent elsewhere(uint64_t length, uint64_t degree);
+
+    // Whether there is one: a polynomial on the host, or one elsewhere.
+    bool given() const { return onHost != nullptr || isElsewhere; }
+    // The polynomial on the host; null for one elsewhere.
+    Poly *host() const { return onHost; }
+    uint64_t length() const { return onHost != nullptr ? onHost->getLength() : nCoefficients; }
+    uint64_t degree() const { return onHost != nullptr ? onHost->getDegree() : topDegree; }
+
+private:
+    Poly *onHost = nullptr;
+    bool isElsewhere = false;
+    uint64_t nCoefficients = 0;
+    uint64_t topDegree = 0;
+};
+
 // One polynomial f of a SHPLONK opening (pilfflonk/docs/protocol.md#shplonk-opening):
 // f(X) = Σ_{j<k} p_j(X^k)·X^j, packed as pack() does, opened at ξ·ω_N^s for each offset s in O.
 struct ShplonkPolynomial {
     // p_j = components[j] for j < k = components.size(). Not owned: they must outlive the
-    // ShplonkProver built on them, unchanged. Each one's degree must be up to date
+    // ShplonkProver built on them, unchanged. The degree of each one on the host must be up to date
     // (Poly::fixDegree), as pack() requires.
-    std::vector<Poly *> components;
+    std::vector<ShplonkComponent> components;
     // O, signed: s opens f at ξ·ω_N^s, the row s rows after ξ's (before it if s < 0). Distinct
     // modulo N, with |s| < N. The order is kept: it is the order of the roots and evaluations.
     std::vector<int64_t> offsets;
@@ -81,21 +109,23 @@ public:
     // Checks the opening, derives the roots and computes the evaluations. Throws
     // std::invalid_argument, before any work, if there are no polynomials; if nBits exceeds 28;
     // if powerW is not the lcm of every k; if xiSeed is zero; if an f_i has no components, a null
-    // one or one of no coefficients; if its k does not divide r - 1 or kN goes beyond the 2-adicity
+    // one, one of no coefficients or one elsewhere whose degree is not below its number of
+    // coefficients; if its k does not divide r - 1 or kN goes beyond the 2-adicity
     // 2^28 of r - 1 (v₂(k) + nBits > 28); if its offsets are none, not distinct modulo N, or some
     // |s| >= N; or if k times the most coefficients of a p_j, or k·|O_i|, exceeds INT_MAX (the
     // most rapidsnark's Polynomial counts in its interpolation, a bound kept for f_i's coefficients
-    // too: the largest ptau has 2^29 - 1 powers). Throws std::runtime_error where ffiasm has no
-    // assembly backend.
+    // too: the largest ptau has 2^29 - 1 powers); and, as the host evaluates them, if a component
+    // is not on the host. Throws std::runtime_error where ffiasm has no assembly backend.
     explicit ShplonkProver(ShplonkOpening opening);
-    // The same, with the evaluations `evaluate` gives once the roots are derived. Throws as above,
-    // and std::logic_error if it does not give one per p_j and point.
+    // The same, with the evaluations `evaluate` gives once the roots are derived, of components on
+    // the host or elsewhere. Throws as above, and std::logic_error if it does not give one per p_j
+    // and point.
     ShplonkProver(ShplonkOpening opening, const Evaluator &evaluate);
 
     uint64_t size() const { return fs.size(); }
     uint64_t k(uint64_t i) const { return fs[i].components.size(); }
     // The p_j of f_i, as the opening gave them.
-    const std::vector<Poly *> &components(uint64_t i) const { return fs[i].components; }
+    const std::vector<ShplonkComponent> &components(uint64_t i) const { return fs[i].components; }
     // f_i's coefficients as pack() writes them: 1 + max_j(k·deg p_j + j).
     uint64_t nCoefs(uint64_t i) const { return fs[i].nCoefs; }
     // ξ = xiSeed^powerW.
@@ -118,15 +148,16 @@ public:
     // the opening (the digest, commitments and evaluations; the caller decides what).
     //
     // Throws std::invalid_argument, before the transcript is touched, if it is empty or an earlier
-    // failure left it incomplete, or if an f_i has more coefficients than the srs.nG1() powers
-    // [τ^i]₁. After that the transcript has moved on, and on any failure the proof must be
+    // failure left it incomplete, if an f_i has more coefficients than the srs.nG1() powers
+    // [τ^i]₁, or if a component is not on the host, whose quotients read its coefficients. After
+    // that the transcript has moved on, and on any failure the proof must be
     // abandoned: std::runtime_error if [W]₁ is a point the transcript cannot absorb (the point at
     // infinity, or a coordinate below 2^192) or y is a root of some f_i, each of negligible
     // probability; std::logic_error if a division that must be exact is not (a bug).
     ShplonkProof open(const Srs &srs, Transcript &transcript) const;
     // The same, with W, W' and their commitments from `quotients` in place of quotientW, quotientWp
-    // and srs.commit; srs only bounds the coefficients of the f_i. Throws as above, and as
-    // `quotients` does.
+    // and srs.commit; srs only bounds the coefficients of the f_i, which may be on the host or
+    // elsewhere. Throws as above, but for where the components are, and as `quotients` does.
     ShplonkProof open(const Srs &srs, Transcript &transcript, ShplonkQuotients &quotients) const;
 
     // The steps of open(), for tests.
@@ -136,12 +167,13 @@ public:
     // pilfflonk/docs/protocol.md#pairing-check).
     Interpolants interpolants() const;
     // W for α, as above, in workLength() coefficients. Throws std::invalid_argument if r is not one
-    // interpolant per f_i of at most |T_i| coefficients, std::logic_error if an f_i - r_i is not
-    // divisible by Z_{T_i}.
+    // interpolant per f_i of at most |T_i| coefficients or a component is not on the host,
+    // std::logic_error if an f_i - r_i is not divisible by Z_{T_i}.
     std::unique_ptr<Poly> quotientW(const Interpolants &r, const FrElement &alpha) const;
     // W' for α, y and the W that quotientW(r, alpha) returned. Throws std::invalid_argument if r is
-    // not one interpolant per f_i or W does not fit in as many coefficients as quotientW gives it,
-    // std::runtime_error if y is in some T_i, std::logic_error if L is not divisible by X - y.
+    // not one interpolant per f_i, W does not fit in as many coefficients as quotientW gives it or a
+    // component is not on the host, std::runtime_error if y is in some T_i, std::logic_error if L is
+    // not divisible by X - y.
     std::unique_ptr<Poly> quotientWp(const Interpolants &r, const FrElement &alpha, const FrElement &y,
                                      const Poly &W) const;
 
@@ -169,7 +201,7 @@ public:
 
 private:
     struct Entry {
-        std::vector<Poly *> components;
+        std::vector<ShplonkComponent> components;
         uint64_t maxComponentLength = 0;
         uint64_t nCoefs = 0;
         std::vector<FrElement> points;
@@ -177,7 +209,8 @@ private:
     };
 
     // f_i packed into `out`, which holds at least scratchLength() elements: its nCoefs(i)
-    // coefficients at out[0, nCoefs(i)), the rest unspecified. Returns nCoefs(i).
+    // coefficients at out[0, nCoefs(i)), the rest unspecified. Returns nCoefs(i). Its components
+    // must be on the host.
     uint64_t packed(uint64_t i, FrElement *out) const;
     // The buffer pack() needs for the longest f_i.
     uint64_t scratchLength() const;

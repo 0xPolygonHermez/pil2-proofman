@@ -1,15 +1,12 @@
-// pilfflonk's GPU MSMs and NTTs from host memory (pilfflonk/docs/performance.md#gpu): compiled into
-// the GPU library only (libstarksgpu.a, the Makefile's %_gpu.cpp rule), with g++, as
+// pilfflonk's GPU and its MSMs and NTTs on device data (pilfflonk_gpu.hpp): compiled into the GPU
+// library only (libstarksgpu.a, the Makefile's %_gpu.cpp rule), with g++, as
 // final_snark_proof_gpu.cpp. It calls the GPU entry points of pil2-stark through their C linkage, as
 // plonk_prover_gpu.c.cuh does, and has no kernel of its own.
 #include "pilfflonk_gpu.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
-
-#include "pilfflonk_lde.hpp"
 
 // The MSM and the NTTs (bn128/src/msm/msm_bn128.cu, bn128/src/ntt/ntt_bn128.cu) and the device
 // memory helpers (rapidsnark/plonk_prover.cu), declared as plonk_prover_gpu.c.cuh declares them; and
@@ -19,7 +16,6 @@ extern "C" void msm_bn128_gpu_dev_ptr(void *out, const void *d_points, const voi
 extern "C" void ntt_bn128_gpu_dev_ptr(void *d_data, uint32_t lg_n);
 extern "C" void intt_bn128_gpu_dev_ptr(void *d_data, uint32_t lg_n);
 extern "C" void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_memcpy_d2h(void *dst, const void *src, size_t bytes);
 extern "C" void gpu_plonk_cuda_malloc(void **dBuffer, uint64_t buffeSize);
 extern "C" void gpu_plonk_cuda_free(void *dBuffer);
 extern "C" void gpu_plonk_cuda_device_sync();
@@ -35,43 +31,8 @@ using Engine = AltBn128::Engine;
 // The PLONK GPU prover's default device.
 constexpr int DEVICE = 0;
 
-// The largest NTT: sppark's BN254 parameters have the roots of up to 2^28 points
-// (ntt/parameters/alt_bn128.h, S = 28), the 2-adicity of r.
-constexpr uint64_t MAX_NTT_BITS = 28;
-
 std::invalid_argument invalid(const char *function, const std::string &message) {
     return std::invalid_argument(std::string("Gpu::") + function + ": " + message);
-}
-
-bool allZero(const FrElement *values, uint64_t n) {
-    Engine::Fr &fr = Engine::engine.fr;
-    bool zero = true;
-#pragma omp parallel for reduction(&& : zero)
-    for (uint64_t i = 0; i < n; ++i) {
-        zero = zero && fr.isZero(values[i]);
-    }
-    return zero;
-}
-
-// out[i] = scalars[i] + ρ_i, or ρ_i if scalars is null, for i < n. out may be scalars. In chunks,
-// each of which starts from its first ρ (one exponentiation) and multiplies by h from there.
-void shifted(FrElement *out, const FrElement *scalars, uint64_t n) {
-    Engine::Fr &fr = Engine::engine.fr;
-    constexpr uint64_t CHUNK = uint64_t(1) << 14;
-    const FrElement &h = msmShiftRatio();
-#pragma omp parallel for schedule(static)
-    for (uint64_t start = 0; start < n; start += CHUNK) {
-        FrElement rho = power(h, start + 1);
-        const uint64_t end = std::min(n, start + CHUNK);
-        for (uint64_t i = start; i < end; ++i) {
-            if (scalars != nullptr) {
-                fr.add(out[i], scalars[i], rho);
-            } else {
-                out[i] = rho;
-            }
-            fr.mul(rho, rho, h);
-        }
-    }
 }
 
 } // namespace
@@ -121,7 +82,7 @@ void transformOnDevice(void *data, uint64_t bits, bool inverse) {
 
 bool Gpu::available() { return cuda_available(); }
 
-Gpu::Gpu(const G1PointAffine *points, uint64_t n, CopyVolume *copies) : volume(copies) {
+Gpu::Gpu(const G1PointAffine *points, uint64_t n, CopyVolume *copies) {
     if (!available()) {
         throw invalid("Gpu", "no GPU: CUDA sees no device of compute capability 7.0 or above (or no driver)");
     }
@@ -135,125 +96,11 @@ Gpu::Gpu(const G1PointAffine *points, uint64_t n, CopyVolume *copies) : volume(c
     gpu_plonk_cuda_malloc(&devicePoints, n * sizeof(G1PointAffine));
     gpu_plonk_memcpy_h2d(devicePoints, points, n * sizeof(G1PointAffine));
     nDevicePoints = n;
-    if (volume != nullptr) {
-        volume->addToDevice(n * sizeof(G1PointAffine));
+    if (copies != nullptr) {
+        copies->addToDevice(n * sizeof(G1PointAffine));
     }
 }
 
-Gpu::~Gpu() {
-    gpu_plonk_cuda_free(deviceScratch);
-    gpu_plonk_cuda_free(devicePoints);
-}
-
-void *Gpu::scratch(uint64_t n) const {
-    if (n > scratchElements) {
-        gpu_plonk_cuda_free(deviceScratch);
-        deviceScratch = nullptr;
-        scratchElements = 0;
-        gpu_plonk_cuda_malloc(&deviceScratch, n * sizeof(FrElement));
-        scratchElements = n;
-    }
-    return deviceScratch;
-}
-
-G1Point Gpu::msm(const FrElement *scalars, uint64_t n) const {
-    Engine &E = Engine::engine;
-    if (n > nDevicePoints) {
-        throw invalid("msm", std::to_string(n) + " scalars for the " + std::to_string(nDevicePoints) +
-                                 " points on the device");
-    }
-    G1Point result;
-    if (n == 0) {
-        E.g1.copy(result, E.g1.zero());
-        return result;
-    }
-    if (scalars == nullptr) {
-        throw invalid("msm", "scalars is null");
-    }
-
-    const std::lock_guard<std::mutex> guard(lock);
-    gpu_plonk_set_device(DEVICE);
-    FrElement *shiftedScalars = staging(n);
-    auto shiftSum = shiftSums.find(n);
-    if (shiftSum == shiftSums.end()) {
-        shifted(shiftedScalars, nullptr, n);
-        G1Point sum = deviceMsm(shiftedScalars, n);
-        if (E.g1.isZero(sum)) {
-            throw std::runtime_error("Gpu::msm: the GPU's MSM of the shift of " + std::to_string(n) +
-                                     " points gave the point at infinity: msm_bn128_gpu_dev_ptr failed (or τ is a "
-                                     "root of the shift's polynomial)");
-        }
-        shiftSum = shiftSums.emplace(n, sum).first;
-    }
-    shifted(shiftedScalars, scalars, n);
-    G1Point shiftedSum = deviceMsm(shiftedScalars, n);
-    if (E.g1.isZero(shiftedSum) && !allZero(shiftedScalars, n)) {
-        throw std::runtime_error("Gpu::msm: the GPU's MSM of " + std::to_string(n) +
-                                 " points gave the point at infinity for shifted scalars that are not all zero: "
-                                 "msm_bn128_gpu_dev_ptr failed (or τ is a root of the shifted polynomial)");
-    }
-    E.g1.sub(result, shiftedSum, shiftSum->second);
-    return result;
-}
-
-void Gpu::shift(FrElement *out, uint64_t n) {
-    if (out == nullptr && n > 0) {
-        throw invalid("shift", "out is null");
-    }
-    shifted(out, nullptr, n);
-}
-
-G1Point Gpu::deviceMsm(const FrElement *scalars, uint64_t n) const {
-    void *dScalars = scratch(n);
-    gpu_plonk_memcpy_h2d(dScalars, scalars, n * sizeof(FrElement));
-    if (volume != nullptr) {
-        volume->addToDevice(n * sizeof(FrElement));
-    }
-    return msmOnDevice(devicePoints, dScalars, n);
-}
-
-FrElement *Gpu::staging(uint64_t n) const {
-    if (n > stagingElements) {
-        hostStaging.reset();
-        stagingElements = 0;
-        hostStaging.reset(new FrElement[n]);
-        stagingElements = n;
-    }
-    return hostStaging.get();
-}
-
-void Gpu::transform(const FrElement *in, FrElement *out, uint64_t bits, bool inverse) const {
-    const char *function = inverse ? "intt" : "ntt";
-    if (bits > MAX_NTT_BITS) {
-        throw invalid(function, "2^" + std::to_string(bits) + " points, and r has roots of unity of up to 2^" +
-                                    std::to_string(MAX_NTT_BITS));
-    }
-    if (in == nullptr || out == nullptr) {
-        throw invalid(function, in == nullptr ? "in is null" : "out is null");
-    }
-    const uint64_t bytes = (uint64_t(1) << bits) * sizeof(FrElement);
-    if (bits == 0) {
-        // One value is its own transform, either way; sppark's NTT starts at two points.
-        if (out != in) {
-            *out = *in;
-        }
-        return;
-    }
-    const std::lock_guard<std::mutex> guard(lock);
-    gpu_plonk_set_device(DEVICE);
-    void *data = scratch(uint64_t(1) << bits);
-    gpu_plonk_memcpy_h2d(data, in, bytes);
-    transformOnDevice(data, bits, inverse);
-    // The NTT has synchronised its stream; the copy back waits for it.
-    gpu_plonk_memcpy_d2h(out, data, bytes);
-    if (volume != nullptr) {
-        volume->addToDevice(bytes);
-        volume->addToHost(bytes);
-    }
-}
-
-void Gpu::ntt(const FrElement *in, FrElement *out, uint64_t bits) const { transform(in, out, bits, false); }
-
-void Gpu::intt(const FrElement *in, FrElement *out, uint64_t bits) const { transform(in, out, bits, true); }
+Gpu::~Gpu() { gpu_plonk_cuda_free(devicePoints); }
 
 } // namespace PilFflonk

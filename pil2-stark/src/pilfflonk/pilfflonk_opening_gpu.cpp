@@ -139,30 +139,17 @@ std::unique_ptr<OpeningGpu> OpeningGpu::ofInstance(const Instance &instance) {
     const GpuKey &gpu = air.gpuKey();
     const ArenaLayout &layout = air.arena();
     const PilfflonkInfo &info = key.info();
-    FrElement *pieces = reinterpret_cast<FrElement *>(gpu.arena() + layout.qPieces);
     const FrElement *polys = reinterpret_cast<const FrElement *>(gpu.arena() + layout.polys);
+    const FrElement *pieces = reinterpret_cast<const FrElement *>(gpu.arena() + layout.qPieces);
 
-    // Q's pieces, piece i after the bounds of those before it, up to its degree: the kernels read no
-    // coefficient above it.
-    std::vector<const FrElement *> piece(key.nQPieces());
-    uint64_t start = 0;
-    for (uint64_t i = 0; i < key.nQPieces(); ++i) {
-        const Poly &q = *instance.qPiece(i);
-        piece[i] = pieces + start;
-        gpu.staging().toDevice(pieces + start, q.coef, (q.getDegree() + 1) * sizeof(FrElement));
-        start += key.degrees().qPieceCoefficients[i];
-    }
-
+    // Each p_j where the device keeps it: Q's pieces where InstanceGpu::commitQ left them.
     Components components(info.layout.size());
     for (uint64_t f = 0; f < info.layout.size(); ++f) {
         const LayoutEntry &entry = info.layout[f];
+        const FrElement *base =
+            entry.stage == 0 ? air.fixedCoefficients() : entry.stage == info.qStage() ? pieces : polys;
         for (uint64_t j = 0; j < entry.k; ++j) {
-            if (entry.stage == info.qStage()) {
-                components[f].push_back(piece[info.cmPolsMap[entry.pols[j].id].stagePos]);
-            } else {
-                const FrElement *base = entry.stage == 0 ? air.fixedCoefficients() : polys;
-                components[f].push_back(base + componentOffset(key, layout, f, j));
-            }
+            components[f].push_back(base + componentOffset(key, layout, f, j));
         }
     }
     return std::make_unique<OpeningGpu>(gpu, std::move(components), shplonkBounds(key),
@@ -175,8 +162,8 @@ void OpeningGpu::requireShape(const ShplonkProver &prover) const {
     for (uint64_t i = 0; fits && i < prover.size(); ++i) {
         const uint64_t nOffsets = prover.points(i).size();
         fits = components[i].size() == prover.k(i) && nOffsets <= bounds.component;
-        for (const Poly *p : prover.components(i)) {
-            fits = fits && p->getDegree() < bounds.component;
+        for (const ShplonkComponent &p : prover.components(i)) {
+            fits = fits && p.degree() < bounds.component;
         }
         nEvaluations += prover.roots(i).size();
         nPoints += nOffsets;
@@ -261,8 +248,8 @@ ShplonkProver::Evaluations OpeningGpu::evaluate(const ShplonkProver &prover) con
                 points.push_back(x);
             }
         }
-        for (const Poly *p : prover.components(i)) {
-            longest = std::max(longest, p->getDegree() + 1);
+        for (const ShplonkComponent &p : prover.components(i)) {
+            longest = std::max(longest, p.degree() + 1);
         }
     }
     const uint64_t perPoint = tableElements(longest), nBlocks = perPoint - TABLE_BLOCK;
@@ -280,7 +267,7 @@ ShplonkProver::Evaluations OpeningGpu::evaluate(const ShplonkProver &prover) con
         for (uint64_t m = 0; m < pointOf[i].size(); ++m) {
             const FrElement *blocks = tables + pointOf[i][m] * perPoint;
             for (uint64_t j = 0; j < k; ++j) {
-                evaluations.push_back(PilfflonkGpuEvaluation{components[i][j], prover.components(i)[j]->getDegree() + 1,
+                evaluations.push_back(PilfflonkGpuEvaluation{components[i][j], prover.components(i)[j].degree() + 1,
                                                              blocks, blocks + nBlocks});
             }
         }
@@ -321,7 +308,7 @@ void OpeningGpu::computeW(const ShplonkProver &prover, const ShplonkProver::Inte
         const uint64_t k = prover.k(i), nRoots = prover.roots(i).size();
         const std::vector<FrElement> &points = prover.points(i);
         for (uint64_t j = 0; j < k; ++j) {
-            const uint64_t coefs = prover.components(i)[j]->getDegree() + 1;
+            const uint64_t coefs = prover.components(i)[j].degree() + 1;
             uint64_t n = std::max<uint64_t>(coefs, points.size());
             pilfflonk_gpu_component_minus(buffer, n, components[i][j], coefs, interpolants + rStart, nRoots, k, j);
             // Z_{T_i} = Π_{s in O_i} (Y − ξ·ω_N^s) in Y = X^k, one factor at a time.
@@ -362,7 +349,7 @@ void OpeningGpu::computeWp(const ShplonkProver &prover, const ShplonkProver::Int
     pilfflonk_gpu_scale_add_constant(L, length, &scalars.w, &constant);
     for (uint64_t i = 0; i < prover.size(); ++i) {
         for (uint64_t j = 0; j < prover.k(i); ++j) {
-            pilfflonk_gpu_add_component(L, components[i][j], prover.components(i)[j]->getDegree() + 1, prover.k(i), j,
+            pilfflonk_gpu_add_component(L, components[i][j], prover.components(i)[j].degree() + 1, prover.k(i), j,
                                         &scalars.f[i]);
         }
     }

@@ -45,6 +45,7 @@
 #include "pilfflonk_expressions_bin.hpp"
 #include "pilfflonk_expressions_gpu.hpp"
 #include "pilfflonk_info.hpp"
+#include "pilfflonk_kernels.hpp"
 #include "pilfflonk_proving_key.hpp"
 
 // The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu).
@@ -442,6 +443,10 @@ void testAnAir(const Air &air, Random &random, bool gpu) {
         // The temporaries in shared memory, and in device memory.
         devices.emplace_back(new ExpressionsGpu(air.bin, air.info, e, c));
         devices.emplace_back(new ExpressionsGpu(air.bin, air.info, e, c, 0));
+        // What a key on the GPU budgets for them.
+        const uint32_t sms = pilfflonk_gpu_multiprocessors();
+        assert(devices[0]->deviceBytes() == ExpressionsGpu::deviceBytesOf(air.bin, air.info, sms));
+        assert(devices[1]->deviceBytes() == ExpressionsGpu::deviceBytesOf(air.bin, air.info, sms, 0));
         dest = DeviceBuffer(NExt * sizeof(FrElement));
     }
 

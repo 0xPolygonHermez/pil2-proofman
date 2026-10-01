@@ -39,41 +39,32 @@ void extendCosetPartOnDevice(const Lde &lde, const FrElement *const *coefs, cons
 // as extendCosetPartOnDevice.
 void interpolateCosetOnDevice(const Lde &lde, FrElement *values, FrElement *tables);
 
-// Q's LDE on a key on the GPU (Instance::commitQ), for the instance that holds the key's arena
+// Q's LDE on a key on the GPU (InstanceGpu::computeQ), for the instance that holds the key's arena
 // (GpuKey::Lease) with every stage committed: each column Q's code reads (AirKey::qReads), from its
 // polynomial where the device keeps it (the fixed columns' coefficients of the GpuAirKey, the
-// committed polynomials in the arena), extended there to each part of the coset in turn, and Q
-// interpolated there, in the arena's Q phase (ArenaLayout::q). Until the interpreter runs on the
-// device, it reads the columns and writes Q's values in the key's host buffer for Q (GpuKey::qHost):
-// each part's columns are copied to it, and Q's values go to the device and back for their
-// interpolation. Nothing else crosses: no coefficient goes to the device.
+// committed polynomials in the arena), extended to each part of the coset in turn, in the arena's Q
+// phase, where the interpreter on the device reads it; and Q, whose values the interpreter writes at
+// ArenaLayout::q, interpolated there. Nothing crosses between the host and the device.
 class LdeGpu {
 public:
-    // Q in parts of 2^partBits points (Instance::setQPartBits), nBits <= partBits <= nBitsExt. The
-    // key's host buffer for Q grows to N' + |qReads|·2^partBits elements if it holds fewer.
-    LdeGpu(const GpuAirKey &air, uint64_t partBits);
+    // Q in parts of 2^partBits points (nBits <= partBits <= nBitsExt), column r of qReads on a part
+    // at columns + r·2^partBits.
+    LdeGpu(const GpuAirKey &air, uint64_t partBits, FrElement *columns);
 
-    // Q's N' values, in the key's host buffer for Q, and after them the S values on a part of each
-    // column Q reads, column r of qReads at partColumns() + r·S.
-    FrElement *values() const { return hostValues; }
-    FrElement *partColumns() const { return hostColumns; }
-
-    // Part `part` of the coset (part < N'/S): every column extended to it on the device
-    // (extendCosetPartOnDevice), as many at a time as the arena's Q phase holds, and copied to
-    // partColumns(). Returns once they are there.
+    // Part `part` of the coset (part < N'/2^partBits): every column extended to it
+    // (extendCosetPartOnDevice), ordered as a kernel's.
     void extendPart(uint64_t part) const;
 
-    // Q's N' values, in values(), into its coefficients there: copied to the device, interpolated
-    // (interpolateCosetOnDevice) and copied back.
+    // Q's N' values at ArenaLayout::q into its N' coefficients there (interpolateCosetOnDevice),
+    // ordered as a kernel's.
     void interpolate() const;
 
 private:
     const GpuAirKey &air;
     uint64_t partBits;
+    FrElement *columns;
     std::vector<const FrElement *> sources; // by column of qReads, its polynomial on the device
-    std::vector<uint64_t> lengths;          // and its coefficients, as many as its host copy has
-    FrElement *hostValues = nullptr;
-    FrElement *hostColumns = nullptr;
+    std::vector<uint64_t> lengths;          // and its coefficients
 };
 
 } // namespace PilFflonk

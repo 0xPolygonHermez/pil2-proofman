@@ -85,7 +85,8 @@ private:
 
 // Where a proof of an AIR keeps its data in a GpuKey's arena: byte offsets from its start, each a
 // multiple of 256, and counts of 32-byte elements. The phases of a proof (Instance) reuse the bytes
-// of the ones before them, but for the committed polynomials, which last the whole proof:
+// of the ones before them, but for the committed polynomials, which last the whole proof, and Q's
+// pieces, which last from Q's commitment to its end:
 // - the committed polynomials, at `polys`: those of the f of stages 1 … nStages, in the order of the
 //   layout and, within an f, of its columns, p_j of f at element slot[f] + j·(N + b_f), each with
 //   room for its blinding (b_f = AirKey::blindLength(f));
@@ -95,12 +96,18 @@ private:
 //   and from the work buffer on, at `hints`, the scratch of the hints and im pols of a stage s >= 2
 //   (StageScratch, pilfflonk_hints_gpu.hpp), which are computed before the stage's commit uses that
 //   memory;
-// - Q's: at `q`, room for Q's N' values and every column it reads on a part of N points, which
-//   holds the columns of each part as the device extends them (LdeGpu), and then Q's values for
-//   their interpolation; and at `qTables`, the tables of the powers of a shift (ldeTableElements);
-// - the opening's (OpeningGpu, pilfflonk_opening_gpu.hpp): Q's pieces at `qPieces`, piece i after
-//   the bounds (AirDegrees::qPieceCoefficients) of those before it, then SHPLONK's workspace at
-//   `shplonk`.
+// - Q's (InstanceGpu::computeQ), after the committed polynomials: at `qCounts`, the 64-bit counts of
+//   the coefficients of Q and of its pieces (1 + nQPieces); at `qFactors`, the two blinding factors
+//   of each boundary between pieces; at `q`, Q's N' values on the coset, by point, and then its
+//   coefficients; at `qTables`, the tables of the powers of a shift (ldeTableElements); and at
+//   `qPart`, Zi of a part of the coset and every column Q reads on it (qPartLayout), the default
+//   parts of N points: Q's phase ends at qPhaseBytes(air, layout, nBits), and larger parts need
+//   qPhaseBytes(air, layout, partBits) bytes of the arena;
+// - Q's pieces (InstanceGpu::commitQ), at `qPieces`, piece i at i·qPieceElements elements, the most
+//   of AirDegrees::qPieceCoefficients, and zero above its own: Q itself, over its coefficients at
+//   `q`, if it is not split, and after them if it is; then, at `shplonk`, the work of their
+//   commitments (the largest degree of an f of Q's), and later the opening's SHPLONK workspace
+//   (OpeningGpu, pilfflonk_opening_gpu.hpp).
 struct ArenaLayout {
     static constexpr uint64_t NONE = UINT64_MAX;
 
@@ -117,19 +124,39 @@ struct ArenaLayout {
     uint64_t hints = 0;     // = work
     uint64_t hintBytes = 0; // the most of a stage (stageScratchBytes)
     uint64_t stageBytes = 0; // the end of the stages' phase
+    uint64_t qCounts = 0;
+    uint64_t qFactors = 0;
     uint64_t q = 0;
-    uint64_t qElements = 0; // N' + N·|qReads|
     uint64_t qTables = 0;
+    uint64_t qPart = 0;
     uint64_t qPieces = 0;
+    uint64_t qPieceElements = 0;
     uint64_t shplonk = 0;
     uint64_t bytes = 0; // a proof's arena: its largest phase
 };
 
 ArenaLayout arenaLayout(const AirKey &air);
 
-// Where p_j of f, an f of the layout but Q's, is on the device, in elements: from
-// GpuAirKey::fixedCoefficients() for a fixed f, and from the arena's committed polynomials
-// (ArenaLayout::polys) for the others.
+// Where a part of 2^partBits points of the coset keeps its data at ArenaLayout::qPart: Zi of the
+// part (ExpressionsDomainGpu::cosetPart's workspace) at `zerofiers`, and column r of AirKey::qReads
+// at `columns` + r·2^partBits elements; byte offsets from qPart, and `bytes` in all.
+struct QPartLayout {
+    uint64_t zerofiers = 0;
+    uint64_t columns = 0;
+    uint64_t bytes = 0;
+};
+
+QPartLayout qPartLayout(const AirKey &air, uint64_t partBits);
+
+// The bytes of the arena a proof of `air` (whose arena `layout` describes) needs for Q's phase in
+// parts of 2^partBits points (nBits <= partBits <= nBitsExt), from the arena's start: layout.bytes
+// covers it for the default parts of N points, and a larger part needs as many bytes of the key's
+// arena (InstanceGpu::requireQParts).
+uint64_t qPhaseBytes(const AirKey &air, const ArenaLayout &layout, uint64_t partBits);
+
+// Where p_j of f is on the device, in elements: from GpuAirKey::fixedCoefficients() for a fixed f,
+// from the arena's committed polynomials (ArenaLayout::polys) for an f of a committed stage, and
+// from the arena's pieces of Q (ArenaLayout::qPieces) for an f of Q's, whose p_j is a piece.
 uint64_t componentOffset(const AirKey &air, const ArenaLayout &layout, uint64_t f, uint64_t j);
 
 // The device memory a key on the GPU needs for an AIR, in bytes.
@@ -140,10 +167,10 @@ struct GpuBudget {
     uint64_t transient = 0; // what a proof allocates besides, while it runs
 };
 
-// The budget of `air` on a device of `multiprocessors` SMs. `transient` is the most that sppark's
-// MSM allocates for the largest f (msm_t of pippenger.cuh, which grows with the SMs), what Gpu's
-// buffer grows to (N' or the largest f), and a margin for the allocator's rounding and sppark's NTT
-// tables.
+// The budget of `air` on a device of `multiprocessors` SMs. `resident` counts the device memory of its
+// interpreter (ExpressionsGpu::deviceBytesOf); `transient` is the most that sppark's MSM allocates
+// for the largest f (msm_t of pippenger.cuh, which grows with the SMs), and a margin for the
+// allocator's rounding and sppark's NTT tables.
 GpuBudget gpuBudget(const AirKey &air, uint32_t multiprocessors);
 
 // The bytes sppark's MSM allocates for itself (msm_t and its invoke, pippenger.cuh) for n points and
@@ -169,23 +196,26 @@ struct GpuKeyOptions {
     uint64_t arenaBytes = 0;
 };
 
-// The GPU side of a ProvingKey: the SRS's powers [τ^i]₁ on the device (in its Gpu, whose MSMs and
-// NTTs the parts that still run on the host use), the tables of the MSM's shift and its sums, the
-// arena where a proof keeps its data (ArenaLayout), pinned host buffers for the copies of its
-// committed polynomials and of Q's, and the Staging of its other copies.
+// The GPU side of a ProvingKey: the SRS's powers [τ^i]₁ on the device (its Gpu), the tables of the
+// MSM's shift and its sums, the arena where a proof keeps its data (ArenaLayout), a pinned host
+// buffer for the copies of its committed polynomials, and the Staging of its other copies.
 //
-// The MSM (commit) shifts its scalars as Gpu::msm does, by ρ_i = h^(i+1), h = msmShiftRatio(), which
-// a kernel adds while it packs them, from the tables h^(256·b) and h^t (t < 256) that
-// gpu_plonk_precompute_omega_tables_async computes with base h. Every MSM of the device path is of
-// a static length, the degree bound of its f in the layout (zero scalars add nothing, so the
-// commitment is the same), and the sum Σ_{i<n} ρ_i·[τ^i]₁ of each length is computed once, when the
-// AIRs that commit with it load (addShiftSum).
+// The MSM (commit) shifts its scalars: it computes Σ (s_i + ρ_i)·[τ^i]₁ − Σ ρ_i·[τ^i]₁, with
+// ρ_i = h^(i+1), h = msmShiftRatio(). sppark's Pippenger is fast when the scalars look random and slow
+// when many of them repeat, as every coefficient of L1 does (in each window, every point whose scalar
+// has the same digit goes to one bucket, which few threads sum: on an RTX 5090, 2^23 points take
+// 0.05 s with random scalars and 26 s with equal ones); s + ρ looks random whatever s is, and the
+// difference is the same point. A kernel adds ρ while it packs the scalars, from the tables
+// h^(256·b) and h^t (t < 256) that gpu_plonk_precompute_omega_tables_async computes with base h.
+// Every MSM of the device path is of a static length, the degree bound of its f in the layout (zero
+// scalars add nothing, so the commitment is the same), and the sum Σ_{i<n} ρ_i·[τ^i]₁ of each length
+// is computed once, when the AIRs that commit with it load (addShiftSum).
 //
 // Its AIRs (GpuAirKey) reserve their memory as they load, and each is refused, with how much it needs
 // and how much is free, if the device cannot hold it and a whole proof of it with the key's other
 // data: a key on the GPU never runs out of device memory in the middle of a proof (reserve).
 //
-// One proof at a time uses the arena, the host buffers and the Staging: the one whose Instance holds
+// One proof at a time uses the arena, the mirror and the Staging: the one whose Instance holds
 // a Lease, which another thread's waits for. Its other const functions are safe from several
 // threads.
 class GpuKey {
@@ -197,8 +227,10 @@ public:
     GpuKey(const GpuKey &) = delete;
     GpuKey &operator=(const GpuKey &) = delete;
 
-    const Gpu &hybrid() const { return *transforms; }
-    uint64_t nPowers() const { return transforms->nPoints(); }
+    uint64_t nPowers() const { return powers->nPoints(); }
+    // Whether these are the powers [τ^i]₁ of `srs`: the key was made from it (or from the Srs it was
+    // moved from), whose powers it copied.
+    bool holds(const Srs &srs) const { return &srs.g1(0) == hostPowers; }
     uint32_t multiprocessors() const { return smCount; }
     CopyVolume &copies() const { return volume; }
     // The bytes the key holds on the device, its arena included.
@@ -206,23 +238,20 @@ public:
 
     // While the key loads, before it is shared (GpuAirKey's constructor): room for an AIR whose
     // budget is `budget` and whose proofs copy mirrorElements elements of committed polynomials to
-    // the host, and qElements of Q's (qHost). The arena grows to the largest proof's, and the mirror
-    // and the host buffer for Q to the most elements. Throws std::invalid_argument, naming `air`, if
-    // the device has not the memory (requireDeviceMemory), or the arena given in the options is
-    // smaller than a proof's.
-    void reserve(const std::string &air, const GpuBudget &budget, uint64_t mirrorElements, uint64_t qElements);
+    // the host. The arena grows to the largest proof's, and the mirror to the most elements. Throws
+    // std::invalid_argument, naming `air`, if the device has not the memory (requireDeviceMemory), or
+    // the arena given in the options is smaller than a proof's.
+    void reserve(const std::string &air, const GpuBudget &budget, uint64_t mirrorElements);
     // While the key loads: Σ_{i<n} ρ_i·[τ^i]₁, for commit's MSMs of n scalars, n <= nPowers(), with
     // `work` (n elements on the device) as scratch. Throws std::runtime_error if the MSM fails.
     void addShiftSum(uint64_t n, void *work);
 
     // For the holder of a Lease, or while the key loads.
     uint8_t *arena() const { return options.arena != nullptr ? static_cast<uint8_t *>(options.arena) : owned.data(); }
+    // Its bytes: the given arena's, or the largest proof's of the AIRs that reserved it.
+    uint64_t arenaSize() const { return options.arena != nullptr ? options.arenaBytes : arenaBytes; }
     FrElement *mirror() const { return hostMirror; }
     Staging &staging() const { return *transfers; }
-    // The host buffer, registered, where Q's values and the columns it reads on a part go to and
-    // from the device (LdeGpu), of n elements at least: the one reserve made, replaced by one of n
-    // elements if a proof's parts need more (Instance::setQPartBits).
-    FrElement *qHost(uint64_t n) const;
 
     // [f(τ)]₁ of f(X) = Σ_{j<k} p_j(X^k)·X^j, for k polynomials of `length` coefficients on the device,
     // p_j at base + offsets[j] elements (offsets on the device), committed with an MSM of n scalars,
@@ -267,7 +296,8 @@ private:
     uint32_t smCount = 0;
     uint64_t held = 0;
     uint64_t transient = 0; // the most of the AIRs' GpuBudget::transient
-    std::unique_ptr<Gpu> transforms;
+    std::unique_ptr<Gpu> powers;
+    const G1PointAffine *hostPowers = nullptr; // those of the Srs it copied
     DeviceBuffer tables;    // h^(256·b), h^t, then a 64-bit 0 (an offset) and a 64-bit count
     const void *hBlocks = nullptr;
     const void *hPowers = nullptr;
@@ -278,7 +308,6 @@ private:
     uint64_t arenaBytes = 0;
     std::unique_ptr<RegisteredHost> mirrorBuffer;
     FrElement *hostMirror = nullptr;
-    mutable std::unique_ptr<RegisteredHost> qBuffer;
     std::unique_ptr<Staging> transfers;
 
     mutable std::mutex leaseLock;
@@ -295,11 +324,11 @@ class GpuAirKey {
 public:
     // `air`'s, whose host side is built (but for its fixed columns' polynomials, which this makes):
     // reserves its memory in `key` (GpuKey::reserve), copies its fixed columns on H to the device and
-    // interpolates them there (Gpu's INTT), then copies their coefficients into fixedCoefs (N per
+    // interpolates them there (sppark's INTT), then copies their coefficients into fixedCoefs (N per
     // column, on the host) and makes fixedPolys over them, as the CPU's Lde::intt makes them; copies its
-    // bytecode; computes the shift's sums of its f's lengths, and its fixed commitments. Throws
-    // FormatError if an f has more coefficients than the SRS has powers (checkSrsFits), and as reserve
-    // and GpuKey::commit.
+    // bytecode, and makes its interpreter on the device; computes the shift's sums of its f's lengths,
+    // and its fixed commitments. Throws FormatError if an f has more coefficients than the SRS has
+    // powers (checkSrsFits), and as reserve and GpuKey::commit.
     GpuAirKey(GpuKey &key, const AirKey &air, FrElement *fixedCoefs, std::vector<std::unique_ptr<Poly>> &fixedPolys);
     ~GpuAirKey();
     GpuAirKey(const GpuAirKey &) = delete;
@@ -314,17 +343,18 @@ public:
 
     // On the device: the fixed columns' coefficients (column c at c·N); the expressions' code
     // (ExpressionsBin::expressionsBinArgsExpressions); the stagePos in stage 1 of each witness column
-    // (AirKey::witnessColumns); and the offsets, from the fixed coefficients for a fixed f and from
-    // the arena's committed polynomials for the others, of the polynomials f packs (none for Q's f).
+    // (AirKey::witnessColumns); the offsets of the polynomials f packs (componentOffset); and those
+    // of Q's pieces, piece i at qPieceOffsets()[i], from ArenaLayout::qPieces (the first is 0).
     const FrElement *fixedCoefficients() const;
     const uint8_t *ops() const;
     const uint32_t *args() const;
     const FrElement *numbers() const;
     const uint64_t *witnessPositions() const;
     const uint64_t *offsets(uint64_t f) const;
+    const uint64_t *qPieceOffsets() const;
 
-    // The interpreter on the device of the expressions' code above (pilfflonk_expressions_gpu.hpp),
-    // for the holder of the arena: one proof at a time.
+    // The interpreter on the device of the expressions' code above (pilfflonk_expressions_gpu.hpp):
+    // the stages' hints and im pols, and Q; for the holder of the arena, one proof at a time.
     const ExpressionsGpu &expressions() const { return *interpreter; }
 
     // Runs of consecutive stagePos, (first, count), in increasing order: of the witness columns in
@@ -347,6 +377,7 @@ private:
              offsetsOffset = 0;
     std::vector<uint64_t> tableStart; // by f, its first entry in the offsets' table
     uint64_t fixedColumnsStart = 0;   // the entries c·N of the fixed columns, for their counts
+    uint64_t piecesStart = 0;         // the entries of Q's pieces
     ColumnRuns witnessRuns;
     std::vector<ColumnRuns> computedOnHost; // by stage
     std::vector<G1Point> fixedPoints;

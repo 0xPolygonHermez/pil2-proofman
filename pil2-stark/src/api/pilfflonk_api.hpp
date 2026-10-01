@@ -202,12 +202,13 @@ extern "C" {
     // other than pilfflonk/docs/protocol.md#q-pieces describes).
     void *pilfflonk_ctx_new(const char *proving_key_dir);
 
-    // pilfflonk_ctx_new with the MSMs and the NTTs of the ctx and of its proofs on `device`, one of
-    // enum pilfflonk_device (pilfflonk/docs/performance.md#what-runs-on-the-gpu). On
-    // PILFFLONK_DEVICE_GPU the SRS's powers [τ^i]₁ are copied to the GPU once they are read, and
-    // the commitments and the transforms run there, the fixed columns' INTT and
-    // pilfflonk_ctx_fixed_commitments included; the coset shifts, the blinding, the packing, Q's
-    // bytecode and SHPLONK's divisions stay on the CPU. Returns NULL on failure, as
+    // pilfflonk_ctx_new with the ctx and its proofs on `device`, one of enum pilfflonk_device
+    // (pilfflonk/docs/performance.md#what-runs-on-the-gpu). On PILFFLONK_DEVICE_GPU the SRS's powers
+    // [τ^i]₁ are copied to the GPU once they are read, and the key's fixed columns and every proof's
+    // polynomials stay there: the fixed columns' INTT and commitments (pilfflonk_ctx_fixed_commitments),
+    // each stage's INTTs and commitments, Q whole and SHPLONK's opening run on the device; the
+    // transcript, the blinding's draws, the std's hints and the im pols stay on the CPU. Returns NULL
+    // on failure, as
     // pilfflonk_ctx_new, and PILFFLONK_ERR_INVALID_ARGUMENT also if device is none of the enum or
     // is PILFFLONK_DEVICE_GPU and pilfflonk_gpu_available() is 0 (checked before any file is read).
     void *pilfflonk_ctx_new_on(const char *proving_key_dir, uint32_t device);
@@ -299,7 +300,9 @@ extern "C" {
     // (Instance::setQPartBits). The default, part_bits = nBits, holds the columns Q reads on N
     // points at a time, the least memory; nBitsExt evaluates Q on the whole coset at once. Q, and
     // so the proof, is the same bit for bit either way. PILFFLONK_ERR_INVALID_ARGUMENT if instance
-    // is NULL or part_bits is not between nBits and nBitsExt.
+    // is NULL or part_bits is not between nBits and nBitsExt, and, on a key on the GPU, if its device
+    // memory cannot hold Q in such parts (the default ones it always holds), saying the bytes they
+    // need and it has.
     int pilfflonk_instance_set_q_part_bits(void *instance, uint64_t part_bits);
 
     // Writes to out the n = N values on H of the column of stage `stage` (1 … nStages) at stage_pos

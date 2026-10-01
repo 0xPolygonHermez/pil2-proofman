@@ -67,7 +67,8 @@ void interpolateCosetOnDevice(const Lde &lde, FrElement *values, FrElement *tabl
     pilfflonk_gpu_mul_by_powers(values, M, t.blocks, t.powers);
 }
 
-LdeGpu::LdeGpu(const GpuAirKey &_air, uint64_t _partBits) : air(_air), partBits(_partBits) {
+LdeGpu::LdeGpu(const GpuAirKey &_air, uint64_t _partBits, FrElement *_columns)
+    : air(_air), partBits(_partBits), columns(_columns) {
     const AirKey &key = air.airKey();
     const uint64_t N = key.n();
     const FrElement *committed = elements(air.gpuKey().arena(), air.arena().polys);
@@ -82,39 +83,16 @@ LdeGpu::LdeGpu(const GpuAirKey &_air, uint64_t _partBits) : air(_air), partBits(
         sources.push_back(committed + air.arena().slot[at.f] + at.j * length);
         lengths.push_back(length);
     }
-    const uint64_t NExt = key.lde().extendedSize();
-    hostValues = air.gpuKey().qHost(NExt + sources.size() * (uint64_t(1) << partBits));
-    hostColumns = hostValues + NExt;
 }
 
 void LdeGpu::extendPart(uint64_t part) const {
-    const GpuKey &key = air.gpuKey();
-    const ArenaLayout &layout = air.arena();
-    const uint64_t S = uint64_t(1) << partBits;
-    FrElement *extended = elements(key.arena(), layout.q), *tables = elements(key.arena(), layout.qTables);
-    // Q's values are on the host while the columns are extended: the whole Q phase holds columns.
-    const uint64_t perCopy = layout.qElements / S;
-    Staging &staging = key.staging();
-    for (uint64_t first = 0; first < sources.size(); first += perCopy) {
-        const uint64_t count = std::min(perCopy, sources.size() - first);
-        extendCosetPartOnDevice(air.airKey().lde(), sources.data() + first, lengths.data() + first, count, partBits,
-                                part, extended, tables);
-        staging.toRegisteredHost(partColumns() + first * S, extended, count * S * sizeof(FrElement));
-        // The next columns overwrite these on the device.
-        staging.wait();
-    }
+    extendCosetPartOnDevice(air.airKey().lde(), sources.data(), lengths.data(), sources.size(), partBits, part,
+                            columns, elements(air.gpuKey().arena(), air.arena().qTables));
 }
 
 void LdeGpu::interpolate() const {
-    const GpuKey &key = air.gpuKey();
-    const Lde &lde = air.airKey().lde();
-    const uint64_t bytes = lde.extendedSize() * sizeof(FrElement);
-    FrElement *values = elements(key.arena(), air.arena().q);
-    Staging &staging = key.staging();
-    staging.toDevice(values, hostValues, bytes);
-    interpolateCosetOnDevice(lde, values, elements(key.arena(), air.arena().qTables));
-    staging.toRegisteredHost(hostValues, values, bytes);
-    staging.wait();
+    uint8_t *arena = air.gpuKey().arena();
+    interpolateCosetOnDevice(air.airKey().lde(), elements(arena, air.arena().q), elements(arena, air.arena().qTables));
 }
 
 } // namespace PilFflonk

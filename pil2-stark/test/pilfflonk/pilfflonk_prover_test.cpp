@@ -36,6 +36,7 @@
 #include <chrono>
 #include <cinttypes>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -58,7 +59,9 @@
 #include "pilfflonk_srs.hpp"
 #include "pilfflonk_transcript.hpp"
 #ifdef __USE_CUDA__
+#include "pilfflonk_expressions_gpu.hpp"
 #include "pilfflonk_key_gpu.hpp"
+#include "pilfflonk_lde_gpu.hpp"
 
 // The PLONK GPU prover's helper (rapidsnark/plonk_prover.cu).
 extern "C" void gpu_plonk_memcpy_d2h(void *dst, const void *src, size_t bytes);
@@ -2089,12 +2092,34 @@ Proved proveTheSumBus(const SumBus &bus, std::unique_ptr<BlindingSource> blindin
     return p;
 }
 
+// Whether `pk`, a key on the GPU of one AIR, holds Q in parts of 2^bits points: its arena against
+// what Q's phase needs then (InstanceGpu::requireQParts). Without the GPU library no key is on the
+// GPU, and nothing is refused.
+bool gpuHoldsQParts(const ProvingKey &pk, uint64_t bits) {
+#ifdef __USE_CUDA__
+    const AirKey &air = pk.air(0, 0);
+    return PilFflonk::qPhaseBytes(air, air.device()->arena(), bits) <= pk.gpuKey()->arenaSize();
+#else
+    (void)pk;
+    (void)bits;
+    return true;
+#endif
+}
+
+// The start of what Instance::setQPartBits says of parts of 2^bits points a key on the GPU does not
+// hold.
+std::string qPartsRefused(uint64_t bits) {
+    return "Instance::setQPartBits: not enough GPU memory for Q in parts of 2^" + std::to_string(bits) +
+           " points: it needs ";
+}
+
 // A key on the GPU (ProvingKey::load(…, Device::Gpu)) gives the CPU's proofs bit for bit, with the
 // same seed: its fixed columns' interpolants and commitments, every commitment, the polynomials
 // behind them, the evaluations and the opening (proofBytes). On the Fibonacci, whole, split and split
-// and packed, with Q in its default parts of N points, in parts of 2N and on the whole coset at once,
-// through the classes and, whole, through the C API (pilfflonk_ctx_new_on); and on the sum bus, of
-// two stages.
+// and packed, with Q in its default parts of N points, in parts of 2N and on the whole coset at once
+// where the key on the GPU holds them (the whole coset of the split Fibonacci, 2^10 points, it does
+// not: refused, saying so), through the classes and, whole, through the C API
+// (pilfflonk_ctx_new_on); and on the sum bus, of two stages.
 void testTheGpuGivesTheCpusProof() {
     if (!gpuUnderTest("proofs on the GPU")) {
         return;
@@ -2106,6 +2131,15 @@ void testTheGpuGivesTheCpusProof() {
         assert(fixedBytes(*cpu.pk) == fixedBytes(*gpu.pk));
         for (uint64_t bits : {uint64_t(0), cpu.air().info().nBits + 1, cpu.air().degrees().nBitsExt}) {
             const Proved a = prove(cpu, std::make_unique<BlindingRng>(seed), bits);
+            if (bits != 0 && !gpuHoldsQParts(*gpu.pk, bits)) {
+                assert(contains(thrown<std::invalid_argument>(
+                                    [&] { prove(gpu, std::make_unique<BlindingRng>(seed), bits); }),
+                                qPartsRefused(bits)));
+                std::printf("pilfflonk_test: the Fibonacci in %" PRIu64 " piece(s) on the GPU: Q in parts of 2^%" PRIu64
+                            " points refused, as its arena does not hold them\n",
+                            gpu.air().nQPieces(), bits);
+                continue;
+            }
             const Proved b = prove(gpu, std::make_unique<BlindingRng>(seed), bits);
             assert(proofBytes(a, cpu.air()) == proofBytes(b, gpu.air()));
         }
@@ -2276,16 +2310,11 @@ void testAnArenaGivenToTheKey() {
 // What a proof on the GPU copies between the host and the device, which the target of the device
 // path keeps to the witness and a few bytes: the instance sends its witness up and gets its columns
 // back (for the host's im pols and hints); stage 1 sends the im pols and the blinding factors, and
-// gets the committed polynomials (for the opening, still on the host) and their counts; Q sends no
-// column up, gets the columns its code reads on each part (for the interpreter, still on the host),
-// and sends Q's values up and gets them back, interpolated; and its MSMs, still from the host, send
-// their scalars, and the shift's for a length first seen (Gpu::msm), at most twice the degree bound
-// of each f of Q.
-void testTheGpuCopiesWhatItMust() {
-    if (!gpuUnderTest("the copies of a proof on the GPU")) {
-        return;
-    }
-    const Fibonacci fib(KeyFiles(), Device::Gpu);
+// gets the committed polynomials (for the host's copies) and their counts; and Q, which runs on the
+// device whole, gets the count of its coefficients and of each piece's, and sends up only the blinding
+// factors of its boundaries, if it is split: on the Fibonacci, whole and split and packed.
+void expectTheCopiesOf(const KeyFiles &files) {
+    const Fibonacci fib(files, Device::Gpu);
     const AirKey &air = fib.air();
     const PilfflonkInfo &info = air.info();
     const PilFflonk::CopyVolume &volume = fib.pk->gpuKey()->copies();
@@ -2312,50 +2341,184 @@ void testTheGpuCopiesWhatItMust() {
     const PilFflonk::CopyVolume::Totals committed = volume.totals();
     assert(committed.toDevice - made.toDevice == up && committed.toHost - made.toHost == down);
 
-    const uint64_t NExt = air.lde().extendedSize();
-    uint64_t msmBound = 0;
-    for (const LayoutEntry &f : info.layout) {
-        if (f.stage == info.qStage()) {
-            msmBound += 2 * f.degree * element;
-        }
-    }
+    const uint64_t m = air.nQPieces();
     inst->commitQ({fr(fib.oracle["stdVc"])});
     const PilFflonk::CopyVolume::Totals q = volume.totals();
-    assert(q.toHost - committed.toHost == (air.qReads().size() + 1) * NExt * element);
-    assert(q.toDevice - committed.toDevice >= NExt * element);
-    assert(q.toDevice - committed.toDevice - NExt * element <= msmBound);
+    assert(q.toDevice - committed.toDevice == 2 * (m - 1) * element);
+    assert(q.toHost - committed.toHost == (1 + m) * sizeof(uint64_t));
+}
+
+void testTheGpuCopiesWhatItMust() {
+    if (!gpuUnderTest("the copies of a proof on the GPU")) {
+        return;
+    }
+    for (const KeyFiles &files : {KeyFiles(), splitQFiles(true)}) {
+        expectTheCopiesOf(files);
+    }
 }
 
 // A witness that does not satisfy the constraints is refused on the GPU as on the CPU: commitQ
 // throws the CPU's UnsatisfiedError, whose degree is that of Q's highest coefficient not zero, in
-// each size of Q's parts, and Q stays uncommitted.
+// each size of Q's parts the key on the GPU holds (and the others are refused when they are set),
+// and Q stays uncommitted.
 void testAMutatedWitnessIsUnsatisfiedOnTheGpu() {
     if (!gpuUnderTest("a witness refused on the GPU")) {
         return;
     }
-    const Fibonacci cpu, gpu(KeyFiles(), Device::Gpu);
-    std::vector<uint8_t> mutated = cpu.witness;
-    mutated[(100 * 2 + 0) * 32] ^= 1; // l1 at row 100
-    const uint64_t nBits = cpu.air().info().nBits, nBitsExt = cpu.air().degrees().nBitsExt;
-    for (uint64_t bits = nBits; bits <= nBitsExt; ++bits) {
-        std::string messages[2];
-        const Fibonacci *on[2] = {&cpu, &gpu};
-        for (int d = 0; d < 2; ++d) {
-            std::unique_ptr<Instance> inst = on[d]->instance(std::make_unique<ZeroBlinding>(), mutated);
-            inst->setQPartBits(bits);
-            inst->commitStage(1, {});
-            messages[d] = thrown<UnsatisfiedError>([&] { inst->commitQ({fr(cpu.oracle["stdVc"])}); });
-            assert(!inst->qCommitted());
+    for (const KeyFiles &files : {KeyFiles(), splitQFiles(true)}) {
+        const Fibonacci cpu(files), gpu(files, Device::Gpu);
+        std::vector<uint8_t> mutated = cpu.witness;
+        mutated[(100 * 2 + 0) * 32] ^= 1; // l1 at row 100
+        const uint64_t nBits = cpu.air().info().nBits, nBitsExt = cpu.air().degrees().nBitsExt;
+        for (uint64_t bits = nBits; bits <= nBitsExt; ++bits) {
+            std::string messages[2];
+            const Fibonacci *on[2] = {&cpu, &gpu};
+            if (!gpuHoldsQParts(*gpu.pk, bits)) {
+                std::unique_ptr<Instance> inst = gpu.instance(std::make_unique<ZeroBlinding>(), mutated);
+                assert(contains(thrown<std::invalid_argument>([&] { inst->setQPartBits(bits); }), qPartsRefused(bits)));
+                continue;
+            }
+            for (int d = 0; d < 2; ++d) {
+                std::unique_ptr<Instance> inst = on[d]->instance(std::make_unique<ZeroBlinding>(), mutated);
+                inst->setQPartBits(bits);
+                inst->commitStage(1, {});
+                messages[d] = thrown<UnsatisfiedError>([&] { inst->commitQ({fr(cpu.oracle["stdVc"])}); });
+                assert(!inst->qCommitted() && inst->qPiece(0) == nullptr);
+            }
+            assert(contains(messages[1], "the witness does not satisfy the constraints of Fibonacci"));
+            assert(messages[0] == messages[1]);
         }
-        assert(contains(messages[1], "the witness does not satisfy the constraints of Fibonacci"));
-        assert(messages[0] == messages[1]);
     }
 }
 
+// The witness directory of a key under test (pilfflonk/docs/formats.md#witness-directory): one
+// instance, of AIR 0 of airgroup 0, with no air values or proof values (v1 has none).
+struct WitnessDir {
+    std::vector<uint8_t> trace;
+    std::vector<FrElement> publics;
+};
+
+WitnessDir readWitnessDir(const std::string &dir) {
+    const json instances = json::parse(readBytes(dir + "/instances.json"));
+    assert(instances.size() == 1 && instances[0]["airgroupId"] == 0 && instances[0]["airId"] == 0 &&
+           instances[0]["airValues"].empty());
+    assert(json::parse(readBytes(dir + "/proof_values.json")).empty());
+    return WitnessDir{readBytes(dir + "/instance_0_0_0.bin"), frs(json::parse(readBytes(dir + "/publics.json")))};
+}
+
+// A proof of the instance `trace` of `pk`'s AIR, with a seeded blinding and Q in parts of
+// 2^qPartBits points, the transcript in miniature as `prove`'s: each stage's challenges squeezed
+// after the commitments before it, and ξ after Q's.
+Proved proveWitness(const ProvingKey &pk, const std::vector<uint8_t> &trace, const std::vector<FrElement> &publics,
+                    uint64_t qPartBits) {
+    const uint8_t seed[32] = {60};
+    Proved p;
+    p.instance = std::make_unique<Instance>(pk, 0, 0, trace.data(), trace.size(), std::vector<FrElement>{}, publics,
+                                            std::vector<FrElement>{}, std::make_unique<BlindingRng>(seed));
+    p.instance->setQPartBits(qPartBits);
+    Transcript t;
+    t.absorb(std::vector<FrElement>{E.fr.one()});
+    t.absorb(publics);
+    const uint64_t qStage = pk.air(0, 0).info().qStage();
+    for (uint64_t s = 1; s <= qStage; ++s) {
+        std::vector<FrElement> challenges(p.instance->nChallenges(s));
+        for (FrElement &c : challenges) {
+            c = t.squeeze();
+        }
+        const std::vector<G1Point> c =
+            s == qStage ? p.instance->commitQ(challenges) : p.instance->commitStage(s, challenges);
+        t.absorb(c);
+        p.commitments.insert(p.commitments.end(), c.begin(), c.end());
+    }
+    p.xiSeed = t.squeeze();
+    p.opening = std::make_unique<Opening>(std::vector<const Instance *>{p.instance.get()}, p.xiSeed);
+    t.absorb(p.opening->evaluations());
+    p.proof = p.opening->open(t);
+    return p;
+}
+
+// What proveWitness gives: the error it throws ("" if none), and the proof's bytes (proofBytes).
+using ProofOutcome = std::pair<std::string, std::vector<uint8_t>>;
+
+ProofOutcome proofOutcome(const ProvingKey &pk, const std::vector<uint8_t> &trace,
+                          const std::vector<FrElement> &publics, uint64_t qPartBits) {
+    try {
+        return {"", proofBytes(proveWitness(pk, trace, publics, qPartBits), pk.air(0, 0))};
+    } catch (const std::exception &e) {
+        return {e.what(), {}};
+    }
+}
+
+// Every key of PILFFLONK_GPU_PROOF_KEYS (colon-separated directories, each with a provingKey/ and the
+// witness/ of its instance), on the GPU: the CPU's proof bit for bit (proofBytes: the commitments,
+// the evaluations, the opening, and every committed polynomial and piece of Q), with Q in parts of N,
+// 2N and N' points, or, for parts the key on the GPU does not hold, their refusal; and its witness
+// changed at one scalar, the CPU's outcome, which is an error where the change breaks a constraint
+// (the same error). The keys of the GPU's checks: the synthetic
+// domains, split Q, im pols and two stages (pilfflonk/docs/performance.md#gpu).
+void testTheGpuProvesTheKeysUnderTest() {
+    const char *list = std::getenv("PILFFLONK_GPU_PROOF_KEYS");
+    if (list == nullptr || !gpuUnderTest("the proofs of PILFFLONK_GPU_PROOF_KEYS on the GPU")) {
+        return;
+    }
+    std::string dirs = list;
+    uint64_t keys = 0, refused = 0;
+    while (!dirs.empty()) {
+        const size_t colon = dirs.find(':');
+        const std::string dir = dirs.substr(0, colon);
+        dirs = colon == std::string::npos ? "" : dirs.substr(colon + 1);
+        const std::unique_ptr<ProvingKey> cpu = ProvingKey::load(dir + "/provingKey", Device::Cpu);
+        const std::unique_ptr<ProvingKey> gpu = ProvingKey::load(dir + "/provingKey", Device::Gpu);
+        const WitnessDir witness = readWitnessDir(dir + "/witness");
+        const uint64_t nBits = cpu->air(0, 0).info().nBits, nBitsExt = cpu->air(0, 0).degrees().nBitsExt;
+        std::vector<uint64_t> parts = {nBits};
+        for (uint64_t bits : {nBits + 1, nBitsExt}) {
+            if (bits <= nBitsExt && bits != parts.back()) {
+                parts.push_back(bits);
+            }
+        }
+        // On the GPU, the CPU's outcome, or, for parts the key does not hold, their refusal.
+        auto expectTheCpusOutcome = [&](const std::vector<uint8_t> &trace, uint64_t bits) {
+            const ProofOutcome expected = proofOutcome(*cpu, trace, witness.publics, bits);
+            const ProofOutcome onGpu = proofOutcome(*gpu, trace, witness.publics, bits);
+            if (!gpuHoldsQParts(*gpu, bits)) {
+                assert(onGpu.first.rfind(qPartsRefused(bits), 0) == 0);
+                return expected;
+            }
+            if (onGpu != expected) {
+                std::fprintf(stderr,
+                             "pilfflonk_test: %s, Q in parts of 2^%" PRIu64 ": the GPU's outcome is not the CPU's\n",
+                             dir.c_str(), bits);
+                assert(false);
+            }
+            return expected;
+        };
+        std::string held, notHeld;
+        for (uint64_t bits : parts) {
+            assert(expectTheCpusOutcome(witness.trace, bits).first.empty());
+            (gpuHoldsQParts(*gpu, bits) ? held : notHeld) += " 2^" + std::to_string(bits);
+        }
+        std::printf("pilfflonk_test: %s: Q in parts of%s the GPU's proof, the CPU's%s%s\n", dir.c_str(), held.c_str(),
+                    notHeld.empty() ? "" : "; in parts of", notHeld.empty() ? "" : (notHeld + " refused").c_str());
+        // Row N/2 of the first column: 12345, or 54321 if it is 12345 already.
+        std::vector<uint8_t> mutated = witness.trace;
+        uint8_t *scalar = mutated.data() + (uint64_t(1) << (nBits - 1)) * cpu->air(0, 0).witnessColumns().size() * 32;
+        const uint8_t a[32] = {0x39, 0x30}, b[32] = {0x31, 0xd4};
+        std::memcpy(scalar, std::memcmp(scalar, a, 32) == 0 ? b : a, 32);
+        for (uint64_t bits : {parts.front(), parts.back()}) {
+            refused += expectTheCpusOutcome(mutated, bits).first.empty() ? 0 : 1;
+        }
+        ++keys;
+    }
+    std::printf("pilfflonk_test: %" PRIu64 " keys of PILFFLONK_GPU_PROOF_KEYS proved on the GPU as on the CPU, "
+                "%" PRIu64 " changed witnesses refused alike\n",
+                keys, refused);
+}
+
 // What the opening of a proof on the GPU copies (OpeningGpu), of the Fibonacci whole and split and
-// packed: Q's pieces to the device, up to their degrees, from the instance's on the host until Q is
-// computed on the device; and besides, a few elements each way: the evaluations' descriptors and
-// values, the interpolants, and an element or two of each division and count.
+// packed: no polynomial, as Q's pieces are on the device too; a few elements each way: the
+// evaluations' descriptors and values, the interpolants, and an element or two of each division and
+// count.
 void testTheGpuOpeningCopiesWhatItMust() {
     if (!gpuUnderTest("the copies of an opening on the GPU")) {
         return;
@@ -2368,15 +2531,10 @@ void testTheGpuOpeningCopiesWhatItMust() {
         Transcript t;
         t.absorb(inst->commitStage(1, {}));
         t.absorb(inst->commitQ({t.squeeze()}));
-        uint64_t pieces = 0;
-        for (uint64_t i = 0; i < fib.air().nQPieces(); ++i) {
-            pieces += (inst->qPiece(i)->getDegree() + 1) * sizeof(FrElement);
-        }
         const PilFflonk::CopyVolume::Totals before = volume.totals();
         const Opening opening({inst.get()}, t.squeeze());
         const PilFflonk::CopyVolume::Totals evaluated = volume.totals();
-        assert(evaluated.toDevice - before.toDevice >= pieces && evaluated.toDevice - before.toDevice < pieces + FEW);
-        assert(evaluated.toHost - before.toHost < FEW);
+        assert(evaluated.toDevice - before.toDevice < FEW && evaluated.toHost - before.toHost < FEW);
         t.absorb(opening.evaluations());
         opening.open(t);
         const PilFflonk::CopyVolume::Totals opened = volume.totals();
@@ -2384,16 +2542,103 @@ void testTheGpuOpeningCopiesWhatItMust() {
     }
 }
 
-// What stays on the device while a key on the GPU lives is the host's, byte for byte: the
-// expressions' code, the witness columns' places, and the fixed columns' coefficients, of which the
-// key's fixed polynomials are the copies.
-void testTheGpuKeyHoldsTheKeysData() {
-    if (!gpuUnderTest("the data of a key on the GPU")) {
-        return;
+// Where a proof of the Fibonacci, whole and split, keeps Q's data in the arena (ArenaLayout), which
+// needs no GPU: Q's counts, factors, values, tables and part one after another after the committed
+// polynomials, the part of N points within the arena; the pieces over Q's values unsplit and after
+// them split, in slots of the largest piece; SHPLONK's workspace after them; and each piece of an f
+// of Q's where componentOffset says.
+void testTheArenaLayoutOfQ() {
+    for (const KeyFiles &files : {KeyFiles(), splitQFiles(false), splitQFiles(true)}) {
+        const Fibonacci fib(files);
+        const AirKey &air = fib.air();
+        const PilFflonk::ArenaLayout a = PilFflonk::arenaLayout(air);
+        const PilFflonk::AirDegrees &d = air.degrees();
+        const uint64_t m = air.nQPieces(), NExt = air.lde().extendedSize(), element = sizeof(FrElement);
+        const uint64_t polysEnd = a.polys + a.polyElements * element;
+        assert(a.qCounts >= polysEnd && a.qFactors >= a.qCounts + (1 + m) * sizeof(uint64_t));
+        assert(a.q >= a.qFactors + 2 * (m - 1) * element && a.qTables >= a.q + NExt * element);
+        assert(a.qPart >= a.qTables + PilFflonk::ldeTableElements(air.lde()) * element);
+        assert(a.qPart + PilFflonk::qPartLayout(air, air.info().nBits).bytes <= a.bytes);
+        // Q's phase: in the default parts within the arena, and in larger ones as many more bytes as
+        // their columns and Zi take.
+        assert(PilFflonk::qPhaseBytes(air, a, air.info().nBits) <= a.bytes);
+        for (uint64_t bits = air.info().nBits; bits <= d.nBitsExt; ++bits) {
+            assert(PilFflonk::qPhaseBytes(air, a, bits) == a.qPart + PilFflonk::qPartLayout(air, bits).bytes);
+        }
+        assert(a.qPieceElements == *std::max_element(d.qPieceCoefficients.begin(), d.qPieceCoefficients.end()));
+        assert(m == 1 ? a.qPieces == a.q : a.qPieces >= a.q + NExt * element);
+        assert(a.shplonk >= a.qPieces + m * a.qPieceElements * element && a.shplonk <= a.bytes);
+        for (uint64_t f = 0; f < air.info().layout.size(); ++f) {
+            const LayoutEntry &entry = air.info().layout[f];
+            for (uint64_t j = 0; entry.stage == air.info().qStage() && j < entry.k; ++j) {
+                const uint64_t piece = air.info().cmPolsMap[entry.pols[j].id].stagePos;
+                assert(PilFflonk::componentOffset(air, a, f, j) == piece * a.qPieceElements);
+            }
+        }
     }
-    const Fibonacci fib(KeyFiles(), Device::Gpu);
+}
+
+// Which parts of Q a key on the GPU of one AIR holds, which needs no GPU: its arena is its proofs'
+// (arenaLayout), which holds the default parts, of 2^nBits points; listed for the Fibonacci, whole
+// and split, and for the keys of PILFFLONK_GPU_PROOF_KEYS, at 2^nBits, 2^(nBits+1) and 2^nBitsExt.
+void testTheQPartsAKeyOnTheGpuHolds() {
+    auto list = [](const std::string &name, const AirKey &air) {
+        const PilFflonk::ArenaLayout a = PilFflonk::arenaLayout(air);
+        const uint64_t nBits = air.info().nBits, nBitsExt = air.degrees().nBitsExt;
+        assert(PilFflonk::qPhaseBytes(air, a, nBits) <= a.bytes);
+        std::vector<uint64_t> sizes = {nBits};
+        for (uint64_t bits : {nBits + 1, nBitsExt}) {
+            if (bits <= nBitsExt && bits != sizes.back()) {
+                sizes.push_back(bits);
+            }
+        }
+        std::string held, refused;
+        for (uint64_t bits : sizes) {
+            (PilFflonk::qPhaseBytes(air, a, bits) <= a.bytes ? held : refused) += " 2^" + std::to_string(bits);
+        }
+        std::printf("pilfflonk_test: %s on the GPU: Q in parts of%s held%s%s\n", name.c_str(), held.c_str(),
+                    refused.empty() ? "" : ", of", refused.empty() ? "" : (refused + " refused").c_str());
+    };
+    for (const KeyFiles &files : {KeyFiles(), splitQFiles(false), splitQFiles(true)}) {
+        const Fibonacci fib(files);
+        list("the Fibonacci in " + std::to_string(fib.air().nQPieces()) + " piece(s), k = " +
+                 std::to_string(fib.air().info().layout.back().k),
+             fib.air());
+    }
+    const char *keys = std::getenv("PILFFLONK_GPU_PROOF_KEYS");
+    std::string dirs = keys != nullptr ? keys : "";
+    while (!dirs.empty()) {
+        const size_t colon = dirs.find(':');
+        const std::string dir = dirs.substr(0, colon);
+        dirs = colon == std::string::npos ? "" : dirs.substr(colon + 1);
+        list(dir, ProvingKey::load(dir + "/provingKey", Device::Cpu)->air(0, 0));
+    }
+}
+
+// What stays on the device while a key on the GPU lives is the host's, byte for byte: the
+// expressions' code, the witness columns' places, the fixed columns' coefficients, of which the
+// key's fixed polynomials are the copies, and the offsets of Q's pieces; and the interpreter holds
+// the device memory its budget counts.
+void expectTheKeysDataOnTheGpu(const KeyFiles &files) {
+    const Fibonacci fib(files, Device::Gpu);
     const AirKey &air = fib.air();
     const PilFflonk::GpuAirKey &device = *air.device();
+    assert(device.expressions().deviceBytes() ==
+           PilFflonk::ExpressionsGpu::deviceBytesOf(air.bin(), air.info(), device.gpuKey().multiprocessors()));
+    const uint64_t m = air.nQPieces(), slot = device.arena().qPieceElements;
+    std::vector<uint64_t> pieces(m);
+    gpu_plonk_memcpy_d2h(pieces.data(), device.qPieceOffsets(), m * sizeof(uint64_t));
+    for (uint64_t i = 0; i < m; ++i) {
+        assert(pieces[i] == i * slot);
+    }
+    for (uint64_t f = 0; f < air.info().layout.size(); ++f) {
+        const LayoutEntry &entry = air.info().layout[f];
+        std::vector<uint64_t> offsets(entry.k);
+        gpu_plonk_memcpy_d2h(offsets.data(), device.offsets(f), entry.k * sizeof(uint64_t));
+        for (uint64_t j = 0; j < entry.k; ++j) {
+            assert(offsets[j] == PilFflonk::componentOffset(air, device.arena(), f, j));
+        }
+    }
     const PilFflonk::ParserArgs &code = air.bin().expressionsBinArgsExpressions;
     std::vector<uint8_t> ops(code.ops.size());
     std::vector<uint32_t> args(code.args.size());
@@ -2411,6 +2656,15 @@ void testTheGpuKeyHoldsTheKeysData() {
     for (uint64_t c = 0; c < air.info().nConstants; ++c) {
         const Poly *p = air.fixedPolynomial(c);
         assert(p->getLength() == N && std::memcmp(fixed.data() + c * N, p->coef, N * sizeof(FrElement)) == 0);
+    }
+}
+
+void testTheGpuKeyHoldsTheKeysData() {
+    if (!gpuUnderTest("the data of a key on the GPU")) {
+        return;
+    }
+    for (const KeyFiles &files : {KeyFiles(), splitQFiles(true)}) {
+        expectTheKeysDataOnTheGpu(files);
     }
 }
 
@@ -2453,7 +2707,10 @@ void runProverTests() {
     testAnArenaGivenToTheKey();
     testTheGpuCopiesWhatItMust();
     testAMutatedWitnessIsUnsatisfiedOnTheGpu();
+    testTheGpuProvesTheKeysUnderTest();
     testTheGpuOpeningCopiesWhatItMust();
+    testTheArenaLayoutOfQ();
+    testTheQPartsAKeyOnTheGpuHolds();
     testTheGpuKeyHoldsTheKeysData();
 #endif
 }

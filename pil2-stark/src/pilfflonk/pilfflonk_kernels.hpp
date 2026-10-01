@@ -36,6 +36,15 @@ void pilfflonk_gpu_pack_shift(void *out, uint64_t n, const void *base, const uin
 void pilfflonk_gpu_blind(void *base, const uint64_t *offsets, uint64_t nPolys, uint64_t n, const void *factors,
                          uint64_t nFactors);
 
+// The blinding of the boundaries between Q's nPieces pieces (pilfflonk/docs/protocol.md#q-pieces), as
+// Instance::commitQ does it on the host: piece t at base + t·slot, and for each boundary t <
+// nPieces − 1 its factors b0, b1 at factors + 2t, b0·X^qStride + b1·X^(qStride+1) into piece t (its
+// coefficients qStride and qStride + 1 become b0 and b1) and b0 + b1·X out of piece t + 1 (its
+// coefficients 0 and 1 less b0 and b1). 2 <= qStride, qStride + 2 <= slot, and every piece has two
+// coefficients.
+void pilfflonk_gpu_blind_q_boundaries(void *base, uint64_t slot, uint64_t qStride, uint64_t nPieces,
+                                      const void *factors);
+
 // counts[t] = 1 + the index of the highest coefficient of p_t that is not zero, or 0 if every one
 // is, for the nPolys polynomials of `length` coefficients, p_t at base + offsets[t]: the degree
 // rapidsnark's Polynomial::fixDegree finds is max(counts[t], 1) − 1.

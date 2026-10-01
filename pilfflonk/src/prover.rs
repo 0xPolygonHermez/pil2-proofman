@@ -361,7 +361,8 @@ pub struct ProveOptions {
     /// (pilfflonk/docs/protocol.md#q-in-parts): in parts of `2^bits` points, one after another,
     /// `nBits <= bits <= nBitsExt`. `None` (the default) is `nBits`, one coset of `H` per part, the
     /// least memory; `nBitsExt` evaluates `Q` on the whole coset at once. The proof is the same bit
-    /// for bit whatever the parts.
+    /// for bit whatever the parts. On the GPU, parts the key's device memory cannot hold are refused
+    /// (the default ones it always holds).
     pub q_part_bits: Option<u64>,
 }
 

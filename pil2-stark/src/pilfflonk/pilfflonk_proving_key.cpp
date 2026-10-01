@@ -488,6 +488,11 @@ AirDegrees airDegrees(const PilfflonkInfo &info, const std::string &name) {
     return d;
 }
 
+QPieceRange qPieceRange(const AirDegrees &d, uint64_t i) {
+    const uint64_t start = i * d.qStride;
+    return QPieceRange{start, i + 1 < d.qPieceCoefficients.size() ? d.qStride : d.qCoefficients - start};
+}
+
 AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constants, uint64_t constantsBytes,
                const std::string &name, GpuKey *gpu)
     : airName(name), pilfflonkInfo(std::move(_info)), expressionsBin(std::move(_bin)) {
@@ -497,13 +502,7 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
     interpreter = std::make_unique<Expressions>(expressionsBin, info);
     airDegrees_ = airDegrees(info, name);
     const uint64_t N = airDegrees_.n;
-    const Gpu *transforms = nullptr;
-#ifdef __USE_CUDA__
-    if (gpu != nullptr) {
-        transforms = &gpu->hybrid();
-    }
-#endif
-    extension = std::make_unique<Lde>(info.nBits, airDegrees_.nBitsExt, transforms);
+    extension = std::make_unique<Lde>(info.nBits, airDegrees_.nBitsExt);
 
     // The rows of each constraint of the .bin (section 2, which check runs) lie in the trace; its
     // reader checked firstRow <= lastRow.
@@ -704,7 +703,7 @@ AirKey::~AirKey() = default;
 
 std::vector<G1Point> AirKey::fixedCommitments(const Srs &srs) const {
 #ifdef __USE_CUDA__
-    if (deviceKey != nullptr && srs.gpu() == &deviceKey->gpuKey().hybrid()) {
+    if (deviceKey != nullptr && deviceKey->gpuKey().holds(srs)) {
         return deviceKey->fixedCommitments();
     }
 #endif
@@ -756,19 +755,13 @@ ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::
                        std::shared_ptr<const GpuKey> _gpu)
     : info(std::move(_info)), gpu(std::move(_gpu)), structuredReferenceString(std::move(_srs)),
       airKeys(std::move(_airs)) {
-    // The Gpu of the transforms and of the MSMs that run on the host's data.
-    const Gpu *transforms = nullptr;
 #ifdef __USE_CUDA__
-    if (gpu) {
-        if (gpu->nPowers() != structuredReferenceString.nG1()) {
-            throw std::invalid_argument("provingKey: its GPU holds " + std::to_string(gpu->nPowers()) +
-                                        " points, and its SRS " + std::to_string(structuredReferenceString.nG1()) +
-                                        " powers [τ^i]₁");
-        }
-        transforms = &gpu->hybrid();
+    if (gpu && gpu->nPowers() != structuredReferenceString.nG1()) {
+        throw std::invalid_argument("provingKey: its GPU holds " + std::to_string(gpu->nPowers()) +
+                                    " points, and its SRS " + std::to_string(structuredReferenceString.nG1()) +
+                                    " powers [τ^i]₁");
     }
 #endif
-    structuredReferenceString.setGpu(transforms);
     if (airKeys.size() != info.airs.size()) {
         throw FormatError("provingKey: " + std::to_string(airKeys.size()) + " airgroups of keys for the " +
                           std::to_string(info.airs.size()) + " of the globalInfo");
@@ -781,7 +774,12 @@ ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::
         }
         for (uint64_t a = 0; a < airKeys[ag].size(); ++a) {
             const AirKey &key = *airKeys[ag][a];
-            if (key.lde().gpu() != transforms) {
+#ifdef __USE_CUDA__
+            const GpuKey *onGpu = key.device() != nullptr ? &key.device()->gpuKey() : nullptr;
+#else
+            const GpuKey *onGpu = nullptr;
+#endif
+            if (onGpu != gpu.get()) {
                 throw std::invalid_argument("provingKey: " + key.name() +
                                             (gpu ? "'s key is not on the provingKey's GPU" : "'s key is on a GPU"));
             }

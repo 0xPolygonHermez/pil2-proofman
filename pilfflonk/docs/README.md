@@ -219,7 +219,7 @@ Loads the `provingKey/`, takes the witness from a directory or a witness library
 - **Blinding** is always on, random by default (libsodium). `--insecure-blinding-seed` fixes it, so
   that the same seed gives the same proof: for tests and CI only, as whoever knows the seed can
   remove the blinding ([protocol.md#blinding](protocol.md#blinding)).
-- **`-g/--gpu`** runs the MSMs and the NTTs on the GPU and gives the same proof, bit for bit
+- **`-g/--gpu`** runs the proof on the GPU and gives the same proof, bit for bit
   ([performance.md#gpu](performance.md#gpu)). It needs a build that found `nvcc` (without the feature
   `proofman-starks-lib-c/cpu-only`) and a GPU; otherwise it is refused, saying why, before the SRS is
   read. The CPU is the default, and a GPU build without `--gpu` proves on the CPU.

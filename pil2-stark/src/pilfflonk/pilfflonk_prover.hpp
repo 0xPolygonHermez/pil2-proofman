@@ -105,12 +105,13 @@ struct ConstraintCheck {
 // On a key on the GPU (ProvingKey::load with Device::Gpu), the witness goes to the device as it is
 // given, and the INTTs, the blinding and the commitments of commitStage run there (InstanceGpu),
 // with the blinding factors drawn here, and so do the hints and the im pols of the stages after the
-// first, whose columns stay there (computeStageColumns), and commitQ's extension of the columns to
-// each part and its interpolation of Q (LdeGpu); the rest runs here, on the copies of the stage-1
-// columns, of the committed polynomials and of Q's columns and values the device sends back, and
-// the proof is the same bit for bit. Such a key holds the device memory of one proof at a time: an
-// instance holds it until it is destroyed, another thread's waits for it, and a second instance of
-// this thread is refused.
+// first, whose columns stay there (computeStageColumns), and commitQ whole: the extension of the
+// columns to each part, Q's code there, its interpolation and the check of its bound, its pieces,
+// their blinding with the factors drawn here, and their commitments; the pieces stay on the device
+// for the opening. The im pols of stage 1 run here, on the copies of the stage-1 columns the device
+// sends back, and the proof is the same bit for bit. Such a key holds the device memory of one proof
+// at a time: an instance holds it until it is destroyed, another thread's waits for it, and a second
+// instance of this thread is refused.
 //
 // Elements are in Montgomery form. Refused arguments throw std::invalid_argument before anything
 // changes. Not safe to use from several threads at once; the ProvingKey, which must outlive it, may
@@ -191,7 +192,14 @@ public:
     // stage, the piece of Q it packs. Not const as rapidsnark's API takes it, but never changed.
     Poly *polynomial(uint64_t f, uint64_t j) const;
 
-    // Piece i of Q (the whole Q if it is not split) once Q is committed; null before.
+    // p_j of f as an Opening reads it: polynomial(f, j), but for a piece of Q on a key on the GPU, which
+    // is where the device keeps it (ShplonkComponent::elsewhere, of its bound's coefficients and its
+    // degree), not copied to the host.
+    ShplonkComponent component(uint64_t f, uint64_t j) const;
+
+    // Piece i of Q (the whole Q if it is not split) once Q is committed; null before. On a key on
+    // the GPU, which keeps the pieces on the device, the first call copies them all to the host (for
+    // tests and diagnostics).
     Poly *qPiece(uint64_t i) const;
 
     // How commitQ evaluates Q on the extended coset of N' = 2^nBitsExt points
@@ -200,7 +208,9 @@ public:
     // one part at a time, 32·2^partBits bytes each, and not on all N'. By default partBits = nBits,
     // one coset of H per part, the least memory; nBitsExt evaluates Q on the whole coset at once.
     // Q, and so the proof, is the same bit for bit whatever the parts. Throws std::invalid_argument
-    // unless nBits <= partBits <= nBitsExt.
+    // unless nBits <= partBits <= nBitsExt, and, on a key on the GPU, if the key's device memory
+    // cannot hold Q in such parts (InstanceGpu::requireQParts), saying how many bytes they need and
+    // it has: the default parts, of 2^nBits points, it always holds.
     void setQPartBits(uint64_t partBits);
 
 private:
@@ -233,7 +243,20 @@ private:
     // (blindLength), drawn f by f in the order of the layout and column by column within an f, one
     // BlindingSource::fill per column, in that order.
     std::vector<FrElement> drawBlinding(uint64_t stage);
+    // The blinding factors of the boundaries between Q's pieces, two for each, b0 first, one
+    // BlindingSource::fill per boundary, boundary by boundary: none if Q is not split.
+    std::vector<FrElement> drawQBlinding();
     std::vector<G1Point> commitF(uint64_t stage);
+    // What Q's code reads on a part of S points: column r of AirKey::qReads at columns + r·S (host or
+    // device memory), and the instance's scalars, with the challenges of Q's stage.
+    ProverValues qValuesOn(const FrElement *columns, uint64_t S) const;
+    // The UnsatisfiedError of a Q with a coefficient of degree `degree`, at least its bound, not zero.
+    UnsatisfiedError qAboveItsBound(uint64_t degree) const;
+    // commitQ, here and on the device, in parts of 2^partBits points.
+    std::vector<G1Point> commitQOnHost(uint64_t partBits);
+#ifdef __USE_CUDA__
+    std::vector<G1Point> commitQOnDevice(uint64_t partBits);
+#endif
 
     const ProvingKey &pk;
     const AirKey &key;
@@ -264,7 +287,9 @@ private:
     // By cmPolsMap index: the committed polynomial of a column, and its buffer.
     std::vector<std::unique_ptr<FrElement[]>> coefBuffers;
     std::vector<std::unique_ptr<Poly>> polys;
-    std::vector<std::unique_ptr<Poly>> qPieces; // by piece, once Q is committed
+    // By piece, once Q is committed; on a key on the GPU, once qPiece copies them, over qPieceCopy.
+    mutable std::unique_ptr<FrElement[]> qPieceCopy;
+    mutable std::vector<std::unique_ptr<Poly>> qPieces;
 };
 
 // The opening of a proof (pilfflonk/docs/protocol.md#proof-sequence, steps 4 and 5): every f of its
