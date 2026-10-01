@@ -1915,24 +1915,31 @@ pub type GpuWitnessFillFn = unsafe extern "C" fn(
 ) -> i32;
 
 /// Forget every registered kernel, so a later prover in the process does not inherit them.
-pub fn gpu_witness_clear_c() {
-    unsafe { gpu_witness_clear() }
+pub fn gpu_witness_clear_c(d_buffers: *mut c_void) {
+    unsafe { gpu_witness_clear(d_buffers) }
 }
 
 /// Whether a kernel is registered for this air, i.e. the prover produces its witness on the
 /// device. The single source of truth for staging kernel inputs vs filling a trace.
-pub fn gpu_witness_is_registered_c(airgroup_id: u64, air_id: u64) -> bool {
-    unsafe { gpu_witness_is_registered(airgroup_id, air_id) == 1 }
+pub fn gpu_witness_is_registered_c(d_buffers: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { gpu_witness_is_registered(d_buffers, airgroup_id, air_id) == 1 }
 }
 
 /// Declare that this air's stage-1 witness comes from `fill`, not a host upload.
-pub fn gpu_witness_register_c(airgroup_id: u64, air_id: u64, bytes_per_op: u64, emits: i32, fill: GpuWitnessFillFn) {
-    unsafe { gpu_witness_register(airgroup_id, air_id, bytes_per_op, emits, fill) }
+pub fn gpu_witness_register_c(
+    d_buffers: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    bytes_per_op: u64,
+    emits: i32,
+    fill: GpuWitnessFillFn,
+) {
+    unsafe { gpu_witness_register(d_buffers, airgroup_id, air_id, bytes_per_op, emits, fill) }
 }
 
 /// How many airs the C++ side has registered.
-pub fn gpu_witness_count_c() -> u64 {
-    unsafe { gpu_witness_count() }
+pub fn gpu_witness_count_c(d_buffers: *mut c_void) -> u64 {
+    unsafe { gpu_witness_count(d_buffers) }
 }
 
 /// Virtual range-check tables the prover can compute itself, as (table id, bias) pairs.

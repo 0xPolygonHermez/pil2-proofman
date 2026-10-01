@@ -15,25 +15,17 @@ use proofman_fields::PrimeField64;
 
 use crate::{AirInstance, ProofmanError, ProofmanResult, TraceInfo};
 
-/// Whether the prover will produce this air's witness on the device.
+/// Write a kernel's inputs into `buffer` and wrap it as `decl`'s air's `AirInstance`.
 ///
-/// Reads the registry the commit path dispatches on, so callers cannot disagree
-/// with the prover. False on a CPU build or when nothing was declared.
-pub fn gpu_witness_registered(airgroup_id: usize, air_id: usize) -> bool {
-    proofman_starks_lib_c::gpu_witness_is_registered_c(airgroup_id as u64, air_id as u64)
-}
-
-/// Write a kernel's inputs into `buffer` and wrap it as this air's `AirInstance`.
-///
-/// The prover uploads `ops_written * size_of::<Op>()` bytes of `buffer` and the
-/// kernel writes cm1 from them. The buffer is used as raw bytes (`Goldilocks` is
+/// `decl` is the prover's declaration (`ProofCtx::gpu_witness_air`): the commit uploads
+/// `ops * decl.bytes_per_op` bytes and stages at most `decl.input_bytes_per_instance`, so `Op`
+/// must be exactly `bytes_per_op` wide and the ops must fit that bound. The buffer is used as raw bytes (`Goldilocks` is
 /// not `repr(transparent)`), so ops are written through a raw pointer.
 ///
 /// `n_cols` is the air's real column count and does not match `trace.len()`;
 /// the commit path takes its geometry from the setup.
 pub fn stage_gpu_witness<F: PrimeField64, Op, I>(
-    airgroup_id: usize,
-    air_id: usize,
+    decl: &GpuWitnessAir,
     num_rows: usize,
     n_cols: usize,
     mut buffer: Vec<F>,
@@ -42,13 +34,26 @@ pub fn stage_gpu_witness<F: PrimeField64, Op, I>(
 where
     for<'a> Op: From<&'a I>,
 {
-    let num_ops: usize = inputs.iter().map(|chunk| chunk.len()).sum();
-    let needed = num_ops * std::mem::size_of::<Op>();
-    let capacity = std::mem::size_of_val(buffer.as_slice());
+    let (airgroup_id, air_id) = (decl.airgroup_id, decl.air_id);
+    if std::mem::size_of::<Op>() as u64 != decl.bytes_per_op {
+        return Err(ProofmanError::InvalidParameters(format!(
+            "air {airgroup_id}:{air_id}: staged op is {} bytes but the kernel declares {}",
+            std::mem::size_of::<Op>(),
+            decl.bytes_per_op
+        )));
+    }
+    let capacity = std::mem::size_of_val(buffer.as_slice()).min(decl.input_bytes_per_instance as usize);
+    // Checked: zero-sized inputs can count past usize without allocating, and the writes trust `needed`.
+    let num_ops = inputs.iter().try_fold(0usize, |n, chunk| n.checked_add(chunk.len()));
+    let Some((num_ops, needed)) = num_ops.and_then(|n| Some((n, n.checked_mul(std::mem::size_of::<Op>())?))) else {
+        return Err(ProofmanError::InvalidParameters(format!(
+            "air {airgroup_id}:{air_id}: the staged operation count overflows"
+        )));
+    };
     if needed > capacity {
         return Err(ProofmanError::InvalidParameters(format!(
             "air {airgroup_id}:{air_id}: {num_ops} staged operations need {needed} bytes but the \
-             trace buffer holds {capacity}"
+             trace buffer and the declaration allow {capacity}"
         )));
     }
 
@@ -143,11 +148,12 @@ impl GpuWitnessAirs {
         self.airs.iter().find(|a| a.airgroup_id == airgroup_id && a.air_id == air_id)
     }
 
-    /// Replace the prover's C++ registry with these declarations.
-    pub fn register(&self) {
-        proofman_starks_lib_c::gpu_witness_clear_c();
+    /// Replace this prover's C++ registry (keyed by its `d_buffers`) with these declarations.
+    pub fn register(&self, d_buffers: *mut std::ffi::c_void) {
+        proofman_starks_lib_c::gpu_witness_clear_c(d_buffers);
         for a in &self.airs {
             proofman_starks_lib_c::gpu_witness_register_c(
+                d_buffers,
                 a.airgroup_id as u64,
                 a.air_id as u64,
                 a.bytes_per_op,
@@ -202,6 +208,10 @@ mod tests {
         assert!(!airs.contains(0, 37));
     }
 
+    fn decl(input_bytes: u64, bytes_per_op: u64) -> GpuWitnessAir {
+        GpuWitnessAir::new(0, 36, input_bytes, bytes_per_op, TraceLayout::PackedCm1, never_called)
+    }
+
     #[test]
     fn input_staging_is_the_max_not_the_sum() {
         assert_eq!(airs().max_input_bytes(), 3_123_792);
@@ -225,7 +235,7 @@ mod tests {
         let inputs = vec![vec![1u32, 2], vec![3], vec![], vec![4, 5]];
         let buffer = vec![Goldilocks::default(); 64];
         let (air_instance, ops) =
-            stage_gpu_witness::<Goldilocks, Op, u32>(0, 36, 8, 4, buffer, &inputs).expect("stages");
+            stage_gpu_witness::<Goldilocks, Op, u32>(&decl(512, 16), 8, 4, buffer, &inputs).expect("stages");
 
         assert_eq!(ops, 5, "every input becomes one operation");
         assert_eq!(air_instance.gpu_witness_ops, 5, "the instance carries the count for the prover");
@@ -251,9 +261,58 @@ mod tests {
 
         // Room for two ops, asked for three.
         let buffer = vec![Goldilocks::default(); 16];
-        let err = stage_gpu_witness::<Goldilocks, Wide, u32>(0, 36, 8, 4, buffer, &[vec![1, 2, 3]])
+        let err = stage_gpu_witness::<Goldilocks, Wide, u32>(&decl(4096, 64), 8, 4, buffer, &[vec![1, 2, 3]])
             .expect_err("must refuse rather than overrun");
         assert!(err.to_string().contains("192 bytes"), "reports what was needed: {err}");
+    }
+
+    #[test]
+    fn an_op_count_that_overflows_is_refused() {
+        #[allow(dead_code)] // only its size matters
+        struct Op(u64);
+        impl From<&()> for Op {
+            fn from(_: &()) -> Self {
+                Op(0)
+            }
+        }
+        // Zero-sized inputs reach usize::MAX ops without allocating.
+        let buffer = vec![Goldilocks::default(); 16];
+        let inputs = vec![vec![(); usize::MAX], vec![(); 1]];
+        let err = stage_gpu_witness::<Goldilocks, Op, ()>(&decl(128, 8), 8, 4, buffer, &inputs)
+            .expect_err("must refuse rather than wrap");
+        assert!(err.to_string().contains("overflows"), "{err}");
+    }
+
+    #[test]
+    fn an_op_wider_or_narrower_than_declared_is_refused() {
+        #[allow(dead_code)] // only its size matters
+        struct Op(u64);
+        impl From<&u32> for Op {
+            fn from(v: &u32) -> Self {
+                Op(*v as u64)
+            }
+        }
+        // The commit copies ops * bytes_per_op: an 8-byte op under a 16-byte declaration would ship garbage.
+        let buffer = vec![Goldilocks::default(); 16];
+        let err = stage_gpu_witness::<Goldilocks, Op, u32>(&decl(128, 16), 8, 4, buffer, &[vec![1]])
+            .expect_err("must refuse a layout mismatch");
+        assert!(err.to_string().contains("declares 16"), "{err}");
+    }
+
+    #[test]
+    fn staging_past_the_declared_bound_is_refused_even_in_a_bigger_buffer() {
+        #[allow(dead_code)] // only its size matters
+        struct Op(u64);
+        impl From<&u32> for Op {
+            fn from(v: &u32) -> Self {
+                Op(*v as u64)
+            }
+        }
+        // The pool buffer is sized for the largest air; this air declared room for two ops.
+        let buffer = vec![Goldilocks::default(); 64];
+        let err = stage_gpu_witness::<Goldilocks, Op, u32>(&decl(16, 8), 8, 4, buffer, &[vec![1, 2, 3]])
+            .expect_err("must refuse past the declaration");
+        assert!(err.to_string().contains("allow 16"), "{err}");
     }
 
     #[test]

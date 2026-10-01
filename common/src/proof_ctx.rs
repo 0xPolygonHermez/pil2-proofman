@@ -393,11 +393,20 @@ pub struct ProofCtx<F: PrimeField64> {
     /// Phase B: capacity (elements) of each half of the basic stream. An instance whose buffer
     /// exceeds it can only run in phase A; the phase-A countdown counts exactly those.
     pub phase_b_half: usize,
+    /// This prover's GPU witness declarations, copied from the options at startup: the one source the
+    /// witness side asks before staging kernel inputs.
+    pub gpu_witness_airs: GpuWitnessAirs,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
 
 impl<F: PrimeField64> ProofCtx<F> {
+    /// The declaration this prover's kernel for the air was registered from, or `None` when the host
+    /// fills the trace. Pass it to `stage_gpu_witness`.
+    pub fn gpu_witness_air(&self, airgroup_id: usize, air_id: usize) -> Option<&GpuWitnessAir> {
+        self.gpu_witness_airs.get(airgroup_id, air_id)
+    }
+
     pub fn create_ctx(
         proving_key_path: PathBuf,
         aggregation: bool,
@@ -432,6 +441,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         Ok(Self {
             prover_owned_tables: RwLock::new(Vec::new()),
             prover_multiplicities_registered: Mutex::new(false),
+            gpu_witness_airs: GpuWitnessAirs::default(),
             device_owned_table_airs: RwLock::new(Vec::new()),
             prover_counts: RwLock::new(HashMap::new()),
             mpi_ctx,

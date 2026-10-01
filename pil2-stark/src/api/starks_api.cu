@@ -1540,8 +1540,9 @@ static bool gpuWitnessFillTrace(DeviceCommitBuffers *d_buffers, StepsParams *par
                                 bool is_packed, uint64_t *dst, uint64_t dst_bytes,
                                 gl64_t *staging_base, uint64_t staging_words, int gpuId,
                                 uint64_t streamId, cudaStream_t stream) {
-    const GpuWitnessAirReg *reg = gpu_witness_for(airgroupId, airId);
-    if (reg == nullptr) return false;
+    GpuWitnessAirReg regCopy;
+    if (!gpu_witness_for(d_buffers, airgroupId, airId, &regCopy)) return false;
+    const GpuWitnessAirReg *reg = &regCopy;
 
     const std::string air = std::to_string(airgroupId) + ":" + std::to_string(airId);
     // A kernel emitting the other layout would decode into a silently wrong trace.
@@ -3660,7 +3661,8 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
 
     // A GPU-witness air has no host trace: `packed` holds its kernel's INPUTS. The kernel writes
     // the packed rows straight into the slot; otherwise the commit would hash the inputs.
-    const GpuWitnessAirReg *gwReg = gpu_witness_for(airgroupId, airId);
+    GpuWitnessAirReg gwRegCopy;
+    const GpuWitnessAirReg *gwReg = gpu_witness_for(d_buffers, airgroupId, airId, &gwRegCopy) ? &gwRegCopy : nullptr;
     uint64_t *dPacked = (uint64_t *)slotBase + SC_MAX_COLS;   // where streamCommitPacked reads the rows
     const uint64_t packedWords = nRowsSlot * dims.wordsPerRow;
     if (gwReg != nullptr) {
@@ -3711,9 +3713,12 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         const int gwRc = gwReg->fill((const void *)dOps, nOps, dPacked,
                                      gpu, (void *)gwStream);
         if (gwRc != 0) {
+            // The kernel's own failure: hand it to the caller's cancellation, not a process exit.
             zklog.error("gpu witness: air " + std::to_string(airgroupId) + ":" +
                         std::to_string(airId) + " kernel returned " + std::to_string(gwRc));
-            exitProcess();
+            timer.stopCategory("GW_KERNEL");
+            streamCommitReleaseRegion(d_buffers, gl);
+            return -24;
         }
         timer.stopCategory("GW_KERNEL");
         packedSrc = (const void *)dPacked;

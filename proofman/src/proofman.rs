@@ -771,6 +771,7 @@ impl<F: PrimeField64> Drop for ProofMan<F> {
         if let Err(e) = self.reset() {
             eprintln!("Error during ProofMan cleanup: {:?}", e);
         }
+        proofman_starks_lib_c::gpu_witness_clear_c(self.pctx.get_device_buffers_ptr());
         free_device_buffers_c(self.pctx.get_device_buffers_ptr());
     }
 }
@@ -3006,6 +3007,8 @@ where
         hash_words(&mut h, &range_ids);
         hash_words(&mut h, &range_biases.iter().map(|b| *b as u64).collect::<Vec<_>>());
         hash_words(&mut h, &map_ids);
+        // The slot programs are compiled for one row layout: packed and unpacked runs must not share them.
+        hash_words(&mut h, &[self.options.packed as u64]);
         for ah in &air_hashes {
             h.update(ah.as_bytes());
         }
@@ -6172,18 +6175,18 @@ where
 
         // GPU witness airs, once the zone's fate is known. They have no host trace, so every
         // condition below must hold or the run stops; there is no host fallback.
-        // The C++ kernel registry is process-wide and outlives this ProofMan; clear it when this job
-        // declares none, or a later commit runs a stale kernel and aborts in cudaMemcpy.
+        // The C++ registry is keyed by this prover's device buffers; clear the key first, since a freed
+        // prover's address can be reused and its kernels would otherwise run for this one.
         if options.gpu_witness_airs.is_empty() {
-            proofman_starks_lib_c::gpu_witness_clear_c();
+            proofman_starks_lib_c::gpu_witness_clear_c(pctx.get_device_buffers_ptr());
         } else {
             if !options.gpu {
                 return Err(ProofmanError::InvalidConfiguration(
                     "GPU witness airs were declared but this is not a GPU run".into(),
                 ));
             }
-            options.gpu_witness_airs.register();
-            let registered = gpu_witness_count_c();
+            options.gpu_witness_airs.register(pctx.get_device_buffers_ptr());
+            let registered = gpu_witness_count_c(pctx.get_device_buffers_ptr());
             if registered != options.gpu_witness_airs.len() as u64 {
                 return Err(ProofmanError::InvalidConfiguration(format!(
                     "declared {} GPU witness airs but the prover registered {registered}",
@@ -6192,6 +6195,7 @@ where
             }
             tracing::info!("GPU witness kernels registered: {registered}");
         }
+        pctx.gpu_witness_airs = options.gpu_witness_airs.clone();
 
         // Streaming-commit slots, the GPU's only contributions path. The slot COUNT is a memory-budget
         // knob (each slot lowers the ceiling on what gpu-mops may borrow); the slot SIZE is the largest
@@ -6539,7 +6543,8 @@ where
             }
             return Err(ProofmanError::ProofmanError(format!(
                 "Streaming slot commit refused (rc={rc}) for instance {instance_id} [{airgroup_id}:{air_id}]; \
-                 -20/-21 mean the quiesce or the region did not lift in 60 s, anything else is a configuration error"
+                 -20/-21 mean the quiesce or the region did not lift in 60 s, -24 that its GPU witness kernel \
+                 failed, anything else is a configuration error"
             )));
         }
         ctx.committed.fetch_add(1, Ordering::Relaxed);
