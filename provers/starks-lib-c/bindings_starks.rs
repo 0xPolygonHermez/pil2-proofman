@@ -550,6 +550,8 @@ extern "C" {
 
     pub fn free_json_string(json_str: *mut ::std::os::raw::c_char);
 
+    pub fn free_recursivef_proof(zkin: *mut ::std::os::raw::c_void);
+
     pub fn snark_proof_bytes_to_json(
         proof_bytes: *const u8,
         proof_size: u64,
