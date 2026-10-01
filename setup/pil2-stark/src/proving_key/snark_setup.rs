@@ -4,19 +4,26 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use serde_json::Value;
 
 use proofman_starks_lib_c::{generate_fflonk_zkey_c, generate_plonk_zkey_c, get_plonk_circuit_stats_c};
 
+use crate::commands::compile_pil::{run_compile_pil, CompilePilOptions};
 use crate::io::recurser::{gen_circom, pil2circom, GenCircomInput, GenCircomOptions, Pil2CircomOptions};
-use pil2_stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier};
+use pil2_stark_recurser::stark2circom::templates::{gen_solidity, gen_iverifier, SnarkVerifier};
 use crate::proving_key::{bctree, recursive::compile_pil};
 use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
-use pil2_stark_recurser::plonk2pil;
+use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
+use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
+use pilfflonk_setup::solidity::VERIFIER_SOL_FILE;
+use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
+use proofman_common::hash_family::BN254_WRAP_FAMILY;
+use proofman_fields::Bn254;
+use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, Vkey, BN254_R};
 use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
 
 /// The protocol that proves the final circuit, the verifier of the recursivef. It decides how the
@@ -28,9 +35,8 @@ pub enum FinalSnark {
     Fflonk,
     /// rapidsnark's PLONK, over the final circuit's r1cs.
     Plonk,
-    /// pilfflonk, over the AIR plonk2pil makes of the final circuit with custom gates. Its setup
-    /// builds the recursivef, the final circuit and the circuit's witness library, and not yet the
-    /// pilfflonk proving key.
+    /// pilfflonk, over the AIR plonk2pil makes of the final circuit with custom gates
+    /// ([`gen_pilfflonk_key`]).
     Pilfflonk,
 }
 
@@ -100,8 +106,8 @@ pub struct SnarkSetupConfig<'a> {
     /// Directory containing BN128 fr.cpp/fr.asm and Makefile for the `final` SNARK witness library.
     /// Corresponds to `final_snark_circom/`
     pub final_snark_circom_helpers_dir: &'a str,
-    /// Powers-of-tau (.ptau) file for snarkjs final setup (required for PLONK and FFLONK if
-    /// !only_recursive_final).
+    /// Powers-of-tau (.ptau) file for the final SNARK's setup (required for PLONK, FFLONK and
+    /// pilfflonk if !only_recursive_final).
     pub powers_of_tau: Option<&'a str>,
     /// The protocol that proves the final circuit.
     pub final_snark: FinalSnark,
@@ -114,8 +120,8 @@ pub struct SnarkSetupConfig<'a> {
 /// Run the final SNARK setup pipeline.
 ///
 /// Phase 1 (recursivef): GL → BN128 bridge circuit.
-/// Phase 2 (final):      BN128 R1CS → SNARK zkey + Solidity verifiers (PLONK and FFLONK); for
-///                       pilfflonk, so far, the final circuit and its witness library.
+/// Phase 2 (final):      BN128 R1CS → SNARK zkey + Solidity verifiers (PLONK and FFLONK), or the
+///                       pilfflonk key of its AIR + Solidity verifiers (pilfflonk).
 pub fn gen_snark_setup(
     config: &SnarkSetupConfig<'_>,
     witness_tracker: &WitnessTracker,
@@ -255,10 +261,7 @@ pub fn gen_snark_setup(
     let pil_rf = pil_dir.join("recursivef.pil");
     fs::write(&pil_rf, &plonk_rf.pil_str)?;
 
-    // Write exec buffer.
-    let exec_rf = recursivef_dir.join("recursivef.exec");
-    let exec_bytes_rf: Vec<u8> = plonk_rf.exec.iter().flat_map(|v| v.to_le_bytes()).collect();
-    fs::write(&exec_rf, &exec_bytes_rf)?;
+    write_exec(&recursivef_dir.join("recursivef.exec"), &plonk_rf.exec)?;
 
     let pilout_rf = build_path.join("recursivef.pilout");
     compile_pil(pil_rf.to_str().unwrap(), pilout_rf.to_str().unwrap(), config.std_pil_path, config.recurser_pil_path)?;
@@ -510,7 +513,9 @@ pub fn gen_snark_setup(
         FinalSnark::Fflonk | FinalSnark::Plonk => {
             gen_rapidsnark_key(config, witness_tracker, &r1cs_final, &final_dir, const_root)?
         }
-        FinalSnark::Pilfflonk => gen_pilfflonk_key(config, witness_tracker, &final_dir)?,
+        FinalSnark::Pilfflonk => {
+            gen_pilfflonk_key(config, witness_tracker, &build_path, &pil_dir, &final_dir, const_root)?
+        }
     }
 
     // Write publics_info.json if provided.
@@ -550,11 +555,7 @@ fn gen_rapidsnark_key(
     }
 
     // Validate inputs for the zkey setup before launching parallel work.
-    let powers_of_tau =
-        config.powers_of_tau.ok_or_else(|| anyhow::anyhow!("--powers-of-tau is required for final SNARK setup"))?;
-    if !std::path::Path::new(powers_of_tau).exists() {
-        bail!("powers-of-tau file not found: {}", powers_of_tau);
-    }
+    let powers_of_tau = required_powers_of_tau(config)?;
     let zkey_final = final_dir.join("final.zkey");
 
     // Launch witness library generation (make) in background, then run the
@@ -588,33 +589,207 @@ fn gen_rapidsnark_key(
         &config.final_snark.to_string(),
     )?;
 
-    // Generate project-specific Solidity verifier (pure Rust — no Node.js required).
-    tracing::info!("Generating {} Solidity verifier...", config.name);
-    {
-        let publics_ref = config.publics_info.as_ref();
-        let camel = {
-            let mut c = config.name.chars();
-            match c.next() {
-                None => String::new(),
-                Some(f) => f.to_uppercase().to_string() + c.as_str(),
-            }
-        };
-        let sol = gen_solidity(config.name, const_root, publics_ref, fflonk);
-        let isol = gen_iverifier(config.name, publics_ref);
-        fs::write(final_dir.join(format!("{camel}Verifier.sol")), sol)?;
-        fs::write(final_dir.join(format!("I{camel}Verifier.sol")), isol)?;
-    }
-
-    Ok(())
+    let verifier = if fflonk { SnarkVerifier::Fflonk } else { SnarkVerifier::Plonk };
+    write_project_verifier(config, final_dir, const_root, &verifier)
 }
 
-/// What there is so far of the pilfflonk key of the final circuit: the circuit's witness library.
-/// The AIR plonk2pil makes of the circuit over BN254, and pilfflonk's setup of it, are not built
-/// yet.
-fn gen_pilfflonk_key(config: &SnarkSetupConfig<'_>, witness_tracker: &WitnessTracker, final_dir: &Path) -> Result<()> {
+/// The pilfflonk key of the final circuit, in `final_dir`, `provingKeySnark/final/`:
+///
+/// ```text
+/// provingKeySnark/final/
+/// ├── final.so, final.dat    the circuit's witness calculator, as for PLONK and FFLONK
+/// ├── final.exec             plonk2pil's BN254 exec (version 3): the AIR's stage-1 columns out of
+/// │                          the circuit's witness
+/// ├── provingKey/            what `setup-pilfflonk -b provingKeySnark/final --solidity` writes
+/// │   │                      (pilfflonk/docs/formats.md#provingkey)
+/// │   ├── pilout.globalInfo.json, pilout.globalConstraints.json
+/// │   └── final/             the pilout's name
+/// │       ├── pilfflonk/     pilfflonk.srs.bin, pilfflonk.vkey.json, pilfflonk.verifier.sol
+/// │       └── Wrap/airs/Wrap/air/
+/// │                          Wrap.{const, pilfflonkinfo.json, expressionsinfo.json,
+/// │                                verifierinfo.json, bin, verkey.json}
+/// ├── <Name>Verifier.sol     the project's verifier, which imports pilfflonk.verifier.sol from
+/// │                          provingKey/ and extends its PilfflonkVerifier
+/// └── I<Name>Verifier.sol    its interface, as for PLONK and FFLONK
+/// ```
+///
+/// `final.so`, `final.dat` and `final.exec` are the files `pilfflonk-wrap-witness` computes the
+/// wrap's witness from, as `WrapArtifacts::with_stem` names them for the stem
+/// `provingKeySnark/final/final`. The AIR's PIL and pilout stay beside the recursivef's, in
+/// `pil/final.pil` and `build/final.pilout` ([`set_up_wrap_air`]). The witness library is built
+/// while the key is, and `--powers-of-tau` is required, as for PLONK and FFLONK; the setup refuses
+/// one with fewer powers than the layout needs.
+fn gen_pilfflonk_key(
+    config: &SnarkSetupConfig<'_>,
+    witness_tracker: &WitnessTracker,
+    build_path: &Path,
+    pil_dir: &Path,
+    final_dir: &Path,
+    const_root: &[u64; 4],
+) -> Result<()> {
+    let powers_of_tau = required_powers_of_tau(config)?;
     run_final_witness_library_generation(config, witness_tracker, final_dir);
+
+    let files = WrapAirFiles {
+        pil: pil_dir.join("final.pil"),
+        pil_config: build_path.join("final.bn254.json"),
+        pilout: build_path.join("final.pilout"),
+        exec: final_dir.join("final.exec"),
+    };
+    let includes = [config.recurser_pil_path.to_string(), config.std_pil_path.to_string()];
+    let key = set_up_wrap_air(&build_path.join("final.r1cs"), &files, &includes, Path::new(powers_of_tau), final_dir)?;
+    let verifier = key.snark_verifier()?;
+
     witness_tracker.await_all()?;
-    tracing::warn!("pilfflonk: built the final circuit and its witness library, not yet its pilfflonk proving key");
+    write_project_verifier(config, final_dir, const_root, &verifier)
+}
+
+/// The files of the pilfflonk wrap of a circuit ([`set_up_wrap_air`]).
+struct WrapAirFiles {
+    /// plonk2pil's PIL of the AIR.
+    pil: PathBuf,
+    /// The pil2com configuration that compiles it over BN254, `{"prime": r}`.
+    pil_config: PathBuf,
+    /// The PIL's pilout. Its stem is the pilout's name, which names the key's directory in
+    /// `provingKey/`.
+    pilout: PathBuf,
+    /// plonk2pil's exec of the AIR, over BN254.
+    exec: PathBuf,
+}
+
+/// The pilfflonk key [`set_up_wrap_air`] writes: its globalInfo, which names its files, and its
+/// vkey.
+struct WrapKey {
+    global_info: PilfflonkGlobalInfo,
+    vkey: Vkey,
+}
+
+impl WrapKey {
+    /// The key's Solidity verifier, as the project's verifier beside `provingKey/` extends it:
+    /// `pilfflonk.verifier.sol` by its path from there, and the words of the proof its `verifyProof`
+    /// takes (pilfflonk/docs/formats.md#calldata). The project's verifier hands it one public, the
+    /// final circuit's publics hash, and a vkey of any other number is refused.
+    fn snark_verifier(&self) -> Result<SnarkVerifier> {
+        ensure!(
+            self.vkey.n_public == 1,
+            "the pilfflonk vkey has {} publics, and the final circuit has one, its publics hash",
+            self.vkey.n_public
+        );
+        let source = self.global_info.backend_dir(Path::new(PROVING_KEY_DIR)).join(VERIFIER_SOL_FILE);
+        Ok(SnarkVerifier::Pilfflonk {
+            source: format!("./{}", source.display()),
+            words: CalldataLayout::of(&self.vkey).words(),
+        })
+    }
+}
+
+/// Sets up the AIR plonk2pil makes of the circuit `r1cs`, over BN254, for pilfflonk, writing
+/// `files` and `provingKey/` under `key_dir`:
+/// 1. plonk2pil lays out the r1cs in the final SNARK wrap's family ([`BN254_WRAP_FAMILY`],
+///    PoseidonBN254 in layout L1), and its PIL and exec are written;
+/// 2. pil2com compiles the PIL over BN254, with `includes` (plonk2pil's PIL and the std): `-P` with
+///    a `prime` of r, which only a pil2com that honours `prime` does (`PIL2C_EXEC`,
+///    pilfflonk/docs/README.md#compile-pil). One that ignores it compiles over Goldilocks, and the
+///    setup refuses the pilout, saying so;
+/// 3. setup-pilfflonk sets the pilout up with plonk2pil's fixed columns, which the pilout declares
+///    `#pragma fixed_external`, and writes its Solidity verifier. It refuses a ptau with fewer
+///    powers `[τ^i]₁` than the layout's largest degree, `12·N + 11` in L1, saying how many it holds
+///    and how many it needs, before it writes any file of the key.
+fn set_up_wrap_air(
+    r1cs: &Path,
+    files: &WrapAirFiles,
+    includes: &[String],
+    powers_of_tau: &Path,
+    key_dir: &Path,
+) -> Result<WrapKey> {
+    tracing::info!("plonk2pil: the {BN254_WRAP_FAMILY} wrap of {}...", r1cs.display());
+    let r1cs_data = fs::read(r1cs).with_context(|| format!("Failed to read {}", r1cs.display()))?;
+    let options = PlonkOptions { hash_id: BN254_WRAP_FAMILY.into(), ..Default::default() };
+    let PlonkResult::<Bn254> { exec, pil_str, fixed_pols, .. } = plonk2pil::plonk2pil(&r1cs_data, "wrap", &options)
+        .with_context(|| format!("plonk2pil failed for {}", r1cs.display()))?;
+    drop(r1cs_data);
+    fs::write(&files.pil, pil_str)?;
+    write_exec(&files.exec, &exec)?;
+    drop(exec);
+
+    tracing::info!("Compiling {} over BN254...", files.pil.display());
+    fs::write(&files.pil_config, serde_json::json!({ "prime": BN254_R }).to_string())?;
+    run_compile_pil(&CompilePilOptions {
+        pil_path: files.pil.to_string_lossy().into_owned(),
+        output_path: files.pilout.to_string_lossy().into_owned(),
+        include_paths: includes.to_vec(),
+        fixed_dir: None,
+        config: Some(files.pil_config.to_string_lossy().into_owned()),
+        fixed_to_file: false,
+        no_proto_fixed_data: false,
+    })?;
+
+    tracing::info!("Running the pilfflonk setup of {}...", files.pilout.display());
+    let setup = SetupPilfflonkOptions {
+        airout_path: files.pilout.clone(),
+        build_dir: key_dir.to_path_buf(),
+        powers_of_tau: powers_of_tau.to_path_buf(),
+        max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
+        extra_muls: DEFAULT_EXTRA_MULS,
+        max_q_degree: DEFAULT_MAX_Q_DEGREE,
+        no_packing: false,
+        solidity: true,
+    };
+    let external = fixed_pols
+        .into_iter()
+        .map(|p| ExternalFixedColumn {
+            name: p.name,
+            index: p.index,
+            values: p.values.into_iter().map(FrBytes::from).collect(),
+        })
+        .collect();
+    run_setup_pilfflonk_with_external_fixed(&setup, external)?;
+
+    let proving_key = key_dir.join(PROVING_KEY_DIR);
+    let global_info = PilfflonkGlobalInfo::from_proving_key(&proving_key)?;
+    let vkey = Vkey::read(&global_info.vkey_path(&proving_key))?;
+    Ok(WrapKey { global_info, vkey })
+}
+
+/// The `--powers-of-tau` of the final SNARK's setup, which every protocol requires, if there is a
+/// file there.
+fn required_powers_of_tau<'a>(config: &SnarkSetupConfig<'a>) -> Result<&'a str> {
+    let powers_of_tau =
+        config.powers_of_tau.ok_or_else(|| anyhow::anyhow!("--powers-of-tau is required for final SNARK setup"))?;
+    if !Path::new(powers_of_tau).exists() {
+        bail!("powers-of-tau file not found: {}", powers_of_tau);
+    }
+    Ok(powers_of_tau)
+}
+
+/// Writes plonk2pil's exec buffer at `path`, its words little-endian
+/// (`proofman_common::exec_format`).
+fn write_exec(path: &Path, words: &[u64]) -> Result<()> {
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    fs::write(path, bytes).with_context(|| format!("Failed to write {}", path.display()))
+}
+
+/// The project's Solidity verifier, `<Name>Verifier.sol`, which extends `verifier`, and its
+/// interface, `I<Name>Verifier.sol`, in `final_dir` (pure Rust — no Node.js required).
+fn write_project_verifier(
+    config: &SnarkSetupConfig<'_>,
+    final_dir: &Path,
+    const_root: &[u64; 4],
+    verifier: &SnarkVerifier,
+) -> Result<()> {
+    tracing::info!("Generating {} Solidity verifier...", config.name);
+    let publics_ref = config.publics_info.as_ref();
+    let camel = {
+        let mut c = config.name.chars();
+        match c.next() {
+            None => String::new(),
+            Some(f) => f.to_uppercase().to_string() + c.as_str(),
+        }
+    };
+    let sol = gen_solidity(config.name, const_root, publics_ref, verifier);
+    let isol = gen_iverifier(config.name, publics_ref);
+    fs::write(final_dir.join(format!("{camel}Verifier.sol")), sol)?;
+    fs::write(final_dir.join(format!("I{camel}Verifier.sol")), isol)?;
     Ok(())
 }
 
@@ -758,4 +933,104 @@ fn run_node_inline(script: &str, context: &str, cwd: &std::path::Path) -> Result
         bail!("{} failed (exit {})", context, out.status.code().unwrap_or(-1));
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::process::Command;
+
+    use pilfflonk_setup::layout::max_degree;
+    use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau, write_tau_one_ptau};
+    use proofman_common::exec_format::{ExecFile, EXEC_FORMAT_VERSION_WIDE};
+    use proofman_pilfflonk::{AirFile, PilfflonkInfo, WitnessShape};
+
+    use super::*;
+
+    fn repo_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    /// The exec at `exec` is over BN254 (version 3), has no gate band, which the wrap's witness
+    /// refuses, and gathers exactly the stage-1 columns of the AIR of the key at `proving_key`, in
+    /// its rows.
+    pub(crate) fn assert_exec_gathers_the_air_columns(exec: &Path, proving_key: &Path) {
+        let exec = ExecFile::<Bn254>::read(exec).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(exec.layout.version(), EXEC_FORMAT_VERSION_WIDE);
+        assert_eq!(exec.layout.coef_words(), 4);
+        assert!(exec.bands.is_empty(), "{} gate bands", exec.bands.len());
+        let global_info = PilfflonkGlobalInfo::from_proving_key(proving_key).unwrap();
+        let info_path = global_info.air_file(proving_key, 0, 0, AirFile::PilfflonkInfo).unwrap();
+        let info = PilfflonkInfo::read(&info_path).unwrap();
+        let shape = WitnessShape::from_proving_key(&global_info, &[&info]).unwrap();
+        let air = shape.airs()[0];
+        assert_eq!(exec.layout.map_cols(), air.n_cols, "the exec's columns and the AIR's stage-1 ones");
+        assert!(exec.layout.map_rows() <= 1 << air.n_bits, "{} rows of 2^{}", exec.layout.map_rows(), air.n_bits);
+    }
+
+    /// M49's end-to-end circuit, `setup/stark-recurser/tests/fixtures/bn254/wrap.circom`: a
+    /// `PoseidonT(5)` use among PLONK gates, and one public. Its r1cs, compiled for BN254 into
+    /// `dir` with the committed circom.
+    fn small_wrap_r1cs(dir: &Path) -> PathBuf {
+        let root = repo_root();
+        let circom = root.join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" });
+        let out = Command::new(&circom)
+            .args(["--O1", "--r1cs", "--prime", "bn128", "-l"])
+            .arg(root.join("setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128"))
+            .arg(root.join("setup/stark-recurser/tests/fixtures/bn254/wrap.circom"))
+            .arg("-o")
+            .arg(dir)
+            .output()
+            .unwrap_or_else(|e| panic!("run {}: {e}", circom.display()));
+        assert!(out.status.success(), "circom failed:\n{}", String::from_utf8_lossy(&out.stderr));
+        dir.join("wrap.r1cs")
+    }
+
+    /// The pilfflonk wrap of a small circuit: a ptau with fewer powers than the layout's largest
+    /// degree, `12·N + 11` in L1, is refused, saying how many it holds and how many it needs; with
+    /// enough, the key is set up, with its vkey, its Solidity verifier and the exec of its AIR.
+    ///
+    /// Needs `PIL2C_EXEC`, a pil2com that honours `prime` (pilfflonk/docs/README.md#compile-pil);
+    /// without it the test says so and passes.
+    #[test]
+    fn the_wrap_air_refuses_a_ptau_too_small_and_is_set_up_with_enough() {
+        if std::env::var_os("PIL2C_EXEC").is_none() {
+            eprintln!("skipped: PIL2C_EXEC does not name a pil2com that honours `prime`");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("snark_setup_wrap_air_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let r1cs = small_wrap_r1cs(&dir);
+        let files = WrapAirFiles {
+            pil: dir.join("wrap.pil"),
+            pil_config: dir.join("bn254.json"),
+            pilout: dir.join("wrap.pilout"),
+            exec: dir.join("wrap.exec"),
+        };
+        let root = repo_root();
+        let includes = ["setup/stark-recurser/plonk2pil/pil", "pil2-components/lib/std/pil"]
+            .map(|include| root.join(include).to_string_lossy().into_owned());
+
+        let small = dir.join("small.ptau");
+        write_tau_one_ptau(&small, 64).unwrap();
+        let refused = set_up_wrap_air(&r1cs, &files, &includes, &small, &dir.join("refused")).err().expect("refused");
+        let refused = format!("{refused:#}");
+        assert!(refused.contains("holds 64 powers [τ^i]₁, fewer than the "), "{refused}");
+
+        let ptau = dir.join("fixed_tau.ptau");
+        write_fixed_tau_ptau(&ptau, 8192, &test_tau()).unwrap();
+        let key_dir = dir.join("key");
+        let key = set_up_wrap_air(&r1cs, &files, &includes, &ptau, &key_dir).unwrap_or_else(|e| panic!("{e:#}"));
+        let needed = max_degree(&key.vkey.layout);
+        assert_eq!(needed, 12 * (1 << key.vkey.power) + 11, "the largest degree of layout L1");
+        assert!(refused.contains(&format!("fewer than the {needed} requested")), "{refused}");
+
+        assert_exec_gathers_the_air_columns(&files.exec, &key_dir.join(PROVING_KEY_DIR));
+        assert_eq!(key.vkey.n_public, 1);
+        let source = "./provingKey/wrap/pilfflonk/pilfflonk.verifier.sol";
+        let words = CalldataLayout::of(&key.vkey).words();
+        assert_eq!(key.snark_verifier().unwrap(), SnarkVerifier::Pilfflonk { source: source.into(), words });
+        assert!(key_dir.join(source).is_file(), "{source} missing from {}", key_dir.display());
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

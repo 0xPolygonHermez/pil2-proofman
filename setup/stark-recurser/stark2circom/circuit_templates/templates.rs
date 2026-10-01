@@ -119,10 +119,61 @@ pub fn gen_recursion_final(
 
 // ── Solidity contracts ────────────────────────────────────────────────────────
 
-/// Port of `src/recursion/contracts/verifier.sol.ejs`.
-pub fn gen_solidity(name: &str, root_c: &[u64; 4], publics: Option<&Value>, use_fflonk: bool) -> String {
+/// The verifier of the final SNARK that the project's Solidity verifier ([`gen_solidity`]) extends:
+/// the contract that checks the final circuit's proof, where it is, and the proof its `verifyProof`
+/// takes, with the publics hash as its one public.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SnarkVerifier {
+    /// snarkjs's `FflonkVerifier`, in `FflonkVerifier.sol` beside the project's: a proof of 24
+    /// `bytes32`.
+    Fflonk,
+    /// snarkjs's `PlonkVerifier`, in `PlonkVerifier.sol` beside the project's: a proof of 24
+    /// `uint256`.
+    Plonk,
+    /// pilfflonk's `PilfflonkVerifier`, the verifier of the final circuit's vkey
+    /// (`pilfflonk.verifier.sol`): a proof of `words` `bytes32`, the vkey's calldata
+    /// (pilfflonk/docs/formats.md#calldata), whose number depends on the vkey.
+    Pilfflonk {
+        /// The path the project's verifier imports `pilfflonk.verifier.sol` from.
+        source: String,
+        /// The words of the `proof` argument of its `verifyProof`.
+        words: u64,
+    },
+}
+
+impl SnarkVerifier {
+    /// The contract's name, without `Verifier`.
+    fn name(&self) -> &'static str {
+        match self {
+            SnarkVerifier::Fflonk => "Fflonk",
+            SnarkVerifier::Plonk => "Plonk",
+            SnarkVerifier::Pilfflonk { .. } => "Pilfflonk",
+        }
+    }
+
+    /// The path the project's verifier imports the contract from.
+    fn source(&self) -> String {
+        match self {
+            SnarkVerifier::Fflonk | SnarkVerifier::Plonk => format!("./{}Verifier.sol", self.name()),
+            SnarkVerifier::Pilfflonk { source, .. } => source.clone(),
+        }
+    }
+
+    /// The statement that decodes `proofBytes` into `proofDecoded`, the `proof` of `verifyProof`.
+    fn proof_decode(&self) -> String {
+        let (word, words) = match self {
+            SnarkVerifier::Fflonk => ("bytes32", 24),
+            SnarkVerifier::Plonk => ("uint256", 24),
+            SnarkVerifier::Pilfflonk { words, .. } => ("bytes32", *words),
+        };
+        format!("{word}[{words}] memory proofDecoded = abi.decode(proofBytes, ({word}[{words}]));")
+    }
+}
+
+/// Port of `src/recursion/contracts/verifier.sol.ejs`: the project's verifier, which extends
+/// `verifier`.
+pub fn gen_solidity(name: &str, root_c: &[u64; 4], publics: Option<&Value>, verifier: &SnarkVerifier) -> String {
     let camel = capitalise(name);
-    let snark = if use_fflonk { "Fflonk" } else { "Plonk" };
 
     let (has_program_vk, first_is_vk) = publics
         .and_then(|v| v["definitions"].as_array())
@@ -133,22 +184,17 @@ pub fn gen_solidity(name: &str, root_c: &[u64; 4], publics: Option<&Value>, use_
         })
         .unwrap_or((false, false));
 
-    let proof_decode = if use_fflonk {
-        "bytes32[24] memory proofDecoded = abi.decode(proofBytes, (bytes32[24]));"
-    } else {
-        "uint256[24] memory proofDecoded = abi.decode(proofBytes, (uint256[24]));"
-    };
-
     let mut ctx = TeraCtx::new();
     ctx.insert("name", &camel);
-    ctx.insert("snark", snark);
+    ctx.insert("snark", verifier.name());
+    ctx.insert("snark_source", &verifier.source());
     ctx.insert("root_c_0", &root_c[0]);
     ctx.insert("root_c_1", &root_c[1]);
     ctx.insert("root_c_2", &root_c[2]);
     ctx.insert("root_c_3", &root_c[3]);
     ctx.insert("has_program_vk", &has_program_vk);
     ctx.insert("first_is_vk", &first_is_vk);
-    ctx.insert("proof_decode", proof_decode);
+    ctx.insert("proof_decode", &verifier.proof_decode());
 
     render(VERIFIER_SOL_TMPL, &ctx).unwrap_or_else(|e| panic!("verifier.sol template error: {e:#}"))
 }
@@ -622,6 +668,62 @@ mod tests {
             "out:\n{out}"
         );
         assert!(!out.contains("custom_templates"), "out:\n{out}");
+    }
+
+    /// The project's verifier of a program whose publics end with its verification key, extending
+    /// `verifier`.
+    fn project_verifier(verifier: &SnarkVerifier) -> String {
+        let publics = json!({"definitions": [{"name": "out"}, {"name": "rom_root", "verificationKey": true}]});
+        gen_solidity("build", &[1, 2, 3, u64::MAX], Some(&publics), verifier)
+    }
+
+    /// The lines of `verifier`'s project verifier that are not FFLONK's.
+    fn lines_unlike_fflonk(verifier: &SnarkVerifier) -> Vec<String> {
+        let fflonk = project_verifier(&SnarkVerifier::Fflonk);
+        let out = project_verifier(verifier);
+        assert_eq!(out.lines().count(), fflonk.lines().count(), "out:\n{out}");
+        out.lines()
+            .zip(fflonk.lines())
+            .filter(|(line, other)| line != other)
+            .map(|(line, _)| line.trim().to_string())
+            .collect()
+    }
+
+    /// snarkjs's verifiers are beside the project's, and take a proof of 24 words.
+    #[test]
+    fn the_snarkjs_verifiers_are_imported_from_beside_the_contract() {
+        let fflonk = project_verifier(&SnarkVerifier::Fflonk);
+        for line in [
+            "import {FflonkVerifier} from \"./FflonkVerifier.sol\";",
+            "contract BuildVerifier is FflonkVerifier, IBuildVerifier {",
+            "bytes32[24] memory proofDecoded = abi.decode(proofBytes, (bytes32[24]));",
+            "bool success = this.verifyProof(proofDecoded, [publicValuesDigest]);",
+        ] {
+            assert!(fflonk.contains(line), "{line} missing from:\n{fflonk}");
+        }
+        assert_eq!(
+            lines_unlike_fflonk(&SnarkVerifier::Plonk),
+            [
+                "import {PlonkVerifier} from \"./PlonkVerifier.sol\";",
+                "contract BuildVerifier is PlonkVerifier, IBuildVerifier {",
+                "uint256[24] memory proofDecoded = abi.decode(proofBytes, (uint256[24]));",
+            ]
+        );
+    }
+
+    /// pilfflonk's verifier is imported from where the key has it, and takes a proof of the words of
+    /// the vkey's calldata; the rest of the contract is FFLONK's.
+    #[test]
+    fn the_pilfflonk_verifier_is_imported_from_its_source_with_a_proof_of_its_words() {
+        let source = "./provingKey/final/pilfflonk/pilfflonk.verifier.sol".to_string();
+        assert_eq!(
+            lines_unlike_fflonk(&SnarkVerifier::Pilfflonk { source, words: 47 }),
+            [
+                "import {PilfflonkVerifier} from \"./provingKey/final/pilfflonk/pilfflonk.verifier.sol\";",
+                "contract BuildVerifier is PilfflonkVerifier, IBuildVerifier {",
+                "bytes32[47] memory proofDecoded = abi.decode(proofBytes, (bytes32[47]));",
+            ]
+        );
     }
 
     /// The include graph of the final circuit around a recursivef with custom trees, which circom

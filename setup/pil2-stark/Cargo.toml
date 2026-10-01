@@ -25,6 +25,9 @@ pil2-stark-recurser = { workspace = true }
 pil2-pilout = { workspace = true }
 pil-info = { workspace = true }
 pilfflonk-setup = { workspace = true }
+# The pilfflonk key of the final SNARK (setup-snark --final-snark pilfflonk): its globalInfo, vkey
+# and calldata.
+proofman-pilfflonk = { workspace = true }
 proofman-util = { workspace = true }
 proofman-exps-codegen = { workspace = true }
 prost = { workspace = true }
@@ -40,7 +43,6 @@ clap = { version = "4.5.38", features = ["derive", "env"] }
 which = "6"
 
 [dev-dependencies]
-proofman-pilfflonk = { workspace = true }
 # The test ptau of the setup-pilfflonk tests.
 pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
 

@@ -83,7 +83,7 @@ Read-only — does not write to `provingKey/`.
 ## `setup-snark`
 
 Continues from a `provingKey/` produced by `setup --recursive`, generating the
-final SNARK layer (`recursivef` + `fflonk` or `plonk` final).
+final SNARK layer (`recursivef` + `fflonk`, `plonk` or `pilfflonk` final).
 
 ```bash
 proofman-setup setup-snark \
@@ -97,13 +97,22 @@ proofman-setup setup-snark \
 | Flag | Purpose |
 |---|---|
 | `-b, --build-dir` | Build directory containing `provingKey/` from a prior `setup --recursive` |
-| `--powers-of-tau` | `.ptau` file consumed by the snarkjs setup |
-| `--final-snark` | `fflonk` (default) or `plonk` |
+| `--powers-of-tau` | `.ptau` file consumed by the final SNARK's setup |
+| `--final-snark` | `fflonk` (default), `plonk` or `pilfflonk` |
 | `--publics-info` | Optional JSON describing the publics-hash layout |
 | `--only-recursive-final` | Stop after `recursivef`; skip the final SNARK step |
 
 Requires `vadcop_final/vadcop_final.{starkinfo,verifierinfo,verkey}.json` to
 already exist.
+
+With `pilfflonk`, the final circuit is laid out as a PIL2 AIR over BN254 by
+plonk2pil, compiled with `-P` and a `prime` of BN254's `r` (`PIL2C_EXEC` must
+name a pil2-compiler that honours `prime`, see
+[pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)), and set
+up with `setup-pilfflonk`'s steps: `provingKeySnark/final/` gets the circuit's
+witness calculator and `.exec`, the pilfflonk `provingKey/` and the Solidity
+verifiers. The ptau needs at least as many powers `[τ^i]₁` as the layout's
+largest degree: `12·N + 11` for the wrap's AIR of `N` rows.
 
 ## `setup-recursive-test`
 

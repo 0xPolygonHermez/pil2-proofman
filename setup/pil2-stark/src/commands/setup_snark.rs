@@ -16,7 +16,7 @@ pub struct SetupSnarkOptions {
     pub build_dir: String,
     /// Powers-of-tau (.ptau) file path.
     pub powers_of_tau: Option<String>,
-    /// SNARK type: "fflonk" (default) or "plonk".
+    /// SNARK type: "fflonk" (default), "plonk" or "pilfflonk".
     pub final_snark: String,
     /// Optional path to publics hash info JSON.
     pub publics_info: Option<String>,
@@ -29,17 +29,9 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
     let final_snark = match opts.final_snark.as_str() {
         "fflonk" => FinalSnark::Fflonk,
         "plonk" => FinalSnark::Plonk,
-        // Not offered until its setup builds the pilfflonk proving key: today it would stop at the
-        // final circuit.
-        "pilfflonk" => bail!("--final-snark pilfflonk is not available yet: its setup is not complete"),
-        other => bail!("unknown --final-snark {other:?}: expected fflonk or plonk"),
+        "pilfflonk" => FinalSnark::Pilfflonk,
+        other => bail!("unknown --final-snark {other:?}: expected fflonk, plonk or pilfflonk"),
     };
-    setup_snark(opts, final_snark)
-}
-
-/// [`run_setup_snark`] for `final_snark`, which stands for the name in `opts.final_snark`. It takes
-/// pilfflonk as well: that is how the tests reach its setup while the command does not offer it.
-fn setup_snark(opts: &SetupSnarkOptions, final_snark: FinalSnark) -> Result<()> {
     let build_dir = &opts.build_dir;
 
     // Read globalInfo to get the name.
@@ -177,9 +169,15 @@ mod tests {
     use std::path::Path;
 
     use pil2_stark_recurser::plonk2pil::r1cs_types::read_r1cs_from_bytes;
+    use pilfflonk_setup::command::PROVING_KEY_DIR;
+    use pilfflonk_setup::solidity::VERIFIER_SOL_FILE;
+    use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
     use proofman_fields::Bn254;
+    use proofman_pilfflonk::global_info::{GLOBAL_CONSTRAINTS_FILE, GLOBAL_INFO_FILE};
+    use proofman_pilfflonk::{AirFile, CalldataLayout, JsonFile, PilfflonkGlobalInfo, Vkey};
 
     use super::*;
+    use crate::proving_key::snark_setup::tests::assert_exec_gathers_the_air_columns;
 
     fn options(build_dir: &str, final_snark: &str) -> SetupSnarkOptions {
         SetupSnarkOptions {
@@ -191,31 +189,45 @@ mod tests {
         }
     }
 
-    /// The command takes PLONK and FFLONK only, and refuses anything else before it reads the build
-    /// dir.
+    /// The command takes FFLONK, PLONK and pilfflonk, and refuses anything else before it reads the
+    /// build dir.
     #[test]
-    fn refuses_other_final_snarks_up_front() {
+    fn takes_the_three_final_snarks_and_refuses_others_up_front() {
         let missing = "/nonexistent/setup-snark/build";
-        let err = run_setup_snark(&options(missing, "pilfflonk")).unwrap_err().to_string();
-        assert!(err.contains("pilfflonk is not available yet"), "{err}");
         let err = run_setup_snark(&options(missing, "groth16")).unwrap_err().to_string();
-        assert!(err.contains("unknown --final-snark \"groth16\""), "{err}");
+        assert!(err.contains("unknown --final-snark \"groth16\": expected fflonk, plonk or pilfflonk"), "{err}");
         // One it takes gets as far as the build dir.
-        let err = run_setup_snark(&options(missing, "plonk")).unwrap_err().to_string();
-        assert!(err.contains("Global info file not found"), "{err}");
+        for final_snark in ["fflonk", "plonk", "pilfflonk"] {
+            let err = run_setup_snark(&options(missing, final_snark)).unwrap_err().to_string();
+            assert!(err.contains("Global info file not found"), "{final_snark}: {err}");
+        }
     }
+
+    /// The powers `[τ^i]₁` of the test ptau [`pilfflonk_final_circuit`] writes: fibonacci-square's
+    /// final circuit is an AIR of 2^22 rows, whose layout needs `12·2^22 + 11`, and this is `16·N`,
+    /// as plonk2pil's wrap tests size theirs.
+    const TEST_PTAU_POWERS: usize = 16 << 22;
 
     /// setup-snark for pilfflonk on the `vadcop_final` of a real program: the recursivef with custom
     /// trees and `lastLevelVerification` 0, the final circuit with custom templates, which the
-    /// committed circom compiles over BN254, and the circuit's witness library.
+    /// committed circom compiles over BN254, the circuit's witness library, and the pilfflonk key of
+    /// the AIR plonk2pil makes of it, every file of `provingKeySnark/final/` as `gen_pilfflonk_key`
+    /// lays it out.
     ///
     /// `SETUP_SNARK_BUILD_DIR` names the build dir of a recursive setup (`proofman-setup setup -r`
     /// with a poseidon family; fibonacci-square's takes some 11 minutes), and the test writes the
     /// outputs of setup-snark into it, as `setup-snark -b` does. `SETUP_SNARK_PUBLICS_INFO`, if set,
-    /// is the `--publics-info`. That takes some 2 minutes and 5 GB:
+    /// is the `--publics-info`. `SETUP_SNARK_POWERS_OF_TAU` is the `--powers-of-tau`: if there is no
+    /// file there, the test writes a ptau of [`TEST_PTAU_POWERS`] powers there, with the fixed τ of
+    /// the tests (`pilfflonk_setup::test_ptau`), never to be used for a real key. The PIL of the AIR
+    /// is compiled over BN254 with `PIL2C_EXEC`, which must honour `prime`
+    /// (pilfflonk/docs/README.md#compile-pil). With fibonacci-square on 64 threads, that takes some
+    /// 5 minutes and 16 GB, most of it the build of the final circuit's witness library; the test
+    /// ptau takes some 40 minutes and 19 GB more, and 4.3 GB on disk:
     ///
     /// ```text
     /// SETUP_SNARK_BUILD_DIR=<dir> SETUP_SNARK_PUBLICS_INFO=$PWD/examples/fibonacci-square/src/publics_info.json \
+    ///     SETUP_SNARK_POWERS_OF_TAU=<ptau> PIL2C_EXEC=<pil2-compiler>/src/pil.js \
     ///     cargo test --release -p pil2-stark-setup --features proofman-starks-lib-c/cpu-only \
     ///     --lib pilfflonk_final_circuit -- --ignored --nocapture
     /// ```
@@ -226,11 +238,17 @@ mod tests {
             eprintln!("skipped: SETUP_SNARK_BUILD_DIR does not name a recursive setup's build dir");
             return;
         };
+        let ptau = std::env::var("SETUP_SNARK_POWERS_OF_TAU").expect("SETUP_SNARK_POWERS_OF_TAU names a ptau");
+        if !Path::new(&ptau).exists() {
+            eprintln!("writing a test ptau of {TEST_PTAU_POWERS} powers at {ptau}");
+            write_fixed_tau_ptau(Path::new(&ptau), TEST_PTAU_POWERS, &test_tau()).unwrap();
+        }
         let opts = SetupSnarkOptions {
+            powers_of_tau: Some(ptau),
             publics_info: std::env::var("SETUP_SNARK_PUBLICS_INFO").ok(),
             ..options(&build_dir, "pilfflonk")
         };
-        setup_snark(&opts, FinalSnark::Pilfflonk).expect("setup-snark for pilfflonk");
+        run_setup_snark(&opts).unwrap_or_else(|e| panic!("setup-snark for pilfflonk: {e:#}"));
 
         let dir = Path::new(&build_dir);
         let starkinfo: Value = serde_json::from_str(
@@ -243,13 +261,6 @@ mod tests {
         let circuit = fs::read_to_string(dir.join("circom/final.circom")).unwrap();
         let head: Vec<&str> = circuit.lines().take(2).collect();
         assert_eq!(head, ["pragma circom 2.1.0;", "pragma custom_templates;"]);
-
-        let final_dir = dir.join("provingKeySnark/final");
-        let library = if cfg!(target_os = "macos") { "final.dylib" } else { "final.so" };
-        for file in ["final.dat", library] {
-            assert!(final_dir.join(file).is_file(), "{file} missing from {}", final_dir.display());
-        }
-        assert!(!final_dir.join("final.zkey").exists(), "a rapidsnark zkey for pilfflonk");
 
         // read_r1cs_from_bytes refuses an r1cs that is not over BN254. Its custom gates are
         // PoseidonT(5), for the hashes, and a Num2Bytes(nBits) per width up to 80 bits, for the
@@ -276,5 +287,53 @@ mod tests {
             "final circuit: {} r1cs constraints, {hashes} PoseidonT(5) uses, {range_checks} Num2Bytes uses",
             r1cs.header.n_constraints
         );
+
+        // Every file of provingKeySnark/final/, and the key's under provingKey/.
+        let final_dir = dir.join("provingKeySnark/final");
+        let proving_key = final_dir.join(PROVING_KEY_DIR);
+        let global_info = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap();
+        assert_eq!(global_info.name, "final", "the pilout's name, build/final.pilout's");
+        let name: Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("provingKey/pilout.globalInfo.json")).unwrap()).unwrap();
+        let name = name["name"].as_str().unwrap();
+        let contract = format!("{}{}Verifier.sol", name[..1].to_uppercase(), &name[1..]);
+        let library = if cfg!(target_os = "macos") { "final.dylib" } else { "final.so" };
+        let mut files: Vec<PathBuf> = ["final.dat", library, "final.exec", &contract, &format!("I{contract}")]
+            .iter()
+            .map(|file| final_dir.join(file))
+            .collect();
+        files.extend([GLOBAL_INFO_FILE, GLOBAL_CONSTRAINTS_FILE].map(|file| proving_key.join(file)));
+        let verifier = global_info.backend_dir(&proving_key).join(VERIFIER_SOL_FILE);
+        files.extend([global_info.srs_path(&proving_key), global_info.vkey_path(&proving_key), verifier.clone()]);
+        for air_file in [
+            AirFile::Const,
+            AirFile::PilfflonkInfo,
+            AirFile::ExpressionsInfo,
+            AirFile::VerifierInfo,
+            AirFile::Bin,
+            AirFile::Verkey,
+        ] {
+            files.push(global_info.air_file(&proving_key, 0, 0, air_file).unwrap());
+        }
+        for file in &files {
+            assert!(file.is_file(), "{} missing", file.display());
+        }
+        assert!(!final_dir.join("final.zkey").exists(), "a rapidsnark zkey for pilfflonk");
+
+        let vkey = Vkey::read(&global_info.vkey_path(&proving_key)).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(vkey.n_public, 1, "the final circuit's one public, its publics hash");
+        assert_exec_gathers_the_air_columns(&final_dir.join("final.exec"), &proving_key);
+
+        // The project's verifier extends the key's, from where it is, with a proof of its calldata.
+        let words = CalldataLayout::of(&vkey).words();
+        let project = fs::read_to_string(final_dir.join(&contract)).unwrap();
+        let source = verifier.strip_prefix(&final_dir).unwrap().display().to_string();
+        for line in [
+            format!("import {{PilfflonkVerifier}} from \"./{source}\";"),
+            format!("bytes32[{words}] memory proofDecoded = abi.decode(proofBytes, (bytes32[{words}]));"),
+        ] {
+            assert!(project.contains(&line), "{line} missing from {contract}");
+        }
+        eprintln!("pilfflonk key: 2^{} rows, {} f, {words} calldata words", vkey.power, vkey.layout.0.len());
     }
 }

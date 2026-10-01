@@ -28,7 +28,7 @@ enum Commands {
     Setup(SetupArgs),
     /// Compute per-AIR statistics (constraints, intermediate polynomials, etc.).
     Stats(StatsArgs),
-    /// Generate final SNARK setup (recursivef + fflonk/plonk final).
+    /// Generate final SNARK setup (recursivef + fflonk/plonk/pilfflonk final).
     SetupSnark(SetupSnarkArgs),
     /// Set up a BN254 pilout for the pilfflonk backend (one AIR, one instance): write its
     /// provingKey/.
@@ -175,11 +175,12 @@ struct SetupSnarkArgs {
     #[arg(short = 'b', long)]
     build_dir: String,
 
-    /// Powers-of-tau (.ptau) file for snarkjs setup
+    /// Powers-of-tau (.ptau) file for the final SNARK's setup. pilfflonk reads only its powers
+    /// [τ^i]₁ and [τ]₂, and needs as many [τ^i]₁ as its layout's largest degree
     #[arg(long)]
     powers_of_tau: Option<String>,
 
-    /// Final SNARK type: fflonk (default) or plonk
+    /// Final SNARK type: fflonk (default), plonk or pilfflonk
     #[arg(long, default_value = "fflonk")]
     final_snark: String,
 
