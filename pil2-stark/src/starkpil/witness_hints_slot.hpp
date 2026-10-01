@@ -42,10 +42,17 @@ struct SlotHintPlan {
     uint64_t                nRows = 0;
     bool                    ok = false;
     bool                    readsCustom = false;   // a hint reads the first fixed custom commit
-    // Air values a hint computes, as terms address them: the slot skips those hints, so nothing on it
-    // may read them.
+    // Air and airgroup values a hint computes, as terms address them: the slot skips those hints, so
+    // nothing on it may read them.
     std::set<uint64_t>      computedAirValues;
+    std::set<uint64_t>      computedAirgroupValues;
     std::string             why;       // why not, when !ok
+
+    // The slot only has the host's values, which a skipped hint never wrote.
+    bool readsComputedValue(const MulTermDev& t) const {
+        return (t.src == MUL_SRC_AIRVALUE && computedAirValues.count(t.sectionOffset))
+            || (t.src == MUL_SRC_AIRGROUPVALUE && computedAirgroupValues.count(t.sectionOffset));
+    }
 };
 
 
@@ -66,17 +73,21 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, MulPackedLayout layout
     const uint64_t bcs = 1 + setupCtx.starkInfo.nStages + 3 + setupCtx.starkInfo.customCommits.size();
 
     // Pass 1: the stage-1 columns these hints write, and where each lands in the side buffer. A hint
-    // into an air value leaves cm1 alone and the contribution hashes the host's air values, as the
-    // stream commit did, so the slot skips it.
+    // into an air or airgroup value leaves cm1 alone; the contribution hashes only the host's air
+    // values and the proof recomputes both, so the slot skips it.
     std::map<uint32_t, uint32_t> slotOf;
-    std::vector<bool> intoAirValue(nh, false);
-    std::set<uint64_t>& computedAirValues = plan.computedAirValues;
+    std::vector<bool> intoValue(nh, false);
     for (uint64_t i = 0; i < nh; ++i)
         for (auto& f : setupCtx.expressionsBin.hints[ids[i]].fields) {
             if (f.name != "reference" || f.values.empty()) continue;
             if (f.values[0].operand == opType::airvalue) {
-                intoAirValue[i] = true;
-                computedAirValues.insert(mulValuePos(setupCtx.starkInfo.airValuesMap, f.values[0].id));   // as terms address it
+                intoValue[i] = true;
+                plan.computedAirValues.insert(mulValuePos(setupCtx.starkInfo.airValuesMap, f.values[0].id));   // as terms address it
+                continue;
+            }
+            if (f.values[0].operand == opType::airgroupvalue) {
+                intoValue[i] = true;
+                plan.computedAirgroupValues.insert(mulValuePos(setupCtx.starkInfo.airgroupValuesMap, f.values[0].id));
                 continue;
             }
             if (f.values[0].operand != opType::cm) { plan.why = "hint writes something other than a column"; return plan; }
@@ -92,7 +103,7 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, MulPackedLayout layout
     // column is accepted only once an EARLIER hint wrote it; forward references are refused.
     std::set<uint32_t> written;
     for (uint64_t i = 0; i < nh; ++i) {
-        if (intoAirValue[i]) continue;
+        if (intoValue[i]) continue;
         Hint& h = setupCtx.expressionsBin.hints[ids[i]];
         const HintField *fe = nullptr, *fr = nullptr;
         for (auto& f : h.fields) { if (f.name == "expression") fe = &f; if (f.name == "reference") fr = &f; }
@@ -108,9 +119,8 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, MulPackedLayout layout
             for (MulOperandDev* o : {&in.a, &in.b}) {
                 if (o->kind != MUL_OPND_COL) continue;
                 MulTermDev& t = o->term;
-                // The slot reads the host's air values, which a skipped hint never wrote.
-                if (t.src == MUL_SRC_AIRVALUE && computedAirValues.count(t.sectionOffset)) {
-                    plan.why = "hint reads an air value another hint computes"; return plan;
+                if (plan.readsComputedValue(t)) {
+                    plan.why = "hint reads an air or airgroup value another hint computes"; return plan;
                 }
                 if (MUL_SRC_IS_UNIFORM(t.src) || t.src == MUL_SRC_CONST) continue;   // served as-is
                 if (MUL_SLOT_CUSTOM_OK(t)) { plan.readsCustom = true; continue; }

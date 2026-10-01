@@ -2997,7 +2997,11 @@ where
                     hash_words(&mut h, &[bytes.len() as u64]);
                     h.update(&bytes);
                 }
-                if let Some(pi) = self.options.packed_info.get(&(ag, ai)) {
+                let pi = self.options.packed_info.get(&(ag, ai));
+                // The air's effective packing, which its slot programs are compiled for.
+                let effectively_packed = self.options.packed && pi.is_some_and(|pi| pi.is_packed);
+                hash_words(&mut h, &[effectively_packed as u64]);
+                if let Some(pi) = pi {
                     let flags = [pi.is_packed as u64, pi.num_packed_words, pi.index_bits, pi.words_per_entry, pi.lanes];
                     hash_words(&mut h, &flags);
                     hash_words(&mut h, &pi.unpack_info);

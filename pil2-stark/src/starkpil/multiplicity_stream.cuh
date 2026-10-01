@@ -79,9 +79,7 @@ inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx
         for (MulOperandDev* o : {&in.a, &in.b}) {
             if (o->kind != MUL_OPND_COL) continue;
             MulTermDev& t = o->term;
-            // The slot reads the host's air values, which a skipped hint never wrote.
-            if (t.src == MUL_SRC_AIRVALUE && c.hintPlan != nullptr
-                && c.hintPlan->computedAirValues.count(t.sectionOffset)) return r;
+            if (c.hintPlan != nullptr && c.hintPlan->readsComputedValue(t)) return r;
             if (MUL_SRC_IS_UNIFORM(t.src) || t.src == MUL_SRC_CONST || MUL_SLOT_CUSTOM_OK(t)) continue;   // served as-is
             if (t.src != MUL_SRC_TRACE) return r;
             auto h = hintSlotOf.find(t.col);
