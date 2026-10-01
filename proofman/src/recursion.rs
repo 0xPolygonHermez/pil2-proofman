@@ -323,15 +323,13 @@ fn write_vadcop_final_publics<F: PrimeField64>(proof: &mut Proof<F>, n_publics: 
 }
 
 /// # Safety
-/// `new_proof` must point to a proof buffer large enough for this proof type, and it must stay
-/// allocated until the GPU has written the proof (after this returns).
+/// `new_proof` must fit this proof type and outlive the GPU's write, which lands after return.
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn generate_recursive_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
     setups: &SetupsVadcop<F>,
     witness: &mut Proof<F>,
-    // The output buffer; the GPU writes it after this returns, so it must outlive the proof.
     new_proof: *mut u64,
     prover_buffer: &[F],
     const_tree: &[F],
@@ -555,7 +553,7 @@ pub fn aggregate_worker_proofs<F: PrimeField64>(
                             }
                         };
 
-                        // SAFETY: sized for this proof type; get_stream_id_proof_c below waits for the GPU write.
+                        // SAFETY: get_stream_id_proof_c below waits for the write.
                         let (stream_id, _) = unsafe {
                             generate_recursive_proof::<F>(
                                 pctx,
@@ -717,7 +715,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
             return Err(e);
         }
     };
-    // SAFETY: sized for this proof type; get_stream_id_proof_c below waits for the GPU write.
+    // SAFETY: get_stream_id_proof_c below waits for the write.
     let (stream_id, publics) = unsafe {
         generate_recursive_proof::<F>(
             pctx,
@@ -810,7 +808,7 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
             return Err(e);
         }
     };
-    // SAFETY: sized for this proof type; get_stream_id_proof_c below waits for the GPU write.
+    // SAFETY: get_stream_id_proof_c below waits for the write.
     let (stream_id, publics) = unsafe {
         generate_recursive_proof::<F>(
             pctx,

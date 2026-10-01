@@ -3862,7 +3862,7 @@ where
                         *recursive1_proofs_clone[id].write().unwrap() = Some(new_proof);
                     }
 
-                    // SAFETY: the Vec's heap buffer survives the move into its slot, which is only taken on completion.
+                    // SAFETY: the heap buffer survives the move into its slot.
                     if let Err(e) = unsafe {
                         generate_recursive_proof(
                             &pctx_clone,
@@ -4681,7 +4681,7 @@ where
                 let new_proof_ptr = new_proof.proof.as_mut_ptr();
                 recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
 
-                // SAFETY: the Vec's heap buffer survives the move into its slot, which is only taken on completion.
+                // SAFETY: the heap buffer survives the move into its slot.
                 if let Err(e) = unsafe {
                     generate_recursive_proof(
                         &pctx_clone,
@@ -4888,7 +4888,7 @@ where
                     let new_proof_ptr = new_proof.proof.as_mut_ptr();
                     recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
 
-                    // SAFETY: the Vec's heap buffer survives the move into its slot, which is only taken on completion.
+                    // SAFETY: the heap buffer survives the move into its slot.
                     if let Err(e) = unsafe {
                         generate_recursive_proof(
                             &pctx_clone,
