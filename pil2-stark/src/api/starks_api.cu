@@ -1100,6 +1100,8 @@ void invalidate_stream_contexts_gpu(void *d_buffers_) {
         std::lock_guard<std::mutex> lg(d->streamsData[i].mutex_stream_selection);
         d->streamsData[i].invalidateContext();
     }
+    // The aux scratch may also have covered the slots' cached const expansions.
+    slotConstCacheClear();
 }
 
 void late_region_invalidate_gpu(void *d_buffers_) {
