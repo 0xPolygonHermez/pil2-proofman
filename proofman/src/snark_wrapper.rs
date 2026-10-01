@@ -6,7 +6,7 @@ use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug
 use proofman_verifier::VadcopFinalProof;
 use proofman_fields::PrimeField64;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::fs::File;
 use std::process::Command;
 use colored::Colorize;
@@ -134,8 +134,9 @@ impl FinalSnarkKey {
                 ))),
             },
             (true, true) => Err(ProofmanError::InvalidSetup(format!(
-                "There are two final SNARK keys, {} (PLONK or FFLONK) and {} (pilfflonk), and setup-snark writes one: \
-                 remove the one of the other setup",
+                "There are two final SNARK keys, {} (PLONK or FFLONK) and {} (pilfflonk): setup-snark writes the key \
+                 of one protocol and removes the other's, so running it again with the --final-snark to prove with \
+                 leaves only that one",
                 zkey.display(),
                 proving_key.display()
             ))),
@@ -151,6 +152,9 @@ impl FinalSnarkKey {
 /// The wrap of a vadcop_final proof in the final SNARK: the recursivef proves it, and then the final
 /// SNARK of `provingKeySnark/final/` ([`FinalSnarkKey`]), rapidsnark's PLONK or FFLONK or pilfflonk,
 /// proves the recursivef's verifier circuit.
+///
+/// **One proof at a time.** The wrapper is `Send` and `Sync`, and proofs of it from several threads
+/// run one after another: each proof uses its buffers and provers alone.
 ///
 /// **GPU memory with pilfflonk.** Each proof allocates the recursivef's device buffers and frees them
 /// before pilfflonk proves, so its proving buffers never share the device with them. With `preload`
@@ -176,8 +180,12 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     pub gpu: bool,
     pub final_snark_key: FinalSnarkKey,
-    /// pilfflonk's prover, with `preload`.
-    pilfflonk_prover: Option<PilfflonkWrapProver>,
+    /// Held by each proof throughout ([`generate_final_snark_proof`](Self::generate_final_snark_proof)),
+    /// so that the wrapper proves one at a time, and pilfflonk's prover, with `preload`. Two proofs at
+    /// once would both write the recursivef's prover buffer `aux_trace` and its device buffers, and
+    /// rapidsnark's prover. pilfflonk's prover, a C++ handle, is neither `Send` nor `Sync`: it is only
+    /// used under this lock, which the wrapper's `Send` and `Sync` rely on.
+    proving: Mutex<Option<PilfflonkWrapProver>>,
     /// The recursivef's verkey, which its device buffers hold.
     recursivef_verkey: String,
 }
@@ -455,7 +463,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             reload_fixed_pols_gpu,
             gpu,
             final_snark_key,
-            pilfflonk_prover,
+            proving: Mutex::new(pilfflonk_prover),
             recursivef_verkey: verkey_str,
         })
     }
@@ -489,9 +497,14 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         // wrapper transcript (VerifyPoW aborts).
         let verkey = verkey_override.unwrap_or(&self.vadcop_final_verkey);
 
+        // One proof at a time (`proving`), until this one is out. A proof that panicked poisons the
+        // lock, and the next one takes it all the same: each proof writes its buffers afresh.
+        let pilfflonk_prover = self.proving.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let snark_proof = match &self.final_snark_key {
             FinalSnarkKey::Zkey(_) => self.generate_rapidsnark_proof(&proof, verkey)?,
-            FinalSnarkKey::Pilfflonk(pilfflonk_key) => self.generate_pilfflonk_proof(pilfflonk_key, &proof, verkey)?,
+            FinalSnarkKey::Pilfflonk(pilfflonk_key) => {
+                self.generate_pilfflonk_proof(pilfflonk_key, pilfflonk_prover.as_ref(), &proof, verkey)?
+            }
         };
 
         timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
@@ -508,7 +521,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     }
 
     /// The PLONK or FFLONK proof of the vadcop proof `proof` (with its publics), whose recursivef
-    /// verifies it against `verkey`: rapidsnark's prover of `final.zkey`.
+    /// verifies it against `verkey`: rapidsnark's prover of `final.zkey`. Under the lock of
+    /// `proving`.
     fn generate_rapidsnark_proof(&self, proof: &[u64], verkey: &[u64]) -> ProofmanResult<SnarkProof> {
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
@@ -592,12 +606,14 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     }
 
     /// The pilfflonk proof of the vadcop proof `proof` (with its publics), whose recursivef verifies
-    /// it against `verkey`, with the key at `pilfflonk_key`. The recursivef proves with device
-    /// buffers of its own, freed before pilfflonk loads its key (without `preload`) and proves; then
-    /// pilfflonk proves the wrap's witness, which it computes from the recursivef proof.
+    /// it against `verkey`, with the key at `pilfflonk_key`, whose prover is `preloaded` with
+    /// `preload` (the one `proving` holds). Under the lock of `proving`. The recursivef proves with
+    /// device buffers of its own, freed before pilfflonk loads its key (without `preload`) and
+    /// proves; then pilfflonk proves the wrap's witness, which it computes from the recursivef proof.
     fn generate_pilfflonk_proof(
         &self,
         pilfflonk_key: &Path,
+        preloaded: Option<&PilfflonkWrapProver>,
         proof: &[u64],
         verkey: &[u64],
     ) -> ProofmanResult<SnarkProof> {
@@ -620,7 +636,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         timer_start_debug!(GENERATING_SNARK_PROOF);
 
         let loaded;
-        let prover = match &self.pilfflonk_prover {
+        let prover = match preloaded {
             Some(prover) => prover,
             None => {
                 loaded = PilfflonkWrapProver::load(&self.setup_snark_path, pilfflonk_key, self.gpu)?;
@@ -958,7 +974,26 @@ fn report_verdict(verdict: Result<bool, String>) -> ProofmanResult<()> {
     }
 }
 
+// SAFETY: every field is `Send` but the raw pointers and pilfflonk's prover in `proving`, and none
+// of those is tied to the thread that made it:
+// - `snark_prover` (rapidsnark's prover of `final.zkey`) and `d_buffers_recursivef` (the
+//   recursivef's device buffers) are the wrapper's, which its `Drop` frees, and `d_buffers` (the
+//   caller's unified buffer) it never frees. They are C++ objects of the process and CUDA memory of
+//   its contexts, which each proof already hands to threads it spawns: the recursivef's loader of
+//   its fixed columns, and the GPU preallocation of rapidsnark's prover;
+// - pilfflonk's prover owns its key, whose `PilFflonkProverCtx` is a C++ object any thread may use
+//   (pilfflonk_api.hpp), with the status of each call kept per thread and read on the calling
+//   thread right after it, and the final circuit's witness library, a `WrapWitness`, which is
+//   `Send`.
 unsafe impl<F: PrimeField64> Send for SnarkWrapper<F> {}
+// SAFETY: a shared wrapper proves one proof at a time: `generate_final_snark_proof` holds the lock
+// of `proving` throughout, and only a proof uses pilfflonk's prover and the final circuit's witness
+// calculator, or hands the C++ side what it writes: rapidsnark's prover, the recursivef's and the
+// caller's device buffers (the raw pointers), and the recursivef's prover buffer `aux_trace`,
+// through a pointer of the shared `Vec`. The threads a proof spawns are joined before it returns,
+// on its errors too. Every other field is `Sync`. The raw pointers are public, and handing one to
+// the C++ side outside a proof is the caller's to order with the wrapper's proofs, as for any call
+// of `proofman_starks_lib_c` with them.
 unsafe impl<F: PrimeField64> Sync for SnarkWrapper<F> {}
 
 #[cfg(test)]
@@ -1130,6 +1165,9 @@ mod tests {
         let message = setup_error(FinalSnarkKey::find(&final_dir(&dir, true, Some(PILFFLONK_GLOBAL_INFO))));
         assert!(message.contains("two final SNARK keys") && message.contains("final.zkey"), "{message}");
         assert!(message.contains("provingKey"), "{message}");
+        // What fixes the directory: setup-snark of the protocol to prove with removes the other key.
+        assert!(message.contains("setup-snark writes the key of one protocol and removes the other's"), "{message}");
+        assert!(message.contains("running it again with the --final-snark to prove with"), "{message}");
 
         let dir = TestDir::new("none");
         let message = setup_error(FinalSnarkKey::find(&final_dir(&dir, false, None)));

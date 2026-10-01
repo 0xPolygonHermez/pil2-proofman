@@ -41,7 +41,34 @@ pub enum FinalSnark {
     Pilfflonk,
 }
 
+/// rapidsnark's zkey of the final circuit in `provingKeySnark/final/`: the PLONK or FFLONK key.
+const ZKEY_FILE: &str = "final.zkey";
+/// snarkjs's verification key of the zkey, beside it.
+const SNARKJS_VKEY_FILE: &str = "final.verkey.json";
+/// snarkjs's Solidity verifier of an FFLONK zkey, beside it, which the project's verifier imports.
+const FFLONK_VERIFIER_SOL: &str = "FflonkVerifier.sol";
+/// snarkjs's Solidity verifier of a PLONK zkey, beside it, which the project's verifier imports.
+const PLONK_VERIFIER_SOL: &str = "PlonkVerifier.sol";
+/// plonk2pil's exec of the pilfflonk wrap's AIR in `provingKeySnark/final/`, beside its
+/// `provingKey/` ([`PROVING_KEY_DIR`]).
+const WRAP_EXEC_FILE: &str = "final.exec";
+
 impl FinalSnark {
+    /// Every protocol, as `--final-snark` lists them.
+    const ALL: [FinalSnark; 3] = [FinalSnark::Fflonk, FinalSnark::Plonk, FinalSnark::Pilfflonk];
+
+    /// The entries of `provingKeySnark/final/` that are this protocol's key, by the names its setup
+    /// writes them with ([`gen_rapidsnark_key`], [`gen_pilfflonk_key`]). Every protocol writes the
+    /// rest of the directory, the final circuit's witness library and the project's verifier and
+    /// its interface, over the last setup's.
+    fn key_files(self) -> &'static [&'static str] {
+        match self {
+            FinalSnark::Fflonk => &[ZKEY_FILE, SNARKJS_VKEY_FILE, FFLONK_VERIFIER_SOL],
+            FinalSnark::Plonk => &[ZKEY_FILE, SNARKJS_VKEY_FILE, PLONK_VERIFIER_SOL],
+            FinalSnark::Pilfflonk => &[WRAP_EXEC_FILE, PROVING_KEY_DIR],
+        }
+    }
+
     /// The recursivef's stark struct settings, which decide the final circuit as well: stark2circom
     /// writes the recursivef's verifier, and the final circuit that includes it, with circom custom
     /// templates exactly when the recursivef's trees are custom.
@@ -385,6 +412,7 @@ pub fn gen_snark_setup(
     // ── Phase 2: final SNARK ──────────────────────────────────────────────────
     let final_dir = snark_dir.join("final");
     fs::create_dir_all(&final_dir)?;
+    remove_other_keys(config.final_snark, &final_dir)?;
 
     let rf_const_root_json: Value = serde_json::from_str(
         &fs::read_to_string(&verkey_rf_path)
@@ -528,6 +556,38 @@ pub fn gen_snark_setup(
     Ok(())
 }
 
+/// Removes from `final_dir`, `provingKeySnark/final/`, the key of every protocol but
+/// `final_snark`: the entries of their [`FinalSnark::key_files`] that `final_snark`'s do not name,
+/// each logged, and nothing else. A setup of one protocol in a build dir where another's ran would
+/// otherwise leave that key beside its own, which is the build's key no more (pilfflonk's
+/// recursivef is not rapidsnark's: [`FinalSnark::recursivef_settings`]), and prove-snark refuses a
+/// `final.zkey` beside a `provingKey/` (`FinalSnarkKey::find`). A symlink is removed, not what it
+/// points to.
+fn remove_other_keys(final_snark: FinalSnark, final_dir: &Path) -> Result<()> {
+    let own = final_snark.key_files();
+    let mut others: Vec<&str> = FinalSnark::ALL
+        .into_iter()
+        .filter(|&protocol| protocol != final_snark)
+        .flat_map(FinalSnark::key_files)
+        .copied()
+        .filter(|file| !own.contains(file))
+        .collect();
+    others.sort_unstable();
+    others.dedup();
+    for file in others {
+        let path = final_dir.join(file);
+        let is_dir = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata.is_dir(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e).with_context(|| format!("Failed to read {}", path.display())),
+        };
+        if is_dir { fs::remove_dir_all(&path) } else { fs::remove_file(&path) }
+            .with_context(|| format!("Failed to remove {}, of another final SNARK's key", path.display()))?;
+        tracing::info!("Removed {}, of the key of another final SNARK than {final_snark}", path.display());
+    }
+    Ok(())
+}
+
 /// The PLONK or FFLONK key of the final circuit: rapidsnark's zkey of its r1cs, snarkjs's
 /// verification key and Solidity verifier, the project's Solidity verifier around that one, and
 /// the circuit's witness library.
@@ -557,7 +617,7 @@ fn gen_rapidsnark_key(
 
     // Validate inputs for the zkey setup before launching parallel work.
     let powers_of_tau = required_powers_of_tau(config)?;
-    let zkey_final = final_dir.join("final.zkey");
+    let zkey_final = final_dir.join(ZKEY_FILE);
 
     // Launch witness library generation (make) in background, then run the
     // zkey FFI setup concurrently on this thread — both only need the circom
@@ -579,11 +639,11 @@ fn gen_rapidsnark_key(
 
     // Export verification key (snarkjs.zKey.exportVerificationKey) via Node.js.
     tracing::info!("Exporting verification key...");
-    run_snarkjs_export_vk(zkey_final.to_str().unwrap(), final_dir.join("final.verkey.json").to_str().unwrap())?;
+    run_snarkjs_export_vk(zkey_final.to_str().unwrap(), final_dir.join(SNARKJS_VKEY_FILE).to_str().unwrap())?;
 
     // Export Solidity verifier (snarkjs.zKey.exportSolidityVerifier) via Node.js.
     tracing::info!("Exporting Solidity verifier...");
-    let snark_verifier_sol = if fflonk { "FflonkVerifier.sol" } else { "PlonkVerifier.sol" };
+    let snark_verifier_sol = if fflonk { FFLONK_VERIFIER_SOL } else { PLONK_VERIFIER_SOL };
     run_snarkjs_export_solidity(
         zkey_final.to_str().unwrap(),
         final_dir.join(snark_verifier_sol).to_str().unwrap(),
@@ -635,7 +695,7 @@ fn gen_pilfflonk_key(
         pil: pil_dir.join("final.pil"),
         pil_config: build_path.join("final.bn254.json"),
         pilout: build_path.join("final.pilout"),
-        exec: final_dir.join("final.exec"),
+        exec: final_dir.join(WRAP_EXEC_FILE),
     };
     let includes = [config.recurser_pil_path.to_string(), config.std_pil_path.to_string()];
     let key = set_up_wrap_air(&build_path.join("final.r1cs"), &files, &includes, Path::new(powers_of_tau), final_dir)?;
@@ -944,6 +1004,7 @@ fn run_node_inline(script: &str, context: &str, cwd: &std::path::Path) -> Result
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::collections::BTreeMap;
     use std::process::Command;
 
     use pilfflonk_setup::layout::max_degree;
@@ -996,6 +1057,117 @@ pub(crate) mod tests {
             packing: true,
         };
         assert_eq!(global_info.setup_params, knobs, "the wrap family's knobs");
+    }
+
+    /// A fresh directory `name` under the temporary directory, for this process.
+    fn fresh_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("{name}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Every entry under `dir`, by its path from there, with its text (`None` for a directory).
+    fn entries(dir: &Path) -> BTreeMap<PathBuf, Option<String>> {
+        let mut entries = BTreeMap::new();
+        let mut pending = vec![dir.to_path_buf()];
+        while let Some(current) = pending.pop() {
+            for entry in fs::read_dir(&current).unwrap() {
+                let path = entry.unwrap().path();
+                let relative = path.strip_prefix(dir).unwrap().to_path_buf();
+                if fs::symlink_metadata(&path).unwrap().is_dir() {
+                    entries.insert(relative, None);
+                    pending.push(path);
+                } else {
+                    entries.insert(relative, Some(fs::read_to_string(&path).unwrap()));
+                }
+            }
+        }
+        entries
+    }
+
+    /// A `provingKeySnark/final/` in `dir` with the keys of every protocol, the files every protocol
+    /// writes, and files of no setup with names like a key's: each file holds its name.
+    fn write_final_dir_of_every_key(dir: &Path) {
+        for subdir in ["provingKey/final/pilfflonk", "provingKey.old"] {
+            fs::create_dir_all(dir.join(subdir)).unwrap();
+        }
+        for file in [
+            // FFLONK's and PLONK's keys.
+            "final.zkey",
+            "final.verkey.json",
+            "FflonkVerifier.sol",
+            "PlonkVerifier.sol",
+            // pilfflonk's.
+            "final.exec",
+            "provingKey/pilout.globalInfo.json",
+            "provingKey/final/pilfflonk/pilfflonk.vkey.json",
+            // Every protocol's.
+            "final.so",
+            "final.dat",
+            "FibonacciSquareVerifier.sol",
+            "IFibonacciSquareVerifier.sol",
+            // No setup's.
+            "final.zkey.bak",
+            "provingKey.old/pilout.globalInfo.json",
+            "notes.txt",
+        ] {
+            fs::write(dir.join(file), file).unwrap();
+        }
+    }
+
+    /// A setup of each protocol in a `provingKeySnark/final/` that holds every protocol's key removes
+    /// exactly the entries of the other protocols' keys that its own does not have, and leaves every
+    /// other one as it was: its own key, the files every protocol writes, and files of no setup.
+    /// Run again, it removes nothing.
+    #[test]
+    fn a_setup_removes_the_other_protocols_keys_and_nothing_else() {
+        let cases: [(FinalSnark, &[&str]); 3] = [
+            (FinalSnark::Fflonk, &["PlonkVerifier.sol", "final.exec", "provingKey"]),
+            (FinalSnark::Plonk, &["FflonkVerifier.sol", "final.exec", "provingKey"]),
+            (FinalSnark::Pilfflonk, &["final.zkey", "final.verkey.json", "FflonkVerifier.sol", "PlonkVerifier.sol"]),
+        ];
+        for (final_snark, removed) in cases {
+            let dir = fresh_dir(&format!("snark_setup_other_keys_{final_snark}"));
+            write_final_dir_of_every_key(&dir);
+            let before = entries(&dir);
+            for entry in removed {
+                assert!(before.contains_key(Path::new(entry)), "{entry} missing before the setup");
+            }
+            let kept: BTreeMap<_, _> =
+                before.into_iter().filter(|(path, _)| !removed.iter().any(|entry| path.starts_with(entry))).collect();
+
+            remove_other_keys(final_snark, &dir).unwrap();
+            assert_eq!(entries(&dir), kept, "{final_snark}");
+            remove_other_keys(final_snark, &dir).unwrap();
+            assert_eq!(entries(&dir), kept, "{final_snark}, run again");
+            fs::remove_dir_all(&dir).unwrap();
+        }
+    }
+
+    /// An entry of another protocol's key that is a symlink is unlinked, and what it points to is
+    /// kept; one of the protocol's own key is kept as it is.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_key_of_another_protocol_is_unlinked_and_its_target_kept() {
+        let dir = fresh_dir("snark_setup_symlinked_keys");
+        let (final_dir, elsewhere) = (dir.join("final"), dir.join("elsewhere"));
+        fs::create_dir_all(elsewhere.join("provingKey")).unwrap();
+        fs::write(elsewhere.join("provingKey/pilout.globalInfo.json"), "{}").unwrap();
+        fs::write(elsewhere.join("final.zkey"), "zkey").unwrap();
+        fs::create_dir_all(&final_dir).unwrap();
+        for entry in ["provingKey", "final.zkey"] {
+            std::os::unix::fs::symlink(elsewhere.join(entry), final_dir.join(entry)).unwrap();
+        }
+        let targets = entries(&elsewhere);
+        let is_symlink = |entry: &str| fs::symlink_metadata(final_dir.join(entry)).map(|m| m.is_symlink()).ok();
+
+        remove_other_keys(FinalSnark::Plonk, &final_dir).unwrap();
+        assert_eq!((is_symlink("provingKey"), is_symlink("final.zkey")), (None, Some(true)));
+        remove_other_keys(FinalSnark::Pilfflonk, &final_dir).unwrap();
+        assert!(fs::read_dir(&final_dir).unwrap().next().is_none(), "{} is not empty", final_dir.display());
+        assert_eq!(entries(&elsewhere), targets);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// M49's end-to-end circuit, `setup/stark-recurser/tests/fixtures/bn254/wrap.circom`: a

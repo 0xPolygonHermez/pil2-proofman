@@ -1053,10 +1053,12 @@ pub fn generate_snark_proof(
     prealloc_handle: std::thread::JoinHandle<()>,
     d_buffers_recursivef: *mut c_void,
 ) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
-    let witness = generate_witness_final_snark(proof, setup_path)?;
+    let witness = generate_witness_final_snark(proof, setup_path);
 
-    // Wait for GPU pre-allocation
+    // Wait for GPU pre-allocation, also when the witness failed: it uses the prover and the
+    // recursivef's device buffers, which the next proof of the `SnarkWrapper` uses once this returns.
     prealloc_handle.join().unwrap();
+    let witness = witness?;
 
     timer_start_info!(CALCULATE_FINAL_PROOF);
 
