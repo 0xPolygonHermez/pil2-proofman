@@ -71,6 +71,8 @@ struct Circuit {
     /// `final/` holds its files, as `provingKeySnark/final/`.
     dir: PathBuf,
     gates: Vec<PlonkConstraint<Bn254>>,
+    /// The r1cs's wire count, from which `r1cs2plonk` numbers the additions.
+    n_vars: u32,
     additions: Vec<PlonkAddition<Bn254>>,
     /// The map, as plonk2pil's packers make one: a column at a time, `N` rows each.
     s_map: Vec<Vec<u32>>,
@@ -110,7 +112,18 @@ impl Circuit {
 
     /// Writes the exec of these additions and bands, over `F`, at `path`.
     fn write_exec<F: PlonkField>(&self, path: &Path, additions: &[PlonkAddition<F>], bands: &[GateBand]) {
-        let words = write_exec_file(additions, &self.s_map, bands, 0);
+        self.write_exec_of(path, self.n_vars, additions, bands);
+    }
+
+    /// [`write_exec`](Self::write_exec), as if the r1cs had `n_vars` wires.
+    fn write_exec_of<F: PlonkField>(
+        &self,
+        path: &Path,
+        n_vars: u32,
+        additions: &[PlonkAddition<F>],
+        bands: &[GateBand],
+    ) {
+        let words = write_exec_file(n_vars, additions, &self.s_map, bands, 0);
         fs::write(path, words.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
     }
 }
@@ -155,7 +168,8 @@ fn build_circuit() -> Circuit {
     let reference = snarkjs_witness(&dir, "arith", &zkin());
     assert_eq!(reference.len(), r1cs.header.n_vars as usize);
 
-    let circuit = Circuit { dir, gates, additions, s_map, n_bits: n_rows.trailing_zeros() as u64, reference };
+    let n_vars = r1cs.header.n_vars;
+    let circuit = Circuit { dir, gates, n_vars, additions, s_map, n_bits: n_rows.trailing_zeros() as u64, reference };
     circuit.write_exec(&circuit.artifacts().exec, &circuit.additions, &[]);
     circuit
 }
@@ -276,8 +290,8 @@ fn the_dynamic_library_computes_the_same_witness() {
     assert!(matches!(&err, PilfflonkError::Io { path, .. } if path.ends_with("none.json")), "{err}");
 }
 
-/// A file missing, an exec of another field or with a gate band of the STARK's, and a key that is
-/// not the wrap's.
+/// A file missing, an exec of another field, with a gate band of the STARK's or of another compile
+/// of the circuit, and a key that is not the wrap's.
 #[test]
 fn files_and_keys_that_do_not_fit_are_refused() {
     let Some(circuit) = circuit() else { return };
@@ -298,12 +312,23 @@ fn files_and_keys_that_do_not_fit_are_refused() {
     circuit.write_exec::<Goldilocks>(&goldilocks, &[], &[]);
     let err = WrapWitness::load(&WrapArtifacts { exec: goldilocks, ..artifacts.clone() }).unwrap_err();
     assert!(matches!(err, WrapWitnessError::Exec(_)), "{err}");
-    assert!(err.to_string().contains("not the 4-word ones of BN254"), "{err}");
+    assert!(err.to_string().contains("not version 3 with the 4-word ones of BN254"), "{err}");
     let banded = circuit.file("banded.exec");
     let band = GateBand { row: 0, kind: GateBandKind::Poseidon1CompressorSponge, payload: 0 };
     circuit.write_exec(&banded, &circuit.additions, &[band]);
     let err = WrapWitness::load(&WrapArtifacts { exec: banded, ..artifacts.clone() }).unwrap_err();
     assert!(err.to_string().contains("has a gate band of kind 1 at row 0, which only the STARK's"), "{err}");
+
+    // The exec of a compile of the circuit with a wire more, whose additions are each a wire past
+    // where this calculator's witness puts them: refused at the witness, naming both counts.
+    let other_compile = circuit.file("other_compile.exec");
+    circuit.write_exec_of(&other_compile, circuit.n_vars + 1, &circuit.additions, &[]);
+    let wrap = WrapWitness::load(&WrapArtifacts { exec: other_compile, ..artifacts.clone() }).unwrap();
+    let err = wrap.witness(&circuit.shape(), &zkin()).unwrap_err();
+    assert!(matches!(err, WrapWitnessError::Exec(_)), "{err}");
+    let (n, other) = (circuit.n_vars, circuit.n_vars + 1);
+    let why = format!("the circom witness has {n} wires, and the r1cs the exec was written for has {other}");
+    assert!(err.to_string().contains(&why), "{err}");
 
     // Keys whose AIR the map does not fit, with publics past the witness, or not the wrap's.
     let wrap = WrapWitness::load(&artifacts).unwrap();

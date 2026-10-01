@@ -26,8 +26,9 @@
 //!   lives in that build, not beside the circuit's files in `provingKeySnark/`, and `-i` names them.
 //!
 //! What it cannot compute is an error, not a panic: a file missing, an exec that is not over BN254,
-//! has gate bands that are not the wrap's range checks or does not fit the circuit's witness or the
-//! AIR, a chunk of a range check that is not below 2^16, a key whose shape is not one AIR with no
+//! has gate bands that are not the wrap's range checks or does not fit the circuit's witness (one of
+//! another compile of the circuit, whose wire count is not the one the exec records) or the AIR, a
+//! chunk of a range check that is not below 2^16, a key whose shape is not one AIR with no
 //! air values or proof values, a zkin that is not a JSON object, and a zkin the calculator fails
 //! on. A key of the zkin that is not an input of the circuit is the exception: circom's
 //! calculator stops the process on it, as it does in the PLONK and FFLONK wraps.

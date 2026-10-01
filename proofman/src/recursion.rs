@@ -1438,8 +1438,8 @@ mod stride_tests {
     /// BN254's version 3 included, and the fill keeps the air's width.
     #[test]
     fn only_a_version_2_header_narrows_the_gpu_fill() {
-        // magic|version, n_adds, map_rows, map_cols, and version 3's coefficient width.
-        let exec = |version| [EXEC_MAGIC | version, 0, 4, 3, 4];
+        // magic|version, n_adds, map_rows, map_cols, and version 3's coefficient width and n_vars.
+        let exec = |version| [EXEC_MAGIC | version, 0, 4, 3, 4, 16];
         assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION), 8, true), 3);
         assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION), 8, false), 8, "the CPU keeps the air's width");
         assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION_WIDE), 8, true), 8);

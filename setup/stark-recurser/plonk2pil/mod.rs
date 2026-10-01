@@ -150,8 +150,12 @@ mod sealed {
 
 /// Serialize PLONK additions, the signal map and the gate bands into an exec buffer, in the layout
 /// of [`proofman_common::exec_format`] and the version `F` is written in: version 2 over
-/// Goldilocks, the one the STARK prover reads, and version 3, which records the coefficient width,
-/// over BN254.
+/// Goldilocks, the one the STARK prover reads, and version 3, which records the coefficient width
+/// and `n_vars`, over BN254.
+///
+/// `n_vars` is the r1cs's wire count, from which `r1cs2plonk` numbers the additions: version 3
+/// records it, so that its reader refuses the witness of another compile of the circuit, and
+/// version 2, whose readers number the additions from the witness's length, does not.
 ///
 /// The map is stored at its live extent, not the trace's: the packers fill rows from 0 and leave
 /// the power-of-two padding untouched, and the columns a gate band fills are never mapped -- the
@@ -163,6 +167,7 @@ mod sealed {
 /// Public so that a caller can write the exec of rows it places itself, as the tests of the pilfflonk
 /// wrap's witness (`pilfflonk-wrap-witness`) do over BN254.
 pub fn write_exec_file<F: PlonkField>(
+    n_vars: u32,
     adds: &[r1cs::to_plonk::PlonkAddition<F>],
     s_map: &[Vec<u32>],
     gate_bands: &[r1cs::types::GateBand],
@@ -188,7 +193,7 @@ pub fn write_exec_file<F: PlonkField>(
         );
     }
 
-    let layout = ExecLayout::new::<F>(adds.len(), map_rows, map_cols);
+    let layout = ExecLayout::new::<F>(n_vars as usize, adds.len(), map_rows, map_cols);
     let map_at = layout.map_at();
     let bands_at = layout.bands_at();
     let mut buff = vec![0u64; bands_at + GATE_BAND_HEADER_WORDS + gate_bands.len() * GATE_BAND_WORDS];
@@ -262,7 +267,7 @@ pub fn plonk2pil<V: FixedValue>(r1cs_data: &[u8], setup_type: &str, options: &Pl
     let r1cs = read_r1cs_from_bytes::<V::Field>(r1cs_data)?;
     let res = V::setup(&r1cs, setup_type, options)?;
 
-    let exec = write_exec_file(&res.plonk_additions, &res.s_map, &res.gate_bands, res.band_aux);
+    let exec = write_exec_file(r1cs.header.n_vars, &res.plonk_additions, &res.s_map, &res.gate_bands, res.band_aux);
 
     Ok(PlonkResult {
         exec,
@@ -293,6 +298,10 @@ mod tests {
         EXEC_WIDE_HEADER_WORDS,
     };
     use proofman_fields::{Field, Goldilocks, PrimeField, QuotientMap};
+
+    /// The r1cs's wire count the writer's tests give it: version 3 records it, and version 2 does
+    /// not. The writer does not check the wires against it; the reader of a witness does.
+    const N_VARS: u32 = 100;
 
     /// Run the real compressor packer end-to-end on an r1cs (exercises the row-count
     /// assert + verify_merge_soundness). ESTIMATE_HASH picks the family; it defaults to
@@ -490,6 +499,7 @@ mod tests {
         let res = plonk2pil::<Bn254>(&bn254, "wrap", &wrap).unwrap();
         let exec = ExecFile::<Bn254>::from_words(&res.exec).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(exec.layout.version(), EXEC_FORMAT_VERSION_WIDE, "a BN254 exec is version 3");
+        assert_eq!(exec.layout.n_vars(), Some(4), "the r1cs's nVars, which the additions are numbered from");
         assert!(res.pil_str.contains("require \"poseidon_bn254/wrap.pil\";"), "{}", res.pil_str);
     }
 
@@ -517,7 +527,7 @@ mod tests {
         ];
         let s_map: Vec<Vec<u32>> = vec![vec![1, 2, 3, 4], vec![5, 6, 7, 8]];
 
-        let exec = write_exec_file(&adds, &s_map, &[], 0);
+        let exec = write_exec_file(N_VARS, &adds, &s_map, &[], 0);
 
         assert_eq!(exec[0], EXEC_MAGIC | EXEC_FORMAT_VERSION, "magic and version lead");
         assert_eq!(exec[1], 2, "2 additions");
@@ -543,6 +553,9 @@ mod tests {
                 assert_eq!(map_entry(&exec, map_at, 2, row, col), signal, "row {row} col {col}");
             }
         }
+
+        // Version 2 does not record the r1cs's wire count: its words are the same for any.
+        assert_eq!(write_exec_file(N_VARS + 1, &adds, &s_map, &[], 0), exec);
     }
 
     /// The map is stored at its live extent: the trailing rows the power-of-two padding leaves
@@ -554,7 +567,7 @@ mod tests {
         let s_map: Vec<Vec<u32>> =
             vec![vec![1, 2, 3, 0, 0], vec![4, 0, 5, 0, 0], vec![0, 0, 0, 0, 0], vec![0, 0, 0, 0, 0]];
 
-        let exec = write_exec_file::<Goldilocks>(&[], &s_map, &[], 0);
+        let exec = write_exec_file::<Goldilocks>(N_VARS, &[], &s_map, &[], 0);
 
         assert_eq!(exec[2], 3, "rows 3 and 4 hold nothing");
         assert_eq!(exec[3], 2, "columns 2 and 3 hold nothing");
@@ -579,7 +592,7 @@ mod tests {
     #[test]
     fn write_exec_file_pads_an_odd_map_to_a_whole_word() {
         let s_map: Vec<Vec<u32>> = vec![vec![7]]; // 1 row x 1 col = one entry
-        let exec = write_exec_file::<Goldilocks>(&[], &s_map, &[], 0);
+        let exec = write_exec_file::<Goldilocks>(N_VARS, &[], &s_map, &[], 0);
 
         assert_eq!((exec[2], exec[3]), (1, 1));
         assert_eq!(exec[EXEC_HEADER_WORDS], 7, "the entry, with the high half unused");
@@ -591,7 +604,7 @@ mod tests {
     #[test]
     fn write_exec_file_handles_an_empty_map() {
         for s_map in [vec![], vec![vec![0u32; 4]; 3]] {
-            let exec = write_exec_file::<Goldilocks>(&[], &s_map, &[], 0);
+            let exec = write_exec_file::<Goldilocks>(N_VARS, &[], &s_map, &[], 0);
             assert_eq!((exec[2], exec[3]), (0, 0));
             assert_eq!(exec.len(), EXEC_HEADER_WORDS + 3, "header plus an empty band section");
         }
@@ -612,8 +625,8 @@ mod tests {
             GateBand { row: 10, kind: GateBandKind::Poseidon1CompressorSponge, payload: 0xB3 },
         ];
 
-        let without = write_exec_file(&adds, &s_map, &[], 0);
-        let with = write_exec_file(&adds, &s_map, &bands, 0);
+        let without = write_exec_file(N_VARS, &adds, &s_map, &[], 0);
+        let with = write_exec_file(N_VARS, &adds, &s_map, &bands, 0);
 
         // 12 rows x 2 cols = 24 entries = 12 words.
         let prefix = EXEC_HEADER_WORDS + adds.len() * 4 + 12;
@@ -641,7 +654,7 @@ mod tests {
         use r1cs::types::{GateBand, GateBandKind};
         let s_map = vec![vec![1u32, 2, 0, 0]]; // live extent is 2 rows
         let bands = vec![GateBand { row: 3, kind: GateBandKind::Poseidon1CompressorSponge, payload: 0 }];
-        write_exec_file::<Goldilocks>(&[], &s_map, &bands, 0);
+        write_exec_file::<Goldilocks>(N_VARS, &[], &s_map, &bands, 0);
     }
 
     /// The map and bands the round trips below write in each field: 5 columns x 6 rows of trace,
@@ -663,10 +676,12 @@ mod tests {
     /// everywhere, and the bands as they were.
     fn assert_exec_round_trips<F: PlonkField>(adds: &[PlonkAddition<F>]) {
         let (s_map, bands, aux) = exec_fixture();
-        let exec = write_exec_file(adds, &s_map, &bands, aux);
+        let exec = write_exec_file(N_VARS, adds, &s_map, &bands, aux);
         let file = ExecFile::<F>::from_words(&exec).unwrap_or_else(|e| panic!("{e}"));
 
         assert_eq!((file.layout.version(), file.layout.coef_words()), (F::EXEC_VERSION, F::COEF_WORDS));
+        let n_vars = (F::EXEC_VERSION == EXEC_FORMAT_VERSION_WIDE).then_some(N_VARS as usize);
+        assert_eq!(file.layout.n_vars(), n_vars, "recorded in version 3 only");
         assert_eq!((file.layout.map_rows(), file.layout.map_cols()), (3, 3), "trimmed to the live extent");
         let read: Vec<_> = file.additions.iter().map(|a| (a.wires, a.coeffs)).collect();
         let written: Vec<_> = adds.iter().map(|a| (a.wires, a.coeffs)).collect();
@@ -701,20 +716,22 @@ mod tests {
         assert_exec_round_trips(&adds);
     }
 
-    /// Over BN254 the header records four words per coefficient, and a coefficient is its canonical
-    /// value in them, least significant first: the original pil-fflonk's 32-byte `Fr`, in words.
+    /// Over BN254 the header records four words per coefficient and the r1cs's wire count, and a
+    /// coefficient is its canonical value in them, least significant first: the original
+    /// pil-fflonk's 32-byte `Fr`, in words.
     #[test]
     fn a_bn254_exec_is_version_3_with_four_word_coefficients() {
         let adds = [PlonkAddition { wires: [7, 9], coeffs: [Bn254::NEG_ONE, Bn254::from_int(1u128 << 100)] }];
-        let exec = write_exec_file(&adds, &[vec![1, 2]], &[], 0);
+        let exec = write_exec_file(N_VARS, &adds, &[vec![1, 2]], &[], 0);
 
-        assert_eq!(exec[..EXEC_WIDE_HEADER_WORDS], [EXEC_MAGIC | EXEC_FORMAT_VERSION_WIDE, 1, 2, 1, 4]);
-        assert_eq!(exec[5..7], [7, 9], "the wires, a word each");
+        let header = [EXEC_MAGIC | EXEC_FORMAT_VERSION_WIDE, 1, 2, 1, 4, N_VARS as u64];
+        assert_eq!(exec[..EXEC_WIDE_HEADER_WORDS], header, "n_adds, the 2 x 1 map, coef_words and n_vars");
+        assert_eq!(exec[6..8], [7, 9], "the wires, a word each");
         let r_minus_1 = [0x43e1f593f0000000, 0x2833e84879b97091, 0xb85045b68181585d, 0x30644e72e131a029];
-        assert_eq!(exec[7..11], r_minus_1, "coef_l = r - 1");
-        assert_eq!(exec[11..15], [0, 1 << 36, 0, 0], "coef_r = 2^100");
-        assert_eq!(exec[15], 1 | (2 << 32), "the 2 x 1 map");
-        assert_eq!(exec[16..], [GATE_BAND_FORMAT_VERSION, 0, 0], "an empty band section");
+        assert_eq!(exec[8..12], r_minus_1, "coef_l = r - 1");
+        assert_eq!(exec[12..16], [0, 1 << 36, 0, 0], "coef_r = 2^100");
+        assert_eq!(exec[16], 1 | (2 << 32), "the 2 x 1 map");
+        assert_eq!(exec[17..], [GATE_BAND_FORMAT_VERSION, 0, 0], "an empty band section");
     }
 
     /// Past the additions both versions are the same words: the map and the bands do not depend on
@@ -722,8 +739,15 @@ mod tests {
     #[test]
     fn the_map_and_the_bands_are_the_same_words_in_both_versions() {
         let (s_map, bands, aux) = exec_fixture();
-        let gl = write_exec_file(&[PlonkAddition { wires: [1, 2], coeffs: [Goldilocks::ONE; 2] }], &s_map, &bands, aux);
-        let bn = write_exec_file(&[PlonkAddition { wires: [1, 2], coeffs: [Bn254::ONE; 2] }], &s_map, &bands, aux);
+        let gl = write_exec_file(
+            N_VARS,
+            &[PlonkAddition { wires: [1, 2], coeffs: [Goldilocks::ONE; 2] }],
+            &s_map,
+            &bands,
+            aux,
+        );
+        let bn =
+            write_exec_file(N_VARS, &[PlonkAddition { wires: [1, 2], coeffs: [Bn254::ONE; 2] }], &s_map, &bands, aux);
         assert_eq!(gl[1..EXEC_HEADER_WORDS], bn[1..EXEC_HEADER_WORDS], "the extents");
         assert_eq!(gl[EXEC_HEADER_WORDS + 4..], bn[EXEC_WIDE_HEADER_WORDS + 10..]);
     }
@@ -733,8 +757,13 @@ mod tests {
     #[test]
     fn a_truncated_or_padded_exec_is_refused() {
         let (s_map, bands, aux) = exec_fixture();
-        let exec =
-            write_exec_file(&[PlonkAddition { wires: [1, 2], coeffs: [Bn254::NEG_ONE; 2] }], &s_map, &bands, aux);
+        let exec = write_exec_file(
+            N_VARS,
+            &[PlonkAddition { wires: [1, 2], coeffs: [Bn254::NEG_ONE; 2] }],
+            &s_map,
+            &bands,
+            aux,
+        );
         for len in 0..exec.len() {
             assert!(ExecFile::<Bn254>::from_words(&exec[..len]).is_err(), "{len} of {} words", exec.len());
         }
@@ -747,12 +776,19 @@ mod tests {
     #[test]
     fn an_exec_is_refused_in_a_field_it_is_not_over() {
         let s_map = [vec![1u32]];
-        let gl = write_exec_file(&[PlonkAddition { wires: [1, 2], coeffs: [Goldilocks::ONE; 2] }], &s_map, &[], 0);
-        let bn = write_exec_file(&[PlonkAddition { wires: [1, 2], coeffs: [Bn254::ONE; 2] }], &s_map, &[], 0);
+        let gl =
+            write_exec_file(N_VARS, &[PlonkAddition { wires: [1, 2], coeffs: [Goldilocks::ONE; 2] }], &s_map, &[], 0);
+        let bn = write_exec_file(N_VARS, &[PlonkAddition { wires: [1, 2], coeffs: [Bn254::ONE; 2] }], &s_map, &[], 0);
         let err = ExecFile::<Bn254>::from_words(&gl).unwrap_err().to_string();
-        assert!(err.contains("version 2 with 1-word coefficients, not the 4-word ones of BN254"), "{err}");
+        assert!(
+            err.contains("version 2 with 1-word coefficients, not version 3 with the 4-word ones of BN254"),
+            "{err}"
+        );
         let err = ExecFile::<Goldilocks>::from_words(&bn).unwrap_err().to_string();
-        assert!(err.contains("version 3 with 4-word coefficients, not the 1-word ones of Goldilocks"), "{err}");
+        assert!(
+            err.contains("version 3 with 4-word coefficients, not version 2 with the 1-word ones of Goldilocks"),
+            "{err}"
+        );
     }
 
     /// The STARK prover's loader still takes the Goldilocks exec as it is, and refuses the BN254 one
@@ -761,8 +797,10 @@ mod tests {
     #[test]
     fn the_stark_loader_refuses_a_bn254_exec_by_name() {
         let s_map = [vec![1u32, 2]];
-        let gl = write_exec_file(&[PlonkAddition { wires: [1, 2], coeffs: [Goldilocks::ONE; 2] }], &s_map, &[], 0);
-        let bn = write_exec_file(&[PlonkAddition { wires: [1, 2], coeffs: [Bn254::NEG_ONE; 2] }], &s_map, &[], 0);
+        let gl =
+            write_exec_file(N_VARS, &[PlonkAddition { wires: [1, 2], coeffs: [Goldilocks::ONE; 2] }], &s_map, &[], 0);
+        let bn =
+            write_exec_file(N_VARS, &[PlonkAddition { wires: [1, 2], coeffs: [Bn254::NEG_ONE; 2] }], &s_map, &[], 0);
         let path = |name: &str| std::env::temp_dir().join(format!("plonk2pil_exec_{name}_{}.exec", std::process::id()));
         let (gl_path, bn_path) = (path("goldilocks"), path("bn254"));
         let bytes = |words: &[u64]| words.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>();

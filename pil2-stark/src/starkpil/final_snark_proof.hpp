@@ -143,9 +143,10 @@ std::pair<std::string, std::string> snark_proof_to_json(
     }
     
     // Validate proof size before parsing
-    // Each commitment is a G1 point with 2 coordinates (x, y), each coordinate is AltBn128::Fr.bytes()
-    // Each evaluation is a single Fr element
-    size_t expected_size = (orderedCommitments.size() * 2 + orderedEvaluations.size()) * AltBn128::Fr.bytes();
+    // Each commitment is a G1 point with 2 coordinates (x, y), each an element of the base field Fq
+    // (AltBn128::F1), as SnarkProof::toBytes writes them. Each evaluation is a single Fr element
+    size_t expected_size =
+        orderedCommitments.size() * 2 * AltBn128::F1.bytes() + orderedEvaluations.size() * AltBn128::Fr.bytes();
     if (proof_size < expected_size) {
         throw std::runtime_error("Proof size (" + std::to_string(proof_size) + 
                                  " bytes) is smaller than expected (" + std::to_string(expected_size) + 
@@ -160,19 +161,20 @@ std::pair<std::string, std::string> snark_proof_to_json(
     json &commitments_json = nested ? proof_json["polynomials"] : proof_json;
     json &evaluations_json = nested ? proof_json["evaluations"] : proof_json;
     
-    // Parse commitments (G1 points - each has x and y coordinates)
+    // Parse commitments (G1 points - each has x and y coordinates). A coordinate is an element of
+    // Fq, not Fr: q > r, so one in [r, q) read in Fr would print reduced mod r.
     for (const auto& key : orderedCommitments) {
         json point = json::array();
         
-        AltBn128::FrElement x;
-        AltBn128::Fr.fromRprBE(x, proof_bytes + offset, AltBn128::Fr.bytes());
-        point.push_back(AltBn128::Fr.toString(x));
-        offset += AltBn128::Fr.bytes();
+        AltBn128::F1Element x;
+        AltBn128::F1.fromRprBE(x, proof_bytes + offset, AltBn128::F1.bytes());
+        point.push_back(AltBn128::F1.toString(x));
+        offset += AltBn128::F1.bytes();
         
-        AltBn128::FrElement y;
-        AltBn128::Fr.fromRprBE(y, proof_bytes + offset, AltBn128::Fr.bytes());
-        point.push_back(AltBn128::Fr.toString(y));
-        offset += AltBn128::Fr.bytes();
+        AltBn128::F1Element y;
+        AltBn128::F1.fromRprBE(y, proof_bytes + offset, AltBn128::F1.bytes());
+        point.push_back(AltBn128::F1.toString(y));
+        offset += AltBn128::F1.bytes();
         
         point.push_back("1");
         

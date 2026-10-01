@@ -19,8 +19,9 @@
 // Every cell outside the extent is zero.
 //
 // That is version 2, Goldilocks', the only one this build reads. Version 3 is the same layout with
-// the coefficient width in a fifth header word, and plonk2pil writes it over BN254 for the
-// pilfflonk wrap; it is refused by name (refused_version).
+// two more header words, the coefficient width and the r1cs's wire count, from which the additions
+// are numbered, and plonk2pil writes it over BN254 for the pilfflonk wrap; it is refused by name
+// (refused_version).
 
 #include <cstdint>
 #include <string>

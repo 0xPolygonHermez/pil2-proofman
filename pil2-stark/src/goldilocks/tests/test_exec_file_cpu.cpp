@@ -141,10 +141,10 @@ TEST(ExecFile, AnUnreadableHeaderYieldsAnEmptyTrace)
 // offsets, and the error that refuses it says what it is: regenerating the key would not help.
 TEST(ExecFile, ABn254ExecIsRefusedByName)
 {
-    // magic|3, nAdds, mapRows, mapCols, the coefficient width a version 2 header lacks, then a
-    // 1 x 1 map and an empty band section.
+    // magic|3, nAdds, mapRows, mapCols, the coefficient width and the r1cs's wire count a version 2
+    // header lacks, then a 1 x 1 map and an empty band section.
     const std::vector<uint64_t> exec{exec_layout::EXEC_MAGIC | exec_layout::EXEC_FORMAT_VERSION_WIDE, 0, 1, 1, 4,
-                                     7, 2, 0, 0};
+                                     8, 7, 2, 0, 0};
     const exec_layout::Header h = exec_layout::header(exec.data(), exec.size());
     ASSERT_TRUE(h.magic);
     ASSERT_FALSE(h.versionOk);

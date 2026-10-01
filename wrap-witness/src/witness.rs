@@ -306,7 +306,7 @@ mod tests {
     fn exec(bands: &[(u64, u64)], column: u64) -> ExecFile<Bn254> {
         let bands = bands.iter().map(|&(row, payload)| ExecGateBand { row, kind: RANGE_CHECK_BAND_KIND, payload });
         ExecFile {
-            layout: ExecLayout::new::<Bn254>(0, 1, 9),
+            layout: ExecLayout::new::<Bn254>(1, 0, 1, 9),
             additions: vec![],
             map: vec![0; 9],
             band_aux: column,
