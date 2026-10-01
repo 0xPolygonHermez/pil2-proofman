@@ -1,7 +1,7 @@
-// pilfflonk's GPU path (pilfflonk/docs/performance.md#gpu): compiled into the GPU library only
-// (libstarksgpu.a, the Makefile's %_gpu.cpp rule), with g++, as final_snark_proof_gpu.cpp. It calls
-// the GPU entry points of pil2-stark through their C linkage, as plonk_prover_gpu.c.cuh does, and
-// has no kernel of its own.
+// pilfflonk's GPU MSMs and NTTs from host memory (pilfflonk/docs/performance.md#gpu): compiled into
+// the GPU library only (libstarksgpu.a, the Makefile's %_gpu.cpp rule), with g++, as
+// final_snark_proof_gpu.cpp. It calls the GPU entry points of pil2-stark through their C linkage, as
+// plonk_prover_gpu.c.cuh does, and has no kernel of its own.
 #include "pilfflonk_gpu.hpp"
 
 #include <algorithm>
@@ -53,23 +53,12 @@ bool allZero(const FrElement *values, uint64_t n) {
     return zero;
 }
 
-// h, the ratio of the shift ρ_i = h^(i+1) (pilfflonk_gpu.hpp). Any element of large order does; a
-// fixed one makes every intermediate value the same from run to run.
-const FrElement &shiftRatio() {
-    static const FrElement ratio = [] {
-        FrElement h;
-        Engine::engine.fr.fromString(h, "6277101735386680763835789423207666416102355444464034512659");
-        return h;
-    }();
-    return ratio;
-}
-
 // out[i] = scalars[i] + ρ_i, or ρ_i if scalars is null, for i < n. out may be scalars. In chunks,
 // each of which starts from its first ρ (one exponentiation) and multiplies by h from there.
 void shifted(FrElement *out, const FrElement *scalars, uint64_t n) {
     Engine::Fr &fr = Engine::engine.fr;
     constexpr uint64_t CHUNK = uint64_t(1) << 14;
-    const FrElement &h = shiftRatio();
+    const FrElement &h = msmShiftRatio();
 #pragma omp parallel for schedule(static)
     for (uint64_t start = 0; start < n; start += CHUNK) {
         FrElement rho = power(h, start + 1);
@@ -87,9 +76,52 @@ void shifted(FrElement *out, const FrElement *scalars, uint64_t n) {
 
 } // namespace
 
+// Any element of large order does; a fixed one makes every intermediate value the same from run to
+// run.
+const FrElement &msmShiftRatio() {
+    static const FrElement ratio = [] {
+        FrElement h;
+        Engine::engine.fr.fromString(h, "6277101735386680763835789423207666416102355444464034512659");
+        return h;
+    }();
+    return ratio;
+}
+
+G1Point msmOnDevice(const void *points, const void *scalars, uint64_t n) {
+    Engine &E = Engine::engine;
+    // sppark's jacobian_t<fp_t>: (X, Y, Z) in Montgomery form, the point (X/Z², Y/Z³).
+    struct Jacobian {
+        Engine::F1Element X, Y, Z;
+    } jacobian;
+    gpu_plonk_cuda_device_sync();
+    msm_bn128_gpu_dev_ptr(&jacobian, points, scalars, n, true);
+    // ffiasm's extended Jacobian point: (x, y, zz, zzz) is (x/zz, y/zzz), zz = Z² and zzz = Z³.
+    G1Point result;
+    result.x = jacobian.X;
+    result.y = jacobian.Y;
+    E.f1.square(result.zz, jacobian.Z);
+    E.f1.mul(result.zzz, result.zz, jacobian.Z);
+    return result;
+}
+
+void transformOnDevice(void *data, uint64_t bits, bool inverse) {
+    // sppark's NTT starts at two points.
+    if (bits == 0) {
+        return;
+    }
+    // As the PLONK GPU prover before each NTT: the data may come from the default stream, and the
+    // NTT runs on sppark's, which it synchronises before it returns.
+    gpu_plonk_cuda_device_sync();
+    if (inverse) {
+        intt_bn128_gpu_dev_ptr(data, static_cast<uint32_t>(bits));
+    } else {
+        ntt_bn128_gpu_dev_ptr(data, static_cast<uint32_t>(bits));
+    }
+}
+
 bool Gpu::available() { return cuda_available(); }
 
-Gpu::Gpu(const G1PointAffine *points, uint64_t n) {
+Gpu::Gpu(const G1PointAffine *points, uint64_t n, CopyVolume *copies) : volume(copies) {
     if (!available()) {
         throw invalid("Gpu", "no GPU: CUDA sees no device of compute capability 7.0 or above (or no driver)");
     }
@@ -103,6 +135,9 @@ Gpu::Gpu(const G1PointAffine *points, uint64_t n) {
     gpu_plonk_cuda_malloc(&devicePoints, n * sizeof(G1PointAffine));
     gpu_plonk_memcpy_h2d(devicePoints, points, n * sizeof(G1PointAffine));
     nDevicePoints = n;
+    if (volume != nullptr) {
+        volume->addToDevice(n * sizeof(G1PointAffine));
+    }
 }
 
 Gpu::~Gpu() {
@@ -169,23 +204,12 @@ void Gpu::shift(FrElement *out, uint64_t n) {
 }
 
 G1Point Gpu::deviceMsm(const FrElement *scalars, uint64_t n) const {
-    Engine &E = Engine::engine;
-    // sppark's jacobian_t<fp_t>: (X, Y, Z) in Montgomery form, the point (X/Z², Y/Z³).
-    struct Jacobian {
-        Engine::F1Element X, Y, Z;
-    } jacobian;
     void *dScalars = scratch(n);
     gpu_plonk_memcpy_h2d(dScalars, scalars, n * sizeof(FrElement));
-    // The copy is on the default stream, and sppark's MSM on streams of its own.
-    gpu_plonk_cuda_device_sync();
-    msm_bn128_gpu_dev_ptr(&jacobian, devicePoints, dScalars, n, true);
-    // ffiasm's extended Jacobian point: (x, y, zz, zzz) is (x/zz, y/zzz), zz = Z² and zzz = Z³.
-    G1Point result;
-    result.x = jacobian.X;
-    result.y = jacobian.Y;
-    E.f1.square(result.zz, jacobian.Z);
-    E.f1.mul(result.zzz, result.zz, jacobian.Z);
-    return result;
+    if (volume != nullptr) {
+        volume->addToDevice(n * sizeof(FrElement));
+    }
+    return msmOnDevice(devicePoints, dScalars, n);
 }
 
 FrElement *Gpu::staging(uint64_t n) const {
@@ -219,15 +243,13 @@ void Gpu::transform(const FrElement *in, FrElement *out, uint64_t bits, bool inv
     gpu_plonk_set_device(DEVICE);
     void *data = scratch(uint64_t(1) << bits);
     gpu_plonk_memcpy_h2d(data, in, bytes);
-    // As the PLONK GPU prover before each NTT: the copy is on the default stream, the NTT on sppark's.
-    gpu_plonk_cuda_device_sync();
-    if (inverse) {
-        intt_bn128_gpu_dev_ptr(data, static_cast<uint32_t>(bits));
-    } else {
-        ntt_bn128_gpu_dev_ptr(data, static_cast<uint32_t>(bits));
-    }
+    transformOnDevice(data, bits, inverse);
     // The NTT has synchronised its stream; the copy back waits for it.
     gpu_plonk_memcpy_d2h(out, data, bytes);
+    if (volume != nullptr) {
+        volume->addToDevice(bytes);
+        volume->addToHost(bytes);
+    }
 }
 
 void Gpu::ntt(const FrElement *in, FrElement *out, uint64_t bits) const { transform(in, out, bits, false); }

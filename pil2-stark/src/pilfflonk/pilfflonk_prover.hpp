@@ -14,6 +14,8 @@
 
 namespace PilFflonk {
 
+class InstanceGpu; // pilfflonk_instance_gpu.hpp
+
 // A row where a constraint does not hold: the value of its numerator there, not 0.
 struct FailedRow {
     uint64_t row;
@@ -80,6 +82,13 @@ struct ConstraintCheck {
 //   commitStage(s) does, the hints' and then the im pols, into buffers of its own, and commits
 //   nothing.
 //
+// On a key on the GPU (ProvingKey::load with Device::Gpu), the witness goes to the device as it is
+// given, and the INTTs, the blinding and the commitments of commitStage run there (InstanceGpu),
+// with the blinding factors drawn here; the rest runs here, on the copies of the stage-1 columns and
+// of the committed polynomials the device sends back, and the proof is the same bit for bit. Such a
+// key holds the device memory of one proof at a time: an instance holds it until it is destroyed,
+// another thread's waits for it, and a second instance of this thread is refused.
+//
 // Elements are in Montgomery form. Refused arguments throw std::invalid_argument before anything
 // changes. Not safe to use from several threads at once; the ProvingKey, which must outlive it, may
 // be shared.
@@ -92,10 +101,12 @@ public:
     // the order of their stage-1 entries of the AIR's airValuesMap and of the globalInfo's
     // proofValuesMap; publics, the globalInfo's nPublics. Throws std::invalid_argument if there is
     // no such AIR, if a count or the size is not the one expected, or if a scalar of stage1 is not
-    // below r (naming its row and column).
+    // below r (naming its row and column), and, on a key on the GPU, if this thread has another
+    // instance of it.
     Instance(const ProvingKey &pk, uint64_t airgroupId, uint64_t airId, const uint8_t *stage1, uint64_t stage1Bytes,
              std::vector<FrElement> airValues, std::vector<FrElement> publics, std::vector<FrElement> proofValues,
              std::unique_ptr<BlindingSource> blinding);
+    ~Instance();
 
     Instance(const Instance &) = delete;
     Instance &operator=(const Instance &) = delete;
@@ -190,6 +201,10 @@ private:
     // Stage 1's im pols into columns, and, for an AIR of several stages, a copy of columns with the
     // later stages computed with `challenges` (empty for one stage).
     CheckTrace checkTrace(const std::vector<FrElement> &challenges);
+    // The blinding factors of the f of stage `stage`, b of them for each column of each
+    // (blindLength), drawn f by f in the order of the layout and column by column within an f, one
+    // BlindingSource::fill per column, in that order.
+    std::vector<FrElement> drawBlinding(uint64_t stage);
     std::vector<G1Point> commitF(uint64_t stage);
 
     const ProvingKey &pk;
@@ -206,6 +221,11 @@ private:
     std::vector<FrElement> challengeValues; // challengesMap order
     // columns[s]: the columns of stage s (1 … nStages) on H, column p at [p·N, (p+1)·N).
     std::vector<std::vector<FrElement>> columns;
+#ifdef __USE_CUDA__
+    // Its device side, on a key on the GPU. Declared before the polynomials, which may be over the
+    // key's mirror (GpuKey::mirror), so that they go before it does.
+    std::unique_ptr<InstanceGpu> device;
+#endif
     // By cmPolsMap index: the committed polynomial of a column, and its buffer.
     std::vector<std::unique_ptr<FrElement[]>> coefBuffers;
     std::vector<std::unique_ptr<Poly>> polys;

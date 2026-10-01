@@ -19,6 +19,9 @@
 #include "pilfflonk_fr.hpp"
 #include "pilfflonk_transcript.hpp"
 #include "timer.hpp"
+#ifdef __USE_CUDA__
+#include "pilfflonk_key_gpu.hpp"
+#endif
 
 namespace PilFflonk {
 
@@ -486,7 +489,7 @@ AirDegrees airDegrees(const PilfflonkInfo &info, const std::string &name) {
 }
 
 AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constants, uint64_t constantsBytes,
-               const std::string &name, const Gpu *gpu)
+               const std::string &name, GpuKey *gpu)
     : airName(name), pilfflonkInfo(std::move(_info)), expressionsBin(std::move(_bin)) {
     const PilfflonkInfo &info = pilfflonkInfo;
     auto fail = [&](const std::string &what) { failAir(name, what); };
@@ -494,7 +497,13 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
     interpreter = std::make_unique<Expressions>(expressionsBin, info);
     airDegrees_ = airDegrees(info, name);
     const uint64_t N = airDegrees_.n;
-    extension = std::make_unique<Lde>(info.nBits, airDegrees_.nBitsExt, gpu);
+    const Gpu *transforms = nullptr;
+#ifdef __USE_CUDA__
+    if (gpu != nullptr) {
+        transforms = &gpu->hybrid();
+    }
+#endif
+    extension = std::make_unique<Lde>(info.nBits, airDegrees_.nBitsExt, transforms);
 
     // The rows of each constraint of the .bin (section 2, which check runs) lie in the trace; its
     // reader checked firstRow <= lastRow.
@@ -671,6 +680,15 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
         fixedEvals.reset(new FrElement[nConstants * N]);
         fixedCoefs.reset(new FrElement[nConstants * N]);
         decodeColumns(constants, N, nConstants, fixedEvals.get(), name + ".const");
+    }
+#ifdef __USE_CUDA__
+    if (gpu != nullptr) {
+        // Interpolated on the device, where the coefficients stay; fixedCoefs is their copy.
+        deviceKey = std::make_unique<GpuAirKey>(*gpu, *this, fixedCoefs.get(), fixedPolys);
+        return;
+    }
+#endif
+    if (nConstants > 0) {
         std::vector<FrElement *> evals(nConstants), coefs(nConstants);
         for (uint64_t c = 0; c < nConstants; ++c) {
             evals[c] = fixedEvals.get() + c * N;
@@ -682,7 +700,14 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
     }
 }
 
+AirKey::~AirKey() = default;
+
 std::vector<G1Point> AirKey::fixedCommitments(const Srs &srs) const {
+#ifdef __USE_CUDA__
+    if (deviceKey != nullptr && srs.gpu() == &deviceKey->gpuKey().hybrid()) {
+        return deviceKey->fixedCommitments();
+    }
+#endif
     TimerStart(PILFFLONK_FIXED_COMMITMENTS);
     std::vector<G1Point> commitments;
     commitments.reserve(nFixed);
@@ -704,7 +729,7 @@ uint64_t AirKey::blindLength(uint64_t f) const {
     return entry.stage >= 1 && entry.stage <= pilfflonkInfo.nStages ? entry.offsets.size() + 1 : 0;
 }
 
-std::unique_ptr<AirKey> AirKey::load(const std::string &dir, const std::string &name, const Gpu *gpu) {
+std::unique_ptr<AirKey> AirKey::load(const std::string &dir, const std::string &name, GpuKey *gpu) {
     const std::string base = dir + "/" + name;
     PilfflonkInfo info = PilfflonkInfo::load(base + ".pilfflonkinfo.json");
     ExpressionsBin bin = ExpressionsBin::load(base + ".bin");
@@ -716,16 +741,34 @@ std::unique_ptr<AirKey> AirKey::load(const std::string &dir, const std::string &
 // ProvingKey
 // ---------------------------------------------------------------------------------------------
 
+void checkSrsFits(const AirKey &air, uint64_t nG1) {
+    const std::vector<LayoutEntry> &layout = air.info().layout;
+    for (uint64_t f = 0; f < layout.size(); ++f) {
+        if (layout[f].degree > nG1) {
+            throw FormatError(air.name() + ": layout f" + std::to_string(f) + " has " +
+                              std::to_string(layout[f].degree) + " coefficients, and the SRS " + std::to_string(nG1) +
+                              " powers [τ^i]₁");
+        }
+    }
+}
+
 ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::unique_ptr<AirKey>>> _airs,
-                       std::shared_ptr<const Gpu> _gpu)
+                       std::shared_ptr<const GpuKey> _gpu)
     : info(std::move(_info)), gpu(std::move(_gpu)), structuredReferenceString(std::move(_srs)),
       airKeys(std::move(_airs)) {
-    if (gpu && gpu->nPoints() != structuredReferenceString.nG1()) {
-        throw std::invalid_argument("provingKey: its GPU holds " + std::to_string(gpu->nPoints()) +
-                                    " points, and its SRS " + std::to_string(structuredReferenceString.nG1()) +
-                                    " powers [τ^i]₁");
+    // The Gpu of the transforms and of the MSMs that run on the host's data.
+    const Gpu *transforms = nullptr;
+#ifdef __USE_CUDA__
+    if (gpu) {
+        if (gpu->nPowers() != structuredReferenceString.nG1()) {
+            throw std::invalid_argument("provingKey: its GPU holds " + std::to_string(gpu->nPowers()) +
+                                        " points, and its SRS " + std::to_string(structuredReferenceString.nG1()) +
+                                        " powers [τ^i]₁");
+        }
+        transforms = &gpu->hybrid();
     }
-    structuredReferenceString.setGpu(gpu.get());
+#endif
+    structuredReferenceString.setGpu(transforms);
     if (airKeys.size() != info.airs.size()) {
         throw FormatError("provingKey: " + std::to_string(airKeys.size()) + " airgroups of keys for the " +
                           std::to_string(info.airs.size()) + " of the globalInfo");
@@ -738,7 +781,7 @@ ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::
         }
         for (uint64_t a = 0; a < airKeys[ag].size(); ++a) {
             const AirKey &key = *airKeys[ag][a];
-            if (key.lde().gpu() != gpu.get()) {
+            if (key.lde().gpu() != transforms) {
                 throw std::invalid_argument("provingKey: " + key.name() +
                                             (gpu ? "'s key is not on the provingKey's GPU" : "'s key is on a GPU"));
             }
@@ -749,13 +792,7 @@ ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::
                                   std::to_string(ag) + " of the globalInfo, " + expected.name + " of " +
                                   std::to_string(expected.numRows) + " rows");
             }
-            for (uint64_t f = 0; f < air.layout.size(); ++f) {
-                if (air.layout[f].degree > structuredReferenceString.nG1()) {
-                    throw FormatError(key.name() + ": layout f" + std::to_string(f) + " has " +
-                                      std::to_string(air.layout[f].degree) + " coefficients, and the SRS " +
-                                      std::to_string(structuredReferenceString.nG1()) + " powers [τ^i]₁");
-                }
-            }
+            checkSrsFits(key, structuredReferenceString.nG1());
         }
     }
 }
@@ -781,11 +818,11 @@ std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device devi
     TimerStart(PILFFLONK_LOAD_SRS);
     Srs srs = Srs::load(dir + "/" + info.name + "/" + BACKEND_DIR + "/" + SRS_FILE);
     TimerStopAndLog(PILFFLONK_LOAD_SRS);
-    std::shared_ptr<const Gpu> gpu;
+    std::shared_ptr<GpuKey> gpu;
 #ifdef __USE_CUDA__
     if (device == Device::Gpu) {
         TimerStart(PILFFLONK_GPU_SRS);
-        gpu = std::make_shared<const Gpu>(&srs.g1(0), srs.nG1());
+        gpu = std::make_shared<GpuKey>(srs);
         TimerStopAndLog(PILFFLONK_GPU_SRS);
     }
 #endif
@@ -798,6 +835,11 @@ std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device devi
         }
     }
     TimerStopAndLog(PILFFLONK_LOAD_AIRS);
+#ifdef __USE_CUDA__
+    if (gpu) {
+        logCopies(gpu->copies(), "KEY", CopyVolume::Totals());
+    }
+#endif
     return std::make_unique<ProvingKey>(std::move(info), std::move(srs), std::move(airs), std::move(gpu));
 }
 

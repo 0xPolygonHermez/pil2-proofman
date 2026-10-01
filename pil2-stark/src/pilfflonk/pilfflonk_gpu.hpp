@@ -1,6 +1,7 @@
 #ifndef PILFFLONK_GPU_HPP
 #define PILFFLONK_GPU_HPP
 
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -21,8 +22,29 @@ enum class Device {
     Gpu, // Gpu's, below
 };
 
-// The MSMs and the NTTs of the prover on the GPU
-// (pilfflonk/docs/performance.md#what-runs-on-the-gpu). It has none of its own: it calls the GPU
+// The bytes the GPU path copies between the host and the device, each way, for the -vv log of each
+// phase (CopyLog, pilfflonk_key_gpu.hpp). Safe to use from several threads.
+class CopyVolume {
+public:
+    struct Totals {
+        uint64_t toDevice = 0;
+        uint64_t toHost = 0;
+    };
+
+    void addToDevice(uint64_t bytes) { h2d += bytes; }
+    void addToHost(uint64_t bytes) { d2h += bytes; }
+    Totals totals() const { return Totals{h2d.load(), d2h.load()}; }
+
+private:
+    std::atomic<uint64_t> h2d{0};
+    std::atomic<uint64_t> d2h{0};
+};
+
+// The MSMs and the NTTs of the prover on the GPU from host memory
+// (pilfflonk/docs/performance.md#what-runs-on-the-gpu): each copies its data to the device and its
+// result back. A key on the GPU (GpuKey, pilfflonk_key_gpu.hpp) keeps the data of its stage and
+// fixed commitments on the device instead, and uses this one only for what still runs on the host:
+// the LDE and the interpolation of Q, and the MSMs of Q, W and W'. It has no kernel: it calls the GPU
 // entry points that pil2-stark already has, as the PLONK GPU prover calls them
 // (rapidsnark/plonk_prover_gpu.c.cuh):
 // - msm_bn128_gpu_dev_ptr (bn128/src/msm/msm_bn128.cu, sppark's Pippenger), with montgomery = true,
@@ -36,9 +58,9 @@ enum class Device {
 //   gpu_plonk_set_device (rapidsnark/plonk_prover.cu), for the device's memory.
 // Both sides compute in exact field arithmetic and keep every element in its canonical Montgomery
 // form (limbs below r), and a commitment leaves the prover in affine coordinates: the results are
-// those of ffiasm's MSM and FFT bit for bit. The elementwise work around the transforms (the coset
-// shifts, the folding of Lde::extendCosetPart, the blinding, the packing) stays on the CPU, where
-// Lde, commitF and commitPacked do it: the PLONK GPU prover has no helper for a coset on the device.
+// those of ffiasm's MSM and FFT bit for bit. The elementwise work around them (the coset shifts,
+// the folding of Lde::extendCosetPart, the packing) stays on the CPU, where Lde and commitPacked do
+// it: the PLONK GPU prover has no helper for a coset on the device.
 //
 // The MSM shifts its scalars: it computes Σ (s_i + ρ_i)·[τ^i]₁ − Σ ρ_i·[τ^i]₁, with
 // ρ_i = h^(i+1) for a fixed h (shift). sppark's Pippenger is fast when the scalars look random and
@@ -66,13 +88,16 @@ public:
     static bool available();
 
     // A copy on the device of the n points (n >= 1) at `points`, the powers [τ^i]₁ of an SRS, for
-    // msm. Throws std::invalid_argument if !available(), points is null or n is 0.
-    Gpu(const G1PointAffine *points, uint64_t n);
+    // msm. Its copies to and from the device are counted in `copies`, if not null, which must outlive
+    // it. Throws std::invalid_argument if !available(), points is null or n is 0.
+    Gpu(const G1PointAffine *points, uint64_t n, CopyVolume *copies = nullptr);
     ~Gpu();
     Gpu(const Gpu &) = delete;
     Gpu &operator=(const Gpu &) = delete;
 
     uint64_t nPoints() const { return nDevicePoints; }
+    // The points on the device, which a GpuKey's MSMs share.
+    const void *devicePowers() const { return devicePoints; }
 
     // Σ_{i<n} scalars[i]·points[i], the scalars in Montgomery form: what Srs::commit computes with
     // ffiasm's MSM, through the shift above. With n = 0, the point at infinity. Throws
@@ -104,6 +129,7 @@ private:
 
     void *devicePoints = nullptr;
     uint64_t nDevicePoints = 0;
+    CopyVolume *volume = nullptr;
     mutable std::mutex lock;
     mutable void *deviceScratch = nullptr;
     mutable uint64_t scratchElements = 0;
@@ -112,6 +138,20 @@ private:
     // Σ_{i<n} ρ_i·points[i] for each n msm has seen.
     mutable std::map<uint64_t, G1Point> shiftSums;
 };
+
+// The ratio h of the shift ρ_i = h^(i+1) of the MSMs' scalars (Gpu::msm), in Montgomery form.
+const FrElement &msmShiftRatio();
+
+// Σ_{i<n} scalars[i]·points[i] for n >= 1 scalars in Montgomery form and n points [τ^i]₁, all on the
+// device: msm_bn128_gpu_dev_ptr, after the device is synchronised (the scalars may come from the
+// default stream, and sppark's MSM runs on its own), as ffiasm's point. The point at infinity is
+// also sppark's report of a failure.
+G1Point msmOnDevice(const void *points, const void *scalars, uint64_t n);
+
+// The NTT (ffiasm's fft) or the INTT (its ifft) of the 2^bits values at `data`, on the device, in
+// place and in natural order: ntt_bn128_gpu_dev_ptr or intt_bn128_gpu_dev_ptr after the device is
+// synchronised. Nothing for bits = 0, a value being its own transform. bits <= 28.
+void transformOnDevice(void *data, uint64_t bits, bool inverse);
 
 // Gpu::available() in a library built with the GPU, and false in one built without.
 inline bool gpuAvailable() {

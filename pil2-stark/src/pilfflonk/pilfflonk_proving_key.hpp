@@ -17,6 +17,9 @@
 
 namespace PilFflonk {
 
+class GpuKey;    // pilfflonk_key_gpu.hpp
+class GpuAirKey; // pilfflonk_key_gpu.hpp
+
 // What the prover reads of pilout.globalInfo.json (pilfflonk/docs/formats.md#globalinfo): where the
 // AIRs' files are, and the counts of the values every instance is given. The file's owner is the
 // Rust type proofman_pilfflonk::PilfflonkGlobalInfo (pilfflonk/src/global_info.rs), which validates
@@ -134,15 +137,19 @@ struct StdHint {
 // gsum_col or gprod_col, as the STARK's calculateImHints computes them only then.
 class AirKey {
 public:
-    // From the files' contents. `name` is what the errors call the AIR. Throws FormatError. Its Lde
-    // runs its transforms on `gpu` if it is not null, the fixed columns' INTT included; the Gpu
-    // must outlive the key.
+    // From the files' contents. `name` is what the errors call the AIR. Throws FormatError. With a
+    // `gpu` (only in a library built with the GPU), which must outlive the key, the key is on it: its
+    // fixed columns are interpolated and committed on the device, where their coefficients stay, and
+    // its proofs commit their stages there (GpuAirKey, pilfflonk_key_gpu.hpp); its Lde runs its
+    // transforms on gpu's Gpu. It throws then as GpuAirKey's constructor too: std::invalid_argument
+    // if the device has not the memory of the key and a proof of the AIR.
     AirKey(PilfflonkInfo info, ExpressionsBin bin, const uint8_t *constants, uint64_t constantsBytes,
-           const std::string &name, const Gpu *gpu = nullptr);
+           const std::string &name, GpuKey *gpu = nullptr);
+    ~AirKey();
 
     // Reads <dir>/<name>.pilfflonkinfo.json, <dir>/<name>.bin and <dir>/<name>.const. Throws
-    // IoError and FormatError.
-    static std::unique_ptr<AirKey> load(const std::string &dir, const std::string &name, const Gpu *gpu = nullptr);
+    // IoError and FormatError, and as the constructor.
+    static std::unique_ptr<AirKey> load(const std::string &dir, const std::string &name, GpuKey *gpu = nullptr);
 
     AirKey(const AirKey &) = delete;
     AirKey &operator=(const AirKey &) = delete;
@@ -155,6 +162,10 @@ public:
     // N and N' = 2^nBitsExt.
     const Lde &lde() const { return *extension; }
     uint64_t n() const { return airDegrees_.n; }
+#ifdef __USE_CUDA__
+    // Its device side, if the key is on the GPU; null otherwise.
+    const GpuAirKey *device() const { return deviceKey.get(); }
+#endif
 
     // Fixed column c (constPolsMap index) on H, N values in natural order.
     const FrElement *fixedEvaluations(uint64_t c) const { return fixedEvals.get() + c * n(); }
@@ -191,7 +202,8 @@ public:
 
     // The commitments [f(τ)]₁ of the fixed f, in the order of the layout, from the fixed columns of
     // the .const: their interpolants packed (pack()) and committed with `srs`, as the setup commits
-    // them for the vkey (commitFixed; nothing is blinded). One MSM per f, of its k·N coefficients.
+    // them for the vkey (commitFixed; nothing is blinded). One MSM per f, of its k·N coefficients;
+    // on the GPU, those the key computed on the device when it loaded, if `srs` commits there.
     // The prover never needs them, the verifier takes them from the vkey: the orchestrator compares
     // them, so that a .const the vkey was not set up with is refused instead of giving proofs that
     // do not verify. Throws std::invalid_argument if an f has more coefficients than `srs` has
@@ -230,18 +242,25 @@ private:
     uint64_t nFixed = 0;
     std::vector<LayoutPosition> qPositions; // by piece
     std::vector<StdHint> hints;
+#ifdef __USE_CUDA__
+    std::unique_ptr<GpuAirKey> deviceKey;
+#endif
 };
 
+// Throws FormatError, naming the AIR, if an f of `air`'s layout has more coefficients than an SRS of
+// nG1 powers [τ^i]₁.
+void checkSrsFits(const AirKey &air, uint64_t nG1);
+
 // The proving key of a proof (pilfflonk/docs/protocol.md#proof-sequence, step 1): the globalInfo,
-// the SRS and every AIR's key, and, on the GPU, the Gpu their MSMs and transforms run on. Immutable
-// once built: proofs may share it, from several threads.
+// the SRS and every AIR's key, and, on the GPU, its device side (GpuKey). Immutable once built:
+// proofs may share it, from several threads.
 class ProvingKey {
 public:
     // With a gpu, which must hold the SRS's powers [τ^i]₁ and be every AIR key's (AirKey's `gpu`),
-    // the SRS commits on it (Srs::setGpu). Throws std::invalid_argument if an AIR key's is another,
-    // or the gpu holds another number of points than the SRS.
+    // the SRS commits on its Gpu (Srs::setGpu). Throws std::invalid_argument if an AIR key's is
+    // another, or the gpu holds another number of points than the SRS.
     ProvingKey(GlobalInfo globalInfo, Srs srs, std::vector<std::vector<std::unique_ptr<AirKey>>> airs,
-               std::shared_ptr<const Gpu> gpu = nullptr);
+               std::shared_ptr<const GpuKey> gpu = nullptr);
 
     // Reads the provingKey/ at dir, as setup-pilfflonk writes it
     // (pilfflonk/docs/formats.md#provingkey):
@@ -252,10 +271,11 @@ public:
     // (pilfflonk/docs/protocol.md#transcript), which reads and checks the vkey. Throws IoError and
     // FormatError, and FormatError if an AIR's layout needs more powers [τ^i]₁ than the SRS holds
     // or its pilfflonkinfo is not the globalInfo's AIR. On Device::Gpu, the SRS's powers [τ^i]₁ are
-    // copied to the GPU once they are read, and the MSMs and transforms of the key and its proofs
-    // run there, the fixed columns' INTT first; the proofs are the same bit for bit. Throws
-    // std::invalid_argument before it reads anything if there is no GPU (gpuAvailable()), in a
-    // library built without one or on a machine without one.
+    // copied to the GPU once they are read, each AIR's key is on it (AirKey's `gpu`), and the MSMs
+    // and transforms of the key and its proofs run there; the proofs are the same bit for bit.
+    // Throws std::invalid_argument before it reads anything if there is no GPU (gpuAvailable()), in
+    // a library built without one or on a machine without one, and as AirKey's constructor if the
+    // device has not the memory of the key and a proof of each AIR.
     static std::unique_ptr<ProvingKey> load(const std::string &dir, Device device = Device::Cpu);
 
     ProvingKey(const ProvingKey &) = delete;
@@ -264,6 +284,8 @@ public:
     const GlobalInfo &globalInfo() const { return info; }
     const Srs &srs() const { return structuredReferenceString; }
     Device device() const { return gpu ? Device::Gpu : Device::Cpu; }
+    // Its device side, or null on the CPU.
+    const GpuKey *gpuKey() const { return gpu.get(); }
 
     // The key of air airId of airgroup airgroupId. Throws std::invalid_argument if there is none.
     const AirKey &air(uint64_t airgroupId, uint64_t airId) const;
@@ -271,8 +293,8 @@ public:
 private:
     GlobalInfo info;
     // Before the SRS and the AIR keys, which point to it: it outlives them. A shared_ptr, whose deleter
-    // is the GPU library's, so that a library built without the GPU never needs Gpu's destructor.
-    std::shared_ptr<const Gpu> gpu;
+    // is the GPU library's, so that a library built without the GPU never needs GpuKey's destructor.
+    std::shared_ptr<const GpuKey> gpu;
     Srs structuredReferenceString;
     std::vector<std::vector<std::unique_ptr<AirKey>>> airKeys;
 };

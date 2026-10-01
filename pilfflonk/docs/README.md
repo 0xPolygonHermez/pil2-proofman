@@ -351,7 +351,8 @@ them as Rust writes them.
   files, since the Makefile compiles every `.cpp` of the directories it lists. File names start with
   `pilfflonk_` and the namespace is `PilFflonk`, since every directory is on the include path.
 - **Build.** `./src/api/pilfflonk_api.*` and `./src/pilfflonk` are in the Makefile's source lists of
-  the CPU and GPU libraries. `pilfflonk_gpu.cpp` only goes into `libstarksgpu.a`.
+  the CPU and GPU libraries. The `*_gpu.cpp` files (compiled with g++) and `pilfflonk_kernels.cu`
+  (with nvcc) only go into `libstarksgpu.a`.
 - **Logs and timers.** `tracing`, and the C++ timers `TimerStart`/`TimerStopAndLog` with names
   `PILFFLONK_*`, logged at trace level (`-vv`).
 - **Format and lints.** `rustfmt` (`max_width = 120`) and `clippy -D warnings`.

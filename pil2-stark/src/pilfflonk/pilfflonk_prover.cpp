@@ -14,6 +14,9 @@
 #include "pilfflonk_fr.hpp"
 #include "thread_utils.hpp"
 #include "timer.hpp"
+#ifdef __USE_CUDA__
+#include "pilfflonk_instance_gpu.hpp"
+#endif
 
 namespace PilFflonk {
 
@@ -93,11 +96,19 @@ Instance::Instance(const ProvingKey &_pk, uint64_t airgroupId, uint64_t airId, c
     for (uint64_t s = 1; s <= info.nStages; ++s) {
         columns[s].assign(key.cmIds()[s].size() * N, Engine::engine.fr.zero());
     }
-    const std::vector<uint64_t> &positions = key.witnessColumns();
-    FrElement *stageOne = columns[1].data();
+#ifdef __USE_CUDA__
+    if (key.device() != nullptr) {
+        device = std::make_unique<InstanceGpu>(*key.device(), stage1, columns[1].data());
+    }
+    if (device == nullptr)
+#endif
+    {
+        const std::vector<uint64_t> &positions = key.witnessColumns();
+        FrElement *stageOne = columns[1].data();
 #pragma omp parallel for
-    for (uint64_t v = 0; v < N * C; ++v) {
-        stageOne[positions[v % C] * N + v / C] = fromCanonicalFr(stage1 + v * FR_BYTES);
+        for (uint64_t v = 0; v < N * C; ++v) {
+            stageOne[positions[v % C] * N + v / C] = fromCanonicalFr(stage1 + v * FR_BYTES);
+        }
     }
 
     challengeValues.assign(info.challengesMap.size(), Engine::engine.fr.zero());
@@ -105,6 +116,8 @@ Instance::Instance(const ProvingKey &_pk, uint64_t airgroupId, uint64_t airId, c
     polys.resize(info.cmPolsMap.size());
     TimerStopAndLog(PILFFLONK_INSTANCE);
 }
+
+Instance::~Instance() = default;
 
 uint64_t Instance::nCommitments(uint64_t stage) const {
     const std::vector<LayoutEntry> &layout = key.info().layout;
@@ -284,9 +297,40 @@ void Instance::computeImPols(uint64_t stage, std::vector<std::vector<FrElement>>
     }
 }
 
+std::vector<FrElement> Instance::drawBlinding(uint64_t stage) {
+    const std::vector<LayoutEntry> &layout = key.info().layout;
+    uint64_t n = 0;
+    for (uint64_t f = 0; f < layout.size(); ++f) {
+        if (layout[f].stage == stage) {
+            n += layout[f].k * key.blindLength(f);
+        }
+    }
+    std::vector<FrElement> factors(n);
+    FrElement *next = factors.data();
+    for (uint64_t f = 0; f < layout.size(); ++f) {
+        if (layout[f].stage != stage) {
+            continue;
+        }
+        const uint64_t b = key.blindLength(f);
+        for (uint64_t j = 0; j < layout[f].k; ++j, next += b) {
+            blinding->fill(next, b);
+        }
+    }
+    return factors;
+}
+
 std::vector<G1Point> Instance::commitF(uint64_t stage) {
     const PilfflonkInfo &info = key.info();
     const uint64_t N = key.n();
+    // p'(X) = p(X) + (X^N − 1)·b(X): blindCoefficients adds b_i at N + i and subtracts it at i
+    // (pilfflonk/docs/protocol.md#blinding).
+    std::vector<FrElement> factors = drawBlinding(stage);
+#ifdef __USE_CUDA__
+    if (device != nullptr) {
+        return device->commitStage(stage, columns[stage].data(), factors.data(), polys);
+    }
+#endif
+    FrElement *next = factors.data();
     std::vector<G1Point> commitments;
     for (uint64_t f = 0; f < info.layout.size(); ++f) {
         const LayoutEntry &entry = info.layout[f];
@@ -305,14 +349,9 @@ std::vector<G1Point> Instance::commitF(uint64_t stage) {
         TimerStartExpr(PILFFLONK_INTT, f);
         std::vector<std::unique_ptr<Poly>> interpolants = key.lde().intt(evals.data(), coefs.data(), k, b);
         TimerStopAndLogExpr(PILFFLONK_INTT, f);
-        // p'(X) = p(X) + (X^N − 1)·b(X): blindCoefficients adds b_i at N + i and subtracts it at i
-        // (pilfflonk/docs/protocol.md#blinding). The factors are drawn f by f, and column by column
-        // within an f.
-        std::vector<FrElement> factors(b);
         std::vector<Poly *> components(k);
-        for (uint64_t j = 0; j < k; ++j) {
-            blinding->fill(factors.data(), b);
-            interpolants[j]->blindCoefficients(factors.data(), static_cast<uint32_t>(b));
+        for (uint64_t j = 0; j < k; ++j, next += b) {
+            interpolants[j]->blindCoefficients(next, static_cast<uint32_t>(b));
             components[j] = interpolants[j].get();
             polys[entry.pols[j].id] = std::move(interpolants[j]);
         }
@@ -356,6 +395,9 @@ std::vector<G1Point> Instance::commitQ(const std::vector<FrElement> &challenges)
                                                      : "Q is committed already");
     }
     setChallenges(info.qStage(), challenges);
+#ifdef __USE_CUDA__
+    const CopyLog copies(pk.gpuKey(), "Q");
+#endif
     TimerStart(PILFFLONK_Q);
 
     // Q on the extended coset g·H' part by part (pilfflonk/docs/protocol.md#q-in-parts): each part
@@ -770,6 +812,9 @@ FrElement Opening::q(uint64_t instance) const {
 Opening::Proof Opening::open(Transcript &transcript) const {
     Engine::Fr &fr = Engine::engine.fr;
     Proof proof;
+#ifdef __USE_CUDA__
+    const CopyLog copies(pk->gpuKey(), "OPEN");
+#endif
     TimerStart(PILFFLONK_OPEN);
     proof.shplonk = shplonk->open(pk->srs(), transcript);
     TimerStopAndLog(PILFFLONK_OPEN);
