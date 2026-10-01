@@ -56,28 +56,15 @@ struct SlotHintPlan {
 };
 
 
-// Compile this air's witness_calc hints into a schedule a slot can run, reading cm1 through
-// `layout`. `ok` in the result says whether every hint was expressible.
-inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, MulPackedLayout layout) {
-    SlotHintPlan plan;
-    plan.nRows = 1ULL << setupCtx.starkInfo.starkStruct.nBits;
-    const uint64_t nh = setupCtx.expressionsBin.getNumberHintIdsByName("witness_calc");
-    if (nh == 0) { plan.ok = true; return plan; }          // nothing to do is a valid plan
-    if (layout.widths == nullptr || layout.widths->empty() || layout.wordsPerRow == 0) {
-        plan.why = "air is not packed"; return plan;
-    }
-    if (!layout.build()) { plan.why = "packed layout does not fit the row"; return plan; }
-
-    std::vector<uint64_t> ids(nh);
-    setupCtx.expressionsBin.getHintIdsByName(ids.data(), "witness_calc");
-    const uint64_t bcs = 1 + setupCtx.starkInfo.nStages + 3 + setupCtx.starkInfo.customCommits.size();
-
-    // Pass 1: the stage-1 columns these hints write, and where each lands in the side buffer. A hint
-    // into an air or airgroup value leaves cm1 alone; the contribution hashes only the host's air
-    // values and the proof recomputes both, so the slot skips it.
-    std::map<uint32_t, uint32_t> slotOf;
-    std::vector<bool> intoValue(nh, false);
-    for (uint64_t i = 0; i < nh; ++i)
+// Pass 1, shared with the sizing: the stage-1 columns these hints write, and where each lands in the
+// side buffer. A hint into an air or airgroup value leaves cm1 alone; the contribution hashes only the
+// host's air values and the proof recomputes both, so the slot skips it. False (with `why`) on refusal.
+inline bool slotHintDests(SetupCtx& setupCtx, SlotHintPlan& plan, std::vector<uint64_t>& ids,
+                          std::map<uint32_t, uint32_t>& slotOf, std::vector<bool>& intoValue) {
+    ids.resize(setupCtx.expressionsBin.getNumberHintIdsByName("witness_calc"));
+    if (!ids.empty()) setupCtx.expressionsBin.getHintIdsByName(ids.data(), "witness_calc");
+    intoValue.assign(ids.size(), false);
+    for (uint64_t i = 0; i < ids.size(); ++i)
         for (auto& f : setupCtx.expressionsBin.hints[ids[i]].fields) {
             if (f.name != "reference" || f.values.empty()) continue;
             if (f.values[0].operand == opType::airvalue) {
@@ -90,14 +77,43 @@ inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, MulPackedLayout layout
                 plan.computedAirgroupValues.insert(mulValuePos(setupCtx.starkInfo.airgroupValuesMap, f.values[0].id));
                 continue;
             }
-            if (f.values[0].operand != opType::cm) { plan.why = "hint writes something other than a column"; return plan; }
+            if (f.values[0].operand != opType::cm) { plan.why = "hint writes something other than a column"; return false; }
             const auto& pm = setupCtx.starkInfo.cmPolsMap[f.values[0].id];
-            if (pm.stage != 1) { plan.why = "hint writes a later stage"; return plan; }
+            if (pm.stage != 1) { plan.why = "hint writes a later stage"; return false; }
             for (uint64_t k = 0; k < pm.dim; ++k) {
                 const uint32_t col = (uint32_t)(pm.stagePos + k);
                 if (!slotOf.count(col)) { const uint32_t n = (uint32_t)slotOf.size(); slotOf[col] = n; }
             }
         }
+    return true;
+}
+
+// Distinct stage-1 columns the air's witness_calc hints write; -1 when the slot refuses them.
+inline int64_t slotHintDestCount(SetupCtx& setupCtx) {
+    SlotHintPlan plan;
+    std::vector<uint64_t> ids;
+    std::map<uint32_t, uint32_t> slotOf;
+    std::vector<bool> intoValue;
+    return slotHintDests(setupCtx, plan, ids, slotOf, intoValue) ? (int64_t)slotOf.size() : -1;
+}
+
+// Compile this air's witness_calc hints into a schedule a slot can run, reading cm1 through
+// `layout`. `ok` in the result says whether every hint was expressible.
+inline SlotHintPlan slotHintBuildPlan(SetupCtx& setupCtx, MulPackedLayout layout) {
+    SlotHintPlan plan;
+    plan.nRows = 1ULL << setupCtx.starkInfo.starkStruct.nBits;
+    const uint64_t nh = setupCtx.expressionsBin.getNumberHintIdsByName("witness_calc");
+    if (nh == 0) { plan.ok = true; return plan; }          // nothing to do is a valid plan
+    if (layout.widths == nullptr || layout.widths->empty() || layout.wordsPerRow == 0) {
+        plan.why = "air is not packed"; return plan;
+    }
+    if (!layout.build()) { plan.why = "packed layout does not fit the row"; return plan; }
+
+    const uint64_t bcs = 1 + setupCtx.starkInfo.nStages + 3 + setupCtx.starkInfo.customCommits.size();
+    std::vector<uint64_t> ids;
+    std::map<uint32_t, uint32_t> slotOf;
+    std::vector<bool> intoValue;
+    if (!slotHintDests(setupCtx, plan, ids, slotOf, intoValue)) return plan;
 
     // Pass 2: compile each hint in declaration order, rewriting operands to what a slot has. A hint
     // column is accepted only once an EARLIER hint wrote it; forward references are refused.

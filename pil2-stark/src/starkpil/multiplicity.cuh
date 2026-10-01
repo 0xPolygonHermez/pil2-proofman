@@ -15,6 +15,29 @@
 #include "exit_process.hpp"
 #include "cuda_utils.cuh"
 #include "multiplicity.hpp"
+#include "late_arena.hpp"
+
+// Arena when the unified buffer exists, cudaMalloc for the standalone tools; never a silent overrun.
+inline void *lateAllocOrDie(int gpuId, const std::string &tag, uint64_t bytes) {
+    void *p = nullptr;
+    switch (lateArenaAlloc(gpuId, tag, bytes, &p)) {
+        case LateRc::Ok: return p;
+        case LateRc::Unbound: CHECKCUDAERR(cudaMalloc(&p, bytes)); return p;
+        case LateRc::Overrun:
+        case LateRc::Regrow:
+            zklog.error("late region: '" + tag + "' needs " + std::to_string(bytes) + " B on gpu " +
+                        std::to_string(gpuId) + " beyond its plan (used " + std::to_string(lateArenaUsed(gpuId)) +
+                        " B of " + std::to_string(lateArenaCap(gpuId)) +
+                        " B); the Rust sizing (plan_late_region) and this allocation disagree");
+            exitProcess();
+    }
+    return nullptr;
+}
+
+// Arena blocks belong to the unified buffer; only the cudaMalloc fallback is freed.
+inline void lateRelease(int gpuId, void *p) {
+    if (p != nullptr && !lateArenaOwns(gpuId, p)) CHECKCUDAERR(cudaFree(p));
+}
 
 // ---------------------------------------------------------------------------------------------
 // Every host<->device operation below runs on a per-device NON-BLOCKING stream. The legacy
@@ -103,10 +126,7 @@ inline MulAcc* mul_acc_init(int gpuId, uint64_t n_counters) {
     MulAcc* a = new MulAcc();
     a->gpuId = gpuId;
     a->n_counters = n_counters;
-    if (cudaMalloc(&a->d_acc, n_counters * sizeof(uint64_t)) != cudaSuccess) {
-        delete a;
-        return nullptr;
-    }
+    a->d_acc = (uint64_t *)lateAllocOrDie(gpuId, "mul.acc", n_counters * sizeof(uint64_t));
     mulMemsetSync(gpuId, a->d_acc, 0, n_counters * sizeof(uint64_t));
     return a;
 }
@@ -143,13 +163,7 @@ inline void mul_alloc_devices(const int* gpuIds, int nGpus) {
         for (int g = 0; g < nGpus; ++g) {
             auto key = std::make_pair(L.airKey, gpuIds[g]);
             if (mulAccs().count(key)) continue;
-            MulAcc* a = mul_acc_init(gpuIds[g], L.nCounters);
-            if (a == nullptr) {
-                zklog.error("multiplicity accumulator alloc failed: "
-                            + std::to_string(L.nCounters * sizeof(uint64_t) / 1000000) + " MB");
-                exitProcess();
-            }
-            mulAccs()[key] = a;
+            mulAccs()[key] = mul_acc_init(gpuIds[g], L.nCounters);
             // Per (air, gpu); mul_alloc logs the per-device aggregate.
             zklog.trace("Multiplicity accumulator: "
                        + std::to_string(L.nCounters * sizeof(uint64_t) / 1000000)
@@ -159,41 +173,40 @@ inline void mul_alloc_devices(const int* gpuIds, int nGpus) {
     }
 }
 
-// Each table's exact-match map, mirrored per device. Setup-derived, never freed.
-inline std::map<std::pair<uint64_t,int>, uint64_t*>& mulMapDev() {
-    static std::map<std::pair<uint64_t,int>, uint64_t*> m;
+// Each table's exact-match map, mirrored per device: (pointer, arena generation it was copied at).
+inline std::map<std::pair<uint64_t,int>, std::pair<uint64_t*, uint32_t>>& mulMapDev() {
+    static std::map<std::pair<uint64_t,int>, std::pair<uint64_t*, uint32_t>> m;
     return m;
 }
 
-// Mirror every table's map onto one GPU, once per (table, gpu). Failure is fatal, since the
-// lookups it decodes would silently count nothing.
+// Mirror every table's map onto one GPU, once per (table, gpu) and arena generation.
 inline void mul_alloc_maps(int gpuId) {
     CHECKCUDAERR(cudaSetDevice(gpuId));
+    const uint32_t gen = lateArenaGen(gpuId);
     for (const auto& kv : mulTableMaps()) {
         auto key = std::make_pair(kv.first, gpuId);
         const std::vector<uint64_t>& host = kv.second.kv;
-        if (mulMapDev().count(key) || host.empty()) continue;
+        if (host.empty()) continue;
+        auto it = mulMapDev().find(key);
+        if (it != mulMapDev().end() && it->second.second == gen) continue;
         const size_t bytes = host.size() * sizeof(uint64_t);
-        uint64_t* d = nullptr;
-        if (cudaMalloc(&d, bytes) != cudaSuccess) {
-            zklog.error("multiplicity: could not allocate the map for table " + std::to_string(kv.first)
-                        + " (" + std::to_string(bytes / 1000000) + " MB)");
-            exitProcess();
-        }
+        // An invalidated arena keeps the address (plans embed it): re-copy in place.
+        uint64_t* d = it != mulMapDev().end()
+            ? it->second.first
+            : (uint64_t*)lateAllocOrDie(gpuId, "mul.map." + std::to_string(kv.first), bytes);
         mulCopySync(gpuId, d, host.data(), bytes, cudaMemcpyHostToDevice);
-        mulMapDev()[key] = d;
+        mulMapDev()[key] = {d, gen};
     }
 }
 
 inline const uint64_t* mulMapFor(uint64_t tableId, int gpuId) {
     auto it = mulMapDev().find(std::make_pair(tableId, gpuId));
-    return it == mulMapDev().end() ? nullptr : it->second;
+    return it == mulMapDev().end() ? nullptr : it->second.first;
 }
 
 // Folding the other GPUs' partials into the exporting one. Per device: two streams, each with a
 // staging chunk, so one chunk's peer copy overlaps the previous chunk's add; `done` marks the end
 // of a device's pulls. Allocated by mul_alloc when there are several GPUs, never on the commit path.
-static constexpr uint64_t MUL_PEER_CHUNK = 4ull << 20;   // counters per staging (32 MB)
 struct MulPeer {
     cudaStream_t stream[2] = {};
     uint64_t* stage[2] = {};
@@ -220,7 +233,7 @@ inline void mul_alloc_peers(const std::vector<int>& gpuIds) {
         MulPeer& p = mulPeers()[a];
         for (int k = 0; k < 2; k++) {
             CHECKCUDAERR(cudaStreamCreateWithFlags(&p.stream[k], cudaStreamNonBlocking));
-            CHECKCUDAERR(cudaMalloc(&p.stage[k], MUL_PEER_CHUNK * sizeof(uint64_t)));
+            p.stage[k] = (uint64_t*)lateAllocOrDie(a, "mul.peer." + std::to_string(k), MUL_PEER_CHUNK * sizeof(uint64_t));
             CHECKCUDAERR(cudaEventCreateWithFlags(&p.done[k], cudaEventDisableTiming));
         }
     }
@@ -279,10 +292,13 @@ inline void mul_alloc_oob(int gpuId) {
     CHECKCUDAERR(cudaSetDevice(gpuId));
     uint64_t*& oob = mulOobMap()[gpuId];
     if (oob == nullptr) {
-        CHECKCUDAERR(cudaMalloc(&oob, MUL_OOB_SLOTS * sizeof(uint64_t)));
+        oob = (uint64_t*)lateAllocOrDie(gpuId, "mul.oob", MUL_OOB_SLOTS * sizeof(uint64_t));
         mulMemsetSync(gpuId, oob, 0, MUL_OOB_SLOTS * sizeof(uint64_t));
     }
 }
+
+// Drop gpuId's mirrors and the device programs pointing into them; the next mul_alloc rebuilds them.
+void mul_release_device(int gpuId);
 
 // Once per proof, from ProofMan::reset.
 inline void mul_reset_all() {

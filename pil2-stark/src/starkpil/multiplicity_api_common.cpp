@@ -9,7 +9,9 @@
 #include "multiplicity_decoders.hpp"
 #include "multiplicity_plan.hpp"
 #include "multiplicity_cpu.hpp"
+#include "witness_hints_slot.hpp"
 #include "zklog.hpp"
+#include "late_arena.hpp"
 
 extern "C" {
 
@@ -66,6 +68,13 @@ uint64_t mul_air_plan_error(void *pSetupCtx_, uint64_t airgroupId, uint64_t airI
 uint64_t mul_air_reads_aux(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId) {
     if (mulDecoders().empty() || pSetupCtx_ == nullptr) return 0;
     return (mulPlanFor(*(SetupCtx *)pSetupCtx_, airgroupId, airId).srcMask & (1u << MUL_SRC_AUX)) ? 1 : 0;
+}
+
+// The slot commit's col-major predicate, for the Rust slot sizing.
+uint64_t mul_scatter_wants_colmajor(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t wordsPerRow,
+                                    uint64_t indexed) {
+    if (mulDecoders().empty() || pSetupCtx_ == nullptr) return 0;
+    return mulPlanWantsColMajor(mulPlanFor(*(SetupCtx *)pSetupCtx_, airgroupId, airId), wordsPerRow, indexed != 0) ? 1 : 0;
 }
 
 // --- a table air's own rows, evaluated from its fixed columns for the host's row-map fit ---
@@ -164,4 +173,33 @@ void register_mul_vt(uint64_t airgroupId, uint64_t airId, uint64_t numRows, uint
     mul_register_vt(airgroupId, airId, numRows, numCols, tableIds, accBases, nTables);
     mul_materialize_decoders();
 }
+
+// Late-region bytes per GPU: mul_alloc's mirrors (the slot scratch lives in the slots); the fit must have run.
+uint64_t late_region_bytes(uint64_t withPeers) {
+    uint64_t acc = 0;
+    for (const auto& L : mulVtLayouts())
+        if (mulLayoutHostsMigrated(L)) acc += L.nCounters * sizeof(uint64_t);
+    std::vector<uint64_t> once{acc, MUL_OOB_SLOTS * sizeof(uint64_t)};
+    for (const auto& kv : mulTableMaps()) once.push_back(kv.second.kv.size() * sizeof(uint64_t));
+    if (withPeers) once.push_back(2 * MUL_PEER_CHUNK * sizeof(uint64_t));
+    return latePlanBytes(once);
+}
+
+// Upper bound of this air's slot scratch (elements); the slot layout places it after the air's commit area.
+void stream_commit_scratch_elems(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId,
+                                 uint64_t *side, uint64_t *cons, uint64_t *custom) {
+    SetupCtx &s = *(SetupCtx *)pSetupCtx_;
+    const StarkInfo &si = s.starkInfo;
+    const uint64_t N = 1ull << si.starkStruct.nBits;
+    // 65536 = PINNED_AUX_VALUES_MAX, from a CUDA-only header.
+    const uint64_t nAll = si.nPublics + si.proofValuesSize + si.airgroupValuesSize + si.airValuesSize;
+    const uint64_t nVals = nAll <= 65536 ? nAll : 0;
+    const int64_t dest = slotHintDestCount(s);
+    const bool hints = dest > 0;
+    const bool jobs = !mulDecoders().empty() && !mulPlanFor(s, airgroupId, airId).jobs.empty();
+    *side = (hints || nVals != 0) ? (uint64_t)(hints ? dest : 0) * N + nVals : 0;
+    *cons = (hints || jobs) ? si.nConstants * N : 0;
+    *custom = ((hints || jobs) && !si.customCommits.empty()) ? si.mapSectionsN.at(si.customCommits[0].name + "0") * N : 0;
+}
+
 } // extern "C"

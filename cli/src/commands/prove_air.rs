@@ -92,7 +92,7 @@ pub struct ProveAirCmd {
 }
 
 /// Per-run `--repeat` timings. Run 1 is kept out of the stats: it is the cold one.
-fn report_repeat(label: &str, times: &[std::time::Duration]) {
+pub(crate) fn report_repeat(label: &str, times: &[std::time::Duration]) {
     let ms = |d: &std::time::Duration| d.as_secs_f64() * 1e3;
     for (i, d) in times.iter().enumerate() {
         tracing::info!("    {label} run {:<3} {:>9.2} ms{}", i + 1, ms(d), if i == 0 { "   (cold)" } else { "" });
@@ -336,7 +336,7 @@ impl ProveAirCmd {
         // patched with this AIR's const sizes, then set_device_buffers(aggregation: true).
         let mut setups_vadcop: SetupsVadcop<Goldilocks> = SetupsVadcop::new(&pctx.global_info, false, false, self.gpu)?;
         setups_vadcop.total_const_pols_size = setup.const_pols_size_packed;
-        pctx.set_device_buffers(&sctx, &setups_vadcop, true, self.gpu, 1, 1, false, 0)?;
+        pctx.set_device_buffers(&sctx, &setups_vadcop, true, self.gpu, 1, 1, false, 0, 0, 0, 0)?;
 
         // The proofType must match the one gen_recursive_proof_c reads the const pols under.
         let proof_type_str: &str = (*proof_type).into();

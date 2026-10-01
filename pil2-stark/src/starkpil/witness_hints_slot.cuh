@@ -13,7 +13,7 @@ struct SlotHintValOffsets {
     uint64_t publics = 0, proofValues = 0, airgroupValues = 0, airValues = 0;
 };
 
-// This air's plan on one GPU, built once and shared by every instance (side buffer is per-slot).
+// This air's plan on one GPU, built once and shared by every instance (the side buffer is slot scratch).
 struct SlotHintPlanDev {
     const MulInsnDev *prog = nullptr;
     const uint32_t   *destCols = nullptr;
@@ -25,9 +25,8 @@ struct SlotHintPlanDev {
 SlotHintPlanDev slotHintPlanDevice(const SlotHintPlan &plan, uint64_t airgroupId, uint64_t airId,
                                    int gpuId);
 
-// Per-(device, slot) side buffer, sized by the warm-up (`grow`) to the widest air; a commit never
-// allocates it.
-uint64_t *slotHintSideBuffer(int gpuId, uint64_t slotIdx, size_t elems, bool grow = false);
+// Drops gpuId's device hint programs (mul_release_device).
+void slotHintRelease(int gpuId);
 
 // Evaluate this air's witness_calc hints into `dSide`, one column per plan slot.
 // `hOps` is a HOST array, one launch per hint in declaration order. `dConstPols` must be the
