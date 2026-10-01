@@ -813,6 +813,13 @@ extern "C" {
     );
     pub fn mul_air_has_jobs(pSetupCtx: *mut ::std::os::raw::c_void, airgroupId: u64, airId: u64) -> u64;
     pub fn mul_air_reads_aux(pSetupCtx: *mut ::std::os::raw::c_void, airgroupId: u64, airId: u64) -> u64;
+    pub fn mul_air_plan_error(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        out: *mut ::std::os::raw::c_char,
+        cap: u64,
+    ) -> u64;
     pub fn mul_proves_hints(pSetupCtx: *mut ::std::os::raw::c_void, cols: *mut i64, lens: *mut u64, cap: u64) -> u64;
     pub fn mul_eval_proves_hint(
         pSetupCtx: *mut ::std::os::raw::c_void,

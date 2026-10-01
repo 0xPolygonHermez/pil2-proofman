@@ -3,6 +3,8 @@
 // No CUDA in the include chain: compiled into both libstarks.a and libstarksgpu.a.
 
 #include <cstdint>
+#include <cstring>
+#include <algorithm>
 #include "multiplicity.hpp"
 #include "multiplicity_decoders.hpp"
 #include "multiplicity_plan.hpp"
@@ -49,6 +51,15 @@ uint64_t mul_commit_count() { return mulCommits().load(std::memory_order_acquire
 uint64_t mul_air_has_jobs(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId) {
     if (mulDecoders().empty() || pSetupCtx_ == nullptr) return 0;
     return mulPlanFor(*(SetupCtx *)pSetupCtx_, airgroupId, airId).jobs.empty() ? 0 : 1;
+}
+
+// Why the air's lookups into prover-owned tables cannot be counted, copied into `out` (at most `cap`
+// bytes); returns its full length, 0 when the plan is fine.
+uint64_t mul_air_plan_error(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *out, uint64_t cap) {
+    if (mulDecoders().empty() || pSetupCtx_ == nullptr) return 0;
+    const std::string& e = mulPlanFor(*(SetupCtx *)pSetupCtx_, airgroupId, airId).error;
+    if (out != nullptr && cap != 0) std::memcpy(out, e.data(), std::min<uint64_t>(cap, e.size()));
+    return e.size();
 }
 
 // Whether such a lookup reads a stage-2 or im-pol value, which no commit can count.

@@ -2,6 +2,7 @@
 #define MULTIPLICITY_PLAN_HPP
 
 #include <cstdint>
+#include <string>
 #include <vector>
 #include <map>
 #include <mutex>
@@ -22,6 +23,7 @@ struct MulPlan {
     uint32_t                    srcMask = 0;
     uint64_t                    maxRows = 0;       // tallest job: the row-stationary grid height
     uint64_t                    cm1Reads = 0;      // cm1 operands over `prog`, for the col-major choice
+    std::string                 error;             // why the air's lookups cannot be counted; no jobs then
 };
 
 inline bool mulPlanStreamable(const MulPlan& p) {
@@ -60,7 +62,8 @@ inline std::string mulSrcMaskNames(uint32_t mask) {
 }
 
 // Walk `gsum_debug_data` once per air and turn every lookup into a prover-owned table into a job.
-// One that does not compile, or whose hint cannot be read, is fatal: nothing else counts it.
+// One that does not compile, or whose hint cannot be read, fails the plan (`error`): nothing else
+// counts it, so the host rejects the setup.
 inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId) {
     MulPlan plan;
     std::map<std::string, uint32_t> progCache;
@@ -72,11 +75,11 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
     const uint64_t nRows = 1ULL << setupCtx.starkInfo.starkStruct.nBits;
     const uint64_t bufferCommitSize = 1 + setupCtx.starkInfo.nStages + 3
                                     + setupCtx.starkInfo.customCommits.size();
-    auto fatal = [&](uint32_t tableId, const std::string& why) {
-        zklog.error("multiplicity: air " + std::to_string(airgroupId) + "/" + std::to_string(airId)
-                    + " looks up prover-owned table " + std::to_string(tableId) + ", but " + why
-                    + " -- the prover cannot count it");
-        exitProcess();
+    auto fail = [&](uint32_t tableId, const std::string& why) {
+        MulPlan bad;
+        bad.error = "air " + std::to_string(airgroupId) + "/" + std::to_string(airId) + " looks up prover-owned table "
+                    + std::to_string(tableId) + ", but " + why + " -- the prover cannot count it";
+        return bad;
     };
 
     for (uint64_t i = 0; i < n; ++i) {
@@ -100,7 +103,7 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
             if (fOp != nullptr)
                 for (const auto& ov : fOp->values)
                     if (ov.operand == opType::number && mulDecoderFor(ov.value) != nullptr)
-                        fatal((uint32_t)ov.value, "its gsum_debug_data hint is not an assumes lookup the "
+                        return fail((uint32_t)ov.value, "its gsum_debug_data hint is not an assumes lookup the "
                                                   "plan can read");
             continue;
         }
@@ -152,12 +155,12 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
             // A K-element tuple needs an exact map; a 1-element tuple is a range check and uses
             // `bias`.
             if (fEx->values.size() != 1 && dec.mapSlots == 0)
-                fatal(dec.table_id, "it sends a " + std::to_string(fEx->values.size())
+                return fail(dec.table_id, "it sends a " + std::to_string(fEx->values.size())
                                     + "-element tuple and the table has no fitted row map");
-            if (!sel.why.empty()) fatal(dec.table_id, "its selector does not compile (" + sel.why + ")");
-            if (!bus.why.empty()) fatal(dec.table_id, "its bus id does not compile (" + bus.why + ")");
+            if (!sel.why.empty()) return fail(dec.table_id, "its selector does not compile (" + sel.why + ")");
+            if (!bus.why.empty()) return fail(dec.table_id, "its bus id does not compile (" + bus.why + ")");
             if (!val.why.empty() && dec.mapSlots == 0)
-                fatal(dec.table_id, "its value does not compile (" + val.why + ")");
+                return fail(dec.table_id, "its value does not compile (" + val.why + ")");
 
             MulJobDev job{};
             // Counters live in the air hosting the table, not the air being committed.
@@ -170,17 +173,14 @@ inline MulPlan mulBuildPlan(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t ai
             job.nKey        = dec.nKey;
             // An exact map looks the tuple up verbatim: one program per key column.
             if (dec.mapSlots != 0) {
-                if (dec.nKey == 0 || dec.nKey > fEx->values.size()) {
-                    zklog.error("multiplicity: table " + std::to_string(dec.table_id) + " maps on "
-                                + std::to_string(dec.nKey) + " columns but the lookup supplies "
-                                + std::to_string(fEx->values.size()));
-                    exitProcess();
-                }
+                if (dec.nKey == 0 || dec.nKey > fEx->values.size())
+                    return fail(dec.table_id, "its map keys on " + std::to_string(dec.nKey)
+                                              + " columns and the lookup sends " + std::to_string(fEx->values.size()));
                 job.keyRefOff = (uint32_t)plan.keyRefs.size();
                 for (uint32_t c = 0; c < dec.nKey; ++c) {
                     const Field key = compile(&fEx->values[c]);
                     if (!key.why.empty())
-                        fatal(dec.table_id, "key column " + std::to_string(c) + " does not compile ("
+                        return fail(dec.table_id, "key column " + std::to_string(c) + " does not compile ("
                                             + key.why + ")");
                     plan.keyRefs.push_back(key.off);
                     plan.keyRefs.push_back(key.len);

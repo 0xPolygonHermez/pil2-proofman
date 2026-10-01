@@ -150,11 +150,11 @@ use crate::{
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, load_custom_commit_c, calculate_impols_expressions_c, mul_scatter_c,
-    mul_air_device_owned_c, mul_air_has_jobs_c, mul_air_has_owned_c, mul_air_reads_aux_c, mul_commit_count_c,
-    mul_set_device_export_c, mul_sync_commits_c, MulSync, calculate_witness_expressions_c, launch_callback_c,
-    initialize_instance_c, calculate_trace_instance_c, wait_trace_h2d_done_c, get_stream_commit_slots_c,
-    get_stream_commit_gpus_c, commit_witness_streaming_c, stream_commit_slot_bytes_c, configure_stream_commit_slots_c,
-    get_stream_id_proof_c,
+    mul_air_device_owned_c, mul_air_has_jobs_c, mul_air_has_owned_c, mul_air_plan_error_c, mul_air_reads_aux_c,
+    mul_commit_count_c, mul_set_device_export_c, mul_sync_commits_c, MulSync, calculate_witness_expressions_c,
+    launch_callback_c, initialize_instance_c, calculate_trace_instance_c, wait_trace_h2d_done_c,
+    get_stream_commit_slots_c, get_stream_commit_gpus_c, commit_witness_streaming_c, stream_commit_slot_bytes_c,
+    configure_stream_commit_slots_c, get_stream_id_proof_c,
 };
 
 use std::{
@@ -3049,14 +3049,23 @@ where
         let migrated = mul_migrated_tables_c();
         // Every commit counts before stage 2, so a lookup over a stage-2 or im-pol value into a table
         // the prover counts cannot be counted. Needs the decoders: the plans are built from them.
-        let mut reads_aux = Vec::new();
+        let (mut reads_aux, mut plan_errors) = (Vec::new(), Vec::new());
         for (airgroup_id, airs) in self.pctx.global_info.airs.iter().enumerate() {
             for air_id in 0..airs.len() {
                 let Ok(setup) = self.sctx.get_setup(airgroup_id, air_id) else { continue };
-                if mul_air_reads_aux_c((&setup.p_setup).into(), airgroup_id as u64, air_id as u64) {
+                let p_setup = (&setup.p_setup).into();
+                if let Some(e) = mul_air_plan_error_c(p_setup, airgroup_id as u64, air_id as u64) {
+                    plan_errors.push(e);
+                } else if mul_air_reads_aux_c(p_setup, airgroup_id as u64, air_id as u64) {
                     reads_aux.push((airgroup_id, air_id));
                 }
             }
+        }
+        if !plan_errors.is_empty() {
+            return Err(ProofmanError::InvalidSetup(format!(
+                "{}; keep those tables in ProofmanOptions::std_owned_tables",
+                plan_errors.join("; ")
+            )));
         }
         if !reads_aux.is_empty() {
             return Err(ProofmanError::InvalidSetup(format!(

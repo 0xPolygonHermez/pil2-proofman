@@ -2010,6 +2010,17 @@ pub fn mul_air_has_jobs_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -
     unsafe { mul_air_has_jobs(p_setup, airgroup_id, air_id) != 0 }
 }
 
+/// Why the air's lookups into prover-owned tables cannot be counted, if they cannot.
+pub fn mul_air_plan_error_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> Option<String> {
+    let n = unsafe { mul_air_plan_error(p_setup, airgroup_id, air_id, std::ptr::null_mut(), 0) } as usize;
+    if n == 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; n];
+    unsafe { mul_air_plan_error(p_setup, airgroup_id, air_id, buf.as_mut_ptr() as *mut c_char, n as u64) };
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
 /// Whether such a lookup reads a stage-2 or im-pol value.
 pub fn mul_air_reads_aux_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
     unsafe { mul_air_reads_aux(p_setup, airgroup_id, air_id) != 0 }
