@@ -618,6 +618,44 @@ fn fit_air_maps<F: PrimeField64>(
     Ok(out)
 }
 
+/// The global hint's two air lists must pair up.
+fn check_vt_air_lists(airgroups: usize, airs: usize) -> ProofmanResult<()> {
+    if airgroups != airs {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "virtual_table_data_global lists {airgroups} airgroup ids but {airs} air ids"
+        )));
+    }
+    Ok(())
+}
+
+/// The air's single `virtual_table_data` hint.
+fn vt_air_hint(hints: &[u64], airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
+    match hints {
+        [h] => Ok(*h as usize),
+        _ => Err(ProofmanError::InvalidSetup(format!(
+            "virtual-table air {airgroup_id}:{air_id} has {} virtual_table_data hints, expected one",
+            hints.len()
+        ))),
+    }
+}
+
+/// One counter base per table, distinct table ids and bases, every base inside the accumulator:
+/// heights are the gaps between sorted bases, so anything else overlaps or underflows.
+fn check_vt_geometry(table_ids: &[u64], acc_bases: &[u64], num_rows: u64, num_cols: u64) -> Result<(), String> {
+    if table_ids.len() != acc_bases.len() {
+        return Err(format!("{} table ids but {} acc_heights", table_ids.len(), acc_bases.len()));
+    }
+    let total = num_rows.checked_mul(num_cols).ok_or("num_rows * num_muls overflows")?;
+    if let Some(b) = acc_bases.iter().find(|&&b| b >= total) {
+        return Err(format!("acc_height {b} is outside its {total} counters"));
+    }
+    let distinct = |v: &[u64]| v.iter().collect::<HashSet<_>>().len() == v.len();
+    if !distinct(table_ids) || !distinct(acc_bases) {
+        return Err("repeated table ids or acc_heights".into());
+    }
+    Ok(())
+}
+
 pub fn collect_virtual_table_layouts<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
@@ -628,12 +666,17 @@ pub fn collect_virtual_table_layouts<F: PrimeField64>(
     }
     let airgroup_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, global_hint[0], "airgroup_ids")?;
     let air_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, global_hint[0], "air_ids")?;
+    check_vt_air_lists(airgroup_ids.len(), air_ids.len())?;
 
     let mut out = Vec::with_capacity(airgroup_ids.len());
     for i in 0..airgroup_ids.len() {
         let (airgroup_id, air_id) = (airgroup_ids[i], air_ids[i]);
         let setup = sctx.get_setup(airgroup_id, air_id)?;
-        let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "virtual_table_data")[0] as usize;
+        let hint_id = vt_air_hint(
+            &get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "virtual_table_data"),
+            airgroup_id,
+            air_id,
+        )?;
         let o = HintFieldOptions::default();
         let table_ids = get_hint_field_constant_a_as::<usize, F>(
             pctx,
@@ -655,14 +698,17 @@ pub fn collect_virtual_table_layouts<F: PrimeField64>(
         )?;
         let num_muls =
             get_hint_field_constant_as::<usize, F>(pctx, setup, airgroup_id, air_id, hint_id, "num_muls", o)?;
-        out.push(VtLayout {
+        let layout = VtLayout {
             airgroup_id: airgroup_id as u64,
             air_id: air_id as u64,
             num_rows: pctx.global_info.airs[airgroup_id][air_id].num_rows as u64,
             num_cols: num_muls as u64,
             table_ids: table_ids.iter().map(|id| *id as u64).collect(),
             acc_bases: acc_heights,
-        });
+        };
+        check_vt_geometry(&layout.table_ids, &layout.acc_bases, layout.num_rows, layout.num_cols)
+            .map_err(|e| ProofmanError::InvalidSetup(format!("virtual-table air {airgroup_id}:{air_id}: {e}")))?;
+        out.push(layout);
     }
     Ok(out)
 }
@@ -683,6 +729,7 @@ impl<F: PrimeField64> StdVirtualTable<F> {
         let airgroup_ids =
             get_global_hint_field_constant_a_as::<usize, F>(sctx, virtual_table_global_hint[0], "airgroup_ids")?;
         let air_ids = get_global_hint_field_constant_a_as::<usize, F>(sctx, virtual_table_global_hint[0], "air_ids")?;
+        check_vt_air_lists(airgroup_ids.len(), air_ids.len())?;
 
         let num_virtual_tables = airgroup_ids.len();
         let mut virtual_tables = Vec::with_capacity(num_virtual_tables);
@@ -695,7 +742,11 @@ impl<F: PrimeField64> StdVirtualTable<F> {
 
             // Get the Virtual Table structure
             let setup = sctx.get_setup(airgroup_id, air_id)?;
-            let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "virtual_table_data")[0] as usize;
+            let hint_id = vt_air_hint(
+                &get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "virtual_table_data"),
+                airgroup_id,
+                air_id,
+            )?;
 
             let hint_opt = HintFieldOptions::default();
             let table_ids = get_hint_field_constant_a_as::<usize, F>(
@@ -1216,6 +1267,23 @@ mod tests {
 
     // -----------------------------------------------------------------------------------------
     // Row-map fitting on small hand-built (tuple, row) samples; no proving key needed.
+
+    #[test]
+    fn malformed_virtual_table_setup_is_refused() {
+        assert!(check_vt_air_lists(2, 2).is_ok());
+        assert!(check_vt_air_lists(2, 1).is_err());
+        assert_eq!(vt_air_hint(&[7], 0, 3).unwrap(), 7);
+        assert!(vt_air_hint(&[], 0, 3).is_err());
+        assert!(vt_air_hint(&[7, 8], 0, 3).is_err());
+
+        // 4 rows x 2 muls = 8 counters.
+        assert!(check_vt_geometry(&[10, 11], &[0, 4], 4, 2).is_ok());
+        assert!(check_vt_geometry(&[10, 11], &[0], 4, 2).unwrap_err().contains("acc_heights"));
+        assert!(check_vt_geometry(&[10], &[8], 4, 2).unwrap_err().contains("outside"));
+        assert!(check_vt_geometry(&[10, 11], &[3, 3], 4, 2).unwrap_err().contains("repeated"));
+        assert!(check_vt_geometry(&[10, 10], &[0, 4], 4, 2).unwrap_err().contains("repeated"));
+        assert!(check_vt_geometry(&[10], &[0], u64::MAX, 2).unwrap_err().contains("overflows"));
+    }
 
     /// Probe a `fit_exact_map` result as the GPU decoder does.
     fn probe(kv: &[u64], tuple: &[u64]) -> Option<u64> {

@@ -1960,19 +1960,16 @@ pub fn mul_register_table_map_c(table_id: u64, kv: &[u64], n_key: usize, slots: 
 }
 
 pub fn mul_migrated_tables_c() -> Vec<u64> {
-    const CAP: u64 = 256;
-    let mut out = vec![0u64; CAP as usize];
-    let n = unsafe { mul_migrated_tables(out.as_mut_ptr(), CAP) };
-    // The C side fills at most `CAP` entries without signalling truncation, so `n == CAP` may hide
-    // unlisted tables that the CPU path would then double-count. Fail instead.
-    assert!(
-        n < CAP,
-        "mul_migrated_tables_c: C side returned {n} tables, at the {CAP}-table cap -- this table \
-         count may have been silently truncated (mul_migrated_tables_impl stops writing at CAP with \
-         no log); raise CAP on the C side"
-    );
-    out.truncate(n as usize);
-    out
+    // The C side returns the total and writes at most `cap`: size first, then fill.
+    let mut out = Vec::new();
+    loop {
+        let n = unsafe { mul_migrated_tables(out.as_mut_ptr(), out.len() as u64) } as usize;
+        if n <= out.len() {
+            out.truncate(n);
+            return out;
+        }
+        out.resize(n, 0);
+    }
 }
 
 /// The C registry's name for an air (`mulAirKey`): air ids repeat across airgroups.

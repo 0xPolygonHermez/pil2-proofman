@@ -173,10 +173,11 @@ inline void mul_register_range_tables_impl(const uint64_t* tableIds, const int64
                + std::to_string(mulDecoders().size()) + " decoders registered");
 }
 
-// Tables whose multiplicities the prover owns, so Std stops counting them.
+// Tables whose multiplicities the prover owns, so Std stops counting them. Writes the first `cap`
+// and returns how many there are, so `cap = 0` sizes the buffer.
 inline uint64_t mul_migrated_tables_impl(uint64_t* out, uint64_t cap) {
     uint64_t n = 0;
-    for (const auto& d : mulDecoders()) { if (n >= cap) break; out[n++] = d.table_id; }
+    for (const auto& d : mulDecoders()) { if (n < cap) out[n] = d.table_id; ++n; }
     return n;
 }
 
