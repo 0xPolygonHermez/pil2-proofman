@@ -727,6 +727,10 @@ impl<F: PrimeField64> ProofMan<F> {
         for handle in handles {
             let _ = handle.join();
         }
+        // The owner's harvest skipped launches still enqueueing; now joined, wait for their proof writes.
+        if self.pctx.gpu {
+            get_stream_proofs_c(self.pctx.get_device_buffers_ptr());
+        }
 
         // Generators and consumers are joined, so nothing is producing or consuming any more. A
         // witness the consumers never reached still pins a pooled trace, and the next fold would
@@ -752,29 +756,6 @@ impl<F: PrimeField64> ProofMan<F> {
 
     pub fn reset(&self) -> ProofmanResult<()> {
         self.wcm.reset();
-
-        for proof_lock in self.proofs.iter() {
-            let mut proof = proof_lock.write().unwrap_or_else(|e| e.into_inner());
-            *proof = None;
-        }
-
-        for proof_lock in self.compressor_proofs.iter() {
-            let mut proof = proof_lock.write().unwrap_or_else(|e| e.into_inner());
-            *proof = None;
-        }
-
-        for proof_lock in self.recursive1_proofs.iter() {
-            let mut proof = proof_lock.write().unwrap_or_else(|e| e.into_inner());
-            *proof = None;
-        }
-
-        for proof_lock in self.recursive2_proofs.iter() {
-            let mut proofs = proof_lock.write().unwrap_or_else(|e| e.into_inner());
-            proofs.clear();
-        }
-
-        let mut ongoing_proofs = self.recursive2_proofs_ongoing.write().unwrap_or_else(|e| e.into_inner());
-        ongoing_proofs.clear();
 
         self.pctx.set_witness_tx(None);
         self.pctx.set_proof_tx(None);
@@ -812,6 +793,21 @@ impl<F: PrimeField64> ProofMan<F> {
 
         self.worker_contributions.write().unwrap_or_else(|e| e.into_inner()).clear();
         reset_device_streams_c(self.pctx.get_device_buffers_ptr());
+
+        // Launches write these through raw pointers: free them only once workers and device are done.
+        for proof_lock in self.proofs.iter() {
+            *proof_lock.write().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+        for proof_lock in self.compressor_proofs.iter() {
+            *proof_lock.write().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+        for proof_lock in self.recursive1_proofs.iter() {
+            *proof_lock.write().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+        for proof_lock in self.recursive2_proofs.iter() {
+            proof_lock.write().unwrap_or_else(|e| e.into_inner()).clear();
+        }
+        self.recursive2_proofs_ongoing.write().unwrap_or_else(|e| e.into_inner()).clear();
 
         for inner_vec in self.received_agg_proofs.write().unwrap_or_else(|e| e.into_inner()).iter_mut() {
             inner_vec.clear();
@@ -3838,7 +3834,7 @@ where
 
                     let force_recursive_stream = stream_id >= n_streams_non_recursive;
 
-                    let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
+                    let mut new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                         Ok(p) => p,
                         Err(e) => {
                             // generate_recursive_proof (which normally returns the witness buffer to its
@@ -3853,6 +3849,7 @@ where
                     let new_proof_type = new_proof.proof_type;
 
                     let id = new_proof.global_idx.unwrap();
+                    let new_proof_ptr = new_proof.proof.as_mut_ptr();
                     if new_proof_type == ProofType::Recursive2 {
                         recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
                     } else if new_proof_type == ProofType::Compressor {
@@ -3861,64 +3858,24 @@ where
                         *recursive1_proofs_clone[id].write().unwrap() = Some(new_proof);
                     }
 
-                    if new_proof_type == ProofType::Recursive2 {
-                        let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
-                        let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
-
-                        if let Err(e) = generate_recursive_proof(
+                    // SAFETY: the heap buffer survives the move into its slot.
+                    if let Err(e) = unsafe {
+                        generate_recursive_proof(
                             &pctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
                             &mut witness,
-                            new_proof_ref,
+                            new_proof_ptr,
                             &aux_trace_clone,
                             &const_tree_clone,
                             &const_pols_clone,
                             force_recursive_stream,
                             reserved_stream,
                             None,
-                        ) {
-                            cancellation_info_clone.write_recover().cancel(Some(e));
-                            break;
-                        }
-                    } else if new_proof_type == ProofType::Compressor {
-                        let compressor_lock = compressor_proofs_clone[id].read().unwrap();
-                        let new_proof_ref = compressor_lock.as_ref().unwrap();
-                        if let Err(e) = generate_recursive_proof(
-                            &pctx_clone,
-                            &memory_handler_recursive_witness,
-                            &setups_clone,
-                            &mut witness,
-                            new_proof_ref,
-                            &aux_trace_clone,
-                            &const_tree_clone,
-                            &const_pols_clone,
-                            force_recursive_stream,
-                            reserved_stream,
-                            None,
-                        ) {
-                            cancellation_info_clone.write_recover().cancel(Some(e));
-                            break;
-                        }
-                    } else {
-                        let recursive1_lock = recursive1_proofs_clone[id].read().unwrap();
-                        let new_proof_ref = recursive1_lock.as_ref().unwrap();
-                        if let Err(e) = generate_recursive_proof(
-                            &pctx_clone,
-                            &memory_handler_recursive_witness,
-                            &setups_clone,
-                            &mut witness,
-                            new_proof_ref,
-                            &aux_trace_clone,
-                            &const_tree_clone,
-                            &const_pols_clone,
-                            force_recursive_stream,
-                            reserved_stream,
-                            None,
-                        ) {
-                            cancellation_info_clone.write_recover().cancel(Some(e));
-                            break;
-                        }
+                        )
+                    } {
+                        cancellation_info_clone.write_recover().cancel(Some(e));
+                        break;
                     }
 
                     pending.commit();
@@ -4706,7 +4663,7 @@ where
 
                 witness.global_idx = Some(id);
 
-                let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
+                let mut new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                     Ok(p) => p,
                     Err(e) => {
                         // generate_recursive_proof (which returns the buffer to its pool) isn't reached
@@ -4717,24 +4674,25 @@ where
                     }
                 };
 
+                let new_proof_ptr = new_proof.proof.as_mut_ptr();
                 recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
 
-                let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
-                let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
-
-                if let Err(e) = generate_recursive_proof(
-                    &pctx_clone,
-                    &memory_handler_recursive_witness,
-                    &setups_clone,
-                    &mut witness,
-                    new_proof_ref,
-                    &aux_trace_clone,
-                    &const_tree_clone,
-                    &const_pols_clone,
-                    false,
-                    u64::MAX, // one-off launch: reserve stream internally
-                    None,
-                ) {
+                // SAFETY: the heap buffer survives the move into its slot.
+                if let Err(e) = unsafe {
+                    generate_recursive_proof(
+                        &pctx_clone,
+                        &memory_handler_recursive_witness,
+                        &setups_clone,
+                        &mut witness,
+                        new_proof_ptr,
+                        &aux_trace_clone,
+                        &const_tree_clone,
+                        &const_pols_clone,
+                        false,
+                        u64::MAX, // one-off launch: reserve stream internally
+                        None,
+                    )
+                } {
                     cancellation_info_clone.write_recover().cancel(Some(e));
                     break;
                 }
@@ -4911,7 +4869,7 @@ where
 
                     witness.global_idx = Some(id);
 
-                    let new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
+                    let mut new_proof = match gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness) {
                         Ok(p) => p,
                         Err(e) => {
                             // generate_recursive_proof (which returns the buffer to its pool) is not
@@ -4923,24 +4881,25 @@ where
                     };
 
                     let id = new_proof.global_idx.unwrap();
+                    let new_proof_ptr = new_proof.proof.as_mut_ptr();
                     recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
 
-                    let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
-                    let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
-
-                    if let Err(e) = generate_recursive_proof(
-                        &pctx_clone,
-                        &memory_handler_recursive_witness,
-                        &setups_clone,
-                        &mut witness,
-                        new_proof_ref,
-                        &aux_trace_clone,
-                        &const_tree_clone,
-                        &const_pols_clone,
-                        false,
-                        u64::MAX, // one-off launch: reserve stream internally
-                        None,
-                    ) {
+                    // SAFETY: the heap buffer survives the move into its slot.
+                    if let Err(e) = unsafe {
+                        generate_recursive_proof(
+                            &pctx_clone,
+                            &memory_handler_recursive_witness,
+                            &setups_clone,
+                            &mut witness,
+                            new_proof_ptr,
+                            &aux_trace_clone,
+                            &const_tree_clone,
+                            &const_pols_clone,
+                            false,
+                            u64::MAX, // one-off launch: reserve stream internally
+                            None,
+                        )
+                    } {
                         cancellation_info_clone.write_recover().cancel(Some(e));
                         break;
                     };
