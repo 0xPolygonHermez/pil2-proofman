@@ -9,7 +9,7 @@ use proofman_fields::Goldilocks;
 
 use proofman::SnarkWrapper;
 use proofman::ProofMan;
-use proofman::ProvePhaseResult;
+use proofman::{ProvePhase, ProvePhaseInputs, ProvePhaseResult};
 use proofman_common::{ModeName, ProofOptions, ProofmanOptions};
 
 #[derive(Parser)]
@@ -85,6 +85,10 @@ pub struct ProveCmd {
 
     #[clap(short = 'g', long, default_value_t = false)]
     pub gpu: bool,
+
+    /// Prove N times in one process and report per-run timings (run 1 is the cold one).
+    #[clap(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+    pub repeat: u32,
 }
 
 impl ProveCmd {
@@ -159,25 +163,42 @@ impl ProveCmd {
             };
         } else {
             proofman.set_barrier();
-            let result = match self.field {
-                Field::Goldilocks => proofman.generate_proof(
-                    self.witness_lib.clone(),
-                    self.public_inputs.clone(),
-                    None,
-                    self.verbose.into(),
-                    proof_options.clone(),
-                )?,
-            };
+            let mut times = Vec::with_capacity(self.repeat as usize);
+            for run in 0..self.repeat {
+                let started = std::time::Instant::now();
+                let result = match self.field {
+                    // Later runs reuse the registered library: registering it again duplicates its components.
+                    Field::Goldilocks if run > 0 => {
+                        proofman.set_partition(1, vec![0], 0)?;
+                        proofman.generate_proof_from_lib(
+                            ProvePhaseInputs::Full(),
+                            proof_options.clone(),
+                            ProvePhase::Full,
+                        )?
+                    }
+                    Field::Goldilocks => proofman.generate_proof(
+                        self.witness_lib.clone(),
+                        self.public_inputs.clone(),
+                        None,
+                        self.verbose.into(),
+                        proof_options.clone(),
+                    )?,
+                };
 
-            if let ProvePhaseResult::Full(_, Some(vadcop_final_proof)) = result {
-                // Save the vadcop final proof using the struct's save method
-                vadcop_final_proof.save(self.output_dir.join("vadcop_final_proof.bin"))?;
+                if let ProvePhaseResult::Full(_, Some(vadcop_final_proof)) = result {
+                    // Save the vadcop final proof using the struct's save method
+                    vadcop_final_proof.save(self.output_dir.join("vadcop_final_proof.bin"))?;
 
-                if let Some(proving_key_snark) = &self.proving_key_snark {
-                    let snark_wrapper: SnarkWrapper<Goldilocks> =
-                        SnarkWrapper::new(proving_key_snark, self.verbose.into(), true, self.gpu)?;
-                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, None)?;
+                    if let Some(proving_key_snark) = &self.proving_key_snark {
+                        let snark_wrapper: SnarkWrapper<Goldilocks> =
+                            SnarkWrapper::new(proving_key_snark, self.verbose.into(), true, self.gpu)?;
+                        snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, None)?;
+                    }
                 }
+                times.push(started.elapsed());
+            }
+            if self.repeat > 1 {
+                super::prove_air::report_repeat("prove", &times);
             }
         }
 

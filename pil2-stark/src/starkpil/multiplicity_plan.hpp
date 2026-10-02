@@ -37,6 +37,16 @@ inline bool mulPlanStreamable(const MulPlan& p) {
     return (p.srcMask & ~resident) == 0;
 }
 
+// Min cm1 operands for a column-major copy: the transpose pays only for read-heavy scatters (Keccakf), not Mem.
+#define MUL_COLMAJOR_MIN_READS_PER_ROW 100
+
+// Shared by the slot commit and the Rust slot sizing; the indexed walk is left alone.
+inline bool mulPlanWantsColMajor(const MulPlan& plan, uint64_t wordsPerRow, bool indexed) {
+    if (indexed || wordsPerRow == 0) return false;
+    if (plan.jobs.empty() || !mulPlanStreamable(plan)) return false;
+    return plan.cm1Reads >= MUL_COLMAJOR_MIN_READS_PER_ROW;
+}
+
 inline std::string mulSrcName(uint32_t s) {
     switch (s) {
         case MUL_SRC_CONST:         return "const";

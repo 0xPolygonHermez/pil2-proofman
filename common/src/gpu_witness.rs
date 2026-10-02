@@ -193,6 +193,7 @@ impl GpuWitnessAirs {
                 a.airgroup_id as u64,
                 a.air_id as u64,
                 a.bytes_per_op,
+                a.input_bytes_per_instance,
                 a.emits as i32,
                 a.kernel,
             );

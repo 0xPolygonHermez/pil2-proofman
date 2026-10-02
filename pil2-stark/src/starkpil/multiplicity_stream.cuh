@@ -31,9 +31,9 @@ struct MulStreamCtx {
     uint64_t *oob;
     const uint64_t *dTable;
     // Device, this air's const pols UNPACKED (column-major, `col * nRows + row`), expanded into
-    // mulStreamConst. d_constPols is bit-packed behind a header and must not be handed to the jobs.
+    // the slot's const scratch. d_constPols is bit-packed behind a header and must not be handed to the jobs.
     const uint64_t *constPols;
-    // Device, the first fixed custom commit UNPACKED (column-major), expanded into mulStreamCustom.
+    // Device, the first fixed custom commit UNPACKED (column-major), expanded into the slot's custom scratch.
     // Null when the air's jobs read none.
     const uint64_t *customPols = nullptr;
     // Publics and the value pools, one contiguous device window (uploaded by the slot hook), capped
@@ -56,12 +56,17 @@ struct MulStreamCtx {
 // declines the slot; the hook itself cannot refuse. Only successes are cached.
 struct MulPackedProg { const MulInsnDev* prog = nullptr; bool ok = false; };
 
+inline std::map<std::tuple<uint64_t,uint64_t,int,std::vector<uint64_t>,const SlotHintPlan*>, MulPackedProg>& mulPackedProgs() {
+    static std::map<std::tuple<uint64_t,uint64_t,int,std::vector<uint64_t>,const SlotHintPlan*>, MulPackedProg> m;
+    return m;
+}
+inline std::mutex& mulPackedProgsMutex() { static std::mutex m; return m; }
+
 inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx& c,
                                          uint64_t airgroupId, uint64_t airId, int gpuId) {
     // By layout and hint plan too: the rewrite depends on both.
-    static std::map<std::tuple<uint64_t,uint64_t,int,std::vector<uint64_t>,const SlotHintPlan*>, MulPackedProg> cache;
-    static std::mutex mtx;
-    std::lock_guard<std::mutex> lock(mtx);
+    auto& cache = mulPackedProgs();
+    std::lock_guard<std::mutex> lock(mulPackedProgsMutex());
     auto key = std::make_tuple(airgroupId, airId, gpuId, c.layout.key(), c.hintPlan);
     auto it = cache.find(key);
     if (it != cache.end()) return it->second;
@@ -104,58 +109,19 @@ inline MulPackedProg mulPackedProgramFor(const MulPlan& plan, const MulStreamCtx
     return r;
 }
 
-// One scratch buffer per (device, slot), keyed by slot because distinct slots commit concurrently.
-// Only the warm-up (`grow`) allocates, to the widest air; a commit that needs more gets null.
-using MulStreamBufs = std::map<std::pair<int, uint64_t>, std::pair<uint64_t*, size_t>>;
-
-inline std::mutex& mulStreamBufsMutex() { static std::mutex m; return m; }
-
-inline uint64_t* mulStreamBuf(MulStreamBufs& bufs, int gpuId, uint64_t slotIdx, size_t elems, bool grow) {
-    std::lock_guard<std::mutex> lk(mulStreamBufsMutex());
-    auto& e = bufs[{gpuId, slotIdx}];
-    if (e.second >= elems) return e.first;
-    if (!grow) {
-        zklog.error("multiplicity: slot " + std::to_string(slotIdx) + " on gpu " + std::to_string(gpuId)
-                    + " needs " + std::to_string(elems) + " scratch words; the warm-up sized it for "
-                    + std::to_string(e.second));
-        return nullptr;
+inline void mulPackedProgramRelease(int gpuId) {
+    std::lock_guard<std::mutex> lock(mulPackedProgsMutex());
+    auto& cache = mulPackedProgs();
+    for (auto it = cache.begin(); it != cache.end();) {
+        if (std::get<2>(it->first) != gpuId) { ++it; continue; }
+        CHECKCUDAERR(cudaFree((void*)it->second.prog));
+        it = cache.erase(it);
     }
-    if (e.first != nullptr) cudaFree(e.first);
-    e.first = nullptr;
-    e.second = 0;
-    if (cudaMalloc(&e.first, elems * sizeof(uint64_t)) != cudaSuccess) {
-        (void)cudaGetLastError();   // tolerated: leave no sticky error for the next check
-        e.first = nullptr;
-        return nullptr;
-    }
-    e.second = elems;
-    return e.first;
 }
-
-// Where the caller expands this air's const pols before the commit. Sized nConstants * N.
-inline uint64_t* mulStreamConst(int gpuId, uint64_t slotIdx, size_t elems, bool grow = false) {
-    static MulStreamBufs bufs;
-    return mulStreamBuf(bufs, gpuId, slotIdx, elems, grow);
-}
-
-// Where the caller expands this air's first fixed custom commit. Sized its width * N.
-inline uint64_t* mulStreamCustom(int gpuId, uint64_t slotIdx, size_t elems, bool grow = false) {
-    static MulStreamBufs bufs;
-    return mulStreamBuf(bufs, gpuId, slotIdx, elems, grow);
-}
-
-// Min cm1 operands in the (deduplicated) plan program for the scatter to get a column-major copy
-// (StreamCommitDims::colMajorForHook). The transpose costs one pass over the packed rows, so it pays
-// only for read-heavy scatters (Keccakf, BinaryHuge, BinaryExtensionLarge), not e.g. Mem.
-#define MUL_COLMAJOR_MIN_READS_PER_ROW 100
 
 inline bool mulScatterWantsColMajor(SetupCtx &setupCtx, uint64_t airgroupId, uint64_t airId,
                                     const StreamCommitDims &dims) {
-    // The indexed walk addresses the row and the table with one expression, so it is left alone.
-    if (dims.indexBits != 0 || dims.wordsPerRow == 0) return false;
-    const MulPlan &plan = mulPlanFor(setupCtx, airgroupId, airId);
-    if (plan.jobs.empty() || !mulPlanStreamable(plan)) return false;
-    return plan.cm1Reads >= MUL_COLMAJOR_MIN_READS_PER_ROW;
+    return mulPlanWantsColMajor(mulPlanFor(setupCtx, airgroupId, airId), dims.wordsPerRow, dims.indexBits != 0);
 }
 
 // The hook handed to streamCommitPacked.

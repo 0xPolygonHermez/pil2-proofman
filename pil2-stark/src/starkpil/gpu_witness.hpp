@@ -33,6 +33,8 @@ struct GpuWitnessAirReg {
     uint64_t airId;
     /// Size of one staged operation, so an instance's op count becomes a byte count.
     uint64_t bytesPerOp;
+    /// The declared per-instance input bound; the slot layout places the scratch past it.
+    uint64_t inputBytesMax;
     int emits;
     GpuWitnessFillFn fill;
 };
@@ -49,18 +51,20 @@ inline std::mutex &gpuWitnessMutex() {
 
 /// Register (or replace) an air's kernel for `owner`; a later registration for the same air wins.
 inline void gpu_witness_register_impl(const void *owner, uint64_t airgroupId, uint64_t airId,
-                                      uint64_t bytesPerOp, int emits, GpuWitnessFillFn fill) {
+                                      uint64_t bytesPerOp, uint64_t inputBytesMax, int emits,
+                                      GpuWitnessFillFn fill) {
     std::lock_guard<std::mutex> lk(gpuWitnessMutex());
     auto &regs = gpuWitnessRegs()[owner];
     for (auto &r : regs) {
         if (r.airgroupId == airgroupId && r.airId == airId) {
             r.bytesPerOp = bytesPerOp;
+            r.inputBytesMax = inputBytesMax;
             r.emits = emits;
             r.fill = fill;
             return;
         }
     }
-    regs.push_back(GpuWitnessAirReg{airgroupId, airId, bytesPerOp, emits, fill});
+    regs.push_back(GpuWitnessAirReg{airgroupId, airId, bytesPerOp, inputBytesMax, emits, fill});
 }
 
 /// Drop `owner`'s registrations: at its start (a freed owner's address can be reused) and teardown.
