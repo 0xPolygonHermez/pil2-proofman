@@ -20,7 +20,7 @@ use proofman_starks_lib_c::{
     gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c, get_unified_buffer_gpu_size_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
-use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
+use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof, PROVING};
 use serde::{Deserialize, Serialize};
 
 /// Sets GPU mode and verifies that a usable GPU is available when `gpu` is requested.
@@ -318,12 +318,16 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         // wrapper transcript (VerifyPoW aborts).
         let verkey = verkey_override.unwrap_or(&self.vadcop_final_verkey);
 
-        // Before recursiveF's first write, so every exit path below gets the restore.
-        if self.d_buffers.is_some() {
-            if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
+        // A shared buffer: held until the wrap returns, so no ProofMan job or reset runs while
+        // recursiveF and the snark write it; flagged first, so every exit gets the restore.
+        let _proving = match (&self.d_buffers, &self.reload_fixed_pols_gpu) {
+            (Some(_), Some(reload_flag)) => {
+                let guard = PROVING.lock().unwrap_or_else(|e| e.into_inner());
                 reload_flag.store(true, Ordering::SeqCst);
+                Some(guard)
             }
-        }
+            _ => None,
+        };
 
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
@@ -392,13 +396,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         timer_stop_and_log_debug!(GENERATING_SNARK_PROOF);
 
         timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
-
-        // Again at the end: a reset() that ran mid-snark consumed the first store.
-        if self.d_buffers.is_some() {
-            if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
-                reload_flag.store(true, Ordering::SeqCst);
-            }
-        }
 
         if self.snark_prover.is_none() {
             free_final_snark_prover_c(snark_prover);

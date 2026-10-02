@@ -197,6 +197,10 @@ use proofman_util::{
 
 use serde::Serialize;
 
+/// Process-wide: the C++ multiplicity state is global, and a SNARK wrap carves the shared unified
+/// buffer, so no two of them may interleave.
+pub(crate) static PROVING: Mutex<()> = Mutex::new(());
+
 #[derive(Default, Debug, Clone)]
 pub struct WitnessInfo {
     pub witness_time: f32,
@@ -883,11 +887,8 @@ impl<F: PrimeField64> ProofMan<F> {
         self.options.clone()
     }
 
-    /// Acquire `computing`, and the process-wide `PROVING` before it. Warns if the wait exceeded 50ms.
+    /// Acquire `computing`, and the process-wide [`PROVING`] before it. Warns if the wait exceeded 50ms.
     fn acquire_computing(&self, caller: &'static str) -> (MutexGuard<'_, ()>, MutexGuard<'static, ()>) {
-        // The C++ multiplicity accumulators and commit counter are process-global: two live ProofMans
-        // must not interleave proofs.
-        static PROVING: Mutex<()> = Mutex::new(());
         let t0 = std::time::Instant::now();
         let global = PROVING.lock().unwrap_or_else(|e| e.into_inner());
         let g = self.computing.lock().unwrap_or_else(|e| e.into_inner());
