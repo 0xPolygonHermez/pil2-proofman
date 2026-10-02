@@ -170,6 +170,12 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         ensure_gpu_available(gpu)?;
 
+        if d_buffers.is_some() && reload_fixed_pols_gpu.is_none() {
+            return Err(ProofmanError::InvalidConfiguration(
+                "A shared device buffer needs its owner's reload flag: the wrap overwrites it".to_string(),
+            ));
+        }
+
         let setup_recursivef_path =
             PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "recursivef", "recursivef"));
         let setup_snark_path = PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "final", "final"));
@@ -320,14 +326,13 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         // A shared buffer: held until the wrap returns, so no ProofMan job or reset runs while
         // recursiveF and the snark write it; flagged first, so every exit gets the restore.
-        let _proving = match (&self.d_buffers, &self.reload_fixed_pols_gpu) {
-            (Some(_), Some(reload_flag)) => {
-                let guard = PROVING.lock().unwrap_or_else(|e| e.into_inner());
+        let _proving = self.d_buffers.map(|_| {
+            let guard = PROVING.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
                 reload_flag.store(true, Ordering::SeqCst);
-                Some(guard)
             }
-            _ => None,
-        };
+            guard
+        });
 
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,

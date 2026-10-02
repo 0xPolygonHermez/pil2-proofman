@@ -453,15 +453,19 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
     in.recursiveTotal = totalAuxTraceRecursiveSize;
     // 1 MiB keeps slot bases 16-byte aligned for vectorized kernel accesses.
     d_buffers->streamCommitSlotBytes = ubl::alignUp(slotBytes, 1ull << 20);
+    // The slots live inside the first basic stream; fewer slots beat none, and none is the caller's to report.
+    const uint64_t firstStreamBytes = d_buffers->n_streams > 0 ? d_buffers->aux_trace_sizes[0] * sizeof(Goldilocks::Element) : 0;
+    if (d_buffers->streamCommitSlotBytes > 0 && nSlots * d_buffers->streamCommitSlotBytes > firstStreamBytes) {
+        const uint64_t fit = firstStreamBytes / d_buffers->streamCommitSlotBytes;
+        zklog.warning("streaming-commit slots: " + std::to_string(nSlots) + " x " +
+                      std::to_string(d_buffers->streamCommitSlotBytes >> 20) + " MB exceed the first basic stream (" +
+                      std::to_string(firstStreamBytes >> 20) + " MB); using " + std::to_string(fit));
+        nSlots = fit;
+    }
     in.slots = nSlots * d_buffers->streamCommitSlotBytes;
     in.aggConst = constPolsAggregationSize;
     in.snarkPad = unifiedBufferPadSize;
     const ubl::Layout L = ubl::plan(in);
-    const uint64_t firstStreamBytes = d_buffers->n_streams > 0 ? d_buffers->aux_trace_sizes[0] * sizeof(Goldilocks::Element) : 0;
-    if (in.slots > firstStreamBytes) {
-        zklog.error("streaming-commit slots (" + std::to_string(in.slots >> 20) + " MB) exceed the first basic stream");
-        exitProcess();
-    }
     d_buffers->layout = L;
     const uint64_t totalGpuMemoryPerGpu = L.end;
     auto gb = [](uint64_t v) { return std::to_string(v / (1024.0 * 1024.0 * 1024.0)); };
