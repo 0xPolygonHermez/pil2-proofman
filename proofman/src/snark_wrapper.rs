@@ -203,7 +203,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             false,
         )?;
 
-        check_const_tree(&setup_recursivef, &d_buffers)?;
+        {
+            // On a shared buffer the tree is built over its aux area: not while a ProofMan job runs.
+            let _proving = d_buffers.map(|_| PROVING.lock().unwrap_or_else(|e| e.into_inner()));
+            check_const_tree(&setup_recursivef, &d_buffers)?;
+        }
 
         let mut recursivef_const_pols_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_pols_size];
         load_const_pols_recursivef(&setup_recursivef, &mut recursivef_const_pols_buf);
