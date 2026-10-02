@@ -526,36 +526,6 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, gl64
     CHECKCUDAERR(cudaGetLastError());
 }
 
-__global__ void calcXis(Goldilocks::Element * d_xis, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints)
-{
-    uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < nOpeningPoints)
-    {
-        uint64_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
-        gl64_t W(W_);
-        gl64_t w = W ^ uint32_t(openingAbs);
-        if (d_openingPoints[i] < 0)
-        {
-            w = w.reciprocal();
-        }
-        Goldilocks3GPU::mul(*((Goldilocks3GPU::Element *) &d_xis[i * FIELD_EXTENSION]), *((Goldilocks3GPU::Element *)d_xiChallenge), w);
-    }
-}
-
-
-void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, int64_t *d_openingPoints, Goldilocks::Element *d_xiChallenge, cudaStream_t stream)
-{
-
-    uint64_t nOpeningPoints = setupCtx.starkInfo.openingPoints.size();
-    int64_t *openingPoints = setupCtx.starkInfo.openingPoints.data();
-    uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
- 
-    dim3 nThreads(16);
-    dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x);
-    calcXis<<<nBlocks, nThreads, 0, stream>>>(h_params.xDivXSub, (gl64_t*)d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints);
-    CHECKCUDAERR(cudaGetLastError());
-}
-
 // Opening evaluations p(xi w^o). Every opening point is z = xi / s shifted by a power of the trace
 // root w, so L_j(z w^o) = L_{j-o}(z) and p(xi w^o) = SUM_i L_i(z) * p[(i + o) mod N]: opening 0's
 // Lagrange vector serves every opening, and a group reads its column once for all its openings.
@@ -1290,58 +1260,39 @@ void calculateHash(TranscriptGL_GPU *d_transcript, Goldilocks::Element* hash, Se
     d_transcript->getState(hash, stream);
 };
 
-void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstanceInfo *air_instance_info, cudaStream_t stream) {
+void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstanceInfo *air_instance_info, Goldilocks::Element *d_xiChallenge, cudaStream_t stream) {
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBitsExt);
-    // computeFRIExpressionFolded strides by domainSize/blockDim.x with no remainder handling,
-    // so blockDim.x must divide domainSize or leftover rows are silently dropped.
-    // Raise nrowsPack up to a 256-thread minimum (memory-constrained instances halve
-    // nrowsPack below 256 and would otherwise underpopulate blocks), then cap at
-    // domainSize. This is only reached on the prover path (gen_proof / gen_recursivef),
-    // where nrowsPack is a power of two <= 256, so blockDim.x stays a power-of-two
-    // divisor of the power-of-two domainSize. It is NOT called on the verify path, whose
-    // nrowsPack = nQueries can be a non-power-of-two > 256 and would break the invariant.
-    uint32_t nthreads_ = std::min<uint32_t>(std::max<uint32_t>(setupCtx.starkInfo.nrowsPack, 256), (uint32_t)domainSize);
-    uint32_t nblocks_ = (uint32_t)((domainSize + nthreads_ - 1) / nthreads_);
-    dim3 nThreads(nthreads_);
-    dim3 nBlocks(nblocks_);
+    dim3 nThreads(friThreads(setupCtx.starkInfo.nrowsPack, domainSize));
+    dim3 nBlocks((uint32_t)(domainSize / nThreads.x));
 
-    // Fold the vf1/vf2 challenge powers and the openings' evaluations into per-column
-    // constants first, so the per-row loop is one mul31 + one add33 per base column
-    // instead of a sub33 + mul33 + add33. Lives in the per-stream aux_trace, so
-    // concurrent proofs of the same AIR cannot race on it.
-    uint64_t nOpeningPoints = setupCtx.starkInfo.openingPoints.size();
-    // The fri_folded region's presence is asserted at setup (AirInstanceInfo); this
-    // runs inside a cudagraph capture region, where throwing would strand the stream
-    // in capture mode.
+    // The fri_folded region is checked and the window sized at setup (AirInstanceInfo); this runs inside a
+    // cudagraph capture region, where throwing would strand the stream in capture mode.
+    const std::vector<int64_t> &openings = setupCtx.starkInfo.openingPoints;
+    const uint64_t nOpeningPoints = openings.size();
+    const uint64_t extendBits = setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits;
     gl64_t *d_fri = (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
-    gl64_t *d_friFoldedCoef = (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_folded", false)];
-    gl64_t *d_friFoldedK = d_friFoldedCoef + setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION;
+    gl64_t *d_coef = (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_folded", false)];
+    gl64_t *d_k = d_coef + setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION;
+    gl64_t *d_x = (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
 
     computeFRIFoldedConstants<<<(nOpeningPoints + 63) / 64, 64, 0, stream>>>(
-        nOpeningPoints,
-        air_instance_info->evalsInfoFRISizes,
-        air_instance_info->evalsInfoFRI,
-        (gl64_t*)h_params.evals,
-        (gl64_t*)h_params.challenges + 4 * FIELD_EXTENSION,
-        (gl64_t*)h_params.challenges + 5 * FIELD_EXTENSION,
-        d_friFoldedCoef,
-        d_friFoldedK);
+        nOpeningPoints, air_instance_info->opening_points, Goldilocks::w(setupCtx.starkInfo.starkStruct.nBits).fe,
+        air_instance_info->friTermStart, air_instance_info->friTerms, (gl64_t*)h_params.evals,
+        (gl64_t*)h_params.challenges + 4 * FIELD_EXTENSION, (gl64_t*)h_params.challenges + 5 * FIELD_EXTENSION, d_coef, d_k);
     CHECKCUDAERR(cudaGetLastError());
 
-    computeFRIExpressionFolded<<<nBlocks, nThreads, 0, stream>>>(
-        domainSize,
-        setupCtx.starkInfo.starkStruct.nBits,
-        nOpeningPoints,
-        d_fri,
-        air_instance_info->evalsInfoFRISizes,
-        air_instance_info->evalsInfoFRI,
-        d_friFoldedCoef,
-        d_friFoldedK,
-        (gl64_t*)h_params.aux_trace,
-        (gl64_t*)h_params.xDivXSub,
-        (gl64_t*)h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)],
-        (gl64_t *)h_params.pConstPolsExtendedTreeAddress,
-        (gl64_t *)h_params.pCustomCommitsFixed
-    );
+    const uint64_t window = air_instance_info->friWindow;
+    if (window != 0) {
+        computeFRIExpressionShifted<<<nBlocks, nThreads, window * sizeof(Goldilocks3GPU::Element), stream>>>(
+            domainSize, extendBits, nOpeningPoints, air_instance_info->opening_points,
+            *std::max_element(openings.begin(), openings.end()), window, air_instance_info->friTermStart,
+            air_instance_info->friTerms, d_coef, d_k, (gl64_t*)h_params.aux_trace, (gl64_t *)h_params.pCustomCommitsFixed,
+            (gl64_t *)h_params.pConstPolsExtendedTreeAddress, (gl64_t*)d_xiChallenge, d_x, d_fri);
+    } else {
+        computeFRIExpressionFolded<<<nBlocks, nThreads, 0, stream>>>(
+            domainSize, extendBits, nOpeningPoints, air_instance_info->opening_points, air_instance_info->friTermStart,
+            air_instance_info->friTerms, d_coef, d_k, (gl64_t*)h_params.aux_trace, (gl64_t *)h_params.pCustomCommitsFixed,
+            (gl64_t *)h_params.pConstPolsExtendedTreeAddress, (gl64_t*)d_xiChallenge, d_x, d_fri);
+    }
     CHECKCUDAERR(cudaGetLastError());
 }

@@ -73,10 +73,13 @@ struct StarksBackend {
     void *(*get_first_gpu_buffer)(void *d_buffers_);
     uint64_t (*get_const_pols_aggregation_offset)(void *d_buffers_);
     uint64_t (*get_stream_commit_slots)(void *d_buffers_);
+    uint64_t (*get_stream_commit_gpus)(void *d_buffers_);
     uint64_t (*get_stream_commit_floor)(void *d_buffers_);
-    uint64_t (*stream_commit_slot_bytes)(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
+    uint64_t (*stream_commit_slot_bytes)(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes);
     void (*configure_stream_commit_slots)(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
-    void (*configure_prefetch_zone)(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
+    void (*configure_prefetch_zone)(void *d_buffers_, uint64_t witnessBytes);
+    int64_t (*stage_witness)(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size, bool hostSync);
+    void (*release_staged_witness)(void *d_buffers_, uint64_t instanceId);
     uint32_t (*get_prefetch_witness_slots)();
     uint64_t (*get_mops_floor_bytes)();
     uint64_t (*get_post_alloc_headroom_bytes)();
@@ -87,10 +90,7 @@ struct StarksBackend {
     int64_t (*set_phase_b)(void *d_buffers_, uint32_t state);
     void (*harvest_pipeline)(void *d_buffers_);
     void (*dump_pipeline_state)(void *d_buffers_);
-    int64_t (*prefetch_witness)(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
-                                uint64_t airgroupId, uint64_t airId, void *trace);
-    void (*prefetch_zone_sync)(void *d_buffers_);
-    int64_t (*commit_witness_streaming)(void *d_buffers_, uint64_t slotIdx, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
+    int64_t (*commit_witness_streaming)(void *d_buffers_, uint64_t slotIdx, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root, void *params_);
     void (*stream_commit_pause)();
     void *(*get_unified_buffer_gpu_for_recursivef)(void *d_buffers_, void *d_buffers_recursivef_);
     void (*load_fixed_pols_recursivef)(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
@@ -105,6 +105,9 @@ struct StarksBackend {
 
 // Active backend pointer — set via set_gpu_mode()
 extern std::atomic<StarksBackend*> active_backend;
+
+// True when the GPU backend is active, as opposed to merely compiled in.
+bool starks_gpu_mode_active();
 
 // CPU backend (always available)
 extern StarksBackend cpu_backend;

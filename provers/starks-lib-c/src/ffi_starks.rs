@@ -161,10 +161,6 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n(p_stark_info) }
 }
 
-pub fn get_map_totaln_contributions_c(p_stark_info: *mut c_void) -> u64 {
-    unsafe { get_map_total_n_contributions(p_stark_info) }
-}
-
 pub fn get_tree_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_tree_size(p_stark_info) }
 }
@@ -1245,6 +1241,10 @@ pub fn get_snark_protocol_id_c(snark_prover: *mut c_void) -> u64 {
     unsafe { get_snark_protocol_id(snark_prover) }
 }
 
+pub fn free_recursivef_proof_c(zkin: *mut c_void) {
+    unsafe { free_recursivef_proof(zkin) }
+}
+
 pub fn free_final_snark_prover_c(snark_prover: *mut c_void) {
     unsafe { free_final_snark_prover(snark_prover) }
 }
@@ -1539,17 +1539,43 @@ pub fn alloc_device_large_buffers_c(
     }
 }
 
-pub fn configure_prefetch_zone_c(
-    d_buffers: *mut ::std::os::raw::c_void,
-    witness_bytes: u64,
-    fixed_tree_bytes: u64,
-    packed_const_bytes: u64,
-    rec_witness_bytes: u64,
-) {
-    unsafe {
-        configure_prefetch_zone(d_buffers, witness_bytes, fixed_tree_bytes, packed_const_bytes, rec_witness_bytes)
-    }
+pub fn configure_prefetch_zone_c(d_buffers: *mut ::std::os::raw::c_void, witness_bytes: u64) {
+    unsafe { configure_prefetch_zone(d_buffers, witness_bytes) }
 }
+
+/// Stage a witness into the prefetch zone ahead of its commit. Returns the zone's GPU, or -1 when
+/// there is no zone or no free run; the commit then uploads for itself. `host_sync` waits for the
+/// H2D, which a caller about to recycle `trace` needs; otherwise the commit waits for it on device.
+#[cfg(not(feature = "cpu-only"))]
+pub fn stage_witness_c(
+    d_buffers: *mut c_void,
+    instance_id: u64,
+    trace: *mut c_void,
+    total_size: u64,
+    host_sync: bool,
+) -> i64 {
+    unsafe { stage_witness(d_buffers, instance_id, trace, total_size, host_sync) }
+}
+
+#[cfg(feature = "cpu-only")]
+pub fn stage_witness_c(
+    _d_buffers: *mut c_void,
+    _instance_id: u64,
+    _trace: *mut c_void,
+    _total_size: u64,
+    _host_sync: bool,
+) -> i64 {
+    -1
+}
+
+/// Drop a staging whose commit already ran, so its slot goes back to the zone.
+#[cfg(not(feature = "cpu-only"))]
+pub fn release_staged_witness_c(d_buffers: *mut c_void, instance_id: u64) {
+    unsafe { release_staged_witness(d_buffers, instance_id) }
+}
+
+#[cfg(feature = "cpu-only")]
+pub fn release_staged_witness_c(_d_buffers: *mut c_void, _instance_id: u64) {}
 
 pub fn get_prefetch_witness_slots_c() -> u32 {
     unsafe { get_prefetch_witness_slots() }
@@ -1616,22 +1642,6 @@ pub fn harvest_pipeline_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe { harvest_pipeline(d_buffers) }
 }
 
-pub fn prefetch_witness_c(
-    p_setup_ctx: *mut ::std::os::raw::c_void,
-    d_buffers: *mut ::std::os::raw::c_void,
-    instance_id: u64,
-    airgroup_id: u64,
-    air_id: u64,
-    trace: *mut ::std::os::raw::c_void,
-) -> i64 {
-    unsafe { prefetch_witness(p_setup_ctx, d_buffers, instance_id, airgroup_id, air_id, trace) }
-}
-
-/// Wait for every in-flight prefetch staging, so the host traces it reads can be recycled.
-pub fn prefetch_zone_sync_c(d_buffers: *mut ::std::os::raw::c_void) {
-    unsafe { prefetch_zone_sync(d_buffers) }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn reset_device_streams_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe {
@@ -1694,12 +1704,24 @@ pub fn get_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 
     unsafe { get_stream_commit_slots(d_buffers) }
 }
 
+/// GPUs this process drives (not the node's device count).
+pub fn get_stream_commit_gpus_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_stream_commit_gpus(d_buffers) }
+}
+
 pub fn get_stream_commit_floor_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
     unsafe { get_stream_commit_floor(d_buffers) }
 }
 
-pub fn stream_commit_slot_bytes_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, words_per_row: u64) -> u64 {
-    unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row) }
+/// `input_bytes`: a GPU-witness air's staged-input bound (0 otherwise), which rides in the slot.
+pub fn stream_commit_slot_bytes_c(
+    n_bits: u64,
+    n_bits_ext: u64,
+    n_cols: u64,
+    words_per_row: u64,
+    input_bytes: u64,
+) -> u64 {
+    unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row, input_bytes) }
 }
 
 pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64) {
@@ -1720,6 +1742,9 @@ pub fn commit_witness_streaming_c(
     words_per_row: u64,
     col_widths: *mut ::std::os::raw::c_void,
     root: *mut ::std::os::raw::c_void,
+    // StepsParams: the slot stages publics and value pools from it. Null fails the commit of an air
+    // with values whose lookups or hints are evaluated on the slot.
+    params: *mut ::std::os::raw::c_void,
 ) -> i64 {
     unsafe {
         commit_witness_streaming(
@@ -1735,6 +1760,7 @@ pub fn commit_witness_streaming_c(
             words_per_row,
             col_widths,
             root,
+            params,
         )
     }
 }
@@ -1877,6 +1903,244 @@ pub fn load_device_const_pols_c(
             already_loaded,
         );
     }
+}
+
+// ---- Prover-side multiplicities -------------------------------------------------------------
+// Geometry is registered once; the host accumulator pointer is passed per call and never retained
+// on the C++ side, so Rust stays free to reallocate or reset its accumulator.
+pub fn register_mul_vt_c(
+    airgroup_id: u64,
+    air_id: u64,
+    num_rows: u64,
+    num_cols: u64,
+    table_ids: &[u64],
+    acc_bases: &[u64],
+) {
+    assert_eq!(table_ids.len(), acc_bases.len(), "register_mul_vt_c: one acc base per table id");
+    unsafe {
+        register_mul_vt(
+            airgroup_id,
+            air_id,
+            num_rows,
+            num_cols,
+            table_ids.as_ptr(),
+            acc_bases.as_ptr(),
+            table_ids.len() as u64,
+        );
+    }
+}
+
+/// A witness kernel's entry point, as `ZISK_GPU_WITNESS_ENTRIES` generates it.
+///
+/// Enqueue-only: no allocation, no synchronisation, one launch on `stream`; anything else breaks
+/// the CUDA graph capture of the commit path. Arguments: device inputs, their count, commit slot,
+/// device id (-1 = current) and `cudaStream_t`. Returns 0 on success.
+///
+/// Declared here because this crate is below proofman-common, which re-exports it.
+pub type GpuWitnessFillFn = unsafe extern "C" fn(
+    d_ops: *const c_void,
+    num_ops: u64,
+    d_dst: *mut u64,
+    device_id: i32,
+    stream: *mut c_void,
+) -> i32;
+
+/// Forget every registered kernel, so a later prover in the process does not inherit them.
+pub fn gpu_witness_clear_c(d_buffers: *mut c_void) {
+    unsafe { gpu_witness_clear(d_buffers) }
+}
+
+/// Whether a kernel is registered for this air, i.e. the prover produces its witness on the
+/// device. The single source of truth for staging kernel inputs vs filling a trace.
+pub fn gpu_witness_is_registered_c(d_buffers: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { gpu_witness_is_registered(d_buffers, airgroup_id, air_id) == 1 }
+}
+
+/// Declare that this air's stage-1 witness comes from `fill`, not a host upload.
+pub fn gpu_witness_register_c(
+    d_buffers: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    bytes_per_op: u64,
+    emits: i32,
+    fill: GpuWitnessFillFn,
+) {
+    unsafe { gpu_witness_register(d_buffers, airgroup_id, air_id, bytes_per_op, emits, fill) }
+}
+
+/// How many airs the C++ side has registered.
+pub fn gpu_witness_count_c(d_buffers: *mut c_void) -> u64 {
+    unsafe { gpu_witness_count(d_buffers) }
+}
+
+/// Virtual range-check tables the prover can compute itself, as (table id, bias) pairs.
+pub fn mul_register_range_tables_c(table_ids: &[u64], biases: &[i64]) {
+    assert_eq!(table_ids.len(), biases.len(), "mul_register_range_tables_c: one bias per table id");
+    unsafe { mul_register_range_tables(table_ids.as_ptr(), biases.as_ptr(), table_ids.len() as u64) }
+}
+/// Hand down an exact-match key->row map.
+pub fn mul_register_table_map_c(table_id: u64, kv: &[u64], n_key: usize, slots: u64) {
+    unsafe { mul_register_table_map(table_id, kv.as_ptr(), kv.len() as u64, slots, n_key as u64) }
+}
+
+pub fn mul_migrated_tables_c() -> Vec<u64> {
+    // The C side returns the total and writes at most `cap`: size first, then fill.
+    let mut out = Vec::new();
+    loop {
+        let n = unsafe { mul_migrated_tables(out.as_mut_ptr(), out.len() as u64) } as usize;
+        if n <= out.len() {
+            out.truncate(n);
+            return out;
+        }
+        out.resize(n, 0);
+    }
+}
+
+/// The C registry's name for an air (`mulAirKey`): air ids repeat across airgroups.
+fn mul_air_key(airgroup_id: u64, air_id: u64) -> u64 {
+    (airgroup_id << 32) | air_id
+}
+
+/// Whether the prover counts any table of the air. An air where it counts none needs no host
+/// accumulator at all.
+pub fn mul_air_has_owned_c(airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { mul_air_has_owned(mul_air_key(airgroup_id, air_id)) != 0 }
+}
+
+/// Allow the device to export table traces by itself. Only sound when no cross-rank reduction is
+/// needed, since the device accumulator holds this process's counts alone.
+pub fn mul_set_device_export_c(enabled: bool) {
+    unsafe { mul_set_device_export(enabled as u64) }
+}
+
+/// Whether the device owns every table of the air, so the host must not build its trace.
+pub fn mul_air_device_owned_c(airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { mul_air_device_owned(mul_air_key(airgroup_id, air_id)) != 0 }
+}
+
+/// `mul_sync_commits_c`: whether the prover's counts can be trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MulSync {
+    Ok,
+    Short,      // fewer commits than instances before the deadline
+    Extra,      // more: one counted twice
+    OutOfTable, // lookups decoded outside their table, or a selector >= 2^32
+    Unknown(u64),
+}
+
+/// Check, once every instance has launched its scatter, that the counts can be used. The table's
+/// own commit reads the accumulator on the device, so this is the ordering point that makes it
+/// complete.
+pub fn mul_sync_commits_c(expected_commits: u64) -> MulSync {
+    match unsafe { mul_sync_commits(expected_commits) } {
+        0 => MulSync::Ok,
+        1 => MulSync::Short,
+        2 => MulSync::Extra,
+        3 => MulSync::OutOfTable,
+        s => MulSync::Unknown(s),
+    }
+}
+
+/// Instances that have counted their lookups this proof.
+pub fn mul_commit_count_c() -> u64 {
+    unsafe { mul_commit_count() }
+}
+
+/// Call after `mul_sync_commits_c`.
+///
+/// # Safety
+/// `host_acc` must point to at least the registered `nCounters` u64 for this air, valid for the
+/// duration of the call. The C++ side does not retain it.
+pub unsafe fn mul_fold_c(airgroup_id: u64, air_id: u64, host_acc: *mut u64) {
+    unsafe { mul_fold(mul_air_key(airgroup_id, air_id), host_acc) }
+}
+
+/// # Safety
+/// `d_buffers` must be the live device-buffers pointer.
+pub unsafe fn mul_alloc_c(d_buffers: *mut c_void) {
+    unsafe { mul_alloc(d_buffers) }
+}
+
+/// Count one instance's lookups straight from its filled witness, for paths that never commit
+/// (verify-constraints, debug), where the commit hook does not run. `aux_ready`: stage 2 and the
+/// im-pols are computed.
+/// # Safety
+/// `p_setup` and `steps_params` must be live for the duration of the call; neither is retained.
+pub unsafe fn mul_scatter_c(
+    p_setup: *mut c_void,
+    steps_params: *mut u8,
+    airgroup_id: u64,
+    air_id: u64,
+    aux_ready: bool,
+) {
+    unsafe { mul_scatter(p_setup, steps_params as *mut c_void, airgroup_id, air_id, aux_ready as u64) }
+}
+
+/// Whether the air looks up any table the prover counts.
+pub fn mul_air_has_jobs_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { mul_air_has_jobs(p_setup, airgroup_id, air_id) != 0 }
+}
+
+/// Why the air's lookups into prover-owned tables cannot be counted, if they cannot.
+pub fn mul_air_plan_error_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> Option<String> {
+    let n = unsafe { mul_air_plan_error(p_setup, airgroup_id, air_id, std::ptr::null_mut(), 0) } as usize;
+    if n == 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; n];
+    unsafe { mul_air_plan_error(p_setup, airgroup_id, air_id, buf.as_mut_ptr() as *mut c_char, n as u64) };
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Whether such a lookup reads a stage-2 or im-pol value.
+pub fn mul_air_reads_aux_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { mul_air_reads_aux(p_setup, airgroup_id, air_id) != 0 }
+}
+
+/// Per proves-side lookup of a table air, in hint order: the stage-1 column its multiplicity is
+/// (`None` when it is not a plain one) and its tuple length.
+pub fn mul_proves_hints_c(p_setup: *mut c_void) -> Vec<(Option<usize>, usize)> {
+    let n = unsafe { mul_proves_hints(p_setup, std::ptr::null_mut(), std::ptr::null_mut(), 0) } as usize;
+    let (mut cols, mut lens) = (vec![0i64; n], vec![0u64; n]);
+    unsafe { mul_proves_hints(p_setup, cols.as_mut_ptr(), lens.as_mut_ptr(), n as u64) };
+    cols.into_iter().zip(lens).map(|(c, l)| (usize::try_from(c).ok(), l as usize)).collect()
+}
+
+/// Rows `r0..r0 + bus.len()` of proves-side lookup `k`, evaluated from the air's row-major fixed
+/// columns: bus ids into `bus`, the leading `len` tuple elements row-major into `tuple`. False when
+/// a field does not compile or reads anything but fixed columns.
+pub fn mul_eval_proves_hint_c(
+    p_setup: *mut c_void,
+    k: usize,
+    const_pols: &[u64],
+    r0: usize,
+    bus: &mut [u64],
+    tuple: &mut [u64],
+    len: usize,
+) -> bool {
+    assert_eq!(tuple.len(), bus.len() * len, "mul_eval_proves_hint_c: one tuple per bus id");
+    unsafe {
+        mul_eval_proves_hint(
+            p_setup,
+            k as u64,
+            const_pols.as_ptr(),
+            const_pols.len() as u64,
+            r0 as u64,
+            (r0 + bus.len()) as u64,
+            bus.as_mut_ptr(),
+            tuple.as_mut_ptr(),
+            len as u64,
+        ) != 0
+    }
+}
+
+pub fn mul_reset_c() {
+    unsafe { mul_reset() }
+}
+
+/// Forget every multiplicity registration; only before any proof allocated from it.
+pub fn mul_clear_registry_c() {
+    unsafe { mul_clear_registry() }
 }
 
 #[cfg(test)]

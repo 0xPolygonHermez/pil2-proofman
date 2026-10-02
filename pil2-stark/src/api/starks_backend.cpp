@@ -1,6 +1,7 @@
 #include "starks_api.hpp"
 #include "starks_backend.hpp"
 #include <cstdio>
+#include <cstdlib>
 #include <atomic>
 
 // ============================================================================
@@ -38,7 +39,6 @@ void tile_const_pols_gpu(void *pStarkInfo, void *pConstPols, char *constFile, vo
 void prepare_blocks_gpu(uint64_t* pol, uint64_t N, uint64_t nCols, void *unified_buffer_gpu);
 void calculate_const_tree_gpu(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree, void *unified_buffer_gpu);
 void write_custom_commit_gpu(void *root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile);
-uint64_t commit_witness_gpu(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers, char *customCommitsFixedPath);
 uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* params_, void *d_buffers_, char *customCommitsFixedPath);
 void calculate_trace_instance_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *d_buffers, uint64_t streamId);
 void verify_constraints_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, void *stepsParams, void *constraintsInfo, void *d_buffers, uint64_t streamId);
@@ -76,10 +76,13 @@ uint32_t get_first_gpu_id_gpu(void *d_buffers_);
 void *get_first_gpu_buffer_gpu(void *d_buffers_);
 uint64_t get_const_pols_aggregation_offset_gpu(void *d_buffers_);
 uint64_t get_stream_commit_slots_gpu(void *d_buffers_);
+uint64_t get_stream_commit_gpus_gpu(void *d_buffers_);
 uint64_t get_stream_commit_floor_gpu(void *d_buffers_);
-uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
+uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes);
 void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
-void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
+void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes);
+int64_t stage_witness_gpu(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size, bool hostSync);
+void release_staged_witness_gpu(void *d_buffers_, uint64_t instanceId);
 uint32_t get_prefetch_witness_slots_gpu();
 uint64_t get_mops_floor_bytes_gpu();
 uint64_t get_post_alloc_headroom_bytes_gpu();
@@ -90,10 +93,7 @@ void configure_phase_b_gpu(void *d_buffers_);
 int64_t set_phase_b_gpu(void *d_buffers_, uint32_t state);
 void harvest_pipeline_gpu(void *d_buffers_);
 void dump_pipeline_state_gpu(void *d_buffers_);
-void prefetch_zone_sync_gpu(void *d_buffers_);
-int64_t prefetch_witness_gpu(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
-                             uint64_t airgroupId, uint64_t airId, void *trace);
-int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
+int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root, void *params_);
 void stream_commit_pause_gpu();
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_);
 void load_fixed_pols_recursivef_gpu(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
@@ -157,10 +157,13 @@ StarksBackend cpu_backend = []() {
     backend.get_first_gpu_buffer = nullptr;               // default: nullptr
     backend.get_const_pols_aggregation_offset = nullptr;
     backend.get_stream_commit_slots = nullptr;            // default: 0 (disabled)
+    backend.get_stream_commit_gpus = nullptr;
     backend.get_stream_commit_floor = nullptr;            // default: UINT64_MAX
     backend.stream_commit_slot_bytes = nullptr;           // default: 0 (not committable)
     backend.configure_stream_commit_slots = nullptr;      // default: no-op
     backend.configure_prefetch_zone = nullptr;            // default: no-op
+    backend.stage_witness = nullptr;                      // default: no look-ahead
+    backend.release_staged_witness = nullptr;
     backend.get_prefetch_witness_slots = nullptr;         // default: 0 (no zone)
     backend.get_mops_floor_bytes = nullptr;               // default: 0 (no floor)
     backend.get_post_alloc_headroom_bytes = nullptr;      // default: 0
@@ -171,8 +174,6 @@ StarksBackend cpu_backend = []() {
     backend.set_phase_b = nullptr;
     backend.harvest_pipeline = nullptr;                   // default: no-op
     backend.dump_pipeline_state = nullptr;                // default: no-op
-    backend.prefetch_witness = nullptr;                   // default: declined
-    backend.prefetch_zone_sync = nullptr;                 // default: no zone
     backend.commit_witness_streaming = nullptr;           // default: error (-1)
     backend.stream_commit_pause = nullptr;                // default: no-op
     backend.get_unified_buffer_gpu_for_recursivef = nullptr;
@@ -193,7 +194,7 @@ StarksBackend gpu_backend = []() {
     backend.prepare_blocks = prepare_blocks_gpu;
     backend.calculate_const_tree = calculate_const_tree_gpu;
     backend.write_custom_commit = write_custom_commit_gpu;
-    backend.commit_witness = commit_witness_gpu;
+    backend.commit_witness = nullptr;                     // contributions commit on streaming slots
     backend.initialize_instance = initialize_instance_gpu;
     backend.calculate_trace_instance = calculate_trace_instance_gpu;
     backend.verify_constraints = verify_constraints_gpu;
@@ -234,10 +235,13 @@ StarksBackend gpu_backend = []() {
     backend.get_first_gpu_buffer = get_first_gpu_buffer_gpu;
     backend.get_const_pols_aggregation_offset = get_const_pols_aggregation_offset_gpu;
     backend.get_stream_commit_slots = get_stream_commit_slots_gpu;
+    backend.get_stream_commit_gpus = get_stream_commit_gpus_gpu;
     backend.get_stream_commit_floor = get_stream_commit_floor_gpu;
     backend.stream_commit_slot_bytes = stream_commit_slot_bytes_gpu;
     backend.configure_stream_commit_slots = configure_stream_commit_slots_gpu;
     backend.configure_prefetch_zone = configure_prefetch_zone_gpu;
+    backend.stage_witness = stage_witness_gpu;
+    backend.release_staged_witness = release_staged_witness_gpu;
     backend.get_prefetch_witness_slots = get_prefetch_witness_slots_gpu;
     backend.get_mops_floor_bytes = get_mops_floor_bytes_gpu;
     backend.get_post_alloc_headroom_bytes = get_post_alloc_headroom_bytes_gpu;
@@ -248,8 +252,6 @@ StarksBackend gpu_backend = []() {
     backend.set_phase_b = set_phase_b_gpu;
     backend.harvest_pipeline = harvest_pipeline_gpu;
     backend.dump_pipeline_state = dump_pipeline_state_gpu;
-    backend.prefetch_witness = prefetch_witness_gpu;
-    backend.prefetch_zone_sync = prefetch_zone_sync_gpu;
     backend.commit_witness_streaming = commit_witness_streaming_gpu;
     backend.stream_commit_pause = stream_commit_pause_gpu;
     backend.get_unified_buffer_gpu_for_recursivef = get_unified_buffer_gpu_for_recursivef_gpu;
@@ -269,6 +271,16 @@ std::atomic<StarksBackend*> active_backend(&cpu_backend);
 // ============================================================================
 // Runtime backend switch
 // ============================================================================
+
+// Whether the GPU backend is active, which __USE_CUDA__ does not answer: the CUDA build also runs
+// whole proofs on the CPU.
+bool starks_gpu_mode_active() {
+#ifdef __USE_CUDA__
+    return active_backend.load(std::memory_order_acquire) == &gpu_backend;
+#else
+    return false;
+#endif
+}
 
 bool set_gpu_mode(bool use_gpu) {
 #ifdef __USE_CUDA__
@@ -316,6 +328,11 @@ void write_custom_commit(void *root, uint64_t arity, uint64_t nBits, uint64_t nB
 
 uint64_t commit_witness(void *pSetupCtx, void *params, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *root, void *d_buffers, char *customCommitsFixedPath) {
     auto backend = active_backend.load(std::memory_order_acquire);
+    // The GPU backend has no stream commit: every contribution goes through commit_witness_streaming.
+    if (backend->commit_witness == nullptr) {
+        fprintf(stderr, "commit_witness: the GPU backend commits contributions on streaming slots only\n");
+        abort();
+    }
     return backend->commit_witness(pSetupCtx, params, instanceId, airgroupId, airId, root, d_buffers, customCommitsFixedPath);
 }
 
@@ -532,10 +549,16 @@ uint64_t get_stream_commit_slots(void *d_buffers_) {
     return backend->get_stream_commit_slots ? backend->get_stream_commit_slots(d_buffers_) : 0;
 }
 
-uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow) {
+// GPUs this process drives, each with its own slots (not the node's device count).
+uint64_t get_stream_commit_gpus(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->get_stream_commit_gpus ? backend->get_stream_commit_gpus(d_buffers_) : 0;
+}
+
+uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->stream_commit_slot_bytes
-               ? backend->stream_commit_slot_bytes(nBits, nBitsExt, nCols, wordsPerRow)
+               ? backend->stream_commit_slot_bytes(nBits, nBitsExt, nCols, wordsPerRow, inputBytes)
                : 0;
 }
 
@@ -545,10 +568,24 @@ void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t s
         backend->configure_stream_commit_slots(d_buffers_, nSlots, slotBytes);
 }
 
-void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes) {
+void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes) {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->configure_prefetch_zone)
-        backend->configure_prefetch_zone(d_buffers_, witnessBytes, fixedTreeBytes, packedConstBytes, recWitnessBytes);
+        backend->configure_prefetch_zone(d_buffers_, witnessBytes);
+}
+
+// -1 when there is no backend, zone or free slot: the caller keeps its buffer and the commit
+// stages for itself.
+int64_t stage_witness(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size, bool hostSync) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (!backend->stage_witness) return -1;
+    return backend->stage_witness(d_buffers_, instanceId, trace, total_size, hostSync);
+}
+
+// Drop a staging whose commit already ran; no-op when there is no backend or no such staging.
+void release_staged_witness(void *d_buffers_, uint64_t instanceId) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->release_staged_witness) backend->release_staged_witness(d_buffers_, instanceId);
 }
 
 uint32_t get_prefetch_witness_slots() {
@@ -601,19 +638,6 @@ void dump_pipeline_state(void *d_buffers_) {
     if (backend->dump_pipeline_state) backend->dump_pipeline_state(d_buffers_);
 }
 
-int64_t prefetch_witness(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
-                         uint64_t airgroupId, uint64_t airId, void *trace) {
-    auto backend = active_backend.load(std::memory_order_acquire);
-    return backend->prefetch_witness
-               ? backend->prefetch_witness(pSetupCtx_, d_buffers_, instanceId, airgroupId, airId, trace)
-               : -1;
-}
-
-void prefetch_zone_sync(void *d_buffers_) {
-    auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->prefetch_zone_sync) backend->prefetch_zone_sync(d_buffers_);
-}
-
 uint64_t get_stream_commit_floor(void *d_buffers_) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->get_stream_commit_floor ? backend->get_stream_commit_floor(d_buffers_) : UINT64_MAX;
@@ -630,11 +654,11 @@ int64_t commit_witness_streaming(void *d_buffers_, uint64_t slotIdx,
                                  uint64_t instanceId, uint64_t airgroupId, uint64_t airId,
                                  void *packed, uint64_t nBits, uint64_t nBitsExt,
                                  uint64_t nCols, uint64_t wordsPerRow,
-                                 void *colWidths, void *root) {
+                                 void *colWidths, void *root, void *params_) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->commit_witness_streaming
                ? backend->commit_witness_streaming(d_buffers_, slotIdx, instanceId, airgroupId, airId, packed,
-                                                   nBits, nBitsExt, nCols, wordsPerRow, colWidths, root)
+                                                   nBits, nBitsExt, nCols, wordsPerRow, colWidths, root, params_)
                : -1;
 }
 

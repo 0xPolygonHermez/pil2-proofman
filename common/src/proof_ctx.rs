@@ -3,11 +3,11 @@ use std::{
     sync::RwLock,
 };
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU8};
 use std::sync::Arc;
 use std::sync::Mutex;
 use crate::{plan_stream_layout, StreamClass, StreamLayout};
-use crate::{MpiCtx, ProofmanError};
+use crate::{GpuWitnessAir, GpuWitnessAirs, MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
 use std::io::Read;
@@ -16,6 +16,7 @@ use crate::{
     initialize_logger, format_bytes, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PolMap, SetupCtx, StdMode,
     CustomCommits, PackedInfo, RowInfo, Setup, StepsParams, SetupsVadcop, VerboseMode, ProofmanResult,
     custom_commit_words_per_row, CustomCommitEntry, CustomCommitValidation, WitnessState, WitnessStats,
+    WitnessPriority,
 };
 
 use std::ffi::c_void;
@@ -201,6 +202,13 @@ pub struct ProofmanOptions {
 
     /// Basic airs are proved with no global challenge (prove-air), so none takes the in-place commit.
     pub self_contained: bool,
+    /// Virtual tables the caller counts itself in the witness; the prover must not claim them. Every
+    /// other table is the prover's, and one it cannot derive a row map for is a setup error.
+    pub std_owned_tables: Vec<u64>,
+
+    /// Airs whose stage-1 witness a GPU kernel writes into the commit slot. They get no host trace
+    /// buffer or upload, so the trace pool and prefetch zone are sized without them.
+    pub gpu_witness_airs: GpuWitnessAirs,
 }
 
 impl Default for ProofmanOptions {
@@ -220,6 +228,8 @@ impl Default for ProofmanOptions {
             final_snark: false,
             custom_commits_fixed: HashMap::new(),
             self_contained: false,
+            std_owned_tables: Vec::new(),
+            gpu_witness_airs: GpuWitnessAirs::default(),
         }
     }
 }
@@ -293,6 +303,37 @@ impl ProofmanOptions {
     pub fn packed_info(&mut self, packed_info: HashMap<(usize, usize), PackedInfo>) {
         self.packed_info = packed_info;
     }
+
+    /// Declare the virtual tables this caller counts itself. A prover table it cannot derive fails setup.
+    pub fn std_owned_tables(&mut self, table_ids: Vec<u64>) {
+        self.std_owned_tables = table_ids;
+    }
+
+    /// Declare the airs whose witness a GPU kernel produces on the device. Must be set before
+    /// `ProofMan::new`, which sizes the trace pool and prefetch zone from it. See [`GpuWitnessAirs`].
+    pub fn gpu_witness_airs(&mut self, airs: Vec<GpuWitnessAir>) {
+        self.gpu_witness_airs = GpuWitnessAirs::new(airs);
+    }
+}
+
+/// `ProofCtx::witness_staged` states. A staged state carries its zone's GPU (local index) in the
+/// bits above `WITNESS_STAGED_KIND`; see [`witness_staged_on`] and [`witness_staged_gpu`].
+pub const WITNESS_NOT_STAGED: u8 = 0;
+pub const WITNESS_STAGED: u8 = 1;
+pub const WITNESS_STAGED_RELEASED: u8 = 2;
+pub const WITNESS_STAGED_KIND: u8 = 3;
+
+pub const fn witness_staged_on(kind: u8, gpu: u8) -> u8 {
+    kind | (gpu << 2)
+}
+
+/// The GPU whose zone holds the witness, or None when it is not staged.
+pub const fn witness_staged_gpu(state: u8) -> Option<usize> {
+    if state & WITNESS_STAGED_KIND == WITNESS_NOT_STAGED {
+        None
+    } else {
+        Some((state >> 2) as usize)
+    }
 }
 
 #[allow(dead_code)]
@@ -313,7 +354,6 @@ pub struct ProofCtx<F: PrimeField64> {
     pub aggregation: bool,
     pub proof_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
-    pub witness_tx_priority: RwLock<Option<crossbeam_channel::Sender<usize>>>,
     pub witness_stats: WitnessStats,
     pub d_buffers: Arc<DeviceBuffer>,
     pub gpu: bool,
@@ -321,6 +361,28 @@ pub struct ProofCtx<F: PrimeField64> {
     /// pair the device gates on, so a global flag cannot disagree with the per-air setup.
     pub packed_airs: HashSet<(usize, usize)>,
     pub reload_fixed_pols_gpu: Arc<AtomicBool>,
+    /// Set while a contributions witness thread stages the instance before dispatching it itself;
+    /// `add_air_instance` then skips the send.
+    pub dispatch_deferred: Vec<AtomicBool>,
+    /// `add_air_instance` ran while the dispatch was deferred: the witness thread owes the send.
+    /// Separate from the trace, which a staged instance may have lost to eviction.
+    pub dispatch_pending: Vec<AtomicBool>,
+    /// What the witness thread did with the witness before dispatch: `WITNESS_NOT_STAGED`,
+    /// `WITNESS_STAGED` (host buffer kept) or `WITNESS_STAGED_RELEASED` (host buffer given back; the
+    /// commit must read the zone and not release again). Consumed by the commit.
+    pub witness_staged: Vec<AtomicU8>,
+    /// Range tables the prover counts itself, and their counts, keyed by the virtual table's host air.
+    /// Held here because the witness library and the host binary each link their own libstarks.
+    pub prover_owned_tables: RwLock<Vec<u64>>,
+    /// Set once the prover multiplicities are registered; `prover_owned_tables` may legitimately stay
+    /// empty, so it cannot double as the guard. The C++ registry behind it is process-wide (see
+    /// `register_prover_multiplicities`).
+    pub prover_multiplicities_registered: Mutex<bool>,
+
+    /// Virtual-table airs the device produces end to end: the host must neither build their trace nor
+    /// skip the instance for looking empty.
+    pub device_owned_table_airs: RwLock<Vec<(usize, usize)>>,
+    pub prover_counts: RwLock<HashMap<(usize, usize), Vec<u64>>>,
     /// Aux-trace size of each basic GPU stream, largest class first (empty until `set_device_buffers`,
     /// and on CPU). An air can only run on a stream at least as large as its `prover_buffer_size`, so
     /// this is what makes stream eligibility visible to the Rust-side schedulers.
@@ -331,11 +393,20 @@ pub struct ProofCtx<F: PrimeField64> {
     /// Phase B: capacity (elements) of each half of the basic stream. An instance whose buffer
     /// exceeds it can only run in phase A; the phase-A countdown counts exactly those.
     pub phase_b_half: usize,
+    /// This prover's GPU witness declarations, copied from the options at startup: the one source the
+    /// witness side asks before staging kernel inputs.
+    pub gpu_witness_airs: GpuWitnessAirs,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
 
 impl<F: PrimeField64> ProofCtx<F> {
+    /// The declaration this prover's kernel for the air was registered from, or `None` when the host
+    /// fills the trace. Pass it to `stage_gpu_witness`.
+    pub fn gpu_witness_air(&self, airgroup_id: usize, air_id: usize) -> Option<&GpuWitnessAir> {
+        self.gpu_witness_airs.get(airgroup_id, air_id)
+    }
+
     pub fn create_ctx(
         proving_key_path: PathBuf,
         aggregation: bool,
@@ -368,6 +439,11 @@ impl<F: PrimeField64> ProofCtx<F> {
             (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
 
         Ok(Self {
+            prover_owned_tables: RwLock::new(Vec::new()),
+            prover_multiplicities_registered: Mutex::new(false),
+            gpu_witness_airs: GpuWitnessAirs::default(),
+            device_owned_table_airs: RwLock::new(Vec::new()),
+            prover_counts: RwLock::new(HashMap::new()),
             mpi_ctx,
             global_info,
             public_inputs: Values::new(n_publics),
@@ -383,13 +459,15 @@ impl<F: PrimeField64> ProofCtx<F> {
             recursion_weights,
             aggregation,
             witness_tx: RwLock::new(None),
-            witness_tx_priority: RwLock::new(None),
             witness_stats: WitnessStats::default(),
             proof_tx: RwLock::new(None),
             d_buffers: Arc::new(DeviceBuffer::default()),
             gpu,
             packed_airs: HashSet::new(),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
+            dispatch_deferred: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
+            dispatch_pending: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
+            witness_staged: (0..MAX_INSTANCES).map(|_| AtomicU8::new(WITNESS_NOT_STAGED)).collect(),
             basic_stream_sizes: Vec::new(),
             phase_b: false,
             phase_b_half: 0,
@@ -424,26 +502,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         *self.proof_tx.write().unwrap() = proof_tx;
     }
 
-    pub fn set_witness_tx_priority(&self, witness_tx_priority: Option<crossbeam_channel::Sender<usize>>) {
-        *self.witness_tx_priority.write().unwrap() = witness_tx_priority;
-    }
-
     pub fn set_witness_tx(&self, witness_tx: Option<crossbeam_channel::Sender<usize>>) {
         *self.witness_tx.write().unwrap() = witness_tx;
     }
 
-    /// Queue an instance for witness dispatch, at most once. The CAS is what stops a duplicate: the
-    /// default `pre_calculate_witness` re-announces every id it is handed.
-    pub fn set_witness_ready(&self, global_id: usize, priority: bool) {
+    /// Queue this instance for dispatch, at most once per proof; urgency is its declared
+    /// [`WitnessPriority`], not an argument here.
+    pub fn announce_witness_ready(&self, global_id: usize) {
         if !self.dctx_try_queue_witness(global_id) {
             self.witness_stats.duplicate_sends.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return;
-        }
-        if priority {
-            if let Some(witness_tx_priority) = &*self.witness_tx_priority.read().unwrap() {
-                witness_tx_priority.send(global_id).unwrap();
-                return;
-            }
         }
         if let Some(witness_tx) = &*self.witness_tx.read().unwrap() {
             witness_tx.send(global_id).unwrap();
@@ -650,7 +718,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         Ok(())
     }
 
-    /// Basic proof alone: the whole cost only for tables, which trigger no recursion
+    /// Basic proof alone; the recursion chain and the compressor are booked apart
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
@@ -689,6 +757,29 @@ impl<F: PrimeField64> ProofCtx<F> {
             *slot = air_instance;
             slot.trace_generation = generation;
         }
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.dispatch_deferred[global_idx].load(SeqCst) {
+            // Publish, then re-check: if the witness thread ended the deferral meanwhile, one of us
+            // must still send, and the swap picks exactly one.
+            self.dispatch_pending[global_idx].store(true, SeqCst);
+            if self.dispatch_deferred[global_idx].load(SeqCst) || !self.dispatch_pending[global_idx].swap(false, SeqCst)
+            {
+                return;
+            }
+        }
+        self.dispatch_air_instance(global_idx);
+    }
+
+    /// End a deferral started with `dispatch_deferred`, sending the instance if it arrived meanwhile.
+    pub fn end_deferred_dispatch(&self, global_idx: usize) {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.dispatch_deferred[global_idx].store(false, SeqCst);
+        if self.dispatch_pending[global_idx].swap(false, SeqCst) {
+            self.dispatch_air_instance(global_idx);
+        }
+    }
+
+    fn dispatch_air_instance(&self, global_idx: usize) {
         if let Some(proof_tx) = &*self.proof_tx.read().unwrap() {
             proof_tx.send(global_idx).unwrap();
         }
@@ -796,6 +887,42 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.process_instances.iter().copied().filter(|id| !dctx.is_skipped_instance(*id)).collect()
     }
 
+    /// This process's instances in dispatch order. See [`witness_schedule`].
+    ///
+    /// The collect is load-bearing, not a copy to be optimised away: callers pass lazy iterators
+    /// whose filters call back into `dctx` (`dctx_is_table`, `skip_prover_instance`). Draining one
+    /// under the guard would take a second read on the same `RwLock`, which std documents as
+    /// allowed to panic and which deadlocks outright behind a queued writer.
+    pub fn dctx_witness_schedule(&self, instances: impl IntoIterator<Item = usize>) -> Vec<usize> {
+        let ids: Vec<usize> = instances.into_iter().collect();
+        let dctx = self.dctx.read().unwrap();
+        crate::witness_schedule(ids, |id| dctx.instance_priority(id))
+    }
+
+    /// The band `instance_id` was registered with.
+    pub fn dctx_instance_priority(&self, instance_id: usize) -> WitnessPriority {
+        self.dctx.read().unwrap().instance_priority(instance_id)
+    }
+
+    /// Stall diagnostic: of `instances`, those never `Done`, grouped by state -- `Absent` never
+    /// announced, `Queued` never dispatched, `Running` wedged in a hook, `Evicted` not recomputed.
+    /// Poison-tolerant: it runs only after a failure and must not replace the real error.
+    pub fn dctx_instances_not_done(&self, instances: &[usize]) -> Vec<(WitnessState, Vec<usize>)> {
+        let dctx = self.dctx.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let states = [WitnessState::Absent, WitnessState::Queued, WitnessState::Running, WitnessState::Evicted];
+        states
+            .into_iter()
+            .filter_map(|want| {
+                let ids: Vec<usize> = instances
+                    .iter()
+                    .copied()
+                    .filter(|&id| dctx.witness_states.get(id).is_some_and(|s| s.get() == want))
+                    .collect();
+                (!ids.is_empty()).then_some((want, ids))
+            })
+            .collect()
+    }
+
     pub fn dctx_skip_process_instance(&self, instance_id: usize) {
         let mut dctx = self.dctx.write().unwrap();
         dctx.skip_instance(instance_id);
@@ -834,6 +961,16 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_is_table(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.instances[global_idx].table
+    }
+
+    /// Process instances excluding table airs, under a single read lock.
+    pub fn dctx_get_process_instances_no_tables(&self) -> Vec<usize> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.process_instances
+            .iter()
+            .copied()
+            .filter(|id| !dctx.is_skipped_instance(*id) && !dctx.instances[*id].table)
+            .collect()
     }
 
     /// Whether this air's witness rows must be written packed.
@@ -875,30 +1012,50 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.set_chunks(global_idx, chunks, slow);
     }
 
-    pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
+    /// Registers an instance, assigned to the least-loaded partition immediately, in `priority`'s band.
+    pub fn add_instance_assign(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        priority: WitnessPriority,
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
-        dctx.add_instance(airgroup_id, air_id, weight, compressor_weight)
+        dctx.add_instance(airgroup_id, air_id, weight, compressor_weight, priority)
     }
 
+    /// Registers an instance with no band preference.
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
+        self.add_instance_with_priority(airgroup_id, air_id, WitnessPriority::default())
+    }
+
+    /// Registers an instance in `priority`'s band, to be assigned later by `assign_instances`.
+    pub fn add_instance_with_priority(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        priority: WitnessPriority,
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight, priority)
     }
 
+    /// Booked like an instance: a table's proof runs the same recursion chain.
     pub fn add_table(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_table(airgroup_id, air_id, weight)
+        let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
+        let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        dctx.add_table(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn add_table_all(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
-        let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_table_all(airgroup_id, air_id, weight)
+        let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
+        let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        dctx.add_table_all(airgroup_id, air_id, weight, compressor_weight)
     }
 
     pub fn assign_table_to(&self, airgroup_id: usize, air_id: usize, gid: usize) -> ProofmanResult<()> {
@@ -911,12 +1068,19 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.is_assigned_table(instance_id)
     }
 
-    /// `weight` is the caller's basic-proof estimate; the recursion chain is added here
-    pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
+    /// `weight` is the caller's basic-proof estimate; the recursion chain is added here.
+    /// `priority` is required, not defaulted: a silent `Normal` here demotes an air with no error.
+    pub fn dctx_add_instance_no_assign(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+        priority: WitnessPriority,
+    ) -> ProofmanResult<usize> {
         let mut dctx = self.dctx.write().unwrap();
         let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
         let weight = weight + self.get_recursion_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight, compressor_weight, priority)
     }
 
     pub fn dctx_assign_instances(&self) -> ProofmanResult<()> {
@@ -1065,6 +1229,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             p_const_pols: const_pols,
             p_const_tree: std::ptr::null_mut(),
             custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
+            witness_ops: air_instance.gpu_witness_ops,
         }
     }
 
@@ -1316,6 +1481,12 @@ impl<F: PrimeField64> ProofCtx<F> {
                 headroom_extra += (PHASE_A_ALIAS_HEADROOM_MB * 1024 * 1024 / 8) as usize;
                 target = grow_to(headroom_extra);
             }
+            // 2 MiB granularity, so both halves (and the slot ceiling above them) stay 1 MiB aligned.
+            const HALVES_ALIGN: usize = 2 * (1 << 20) / 8;
+            let aligned = target & !(HALVES_ALIGN - 1);
+            if aligned >= current {
+                target = aligned;
+            }
             let half = target / 2;
             if half >= max_prover_recursive2_buffer_size {
                 layout.unused -= target - current;
@@ -1420,6 +1591,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         // taking only the layout's unused slack. Runs without a wrapper skip it.
         let unified_buffer_pad_area: u64 = if gpu && final_snark {
             let predicted_unified_buffer: u64 = aux_trace_sizes.iter().sum::<u64>()
+                + prefetch_region_area
                 + if self.phase_b {
                     0
                 } else {

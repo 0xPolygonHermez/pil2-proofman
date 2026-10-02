@@ -65,6 +65,7 @@ pub fn setup(pilout: &Path, build: &Path) -> Result<(), String> {
             proofman_common::hash_family::DEFAULT_HASH_ID,
         ),
         recursive_n_bits: None,
+        setup_version: None,
         gen_exps: false,
         exps_arch: "auto".to_string(),
         exps_cap: 60000,

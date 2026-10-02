@@ -36,6 +36,41 @@ extern "C" {
     uint64_t n_hints_by_name(void *p_expression_bin, char *hintName);
     void get_hint_ids_by_name(void *p_expression_bin, uint64_t *hintIds, char *hintName);
 
+    // ---- Prover-side multiplicities ------------------------------------------------------
+    // All of these are registry state: call them only from the host binary, never from a witness
+    // library, which links its own copy of this library (see ProofCtx::prover_owned_tables).
+    // Geometry only, registered once per run.
+    void register_mul_vt(uint64_t airgroupId, uint64_t airId, uint64_t numRows, uint64_t numCols,
+                         const uint64_t *tableIds, const uint64_t *accBases, uint64_t nTables);
+    // Every virtual range-check table, as (id, bias): the row a lookup addresses is value + bias.
+    void mul_register_range_tables(const uint64_t *tableIds, const int64_t *biases, uint64_t n);
+    void mul_register_table_map(uint64_t tableId, const uint64_t *kv, uint64_t n, uint64_t slots,
+                                uint64_t nKey);
+    // Table ids whose multiplicities the prover now owns, so Std stops counting them.
+    uint64_t mul_migrated_tables(uint64_t *out, uint64_t cap);
+    // Fold the prover-owned spans into `hostAcc`, which is scoped to this call and not retained.
+    void mul_fold(uint64_t airKey, uint64_t *hostAcc);
+    uint64_t mul_air_has_owned(uint64_t airKey);
+    void mul_set_device_export(uint64_t enabled);
+    uint64_t mul_air_device_owned(uint64_t airKey);
+    // MUL_SYNC_* status (multiplicity.hpp): OK, or why the counts cannot be trusted.
+    uint64_t mul_sync_commits(uint64_t expectedCommits);
+    uint64_t mul_commit_count();
+    // Allocate the accumulators (idempotent, no-op until a decoder is registered).
+    void mul_alloc(void *d_buffers_);
+    // Count one instance's lookups from a filled witness, for the paths that never commit.
+    void mul_scatter(void *pSetupCtx, void *params, uint64_t airgroupId, uint64_t airId, uint64_t auxReady);
+    uint64_t mul_air_has_jobs(void *pSetupCtx, uint64_t airgroupId, uint64_t airId);
+    uint64_t mul_air_reads_aux(void *pSetupCtx, uint64_t airgroupId, uint64_t airId);
+    uint64_t mul_air_plan_error(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, char *out, uint64_t cap);
+    void mul_clear_registry();
+    // A table air's proves-side lookups, evaluated from its fixed columns (stateless).
+    uint64_t mul_proves_hints(void *pSetupCtx, int64_t *cols, uint64_t *lens, uint64_t cap);
+    uint64_t mul_eval_proves_hint(void *pSetupCtx, uint64_t k, const uint64_t *constPols, uint64_t constLen,
+                                  uint64_t r0, uint64_t r1, uint64_t *bus, uint64_t *tuple, uint64_t len);
+    // Reset every mirror; called once per proof from the std's own reset point.
+    void mul_reset();
+
     // Stark Info
     // ========================================================================================
     void *stark_info_new(char* filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu);
@@ -48,7 +83,6 @@ extern "C" {
     void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
     uint64_t get_map_total_n(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
-    uint64_t get_map_total_n_contributions(void *pStarkInfo);
     uint64_t get_tree_size(void *pStarkInfo);
     void stark_info_free(void *pStarkInfo);
 
@@ -131,6 +165,7 @@ extern "C" {
     // placed. No-op on an exec file written without a band section. Returns bands expanded.
     uint64_t expand_gate_bands(void *witness, uint64_t* execData, uint64_t nCols, uint64_t execWords, uint64_t N);
     void *gen_recursive_proof_final(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
+    void free_recursivef_proof(void *zkin);
     void get_stream_proofs(void *d_buffers_);
     void get_stream_proofs_non_blocking(void *d_buffers_);
     void get_stream_id_proof(void *d_buffers_, uint64_t streamId);
@@ -225,10 +260,13 @@ extern "C" {
     void *get_first_gpu_buffer(void *d_buffers_);
     uint64_t get_const_pols_aggregation_offset(void *d_buffers_);
     uint64_t get_stream_commit_slots(void *d_buffers_);
+    uint64_t get_stream_commit_gpus(void *d_buffers_);
     uint64_t get_stream_commit_floor(void *d_buffers_);
-    uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
+    uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes);
     void configure_stream_commit_slots(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
-    void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
+    void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes);
+    int64_t stage_witness(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size, bool hostSync);
+    void release_staged_witness(void *d_buffers_, uint64_t instanceId);
     void set_pipeline_mode(void *d_buffers_, bool enable);
     void configure_phase_b(void *d_buffers_);
     int64_t set_phase_b(void *d_buffers_, uint32_t state);
@@ -239,9 +277,7 @@ extern "C" {
     uint64_t get_post_alloc_headroom_bytes();
     void configure_const_slot_cache(void *d_buffers_, uint64_t baseOffset, uint64_t slotElems, uint32_t nSlots);
     void load_host_const_pols(uint64_t airgroupId, uint64_t airId, char *proofType, char *constFilename, uint64_t constSize, void *d_buffers_, bool onlyFirstGPU);
-    int64_t prefetch_witness(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *trace);
-    void prefetch_zone_sync(void *d_buffers_);
-    int64_t commit_witness_streaming(void *d_buffers_, uint64_t slotIdx, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
+    int64_t commit_witness_streaming(void *d_buffers_, uint64_t slotIdx, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root, void *params_);
     void stream_commit_pause();
     void *get_unified_buffer_gpu_for_recursivef(void *d_buffers_, void *d_buffers_recursivef_);
     void load_fixed_pols_recursivef(void *pSetupCtx_, void *pConstTree, void *d_buffers_);

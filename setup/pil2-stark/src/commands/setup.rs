@@ -45,6 +45,8 @@ pub struct SetupOptions {
     /// `hash_family::compressed_final_by_default` -- and can be added later with the
     /// `setup-compressed-final` subcommand.
     pub compressed_final: bool,
+    /// Label written as `setupVersion` in globalInfo.json; the consumer (ZisK) checks it at load.
+    pub setup_version: Option<String>,
     /// Pin every recursive air to 2^N rows (see the CLI flag).
     pub recursive_n_bits: Option<usize>,
     /// Generate + compile per-AIR Q-expression CUDA kernels (`.exps.so`) at the
@@ -126,6 +128,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             &opts.hash,
             opts.agg_arity,
             opts.compressed_final,
+            opts.setup_version.as_deref(),
         )?;
     }
 
@@ -372,6 +375,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             &opts.hash,
             opts.agg_arity,
             opts.compressed_final,
+            opts.setup_version.as_deref(),
         );
         let airs_with_compressor = run_recursive_setup(&pilout, &pilout_name, opts, &settings_map, global_info_base)?;
 
@@ -390,6 +394,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             &opts.hash,
             opts.agg_arity,
             opts.compressed_final,
+            opts.setup_version.as_deref(),
         )?;
         tracing::info!("Wrote globalInfo.json with hasCompressor flags");
     }
@@ -467,6 +472,7 @@ mod tests {
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
+            setup_version: None,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -522,6 +528,7 @@ mod tests {
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
+            setup_version: None,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -570,6 +577,7 @@ mod tests {
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
+            setup_version: None,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,

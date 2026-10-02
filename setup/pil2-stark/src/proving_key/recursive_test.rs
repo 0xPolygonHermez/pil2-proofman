@@ -55,6 +55,8 @@ pub fn gen_recursive_test_setup(
     circom_helpers_dir: &str,
     witness_tracker: &WitnessTracker,
     blake3_lanes: Option<usize>,
+    blowup_override: Option<usize>,
+    min_n_bits: Option<usize>,
 ) -> Result<()> {
     if !["compressor", "aggregation"].contains(&setup_type) {
         bail!("Invalid setup type '{}'. Must be one of: compressor, aggregation", setup_type);
@@ -141,9 +143,9 @@ pub fn gen_recursive_test_setup(
     // it built the compressor air at degree 5 where production builds it at 3 -- same template, same
     // parameters, but 177 intermediate polynomials against far fewer, so stage 2 came out 501 columns
     // wide against 255. A fixture that verifies THAT air says nothing about the one being shipped.
-    let max_constraint_degree = Some(proofman_common::hash_family::max_constraint_degree_for_blowup(
-        crate::proving_key::recursive::recursive_blowup(template, hash),
-    ));
+    // `--blowup` overrides the template's; the degree follows it, which is the coupling being swept.
+    let blowup = blowup_override.unwrap_or_else(|| crate::proving_key::recursive::recursive_blowup(template, hash));
+    let max_constraint_degree = Some(proofman_common::hash_family::max_constraint_degree_for_blowup(blowup));
     let plonk_opts = PlonkOptions {
         airgroup_name: Some(NAME_FILE.to_string()),
         max_constraint_degree,
@@ -151,7 +153,8 @@ pub fn gen_recursive_test_setup(
         merge_copies: true,
         // None takes the air's default of 4; --blake3-lanes overrides it.
         blake3_lanes,
-        min_n_bits: None,
+        // Floors the air so a geometry can be measured at a size the circuit alone would not pick.
+        min_n_bits,
     };
     let r1cs_path = build_inner.join(format!("{}.r1cs", circom_name));
     let r1cs_data =
@@ -214,14 +217,15 @@ pub fn gen_recursive_test_setup(
     // reproduce the geometry being debugged: blake3's recursion runs at blowup 2, where maxDeg 5
     // fits exactly, and a fixture at 3 would carry a quotient the production air does not have.
     // `recursive_blowup` gives 2 for blake3 and keeps poseidon's 3, which its README documents.
+    // finalDegree is a terminal DOMAIN size here, so an overridden blowup has to shift it to keep
+    // the terminal polynomial degree -- and the schedule -- where the family put it.
+    let terminal = proofman_common::hash_family::fri_terminal_degree(hash);
     let settings = StarkSettings {
-        blowup_factor: Some(crate::proving_key::recursive::recursive_blowup(template, hash)),
+        blowup_factor: Some(blowup),
         last_level_verification: crate::proving_key::recursive::recursive_last_level_verification(template, hash),
-        // Same pins as the real recursion layers, so a test key matches their geometry. The terminal
-        // degree matters as much as the rest: left to the generic default of 5 it gave the fixture a
-        // six-step FRI schedule where production has five, so the fixture verified a shape the
-        // pipeline never builds.
-        final_degree: Some(proofman_common::hash_family::fri_terminal_degree(hash)),
+        final_degree: Some(
+            (terminal + blowup).saturating_sub(crate::proving_key::recursive::recursive_blowup(template, hash)),
+        ),
         pow_bits: Some(crate::proving_key::recursive::recursive_grinding_bits(template, hash)),
         ..Default::default()
     };

@@ -25,6 +25,7 @@ pub(crate) fn build_global_info_json(
     hash: &str,
     agg_arity: usize,
     has_compressed_final: bool,
+    setup_version: Option<&str>,
 ) -> serde_json::Value {
     let mut airs = Vec::new();
     let mut air_groups = Vec::new();
@@ -62,7 +63,7 @@ pub(crate) fn build_global_info_json(
 
     let transcript_arity: u64 = proofman_common::hash_family::transcript_arity(hash);
 
-    json!({
+    let mut global_info = json!({
         "name": pilout_name,
         "airs": airs,
         "air_groups": air_groups,
@@ -81,10 +82,16 @@ pub(crate) fn build_global_info_json(
         "proofValuesMap": proof_values_map,
         "publicsMap": publics_map,
         "hash": hash,
-    })
+    });
+    // Consumer-assigned label (e.g. ZisK's); proofman only records it, the consumer checks it.
+    if let Some(v) = setup_version {
+        global_info.as_object_mut().unwrap().insert("setupVersion".to_string(), json!(v));
+    }
+    global_info
 }
 
 /// Write only `pilout.globalInfo.json` into `<build_dir>/provingKey/`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_global_info_json(
     pilout: &pb::PilOut,
     pilout_name: &str,
@@ -93,10 +100,12 @@ pub(crate) fn write_global_info_json(
     hash: &str,
     agg_arity: usize,
     has_compressed_final: bool,
+    setup_version: Option<&str>,
 ) -> Result<()> {
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
-    let global_info = build_global_info_json(pilout, pilout_name, settings_map, hash, agg_arity, has_compressed_final);
+    let global_info =
+        build_global_info_json(pilout, pilout_name, settings_map, hash, agg_arity, has_compressed_final, setup_version);
     let global_info_str = crate::output::json::to_json_string(&global_info)?;
     fs::write(proving_key_dir.join("pilout.globalInfo.json"), &global_info_str)?;
     Ok(())
@@ -124,6 +133,7 @@ pub(crate) fn write_global_constraints(
         // Same reason as the hash and the arity above: this JSON is dropped, so the value is
         // never read back and any of the two would do.
         true,
+        None,
     );
 
     let global_constraints = build_global_constraints_json(pilout, &pil_info::FieldCfg::goldilocks())?;
@@ -172,7 +182,7 @@ pub(crate) fn write_global_info(
     has_compressed_final: bool,
 ) -> Result<()> {
     write_global_constraints(pilout, pilout_name, build_dir, settings_map)?;
-    write_global_info_json(pilout, pilout_name, build_dir, settings_map, hash, agg_arity, has_compressed_final)?;
+    write_global_info_json(pilout, pilout_name, build_dir, settings_map, hash, agg_arity, has_compressed_final, None)?;
     tracing::info!("Global info and constraints written");
     Ok(())
 }
@@ -226,9 +236,19 @@ mod agg_arity_tests {
         let pilout = pb::PilOut::default();
         let settings = StarkStructsConfig::default();
         for arity in [2usize, 3] {
-            let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", arity, true);
+            let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", arity, true, None);
             assert_eq!(v["aggregationArity"], serde_json::json!(arity));
         }
+    }
+
+    #[test]
+    fn the_builder_emits_the_setup_version_only_when_given() {
+        let pilout = pb::PilOut::default();
+        let settings = StarkStructsConfig::default();
+        let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", 3, true, None);
+        assert!(v.get("setupVersion").is_none());
+        let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", 3, true, Some("1.3.1"));
+        assert_eq!(v["setupVersion"], serde_json::json!("1.3.1"));
     }
 }
 

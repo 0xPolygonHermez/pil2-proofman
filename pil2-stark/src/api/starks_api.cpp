@@ -1,4 +1,7 @@
 #include "zkglobals.hpp"
+#include "starks_backend.hpp"
+#include "multiplicity.hpp"
+#include "multiplicity_cpu.hpp"
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
 #include "global_constraints.hpp"
@@ -320,10 +323,6 @@ uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
     return ((StarkInfo *)pStarkInfo)->mapTotalNCustomCommitsFixed;
 }
 
-uint64_t get_map_total_n_contributions(void *pStarkInfo)
-{
-    return ((StarkInfo *)pStarkInfo)->mapTotalNContributions;
-}
 
 void stark_info_free(void *pStarkInfo)
 {
@@ -753,6 +752,15 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
 
     calculateWitnessExpr(*setupCtx, paramsUnpacked, expressionsCtx);
 
+    // Prover-side multiplicities, at the point the GPU backend scatters (witness filled, untransformed).
+    // Gated on the active backend, not __USE_CUDA__: the CUDA build also proves on the CPU.
+
+    if (!starks_gpu_mode_active()) {
+        mul_cpu_alloc();   // idempotent; the accumulators are not allocated on a CPU run otherwise
+        mul_scatter_cpu(*setupCtx, paramsUnpacked, airgroupId, airId, false);
+        mul_note_commit();
+    }
+
     NTT_Goldilocks ntt(N);
     ntt.LDE(&auxTraceGL[offset_dst], paramsUnpacked.trace, NExtended, N, nCols, ldeScratch);
     mt.setSource(&auxTraceGL[offset_dst]);
@@ -1076,6 +1084,11 @@ void gen_final_snark_proof_cpu(void *prover, void *circomWitnessFinal, uint8_t* 
     genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
 }
 
+
+// The zkin json gen_recursive_proof_final returns; host-only, so one definition serves CPU and GPU.
+void free_recursivef_proof(void *zkin) {
+    delete (json *)zkin;
+}
 
 void free_json_string(char* json_str) {
     if (json_str != nullptr) {

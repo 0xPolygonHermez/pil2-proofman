@@ -26,35 +26,35 @@ class TimerGPU;
 //   * blake3 (arity 2): chunks of 8 (one 64-byte block), raw chaining value
 //     carried in the 4 state columns, packed to the digest on the final
 //     block (matches b3_hash_row block for block). A row wider than one
-//     blake3 chunk (128 words) spans two chunks: chunk 0's chaining value is
-//     parked in 4 extra state columns and the leaf is the parent node of the
-//     two chunk values, as b3_hash_row builds it. The 12-column (16 for two
-//     chunks) working set makes a blake3 slot smaller than a Poseidon1 one
-//     for the same shape.
+//     blake3 chunk (128 words) spans several: the chaining values of completed
+//     left subtrees are parked in a stack of 4-column state slots and the leaf
+//     is the chunk tree's root node, as b3_hash_row builds it. The 12-column
+//     working set (+4 per parked value) keeps a blake3 slot smaller than a
+//     Poseidon1 one for rows of up to two chunks.
 //
 // All working memory lives inside one caller-provided slot (see layout in
 // streamCommitSlotElems); concurrent calls on different slots/streams are
 // independent.
 
-// Widest witness a slot commit accepts. The slot head reserves one element per
-// column for the bit widths, and the blake3 absorb hashes a row as at most two
-// blake3 chunks (2 x 128 words, one parent node): wider rows would need the
-// general chaining-value stack of b3_hash_row. 256 covers the lane-packed Main
-// (245 columns); Poseidon1 has no such limit beyond the header.
-static constexpr uint64_t SC_MAX_COLS = 256;
+// Widest witness a slot commit accepts. Cost is the slot head (one element per column for the bit
+// widths, 32 KB) and a blake3 row's parked chaining values (see scBlake3StateCols).
+static constexpr uint64_t SC_MAX_COLS = 4096;
 
 // A lane is named by a u8 (dColLane, and bits 33-40 of the kernel's metadata word).
 static constexpr uint64_t SC_MAX_LANES = 256;
 
 // Hash family the slot commits with. Must match the proving key's family --
 // the caller (commit_witness_streaming_gpu) derives it from get_hash_family().
-enum class StreamCommitHash : uint32_t { Poseidon1 = 0, Blake3 = 1 };
+enum class StreamCommitHash : uint32_t { Poseidon1 = 0, Blake3 = 1, Poseidon2 = 2 };
 
 struct StreamCommitDims {
     uint64_t nBits;        // log2 trace rows
     uint64_t nBitsExt;     // log2 extended rows
     uint64_t nCols;        // witness columns (<= SC_MAX_COLS)
     uint64_t wordsPerRow;  // packed 64-bit words per row
+    // Hand the hook a column-major copy of the packed rows, transposed into the slot's unused
+    // tail (scTransposePackedKernel).
+    bool colMajorForHook = false;
 
     // Indexed (compact) witness. Each row is a header of `lanes` instruction indices
     // (indexBits wide each) followed by the runtime columns; the columns flagged in
@@ -73,14 +73,14 @@ struct StreamCommitDims {
 //   [0, SC_MAX_COLS)              column bit widths (nCols used)
 //   [SC_MAX_COLS, +N*wordsPerRow) packed witness
 //   [.., +W*NExt)              hash working set (data | state), ColMajor;
-//                              W = 16 (Poseidon1: 12 + 4 state), 12 (blake3:
-//                              8 + 4 state) or 16 (blake3, nCols > 128: 8 + 4
-//                              state + 4 parked chunk-0 CV)
+//                              W = 16 (Poseidon1/2: 12 + 4 state) or, for
+//                              blake3, 8 + 4 state + 4 per parked chaining
+//                              value (bitlen(chunks - 1) of them)
 //   [.., +N)                   LDE scratch
 uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
                                StreamCommitHash hash = StreamCommitHash::Poseidon1);
 
-// Commit the bit-packed witness at hPacked (N*wordsPerRow u64, row-major) and
+// Commit the bit-packed witness at hPacked (N*wordsPerRow u64, row- or column-major) and
 // write the 4-element root to hRoot. colWidths: per-column bit widths (nCols
 // entries, host). The packed upload is issued as 32 MiB cudaMemcpyAsync blocks.
 // Synchronous on return: the root is valid, and both the slot and the caller's
@@ -99,7 +99,38 @@ uint64_t streamCommitSlotElems(const StreamCommitDims &dims,
 //
 // Returns 0, or a negative value on invalid dims (nCols outside
 // (0, SC_MAX_COLS], lanes above SC_MAX_LANES, arity mismatch with the slot
-// layout contract, or an inconsistent indexed descriptor).
+// layout contract, an inconsistent indexed descriptor, or an indexed row too
+// wide for the device's shared memory, -8).
+
+// Called once, after the packed witness (`dPacked`, device) is uploaded and before the chunk loop.
+// The only point where the whole witness exists: the loop LDEs columns IN PLACE, so nothing after
+// it can read cm1.
+typedef void (*StreamCommitHook)(const uint64_t *dPacked, const StreamCommitDims &dims,
+                                 cudaStream_t stream, void *user);
+
+// Called after each chunk is unpacked and BEFORE it is extended in place. `dst` holds `cc` columns
+// from `c0`, ColMajor at the small-domain stride. Prover-computed stage-1 columns (witness_calc
+// hints) are written here.
+typedef void (*StreamCommitChunkHook)(uint64_t *dst, uint32_t c0, uint32_t cc, uint64_t nRows,
+                                      cudaStream_t stream, void *user);
+
+// Whether a slot of `slotElems` elements fits this layout AND a column-major packed copy at the tail.
+inline bool streamCommitColMajorFits(const StreamCommitDims &dims, StreamCommitHash hash,
+                                     uint64_t slotElems) {
+    const uint64_t need = (1ull << dims.nBits) * dims.wordsPerRow;
+    return need != 0 && slotElems >= need &&
+           streamCommitSlotElems(dims, hash) + need <= slotElems;
+}
+
+// The hash family's round constants on the current device, once; called by the warm-up so no
+// commit copies to a symbol.
+void streamCommitWarmConstants(StreamCommitHash hash);
+
+// The shape checks streamCommitPacked refuses on, callable before the witness is consumed.
+// 0 when the commit can run; otherwise the code streamCommitPacked would return.
+int64_t streamCommitCheck(const StreamCommitDims &dims, const uint8_t *dColSource,
+                          const uint8_t *dColLane, const uint64_t *dTable, StreamCommitHash hash);
+
 int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint64_t *colWidths, const void *hPacked,
                            uint64_t *hRoot, cudaStream_t stream,
@@ -107,6 +138,11 @@ int64_t streamCommitPacked(gl64_t *slotBase, const StreamCommitDims &dims,
                            const uint8_t *dColLane = nullptr,
                            const uint64_t *dTable = nullptr,
                            StreamCommitHash hash = StreamCommitHash::Poseidon1,
-                           TimerGPU *timer = nullptr);
+                           StreamCommitHook hook = nullptr, void *hookUser = nullptr,
+                           TimerGPU *timer = nullptr,
+                           StreamCommitChunkHook chunkHook = nullptr, void *chunkUser = nullptr,
+                           // Elements the slot owns; colMajorForHook transposes into the
+                           // unused tail. 0 disables it.
+                           uint64_t slotElems = 0);
 
 #endif

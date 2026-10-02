@@ -83,7 +83,7 @@ airtemplate Blake3(const int N = 2**20, const int LANES = 1) {
     // not the IV and vc has to be a committed column.
     blake3Lanes(LANES, BLOCK_ID, 1, BLAKE3_TABLE_ID, RANGE_CHECKER_ID, BLAKE3_MSG_ID,
                 0, 0, noA, noDInv, noVbPpTHi, noOutBytes, noCvBytes,
-                noClk, noClk, 0, 0, 0, 0, 0, noClk, CLOCKS);
+                0, 0, 0, 0, 0, noClk, CLOCKS);
 
     // After the lanes: mul_table and mul_range are the trace's last two columns.
     blake3Tables(N, BLAKE3_TABLE_ID, RANGE_CHECKER_ID);

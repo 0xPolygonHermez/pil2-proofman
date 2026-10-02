@@ -131,8 +131,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     //   0x465249   "FRI"   FRI fold+merkelize step (+ step in key)
     //   0x4752494e "GRIN"  grinding (+ powBits in key)
     //   0x515559   "QUY"   query proofs (+ d_const_tree in key: preloaded trees repoint it)
-    //   0x57455843 "WEXC"  contributions witness expressions   (commit_witness_gpu, starks_api.cu)
-    //   0x574c4445 "WLDE"  contributions LDE + Merkle + root   (commit_witness_gpu, starks_api.cu)
     const uint64_t graphCtxId = (uint64_t)(uintptr_t)&setupCtx;
 
     // Pipeline: pinned params/proof staging is parity-sliced by launchSeq (incremented at
@@ -188,7 +186,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t offsetProofValues = setupCtx.starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
     uint64_t offsetEvals = setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)];
     uint64_t offsetChallenges = setupCtx.starkInfo.mapOffsets[std::make_pair("challenges", false)];
-    uint64_t offsetXDivXSub = setupCtx.starkInfo.mapOffsets[std::make_pair("xdivxsub", false)];
     uint64_t offsetFriQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("fri_queries", false)];
     uint64_t offsetChallenge = setupCtx.starkInfo.mapOffsets[std::make_pair("challenge", false)];
     uint64_t offsetNonce = setupCtx.starkInfo.mapOffsets[std::make_pair("nonce", false)];
@@ -214,7 +211,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         airgroupValues : (Goldilocks::Element *)d_aux_trace + offsetAirgroupValues,
         airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
         evals : (Goldilocks::Element *)d_aux_trace + offsetEvals,
-        xDivXSub : (Goldilocks::Element *)d_aux_trace + offsetXDivXSub,
+        xDivXSub : nullptr,
         pConstPolsAddress: d_const_pols_unpacked,
         pConstPolsExtendedTreeAddress,
         pCustomCommitsFixed,
@@ -399,7 +396,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     // stops being sampled. This category happens to cover the whole body, so it can just wrap it.
     TimerStartCategoryGPU(timer, FRI);
     cudagraph::run(cudagraph::key(0x46524950ULL ^ graphCtxId), countId, stream, [&] {
-    calculateXis_inplace(setupCtx, h_params, air_instance_info->opening_points, d_xiChallenge, stream);
     uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
     dim3 threads(256);
     dim3 blocks((NExtended + threads.x - 1) / threads.x);
@@ -410,7 +406,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStartGPU(timer, STARK_FRI_POLYNOMIAL);
     TimerStartCategoryGPU(timer, EXPRESSIONS);
     cudagraph::run(cudagraph::key(0x46524558ULL ^ graphCtxId), countId, stream, [&] {
-        calculateFRIExpression(setupCtx, h_params, air_instance_info, stream);
+        calculateFRIExpression(setupCtx, h_params, air_instance_info, d_xiChallenge, stream);
     });
     TimerStopCategoryGPU(timer, EXPRESSIONS);
     TimerStopGPU(timer, STARK_FRI_POLYNOMIAL);

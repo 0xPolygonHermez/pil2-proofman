@@ -37,9 +37,8 @@ unsafe impl Sync for CircomState {}
 use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
-    get_map_totaln_custom_commits_fixed_c, get_map_totaln_contributions_c, get_proof_size_c, get_max_n_tmp1_c,
-    get_max_n_tmp3_c, get_const_tree_size_c, get_proof_pinned_size_c, get_operations_quotient_c,
-    calculate_words_per_row_c, load_device_setup_c,
+    get_map_totaln_custom_commits_fixed_c, get_proof_size_c, get_max_n_tmp1_c, get_max_n_tmp3_c, get_const_tree_size_c,
+    get_proof_pinned_size_c, get_operations_quotient_c, calculate_words_per_row_c, load_device_setup_c,
 };
 
 use crate::{custom_commit_reserved_words, custom_commit_words_per_row, GlobalInfoAir, ProofmanError};
@@ -96,7 +95,6 @@ pub struct Setup<F: PrimeField64> {
     pub const_pols_path: String,
     pub const_pols_tree_path: String,
     pub prover_buffer_size: u64,
-    pub contributions_size: u64,
     pub custom_commits_fixed_buffer_size: u64,
     pub proof_size: u64,
     pub pinned_proof_size: u64,
@@ -351,7 +349,6 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_size_packed,
             const_tree_size,
             prover_buffer_size,
-            contributions_size,
             custom_commits_fixed_buffer_size,
             proof_size,
             pinned_proof_size,
@@ -365,7 +362,6 @@ impl<F: PrimeField64> Setup<F> {
                 std::ptr::null_mut(),
                 Vec::new(),
                 String::new(),
-                0,
                 0,
                 0,
                 0,
@@ -390,7 +386,6 @@ impl<F: PrimeField64> Setup<F> {
             let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);
             set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
             let prover_buffer_size = get_map_totaln_c(p_stark_info);
-            let contributions_size = get_map_totaln_contributions_c(p_stark_info);
             let custom_commits_fixed_buffer_size = get_map_totaln_custom_commits_fixed_c(p_stark_info);
             let proof_size = get_proof_size_c(p_stark_info);
             let pinned_proof_size = get_proof_pinned_size_c(p_stark_info);
@@ -427,7 +422,6 @@ impl<F: PrimeField64> Setup<F> {
                     0,
                     const_tree_size,
                     prover_buffer_size,
-                    contributions_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
                     pinned_proof_size,
@@ -464,7 +458,6 @@ impl<F: PrimeField64> Setup<F> {
                     const_pols_size_packed,
                     const_tree_size,
                     prover_buffer_size,
-                    contributions_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
                     pinned_proof_size,
@@ -605,7 +598,6 @@ impl<F: PrimeField64> Setup<F> {
             verkey_file,
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
-            contributions_size,
             proof_size,
             pinned_proof_size,
             total_signal_no,
