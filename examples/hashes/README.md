@@ -114,8 +114,8 @@ GPU const cache, so re-run the whole chain rather than a suffix of it. If a run 
 
 ### Blowup Factor
 
-`config.json` sets `blowupFactor` per air as the **log2** of the LDE expansion — Blake3's `2`
-means the trace is extended to `4 * N` rows, Sha2 and Blake2b's `1` means `2 * N`.
+`config.json` sets `blowupFactor` per air as the **log2** of the LDE expansion — Blake3's and Sha2's
+`2` means the trace is extended to `4 * N` rows, Blake2b's `1` means `2 * N`.
 
 It is coupled to the constraint degree: a blowup of `2**k` admits constraints of degree at most
 `2**k + 1`, so Blake3's `blowupFactor: 2` is what lets `main.pil` ask for
@@ -167,37 +167,55 @@ at `LANES=1`), so comparing lane counts measured at different blowups conflates 
 twelve `LANES 1-4 x blowup 1-3` points come from `proofman-setup stats` and are recorded in
 `setup/stark-recurser/docs-research/recursion-cell-memory-model.html`.
 
+### SHA2-256: instance-sliced cells
+
+`Sha2` is not bit-decomposed per hash. A cell holds the **same bit position of 5 independent
+SHA2-256s**, `v = Σ_k bit_k · 2^(12k)`, so the 5 lanes share every column instead of each lane
+getting its own (this is what `LANES` means for Sha2, and it is fixed at 5: a 64-bit field holds 5
+slots of 12 bits, and 12 is the spacing the 8-bit addition chunks need). Rotations and shifts are
+rewiring; Σ0, Σ1, σ0, σ1, maj and ch go through batched lookup tables whose output cell packs the 5
+lanes' contributions; the additions are checked per 8-bit chunk on lane-packed values. 68 rows per
+cycle: 4 load-state rows, then rounds 0..63.
+
+The compression lives in `setup/stark-recurser/plonk2pil/pil/circuits/sha2.pil` (`sha2Lanes`,
+`sha2Tables`), so a recursion air can call it the way the Blake3 ones call `circuits/blake3.pil`;
+`pil/sha2.pil` only supplies the clocks. The tables (`2^21`, `2^20`, `2^20` and `7^5` rows) are
+integrated in the air and split into blocks of `N` rows, one multiplicity column per block. The
+soundness argument, including two constructions that were tried and rejected, is
+`sha2-sliced-soundness.md` at the repo root.
+
 ## Hash Throughput Comparison
 
-All from `proofman-setup stats` at `LANES=1`, Blake3 at `N=2**17`, SHA2/Blake2b at `N=2**16`.
-`total` is the committed width (stage1+stage2+stageQ); fixed is listed separately. Clock length is
-rows per hash per lane and does not move with blowup. Lower **cost / byte** is better.
+From `proofman-setup stats` at the configured shapes: Blake3 with `LANES=4` and Sha2 at `N=2**19`,
+`blowupFactor: 2`; Blake2b at `N=2**16`, `blowupFactor: 1`. `total` is the committed width
+(stage1+stage2+stageQ); fixed is listed separately. Rows / hash is rows per cycle divided by the
+hashes a cycle carries. GPU time is warm `prove --gpu -t 1` (commit + proof per instance, median of
+the warm instances of a six-instance proof) on an RTX 5090. Lower **cost / byte** is better.
 
-Compared at the same `blowupFactor: 1` — raising it only helps Blake3, see below:
-
-|                       | **Blake3**          | **SHA2-256**                | **Blake2b**                   |
-| --------------------- | ------------------- | --------------------------- | ----------------------------- |
-| Clock length          | 56 rows             | 72 rows                     | 96 rows                       |
-| Fixed                 | 8                   | 5                           | 6                             |
-| Stage1                | 55                  | 103                         | 100                           |
-| Stage2                | 48                  | 6                           | 84                            |
-| StageQ                | 6                   | 6                           | 6                             |
-| **Total cols**        | **109**             | **115**                     | **190**                       |
-| Constraints           | 26                  | 105                         | 47                            |
-| Max degree            | 3                   | 3                           | 3                             |
-| Opening points        | 57                  | 73                          | 97                            |
-| nEvals                | 186                 | 633                         | 329                           |
-| Expressions           | 1,143               | 3,808                       | 2,088                         |
-| Prover mem / instance | 0.32 GB             | 0.19 GB                     | 0.24 GB                       |
-| Verifier hashes       | 23,326              | 22,160                      | 24,042                        |
-| **Cells / hash**      | 109x56 = **6,104**  | 115x72 = **8,280** (+36%)   | 190x96 = **18,240** (+199%)   |
-| **Cost / byte**       | 6,104/64 = **95.4** | 8,280/64 = **129.4** (+36%) | 18,240/128 = **142.5** (+49%) |
+|                       | **Blake3** (4 lanes)    | **SHA2-256** (5 lanes)        | **Blake2b**                   |
+| --------------------- | ----------------------- | ----------------------------- | ----------------------------- |
+| Rows / hash           | 56 / 4 = 14             | 68 / 5 = 13.6                 | 96                            |
+| Fixed                 | 8                       | 25                            | 6                             |
+| Stage1                | 214                     | 229                           | 100                           |
+| Stage2                | 81                      | 114                           | 87                            |
+| StageQ                | 12                      | 12                            | 6                             |
+| **Total cols**        | **307**                 | **355**                       | **193**                       |
+| Max degree            | 5                       | 5                             | 3                             |
+| Opening points        | 57                      | 69                            | 97                            |
+| nEvals                | 502                     | 745                           | 330                           |
+| Expressions           | 4,742                   | 6,912                         | 2,131                         |
+| Prover mem / instance | 5.62 GB                 | 6.70 GB                       | 0.24 GB                       |
+| Verifier hashes       | 17,508                  | 18,553                        | 23,679                        |
+| **Cells / hash**      | 307x14 = **4,298**      | 355x13.6 = **4,828** (+12%)   | 193x96 = **18,528** (+331%)   |
+| **Cost / byte**       | 4,298/64 = **67.2**     | 4,828/64 = **75.4** (+12%)    | 18,528/128 = **144.8**        |
+| **GPU time / hash**   | 85.6 ms / 37,448 = **2.29 µs** | 102.8 ms / 38,550 = **2.67 µs** (+17%) | —               |
 
 ### What blowup buys Blake3
 
-`config.json` raises only Blake3 to `blowupFactor: 2`, because Blake3 is the one air here with
-degree headroom to spend. SHA2-256 never exceeds degree 3, so its `maxConstraintDegree` stays 3 and
-its width is unchanged at any blowup — it would pay the memory for nothing.
+`config.json` runs Blake3 and Sha2 at `blowupFactor: 2`: both carry most of their lookup terms in
+stage2, which is what the degree headroom shrinks. For Sha2, stage2 goes from 225 to 114 columns
+between blowup 1 and 2 (total 460 -> 355), the same -23% in cells / hash that Blake3 gets at
+4 lanes. At `LANES=1`, Blake3:
 
 | Blake3 `blowupFactor`  | **1**               | **2**               | **3**               |
 | ---------------------- | ------------------- | ------------------- | ------------------- |

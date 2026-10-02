@@ -29,7 +29,7 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), true)?;
         register_std(wcm, &std_lib);
 
-        let sha2_air = Sha2Air::new::<F>();
+        let sha2_air = Sha2Air::new();
         wcm.register_component(sha2_air);
 
         let blake2b_air = Blake2bAir::new::<F>();

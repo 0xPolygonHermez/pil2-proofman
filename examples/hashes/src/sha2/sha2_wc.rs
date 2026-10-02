@@ -4,151 +4,214 @@ use proofman_common::{AirInstance, BufferPool, FromTrace, ProofCtx, ProofmanResu
 use proofman_witness::WitnessComponent;
 use proofman_fields::PrimeField64;
 
-use crate::pil_helpers::{Sha2Trace, Sha2TraceRow, Sha2TraceRowOps, Sha2TraceRowPacked};
+use crate::pil_helpers::Sha2Trace;
 
 use super::{
-    sha2_constants::{CLOCKS, CLOCKS_LOAD_INPUT, CLOCKS_LOAD_STATE, NUM_STEPS, RANGE_SIZE, RC},
-    sha2_helpers::{big_sigma0, big_sigma1, bits32, ch, maj, random_sha2_input, range_row, small_sigma0, small_sigma1},
+    sha2_constants::{
+        CARRY_ROWS, CHR_ROWS, CHUNK_BITS, CLOCKS, CLOCKS_LOAD_INPUT, CLOCKS_LOAD_STATE, LANES, NCHUNK, NUM_ROUNDS,
+        P3_ROWS, RANGE_ROWS, RC, SLOT_BITS,
+    },
+    sha2_helpers::{
+        big_sigma0, big_sigma1, bit, ch, compress, maj, random_sha2_input, self_test, slice, small_sigma0, small_sigma1,
+    },
 };
 
+/// Tag of each parity/maj lookup, in the order Σ0, Σ1, maj, σ0, σ1 (1 selects maj).
+const P3_TAGS: [usize; 5] = [0, 0, 1, 0, 0];
+
 pub struct Sha2Air {
-    num_available_sha2s: usize,
     instance_ids: RwLock<Vec<usize>>,
 }
 
 impl Sha2Air {
-    pub fn new<F: PrimeField64>() -> Arc<Self> {
-        let num_available_sha2s = Sha2Trace::<Sha2TraceRow<F>>::NUM_ROWS / CLOCKS;
-
-        Arc::new(Self { num_available_sha2s, instance_ids: RwLock::new(Vec::new()) })
+    pub fn new() -> Arc<Self> {
+        self_test();
+        Arc::new(Self { instance_ids: RwLock::new(Vec::new()) })
     }
 
-    /// Fill one SHA2-256 invocation and accumulate the lookup multiplicities
+    /// Fill the whole trace and wrap it as an air instance.
     #[allow(clippy::needless_range_loop)]
-    fn process_trace<F: PrimeField64, R: Sha2TraceRowOps<F>>(
-        rows: &mut [R],
-        state: &[u32; 8],
-        input: &[u32; 16],
-        range_counts: &mut [u64],
-    ) {
-        // ── LOAD STATE: rows 0..4 hold [d,c,b,a] in s0 and [h,g,f,e] in s1 ──
-        for i in 0..CLOCKS_LOAD_STATE {
-            let row = &mut rows[i];
-            row.set_all_s0(&bits32(state[3 - i]));
-            row.set_all_s1(&bits32(state[7 - i]));
-            range_counts[range_row(0, 0, 0)] += 1;
-        }
-
-        // ── LOAD INPUT & MIXING: rows 4..68, one mixing step per row ──
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
-        let mut w = [0u32; NUM_STEPS];
-        w[..16].copy_from_slice(input);
-
-        for i in 0..NUM_STEPS {
-            let row = &mut rows[CLOCKS_LOAD_STATE + i];
-
-            // Message schedule: rows 4..20 load the input; the rest extend it
-            let w_carry = if i < CLOCKS_LOAD_INPUT {
-                0u8
-            } else {
-                let w_full =
-                    w[i - 16] as u64 + small_sigma0(w[i - 15]) as u64 + w[i - 7] as u64 + small_sigma1(w[i - 2]) as u64;
-                w[i] = w_full as u32;
-                (w_full >> 32) as u8
-            };
-
-            // Mixer
-            let t1 = h as u64 + big_sigma1(e) as u64 + ch(e, f, g) as u64 + RC[i] as u64 + w[i] as u64;
-            let t2 = big_sigma0(a) as u64 + maj(a, b, c) as u64;
-            let new_a_full = t1 + t2;
-            let new_e_full = d as u64 + t1;
-            let s0_carry = (new_a_full >> 32) as u8;
-            let s1_carry = (new_e_full >> 32) as u8;
-
-            row.set_all_s0(&bits32(new_a_full as u32));
-            row.set_all_s1(&bits32(new_e_full as u32));
-            row.set_all_w(&bits32(w[i]));
-            row.set_new_s0_carry_bits(s0_carry);
-            row.set_new_s1_carry_bits(s1_carry);
-            row.set_new_w_carry_bits(w_carry);
-            range_counts[range_row(s0_carry, s1_carry, w_carry)] += 1;
-
-            // advance the working state
-            h = g;
-            g = f;
-            f = e;
-            e = new_e_full as u32;
-            d = c;
-            c = b;
-            b = a;
-            a = new_a_full as u32;
-        }
-
-        // ── WRITE STATE: rows 68..72 hold state + [d,c,b,a] and state + [h,g,f,e] ──
-        let out_s0 = [d, c, b, a];
-        let out_s1 = [h, g, f, e];
-        for i in 0..4 {
-            let row = &mut rows[CLOCKS_LOAD_STATE + NUM_STEPS + i];
-
-            let s0_full = state[3 - i] as u64 + out_s0[i] as u64;
-            let s1_full = state[7 - i] as u64 + out_s1[i] as u64;
-            let s0_carry = (s0_full >> 32) as u8;
-            let s1_carry = (s1_full >> 32) as u8;
-
-            row.set_all_s0(&bits32(s0_full as u32));
-            row.set_all_s1(&bits32(s1_full as u32));
-            row.set_new_s0_carry_bits(s0_carry);
-            row.set_new_s1_carry_bits(s1_carry);
-            range_counts[range_row(s0_carry, s1_carry, 0)] += 1;
-        }
-    }
-
-    /// Fill the whole trace and wrap it as an air instance. Generic over the row type so the
-    /// packed and unpacked layouts share one filler; every write goes through `Sha2TraceRowOps`.
-    fn compute_witness_inner<F: PrimeField64, R: Sha2TraceRowOps<F>>(
+    fn compute_witness_inner<F: PrimeField64>(
         &self,
         buffer_pool: &dyn BufferPool<F>,
     ) -> ProofmanResult<AirInstance<F>> {
-        // One count today: every available slot is filled. A requested count, when there is one,
-        // would make the padding below reachable.
-        let num_available_sha2s = self.num_available_sha2s;
-
-        let mut trace = Sha2Trace::<R>::new_from_vec_zeroes(buffer_pool.take_buffer())?;
-        let num_rows = trace.num_rows();
-
-        // Check that we can fit all the SHA2 inputs in the trace
-        let num_rows_needed = num_available_sha2s * CLOCKS;
+        let mut trace = Sha2Trace::<F>::new_from_vec_zeroes(buffer_pool.take_buffer())?;
+        let n = trace.num_rows();
+        let num_ops = n / CLOCKS;
+        let used = num_ops * CLOCKS;
 
         tracing::debug!(
-            "··· Creating SHA2 instance with {} inputs [{} rows, {:.2}% filled]",
-            num_available_sha2s,
-            num_rows,
-            num_rows_needed as f64 / num_rows as f64 * 100.0
+            "··· Creating SHA2 instance with {} inputs ({} cycles x {} lanes) [{} / {} rows used {:.2}%]",
+            num_ops * LANES,
+            num_ops,
+            LANES,
+            used,
+            n,
+            used as f64 / n as f64 * 100.0
         );
 
-        // Local multiplicity accumulator for the range checker
-        let mut range_counts = vec![0u64; RANGE_SIZE];
-
-        // 1] Fill one CLOCKS-row cycle per SHA2 and count its lookups.
-        for k in 0..num_available_sha2s {
-            let base = k * CLOCKS;
-            let (state, input) = random_sha2_input(k as u64);
-            Self::process_trace::<F, R>(&mut trace.buffer[base..base + CLOCKS], &state, &input, &mut range_counts);
+        // 1] The words every row holds, lane by lane: the load-state rows [d,c,b,a] / [h,g,f,e], then
+        //    round t on row 4+t with (a_t, e_t, W_t). The trailing rows no cycle covers stay zero.
+        let mut wa = vec![[0u32; LANES]; n];
+        let mut we = vec![[0u32; LANES]; n];
+        let mut ww = vec![[0u32; LANES]; n];
+        for op in 0..num_ops {
+            let base = op * CLOCKS;
+            for k in 0..LANES {
+                let (state, block) = random_sha2_input((op * LANES + k) as u64);
+                let (av, ev, w, _) = compress(&state, &block);
+                for i in 0..CLOCKS_LOAD_STATE {
+                    wa[base + i][k] = state[3 - i];
+                    we[base + i][k] = state[7 - i];
+                }
+                for t in 0..NUM_ROUNDS {
+                    wa[base + CLOCKS_LOAD_STATE + t][k] = av[t];
+                    we[base + CLOCKS_LOAD_STATE + t][k] = ev[t];
+                    ww[base + CLOCKS_LOAD_STATE + t][k] = w[t];
+                }
+            }
         }
 
-        // Every complete cycle is filled above, so there are no padding cycles to fill. If a
-        // requested count is ever plumbed in, they cannot be left zero: unlike the Blake AIRs the
-        // all-zero row does not satisfy the SHA2 constraints on clocked cycles (the round constant
-        // is a fixed column), so each spare cycle needs a real zero-input SHA2 written into it.
+        // 2] Every row, reading the rows before it cyclically, as the constraints do: the cells, the
+        //    table outputs, the carries and the lookup multiplicities. The lookups run on every row.
+        let mut m_p3 = vec![0u64; P3_ROWS];
+        let mut m_chr = vec![0u64; CHR_ROWS];
+        let mut m_range = vec![0u64; RANGE_ROWS];
+        let mut m_carry = vec![0u64; CARRY_ROWS];
+        let back = |r: usize, j: usize| (r + n - j) % n;
+        let chunk = |x: u32, h: usize| ((x >> (CHUNK_BITS * h)) & 0xff) as u64;
 
-        // The trailing rows where no clock fires range-check the all-zero carry triple
-        let num_trailing_rows = num_rows - num_available_sha2s * CLOCKS;
-        range_counts[range_row(0, 0, 0)] += num_trailing_rows as u64;
+        for r in 0..n {
+            let (a1, a2, a3, a4) = (wa[back(r, 1)], wa[back(r, 2)], wa[back(r, 3)], wa[back(r, 4)]);
+            let (e1, e2, e3, e4) = (we[back(r, 1)], we[back(r, 2)], we[back(r, 3)], we[back(r, 4)]);
+            let (w0, w2, w7, w15, w16) = (ww[r], ww[back(r, 2)], ww[back(r, 7)], ww[back(r, 15)], ww[back(r, 16)]);
+            let f_bs0: [u32; LANES] = core::array::from_fn(|k| big_sigma0(a1[k]));
+            let f_bs1: [u32; LANES] = core::array::from_fn(|k| big_sigma1(e1[k]));
+            let f_mj: [u32; LANES] = core::array::from_fn(|k| maj(a1[k], a2[k], a3[k]));
+            let f_ss0: [u32; LANES] = core::array::from_fn(|k| small_sigma0(w15[k]));
+            let f_ss1: [u32; LANES] = core::array::from_fn(|k| small_sigma1(w2[k]));
+            let f_ch: [u32; LANES] = core::array::from_fn(|k| ch(e1[k], e2[k], e3[k]));
 
-        // Write the multiplicity column
-        for (t, &m) in range_counts.iter().enumerate() {
-            if m != 0 {
-                trace.buffer[t].set_mul_range(m);
+            // The 3-bit sum each parity/maj lookup keys on, per lane and position
+            let sum3 = |x: &[u32; LANES], k: usize, p: usize, rot: [usize; 3]| -> u64 {
+                rot.iter().map(|&o| bit(x[k], (p + o) % 32)).sum()
+            };
+            let shr = |x: u32, p: usize, s: usize| if p + s < 32 { bit(x, p + s) } else { 0 };
+            let key_sum = |f: usize, k: usize, p: usize| -> u64 {
+                match f {
+                    0 => sum3(&a1, k, p, [2, 13, 22]),
+                    1 => sum3(&e1, k, p, [6, 11, 25]),
+                    2 => bit(a1[k], p) + bit(a2[k], p) + bit(a3[k], p),
+                    3 => bit(w15[k], (p + 7) % 32) + bit(w15[k], (p + 18) % 32) + shr(w15[k], p, 3),
+                    _ => bit(w2[k], (p + 17) % 32) + bit(w2[k], (p + 19) % 32) + shr(w2[k], p, 10),
+                }
+            };
+            let outs_of = [&f_bs0, &f_bs1, &f_mj, &f_ss0, &f_ss1];
+
+            let row = &mut trace[r];
+            for i in 0..32 {
+                row.sa[i] = F::from_u64(slice(&wa[r], i));
+                row.se[i] = F::from_u64(slice(&we[r], i));
+                row.sw[i] = F::from_u64(slice(&w0, i));
+            }
+
+            for g in 0..16 {
+                let s = CHUNK_BITS * (g / 4) + 2 * (g % 4);
+                let mut outs = [0u64; 5];
+                for f in 0..5 {
+                    let (mut i0, mut i1, mut out) = (0usize, 0usize, 0u64);
+                    for k in 0..LANES {
+                        i0 += (key_sum(f, k, s) as usize) << (2 * k);
+                        i1 += (key_sum(f, k, s + 1) as usize) << (2 * k);
+                        out += (bit(outs_of[f][k], s) + 2 * bit(outs_of[f][k], s + 1)) << (SLOT_BITS * k);
+                    }
+                    m_p3[(P3_TAGS[f] << 20) + (i1 << 10) + i0] += 1;
+                    outs[f] = out;
+                }
+                row.bs0[g] = F::from_u64(outs[0]);
+                row.bs1[g] = F::from_u64(outs[1]);
+                row.mj[g] = F::from_u64(outs[2]);
+                row.ss0[g] = F::from_u64(outs[3]);
+                row.ss1[g] = F::from_u64(outs[4]);
+            }
+
+            // ch over u = e + 2f + 4g, carrying the range check of this row's a cell
+            for p in 0..32 {
+                let (mut iu, mut ir) = (0usize, 0usize);
+                for k in 0..LANES {
+                    let u = bit(e1[k], p) + 2 * bit(e2[k], p) + 4 * bit(e3[k], p);
+                    iu += (u as usize) << (3 * k);
+                    ir += (bit(wa[r][k], p) as usize) << k;
+                }
+                m_chr[(ir << 15) + iu] += 1;
+                row.chv[p] = F::from_u64(slice(&f_ch, p));
+            }
+
+            // e and w range checks, four cells per lookup
+            for i in (0..32).step_by(4) {
+                for word in [&we[r], &w0] {
+                    let idx: usize = (0..4)
+                        .map(|j| (0..LANES).map(|k| (bit(word[k], i + j) as usize) << k).sum::<usize>() << (5 * j))
+                        .sum();
+                    m_range[idx] += 1;
+                }
+            }
+
+            // Carries: the additions bind only on round rows (a, e) and schedule rows (w)
+            let clock = if r < used { Some(r % CLOCKS) } else { None };
+            let mix = matches!(clock, Some(c) if c >= CLOCKS_LOAD_STATE);
+            let wcomp = matches!(clock, Some(c) if c >= CLOCKS_LOAD_STATE + CLOCKS_LOAD_INPUT);
+            let kw = match clock {
+                Some(c) if mix => RC[c - CLOCKS_LOAD_STATE],
+                _ => 0,
+            };
+            let (mut ca, mut ce, mut cw) = ([[0u64; LANES]; NCHUNK], [[0u64; LANES]; NCHUNK], [[0u64; LANES]; NCHUNK]);
+            for k in 0..LANES {
+                let (mut cin_a, mut cin_e, mut cin_w) = (0u64, 0u64, 0u64);
+                for h in 0..NCHUNK {
+                    if mix {
+                        let t1 =
+                            chunk(e4[k], h) + chunk(f_bs1[k], h) + chunk(f_ch[k], h) + chunk(kw, h) + chunk(w0[k], h);
+                        let sum_a = t1 + chunk(f_bs0[k], h) + chunk(f_mj[k], h) + cin_a;
+                        let sum_e = chunk(a4[k], h) + t1 + cin_e;
+                        debug_assert_eq!(sum_a & 0xff, chunk(wa[r][k], h));
+                        debug_assert_eq!(sum_e & 0xff, chunk(we[r][k], h));
+                        cin_a = sum_a >> CHUNK_BITS;
+                        cin_e = sum_e >> CHUNK_BITS;
+                        ca[h][k] = cin_a;
+                        ce[h][k] = cin_e;
+                    }
+                    if wcomp {
+                        let sum_w =
+                            chunk(f_ss1[k], h) + chunk(w7[k], h) + chunk(f_ss0[k], h) + chunk(w16[k], h) + cin_w;
+                        debug_assert_eq!(sum_w & 0xff, chunk(w0[k], h));
+                        cin_w = sum_w >> CHUNK_BITS;
+                        cw[h][k] = cin_w;
+                    }
+                }
+            }
+            for h in 0..NCHUNK {
+                for (col, c) in [(&mut row.ca[h], &ca[h]), (&mut row.ce[h], &ce[h]), (&mut row.cw[h], &cw[h])] {
+                    *col = F::from_u64((0..LANES).map(|k| c[k] << (SLOT_BITS * k)).sum());
+                    m_carry[(0..LANES).rev().fold(0usize, |acc, k| acc * 7 + c[k] as usize)] += 1;
+                }
+            }
+        }
+
+        // 3] Multiplicities: table row R lives in block R / n at row R % n
+        for local in 0..n {
+            let row = &mut trace[local];
+            for (b, m) in row.sha2_mul_p3.iter_mut().enumerate() {
+                *m = F::from_u64(m_p3.get(b * n + local).copied().unwrap_or(0));
+            }
+            for (b, m) in row.sha2_mul_chr.iter_mut().enumerate() {
+                *m = F::from_u64(m_chr.get(b * n + local).copied().unwrap_or(0));
+            }
+            for (b, m) in row.sha2_mul_range.iter_mut().enumerate() {
+                *m = F::from_u64(m_range.get(b * n + local).copied().unwrap_or(0));
+            }
+            for (b, m) in row.sha2_mul_carry.iter_mut().enumerate() {
+                *m = F::from_u64(m_carry.get(b * n + local).copied().unwrap_or(0));
             }
         }
 
@@ -182,13 +245,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Sha2Air {
             return Ok(());
         }
 
-        // Same filler either way -- only the row's storage layout differs.
-        let air_instance = if pctx.is_packed(Sha2Trace::<F>::AIRGROUP_ID, Sha2Trace::<F>::AIR_ID) {
-            self.compute_witness_inner::<F, Sha2TraceRowPacked<F>>(buffer_pool)?
-        } else {
-            self.compute_witness_inner::<F, Sha2TraceRow<F>>(buffer_pool)?
-        };
-
+        let air_instance = self.compute_witness_inner::<F>(buffer_pool)?;
         pctx.add_air_instance(air_instance, instance_ids[0]);
         Ok(())
     }

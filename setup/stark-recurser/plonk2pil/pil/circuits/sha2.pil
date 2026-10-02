@@ -1,0 +1,336 @@
+// SHA2-256 rounds and message schedule with instance-sliced cells, shared by the standalone
+// precompile air and (eventually) the recursion airs. The feed-forward and the input/output binding
+// belong to the recursion caller, as with circuits/blake3.pil.
+// For reference: Section 6.2 of FIPS 180-4.
+//
+// A cell holds the SAME bit position of SHA2_LANES independent SHA2-256s, v = Σ_k bit_k · 2^(12k).
+// Rotations and shifts are rewiring; Σ0/Σ1/σ0/σ1/maj/ch run through batched tables whose output
+// cell packs the lanes' contributions at the same spacing; the 32-bit additions run per 8-bit chunk
+// on lane-packed values. Soundness argument: sha2-sliced-soundness.md (design D5) at the repo root.
+//
+// Names are sha2-prefixed so a file-scope name here cannot shadow another circuit's.
+//
+// Row layout the caller provides, per compression: 4 load-state rows holding (d,h), (c,g), (b,f),
+// (a,e), then rounds 0..63, round t on its own row with a_t, e_t and W_t. The caller binds the
+// load-state rows, the message words (W_0..W_15) and the outputs to the rest of its trace.
+
+require "std_constants.pil";
+require "std_lookup.pil";
+
+const int SHA2_LANES = 5;
+const int SHA2_SLOT_BITS = 12;
+const int SHA2_CHUNK_BITS = 8;
+const int SHA2_NCHUNK = 4;
+
+// Rows per compression: 4 load-state rows, 16 rounds loading the message, 48 extending it.
+const int SHA2_CLOCKS_LOAD_STATE = 4;
+const int SHA2_CLOCKS_LOAD_INPUT = 16;
+const int SHA2_CLOCKS = 68;
+
+// Round constants (first 32 bits of the fractional parts of the cube roots of the first 64 primes)
+const int SHA2_RC[64] = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+];
+
+// Table sizes. Each table is split into blocks of N rows: one multiplicity column per block.
+const int SHA2_P3_ROWS = 2**21;       // tag (1) x s_i (4^5) x s_{i+1} (4^5)
+const int SHA2_CHR_ROWS = 2**20;      // r (2^5) x u (8^5)
+const int SHA2_RANGE_ROWS = 2**20;    // four cells of 2^5
+const int SHA2_CARRY_ROWS = 16807;    // 7^5
+
+// 1 in every slot
+function sha2SlotOne(): int {
+    int one = 0;
+    for (int k = 0; k < SHA2_LANES; k++) { one = one + 2**(SHA2_SLOT_BITS * k); }
+    return one;
+}
+
+/*
+    The round function and the message schedule over SHA2_LANES lanes.
+
+    MIX   1 on round rows (where a_t, e_t are computed), 0 elsewhere
+    WCOMP 1 on rounds 16..63 (where W_t is computed), 0 elsewhere
+    KC    chunk j (8 bits) of the round constant K_t on round rows, 0 elsewhere
+    SEL   multiplicity of every lookup: 1 for an air that is SHA2 throughout. A caller confining
+          SHA2 to part of its trace passes a FIXED selector that is 1 on every row of each cycle
+          it covers, and makes MIX/WCOMP vanish outside it: the additions read cells up to 16
+          rows back, and those cells are bounded only by the lookups on their own rows
+
+    Every lookup is keyed by bounded inputs only, with the output (and range cells) as separate
+    components: packing an output into the key lets a tag flip or a key mismatch be absorbed.
+*/
+function sha2Lanes(const expr SEL, const expr MIX, const expr WCOMP, const expr KC[],
+                   const int P3_ID, const int CHR_ID, const int RANGE_ID, const int CARRY_ID) {
+    const int CH = SHA2_CHUNK_BITS;
+    const int SL_ONE = sha2SlotOne();
+
+    // State: a, e, w as one sliced cell per bit position
+    col witness sa[32];
+    col witness se[32];
+    col witness sw[32];
+
+    // Table outputs: Σ0, Σ1, maj, σ0, σ1 two positions per cell, ch one
+    col witness bs0[16];
+    col witness bs1[16];
+    col witness mj[16];
+    col witness ss0[16];
+    col witness ss1[16];
+    col witness chv[32];
+
+    // Lane-packed carries, one per 8-bit chunk of each addition
+    col witness ca[SHA2_NCHUNK];
+    col witness ce[SHA2_NCHUNK];
+    col witness cw[SHA2_NCHUNK];
+
+    expr a1[32];
+    expr a2[32];
+    expr a3[32];
+    expr a4[32];
+    expr e1[32];
+    expr e2[32];
+    expr e3[32];
+    expr e4[32];
+    expr w2[32];
+    expr w7[32];
+    expr w15[32];
+    expr w16[32];
+    for (int i = 0; i < 32; i++) {
+        a1[i] = 'sa[i];  a2[i] = 2'sa[i];  a3[i] = 3'sa[i];  a4[i] = 4'sa[i];
+        e1[i] = 'se[i];  e2[i] = 2'se[i];  e3[i] = 3'se[i];  e4[i] = 4'se[i];
+        w2[i] = 2'sw[i]; w7[i] = 7'sw[i]; w15[i] = 15'sw[i]; w16[i] = 16'sw[i];
+    }
+
+    // Per-position table inputs: sums of range-checked cells, digits in [0,3] ([0,7] for ch)
+    expr in_bs0[32];
+    expr in_bs1[32];
+    expr in_mj[32];
+    expr in_ss0[32];
+    expr in_ss1[32];
+    expr in_ch[32];
+    for (int i = 0; i < 32; i++) {
+        in_bs0[i] = a1[(i + 2) % 32] + a1[(i + 13) % 32] + a1[(i + 22) % 32];
+        in_bs1[i] = e1[(i + 6) % 32] + e1[(i + 11) % 32] + e1[(i + 25) % 32];
+        in_mj[i] = a1[i] + a2[i] + a3[i];
+        in_ss0[i] = w15[(i + 7) % 32] + w15[(i + 18) % 32];
+        if (i + 3 < 32) { in_ss0[i] = in_ss0[i] + w15[i + 3]; }
+        in_ss1[i] = w2[(i + 17) % 32] + w2[(i + 19) % 32];
+        if (i + 10 < 32) { in_ss1[i] = in_ss1[i] + w2[i + 10]; }
+        in_ch[i] = e1[i] + 2 * e2[i] + 4 * e3[i];
+    }
+
+    expr c_bs0[SHA2_NCHUNK];
+    expr c_bs1[SHA2_NCHUNK];
+    expr c_mj[SHA2_NCHUNK];
+    expr c_ss0[SHA2_NCHUNK];
+    expr c_ss1[SHA2_NCHUNK];
+    expr c_ch[SHA2_NCHUNK];
+    for (int h = 0; h < SHA2_NCHUNK; h++) {
+        c_bs0[h] = 0; c_bs1[h] = 0; c_mj[h] = 0; c_ss0[h] = 0; c_ss1[h] = 0; c_ch[h] = 0;
+    }
+
+    // Parity/maj: [s_i + 4 s_{i+1} (+ 64 tag), out], two positions per lookup
+    for (int g = 0; g < 16; g++) {
+        const int h = g / 4;
+        const int s = CH * h + 2 * (g % 4);
+        const int sh = 2 ** (s - CH * h);
+        lookup_assumes(P3_ID, [in_bs0[s] + 4 * in_bs0[s + 1], bs0[g]], sel: SEL);
+        lookup_assumes(P3_ID, [in_bs1[s] + 4 * in_bs1[s + 1], bs1[g]], sel: SEL);
+        lookup_assumes(P3_ID, [in_mj[s] + 4 * in_mj[s + 1] + 64 * SL_ONE, mj[g]], sel: SEL);
+        lookup_assumes(P3_ID, [in_ss0[s] + 4 * in_ss0[s + 1], ss0[g]], sel: SEL);
+        lookup_assumes(P3_ID, [in_ss1[s] + 4 * in_ss1[s + 1], ss1[g]], sel: SEL);
+        c_bs0[h] = c_bs0[h] + sh * bs0[g];
+        c_bs1[h] = c_bs1[h] + sh * bs1[g];
+        c_mj[h] = c_mj[h] + sh * mj[g];
+        c_ss0[h] = c_ss0[h] + sh * ss0[g];
+        c_ss1[h] = c_ss1[h] + sh * ss1[g];
+    }
+
+    // ch, one position per lookup, carrying the range check of one a cell
+    for (int p = 0; p < 32; p++) {
+        lookup_assumes(CHR_ID, [in_ch[p], sa[p], chv[p]], sel: SEL);
+        c_ch[p / CH] = c_ch[p / CH] + 2 ** (p % CH) * chv[p];
+    }
+
+    // e and w range checks, four cells per lookup. ch's input does NOT pin e: it bounds only the
+    // combination of three consecutive e values.
+    for (int i = 0; i < 32; i += 4) {
+        lookup_assumes(RANGE_ID, [se[i], se[i + 1], se[i + 2], se[i + 3]], sel: SEL);
+        lookup_assumes(RANGE_ID, [sw[i], sw[i + 1], sw[i + 2], sw[i + 3]], sel: SEL);
+    }
+    for (int h = 0; h < SHA2_NCHUNK; h++) {
+        lookup_assumes(CARRY_ID, [ca[h]], sel: SEL);
+        lookup_assumes(CARRY_ID, [ce[h]], sel: SEL);
+        lookup_assumes(CARRY_ID, [cw[h]], sel: SEL);
+    }
+
+    // Additions per 8-bit chunk on lane-packed values; the carry chains through the chunks.
+    // Per-slot residual <= 1791 < 2^11, so the field equation forces every lane's equation.
+    for (int h = 0; h < SHA2_NCHUNK; h++) {
+        expr pa = 0;
+        expr pe = 0;
+        expr pw = 0;
+        expr pd = 0;
+        expr ph = 0;
+        expr pw7 = 0;
+        expr pw16 = 0;
+        for (int i = 0; i < CH; i++) {
+            const int p = CH * h + i;
+            pa = pa + 2**i * sa[p];  pe = pe + 2**i * se[p];  pw = pw + 2**i * sw[p];
+            pd = pd + 2**i * a4[p];  ph = ph + 2**i * e4[p];
+            pw7 = pw7 + 2**i * w7[p]; pw16 = pw16 + 2**i * w16[p];
+        }
+        expr cin_a = 0;
+        expr cin_e = 0;
+        expr cin_w = 0;
+        if (h > 0) {
+            cin_a = ca[h - 1];
+            cin_e = ce[h - 1];
+            cin_w = cw[h - 1];
+        }
+        const expr t1 = ph + c_bs1[h] + c_ch[h] + KC[h] * SL_ONE + pw;
+        MIX * (pa + 2**CH * ca[h] - t1 - c_bs0[h] - c_mj[h] - cin_a) === 0;
+        MIX * (pe + 2**CH * ce[h] - pd - t1 - cin_e) === 0;
+        WCOMP * (pw + 2**CH * cw[h] - c_ss1[h] - pw7 - c_ss0[h] - pw16 - cin_w) === 0;
+    }
+}
+
+/*
+    The four tables, called once per air. A table of R rows takes ceil(R / N) blocks of N rows,
+    each with its own fixed columns and multiplicity; block b holds table rows b·N .. b·N + N - 1
+    (wrapping onto row 0, with multiplicity 0, past the end). Call it AFTER sha2Lanes: the
+    multiplicity columns are declared last in the trace and the generated helpers encode that order.
+*/
+function sha2Tables(const int N, const int P3_ID, const int CHR_ID, const int RANGE_ID, const int CARRY_ID) {
+    const int K = SHA2_SLOT_BITS;
+    const int B_P3 = (SHA2_P3_ROWS + N - 1) / N;
+    const int B_CHR = (SHA2_CHR_ROWS + N - 1) / N;
+    const int B_RANGE = (SHA2_RANGE_ROWS + N - 1) / N;
+    const int B_CARRY = (SHA2_CARRY_ROWS + N - 1) / N;
+    const int P3_ROWS = SHA2_P3_ROWS;
+    const int CHR_ROWS = SHA2_CHR_ROWS;
+    const int RANGE_ROWS = SHA2_RANGE_ROWS;
+    const int CARRY_ROWS = SHA2_CARRY_ROWS;
+
+    col fixed SHA2_P3K[B_P3];
+    col fixed SHA2_P3O[B_P3];
+    col fixed SHA2_CHU[B_CHR];
+    col fixed SHA2_CHR[B_CHR];
+    col fixed SHA2_CHO[B_CHR];
+    col fixed SHA2_RV0[B_RANGE];
+    col fixed SHA2_RV1[B_RANGE];
+    col fixed SHA2_RV2[B_RANGE];
+    col fixed SHA2_RV3[B_RANGE];
+    col fixed SHA2_CV[B_CARRY];
+
+    // Parity (tag 0) / maj (tag 1) of two 3-bit sums per lane: key s_i + 4 s_{i+1} + 64 tag
+    for (int b = 0; b < B_P3; b++) {
+        #pragma transpile
+        for (int i = 0; i < N; i++) {
+            const int row = (b * N + i) % P3_ROWS;
+            const int tag = row >> 20;
+            const int i0 = row & 1023;
+            const int i1 = (row >> 10) & 1023;
+            int key = 0;
+            int out = 0;
+            for (int k = 0; k < 5; k++) {
+                const int d0 = (i0 >> (2 * k)) & 3;
+                const int d1 = (i1 >> (2 * k)) & 3;
+                int f0 = d0 & 1;
+                int f1 = d1 & 1;
+                if (tag == 1) {
+                    f0 = d0 >> 1;
+                    f1 = d1 >> 1;
+                }
+                key = key + (d0 + 4 * d1 + 64 * tag) * 2**(12 * k);
+                out = out + (f0 + 2 * f1) * 2**(12 * k);
+            }
+            SHA2_P3K[b][i] = key;
+            SHA2_P3O[b][i] = out;
+        }
+    }
+
+    // ch over u = e + 2f + 4g per lane, with one boolean range cell riding along
+    for (int b = 0; b < B_CHR; b++) {
+        #pragma transpile
+        for (int i = 0; i < N; i++) {
+            const int row = (b * N + i) % CHR_ROWS;
+            const int iu = row & 32767;
+            const int ir = row >> 15;
+            int u = 0;
+            int r = 0;
+            int out = 0;
+            for (int k = 0; k < 5; k++) {
+                const int d = (iu >> (3 * k)) & 7;
+                const int e = d & 1;
+                const int f = (d >> 1) & 1;
+                const int g = (d >> 2) & 1;
+                u = u + d * 2**(12 * k);
+                r = r + ((ir >> k) & 1) * 2**(12 * k);
+                out = out + (e * f + (1 - e) * g) * 2**(12 * k);
+            }
+            SHA2_CHU[b][i] = u;
+            SHA2_CHR[b][i] = r;
+            SHA2_CHO[b][i] = out;
+        }
+    }
+
+    // Four boolean cells
+    for (int b = 0; b < B_RANGE; b++) {
+        #pragma transpile
+        for (int i = 0; i < N; i++) {
+            const int row = (b * N + i) % RANGE_ROWS;
+            int v0 = 0;
+            int v1 = 0;
+            int v2 = 0;
+            int v3 = 0;
+            for (int k = 0; k < 5; k++) {
+                v0 = v0 + ((row >> k) & 1) * 2**(12 * k);
+                v1 = v1 + ((row >> (5 + k)) & 1) * 2**(12 * k);
+                v2 = v2 + ((row >> (10 + k)) & 1) * 2**(12 * k);
+                v3 = v3 + ((row >> (15 + k)) & 1) * 2**(12 * k);
+            }
+            SHA2_RV0[b][i] = v0;
+            SHA2_RV1[b][i] = v1;
+            SHA2_RV2[b][i] = v2;
+            SHA2_RV3[b][i] = v3;
+        }
+    }
+
+    // Carries, every lane in [0,6]
+    for (int b = 0; b < B_CARRY; b++) {
+        #pragma transpile
+        for (int i = 0; i < N; i++) {
+            int row = (b * N + i) % CARRY_ROWS;
+            int v = 0;
+            for (int k = 0; k < 5; k++) {
+                v = v + (row % 7) * 2**(12 * k);
+                row = row / 7;
+            }
+            SHA2_CV[b][i] = v;
+        }
+    }
+
+    col witness sha2_mul_p3[B_P3];
+    col witness sha2_mul_chr[B_CHR];
+    col witness sha2_mul_range[B_RANGE];
+    col witness sha2_mul_carry[B_CARRY];
+    for (int b = 0; b < B_P3; b++) {
+        lookup_proves(P3_ID, [SHA2_P3K[b], SHA2_P3O[b]], sha2_mul_p3[b]);
+    }
+    for (int b = 0; b < B_CHR; b++) {
+        lookup_proves(CHR_ID, [SHA2_CHU[b], SHA2_CHR[b], SHA2_CHO[b]], sha2_mul_chr[b]);
+    }
+    for (int b = 0; b < B_RANGE; b++) {
+        lookup_proves(RANGE_ID, [SHA2_RV0[b], SHA2_RV1[b], SHA2_RV2[b], SHA2_RV3[b]], sha2_mul_range[b]);
+    }
+    for (int b = 0; b < B_CARRY; b++) {
+        lookup_proves(CARRY_ID, [SHA2_CV[b]], sha2_mul_carry[b]);
+    }
+}
