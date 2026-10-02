@@ -5,7 +5,9 @@
 
 #include <gmp.h>
 #include <omp.h>
+#include <unistd.h>
 
+#include <fstream>
 #include <memory>
 #include <random>
 #include <stdexcept>
@@ -312,6 +314,72 @@ void testRoundTrips() {
     }
 }
 
+// The NTT (Lde::ntt) is the INTT's inverse, bit for bit, and rapidsnark's Evaluations: coefficients
+// to their evaluations on H, out of place and in place, one column or a batch of more columns than
+// threads, which run one per thread.
+void testNttInvertsTheIntt() {
+    Random random(9);
+    FFT<Engine::Fr> referenceFft(uint64_t(1) << 12);
+    for (uint64_t nBits = 0; nBits <= 12; ++nBits) {
+        const Lde lde(nBits, nBits + 1);
+        const uint64_t N = lde.domainSize();
+        const uint64_t nCols = nBits % 2 == 0 ? 1 : static_cast<uint64_t>(omp_get_max_threads()) + 1;
+        std::vector<Column> evals(nCols), coefs(nCols, Column(N)), back(nCols, Column(N));
+        std::vector<FrElement *> in(nCols), out(nCols), again(nCols);
+        for (uint64_t c = 0; c < nCols; ++c) {
+            evals[c] = random.column(N);
+            in[c] = evals[c].data();
+            out[c] = coefs[c].data();
+            again[c] = back[c].data();
+        }
+        const std::vector<std::unique_ptr<Lde::Poly>> polys = lde.intt(in.data(), out.data(), nCols);
+        lde.ntt(out.data(), again.data(), nCols);
+        for (uint64_t c = 0; c < nCols; ++c) {
+            assert(identical(back[c].data(), evals[c].data(), N));
+            const Evaluations<Engine> reference(E, &referenceFft, *polys[c], N);
+            assert(identical(reference.eval, evals[c].data(), N));
+        }
+        lde.ntt(out.data(), out.data(), nCols);
+        for (uint64_t c = 0; c < nCols; ++c) {
+            assert(identical(coefs[c].data(), evals[c].data(), N));
+        }
+    }
+}
+
+// The shift of each part of the coset (Lde::partShift) is g·ω_N'^part with ffiasm's ω_N', the root its
+// FFT has, which the Lde computes without that FFT's table: an Lde builds its table of N' roots only
+// for its first transform, and one of 2^28 points (whose table takes 8 GB) gives its shifts at no
+// memory.
+void testThePartShiftsNeedNoTable() {
+    Random random(10);
+    for (uint64_t nBitsExt = 1; nBitsExt <= 12; ++nBitsExt) {
+        const Lde lde(nBitsExt - 1, nBitsExt);
+        FFT<Engine::Fr> fft(lde.extendedSize());
+        assert(equal(lde.partShift(0), fromUI(5)));
+        for (uint64_t part : {uint64_t(1), uint64_t(2), lde.extendedSize() / 2, lde.extendedSize() - 1,
+                              random.below(lde.extendedSize())}) {
+            const FrElement expected = E.fr.mul(fromUI(5), power(fft.root(static_cast<uint32_t>(nBitsExt), 1), part));
+            const FrElement shift = lde.partShift(part);
+            assert(identical(&shift, &expected, 1));
+        }
+        FrElement inverse;
+        E.fr.inv(inverse, fromUI(5));
+        assert(identical(&lde.shiftInverse(), &inverse, 1));
+    }
+    auto residentBytes = [] {
+        std::ifstream statm("/proc/self/statm");
+        uint64_t size = 0, resident = 0;
+        statm >> size >> resident;
+        return resident * static_cast<uint64_t>(sysconf(_SC_PAGESIZE));
+    };
+    const uint64_t before = residentBytes();
+    const Lde large(28, 28);
+    const FrElement expected = E.fr.mul(fromUI(5), power(rootOfUnity(28), 12345));
+    const FrElement shift = large.partShift(12345);
+    assert(identical(&shift, &expected, 1) && large.extendedSize() == uint64_t(1) << 28);
+    assert(residentBytes() < before + (uint64_t(64) << 20));
+}
+
 void testInttKeepsRoomForBlinding() {
     Random random(4);
     for (uint64_t nBits : {0, 1, 2, 5, 10, 16}) {
@@ -555,6 +623,13 @@ void testRefusedArguments() {
     expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, 1, 3, 4); }, "part 4 of the 4 of 2^3 points");
     expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, 1, 5, 1); }, "part 1 of the 1 of 2^5 points");
 
+    // ntt
+    expectInvalid([&] { lde.ntt(&constA, &pb, 0); }, "Lde::ntt: no columns");
+    expectInvalid([&] { lde.ntt(nullptr, &pb, 1); }, "Lde::ntt: coefs is null");
+    expectInvalid([&] { lde.ntt(&constA, nullptr, 1); }, "Lde::ntt: evals is null");
+    expectInvalid([&] { lde.ntt(constWithNull, outputs, 2); }, "Lde::ntt: coefs[1] is null");
+    expectInvalid([&] { lde.ntt(constPair, withNull, 2); }, "Lde::ntt: evals[1] is null");
+
     // interpolateCoset
     expectInvalid([&] { lde.interpolateCoset(&constA, &pb, 0); }, "Lde::interpolateCoset: no columns");
     expectInvalid([&] { lde.interpolateCoset(nullptr, &pb, 1); }, "Lde::interpolateCoset: evals is null");
@@ -600,10 +675,11 @@ void testTheGpuIsTheCpu() {
         }
     }
 
-    // What a Gpu refuses.
+    // What a Gpu refuses, before it copies anything.
     Engine::G1PointAffine generator = E.g1.oneAffine();
-    expectInvalid([&] { Gpu(nullptr, 1); }, "Gpu::Gpu: points is null");
-    expectInvalid([&] { Gpu(&generator, 0); }, "Gpu::Gpu: no points");
+    const Gpu::Upload none = [](void *, const void *, uint64_t) { assert(false); };
+    expectInvalid([&] { Gpu(nullptr, 1, none); }, "Gpu::Gpu: points is null");
+    expectInvalid([&] { Gpu(&generator, 0, none); }, "Gpu::Gpu: no points");
 #else
     // A library built without the GPU: nothing to compare (pilfflonk_gpu_test.cpp tests the refusal).
     assert(!PilFflonk::gpuAvailable());
@@ -617,6 +693,8 @@ void runLdeTests() {
     testInttMatchesHorner();
     testExtendMatchesHorner();
     testRoundTrips();
+    testNttInvertsTheIntt();
+    testThePartShiftsNeedNoTable();
     testInttKeepsRoomForBlinding();
     testBatchMatchesSingleColumns();
     testExtendCosetParts();

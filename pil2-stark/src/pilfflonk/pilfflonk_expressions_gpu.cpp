@@ -259,8 +259,8 @@ OperandTables operandTables(const OperandLayout &layout, const OperandTypes &typ
 // ---------------------------------------------------------------------------------------------
 
 ExpressionsGpu::ExpressionsGpu(const ExpressionsBin &bin, const PilfflonkInfo &info, DeviceCode expressions,
-                               DeviceCode constraints, uint64_t _sharedBytes)
-    : host(bin, info), types(bin.types()), expressionsCode(expressions), constraintsCode(constraints),
+                               uint64_t _sharedBytes)
+    : host(bin, info), types(bin.types()), expressionsCode(expressions),
       layout(operandLayout(bin, info.openingPoints.size(), info.boundaries.size())), sharedBytes(_sharedBytes) {
     if (sharedBytes > MAX_SHARED_BYTES) {
         throw std::invalid_argument("ExpressionsGpu: " + std::to_string(sharedBytes) +
@@ -283,25 +283,11 @@ uint64_t ExpressionsGpu::deviceBytesOf(const ExpressionsBin &bin, const Pilfflon
 
 void ExpressionsGpu::calculateExpression(uint64_t expId, const ExpressionsDomainGpu &domain, const ProverValues &values,
                                          FrElement *dest, uint64_t stride) const {
-    calculate(host.checkedExpression(expId, domain.nZerofiers(), values, dest), expressionsCode, domain, values, dest,
-              stride, "calculateExpression");
-}
-
-void ExpressionsGpu::calculateConstraint(uint64_t index, const ExpressionsDomainGpu &domain, const ProverValues &values,
-                                         FrElement *dest, uint64_t stride) const {
-    if (constraintsCode.args == nullptr) {
-        throw std::logic_error("ExpressionsGpu::calculateConstraint: the constraints' code is not on the device");
-    }
-    calculate(host.checkedConstraint(index, domain.nZerofiers(), values, dest), constraintsCode, domain, values, dest,
-              stride, "calculateConstraint");
-}
-
-void ExpressionsGpu::calculate(const ParserParams &params, const DeviceCode &code, const ExpressionsDomainGpu &domain,
-                               const ProverValues &values, FrElement *dest, uint64_t stride,
-                               const char *function) const {
+    const ParserParams &params = host.checkedExpression(expId, domain.nZerofiers(), values, dest);
     if (stride == 0) {
-        throw std::invalid_argument(std::string("ExpressionsGpu::") + function + ": a stride of 0");
+        throw std::invalid_argument("ExpressionsGpu::calculateExpression: a stride of 0");
     }
+    const DeviceCode &code = expressionsCode;
     std::vector<uint8_t> bytes(layout.bytes);
     encodeOperands(layout, types, values, code.numbers, host.shifts(domain.size(), domain.extendBits()),
                    domain.zerofiers(), domain.zerofierMasks(), bytes.data(), tables.data());

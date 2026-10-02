@@ -506,6 +506,17 @@ int pilfflonk_gpu_device_bytes(const char *proving_key_dir, uint64_t *out_arena,
     });
 }
 
+int pilfflonk_gpu_free_bytes(uint64_t *out_free) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (out_free == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "out_free is NULL");
+        }
+        *out_free = PilFflonk::ProvingKey::freeDeviceBytes();
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
 int pilfflonk_gpu_available(void) {
     clearLastError();
     return PilFflonk::gpuAvailable() ? 1 : 0;

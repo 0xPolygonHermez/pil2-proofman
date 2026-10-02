@@ -6,7 +6,10 @@
 // library built with the GPU (__USE_CUDA__) has it, in pilfflonk_key_gpu.cpp; the classes that
 // use it hold it under __USE_CUDA__.
 //
-// The device is device 0, as for Gpu. Kernels run on the legacy default stream, copies to and from
+// The device is device 0, as for Gpu: every function here that a caller reaches makes it the calling
+// thread's current device while it runs (DeviceScope; ProofCall for a proof's), and so does the
+// release of what holds device memory, a stream or an event (DeviceBuffer, Staging, Gpu), wherever
+// it is released. Kernels run on the legacy default stream, copies to and from
 // pageable memory on one non-blocking copy stream (Staging) ordered with it by events, and the
 // device is synchronised before every call of sppark's MSM and NTT, which run on streams of their
 // own (msmOnDevice, transformOnDevice). A CUDA failure aborts the process, as in Gpu.
@@ -28,8 +31,9 @@ namespace PilFflonk {
 
 class AirKey;         // pilfflonk_proving_key.hpp
 class ExpressionsGpu; // pilfflonk_expressions_gpu.hpp
+class ProofCall;      // below
 
-// Device memory, freed with it.
+// Device memory on the GPU's device, freed with it.
 class DeviceBuffer {
 public:
     DeviceBuffer() = default;
@@ -44,6 +48,9 @@ public:
     uint64_t size() const { return bytes; }
 
 private:
+    // Frees the memory, if any.
+    void release();
+
     uint8_t *memory = nullptr;
     uint64_t bytes = 0;
 };
@@ -176,14 +183,18 @@ GpuBudget gpuBudget(const AirKey &air, uint32_t multiprocessors);
 // fixed columns' coefficients. Within the arena's work buffer and counts (arenaLayout).
 uint64_t loadScratchBytes(const AirKey &air);
 
-// The device memory a key on the GPU of an SRS of nG1 powers and of `airs` needs on a device of
-// `multiprocessors` SMs, as GpuKey and its AIRs (GpuAirKey) reserve it: the arena of the largest
-// proof, and beside it the SRS's powers and tables (GpuKey::powersAndTablesBytes), each AIR's
-// resident bytes and the most a proof allocates besides.
+// The device memory a key on the GPU of an SRS of nG1 powers and of `airs` (in the order they load)
+// needs on a device of `multiprocessors` SMs, as GpuKey and its AIRs (GpuAirKey) reserve it
+// (DeviceBytes): the arena of the largest proof, and beside a given arena the most the key holds and
+// allocates as each AIR loads, the SRS's powers and tables (GpuKey::powersAndTablesBytes), the
+// resident bytes of the AIRs so far, the loading's scratch of the AIR and the most a proof of them
+// allocates besides (GpuBudget), what GpuKey::reserve checks against the free memory.
 DeviceBytes deviceBytesOf(uint64_t nG1, const std::vector<const AirKey *> &airs, uint32_t multiprocessors);
 
-// The multiprocessors of the device a GpuKey uses, device 0, which it makes the current one.
+// The multiprocessors of the device a GpuKey uses, device 0, and its free memory in bytes
+// (cudaMemGetInfo), whatever the calling thread's current device (DeviceScope).
 uint32_t gpuMultiprocessors();
+uint64_t gpuFreeBytes();
 
 // The bytes sppark's MSM allocates for itself (msm_t and its invoke, pippenger.cuh) for n points and
 // scalars already on a device of `multiprocessors` SMs.
@@ -286,9 +297,12 @@ public:
 
     // The arena of one proof (an Instance's), held from its construction to its end; another thread's
     // waits for it. Throws std::invalid_argument, naming `function`, if this thread holds it already:
-    // it would wait for itself. A given arena is the caller's other work's between the proofs: the
-    // device is synchronised once the lease is taken, before the proof writes it, and before the lease
-    // is let go, after the proof's last work on it.
+    // it would wait for itself. The thread that holds it is the one of the latest call of the proof
+    // that holds it on the device (its Instance's construction, or a ProofCall of it or of its
+    // opening), which may not be the one that made it: an instance may move to another thread, which
+    // then holds it from its first call there. A given arena is the caller's other work's between the
+    // proofs: the device is synchronised once the lease is taken, before the proof writes it, and
+    // before the lease is let go, after the proof's last work on it.
     class Lease {
     public:
         Lease(const GpuKey &key, const char *function);
@@ -301,8 +315,12 @@ public:
     };
 
 private:
+    friend class ProofCall;
+
     // What the device has free for the key: cudaMemGetInfo's, within options.memoryLimit.
     uint64_t available() const;
+    // While the lease is held: the calling thread is the one that holds it (ProofCall).
+    void provingHere() const;
     // Whether the n scalars at `scalars` on the device are all zero.
     bool allZero(const void *scalars, uint64_t n) const;
 
@@ -329,8 +347,23 @@ private:
     mutable std::thread::id holder;
 };
 
-// The device side of an AirKey on the GPU: its fixed columns' coefficients, its bytecode (the code
-// of its expressions, for the device's evaluation of them) and the interpreter that runs it, and the
+// What every call of a proof on the device holds while it runs (InstanceGpu's, OpeningGpu's,
+// computeStageColumns and stageColumnToHost, for the instance that holds `key`'s Lease): the GPU's
+// device made current (DeviceScope), and the calling thread recorded as the one that holds the lease
+// (GpuKey::Lease), on which a second instance of the key is refused.
+class ProofCall {
+public:
+    explicit ProofCall(const GpuKey &key);
+    ProofCall(const ProofCall &) = delete;
+    ProofCall &operator=(const ProofCall &) = delete;
+
+private:
+    DeviceScope device;
+};
+
+// The device side of an AirKey on the GPU: its fixed columns' coefficients, its bytecode (the args
+// and numbers of its expressions' code, which the interpreter on the device runs) and that
+// interpreter, and the
 // tables its kernels read, all on the device while the key lives; its fixed commitments; and where
 // its proofs keep their data in the GpuKey's arena (ArenaLayout). Nothing of it is copied back to the
 // host but the counts of its fixed columns' coefficients, and their coefficients when they are asked
@@ -371,12 +404,13 @@ public:
     // GpuKey::copyToHost: for the copies on demand of AirKey::fixedPolynomial. Safe from any thread.
     void fixedToHost(FrElement *out) const;
 
-    // On the device: the fixed columns' coefficients (column c at c·N); the expressions' code
-    // (ExpressionsBin::expressionsBinArgsExpressions); the stagePos in stage 1 of each witness column
-    // (AirKey::witnessColumns); the offsets of the polynomials f packs (componentOffset); and those
-    // of Q's pieces, piece i at qPieceOffsets()[i], from ArenaLayout::qPieces (the first is 0).
+    // On the device: the fixed columns' coefficients (column c at c·N); the args and the numbers of
+    // the expressions' code (ExpressionsBin::expressionsBinArgsExpressions), which the interpreter
+    // reads (its ops it does not: an op's args say what it is); the stagePos in stage 1 of each
+    // witness column (AirKey::witnessColumns); the offsets of the polynomials f packs
+    // (componentOffset); and those of Q's pieces, piece i at qPieceOffsets()[i], from
+    // ArenaLayout::qPieces (the first is 0).
     const FrElement *fixedCoefficients() const;
-    const uint8_t *ops() const;
     const uint32_t *args() const;
     const FrElement *numbers() const;
     const uint64_t *witnessPositions() const;
@@ -405,8 +439,7 @@ private:
     const AirKey &air;
     ArenaLayout layout;
     DeviceBuffer resident;
-    uint64_t fixedOffset = 0, opsOffset = 0, argsOffset = 0, numbersOffset = 0, positionsOffset = 0,
-             offsetsOffset = 0;
+    uint64_t fixedOffset = 0, argsOffset = 0, numbersOffset = 0, positionsOffset = 0, offsetsOffset = 0;
     std::vector<uint64_t> tableStart; // by f, its first entry in the offsets' table
     uint64_t fixedColumnsStart = 0;   // the entries c·N of the fixed columns, for their counts
     uint64_t piecesStart = 0;         // the entries of Q's pieces

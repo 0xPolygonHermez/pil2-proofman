@@ -193,6 +193,12 @@ extern "C" uint32_t pilfflonk_gpu_multiprocessors() {
     return static_cast<uint32_t>(count);
 }
 
+extern "C" int pilfflonk_gpu_current_device() {
+    int device = 0;
+    CHECKCUDAERR(cudaGetDevice(&device));
+    return device;
+}
+
 extern "C" void *pilfflonk_gpu_event_create() {
     cudaEvent_t event;
     CHECKCUDAERR(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));

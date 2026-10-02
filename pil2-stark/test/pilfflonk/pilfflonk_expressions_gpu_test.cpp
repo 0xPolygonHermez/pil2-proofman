@@ -1,16 +1,17 @@
 // Tests of the interpreter's prover mode on the device (pilfflonk_expressions_gpu.hpp), in a library
-// built with the GPU: every expression and constraint of every bytecode under test, on H and on
-// every part of the extended coset of 2^partBits points for partBits = nBits, nBits + 1 and
-// nBitsExt, against Expressions::calculateExpression and calculateConstraint byte for byte, with
-// their temporaries in shared memory and in device memory, into a strided dest on the parts (as Q
-// goes into the coset's order); the errors too, which are the CPU's word for word; and the Zi of
-// every kind of boundary (ExpressionsDomainGpu) against ExpressionsDomain::cosetPart. The columns
-// and scalars are random, from a fixed seed, with 0, 1 and r − 1 among them: the code does not
-// need a witness that satisfies it to be computed the same.
+// built with the GPU: every expression of every bytecode under test, on H and on every part of the
+// extended coset of 2^partBits points for partBits = nBits, nBits + 1 and nBitsExt, against
+// Expressions::calculateExpression byte for byte, with their temporaries in shared memory and in
+// device memory, into a strided dest on the parts (as Q goes into the coset's order); the errors
+// too, which are the CPU's word for word; and the Zi of every kind of boundary
+// (ExpressionsDomainGpu) against ExpressionsDomain::cosetPart. The columns and scalars are random,
+// from a fixed seed, with 0, 1 and r − 1 among them: the code does not need a witness that satisfies
+// it to be computed the same. The device runs the expressions only (section 1: the hints, the im pols
+// and Q); the constraints of section 2 are the check's, on the host.
 //
-// Where there is no GPU (gpuUnderTest), the host's part still runs: the tables of the operands
-// (encodeOperands), read on the host through operandAddress as the kernel reads them, give the
-// CPU's values on the same domains, for the same bytecodes.
+// The tables of the operands (encodeOperands), read on the host through operandAddress as the kernel
+// reads them, give the CPU's values of every expression and constraint on the same domains, for the
+// same bytecodes, with a GPU or not (gpuUnderTest).
 //
 // The bytecodes are setup-pilfflonk's fixtures of setup/pilfflonk/tests/fixtures/bytecode/, and
 // those of every <air>.bin with its <air>.pilfflonkinfo.json under the directories of
@@ -430,19 +431,16 @@ void testAnAir(const Air &air, Random &random, bool gpu) {
     }
 
     std::vector<std::unique_ptr<ExpressionsGpu>> devices;
-    DeviceBuffer expressionsArgs, expressionsNumbers, constraintsArgs, constraintsNumbers, dest;
+    DeviceBuffer expressionsArgs, expressionsNumbers, dest;
     if (gpu) {
-        auto copy = [](const ParserArgs &code, DeviceBuffer &args, DeviceBuffer &numbers) {
-            args = upload(code.args.data(), code.args.size() * sizeof(uint32_t));
-            numbers = upload(code.numbers.data(), code.numbers.size() * sizeof(FrElement));
-            return DeviceCode{reinterpret_cast<const uint32_t *>(args.data()),
-                              reinterpret_cast<const FrElement *>(numbers.data())};
-        };
-        const DeviceCode e = copy(air.bin.expressionsBinArgsExpressions, expressionsArgs, expressionsNumbers);
-        const DeviceCode c = copy(air.bin.expressionsBinArgsConstraints, constraintsArgs, constraintsNumbers);
+        const ParserArgs &code = air.bin.expressionsBinArgsExpressions;
+        expressionsArgs = upload(code.args.data(), code.args.size() * sizeof(uint32_t));
+        expressionsNumbers = upload(code.numbers.data(), code.numbers.size() * sizeof(FrElement));
+        const DeviceCode e{reinterpret_cast<const uint32_t *>(expressionsArgs.data()),
+                           reinterpret_cast<const FrElement *>(expressionsNumbers.data())};
         // The temporaries in shared memory, and in device memory.
-        devices.emplace_back(new ExpressionsGpu(air.bin, air.info, e, c));
-        devices.emplace_back(new ExpressionsGpu(air.bin, air.info, e, c, 0));
+        devices.emplace_back(new ExpressionsGpu(air.bin, air.info, e));
+        devices.emplace_back(new ExpressionsGpu(air.bin, air.info, e, 0));
         // What a key on the GPU budgets for them.
         const uint32_t sms = pilfflonk_gpu_multiprocessors();
         assert(devices[0]->deviceBytes() == ExpressionsGpu::deviceBytesOf(air.bin, air.info, sms));
@@ -485,23 +483,22 @@ void testAnAir(const Air &air, Random &random, bool gpu) {
                 const OperandTables t = PilFflonk::operandTables(layout, types, tables, size);
                 assert(same(throughTheTables(params, args, t, types.tmp(), size).data(), out.data(), size));
             }
+            // The device runs the expressions alone.
             for (const auto &device : devices) {
+                if (code.constraint) {
+                    break;
+                }
                 // No element: a value it does not write is not the CPU's.
                 const std::vector<uint8_t> poison(size * nParts * sizeof(FrElement), 0xff);
                 gpu_plonk_memcpy_h2d(dest.data(), poison.data(), poison.size());
                 for (uint64_t part = 0; part < domains[s].size(); ++part) {
                     FrElement *at = reinterpret_cast<FrElement *>(dest.data()) + part;
                     const std::string got = outcome([&] {
-                        if (code.constraint) {
-                            device->calculateConstraint(code.id, domains[s][part].gpu[0], values.device, at, nParts);
-                        } else {
-                            device->calculateExpression(code.id, domains[s][part].gpu[0], values.device, at, nParts);
-                        }
+                        device->calculateExpression(code.id, domains[s][part].gpu[0], values.device, at, nParts);
                     });
                     if (got != error) {
-                        std::fprintf(stderr, "%s, %s %lu: the CPU says \"%s\" and the GPU \"%s\"\n", air.name.c_str(),
-                                     code.constraint ? "constraint" : "expression", code.id, error.c_str(),
-                                     got.c_str());
+                        std::fprintf(stderr, "%s, expression %lu: the CPU says \"%s\" and the GPU \"%s\"\n",
+                                     air.name.c_str(), code.id, error.c_str(), got.c_str());
                         assert(false);
                     }
                     if (!error.empty()) {
@@ -510,9 +507,8 @@ void testAnAir(const Air &air, Random &random, bool gpu) {
                 }
                 if (error.empty() &&
                     !same(download(dest.data(), size * nParts).data(), expected.data(), size * nParts)) {
-                    std::fprintf(stderr, "%s, %s %lu on 2^%lu points: the GPU's values are not the CPU's\n",
-                                 air.name.c_str(), code.constraint ? "constraint" : "expression", code.id,
-                                 sizes[s]);
+                    std::fprintf(stderr, "%s, expression %lu on 2^%lu points: the GPU's values are not the CPU's\n",
+                                 air.name.c_str(), code.id, sizes[s]);
                     assert(false);
                 }
             }
@@ -637,8 +633,8 @@ void testTheZerofiersOnTheDevice() {
     assert(outcome([] { ExpressionsDomainGpu::trace(29); }) == outcome([] { ExpressionsDomain::trace(29); }));
 }
 
-// What the device refuses besides the CPU's: a stride of 0, constraints without their code, and
-// more shared memory than a block may take.
+// What the device refuses besides the CPU's: a stride of 0, and more shared memory than a block may
+// take.
 void testWhatTheDeviceRefuses() {
     const Air air = sampleAir();
     const ParserArgs &code = air.bin.expressionsBinArgsExpressions;
@@ -654,14 +650,12 @@ void testWhatTheDeviceRefuses() {
     FrElement *d = reinterpret_cast<FrElement *>(dest.data());
     assert(outcome([&] { gpu.calculateExpression(3, trace, values.device, d, 0); }) ==
            "invalid_argument: ExpressionsGpu::calculateExpression: a stride of 0");
-    assert(outcome([&] { gpu.calculateConstraint(0, trace, values.device, d); }) ==
-           "logic_error: ExpressionsGpu::calculateConstraint: the constraints' code is not on the device");
     assert(outcome([&] { gpu.calculateExpression(3, trace, values.device, nullptr); }) ==
            "invalid_argument: Expressions::calculateExpression: dest is null");
     assert(outcome([&] { gpu.calculateExpression(4, trace, values.device, d); }) ==
            outcome([&] { air.bin.expression(4); }));
     assert(outcome([&] {
-               (void)ExpressionsGpu(air.bin, air.info, e, DeviceCode(), ExpressionsGpu::MAX_SHARED_BYTES + 1);
+               (void)ExpressionsGpu(air.bin, air.info, e, ExpressionsGpu::MAX_SHARED_BYTES + 1);
            }) == "invalid_argument: ExpressionsGpu: 49153 bytes of shared memory per block, and a block may take "
                  "49152");
 }
@@ -675,15 +669,13 @@ void timeQ(const std::string &dir) {
     const ParserParams &q = air.bin.expression(air.info.cExpId);
     const OperandTypes types = air.bin.types();
     const Expressions cpu(air.bin, air.info);
-    const DeviceCode none;
     const DeviceBuffer args = upload(air.bin.expressionsBinArgsExpressions.args.data(),
                                      air.bin.expressionsBinArgsExpressions.args.size() * sizeof(uint32_t));
     const DeviceBuffer numbers = upload(air.bin.expressionsBinArgsExpressions.numbers.data(),
                                         air.bin.expressionsBinArgsExpressions.numbers.size() * sizeof(FrElement));
     const ExpressionsGpu gpu(air.bin, air.info,
                              DeviceCode{reinterpret_cast<const uint32_t *>(args.data()),
-                                        reinterpret_cast<const FrElement *>(numbers.data())},
-                             none);
+                                        reinterpret_cast<const FrElement *>(numbers.data())});
     const std::vector<PilFflonk::ColumnRead> reads = PilFflonk::columnsRead(air.bin, air.info.cExpId);
     const uint64_t nBits = air.info.nBits, NExt = uint64_t(1) << air.nBitsExt;
     const DeviceBuffer dest(NExt * sizeof(FrElement));

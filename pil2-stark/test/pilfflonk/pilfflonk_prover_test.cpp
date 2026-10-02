@@ -60,12 +60,16 @@
 #include "pilfflonk_transcript.hpp"
 #ifdef __USE_CUDA__
 #include "pilfflonk_expressions_gpu.hpp"
+#include "pilfflonk_kernels.hpp"
 #include "pilfflonk_key_gpu.hpp"
 #include "pilfflonk_lde_gpu.hpp"
 
-// The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu).
+// The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu), and the CUDA runtime's count of the
+// devices (linked statically).
 extern "C" void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
 extern "C" void gpu_plonk_memcpy_d2h(void *dst, const void *src, size_t bytes);
+extern "C" void gpu_plonk_set_device(int gpuId);
+extern "C" int cudaGetDeviceCount(int *count);
 #endif
 
 namespace PilFflonkTest {
@@ -2264,6 +2268,198 @@ void testAGpuKeyHoldsOneProofAtATime() {
     assert(made);
 }
 
+// An instance moved to another thread is held there from its first call there (GpuKey::Lease): that
+// thread's second instance is refused, as it would wait for itself, and the thread that made the
+// first, which no longer proves with it, waits for it as any other.
+void testAMovedInstanceIsHeldOnItsThread() {
+    if (!gpuUnderTest("an instance moved to another thread")) {
+        return;
+    }
+    const Fibonacci fib(KeyFiles(), Device::Gpu);
+    std::unique_ptr<Instance> first = fib.instance(std::make_unique<ZeroBlinding>());
+    std::atomic<bool> used{false}, release{false}, freeing{false};
+    std::string refused;
+    std::thread prover([&] {
+        first->commitStage(1, {});
+        refused = thrown<std::invalid_argument>([&] { fib.instance(std::make_unique<ZeroBlinding>()); });
+        used = true;
+        while (!release) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        freeing = true;
+        first.reset();
+    });
+    while (!used) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    std::thread releaser([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        release = true;
+    });
+    // This thread made the first instance: it waits until the prover's thread frees it.
+    const std::unique_ptr<Instance> second = fib.instance(std::make_unique<ZeroBlinding>());
+    assert(freeing);
+    releaser.join();
+    prover.join();
+    assert(contains(refused, "Instance: this thread proves already with another instance of the key"));
+}
+
+// An opening on a key on the GPU is of its one instance: the same instance twice is refused, as an
+// argument, before anything of it runs on the device.
+void testAGpuOpeningIsOfOneInstance() {
+    if (!gpuUnderTest("an opening of one instance on a key on the GPU")) {
+        return;
+    }
+    const Fibonacci fib(KeyFiles(), Device::Gpu);
+    const std::unique_ptr<Instance> inst = fib.instance(std::make_unique<ZeroBlinding>());
+    inst->commitStage(1, {});
+    inst->commitQ({fr(fib.oracle["stdVc"])});
+    const FrElement xiSeed = E.fr.set(7);
+    assert(contains(thrown<std::invalid_argument>(
+                        [&] { Opening(std::vector<const Instance *>{inst.get(), inst.get()}, xiSeed); }),
+                    "Opening: 2 instances of a key on the GPU, which proves one at a time"));
+    const Opening opening(std::vector<const Instance *>{inst.get()}, xiSeed);
+    assert(!opening.evaluations().empty());
+}
+
+// A2 of the Fase 7 audit: proofs of one key on the GPU from two threads at once, each waiting for the
+// other's lease, with instances made and dropped at once between them (their witness's transposition
+// still queued), while a third thread copies the fixed coefficients to the host over and over
+// (GpuAirKey::fixedToHost, from any thread): every proof the CPU's, and every copy the CPU key's
+// coefficients. On the Fibonacci, whole and split and packed, and on the sum bus.
+template <typename Prove, typename Drop>
+void expectProofsFromTwoThreads(const char *what, const AirKey &cpuAir, const AirKey &gpuAir,
+                                const std::vector<uint8_t> &expected, const Prove &proveOnce, const Drop &dropOne) {
+    const uint64_t N = gpuAir.n(), nConstants = gpuAir.info().nConstants;
+    std::vector<FrElement> fixed(nConstants * N);
+    for (uint64_t c = 0; c < nConstants; ++c) {
+        std::memcpy(fixed.data() + c * N, cpuAir.fixedPolynomial(c)->coef, N * sizeof(FrElement));
+    }
+    std::atomic<int> wrong{0}, copies{0}, wrongCopies{0};
+    std::atomic<bool> stop{false};
+    std::thread copier([&] {
+        std::vector<FrElement> out(nConstants * N);
+        while (!stop) {
+            gpuAir.device()->fixedToHost(out.data());
+            ++copies;
+            if (std::memcmp(out.data(), fixed.data(), out.size() * sizeof(FrElement)) != 0) {
+                ++wrongCopies;
+            }
+        }
+    });
+    auto prover = [&](int id) {
+        for (int round = 0; round < 4; ++round) {
+            if ((round + id) % 2 == 0) {
+                dropOne();
+            }
+            if (proveOnce() != expected) {
+                ++wrong;
+            }
+        }
+    };
+    std::thread a(prover, 0), b(prover, 1);
+    a.join();
+    b.join();
+    stop = true;
+    copier.join();
+    std::printf("pilfflonk_test: %s on the GPU: 8 proofs from two threads, %d not the CPU's; %d copies of the "
+                "fixed coefficients meanwhile, %d not the CPU's\n",
+                what, wrong.load(), copies.load(), wrongCopies.load());
+    assert(wrong == 0 && wrongCopies == 0);
+}
+
+void testProofsFromTwoThreads() {
+    if (!gpuUnderTest("proofs from two threads on a key on the GPU")) {
+        return;
+    }
+    const uint8_t seed[32] = {31};
+    for (const KeyFiles &files : {KeyFiles(), splitQFiles(true)}) {
+        const Fibonacci cpu(files), gpu(files, Device::Gpu);
+        const std::vector<uint8_t> expected = proofBytes(prove(cpu, std::make_unique<BlindingRng>(seed)), cpu.air());
+        expectProofsFromTwoThreads(
+            gpu.air().nQPieces() == 1 ? "the Fibonacci" : "the split Fibonacci", cpu.air(), gpu.air(), expected,
+            [&] { return proofBytes(prove(gpu, std::make_unique<BlindingRng>(seed)), gpu.air()); },
+            [&] { const std::unique_ptr<Instance> dropped = gpu.instance(std::make_unique<ZeroBlinding>()); });
+    }
+    const SumBus cpu, gpu(sumBusFiles(), Device::Gpu);
+    const std::vector<uint8_t> expected =
+        proofBytes(proveTheSumBus(cpu, std::make_unique<BlindingRng>(seed)), cpu.air());
+    expectProofsFromTwoThreads(
+        "the sum bus", cpu.air(), gpu.air(), expected,
+        [&] { return proofBytes(proveTheSumBus(gpu, std::make_unique<BlindingRng>(seed)), gpu.air()); },
+        [&] { const std::unique_ptr<Instance> dropped = gpu.instance(gpu.witness); });
+}
+
+// A5 of the Fase 7 audit: a thread whose current device is another than the GPU's, as one of a
+// multi-GPU process may be (device 1, if there are two): the device memory of a key
+// (requiredDeviceBytes), its load, its fixed coefficients' copy, a proof, and their release, run on
+// device 0 (DeviceScope) and leave the thread's current device as it was; the proof is the CPU's.
+// With one device, the thread's is the GPU's, and stays so.
+void testAThreadOfAnotherDevice() {
+    if (!gpuUnderTest("a thread of another device")) {
+        return;
+    }
+    int count = 0;
+    assert(cudaGetDeviceCount(&count) == 0 && count >= 1);
+    const int device = count > 1 ? 1 : 0;
+    const uint8_t seed[32] = {41};
+    const KeyFiles files;
+    const Fibonacci cpu(files);
+    const std::vector<uint8_t> expected = proofBytes(prove(cpu, std::make_unique<BlindingRng>(seed)), cpu.air());
+    std::vector<int> devices;
+    bool same = false;
+    std::thread other([&] {
+        gpu_plonk_set_device(device);
+        (void)ProvingKey::requiredDeviceBytes(cpu.dir.path());
+        devices.push_back(pilfflonk_gpu_current_device());
+        Fibonacci gpu(files, Device::Gpu);
+        devices.push_back(pilfflonk_gpu_current_device());
+        assert(gpu.air().fixedPolynomial(0) != nullptr);
+        devices.push_back(pilfflonk_gpu_current_device());
+        {
+            const Proved p = prove(gpu, std::make_unique<BlindingRng>(seed));
+            same = proofBytes(p, gpu.air()) == expected;
+            devices.push_back(pilfflonk_gpu_current_device());
+        }
+        devices.push_back(pilfflonk_gpu_current_device());
+        gpu.pk.reset();
+        devices.push_back(pilfflonk_gpu_current_device());
+    });
+    other.join();
+    std::printf("pilfflonk_test: a proof on the GPU from a thread of device %d (of %d): %s, the thread's device "
+                "left as it was\n",
+                device, count, same ? "the CPU's" : "NOT the CPU's");
+    assert(same && devices == std::vector<int>(6, device));
+}
+
+// On a key on the GPU, which keeps nothing of its fixed columns on the host, AirKey::fixedEvaluations
+// copies their coefficients from the device and evaluates them on H the first time it is asked, once
+// whatever the thread: the .const's columns, as the CPU key has them, byte for byte. On the
+// Fibonacci and on the sum bus.
+void testTheFixedEvaluationsOfAGpuKey() {
+    if (!gpuUnderTest("the fixed evaluations of a key on the GPU")) {
+        return;
+    }
+    auto expectTheCpus = [](const AirKey &cpu, const AirKey &gpu, const PilFflonk::CopyVolume &volume) {
+        const uint64_t N = cpu.n(), nConstants = cpu.info().nConstants;
+        const uint64_t before = volume.totals().toHost;
+        const FrElement *evaluations[2] = {nullptr, nullptr};
+        std::thread other([&] { evaluations[1] = gpu.fixedEvaluations(0); });
+        evaluations[0] = gpu.fixedEvaluations(0);
+        other.join();
+        assert(nConstants > 0 && evaluations[0] == evaluations[1]);
+        assert(volume.totals().toHost == before + nConstants * N * sizeof(FrElement));
+        for (uint64_t c = 0; c < nConstants; ++c) {
+            assert(std::memcmp(gpu.fixedEvaluations(c), cpu.fixedEvaluations(c), N * sizeof(FrElement)) == 0);
+        }
+        assert(volume.totals().toHost == before + nConstants * N * sizeof(FrElement));
+    };
+    const Fibonacci cpu, gpu(KeyFiles(), Device::Gpu);
+    expectTheCpus(cpu.air(), gpu.air(), gpu.pk->gpuKey()->copies());
+    const SumBus busOnCpu, busOnGpu(sumBusFiles(), Device::Gpu);
+    expectTheCpus(busOnCpu.air(), busOnGpu.air(), busOnGpu.pk->gpuKey()->copies());
+}
+
 // A key goes on the GPU only if the device can hold it and a whole proof of each AIR besides
 // (GpuKey::reserve): refused, saying what it needs and what is free, with too little memory for the
 // SRS, or for the AIR once the SRS is there, and with an arena given that is too small.
@@ -2471,8 +2667,12 @@ void testStageOneOnTheGpu() {
 
 // The device memory ProvingKey::requiredDeviceBytes reads from a key's files, which needs no fixed
 // column, is what a key on the GPU of them reserves (GpuKey::reserve): its arena, and beside it what
-// it holds and the most a proof allocates besides; pilfflonk_gpu_device_bytes gives the same. On the
-// Fibonacci, whole and split and packed.
+// it holds, its loading's scratch and the most a proof allocates besides; pilfflonk_gpu_device_bytes
+// gives the same. A1 of the Fase 7 audit: a key on a given arena loads with a memoryLimit of exactly
+// `beside`, and is refused with one byte less; one of its own arena loads with arena + beside, and
+// with as little as that less its loading's scratch, which its arena holds then, and not one byte
+// less. And pilfflonk_gpu_free_bytes is what the device has free. On the Fibonacci, whole and split
+// and packed.
 void testTheDeviceBytesOfAKey() {
     if (!gpuUnderTest("the device memory of a key on the GPU")) {
         return;
@@ -2480,13 +2680,44 @@ void testTheDeviceBytesOfAKey() {
     for (const KeyFiles &files : {KeyFiles(), splitQFiles(true)}) {
         const Fibonacci fib(files, Device::Gpu);
         const PilFflonk::GpuKey &key = *fib.pk->gpuKey();
-        const PilFflonk::DeviceBytes needed = ProvingKey::requiredDeviceBytes(fib.dir.path());
+        const std::string dir = fib.dir.path();
+        const PilFflonk::DeviceBytes needed = ProvingKey::requiredDeviceBytes(dir);
+        const uint64_t loading = PilFflonk::loadScratchBytes(fib.air());
         assert(needed.arena == key.arenaSize() && needed.arena == PilFflonk::arenaLayout(fib.air()).bytes);
-        assert(needed.beside == key.deviceBytes() - key.arenaSize() + key.transientBytes());
+        assert(loading > 0 && needed.beside == key.deviceBytes() - key.arenaSize() + loading + key.transientBytes());
         uint64_t arena = 0, beside = 0;
-        assert(pilfflonk_gpu_device_bytes(fib.dir.path().c_str(), &arena, &beside) == PILFFLONK_OK);
+        assert(pilfflonk_gpu_device_bytes(dir.c_str(), &arena, &beside) == PILFFLONK_OK);
         assert(arena == needed.arena && beside == needed.beside);
+
+        const PilFflonk::DeviceBuffer given(needed.arena);
+        auto refusal = [&](uint64_t memoryLimit, bool onGiven) {
+            PilFflonk::GpuKeyOptions options;
+            options.memoryLimit = memoryLimit;
+            if (onGiven) {
+                options.arena = given.data();
+                options.arenaBytes = needed.arena;
+            }
+            try {
+                ProvingKey::load(dir, Device::Gpu, options);
+            } catch (const std::invalid_argument &e) {
+                return std::string(e.what());
+            }
+            return std::string();
+        };
+        const std::string short1 = "not enough GPU memory for Fibonacci (its fixed columns, bytecode and tables, ";
+        assert(refusal(needed.beside, true).empty());
+        assert(contains(refusal(needed.beside - 1, true), short1));
+        assert(refusal(needed.arena + needed.beside, false).empty());
+        assert(refusal(needed.arena + needed.beside - loading, false).empty());
+        assert(contains(refusal(needed.arena + needed.beside - loading - 1, false), short1));
+        std::printf("pilfflonk_test: the Fibonacci in %" PRIu64 " piece(s) on the GPU: an arena of %" PRIu64
+                    " bytes, and %" PRIu64 " beside it (%" PRIu64 " of them its loading's scratch), to the byte\n",
+                    fib.air().nQPieces(), needed.arena, needed.beside, loading);
     }
+    uint64_t free = 0;
+    assert(pilfflonk_gpu_free_bytes(&free) == PILFFLONK_OK && free > 0 && free == PilFflonk::gpuFreeBytes());
+    assert(free == ProvingKey::freeDeviceBytes());
+    assert(pilfflonk_gpu_free_bytes(nullptr) == PILFFLONK_ERR_INVALID_ARGUMENT);
 }
 
 void testTheGpuCopiesWhatItMust() {
@@ -2656,6 +2887,89 @@ void testTheGpuProvesTheKeysUnderTest() {
                 keys, refused);
 }
 
+// The least free memory of the device while it lives, sampled every 100 µs from a thread of its own.
+class LeastFreeMemory {
+public:
+    LeastFreeMemory()
+        : sampler([this] {
+              while (!stop) {
+                  const uint64_t free = PilFflonk::gpuFreeBytes();
+                  uint64_t low = least.load();
+                  while (free < low && !least.compare_exchange_weak(low, free)) {
+                  }
+                  std::this_thread::sleep_for(std::chrono::microseconds(100));
+              }
+          }) {}
+    ~LeastFreeMemory() {
+        stop = true;
+        if (sampler.joinable()) {
+            sampler.join();
+        }
+    }
+    LeastFreeMemory(const LeastFreeMemory &) = delete;
+    LeastFreeMemory &operator=(const LeastFreeMemory &) = delete;
+
+    // Stops the sampling, and the least it saw.
+    uint64_t done() {
+        stop = true;
+        sampler.join();
+        return least;
+    }
+
+private:
+    std::atomic<bool> stop{false};
+    std::atomic<uint64_t> least{UINT64_MAX};
+    std::thread sampler;
+};
+
+// A4 of the Fase 7 audit: the device memory a key on the GPU uses, sampled while it loads and while it
+// proves its witness, within what ProvingKey::requiredDeviceBytes says it needs: beside a given
+// arena, `beside`; with its own, arena + beside. For each key of PILFFLONK_GPU_PEAK_KEYS
+// (colon-separated: a directory with a provingKey/ and a witness/, or "provingKeyDir,witnessDir"),
+// with its own arena and with one given.
+void testTheDeviceMemoryOfTheKeysUnderTest() {
+    const char *list = std::getenv("PILFFLONK_GPU_PEAK_KEYS");
+    if (list == nullptr || !gpuUnderTest("the device memory of PILFFLONK_GPU_PEAK_KEYS")) {
+        return;
+    }
+    std::string entries = list;
+    while (!entries.empty()) {
+        const size_t colon = entries.find(':');
+        const std::string entry = entries.substr(0, colon);
+        entries = colon == std::string::npos ? "" : entries.substr(colon + 1);
+        const size_t comma = entry.find(',');
+        const std::string key = comma == std::string::npos ? entry + "/provingKey" : entry.substr(0, comma);
+        const WitnessDir witness =
+            readWitnessDir(comma == std::string::npos ? entry + "/witness" : entry.substr(comma + 1));
+        const PilFflonk::DeviceBytes needed = ProvingKey::requiredDeviceBytes(key);
+        for (bool given : {false, true}) {
+            std::unique_ptr<PilFflonk::DeviceBuffer> arena;
+            PilFflonk::GpuKeyOptions options;
+            if (given) {
+                arena = std::make_unique<PilFflonk::DeviceBuffer>(needed.arena);
+                options.arena = arena->data();
+                options.arenaBytes = needed.arena;
+            }
+            const uint64_t free = PilFflonk::gpuFreeBytes();
+            auto used = [free](uint64_t least) { return free - std::min(free, least); };
+            std::unique_ptr<ProvingKey> pk;
+            LeastFreeMemory loading;
+            pk = ProvingKey::load(key, Device::Gpu, options);
+            const uint64_t loadPeak = used(loading.done());
+            LeastFreeMemory proving;
+            const ProofOutcome outcome = proofOutcome(*pk, witness.trace, witness.publics, pk->air(0, 0).info().nBits);
+            const uint64_t proofPeak = used(proving.done());
+            const uint64_t budget = given ? needed.beside : needed.arena + needed.beside;
+            std::printf("pilfflonk_test: %s, %s arena: the device's memory in use peaks at %" PRIu64
+                        " bytes while it loads and %" PRIu64 " while it proves, of the %" PRIu64
+                        " it needs (arena %" PRIu64 ", beside %" PRIu64 ")\n",
+                        key.c_str(), given ? "a given" : "its own", loadPeak, proofPeak, budget, needed.arena,
+                        needed.beside);
+            assert(outcome.first.empty() && loadPeak <= budget && proofPeak <= budget);
+        }
+    }
+}
+
 // What the opening of a proof on the GPU copies (OpeningGpu), of the Fibonacci whole and split and
 // packed: no polynomial, as Q's pieces are on the device too; a few elements each way: the
 // evaluations' descriptors and values, the interpolants, and an element or two of each division and
@@ -2757,9 +3071,9 @@ void testTheQPartsAKeyOnTheGpuHolds() {
 }
 
 // What stays on the device while a key on the GPU lives is the host's, byte for byte: the
-// expressions' code, the witness columns' places, the fixed columns' coefficients, of which the
-// key's fixed polynomials are the copies, and the offsets of Q's pieces; and the interpreter holds
-// the device memory its budget counts.
+// expressions' code (its args and numbers, which the interpreter reads), the witness columns'
+// places, the fixed columns' coefficients, of which the key's fixed polynomials are the copies, and
+// the offsets of Q's pieces; and the interpreter holds the device memory its budget counts.
 void expectTheKeysDataOnTheGpu(const KeyFiles &files) {
     const Fibonacci fib(files, Device::Gpu);
     const AirKey &air = fib.air();
@@ -2781,15 +3095,13 @@ void expectTheKeysDataOnTheGpu(const KeyFiles &files) {
         }
     }
     const PilFflonk::ParserArgs &code = air.bin().expressionsBinArgsExpressions;
-    std::vector<uint8_t> ops(code.ops.size());
     std::vector<uint32_t> args(code.args.size());
     std::vector<FrElement> numbers(code.numbers.size());
     std::vector<uint64_t> positions(air.witnessColumns().size());
-    gpu_plonk_memcpy_d2h(ops.data(), device.ops(), ops.size());
     gpu_plonk_memcpy_d2h(args.data(), device.args(), args.size() * sizeof(uint32_t));
     gpu_plonk_memcpy_d2h(numbers.data(), device.numbers(), numbers.size() * sizeof(FrElement));
     gpu_plonk_memcpy_d2h(positions.data(), device.witnessPositions(), positions.size() * sizeof(uint64_t));
-    assert(ops == code.ops && args == code.args && positions == air.witnessColumns());
+    assert(args == code.args && positions == air.witnessColumns());
     assert(std::memcmp(numbers.data(), code.numbers.data(), numbers.size() * sizeof(FrElement)) == 0);
     const uint64_t N = air.n();
     std::vector<FrElement> fixed(air.info().nConstants * N);
@@ -2844,6 +3156,11 @@ void runProverTests() {
     testTheBlindingDrawOrder();
 #ifdef __USE_CUDA__
     testAGpuKeyHoldsOneProofAtATime();
+    testAMovedInstanceIsHeldOnItsThread();
+    testAGpuOpeningIsOfOneInstance();
+    testProofsFromTwoThreads();
+    testAThreadOfAnotherDevice();
+    testTheFixedEvaluationsOfAGpuKey();
     testAGpuKeyRefusesWhatItCannotHold();
     testAnArenaGivenToTheKey();
     testTheGpuCopiesWhatItMust();
@@ -2852,6 +3169,7 @@ void runProverTests() {
     testTheDeviceBytesOfAKey();
     testAMutatedWitnessIsUnsatisfiedOnTheGpu();
     testTheGpuProvesTheKeysUnderTest();
+    testTheDeviceMemoryOfTheKeysUnderTest();
     testTheGpuOpeningCopiesWhatItMust();
     testTheArenaLayoutOfQ();
     testTheQPartsAKeyOnTheGpuHolds();

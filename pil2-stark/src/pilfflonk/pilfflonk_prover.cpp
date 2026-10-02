@@ -907,10 +907,11 @@ Opening::Opening(const std::vector<const Instance *> &instances, const FrElement
     TimerStart(PILFFLONK_EVALUATIONS);
 #ifdef __USE_CUDA__
     if (pk->gpuKey() != nullptr) {
-        // The instance holds the key's device memory, which no other instance does meanwhile.
+        // The instance holds the key's device memory, which no other instance does meanwhile: two
+        // are the same one twice.
         if (instances.size() != 1) {
-            throw std::logic_error("Opening: " + std::to_string(instances.size()) +
-                                   " instances of a key on the GPU, which holds one at a time");
+            throw invalid(function, std::to_string(instances.size()) +
+                                        " instances of a key on the GPU, which proves one at a time");
         }
         device = OpeningGpu::ofInstance(*instances[0]);
         shplonk = std::make_unique<ShplonkProver>(

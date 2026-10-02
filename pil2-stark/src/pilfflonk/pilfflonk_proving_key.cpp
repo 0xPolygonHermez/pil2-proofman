@@ -700,19 +700,22 @@ void AirKey::loadFixed(const ConstantsSource &constants, GpuKey *gpu) {
                              " fixed columns of " + std::to_string(N) + " rows have " +
                              std::to_string(nConstants * N * FR_BYTES));
     }
+    std::unique_ptr<FrElement[]> evaluations;
     if (nConstants > 0) {
-        fixedEvals.reset(new FrElement[nConstants * N]);
-        decodeColumns(bytes.data, N, nConstants, fixedEvals.get(), airName + ".const");
+        evaluations.reset(new FrElement[nConstants * N]);
+        decodeColumns(bytes.data, N, nConstants, evaluations.get(), airName + ".const");
     }
 #ifdef __USE_CUDA__
     if (deviceKey != nullptr) {
-        // Interpolated on the device, where the coefficients stay (fixedPolynomial copies them).
-        deviceKey->loadFixed(fixedEvals.get());
+        // Interpolated on the device, where the coefficients stay (fixedPolynomial copies them, and
+        // fixedEvaluations evaluates them again): the host keeps nothing of them.
+        deviceKey->loadFixed(evaluations.get());
         return;
     }
 #else
     (void)gpu;
 #endif
+    fixedEvals = std::move(evaluations);
     if (nConstants > 0) {
         fixedCoefs.reset(new FrElement[nConstants * N]);
         std::vector<FrElement *> evals(nConstants), coefs(nConstants);
@@ -728,18 +731,46 @@ void AirKey::loadFixed(const ConstantsSource &constants, GpuKey *gpu) {
 
 AirKey::~AirKey() = default;
 
+const FrElement *AirKey::fixedEvaluations(uint64_t c) const {
+#ifdef __USE_CUDA__
+    if (deviceKey != nullptr) {
+        // Built aside and kept only once whole: a call that throws leaves nothing, and the next one
+        // tries again.
+        std::call_once(fixedEvaluated, [this] {
+            const uint64_t N = n(), nConstants = pilfflonkInfo.nConstants;
+            if (nConstants == 0) {
+                return;
+            }
+            std::unique_ptr<FrElement[]> evaluations(new FrElement[nConstants * N]);
+            deviceKey->fixedToHost(evaluations.get());
+            std::vector<FrElement *> columns(nConstants);
+            for (uint64_t k = 0; k < nConstants; ++k) {
+                columns[k] = evaluations.get() + k * N;
+            }
+            extension->ntt(columns.data(), columns.data(), nConstants);
+            fixedEvals = std::move(evaluations);
+        });
+    }
+#endif
+    return fixedEvals.get() + c * n();
+}
+
 Poly *AirKey::fixedPolynomial(uint64_t c) const {
 #ifdef __USE_CUDA__
     if (deviceKey != nullptr) {
+        // As fixedEvaluations: kept only once whole.
         std::call_once(fixedCopied, [this] {
             const uint64_t N = n(), nConstants = pilfflonkInfo.nConstants;
-            fixedCoefs.reset(new FrElement[nConstants * N]);
-            deviceKey->fixedToHost(fixedCoefs.get());
+            std::unique_ptr<FrElement[]> coefs(new FrElement[nConstants * N]);
+            deviceKey->fixedToHost(coefs.get());
+            std::vector<std::unique_ptr<Poly>> polys;
+            polys.reserve(nConstants);
             for (uint64_t k = 0; k < nConstants; ++k) {
-                fixedPolys.push_back(mirrorPolynomial(fixedCoefs.get() + k * N, N, deviceKey->fixedCount(k),
-                                                      airName + ": the fixed column " +
-                                                          pilfflonkInfo.constPolsMap[k].name));
+                polys.push_back(mirrorPolynomial(coefs.get() + k * N, N, deviceKey->fixedCount(k),
+                                                 airName + ": the fixed column " + pilfflonkInfo.constPolsMap[k].name));
             }
+            fixedCoefs = std::move(coefs);
+            fixedPolys = std::move(polys);
         });
     }
 #endif
@@ -968,6 +999,15 @@ DeviceBytes ProvingKey::requiredDeviceBytes(const std::string &dir) {
 #else
     (void)dir;
     return DeviceBytes();
+#endif
+}
+
+uint64_t ProvingKey::freeDeviceBytes() {
+    requireGpu("ProvingKey::freeDeviceBytes");
+#ifdef __USE_CUDA__
+    return gpuFreeBytes();
+#else
+    return 0;
 #endif
 }
 

@@ -323,8 +323,11 @@ pub struct PilFflonkDeviceBytes {
     /// The arena of its proofs: what the buffer of [`PilFflonkProverCtx::load_on_device_buffer`]
     /// must hold.
     pub arena: u64,
-    /// What it holds and allocates beside the arena: the SRS's powers, each AIR's fixed columns'
-    /// coefficients, bytecode and tables, and what a proof allocates besides (sppark's MSM).
+    /// The most it holds and allocates beside that buffer: the SRS's powers, each AIR's fixed
+    /// columns' coefficients, bytecode and tables, the scratch of an AIR's loading, and what a proof
+    /// allocates besides (sppark's MSM). A context on a buffer loads if the device has `beside` bytes
+    /// free, and is refused with one byte less; one of its own arena (`load_on`) needs at most
+    /// `arena + beside`, as its loading's scratch is in its arena.
     pub beside: u64,
 }
 
@@ -341,9 +344,29 @@ pub fn pilfflonk_gpu_device_bytes_c(dir: &Path) -> Result<PilFflonkDeviceBytes, 
     Ok(bytes)
 }
 
+/// The free memory of CUDA device 0, in bytes: what a [`PilFflonkProverCtx`]'s load on the GPU checks
+/// [`pilfflonk_gpu_device_bytes_c`]'s needs against, for a caller that reserves device memory before
+/// it loads a context (the wrap's). Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument)
+/// without a GPU ([`pilfflonk_gpu_available_c`]).
+pub fn pilfflonk_gpu_free_bytes_c() -> Result<u64, PilFflonkError> {
+    let mut free = 0u64;
+    // SAFETY: the out pointer is a u64 the call writes.
+    check_status(unsafe { pilfflonk_gpu_free_bytes(&mut free) })?;
+    Ok(free)
+}
+
 /// The proving key of the prover (pilfflonk/docs/protocol.md#proof-sequence, step 1), owned by the
 /// C++ side: the `provingKey/` that `setup-pilfflonk` writes, loaded, with the fixed columns
 /// interpolated. Immutable.
+///
+/// On the CPU, its instances prove at the same time, each with memory of its own. On the GPU
+/// ([`load_on`](Self::load_on) with [`PilFflonkDevice::Gpu`], or
+/// [`load_on_device_buffer`](Self::load_on_device_buffer)), it holds the device memory of one proof,
+/// which a [`PilFflonkInstance`] holds from its creation to its drop: one proof at a time.
+/// [`PilFflonkInstance::new`] then waits while an instance of another thread holds it, and fails with
+/// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) while one holds it whose latest call was
+/// on this thread, which it would wait for (pilfflonk_api.hpp, the concurrent instances). Its calls
+/// run on CUDA device 0 and leave the thread's current device as it was.
 #[derive(Debug)]
 pub struct PilFflonkProverCtx {
     handle: NonNull<c_void>,
@@ -478,8 +501,10 @@ pub struct PilFflonkInstance<'ctx> {
 
 impl<'ctx> PilFflonkInstance<'ctx> {
     /// Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if there is no such AIR
-    /// or a count or the size of the witness is not the AIR's, and
-    /// [`NonCanonical`](PilFflonkErrorKind::NonCanonical) if a scalar is not below r.
+    /// or a count or the size of the witness is not the AIR's, or, on a context on the GPU, if this
+    /// thread holds its device memory with another instance (see [`PilFflonkProverCtx`]: another
+    /// thread's it waits for), and [`NonCanonical`](PilFflonkErrorKind::NonCanonical) if a scalar is
+    /// not below r.
     pub fn new(ctx: &'ctx PilFflonkProverCtx, inputs: &PilFflonkInstanceInputs<'_>) -> Result<Self, PilFflonkError> {
         let seed = inputs.insecure_blinding_seed.map_or(std::ptr::null(), |seed| seed.as_ptr());
         // SAFETY: every pointer is NULL with a count of 0 or holds the count of 32-byte scalars (or

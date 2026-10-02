@@ -23,7 +23,8 @@ namespace PilFflonk {
 // counts of the polynomials' coefficients, and copies on demand (polynomialToHost, qPiecesToHost,
 // stageColumnToHost) for tests and diagnostics. Everything is the CPU's bit for bit: the same INTTs
 // and MSMs, the same field operations in the same order on each element, and the blinding factors
-// the host drew.
+// the host drew. Each of its calls but the counts' holds a ProofCall (pilfflonk_key_gpu.hpp): it runs
+// on the GPU's device, and its thread is the one that holds the key's arena.
 class InstanceGpu {
 public:
     // The device side of an instance of `air`: waits for the key's arena (GpuKey::Lease), copies to

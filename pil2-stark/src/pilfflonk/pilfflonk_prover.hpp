@@ -320,7 +320,8 @@ public:
     // The instances, in canonical order ((airgroupId, airId) non-decreasing), of one ProvingKey,
     // all with Q committed and of the same N (the one invZh is of), at ξ = xiSeed^powerW, powerW
     // the lcm of the k of every f (pilfflonk/docs/protocol.md#roots). Throws std::invalid_argument
-    // if they are not, and std::runtime_error if ξ is in H (probability N/r).
+    // if they are not, or if they are more than one of a key on the GPU (which holds one at a time:
+    // the same instance twice), and std::runtime_error if ξ is in H (probability N/r).
     Opening(const std::vector<const Instance *> &instances, const FrElement &xiSeed);
     ~Opening();
 

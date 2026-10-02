@@ -24,8 +24,8 @@ use std::path::Path;
 use pilfflonk_wrap_witness::{WrapArtifacts, WrapWitness};
 use proofman_common::{ProofmanError, ProofmanResult};
 use proofman_pilfflonk::{
-    gpu_device_bytes, js_verifier, prove, Device, FrBytes, JsonFile, Proof, ProofJson, ProofNames, ProveOptions,
-    ProvingKey, ProvingKeyFiles, Publics, Vkey, Witness, WitnessShape,
+    gpu_device_bytes, gpu_free_bytes, js_verifier, prove, Device, DeviceBytes, FrBytes, JsonFile, Proof, ProofJson,
+    ProofNames, ProveOptions, ProvingKey, ProvingKeyFiles, Publics, Vkey, Witness, WitnessShape,
 };
 use proofman_starks_lib_c::{
     get_first_gpu_id_c, get_unified_buffer_gpu_for_recursivef_c, get_unified_buffer_gpu_size_c,
@@ -49,7 +49,9 @@ pub(crate) struct WrapArena {
 /// `d_buffers` if there is one, all of it (the key refuses it, as a GPU without the memory, if it holds
 /// less than a proof's arena: decision D1); otherwise the recursivef's prover buffer
 /// `d_buffers_recursivef`, grown to the arena if it is smaller. `None` on the CPU. Refused if the
-/// unified buffer is not on device 0, where pilfflonk proves, or the recursivef's buffer cannot grow.
+/// unified buffer is not on device 0, where pilfflonk proves, if the recursivef's buffer cannot grow,
+/// or if, the arena in place, the device has less free memory than the key needs beside it
+/// ([`DeviceBytes::beside`], its loading's scratch included): before the key loads anything.
 pub(crate) fn wrap_arena(
     gpu: bool,
     d_buffers: Option<*mut c_void>,
@@ -69,6 +71,7 @@ pub(crate) fn wrap_arena(
         }
         let buffer = get_unified_buffer_gpu_for_recursivef_c(d_buffers, d_buffers_recursivef);
         let bytes = get_unified_buffer_gpu_size_c(d_buffers);
+        require_beside(&needed, gpu_free_bytes().map_err(|e| invalid_key(proving_key, e))?)?;
         tracing::info!(
             "pilfflonk's GPU arena: {} bytes of the unified buffer's {bytes} (margin {}), and {} bytes beside it",
             needed.arena,
@@ -79,6 +82,7 @@ pub(crate) fn wrap_arena(
     }
     match reserve_recursivef_aux_trace_c(d_buffers_recursivef, needed.arena) {
         Ok((buffer, bytes)) => {
+            require_beside(&needed, gpu_free_bytes().map_err(|e| invalid_key(proving_key, e))?)?;
             tracing::info!(
                 "pilfflonk's GPU arena: {} bytes of the recursivef's prover buffer of {bytes}, and {} bytes beside it",
                 needed.arena,
@@ -92,6 +96,19 @@ pub(crate) fn wrap_arena(
             needed.arena
         ))),
     }
+}
+
+/// Refuses a key that needs more device memory beside its arena (`needed.beside`) than the device has
+/// `free`, once the arena is in place, as the key would refuse itself while it loads (decision D1).
+fn require_beside(needed: &DeviceBytes, free: u64) -> ProofmanResult<()> {
+    if free < needed.beside {
+        return Err(ProofmanError::InvalidConfiguration(format!(
+            "not enough GPU memory for the pilfflonk wrap's key: beside its arena of {} bytes it needs {} bytes, \
+             and the device has {free} free (pilfflonk/docs/performance.md#selection-memory-and-errors)",
+            needed.arena, needed.beside
+        )));
+    }
+    Ok(())
 }
 
 /// The prover of the pilfflonk wrap: its key, loaded on its device, and the final circuit's witness
@@ -283,6 +300,16 @@ mod tests {
             *byte = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap();
         }
         bytes
+    }
+
+    #[test]
+    fn a_key_is_refused_when_the_device_has_less_free_than_it_needs_beside_its_arena() {
+        let needed = DeviceBytes { arena: 1 << 20, beside: 3 << 20 };
+        assert!(require_beside(&needed, needed.beside).is_ok());
+        assert!(require_beside(&needed, u64::MAX).is_ok());
+        let refused = require_beside(&needed, needed.beside - 1).unwrap_err().to_string();
+        assert!(refused.contains("beside its arena of 1048576 bytes it needs 3145728 bytes"), "{refused}");
+        assert!(refused.contains("and the device has 3145727 free"), "{refused}");
     }
 
     #[test]

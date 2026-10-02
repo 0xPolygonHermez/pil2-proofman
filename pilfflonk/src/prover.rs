@@ -47,8 +47,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use proofman_starks_lib_c::{
-    pilfflonk_gpu_available_c, pilfflonk_gpu_device_bytes_c, PilFflonkError, PilFflonkErrorKind, PilFflonkInstance,
-    PilFflonkInstanceInputs, PilFflonkOpening, PilFflonkProverCtx, PilFflonkTranscript,
+    pilfflonk_gpu_available_c, pilfflonk_gpu_device_bytes_c, pilfflonk_gpu_free_bytes_c, PilFflonkError,
+    PilFflonkErrorKind, PilFflonkInstance, PilFflonkInstanceInputs, PilFflonkOpening, PilFflonkProverCtx,
+    PilFflonkTranscript,
 };
 
 use crate::error::{invalid, PilfflonkError, PilfflonkResult};
@@ -64,8 +65,10 @@ use crate::witness::{AirInstanceRef, Stage1Witness, WitnessShape, WitnessSource}
 /// (pilfflonk/docs/performance.md#selection-memory-and-errors).
 pub use proofman_starks_lib_c::PilFflonkDevice as Device;
 
-/// The device memory a key needs on the GPU ([`gpu_device_bytes`]): the arena of its proofs, and what
-/// it holds and allocates beside it, in bytes.
+/// The device memory a key needs on the GPU ([`gpu_device_bytes`]): the arena of its proofs, and the
+/// most it holds and allocates beside a buffer given as that arena, its loading's scratch included, in
+/// bytes. A key on such a buffer loads if the device has `beside` bytes free; one of its own arena
+/// needs at most `arena + beside`.
 pub use proofman_starks_lib_c::PilFflonkDeviceBytes as DeviceBytes;
 
 /// Whether [`Device::Gpu`] can be used here: this library was built with CUDA (`nvcc` found, the
@@ -84,6 +87,12 @@ pub(crate) fn native(context: &'static str) -> impl FnOnce(PilFflonkError) -> Pi
 }
 
 /// The `provingKey/` of a proof, loaded (see [the module](self)).
+///
+/// On [`Device::Gpu`], it proves one proof at a time, in the device memory it holds for one: [`prove`]
+/// and [`stage_columns`] hold it from their instance's creation to its end, and another one's on this
+/// thread meanwhile fails (`proofman_starks_lib_c::PilFflonkProverCtx`, which says what a C++ caller
+/// sharing it between threads sees). Its calls run on CUDA device 0, whatever the thread's current
+/// device, which they leave as it was. On [`Device::Cpu`], proofs of one key are independent.
 #[derive(Debug)]
 pub struct ProvingKey {
     dir: PathBuf,
@@ -274,6 +283,14 @@ impl ProvingKeyFiles {
 /// Refused without a GPU ([`gpu_available`]).
 pub fn gpu_device_bytes(dir: &Path) -> PilfflonkResult<DeviceBytes> {
     pilfflonk_gpu_device_bytes_c(dir).map_err(native("reading the device memory of the provingKey/"))
+}
+
+/// The free memory of CUDA device 0, in bytes, what a key's load on the GPU checks
+/// [`gpu_device_bytes`] against: for a caller that reserves device memory before it loads a key (the
+/// wrap's, pilfflonk/docs/performance.md#the-wraps-device-buffer). Refused without a GPU
+/// ([`gpu_available`]).
+pub fn gpu_free_bytes() -> PilfflonkResult<u64> {
+    pilfflonk_gpu_free_bytes_c().map_err(native("reading the GPU's free memory"))
 }
 
 /// Runs `f` between the two lines the C++ core's timers log at -vv (TimerStart and

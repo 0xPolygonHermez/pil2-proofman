@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "alt_bn128.hpp"
@@ -55,14 +56,17 @@ bool batchInverse(FrElement *out, const FrElement *values, uint64_t n);
 //
 // A key on the GPU runs these transforms on the device instead (pilfflonk_lde_gpu.hpp), with the
 // shifts of the parts and the coset this computes (partShift, shiftInverse): the same bit for bit.
+// Those need no FFT, and ffiasm's table of the N' roots of unity, 32·N' bytes (512 MB at N' = 2^24),
+// is built by the first transform, once: a key on the GPU, and one without its fixed columns
+// (AirKey::withoutFixedColumns), never builds it but for what the host asks of it
+// (AirKey::fixedEvaluations).
 class Lde {
 public:
     using Engine = AltBn128::Engine;
     using Poly = Polynomial<Engine>;
 
     // Throws std::invalid_argument unless nBits <= nBitsExt <= MAX_NBITS_EXT, and
-    // std::runtime_error where ffiasm has no assembly backend. Builds ffiasm's table of the
-    // N' roots of unity, which takes 32·N' bytes.
+    // std::runtime_error where ffiasm has no assembly backend.
     Lde(uint64_t _nBits, uint64_t _nBitsExt);
 
     uint64_t domainSize() const { return N; }
@@ -77,6 +81,11 @@ public:
     // Not in place: fromEvaluations clears coefs[c] before it reads evals[c].
     std::vector<std::unique_ptr<Poly>> intt(FrElement *const *evals, FrElement *const *coefs, uint64_t nCols,
                                             uint64_t blindLength = 0) const;
+
+    // The NTT, the inverse of intt (without blinding): column c's N coefficients, in coefs[c], into
+    // its N evaluations on H, in evals[c], by ffiasm's FFT. evals[c] may be coefs[c] itself (in
+    // place).
+    void ntt(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols) const;
 
     // LDE: column c, the polynomial with the nCoefs coefficients in coefs[c] (1 <= nCoefs <= N'),
     // into its N' evaluations on g·H', in evals[c]. Coefficient j is scaled by g^j, and the rest up
@@ -102,7 +111,8 @@ public:
     void interpolateCoset(const FrElement *const *evals, FrElement *const *coefs, uint64_t nCols) const;
 
     // The shift c = g·ω_N'^part of part `part` of the coset, whatever the size of the parts
-    // (extendCosetPart): part 0's is g itself. For part < N'.
+    // (extendCosetPart): part 0's is g itself. For part < N'. ω_N' is rootOfUnity(nBitsExt), the
+    // root ffiasm's FFT has (pilfflonk_expressions.hpp).
     FrElement partShift(uint64_t part) const;
     // g^-1, whose powers interpolateCoset scales by.
     const FrElement &shiftInverse() const { return shiftInv; }
@@ -111,14 +121,19 @@ private:
     // extendCosetPart once its arguments are checked.
     void extendPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs,
                     uint64_t partBits, uint64_t part) const;
+    // ffiasm's FFT, built by the first call, once, whatever the thread; called before any parallel
+    // region that uses it.
+    FFT<Engine::Fr> &transforms() const;
 
     uint64_t N;
     uint64_t NExtended;
     FrElement shift;
     FrElement shiftInv;
-    // Sized for N', it also serves N. Behind a pointer because FFT::fft and FFT::ifft are not
-    // const, although they only read the FFT's tables.
-    std::unique_ptr<FFT<Engine::Fr>> fft;
+    FrElement extendedRoot; // ω_N'
+    // Sized for N', it also serves N. Mutable because FFT::fft and FFT::ifft are not const, although
+    // they only read the FFT's tables, and because transforms() builds it.
+    mutable std::once_flag fftBuilt;
+    mutable std::unique_ptr<FFT<Engine::Fr>> fft;
 };
 
 } // namespace PilFflonk

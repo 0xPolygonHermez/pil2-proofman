@@ -151,8 +151,9 @@ class AirKey {
 public:
     // From the files' contents. `name` is what the errors call the AIR. Throws FormatError. With a
     // `gpu` (only in a library built with the GPU), which must outlive the key, the key is on it: its
-    // fixed columns are interpolated and committed on the device, where their coefficients stay, and
-    // its proofs run there (GpuAirKey, pilfflonk_key_gpu.hpp). It throws then as GpuAirKey's
+    // fixed columns are interpolated and committed on the device, where their coefficients stay (the
+    // host keeps them neither on H nor as polynomials until it is asked for them), and its proofs run
+    // there (GpuAirKey, pilfflonk_key_gpu.hpp). It throws then as GpuAirKey's
     // constructor too: std::invalid_argument if the device has not the memory of the key and a proof
     // of the AIR.
     AirKey(PilfflonkInfo info, ExpressionsBin bin, const uint8_t *constants, uint64_t constantsBytes,
@@ -201,8 +202,12 @@ public:
     const GpuAirKey *device() const { return deviceKey.get(); }
 #endif
 
-    // Fixed column c (constPolsMap index) on H, N values in natural order.
-    const FrElement *fixedEvaluations(uint64_t c) const { return fixedEvals.get() + c * n(); }
+    // Fixed column c (constPolsMap index) on H, N values in natural order. On a key on the GPU, which
+    // keeps the fixed columns' coefficients on the device and nothing of them on the host, the first
+    // call copies those of every fixed column to the host (GpuAirKey::fixedToHost) and evaluates them
+    // there on H (Lde::ntt), once, whatever the thread (decision D8): for the check
+    // (Instance::check), which computes the stages' columns on the host.
+    const FrElement *fixedEvaluations(uint64_t c) const;
     // Its interpolant, of N coefficients. Not const, as rapidsnark's API takes it, but never changed.
     // On a key on the GPU, which keeps the coefficients on the device, the first call copies those of
     // every fixed column to the host (GpuAirKey::fixedToHost), once, whatever the thread.
@@ -277,7 +282,9 @@ private:
     std::unique_ptr<Expressions> interpreter; // refers to expressionsBin
     AirDegrees airDegrees_;
     std::unique_ptr<Lde> extension;
-    std::unique_ptr<FrElement[]> fixedEvals;
+    // On a key on the GPU, made by fixedEvaluations's first call (fixedEvaluated).
+    mutable std::unique_ptr<FrElement[]> fixedEvals;
+    mutable std::once_flag fixedEvaluated;
     // On a key on the GPU, made by fixedPolynomial's first call (fixedCopied).
     mutable std::unique_ptr<FrElement[]> fixedCoefs;
     mutable std::vector<std::unique_ptr<Poly>> fixedPolys;
@@ -334,10 +341,18 @@ public:
     // The device memory a key loaded from `dir` on the GPU needs (DeviceBytes), from the globalInfo,
     // the SRS's header and each AIR's pilfflonkinfo and .bin (AirKey::withoutFixedColumns), without
     // loading it, as GpuKey and its AIRs reserve it: what a buffer given as its arena
-    // (GpuKeyOptions::arena) must hold, and what the key needs beside it. Throws std::invalid_argument
-    // as load does without a GPU, whose number of multiprocessors sppark's MSM's memory depends on, and
-    // IoError and FormatError as load does for those files.
+    // (GpuKeyOptions::arena) must hold, and the most the key needs beside it, its loading's scratch
+    // included: with a memoryLimit (or free memory) of `beside`, a key on a given arena always loads.
+    // It reads device 0's number of multiprocessors (sppark's MSM's memory depends on it), and leaves
+    // the calling thread's current device as it was. Throws std::invalid_argument as load does without
+    // a GPU, and IoError and FormatError as load does for those files.
     static DeviceBytes requiredDeviceBytes(const std::string &dir);
+
+    // The free memory of device 0, in bytes, what a key's load on the GPU checks its needs against
+    // (requiredDeviceBytes), for a caller that reserves device memory before it loads a key (the
+    // wrap's): cudaMemGetInfo's, the calling thread's current device left as it was. Throws
+    // std::invalid_argument as load does without a GPU.
+    static uint64_t freeDeviceBytes();
 
     ProvingKey(const ProvingKey &) = delete;
     ProvingKey &operator=(const ProvingKey &) = delete;

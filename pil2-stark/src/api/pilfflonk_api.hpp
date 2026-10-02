@@ -186,7 +186,23 @@ extern "C" {
     //
     // A ctx outlives its instances, and instances their openings. A ctx is immutable: instances of
     // several proofs may share one, from several threads. An instance or an opening is not safe to use
-    // from several threads at once.
+    // from several threads at once, but may move from one thread to another between its calls.
+    //
+    // Concurrent instances of one ctx:
+    // - On the CPU (pilfflonk_ctx_new, or pilfflonk_ctx_new_on with PILFFLONK_DEVICE_CPU), each
+    //   instance has memory of its own, and instances on several threads prove at the same time.
+    // - On the GPU (PILFFLONK_DEVICE_GPU, or pilfflonk_ctx_new_on_device_buffer), the ctx holds the
+    //   device memory of one proof (its arena), which an instance holds from pilfflonk_instance_new to
+    //   pilfflonk_instance_free: one proof at a time per ctx. pilfflonk_instance_new on another thread
+    //   waits until the instance that holds it is freed. On the thread that holds it, the thread of
+    //   the latest call of that instance or of its opening that works on its device memory (its
+    //   pilfflonk_instance_new, pilfflonk_commit_stage, pilfflonk_commit_q,
+    //   pilfflonk_instance_set_q_part_bits, a column's first copy, pilfflonk_opening_new and
+    //   pilfflonk_opening_open), pilfflonk_instance_new is refused with PILFFLONK_ERR_INVALID_ARGUMENT,
+    //   as it would wait for itself: an instance that moved to another thread is held there from its
+    //   first such call there.
+    //   Every call runs on CUDA device 0, whatever the calling thread's current device, which it leaves
+    //   as it was.
     // ---------------------------------------------------------------------------------------------
 
     // The proving key at proving_key_dir, the provingKey/ setup-pilfflonk writes
@@ -208,7 +224,8 @@ extern "C" {
     // polynomials stay there: the fixed columns' INTT and commitments (pilfflonk_ctx_fixed_commitments),
     // each stage's hints, im pols, INTTs and commitments, Q whole and SHPLONK's opening run on the
     // device; the transcript and the blinding's draws stay on the CPU. A proof copies its witness to
-    // the device, and back only commitments, evaluations and a few bytes. Returns NULL on failure, as
+    // the device, and back only commitments, evaluations and a few bytes; one proof at a time (the
+    // concurrent instances above). Returns NULL on failure, as
     // pilfflonk_ctx_new, and PILFFLONK_ERR_INVALID_ARGUMENT also if device is none of the enum or
     // is PILFFLONK_DEVICE_GPU and pilfflonk_gpu_available() is 0 (checked before any file is read),
     // or if the device has not the memory of the key and a proof of each AIR (naming the AIR and the
@@ -220,7 +237,8 @@ extern "C" {
     // pre-reserved buffer, such as proofman's unified buffer, which others use between the proofs. The
     // ctx writes it only while one of its instances lives (one at a time), never while it loads,
     // synchronises the device before and after, and never frees it: it must outlive the ctx. Its other
-    // device memory it allocates beside it (pilfflonk_gpu_device_bytes). Returns NULL on failure, as
+    // device memory it allocates beside it, at most pilfflonk_gpu_device_bytes's *out_beside, which it
+    // checks against the device's free memory. Returns NULL on failure, as
     // pilfflonk_ctx_new_on, and PILFFLONK_ERR_INVALID_ARGUMENT also if device_buffer is NULL, or if
     // device_buffer_bytes is less than a proof's arena (saying how many bytes it needs and the buffer
     // has) or the device has not the memory of the rest.
@@ -230,11 +248,21 @@ extern "C" {
     // The device memory a ctx of the provingKey/ at proving_key_dir needs on the GPU, from its files
     // (the globalInfo, the SRS's header, each AIR's pilfflonkinfo and .bin), without loading it:
     // *out_arena, the arena of its proofs, which pilfflonk_ctx_new_on_device_buffer's buffer must
-    // hold, and *out_beside, what it holds and allocates beside it (the SRS's powers, each AIR's fixed
-    // columns' coefficients, bytecode and tables, and what a proof allocates besides).
-    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no GPU (as pilfflonk_ctx_new_on);
-    // PILFFLONK_ERR_IO and PILFFLONK_ERR_FORMAT for those files, as pilfflonk_ctx_new.
+    // hold, and *out_beside, the most it holds and allocates beside that buffer (the SRS's powers, each
+    // AIR's fixed columns' coefficients, bytecode and tables, the scratch of an AIR's loading, and what
+    // a proof allocates besides): pilfflonk_ctx_new_on_device_buffer loads if the device has
+    // *out_beside bytes free, and is refused with one byte less. A ctx of its own arena
+    // (pilfflonk_ctx_new_on) needs at most *out_arena + *out_beside, as its loading's scratch is in its
+    // arena. PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no GPU (as
+    // pilfflonk_ctx_new_on); PILFFLONK_ERR_IO and PILFFLONK_ERR_FORMAT for those files, as
+    // pilfflonk_ctx_new.
     int pilfflonk_gpu_device_bytes(const char *proving_key_dir, uint64_t *out_arena, uint64_t *out_beside);
+
+    // Writes to *out_free the free memory of CUDA device 0, in bytes (cudaMemGetInfo), what a ctx's
+    // load on the GPU checks pilfflonk_gpu_device_bytes's needs against: for a caller that reserves
+    // device memory before it loads a ctx, as a wrap does. PILFFLONK_ERR_INVALID_ARGUMENT if out_free
+    // is NULL or there is no GPU (as pilfflonk_ctx_new_on).
+    int pilfflonk_gpu_free_bytes(uint64_t *out_free);
 
     // 1 if this library has the GPU path (it was built with nvcc: libstarksgpu.a) and sees a GPU it
     // can use (compute capability 7.0 or above), 0 otherwise: in a library built without it, and
@@ -278,8 +306,11 @@ extern "C" {
     //   bytes that fix the blinding (for tests and CI only, pilfflonk/docs/protocol.md#blinding): the
     //   same seed gives the same proof, and whoever knows it can remove the blinding, so the proof is
     //   not zero-knowledge.
+    // On a ctx on the GPU, it waits while another thread's instance of the ctx holds the device
+    // memory of its proof (the concurrent instances above).
     // PILFFLONK_ERR_INVALID_ARGUMENT if ctx is NULL, if there is no such AIR, if a count or stage1_len
-    // is not the one expected, or an array is NULL with a count other than 0;
+    // is not the one expected, or an array is NULL with a count other than 0, and on a ctx on the GPU
+    // if this thread holds its device memory with another instance (it would wait for itself);
     // PILFFLONK_ERR_NON_CANONICAL if a scalar is not below r (for stage1, naming its row and column).
     void *pilfflonk_instance_new(const void *ctx, uint64_t airgroup_id, uint64_t air_id, const uint8_t *stage1,
                                  uint64_t stage1_len, const uint8_t *air_values, uint64_t n_air_values,
@@ -344,7 +375,8 @@ extern "C" {
     // every f of the instances, in the global order (pilfflonk/docs/protocol.md#global-order),
     // evaluated at ξ = xi_seed^powerW (powerW the lcm of every k). The n_instances instances, of one
     // ctx and in canonical order, must all have Q committed, and stay alive and unchanged while the
-    // opening is.
+    // opening is. On a ctx on the GPU, which holds one instance at a time, there is one instance, and
+    // the opening runs in the device memory it holds.
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL, if there are no instances, if they are not as
     // said, or if xi_seed is 0; PILFFLONK_ERR_NON_CANONICAL if xi_seed is not below r;
     // PILFFLONK_ERR_INTERNAL if ξ is in H, where Z_H vanishes (probability N/r).

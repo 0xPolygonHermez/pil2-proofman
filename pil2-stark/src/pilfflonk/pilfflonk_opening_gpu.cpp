@@ -127,6 +127,7 @@ uint64_t shplonkWorkspaceBytes(const ShplonkBounds &bounds) { return workspaceOf
 
 OpeningGpu::OpeningGpu(const GpuKey &_key, Components _components, const ShplonkBounds &_bounds, uint8_t *_workspace)
     : key(_key), components(std::move(_components)), bounds(_bounds), workspace(_workspace) {
+    const ProofCall call(key);
     pilfflonk_gpu_memset_zero(at<uint64_t>(workspaceOf(bounds).zero), sizeof(uint64_t));
 }
 
@@ -232,6 +233,7 @@ G1Point OpeningGpu::commit(uint64_t coefficients, uint64_t n) const {
 
 ShplonkProver::Evaluations OpeningGpu::evaluate(const ShplonkProver &prover) const {
     requireShape(prover);
+    const ProofCall call(key);
     Engine::Fr &fr = Engine::engine.fr;
     const Workspace w = workspaceOf(bounds);
 
@@ -292,6 +294,7 @@ ShplonkProver::Evaluations OpeningGpu::evaluate(const ShplonkProver &prover) con
 
 void OpeningGpu::computeW(const ShplonkProver &prover, const ShplonkProver::Interpolants &r, const FrElement &alpha) {
     requireShape(prover);
+    const ProofCall call(key);
     uploadInterpolants(prover, r);
     Engine::Fr &fr = Engine::engine.fr;
     const Workspace w = workspaceOf(bounds);
@@ -327,11 +330,15 @@ void OpeningGpu::computeW(const ShplonkProver &prover, const ShplonkProver::Inte
     prover.checkW(degreeOf(wCount));
 }
 
-G1Point OpeningGpu::commitW() { return commit(wCount, bounds.wMsm); }
+G1Point OpeningGpu::commitW() {
+    const ProofCall call(key);
+    return commit(wCount, bounds.wMsm);
+}
 
 void OpeningGpu::computeWp(const ShplonkProver &prover, const ShplonkProver::Interpolants &r, const FrElement &alpha,
                            const FrElement &y) {
     requireShape(prover);
+    const ProofCall call(key);
     if (r.size() != prover.size() || std::find(r.begin(), r.end(), nullptr) != r.end()) {
         throw std::logic_error("OpeningGpu: r is not one interpolant per f_i");
     }
@@ -361,7 +368,10 @@ void OpeningGpu::computeWp(const ShplonkProver &prover, const ShplonkProver::Int
     prover.checkWp(degreeOf(wpCount));
 }
 
-G1Point OpeningGpu::commitWp() { return commit(wpCount, bounds.wpMsm); }
+G1Point OpeningGpu::commitWp() {
+    const ProofCall call(key);
+    return commit(wpCount, bounds.wpMsm);
+}
 
 const FrElement *OpeningGpu::quotient() const { return at<FrElement>(workspaceOf(bounds).quotient); }
 

@@ -26,6 +26,7 @@ FrElement *elements(uint8_t *arena, uint64_t offset) { return reinterpret_cast<F
 
 InstanceGpu::InstanceGpu(const GpuAirKey &_air, const uint8_t *stage1)
     : air(_air), lease(_air.gpuKey(), "Instance") {
+    const ProofCall call(air.gpuKey());
     const CopyLog copies(&air.gpuKey(), "INSTANCE");
     const AirKey &key = air.airKey();
     const uint64_t N = key.n(), C = key.witnessColumns().size();
@@ -40,6 +41,7 @@ InstanceGpu::InstanceGpu(const GpuAirKey &_air, const uint8_t *stage1)
 }
 
 std::vector<G1Point> InstanceGpu::commitStage(uint64_t stage, const FrElement *factors) {
+    const ProofCall call(air.gpuKey());
     const CopyLog copies(&air.gpuKey(), "STAGE_" + std::to_string(stage));
     const AirKey &key = air.airKey();
     const PilfflonkInfo &info = key.info();
@@ -114,6 +116,7 @@ uint64_t InstanceGpu::polynomialCount(uint64_t cmId) const {
 }
 
 std::unique_ptr<Poly> InstanceGpu::polynomialToHost(uint64_t cmId, FrElement *coefs) const {
+    const ProofCall call(air.gpuKey());
     const uint64_t count = polynomialCount(cmId);
     const AirKey &key = air.airKey();
     const LayoutPosition &at = key.cmPosition(cmId);
@@ -124,6 +127,7 @@ std::unique_ptr<Poly> InstanceGpu::polynomialToHost(uint64_t cmId, FrElement *co
 }
 
 void InstanceGpu::requireQParts(uint64_t partBits, const char *function) const {
+    const ProofCall call(air.gpuKey());
     const AirKey &key = air.airKey();
     const uint64_t needed = qPhaseBytes(key, air.arena(), partBits), held = air.gpuKey().arenaSize();
     if (needed > held) {
@@ -139,6 +143,7 @@ void InstanceGpu::requireQParts(uint64_t partBits, const char *function) const {
 
 uint64_t InstanceGpu::computeQ(uint64_t partBits, const QValues &valuesOn) {
     requireQParts(partBits, "InstanceGpu::computeQ");
+    const ProofCall call(air.gpuKey());
     const AirKey &key = air.airKey();
     const PilfflonkInfo &info = key.info();
     const ArenaLayout &layout = air.arena();
@@ -180,6 +185,7 @@ uint64_t InstanceGpu::computeQ(uint64_t partBits, const QValues &valuesOn) {
 }
 
 std::vector<G1Point> InstanceGpu::commitQ(const FrElement *factors) {
+    const ProofCall call(air.gpuKey());
     const AirKey &key = air.airKey();
     const PilfflonkInfo &info = key.info();
     const AirDegrees &d = key.degrees();
@@ -224,6 +230,7 @@ uint64_t InstanceGpu::qPieceDegree(uint64_t i) const {
 }
 
 std::vector<std::unique_ptr<Poly>> InstanceGpu::qPiecesToHost(FrElement *coefs) const {
+    const ProofCall call(air.gpuKey());
     const AirKey &key = air.airKey();
     const std::vector<uint64_t> &bounds = key.degrees().qPieceCoefficients;
     const ArenaLayout &layout = air.arena();

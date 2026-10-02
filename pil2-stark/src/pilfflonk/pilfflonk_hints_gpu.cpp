@@ -94,6 +94,7 @@ uint64_t stageScratchBytes(const AirKey &air) {
 }
 
 void computeStageColumns(const GpuAirKey &air, uint64_t stage, const ProverValues &scalars) {
+    const ProofCall call(air.gpuKey());
     const AirKey &key = air.airKey();
     const PilfflonkInfo &info = key.info();
     const uint64_t N = key.n();
@@ -176,6 +177,7 @@ void computeStageColumns(const GpuAirKey &air, uint64_t stage, const ProverValue
 }
 
 void stageColumnToHost(const GpuAirKey &air, uint64_t stage, uint64_t stagePos, FrElement *out) {
+    const ProofCall call(air.gpuKey());
     const uint64_t N = air.airKey().n();
     air.gpuKey().staging().toHost(out, evaluations(air, stage) + stagePos * N, N * sizeof(FrElement));
 }

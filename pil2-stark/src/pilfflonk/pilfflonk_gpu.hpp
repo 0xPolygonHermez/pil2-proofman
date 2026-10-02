@@ -52,9 +52,13 @@ struct GpuKeyOptions {
 };
 
 // The device memory a key on the GPU needs (ProvingKey::requiredDeviceBytes), in bytes: the arena of
-// its proofs, which a buffer given to it (GpuKeyOptions::arena) must hold, and what it holds and
-// allocates beside it: the SRS's powers and the tables of the MSMs' shift, each AIR's fixed columns'
-// coefficients, bytecode and interpreter, and what a proof allocates besides (sppark's MSM).
+// its proofs, which a buffer given to it (GpuKeyOptions::arena) must hold, and the most it holds and
+// allocates beside that buffer: the SRS's powers and the tables of the MSMs' shift, each AIR's fixed
+// columns' coefficients, bytecode and interpreter, the scratch of an AIR's loading (which it
+// allocates while the AIR loads, as it never writes a given arena then) and what a proof allocates
+// besides (sppark's MSM). A key loads on a given arena with a memoryLimit (or free memory) of
+// `beside`, and not of one byte less; on its own arena, which holds its loading's scratch, with
+// arena + beside at most.
 struct DeviceBytes {
     uint64_t arena = 0;
     uint64_t beside = 0;
@@ -77,7 +81,9 @@ struct DeviceBytes {
 // form (limbs below r), and a commitment leaves the prover in affine coordinates: the results are
 // those of ffiasm's MSM and FFT bit for bit.
 //
-// Device 0, the PLONK GPU prover's default. Only a library built with the GPU
+// Device 0, the PLONK GPU prover's default, whatever the calling thread's current device: every
+// function of the GPU path a caller reaches makes it current while it runs (DeviceScope). Only a
+// library built with the GPU
 // (provers/starks-lib-c/build.rs found nvcc: libstarksgpu.a, its sources compiled with __USE_CUDA__)
 // defines it, in pilfflonk_gpu.cpp; the code that uses it is under __USE_CUDA__, and elsewhere
 // gpuAvailable() is false. A CUDA failure inside the helpers above (out of device memory, a lost
@@ -89,15 +95,11 @@ public:
     // cooperative launch. False, without failing, where CUDA finds no device or no driver.
     static bool available();
 
-    // A copy on the device of the n points (n >= 1) at `points`, the powers [τ^i]₁ of an SRS. Its
-    // copy to the device is counted in `copies`, if not null, which must outlive it. Throws
-    // std::invalid_argument if !available(), points is null or n is 0.
-    Gpu(const G1PointAffine *points, uint64_t n, CopyVolume *copies = nullptr);
-
     // A copy of `bytes` bytes from host `src` to device `dst`, which returns once src may change.
     using Upload = std::function<void(void *dst, const void *src, uint64_t bytes)>;
-    // The same, the points copied by `upload` (which counts them, if it counts): a GpuKey's pinned
-    // Staging, in place of a copy from pageable memory.
+    // A copy on the device of the n points (n >= 1) at `points`, the powers [τ^i]₁ of an SRS, copied
+    // by `upload` (a GpuKey's pinned Staging, which counts them). Throws std::invalid_argument if
+    // !available(), points is null or n is 0.
     Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload);
     ~Gpu();
     Gpu(const Gpu &) = delete;
@@ -110,6 +112,24 @@ public:
 private:
     void *devicePoints = nullptr;
     uint64_t nDevicePoints = 0;
+};
+
+// While it lives, the GPU's device (device 0, Gpu's) is the calling thread's current CUDA device;
+// then the one the thread had before is again. Every function of the GPU path that a caller reaches
+// holds one while it runs (a key's load, an instance's and an opening's calls, their device memory's
+// and streams' release, ProvingKey::requiredDeviceBytes), as the repo's other GPU entry points set
+// their device (gen_recursive_proof_final_gpu): a thread whose current device is another, as one of
+// a multi-GPU process may be, proves on device 0 and keeps its own. Only a library built with the
+// GPU defines it, in pilfflonk_gpu.cpp.
+class DeviceScope {
+public:
+    DeviceScope();
+    ~DeviceScope();
+    DeviceScope(const DeviceScope &) = delete;
+    DeviceScope &operator=(const DeviceScope &) = delete;
+
+private:
+    int previous;
 };
 
 // The ratio h of the shift ρ_i = h^(i+1) of the MSMs' scalars (GpuKey::commit), in Montgomery form.

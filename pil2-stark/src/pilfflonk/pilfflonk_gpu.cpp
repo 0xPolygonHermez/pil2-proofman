@@ -8,6 +8,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "pilfflonk_kernels.hpp"
+
 // The MSM and the NTTs (bn128/src/msm/msm_bn128.cu, bn128/src/ntt/ntt_bn128.cu) and the device
 // memory helpers (rapidsnark/plonk_prover.cu), declared as plonk_prover_gpu.c.cuh declares them; and
 // sppark's probe for a usable GPU (external/sppark/util/all_gpus.cpp).
@@ -15,7 +17,6 @@ extern "C" void msm_bn128_gpu_dev_ptr(void *out, const void *d_points, const voi
                                       bool montgomery);
 extern "C" void ntt_bn128_gpu_dev_ptr(void *d_data, uint32_t lg_n);
 extern "C" void intt_bn128_gpu_dev_ptr(void *d_data, uint32_t lg_n);
-extern "C" void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
 extern "C" void gpu_plonk_cuda_malloc(void **dBuffer, uint64_t buffeSize);
 extern "C" void gpu_plonk_cuda_free(void *dBuffer);
 extern "C" void gpu_plonk_cuda_device_sync();
@@ -54,6 +55,7 @@ G1Point msmOnDevice(const void *points, const void *scalars, uint64_t n) {
     struct Jacobian {
         Engine::F1Element X, Y, Z;
     } jacobian;
+    const DeviceScope device;
     gpu_plonk_cuda_device_sync();
     msm_bn128_gpu_dev_ptr(&jacobian, points, scalars, n, true);
     // ffiasm's extended Jacobian point: (x, y, zz, zzz) is (x/zz, y/zzz), zz = Z² and zzz = Z³.
@@ -72,6 +74,7 @@ void transformOnDevice(void *data, uint64_t bits, bool inverse) {
     }
     // As the PLONK GPU prover before each NTT: the data may come from the default stream, and the
     // NTT runs on sppark's, which it synchronises before it returns.
+    const DeviceScope device;
     gpu_plonk_cuda_device_sync();
     if (inverse) {
         intt_bn128_gpu_dev_ptr(data, static_cast<uint32_t>(bits));
@@ -80,15 +83,19 @@ void transformOnDevice(void *data, uint64_t bits, bool inverse) {
     }
 }
 
-bool Gpu::available() { return cuda_available(); }
+DeviceScope::DeviceScope() : previous(pilfflonk_gpu_current_device()) {
+    if (previous != DEVICE) {
+        gpu_plonk_set_device(DEVICE);
+    }
+}
 
-Gpu::Gpu(const G1PointAffine *points, uint64_t n, CopyVolume *copies)
-    : Gpu(points, n, [copies](void *dst, const void *src, uint64_t bytes) {
-          gpu_plonk_memcpy_h2d(dst, src, bytes);
-          if (copies != nullptr) {
-              copies->addToDevice(bytes);
-          }
-      }) {}
+DeviceScope::~DeviceScope() {
+    if (previous != DEVICE) {
+        gpu_plonk_set_device(previous);
+    }
+}
+
+bool Gpu::available() { return cuda_available(); }
 
 Gpu::Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload) {
     if (!available()) {
@@ -100,12 +107,15 @@ Gpu::Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload) {
     if (n == 0) {
         throw invalid("Gpu", "no points");
     }
-    gpu_plonk_set_device(DEVICE);
+    const DeviceScope device;
     gpu_plonk_cuda_malloc(&devicePoints, n * sizeof(G1PointAffine));
     nDevicePoints = n;
     upload(devicePoints, points, n * sizeof(G1PointAffine));
 }
 
-Gpu::~Gpu() { gpu_plonk_cuda_free(devicePoints); }
+Gpu::~Gpu() {
+    const DeviceScope device;
+    gpu_plonk_cuda_free(devicePoints);
+}
 
 } // namespace PilFflonk

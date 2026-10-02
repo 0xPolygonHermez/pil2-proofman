@@ -9,7 +9,8 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use proofman_starks_lib_c::{
-    pilfflonk_gpu_available_c, pilfflonk_gpu_device_bytes_c, PilFflonkDevice, PilFflonkErrorKind, PilFflonkProverCtx,
+    pilfflonk_gpu_available_c, pilfflonk_gpu_device_bytes_c, pilfflonk_gpu_free_bytes_c, PilFflonkDevice,
+    PilFflonkErrorKind, PilFflonkProverCtx,
 };
 
 fn scratch(name: &str) -> PathBuf {
@@ -75,10 +76,10 @@ fn the_gpu_is_refused_without_one() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
-/// A key on a device buffer of the caller's, and the device memory a key needs: as the GPU, refused
-/// without one before any file is read, saying why; with one, the key is read as on the CPU. A host
-/// address stands for the buffer, which nothing reads, since the key is refused first; a null one is
-/// refused.
+/// A key on a device buffer of the caller's, the device memory a key needs and the device's free
+/// memory: as the GPU, refused without one before any file is read, saying why; with one, the key is
+/// read as on the CPU. A host address stands for the buffer, which nothing reads, since the key is
+/// refused first; a null one is refused.
 #[test]
 fn a_device_buffer_and_the_device_bytes_are_refused_without_a_gpu() {
     let dir = scratch("gpu_buffer");
@@ -102,6 +103,15 @@ fn a_device_buffer_and_the_device_bytes_are_refused_without_a_gpu() {
             bytes.message.contains("pilfflonk_gpu_device_bytes: ProvingKey::requiredDeviceBytes: no GPU"),
             "{bytes}"
         );
+    }
+    // The device's free memory, as a load checks it: refused without a GPU, as the device bytes.
+    match pilfflonk_gpu_free_bytes_c() {
+        Ok(free) => assert!(pilfflonk_gpu_available_c() && free > 0, "{free} bytes free"),
+        Err(err) => {
+            assert!(!pilfflonk_gpu_available_c(), "{err}");
+            assert_eq!(err.kind, PilFflonkErrorKind::InvalidArgument, "{err}");
+            assert!(err.message.contains("pilfflonk_gpu_free_bytes: ProvingKey::freeDeviceBytes: no GPU"), "{err}");
+        }
     }
     // SAFETY: refused before anything is read.
     let null = unsafe { PilFflonkProverCtx::load_on_device_buffer(&missing, std::ptr::null_mut(), 8) }.unwrap_err();

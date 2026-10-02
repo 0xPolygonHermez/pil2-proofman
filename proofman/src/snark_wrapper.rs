@@ -509,6 +509,10 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         // One proof at a time (`proving`), until this one is out. A proof that panicked poisons the
         // lock, and the next one takes it all the same: each proof writes its buffers afresh.
         let pilfflonk_prover = self.proving.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // The wrap's provers write the unified buffer over the STARK's const pols (the snark's carve,
+        // pilfflonk's arena), and one that fails may have written it too: the flag is set as this
+        // proof ends, whatever its outcome, before the lock is let go.
+        let _reload = ReloadFixedPolsOnDrop(self.d_buffers.and(self.reload_fixed_pols_gpu.as_deref()));
         let snark_proof = match &self.final_snark_key {
             FinalSnarkKey::Zkey(_) => self.generate_rapidsnark_proof(&proof, verkey)?,
             FinalSnarkKey::Pilfflonk(pilfflonk_key) => {
@@ -517,14 +521,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         };
 
         timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
-
-        // The snark's carve overwrote the const-pols regions inside the unified buffer; the
-        // flag is consumed after the next wcm.execute() and re-uploads them before any proof.
-        if self.d_buffers.is_some() {
-            if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
-                reload_flag.store(true, Ordering::SeqCst);
-            }
-        }
 
         Ok(snark_proof)
     }
@@ -984,6 +980,20 @@ fn report_verdict(verdict: Result<bool, String>) -> ProofmanResult<()> {
     }
 }
 
+/// Sets proofman's `reload_fixed_pols_gpu`, if any, when it goes, on any return of a wrap's proof, an
+/// error or a panic included: the snark's carve and pilfflonk's arena overwrote the const-pols regions
+/// inside the unified buffer, or may have, and the flag, consumed after the next `wcm.execute()`,
+/// re-uploads them before any proof.
+struct ReloadFixedPolsOnDrop<'a>(Option<&'a AtomicBool>);
+
+impl Drop for ReloadFixedPolsOnDrop<'_> {
+    fn drop(&mut self) {
+        if let Some(flag) = self.0 {
+            flag.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
 // SAFETY: every field is `Send` but the raw pointers and pilfflonk's prover in `proving`, and none
 // of those is tied to the thread that made it:
 // - `snark_prover` (rapidsnark's prover of `final.zkey`) and `d_buffers_recursivef` (the
@@ -1008,7 +1018,9 @@ unsafe impl<F: PrimeField64> Sync for SnarkWrapper<F> {}
 
 #[cfg(test)]
 mod tests {
-    use super::{verify_snark_proof, FinalSnarkKey, SnarkProof, SnarkProtocol, PILFFLONK_PROTOCOL_ID};
+    use super::{
+        verify_snark_proof, FinalSnarkKey, ReloadFixedPolsOnDrop, SnarkProof, SnarkProtocol, PILFFLONK_PROTOCOL_ID,
+    };
     use proofman_common::ProofmanError;
     use proofman_starks_lib_c::{
         free_final_snark_prover_c, generate_fflonk_zkey_c, generate_plonk_zkey_c, init_final_snark_prover_c,
@@ -1088,6 +1100,33 @@ mod tests {
         }
         let wire_to_label = (0..3u64).flat_map(u64::to_le_bytes).collect();
         binfile(b"r1cs", &[(1, header), (2, constraints), (3, wire_to_label)])
+    }
+
+    /// The reload flag is set as a wrap's proof ends, on its errors and panics too, and without one
+    /// (no unified buffer) nothing is.
+    #[test]
+    fn the_reload_flag_is_set_whatever_the_proof_ends_with() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let proof = |flag: Option<&AtomicBool>, fails: bool| -> Result<(), ()> {
+            let _reload = ReloadFixedPolsOnDrop(flag);
+            assert!(flag.is_none_or(|f| !f.load(Ordering::SeqCst)), "set before the proof ends");
+            if fails {
+                return Err(());
+            }
+            Ok(())
+        };
+        for fails in [false, true] {
+            let flag = AtomicBool::new(false);
+            assert_eq!(proof(Some(&flag), fails).is_err(), fails);
+            assert!(flag.load(Ordering::SeqCst), "fails: {fails}");
+            assert_eq!(proof(None, fails).is_err(), fails);
+        }
+        let flag = AtomicBool::new(false);
+        let panicked = std::panic::catch_unwind(|| {
+            let _reload = ReloadFixedPolsOnDrop(Some(&flag));
+            panic!("a proof that panics");
+        });
+        assert!(panicked.is_err() && flag.load(Ordering::SeqCst));
     }
 
     #[test]

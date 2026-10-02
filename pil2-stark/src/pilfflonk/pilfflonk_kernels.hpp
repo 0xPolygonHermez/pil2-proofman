@@ -51,9 +51,13 @@ void pilfflonk_gpu_blind_q_boundaries(void *base, uint64_t slot, uint64_t qStrid
 void pilfflonk_gpu_count_coefficients(uint64_t *counts, const void *base, const uint64_t *offsets, uint64_t nPolys,
                                       uint64_t length);
 
-// The device's free and total memory, in bytes (cudaMemGetInfo), and its number of multiprocessors.
+// The current device's free and total memory, in bytes (cudaMemGetInfo), and its number of
+// multiprocessors.
 void pilfflonk_gpu_memory(uint64_t *freeBytes, uint64_t *totalBytes);
 uint32_t pilfflonk_gpu_multiprocessors();
+
+// The calling thread's current device (cudaGetDevice).
+int pilfflonk_gpu_current_device();
 
 // Events without timing, to order a non-blocking stream with the default one (a null stream).
 void *pilfflonk_gpu_event_create();

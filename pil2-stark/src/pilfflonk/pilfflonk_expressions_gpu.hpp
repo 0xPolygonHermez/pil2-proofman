@@ -58,8 +58,8 @@ private:
     std::vector<uint64_t> masks_;
 };
 
-// The device's copy of the code of a section of <air>.bin (ParserArgs): its args, 16-byte aligned,
-// and its numbers.
+// The device's copy of the code of the expressions of <air>.bin (its section 1, ParserArgs): its
+// args, 16-byte aligned, and its numbers.
 struct DeviceCode {
     const uint32_t *args = nullptr;
     const FrElement *numbers = nullptr;
@@ -111,12 +111,11 @@ public:
     static constexpr uint64_t MAX_SHARED_BYTES = uint64_t(48) << 10;
 
     // The code of `bin` for the AIR `info`, checked as Expressions checks it (FormatError), with the
-    // code of its expressions on the device at `expressions` (a GpuAirKey's args() and numbers()),
-    // and that of its constraints at `constraints` (none: calculateConstraint refuses). It keeps a
-    // reference to `bin`, which must outlive it. Throws std::invalid_argument if sharedBytes exceeds
-    // MAX_SHARED_BYTES.
+    // code of its expressions on the device at `expressions` (a GpuAirKey's args() and numbers()). It
+    // keeps a reference to `bin`, which must outlive it. Throws std::invalid_argument if sharedBytes
+    // exceeds MAX_SHARED_BYTES.
     ExpressionsGpu(const ExpressionsBin &bin, const PilfflonkInfo &info, DeviceCode expressions,
-                   DeviceCode constraints = DeviceCode(), uint64_t sharedBytes = MAX_SHARED_BYTES);
+                   uint64_t sharedBytes = MAX_SHARED_BYTES);
 
     // Expressions::calculateExpression on the device: expression expId on every point of `domain`,
     // the value at point i into dest[i·stride], device memory. values.columns are device pointers,
@@ -125,11 +124,6 @@ public:
     // does (Expressions::checkedExpression), with its messages, and std::invalid_argument for a
     // stride of 0. Returns before the kernel finishes.
     void calculateExpression(uint64_t expId, const ExpressionsDomainGpu &domain, const ProverValues &values,
-                             FrElement *dest, uint64_t stride = 1) const;
-
-    // The same for constraint `index` of section 2 (Expressions::calculateConstraint). Throws
-    // std::logic_error, first, if it was given no code of the constraints.
-    void calculateConstraint(uint64_t index, const ExpressionsDomainGpu &domain, const ProverValues &values,
                              FrElement *dest, uint64_t stride = 1) const;
 
     // The device memory it holds, in bytes: its tables, and the temporaries that do not fit in
@@ -142,13 +136,9 @@ public:
                                   uint64_t sharedBytes = MAX_SHARED_BYTES);
 
 private:
-    void calculate(const ParserParams &params, const DeviceCode &code, const ExpressionsDomainGpu &domain,
-                   const ProverValues &values, FrElement *dest, uint64_t stride, const char *function) const;
-
     Expressions host;
     OperandTypes types;
     DeviceCode expressionsCode;
-    DeviceCode constraintsCode;
     OperandLayout layout;
     uint64_t sharedBytes;
     uint32_t temporaryBlocks = 0; // the blocks of a launch whose temporaries are in `temporaries`

@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "pilfflonk_expressions.hpp"
 #include "thread_utils.hpp"
 
 namespace PilFflonk {
@@ -198,10 +199,15 @@ Lde::Lde(uint64_t _nBits, uint64_t _nBitsExt) {
     Engine::Fr &fr = Engine::engine.fr;
     fr.fromUI(shift, COSET_SHIFT);
     fr.inv(shiftInv, shift);
-    fft = std::make_unique<FFT<Engine::Fr>>(NExtended);
+    extendedRoot = rootOfUnity(_nBitsExt);
 #else
     throw std::runtime_error("the LDE needs ffiasm's assembly backend, not built on this platform");
 #endif
+}
+
+FFT<Engine::Fr> &Lde::transforms() const {
+    std::call_once(fftBuilt, [this] { fft = std::make_unique<FFT<Engine::Fr>>(NExtended); });
+    return *fft;
 }
 
 std::vector<std::unique_ptr<Lde::Poly>> Lde::intt(FrElement *const *evals, FrElement *const *coefs, uint64_t nCols,
@@ -220,11 +226,25 @@ std::vector<std::unique_ptr<Lde::Poly>> Lde::intt(FrElement *const *evals, FrEle
                                   " coefficients exceed the " + std::to_string(NExtended) + " of the extended domain");
     }
 
+    FFT<Engine::Fr> &transform = transforms();
     std::vector<std::unique_ptr<Poly>> polys(nCols);
     forEachColumn(nCols, [&](uint64_t c) {
-        polys[c].reset(Poly::fromEvaluations(Engine::engine, fft.get(), evals[c], coefs[c], N, blindLength));
+        polys[c].reset(Poly::fromEvaluations(Engine::engine, &transform, evals[c], coefs[c], N, blindLength));
     });
     return polys;
+}
+
+void Lde::ntt(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols) const {
+    checkBuffers("ntt", "coefs", coefs, nCols);
+    checkBuffers("ntt", "evals", evals, nCols);
+
+    FFT<Engine::Fr> &transform = transforms();
+    forEachColumn(nCols, [&](uint64_t c) {
+        if (evals[c] != coefs[c]) {
+            ThreadUtils::parcpy(evals[c], coefs[c], N * sizeof(FrElement), omp_get_max_threads());
+        }
+        transform.fft(evals[c], N);
+    });
 }
 
 void Lde::extendCoset(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs) const {
@@ -268,7 +288,7 @@ void Lde::extendCosetPart(const FrElement *const *coefs, FrElement *const *evals
 FrElement Lde::partShift(uint64_t part) const {
     FrElement c = shift;
     if (part > 0) {
-        Engine::engine.fr.mul(c, shift, power(fft->root(static_cast<uint32_t>(bitsOf(NExtended)), 1), part));
+        Engine::engine.fr.mul(c, shift, power(extendedRoot, part));
     }
     return c;
 }
@@ -278,9 +298,10 @@ void Lde::extendPart(const FrElement *const *coefs, FrElement *const *evals, uin
     const uint64_t S = uint64_t(1) << partBits;
     // Part 0's shift is g, extendCoset's scaling.
     const FrElement c = partShift(part);
+    FFT<Engine::Fr> &transform = transforms();
     forEachColumn(nCols, [&](uint64_t col) {
         foldByPowers(evals[col], coefs[col], nCoefs, S, c);
-        fft->fft(evals[col], S);
+        transform.fft(evals[col], S);
     });
 }
 
@@ -288,11 +309,12 @@ void Lde::interpolateCoset(const FrElement *const *evals, FrElement *const *coef
     checkBuffers("interpolateCoset", "evals", evals, nCols);
     checkBuffers("interpolateCoset", "coefs", coefs, nCols);
 
+    FFT<Engine::Fr> &transform = transforms();
     forEachColumn(nCols, [&](uint64_t c) {
         if (coefs[c] != evals[c]) {
             ThreadUtils::parcpy(coefs[c], evals[c], NExtended * sizeof(FrElement), omp_get_max_threads());
         }
-        fft->ifft(coefs[c], NExtended);
+        transform.ifft(coefs[c], NExtended);
         mulByPowers(coefs[c], coefs[c], NExtended, shiftInv);
     });
 }
