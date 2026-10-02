@@ -316,6 +316,31 @@ pub fn pilfflonk_gpu_available_c() -> bool {
     unsafe { pilfflonk_gpu_available() == 1 }
 }
 
+/// The device memory a [`PilFflonkProverCtx`] of a `provingKey/` needs on the GPU, in bytes
+/// ([`pilfflonk_gpu_device_bytes_c`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PilFflonkDeviceBytes {
+    /// The arena of its proofs: what the buffer of [`PilFflonkProverCtx::load_on_device_buffer`]
+    /// must hold.
+    pub arena: u64,
+    /// What it holds and allocates beside the arena: the SRS's powers, each AIR's fixed columns'
+    /// coefficients, bytecode and tables, and what a proof allocates besides (sppark's MSM).
+    pub beside: u64,
+}
+
+/// The device memory a context of the `provingKey/` at `dir` needs on the GPU, from its files (the
+/// globalInfo, the SRS's header, each AIR's pilfflonkinfo and `.bin`), without loading it. Fails with
+/// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) without a GPU
+/// ([`pilfflonk_gpu_available_c`]), and as [`PilFflonkProverCtx::load`] for those files.
+pub fn pilfflonk_gpu_device_bytes_c(dir: &Path) -> Result<PilFflonkDeviceBytes, PilFflonkError> {
+    let path = c_path("pilfflonk_gpu_device_bytes", dir)?;
+    let mut bytes = PilFflonkDeviceBytes::default();
+    // SAFETY: `path` is a NUL-terminated string that outlives the call, and the out pointers are
+    // two u64 the call writes.
+    check_status(unsafe { pilfflonk_gpu_device_bytes(path.as_ptr(), &mut bytes.arena, &mut bytes.beside) })?;
+    Ok(bytes)
+}
+
 /// The proving key of the prover (pilfflonk/docs/protocol.md#proof-sequence, step 1), owned by the
 /// C++ side: the `provingKey/` that `setup-pilfflonk` writes, loaded, with the fixed columns
 /// interpolated. Immutable.
@@ -352,6 +377,26 @@ impl PilFflonkProverCtx {
         // SAFETY: `path` is a NUL-terminated string that outlives the call, and `device` one of the
         // C enum's; the result is either NULL or a handle this value then owns.
         let handle = unsafe { pilfflonk_ctx_new_on(path.as_ptr(), device) };
+        NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
+    }
+
+    /// [`load_on`](Self::load_on) on [`PilFflonkDevice::Gpu`], with the device memory of its proofs
+    /// (their arena) in the caller's `bytes` bytes at `buffer`: a wrap's pre-reserved buffer, such as
+    /// proofman's unified buffer, which others use between the proofs. The context writes it only
+    /// while one of its instances lives, never while it loads, and never frees it; its other device
+    /// memory it allocates beside it ([`pilfflonk_gpu_device_bytes_c`]). Fails as `load_on`, and with
+    /// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if `buffer` is null or `bytes` is
+    /// less than a proof's arena (saying how many bytes it needs and the buffer has).
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must be `bytes` bytes of device memory on CUDA device 0, which outlive the context,
+    /// and which nothing else uses while an instance of the context lives.
+    pub unsafe fn load_on_device_buffer(dir: &Path, buffer: *mut c_void, bytes: u64) -> Result<Self, PilFflonkError> {
+        let path = c_path("pilfflonk_ctx_new_on_device_buffer", dir)?;
+        // SAFETY: `path` is a NUL-terminated string that outlives the call; `buffer` is the caller's,
+        // as this function's contract says; the result is either NULL or a handle this value then owns.
+        let handle = unsafe { pilfflonk_ctx_new_on_device_buffer(path.as_ptr(), buffer, bytes) };
         NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
     }
 

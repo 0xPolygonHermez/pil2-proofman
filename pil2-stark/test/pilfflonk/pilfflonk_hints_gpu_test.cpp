@@ -507,17 +507,22 @@ void testTheScratch() {
     const uint64_t N = air.n();
     assert(scratch.fixedValues == 0 && scratch.denominator >= scratch.fixed.size() * N * sizeof(FrElement));
     assert(scratch.work >= scratch.denominator + N * sizeof(FrElement) && scratch.zeroRow >= scratch.work);
-    assert(scratch.bytes >= scratch.zeroRow + sizeof(uint64_t) && PilFflonk::stageScratchBytes(air) == scratch.bytes);
+    assert(scratch.bytes >= scratch.zeroRow + sizeof(uint64_t));
+    // Stage 1 has no hints: its scratch is the fixed columns its im pols read.
+    const PilFflonk::StageScratch first = PilFflonk::stageScratch(air, 1);
+    assert(first.bytes == ((first.fixed.size() * N * sizeof(FrElement) + 255) & ~uint64_t(255)));
+    const uint64_t most = std::max(scratch.bytes, first.bytes);
+    assert(PilFflonk::stageScratchBytes(air) == most);
     const PilFflonk::ArenaLayout layout = PilFflonk::arenaLayout(air);
-    assert(layout.hints == layout.work && layout.hintBytes == scratch.bytes);
+    assert(layout.hints == layout.work && layout.hintBytes == most);
     assert(layout.stageBytes >= layout.hints + layout.hintBytes && layout.bytes >= layout.stageBytes);
 }
 
 // On a key on the GPU, the sum bus's columns of stage 2 (gsum, im_single and the im pol) are the
 // oracle's, check's and a CPU key's; stage 2 copies to the device its blinding factors only, and to
-// the host its committed polynomials, their counts and a row per hint; Instance::column copies a
-// column the first time it is asked for, and refuses one it has not once commitQ has begun; and the
-// proof's commitments are the CPU key's.
+// the host the counts of its committed polynomials' coefficients and a row per hint; Instance::column
+// copies a column the first time it is asked for, and refuses one it has not once commitQ has begun;
+// and the proof's commitments are the CPU key's.
 void testTheSumBusOnTheGpu() {
     const SumBus bus;
     const std::unique_ptr<ProvingKey> cpu = keyOf(bus.files, Device::Cpu), gpu = keyOf(bus.files, Device::Gpu);
@@ -551,7 +556,7 @@ void testTheSumBusOnTheGpu() {
         if (air.info().layout[f].stage == 2) {
             const uint64_t k = air.info().layout[f].k, b = air.blindLength(f);
             up += k * b * sizeof(FrElement);
-            down += k * (N + b) * sizeof(FrElement) + k * sizeof(uint64_t);
+            down += k * sizeof(uint64_t);
         }
     }
     down += std::count_if(air.stdHints().begin(), air.stdHints().end(), [](const StdHint &h) { return h.stage == 2; }) *
@@ -571,22 +576,40 @@ void testTheSumBusOnTheGpu() {
     }
 }
 
-// Once commitQ has begun, a column of stage 2 not copied before is refused.
+// Once commitQ has begun, a column not copied before is refused, of stage 2 or of stage 1 (whose
+// columns are on the device too), and so are check's columns if check had not run before; those
+// copied before are still there.
 void testAColumnAfterQ() {
     const SumBus bus;
     const std::unique_ptr<ProvingKey> gpu = keyOf(bus.files, Device::Gpu);
-    const std::unique_ptr<Instance> inst = instanceOf(*gpu, bus.witness, bus.values(bus.oracle["publics"]), 4);
-    inst->commitStage(1, {});
-    inst->commitStage(2, bus.values(bus.oracle["challenges"]));
-    assert(same(inst->column(2, 1), bus.values(bus.oracle["stage2"][1]).data(), SUM_BUS_N));
-    assert(unsatisfied([&] { inst->commitQ({E.fr.one()}); }).empty());
-    assert(contains(invalidArgument([&] { inst->column(2, 0); }),
-                    "Instance::column: on a key on the GPU, the columns of stage 2 are on the device until Q is "
+    const std::vector<FrElement> publics = bus.values(bus.oracle["publics"]);
+    const std::vector<FrElement> challenges = bus.values(bus.oracle["challenges"]);
+    const uint64_t N = SUM_BUS_N;
+    {
+        const std::unique_ptr<Instance> inst = instanceOf(*gpu, bus.witness, publics, 4);
+        inst->commitStage(1, {});
+        inst->commitStage(2, challenges);
+        assert(same(inst->column(2, 1), bus.values(bus.oracle["stage2"][1]).data(), N));
+        const std::vector<std::vector<FrElement>> checked = inst->checkColumns(challenges);
+        assert(same(inst->column(1, SUM_BUS_B), checked[1].data() + SUM_BUS_B * N, N));
+        assert(unsatisfied([&] { inst->commitQ({E.fr.one()}); }).empty());
+        assert(contains(invalidArgument([&] { inst->column(2, 0); }),
+                        "Instance::column: on a key on the GPU, the columns of stage 2 are on the device until Q is "
+                        "committed"));
+        assert(contains(invalidArgument([&] { inst->column(1, SUM_BUS_A); }),
+                        "Instance::column: on a key on the GPU, the columns of stage 1 are on the device until Q is "
+                        "committed"));
+        assert(same(inst->column(2, 1), bus.values(bus.oracle["stage2"][1]).data(), N));
+        assert(same(inst->column(1, SUM_BUS_B), checked[1].data() + SUM_BUS_B * N, N));
+        assert(same(inst->checkColumns(challenges)[1].data(), checked[1].data(), checked[1].size()));
+    }
+    const std::unique_ptr<Instance> late = instanceOf(*gpu, bus.witness, publics, 4);
+    late->commitStage(1, {});
+    late->commitStage(2, challenges);
+    assert(unsatisfied([&] { late->commitQ({E.fr.one()}); }).empty());
+    assert(contains(invalidArgument([&] { late->checkColumns(challenges); }),
+                    "Instance::check: on a key on the GPU, the witness columns are on the device until Q is "
                     "committed"));
-    assert(same(inst->column(2, 1), bus.values(bus.oracle["stage2"][1]).data(), SUM_BUS_N));
-    assert(same(inst->column(1, SUM_BUS_B), inst->checkColumns(bus.values(bus.oracle["challenges"]))[1].data() +
-                                                SUM_BUS_B * SUM_BUS_N,
-                SUM_BUS_N));
 }
 
 // A denominator 0 on rows of the sum bus, refused on the GPU with the CPU's message, of the first

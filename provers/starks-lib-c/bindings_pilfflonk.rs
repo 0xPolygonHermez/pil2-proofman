@@ -71,6 +71,18 @@ extern "C" {
         device: u32,
     ) -> *mut ::std::os::raw::c_void;
 
+    pub fn pilfflonk_ctx_new_on_device_buffer(
+        proving_key_dir: *const ::std::os::raw::c_char,
+        device_buffer: *mut ::std::os::raw::c_void,
+        device_buffer_bytes: u64,
+    ) -> *mut ::std::os::raw::c_void;
+
+    pub fn pilfflonk_gpu_device_bytes(
+        proving_key_dir: *const ::std::os::raw::c_char,
+        out_arena: *mut u64,
+        out_beside: *mut u64,
+    ) -> ::std::os::raw::c_int;
+
     pub fn pilfflonk_gpu_available() -> ::std::os::raw::c_int;
 
     pub fn pilfflonk_ctx_free(ctx: *mut ::std::os::raw::c_void);

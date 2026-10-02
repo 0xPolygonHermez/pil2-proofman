@@ -24,7 +24,7 @@ FrElement *elements(uint8_t *arena, uint64_t offset) { return reinterpret_cast<F
 
 } // namespace
 
-InstanceGpu::InstanceGpu(const GpuAirKey &_air, const uint8_t *stage1, FrElement *stageOne)
+InstanceGpu::InstanceGpu(const GpuAirKey &_air, const uint8_t *stage1)
     : air(_air), lease(_air.gpuKey(), "Instance") {
     const CopyLog copies(&air.gpuKey(), "INSTANCE");
     const AirKey &key = air.airKey();
@@ -35,13 +35,11 @@ InstanceGpu::InstanceGpu(const GpuAirKey &_air, const uint8_t *stage1, FrElement
     FrElement *columns = elements(arena, air.arena().evaluations[1]);
     staging.toDevice(raw, stage1, N * C * sizeof(FrElement));
     pilfflonk_gpu_transpose_witness(columns, raw, air.witnessPositions(), N, C);
-    for (const auto &[first, count] : air.witnessColumns()) {
-        staging.toHost(stageOne + first * N, columns + first * N, count * N * sizeof(FrElement));
-    }
+    polyCounts.assign(key.info().cmPolsMap.size(), 0);
+    committed.assign(key.info().cmPolsMap.size(), false);
 }
 
-std::vector<G1Point> InstanceGpu::commitStage(uint64_t stage, const FrElement *columns, const FrElement *factors,
-                                              std::vector<std::unique_ptr<Poly>> &polys) {
+std::vector<G1Point> InstanceGpu::commitStage(uint64_t stage, const FrElement *factors) {
     const CopyLog copies(&air.gpuKey(), "STAGE_" + std::to_string(stage));
     const AirKey &key = air.airKey();
     const PilfflonkInfo &info = key.info();
@@ -55,9 +53,6 @@ std::vector<G1Point> InstanceGpu::commitStage(uint64_t stage, const FrElement *c
     FrElement *deviceFactors = elements(arena, layout.factors);
     uint64_t *counts = reinterpret_cast<uint64_t *>(arena + layout.counts);
 
-    for (const auto &[first, count] : air.hostColumns(stage)) {
-        staging.toDevice(evaluations + first * N, columns + first * N, count * N * sizeof(FrElement));
-    }
     uint64_t nFactors = 0;
     for (uint64_t f = 0; f < info.layout.size(); ++f) {
         if (info.layout[f].stage == stage) {
@@ -93,32 +88,39 @@ std::vector<G1Point> InstanceGpu::commitStage(uint64_t stage, const FrElement *c
         counted += entry.k;
     }
 
-    // The host's copies, over the mirror, which has the arena's slots.
+    // Their counts, which the opening's components and the copies on demand read: the polynomials
+    // stay in the arena.
     std::vector<uint64_t> found(counted);
     staging.toHost(found.data(), counts, counted * sizeof(uint64_t));
-    FrElement *mirror = gpu.mirror();
-    for (uint64_t f = 0; f < info.layout.size(); ++f) {
-        const LayoutEntry &entry = info.layout[f];
-        if (entry.stage == stage) {
-            const uint64_t elementsOfF = entry.k * (N + key.blindLength(f));
-            staging.toRegisteredHost(mirror + layout.slot[f], slots + layout.slot[f], elementsOfF * sizeof(FrElement));
-        }
-    }
-    staging.wait();
     counted = 0;
-    for (uint64_t f = 0; f < info.layout.size(); ++f) {
-        const LayoutEntry &entry = info.layout[f];
+    for (const LayoutEntry &entry : info.layout) {
         if (entry.stage != stage) {
             continue;
         }
-        const uint64_t length = N + key.blindLength(f);
         for (uint64_t j = 0; j < entry.k; ++j) {
-            const uint64_t id = entry.pols[j].id;
-            polys[id] = mirrorPolynomial(mirror + layout.slot[f] + j * length, length, found[counted++],
-                                         key.name() + ": the column " + info.cmPolsMap[id].name);
+            polyCounts[entry.pols[j].id] = found[counted++];
+            committed[entry.pols[j].id] = true;
         }
     }
     return commitments;
+}
+
+uint64_t InstanceGpu::polynomialCount(uint64_t cmId) const {
+    if (cmId >= committed.size() || !committed[cmId]) {
+        throw std::invalid_argument("InstanceGpu: the polynomial of cm " + std::to_string(cmId) +
+                                    " is not committed");
+    }
+    return polyCounts[cmId];
+}
+
+std::unique_ptr<Poly> InstanceGpu::polynomialToHost(uint64_t cmId, FrElement *coefs) const {
+    const uint64_t count = polynomialCount(cmId);
+    const AirKey &key = air.airKey();
+    const LayoutPosition &at = key.cmPosition(cmId);
+    const uint64_t length = key.n() + key.blindLength(at.f);
+    const FrElement *slot = elements(air.gpuKey().arena(), air.arena().polys) + air.arena().slot[at.f] + at.j * length;
+    air.gpuKey().staging().toHost(coefs, slot, length * sizeof(FrElement));
+    return mirrorPolynomial(coefs, length, count, key.name() + ": the column " + key.info().cmPolsMap[cmId].name);
 }
 
 void InstanceGpu::requireQParts(uint64_t partBits, const char *function) const {

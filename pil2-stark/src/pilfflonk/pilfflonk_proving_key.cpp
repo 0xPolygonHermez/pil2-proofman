@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <limits>
 #include <stdexcept>
@@ -495,6 +496,21 @@ QPieceRange qPieceRange(const AirDegrees &d, uint64_t i) {
 
 AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constants, uint64_t constantsBytes,
                const std::string &name, GpuKey *gpu)
+    : AirKey(
+          std::move(_info), std::move(_bin),
+          [constants, constantsBytes] { return ConstantsBytes{constants, constantsBytes}; }, name, gpu) {}
+
+AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const ConstantsSource &constants, const std::string &name,
+               GpuKey *gpu)
+    : AirKey(std::move(_info), std::move(_bin), name) {
+    loadFixed(constants, gpu);
+}
+
+std::unique_ptr<AirKey> AirKey::withoutFixedColumns(PilfflonkInfo info, ExpressionsBin bin, const std::string &name) {
+    return std::unique_ptr<AirKey>(new AirKey(std::move(info), std::move(bin), name));
+}
+
+AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const std::string &name)
     : airName(name), pilfflonkInfo(std::move(_info)), expressionsBin(std::move(_bin)) {
     const PilfflonkInfo &info = pilfflonkInfo;
     auto fail = [&](const std::string &what) { failAir(name, what); };
@@ -668,26 +684,37 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
         }
     }
 
-    // The fixed columns.
-    const uint64_t nConstants = info.nConstants;
-    if (nConstants > std::numeric_limits<uint64_t>::max() / FR_BYTES / N ||
-        constantsBytes != nConstants * N * FR_BYTES) {
-        fail(".const has " + std::to_string(constantsBytes) + " bytes, and " + std::to_string(nConstants) +
-             " fixed columns of " + std::to_string(N) + " rows have " + std::to_string(nConstants * N * FR_BYTES));
+}
+
+void AirKey::loadFixed(const ConstantsSource &constants, GpuKey *gpu) {
+    const uint64_t N = n(), nConstants = pilfflonkInfo.nConstants;
+#ifdef __USE_CUDA__
+    // On the device first what does not need the fixed columns, while the .const may still be read.
+    if (gpu != nullptr) {
+        deviceKey = std::make_unique<GpuAirKey>(*gpu, *this);
+    }
+#endif
+    const ConstantsBytes bytes = constants();
+    if (nConstants > std::numeric_limits<uint64_t>::max() / FR_BYTES / N || bytes.size != nConstants * N * FR_BYTES) {
+        failAir(airName, ".const has " + std::to_string(bytes.size) + " bytes, and " + std::to_string(nConstants) +
+                             " fixed columns of " + std::to_string(N) + " rows have " +
+                             std::to_string(nConstants * N * FR_BYTES));
     }
     if (nConstants > 0) {
         fixedEvals.reset(new FrElement[nConstants * N]);
-        fixedCoefs.reset(new FrElement[nConstants * N]);
-        decodeColumns(constants, N, nConstants, fixedEvals.get(), name + ".const");
+        decodeColumns(bytes.data, N, nConstants, fixedEvals.get(), airName + ".const");
     }
 #ifdef __USE_CUDA__
-    if (gpu != nullptr) {
-        // Interpolated on the device, where the coefficients stay; fixedCoefs is their copy.
-        deviceKey = std::make_unique<GpuAirKey>(*gpu, *this, fixedCoefs.get(), fixedPolys);
+    if (deviceKey != nullptr) {
+        // Interpolated on the device, where the coefficients stay (fixedPolynomial copies them).
+        deviceKey->loadFixed(fixedEvals.get());
         return;
     }
+#else
+    (void)gpu;
 #endif
     if (nConstants > 0) {
+        fixedCoefs.reset(new FrElement[nConstants * N]);
         std::vector<FrElement *> evals(nConstants), coefs(nConstants);
         for (uint64_t c = 0; c < nConstants; ++c) {
             evals[c] = fixedEvals.get() + c * N;
@@ -700,6 +727,33 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const uint8_t *constant
 }
 
 AirKey::~AirKey() = default;
+
+Poly *AirKey::fixedPolynomial(uint64_t c) const {
+#ifdef __USE_CUDA__
+    if (deviceKey != nullptr) {
+        std::call_once(fixedCopied, [this] {
+            const uint64_t N = n(), nConstants = pilfflonkInfo.nConstants;
+            fixedCoefs.reset(new FrElement[nConstants * N]);
+            deviceKey->fixedToHost(fixedCoefs.get());
+            for (uint64_t k = 0; k < nConstants; ++k) {
+                fixedPolys.push_back(mirrorPolynomial(fixedCoefs.get() + k * N, N, deviceKey->fixedCount(k),
+                                                      airName + ": the fixed column " +
+                                                          pilfflonkInfo.constPolsMap[k].name));
+            }
+        });
+    }
+#endif
+    return fixedPolys[c].get();
+}
+
+ShplonkComponent AirKey::fixedComponent(uint64_t c) const {
+#ifdef __USE_CUDA__
+    if (deviceKey != nullptr) {
+        return ShplonkComponent::elsewhere(n(), deviceKey->fixedDegree(c));
+    }
+#endif
+    return fixedPolynomial(c);
+}
 
 std::vector<G1Point> AirKey::fixedCommitments(const Srs &srs) const {
 #ifdef __USE_CUDA__
@@ -795,7 +849,48 @@ ProvingKey::ProvingKey(GlobalInfo _info, Srs _srs, std::vector<std::vector<std::
     }
 }
 
-std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device device) {
+namespace {
+
+// Throws std::invalid_argument, naming `function`, if there is no GPU (gpuAvailable()).
+void requireGpu(const char *function) {
+    if (!gpuAvailable()) {
+#ifdef __USE_CUDA__
+        throw std::invalid_argument(std::string(function) +
+                                    ": no GPU: CUDA sees no device of compute capability 7.0 or above (or no driver)");
+#else
+        throw std::invalid_argument(std::string(function) +
+                                    ": no GPU: this library was built without it (provers/starks-lib-c/build.rs found "
+                                    "no nvcc, or the feature cpu-only)");
+#endif
+    }
+}
+
+// An AIR of a provingKey/: its airgroup, its name, and its files' path without their extensions.
+struct AirFiles {
+    uint64_t airgroup;
+    std::string name;
+    std::string base;
+};
+
+// Every AIR of the globalInfo `info` of the provingKey/ at `dir`, in canonical order.
+std::vector<AirFiles> airFilesOf(const std::string &dir, const GlobalInfo &info) {
+    std::vector<AirFiles> airs;
+    for (uint64_t ag = 0; ag < info.airs.size(); ++ag) {
+        for (const GlobalInfo::Air &air : info.airs[ag]) {
+            const std::string airDir = dir + "/" + info.name + "/" + info.airGroups[ag] + "/airs/" + air.name + "/air";
+            airs.push_back(AirFiles{ag, air.name, airDir + "/" + air.name});
+        }
+    }
+    return airs;
+}
+
+std::string srsPathOf(const std::string &dir, const GlobalInfo &info) {
+    return dir + "/" + info.name + "/" + BACKEND_DIR + "/" + SRS_FILE;
+}
+
+} // namespace
+
+std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device device, const GpuKeyOptions &options) {
     if (device == Device::Gpu) {
         // CUDA's initialisation, on its first call: what is left of it if a warm-up started it
         // before (pilfflonk/docs/performance.md#the-start-of-a-proof).
@@ -803,34 +898,50 @@ std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device devi
         const bool available = gpuAvailable();
         TimerStopAndLog(PILFFLONK_GPU_INIT);
         if (!available) {
-#ifdef __USE_CUDA__
-            throw std::invalid_argument("ProvingKey::load: no GPU: CUDA sees no device of compute capability 7.0 or "
-                                        "above (or no driver)");
-#else
-            throw std::invalid_argument("ProvingKey::load: no GPU: this library was built without it "
-                                        "(provers/starks-lib-c/build.rs found no nvcc, or the feature cpu-only)");
-#endif
+            requireGpu("ProvingKey::load");
         }
     }
     GlobalInfo info = GlobalInfo::load(dir + "/" + GLOBAL_INFO_FILE);
+    const std::vector<AirFiles> files = airFilesOf(dir, info);
+    // Each AIR's .const on a thread of its own: the first one's from now, while the SRS is read and
+    // copied to the device, and each next one's from when the AIR before it reads its own, while that
+    // AIR's key is built (pilfflonk/docs/performance.md#loading-a-key-on-the-gpu).
+    auto readConstants = [&files](uint64_t i) {
+        const std::string path = files[i].base + ".const";
+        return std::async(std::launch::async, [path] { return readBytes(path, "const"); });
+    };
+    std::future<FileBytes> pending;
+    if (!files.empty()) {
+        pending = readConstants(0);
+    }
     TimerStart(PILFFLONK_LOAD_SRS);
-    Srs srs = Srs::load(dir + "/" + info.name + "/" + BACKEND_DIR + "/" + SRS_FILE);
+    Srs srs = Srs::load(srsPathOf(dir, info));
     TimerStopAndLog(PILFFLONK_LOAD_SRS);
     std::shared_ptr<GpuKey> gpu;
 #ifdef __USE_CUDA__
     if (device == Device::Gpu) {
         TimerStart(PILFFLONK_GPU_SRS);
-        gpu = std::make_shared<GpuKey>(srs);
+        gpu = std::make_shared<GpuKey>(srs, options);
         TimerStopAndLog(PILFFLONK_GPU_SRS);
     }
+#else
+    (void)options;
 #endif
     TimerStart(PILFFLONK_LOAD_AIRS);
     std::vector<std::vector<std::unique_ptr<AirKey>>> airs(info.airs.size());
-    for (uint64_t ag = 0; ag < info.airs.size(); ++ag) {
-        for (const GlobalInfo::Air &air : info.airs[ag]) {
-            const std::string airDir = dir + "/" + info.name + "/" + info.airGroups[ag] + "/airs/" + air.name + "/air";
-            airs[ag].push_back(AirKey::load(airDir, air.name, gpu.get()));
-        }
+    for (uint64_t i = 0; i < files.size(); ++i) {
+        PilfflonkInfo airInfo = PilfflonkInfo::load(files[i].base + ".pilfflonkinfo.json");
+        ExpressionsBin bin = ExpressionsBin::load(files[i].base + ".bin");
+        FileBytes constants;
+        const AirKey::ConstantsSource source = [&] {
+            constants = pending.get();
+            if (i + 1 < files.size()) {
+                pending = readConstants(i + 1);
+            }
+            return AirKey::ConstantsBytes{constants.data.get(), constants.size};
+        };
+        airs[files[i].airgroup].push_back(
+            std::make_unique<AirKey>(std::move(airInfo), std::move(bin), source, files[i].name, gpu.get()));
     }
     TimerStopAndLog(PILFFLONK_LOAD_AIRS);
 #ifdef __USE_CUDA__
@@ -839,6 +950,25 @@ std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device devi
     }
 #endif
     return std::make_unique<ProvingKey>(std::move(info), std::move(srs), std::move(airs), std::move(gpu));
+}
+
+DeviceBytes ProvingKey::requiredDeviceBytes(const std::string &dir) {
+    requireGpu("ProvingKey::requiredDeviceBytes");
+#ifdef __USE_CUDA__
+    const GlobalInfo info = GlobalInfo::load(dir + "/" + GLOBAL_INFO_FILE);
+    const uint64_t nG1 = Srs::powersIn(srsPathOf(dir, info));
+    std::vector<std::unique_ptr<AirKey>> keys;
+    std::vector<const AirKey *> airs;
+    for (const AirFiles &air : airFilesOf(dir, info)) {
+        keys.push_back(AirKey::withoutFixedColumns(PilfflonkInfo::load(air.base + ".pilfflonkinfo.json"),
+                                                   ExpressionsBin::load(air.base + ".bin"), air.name));
+        airs.push_back(keys.back().get());
+    }
+    return deviceBytesOf(nG1, airs, gpuMultiprocessors());
+#else
+    (void)dir;
+    return DeviceBytes();
+#endif
 }
 
 const AirKey &ProvingKey::air(uint64_t airgroupId, uint64_t airId) const {

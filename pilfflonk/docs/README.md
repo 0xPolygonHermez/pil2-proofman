@@ -284,13 +284,14 @@ or, with `--gpu`, as `pilfflonk prove --gpu` does. `snark_proof.bin` holds the p
 one public, the final circuit's publics hash ([formats.md#proof](formats.md#proof)). `verify-snark`
 names the bytes with the vkey and runs the JS verifier, as `pilfflonk verify`.
 
-On the GPU, each proof allocates the recursivef's device buffers and frees them before pilfflonk
-proves. The key, which `prove-snark` loads before the recursivef proves (`SnarkWrapper` with
-`preload`), keeps its SRS on the device; without `preload` it loads after those buffers are freed.
-A wrapper built on
-proofman's unified GPU buffer (`new_with_preallocated_buffers` with `d_buffers`) still lets pilfflonk
-allocate beside it: the PLONK prover carves its buffers out of it (`pre_allocate_final_snark_prover`),
-and pilfflonk does not yet.
+On the GPU, pilfflonk proves in the wrap's own device memory, where the PLONK prover carves its
+buffers (`pre_allocate_final_snark_prover`): a wrapper built on proofman's unified GPU buffer
+(`new_with_preallocated_buffers` with `d_buffers`) gives it that buffer, which must hold a proof's
+arena or the key is refused; `prove-snark`, which has none, gives it the recursivef's prover buffer,
+grown to the arena if it is smaller. The recursivef is done with either when pilfflonk proves. The
+key's own device memory (the SRS's powers, the fixed columns' coefficients) is beside them, from
+before the recursivef proves (`SnarkWrapper` with `preload`)
+([performance.md#the-wraps-device-buffer](performance.md#the-wraps-device-buffer)).
 
 ## Witness
 

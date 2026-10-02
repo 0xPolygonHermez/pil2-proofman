@@ -102,6 +102,10 @@ public:
     // valid), and std::runtime_error where ffiasm has no assembly backend.
     static Srs load(const std::string &path);
 
+    // The nG1 of the pilfflonk.srs.bin at `path`, from its header, checked as load checks it: no point
+    // is read. Throws as load does.
+    static uint64_t powersIn(const std::string &path);
+
     // Writes pilfflonk.srs.bin to `path`, replacing any file there. It writes to `path` + ".tmp"
     // first and renames that into place, so `path` is never left half written. Throws IoError if
     // the file cannot be written.

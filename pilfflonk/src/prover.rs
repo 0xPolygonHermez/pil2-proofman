@@ -41,13 +41,14 @@
 //! `pil2-stark/src/bn128/src/{msm,ntt}`, and gives the same proofs, bit for bit. It needs a library
 //! built with CUDA and a GPU ([`gpu_available`]); [`ProvingKey::load`] is the CPU.
 
+use std::ffi::c_void;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use proofman_starks_lib_c::{
-    pilfflonk_gpu_available_c, PilFflonkError, PilFflonkErrorKind, PilFflonkInstance, PilFflonkInstanceInputs,
-    PilFflonkOpening, PilFflonkProverCtx, PilFflonkTranscript,
+    pilfflonk_gpu_available_c, pilfflonk_gpu_device_bytes_c, PilFflonkError, PilFflonkErrorKind, PilFflonkInstance,
+    PilFflonkInstanceInputs, PilFflonkOpening, PilFflonkProverCtx, PilFflonkTranscript,
 };
 
 use crate::error::{invalid, PilfflonkError, PilfflonkResult};
@@ -62,6 +63,10 @@ use crate::witness::{AirInstanceRef, Stage1Witness, WitnessShape, WitnessSource}
 /// Where a [`ProvingKey`] runs the MSMs and the NTTs of its proofs
 /// (pilfflonk/docs/performance.md#selection-memory-and-errors).
 pub use proofman_starks_lib_c::PilFflonkDevice as Device;
+
+/// The device memory a key needs on the GPU ([`gpu_device_bytes`]): the arena of its proofs, and what
+/// it holds and allocates beside it, in bytes.
+pub use proofman_starks_lib_c::PilFflonkDeviceBytes as DeviceBytes;
 
 /// Whether [`Device::Gpu`] can be used here: this library was built with CUDA (`nvcc` found, the
 /// feature `proofman-starks-lib-c/cpu-only` off) and sees a GPU. It never fails.
@@ -108,6 +113,17 @@ impl ProvingKey {
     /// [`ProvingKeyFiles::load_on`].
     pub fn load_on(dir: &Path, device: Device) -> PilfflonkResult<Self> {
         ProvingKeyFiles::read(dir)?.load_on(device)
+    }
+
+    /// [`ProvingKeyFiles::read`] and then [`ProvingKeyFiles::load_on_device_buffer`]: on the GPU,
+    /// with its proofs' device memory in the caller's buffer.
+    ///
+    /// # Safety
+    ///
+    /// As [`ProvingKeyFiles::load_on_device_buffer`].
+    pub unsafe fn load_on_device_buffer(dir: &Path, buffer: *mut c_void, bytes: u64) -> PilfflonkResult<Self> {
+        // SAFETY: the caller's, as this function's contract says.
+        unsafe { ProvingKeyFiles::read(dir)?.load_on_device_buffer(buffer, bytes) }
     }
 
     pub fn dir(&self) -> &Path {
@@ -197,12 +213,43 @@ impl ProvingKeyFiles {
     /// The second half of [`ProvingKey::load_on`]: the C++ core loads the key on `device`, and its
     /// degrees, its SRS and the commitments of its fixed columns are checked against these files.
     pub fn load_on(self, device: Device) -> PilfflonkResult<ProvingKey> {
-        let Self { dir, global_info, vkey, airs } = self;
-        let [info] = airs.as_slice() else {
-            return invalid!("the provingKey/ has {} AIRs, and read() accepts one", airs.len());
-        };
-        let ctx =
-            PilFflonkProverCtx::load_on(&dir, device).map_err(native("loading the provingKey/ into the C++ prover"))?;
+        self.one_air()?;
+        let ctx = PilFflonkProverCtx::load_on(&self.dir, device)
+            .map_err(native("loading the provingKey/ into the C++ prover"))?;
+        self.checked(ctx)
+    }
+
+    /// [`load_on`](Self::load_on) on [`Device::Gpu`], with the device memory of the key's proofs
+    /// (their arena) in the caller's `bytes` bytes at `buffer`, a wrap's pre-reserved buffer
+    /// (pilfflonk/docs/performance.md#the-wraps-device-buffer): the key writes it only while a proof
+    /// runs, and allocates the rest of its device memory beside it ([`gpu_device_bytes`]). Refused,
+    /// as a key the device cannot hold is (decision D1), if the buffer holds less than a proof's
+    /// arena, saying how many bytes it needs and the buffer has.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must be `bytes` bytes of device memory on CUDA device 0, which outlive the key, and
+    /// which nothing else uses while a proof of the key runs.
+    pub unsafe fn load_on_device_buffer(self, buffer: *mut c_void, bytes: u64) -> PilfflonkResult<ProvingKey> {
+        self.one_air()?;
+        // SAFETY: the caller's, as this function's contract says.
+        let ctx = unsafe { PilFflonkProverCtx::load_on_device_buffer(&self.dir, buffer, bytes) }
+            .map_err(native("loading the provingKey/ into the C++ prover"))?;
+        self.checked(ctx)
+    }
+
+    /// Its one AIR: [`read`](Self::read) refuses keys of more.
+    fn one_air(&self) -> PilfflonkResult<&PilfflonkInfo> {
+        match self.airs.as_slice() {
+            [info] => Ok(info),
+            airs => invalid!("the provingKey/ has {} AIRs, and read() accepts one", airs.len()),
+        }
+    }
+
+    /// The key of `ctx`, the C++ core's of these files: its degrees, its SRS and the commitments of
+    /// its fixed columns checked against them.
+    fn checked(self, ctx: PilFflonkProverCtx) -> PilfflonkResult<ProvingKey> {
+        let info = self.one_air()?;
         let degrees = info.degrees()?;
         let n_bits_ext = ctx
             .n_bits_ext(info.airgroup_id, info.air_id)
@@ -215,9 +262,18 @@ impl ProvingKeyFiles {
                 degrees.n_bits_ext
             );
         }
-        check_srs_and_fixed(&ctx, &vkey, info, &global_info, &dir)?;
+        check_srs_and_fixed(&ctx, &self.vkey, info, &self.global_info, &self.dir)?;
+        let Self { dir, global_info, vkey, airs } = self;
         Ok(ProvingKey { dir, global_info, vkey, airs, ctx })
     }
+}
+
+/// The device memory a key of the `provingKey/` at `dir` needs on the GPU, from its files, without
+/// loading it (pilfflonk/docs/performance.md#the-wraps-device-buffer): the arena of its proofs, what
+/// the buffer of [`ProvingKeyFiles::load_on_device_buffer`] must hold, and what it needs beside it.
+/// Refused without a GPU ([`gpu_available`]).
+pub fn gpu_device_bytes(dir: &Path) -> PilfflonkResult<DeviceBytes> {
+    pilfflonk_gpu_device_bytes_c(dir).map_err(native("reading the device memory of the provingKey/"))
 }
 
 /// Runs `f` between the two lines the C++ core's timers log at -vv (TimerStart and

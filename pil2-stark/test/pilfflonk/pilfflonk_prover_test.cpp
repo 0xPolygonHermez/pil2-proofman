@@ -63,7 +63,8 @@
 #include "pilfflonk_key_gpu.hpp"
 #include "pilfflonk_lde_gpu.hpp"
 
-// The PLONK GPU prover's helper (rapidsnark/plonk_prover.cu).
+// The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu).
+extern "C" void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
 extern "C" void gpu_plonk_memcpy_d2h(void *dst, const void *src, size_t bytes);
 #endif
 
@@ -1052,13 +1053,9 @@ std::vector<uint8_t> scalars(const std::vector<FrElement> &values) {
     return out;
 }
 
-// The proof `prove` makes, through the C API: with pilfflonk_ctx_new, or pilfflonk_ctx_new_on(device).
-CApiProof proveThroughTheCApi(const Fibonacci &fib, const uint8_t seed[32],
-                              std::optional<uint32_t> device = std::nullopt) {
+// The proof `prove` makes, through the C API, on `ctx`, a ctx of fib's key.
+CApiProof proveOnTheCtx(const Fibonacci &fib, const uint8_t seed[32], void *ctx) {
     CApiProof out;
-    const char *dir = fib.dir.path().c_str();
-    void *ctx = device ? pilfflonk_ctx_new_on(dir, *device) : pilfflonk_ctx_new(dir);
-    assert(ctx != nullptr);
     const std::vector<uint8_t> publics = scalars(fib.publics);
     void *inst = pilfflonk_instance_new(ctx, 0, 0, fib.witness.data(), fib.witness.size(), nullptr, 0,
                                         publics.data(), 3, nullptr, 0, seed);
@@ -1092,6 +1089,16 @@ CApiProof proveThroughTheCApi(const Fibonacci &fib, const uint8_t seed[32],
     pilfflonk_opening_free(opening);
     pilfflonk_transcript_free(t);
     pilfflonk_instance_free(inst);
+    return out;
+}
+
+// The same, with pilfflonk_ctx_new, or pilfflonk_ctx_new_on(device).
+CApiProof proveThroughTheCApi(const Fibonacci &fib, const uint8_t seed[32],
+                              std::optional<uint32_t> device = std::nullopt) {
+    const char *dir = fib.dir.path().c_str();
+    void *ctx = device ? pilfflonk_ctx_new_on(dir, *device) : pilfflonk_ctx_new(dir);
+    assert(ctx != nullptr);
+    const CApiProof out = proveOnTheCtx(fib, seed, ctx);
     pilfflonk_ctx_free(ctx);
     return out;
 }
@@ -2287,7 +2294,10 @@ void testAGpuKeyRefusesWhatItCannotHold() {
 }
 
 // A key whose arena is a device buffer given to it (GpuKeyOptions::arena, as a wrap's pre-reserved
-// memory) proves the CPU's proofs, and does not free it.
+// memory: through the classes, ProvingKey::load's options and pilfflonk_ctx_new_on_device_buffer)
+// proves the CPU's proofs, does not write it while it loads (what the caller left there is still
+// there), and does not free it; a buffer smaller than a proof's arena is refused through the C API
+// too, saying how many bytes the arena needs and the buffer has, and a null one.
 void testAnArenaGivenToTheKey() {
     if (!gpuUnderTest("an arena given to a key on the GPU")) {
         return;
@@ -2297,22 +2307,49 @@ void testAnArenaGivenToTheKey() {
     const Fibonacci cpu(files);
     const uint64_t arenaBytes = PilFflonk::arenaLayout(cpu.air()).bytes;
     const PilFflonk::DeviceBuffer arena(arenaBytes);
-    for (int run = 0; run < 2; ++run) {
+    const std::vector<uint8_t> left(arenaBytes, 0xa5);
+    const std::vector<uint8_t> expected = proofBytes(prove(cpu, std::make_unique<BlindingRng>(seed)), cpu.air());
+    for (int run = 0; run < 3; ++run) {
+        gpu_plonk_memcpy_h2d(arena.data(), left.data(), arenaBytes);
         Fibonacci onGpu(files);
         const PilFflonk::GpuKeyOptions given{0, arena.data(), arenaBytes};
-        onGpu.pk = fibonacciKeyOn(onGpu, files, std::make_shared<PilFflonk::GpuKey>(Srs::load(srsPath(onGpu)), given));
+        onGpu.pk = run == 0 ? ProvingKey::load(onGpu.dir.path(), Device::Gpu, given)
+                            : fibonacciKeyOn(onGpu, files,
+                                             std::make_shared<PilFflonk::GpuKey>(Srs::load(srsPath(onGpu)), given));
         assert(onGpu.pk->device() == Device::Gpu && onGpu.pk->gpuKey()->arena() == arena.data());
-        assert(proofBytes(prove(cpu, std::make_unique<BlindingRng>(seed)), cpu.air()) ==
-               proofBytes(prove(onGpu, std::make_unique<BlindingRng>(seed)), onGpu.air()));
+        std::vector<uint8_t> there(arenaBytes);
+        gpu_plonk_memcpy_d2h(there.data(), arena.data(), arenaBytes);
+        assert(there == left);
+        assert(proofBytes(prove(onGpu, std::make_unique<BlindingRng>(seed)), onGpu.air()) == expected);
     }
+
+    const Fibonacci fib(files);
+    const CApiProof onCpu = proveThroughTheCApi(fib, seed);
+    const char *dir = fib.dir.path().c_str();
+    void *ctx = pilfflonk_ctx_new_on_device_buffer(dir, arena.data(), arenaBytes);
+    assert(ctx != nullptr);
+    const CApiProof onGpu = proveOnTheCtx(fib, seed, ctx);
+    pilfflonk_ctx_free(ctx);
+    assert(onCpu.commitments == onGpu.commitments && onCpu.evaluations == onGpu.evaluations && onCpu.q == onGpu.q);
+    assert(onCpu.w == onGpu.w && onCpu.wp == onGpu.wp && onCpu.inv == onGpu.inv && onCpu.invZh == onGpu.invZh);
+    assert(pilfflonk_ctx_new_on_device_buffer(dir, arena.data(), arenaBytes - 1) == nullptr);
+    assert(pilfflonk_last_status() == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "pilfflonk_ctx_new_on_device_buffer: Fibonacci: a proof on the GPU needs "
+                                            "an arena of " +
+                                                std::to_string(arenaBytes) + " bytes, and the one given has " +
+                                                std::to_string(arenaBytes - 1)));
+    assert(pilfflonk_ctx_new_on_device_buffer(dir, nullptr, arenaBytes) == nullptr);
+    assert(pilfflonk_last_status() == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "device_buffer is NULL"));
 }
 
-// What a proof on the GPU copies between the host and the device, which the target of the device
-// path keeps to the witness and a few bytes: the instance sends its witness up and gets its columns
-// back (for the host's im pols and hints); stage 1 sends the im pols and the blinding factors, and
-// gets the committed polynomials (for the host's copies) and their counts; and Q, which runs on the
-// device whole, gets the count of its coefficients and of each piece's, and sends up only the blinding
-// factors of its boundaries, if it is split: on the Fibonacci, whole and split and packed.
+// What a proof on the GPU copies between the host and the device, which the device path keeps to the
+// witness up and a few bytes each way: the instance sends its witness up and gets nothing back;
+// stage 1, whose im pols the device computes, sends up the blinding factors and gets the counts of its
+// committed polynomials' coefficients; and Q, which runs on the device whole, gets the count of its
+// coefficients and of each piece's, and sends up only the blinding factors of its boundaries, if it
+// is split. A committed polynomial comes back only when Instance::polynomial asks for it, once. On the
+// Fibonacci, whole and split and packed, whose stage 1 has an im pol.
 void expectTheCopiesOf(const KeyFiles &files) {
     const Fibonacci fib(files, Device::Gpu);
     const AirKey &air = fib.air();
@@ -2322,30 +2359,134 @@ void expectTheCopiesOf(const KeyFiles &files) {
     const PilFflonk::CopyVolume::Totals start = volume.totals();
     const std::unique_ptr<Instance> inst = fib.instance(std::make_unique<ZeroBlinding>());
     const PilFflonk::CopyVolume::Totals made = volume.totals();
-    assert(made.toDevice - start.toDevice == N * C * element && made.toHost - start.toHost == N * C * element);
-    uint64_t up = 0, down = 0;
-    for (const PilFflonk::PolMapEntry &p : info.cmPolsMap) {
-        if (p.stage == 1 && p.imPol) {
-            up += N * element;
-        }
-    }
+    assert(made.toDevice - start.toDevice == N * C * element && made.toHost == start.toHost);
+    assert(std::any_of(info.cmPolsMap.begin(), info.cmPolsMap.end(),
+                       [](const PilFflonk::PolMapEntry &p) { return p.stage == 1 && p.imPol; }));
+    uint64_t up = 0, down = 0, first = UINT64_MAX;
     for (uint64_t f = 0; f < info.layout.size(); ++f) {
         if (info.layout[f].stage == 1) {
             const uint64_t k = info.layout[f].k, b = air.blindLength(f);
             up += k * b * element;
-            down += k * (N + b) * element + k * sizeof(uint64_t);
+            down += k * sizeof(uint64_t);
+            first = std::min(first, f);
         }
     }
-    assert(up > N * element);
     inst->commitStage(1, {});
     const PilFflonk::CopyVolume::Totals committed = volume.totals();
     assert(committed.toDevice - made.toDevice == up && committed.toHost - made.toHost == down);
 
+    // A committed polynomial, copied the first time it is asked for.
+    const Poly *p = inst->polynomial(first, 0);
+    const PilFflonk::CopyVolume::Totals asked = volume.totals();
+    assert(p != nullptr && p->getLength() == N + air.blindLength(first));
+    assert(asked.toDevice == committed.toDevice && asked.toHost - committed.toHost == p->getLength() * element);
+    assert(inst->polynomial(first, 0) == p && volume.totals().toHost == asked.toHost);
+
     const uint64_t m = air.nQPieces();
     inst->commitQ({fr(fib.oracle["stdVc"])});
     const PilFflonk::CopyVolume::Totals q = volume.totals();
-    assert(q.toDevice - committed.toDevice == 2 * (m - 1) * element);
-    assert(q.toHost - committed.toHost == (1 + m) * sizeof(uint64_t));
+    assert(q.toDevice - asked.toDevice == 2 * (m - 1) * element);
+    assert(q.toHost - asked.toHost == (1 + m) * sizeof(uint64_t));
+}
+
+// What loading a key on the GPU copies: up, the SRS's powers and the fixed columns on H, and its
+// bytecode and tables (a few KB); back, the counts of the fixed columns' coefficients only. Their
+// coefficients come back when AirKey::fixedPolynomial asks for them, once, whatever the thread.
+void testTheGpuKeyCopiesWhatItMust() {
+    if (!gpuUnderTest("the copies of a key on the GPU")) {
+        return;
+    }
+    const Fibonacci fib(KeyFiles(), Device::Gpu);
+    const AirKey &air = fib.air();
+    const PilFflonk::CopyVolume &volume = fib.pk->gpuKey()->copies();
+    const PilFflonk::CopyVolume::Totals loaded = volume.totals();
+    const uint64_t N = air.n(), nConstants = air.info().nConstants;
+    const uint64_t up = fib.pk->srs().nG1() * sizeof(PilFflonk::G1PointAffine) + nConstants * N * sizeof(FrElement);
+    assert(nConstants > 0 && loaded.toDevice >= up && loaded.toDevice < up + (uint64_t(1) << 20));
+    assert(loaded.toHost == nConstants * sizeof(uint64_t));
+    const Poly *polys[2] = {nullptr, nullptr};
+    std::thread other([&] { polys[1] = air.fixedPolynomial(0); });
+    polys[0] = air.fixedPolynomial(0);
+    other.join();
+    assert(polys[0] != nullptr && polys[0] == polys[1] && air.fixedPolynomial(nConstants - 1) != nullptr);
+    assert(volume.totals().toHost == loaded.toHost + nConstants * N * sizeof(FrElement));
+}
+
+// On a key on the GPU, the columns of stage 1 are on the device, which computes its im pols there
+// (computeStageColumns): Instance::column copies one the first time it is asked for, the CPU's, before
+// commitQ, and refuses one after; check copies the witness columns, before commitQ, gives the CPU's
+// checks (of a mutated witness, with failures), and still does after commitQ, and is refused after it
+// if it had not run before. On the Fibonacci, whose stage 1 has an im pol.
+void testStageOneOnTheGpu() {
+    if (!gpuUnderTest("the columns of stage 1 on the GPU")) {
+        return;
+    }
+    const Fibonacci cpu, gpu(KeyFiles(), Device::Gpu);
+    const AirKey &air = cpu.air();
+    const uint64_t N = air.n(), width = air.cmIds()[1].size();
+    std::vector<uint8_t> mutated = cpu.witness;
+    mutated[(100 * 2 + 0) * 32] ^= 1; // l1 at row 100
+    auto sameChecks = [](const std::vector<PilFflonk::ConstraintCheck> &a,
+                         const std::vector<PilFflonk::ConstraintCheck> &b) {
+        bool same = a.size() == b.size();
+        for (uint64_t c = 0; same && c < a.size(); ++c) {
+            same = a[c].nFailed == b[c].nFailed && a[c].rows.size() == b[c].rows.size();
+            for (uint64_t r = 0; same && r < a[c].rows.size(); ++r) {
+                same = a[c].rows[r].row == b[c].rows[r].row &&
+                       std::memcmp(&a[c].rows[r].value, &b[c].rows[r].value, sizeof(FrElement)) == 0;
+            }
+        }
+        return same;
+    };
+    {
+        const std::unique_ptr<Instance> onCpu = cpu.instance(std::make_unique<ZeroBlinding>(), mutated);
+        std::unique_ptr<Instance> onGpu = gpu.instance(std::make_unique<ZeroBlinding>(), mutated);
+        const std::vector<PilFflonk::ConstraintCheck> expected = onCpu->check(4, {});
+        assert(std::any_of(expected.begin(), expected.end(), [](const PilFflonk::ConstraintCheck &c) {
+            return c.nFailed > 0;
+        }));
+        assert(sameChecks(onGpu->check(4, {}), expected));
+        onCpu->commitStage(1, {});
+        onGpu->commitStage(1, {});
+        for (uint64_t p = 0; p < width; ++p) {
+            assert(std::memcmp(onCpu->column(1, p), onGpu->column(1, p), N * sizeof(FrElement)) == 0);
+        }
+        assert(contains(thrown<UnsatisfiedError>([&] { onGpu->commitQ({fr(gpu.oracle["stdVc"])}); }),
+                        "the witness does not satisfy the constraints of Fibonacci"));
+        for (uint64_t p = 0; p < width; ++p) {
+            assert(std::memcmp(onCpu->column(1, p), onGpu->column(1, p), N * sizeof(FrElement)) == 0);
+        }
+        assert(sameChecks(onGpu->check(4, {}), expected));
+    }
+    const std::unique_ptr<Instance> late = gpu.instance(std::make_unique<ZeroBlinding>());
+    late->commitStage(1, {});
+    late->commitQ({fr(gpu.oracle["stdVc"])});
+    assert(contains(thrown<std::invalid_argument>([&] { late->column(1, 0); }),
+                    "Instance::column: on a key on the GPU, the columns of stage 1 are on the device until Q is "
+                    "committed"));
+    assert(contains(thrown<std::invalid_argument>([&] { late->check(4, {}); }),
+                    "Instance::check: on a key on the GPU, the witness columns are on the device until Q is "
+                    "committed"));
+}
+
+// The device memory ProvingKey::requiredDeviceBytes reads from a key's files, which needs no fixed
+// column, is what a key on the GPU of them reserves (GpuKey::reserve): its arena, and beside it what
+// it holds and the most a proof allocates besides; pilfflonk_gpu_device_bytes gives the same. On the
+// Fibonacci, whole and split and packed.
+void testTheDeviceBytesOfAKey() {
+    if (!gpuUnderTest("the device memory of a key on the GPU")) {
+        return;
+    }
+    for (const KeyFiles &files : {KeyFiles(), splitQFiles(true)}) {
+        const Fibonacci fib(files, Device::Gpu);
+        const PilFflonk::GpuKey &key = *fib.pk->gpuKey();
+        const PilFflonk::DeviceBytes needed = ProvingKey::requiredDeviceBytes(fib.dir.path());
+        assert(needed.arena == key.arenaSize() && needed.arena == PilFflonk::arenaLayout(fib.air()).bytes);
+        assert(needed.beside == key.deviceBytes() - key.arenaSize() + key.transientBytes());
+        uint64_t arena = 0, beside = 0;
+        assert(pilfflonk_gpu_device_bytes(fib.dir.path().c_str(), &arena, &beside) == PILFFLONK_OK);
+        assert(arena == needed.arena && beside == needed.beside);
+    }
 }
 
 void testTheGpuCopiesWhatItMust() {
@@ -2706,6 +2847,9 @@ void runProverTests() {
     testAGpuKeyRefusesWhatItCannotHold();
     testAnArenaGivenToTheKey();
     testTheGpuCopiesWhatItMust();
+    testTheGpuKeyCopiesWhatItMust();
+    testStageOneOnTheGpu();
+    testTheDeviceBytesOfAKey();
     testAMutatedWitnessIsUnsatisfiedOnTheGpu();
     testTheGpuProvesTheKeysUnderTest();
     testTheGpuOpeningCopiesWhatItMust();

@@ -260,6 +260,46 @@ PtauHeader readHeaderOf(BinFile &file, const std::string &path) {
     return result;
 }
 
+// The header of pilfflonk.srs.bin (section 1) and the sizes of its sections 2 and 3, checked: its nG1.
+uint64_t checkedSrsHeader(BinFile &file, const std::string &path) {
+    const uint64_t headerBytes = sectionSize(file, path, SRS_HEADER_SECTION, "the header");
+    if (headerBytes != SRS_HEADER_BYTES) {
+        throw FormatError(path + ": the header (section 1) has " + std::to_string(headerBytes) + " bytes, not " +
+                          std::to_string(SRS_HEADER_BYTES));
+    }
+    uint8_t header[SRS_HEADER_BYTES];
+    readSection(file, path, SRS_HEADER_SECTION, header, sizeof(header));
+    const uint8_t *field = header;
+    if (readLittleEndian(field, 4) != N8 || !isModulus(field + 4, Fq_rawq)) {
+        throw FormatError(path + ": n8q and q are not those of BN254's base field");
+    }
+    field += 4 + N8;
+    if (readLittleEndian(field, 4) != N8 || !isModulus(field + 4, Fr_rawq)) {
+        throw FormatError(path + ": n8r and r are not those of BN254's scalar field");
+    }
+    field += 4 + N8;
+    const uint64_t nG1 = readLittleEndian(field, 8);
+    const uint64_t nG2 = readLittleEndian(field + 8, 8);
+    if (nG1 == 0 || nG1 > MAX_SRS_G1) {
+        throw FormatError(path + ": nG1 = " + std::to_string(nG1) + ", not between 1 and " +
+                          std::to_string(MAX_SRS_G1));
+    }
+    if (nG2 != Srs::N_G2) {
+        throw FormatError(path + ": nG2 = " + std::to_string(nG2) + ", not " + std::to_string(Srs::N_G2));
+    }
+    const uint64_t g1Bytes = sectionSize(file, path, SRS_G1_SECTION, "[τ^i]₁");
+    if (g1Bytes != nG1 * SRS_G1_BYTES) {
+        throw FormatError(path + ": section 2 ([τ^i]₁) has " + std::to_string(g1Bytes) + " bytes, not the " +
+                          std::to_string(nG1 * SRS_G1_BYTES) + " of nG1 = " + std::to_string(nG1) + " points");
+    }
+    const uint64_t g2Bytes = sectionSize(file, path, SRS_G2_SECTION, "[τ^i]₂");
+    if (g2Bytes != Srs::N_G2 * SRS_G2_BYTES) {
+        throw FormatError(path + ": section 3 ([τ^i]₂) has " + std::to_string(g2Bytes) + " bytes, not the " +
+                          std::to_string(Srs::N_G2 * SRS_G2_BYTES) + " of [1]₂ and [τ]₂");
+    }
+    return nG1;
+}
+
 } // namespace
 
 PtauHeader readPtauHeader(const std::string &path) {
@@ -308,48 +348,21 @@ Srs Srs::load(const std::string &path) {
     throw std::runtime_error("the SRS needs ffiasm's assembly backend, not built on this platform");
 #else
     const std::unique_ptr<BinFile> file = openBinFile(path, SRS_TYPE, SRS_VERSION);
-
-    const uint64_t headerBytes = sectionSize(*file, path, SRS_HEADER_SECTION, "the header");
-    if (headerBytes != SRS_HEADER_BYTES) {
-        throw FormatError(path + ": the header (section 1) has " + std::to_string(headerBytes) + " bytes, not " +
-                          std::to_string(SRS_HEADER_BYTES));
-    }
-    uint8_t header[SRS_HEADER_BYTES];
-    readSection(*file, path, SRS_HEADER_SECTION, header, sizeof(header));
-    const uint8_t *field = header;
-    if (readLittleEndian(field, 4) != N8 || !isModulus(field + 4, Fq_rawq)) {
-        throw FormatError(path + ": n8q and q are not those of BN254's base field");
-    }
-    field += 4 + N8;
-    if (readLittleEndian(field, 4) != N8 || !isModulus(field + 4, Fr_rawq)) {
-        throw FormatError(path + ": n8r and r are not those of BN254's scalar field");
-    }
-    field += 4 + N8;
-    const uint64_t nG1 = readLittleEndian(field, 8);
-    const uint64_t nG2 = readLittleEndian(field + 8, 8);
-    if (nG1 == 0 || nG1 > MAX_SRS_G1) {
-        throw FormatError(path + ": nG1 = " + std::to_string(nG1) + ", not between 1 and " +
-                          std::to_string(MAX_SRS_G1));
-    }
-    if (nG2 != N_G2) {
-        throw FormatError(path + ": nG2 = " + std::to_string(nG2) + ", not " + std::to_string(N_G2));
-    }
-    const uint64_t g1Bytes = sectionSize(*file, path, SRS_G1_SECTION, "[τ^i]₁");
-    if (g1Bytes != nG1 * SRS_G1_BYTES) {
-        throw FormatError(path + ": section 2 ([τ^i]₁) has " + std::to_string(g1Bytes) + " bytes, not the " +
-                          std::to_string(nG1 * SRS_G1_BYTES) + " of nG1 = " + std::to_string(nG1) + " points");
-    }
-    const uint64_t g2Bytes = sectionSize(*file, path, SRS_G2_SECTION, "[τ^i]₂");
-    if (g2Bytes != N_G2 * SRS_G2_BYTES) {
-        throw FormatError(path + ": section 3 ([τ^i]₂) has " + std::to_string(g2Bytes) + " bytes, not the " +
-                          std::to_string(N_G2 * SRS_G2_BYTES) + " of [1]₂ and [τ]₂");
-    }
-
+    const uint64_t nG1 = checkedSrsHeader(*file, path);
     Srs srs(nG1);
-    readSectionInParallel(*file, path, SRS_G1_SECTION, srs.g1Powers.get(), g1Bytes);
-    readSection(*file, path, SRS_G2_SECTION, srs.g2Powers, g2Bytes);
+    readSectionInParallel(*file, path, SRS_G1_SECTION, srs.g1Powers.get(), nG1 * SRS_G1_BYTES);
+    readSection(*file, path, SRS_G2_SECTION, srs.g2Powers, N_G2 * SRS_G2_BYTES);
     srs.checkPoints(path);
     return srs;
+#endif
+}
+
+uint64_t Srs::powersIn(const std::string &path) {
+#ifndef __USE_ASSEMBLY__
+    throw std::runtime_error("the SRS needs ffiasm's assembly backend, not built on this platform");
+#else
+    const std::unique_ptr<BinFile> file = openBinFile(path, SRS_TYPE, SRS_VERSION);
+    return checkedSrsHeader(*file, path);
 #endif
 }
 

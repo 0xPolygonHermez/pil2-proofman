@@ -15,35 +15,39 @@
 
 namespace PilFflonk {
 
-// What the device does of an Instance (pilfflonk_prover.hpp) while the hints and the im pols run on
-// the host: the stages commit what they get from the host and copy back what the host needs, and Q
-// runs there whole, from the committed polynomials, with the scalars and the blinding factors the
-// host gives it. The data stay in the arena of the key, which the instance holds from its
-// construction (GpuKey::Lease) to its end, and where the opening reads them (OpeningGpu); their copies
-// on the host are the instance's columns of stage 1 and the GpuKey's mirror of the committed
-// polynomials, and Q's pieces only when they are asked for (qPiecesToHost). Everything is the CPU's
-// bit for bit: the same INTTs and MSMs, the same field operations in the same order on each element,
-// and the blinding factors the host drew.
+// What the device does of an Instance (pilfflonk_prover.hpp): its witness goes up once, its stages'
+// columns (computeStageColumns, pilfflonk_hints_gpu.hpp) and commitments, and Q whole, run there from
+// the committed polynomials, with the scalars and the blinding factors the host gives it. The data
+// stay in the arena of the key, which the instance holds from its construction (GpuKey::Lease) to its
+// end, and where the opening reads them (OpeningGpu); nothing of them comes back to the host but the
+// counts of the polynomials' coefficients, and copies on demand (polynomialToHost, qPiecesToHost,
+// stageColumnToHost) for tests and diagnostics. Everything is the CPU's bit for bit: the same INTTs
+// and MSMs, the same field operations in the same order on each element, and the blinding factors
+// the host drew.
 class InstanceGpu {
 public:
     // The device side of an instance of `air`: waits for the key's arena (GpuKey::Lease), copies to
-    // it stage1, the witness as Instance takes it (N rows of C canonical scalars), transposes it there
-    // into the columns of stage 1 in Montgomery form, and copies those to stageOne, the instance's
-    // columns of stage 1 on the host (column p at p·N). Throws std::invalid_argument, before it
-    // waits, if this thread holds the arena for another instance.
-    InstanceGpu(const GpuAirKey &air, const uint8_t *stage1, FrElement *stageOne);
+    // it stage1, the witness as Instance takes it (N rows of C canonical scalars), and transposes it
+    // there into the columns of stage 1 in Montgomery form (ArenaLayout::evaluations). Throws
+    // std::invalid_argument, before it waits, if this thread holds the arena for another instance.
+    InstanceGpu(const GpuAirKey &air, const uint8_t *stage1);
     InstanceGpu(const InstanceGpu &) = delete;
     InstanceGpu &operator=(const InstanceGpu &) = delete;
 
-    // Instance::commitF of `stage` on the device, given what the host computed: copies to the device
-    // the stage's columns on H the host computed (GpuAirKey::hostColumns) from `columns` (column p at
-    // p·N), and `factors`, the blinding factors of the stage's f as Instance::drawBlinding drew them;
-    // then for each f of the stage, in the order of the layout: the INTT of each column into its slot
-    // in the arena, its blinding, the count of its coefficients, and the commitment of f
-    // (GpuKey::commit). Then the polynomials go to the key's mirror on the host, and polys (by
-    // cmPolsMap index) gets the polynomials over them. The commitments, in the order of the layout.
-    std::vector<G1Point> commitStage(uint64_t stage, const FrElement *columns, const FrElement *factors,
-                                     std::vector<std::unique_ptr<Poly>> &polys);
+    // Instance::commitF of `stage` on the device, whose columns computeStageColumns has computed:
+    // copies to the device `factors`, the blinding factors of the stage's f as Instance::drawBlinding
+    // drew them; then for each f of the stage, in the order of the layout: the INTT of each column into
+    // its slot in the arena, its blinding, the count of its coefficients, and the commitment of f
+    // (GpuKey::commit). The counts come back (polynomialCount). The commitments, in the order of the
+    // layout.
+    std::vector<G1Point> commitStage(uint64_t stage, const FrElement *factors);
+
+    // Of the committed polynomial of column cmId (cmPolsMap), once its stage is committed: 1 + its
+    // degree, 0 if it is zero, as the device counted it; and its N + blindLength(f) coefficients
+    // copied to `coefs` on the host, a polynomial over them (mirrorPolynomial), for tests and
+    // diagnostics (Instance::polynomial). Throw std::invalid_argument if its stage is not committed.
+    uint64_t polynomialCount(uint64_t cmId) const;
+    std::unique_ptr<Poly> polynomialToHost(uint64_t cmId, FrElement *coefs) const;
 
     // What Q's code reads on a part of S points of the coset: column r of AirKey::qReads at
     // columns + r·S, on the device, and the instance's scalars (Instance::commitQ's ProverValues).
@@ -86,6 +90,8 @@ public:
 private:
     const GpuAirKey &air;
     GpuKey::Lease lease;
+    std::vector<uint64_t> polyCounts;   // by cmPolsMap index, once its stage is committed: 1 + its degree
+    std::vector<bool> committed;        // by cmPolsMap index: its polynomial is in the arena
     std::vector<uint64_t> qPieceCounts; // by piece: 1 + its degree, 0 if it is zero
 };
 

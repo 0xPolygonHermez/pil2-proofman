@@ -27,7 +27,8 @@
 //! the witness while the C++ core loads the key) and [`prove`], and, for tests
 //! and diagnostics, [`stage_columns`], the columns its stages commit. On the GPU
 //! (pilfflonk/docs/performance.md#gpu): [`ProvingKey::load_on`] with [`Device::Gpu`], where
-//! [`gpu_available`]. [`check`](mod@check) checks a witness row by row without proving
+//! [`gpu_available`], or [`ProvingKey::load_on_device_buffer`] with its proofs' device memory in a
+//! buffer of the caller's, of [`gpu_device_bytes`]. [`check`](mod@check) checks a witness row by row without proving
 //! (pilfflonk/docs/README.md#pilfflonk-check): [`check()`].
 //!
 //! The verifier is JS (`js/`, pilfflonk/docs/verifier.md#js-verifier): [`js_verifier::verify`] runs
@@ -75,8 +76,8 @@ pub use layout::{Layout, LayoutEntry, LayoutPol};
 pub use pilfflonk_info::{Boundary, ChallengeMapEntry, EvMapEntry, NameStageEntry, PilfflonkInfo, PolMapEntry, PolType};
 pub use proof::{Proof, ProofJson, ProofNames, ProofShape, Publics, SnarkjsG1};
 pub use prover::{
-    gpu_available, prove, stage_columns, Device, ProofChallenges, ProofOutput, ProveOptions, ProvingKey,
-    ProvingKeyFiles, StageColumns,
+    gpu_available, gpu_device_bytes, prove, stage_columns, Device, DeviceBytes, ProofChallenges, ProofOutput,
+    ProveOptions, ProvingKey, ProvingKeyFiles, StageColumns,
 };
 pub use verkey::AirVerkey;
 pub use vkey::{FixedCommitments, Vkey, DIGEST_DOMAIN};

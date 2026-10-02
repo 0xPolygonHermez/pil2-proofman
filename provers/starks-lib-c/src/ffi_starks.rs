@@ -1257,6 +1257,26 @@ pub fn pre_allocate_final_snark_prover_c(
     unsafe { pre_allocate_final_snark_prover(snark_prover, unified_buffer_gpu, d_buffers_recursivef) }
 }
 
+/// The recursivef's device prover buffer of `d_buffers_recursivef`, grown to `bytes` if it holds
+/// fewer and is its own, for a final SNARK prover that proves in it after the recursivef, as
+/// [`pre_allocate_final_snark_prover_c`] does PLONK's: `Ok((buffer, its bytes))`. `Err(most)` if it
+/// cannot grow, `most` the bytes it could hold; `Err(0)` if it is not its own (carved from proofman's
+/// unified buffer) or there are none (the CPU).
+pub fn reserve_recursivef_aux_trace_c(
+    d_buffers_recursivef: *mut c_void,
+    bytes: u64,
+) -> Result<(*mut c_void, u64), u64> {
+    let mut held = 0u64;
+    // SAFETY: `d_buffers_recursivef` is null or the recursivef's device buffers, as the C side
+    // takes them, and `held` a u64 it writes.
+    let buffer = unsafe { reserve_recursivef_aux_trace(d_buffers_recursivef, bytes, &mut held) };
+    if buffer.is_null() {
+        Err(held)
+    } else {
+        Ok((buffer, held))
+    }
+}
+
 pub fn gen_final_snark_proof_c(
     prover: *mut c_void,
     circomWitnessFinal: *mut u8,

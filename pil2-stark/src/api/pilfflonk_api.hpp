@@ -206,12 +206,35 @@ extern "C" {
     // (pilfflonk/docs/performance.md#what-runs-on-the-gpu). On PILFFLONK_DEVICE_GPU the SRS's powers
     // [τ^i]₁ are copied to the GPU once they are read, and the key's fixed columns and every proof's
     // polynomials stay there: the fixed columns' INTT and commitments (pilfflonk_ctx_fixed_commitments),
-    // each stage's INTTs and commitments, Q whole and SHPLONK's opening run on the device; the
-    // transcript, the blinding's draws, the std's hints and the im pols stay on the CPU. Returns NULL
-    // on failure, as
+    // each stage's hints, im pols, INTTs and commitments, Q whole and SHPLONK's opening run on the
+    // device; the transcript and the blinding's draws stay on the CPU. A proof copies its witness to
+    // the device, and back only commitments, evaluations and a few bytes. Returns NULL on failure, as
     // pilfflonk_ctx_new, and PILFFLONK_ERR_INVALID_ARGUMENT also if device is none of the enum or
-    // is PILFFLONK_DEVICE_GPU and pilfflonk_gpu_available() is 0 (checked before any file is read).
+    // is PILFFLONK_DEVICE_GPU and pilfflonk_gpu_available() is 0 (checked before any file is read),
+    // or if the device has not the memory of the key and a proof of each AIR (naming the AIR and the
+    // bytes it needs and the device has free).
     void *pilfflonk_ctx_new_on(const char *proving_key_dir, uint32_t device);
+
+    // pilfflonk_ctx_new_on(proving_key_dir, PILFFLONK_DEVICE_GPU), with its proofs' device memory (their
+    // arena) in the caller's device_buffer, device_buffer_bytes bytes on CUDA device 0: a wrap's
+    // pre-reserved buffer, such as proofman's unified buffer, which others use between the proofs. The
+    // ctx writes it only while one of its instances lives (one at a time), never while it loads,
+    // synchronises the device before and after, and never frees it: it must outlive the ctx. Its other
+    // device memory it allocates beside it (pilfflonk_gpu_device_bytes). Returns NULL on failure, as
+    // pilfflonk_ctx_new_on, and PILFFLONK_ERR_INVALID_ARGUMENT also if device_buffer is NULL, or if
+    // device_buffer_bytes is less than a proof's arena (saying how many bytes it needs and the buffer
+    // has) or the device has not the memory of the rest.
+    void *pilfflonk_ctx_new_on_device_buffer(const char *proving_key_dir, void *device_buffer,
+                                             uint64_t device_buffer_bytes);
+
+    // The device memory a ctx of the provingKey/ at proving_key_dir needs on the GPU, from its files
+    // (the globalInfo, the SRS's header, each AIR's pilfflonkinfo and .bin), without loading it:
+    // *out_arena, the arena of its proofs, which pilfflonk_ctx_new_on_device_buffer's buffer must
+    // hold, and *out_beside, what it holds and allocates beside it (the SRS's powers, each AIR's fixed
+    // columns' coefficients, bytecode and tables, and what a proof allocates besides).
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no GPU (as pilfflonk_ctx_new_on);
+    // PILFFLONK_ERR_IO and PILFFLONK_ERR_FORMAT for those files, as pilfflonk_ctx_new.
+    int pilfflonk_gpu_device_bytes(const char *proving_key_dir, uint64_t *out_arena, uint64_t *out_beside);
 
     // 1 if this library has the GPU path (it was built with nvcc: libstarksgpu.a) and sees a GPU it
     // can use (compute capability 7.0 or above), 0 otherwise: in a library built without it, and
@@ -309,8 +332,8 @@ extern "C" {
     // of the instance, as scalars, in the order of the rows: as the prover computed it, the
     // witness's, a prover hint's or an im pol's, once its stage is committed. For tests and
     // diagnostics (the Rust oracle checks the hints' columns against it); it is not part of the
-    // proof. On a key on the GPU, a column of a stage after the first is on the device, and is read
-    // from there the first time (Instance::column): before pilfflonk_commit_q, which reuses its memory.
+    // proof. On a key on the GPU, the column is on the device, and is read from there the first time
+    // (Instance::column): before pilfflonk_commit_q, which reuses its memory.
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL, if the stage is not committed yet or has no
     // column at stage_pos, if n is not N, or if such a column is read first once Q's commitment has
     // begun.
@@ -410,7 +433,9 @@ extern "C" {
     // min(out_n_failed[c], max_rows) of them in increasing order, entry c·max_rows + j of out_rows (the
     // row) and of out_values (the numerator there, a scalar); its other entries up to
     // (c + 1)·max_rows are zeroed.
-    // The instance may be committed before, between or after, as if the check had not run.
+    // The instance may be committed before, between or after, as if the check had not run; on a key on
+    // the GPU, whose witness columns are on the device, the first check copies them to the host, and
+    // so must come before pilfflonk_commit_q (Instance::check).
     // PILFFLONK_OK whether or not every constraint holds: out_n_failed says. With max_rows = 0 it only
     // counts, and out_rows and out_values may be NULL; out_n_failed may be NULL if n_constraints is 0.
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL as it may not be, if n_constraints is not the

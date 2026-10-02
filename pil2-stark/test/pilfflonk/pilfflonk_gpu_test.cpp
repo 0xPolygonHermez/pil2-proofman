@@ -82,16 +82,39 @@ void testCtxNewOn() {
     assert(pilfflonk_ctx_new_on(missing.c_str(), PILFFLONK_DEVICE_CPU) == nullptr);
     assert(pilfflonk_last_status() == PILFFLONK_ERR_IO && contains(pilfflonk_last_error(), "cannot open"));
 
+    // A device buffer, and the device memory of a key: refused arguments first. A host address stands
+    // for the buffer, which nothing reads, as the key is refused before it would be used.
+    int buffer = 0;
+    uint64_t arena = 0, beside = 0;
+    assert(pilfflonk_ctx_new_on_device_buffer(missing.c_str(), nullptr, 1) == nullptr);
+    assert(pilfflonk_last_status() == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "pilfflonk_ctx_new_on_device_buffer: device_buffer is NULL"));
+    assert(pilfflonk_ctx_new_on_device_buffer(nullptr, &buffer, 1) == nullptr);
+    assert(contains(pilfflonk_last_error(), "proving_key_dir is NULL"));
+    assert(pilfflonk_gpu_device_bytes(missing.c_str(), nullptr, &beside) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "pilfflonk_gpu_device_bytes: an out pointer is NULL"));
+    assert(pilfflonk_gpu_device_bytes(nullptr, &arena, &beside) == PILFFLONK_ERR_INVALID_ARGUMENT);
+
     if (pilfflonk_gpu_available()) {
         // A GPU there: it reads the key too.
         assert(pilfflonk_ctx_new_on(missing.c_str(), PILFFLONK_DEVICE_GPU) == nullptr);
         assert(pilfflonk_last_status() == PILFFLONK_ERR_IO);
+        assert(pilfflonk_ctx_new_on_device_buffer(missing.c_str(), &buffer, 1) == nullptr);
+        assert(pilfflonk_last_status() == PILFFLONK_ERR_IO);
+        assert(pilfflonk_gpu_device_bytes(missing.c_str(), &arena, &beside) == PILFFLONK_ERR_IO);
         return;
     }
     // No GPU: refused before anything is read, so not an IoError, and the reason given.
     assert(pilfflonk_ctx_new_on(missing.c_str(), PILFFLONK_DEVICE_GPU) == nullptr);
     assert(pilfflonk_last_status() == PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(contains(pilfflonk_last_error(), "pilfflonk_ctx_new_on: ProvingKey::load: "));
+    assert(contains(pilfflonk_last_error(), NO_GPU));
+    assert(pilfflonk_ctx_new_on_device_buffer(missing.c_str(), &buffer, 1) == nullptr);
+    assert(pilfflonk_last_status() == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "pilfflonk_ctx_new_on_device_buffer: ProvingKey::load: "));
+    assert(contains(pilfflonk_last_error(), NO_GPU));
+    assert(pilfflonk_gpu_device_bytes(missing.c_str(), &arena, &beside) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(contains(pilfflonk_last_error(), "pilfflonk_gpu_device_bytes: ProvingKey::requiredDeviceBytes: "));
     assert(contains(pilfflonk_last_error(), NO_GPU));
     try {
         PilFflonk::ProvingKey::load(missing, PilFflonk::Device::Gpu);

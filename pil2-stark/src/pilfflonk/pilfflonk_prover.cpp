@@ -163,24 +163,19 @@ Instance::Instance(const ProvingKey &_pk, uint64_t airgroupId, uint64_t airId, c
     }
 
     columns.resize(info.nStages + 1);
-    for (uint64_t s = 1; s <= info.nStages; ++s) {
 #ifdef __USE_CUDA__
-        // On a key on the GPU, the columns of the later stages are on the device only.
-        if (s > 1 && key.device() != nullptr) {
-            continue;
-        }
-#endif
-        columns[s].assign(key.cmIds()[s].size() * N, Engine::engine.fr.zero());
-    }
-#ifdef __USE_CUDA__
+    // On a key on the GPU, the columns are on the device only.
     if (key.device() != nullptr) {
-        device = std::make_unique<InstanceGpu>(*key.device(), stage1, columns[1].data());
+        device = std::make_unique<InstanceGpu>(*key.device(), stage1);
         deviceCopies.resize(info.nStages + 1);
         copied.resize(info.nStages + 1);
     }
     if (device == nullptr)
 #endif
     {
+        for (uint64_t s = 1; s <= info.nStages; ++s) {
+            columns[s].assign(key.cmIds()[s].size() * N, Engine::engine.fr.zero());
+        }
         const std::vector<uint64_t> &positions = key.witnessColumns();
         FrElement *stageOne = columns[1].data();
 #pragma omp parallel for
@@ -381,7 +376,7 @@ std::vector<G1Point> Instance::commitF(uint64_t stage) {
     std::vector<FrElement> factors = drawBlinding(stage);
 #ifdef __USE_CUDA__
     if (device != nullptr) {
-        return device->commitStage(stage, columns[stage].data(), factors.data(), polys);
+        return device->commitStage(stage, factors.data());
     }
 #endif
     FrElement *next = factors.data();
@@ -430,8 +425,8 @@ std::vector<G1Point> Instance::commitStage(uint64_t stage, const std::vector<FrE
     setChallenges(stage, challenges);
     TimerStartExpr(PILFFLONK_STAGE, stage);
 #ifdef __USE_CUDA__
-    // On a key on the GPU, the columns of a later stage are computed where its commit reads them.
-    if (device != nullptr && stage > 1) {
+    // On a key on the GPU, the columns of the stage are computed where its commit reads them.
+    if (device != nullptr) {
         computeStageColumns(*key.device(), stage, scalarValues(challengeValues));
     } else
 #endif
@@ -636,6 +631,7 @@ Instance::CheckTrace Instance::checkTrace(const std::vector<FrElement> &challeng
                                              std::to_string(expected));
     }
     // Stage 1's im pols as commitStage(1) computes them, in the instance: they read no challenge.
+    witnessColumnsToHost("Instance::check");
     computeImPols(1);
     CheckTrace t;
     if (info.nStages == 1) {
@@ -656,6 +652,25 @@ Instance::CheckTrace Instance::checkTrace(const std::vector<FrElement> &challeng
         computeImPols(s, t.columns, t.challenges);
     }
     return t;
+}
+
+void Instance::witnessColumnsToHost(const char *function) {
+#ifdef __USE_CUDA__
+    if (device == nullptr || !columns[1].empty()) {
+        return;
+    }
+    if (qBegun) {
+        throw invalid(function, "on a key on the GPU, the witness columns are on the device until Q is committed, and "
+                                "Q's commitment has begun: check before commitQ");
+    }
+    const uint64_t N = key.n();
+    columns[1].assign(key.cmIds()[1].size() * N, Engine::engine.fr.zero());
+    for (uint64_t p : key.witnessColumns()) {
+        stageColumnToHost(*key.device(), 1, p, columns[1].data() + p * N);
+    }
+#else
+    (void)function;
+#endif
 }
 
 std::vector<std::vector<FrElement>> Instance::checkColumns(const std::vector<FrElement> &challenges) {
@@ -715,7 +730,7 @@ const FrElement *Instance::column(uint64_t stage, uint64_t stagePos) const {
     }
     const uint64_t N = key.n();
 #ifdef __USE_CUDA__
-    if (device != nullptr && stage > 1) {
+    if (device != nullptr) {
         std::vector<FrElement> &copy = deviceCopies[stage];
         std::vector<bool> &done = copied[stage];
         if (done.empty()) {
@@ -746,16 +761,29 @@ Poly *Instance::polynomial(uint64_t f, uint64_t j) const {
     if (entry.stage == info.qStage()) {
         return qPiece(info.cmPolsMap[entry.pols[j].id].stagePos);
     }
-    return polys[entry.pols[j].id].get();
+    const uint64_t id = entry.pols[j].id;
+#ifdef __USE_CUDA__
+    // On a key on the GPU, a copy of the device's, once its stage is committed.
+    if (device != nullptr && entry.stage < next && polys[id] == nullptr) {
+        coefBuffers[id].reset(new FrElement[key.n() + key.blindLength(f)]);
+        polys[id] = device->polynomialToHost(id, coefBuffers[id].get());
+    }
+#endif
+    return polys[id].get();
 }
 
 ShplonkComponent Instance::component(uint64_t f, uint64_t j) const {
 #ifdef __USE_CUDA__
     const PilfflonkInfo &info = key.info();
     const LayoutEntry &entry = info.layout.at(f);
-    if (device != nullptr && entry.stage == info.qStage() && j < entry.k && qCommitted()) {
-        const uint64_t piece = info.cmPolsMap[entry.pols[j].id].stagePos;
-        return ShplonkComponent::elsewhere(key.degrees().qPieceCoefficients[piece], device->qPieceDegree(piece));
+    // On a key on the GPU, where the device keeps it, once its stage is committed.
+    if (device != nullptr && entry.stage != 0 && j < entry.k && entry.stage < next) {
+        if (entry.stage == info.qStage()) {
+            const uint64_t piece = info.cmPolsMap[entry.pols[j].id].stagePos;
+            return ShplonkComponent::elsewhere(key.degrees().qPieceCoefficients[piece], device->qPieceDegree(piece));
+        }
+        const uint64_t count = device->polynomialCount(entry.pols[j].id);
+        return ShplonkComponent::elsewhere(key.n() + key.blindLength(f), count == 0 ? 0 : count - 1);
     }
 #endif
     return polynomial(f, j);
@@ -842,7 +870,7 @@ Opening::Opening(const std::vector<const Instance *> &instances, const FrElement
             const LayoutEntry &entry = air.info().layout[f];
             ShplonkPolynomial p;
             for (const LayoutPol &pol : entry.pols) {
-                p.components.push_back(air.fixedPolynomial(pol.id));
+                p.components.push_back(air.fixedComponent(pol.id));
             }
             p.offsets = entry.offsets;
             opening.polynomials.push_back(std::move(p));

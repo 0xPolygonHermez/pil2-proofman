@@ -12,6 +12,11 @@
 //! - [`json_views`] names those bytes with the vkey, `proof.json` and `publics.json`, and
 //!   [`verify_json`] runs pilfflonk's JS verifier on them, as `verify_snark_proof` runs snarkjs for
 //!   PLONK and FFLONK.
+//!
+//! On the GPU the key's proofs keep their data in device memory of the wrap's ([`wrap_arena`],
+//! pilfflonk/docs/performance.md#the-wraps-device-buffer), as rapidsnark's PLONK prover is carved out
+//! of it by `pre_allocate_final_snark_prover_c`: proofman's unified buffer if the wrap has one, and
+//! otherwise the recursivef's prover buffer, which the recursivef is done with when pilfflonk proves.
 
 use std::ffi::c_void;
 use std::path::Path;
@@ -19,13 +24,75 @@ use std::path::Path;
 use pilfflonk_wrap_witness::{WrapArtifacts, WrapWitness};
 use proofman_common::{ProofmanError, ProofmanResult};
 use proofman_pilfflonk::{
-    js_verifier, prove, Device, FrBytes, JsonFile, Proof, ProofJson, ProofNames, ProveOptions, ProvingKey,
-    ProvingKeyFiles, Publics, Vkey, Witness, WitnessShape,
+    gpu_device_bytes, js_verifier, prove, Device, FrBytes, JsonFile, Proof, ProofJson, ProofNames, ProveOptions,
+    ProvingKey, ProvingKeyFiles, Publics, Vkey, Witness, WitnessShape,
+};
+use proofman_starks_lib_c::{
+    get_first_gpu_id_c, get_unified_buffer_gpu_for_recursivef_c, get_unified_buffer_gpu_size_c,
+    reserve_recursivef_aux_trace_c,
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
 /// Bytes of a public of a pilfflonk proof in a `SnarkProof`: an element of `Fr`, big-endian.
 const PUBLIC_BYTES: usize = 32;
+
+/// The device memory of the pilfflonk wrap's proofs on the GPU (their arena): `bytes` bytes at
+/// `buffer` on CUDA device 0, of the wrap's ([`wrap_arena`]).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WrapArena {
+    pub(crate) buffer: *mut c_void,
+    pub(crate) bytes: u64,
+}
+
+/// pilfflonk's arena in the wrap on the GPU, for the key at `proving_key`, as
+/// `pre_allocate_final_snark_prover_c` carves rapidsnark's PLONK prover: proofman's unified buffer
+/// `d_buffers` if there is one, all of it (the key refuses it, as a GPU without the memory, if it holds
+/// less than a proof's arena: decision D1); otherwise the recursivef's prover buffer
+/// `d_buffers_recursivef`, grown to the arena if it is smaller. `None` on the CPU. Refused if the
+/// unified buffer is not on device 0, where pilfflonk proves, or the recursivef's buffer cannot grow.
+pub(crate) fn wrap_arena(
+    gpu: bool,
+    d_buffers: Option<*mut c_void>,
+    d_buffers_recursivef: *mut c_void,
+    proving_key: &Path,
+) -> ProofmanResult<Option<WrapArena>> {
+    if !gpu {
+        return Ok(None);
+    }
+    let needed = gpu_device_bytes(proving_key).map_err(|e| invalid_key(proving_key, e))?;
+    if let Some(d_buffers) = d_buffers {
+        let gpu_id = get_first_gpu_id_c(d_buffers);
+        if gpu_id != 0 {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "pilfflonk proves on CUDA device 0, and proofman's unified buffer is on device {gpu_id}"
+            )));
+        }
+        let buffer = get_unified_buffer_gpu_for_recursivef_c(d_buffers, d_buffers_recursivef);
+        let bytes = get_unified_buffer_gpu_size_c(d_buffers);
+        tracing::info!(
+            "pilfflonk's GPU arena: {} bytes of the unified buffer's {bytes} (margin {}), and {} bytes beside it",
+            needed.arena,
+            i128::from(bytes) - i128::from(needed.arena),
+            needed.beside
+        );
+        return Ok(Some(WrapArena { buffer, bytes }));
+    }
+    match reserve_recursivef_aux_trace_c(d_buffers_recursivef, needed.arena) {
+        Ok((buffer, bytes)) => {
+            tracing::info!(
+                "pilfflonk's GPU arena: {} bytes of the recursivef's prover buffer of {bytes}, and {} bytes beside it",
+                needed.arena,
+                needed.beside
+            );
+            Ok(Some(WrapArena { buffer, bytes }))
+        }
+        Err(most) => Err(ProofmanError::InvalidConfiguration(format!(
+            "not enough GPU memory for the pilfflonk wrap's arena: it needs {} bytes, and the recursivef's prover \
+             buffer can hold {most} (pilfflonk/docs/performance.md#selection-memory-and-errors)",
+            needed.arena
+        ))),
+    }
+}
 
 /// The prover of the pilfflonk wrap: its key, loaded on its device, and the final circuit's witness
 /// calculator and exec, which compute the wrap's witness from a recursivef proof.
@@ -38,11 +105,27 @@ pub(crate) struct PilfflonkWrapProver {
 impl PilfflonkWrapProver {
     /// Loads the key at `proving_key` (`final/provingKey/`), on the GPU if `gpu` and on the CPU
     /// otherwise, and the witness calculator and exec of the stem `setup_snark_path`
-    /// (`final/final`: `WrapArtifacts::with_stem`). `ProvingKey::load_on` refuses the GPU without
-    /// one, saying why, before it reads the SRS.
-    pub(crate) fn load(setup_snark_path: &Path, proving_key: &Path, gpu: bool) -> ProofmanResult<Self> {
-        let device = if gpu { Device::Gpu } else { Device::Cpu };
-        let key = ProvingKey::load_on(proving_key, device).map_err(|e| invalid_key(proving_key, e))?;
+    /// (`final/final`: `WrapArtifacts::with_stem`). On the GPU with an `arena`, the key's proofs keep
+    /// their data there ([`ProvingKey::load_on_device_buffer`]). `ProvingKey::load_on` refuses the
+    /// GPU without one, saying why, before it reads the SRS.
+    ///
+    /// # Safety
+    ///
+    /// An `arena` must be device memory of its bytes on device 0 that outlives the prover, and that
+    /// nothing else uses while it proves.
+    pub(crate) unsafe fn load(
+        setup_snark_path: &Path,
+        proving_key: &Path,
+        gpu: bool,
+        arena: Option<WrapArena>,
+    ) -> ProofmanResult<Self> {
+        let key = match (gpu, arena) {
+            // SAFETY: the caller's, as this function's contract says.
+            (true, Some(arena)) => unsafe { ProvingKey::load_on_device_buffer(proving_key, arena.buffer, arena.bytes) },
+            (true, None) => ProvingKey::load_on(proving_key, Device::Gpu),
+            (false, _) => ProvingKey::load_on(proving_key, Device::Cpu),
+        }
+        .map_err(|e| invalid_key(proving_key, e))?;
         let shape = key.witness_shape().map_err(|e| invalid_key(proving_key, e))?;
         let witness = load_wrap_witness(setup_snark_path)?;
         Ok(Self { key, shape, witness })

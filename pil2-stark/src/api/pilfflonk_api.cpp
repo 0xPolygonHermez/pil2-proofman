@@ -471,6 +471,41 @@ void *pilfflonk_ctx_new_on(const char *proving_key_dir, uint32_t device) {
     });
 }
 
+void *pilfflonk_ctx_new_on_device_buffer(const char *proving_key_dir, void *device_buffer,
+                                         uint64_t device_buffer_bytes) {
+    const char *function = __func__;
+    return guardNew(function, [&]() -> void * {
+        if (proving_key_dir == nullptr) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "proving_key_dir is NULL");
+            return nullptr;
+        }
+        if (device_buffer == nullptr) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "device_buffer is NULL");
+            return nullptr;
+        }
+        PilFflonk::GpuKeyOptions options;
+        options.arena = device_buffer;
+        options.arenaBytes = device_buffer_bytes;
+        return PilFflonk::ProvingKey::load(proving_key_dir, PilFflonk::Device::Gpu, options).release();
+    });
+}
+
+int pilfflonk_gpu_device_bytes(const char *proving_key_dir, uint64_t *out_arena, uint64_t *out_beside) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (proving_key_dir == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "proving_key_dir is NULL");
+        }
+        if (out_arena == nullptr || out_beside == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "an out pointer is NULL");
+        }
+        const PilFflonk::DeviceBytes bytes = PilFflonk::ProvingKey::requiredDeviceBytes(proving_key_dir);
+        *out_arena = bytes.arena;
+        *out_beside = bytes.beside;
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
 int pilfflonk_gpu_available(void) {
     clearLastError();
     return PilFflonk::gpuAvailable() ? 1 : 0;

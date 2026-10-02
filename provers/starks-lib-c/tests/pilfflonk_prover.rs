@@ -8,7 +8,9 @@ use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use proofman_starks_lib_c::{pilfflonk_gpu_available_c, PilFflonkDevice, PilFflonkErrorKind, PilFflonkProverCtx};
+use proofman_starks_lib_c::{
+    pilfflonk_gpu_available_c, pilfflonk_gpu_device_bytes_c, PilFflonkDevice, PilFflonkErrorKind, PilFflonkProverCtx,
+};
 
 fn scratch(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("pilfflonk_prover_{name}_{}", std::process::id()));
@@ -70,5 +72,40 @@ fn the_gpu_is_refused_without_one() {
     }
     let err = PilFflonkProverCtx::load_on(Path::new(OsStr::from_bytes(b"a\0b")), PilFflonkDevice::Gpu).unwrap_err();
     assert!(err.message.contains("pilfflonk_ctx_new_on") && err.message.contains("NUL"), "{err}");
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A key on a device buffer of the caller's, and the device memory a key needs: as the GPU, refused
+/// without one before any file is read, saying why; with one, the key is read as on the CPU. A host
+/// address stands for the buffer, which nothing reads, since the key is refused first; a null one is
+/// refused.
+#[test]
+fn a_device_buffer_and_the_device_bytes_are_refused_without_a_gpu() {
+    let dir = scratch("gpu_buffer");
+    let missing = dir.join("nothing");
+    let mut stand_in = 0u64;
+    let buffer: *mut std::ffi::c_void = (&mut stand_in as *mut u64).cast();
+    // SAFETY: no key is loaded, so the buffer is never used.
+    let on_buffer = unsafe { PilFflonkProverCtx::load_on_device_buffer(&missing, buffer, 8) }.unwrap_err();
+    let bytes = pilfflonk_gpu_device_bytes_c(&missing).unwrap_err();
+    if pilfflonk_gpu_available_c() {
+        assert_eq!(on_buffer.kind, PilFflonkErrorKind::Io, "{on_buffer}");
+        assert_eq!(bytes.kind, PilFflonkErrorKind::Io, "{bytes}");
+    } else {
+        assert_eq!(on_buffer.kind, PilFflonkErrorKind::InvalidArgument, "{on_buffer}");
+        assert!(
+            on_buffer.message.contains("pilfflonk_ctx_new_on_device_buffer: ProvingKey::load: no GPU"),
+            "{on_buffer}"
+        );
+        assert_eq!(bytes.kind, PilFflonkErrorKind::InvalidArgument, "{bytes}");
+        assert!(
+            bytes.message.contains("pilfflonk_gpu_device_bytes: ProvingKey::requiredDeviceBytes: no GPU"),
+            "{bytes}"
+        );
+    }
+    // SAFETY: refused before anything is read.
+    let null = unsafe { PilFflonkProverCtx::load_on_device_buffer(&missing, std::ptr::null_mut(), 8) }.unwrap_err();
+    assert_eq!(null.kind, PilFflonkErrorKind::InvalidArgument, "{null}");
+    assert!(null.message.contains("device_buffer is NULL"), "{null}");
     fs::remove_dir_all(&dir).unwrap();
 }

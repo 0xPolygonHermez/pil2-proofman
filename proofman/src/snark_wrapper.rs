@@ -156,12 +156,13 @@ impl FinalSnarkKey {
 /// **One proof at a time.** The wrapper is `Send` and `Sync`, and proofs of it from several threads
 /// run one after another: each proof uses its buffers and provers alone.
 ///
-/// **GPU memory with pilfflonk.** Each proof allocates the recursivef's device buffers and frees them
-/// before pilfflonk proves, so its proving buffers never share the device with them. With `preload`
-/// the pilfflonk key (its SRS, `64·nG1` bytes) is on the device from the start and during the
-/// recursivef; without, it loads after the recursivef's buffers are freed. What remains (M63): with
-/// `d_buffers`, proofman's unified buffer, pilfflonk allocates its own device memory beside it, where
-/// `pre_allocate_final_snark_prover_c` carves the PLONK prover's out of it.
+/// **GPU memory with pilfflonk.** As for PLONK, the recursivef's device buffers are the wrapper's
+/// (in `d_buffers`, proofman's unified buffer, if there is one), and pilfflonk's proofs keep their data
+/// where `pre_allocate_final_snark_prover_c` carves the PLONK prover's (`pilfflonk_wrap::wrap_arena`):
+/// in the unified buffer, which must hold a proof's arena (or the key is refused), or else in the
+/// recursivef's prover buffer, grown to it; the recursivef is done with either when pilfflonk proves.
+/// Its key's own device memory (the SRS's powers, the fixed columns' coefficients) is beside them,
+/// from the start with `preload`.
 pub struct SnarkWrapper<F: PrimeField64> {
     pub setup_snark_path: PathBuf,
     pub setup_recursivef: Setup<F>,
@@ -173,8 +174,8 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub reload_fixed_pols_gpu: Option<Arc<AtomicBool>>,
     /// rapidsnark's prover of `final.zkey`, with `preload`; never with pilfflonk.
     pub snark_prover: Option<*mut c_void>,
-    /// The recursivef's device buffers, for PLONK and FFLONK, whose GPU prover carves its own out of
-    /// them; null with pilfflonk, whose proofs allocate their own.
+    /// The recursivef's device buffers (null on the CPU), out of which PLONK's GPU prover carves its
+    /// own, and pilfflonk's its arena without `d_buffers`.
     pub d_buffers_recursivef: *mut c_void,
     pub proving_key_path: PathBuf,
     pub memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
@@ -186,8 +187,6 @@ pub struct SnarkWrapper<F: PrimeField64> {
     /// rapidsnark's prover. pilfflonk's prover, a C++ handle, is neither `Send` nor `Sync`: it is only
     /// used under this lock, which the wrapper's `Send` and `Sync` rely on.
     proving: Mutex<Option<PilfflonkWrapProver>>,
-    /// The recursivef's verkey, which its device buffers hold.
-    recursivef_verkey: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -281,15 +280,18 @@ impl<F: PrimeField64> Drop for SnarkWrapper<F> {
         if let Some(snark_prover) = self.snark_prover {
             free_final_snark_prover_c(snark_prover);
         }
-        // Null with pilfflonk, and on the CPU, whose backend has no device buffers to free.
+        // pilfflonk's key first, whose arena may be the recursivef's prover buffer.
+        drop(self.proving.get_mut().unwrap_or_else(|poisoned| poisoned.into_inner()).take());
+        // Null on the CPU, whose backend has no device buffers to free.
         if !self.d_buffers_recursivef.is_null() {
             free_device_buffers_recursivef_c(self.d_buffers_recursivef);
         }
     }
 }
 
-/// The recursivef's device buffers of one proof (`gen_device_buffers_recursivef_c`), freed when
-/// dropped. The CPU backend has none: the pointer is null, and nothing is freed.
+/// The recursivef's device buffers (`gen_device_buffers_recursivef_c`), freed when dropped unless
+/// handed over ([`into_raw`](Self::into_raw)). The CPU backend has none: the pointer is null, and
+/// nothing is freed.
 struct RecursivefDeviceBuffers(*mut c_void);
 
 impl RecursivefDeviceBuffers {
@@ -308,6 +310,13 @@ impl RecursivefDeviceBuffers {
 
     fn as_ptr(&self) -> *mut c_void {
         self.0
+    }
+
+    /// The buffers, which the caller frees from now on.
+    fn into_raw(self) -> *mut c_void {
+        let buffers = self.0;
+        std::mem::forget(self);
+        buffers
     }
 }
 
@@ -426,19 +435,20 @@ impl<F: PrimeField64> SnarkWrapper<F> {
                 (d_buffers_recursivef, snark_prover)
             }
             FinalSnarkKey::Pilfflonk(pilfflonk_key) => {
-                if gpu && d_buffers.is_some() {
-                    tracing::warn!(
-                        "pilfflonk allocates its device memory beside proofman's unified buffer, which it does not \
-                         share yet"
-                    );
-                }
+                // The recursivef's, freed if the key is refused; and pilfflonk's arena in the unified
+                // buffer or in them.
+                let recursivef_buffers = RecursivefDeviceBuffers::new(&setup_recursivef, d_buffers, &verkey_str);
                 if preload {
                     timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
-                    pilfflonk_prover = Some(PilfflonkWrapProver::load(&setup_snark_path, pilfflonk_key, gpu)?);
+                    let arena = pilfflonk_wrap::wrap_arena(gpu, d_buffers, recursivef_buffers.as_ptr(), pilfflonk_key)?;
+                    // SAFETY: the arena is the unified buffer or the recursivef's prover buffer, which
+                    // outlive the prover (the wrapper's `Drop` drops it first), and which a proof uses
+                    // only for the recursivef until pilfflonk proves.
+                    pilfflonk_prover =
+                        Some(unsafe { PilfflonkWrapProver::load(&setup_snark_path, pilfflonk_key, gpu, arena) }?);
                     timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
                 }
-                // Each proof allocates its own (`generate_pilfflonk_proof`).
-                (std::ptr::null_mut(), None)
+                (recursivef_buffers.into_raw(), None)
             }
         };
 
@@ -464,7 +474,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             gpu,
             final_snark_key,
             proving: Mutex::new(pilfflonk_prover),
-            recursivef_verkey: verkey_str,
         })
     }
 
@@ -607,9 +616,10 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
     /// The pilfflonk proof of the vadcop proof `proof` (with its publics), whose recursivef verifies
     /// it against `verkey`, with the key at `pilfflonk_key`, whose prover is `preloaded` with
-    /// `preload` (the one `proving` holds). Under the lock of `proving`. The recursivef proves with
-    /// device buffers of its own, freed before pilfflonk loads its key (without `preload`) and
-    /// proves; then pilfflonk proves the wrap's witness, which it computes from the recursivef proof.
+    /// `preload` (the one `proving` holds). Under the lock of `proving`. The recursivef proves in the
+    /// wrapper's device buffers; then pilfflonk, its key loaded now without `preload`, proves the
+    /// wrap's witness, which it computes from the recursivef proof, in its arena, which the
+    /// recursivef is done with.
     fn generate_pilfflonk_proof(
         &self,
         pilfflonk_key: &Path,
@@ -617,21 +627,17 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         proof: &[u64],
         verkey: &[u64],
     ) -> ProofmanResult<SnarkProof> {
-        let recursivef_proof = {
-            let d_buffers_recursivef =
-                RecursivefDeviceBuffers::new(&self.setup_recursivef, self.d_buffers, &self.recursivef_verkey);
-            generate_recursivef_proof(
-                &self.setup_recursivef,
-                &self.memory_handler_recursive_witness,
-                proof,
-                &self.aux_trace,
-                &self.recursivef_const_pols,
-                &self.recursivef_const_tree,
-                verkey,
-                self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
-                d_buffers_recursivef.as_ptr(),
-            )?
-        };
+        let recursivef_proof = generate_recursivef_proof(
+            &self.setup_recursivef,
+            &self.memory_handler_recursive_witness,
+            proof,
+            &self.aux_trace,
+            &self.recursivef_const_pols,
+            &self.recursivef_const_tree,
+            verkey,
+            self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
+            self.d_buffers_recursivef,
+        )?;
 
         timer_start_debug!(GENERATING_SNARK_PROOF);
 
@@ -639,7 +645,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let prover = match preloaded {
             Some(prover) => prover,
             None => {
-                loaded = PilfflonkWrapProver::load(&self.setup_snark_path, pilfflonk_key, self.gpu)?;
+                let arena =
+                    pilfflonk_wrap::wrap_arena(self.gpu, self.d_buffers, self.d_buffers_recursivef, pilfflonk_key)?;
+                // SAFETY: as for the preloaded prover (`new_with_preallocated_buffers`): the arena
+                // outlives this prover, which this proof drops, and the recursivef is done with it.
+                loaded = unsafe { PilfflonkWrapProver::load(&self.setup_snark_path, pilfflonk_key, self.gpu, arena) }?;
                 &loaded
             }
         };

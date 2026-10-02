@@ -3853,4 +3853,32 @@ void pre_allocate_final_snark_prover_gpu(void *snark_prover, void* unified_buffe
     }
     preAllocateFinalSnarkProverGPU(snark_prover, unified_buffer_gpu);
 }
+
+void *reserve_recursivef_aux_trace_gpu(void *d_buffers_recursivef, uint64_t bytes, uint64_t *out_bytes) {
+    *out_bytes = 0;
+    if (d_buffers_recursivef == nullptr) {
+        return nullptr;
+    }
+    DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_recursivef;
+    if (!d_buffers->owns_aux_trace) {
+        return nullptr;
+    }
+    CHECKCUDAERR(cudaSetDevice(d_buffers->gpuId));
+    if (bytes > d_buffers->aux_trace_size) {
+        // As pre_allocate_final_snark_prover_gpu for PLONK, but refused rather than aborted when the
+        // device cannot hold it: the old buffer's bytes come back once it is freed.
+        size_t freeBytes = 0, totalBytes = 0;
+        CHECKCUDAERR(cudaMemGetInfo(&freeBytes, &totalBytes));
+        const uint64_t most = (uint64_t)freeBytes + d_buffers->aux_trace_size;
+        if (bytes > most) {
+            *out_bytes = most;
+            return nullptr;
+        }
+        CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
+        CHECKCUDAERR(cudaMalloc((void **)&d_buffers->d_aux_trace, bytes));
+        d_buffers->aux_trace_size = bytes;
+    }
+    *out_bytes = d_buffers->aux_trace_size;
+    return d_buffers->d_aux_trace;
+}
 #endif

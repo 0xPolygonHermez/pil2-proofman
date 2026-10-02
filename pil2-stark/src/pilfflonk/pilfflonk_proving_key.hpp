@@ -2,7 +2,9 @@
 #define PILFFLONK_PROVING_KEY_HPP
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -13,6 +15,7 @@
 #include "pilfflonk_gpu.hpp"
 #include "pilfflonk_info.hpp"
 #include "pilfflonk_lde.hpp"
+#include "pilfflonk_shplonk_prover.hpp"
 #include "pilfflonk_srs.hpp"
 
 namespace PilFflonk {
@@ -154,6 +157,28 @@ public:
     // of the AIR.
     AirKey(PilfflonkInfo info, ExpressionsBin bin, const uint8_t *constants, uint64_t constantsBytes,
            const std::string &name, GpuKey *gpu = nullptr);
+
+    // The bytes of an AIR's .const, valid until the constructor they are given to returns.
+    struct ConstantsBytes {
+        const uint8_t *data = nullptr;
+        uint64_t size = 0;
+    };
+    using ConstantsSource = std::function<ConstantsBytes()>;
+
+    // The same, the .const's bytes asked of `constants` once, when the key needs them: after what the
+    // pilfflonkinfo and the .bin give alone, and, on a gpu, after GpuAirKey's first step (its memory
+    // reserved, its bytecode and interpreter on the device, the shift's sums), so that the host reads
+    // the file meanwhile (ProvingKey::load). Throws what `constants` throws, and as the constructor
+    // above.
+    AirKey(PilfflonkInfo info, ExpressionsBin bin, const ConstantsSource &constants, const std::string &name,
+           GpuKey *gpu = nullptr);
+
+    // The key of an AIR without its fixed columns: what its pilfflonkinfo and .bin give alone (its
+    // degrees, layout, hints and the reads of its code), for what depends on nothing else, as the
+    // device memory of a key on the GPU (ProvingKey::requiredDeviceBytes). It has no fixed columns:
+    // fixedEvaluations, fixedPolynomial, fixedComponent and fixedCommitments must not be called. Throws
+    // FormatError as the constructor.
+    static std::unique_ptr<AirKey> withoutFixedColumns(PilfflonkInfo info, ExpressionsBin bin, const std::string &name);
     ~AirKey();
 
     // Reads <dir>/<name>.pilfflonkinfo.json, <dir>/<name>.bin and <dir>/<name>.const. Throws
@@ -179,7 +204,13 @@ public:
     // Fixed column c (constPolsMap index) on H, N values in natural order.
     const FrElement *fixedEvaluations(uint64_t c) const { return fixedEvals.get() + c * n(); }
     // Its interpolant, of N coefficients. Not const, as rapidsnark's API takes it, but never changed.
-    Poly *fixedPolynomial(uint64_t c) const { return fixedPolys[c].get(); }
+    // On a key on the GPU, which keeps the coefficients on the device, the first call copies those of
+    // every fixed column to the host (GpuAirKey::fixedToHost), once, whatever the thread.
+    Poly *fixedPolynomial(uint64_t c) const;
+    // Its interpolant as an Opening reads it: fixedPolynomial(c), but on a key on the GPU, where the
+    // device keeps it (ShplonkComponent::elsewhere, of N coefficients and the degree the device found),
+    // not copied to the host.
+    ShplonkComponent fixedComponent(uint64_t c) const;
 
     // Where the layout commits constPolsMap[id] or cmPolsMap[id]; f = UINT64_MAX if it does not
     // (a column the evMap never opens, pilfflonk/docs/protocol.md#layout).
@@ -235,6 +266,11 @@ public:
     const std::vector<StdHint> &stdHints() const { return hints; }
 
 private:
+    // What the pilfflonkinfo and the .bin give alone: everything but the fixed columns.
+    AirKey(PilfflonkInfo info, ExpressionsBin bin, const std::string &name);
+    // The fixed columns, from the .const's bytes `constants` gives, on `gpu` if not null.
+    void loadFixed(const ConstantsSource &constants, GpuKey *gpu);
+
     std::string airName;
     PilfflonkInfo pilfflonkInfo;
     ExpressionsBin expressionsBin;
@@ -242,8 +278,10 @@ private:
     AirDegrees airDegrees_;
     std::unique_ptr<Lde> extension;
     std::unique_ptr<FrElement[]> fixedEvals;
-    std::unique_ptr<FrElement[]> fixedCoefs;
-    std::vector<std::unique_ptr<Poly>> fixedPolys;
+    // On a key on the GPU, made by fixedPolynomial's first call (fixedCopied).
+    mutable std::unique_ptr<FrElement[]> fixedCoefs;
+    mutable std::vector<std::unique_ptr<Poly>> fixedPolys;
+    mutable std::once_flag fixedCopied;
     std::vector<LayoutPosition> constPositions;
     std::vector<LayoutPosition> cmPositions;
     std::vector<uint64_t> witness;
@@ -281,12 +319,25 @@ public:
     // (pilfflonk/docs/protocol.md#transcript), which reads and checks the vkey. Throws IoError and
     // FormatError, and FormatError if an AIR's layout needs more powers [τ^i]₁ than the SRS holds
     // or its pilfflonkinfo is not the globalInfo's AIR. On Device::Gpu, the SRS's powers [τ^i]₁ are
-    // copied to the GPU once they are read, each AIR's key is on it (AirKey's `gpu`), and its proofs
-    // run there; the proofs are the same bit for bit.
+    // copied to the GPU once they are read, each AIR's key is on it (AirKey's `gpu`) with `options`,
+    // and its proofs run there; the proofs are the same bit for bit.
+    // Each AIR's .const is read on a thread of its own, from the SRS's read on, the next one's while
+    // an AIR's key is built (AirKey's ConstantsSource): it overlaps the SRS's copy to the device and,
+    // on the GPU, the AIR's work before its fixed columns (pilfflonk/docs/performance.md#loading-a-key-on-the-gpu).
     // Throws std::invalid_argument before it reads anything if there is no GPU (gpuAvailable()), in
     // a library built without one or on a machine without one, and as AirKey's constructor if the
-    // device has not the memory of the key and a proof of each AIR.
-    static std::unique_ptr<ProvingKey> load(const std::string &dir, Device device = Device::Cpu);
+    // device has not the memory of the key and a proof of each AIR, or the arena given in `options` is
+    // smaller than a proof's.
+    static std::unique_ptr<ProvingKey> load(const std::string &dir, Device device = Device::Cpu,
+                                            const GpuKeyOptions &options = GpuKeyOptions());
+
+    // The device memory a key loaded from `dir` on the GPU needs (DeviceBytes), from the globalInfo,
+    // the SRS's header and each AIR's pilfflonkinfo and .bin (AirKey::withoutFixedColumns), without
+    // loading it, as GpuKey and its AIRs reserve it: what a buffer given as its arena
+    // (GpuKeyOptions::arena) must hold, and what the key needs beside it. Throws std::invalid_argument
+    // as load does without a GPU, whose number of multiprocessors sppark's MSM's memory depends on, and
+    // IoError and FormatError as load does for those files.
+    static DeviceBytes requiredDeviceBytes(const std::string &dir);
 
     ProvingKey(const ProvingKey &) = delete;
     ProvingKey &operator=(const ProvingKey &) = delete;

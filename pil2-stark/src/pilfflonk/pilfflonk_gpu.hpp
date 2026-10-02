@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 
 #include "alt_bn128.hpp"
 
@@ -35,6 +36,28 @@ public:
 private:
     std::atomic<uint64_t> h2d{0};
     std::atomic<uint64_t> d2h{0};
+};
+
+// How a key on the GPU (GpuKey, pilfflonk_key_gpu.hpp) uses the device's memory.
+struct GpuKeyOptions {
+    // The most device memory the key may hold and leave for a proof, in bytes, or 0 for what the
+    // device has free.
+    uint64_t memoryLimit = 0;
+    // A device buffer of arenaBytes bytes on device 0 for the arena of its proofs, in place of one the
+    // key allocates: a wrap's pre-reserved memory, which others use between the proofs (proofman's
+    // unified buffer). The key writes it only while a proof holds it (GpuKey::Lease), never while it
+    // loads, and never frees it: it must outlive the key.
+    void *arena = nullptr;
+    uint64_t arenaBytes = 0;
+};
+
+// The device memory a key on the GPU needs (ProvingKey::requiredDeviceBytes), in bytes: the arena of
+// its proofs, which a buffer given to it (GpuKeyOptions::arena) must hold, and what it holds and
+// allocates beside it: the SRS's powers and the tables of the MSMs' shift, each AIR's fixed columns'
+// coefficients, bytecode and interpreter, and what a proof allocates besides (sppark's MSM).
+struct DeviceBytes {
+    uint64_t arena = 0;
+    uint64_t beside = 0;
 };
 
 // The GPU of a key on it (pilfflonk/docs/performance.md#what-runs-on-the-gpu): whether there is one,
@@ -70,6 +93,12 @@ public:
     // copy to the device is counted in `copies`, if not null, which must outlive it. Throws
     // std::invalid_argument if !available(), points is null or n is 0.
     Gpu(const G1PointAffine *points, uint64_t n, CopyVolume *copies = nullptr);
+
+    // A copy of `bytes` bytes from host `src` to device `dst`, which returns once src may change.
+    using Upload = std::function<void(void *dst, const void *src, uint64_t bytes)>;
+    // The same, the points copied by `upload` (which counts them, if it counts): a GpuKey's pinned
+    // Staging, in place of a copy from pageable memory.
+    Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload);
     ~Gpu();
     Gpu(const Gpu &) = delete;
     Gpu &operator=(const Gpu &) = delete;

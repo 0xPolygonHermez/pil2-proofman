@@ -1,4 +1,4 @@
-// The columns of the stages after the first on a key on the GPU (pilfflonk_hints_gpu.hpp): compiled
+// The hint columns and im pols of the stages on a key on the GPU (pilfflonk_hints_gpu.hpp): compiled
 // into the GPU library only (the Makefile's %_gpu.cpp rule), with g++. It calls the kernels of
 // pilfflonk_hints.cu and the PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu) through their C
 // linkage.
@@ -47,10 +47,12 @@ StageScratch stageScratch(const AirKey &air, uint64_t stage) {
             }
         }
     };
+    bool hinted = false;
     for (const StdHint &hint : air.stdHints()) {
         if (hint.stage != stage) {
             continue;
         }
+        hinted = true;
         for (const HintInput *in : {&hint.numerator, &hint.denominator}) {
             if (in->kind == HintInput::Kind::Column) {
                 readFixed({in->column});
@@ -75,9 +77,9 @@ StageScratch stageScratch(const AirKey &air, uint64_t stage) {
         return start;
     };
     s.fixedValues = take(fixed.size() * N * sizeof(FrElement));
-    s.denominator = take(N * sizeof(FrElement));
-    s.work = take(pilfflonk_gpu_prefix_scan_work_elements(N) * sizeof(FrElement));
-    s.zeroRow = take(sizeof(uint64_t));
+    s.denominator = take(hinted ? N * sizeof(FrElement) : 0);
+    s.work = take(hinted ? pilfflonk_gpu_prefix_scan_work_elements(N) * sizeof(FrElement) : 0);
+    s.zeroRow = take(hinted ? sizeof(uint64_t) : 0);
     s.bytes = end;
     s.fixed = std::move(fixed);
     return s;
@@ -85,7 +87,7 @@ StageScratch stageScratch(const AirKey &air, uint64_t stage) {
 
 uint64_t stageScratchBytes(const AirKey &air) {
     uint64_t bytes = 0;
-    for (uint64_t s = 2; s <= air.info().nStages; ++s) {
+    for (uint64_t s = 1; s <= air.info().nStages; ++s) {
         bytes = std::max(bytes, stageScratch(air, s).bytes);
     }
     return bytes;

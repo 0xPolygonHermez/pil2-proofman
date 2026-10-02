@@ -82,7 +82,15 @@ void transformOnDevice(void *data, uint64_t bits, bool inverse) {
 
 bool Gpu::available() { return cuda_available(); }
 
-Gpu::Gpu(const G1PointAffine *points, uint64_t n, CopyVolume *copies) {
+Gpu::Gpu(const G1PointAffine *points, uint64_t n, CopyVolume *copies)
+    : Gpu(points, n, [copies](void *dst, const void *src, uint64_t bytes) {
+          gpu_plonk_memcpy_h2d(dst, src, bytes);
+          if (copies != nullptr) {
+              copies->addToDevice(bytes);
+          }
+      }) {}
+
+Gpu::Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload) {
     if (!available()) {
         throw invalid("Gpu", "no GPU: CUDA sees no device of compute capability 7.0 or above (or no driver)");
     }
@@ -94,11 +102,8 @@ Gpu::Gpu(const G1PointAffine *points, uint64_t n, CopyVolume *copies) {
     }
     gpu_plonk_set_device(DEVICE);
     gpu_plonk_cuda_malloc(&devicePoints, n * sizeof(G1PointAffine));
-    gpu_plonk_memcpy_h2d(devicePoints, points, n * sizeof(G1PointAffine));
     nDevicePoints = n;
-    if (copies != nullptr) {
-        copies->addToDevice(n * sizeof(G1PointAffine));
-    }
+    upload(devicePoints, points, n * sizeof(G1PointAffine));
 }
 
 Gpu::~Gpu() { gpu_plonk_cuda_free(devicePoints); }

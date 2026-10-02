@@ -103,15 +103,15 @@ struct ConstraintCheck {
 //   nothing.
 //
 // On a key on the GPU (ProvingKey::load with Device::Gpu), the witness goes to the device as it is
-// given, and the INTTs, the blinding and the commitments of commitStage run there (InstanceGpu),
-// with the blinding factors drawn here, and so do the hints and the im pols of the stages after the
-// first, whose columns stay there (computeStageColumns), and commitQ whole: the extension of the
-// columns to each part, Q's code there, its interpolation and the check of its bound, its pieces,
-// their blinding with the factors drawn here, and their commitments; the pieces stay on the device
-// for the opening. The im pols of stage 1 run here, on the copies of the stage-1 columns the device
-// sends back, and the proof is the same bit for bit. Such a key holds the device memory of one proof
-// at a time: an instance holds it until it is destroyed, another thread's waits for it, and a second
-// instance of this thread is refused.
+// given, and every stage runs there (InstanceGpu): its hints and im pols, whose columns stay there
+// (computeStageColumns), and the INTTs, the blinding and the commitments of commitStage, with the
+// blinding factors drawn here; and so does commitQ whole: the extension of the columns to each part,
+// Q's code there, its interpolation and the check of its bound, its pieces, their blinding with the
+// factors drawn here, and their commitments. The committed polynomials and the pieces stay on the
+// device for the opening, and the proof is the same bit for bit. Nothing comes back but counts, and
+// what check, column, polynomial and qPiece ask for, copied on demand (decision D8). Such a key holds
+// the device memory of one proof at a time: an instance holds it until it is destroyed, another
+// thread's waits for it, and a second instance of this thread is refused.
 //
 // Elements are in Montgomery form. Refused arguments throw std::invalid_argument before anything
 // changes. Not safe to use from several threads at once; the ProvingKey, which must outlive it, may
@@ -168,9 +168,12 @@ public:
     // where it does not hold, the first maxRows of them with the value there. `challenges` are those
     // of stages 2 … nStages, by stage and then by stageId (none for an AIR of one stage), which the
     // columns of those stages are computed with (checkColumns). It changes nothing the commits depend
-    // on, and may run before, between or after them. Throws std::invalid_argument, before computing
-    // anything, if a constraint is of a stage the AIR does not have or the number of challenges is
-    // not theirs, and UnsatisfiedError if a hint's denominator is 0 on a row.
+    // on, and may run before, between or after them; on a key on the GPU, whose witness columns are
+    // on the device (decision D8), it copies them here the first time, and so only before commitQ,
+    // which reuses their memory there: the first check after it throws std::invalid_argument. Throws
+    // std::invalid_argument, before computing anything, if a constraint is of a stage the AIR does not
+    // have or the number of challenges is not theirs, and UnsatisfiedError if a hint's denominator is
+    // 0 on a row.
     std::vector<ConstraintCheck> check(uint64_t maxRows, const std::vector<FrElement> &challenges);
 
     // The columns of stages 1 … nStages on H that check checks, by stage then stagePos: stage 1's as
@@ -182,19 +185,21 @@ public:
     // The N values on H of the column of stage `stage` at stagePos, as the prover computed them: the
     // witness's, a hint's or an im pol's. For tests and diagnostics (the oracle checks the hints'
     // columns against them); not part of the proof. Throws std::invalid_argument unless the stage is
-    // committed and has such a column. On a key on the GPU, a column of a stage after the first is
-    // on the device, which computed it (decision D8): it is copied here the first time it is asked
-    // for, and so only before commitQ, which reuses its memory there; asked for the first time after,
-    // it throws std::invalid_argument.
+    // committed and has such a column. On a key on the GPU, the column is on the device, which
+    // computed it (decision D8): it is copied here the first time it is asked for, and so only before
+    // commitQ, which reuses its memory there; asked for the first time after, it throws
+    // std::invalid_argument.
     const FrElement *column(uint64_t stage, uint64_t stagePos) const;
 
     // p_j of f (a non-fixed entry of the layout) once its stage is committed; null before. Of Q's
-    // stage, the piece of Q it packs. Not const as rapidsnark's API takes it, but never changed.
+    // stage, the piece of Q it packs. Not const as rapidsnark's API takes it, but never changed. On a
+    // key on the GPU, which keeps the polynomials on the device, the first call for each copies it to
+    // the host (for tests and diagnostics; qPiece for Q's).
     Poly *polynomial(uint64_t f, uint64_t j) const;
 
-    // p_j of f as an Opening reads it: polynomial(f, j), but for a piece of Q on a key on the GPU, which
-    // is where the device keeps it (ShplonkComponent::elsewhere, of its bound's coefficients and its
-    // degree), not copied to the host.
+    // p_j of f as an Opening reads it: polynomial(f, j), but on a key on the GPU, where the device
+    // keeps it (ShplonkComponent::elsewhere, of its coefficients and its degree), not copied to the
+    // host.
     ShplonkComponent component(uint64_t f, uint64_t j) const;
 
     // Piece i of Q (the whole Q if it is not split) once Q is committed; null before. On a key on
@@ -239,6 +244,10 @@ private:
     // Stage 1's im pols into columns, and, for an AIR of several stages, a copy of columns with the
     // later stages computed with `challenges` (empty for one stage).
     CheckTrace checkTrace(const std::vector<FrElement> &challenges);
+    // On a key on the GPU, the witness columns into columns[1] from the device, once, before Q's
+    // phase reuses their memory there: throws std::invalid_argument, naming `function`, if it has
+    // begun. Nothing on the CPU, where they are there from the start.
+    void witnessColumnsToHost(const char *function);
     // The blinding factors of the f of stage `stage`, b of them for each column of each
     // (blindLength), drawn f by f in the order of the layout and column by column within an f, one
     // BlindingSource::fill per column, in that order.
@@ -271,22 +280,23 @@ private:
     std::vector<FrElement> proofValueValues;
     std::vector<FrElement> challengeValues; // challengesMap order
     // columns[s]: the columns of stage s (1 … nStages) on H, column p at [p·N, (p+1)·N); on a key on
-    // the GPU, stage 1's only, the later ones being on the device (computeStageColumns).
+    // the GPU, which has them on the device, none, but for check's copy of the witness columns of
+    // stage 1 (witnessColumnsToHost) and the im pols it computes from them.
     std::vector<std::vector<FrElement>> columns;
 #ifdef __USE_CUDA__
-    // Its device side, on a key on the GPU. Declared before the polynomials, which may be over the
-    // key's mirror (GpuKey::mirror), so that they go before it does.
+    // Its device side, on a key on the GPU.
     std::unique_ptr<InstanceGpu> device;
     // commitQ has begun: its phase of the arena holds the bytes of the stages' columns from then on.
     bool qBegun = false;
-    // The copies column() made of the device's columns of each stage s >= 2 (column p at p·N, once
+    // The copies column() made of the device's columns of each stage (column p at p·N, once
     // copied[s][p]).
     mutable std::vector<std::vector<FrElement>> deviceCopies;
     mutable std::vector<std::vector<bool>> copied;
 #endif
-    // By cmPolsMap index: the committed polynomial of a column, and its buffer.
-    std::vector<std::unique_ptr<FrElement[]>> coefBuffers;
-    std::vector<std::unique_ptr<Poly>> polys;
+    // By cmPolsMap index: the committed polynomial of a column, and its buffer; on a key on the GPU,
+    // the copies polynomial() made of the device's.
+    mutable std::vector<std::unique_ptr<FrElement[]>> coefBuffers;
+    mutable std::vector<std::unique_ptr<Poly>> polys;
     // By piece, once Q is committed; on a key on the GPU, once qPiece copies them, over qPieceCopy.
     mutable std::unique_ptr<FrElement[]> qPieceCopy;
     mutable std::vector<std::unique_ptr<Poly>> qPieces;
