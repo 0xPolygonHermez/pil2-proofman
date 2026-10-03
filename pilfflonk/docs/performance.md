@@ -707,7 +707,7 @@ transaction on anvil (with the intrinsic 21,000 and the calldata):
 From the repository root, with the release binaries
 (`cargo build --release -p pil2-stark-setup -p proofman-cli -p fibonacci-square --features
 proofman-starks-lib-c/cpu-only`), circom 2.2.3 on the `PATH` (`setup/circom`) and `PIL2C_EXEC`
-naming a pil2com that honours `prime` ([README.md#compile-pil](README.md#compile-pil)):
+naming a pil2com that has `--field` ([README.md#compile-pil](README.md#compile-pil)):
 
 ```sh
 B=<build dir>

@@ -3,7 +3,7 @@
 //! degree search follows `DegreePolicy::Search`.
 //!
 //! The pilouts are built in code; pilouts are not versioned. The `#[ignore]` tests compile real PIL
-//! with the compiler `PIL2C_EXEC` names, which must honour `prime` (the pinned one silently
+//! with the compiler `PIL2C_EXEC` names, which must have `--field` (the pinned one silently
 //! compiles over Goldilocks):
 //!
 //! ```text
@@ -354,7 +354,7 @@ fn repo_root() -> PathBuf {
 /// Compile `pil` (relative to the repository root) over BN254 with `PIL2C_EXEC`.
 fn compile_bn254(pil: &str) -> pb::PilOut {
     let compiler = std::env::var("PIL2C_EXEC")
-        .expect("PIL2C_EXEC must name a pil2com that honours `prime` (e.g. <pil2-compiler>/src/pil.js)");
+        .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
     let root = repo_root();
     let stem = Path::new(pil).file_stem().expect("a file name").to_string_lossy().into_owned();
     let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{stem}.bn254.pilout"));
@@ -363,15 +363,15 @@ fn compile_bn254(pil: &str) -> pb::PilOut {
         .arg(pil)
         .arg("-I")
         .arg("pil2-components/lib/std/pil")
-        .arg("-P")
-        .arg("pilfflonk/tests/fixtures/fibonacci/bn254.json")
+        .arg("--field")
+        .arg("bn254")
         .arg("-o")
         .arg(&out)
         .status()
         .expect("PIL2C_EXEC runs");
     assert!(status.success(), "pil2com failed on {pil}");
     let pilout = PilOutProxy::new(out.to_str().expect("a UTF-8 path")).expect("a pilout").pilout;
-    assert_eq!(pilout.base_field, big_be(R), "{pil} was not compiled over BN254: does PIL2C_EXEC honour `prime`?");
+    assert_eq!(pilout.base_field, big_be(R), "{pil} was not compiled over BN254: does PIL2C_EXEC have `--field`?");
     pilout
 }
 

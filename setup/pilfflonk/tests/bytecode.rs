@@ -913,7 +913,7 @@ fn repo_root() -> PathBuf {
 /// Compile `pil` (relative to the repository root) over BN254 with `PIL2C_EXEC`.
 fn compile_bn254(pil: &str) -> pb::PilOut {
     let compiler = std::env::var("PIL2C_EXEC")
-        .expect("PIL2C_EXEC must name a pil2com that honours `prime` (e.g. <pil2-compiler>/src/pil.js)");
+        .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
     // A path of each call's own: the tests run in parallel, and compile the same PIL.
     static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -922,14 +922,14 @@ fn compile_bn254(pil: &str) -> pb::PilOut {
     let status = Command::new(compiler)
         .current_dir(repo_root())
         .arg(pil)
-        .args(["-I", "pil2-components/lib/std/pil", "-P", "pilfflonk/tests/fixtures/fibonacci/bn254.json", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
         .arg(&out)
         .status()
         .expect("PIL2C_EXEC runs");
     assert!(status.success(), "pil2com failed on {pil}");
     let pilout = PilOutProxy::new(out.to_str().unwrap()).unwrap().pilout;
     fs::remove_file(&out).unwrap();
-    assert_eq!(pilout.base_field, big_be(R), "{pil} was not compiled over BN254: does PIL2C_EXEC honour `prime`?");
+    assert_eq!(pilout.base_field, big_be(R), "{pil} was not compiled over BN254: does PIL2C_EXEC have `--field`?");
     pilout
 }
 

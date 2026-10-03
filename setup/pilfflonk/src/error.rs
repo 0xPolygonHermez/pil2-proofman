@@ -13,11 +13,11 @@ use crate::grouping::GroupingError;
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
     // --- What the setup refuses in a pilout (pilfflonk/docs/README.md#what-the-setup-refuses) ---
-    /// The pilout is over Goldilocks: what pil2com writes when it ignores `prime`, as the pinned
+    /// The pilout is over Goldilocks: what pil2com writes when it ignores `--field`, as the pinned
     /// compiler does (pilfflonk/docs/README.md#compile-pil).
     #[error(
-        "the pilout is over Goldilocks, not BN254: compile it with `-P <config>` whose `prime` is r, and with a \
-         pil2com that honours `prime` (PIL2C_EXEC); the pinned one ignores it and compiles over Goldilocks"
+        "the pilout is over Goldilocks, not BN254: compile it with `--field bn254`, and with a pil2com that has \
+         `--field` (PIL2C_EXEC); the pinned one ignores it and compiles over Goldilocks"
     )]
     GoldilocksPilout,
 

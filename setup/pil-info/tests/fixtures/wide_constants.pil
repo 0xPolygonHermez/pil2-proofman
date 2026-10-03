@@ -1,6 +1,6 @@
 // Constants wider than 64 bits and negations, to check that the passes keep BN254 values intact
 // (tests/bn254.rs). Compile over BN254 with PIL2C_EXEC pointing at a pil2com that honours
-// `prime`, e.g. with -P pilfflonk/tests/fixtures/fibonacci/bn254.json.
+// `--field`, with --field bn254.
 
 airtemplate WideConstants(const int N = 2**4) {
     col fixed L1 = [1, 0...];

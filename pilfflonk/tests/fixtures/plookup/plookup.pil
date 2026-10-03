@@ -17,7 +17,7 @@
 //   generator's ten lookups are ten different rows of the table, and hold on both.
 //
 // plookup_sum.pil and plookup_prod.pil are the programs to compile, over BN254 as the Fibonacci
-// (tests/fixtures/fibonacci/fibonacci.pil), with its bn254.json and -I pil2-components/lib/std/pil.
+// (tests/fixtures/fibonacci/fibonacci.pil), with --field bn254 and -I pil2-components/lib/std/pil.
 // The witness generator is tests/data/plookup.rs.
 require "std_constants.pil"
 require "std_lookup.pil"

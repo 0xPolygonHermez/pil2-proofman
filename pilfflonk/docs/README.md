@@ -63,7 +63,7 @@ change to a proof, its publics or the witness is rejected.
 
 ```
 program.pil
-  │  proofman-setup compile-pil -P <config with "prime">     compile over BN254
+  │  proofman-setup compile-pil --field bn254               compile over BN254
   ▼
 program.pilout
   │  proofman-setup setup-pilfflonk --powers-of-tau <ptau>    setup
@@ -81,19 +81,17 @@ accepted or rejected
 ### compile-pil
 
 ```
-proofman-setup compile-pil -p <program.pil> -o <program.pilout> -I <std dir> -P <config.json>
+proofman-setup compile-pil -p <program.pil> -o <program.pilout> -I <std dir> --field bn254
 ```
 
-`-P` passes a pil2com configuration file through as it is. Its `prime` field, a decimal or
-hexadecimal **string**, selects the base field; without it the compiler uses Goldilocks. For pilfflonk
-it is BN254's `r`:
+`--field` is passed to pil2com, which knows two fields by name: `goldilocks`, its default, and
+`bn254`, the BN254 scalar field `r` that pilfflonk proves over (`bn128`, circom's name for it, is
+accepted too). Any other name is refused.
 
-```json
-{"prime": "21888242871839275222246405745257275088548364400416034343698204186575808495617"}
-```
-
-The compiler must honour `prime` (`PIL2C_EXEC` points at it): it is `../pil2-compiler` on its branch
+The compiler must have `--field` (`PIL2C_EXEC` points at it): it is `../pil2-compiler` on its branch
 `develop-0.14.0-pil2-fflonk`, which also encodes field values of 64 bits and more correctly. The
+pinned compiler ignores `--field` and compiles over Goldilocks; setup-pilfflonk then refuses the
+pilout, saying so. The
 pilout's `baseField` is then `r`. Its writers `fixed-to-file` and `extern_fixed_file` work with `u64`
 and refuse a field wider than 64 bits, so the fixed columns stay in the pilout, but for those it
 declares `#pragma fixed_external`: the compiler writes them without values, and the caller of the

@@ -15,7 +15,7 @@
 //   and so every one of `v`, is in [0, R): 2N − 1 steps of at most 1 do not wrap around the field.
 //
 // range_check_sum.pil and range_check_prod.pil are the programs to compile, over BN254 as the
-// Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its bn254.json and
+// Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with --field bn254 and
 // -I pil2-components/lib/std/pil. The witness generator is tests/data/range_check.rs.
 require "std_constants.pil"
 require "std_lookup.pil"

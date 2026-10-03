@@ -26,7 +26,7 @@
 //! The trace is the witness through the `.exec`, and the range checks' multiplicity counted, by
 //! [`naive_trace`], the naive reference of the wrap's witness library (`wrap-witness`).
 //!
-//! They need what the witness needs (`common`), `PIL2C_EXEC` (a pil2com that honours `prime`) and
+//! They need what the witness needs (`common`), `PIL2C_EXEC` (a pil2com that has `--field`) and
 //! the JS verifier (`PILFFLONK_JS`, or `pilfflonk/js`); without the first two they say why and
 //! pass. They hold a lock around the C++ core, as pilfflonk's tests do: run them with
 //! `--test-threads 2`.

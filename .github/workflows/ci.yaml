@@ -304,7 +304,7 @@ jobs:
     # that verify-snark refuses a changed evaluation, a changed public and another key's vkey.
     #
     # Prepared, but not run yet: the wrap's AIR is compiled over BN254, which needs a pil2com that
-    # honours `prime` (pilfflonk/docs/README.md#compile-pil): commit PIL2_COMPILER_COMMIT of
+    # has `--field` (pilfflonk/docs/README.md#compile-pil): commit PIL2_COMPILER_COMMIT of
     # pil2-compiler's branch develop-0.14.0-pil2-fflonk, which is not published. Once it is, set the
     # repository variable PILFFLONK_BN254_CI to "true" (Settings > Secrets and variables > Actions >
     # Variables) and the job runs, with the compiler at that commit.
@@ -317,7 +317,7 @@ jobs:
     if: ${{ vars.PILFFLONK_BN254_CI == 'true' }}
     runs-on: ubuntu-latest
     env:
-      PIL2_COMPILER_COMMIT: 930a88da8afbaaa38f45516a231131f8521aaa7a
+      PIL2_COMPILER_COMMIT: abe87b8b31398b5f3f9d21d516536b4474fab568
       CARGO_FEATURES: proofman-starks-lib-c/cpu-only
       WRAP: target/pilfflonk-wrap
       WRAP_PTAU_POWERS: 6815756
@@ -409,7 +409,7 @@ jobs:
       - name: Setup pilfflonk of the Fibonacci fixture
         run: |
           mkdir -p "$WRAP/other"
-          target/release/proofman-setup compile-pil --pil pilfflonk/tests/fixtures/fibonacci/fibonacci.pil -I pil2-components/lib/std/pil -P pilfflonk/tests/fixtures/fibonacci/bn254.json -o "$WRAP/other/fibonacci.pilout"
+          target/release/proofman-setup compile-pil --pil pilfflonk/tests/fixtures/fibonacci/fibonacci.pil -I pil2-components/lib/std/pil --field bn254 -o "$WRAP/other/fibonacci.pilout"
           target/release/proofman-setup setup-pilfflonk -a "$WRAP/other/fibonacci.pilout" -b "$WRAP/other" --powers-of-tau "$WRAP/wrap.ptau"
           echo "PROVE_SNARK_OTHER_VKEY=$(ls "$GITHUB_WORKSPACE/$WRAP"/other/provingKey/*/pilfflonk/pilfflonk.vkey.json)" >> "$GITHUB_ENV"
 

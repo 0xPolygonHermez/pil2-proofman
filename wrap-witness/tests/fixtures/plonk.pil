@@ -4,7 +4,7 @@
 // plonk2pil's are: the test computes them from the gates. There are no copy constraints: the
 // wrap's AIR is plonk2pil's BN254 family, with its permutation.
 //
-// Compile over BN254: -P pilfflonk/tests/fixtures/fibonacci/bn254.json. N is the circuit's 6 publics
+// Compile over BN254: --field bn254. N is the circuit's 6 publics
 // and 16 gates, to a power of two.
 
 const int N_PUBLICS = 6;

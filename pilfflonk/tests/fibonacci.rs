@@ -4,7 +4,7 @@
 //! `tests/fixtures/fibonacci/fibonacci.pil`.
 //!
 //! Pilouts are not versioned: the `#[ignore]` tests compile the fixture with the compiler
-//! `PIL2C_EXEC` names, which must honour `prime` (the pinned one silently compiles over
+//! `PIL2C_EXEC` names, which must have `--field` (the pinned one silently compiles over
 //! Goldilocks):
 //!
 //! ```text
@@ -128,7 +128,7 @@ fn pilout() -> &'static pb::PilOut {
 /// Compiles the fixture over BN254 with `PIL2C_EXEC`, as `setup/pil-info/tests/bn254.rs` does.
 fn compile_fibonacci() -> pb::PilOut {
     let compiler = std::env::var("PIL2C_EXEC")
-        .expect("PIL2C_EXEC must name a pil2com that honours `prime` (e.g. <pil2-compiler>/src/pil.js)");
+        .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").canonicalize().expect("the repository root");
     let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fibonacci.bn254.pilout");
     let status = Command::new(compiler)
@@ -136,8 +136,8 @@ fn compile_fibonacci() -> pb::PilOut {
         .arg("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil")
         .arg("-I")
         .arg("pil2-components/lib/std/pil")
-        .arg("-P")
-        .arg("pilfflonk/tests/fixtures/fibonacci/bn254.json")
+        .arg("--field")
+        .arg("bn254")
         .arg("-o")
         .arg(&out)
         .status()

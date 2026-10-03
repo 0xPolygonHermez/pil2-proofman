@@ -6,7 +6,7 @@
 // row. The std's default MAX_CONSTRAINT_DEGREE (3).
 //
 // The program to compile, over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil),
-// with its bn254.json and -I pil2-components/lib/std/pil. The witness generator is
+// with --field bn254 and -I pil2-components/lib/std/pil. The witness generator is
 // tests/data/mixed_bus.rs.
 require "std_constants.pil"
 require "../connection/connection.pil"

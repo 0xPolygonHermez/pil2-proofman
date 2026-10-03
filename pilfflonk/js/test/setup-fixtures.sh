@@ -6,7 +6,7 @@
 #
 # 1. `cargo test --test js_fixtures tau_one_ptau` writes <dir>/tau_one.ptau, τ = 1;
 # 2. `proofman-setup compile-pil` compiles pilfflonk/tests/fixtures/fibonacci over BN254 with the
-#    compiler PIL2C_EXEC names, which must honour `prime` (the pinned one silently compiles over
+#    compiler PIL2C_EXEC names, which must have `--field` (the pinned one silently compiles over
 #    Goldilocks), and `proofman-setup setup-pilfflonk` writes <dir>/build/provingKey, grouped as it
 #    does by default;
 # 3. `cargo test --test js_fixtures q_at_xi` writes <dir>/q_at_xi.json from the Rust oracle;
@@ -18,7 +18,7 @@
 # the C++ SHPLONK fixtures' tests (fixtures.sh) run too.
 set -eu
 
-: "${PIL2C_EXEC:?must name a pil2com that honours prime, e.g. ../pil2-compiler/src/pil.js}"
+: "${PIL2C_EXEC:?must name a pil2com that has --field, e.g. ../pil2-compiler/src/pil.js}"
 export PIL2C_EXEC
 
 js=$(cd "$(dirname "$0")/.." && pwd)
@@ -43,7 +43,7 @@ setup() {
 
 js_fixtures tau_one_ptau
 setup compile-pil -p pilfflonk/tests/fixtures/fibonacci/fibonacci.pil -I ./pil2-components/lib/std/pil \
-    -P pilfflonk/tests/fixtures/fibonacci/bn254.json -o "$dir/fibonacci.pilout"
+    --field bn254 -o "$dir/fibonacci.pilout"
 setup setup-pilfflonk -a "$dir/fibonacci.pilout" -b "$dir/build" --powers-of-tau "$dir/tau_one.ptau"
 js_fixtures q_at_xi
 

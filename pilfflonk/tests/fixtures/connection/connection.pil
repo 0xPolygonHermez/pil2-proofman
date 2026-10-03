@@ -17,7 +17,7 @@
 //   and b rearranged the same way (b[j] = a[i], c[j] = b[i]), and the connection holds.
 //
 // connection_sum.pil and connection_prod.pil are the programs to compile, over BN254 as the
-// Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its bn254.json and
+// Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with --field bn254 and
 // -I pil2-components/lib/std/pil. The witness generator is tests/data/connection.rs.
 require "std_constants.pil"
 require "std_connection.pil"

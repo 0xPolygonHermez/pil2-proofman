@@ -13,8 +13,8 @@
 //   `plookup_a`. The fixed ones are unique already.
 // - PIL1's Global.L1 is the std's __L1__, and the Fibonacci's L1 is its own, as in PIL1.
 //
-// all_sum.pil and all_prod.pil are the programs to compile, over BN254 as the Fibonacci, with its
-// bn254.json and -I pil2-components/lib/std/pil. The witness generator is tests/data/all.rs.
+// all_sum.pil and all_prod.pil are the programs to compile, over BN254 as the Fibonacci, with
+// --field bn254 and -I pil2-components/lib/std/pil. The witness generator is tests/data/all.rs.
 require "std_constants.pil"
 require "../connection/connection.pil"
 require "../permutation/permutation.pil"

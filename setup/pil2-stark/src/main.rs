@@ -344,11 +344,10 @@ struct CompilePilArgs {
     #[arg(short = 'u', long = "fixed-dir")]
     fixed_dir: Option<String>,
 
-    /// `-P` pil2com configuration file (JSON), passed through verbatim. Set
-    /// `prime` (a decimal or hex string) to pick the base field; Goldilocks
-    /// when absent
-    #[arg(short = 'P', long = "config")]
-    config: Option<String>,
+    /// The prime field to compile over, passed to pil2com's `--field`: `goldilocks` (default) or
+    /// `bn254`
+    #[arg(long = "field")]
+    field: Option<String>,
 
     /// Pass `-O fixed-to-file` to write fixed columns to disk
     #[arg(long = "fixed-to-file")]
@@ -626,7 +625,7 @@ fn main() -> anyhow::Result<()> {
                 output_path: args.output_path,
                 include_paths: args.include_paths,
                 fixed_dir: args.fixed_dir,
-                config: args.config,
+                field: args.field,
                 fixed_to_file: args.fixed_to_file,
                 no_proto_fixed_data: args.no_proto_fixed_data,
             };

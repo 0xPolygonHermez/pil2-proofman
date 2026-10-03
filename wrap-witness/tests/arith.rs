@@ -19,7 +19,7 @@
 //!
 //! `the_witness_proves_on_an_air_of_the_gates` proves the witness, loaded with `-w`'s
 //! `load_witness_library`, on a PIL2 AIR of the gates (`tests/fixtures/plonk.pil`, no copy
-//! constraints), and needs `PIL2C_EXEC`, a compiler that honours `prime`, and the JS verifier's
+//! constraints), and needs `PIL2C_EXEC`, a compiler that has `--field`, and the JS verifier's
 //! packages in `pilfflonk/js` (pilfflonk/docs/README.md#tests):
 //!
 //! ```text
@@ -50,7 +50,7 @@ use proofman_pilfflonk::{
     check, compute_witness, js_verifier, load_witness_library, prove, AirShape, CheckOptions, FrBytes, JsonFile,
     PilfflonkError, PilfflonkGlobalInfo, ProveOptions, ProvingKey, Publics, Witness, WitnessShape,
 };
-use common::{build_final, fixture, missing_prerequisite, repo_root, run, snarkjs_witness};
+use common::{build_final, fixture, missing_prerequisite, run, snarkjs_witness};
 use witness_libraries::built_library;
 
 /// The circuit's publics: its 4 outputs and its 2 public inputs, wires 1 to 6.
@@ -392,7 +392,7 @@ fn zkins_the_circuit_cannot_take_are_refused() {
 fn the_witness_proves_on_an_air_of_the_gates() {
     let circuit = circuit().expect("node and the snarkjs of setup/pil2-stark/node_modules");
     let compiler = std::env::var("PIL2C_EXEC")
-        .expect("PIL2C_EXEC must name a pil2com that honours `prime` (e.g. <pil2-compiler>/src/pil.js)");
+        .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
     let dir = circuit.file("prove");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
@@ -401,8 +401,8 @@ fn the_witness_proves_on_an_air_of_the_gates() {
     run(
         Command::new(compiler)
             .arg(manifest.join("tests/fixtures/plonk.pil"))
-            .arg("-P")
-            .arg(repo_root().join("pilfflonk/tests/fixtures/fibonacci/bn254.json"))
+            .arg("--field")
+            .arg("bn254")
             .arg("-o")
             .arg(&pilout),
         "pil2com",

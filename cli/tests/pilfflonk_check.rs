@@ -19,7 +19,7 @@
 //! not there, and the flags that do not go together.
 //!
 //! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
-//! which must honour `prime`, and is `#[ignore]` without it. Those of the domains build their
+//! which must have `--field`, and is `#[ignore]` without it. Those of the domains build their
 //! pilouts in code, and always run:
 //!
 //! ```text
@@ -157,11 +157,11 @@ fn compile(program: Program, pilout: &Path) {
             return;
         }
     };
-    let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that honours `prime`");
+    let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg(pil)
-        .args(["-I", "pil2-components/lib/std/pil", "-P", "pilfflonk/tests/fixtures/fibonacci/bn254.json", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
         .arg(pilout)
         .output()
         .expect("PIL2C_EXEC runs");

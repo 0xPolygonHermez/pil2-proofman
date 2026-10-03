@@ -7,7 +7,7 @@
 //!   in a `snark_proof.bin`: it is read back as it was written, its JSON views are pilfflonk's, and
 //!   `verify-snark` accepts it, and refuses it with a byte of the proof changed, with a public
 //!   changed, cut short, and against the vkey of a setup with another `τ`. It compiles the fixture
-//!   with the compiler `PIL2C_EXEC` names, which must honour `prime`, and needs Node.js.
+//!   with the compiler `PIL2C_EXEC` names, which must have `--field`, and needs Node.js.
 //! - `prove_snark_wraps_a_vadcop_final_proof_in_pilfflonk`: the wrap of a real vadcop_final proof,
 //!   `prove-snark` on the `provingKeySnark/` of `setup-snark --final-snark pilfflonk`, and
 //!   `verify-snark` on its proof, with the same refusals; the publics the Solidity verifier hashes
@@ -88,11 +88,11 @@ fn verify_snark(proof: &Path, vkey: &Path) -> Output {
 
 /// Compiles the Fibonacci fixture over BN254 to `pilout` with `PIL2C_EXEC`.
 fn compile_fibonacci(pilout: &Path) {
-    let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that honours `prime`");
+    let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil")
-        .args(["-I", "pil2-components/lib/std/pil", "-P", "pilfflonk/tests/fixtures/fibonacci/bn254.json", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
         .arg(pilout)
         .output()
         .expect("PIL2C_EXEC runs");

@@ -13,7 +13,7 @@
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo run --bin proofman-setup -- compile-pil \
 //!     -p pilfflonk/tests/fixtures/all/all_sum.pil -I ./pil2-components/lib/std/pil \
-//!     -P pilfflonk/tests/fixtures/fibonacci/bn254.json -o <out>/all.pilout
+//!     --field bn254 -o <out>/all.pilout
 //! cargo run --bin proofman-cli pil-helpers --pilout <out>/all.pilout \
 //!     --path pilfflonk/tests/fixtures/all/rs/src -o
 //! ```

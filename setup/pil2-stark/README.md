@@ -108,8 +108,8 @@ Requires `vadcop_final/vadcop_final.{starkinfo,verifierinfo,verkey}.json` to
 already exist.
 
 With `pilfflonk`, the final circuit is laid out as a PIL2 AIR over BN254 by
-plonk2pil, compiled with `-P` and a `prime` of BN254's `r` (`PIL2C_EXEC` must
-name a pil2-compiler that honours `prime`, see
+plonk2pil, compiled with `--field bn254` (`PIL2C_EXEC` must name a
+pil2-compiler that has `--field`, see
 [pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)), and set
 up with `setup-pilfflonk`'s steps at the wrap family's knobs (plonk2pil's
 `wrap::MAX_CONSTRAINT_DEGREE` and `wrap::EXTRA_MULS`): `provingKeySnark/final/`
@@ -245,7 +245,7 @@ that resolve relative to the repo or the executable's parent directories.
 | `GOLDILOCKS_SRC_DIR` | `pil2-stark/src/goldilocks/src` | Goldilocks C++ sources copied into the witness build |
 | `RECURSIVE_JOBS` | `1` | Parallelism for recursive1 air pipelines |
 | `SETUP_JOBS` | `1` | Parallelism for non-recursive AIR setup |
-| `PIL2C_EXEC` | `pil2com` from `node_modules/.bin`, or on `PATH` | The pil2-compiler's `pil.js`. Compiling over BN254 (`compile-pil -P`, `setup-snark --final-snark pilfflonk`) needs one that honours `prime` ([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)) |
+| `PIL2C_EXEC` | `pil2com` from `node_modules/.bin`, or on `PATH` | The pil2-compiler's `pil.js`. Compiling over BN254 (`compile-pil --field bn254`, `setup-snark --final-snark pilfflonk`) needs one that has `--field` ([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)) |
 | `REBUILD_JOBS` | `1` | Parallelism for `rebuild-witness-libs` circom compiles |
 
 Path resolution checks (in order): the env var, the path relative to CWD, then

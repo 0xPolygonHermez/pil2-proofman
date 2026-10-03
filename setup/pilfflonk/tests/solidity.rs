@@ -33,7 +33,7 @@
 //!
 //! The tools are pinned (pilfflonk/docs/verifier.md#tools): Foundry v1.8.3 and solc 0.8.37, at the
 //! paths `PILFFLONK_FORGE` and `PILFFLONK_SOLC` name. The tests are `#[ignore]`d without them;
-//! those of the compiled fixtures also need `PIL2C_EXEC`, a compiler that honours `prime`. All need
+//! those of the compiled fixtures also need `PIL2C_EXEC`, a compiler that has `--field`. All need
 //! Node.js:
 //!
 //! ```text
@@ -161,11 +161,11 @@ impl Program {
                 return;
             }
         };
-        let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that honours `prime`");
+        let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
         let out = Command::new(compiler)
             .current_dir(repo_root())
             .arg(pil)
-            .args(["-I", "pil2-components/lib/std/pil", "-P", "pilfflonk/tests/fixtures/fibonacci/bn254.json", "-o"])
+            .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
             .arg(pilout)
             .output()
             .expect("PIL2C_EXEC runs");

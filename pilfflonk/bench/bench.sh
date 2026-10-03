@@ -15,7 +15,7 @@
 #       --bin proofman-cli --bin proofman-setup --example pilfflonk_bench_inputs
 #
 # Environment:
-#   PIL2C_EXEC      pil2com (`run`), a compiler that honours `prime`
+#   PIL2C_EXEC      pil2com (`run`), a compiler that has `--field`
 #                   (pilfflonk/docs/README.md#compile-pil)
 #   BENCH_DIR       where everything goes (default target/tmp/pilfflonk-bench); the results are
 #                   $BENCH_DIR/{compile,setup,prove}.tsv
@@ -47,7 +47,6 @@ BENCH_REPEATS="${BENCH_REPEATS:-2}"
 BENCH_KEEP="${BENCH_KEEP:-0}"
 BENCH_NODE_HEAP_MB="${BENCH_NODE_HEAP_MB:-250000}"
 THREADS="${OMP_NUM_THREADS:-$(nproc)}"
-BN254_R="21888242871839275222246405745257275088548364400416034343698204186575808495617"
 
 CLI="$ROOT/target/release/proofman-cli"
 SETUP="$ROOT/target/release/proofman-setup"
@@ -219,18 +218,17 @@ run_size() {
     mkdir -p "$dir"
     echo "== $program, N = 2^$bits, $THREADS threads"
 
-    # The pilout, with N from the compiler: pil2com's -P config carries the prime and the define.
+    # The pilout, with N from the compiler: pil2com compiles over BN254 (--field) with the define.
     # Its name is its file's stem, the program's; a later run of the size takes it as it is.
     local pilout="$BENCH_DIR/pilouts/$bits/$program.pilout" load status
     if [ ! -f "$pilout" ]; then
         # Written apart, and moved into place once whole.
         rm -rf "$pilout.tmp"
         mkdir -p "$pilout.tmp"
-        printf '{"prime": "%s", "defines": {"BENCH_BITS": %s}}\n' "$BN254_R" "$bits" >"$dir/config.json"
         load="$(loads)"
         status=0
         timed "$dir/compile.time" "$dir/compile.log" node --max-old-space-size="$BENCH_NODE_HEAP_MB" "$PIL2C_EXEC" \
-            "$ROOT/pilfflonk/bench/$program.pil" -I "$ROOT/pil2-components/lib/std/pil" -P "$dir/config.json" \
+            "$ROOT/pilfflonk/bench/$program.pil" -I "$ROOT/pil2-components/lib/std/pil" --field bn254 -D "BENCH_BITS=$bits" \
             -o "$pilout.tmp/$program.pilout" || status=$?
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$program" "$bits" "$load" "$status" "$(wall_of "$dir/compile.time")" \
             "$(rss_of "$dir/compile.time")" "$(stat -c %s "$pilout.tmp/$program.pilout" 2>/dev/null || echo -)" \

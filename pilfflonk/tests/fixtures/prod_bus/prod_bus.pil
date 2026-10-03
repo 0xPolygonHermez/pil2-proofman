@@ -11,8 +11,8 @@
 //   so there is no im_airval.
 // - `first` is a[0], so that a public ties the witness.
 //
-// Compile over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its
-// bn254.json and -I pil2-components/lib/std/pil. The witness generator is tests/data/prod_bus.rs.
+// Compile over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with
+// --field bn254 and -I pil2-components/lib/std/pil. The witness generator is tests/data/prod_bus.rs.
 require "std_constants.pil"
 require "std_permutation.pil"
 

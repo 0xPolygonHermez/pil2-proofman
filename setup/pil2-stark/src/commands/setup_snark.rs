@@ -221,7 +221,7 @@ mod tests {
     /// is the `--publics-info`. `SETUP_SNARK_POWERS_OF_TAU` is the `--powers-of-tau`: if there is no
     /// file there, the test writes a ptau of [`TEST_PTAU_POWERS`] powers there, with the fixed τ of
     /// the tests (`pilfflonk_setup::test_ptau`), never to be used for a real key. The PIL of the AIR
-    /// is compiled over BN254 with `PIL2C_EXEC`, which must honour `prime`
+    /// is compiled over BN254 with `PIL2C_EXEC`, which must have `--field`
     /// (pilfflonk/docs/README.md#compile-pil). With fibonacci-square and the Hermez ptau of 2^24 on
     /// 32 threads, that takes some 4 minutes and 3.5 GB, most of it the build of the final
     /// circuit's witness library; the test ptau holds 0.47 GB on disk:

@@ -12,7 +12,7 @@
 //   (pilfflonk/docs/protocol.md#layout).
 //
 // permutation_sum.pil and permutation_prod.pil are the programs to compile, over BN254 as the
-// Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its bn254.json and
+// Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with --field bn254 and
 // -I pil2-components/lib/std/pil. The witness generator is tests/data/permutation.rs.
 require "std_constants.pil"
 require "std_permutation.pil"

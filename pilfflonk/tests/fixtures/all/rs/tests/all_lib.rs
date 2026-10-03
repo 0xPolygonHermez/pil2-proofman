@@ -9,7 +9,7 @@
 //! `src/pil_helpers`, which the library is built from, to look at their layout.
 //!
 //! Pilouts are not versioned: the `#[ignore]` tests compile the fixture with the compiler `PIL2C_EXEC`
-//! names, which must honour `prime`:
+//! names, which must have `--field`:
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p pilfflonk-all -p proofman-starks-lib-c \
@@ -154,12 +154,12 @@ fn the_library_refuses_what_it_cannot_compute() {
 /// as `src/lib.rs` says: the pilout's name, `all`, is the stem of its file, whatever the bus.
 fn compile(dir: &TestDir, bus: &str) -> PathBuf {
     let compiler = std::env::var("PIL2C_EXEC")
-        .expect("PIL2C_EXEC must name a pil2com that honours `prime` (e.g. <pil2-compiler>/src/pil.js)");
+        .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
     let pilout = dir.file("all.pilout");
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg(format!("pilfflonk/tests/fixtures/all/all_{bus}.pil"))
-        .args(["-I", "pil2-components/lib/std/pil", "-P", "pilfflonk/tests/fixtures/fibonacci/bn254.json", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
         .arg(&pilout)
         .output()
         .expect("PIL2C_EXEC runs");

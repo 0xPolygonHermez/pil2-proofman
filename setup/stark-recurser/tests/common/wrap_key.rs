@@ -11,7 +11,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use pil2_stark_recurser::plonk2pil::field::modulus;
 use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::wrap::EXTRA_MULS;
 use pil2_stark_recurser::plonk2pil::PlonkResult;
 use pilfflonk_setup::command::{DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
@@ -69,20 +68,19 @@ pub fn set_up_key(repo_root: &Path, dir: &Path, res: &PlonkResult<Bn254>, ptau: 
     setup.build_dir.join(PROVING_KEY_DIR)
 }
 
-/// Compiles `pil` in `dir` with `PIL2C_EXEC` over BN254 (`-P`), with plonk2pil's PIL and the std
+/// Compiles `pil` in `dir` with `PIL2C_EXEC` over BN254 (`--field bn254`), with plonk2pil's PIL and the std
 /// on the include path, as the pilfflonk fixtures are compiled: the pilout.
 pub fn compile_pil(repo_root: &Path, dir: &Path, pil: &str) -> PathBuf {
-    let (source, config, pilout) = (dir.join("wrap.pil"), dir.join("bn254.json"), dir.join("wrap.pilout"));
+    let (source, pilout) = (dir.join("wrap.pil"), dir.join("wrap.pilout"));
     fs::write(&source, pil).unwrap();
-    fs::write(&config, format!("{{\"prime\": \"{}\"}}", modulus::<Bn254>())).unwrap();
     let includes = ["setup/stark-recurser/plonk2pil/pil", "pil2-components/lib/std/pil"];
     let includes: Vec<String> = includes.iter().map(|p| repo_root.join(p).display().to_string()).collect();
-    let out = Command::new(std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC names a pil2com that honours `prime`"))
+    let out = Command::new(std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC names a pil2com that has `--field`"))
         .arg(&source)
         .arg("-I")
         .arg(includes.join(","))
-        .arg("-P")
-        .arg(&config)
+        .arg("--field")
+        .arg("bn254")
         .arg("-o")
         .arg(&pilout)
         .output()

@@ -4,7 +4,7 @@
 //! fixture. Its steps are tested in `setup/pilfflonk/tests/`.
 //!
 //! Pilouts are not versioned: the `#[ignore]` test compiles the fixture with `compile-pil` and
-//! the compiler `PIL2C_EXEC` names, which must honour `prime` (the pinned one silently compiles
+//! the compiler `PIL2C_EXEC` names, which must have `--field` (the pinned one silently compiles
 //! over Goldilocks):
 //!
 //! ```text
@@ -314,7 +314,7 @@ fn it_writes_the_proving_key_of_a_pilout() {
         assert!(stderr.contains(expected), "{stderr}");
     }
 
-    // A Goldilocks pilout, what the pinned compiler writes for `-P bn254.json`
+    // A Goldilocks pilout, what the pinned compiler writes for `--field bn254`
     // (pilfflonk/docs/README.md#compile-pil).
     let mut goldilocks = pilout();
     goldilocks.base_field = 0xFFFF_FFFF_0000_0001u64.to_be_bytes().to_vec();
@@ -385,14 +385,14 @@ fn it_writes_the_solidity_verifier_of_the_vkey() {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
-    std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that honours `prime`");
+    std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
     let dir = TestDir::new("fibonacci");
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
     let pilout_path = dir.file("fibonacci.pilout");
     let out = Command::new(env!("CARGO_BIN_EXE_proofman-setup"))
         .current_dir(&root)
         .args(["compile-pil", "-p", "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil"])
-        .args(["-I", "pil2-components/lib/std/pil", "-P", "pilfflonk/tests/fixtures/fibonacci/bn254.json"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254"])
         .args(["-o", path(&pilout_path)])
         .output()
         .unwrap();

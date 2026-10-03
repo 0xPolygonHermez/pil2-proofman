@@ -24,7 +24,7 @@ use pilfflonk_setup::solidity::VERIFIER_SOL_FILE;
 use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
 use proofman_common::hash_family::BN254_WRAP_FAMILY;
 use proofman_fields::Bn254;
-use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, Vkey, BN254_R};
+use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, Vkey};
 use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
 
 /// The protocol that proves the final circuit, the verifier of the recursivef. It decides how the
@@ -693,7 +693,6 @@ fn gen_pilfflonk_key(
 
     let files = WrapAirFiles {
         pil: pil_dir.join("final.pil"),
-        pil_config: build_path.join("final.bn254.json"),
         pilout: build_path.join("final.pilout"),
         exec: final_dir.join(WRAP_EXEC_FILE),
     };
@@ -709,8 +708,6 @@ fn gen_pilfflonk_key(
 struct WrapAirFiles {
     /// plonk2pil's PIL of the AIR.
     pil: PathBuf,
-    /// The pil2com configuration that compiles it over BN254, `{"prime": r}`.
-    pil_config: PathBuf,
     /// The PIL's pilout. Its stem is the pilout's name, which names the key's directory in
     /// `provingKey/`.
     pilout: PathBuf,
@@ -750,8 +747,8 @@ impl WrapKey {
 ///    PoseidonBN254 in layout L1, with range checks), and its PIL and exec are written. The PIL has
 ///    the std group its buses' terms to the family's degree, [`wrap::MAX_CONSTRAINT_DEGREE`],
 ///    plonk2pil's by default;
-/// 2. pil2com compiles the PIL over BN254, with `includes` (plonk2pil's PIL and the std): `-P` with
-///    a `prime` of r, which only a pil2com that honours `prime` does (`PIL2C_EXEC`,
+/// 2. pil2com compiles the PIL over BN254, with `includes` (plonk2pil's PIL and the std):
+///    `--field bn254`, which only a pil2com that has `--field` takes (`PIL2C_EXEC`,
 ///    pilfflonk/docs/README.md#compile-pil). One that ignores it compiles over Goldilocks, and the
 ///    setup refuses the pilout, saying so;
 /// 3. setup-pilfflonk sets the pilout up with plonk2pil's fixed columns, which the pilout declares
@@ -780,13 +777,12 @@ fn set_up_wrap_air(
     drop(exec);
 
     tracing::info!("Compiling {} over BN254...", files.pil.display());
-    fs::write(&files.pil_config, serde_json::json!({ "prime": BN254_R }).to_string())?;
     run_compile_pil(&CompilePilOptions {
         pil_path: files.pil.to_string_lossy().into_owned(),
         output_path: files.pilout.to_string_lossy().into_owned(),
         include_paths: includes.to_vec(),
         fixed_dir: None,
-        config: Some(files.pil_config.to_string_lossy().into_owned()),
+        field: Some("bn254".to_string()),
         fixed_to_file: false,
         no_proto_fixed_data: false,
     })?;
@@ -1195,24 +1191,20 @@ pub(crate) mod tests {
     /// at ξ alone of an AIR with no range check go into three `f` of 8 (with range checks, 26 go
     /// into two of 13, `13·N + 12`).
     ///
-    /// Needs `PIL2C_EXEC`, a pil2com that honours `prime` (pilfflonk/docs/README.md#compile-pil);
+    /// Needs `PIL2C_EXEC`, a pil2com that has `--field` (pilfflonk/docs/README.md#compile-pil);
     /// without it the test says so and passes.
     #[test]
     fn the_wrap_air_refuses_a_ptau_too_small_and_is_set_up_with_enough() {
         if std::env::var_os("PIL2C_EXEC").is_none() {
-            eprintln!("skipped: PIL2C_EXEC does not name a pil2com that honours `prime`");
+            eprintln!("skipped: PIL2C_EXEC does not name a pil2com that has `--field`");
             return;
         }
         let dir = std::env::temp_dir().join(format!("snark_setup_wrap_air_{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let r1cs = small_wrap_r1cs(&dir);
-        let files = WrapAirFiles {
-            pil: dir.join("wrap.pil"),
-            pil_config: dir.join("bn254.json"),
-            pilout: dir.join("wrap.pilout"),
-            exec: dir.join("wrap.exec"),
-        };
+        let files =
+            WrapAirFiles { pil: dir.join("wrap.pil"), pilout: dir.join("wrap.pilout"), exec: dir.join("wrap.exec") };
         let root = repo_root();
         let includes = ["setup/stark-recurser/plonk2pil/pil", "pil2-components/lib/std/pil"]
             .map(|include| root.join(include).to_string_lossy().into_owned());

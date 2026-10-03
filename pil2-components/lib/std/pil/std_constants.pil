@@ -144,7 +144,7 @@ function get_field_code(const int prime): int {
     }
 }
 
-// The field the program is compiled over, which pil2com takes from the `prime` of its -P config (Goldilocks by default)
+// The field the program is compiled over, which pil2com takes from its --field option (Goldilocks by default)
 const int ACTIVE_FIELD = get_field_code(PRIME);
 
 int GEN[256];

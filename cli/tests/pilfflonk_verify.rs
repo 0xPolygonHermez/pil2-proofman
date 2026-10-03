@@ -7,7 +7,7 @@
 //! refuses, which the JS verifier must refuse too.
 //!
 //! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
-//! which must honour `prime`, and is `#[ignore]` without it. It needs Node.js:
+//! which must have `--field`, and is `#[ignore]` without it. It needs Node.js:
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p proofman-cli --features proofman-starks-lib-c/cpu-only \
@@ -79,11 +79,11 @@ fn output(out: &Output) -> String {
 
 /// Compiles the Fibonacci fixture over BN254 to `pilout` with `PIL2C_EXEC`.
 fn compile_fibonacci(pilout: &Path) {
-    let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that honours `prime`");
+    let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil")
-        .args(["-I", "pil2-components/lib/std/pil", "-P", "pilfflonk/tests/fixtures/fibonacci/bn254.json", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
         .arg(pilout)
         .output()
         .expect("PIL2C_EXEC runs");

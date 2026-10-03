@@ -7,7 +7,7 @@
 //! STARK one `examples/fibonacci-square`'s, a dev-dependency built for the same reason.
 //!
 //! Pilouts are not versioned: the `#[ignore]` tests compile the fixture with the compiler `PIL2C_EXEC`
-//! names, which must honour `prime`. The proof's needs Node.js, for the JS verifier:
+//! names, which must have `--field`. The proof's needs Node.js, for the JS verifier:
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p pilfflonk-fibonacci -p proofman-starks-lib-c \
@@ -173,12 +173,12 @@ fn the_loaders_do_not_take_each_others_libraries() {
 /// says: the pilout's name, `Fibonacci`, is the stem of its file.
 fn compile(dir: &TestDir) -> PathBuf {
     let compiler = std::env::var("PIL2C_EXEC")
-        .expect("PIL2C_EXEC must name a pil2com that honours `prime` (e.g. <pil2-compiler>/src/pil.js)");
+        .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
     let pilout = dir.file("fibonacci.pilout");
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil")
-        .args(["-I", "pil2-components/lib/std/pil", "-P", "pilfflonk/tests/fixtures/fibonacci/bn254.json", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
         .arg(&pilout)
         .output()
         .expect("PIL2C_EXEC runs");

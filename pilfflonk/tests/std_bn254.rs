@@ -3,8 +3,8 @@
 //! `tests/fixtures/std_bn254/connection.pil` compiled over BN254 and over Goldilocks, whose pilouts
 //! must carry the roots of unity and the coset generator of that field.
 //!
-//! The `#[ignore]` tests compile the fixture with the compiler `PIL2C_EXEC` names, which must honour
-//! `prime` (the pinned one silently compiles over Goldilocks):
+//! The `#[ignore]` tests compile the fixture with the compiler `PIL2C_EXEC` names, which must have
+//! `--field` (the pinned one silently compiles over Goldilocks):
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p proofman-pilfflonk --features proofman-common/cpu-only \
@@ -21,7 +21,7 @@ use pil2_pilout::pilout::{self as pb, operand, SymbolType};
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use proofman_fields::{Bn254, Field, PrimeField};
 use proofman_pilfflonk::global_info::MAX_NBITS;
-use proofman_pilfflonk::{oracle, BN254_Q, BN254_R};
+use proofman_pilfflonk::{oracle, BN254_R};
 
 /// The standard 2^28-th root of unity of BN254, `5^((r − 1)/2^28)`.
 const BN254_ROOT_28: &str = "19103219067921713944291392827692070036145651957329286315305642004821462161904";
@@ -262,27 +262,23 @@ fn bn254_k_generates_cosets_disjoint_from_each_other_and_from_h() {
 
 const FIXTURE: &str = "pilfflonk/tests/fixtures/std_bn254/connection.pil";
 
-/// Runs `PIL2C_EXEC` on the fixture from the repository root, with `-P <config>` if given.
-fn run_pil2com(out: &Path, config: Option<&Path>) -> Output {
+/// Runs `PIL2C_EXEC` on the fixture from the repository root, with `--field <field>` if given.
+fn run_pil2com(out: &Path, field: Option<&str>) -> Output {
     let compiler = std::env::var("PIL2C_EXEC")
-        .expect("PIL2C_EXEC must name a pil2com that honours `prime` (e.g. <pil2-compiler>/src/pil.js)");
+        .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
     let mut cmd = Command::new(compiler);
     cmd.current_dir(repo_root()).arg(FIXTURE).arg("-I").arg("pil2-components/lib/std/pil").arg("-o").arg(out);
-    if let Some(config) = config {
-        cmd.arg("-P").arg(config);
+    if let Some(field) = field {
+        cmd.arg("--field").arg(field);
     }
     cmd.output().expect("PIL2C_EXEC runs")
 }
 
-fn compile(name: &str, config: Option<&Path>) -> pb::PilOut {
+fn compile(name: &str, field: Option<&str>) -> pb::PilOut {
     let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("std_bn254.{name}.pilout"));
-    let output = run_pil2com(&out, config);
+    let output = run_pil2com(&out, field);
     assert!(output.status.success(), "pil2com failed:\n{}", String::from_utf8_lossy(&output.stdout));
     PilOutProxy::new(out.to_str().expect("a UTF-8 path")).expect("a pilout").pilout
-}
-
-fn bn254_config() -> PathBuf {
-    repo_root().join("pilfflonk/tests/fixtures/fibonacci/bn254.json")
 }
 
 /// The values of the fixed column `name` of air `air_id` (one of `index`, if it is an array).
@@ -366,7 +362,7 @@ fn check_connections(pilout: &pb::PilOut, f: &FieldConstants) {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn over_bn254_the_connections_carry_bn254s_constants() {
-    let pilout = compile("bn254", Some(&bn254_config()));
+    let pilout = compile("bn254", Some("bn254"));
     let f = FieldConstants::bn254();
     check_connections(&pilout, &f);
 
@@ -385,15 +381,14 @@ fn over_goldilocks_the_connections_still_carry_goldilocks_constants() {
 
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
-fn over_another_field_the_std_is_an_error() {
-    // BN254's base field, a likely mistake for its scalar field.
-    let config = Path::new(env!("CARGO_TARGET_TMPDIR")).join("std_bn254.fq.json");
-    fs::write(&config, format!("{{\"prime\": \"{BN254_Q}\"}}")).unwrap();
+fn over_another_field_nothing_is_compiled() {
+    // The compiler knows only the fields the std has constants for, and refuses any other name
+    // before it compiles: BN254's base field, a likely mistake for its scalar field, is not one.
     let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("std_bn254.fq.pilout");
     let _ = fs::remove_file(&out);
-    let output = run_pil2com(&out, Some(&config));
+    let output = run_pil2com(&out, Some("bn254fq"));
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(&format!("Unknown field of order {BN254_Q}")), "{stdout}");
+    assert!(stdout.contains("unknown field \"bn254fq\""), "{stdout}");
     assert!(!out.exists());
 }

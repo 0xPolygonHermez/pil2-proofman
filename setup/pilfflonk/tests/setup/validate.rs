@@ -40,7 +40,7 @@ fn its_air_is_found_in_any_airgroup() {
 
 // --- The base field ------------------------------------------------------------------------
 
-/// The pilout pil2com writes for `-P bn254.json` when it ignores `prime`, as the pinned compiler
+/// The pilout pil2com writes for `--field bn254` when it ignores `--field`, as the pinned compiler
 /// does (pilfflonk/docs/README.md#compile-pil): over Goldilocks. The error says how to compile it.
 #[test]
 fn a_goldilocks_pilout_is_refused() {
@@ -49,7 +49,10 @@ fn a_goldilocks_pilout_is_refused() {
     let err = refusal(&pilout);
     assert!(matches!(err, SetupError::GoldilocksPilout), "{err}");
     let message = err.to_string();
-    assert!(message.contains("Goldilocks") && message.contains("PIL2C_EXEC") && message.contains("prime"), "{message}");
+    assert!(
+        message.contains("Goldilocks") && message.contains("PIL2C_EXEC") && message.contains("--field bn254"),
+        "{message}"
+    );
 }
 
 #[test]

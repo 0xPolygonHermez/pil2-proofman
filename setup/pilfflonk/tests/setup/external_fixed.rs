@@ -23,7 +23,7 @@
 //! 4. proves the fixture's witness with the external key and a fixed blinding seed: the JS verifier
 //!    accepts the proof, which is the one the inline key gives.
 //!
-//! It needs `PIL2C_EXEC`, a compiler that honours `prime`, and Node.js, and is `#[ignore]` without
+//! It needs `PIL2C_EXEC`, a compiler that has `--field`, and Node.js, and is `#[ignore]` without
 //! them (pilfflonk/docs/README.md#tests):
 //!
 //! ```text
@@ -98,11 +98,11 @@ fn repo_root() -> PathBuf {
 
 /// Compiles `pil` over BN254 to `pilout` with `PIL2C_EXEC`, and reads it back.
 fn compile(pil: &str, pilout: &Path) -> pb::PilOut {
-    let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that honours `prime`");
+    let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg(pil)
-        .args(["-I", "pil2-components/lib/std/pil", "-P", "pilfflonk/tests/fixtures/fibonacci/bn254.json", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
         .arg(pilout)
         .output()
         .expect("PIL2C_EXEC runs");
