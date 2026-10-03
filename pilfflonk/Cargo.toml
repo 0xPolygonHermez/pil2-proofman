@@ -1,0 +1,38 @@
+[package]
+name = "proofman-pilfflonk"
+description = "Prover orchestration for the pilfflonk backend: its file types, instances, stage loop and proof output"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+[features]
+# The Rust test oracle, `proofman_pilfflonk::oracle` (pilfflonk/docs/README.md#tests). For tests only:
+# nothing but this crate's tests turns it on, through the dev-dependency on itself below.
+oracle = ["dep:pil2-pilout"]
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+num-bigint = { workspace = true }
+tracing = { workspace = true }
+proofman-starks-lib-c = { workspace = true }
+# `Bn254`, the type a witness is computed in (pilfflonk/docs/README.md#witness), and its
+# conversions to `FrBytes`.
+proofman-fields = { workspace = true }
+# Loads a witness library (`witness_library`), as the STARK loads its own.
+libloading = { workspace = true }
+pil2-pilout = { workspace = true, optional = true }
+
+[dev-dependencies]
+# Only to check that the STARK loader refuses a pilfflonk globalInfo
+# (pilfflonk/docs/formats.md#provingkey).
+proofman-common = { workspace = true }
+# Turns the oracle on for the tests of this crate.
+proofman-pilfflonk = { path = ".", features = ["oracle"] }
+# The tests read compiled pilouts and build others in code.
+pil2-pilout = { workspace = true }

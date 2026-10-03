@@ -1,0 +1,58 @@
+// A synthetic AIR for the im pols and the signed offsets (pilfflonk/docs/README.md#fixtures):
+// columns read at the rows −1, 0, 1 and 2 around each row, and constraints of degree up to 6, so
+// that the setup must choose im pols, and more of them the lower --max-constraint-degree is. One
+// air, one instance, stage 1 only, no std, no hints. N = 2^5.
+//
+// - `a` is read at {−1, 0, 1, 2}, `b` at {0, 2}, `c` and `e` at {0, 1}, `d` at {0} and `g` at {2}
+//   only; the fixed `K` at {−1} only, and `P` at {2} only. The default grouping moves every
+//   committed column to {−1, 0, 1, 2}, and `K` and `P` to {−1, 0, 2}; with --no-packing, `K`, `P`
+//   and `g` are opened at no row but theirs.
+// - `WIN` is 1 on the rows whose window [i − 1, i + 2] does not wrap around, 1 to N − 3; the
+//   constraints it does not guard hold cyclically, and read rows across the wrap: `d` at row 0
+//   reads `a` at row N − 1, and at row N − 2 `b` at row 0.
+// - The largest degree is 6 (`WIN·(b − 'a·a·a'·a'2·e)`), then 4 (`(1 − LLAST)·(c' − c·b·e − d)`).
+//   The degree search (nImPols + qDeg, the lowest degree on ties;
+//   pilfflonk/docs/protocol.md#degree-search) chooses degree 4 with one im pol ('a·a·a'·a'2) and
+//   qDeg 3 by default; with --max-constraint-degree 3, three im pols and qDeg 2; with 2, eight im
+//   pols ('a·a, 'a·a·a' and 'a·a·a'·a'2 among them, each inside the next) and qDeg 1.
+//
+// Compile over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its
+// bn254.json. The witness generator is tests/data/signed.rs.
+
+public in1;
+public in2;
+public out;
+
+airtemplate Signed(const int N = 2**5) {
+    col fixed L1 = [1, 0...];
+    col fixed LLAST = [0:(N-1), 1];
+    col fixed WIN = [0, 1:(N-3), 0:2];
+    col fixed K = [1..N];
+    col fixed P = [5..(N + 4)];
+
+    col witness a, b, c, d, e, g;
+
+    // a[i + 2] = a[i + 1] + a[i]·a[i − 1] + K[i − 1], on the rows of WIN.
+    WIN * (a'2 - a' - a * 'a - 'K) === 0;
+    // b is the product of a's window and e, on the rows of WIN: degree 6.
+    WIN * (b - 'a * a * a' * a'2 * e) === 0;
+    // c' = c·b·e + d, but at the last row: degree 4.
+    (1 - LLAST) * (c' - c * b * e - d) === 0;
+    // Cyclic: d at row 0 reads a at row N − 1, and at rows N − 2 and N − 1, b at rows 0 and 1.
+    d - 'a * b'2 * e' === 0;
+    // P is read at row i + 2 only, as K (above) at row i − 1 only.
+    e - a * a - P'2 === 0;
+    // Cyclic: g[i] = a[i − 1], g read at row i + 2 only.
+    g'2 - a' === 0;
+
+    L1 * (a - in1) === 0;
+    L1 * (a' - in2) === 0;
+    L1 * (a'2 - a' - a) === 0;
+    // c at row 0 is a at row N − 1, across the wrap.
+    L1 * (c - 'a) === 0;
+    LLAST * (c - out) === 0;
+}
+
+airgroup Signed {
+    Signed(N: 2**5);
+}

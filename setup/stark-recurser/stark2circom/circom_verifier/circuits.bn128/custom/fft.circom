@@ -2,7 +2,8 @@ pragma circom 2.1.0;
 pragma custom_templates;
 
 include "gl.circom";
-include "../bitifyT.circom";
+include "lessthangl.circom";
+include "rangecheck.circom";
 
 function roots(i) {
     var roots[33] = [
@@ -126,7 +127,7 @@ template FFT(nBits, inv) {
 
             k[i][e]*p + out[i][e] === sum[i][e];
 
-            _ <== Num2BitsT(64+nBits+1)(k[i][e]);
+            RangeCheck(64+nBits+1)(k[i][e]);
         }
     }
 }

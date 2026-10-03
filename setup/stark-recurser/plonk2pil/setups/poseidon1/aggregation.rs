@@ -5,10 +5,13 @@
 
 use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
 use crate::plonk2pil::r1cs::types::{GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
-use crate::plonk2pil::utils::{bind_public_signals, build_fixed_pols, build_s_polynomials, log2, mulp, public_rows};
+use crate::plonk2pil::utils::{
+    bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, log2, public_rows,
+};
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use super::{gen_pil_str, PilTemplateParams};
 use proofman_common::hash_family::GateRole;
+use proofman_fields::{Field, Goldilocks};
 use std::collections::HashMap;
 
 const COMMITTED_POLS: usize = 48;
@@ -25,7 +28,7 @@ fn rand_hex() -> String {
 
 type PR = (usize, usize, usize); // (row, n_used, max_used)
 
-pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
+pub fn aggregation_compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOptions) -> SetupResult<Goldilocks> {
     let (plonk_constraints, plonk_additions, copy_merge) = r1cs2plonk_merged(r1cs, options.merge_copies);
     tracing::info!("Number of plonk constraints: {}", plonk_constraints.len());
 
@@ -138,7 +141,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     tracing::info!("NUsed: {}, nBits: {}, N: {}", n_used, n_bits, n);
 
     let mut s_map: Vec<Vec<u32>> = (0..COMMITTED_POLS).map(|_| vec![0u32; n]).collect();
-    let mut cv: Vec<Vec<u64>> = (0..10).map(|_| vec![0u64; n]).collect();
+    let mut cv: Vec<Vec<Goldilocks>> = (0..10).map(|_| vec![Goldilocks::ZERO; n]).collect();
 
     let mut five_extra: Vec<usize> = Vec::new(); // PR', FINAL' rows (q0 gates 0,1 + q1 gates 2,3,4)
     let mut three_extra: Vec<usize> = Vec::new(); // PR row (q0 gates 0,1 + q1 gate 2)
@@ -190,7 +193,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
     let process_poseidon1 = |s: &[u64],
                              is_compression: bool,
                              s_map: &mut [Vec<u32>],
-                             cv: &mut [Vec<u64>],
+                             cv: &mut [Vec<Goldilocks>],
                              five_extra: &mut Vec<usize>,
                              three_extra: &mut Vec<usize>,
                              r: usize| {
@@ -218,7 +221,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
 
         for off in 0..POSEIDON_ROWS {
             for item in cv.iter_mut() {
-                item[r + off] = 0;
+                item[r + off] = Goldilocks::ZERO;
             }
         }
 
@@ -283,7 +286,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
                 item[r] = cgu.signals[i] as u32;
             }
             for item in cv.iter_mut() {
-                item[r] = 0;
+                item[r] = Goldilocks::ZERO;
             }
             cmul_extra.push(r); // a[18..23] free → plonk gates 6,7
             cmul_row = r as i64;
@@ -301,7 +304,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             item[r] = cgu.signals[i] as u32;
         }
         for item in cv.iter_mut() {
-            item[r] = 0;
+            item[r] = Goldilocks::ZERO;
         }
         ev_extra.push(r);
         r += 1;
@@ -314,29 +317,11 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             item[r] = cgu.signals[i] as u32;
         }
         let p = cgi.fft4_parameters.get(&cgu.id).expect("FFT4 params");
-        let (fft_type, scale, first_w, inc_w) = (p[3], p[2], p[0], p[1]);
-        let fw2 = mulp(first_w, first_w);
-        if fft_type == 4 {
-            cv[0][r] = scale;
-            cv[1][r] = mulp(scale, fw2);
-            cv[2][r] = mulp(scale, first_w);
-            cv[3][r] = mulp(mulp(scale, first_w), fw2);
-            cv[4][r] = mulp(mulp(scale, first_w), inc_w);
-            cv[5][r] = mulp(mulp(mulp(scale, first_w), fw2), inc_w);
-            for item in cv.iter_mut().skip(6) {
-                item[r] = 0;
-            }
-        } else if fft_type == 2 {
-            for item in cv.iter_mut().take(6) {
-                item[r] = 0;
-            }
-            cv[6][r] = scale;
-            cv[7][r] = mulp(scale, first_w);
-            cv[8][r] = mulp(mulp(scale, first_w), inc_w);
-            cv[9][r] = 0;
-        } else {
-            panic!("Invalid FFT4 type: {}", fft_type);
+        // constFFT[0..9] on C[0..9]; C[9] is not one of them.
+        for (col, v) in cv.iter_mut().zip(fft4_constants(p)) {
+            col[r] = v;
         }
+        cv[9][r] = Goldilocks::ZERO;
         r += 1;
     }
 
@@ -354,8 +339,8 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             item[r + 1] = cgu.signals[24 + i] as u32; // key+res → a[0..5] @ row r+1
         }
         for item in cv.iter_mut() {
-            item[r] = 0;
-            item[r + 1] = 0;
+            item[r] = Goldilocks::ZERO;
+            item[r + 1] = Goldilocks::ZERO;
         }
         r += TREESEL_ROWS;
     }
@@ -369,7 +354,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
             item[r] = cgu.signals[i] as u32;
         }
         for item in cv.iter_mut() {
-            item[r] = 0;
+            item[r] = Goldilocks::ZERO;
         }
         r += 1;
     }
@@ -391,9 +376,9 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         if let Some(pr) = partial.get_mut(&k) {
             let n = pr.1;
             let row = pr.0;
-            s_map[n * 3][row] = c[0] as u32;
-            s_map[n * 3 + 1][row] = c[1] as u32;
-            s_map[n * 3 + 2][row] = c[2] as u32;
+            s_map[n * 3][row] = c.wires[0];
+            s_map[n * 3 + 1][row] = c.wires[1];
+            s_map[n * 3 + 2][row] = c.wires[2];
             pr.1 += 1;
             if pr.1 == pr.2 {
                 partial.remove(&k);
@@ -406,15 +391,15 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         } else if !half.is_empty() {
             let mut pr = half.remove(0);
             let row = pr.0;
-            cv[5][row] = c[3];
-            cv[6][row] = c[4];
-            cv[7][row] = c[5];
-            cv[8][row] = c[6];
-            cv[9][row] = c[7];
+            cv[5][row] = c.coeffs[0];
+            cv[6][row] = c.coeffs[1];
+            cv[7][row] = c.coeffs[2];
+            cv[8][row] = c.coeffs[3];
+            cv[9][row] = c.coeffs[4];
             for i in pr.1..pr.2 {
-                s_map[3 * i][row] = c[0] as u32;
-                s_map[3 * i + 1][row] = c[1] as u32;
-                s_map[3 * i + 2][row] = c[2] as u32;
+                s_map[3 * i][row] = c.wires[0];
+                s_map[3 * i + 1][row] = c.wires[1];
+                s_map[3 * i + 2][row] = c.wires[2];
             }
             // Opener took gate pr.1; only keep the slot open if a later gate can coalesce.
             pr.1 += 1;
@@ -429,79 +414,79 @@ pub fn aggregation_compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupR
         } else if !five_extra.is_empty() {
             // PR' / FINAL': q0 gates 0,1 (dup) now; q1 gates 2,3,4 queued.
             let row = five_extra.remove(0);
-            cv[0][row] = c[3];
-            cv[1][row] = c[4];
-            cv[2][row] = c[5];
-            cv[3][row] = c[6];
-            cv[4][row] = c[7];
-            s_map[0][row] = c[0] as u32;
-            s_map[1][row] = c[1] as u32;
-            s_map[2][row] = c[2] as u32;
-            s_map[3][row] = c[0] as u32;
-            s_map[4][row] = c[1] as u32;
-            s_map[5][row] = c[2] as u32;
+            cv[0][row] = c.coeffs[0];
+            cv[1][row] = c.coeffs[1];
+            cv[2][row] = c.coeffs[2];
+            cv[3][row] = c.coeffs[3];
+            cv[4][row] = c.coeffs[4];
+            s_map[0][row] = c.wires[0];
+            s_map[1][row] = c.wires[1];
+            s_map[2][row] = c.wires[2];
+            s_map[3][row] = c.wires[0];
+            s_map[4][row] = c.wires[1];
+            s_map[5][row] = c.wires[2];
             partial.insert(k.clone(), (row, 1, 2));
             half.push((row, 2, 5));
             plonk_in_custom += 1;
         } else if !three_extra.is_empty() {
             // PR: q0 gates 0,1 (dup) now; q1 gate 2 queued.
             let row = three_extra.remove(0);
-            cv[0][row] = c[3];
-            cv[1][row] = c[4];
-            cv[2][row] = c[5];
-            cv[3][row] = c[6];
-            cv[4][row] = c[7];
-            s_map[0][row] = c[0] as u32;
-            s_map[1][row] = c[1] as u32;
-            s_map[2][row] = c[2] as u32;
-            s_map[3][row] = c[0] as u32;
-            s_map[4][row] = c[1] as u32;
-            s_map[5][row] = c[2] as u32;
+            cv[0][row] = c.coeffs[0];
+            cv[1][row] = c.coeffs[1];
+            cv[2][row] = c.coeffs[2];
+            cv[3][row] = c.coeffs[3];
+            cv[4][row] = c.coeffs[4];
+            s_map[0][row] = c.wires[0];
+            s_map[1][row] = c.wires[1];
+            s_map[2][row] = c.wires[2];
+            s_map[3][row] = c.wires[0];
+            s_map[4][row] = c.wires[1];
+            s_map[5][row] = c.wires[2];
             partial.insert(k.clone(), (row, 1, 2));
             half.push((row, 2, 3));
             plonk_in_custom += 1;
         } else if !cmul_extra.is_empty() {
             // cmul row: q1 gates 6,7 (no q0). Dup across gates 6,7 (cells 18..23).
             let row = cmul_extra.remove(0);
-            cv[5][row] = c[3];
-            cv[6][row] = c[4];
-            cv[7][row] = c[5];
-            cv[8][row] = c[6];
-            cv[9][row] = c[7];
+            cv[5][row] = c.coeffs[0];
+            cv[6][row] = c.coeffs[1];
+            cv[7][row] = c.coeffs[2];
+            cv[8][row] = c.coeffs[3];
+            cv[9][row] = c.coeffs[4];
             for i in 6..8 {
-                s_map[3 * i][row] = c[0] as u32;
-                s_map[3 * i + 1][row] = c[1] as u32;
-                s_map[3 * i + 2][row] = c[2] as u32;
+                s_map[3 * i][row] = c.wires[0];
+                s_map[3 * i + 1][row] = c.wires[1];
+                s_map[3 * i + 2][row] = c.wires[2];
             }
             partial.insert(k, (row, 7, 8));
             plonk_in_custom += 1;
         } else if !ev_extra.is_empty() {
             // evpol row: q1 gate 7 only (single gate, no partial to track).
             let row = ev_extra.remove(0);
-            cv[5][row] = c[3];
-            cv[6][row] = c[4];
-            cv[7][row] = c[5];
-            cv[8][row] = c[6];
-            cv[9][row] = c[7];
-            s_map[21][row] = c[0] as u32;
-            s_map[22][row] = c[1] as u32;
-            s_map[23][row] = c[2] as u32;
+            cv[5][row] = c.coeffs[0];
+            cv[6][row] = c.coeffs[1];
+            cv[7][row] = c.coeffs[2];
+            cv[8][row] = c.coeffs[3];
+            cv[9][row] = c.coeffs[4];
+            s_map[21][row] = c.wires[0];
+            s_map[22][row] = c.wires[1];
+            s_map[23][row] = c.wires[2];
             plonk_in_custom += 1;
         } else {
             // Pure-plonk row: q0 gates 0,1 (dup) now; q1 gates 2..7 queued.
             pure_plonk_rows.insert(r);
             plonk_in_pure += 1;
-            cv[0][r] = c[3];
-            cv[1][r] = c[4];
-            cv[2][r] = c[5];
-            cv[3][r] = c[6];
-            cv[4][r] = c[7];
-            s_map[0][r] = c[0] as u32;
-            s_map[1][r] = c[1] as u32;
-            s_map[2][r] = c[2] as u32;
-            s_map[3][r] = c[0] as u32;
-            s_map[4][r] = c[1] as u32;
-            s_map[5][r] = c[2] as u32;
+            cv[0][r] = c.coeffs[0];
+            cv[1][r] = c.coeffs[1];
+            cv[2][r] = c.coeffs[2];
+            cv[3][r] = c.coeffs[3];
+            cv[4][r] = c.coeffs[4];
+            s_map[0][r] = c.wires[0];
+            s_map[1][r] = c.wires[1];
+            s_map[2][r] = c.wires[2];
+            s_map[3][r] = c.wires[0];
+            s_map[4][r] = c.wires[1];
+            s_map[5][r] = c.wires[2];
             partial.insert(k.clone(), (r, 1, 2));
             half.push((r, 2, 8));
             r += 1;

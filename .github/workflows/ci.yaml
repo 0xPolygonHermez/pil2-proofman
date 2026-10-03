@@ -135,6 +135,68 @@ jobs:
         run: cargo install cargo-audit
       - name: cargo audit
         run: cargo audit
+  golden-setup:
+    # The non-recursive STARK setup of the programs in test-fibo and test-std must
+    # stay byte-identical to setup/golden/manifest.sha256 (see setup/golden/README.md),
+    # and plonk2pil's outputs for the test-recursive circuits to
+    # setup/golden/plonk2pil/manifest.sha256 (see setup/golden/plonk2pil/README.md).
+    name: Golden setup
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "18"
+
+      - name: Install Node dependencies (pil2-compiler)
+        run: npm install
+        working-directory: setup/pil2-stark
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
+          sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
+
+      - name: Check setup outputs against the golden manifest
+        run: ./setup/golden/check.sh
+
+      - name: Upload setup outputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-setup
+          path: target/golden-setup
+          retention-days: 7
+
+      # Independent of the check above, so it runs whether that one passed or not.
+      # circom is the committed setup/circom/circom; Node.js is not needed.
+      - name: Check plonk2pil outputs against the golden manifest
+        if: ${{ !cancelled() }}
+        run: ./setup/golden/plonk2pil/check.sh
+
+      # The text outputs only: the execs and fixed columns run to hundreds of MB.
+      - name: Upload plonk2pil outputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-plonk2pil
+          path: |
+            target/golden-plonk2pil/manifest.sha256
+            target/golden-plonk2pil/logs
+            target/golden-plonk2pil/golden/*/air.pil
+            target/golden-plonk2pil/golden/*/result.json
+          retention-days: 7
   test-fibo:
     name: Test Fibonacci Square (with aggregation)
     runs-on: ubuntu-latest
@@ -234,6 +296,129 @@ jobs:
       # - name: Generate proof Fibonacci Square distributed
       #   run: | 
       #     mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=80 target/debug/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
+
+  test-pilfflonk-wrap:
+    # The final SNARK wrap with pilfflonk, end to end on fibonacci-square: a vadcop_final proof,
+    # setup-snark --final-snark pilfflonk, and cli/tests/snark_pilfflonk.rs, whose tests run
+    # prove-snark and verify-snark on that key and proof, and on the Fibonacci fixture, and check
+    # that verify-snark refuses a changed evaluation, a changed public and another key's vkey.
+    #
+    # Prepared, but not run yet: the wrap's AIR is compiled over BN254, which needs a pil2com that
+    # honours `prime` (pilfflonk/docs/README.md#compile-pil): commit PIL2_COMPILER_COMMIT of
+    # pil2-compiler's branch develop-0.14.0-pil2-fflonk, which is not published. Once it is, set the
+    # repository variable PILFFLONK_BN254_CI to "true" (Settings > Secrets and variables > Actions >
+    # Variables) and the job runs, with the compiler at that commit.
+    #
+    # The ptau is a test one, written here (pilfflonk/bench/inputs.rs: its τ is public, good for a
+    # test and nothing else), with the fewest powers setup-snark accepts for this key: 2^19 rows,
+    # 13·2^19 + 12 powers (it refuses fewer, and says how many it needs). 436 MB, where the Hermez
+    # ptau of 2^24 is 19 GB.
+    name: Test pilfflonk wrap (fibonacci-square)
+    if: ${{ vars.PILFFLONK_BN254_CI == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      PIL2_COMPILER_COMMIT: 930a88da8afbaaa38f45516a231131f8521aaa7a
+      CARGO_FEATURES: proofman-starks-lib-c/cpu-only
+      WRAP: target/pilfflonk-wrap
+      WRAP_PTAU_POWERS: 6815756
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check out pil2-compiler (BN254)
+        uses: actions/checkout@v4
+        with:
+          repository: 0xPolygonHermez/pil2-compiler
+          ref: ${{ env.PIL2_COMPILER_COMMIT }}
+          path: pil2-compiler-bn254
+
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "18"
+
+      - name: Install Node dependencies (pil2-compiler, snarkjs)
+        run: npm install
+        working-directory: setup/pil2-stark
+
+      - name: Install Node dependencies (pil2-compiler BN254)
+        run: npm ci
+        working-directory: pil2-compiler-bn254
+
+      - name: Install Node dependencies (pilfflonk JS verifier)
+        run: npm install
+        working-directory: pilfflonk/js
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
+          sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
+
+      # circom is the committed setup/circom/circom (2.2.3), which compiles the final circuit's
+      # custom templates. PIL2C_EXEC names the pil2com every compile-pil and setup runs
+      # (resolve_pil2com_exec), Goldilocks ones included: the BN254 compiles of the wrap's AIR and of
+      # the Fibonacci fixture need it.
+      - name: Set up circom and the BN254 compiler
+        run: |
+          echo "$GITHUB_WORKSPACE/setup/circom" >> "$GITHUB_PATH"
+          echo "PIL2C_EXEC=$GITHUB_WORKSPACE/pil2-compiler-bn254/src/pil.js" >> "$GITHUB_ENV"
+
+      - name: Cargo build (release)
+        run: |
+          cargo build --release -p pil2-stark-setup -p proofman-cli -p fibonacci-square --features "$CARGO_FEATURES"
+          cargo build --release -p proofman-cli --example pilfflonk_bench_inputs --features "$CARGO_FEATURES"
+
+      - name: Setup Fibonacci Square
+        run: |
+          mkdir -p "$WRAP/build"
+          target/release/proofman-setup compile-pil --pil ./examples/fibonacci-square/pil/build.pil -I ./pil2-components/lib/std/pil -o "$WRAP/build.pilout" -u "$WRAP/build/fixed" --fixed-to-file
+          target/release/proofman-setup setup -a "$WRAP/build.pilout" -b "$WRAP/build" -r -u "$WRAP/build/fixed" --hash Poseidon2
+
+      - name: Generate the vadcop_final proof of Fibonacci Square
+        run: |
+          target/release/proofman-cli gen-custom-commits-fixed --witness-lib target/release/libfibonacci_square.so --proving-key "$WRAP/build/provingKey/" --custom-commits rom="$WRAP/build/rom.bin"
+          target/release/proofman-cli prove --witness-lib target/release/libfibonacci_square.so --proving-key "$WRAP/build/provingKey/" --public-inputs examples/fibonacci-square/src/inputs.json --output-dir "$WRAP/proofs" --custom-commits rom="$WRAP/build/rom.bin" -a
+          target/release/proofman-cli verify-stark --proof "$WRAP/proofs/vadcop_final_proof.bin" --verkey "$WRAP/build/provingKey/build/vadcop_final/vadcop_final.verkey.bin"
+
+      # About 3.5 CPU-hours (3 min 23 s on 64 threads): kept in the cache while its generator and
+      # its size do not change.
+      - name: Cache the test ptau
+        id: wrap-ptau
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.WRAP }}/wrap.ptau
+          key: pilfflonk-wrap-ptau-${{ env.WRAP_PTAU_POWERS }}-${{ hashFiles('setup/pilfflonk/src/test_ptau.rs', 'pilfflonk/bench/inputs.rs') }}
+
+      - name: Write the test ptau
+        if: steps.wrap-ptau.outputs.cache-hit != 'true'
+        run: target/release/examples/pilfflonk_bench_inputs ptau "$WRAP_PTAU_POWERS" "$WRAP/wrap.ptau"
+
+      - name: Setup SNARK with pilfflonk
+        run: |
+          target/release/proofman-setup setup-snark -b "$WRAP/build" --final-snark pilfflonk --powers-of-tau "$WRAP/wrap.ptau" --publics-info examples/fibonacci-square/src/publics_info.json
+
+      # Another key's vkey, for verify-snark to refuse the wrap's proof with: the Fibonacci fixture's.
+      - name: Setup pilfflonk of the Fibonacci fixture
+        run: |
+          mkdir -p "$WRAP/other"
+          target/release/proofman-setup compile-pil --pil pilfflonk/tests/fixtures/fibonacci/fibonacci.pil -I pil2-components/lib/std/pil -P pilfflonk/tests/fixtures/fibonacci/bn254.json -o "$WRAP/other/fibonacci.pilout"
+          target/release/proofman-setup setup-pilfflonk -a "$WRAP/other/fibonacci.pilout" -b "$WRAP/other" --powers-of-tau "$WRAP/wrap.ptau"
+          echo "PROVE_SNARK_OTHER_VKEY=$(ls "$GITHUB_WORKSPACE/$WRAP"/other/provingKey/*/pilfflonk/pilfflonk.vkey.json)" >> "$GITHUB_ENV"
+
+      - name: Prove and verify the wrap with pilfflonk
+        env:
+          PROVE_SNARK_PROVING_KEY: ${{ github.workspace }}/${{ env.WRAP }}/build/provingKeySnark
+          PROVE_SNARK_PROOF: ${{ github.workspace }}/${{ env.WRAP }}/proofs/vadcop_final_proof.bin
+        run: |
+          cargo test --release -p proofman-cli --features "$CARGO_FEATURES" --test snark_pilfflonk -- --ignored --test-threads 1
 
   test-recursive:
     name: Test Recursive

@@ -4,9 +4,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::io::bin_file_writer::BinFileWriter;
+use crate::types::GOLDILOCKS_MODULUS;
 
 /// Reorder plonk fixed polynomials to match the pilout `fixed_cols` order.
 ///
@@ -196,7 +197,8 @@ pub fn write_fixed_pols_bin(
     }
 
     writer.end_write_section()?;
-    writer.close()
+    writer.close()?;
+    Ok(())
 }
 
 /// Write the `.const` file from the pilout and plonk fixed polynomial values.
@@ -245,7 +247,8 @@ pub fn write_const_file(path: &str, air: &pil2_pilout::pilout::Air, plonk_pol_va
                 if row >= n_rows {
                     break;
                 }
-                flat_buffer[row * n_constants + col_idx] = bytes_to_u64_be(val_bytes);
+                flat_buffer[row * n_constants + col_idx] =
+                    goldilocks_from_be(val_bytes).with_context(|| format!("fixed column {col_idx}, row {row}"))?;
             }
         }
     }
@@ -294,14 +297,20 @@ fn read_string(reader: &mut impl Read) -> io::Result<String> {
     String::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-fn bytes_to_u64_be(bytes: &[u8]) -> u64 {
-    // Pilout stores fixed col values big-endian (JS bint2buf uses writeBigUInt64BE).
-    // buf2bint reads them back with readBigUInt64BE.
-    let mut val = 0u64;
-    for &b in bytes.iter().take(8) {
-        val = (val << 8) | (b as u64);
+/// A fixed value of the pilout as the canonical Goldilocks element the `.const` file stores.
+///
+/// Pilout stores fixed col values big-endian (JS bint2buf uses writeBigUInt64BE), of any length.
+/// A value that is not below p is an error: it is neither truncated nor reduced.
+fn goldilocks_from_be(bytes: &[u8]) -> Result<u64> {
+    let significant = &bytes[bytes.iter().take_while(|&&b| b == 0).count()..];
+    if significant.len() <= 8 {
+        let value = significant.iter().fold(0u64, |acc, &b| (acc << 8) | u64::from(b));
+        if value < GOLDILOCKS_MODULUS {
+            return Ok(value);
+        }
     }
-    val
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    bail!("the fixed value 0x{hex} is not a Goldilocks element (below p = {GOLDILOCKS_MODULUS})")
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -360,5 +369,52 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0][0], 10);
         assert_eq!(out[1][0], 11);
+    }
+
+    fn air_with_fixed(values: Vec<Vec<u8>>) -> pil2_pilout::pilout::Air {
+        pil2_pilout::pilout::Air {
+            num_rows: Some(values.len() as u32),
+            fixed_cols: vec![pil2_pilout::pilout::FixedCol { values }],
+            ..Default::default()
+        }
+    }
+
+    /// The pilout's fixed values, of any length, as the u64 they were before the checked narrowing:
+    /// what pil2com writes (up to 8 bytes, leading zeros stripped or not) is unchanged.
+    #[test]
+    fn a_fixed_value_below_p_is_written_as_is() {
+        let p_minus_one = (GOLDILOCKS_MODULUS - 1).to_be_bytes().to_vec();
+        let values = vec![vec![], vec![0x01, 0x00], vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2a], p_minus_one];
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("air.const");
+        write_const_file(path.to_str().unwrap(), &air_with_fixed(values), &[]).unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        let written: Vec<u64> = bytes.chunks(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+        assert_eq!(written, vec![0, 256, 42, GOLDILOCKS_MODULUS - 1]);
+    }
+
+    /// A fixed value that is not a Goldilocks element is refused, not truncated: the old reader
+    /// kept the first 8 of its bytes.
+    #[test]
+    fn a_fixed_value_that_is_not_below_p_is_refused() {
+        let wide = vec![0x01, 0, 0, 0, 0, 0, 0, 0, 0x05]; // 2^64 + 5
+        for (value, hex) in [
+            (GOLDILOCKS_MODULUS.to_be_bytes().to_vec(), "ffffffff00000001"),
+            (u64::MAX.to_be_bytes().to_vec(), "ffffffffffffffff"),
+            (wide, "010000000000000005"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("air.const");
+            let err = write_const_file(path.to_str().unwrap(), &air_with_fixed(vec![vec![7], value]), &[]).unwrap_err();
+            assert_eq!(
+                format!("{err:#}"),
+                format!(
+                    "fixed column 0, row 1: the fixed value 0x{hex} is not a Goldilocks element (below p = \
+                     {GOLDILOCKS_MODULUS})"
+                )
+            );
+            assert!(!path.exists(), "nothing is written on a refusal");
+        }
     }
 }

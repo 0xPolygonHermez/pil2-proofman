@@ -1,0 +1,35 @@
+// PIL2 port of the pil-fflonk Permutation example (pilfflonk/docs/README.md#fixtures):
+// pil-fflonk/pil/sm_permutation/permutation.pil, `selC {c, c} is selD {d, d}`. N = 2^8, as its
+// permutation_main.pil and `all`.
+//
+// - `sm_permutation` is the state machine: the pairs (c, c) of the rows of selC are a permutation of
+//   the pairs (d, d) of the rows of selD, on the std's permutation (PIOP_BUS_SUM, LogUp, or
+//   PIOP_BUS_PROD, a grand product, as `bus_type` says). The std makes both selectors binary; PIL1 did
+//   not constrain them. It is a function of the witness columns, which its caller declares, so that
+//   tests/fixtures/all/all.pil takes it into one AIR with the others.
+// - `a` and `b` are PIL1's: its generator fills them (sm_permutation.js), but no constraint reads
+//   them. PIL1 did not commit them either; the setup does not commit them, and says so
+//   (pilfflonk/docs/protocol.md#layout).
+//
+// permutation_sum.pil and permutation_prod.pil are the programs to compile, over BN254 as the
+// Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its bn254.json and
+// -I pil2-components/lib/std/pil. The witness generator is tests/data/permutation.rs.
+require "std_constants.pil"
+require "std_permutation.pil"
+
+const int PERMUTATION_OPID = 2;
+
+// The Permutation state machine over the witness columns c, d, selC and selD of the caller's AIR, on
+// the bus `bus_type`.
+function sm_permutation(const expr c, const expr d, const expr selC, const expr selD, const int bus_type) {
+    permutation_assumes(PERMUTATION_OPID, [c, c], selC, bus_type: bus_type);
+    permutation_proves(PERMUTATION_OPID, [d, d], selD, bus_type: bus_type);
+}
+
+airtemplate Permutation(const int N = 2**8, const int bus_type = PIOP_BUS_SUM) {
+    col witness a, b;
+    col witness c, d;
+    col witness selC, selD;
+
+    sm_permutation(c, d, selC, selD, bus_type);
+}

@@ -1,0 +1,60 @@
+// PIL2 port of the pil-fflonk Connection example (pilfflonk/docs/README.md#fixtures):
+// pil-fflonk/pil/sm_connection/connection.pil, `{a, b, c} connect {S1, S2, S3}`, with the constants
+// of its generator sm_connection.js (`buildConstants`). N = 2^10, as its connection_main.pil (2^8 in
+// `all`).
+//
+// - `sm_connection` is the state machine: the std's `connection`, a permutation of the pairs
+//   (column, k^i·ω^row) of the cells of a, b and c into the pairs (column, S_i) on the std's bus
+//   (PIOP_BUS_SUM, LogUp, or PIOP_BUS_PROD, a grand product, as `bus_type` says). It is a function of
+//   the witness columns, which its caller declares, so that tests/fixtures/all/all.pil takes it into
+//   one AIR with the others.
+// - S1, S2 and S3 start as the identity, S_i[row] = k^(i−1)·ω^row, with the std's coset generator
+//   k_coset and root of unity GEN[BITS] of the field (BN254's from bn254.pil, never Goldilocks_k as
+//   pil2-components/test/connection/connection.pil has it). They are the ks of PIL1 (pilcom's
+//   getKs: k, k² for F.k = 5^(2^28)) and its ω (ffjavascript's F.w[BITS]). Then the swaps of
+//   sm_connection.js, in its order: for each row i, the cell (S1, i) with (S2, j) and (S2, i) with
+//   (S3, j), j = i/2 for an even i and N/2 + (i − 1)/2 for an odd one. The generator's b and c are a
+//   and b rearranged the same way (b[j] = a[i], c[j] = b[i]), and the connection holds.
+//
+// connection_sum.pil and connection_prod.pil are the programs to compile, over BN254 as the
+// Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its bn254.json and
+// -I pil2-components/lib/std/pil. The witness generator is tests/data/connection.rs.
+require "std_constants.pil"
+require "std_connection.pil"
+
+const int CONNECTION_OPID = 3;
+
+// The Connection state machine over the witness columns a, b and c of the caller's AIR, on the bus
+// `bus_type`: its fixed columns S1, S2 and S3, and the std's connection.
+function sm_connection(const expr a, const expr b, const expr c, const int bus_type) {
+    col fixed S1, S2, S3;
+    int w = 1;
+    for (int i = 0; i < N; i++) {
+        S1[i] = w;
+        S2[i] = k_coset * w % PRIME;
+        S3[i] = k_coset**2 * w % PRIME;
+        w = w * GEN[BITS] % PRIME;
+    }
+
+    int tmp = 0;
+    for (int i = 0; i < N; i++) {
+        int j = i/2;
+        if (i % 2 == 1) {
+            j = N/2 + (i - 1)/2;
+        }
+        tmp = S1[i];
+        S1[i] = S2[j];
+        S2[j] = tmp;
+        tmp = S2[i];
+        S2[i] = S3[j];
+        S3[j] = tmp;
+    }
+
+    connection(CONNECTION_OPID, [a, b, c], [S1, S2, S3], bus_type);
+}
+
+airtemplate Connection(const int N = 2**10, const int bus_type = PIOP_BUS_SUM) {
+    col witness a, b, c;
+
+    sm_connection(a, b, c, bus_type);
+}

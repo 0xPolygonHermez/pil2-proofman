@@ -7,6 +7,9 @@ use pil2_stark_setup::commands::stats::{self as stats_cmd, StatsOptions};
 use pil2_stark_setup::commands::setup_compressed_final::{self as compressed_final_cmd, SetupCompressedFinalOptions};
 use pil2_stark_setup::commands::setup_recursive_test::{self as recursive_test_cmd, SetupRecursiveTestOptions};
 use pil2_stark_setup::commands::setup_snark::{self as snark_cmd, SetupSnarkOptions};
+use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE};
+use pilfflonk_setup::solidity::export_verifier_sol;
+use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 
 // Uses the default system allocator (glibc malloc). After each AIR,
 // setup_cmd calls malloc_trim(0) to return freed pages to the OS and
@@ -25,8 +28,14 @@ enum Commands {
     Setup(SetupArgs),
     /// Compute per-AIR statistics (constraints, intermediate polynomials, etc.).
     Stats(StatsArgs),
-    /// Generate final SNARK setup (recursivef + fflonk/plonk final).
+    /// Generate final SNARK setup (recursivef + fflonk/plonk/pilfflonk final).
     SetupSnark(SetupSnarkArgs),
+    /// Set up a BN254 pilout for the pilfflonk backend (one AIR, one instance): write its
+    /// provingKey/.
+    SetupPilfflonk(SetupPilfflonkArgs),
+    /// Write the Solidity verifier of an existing pilfflonk vkey (pilfflonk.vkey.json), as
+    /// `setup-pilfflonk --solidity` writes it with the key.
+    PilfflonkSolidity(PilfflonkSolidityArgs),
     /// Run only the `vadcop_final_compressed` stage on top of an existing
     /// provingKey/<name>/vadcop_final/. Useful for iterating on this stage.
     SetupCompressedFinal(SetupCompressedFinalArgs),
@@ -171,11 +180,12 @@ struct SetupSnarkArgs {
     #[arg(short = 'b', long)]
     build_dir: String,
 
-    /// Powers-of-tau (.ptau) file for snarkjs setup
+    /// Powers-of-tau (.ptau) file for the final SNARK's setup. pilfflonk reads only its powers
+    /// [τ^i]₁ and [τ]₂, and needs as many [τ^i]₁ as its layout's largest degree
     #[arg(long)]
     powers_of_tau: Option<String>,
 
-    /// Final SNARK type: fflonk (default) or plonk
+    /// Final SNARK type: fflonk (default), plonk or pilfflonk
     #[arg(long, default_value = "fflonk")]
     final_snark: String,
 
@@ -186,6 +196,53 @@ struct SetupSnarkArgs {
     /// Only generate the recursivef step; skip the final SNARK
     #[arg(long)]
     only_recursive_final: bool,
+}
+
+#[derive(Parser)]
+struct SetupPilfflonkArgs {
+    /// Path to the compiled .pilout file, over BN254
+    #[arg(short = 'a', long)]
+    airout: String,
+
+    /// Build output directory: the provingKey/ goes in it
+    #[arg(short = 'b', long)]
+    build_dir: String,
+
+    /// Powers-of-tau (.ptau) file, as snarkjs writes it. Only its powers [τ^i]₁ and [τ]₂ are
+    /// read; it need not be prepared for phase 2
+    #[arg(long)]
+    powers_of_tau: String,
+
+    /// Largest constraint degree the intermediate-polynomial search tries, from 2
+    #[arg(long, default_value_t = DEFAULT_MAX_CONSTRAINT_DEGREE)]
+    max_constraint_degree: u64,
+
+    /// Extra scalar multiplications the fflonk grouping may spend to split its groups
+    #[arg(long, default_value_t = DEFAULT_EXTRA_MULS)]
+    extra_muls: u64,
+
+    /// Split Q into pieces of this degree; 0 does not split it
+    #[arg(long, default_value_t = DEFAULT_MAX_Q_DEGREE)]
+    max_q_degree: u64,
+
+    /// Pack no polynomials together: k = 1 in every f (for tests)
+    #[arg(long)]
+    no_packing: bool,
+
+    /// Also write the Solidity verifier of the vkey, pilfflonk.verifier.sol, next to it
+    #[arg(long)]
+    solidity: bool,
+}
+
+#[derive(Parser)]
+struct PilfflonkSolidityArgs {
+    /// The pilfflonk vkey, pilfflonk.vkey.json
+    #[arg(short = 'k', long)]
+    vkey: String,
+
+    /// The Solidity file to write
+    #[arg(short = 'o', long)]
+    output: String,
 }
 
 #[derive(Parser)]
@@ -286,6 +343,12 @@ struct CompilePilArgs {
     /// `-u` directory for fixed columns
     #[arg(short = 'u', long = "fixed-dir")]
     fixed_dir: Option<String>,
+
+    /// `-P` pil2com configuration file (JSON), passed through verbatim. Set
+    /// `prime` (a decimal or hex string) to pick the base field; Goldilocks
+    /// when absent
+    #[arg(short = 'P', long = "config")]
+    config: Option<String>,
 
     /// Pass `-O fixed-to-file` to write fixed columns to disk
     #[arg(long = "fixed-to-file")]
@@ -453,6 +516,33 @@ fn main() -> anyhow::Result<()> {
             snark_cmd::run_setup_snark(&opts)
         }
 
+        Commands::SetupPilfflonk(args) => {
+            tracing::info!("proofman-setup setup-pilfflonk: starting");
+            tracing::info!("  airout: {}", args.airout);
+            tracing::info!("  build_dir: {}", args.build_dir);
+            tracing::info!("  powers_of_tau: {}", args.powers_of_tau);
+            let opts = SetupPilfflonkOptions {
+                airout_path: args.airout.into(),
+                build_dir: args.build_dir.into(),
+                powers_of_tau: args.powers_of_tau.into(),
+                max_constraint_degree: args.max_constraint_degree,
+                extra_muls: args.extra_muls,
+                max_q_degree: args.max_q_degree,
+                no_packing: args.no_packing,
+                solidity: args.solidity,
+            };
+            run_setup_pilfflonk(&opts)
+        }
+
+        Commands::PilfflonkSolidity(args) => {
+            tracing::info!("proofman-setup pilfflonk-solidity: starting");
+            tracing::info!("  vkey: {}", args.vkey);
+            tracing::info!("  output: {}", args.output);
+            export_verifier_sol(args.vkey.as_ref(), args.output.as_ref())?;
+            tracing::info!("wrote {}", args.output);
+            Ok(())
+        }
+
         Commands::SetupCompressedFinal(args) => {
             tracing::info!("proofman-setup setup-compressed-final: starting");
             tracing::info!("  build_dir: {}", args.build_dir);
@@ -536,6 +626,7 @@ fn main() -> anyhow::Result<()> {
                 output_path: args.output_path,
                 include_paths: args.include_paths,
                 fixed_dir: args.fixed_dir,
+                config: args.config,
                 fixed_to_file: args.fixed_to_file,
                 no_proto_fixed_data: args.no_proto_fixed_data,
             };

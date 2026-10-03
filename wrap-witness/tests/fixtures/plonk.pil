@@ -1,0 +1,42 @@
+// An AIR of the PLONK gates of tests/arith.rs's circuit, over BN254, for its end-to-end test: the
+// rows of the exec that test writes, a row per public, whose `a` is the public, and then a row per
+// gate, its wires `(l, r, o)` in `a`, `b` and `c`. The selectors are external fixed columns, as
+// plonk2pil's are: the test computes them from the gates. There are no copy constraints: the
+// wrap's AIR is plonk2pil's BN254 family, with its permutation.
+//
+// Compile over BN254: -P pilfflonk/tests/fixtures/fibonacci/bn254.json. N is the circuit's 6 publics
+// and 16 gates, to a power of two.
+
+const int N_PUBLICS = 6;
+
+public publics[N_PUBLICS];
+
+airtemplate Plonk(const int N = 2**5) {
+    #pragma fixed_external
+    col fixed QM;
+    #pragma fixed_external
+    col fixed QL;
+    #pragma fixed_external
+    col fixed QR;
+    #pragma fixed_external
+    col fixed QO;
+    #pragma fixed_external
+    col fixed QC;
+    // P[i] is 1 on the row of public i.
+    #pragma fixed_external
+    col fixed P[N_PUBLICS];
+
+    col witness a, b, c;
+    // The column the exec's map leaves empty.
+    col witness z;
+
+    QM * a * b + QL * a + QR * b + QO * c + QC === 0;
+    for (int i = 0; i < N_PUBLICS; i++) {
+        P[i] * (a - publics[i]) === 0;
+    }
+    z === 0;
+}
+
+airgroup Plonk {
+    Plonk(N: 2**5);
+}

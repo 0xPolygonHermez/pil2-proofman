@@ -547,6 +547,12 @@ extern "C" {
 
     pub fn pre_allocate_final_snark_prover(prover: *mut ::std::os::raw::c_void, unified_buffer_gpu: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void);
 
+    pub fn reserve_recursivef_aux_trace(
+        d_buffers_recursivef: *mut ::std::os::raw::c_void,
+        bytes: u64,
+        out_bytes: *mut u64,
+    ) -> *mut ::std::os::raw::c_void;
+
     pub fn free_json_string(json_str: *mut ::std::os::raw::c_char);
 
     pub fn free_recursivef_proof(zkin: *mut ::std::os::raw::c_void);

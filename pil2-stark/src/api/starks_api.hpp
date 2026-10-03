@@ -187,6 +187,13 @@ extern "C" {
     void free_final_snark_prover(void *snark_prover);
     void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef);
     void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu, void* d_buffers_recursivef);
+    // The recursivef's device prover buffer (its aux trace) for a final SNARK prover that proves in it
+    // after the recursivef, as pre_allocate_final_snark_prover does PLONK's without a unified buffer:
+    // grown to `bytes` if it holds fewer and is its own. Writes its bytes to *out_bytes and returns it.
+    // NULL if it is not its own (carved from proofman's unified buffer) or there are no device buffers
+    // (*out_bytes 0), and if it cannot grow, with *out_bytes the most it could hold (the device's free
+    // memory and its own).
+    void *reserve_recursivef_aux_trace(void *d_buffers_recursivef, uint64_t bytes, uint64_t *out_bytes);
     void free_json_string(char* json_str);
     void snark_proof_bytes_to_json(uint8_t* proof_bytes,uint64_t proof_size,uint8_t* public_bytes,uint64_t public_size,int protocol_id,char** proof_json_out,char** publics_json_out);
 

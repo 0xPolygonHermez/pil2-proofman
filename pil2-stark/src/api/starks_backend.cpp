@@ -101,6 +101,7 @@ void *init_final_snark_prover_gpu(char* zkeyFile, void* d_buffers_recursivef);
 void free_final_snark_prover_gpu(void *snark_prover);
 void gen_final_snark_proof_gpu(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef);
 void pre_allocate_final_snark_prover_gpu(void *snark_prover, void* unified_buffer_gpu, void* d_buffers_recursivef);
+void *reserve_recursivef_aux_trace_gpu(void *d_buffers_recursivef, uint64_t bytes, uint64_t *out_bytes);
 #endif
 
 // ============================================================================
@@ -181,6 +182,7 @@ StarksBackend cpu_backend = []() {
     backend.free_final_snark_prover = free_final_snark_prover_cpu;
     backend.gen_final_snark_proof = gen_final_snark_proof_cpu;
     backend.pre_allocate_final_snark_prover = nullptr;
+    backend.reserve_recursivef_aux_trace = nullptr;       // default: nullptr, 0 bytes
     return backend;
 }();
 
@@ -258,6 +260,7 @@ StarksBackend gpu_backend = []() {
     backend.free_final_snark_prover = free_final_snark_prover_gpu;
     backend.gen_final_snark_proof = gen_final_snark_proof_gpu;
     backend.pre_allocate_final_snark_prover = pre_allocate_final_snark_prover_gpu;
+    backend.reserve_recursivef_aux_trace = reserve_recursivef_aux_trace_gpu;
     return backend;
 }();
 #endif
@@ -695,4 +698,11 @@ void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, uint8_t
 void pre_allocate_final_snark_prover(void *snark_prover, void* unified_buffer_gpu, void* d_buffers_recursivef) {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->pre_allocate_final_snark_prover) backend->pre_allocate_final_snark_prover(snark_prover, unified_buffer_gpu, d_buffers_recursivef);
+}
+
+void *reserve_recursivef_aux_trace(void *d_buffers_recursivef, uint64_t bytes, uint64_t *out_bytes) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->reserve_recursivef_aux_trace) return backend->reserve_recursivef_aux_trace(d_buffers_recursivef, bytes, out_bytes);
+    *out_bytes = 0;
+    return nullptr;
 }

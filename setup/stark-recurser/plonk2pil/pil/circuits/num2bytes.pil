@@ -1,0 +1,42 @@
+// circom's custom gate `Num2Bytes(nBits)`
+// (stark2circom/circom_verifier/circuits.bn128/custom/rangecheck.circom), as the BN254 wrap lays it
+// out: a row per use, which holds its `in` and, in NUM2BYTES_CHUNKS cells, the ⌈nBits/16⌉ chunks of
+// 16 bits `out` it is split in, least significant first, and zeros past them.
+//
+// On a row of `sel`:
+//   1. the chunks recompose the value: value = Σ_k weights[k]·chunks[k], where the weights are the
+//      caller's fixed columns, 2^(16·k) for the row's chunks k < ⌈nBits/16⌉ and 0 for the cells
+//      past them;
+//   2. every cell, the cells past the chunks too, is in [0, 2^16): the std's lookup (LogUp, on the
+//      sum bus) of each into the caller's fixed table `range`, which holds every value of
+//      [0, 2^16), with `mul` the times each of its rows is looked up.
+//
+// So the value is below 2^(16·⌈nBits/16⌉) as an integer: at most 5 chunks below 2^16 sum below
+// 2^80, far below the prime, and the sum does not wrap. A cell past the chunks is in the range as
+// any, and its weight 0 keeps it out of the sum, so it cannot take the value past the bound. The
+// top chunk of an nBits that is not a multiple of 16 is bounded by 2^16 alone, as in the original
+// (pil-stark's final9): the gate proves the bound rounded up to whole chunks, which is what its
+// circom callers rely on.
+//
+// The original laid the gate out alike but had its lookups commented out, and the cells past the
+// chunks free under the weights 2^(16·k), so that a 64-bit check passed `in + 2^64·x`.
+//
+// DEGREE: 3, sel·weights[k]·chunks[k]; the lookups add the std's terms.
+
+require "std_lookup.pil";
+
+const int NUM2BYTES_CHUNKS = 5;
+const int NUM2BYTES_CHUNK_BITS = 16;
+
+// The gate on the rows of `sel`, a fixed column of 0s and 1s, looked up under the bus `opid`.
+function num2bytes(const int opid, const expr value, const expr chunks[], const expr weights[], const expr sel,
+                   const expr range, const expr mul) {
+    expr recomposed = 0;
+    for (int k = 0; k < NUM2BYTES_CHUNKS; k++) {
+        recomposed = recomposed + weights[k] * chunks[k];
+        // `sel` is fixed and binary by construction: the std need not constrain it.
+        lookup_assumes(opid, [chunks[k]], sel: sel, sel_is_binary: 1);
+    }
+    sel * (value - recomposed) === 0;
+    lookup_proves(opid, [range], mul);
+}

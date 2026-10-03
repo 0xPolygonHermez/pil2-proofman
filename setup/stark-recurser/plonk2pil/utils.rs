@@ -1,73 +1,12 @@
-//! Goldilocks field utilities shared by all plonk2pil setup routines.
+//! Field utilities shared by all plonk2pil setup routines.
 
 use std::collections::HashMap;
 
+use proofman_fields::Field;
+
+use super::field::PlonkField;
+use super::r1cs::to_plonk::PlonkConstraint;
 use super::r1cs_types::FixedPol;
-
-/// Goldilocks prime p = 2^64 - 2^32 + 1.
-pub const GOLDILOCKS_P: u64 = 0xFFFF_FFFF_0000_0001;
-
-/// Generator table: `GOLDILOCKS_GEN[n]` is a primitive 2^n-th root of unity mod p.
-pub const GOLDILOCKS_GEN: [u64; 33] = [
-    1,
-    18446744069414584320,
-    281474976710656,
-    18446744069397807105,
-    17293822564807737345,
-    70368744161280,
-    549755813888,
-    17870292113338400769,
-    13797081185216407910,
-    1803076106186727246,
-    11353340290879379826,
-    455906449640507599,
-    17492915097719143606,
-    1532612707718625687,
-    16207902636198568418,
-    17776499369601055404,
-    6115771955107415310,
-    12380578893860276750,
-    9306717745644682924,
-    18146160046829613826,
-    3511170319078647661,
-    17654865857378133588,
-    5416168637041100469,
-    16905767614792059275,
-    9713644485405565297,
-    5456943929260765144,
-    17096174751763063430,
-    1213594585890690845,
-    6414415596519834757,
-    16116352524544190054,
-    9123114210336311365,
-    4614640910117430873,
-    1753635133440165772,
-];
-
-/// Coset shift constant K used for building permutation polynomials.
-pub const GOLDILOCKS_K: u64 = 12275445934081160404;
-
-/// (a * b) mod p
-#[inline]
-pub fn mulp(a: u64, b: u64) -> u64 {
-    ((a as u128 * b as u128) % GOLDILOCKS_P as u128) as u64
-}
-
-/// (a + b) mod p
-#[inline]
-pub fn addp(a: u64, b: u64) -> u64 {
-    ((a as u128 + b as u128) % GOLDILOCKS_P as u128) as u64
-}
-
-/// (-v) mod p  =  (p - v) mod p
-#[inline]
-pub fn neg(v: u64) -> u64 {
-    if v == 0 {
-        0
-    } else {
-        GOLDILOCKS_P - v
-    }
-}
 
 /// log2(v): floor(log2(v)) for a u32.  Returns 0 for v == 0.
 #[inline]
@@ -79,16 +18,16 @@ pub fn log2(v: u32) -> u32 {
     }
 }
 
-/// Compute n coset shift factors: K, K^2, ..., K^n.
-pub fn get_ks(n: usize) -> Vec<u64> {
+/// Compute n coset shift factors of `F`'s connection argument: K, K^2, ..., K^n.
+pub fn get_ks<F: PlonkField>(n: usize) -> Vec<F> {
     let mut ks = Vec::with_capacity(n);
     if n == 0 {
         return ks;
     }
-    ks.push(GOLDILOCKS_K);
+    ks.push(F::K);
     for i in 1..n {
         let prev = ks[i - 1];
-        ks.push(mulp(prev, GOLDILOCKS_K));
+        ks.push(prev * F::K);
     }
     ks
 }
@@ -106,17 +45,29 @@ pub fn get_ks(n: usize) -> Vec<u64> {
 /// * `n_bits`  — log2(n)
 /// * `r`       — number of used rows (connections iterated over `0..r`)
 /// * `s_map`   — `s_map[col][row]` = signal id (0 = unused)
-pub fn build_s_polynomials(n_cols: usize, n: usize, n_bits: usize, r: usize, s_map: &[Vec<u32>]) -> Vec<Vec<u64>> {
-    let ks = get_ks(n_cols - 1);
-    let mut sv: Vec<Vec<u64>> = (0..n_cols).map(|_| vec![0u64; n]).collect();
-    let mut w = 1u64;
+///
+/// The identity permutation is `F`'s: [`PlonkField::K`] and [`PlonkField::ROOTS_OF_UNITY`], the
+/// std's constants. Panics if `F` has no `2^n_bits`-th root of unity.
+pub fn build_s_polynomials<F: PlonkField>(
+    n_cols: usize,
+    n: usize,
+    n_bits: usize,
+    r: usize,
+    s_map: &[Vec<u32>],
+) -> Vec<Vec<F>> {
+    let gen = *F::ROOTS_OF_UNITY
+        .get(n_bits)
+        .unwrap_or_else(|| panic!("{} has no 2^{n_bits}-th root of unity: the air is too tall", F::PRIME));
+    let ks = get_ks::<F>(n_cols - 1);
+    let mut sv: Vec<Vec<F>> = (0..n_cols).map(|_| vec![F::ZERO; n]).collect();
+    let mut w = F::ONE;
     #[allow(clippy::needless_range_loop)]
     for i in 0..n {
         sv[0][i] = w;
         for j in 1..n_cols {
-            sv[j][i] = mulp(w, ks[j - 1]);
+            sv[j][i] = w * ks[j - 1];
         }
-        w = mulp(w, GOLDILOCKS_GEN[n_bits]);
+        w *= gen;
     }
     // JS: lastSignal is only set on the *first* occurrence of each signal.
     // Every later occurrence swaps with that first-seen position (not the most
@@ -162,42 +113,31 @@ pub fn bind_public_signals(s_map: &mut [Vec<u32>], first_row: usize, n_publics: 
     }
 }
 
-/// Compute the permuted initialSt for a Poseidon1_16 gate, mirroring the
-/// `CustPoseidon1_16` input-ordering in circom:
-///   key=(0,0) → initialSt = in
-///   key=(1,0) → in[0..3]↔in[4..7] (swap halves of low 8 cells)
-///   key=(0,1) → in[0..3]→pos 8..11, in[4..7]→pos 0..3, in[8..11]→pos 4..7
-///   key=(1,1) → in[0..3]→pos 12..15, in[4..7]→0..3, in[8..11]→4..7, in[12..15]→8..11
-/// For sponge mode (no key) this is identity.
-pub fn cust_poseidon1_initial_state(input: &[u64], key: Option<&[u64]>) -> Vec<u64> {
-    let mut p = vec![0u64; 16];
-    match key {
-        None => p.copy_from_slice(input),
-        Some(k) => {
-            let (k0, k1) = (k[0], k[1]);
-            if k0 == 0 && k1 == 0 {
-                p.copy_from_slice(input);
-            } else if k0 == 1 && k1 == 0 {
-                p[0..4].copy_from_slice(&input[4..8]);
-                p[4..8].copy_from_slice(&input[0..4]);
-                p[8..16].copy_from_slice(&input[8..16]);
-            } else if k0 == 0 && k1 == 1 {
-                p[0..4].copy_from_slice(&input[4..8]);
-                p[4..8].copy_from_slice(&input[8..12]);
-                p[8..12].copy_from_slice(&input[0..4]);
-                p[12..16].copy_from_slice(&input[12..16]);
-            } else {
-                p[0..4].copy_from_slice(&input[4..8]);
-                p[4..8].copy_from_slice(&input[8..12]);
-                p[8..12].copy_from_slice(&input[12..16]);
-                p[12..16].copy_from_slice(&input[0..4]);
-            }
-        }
+/// The nine `constFFT` values of an `FFT4` gate from its parameters `[firstW, incW, scale, type]`:
+/// slots 0..6 for a radix-4 step (`type` 4) and 6..9 for a radix-2 one (`type` 2), the others zero.
+/// Every family's air reads them in this order; where each slot lives in `C[]` is the family's.
+pub fn fft4_constants<F: Field>(params: &[F]) -> [F; 9] {
+    let (first_w, inc_w, scale, fft_type) = (params[0], params[1], params[2], params[3]);
+    let fw2 = first_w * first_w;
+    let mut c = [F::ZERO; 9];
+    if fft_type == F::TWO.double() {
+        c[0] = scale;
+        c[1] = scale * fw2;
+        c[2] = scale * first_w;
+        c[3] = scale * first_w * fw2;
+        c[4] = scale * first_w * inc_w;
+        c[5] = scale * first_w * fw2 * inc_w;
+    } else if fft_type == F::TWO {
+        c[6] = scale;
+        c[7] = scale * first_w;
+        c[8] = scale * first_w * inc_w;
+    } else {
+        panic!("Invalid FFT4 type: {fft_type}");
     }
-    p
+    c
 }
 
-pub fn build_fixed_pols(airgroup_name: &str, cv: &[Vec<u64>], sv: &[Vec<u64>]) -> Vec<FixedPol> {
+pub fn build_fixed_pols<F: Clone>(airgroup_name: &str, cv: &[Vec<F>], sv: &[Vec<F>]) -> Vec<FixedPol<F>> {
     let mut pols = Vec::with_capacity(cv.len() + sv.len());
     for (k, cv_values) in cv.iter().enumerate() {
         pols.push(FixedPol { name: format!("{}.C", airgroup_name), index: k, values: cv_values.clone() });
@@ -233,7 +173,7 @@ impl PlonkBand {
     }
 
     /// Place plonk constraint `c` into gate `g` of `row`.
-    pub fn put(&mut self, s_map: &mut [Vec<u32>], row: usize, g: usize, c: &[u64]) {
+    pub fn put<F>(&mut self, s_map: &mut [Vec<u32>], row: usize, g: usize, c: &PlonkConstraint<F>) {
         assert!(
             self.allowed[row] & (1 << g) != 0,
             "plonk gate {g} placed at row {row}, but its PIL selector does not fire there \
@@ -254,15 +194,37 @@ impl PlonkBand {
             }
             self.written[row] |= 1 << g;
         }
-        s_map[3 * g][row] = c[0] as u32;
-        s_map[3 * g + 1][row] = c[1] as u32;
-        s_map[3 * g + 2][row] = c[2] as u32;
+        s_map[3 * g][row] = c.wires[0];
+        s_map[3 * g + 1][row] = c.wires[1];
+        s_map[3 * g + 2][row] = c.wires[2];
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{bind_public_signals, public_rows};
+    use super::{bind_public_signals, fft4_constants, public_rows};
+    use proofman_fields::Goldilocks;
+
+    /// `[firstW, incW, scale, type]` = `[3, 5, 7, type]`: small enough that every constant is the
+    /// integer it is in any field.
+    fn fft4(fft_type: u64) -> Vec<u64> {
+        let p = [3, 5, 7, fft_type].map(Goldilocks::new);
+        fft4_constants(&p).iter().map(proofman_fields::PrimeField64::as_canonical_u64).collect()
+    }
+
+    #[test]
+    fn fft4_constants_fill_the_slots_of_their_type() {
+        // scale, scale·w², scale·w, scale·w³, scale·w·inc, scale·w³·inc
+        assert_eq!(fft4(4), [7, 63, 21, 189, 105, 945, 0, 0, 0]);
+        // scale, scale·w, scale·w·inc, in the last three slots
+        assert_eq!(fft4(2), [0, 0, 0, 0, 0, 0, 7, 21, 105]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid FFT4 type: 3")]
+    fn fft4_constants_refuse_another_type() {
+        fft4(3);
+    }
 
     #[test]
     fn public_signals_are_appended_in_connection_rows() {

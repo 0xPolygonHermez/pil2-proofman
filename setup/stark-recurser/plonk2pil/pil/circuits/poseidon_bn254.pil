@@ -1,0 +1,59 @@
+// The original Poseidon over BN254, as circom's custom gate `PoseidonT(t)` computes it
+// (stark2circom/circom_verifier/circuits.bn128/custom/poseidon.circom), at width t = 5: 8 full
+// rounds and 60 partial ones, the first 4 rounds and the last 4 full.
+//
+// A round, on the state `st` of t lanes:
+//   1. ARC:    st[j] += C[5·r + j], on every lane;
+//   2. S-box:  st[j] = st[j]^5, on every lane in a full round and on lane 0 in a partial one;
+//   3. MDS:    st'[i] = Σ_j M[i][j]·st[j].
+// C is POSEIDON_C_ORIGINAL(5) and M is POSEIDON_M_ORIGINAL(5), of poseidon_constants_original.circom.
+//
+// The gate lays a permutation out as a band of rows, one round a row: the state before round r on
+// row r, and after it on row r + 1, which is the gate's `im[r]` (its `out` after the last round).
+// So nothing of the permutation is recomputed out of the trace: every intermediate state is a
+// witness value, and every round is constrained. The round constants are the caller's, in fixed
+// columns that hold C[5·r .. 5·r + 4] on row r of the band; M is below.
+
+const int POSEIDON_BN254_WIDTH = 5;
+const int POSEIDON_BN254_FULL_ROUNDS = 8;
+const int POSEIDON_BN254_PARTIAL_ROUNDS = 60;
+
+// POSEIDON_M_ORIGINAL(5), row-major: M[5·i + j] is M[i][j].
+const int POSEIDON_BN254_M[POSEIDON_BN254_WIDTH * POSEIDON_BN254_WIDTH] = [
+    0x251e7fdf99591080080b0af133b9e4369f22e57ace3cd7f64fc6fdbcf38d7da1, 0x25fb50b65acf4fb047cbd3b1c17d97c7fe26ea9ca238d6e348550486e91c7765, 0x293d617d7da72102355f39ebf62f91b06deb5325f367a4556ea1e31ed5767833, 0x104d0295ab00c85e960111ac25da474366599e575a9b7edf6145f14ba6d3c1c4, 0x0aaa35e2c84baf117dea3e336cd96a39792b3813954fe9bf3ed5b90f2f69c977,
+    0x2a70b9f1d4bbccdbc03e17c1d1dcdb02052903dc6609ea6969f661b2eb74c839, 0x281154651c921e746315a9934f1b8a1bba9f92ad8ef4b979115b8e2e991ccd7a, 0x28c2be2f8264f95f0b53c732134efa338ccd8fdb9ee2b45fb86a894f7db36c37, 0x21888041e6febd546d427c890b1883bb9b626d8cb4dc18dcc4ec8fa75e530a13, 0x14ddb5fada0171db80195b9592d8cf2be810930e3ea4574a350d65e2cbff4941,
+    0x2f69a7198e1fbcc7dea43265306a37ed55b91bff652ad69aa4fa8478970d401d, 0x001c1edd62645b73ad931ab80e37bbb267ba312b34140e716d6a3747594d3052, 0x15b98ce93e47bc64ce2f2c96c69663c439c40c603049466fa7f9a4b228bfc32b, 0x12c7e2adfa524e5958f65be2fbac809fcba8458b28e44d9265051de33163cf9c, 0x2efc2b90d688134849018222e7b8922eaf67ce79816ef468531ec2de53bbd167,
+    0x0c3f050a6bf5af151981e55e3e1a29a13c3ffa4550bd2514f1afd6c5f721f830, 0x0dec54e6dbf75205fa75ba7992bd34f08b2efe2ecd424a73eda7784320a1a36e, 0x1c482a25a729f5df20225815034b196098364a11f4d988fb7cc75cf32d8136fa, 0x2625ce48a7b39a4252732624e4ab94360812ac2fc9a14a5fb8b607ae9fd8514a, 0x07f017a7ebd56dd086f7cd4fd710c509ed7ef8e300b9a8bb9fb9f28af710251f,
+    0x2a20e3a4a0e57d92f97c9d6186c6c3ea7c5e55c20146259be2f78c2ccc2e3595, 0x1049f8210566b51faafb1e9a5d63c0ee701673aed820d9c4403b01feb727a549, 0x02ecac687ef5b4b568002bd9d1b96b4bef357a69e3e86b5561b9299b82d69c8e, 0x2d3a1aea2e6d44466808f88c9ba903d3bdcb6b58ba40441ed4ebcf11bbe1e37b, 0x14074bb14c982c81c9ad171e4f35fe49b39c4a7a72dbb6d9c98d803bfed65e64
+];
+
+function poseidonBn254Pow5(const expr x): const expr {
+    const expr x2 = x * x;
+    return x2 * x2 * x;
+}
+
+// One round of the permutation, from `state` (the row's lanes) to `next` (the next row's), with the
+// round constants `rc`. `full` and `partial` are the fixed selectors of the round's kind: at most
+// one is 1 on a row, and on a row where neither is, nothing is constrained.
+//
+// DEGREE: 6. The S-box is degree 5 in the row's lanes, and its selector adds one: lane 0 is
+// S-boxed in both kinds, the others only in a full round, `full·u^5 + partial·u`.
+function poseidonBn254Round(const expr state[], const expr next[], const expr rc[], const expr full, const expr partial) {
+    const expr round = full + partial;
+    const expr sbox[POSEIDON_BN254_WIDTH];
+    for (int j = 0; j < POSEIDON_BN254_WIDTH; j++) {
+        const expr u = state[j] + rc[j];
+        if (j == 0) {
+            sbox[j] = round * poseidonBn254Pow5(u);
+        } else {
+            sbox[j] = full * poseidonBn254Pow5(u) + partial * u;
+        }
+    }
+    for (int i = 0; i < POSEIDON_BN254_WIDTH; i++) {
+        expr mds = 0;
+        for (int j = 0; j < POSEIDON_BN254_WIDTH; j++) {
+            mds = mds + POSEIDON_BN254_M[POSEIDON_BN254_WIDTH * i + j] * sbox[j];
+        }
+        round * next[i] - mds === 0;
+    }
+}

@@ -1208,6 +1208,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pil-info"
+version = "1.4.0-alpha"
+dependencies = [
+ "indexmap",
+ "num-bigint",
+ "pil2-pilout",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "pil2-pilout"
 version = "1.4.0-alpha"
 dependencies = [
@@ -1223,9 +1236,10 @@ version = "1.4.0-alpha"
 dependencies = [
  "anyhow",
  "num-bigint",
- "num-traits",
+ "pilfflonk-setup",
  "proofman-common",
  "proofman-fields",
+ "proofman-pilfflonk",
  "rand 0.10.3",
  "serde",
  "serde_json",
@@ -1241,11 +1255,14 @@ dependencies = [
  "clap",
  "indexmap",
  "mpi",
+ "pil-info",
  "pil2-pilout",
  "pil2-stark-recurser",
+ "pilfflonk-setup",
  "proofman-common",
  "proofman-exps-codegen",
  "proofman-fields",
+ "proofman-pilfflonk",
  "proofman-starks-lib-c",
  "proofman-util",
  "prost",
@@ -1273,6 +1290,88 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "pilfflonk-all"
+version = "1.4.0-alpha"
+dependencies = [
+ "num-bigint",
+ "pilfflonk-setup",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-fields",
+ "proofman-macros",
+ "proofman-pilfflonk",
+ "serde",
+ "serde_arrays",
+]
+
+[[package]]
+name = "pilfflonk-connection"
+version = "1.4.0-alpha"
+dependencies = [
+ "pilfflonk-setup",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-fields",
+ "proofman-macros",
+ "proofman-pilfflonk",
+]
+
+[[package]]
+name = "pilfflonk-fibonacci"
+version = "1.4.0-alpha"
+dependencies = [
+ "fibonacci-square",
+ "libloading",
+ "num-bigint",
+ "pilfflonk-setup",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-fields",
+ "proofman-macros",
+ "proofman-pilfflonk",
+ "serde",
+ "serde_arrays",
+]
+
+[[package]]
+name = "pilfflonk-setup"
+version = "1.4.0-alpha"
+dependencies = [
+ "anyhow",
+ "num-bigint",
+ "pil-info",
+ "pil2-pilout",
+ "pilfflonk-setup",
+ "proofman-pilfflonk",
+ "proofman-starks-lib-c",
+ "prost",
+ "serde",
+ "serde_json",
+ "tera",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "pilfflonk-wrap-witness"
+version = "1.4.0-alpha"
+dependencies = [
+ "cc",
+ "pil2-stark-recurser",
+ "pil2-stark-setup",
+ "pilfflonk-setup",
+ "proofman-common",
+ "proofman-fields",
+ "proofman-pilfflonk",
+ "proofman-util",
+ "rayon",
+ "serde",
+ "serde_json",
+ "thiserror",
  "tracing",
 ]
 
@@ -1340,11 +1439,13 @@ dependencies = [
  "mpi",
  "num-traits",
  "pil2-std-lib",
+ "pilfflonk-wrap-witness",
  "proofman-common",
  "proofman-curves",
  "proofman-fields",
  "proofman-hints",
  "proofman-macros",
+ "proofman-pilfflonk",
  "proofman-starks-lib-c",
  "proofman-util",
  "proofman-verifier",
@@ -1364,19 +1465,29 @@ dependencies = [
  "clap",
  "colored",
  "convert_case",
+ "fibonacci-square",
  "libloading",
+ "num-bigint",
  "pil2-pilout",
+ "pilfflonk-all",
+ "pilfflonk-connection",
+ "pilfflonk-fibonacci",
+ "pilfflonk-setup",
  "proofman",
  "proofman-common",
  "proofman-exps-codegen",
  "proofman-fields",
+ "proofman-pilfflonk",
  "proofman-soundness",
  "proofman-starks-lib-c",
  "proofman-util",
  "proofman-verifier",
  "proofman-witness",
+ "prost",
+ "rand 0.10.3",
  "regex",
  "serde",
+ "serde_json",
  "tinytemplate",
  "toml",
  "tracing",
@@ -1441,6 +1552,7 @@ dependencies = [
  "proofman-starks-lib-c",
  "rand 0.10.3",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1461,6 +1573,23 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "proofman-pilfflonk"
+version = "1.4.0-alpha"
+dependencies = [
+ "libloading",
+ "num-bigint",
+ "pil2-pilout",
+ "proofman-common",
+ "proofman-fields",
+ "proofman-pilfflonk",
+ "proofman-starks-lib-c",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

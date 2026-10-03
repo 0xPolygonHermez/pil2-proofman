@@ -1,0 +1,34 @@
+[package]
+name = "pilfflonk-fibonacci"
+description = "The pilfflonk witness library of the Fibonacci fixture, over BN254's Fr: a test of the witness-library API"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+publish = false
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+proofman-pilfflonk = { workspace = true }
+# The rows `pil_helpers` generates: `GenericTrace`, `trace_row!` and `values!`; and the logger.
+proofman-common = { workspace = true }
+proofman-macros = { workspace = true }
+proofman-fields = { workspace = true }
+serde = { workspace = true }
+serde_arrays = { workspace = true }
+
+[dev-dependencies]
+# Regenerates `src/pil_helpers` to check it is what pil-helpers writes.
+proofman-cli = { workspace = true }
+# Sets up the fixture's key, with the ptau of the tests (pilfflonk/docs/README.md#tests).
+pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
+# The generator of `pilfflonk/tests/data/fibonacci.rs`, which the library's witness is checked against.
+num-bigint = { workspace = true }
+libloading = { workspace = true }
+# A STARK witness library, which the pilfflonk loader must refuse.
+fibonacci-square = { path = "../../../../../examples/fibonacci-square" }

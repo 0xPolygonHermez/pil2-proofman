@@ -1003,9 +1003,7 @@ uint64_t expand_gate_bands(void *witness, uint64_t* execData, uint64_t nCommited
                         "buffer of " + std::to_string(execWords) + " words; the proving key is corrupt");
             break;
         case gate_bands::ExpandStatus::UnsupportedExecFormat:
-            zklog.error("expand_gate_bands: the exec file's format version is not the version " +
-                        std::to_string(exec_layout::EXEC_FORMAT_VERSION) + " this build reads; "
-                        "regenerate the proving key with a matching setup");
+            zklog.error("expand_gate_bands: " + exec_layout::refused_version(res.version));
             break;
         case gate_bands::ExpandStatus::UnsupportedVersion:
             zklog.error("expand_gate_bands: gate-band section is format version " +

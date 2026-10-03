@@ -44,6 +44,14 @@ pub fn gen_stark_verifier_bn128(
     Tera::one_off(TEMPLATE_BN128, &ctx, false).map_err(|e| anyhow::anyhow!("Tera render error (BN128): {e}"))
 }
 
+/// Whether the BN128 verifier of `stark_info` is written with circom custom templates, the ones of
+/// `circuits.bn128/custom/`: exactly when its Merkle trees are custom. circom then wants
+/// `pragma custom_templates;` in every file on the include path to it, the circuit that includes
+/// the verifier as well.
+pub(crate) fn uses_custom_templates(stark_info: &Value) -> bool {
+    stark_info["starkStruct"]["merkleTreeCustom"].as_bool().unwrap_or(false)
+}
+
 // ── Tera context builder ──────────────────────────────────────────────────────
 
 fn build_tera_context_bn128(
@@ -60,7 +68,7 @@ fn build_tera_context_bn128(
     let evals_stage = q_stage + 1;
     let fri_stage = evals_stage + 1;
     let arity = ss["merkleTreeArity"].as_u64().unwrap_or(16) as usize;
-    let custom = ss["merkleTreeCustom"].as_bool().unwrap_or(false);
+    let custom = uses_custom_templates(si);
     let transcript_arity = if custom { arity } else { 16usize };
     let n_bits_arity = (arity as f64).log2().ceil() as usize;
     let n_queries = ss["nQueries"].as_u64().unwrap_or(0) as usize;
@@ -625,6 +633,11 @@ mod tests {
         let out = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap();
         assert!(out.contains("include \"custom/poseidon.circom\";"), "out:\n{out}");
         assert!(out.contains("include \"custom/merklehash.circom\";"), "out:\n{out}");
+        // LessThanGoldilocks with Num2Bytes gates, and not the other one as well: they define the
+        // same templates. The final circuit's publics hash includes the same file.
+        assert!(out.contains("include \"custom/lessthangl.circom\";"), "out:\n{out}");
+        assert!(!out.contains("include \"lessthangl.circom\";"), "out:\n{out}");
+        assert!(out.starts_with("pragma circom 2.1.0;\npragma custom_templates;\n"), "out:\n{out}");
     }
 
     #[test]

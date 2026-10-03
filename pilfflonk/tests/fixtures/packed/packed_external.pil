@@ -1,0 +1,36 @@
+// packed.pil with its fixed columns K[4] and S declared `#pragma fixed_external`: the compiler
+// writes no values for them, and the setup takes them from its caller
+// (pilfflonk/docs/formats.md#fixed-columns). An array and a column that is not one, after two
+// columns with their values: the default grouping packs L1, LLAST and K[0..3] in one f, and S
+// moves to {0, 1}. The rest is packed.pil's: setup/pilfflonk/tests/setup/external_fixed.rs checks
+// that its pilout is packed.pil's without those values, and that both give the same key.
+//
+// Compile over BN254 as packed.pil. The witness generator is tests/data/packed.rs.
+
+public in1;
+public out;
+
+airtemplate Packed(const int N = 2**4) {
+    col fixed L1 = [1, 0...];
+    col fixed LLAST = [0:(N-1), 1];
+    #pragma fixed_external
+    col fixed K[4];
+    #pragma fixed_external
+    col fixed S;
+
+    col witness a[8];
+    col witness c, b;
+
+    for (int i = 0; i < 8; i++) {
+        (1 - LLAST) * (a[i]' - a[i] - K[i % 4]) === 0;
+    }
+    (1 - LLAST) * (c' - c * a[2] - a[3]) === 0;
+    b - a[0] * a[1] - S' === 0;
+
+    L1 * (a[0] - in1) === 0;
+    LLAST * (c - out) === 0;
+}
+
+airgroup Packed {
+    Packed(N: 2**4);
+}

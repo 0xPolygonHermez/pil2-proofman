@@ -100,6 +100,7 @@ struct StarksBackend {
     void (*free_final_snark_prover)(void *snark_prover);
     void (*gen_final_snark_proof)(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef);
     void (*pre_allocate_final_snark_prover)(void *snark_prover, void* unified_buffer_gpu, void* d_buffers_recursivef);
+    void *(*reserve_recursivef_aux_trace)(void *d_buffers_recursivef, uint64_t bytes, uint64_t *out_bytes);
 };
 
 // Active backend pointer — set via set_gpu_mode()

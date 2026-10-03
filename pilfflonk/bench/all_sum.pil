@@ -1,0 +1,14 @@
+// The `all` of tests/fixtures/all/all_sum.pil at N = 2^BENCH_BITS, for the benchmark (bench.sh,
+// pilfflonk/docs/performance.md#cpu): the fixture's airtemplate, on the std's sum bus in
+// STD_MODE_ONE_INSTANCE, with the airgroup taking N from the compiler (the fixture's, 2^8).
+//
+// BENCH_BITS is a define of pil2com: bench.sh compiles with a -P config holding the prime and
+// "defines": {"BENCH_BITS": <bits>}, and -I pil2-components/lib/std/pil. The witness is
+// tests/data/all.rs's for 2^BENCH_BITS rows (`witness_of_size`).
+require "../tests/fixtures/all/all.pil"
+
+set_std_mode(STD_MODE_ONE_INSTANCE);
+
+airgroup All {
+    All(N: 2**BENCH_BITS, bus_type: PIOP_BUS_SUM);
+}

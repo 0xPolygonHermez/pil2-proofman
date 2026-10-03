@@ -1,0 +1,12 @@
+// The sum bus of sum_bus.pil with the std's MAX_CONSTRAINT_DEGREE raised to 4: both terms fit in
+// one fraction of denominator degree 2 (std_sum.pil, piop_gsum_air), and gsum_col alone gives the
+// stage-2 column `gsum`, from the columns of stage 1, with no im_col. The same AIR, witness
+// (tests/data/sum_bus.rs) and compilation as sum_bus.pil's.
+//
+// The degree is set before sum_bus.pil is read: the std reads it when it closes the AIR's bus, and
+// requires std_constants.pil only once.
+require "std_constants.pil"
+
+set_max_constraint_degree(4);
+
+require "sum_bus.pil"

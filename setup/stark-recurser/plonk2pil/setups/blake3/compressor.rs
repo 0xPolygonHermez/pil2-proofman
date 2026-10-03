@@ -46,6 +46,7 @@ use crate::plonk2pil::r1cs::to_plonk::{blake3_compress_gate_uses, get_custom_gat
 use crate::plonk2pil::r1cs::types::{PlonkOptions, R1csFile, SetupResult};
 use crate::plonk2pil::utils::log2;
 use proofman_common::hash_family::GateRole;
+use proofman_fields::{Field, Goldilocks};
 
 /// Lanes the air accepts. Above 8 the boundary opening depth exceeds 7 -- see `aggregator.pil`.
 /// A structural bound, not a preference: it is what the AIR can express.
@@ -234,12 +235,12 @@ pub fn plan_compressor_geometry(
 }
 
 /// Reads the demand off an r1cs, mirroring what `aggregation_blake3` counts.
-pub fn compressor_demand(r1cs: &R1csFile, options: &PlonkOptions) -> CompressorDemand {
+pub fn compressor_demand(r1cs: &R1csFile<Goldilocks>, options: &PlonkOptions) -> CompressorDemand {
     let (plonk_constraints, _, _) = r1cs2plonk_merged(r1cs, options.merge_copies);
     let cgi = get_custom_gates_info(r1cs);
 
     let compress_uses = blake3_compress_gate_uses(&r1cs.custom_gates_uses, &cgi.blake3_compress_parameters);
-    let (parent_uses, chunk_uses): (Vec<_>, Vec<_>) = compress_uses.into_iter().partition(|(_, _, ip)| *ip == 1);
+    let (parent_uses, chunk_uses): (Vec<_>, Vec<_>) = compress_uses.into_iter().partition(|(_, _, ip)| ip.is_one());
     let sizes = |uses: Vec<_>| bucket_by_flags(uses).iter().map(|b| b.len()).collect::<Vec<_>>();
 
     // Every one of these is a ROW count under COMPRESSOR_LAYOUT, because that is the air being
@@ -272,7 +273,7 @@ pub fn compressor_demand(r1cs: &R1csFile, options: &PlonkOptions) -> CompressorD
 /// the same permutation and the same six band circuits as the aggregator and shares its placement
 /// routine; `COMPRESSOR_LAYOUT` is the whole difference. What also differs is the SIZING: the
 /// aggregator is pinned to the shared recursion shape, the compressor picks its own.
-pub fn compressor_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
+pub fn compressor_blake3(r1cs: &R1csFile<Goldilocks>, options: &PlonkOptions) -> SetupResult<Goldilocks> {
     // An explicit --blake3-lanes outranks the search: the caller is stating the geometry.
     if options.blake3_lanes.is_some() {
         tracing::info!("Compressor: LANES pinned by the caller, skipping the geometry search");

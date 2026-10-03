@@ -1,0 +1,31 @@
+// The Fibonacci of tests/fixtures/fibonacci/fibonacci.pil at N = 2^BENCH_BITS, for the benchmark
+// (bench.sh, pilfflonk/docs/performance.md#cpu). The fixture's airgroup fixes N = 2^8, and
+// requiring it would instantiate that one too: this is its airtemplate, the same columns,
+// constraints and publics, with the airgroup taking N from the compiler.
+//
+// BENCH_BITS is a define of pil2com: bench.sh compiles with a -P config holding the prime and
+// "defines": {"BENCH_BITS": <bits>}. The witness is tests/data/fibonacci.rs's for 2^BENCH_BITS rows.
+
+public in1;
+public in2;
+public out;
+
+airtemplate Fibonacci(const int N = 2**8) {
+    col fixed L1 = [1, 0...];           // 1 at the first row
+    col fixed LLAST = [0:(N-1), 1];     // 1 at the last row
+
+    col witness l1, l2;
+
+    (l2' - l1) * (1 - LLAST) === 0;
+
+    expr next = l1*l1 + l2*l2;
+    (l1' - next) * (1 - LLAST) === 0;
+
+    L1 * (l2 - in1) === 0;
+    L1 * (l1 - in2) === 0;
+    LLAST * (l1 - out) === 0;
+}
+
+airgroup Fibonacci {
+    Fibonacci(N: 2**BENCH_BITS);
+}

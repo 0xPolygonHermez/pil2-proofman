@@ -1,0 +1,493 @@
+#ifndef PILFFLONK_API_HPP
+#define PILFFLONK_API_HPP
+
+#include <stdint.h>
+
+// C API of the pilfflonk BN254 backend. The Rust side declares it by hand in
+// provers/starks-lib-c/bindings_pilfflonk.rs: keep both in sync.
+//
+// Conventions:
+// - A scalar is 32 bytes, canonical (< r) little-endian.
+// - A G1 point is 64 bytes, affine x‖y, each coordinate 32 bytes canonical (< q) little-endian.
+//   The point at infinity has no affine coordinates: a function that writes it writes (0, 0), as
+//   ffiasm and Ethereum's precompiles (EIP-196) do.
+// - Objects are opaque handles, released with their _free function.
+// - Functions that create an object return NULL on failure; every other function returns one of
+//   the status codes below. No function exits or aborts the process, with one exception: on the
+//   GPU (pilfflonk_ctx_new_on), a CUDA failure inside the GPU helpers it reuses (out of device
+//   memory, a lost device) aborts it, as it does in the PLONK GPU prover
+//   (pilfflonk/docs/performance.md#selection-memory-and-errors).
+// - After a failure, pilfflonk_last_error() describes it and pilfflonk_last_status() returns its
+//   status, which is how a function that returns NULL tells why.
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+    enum pilfflonk_status {
+        PILFFLONK_OK = 0,
+        PILFFLONK_ERR_INVALID_ARGUMENT = 1, // a null pointer, an out-of-range size or kind, or a call
+                                            // the object's state does not allow
+        PILFFLONK_ERR_NON_CANONICAL = 2,    // a scalar not below r, or a coordinate not below q
+        PILFFLONK_ERR_INTERNAL = 3,         // an unexpected failure inside the library
+        PILFFLONK_ERR_INVALID_POINT = 4,    // a G1 point off the curve, or one the transcript cannot hash
+        PILFFLONK_ERR_IO = 5,               // a file cannot be opened, read or written
+        PILFFLONK_ERR_FORMAT = 6,           // a file is not in the format expected: the wrong type, a
+                                            // section missing or of the wrong size, a value out of range
+        PILFFLONK_ERR_UNSATISFIED = 7,      // the witness does not satisfy the AIR's constraints: its
+                                            // constraint polynomial Q is not of its degree
+    };
+
+    // What pilfflonk_transcript_absorb reads.
+    enum pilfflonk_transcript_kind {
+        PILFFLONK_TRANSCRIPT_FR = 0, // scalars, 32 bytes each
+        PILFFLONK_TRANSCRIPT_G1 = 1, // G1 points, 64 bytes each
+    };
+
+    // Where a ctx runs the MSMs and the NTTs of its proofs (pilfflonk_ctx_new_on;
+    // pilfflonk/docs/performance.md#gpu). The proofs are the same, bit for bit, on either.
+    enum pilfflonk_device {
+        PILFFLONK_DEVICE_CPU = 0, // ffiasm's MSM and FFT: pilfflonk_ctx_new
+        PILFFLONK_DEVICE_GPU = 1, // the GPU's MSM and NTT of src/bn128/src/{msm,ntt}, on CUDA device 0
+    };
+
+    // Why the most recent other pilfflonk_* call on the calling thread failed; empty if it
+    // succeeded. Never NULL; the next pilfflonk_* call on the same thread overwrites the text.
+    const char *pilfflonk_last_error(void);
+
+    // The status of the most recent other pilfflonk_* call on the calling thread: PILFFLONK_OK if it
+    // succeeded. The next pilfflonk_* call on the same thread overwrites it.
+    int pilfflonk_last_status(void);
+
+    // PILFFLONK_OK if `scalar` (little-endian) is below the BN254 scalar modulus r,
+    // PILFFLONK_ERR_NON_CANONICAL otherwise.
+    int pilfflonk_fr_check_canonical(const uint8_t scalar[32]);
+
+    // Writes to `out` the Keccak-256 hash of the `len` bytes at `data`: Keccak with its original
+    // padding (0x01), as Ethereum and snarkjs use it, not SHA3-256. It is rapidsnark's
+    // keccak_wrapper, the hash Keccak256Transcript uses (pilfflonk/docs/protocol.md#transcript).
+    // The setup hashes the vkey's digest preimage with it (pilfflonk/docs/formats.md#digest). With
+    // len = 0, `data` may be NULL.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if `out` is NULL, if `data` is NULL and len is not 0, or if
+    // len is above 2^63 - 1.
+    int pilfflonk_keccak256(const uint8_t *data, uint64_t len, uint8_t out[32]);
+
+    // The Fiat-Shamir transcript of a proof (pilfflonk/docs/protocol.md#transcript): rapidsnark's
+    // Keccak256Transcript, driven as the existing FFLONK prover drives it. Absorbing only appends
+    // elements; a squeeze hashes all the elements absorbed since the previous one. Not safe to use
+    // from several threads at once.
+    // A call that fails with PILFFLONK_ERR_INTERNAL may have been cut short (out of memory); the
+    // transcript then refuses every later absorb and squeeze, with the same status.
+
+    // A new, empty transcript, or NULL on failure. Release it with pilfflonk_transcript_free.
+    void *pilfflonk_transcript_new(void);
+
+    // Releases a transcript. NULL is a no-op.
+    void pilfflonk_transcript_free(void *transcript);
+
+    // Appends `n` elements of `kind`, read from `data`: n * 32 bytes of scalars, or n * 64 bytes of
+    // G1 points. All or nothing: if any element is refused, none is absorbed. With n = 0 it does
+    // nothing, and `data` may be NULL.
+    //
+    // A point must be on the curve. It cannot be the point at infinity, which has no x‖y encoding;
+    // (0, 0), ffiasm's affine form of it, is refused with its own message because
+    // Keccak256Transcript does not hash it (it clears the start of its buffer instead). Nor can a
+    // coordinate be below 2^192: ffiasm writes such a coordinate as a larger number instead of as
+    // 32 big-endian bytes, so the challenge would not be the protocol's
+    // (pilfflonk/docs/protocol.md#transcript). Neither case happens in a proof: every point
+    // absorbed is blinded, and a random coordinate is that small with probability about 2^-62. Both
+    // are PILFFLONK_ERR_INVALID_POINT.
+    //
+    // PILFFLONK_ERR_INVALID_ARGUMENT also if the elements absorbed since the last squeeze would
+    // exceed the 2^31 - 1 bytes that Keccak256Transcript can hash at once (32 per scalar, 192 per
+    // point, as it counts them); it is then checked before `data` is read.
+    int pilfflonk_transcript_absorb(void *transcript, const uint8_t *data, uint64_t n, uint32_t kind);
+
+    // Writes to `out` the challenge keccak256(buffer) mod r, as a scalar, where the buffer holds
+    // the elements absorbed since the previous squeeze in the transcript's big-endian encoding.
+    // Then restarts the transcript seeded with that challenge: Keccak256Transcript's reset() +
+    // addScalar().
+    // PILFFLONK_ERR_INVALID_ARGUMENT on a transcript to which nothing has been absorbed yet, like
+    // snarkjs's Keccak256Transcript.
+    int pilfflonk_transcript_squeeze(void *transcript, uint8_t out[32]);
+
+    // The structured reference string: the powers [τ^i]₁ for i < n_g1, and [1]₂ and [τ]₂, of a
+    // snarkjs powers-of-tau file. The setup extracts them into pilfflonk.srs.bin
+    // (pilfflonk/docs/formats.md#srs; the format is in src/pilfflonk/pilfflonk_srs.hpp) and the
+    // prover loads that file. Every point is checked as it is read: coordinates below q, on the
+    // curve, [1]₁ and [1]₂ the generators, and [τ]₂ in the r-torsion group G2 of the twist (the JS
+    // verifier refuses a vkey whose X_2 is not).
+
+    // Reads the first n_g1 powers [τ^i]₁, and [1]₂ and [τ]₂, of the ptau at ptau_path -- only
+    // those points, from sections 1 to 3 (section 12 is not needed,
+    // pilfflonk/docs/README.md#setup-pilfflonk) -- and writes them to srs_path as pilfflonk.srs.bin,
+    // replacing any file there. It writes srs_path + ".tmp" and renames it into place, so srs_path
+    // is never left half written.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a path is NULL, if n_g1 is 0 or above 2^32 - 1, or if the
+    // ptau has fewer than n_g1 powers [τ^i]₁; PILFFLONK_ERR_IO if a file cannot be opened, read or
+    // written; PILFFLONK_ERR_FORMAT if the ptau is not a BN254 one, a section is missing or cut
+    // short, or a point is not valid.
+    int pilfflonk_srs_from_ptau(const char *ptau_path, uint64_t n_g1, const char *srs_path);
+
+    // Loads the pilfflonk.srs.bin at srs_path, or returns NULL. pilfflonk_last_status() then says
+    // why: PILFFLONK_ERR_INVALID_ARGUMENT if srs_path is NULL, PILFFLONK_ERR_IO if the file cannot
+    // be opened or read, PILFFLONK_ERR_FORMAT if it is not such a file (a header field or a section
+    // size that does not match, or a point that is not valid). Release it with pilfflonk_srs_free.
+    // An SRS is immutable: the calls that use it may run concurrently.
+    void *pilfflonk_srs_load(const char *srs_path);
+
+    // Releases an SRS. NULL is a no-op.
+    void pilfflonk_srs_free(void *srs);
+
+    // Writes to out_g2 the power [τ^i]₂ of the SRS, for i = 0 ([1]₂) or i = 1 ([τ]₂): the points of
+    // the verifier's pairing (pilfflonk/docs/protocol.md#pairing-check); the vkey's X_2 is [τ]₂
+    // (pilfflonk/docs/formats.md#vkey). The point is affine, x‖y, each coordinate an Fq2 element
+    // c0 + c1·u written c0‖c1, and each of the four Fq values 32 bytes canonical (< q)
+    // little-endian: x.c0‖x.c1‖y.c0‖y.c1, the order of the vkey's X_2 = [[x.c0, x.c1], [y.c0, y.c1]].
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or i is neither 0 nor 1.
+    int pilfflonk_srs_g2(const void *srs, uint64_t i, uint8_t out_g2[128]);
+
+    // PILFFLONK_OK if `g2`, a point x.c0‖x.c1‖y.c0‖y.c1 as pilfflonk_srs_g2 writes one (each
+    // coordinate canonical little-endian), is a point of G2 other than the point at infinity: on the
+    // twist and in its r-torsion group. What the JS verifier requires of the vkey's X_2
+    // (pilfflonk/js/src/elements.js, g2FromObject), and the SRS of its [τ]₂: Vkey::validate calls it.
+    // PILFFLONK_ERR_NON_CANONICAL if a coordinate is not below q; PILFFLONK_ERR_INVALID_POINT if the
+    // point is (0, 0), the point at infinity, off the twist, or not in G2 (the last error says which);
+    // PILFFLONK_ERR_INVALID_ARGUMENT if g2 is NULL.
+    int pilfflonk_g2_check(const uint8_t g2[128]);
+
+    // Writes to out_g1 the KZG commitment [f(τ)]₁ of a fixed f
+    // (pilfflonk/docs/README.md#setup-pilfflonk): f(X) = Σ_{j<k} p_j(X^k)·X^j, where p_j is the
+    // polynomial of degree < N = 2^n_bits whose evaluations on H are column j. `evals` holds the k
+    // columns one after another, each the N scalars p_j(ω^i) for i = 0 … N-1, where
+    // ω = 5^((r-1)/N). The columns are interpolated with no blinding (constants get none,
+    // pilfflonk/docs/protocol.md#blinding), packed, and committed with the SRS. An f that is zero
+    // commits to the point at infinity, written as (0, 0), which pilfflonk_transcript_absorb
+    // refuses.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL, if k is 0, if n_bits exceeds 28, or if
+    // f's k·N coefficients exceed the SRS's powers [τ^i]₁; PILFFLONK_ERR_NON_CANONICAL if a scalar
+    // is not below r (checked before anything is computed).
+    // This is the pilfflonk_commit_fixed the setup calls, in memory, one f per call.
+    int pilfflonk_commit_fixed(const void *srs, uint64_t n_bits, uint64_t k, const uint8_t *evals,
+                               uint8_t out_g1[64]);
+
+    // ---------------------------------------------------------------------------------------------
+    // The prover (pilfflonk/docs/protocol.md#proof-sequence). The orchestrator
+    // (proofman_pilfflonk::prover) drives it in the order of the transcript
+    // (pilfflonk/docs/protocol.md#transcript), which it owns and absorbs into:
+    //
+    //   ctx = pilfflonk_ctx_new(provingKey/)                      step 1: the proving key
+    //   inst = pilfflonk_instance_new(ctx, …, stage-1 witness, publics, …, seed)
+    //   pilfflonk_commit_stage(inst, s, challenges of s, …)       step 2, for s = 1 … nStages
+    //   pilfflonk_commit_q(inst, [std_vc], …)                     step 3
+    //   op = pilfflonk_opening_new([inst], xiSeed)                step 4: the evaluations
+    //   pilfflonk_opening_evaluations(op, …)
+    //   pilfflonk_opening_open(op, transcript, W, W', inv, invZh) step 5: squeezes α_S, absorbs W, squeezes y
+    //
+    // A ctx outlives its instances, and instances their openings. A ctx is immutable: instances of
+    // several proofs may share one, from several threads. An instance or an opening is not safe to use
+    // from several threads at once, but may move from one thread to another between its calls.
+    //
+    // Concurrent instances of one ctx:
+    // - On the CPU (pilfflonk_ctx_new, or pilfflonk_ctx_new_on with PILFFLONK_DEVICE_CPU), each
+    //   instance has memory of its own, and instances on several threads prove at the same time.
+    // - On the GPU (PILFFLONK_DEVICE_GPU, or pilfflonk_ctx_new_on_device_buffer), the ctx holds the
+    //   device memory of one proof (its arena), which an instance holds from pilfflonk_instance_new to
+    //   pilfflonk_instance_free: one proof at a time per ctx. pilfflonk_instance_new on another thread
+    //   waits until the instance that holds it is freed. On the thread that holds it, the thread of
+    //   the latest call of that instance or of its opening that works on its device memory (its
+    //   pilfflonk_instance_new, pilfflonk_commit_stage, pilfflonk_commit_q,
+    //   pilfflonk_instance_set_q_part_bits, a column's first copy, pilfflonk_opening_new and
+    //   pilfflonk_opening_open), pilfflonk_instance_new is refused with PILFFLONK_ERR_INVALID_ARGUMENT,
+    //   as it would wait for itself: an instance that moved to another thread is held there from its
+    //   first such call there.
+    //   Every call runs on CUDA device 0, whatever the calling thread's current device, which it leaves
+    //   as it was.
+    // ---------------------------------------------------------------------------------------------
+
+    // The proving key at proving_key_dir, the provingKey/ setup-pilfflonk writes
+    // (pilfflonk/docs/formats.md#provingkey): pilout.globalInfo.json,
+    // <name>/pilfflonk/pilfflonk.srs.bin and, for every AIR, <air>.pilfflonkinfo.json, <air>.bin
+    // and <air>.const. The fixed columns are interpolated as it is loaded, and everything else the
+    // prover derives (the degrees and the extended domain, pilfflonk/docs/protocol.md#degrees, and
+    // the blinding of each column) is derived. The vkey is not read: its digest, which the
+    // transcript absorbs, is the orchestrator's. Returns NULL on failure:
+    // PILFFLONK_ERR_INVALID_ARGUMENT if proving_key_dir is NULL, PILFFLONK_ERR_IO if a file cannot
+    // be read, PILFFLONK_ERR_FORMAT if one is not what it should be or they do not agree (an AIR
+    // that is not the globalInfo's, a layout needing more powers than the SRS holds, pieces of Q
+    // other than pilfflonk/docs/protocol.md#q-pieces describes).
+    void *pilfflonk_ctx_new(const char *proving_key_dir);
+
+    // pilfflonk_ctx_new with the ctx and its proofs on `device`, one of enum pilfflonk_device
+    // (pilfflonk/docs/performance.md#what-runs-on-the-gpu). On PILFFLONK_DEVICE_GPU the SRS's powers
+    // [τ^i]₁ are copied to the GPU once they are read, and the key's fixed columns and every proof's
+    // polynomials stay there: the fixed columns' INTT and commitments (pilfflonk_ctx_fixed_commitments),
+    // each stage's hints, im pols, INTTs and commitments, Q whole and SHPLONK's opening run on the
+    // device; the transcript and the blinding's draws stay on the CPU. A proof copies its witness to
+    // the device, and back only commitments, evaluations and a few bytes; one proof at a time (the
+    // concurrent instances above). Returns NULL on failure, as
+    // pilfflonk_ctx_new, and PILFFLONK_ERR_INVALID_ARGUMENT also if device is none of the enum or
+    // is PILFFLONK_DEVICE_GPU and pilfflonk_gpu_available() is 0 (checked before any file is read),
+    // or if the device has not the memory of the key and a proof of each AIR (naming the AIR and the
+    // bytes it needs and the device has free).
+    void *pilfflonk_ctx_new_on(const char *proving_key_dir, uint32_t device);
+
+    // pilfflonk_ctx_new_on(proving_key_dir, PILFFLONK_DEVICE_GPU), with its proofs' device memory (their
+    // arena) in the caller's device_buffer, device_buffer_bytes bytes on CUDA device 0: a wrap's
+    // pre-reserved buffer, such as proofman's unified buffer, which others use between the proofs. The
+    // ctx writes it only while one of its instances lives (one at a time), never while it loads,
+    // synchronises the device before and after, and never frees it: it must outlive the ctx. Its other
+    // device memory it allocates beside it, at most pilfflonk_gpu_device_bytes's *out_beside, which it
+    // checks against the device's free memory. Returns NULL on failure, as
+    // pilfflonk_ctx_new_on, and PILFFLONK_ERR_INVALID_ARGUMENT also if device_buffer is NULL, or if
+    // device_buffer_bytes is less than a proof's arena (saying how many bytes it needs and the buffer
+    // has) or the device has not the memory of the rest.
+    void *pilfflonk_ctx_new_on_device_buffer(const char *proving_key_dir, void *device_buffer,
+                                             uint64_t device_buffer_bytes);
+
+    // The device memory a ctx of the provingKey/ at proving_key_dir needs on the GPU, from its files
+    // (the globalInfo, the SRS's header, each AIR's pilfflonkinfo and .bin), without loading it:
+    // *out_arena, the arena of its proofs, which pilfflonk_ctx_new_on_device_buffer's buffer must
+    // hold, and *out_beside, the most it holds and allocates beside that buffer (the SRS's powers, each
+    // AIR's fixed columns' coefficients, bytecode and tables, the scratch of an AIR's loading, and what
+    // a proof allocates besides): pilfflonk_ctx_new_on_device_buffer loads if the device has
+    // *out_beside bytes free, and is refused with one byte less. A ctx of its own arena
+    // (pilfflonk_ctx_new_on) needs at most *out_arena + *out_beside, as its loading's scratch is in its
+    // arena. PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no GPU (as
+    // pilfflonk_ctx_new_on); PILFFLONK_ERR_IO and PILFFLONK_ERR_FORMAT for those files, as
+    // pilfflonk_ctx_new.
+    int pilfflonk_gpu_device_bytes(const char *proving_key_dir, uint64_t *out_arena, uint64_t *out_beside);
+
+    // Writes to *out_free the free memory of CUDA device 0, in bytes (cudaMemGetInfo), what a ctx's
+    // load on the GPU checks pilfflonk_gpu_device_bytes's needs against: for a caller that reserves
+    // device memory before it loads a ctx, as a wrap does. PILFFLONK_ERR_INVALID_ARGUMENT if out_free
+    // is NULL or there is no GPU (as pilfflonk_ctx_new_on).
+    int pilfflonk_gpu_free_bytes(uint64_t *out_free);
+
+    // 1 if this library has the GPU path (it was built with nvcc: libstarksgpu.a) and sees a GPU it
+    // can use (compute capability 7.0 or above), 0 otherwise: in a library built without it, and
+    // where CUDA finds no device or no driver. It never fails.
+    int pilfflonk_gpu_available(void);
+
+    // Releases a ctx, which no instance may still use. NULL is a no-op.
+    void pilfflonk_ctx_free(void *ctx);
+
+    // Writes to out the nBitsExt of air air_id of airgroup airgroup_id
+    // (pilfflonk/docs/protocol.md#degrees), as the prover derives it, for the orchestrator to check
+    // against its own. PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no such AIR.
+    int pilfflonk_ctx_n_bits_ext(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t *out);
+
+    // Writes to out_g2 the power [τ^i]₂ of the ctx's SRS, as pilfflonk_srs_g2 does. The orchestrator
+    // compares [τ]₂ with the vkey's X_2, so that the SRS of a ptau other than the vkey's is refused.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or i is neither 0 nor 1.
+    int pilfflonk_ctx_srs_g2(const void *ctx, uint64_t i, uint8_t out_g2[128]);
+
+    // Writes to out_g1 the n commitments [f(τ)]₁ of the fixed f of air air_id of airgroup
+    // airgroup_id, the first n entries of its layout, computed from its .const as the ctx holds it:
+    // its columns interpolated, packed and committed with the SRS, as setup-pilfflonk commits them
+    // for the vkey (pilfflonk_commit_fixed). The prover never needs them and the verifier takes
+    // them from the vkey: the orchestrator compares them with the vkey's f<i>, so that a .const
+    // other than the one the vkey was set up with is refused rather than giving proofs that do not
+    // verify. One MSM per f, of its k·N points; computed at each call. out_g1 may be NULL if n is 0.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL as it may not be, if there is no such AIR,
+    // or if n is not its number of fixed f.
+    int pilfflonk_ctx_fixed_commitments(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint8_t *out_g1,
+                                        uint64_t n);
+
+    // An instance of air air_id of airgroup airgroup_id, or NULL.
+    // - stage1 holds its stage-1 witness as the witness directory's instance file does
+    //   (pilfflonk/docs/formats.md#witness-directory): the N rows one after another, each the values
+    //   of the C stage-1 columns (the witness columns of stage 1, by stageId; not the im pols, which
+    //   the prover computes), stage1_len = N·C·32 bytes.
+    // - air_values: the n_air_values values of the stage-1 entries of the AIR's airValuesMap, in
+    //   their order; publics, the globalInfo's nPublics; proof_values, those of the stage-1 entries of
+    //   the globalInfo's proofValuesMap. Each array may be NULL if its count is 0.
+    // - insecure_blinding_seed: NULL for a real proof, blinded with the OS's randomness. Otherwise 32
+    //   bytes that fix the blinding (for tests and CI only, pilfflonk/docs/protocol.md#blinding): the
+    //   same seed gives the same proof, and whoever knows it can remove the blinding, so the proof is
+    //   not zero-knowledge.
+    // On a ctx on the GPU, it waits while another thread's instance of the ctx holds the device
+    // memory of its proof (the concurrent instances above).
+    // PILFFLONK_ERR_INVALID_ARGUMENT if ctx is NULL, if there is no such AIR, if a count or stage1_len
+    // is not the one expected, or an array is NULL with a count other than 0, and on a ctx on the GPU
+    // if this thread holds its device memory with another instance (it would wait for itself);
+    // PILFFLONK_ERR_NON_CANONICAL if a scalar is not below r (for stage1, naming its row and column).
+    void *pilfflonk_instance_new(const void *ctx, uint64_t airgroup_id, uint64_t air_id, const uint8_t *stage1,
+                                 uint64_t stage1_len, const uint8_t *air_values, uint64_t n_air_values,
+                                 const uint8_t *publics, uint64_t n_publics, const uint8_t *proof_values,
+                                 uint64_t n_proof_values, const uint8_t *insecure_blinding_seed);
+
+    // Releases an instance, which no opening may still use. NULL is a no-op.
+    void pilfflonk_instance_free(void *instance);
+
+    // Commits stage `stage` of the instance (pilfflonk/docs/protocol.md#proof-sequence, step 2):
+    // its columns (the witness's for stage 1, and for a stage >= 2 those its std prover hints give,
+    // im_col and then gsum_col and gprod_col, as the STARK's calculateImHints and
+    // calculateWitnessSTD compute them), its intermediate polynomials (with the AIR's bytecode on
+    // H), and for each f of the stage in the layout, its columns interpolated, blinded
+    // (p' = p + (X^N − 1)·b, b of |O_f| + 1 coefficients), packed and committed.
+    // `challenges` holds the n_challenges challenges of the stage by stageId (none for stage 1);
+    // out_g1 receives the n_out commitments of the stage's f, in the order of the layout, n_out being
+    // their number.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL with a count other than 0, if stage is not the
+    // next stage to commit (1, 2, … nStages in turn), or if a count is not the stage's;
+    // PILFFLONK_ERR_NON_CANONICAL if a challenge is not below r; PILFFLONK_ERR_UNSATISFIED if the
+    // denominator of a hint is 0 on a row, where its column has no value (the stage stays uncommitted).
+    int pilfflonk_commit_stage(void *instance, uint32_t stage, const uint8_t *challenges, uint64_t n_challenges,
+                               uint8_t *out_g1, uint64_t n_out);
+
+    // Commits Q (pilfflonk/docs/protocol.md#proof-sequence, step 3), once every stage is: the
+    // columns it reads extended to the coset, Q (the AIR's cExpId) there, and its coefficients,
+    // committed unblinded if it is not split; split, its pieces, each boundary between two blinded
+    // with two random coefficients that cancel (pilfflonk/docs/protocol.md#q-pieces).
+    // `challenges` holds the challenges of stage nStages + 1, std_vc; out_g1 receives the n_out
+    // commitments of the f of Q's stage, in the order of the layout (one f, unless the grouping
+    // splits the pieces' group). PILFFLONK_ERR_UNSATISFIED if the witness does not satisfy the
+    // AIR's constraints: Q has a coefficient not zero beyond its bound
+    // (pilfflonk/docs/protocol.md#degrees). Otherwise as pilfflonk_commit_stage, and
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a stage is not committed yet or Q is committed already.
+    int pilfflonk_commit_q(void *instance, const uint8_t *challenges, uint64_t n_challenges, uint8_t *out_g1,
+                           uint64_t n_out);
+
+    // How pilfflonk_commit_q evaluates Q on the extended coset of N' = 2^nBitsExt points
+    // (pilfflonk/docs/protocol.md#q-in-parts): in parts of 2^part_bits points, one after another
+    // (Instance::setQPartBits). The default, part_bits = nBits, holds the columns Q reads on N
+    // points at a time, the least memory; nBitsExt evaluates Q on the whole coset at once. Q, and
+    // so the proof, is the same bit for bit either way. PILFFLONK_ERR_INVALID_ARGUMENT if instance
+    // is NULL or part_bits is not between nBits and nBitsExt, and, on a key on the GPU, if its device
+    // memory cannot hold Q in such parts (the default ones it always holds), saying the bytes they
+    // need and it has.
+    int pilfflonk_instance_set_q_part_bits(void *instance, uint64_t part_bits);
+
+    // Writes to out the n = N values on H of the column of stage `stage` (1 … nStages) at stage_pos
+    // of the instance, as scalars, in the order of the rows: as the prover computed it, the
+    // witness's, a prover hint's or an im pol's, once its stage is committed. For tests and
+    // diagnostics (the Rust oracle checks the hints' columns against it); it is not part of the
+    // proof. On a key on the GPU, the column is on the device, and is read from there the first time
+    // (Instance::column): before pilfflonk_commit_q, which reuses its memory.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL, if the stage is not committed yet or has no
+    // column at stage_pos, if n is not N, or if such a column is read first once Q's commitment has
+    // begun.
+    int pilfflonk_instance_column(const void *instance, uint32_t stage, uint64_t stage_pos, uint8_t *out,
+                                  uint64_t n);
+
+    // The opening of a proof (pilfflonk/docs/protocol.md#proof-sequence, steps 4 and 5), or NULL:
+    // every f of the instances, in the global order (pilfflonk/docs/protocol.md#global-order),
+    // evaluated at ξ = xi_seed^powerW (powerW the lcm of every k). The n_instances instances, of one
+    // ctx and in canonical order, must all have Q committed, and stay alive and unchanged while the
+    // opening is. On a ctx on the GPU, which holds one instance at a time, there is one instance, and
+    // the opening runs in the device memory it holds.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL, if there are no instances, if they are not as
+    // said, or if xi_seed is 0; PILFFLONK_ERR_NON_CANONICAL if xi_seed is not below r;
+    // PILFFLONK_ERR_INTERNAL if ξ is in H, where Z_H vanishes (probability N/r).
+    void *pilfflonk_opening_new(const void *const *instances, uint64_t n_instances, const uint8_t xi_seed[32]);
+
+    // Releases an opening. NULL is a no-op.
+    void pilfflonk_opening_free(void *opening);
+
+    // The number of evaluations of the proof, the n that pilfflonk_opening_evaluations writes. 0 if
+    // opening is NULL (and pilfflonk_last_status() says so).
+    uint64_t pilfflonk_opening_n_evaluations(const void *opening);
+
+    // Writes to out the n evaluations of the proof, in the order of the transcript and of the proof
+    // (pilfflonk/docs/protocol.md#transcript, step 4; pilfflonk/docs/formats.md#proof): for each AIR
+    // with an instance its fixed columns, then for each instance its other columns, each in the
+    // order of the AIR's evMap, whose entry (type, id, prime) is its column at ξ·ω^prime; then, for
+    // each instance whose Q is split, its pieces' Q_i(ξ) in the order of its layout. The
+    // orchestrator absorbs them before pilfflonk_opening_open.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or n is not their number.
+    int pilfflonk_opening_evaluations(const void *opening, uint64_t n, uint8_t *out);
+
+    // Writes to out Q(ξ) of instance `instance` of the opening: the value the verifier computes
+    // from the evaluations (pilfflonk/docs/protocol.md#constraint-polynomial),
+    // Σ_i ξ^(i·maxQDegree·N)·Q_i(ξ) of its pieces if Q is split, for tests and diagnostics; it is
+    // not part of the proof.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no such instance.
+    int pilfflonk_opening_q(const void *opening, uint64_t instance, uint8_t out[32]);
+
+    // SHPLONK (pilfflonk/docs/protocol.md#proof-sequence, step 5): squeezes α_S from the transcript,
+    // which must hold everything absorbed before (the evaluations last), writes [W]₁ to out_w and
+    // absorbs it, squeezes y, and writes [W']₁ to out_wp; then the proof's inv to out_inv (the
+    // inverse of the product of the denominators the verifier inverts in the SHPLONK check, in the
+    // order verifierInverse lists them in src/pilfflonk/pilfflonk_shplonk_prover.hpp) and 1/Z_H(ξ)
+    // to out_inv_zh.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or the transcript is empty or incomplete
+    // (before it is touched). After that, on failure the proof must be abandoned: PILFFLONK_ERR_INTERNAL
+    // if [W]₁ is a point the transcript cannot absorb or y is a root of some f (probability about
+    // 2^-60 and deg/r).
+    int pilfflonk_opening_open(const void *opening, void *transcript, uint8_t out_w[64], uint8_t out_wp[64],
+                               uint8_t out_inv[32], uint8_t out_inv_zh[32]);
+
+    // ---------------------------------------------------------------------------------------------
+    // The check (pilfflonk/docs/README.md#pilfflonk-check): the witness of an instance against the
+    // constraints of its AIR, row by row, proving nothing. The constraints are section 2 of the
+    // AIR's <air>.bin: the pilout's, in its order, then one per intermediate polynomial, im − e.
+    // Constraint c holds on the rows first_row <= i < last_row where its numerator, the value of
+    // its code, is 0.
+    //
+    //   n = pilfflonk_ctx_n_constraints(ctx, …)
+    //   pilfflonk_ctx_constraint(ctx, …, c, …), pilfflonk_ctx_constraint_line(ctx, …, c, …), c < n
+    //   inst = pilfflonk_instance_new(ctx, …)
+    //   pilfflonk_check(inst, challenges of stages 2 … nStages, max_rows, n, …)
+    //
+    // The columns of the stages after the first need the challenges of their stages, which the
+    // check is given: proofman_pilfflonk::check derives them from fixed elements, as the STARK's
+    // verify-constraints does. Nothing is committed.
+    // ---------------------------------------------------------------------------------------------
+
+    // Writes to out the number of constraints of air air_id of airgroup airgroup_id.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no such AIR.
+    int pilfflonk_ctx_n_constraints(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t *out);
+
+    // Constraint `index` of that AIR: its stage, the rows first_row <= i < last_row it holds on, 1 in
+    // im_pol if it is an intermediate polynomial's and 0 if not, and in line_len the bytes of its line,
+    // the PIL it comes from (pilfflonk_ctx_constraint_line).
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no such AIR or constraint.
+    int pilfflonk_ctx_constraint(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t index,
+                                 uint64_t *stage, uint64_t *first_row, uint64_t *last_row, uint32_t *im_pol,
+                                 uint64_t *line_len);
+
+    // Writes to out the line of that constraint, as the setup wrote it (UTF-8,
+    // pilfflonk/docs/formats.md#bytecode): its n bytes, with no NUL. n must be its line_len; out
+    // may be NULL if n is 0.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL, there is no such AIR or constraint, or n is
+    // not its line_len.
+    int pilfflonk_ctx_constraint_line(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t index,
+                                      uint8_t *out, uint64_t n);
+
+    // Checks the witness of the instance: computes its intermediate polynomials of stage 1 as
+    // pilfflonk_commit_stage does; for each stage >= 2, its columns as pilfflonk_commit_stage computes
+    // them (its prover hints' and then its intermediate polynomials), with `challenges`, the
+    // n_challenges challenges of stages 2 … nStages by stage and then by stageId (none for an AIR of
+    // one stage), into buffers of its own; and then each constraint's numerator on H with the AIR's
+    // bytecode. For each constraint c of the n_constraints of its AIR, writes to out_n_failed[c] the
+    // number of rows of its domain where the numerator is not 0 and, for the first
+    // min(out_n_failed[c], max_rows) of them in increasing order, entry c·max_rows + j of out_rows (the
+    // row) and of out_values (the numerator there, a scalar); its other entries up to
+    // (c + 1)·max_rows are zeroed.
+    // The instance may be committed before, between or after, as if the check had not run; on a key on
+    // the GPU, whose witness columns are on the device, the first check copies them to the host, and
+    // so must come before pilfflonk_commit_q (Instance::check).
+    // PILFFLONK_OK whether or not every constraint holds: out_n_failed says. With max_rows = 0 it only
+    // counts, and out_rows and out_values may be NULL; out_n_failed may be NULL if n_constraints is 0.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL as it may not be, if n_constraints is not the
+    // AIR's number of constraints or n_challenges the number of challenges of its stages 2 … nStages,
+    // if n_constraints·max_rows scalars exceed 2^64 bytes, or, before anything is computed, for a
+    // constraint of a stage the AIR does not have; PILFFLONK_ERR_NON_CANONICAL if a challenge is not
+    // below r; PILFFLONK_ERR_UNSATISFIED if the denominator of a prover hint is 0 on a row.
+    int pilfflonk_check(void *instance, const uint8_t *challenges, uint64_t n_challenges, uint64_t max_rows,
+                        uint64_t n_constraints, uint64_t *out_n_failed, uint64_t *out_rows, uint8_t *out_values);
+
+    // Writes to out the n = N values on H of the column of stage `stage` (1 … nStages) at
+    // stage_pos, as pilfflonk_check computes it with the same challenges. For tests and diagnostics
+    // (the Rust oracle checks the check's columns against it). Errors as pilfflonk_check, and
+    // PILFFLONK_ERR_INVALID_ARGUMENT if out is NULL, the stage has no column at stage_pos, or n is
+    // not N.
+    int pilfflonk_check_column(void *instance, const uint8_t *challenges, uint64_t n_challenges, uint32_t stage,
+                               uint64_t stage_pos, uint8_t *out, uint64_t n);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

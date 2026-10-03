@@ -17,6 +17,10 @@ proofman-util = { workspace = true }
 proofman-starks-lib-c = { workspace = true }
 proofman-verifier = { workspace = true, features = ["parallel"] }
 pil2-std-lib = { workspace = true }
+# The pilfflonk final SNARK of the wrap (src/pilfflonk_wrap.rs): its key, prover, proof and JS
+# verifier, and the wrap's witness. Neither depends on this crate.
+proofman-pilfflonk = { workspace = true }
+pilfflonk-wrap-witness = { workspace = true }
 
 tracing.workspace = true
 proofman-curves.workspace = true

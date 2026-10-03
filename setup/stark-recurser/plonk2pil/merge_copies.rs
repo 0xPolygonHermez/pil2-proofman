@@ -33,15 +33,17 @@
 //! panics otherwise. The condition depends on the verifier circuit's layout, so it is
 //! enforced at runtime rather than assumed.
 
+use proofman_fields::Field;
+
 use super::r1cs::to_plonk::{r1cs2plonk, PlonkAddition, PlonkConstraint};
 use super::r1cs::types::R1csFile;
-use super::utils::neg;
 
 /// Is this constraint a pure exact copy `sl = sr` (mergeable)?
 /// Shape: `qM=0, qO=0, qC=0, qL = -qR (mod p), qL != 0`, and `sl != sr`.
-fn is_exact_copy(c: &PlonkConstraint) -> bool {
-    let [sl, sr, _so, q_m, q_l, q_r, q_o, q_c] = *c;
-    q_m == 0 && q_o == 0 && q_c == 0 && q_l != 0 && q_r != 0 && q_l == neg(q_r) && sl != sr
+fn is_exact_copy<F: Field>(c: &PlonkConstraint<F>) -> bool {
+    let [sl, sr, _so] = c.wires;
+    let [q_m, q_l, q_r, q_o, q_c] = c.coeffs;
+    q_m.is_zero() && q_o.is_zero() && q_c.is_zero() && !q_l.is_zero() && !q_r.is_zero() && q_l == -q_r && sl != sr
 }
 
 /// Union-find that refuses to merge any signal pinned as externally bound.
@@ -103,9 +105,9 @@ impl UnionFind {
 
 /// Output of the merge: the surviving constraints/additions and a remap table the
 /// caller MUST apply to the full `s_map` after placement.
-pub struct MergeResult {
-    pub constraints: Vec<PlonkConstraint>,
-    pub additions: Vec<PlonkAddition>,
+pub struct MergeResult<F> {
+    pub constraints: Vec<PlonkConstraint<F>>,
+    pub additions: Vec<PlonkAddition<F>>,
     /// `remap[id]` = representative id for signal `id`. Identity outside merged sets.
     /// Apply with [`apply_remap_to_s_map`] to every placed cell.
     pub remap: Vec<u32>,
@@ -120,35 +122,30 @@ pub struct MergeResult {
 /// table for the placement sweep.
 ///
 /// `n_vars` is the R1CS variable count; `n_publics` is `n_outputs + n_pub_inputs`.
-pub fn merge_copy_signals(
-    constraints: &[PlonkConstraint],
-    additions: &[PlonkAddition],
+pub fn merge_copy_signals<F: Field>(
+    constraints: &[PlonkConstraint<F>],
+    additions: &[PlonkAddition<F>],
     n_vars: u32,
     n_publics: u32,
-) -> MergeResult {
+) -> MergeResult<F> {
     // Size the union-find over every id that can appear in s_map: all real signals,
     // all constraint operands, all addition operands.
-    let mut max_id = n_vars.saturating_sub(1);
-    for c in constraints {
-        max_id = max_id.max(c[0] as u32).max(c[1] as u32).max(c[2] as u32);
-    }
-    for a in additions {
-        max_id = max_id.max(a[0] as u32).max(a[1] as u32);
-    }
+    let wires = constraints.iter().flat_map(|c| c.wires).chain(additions.iter().flat_map(|a| a.wires));
+    let max_id = wires.fold(n_vars.saturating_sub(1), u32::max);
 
     let mut uf = UnionFind::new(max_id, n_publics);
 
     // Union exact copies; record which constraint indices a successful merge consumed.
     let mut merged_away = vec![false; constraints.len()];
     for (i, c) in constraints.iter().enumerate() {
-        if is_exact_copy(c) && uf.union(c[0] as u32, c[1] as u32) {
+        if is_exact_copy(c) && uf.union(c.wires[0], c.wires[1]) {
             merged_away[i] = true;
         }
     }
 
     // Representatives of every merged pair (for the post-sweep soundness check).
     let mut merged_reps: Vec<u32> =
-        constraints.iter().zip(merged_away.iter()).filter(|(_, &m)| m).map(|(c, _)| uf.find(c[0] as u32)).collect();
+        constraints.iter().zip(merged_away.iter()).filter(|(_, &m)| m).map(|(c, _)| uf.find(c.wires[0])).collect();
     merged_reps.sort_unstable();
     merged_reps.dedup();
 
@@ -160,23 +157,12 @@ pub fn merge_copy_signals(
             dropped += 1;
             continue;
         }
-        let mut nc = *c;
-        nc[0] = uf.find(c[0] as u32) as u64;
-        nc[1] = uf.find(c[1] as u32) as u64;
-        nc[2] = uf.find(c[2] as u32) as u64;
-        out_constraints.push(nc);
+        out_constraints.push(PlonkConstraint { wires: c.wires.map(|w| uf.find(w)), coeffs: c.coeffs });
     }
 
     // Additions (witness-population rules) remapped too.
-    let out_additions: Vec<PlonkAddition> = additions
-        .iter()
-        .map(|a| {
-            let mut na = *a;
-            na[0] = uf.find(a[0] as u32) as u64;
-            na[1] = uf.find(a[1] as u32) as u64;
-            na
-        })
-        .collect();
+    let out_additions: Vec<PlonkAddition<F>> =
+        additions.iter().map(|a| PlonkAddition { wires: a.wires.map(|w| uf.find(w)), coeffs: a.coeffs }).collect();
 
     // Materialize the full remap table (id -> representative) for the s_map sweep.
     let remap: Vec<u32> = (0..uf.parent.len() as u32).map(|id| uf.find(id)).collect();
@@ -247,7 +233,10 @@ pub struct CopyMerge {
 /// Returns the surviving `(constraints, additions)` and a [`CopyMerge`] payload.
 /// When `merge` is false the remap is identity (sweep is a no-op) and `merged_reps`
 /// is empty (soundness check is vacuous).
-pub fn r1cs2plonk_merged(r1cs: &R1csFile, merge: bool) -> (Vec<PlonkConstraint>, Vec<PlonkAddition>, CopyMerge) {
+pub fn r1cs2plonk_merged<F: Field>(
+    r1cs: &R1csFile<F>,
+    merge: bool,
+) -> (Vec<PlonkConstraint<F>>, Vec<PlonkAddition<F>>, CopyMerge) {
     let (constraints, additions) = r1cs2plonk(r1cs);
     if !merge {
         let identity: Vec<u32> = (0..r1cs.header.n_vars).collect();
@@ -268,19 +257,23 @@ pub fn r1cs2plonk_merged(r1cs: &R1csFile, merge: bool) -> (Vec<PlonkConstraint>,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proofman_fields::Goldilocks;
 
-    fn copy(sl: u64, sr: u64) -> PlonkConstraint {
-        [sl, sr, 0, 0, 1, neg(1), 0, 0] // sl = sr
+    const O: Goldilocks = Goldilocks::ZERO;
+    const I: Goldilocks = Goldilocks::ONE;
+
+    fn copy(sl: u32, sr: u32) -> PlonkConstraint<Goldilocks> {
+        PlonkConstraint { wires: [sl, sr, 0], coeffs: [O, I, -I, O, O] } // sl = sr
     }
-    fn mul(sl: u64, sr: u64, so: u64) -> PlonkConstraint {
-        [sl, sr, so, 1, 0, 0, neg(1), 0]
+    fn mul(sl: u32, sr: u32, so: u32) -> PlonkConstraint<Goldilocks> {
+        PlonkConstraint { wires: [sl, sr, so], coeffs: [I, O, O, -I, O] }
     }
 
     #[test]
     fn detects_exact_copy_not_mul_or_scaled() {
         assert!(is_exact_copy(&copy(5, 9)));
         assert!(!is_exact_copy(&mul(5, 9, 12)));
-        let scaled: PlonkConstraint = [5, 9, 0, 0, 1, neg(2), 0, 0]; // sl = 2*sr
+        let scaled = PlonkConstraint { wires: [5, 9, 0], coeffs: [O, I, -Goldilocks::TWO, O, O] }; // sl = 2*sr
         assert!(!is_exact_copy(&scaled));
         assert!(!is_exact_copy(&copy(7, 7))); // self-copy
     }
@@ -291,7 +284,7 @@ mod tests {
         let r = merge_copy_signals(&cs, &[], 10, 2);
         assert_eq!(r.dropped, 1);
         assert_eq!(r.constraints.len(), 1);
-        assert_eq!(r.constraints[0][0], r.constraints[0][1]);
+        assert_eq!(r.constraints[0].wires[0], r.constraints[0].wires[1]);
     }
 
     #[test]
@@ -337,8 +330,8 @@ mod tests {
 
     #[test]
     fn additions_are_remapped() {
-        let r = merge_copy_signals(&[copy(5, 6)], &[[6, 9, 1, 1]], 10, 2);
-        assert_eq!(r.additions[0][0], r.remap[5] as u64);
+        let r = merge_copy_signals(&[copy(5, 6)], &[PlonkAddition { wires: [6, 9], coeffs: [I, I] }], 10, 2);
+        assert_eq!(r.additions[0].wires[0], r.remap[5]);
     }
 
     #[test]
@@ -370,7 +363,7 @@ mod tests {
             return;
         };
         let bytes = std::fs::read(&f).unwrap_or_else(|e| panic!("read {f}: {e}"));
-        let r1cs = read_r1cs_from_bytes(&bytes).unwrap();
+        let r1cs = read_r1cs_from_bytes::<Goldilocks>(&bytes).unwrap();
         let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
 
         // Recompute the remap the packer will use.
@@ -401,8 +394,7 @@ mod tests {
         let mut checked = 0usize;
         for c in &constraints {
             if is_exact_copy(c) {
-                let sl = c[0] as u32;
-                let sr = c[1] as u32;
+                let [sl, sr, _] = c.wires;
                 let rep_l = mr.remap[sl as usize];
                 let rep_r = mr.remap[sr as usize];
                 if rep_l != rep_r {

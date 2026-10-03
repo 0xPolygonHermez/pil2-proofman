@@ -1,0 +1,90 @@
+//! Prover orchestration for the pilfflonk backend: the types of its own files, instance loading,
+//! the stage loop over the C++ core and proof output.
+//!
+//! This crate owns the types of every pilfflonk file (pilfflonk/docs/README.md#code-map): the setup
+//! (`pilfflonk-setup`) writes them and the prover reads them, both through these types. Their
+//! formats are version 1 (pilfflonk/docs/formats.md):
+//!
+//! | File | Type |
+//! |---|---|
+//! | `pilout.globalInfo.json` | [`PilfflonkGlobalInfo`] |
+//! | `<air>.pilfflonkinfo.json` | [`PilfflonkInfo`] (read by C++ too: `pil2-stark/src/pilfflonk/pilfflonk_info.hpp`) |
+//! | `<air>.verkey.json` | [`AirVerkey`] |
+//! | `pilfflonk.vkey.json` | [`Vkey`] |
+//! | the proof: bytes and `proof.json` | [`Proof`], [`ProofJson`], named by [`ProofNames`] |
+//! | `publics.json` | [`Publics`] |
+//! | the witness directory: `instances.json`, `instance_<ag>_<a>_<t>.bin`, `proof_values.json` | [`Witness`], read by [`FileWitnessSource`] |
+//!
+//! Each JSON file type is a [`JsonFile`]: it is validated when it is read and before it is
+//! written, and written deterministically. [`canonical_json`] is the canonical form the digest of
+//! the vkey is computed over.
+//!
+//! The prover takes its witness from a [`WitnessSource`] (pilfflonk/docs/README.md#witness): a
+//! witness directory, or the [`Witness`] a witness library computes over `Fr` ([`witness_library`]),
+//! loaded with [`load_witness_library`] and exported with [`pilfflonk_witness_library!`].
+//! [`prover`] is the orchestration of a proof over the C++ core
+//! (pilfflonk/docs/protocol.md#proof-sequence): [`ProvingKey::load`] (or [`ProvingKeyFiles`], to read
+//! the witness while the C++ core loads the key) and [`prove`], and, for tests
+//! and diagnostics, [`stage_columns`], the columns its stages commit. On the GPU
+//! (pilfflonk/docs/performance.md#gpu): [`ProvingKey::load_on`] with [`Device::Gpu`], where
+//! [`gpu_available`], or [`ProvingKey::load_on_device_buffer`] with its proofs' device memory in a
+//! buffer of the caller's, of [`gpu_device_bytes`]. [`check`](mod@check) checks a witness row by row without proving
+//! (pilfflonk/docs/README.md#pilfflonk-check): [`check()`].
+//!
+//! The verifier is JS (`js/`, pilfflonk/docs/verifier.md#js-verifier): [`js_verifier::verify`] runs
+//! it with Node. The Solidity verifier (pilfflonk/docs/verifier.md#solidity-verifier), which
+//! `pilfflonk-setup` generates, takes the calldata [`calldata`](mod@calldata) encodes for a proof:
+//! [`Calldata::read`] and [`Calldata::encode`].
+//!
+//! With the feature `oracle`, the module `oracle` is the Rust test oracle
+//! (pilfflonk/docs/README.md#tests): an evaluation of a pilout's constraints and of `Q` with
+//! `num-bigint`, independent of `pil-info`. It is for tests only; the crate's own tests turn it on.
+
+pub mod calldata;
+pub mod check;
+pub mod degrees;
+pub mod error;
+pub mod field;
+pub mod global_info;
+pub mod js_verifier;
+pub mod json;
+pub mod layout;
+pub mod names;
+pub mod pilfflonk_info;
+pub mod proof;
+pub mod prover;
+mod q_verifier;
+pub mod tag;
+pub mod verkey;
+pub mod vkey;
+pub mod witness;
+pub mod witness_library;
+
+#[cfg(feature = "oracle")]
+pub mod oracle;
+
+pub use calldata::{auxiliary_inverses, verifier_challenges, Calldata, CalldataLayout, VerifierChallenges};
+pub use check::{
+    check, check_challenges, check_columns, CheckOptions, CheckReport, ConstraintCheck, FailedRow, DEFAULT_MAX_ROWS,
+};
+pub use degrees::Degrees;
+pub use error::{PilfflonkError, PilfflonkResult};
+pub use field::{Digest, FqBytes, FrBytes, G1Affine, G2Affine, BN254_Q, BN254_R, G2_GENERATOR};
+pub use global_info::{AggType, AirFile, GlobalInfoAir, PilfflonkGlobalInfo, SetupParams, FORMAT_VERSION};
+pub use json::{canonical_json, JsonFile};
+pub use layout::{Layout, LayoutEntry, LayoutPol};
+pub use pilfflonk_info::{Boundary, ChallengeMapEntry, EvMapEntry, NameStageEntry, PilfflonkInfo, PolMapEntry, PolType};
+pub use proof::{Proof, ProofJson, ProofNames, ProofShape, Publics, SnarkjsG1};
+pub use prover::{
+    gpu_available, gpu_device_bytes, gpu_free_bytes, prove, stage_columns, Device, DeviceBytes, ProofChallenges,
+    ProofOutput, ProveOptions, ProvingKey, ProvingKeyFiles, StageColumns,
+};
+pub use verkey::AirVerkey;
+pub use vkey::{FixedCommitments, Vkey, DIGEST_DOMAIN};
+pub use witness::{
+    AirInstanceRef, AirShape, FileWitnessSource, InstanceWitness, ProofValues, Stage1Witness, Witness, WitnessShape,
+    WitnessSource,
+};
+pub use witness_library::{
+    compute_witness, load_witness_library, read_public_inputs, PilfflonkWitnessLibInitFn, PilfflonkWitnessLibrary,
+};

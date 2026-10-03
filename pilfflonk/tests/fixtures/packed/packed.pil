@@ -1,0 +1,46 @@
+// A synthetic AIR for the packing (pilfflonk/docs/protocol.md#layout): enough columns of each kind
+// that the default grouping (--extra-muls 2) packs several of them in one f, splits a group in
+// several f, and moves (fuses) columns to the union of their stage's offsets, which adds
+// evaluations to the evMap. One air, one instance, stage 1 only, no std, no hints. N = 2^4.
+//
+// The committed columns and their offsets:
+// - fixed at {0}: L1, LLAST and K[0..3], six of them: one class;
+// - fixed at {1}: S, alone: it moves to {0, 1}, and is evaluated at ξ too;
+// - witness at {0, 1}: a[0..7] and c, nine of them;
+// - witness at {0}: b and the im pol the setup chooses for the degree-3 constraint on c, two of
+//   them: they move to {0, 1}, and the group of stage 1 has eleven, which no one chunk can hold.
+//
+// Compile over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its
+// bn254.json. The witness generator is tests/data/packed.rs.
+
+public in1;
+public out;
+
+airtemplate Packed(const int N = 2**4) {
+    col fixed L1 = [1, 0...];
+    col fixed LLAST = [0:(N-1), 1];
+    col fixed K[4];
+    for (int i = 0; i < 4; i++) {
+        K[i] = [(i + 1)..(i + N)...];
+    }
+    col fixed S = [3..(N + 2)];
+
+    col witness a[8];
+    col witness c, b;
+
+    // Each a[i] adds K[i % 4] from row to row.
+    for (int i = 0; i < 8; i++) {
+        (1 - LLAST) * (a[i]' - a[i] - K[i % 4]) === 0;
+    }
+    // c' = c·a[2] + a[3]: degree 3 with (1 - LLAST), which the setup brings down with an im pol.
+    (1 - LLAST) * (c' - c * a[2] - a[3]) === 0;
+    // b reads S at the next row.
+    b - a[0] * a[1] - S' === 0;
+
+    L1 * (a[0] - in1) === 0;
+    LLAST * (c - out) === 0;
+}
+
+airgroup Packed {
+    Packed(N: 2**4);
+}

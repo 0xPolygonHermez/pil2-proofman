@@ -1,0 +1,9 @@
+// The range check of range_check.pil on the std's product bus (sorted columns and a permutation), in
+// STD_MODE_ONE_INSTANCE. The std's default MAX_CONSTRAINT_DEGREE (3) gives one im_col.
+require "range_check.pil"
+
+set_std_mode(STD_MODE_ONE_INSTANCE);
+
+airgroup RangeCheck {
+    RangeCheck(bus_type: PIOP_BUS_PROD);
+}

@@ -7,6 +7,7 @@ mod verify_constraints;
 mod verify;
 mod challenge_accumulation;
 mod snark_wrapper;
+mod pilfflonk_wrap;
 
 pub use scheduler::*;
 pub use proofman::*;

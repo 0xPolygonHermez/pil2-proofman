@@ -1,4 +1,4 @@
-include "lessthangl.circom";
+include "{% if custom_templates %}custom/{% endif %}lessthangl.circom";
 include "sha256/sha256.circom";
 include "bitify.circom";
 

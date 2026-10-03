@@ -1,0 +1,231 @@
+{
+ "name": "Fibonacci",
+ "airgroupId": 0,
+ "airId": 0,
+ "nBits": 8,
+ "nStages": 1,
+ "nConstants": 2,
+ "cmPolsMap": [
+  {
+   "stage": 1,
+   "name": "l1",
+   "dim": 1,
+   "polsMapId": 0,
+   "stageId": 0,
+   "stagePos": 0
+  },
+  {
+   "stage": 1,
+   "name": "l2",
+   "dim": 1,
+   "polsMapId": 1,
+   "stageId": 1,
+   "stagePos": 1
+  },
+  {
+   "stage": 1,
+   "name": "Fibonacci.ImPol",
+   "dim": 1,
+   "polsMapId": 2,
+   "stageId": 2,
+   "lengths": [
+    0
+   ],
+   "imPol": true,
+   "expId": 6,
+   "stagePos": 2
+  },
+  {
+   "stage": 2,
+   "name": "Q0",
+   "dim": 1,
+   "polsMapId": 3,
+   "stageId": 0,
+   "stagePos": 0
+  }
+ ],
+ "constPolsMap": [
+  {
+   "stage": 0,
+   "name": "Fibonacci.L1",
+   "dim": 1,
+   "polsMapId": 0,
+   "stageId": 0,
+   "stagePos": 0
+  },
+  {
+   "stage": 0,
+   "name": "Fibonacci.LLAST",
+   "dim": 1,
+   "polsMapId": 1,
+   "stageId": 1,
+   "stagePos": 1
+  }
+ ],
+ "challengesMap": [
+  {
+   "name": "std_vc",
+   "stage": 2,
+   "dim": 1,
+   "stageId": 0
+  },
+  {
+   "name": "std_xi",
+   "stage": 3,
+   "dim": 1,
+   "stageId": 0
+  }
+ ],
+ "airValuesMap": [],
+ "airgroupValuesMap": [],
+ "mapSectionsN": {
+  "cm1": 3,
+  "cm2": 1,
+  "const": 2
+ },
+ "openingPoints": [
+  0,
+  1
+ ],
+ "boundaries": [
+  {
+   "name": "everyRow"
+  }
+ ],
+ "evMap": [
+  {
+   "type": "const",
+   "id": 0,
+   "prime": 0,
+   "openingPos": 0
+  },
+  {
+   "type": "const",
+   "id": 1,
+   "prime": 0,
+   "openingPos": 0
+  },
+  {
+   "type": "cm",
+   "id": 0,
+   "prime": 0,
+   "openingPos": 0
+  },
+  {
+   "type": "cm",
+   "id": 1,
+   "prime": 0,
+   "openingPos": 0
+  },
+  {
+   "type": "cm",
+   "id": 2,
+   "prime": 0,
+   "openingPos": 0
+  },
+  {
+   "type": "cm",
+   "id": 0,
+   "prime": 1,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 1,
+   "prime": 1,
+   "openingPos": 1
+  }
+ ],
+ "qDeg": 1,
+ "qDim": 1,
+ "maxQDegree": 0,
+ "cExpId": 26,
+ "layout": [
+  {
+   "stage": 0,
+   "pols": [
+    {
+     "id": 0,
+     "name": "Fibonacci.L1"
+    }
+   ],
+   "k": 1,
+   "offsets": [
+    0
+   ],
+   "degree": 256
+  },
+  {
+   "stage": 0,
+   "pols": [
+    {
+     "id": 1,
+     "name": "Fibonacci.LLAST"
+    }
+   ],
+   "k": 1,
+   "offsets": [
+    0
+   ],
+   "degree": 256
+  },
+  {
+   "stage": 1,
+   "pols": [
+    {
+     "id": 0,
+     "name": "l1"
+    }
+   ],
+   "k": 1,
+   "offsets": [
+    0,
+    1
+   ],
+   "degree": 259
+  },
+  {
+   "stage": 1,
+   "pols": [
+    {
+     "id": 1,
+     "name": "l2"
+    }
+   ],
+   "k": 1,
+   "offsets": [
+    0,
+    1
+   ],
+   "degree": 259
+  },
+  {
+   "stage": 1,
+   "pols": [
+    {
+     "id": 2,
+     "name": "Fibonacci.ImPol[0]"
+    }
+   ],
+   "k": 1,
+   "offsets": [
+    0
+   ],
+   "degree": 258
+  },
+  {
+   "stage": 2,
+   "pols": [
+    {
+     "id": 3,
+     "name": "Q0"
+    }
+   ],
+   "k": 1,
+   "offsets": [
+    0
+   ],
+   "degree": 261
+  }
+ ]
+}

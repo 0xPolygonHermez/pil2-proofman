@@ -1,0 +1,19 @@
+[package]
+name = "pil-info"
+description = "Field-parameterised symbolic analysis of a pilout, shared by the STARK and pilfflonk setups"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+[dependencies]
+thiserror = { workspace = true }
+num-bigint = { workspace = true }
+pil2-pilout = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+indexmap = "2"

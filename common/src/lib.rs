@@ -22,6 +22,8 @@ pub mod memory_handler;
 pub mod gpu_witness;
 pub mod packed_info;
 pub mod error_manager;
+pub mod exec_format;
+pub mod final_witness;
 
 pub use air_instance::*;
 pub use verbose_mode::*;

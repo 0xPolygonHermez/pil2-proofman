@@ -1,7 +1,5 @@
 use borsh::{BorshSerialize, BorshDeserialize};
-use libloading::{Library, Symbol};
 use proofman_fields::PrimeField64;
-use std::ffi::CString;
 use std::fmt;
 use proofman_starks_lib_c::*;
 use std::path::Path;
@@ -10,10 +8,12 @@ use std::io::Write;
 
 use proofman_common::{
     CurveType, MpiCtx, MemoryHandlerRecursive, Proof, ProofCtx, ProofType, ProofmanResult, ProofmanError, Setup,
-    SetupsVadcop, GetSizeWitnessFunc,
+    SetupsVadcop,
 };
+use proofman_common::exec_format::{EXEC_FORMAT_VERSION, EXEC_HEADER_WORDS, EXEC_MAGIC};
+use proofman_common::final_witness::FinalWitnessLibrary;
 
-use std::os::raw::{c_void, c_char};
+use std::os::raw::c_void;
 
 use proofman_util::{
     timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug,
@@ -22,8 +22,7 @@ use proofman_util::{
 
 use crate::{add_publics_circom, add_publics_aggregation};
 
-pub type GetWitnessFinalFunc =
-    unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64) -> i64;
+pub use proofman_common::final_witness::GetWitnessFinalFunc;
 
 /// Joins a background FFI thread on drop, so an early `?` or panic can't detach a thread still
 /// writing shared device state (the const-tree buffer) and let the next proof race it.
@@ -1082,10 +1081,12 @@ pub fn generate_snark_proof(
     prealloc_handle: std::thread::JoinHandle<()>,
     d_buffers_recursivef: *mut c_void,
 ) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
-    let witness = generate_witness_final_snark(proof, setup_path)?;
+    let witness = generate_witness_final_snark(proof, setup_path);
 
-    // Wait for GPU pre-allocation
+    // Wait for GPU pre-allocation, also when the witness failed: it uses the prover and the
+    // recursivef's device buffers, which the next proof of the `SnarkWrapper` uses once this returns.
     prealloc_handle.join().unwrap();
+    let witness = witness?;
 
     timer_start_info!(CALCULATE_FINAL_PROOF);
 
@@ -1109,45 +1110,32 @@ pub fn generate_snark_proof(
     Ok((snark_proof, snark_publics))
 }
 
+// `proof` must be the recursivef proof, a nlohmann::json (`FinalWitnessLibrary::witness`). The
+// signature is the one this function always had: the pointer used to reach `getWitness` through a
+// symbol of the library, which clippy does not follow.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> ProofmanResult<Vec<u8>> {
     let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
     let rust_lib_filename = setup_path.display().to_string() + lib_extension;
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
 
-    if !rust_lib_path.exists() {
-        return Err(ProofmanError::InvalidSetup(format!(
-            "Rust lib dynamic library not found at path: {rust_lib_path:?}"
-        )));
-    }
-    let library: Library = unsafe { Library::new(rust_lib_path)? };
-
     let dat_filename = setup_path.display().to_string() + ".dat";
-    let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
-    let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
+    let library = FinalWitnessLibrary::load(rust_lib_path, Path::new(dat_filename.as_str()))?;
 
-    unsafe {
-        timer_start_info!(CALCULATE_FINAL_WITNESS);
+    timer_start_info!(CALCULATE_FINAL_WITNESS);
+    // SAFETY: `proof` is the recursivef proof, the nlohmann::json `gen_recursive_proof_final_c` returns.
+    let witness = unsafe { library.witness(proof) }?;
+    timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
 
-        let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-        let size_witness = get_size_witness();
-
-        let mut witness: Vec<u8> = vec![0; (size_witness * 32) as usize];
-        let witness_ptr = witness.as_mut_ptr();
-
-        let get_witness_final: Symbol<GetWitnessFinalFunc> = library.get(b"getWitness\0")?;
-        let nmutex = std::cmp::min(8, rayon::current_num_threads());
-        let res = get_witness_final(proof, dat_filename_ptr, witness_ptr as *mut c_void, nmutex as u64);
-        if res != 0 {
-            return Err(ProofmanError::InvalidProof("Error generating final witness from rust".into()));
-        }
-        timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
-
-        Ok(witness)
-    }
+    Ok(witness)
 }
 
-/// Writes the zkin under the name `prove-air --proof` parses, when `PIL2_DUMP_ZKIN` names this
-/// proof type (or `all`). Errors are logged, never returned: this is a diagnostic.
+/// Exec header for [`recursion_trace_stride`]. Empty when a setup carries no exec file, which
+/// makes the stride fall back to the full width.
+fn setup_exec_slice<F: PrimeField64>(setup: &Setup<F>) -> &[u64] {
+    setup.exec_data.as_deref().map_or(&[][..], |e| e.as_slice())
+}
+
 /// Row stride to fill the recursion trace with: the exec map's width when the device widens it, the
 /// air's own width otherwise.
 ///
@@ -1162,20 +1150,11 @@ pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> Pr
 /// because that side decides the same question from the same exec header. Filling wide while it reads
 /// compact hands it `map_cols` columns' worth of an `n_cols`-wide row, and the proof then fails its
 /// evaluations check with nothing pointing at the cause.
-/// Exec header for [`recursion_trace_stride`]. Empty when a setup carries no exec file, which
-/// makes the stride fall back to the full width.
-fn setup_exec_slice<F: PrimeField64>(setup: &Setup<F>) -> &[u64] {
-    setup.exec_data.as_deref().map_or(&[][..], |e| e.as_slice())
-}
-
 pub fn recursion_trace_stride(exec: &[u64], n_cols: u64, gpu: bool) -> u64 {
-    // Mirrors `plonk2pil::{EXEC_MAGIC, EXEC_FORMAT_VERSION, EXEC_HEADER_WORDS}`, which write the
-    // header, and `exec_layout` in pil2-stark/src/starkpil/exec_layout.hpp, which reads it. Spelled
-    // out rather than imported: the prover does not depend on the setup crate.
-    // Header: [magic|version, n_adds, map_rows, map_cols].
-    const EXEC_MAGIC: u64 = 0x5058_4543_0000_0000; // "PXEC" in the high half
-    const EXEC_FORMAT_VERSION: u64 = 2;
-    const EXEC_HEADER_WORDS: usize = 4;
+    // The header is `exec_format`'s version 2, [magic|version, n_adds, map_rows, map_cols], which
+    // `exec_layout` in pil2-stark/src/starkpil/recursion_trace/exec_layout.hpp also reads. No other
+    // version reaches here: `load_exec_file` refuses them, BN254's version 3 by name. One that did
+    // would get the full width, as a buffer without a header does.
     if !gpu {
         return n_cols;
     }
@@ -1191,6 +1170,8 @@ pub fn recursion_trace_stride(exec: &[u64], n_cols: u64, gpu: bool) -> u64 {
     }
 }
 
+/// Writes the zkin under the name `prove-air --proof` parses, when `PIL2_DUMP_ZKIN` names this
+/// proof type (or `all`). Errors are logged, never returned: this is a diagnostic.
 fn dump_zkin_if_requested<F: PrimeField64>(setup: &Setup<F>, instance_id: usize, zkin: &[u64]) {
     let Ok(want) = std::env::var("PIL2_DUMP_ZKIN") else {
         return;
@@ -1506,5 +1487,23 @@ mod arity_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod stride_tests {
+    use super::recursion_trace_stride;
+    use proofman_common::exec_format::{EXEC_FORMAT_VERSION, EXEC_FORMAT_VERSION_WIDE, EXEC_MAGIC};
+
+    /// A version 2 header narrows the GPU fill to its map's width. Any other is not read for one,
+    /// BN254's version 3 included, and the fill keeps the air's width.
+    #[test]
+    fn only_a_version_2_header_narrows_the_gpu_fill() {
+        // magic|version, n_adds, map_rows, map_cols, and version 3's coefficient width and n_vars.
+        let exec = |version| [EXEC_MAGIC | version, 0, 4, 3, 4, 16];
+        assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION), 8, true), 3);
+        assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION), 8, false), 8, "the CPU keeps the air's width");
+        assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION_WIDE), 8, true), 8);
+        assert_eq!(recursion_trace_stride(&[], 8, true), 8, "no exec file");
     }
 }

@@ -1,0 +1,36 @@
+// A product bus in one AIR: a permutation of the pairs (a, c) into the pairs (b, d), on the std's
+// grand-product bus (gprod, PIOP_BUS_PROD) in STD_MODE_ONE_INSTANCE, which has no airgroup value
+// (pilfflonk/docs/README.md#scope). One air, one instance, N = 2^5.
+//
+// - The std's prover hint gprod_col gives the stage-2 column `gprod`, with the challenges std_alpha
+//   and std_gamma: row by row, the running product of (b + d·α + 1·α² … + γ)/(a + c·α … + γ), each
+//   pair compressed as busid + e_1·α + e_2·α² (std_tools.pil, compress_exprs). Its last row is 1 if
+//   and only if (b, d) is a permutation of (a, c): `L1'·(1 − gprod) === 0`.
+// - With selectors 1, each term has degree 1 and the whole product fits in the std's default
+//   MAX_CONSTRAINT_DEGREE (3): no im_col (std_prod.pil, piop_gprod_air), and no term is a constant,
+//   so there is no im_airval.
+// - `first` is a[0], so that a public ties the witness.
+//
+// Compile over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with its
+// bn254.json and -I pil2-components/lib/std/pil. The witness generator is tests/data/prod_bus.rs.
+require "std_constants.pil"
+require "std_permutation.pil"
+
+set_std_mode(STD_MODE_ONE_INSTANCE);
+set_permutation_bus_type(PIOP_BUS_PROD);
+
+public first;
+
+airtemplate ProdBus(const int N = 2**5) {
+    col witness a, c, b, d;
+
+    permutation_assumes(1, [a, c]);
+    permutation_proves(1, [b, d]);
+
+    const expr L1 = get_L1();
+    L1 * (a - first) === 0;
+}
+
+airgroup ProdBus {
+    ProdBus();
+}

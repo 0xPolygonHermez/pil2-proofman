@@ -8,14 +8,17 @@ use proofman::SnarkWrapper;
 use proofman::generate_and_verify_recursivef;
 use proofman_verifier::VadcopFinalProof;
 
+/// Wrap a vadcop_final proof in the recursivef and the final SNARK of setup-snark: PLONK or FFLONK
+/// (final/final.zkey) or pilfflonk (final/provingKey/). Writes snark_proof.bin
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version, long_about = None)]
 #[command(propagate_version = true)]
 pub struct ProveSnarkCmd {
+    /// The vadcop_final proof, vadcop_final_proof.bin
     #[clap(short = 'p', long)]
     pub proof: String,
 
-    /// Setup folder path
+    /// Setup folder path: the provingKeySnark/ of setup-snark, with recursivef/ and final/
     #[clap(short = 'k', long)]
     pub proving_key_snark: PathBuf,
 
@@ -27,9 +30,12 @@ pub struct ProveSnarkCmd {
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
 
+    /// Prove and verify the recursivef only, and compute the final SNARK's witness, without its proof
     #[clap(short = 'r', long, default_value_t = false)]
     pub only_recursivef: bool,
 
+    /// Prove on the GPU: the recursivef and the final SNARK (with pilfflonk, its MSMs and NTTs). Needs a
+    /// build with CUDA (nvcc found, no feature cpu-only) and a GPU
     #[clap(short = 'g', long, default_value_t = false)]
     pub gpu: bool,
 }

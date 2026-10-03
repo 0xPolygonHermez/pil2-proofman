@@ -1257,6 +1257,26 @@ pub fn pre_allocate_final_snark_prover_c(
     unsafe { pre_allocate_final_snark_prover(snark_prover, unified_buffer_gpu, d_buffers_recursivef) }
 }
 
+/// The recursivef's device prover buffer of `d_buffers_recursivef`, grown to `bytes` if it holds
+/// fewer and is its own, for a final SNARK prover that proves in it after the recursivef, as
+/// [`pre_allocate_final_snark_prover_c`] does PLONK's: `Ok((buffer, its bytes))`. `Err(most)` if it
+/// cannot grow, `most` the bytes it could hold; `Err(0)` if it is not its own (carved from proofman's
+/// unified buffer) or there are none (the CPU).
+pub fn reserve_recursivef_aux_trace_c(
+    d_buffers_recursivef: *mut c_void,
+    bytes: u64,
+) -> Result<(*mut c_void, u64), u64> {
+    let mut held = 0u64;
+    // SAFETY: `d_buffers_recursivef` is null or the recursivef's device buffers, as the C side
+    // takes them, and `held` a u64 it writes.
+    let buffer = unsafe { reserve_recursivef_aux_trace(d_buffers_recursivef, bytes, &mut held) };
+    if buffer.is_null() {
+        Err(held)
+    } else {
+        Ok((buffer, held))
+    }
+}
+
 pub fn gen_final_snark_proof_c(
     prover: *mut c_void,
     circomWitnessFinal: *mut u8,
@@ -2121,4 +2141,100 @@ pub fn mul_reset_c() {
 /// Forget every multiplicity registration; only before any proof allocated from it.
 pub fn mul_clear_registry_c() {
     unsafe { mul_clear_registry() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::snark_proof_bytes_to_json_c;
+
+    /// The protocol ids of `snark_proof_bytes_to_json` (pil2-stark/src/rapidsnark/zkey.hpp).
+    const PLONK_PROTOCOL_ID: i32 = 2;
+    const FFLONK_PROTOCOL_ID: i32 = 10;
+
+    /// BN254's base field modulus q and scalar field modulus r, most significant limb first.
+    const Q: [u64; 4] = [0x30644e72e131a029, 0xb85045b68181585d, 0x97816a916871ca8d, 0x3c208c16d87cfd47];
+    const R: [u64; 4] = [0x30644e72e131a029, 0xb85045b68181585d, 0x2833e84879b97091, 0x43e1f593f0000001];
+
+    /// q − 1, r and r − 1 in decimal. Read in Fr, as the coordinates were, q − 1 printed as
+    /// 147946756881789318990833708069417712965 and r as 0.
+    const Q_MINUS_1: &str = "21888242871839275222246405745257275088696311157297823662689037894645226208582";
+    const R_DEC: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
+    const R_MINUS_1: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
+
+    /// `limbs` minus `sub`, as the 32 big-endian bytes `SnarkProof::toBytes` writes an element in.
+    fn be(limbs: [u64; 4], sub: u64) -> Vec<u8> {
+        assert!(limbs[3] >= sub);
+        let mut limbs = limbs;
+        limbs[3] -= sub;
+        limbs.iter().flat_map(|limb| limb.to_be_bytes()).collect()
+    }
+
+    /// A small element, big-endian.
+    fn small(value: u64) -> Vec<u8> {
+        be([0, 0, 0, value], 0)
+    }
+
+    /// The bytes of a proof with `n_commitments` points and `n_evaluations` evaluations: the first
+    /// point `(q − 1, r)`, both coordinates in [r, q), the second `(r − 1, 1)`, the others and the
+    /// evaluations small, and the first evaluation r − 1; and their JSON, `[x, y, "1"]` per point.
+    fn proof(n_commitments: usize, n_evaluations: usize) -> (Vec<u8>, Vec<[String; 3]>, Vec<String>) {
+        let mut bytes = Vec::new();
+        let mut points = Vec::new();
+        for i in 0..n_commitments as u64 {
+            let (x, y, json) = match i {
+                0 => (be(Q, 1), be(R, 0), [Q_MINUS_1.to_string(), R_DEC.to_string()]),
+                1 => (be(R, 1), small(1), [R_MINUS_1.to_string(), "1".to_string()]),
+                _ => (small(i + 1), small(2 * i + 2), [(i + 1).to_string(), (2 * i + 2).to_string()]),
+            };
+            bytes.extend(x);
+            bytes.extend(y);
+            let [x, y] = json;
+            points.push([x, y, "1".to_string()]);
+        }
+        let mut evaluations = Vec::new();
+        for j in 0..n_evaluations as u64 {
+            let (bytes_j, json) =
+                if j == 0 { (be(R, 1), R_MINUS_1.to_string()) } else { (small(j + 7), (j + 7).to_string()) };
+            bytes.extend(bytes_j);
+            evaluations.push(json);
+        }
+        (bytes, points, evaluations)
+    }
+
+    fn point_json(key: &str, point: &[String; 3]) -> String {
+        format!("\"{key}\":[\"{}\",\"{}\",\"{}\"]", point[0], point[1], point[2])
+    }
+
+    /// The coordinates of a commitment are elements of Fq, not Fr: one in [r, q) prints whole, as
+    /// snarkjs reads it, and one below r, as every coordinate of most proofs, prints as before.
+    /// The evaluations and the publics are elements of Fr.
+    #[test]
+    fn a_proof_prints_its_coordinates_in_the_base_field() {
+        let publics = [be(R, 1), small(5)].concat();
+        let commitments = ["A", "B", "C", "Z", "T1", "T2", "T3", "Wxi", "Wxiw"];
+        let evaluation_keys = ["eval_a", "eval_b", "eval_c", "eval_s1", "eval_s2", "eval_zw"];
+        let (bytes, points, evaluations) = proof(commitments.len(), evaluation_keys.len());
+        let (json, publics_json) = snark_proof_bytes_to_json_c(&bytes, &publics, PLONK_PROTOCOL_ID);
+        assert_eq!(publics_json, format!("[\"{R_MINUS_1}\",\"5\"]"));
+        for (key, point) in commitments.iter().zip(&points) {
+            assert!(json.contains(&point_json(key, point)), "{key}: {json}");
+        }
+        for (key, value) in evaluation_keys.iter().zip(&evaluations) {
+            assert!(json.contains(&format!("\"{key}\":\"{value}\"")), "{key}: {json}");
+        }
+        assert!(json.contains("\"protocol\":\"plonk\"") && json.contains("\"curve\":\"bn128\""), "{json}");
+
+        // FFLONK's, under "polynomials" and "evaluations".
+        let commitments = ["C1", "C2", "W1", "W2"];
+        let evaluation_keys =
+            ["ql", "qr", "qm", "qo", "qc", "s1", "s2", "s3", "a", "b", "c", "z", "zw", "t1w", "t2w", "inv"];
+        let (bytes, points, evaluations) = proof(commitments.len(), evaluation_keys.len());
+        let (json, _) = snark_proof_bytes_to_json_c(&bytes, &publics, FFLONK_PROTOCOL_ID);
+        let polynomials: Vec<String> = commitments.iter().zip(&points).map(|(key, p)| point_json(key, p)).collect();
+        assert!(json.contains(&format!("\"polynomials\":{{{}}}", polynomials.join(","))), "{json}");
+        let mut by_key: Vec<_> = evaluation_keys.iter().zip(&evaluations).collect();
+        by_key.sort();
+        let evaluations: Vec<String> = by_key.iter().map(|(key, value)| format!("\"{key}\":\"{value}\"")).collect();
+        assert!(json.contains(&format!("\"evaluations\":{{{}}}", evaluations.join(","))), "{json}");
+    }
 }

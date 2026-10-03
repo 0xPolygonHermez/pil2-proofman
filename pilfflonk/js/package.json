@@ -1,0 +1,18 @@
+{
+  "name": "pilfflonk-verifier",
+  "private": true,
+  "type": "module",
+  "description": "JS verifier of the pilfflonk backend (pilfflonk/docs/verifier.md#js-verifier): verify(vkey, publics, proof) and bin/verify.js",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:fixtures": "sh test/fixtures.sh",
+    "test:setup": "sh test/setup-fixtures.sh"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.7.1",
+    "ffjavascript": "0.3.1"
+  }
+}
