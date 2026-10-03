@@ -25,7 +25,8 @@ namespace PilFflonk {
 struct StageScratch {
     // The fixed columns the stage's hints and im pols read (constPolsMap indices, in increasing
     // order), on H: column fixed[k] at fixedValues + k·N elements, which computeStageColumns
-    // computes from their coefficients on the device (decision D6: they are not kept there).
+    // computes from their coefficients on the device: they are not kept there ("recomputed, not
+    // kept", pilfflonk/docs/performance.md#rules-of-the-device-path).
     std::vector<uint64_t> fixed;
     uint64_t fixedValues = 0;
     // Those of the hints, if the stage has any (stage 1 has none: 0 bytes from `denominator` on).

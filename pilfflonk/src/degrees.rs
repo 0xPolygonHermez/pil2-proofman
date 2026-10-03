@@ -107,12 +107,13 @@ impl Degrees {
 /// `m = q_pieces(qDeg, maxQDegree)`: `Q(X) = Σ_i X^{i·stride}·Q_i(X)`.
 ///
 /// Not split (`m = 1`), the one piece is `Q`, unblinded. Split, with `S = stride = M·N` (`M =
-/// maxQDegree`), piece `i` holds the coefficients `i·S … (i+1)·S − 1` of `Q`, and the last one those
-/// from `(m−1)·S` to its bound; and each boundary between pieces `i` and `i + 1` has two random
-/// coefficients `b_0, b_1` that cancel, as PLONK's (`pil-fflonk/src/pilfflonk_prover.cpp:697-720`):
-/// `b_0·X^S + b_1·X^{S+1}` added to piece `i` and `b_0 + b_1·X` subtracted from piece `i + 1`. So
-/// each piece but the last has `S + 2` coefficients, and the last `qCoefficients − (m−1)·S`, at least
-/// `N + 1` (its first `qDeg − (m−1)·M ≥ 1` of `N`).
+/// maxQDegree`), piece `i` holds the coefficients `i·S … (i+1)·S − 1` of `Q`, and the last one
+/// those from `(m−1)·S` to its bound; and each boundary between pieces `i` and `i + 1` has two
+/// random coefficients `b_0, b_1` that cancel, as PLONK's
+/// (`pil-fflonk/src/pilfflonk_prover.cpp:697-720`, pilfflonk/docs/README.md#references): `b_0·X^S +
+/// b_1·X^{S+1}` added to piece `i` and `b_0 + b_1·X` subtracted from piece `i + 1`. So each piece
+/// but the last has `S + 2` coefficients, and the last `qCoefficients − (m−1)·S`, at least `N + 1`
+/// (its first `qDeg − (m−1)·M ≥ 1` of `N`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QSplit {
     /// `S = M·N`, the power of `X` piece 1 is multiplied by; 0 when `Q` is not split.
@@ -180,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn q_has_the_bound_of_a1() {
+    fn q_has_its_degree_bound() {
         // The Fibonacci: N = 256, qDeg = 1, |O|_max = 2.
         assert_eq!(q_coefficients(8, 1, 2).unwrap(), 256 + 2 * 2 + 1);
         // qDeg = 0: Q = c/Z_H of a linear c has |O|_max + 1 coefficients.

@@ -56,8 +56,9 @@ public:
 
     // Throws std::invalid_argument, naming `function`, if the key's arena (GpuKey::arenaSize) cannot
     // hold Q's phase in parts of 2^partBits points (qPhaseBytes), saying how many bytes it needs and
-    // the arena has (decisions D1 and D5: no fallback, and no other part size than asked). The
-    // default parts, of 2^nBits points, it always holds (arenaLayout).
+    // the arena has: no fallback, and no other part size than asked
+    // (pilfflonk/docs/performance.md#rules-of-the-device-path). The default parts, of 2^nBits
+    // points, it always holds (arenaLayout).
     void requireQParts(uint64_t partBits, const char *function) const;
 
     // Instance::commitQ's Q, once every stage is committed (pilfflonk/docs/protocol.md#q-in-parts):

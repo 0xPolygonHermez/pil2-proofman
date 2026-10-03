@@ -33,7 +33,7 @@
 //! the table while the workers it has just started may still be reading the old one
 //! (pilfflonk/docs/README.md#tests; the lock of `setup/pilfflonk/tests/setup/common.rs`,
 //! `cpp_core`, has the details). It has not happened in these tests, but nothing rules it out: run
-//! them with `--test-threads 2`, as above (and CI), which keeps the teams alive, counting those of
+//! them with `--test-threads 2`, as above, which keeps the teams alive, counting those of
 //! tests that are just ending, within that table.
 
 #[path = "../../pilfflonk/tests/data/all.rs"]

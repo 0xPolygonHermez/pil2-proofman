@@ -18,15 +18,17 @@
 //!                                           verifierinfo.json, bin, verkey.json}
 //! ```
 //!
-//! Everything that can be refused is refused before the first file is written: the pilout
-//! (pilfflonk/docs/README.md#what-the-setup-refuses), what the passes return (the prover hints
-//! among it), the extended domain, the names of the proof, the shape of the witness and what the
-//! verifier would refuse of the vkey. The SRS is the first file, so that a ptau with too few
-//! powers writes nothing else; the vkey is the last, with its digest
+//! What the pilout, the passes and the vkey's checks can refuse is refused before the first file is
+//! written: the pilout (pilfflonk/docs/README.md#what-the-setup-refuses), what the passes return
+//! (the prover hints among it), the extended domain, the names of the proof, the shape of the
+//! witness and what the verifier would refuse of the vkey. Three steps run after files are written
+//! and can still fail, leaving a partial `provingKey/`: the fixed commitments (`air_verkey`), the
+//! global constraints and the vkey's digest (`seal_vkey`). The SRS is the first file, so that a
+//! ptau with too few powers writes nothing else; the vkey is the last, with its digest
 //! (pilfflonk/docs/formats.md#digest). With `--solidity`, `pilfflonk.verifier.sol` follows it: it
-//! is made from the vkey ([`crate::solidity`]) before the vkey is written, so that a vkey it
-//! cannot be made of is not written either. The files depend only on the inputs: two runs write
-//! the same bytes.
+//! is made from the vkey ([`crate::solidity`]) before the vkey is written, so that a vkey it cannot
+//! be made of is not written either. The files depend only on the inputs: two runs write the same
+//! bytes.
 
 use std::fs;
 use std::path::{Path, PathBuf};

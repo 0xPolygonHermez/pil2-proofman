@@ -91,8 +91,8 @@ struct ConstraintCheck {
 //   i and i + 1 two factors b0, b1 from the BlindingSource, boundary by boundary and b0 first,
 //   after the columns' ones: b0·X^S + b1·X^(S+1) added to piece i and b0 + b1·X subtracted from
 //   piece i + 1, so that Σ_i X^(i·S)·Q_i(X) = Q(X) (pilfflonk/docs/protocol.md#q-pieces, as
-//   pil-fflonk's pilfflonk_prover.cpp:697-720). Each f of Q's stage packs its pieces and is
-//   committed.
+//   pil-fflonk's pilfflonk_prover.cpp:697-720, at the version of
+//   pilfflonk/docs/README.md#references). Each f of Q's stage packs its pieces and is committed.
 // check:
 //   pilfflonk check (pilfflonk/docs/README.md#pilfflonk-check), which proves nothing: the im pols
 //   of stage 1 as commitStage(1) computes them, then the numerator of each constraint of the .bin
@@ -109,9 +109,10 @@ struct ConstraintCheck {
 // Q's code there, its interpolation and the check of its bound, its pieces, their blinding with the
 // factors drawn here, and their commitments. The committed polynomials and the pieces stay on the
 // device for the opening, and the proof is the same bit for bit. Nothing comes back but counts, and
-// what check, column, polynomial and qPiece ask for, copied on demand (decision D8). Such a key holds
-// the device memory of one proof at a time: an instance holds it until it is destroyed, another
-// thread's waits for it, and a second instance of this thread is refused.
+// what check, column, polynomial and qPiece ask for, copied on demand
+// (pilfflonk/docs/performance.md#rules-of-the-device-path). Such a key holds the device memory of
+// one proof at a time: an instance holds it until it is destroyed, another thread's waits for it,
+// and a second instance of this thread is refused.
 //
 // Elements are in Montgomery form. Refused arguments throw std::invalid_argument before anything
 // changes. Not safe to use from several threads at once; the ProvingKey, which must outlive it, may
@@ -163,17 +164,17 @@ public:
     // constraints.
     std::vector<G1Point> commitQ(const std::vector<FrElement> &challenges);
 
-    // The check of the witness against every constraint of section 2 of the AIR's .bin, in its order
-    // (the pilout's constraints, then those of the im pols, im − e): for each, the rows of its domain
-    // where it does not hold, the first maxRows of them with the value there. `challenges` are those
-    // of stages 2 … nStages, by stage and then by stageId (none for an AIR of one stage), which the
-    // columns of those stages are computed with (checkColumns). It changes nothing the commits depend
-    // on, and may run before, between or after them; on a key on the GPU, whose witness columns are
-    // on the device (decision D8), it copies them here the first time, and so only before commitQ,
-    // which reuses their memory there: the first check after it throws std::invalid_argument. Throws
-    // std::invalid_argument, before computing anything, if a constraint is of a stage the AIR does not
-    // have or the number of challenges is not theirs, and UnsatisfiedError if a hint's denominator is
-    // 0 on a row.
+    // The check of the witness against every constraint of section 2 of the AIR's .bin, in its
+    // order (the pilout's constraints, then those of the im pols, im − e): for each, the rows of
+    // its domain where it does not hold, the first maxRows of them with the value there.
+    // `challenges` are those of stages 2 … nStages, by stage and then by stageId (none for an AIR
+    // of one stage), which the columns of those stages are computed with (checkColumns). It changes
+    // nothing the commits depend on, and may run before, between or after them; on a key on the
+    // GPU, whose witness columns are on the device (copies on demand), it copies them here the
+    // first time, and so only before commitQ, which reuses their memory there: the first check
+    // after it throws std::invalid_argument. Throws std::invalid_argument, before computing
+    // anything, if a constraint is of a stage the AIR does not have or the number of challenges is
+    // not theirs, and UnsatisfiedError if a hint's denominator is 0 on a row.
     std::vector<ConstraintCheck> check(uint64_t maxRows, const std::vector<FrElement> &challenges);
 
     // The columns of stages 1 … nStages on H that check checks, by stage then stagePos: stage 1's as
@@ -182,13 +183,13 @@ public:
     // check does.
     std::vector<std::vector<FrElement>> checkColumns(const std::vector<FrElement> &challenges);
 
-    // The N values on H of the column of stage `stage` at stagePos, as the prover computed them: the
-    // witness's, a hint's or an im pol's. For tests and diagnostics (the oracle checks the hints'
-    // columns against them); not part of the proof. Throws std::invalid_argument unless the stage is
-    // committed and has such a column. On a key on the GPU, the column is on the device, which
-    // computed it (decision D8): it is copied here the first time it is asked for, and so only before
-    // commitQ, which reuses its memory there; asked for the first time after, it throws
-    // std::invalid_argument.
+    // The N values on H of the column of stage `stage` at stagePos, as the prover computed them:
+    // the witness's, a hint's or an im pol's. For tests and diagnostics (the oracle checks the
+    // hints' columns against them); not part of the proof. Throws std::invalid_argument unless the
+    // stage is committed and has such a column. On a key on the GPU, the column is on the device,
+    // which computed it (copies on demand): it is copied here the first time it is asked for, and
+    // so only before commitQ, which reuses its memory there; asked for the first time after, it
+    // throws std::invalid_argument.
     const FrElement *column(uint64_t stage, uint64_t stagePos) const;
 
     // p_j of f (a non-fixed entry of the layout) once its stage is committed; null before. Of Q's

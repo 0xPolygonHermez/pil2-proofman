@@ -17,6 +17,8 @@ proofman-setup <subcommand> [options]
 | [`setup-snark`](#setup-snark) | Final SNARK setup on top of `vadcop_final` | `provingKey/` from a prior `setup --recursive` | `recursivef`, `final` SNARK artifacts |
 | [`setup-recursive-test`](#setup-recursive-test) | Setup a single user-provided recursive circuit | a `.circom` file | per-circuit setup artifacts |
 | [`rebuild-witness-libs`](#rebuild-witness-libs) | Rebuild every witness `.so`/`.dylib` from a `provingKey/` directory | existing `provingKey/` | refreshed witness libraries in-place |
+| [`setup-pilfflonk`](../../pilfflonk/docs/README.md#setup-pilfflonk) | Set up a BN254 pilout for the pilfflonk backend (one AIR, one instance) | `.pilout` compiled over BN254, `.ptau` | pilfflonk `provingKey/` |
+| [`pilfflonk-solidity`](../../pilfflonk/docs/README.md#pilfflonk-solidity) | Write the Solidity verifier of an existing pilfflonk vkey | `pilfflonk.vkey.json` | `pilfflonk.verifier.sol` |
 
 ## `setup`
 
@@ -243,6 +245,7 @@ that resolve relative to the repo or the executable's parent directories.
 | `GOLDILOCKS_SRC_DIR` | `pil2-stark/src/goldilocks/src` | Goldilocks C++ sources copied into the witness build |
 | `RECURSIVE_JOBS` | `1` | Parallelism for recursive1 air pipelines |
 | `SETUP_JOBS` | `1` | Parallelism for non-recursive AIR setup |
+| `PIL2C_EXEC` | `pil2com` from `node_modules/.bin`, or on `PATH` | The pil2-compiler's `pil.js`. Compiling over BN254 (`compile-pil -P`, `setup-snark --final-snark pilfflonk`) needs one that honours `prime` ([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)) |
 | `REBUILD_JOBS` | `1` | Parallelism for `rebuild-witness-libs` circom compiles |
 
 Path resolution checks (in order): the env var, the path relative to CWD, then

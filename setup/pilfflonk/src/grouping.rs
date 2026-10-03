@@ -4,9 +4,10 @@
 //!
 //! It is the old system's grouping, generalised to signed offsets: the classes of pil-stark's
 //! `src/fflonk/helpers/fflonk_shkey.js` and the split in `f_i` of shplonkjs's
-//! `src/helpers/setup.js` and `src/utils.js` (read in `../pil-stark`: pil-stark `5e20f57`,
-//! shplonkjs `7824640`). For offsets in `{0, 1}` the result is the old system's (rule 6), which
-//! `tests/grouping.rs` checks against pil-fflonk's example `all`.
+//! `src/helpers/setup.js` and `src/utils.js` (pil-stark `5e20f57`, shplonkjs `7824640`: the
+//! versions of pilfflonk/docs/README.md#references, whose lines the comments below cite). For
+//! offsets in `{0, 1}` the result is the old system's (rule 6), which `tests/grouping.rs` checks
+//! against pil-fflonk's example `all`.
 //!
 //! **Input.** The polynomials, in the order the old system inserts them (`setPolDefs`,
 //! `fflonk_shkey.js:34-153`); the setup's is [`crate::layout::committed_pols`]'s, by stage and index.

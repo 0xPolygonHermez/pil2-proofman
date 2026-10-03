@@ -78,8 +78,8 @@
 //! crash with SIGSEGV once the teams outgrow its first table of threads (4 per CPU): it replaces
 //! the table while the workers it has just started may still be reading the old one (the lock of
 //! `setup/pilfflonk/tests/setup/common.rs`, `cpp_core`, has the details). It has not happened in
-//! these tests, but nothing rules it out: run them with `--test-threads 2`, as above (and CI),
-//! which keeps the teams alive, counting those of tests that are just ending, within that table.
+//! these tests, but nothing rules it out: run them with `--test-threads 2`, as above, which keeps
+//! the teams alive, counting those of tests that are just ending, within that table.
 
 #[path = "../../pilfflonk/tests/data/all.rs"]
 mod all;
@@ -2471,7 +2471,7 @@ const FUZZ_KEYS: [&str; 13] = [
     "all_sum_unpacked",
 ];
 
-/// The cases of the fuzzer's run in CI, over all its keys; `PILFFLONK_FUZZ_CASES` sets another
+/// The cases of the fuzzer's default run, over all its keys; `PILFFLONK_FUZZ_CASES` sets another
 /// number: 10,000 or more for the extended run (pilfflonk/docs/verifier.md#differential-fuzzer).
 const FUZZ_CASES: u64 = 400;
 

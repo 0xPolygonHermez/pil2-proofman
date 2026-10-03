@@ -214,7 +214,21 @@ device memory. On the device:
   and `Q`'s pieces where the device keeps them.
 
 On the host: the transcript, the blinding's draws (sent up in the CPU's order) and the opening's
-scalars. The MSMs and the NTTs are the GPU entry points pil2-stark has, called as the PLONK GPU prover
+scalars.
+
+### Rules of the device path
+
+The code cites these rules by name:
+
+- **No fallback.** A key whose AIRs, or a whole proof of one of them, the device cannot hold is
+  refused when it loads, naming the AIR, the bytes it needs and the bytes the device has. A proof
+  never runs out of device memory midway, and nothing falls back to the host.
+- **One part size.** A proof's arena holds `Q` in the part size it was sized for. A larger part size
+  that the arena does not hold is refused when it is set, and is never changed to another.
+- **Recomputed, not kept.** What the host rarely needs is not kept for it: the fixed columns'
+  evaluations on `H` are computed from their coefficients when a check asks for them.
+- **Copies on demand.** What the host asks for of the device's data is copied when it asks, and
+  once. The MSMs and the NTTs are the GPU entry points pil2-stark has, called as the PLONK GPU prover
 calls them (`rapidsnark/plonk_prover_gpu.c.cuh`):
 
 - `msm_bn128_gpu_dev_ptr` (`bn128/src/msm/msm_bn128.cu`, sppark's Pippenger) with `montgomery = true`,
@@ -242,7 +256,7 @@ witness to the device, and a few kilobytes otherwise:
 
 The key copies the SRS's powers and its fixed columns up once, and back only the counts of the fixed
 columns' coefficients; the host keeps nothing of the fixed columns. What the host asks for of the
-device's data is copied when it asks, once (decision D8): a column (`Instance::column`), the witness
+device's data is copied when it asks, once ([copies on demand](#rules-of-the-device-path)): a column (`Instance::column`), the witness
 columns (`check`), a committed polynomial (`Instance::polynomial`), `Q`'s pieces
 (`Instance::qPiece`), the fixed polynomials (`AirKey::fixedPolynomial`), and the fixed columns on `H`
 (`AirKey::fixedEvaluations`, which `check` reads: their coefficients, evaluated on the host by
@@ -300,13 +314,14 @@ with the rest:
    double-buffered staging (`GPU_SRS`), after a check that the device holds them.
 4. For each AIR (`LOAD_AIRS`), first what its pilfflonkinfo and `.bin` give alone, while its `.const`
    may still be read: its degrees, layout and hints; its whole budget checked against the device's
-   free memory (decision D1) before anything of it goes up; its bytecode and its interpreter on the
+   free memory ([no fallback](#rules-of-the-device-path)) before anything of it goes up; its bytecode and its interpreter on the
    device; and the shift's sums (`GPU_SHIFT_SUMS`). Then its fixed columns, decoded from the
    `.const`, go up, are interpolated (`FIXED_INTT`; only their counts come back) and committed
    (`FIXED_COMMITMENTS`).
 
-On the RTX 5090, 32 threads, a warm GPU, **M** (before: M60b's CLI, the same session, three runs;
-after: the first GPU proof of `gpu_check`; the wrap: its warm runs):
+On the RTX 5090, 32 threads, a warm GPU, **M**. "Before" is the previous loading, which read the
+files one after the other and copied the fixed columns' coefficients back to the host (three runs
+in the same session); "after" is the first GPU proof of `gpu_check`, and for the wrap its warm runs:
 
 | Phase (s) | L1 `2^21`, before | after | wrap `2^19`, before | after |
 |---|---|---|---|---|
@@ -346,18 +361,19 @@ after: the first GPU proof of `gpu_check`; the wrap: its warm runs):
   it loads each AIR and before anything of it goes to the device, that the device holds it and a
   whole proof of it, with what sppark's MSM reserves per call; if not, the load fails, naming the AIR
   and the bytes it needs and the device has: a proof never runs out of device memory midway, and
-  there is no fallback to the host (decision D1). The arena holds `Q` in its default parts, of
+  there is no fallback to the host ([no fallback](#rules-of-the-device-path)). The arena holds `Q` in its default parts, of
   `2^nBits` points; a larger `q_part_bits` whose parts it does not hold is refused when it is set
   (`pilfflonk_instance_set_q_part_bits`), naming the parts and the bytes they need and the arena has,
-  and never changed to another size (decision D5). Device 0, whatever the calling thread's current
+  and never changed to another size ([one part size](#rules-of-the-device-path)). Device 0, whatever the calling thread's current
   device: every call of the GPU path, and the release of its device memory, makes it current while it
   runs and leaves the thread's as it was (`DeviceScope`), as the STARK's GPU entry points set theirs.
 - **Host memory.** A key on the GPU keeps of each AIR neither its fixed columns on `H` (1.68 GB at L1
   `2^21`) nor the LDE's table of the `N'` roots of unity (512 MB at `N' = 2^24`), which its proofs do
   not read: `Lde` builds the table for its first transform on the host, and the only one a key on the
-  GPU runs is the evaluation of its fixed columns when `check` asks for them (D8). **M** (F7F, two
-  GPU proofs each): the peak RSS of a proof of L1 `2^21` is 5.66 GB against 6.18 GB before, and of
-  `fibonacci` `2^22` 1.53 GB against 1.79 GB, the table of each (512 and 256 MiB); the fixed
+  GPU runs is the evaluation of its fixed columns when `check` asks for them
+  ([recomputed, not kept](#rules-of-the-device-path)). **M** (two GPU proofs each): the peak RSS of a
+  proof of L1 `2^21` is 5.66 GB, against 6.18 GB when the key kept both, and of `fibonacci` `2^22`
+  1.53 GB against 1.79 GB, the table of each (512 and 256 MiB); the fixed
   columns on `H`, decoded from the `.const` while the AIR loads, are freed once they are on the
   device, so they leave the key's memory but not the load's peak.
 - **The arena given.** The arena can be a buffer of the caller's ([the wrap's device
@@ -387,7 +403,7 @@ memory, as rapidsnark's PLONK prover is carved out of it by `pre_allocate_final_
 (`pilfflonk_wrap::wrap_arena`, `proofman/src/pilfflonk_wrap.rs`):
 
 - with `d_buffers`, proofman's unified buffer (`SnarkWrapper::new_with_preallocated_buffers`): all of
-  it, which the key refuses, as a GPU without the memory (decision D1), if it holds less than a
+  it, which the key refuses, as a GPU without the memory ([no fallback](#rules-of-the-device-path)), if it holds less than a
   proof's arena; the unified buffer must be on device 0, where pilfflonk proves. The wrapper then
   re-uploads the STARK's fixed columns that the proof overwrote, as after PLONK's
   (`reload_fixed_pols_gpu`): the flag is set as each wrap's proof ends, whatever its outcome, as a
@@ -402,40 +418,41 @@ the device has what the key needs beside it free (`requiredDeviceBytes`' `beside
 `gpu_free_bytes`), before the key loads anything. At the wrap's `2^19`, **M**: the arena is
 1,057,572,864 bytes of the recursivef's prover buffer of 2,665,131,360, and the key needs
 1,556,689,640 bytes beside it at most (`ProvingKey::requiredDeviceBytes`, its loading's scratch
-included: 1,338,585,832 without it, before F7F); [On the GPU](#on-the-gpu) has the
+included; 1,338,585,832 without it); [On the GPU](#on-the-gpu) has the
 run. The unified buffer's path is measured only by the C++ tests of an arena given to a key, which
 prove the CPU's proofs on it and refuse one a byte short.
 
 ### GPU results
 
-The device path at the end of Fase 7, on worker-13: RTX 5090 (`sm_120`), CUDA 13.0, 32 CPU threads
+The device path on an RTX 5090 (`sm_120`), CUDA 13.0, 32 CPU threads
 (`OMP_NUM_THREADS=32`), packed keys, `gpu_check.sh` with three proofs on each device and the same
 `--insecure-blinding-seed`, and an `nvidia-smi` sampler running, which keeps the driver's state up
 between processes (a warm GPU), as persistence mode would; without it, cold.
 
 **Checks, M.** Every GPU proof is the CPU's byte for byte: `fibonacci` `2^16`–`2^22`, `all_sum`
 `2^16`–`2^20`, `all_prod` `2^18`, the wrap's layout L1 at `2^21` (three proofs on each device), and 20
-fixture keys (one on each): M24's synthetic domains, `Q` split, im pols, unpacked, and two stages.
+fixture keys (one on each): the synthetic constraint domains, `Q` split, im pols, unpacked, and two
+stages.
 `pilfflonk_gpu_test` with `PILFFLONK_GPU=1` passes: those 20 keys proved with `Q` in every part size
 the arena holds, 40 changed witnesses refused with the CPU's errors, 23 bytecodes through the
 interpreter on the device, the stage columns of the 3 AIRs of two stages, and every kernel, copy and
 memory test.
 
-**Fase 7, M.** The whole command (`wall`, from the first line of the log to the last), warm, at each
-milestone:
+**As each part moved to the device, M.** The whole command (`wall`, from the first line of the log
+to the last), warm, each row with everything of the rows above it:
 
 | Point | L1 `2^21` | `fibonacci` `2^22` | `all_sum` `2^20` |
 |---|---|---|---|
-| The MSMs and NTTs on the GPU, from host memory (M43/M44) | 16.94 | 2.79–2.88 | 4.26–4.36 |
-| The key and the stage commitments on the device (M58) | 16.2–16.4 | 2.52–2.68 | 3.94–3.97 |
-| and `Q`'s LDE (M59) and the opening (M62) | 9.74–9.76 | 1.78–1.82 | 2.51–2.57 |
-| and the stage-2 hints (M61) | 9.37–9.47 | | 2.26–2.36 |
-| and `Q`'s bytecode, all of `Q` (M60b) | 2.83–2.86 | 1.22–1.25 | 1.54–1.70 |
-| and no copies back, the overlapped load (M63) | **2.11–2.20** | **0.89–0.91** | **1.14–1.19** |
+| The MSMs and NTTs on the GPU, from host memory | 16.94 | 2.79–2.88 | 4.26–4.36 |
+| The key and the stage commitments on the device | 16.2–16.4 | 2.52–2.68 | 3.94–3.97 |
+| and `Q`'s LDE and the opening | 9.74–9.76 | 1.78–1.82 | 2.51–2.57 |
+| and the stage-2 hints | 9.37–9.47 | | 2.26–2.36 |
+| and `Q`'s bytecode, all of `Q` | 2.83–2.86 | 1.22–1.25 | 1.54–1.70 |
+| and no copies back, the overlapped load | **2.11–2.20** | **0.89–0.91** | **1.14–1.19** |
 
-`all_prod` `2^18`: 0.89–1.01 s at M60b, 0.75–0.92 s now. Against M60b's CLI in the same session
-(L1 2.76–2.79 s, `fibonacci` `2^22` 1.06 s), M63 takes 0.65 s and 0.16 s less: the key's load
-([above](#loading-a-key-on-the-gpu)) and the copies back.
+`all_prod` `2^18`: 0.89–1.01 s with all of `Q` on the device, 0.75–0.92 s now. Against that step's
+CLI in the same session (L1 2.76–2.79 s, `fibonacci` `2^22` 1.06 s), the last row takes 0.65 s and
+0.16 s less: the key's load ([above](#loading-a-key-on-the-gpu)) and the copies back.
 
 **Every key, M.** The whole command on each device, the median and the range of the three runs of
 `gpu_check` (the same build, 32 threads, a warm GPU):
@@ -457,7 +474,7 @@ smaller sizes.
 
 **Copies at L1 `2^21`, M** (`PILFFLONK_COPIES_*`, bytes up / down):
 
-| Phase | M60b | M63 |
+| Phase | With copies back | Now |
 |---|---|---|
 | `KEY` | 3.29 GB / 1.68 GB | 3,288,361,577 / 200 |
 | `INSTANCE` | 0.60 GB / 0.60 GB | 603,979,776 / 0 |
@@ -471,7 +488,7 @@ A proof copies its witness, 604 MB, and 4.1 KB up, and 4.7 KB down, where it cop
 before. The key copies its SRS's powers (1.61 GB) and fixed columns (1.68 GB) up, and 25 counts back.
 
 **Warm and cold, M.** Cold, `fibonacci` `2^22` takes 2.06–2.10 s against 0.89–0.91 s: each process
-then adds 1.2 s of CUDA's initialisation, which a warm driver keeps (0.9 s at M58).
+then adds 1.2 s of CUDA's initialisation, which a warm driver keeps.
 
 **Device memory, M.** At the wrap's `2^19`: the arena, 1.06 GB, and 1.56 GB beside it at most
 (`requiredDeviceBytes`, its loading's scratch included). Over every key of the run, the GPU's memory
@@ -490,8 +507,8 @@ and CUDA's context.
   host memory at L1 `2^21`, the one large datum a key on the GPU keeps on the host, now that it keeps
   neither the fixed columns on `H` (1.68 GB) nor the LDE's table of roots (512 MB)
   ([host memory](#selection-memory-and-errors)).
-- Outside Fase 7 (decision D10): a smaller packing of the fixed columns (`W` and `W'` from `12·N` to
-  about `5·N` coefficients), and the wrap's `.exec` additions on the device, as PLONK's.
+- Not done: a smaller packing of the fixed columns (`W` and `W'` from `12·N` to about `5·N`
+  coefficients), and the wrap's `.exec` additions on the device, as PLONK's.
 
 ## The wrap
 
@@ -583,10 +600,10 @@ before the range-check gates, whose final circuit checks the Goldilocks ranges b
 | Wrapper, CPU 32 threads | **27.9 s** | 80.1 s (64 thr) | 146.3 s | 63.9 s |
 | `prove-snark`, CPU 32 threads | 32.9 s | 109 s (64 thr) | 218 s | 73–82 s |
 | Peak RSS | **6.29 GB** | 27.4 GB (64 thr) | 134.4 GB | 54.5 GB |
-| Final proof, RTX 5090 | **0.35 s** | — | no GPU prover | 0.86 s |
-| Wrapper, RTX 5090 | **1.08 s** | — | — | 1.65 s |
-| `prove-snark`, RTX 5090 | **2.28 s** | — | — | 3.50–3.65 s |
-| Host RSS, RTX 5090 | **2.95 GB** (3.31 GB before F7F) | — | — | 13.2 GB |
+| Final proof, RTX 5090 | **0.34 s** | — | no GPU prover | 0.86 s |
+| Wrapper, RTX 5090 | **1.09 s** | — | — | 1.65 s |
+| `prove-snark`, RTX 5090 | **2.21 s** | — | — | 3.50–3.65 s |
+| Host RSS, RTX 5090 | **2.95 GB** | — | — | 13.2 GB |
 | GPU memory | **5.0 GiB** | — | — | 29.8 GiB |
 | Proof | 2,208 B, 69 words | 2,048 B, 64 words | 768 B (E: snarkjs's 24 words) | 768 B |
 | `verifyProof` gas | 332,661 | 310,932 | 182,681 | 263,175 |
@@ -598,57 +615,54 @@ PLONK's and 13 times faster than FFLONK's, and the wrapper 2.3 and 5.2 times; it
 port was twice) and 1.26 times PLONK's. The range checks took the AIR from 2^22 rows to 2^19 and
 the proof from 62.6 s to 7.0 s on 64 threads, for 160 more bytes and 21,729 more gas. On the RTX
 5090 ([On the GPU](#on-the-gpu)), the pilfflonk proof is 2.5 times faster than PLONK's, the wrapper
-1.5 times and the whole command 1.5–1.6 times; it needs a quarter of PLONK's host memory and a sixth
+1.5 times and the whole command 1.6 times; it needs a quarter of PLONK's host memory and a sixth
 of its GPU memory.
 
 ### On the GPU
 
-The same `prove-snark`, with `--gpu`, on worker-13: RTX 5090 (`sm_120`), CUDA 13.0, 32 CPU threads
+The same `prove-snark`, with `--gpu`, on an RTX 5090 (`sm_120`), CUDA 13.0, 32 CPU threads
 (`OMP_NUM_THREADS=RAYON_NUM_THREADS=32`), on this run's vadcop_final proof and `provingKeySnark/`,
-with the GPU prover of the end of Fase 7 ([GPU](#gpu)): the key, every stage with its hints and im
-pols, `Q` whole and the SHPLONK opening on the device, and pilfflonk's arena in the recursivef's
-prover buffer ([the wrap's device buffer](#the-wraps-device-buffer)). The CPU measurements above are
-of `8343ef2c4`, whose CPU prover gives the same proofs. Three runs with an `nvidia-smi` sampler
-running, which keeps the driver's state up between processes (a warm GPU), and one without (cold).
-Every proof verifies with `verify-snark`. **M**, the medians of the warm runs, before Fase 7's last
-milestone (`0aac57552`, the same bundle) and after it:
+with the GPU prover of [GPU](#gpu): the key, every stage with its hints and im pols, `Q` whole and
+the SHPLONK opening on the device, and pilfflonk's arena in the recursivef's prover buffer ([the
+wrap's device buffer](#the-wraps-device-buffer)). The CPU figures above were measured before the
+device path held whole proofs; the CPU prover's proofs have not changed since. Three runs with an
+`nvidia-smi` sampler running, which keeps the driver's state up between processes (a warm GPU), and
+one without (cold). Every proof verifies with `verify-snark`. **M**, the medians of the warm runs and
+the cold run:
 
-| Phase | Before, warm (s) | Warm (s) | Cold (s) |
-|---|---|---|---|
-| `LOADING_RECURSIVE_F_SETUP` | 0.26 | 0.27 | 0.26 |
-| `INITIALIZING_FINAL_SNARK_PROVER` | 0.70 | 0.50 | 0.49 |
-| `GENERATE_RECURSIVEF` | 0.35 | 0.33 | 0.35 |
-| `CALCULATE_FINAL_WITNESS` | 0.40 | 0.39 | 0.39 |
-| `CALCULATE_FINAL_PROOF` | 0.38–0.39 | **0.35** | 0.33 |
-| `GENERATING_WRAPPER_SNARK_PROOF` | 1.26 | **1.08** | 1.08 |
-| The command | 2.45 | **2.28** | 3.55 |
+| Phase | Warm (s) | Cold (s) |
+|---|---|---|
+| `LOADING_RECURSIVE_F_SETUP` | 0.26 | 0.27 |
+| `INITIALIZING_FINAL_SNARK_PROVER` | 0.46 | 0.50 |
+| `GENERATE_RECURSIVEF` | 0.35 | 0.35 |
+| `CALCULATE_FINAL_WITNESS` | 0.40 | 0.38 |
+| `CALCULATE_FINAL_PROOF` | **0.34** (0.32–0.35) | 0.35 |
+| `GENERATING_WRAPPER_SNARK_PROOF` | **1.09** (1.05–1.11) | 1.10 |
+| The command | **2.21** (2.21–2.23) | 3.57 |
 
-The recursivef's `.consttree` was there from M55's runs; cold, the command took 3.74 s before. The
-host's peak RSS is 3.31 GB (3.60 GB before; 2.95 GB since F7F, whose key on the GPU keeps neither
-its fixed columns on `H` nor the LDE's table on the host, held throughout the wrap), and the GPU's
-memory in use, sampled once a second, peaks at 5,131 MiB (2,645 MiB before; 5,099 MiB since F7F).
+The recursivef's `.consttree` was there from earlier runs. The host's peak RSS is 2.95 GB: a key on
+the GPU keeps neither its fixed columns on `H` nor the LDE's table on the host
+([host memory](#selection-memory-and-errors)). The GPU's memory in use, sampled once a second, peaks
+at 5,099 MiB.
 
-- **The pilfflonk proof**, 0.35 s (9.64 s on 32 threads of the CPU machine): the instance 0.013 s,
-  stage 1 0.054 s, stage 2 0.027 s, `Q` 0.090 s, the evaluations 0.002 s and the opening 0.12 s.
-  The instance took 0.060 s before: it copied the witness's columns back to the host (168 MB), and
-  the stages their committed polynomials (235 MB). Now a proof copies its witness up, 168 MB, and
-  4.5 KB up and 5.2 KB down otherwise.
-- **The key**, 0.50 s: the SRS 0.08 s and its copy 0.04 s, and the AIR 0.30 s, with the shift's sums
-  0.09 s, the fixed INTT 0.04 s and the fixed commitments 0.06 s
-  ([loading a key](#loading-a-key-on-the-gpu)). CUDA's initialisation (0.11 s before) now comes
-  earlier, with the recursivef's device buffers, which the wrapper allocates at its start.
-- **The wrapper**, 1.08 s against 1.26 s: the pilfflonk proof, and the recursivef's device buffers,
-  which each proof allocated and freed before (with 512 MB of pinned host memory) and which the
-  wrapper now holds, as for PLONK.
+- **The pilfflonk proof**, 0.34 s (9.64 s on 32 threads of the CPU machine): the instance 0.013 s,
+  stage 1 0.05–0.06 s, stage 2 0.022–0.026 s, `Q` 0.088–0.092 s, the evaluations 0.002 s and the
+  opening 0.10–0.12 s. A proof copies its witness up, 168 MB, and 4.5 KB up and 5.2 KB down
+  otherwise; nothing of the witness or of the committed polynomials comes back to the host.
+- **The key**, 0.46 s: the SRS 0.06–0.07 s and its copy 0.04 s, and the AIR 0.26–0.34 s, with the
+  shift's sums 0.08–0.13 s, the fixed INTT 0.04 s and the fixed commitments 0.06 s
+  ([loading a key](#loading-a-key-on-the-gpu)). CUDA's initialisation comes earlier, with the
+  recursivef's device buffers, which the wrapper allocates at its start.
+- **The wrapper**, 1.09 s: the recursivef, the final circuit's witness and the pilfflonk proof. The
+  wrapper holds the recursivef's device buffers for its life, as for PLONK, instead of allocating
+  and freeing them (with 512 MB of pinned host memory) for each proof.
 - **GPU memory.** The wrapper holds the recursivef's device buffers (its prover buffer, 2.67 GB, and
   its constant tree) throughout, as for PLONK, with pilfflonk's arena (1.06 GB) inside the prover
-  buffer, and the key's memory beside them, 1.56 GB at most (`requiredDeviceBytes`). Before, those
-  buffers were there for each proof's 0.35 s of recursivef, which the sampler, once a second, missed
-  (**E**: the peak then was a GB higher, with pilfflonk's own arena beside them).
+  buffer, and the key's memory beside them, 1.56 GB at most (`requiredDeviceBytes`).
 - **Against PLONK's GPU wrap** (rapidsnark's GPU prover, measured on the same 5090): its final proof
   takes 0.86 s, its wrapper 1.65 s and its command 3.50–3.65 s, with 13.2 GB of host RSS and
   29.8 GiB of GPU memory. pilfflonk's proof is 2.5 times faster, its wrapper 1.5 times and its
-  command 1.5–1.6 times, with a quarter of the host memory and a sixth of the GPU memory.
+  command 1.6 times, with a quarter of the host memory and a sixth of the GPU memory.
 
 ### On chain
 

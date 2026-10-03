@@ -46,12 +46,13 @@ pub(crate) struct WrapArena {
 
 /// pilfflonk's arena in the wrap on the GPU, for the key at `proving_key`, as
 /// `pre_allocate_final_snark_prover_c` carves rapidsnark's PLONK prover: proofman's unified buffer
-/// `d_buffers` if there is one, all of it (the key refuses it, as a GPU without the memory, if it holds
-/// less than a proof's arena: decision D1); otherwise the recursivef's prover buffer
-/// `d_buffers_recursivef`, grown to the arena if it is smaller. `None` on the CPU. Refused if the
-/// unified buffer is not on device 0, where pilfflonk proves, if the recursivef's buffer cannot grow,
-/// or if, the arena in place, the device has less free memory than the key needs beside it
-/// ([`DeviceBytes::beside`], its loading's scratch included): before the key loads anything.
+/// `d_buffers` if there is one, all of it (the key refuses it, as a GPU without the memory, if it
+/// holds less than a proof's arena: pilfflonk/docs/performance.md#rules-of-the-device-path);
+/// otherwise the recursivef's prover buffer `d_buffers_recursivef`, grown to the arena if it is
+/// smaller. `None` on the CPU. Refused if the unified buffer is not on device 0, where pilfflonk
+/// proves, if the recursivef's buffer cannot grow, or if, the arena in place, the device has less
+/// free memory than the key needs beside it ([`DeviceBytes::beside`], its loading's scratch
+/// included): before the key loads anything.
 pub(crate) fn wrap_arena(
     gpu: bool,
     d_buffers: Option<*mut c_void>,
@@ -99,7 +100,8 @@ pub(crate) fn wrap_arena(
 }
 
 /// Refuses a key that needs more device memory beside its arena (`needed.beside`) than the device has
-/// `free`, once the arena is in place, as the key would refuse itself while it loads (decision D1).
+/// `free`, once the arena is in place, as the key would refuse itself while it loads
+/// (pilfflonk/docs/performance.md#rules-of-the-device-path).
 fn require_beside(needed: &DeviceBytes, free: u64) -> ProofmanResult<()> {
     if free < needed.beside {
         return Err(ProofmanError::InvalidConfiguration(format!(

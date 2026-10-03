@@ -1,6 +1,7 @@
 //! The names of the JSON view of a proof (pilfflonk/docs/formats.md#proof-names): pil-fflonk's
-//! (`pil-fflonk/src/shplonk.cpp:316-328`, `pil-stark/src/fflonk/helpers/fflonk_verify.js`),
-//! extended to signed offsets, to array columns and to proofs of several instances.
+//! (`pil-fflonk/src/shplonk.cpp:316-328`, `pil-stark/src/fflonk/helpers/fflonk_verify.js`, at the
+//! versions of pilfflonk/docs/README.md#references), extended to signed offsets, to array columns
+//! and to proofs of several instances.
 //!
 //! `polynomials`:
 //! - `f<g>`: the commitment of the `f` at position `g` of the global order

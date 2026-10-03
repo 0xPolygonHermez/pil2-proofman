@@ -1,10 +1,9 @@
 //! Mutated proofs for the tests of the Solidity verifier (pilfflonk/docs/verifier.md#tests): the
 //! arithmetic of `Fr` over `num-bigint` that they need, and [`fixup`], which recomputes `invZh` and
-//! `inv` of a mutated proof for its own transcript (pilfflonk/docs/protocol.md#inverses), as the
-//! harness of the security review of the Solidity verifier did, so that the proof gets past those
-//! checks to the deeper ones, `checkQPieces` and the pairing. The Solidity tests of
-//! `pilfflonk-setup` (`setup/pilfflonk/tests/solidity.rs`) and the differential fuzzer (`fuzz.rs`,
-//! which the CLI's end to end runs) share it.
+//! `inv` of a mutated proof for its own transcript (pilfflonk/docs/protocol.md#inverses), as an
+//! attacker would, so that the proof gets past those checks to the deeper ones, `checkQPieces` and
+//! the pairing. The Solidity tests of `pilfflonk-setup` (`setup/pilfflonk/tests/solidity.rs`) and
+//! the differential fuzzer (`fuzz.rs`, which the CLI's end to end runs) share it.
 //!
 //! Include it with `#[path = ".../pilfflonk/tests/data/mutations.rs"] mod mutations;`.
 
@@ -85,9 +84,9 @@ pub fn roots(vkey: &Vkey, k: u64, offsets: &[i64], xi_seed: &BigUint) -> Vec<Big
 
 /// `proof` with `invZh` and `inv` recomputed for its own transcript
 /// (pilfflonk/docs/protocol.md#inverses; `shplonk.js`, `computeZerofiers` and
-/// `computeInverseDenominators`, as the harness of the security review of the Solidity verifier
-/// does), so that a mutated proof, with the auxiliary inverses of its `ξ` (`Calldata::encode`), gets
-/// past those checks to the deeper ones: `checkQPieces` and the pairing.
+/// `computeInverseDenominators`, as an attacker would), so that a mutated proof, with the auxiliary
+/// inverses of its `ξ` (`Calldata::encode`), gets past those checks to the deeper ones:
+/// `checkQPieces` and the pairing.
 pub fn fixup(vkey: &Vkey, mut proof: Proof, publics: &[FrBytes]) -> Proof {
     let ch = verifier_challenges(vkey, &proof, publics).expect("a proof whose points the transcript absorbs");
     let (xi_seed, y) = (big(&ch.xi_seed), big(&ch.y));

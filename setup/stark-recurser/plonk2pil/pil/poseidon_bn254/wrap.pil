@@ -10,7 +10,7 @@ require "circuits/num2bytes.pil";
 //
 // The AIR of the final SNARK wrap, over BN254, proved with pilfflonk: the circom verifier of the
 // last STARK (`final.circom`, with custom templates) as PLONK gates and the custom gates
-// `PoseidonT(5)` and `Num2Bytes(nBits)`. Layout L1 (M45), with the range checks of M56a:
+// `PoseidonT(5)` and `Num2Bytes(nBits)`. Layout L1, with range checks:
 //
 //   - 3 PLONK gates a row, gate g on a[3g..3g+2], all three with the row's one coefficient set C;
 //   - a PoseidonT(5) use is a band of 69 rows, one round a row on a[0..4]: row r holds the state
@@ -37,9 +37,10 @@ require "circuits/num2bytes.pil";
 // three, nor the sum bus.
 //
 // Every fixed column but the std's own (the connection's ID and __L1__) is computed by plonk2pil
-// and given to the setup, `#pragma fixed_external`: at the 2^22 rows of M45's circuit, the values
-// of all of them were above the 2 GiB a pilout can hold. A row without a PLONK constraint has
-// C = 0, so its gates hold whatever the row's cells.
+// and given to the setup, `#pragma fixed_external`, instead of being written into the pilout: a
+// pilout holds at most 2 GiB, which the fixed columns of a wrap of 2^22 rows (a final circuit
+// without range checks) exceed, and plonk2pil has their values already. A row without a PLONK
+// constraint has C = 0, so its gates hold whatever the row's cells.
 // ============================================================================
 airtemplate Wrap (const int N, const int nPublics, const int nRangeChecks) {
     const int nWires = 9;

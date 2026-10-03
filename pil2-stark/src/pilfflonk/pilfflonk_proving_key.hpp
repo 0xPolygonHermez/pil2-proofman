@@ -202,11 +202,12 @@ public:
     const GpuAirKey *device() const { return deviceKey.get(); }
 #endif
 
-    // Fixed column c (constPolsMap index) on H, N values in natural order. On a key on the GPU, which
-    // keeps the fixed columns' coefficients on the device and nothing of them on the host, the first
-    // call copies those of every fixed column to the host (GpuAirKey::fixedToHost) and evaluates them
-    // there on H (Lde::ntt), once, whatever the thread (decision D8): for the check
-    // (Instance::check), which computes the stages' columns on the host.
+    // Fixed column c (constPolsMap index) on H, N values in natural order. On a key on the GPU,
+    // which keeps the fixed columns' coefficients on the device and nothing of them on the host,
+    // the first call copies those of every fixed column to the host (GpuAirKey::fixedToHost) and
+    // evaluates them there on H (Lde::ntt), once, whatever the thread ("copies on demand" and
+    // "recomputed, not kept", pilfflonk/docs/performance.md#rules-of-the-device-path): for the
+    // check (Instance::check), which computes the stages' columns on the host.
     const FrElement *fixedEvaluations(uint64_t c) const;
     // Its interpolant, of N coefficients. Not const, as rapidsnark's API takes it, but never changed.
     // On a key on the GPU, which keeps the coefficients on the device, the first call copies those of

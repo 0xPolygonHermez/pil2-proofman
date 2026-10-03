@@ -673,7 +673,7 @@ fn with_pieces(pieces: &[&str]) -> (Vec<PolMapEntry>, Vec<EvMapEntry>) {
 /// of `k = 3` with no extra mul, and with one, the split of that group of least cost, `[Q2]` and
 /// `[Q1, Q0]` (rule 3), as the old system splits it (`extraMuls` may split every group, `Q`'s too).
 #[test]
-fn the_pieces_of_q_have_the_bounds_of_a1_and_a_group_of_their_own() {
+fn the_pieces_of_q_have_their_bounds_and_a_group_of_their_own() {
     let consts = [pol(0, "F0", 0), pol(0, "F1", 1)];
     let (cm, ev_map) = with_pieces(&["Q0", "Q1", "Q2"]);
     let unpacked = committed_pols(3, split(3, 1), &consts, &cm, &ev_map, Packing::Unpacked).unwrap();
@@ -730,7 +730,7 @@ fn the_pieces_of_q_have_the_bounds_of_a1_and_a_group_of_their_own() {
 /// order; and as many as the grouping can split in chunks of `kN | r − 1`: five pieces are no
 /// chunk, and need an extra mul.
 #[test]
-fn the_pieces_of_q_are_refused_unless_they_are_those_of_a1() {
+fn unexpected_pieces_of_q_are_refused() {
     let consts = [pol(0, "F0", 0), pol(0, "F1", 1)];
     let passes_output = |r: Result<Committed, SetupError>, what: &str| match r {
         Err(SetupError::PassesOutput(m)) => assert!(m.contains(what), "{m}"),

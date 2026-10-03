@@ -1170,9 +1170,9 @@ pub(crate) mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// M49's end-to-end circuit, `setup/stark-recurser/tests/fixtures/bn254/wrap.circom`: a
-    /// `PoseidonT(5)` use among PLONK gates, and one public. Its r1cs, compiled for BN254 into
-    /// `dir` with the committed circom.
+    /// The stark-recurser's end-to-end wrap circuit,
+    /// `setup/stark-recurser/tests/fixtures/bn254/wrap.circom`: a `PoseidonT(5)` use among PLONK
+    /// gates, and one public. Its r1cs, compiled for BN254 into `dir` with the committed circom.
     fn small_wrap_r1cs(dir: &Path) -> PathBuf {
         let root = repo_root();
         let circom = root.join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" });

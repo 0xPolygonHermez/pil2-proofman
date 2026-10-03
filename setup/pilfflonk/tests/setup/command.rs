@@ -69,7 +69,7 @@ fn files(dir: &Path) -> Vec<String> {
 }
 
 #[test]
-fn the_defaults_are_those_of_spec_4_2() {
+fn the_defaults_are_the_documented_ones() {
     assert_eq!((DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_EXTRA_MULS, DEFAULT_MAX_Q_DEGREE), (9, 2, 0));
     let dir = TestDir::new("defaults");
     let opts = options(&dir);

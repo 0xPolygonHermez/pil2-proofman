@@ -2322,9 +2322,9 @@ void testAGpuOpeningIsOfOneInstance() {
     assert(!opening.evaluations().empty());
 }
 
-// A2 of the Fase 7 audit: proofs of one key on the GPU from two threads at once, each waiting for the
-// other's lease, with instances made and dropped at once between them (their witness's transposition
-// still queued), while a third thread copies the fixed coefficients to the host over and over
+// Proofs of one key on the GPU from two threads at once, each waiting for the other's lease, with
+// instances made and dropped at once between them (their witness's transposition still queued),
+// while a third thread copies the fixed coefficients to the host over and over
 // (GpuAirKey::fixedToHost, from any thread): every proof the CPU's, and every copy the CPU key's
 // coefficients. On the Fibonacci, whole and split and packed, and on the sum bus.
 template <typename Prove, typename Drop>
@@ -2390,11 +2390,11 @@ void testProofsFromTwoThreads() {
         [&] { const std::unique_ptr<Instance> dropped = gpu.instance(gpu.witness); });
 }
 
-// A5 of the Fase 7 audit: a thread whose current device is another than the GPU's, as one of a
-// multi-GPU process may be (device 1, if there are two): the device memory of a key
-// (requiredDeviceBytes), its load, its fixed coefficients' copy, a proof, and their release, run on
-// device 0 (DeviceScope) and leave the thread's current device as it was; the proof is the CPU's.
-// With one device, the thread's is the GPU's, and stays so.
+// A thread whose current device is another than the GPU's, as one of a multi-GPU process may be
+// (device 1, if there are two): the device memory of a key (requiredDeviceBytes), its load, its
+// fixed coefficients' copy, a proof, and their release, run on device 0 (DeviceScope) and leave the
+// thread's current device as it was; the proof is the CPU's. With one device, the thread's is the
+// GPU's, and stays so.
 void testAThreadOfAnotherDevice() {
     if (!gpuUnderTest("a thread of another device")) {
         return;
@@ -2666,13 +2666,13 @@ void testStageOneOnTheGpu() {
 }
 
 // The device memory ProvingKey::requiredDeviceBytes reads from a key's files, which needs no fixed
-// column, is what a key on the GPU of them reserves (GpuKey::reserve): its arena, and beside it what
-// it holds, its loading's scratch and the most a proof allocates besides; pilfflonk_gpu_device_bytes
-// gives the same. A1 of the Fase 7 audit: a key on a given arena loads with a memoryLimit of exactly
-// `beside`, and is refused with one byte less; one of its own arena loads with arena + beside, and
-// with as little as that less its loading's scratch, which its arena holds then, and not one byte
-// less. And pilfflonk_gpu_free_bytes is what the device has free. On the Fibonacci, whole and split
-// and packed.
+// column, is what a key on the GPU of them reserves (GpuKey::reserve): its arena, and beside it
+// what it holds, its loading's scratch and the most a proof allocates besides;
+// pilfflonk_gpu_device_bytes gives the same. A key on a given arena loads with a memoryLimit of
+// exactly `beside`, and is refused with one byte less; one of its own arena loads with arena +
+// beside, and with as little as that less its loading's scratch, which its arena holds then, and
+// not one byte less. And pilfflonk_gpu_free_bytes is what the device has free. On the Fibonacci,
+// whole and split and packed.
 void testTheDeviceBytesOfAKey() {
     if (!gpuUnderTest("the device memory of a key on the GPU")) {
         return;
@@ -2922,11 +2922,11 @@ private:
     std::thread sampler;
 };
 
-// A4 of the Fase 7 audit: the device memory a key on the GPU uses, sampled while it loads and while it
-// proves its witness, within what ProvingKey::requiredDeviceBytes says it needs: beside a given
-// arena, `beside`; with its own, arena + beside. For each key of PILFFLONK_GPU_PEAK_KEYS
-// (colon-separated: a directory with a provingKey/ and a witness/, or "provingKeyDir,witnessDir"),
-// with its own arena and with one given.
+// The device memory a key on the GPU uses, sampled while it loads and while it proves its witness,
+// within what ProvingKey::requiredDeviceBytes says it needs: beside a given arena, `beside`; with
+// its own, arena + beside. For each key of PILFFLONK_GPU_PEAK_KEYS (colon-separated: a directory
+// with a provingKey/ and a witness/, or "provingKeyDir,witnessDir"), with its own arena and with
+// one given.
 void testTheDeviceMemoryOfTheKeysUnderTest() {
     const char *list = std::getenv("PILFFLONK_GPU_PEAK_KEYS");
     if (list == nullptr || !gpuUnderTest("the device memory of PILFFLONK_GPU_PEAK_KEYS")) {

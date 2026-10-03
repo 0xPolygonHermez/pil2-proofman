@@ -15,12 +15,11 @@
 //! 4. makes the cases: the proof; the proof with an evaluation, a commitment, a public or `W'`
 //!    changed, the first three also "fixed up" (`fixup` of `pilfflonk/tests/data/mutations.rs`,
 //!    which the differential fuzzer shares: `invZh`, `inv` and the auxiliary inverses recomputed
-//!    for the changed transcript, as the harness of the security review of the Solidity verifier
-//!    did), so that they get to the pairing, or to `checkQPieces` if `Q` is split; split, the
-//!    pieces of `Q` changed with their sum kept (to the pairing) and one changed (to
-//!    `checkQPieces`); points off the curve or that the transcript refuses; and values only the
-//!    calldata can hold (a coordinate `≥ q`, a scalar `≥ r`, a wrong auxiliary inverse, calldata a
-//!    word short);
+//!    for the changed transcript, as an attacker would), so that they get to the pairing, or to
+//!    `checkQPieces` if `Q` is split; split, the pieces of `Q` changed with their sum kept (to the
+//!    pairing) and one changed (to `checkQPieces`); points off the curve or that the transcript
+//!    refuses; and values only the calldata can hold (a coordinate `≥ q`, a scalar `≥ r`, a wrong
+//!    auxiliary inverse, calldata a word short);
 //! 5. asks the JS verifier about each case (`js_verifier::verify`), and runs Foundry on all of them
 //!    (`pilfflonk/solidity`, copied to a directory of its own; `pilfflonk/tests/data/foundry.rs`):
 //!    `verifyProof` must return what the JS verifier says, `false` for every calldata-only case but
@@ -466,15 +465,14 @@ fn foundry_verifies_the_proofs_of_every_domain() {
     }
 }
 
-/// A split `Q` and no evaluation (a case of the security review of the Solidity verifier): one `f`,
-/// `Q`'s, of `k = 2` with its pieces in the order `Q1`, `Q0`, so that the calldata's scalars start
-/// with `Q1`, and the transcript absorbs the pieces from there, not from `Q0`
-/// (pilfflonk/docs/verifier.md#steps, step 4). No pilout gives such a key: the vkey and its proof
-/// are made here with the test ptau's `τ`, for the statement `public = 5` (`Q = (p − 5)/Z_H` is
-/// then 0, and its pieces only PLONK's blinding, pilfflonk/docs/protocol.md#q-pieces):
-/// `f(X) = Q1(X²) + X·Q0(X²)` with `Q0 = b0·X^N + b1·X^(N+1)` and `Q1 = −b0 − b1·X`, committed as
-/// `f(τ)·G`, and `W` and `W'` as the prover defines them for one `f`
-/// (pilfflonk/docs/protocol.md#pairing-check).
+/// A split `Q` and no evaluation, an edge case of the vkey format: one `f`, `Q`'s, of `k = 2` with
+/// its pieces in the order `Q1`, `Q0`, so that the calldata's scalars start with `Q1`, and the
+/// transcript absorbs the pieces from there, not from `Q0` (pilfflonk/docs/verifier.md#steps, step
+/// 4). No pilout gives such a key: the vkey and its proof are made here with the test ptau's `τ`,
+/// for the statement `public = 5` (`Q = (p − 5)/Z_H` is then 0, and its pieces only PLONK's
+/// blinding, pilfflonk/docs/protocol.md#q-pieces): `f(X) = Q1(X²) + X·Q0(X²)` with `Q0 = b0·X^N +
+/// b1·X^(N+1)` and `Q1 = −b0 − b1·X`, committed as `f(τ)·G`, and `W` and `W'` as the prover defines
+/// them for one `f` (pilfflonk/docs/protocol.md#pairing-check).
 #[test]
 #[ignore = "needs PILFFLONK_FORGE, PILFFLONK_SOLC and Node.js"]
 fn foundry_verifies_a_split_q_without_evaluations() {

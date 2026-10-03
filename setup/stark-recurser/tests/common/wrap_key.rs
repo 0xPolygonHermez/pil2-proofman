@@ -36,7 +36,7 @@ pub enum Ptau {
 /// `repo_root` is the repository's root, where plonk2pil's PIL and the std are.
 pub fn set_up_key(repo_root: &Path, dir: &Path, res: &PlonkResult<Bn254>, ptau: Ptau) -> PathBuf {
     let pilout = compile_pil(repo_root, dir, &res.pil_str);
-    // More powers than the layout's largest degree, 13·N + 12 for L1 at the family's knobs (M56a).
+    // More powers than the layout's largest degree, 13·N + 12 for L1 at the family's knobs.
     let n_g1 = 14 << res.n_bits;
     let powers_of_tau = match ptau {
         Ptau::TauOne => {

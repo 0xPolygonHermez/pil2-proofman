@@ -317,7 +317,7 @@ agree on every case.
   generated contract that the test writes (never the generator): each `fail` says where it is, and the
   body records the gas left after each step. Each family must reach the checks it aims at, and a case
   refused by the pairing must cost at least 90 % of the honest proof's gas.
-- **Runs.** 403 cases in CI (31 per key) in 37 s with the setups; 10,400 (`PILFFLONK_FUZZ_CASES=10400`)
+- **Runs.** 403 cases by default (31 per key) in 37 s with the setups; 10,400 (`PILFFLONK_FUZZ_CASES=10400`)
   in 94 s. Foundry runs in rounds of 250 cases, without isolation. **No discrepancy**: every verdict
   and every refusing check agree, the contract only reverts on short calldata, and it accepts no
   mutated proof (the accepted cases of the length family are honest proofs with trailing bytes). Three

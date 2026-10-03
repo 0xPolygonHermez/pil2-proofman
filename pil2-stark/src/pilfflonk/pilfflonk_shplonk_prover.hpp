@@ -88,8 +88,8 @@ struct ShplonkProof {
 // FFT uses). T_i is the union of the roots of f_i's offsets, offset-major: T_i[m·k + j] is x_j of
 // offset O_i[m].
 //
-// The opening (pil-fflonk's convention, shplonk.cpp:83-101, 263-270): r_i interpolates f_i on
-// T_i, and with α = α_S,
+// The opening (pil-fflonk's convention, shplonk.cpp:83-101, 263-270, at the version of
+// pilfflonk/docs/README.md#references): r_i interpolates f_i on T_i, and with α = α_S,
 //     W(X)  = Σ_i α^i·(f_i(X) - r_i(X)) / Z_{T_i}(X),
 //     L(X)  = Σ_i α^i·Z_{T∖T_i}(y)·(f_i(X) - r_i(y)) - Z_T(y)·W(X),
 //     W'(X) = L(X) / (Z_{T∖T_0}(y)·(X - y)),

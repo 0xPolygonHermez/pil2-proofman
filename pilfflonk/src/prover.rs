@@ -230,10 +230,11 @@ impl ProvingKeyFiles {
 
     /// [`load_on`](Self::load_on) on [`Device::Gpu`], with the device memory of the key's proofs
     /// (their arena) in the caller's `bytes` bytes at `buffer`, a wrap's pre-reserved buffer
-    /// (pilfflonk/docs/performance.md#the-wraps-device-buffer): the key writes it only while a proof
-    /// runs, and allocates the rest of its device memory beside it ([`gpu_device_bytes`]). Refused,
-    /// as a key the device cannot hold is (decision D1), if the buffer holds less than a proof's
-    /// arena, saying how many bytes it needs and the buffer has.
+    /// (pilfflonk/docs/performance.md#the-wraps-device-buffer): the key writes it only while a
+    /// proof runs, and allocates the rest of its device memory beside it ([`gpu_device_bytes`]).
+    /// Refused, as a key the device cannot hold is
+    /// (pilfflonk/docs/performance.md#rules-of-the-device-path), if the buffer holds less than a
+    /// proof's arena, saying how many bytes it needs and the buffer has.
     ///
     /// # Safety
     ///

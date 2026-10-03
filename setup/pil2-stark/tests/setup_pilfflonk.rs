@@ -205,7 +205,7 @@ fn contents(dir: &Path) -> Vec<(String, Vec<u8>)> {
 }
 
 #[test]
-fn the_subcommand_takes_the_arguments_of_spec_4_2() {
+fn the_subcommand_takes_the_documented_arguments() {
     let out = proofman_setup(&["setup-pilfflonk", "--help"]);
     assert!(out.status.success());
     let help = String::from_utf8_lossy(&out.stdout);

@@ -1,6 +1,7 @@
 //! The grouping (pilfflonk/docs/protocol.md#grouping-rules): the golden of pil-fflonk's example
 //! `all`, the rules on small cases, the errors, and properties of random inputs checked against a
-//! brute force.
+//! brute force. The old system's files are cited at the versions of
+//! pilfflonk/docs/README.md#references.
 //!
 //! # The golden
 //!
@@ -214,7 +215,7 @@ fn the_roots_of_example_all_are_those_of_xi_times_omega_to_the_offset() {
 // --- Rule 1: classes and fusion ---------------------------------------------------------------
 
 #[test]
-fn a2s_examples_of_the_fusion() {
+fn the_documented_fusion_examples() {
     // {0}:4, {0,1}:2 stays two classes.
     let mut pols: Vec<CommittedPol> = (0..4).map(|i| column(&format!("a{i}"), 1, i, &[0], 3)).collect();
     pols.extend((4..6).map(|i| column(&format!("b{i}"), 1, i, &[0, 1], 3)));
@@ -704,7 +705,7 @@ fn brute_best_costs(options: &[BTreeMap<usize, (u64, Vec<usize>)>], extra_muls: 
 }
 
 #[test]
-fn random_inputs_are_grouped_as_a2_says() {
+fn random_inputs_are_grouped_by_the_rules() {
     let mut rng = Rng(0x00c0_ffee_f1f0_2026);
     let (mut grouped, mut refused, mut with_moves, mut with_splits) = (0, 0, 0, 0);
     for case in 0..3000 {

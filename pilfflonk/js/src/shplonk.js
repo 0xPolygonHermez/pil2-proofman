@@ -2,7 +2,8 @@
 // structure of snarkjs' fflonk verifier (src/fflonk_verify.js: computeF, computeE, computeJ,
 // isValidPairing). snarkjs has three fixed polynomials C0, C1 and C2 and their roots written out;
 // here they are the list of f_i, each with its k and signed offsets, and r_i(y) and q_i are
-// generalised as shplonkjs' verifyOpenings does (shplonkjs/src/helpers/verifier.js:107-138).
+// generalised as shplonkjs' verifyOpenings does (shplonkjs/src/helpers/verifier.js:107-138; this
+// file's line numbers are those of the versions in pilfflonk/docs/README.md#references).
 // It checks
 //
 //     e(F - E - J + y·[W'], [1]₂) = e([W'], [τ]₂)

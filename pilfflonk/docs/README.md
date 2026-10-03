@@ -485,6 +485,18 @@ pilout needs `PIL2C_EXEC`, and a test checks that they are what `pil-helpers` wr
 serves both buses of a fixture: the two pilouts have the same stage-1 columns and publics. Their
 witness is the generator's, byte for byte.
 
+## References
+
+pilfflonk adapts code and conventions from these sources. Where a comment cites one of their files
+with line numbers, the lines are those of the version below.
+
+| Source | Version | What pilfflonk takes from it |
+|---|---|---|
+| [pil-fflonk](https://github.com/0xPolygonHermez/pil-fflonk) | commit `b385c38` | The C++ SHPLONK prover (`src/shplonk.cpp`) and the prover's sequence (`src/pilfflonk_prover.cpp`) |
+| [pil-stark](https://github.com/0xPolygonHermez/pil-stark), branch `pilfflonk` | commit `5e20f57` | The grouping's classes (`src/fflonk/helpers/fflonk_shkey.js`) and the verifier's equations (`src/fflonk/helpers/fflonk_verify.js`) |
+| [shplonkjs](https://github.com/0xPolygonHermez/shplonkjs) | commit `7824640`, the one pil-stark's `package-lock.json` pins | The split of the groups in `f_i` (`src/helpers/setup.js`, `src/utils.js`), the roots (`src/shplonk.js`) and the opening's check (`src/helpers/verifier.js`) |
+| [snarkjs](https://github.com/iden3/snarkjs) | 0.7.6 | The JS verifier's template (`src/fflonk_verify.js`) and the Solidity verifier's (`templates/verifier_fflonk.sol.ejs`) |
+
 ## Upstream issues
 
 Defects found in code pilfflonk uses but does not own. None is fixed here unless it says so;

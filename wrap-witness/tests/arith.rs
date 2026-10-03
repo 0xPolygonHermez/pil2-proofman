@@ -1,6 +1,7 @@
-//! The wrap's witness on a small circuit over BN254, before plonk2pil has a BN254 gate family: the
-//! circuit of plonk2pil's BN254 test, `setup/stark-recurser/tests/fixtures/bn254/arith.circom`, and
-//! its `input.json` as the zkin.
+//! The wrap's witness on a small circuit over BN254, on an AIR of plain PLONK gates rather than
+//! plonk2pil's BN254 wrap family (`tests/range_checks.rs` has that one): the circuit of plonk2pil's
+//! BN254 test, `setup/stark-recurser/tests/fixtures/bn254/arith.circom`, and its `input.json` as
+//! the zkin.
 //!
 //! The circuit's files are laid out as setup-snark lays out `provingKeySnark/final/`,
 //! `final/final.{so,dat,exec}` (`tests/common`):

@@ -75,7 +75,8 @@ pub fn q_pieces(q_deg: u64, max_q_degree: u64) -> u64 {
 
 /// The `maxQDegree` a pilfflonkinfo and a vkey hold for `--max-q-degree max_q_degree` and `Q` of
 /// degree `q_deg`: `max_q_degree` if it splits `Q`, and 0 if it does not, as the old system's setup
-/// (`fflonk_shkey.js:162-163`; pilfflonk/docs/protocol.md#q-pieces). So `maxQDegree > 0` if and
+/// (pil-stark's `fflonk_shkey.js:162-163`, pilfflonk/docs/README.md#references;
+/// pilfflonk/docs/protocol.md#q-pieces). So `maxQDegree > 0` if and
 /// only if `Q` is split, and a key of `Q` whole is the same whatever the option was (the globalInfo
 /// keeps the option).
 pub fn split_max_q_degree(q_deg: u64, max_q_degree: u64) -> u64 {

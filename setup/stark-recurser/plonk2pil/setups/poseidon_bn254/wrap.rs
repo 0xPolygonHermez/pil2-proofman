@@ -1,5 +1,5 @@
-//! The final SNARK wrap's setup, over BN254 (`pil/poseidon_bn254/wrap.pil`), in layout L1 (M45)
-//! with range checks (M56a): 9 wires, all of them in the std's connection; 3 PLONK gates a row on
+//! The final SNARK wrap's setup, over BN254 (`pil/poseidon_bn254/wrap.pil`), in layout L1 with
+//! range checks: 9 wires, all of them in the std's connection; 3 PLONK gates a row on
 //! the row's one coefficient set; each `PoseidonT(5)` use a band of 69 rows, one round a row on
 //! a[0..4]; and each `Num2Bytes(nBits)` use a range-check row. On the rows of the custom gates, the
 //! bands' and the range checks', gate 2 is the only PLONK gate on.
@@ -72,17 +72,17 @@ pub const RANGE_MUL_COLUMN: usize = N_WIRES;
 const _: () = assert!(RANGE_CHECK_CHUNKS <= WIDTH && RANGE_CHECK_CHUNK_COLS.start == 1);
 
 /// `set_max_constraint_degree` of the PIL by default: the degree the std groups its buses' terms
-/// to, the AIR's own constraints being of degree 6 whatever it is. M45 measured L1 at the std's
-/// default, 3; with the range checks' sum bus, the AIR cannot be set up at degree 3 and pilfflonk's
-/// default `--extra-muls` (2), and degree 6 with [`EXTRA_MULS`] is the cheapest of the settings
-/// that can to verify (M56a: 337,557 gas against 356,761 at degree 3 and `--extra-muls` 4).
+/// to, the AIR's own constraints being of degree 6 whatever it is. With the range checks' sum bus,
+/// the AIR cannot be set up at the std's default degree, 3, and pilfflonk's default `--extra-muls`
+/// (2); degree 6 with [`EXTRA_MULS`] is the cheapest of the settings that can to verify (measured
+/// on the fibonacci-square wrap: 337,557 gas against 356,761 at degree 3 and `--extra-muls` 4).
 /// setup-snark also bounds pilfflonk's degree search with it (setup-pilfflonk's
 /// `--max-constraint-degree`): the AIR's own constraints reach it, so `Q` needs no im pol.
 pub const MAX_CONSTRAINT_DEGREE: usize = 6;
 
 /// The `--extra-muls` the wrap's AIR is set up with by pilfflonk (pilfflonk/docs/protocol.md,
 /// grouping rule 3), at the PIL's [`MAX_CONSTRAINT_DEGREE`]: setup-snark passes it, with a ptau of
-/// at least `13·N + 12` powers for it (M56a).
+/// at least `13·N + 12` powers for it.
 pub const EXTRA_MULS: u64 = 3;
 
 /// The airgroup, and air, by default.

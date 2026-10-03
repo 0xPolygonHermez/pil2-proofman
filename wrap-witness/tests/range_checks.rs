@@ -1,4 +1,4 @@
-//! The wrap's witness of an AIR with range checks (M56a): plonk2pil's wrap of
+//! The wrap's witness of an AIR with range checks: plonk2pil's wrap of
 //! `setup/stark-recurser/tests/fixtures/bn254/num2bytes.circom`, uses of circom's `Num2Bytes` of
 //! whole and partial chunks among PLONK gates and a `PoseidonT(5)` use, with its files laid out as
 //! setup-snark lays out `provingKeySnark/final/` (`tests/common`) and plonk2pil's exec.

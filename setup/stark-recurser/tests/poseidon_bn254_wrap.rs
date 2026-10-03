@@ -7,8 +7,8 @@
 //!    inputs (a fixed seed). `pilfflonk check` holds on the trace, whose bands are circom's own `in`,
 //!    `im` and `out`; and with any one intermediate state changed, the round constraints fail, on
 //!    the two rows that read it and nowhere else. The circuit cannot catch that: the custom gate has
-//!    no r1cs constraint, so `snarkjs wtns check` accepts a wrong intermediate (M45), and only the
-//!    AIR constrains every round.
+//!    no r1cs constraint, so `snarkjs wtns check` accepts a wrong intermediate, and only the AIR
+//!    constrains every round.
 //! 2. **End to end.** `fixtures/bn254/wrap.circom`, the gate among multiplications, additions and
 //!    copies: plonk2pil, pil2com over BN254, the pilfflonk setup with plonk2pil's fixed columns, the
 //!    trace from circom's witness and the `.exec`; `pilfflonk check` holds and fails with a cell
