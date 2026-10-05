@@ -78,6 +78,19 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     let pilout = pb::PilOut::decode(pilout_data.as_slice())?;
     let pilout_name = pilout.name.clone().unwrap_or_else(|| "pilout".to_string());
 
+    // Reject stage>=2 proofValues: nothing binds them to the instances (they are absorbed
+    // into no transcript and constrained by no AIR), so a prover could pick them after the
+    // challenges. Only stage-1 proofValues (folded into the global challenge) are sound today.
+    if let Some(bad) = pilout.symbols.iter().find(|sym| {
+        sym.r#type == pb::SymbolType::ProofValue as i32 && sym.stage.unwrap_or(1) >= 2
+    }) {
+        anyhow::bail!(
+            "proofValue '{}' is stage {}; stage >= 2 proofValues are not bound to the proof and are rejected",
+            bad.name,
+            bad.stage.unwrap_or(1)
+        );
+    }
+
     let settings_map: StarkStructsConfig = if let Some(ref settings_path) = opts.stark_structs_path {
         let data = fs::read_to_string(settings_path)?;
         StarkStructsConfig::from_json_str(&data)?
