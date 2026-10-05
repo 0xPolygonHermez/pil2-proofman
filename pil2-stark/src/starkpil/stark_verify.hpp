@@ -137,14 +137,15 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
         uint64_t pag = 0;
         for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++) {
-            if(starkInfo.airgroupValuesMap[i].stage == 1) {
-                pag += 1;
-            } else {
-                if(starkInfo.airgroupValuesMap[i].stage == s) {
-                    transcript.put(&airgroupValues[pag], FIELD_EXTENSION);
-                }
-                pag += FIELD_EXTENSION;
+            // Bind every airgroupvalue once, in its effective round (stage 1 rides in the
+            // first post-stage-1 round, s == 2, as a single base-field limb; wider stages
+            // bind FIELD_EXTENSION limbs in their own round). Packed width per stage.
+            uint64_t width = starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+            uint64_t eff = starkInfo.airgroupValuesMap[i].stage < 2 ? 2 : starkInfo.airgroupValuesMap[i].stage;
+            if(eff == s) {
+                transcript.put(&airgroupValues[pag], width);
             }
+            pag += width;
         }
 
         // TODO: ADD PROOF VALUES ??

@@ -114,7 +114,7 @@ template {{ verify_fri_name }}(nBitsExt, prevStepBits, currStepBits, nextStepBit
     Verify that all committed polynomials are calculated correctly
 */
 
-{% for chunk in eval_p_chunks %}template VerifyEvaluationsChunks{{ chunk.idx }}() {
+{% for chunk in eval_p_chunks %}template VerifyEvaluationsChunks{{ chunk.idx }}{{ chunk_suffix }}() {
 {% for cp in challenges_per_stage %}    signal input challengesStage{{ cp.stage }}[{{ cp.count }}][3];
 {% endfor %}    signal input challengeQ[3];
     signal input challengeXi[3];
@@ -175,7 +175,7 @@ template parallel {{ verify_evaluations_name }}() {
     // calculate the sum of q_i, i.e, q_0(X) + challenge * q_1(X) + challenge^2 * q_2(X) +  ... + challenge^(l-1) * q_l-1(X) evaluated at z 
 {% for chunk in eval_p_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
 {% else %}    signal tmp_{{ out.id }}[3];
-{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== VerifyEvaluationsChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
+{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== VerifyEvaluationsChunks{{ chunk.idx }}{{ chunk_suffix }}()({{ chunk.call_inputs }});
 {% endfor %}
     signal xAcc[{{ q_deg }}][3]; //Stores, at each step, x^i evaluated at z
     signal qStep[{{ q_deg - 1 }}][3]; // Stores the evaluations of Q_i
@@ -202,7 +202,7 @@ template parallel {{ verify_evaluations_name }}() {
     enable * (tmp_{{ last_dest_id_p }}[2] - qAcc[{{ q_deg - 1 }}][2]) === 0;
 }
 
-{% for chunk in eval_q_chunks %}template CalculateFRIPolChunks{{ chunk.idx }}() {
+{% for chunk in eval_q_chunks %}template CalculateFRIPolChunks{{ chunk.idx }}{{ chunk_suffix }}() {
     signal input challengesFRI[2][3];
     signal input evals[{{ ev_map_len }}][3];
 
@@ -260,7 +260,7 @@ template {{ verify_query_name }}(currStepBits, nextStepBits) {
 {% endfor %}
 {% for chunk in eval_q_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
 {% else %}    signal tmp_{{ out.id }}[3];
-{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIPolChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
+{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIPolChunks{{ chunk.idx }}{{ chunk_suffix }}()({{ chunk.call_inputs }});
 {% endfor %}
     signal queryVals[3];
     queryVals[0] <== tmp_{{ last_dest_id_q }}[0];

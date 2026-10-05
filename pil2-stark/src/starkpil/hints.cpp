@@ -689,7 +689,14 @@ uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t h
     ExpressionsPack expressionsCtx(setupCtx, &proverHelpers, 1);
     expressionsCtx.calculateExpressions(params, destStruct, 1, false, false);
 
-    Goldilocks::Element *airgroupValue = &params.airgroupValues[FIELD_EXTENSION*hintFieldAirgroupVal.id];
+    // Packed offset: airgroupValues stores a stage-1 value in 1 limb and others in
+    // FIELD_EXTENSION. Indexing by FIELD_EXTENSION*id lands on the wrong slot (and can
+    // overrun) once a stage-1 airgroupvalue precedes this one. Matches setAirGroupValue.
+    uint64_t agPos = 0;
+    for(uint64_t i = 0; i < hintFieldAirgroupVal.id; ++i) {
+        agPos += setupCtx.starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+    }
+    Goldilocks::Element *airgroupValue = &params.airgroupValues[agPos];
     if(add) {
         if(destStruct.dim == 1) {
             Goldilocks::add(airgroupValue[0], airgroupValue[0], vals[0]);

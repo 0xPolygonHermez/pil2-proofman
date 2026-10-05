@@ -168,7 +168,14 @@ pub fn ref_operand(r: &Value, is_dest: bool, initialized: &[u64], ctx: &UnrollCt
         }
         "airgroupvalue" => {
             let id = r["id"].as_u64().unwrap_or(0);
-            Ok(format!("airgroupvalues[{id}]"))
+            // A stage-1 airgroupvalue is a single base-field limb (circom signal
+            // airgroupvalues[id][0]); only wider stages are the full extension element.
+            let dim = r["dim"].as_u64().unwrap_or(3);
+            if dim == 1 {
+                Ok(format!("airgroupvalues[{id}][0]"))
+            } else {
+                Ok(format!("airgroupvalues[{id}]"))
+            }
         }
         "airvalue" => {
             let id = r["id"].as_u64().unwrap_or(0);
@@ -222,14 +229,19 @@ pub fn unroll_code(code: &[Value], initialized: &[u64], ctx: &UnrollCtx<'_>, out
             }
         }
 
-        // Force dim=3 on Zi and airgroupvalue sources (matching EJS logic).
+        // Zi sources are always the extension; airgroupvalue sources take the width of
+        // their stage (stage-1 is a single base-field limb, wider stages are extension) —
+        // forcing dim=3 unconditionally, as the EJS did, breaks a stage-1 airgroupvalue.
         let mut s0 = src.get(0).cloned().unwrap_or(Value::Null);
         let mut s1 = src.get(1).cloned().unwrap_or(Value::Null);
-        if matches!(s0["type"].as_str(), Some("Zi") | Some("airgroupvalue")) {
-            s0["dim"] = 3.into();
-        }
-        if matches!(s1["type"].as_str(), Some("Zi") | Some("airgroupvalue")) {
-            s1["dim"] = 3.into();
+        for s in [&mut s0, &mut s1] {
+            match s["type"].as_str() {
+                Some("Zi") => s["dim"] = 3.into(),
+                Some("airgroupvalue") => {
+                    s["dim"] = if s["stage"].as_u64() == Some(1) { 1.into() } else { 3.into() };
+                }
+                _ => {}
+            }
         }
 
         let dest_str = ref_operand(dest, true, &declared, ctx)?;

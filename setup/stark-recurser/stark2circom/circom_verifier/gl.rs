@@ -542,8 +542,14 @@ fn build_tera_context(
         // Bind airgroupvalues to Fiat-Shamir: without this they are only read in the Q
         // check, so a prover could solve for them after seeing the challenges.
         for (j, agv) in air_group_values_map.iter().enumerate() {
-            if agv["stage"].as_u64() == Some(stage) {
-                t.put(&format!("airgroupvalues[{j}]"), 3);
+            // Bind every airgroupvalue once: stage 1 (one limb) rides in the first
+            // post-stage-1 round, wider stages (3 limbs) bind in their own round. Matches
+            // the prover/verifier effective-stage rule.
+            let st = agv["stage"].as_u64().unwrap_or(1);
+            let eff = st.max(2);
+            if eff == stage {
+                let w = if st == 1 { 1 } else { 3 };
+                t.put(&format!("airgroupvalues[{j}]"), w);
             }
         }
     }
@@ -754,6 +760,11 @@ fn build_tera_context(
     ctx.insert("calculate_fri_queries_name", &mk("calculateFRIQueries"));
     ctx.insert("transcript_name", &mk("Transcript"));
     ctx.insert("verify_fri_name", &mk("VerifyFRI"));
+    // The per-chunk templates (VerifyEvaluationsChunks{i}/CalculateFRIPolChunks{i}) bypass
+    // `mk`, so without this suffix two airgroups' recursive2 verifiers both define
+    // ...Chunks0 and collide when vadcop_final includes them (T2008 Duplicated symbol).
+    let chunk_suffix = if id_suffix.is_empty() { String::new() } else { format!("_{id_suffix}") };
+    ctx.insert("chunk_suffix", &chunk_suffix);
     ctx.insert("verify_evaluations_name", &mk("VerifyEvaluations"));
     ctx.insert("map_values_name", &mk("MapValues"));
     ctx.insert("verify_query_name", &mk("VerifyQuery"));

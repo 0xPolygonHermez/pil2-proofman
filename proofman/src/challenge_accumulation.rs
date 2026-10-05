@@ -43,7 +43,7 @@ pub fn calculate_internal_contributions<F>(
     roots_contributions: &[[F; 4]],
     values_contributions: &[Mutex<Vec<F>>],
     print: bool,
-) -> Vec<u64>
+) -> Vec<Vec<u64>>
 where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
@@ -98,13 +98,23 @@ where
         }
     });
 
-    let partial_contribution = add_contributions(pctx, &values);
-
-    let partial_contribution_u64: Vec<u64> = partial_contribution.iter().map(|&x| x.as_canonical_u64()).collect();
+    // Group each instance's contribution by airgroup and sum within the airgroup, so the
+    // global challenge can absorb one aggregated value per airgroup, in airgroup order,
+    // exactly as the circuit's VerifyGlobalChallenges does (one stage1Hash per airgroup).
+    let n_airgroups = pctx.global_info.air_groups.len();
+    let mut grouped: Vec<Vec<Vec<F>>> = vec![Vec::new(); n_airgroups];
+    for (row, instance_id) in values.into_iter().zip(my_instances.iter()) {
+        let (airgroup_id, _) = pctx.dctx_get_instance_info(*instance_id).unwrap();
+        grouped[airgroup_id].push(row);
+    }
+    let per_airgroup: Vec<Vec<u64>> = grouped
+        .iter()
+        .map(|g| add_contributions(pctx, g).iter().map(|&x| x.as_canonical_u64()).collect())
+        .collect();
 
     timer_stop_and_log_debug!(CALCULATE_INTERNAL_CONTRIBUTION);
 
-    partial_contribution_u64
+    per_airgroup
 }
 
 pub fn calculate_global_challenge<F>(pctx: &ProofCtx<F>, all_partial_contributions_u64: &[ContributionsInfo]) -> [F; 3]
@@ -121,13 +131,19 @@ where
         transcript.put(&proof_values_stage);
     }
 
-    let all_partial_contributions: Vec<Vec<F>> = all_partial_contributions_u64
-        .iter()
-        .map(|arr| arr.challenge.iter().map(|&x| F::from_u64(x)).collect())
-        .collect();
-
-    let value = aggregate_contributions(pctx, &all_partial_contributions);
-    transcript.put(&value);
+    // Absorb one aggregated contribution per airgroup, in airgroup order, matching the
+    // circuit (verify_global_challenge.rs puts stage1Hash[k] for each airgroup). Folding
+    // everything into one value, as before, only matched the circuit for a single airgroup.
+    let n_airgroups = pctx.global_info.air_groups.len();
+    for airgroup_id in 0..n_airgroups {
+        let group: Vec<Vec<F>> = all_partial_contributions_u64
+            .iter()
+            .filter(|c| c.airgroup_id == airgroup_id)
+            .map(|c| c.challenge.iter().map(|&x| F::from_u64(x)).collect())
+            .collect();
+        let value = aggregate_contributions(pctx, &group);
+        transcript.put(&value);
+    }
 
     let mut global_challenge = [F::ZERO; 3];
     transcript.get_field(&mut global_challenge);
@@ -140,6 +156,16 @@ where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
+    // An airgroup with no instances on any worker contributes the identity: the zero
+    // vector, which is the lattice sum identity and the curve point-at-infinity encoding
+    // the circuit also treats as "no contribution".
+    if values.is_empty() {
+        let size = match pctx.global_info.curve {
+            CurveType::None => pctx.global_info.lattice_size.unwrap(),
+            _ => 10,
+        };
+        return vec![F::ZERO; size];
+    }
     match pctx.global_info.curve {
         CurveType::EcGFp5 => {
             let mut result = EcGFp5::hash_to_curve(
@@ -198,6 +224,16 @@ where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
+    // An airgroup with no instances on any worker contributes the identity: the zero
+    // vector, which is the lattice sum identity and the curve point-at-infinity encoding
+    // the circuit also treats as "no contribution".
+    if values.is_empty() {
+        let size = match pctx.global_info.curve {
+            CurveType::None => pctx.global_info.lattice_size.unwrap(),
+            _ => 10,
+        };
+        return vec![F::ZERO; size];
+    }
     match pctx.global_info.curve {
         CurveType::EcGFp5 => {
             let mut result = EcGFp5::new(

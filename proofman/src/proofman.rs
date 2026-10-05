@@ -2959,16 +2959,28 @@ where
                 _ => 10,
             };
 
-            let all_internal_partial_contributions = self.mpi_ctx.distribute_roots(internal_contribution);
-            let all_internal_partial_contributions_split: Vec<Vec<F>> = all_internal_partial_contributions
-                .chunks(contributions_size)
-                .map(|chunk| chunk.iter().map(|&x| F::from_u64(x)).collect())
+            // `internal_contribution` is now per-airgroup (one vector each). Flatten, gather
+            // every worker's flattened contributions, then aggregate across workers PER
+            // airgroup so the challenge is absorbed one airgroup at a time (matching the
+            // circuit). Folding all airgroups into one value only matched for a single one.
+            let n_airgroups_c = self.pctx.global_info.air_groups.len();
+            let flat: Vec<u64> = internal_contribution.iter().flatten().copied().collect();
+            let all_internal_partial_contributions = self.mpi_ctx.distribute_roots(flat);
+            let n_workers_gathered = all_internal_partial_contributions.len() / (n_airgroups_c * contributions_size);
+            let per_airgroup_contributions_u64: Vec<Vec<u64>> = (0..n_airgroups_c)
+                .map(|airgroup_id| {
+                    let group: Vec<Vec<F>> = (0..n_workers_gathered)
+                        .map(|w| {
+                            let base = w * n_airgroups_c * contributions_size + airgroup_id * contributions_size;
+                            all_internal_partial_contributions[base..base + contributions_size]
+                                .iter()
+                                .map(|&x| F::from_u64(x))
+                                .collect()
+                        })
+                        .collect();
+                    aggregate_contributions(&self.pctx, &group).iter().map(|&x| x.as_canonical_u64()).collect()
+                })
                 .collect();
-
-            let internal_contribution = aggregate_contributions(&self.pctx, &all_internal_partial_contributions_split);
-
-            let internal_contribution_u64: Vec<u64> =
-                internal_contribution.iter().map(|&x| x.as_canonical_u64()).collect::<Vec<u64>>();
 
             if phase == ProvePhase::Contributions {
                 let witness_time =
@@ -2987,19 +2999,30 @@ where
                     witness_time,
                     total_instances: self.pctx.dctx_get_instances().len(),
                 };
-                return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
-                    challenge: internal_contribution_u64,
-                    worker_index: self.pctx.get_worker_index()? as u32,
-                    airgroup_id: 0,
-                    aggregated: false,
-                }]));
+                let worker_index = self.pctx.get_worker_index()? as u32;
+                return Ok(ProvePhaseResult::Contributions(
+                    per_airgroup_contributions_u64
+                        .iter()
+                        .enumerate()
+                        .map(|(airgroup_id, challenge)| ContributionsInfo {
+                            challenge: challenge.clone(),
+                            worker_index,
+                            airgroup_id,
+                            aggregated: false,
+                        })
+                        .collect(),
+                ));
             }
-            &vec![ContributionsInfo {
-                challenge: internal_contribution_u64,
-                worker_index: 0,
-                airgroup_id: 0,
-                aggregated: false,
-            }]
+            &per_airgroup_contributions_u64
+                .iter()
+                .enumerate()
+                .map(|(airgroup_id, challenge)| ContributionsInfo {
+                    challenge: challenge.clone(),
+                    worker_index: 0,
+                    airgroup_id,
+                    aggregated: false,
+                })
+                .collect::<Vec<_>>()
         } else {
             match phase_inputs {
                 ProvePhaseInputs::Internal(ref contributions) => contributions,
@@ -4083,7 +4106,7 @@ where
                     let agg_proof =
                         Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, None, proof.proof.clone());
 
-                    let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
+                    let proof_acc_challenge = get_accumulated_challenge(&self.pctx, proof.airgroup_id as usize, &proof.proof);
                     let mut worker_contributions = self.worker_contributions.write().unwrap();
                     if let Some(contrib) = worker_contributions.iter_mut().find(|contrib| {
                         contrib.worker_index == worker_index as u32 && contrib.airgroup_id == proof.airgroup_id as usize
@@ -4271,7 +4294,7 @@ where
                     break;
                 }
             }
-            let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
+            let proof_acc_challenge = get_accumulated_challenge(&self.pctx, proof.airgroup_id as usize, &proof.proof);
             let mut stored_contributions = Vec::new();
             for w in &proof.worker_indexes {
                 let mut worker_contributions = self.worker_contributions.write().unwrap();
@@ -4431,16 +4454,19 @@ where
                 }
 
                 let global_challenge = self.pctx.get_global_challenge().clone();
-                let accumulated_challenge = get_accumulated_challenge(&self.pctx, &agg_proofs_data[0].proof);
-                let global_challenge_calculated = calculate_global_challenge(
-                    &self.pctx,
-                    &[ContributionsInfo {
-                        challenge: accumulated_challenge.clone(),
-                        airgroup_id: 0,
+                // One accumulated challenge per airgroup (each recursive2 proof carries its
+                // airgroup's aggregated stage1Hash); calculate_global_challenge absorbs them
+                // per airgroup, so every airgroup must be passed, not only airgroup 0.
+                let recomputed_contributions: Vec<ContributionsInfo> = agg_proofs_data
+                    .iter()
+                    .map(|ap| ContributionsInfo {
+                        challenge: get_accumulated_challenge(&self.pctx, ap.airgroup_id as usize, &ap.proof),
+                        airgroup_id: ap.airgroup_id as usize,
                         worker_index: 0,
                         aggregated: true,
-                    }],
-                );
+                    })
+                    .collect();
+                let global_challenge_calculated = calculate_global_challenge(&self.pctx, &recomputed_contributions);
 
                 if global_challenge_calculated != *global_challenge {
                     let error =

@@ -279,11 +279,19 @@ pub fn n_publics_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_id: u
     publics_aggregation
 }
 
-pub fn get_accumulated_challenge<F: PrimeField64>(pctx: &ProofCtx<F>, proof: &[u64]) -> Vec<u64> {
+pub fn get_accumulated_challenge<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    airgroup_id: usize,
+    proof: &[u64],
+) -> Vec<u64> {
+    // The aggregated stage1Hash sits after [circuitType, nProofs, aggTypes(L), airgroupvalues(3L)],
+    // i.e. at 2 + 4*L, where L = agg_types for this airgroup. The old hardcoded 6 only held for
+    // L == 1 and read into the airgroupvalues region for any airgroup with more than one bus.
+    let offset = 2 + 4 * pctx.global_info.agg_types[airgroup_id].len();
     if pctx.global_info.curve != CurveType::None {
-        proof[6..16].to_vec()
+        proof[offset..offset + 10].to_vec()
     } else {
-        proof[6..6 + pctx.global_info.lattice_size.unwrap()].to_vec()
+        proof[offset..offset + pctx.global_info.lattice_size.unwrap()].to_vec()
     }
 }
 

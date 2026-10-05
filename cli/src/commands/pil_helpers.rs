@@ -486,9 +486,12 @@ impl PilHelpersCmd {
                                     values_default: Vec::new(),
                                 });
                             }
+                            // Stage-aware like air values: a stage-1 airgroupvalue is one
+                            // base-field limb (the packed C++ airgroupValues layout), not an
+                            // extension element, so the witness buffer matches the prover's.
                             air.airgroup_values[0].values.push(ColumnCtx {
                                 name: name.to_owned(),
-                                r#type: ext_type,
+                                r#type: if symbol.stage == Some(1) { r#type } else { ext_type },
                                 type_packed: String::new(),
                             });
                         } else {

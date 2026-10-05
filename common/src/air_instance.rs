@@ -237,6 +237,10 @@ impl<F: PrimeField64> AirInstance<F> {
             trace_info = trace_info.with_air_values(air_values.get_buffer());
         }
 
+        if let Some(airgroup_values) = traces.airgroup_values.as_mut() {
+            trace_info = trace_info.with_airgroup_values(airgroup_values.get_buffer());
+        }
+
         AirInstance::new(trace_info)
     }
 

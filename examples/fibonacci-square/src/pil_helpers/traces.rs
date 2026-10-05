@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "fccae7030fd7449ee948fe480eb96e9c76561358a007505e6e7033d319bdcb6b";
+pub const PILOUT_HASH: &str = "f2554df846a79cc70c171b256864163b67099aa294855bb4215d69b1726c99dd";
 
 //AIRGROUP CONSTANTS
 
@@ -125,15 +125,15 @@ values!(ModuleAirValues<F> {
 });
 
 values!(FibonacciSquareAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ fibo_ag1: F, gsum_result: FieldExtension<F>,
 });
 
 values!(ModuleAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ fibo_ag1: F, gsum_result: FieldExtension<F>,
 });
 
 values!(SpecifiedRangesAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ fibo_ag1: F, gsum_result: FieldExtension<F>,
 });
 
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
