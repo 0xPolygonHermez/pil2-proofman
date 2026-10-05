@@ -36,12 +36,6 @@
 #include "pilfflonk_shplonk_prover.hpp"
 #include "pilfflonk_srs.hpp"
 #include "pilfflonk_transcript.hpp"
-
-// The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu).
-extern "C" void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_memcpy_d2h(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_precompute_omega_tables_async(void *dBases, void *dTid, const void *omega4xPtr,
-                                                        uint32_t blockSize, uint32_t numBlocks, void *stream);
 #endif
 
 namespace PilFflonkTest {
@@ -78,7 +72,7 @@ void testCtxNewOn() {
     assert(pilfflonk_last_status() == PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(contains(pilfflonk_last_error(), "proving_key_dir is NULL"));
 
-    // The CPU reads the key, which is not there; so does pilfflonk_ctx_new, the same ctx.
+    // The CPU reads the key, which is not there.
     assert(pilfflonk_ctx_new_on(missing.c_str(), PILFFLONK_DEVICE_CPU) == nullptr);
     assert(pilfflonk_last_status() == PILFFLONK_ERR_IO && contains(pilfflonk_last_error(), "cannot open"));
 
@@ -172,27 +166,7 @@ private:
     std::mt19937_64 generator;
 };
 
-template <typename T>
-DeviceBuffer upload(const std::vector<T> &host) {
-    DeviceBuffer device(host.size() * sizeof(T));
-    gpu_plonk_memcpy_h2d(device.data(), host.data(), device.size());
-    return device;
-}
-
-template <typename T>
-std::vector<T> download(const DeviceBuffer &device, uint64_t n) {
-    std::vector<T> host(n);
-    gpu_plonk_memcpy_d2h(host.data(), device.data(), n * sizeof(T));
-    return host;
-}
-
 FrElement *elementsOf(const DeviceBuffer &device) { return reinterpret_cast<FrElement *>(device.data()); }
-
-Column download(const FrElement *device, uint64_t n) {
-    Column host(n);
-    gpu_plonk_memcpy_d2h(host.data(), device, n * sizeof(FrElement));
-    return host;
-}
 
 bool same(const Column &a, const Column &b) {
     return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(FrElement)) == 0;

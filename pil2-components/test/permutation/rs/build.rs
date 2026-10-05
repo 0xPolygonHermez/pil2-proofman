@@ -20,9 +20,9 @@ fn main() {
         output_path: pilout.clone(),
         include_paths: vec![STD.to_string()],
         fixed_dir: None,
-        field: None,
         fixed_to_file: false,
         no_proto_fixed_data: false,
+        ..Default::default()
     })
     .expect("build.rs: compile-pil failed");
 

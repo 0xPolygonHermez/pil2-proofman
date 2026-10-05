@@ -2,12 +2,11 @@
 
 #include <algorithm>
 #include <cstring>
-#include <fstream>
-#include <iterator>
 #include <stdexcept>
 
 #include "pilfflonk_error.hpp"
 #include "pilfflonk_fr.hpp"
+#include "pilfflonk_json.hpp"
 
 namespace PilFflonk {
 
@@ -219,15 +218,8 @@ void readCodeFields(Reader &r, ParserParams &p) {
 } // namespace
 
 ExpressionsBin ExpressionsBin::load(const std::string &path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        throw IoError(path + ": cannot open the file");
-    }
-    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (file.bad()) {
-        throw IoError(path + ": cannot read the file");
-    }
-    return parse(bytes.data(), bytes.size(), path);
+    const std::string bytes = readText(path, path + ": cannot open the file", path + ": cannot read the file");
+    return parse(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size(), path);
 }
 
 ExpressionsBin ExpressionsBin::parse(const uint8_t *data, uint64_t size, const std::string &name) {

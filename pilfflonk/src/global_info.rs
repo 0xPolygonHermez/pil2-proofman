@@ -10,6 +10,9 @@ use crate::json::JsonFile;
 use crate::pilfflonk_info::NameStageEntry;
 use crate::tag::{Backend, Field, Modulus, Transcript};
 
+/// The name of the `provingKey/` directory, which `setup-pilfflonk` writes under its build directory.
+pub const PROVING_KEY_DIR: &str = "provingKey";
+
 /// The file name of the globalInfo, at the root of the `provingKey/`.
 pub const GLOBAL_INFO_FILE: &str = "pilout.globalInfo.json";
 

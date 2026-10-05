@@ -1,7 +1,5 @@
 #include "pilfflonk_shplonk_prover.hpp"
 
-#include <gmp.h>
-
 #include <algorithm>
 #include <climits>
 #include <numeric>
@@ -9,6 +7,8 @@
 #include <string>
 #include <utility>
 
+#include "pilfflonk_error.hpp"
+#include "pilfflonk_fr.hpp"
 #include "pilfflonk_lde.hpp"
 #include "timer.hpp"
 
@@ -18,12 +18,7 @@ namespace {
 
 using Engine = AltBn128::Engine;
 
-// mpz_divisible_ui_p and mpz_divexact_ui take the divisor as an unsigned long.
-static_assert(sizeof(unsigned long) == sizeof(uint64_t), "a 64-bit unsigned long");
-
-std::invalid_argument invalid(const char *function, const std::string &message) {
-    return std::invalid_argument(std::string("ShplonkProver") + function + ": " + message);
-}
+constexpr InvalidArgument invalid("ShplonkProver");
 
 std::string name(uint64_t i) {
     return "f_" + std::to_string(i);
@@ -44,91 +39,24 @@ std::logic_error degreeNotBelow(const char *what, uint64_t degree, uint64_t boun
                             ", not below " + std::to_string(bound));
 }
 
-// An mpz_t that clears itself.
-struct Mpz {
-    mpz_t v;
-    Mpz() { mpz_init(v); }
-    ~Mpz() { mpz_clear(v); }
-    Mpz(const Mpz &) = delete;
-    Mpz &operator=(const Mpz &) = delete;
-};
-
-// r - 1, the order of the multiplicative group of Fr.
-void rMinusOne(Mpz &out) {
-    Engine &E = Engine::engine;
-    E.fr.toMpz(out.v, E.fr.negOne());
-}
-
-// base^e by ffiasm's square-and-multiply, which reads e as little-endian bytes.
-FrElement power(const FrElement &base, const Mpz &e) {
-    uint8_t bytes[32] = {};
-    if (mpz_sizeinbase(e.v, 256) > sizeof(bytes)) {
-        throw std::logic_error("ShplonkProver: an exponent above 2^256");
-    }
-    mpz_export(bytes, nullptr, -1, 1, -1, 0, e.v);
-    FrElement result;
-    Engine::engine.fr.exp(result, base, bytes, sizeof(bytes));
-    return result;
-}
-
-bool dividesRMinusOne(uint64_t n) {
-    Mpz m;
-    rMinusOne(m);
-    return mpz_divisible_ui_p(m.v, n) != 0;
-}
-
-// 5^((r-1)/n), a primitive n-th root of unity, for n dividing r - 1: w_k for n = k and ω_{kN} for
-// n = kN (pilfflonk/docs/protocol.md#roots). 5 is the smallest quadratic non-residue, the generator
-// ffiasm's FFT and ffjavascript raise, so ω_N is the generator of H they use.
-FrElement rootOfUnity(uint64_t n) {
-    Mpz e;
-    rMinusOne(e);
-    mpz_divexact_ui(e.v, e.v, n);
-    FrElement five;
-    Engine::engine.fr.fromUI(five, 5);
-    return power(five, e);
-}
-
 // s mod n in [0, n), for |s| < n: the exponent of ω_n^s, since ω_n^n = 1.
 uint64_t exponent(int64_t s, uint64_t n) {
     return s >= 0 ? static_cast<uint64_t>(s) : n - static_cast<uint64_t>(-s);
 }
 
-// 1/a_i for every a_i, none zero, with a single field inversion: Montgomery's trick, as
-// rapidsnark's FflonkProver::batchInverse does it.
-std::vector<FrElement> batchInverse(const std::vector<FrElement> &a) {
-    Engine &E = Engine::engine;
-    const size_t n = a.size();
-    std::vector<FrElement> inverses(n);
-    if (n == 0) {
-        return inverses;
-    }
-    // products[i] = a_0·…·a_i
-    std::vector<FrElement> products(n);
-    products[0] = a[0];
-    for (size_t i = 1; i < n; ++i) {
-        E.fr.mul(products[i], products[i - 1], a[i]);
-    }
-    // inverse = 1/(a_0·…·a_i) going down.
-    FrElement inverse;
-    E.fr.inv(inverse, products[n - 1]);
-    for (size_t i = n - 1; i > 0; --i) {
-        E.fr.mul(inverses[i], inverse, products[i - 1]);
-        E.fr.mul(inverse, inverse, a[i]);
-    }
-    inverses[0] = inverse;
-    return inverses;
-}
-
-// out[j] += s·in[j] for j < n.
-void addScaled(FrElement *out, const FrElement *in, uint64_t n, const FrElement &s) {
+// out[j·stride] += s·in[j] for j < n.
+void addScaled(FrElement *out, uint64_t stride, const FrElement *in, uint64_t n, const FrElement &s) {
     Engine &E = Engine::engine;
 #pragma omp parallel for
     for (uint64_t j = 0; j < n; ++j) {
         FrElement term;
         E.fr.mul(term, s, in[j]);
-        E.fr.add(out[j], out[j], term);
+        E.fr.add(out[j * stride], out[j * stride], term);
     }
+}
+
+std::logic_error componentsChanged(uint64_t i) {
+    return std::logic_error("ShplonkProver: the components of " + name(i) + " changed after it was built");
 }
 
 // Throws std::invalid_argument, naming `function`, if a component of `prover` is not on the host,
@@ -161,7 +89,8 @@ ShplonkProver::Evaluations hostEvaluations(const ShplonkProver &prover) {
     return evals;
 }
 
-// The host's quotients: quotientW, quotientWp and srs.commit.
+// The host's quotients: quotientW, quotientWp and srs.commit, W' in place (Srs::commitInPlace), as
+// nothing reads it after its commitment; W is read by W' after its own.
 class HostQuotients final : public ShplonkQuotients {
 public:
     explicit HostQuotients(const Srs &_srs) : srs(_srs) {}
@@ -175,7 +104,11 @@ public:
         Wp = prover.quotientWp(r, alpha, y, *W);
         W.reset();
     }
-    G1Point commitWp() override { return srs.commit(Wp->coef, Wp->getDegree() + 1); }
+    G1Point commitWp() override {
+        const G1Point commitment = srs.commitInPlace(Wp->coef, Wp->getDegree() + 1);
+        Wp.reset();
+        return commitment;
+    }
 
 private:
     const Srs &srs;
@@ -301,13 +234,13 @@ ShplonkProver::ShplonkProver(ShplonkOpening opening, const Evaluator &evaluate) 
 
     // The roots (pilfflonk/docs/protocol.md#roots).
     challengeXi = power(opening.xiSeed, opening.powerW);
-    const FrElement omegaN = rootOfUnity(N);
+    const FrElement omegaN = rootOfUnityOfOrder(N);
     fs.reserve(opening.polynomials.size());
     for (ShplonkPolynomial &f : opening.polynomials) {
         Entry entry;
         const uint64_t k = f.components.size();
-        const FrElement wk = rootOfUnity(k);
-        const FrElement omegaKN = rootOfUnity(k * N);
+        const FrElement wk = rootOfUnityOfOrder(k);
+        const FrElement omegaKN = rootOfUnityOfOrder(k * N);
         const FrElement seed = power(opening.xiSeed, opening.powerW / k);
         for (uint64_t j = 0; j < k; ++j) {
             entry.maxComponentLength = std::max(entry.maxComponentLength, f.components[j].length());
@@ -410,7 +343,10 @@ ShplonkProver::LScalars ShplonkProver::lScalars(const FrElement &alpha, const Fr
         }
         zi[i] = z;
     }
-    const std::vector<FrElement> ziInverse = batchInverse(zi);
+    std::vector<FrElement> ziInverse(zi.size());
+    if (!batchInverse(ziInverse.data(), zi.data(), zi.size())) {
+        throw std::logic_error("ShplonkProver: batchInverse found a zero Z_{T_i}(y), which is refused above");
+    }
     FrElement zT = E.fr.one();
     for (const FrElement &z : zi) {
         E.fr.mul(zT, zT, z);
@@ -441,7 +377,7 @@ uint64_t ShplonkProver::packed(uint64_t i, FrElement *out) const {
     }
     const uint64_t n = pack(polys.data(), k, out, packedBufferLength(k, f.maxComponentLength));
     if (n != f.nCoefs) {
-        throw std::logic_error("ShplonkProver: the components of " + name(i) + " changed after it was built");
+        throw componentsChanged(i);
     }
     return n;
 }
@@ -517,7 +453,7 @@ std::unique_ptr<Poly> ShplonkProver::quotientW(const Interpolants &r, const FrEl
         for (const FrElement &point : f.points) {
             divideExactly(*term, k, point, remainder(i));
         }
-        addScaled(W->coef, term->coef, term->getDegree() + 1, alphaPower);
+        addScaled(W->coef, 1, term->coef, term->getDegree() + 1, alphaPower);
         E.fr.mul(alphaPower, alphaPower, alpha);
     }
     W->fixDegree();
@@ -553,12 +489,23 @@ std::unique_ptr<Poly> ShplonkProver::quotientWp(const Interpolants &r, const FrE
         E.fr.mul(L->coef[m], scalars.w, W.coef[m]);
     }
 
-    // Each f_i is packed into the same buffer and added to L from there.
-    const std::unique_ptr<FrElement[]> scratch(new FrElement[scratchLength()]);
+    // Each f_i − r_i(y) added to L: its components strided, coefficient c of p_j at c·k + j as pack()
+    // puts it, as on the device (OpeningGpu::computeWp), with no f_i packed, and r_i(y) at 0.
     for (uint64_t i = 0; i < fs.size(); ++i) {
-        const uint64_t n = packed(i, scratch.get());
-        E.fr.sub(scratch[0], scratch[0], r[i]->evaluate(y));
-        addScaled(L->coef, scratch.get(), n, scalars.f[i]);
+        const Entry &f = fs[i];
+        const uint64_t k = f.components.size();
+        uint64_t nCoefs = 0;
+        for (uint64_t j = 0; j < k; ++j) {
+            nCoefs = std::max(nCoefs, k * f.components[j].host()->getDegree() + j + 1);
+        }
+        if (nCoefs != f.nCoefs) {
+            throw componentsChanged(i);
+        }
+        for (uint64_t j = 0; j < k; ++j) {
+            const Poly &p = *f.components[j].host();
+            addScaled(L->coef + j, k, p.coef, p.getDegree() + 1, scalars.f[i]);
+        }
+        E.fr.sub(L->coef[0], L->coef[0], E.fr.mul(scalars.f[i], r[i]->evaluate(y)));
     }
     L->fixDegree();
 

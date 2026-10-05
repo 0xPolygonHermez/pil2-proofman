@@ -30,8 +30,6 @@ libloading.workspace = true
 blake3.workspace = true
 colored.workspace = true
 serde.workspace = true
-# pil-helpers tells a BN128 pilout by its `baseField` (a big-endian integer).
-num-bigint.workspace = true
 
 clap = { version = "4.5.38", features = ["derive", "env"] }
 tinytemplate = "1.1"
@@ -46,6 +44,8 @@ pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
 # The Rust oracle, which the `pilfflonk prove` test checks the prover against.
 proofman-pilfflonk = { workspace = true, features = ["oracle"] }
 serde_json = { workspace = true }
+# The tests' pilouts and values: a `baseField` and the values of `Fr` are big integers.
+num-bigint = { workspace = true }
 # Encodes the synthetic pilouts of the domains tests, built in code.
 prost = { workspace = true }
 # The seeded mutations of the differential fuzzer of the Solidity verifier

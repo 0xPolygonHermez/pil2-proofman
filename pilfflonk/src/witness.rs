@@ -56,8 +56,10 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use proofman_fields::Bn128;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{invalid, PilfflonkError, PilfflonkResult};
@@ -101,12 +103,13 @@ pub struct AirInstanceRef {
 }
 
 /// The stage-1 witness of an instance: its `n_rows × n_cols` columns, as the bytes of its `.bin`
-/// (see the module), and its stage-1 air values. Every value is below `r`.
+/// (see the module), and its stage-1 air values. Every value is below `r`. Its clones share the
+/// trace until one of them changes it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage1Witness {
     n_rows: usize,
     n_cols: usize,
-    trace: Vec<u8>,
+    trace: Arc<Vec<u8>>,
     air_values: Vec<FrBytes>,
 }
 
@@ -135,7 +138,7 @@ impl Stage1Witness {
                 return invalid!("the value of row {}, column {} is not below r", i / n_cols, i % n_cols);
             }
         }
-        Ok(Self { n_rows, n_cols, trace, air_values })
+        Ok(Self { n_rows, n_cols, trace: Arc::new(trace), air_values })
     }
 
     /// From its values in `Fr`, row after row, each row the values of its `n_cols` columns in
@@ -156,11 +159,11 @@ impl Stage1Witness {
                 values.len()
             );
         }
-        let mut trace = Vec::with_capacity(len);
-        for value in values {
-            trace.extend_from_slice(&value.to_le_bytes());
-        }
-        Ok(Self { n_rows, n_cols, trace, air_values })
+        let mut trace = vec![0u8; len];
+        trace.par_chunks_exact_mut(FIELD_BYTES).zip(values).for_each(|(bytes, value)| {
+            bytes.copy_from_slice(&value.to_le_bytes());
+        });
+        Ok(Self { n_rows, n_cols, trace: Arc::new(trace), air_values })
     }
 
     /// From its columns, each of `n_rows` values.
@@ -175,7 +178,7 @@ impl Stage1Witness {
                 trace.extend_from_slice(&column[row].to_le_bytes());
             }
         }
-        Ok(Self { n_rows, n_cols, trace, air_values })
+        Ok(Self { n_rows, n_cols, trace: Arc::new(trace), air_values })
     }
 
     pub fn n_rows(&self) -> usize {
@@ -207,7 +210,7 @@ impl Stage1Witness {
                 self.n_cols
             );
         };
-        self.trace[at..at + FIELD_BYTES].copy_from_slice(&value.to_le_bytes());
+        Arc::make_mut(&mut self.trace)[at..at + FIELD_BYTES].copy_from_slice(&value.to_le_bytes());
         Ok(())
     }
 
@@ -533,7 +536,7 @@ impl Witness {
         Instances(entries).write(&dir.join(INSTANCES_FILE))?;
         for (instance, name) in self.instances.iter().zip(names) {
             let path = dir.join(name);
-            fs::write(&path, &instance.stage1.trace).map_err(|source| io_error(&path, source))?;
+            fs::write(&path, instance.stage1.trace_bytes()).map_err(|source| io_error(&path, source))?;
         }
         Publics(self.publics.clone()).write(&dir.join(PUBLICS_FILE))?;
         ProofValues(self.proof_values.clone()).write(&dir.join(PROOF_VALUES_FILE))

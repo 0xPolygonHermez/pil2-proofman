@@ -22,14 +22,10 @@
 // (pilfflonk/docs/README.md#scope); xDivXSubXi is FRI's. A vkey whose code has any other op or
 // operand is refused as malformed.
 
-import { PilFflonkInputError, decimalFromObject, show } from "./elements.js";
+import { PilFflonkInputError, decimalFromObject, isPlainObject, show } from "./elements.js";
 import { rootOfUnity } from "./shplonk.js";
 
 const BINARY_OPS = new Set(["add", "sub", "mul"]);
-
-function isPlainObject(v) {
-    return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 function isIndex(v, n) {
     return Number.isSafeInteger(v) && v >= 0 && v < n;

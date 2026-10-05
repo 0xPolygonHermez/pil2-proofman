@@ -81,11 +81,10 @@ mod poly;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
-use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, SymbolType};
 
 use crate::error::{invalid, PilfflonkError, PilfflonkResult};
-use crate::field::r;
+use crate::field::is_r_be;
 use crate::global_info::MAX_NBITS;
 use crate::witness::{AirInstanceRef, AirShape, WitnessShape, WitnessSource};
 
@@ -393,7 +392,7 @@ impl AirOracle {
     /// BN128, fixed columns without their values (a pilout compiled with fixed columns to a
     /// file), and constraints without an expression.
     pub fn new(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize) -> PilfflonkResult<Self> {
-        if BigUint::from_bytes_be(&pilout.base_field) != *r() {
+        if !is_r_be(&pilout.base_field) {
             return invalid!("the pilout is not over BN128: its base field is not r");
         }
         let Some(airgroup) = pilout.air_groups.get(airgroup_id) else {

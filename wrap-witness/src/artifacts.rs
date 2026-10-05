@@ -4,6 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use proofman_common::final_witness::FinalWitnessLibrary;
 use serde::Deserialize;
 
 use crate::error::{WrapWitnessError, WrapWitnessResult};
@@ -23,17 +24,14 @@ pub struct WrapArtifacts {
 }
 
 impl WrapArtifacts {
-    /// `<stem>.so` (`.dylib` on macOS), `<stem>.dat` and `<stem>.exec`, as
-    /// `proofman::generate_witness_final_snark` names the first two: setup-snark's stem is
+    /// `<stem>.so` (`.dylib` on macOS) and `<stem>.dat`, as the PLONK and FFLONK wraps name them
+    /// ([`FinalWitnessLibrary::paths`]), and `<stem>.exec`: setup-snark's stem is
     /// `provingKeySnark/final/final`.
     pub fn with_stem(stem: &Path) -> Self {
-        let file = |extension: &str| {
-            let mut name = stem.as_os_str().to_os_string();
-            name.push(extension);
-            PathBuf::from(name)
-        };
-        let library = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
-        Self { witness_calculator: file(library), dat: file(".dat"), exec: file(".exec") }
+        let (witness_calculator, dat) = FinalWitnessLibrary::paths(stem);
+        let mut exec = stem.as_os_str().to_os_string();
+        exec.push(".exec");
+        Self { witness_calculator, dat, exec: PathBuf::from(exec) }
     }
 }
 

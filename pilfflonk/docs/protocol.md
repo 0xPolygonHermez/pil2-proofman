@@ -434,8 +434,9 @@ coset of `H` (`S = N`). For each part the prover:
 
 1. extends every column `Q` reads to the part (`Lde::extendCosetPart`): coefficient `j` is multiplied
    by `c^j` and folded onto `j mod S`, then an FFT of `S` points;
-2. builds the part's domain (`ExpressionsDomain::cosetPart`): its points and `Zi`, those of the whole
-   coset at the same points;
+2. builds the part's domain (`ExpressionsDomain::cosetPart`): its `Zi`, those of the whole coset at
+   the same points, from the part's points; an `everyRow`'s, `1/Z_H`, repeats every `S/N` points and
+   is kept as those values only;
 3. evaluates `Q` there with the interpreter, in blocks of 128 rows as the STARK's
    (`NROWS_PACK`); a column at offset `o` is read `o·S/N` points further within the part;
 4. stores the values at the positions `p + (N'/S)·i` of `Q` on the coset.

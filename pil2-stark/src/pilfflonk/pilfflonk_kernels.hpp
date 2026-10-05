@@ -4,9 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 
-// The kernels of pilfflonk's GPU path (pilfflonk_kernels.cu), and the CUDA runtime calls its host
-// side needs besides the PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu), with C linkage as
-// those are: the files that call them are compiled with g++, without the CUDA headers.
+// The kernels of pilfflonk's GPU path (pilfflonk_kernels.cu), the CUDA runtime calls its host side
+// needs besides the PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu), and the GPU entry
+// points of pil2-stark it calls (those helpers, the MSM and the NTTs), all with C linkage: the files
+// that call them are compiled with g++, without the CUDA headers.
 //
 // Every pointer but a host one named so is device memory. An element is a BN128 scalar of 32
 // bytes, in Montgomery form unless said otherwise, as BN128GPUScalarField (bn128/src/ffigpu/fr.cuh)
@@ -71,6 +72,33 @@ void pilfflonk_gpu_memcpy_d2h_async(void *hostDst, const void *src, size_t bytes
 
 // Zeros `bytes` bytes at dst, on the default stream.
 void pilfflonk_gpu_memset_zero(void *dst, size_t bytes);
+
+// The GPU entry points of pil2-stark pilfflonk's host side calls, as plonk_prover_gpu.c.cuh does,
+// declared as they are defined: the PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu), the MSM
+// and the NTTs on device data (bn128/src/msm/msm_bn128.cu, bn128/src/ntt/ntt_bn128.cu), and
+// sppark's probe for a usable GPU (external/sppark/util/all_gpus.cpp).
+void gpu_plonk_cuda_malloc(void **dBuffer, uint64_t gpuBytes);
+void gpu_plonk_cuda_free(void *dBuffer);
+void gpu_plonk_cuda_malloc_pinned_buffer(void **pinnedBuffer, size_t pinnedSize);
+void gpu_plonk_free_pinned_buffer(void *pinnedBuffer);
+void *gpu_plonk_create_cuda_stream_nonblocking();
+void gpu_plonk_destroy_cuda_stream(void *stream);
+void gpu_plonk_sync_cuda_stream(void *stream);
+void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
+void gpu_plonk_memcpy_h2d_async(void *dst, const void *src, size_t bytes, void *stream);
+void gpu_plonk_memcpy_d2h(void *dst, const void *src, size_t bytes);
+void gpu_plonk_memcpy_d2d(void *dst, const void *src, size_t bytes);
+void gpu_plonk_cuda_device_sync();
+void gpu_plonk_set_device(int gpuId);
+void gpu_plonk_precompute_omega_tables_async(void *dBases, void *dTid, const void *omega4xPtr, uint32_t blockSize,
+                                             uint32_t numBlocks, void *stream);
+void gpu_plonk_prefix_scan_multiply(void *dData, uint64_t N, void *dWork);
+void gpu_plonk_compute_div_zerofier(void *dCoefs, uint64_t length, const void *invBetaPtr, const void *y0Ptr,
+                                    void *dPairWork);
+void msm_bn128_gpu_dev_ptr(void *out, const void *d_points, const void *d_scalars, size_t npoints, bool mont);
+void ntt_bn128_gpu_dev_ptr(void *d_data, uint32_t lg_n);
+void intt_bn128_gpu_dev_ptr(void *d_data, uint32_t lg_n);
+bool cuda_available();
 
 } // extern "C"
 

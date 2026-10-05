@@ -539,9 +539,8 @@ pub fn gen_snark_setup(
     }
 
     match config.final_snark {
-        FinalSnark::Fflonk | FinalSnark::Plonk => {
-            gen_rapidsnark_key(config, witness_tracker, &r1cs_final, &final_dir, const_root)?
-        }
+        FinalSnark::Fflonk => gen_rapidsnark_key(config, witness_tracker, &r1cs_final, &final_dir, const_root, true)?,
+        FinalSnark::Plonk => gen_rapidsnark_key(config, witness_tracker, &r1cs_final, &final_dir, const_root, false)?,
         FinalSnark::Pilfflonk => {
             gen_pilfflonk_key(config, witness_tracker, &build_path, &pil_dir, &final_dir, const_root)?
         }
@@ -588,22 +587,17 @@ fn remove_other_keys(final_snark: FinalSnark, final_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The PLONK or FFLONK key of the final circuit: rapidsnark's zkey of its r1cs, snarkjs's
-/// verification key and Solidity verifier, the project's Solidity verifier around that one, and
-/// the circuit's witness library.
+/// The PLONK key of the final circuit, or the FFLONK one if `fflonk`: rapidsnark's zkey of its r1cs,
+/// snarkjs's verification key and Solidity verifier, the project's Solidity verifier around that
+/// one, and the circuit's witness library.
 fn gen_rapidsnark_key(
     config: &SnarkSetupConfig<'_>,
     witness_tracker: &WitnessTracker,
     r1cs_final: &Path,
     final_dir: &Path,
     const_root: &[u64; 4],
+    fflonk: bool,
 ) -> Result<()> {
-    let fflonk = match config.final_snark {
-        FinalSnark::Fflonk => true,
-        FinalSnark::Plonk => false,
-        FinalSnark::Pilfflonk => bail!("the pilfflonk final circuit has no rapidsnark key"),
-    };
-
     if let Some((n_constraints, n_additions)) = get_plonk_circuit_stats_c(r1cs_final.to_str().unwrap()) {
         let circuit_power = std::cmp::max(3, 64 - (n_constraints + 1).leading_zeros() as u64);
         tracing::info!(

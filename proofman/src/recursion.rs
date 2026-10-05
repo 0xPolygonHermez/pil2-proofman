@@ -1115,12 +1115,8 @@ pub fn generate_snark_proof(
 // symbol of the library, which clippy does not follow.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> ProofmanResult<Vec<u8>> {
-    let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
-    let rust_lib_filename = setup_path.display().to_string() + lib_extension;
-    let rust_lib_path = Path::new(rust_lib_filename.as_str());
-
-    let dat_filename = setup_path.display().to_string() + ".dat";
-    let library = FinalWitnessLibrary::load(rust_lib_path, Path::new(dat_filename.as_str()))?;
+    let (library, dat) = FinalWitnessLibrary::paths(setup_path);
+    let library = FinalWitnessLibrary::load(&library, &dat)?;
 
     timer_start_info!(CALCULATE_FINAL_WITNESS);
     // SAFETY: `proof` is the recursivef proof, the nlohmann::json `gen_recursive_proof_final_c` returns.

@@ -21,9 +21,6 @@
 #include "polynomial.hpp"
 #ifdef __USE_CUDA__
 #include "pilfflonk_key_gpu.hpp"
-
-// The PLONK GPU prover's helper (rapidsnark/plonk_prover.cu).
-extern "C" void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
 #endif
 
 namespace PilFflonkTest {
@@ -81,34 +78,6 @@ const Srs &testSrs() {
         return Srs::fromPtau(ptau, N_G1);
     }();
     return srs;
-}
-
-FrElement power(const FrElement &base, uint64_t exponent) {
-    FrElement result = E.fr.one();
-    for (uint64_t i = 0; i < exponent; ++i) {
-        E.fr.mul(result, result, base);
-    }
-    return result;
-}
-
-// x·G for the generator G of G1: ffiasm's scalar multiplication, not its MSM.
-G1Point g1Times(const FrElement &x) {
-    FrElement canonical;
-    E.fr.fromMontgomery(canonical, x);
-    G1Point p;
-    E.g1.mulByScalar(p, E.g1.oneAffine(), reinterpret_cast<uint8_t *>(canonical.v), sizeof(canonical.v));
-    return p;
-}
-
-bool samePoint(G1Point a, G1Point b) {
-    return E.g1.eq(a, b);
-}
-
-// Through the projective comparison: ffiasm's mixed one does not compile warning-free.
-bool samePoint(G1Point a, G1PointAffine b) {
-    G1Point projective;
-    E.g1.copy(projective, b);
-    return E.g1.eq(a, projective);
 }
 
 bool identical(const FrElement *a, const FrElement *b, uint64_t n) {

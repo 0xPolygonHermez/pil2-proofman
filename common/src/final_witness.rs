@@ -7,7 +7,7 @@
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_void};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use libloading::{Library, Symbol};
 
@@ -30,6 +30,19 @@ pub struct FinalWitnessLibrary {
 }
 
 impl FinalWitnessLibrary {
+    /// The library and the `.dat` of the final circuit whose files have the stem `stem`
+    /// (setup-snark's `provingKeySnark/final/final`): `<stem>.so` (`<stem>.dylib` on macOS) and
+    /// `<stem>.dat`.
+    pub fn paths(stem: &Path) -> (PathBuf, PathBuf) {
+        let file = |extension: &str| {
+            let mut name = stem.as_os_str().to_os_string();
+            name.push(extension);
+            PathBuf::from(name)
+        };
+        let library = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
+        (file(library), file(".dat"))
+    }
+
     /// Loads the library at `library`, which will compute with the `.dat` at `dat`. Refuses a
     /// library that does not exist, and one that cannot be loaded.
     pub fn load(library: &Path, dat: &Path) -> ProofmanResult<Self> {

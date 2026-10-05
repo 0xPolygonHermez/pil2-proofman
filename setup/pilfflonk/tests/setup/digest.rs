@@ -3,7 +3,7 @@
 
 use std::fs;
 
-use pilfflonk_setup::digest::{keccak256, seal_vkey, vkey_digest};
+use pilfflonk_setup::digest::{keccak256, seal_vkey};
 use proofman_pilfflonk::tag::{Curve, Protocol};
 use proofman_pilfflonk::{
     Boundary, Digest, EvMapEntry, FixedCommitments, FqBytes, G2Affine, JsonFile, Layout, LayoutEntry, LayoutPol,
@@ -90,7 +90,7 @@ fn the_digest_is_keccak256_of_the_preimage() {
     let vkey = sample_vkey();
     let preimage = vkey.digest_preimage().unwrap();
     assert!(preimage.starts_with(b"pilfflonk-v1{\"X_2\":"));
-    let digest = vkey_digest(&vkey).unwrap();
+    let digest = vkey.compute_digest().unwrap();
     assert_eq!(digest, Digest(keccak256(&preimage).unwrap()));
     assert_eq!(digest.to_hex(), SAMPLE_DIGEST);
 }
@@ -116,7 +116,7 @@ fn sealing_sets_the_digest_and_nothing_else() {
     let path = dir.file("pilfflonk.vkey.json");
     sealed.write(&path).unwrap();
     let back = Vkey::read(&path).unwrap();
-    assert_eq!(vkey_digest(&back).unwrap(), sealed.digest);
+    assert_eq!(back.compute_digest().unwrap(), sealed.digest);
     assert!(fs::read_to_string(&path).unwrap().contains(&format!("\"digest\": \"{SAMPLE_DIGEST}\"")));
 }
 
@@ -124,7 +124,7 @@ fn sealing_sets_the_digest_and_nothing_else() {
 /// digest.
 #[test]
 fn the_digest_changes_with_every_field() {
-    let base = vkey_digest(&sample_vkey()).unwrap();
+    let base = sample_vkey().compute_digest().unwrap();
     let changes: [fn(&mut Vkey); 13] = [
         |v| v.n_public = 3,
         |v| v.power = 4,
@@ -144,7 +144,7 @@ fn the_digest_changes_with_every_field() {
     for (i, change) in changes.iter().enumerate() {
         let mut vkey = sample_vkey();
         change(&mut vkey);
-        let digest = vkey_digest(&vkey).unwrap();
+        let digest = vkey.compute_digest().unwrap();
         assert!(!digests.contains(&digest), "change {i} gives a digest seen before");
         digests.push(digest);
     }

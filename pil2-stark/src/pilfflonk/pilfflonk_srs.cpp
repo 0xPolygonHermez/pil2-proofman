@@ -56,9 +56,7 @@ constexpr uint64_t SRS_HEADER_BYTES = 4 + N8 + 4 + N8 + 8 + 8;
 constexpr uint64_t BINFILE_HEADER_BYTES = 4 + 4 + 4;
 constexpr uint64_t BINFILE_SECTION_HEADER_BYTES = 4 + 8;
 
-std::invalid_argument invalid(const char *function, const std::string &message) {
-    return std::invalid_argument(std::string("Srs::") + function + ": " + message);
-}
+constexpr InvalidArgument invalid("Srs::");
 
 // Runs a call on BinFile, which throws standard exceptions: std::system_error when the OS refuses
 // (open, fstat, pread), and other types for what the file holds (the wrong type or version,
@@ -474,7 +472,7 @@ G2Error checkG2(const G2PointAffine &p) {
     return G2Error::None;
 }
 
-G1Point Srs::commit(const FrElement *coefs, uint64_t nCoefs) const {
+void Srs::checkCommit(const FrElement *coefs, uint64_t nCoefs) const {
     if (nCoefs > nPowers) {
         throw invalid("commit", std::to_string(nCoefs) + " coefficients exceed the " + std::to_string(nPowers) +
                                     " powers [τ^i]₁ of the SRS");
@@ -482,18 +480,37 @@ G1Point Srs::commit(const FrElement *coefs, uint64_t nCoefs) const {
     if (coefs == nullptr && nCoefs != 0) {
         throw invalid("commit", "coefs is null");
     }
+}
+
+G1Point Srs::multiMul(FrElement *scalars, uint64_t nCoefs) const {
+    G1Point result;
+    Engine::engine.g1.multiMulByScalar(result, g1Powers.get(), reinterpret_cast<uint8_t *>(scalars), sizeof(FrElement),
+                                       static_cast<unsigned int>(nCoefs));
+    return result;
+}
+
+// ffiasm's MSM reads each scalar as a little-endian integer, so it must be the canonical value:
+// Montgomery limbs would commit to p·2^256 instead (pilfflonk/docs/protocol.md#commitments). Each is
+// converted from Montgomery right before it.
+G1Point Srs::commit(const FrElement *coefs, uint64_t nCoefs) const {
+    checkCommit(coefs, nCoefs);
     Engine &E = Engine::engine;
-    // ffiasm's MSM reads each scalar as a little-endian integer, so it must be the canonical value:
-    // Montgomery limbs would commit to p·2^256 instead (pilfflonk/docs/protocol.md#commitments).
     std::unique_ptr<FrElement[]> scalars(new FrElement[nCoefs]);
 #pragma omp parallel for
     for (uint64_t i = 0; i < nCoefs; ++i) {
         E.fr.fromMontgomery(scalars[i], coefs[i]);
     }
-    G1Point result;
-    E.g1.multiMulByScalar(result, g1Powers.get(), reinterpret_cast<uint8_t *>(scalars.get()), sizeof(FrElement),
-                          static_cast<unsigned int>(nCoefs));
-    return result;
+    return multiMul(scalars.get(), nCoefs);
+}
+
+G1Point Srs::commitInPlace(FrElement *coefs, uint64_t nCoefs) const {
+    checkCommit(coefs, nCoefs);
+    Engine &E = Engine::engine;
+#pragma omp parallel for
+    for (uint64_t i = 0; i < nCoefs; ++i) {
+        E.fr.fromMontgomery(coefs[i], coefs[i]);
+    }
+    return multiMul(coefs, nCoefs);
 }
 
 } // namespace PilFflonk

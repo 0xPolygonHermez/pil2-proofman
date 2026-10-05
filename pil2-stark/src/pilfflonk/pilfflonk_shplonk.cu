@@ -2,40 +2,17 @@
 // over BN128 scalars in sppark's Montgomery arithmetic (BN128GPUScalarField), which keeps every
 // result fully reduced, as ffiasm does. Their sums are in another order than the CPU's, which in an
 // exact field gives the same element, and so the same bytes.
-#include <cuda.h>
-#include <cuda_runtime.h>
-
-#include <algorithm>
-#include <cstdint>
-
-#ifndef FEATURE_BN254
-#define FEATURE_BN254
-#endif
-
-#include "../bn128/src/ffigpu/fr.cuh"
-#include "cuda_utils.cuh"
+#include "pilfflonk_cuda.cuh"
 #include "pilfflonk_shplonk.hpp"
 
 namespace {
 
-using Fr = BN128GPUScalarField;
-using Element = Fr::Element;
-
-constexpr uint32_t THREADS = 256;
-// The most blocks of a launch: a kernel strides over what they do not cover.
-constexpr uint64_t MAX_BLOCKS = uint64_t(1) << 20;
 // The blocks of each evaluation of pilfflonk_gpu_evaluate, whose partial sums its scratch holds.
 constexpr uint32_t EVALUATION_BLOCKS = 128;
 // The most evaluations a launch covers at once, one per row of blocks.
 constexpr uint64_t MAX_ROWS = 65535;
 
-uint32_t blocksFor(uint64_t n) { return static_cast<uint32_t>(std::min((n + THREADS - 1) / THREADS, MAX_BLOCKS)); }
-
 uint32_t rowsFor(uint64_t n) { return static_cast<uint32_t>(std::min(n, MAX_ROWS)); }
-
-__device__ __forceinline__ uint64_t firstIndex() { return uint64_t(blockIdx.x) * blockDim.x + threadIdx.x; }
-
-__device__ __forceinline__ uint64_t stride() { return uint64_t(gridDim.x) * blockDim.x; }
 
 // The sum of the THREADS values of `sums` in sums[0]. Every thread of the block reaches each barrier.
 __device__ void blockSum(Element *sums) {

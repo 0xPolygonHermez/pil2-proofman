@@ -23,9 +23,6 @@
 
 #ifdef __USE_CUDA__
 
-#include <limits.h>
-#include <unistd.h>
-
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -48,11 +45,6 @@
 #include "pilfflonk_info.hpp"
 #include "pilfflonk_kernels.hpp"
 #include "pilfflonk_proving_key.hpp"
-
-// The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu).
-extern "C" void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_memcpy_d2h(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_cuda_device_sync();
 
 #endif
 
@@ -89,18 +81,6 @@ Engine &E = Engine::engine;
 // The rows of the domains a larger key is tested on.
 constexpr uint64_t TEST_NBITS = 10;
 
-std::string repoPath(const std::string &relative) {
-    if (const char *root = std::getenv("PILFFLONK_REPO_ROOT")) {
-        return std::string(root) + "/" + relative;
-    }
-    char exe[PATH_MAX];
-    const ssize_t length = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-    assert(length > 0);
-    exe[length] = '\0';
-    const std::string dir(exe);
-    return dir.substr(0, dir.rfind('/')) + "/../../" + relative;
-}
-
 std::string fixture(const std::string &name) { return repoPath("setup/pilfflonk/tests/fixtures/bytecode/" + name); }
 
 // Elements from a fixed seed, below 2^253 < r as Montgomery limbs; a column has 0, 1, r − 1 and a
@@ -134,18 +114,6 @@ private:
 };
 
 bool same(const FrElement *a, const FrElement *b, uint64_t n) { return std::memcmp(a, b, n * sizeof(FrElement)) == 0; }
-
-DeviceBuffer upload(const void *data, uint64_t bytes) {
-    DeviceBuffer device(bytes);
-    gpu_plonk_memcpy_h2d(device.data(), data, bytes);
-    return device;
-}
-
-Column download(const void *device, uint64_t n) {
-    Column host(n);
-    gpu_plonk_memcpy_d2h(host.data(), device, n * sizeof(FrElement));
-    return host;
-}
 
 // What `call` throws, as "<kind>: <message>", or "" if it throws nothing.
 template <typename Call>
@@ -394,7 +362,7 @@ void expectTheCpusZerofiers(const ExpressionsDomain &cpu, const ExpressionsDomai
         const uint64_t mask = gpu.zerofierMasks()[b];
         const Column values = download(gpu.zerofiers()[b], mask + 1);
         for (uint64_t i = 0; i < cpu.size(); ++i) {
-            assert(same(&values[i & mask], &cpu.zerofier(b)[i], 1));
+            assert(same(&values[i & mask], &cpu.zerofier(b)[i & cpu.zerofierMask(b)], 1));
         }
     }
 }

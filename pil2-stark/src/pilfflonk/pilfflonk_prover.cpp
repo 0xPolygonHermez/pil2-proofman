@@ -26,9 +26,7 @@ namespace {
 
 using Engine = AltBn128::Engine;
 
-std::invalid_argument invalid(const char *function, const std::string &message) {
-    return std::invalid_argument(std::string(function) + ": " + message);
-}
+constexpr InvalidArgument invalid("");
 
 // The values of stage 1 among all of a map's, by the stages of its entries: given[i] at the i-th entry
 // of stage 1, zero at the others (of later stages, which the prover computes).
@@ -47,6 +45,47 @@ std::vector<FrElement> stageOneValues(const std::vector<uint64_t> &stages, std::
         }
     }
     return values;
+}
+
+// The rows of a chunk of accumulate() at least, below which it scans on one thread.
+constexpr uint64_t MIN_SCAN_CHUNK = uint64_t(1) << 12;
+
+// values[i] = values[0] ∘ … ∘ values[i] for i < n, ∘ the product (or the sum), as accMulHintFields
+// accumulates: a blocked prefix, each chunk scanned on a thread of its own, then each chunk's carry
+// (∘ of the chunks before it) applied to it. The field's arithmetic is exact, so it is the serial
+// scan's, bit for bit.
+void accumulate(FrElement *values, uint64_t n, bool product) {
+    Engine::Fr &fr = Engine::engine.fr;
+    auto combine = [&fr, product](FrElement &out, const FrElement &a, const FrElement &b) {
+        if (product) {
+            fr.mul(out, a, b);
+        } else {
+            fr.add(out, a, b);
+        }
+    };
+    const uint64_t threads = std::max<uint64_t>(1, std::min<uint64_t>(omp_get_max_threads(), n / MIN_SCAN_CHUNK));
+    const uint64_t chunk = (n + threads - 1) / threads;
+    const uint64_t nChunks = chunk == 0 ? 0 : (n + chunk - 1) / chunk;
+    // totals[c]: ∘ of chunk c's values, then of every chunk up to c.
+    std::vector<FrElement> totals(nChunks);
+#pragma omp parallel for schedule(static) num_threads(threads)
+    for (uint64_t c = 0; c < nChunks; ++c) {
+        const uint64_t begin = c * chunk, end = std::min(n, begin + chunk);
+        for (uint64_t i = begin + 1; i < end; ++i) {
+            combine(values[i], values[i], values[i - 1]);
+        }
+        totals[c] = values[end - 1];
+    }
+    for (uint64_t c = 1; c < nChunks; ++c) {
+        combine(totals[c], totals[c], totals[c - 1]);
+    }
+#pragma omp parallel for schedule(static) num_threads(threads)
+    for (uint64_t c = 1; c < nChunks; ++c) {
+        const uint64_t begin = c * chunk, end = std::min(n, begin + chunk);
+        for (uint64_t i = begin; i < end; ++i) {
+            combine(values[i], values[i], totals[c - 1]);
+        }
+    }
 }
 
 // Every column Q's code reads (AirKey::qReads), column r of them from its polynomial (polys, by
@@ -309,15 +348,8 @@ void Instance::computeHintColumns(uint64_t stage, std::vector<std::vector<FrElem
         for (uint64_t i = 0; i < N; ++i) {
             fr.mul(dest[i], numerator[i], inverse[i]);
         }
-        if (hint.kind == StdHint::Kind::ImCol) {
-            continue;
-        }
-        for (uint64_t i = 1; i < N; ++i) {
-            if (hint.kind == StdHint::Kind::Prod) {
-                fr.mul(dest[i], dest[i], dest[i - 1]);
-            } else {
-                fr.add(dest[i], dest[i], dest[i - 1]);
-            }
+        if (hint.kind != StdHint::Kind::ImCol) {
+            accumulate(dest, N, hint.kind == StdHint::Kind::Prod);
         }
     }
 }
@@ -518,7 +550,8 @@ std::vector<G1Point> Instance::commitQOnHost(uint64_t partBits) {
     const uint64_t S = uint64_t(1) << partBits;
     const uint64_t nParts = M / S;
     // Q's N' values, and the S values on a part of column r of qReads at partColumns + r·S.
-    std::vector<FrElement> qValues(M), partColumns(key.qReads().size() * S);
+    std::unique_ptr<FrElement[]> qValues(new FrElement[M]());
+    std::vector<FrElement> partColumns(key.qReads().size() * S);
     const ProverValues values = qValuesOn(partColumns.data(), S);
 
     // One part is the whole coset, in its order: Q goes straight into qValues.
@@ -532,7 +565,7 @@ std::vector<G1Point> Instance::commitQOnHost(uint64_t partBits) {
             ExpressionsDomain::cosetPart(info.nBits, nBitsExt, partBits, part, info.boundaries);
         TimerStopAndLogExpr(PILFFLONK_Q_DOMAIN, part);
         TimerStartExpr(PILFFLONK_Q_EVALUATE, part);
-        FrElement *dest = nParts > 1 ? qPart.data() : qValues.data();
+        FrElement *dest = nParts > 1 ? qPart.data() : qValues.get();
         key.expressions().calculateExpression(info.cExpId, domain, values, dest);
         if (nParts > 1) {
 #pragma omp parallel for schedule(static)
@@ -546,7 +579,7 @@ std::vector<G1Point> Instance::commitQOnHost(uint64_t partBits) {
     std::vector<FrElement>().swap(partColumns);
     std::vector<FrElement>().swap(qPart);
     TimerStart(PILFFLONK_Q_INTERPOLATE);
-    FrElement *coefs = qValues.data();
+    FrElement *coefs = qValues.get();
     lde.interpolateCoset(&coefs, &coefs, 1);
     TimerStopAndLog(PILFFLONK_Q_INTERPOLATE);
 
@@ -559,17 +592,25 @@ std::vector<G1Point> Instance::commitQOnHost(uint64_t partBits) {
 
     // Its pieces (pilfflonk/docs/protocol.md#q-pieces): each its S coefficients of Q (the last one
     // the rest up to the bound), and each boundary b0·X^S + b1·X^(S+1) in the piece below it,
-    // b0 + b1·X out of the one above. Unsplit, the one piece is Q, unblinded. AirDegrees gives every
-    // piece 2 coefficients at least.
+    // b0 + b1·X out of the one above. Unsplit, the one piece is Q, unblinded: its first bound
+    // coefficients, where they are, in the buffer the instance keeps (qPieceCopy). AirDegrees gives
+    // every piece 2 coefficients at least.
     Engine::Fr &fr = Engine::engine.fr;
     const AirDegrees &d = key.degrees();
     const uint64_t m = d.qPieceCoefficients.size();
     std::vector<std::unique_ptr<Poly>> pieces(m);
-    for (uint64_t i = 0; i < m; ++i) {
-        const QPieceRange range = qPieceRange(d, i);
-        pieces[i].reset(new Poly(Engine::engine, d.qPieceCoefficients[i]));
-        ThreadUtils::parcpy(pieces[i]->coef, qValues.data() + range.start, range.length * sizeof(FrElement),
-                            omp_get_max_threads());
+    if (m == 1) {
+        qPieceCopy = std::move(qValues);
+        pieces[0].reset(Poly::fromReservedBuffer(Engine::engine, qPieceCopy.get(), d.qPieceCoefficients[0]));
+    } else {
+        for (uint64_t i = 0; i < m; ++i) {
+            const QPieceRange range = qPieceRange(d, i);
+            pieces[i].reset(new Poly(Engine::engine, d.qPieceCoefficients[i]));
+            ThreadUtils::parcpy(pieces[i]->coef, qValues.get() + range.start, range.length * sizeof(FrElement),
+                                omp_get_max_threads());
+        }
+        // Q is in its pieces: its memory back before their commitments.
+        qValues.reset();
     }
     const std::vector<FrElement> factors = drawQBlinding();
     for (uint64_t i = 0; i + 1 < m; ++i) {

@@ -23,19 +23,16 @@
 import { keccak_256 } from "@noble/hashes/sha3";
 import { bytesToHex } from "@noble/hashes/utils";
 
-import { PilFflonkInputError, decimalFromObject, g1FromObject, g2FromObject, show } from "./elements.js";
+import { PilFflonkInputError, decimalFromObject, g1FromObject, g2FromObject, isPlainObject, show } from "./elements.js";
 import { canonicalJson } from "./json.js";
 import { INV, INV_ZH, commitmentName, evaluationName } from "./names.js";
 import { challengesMap, checkQVerifier } from "./qverifier.js";
-import { checkLayout } from "./shplonk.js";
+import { MAX_NBITS, checkLayout } from "./shplonk.js";
 
 export const PROTOCOL = "pilfflonk";
 export const CURVE = "bn128";
 export const FORMAT_VERSION = 1;
 export const DIGEST_DOMAIN = "pilfflonk-v1";
-
-// The 2-adicity of r - 1, the largest nBits (global_info.rs, MAX_NBITS).
-const MAX_NBITS = 28;
 
 const FIELDS = [
     "protocol",
@@ -61,10 +58,6 @@ const DIGEST = /^0x[0-9a-f]{64}$/;
 
 function fail(message) {
     throw new PilFflonkInputError(`vkey: ${message}`);
-}
-
-function isPlainObject(v) {
-    return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 // An object with exactly these keys, as serde's deny_unknown_fields reads it.

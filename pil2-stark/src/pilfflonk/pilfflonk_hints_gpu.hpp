@@ -20,7 +20,7 @@
 
 namespace PilFflonk {
 
-// What computeStageColumns keeps of stage `stage` in a proof's arena, from ArenaLayout::hints on:
+// What computeStageColumns keeps of stage `stage` in a proof's arena, from ArenaLayout::work on:
 // byte offsets from there, each a multiple of 256.
 struct StageScratch {
     // The fixed columns the stage's hints and im pols read (constPolsMap indices, in increasing

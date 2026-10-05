@@ -23,9 +23,9 @@ fn scratch(name: &str) -> PathBuf {
 #[test]
 fn a_missing_proving_key_is_an_io_error() {
     let dir = scratch("missing");
-    let err = PilFflonkProverCtx::load(&dir.join("nothing")).unwrap_err();
+    let err = PilFflonkProverCtx::load_on(&dir.join("nothing"), PilFflonkDevice::Cpu).unwrap_err();
     assert_eq!(err.kind, PilFflonkErrorKind::Io, "{err}");
-    assert!(err.message.contains("pilfflonk_ctx_new: globalInfo: cannot open"), "{err}");
+    assert!(err.message.contains("pilfflonk_ctx_new_on: globalInfo: cannot open"), "{err}");
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -33,7 +33,7 @@ fn a_missing_proving_key_is_an_io_error() {
 fn a_stark_proving_key_is_a_format_error() {
     let dir = scratch("stark");
     fs::write(dir.join("pilout.globalInfo.json"), r#"{"name": "x", "backend": "stark"}"#).unwrap();
-    let err = PilFflonkProverCtx::load(&dir).unwrap_err();
+    let err = PilFflonkProverCtx::load_on(&dir, PilFflonkDevice::Cpu).unwrap_err();
     assert_eq!(err.kind, PilFflonkErrorKind::Format, "{err}");
     assert!(err.message.contains("backend: must be \"pilfflonk\""), "{err}");
     fs::remove_dir_all(&dir).unwrap();
@@ -41,19 +41,14 @@ fn a_stark_proving_key_is_a_format_error() {
 
 #[test]
 fn a_path_with_a_nul_byte_is_refused_before_the_call() {
-    let err = PilFflonkProverCtx::load(Path::new(OsStr::from_bytes(b"a\0b"))).unwrap_err();
+    let err = PilFflonkProverCtx::load_on(Path::new(OsStr::from_bytes(b"a\0b")), PilFflonkDevice::Cpu).unwrap_err();
     assert_eq!(err.kind, PilFflonkErrorKind::InvalidArgument, "{err}");
-    assert!(err.message.contains("pilfflonk_ctx_new") && err.message.contains("NUL"), "{err}");
+    assert!(err.message.contains("pilfflonk_ctx_new_on") && err.message.contains("NUL"), "{err}");
 }
 
 #[test]
-fn the_cpu_device_is_load() {
-    let dir = scratch("cpu");
-    let err = PilFflonkProverCtx::load_on(&dir.join("nothing"), PilFflonkDevice::Cpu).unwrap_err();
-    assert_eq!(err.kind, PilFflonkErrorKind::Io, "{err}");
-    assert!(err.message.contains("pilfflonk_ctx_new_on: globalInfo: cannot open"), "{err}");
+fn the_cpu_is_the_default_device() {
     assert_eq!(PilFflonkDevice::default(), PilFflonkDevice::Cpu);
-    fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Without a GPU (a library built `cpu-only`, or a machine without one), the GPU is refused before

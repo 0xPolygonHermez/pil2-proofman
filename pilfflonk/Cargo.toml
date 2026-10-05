@@ -26,6 +26,8 @@ proofman-starks-lib-c = { workspace = true }
 proofman-fields = { workspace = true }
 # Loads a witness library (`witness_library`), as the STARK loads its own.
 libloading = { workspace = true }
+# Converts a typed trace's rows to the bytes of a stage-1 witness in parallel.
+rayon = { workspace = true }
 pil2-pilout = { workspace = true, optional = true }
 
 [dev-dependencies]

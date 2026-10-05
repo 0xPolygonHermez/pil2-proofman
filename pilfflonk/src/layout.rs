@@ -111,6 +111,18 @@ impl Layout {
         self.0.iter().filter(|f| f.stage == 0).count()
     }
 
+    /// The stage of `Q`, `nStages + 1`: that of the last `f_i`, as `Q`'s are the layout's last (0 if
+    /// the layout is empty).
+    pub fn q_stage(&self) -> u64 {
+        self.0.last().map_or(0, |f| f.stage)
+    }
+
+    /// The `f_i` of `Q` ([`q_stage`](Self::q_stage)), in order.
+    pub fn q_entries(&self) -> impl Iterator<Item = &LayoutEntry> {
+        let q_stage = self.q_stage();
+        self.0.iter().filter(move |f| f.stage == q_stage)
+    }
+
     /// `powerW`: the least common multiple of the `k` of every `f_i`
     /// (pilfflonk/docs/protocol.md#roots).
     pub fn power_w(&self) -> PilfflonkResult<u64> {

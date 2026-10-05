@@ -57,7 +57,7 @@ use crate::solidity::{verifier_sol, VERIFIER_SOL_FILE};
 use crate::validate::{check_extended_domain, check_prover_hints, validate};
 
 /// The directory the setup writes under the build directory.
-pub const PROVING_KEY_DIR: &str = "provingKey";
+pub use proofman_pilfflonk::global_info::PROVING_KEY_DIR;
 
 /// `--max-constraint-degree` by default, as pil-stark (pilfflonk/docs/protocol.md#degree-search).
 pub const DEFAULT_MAX_CONSTRAINT_DEGREE: u64 = pil_info::DEFAULT_MAX_CONSTRAINT_DEGREE as u64;

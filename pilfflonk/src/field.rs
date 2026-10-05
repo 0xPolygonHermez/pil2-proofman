@@ -42,14 +42,21 @@ fn modulus(cell: &'static OnceLock<BigUint>, decimal: &str) -> &'static BigUint 
     cell.get_or_init(|| BigUint::parse_bytes(decimal.as_bytes(), 10).unwrap_or_default())
 }
 
-pub(crate) fn r() -> &'static BigUint {
+/// `r` ([`BN128_R`]).
+pub fn r() -> &'static BigUint {
     static R: OnceLock<BigUint> = OnceLock::new();
     modulus(&R, BN128_R)
 }
 
-fn q() -> &'static BigUint {
+/// `q` ([`BN128_Q`]).
+pub fn q() -> &'static BigUint {
     static Q: OnceLock<BigUint> = OnceLock::new();
     modulus(&Q, BN128_Q)
+}
+
+/// Whether the big-endian integer `bytes` is `r`: whether a pilout's `baseField` is BN128's `Fr`.
+pub fn is_r_be(bytes: &[u8]) -> bool {
+    BigUint::from_bytes_be(bytes) == *r()
 }
 
 fn modulus_le(cell: &'static OnceLock<[u8; FIELD_BYTES]>, modulus: &BigUint) -> &'static [u8; FIELD_BYTES] {

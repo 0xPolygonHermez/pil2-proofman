@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "cpolynomial.hpp"
+#include "pilfflonk_error.hpp"
 
 namespace PilFflonk {
 
@@ -15,9 +16,7 @@ namespace {
 
 using Engine = AltBn128::Engine;
 
-std::invalid_argument invalid(const char *function, const std::string &message) {
-    return std::invalid_argument(std::string(function) + ": " + message);
-}
+constexpr InvalidArgument invalid("");
 
 } // namespace
 
@@ -92,7 +91,8 @@ G1Point commitPacked(const Srs &srs, Poly *const *polys, uint64_t k) {
     const uint64_t length = packedBufferLength(k, maxLength);
     std::unique_ptr<FrElement[]> packed(new FrElement[length]);
     const uint64_t nCoefs = pack(polys, k, packed.get(), length);
-    return srs.commit(packed.get(), nCoefs);
+    // The packing is this call's alone: it is converted for the MSM where it is.
+    return srs.commitInPlace(packed.get(), nCoefs);
 }
 
 G1Point commitFixed(const Srs &srs, const Lde &lde, FrElement *const *evals, uint64_t k) {

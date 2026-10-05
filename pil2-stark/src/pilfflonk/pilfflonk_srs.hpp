@@ -126,8 +126,18 @@ public:
     // std::invalid_argument if nCoefs > nG1().
     G1Point commit(const FrElement *coefs, uint64_t nCoefs) const;
 
+    // commit(), converting `coefs` out of Montgomery form where they are instead of in a copy: they
+    // are left canonical, for a caller that does not read them again. Throws as commit() does.
+    G1Point commitInPlace(FrElement *coefs, uint64_t nCoefs) const;
+
 private:
     explicit Srs(uint64_t nG1);
+
+    // Throws std::invalid_argument, as commit() does, unless nCoefs <= nG1() and coefs is not null.
+    void checkCommit(const FrElement *coefs, uint64_t nCoefs) const;
+    // The MSM Σ_i scalars[i]·[τ^i]₁ of nCoefs canonical scalars (ffiasm's, which takes them as
+    // non-const).
+    G1Point multiMul(FrElement *scalars, uint64_t nCoefs) const;
 
     // Throws FormatError, naming `source`, unless every point is valid.
     void checkPoints(const std::string &source) const;

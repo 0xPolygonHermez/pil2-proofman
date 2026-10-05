@@ -11,16 +11,18 @@
 #include "pilfflonk_proving_key.hpp"
 #include "timer.hpp"
 
-// The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu), declared as plonk_prover_gpu.c.cuh
-// declares them.
-extern "C" void gpu_plonk_memcpy_d2d(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_cuda_device_sync();
-
 namespace PilFflonk {
 
 namespace {
 
 FrElement *elements(uint8_t *arena, uint64_t offset) { return reinterpret_cast<FrElement *>(arena + offset); }
+
+// Whether the timers' lines are printed: they log at trace level (timer.hpp), as gpu_timer.cuh's
+// events are recorded only then.
+bool timersLogged() {
+    return CPlusPlusLogging::Logger::getInstance(CPlusPlusLogging::LOG_TYPE::CONSOLE)->getLogLevel() >=
+           CPlusPlusLogging::LOG_LEVEL_TRACE;
+}
 
 } // namespace
 
@@ -156,25 +158,32 @@ uint64_t InstanceGpu::computeQ(uint64_t partBits, const QValues &valuesOn) {
     const LdeGpu lde(air, partBits, columns);
     const ProverValues values = valuesOn(columns, S);
 
-    // Each phase is waited for, so that its timer has its time.
+    // Each phase is waited for when the timers are printed, so that each has its time; the default
+    // stream orders the phases, and the count's copy below waits for them, either way.
+    const bool timed = timersLogged();
+    auto phaseDone = [timed] {
+        if (timed) {
+            gpu_plonk_cuda_device_sync();
+        }
+    };
     for (uint64_t p = 0; p < nParts; ++p) {
         TimerStartExpr(PILFFLONK_Q_EXTEND, p);
         lde.extendPart(p);
-        gpu_plonk_cuda_device_sync();
+        phaseDone();
         TimerStopAndLogExpr(PILFFLONK_Q_EXTEND, p);
         TimerStartExpr(PILFFLONK_Q_DOMAIN, p);
         const ExpressionsDomainGpu domain = ExpressionsDomainGpu::cosetPart(
             info.nBits, key.degrees().nBitsExt, partBits, p, info.boundaries, zerofiers);
-        gpu_plonk_cuda_device_sync();
+        phaseDone();
         TimerStopAndLogExpr(PILFFLONK_Q_DOMAIN, p);
         TimerStartExpr(PILFFLONK_Q_EVALUATE, p);
         air.expressions().calculateExpression(info.cExpId, domain, values, q + p, nParts);
-        gpu_plonk_cuda_device_sync();
+        phaseDone();
         TimerStopAndLogExpr(PILFFLONK_Q_EVALUATE, p);
     }
     TimerStart(PILFFLONK_Q_INTERPOLATE);
     lde.interpolate();
-    gpu_plonk_cuda_device_sync();
+    phaseDone();
     TimerStopAndLog(PILFFLONK_Q_INTERPOLATE);
 
     uint64_t *count = reinterpret_cast<uint64_t *>(arena + layout.qCounts);

@@ -122,11 +122,10 @@ pub(crate) struct PilfflonkWrapProver {
 }
 
 impl PilfflonkWrapProver {
-    /// Loads the key at `proving_key` (`final/provingKey/`), on the GPU if `gpu` and on the CPU
-    /// otherwise, and the witness calculator and exec of the stem `setup_snark_path`
-    /// (`final/final`: `WrapArtifacts::with_stem`). On the GPU with an `arena`, the key's proofs keep
-    /// their data there ([`ProvingKey::load_on_device_buffer`]). `ProvingKey::load_on` refuses the
-    /// GPU without one, saying why, before it reads the SRS.
+    /// Loads the key at `proving_key` (`final/provingKey/`), on the GPU with an `arena`
+    /// ([`wrap_arena`]'s, `None` on the CPU) and on the CPU otherwise, and the witness calculator and
+    /// exec of the stem `setup_snark_path` (`final/final`: `WrapArtifacts::with_stem`). On the GPU
+    /// the key's proofs keep their data in the arena ([`ProvingKey::load_on_device_buffer`]).
     ///
     /// # Safety
     ///
@@ -135,14 +134,12 @@ impl PilfflonkWrapProver {
     pub(crate) unsafe fn load(
         setup_snark_path: &Path,
         proving_key: &Path,
-        gpu: bool,
         arena: Option<WrapArena>,
     ) -> ProofmanResult<Self> {
-        let key = match (gpu, arena) {
+        let key = match arena {
             // SAFETY: the caller's, as this function's contract says.
-            (true, Some(arena)) => unsafe { ProvingKey::load_on_device_buffer(proving_key, arena.buffer, arena.bytes) },
-            (true, None) => ProvingKey::load_on(proving_key, Device::Gpu),
-            (false, _) => ProvingKey::load_on(proving_key, Device::Cpu),
+            Some(arena) => unsafe { ProvingKey::load_on_device_buffer(proving_key, arena.buffer, arena.bytes) },
+            None => ProvingKey::load_on(proving_key, Device::Cpu),
         }
         .map_err(|e| invalid_key(proving_key, e))?;
         let shape = key.witness_shape().map_err(|e| invalid_key(proving_key, e))?;

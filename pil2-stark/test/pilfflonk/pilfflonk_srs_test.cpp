@@ -86,20 +86,9 @@ std::vector<uint8_t> pointBytes(const Point &p) {
     return std::vector<uint8_t>(bytes, bytes + sizeof(Point));
 }
 
-FrElement power(const FrElement &base, uint64_t exponent) {
-    FrElement result = E.fr.one();
-    for (uint64_t i = 0; i < exponent; ++i) {
-        E.fr.mul(result, result, base);
-    }
-    return result;
-}
-
 // k·G1 or k·G2 for the generator, affine.
-G1PointAffine g1Times(const FrElement &k) {
-    FrElement canonical;
-    E.fr.fromMontgomery(canonical, k);
-    Engine::G1Point p;
-    E.g1.mulByScalar(p, E.g1.oneAffine(), reinterpret_cast<uint8_t *>(canonical.v), 32);
+G1PointAffine g1AffineTimes(const FrElement &k) {
+    Engine::G1Point p = g1Times(k);
     G1PointAffine affine;
     E.g1.copy(affine, p);
     return affine;
@@ -228,7 +217,7 @@ void testFromPtauReadsThePowers() {
     assert(identical(srs.g1(0), g1Generator()));
     assert(identical(srs.g2(0), g2Generator()));
     for (uint64_t i : {1, 2, 3, 20, 39}) {
-        assert(identical(srs.g1(i), g1Times(power(tau, i))));
+        assert(identical(srs.g1(i), g1AffineTimes(power(tau, i))));
     }
     assert(identical(srs.g2(1), g2Times(tau)));
 
@@ -239,7 +228,7 @@ void testFromPtauReadsThePowers() {
     }
 
     const Srs all = Srs::fromPtau(path, 64);
-    assert(all.nG1() == 64 && identical(all.g1(63), g1Times(power(tau, 63))));
+    assert(all.nG1() == 64 && identical(all.g1(63), g1AffineTimes(power(tau, 63))));
     const Srs one = Srs::fromPtau(path, 1);
     assert(one.nG1() == 1 && identical(one.g1(0), g1Generator()) && identical(one.g2(1), g2Times(tau)));
 
@@ -272,7 +261,7 @@ void testFromPtauReadsOnlyWhatItNeeds() {
 
     assert(PilFflonk::readPtauHeader(path).nG1 == nClaimed);
     const Srs srs = Srs::fromPtau(path, 16);
-    assert(srs.nG1() == 16 && identical(srs.g1(15), g1Times(power(testTau(), 15))));
+    assert(srs.nG1() == 16 && identical(srs.g1(15), g1AffineTimes(power(testTau(), 15))));
     assert(identical(srs.g2(1), g2Times(testTau())));
     // Beyond what was written, the file reads as zeros: (0, 0) is not a point of G1.
     expectThrows<FormatError>([&] { Srs::fromPtau(path, 17); }, "[τ^16]₁ is not a point of G1");
@@ -596,7 +585,8 @@ void testApi() {
     expectOk(pilfflonk_last_status());
     const Srs &loaded = *static_cast<const Srs *>(handle);
     assert(loaded.nG1() == 64 && identical(loaded.g1(0), g1Generator()));
-    assert(identical(loaded.g1(63), g1Times(power(testTau(), 63))) && identical(loaded.g2(1), g2Times(testTau())));
+    assert(identical(loaded.g1(63), g1AffineTimes(power(testTau(), 63))) &&
+           identical(loaded.g2(1), g2Times(testTau())));
     testG2Api(handle);
 
     // Freeing clears the last error, like every other call.

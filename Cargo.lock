@@ -1586,6 +1586,7 @@ dependencies = [
  "proofman-fields",
  "proofman-pilfflonk",
  "proofman-starks-lib-c",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror",

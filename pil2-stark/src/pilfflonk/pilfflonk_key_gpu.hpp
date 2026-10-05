@@ -57,11 +57,11 @@ private:
 
 // Copies between pageable host memory and the device through two pinned halves, on a non-blocking
 // copy stream of its own, as the PLONK GPU prover's double-buffered copies
-// (gpu_plonk_start_cpu_to_gpu_transfer): the host copies one half (on every OpenMP thread) while
-// the other half's copy to or from the device runs. Each copy waits for the work the default stream
-// has before it, and the default stream's work after an upload waits for the upload. Every copy is
-// counted in `volume`. Not safe from several threads at once: the holder of a GpuKey's Lease, or
-// the key's loading, uses it.
+// (gpu_plonk_start_cpu_to_gpu_transfer): the host copies one half (on every OpenMP thread, or on one
+// below a MiB) while the other half's copy to or from the device runs. Each copy waits for the work
+// the default stream has before it, and the default stream's work after an upload waits for the
+// upload. Every copy is counted in `volume`. Not safe from several threads at once: the holder of a
+// GpuKey's Lease, or the key's loading, uses it.
 class Staging {
 public:
     Staging(uint64_t halfBytes, CopyVolume &volume);
@@ -96,7 +96,7 @@ private:
 // - the stages': the columns of each stage s on H, column p at evaluations[s] + p·N elements; the
 //   work buffer, which holds the stage-1 witness as the Instance is given it, and then each f packed
 //   and shifted for its MSM (GpuKey::commit); and a stage's blinding factors and coefficient counts;
-//   and from the work buffer on, at `hints`, the scratch of the hints and im pols of a stage
+//   and from the work buffer on, at `work`, the scratch of the hints and im pols of a stage
 //   (StageScratch, pilfflonk_hints_gpu.hpp), which are computed before the stage's commit uses that
 //   memory (and, in stage 1, after the Instance has transposed the witness);
 // - Q's (InstanceGpu::computeQ), after the committed polynomials: at `qCounts`, the 64-bit counts of
@@ -124,8 +124,7 @@ struct ArenaLayout {
     uint64_t factorElements = 0; // the most of a stage, Σ k_f·b_f
     uint64_t counts = 0;
     uint64_t nCounts = 0; // 64-bit counts: the most polynomials of a stage, or the fixed columns
-    uint64_t hints = 0;     // = work
-    uint64_t hintBytes = 0; // the most of a stage (stageScratchBytes)
+    uint64_t hintBytes = 0; // the most of a stage's scratch at `work` (stageScratchBytes)
     uint64_t stageBytes = 0; // the end of the stages' phase
     uint64_t qCounts = 0;
     uint64_t qFactors = 0;

@@ -17,10 +17,13 @@
 use std::path::Path;
 
 use num_bigint::BigUint;
-use proofman_pilfflonk::{FqBytes, G1Affine, G2Affine, BN128_Q, BN128_R};
+use proofman_pilfflonk::field::{q, r};
+use proofman_pilfflonk::{FqBytes, G1Affine, G2Affine, G2_GENERATOR};
 
-/// BN128's base field modulus `q`, little-endian, in hex: byte by byte as it is stored.
-const Q_LE: &str = "47fd7cd8168c203c8dca7168916a81975d588181b64550b829a031e1724e6430";
+/// BN128's base field modulus `q`, as a ptau's header stores it: 32 bytes, little-endian.
+fn q_le() -> Vec<u8> {
+    q().to_bytes_le()
+}
 
 /// The generator of G1, `(1, 2)`, in Montgomery form (`c·2^256 mod q`), little-endian: as a
 /// snarkjs ptau stores it. The same constants as `provers/starks-lib-c/tests/pilfflonk_srs.rs`;
@@ -63,7 +66,7 @@ fn binfile(file_type: &[u8; 4], sections: &[(u32, Vec<u8>)]) -> Vec<u8> {
 pub fn tau_one_ptau(n_g1: usize) -> Vec<u8> {
     let power = (1..usize::BITS - 1).find(|&p| (1usize << (p + 1)) > n_g1).unwrap_or(usize::BITS - 1);
     let mut header = 32u32.to_le_bytes().to_vec();
-    header.extend(bytes(Q_LE));
+    header.extend(q_le());
     header.extend(power.to_le_bytes());
     header.extend(power.to_le_bytes());
     let g1: Vec<u8> = G1_MONTGOMERY_LE.iter().flat_map(|c| bytes(c)).collect();
@@ -83,14 +86,6 @@ pub fn write_tau_one_ptau(path: &Path, n_g1: usize) -> std::io::Result<()> {
 /// The `τ` of the C++ test ptau (`testTau()` of `pil2-stark/test/pilfflonk/pilfflonk_test_ptau.cpp`),
 /// a 253-bit scalar, in hexadecimal.
 pub const TEST_TAU: &str = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809";
-
-/// The generator of G2 in canonical form, `x.c0, x.c1, y.c0, y.c1` (the `X_2` of a `τ = 1` vkey).
-const G2_GENERATOR: [&str; 4] = [
-    "10857046999023057135944570762232829481370756359578518086990519993285655852781",
-    "11559732032986387107991004021392285783925812861821192530917403151452391805634",
-    "8495653923123431417604973247489272438418190587263600148770280649306958101930",
-    "4082367875863433681332203403145435568316851327593401208105741076214120093531",
-];
 
 fn decimal(s: &str) -> BigUint {
     BigUint::parse_bytes(s.as_bytes(), 10).unwrap_or_default()
@@ -257,12 +252,12 @@ fn g1_multiples(scalars: &[BigUint], q: &BigUint) -> Vec<Vec<u8>> {
 /// in the header as [`tau_one_ptau`] (see [the module](self)). Scalar multiplications over
 /// `num-bigint`: a few seconds for a few hundred powers in a debug build.
 pub fn fixed_tau_ptau(n_g1: usize, tau: &BigUint) -> Vec<u8> {
-    let q = decimal(BN128_Q);
-    let r = decimal(BN128_R);
+    let q = q().clone();
+    let r = r().clone();
     let tau = tau % &r;
     let power = (1..usize::BITS - 1).find(|&p| (1usize << (p + 1)) > n_g1).unwrap_or(usize::BITS - 1);
     let mut header = 32u32.to_le_bytes().to_vec();
-    header.extend(bytes(Q_LE));
+    header.extend(q_le());
     header.extend(power.to_le_bytes());
     header.extend(power.to_le_bytes());
 
@@ -301,10 +296,10 @@ pub fn write_fixed_tau_ptau(path: &Path, n_g1: usize, tau: &BigUint) -> std::io:
 /// `s·G`, `G = (1, 2)` the generator of G1, with this module's arithmetic: for a test that builds a
 /// proof by hand, knowing `τ`. The point at infinity, `(0, 0)`, for `s ≡ 0 mod r`.
 pub fn g1_times(s: &BigUint) -> G1Affine {
-    let q = decimal(BN128_Q);
+    let q = q().clone();
     let g = (Fq(BigUint::from(1u32)), Fq(BigUint::from(2u32)));
     let fq = |c: &Fq| FqBytes::from_decimal(&c.0.to_str_radix(10)).unwrap_or_default();
-    match scalar_mul(&g, &(s % decimal(BN128_R)), &q) {
+    match scalar_mul(&g, &(s % r()), &q) {
         Some((x, y)) => G1Affine { x: fq(&x), y: fq(&y) },
         None => G1Affine::INFINITY,
     }
@@ -312,10 +307,10 @@ pub fn g1_times(s: &BigUint) -> G1Affine {
 
 /// `s·[1]₂`, as [`g1_times`]: the `X_2 = [τ]₂` of a vkey of `τ = s`. All zeros for `s ≡ 0 mod r`.
 pub fn g2_times(s: &BigUint) -> G2Affine {
-    let q = decimal(BN128_Q);
+    let q = q().clone();
     let [xc0, xc1, yc0, yc1] = G2_GENERATOR.map(|c| Fq(decimal(c)));
     let fq = |c: &Fq| FqBytes::from_decimal(&c.0.to_str_radix(10)).unwrap_or_default();
-    match scalar_mul(&(Fq2(xc0, xc1), Fq2(yc0, yc1)), &(s % decimal(BN128_R)), &q) {
+    match scalar_mul(&(Fq2(xc0, xc1), Fq2(yc0, yc1)), &(s % r()), &q) {
         Some((x, y)) => G2Affine { x: [fq(&x.0), fq(&x.1)], y: [fq(&y.0), fq(&y.1)] },
         None => G2Affine::default(),
     }
@@ -361,7 +356,7 @@ mod tests {
     fn the_multiples_are_the_ptaus_points() {
         let tau = test_tau();
         let file = fixed_tau_ptau(2, &tau);
-        let q = decimal(BN128_Q);
+        let q = q().clone();
         // The ptau's [τ]₁ and [τ]₂, out of Montgomery form (c·R⁻¹ mod q, R = 2^256).
         let r_inv = (BigUint::from(1u32) << 256u32).modpow(&(&q - 2u32), &q);
         let canonical = |le: &[u8]| (BigUint::from_bytes_le(le) * &r_inv % &q).to_str_radix(10);
@@ -373,7 +368,7 @@ mod tests {
         let expected: Vec<String> = (0..4).map(|c| canonical(&g2[128 + 32 * c..160 + 32 * c])).collect();
         assert_eq!(coordinates.to_vec(), expected);
         assert!(g1_times(&BigUint::ZERO).is_infinity());
-        assert_eq!(g2_times(&decimal(BN128_R)), G2Affine::default());
+        assert_eq!(g2_times(r()), G2Affine::default());
     }
 
     #[test]

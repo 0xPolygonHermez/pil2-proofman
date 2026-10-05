@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "pilfflonk_expressions_bin.hpp"
+#include "pilfflonk_fr.hpp"
 #include "pilfflonk_info.hpp"
 
 namespace PilFflonk {
@@ -28,10 +29,6 @@ namespace PilFflonk {
 //
 // Elements are in ffiasm's Montgomery form. Everything is checked before anything is written: a
 // bad argument throws std::invalid_argument; a bytecode that does not fit the AIR, FormatError.
-
-// ω_{2^nBits}: ffiasm's root of unity of order 2^nBits, 5^((r − 1)/2^nBits)
-// (pilfflonk/docs/protocol.md#notation). Throws std::invalid_argument for nBits > 28.
-FrElement rootOfUnity(uint64_t nBits);
 
 // Zi of each boundary at a point x ∉ H (pilfflonk/docs/protocol.md#constraint-polynomial):
 // 1/Z_H(x) for everyRow, and Z_H(x)/Z_D(x) for any other, with Z_H(x) = x^N − 1, Z_D(x) = x − 1
@@ -73,7 +70,8 @@ public:
 
     // The extended coset g·H', g·ω_{N'}^i for N' = 2^nBitsExt and g = COSET_SHIFT (5), the points
     // of Lde::extendCoset. Zi of each boundary on it, computed as zerofiersAt says, with batch
-    // inversions: 32·N' bytes per boundary. Throws std::invalid_argument unless
+    // inversions: 32·N' bytes per boundary but an everyRow, whose Zi, 1/Z_H, repeats every
+    // 2^extendBits() points and has those values only. Throws std::invalid_argument unless
     // nBits <= nBitsExt <= 28, or for an everyFrame that excludes more than N rows.
     static ExpressionsDomain coset(uint64_t nBits, uint64_t nBitsExt, const std::vector<Boundary> &boundaries);
 
@@ -94,8 +92,10 @@ public:
     uint64_t extendBits() const { return extendBits_; }
     // The boundaries Zi is defined for: 0 on H.
     uint64_t nZerofiers() const { return zerofiers_.size(); }
-    // Zi of boundary b, size() values.
+    // Zi of boundary b: at point i, zerofier(b)[i & zerofierMask(b)], as on the device
+    // (ExpressionsDomainGpu): size() values, or 2^extendBits() for an everyRow.
     const std::vector<FrElement> &zerofier(uint64_t b) const { return zerofiers_.at(b); }
+    uint64_t zerofierMask(uint64_t b) const { return zerofiers_.at(b).size() - 1; }
 
 private:
     ExpressionsDomain(uint64_t nBits, uint64_t extendBits) : nBits_(nBits), extendBits_(extendBits) {}

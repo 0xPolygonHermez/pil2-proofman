@@ -63,9 +63,6 @@ pub struct ValidAir<'a> {
     pub air: &'a pb::Air,
 }
 
-/// Goldilocks, `2^64 − 2^32 + 1`: the field of a pilout compiled without a `prime`.
-const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
-
 /// `r`, the modulus of `Fr`.
 fn r() -> BigUint {
     FieldCfg::bn128().modulus().clone()
@@ -129,7 +126,7 @@ fn check_base_field(pilout: &pb::PilOut) -> Result<(), SetupError> {
     let base_field = BigUint::from_bytes_be(&pilout.base_field);
     if base_field == r() {
         Ok(())
-    } else if base_field == BigUint::from(GOLDILOCKS) {
+    } else if base_field == *FieldCfg::goldilocks().modulus() {
         Err(SetupError::GoldilocksPilout)
     } else {
         Err(SetupError::NotBn128 { base_field: base_field.to_str_radix(10) })

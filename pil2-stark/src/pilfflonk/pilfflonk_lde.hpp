@@ -8,15 +8,10 @@
 
 #include "alt_bn128.hpp"
 #include "fft.hpp"
+#include "pilfflonk_fr.hpp"
 #include "polynomial.hpp"
 
 namespace PilFflonk {
-
-using FrElement = AltBn128::Engine::FrElement;
-
-// The 2-adicity of the BN128 scalar field, r - 1 = 2^28 · odd: no domain of roots of unity, and so
-// no FFT, has more than 2^28 points (pilfflonk/docs/protocol.md#notation).
-constexpr uint64_t MAX_NBITS_EXT = 28;
 
 // The shift g of the extended coset g·H' on which Q is evaluated
 // (pilfflonk/docs/protocol.md#extended-coset): 5, the smallest quadratic non-residue mod r. It is
@@ -24,15 +19,6 @@ constexpr uint64_t MAX_NBITS_EXT = 28;
 // lies in no subgroup of order 2^k: g·H' meets neither H' nor H, and Z_H does not vanish on it.
 // Internal to the prover; the verifier never sees it.
 constexpr unsigned int COSET_SHIFT = 5;
-
-// base^exponent, in Montgomery form, by ffiasm's square-and-multiply.
-FrElement power(const FrElement &base, uint64_t exponent);
-
-// out[i] = 1/values[i] for i < n, with one inversion per thread (Montgomery's trick on each
-// thread's chunk, which keeps its prefix products in out: out and values must not overlap). Returns
-// false, leaving out unspecified, if some value is 0. Allocates nothing: nothing in its parallel
-// region can throw.
-bool batchInverse(FrElement *out, const FrElement *values, uint64_t n);
 
 // Moves BN128 columns between evaluations on the trace domain H (N = 2^nBits points), their
 // coefficients, and evaluations on the extended coset g·H' (N' = 2^nBitsExt points, N <= N').

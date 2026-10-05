@@ -146,14 +146,8 @@ void decodeCanonicalFr(const uint8_t *bytes, uint64_t n, PilFflonk::FrElement *o
 // The n scalars at `bytes` (canonical little-endian, 32 bytes each) into `out`, or false with the
 // index of the first one not below r in `refused`.
 bool decodeScalars(const uint8_t *bytes, uint64_t n, std::vector<PilFflonk::FrElement> &out, uint64_t &refused) {
-    out.resize(n);
-    for (uint64_t i = 0; i < n; ++i) {
-        if (PilFflonk::decodeFr(bytes + i * PilFflonk::FR_BYTES, out[i]) != PilFflonk::AbsorbError::None) {
-            refused = i;
-            return false;
-        }
-    }
-    return true;
+    return decodeAll(bytes, n, PilFflonk::FR_BYTES, PilFflonk::decodeFr, out, refused) ==
+           PilFflonk::AbsorbError::None;
 }
 
 // Writes the n points to `out`, 64 bytes each (encodeG1).
@@ -183,19 +177,6 @@ const char *pilfflonk_last_error(void) {
 
 int pilfflonk_last_status(void) {
     return lastStatus;
-}
-
-int pilfflonk_fr_check_canonical(const uint8_t scalar[32]) {
-    const char *function = __func__;
-    return guard(function, [&] {
-        if (scalar == nullptr) {
-            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "scalar is NULL");
-        }
-        if (!PilFflonk::isCanonicalFr(scalar)) {
-            return fail(PILFFLONK_ERR_NON_CANONICAL, function, "scalar is not below the BN128 scalar modulus r");
-        }
-        return static_cast<int>(PILFFLONK_OK);
-    });
 }
 
 int pilfflonk_keccak256(const uint8_t *data, uint64_t len, uint8_t out[32]) {
@@ -441,17 +422,6 @@ int pilfflonk_commit_fixed(const void *srs, uint64_t n_bits, uint64_t k, const u
 // -------------------------------------------------------------------------------------------------
 // The prover
 // -------------------------------------------------------------------------------------------------
-
-void *pilfflonk_ctx_new(const char *proving_key_dir) {
-    const char *function = __func__;
-    return guardNew(function, [&]() -> void * {
-        if (proving_key_dir == nullptr) {
-            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "proving_key_dir is NULL");
-            return nullptr;
-        }
-        return PilFflonk::ProvingKey::load(proving_key_dir).release();
-    });
-}
 
 void *pilfflonk_ctx_new_on(const char *proving_key_dir, uint32_t device) {
     const char *function = __func__;

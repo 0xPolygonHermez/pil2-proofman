@@ -20,10 +20,10 @@
 //! as the prover does, with [`Unsatisfied`](crate::PilfflonkError::Unsatisfied), naming the hint and
 //! the row, and reports nothing.
 
-use crate::error::{PilfflonkError, PilfflonkResult};
+use crate::error::PilfflonkResult;
 use crate::field::FrBytes;
 use crate::global_info::PilfflonkGlobalInfo;
-use crate::prover::{fr, le, native, ProvingKey, StageColumns, Transcript, WitnessInstance};
+use crate::prover::{le, native, read_stage_columns, ProvingKey, StageColumns, Transcript, WitnessInstance};
 use crate::witness::{AirInstanceRef, WitnessSource};
 
 /// The failed rows [`check`] keeps of each constraint by default: the STARK's
@@ -176,20 +176,9 @@ pub fn check_columns(pk: &ProvingKey, witness: &impl WitnessSource) -> Pilfflonk
     let challenges = check_challenges(pk.global_info(), info.n_stages)?;
     let flat = le(&challenges.concat());
     let mut instance = read.instance(pk, None)?;
-    let n_rows = 1usize << info.n_bits;
-    let mut columns = Vec::new();
-    for stage in 1..=info.n_stages {
-        let width = info.map_sections_n.get(&format!("cm{stage}")).copied().unwrap_or(0);
-        let stage_u32 = u32::try_from(stage).map_err(|_| PilfflonkError::InvalidFormat("too many stages".into()))?;
-        let stage_columns = (0..width)
-            .map(|p| {
-                let values =
-                    instance.check_column(&flat, stage_u32, p, n_rows).map_err(native("computing a column"))?;
-                values.into_iter().map(fr).collect::<PilfflonkResult<Vec<_>>>()
-            })
-            .collect::<PilfflonkResult<_>>()?;
-        columns.push(stage_columns);
-    }
+    let columns = read_stage_columns(info, |stage, stage_pos, n_rows| {
+        instance.check_column(&flat, stage, stage_pos, n_rows).map_err(native("computing a column"))
+    })?;
     Ok(StageColumns { challenges, columns })
 }
 

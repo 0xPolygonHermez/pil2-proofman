@@ -12,16 +12,12 @@
 // without sign or leading zeros. A name that is missing or should not be there, a point off the
 // curve or at infinity, or a scalar not below r is a PilFflonkInputError naming it.
 
-import { PilFflonkInputError, decimalFromObject, frFromObject, g1FromObject, show } from "./elements.js";
+import { PilFflonkInputError, decimalFromObject, frFromObject, g1FromObject, isPlainObject, show } from "./elements.js";
 import { INV, INV_ZH, W, WP } from "./names.js";
 import { CURVE, PROTOCOL } from "./vkey.js";
 
 function fail(message) {
     throw new PilFflonkInputError(`proof: ${message}`);
-}
-
-function isPlainObject(v) {
-    return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 // An object with exactly the keys `names`.

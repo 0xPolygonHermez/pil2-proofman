@@ -193,15 +193,20 @@ impl Vkey {
         Ok(Digest(keccak256(&self.digest_preimage()?)) == self.digest)
     }
 
-    /// Refuses a vkey whose `digest` is not the digest of the rest of it ([`digest_matches`] with
-    /// the C++ core's Keccak-256): the JS verifier accepts no proof of it, and the Solidity verifier
-    /// is not generated for it. The prover refuses it too ([`ProvingKey::load`]).
+    /// The digest of the rest of the vkey, with the C++ core's Keccak-256 (rapidsnark's
+    /// `keccak_wrapper`, which the transcript hashes with too).
+    pub fn compute_digest(&self) -> PilfflonkResult<Digest> {
+        Ok(Digest(pilfflonk_keccak256_c(&self.digest_preimage()?).map_err(native("hashing the vkey"))?))
+    }
+
+    /// Refuses a vkey whose `digest` is not the digest of the rest of it ([`compute_digest`]): the JS
+    /// verifier accepts no proof of it, and the Solidity verifier is not generated for it. The
+    /// prover refuses it too ([`ProvingKey::load`]).
     ///
-    /// [`digest_matches`]: Vkey::digest_matches
+    /// [`compute_digest`]: Vkey::compute_digest
     /// [`ProvingKey::load`]: crate::ProvingKey::load
     pub fn check_digest(&self) -> PilfflonkResult<()> {
-        let digest = pilfflonk_keccak256_c(&self.digest_preimage()?).map_err(native("hashing the vkey"))?;
-        if self.digest_matches(|_| digest)? {
+        if self.compute_digest()? == self.digest {
             Ok(())
         } else {
             invalid!("the digest of the vkey is not the digest of its contents (pilfflonk/docs/formats.md#digest)")
@@ -227,7 +232,7 @@ impl JsonFile for Vkey {
         if let Err(e) = pilfflonk_g2_check_c(&self.x_2.to_le_bytes()) {
             return invalid!("X_2 is not a point of G2 other than the point at infinity: {}", e.message);
         }
-        let q_stage = self.layout.0.last().map_or(0, |f| f.stage);
+        let q_stage = self.layout.q_stage();
         if q_stage == 0 {
             return invalid!("the layout has no f for Q");
         }

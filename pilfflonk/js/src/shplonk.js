@@ -23,8 +23,8 @@
 
 import { PilFflonkInputError } from "./elements.js";
 
-// The 2-adicity of r - 1.
-const MAX_NBITS = 28;
+// The 2-adicity of r - 1, the largest nBits (global_info.rs, MAX_NBITS).
+export const MAX_NBITS = 28;
 
 function log(logger, message) {
     if (logger) logger.info(message);

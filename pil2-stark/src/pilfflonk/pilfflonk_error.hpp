@@ -2,8 +2,24 @@
 #define PILFFLONK_ERROR_HPP
 
 #include <stdexcept>
+#include <string>
 
 namespace PilFflonk {
+
+// The std::invalid_argument of an argument refused by a function of `scope`, a class ("Srs::"), or
+// "" for free functions, which a module keeps as its `invalid`: invalid(function, message) is
+// "<scope><function>: <message>".
+class InvalidArgument {
+public:
+    constexpr explicit InvalidArgument(const char *_scope) : scope(_scope) {}
+
+    std::invalid_argument operator()(const char *function, const std::string &message) const {
+        return std::invalid_argument(std::string(scope) + function + ": " + message);
+    }
+
+private:
+    const char *scope;
+};
 
 // The exceptions the pilfflonk modules throw besides std::invalid_argument (an argument refused
 // before anything is done) and std::bad_alloc. The C API turns each into its own status code.

@@ -22,18 +22,13 @@
 
 #ifdef __USE_CUDA__
 
-#include <limits.h>
-#include <unistd.h>
-
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <functional>
-#include <iterator>
 #include <memory>
 #include <random>
 #include <stdexcept>
@@ -51,11 +46,6 @@
 #include "pilfflonk_rng.hpp"
 #include "pilfflonk_srs.hpp"
 #include "pilfflonk_transcript.hpp"
-
-// The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu).
-extern "C" void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_memcpy_d2h(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_prefix_scan_multiply(void *dData, uint64_t N, void *dWork);
 
 #endif
 
@@ -148,20 +138,6 @@ private:
     std::mt19937_64 generator;
 };
 
-DeviceBuffer upload(const void *data, uint64_t bytes) {
-    DeviceBuffer device(std::max<uint64_t>(bytes, 1));
-    gpu_plonk_memcpy_h2d(device.data(), data, bytes);
-    return device;
-}
-
-DeviceBuffer upload(const Column &c) { return upload(c.data(), c.size() * sizeof(FrElement)); }
-
-Column download(const void *device, uint64_t n) {
-    Column host(n);
-    gpu_plonk_memcpy_d2h(host.data(), device, n * sizeof(FrElement));
-    return host;
-}
-
 uint64_t downloadRow(const DeviceBuffer &row) {
     uint64_t value = 0;
     gpu_plonk_memcpy_d2h(&value, row.data(), sizeof(value));
@@ -172,26 +148,7 @@ bool same(const FrElement *a, const FrElement *b, uint64_t n) { return std::memc
 
 bool same(const Column &a, const Column &b) { return a.size() == b.size() && same(a.data(), b.data(), a.size()); }
 
-bool samePoint(G1Point a, G1Point b) {
-    Engine::G1PointAffine x, y;
-    E.g1.copy(x, a);
-    E.g1.copy(y, b);
-    return std::memcmp(&x, &y, sizeof(x)) == 0;
-}
-
 bool contains(const std::string &s, const std::string &part) { return s.find(part) != std::string::npos; }
-
-FrElement inverse(const FrElement &a) {
-    FrElement r;
-    E.fr.inv(r, a);
-    return r;
-}
-
-std::vector<uint8_t> readBytes(const std::string &path) {
-    std::ifstream file(path, std::ios::binary);
-    assert(file);
-    return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-}
 
 std::string readText(const std::string &path) {
     const std::vector<uint8_t> bytes = readBytes(path);
@@ -346,18 +303,6 @@ void testPrefixScans(Random &random) {
 // ---------------------------------------------------------------------------------------------
 // Keys
 // ---------------------------------------------------------------------------------------------
-
-std::string repoPath(const std::string &relative) {
-    if (const char *root = std::getenv("PILFFLONK_REPO_ROOT")) {
-        return std::string(root) + "/" + relative;
-    }
-    char exe[PATH_MAX];
-    const ssize_t length = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-    assert(length > 0);
-    exe[length] = '\0';
-    const std::string dir(exe);
-    return dir.substr(0, dir.rfind('/')) + "/../../" + relative;
-}
 
 std::string busFixture(const std::string &name) {
     return repoPath("setup/pilfflonk/tests/fixtures/bytecode/sum_bus/" + name);
@@ -514,8 +459,8 @@ void testTheScratch() {
     const uint64_t most = std::max(scratch.bytes, first.bytes);
     assert(PilFflonk::stageScratchBytes(air) == most);
     const PilFflonk::ArenaLayout layout = PilFflonk::arenaLayout(air);
-    assert(layout.hints == layout.work && layout.hintBytes == most);
-    assert(layout.stageBytes >= layout.hints + layout.hintBytes && layout.bytes >= layout.stageBytes);
+    assert(layout.hintBytes == most);
+    assert(layout.stageBytes >= layout.work + layout.hintBytes && layout.bytes >= layout.stageBytes);
 }
 
 // On a key on the GPU, the sum bus's columns of stage 2 (gsum, im_single and the im pol) are the

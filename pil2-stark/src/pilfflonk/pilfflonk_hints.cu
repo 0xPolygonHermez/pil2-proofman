@@ -3,47 +3,19 @@
 // keeps every result fully reduced, as ffiasm does: the quotient and the running sums are the same
 // field elements as the CPU's (Instance::computeHintColumns), and so the same bytes, whatever the
 // order of the operations: an inverse is unique, and so is a sum.
-#include <cuda.h>
-#include <cuda_runtime.h>
-
-#include <algorithm>
-#include <cstdint>
 #include <cstring>
 
-#ifndef FEATURE_BN254
-#define FEATURE_BN254
-#endif
-
-#include "../bn128/src/ffigpu/fr.cuh"
-#include "cuda_utils.cuh"
+#include "pilfflonk_cuda.cuh"
 #include "pilfflonk_hints_kernels.hpp"
 
 namespace {
 
-using Fr = BN128GPUScalarField;
-using Element = Fr::Element;
-
 static_assert(sizeof(Element) == sizeof(HintOperand::number), "a number is one element");
 
-constexpr uint32_t THREADS = 256;
-// The most blocks of a launch: a kernel strides over what they do not cover.
-constexpr uint64_t MAX_BLOCKS = uint64_t(1) << 20;
 // The scan's blocks, as the PLONK GPU prover's mulScan*: 256 threads of 4 elements each.
 constexpr uint32_t SCAN_THREADS = 256;
 constexpr uint32_t SCAN_PER_THREAD = 4;
 constexpr uint64_t SCAN_BLOCK = SCAN_THREADS * SCAN_PER_THREAD;
-
-uint32_t blocksFor(uint64_t n) { return static_cast<uint32_t>(std::min((n + THREADS - 1) / THREADS, MAX_BLOCKS)); }
-
-__device__ __forceinline__ uint64_t stride() { return uint64_t(gridDim.x) * blockDim.x; }
-
-__device__ __forceinline__ bool isZero(const Element &a) {
-    uint32_t bits = 0;
-    for (int limb = 0; limb < 8; ++limb) {
-        bits |= a[limb];
-    }
-    return bits == 0;
-}
 
 __device__ __forceinline__ Element operandAt(const HintOperand &op, uint64_t i, uint64_t mask) {
     Element value;

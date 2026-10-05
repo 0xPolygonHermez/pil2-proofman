@@ -103,12 +103,6 @@ fn c_path(function: &str, path: &Path) -> Result<CString, PilFflonkError> {
         .map_err(|_| invalid_argument(function, format!("{} contains a NUL byte", path.display())))
 }
 
-/// Checks that `scalar`, read as a little-endian integer, is below the BN128 scalar modulus r.
-pub fn pilfflonk_fr_check_canonical_c(scalar: &[u8; PILFFLONK_FR_BYTES]) -> Result<(), PilFflonkError> {
-    // SAFETY: `scalar` points to the 32 bytes the function reads.
-    check_status(unsafe { pilfflonk_fr_check_canonical(scalar.as_ptr()) })
-}
-
 /// Checks that `g2`, a point `x.c0‖x.c1‖y.c0‖y.c1` with canonical little-endian coordinates (the
 /// encoding of [`PilFflonkSrs::g2`]), is a point of G2 other than the point at infinity: on the twist
 /// and in its r-torsion group, as the JS verifier requires of the vkey's `X_2`.
@@ -334,7 +328,7 @@ pub struct PilFflonkDeviceBytes {
 /// The device memory a context of the `provingKey/` at `dir` needs on the GPU, from its files (the
 /// globalInfo, the SRS's header, each AIR's pilfflonkinfo and `.bin`), without loading it. Fails with
 /// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) without a GPU
-/// ([`pilfflonk_gpu_available_c`]), and as [`PilFflonkProverCtx::load`] for those files.
+/// ([`pilfflonk_gpu_available_c`]), and as [`PilFflonkProverCtx::load_on`] for those files.
 pub fn pilfflonk_gpu_device_bytes_c(dir: &Path) -> Result<PilFflonkDeviceBytes, PilFflonkError> {
     let path = c_path("pilfflonk_gpu_device_bytes", dir)?;
     let mut bytes = PilFflonkDeviceBytes::default();
@@ -374,23 +368,14 @@ pub struct PilFflonkProverCtx {
 
 impl PilFflonkProverCtx {
     /// Loads the `provingKey/` at `dir`: `pilout.globalInfo.json`, the SRS and every AIR's
-    /// pilfflonkinfo, `.bin` and `.const` (not the vkey, whose digest the caller absorbs). Fails with
-    /// [`Io`](PilFflonkErrorKind::Io) if a file cannot be read, [`Format`](PilFflonkErrorKind::Format)
-    /// if one is not what it should be or they do not agree.
-    pub fn load(dir: &Path) -> Result<Self, PilFflonkError> {
-        let path = c_path("pilfflonk_ctx_new", dir)?;
-        // SAFETY: `path` is a NUL-terminated string that outlives the call; the result is either
-        // NULL or a handle this value then owns.
-        let handle = unsafe { pilfflonk_ctx_new(path.as_ptr()) };
-        NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
-    }
-
-    /// [`load`](Self::load), with the MSMs and the NTTs of the key and of its proofs on `device`: on
-    /// the GPU, the SRS's powers `[τ^i]₁` are copied to it once they are read. Fails as `load` does,
-    /// and with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument), before any file is read, on
-    /// the GPU without one ([`pilfflonk_gpu_available_c`]), saying why. On the GPU, a CUDA failure
-    /// (out of device memory, a lost device) aborts the process, as in the PLONK GPU prover whose
-    /// helpers it reuses.
+    /// pilfflonkinfo, `.bin` and `.const` (not the vkey, whose digest the caller absorbs), with the
+    /// MSMs and the NTTs of the key and of its proofs on `device`: on the GPU, the SRS's powers
+    /// `[τ^i]₁` are copied to it once they are read. Fails with
+    /// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument), before any file is read, on the GPU
+    /// without one ([`pilfflonk_gpu_available_c`]), saying why; with [`Io`](PilFflonkErrorKind::Io) if
+    /// a file cannot be read, and with [`Format`](PilFflonkErrorKind::Format) if one is not what it
+    /// should be or they do not agree. On the GPU, a CUDA failure (out of device memory, a lost
+    /// device) aborts the process, as in the PLONK GPU prover whose helpers it reuses.
     pub fn load_on(dir: &Path, device: PilFflonkDevice) -> Result<Self, PilFflonkError> {
         let path = c_path("pilfflonk_ctx_new_on", dir)?;
         let device = match device {
@@ -467,7 +452,7 @@ impl PilFflonkProverCtx {
 
 impl Drop for PilFflonkProverCtx {
     fn drop(&mut self) {
-        // SAFETY: the handle came from `pilfflonk_ctx_new` and is released only here; the instances
+        // SAFETY: the handle came from a `pilfflonk_ctx_new_on*` and is released only here; the instances
         // that borrow it are gone.
         unsafe { pilfflonk_ctx_free(self.handle.as_ptr()) }
     }
@@ -873,34 +858,6 @@ impl PilFflonkInstance<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// r in little-endian 64-bit limbs, written out independently of the C++ side.
-    const R_LIMBS: [u64; 4] = [0x43e1f593f0000001, 0x2833e84879b97091, 0xb85045b68181585d, 0x30644e72e131a029];
-
-    fn scalar(limbs: [u64; 4]) -> [u8; PILFFLONK_FR_BYTES] {
-        let mut bytes = [0u8; PILFFLONK_FR_BYTES];
-        for (chunk, limb) in bytes.chunks_exact_mut(8).zip(limbs) {
-            chunk.copy_from_slice(&limb.to_le_bytes());
-        }
-        bytes
-    }
-
-    #[test]
-    fn accepts_canonical_scalars() {
-        let r_minus_one = [R_LIMBS[0] - 1, R_LIMBS[1], R_LIMBS[2], R_LIMBS[3]];
-        for limbs in [[0; 4], [1, 0, 0, 0], r_minus_one] {
-            assert_eq!(pilfflonk_fr_check_canonical_c(&scalar(limbs)), Ok(()), "{limbs:x?}");
-        }
-    }
-
-    #[test]
-    fn rejects_non_canonical_scalars() {
-        for limbs in [R_LIMBS, [u64::MAX; 4]] {
-            let err = pilfflonk_fr_check_canonical_c(&scalar(limbs)).unwrap_err();
-            assert_eq!(err.kind, PilFflonkErrorKind::NonCanonical, "{limbs:x?}");
-            assert!(err.message.contains("pilfflonk_fr_check_canonical"), "{err}");
-        }
-    }
 
     /// 32 little-endian bytes from a 64-digit big-endian hex string.
     fn from_hex(hex: &str) -> [u8; PILFFLONK_FR_BYTES] {

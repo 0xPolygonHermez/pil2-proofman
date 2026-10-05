@@ -11,12 +11,6 @@
 
 #include "pilfflonk_kernels.hpp"
 
-// The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu), declared as plonk_prover_gpu.c.cuh
-// declares them.
-extern "C" void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_precompute_omega_tables_async(void *dBases, void *dTid, const void *omega4xPtr,
-                                                        uint32_t blockSize, uint32_t numBlocks, void *stream);
-
 namespace PilFflonk {
 
 static_assert(uint32_t(EXPRESSION_ADD) == uint32_t(OP_ADD) && uint32_t(EXPRESSION_SUB) == uint32_t(OP_SUB) &&

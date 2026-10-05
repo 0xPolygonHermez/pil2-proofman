@@ -9,15 +9,10 @@
 
 #include "pilfflonk_expressions_gpu.hpp"
 #include "pilfflonk_hints_kernels.hpp"
+#include "pilfflonk_kernels.hpp"
 #include "pilfflonk_prover.hpp"
 #include "pilfflonk_proving_key.hpp"
 #include "timer.hpp"
-
-// The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu), declared as plonk_prover_gpu.c.cuh
-// declares them.
-extern "C" void gpu_plonk_memcpy_d2d(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_cuda_device_sync();
-extern "C" void gpu_plonk_prefix_scan_multiply(void *dData, uint64_t N, void *dWork);
 
 namespace PilFflonk {
 
@@ -99,7 +94,7 @@ void computeStageColumns(const GpuAirKey &air, uint64_t stage, const ProverValue
     const PilfflonkInfo &info = key.info();
     const uint64_t N = key.n();
     const StageScratch scratch = stageScratch(key, stage);
-    uint8_t *base = air.gpuKey().arena() + air.arena().hints;
+    uint8_t *base = air.gpuKey().arena() + air.arena().work;
     Staging &staging = air.gpuKey().staging();
 
     TimerStartExpr(PILFFLONK_HINT_COLUMNS, stage);

@@ -40,9 +40,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
-#include <iterator>
 #include <memory>
-#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -132,12 +130,6 @@ std::string busFixture(const std::string &name) {
     return fixture("../sum_bus/" + name);
 }
 
-std::vector<uint8_t> readBytes(const std::string &path) {
-    std::ifstream file(path, std::ios::binary);
-    assert(file);
-    return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-}
-
 void writeBytes(const std::string &path, const std::vector<uint8_t> &bytes) {
     std::ofstream file(path, std::ios::binary);
     assert(file);
@@ -174,20 +166,6 @@ std::vector<FrElement> frs(const json &values) {
 
 bool eq(const FrElement &a, const FrElement &b) { return E.fr.eq(a, b); }
 
-FrElement power(const FrElement &base, uint64_t exponent) {
-    uint8_t bytes[sizeof(exponent)];
-    for (size_t i = 0; i < sizeof(exponent); ++i) bytes[i] = static_cast<uint8_t>(exponent >> (8 * i));
-    FrElement r;
-    E.fr.exp(r, base, bytes, sizeof(bytes));
-    return r;
-}
-
-FrElement inverse(const FrElement &a) {
-    FrElement r;
-    E.fr.inv(r, a);
-    return r;
-}
-
 G1Point times(G1Point p, const FrElement &x) {
     FrElement canonical;
     E.fr.fromMontgomery(canonical, x);
@@ -195,14 +173,6 @@ G1Point times(G1Point p, const FrElement &x) {
     E.g1.mulByScalar(r, p, reinterpret_cast<uint8_t *>(canonical.v), sizeof(canonical.v));
     return r;
 }
-
-G1Point g1Times(const FrElement &x) {
-    G1Point g;
-    E.g1.copy(g, E.g1.oneAffine());
-    return times(g, x);
-}
-
-bool samePoint(G1Point a, G1Point b) { return E.g1.eq(a, b); }
 
 G1Point add(G1Point a, G1Point b) {
     G1Point r;
@@ -590,7 +560,7 @@ void testLoadsTheFibonaccisKey() {
     assert(contains(thrown<std::invalid_argument>([&] { fib.pk->air(1, 0); }), "no air 0 in airgroup 1"));
 
     // Through the C API.
-    void *ctx = pilfflonk_ctx_new(fib.dir.path().c_str());
+    void *ctx = pilfflonk_ctx_new_on(fib.dir.path().c_str(), PILFFLONK_DEVICE_CPU);
     assert(ctx != nullptr);
     uint64_t nBitsExt = 0;
     assert(pilfflonk_ctx_n_bits_ext(ctx, 0, 0, &nBitsExt) == PILFFLONK_OK && nBitsExt == 9);
@@ -626,13 +596,14 @@ void testLoadsTheFibonaccisKey() {
     assert(pilfflonk_ctx_srs_g2(nullptr, 1, g2) == PILFFLONK_ERR_INVALID_ARGUMENT);
     pilfflonk_ctx_free(ctx);
     pilfflonk_ctx_free(nullptr);
-    assert(pilfflonk_ctx_new(nullptr) == nullptr && pilfflonk_last_status() == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_ctx_new_on(nullptr, PILFFLONK_DEVICE_CPU) == nullptr &&
+           pilfflonk_last_status() == PILFFLONK_ERR_INVALID_ARGUMENT);
 }
 
 // What each broken provingKey/ is refused with, through ProvingKey::load and the C API.
 void expectRefused(const KeyFiles &files, int status, const char *message) {
     const KeyDir dir(files);
-    assert(pilfflonk_ctx_new(dir.path().c_str()) == nullptr);
+    assert(pilfflonk_ctx_new_on(dir.path().c_str(), PILFFLONK_DEVICE_CPU) == nullptr);
     assert(pilfflonk_last_status() == status);
     if (!contains(pilfflonk_last_error(), message)) {
         std::fprintf(stderr, "unexpected message: %s\n", pilfflonk_last_error());
@@ -645,13 +616,15 @@ void testRefusesBrokenKeys() {
         const KeyDir dir;
         fs::remove(dir.path() + "/pilout.globalInfo.json");
         assert(contains(thrown<IoError>([&] { ProvingKey::load(dir.path()); }), "cannot open"));
-        assert(pilfflonk_ctx_new(dir.path().c_str()) == nullptr && pilfflonk_last_status() == PILFFLONK_ERR_IO);
-        assert(contains(pilfflonk_last_error(), "pilfflonk_ctx_new: globalInfo: cannot open"));
+        assert(pilfflonk_ctx_new_on(dir.path().c_str(), PILFFLONK_DEVICE_CPU) == nullptr &&
+               pilfflonk_last_status() == PILFFLONK_ERR_IO);
+        assert(contains(pilfflonk_last_error(), "pilfflonk_ctx_new_on: globalInfo: cannot open"));
     }
     {
         const KeyDir dir;
         fs::remove(dir.airFile("const"));
-        assert(pilfflonk_ctx_new(dir.path().c_str()) == nullptr && pilfflonk_last_status() == PILFFLONK_ERR_IO);
+        assert(pilfflonk_ctx_new_on(dir.path().c_str(), PILFFLONK_DEVICE_CPU) == nullptr &&
+               pilfflonk_last_status() == PILFFLONK_ERR_IO);
     }
     KeyFiles files;
     files.globalInfo = text(globalInfoJson("stark"));
@@ -1096,11 +1069,9 @@ CApiProof proveOnTheCtx(const Fibonacci &fib, const uint8_t seed[32], void *ctx)
     return out;
 }
 
-// The same, with pilfflonk_ctx_new, or pilfflonk_ctx_new_on(device).
-CApiProof proveThroughTheCApi(const Fibonacci &fib, const uint8_t seed[32],
-                              std::optional<uint32_t> device = std::nullopt) {
-    const char *dir = fib.dir.path().c_str();
-    void *ctx = device ? pilfflonk_ctx_new_on(dir, *device) : pilfflonk_ctx_new(dir);
+// The same, with pilfflonk_ctx_new_on(device).
+CApiProof proveThroughTheCApi(const Fibonacci &fib, const uint8_t seed[32], uint32_t device = PILFFLONK_DEVICE_CPU) {
+    void *ctx = pilfflonk_ctx_new_on(fib.dir.path().c_str(), device);
     assert(ctx != nullptr);
     const CApiProof out = proveOnTheCtx(fib, seed, ctx);
     pilfflonk_ctx_free(ctx);
@@ -1127,7 +1098,7 @@ void testCApi() {
     assert(proveThroughTheCApi(fib, seed).commitments == api.commitments);
 
     // Refusals.
-    void *ctx = pilfflonk_ctx_new(fib.dir.path().c_str());
+    void *ctx = pilfflonk_ctx_new_on(fib.dir.path().c_str(), PILFFLONK_DEVICE_CPU);
     const std::vector<uint8_t> publics = scalars(fib.publics);
     auto instance = [&](const std::vector<uint8_t> &trace, const uint8_t *p, uint64_t nPublics) {
         return pilfflonk_instance_new(ctx, 0, 0, trace.data(), trace.size(), nullptr, 0, p, nPublics, nullptr, 0,
@@ -1422,7 +1393,7 @@ void testCheckRefusals() {
 
 void testCheckCApi() {
     const Fibonacci fib;
-    void *ctx = pilfflonk_ctx_new(fib.dir.path().c_str());
+    void *ctx = pilfflonk_ctx_new_on(fib.dir.path().c_str(), PILFFLONK_DEVICE_CPU);
     assert(ctx != nullptr);
     uint64_t n = 0;
     assert(pilfflonk_ctx_n_constraints(ctx, 0, 0, &n) == PILFFLONK_OK && n == N_CONSTRAINTS);
@@ -1772,7 +1743,7 @@ void testAZeroDenominatorIsAnError() {
     assert(contains(message, "SumBus: the denominator of hint 1 (gsum_col, column gsum) is 0 at row 5"));
     assert(inst->nextStage() == 2);
 
-    void *ctx = pilfflonk_ctx_new(bus.dir.path().c_str());
+    void *ctx = pilfflonk_ctx_new_on(bus.dir.path().c_str(), PILFFLONK_DEVICE_CPU);
     assert(ctx != nullptr);
     const std::vector<uint8_t> publics = scalars(bus.publics);
     uint8_t seed[32] = {1};
@@ -1971,7 +1942,7 @@ void testRefusedHints() {
 // oracle's for the fixture's; refused with the wrong challenges, size or pointers.
 void testCheckColumnCApi() {
     const SumBus bus;
-    void *ctx = pilfflonk_ctx_new(bus.dir.path().c_str());
+    void *ctx = pilfflonk_ctx_new_on(bus.dir.path().c_str(), PILFFLONK_DEVICE_CPU);
     assert(ctx != nullptr);
     const std::vector<uint8_t> publics = scalars(bus.publics);
     void *inst = pilfflonk_instance_new(ctx, 0, 0, bus.witness.data(), bus.witness.size(), nullptr, 0, publics.data(),
@@ -2017,7 +1988,7 @@ void testCheckColumnCApi() {
 // it; refused before, and with the wrong size or pointers.
 void testInstanceColumnCApi() {
     const SumBus bus;
-    void *ctx = pilfflonk_ctx_new(bus.dir.path().c_str());
+    void *ctx = pilfflonk_ctx_new_on(bus.dir.path().c_str(), PILFFLONK_DEVICE_CPU);
     assert(ctx != nullptr);
     const std::vector<uint8_t> publics = scalars(bus.publics);
     uint8_t seed[32] = {3};

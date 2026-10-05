@@ -339,7 +339,6 @@ impl ProofNames {
     pub fn of_vkey(vkey: &Vkey) -> PilfflonkResult<Self> {
         let layout = &vkey.layout.0;
         let n_fixed = vkey.layout.n_fixed();
-        let q_stage = layout.last().map_or(0, |f| f.stage);
         let commitments = (n_fixed..layout.len()).map(|g| commitment_name(g as u64)).collect();
 
         // The fixed columns are in the f of stage 0, the committed ones in the others
@@ -358,7 +357,7 @@ impl ProofNames {
             }
         }
         if q_pieces(vkey.q_deg, vkey.max_q_degree) > 1 {
-            let pieces = layout.iter().filter(|f| f.stage == q_stage).flat_map(|f| &f.pols);
+            let pieces = vkey.layout.q_entries().flat_map(|f| &f.pols);
             evaluations.extend(pieces.map(|pol| pol.name.clone()));
         }
         let none = Vec::new;

@@ -47,7 +47,7 @@ extern "C" {
     // Where a ctx runs the MSMs and the NTTs of its proofs (pilfflonk_ctx_new_on;
     // pilfflonk/docs/performance.md#gpu). The proofs are the same, bit for bit, on either.
     enum pilfflonk_device {
-        PILFFLONK_DEVICE_CPU = 0, // ffiasm's MSM and FFT: pilfflonk_ctx_new
+        PILFFLONK_DEVICE_CPU = 0, // ffiasm's MSM and FFT
         PILFFLONK_DEVICE_GPU = 1, // the GPU's MSM and NTT of src/bn128/src/{msm,ntt}, on CUDA device 0
     };
 
@@ -58,10 +58,6 @@ extern "C" {
     // The status of the most recent other pilfflonk_* call on the calling thread: PILFFLONK_OK if it
     // succeeded. The next pilfflonk_* call on the same thread overwrites it.
     int pilfflonk_last_status(void);
-
-    // PILFFLONK_OK if `scalar` (little-endian) is below the BN128 scalar modulus r,
-    // PILFFLONK_ERR_NON_CANONICAL otherwise.
-    int pilfflonk_fr_check_canonical(const uint8_t scalar[32]);
 
     // Writes to `out` the Keccak-256 hash of the `len` bytes at `data`: Keccak with its original
     // padding (0x01), as Ethereum and snarkjs use it, not SHA3-256. It is rapidsnark's
@@ -176,7 +172,7 @@ extern "C" {
     // (proofman_pilfflonk::prover) drives it in the order of the transcript
     // (pilfflonk/docs/protocol.md#transcript), which it owns and absorbs into:
     //
-    //   ctx = pilfflonk_ctx_new(provingKey/)                      step 1: the proving key
+    //   ctx = pilfflonk_ctx_new_on(provingKey/, device)           step 1: the proving key
     //   inst = pilfflonk_instance_new(ctx, …, stage-1 witness, publics, …, seed)
     //   pilfflonk_commit_stage(inst, s, challenges of s, …)       step 2, for s = 1 … nStages
     //   pilfflonk_commit_q(inst, [std_vc], …)                     step 3
@@ -189,8 +185,8 @@ extern "C" {
     // from several threads at once, but may move from one thread to another between its calls.
     //
     // Concurrent instances of one ctx:
-    // - On the CPU (pilfflonk_ctx_new, or pilfflonk_ctx_new_on with PILFFLONK_DEVICE_CPU), each
-    //   instance has memory of its own, and instances on several threads prove at the same time.
+    // - On the CPU (pilfflonk_ctx_new_on with PILFFLONK_DEVICE_CPU), each instance has memory of its
+    //   own, and instances on several threads prove at the same time.
     // - On the GPU (PILFFLONK_DEVICE_GPU, or pilfflonk_ctx_new_on_device_buffer), the ctx holds the
     //   device memory of one proof (its arena), which an instance holds from pilfflonk_instance_new to
     //   pilfflonk_instance_free: one proof at a time per ctx. pilfflonk_instance_new on another thread
@@ -211,25 +207,24 @@ extern "C" {
     // and <air>.const. The fixed columns are interpolated as it is loaded, and everything else the
     // prover derives (the degrees and the extended domain, pilfflonk/docs/protocol.md#degrees, and
     // the blinding of each column) is derived. The vkey is not read: its digest, which the
-    // transcript absorbs, is the orchestrator's. Returns NULL on failure:
-    // PILFFLONK_ERR_INVALID_ARGUMENT if proving_key_dir is NULL, PILFFLONK_ERR_IO if a file cannot
-    // be read, PILFFLONK_ERR_FORMAT if one is not what it should be or they do not agree (an AIR
-    // that is not the globalInfo's, a layout needing more powers than the SRS holds, pieces of Q
-    // other than pilfflonk/docs/protocol.md#q-pieces describes).
-    void *pilfflonk_ctx_new(const char *proving_key_dir);
-
-    // pilfflonk_ctx_new with the ctx and its proofs on `device`, one of enum pilfflonk_device
+    // transcript absorbs, is the orchestrator's.
+    //
+    // The ctx and its proofs are on `device`, one of enum pilfflonk_device
     // (pilfflonk/docs/performance.md#what-runs-on-the-gpu). On PILFFLONK_DEVICE_GPU the SRS's powers
     // [τ^i]₁ are copied to the GPU once they are read, and the key's fixed columns and every proof's
     // polynomials stay there: the fixed columns' INTT and commitments (pilfflonk_ctx_fixed_commitments),
     // each stage's hints, im pols, INTTs and commitments, Q whole and SHPLONK's opening run on the
     // device; the transcript and the blinding's draws stay on the CPU. A proof copies its witness to
     // the device, and back only commitments, evaluations and a few bytes; one proof at a time (the
-    // concurrent instances above). Returns NULL on failure, as
-    // pilfflonk_ctx_new, and PILFFLONK_ERR_INVALID_ARGUMENT also if device is none of the enum or
-    // is PILFFLONK_DEVICE_GPU and pilfflonk_gpu_available() is 0 (checked before any file is read),
-    // or if the device has not the memory of the key and a proof of each AIR (naming the AIR and the
-    // bytes it needs and the device has free).
+    // concurrent instances above).
+    //
+    // Returns NULL on failure: PILFFLONK_ERR_INVALID_ARGUMENT if device is none of the enum or is
+    // PILFFLONK_DEVICE_GPU and pilfflonk_gpu_available() is 0 (checked before any file is read), if
+    // proving_key_dir is NULL, or if the device has not the memory of the key and a proof of each AIR
+    // (naming the AIR and the bytes it needs and the device has free); PILFFLONK_ERR_IO if a file
+    // cannot be read, PILFFLONK_ERR_FORMAT if one is not what it should be or they do not agree (an
+    // AIR that is not the globalInfo's, a layout needing more powers than the SRS holds, pieces of Q
+    // other than pilfflonk/docs/protocol.md#q-pieces describes).
     void *pilfflonk_ctx_new_on(const char *proving_key_dir, uint32_t device);
 
     // pilfflonk_ctx_new_on(proving_key_dir, PILFFLONK_DEVICE_GPU), with its proofs' device memory (their
@@ -255,7 +250,7 @@ extern "C" {
     // (pilfflonk_ctx_new_on) needs at most *out_arena + *out_beside, as its loading's scratch is in its
     // arena. PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no GPU (as
     // pilfflonk_ctx_new_on); PILFFLONK_ERR_IO and PILFFLONK_ERR_FORMAT for those files, as
-    // pilfflonk_ctx_new.
+    // pilfflonk_ctx_new_on.
     int pilfflonk_gpu_device_bytes(const char *proving_key_dir, uint64_t *out_arena, uint64_t *out_beside);
 
     // Writes to *out_free the free memory of CUDA device 0, in bytes (cudaMemGetInfo), what a ctx's

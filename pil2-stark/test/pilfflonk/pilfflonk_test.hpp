@@ -2,12 +2,22 @@
 #define PILFFLONK_TEST_HPP
 
 // Shared by the pilfflonk tests, of the C API and of the C++ modules: plain asserts, one file per
-// module, run from main() in pilfflonk_test.cpp. Include this header first: it turns asserts on.
+// module, run from main() in pilfflonk_test.cpp, which also has the helpers below. Include this
+// header first: it turns asserts on.
 #undef NDEBUG
 #include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
+
+#include <gmp.h>
+
+#include "alt_bn128.hpp"
+#ifdef __USE_CUDA__
+#include "pilfflonk_kernels.hpp"
+#include "pilfflonk_key_gpu.hpp"
+#endif
 
 namespace PilFflonkTest {
 
@@ -50,6 +60,54 @@ void runHintsGpuTests();
 // machine with one. Without one it prints that `what` is skipped and returns false, or, with
 // PILFFLONK_GPU=1 in the environment, fails: a GPU run must not pass by skipping.
 bool gpuUnderTest(const char *what);
+
+// The helpers of several tests, on ffiasm's arithmetic alone, not on the code under test.
+
+// base^exponent, by ffiasm's square-and-multiply.
+AltBn128::Engine::FrElement power(const AltBn128::Engine::FrElement &base, uint64_t exponent);
+AltBn128::Engine::FrElement power(const AltBn128::Engine::FrElement &base, const mpz_t exponent);
+
+AltBn128::Engine::FrElement fromUI(uint64_t value);
+
+AltBn128::Engine::FrElement inverse(const AltBn128::Engine::FrElement &a);
+
+// x·G for the generator G of G1: ffiasm's scalar multiplication, not its MSM.
+AltBn128::Engine::G1Point g1Times(const AltBn128::Engine::FrElement &x);
+
+bool samePoint(AltBn128::Engine::G1Point a, AltBn128::Engine::G1Point b);
+// Through the projective comparison: ffiasm's mixed one does not compile warning-free.
+bool samePoint(AltBn128::Engine::G1Point a, AltBn128::Engine::G1PointAffine b);
+
+// The bytes of the file at `path`, which must open.
+std::vector<uint8_t> readBytes(const std::string &path);
+
+// `relative` in the repository, from $PILFFLONK_REPO_ROOT if it is set, and otherwise from the test
+// binary's directory, pil2-stark/build or pil2-stark/build-gpu.
+std::string repoPath(const std::string &relative);
+
+#ifdef __USE_CUDA__
+// `bytes` bytes at `data` in device memory of their own, one byte at least: an upload always has an
+// address, which an operand's null pointer would not (a hint's number).
+PilFflonk::DeviceBuffer upload(const void *data, uint64_t bytes);
+
+template <typename T>
+PilFflonk::DeviceBuffer upload(const std::vector<T> &host) {
+    return upload(host.data(), host.size() * sizeof(T));
+}
+
+// The n values of type T at `device`, device memory, in host memory.
+template <typename T = AltBn128::Engine::FrElement>
+std::vector<T> download(const void *device, uint64_t n) {
+    std::vector<T> host(n);
+    gpu_plonk_memcpy_d2h(host.data(), device, n * sizeof(T));
+    return host;
+}
+
+template <typename T>
+std::vector<T> download(const PilFflonk::DeviceBuffer &device, uint64_t n) {
+    return download<T>(device.data(), n);
+}
+#endif
 
 } // namespace PilFflonkTest
 

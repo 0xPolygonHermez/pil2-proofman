@@ -36,6 +36,11 @@ export function decimalFromObject(value, what) {
     throw new PilFflonkInputError(`${what}: ${show(value)} is not a decimal string without sign or leading zeros`);
 }
 
+// Whether `v` is a JSON object: not null, and not an array.
+export function isPlainObject(v) {
+    return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 // A value as an error message shows it: its JSON, bigints included, which JSON.stringify refuses.
 export function show(value) {
     return JSON.stringify(value, (_, v) => (typeof v === "bigint" ? `${v}n` : v));

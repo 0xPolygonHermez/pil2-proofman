@@ -8,20 +8,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "pilfflonk_error.hpp"
 #include "pilfflonk_kernels.hpp"
-
-// The MSM and the NTTs (bn128/src/msm/msm_bn128.cu, bn128/src/ntt/ntt_bn128.cu) and the device
-// memory helpers (rapidsnark/plonk_prover.cu), declared as plonk_prover_gpu.c.cuh declares them; and
-// sppark's probe for a usable GPU (external/sppark/util/all_gpus.cpp).
-extern "C" void msm_bn128_gpu_dev_ptr(void *out, const void *d_points, const void *d_scalars, size_t npoints,
-                                      bool montgomery);
-extern "C" void ntt_bn128_gpu_dev_ptr(void *d_data, uint32_t lg_n);
-extern "C" void intt_bn128_gpu_dev_ptr(void *d_data, uint32_t lg_n);
-extern "C" void gpu_plonk_cuda_malloc(void **dBuffer, uint64_t buffeSize);
-extern "C" void gpu_plonk_cuda_free(void *dBuffer);
-extern "C" void gpu_plonk_cuda_device_sync();
-extern "C" void gpu_plonk_set_device(int gpuId);
-extern "C" bool cuda_available();
 
 namespace PilFflonk {
 
@@ -32,9 +20,7 @@ using Engine = AltBn128::Engine;
 // The PLONK GPU prover's default device.
 constexpr int DEVICE = 0;
 
-std::invalid_argument invalid(const char *function, const std::string &message) {
-    return std::invalid_argument(std::string("Gpu::") + function + ": " + message);
-}
+constexpr InvalidArgument invalid("Gpu::");
 
 } // namespace
 

@@ -605,20 +605,29 @@ pub fn stage_columns(
     let info = pk.air(read.air)?;
     let mut instance = read.instance(pk, options.insecure_blinding_seed.as_ref())?;
     let committed = commit_stages(pk, &read, &mut instance)?;
+    let columns = read_stage_columns(info, |stage, stage_pos, n_rows| {
+        instance.column(stage, stage_pos, n_rows).map_err(native("reading a column"))
+    })?;
+    Ok(StageColumns { challenges: committed.challenges, columns })
+}
+
+/// The columns of every stage `1 … nStages` of an instance of `info`, each `column(stage, stagePos,
+/// N)`, row by row: what [`StageColumns::columns`] holds.
+pub(crate) fn read_stage_columns(
+    info: &PilfflonkInfo,
+    mut column: impl FnMut(u32, u64, usize) -> PilfflonkResult<Vec<[u8; 32]>>,
+) -> PilfflonkResult<Vec<Vec<Vec<FrBytes>>>> {
     let n_rows = 1usize << info.n_bits;
     let mut columns = Vec::new();
     for stage in 1..=info.n_stages {
         let width = info.map_sections_n.get(&format!("cm{stage}")).copied().unwrap_or(0);
-        let stage_u32 = u32::try_from(stage).map_err(|_| PilfflonkError::InvalidFormat("too many stages".into()))?;
+        let stage = u32::try_from(stage).map_err(|_| PilfflonkError::InvalidFormat("too many stages".into()))?;
         let stage_columns = (0..width)
-            .map(|p| {
-                let values = instance.column(stage_u32, p, n_rows).map_err(native("reading a column"))?;
-                values.into_iter().map(fr).collect::<PilfflonkResult<Vec<_>>>()
-            })
+            .map(|p| column(stage, p, n_rows)?.into_iter().map(fr).collect::<PilfflonkResult<Vec<_>>>())
             .collect::<PilfflonkResult<_>>()?;
         columns.push(stage_columns);
     }
-    Ok(StageColumns { challenges: committed.challenges, columns })
+    Ok(columns)
 }
 
 /// A proof of the one instance of `witness` (see [the module](self)).
@@ -637,7 +646,10 @@ pub fn prove(pk: &ProvingKey, witness: &impl WitnessSource, options: &ProveOptio
     // Steps 1 and 2.
     let CommittedStages { mut transcript, mut commitments, challenges: stage_challenges } =
         commit_stages(pk, &read, &mut instance)?;
+    // The instance holds the trace from here on: only the air values are kept.
     let WitnessInstance { stage1, publics, proof_values, .. } = read;
+    let air_values = stage1.air_values().to_vec();
+    drop(stage1);
 
     // Step 3: Q.
     let std_vc = transcript.squeeze()?;
@@ -669,7 +681,7 @@ pub fn prove(pk: &ProvingKey, witness: &impl WitnessSource, options: &ProveOptio
         w: G1Affine::from_le_bytes(&opened.w)?,
         wp: G1Affine::from_le_bytes(&opened.wp)?,
         evaluations,
-        air_values: stage1.air_values().to_vec(),
+        air_values,
         airgroup_values: vec![],
         proof_values,
         inv: fr(opened.inv)?,

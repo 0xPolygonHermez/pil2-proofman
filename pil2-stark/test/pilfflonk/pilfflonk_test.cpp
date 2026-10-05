@@ -1,26 +1,119 @@
-// Tests for the pilfflonk C API. Run with `make pilfflonk_test`, and against the GPU archive with
+// Tests for the pilfflonk C API, the helpers the tests share (pilfflonk_test.hpp), and main(), which
+// runs every test. Run with `make pilfflonk_test`, and against the GPU archive with
 // `make pilfflonk_gpu_test` (pilfflonk/docs/README.md#tests); exits non-zero on the first failure.
 #include "pilfflonk_test.hpp"
 
+#include <limits.h>
+#include <unistd.h>
+
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
 
 #include "pilfflonk_api.hpp"
+#include "pilfflonk_fr.hpp"
+
+namespace PilFflonkTest {
+
+namespace {
+
+using Engine = AltBn128::Engine;
+
+Engine &E = Engine::engine;
+
+} // namespace
+
+Engine::FrElement power(const Engine::FrElement &base, uint64_t exponent) {
+    uint8_t bytes[sizeof(exponent)];
+    for (size_t i = 0; i < sizeof(exponent); ++i) bytes[i] = static_cast<uint8_t>(exponent >> (8 * i));
+    Engine::FrElement r;
+    E.fr.exp(r, base, bytes, sizeof(bytes));
+    return r;
+}
+
+Engine::FrElement power(const Engine::FrElement &base, const mpz_t exponent) {
+    uint8_t littleEndian[32] = {};
+    assert(mpz_sizeinbase(exponent, 256) <= sizeof(littleEndian));
+    mpz_export(littleEndian, nullptr, -1, 1, -1, 0, exponent);
+    Engine::FrElement result;
+    E.fr.exp(result, base, littleEndian, sizeof(littleEndian));
+    return result;
+}
+
+Engine::FrElement fromUI(uint64_t value) {
+    Engine::FrElement e;
+    E.fr.fromUI(e, value);
+    return e;
+}
+
+Engine::FrElement inverse(const Engine::FrElement &a) {
+    Engine::FrElement r;
+    E.fr.inv(r, a);
+    return r;
+}
+
+Engine::G1Point g1Times(const Engine::FrElement &x) {
+    Engine::FrElement canonical;
+    E.fr.fromMontgomery(canonical, x);
+    Engine::G1Point p;
+    E.g1.mulByScalar(p, E.g1.oneAffine(), reinterpret_cast<uint8_t *>(canonical.v), sizeof(canonical.v));
+    return p;
+}
+
+bool samePoint(Engine::G1Point a, Engine::G1Point b) {
+    return E.g1.eq(a, b);
+}
+
+bool samePoint(Engine::G1Point a, Engine::G1PointAffine b) {
+    Engine::G1Point projective;
+    E.g1.copy(projective, b);
+    return E.g1.eq(a, projective);
+}
+
+std::vector<uint8_t> readBytes(const std::string &path) {
+    std::ifstream file(path, std::ios::binary);
+    assert(file);
+    return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+}
+
+std::string repoPath(const std::string &relative) {
+    if (const char *root = std::getenv("PILFFLONK_REPO_ROOT")) {
+        return std::string(root) + "/" + relative;
+    }
+    char exe[PATH_MAX];
+    const ssize_t length = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    assert(length > 0);
+    exe[length] = '\0';
+    const std::string dir(exe);
+    return dir.substr(0, dir.rfind('/')) + "/../../" + relative;
+}
+
+#ifdef __USE_CUDA__
+PilFflonk::DeviceBuffer upload(const void *data, uint64_t bytes) {
+    PilFflonk::DeviceBuffer device(std::max<uint64_t>(bytes, 1));
+    gpu_plonk_memcpy_h2d(device.data(), data, bytes);
+    return device;
+}
+#endif
+
+} // namespace PilFflonkTest
 
 using PilFflonkTest::Bytes32;
 using PilFflonkTest::R_HEX;
 
 namespace {
 
+// What the C API checks every scalar it is given with (decodeFr, firstNonCanonicalFr): below r.
 void expectCanonical(const char *hex) {
     const Bytes32 s(hex);
-    assert(pilfflonk_fr_check_canonical(s.bytes) == PILFFLONK_OK);
-    assert(pilfflonk_last_error()[0] == '\0');
+    assert(PilFflonk::isCanonicalFr(s.bytes));
 }
 
 void expectNonCanonical(const char *hex) {
     const Bytes32 s(hex);
-    assert(pilfflonk_fr_check_canonical(s.bytes) == PILFFLONK_ERR_NON_CANONICAL);
-    assert(std::strstr(pilfflonk_last_error(), "pilfflonk_fr_check_canonical") != nullptr);
+    assert(!PilFflonk::isCanonicalFr(s.bytes));
 }
 
 void testCheckCanonical() {
@@ -38,14 +131,12 @@ void testCheckCanonical() {
     expectNonCanonical("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
 }
 
-void testNullScalar() {
-    assert(pilfflonk_fr_check_canonical(nullptr) == PILFFLONK_ERR_INVALID_ARGUMENT);
-    assert(pilfflonk_last_error()[0] != '\0');
-}
-
 void testSuccessClearsLastError() {
-    expectNonCanonical(R_HEX);
-    expectCanonical("0000000000000000000000000000000000000000000000000000000000000000");
+    uint8_t out[32];
+    assert(pilfflonk_keccak256(nullptr, 1, out) == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_last_error()[0] != '\0' && pilfflonk_last_status() == PILFFLONK_ERR_INVALID_ARGUMENT);
+    assert(pilfflonk_keccak256(nullptr, 0, out) == PILFFLONK_OK);
+    assert(pilfflonk_last_error()[0] == '\0' && pilfflonk_last_status() == PILFFLONK_OK);
 }
 
 // Keccak-256, not SHA3-256: "" and "abc" are the published vectors (SHA3-256 of "" is a7ffc6f8…);
@@ -98,7 +189,6 @@ void testKeccak256() {
 
 int main() {
     testCheckCanonical();
-    testNullScalar();
     testSuccessClearsLastError();
     testKeccak256();
     PilFflonkTest::runTranscriptTests();

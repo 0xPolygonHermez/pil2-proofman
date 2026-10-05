@@ -22,10 +22,6 @@
 #include "polynomial.hpp"
 #ifdef __USE_CUDA__
 #include "pilfflonk_key_gpu.hpp"
-
-// The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu).
-extern "C" void gpu_plonk_memcpy_h2d(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_memcpy_d2h(void *dst, const void *src, size_t bytes);
 #endif
 
 namespace PilFflonkTest {
@@ -81,29 +77,6 @@ public:
 private:
     std::mt19937_64 generator;
 };
-
-FrElement fromUI(uint64_t value) {
-    FrElement e;
-    E.fr.fromUI(e, value);
-    return e;
-}
-
-FrElement power(const FrElement &base, const mpz_t exponent) {
-    uint8_t littleEndian[32] = {};
-    assert(mpz_sizeinbase(exponent, 256) <= sizeof(littleEndian));
-    mpz_export(littleEndian, nullptr, -1, 1, -1, 0, exponent);
-    FrElement result;
-    E.fr.exp(result, base, littleEndian, sizeof(littleEndian));
-    return result;
-}
-
-FrElement power(const FrElement &base, uint64_t exponent) {
-    mpz_t e;
-    mpz_init_set_ui(e, exponent);
-    const FrElement result = power(base, e);
-    mpz_clear(e);
-    return result;
-}
 
 // (r - 1) / 2^k, into an initialised `out`.
 void rMinusOneOver2ToThe(uint64_t k, mpz_t out) {

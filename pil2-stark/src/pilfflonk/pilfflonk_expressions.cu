@@ -2,36 +2,16 @@
 // library only: the bytecode's ops over BN128 scalars in sppark's Montgomery arithmetic
 // (BN128GPUScalarField), which keeps every result fully reduced, as ffiasm does, so that the same
 // field operation gives the same bytes on either; and the zerofiers of a part of the coset.
-#include <cuda.h>
-#include <cuda_runtime.h>
-
-#include <algorithm>
-#include <cstdint>
-
-#ifndef FEATURE_BN254
-#define FEATURE_BN254
-#endif
-
-#include "../bn128/src/ffigpu/fr.cuh"
-#include "cuda_utils.cuh"
+#include "pilfflonk_cuda.cuh"
 #include "pilfflonk_expressions_kernels.hpp"
 
 namespace {
 
-using Fr = BN128GPUScalarField;
-using Element = Fr::Element;
 using PilFflonk::ExpressionLaunch;
 
 static_assert(sizeof(Element) == PilFflonk::OPERAND_BYTES, "an operand is one element");
 
-// The zerofiers' blocks.
-constexpr uint32_t THREADS = 256;
-// The most blocks of a launch: a kernel strides over what they do not cover.
-constexpr uint64_t MAX_BLOCKS = uint64_t(1) << 20;
-
-uint32_t blocksFor(uint64_t n) { return static_cast<uint32_t>(std::min((n + THREADS - 1) / THREADS, MAX_BLOCKS)); }
-
-__device__ __forceinline__ uint64_t stride() { return uint64_t(gridDim.x) * blockDim.x; }
+// The zerofiers' blocks are of THREADS threads (pilfflonk_cuda.cuh); the code's, of EXPRESSION_ROWS.
 
 __device__ __forceinline__ Element source(const ExpressionLaunch &p, uint32_t type, uint32_t arg1, uint32_t arg2,
                                           uint64_t i, const Element *tmp) {

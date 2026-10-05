@@ -3,6 +3,7 @@
 #include <omp.h>
 
 #include <algorithm>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -16,9 +17,7 @@ namespace {
 
 using Engine = AltBn128::Engine;
 
-std::invalid_argument invalid(const char *function, const std::string &message) {
-    return std::invalid_argument(std::string("Expressions::") + function + ": " + message);
-}
+constexpr InvalidArgument invalid("Expressions::");
 
 FrElement fromUI(uint64_t value) {
     FrElement e;
@@ -79,26 +78,6 @@ std::vector<FrElement> excludedRoots(uint64_t nBits, const Boundary &b) {
 FrElement oneRowRoot(uint64_t nBits, BoundaryType type) {
     const uint64_t n = uint64_t(1) << nBits;
     return type == BoundaryType::FirstRow ? Engine::engine.fr.one() : power(rootOfUnity(nBits), n - 1);
-}
-
-FrElement rootOfUnity(uint64_t nBits) {
-    if (nBits > MAX_NBITS_EXT) {
-        throw std::invalid_argument("rootOfUnity: there is no root of unity of order 2^" + std::to_string(nBits) +
-                                    ": r - 1 = 2^28 · odd");
-    }
-    // (r − 1) >> nBits, little-endian: r − 1 is FR_MODULUS_LE with its lowest byte 1 less (it is 1).
-    uint8_t exponent[FR_BYTES];
-    std::copy(FR_MODULUS_LE, FR_MODULUS_LE + FR_BYTES, exponent);
-    exponent[0] -= 1;
-    for (uint64_t s = 0; s < nBits; ++s) {
-        for (size_t i = 0; i < FR_BYTES; ++i) {
-            const uint8_t carry = i + 1 < FR_BYTES ? static_cast<uint8_t>(exponent[i + 1] << 7) : 0;
-            exponent[i] = static_cast<uint8_t>(exponent[i] >> 1) | carry;
-        }
-    }
-    FrElement result;
-    Engine::engine.fr.exp(result, fromUI(COSET_SHIFT), exponent, FR_BYTES);
-    return result;
 }
 
 std::vector<FrElement> zerofiersAt(uint64_t nBits, const std::vector<Boundary> &boundaries, const FrElement &x) {
@@ -209,35 +188,40 @@ ExpressionsDomain ExpressionsDomain::cosetPart(uint64_t nBits, uint64_t nBitsExt
     const uint64_t m = uint64_t(1) << partBits;
     const uint64_t e = points.zh.size();
 
-    // The part's points c·ω_m^i, each thread's chunk from c·ω_m^begin.
+    // The part's points c·ω_m^i, each thread's chunk from c·ω_m^begin: only if a boundary other than
+    // everyRow reads them, whose Zi is the e values of 1/Z_H.
     const FrElement &c = points.shift;
     const FrElement &w = points.root;
-    std::vector<FrElement> x(m);
+    const bool readsPoints = std::any_of(boundaries.begin(), boundaries.end(),
+                                         [](const Boundary &b) { return b.type != BoundaryType::EveryRow; });
+    std::vector<FrElement> x(readsPoints ? m : 0);
+    if (readsPoints) {
 #pragma omp parallel
-    {
-        const uint64_t nThreads = omp_get_num_threads();
-        const uint64_t chunk = (m + nThreads - 1) / nThreads;
-        const uint64_t begin = std::min(m, omp_get_thread_num() * chunk);
-        const uint64_t end = std::min(m, begin + chunk);
-        if (begin < end) {
-            FrElement point;
-            fr.mul(point, c, power(w, begin));
-            for (uint64_t i = begin; i < end; ++i) {
-                x[i] = point;
-                fr.mul(point, point, w);
+        {
+            const uint64_t nThreads = omp_get_num_threads();
+            const uint64_t chunk = (m + nThreads - 1) / nThreads;
+            const uint64_t begin = std::min(m, omp_get_thread_num() * chunk);
+            const uint64_t end = std::min(m, begin + chunk);
+            if (begin < end) {
+                FrElement point;
+                fr.mul(point, c, power(w, begin));
+                for (uint64_t i = begin; i < end; ++i) {
+                    x[i] = point;
+                    fr.mul(point, point, w);
+                }
             }
         }
     }
 
     std::vector<FrElement> den;
     for (const Boundary &b : boundaries) {
+        if (b.type == BoundaryType::EveryRow) {
+            domain.zerofiers_.push_back(points.zhInv);
+            continue;
+        }
         std::vector<FrElement> zi(m);
         switch (b.type) {
-        case BoundaryType::EveryRow:
-#pragma omp parallel for schedule(static)
-            for (uint64_t i = 0; i < m; ++i) {
-                zi[i] = points.zhInv[i & (e - 1)];
-            }
+        case BoundaryType::EveryRow: // its e values, above
             break;
         case BoundaryType::FirstRow:
         case BoundaryType::LastRow: {
@@ -395,22 +379,26 @@ void Expressions::calculate(const ParserParams &params, const ParserArgs &args, 
     const std::vector<uint64_t> openingShifts = shifts(m, domain.extendBits());
 
     std::vector<const FrElement *> zerofiers(domain.nZerofiers());
+    std::vector<uint64_t> zerofierMasks(domain.nZerofiers());
     for (uint64_t b = 0; b < zerofiers.size(); ++b) {
         zerofiers[b] = domain.zerofier(b).data();
+        zerofierMasks[b] = domain.zerofierMask(b);
     }
 
     const uint64_t blockRows = std::min(BLOCK_ROWS, m);
     const uint64_t nBlocks = m / blockRows;
     const uint64_t nTemp = params.nTemp;
     // Per thread: the temporaries of a block, and a buffer for each source that wraps around. Nothing
-    // in the parallel region allocates or throws.
+    // in the parallel region allocates or throws. Not cleared: a block writes each element before it
+    // reads it, a temporary in an op before the ops after it (ExpressionsBin refuses code that reads
+    // one first, and its destId is the last op's) and a buffer in load().
     const uint64_t perThread = (nTemp + 2) * blockRows;
-    std::vector<FrElement> scratch(perThread * omp_get_max_threads());
+    const std::unique_ptr<FrElement[]> scratch(new FrElement[perThread * omp_get_max_threads()]);
     Engine::Fr &fr = Engine::engine.fr;
 
 #pragma omp parallel for schedule(static)
     for (uint64_t block = 0; block < nBlocks; ++block) {
-        FrElement *tmp = scratch.data() + perThread * omp_get_thread_num();
+        FrElement *tmp = scratch.get() + perThread * omp_get_thread_num();
         FrElement *buffers[2] = {tmp + nTemp * blockRows, tmp + (nTemp + 1) * blockRows};
         const uint64_t row = block * blockRows;
 
@@ -428,7 +416,21 @@ void Expressions::calculate(const ParserParams &params, const ParserArgs &args, 
                 return {buffer, false};
             }
             if (type == types.zi()) {
-                return {zerofiers[arg1 - 1] + row, false};
+                // Zi at point i is zi[i & mask]: one value for every point, or a block of its own
+                // unless it repeats within the block.
+                const FrElement *zi = zerofiers[arg1 - 1];
+                const uint64_t mask = zerofierMasks[arg1 - 1];
+                if (mask == 0) {
+                    return {zi, true};
+                }
+                const uint64_t start = row & mask;
+                if (start + blockRows <= mask + 1) {
+                    return {zi + start, false};
+                }
+                for (uint64_t j = 0; j < blockRows; ++j) {
+                    buffer[j] = zi[(row + j) & mask];
+                }
+                return {buffer, false};
             }
             if (type == types.tmp()) {
                 return {tmp + arg1 * blockRows, false};

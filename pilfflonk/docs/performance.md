@@ -123,10 +123,11 @@ scan, over blocks of about `2^12` coefficients of the quotient, a whole number `
 
 It is twice the serial work, on every thread, in place (`divByMonic` clears a second polynomial), and
 it gives the serial quotient: the quotient is unique and the arithmetic exact. It returns whether the
-remainder is zero, which `divideExactly` checks as before. `W` and `W'` also pack each `f_i` into one
-buffer, where `W` divides it as a polynomial over it that does not clear it
-(`Polynomial::fromReservedBuffer`), instead of allocating, clearing and copying a polynomial per
-`f_i`; and `pack()` calls `CPolynomial::getCoefficients`, added next to `getPolynomial`, which
+remainder is zero, which `divideExactly` checks as before. `W` also packs each `f_i` into one buffer,
+where it divides it as a polynomial over it that does not clear it (`Polynomial::fromReservedBuffer`),
+instead of allocating, clearing and copying a polynomial per `f_i`; `W'` packs none, and adds each
+component `p_j` of `f_i` into `L` where the packing puts it (coefficient `c` at `c·k + j`), as the
+device does; and `pack()` calls `CPolynomial::getCoefficients`, added next to `getPolynomial`, which
 interleaves `f` in one parallel pass over its coefficients, without clearing a power-of-two buffer and
 scanning it for the degree, which every commitment gains from too. pilfflonk has no division or
 packing of its own: it calls these rapidsnark methods, and rapidsnark's existing ones are unchanged
@@ -375,7 +376,8 @@ in the same session); "after" is the first GPU proof of `gpu_check`, and for the
   proof of L1 `2^21` is 5.66 GB, against 6.18 GB when the key kept both, and of `fibonacci` `2^22`
   1.53 GB against 1.79 GB, the table of each (512 and 256 MiB); the fixed
   columns on `H`, decoded from the `.const` while the AIR loads, are freed once they are on the
-  device, so they leave the key's memory but not the load's peak.
+  device, so they leave the key's memory but not the load's peak. The `.const`'s bytes themselves
+  are released as soon as they are decoded, before the columns are interpolated and committed.
 - **The arena given.** The arena can be a buffer of the caller's ([the wrap's device
   buffer](#the-wraps-device-buffer)): `GpuKeyOptions::arena` (C++), `pilfflonk_ctx_new_on_device_buffer`
   (C), `ProvingKey::load_on_device_buffer` (Rust). The key never writes it while it loads (its
@@ -599,24 +601,26 @@ before the range-check gates, whose final circuit checks the Goldilocks ranges b
 | Final proof, CPU 32 threads | **9.64 s** | 62.6 s (64 thr) | 127.8 s | 45.0 s |
 | Wrapper, CPU 32 threads | **27.9 s** | 80.1 s (64 thr) | 146.3 s | 63.9 s |
 | `prove-snark`, CPU 32 threads | 32.9 s | 109 s (64 thr) | 218 s | 73–82 s |
-| Peak RSS | **6.29 GB** | 27.4 GB (64 thr) | 134.4 GB | 54.5 GB |
-| Final proof, RTX 5090 | **0.34 s** | — | no GPU prover | 0.86 s |
-| Wrapper, RTX 5090 | **1.09 s** | — | — | 1.65 s |
-| `prove-snark`, RTX 5090 | **2.21 s** | — | — | 3.50–3.65 s |
+| Peak RSS | **6.12 GB** | 27.4 GB (64 thr) | 134.4 GB | 54.5 GB |
+| Final proof, RTX 5090 | **0.30 s** | — | no GPU prover | 0.86 s |
+| Wrapper, RTX 5090 | **1.00 s** | — | — | 1.65 s |
+| `prove-snark`, RTX 5090 | **2.17 s** | — | — | 3.50–3.65 s |
 | Host RSS, RTX 5090 | **2.95 GB** | — | — | 13.2 GB |
 | GPU memory | **5.0 GiB** | — | — | 29.8 GiB |
 | Proof | 2,208 B, 69 words | 2,048 B, 64 words | 768 B (E: snarkjs's 24 words) | 768 B |
 | `verifyProof` gas | 332,661 | 310,932 | 182,681 | 263,175 |
 | Verifier's runtime | 21,569 B | 19,306 B | 14,078 B | 5,850 B |
 
-All **M** but FFLONK's proof size. On 32 threads the pilfflonk proof is 4.7 times faster than
-PLONK's and 13 times faster than FFLONK's, and the wrapper 2.3 and 5.2 times; its peak memory is
-8.7 and 21 times smaller. Its `verifyProof` costs 1.82 times FFLONK's gas (the limit set for this
-port was twice) and 1.26 times PLONK's. The range checks took the AIR from 2^22 rows to 2^19 and
-the proof from 62.6 s to 7.0 s on 64 threads, for 160 more bytes and 21,729 more gas. On the RTX
-5090 ([On the GPU](#on-the-gpu)), the pilfflonk proof is 2.5 times faster than PLONK's, the wrapper
-1.5 times and the whole command 1.6 times; it needs a quarter of PLONK's host memory and a sixth
-of its GPU memory.
+All **M** but FFLONK's proof size. pilfflonk's peak RSS on 32 threads is that of the current prover,
+measured on the RTX 5090 machine's CPU (two runs, 6.12 GB both, against 6.30 GB there for the prover
+before its last cleanup, as the CPU machine's 6.29 GB); its times are the CPU machine's. On 32
+threads the pilfflonk proof is 4.7 times faster than PLONK's and 13 times faster than FFLONK's, and
+the wrapper 2.3 and 5.2 times; its peak memory is 8.9 and 22 times smaller. Its `verifyProof` costs
+1.82 times FFLONK's gas (the limit set for this port was twice) and 1.26 times PLONK's. The range
+checks took the AIR from 2^22 rows to 2^19 and the proof from 62.6 s to 7.0 s on 64 threads, for 160
+more bytes and 21,729 more gas. On the RTX 5090 ([On the GPU](#on-the-gpu)), the pilfflonk proof is
+2.9 times faster than PLONK's, the wrapper 1.7 times and the whole command 1.6–1.7 times; it needs a
+quarter of PLONK's host memory and a sixth of its GPU memory.
 
 ### On the GPU
 
@@ -632,28 +636,30 @@ the cold run:
 
 | Phase | Warm (s) | Cold (s) |
 |---|---|---|
-| `LOADING_RECURSIVE_F_SETUP` | 0.26 | 0.27 |
-| `INITIALIZING_FINAL_SNARK_PROVER` | 0.46 | 0.50 |
+| `LOADING_RECURSIVE_F_SETUP` | 0.26 | 0.26 |
+| `INITIALIZING_FINAL_SNARK_PROVER` | 0.50 (0.43–0.50) | 0.51 |
 | `GENERATE_RECURSIVEF` | 0.35 | 0.35 |
-| `CALCULATE_FINAL_WITNESS` | 0.40 | 0.38 |
-| `CALCULATE_FINAL_PROOF` | **0.34** (0.32–0.35) | 0.35 |
-| `GENERATING_WRAPPER_SNARK_PROOF` | **1.09** (1.05–1.11) | 1.10 |
-| The command | **2.21** (2.21–2.23) | 3.57 |
+| `CALCULATE_FINAL_WITNESS` | 0.34 | 0.34 |
+| `CALCULATE_FINAL_PROOF` | **0.30** (0.28–0.32) | 0.28 |
+| `GENERATING_WRAPPER_SNARK_PROOF` | **1.00** (0.98–1.03) | 0.98 |
+| The command | **2.17** (2.16–2.22) | 3.47 |
 
-The recursivef's `.consttree` was there from earlier runs. The host's peak RSS is 2.95 GB: a key on
-the GPU keeps neither its fixed columns on `H` nor the LDE's table on the host
-([host memory](#selection-memory-and-errors)). The GPU's memory in use, sampled once a second, peaks
-at 5,099 MiB.
+The recursivef's `.consttree` was there from earlier runs. Against the CLI before the last cleanup
+of the prover and the wrap (the same session, alternating, three warm runs each): the final proof
+0.32, the final circuit's witness 0.39 and the wrapper 1.07–1.08 s; its proofs are the same byte for
+byte with a fixed blinding seed. The host's peak RSS is 2.95 GB: a key on the GPU keeps neither its
+fixed columns on `H` nor the LDE's table on the host ([host memory](#selection-memory-and-errors)).
+The GPU's memory in use, sampled once a second, peaks at 5,157 MiB.
 
-- **The pilfflonk proof**, 0.34 s (9.64 s on 32 threads of the CPU machine): the instance 0.013 s,
-  stage 1 0.05–0.06 s, stage 2 0.022–0.026 s, `Q` 0.088–0.092 s, the evaluations 0.002 s and the
-  opening 0.10–0.12 s. A proof copies its witness up, 168 MB, and 4.5 KB up and 5.2 KB down
-  otherwise; nothing of the witness or of the committed polynomials comes back to the host.
-- **The key**, 0.46 s: the SRS 0.06–0.07 s and its copy 0.04 s, and the AIR 0.26–0.34 s, with the
-  shift's sums 0.08–0.13 s, the fixed INTT 0.04 s and the fixed commitments 0.06 s
+- **The pilfflonk proof**, 0.30 s (9.64 s on 32 threads of the CPU machine): the instance
+  0.013–0.016 s, stage 1 0.05–0.07 s, stage 2 0.018–0.031 s, `Q` 0.088–0.090 s, the evaluations
+  0.001 s and the opening 0.10–0.12 s. A proof copies its witness up, 168 MB, and 4.5 KB up and 5.2
+  KB down otherwise; nothing of the witness or of the committed polynomials comes back to the host.
+- **The key**, 0.50 s: the SRS 0.07 s and its copy 0.04 s, and the AIR 0.27–0.33 s, with the
+  shift's sums 0.08–0.10 s, the fixed INTT 0.04 s and the fixed commitments 0.06–0.08 s
   ([loading a key](#loading-a-key-on-the-gpu)). CUDA's initialisation comes earlier, with the
   recursivef's device buffers, which the wrapper allocates at its start.
-- **The wrapper**, 1.09 s: the recursivef, the final circuit's witness and the pilfflonk proof. The
+- **The wrapper**, 1.00 s: the recursivef, the final circuit's witness and the pilfflonk proof. The
   wrapper holds the recursivef's device buffers for its life, as for PLONK, instead of allocating
   and freeing them (with 512 MB of pinned host memory) for each proof.
 - **GPU memory.** The wrapper holds the recursivef's device buffers (its prover buffer, 2.67 GB, and
@@ -661,8 +667,8 @@ at 5,099 MiB.
   buffer, and the key's memory beside them, 1.56 GB at most (`requiredDeviceBytes`).
 - **Against PLONK's GPU wrap** (rapidsnark's GPU prover, measured on the same 5090): its final proof
   takes 0.86 s, its wrapper 1.65 s and its command 3.50–3.65 s, with 13.2 GB of host RSS and
-  29.8 GiB of GPU memory. pilfflonk's proof is 2.5 times faster, its wrapper 1.5 times and its
-  command 1.6 times, with a quarter of the host memory and a sixth of the GPU memory.
+  29.8 GiB of GPU memory. pilfflonk's proof is 2.9 times faster, its wrapper 1.7 times and its
+  command 1.6–1.7 times, with a quarter of the host memory and a sixth of the GPU memory.
 
 ### On chain
 

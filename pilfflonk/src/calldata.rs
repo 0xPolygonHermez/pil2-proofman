@@ -64,8 +64,7 @@ impl CalldataLayout {
     pub fn of(vkey: &Vkey) -> Self {
         let n_fixed = vkey.layout.n_fixed() as u64;
         let n_rows = 1u64 << vkey.power;
-        let q_stage = vkey.layout.0.last().map_or(0, |f| f.stage);
-        let n_q = vkey.layout.0.iter().filter(|f| f.stage == q_stage).map(|f| f.k).sum::<u64>();
+        let n_q = vkey.layout.q_entries().map(|f| f.k).sum::<u64>();
         let aux_rows = vkey
             .boundaries
             .iter()
@@ -165,7 +164,7 @@ pub fn verifier_challenges(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> P
     check_shape(vkey, proof, publics)?;
     let layout = &vkey.layout.0;
     let n_fixed = vkey.layout.n_fixed();
-    let q_stage = layout.last().map_or(0, |f| f.stage);
+    let q_stage = vkey.layout.q_stage();
     let n_stages = q_stage.saturating_sub(1);
 
     // Step 1.

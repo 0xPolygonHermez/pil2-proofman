@@ -9,8 +9,7 @@ use pil2_pilout::pilout::hint_field::Value::StringValue;
 use pil2_pilout::pilout::hint_field::Value::Operand;
 use pil2_pilout::pilout::operand::Operand::Constant;
 use proofman_common::initialize_logger;
-use proofman_pilfflonk::BN128_R;
-use num_bigint::BigUint;
+use proofman_pilfflonk::field::is_r_be;
 use serde::Serialize;
 use tinytemplate::TinyTemplate;
 use std::{fs, path::PathBuf};
@@ -124,7 +123,7 @@ struct StageColumnCtx {
 /// not accept yet; values of dimension 1, as BN128 has no extension field; and publics that are
 /// `Bn128` values.
 fn is_bn128(pilout: &pil2_pilout::pilout::PilOut) -> bool {
-    BigUint::parse_bytes(BN128_R.as_bytes(), 10).is_some_and(|r| BigUint::from_bytes_be(&pilout.base_field) == r)
+    is_r_be(&pilout.base_field)
 }
 
 impl PilHelpersCmd {
@@ -577,6 +576,7 @@ impl PilHelpersCmd {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num_bigint::BigUint;
     use pil2_pilout::pilout::{self as pb, hint_field};
     use prost::Message;
 
@@ -638,7 +638,7 @@ mod tests {
     }
 
     fn bn128() -> Vec<u8> {
-        BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap().to_bytes_be()
+        proofman_pilfflonk::field::r().to_bytes_be()
     }
 
     /// The `witness_bits` hint `col witness bits(8) a` gives.

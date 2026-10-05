@@ -24,8 +24,6 @@ extern "C" {
 
     pub fn pilfflonk_last_status() -> ::std::os::raw::c_int;
 
-    pub fn pilfflonk_fr_check_canonical(scalar: *const u8) -> ::std::os::raw::c_int;
-
     pub fn pilfflonk_keccak256(data: *const u8, len: u64, out: *mut u8) -> ::std::os::raw::c_int;
 
     pub fn pilfflonk_transcript_new() -> *mut ::std::os::raw::c_void;
@@ -63,8 +61,6 @@ extern "C" {
         evals: *const u8,
         out_g1: *mut u8,
     ) -> ::std::os::raw::c_int;
-
-    pub fn pilfflonk_ctx_new(proving_key_dir: *const ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
 
     pub fn pilfflonk_ctx_new_on(
         proving_key_dir: *const ::std::os::raw::c_char,

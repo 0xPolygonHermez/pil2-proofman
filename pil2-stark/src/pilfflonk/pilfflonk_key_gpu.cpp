@@ -6,6 +6,7 @@
 #include <omp.h>
 
 #include <algorithm>
+#include <cstring>
 #include <stdexcept>
 #include <utility>
 
@@ -17,21 +18,6 @@
 #include "pilfflonk_proving_key.hpp"
 #include "thread_utils.hpp"
 #include "timer.hpp"
-
-// The PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu), declared as plonk_prover_gpu.c.cuh
-// declares them.
-extern "C" void gpu_plonk_cuda_malloc(void **dBuffer, uint64_t buffeSize);
-extern "C" void gpu_plonk_cuda_free(void *dBuffer);
-extern "C" void gpu_plonk_cuda_malloc_pinned_buffer(void **pinnedBuffer, size_t pinnedSize);
-extern "C" void gpu_plonk_free_pinned_buffer(void *pinnedBuffer);
-extern "C" void *gpu_plonk_create_cuda_stream_nonblocking();
-extern "C" void gpu_plonk_destroy_cuda_stream(void *stream);
-extern "C" void gpu_plonk_sync_cuda_stream(void *stream);
-extern "C" void gpu_plonk_memcpy_h2d_async(void *dst, const void *src, size_t bytes, void *stream);
-extern "C" void gpu_plonk_memcpy_d2h(void *dst, const void *src, size_t bytes);
-extern "C" void gpu_plonk_cuda_device_sync();
-extern "C" void gpu_plonk_precompute_omega_tables_async(void *dBases, void *dTid, const void *omega4xPtr,
-                                                        uint32_t blockSize, uint32_t numBlocks, void *stream);
 
 namespace PilFflonk {
 
@@ -49,6 +35,19 @@ constexpr uint64_t SCALAR_BITS = 254;
 constexpr uint64_t BUCKET_BYTES = 4 * sizeof(FrElement);
 
 uint64_t aligned(uint64_t bytes) { return (bytes + 255) & ~uint64_t(255); }
+
+// The host side of a staged copy, to or from the pinned buffer: by every thread, but below
+// PARALLEL_COPY_BYTES, where one thread copies sooner than an OpenMP team forks (a count or a scalar
+// is 8 to 32 bytes).
+constexpr uint64_t PARALLEL_COPY_BYTES = uint64_t(1) << 20;
+
+void hostCopy(void *dst, const void *src, uint64_t bytes) {
+    if (bytes < PARALLEL_COPY_BYTES) {
+        std::memcpy(dst, src, bytes);
+    } else {
+        ThreadUtils::parcpy(dst, src, bytes, omp_get_max_threads());
+    }
+}
 
 uint64_t log2Floor(uint64_t x) {
     uint64_t bits = 0;
@@ -198,7 +197,7 @@ void Staging::toDevice(void *dst, const void *src, uint64_t bytes) {
         const uint64_t h = chunk & 1;
         // The half's previous copy is done before it is written again.
         pilfflonk_gpu_event_sync(done[h]);
-        ThreadUtils::parcpy(halves[h], static_cast<const uint8_t *>(src) + at, n, omp_get_max_threads());
+        hostCopy(halves[h], static_cast<const uint8_t *>(src) + at, n);
         gpu_plonk_memcpy_h2d_async(static_cast<uint8_t *>(dst) + at, halves[h], n, stream);
         pilfflonk_gpu_event_record(done[h], stream);
     }
@@ -227,8 +226,7 @@ void Staging::toHost(void *dst, const void *src, uint64_t bytes) {
             issue(chunk + 1);
         }
         pilfflonk_gpu_event_sync(done[chunk & 1]);
-        ThreadUtils::parcpy(static_cast<uint8_t *>(dst) + chunk * half, halves[chunk & 1], length(chunk),
-                            omp_get_max_threads());
+        hostCopy(static_cast<uint8_t *>(dst) + chunk * half, halves[chunk & 1], length(chunk));
     }
     copies.addToHost(bytes);
 }
@@ -270,9 +268,8 @@ ArenaLayout arenaLayout(const AirKey &air) {
     a.factors = carver.take(a.factorElements * sizeof(FrElement));
     a.counts = carver.take(a.nCounts * sizeof(uint64_t));
     a.stageBytes = carver.size();
-    a.hints = a.work;
     a.hintBytes = stageScratchBytes(air);
-    a.stageBytes = std::max(a.stageBytes, aligned(a.hints + a.hintBytes));
+    a.stageBytes = std::max(a.stageBytes, aligned(a.work + a.hintBytes));
 
     // Q's phase, over the stages' (InstanceGpu::computeQ).
     const AirDegrees &d = air.degrees();

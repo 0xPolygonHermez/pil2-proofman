@@ -12,6 +12,7 @@
 #include "keccak_256_transcript.hpp"
 #include "keccak_wrapper.hpp"
 #include "pilfflonk_api.hpp"
+#include "pilfflonk_fr.hpp"
 
 namespace PilFflonkTest {
 
@@ -147,7 +148,7 @@ public:
         Bytes32 challenge;
         assert(pilfflonk_transcript_squeeze(handle, challenge.bytes) == PILFFLONK_OK);
         assert(pilfflonk_last_error()[0] == '\0');
-        assert(pilfflonk_fr_check_canonical(challenge.bytes) == PILFFLONK_OK);
+        assert(PilFflonk::isCanonicalFr(challenge.bytes));
         return challenge;
     }
 

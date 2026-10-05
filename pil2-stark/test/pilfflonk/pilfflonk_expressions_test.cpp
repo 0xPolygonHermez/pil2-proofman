@@ -15,16 +15,12 @@
 // $PILFFLONK_REPO_ROOT if it is set.
 #include "pilfflonk_test.hpp"
 
-#include <limits.h>
 #include <omp.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
-#include <iterator>
 #include <map>
 #include <string>
 #include <vector>
@@ -64,26 +60,7 @@ using Engine = AltBn128::Engine;
 
 Engine::Fr &F() { return Engine::engine.fr; }
 
-std::string repoPath(const std::string &relative) {
-    if (const char *root = std::getenv("PILFFLONK_REPO_ROOT")) {
-        return std::string(root) + "/" + relative;
-    }
-    char exe[PATH_MAX];
-    const ssize_t length = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-    assert(length > 0);
-    exe[length] = '\0';
-    std::string dir(exe);
-    dir = dir.substr(0, dir.rfind('/'));
-    return dir + "/../../" + relative;
-}
-
 std::string fixture(const std::string &name) { return repoPath("setup/pilfflonk/tests/fixtures/bytecode/" + name); }
-
-std::vector<uint8_t> readBytes(const std::string &path) {
-    std::ifstream file(path, std::ios::binary);
-    assert(file);
-    return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-}
 
 json readJson(const std::string &path) {
     const std::vector<uint8_t> bytes = readBytes(path);
@@ -98,12 +75,6 @@ FrElement fr(const std::string &decimal) {
 
 FrElement fr(const json &value) { return fr(value.get<std::string>()); }
 
-FrElement fromUI(uint64_t v) {
-    FrElement e;
-    F().fromUI(e, v);
-    return e;
-}
-
 std::vector<FrElement> frs(const json &values) {
     std::vector<FrElement> out;
     for (const json &v : values) out.push_back(fr(v));
@@ -111,18 +82,6 @@ std::vector<FrElement> frs(const json &values) {
 }
 
 bool eq(const FrElement &a, const FrElement &b) { return F().eq(a, b); }
-
-FrElement inv(const FrElement &a) {
-    FrElement r;
-    F().inv(r, a);
-    return r;
-}
-
-FrElement power(const FrElement &base, uint64_t exponent) {
-    FrElement r = F().one();
-    for (uint64_t i = 0; i < exponent; ++i) F().mul(r, r, base);
-    return r;
-}
 
 // A canonical 32-byte little-endian value, into Montgomery form.
 FrElement fromLE(const uint8_t *bytes) {
@@ -347,6 +306,13 @@ struct Columns {
     }
 };
 
+// Zi of boundary b of `domain` at each of its points.
+std::vector<FrElement> zerofierValues(const ExpressionsDomain &domain, uint64_t b) {
+    std::vector<FrElement> values(domain.size());
+    for (uint64_t i = 0; i < values.size(); ++i) values[i] = domain.zerofier(b)[i & domain.zerofierMask(b)];
+    return values;
+}
+
 void expectValues(const std::vector<FrElement> &got, const json &expected, const char *what) {
     assert(got.size() == expected.size());
     for (size_t i = 0; i < got.size(); ++i) {
@@ -400,7 +366,7 @@ void testSampleGivesTheRustEvaluatorsValues() {
     const ExpressionsDomain coset = ExpressionsDomain::coset(nBits, nBitsExt, info.boundaries);
     assert(coset.size() == 16 && coset.extendBits() == 1 && coset.nZerofiers() == 4);
     for (uint64_t b = 0; b < 4; ++b) {
-        expectValues(coset.zerofier(b), expected["cosetZerofiers"][b], "Zi on the coset");
+        expectValues(zerofierValues(coset, b), expected["cosetZerofiers"][b], "Zi on the coset");
     }
     out.resize(coset.size());
     expressions.calculateExpression(7, coset, proverValues(cosetColumns), out.data());
@@ -476,6 +442,13 @@ void testZerofiersOnTheCoset() {
                                               {BoundaryType::EveryFrame, 0, 0}};
     const ExpressionsDomain coset = ExpressionsDomain::coset(nBits, nBitsExt, boundaries);
     assert(coset.size() == m && coset.extendBits() == 2 && coset.nZerofiers() == boundaries.size());
+    // everyRow's Zi, 1/Z_H, repeats every 2^extendBits points, and is kept as those values only.
+    assert(coset.zerofier(0).size() == 4 && coset.zerofierMask(0) == 3);
+    std::vector<std::vector<FrElement>> zi;
+    for (uint64_t b = 0; b < boundaries.size(); ++b) {
+        assert(b == 0 || coset.zerofierMask(b) == m - 1);
+        zi.push_back(zerofierValues(coset, b));
+    }
 
     FrElement x = fromUI(5); // g
     const FrElement lastRoot = power(wN, n - 1);
@@ -483,26 +456,26 @@ void testZerofiersOnTheCoset() {
     for (uint64_t i = 0; i < m; ++i) {
         FrElement zh, d;
         F().sub(zh, power(x, n), F().one());
-        const FrElement everyRow = inv(zh);
+        const FrElement everyRow = inverse(zh);
         F().sub(d, x, F().one());
-        const FrElement firstRow = F().mul(zh, inv(d));
+        const FrElement firstRow = F().mul(zh, inverse(d));
         // X − ω^(N−1), not X − ω^N = X − 1 (pilfflonk/docs/README.md#stark-lastrow-zerofier)
         F().sub(d, x, lastRoot);
-        const FrElement lastRow = F().mul(zh, inv(d));
+        const FrElement lastRow = F().mul(zh, inverse(d));
         FrElement frame = F().one();
         for (uint64_t j : {uint64_t(0), n - 1, n - 2}) {
             F().sub(d, x, power(wN, j));
             F().mul(frame, frame, d);
         }
-        assert(eq(coset.zerofier(0)[i], everyRow));
-        assert(eq(coset.zerofier(1)[i], firstRow));
-        assert(eq(coset.zerofier(2)[i], lastRow));
-        assert(eq(coset.zerofier(3)[i], frame));
-        assert(eq(coset.zerofier(4)[i], F().one())); // an everyFrame that excludes nothing: Z_D = Z_H
+        assert(eq(zi[0][i], everyRow));
+        assert(eq(zi[1][i], firstRow));
+        assert(eq(zi[2][i], lastRow));
+        assert(eq(zi[3][i], frame));
+        assert(eq(zi[4][i], F().one())); // an everyFrame that excludes nothing: Z_D = Z_H
         lastIsNotFirst = lastIsNotFirst || !eq(lastRow, firstRow);
         // The same at the point, by zerofiersAt.
         const std::vector<FrElement> at = PilFflonk::zerofiersAt(nBits, boundaries, x);
-        for (size_t b = 0; b < boundaries.size(); ++b) assert(eq(at[b], coset.zerofier(b)[i]));
+        for (size_t b = 0; b < boundaries.size(); ++b) assert(eq(at[b], zi[b][i]));
         F().mul(x, x, w);
     }
     assert(lastIsNotFirst);
@@ -531,8 +504,9 @@ void testZerofiersOnTheCoset() {
             assert(piece.nZerofiers() == boundaries.size());
             for (size_t b = 0; b < boundaries.size(); ++b) {
                 for (uint64_t i = 0; i < S; ++i) {
-                    const FrElement &whole = coset.zerofier(b)[part + nParts * i];
-                    assert(std::memcmp(&piece.zerofier(b)[i], &whole, sizeof(FrElement)) == 0);
+                    const FrElement &whole = zi[b][part + nParts * i];
+                    const FrElement &inPiece = piece.zerofier(b)[i & piece.zerofierMask(b)];
+                    assert(std::memcmp(&inPiece, &whole, sizeof(FrElement)) == 0);
                 }
             }
         }

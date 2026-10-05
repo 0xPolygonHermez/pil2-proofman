@@ -7,7 +7,8 @@
 #include <stdexcept>
 #include <string>
 
-#include "pilfflonk_expressions.hpp"
+#include "pilfflonk_error.hpp"
+#include "pilfflonk_fr.hpp"
 #include "thread_utils.hpp"
 
 namespace PilFflonk {
@@ -16,9 +17,7 @@ namespace {
 
 using Engine = Lde::Engine;
 
-std::invalid_argument invalid(const char *function, const std::string &message) {
-    return std::invalid_argument(std::string("Lde::") + function + ": " + message);
-}
+constexpr InvalidArgument invalid("Lde::");
 
 // Throws unless `buffers` holds nCols >= 1 pointers, none of them null.
 template <typename Pointer>
@@ -140,49 +139,6 @@ void foldByPowers(FrElement *dst, const FrElement *src, uint64_t n, uint64_t s, 
 }
 
 } // namespace
-
-FrElement power(const FrElement &base, uint64_t exponent) {
-    uint8_t littleEndian[sizeof(exponent)];
-    for (size_t i = 0; i < sizeof(exponent); ++i) {
-        littleEndian[i] = static_cast<uint8_t>(exponent >> (8 * i));
-    }
-    FrElement result;
-    Engine::engine.fr.exp(result, base, littleEndian, sizeof(littleEndian));
-    return result;
-}
-
-bool batchInverse(FrElement *out, const FrElement *values, uint64_t n) {
-    Engine::Fr &fr = Engine::engine.fr;
-    bool zero = false;
-#pragma omp parallel reduction(|| : zero)
-    {
-        const uint64_t nThreads = omp_get_num_threads();
-        const uint64_t chunk = (n + nThreads - 1) / nThreads;
-        const uint64_t begin = std::min(n, omp_get_thread_num() * chunk);
-        const uint64_t end = std::min(n, begin + chunk);
-        if (begin < end) {
-            // out[i] = values[begin] · … · values[i − 1]
-            FrElement acc = fr.one();
-            for (uint64_t i = begin; i < end; ++i) {
-                out[i] = acc;
-                fr.mul(acc, acc, values[i]);
-            }
-            if (fr.isZero(acc)) {
-                zero = true;
-            } else {
-                FrElement inv;
-                fr.inv(inv, acc);
-                for (uint64_t i = end; i-- > begin;) {
-                    FrElement t;
-                    fr.mul(t, inv, out[i]);
-                    fr.mul(inv, inv, values[i]);
-                    out[i] = t;
-                }
-            }
-        }
-    }
-    return !zero;
-}
 
 Lde::Lde(uint64_t _nBits, uint64_t _nBitsExt) {
     if (_nBitsExt > MAX_NBITS_EXT) {

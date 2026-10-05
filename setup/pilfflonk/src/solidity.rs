@@ -28,17 +28,16 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
-use std::sync::OnceLock;
 
 use num_bigint::BigUint;
 use proofman_pilfflonk::calldata::SELECTOR_BYTES;
+use proofman_pilfflonk::field::{q, r};
 use proofman_pilfflonk::names::evaluation_name;
-use proofman_pilfflonk::{Boundary, CalldataLayout, G1Affine, JsonFile, PolType, Vkey, BN128_Q, BN128_R};
+use proofman_pilfflonk::{Boundary, CalldataLayout, FrBytes, G1Affine, JsonFile, PolType, Vkey};
 use serde::Serialize;
 use serde_json::Value;
 use tera::{Context as TeraContext, Tera};
 
-use crate::digest::vkey_digest;
 use crate::error::SetupError;
 
 /// The file name of the verifier, in the backend directory of the `provingKey/`, next to the vkey
@@ -58,20 +57,6 @@ fn fail<T>(message: impl Into<String>) -> Result<T, SetupError> {
 // ---------------------------------------------------------------------------------------------
 // BN128's scalar field, with num-bigint: the constants the contract embeds
 // ---------------------------------------------------------------------------------------------
-
-fn big(decimal: &str) -> BigUint {
-    BigUint::parse_bytes(decimal.as_bytes(), 10).unwrap_or_default()
-}
-
-fn r() -> &'static BigUint {
-    static R: OnceLock<BigUint> = OnceLock::new();
-    R.get_or_init(|| big(BN128_R))
-}
-
-fn q() -> &'static BigUint {
-    static Q: OnceLock<BigUint> = OnceLock::new();
-    Q.get_or_init(|| big(BN128_Q))
-}
 
 fn fr_pow(base: &BigUint, exponent: u64) -> BigUint {
     base.modpow(&BigUint::from(exponent), r())
@@ -400,7 +385,7 @@ fn q_operand(
         "eval" => (format!("calldataload({})", index(ops.eval, u64_field(value, "id", at)?, "evaluation", at)?), true),
         "public" => (format!("calldataload({})", index(ops.public, u64_field(value, "id", at)?, "public", at)?), true),
         "number" => match value.get("value").and_then(Value::as_str) {
-            Some(v) if big(v) < *r() && big(v).to_str_radix(10) == v => (v.to_string(), true),
+            Some(v) if FrBytes::from_decimal(v).is_ok() => (v.to_string(), true),
             _ => return fail(format!("qVerifier: {at} is not a number below r")),
         },
         "challenge" => {
@@ -480,7 +465,7 @@ impl Context {
     fn new(vkey: &Vkey) -> Result<Self, SetupError> {
         let layout = &vkey.layout.0;
         let n_fixed = vkey.layout.n_fixed();
-        let q_stage = layout.last().map_or(0, |f| f.stage);
+        let q_stage = vkey.layout.q_stage();
         let n_stages = q_stage.saturating_sub(1);
         let n_rows = 1u64 << vkey.power;
         let n_big = BigUint::from(n_rows);
@@ -531,7 +516,7 @@ impl Context {
         let mut piece_slots = BTreeMap::new();
         let mut pieces_in_calldata = Vec::new();
         if cd.n_q_pieces > 0 {
-            let pieces = layout.iter().filter(|f| f.stage == q_stage).flat_map(|f| f.pols.iter());
+            let pieces = vkey.layout.q_entries().flat_map(|f| f.pols.iter());
             for (t, pol) in pieces.enumerate() {
                 let piece: u64 = match pol.name.strip_prefix('Q').and_then(|i| i.parse().ok()) {
                     Some(piece) => piece,
@@ -881,7 +866,7 @@ fn render(template: &str, context: &TeraContext) -> Result<String, SetupError> {
 /// with a fixed commitment off the curve.
 pub fn verifier_sol(vkey: &Vkey) -> Result<String, SetupError> {
     vkey.validate()?;
-    if vkey_digest(vkey)? != vkey.digest {
+    if vkey.compute_digest()? != vkey.digest {
         return fail(
             "the vkey's digest is not the digest of its contents (pilfflonk/docs/formats.md#digest): the JS verifier \
              accepts no proof of it",

@@ -103,29 +103,6 @@ bool equal(const std::vector<FrElement> &a, const std::vector<FrElement> &b) {
     return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), same);
 }
 
-FrElement fromUI(uint64_t value) {
-    FrElement e;
-    E.fr.fromUI(e, value);
-    return e;
-}
-
-FrElement power(const FrElement &base, const mpz_t exponent) {
-    uint8_t littleEndian[32] = {};
-    assert(mpz_sizeinbase(exponent, 256) <= sizeof(littleEndian));
-    mpz_export(littleEndian, nullptr, -1, 1, -1, 0, exponent);
-    FrElement result;
-    E.fr.exp(result, base, littleEndian, sizeof(littleEndian));
-    return result;
-}
-
-FrElement power(const FrElement &base, uint64_t exponent) {
-    mpz_t e;
-    mpz_init_set_ui(e, exponent);
-    const FrElement result = power(base, e);
-    mpz_clear(e);
-    return result;
-}
-
 // base^s, the inverse of base^|s| for s < 0.
 FrElement signedPower(const FrElement &base, int64_t s) {
     if (s >= 0) {
@@ -134,12 +111,6 @@ FrElement signedPower(const FrElement &base, int64_t s) {
     FrElement inverse;
     E.fr.inv(inverse, power(base, static_cast<uint64_t>(-s)));
     return inverse;
-}
-
-FrElement inverse(const FrElement &a) {
-    FrElement r;
-    E.fr.inv(r, a);
-    return r;
 }
 
 // 5^((r-1)/n), from r written out in the test: independent of the prover's, which starts from
@@ -174,12 +145,6 @@ G1Point times(G1Point p, const FrElement &x) {
     return r;
 }
 
-G1Point g1Times(const FrElement &x) {
-    G1Point g;
-    E.g1.copy(g, E.g1.oneAffine());
-    return times(g, x);
-}
-
 G1Point add(G1Point a, G1Point b) {
     G1Point r;
     E.g1.add(r, a, b);
@@ -190,10 +155,6 @@ G1Point sub(G1Point a, G1Point b) {
     G1Point r;
     E.g1.sub(r, a, b);
     return r;
-}
-
-bool samePoint(G1Point a, G1Point b) {
-    return E.g1.eq(a, b);
 }
 
 // A polynomial owning `length` coefficients, the first of them `coefs`, with its degree fixed.

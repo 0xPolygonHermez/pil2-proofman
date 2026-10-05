@@ -11,6 +11,7 @@ use anyhow::{bail, Context, Result};
 use crate::proving_key::recursive::ensure_pil2com_exec;
 
 /// Options for the `compile-pil` subcommand.
+#[derive(Default)]
 pub struct CompilePilOptions {
     /// Path to the entry `.pil` file (e.g. `pil/zisk.pil`).
     pub pil_path: String,

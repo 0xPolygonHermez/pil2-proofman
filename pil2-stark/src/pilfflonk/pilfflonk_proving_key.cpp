@@ -7,9 +7,7 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <fstream>
 #include <future>
-#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -18,6 +16,7 @@
 
 #include "pilfflonk_error.hpp"
 #include "pilfflonk_fr.hpp"
+#include "pilfflonk_json.hpp"
 #include "pilfflonk_transcript.hpp"
 #include "timer.hpp"
 #ifdef __USE_CUDA__
@@ -39,57 +38,23 @@ const char *const SRS_FILE = "pilfflonk.srs.bin";
 // pilout.globalInfo.json
 // ---------------------------------------------------------------------------------------------
 
-[[noreturn]] void failGlobalInfo(const std::string &where, const std::string &what) {
-    throw FormatError("globalInfo: " + where + ": " + what);
-}
+// The globalInfo's values, and its errors: "globalInfo: <where>: <what>".
+constexpr JsonReader globalInfo("globalInfo");
 
 const json &field(const json &object, const char *key, const std::string &where) {
     if (!object.is_object() || !object.contains(key)) {
-        failGlobalInfo(where.empty() ? key : where, where.empty() ? "is missing" : std::string("has no ") + key);
+        globalInfo.fail(where.empty() ? key : where, where.empty() ? "is missing" : std::string("has no ") + key);
     }
     return object[key];
 }
 
-uint64_t u64(const json &value, const std::string &where) {
-    if (!value.is_number_unsigned()) {
-        failGlobalInfo(where, "must be an unsigned integer");
-    }
-    return value.get<uint64_t>();
-}
-
-std::string str(const json &value, const std::string &where) {
-    if (!value.is_string()) {
-        failGlobalInfo(where, "must be a string");
-    }
-    return value.get<std::string>();
-}
-
-const json &array(const json &value, const std::string &where) {
-    if (!value.is_array()) {
-        failGlobalInfo(where, "must be an array");
-    }
-    return value;
-}
-
 // A path component taken from a file: a name, not a path.
 std::string pathComponent(const json &value, const std::string &where) {
-    const std::string s = str(value, where);
+    const std::string s = globalInfo.str(value, where);
     if (s.empty() || s == "." || s == ".." || s.find('/') != std::string::npos || s.find('\0') != std::string::npos) {
-        failGlobalInfo(where, "\"" + s + "\" is not a file name");
+        globalInfo.fail(where, "\"" + s + "\" is not a file name");
     }
     return s;
-}
-
-std::string readText(const std::string &path, const char *what) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        throw IoError(std::string(what) + ": cannot open " + path);
-    }
-    std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (file.bad()) {
-        throw IoError(std::string(what) + ": cannot read " + path);
-    }
-    return text;
 }
 
 // The bytes of a file.
@@ -97,6 +62,15 @@ struct FileBytes {
     std::unique_ptr<uint8_t[]> data;
     uint64_t size = 0;
 };
+
+// The bytes of a .const as an AirKey takes them, its own, to release once it has decoded them.
+AirKey::ConstantsBytes ownedConstants(FileBytes file) {
+    AirKey::ConstantsBytes bytes;
+    bytes.data = file.data.get();
+    bytes.size = file.size;
+    bytes.owner = std::move(file.data);
+    return bytes;
+}
 
 // A file's bytes, read by every thread at once, a chunk each: a .const holds N rows of every fixed
 // column, GBs at large N, which one thread copies from the page cache at a fraction of the speed of
@@ -185,50 +159,50 @@ GlobalInfo GlobalInfo::parse(const std::string &text) {
         throw FormatError(std::string("globalInfo: not valid JSON: ") + e.what());
     }
     if (!j.is_object()) {
-        failGlobalInfo("the file", "must be an object");
+        globalInfo.fail("the file", "must be an object");
     }
-    if (str(field(j, "backend", ""), "backend") != "pilfflonk") {
-        failGlobalInfo("backend", "must be \"pilfflonk\": this is not a pilfflonk provingKey/");
+    if (globalInfo.str(field(j, "backend", ""), "backend") != "pilfflonk") {
+        globalInfo.fail("backend", "must be \"pilfflonk\": this is not a pilfflonk provingKey/");
     }
-    if (u64(field(j, "formatVersion", ""), "formatVersion") != 1) {
-        failGlobalInfo("formatVersion", "must be 1, the version this prover reads");
+    if (globalInfo.u64(field(j, "formatVersion", ""), "formatVersion") != 1) {
+        globalInfo.fail("formatVersion", "must be 1, the version this prover reads");
     }
-    if (str(field(j, "field", ""), "field") != "bn128") {
-        failGlobalInfo("field", "must be \"bn128\"");
+    if (globalInfo.str(field(j, "field", ""), "field") != "bn128") {
+        globalInfo.fail("field", "must be \"bn128\"");
     }
 
     GlobalInfo info;
     info.name = pathComponent(field(j, "name", ""), "name");
-    const json &airGroups = array(field(j, "air_groups", ""), "air_groups");
+    const json &airGroups = globalInfo.array(field(j, "air_groups", ""), "air_groups");
     for (size_t ag = 0; ag < airGroups.size(); ++ag) {
         info.airGroups.push_back(pathComponent(airGroups[ag], "air_groups[" + std::to_string(ag) + "]"));
     }
-    const json &airs = array(field(j, "airs", ""), "airs");
+    const json &airs = globalInfo.array(field(j, "airs", ""), "airs");
     if (airs.size() != info.airGroups.size()) {
-        failGlobalInfo("airs", "must have one list per airgroup");
+        globalInfo.fail("airs", "must have one list per airgroup");
     }
     for (size_t ag = 0; ag < airs.size(); ++ag) {
         const std::string where = "airs[" + std::to_string(ag) + "]";
         std::vector<Air> group;
-        const json &list = array(airs[ag], where);
+        const json &list = globalInfo.array(airs[ag], where);
         for (size_t a = 0; a < list.size(); ++a) {
             const std::string at = where + "[" + std::to_string(a) + "]";
             group.push_back(Air{pathComponent(field(list[a], "name", at), at + ".name"),
-                                u64(field(list[a], "num_rows", at), at + ".num_rows")});
+                                globalInfo.u64(field(list[a], "num_rows", at), at + ".num_rows")});
         }
         info.airs.push_back(std::move(group));
     }
-    info.nPublics = u64(field(j, "nPublics", ""), "nPublics");
-    const json &proofValues = array(field(j, "proofValuesMap", ""), "proofValuesMap");
+    info.nPublics = globalInfo.u64(field(j, "nPublics", ""), "nPublics");
+    const json &proofValues = globalInfo.array(field(j, "proofValuesMap", ""), "proofValuesMap");
     for (size_t i = 0; i < proofValues.size(); ++i) {
         const std::string at = "proofValuesMap[" + std::to_string(i) + "]";
-        info.proofValueStages.push_back(u64(field(proofValues[i], "stage", at), at + ".stage"));
+        info.proofValueStages.push_back(globalInfo.u64(field(proofValues[i], "stage", at), at + ".stage"));
     }
     return info;
 }
 
 GlobalInfo GlobalInfo::load(const std::string &path) {
-    const std::string text = readText(path, "globalInfo");
+    const std::string text = readText(path, "globalInfo: cannot open " + path, "globalInfo: cannot read " + path);
     try {
         return parse(text);
     } catch (const FormatError &e) {
@@ -694,16 +668,20 @@ void AirKey::loadFixed(const ConstantsSource &constants, GpuKey *gpu) {
         deviceKey = std::make_unique<GpuAirKey>(*gpu, *this);
     }
 #endif
-    const ConstantsBytes bytes = constants();
-    if (nConstants > std::numeric_limits<uint64_t>::max() / FR_BYTES / N || bytes.size != nConstants * N * FR_BYTES) {
-        failAir(airName, ".const has " + std::to_string(bytes.size) + " bytes, and " + std::to_string(nConstants) +
-                             " fixed columns of " + std::to_string(N) + " rows have " +
-                             std::to_string(nConstants * N * FR_BYTES));
-    }
     std::unique_ptr<FrElement[]> evaluations;
-    if (nConstants > 0) {
-        evaluations.reset(new FrElement[nConstants * N]);
-        decodeColumns(bytes.data, N, nConstants, evaluations.get(), airName + ".const");
+    {
+        // The .const's bytes, released (if they are the source's to give) once they are decoded.
+        const ConstantsBytes bytes = constants();
+        if (nConstants > std::numeric_limits<uint64_t>::max() / FR_BYTES / N ||
+            bytes.size != nConstants * N * FR_BYTES) {
+            failAir(airName, ".const has " + std::to_string(bytes.size) + " bytes, and " +
+                                 std::to_string(nConstants) + " fixed columns of " + std::to_string(N) +
+                                 " rows have " + std::to_string(nConstants * N * FR_BYTES));
+        }
+        if (nConstants > 0) {
+            evaluations.reset(new FrElement[nConstants * N]);
+            decodeColumns(bytes.data, N, nConstants, evaluations.get(), airName + ".const");
+        }
     }
 #ifdef __USE_CUDA__
     if (deviceKey != nullptr) {
@@ -817,8 +795,9 @@ std::unique_ptr<AirKey> AirKey::load(const std::string &dir, const std::string &
     const std::string base = dir + "/" + name;
     PilfflonkInfo info = PilfflonkInfo::load(base + ".pilfflonkinfo.json");
     ExpressionsBin bin = ExpressionsBin::load(base + ".bin");
-    const FileBytes constants = readBytes(base + ".const", "const");
-    return std::make_unique<AirKey>(std::move(info), std::move(bin), constants.data.get(), constants.size, name, gpu);
+    FileBytes constants = readBytes(base + ".const", "const");
+    const AirKey::ConstantsSource source = [&constants] { return ownedConstants(std::move(constants)); };
+    return std::make_unique<AirKey>(std::move(info), std::move(bin), source, name, gpu);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -963,13 +942,12 @@ std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device devi
     for (uint64_t i = 0; i < files.size(); ++i) {
         PilfflonkInfo airInfo = PilfflonkInfo::load(files[i].base + ".pilfflonkinfo.json");
         ExpressionsBin bin = ExpressionsBin::load(files[i].base + ".bin");
-        FileBytes constants;
         const AirKey::ConstantsSource source = [&] {
-            constants = pending.get();
+            FileBytes constants = pending.get();
             if (i + 1 < files.size()) {
                 pending = readConstants(i + 1);
             }
-            return AirKey::ConstantsBytes{constants.data.get(), constants.size};
+            return ownedConstants(std::move(constants));
         };
         airs[files[i].airgroup].push_back(
             std::make_unique<AirKey>(std::move(airInfo), std::move(bin), source, files[i].name, gpu.get()));

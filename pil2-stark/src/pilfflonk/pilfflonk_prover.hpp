@@ -298,7 +298,8 @@ private:
     // the copies polynomial() made of the device's.
     mutable std::vector<std::unique_ptr<FrElement[]>> coefBuffers;
     mutable std::vector<std::unique_ptr<Poly>> polys;
-    // By piece, once Q is committed; on a key on the GPU, once qPiece copies them, over qPieceCopy.
+    // By piece, once Q is committed: unsplit on the host, its one piece over qPieceCopy, Q's
+    // coefficients; on a key on the GPU, once qPiece copies them, over qPieceCopy.
     mutable std::unique_ptr<FrElement[]> qPieceCopy;
     mutable std::vector<std::unique_ptr<Poly>> qPieces;
 };

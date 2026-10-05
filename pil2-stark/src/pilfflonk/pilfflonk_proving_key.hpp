@@ -159,10 +159,13 @@ public:
     AirKey(PilfflonkInfo info, ExpressionsBin bin, const uint8_t *constants, uint64_t constantsBytes,
            const std::string &name, GpuKey *gpu = nullptr);
 
-    // The bytes of an AIR's .const, valid until the constructor they are given to returns.
+    // The bytes of an AIR's .const, valid until the constructor they are given to returns. With an
+    // `owner`, they are its own, and the key releases them as soon as it has decoded its fixed
+    // columns from them, before it interpolates and commits them.
     struct ConstantsBytes {
         const uint8_t *data = nullptr;
         uint64_t size = 0;
+        std::unique_ptr<uint8_t[]> owner;
     };
     using ConstantsSource = std::function<ConstantsBytes()>;
 
