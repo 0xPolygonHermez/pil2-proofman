@@ -2189,6 +2189,16 @@ pub fn mul_reset_c() {
     unsafe { mul_reset() }
 }
 
+/// In-aux late region: once per job, before `mul_alloc_c`.
+pub fn mul_begin_job_c(d_buffers: *mut c_void) {
+    unsafe { mul_begin_job(d_buffers) }
+}
+
+/// In-aux late region: after the last commit.
+pub fn mul_end_contributions_c(d_buffers: *mut c_void) {
+    unsafe { mul_end_contributions(d_buffers) }
+}
+
 /// Forget every multiplicity registration; only before any proof allocated from it.
 pub fn mul_clear_registry_c() {
     unsafe { mul_clear_registry() }

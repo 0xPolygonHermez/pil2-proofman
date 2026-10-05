@@ -75,6 +75,8 @@ extern "C" {
                                   uint64_t r0, uint64_t r1, uint64_t *bus, uint64_t *tuple, uint64_t len);
     // Reset every mirror; called once per proof from the std's own reset point.
     void mul_reset();
+    void mul_begin_job(void *d_buffers_);
+    void mul_end_contributions(void *d_buffers_);
 
     // Stark Info
     // ========================================================================================

@@ -165,6 +165,8 @@ inline void mulStreamHook(const uint64_t *dPacked, const StreamCommitDims &dims,
         vals ? vals + c->valOff.airgroupValues : nullptr,
         c->customPols, nullptr, nullptr, nullptr };
     if (c->timer) c->timer->startCategory("MUL_SCATTER_PACKED");
+    // This job's maps and zeroed counters (late region in aux).
+    if (cudaEvent_t ready = mulLateReady(gpuId)) CHECKCUDAERR(cudaStreamWaitEvent(stream, ready, 0));
     mul_scatter_launch(dev.jobs, (uint32_t)plan.jobs.size(), nRows, nRows, bases, c->acc, c->oob,
                        (c->airgroupId << 32) | c->airId, packedProg.prog, stream,
                        dPacked, dims.wordsPerRow, c->hintSide,

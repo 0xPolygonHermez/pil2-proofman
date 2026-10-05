@@ -107,3 +107,40 @@ TEST(UnifiedBufferLayout, per_air_slot_is_below_the_sum_of_maxima) {
     EXPECT_EQ(perAir, 2288 * MiB);
     EXPECT_EQ(maxima - perAir, 384 * MiB);
 }
+
+TEST(UnifiedBufferLayout, late_in_aux_sits_after_the_slots) {
+    ubl::In in;
+    in.basicConst = 1000; in.lateRegion = 300ull << 20; in.prefetch = 8ull << 20;
+    in.auxTotal = 4ull << 30; in.slots = 2 * (64ull << 20); in.aggConst = 1ull << 20;
+    in.lateInAux = true;
+    const ubl::Layout L = ubl::plan(in);
+    EXPECT_EQ(L.prefetch, in.basicConst);
+    EXPECT_EQ(L.auxBase, ubl::alignUp(in.basicConst + in.prefetch, ubl::AUX_ALIGN));
+    EXPECT_EQ(L.slotsBase, L.auxBase);
+    EXPECT_EQ(L.late, ubl::alignUp(L.auxBase + in.slots, 256));
+    EXPECT_EQ(L.mopsBase, L.late + in.lateRegion);
+    EXPECT_LE(L.mopsBase, L.auxBase + in.auxTotal);
+    // No bytes of its own: it lives inside the first stream.
+    EXPECT_EQ(L.end, L.auxBase + in.auxTotal + in.aggConst);
+    EXPECT_TRUE(ubl::overlapsSlots(L, L.late - L.auxBase, L.mopsBase - L.auxBase));
+}
+
+TEST(UnifiedBufferLayout, late_in_aux_off_keeps_todays_layout) {
+    ubl::In in;
+    in.basicConst = 1000; in.lateRegion = 300ull << 20; in.prefetch = 8ull << 20;
+    in.auxTotal = 4ull << 30; in.slots = 2 * (64ull << 20); in.aggConst = 1ull << 20;
+    const ubl::Layout L = ubl::plan(in);
+    EXPECT_EQ(L.late, in.basicConst);
+    EXPECT_EQ(L.prefetch, in.basicConst + in.lateRegion);
+    EXPECT_EQ(L.mopsBase, L.auxBase + in.slots);
+}
+
+// The slot count is read back from the layout: a late region wider than a slot must not add slots.
+TEST(UnifiedBufferLayout, late_in_aux_does_not_widen_the_slot_area) {
+    ubl::In in;
+    in.lateRegion = 3 * (64ull << 20); in.auxTotal = 4ull << 30;
+    in.slots = 2 * (64ull << 20); in.lateInAux = true;
+    const ubl::Layout L = ubl::plan(in);
+    EXPECT_EQ((L.slotsEnd - L.slotsBase) / (64ull << 20), 2u);
+    EXPECT_LE(L.slotsEnd, L.late);
+}

@@ -359,6 +359,8 @@ pub struct ProofCtx<F: PrimeField64> {
     /// pair the device gates on, so a global flag cannot disagree with the per-air setup.
     pub packed_airs: HashSet<(usize, usize)>,
     pub reload_fixed_pols_gpu: Arc<AtomicBool>,
+    /// The late region lives in aux, through the contributions only (set by `set_device_buffers`).
+    pub late_in_aux: bool,
     /// Highest byte (from the buffer base) a mops borrow wrote past `aggBase`, or 0.
     pub reload_aggregation_to: Arc<AtomicU64>,
     /// Set while a contributions witness thread stages the instance before dispatching it itself;
@@ -476,6 +478,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             gpu,
             packed_airs: HashSet::new(),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
+            late_in_aux: false,
             reload_aggregation_to: Arc::new(AtomicU64::new(0)),
             dispatch_deferred: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
             dispatch_pending: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
@@ -1459,7 +1462,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         // Wrapping here would carve streams out of a budget the card does not have, and only fail
         // later inside cudaMalloc.
         // + ubl::AUX_ALIGN slack.
-        let late_area = if gpu { (late_region_bytes + UBL_AUX_ALIGN_BYTES).div_ceil(8) } else { 0 };
+        // Behind the slots (as the carve places it) it lives inside the first stream: nothing taken from the budget.
+        let late_in_aux = gpu && n_slots > 0 && slot_bytes > 0;
+        let late_area = if gpu && !late_in_aux { (late_region_bytes + UBL_AUX_ALIGN_BYTES).div_ceil(8) } else { 0 };
         let max_size_buffer = ((free_memory_gpu / 8.0).floor() as u64)
             .checked_sub(total_const_area + total_const_area_aggregation + late_area)
             .ok_or_else(|| {
@@ -1639,7 +1644,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         // Pad the unified buffer up to the snark floor (see GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES),
         // taking only the layout's unused slack. Runs without a wrapper skip it.
         let unified_buffer_pad_area: u64 = if gpu && final_snark {
-            let below_aux_bytes = (total_const_area + prefetch_region_area) * 8 + late_region_bytes;
+            let below_aux_bytes =
+                (total_const_area + prefetch_region_area) * 8 + if late_in_aux { 0 } else { late_region_bytes };
             let above_aux_elems = aux_trace_sizes.iter().sum::<u64>()
                 + if self.phase_b {
                     0
@@ -1680,6 +1686,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             n_slots,
             slot_bytes,
         );
+        self.late_in_aux = late_in_aux;
 
         self.d_buffers = d_buffers;
 

@@ -11,8 +11,8 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::{aggregate_airgroupvals, expand_airgroup_values};
 use proofman_starks_lib_c::{
-    mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c,
-    register_mul_vt_c,
+    mul_alloc_c, mul_begin_job_c, mul_end_contributions_c, mul_fold_c, mul_migrated_tables_c,
+    mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
 };
 use pil2_std_lib::{
     collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps, global_sum_assumed_tables,
@@ -990,6 +990,9 @@ impl<F: PrimeField64> ProofMan<F> {
         // of reset must still run on an error.
         let restore_err = self.restore_after_snark().err();
         if self.pctx.gpu {
+            if self.pctx.late_in_aux {
+                mul_begin_job_c(self.pctx.get_device_buffers_ptr());
+            }
             unsafe { mul_alloc_c(self.pctx.get_device_buffers_ptr()) };
             // Record which airs the device can produce whole; see `device_owned_table_airs`.
             if let Ok(layouts) = collect_virtual_table_layouts(&self.pctx, &self.sctx) {
@@ -1693,8 +1696,19 @@ where
         self._get_debug_info(debug_info)
     }
 
+    /// Verify-constraints and debug-info scatter from the ordinary aux streams while the counters are live.
+    fn require_counters_outside_aux(&self) -> ProofmanResult<()> {
+        if self.pctx.late_in_aux {
+            return Err(ProofmanError::InvalidConfiguration(
+                "verify-constraints/debug-info need a ProofMan built with verify_constraints".into(),
+            ));
+        }
+        Ok(())
+    }
+
     fn _get_debug_info(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
         let _computing = self.acquire_computing("_get_debug_info");
+        self.require_counters_outside_aux()?;
 
         self.set_partition(1, vec![0], 0)?;
 
@@ -1849,6 +1863,7 @@ where
         timer_start_info!(VERIFYING_PROOF_CONSTRAINTS);
 
         let _computing = self.acquire_computing("_verify_proof_constraints");
+        self.require_counters_outside_aux()?;
 
         self.set_partition(1, vec![0], 0)?;
 
@@ -3622,6 +3637,12 @@ where
                     })
                     .collect()
             };
+
+            // Every commit is done and the snapshot D2H overlapped the challenge: the proofs may reuse
+            // the late region from here.
+            if self.pctx.late_in_aux {
+                mul_end_contributions_c(self.pctx.get_device_buffers_ptr());
+            }
 
             if phase == ProvePhase::Contributions {
                 let witness_time =
@@ -6302,7 +6323,8 @@ where
             options.final_snark,
             prefetch_region_area,
             late_region_bytes,
-            STREAM_COMMIT_SLOTS,
+            // Verify-constraints and debug-info commit no slots, and so keep the late region outside aux.
+            if options.verify_constraints { 0 } else { STREAM_COMMIT_SLOTS },
             slot_bytes,
         )?;
 
@@ -6355,7 +6377,8 @@ where
                 );
             }
             configure_stream_commit_slots_c(pctx.get_device_buffers_ptr());
-            if get_stream_commit_slots_c(pctx.get_device_buffers_ptr()) == 0 {
+            // Verify-constraints and debug-info commit nothing, so they carve none.
+            if !options.verify_constraints && get_stream_commit_slots_c(pctx.get_device_buffers_ptr()) == 0 {
                 return Err(ProofmanError::InvalidConfiguration(
                     "no air can commit in a streaming slot, the GPU's only contributions path".into(),
                 ));
