@@ -512,15 +512,56 @@ pub fn gen_vadcop_final(
         assign_sections.push(section);
     }
 
-    // airgroupvalues wiring names for verifyGlobalConstraints
-    let airgroupvalues_names: Vec<String> = agg_types
+    // A null proof leaves its airgroup's values unconstrained, so the global checks must
+    // see what an airgroup with no instances contributes, never the prover's values.
+    // A single airgroup can never be null (the proof count below), so it needs no mask.
+    let mask_null = multi_air && agg_types.len() > 1;
+    let curve = vadcop_info["curve"].as_str().unwrap_or("None");
+    let lattice_size = vadcop_info["latticeSize"].as_u64().unwrap_or(0) as usize;
+    let src = |i: usize, what: &str| if mask_null { format!("s{i}_masked_{what}") } else { format!("s{i}_sv_{what}") };
+    let mut null_sections: Vec<String> = Vec::new();
+    if mask_null {
+        for (i, ag) in agg_types.iter().enumerate() {
+            let mut section = String::new();
+            if curve == "None" {
+                section.push_str(&format!(
+                    "    signal s{i}_masked_stage1Hash[{lattice_size}];\n    for (var k = 0; k < {lattice_size}; k++) {{\n        s{i}_masked_stage1Hash[k] <== (1 - s{i}_sv_isNull) * s{i}_sv_stage1Hash[k];\n    }}\n"
+                ));
+            } else {
+                section.push_str(&format!(
+                    "    signal s{i}_masked_stage1Hash[2][5];\n    for (var k = 0; k < 2; k++) {{\n        for (var l = 0; l < 5; l++) {{\n            s{i}_masked_stage1Hash[k][l] <== (1 - s{i}_sv_isNull) * s{i}_sv_stage1Hash[k][l];\n        }}\n    }}\n"
+                ));
+            }
+            let types = ag.as_array().cloned().unwrap_or_default();
+            if !types.is_empty() {
+                section.push_str(&format!("    signal s{i}_masked_airgroupvalues[{}][3];\n", types.len()));
+                for (j, t) in types.iter().enumerate() {
+                    // The identity of the aggregation: 0 for a sum, 1 for a product.
+                    let v = format!("s{i}_sv_airgroupvalues[{j}]");
+                    let first = if t["aggType"].as_u64() == Some(1) {
+                        format!("{v}[0] + s{i}_sv_isNull * (1 - {v}[0])")
+                    } else {
+                        format!("(1 - s{i}_sv_isNull) * {v}[0]")
+                    };
+                    section.push_str(&format!(
+                        "    s{i}_masked_airgroupvalues[{j}] <== [{first}, (1 - s{i}_sv_isNull) * {v}[1], (1 - s{i}_sv_isNull) * {v}[2]];\n"
+                    ));
+                }
+            }
+            null_sections.push(section);
+        }
+    }
+
+    // (verifyGlobalConstraints input, source) for each airgroup that has airgroupvalues
+    let airgroupvalues_wires: Vec<serde_json::Value> = agg_types
         .iter()
         .enumerate()
         .filter(|(_, ag)| ag.as_array().map(|a| a.len()).unwrap_or(0) > 0)
-        .map(|(i, _)| format!("s{i}_sv_airgroupvalues"))
+        .map(|(i, _)| serde_json::json!({ "dst": format!("s{i}_airgroupvalues"), "src": src(i, "airgroupvalues") }))
         .collect();
 
     let stage1hash_indices: Vec<usize> = (0..agg_types.len()).collect();
+    let stage1hash_srcs: Vec<String> = stage1hash_indices.iter().map(|&i| src(i, "stage1Hash")).collect();
 
     let mut ctx = TeraCtx::new();
     ctx.insert("verifier_filenames", verifier_filenames);
@@ -533,7 +574,10 @@ pub fn gen_vadcop_final(
     ctx.insert("define_sections", &define_sections);
     ctx.insert("assign_sections", &assign_sections);
     ctx.insert("stage1hash_indices", &stage1hash_indices);
-    ctx.insert("airgroupvalues_names", &airgroupvalues_names);
+    ctx.insert("stage1hash_srcs", &stage1hash_srcs);
+    ctx.insert("airgroupvalues_wires", &airgroupvalues_wires);
+    ctx.insert("multi_air", &multi_air);
+    ctx.insert("null_sections", &null_sections);
     ctx.insert("n_airgroups", &agg_types.len());
 
     render(VADCOP_FINAL_TMPL, &ctx)
