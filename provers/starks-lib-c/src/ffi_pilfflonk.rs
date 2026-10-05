@@ -10,7 +10,7 @@ use std::ptr::NonNull;
 
 include!("../bindings_pilfflonk.rs");
 
-/// Size of a BN254 scalar at the C API: a canonical (< r) little-endian integer.
+/// Size of a BN128 scalar at the C API: a canonical (< r) little-endian integer.
 pub const PILFFLONK_FR_BYTES: usize = 32;
 
 /// Size of a G1 point at the C API: affine `x‖y`, each coordinate a canonical (< q) little-endian
@@ -103,7 +103,7 @@ fn c_path(function: &str, path: &Path) -> Result<CString, PilFflonkError> {
         .map_err(|_| invalid_argument(function, format!("{} contains a NUL byte", path.display())))
 }
 
-/// Checks that `scalar`, read as a little-endian integer, is below the BN254 scalar modulus r.
+/// Checks that `scalar`, read as a little-endian integer, is below the BN128 scalar modulus r.
 pub fn pilfflonk_fr_check_canonical_c(scalar: &[u8; PILFFLONK_FR_BYTES]) -> Result<(), PilFflonkError> {
     // SAFETY: `scalar` points to the 32 bytes the function reads.
     check_status(unsafe { pilfflonk_fr_check_canonical(scalar.as_ptr()) })
@@ -188,7 +188,7 @@ impl Drop for PilFflonkTranscript {
 ///
 /// Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if `n_g1` is 0 or above
 /// 2^32 - 1, or the ptau holds fewer powers; [`Io`](PilFflonkErrorKind::Io) if a file cannot be
-/// opened, read or written; [`Format`](PilFflonkErrorKind::Format) if the ptau is not a BN254 one,
+/// opened, read or written; [`Format`](PilFflonkErrorKind::Format) if the ptau is not a BN128 one,
 /// is cut short or holds a point that is not valid.
 pub fn pilfflonk_srs_from_ptau_c(ptau_path: &Path, n_g1: u64, srs_path: &Path) -> Result<(), PilFflonkError> {
     const FUNCTION: &str = "pilfflonk_srs_from_ptau";

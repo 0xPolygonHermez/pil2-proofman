@@ -1,7 +1,7 @@
 //! The Fibonacci's witness library (pilfflonk/docs/README.md#witness), loaded as a dynamic library:
 //! its witness is the generator's (`pilfflonk/tests/data/fibonacci.rs`) byte for byte, and proves
 //! and verifies; a STARK witness library is not taken for a pilfflonk one, nor the other way round;
-//! and `src/pil_helpers` is what pil-helpers writes for the fixture's BN254 pilout.
+//! and `src/pil_helpers` is what pil-helpers writes for the fixture's BN128 pilout.
 //!
 //! The library is this crate's, `libpilfflonk_fibonacci.so`, which Cargo builds for its tests, and the
 //! STARK one `examples/fibonacci-square`'s, a dev-dependency built for the same reason.
@@ -30,7 +30,7 @@ use proofman_cli::commands::pil_helpers::PilHelpersCmd;
 use proofman_pilfflonk::witness_library::INIT_SYMBOL;
 use proofman_pilfflonk::{
     compute_witness, js_verifier, load_witness_library, prove, AirShape, FrBytes, JsonFile, PilfflonkError,
-    PilfflonkGlobalInfo, ProveOptions, ProvingKey, Publics, WitnessShape, BN254_R,
+    PilfflonkGlobalInfo, ProveOptions, ProvingKey, Publics, WitnessShape, BN128_R,
 };
 use witness_libraries::built_library;
 
@@ -115,7 +115,7 @@ fn the_librarys_witness_is_the_generators() {
 #[test]
 fn the_library_computes_modulo_r() {
     let dir = TestDir::new("modulo_r");
-    let r_minus_1 = num_bigint::BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap() - 1u32;
+    let r_minus_1 = num_bigint::BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap() - 1u32;
     let path = public_inputs(&dir, &r_minus_1.to_string(), &r_minus_1.to_string());
     let mut library = load_witness_library(&fibonacci_library(), 0).unwrap();
     let witness = compute_witness(&mut *library, &fibonacci_shape(), Some(&path)).unwrap();
@@ -130,7 +130,7 @@ fn the_library_refuses_what_it_cannot_compute() {
     let dir = TestDir::new("refusals");
     let mut library = load_witness_library(&fibonacci_library(), 0).unwrap();
     // Public inputs that are not Fr values: a JSON number, a value not below r.
-    for text in [r#"{"in1": 1}"#, &format!(r#"{{"in1": "{BN254_R}"}}"#)] {
+    for text in [r#"{"in1": 1}"#, &format!(r#"{{"in1": "{BN128_R}"}}"#)] {
         let path = dir.file("bad.json");
         fs::write(&path, text).unwrap();
         let err = compute_witness(&mut *library, &fibonacci_shape(), Some(&path)).unwrap_err();
@@ -169,7 +169,7 @@ fn the_loaders_do_not_take_each_others_libraries() {
 // On the compiled fixture (needs PIL2C_EXEC)
 // ---------------------------------------------------------------------------------------------
 
-/// Compiles the fixture over BN254 with `PIL2C_EXEC` to `dir/fibonacci.pilout`, as `src/lib.rs`
+/// Compiles the fixture over BN128 with `PIL2C_EXEC` to `dir/fibonacci.pilout`, as `src/lib.rs`
 /// says: the pilout's name, `Fibonacci`, is the stem of its file.
 fn compile(dir: &TestDir) -> PathBuf {
     let compiler = std::env::var("PIL2C_EXEC")
@@ -178,7 +178,7 @@ fn compile(dir: &TestDir) -> PathBuf {
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil")
-        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
         .arg(&pilout)
         .output()
         .expect("PIL2C_EXEC runs");

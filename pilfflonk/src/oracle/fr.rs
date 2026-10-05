@@ -32,7 +32,7 @@ impl Fr {
     }
 
     /// A value the pilout writes: big-endian bytes, the empty string for 0. Refuses a value that
-    /// is not below `r`: a pilout over BN254 has none, and reducing it would hide a compiler bug.
+    /// is not below `r`: a pilout over BN128 has none, and reducing it would hide a compiler bug.
     pub fn from_pilout_bytes(bytes: &[u8]) -> PilfflonkResult<Self> {
         let value = BigUint::from_bytes_be(bytes);
         if value < *r() {
@@ -162,7 +162,7 @@ pub fn batch_inverse(values: &[Fr]) -> PilfflonkResult<Vec<Fr>> {
 mod tests {
     use super::*;
 
-    /// ffjavascript 0.3.1's `Fr.w[8]` and `Fr.w[28]` for BN254 (`buildBn128`), printed with
+    /// ffjavascript 0.3.1's `Fr.w[8]` and `Fr.w[28]` for BN128 (`buildBn128`), printed with
     /// `Fr.toString`.
     const W8: &str = "3478517300119284901893091970156912948790432420133812234316178878452092729974";
     const W28: &str = "19103219067921713944291392827692070036145651957329286315305642004821462161904";

@@ -9,7 +9,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
 use pilfflonk_setup::ExternalFixedColumn;
-use proofman_pilfflonk::{FqBytes, FrBytes, G1Affine, Layout, BN254_R};
+use proofman_pilfflonk::{FqBytes, FrBytes, G1Affine, Layout, BN128_R};
 
 pub const R_MINUS_ONE: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
 /// 2^200 + 7: a value of more than 64 bits.
@@ -20,7 +20,7 @@ pub fn big(decimal: &str) -> BigUint {
 }
 
 pub fn r() -> BigUint {
-    big(BN254_R)
+    big(BN128_R)
 }
 
 /// A value as a pilout has it: big-endian, without leading zeros (none for 0).
@@ -256,7 +256,7 @@ fn point(x: &str, y: &str) -> G1Affine {
     G1Affine { x: coordinate(x), y: coordinate(y) }
 }
 
-/// `m·G` for the generator `G = (1, 2)` of G1, for the `m` the tests need: BN254's well-known
+/// `m·G` for the generator `G = (1, 2)` of G1, for the `m` the tests need: BN128's well-known
 /// multiples, written out independently of the C++ core (as `provers/starks-lib-c/tests/
 /// pilfflonk_srs.rs` has them); `0·G` is the point at infinity, `(0, 0)`.
 pub fn multiple_of_g(m: u64) -> G1Affine {
@@ -280,7 +280,7 @@ pub fn multiple_of_g(m: u64) -> G1Affine {
 }
 
 /// The generator of G2, canonical, `x.c0, x.c1, y.c0, y.c1` in decimal: the `[1]₂` of every
-/// BN254 library, and `[τ]₂` of a ptau with `τ = 1`.
+/// BN128 library, and `[τ]₂` of a ptau with `τ = 1`.
 pub const G2_GENERATOR: [&str; 4] = [
     "10857046999023057135944570762232829481370756359578518086990519993285655852781",
     "11559732032986387107991004021392285783925812861821192530917403151452391805634",

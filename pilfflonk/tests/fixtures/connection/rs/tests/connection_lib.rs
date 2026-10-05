@@ -1,7 +1,7 @@
 //! The Connection's witness library (pilfflonk/docs/README.md#fixtures), loaded as a dynamic
 //! library: its witness is the generator's (`pilfflonk/tests/data/connection.rs`) byte for byte;
 //! its rows are the stage-1 columns of the keys of the fixture on either bus, in their order; and
-//! `src/pil_helpers` is what pil-helpers writes for the fixture's BN254 pilouts.
+//! `src/pil_helpers` is what pil-helpers writes for the fixture's BN128 pilouts.
 //!
 //! The library is this crate's, `libpilfflonk_connection.so`, which Cargo builds for its tests. A
 //! test cannot link it (a Rust `dylib` would bring a second `std`), so it includes the rows of
@@ -32,7 +32,7 @@ use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE
 use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_cli::commands::pil_helpers::PilHelpersCmd;
-use proofman_fields::Bn254;
+use proofman_fields::Bn128;
 use proofman_pilfflonk::{
     check, compute_witness, load_witness_library, AirInstanceRef, AirShape, CheckOptions, PilfflonkInfo, ProvingKey,
     WitnessShape,
@@ -117,7 +117,7 @@ fn the_library_refuses_a_key_of_another_program() {
 // On the compiled fixture (needs PIL2C_EXEC)
 // ---------------------------------------------------------------------------------------------
 
-/// Compiles the fixture on `bus` (`sum` or `prod`) over BN254 with `PIL2C_EXEC` to
+/// Compiles the fixture on `bus` (`sum` or `prod`) over BN128 with `PIL2C_EXEC` to
 /// `dir/connection.pilout`, as `src/lib.rs` says: the pilout's name, `connection`, is the stem of its
 /// file, whatever the bus.
 fn compile(dir: &TestDir, bus: &str) -> PathBuf {
@@ -127,7 +127,7 @@ fn compile(dir: &TestDir, bus: &str) -> PathBuf {
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg(format!("pilfflonk/tests/fixtures/connection/connection_{bus}.pil"))
-        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
         .arg(&pilout)
         .output()
         .expect("PIL2C_EXEC runs");
@@ -169,10 +169,10 @@ fn stage1_columns(info: &PilfflonkInfo) -> Vec<(String, usize)> {
         .collect()
 }
 
-/// The fields of the row, each with its column: its offset in the row, in `Bn254` values.
+/// The fields of the row, each with its column: its offset in the row, in `Bn128` values.
 macro_rules! row_columns {
     ($row:ty: $($field:ident),*) => {
-        vec![$((stringify!($field).to_string(), offset_of!($row, $field) / size_of::<Bn254>())),*]
+        vec![$((stringify!($field).to_string(), offset_of!($row, $field) / size_of::<Bn128>())),*]
     };
 }
 
@@ -182,7 +182,7 @@ macro_rules! row_columns {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_rows_are_the_stage_1_columns_of_the_keys() {
-    type Row = ConnectionTraceRow<Bn254>;
+    type Row = ConnectionTraceRow<Bn128>;
     for bus in ["sum", "prod"] {
         let dir = TestDir::new(&format!("keys_{bus}"));
         let opts = SetupPilfflonkOptions {
@@ -203,8 +203,8 @@ fn the_rows_are_the_stage_1_columns_of_the_keys() {
         let info = pk.air(AirInstanceRef { airgroup_id: 0, air_id: 0 }).unwrap();
 
         assert_eq!(row_columns!(Row: a, b, c), stage1_columns(info), "{bus}");
-        assert_eq!(ConnectionTrace::<Bn254>::ROW_SIZE, stage1_columns(info).len(), "{bus}");
-        assert_eq!(size_of::<Row>(), ConnectionTrace::<Bn254>::ROW_SIZE * size_of::<Bn254>(), "{bus}: no padding");
+        assert_eq!(ConnectionTrace::<Bn128>::ROW_SIZE, stage1_columns(info).len(), "{bus}");
+        assert_eq!(size_of::<Row>(), ConnectionTrace::<Bn128>::ROW_SIZE * size_of::<Bn128>(), "{bus}: no padding");
         let shape = pk.witness_shape().unwrap();
         assert_eq!(shape, connection_shape(), "{bus}");
 

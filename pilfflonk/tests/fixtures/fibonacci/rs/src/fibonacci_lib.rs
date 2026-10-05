@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use proofman_common::trace::Values;
-use proofman_fields::Bn254;
+use proofman_fields::Bn128;
 use proofman_pilfflonk::{
     pilfflonk_witness_library, read_public_inputs, AirInstanceRef, InstanceWitness, PilfflonkResult,
     PilfflonkWitnessLibrary, Stage1Witness, Witness, WitnessShape,
@@ -12,10 +12,10 @@ use crate::{FibonacciPublicValues, FibonacciPublics, FibonacciTrace};
 pilfflonk_witness_library!(WitnessLib);
 
 /// The fixture's trace, over `Fr`.
-type Trace = FibonacciTrace<Bn254>;
+type Trace = FibonacciTrace<Bn128>;
 
 /// The witness of `sm_fibonacci.js`'s `execute` (as `pilfflonk/tests/data/fibonacci.rs`, in
-/// `Bn254`): `l2[0] = in1`, `l1[0] = in2` and, for `i ≥ 1`, `l2[i] = l1[i-1]` and
+/// `Bn128`): `l2[0] = in1`, `l1[0] = in2` and, for `i ≥ 1`, `l2[i] = l1[i-1]` and
 /// `l1[i] = l2[i-1]² + l1[i-1]²`; the publics are `in1`, `in2` and `out = l1[N-1]`. The public
 /// inputs are `in1` and `in2`, as decimal strings; either one missing is 0.
 impl PilfflonkWitnessLibrary for WitnessLib {
@@ -33,7 +33,7 @@ impl PilfflonkWitnessLibrary for WitnessLib {
             trace[i].l1 = previous.l2 * previous.l2 + previous.l1 * previous.l1;
         }
 
-        let mut publics = FibonacciPublicValues::<Bn254>::new();
+        let mut publics = FibonacciPublicValues::<Bn128>::new();
         publics.in1 = inputs.in1;
         publics.in2 = inputs.in2;
         publics.out = trace[Trace::NUM_ROWS - 1].l1;

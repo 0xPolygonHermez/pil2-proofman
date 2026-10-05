@@ -7,7 +7,7 @@
 // The kernels of the prover mode of the interpreter on the device (pilfflonk_expressions.cu), with
 // C linkage as pilfflonk_kernels.hpp's, and the tables their operands are read from, which the host
 // builds (ExpressionsGpu, pilfflonk_expressions_gpu.hpp) and the kernels and the host's tests read
-// through operandAddress. Pointers are device memory unless said otherwise; an element is a BN254
+// through operandAddress. Pointers are device memory unless said otherwise; an element is a BN128
 // scalar of 32 bytes in Montgomery form; the kernels run on the legacy default stream, return before
 // they finish, and abort the process on a CUDA failure (CHECKCUDAERR).
 

@@ -1,7 +1,7 @@
-// Constants for the BN254 scalar field: the prime r = 21888242871839275222246405745257275088548364400416034343698204186575808495617,
-// the order of the groups of the BN254 curve, where
+// Constants for the BN128 scalar field: the prime r = 21888242871839275222246405745257275088548364400416034343698204186575808495617,
+// the order of the groups of the BN128 curve, where
 // r-1 = 2²⁸·3²·13·29·983·11003·237073·405928799·1670836401704629·13818364434197438864469338081
-const int Bn254_r = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
+const int Bn128_r = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
 /*
 List of generators of groups of size power of 2
@@ -13,9 +13,9 @@ for i in range(29):
     assert(g.multiplicative_order() == 2^i)
     print(g, end=",")
 
-Bn254_Gen[28] is the standard 2²⁸-th root of unity of BN254.
+Bn128_Gen[28] is the standard 2²⁸-th root of unity of BN128.
 */
-const int Bn254_Gen[29] = [
+const int Bn128_Gen[29] = [
     1,
     21888242871839275222246405745257275088548364400416034343698204186575808495616,
     21888242871839275217838484774961031246007050428528088939761107053157389710902,
@@ -61,5 +61,5 @@ const int Bn254_Gen[29] = [
 //
 // It is F.k = nqr^(2^s) of ffjavascript's F1Field over r (nqr = 5, s = 28), as Goldilocks_k is F.k over Goldilocks,
 // so it is the k of pilcom's getKs, which pil-stark's fflonk used for its connections.
-// pilfflonk/tests/std_bn254.rs checks the constants of this file numerically.
-const int Bn254_k = 5266228460530200451425464971825753823072228272503274930591399474110020095489;
+// pilfflonk/tests/std_bn128.rs checks the constants of this file numerically.
+const int Bn128_k = 5266228460530200451425464971825753823072228272503274930591399474110020095489;

@@ -21,7 +21,7 @@ serde_json = { workspace = true }
 num-bigint = { workspace = true }
 tracing = { workspace = true }
 proofman-starks-lib-c = { workspace = true }
-# `Bn254`, the type a witness is computed in (pilfflonk/docs/README.md#witness), and its
+# `Bn128`, the type a witness is computed in (pilfflonk/docs/README.md#witness), and its
 # conversions to `FrBytes`.
 proofman-fields = { workspace = true }
 # Loads a witness library (`witness_library`), as the STARK loads its own.

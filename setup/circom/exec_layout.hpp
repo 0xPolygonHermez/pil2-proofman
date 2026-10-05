@@ -20,7 +20,7 @@
 //
 // That is version 2, Goldilocks', the only one this build reads. Version 3 is the same layout with
 // two more header words, the coefficient width and the r1cs's wire count, from which the additions
-// are numbered, and plonk2pil writes it over BN254 for the pilfflonk wrap; it is refused by name
+// are numbered, and plonk2pil writes it over BN128 for the pilfflonk wrap; it is refused by name
 // (refused_version).
 
 #include <cstdint>
@@ -36,7 +36,7 @@ constexpr uint64_t EXEC_MAGIC_MASK = 0xFFFFFFFF00000000ull;
 // Mirrors EXEC_FORMAT_VERSION in common/src/exec_format.rs.
 constexpr uint64_t EXEC_FORMAT_VERSION = 2;
 
-// Mirrors EXEC_FORMAT_VERSION_WIDE in common/src/exec_format.rs: 32-byte BN254 coefficients, for
+// Mirrors EXEC_FORMAT_VERSION_WIDE in common/src/exec_format.rs: 32-byte BN128 coefficients, for
 // the pilfflonk wrap. Never a STARK recursion key's.
 constexpr uint64_t EXEC_FORMAT_VERSION_WIDE = 3;
 
@@ -78,11 +78,11 @@ inline Header header(const uint64_t *exec, uint64_t execWords) {
 }
 
 // Why an exec file of format `version`, which `header` did not read, is refused: completes an
-// error message. A BN254 exec is named as one, since regenerating the key would not change it.
+// error message. A BN128 exec is named as one, since regenerating the key would not change it.
 inline std::string refused_version(uint64_t version) {
     const std::string seen = "the exec file is format version " + std::to_string(version);
     if (version == EXEC_FORMAT_VERSION_WIDE) {
-        return seen + ", the BN254 exec plonk2pil writes for the pilfflonk wrap; the STARK prover reads only "
+        return seen + ", the BN128 exec plonk2pil writes for the pilfflonk wrap; the STARK prover reads only "
                       "version " + std::to_string(EXEC_FORMAT_VERSION) + ", over Goldilocks";
     }
     return seen + ", but this build reads version " + std::to_string(EXEC_FORMAT_VERSION) +

@@ -7,13 +7,13 @@
 
 use proofman_common as common;
 use proofman_common::GenericTrace;
-{{ if not is_bn254 }}use proofman_common::PackedInfoConst;
+{{ if not is_bn128 }}use proofman_common::PackedInfoConst;
 {{ endif }}pub use proofman_macros::trace_row;
 pub use proofman_macros::values;
 use proofman_fields::PrimeField64;
 use std::fmt;
 
-{{ if not is_bn254 }}#[allow(dead_code)]
+{{ if not is_bn128 }}#[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
 {{ endif }}pub const PILOUT_HASH: &str = "{pilout_hash}";
@@ -31,7 +31,7 @@ pub const { constant.0 }_AIR_IDS: &[usize] = &[{ constant.3 }];
 use serde::Deserialize;
 use serde::Serialize;
 use serde_arrays;
-{{ if is_bn254 }}use proofman_fields::Bn254;
+{{ if is_bn128 }}use proofman_fields::Bn128;
 {{ endif }}
 {{ for column in public_values.values_u64 }}{{ if column.array }}
 fn default_array_{column.name}() -> {column.type} \{
@@ -88,7 +88,7 @@ values!({ air.name }AirValues<F> \{
 values!({ air.name }AirGroupValues<F> \{
 {{ for column in air_groupvalues.values }} { column.name }: { column.type },{{ endfor }}
 });
-{{ endfor }}{{ endfor }}{{ endfor }}{{ if not is_bn254 }}
+{{ endfor }}{{ endfor }}{{ endfor }}{{ if not is_bn128 }}
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[{{ for item in packed_info }}
     ({ item.airgroup_id }, { item.air_id }, PackedInfoConst \{
         is_packed: { item.is_packed },

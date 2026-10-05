@@ -24,14 +24,14 @@ use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
 use proofman_pilfflonk::oracle::{omega, AirOracle, ColumnRef, Domain, Failure, Fr, Values};
 use proofman_pilfflonk::{
-    oracle, AirInstanceRef, AirShape, FrBytes, InstanceWitness, Stage1Witness, Witness, WitnessShape, BN254_R,
+    oracle, AirInstanceRef, AirShape, FrBytes, InstanceWitness, Stage1Witness, Witness, WitnessShape, BN128_R,
 };
 
 const N: usize = 8;
 const GOLDILOCKS: u64 = 0xffff_ffff_0000_0001;
 
 fn r() -> BigUint {
-    BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap()
+    BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap()
 }
 
 fn fr(v: u64) -> Fr {
@@ -430,7 +430,7 @@ fn the_oracle_refuses_what_it_cannot_evaluate() {
 
     let mut goldilocks = pilout();
     goldilocks.base_field = BigUint::from(GOLDILOCKS).to_bytes_be();
-    assert!(err(AirOracle::new(&goldilocks, 0, 0)).contains("not over BN254"));
+    assert!(err(AirOracle::new(&goldilocks, 0, 0)).contains("not over BN128"));
     assert!(err(AirOracle::new(&pilout(), 0, 1)).contains("no air 1"));
     assert!(err(AirOracle::new(&pilout(), 1, 0)).contains("no airgroup 1"));
 

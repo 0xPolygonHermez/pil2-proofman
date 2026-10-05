@@ -1,5 +1,5 @@
 // The kernels of the LDE on the device (pilfflonk_lde_kernels.hpp), in the GPU library only. They
-// are elementwise, over BN254 scalars in sppark's Montgomery arithmetic (BN128GPUScalarField), which
+// are elementwise, over BN128 scalars in sppark's Montgomery arithmetic (BN128GPUScalarField), which
 // keeps every result fully reduced, as ffiasm does: each value is the same field element as the
 // CPU's (pilfflonk_lde.cpp), and so the same bytes, whatever the order of the products.
 #include <cuda.h>

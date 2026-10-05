@@ -41,12 +41,12 @@ string_tag!(
 
 string_tag!(
     /// `"field"` of the globalInfo.
-    Field = "bn254"
+    Field = "bn128"
 );
 
 string_tag!(
     /// `"modulus"` of the globalInfo: `r`, in decimal.
-    Modulus = crate::field::BN254_R
+    Modulus = crate::field::BN128_R
 );
 
 string_tag!(
@@ -60,7 +60,7 @@ string_tag!(
 );
 
 string_tag!(
-    /// `"curve"` of the vkey and of the JSON view of the proof, snarkjs's name of BN254.
+    /// `"curve"` of the vkey and of the JSON view of the proof, snarkjs's name of BN128.
     Curve = "bn128"
 );
 
@@ -75,6 +75,6 @@ mod tests {
         let err = serde_json::from_str::<Backend>(r#""stark""#).unwrap_err();
         assert!(err.to_string().contains(r#"expected "pilfflonk", found "stark""#), "{err}");
         assert!(serde_json::from_str::<Curve>("1").is_err());
-        assert_eq!(serde_json::to_string(&Modulus).unwrap(), format!("{:?}", crate::field::BN254_R));
+        assert_eq!(serde_json::to_string(&Modulus).unwrap(), format!("{:?}", crate::field::BN128_R));
     }
 }

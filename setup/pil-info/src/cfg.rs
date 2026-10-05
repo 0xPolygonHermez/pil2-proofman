@@ -3,7 +3,7 @@
 //! how the committed polynomials are opened.
 //!
 //! The STARK runs the passes over Goldilocks with its cubic extension and opens with FRI; pilfflonk
-//! runs them over the BN254 scalar field, with no extension, and opens with SHPLONK. This is a
+//! runs them over the BN128 scalar field, with no extension, and opens with SHPLONK. This is a
 //! run-time value, not a cargo feature, because `proofman-setup` hosts both setups in one binary.
 
 use num_bigint::BigUint;
@@ -11,9 +11,9 @@ use num_bigint::BigUint;
 /// Goldilocks: `p = 2^64 − 2^32 + 1`.
 const GOLDILOCKS_MODULUS: u64 = 0xFFFF_FFFF_0000_0001;
 
-/// The BN254 scalar field `r` (the order of G1), big-endian:
+/// The BN128 scalar field `r` (the order of G1), big-endian:
 /// `0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001`.
-const BN254_R_BE: [u8; 32] = [
+const BN128_R_BE: [u8; 32] = [
     0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d, 0x28, 0x33, 0xe8,
     0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
 ];
@@ -40,9 +40,9 @@ impl FieldCfg {
         Self::new(BigUint::from(GOLDILOCKS_MODULUS), 3)
     }
 
-    /// The BN254 scalar field, large enough to need no extension: every value has dimension 1.
-    pub fn bn254() -> Self {
-        Self::new(BigUint::from_bytes_be(&BN254_R_BE), 1)
+    /// The BN128 scalar field, large enough to need no extension: every value has dimension 1.
+    pub fn bn128() -> Self {
+        Self::new(BigUint::from_bytes_be(&BN128_R_BE), 1)
     }
 
     fn new(modulus: BigUint, ext_dim: usize) -> Self {
@@ -138,9 +138,9 @@ impl PilInfoCfg {
 
     /// pilfflonk's configuration, with the default search bound; `--max-constraint-degree`
     /// replaces `degree_policy`.
-    pub fn bn254() -> Self {
+    pub fn bn128() -> Self {
         Self {
-            field: FieldCfg::bn254(),
+            field: FieldCfg::bn128(),
             degree_policy: DegreePolicy::Search { max: DEFAULT_MAX_CONSTRAINT_DEGREE },
             opening: Opening::Shplonk,
         }
@@ -161,8 +161,8 @@ mod tests {
     }
 
     #[test]
-    fn bn254_is_the_scalar_field_without_extension() {
-        let field = FieldCfg::bn254();
+    fn bn128_is_the_scalar_field_without_extension() {
+        let field = FieldCfg::bn128();
         assert_eq!(
             field.modulus().to_string(),
             "21888242871839275222246405745257275088548364400416034343698204186575808495617"
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn search_bound_is_its_max() {
         assert_eq!(DegreePolicy::Search { max: 4 }.max_constraint_degree(), 4);
-        assert_eq!(PilInfoCfg::bn254().degree_policy.max_constraint_degree(), DEFAULT_MAX_CONSTRAINT_DEGREE);
+        assert_eq!(PilInfoCfg::bn128().degree_policy.max_constraint_degree(), DEFAULT_MAX_CONSTRAINT_DEGREE);
     }
 
     #[test]
@@ -200,8 +200,8 @@ mod tests {
         assert_eq!(stark.degree_policy, DegreePolicy::FromBlowup { blowup_bits: 2 });
         assert_eq!(stark.opening, Opening::Fri);
 
-        let fflonk = PilInfoCfg::bn254();
-        assert_eq!(fflonk.field, FieldCfg::bn254());
+        let fflonk = PilInfoCfg::bn128();
+        assert_eq!(fflonk.field, FieldCfg::bn128());
         assert_eq!(fflonk.opening, Opening::Shplonk);
     }
 }

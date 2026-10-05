@@ -1,4 +1,4 @@
-//! What the BN254 tests share: the committed circom, the snarkjs that computes a circuit's witness,
+//! What the BN128 tests share: the committed circom, the snarkjs that computes a circuit's witness,
 //! a scratch directory of their own and the reader of a `.wtns` file.
 //!
 //! A circuit is compiled with the committed circom (`setup/circom`), so its r1cs cannot go stale,
@@ -31,7 +31,7 @@ pub fn circom() -> PathBuf {
     repo_root().join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" })
 }
 
-/// The circom library of the BN254 verifier, whose `custom/` has the `PoseidonT` gate.
+/// The circom library of the BN128 verifier, whose `custom/` has the `PoseidonT` gate.
 pub fn circuits_bn128() -> PathBuf {
     manifest().join("stark2circom/circom_verifier/circuits.bn128")
 }
@@ -85,7 +85,7 @@ pub fn run(cmd: &mut Command, what: &str) {
     );
 }
 
-/// Compiles `src` for BN254 into `dir`, with the BN254 verifier's circom library on the include
+/// Compiles `src` for BN128 into `dir`, with the BN128 verifier's circom library on the include
 /// path, and computes its witness of `input`: the r1cs and the `.wtns`.
 pub fn compile_and_witness(dir: &Path, src: &Path, input: &Path) -> (Vec<u8>, Vec<u8>) {
     let name = src.file_stem().and_then(|s| s.to_str()).expect("a circuit file name");

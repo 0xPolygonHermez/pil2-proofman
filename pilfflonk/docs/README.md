@@ -1,6 +1,6 @@
 # pilfflonk
 
-pilfflonk proves PIL2 programs with fflonk over BN254. The committed polynomials are packed into a
+pilfflonk proves PIL2 programs with fflonk over BN128. The committed polynomials are packed into a
 few polynomials `f_i`, each is committed with KZG, and one SHPLONK opening of all of them is checked
 with one pairing. The proof is a handful of points and scalars, and the verifier runs in JS (the
 reference) or as a generated Solidity contract.
@@ -45,10 +45,10 @@ change to a proof, its publics or the witness is rejected.
 
 1. **A path beside the STARK one.** The STARK runtime is untouched. `proofman-pilfflonk` depends on
    neither `proofman-common` nor `proofman-witness`, and the STARK runtime stays `F: PrimeField64`.
-2. **Rust orchestrates, C++ computes.** The BN254 arithmetic of the prover (MSMs, NTTs, polynomials)
+2. **Rust orchestrates, C++ computes.** The BN128 arithmetic of the prover (MSMs, NTTs, polynomials)
    is C++: ffiasm and rapidsnark's polynomials on the CPU, `pil2-stark/src/bn128/src/{msm,ntt}` on the
    GPU. Rust reaches it through a hand-written FFI, as the STARK path does. No curve library is added:
-   Rust only has big integers in the setup (`num-bigint`) and the field type `Bn254` to compute
+   Rust only has big integers in the setup (`num-bigint`) and the field type `Bn128` to compute
    witnesses in ([Witness](#witness)).
 3. **The setup decides, the prover executes.** The degrees, the layout and the bytecode are fixed by
    the setup; the prover makes no choice.
@@ -63,7 +63,7 @@ change to a proof, its publics or the witness is rejected.
 
 ```
 program.pil
-  │  proofman-setup compile-pil --field bn254               compile over BN254
+  │  proofman-setup compile-pil --field bn128               compile over BN128
   ▼
 program.pilout
   │  proofman-setup setup-pilfflonk --powers-of-tau <ptau>    setup
@@ -81,24 +81,23 @@ accepted or rejected
 ### compile-pil
 
 ```
-proofman-setup compile-pil -p <program.pil> -o <program.pilout> -I <std dir> --field bn254
+proofman-setup compile-pil -p <program.pil> -o <program.pilout> -I <std dir> --field bn128
 ```
 
 `--field` is passed to pil2com, which knows two fields by name: `goldilocks`, its default, and
-`bn254`, the BN254 scalar field `r` that pilfflonk proves over (`bn128`, circom's name for it, is
-accepted too). Any other name is refused.
+`bn128`, the scalar field `r` of BN128 that pilfflonk proves over. Any other name is refused.
 
 The compiler must have `--field` (`PIL2C_EXEC` points at it): it is `../pil2-compiler` on its branch
 `develop-0.14.0-pil2-fflonk`, which also encodes field values of 64 bits and more correctly. The
 pinned compiler ignores `--field` and compiles over Goldilocks; setup-pilfflonk then refuses the
-pilout, saying so. The
-pilout's `baseField` is then `r`. Its writers `fixed-to-file` and `extern_fixed_file` work with `u64`
-and refuse a field wider than 64 bits, so the fixed columns stay in the pilout, but for those it
-declares `#pragma fixed_external`: the compiler writes them without values, and the caller of the
-setup gives these ([formats.md#fixed-columns](formats.md#fixed-columns)).
+pilout, saying so. With `--field bn128`, the pilout's `baseField` is `r`. Its writers
+`fixed-to-file` and `extern_fixed_file` work with `u64` and refuse a field wider than 64 bits, so
+the fixed columns stay in the pilout, but for those it declares `#pragma fixed_external`: the
+compiler writes them without values, and the caller of the setup gives these
+([formats.md#fixed-columns](formats.md#fixed-columns)).
 
-The std works over BN254 through `pil2-components/lib/std/pil/bn254.pil`, selected when `PRIME` is
-`r`: `Bn254_Gen[i] = 5^((r−1)/2^i)` for `i ≤ 28` and `Bn254_k = 5^(2^28)`, the root of unity and the
+The std works over BN128 through `pil2-components/lib/std/pil/bn128.pil`, selected when `PRIME` is
+`r`: `Bn128_Gen[i] = 5^((r−1)/2^i)` for `i ≤ 28` and `Bn128_k = 5^(2^28)`, the root of unity and the
 coset shift of the connections. The rest of the std works with `PRIME` already.
 
 ### setup-pilfflonk
@@ -122,7 +121,7 @@ The steps, each a pure function but for the file I/O and the fixed commitments:
 1. Read the pilout and validate it ([What the setup refuses](#what-the-setup-refuses)), and its
    fixed columns, with the values of the external ones if it has any
    ([formats.md#fixed-columns](formats.md#fixed-columns)).
-2. Run the symbolic passes of `pil-info`, the STARK's, with `PilInfoCfg::bn254()`: field `r`,
+2. Run the symbolic passes of `pil-info`, the STARK's, with `PilInfoCfg::bn128()`: field `r`,
    extension dimension 1, the degree search of
    [protocol.md#degree-search](protocol.md#degree-search), and no FRI.
 3. Derive the committed polynomials, their bounds and `nBitsExt`, and group them into the layout
@@ -146,7 +145,7 @@ changes no other file: the globalInfo does not record it.
 
 The setup stops with an error, before it writes any file, when:
 
-- the pilout's `baseField` is not BN254's `r` (a Goldilocks pilout says how to compile one over BN254);
+- the pilout's `baseField` is not BN128's `r` (a Goldilocks pilout says how to compile one over BN128);
 - it has custom commits, periodic columns or public tables;
 - it has more than one AIR, air values, airgroup values, proof values or global constraints
   ([Scope](#scope)). The hints are checked before the values, so that an `im_airval` is refused by its
@@ -176,12 +175,12 @@ The setup stops with an error, before it writes any file, when:
 - two columns would have the same name in the proof and the layout, once the setup has indexed the
   im pols and the columns that share a name and have no `lengths`
   ([formats.md#proof-names](formats.md#proof-names)); the error names them;
-- a fixed value is not below `r`. A pilout over BN254 has none, and reducing one would hide a
+- a fixed value is not below `r`. A pilout over BN128 has none, and reducing one would hide a
   compiler bug;
 - a fixed column has no values, in the pilout or external; or an external fixed column is not one
   the pilout has without values, is given twice, or has not one value per row
   ([formats.md#fixed-columns](formats.md#fixed-columns));
-- the extended domain does not fit in BN254's 2-adicity: `nBitsExt > 28`
+- the extended domain does not fit in BN128's 2-adicity: `nBitsExt > 28`
   ([protocol.md#degrees](protocol.md#degrees));
 - the grouping has no valid partition, or `--extra-muls` is too large or makes the search too large
   ([protocol.md#grouping-errors](protocol.md#grouping-errors));
@@ -302,24 +301,24 @@ The witness comes from one of two sources, chosen with exactly one of `--witness
 
 - **A witness directory**, read by `FileWitnessSource` and written by `Witness::write`, which the
   fixtures' generators call ([formats.md#witness-directory](formats.md#witness-directory)).
-- **A witness library**: a dynamic library that computes the witness over BN254's `Fr`, as the
+- **A witness library**: a dynamic library that computes the witness over BN128's `Fr`, as the
   STARK's witness libraries do over Goldilocks, but on a path of its own: no `ProofCtx`, no
   `WitnessManager`.
   - It implements `PilfflonkWitnessLibrary::witness(&mut self, shape, public_inputs) -> Witness` and
     is exported with `pilfflonk_witness_library!(Name)`, which defines the symbol
     `pilfflonk_init_library`. The STARK's loader looks for `init_library`, so neither loader takes
     the other's libraries; `load_witness_library` refuses a STARK library and says so.
-  - Its rows are the typed rows `pil-helpers` generates for a BN254 pilout: unpacked rows over `F`
+  - Its rows are the typed rows `pil-helpers` generates for a BN128 pilout: unpacked rows over `F`
     (`trace_row!` asks `PrimeField64` only of the typed accessors), no `FieldExtension`, and publics of
-    type `Bn254`.
+    type `Bn128`.
   - `-i/--public-inputs <json>` names the public inputs the library reads (only with
     `--witness-lib`). Their values are decimal strings (`"5"`, not `5`): a JSON number is refused.
   - `compute_witness` checks the witness against the shape of the key, as `FileWitnessSource::open`
     checks a directory. The library is never unloaded.
 
-`proofman_fields::Bn254` is BN254's scalar field `Fr`, of order `r` (not the base field `Fq`), in
+`proofman_fields::Bn128` is BN128's scalar field `Fr`, of order `r` (not the base field `Fq`), in
 pure Rust: Montgomery form in four 64-bit limbs, always reduced, the same as ffiasm's `RawFr::Element`.
-It implements `Field` and `PrimeField` but not `PrimeField64`; integers convert with `Bn254::from_int`
+It implements `Field` and `PrimeField` but not `PrimeField64`; integers convert with `Bn128::from_int`
 (a negative `x` is `r − |x|`). `GENERATOR = 5`, `TWO_ADICITY = 28` and `W[i] = 5^((r−1)/2^i)`.
 `to_le_bytes`/`from_le_bytes` use the 32-byte canonical little-endian encoding, and serde the
 canonical decimal string ([formats.md#json-encoding](formats.md#json-encoding)). It is for computing
@@ -329,13 +328,13 @@ witnesses only: the prover's arithmetic is ffiasm's.
 
 | Component | Where | Language | What it does |
 |---|---|---|---|
-| Compiler | `../pil2-compiler`, branch `develop-0.14.0-pil2-fflonk` | JS | the pilout over BN254 |
-| Std constants | `pil2-components/lib/std/pil/bn254.pil` | PIL | `GEN` and `k_coset` over BN254 |
+| Compiler | `../pil2-compiler`, branch `develop-0.14.0-pil2-fflonk` | JS | the pilout over BN128 |
+| Std constants | `pil2-components/lib/std/pil/bn128.pil` | PIL | `GEN` and `k_coset` over BN128 |
 | Symbolic passes | `pil-info`, `setup/pil-info/` | Rust | the STARK's passes, parameterised by the field (`PilInfoCfg`); the `"chps"` container; temporaries; `globalConstraints.json` |
 | Setup | `pilfflonk-setup`, `setup/pilfflonk/` | Rust | validation, layout, bytecode, keys, `provingKey/`, digest, Solidity |
 | Setup commands | `pil2-stark-setup` (`proofman-setup`) | Rust | `setup-pilfflonk` and `pilfflonk-solidity`, which call `pilfflonk-setup` |
 | Types and orchestration | `proofman-pilfflonk`, `pilfflonk/` | Rust | the types of every pilfflonk file, the proving key, the stage loop, `WitnessSource`, witness libraries, `check`, the calldata |
-| BN254 core | `pil2-stark/src/pilfflonk/` | C++ | the `Fr` interpreter, the LDE on a coset, blinding, packing, MSMs, `Q`, evaluations, the prover side of SHPLONK, the GPU path |
+| BN128 core | `pil2-stark/src/pilfflonk/` | C++ | the `Fr` interpreter, the LDE on a coset, blinding, packing, MSMs, `Q`, evaluations, the prover side of SHPLONK, the GPU path |
 | C API | `pil2-stark/src/api/pilfflonk_api.{hpp,cpp}` | C++ | the surface Rust sees: status codes, never `exitProcess` |
 | Bindings | `provers/starks-lib-c/bindings_pilfflonk.rs`, `src/ffi_pilfflonk.rs` | Rust | the hand-written FFI, as `bindings_starks.rs` and `ffi_starks.rs` |
 | CLI | `cli/src/commands/pilfflonk/` | Rust | `pilfflonk prove`, `check`, `verify` and `calldata` |
@@ -384,6 +383,10 @@ them as Rust writes them.
 - **Logs and timers.** `tracing`, and the C++ timers `TimerStart`/`TimerStopAndLog` with names
   `PILFFLONK_*`, logged at trace level (`-vv`).
 - **Format and lints.** `rustfmt` (`max_width = 120`) and `clippy -D warnings`.
+- **The curve's name.** BN128, as the rest of the repository, circom and snarkjs call it: the curve
+  of Ethereum's precompiles (`alt_bn128`). pilfflonk works over its scalar field `Fr`, of order
+  `r = 21888242871839275222246405745257275088548364400416034343698204186575808495617` (the `Bn128`
+  type, `proofman_fields::Bn128`), and its points' coordinates are in its base field `Fq`.
 
 ### C API
 
@@ -447,7 +450,7 @@ columns are computed in PIL, as the PIL1 generators computed them.
 | `sm_fibonacci/fibonacci.pil` | `fibonacci/fibonacci.pil` | 2^8 | The publics are inputs, tied to the trace with the fixed columns `L1` and `LLAST` (the compiler emits only `everyRow` constraints). |
 | `sel {a, b', a*b'} in SEL {A, B, cc}` | `plookup/plookup.pil` | 2^8 | Sum bus: `lookup_assumes(1, [a, b', a·b'], sel)` and `lookup_proves(1, [A, B, cc], mul)`, with `mul` a new column, the times each row of the table is looked up, and `(1 − SEL)·mul = 0`. Product bus: the std's lookup has none, as a product cannot take multiplicities, so the tuples go to the std's permutation with `mul` as the table's selector. PIL1's plookup (`h1`/`h2` and `Z`) is the std's bus. |
 | `selC {c, c} is selD {d, d}` | `permutation/permutation.pil` | 2^8 | `permutation_assumes(2, [c, c], selC)` and `permutation_proves(2, [d, d], selD)`. `a` and `b` are read by no constraint, so they are not committed, as in PIL1, and the setup says so. |
-| `{a, b, c} connect {S1, S2, S3}` | `connection/connection.pil` | 2^10 (2^8 in `all`) | `connection(3, [a, b, c], [S1, S2, S3])`, the `S_i` from the identity `k^(i−1)·ω^row` with BN254's `k_coset` and `GEN[BITS]`, and the swaps of `sm_connection.js` in the same order. |
+| `{a, b, c} connect {S1, S2, S3}` | `connection/connection.pil` | 2^10 (2^8 in `all`) | `connection(3, [a, b, c], [S1, S2, S3])`, the `S_i` from the identity `k^(i−1)·ω^row` with BN128's `k_coset` and `GEN[BITS]`, and the swaps of `sm_connection.js` in the same order. |
 | — | `range_check/range_check.pil` | 2^6 | New: `v ∈ [0, 16)` against a fixed table of the same AIR. Sum bus: a lookup. Product bus: as plookup, `h1` then `h2` are the values of `v` and of the table sorted, which the std's permutation checks. The std's own range check cannot be used ([Upstream issues](#std-range-check)). |
 | `sm_all/all_main.pil` | `all/all.pil` | 2^8 | One AIR, `All`, which calls the four state machines as PIL2 functions. A PIL2 AIR has one scope and the proof names each evaluation by its column, so the witness columns take their state machine's name as a prefix (`connection_a`, `permutation_a`, `plookup_a`). PIL1's `Global.L1` is the std's `__L1__`. |
 
@@ -464,11 +467,11 @@ with `im_low` on the product bus), each with its hint.
 - `sum_bus/`, `prod_bus/`, `prod_bus_im/`: one bus of the std each, of two stages; `prod_bus_im` with
   `im_col` columns.
 - `mixed_bus/`: both buses of the std in one AIR, the Connection on the product bus and the Plookup on
-  the sum bus, as plonk2pil's BN254 wrap has its connection and its range checks' lookup. Each closes
+  the sum bus, as plonk2pil's BN128 wrap has its connection and its range checks' lookup. Each closes
   on its own.
 - `pilfflonk/tests/data/domains.rs`: pilouts built in code with `prost`, for the domains the compiler
   does not emit (`firstRow`, `lastRow` and `everyFrame`).
-- `std_bn254/`: the std's connections over BN254, against `bn254.pil`.
+- `std_bn128/`: the std's connections over BN128, against `bn128.pil`.
 - `packed/packed_external.pil` and `connection/connection_external.pil`: `packed.pil` and
   `connection_prod.pil` with fixed columns declared `#pragma fixed_external` (`K[4]` and `S`;
   `S1`, `S2` and `S3`), whose values the setup takes from its caller
@@ -478,7 +481,7 @@ with `im_low` on the product bus), each with its hint.
 
 **Witness libraries.** `fibonacci/rs`, `connection/rs` and `all/rs` are the witness libraries of
 those fixtures (crates `pilfflonk-fibonacci`, `pilfflonk-connection` and `pilfflonk-all`, `dylib`,
-workspace members that are not default members). Their `pil_helpers` are versioned, as the BN254
+workspace members that are not default members). Their `pil_helpers` are versioned, as the BN128
 pilout needs `PIL2C_EXEC`, and a test checks that they are what `pil-helpers` writes. One library
 serves both buses of a fixture: the two pilouts have the same stage-1 columns and publics. Their
 witness is the generator's, byte for byte.

@@ -64,7 +64,7 @@ export function checkQVerifier(curve, qVerifier, shape) {
     const written = new Set();
     const operand = (ref, where) => {
         if (!isPlainObject(ref)) fail(`${where} is not an operand`);
-        if (ref.dim !== 1) fail(`${where} has dimension ${ref.dim}; over BN254 every operand has 1`);
+        if (ref.dim !== 1) fail(`${where} has dimension ${ref.dim}; over BN128 every operand has 1`);
         const index = (n, name) => {
             if (!isIndex(ref.id, n)) fail(`${where}: ${ref.type} ${ref.id} is not one of the ${n} ${name}`);
             return { type: ref.type, id: ref.id };

@@ -645,13 +645,13 @@ mod tests {
     fn test_get_exp_dim_challenge_follows_the_field() {
         let exprs = vec![Expression { op: "challenge".to_string(), dim: 0, ..Default::default() }];
         assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::goldilocks()).unwrap(), 3);
-        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::bn254()).unwrap(), 1);
+        assert_eq!(get_exp_dim(&exprs, 0, &FieldCfg::bn128()).unwrap(), 1);
     }
 
-    /// `challenge * cm2` (a stage-2 column): extension-valued over Goldilocks, base-valued over BN254.
+    /// `challenge * cm2` (a stage-2 column): extension-valued over Goldilocks, base-valued over BN128.
     #[test]
     fn test_add_info_dims_follow_the_field() {
-        for (field, dim) in [(FieldCfg::goldilocks(), 3), (FieldCfg::bn254(), 1)] {
+        for (field, dim) in [(FieldCfg::goldilocks(), 3), (FieldCfg::bn128(), 1)] {
             let mut exprs = vec![
                 Expression { op: "challenge".to_string(), stage: 2, ..Default::default() },
                 Expression { op: "airvalue".to_string(), stage: 2, ..Default::default() },
@@ -671,7 +671,7 @@ mod tests {
     /// `neg(x)` becomes `mul(modulus − 1, x)`, in the arena and inline.
     #[test]
     fn test_neg_is_a_multiplication_by_modulus_minus_one() {
-        for field in [FieldCfg::goldilocks(), FieldCfg::bn254()] {
+        for field in [FieldCfg::goldilocks(), FieldCfg::bn128()] {
             let mut exprs = vec![
                 make_cm(0, 1),
                 Expression { op: "neg".to_string(), values: vec![ExprChild::Id(0)], ..Default::default() },
@@ -716,7 +716,7 @@ mod tests {
         assert!(matches!(&err, PilInfoError::UnknownOp { pass: "add_info_expressions", op } if op == "bogus"), "{err}");
         let err = add_info_expression_inline(&mut exprs, &mut bogus(), &FieldCfg::goldilocks()).unwrap_err();
         assert_eq!(err.to_string(), "add_info_expressions: unknown expression op `bogus`");
-        let err = get_exp_dim(&[Expression { dim: 0, ..bogus() }], 0, &FieldCfg::bn254()).unwrap_err();
+        let err = get_exp_dim(&[Expression { dim: 0, ..bogus() }], 0, &FieldCfg::bn128()).unwrap_err();
         assert_eq!(err.to_string(), "get_exp_dim: unknown expression op `bogus`");
     }
 }

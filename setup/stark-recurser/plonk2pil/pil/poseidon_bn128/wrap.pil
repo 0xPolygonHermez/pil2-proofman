@@ -2,13 +2,13 @@ require "std_constants.pil";
 require "std_connection.pil";
 
 require "circuits/plonk.pil";
-require "circuits/poseidon_bn254.pil";
+require "circuits/poseidon_bn128.pil";
 require "circuits/num2bytes.pil";
 
 // ============================================================================
-// PoseidonBN254 WRAP
+// PoseidonBN128 WRAP
 //
-// The AIR of the final SNARK wrap, over BN254, proved with pilfflonk: the circom verifier of the
+// The AIR of the final SNARK wrap, over BN128, proved with pilfflonk: the circom verifier of the
 // last STARK (`final.circom`, with custom templates) as PLONK gates and the custom gates
 // `PoseidonT(5)` and `Num2Bytes(nBits)`. Layout L1, with range checks:
 //
@@ -61,7 +61,7 @@ airtemplate Wrap (const int N, const int nPublics, const int nRangeChecks) {
     // The row's constants: on band row r, the round constants C[5·r + j] of POSEIDON_C_ORIGINAL(5);
     // on a range-check row of n chunks, the chunk weights, 2^(16·k) for k < n and 0 for k >= n.
     #pragma fixed_external
-    col fixed K[POSEIDON_BN254_WIDTH];
+    col fixed K[POSEIDON_BN128_WIDTH];
 
     // 1 on every row of a band; 1 on the rows of a full round, and of a partial round.
     #pragma fixed_external
@@ -122,15 +122,15 @@ airtemplate Wrap (const int N, const int nPublics, const int nRangeChecks) {
     plonk([a[3], a[4], a[5]], q, 1 - customGateRow);
     plonk([a[6], a[7], a[8]], q, 1);
 
-    const expr state[POSEIDON_BN254_WIDTH];
-    const expr next[POSEIDON_BN254_WIDTH];
-    const expr rc[POSEIDON_BN254_WIDTH];
-    for (int j = 0; j < POSEIDON_BN254_WIDTH; j++) {
+    const expr state[POSEIDON_BN128_WIDTH];
+    const expr next[POSEIDON_BN128_WIDTH];
+    const expr rc[POSEIDON_BN128_WIDTH];
+    for (int j = 0; j < POSEIDON_BN128_WIDTH; j++) {
         state[j] = a[j];
         next[j] = a[j]';
         rc[j] = K[j];
     }
-    poseidonBn254Round(state, next, rc, POSEIDON_FULL_ROUND, POSEIDON_PARTIAL_ROUND);
+    poseidonBn128Round(state, next, rc, POSEIDON_FULL_ROUND, POSEIDON_PARTIAL_ROUND);
 
     const expr wires[nWires];
     for (int i = 0; i < nWires; i++) {

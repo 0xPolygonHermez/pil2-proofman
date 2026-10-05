@@ -4,13 +4,13 @@
 //! exposes the same surface (`aggregation`, `compressor`, a `PilTemplateParams`
 //! struct and a `gen_pil_str` helper). Dispatch happens in [`super::packers`].
 //!
-//! [`poseidon_bn254`], the final SNARK wrap's family over BN254, has one setup instead of the two,
+//! [`poseidon_bn128`], the final SNARK wrap's family over BN128, has one setup instead of the two,
 //! `wrap`, and the same `PilTemplateParams` and `gen_pil_str`.
 
 pub mod blake3;
 pub mod poseidon1;
 pub mod poseidon2;
-pub mod poseidon_bn254;
+pub mod poseidon_bn128;
 
 #[cfg(test)]
 mod tests {
@@ -138,9 +138,9 @@ mod tests {
 
     /// The wrap's airtemplate takes what its generator emits.
     #[test]
-    fn poseidon_bn254_generated_call_matches_its_airtemplate() {
-        let p = super::poseidon_bn254::PilTemplateParams {
-            template_file: "poseidon_bn254/wrap",
+    fn poseidon_bn128_generated_call_matches_its_airtemplate() {
+        let p = super::poseidon_bn128::PilTemplateParams {
+            template_file: "poseidon_bn128/wrap",
             template_name: "Wrap",
             namespace_name: "Wrap",
             n_bits: 16,
@@ -148,7 +148,7 @@ mod tests {
             n_range_checks: 1,
             max_constraint_degree: 6,
         };
-        assert_no_drift("poseidon_bn254/wrap.pil", "Wrap", &super::poseidon_bn254::gen_pil_str(&p));
+        assert_no_drift("poseidon_bn128/wrap.pil", "Wrap", &super::poseidon_bn128::gen_pil_str(&p));
     }
 
     /// The gate a family places follows its Merkle arity, and blake3's is forced to 2. If this ever

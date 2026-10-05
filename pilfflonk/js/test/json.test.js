@@ -88,7 +88,7 @@ test("changing any field changes the digest", () => {
         maxQDegree: (v) => (v.maxQDegree = 1),
         "qVerifier.tmpUsed": (v) => (v.qVerifier.tmpUsed = 2),
         protocol: (v) => (v.protocol = "pilfflonk2"),
-        curve: (v) => (v.curve = "bn254"),
+        curve: (v) => (v.curve = "not-a-curve"),
         formatVersion: (v) => (v.formatVersion = 2),
         "layout[0].pols[0].name": (v) => (v.layout[0].pols[0].name = "L2"),
         "evMap[0].type": (v) => (v.evMap[0].type = "cm"),

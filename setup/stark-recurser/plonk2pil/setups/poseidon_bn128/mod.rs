@@ -1,6 +1,6 @@
-//! PoseidonBN254-family Plonk-to-PIL setup: the final SNARK wrap's AIR, over BN254, for pilfflonk
-//! ([`proofman_common::hash_family::BN254_WRAP_FAMILY`]). One setup, [`wrap`], in layout L1 with
-//! range checks: `pil/poseidon_bn254/wrap.pil`. Its pilfflonk setup takes the knobs
+//! PoseidonBN128-family Plonk-to-PIL setup: the final SNARK wrap's AIR, over BN128, for pilfflonk
+//! ([`proofman_common::hash_family::BN128_WRAP_FAMILY`]). One setup, [`wrap`], in layout L1 with
+//! range checks: `pil/poseidon_bn128/wrap.pil`. Its pilfflonk setup takes the knobs
 //! [`wrap::MAX_CONSTRAINT_DEGREE`] (the PIL's, by default) and [`wrap::EXTRA_MULS`].
 
 pub mod constants;

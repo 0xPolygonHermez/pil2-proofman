@@ -71,7 +71,7 @@ pub const DEFAULT_MAX_Q_DEGREE: u64 = 0;
 /// The arguments of `setup-pilfflonk` (pilfflonk/docs/README.md#setup-pilfflonk).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SetupPilfflonkOptions {
-    /// `-a`: the pilout, compiled over BN254.
+    /// `-a`: the pilout, compiled over BN128.
     pub airout_path: PathBuf,
     /// `-b`: the build directory, where `provingKey/` goes.
     pub build_dir: PathBuf,
@@ -264,7 +264,7 @@ pub fn run_setup_pilfflonk_with_external_fixed(
     tracing::info!("wrote {}", bin_path.display());
     // No global constraint (pilfflonk/docs/formats.md#globalconstraints): the file has none, and
     // the global hints the setup ignores.
-    let global_constraints = build_global_constraints_json(&pilout, &FieldCfg::bn254()).with_context(refused)?;
+    let global_constraints = build_global_constraints_json(&pilout, &FieldCfg::bn128()).with_context(refused)?;
     write_text(&proving_key.join(GLOBAL_CONSTRAINTS_FILE), &to_json_string(&global_constraints)?)?;
 
     // Last, the vkey (pilfflonk/docs/formats.md#vkey), with [τ]₂ of the SRS and the fixed

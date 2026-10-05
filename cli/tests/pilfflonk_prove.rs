@@ -31,7 +31,7 @@
 //!   verifier's; the columns are the oracle's; the verifier accepts the proofs and rejects every
 //!   change to one; and a witness that breaks the bus is refused. And
 //!   `pilfflonk/tests/fixtures/mixed_bus`, both buses in one AIR, the Connection on the product bus
-//!   and the Plookup on the sum bus, as plonk2pil's BN254 wrap has them: each closes on its own,
+//!   and the Plookup on the sum bus, as plonk2pil's BN128 wrap has them: each closes on its own,
 //!   and breaking either is refused;
 //! - the pil-fflonk examples ported to PIL2 (pilfflonk/docs/README.md#fixtures),
 //!   `pilfflonk/tests/fixtures/{plookup,permutation,connection,range_check,all}`, each on the std's
@@ -134,7 +134,7 @@ use proofman_pilfflonk::oracle::Values;
 use proofman_pilfflonk::{
     gpu_available, prove, stage_columns, AirFile, Boundary, CalldataLayout, FileWitnessSource, FrBytes, JsonFile,
     PilfflonkError, PilfflonkGlobalInfo, PilfflonkInfo, PolMapEntry, PolType, Proof, ProofChallenges, ProofNames,
-    ProveOptions, ProvingKey, Publics, Vkey, Witness, WitnessSource, BN254_R,
+    ProveOptions, ProvingKey, Publics, Vkey, Witness, WitnessSource, BN128_R,
 };
 use prost::Message;
 use serde_json::{json, Value};
@@ -322,7 +322,7 @@ impl Program {
     }
 }
 
-/// Compiles `program` over BN254 to `pilout` with `PIL2C_EXEC`, or writes the pilout it builds.
+/// Compiles `program` over BN128 to `pilout` with `PIL2C_EXEC`, or writes the pilout it builds.
 fn compile(program: Program, pilout: &Path) {
     let pil = match program {
         Program::Fibonacci => "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil".to_string(),
@@ -345,7 +345,7 @@ fn compile(program: Program, pilout: &Path) {
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg(pil)
-        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
         .arg(pilout)
         .output()
         .expect("PIL2C_EXEC runs");
@@ -388,7 +388,7 @@ fn write_json(path: &Path, value: &Value) {
 
 /// `value + 1 mod r`, in decimal.
 fn plus_one(value: &Value) -> Value {
-    let r = num_bigint::BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap();
+    let r = num_bigint::BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap();
     let v = num_bigint::BigUint::parse_bytes(value.as_str().unwrap().as_bytes(), 10).unwrap();
     json!(((v + 1u32) % r).to_string())
 }
@@ -1450,7 +1450,7 @@ fn the_witness_read_with_the_key_is_refused_after_it() {
     fs::remove_file(no_trace.join(trace)).unwrap();
     let r_in_trace = copy("r_in_trace");
     let mut bytes = fs::read(r_in_trace.join(trace)).unwrap();
-    let r = num_bigint::BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap().to_bytes_le();
+    let r = num_bigint::BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap().to_bytes_le();
     bytes[..r.len()].copy_from_slice(&r);
     fs::write(r_in_trace.join(trace), bytes).unwrap();
     let check = |witness: &Path| {
@@ -1753,7 +1753,7 @@ fn a_broken_bus_is_refused(f: &Fixture, name: &str, witness: &Witness, line: &st
 }
 
 /// The std's two buses in one AIR (`tests/fixtures/mixed_bus`): the Connection on the product bus
-/// and the Plookup on the sum bus, as plonk2pil's BN254 wrap has its connection and the lookup of
+/// and the Plookup on the sum bus, as plonk2pil's BN128 wrap has its connection and the lookup of
 /// its range checks. Grouped by default and with `--no-packing`: the prover proves, the verifier
 /// accepts the proof and rejects any change to it ([`proves_its_layout_and_rejects_every_change`]);
 /// the prover's transcript is the JS verifier's, and its `Q(ξ)` and stage-2 columns, the std's hints
@@ -2037,7 +2037,7 @@ fn the_prover_refuses_what_is_not_a_pilfflonk_witness_library() {
         path
     };
     let (number, too_big) =
-        (inputs("number.json", r#"{"in1": 1}"#), inputs("r.json", &format!(r#"{{"in2": "{BN254_R}"}}"#)));
+        (inputs("number.json", r#"{"in1": 1}"#), inputs("r.json", &format!(r#"{{"in2": "{BN128_R}"}}"#)));
     let no_inputs = f.dir.file("no_inputs.json");
 
     for (library, public_inputs, expected) in [

@@ -1,7 +1,7 @@
 //! The pilfflonk witness library (pilfflonk/docs/README.md#witness) of the fixture `all`,
 //! `../all.pil`: pil-fflonk's example `all`, the Fibonacci, Connection, Permutation and Plookup
-//! state machines in one AIR. It computes the witness over BN254's `Fr`, in the rows `pil_helpers`
-//! generates for the fixture's BN254 pilout, and exports it with `pilfflonk_witness_library!`, as
+//! state machines in one AIR. It computes the witness over BN128's `Fr`, in the rows `pil_helpers`
+//! generates for the fixture's BN128 pilout, and exports it with `pilfflonk_witness_library!`, as
 //! the Fibonacci's (`pilfflonk/tests/fixtures/fibonacci/rs`).
 //!
 //! One library for both buses: the pilouts of `all_sum.pil` and `all_prod.pil` have the same
@@ -13,7 +13,7 @@
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo run --bin proofman-setup -- compile-pil \
 //!     -p pilfflonk/tests/fixtures/all/all_sum.pil -I ./pil2-components/lib/std/pil \
-//!     --field bn254 -o <out>/all.pilout
+//!     --field bn128 -o <out>/all.pilout
 //! cargo run --bin proofman-cli pil-helpers --pilout <out>/all.pilout \
 //!     --path pilfflonk/tests/fixtures/all/rs/src -o
 //! ```

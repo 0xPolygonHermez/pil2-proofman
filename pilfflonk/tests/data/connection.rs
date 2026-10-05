@@ -1,6 +1,6 @@
 //! The witness generator of the Connection fixture (pilfflonk/docs/README.md#fixtures),
 //! `tests/fixtures/connection/connection.pil`: a port of `execute` in pil-fflonk's
-//! `pil/sm_connection/sm_connection.js`, over BN254's `Fr` (every value is a small integer). The same
+//! `pil/sm_connection/sm_connection.js`, over BN128's `Fr` (every value is a small integer). The same
 //! witness for the sum and the product bus.
 //!
 //! Its fixed columns are the pilout's: the permutations `S1`, `S2` and `S3`, the std's `ID` and

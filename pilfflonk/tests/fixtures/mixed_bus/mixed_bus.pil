@@ -1,12 +1,12 @@
 // The std's two buses in one AIR (pilfflonk/docs/README.md#fixtures): the Connection of
 // tests/fixtures/connection/connection.pil on the product bus (PIOP_BUS_PROD, a grand product) and
 // the Plookup of tests/fixtures/plookup/plookup.pil on the sum bus (PIOP_BUS_SUM, LogUp), as
-// plonk2pil's BN254 wrap has its connection and the lookup of its range checks. N = 2^8, as `all`.
+// plonk2pil's BN128 wrap has its connection and the lookup of its range checks. N = 2^8, as `all`.
 // Each bus closes on its own, in STD_MODE_ONE_INSTANCE: `gprod` at 1 and `gsum` at 0 on the last
 // row. The std's default MAX_CONSTRAINT_DEGREE (3).
 //
-// The program to compile, over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil),
-// with --field bn254 and -I pil2-components/lib/std/pil. The witness generator is
+// The program to compile, over BN128 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil),
+// with --field bn128 and -I pil2-components/lib/std/pil. The witness generator is
 // tests/data/mixed_bus.rs.
 require "std_constants.pil"
 require "../connection/connection.pil"

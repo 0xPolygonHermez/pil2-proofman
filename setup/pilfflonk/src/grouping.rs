@@ -104,7 +104,7 @@ pub struct GroupingParams {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum GroupingError {
     #[error(
-        "an AIR of 2^{n_bits} rows: BN254's roots of unity allow at most 2^28 (pilfflonk/docs/protocol.md#notation)"
+        "an AIR of 2^{n_bits} rows: BN128's roots of unity allow at most 2^28 (pilfflonk/docs/protocol.md#notation)"
     )]
     NBits { n_bits: u64 },
 

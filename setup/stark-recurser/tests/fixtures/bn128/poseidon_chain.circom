@@ -3,7 +3,7 @@ pragma custom_templates;
 
 include "custom/poseidon.circom";
 
-// The gate test of tests/poseidon_bn254_wrap.rs: n uses of PoseidonT(5) in a chain, each
+// The gate test of tests/poseidon_bn128_wrap.rs: n uses of PoseidonT(5) in a chain, each
 // permutation's first output the next one's initial state, and the last one's the public. Nothing
 // else, so the AIR's rows are the bands, a few copies and the public's.
 template Chain(n) {

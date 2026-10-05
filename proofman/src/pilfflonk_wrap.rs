@@ -294,7 +294,7 @@ fn invalid_key(proving_key: &Path, e: proofman_pilfflonk::PilfflonkError) -> Pro
 mod tests {
     use super::*;
 
-    /// `r`, BN254's scalar field modulus, big-endian.
+    /// `r`, BN128's scalar field modulus, big-endian.
     fn r_be() -> [u8; 32] {
         let hex = "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001";
         let mut bytes = [0u8; 32];

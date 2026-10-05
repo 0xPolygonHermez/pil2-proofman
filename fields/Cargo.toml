@@ -26,7 +26,7 @@ verify = []
 
 [dev-dependencies]
 rand = { workspace = true }
-# Only for the serde tests of `Bn254`.
+# Only for the serde tests of `Bn128`.
 serde_json = { workspace = true }
 
 [lints.rust]

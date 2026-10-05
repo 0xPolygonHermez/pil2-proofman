@@ -1,4 +1,4 @@
-//! The final SNARK wrap's setup, over BN254 (`pil/poseidon_bn254/wrap.pil`), in layout L1 with
+//! The final SNARK wrap's setup, over BN128 (`pil/poseidon_bn128/wrap.pil`), in layout L1 with
 //! range checks: 9 wires, all of them in the std's connection; 3 PLONK gates a row on
 //! the row's one coefficient set; each `PoseidonT(5)` use a band of 69 rows, one round a row on
 //! a[0..4]; and each `Num2Bytes(nBits)` use a range-check row. On the rows of the custom gates, the
@@ -11,7 +11,7 @@
 //! - A range-check row is the use's `in` on a[0] and its `⌈nBits/16⌉` chunks of 16 bits from a[1]
 //!   ([`RANGE_CHECK_CHUNK_COLS`]), the cells past them left empty; its row constants `K` are the
 //!   chunks' weights, `2^(16·k)` for the chunks and 0 past them. Each is a gate band of the exec
-//!   ([`GateBandKind::PoseidonBn254WrapRangeCheck`], its number of chunks as the payload), so that
+//!   ([`GateBandKind::PoseidonBn128WrapRangeCheck`], its number of chunks as the payload), so that
 //!   the wrap's witness counts the table's multiplicity, `RANGE_MUL`, the stage-1 column after the
 //!   wires, which the band section's aux word names. The table `RANGE` is `i mod 2^16` on row `i`,
 //!   so an AIR with range checks has at least `2^16` rows.
@@ -31,8 +31,8 @@ use std::fmt;
 
 use anyhow::{bail, ensure, Result};
 use proofman_common::exec_format::{RANGE_CHECK_CHUNK_BITS, RANGE_CHECK_CHUNK_COLS};
-use proofman_common::hash_family::{lookup_gate, GateRole, BN254_WRAP_FAMILY};
-use proofman_fields::{Bn254, Field, PrimeField, QuotientMap};
+use proofman_common::hash_family::{lookup_gate, GateRole, BN128_WRAP_FAMILY};
+use proofman_fields::{Bn128, Field, PrimeField, QuotientMap};
 
 use super::constants::{is_full_round, ROUNDS, ROUND_CONSTANTS, WIDTH};
 use super::{gen_pil_str, PilTemplateParams};
@@ -90,8 +90,8 @@ const AIRGROUP_NAME: &str = "Wrap";
 
 /// The wrap's AIR for `r1cs` (see the module), or an error naming what it cannot place: a custom
 /// gate other than `PoseidonT(5)` and `Num2Bytes` of up to [`MAX_RANGE_CHECK_BITS`] bits, a use
-/// that does not fit its gate, or more rows than BN254 has domains for.
-pub fn wrap(r1cs: &R1csFile<Bn254>, options: &PlonkOptions) -> Result<SetupResult<Bn254>> {
+/// that does not fit its gate, or more rows than BN128 has domains for.
+pub fn wrap(r1cs: &R1csFile<Bn128>, options: &PlonkOptions) -> Result<SetupResult<Bn128>> {
     let uses = gate_uses(r1cs)?;
     let (plonk_constraints, plonk_additions, copy_merge) = r1cs2plonk_merged(r1cs, options.merge_copies);
     tracing::info!("Number of plonk constraints: {}", plonk_constraints.len());
@@ -111,9 +111,9 @@ pub fn wrap(r1cs: &R1csFile<Bn254>, options: &PlonkOptions) -> Result<SetupResul
     let n_bits_natural = (n_used.max(2).next_power_of_two().trailing_zeros() as usize).max(table_bits);
     let n_bits = n_bits_natural.max(options.min_n_bits.unwrap_or(0));
     ensure!(
-        n_bits <= Bn254::TWO_ADICITY,
-        "plonk2pil: the wrap needs 2^{n_bits} rows ({n_used} used), and BN254 has domains of at most 2^{}",
-        Bn254::TWO_ADICITY
+        n_bits <= Bn128::TWO_ADICITY,
+        "plonk2pil: the wrap needs 2^{n_bits} rows ({n_used} used), and BN128 has domains of at most 2^{}",
+        Bn128::TWO_ADICITY
     );
     let n = 1usize << n_bits;
     tracing::info!(
@@ -124,7 +124,7 @@ pub fn wrap(r1cs: &R1csFile<Bn254>, options: &PlonkOptions) -> Result<SetupResul
     );
 
     let mut s_map: Vec<Vec<u32>> = vec![vec![0u32; n]; N_WIRES];
-    let mut coefficients: Vec<Vec<Bn254>> = vec![vec![Bn254::ZERO; n]; PLONK_COEFFS];
+    let mut coefficients: Vec<Vec<Bn128>> = vec![vec![Bn128::ZERO; n]; PLONK_COEFFS];
     let mut columns = GateColumns::new(n, n_range_checks > 0);
     let mut band = PlonkBand::new(n);
 
@@ -156,7 +156,7 @@ pub fn wrap(r1cs: &R1csFile<Bn254>, options: &PlonkOptions) -> Result<SetupResul
         // Below n, at most 2^28.
         gate_bands.push(GateBand {
             row: row as u32,
-            kind: GateBandKind::PoseidonBn254WrapRangeCheck,
+            kind: GateBandKind::PoseidonBn128WrapRangeCheck,
             payload: n_chunks as u64,
         });
     }
@@ -169,10 +169,10 @@ pub fn wrap(r1cs: &R1csFile<Bn254>, options: &PlonkOptions) -> Result<SetupResul
 
     // ── Publics ──────────────────────────────────────────────────────────────
     bind_public_signals(&mut s_map, first_public_row, n_publics, N_WIRES);
-    let publics_rows: Vec<Vec<Bn254>> = (0..n_public_rows)
+    let publics_rows: Vec<Vec<Bn128>> = (0..n_public_rows)
         .map(|k| {
-            let mut column = vec![Bn254::ZERO; n];
-            column[first_public_row + k] = Bn254::ONE;
+            let mut column = vec![Bn128::ZERO; n];
+            column[first_public_row + k] = Bn128::ONE;
             column
         })
         .collect();
@@ -182,7 +182,7 @@ pub fn wrap(r1cs: &R1csFile<Bn254>, options: &PlonkOptions) -> Result<SetupResul
     // each merged equality is still enforced: every wire is in the connection.
     apply_remap_to_s_map(&mut s_map, &copy_merge.remap);
     verify_merge_soundness(&s_map, &copy_merge.merged_reps, N_WIRES);
-    let sv = build_s_polynomials::<Bn254>(N_WIRES, n, n_bits, n_used, &s_map);
+    let sv = build_s_polynomials::<Bn128>(N_WIRES, n, n_bits, n_used, &s_map);
 
     let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| AIRGROUP_NAME.to_string());
     let mut fixed_pols = build_fixed_pols(&airgroup_name, &coefficients, &sv);
@@ -194,7 +194,7 @@ pub fn wrap(r1cs: &R1csFile<Bn254>, options: &PlonkOptions) -> Result<SetupResul
     }));
 
     let pil_str = gen_pil_str(&PilTemplateParams {
-        template_file: "poseidon_bn254/wrap",
+        template_file: "poseidon_bn128/wrap",
         template_name: "Wrap",
         namespace_name: &airgroup_name,
         n_bits,
@@ -230,7 +230,7 @@ enum WrapGate {
 impl WrapGate {
     /// Gate `id` of the r1cs, or why the wrap cannot place it: a gate of another kind, a
     /// `PoseidonT` of another width, or a `Num2Bytes` of no bits or of more than a row holds.
-    fn of(id: usize, gate: &CustomGate<Bn254>) -> Result<Self> {
+    fn of(id: usize, gate: &CustomGate<Bn128>) -> Result<Self> {
         let parameter = match gate.parameters.as_slice() {
             [p] => usize::try_from(&p.as_canonical_biguint()).ok(),
             _ => None,
@@ -245,7 +245,7 @@ impl WrapGate {
                 let parameters =
                     if parameters.is_empty() { String::new() } else { format!("({})", parameters.join(", ")) };
                 bail!(
-                    "plonk2pil: the {BN254_WRAP_FAMILY} wrap places PoseidonT({WIDTH}) and Num2Bytes(nBits), \
+                    "plonk2pil: the {BN128_WRAP_FAMILY} wrap places PoseidonT({WIDTH}) and Num2Bytes(nBits), \
                      0 < nBits <= {MAX_RANGE_CHECK_BITS}, only, and custom gate {id} is {}{parameters}",
                     gate.template_name
                 )
@@ -293,7 +293,7 @@ struct GateUses<'a> {
 /// The uses of the r1cs's custom gates, once what the wrap cannot place is refused: a gate
 /// [`WrapGate::of`] refuses, a use of a gate the r1cs does not define, of another number of
 /// signals than its gate's, or of a signal the r1cs does not have.
-fn gate_uses(r1cs: &R1csFile<Bn254>) -> Result<GateUses<'_>> {
+fn gate_uses(r1cs: &R1csFile<Bn128>) -> Result<GateUses<'_>> {
     let gates: Vec<WrapGate> =
         r1cs.custom_gates.iter().enumerate().map(|(id, gate)| WrapGate::of(id, gate)).collect::<Result<_>>()?;
     let n_vars = u64::from(r1cs.header.n_vars);
@@ -337,8 +337,8 @@ struct PlonkPlacement {
 
 impl PlonkPlacement {
     /// The placement with `gate_rows` rows of custom gates, each with room for one constraint.
-    fn new(constraints: &[PlonkConstraint<Bn254>], gate_rows: usize) -> Self {
-        let mut group_of: HashMap<[Bn254; PLONK_COEFFS], usize> = HashMap::new();
+    fn new(constraints: &[PlonkConstraint<Bn128>], gate_rows: usize) -> Self {
+        let mut group_of: HashMap<[Bn128; PLONK_COEFFS], usize> = HashMap::new();
         let mut groups: Vec<Vec<usize>> = Vec::new();
         for (i, c) in constraints.iter().enumerate() {
             let g = *group_of.entry(c.coeffs).or_insert_with(|| {
@@ -372,15 +372,15 @@ impl PlonkPlacement {
     /// with the row's coefficients in `coefficients` (`C[0..4]`).
     fn place(
         &self,
-        constraints: &[PlonkConstraint<Bn254>],
+        constraints: &[PlonkConstraint<Bn128>],
         band: &mut PlonkBand,
         s_map: &mut [Vec<u32>],
-        coefficients: &mut [Vec<Bn254>],
+        coefficients: &mut [Vec<Bn128>],
         first_row: usize,
     ) {
         let mut gate_row = 0;
         let mut row = first_row;
-        let mut set_coefficients = |row: usize, c: &PlonkConstraint<Bn254>| {
+        let mut set_coefficients = |row: usize, c: &PlonkConstraint<Bn128>| {
             for (column, &q) in coefficients.iter_mut().zip(&c.coeffs) {
                 column[row] = q;
             }
@@ -409,17 +409,17 @@ impl PlonkPlacement {
 /// `RANGE`.
 struct GateColumns {
     /// `K`: a band row's round constants, a range-check row's chunk weights.
-    row_constants: Vec<Vec<Bn254>>,
-    band: Vec<Bn254>,
-    full_round: Vec<Bn254>,
-    partial_round: Vec<Bn254>,
+    row_constants: Vec<Vec<Bn128>>,
+    band: Vec<Bn128>,
+    full_round: Vec<Bn128>,
+    partial_round: Vec<Bn128>,
     /// `RANGE_CHECK`, if the AIR has range checks. `RANGE` is the same in every one.
-    range_check: Option<Vec<Bn254>>,
+    range_check: Option<Vec<Bn128>>,
 }
 
 impl GateColumns {
     fn new(n: usize, range_checks: bool) -> Self {
-        let zeros = || vec![Bn254::ZERO; n];
+        let zeros = || vec![Bn128::ZERO; n];
         Self {
             row_constants: (0..WIDTH).map(|_| zeros()).collect(),
             band: zeros(),
@@ -434,7 +434,7 @@ impl GateColumns {
     fn write_band(&mut self, first_row: usize) {
         for r in 0..BAND_ROWS {
             let row = first_row + r;
-            self.band[row] = Bn254::ONE;
+            self.band[row] = Bn128::ONE;
             if r == ROUNDS {
                 continue;
             }
@@ -442,9 +442,9 @@ impl GateColumns {
                 column[row] = ROUND_CONSTANTS[WIDTH * r + j];
             }
             if is_full_round(r) {
-                self.full_round[row] = Bn254::ONE;
+                self.full_round[row] = Bn128::ONE;
             } else {
-                self.partial_round[row] = Bn254::ONE;
+                self.partial_round[row] = Bn128::ONE;
             }
         }
     }
@@ -453,29 +453,29 @@ impl GateColumns {
     /// its chunks `k`, 0 past them.
     fn write_range_check(&mut self, row: usize, n_chunks: usize) {
         let selector = self.range_check.as_mut().expect("range-check rows are in an AIR with range checks");
-        selector[row] = Bn254::ONE;
-        let chunk_size = Bn254::from_int(1u64 << RANGE_CHECK_CHUNK_BITS);
-        let mut weight = Bn254::ONE;
+        selector[row] = Bn128::ONE;
+        let chunk_size = Bn128::from_int(1u64 << RANGE_CHECK_CHUNK_BITS);
+        let mut weight = Bn128::ONE;
         for column in &mut self.row_constants[..n_chunks] {
             column[row] = weight;
             weight *= chunk_size;
         }
     }
 
-    fn into_fixed_pols(self, airgroup_name: &str) -> Vec<FixedPol<Bn254>> {
-        let pol = |name: &str, index: usize, values: Vec<Bn254>| FixedPol {
+    fn into_fixed_pols(self, airgroup_name: &str) -> Vec<FixedPol<Bn128>> {
+        let pol = |name: &str, index: usize, values: Vec<Bn128>| FixedPol {
             name: format!("{airgroup_name}.{name}"),
             index,
             values,
         };
-        let mut pols: Vec<FixedPol<Bn254>> =
+        let mut pols: Vec<FixedPol<Bn128>> =
             self.row_constants.into_iter().enumerate().map(|(j, values)| pol("K", j, values)).collect();
         pols.push(pol("POSEIDON", 0, self.band));
         pols.push(pol("POSEIDON_FULL_ROUND", 0, self.full_round));
         pols.push(pol("POSEIDON_PARTIAL_ROUND", 0, self.partial_round));
         if let Some(selector) = self.range_check {
             let table =
-                (0..selector.len() as u64).map(|i| Bn254::from_int(i % (1 << RANGE_CHECK_CHUNK_BITS))).collect();
+                (0..selector.len() as u64).map(|i| Bn128::from_int(i % (1 << RANGE_CHECK_CHUNK_BITS))).collect();
             pols.push(pol("RANGE_CHECK", 0, selector));
             pols.push(pol("RANGE", 0, table));
         }
@@ -489,14 +489,14 @@ mod tests {
     use crate::plonk2pil::r1cs::to_plonk::PlonkAddition;
     use crate::plonk2pil::r1cs::types::{LinearCombination, R1csConstraint, R1csHeader};
 
-    fn q(v: i64) -> Bn254 {
-        Bn254::from_int(v)
+    fn q(v: i64) -> Bn128 {
+        Bn128::from_int(v)
     }
 
     /// `l·r = o`, `l + r = o` or `2·(l + r) = o` as an r1cs constraint, by `kind` (0, 1 or 2): three
     /// coefficient sets once converted.
-    fn r1cs_constraint(l: u32, r: u32, o: u32, kind: u32) -> R1csConstraint<Bn254> {
-        let lc = |terms: &[(u32, i64)]| -> LinearCombination<Bn254> { terms.iter().map(|&(w, c)| (w, q(c))).collect() };
+    fn r1cs_constraint(l: u32, r: u32, o: u32, kind: u32) -> R1csConstraint<Bn128> {
+        let lc = |terms: &[(u32, i64)]| -> LinearCombination<Bn128> { terms.iter().map(|&(w, c)| (w, q(c))).collect() };
         match kind {
             0 => R1csConstraint { a: lc(&[(l, 1)]), b: lc(&[(r, 1)]), c: lc(&[(o, 1)]) },
             k => R1csConstraint { a: lc(&[(0, i64::from(k))]), b: lc(&[(l, 1), (r, 1)]), c: lc(&[(o, 1)]) },
@@ -506,10 +506,10 @@ mod tests {
     fn r1cs(
         n_vars: u32,
         n_publics: u32,
-        constraints: Vec<R1csConstraint<Bn254>>,
-        custom_gates: Vec<CustomGate<Bn254>>,
+        constraints: Vec<R1csConstraint<Bn128>>,
+        custom_gates: Vec<CustomGate<Bn128>>,
         custom_gates_uses: Vec<CustomGateUse>,
-    ) -> R1csFile<Bn254> {
+    ) -> R1csFile<Bn128> {
         R1csFile {
             header: R1csHeader {
                 n8: 32,
@@ -529,12 +529,12 @@ mod tests {
         }
     }
 
-    fn poseidon_t(t: u64) -> CustomGate<Bn254> {
-        CustomGate { template_name: "PoseidonT".into(), parameters: vec![Bn254::from_int(t)] }
+    fn poseidon_t(t: u64) -> CustomGate<Bn128> {
+        CustomGate { template_name: "PoseidonT".into(), parameters: vec![Bn128::from_int(t)] }
     }
 
-    fn num2bytes(n_bits: u64) -> CustomGate<Bn254> {
-        CustomGate { template_name: "Num2Bytes".into(), parameters: vec![Bn254::from_int(n_bits)] }
+    fn num2bytes(n_bits: u64) -> CustomGate<Bn128> {
+        CustomGate { template_name: "Num2Bytes".into(), parameters: vec![Bn128::from_int(n_bits)] }
     }
 
     /// A use of gate 0 on the signals `first..first + 345`.
@@ -544,42 +544,42 @@ mod tests {
 
     /// A use of gate `id`, `Num2Bytes(n_bits)`, of `value`: appends to `witness` its signals,
     /// `value` and its chunks of 16 bits, least significant first.
-    fn num2bytes_use(witness: &mut Vec<Bn254>, id: u32, n_bits: usize, value: u128) -> CustomGateUse {
+    fn num2bytes_use(witness: &mut Vec<Bn128>, id: u32, n_bits: usize, value: u128) -> CustomGateUse {
         let first = witness.len() as u64;
-        witness.push(Bn254::from_int(value));
-        witness.extend((0..n_chunks(n_bits)).map(|k| Bn254::from_int((value >> (16 * k)) & 0xffff)));
+        witness.push(Bn128::from_int(value));
+        witness.extend((0..n_chunks(n_bits)).map(|k| Bn128::from_int((value >> (16 * k)) & 0xffff)));
         CustomGateUse { id, signals: (first..witness.len() as u64).collect() }
     }
 
     fn options() -> PlonkOptions {
-        PlonkOptions { hash_id: BN254_WRAP_FAMILY.into(), ..Default::default() }
+        PlonkOptions { hash_id: BN128_WRAP_FAMILY.into(), ..Default::default() }
     }
 
     /// The witness extended with the additions, then gathered through the map as the prover's
     /// `getCommitedPols` does: a cell the map leaves out is 0.
-    fn trace(res: &SetupResult<Bn254>, witness: &[Bn254]) -> Vec<Vec<Bn254>> {
+    fn trace(res: &SetupResult<Bn128>, witness: &[Bn128]) -> Vec<Vec<Bn128>> {
         let mut w = witness.to_vec();
         for PlonkAddition { wires, coeffs } in &res.plonk_additions {
             w.push(coeffs[0] * w[wires[0] as usize] + coeffs[1] * w[wires[1] as usize]);
         }
         res.s_map
             .iter()
-            .map(|col| col.iter().map(|&s| if s == 0 { Bn254::ZERO } else { w[s as usize] }).collect())
+            .map(|col| col.iter().map(|&s| if s == 0 { Bn128::ZERO } else { w[s as usize] }).collect())
             .collect()
     }
 
-    fn find_column<'a>(res: &'a SetupResult<Bn254>, name: &str, index: usize) -> Option<&'a [Bn254]> {
+    fn find_column<'a>(res: &'a SetupResult<Bn128>, name: &str, index: usize) -> Option<&'a [Bn128]> {
         let name = format!("{AIRGROUP_NAME}.{name}");
         res.fixed_pols.iter().find(|p| p.name == name && p.index == index).map(|p| p.values.as_slice())
     }
 
-    fn column<'a>(res: &'a SetupResult<Bn254>, name: &str, index: usize) -> &'a [Bn254] {
+    fn column<'a>(res: &'a SetupResult<Bn128>, name: &str, index: usize) -> &'a [Bn128] {
         find_column(res, name, index).unwrap_or_else(|| panic!("no {name}[{index}]"))
     }
 
     /// Whether PLONK gates 0 and 1 are off on each row: `POSEIDON + RANGE_CHECK`, the latter if the
     /// AIR has range checks.
-    fn custom_gate_rows(res: &SetupResult<Bn254>) -> Vec<bool> {
+    fn custom_gate_rows(res: &SetupResult<Bn128>) -> Vec<bool> {
         let in_band = column(res, "POSEIDON", 0);
         let range_check = find_column(res, "RANGE_CHECK", 0);
         (0..1 << res.n_bits)
@@ -588,8 +588,8 @@ mod tests {
     }
 
     /// The rows where one of `wrap.pil`'s PLONK gates does not hold on `trace`.
-    fn failing_gates(res: &SetupResult<Bn254>, trace: &[Vec<Bn254>]) -> Vec<(usize, usize)> {
-        let c: Vec<&[Bn254]> = (0..PLONK_COEFFS).map(|k| column(res, "C", k)).collect();
+    fn failing_gates(res: &SetupResult<Bn128>, trace: &[Vec<Bn128>]) -> Vec<(usize, usize)> {
+        let c: Vec<&[Bn128]> = (0..PLONK_COEFFS).map(|k| column(res, "C", k)).collect();
         let custom = custom_gate_rows(res);
         let mut failing = Vec::new();
         for (row, &custom) in custom.iter().enumerate() {
@@ -608,21 +608,21 @@ mod tests {
 
     /// The rows where `num2bytes.pil`'s recomposition does not hold on `trace`:
     /// `RANGE_CHECK·(a[0] − Σ K[k]·a[1 + k])`.
-    fn failing_recompositions(res: &SetupResult<Bn254>, trace: &[Vec<Bn254>]) -> Vec<usize> {
+    fn failing_recompositions(res: &SetupResult<Bn128>, trace: &[Vec<Bn128>]) -> Vec<usize> {
         let selector = column(res, "RANGE_CHECK", 0);
-        let weights: Vec<&[Bn254]> = (0..WIDTH).map(|k| column(res, "K", k)).collect();
-        let recomposed = |row: usize| -> Bn254 {
+        let weights: Vec<&[Bn128]> = (0..WIDTH).map(|k| column(res, "K", k)).collect();
+        let recomposed = |row: usize| -> Bn128 {
             (0..RANGE_CHECK_CHUNKS)
-                .fold(Bn254::ZERO, |sum, k| sum + weights[k][row] * trace[RANGE_CHECK_CHUNK_COLS.start + k][row])
+                .fold(Bn128::ZERO, |sum, k| sum + weights[k][row] * trace[RANGE_CHECK_CHUNK_COLS.start + k][row])
         };
         (0..1 << res.n_bits).filter(|&row| !(selector[row] * (trace[0][row] - recomposed(row))).is_zero()).collect()
     }
 
     /// 198 constraints of three coefficient sets, with a satisfying witness: w1 = 3, w2 = 5, then
     /// w[k] is w[k-1]·w[k-2], w[k-1] + w[k-2] or 2·(w[k-1] + w[k-2]).
-    fn three_sets() -> (Vec<R1csConstraint<Bn254>>, Vec<Bn254>) {
+    fn three_sets() -> (Vec<R1csConstraint<Bn128>>, Vec<Bn128>) {
         let mut constraints = Vec::new();
-        let mut witness = vec![Bn254::ONE, q(3), q(5)];
+        let mut witness = vec![Bn128::ONE, q(3), q(5)];
         for k in 3..201u32 {
             constraints.push(r1cs_constraint(k - 1, k - 2, k, k % 3));
             let (a, b) = (witness[k as usize - 1], witness[k as usize - 2]);
@@ -636,12 +636,12 @@ mod tests {
     }
 
     /// [`three_sets`], a band of 69 rows and a public.
-    fn three_sets_and_a_band() -> (R1csFile<Bn254>, Vec<Bn254>) {
+    fn three_sets_and_a_band() -> (R1csFile<Bn128>, Vec<Bn128>) {
         let (constraints, mut witness) = three_sets();
         let first_band_signal = witness.len() as u64;
         let n_vars = witness.len() as u32 + BAND_SIGNALS as u32;
         // The band's signals are zeros: the PLONK gates do not read them.
-        witness.resize(n_vars as usize, Bn254::ZERO);
+        witness.resize(n_vars as usize, Bn128::ZERO);
         (r1cs(n_vars, 1, constraints, vec![poseidon_t(5)], vec![poseidon_use(first_band_signal)]), witness)
     }
 
@@ -659,7 +659,7 @@ mod tests {
         let trace = trace(&res, &witness);
         assert_eq!(failing_gates(&res, &trace), Vec::<(usize, usize)>::new());
         let mut wrong = witness.clone();
-        wrong[100] += Bn254::ONE;
+        wrong[100] += Bn128::ONE;
         assert!(!failing_gates(&res, &self::trace(&res, &wrong)).is_empty(), "a wrong wire fails a gate");
     }
 
@@ -670,7 +670,7 @@ mod tests {
         let (r1cs, _) = three_sets_and_a_band();
         let [a, b] = [0, 1].map(|_| wrap(&r1cs, &options()).unwrap());
         assert_eq!(a.s_map, b.s_map);
-        let columns = |res: &SetupResult<Bn254>| -> Vec<(String, usize, Vec<Bn254>)> {
+        let columns = |res: &SetupResult<Bn128>| -> Vec<(String, usize, Vec<Bn128>)> {
             res.fixed_pols.iter().map(|p| (p.name.clone(), p.index, p.values.clone())).collect()
         };
         assert_eq!(columns(&a), columns(&b));
@@ -722,14 +722,14 @@ mod tests {
             for j in 0..WIDTH {
                 assert_eq!(res.s_map[j][row] as usize, 1 + b * BAND_SIGNALS + WIDTH * r + j, "row {row} lane {j}");
                 let rc = column(&res, "K", j)[row];
-                assert_eq!(rc, if r < ROUNDS { ROUND_CONSTANTS[WIDTH * r + j] } else { Bn254::ZERO }, "row {row}");
+                assert_eq!(rc, if r < ROUNDS { ROUND_CONSTANTS[WIDTH * r + j] } else { Bn128::ZERO }, "row {row}");
             }
-            assert_eq!(in_band[row], Bn254::ONE);
+            assert_eq!(in_band[row], Bn128::ONE);
             let kind = (full[row], partial[row]);
             let expected = match r {
-                ROUNDS => (Bn254::ZERO, Bn254::ZERO),
-                r if !(4..64).contains(&r) => (Bn254::ONE, Bn254::ZERO),
-                _ => (Bn254::ZERO, Bn254::ONE),
+                ROUNDS => (Bn128::ZERO, Bn128::ZERO),
+                r if !(4..64).contains(&r) => (Bn128::ONE, Bn128::ZERO),
+                _ => (Bn128::ZERO, Bn128::ONE),
             };
             assert_eq!(kind, expected, "row {row}: round {r}");
         }
@@ -745,7 +745,7 @@ mod tests {
     /// The exec marks each with its number of chunks, and the table makes the AIR 2^16 rows.
     #[test]
     fn a_range_check_row_is_its_in_and_chunks_with_their_weights() {
-        let mut witness = vec![Bn254::ONE];
+        let mut witness = vec![Bn128::ONE];
         // Gate 1 is PoseidonT(5): its use's signals are zeros, which nothing here reads.
         let n_bits = [64, 0, 3, 80, 17];
         let values: [u128; 5] = [0x1234_5678_9abc_def0, 0, 5, (1 << 80) - 1, 0x1_0001];
@@ -753,7 +753,7 @@ mod tests {
         for (id, (&bits, &value)) in n_bits.iter().zip(&values).enumerate() {
             if id == 1 {
                 uses.push(CustomGateUse { id: 1, ..poseidon_use(witness.len() as u64) });
-                witness.resize(witness.len() + BAND_SIGNALS, Bn254::ZERO);
+                witness.resize(witness.len() + BAND_SIGNALS, Bn128::ZERO);
             } else {
                 uses.push(num2bytes_use(&mut witness, id as u32, bits, value));
             }
@@ -768,27 +768,27 @@ mod tests {
         assert_eq!(res.band_aux, RANGE_MUL_COLUMN as u64, "the exec names RANGE_MUL's column");
         let bands: Vec<(u32, u64)> = res.gate_bands.iter().map(|b| (b.row, b.payload)).collect();
         assert_eq!(bands, [(69, 4), (70, 1), (71, 5), (72, 2)]);
-        assert!(res.gate_bands.iter().all(|b| b.kind == GateBandKind::PoseidonBn254WrapRangeCheck));
+        assert!(res.gate_bands.iter().all(|b| b.kind == GateBandKind::PoseidonBn128WrapRangeCheck));
 
         let (selector, table, in_band) =
             (column(&res, "RANGE_CHECK", 0), column(&res, "RANGE", 0), column(&res, "POSEIDON", 0));
         for (i, &(cgu, n_chunks)) in rc_uses.iter().enumerate() {
             let row = BAND_ROWS + i;
-            assert_eq!((selector[row], in_band[row]), (Bn254::ONE, Bn254::ZERO), "row {row}");
+            assert_eq!((selector[row], in_band[row]), (Bn128::ONE, Bn128::ZERO), "row {row}");
             assert_eq!(res.s_map[0][row] as u64, cgu.signals[0], "in, row {row}");
             for k in 0..RANGE_CHECK_CHUNKS {
                 let (cell, weight) = (res.s_map[1 + k][row] as u64, column(&res, "K", k)[row]);
                 if k < n_chunks {
-                    assert_eq!((cell, weight), (cgu.signals[1 + k], Bn254::from_int(1u128 << (16 * k))), "row {row}");
+                    assert_eq!((cell, weight), (cgu.signals[1 + k], Bn128::from_int(1u128 << (16 * k))), "row {row}");
                 } else {
-                    assert_eq!((cell, weight), (0, Bn254::ZERO), "past the chunks, row {row}");
+                    assert_eq!((cell, weight), (0, Bn128::ZERO), "past the chunks, row {row}");
                 }
             }
             assert!((6..N_WIRES).all(|col| res.s_map[col][row] == 0), "no PLONK constraint to place");
         }
         let rc_rows = BAND_ROWS..BAND_ROWS + rc_uses.len();
         assert!((0..1 << 16).all(|row| selector[row].is_one() == rc_rows.contains(&row)));
-        assert!((0..1u64 << 16).all(|i| table[i as usize] == Bn254::from_int(i)), "RANGE is 0..2^16");
+        assert!((0..1u64 << 16).all(|i| table[i as usize] == Bn128::from_int(i)), "RANGE is 0..2^16");
         assert_eq!(failing_recompositions(&res, &trace(&res, &witness)), Vec::<usize>::new());
     }
 
@@ -813,7 +813,7 @@ mod tests {
         assert_eq!(failing_gates(&res, &trace), Vec::<(usize, usize)>::new());
         assert_eq!(failing_recompositions(&res, &trace), Vec::<usize>::new());
         let mut wrong = trace.clone();
-        wrong[2][7] += Bn254::ONE;
+        wrong[2][7] += Bn128::ONE;
         assert_eq!(failing_recompositions(&res, &wrong), [7], "a wrong chunk");
     }
 
@@ -823,7 +823,7 @@ mod tests {
     fn the_publics_follow_the_gates_a_selector_a_row() {
         let res = wrap(&r1cs(4, 2, vec![r1cs_constraint(1, 2, 3, 0)], vec![], vec![]), &options()).unwrap();
         let publics_row = column(&res, "PUBLICS_ROW", 0);
-        let first = publics_row.iter().position(|v| *v == Bn254::ONE).unwrap();
+        let first = publics_row.iter().position(|v| *v == Bn128::ONE).unwrap();
         assert_eq!(first, res.n_used - 1, "one public row, after the one PLONK row");
         assert_eq!((res.s_map[0][first], res.s_map[1][first]), (1, 2));
         assert!(find_column(&res, "PUBLICS_ROW", 1).is_none());
@@ -854,7 +854,7 @@ mod tests {
         assert!(refusal(vec![num2bytes(81)], vec![]).ends_with("custom gate 0 is Num2Bytes(81)"));
         let no_bits = CustomGate { template_name: "Num2Bytes".into(), parameters: vec![] };
         assert!(refusal(vec![no_bits], vec![]).ends_with("custom gate 0 is Num2Bytes"));
-        let huge = CustomGate { template_name: "Num2Bytes".into(), parameters: vec![Bn254::NEG_ONE] };
+        let huge = CustomGate { template_name: "Num2Bytes".into(), parameters: vec![Bn128::NEG_ONE] };
         assert!(refusal(vec![huge], vec![]).contains("custom gate 0 is Num2Bytes(2188824287183927522224640574525"));
 
         let short = CustomGateUse { id: 0, signals: vec![1; 10] };

@@ -8,7 +8,7 @@
 //! same inputs, and every op must write the same value.
 //!
 //! The `#[ignore]` tests compile real PIL with the compiler `PIL2C_EXEC` names, as those of
-//! `pil-info`'s `tests/bn254.rs` do:
+//! `pil-info`'s `tests/bn128.rs` do:
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p pilfflonk-setup \
@@ -743,7 +743,7 @@ fn column_symbol(name: &str, kind: SymbolType, stage: u32, id: u32) -> pb::Symbo
     }
 }
 
-/// One BN254 air of 16 rows, as pil2com emits it: `L1·(a − (2^200 + 7))`, `L1·(b − (r − 2))`,
+/// One BN128 air of 16 rows, as pil2com emits it: `L1·(a − (2^200 + 7))`, `L1·(b − (r − 2))`,
 /// `(−a)·b + b'` and `(−(a'·a) + b)·(a·a)`. The negations become products by `r − 1`, and the last
 /// constraint, of degree 4, gets an intermediate polynomial.
 fn wide_constants_pilout() -> pb::PilOut {
@@ -784,8 +784,8 @@ fn wide_constants_pilout() -> pb::PilOut {
     }
 }
 
-fn run_bn254(pilout: &pb::PilOut) -> PilInfoResult {
-    pil_info::run(pilout, 0, 0, &PilInfoCfg::bn254(), &Default::default()).unwrap()
+fn run_bn128(pilout: &pb::PilOut) -> PilInfoResult {
+    pil_info::run(pilout, 0, 0, &PilInfoCfg::bn128(), &Default::default()).unwrap()
 }
 
 /// The file `write_air_bin` writes for `result`, checked against `result`'s code, and its bytes,
@@ -820,7 +820,7 @@ fn assert_has_im_pols_and_q(bytecode: &Bytecode, result: &PilInfoResult) -> Vec<
 
 #[test]
 fn the_passes_code_round_trips() {
-    let result = run_bn254(&wide_constants_pilout());
+    let result = run_bn128(&wide_constants_pilout());
     let (bytecode, first) = check_air_bin(&result, "wide_constants_in_code");
 
     let numbers = all_numbers(&bytecode);
@@ -831,11 +831,11 @@ fn the_passes_code_round_trips() {
     assert!(!im_pols.is_empty(), "the degree-4 constraint gets an intermediate polynomial");
 
     // The passes run twice give the same file.
-    let (_, second) = check_air_bin(&run_bn254(&wide_constants_pilout()), "wide_constants_in_code_2");
+    let (_, second) = check_air_bin(&run_bn128(&wide_constants_pilout()), "wide_constants_in_code_2");
     assert_eq!(first, second);
 }
 
-/// One BN254 air of 16 rows: `a·a − b` on `firstRow` (a public-free stand-in for `x·x − p`) and
+/// One BN128 air of 16 rows: `a·a − b` on `firstRow` (a public-free stand-in for `x·x − p`) and
 /// `b − a` on `everyRow`. With its `Zi`, the first has degree 3; with `--max-constraint-degree 2`
 /// the search promotes its whole expression to an im pol, whose code `pil-info` leaves empty for
 /// the constraint (it marks the im pols as computed before it generates the constraints' code).
@@ -878,7 +878,7 @@ fn im_pol_constraint_pilout() -> pb::PilOut {
 /// failed on ("Cannot encode constraint 0: it has no ops").
 #[test]
 fn a_constraint_that_is_an_im_pol_is_a_copy_of_its_column() {
-    let cfg = PilInfoCfg { degree_policy: DegreePolicy::Search { max: 2 }, ..PilInfoCfg::bn254() };
+    let cfg = PilInfoCfg { degree_policy: DegreePolicy::Search { max: 2 }, ..PilInfoCfg::bn128() };
     let result = pil_info::run(&im_pol_constraint_pilout(), 0, 0, &cfg, &Default::default()).unwrap();
     let setup = &result.setup;
     let im = setup.cm_pols_map.iter().position(|p| p.im_pol).expect("the search chooses an im pol");
@@ -910,26 +910,26 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
 }
 
-/// Compile `pil` (relative to the repository root) over BN254 with `PIL2C_EXEC`.
-fn compile_bn254(pil: &str) -> pb::PilOut {
+/// Compile `pil` (relative to the repository root) over BN128 with `PIL2C_EXEC`.
+fn compile_bn128(pil: &str) -> pb::PilOut {
     let compiler = std::env::var("PIL2C_EXEC")
         .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
     // A path of each call's own: the tests run in parallel, and compile the same PIL.
     static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let stem = Path::new(pil).file_stem().unwrap().to_string_lossy().into_owned();
-    let out = tmp_path(&format!("{stem}.{call}.bn254.pilout"));
+    let out = tmp_path(&format!("{stem}.{call}.bn128.pilout"));
     let status = Command::new(compiler)
         .current_dir(repo_root())
         .arg(pil)
-        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
         .arg(&out)
         .status()
         .expect("PIL2C_EXEC runs");
     assert!(status.success(), "pil2com failed on {pil}");
     let pilout = PilOutProxy::new(out.to_str().unwrap()).unwrap().pilout;
     fs::remove_file(&out).unwrap();
-    assert_eq!(pilout.base_field, big_be(R), "{pil} was not compiled over BN254: does PIL2C_EXEC have `--field`?");
+    assert_eq!(pilout.base_field, big_be(R), "{pil} was not compiled over BN128: does PIL2C_EXEC have `--field`?");
     pilout
 }
 
@@ -938,7 +938,7 @@ fn compile_bn254(pil: &str) -> pb::PilOut {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn fibonacci_fixture_round_trips() {
-    let result = run_bn254(&compile_bn254("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil"));
+    let result = run_bn128(&compile_bn128("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil"));
     let (bytecode, bytes) = check_air_bin(&result, "fibonacci");
 
     let exp_ids: Vec<u32> = bytecode.expressions.iter().map(|e| e.exp_id).collect();
@@ -980,7 +980,7 @@ fn fibonacci_fixture_round_trips() {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn wide_constants_fixture_round_trips() {
-    let result = run_bn254(&compile_bn254("setup/pil-info/tests/fixtures/wide_constants.pil"));
+    let result = run_bn128(&compile_bn128("setup/pil-info/tests/fixtures/wide_constants.pil"));
     let (bytecode, _) = check_air_bin(&result, "wide_constants");
     let numbers = all_numbers(&bytecode);
     for value in [WIDE_200, R_MINUS_TWO, R_MINUS_ONE] {
@@ -1013,7 +1013,7 @@ fn the_bus_fixtures_hints_round_trip() {
             &["im_col", "im_col", "gprod_col"][..],
         ),
     ] {
-        let result = run_bn254(&compile_bn254(pil));
+        let result = run_bn128(&compile_bn128(pil));
         check_prover_hints(&result, name).unwrap();
         let (bytecode, _) = check_air_bin(&result, name);
         assert_eq!(bytecode.n_stages, 2, "{pil}");
@@ -1110,9 +1110,9 @@ fn the_bus_fixtures_hints_round_trip() {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn a_prover_hint_the_prover_cannot_compute_is_refused() {
-    let pilout = compile_bn254("pilfflonk/tests/fixtures/sum_bus/sum_bus_degree4.pil");
+    let pilout = compile_bn128("pilfflonk/tests/fixtures/sum_bus/sum_bus_degree4.pil");
     // The passes again for each case: their result is not Clone.
-    let fresh = || run_bn254(&pilout);
+    let fresh = || run_bn128(&pilout);
     let result = fresh();
     let gsum = result.pil_code.expressions_info.hints_info.iter().position(|h| h.name == "gsum_col").unwrap();
     // The result with the hint, or the value of one of its fields, changed.
@@ -1209,8 +1209,8 @@ fn a_prover_hint_the_prover_cannot_compute_is_refused() {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn an_im_col_the_prover_cannot_compute_is_refused() {
-    let pilout = compile_bn254("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil");
-    let fresh = || run_bn254(&pilout);
+    let pilout = compile_bn128("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil");
+    let fresh = || run_bn128(&pilout);
     let result = fresh();
     let hints = &result.pil_code.expressions_info.hints_info;
     let position = |name: &str| hints.iter().position(|h| h.name == name).unwrap();
@@ -1274,8 +1274,8 @@ fn an_im_col_the_prover_cannot_compute_is_refused() {
     assert!(err.contains("2 hints produce column im_single"), "{err}");
 
     // prod_bus_im: its second im_col reads the first's column; in the other order, it is not there.
-    let pilout = compile_bn254("pilfflonk/tests/fixtures/prod_bus_im/prod_bus_im.pil");
-    let mut result = run_bn254(&pilout);
+    let pilout = compile_bn128("pilfflonk/tests/fixtures/prod_bus_im/prod_bus_im.pil");
+    let mut result = run_bn128(&pilout);
     check_prover_hints(&result, "ProdBusIm").unwrap();
     let hints = &mut result.pil_code.expressions_info.hints_info;
     let ims: Vec<usize> = hints.iter().enumerate().filter(|(_, h)| h.name == "im_col").map(|(i, _)| i).collect();

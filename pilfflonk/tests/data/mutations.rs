@@ -10,18 +10,18 @@
 use std::sync::OnceLock;
 
 use num_bigint::BigUint;
-use proofman_pilfflonk::{verifier_challenges, FrBytes, Proof, Vkey, BN254_Q, BN254_R};
+use proofman_pilfflonk::{verifier_challenges, FrBytes, Proof, Vkey, BN128_Q, BN128_R};
 
-/// BN254's scalar field modulus `r`.
+/// BN128's scalar field modulus `r`.
 pub fn r() -> BigUint {
     static R: OnceLock<BigUint> = OnceLock::new();
-    R.get_or_init(|| BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap()).clone()
+    R.get_or_init(|| BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap()).clone()
 }
 
-/// BN254's base field modulus `q`.
+/// BN128's base field modulus `q`.
 pub fn q() -> BigUint {
     static Q: OnceLock<BigUint> = OnceLock::new();
-    Q.get_or_init(|| BigUint::parse_bytes(BN254_Q.as_bytes(), 10).unwrap()).clone()
+    Q.get_or_init(|| BigUint::parse_bytes(BN128_Q.as_bytes(), 10).unwrap()).clone()
 }
 
 pub fn big(value: &FrBytes) -> BigUint {

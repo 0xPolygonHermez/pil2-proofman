@@ -8,8 +8,8 @@
 //! - **The library** implements [`PilfflonkWitnessLibrary`] and exports it with
 //!   [`pilfflonk_witness_library!`](crate::pilfflonk_witness_library), which defines its entry point,
 //!   the symbol `pilfflonk_init_library` ([`INIT_SYMBOL`]), of type [`PilfflonkWitnessLibInitFn`]. It
-//!   computes its traces in the rows over [`Bn254`](proofman_fields::Bn254) that `pil-helpers`
-//!   generates for a BN254 pilout, which has no packed rows (pilfflonk does not accept packed traces
+//!   computes its traces in the rows over [`Bn128`](proofman_fields::Bn128) that `pil-helpers`
+//!   generates for a BN128 pilout, which has no packed rows (pilfflonk does not accept packed traces
 //!   yet), and makes the stage-1 witness of each instance with
 //!   [`Stage1Witness::from_rows`](crate::Stage1Witness::from_rows).
 //! - **The host** loads it with [`load_witness_library`], and runs it with [`compute_witness`], which
@@ -22,7 +22,7 @@
 //!
 //! **Public inputs.** As a STARK library does, a pilfflonk library reads its public inputs itself,
 //! from the JSON file the host names, if any (`--public-inputs`), with [`read_public_inputs`]: for
-//! a program's publics, into the `<Program>Publics` of its `pil-helpers`, whose publics are `Bn254`
+//! a program's publics, into the `<Program>Publics` of its `pil-helpers`, whose publics are `Bn128`
 //! values, written as decimal strings (pilfflonk/docs/formats.md#json-encoding).
 
 use std::fs;
@@ -185,9 +185,9 @@ mod tests {
     #[derive(Debug, Default, PartialEq, serde::Deserialize)]
     struct Publics {
         #[serde(default)]
-        a: proofman_fields::Bn254,
+        a: proofman_fields::Bn128,
         #[serde(default)]
-        b: proofman_fields::Bn254,
+        b: proofman_fields::Bn128,
     }
 
     /// As `proofman_common::load_from_json`: no file, the default; a public missing, its default.
@@ -205,8 +205,8 @@ mod tests {
         )
         .unwrap();
         let read: Publics = read_public_inputs(Some(&path)).unwrap();
-        assert_eq!(read, Publics { a: proofman_fields::Bn254::from_int(-1i64), b: Default::default() });
-        // A JSON number is not a Bn254, and a file that is not there is an error.
+        assert_eq!(read, Publics { a: proofman_fields::Bn128::from_int(-1i64), b: Default::default() });
+        // A JSON number is not a Bn128, and a file that is not there is an error.
         std::fs::write(&path, r#"{"a": 1}"#).unwrap();
         assert!(matches!(read_public_inputs::<Publics>(Some(&path)), Err(PilfflonkError::InFile { .. })));
         assert!(matches!(read_public_inputs::<Publics>(Some(&dir.join("none.json"))), Err(PilfflonkError::Io { .. })));

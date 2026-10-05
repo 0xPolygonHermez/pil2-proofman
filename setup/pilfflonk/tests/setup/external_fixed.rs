@@ -96,13 +96,13 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
 }
 
-/// Compiles `pil` over BN254 to `pilout` with `PIL2C_EXEC`, and reads it back.
+/// Compiles `pil` over BN128 to `pilout` with `PIL2C_EXEC`, and reads it back.
 fn compile(pil: &str, pilout: &Path) -> pb::PilOut {
     let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg(pil)
-        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
         .arg(pilout)
         .output()
         .expect("PIL2C_EXEC runs");

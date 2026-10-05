@@ -1,6 +1,6 @@
-//! The std over BN254 (pilfflonk/docs/README.md#compile-pil): the constants of
-//! `pil2-components/lib/std/pil/bn254.pil` checked numerically, and
-//! `tests/fixtures/std_bn254/connection.pil` compiled over BN254 and over Goldilocks, whose pilouts
+//! The std over BN128 (pilfflonk/docs/README.md#compile-pil): the constants of
+//! `pil2-components/lib/std/pil/bn128.pil` checked numerically, and
+//! `tests/fixtures/std_bn128/connection.pil` compiled over BN128 and over Goldilocks, whose pilouts
 //! must carry the roots of unity and the coset generator of that field.
 //!
 //! The `#[ignore]` tests compile the fixture with the compiler `PIL2C_EXEC` names, which must have
@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p proofman-pilfflonk --features proofman-common/cpu-only \
-//!     --test std_bn254 -- --include-ignored
+//!     --test std_bn128 -- --include-ignored
 //! ```
 
 use std::collections::BTreeSet;
@@ -19,16 +19,16 @@ use std::process::{Command, Output};
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, operand, SymbolType};
 use pil2_pilout::pilout_proxy::PilOutProxy;
-use proofman_fields::{Bn254, Field, PrimeField};
+use proofman_fields::{Bn128, Field, PrimeField};
 use proofman_pilfflonk::global_info::MAX_NBITS;
-use proofman_pilfflonk::{oracle, BN254_R};
+use proofman_pilfflonk::{oracle, BN128_R};
 
-/// The standard 2^28-th root of unity of BN254, `5^((r − 1)/2^28)`.
-const BN254_ROOT_28: &str = "19103219067921713944291392827692070036145651957329286315305642004821462161904";
+/// The standard 2^28-th root of unity of BN128, `5^((r − 1)/2^28)`.
+const BN128_ROOT_28: &str = "19103219067921713944291392827692070036145651957329286315305642004821462161904";
 
 /// `r − 1 = 2^28 · 3^2 · 13 · 29 · 983 · 11003 · 237073 · 405928799 · 1670836401704629 ·
 /// 13818364434197438864469338081`, as (prime, exponent).
-const BN254_R_MINUS_1_FACTORS: [(&str, u32); 10] = [
+const BN128_R_MINUS_1_FACTORS: [(&str, u32); 10] = [
     ("2", 28),
     ("3", 2),
     ("13", 1),
@@ -76,10 +76,10 @@ impl FieldConstants {
         }
     }
 
-    /// `Bn254_Gen` and `Bn254_k`, over `Bn254_r`.
-    fn bn254() -> Self {
-        let src = std_file("bn254.pil");
-        Self { prime: pil_int(&src, "Bn254_r"), gen: pil_int_array(&src, "Bn254_Gen"), k: pil_int(&src, "Bn254_k") }
+    /// `Bn128_Gen` and `Bn128_k`, over `Bn128_r`.
+    fn bn128() -> Self {
+        let src = std_file("bn128.pil");
+        Self { prime: pil_int(&src, "Bn128_r"), gen: pil_int_array(&src, "Bn128_Gen"), k: pil_int(&src, "Bn128_k") }
     }
 
     fn one(&self) -> BigUint {
@@ -166,83 +166,83 @@ fn is_probable_prime(n: &BigUint) -> bool {
 }
 
 /// The distinct primes of `r − 1`, after checking the factorization.
-fn bn254_r_minus_1_primes(f: &FieldConstants) -> Vec<BigUint> {
+fn bn128_r_minus_1_primes(f: &FieldConstants) -> Vec<BigUint> {
     let mut product = BigUint::from(1u32);
-    for (p, e) in BN254_R_MINUS_1_FACTORS {
+    for (p, e) in BN128_R_MINUS_1_FACTORS {
         let p = big(p);
         assert!(is_probable_prime(&p), "{p} is prime");
         product *= p.pow(e);
     }
     assert_eq!(product, f.minus_one(), "the factorization of r − 1");
-    BN254_R_MINUS_1_FACTORS.iter().map(|(p, _)| big(p)).collect()
+    BN128_R_MINUS_1_FACTORS.iter().map(|(p, _)| big(p)).collect()
 }
 
 #[test]
-fn bn254_r_is_the_scalar_field_of_bn254() {
-    let f = FieldConstants::bn254();
-    assert_eq!(f.prime, big(BN254_R));
+fn bn128_r_is_the_scalar_field_of_bn128() {
+    let f = FieldConstants::bn128();
+    assert_eq!(f.prime, big(BN128_R));
     assert!(is_probable_prime(&f.prime));
 }
 
 #[test]
 fn five_is_the_smallest_non_residue_and_generates_the_multiplicative_group() {
-    let f = FieldConstants::bn254();
+    let f = FieldConstants::bn128();
     let half = f.minus_one() >> 1u32;
     for residue in [2u32, 3, 4] {
         assert_eq!(f.pow(&BigUint::from(residue), &half), f.one(), "{residue} is a square");
     }
     let five = BigUint::from(5u32);
     assert_eq!(f.pow(&five, &half), f.minus_one(), "5 is not a square");
-    for q in bn254_r_minus_1_primes(&f) {
+    for q in bn128_r_minus_1_primes(&f) {
         assert_ne!(f.pow(&five, &(f.minus_one() / &q)), f.one(), "5 has order r − 1, not a divisor of (r − 1)/{q}");
     }
 }
 
 #[test]
-fn bn254_gen_are_the_roots_of_unity_of_order_a_power_of_two() {
-    let f = FieldConstants::bn254();
+fn bn128_gen_are_the_roots_of_unity_of_order_a_power_of_two() {
+    let f = FieldConstants::bn128();
     // r − 1 = 2^28 · odd: one generator per subgroup of order 2^0 … 2^28.
     assert_eq!(f.minus_one().trailing_zeros(), Some(MAX_NBITS));
     assert_eq!(f.gen.len() as u64, MAX_NBITS + 1);
     for (i, g) in f.gen.iter().enumerate() {
-        assert!(*g < f.prime, "Bn254_Gen[{i}] is canonical");
-        assert_eq!(*g, f.pow(&BigUint::from(5u32), &(f.minus_one() >> i)), "Bn254_Gen[{i}] = 5^((r − 1)/2^{i})");
-        assert_eq!(f.pow_u64(g, 1 << i), f.one(), "Bn254_Gen[{i}]^(2^{i}) = 1");
+        assert!(*g < f.prime, "Bn128_Gen[{i}] is canonical");
+        assert_eq!(*g, f.pow(&BigUint::from(5u32), &(f.minus_one() >> i)), "Bn128_Gen[{i}] = 5^((r − 1)/2^{i})");
+        assert_eq!(f.pow_u64(g, 1 << i), f.one(), "Bn128_Gen[{i}]^(2^{i}) = 1");
         if i > 0 {
-            assert_eq!(f.pow_u64(g, 1 << (i - 1)), f.minus_one(), "Bn254_Gen[{i}]^(2^{}) = r − 1", i - 1);
-            assert_eq!(f.mul(g, g), f.gen[i - 1], "Bn254_Gen[{i}]^2 = Bn254_Gen[{}]", i - 1);
+            assert_eq!(f.pow_u64(g, 1 << (i - 1)), f.minus_one(), "Bn128_Gen[{i}]^(2^{}) = r − 1", i - 1);
+            assert_eq!(f.mul(g, g), f.gen[i - 1], "Bn128_Gen[{i}]^2 = Bn128_Gen[{}]", i - 1);
         }
         // The std's subgroups are the domains of pilfflonk.
-        assert_eq!(g, oracle::omega(i as u32).unwrap().as_biguint(), "Bn254_Gen[{i}] is the oracle's ω");
+        assert_eq!(g, oracle::omega(i as u32).unwrap().as_biguint(), "Bn128_Gen[{i}] is the oracle's ω");
     }
     assert_eq!(f.gen[0], f.one());
-    assert_eq!(f.gen[28], big(BN254_ROOT_28));
+    assert_eq!(f.gen[28], big(BN128_ROOT_28));
 }
 
 #[test]
-fn bn254_has_the_roots_of_unity_and_the_coset_generator_of_the_std() {
-    let f = FieldConstants::bn254();
-    assert_eq!(Bn254::TWO_ADICITY as u64, MAX_NBITS);
-    assert_eq!(Bn254::W.len(), f.gen.len());
-    for (i, (w, g)) in Bn254::W.iter().zip(&f.gen).enumerate() {
-        assert_eq!(w.as_canonical_biguint(), *g, "Bn254::W[{i}] is Bn254_Gen[{i}]");
+fn bn128_has_the_roots_of_unity_and_the_coset_generator_of_the_std() {
+    let f = FieldConstants::bn128();
+    assert_eq!(Bn128::TWO_ADICITY as u64, MAX_NBITS);
+    assert_eq!(Bn128::W.len(), f.gen.len());
+    for (i, (w, g)) in Bn128::W.iter().zip(&f.gen).enumerate() {
+        assert_eq!(w.as_canonical_biguint(), *g, "Bn128::W[{i}] is Bn128_Gen[{i}]");
     }
-    assert_eq!(Bn254::GENERATOR.as_canonical_biguint(), BigUint::from(5u32));
-    assert_eq!(Bn254::GENERATOR.exp_power_of_2(Bn254::TWO_ADICITY).as_canonical_biguint(), f.k, "Bn254_k = 5^(2^28)");
+    assert_eq!(Bn128::GENERATOR.as_canonical_biguint(), BigUint::from(5u32));
+    assert_eq!(Bn128::GENERATOR.exp_power_of_2(Bn128::TWO_ADICITY).as_canonical_biguint(), f.k, "Bn128_k = 5^(2^28)");
 }
 
 #[test]
-fn bn254_k_generates_cosets_disjoint_from_each_other_and_from_h() {
-    let f = FieldConstants::bn254();
+fn bn128_k_generates_cosets_disjoint_from_each_other_and_from_h() {
+    let f = FieldConstants::bn128();
     let two_adic = BigUint::from(1u32) << MAX_NBITS;
     let m = f.minus_one() >> MAX_NBITS;
     assert!(m.bit(0) && m.bits() == 226, "m = (r − 1)/2^28 is odd and above 2^225");
-    assert_eq!(f.k, f.pow(&BigUint::from(5u32), &two_adic), "Bn254_k = 5^(2^28)");
+    assert_eq!(f.k, f.pow(&BigUint::from(5u32), &two_adic), "Bn128_k = 5^(2^28)");
 
     // k has order exactly m, so k^d is in the subgroup H of order 2^28 (and in its subgroups, of
     // order N | 2^28) only for m | d: the cosets k^j·H, 0 ≤ j < m, are disjoint.
     assert_eq!(f.pow(&f.k, &m), f.one());
-    for q in bn254_r_minus_1_primes(&f).into_iter().skip(1) {
+    for q in bn128_r_minus_1_primes(&f).into_iter().skip(1) {
         assert_ne!(f.pow(&f.k, &(&m / &q)), f.one(), "the order of k is not a divisor of m/{q}");
     }
 
@@ -260,7 +260,7 @@ fn bn254_k_generates_cosets_disjoint_from_each_other_and_from_h() {
 // The fixture compiled over each field (needs PIL2C_EXEC)
 // ---------------------------------------------------------------------------------------------
 
-const FIXTURE: &str = "pilfflonk/tests/fixtures/std_bn254/connection.pil";
+const FIXTURE: &str = "pilfflonk/tests/fixtures/std_bn128/connection.pil";
 
 /// Runs `PIL2C_EXEC` on the fixture from the repository root, with `--field <field>` if given.
 fn run_pil2com(out: &Path, field: Option<&str>) -> Output {
@@ -275,7 +275,7 @@ fn run_pil2com(out: &Path, field: Option<&str>) -> Output {
 }
 
 fn compile(name: &str, field: Option<&str>) -> pb::PilOut {
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("std_bn254.{name}.pilout"));
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("std_bn128.{name}.pilout"));
     let output = run_pil2com(&out, field);
     assert!(output.status.success(), "pil2com failed:\n{}", String::from_utf8_lossy(&output.stdout));
     PilOutProxy::new(out.to_str().expect("a UTF-8 path")).expect("a pilout").pilout
@@ -361,9 +361,9 @@ fn check_connections(pilout: &pb::PilOut, f: &FieldConstants) {
 
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
-fn over_bn254_the_connections_carry_bn254s_constants() {
-    let pilout = compile("bn254", Some("bn254"));
-    let f = FieldConstants::bn254();
+fn over_bn128_the_connections_carry_bn128s_constants() {
+    let pilout = compile("bn128", Some("bn128"));
+    let f = FieldConstants::bn128();
     check_connections(&pilout, &f);
 
     let goldilocks = FieldConstants::goldilocks();
@@ -383,12 +383,12 @@ fn over_goldilocks_the_connections_still_carry_goldilocks_constants() {
 #[ignore = "needs PIL2C_EXEC"]
 fn over_another_field_nothing_is_compiled() {
     // The compiler knows only the fields the std has constants for, and refuses any other name
-    // before it compiles: BN254's base field, a likely mistake for its scalar field, is not one.
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("std_bn254.fq.pilout");
+    // before it compiles: BN128's base field, a likely mistake for its scalar field, is not one.
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("std_bn128.fq.pilout");
     let _ = fs::remove_file(&out);
-    let output = run_pil2com(&out, Some("bn254fq"));
+    let output = run_pil2com(&out, Some("bn128fq"));
     assert!(!output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("unknown field \"bn254fq\""), "{stdout}");
+    assert!(stdout.contains("unknown field \"bn128fq\""), "{stdout}");
     assert!(!out.exists());
 }

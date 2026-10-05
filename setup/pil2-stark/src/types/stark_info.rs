@@ -539,7 +539,7 @@ mod tests {
     use crate::pil::gen_code::{self, ExpressionCodeEntry, ProcessedHint, ProcessedHintField, ProcessedHintFieldEntry};
     use crate::types::output::{CodeEntry, CodeRef};
 
-    /// BN254's `r − 1`: a constant of a pilout over BN254, which `parse().unwrap_or(0)` wrote as 0.
+    /// BN128's `r − 1`: a constant of a pilout over BN128, which `parse().unwrap_or(0)` wrote as 0.
     const R_MINUS_ONE: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
 
     fn code_ref(ref_type: &str, value: Option<&str>) -> CodeRef {

@@ -1053,7 +1053,7 @@ mod tests {
         bytes
     }
 
-    /// BN254's base field modulus q and scalar field modulus r.
+    /// BN128's base field modulus q and scalar field modulus r.
     const Q: &str = "30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47";
     const R: &str = "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001";
 
@@ -1164,7 +1164,7 @@ mod tests {
  "aggTypes": [[]],
  "backend": "pilfflonk",
  "formatVersion": 1,
- "field": "bn254",
+ "field": "bn128",
  "modulus": "21888242871839275222246405745257275088548364400416034343698204186575808495617",
  "transcript": "keccak256",
  "setupParams": {"maxConstraintDegree": 9, "extraMuls": 2, "maxQDegree": 0, "packing": true},

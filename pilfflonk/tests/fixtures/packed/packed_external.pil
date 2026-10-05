@@ -5,7 +5,7 @@
 // moves to {0, 1}. The rest is packed.pil's: setup/pilfflonk/tests/setup/external_fixed.rs checks
 // that its pilout is packed.pil's without those values, and that both give the same key.
 //
-// Compile over BN254 as packed.pil. The witness generator is tests/data/packed.rs.
+// Compile over BN128 as packed.pil. The witness generator is tests/data/packed.rs.
 
 public in1;
 public out;

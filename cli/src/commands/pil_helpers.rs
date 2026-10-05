@@ -9,7 +9,7 @@ use pil2_pilout::pilout::hint_field::Value::StringValue;
 use pil2_pilout::pilout::hint_field::Value::Operand;
 use pil2_pilout::pilout::operand::Operand::Constant;
 use proofman_common::initialize_logger;
-use proofman_pilfflonk::BN254_R;
+use proofman_pilfflonk::BN128_R;
 use num_bigint::BigUint;
 use serde::Serialize;
 use tinytemplate::TinyTemplate;
@@ -57,8 +57,8 @@ struct ProofCtx {
     publics: Vec<ValuesCtx>,
     has_packed: bool,
     packed_info: Vec<PackInfo>,
-    /// The pilout is over BN254's `Fr` ([`is_bn254`]).
-    is_bn254: bool,
+    /// The pilout is over BN128's `Fr` ([`is_bn128`]).
+    is_bn128: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -117,14 +117,14 @@ struct StageColumnCtx {
     columns: Vec<ColumnCtx>,
 }
 
-/// Whether `pilout` is over BN254's `Fr`, the field of `setup-pilfflonk`
+/// Whether `pilout` is over BN128's `Fr`, the field of `setup-pilfflonk`
 /// (pilfflonk/docs/README.md#what-the-setup-refuses), from its `baseField` as the pilfflonk setup
 /// reads it. Its helpers are then those of a pilfflonk witness library
-/// (pilfflonk/docs/README.md#witness): rows over `Bn254` with no packed rows, which pilfflonk does
-/// not accept yet; values of dimension 1, as BN254 has no extension field; and publics that are
-/// `Bn254` values.
-fn is_bn254(pilout: &pil2_pilout::pilout::PilOut) -> bool {
-    BigUint::parse_bytes(BN254_R.as_bytes(), 10).is_some_and(|r| BigUint::from_bytes_be(&pilout.base_field) == r)
+/// (pilfflonk/docs/README.md#witness): rows over `Bn128` with no packed rows, which pilfflonk does
+/// not accept yet; values of dimension 1, as BN128 has no extension field; and publics that are
+/// `Bn128` values.
+fn is_bn128(pilout: &pil2_pilout::pilout::PilOut) -> bool {
+    BigUint::parse_bytes(BN128_R.as_bytes(), 10).is_some_and(|r| BigUint::from_bytes_be(&pilout.base_field) == r)
 }
 
 impl PilHelpersCmd {
@@ -164,11 +164,11 @@ impl PilHelpersCmd {
 
         // Read the pilout file
         let pilout = PilOutProxy::new(&self.pilout.display().to_string())?;
-        let is_bn254 = is_bn254(&pilout);
-        // BN254 has no extension field: every value has dimension 1.
-        let extension = if is_bn254 { "F" } else { "FieldExtension<F>" };
+        let is_bn128 = is_bn128(&pilout);
+        // BN128 has no extension field: every value has dimension 1.
+        let extension = if is_bn128 { "F" } else { "FieldExtension<F>" };
         // The type of a public in the public inputs a library reads, and its zero.
-        let (public_type, public_zero) = if is_bn254 { ("Bn254", "Bn254::default()") } else { ("u64", "0") };
+        let (public_type, public_zero) = if is_bn128 { ("Bn128", "Bn128::default()") } else { ("u64", "0") };
 
         let mut wcctxs = Vec::new();
         let mut constant_airgroups: Vec<(String, usize)> = Vec::new();
@@ -230,7 +230,7 @@ impl PilHelpersCmd {
         }
 
         // The packed rows of `witness_bits` are 64-bit, and pilfflonk does not accept packed traces yet.
-        if is_bn254 {
+        if is_bn128 {
             if let Some(air) = wcctxs.iter().flat_map(|airgroup| &airgroup.airs).find(|air| air.has_packed) {
                 return Err(format!(
                     "air {} has `witness_bits` hints, from columns declared with `bits(n)`, which ask for packed trace \
@@ -550,7 +550,7 @@ impl PilHelpersCmd {
             proof_values,
             has_packed,
             packed_info,
-            is_bn254,
+            is_bn128,
         };
 
         const MOD_RS: &str = include_str!("../../assets/templates/pil_helpers_mod.rs.tt");
@@ -637,8 +637,8 @@ mod tests {
         }
     }
 
-    fn bn254() -> Vec<u8> {
-        BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap().to_bytes_be()
+    fn bn128() -> Vec<u8> {
+        BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap().to_bytes_be()
     }
 
     /// The `witness_bits` hint `col witness bits(8) a` gives.
@@ -672,19 +672,19 @@ mod tests {
     }
 
     #[test]
-    fn a_bn254_pilout_gives_rows_over_bn254() {
-        let dir = TempDir::new("bn254");
-        let traces = pil_helpers(&dir, &pilout(bn254())).unwrap();
+    fn a_bn128_pilout_gives_rows_over_bn128() {
+        let dir = TempDir::new("bn128");
+        let traces = pil_helpers(&dir, &pilout(bn128())).unwrap();
 
         // No extension field: the values of stage 2 have dimension 1.
         assert!(!traces.contains("FieldExtension"), "{traces}");
         for value in [" av: F,", " agv: F,", " pv: F,"] {
             assert!(traces.contains(value), "{value}: {traces}");
         }
-        // The publics a library reads are Bn254 values, zero by default.
-        assert!(traces.contains("use proofman_fields::Bn254;\n"), "{traces}");
-        assert!(traces.contains("    pub p: Bn254,\n") && traces.contains("    pub q: [Bn254; 2],\n"), "{traces}");
-        assert!(traces.contains("fn default_array_q() -> [Bn254; 2] {\n    [Bn254::default(); 2]\n}"), "{traces}");
+        // The publics a library reads are Bn128 values, zero by default.
+        assert!(traces.contains("use proofman_fields::Bn128;\n"), "{traces}");
+        assert!(traces.contains("    pub p: Bn128,\n") && traces.contains("    pub q: [Bn128; 2],\n"), "{traces}");
+        assert!(traces.contains("fn default_array_q() -> [Bn128; 2] {\n    [Bn128::default(); 2]\n}"), "{traces}");
         assert!(traces.contains("values!(ProgramPublicValues<F> {\n p: F, q: [F; 2],\n});"), "{traces}");
         // Plain rows over the pilout's columns, and no packed trace.
         assert!(traces.contains("trace_row!(MainTraceRow<F> {\n a:F, b:[F; 2],\n});"), "{traces}");
@@ -704,17 +704,17 @@ mod tests {
             assert!(traces.contains(value), "{value}: {traces}");
         }
         assert!(traces.contains("    pub p: u64,\n") && traces.contains("    pub q: [u64; 2],\n"), "{traces}");
-        assert!(!traces.contains("Bn254"), "{traces}");
+        assert!(!traces.contains("Bn128"), "{traces}");
         assert!(traces.contains("use proofman_common::PackedInfoConst;\n"), "{traces}");
         assert!(traces.contains("pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[\n];"), "{traces}");
     }
 
-    /// pilfflonk does not accept packed traces yet: a BN254 pilout with a `witness_bits` hint is
+    /// pilfflonk does not accept packed traces yet: a BN128 pilout with a `witness_bits` hint is
     /// refused, and nothing is written.
     #[test]
-    fn a_bn254_pilout_with_packed_columns_is_refused() {
-        let dir = TempDir::new("bn254_packed");
-        let mut pilout = pilout(bn254());
+    fn a_bn128_pilout_with_packed_columns_is_refused() {
+        let dir = TempDir::new("bn128_packed");
+        let mut pilout = pilout(bn128());
         pilout.hints.push(witness_bits());
         let err = pil_helpers(&dir, &pilout).unwrap_err();
         assert!(err.contains("air Main") && err.contains("pilfflonk does not accept packed traces yet"), "{err}");

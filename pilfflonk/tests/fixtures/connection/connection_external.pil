@@ -6,7 +6,7 @@
 // setup/pilfflonk/tests/setup/external_fixed.rs checks that its pilout is connection_prod.pil's
 // without those values, and that both give the same key.
 //
-// Compile over BN254 as connection_prod.pil. The witness generator is tests/data/connection.rs.
+// Compile over BN128 as connection_prod.pil. The witness generator is tests/data/connection.rs.
 require "std_constants.pil"
 require "std_connection.pil"
 

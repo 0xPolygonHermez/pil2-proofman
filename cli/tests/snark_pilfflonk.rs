@@ -86,13 +86,13 @@ fn verify_snark(proof: &Path, vkey: &Path) -> Output {
     cli(&["verify-snark", "-p", proof.to_str().unwrap(), "-k", vkey.to_str().unwrap()], &[])
 }
 
-/// Compiles the Fibonacci fixture over BN254 to `pilout` with `PIL2C_EXEC`.
+/// Compiles the Fibonacci fixture over BN128 to `pilout` with `PIL2C_EXEC`.
 fn compile_fibonacci(pilout: &Path) {
     let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil")
-        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
         .arg(pilout)
         .output()
         .expect("PIL2C_EXEC runs");

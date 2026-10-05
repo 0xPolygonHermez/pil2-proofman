@@ -5,7 +5,7 @@
 
 // The kernels of the LDE on the device (pilfflonk_lde.cu), the elementwise work of Lde's coset
 // transforms around sppark's NTTs (pilfflonk_lde_gpu.hpp), with C linkage and the conventions of
-// pilfflonk_kernels.hpp: device pointers unless said otherwise, 32-byte BN254 scalars in Montgomery
+// pilfflonk_kernels.hpp: device pointers unless said otherwise, 32-byte BN128 scalars in Montgomery
 // form, the legacy default stream, nothing launched for an empty range, and a CUDA failure aborts
 // the process.
 //

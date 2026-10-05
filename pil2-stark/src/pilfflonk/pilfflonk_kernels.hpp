@@ -8,7 +8,7 @@
 // side needs besides the PLONK GPU prover's helpers (rapidsnark/plonk_prover.cu), with C linkage as
 // those are: the files that call them are compiled with g++, without the CUDA headers.
 //
-// Every pointer but a host one named so is device memory. An element is a BN254 scalar of 32
+// Every pointer but a host one named so is device memory. An element is a BN128 scalar of 32
 // bytes, in Montgomery form unless said otherwise, as BN128GPUScalarField (bn128/src/ffigpu/fr.cuh)
 // and ffiasm keep it; a polynomial is its coefficients in increasing degree. Indices are 64-bit.
 // The kernels run on the legacy default stream, in order with each other and with the PLONK

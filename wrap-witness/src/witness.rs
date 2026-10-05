@@ -7,7 +7,7 @@ use std::path::Path;
 
 use proofman_common::exec_format::{ExecFile, RANGE_CHECK_BAND_KIND, RANGE_CHECK_CHUNK_BITS, RANGE_CHECK_CHUNK_COLS};
 use proofman_common::final_witness::{FinalWitnessLibrary, FINAL_WITNESS_VALUE_BYTES};
-use proofman_fields::{Bn254, QuotientMap};
+use proofman_fields::{Bn128, QuotientMap};
 use proofman_pilfflonk::{AirInstanceRef, AirShape, FrBytes, InstanceWitness, Stage1Witness, Witness, WitnessShape};
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use rayon::prelude::*;
@@ -22,12 +22,12 @@ use crate::zkin::Zkin;
 pub struct WrapWitness {
     artifacts: WrapArtifacts,
     calculator: FinalWitnessLibrary,
-    exec: ExecFile<Bn254>,
+    exec: ExecFile<Bn128>,
 }
 
 impl WrapWitness {
     /// Loads the files of `artifacts`. Refuses a file that is not there, an exec that is not one
-    /// over BN254 or whose gate bands are not the wrap's range checks, and a witness calculator
+    /// over BN128 or whose gate bands are not the wrap's range checks, and a witness calculator
     /// that cannot be loaded.
     pub fn load(artifacts: &WrapArtifacts) -> WrapWitnessResult<Self> {
         for (what, path) in [
@@ -39,7 +39,7 @@ impl WrapWitness {
                 return Err(WrapWitnessError::Missing { what, path: path.clone() });
             }
         }
-        let exec = ExecFile::<Bn254>::read(&artifacts.exec).map_err(WrapWitnessError::Exec)?;
+        let exec = ExecFile::<Bn128>::read(&artifacts.exec).map_err(WrapWitnessError::Exec)?;
         RangeChecks::of(&exec)
             .map_err(|e| WrapWitnessError::Mismatch(format!("the exec {} {e}", artifacts.exec.display())))?;
         let calculator =
@@ -53,7 +53,7 @@ impl WrapWitness {
         &self.artifacts
     }
 
-    pub fn exec(&self) -> &ExecFile<Bn254> {
+    pub fn exec(&self) -> &ExecFile<Bn128> {
         &self.exec
     }
 
@@ -79,7 +79,7 @@ impl WrapWitness {
 
     /// The final circuit's witness for the zkin in the file `zkin`: a value per witness index, wire
     /// 0 the constant one (see [`Zkin::read`] for what is refused of the file).
-    pub fn circom_witness(&self, zkin: &Path) -> WrapWitnessResult<Vec<Bn254>> {
+    pub fn circom_witness(&self, zkin: &Path) -> WrapWitnessResult<Vec<Bn128>> {
         let json = Zkin::read(zkin)?;
         // SAFETY: `json` is a nlohmann::json of the calculator's nlohmann/json (src/zkin.cpp), alive
         // and only the calculator's until it returns.
@@ -91,7 +91,7 @@ impl WrapWitness {
     /// # Safety
     ///
     /// As [`witness_from_json`](Self::witness_from_json).
-    pub unsafe fn circom_witness_from_json(&self, zkin: *mut c_void) -> WrapWitnessResult<Vec<Bn254>> {
+    pub unsafe fn circom_witness_from_json(&self, zkin: *mut c_void) -> WrapWitnessResult<Vec<Bn128>> {
         self.compute(zkin, None)
     }
 
@@ -100,7 +100,7 @@ impl WrapWitness {
     /// # Safety
     ///
     /// As [`witness_from_json`](Self::witness_from_json).
-    unsafe fn compute(&self, json: *mut c_void, zkin: Option<&Path>) -> WrapWitnessResult<Vec<Bn254>> {
+    unsafe fn compute(&self, json: *mut c_void, zkin: Option<&Path>) -> WrapWitnessResult<Vec<Bn128>> {
         let path = &self.artifacts.witness_calculator;
         timer_start_info!(PILFFLONK_WRAP_CIRCOM_WITNESS);
         let bytes = self.calculator.witness(json).map_err(|source| WrapWitnessError::Calculator {
@@ -114,7 +114,7 @@ impl WrapWitness {
             .map(|(wire, value)| {
                 let mut canonical = [0u8; FINAL_WITNESS_VALUE_BYTES];
                 canonical.copy_from_slice(value);
-                Bn254::from_le_bytes(canonical).ok_or(wire)
+                Bn128::from_le_bytes(canonical).ok_or(wire)
             })
             .collect::<Result<Vec<_>, usize>>()
             .map_err(|wire| {
@@ -137,8 +137,8 @@ impl WrapWitness {
 /// has; its publics are wires `1 ..= nPublics` of `circom`; and its trace must hold the exec's map
 /// and the multiplicity's column.
 pub fn witness_from_circom(
-    exec: &ExecFile<Bn254>,
-    circom: Vec<Bn254>,
+    exec: &ExecFile<Bn128>,
+    circom: Vec<Bn128>,
     shape: &WitnessShape,
 ) -> WrapWitnessResult<Witness> {
     let air = wrap_air(shape)?;
@@ -198,7 +198,7 @@ impl RangeChecks {
     /// wrap's: a band of another kind, which only the STARK's trace expander rebuilds, a range check
     /// of more chunks than a row holds or of none, or a multiplicity column that the map fills. The
     /// error completes "the exec ...".
-    fn of(exec: &ExecFile<Bn254>) -> Result<Option<Self>, String> {
+    fn of(exec: &ExecFile<Bn128>) -> Result<Option<Self>, String> {
         if exec.bands.is_empty() {
             return Ok(None);
         }
@@ -238,7 +238,7 @@ impl RangeChecks {
     /// them all up. Refuses an AIR of fewer rows than the table's `2^16` or without the
     /// multiplicity's column, a range-check row past its rows, and a chunk of `2^16` or more, which
     /// no row of the table holds: the circuit's witness does not satisfy its `Num2Bytes`.
-    fn count(&self, trace: &mut [Bn254], n_rows: usize, n_cols: usize) -> WrapWitnessResult<()> {
+    fn count(&self, trace: &mut [Bn128], n_rows: usize, n_cols: usize) -> WrapWitnessResult<()> {
         let mismatch = |e: String| Err(WrapWitnessError::Mismatch(e));
         let table_rows = 1usize << RANGE_CHECK_CHUNK_BITS;
         if n_rows < table_rows {
@@ -270,14 +270,14 @@ impl RangeChecks {
             }
         }
         for (row, count) in counts.into_iter().enumerate() {
-            trace[row * n_cols + self.multiplicity_column] = Bn254::from_int(count);
+            trace[row * n_cols + self.multiplicity_column] = Bn128::from_int(count);
         }
         Ok(())
     }
 }
 
 /// The value of `cell` if it is a chunk, below `2^16`.
-fn chunk_value(cell: &Bn254) -> Option<usize> {
+fn chunk_value(cell: &Bn128) -> Option<usize> {
     let bytes = cell.to_le_bytes();
     let chunk_bytes = RANGE_CHECK_CHUNK_BITS as usize / 8;
     bytes[chunk_bytes..]
@@ -303,10 +303,10 @@ mod tests {
 
     /// An exec over a map of 9 columns with these range-check bands, `(row, chunks)`, counting into
     /// `column`.
-    fn exec(bands: &[(u64, u64)], column: u64) -> ExecFile<Bn254> {
+    fn exec(bands: &[(u64, u64)], column: u64) -> ExecFile<Bn128> {
         let bands = bands.iter().map(|&(row, payload)| ExecGateBand { row, kind: RANGE_CHECK_BAND_KIND, payload });
         ExecFile {
-            layout: ExecLayout::new::<Bn254>(1, 0, 1, 9),
+            layout: ExecLayout::new::<Bn128>(1, 0, 1, 9),
             additions: vec![],
             map: vec![0; 9],
             band_aux: column,
@@ -315,7 +315,7 @@ mod tests {
     }
 
     /// THE NAIVE REFERENCE: how many chunk cells, `a[1..=5]` of each row of `rows`, hold each value.
-    fn naive_counts(trace: &[Bn254], rows: &[usize]) -> HashMap<u64, u64> {
+    fn naive_counts(trace: &[Bn128], rows: &[usize]) -> HashMap<u64, u64> {
         let mut counts = HashMap::new();
         for &row in rows {
             for col in 1..=5 {
@@ -328,14 +328,14 @@ mod tests {
 
     /// Range-check rows of chunks from a fixed seed, all of [0, 2^16) and the top values, with the
     /// cells past a row's chunks zero, as the map gathers them.
-    fn trace_of(rows: &[(usize, usize)]) -> Vec<Bn254> {
-        let mut trace = vec![Bn254::ZERO; N_ROWS * N_COLS];
+    fn trace_of(rows: &[(usize, usize)]) -> Vec<Bn128> {
+        let mut trace = vec![Bn128::ZERO; N_ROWS * N_COLS];
         let mut state = 0x4d35_3661_u64;
         for &(row, n_chunks) in rows {
             for k in 0..n_chunks {
                 state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
                 let chunk = if k == 0 && row % 3 == 0 { 0xffff } else { state >> 48 };
-                trace[row * N_COLS + 1 + k] = Bn254::from_int(chunk);
+                trace[row * N_COLS + 1 + k] = Bn128::from_int(chunk);
             }
         }
         trace
@@ -358,16 +358,16 @@ mod tests {
         assert_eq!(counts.values().sum::<u64>(), 5 * rows.len() as u64);
         for row in 0..N_ROWS {
             let expected = counts.get(&(row as u64)).copied().unwrap_or(0);
-            assert_eq!(trace[row * N_COLS + 9], Bn254::from_int(expected), "RANGE_MUL at row {row}");
+            assert_eq!(trace[row * N_COLS + 9], Bn128::from_int(expected), "RANGE_MUL at row {row}");
             assert_eq!(trace[row * N_COLS..row * N_COLS + 9], gathered[row * N_COLS..row * N_COLS + 9], "row {row}");
         }
 
         // Past the table, at 2^17 rows: the same counts, and zeros after them.
-        let mut tall = vec![Bn254::ZERO; 2 * N_ROWS * N_COLS];
+        let mut tall = vec![Bn128::ZERO; 2 * N_ROWS * N_COLS];
         tall[..N_ROWS * N_COLS].copy_from_slice(&gathered);
         checks.count(&mut tall, 2 * N_ROWS, N_COLS).unwrap();
         assert_eq!(tall[..N_ROWS * N_COLS], trace[..]);
-        assert!(tall[N_ROWS * N_COLS..].iter().all(|v| *v == Bn254::ZERO));
+        assert!(tall[N_ROWS * N_COLS..].iter().all(|v| *v == Bn128::ZERO));
     }
 
     #[test]
@@ -399,17 +399,17 @@ mod tests {
     fn what_the_count_cannot_fit_is_refused() {
         let checks = |bands: &[(u64, u64)], column| RangeChecks::of(&exec(bands, column)).unwrap().unwrap();
         let mut trace = trace_of(&[(3, 2)]);
-        let err = |checks: RangeChecks, trace: &mut [Bn254], n_rows, n_cols| {
+        let err = |checks: RangeChecks, trace: &mut [Bn128], n_rows, n_cols| {
             checks.count(trace, n_rows, n_cols).unwrap_err().to_string()
         };
-        let mut short = vec![Bn254::ZERO; (N_ROWS / 2) * N_COLS];
+        let mut short = vec![Bn128::ZERO; (N_ROWS / 2) * N_COLS];
         assert!(err(checks(&[(3, 2)], 9), &mut short, N_ROWS / 2, N_COLS)
             .contains("fewer than the 2^16 of its range table"));
         assert!(err(checks(&[(3, 2)], 10), &mut trace, N_ROWS, N_COLS)
             .contains("into stage-1 column 10, and the AIR has 10"));
         let past = N_ROWS as u64;
         assert!(err(checks(&[(past, 2)], 9), &mut trace, N_ROWS, N_COLS).contains("a range check at row 65536"));
-        trace[3 * N_COLS + 2] = Bn254::from_int(1u64 << 16);
+        trace[3 * N_COLS + 2] = Bn128::from_int(1u64 << 16);
         let outside = err(checks(&[(3, 2)], 9), &mut trace, N_ROWS, N_COLS);
         assert!(outside.contains("row 3, column 2, is 65536, not below 2^16"), "{outside}");
     }

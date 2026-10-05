@@ -25,7 +25,7 @@
 //!   STARK recursion air carries one, and it is the only version the STARK prover reads.
 //! - version 3, [`EXEC_FORMAT_VERSION_WIDE`], records the width in the header, in whole words, and
 //!   writes a coefficient's canonical value least significant word first. plonk2pil writes it over
-//!   BN254, four words (the original pil-fflonk's 32-byte `Fr`), for the pilfflonk wrap. Its header
+//!   BN128, four words (the original pil-fflonk's 32-byte `Fr`), for the pilfflonk wrap. Its header
 //!   also records `n_vars`, the r1cs's wire count, from which the additions' wires are numbered, so
 //!   that a reader refuses the witness of another compile of the circuit rather than gathering
 //!   other wires; version 2 leaves it to the witness's length, as `getCommitedPols` does.
@@ -34,11 +34,11 @@
 //!
 //! [`ExecFile::committed_pols`] applies a file to a circom witness, over either field: the
 //! semantics of the STARK's `getCommitedPols` (pil2-stark/src/starkpil/recursion_trace/exec_file.hpp),
-//! which the STARK prover runs in C++ over Goldilocks. The pilfflonk wrap runs it over BN254.
+//! which the STARK prover runs in C++ over Goldilocks. The pilfflonk wrap runs it over BN128.
 
 use std::path::Path;
 
-use proofman_fields::{Bn254, Field, Goldilocks, PrimeField64, QuotientMap};
+use proofman_fields::{Bn128, Field, Goldilocks, PrimeField64, QuotientMap};
 use rayon::prelude::*;
 
 use crate::{ProofmanError, ProofmanResult};
@@ -54,7 +54,7 @@ pub const EXEC_MAGIC_MASK: u64 = 0xFFFF_FFFF_0000_0000;
 /// their order. Mirrored by `exec_layout::EXEC_FORMAT_VERSION`.
 pub const EXEC_FORMAT_VERSION: u64 = 2;
 
-/// The layout with the coefficient width in the header, for a field wider than a word: BN254, the
+/// The layout with the coefficient width in the header, for a field wider than a word: BN128, the
 /// pilfflonk wrap's. Mirrored by `exec_layout::EXEC_FORMAT_VERSION_WIDE`, which the C++ readers
 /// only refuse.
 pub const EXEC_FORMAT_VERSION_WIDE: u64 = 3;
@@ -76,7 +76,7 @@ pub const GATE_BAND_HEADER_WORDS: usize = 3;
 pub const GATE_BAND_WORDS: usize = 3;
 
 /// The band kind of a range-check row of the pilfflonk wrap (plonk2pil's
-/// `GateBandKind::PoseidonBn254WrapRangeCheck`): a use of circom's `Num2Bytes(nBits)`, its `in` at
+/// `GateBandKind::PoseidonBn128WrapRangeCheck`): a use of circom's `Num2Bytes(nBits)`, its `in` at
 /// column 0 and its `⌈nBits/16⌉` chunks from column 1 ([`RANGE_CHECK_CHUNK_COLS`]), the other
 /// chunk cells empty. `payload` is its number of chunks, and the section's aux word the stage-1
 /// column of the multiplicity, `RANGE_MUL`, which no map entry fills.
@@ -134,8 +134,8 @@ impl ExecField for Goldilocks {
     }
 }
 
-impl ExecField for Bn254 {
-    const NAME: &'static str = "BN254";
+impl ExecField for Bn128 {
+    const NAME: &'static str = "BN128";
     const EXEC_VERSION: u64 = EXEC_FORMAT_VERSION_WIDE;
     const COEF_WORDS: usize = 4;
 
@@ -565,7 +565,7 @@ impl<F: ExecField + Field> ExecFile<F> {
 mod tests {
     use super::*;
 
-    /// `r`, BN254's prime, least significant word first.
+    /// `r`, BN128's prime, least significant word first.
     const R: [u64; 4] = [0x43e1f593f0000001, 0x2833e84879b97091, 0xb85045b68181585d, 0x30644e72e131a029];
 
     /// A coefficient is its canonical value, least significant word first, in the field's width. A
@@ -573,11 +573,11 @@ mod tests {
     #[test]
     fn a_coefficient_is_its_canonical_value_in_words() {
         let mut words = [0u64; 4];
-        Bn254::NEG_ONE.write_exec_words(&mut words);
+        Bn128::NEG_ONE.write_exec_words(&mut words);
         assert_eq!(words, [R[0] - 1, R[1], R[2], R[3]]);
-        assert_eq!(Bn254::read_exec_words(&words), Some(Bn254::NEG_ONE));
-        assert_eq!(Bn254::read_exec_words(&R), None, "r itself");
-        assert_eq!(Bn254::read_exec_words(&words[..3]), None);
+        assert_eq!(Bn128::read_exec_words(&words), Some(Bn128::NEG_ONE));
+        assert_eq!(Bn128::read_exec_words(&R), None, "r itself");
+        assert_eq!(Bn128::read_exec_words(&words[..3]), None);
 
         let mut word = [0u64];
         Goldilocks::NEG_ONE.write_exec_words(&mut word);
@@ -587,7 +587,7 @@ mod tests {
         assert_eq!(Goldilocks::read_exec_words(&[1, 0]), None);
     }
 
-    /// A version 3 exec over BN254, word by word: an r1cs of 9 wires, one addition, a 1 x 1 map,
+    /// A version 3 exec over BN128, word by word: an r1cs of 9 wires, one addition, a 1 x 1 map,
     /// whose one entry leaves the high half of its word for padding, and no bands.
     fn one_addition() -> Vec<u64> {
         let mut exec = vec![EXEC_MAGIC | EXEC_FORMAT_VERSION_WIDE, 1, 1, 1, 4, 9];
@@ -601,10 +601,10 @@ mod tests {
 
     #[test]
     fn a_version_3_exec_reads_word_by_word() {
-        let file = ExecFile::<Bn254>::from_words(&one_addition()).unwrap();
-        assert_eq!(file.layout, ExecLayout::new::<Bn254>(9, 1, 1, 1));
+        let file = ExecFile::<Bn128>::from_words(&one_addition()).unwrap();
+        assert_eq!(file.layout, ExecLayout::new::<Bn128>(9, 1, 1, 1));
         assert_eq!(file.layout.n_vars(), Some(9));
-        assert_eq!(file.additions, [ExecAddition { wires: [3, 5], coeffs: [Bn254::from_int(7u64), Bn254::NEG_ONE] }]);
+        assert_eq!(file.additions, [ExecAddition { wires: [3, 5], coeffs: [Bn128::from_int(7u64), Bn128::NEG_ONE] }]);
         assert_eq!((file.map_entry(0, 0), file.map_entry(1, 0), file.map_entry(0, 1)), (9, 0, 0));
         assert_eq!((file.band_aux, file.bands.len()), (0, 0));
 
@@ -640,16 +640,16 @@ mod tests {
             ("is format version 4, but this build reads versions 2 and 3", &|e| e[0] = EXEC_MAGIC | 4),
             ("too short for its version 3 header of 6", &|e| e.truncate(5)),
             ("records coefficients of 0 words", &|e| e[4] = 0),
-            ("is format version 2 with 1-word coefficients, not version 3 with the 4-word ones of BN254", &|e| {
+            ("is format version 2 with 1-word coefficients, not version 3 with the 4-word ones of BN128", &|e| {
                 e[0] = EXEC_MAGIC | EXEC_FORMAT_VERSION
             }),
-            ("is format version 3 with 1-word coefficients, not version 3 with the 4-word ones of BN254", &|e| {
+            ("is format version 3 with 1-word coefficients, not version 3 with the 4-word ones of BN128", &|e| {
                 e[4] = 1
             }),
             ("too short for the 1000 additions", &|e| e[1] = 1000),
             ("too short for the 18446744073709551615 additions", &|e| e[1] = u64::MAX),
             ("reading wire 4294967296, which does not fit 32 bits", &|e| e[6] = 1 << 32),
-            ("with a coefficient that is not an element of BN254", &|e| e[12..16].copy_from_slice(&r)),
+            ("with a coefficient that is not an element of BN128", &|e| e[12..16].copy_from_slice(&r)),
             ("has padding 0xdeadbeef, not 0, in the unused high half of its map's last word", &|e| {
                 e[16] |= 0xdead_beef << 32
             }),
@@ -660,7 +660,7 @@ mod tests {
         for (why, corrupt) in cases {
             let mut exec = one_addition();
             corrupt(&mut exec);
-            let err = ExecFile::<Bn254>::from_words(&exec).unwrap_err().to_string();
+            let err = ExecFile::<Bn128>::from_words(&exec).unwrap_err().to_string();
             assert!(err.contains(why), "expected \"{why}\", got: {err}");
         }
     }
@@ -724,9 +724,9 @@ mod tests {
     fn an_exec_gathers_the_trace_as_get_commited_pols_does() {
         let (got, want) = gathered::<Goldilocks>();
         assert_eq!(got, want);
-        let (got, want) = gathered::<Bn254>();
+        let (got, want) = gathered::<Bn128>();
         assert_eq!(got, want);
-        // −20 is r − 20 over BN254: the coefficient −1 is four words wide.
+        // −20 is r − 20 over BN128: the coefficient −1 is four words wide.
         assert_eq!(
             got.trace[4].to_string(),
             "21888242871839275222246405745257275088548364400416034343698204186575808495597"
@@ -736,10 +736,10 @@ mod tests {
     /// What `getCommitedPols` clamps or trusts is refused, saying why.
     #[test]
     fn an_exec_that_does_not_fit_its_witness_or_trace_is_refused() {
-        let f = |v: u64| Bn254::from_int(v);
+        let f = |v: u64| Bn128::from_int(v);
         let witness = vec![f(1), f(5), f(7)];
-        let add = |wires| ExecAddition { wires, coeffs: [Bn254::ONE, Bn254::ONE] };
-        let cases: [(&str, ExecFile<Bn254>, usize, usize, usize); 8] = [
+        let add = |wires| ExecAddition { wires, coeffs: [Bn128::ONE, Bn128::ONE] };
+        let cases: [(&str, ExecFile<Bn128>, usize, usize, usize); 8] = [
             // The witness of a compile of the circuit with one wire fewer or more than the exec's.
             (
                 "the circom witness has 3 wires, and the r1cs the exec was written for has 2",
@@ -767,24 +767,24 @@ mod tests {
             assert!(err.contains(why), "expected \"{why}\", got: {err}");
         }
         // An empty map gathers nothing: a trace of zeros.
-        let pols = exec::<Bn254>(3, vec![], 0, 0, vec![]).committed_pols(witness, 2, 2, 3).unwrap();
-        assert_eq!((pols.publics, pols.trace), (vec![f(5), f(7)], vec![Bn254::ZERO; 6]));
+        let pols = exec::<Bn128>(3, vec![], 0, 0, vec![]).committed_pols(witness, 2, 2, 3).unwrap();
+        assert_eq!((pols.publics, pols.trace), (vec![f(5), f(7)], vec![Bn128::ZERO; 6]));
     }
 
     /// The witness of another compile, one wire longer, would have put the addition at wire 4,
-    /// which nothing reads, and gathered the witness's own wire 3 in its place: refused over BN254,
+    /// which nothing reads, and gathered the witness's own wire 3 in its place: refused over BN128,
     /// whose header records `n_vars`. Version 2 does not, and numbers the additions from whatever
     /// witness it is given, as `getCommitedPols` does.
     #[test]
-    fn the_witness_of_another_compile_is_refused_over_bn254() {
+    fn the_witness_of_another_compile_is_refused_over_bn128() {
         fn file<F: ExecField + Field>() -> ExecFile<F> {
             // Wire 3 = w1 + w2, of a 3-wire r1cs; the map reads it and wire 2.
             exec(3, vec![ExecAddition { wires: [1, 2], coeffs: [F::ONE, F::ONE] }], 1, 2, vec![3, 2])
         }
-        let bn = |v: u64| Bn254::from_int(v);
-        let pols = file::<Bn254>().committed_pols(vec![bn(1), bn(5), bn(7)], 0, 1, 2).unwrap();
+        let bn = |v: u64| Bn128::from_int(v);
+        let pols = file::<Bn128>().committed_pols(vec![bn(1), bn(5), bn(7)], 0, 1, 2).unwrap();
         assert_eq!(pols.trace, [bn(12), bn(7)]);
-        let err = file::<Bn254>().committed_pols(vec![bn(1), bn(5), bn(7), bn(100)], 0, 1, 2).unwrap_err();
+        let err = file::<Bn128>().committed_pols(vec![bn(1), bn(5), bn(7), bn(100)], 0, 1, 2).unwrap_err();
         assert!(err.to_string().contains("has 4 wires, and the r1cs the exec was written for has 3"), "{err}");
 
         let gl = |v: u64| Goldilocks::from_int(v);

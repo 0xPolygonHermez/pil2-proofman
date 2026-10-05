@@ -940,7 +940,7 @@ mod tests {
     /// degree 4.
     #[test]
     fn test_search_minimises_im_pols_plus_q_deg() {
-        let field = FieldCfg::bn254();
+        let field = FieldCfg::bn128();
         let exprs = sum_of_quartics(&field);
         let per_degree = cost_per_degree(&exprs, 4, 9);
         println!("sum of quartics, (degree, (nImPols, qDeg)): {per_degree:?}");
@@ -956,7 +956,7 @@ mod tests {
     /// A lower bound forces the im pols the unbounded optimum does without.
     #[test]
     fn test_search_with_a_lower_max_adds_im_pols() {
-        let field = FieldCfg::bn254();
+        let field = FieldCfg::bn128();
         let exprs = sum_of_quartics(&field);
 
         let unbounded =
@@ -973,7 +973,7 @@ mod tests {
     /// pols (`3 + 2`) beats degree 9 with none (`0 + 8`).
     #[test]
     fn test_search_finds_an_interior_optimum() {
-        let field = FieldCfg::bn254();
+        let field = FieldCfg::bn128();
         let exprs = product_of_cubes(&field);
         let per_degree = cost_per_degree(&exprs, 3, 9);
         println!("product of cubes, (degree, (nImPols, qDeg)): {per_degree:?}");

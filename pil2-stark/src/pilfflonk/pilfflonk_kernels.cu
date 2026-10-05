@@ -1,5 +1,5 @@
 // The kernels of pilfflonk's GPU path (pilfflonk_kernels.hpp), in the GPU library only. They are
-// elementwise, over BN254 scalars in sppark's Montgomery arithmetic (BN128GPUScalarField), which
+// elementwise, over BN128 scalars in sppark's Montgomery arithmetic (BN128GPUScalarField), which
 // keeps every result fully reduced, as ffiasm does: the same field operation gives the same bytes
 // on either.
 #include <cuda.h>

@@ -472,10 +472,10 @@ mod tests {
     }
 
     /// The folding challenge, and so the constraint polynomial, lives in the field's extension:
-    /// dimension 3 over Goldilocks, 1 over BN254.
+    /// dimension 3 over Goldilocks, 1 over BN128.
     #[test]
     fn test_folding_follows_the_field() {
-        for (field, dim) in [(FieldCfg::goldilocks(), 3), (FieldCfg::bn254(), 1)] {
+        for (field, dim) in [(FieldCfg::goldilocks(), 3), (FieldCfg::bn128(), 1)] {
             let mut expressions = vec![make_cm(0, 1), make_cm(1, 1)];
             let mut symbols = Vec::new();
             let every_row = |e| ConstraintInfo {

@@ -10,8 +10,8 @@
 // - witness at {0}: b and the im pol the setup chooses for the degree-3 constraint on c, two of
 //   them: they move to {0, 1}, and the group of stage 1 has eleven, which no one chunk can hold.
 //
-// Compile over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with
-// --field bn254. The witness generator is tests/data/packed.rs.
+// Compile over BN128 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with
+// --field bn128. The witness generator is tests/data/packed.rs.
 
 public in1;
 public out;

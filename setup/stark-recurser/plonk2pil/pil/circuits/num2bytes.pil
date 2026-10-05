@@ -1,5 +1,5 @@
 // circom's custom gate `Num2Bytes(nBits)`
-// (stark2circom/circom_verifier/circuits.bn128/custom/rangecheck.circom), as the BN254 wrap lays it
+// (stark2circom/circom_verifier/circuits.bn128/custom/rangecheck.circom), as the BN128 wrap lays it
 // out: a row per use, which holds its `in` and, in NUM2BYTES_CHUNKS cells, the ⌈nBits/16⌉ chunks of
 // 16 bits `out` it is split in, least significant first, and zeros past them.
 //

@@ -18,7 +18,7 @@ It exits with 0 if the proof verifies, 1 if it does not (a malformed input inclu
 arguments are wrong or a file cannot be read as JSON. pil-stark's old `main_verifier.js` exited with 0
 either way; this one does not. `proofman-cli pilfflonk verify` runs it with Node, as `verify-snark`
 runs snarkjs (`proofman_pilfflonk::js_verifier`). The verifier is the crate's `js/` directory, or the
-copy `PILFFLONK_JS` names. Its dependencies, `ffjavascript` (BN254 and the pairing) and
+copy `PILFFLONK_JS` names. Its dependencies, `ffjavascript` (BN128 and the pairing) and
 `@noble/hashes` (Keccak-256), those of snarkjs 0.7.6, are looked for as Node looks for them, in a
 `node_modules/` of that directory or of an ancestor; if one is missing, `npm install` runs there.
 
@@ -176,7 +176,7 @@ snarkjs's `zkey export soliditycalldata` gives those of its `FflonkVerifier`; it
 - **What it does.** It replays the transcript on the proof, step by step as `computeChallenges`, with
   the C++ core's `Keccak256Transcript`, the prover's (`verifier_challenges`), takes
   `ξ = xiSeed^powerW`, and computes the auxiliary inverses `1/(ξ − ω^j)` with `ω = 5^((r−1)/N)` in
-  `Bn254`. It replays the transcript even without inverses, so it refuses the same for every key.
+  `Bn128`. It replays the transcript even without inverses, so it refuses the same for every key.
 - **What it refuses**, with exit status 1, a message and no file written: a vkey that does not read or
   whose digest is not its content's; a proof of another key, or bytes of another length; publics of
   another number or not below `r`; a proof with a commitment or a `W` the transcript does not absorb

@@ -16,8 +16,8 @@
 //   qDeg 3 by default; with --max-constraint-degree 3, three im pols and qDeg 2; with 2, eight im
 //   pols ('a·a, 'a·a·a' and 'a·a·a'·a'2 among them, each inside the next) and qDeg 1.
 //
-// Compile over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with
-// --field bn254. The witness generator is tests/data/signed.rs.
+// Compile over BN128 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with
+// --field bn128. The witness generator is tests/data/signed.rs.
 
 public in1;
 public in2;

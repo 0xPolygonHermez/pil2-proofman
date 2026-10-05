@@ -1,5 +1,5 @@
 // The prover mode of the interpreter on the device (pilfflonk_expressions_kernels.hpp), in the GPU
-// library only: the bytecode's ops over BN254 scalars in sppark's Montgomery arithmetic
+// library only: the bytecode's ops over BN128 scalars in sppark's Montgomery arithmetic
 // (BN128GPUScalarField), which keeps every result fully reduced, as ffiasm does, so that the same
 // field operation gives the same bytes on either; and the zerofiers of a part of the coset.
 #include <cuda.h>

@@ -3,14 +3,14 @@
 //! (pilfflonk/docs/protocol.md#prover), the prover hints that compute the columns of stage 2 and
 //! above (pilfflonk/docs/protocol.md#hint-columns), and the code `pilfflonk check` runs to say
 //! which constraint fails on which row. [`write_air_bin`] writes it from what
-//! `pil_info::run(…, &PilInfoCfg::bn254(), …)` returns, and [`Bytecode::read`] reads it back.
+//! `pil_info::run(…, &PilInfoCfg::bn128(), …)` returns, and [`Bytecode::read`] reads it back.
 //!
 //! # Format, revision 3
 //!
 //! The file follows the STARK's prover `.bin` field by field, with every value of dimension 1.
 //! That is the file that `setup/pil2-stark/src/io/bin_file.rs` writes, with the ops and args of
 //! `io/parser_args.rs`, that `pil2-stark/src/starkpil/expressions/expressions_bin.cpp` reads and
-//! that `expressions_pack.hpp` runs. It departs from the STARK's only where BN254 and dimension 1
+//! that `expressions_pack.hpp` runs. It departs from the STARK's only where BN128 and dimension 1
 //! force it to:
 //!
 //! - **The dimension fields go:** `destDim`, `nTemp3` and `maxTmp3`, and with them the
@@ -570,7 +570,7 @@ impl Types {
 // From pil-info's code
 // ---------------------------------------------------------------------------------------------
 
-/// Write `<air>.bin` at `path` for the result of `pil_info::run` with `PilInfoCfg::bn254()`.
+/// Write `<air>.bin` at `path` for the result of `pil_info::run` with `PilInfoCfg::bn128()`.
 pub fn write_air_bin(result: &PilInfoResult, path: &Path) -> BytecodeResult<()> {
     Bytecode::from_pil_info(result)?.write(path)
 }
@@ -604,7 +604,7 @@ impl CodeContext {
 }
 
 impl Bytecode {
-    /// The bytecode of the result of `pil_info::run` with `PilInfoCfg::bn254()`.
+    /// The bytecode of the result of `pil_info::run` with `PilInfoCfg::bn128()`.
     ///
     /// Of the hints the passes collected, section 3 has the prover hints the setup supports; the
     /// witness and debug hints are not the prover's, and the setup ignores them
@@ -612,7 +612,7 @@ impl Bytecode {
     /// prover computes.
     pub fn from_pil_info(result: &PilInfoResult) -> BytecodeResult<Self> {
         if result.fri_exp_id.is_some() {
-            return encode_error("a result with a FRI polynomial: pilfflonk opens with SHPLONK (PilInfoCfg::bn254())");
+            return encode_error("a result with a FRI polynomial: pilfflonk opens with SHPLONK (PilInfoCfg::bn128())");
         }
         let context = CodeContext::from_pil_info(result)?;
         let info = &result.pil_code.expressions_info;
@@ -676,7 +676,7 @@ fn hint_operand(
 ) -> BytecodeResult<HintOperand> {
     if matches!(v.op.as_str(), "cm" | "const" | "tmp") && v.dim != Some(1) {
         return encode_error(format!(
-            "{what}: a {} of dimension {:?}; over BN254 every value has dimension 1",
+            "{what}: a {} of dimension {:?}; over BN128 every value has dimension 1",
             v.op, v.dim
         ));
     }
@@ -934,7 +934,7 @@ fn check_dim(r: &CodeRef, what: &str) -> BytecodeResult<()> {
         Ok(())
     } else {
         encode_error(format!(
-            "{what}: a {} of dimension {}; over BN254 every value has dimension 1 (PilInfoCfg::bn254())",
+            "{what}: a {} of dimension {}; over BN128 every value has dimension 1 (PilInfoCfg::bn128())",
             r.ref_type, r.dim
         ))
     }
@@ -1156,10 +1156,10 @@ fn repeated_exp_id(expressions: &[ExpressionBin]) -> Option<u32> {
     expressions.iter().map(|e| e.exp_id).find(|&id| !seen.insert(id))
 }
 
-/// `r`, little-endian: the modulus of the field `PilInfoCfg::bn254()` runs the passes over.
+/// `r`, little-endian: the modulus of the field `PilInfoCfg::bn128()` runs the passes over.
 fn r_le() -> [u8; FIELD_BYTES] {
     let mut bytes = [0u8; FIELD_BYTES];
-    let digits = FieldCfg::bn254().modulus().to_bytes_le();
+    let digits = FieldCfg::bn128().modulus().to_bytes_le();
     bytes[..digits.len()].copy_from_slice(&digits);
     bytes
 }
@@ -1526,7 +1526,7 @@ impl Bytecode {
         if prefix_version != BIN_VERSION || n8 != FIELD_BYTES as u32 || modulus != r_le() {
             return format_error(format!(
                 "section 1 starts with version {prefix_version:#x} and n8 {n8}, not those of a revision-3 \
-                 bytecode over BN254"
+                 bytecode over BN128"
             ));
         }
         let [n_stages] = r1.words()?;
@@ -1722,6 +1722,6 @@ mod tests {
     #[test]
     fn the_prefix_modulus_is_r() {
         let r = num_bigint::BigUint::from_bytes_le(&r_le());
-        assert_eq!(r.to_string(), proofman_pilfflonk::field::BN254_R);
+        assert_eq!(r.to_string(), proofman_pilfflonk::field::BN128_R);
     }
 }

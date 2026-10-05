@@ -264,7 +264,7 @@ columns (`check`), a committed polynomial (`Instance::polynomial`), `Q`'s pieces
 
 ### Why the proof is the same
 
-sppark's NTT roots for BN254 are ffiasm's, `ω_{2^k} = 5^((r−1)/2^k)` for `k ≤ 28`, in the same
+sppark's NTT roots for BN128 are ffiasm's, `ω_{2^k} = 5^((r−1)/2^k)` for `k ≤ 28`, in the same
 Montgomery form (its `group_gen` is 5, ffiasm's `nqr`), and its inverse scales by `1/2^k`, as ffiasm's
 `ifft`. Both sides compute in exact field arithmetic and leave every element in its canonical
 Montgomery form, below `r`. The MSM returns a Jacobian point `(X, Y, Z)`, ffiasm's extended
@@ -520,7 +520,7 @@ and PLONK wraps of the same program. **M** marks a measurement, **E** an estimat
 - **The chain.** `setup -r --hash Poseidon2` and `prove -a` give the vadcop_final proof.
   `setup-snark --final-snark pilfflonk` makes the recursivef (BN128 Merkle trees in custom mode), the
   final circuit with the custom templates `PoseidonT(5)` and `Num2Bytes`, its AIR in plonk2pil's
-  BN254 family (PoseidonBN254, layout L1, with range checks) and the pilfflonk key of that AIR.
+  BN128 family (PoseidonBN128, layout L1, with range checks) and the pilfflonk key of that AIR.
   `prove-snark` proves the recursivef, computes the wrap's witness in its own process and proves it
   with pilfflonk; `verify-snark` runs the JS verifier.
 - **Machine and build** as in [CPU](#method): release, `--features proofman-starks-lib-c/cpu-only`.
@@ -557,7 +557,7 @@ On 64 threads, **M**:
 - **`setup-snark`** spends the last 180 s of its 229 s waiting for the final circuit's witness
   calculator (`final.so`, g++ on circom's C++), which compiles in the background from the moment
   circom writes it. Before that: the recursivef's circom 9.1 s, its AIR and constant tree 12.2 s, the
-  final circuit's circom 15.4 s, plonk2pil 1.8 s, pil2com over BN254 3.9 s and setup-pilfflonk 6.1 s,
+  final circuit's circom 15.4 s, plonk2pil 1.8 s, pil2com over BN128 3.9 s and setup-pilfflonk 6.1 s,
   where the peak is.
 - **The key is reproducible.** A fresh `setup -r` and `setup-snark` give the vkey, the
   `pilfflonk.verifier.sol` and the project contract of an earlier run byte for byte; its `final.exec`
@@ -731,8 +731,8 @@ The ptau needs at least 6,815,756 powers `[τ^i]₁`: Hermez's `powersOfTau28_he
 or a larger one, or, for a test,
 `target/release/examples/pilfflonk_bench_inputs ptau 6815756 <out.ptau>` (a public `τ`; 3 min 23 s
 on 64 threads). The CI job `test-pilfflonk-wrap` runs these steps with that test ptau, and then
-`cli/tests/snark_pilfflonk.rs` on the key and the proof; it waits for the compiler's branch to be
-published (its comment says how to turn it on). On the Solidity side, `proofman-cli pilfflonk
+`cli/tests/snark_pilfflonk.rs` on the key and the proof; it runs when the repository variable
+`PILFFLONK_BN128_CI` is `"true"` (its comment says where to set it). On the Solidity side, `proofman-cli pilfflonk
 calldata -k <vkey> -p <proof.bin> --publics <publics.json> --format hex` gives `verifyProof`'s
 calldata from the proof's bytes, and its words are `verifySnarkProof`'s `proofBytes`.
 

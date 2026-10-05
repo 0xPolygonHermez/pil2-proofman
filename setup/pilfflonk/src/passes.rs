@@ -1,5 +1,5 @@
-//! The symbolic passes over BN254 (pilfflonk/docs/README.md#setup-pilfflonk): `pil_info::run` with
-//! `PilInfoCfg::bn254()` and the degree search (pilfflonk/docs/protocol.md#degree-search),
+//! The symbolic passes over BN128 (pilfflonk/docs/README.md#setup-pilfflonk): `pil_info::run` with
+//! `PilInfoCfg::bn128()` and the degree search (pilfflonk/docs/protocol.md#degree-search),
 //! `Search { max: D }` for `--max-constraint-degree D`.
 //!
 //! The passes recurse over the expression trees, which in large AIRs are thousands of levels
@@ -27,7 +27,7 @@ pub const PASSES_STACK_SIZE: usize = 64 * 1024 * 1024;
 pub fn cfg(max_constraint_degree: u64) -> Result<PilInfoCfg, SetupError> {
     let max =
         usize::try_from(max_constraint_degree).map_err(|_| SetupError::MaxConstraintDegree(max_constraint_degree))?;
-    Ok(PilInfoCfg { degree_policy: DegreePolicy::Search { max }, ..PilInfoCfg::bn254() })
+    Ok(PilInfoCfg { degree_policy: DegreePolicy::Search { max }, ..PilInfoCfg::bn128() })
 }
 
 /// Runs the passes on the AIR of `pilout` that [`crate::validate::validate`] returned.

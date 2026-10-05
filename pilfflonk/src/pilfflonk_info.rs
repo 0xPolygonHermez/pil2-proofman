@@ -13,7 +13,7 @@ use crate::layout::{q_pieces, split_max_q_degree, Layout, LayoutCheck};
 use crate::names::{column_name, q_piece_name};
 
 /// `<air>.pilfflonkinfo.json`. Its fields keep the meaning they have in `starkinfo.json`, with
-/// every dimension 1: BN254 has no extension field.
+/// every dimension 1: BN128 has no extension field.
 ///
 /// There is no `starkStruct`, nothing of FRI, no custom commits (the setup refuses them,
 /// pilfflonk/docs/README.md#scope) and no publics or proof values (they are the globalInfo's).
@@ -259,7 +259,7 @@ impl JsonFile for PilfflonkInfo {
             return invalid!("nStages is 0: an AIR has one stage at least");
         }
         if self.q_dim != 1 {
-            return invalid!("qDim is {}, and BN254 has no extension field: it is 1", self.q_dim);
+            return invalid!("qDim is {}, and BN128 has no extension field: it is 1", self.q_dim);
         }
         if self.n_constants != self.const_pols_map.len() as u64 {
             return invalid!("nConstants is {} but constPolsMap has {}", self.n_constants, self.const_pols_map.len());

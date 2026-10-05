@@ -43,7 +43,7 @@ template custom Num2Bytes(nBits) {
 template RangeCheck(nBits) {
     assert(nBits <= 160);
     // The callers are Goldilocks quotients k, whose k·p + r, with r < 2^64, must stay below the
-    // BN254 order (> 2^253) for their equations to hold over the integers.
+    // BN128 order (> 2^253) for their equations to hold over the integers.
     assert(16 * ((nBits + 15)\16) + 64 < 253);
     signal input in;
 

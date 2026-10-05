@@ -1,6 +1,6 @@
 //! The prime fields plonk2pil converts an r1cs over.
 //!
-//! The arithmetic is `proofman-fields`'s, [`Goldilocks`] and [`Bn254`] through [`Field`], and how an
+//! The arithmetic is `proofman-fields`'s, [`Goldilocks`] and [`Bn128`] through [`Field`], and how an
 //! `.exec` file writes a coefficient is `proofman-common`'s, through [`ExecField`]. [`PlonkField`]
 //! adds what plonk2pil needs on top of them, and [`R1csPrime`] names the primes an r1cs header can
 //! carry.
@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 
 use num_bigint::BigUint;
 use proofman_common::exec_format::ExecField;
-use proofman_fields::{Bn254, Goldilocks, PrimeField, PrimeField64, QuotientMap};
+use proofman_fields::{Bn128, Goldilocks, PrimeField, PrimeField64, QuotientMap};
 
 /// A prime field plonk2pil converts an r1cs over.
 ///
@@ -21,12 +21,12 @@ pub trait PlonkField: PrimeField + ExecField {
     /// The prime, as an r1cs header names it.
     const PRIME: R1csPrime;
 
-    /// The coset shift of the std's connection argument (`Goldilocks_k`, `Bn254_k`): the identity
+    /// The coset shift of the std's connection argument (`Goldilocks_k`, `Bn128_k`): the identity
     /// permutation puts `K^j·w^i` in row `i` of column `j`.
     const K: Self;
 
     /// `ROOTS_OF_UNITY[i]` is a primitive `2^i`-th root of unity: the std's `Goldilocks_Gen` and
-    /// `Bn254_Gen`, which the connection argument's `w` is taken from.
+    /// `Bn128_Gen`, which the connection argument's `w` is taken from.
     const ROOTS_OF_UNITY: &'static [Self];
 
     /// The element whose canonical value is `bytes`, little-endian and [`n8`] long, as an r1cs
@@ -45,12 +45,12 @@ pub trait PlonkField: PrimeField + ExecField {
 pub enum R1csPrime {
     /// `2^64 − 2^32 + 1`, the STARK recursion's.
     Goldilocks,
-    /// The order of BN254's groups (circom's `bn128`), the final SNARK wrap's.
-    Bn254,
+    /// The order of BN128's groups (circom's `bn128`), the final SNARK wrap's.
+    Bn128,
 }
 
 impl R1csPrime {
-    const ALL: [Self; 2] = [Self::Goldilocks, Self::Bn254];
+    const ALL: [Self; 2] = [Self::Goldilocks, Self::Bn128];
 
     /// The prime an r1cs header spells as `prime`, if it is one of these.
     pub fn from_modulus_le(prime: &[u8]) -> Option<Self> {
@@ -61,7 +61,7 @@ impl R1csPrime {
     pub fn modulus_le(self) -> Vec<u8> {
         match self {
             Self::Goldilocks => modulus_le::<Goldilocks>(),
-            Self::Bn254 => modulus_le::<Bn254>(),
+            Self::Bn128 => modulus_le::<Bn128>(),
         }
     }
 }
@@ -70,7 +70,7 @@ impl fmt::Display for R1csPrime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Goldilocks => "Goldilocks",
-            Self::Bn254 => "BN254",
+            Self::Bn128 => "BN128",
         })
     }
 }
@@ -81,7 +81,7 @@ pub fn modulus<F: PrimeField>() -> BigUint {
 }
 
 /// Bytes of an element of `F` in an r1cs, its header's `n8`: the prime's, in whole 64-bit words,
-/// as circom writes them (8 for Goldilocks, 32 for BN254).
+/// as circom writes them (8 for Goldilocks, 32 for BN128).
 pub fn n8<F: PrimeField>() -> usize {
     modulus::<F>().bits().div_ceil(64) as usize * 8
 }
@@ -151,18 +151,18 @@ impl PlonkField for Goldilocks {
     }
 }
 
-impl PlonkField for Bn254 {
-    const PRIME: R1csPrime = R1csPrime::Bn254;
+impl PlonkField for Bn128 {
+    const PRIME: R1csPrime = R1csPrime::Bn128;
 
-    /// The std's `Bn254_k`, `5^(2^28)`.
+    /// The std's `Bn128_k`, `5^(2^28)`.
     const K: Self =
-        match Bn254::from_decimal("5266228460530200451425464971825753823072228272503274930591399474110020095489") {
+        match Bn128::from_decimal("5266228460530200451425464971825753823072228272503274930591399474110020095489") {
             Some(k) => k,
-            None => panic!("Bn254_k is an element of Fr"),
+            None => panic!("Bn128_k is an element of Fr"),
         };
 
-    /// The std's `Bn254_Gen`, which `Bn254::W` is.
-    const ROOTS_OF_UNITY: &'static [Self] = &Bn254::W;
+    /// The std's `Bn128_Gen`, which `Bn128::W` is.
+    const ROOTS_OF_UNITY: &'static [Self] = &Bn128::W;
 
     fn from_canonical_le(bytes: &[u8]) -> Option<Self> {
         Self::from_le_bytes(bytes.try_into().ok()?)
@@ -208,9 +208,9 @@ mod tests {
     }
 
     #[test]
-    fn bn254_constants_are_the_stds() {
-        assert_matches_the_std::<Bn254>("bn254.pil", "Bn254_k", "Bn254_Gen");
-        assert_eq!(vec![modulus::<Bn254>().to_string()], std_constant("bn254.pil", "Bn254_r"));
+    fn bn128_constants_are_the_stds() {
+        assert_matches_the_std::<Bn128>("bn128.pil", "Bn128_k", "Bn128_Gen");
+        assert_eq!(vec![modulus::<Bn128>().to_string()], std_constant("bn128.pil", "Bn128_r"));
     }
 
     /// `ROOTS_OF_UNITY[i]` has order exactly `2^i`, and `K` is outside every `<w>` the trace can
@@ -229,18 +229,18 @@ mod tests {
     #[test]
     fn roots_and_k_are_sound() {
         assert_roots_and_k_are_sound::<Goldilocks>();
-        assert_roots_and_k_are_sound::<Bn254>();
+        assert_roots_and_k_are_sound::<Bn128>();
     }
 
     /// The headers circom writes: `n8` then the prime, little-endian.
     #[test]
     fn primes_are_spelled_as_circom_writes_them() {
-        assert_eq!((n8::<Goldilocks>(), n8::<Bn254>()), (8, 32));
+        assert_eq!((n8::<Goldilocks>(), n8::<Bn128>()), (8, 32));
         assert_eq!(R1csPrime::Goldilocks.modulus_le(), 0xFFFF_FFFF_0000_0001u64.to_le_bytes());
         let r =
             BigUint::parse_bytes(b"21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
                 .unwrap();
-        assert_eq!(BigUint::from_bytes_le(&R1csPrime::Bn254.modulus_le()), r);
+        assert_eq!(BigUint::from_bytes_le(&R1csPrime::Bn128.modulus_le()), r);
         for p in R1csPrime::ALL {
             assert_eq!(R1csPrime::from_modulus_le(&p.modulus_le()), Some(p));
         }
@@ -257,18 +257,18 @@ mod tests {
         assert_eq!(Goldilocks::from_canonical_le(&p), None, "p itself is not canonical");
         assert_eq!(Goldilocks::from_canonical_le(&[1, 0, 0, 0]), None, "4 bytes are not an element");
 
-        let r = R1csPrime::Bn254.modulus_le();
-        assert_eq!(Bn254::from_canonical_le(&p_minus(&r)), Some(Bn254::NEG_ONE));
-        assert_eq!(Bn254::from_canonical_le(&r), None, "r itself is not canonical");
-        assert_eq!(Bn254::from_canonical_le(&p), None, "8 bytes are not an element of Fr");
+        let r = R1csPrime::Bn128.modulus_le();
+        assert_eq!(Bn128::from_canonical_le(&p_minus(&r)), Some(Bn128::NEG_ONE));
+        assert_eq!(Bn128::from_canonical_le(&r), None, "r itself is not canonical");
+        assert_eq!(Bn128::from_canonical_le(&p), None, "8 bytes are not an element of Fr");
     }
 
     /// An `.exec` coefficient is as wide as an element in the r1cs: a word for Goldilocks, and for
-    /// BN254 the 32 bytes of the original pil-fflonk's `Fr`.
+    /// BN128 the 32 bytes of the original pil-fflonk's `Fr`.
     #[test]
     fn an_exec_coefficient_is_as_wide_as_an_r1cs_element() {
         assert_eq!(Goldilocks::COEF_WORDS * 8, n8::<Goldilocks>());
-        assert_eq!(Bn254::COEF_WORDS * 8, n8::<Bn254>());
+        assert_eq!(Bn128::COEF_WORDS * 8, n8::<Bn128>());
     }
 
     /// `prime − 1`, in the same little-endian width.
@@ -290,11 +290,11 @@ mod tests {
             write!(generic, "{:x}", Goldilocks::new(v).as_canonical_biguint()).unwrap();
             assert_eq!(fast, generic);
             let mut wide = String::new();
-            Bn254::from_int(v).push_hex(&mut wide);
+            Bn128::from_int(v).push_hex(&mut wide);
             assert_eq!(wide, format!("{v:x}"));
         }
         let mut s = String::new();
-        Bn254::NEG_ONE.push_hex(&mut s);
+        Bn128::NEG_ONE.push_hex(&mut s);
         assert_eq!(s, "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000");
     }
 }

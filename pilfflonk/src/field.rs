@@ -1,4 +1,4 @@
-//! BN254 values as pilfflonk's files carry them: scalars of `Fr`, affine points of G1 and G2 and
+//! BN128 values as pilfflonk's files carry them: scalars of `Fr`, affine points of G1 and G2 and
 //! the vkey digest.
 //!
 //! In memory a scalar or a coordinate is its canonical 32 bytes, little-endian, as the C API
@@ -16,18 +16,18 @@ use std::fmt;
 use std::sync::OnceLock;
 
 use num_bigint::BigUint;
-use proofman_fields::Bn254;
+use proofman_fields::Bn128;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::{invalid, PilfflonkResult};
 
-/// `r`: the order of BN254's G1, the modulus of `Fr`, in decimal. It is `"modulus"` in the
+/// `r`: the order of BN128's G1, the modulus of `Fr`, in decimal. It is `"modulus"` in the
 /// globalInfo (pilfflonk/docs/formats.md#globalinfo).
-pub const BN254_R: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
+pub const BN128_R: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
 
-/// `q`: the modulus of BN254's base field `Fq`, where the coordinates of the points live.
-pub const BN254_Q: &str = "21888242871839275222246405745257275088696311157297823662689037894645226208583";
+/// `q`: the modulus of BN128's base field `Fq`, where the coordinates of the points live.
+pub const BN128_Q: &str = "21888242871839275222246405745257275088696311157297823662689037894645226208583";
 
 /// Bytes of a scalar or a coordinate.
 pub const FIELD_BYTES: usize = 32;
@@ -44,12 +44,12 @@ fn modulus(cell: &'static OnceLock<BigUint>, decimal: &str) -> &'static BigUint 
 
 pub(crate) fn r() -> &'static BigUint {
     static R: OnceLock<BigUint> = OnceLock::new();
-    modulus(&R, BN254_R)
+    modulus(&R, BN128_R)
 }
 
 fn q() -> &'static BigUint {
     static Q: OnceLock<BigUint> = OnceLock::new();
-    modulus(&Q, BN254_Q)
+    modulus(&Q, BN128_Q)
 }
 
 fn modulus_le(cell: &'static OnceLock<[u8; FIELD_BYTES]>, modulus: &BigUint) -> &'static [u8; FIELD_BYTES] {
@@ -200,19 +200,19 @@ field_element!(
     "r"
 );
 
-/// A `Bn254` is an element of `Fr` in the type a witness is computed in
+/// A `Bn128` is an element of `Fr` in the type a witness is computed in
 /// (pilfflonk/docs/README.md#witness). It is always below `r`, as an `FrBytes` is, so the
 /// conversions cannot fail: they only change the representation.
-impl From<Bn254> for FrBytes {
-    fn from(value: Bn254) -> Self {
+impl From<Bn128> for FrBytes {
+    fn from(value: Bn128) -> Self {
         Self(value.to_le_bytes())
     }
 }
 
-impl From<FrBytes> for Bn254 {
+impl From<FrBytes> for Bn128 {
     fn from(value: FrBytes) -> Self {
-        // Below r, so it is a Bn254.
-        Bn254::from_le_bytes(value.0).unwrap_or_default()
+        // Below r, so it is a Bn128.
+        Bn128::from_le_bytes(value.0).unwrap_or_default()
     }
 }
 
@@ -299,7 +299,7 @@ pub struct G2Affine {
     pub y: [FqBytes; 2],
 }
 
-/// `[1]₂`, the generator of G2, as `x.c0, x.c1, y.c0, y.c1` in decimal: the `[1]₂` of every BN254
+/// `[1]₂`, the generator of G2, as `x.c0, x.c1, y.c0, y.c1` in decimal: the `[1]₂` of every BN128
 /// library and every ptau, and the `[τ]₂` of a ptau with `τ = 1`.
 pub const G2_GENERATOR: [&str; 4] = [
     "10857046999023057135944570762232829481370756359578518086990519993285655852781",
@@ -427,7 +427,7 @@ mod tests {
     const Q_HEX: &str = "30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47";
 
     #[test]
-    fn the_moduli_are_bn254s() {
+    fn the_moduli_are_bn128s() {
         // Written out independently in hexadecimal, as pil2-stark/test/pilfflonk has them.
         assert_eq!(*r(), BigUint::parse_bytes(R_HEX.as_bytes(), 16).unwrap());
         assert_eq!(*q(), BigUint::parse_bytes(Q_HEX.as_bytes(), 16).unwrap());
@@ -437,12 +437,12 @@ mod tests {
     fn a_scalar_is_below_r() {
         let r_minus_1 = (r() - 1u32).to_str_radix(10);
         assert_eq!(FrBytes::from_decimal(&r_minus_1).unwrap().to_decimal(), r_minus_1);
-        assert!(FrBytes::from_decimal(BN254_R).is_err());
+        assert!(FrBytes::from_decimal(BN128_R).is_err());
         // Between r and q: a coordinate, not a scalar.
         let r_plus_1 = (r() + 1u32).to_str_radix(10);
         assert!(FrBytes::from_decimal(&r_plus_1).is_err());
         assert!(FqBytes::from_decimal(&r_plus_1).is_ok());
-        assert!(FqBytes::from_decimal(BN254_Q).is_err());
+        assert!(FqBytes::from_decimal(BN128_Q).is_err());
 
         let mut r_le = [0u8; 32];
         let digits = r().to_bytes_le();
@@ -478,31 +478,31 @@ mod tests {
     }
 
     #[test]
-    fn a_bn254_is_an_fr_bytes() {
+    fn a_bn128_is_an_fr_bytes() {
         use proofman_fields::{Field, QuotientMap};
 
         let r_minus_1 = (r() - 1u32).to_str_radix(10);
         let values = [
-            Bn254::ZERO,
-            Bn254::ONE,
-            Bn254::NEG_ONE,
-            Bn254::GENERATOR,
-            Bn254::from_int(-2),
-            Bn254::W[28],
-            Bn254::W[28].inverse(),
+            Bn128::ZERO,
+            Bn128::ONE,
+            Bn128::NEG_ONE,
+            Bn128::GENERATOR,
+            Bn128::from_int(-2),
+            Bn128::W[28],
+            Bn128::W[28].inverse(),
         ];
         for x in values {
             let bytes = FrBytes::from(x);
             assert_eq!(bytes.to_le_bytes(), x.to_le_bytes());
-            assert_eq!(Bn254::from(bytes), x);
+            assert_eq!(Bn128::from(bytes), x);
             assert_eq!(bytes.to_decimal(), x.to_string());
             // The two JSON forms are the same.
             assert_eq!(serde_json::to_string(&bytes).unwrap(), serde_json::to_string(&x).unwrap());
         }
-        assert_eq!(FrBytes::from(Bn254::NEG_ONE).to_decimal(), r_minus_1);
-        assert_eq!(Bn254::from(FrBytes::from_decimal(&r_minus_1).unwrap()), Bn254::NEG_ONE);
-        assert_eq!(Bn254::from(FrBytes::from_u64(u64::MAX)), Bn254::from_int(u64::MAX));
-        assert_eq!(Bn254::from(Digest([0xff; 32]).to_fr()).to_string(), Digest([0xff; 32]).to_fr().to_decimal());
+        assert_eq!(FrBytes::from(Bn128::NEG_ONE).to_decimal(), r_minus_1);
+        assert_eq!(Bn128::from(FrBytes::from_decimal(&r_minus_1).unwrap()), Bn128::NEG_ONE);
+        assert_eq!(Bn128::from(FrBytes::from_u64(u64::MAX)), Bn128::from_int(u64::MAX));
+        assert_eq!(Bn128::from(Digest([0xff; 32]).to_fr()).to_string(), Digest([0xff; 32]).to_fr().to_decimal());
     }
 
     #[test]

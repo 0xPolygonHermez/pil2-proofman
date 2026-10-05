@@ -5,7 +5,7 @@
 
 // The kernels of SHPLONK's opening on the device (pilfflonk_shplonk.cu), with C linkage, as those of
 // pilfflonk_kernels.hpp, whose conventions they keep: device pointers but those named host ones,
-// 32-byte BN254 scalars in Montgomery form, polynomials in increasing degree, 64-bit indices, the
+// 32-byte BN128 scalars in Montgomery form, polynomials in increasing degree, 64-bit indices, the
 // legacy default stream, nothing launched for an empty range, and a CUDA failure aborting the
 // process. Their divisions are the PLONK GPU prover's (gpu_plonk_compute_div_zerofier), and their
 // MSMs GpuKey::commit's.

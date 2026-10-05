@@ -31,7 +31,7 @@ use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use prost::Message;
 use proofman_pilfflonk::{
     prove, Calldata, CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, ProofOutput, ProveOptions, ProvingKey,
-    Vkey, BN254_R,
+    Vkey, BN128_R,
 };
 use serde_json::{json, Value};
 
@@ -148,7 +148,7 @@ fn written(f: &Fixture, proof: &Path, format: &str) -> String {
 }
 
 fn r() -> BigUint {
-    BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap()
+    BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap()
 }
 
 fn big(value: &FrBytes) -> BigUint {
@@ -272,7 +272,7 @@ fn the_calldata_of_inputs_that_do_not_go_together_is_refused() {
 
     let publics = read(&f.publics);
     let one_public = file("one_public.json", json!([publics[0]]).to_string());
-    let r_public = file("r_public.json", json!([publics[0], BN254_R]).to_string());
+    let r_public = file("r_public.json", json!([publics[0], BN128_R]).to_string());
 
     let mut proof = read(&f.proof_json);
     let first = proof["polynomials"].as_object().unwrap().keys().find(|k| k.starts_with('f')).unwrap().clone();

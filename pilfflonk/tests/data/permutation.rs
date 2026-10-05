@@ -1,6 +1,6 @@
 //! The witness generator of the Permutation fixture (pilfflonk/docs/README.md#fixtures),
 //! `tests/fixtures/permutation/permutation.pil`: a port of `execute` in pil-fflonk's
-//! `pil/sm_permutation/sm_permutation.js`, over BN254's `Fr` (every value is a small integer). The
+//! `pil/sm_permutation/sm_permutation.js`, over BN128's `Fr` (every value is a small integer). The
 //! same witness for the sum and the product bus.
 //!
 //! Its only fixed column is the std's `__L1__`. Its witness columns, in the pilout's order (stage 1,

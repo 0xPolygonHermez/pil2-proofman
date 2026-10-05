@@ -5,7 +5,7 @@ What the setup, the prover and the verifiers compute, normatively. The file form
 
 ## Notation
 
-- `r` is the order of BN254's groups and `Fr` its scalar field; `q` is the modulus of the base field
+- `r` is the order of BN128's groups and `Fr` its scalar field; `q` is the modulus of the base field
   `Fq`. Every value of a polynomial is in `Fr`.
 - An AIR has `N = 2^nBits` rows and `H = ⟨ω_N⟩`. The roots of unity are ffiasm's and ffjavascript's:
   `ω_k = 5^((r−1)/k)` for every `k` that divides `r − 1`. 5 is the smallest quadratic non-residue, and
@@ -53,7 +53,7 @@ introduced, where `δ_i` is 1 if constraint `i` is not `everyRow` and 0 if it is
 `Z_H/Z_{D_i}` adds almost `N` to its degree. If no constraint depends on a column, `qDeg` would be
 negative, and the setup refuses the pilout.
 
-The setup chooses the im pols with the search of `pil-info` (`PilInfoCfg::bn254()`, degree policy
+The setup chooses the im pols with the search of `pil-info` (`PilInfoCfg::bn128()`, degree policy
 `Search { max: D }`): it tries the constraint degrees `2 … D`, with `D` from
 `--max-constraint-degree` (9 by default, as pil-stark), and keeps the one that minimises
 `nImPols + qDeg`. On a tie it keeps the lowest degree, as pil-stark's `cp_prover.js`, so that the

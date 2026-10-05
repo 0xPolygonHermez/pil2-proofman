@@ -355,7 +355,7 @@ pub fn blake3_compress_gate_uses<'a, F: Copy>(
 mod tests {
     use super::*;
     use crate::plonk2pil::r1cs::types::*;
-    use proofman_fields::{Bn254, Goldilocks, QuotientMap};
+    use proofman_fields::{Bn128, Goldilocks, QuotientMap};
 
     fn make_lc<F: QuotientMap<u64>>(terms: &[(u32, u64)]) -> LinearCombination<F> {
         terms.iter().map(|&(w, c)| (w, F::from_int(c))).collect()
@@ -410,7 +410,7 @@ mod tests {
     #[test]
     fn test_simple_mul() {
         simple_mul::<Goldilocks>();
-        simple_mul::<Bn254>();
+        simple_mul::<Bn128>();
     }
 
     fn zero_a_sum<F: Field + QuotientMap<u64>>() {
@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn test_zero_a_sum() {
         zero_a_sum::<Goldilocks>();
-        zero_a_sum::<Bn254>();
+        zero_a_sum::<Bn128>();
     }
 
     /// `(w1 + 2·w2 + 3·w3 + 4·w4 + 5) · w5 = w6`, a product of a wide sum, and `7 · (w1 + w2) = w3 + w6`
@@ -465,17 +465,17 @@ mod tests {
     #[test]
     fn conversion_holds_in_both_fields() {
         conversion_holds_on_a_witness::<Goldilocks>();
-        conversion_holds_on_a_witness::<Bn254>();
+        conversion_holds_on_a_witness::<Bn128>();
     }
 
     /// `PoseidonT(t)` has a parameter, its width: each width is a gate id of the role, and the
     /// uses of every one of them are the role's.
     #[test]
     fn poseidon_t_is_a_role_with_its_width() {
-        let mut r1cs = make_r1cs::<Bn254>(vec![], 4);
+        let mut r1cs = make_r1cs::<Bn128>(vec![], 4);
         r1cs.custom_gates = vec![
-            CustomGate { template_name: "PoseidonT".into(), parameters: vec![Bn254::from_int(5u64)] },
-            CustomGate { template_name: "PoseidonT".into(), parameters: vec![Bn254::from_int(3u64)] },
+            CustomGate { template_name: "PoseidonT".into(), parameters: vec![Bn128::from_int(5u64)] },
+            CustomGate { template_name: "PoseidonT".into(), parameters: vec![Bn128::from_int(3u64)] },
         ];
         r1cs.custom_gates_uses = vec![
             CustomGateUse { id: 0, signals: vec![1; 345] },
@@ -483,7 +483,7 @@ mod tests {
             CustomGateUse { id: 0, signals: vec![1; 345] },
         ];
         let cgi = get_custom_gates_info(&r1cs);
-        assert_eq!(cgi.poseidon_t_widths, HashMap::from([(0, Bn254::from_int(5u64)), (1, Bn254::from_int(3u64))]));
+        assert_eq!(cgi.poseidon_t_widths, HashMap::from([(0, Bn128::from_int(5u64)), (1, Bn128::from_int(3u64))]));
         assert_eq!(cgi.n(GateRole::PoseidonT), 3);
         assert_eq!(cgi.role_id(GateRole::PoseidonT), None, "no single id, as for FFT4");
     }
@@ -492,8 +492,8 @@ mod tests {
     /// wrap's `PoseidonT`, and the uses of every one of them are the role's.
     #[test]
     fn num2bytes_is_a_role_with_its_bits() {
-        let gate = |name: &str, p: u64| CustomGate { template_name: name.into(), parameters: vec![Bn254::from_int(p)] };
-        let mut r1cs = make_r1cs::<Bn254>(vec![], 4);
+        let gate = |name: &str, p: u64| CustomGate { template_name: name.into(), parameters: vec![Bn128::from_int(p)] };
+        let mut r1cs = make_r1cs::<Bn128>(vec![], 4);
         r1cs.custom_gates = vec![gate("Num2Bytes", 64), gate("PoseidonT", 5), gate("Num2Bytes", 70)];
         r1cs.custom_gates_uses = vec![
             CustomGateUse { id: 0, signals: vec![1; 5] },
@@ -502,7 +502,7 @@ mod tests {
             CustomGateUse { id: 0, signals: vec![1; 5] },
         ];
         let cgi = get_custom_gates_info(&r1cs);
-        assert_eq!(cgi.range_check_bits, HashMap::from([(0, Bn254::from_int(64u64)), (2, Bn254::from_int(70u64))]));
+        assert_eq!(cgi.range_check_bits, HashMap::from([(0, Bn128::from_int(64u64)), (2, Bn128::from_int(70u64))]));
         assert_eq!((cgi.n(GateRole::RangeCheck), cgi.n(GateRole::PoseidonT)), (3, 1));
         assert_eq!(cgi.role_id(GateRole::RangeCheck), None, "no single id, as for PoseidonT");
     }
@@ -523,7 +523,7 @@ mod tests {
         assert_eq!(ckey(&c), "0,1,ab,ffffffff00000000,10");
         let c = PlonkConstraint {
             wires: [1, 2, 3],
-            coeffs: [Bn254::ZERO, Bn254::ONE, Bn254::ZERO, Bn254::ZERO, Bn254::NEG_ONE],
+            coeffs: [Bn128::ZERO, Bn128::ONE, Bn128::ZERO, Bn128::ZERO, Bn128::NEG_ONE],
         };
         assert_eq!(ckey(&c), "0,1,0,0,30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000000");
     }

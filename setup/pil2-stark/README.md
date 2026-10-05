@@ -17,7 +17,7 @@ proofman-setup <subcommand> [options]
 | [`setup-snark`](#setup-snark) | Final SNARK setup on top of `vadcop_final` | `provingKey/` from a prior `setup --recursive` | `recursivef`, `final` SNARK artifacts |
 | [`setup-recursive-test`](#setup-recursive-test) | Setup a single user-provided recursive circuit | a `.circom` file | per-circuit setup artifacts |
 | [`rebuild-witness-libs`](#rebuild-witness-libs) | Rebuild every witness `.so`/`.dylib` from a `provingKey/` directory | existing `provingKey/` | refreshed witness libraries in-place |
-| [`setup-pilfflonk`](../../pilfflonk/docs/README.md#setup-pilfflonk) | Set up a BN254 pilout for the pilfflonk backend (one AIR, one instance) | `.pilout` compiled over BN254, `.ptau` | pilfflonk `provingKey/` |
+| [`setup-pilfflonk`](../../pilfflonk/docs/README.md#setup-pilfflonk) | Set up a BN128 pilout for the pilfflonk backend (one AIR, one instance) | `.pilout` compiled over BN128, `.ptau` | pilfflonk `provingKey/` |
 | [`pilfflonk-solidity`](../../pilfflonk/docs/README.md#pilfflonk-solidity) | Write the Solidity verifier of an existing pilfflonk vkey | `pilfflonk.vkey.json` | `pilfflonk.verifier.sol` |
 
 ## `setup`
@@ -107,8 +107,8 @@ proofman-setup setup-snark \
 Requires `vadcop_final/vadcop_final.{starkinfo,verifierinfo,verkey}.json` to
 already exist.
 
-With `pilfflonk`, the final circuit is laid out as a PIL2 AIR over BN254 by
-plonk2pil, compiled with `--field bn254` (`PIL2C_EXEC` must name a
+With `pilfflonk`, the final circuit is laid out as a PIL2 AIR over BN128 by
+plonk2pil, compiled with `--field bn128` (`PIL2C_EXEC` must name a
 pil2-compiler that has `--field`, see
 [pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)), and set
 up with `setup-pilfflonk`'s steps at the wrap family's knobs (plonk2pil's
@@ -245,7 +245,7 @@ that resolve relative to the repo or the executable's parent directories.
 | `GOLDILOCKS_SRC_DIR` | `pil2-stark/src/goldilocks/src` | Goldilocks C++ sources copied into the witness build |
 | `RECURSIVE_JOBS` | `1` | Parallelism for recursive1 air pipelines |
 | `SETUP_JOBS` | `1` | Parallelism for non-recursive AIR setup |
-| `PIL2C_EXEC` | `pil2com` from `node_modules/.bin`, or on `PATH` | The pil2-compiler's `pil.js`. Compiling over BN254 (`compile-pil --field bn254`, `setup-snark --final-snark pilfflonk`) needs one that has `--field` ([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)) |
+| `PIL2C_EXEC` | `pil2com` from `node_modules/.bin`, or on `PATH` | The pil2-compiler's `pil.js`. Compiling over BN128 (`compile-pil --field bn128`, `setup-snark --final-snark pilfflonk`) needs one that has `--field` ([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)) |
 | `REBUILD_JOBS` | `1` | Parallelism for `rebuild-witness-libs` circom compiles |
 
 Path resolution checks (in order): the env var, the path relative to CWD, then

@@ -172,11 +172,11 @@ TEST(GateBands, BandSectionParsingRejectsMalformedBuffers)
     ASSERT_EQ((int)ev.status, (int)gate_bands::BandSection::UnsupportedExecFormat);
     ASSERT_EQ(ev.version, exec_layout::EXEC_FORMAT_VERSION_WIDE + 1);
 
-    // A BN254 exec, with the two header words version 2 lacks (4-word coefficients, an r1cs of 9
+    // A BN128 exec, with the two header words version 2 lacks (4-word coefficients, an r1cs of 9
     // wires): the same refusal, and the version it carries is what names it in the error.
-    const uint64_t bn254Exec = exec_layout::EXEC_MAGIC | exec_layout::EXEC_FORMAT_VERSION_WIDE;
-    std::vector<uint64_t> bn254File{bn254Exec, 0, 1, 2, 4, 9, M, V, 0, 0};
-    auto bv = gate_bands::band_section(bn254File.data(), bn254File.size());
+    const uint64_t bn128Exec = exec_layout::EXEC_MAGIC | exec_layout::EXEC_FORMAT_VERSION_WIDE;
+    std::vector<uint64_t> bn128File{bn128Exec, 0, 1, 2, 4, 9, M, V, 0, 0};
+    auto bv = gate_bands::band_section(bn128File.data(), bn128File.size());
     ASSERT_EQ((int)bv.status, (int)gate_bands::BandSection::UnsupportedExecFormat);
     ASSERT_EQ(bv.version, exec_layout::EXEC_FORMAT_VERSION_WIDE);
 

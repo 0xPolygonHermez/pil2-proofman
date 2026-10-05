@@ -4,7 +4,7 @@ pragma custom_templates;
 include "custom/poseidon.circom";
 include "custom/rangecheck.circom";
 
-// The range-check test of tests/poseidon_bn254_wrap.rs: uses of the custom gate Num2Bytes of whole
+// The range-check test of tests/poseidon_bn128_wrap.rs: uses of the custom gate Num2Bytes of whole
 // chunks (16, 64 and 80 bits) and of a partial top chunk (3, 17 and 70 bits), among PLONK gates
 // and a PoseidonT(5) use, with a public.
 //

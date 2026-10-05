@@ -165,7 +165,7 @@ impl Program {
         let out = Command::new(compiler)
             .current_dir(repo_root())
             .arg(pil)
-            .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
+            .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
             .arg(pilout)
             .output()
             .expect("PIL2C_EXEC runs");

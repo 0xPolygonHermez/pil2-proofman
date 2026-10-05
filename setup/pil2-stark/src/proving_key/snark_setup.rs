@@ -17,13 +17,13 @@ use crate::io::fixed_cols;
 use crate::output::witness_gen::WitnessTracker;
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil2_stark_recurser::plonk2pil::r1cs_types::PlonkOptions;
-use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::wrap;
+use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap;
 use pil2_stark_recurser::plonk2pil::{self, PlonkResult};
 use pilfflonk_setup::command::{DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::solidity::VERIFIER_SOL_FILE;
 use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
-use proofman_common::hash_family::BN254_WRAP_FAMILY;
-use proofman_fields::Bn254;
+use proofman_common::hash_family::BN128_WRAP_FAMILY;
+use proofman_fields::Bn128;
 use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, Vkey};
 use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
 
@@ -659,7 +659,7 @@ fn gen_rapidsnark_key(
 /// ```text
 /// provingKeySnark/final/
 /// ├── final.so, final.dat    the circuit's witness calculator, as for PLONK and FFLONK
-/// ├── final.exec             plonk2pil's BN254 exec (version 3): the AIR's stage-1 columns out of
+/// ├── final.exec             plonk2pil's BN128 exec (version 3): the AIR's stage-1 columns out of
 /// │                          the circuit's witness
 /// ├── provingKey/            what `setup-pilfflonk -b provingKeySnark/final --solidity` writes
 /// │   │                      (pilfflonk/docs/formats.md#provingkey)
@@ -711,7 +711,7 @@ struct WrapAirFiles {
     /// The PIL's pilout. Its stem is the pilout's name, which names the key's directory in
     /// `provingKey/`.
     pilout: PathBuf,
-    /// plonk2pil's exec of the AIR, over BN254.
+    /// plonk2pil's exec of the AIR, over BN128.
     exec: PathBuf,
 }
 
@@ -741,14 +741,14 @@ impl WrapKey {
     }
 }
 
-/// Sets up the AIR plonk2pil makes of the circuit `r1cs`, over BN254, for pilfflonk, writing
+/// Sets up the AIR plonk2pil makes of the circuit `r1cs`, over BN128, for pilfflonk, writing
 /// `files` and `provingKey/` under `key_dir`:
-/// 1. plonk2pil lays out the r1cs in the final SNARK wrap's family ([`BN254_WRAP_FAMILY`],
-///    PoseidonBN254 in layout L1, with range checks), and its PIL and exec are written. The PIL has
+/// 1. plonk2pil lays out the r1cs in the final SNARK wrap's family ([`BN128_WRAP_FAMILY`],
+///    PoseidonBN128 in layout L1, with range checks), and its PIL and exec are written. The PIL has
 ///    the std group its buses' terms to the family's degree, [`wrap::MAX_CONSTRAINT_DEGREE`],
 ///    plonk2pil's by default;
-/// 2. pil2com compiles the PIL over BN254, with `includes` (plonk2pil's PIL and the std):
-///    `--field bn254`, which only a pil2com that has `--field` takes (`PIL2C_EXEC`,
+/// 2. pil2com compiles the PIL over BN128, with `includes` (plonk2pil's PIL and the std):
+///    `--field bn128`, which only a pil2com that has `--field` takes (`PIL2C_EXEC`,
 ///    pilfflonk/docs/README.md#compile-pil). One that ignores it compiles over Goldilocks, and the
 ///    setup refuses the pilout, saying so;
 /// 3. setup-pilfflonk sets the pilout up with plonk2pil's fixed columns, which the pilout declares
@@ -766,23 +766,23 @@ fn set_up_wrap_air(
     powers_of_tau: &Path,
     key_dir: &Path,
 ) -> Result<WrapKey> {
-    tracing::info!("plonk2pil: the {BN254_WRAP_FAMILY} wrap of {}...", r1cs.display());
+    tracing::info!("plonk2pil: the {BN128_WRAP_FAMILY} wrap of {}...", r1cs.display());
     let r1cs_data = fs::read(r1cs).with_context(|| format!("Failed to read {}", r1cs.display()))?;
-    let options = PlonkOptions { hash_id: BN254_WRAP_FAMILY.into(), ..Default::default() };
-    let PlonkResult::<Bn254> { exec, pil_str, fixed_pols, .. } = plonk2pil::plonk2pil(&r1cs_data, "wrap", &options)
+    let options = PlonkOptions { hash_id: BN128_WRAP_FAMILY.into(), ..Default::default() };
+    let PlonkResult::<Bn128> { exec, pil_str, fixed_pols, .. } = plonk2pil::plonk2pil(&r1cs_data, "wrap", &options)
         .with_context(|| format!("plonk2pil failed for {}", r1cs.display()))?;
     drop(r1cs_data);
     fs::write(&files.pil, pil_str)?;
     write_exec(&files.exec, &exec)?;
     drop(exec);
 
-    tracing::info!("Compiling {} over BN254...", files.pil.display());
+    tracing::info!("Compiling {} over BN128...", files.pil.display());
     run_compile_pil(&CompilePilOptions {
         pil_path: files.pil.to_string_lossy().into_owned(),
         output_path: files.pilout.to_string_lossy().into_owned(),
         include_paths: includes.to_vec(),
         fixed_dir: None,
-        field: Some("bn254".to_string()),
+        field: Some("bn128".to_string()),
         fixed_to_file: false,
         no_proto_fixed_data: false,
     })?;
@@ -1005,7 +1005,7 @@ pub(crate) mod tests {
 
     use pilfflonk_setup::layout::max_degree;
     use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau, write_tau_one_ptau};
-    use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::wrap::RANGE_MUL_COLUMN;
+    use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap::RANGE_MUL_COLUMN;
     use proofman_common::exec_format::{ExecFile, EXEC_FORMAT_VERSION_WIDE, RANGE_CHECK_BAND_KIND};
     use proofman_pilfflonk::{AirFile, PilfflonkInfo, SetupParams, WitnessShape};
 
@@ -1015,13 +1015,13 @@ pub(crate) mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
     }
 
-    /// The exec at `exec` is over BN254 (version 3), its gate bands are `n_range_checks` range-check
+    /// The exec at `exec` is over BN128 (version 3), its gate bands are `n_range_checks` range-check
     /// rows, the only bands the wrap's witness takes, and it gathers the stage-1 columns of the AIR
     /// of the key at `proving_key`, in its rows: all of them, but for the range checks'
     /// multiplicity `RANGE_MUL` if there are range checks, the column after the map's, which the
     /// band section's aux word names and the witness counts.
     pub(crate) fn assert_exec_gathers_the_air_columns(exec: &Path, proving_key: &Path, n_range_checks: usize) {
-        let exec = ExecFile::<Bn254>::read(exec).unwrap_or_else(|e| panic!("{e}"));
+        let exec = ExecFile::<Bn128>::read(exec).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(exec.layout.version(), EXEC_FORMAT_VERSION_WIDE);
         assert_eq!(exec.layout.coef_words(), 4);
         assert_eq!(exec.bands.len(), n_range_checks, "gate bands, one per range check");
@@ -1167,15 +1167,15 @@ pub(crate) mod tests {
     }
 
     /// The stark-recurser's end-to-end wrap circuit,
-    /// `setup/stark-recurser/tests/fixtures/bn254/wrap.circom`: a `PoseidonT(5)` use among PLONK
-    /// gates, and one public. Its r1cs, compiled for BN254 into `dir` with the committed circom.
+    /// `setup/stark-recurser/tests/fixtures/bn128/wrap.circom`: a `PoseidonT(5)` use among PLONK
+    /// gates, and one public. Its r1cs, compiled for BN128 into `dir` with the committed circom.
     fn small_wrap_r1cs(dir: &Path) -> PathBuf {
         let root = repo_root();
         let circom = root.join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" });
         let out = Command::new(&circom)
             .args(["--O1", "--r1cs", "--prime", "bn128", "-l"])
             .arg(root.join("setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128"))
-            .arg(root.join("setup/stark-recurser/tests/fixtures/bn254/wrap.circom"))
+            .arg(root.join("setup/stark-recurser/tests/fixtures/bn128/wrap.circom"))
             .arg("-o")
             .arg(dir)
             .output()

@@ -1,6 +1,6 @@
 //! The witness generator of the fixture `all` (pilfflonk/docs/README.md#fixtures),
 //! `tests/fixtures/all/all.pil`: pil-fflonk's `all` (`pil/sm_all/all_main.pil`), whose witness its
-//! generators write one state machine after another, over BN254's `Fr`. The same witness for the
+//! generators write one state machine after another, over BN128's `Fr`. The same witness for the
 //! sum and the product bus. Each state machine's columns are those of its own generator for
 //! `N = 2^8`:
 //!

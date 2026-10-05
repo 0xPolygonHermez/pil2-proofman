@@ -5,7 +5,7 @@
 
 // The kernels of the std's prover hints on the device (pilfflonk_hints.cu), the elementwise work and
 // the scan of a hint's column around the interpreter (pilfflonk_hints_gpu.hpp), with C linkage and
-// the conventions of pilfflonk_kernels.hpp: device pointers unless said otherwise, 32-byte BN254
+// the conventions of pilfflonk_kernels.hpp: device pointers unless said otherwise, 32-byte BN128
 // scalars in Montgomery form, the legacy default stream, nothing launched for an empty range, and a
 // CUDA failure aborts the process. The running product of a gprod_col is the PLONK GPU prover's
 // gpu_plonk_prefix_scan_multiply (rapidsnark/plonk_prover.cu), as it is.

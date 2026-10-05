@@ -125,7 +125,7 @@ fn check_operand(value: &Value, at: &str, written: &HashSet<u64>, shape: &QVerif
     };
     let field = |key: &str| operand.get(key);
     if as_count(field("dim")) != Some(1) {
-        return invalid!("qVerifier: {at} has dimension {}; over BN254 every operand has 1", show(field("dim")));
+        return invalid!("qVerifier: {at} has dimension {}; over BN128 every operand has 1", show(field("dim")));
     }
     let id = field("id");
     let index = |n: u64, what: &str, kind: &str| {

@@ -1,9 +1,9 @@
-//! `Bn254`, the scalar field `Fr` of BN254: the integers modulo
+//! `Bn128`, the scalar field `Fr` of BN128: the integers modulo
 //! `r = 21888242871839275222246405745257275088548364400416034343698204186575808495617`, the order
 //! of the curve's groups. Not its base field `Fq`, where the coordinates of the points live. It is
 //! named after its curve, as `Goldilocks` is after its prime.
 //!
-//! It is for computing a pilfflonk witness in Rust (pilfflonk/docs/README.md#witness): the BN254
+//! It is for computing a pilfflonk witness in Rust (pilfflonk/docs/README.md#witness): the BN128
 //! arithmetic of the prover is ffiasm's, in C++, and this type is not used there.
 //!
 //! An element is kept in Montgomery form, `a·2^256 mod r`, in four 64-bit limbs, little-endian, and
@@ -33,9 +33,9 @@ use crate::{quotient_map_small_int, Field, PrimeField, QuotientMap};
 
 /// An element of `Fr`, in Montgomery form (see the module).
 #[derive(Copy, Clone, Default, PartialEq, Eq, Hash)]
-pub struct Bn254([u64; 4]);
+pub struct Bn128([u64; 4]);
 
-impl Bn254 {
+impl Bn128 {
     /// `r`.
     const MODULUS: [u64; 4] = [0x43e1f593f0000001, 0x2833e84879b97091, 0xb85045b68181585d, 0x30644e72e131a029];
 
@@ -54,8 +54,8 @@ impl Bn254 {
     /// `r − 1 = 2^28 · odd`.
     pub const TWO_ADICITY: usize = 28;
 
-    /// `W[i] = 5^((r − 1)/2^i)`, a primitive `2^i`-th root of unity: the std's `Bn254_Gen[i]`
-    /// (`pil2-components/lib/std/pil/bn254.pil`), and the root of ffjavascript's `Fr.w[i]` and of
+    /// `W[i] = 5^((r − 1)/2^i)`, a primitive `2^i`-th root of unity: the std's `Bn128_Gen[i]`
+    /// (`pil2-components/lib/std/pil/bn128.pil`), and the root of ffjavascript's `Fr.w[i]` and of
     /// ffiasm's FFT.
     pub const W: [Self; Self::TWO_ADICITY + 1] = [
         Self::constant("1"),
@@ -249,7 +249,7 @@ const fn is_below(a: &[u64; 4], b: &[u64; 4]) -> bool {
 /// `a mod r`, for `a < 2r`.
 #[inline(always)]
 const fn reduce_once(a: [u64; 4]) -> [u64; 4] {
-    let m = &Bn254::MODULUS;
+    let m = &Bn128::MODULUS;
     let (d0, borrow) = sbb(a[0], m[0], 0);
     let (d1, borrow) = sbb(a[1], m[1], borrow);
     let (d2, borrow) = sbb(a[2], m[2], borrow);
@@ -280,7 +280,7 @@ const fn sub_mod(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
     let (d3, borrow) = sbb(a[3], b[3], borrow);
     // On a borrow, add r back.
     let mask = 0u64.wrapping_sub(borrow);
-    let m = &Bn254::MODULUS;
+    let m = &Bn128::MODULUS;
     let (d0, carry) = adc(d0, m[0] & mask, 0);
     let (d1, carry) = adc(d1, m[1] & mask, carry);
     let (d2, carry) = adc(d2, m[2] & mask, carry);
@@ -294,7 +294,7 @@ const fn sub_mod(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
 /// in four limbs, and one subtraction reduces it. Within the rounds, `t` may need a fifth limb.
 #[inline(always)]
 const fn mont_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
-    let m = &Bn254::MODULUS;
+    let m = &Bn128::MODULUS;
     let mut t = [0u64; 6];
     let mut i = 0;
     while i < 4 {
@@ -308,7 +308,7 @@ const fn mont_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
         (t[4], t[5]) = adc(t[4], carry, 0);
 
         // t = (t + k·r) / 2^64, with k such that the division is exact.
-        let k = t[0].wrapping_mul(Bn254::INV);
+        let k = t[0].wrapping_mul(Bn128::INV);
         let (_, mut carry) = mac(t[0], k, m[0], 0);
         j = 1;
         while j < 4 {
@@ -322,51 +322,51 @@ const fn mont_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
     reduce_once([t[0], t[1], t[2], t[3]])
 }
 
-impl Ord for Bn254 {
+impl Ord for Bn128 {
     fn cmp(&self, other: &Self) -> Ordering {
         self.canonical_limbs().iter().rev().cmp(other.canonical_limbs().iter().rev())
     }
 }
 
-impl PartialOrd for Bn254 {
+impl PartialOrd for Bn128 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Display for Bn254 {
+impl Display for Bn128 {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut buf = [0u8; Self::MAX_DECIMAL_DIGITS];
         f.pad_integral(true, "", self.write_decimal(&mut buf))
     }
 }
 
-impl Debug for Bn254 {
+impl Debug for Bn128 {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(self, f)
     }
 }
 
-impl Serialize for Bn254 {
+impl Serialize for Bn128 {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut buf = [0u8; Self::MAX_DECIMAL_DIGITS];
         serializer.serialize_str(self.write_decimal(&mut buf))
     }
 }
 
-impl<'de> Deserialize<'de> for Bn254 {
+impl<'de> Deserialize<'de> for Bn128 {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct DecimalVisitor;
 
         impl Visitor<'_> for DecimalVisitor {
-            type Value = Bn254;
+            type Value = Bn128;
 
             fn expecting(&self, f: &mut Formatter<'_>) -> fmt::Result {
                 f.write_str("a decimal string below r, without sign or leading zeros")
             }
 
-            fn visit_str<E: Error>(self, s: &str) -> Result<Bn254, E> {
-                Bn254::from_decimal(s).ok_or_else(|| E::invalid_value(Unexpected::Str(s), &self))
+            fn visit_str<E: Error>(self, s: &str) -> Result<Bn128, E> {
+                Bn128::from_decimal(s).ok_or_else(|| E::invalid_value(Unexpected::Str(s), &self))
             }
         }
 
@@ -374,10 +374,10 @@ impl<'de> Deserialize<'de> for Bn254 {
     }
 }
 
-quotient_map_small_int!(Bn254, u128, [u8, u16, u32, u64]);
-quotient_map_small_int!(Bn254, i128, [i8, i16, i32, i64]);
+quotient_map_small_int!(Bn128, u128, [u8, u16, u32, u64]);
+quotient_map_small_int!(Bn128, i128, [i8, i16, i32, i64]);
 
-impl QuotientMap<u128> for Bn254 {
+impl QuotientMap<u128> for Bn128 {
     /// Every `u128` is below `r`, and so canonical.
     #[inline]
     fn from_int(int: u128) -> Self {
@@ -395,7 +395,7 @@ impl QuotientMap<u128> for Bn254 {
     }
 }
 
-impl QuotientMap<i128> for Bn254 {
+impl QuotientMap<i128> for Bn128 {
     /// A negative `x` is `r − |x|`. Every `i128` is within `(r − 1)/2` of 0, and so canonical.
     #[inline]
     fn from_int(int: i128) -> Self {
@@ -418,7 +418,7 @@ impl QuotientMap<i128> for Bn254 {
     }
 }
 
-impl Field for Bn254 {
+impl Field for Bn128 {
     const ZERO: Self = Self([0; 4]);
     const ONE: Self = Self::from_canonical_limbs_unchecked([1, 0, 0, 0]);
     const TWO: Self = Self::from_canonical_limbs_unchecked([2, 0, 0, 0]);
@@ -441,13 +441,13 @@ impl Field for Bn254 {
     }
 }
 
-impl PrimeField for Bn254 {
+impl PrimeField for Bn128 {
     fn as_canonical_biguint(&self) -> BigUint {
         BigUint::from_bytes_le(&self.to_le_bytes())
     }
 }
 
-impl Add for Bn254 {
+impl Add for Bn128 {
     type Output = Self;
 
     #[inline]
@@ -456,14 +456,14 @@ impl Add for Bn254 {
     }
 }
 
-impl AddAssign for Bn254 {
+impl AddAssign for Bn128 {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
         *self = *self + rhs;
     }
 }
 
-impl Sub for Bn254 {
+impl Sub for Bn128 {
     type Output = Self;
 
     #[inline]
@@ -472,14 +472,14 @@ impl Sub for Bn254 {
     }
 }
 
-impl SubAssign for Bn254 {
+impl SubAssign for Bn128 {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
         *self = *self - rhs;
     }
 }
 
-impl Neg for Bn254 {
+impl Neg for Bn128 {
     type Output = Self;
 
     #[inline]
@@ -488,7 +488,7 @@ impl Neg for Bn254 {
     }
 }
 
-impl Mul for Bn254 {
+impl Mul for Bn128 {
     type Output = Self;
 
     #[inline]
@@ -497,14 +497,14 @@ impl Mul for Bn254 {
     }
 }
 
-impl MulAssign for Bn254 {
+impl MulAssign for Bn128 {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
     }
 }
 
-impl Div for Bn254 {
+impl Div for Bn128 {
     type Output = Self;
 
     /// Panics if `rhs` is 0, as `Field::inverse`.
@@ -514,7 +514,7 @@ impl Div for Bn254 {
     }
 }
 
-impl DivAssign for Bn254 {
+impl DivAssign for Bn128 {
     /// Panics if `rhs` is 0, as `Field::inverse`.
     fn div_assign(&mut self, rhs: Self) {
         *self = *self / rhs;
@@ -564,16 +564,16 @@ mod tests {
 
     /// The value of an element. `bytes_are_canonical_little_endian` checks the bytes against
     /// `num-bigint`.
-    fn value(x: Bn254) -> BigUint {
+    fn value(x: Bn128) -> BigUint {
         BigUint::from_bytes_le(&x.to_le_bytes())
     }
 
     /// The element of a value below `r`.
-    fn element(v: &BigUint) -> Bn254 {
+    fn element(v: &BigUint) -> Bn128 {
         let mut bytes = [0u8; 32];
         let digits = v.to_bytes_le();
         bytes[..digits.len()].copy_from_slice(&digits);
-        Bn254::from_le_bytes(bytes).unwrap()
+        Bn128::from_le_bytes(bytes).unwrap()
     }
 
     /// The edge values (0, 1, r − 1, (r ± 1)/2, around the limb boundaries) and then `n` random
@@ -604,26 +604,26 @@ mod tests {
     const N_EDGES: usize = 17;
 
     #[test]
-    fn the_constants_are_bn254s() {
+    fn the_constants_are_bn128s() {
         let r = r();
-        assert_eq!(from_limbs(Bn254::MODULUS), r);
-        assert_eq!(from_limbs(Bn254::MODULUS_MINUS_2), &r - 2u32);
-        assert_eq!((BigUint::from(Bn254::INV) * &r + 1u32) % (BigUint::from(1u32) << 64), BigUint::from(0u32));
-        assert_eq!(from_limbs(Bn254::R2), (BigUint::from(1u32) << 512) % &r);
-        assert_eq!(Bn254::MAX_DECIMAL_DIGITS, R_DECIMAL.len());
+        assert_eq!(from_limbs(Bn128::MODULUS), r);
+        assert_eq!(from_limbs(Bn128::MODULUS_MINUS_2), &r - 2u32);
+        assert_eq!((BigUint::from(Bn128::INV) * &r + 1u32) % (BigUint::from(1u32) << 64), BigUint::from(0u32));
+        assert_eq!(from_limbs(Bn128::R2), (BigUint::from(1u32) << 512) % &r);
+        assert_eq!(Bn128::MAX_DECIMAL_DIGITS, R_DECIMAL.len());
         // The Montgomery form is ffiasm's: 1 is 2^256 mod r.
-        assert_eq!(from_limbs(Bn254::ONE.0), (BigUint::from(1u32) << 256) % &r);
+        assert_eq!(from_limbs(Bn128::ONE.0), (BigUint::from(1u32) << 256) % &r);
 
-        assert_eq!(value(Bn254::ZERO), BigUint::from(0u32));
-        assert_eq!(value(Bn254::ONE), BigUint::from(1u32));
-        assert_eq!(value(Bn254::TWO), BigUint::from(2u32));
-        assert_eq!(value(Bn254::NEG_ONE), &r - 1u32);
-        assert_eq!(value(Bn254::GENERATOR), BigUint::from(5u32));
-        assert_eq!(Bn254::default(), Bn254::ZERO);
-        assert_eq!(Bn254::ONE + Bn254::NEG_ONE, Bn254::ZERO);
-        assert_eq!(Bn254::ONE + Bn254::ONE, Bn254::TWO);
-        assert!(Bn254::ZERO.is_zero() && Bn254::ONE.is_one() && !Bn254::NEG_ONE.is_one());
-        assert_eq!(Bn254::ONE.as_canonical_biguint(), BigUint::from(1u32));
+        assert_eq!(value(Bn128::ZERO), BigUint::from(0u32));
+        assert_eq!(value(Bn128::ONE), BigUint::from(1u32));
+        assert_eq!(value(Bn128::TWO), BigUint::from(2u32));
+        assert_eq!(value(Bn128::NEG_ONE), &r - 1u32);
+        assert_eq!(value(Bn128::GENERATOR), BigUint::from(5u32));
+        assert_eq!(Bn128::default(), Bn128::ZERO);
+        assert_eq!(Bn128::ONE + Bn128::NEG_ONE, Bn128::ZERO);
+        assert_eq!(Bn128::ONE + Bn128::ONE, Bn128::TWO);
+        assert!(Bn128::ZERO.is_zero() && Bn128::ONE.is_one() && !Bn128::NEG_ONE.is_one());
+        assert_eq!(Bn128::ONE.as_canonical_biguint(), BigUint::from(1u32));
     }
 
     #[test]
@@ -632,9 +632,9 @@ mod tests {
         let zero = BigUint::from(0u32);
         let mut rng = rand::rng();
         let values = samples(&mut rng, 1000);
-        let elements: Vec<Bn254> = values.iter().map(element).collect();
+        let elements: Vec<Bn128> = values.iter().map(element).collect();
 
-        let check_pair = |(a, x): (&BigUint, Bn254), (b, y): (&BigUint, Bn254)| {
+        let check_pair = |(a, x): (&BigUint, Bn128), (b, y): (&BigUint, Bn128)| {
             assert_eq!(value(x + y), (a + b) % &r, "{a} + {b}");
             assert_eq!(value(x - y), (a + &r - b) % &r, "{a} - {b}");
             assert_eq!(value(x * y), a * b % &r, "{a} · {b}");
@@ -672,7 +672,7 @@ mod tests {
                 None => assert_eq!(*a, zero),
                 Some(inverse) => {
                     assert_eq!(value(inverse), a.modpow(&(&r - 2u32), &r), "1/{a}");
-                    assert_eq!(x * inverse, Bn254::ONE);
+                    assert_eq!(x * inverse, Bn128::ONE);
                     assert_eq!(x.inverse(), inverse);
                 }
             }
@@ -681,15 +681,15 @@ mod tests {
             let e = [rng.next_u64(), rng.next_u64(), rng.next_u64(), rng.next_u64()];
             assert_eq!(value(x.exp_u256(e)), a.modpow(&from_limbs(e), &r), "{a}^{}", from_limbs(e));
         }
-        assert_eq!(Bn254::GENERATOR.exp_u256([0; 4]), Bn254::ONE);
-        assert_eq!(Bn254::ZERO.exp_u256([0; 4]), Bn254::ONE, "0^0 = 1, as exp_u64");
-        assert_eq!(Bn254::ZERO.exp_u64(0), Bn254::ONE);
+        assert_eq!(Bn128::GENERATOR.exp_u256([0; 4]), Bn128::ONE);
+        assert_eq!(Bn128::ZERO.exp_u256([0; 4]), Bn128::ONE, "0^0 = 1, as exp_u64");
+        assert_eq!(Bn128::ZERO.exp_u64(0), Bn128::ONE);
     }
 
     #[test]
     #[should_panic(expected = "Tried to invert zero")]
     fn dividing_by_zero_panics() {
-        let _ = Bn254::ONE / Bn254::ZERO;
+        let _ = Bn128::ONE / Bn128::ZERO;
     }
 
     #[test]
@@ -706,33 +706,33 @@ mod tests {
         let mut unsigned: Vec<u128> = [0, 1, 2, u128::from(u64::MAX), u128::from(u64::MAX) + 1, u128::MAX].into();
         unsigned.extend((0..1000).map(|_| (u128::from(rng.next_u64()) << 64) | u128::from(rng.next_u64())));
         for u in unsigned {
-            assert_eq!(value(Bn254::from_int(u)), BigUint::from(u), "{u}");
-            assert_eq!(value(Bn254::from_int(u as u64)), BigUint::from(u as u64));
-            assert_eq!(value(Bn254::from_int(u as usize)), BigUint::from(u as usize));
-            assert_eq!(value(Bn254::from_int(u as u32)), BigUint::from(u as u32));
-            assert_eq!(value(Bn254::from_int(u as u16)), BigUint::from(u as u16));
-            assert_eq!(value(Bn254::from_int(u as u8)), BigUint::from(u as u8));
-            assert_eq!(Bn254::from_canonical_checked(u), Some(Bn254::from_int(u)));
-            assert_eq!(unsafe { Bn254::from_canonical_unchecked(u) }, Bn254::from_int(u));
+            assert_eq!(value(Bn128::from_int(u)), BigUint::from(u), "{u}");
+            assert_eq!(value(Bn128::from_int(u as u64)), BigUint::from(u as u64));
+            assert_eq!(value(Bn128::from_int(u as usize)), BigUint::from(u as usize));
+            assert_eq!(value(Bn128::from_int(u as u32)), BigUint::from(u as u32));
+            assert_eq!(value(Bn128::from_int(u as u16)), BigUint::from(u as u16));
+            assert_eq!(value(Bn128::from_int(u as u8)), BigUint::from(u as u8));
+            assert_eq!(Bn128::from_canonical_checked(u), Some(Bn128::from_int(u)));
+            assert_eq!(unsafe { Bn128::from_canonical_unchecked(u) }, Bn128::from_int(u));
 
             // The same bits as signed integers: a negative x is r − |x|.
             let i = u as i128;
-            assert_eq!(value(Bn254::from_int(i)), signed(i), "{i}");
-            assert_eq!(value(Bn254::from_int(i as i64)), signed(i128::from(i as i64)));
-            assert_eq!(value(Bn254::from_int(i as isize)), signed(i as isize as i128));
-            assert_eq!(value(Bn254::from_int(i as i32)), signed(i128::from(i as i32)));
-            assert_eq!(value(Bn254::from_int(i as i16)), signed(i128::from(i as i16)));
-            assert_eq!(value(Bn254::from_int(i as i8)), signed(i128::from(i as i8)));
-            assert_eq!(Bn254::from_canonical_checked(i), Some(Bn254::from_int(i)));
-            assert_eq!(Bn254::from_canonical_checked(i as i64), Some(Bn254::from_int(i as i64)));
-            assert_eq!(unsafe { Bn254::from_canonical_unchecked(i) }, Bn254::from_int(i));
-            assert_eq!(Bn254::from_int(i) + Bn254::from_int(i.wrapping_neg()), Bn254::ZERO);
+            assert_eq!(value(Bn128::from_int(i)), signed(i), "{i}");
+            assert_eq!(value(Bn128::from_int(i as i64)), signed(i128::from(i as i64)));
+            assert_eq!(value(Bn128::from_int(i as isize)), signed(i as isize as i128));
+            assert_eq!(value(Bn128::from_int(i as i32)), signed(i128::from(i as i32)));
+            assert_eq!(value(Bn128::from_int(i as i16)), signed(i128::from(i as i16)));
+            assert_eq!(value(Bn128::from_int(i as i8)), signed(i128::from(i as i8)));
+            assert_eq!(Bn128::from_canonical_checked(i), Some(Bn128::from_int(i)));
+            assert_eq!(Bn128::from_canonical_checked(i as i64), Some(Bn128::from_int(i as i64)));
+            assert_eq!(unsafe { Bn128::from_canonical_unchecked(i) }, Bn128::from_int(i));
+            assert_eq!(Bn128::from_int(i) + Bn128::from_int(i.wrapping_neg()), Bn128::ZERO);
         }
-        assert_eq!(Bn254::from_int(-1), Bn254::NEG_ONE);
-        assert_eq!(Bn254::from_int(-5i8), -Bn254::GENERATOR);
-        assert_eq!(value(Bn254::from_int(i128::MIN)), &r - (BigUint::from(1u32) << 127));
-        assert_eq!(value(Bn254::from_int(i64::MIN)), &r - (BigUint::from(1u32) << 63));
-        assert_eq!(Bn254::from_int(true as u8), Bn254::from_bool(true));
+        assert_eq!(Bn128::from_int(-1), Bn128::NEG_ONE);
+        assert_eq!(Bn128::from_int(-5i8), -Bn128::GENERATOR);
+        assert_eq!(value(Bn128::from_int(i128::MIN)), &r - (BigUint::from(1u32) << 127));
+        assert_eq!(value(Bn128::from_int(i64::MIN)), &r - (BigUint::from(1u32) << 63));
+        assert_eq!(Bn128::from_int(true as u8), Bn128::from_bool(true));
     }
 
     #[test]
@@ -747,36 +747,36 @@ mod tests {
         let mut rng = rand::rng();
         for v in samples(&mut rng, 1000) {
             let bytes = bytes_of(&v);
-            let x = Bn254::from_le_bytes(bytes).unwrap();
+            let x = Bn128::from_le_bytes(bytes).unwrap();
             assert_eq!(x.to_le_bytes(), bytes);
             assert_eq!(x.as_canonical_biguint(), v);
-            assert_eq!(x, Bn254::from_decimal(&v.to_str_radix(10)).unwrap(), "the bytes and the digits of {v} agree");
+            assert_eq!(x, Bn128::from_decimal(&v.to_str_radix(10)).unwrap(), "the bytes and the digits of {v} agree");
         }
 
         let mut le = [0u8; 32];
         (le[0], le[1]) = (0x02, 0x01);
-        assert_eq!(Bn254::from_int(0x0102u32).to_le_bytes(), le);
-        assert_eq!(Bn254::from_le_bytes([0; 32]), Some(Bn254::ZERO));
-        assert_eq!(Bn254::from_le_bytes(bytes_of(&(&r - 1u32))), Some(Bn254::NEG_ONE));
+        assert_eq!(Bn128::from_int(0x0102u32).to_le_bytes(), le);
+        assert_eq!(Bn128::from_le_bytes([0; 32]), Some(Bn128::ZERO));
+        assert_eq!(Bn128::from_le_bytes(bytes_of(&(&r - 1u32))), Some(Bn128::NEG_ONE));
         for refused in [r.clone(), &r + 1u32, BigUint::from(1u32) << 254, (BigUint::from(1u32) << 256) - 1u32] {
-            assert_eq!(Bn254::from_le_bytes(bytes_of(&refused)), None, "{refused} is not below r");
+            assert_eq!(Bn128::from_le_bytes(bytes_of(&refused)), None, "{refused} is not below r");
         }
-        assert_eq!(Bn254::from_le_bytes([0xff; 32]), None, "2^256 − 1 is refused");
+        assert_eq!(Bn128::from_le_bytes([0xff; 32]), None, "2^256 − 1 is refused");
     }
 
     #[test]
     fn decimals_are_canonical() {
         let r = r();
         for s in ["", "01", "00", "+1", "-1", " 1", "1 ", "1e3", "0x1", "1.0", "١", R_DECIMAL] {
-            assert_eq!(Bn254::from_decimal(s), None, "{s:?} must be refused");
+            assert_eq!(Bn128::from_decimal(s), None, "{s:?} must be refused");
         }
         let above_r = [&r + 1u32, (BigUint::from(1u32) << 256) - 1u32, BigUint::from(10u32).pow(77)];
         for v in above_r {
-            assert_eq!(Bn254::from_decimal(&v.to_str_radix(10)), None, "{v} is not below r");
+            assert_eq!(Bn128::from_decimal(&v.to_str_radix(10)), None, "{v} is not below r");
         }
-        assert_eq!(Bn254::from_decimal("0"), Some(Bn254::ZERO));
-        assert_eq!(Bn254::from_decimal("258"), Some(Bn254::from_int(258u32)));
-        assert_eq!(Bn254::from_decimal(&(&r - 1u32).to_str_radix(10)), Some(Bn254::NEG_ONE));
+        assert_eq!(Bn128::from_decimal("0"), Some(Bn128::ZERO));
+        assert_eq!(Bn128::from_decimal("258"), Some(Bn128::from_int(258u32)));
+        assert_eq!(Bn128::from_decimal(&(&r - 1u32).to_str_radix(10)), Some(Bn128::NEG_ONE));
 
         let mut rng = rand::rng();
         for v in samples(&mut rng, 1000) {
@@ -784,78 +784,78 @@ mod tests {
             let decimal = v.to_str_radix(10);
             assert_eq!(x.to_string(), decimal);
             assert_eq!(format!("{x:?}"), decimal);
-            assert_eq!(Bn254::from_decimal(&decimal), Some(x));
+            assert_eq!(Bn128::from_decimal(&decimal), Some(x));
         }
         // Formatted as an integer.
         assert_eq!(
-            format!("{:>5}|{:<5}|{:05}", Bn254::from_int(42), Bn254::from_int(42), Bn254::from_int(42)),
+            format!("{:>5}|{:<5}|{:05}", Bn128::from_int(42), Bn128::from_int(42), Bn128::from_int(42)),
             "   42|42   |00042"
         );
-        assert_eq!(Bn254::ZERO.to_string(), "0");
-        assert_eq!(Bn254::from_int(10_000_000_000_000_000_000u128).to_string(), "10000000000000000000");
+        assert_eq!(Bn128::ZERO.to_string(), "0");
+        assert_eq!(Bn128::from_int(10_000_000_000_000_000_000u128).to_string(), "10000000000000000000");
     }
 
     #[test]
     fn serde_is_a_canonical_decimal_string() {
         let mut rng = rand::rng();
         let values = samples(&mut rng, 1000);
-        let elements: Vec<Bn254> = values.iter().map(element).collect();
+        let elements: Vec<Bn128> = values.iter().map(element).collect();
         for (v, x) in values.iter().zip(&elements) {
             let json = serde_json::to_string(x).unwrap();
             assert_eq!(json, format!("\"{v}\""));
-            assert_eq!(serde_json::from_str::<Bn254>(&json).unwrap(), *x);
+            assert_eq!(serde_json::from_str::<Bn128>(&json).unwrap(), *x);
         }
         let json = serde_json::to_string(&elements).unwrap();
-        assert_eq!(serde_json::from_str::<Vec<Bn254>>(&json).unwrap(), elements);
+        assert_eq!(serde_json::from_str::<Vec<Bn128>>(&json).unwrap(), elements);
 
-        assert!(serde_json::from_str::<Bn254>("5").is_err(), "a JSON number is not a Bn254");
-        assert!(serde_json::from_str::<Bn254>("\"05\"").is_err());
-        assert!(serde_json::from_str::<Bn254>(&format!("\"{R_DECIMAL}\"")).is_err());
-        assert!(serde_json::from_str::<Bn254>("\"-1\"").is_err());
+        assert!(serde_json::from_str::<Bn128>("5").is_err(), "a JSON number is not a Bn128");
+        assert!(serde_json::from_str::<Bn128>("\"05\"").is_err());
+        assert!(serde_json::from_str::<Bn128>(&format!("\"{R_DECIMAL}\"")).is_err());
+        assert!(serde_json::from_str::<Bn128>("\"-1\"").is_err());
     }
 
     #[test]
     fn order_is_the_canonical_values() {
         let mut rng = rand::rng();
         let values = samples(&mut rng, 200);
-        let mut elements: Vec<Bn254> = values.iter().map(element).collect();
+        let mut elements: Vec<Bn128> = values.iter().map(element).collect();
         elements.sort();
         let mut sorted = values;
         sorted.sort();
         assert_eq!(elements.iter().map(|&x| value(x)).collect::<Vec<_>>(), sorted);
-        assert!(Bn254::ZERO < Bn254::ONE && Bn254::ONE < Bn254::TWO && Bn254::TWO < Bn254::NEG_ONE);
+        assert!(Bn128::ZERO < Bn128::ONE && Bn128::ONE < Bn128::TWO && Bn128::TWO < Bn128::NEG_ONE);
     }
 
     #[test]
     fn the_roots_of_unity_are_5_to_the_r_minus_1_over_2_to_the_i() {
         let r = r();
         let r_minus_1 = &r - 1u32;
-        assert_eq!(r_minus_1.trailing_zeros(), Some(Bn254::TWO_ADICITY as u64));
+        assert_eq!(r_minus_1.trailing_zeros(), Some(Bn128::TWO_ADICITY as u64));
         let five = BigUint::from(5u32);
-        for (i, &w) in Bn254::W.iter().enumerate() {
+        for (i, &w) in Bn128::W.iter().enumerate() {
             let exponent = &r_minus_1 >> i;
             assert_eq!(value(w), five.modpow(&exponent, &r), "W[{i}] = 5^((r − 1)/2^{i})");
-            assert_eq!(w, Bn254::GENERATOR.exp_u256(to_limbs(&exponent)));
+            assert_eq!(w, Bn128::GENERATOR.exp_u256(to_limbs(&exponent)));
             // Of order exactly 2^i.
-            assert_eq!(w.exp_power_of_2(i), Bn254::ONE, "W[{i}]^(2^{i}) = 1");
+            assert_eq!(w.exp_power_of_2(i), Bn128::ONE, "W[{i}]^(2^{i}) = 1");
             if i > 0 {
-                assert_eq!(w.exp_power_of_2(i - 1), Bn254::NEG_ONE, "W[{i}]^(2^{}) = −1", i - 1);
-                assert_eq!(w.square(), Bn254::W[i - 1]);
+                assert_eq!(w.exp_power_of_2(i - 1), Bn128::NEG_ONE, "W[{i}]^(2^{}) = −1", i - 1);
+                assert_eq!(w.square(), Bn128::W[i - 1]);
             }
         }
-        // ffjavascript 0.3.1's `Fr.w[8]` and `Fr.w[28]` for BN254, as `pilfflonk/src/oracle/fr.rs`
+        // ffjavascript 0.3.1's `Fr.w[8]` and `Fr.w[28]` for BN128, as `pilfflonk/src/oracle/fr.rs`
         // pins them.
         assert_eq!(
-            Bn254::W[8].to_string(),
+            Bn128::W[8].to_string(),
             "3478517300119284901893091970156912948790432420133812234316178878452092729974"
         );
         assert_eq!(
-            Bn254::W[28].to_string(),
+            Bn128::W[28].to_string(),
             "19103219067921713944291392827692070036145651957329286315305642004821462161904"
         );
         // 5 is not a square (Euler's criterion): 5^((r − 1)/2) = r − 1.
-        assert_eq!(Bn254::GENERATOR.exp_u256(to_limbs(&(&r_minus_1 >> 1u32))), Bn254::NEG_ONE);
-        assert_eq!(Bn254::from_int(4u8).exp_u256(to_limbs(&(&r_minus_1 >> 1u32))), Bn254::ONE);
+        assert_eq!(Bn128::GENERATOR.exp_u256(to_limbs(&(&r_minus_1 >> 1u32))), Bn128::NEG_ONE);
+        assert_eq!(Bn128::from_int(4u8).exp_u256(to_limbs(&(&r_minus_1 >> 1u32))), Bn128::ONE);
     }
 
     /// Values and the results of the operations on them, from ffiasm's `RawFr`, the prover's `Fr`
@@ -968,7 +968,7 @@ mod tests {
     #[test]
     fn matches_ffiasm() {
         for v in &FFIASM {
-            let (a, b) = (Bn254::from_decimal(v.a).unwrap(), Bn254::from_decimal(v.b).unwrap());
+            let (a, b) = (Bn128::from_decimal(v.a).unwrap(), Bn128::from_decimal(v.b).unwrap());
             assert_eq!(a.0, v.mont_a, "the Montgomery form of {} is ffiasm's", v.a);
             assert_eq!((a + b).to_string(), v.add);
             assert_eq!((a - b).to_string(), v.sub);
@@ -982,10 +982,10 @@ mod tests {
     }
 
     /// A rough measure of throughput, in a dependent chain. In release:
-    /// `cargo test --release -p proofman-fields -- --ignored --nocapture bn254_timing`.
+    /// `cargo test --release -p proofman-fields -- --ignored --nocapture bn128_timing`.
     #[test]
     #[ignore = "timing"]
-    fn bn254_timing() {
+    fn bn128_timing() {
         let mut rng = rand::rng();
         let values = samples(&mut rng, 2);
         let (x0, y) = (element(&values[N_EDGES]), element(&values[N_EDGES + 1]));
@@ -1010,7 +1010,7 @@ mod tests {
         black_box(x);
 
         std::println!(
-            "Bn254: mul {mul_ns:.1} ns ({:.1} M/s), inverse {:.2} µs ({:.0} k/s)",
+            "Bn128: mul {mul_ns:.1} ns ({:.1} M/s), inverse {:.2} µs ({:.0} k/s)",
             1e3 / mul_ns,
             inverse_ns / 1e3,
             1e6 / inverse_ns

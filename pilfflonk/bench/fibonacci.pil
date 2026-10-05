@@ -3,7 +3,7 @@
 // requiring it would instantiate that one too: this is its airtemplate, the same columns,
 // constraints and publics, with the airgroup taking N from the compiler.
 //
-// BENCH_BITS is a define of pil2com: bench.sh compiles with --field bn254 and -D BENCH_BITS=<bits>.
+// BENCH_BITS is a define of pil2com: bench.sh compiles with --field bn128 and -D BENCH_BITS=<bits>.
 // The witness is tests/data/fibonacci.rs's for 2^BENCH_BITS rows.
 
 public in1;

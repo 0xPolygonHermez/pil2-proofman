@@ -32,7 +32,7 @@ using BinFileUtils::BinFile;
 // Bytes of an element of Fq or Fr.
 constexpr uint32_t N8 = 32;
 static_assert(N8 == RawFq::N64 * sizeof(uint64_t) && N8 == RawFr::N64 * sizeof(uint64_t),
-              "both BN254 fields have 32-byte elements");
+              "both BN128 fields have 32-byte elements");
 
 // A snarkjs ptau (powersoftau_new.js): the header, [τ^i]₁ and [τ^i]₂.
 constexpr const char *PTAU_TYPE = "ptau";
@@ -162,7 +162,7 @@ bool isReduced(const Engine::F1Element &e) {
     return false;
 }
 
-// Whether `p` is a point of G1: reduced coordinates with y^2 = x^3 + 3. BN254's G1 has cofactor 1.
+// Whether `p` is a point of G1: reduced coordinates with y^2 = x^3 + 3. BN128's G1 has cofactor 1.
 // (0, 0), ffiasm's affine point at infinity, is not: no power of τ != 0 is that point.
 bool isValidG1(const G1PointAffine &p) {
     if (!isReduced(p.x) || !isReduced(p.y)) {
@@ -232,7 +232,7 @@ PtauHeader readHeaderOf(BinFile &file, const std::string &path) {
     const uint64_t n8q = readLittleEndian(header, 4);
     if (n8q != N8) {
         throw FormatError(path + ": n8q = " + std::to_string(n8q) + ", not the " + std::to_string(N8) +
-                          " bytes of BN254's base field: not a BN254 ptau");
+                          " bytes of BN128's base field: not a BN128 ptau");
     }
     if (headerBytes != PTAU_HEADER_BYTES) {
         throw FormatError(path + ": the header (section 1) has " + std::to_string(headerBytes) + " bytes, not " +
@@ -240,7 +240,7 @@ PtauHeader readHeaderOf(BinFile &file, const std::string &path) {
     }
     readSection(file, path, PTAU_HEADER_SECTION, header, sizeof(header));
     if (!isModulus(header + 4, Fq_rawq)) {
-        throw FormatError(path + ": q is not BN254's base field modulus: not a BN254 ptau");
+        throw FormatError(path + ": q is not BN128's base field modulus: not a BN128 ptau");
     }
 
     PtauHeader result;
@@ -271,11 +271,11 @@ uint64_t checkedSrsHeader(BinFile &file, const std::string &path) {
     readSection(file, path, SRS_HEADER_SECTION, header, sizeof(header));
     const uint8_t *field = header;
     if (readLittleEndian(field, 4) != N8 || !isModulus(field + 4, Fq_rawq)) {
-        throw FormatError(path + ": n8q and q are not those of BN254's base field");
+        throw FormatError(path + ": n8q and q are not those of BN128's base field");
     }
     field += 4 + N8;
     if (readLittleEndian(field, 4) != N8 || !isModulus(field + 4, Fr_rawq)) {
-        throw FormatError(path + ": n8r and r are not those of BN254's scalar field");
+        throw FormatError(path + ": n8r and r are not those of BN128's scalar field");
     }
     field += 4 + N8;
     const uint64_t nG1 = readLittleEndian(field, 8);

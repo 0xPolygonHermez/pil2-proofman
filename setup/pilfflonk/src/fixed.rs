@@ -66,7 +66,7 @@ impl FixedColumns {
 
     /// The fixed columns of `air`, decoded from the pilout's values (big-endian bytes of any
     /// length, none for 0). Refuses a column without a value per row, and a value that is not
-    /// below `r` (pilfflonk/docs/README.md#what-the-setup-refuses): a pilout over BN254 has none,
+    /// below `r` (pilfflonk/docs/README.md#what-the-setup-refuses): a pilout over BN128 has none,
     /// and reducing it would hide a compiler bug. `air` must have a power of two of rows, of at
     /// most `2^28` ([`crate::validate::validate`] checks it).
     pub fn from_air(air: &pb::Air) -> Result<Self, SetupError> {
@@ -234,7 +234,7 @@ fn column_names(pilout: &pb::PilOut, air: ValidAir<'_>) -> Result<Vec<Option<(St
     let symbols: Vec<pb::Symbol> = pilout.symbols.iter().filter(of_air).cloned().collect();
     // One per column, at its position in fixedCols (its stageId); the field only sets the
     // dimension of the columns of stage 2 or above.
-    let mut columns = format_symbols(&symbols, &[], &[], &[], &FieldCfg::bn254()).map_err(SetupError::Passes)?;
+    let mut columns = format_symbols(&symbols, &[], &[], &[], &FieldCfg::bn128()).map_err(SetupError::Passes)?;
     columns.sort_by_key(|s| s.stage_id);
 
     let n_columns = air.air.fixed_cols.len();

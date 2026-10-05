@@ -1,6 +1,6 @@
 //! The pilfflonk witness library (pilfflonk/docs/README.md#witness) of the Connection fixture,
-//! `../connection.pil`: it computes the witness over BN254's `Fr`, in the rows `pil_helpers`
-//! generates for the fixture's BN254 pilout, and exports it with `pilfflonk_witness_library!`, as
+//! `../connection.pil`: it computes the witness over BN128's `Fr`, in the rows `pil_helpers`
+//! generates for the fixture's BN128 pilout, and exports it with `pilfflonk_witness_library!`, as
 //! the Fibonacci's (`pilfflonk/tests/fixtures/fibonacci/rs`).
 //!
 //! One library for both buses: the pilouts of `connection_sum.pil` and `connection_prod.pil` have the
@@ -12,7 +12,7 @@
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo run --bin proofman-setup -- compile-pil \
 //!     -p pilfflonk/tests/fixtures/connection/connection_sum.pil -I ./pil2-components/lib/std/pil \
-//!     --field bn254 -o <out>/connection.pilout
+//!     --field bn128 -o <out>/connection.pilout
 //! cargo run --bin proofman-cli pil-helpers --pilout <out>/connection.pilout \
 //!     --path pilfflonk/tests/fixtures/connection/rs/src -o
 //! ```

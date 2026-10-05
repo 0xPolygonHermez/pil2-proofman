@@ -15,12 +15,12 @@ pub enum GateRole {
     SelectValArity2,
     Blake3Node,
     Blake3Compress,
-    /// circom's `PoseidonT(t)`: the original Poseidon over BN254, with every round's state as an
-    /// output of the gate. The gate of the final SNARK wrap ([`BN254_WRAP_FAMILY`]).
+    /// circom's `PoseidonT(t)`: the original Poseidon over BN128, with every round's state as an
+    /// output of the gate. The gate of the final SNARK wrap ([`BN128_WRAP_FAMILY`]).
     PoseidonT,
     /// circom's `Num2Bytes(nBits)`: its input `in` as `⌈nBits/16⌉` chunks of 16 bits, `out`, least
     /// significant first, so that `in < 2^(16·⌈nBits/16⌉)`. The range check of the final SNARK
-    /// wrap ([`BN254_WRAP_FAMILY`]), which looks every chunk up in a table of `[0, 2^16)`.
+    /// wrap ([`BN128_WRAP_FAMILY`]), which looks every chunk up in a table of `[0, 2^16)`.
     RangeCheck,
 }
 
@@ -28,14 +28,14 @@ pub enum GateRole {
 /// per-family function below answers for. All of them are over Goldilocks.
 pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2", "blake3"];
 
-/// The family of the final SNARK wrap's AIR, which plonk2pil sets up over BN254 for pilfflonk. Its
-/// hash gate is circom's `PoseidonT`: the original Poseidon (the C++'s `PoseidonBN128`) over BN254.
+/// The family of the final SNARK wrap's AIR, which plonk2pil sets up over BN128 for pilfflonk. Its
+/// hash gate is circom's `PoseidonT`: the original Poseidon (the C++'s `PoseidonBN128`) over BN128.
 ///
 /// Its name is its hash's, as the STARK families' are, and its field's: the original Poseidon over
 /// Goldilocks is `Poseidon1`. It is not one of [`FAMILIES`]: no STARK hashes with it, so the
 /// per-family functions here refuse it as unknown. It owns its gates in `GATES`, `PoseidonT` and
 /// the range check `Num2Bytes`, which is how an r1cs is told to be the wrap's.
-pub const BN254_WRAP_FAMILY: &str = "PoseidonBN254";
+pub const BN128_WRAP_FAMILY: &str = "PoseidonBN128";
 
 /// The family a caller gets when it does not choose one: every `--hash` default, every `Default`
 /// impl that carries a family, and the read-back value for a `globalInfo.json` with no `hash`.
@@ -336,9 +336,9 @@ const GATES: &[(&str, GateRole, Option<&str>)] = &[
     ("Blake3Node", GateRole::Blake3Node, Some("blake3")),
     ("Blake3Compress", GateRole::Blake3Compress, Some("blake3")),
     // `PoseidonT(t)`: circom mints one gate id per width t, as for FFT4's parameters.
-    ("PoseidonT", GateRole::PoseidonT, Some(BN254_WRAP_FAMILY)),
+    ("PoseidonT", GateRole::PoseidonT, Some(BN128_WRAP_FAMILY)),
     // `Num2Bytes(nBits)`: one gate id per nBits, as for PoseidonT.
-    ("Num2Bytes", GateRole::RangeCheck, Some(BN254_WRAP_FAMILY)),
+    ("Num2Bytes", GateRole::RangeCheck, Some(BN128_WRAP_FAMILY)),
 ];
 
 pub fn lookup_gate(name: &str) -> Option<(GateRole, Option<&'static str>)> {
@@ -560,11 +560,11 @@ mod tests {
     /// The wrap's gates, its hash and its range check, are its family's, and that family is no
     /// STARK's: a `--hash`, a proof or a globalInfo naming it is refused as any unknown family is.
     #[test]
-    fn the_gates_of_the_bn254_wrap_are_of_its_family_which_is_no_stark_family() {
-        assert_eq!(lookup_gate("PoseidonT"), Some((GateRole::PoseidonT, Some(BN254_WRAP_FAMILY))));
-        assert_eq!(lookup_gate("Num2Bytes"), Some((GateRole::RangeCheck, Some(BN254_WRAP_FAMILY))));
-        assert!(!is_known_family(BN254_WRAP_FAMILY));
-        assert!(!supports_snark(BN254_WRAP_FAMILY));
+    fn the_gates_of_the_bn128_wrap_are_of_its_family_which_is_no_stark_family() {
+        assert_eq!(lookup_gate("PoseidonT"), Some((GateRole::PoseidonT, Some(BN128_WRAP_FAMILY))));
+        assert_eq!(lookup_gate("Num2Bytes"), Some((GateRole::RangeCheck, Some(BN128_WRAP_FAMILY))));
+        assert!(!is_known_family(BN128_WRAP_FAMILY));
+        assert!(!supports_snark(BN128_WRAP_FAMILY));
     }
 
     #[test]

@@ -9,7 +9,7 @@ namespace PilFflonk {
 
 static_assert(FR_BYTES == RawFr::N64 * sizeof(uint64_t), "a scalar must fill ffiasm's raw Fr limbs exactly");
 static_assert(FQ_BYTES == RawFq::N64 * sizeof(uint64_t), "a coordinate must fill ffiasm's raw Fq limbs exactly");
-static_assert(RawFr::N64 == RawFq::N64, "both BN254 fields are compared with the same limb loop");
+static_assert(RawFr::N64 == RawFq::N64, "both BN128 fields are compared with the same limb loop");
 
 #ifdef __USE_ASSEMBLY__
 namespace {
@@ -36,7 +36,7 @@ bool isCanonicalFr(const uint8_t bytes[FR_BYTES]) {
 #ifdef __USE_ASSEMBLY__
     return isBelow(bytes, Fr_rawq);
 #else
-    throw std::runtime_error("the BN254 scalar field needs ffiasm's assembly backend, not built on this platform");
+    throw std::runtime_error("the BN128 scalar field needs ffiasm's assembly backend, not built on this platform");
 #endif
 }
 
@@ -44,7 +44,7 @@ bool isCanonicalFq(const uint8_t bytes[FQ_BYTES]) {
 #ifdef __USE_ASSEMBLY__
     return isBelow(bytes, Fq_rawq);
 #else
-    throw std::runtime_error("the BN254 base field needs ffiasm's assembly backend, not built on this platform");
+    throw std::runtime_error("the BN128 base field needs ffiasm's assembly backend, not built on this platform");
 #endif
 }
 
@@ -61,7 +61,7 @@ uint64_t firstNonCanonicalFr(const uint8_t *bytes, uint64_t n) {
 #else
     (void)bytes;
     (void)n;
-    throw std::runtime_error("the BN254 scalar field needs ffiasm's assembly backend, not built on this platform");
+    throw std::runtime_error("the BN128 scalar field needs ffiasm's assembly backend, not built on this platform");
 #endif
 }
 

@@ -22,7 +22,7 @@ use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE
 use pilfflonk_setup::digest::seal_vkey;
 use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
-use proofman_pilfflonk::{JsonFile, PilfflonkGlobalInfo, Vkey, BN254_R};
+use proofman_pilfflonk::{JsonFile, PilfflonkGlobalInfo, Vkey, BN128_R};
 use serde_json::{json, Value};
 
 /// The Fibonacci's publics for the inputs 1 and 2 (`pil-fflonk/runtime/public.json`).
@@ -77,13 +77,13 @@ fn output(out: &Output) -> String {
     format!("{}{}", String::from_utf8_lossy(&out.stdout), stderr(out))
 }
 
-/// Compiles the Fibonacci fixture over BN254 to `pilout` with `PIL2C_EXEC`.
+/// Compiles the Fibonacci fixture over BN128 to `pilout` with `PIL2C_EXEC`.
 fn compile_fibonacci(pilout: &Path) {
     let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil")
-        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
         .arg(pilout)
         .output()
         .expect("PIL2C_EXEC runs");
@@ -111,7 +111,7 @@ fn forge_proof(vkey: &Path, publics: &Path, proof: &Path) {
 
 /// `value + 1 mod r`, in decimal.
 fn plus_one(value: &Value) -> Value {
-    let r = num_bigint::BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap();
+    let r = num_bigint::BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap();
     let v = num_bigint::BigUint::parse_bytes(value.as_str().unwrap().as_bytes(), 10).unwrap();
     json!(((v + 1u32) % r).to_string())
 }

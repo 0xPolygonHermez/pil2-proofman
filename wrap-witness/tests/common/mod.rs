@@ -1,12 +1,12 @@
 //! What the tests of the wrap's witness share: a final circuit's files laid out as setup-snark lays
 //! out `provingKeySnark/final/`, `final/final.{so,dat}`, and the reference, snarkjs's witness.
 //!
-//! A circuit is compiled with the committed circom (`setup/circom`), for BN254, as setup-snark
+//! A circuit is compiled with the committed circom (`setup/circom`), for BN128, as setup-snark
 //! compiles the final circuit (snark_setup.rs), with the wasm for snarkjs; its witness calculator is
 //! built as setup-snark builds `final.so`, with `WitnessTracker` and the Makefile of
 //! `setup/final_snark_circom/`. The reference is the witness of the same input that snarkjs of
 //! `setup/pil2-stark/node_modules` (`npm install` there) computes from the wasm. Without Node.js or
-//! that snarkjs a test says why and passes, as plonk2pil's BN254 tests do.
+//! that snarkjs a test says why and passes, as plonk2pil's BN128 tests do.
 
 // Each test crate that includes it uses some of it.
 #![allow(dead_code)]
@@ -16,23 +16,23 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pil2_stark_setup::output::witness_gen::WitnessTracker;
-use proofman_fields::Bn254;
+use proofman_fields::Bn128;
 
 pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").canonicalize().expect("the repository root")
 }
 
-/// A file of plonk2pil's BN254 fixtures.
+/// A file of plonk2pil's BN128 fixtures.
 pub fn fixture(name: &str) -> PathBuf {
-    repo_root().join("setup/stark-recurser/tests/fixtures/bn254").join(name)
+    repo_root().join("setup/stark-recurser/tests/fixtures/bn128").join(name)
 }
 
-/// The circom library of the BN254 verifier, whose `custom/` has the wrap's custom gates.
+/// The circom library of the BN128 verifier, whose `custom/` has the wrap's custom gates.
 pub fn circuits_bn128() -> PathBuf {
     repo_root().join("setup/stark-recurser/stark2circom/circom_verifier/circuits.bn128")
 }
 
-/// The committed circom, as plonk2pil's BN254 test picks it.
+/// The committed circom, as plonk2pil's BN128 test picks it.
 pub fn circom() -> PathBuf {
     repo_root().join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" })
 }
@@ -94,7 +94,7 @@ pub fn build_final(dir: &Path, circuit: &Path, libraries: &[PathBuf]) -> Vec<u8>
 
 /// snarkjs's witness of `input` for the circuit `name` that [`build_final`] built in `dir`, from
 /// the circom wasm: a value per witness index, wire 0 the constant one.
-pub fn snarkjs_witness(dir: &Path, name: &str, input: &Path) -> Vec<Bn254> {
+pub fn snarkjs_witness(dir: &Path, name: &str, input: &Path) -> Vec<Bn128> {
     let (wtns, json) = (dir.join(format!("{name}.wtns")), dir.join(format!("{name}.wtns.json")));
     let node = |args: &[&str], paths: &[&Path], what: &str| {
         run(Command::new("node").arg(snarkjs()).args(args).args(paths), what);
@@ -103,5 +103,5 @@ pub fn snarkjs_witness(dir: &Path, name: &str, input: &Path) -> Vec<Bn254> {
     node(&["wtns", "calculate"], &[&wasm, input, &wtns], "snarkjs wtns calculate");
     node(&["wtns", "export", "json"], &[&wtns, &json], "snarkjs wtns export json");
     let values: Vec<String> = serde_json::from_slice(&fs::read(&json).unwrap()).unwrap();
-    values.iter().map(|v| Bn254::from_decimal(v).expect("a canonical value")).collect()
+    values.iter().map(|v| Bn128::from_decimal(v).expect("a canonical value")).collect()
 }

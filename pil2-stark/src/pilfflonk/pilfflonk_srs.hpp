@@ -37,7 +37,7 @@ struct PtauHeader {
 };
 
 // Reads and checks section 1 of the snarkjs ptau at `path` (4-byte n8q = 32, q in n8q bytes
-// little-endian, which must be BN254's base field modulus, then 4-byte power and ceremonyPower)
+// little-endian, which must be BN128's base field modulus, then 4-byte power and ceremonyPower)
 // and the sizes of sections 2 and 3, which must hold whole points. Reads nothing else.
 // Throws IoError if the file cannot be opened or read, FormatError if it is not such a file, and
 // std::runtime_error where ffiasm has no assembly backend.
@@ -72,9 +72,9 @@ G2Error checkG2(const G2PointAffine &p);
 //
 //   1  header, 88 bytes:
 //        u32  n8q = 32
-//        q    n8q bytes, little-endian: BN254's base field modulus
+//        q    n8q bytes, little-endian: BN128's base field modulus
 //        u32  n8r = 32
-//        r    n8r bytes, little-endian: BN254's scalar field modulus
+//        r    n8r bytes, little-endian: BN128's scalar field modulus
 //        u64  nG1, the points in section 2: 1 <= nG1 <= MAX_SRS_G1
 //        u64  nG2, the points in section 3: 2
 //   2  [τ^i]₁ for i < nG1: nG1 · SRS_G1_BYTES bytes

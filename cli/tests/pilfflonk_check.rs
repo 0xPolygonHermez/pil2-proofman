@@ -73,7 +73,7 @@ use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::oracle::{AirOracle, Fr};
 use proofman_pilfflonk::{
     check, check_columns, CheckOptions, CheckReport, FileWitnessSource, FrBytes, PilfflonkError, ProvingKey, Witness,
-    BN254_R,
+    BN128_R,
 };
 use proofman_starks_lib_c::PilFflonkTranscript;
 use prost::Message;
@@ -148,7 +148,7 @@ impl Program {
     }
 }
 
-/// Compiles `program` over BN254 to `pilout` with `PIL2C_EXEC`, or writes the pilout it builds.
+/// Compiles `program` over BN128 to `pilout` with `PIL2C_EXEC`, or writes the pilout it builds.
 fn compile(program: Program, pilout: &Path) {
     let pil = match program {
         Program::Pil(pil) => pil,
@@ -161,7 +161,7 @@ fn compile(program: Program, pilout: &Path) {
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg(pil)
-        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
         .arg(pilout)
         .output()
         .expect("PIL2C_EXEC runs");
@@ -692,7 +692,7 @@ fn the_cli_names_the_edge_row_of_a_domain() {
 /// `_verify_proof_constraints`): a transcript that absorbs the STARK's `dummy_element`
 /// `[0, 1, 2, r − 1]` and squeezes two.
 fn fixed_element_challenges() -> Vec<FrBytes> {
-    let r = num_bigint::BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap();
+    let r = num_bigint::BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap();
     let minus_one = FrBytes::from_decimal(&(r - 1u32).to_string()).unwrap();
     let mut t = PilFflonkTranscript::new().unwrap();
     let dummy = [FrBytes::ZERO, FrBytes::from_u64(1), FrBytes::from_u64(2), minus_one];

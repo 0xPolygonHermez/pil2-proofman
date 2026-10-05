@@ -1,5 +1,5 @@
 // The kernels of the std's prover hints on the device (pilfflonk_hints_kernels.hpp), in the GPU
-// library only, over BN254 scalars in sppark's Montgomery arithmetic (BN128GPUScalarField), which
+// library only, over BN128 scalars in sppark's Montgomery arithmetic (BN128GPUScalarField), which
 // keeps every result fully reduced, as ffiasm does: the quotient and the running sums are the same
 // field elements as the CPU's (Instance::computeHintColumns), and so the same bytes, whatever the
 // order of the operations: an inverse is unique, and so is a sum.

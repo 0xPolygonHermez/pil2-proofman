@@ -14,8 +14,8 @@
 //   constant, so there is no im_airval either.
 // - `first` is a[0], so that a public ties the witness.
 //
-// Compile over BN254 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with
-// --field bn254 and -I pil2-components/lib/std/pil. The witness generator is tests/data/sum_bus.rs.
+// Compile over BN128 as the Fibonacci (tests/fixtures/fibonacci/fibonacci.pil), with
+// --field bn128 and -I pil2-components/lib/std/pil. The witness generator is tests/data/sum_bus.rs.
 require "std_constants.pil"
 require "std_lookup.pil"
 

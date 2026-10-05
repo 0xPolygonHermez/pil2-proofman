@@ -173,7 +173,7 @@ mod tests {
     use pilfflonk_setup::layout::max_degree;
     use pilfflonk_setup::solidity::VERIFIER_SOL_FILE;
     use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
-    use proofman_fields::Bn254;
+    use proofman_fields::Bn128;
     use proofman_pilfflonk::global_info::{GLOBAL_CONSTRAINTS_FILE, GLOBAL_INFO_FILE};
     use proofman_pilfflonk::{AirFile, CalldataLayout, JsonFile, PilfflonkGlobalInfo, Vkey};
 
@@ -211,7 +211,7 @@ mod tests {
 
     /// setup-snark for pilfflonk on the `vadcop_final` of a real program: the recursivef with custom
     /// trees and `lastLevelVerification` 0, the final circuit with custom templates, which the
-    /// committed circom compiles over BN254, the circuit's witness library, and the pilfflonk key of
+    /// committed circom compiles over BN128, the circuit's witness library, and the pilfflonk key of
     /// the AIR plonk2pil makes of it, every file of `provingKeySnark/final/` as `gen_pilfflonk_key`
     /// lays it out.
     ///
@@ -221,7 +221,7 @@ mod tests {
     /// is the `--publics-info`. `SETUP_SNARK_POWERS_OF_TAU` is the `--powers-of-tau`: if there is no
     /// file there, the test writes a ptau of [`TEST_PTAU_POWERS`] powers there, with the fixed τ of
     /// the tests (`pilfflonk_setup::test_ptau`), never to be used for a real key. The PIL of the AIR
-    /// is compiled over BN254 with `PIL2C_EXEC`, which must have `--field`
+    /// is compiled over BN128 with `PIL2C_EXEC`, which must have `--field`
     /// (pilfflonk/docs/README.md#compile-pil). With fibonacci-square and the Hermez ptau of 2^24 on
     /// 32 threads, that takes some 4 minutes and 3.5 GB, most of it the build of the final
     /// circuit's witness library; the test ptau holds 0.47 GB on disk:
@@ -263,14 +263,14 @@ mod tests {
         let head: Vec<&str> = circuit.lines().take(2).collect();
         assert_eq!(head, ["pragma circom 2.1.0;", "pragma custom_templates;"]);
 
-        // read_r1cs_from_bytes refuses an r1cs that is not over BN254. Its custom gates are
+        // read_r1cs_from_bytes refuses an r1cs that is not over BN128. Its custom gates are
         // PoseidonT(5), for the hashes, and a Num2Bytes(nBits) per width up to 80 bits, for the
         // range checks of the Goldilocks arithmetic.
-        let r1cs = read_r1cs_from_bytes::<Bn254>(&fs::read(dir.join("build/final.r1cs")).unwrap()).unwrap();
-        let widths = Bn254::from_decimal("1").unwrap()..=Bn254::from_decimal("80").unwrap();
+        let r1cs = read_r1cs_from_bytes::<Bn128>(&fs::read(dir.join("build/final.r1cs")).unwrap()).unwrap();
+        let widths = Bn128::from_decimal("1").unwrap()..=Bn128::from_decimal("80").unwrap();
         for gate in &r1cs.custom_gates {
             match gate.template_name.as_str() {
-                "PoseidonT" => assert_eq!(gate.parameters, [Bn254::from_decimal("5").unwrap()]),
+                "PoseidonT" => assert_eq!(gate.parameters, [Bn128::from_decimal("5").unwrap()]),
                 "Num2Bytes" => assert!(
                     matches!(gate.parameters[..], [n_bits] if widths.contains(&n_bits)),
                     "Num2Bytes{:?}",

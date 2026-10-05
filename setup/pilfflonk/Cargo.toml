@@ -1,6 +1,6 @@
 [package]
 name = "pilfflonk-setup"
-description = "Setup for the pilfflonk backend (PIL2 over BN254 with fflonk): validation, grouping, bytecode and keys"
+description = "Setup for the pilfflonk backend (PIL2 over BN128 with fflonk): validation, grouping, bytecode and keys"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

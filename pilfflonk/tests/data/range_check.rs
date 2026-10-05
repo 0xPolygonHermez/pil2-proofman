@@ -1,5 +1,5 @@
 //! The witness generator of the range check fixture (pilfflonk/docs/README.md#fixtures),
-//! `tests/fixtures/range_check/range_check.pil`, over BN254's `Fr` (every value is a small
+//! `tests/fixtures/range_check/range_check.pil`, over BN128's `Fr` (every value is a small
 //! integer). pil-fflonk has no range check example.
 //!
 //! Its fixed columns are the pilout's: the table `T = [0, 1, …, R − 1]` padded with `R − 1` (and, on

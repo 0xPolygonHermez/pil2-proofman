@@ -10,7 +10,7 @@
 // to unambiguously call the inherent method rather than the trait method.
 //
 // The trait and the unpacked impl take any `F` an unpacked row can hold, a field of any size
-// (BN254's `Fr` too); the accessors of the typed columns (`bit`, `ubit(N)`, `u8`…) convert
+// (BN128's `Fr` too); the accessors of the typed columns (`bit`, `ubit(N)`, `u8`…) convert
 // through 64 bits, so they alone ask `where F: PrimeField64`. The packed row is 64-bit only.
 
 use proc_macro2::TokenStream;

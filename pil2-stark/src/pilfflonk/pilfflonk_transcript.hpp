@@ -38,7 +38,7 @@ void encodeFr(const FrElement &element, uint8_t out[FR_BYTES]);
 FrElement fromCanonicalFr(const uint8_t bytes[FR_BYTES]);
 
 // Decodes an affine point x‖y of canonical little-endian coordinates, one the transcript can absorb
-// (pilfflonk/docs/protocol.md#transcript); `out` is unspecified on error. BN254's G1 has cofactor
+// (pilfflonk/docs/protocol.md#transcript); `out` is unspecified on error. BN128's G1 has cofactor
 // 1, so a point on the curve is in the r-torsion group.
 AbsorbError decodeG1(const uint8_t bytes[G1_BYTES], G1Point &out);
 

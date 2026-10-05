@@ -1,5 +1,5 @@
 //! The witness generator of the synthetic fixture of the im pols and the signed offsets
-//! (pilfflonk/docs/README.md#fixtures), `tests/fixtures/signed/signed.pil`, over BN254's `Fr` with
+//! (pilfflonk/docs/README.md#fixtures), `tests/fixtures/signed/signed.pil`, over BN128's `Fr` with
 //! `num-bigint`.
 //!
 //! Its fixed columns are the pilout's: `L1`, `LLAST`, `WIN` (1 on rows 1 to N − 3),
@@ -18,7 +18,7 @@
 //! Include it with `#[path = ".../pilfflonk/tests/data/signed.rs"] mod signed;`.
 
 use num_bigint::BigUint;
-use proofman_pilfflonk::{AirInstanceRef, FrBytes, InstanceWitness, Stage1Witness, Witness, BN254_R};
+use proofman_pilfflonk::{AirInstanceRef, FrBytes, InstanceWitness, Stage1Witness, Witness, BN128_R};
 
 /// The fixture's rows: `N = 2^5`.
 pub const N_BITS: u32 = 5;
@@ -38,7 +38,7 @@ pub fn witness_broken_across_the_wrap(inputs: [u64; 2]) -> Witness {
 
 /// The witness with `c[0] = a[N − 1] + c0_delta`.
 fn generate(inputs: [u64; 2], c0_delta: u64) -> Witness {
-    let r = BigUint::parse_bytes(BN254_R.as_bytes(), 10).expect("r in decimal");
+    let r = BigUint::parse_bytes(BN128_R.as_bytes(), 10).expect("r in decimal");
     let n = 1usize << N_BITS;
     let k = |row: usize| BigUint::from(row + 1);
     let p = |row: usize| BigUint::from(row + 5);

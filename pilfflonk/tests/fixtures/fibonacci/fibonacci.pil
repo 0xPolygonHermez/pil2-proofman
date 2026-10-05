@@ -2,12 +2,12 @@
 // with N = 2^8 as in its `all` program (pilfflonk/docs/README.md#fixtures). One air, one
 // instance, stage 1 only, no std, no hints.
 //
-// Compile over BN254. PIL2C_EXEC must point at a pil2com that has `--field` (the pinned
+// Compile over BN128. PIL2C_EXEC must point at a pil2com that has `--field` (the pinned
 // one ignores it and silently compiles over Goldilocks). compile-pil requires an `-I`, which
 // this program does not use:
 //   PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo run --bin proofman-setup -- compile-pil \
 //     -p pilfflonk/tests/fixtures/fibonacci/fibonacci.pil -I ./pil2-components/lib/std/pil \
-//     --field bn254 -o <out>/fibonacci.pilout
+//     --field bn128 -o <out>/fibonacci.pilout
 
 // PIL1 bound each public to a cell (`public in1 = l2c(0)`, ...). In PIL2 they are plain
 // inputs, tied to the trace only by the L1/LLAST constraints below.

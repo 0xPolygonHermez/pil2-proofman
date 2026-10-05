@@ -33,7 +33,7 @@ use std::sync::OnceLock;
 use num_bigint::BigUint;
 use proofman_pilfflonk::calldata::SELECTOR_BYTES;
 use proofman_pilfflonk::names::evaluation_name;
-use proofman_pilfflonk::{Boundary, CalldataLayout, G1Affine, JsonFile, PolType, Vkey, BN254_Q, BN254_R};
+use proofman_pilfflonk::{Boundary, CalldataLayout, G1Affine, JsonFile, PolType, Vkey, BN128_Q, BN128_R};
 use serde::Serialize;
 use serde_json::Value;
 use tera::{Context as TeraContext, Tera};
@@ -56,7 +56,7 @@ fn fail<T>(message: impl Into<String>) -> Result<T, SetupError> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// BN254's scalar field, with num-bigint: the constants the contract embeds
+// BN128's scalar field, with num-bigint: the constants the contract embeds
 // ---------------------------------------------------------------------------------------------
 
 fn big(decimal: &str) -> BigUint {
@@ -65,12 +65,12 @@ fn big(decimal: &str) -> BigUint {
 
 fn r() -> &'static BigUint {
     static R: OnceLock<BigUint> = OnceLock::new();
-    R.get_or_init(|| big(BN254_R))
+    R.get_or_init(|| big(BN128_R))
 }
 
 fn q() -> &'static BigUint {
     static Q: OnceLock<BigUint> = OnceLock::new();
-    Q.get_or_init(|| big(BN254_Q))
+    Q.get_or_init(|| big(BN128_Q))
 }
 
 fn fr_pow(base: &BigUint, exponent: u64) -> BigUint {

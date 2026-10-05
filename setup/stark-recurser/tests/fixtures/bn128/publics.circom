@@ -3,7 +3,7 @@ pragma custom_templates;
 
 include "custom/poseidon.circom";
 
-// The publics test of tests/poseidon_bn254_wrap.rs: 12 outputs and 2 public inputs, 14 publics,
+// The publics test of tests/poseidon_bn128_wrap.rs: 12 outputs and 2 public inputs, 14 publics,
 // more than the 9 of a public row, around a PoseidonT(5) use.
 template Publics() {
     signal input s;

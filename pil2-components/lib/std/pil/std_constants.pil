@@ -1,5 +1,5 @@
 require "goldilocks.pil"
-require "bn254.pil"
+require "bn128.pil"
 
 /*
 Available std modes:
@@ -127,20 +127,20 @@ function set_array_size(const int limit) {
     name    | code | note
 ------------|------|-------------------------------------------------------------------------- 
  Goldilocks |  0   | 2^64 - 2^32 + 1
- BN254      |  1   | r, the order of the groups of the BN254 curve
+ BN128      |  1   | r, the order of the groups of the BN128 curve
 */
 
 const int FIELD_GOLDILOCKS = 0;
-const int FIELD_BN254 = 1;
+const int FIELD_BN128 = 1;
 
 function get_field_code(const int prime): int {
     switch (prime) {
         case Goldilocks_p:
             return FIELD_GOLDILOCKS;
-        case Bn254_r:
-            return FIELD_BN254;
+        case Bn128_r:
+            return FIELD_BN128;
         default:
-            error(`Unknown field of order ${prime}: the std supports Goldilocks and BN254`);
+            error(`Unknown field of order ${prime}: the std supports Goldilocks and BN128`);
     }
 }
 
@@ -164,14 +164,14 @@ switch (ACTIVE_FIELD) {
 
         k_coset = Goldilocks_k;
 
-    case FIELD_BN254:
-        assert(length(Bn254_Gen) <= length(GEN));
+    case FIELD_BN128:
+        assert(length(Bn128_Gen) <= length(GEN));
 
-        for (int i = 0; i < length(Bn254_Gen); i++) {
-            GEN[i] = Bn254_Gen[i];
+        for (int i = 0; i < length(Bn128_Gen); i++) {
+            GEN[i] = Bn128_Gen[i];
         }
 
-        k_coset = Bn254_k;
+        k_coset = Bn128_k;
 
     default:
         error("Unknown field");

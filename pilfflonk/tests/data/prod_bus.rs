@@ -1,5 +1,5 @@
 //! The witness generator of the fixture of the product bus (pilfflonk/docs/README.md#fixtures),
-//! `tests/fixtures/prod_bus/prod_bus.pil`, over BN254's `Fr` (every value is a small integer).
+//! `tests/fixtures/prod_bus/prod_bus.pil`, over BN128's `Fr` (every value is a small integer).
 //!
 //! Its witness columns, in the pilout's order (stage 1, `colIdx` 0 to 3), are `a`, `c`, `b` and `d`,
 //! and its public `first`; its only fixed column is the std's `__L1__`. The stage-2 column `gprod`

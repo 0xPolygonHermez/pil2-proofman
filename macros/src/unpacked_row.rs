@@ -13,7 +13,7 @@ pub fn unpacked_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceF
         quote! {}
     };
     // An unpacked row holds one `F` per column and asks nothing else of it, so a row over any
-    // field works, BN254's `Fr` too.
+    // field works, BN128's `Fr` too.
     let generics_with_bounds = if let Some(g) = generic {
         quote! { <#g: Copy + Default + Send> }
     } else {

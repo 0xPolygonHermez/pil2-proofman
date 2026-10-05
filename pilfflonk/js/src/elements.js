@@ -3,7 +3,7 @@
 // (src/fflonk_verify.js; pilfflonk/docs/verifier.md#steps, steps 1-3):
 // - a scalar is below r;
 // - a G1 point is affine, [x, y] or [x, y, "1"] as snarkjs writes it, with coordinates below q and
-//   on the curve, which puts it in the group: the cofactor of BN254's G1 is 1;
+//   on the curve, which puts it in the group: the cofactor of BN128's G1 is 1;
 // - a G2 point is affine, [[x.c0, x.c1], [y.c0, y.c1]] (c0 + c1·u), on the twist and in the
 //   r-torsion group.
 // A value that fails throws a PilFflonkInputError naming it; the verifier rejects the proof.

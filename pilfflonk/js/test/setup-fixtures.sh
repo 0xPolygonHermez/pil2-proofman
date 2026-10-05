@@ -5,7 +5,7 @@
 #     PIL2C_EXEC=<pil2-compiler>/src/pil.js pilfflonk/js/test/setup-fixtures.sh [dir]
 #
 # 1. `cargo test --test js_fixtures tau_one_ptau` writes <dir>/tau_one.ptau, τ = 1;
-# 2. `proofman-setup compile-pil` compiles pilfflonk/tests/fixtures/fibonacci over BN254 with the
+# 2. `proofman-setup compile-pil` compiles pilfflonk/tests/fixtures/fibonacci over BN128 with the
 #    compiler PIL2C_EXEC names, which must have `--field` (the pinned one silently compiles over
 #    Goldilocks), and `proofman-setup setup-pilfflonk` writes <dir>/build/provingKey, grouped as it
 #    does by default;
@@ -43,7 +43,7 @@ setup() {
 
 js_fixtures tau_one_ptau
 setup compile-pil -p pilfflonk/tests/fixtures/fibonacci/fibonacci.pil -I ./pil2-components/lib/std/pil \
-    --field bn254 -o "$dir/fibonacci.pilout"
+    --field bn128 -o "$dir/fibonacci.pilout"
 setup setup-pilfflonk -a "$dir/fibonacci.pilout" -b "$dir/build" --powers-of-tau "$dir/tau_one.ptau"
 js_fixtures q_at_xi
 

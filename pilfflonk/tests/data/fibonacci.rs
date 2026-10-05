@@ -1,5 +1,5 @@
 //! The witness generator of the Fibonacci fixture, `tests/fixtures/fibonacci/fibonacci.pil`: a
-//! port of `execute` in pil-fflonk's `pil/sm_fibonacci/sm_fibonacci.js`, over BN254's `Fr` with
+//! port of `execute` in pil-fflonk's `pil/sm_fibonacci/sm_fibonacci.js`, over BN128's `Fr` with
 //! `num-bigint`.
 //!
 //! The JS starts from `l2[0] = input[0]`, `l1[0] = input[1]` and, for `i ≥ 1`, sets
@@ -14,12 +14,12 @@
 //! Include it with `mod data { pub mod fibonacci; }`.
 
 use num_bigint::BigUint;
-use proofman_pilfflonk::{AirInstanceRef, FrBytes, InstanceWitness, Stage1Witness, Witness, BN254_R};
+use proofman_pilfflonk::{AirInstanceRef, FrBytes, InstanceWitness, Stage1Witness, Witness, BN128_R};
 
 /// The witness of the fixture for an AIR of `2^n_bits` rows and the inputs `[in1, in2]`: one
 /// instance of air 0 of airgroup 0, with the columns `[l1, l2]` and the publics `[in1, in2, out]`.
 pub fn witness(n_bits: u32, inputs: [u64; 2]) -> Witness {
-    let r = BigUint::parse_bytes(BN254_R.as_bytes(), 10).expect("r in decimal");
+    let r = BigUint::parse_bytes(BN128_R.as_bytes(), 10).expect("r in decimal");
     let n = 1usize << n_bits;
     let mut l1 = vec![BigUint::default(); n];
     let mut l2 = vec![BigUint::default(); n];

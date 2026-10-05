@@ -1153,7 +1153,7 @@ fn setup_exec_slice<F: PrimeField64>(setup: &Setup<F>) -> &[u64] {
 pub fn recursion_trace_stride(exec: &[u64], n_cols: u64, gpu: bool) -> u64 {
     // The header is `exec_format`'s version 2, [magic|version, n_adds, map_rows, map_cols], which
     // `exec_layout` in pil2-stark/src/starkpil/recursion_trace/exec_layout.hpp also reads. No other
-    // version reaches here: `load_exec_file` refuses them, BN254's version 3 by name. One that did
+    // version reaches here: `load_exec_file` refuses them, BN128's version 3 by name. One that did
     // would get the full width, as a buffer without a header does.
     if !gpu {
         return n_cols;
@@ -1496,7 +1496,7 @@ mod stride_tests {
     use proofman_common::exec_format::{EXEC_FORMAT_VERSION, EXEC_FORMAT_VERSION_WIDE, EXEC_MAGIC};
 
     /// A version 2 header narrows the GPU fill to its map's width. Any other is not read for one,
-    /// BN254's version 3 included, and the fill keeps the air's width.
+    /// BN128's version 3 included, and the fill keeps the air's width.
     #[test]
     fn only_a_version_2_header_narrows_the_gpu_fill() {
         // magic|version, n_adds, map_rows, map_cols, and version 3's coefficient width and n_vars.

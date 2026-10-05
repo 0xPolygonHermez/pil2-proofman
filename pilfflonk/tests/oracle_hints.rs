@@ -24,13 +24,13 @@
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, expression, hint_field, operand, SymbolType};
 use proofman_pilfflonk::oracle::{AirOracle, Fr, HintKind, Values};
-use proofman_pilfflonk::{AirInstanceRef, FrBytes, InstanceWitness, Stage1Witness, Witness, BN254_R};
+use proofman_pilfflonk::{AirInstanceRef, FrBytes, InstanceWitness, Stage1Witness, Witness, BN128_R};
 
 const N: usize = 8;
 const G: u64 = 1000;
 
 fn r() -> BigUint {
-    BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap()
+    BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap()
 }
 
 fn op(o: operand::Operand) -> Option<pb::Operand> {

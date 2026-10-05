@@ -1,24 +1,24 @@
-//! The final SNARK wrap's family, PoseidonBN254 (`plonk2pil/setups/poseidon_bn254`), against
-//! pilfflonk, on circuits circom compiles for BN254 with the custom gates `PoseidonT(5)` and
+//! The final SNARK wrap's family, PoseidonBN128 (`plonk2pil/setups/poseidon_bn128`), against
+//! pilfflonk, on circuits circom compiles for BN128 with the custom gates `PoseidonT(5)` and
 //! `Num2Bytes(nBits)`, set up with the family's knobs (`wrap::MAX_CONSTRAINT_DEGREE` in the PIL,
 //! `wrap::EXTRA_MULS`):
 //!
-//! 1. **The gate.** `fixtures/bn254/poseidon_chain.circom`, three permutations in a chain, on random
+//! 1. **The gate.** `fixtures/bn128/poseidon_chain.circom`, three permutations in a chain, on random
 //!    inputs (a fixed seed). `pilfflonk check` holds on the trace, whose bands are circom's own `in`,
 //!    `im` and `out`; and with any one intermediate state changed, the round constraints fail, on
 //!    the two rows that read it and nowhere else. The circuit cannot catch that: the custom gate has
 //!    no r1cs constraint, so `snarkjs wtns check` accepts a wrong intermediate, and only the AIR
 //!    constrains every round.
-//! 2. **End to end.** `fixtures/bn254/wrap.circom`, the gate among multiplications, additions and
-//!    copies: plonk2pil, pil2com over BN254, the pilfflonk setup with plonk2pil's fixed columns, the
+//! 2. **End to end.** `fixtures/bn128/wrap.circom`, the gate among multiplications, additions and
+//!    copies: plonk2pil, pil2com over BN128, the pilfflonk setup with plonk2pil's fixed columns, the
 //!    trace from circom's witness and the `.exec`; `pilfflonk check` holds and fails with a cell
 //!    changed, and the JS verifier accepts a proof of it and refuses it with another public.
-//! 3. **The range checks.** `fixtures/bn254/num2bytes.circom`, uses of `Num2Bytes` of whole and
+//! 3. **The range checks.** `fixtures/bn128/num2bytes.circom`, uses of `Num2Bytes` of whole and
 //!    partial chunks: `pilfflonk check` holds on the trace, and fails on each attack on a range
 //!    check, a chunk outside the table, the original's free cell (`in + 2^64` with `a[5] = 1`), a
 //!    wrong multiplicity and a wrong chunk; the JS verifier accepts a proof. The AIR has the
 //!    connection on the std's product bus and the lookup on its sum bus.
-//! 4. **More publics than a row.** `fixtures/bn254/publics.circom`, 14 publics on two public rows,
+//! 4. **More publics than a row.** `fixtures/bn128/publics.circom`, 14 publics on two public rows,
 //!    each with a selector of its own, opened at its row alone: the AIR sets up at the family's
 //!    knobs, `pilfflonk check` holds and fails with any public changed, and the JS verifier accepts
 //!    a proof and refuses it with another public.
@@ -41,12 +41,12 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use num_bigint::BigUint;
 use pil2_stark_recurser::plonk2pil::field::modulus;
 use pil2_stark_recurser::plonk2pil::r1cs::types::{read_r1cs_header, PlonkOptions};
-use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::constants::ROUNDS;
-use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::wrap::{BAND_ROWS, RANGE_MUL_COLUMN};
+use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::constants::ROUNDS;
+use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap::{BAND_ROWS, RANGE_MUL_COLUMN};
 use pil2_stark_recurser::plonk2pil::{plonk2pil, PlonkResult};
 use proofman_common::exec_format::{ExecFile, RANGE_CHECK_BAND_KIND, RANGE_CHECK_CHUNK_BITS, RANGE_CHECK_CHUNK_COLS};
-use proofman_common::hash_family::BN254_WRAP_FAMILY;
-use proofman_fields::{Bn254, Field, PrimeField, QuotientMap};
+use proofman_common::hash_family::BN128_WRAP_FAMILY;
+use proofman_fields::{Bn128, Field, PrimeField, QuotientMap};
 use proofman_pilfflonk::{
     check, js_verifier, prove, AirInstanceRef, CheckOptions, CheckReport, FrBytes, InstanceWitness, JsonFile,
     PilfflonkGlobalInfo, PolType, ProveOptions, ProvingKey, Publics, Stage1Witness, Witness,
@@ -90,7 +90,7 @@ impl Inputs {
 
     fn element(&mut self) -> String {
         let bytes: Vec<u8> = (0..4).flat_map(|_| self.next_word().to_le_bytes()).collect();
-        (BigUint::from_bytes_le(&bytes) % modulus::<Bn254>()).to_str_radix(10)
+        (BigUint::from_bytes_le(&bytes) % modulus::<Bn128>()).to_str_radix(10)
     }
 
     fn elements(&mut self, n: usize) -> Vec<String> {
@@ -107,9 +107,9 @@ fn json_list(values: &[String]) -> String {
 struct Wrap {
     scratch: Scratch,
     /// circom's witness: wire 0 is the constant one, the publics follow.
-    witness: Vec<Bn254>,
+    witness: Vec<Bn128>,
     n_publics: usize,
-    res: PlonkResult<Bn254>,
+    res: PlonkResult<Bn128>,
     proving_key: PathBuf,
 }
 
@@ -121,12 +121,12 @@ impl Wrap {
         let input_path = scratch.file("input.json");
         fs::write(&input_path, input).unwrap();
         let (r1cs, wtns) =
-            compile_and_witness(&scratch.0, &manifest().join("tests/fixtures/bn254").join(circuit), &input_path);
+            compile_and_witness(&scratch.0, &manifest().join("tests/fixtures/bn128").join(circuit), &input_path);
         let header = read_r1cs_header(&r1cs).unwrap();
         let n_publics = (header.n_outputs + header.n_pub_inputs) as usize;
 
-        let options = PlonkOptions { hash_id: BN254_WRAP_FAMILY.into(), ..Default::default() };
-        let res: PlonkResult<Bn254> = plonk2pil(&r1cs, "wrap", &options).unwrap();
+        let options = PlonkOptions { hash_id: BN128_WRAP_FAMILY.into(), ..Default::default() };
+        let res: PlonkResult<Bn128> = plonk2pil(&r1cs, "wrap", &options).unwrap();
         let proving_key = set_up_key(&repo_root(), &scratch.0, &res, ptau);
         Self { witness: read_wtns(&wtns), n_publics, res, proving_key, scratch }
     }
@@ -136,11 +136,11 @@ impl Wrap {
     }
 
     /// The stage-1 trace, by column, and the publics.
-    fn trace(&self) -> (Vec<Vec<Bn254>>, Vec<Bn254>) {
+    fn trace(&self) -> (Vec<Vec<Bn128>>, Vec<Bn128>) {
         naive_trace(&self.res.exec, &self.witness, self.n(), self.n_publics)
     }
 
-    fn check(&self, pk: &ProvingKey, trace: &[Vec<Bn254>], publics: &[Bn254]) -> CheckReport {
+    fn check(&self, pk: &ProvingKey, trace: &[Vec<Bn128>], publics: &[Bn128]) -> CheckReport {
         let witness = pilfflonk_witness(self.n(), trace, publics);
         check(pk, &witness, &CheckOptions::default()).unwrap_or_else(|e| panic!("{e}"))
     }
@@ -152,15 +152,15 @@ impl Wrap {
 /// witness at its signal, but for the sentinel 0, which is 0; every other cell is 0. With
 /// range-check bands, the column the band section's aux word names is [`range_multiplicity`] of
 /// their rows. The publics are wires `1..=n_publics`.
-fn naive_trace(exec: &[u64], witness: &[Bn254], n: usize, n_publics: usize) -> (Vec<Vec<Bn254>>, Vec<Bn254>) {
-    let file = ExecFile::<Bn254>::from_words(exec).unwrap_or_else(|e| panic!("{e}"));
+fn naive_trace(exec: &[u64], witness: &[Bn128], n: usize, n_publics: usize) -> (Vec<Vec<Bn128>>, Vec<Bn128>) {
+    let file = ExecFile::<Bn128>::from_words(exec).unwrap_or_else(|e| panic!("{e}"));
     let mut w = witness.to_vec();
     for a in &file.additions {
         let v = a.coeffs[0] * w[a.wires[0] as usize] + a.coeffs[1] * w[a.wires[1] as usize];
         w.push(v);
     }
     let (rows, cols) = (file.layout.map_rows(), file.layout.map_cols());
-    let mut trace = vec![vec![Bn254::ZERO; n]; 9];
+    let mut trace = vec![vec![Bn128::ZERO; n]; 9];
     for (col, column) in trace.iter_mut().enumerate().take(cols) {
         for (row, cell) in column.iter_mut().enumerate().take(rows) {
             let signal = file.map_entry(row, col) as usize;
@@ -179,13 +179,13 @@ fn naive_trace(exec: &[u64], witness: &[Bn254], n: usize, n_publics: usize) -> (
 }
 
 /// The range-check rows of an exec: the rows of its bands.
-fn range_check_rows(file: &ExecFile<Bn254>) -> Vec<usize> {
+fn range_check_rows(file: &ExecFile<Bn128>) -> Vec<usize> {
     file.bands.iter().map(|b| b.row as usize).collect()
 }
 
 /// `RANGE_MUL` of `trace`: at row `v < 2^16`, how many of the chunk cells of `rows` hold `v`; every
 /// cell of `a[1..=5]` counts, as the AIR looks them all up, and a cell outside the table nowhere.
-fn range_multiplicity(trace: &[Vec<Bn254>], rows: &[usize]) -> Vec<Bn254> {
+fn range_multiplicity(trace: &[Vec<Bn128>], rows: &[usize]) -> Vec<Bn128> {
     let mut counts = vec![0u64; trace[0].len()];
     for &row in rows {
         for col in RANGE_CHECK_CHUNK_COLS {
@@ -194,12 +194,12 @@ fn range_multiplicity(trace: &[Vec<Bn254>], rows: &[usize]) -> Vec<Bn254> {
             }
         }
     }
-    counts.into_iter().map(Bn254::from_int).collect()
+    counts.into_iter().map(Bn128::from_int).collect()
 }
 
 /// The witness of the AIR's one instance: its stage-1 columns, `a[0..8]` and `RANGE_MUL` if it has
 /// range checks, and the publics.
-fn pilfflonk_witness(n: usize, trace: &[Vec<Bn254>], publics: &[Bn254]) -> Witness {
+fn pilfflonk_witness(n: usize, trace: &[Vec<Bn128>], publics: &[Bn128]) -> Witness {
     let columns: Vec<Vec<FrBytes>> = trace.iter().map(|c| c.iter().map(|&v| FrBytes::from(v)).collect()).collect();
     let stage1 = Stage1Witness::from_columns(n, &columns, vec![]).expect("columns of n rows");
     Witness {
@@ -226,7 +226,7 @@ fn the_rounds_hold_on_circoms_intermediates_and_fail_on_any_other() {
     let initial_state = inputs.element();
     let blocks: Vec<String> = (0..N_HASHES).map(|_| json_list(&inputs.elements(4))).collect();
     let input = format!("{{\"initialState\": \"{initial_state}\", \"in\": [{}]}}", blocks.join(", "));
-    let wrap = Wrap::set_up("poseidon_bn254_gate", "poseidon_chain.circom", &input, Ptau::TauOne);
+    let wrap = Wrap::set_up("poseidon_bn128_gate", "poseidon_chain.circom", &input, Ptau::TauOne);
     assert!(wrap.res.n_used >= N_HASHES * BAND_ROWS);
 
     let pk = ProvingKey::load(&wrap.proving_key).unwrap();
@@ -239,12 +239,12 @@ fn the_rounds_hold_on_circoms_intermediates_and_fail_on_any_other() {
     for (band, k, lane) in [(0, 1, 0), (1, 30, 3), (2, ROUNDS - 1, 4), (0, 4, 2)] {
         let row = BAND_ROWS * band + k;
         let mut wrong = trace.clone();
-        wrong[lane][row] += Bn254::ONE;
+        wrong[lane][row] += Bn128::ONE;
         let report = wrap.check(&pk, &wrong, &publics);
         assert!(!report.holds(), "im[{}][{lane}] of band {band} changed, and the check holds", k - 1);
         let failures = failures(&report);
         for (line, _) in &failures {
-            assert!(line.contains("poseidon_bn254.pil"), "{line} fails, not a round: {failures:?}");
+            assert!(line.contains("poseidon_bn128.pil"), "{line} fails, not a round: {failures:?}");
         }
         let rows: BTreeSet<u64> = failures.iter().flat_map(|(_, rows)| rows.iter().copied()).collect();
         // Round k - 1 computes it, round k reads it.
@@ -255,14 +255,14 @@ fn the_rounds_hold_on_circoms_intermediates_and_fail_on_any_other() {
 #[test]
 fn a_small_wrap_checks_proves_and_verifies() {
     if let Some(why) = missing() {
-        eprintln!("skipping the PoseidonBN254 wrap end to end: {why}");
+        eprintln!("skipping the PoseidonBN128 wrap end to end: {why}");
         return;
     }
     let _cpp = cpp_core();
     let mut inputs = Inputs(INPUT_SEED + 1);
     let [a, b] = [inputs.element(), inputs.element()];
     let input = format!("{{\"a\": \"{a}\", \"b\": \"{b}\", \"x\": {}}}", json_list(&inputs.elements(4)));
-    let wrap = Wrap::set_up("poseidon_bn254_wrap", "wrap.circom", &input, Ptau::FixedTau);
+    let wrap = Wrap::set_up("poseidon_bn128_wrap", "wrap.circom", &input, Ptau::FixedTau);
     assert_eq!(wrap.n_publics, 1);
     assert!(wrap.res.n_used > BAND_ROWS + 1, "PLONK rows past the band, to check gates 0 and 1 too");
 
@@ -273,7 +273,7 @@ fn a_small_wrap_checks_proves_and_verifies() {
 
     // The left wire of gate 0 on the first PLONK row: its gate no longer holds.
     let mut wrong = trace.clone();
-    wrong[0][BAND_ROWS] += Bn254::ONE;
+    wrong[0][BAND_ROWS] += Bn128::ONE;
     let report = wrap.check(&pk, &wrong, &publics);
     let rows: BTreeSet<u64> = failures(&report).iter().flat_map(|(_, rows)| rows.clone()).collect();
     assert!(rows.contains(&(BAND_ROWS as u64)), "a changed PLONK cell: {:?}", failures(&report));
@@ -287,7 +287,7 @@ fn a_small_wrap_checks_proves_and_verifies() {
 
 /// Proves `trace` and the publics, writes the proof, and asks the JS verifier of the key, with the
 /// publics and with `publics[changed] + 1`: whether it accepts each.
-fn js_verifies(wrap: &Wrap, pk: &ProvingKey, trace: &[Vec<Bn254>], publics: &[Bn254], changed: usize) -> [bool; 2] {
+fn js_verifies(wrap: &Wrap, pk: &ProvingKey, trace: &[Vec<Bn128>], publics: &[Bn128], changed: usize) -> [bool; 2] {
     let options = ProveOptions { insecure_blinding_seed: Some(SEED), q_part_bits: None };
     let out = prove(pk, &pilfflonk_witness(wrap.n(), trace, publics), &options).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(out.publics.0, publics.iter().map(|&p| FrBytes::from(p)).collect::<Vec<_>>());
@@ -297,7 +297,7 @@ fn js_verifies(wrap: &Wrap, pk: &ProvingKey, trace: &[Vec<Bn254>], publics: &[Bn
     let vkey = PilfflonkGlobalInfo::from_proving_key(&wrap.proving_key).unwrap().vkey_path(&wrap.proving_key);
 
     let mut other = publics.to_vec();
-    other[changed] += Bn254::ONE;
+    other[changed] += Bn128::ONE;
     let other_path = wrap.scratch.file("other_publics.json");
     Publics(other.into_iter().map(FrBytes::from).collect()).write(&other_path).unwrap();
     [&publics_path, &other_path].map(|path| js_verifier::verify(&vkey, path, &proof).unwrap())
@@ -324,10 +324,10 @@ fn range_checks_hold_and_every_attack_on_them_fails() {
         "{{\"x\": \"{x}\", \"y\": \"{y}\", \"a\": \"{a}\", \"b\": \"{b}\", \"c\": \"{c}\", \"s\": {}}}",
         json_list(&inputs.elements(4))
     );
-    let wrap = Wrap::set_up("poseidon_bn254_num2bytes", "num2bytes.circom", &input, Ptau::FixedTau);
+    let wrap = Wrap::set_up("poseidon_bn128_num2bytes", "num2bytes.circom", &input, Ptau::FixedTau);
     assert_eq!((wrap.n_publics, wrap.res.n_bits), (1, RANGE_CHECK_CHUNK_BITS as usize), "the table's 2^16 rows");
 
-    let file = ExecFile::<Bn254>::from_words(&wrap.res.exec).unwrap();
+    let file = ExecFile::<Bn128>::from_words(&wrap.res.exec).unwrap();
     let rows = range_check_rows(&file);
     let mut payloads: Vec<u64> = file.bands.iter().map(|b| b.payload).collect();
     payloads.sort_unstable();
@@ -342,11 +342,11 @@ fn range_checks_hold_and_every_attack_on_them_fails() {
     assert!(report.holds(), "the trace of circom's witness: {:?}", failures(&report));
 
     // The isolated uses: x's row, of 4 chunks, and y's, of 5.
-    let row_of = |value: u128| rows.iter().copied().find(|&row| trace[0][row] == Bn254::from_int(value)).unwrap();
+    let row_of = |value: u128| rows.iter().copied().find(|&row| trace[0][row] == Bn128::from_int(value)).unwrap();
     let (x_row, y_row) = (row_of(x), row_of(y));
-    let chunk_size = Bn254::from_int(1u64 << RANGE_CHECK_CHUNK_BITS);
+    let chunk_size = Bn128::from_int(1u64 << RANGE_CHECK_CHUNK_BITS);
     // The trace changed by `change`, with RANGE_MUL counted again: what a prover would commit.
-    let attack = |change: &dyn Fn(&mut Vec<Vec<Bn254>>)| {
+    let attack = |change: &dyn Fn(&mut Vec<Vec<Bn128>>)| {
         let mut wrong = trace.clone();
         change(&mut wrong);
         wrong[RANGE_MUL_COLUMN] = range_multiplicity(&wrong, &rows);
@@ -360,24 +360,24 @@ fn range_checks_hold_and_every_attack_on_them_fails() {
     // A chunk outside the table, with the sum unchanged: 2^16 more in chunk 0, 1 less in chunk 1.
     let outside = attack(&|t| {
         t[1][x_row] += chunk_size;
-        t[2][x_row] -= Bn254::ONE;
+        t[2][x_row] -= Bn128::ONE;
     });
     assert!(in_the_sum_bus(&outside), "a chunk of 2^16 or more fails the lookup alone: {outside:?}");
 
     // The original's free cell: a 64-bit check of in + 2^64, with the fifth chunk cell 1.
     let free_cell = attack(&|t| {
-        t[0][x_row] += Bn254::from_int(1u128 << 64);
-        t[5][x_row] = Bn254::ONE;
+        t[0][x_row] += Bn128::from_int(1u128 << 64);
+        t[5][x_row] = Bn128::ONE;
     });
     assert!(recomposition_at(&free_cell, x_row), "a cell past the chunks weighs 0: {free_cell:?}");
 
     // A wrong chunk, in range.
-    let wrong_chunk = attack(&|t| t[3][y_row] += Bn254::ONE);
+    let wrong_chunk = attack(&|t| t[3][y_row] += Bn128::ONE);
     assert!(recomposition_at(&wrong_chunk, y_row), "a wrong chunk: {wrong_chunk:?}");
 
     // A wrong multiplicity, the chunks honest.
     let mut wrong = trace.clone();
-    wrong[RANGE_MUL_COLUMN][7] += Bn254::ONE;
+    wrong[RANGE_MUL_COLUMN][7] += Bn128::ONE;
     let wrong_multiplicity = failures(&wrap.check(&pk, &wrong, &publics));
     assert!(in_the_sum_bus(&wrong_multiplicity), "a wrong multiplicity: {wrong_multiplicity:?}");
 
@@ -398,7 +398,7 @@ fn more_publics_than_a_row_check_prove_and_verify() {
     let mut inputs = Inputs(INPUT_SEED + 3);
     let [s, k] = [inputs.element(), inputs.element()];
     let input = format!("{{\"s\": \"{s}\", \"k\": \"{k}\", \"x\": {}}}", json_list(&inputs.elements(4)));
-    let wrap = Wrap::set_up("poseidon_bn254_publics", "publics.circom", &input, Ptau::FixedTau);
+    let wrap = Wrap::set_up("poseidon_bn128_publics", "publics.circom", &input, Ptau::FixedTau);
     assert_eq!(wrap.n_publics, 14);
 
     let pk = ProvingKey::load(&wrap.proving_key).unwrap();
@@ -422,7 +422,7 @@ fn more_publics_than_a_row_check_prove_and_verify() {
     let first_public_row = wrap.res.n_used - 2;
     for i in [0, 8, 9, 13] {
         let mut other = publics.clone();
-        other[i] += Bn254::ONE;
+        other[i] += Bn128::ONE;
         let failures = failures(&wrap.check(&pk, &trace, &other));
         let row = (first_public_row + i / 9) as u64;
         assert!(

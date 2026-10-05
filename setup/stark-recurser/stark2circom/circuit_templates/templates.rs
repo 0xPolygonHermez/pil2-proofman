@@ -599,7 +599,7 @@ mod tests {
     use super::*;
     use crate::stark2circom::circom_verifier::{gen_stark_verifier_bn128, Pil2CircomOptions};
     use crate::plonk2pil::r1cs_types::read_r1cs_from_bytes;
-    use proofman_fields::Bn254;
+    use proofman_fields::Bn128;
     use serde_json::json;
 
     /// A recursivef starkinfo, whose trees are custom or not, with what the final circuit and the
@@ -793,10 +793,10 @@ component main = Main();
         // The custom templates are compiled as such, the custom ones of LessThanGoldilocks among
         // them: a Num2Bytes(64) on its in and one on in + 2^64 - p. RangeCheck(154) takes two, on
         // its low 80 bits and on the rest.
-        let r1cs = read_r1cs_from_bytes::<Bn254>(&fs::read(dir.join("final.r1cs")).unwrap()).unwrap();
+        let r1cs = read_r1cs_from_bytes::<Bn128>(&fs::read(dir.join("final.r1cs")).unwrap()).unwrap();
         let gate = |id: u32| {
             let gate = &r1cs.custom_gates[id as usize];
-            let parameters: Vec<String> = gate.parameters.iter().map(Bn254::to_string).collect();
+            let parameters: Vec<String> = gate.parameters.iter().map(Bn128::to_string).collect();
             format!("{}({})", gate.template_name, parameters.join(", "))
         };
         let mut uses: Vec<String> = r1cs.custom_gates_uses.iter().map(|gate_use| gate(gate_use.id)).collect();

@@ -1,10 +1,10 @@
-// An AIR of the PLONK gates of tests/arith.rs's circuit, over BN254, for its end-to-end test: the
+// An AIR of the PLONK gates of tests/arith.rs's circuit, over BN128, for its end-to-end test: the
 // rows of the exec that test writes, a row per public, whose `a` is the public, and then a row per
 // gate, its wires `(l, r, o)` in `a`, `b` and `c`. The selectors are external fixed columns, as
 // plonk2pil's are: the test computes them from the gates. There are no copy constraints: the
-// wrap's AIR is plonk2pil's BN254 family, with its permutation.
+// wrap's AIR is plonk2pil's BN128 family, with its permutation.
 //
-// Compile over BN254: --field bn254. N is the circuit's 6 publics
+// Compile over BN128: --field bn128. N is the circuit's 6 publics
 // and 16 gates, to a power of two.
 
 const int N_PUBLICS = 6;

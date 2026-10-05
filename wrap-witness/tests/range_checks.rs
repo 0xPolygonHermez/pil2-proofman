@@ -1,5 +1,5 @@
 //! The wrap's witness of an AIR with range checks: plonk2pil's wrap of
-//! `setup/stark-recurser/tests/fixtures/bn254/num2bytes.circom`, uses of circom's `Num2Bytes` of
+//! `setup/stark-recurser/tests/fixtures/bn128/num2bytes.circom`, uses of circom's `Num2Bytes` of
 //! whole and partial chunks among PLONK gates and a `PoseidonT(5)` use, with its files laid out as
 //! setup-snark lays out `provingKeySnark/final/` (`tests/common`) and plonk2pil's exec.
 //!
@@ -32,12 +32,12 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use pil2_stark_recurser::plonk2pil::r1cs::types::{read_r1cs_header, PlonkOptions};
-use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::wrap::RANGE_MUL_COLUMN;
+use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap::RANGE_MUL_COLUMN;
 use pil2_stark_recurser::plonk2pil::{plonk2pil, PlonkResult};
 use pilfflonk_wrap_witness::{witness_from_circom, WrapArtifacts, WrapWitness};
 use proofman_common::exec_format::{ExecFile, RANGE_CHECK_CHUNK_COLS};
-use proofman_common::hash_family::BN254_WRAP_FAMILY;
-use proofman_fields::{Bn254, Field, PrimeField, QuotientMap};
+use proofman_common::hash_family::BN128_WRAP_FAMILY;
+use proofman_fields::{Bn128, Field, PrimeField, QuotientMap};
 use proofman_pilfflonk::{check, AirShape, CheckOptions, FrBytes, ProvingKey, Witness, WitnessShape};
 
 use common::{build_final, circuits_bn128, fixture, missing_prerequisite, repo_root, snarkjs_witness};
@@ -51,10 +51,10 @@ const INPUT: &str = r#"{"x": "1234605616436508552", "y": "1180591620717411303423
 /// The circuit, its wrap and its reference, built once for the tests of this binary.
 struct Circuit {
     dir: PathBuf,
-    res: PlonkResult<Bn254>,
+    res: PlonkResult<Bn128>,
     n_publics: usize,
     /// snarkjs's witness of the input.
-    reference: Vec<Bn254>,
+    reference: Vec<Bn128>,
 }
 
 impl Circuit {
@@ -66,7 +66,7 @@ impl Circuit {
         self.dir.join("input.json")
     }
 
-    fn exec(&self) -> ExecFile<Bn254> {
+    fn exec(&self) -> ExecFile<Bn128> {
         ExecFile::from_words(&self.res.exec).unwrap()
     }
 
@@ -107,19 +107,19 @@ fn build_circuit() -> Circuit {
 }
 
 /// plonk2pil's wrap of `r1cs`.
-fn wrap(r1cs: &[u8]) -> PlonkResult<Bn254> {
-    let options = PlonkOptions { hash_id: BN254_WRAP_FAMILY.into(), ..Default::default() };
+fn wrap(r1cs: &[u8]) -> PlonkResult<Bn128> {
+    let options = PlonkOptions { hash_id: BN128_WRAP_FAMILY.into(), ..Default::default() };
     plonk2pil(r1cs, "wrap", &options).unwrap()
 }
 
-fn write_exec(res: &PlonkResult<Bn254>, path: &Path) {
+fn write_exec(res: &PlonkResult<Bn128>, path: &Path) {
     fs::write(path, res.exec.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>()).unwrap();
 }
 
 /// THE NAIVE REFERENCE: snarkjs's witness, the additions appended one after another, the cell of
 /// each map entry, 0 for none; and the multiplicity, at row `v` how many chunk cells of the
 /// range-check rows hold `v`, each looked up in a map from values to counts.
-fn naive_reference(circuit: &Circuit) -> Vec<Vec<Bn254>> {
+fn naive_reference(circuit: &Circuit) -> Vec<Vec<Bn128>> {
     let exec = circuit.exec();
     let mut wires = circuit.reference.clone();
     for addition in &exec.additions {
@@ -128,10 +128,10 @@ fn naive_reference(circuit: &Circuit) -> Vec<Vec<Bn254>> {
     }
     let n_rows = 1 << circuit.res.n_bits;
     let cell = |row: usize, col: usize| match exec.map_entry(row, col) {
-        0 => Bn254::ZERO,
+        0 => Bn128::ZERO,
         wire => wires[wire as usize],
     };
-    let mut columns: Vec<Vec<Bn254>> =
+    let mut columns: Vec<Vec<Bn128>> =
         (0..RANGE_MUL_COLUMN).map(|col| (0..n_rows).map(|row| cell(row, col)).collect()).collect();
 
     let mut counts: HashMap<u64, u64> = HashMap::new();
@@ -141,7 +141,7 @@ fn naive_reference(circuit: &Circuit) -> Vec<Vec<Bn254>> {
             *counts.entry(u64::try_from(&value).unwrap()).or_insert(0) += 1;
         }
     }
-    columns.push((0..n_rows as u64).map(|v| Bn254::from_int(counts.get(&v).copied().unwrap_or(0))).collect());
+    columns.push((0..n_rows as u64).map(|v| Bn128::from_int(counts.get(&v).copied().unwrap_or(0))).collect());
     columns
 }
 
@@ -167,7 +167,7 @@ fn the_witness_is_the_naive_reference() {
     // Every chunk cell is counted once: 5 a row, the zeros past a row's chunks too, and the top
     // value of a chunk, 2^16 − 1, at its row.
     let multiplicity = &expected[RANGE_MUL_COLUMN];
-    let total: u64 = multiplicity.iter().map(|m| u64::try_from(&Bn254::from(*m).as_canonical_biguint()).unwrap()).sum();
+    let total: u64 = multiplicity.iter().map(|m| u64::try_from(&Bn128::from(*m).as_canonical_biguint()).unwrap()).sum();
     assert_eq!(total, 5 * exec.bands.len() as u64);
     assert!(multiplicity[0] != FrBytes::ZERO && multiplicity[0xffff] != FrBytes::ZERO);
 
@@ -189,7 +189,7 @@ fn pilfflonk_check_holds_on_the_witness() {
     let report = check(&pk, &witness, &CheckOptions::default()).unwrap();
     assert!(report.holds(), "pilfflonk check fails on the witness: {:?}", report.failures().collect::<Vec<_>>());
     let mut wrong = witness.clone();
-    let m = Bn254::from(wrong.instances[0].stage1.get(3, RANGE_MUL_COLUMN).unwrap()) + Bn254::ONE;
+    let m = Bn128::from(wrong.instances[0].stage1.get(3, RANGE_MUL_COLUMN).unwrap()) + Bn128::ONE;
     wrong.instances[0].stage1.set(3, RANGE_MUL_COLUMN, m.into()).unwrap();
     assert!(!check(&pk, &wrong, &CheckOptions::default()).unwrap().holds(), "a wrong multiplicity passes");
 }
@@ -207,7 +207,7 @@ fn the_witness_of_a_final_circuit_checks() {
 
     let start = Instant::now();
     let res = wrap(&fs::read(final_dir.join("final.r1cs")).unwrap());
-    let exec = ExecFile::<Bn254>::from_words(&res.exec).unwrap();
+    let exec = ExecFile::<Bn128>::from_words(&res.exec).unwrap();
     eprintln!(
         "plonk2pil: n_bits {}, n_used {}, {} range-check rows ({:.1} s)",
         res.n_bits,

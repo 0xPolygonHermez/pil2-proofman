@@ -1,6 +1,6 @@
 //! The witness generator of the Plookup fixture (pilfflonk/docs/README.md#fixtures),
 //! `tests/fixtures/plookup/plookup.pil`: a port of `execute` in pil-fflonk's
-//! `pil/sm_plookup/sm_plookup.js`, over BN254's `Fr` (every value is a small integer). The same
+//! `pil/sm_plookup/sm_plookup.js`, over BN128's `Fr` (every value is a small integer). The same
 //! witness for the sum and the product bus.
 //!
 //! Its fixed columns are the pilout's: the table `(A, B) = (i, j)` at row `16·i + j`, `SEL` 1 on the

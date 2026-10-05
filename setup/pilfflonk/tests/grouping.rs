@@ -39,7 +39,7 @@ use num_bigint::BigUint;
 use pilfflonk_setup::grouping::{fuse, group, GroupingError, GroupingParams, MAX_SEARCH_STEPS, MIN_POLS};
 use pilfflonk_setup::layout::CommittedPol;
 use proofman_pilfflonk::layout::is_valid_k;
-use proofman_pilfflonk::{Layout, BN254_R};
+use proofman_pilfflonk::{Layout, BN128_R};
 use serde_json::Value;
 
 // --- Helpers ----------------------------------------------------------------------------------
@@ -102,7 +102,7 @@ fn golden() -> Golden {
 }
 
 fn modulus() -> BigUint {
-    BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap()
+    BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap()
 }
 
 /// `5^((r−1)/d)`: a primitive `d`-th root of unity, for `d | r − 1`

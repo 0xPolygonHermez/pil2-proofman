@@ -17,7 +17,7 @@ pub struct WrapArtifacts {
     pub witness_calculator: PathBuf,
     /// The calculator's `final.dat`, which circom writes beside the C++.
     pub dat: PathBuf,
-    /// The BN254 `.exec` plonk2pil writes for the circuit: its additions, and the map of the AIR's
+    /// The BN128 `.exec` plonk2pil writes for the circuit: its additions, and the map of the AIR's
     /// stage-1 columns.
     pub exec: PathBuf,
 }

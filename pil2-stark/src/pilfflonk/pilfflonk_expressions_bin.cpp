@@ -269,7 +269,7 @@ ExpressionsBin ExpressionsBin::parse(const uint8_t *data, uint64_t size, const s
     if (prefixVersion != EXPRESSIONS_BIN_VERSION || n8 != FR_BYTES ||
         std::memcmp(modulus, FR_MODULUS_LE, FR_BYTES) != 0) {
         r1.fail("section 1 starts with version " + hex(prefixVersion) + " and n8 " + std::to_string(n8) +
-                ", not those of a revision-3 bytecode over BN254");
+                ", not those of a revision-3 bytecode over BN128");
     }
     bin.nStages = r1.u32();
     if (bin.nStages > EXPRESSIONS_BIN_MAX_N_STAGES) {

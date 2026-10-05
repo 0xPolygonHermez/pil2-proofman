@@ -1,6 +1,6 @@
-//! The pilfflonk key of a plonk2pil wrap, which the tests of the wrap (`tests/poseidon_bn254_wrap.rs`)
+//! The pilfflonk key of a plonk2pil wrap, which the tests of the wrap (`tests/poseidon_bn128_wrap.rs`)
 //! and of its witness (`wrap-witness/tests`) set up alike: plonk2pil's PIL compiled with
-//! `PIL2C_EXEC` over BN254, and set up with plonk2pil's fixed columns and the family's knobs
+//! `PIL2C_EXEC` over BN128, and set up with plonk2pil's fixed columns and the family's knobs
 //! (`wrap::EXTRA_MULS`, and `wrap::MAX_CONSTRAINT_DEGREE` in the PIL). Included with `#[path]` from
 //! outside this crate, so it reads nothing of `common` and is told where the repository is.
 
@@ -11,12 +11,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use pil2_stark_recurser::plonk2pil::setups::poseidon_bn254::wrap::EXTRA_MULS;
+use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap::EXTRA_MULS;
 use pil2_stark_recurser::plonk2pil::PlonkResult;
 use pilfflonk_setup::command::{DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau, write_tau_one_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
-use proofman_fields::Bn254;
+use proofman_fields::Bn128;
 use proofman_pilfflonk::FrBytes;
 
 /// The powers of tau of a key (`pilfflonk_setup::test_ptau`).
@@ -33,7 +33,7 @@ pub enum Ptau {
 
 /// Compiles the PIL of `res` in `dir` and sets it up there: the key's directory, `provingKey/`.
 /// `repo_root` is the repository's root, where plonk2pil's PIL and the std are.
-pub fn set_up_key(repo_root: &Path, dir: &Path, res: &PlonkResult<Bn254>, ptau: Ptau) -> PathBuf {
+pub fn set_up_key(repo_root: &Path, dir: &Path, res: &PlonkResult<Bn128>, ptau: Ptau) -> PathBuf {
     let pilout = compile_pil(repo_root, dir, &res.pil_str);
     // More powers than the layout's largest degree, 13·N + 12 for L1 at the family's knobs.
     let n_g1 = 14 << res.n_bits;
@@ -68,7 +68,7 @@ pub fn set_up_key(repo_root: &Path, dir: &Path, res: &PlonkResult<Bn254>, ptau: 
     setup.build_dir.join(PROVING_KEY_DIR)
 }
 
-/// Compiles `pil` in `dir` with `PIL2C_EXEC` over BN254 (`--field bn254`), with plonk2pil's PIL and the std
+/// Compiles `pil` in `dir` with `PIL2C_EXEC` over BN128 (`--field bn128`), with plonk2pil's PIL and the std
 /// on the include path, as the pilfflonk fixtures are compiled: the pilout.
 pub fn compile_pil(repo_root: &Path, dir: &Path, pil: &str) -> PathBuf {
     let (source, pilout) = (dir.join("wrap.pil"), dir.join("wrap.pilout"));
@@ -80,7 +80,7 @@ pub fn compile_pil(repo_root: &Path, dir: &Path, pil: &str) -> PathBuf {
         .arg("-I")
         .arg(includes.join(","))
         .arg("--field")
-        .arg("bn254")
+        .arg("bn128")
         .arg("-o")
         .arg(&pilout)
         .output()

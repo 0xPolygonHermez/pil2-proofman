@@ -9,7 +9,7 @@
 //!   [`check_prover_hints`], on the hints as the passes process them (the ones `<air>.bin` holds,
 //!   `crate::bytecode`); [`validate`] only checks their names, and that a stage with columns has
 //!   some hint;
-//! - the extended domain must fit in the 2-adicity of BN254: [`check_extended_domain`], called
+//! - the extended domain must fit in the 2-adicity of BN128: [`check_extended_domain`], called
 //!   with the `nBitsExt` of `layout::Degrees` (pilfflonk/docs/protocol.md#degrees);
 //! - the ptau must hold as many powers `[τ^i]₁` as the largest `degree` of the layout:
 //!   [`crate::keys::write_srs`] asks the C++ reader for exactly that many, and the reader refuses a
@@ -68,7 +68,7 @@ const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
 
 /// `r`, the modulus of `Fr`.
 fn r() -> BigUint {
-    FieldCfg::bn254().modulus().clone()
+    FieldCfg::bn128().modulus().clone()
 }
 
 /// A name for an AIR in the errors: its name, or its position if it has none.
@@ -115,7 +115,7 @@ pub fn validate(pilout: &pb::PilOut) -> Result<ValidAir<'_>, SetupError> {
     Ok(valid)
 }
 
-/// Checks that the extended domain, of `2^n_bits_ext` points, fits in the 2-adicity of BN254
+/// Checks that the extended domain, of `2^n_bits_ext` points, fits in the 2-adicity of BN128
 /// (pilfflonk/docs/protocol.md#degrees). The command calls it with the `nBitsExt` of
 /// `layout::Degrees`.
 pub fn check_extended_domain(n_bits_ext: u64) -> Result<(), SetupError> {
@@ -132,7 +132,7 @@ fn check_base_field(pilout: &pb::PilOut) -> Result<(), SetupError> {
     } else if base_field == BigUint::from(GOLDILOCKS) {
         Err(SetupError::GoldilocksPilout)
     } else {
-        Err(SetupError::NotBn254 { base_field: base_field.to_str_radix(10) })
+        Err(SetupError::NotBn128 { base_field: base_field.to_str_radix(10) })
     }
 }
 
@@ -415,7 +415,7 @@ fn global_operands(e: &pb::GlobalExpression) -> [Option<&pb::GlobalOperand>; 2] 
 }
 
 /// The constants of the AIR's expressions and of the global ones must be below `r`: a pilout
-/// over BN254 has none that is not, and reducing one would hide a compiler bug
+/// over BN128 has none that is not, and reducing one would hide a compiler bug
 /// (pilfflonk/docs/README.md#compile-pil).
 /// The expressions the hints refer to are the AIR's; the numbers of the prover hints' own fields,
 /// the bytecode checks as it encodes them (`crate::bytecode`).

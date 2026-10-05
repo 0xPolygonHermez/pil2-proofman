@@ -30,7 +30,7 @@ libloading.workspace = true
 blake3.workspace = true
 colored.workspace = true
 serde.workspace = true
-# pil-helpers tells a BN254 pilout by its `baseField` (a big-endian integer).
+# pil-helpers tells a BN128 pilout by its `baseField` (a big-endian integer).
 num-bigint.workspace = true
 
 clap = { version = "4.5.38", features = ["derive", "env"] }

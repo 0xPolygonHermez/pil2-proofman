@@ -308,7 +308,7 @@ void testPtauErrors() {
     sections = ptauSections(8);
     sections[0].second[0] = 48;
     writeBinFile(bad, "ptau", 1, sections);
-    expectThrows<FormatError>(fromPtau, "n8q = 48, not the 32 bytes of BN254's base field: not a BN254 ptau");
+    expectThrows<FormatError>(fromPtau, "n8q = 48, not the 32 bytes of BN128's base field: not a BN128 ptau");
     sections = ptauSections(8);
     sections[0].second.push_back(0);
     writeBinFile(bad, "ptau", 1, sections);
@@ -317,10 +317,10 @@ void testPtauErrors() {
     writeBinFile(bad, "ptau", 1, sections);
     expectThrows<FormatError>(fromPtau, "the header (section 1) has 3 bytes");
     patchedCopy(good, bad, PTAU_Q, {0x48}); // q + 1
-    expectThrows<FormatError>(fromPtau, "q is not BN254's base field modulus");
+    expectThrows<FormatError>(fromPtau, "q is not BN128's base field modulus");
     const Bytes32 r(R_HEX);
     patchedCopy(good, bad, PTAU_Q, Bytes(r.bytes, r.bytes + 32));
-    expectThrows<FormatError>(fromPtau, "q is not BN254's base field modulus");
+    expectThrows<FormatError>(fromPtau, "q is not BN128's base field modulus");
 
     // The points' sections.
     sections = ptauSections(8);
@@ -450,10 +450,10 @@ void testSrsFileErrors() {
     expectThrows<FormatError>(load, "Section data exceeds file size");
 
     // The header.
-    expectPatched(SRS_N8Q, {31}, "n8q and q are not those of BN254's base field");
-    expectPatched(SRS_Q + 31, {0x31}, "n8q and q are not those of BN254's base field");
-    expectPatched(SRS_N8R, {48}, "n8r and r are not those of BN254's scalar field");
-    expectPatched(SRS_R, {0x02}, "n8r and r are not those of BN254's scalar field");
+    expectPatched(SRS_N8Q, {31}, "n8q and q are not those of BN128's base field");
+    expectPatched(SRS_Q + 31, {0x31}, "n8q and q are not those of BN128's base field");
+    expectPatched(SRS_N8R, {48}, "n8r and r are not those of BN128's scalar field");
+    expectPatched(SRS_R, {0x02}, "n8r and r are not those of BN128's scalar field");
     expectPatched(SRS_NG1, littleEndian(0, 8), "nG1 = 0, not between 1 and 4294967295");
     expectPatched(SRS_NG1, littleEndian(uint64_t(1) << 32, 8), "nG1 = 4294967296, not between 1 and 4294967295");
     expectPatched(SRS_NG1, littleEndian(9, 8), "section 2 ([τ^i]₁) has 512 bytes, not the 576 of nG1 = 9 points");
@@ -527,7 +527,7 @@ void testG2Api(const void *srs) {
     constexpr size_t N_COORDINATES = PilFflonk::SRS_G2_BYTES / PilFflonk::FQ_BYTES;
     uint8_t out[PilFflonk::SRS_G2_BYTES];
 
-    // [1]₂: the generator's x.c0, x.c1, y.c0, y.c1, as every BN254 library writes them, in hex.
+    // [1]₂: the generator's x.c0, x.c1, y.c0, y.c1, as every BN128 library writes them, in hex.
     const Bytes32 generator[N_COORDINATES] = {
         Bytes32("1800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed"),
         Bytes32("198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c2"),

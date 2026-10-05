@@ -390,11 +390,11 @@ fn read_column(values: &[Vec<u8>], what: &str) -> PilfflonkResult<Vec<Fr>> {
 
 impl AirOracle {
     /// The oracle of air `air_id` of airgroup `airgroup_id`. Refuses a pilout that is not over
-    /// BN254, fixed columns without their values (a pilout compiled with fixed columns to a
+    /// BN128, fixed columns without their values (a pilout compiled with fixed columns to a
     /// file), and constraints without an expression.
     pub fn new(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize) -> PilfflonkResult<Self> {
         if BigUint::from_bytes_be(&pilout.base_field) != *r() {
-            return invalid!("the pilout is not over BN254: its base field is not r");
+            return invalid!("the pilout is not over BN128: its base field is not r");
         }
         let Some(airgroup) = pilout.air_groups.get(airgroup_id) else {
             return invalid!("the pilout has no airgroup {airgroup_id}");

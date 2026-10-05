@@ -1,4 +1,4 @@
-//! The passes over BN254 (`PilInfoCfg::bn254()`): every value has dimension 1, a negation is a
+//! The passes over BN128 (`PilInfoCfg::bn128()`): every value has dimension 1, a negation is a
 //! multiplication by `r − 1`, constants keep all their bits, there is no FRI polynomial, and the
 //! degree search follows `DegreePolicy::Search`.
 //!
@@ -7,7 +7,7 @@
 //! compiles over Goldilocks):
 //!
 //! ```text
-//! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p pil-info --test bn254 -- --ignored
+//! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p pil-info --test bn128 -- --ignored
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -93,7 +93,7 @@ fn column_symbol(name: &str, kind: SymbolType, stage: u32, id: u32) -> pb::Symbo
     }
 }
 
-/// One BN254 air of 16 rows with one stage (`numChallenges = [0]`), as pil2com emits it.
+/// One BN128 air of 16 rows with one stage (`numChallenges = [0]`), as pil2com emits it.
 fn pilout(
     witness_names: &[&str],
     fixed_names: &[&str],
@@ -223,7 +223,7 @@ fn im_pols(result: &PilInfoResult) -> usize {
 
 /// Everything a pilfflonk run must give: dimension 1 everywhere, and no trace of the FRI opening
 /// (pilfflonk/docs/README.md#setup-pilfflonk).
-fn assert_bn254_shape(result: &PilInfoResult) {
+fn assert_bn128_shape(result: &PilInfoResult) {
     let setup = &result.setup;
     let q_stage = setup.n_stages + 1;
 
@@ -273,14 +273,14 @@ fn assert_bn254_shape(result: &PilInfoResult) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn bn254_has_dimension_one_and_no_fri() {
-    let result = run(&wide_constants_pilout(), &PilInfoCfg::bn254());
-    assert_bn254_shape(&result);
+fn bn128_has_dimension_one_and_no_fri() {
+    let result = run(&wide_constants_pilout(), &PilInfoCfg::bn128());
+    assert_bn128_shape(&result);
 }
 
 #[test]
-fn bn254_keeps_wide_constants_and_negates_with_r_minus_one() {
-    let result = run(&wide_constants_pilout(), &PilInfoCfg::bn254());
+fn bn128_keeps_wide_constants_and_negates_with_r_minus_one() {
+    let result = run(&wide_constants_pilout(), &PilInfoCfg::bn128());
 
     let in_code = numbers(&result);
     for value in [WIDE, R_MINUS_TWO, R_MINUS_ONE] {
@@ -322,18 +322,18 @@ fn goldilocks_keeps_the_fri_opening() {
 }
 
 #[test]
-fn bn254_default_search_needs_no_im_pols_for_a_quartic() {
-    let result = run(&sum_of_quartics_pilout(), &PilInfoCfg::bn254());
-    assert_bn254_shape(&result);
+fn bn128_default_search_needs_no_im_pols_for_a_quartic() {
+    let result = run(&sum_of_quartics_pilout(), &PilInfoCfg::bn128());
+    assert_bn128_shape(&result);
     assert_eq!(im_pols(&result), 0);
     assert_eq!(result.q_deg, 3);
 }
 
 #[test]
-fn bn254_lower_max_constraint_degree_adds_im_pols() {
-    let cfg = PilInfoCfg { degree_policy: DegreePolicy::Search { max: 3 }, ..PilInfoCfg::bn254() };
+fn bn128_lower_max_constraint_degree_adds_im_pols() {
+    let cfg = PilInfoCfg { degree_policy: DegreePolicy::Search { max: 3 }, ..PilInfoCfg::bn128() };
     let result = run(&sum_of_quartics_pilout(), &cfg);
-    assert_bn254_shape(&result);
+    assert_bn128_shape(&result);
     assert_eq!(im_pols(&result), 2);
     assert_eq!(result.q_deg, 2);
     // The im pols live at the last stage of the air (pilfflonk/docs/protocol.md#degree-search):
@@ -351,27 +351,27 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("the repository root")
 }
 
-/// Compile `pil` (relative to the repository root) over BN254 with `PIL2C_EXEC`.
-fn compile_bn254(pil: &str) -> pb::PilOut {
+/// Compile `pil` (relative to the repository root) over BN128 with `PIL2C_EXEC`.
+fn compile_bn128(pil: &str) -> pb::PilOut {
     let compiler = std::env::var("PIL2C_EXEC")
         .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
     let root = repo_root();
     let stem = Path::new(pil).file_stem().expect("a file name").to_string_lossy().into_owned();
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{stem}.bn254.pilout"));
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{stem}.bn128.pilout"));
     let status = Command::new(compiler)
         .current_dir(&root)
         .arg(pil)
         .arg("-I")
         .arg("pil2-components/lib/std/pil")
         .arg("--field")
-        .arg("bn254")
+        .arg("bn128")
         .arg("-o")
         .arg(&out)
         .status()
         .expect("PIL2C_EXEC runs");
     assert!(status.success(), "pil2com failed on {pil}");
     let pilout = PilOutProxy::new(out.to_str().expect("a UTF-8 path")).expect("a pilout").pilout;
-    assert_eq!(pilout.base_field, big_be(R), "{pil} was not compiled over BN254: does PIL2C_EXEC have `--field`?");
+    assert_eq!(pilout.base_field, big_be(R), "{pil} was not compiled over BN128: does PIL2C_EXEC have `--field`?");
     pilout
 }
 
@@ -383,11 +383,11 @@ fn compile_bn254(pil: &str) -> pb::PilOut {
 /// pol and `qDeg = 1`, not the `qDeg = 2` without im pols, which costs the same.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
-fn fibonacci_fixture_over_bn254() {
-    let pilout = compile_bn254("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
-    let result = run(&pilout, &PilInfoCfg::bn254());
+fn fibonacci_fixture_over_bn128() {
+    let pilout = compile_bn128("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
+    let result = run(&pilout, &PilInfoCfg::bn128());
 
-    assert_bn254_shape(&result);
+    assert_bn128_shape(&result);
     let user_constraints = result.setup.constraints.iter().filter(|c| !c.im_pol).count();
     assert_eq!(user_constraints, 5);
     assert!(result.setup.constraints.iter().all(|c| c.boundary == "everyRow"));
@@ -403,7 +403,7 @@ fn fibonacci_fixture_over_bn254() {
     assert!(!in_code.iter().any(|n| n == GOLDILOCKS_NEG_ONE), "{in_code:?}");
 
     let at_degree_3 =
-        run(&pilout, &PilInfoCfg { degree_policy: DegreePolicy::Search { max: 3 }, ..PilInfoCfg::bn254() });
+        run(&pilout, &PilInfoCfg { degree_policy: DegreePolicy::Search { max: 3 }, ..PilInfoCfg::bn128() });
     assert_eq!((im_pols(&at_degree_3), at_degree_3.q_deg), (1, 1), "the same tie within 2..=3");
 
     println!(
@@ -416,14 +416,14 @@ fn fibonacci_fixture_over_bn254() {
     );
 }
 
-/// `tests/fixtures/wide_constants.pil` compiled over BN254: the compiler's constants survive whole.
+/// `tests/fixtures/wide_constants.pil` compiled over BN128: the compiler's constants survive whole.
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
-fn wide_constants_fixture_over_bn254() {
-    let pilout = compile_bn254("setup/pil-info/tests/fixtures/wide_constants.pil");
-    let result = run(&pilout, &PilInfoCfg::bn254());
+fn wide_constants_fixture_over_bn128() {
+    let pilout = compile_bn128("setup/pil-info/tests/fixtures/wide_constants.pil");
+    let result = run(&pilout, &PilInfoCfg::bn128());
 
-    assert_bn254_shape(&result);
+    assert_bn128_shape(&result);
     let in_code = numbers(&result);
     for value in [WIDE, R_MINUS_TWO, R_MINUS_ONE] {
         assert!(in_code.iter().any(|n| n == value), "{value} not in the code: {in_code:?}");

@@ -187,7 +187,7 @@ bool batchInverse(FrElement *out, const FrElement *values, uint64_t n) {
 Lde::Lde(uint64_t _nBits, uint64_t _nBitsExt) {
     if (_nBitsExt > MAX_NBITS_EXT) {
         throw invalid("Lde", "nBitsExt = " + std::to_string(_nBitsExt) + " exceeds " + std::to_string(MAX_NBITS_EXT) +
-                                 ", the 2-adicity of the BN254 scalar field");
+                                 ", the 2-adicity of the BN128 scalar field");
     }
     if (_nBits > _nBitsExt) {
         throw invalid("Lde",

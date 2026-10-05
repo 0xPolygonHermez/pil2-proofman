@@ -17,7 +17,7 @@
 //!   has `M·N + 2` coefficients, and the last one the rest of `Q`'s ([`QSplit`]).
 //! - The extended domain is the smallest power of two `≥` `Q`'s coefficients and `≥ N + |O|_max +
 //!   1`, the coefficients of the column with the most blinding, which the prover also extends to
-//!   it: `2^nBitsExt` points, `nBitsExt ≤ 28` for BN254's roots of unity (checked by the callers).
+//!   it: `2^nBitsExt` points, `nBitsExt ≤ 28` for BN128's roots of unity (checked by the callers).
 //!   It is `Q`'s, split or not: the prover computes `Q` whole on it before it splits it.
 
 use crate::error::{invalid, PilfflonkResult};
@@ -40,7 +40,7 @@ pub struct Degrees {
 
 fn check_n_bits(n_bits: u64) -> PilfflonkResult<()> {
     if n_bits > MAX_NBITS {
-        return invalid!("an AIR of 2^{n_bits} rows: BN254's roots of unity allow at most 2^{MAX_NBITS}");
+        return invalid!("an AIR of 2^{n_bits} rows: BN128's roots of unity allow at most 2^{MAX_NBITS}");
     }
     Ok(())
 }

@@ -41,7 +41,7 @@ import { fromObjectVk, qPieceIndex, vkeyDigest } from "./vkey.js";
 
 let curvePromise;
 
-// BN254, single-threaded: a verification is small, and no workers are left to terminate.
+// BN128, single-threaded: a verification is small, and no workers are left to terminate.
 export function getCurve() {
     if (!curvePromise) curvePromise = buildBn128(true);
     return curvePromise;

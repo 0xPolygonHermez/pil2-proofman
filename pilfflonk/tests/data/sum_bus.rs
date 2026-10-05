@@ -1,5 +1,5 @@
 //! The witness generator of the fixture of the sum bus (pilfflonk/docs/README.md#fixtures),
-//! `tests/fixtures/sum_bus/sum_bus.pil`, over BN254's `Fr` (every value is a small integer).
+//! `tests/fixtures/sum_bus/sum_bus.pil`, over BN128's `Fr` (every value is a small integer).
 //!
 //! Its fixed columns are the pilout's: the table `T = [0, 1, …, N − 1]` and `TT = [0, 1, 4, …]`, its
 //! squares (and the std's `__L1__`). Its witness columns, in the pilout's order (stage 1, `colIdx` 0

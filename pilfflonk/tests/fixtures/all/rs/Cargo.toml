@@ -1,6 +1,6 @@
 [package]
 name = "pilfflonk-all"
-description = "The pilfflonk witness library of pil-fflonk's example `all`, over BN254's Fr: a test of the witness-library API"
+description = "The pilfflonk witness library of pil-fflonk's example `all`, over BN128's Fr: a test of the witness-library API"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

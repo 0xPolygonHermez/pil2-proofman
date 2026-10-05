@@ -1,10 +1,10 @@
 //! The constants of circom's `PoseidonT(5)` (`circuits.bn128/custom/poseidon.circom`) that the
 //! setup writes into fixed columns: the round constants, `POSEIDON_C_ORIGINAL(5)` of
 //! `poseidon_constants_original.circom`, in decimal. The MDS matrix, `POSEIDON_M_ORIGINAL(5)`, is the
-//! PIL's (`pil/circuits/poseidon_bn254.pil`), since only the gate's constraints read it. A test reads
+//! PIL's (`pil/circuits/poseidon_bn128.pil`), since only the gate's constraints read it. A test reads
 //! both off the circom file.
 
-use proofman_fields::Bn254;
+use proofman_fields::Bn128;
 
 /// The lanes of the state.
 pub const WIDTH: usize = 5;
@@ -25,15 +25,15 @@ pub const fn is_full_round(r: usize) -> bool {
 
 /// The element of canonical value `decimal`. Only for constant items: a wrong literal fails the
 /// build.
-const fn element(decimal: &str) -> Bn254 {
-    match Bn254::from_decimal(decimal) {
+const fn element(decimal: &str) -> Bn128 {
+    match Bn128::from_decimal(decimal) {
         Some(x) => x,
         None => panic!("not a canonical decimal element of Fr"),
     }
 }
 
 /// `POSEIDON_C_ORIGINAL(5)`: round `r` adds `ROUND_CONSTANTS[WIDTH·r + j]` to lane `j`.
-pub const ROUND_CONSTANTS: [Bn254; WIDTH * ROUNDS] = [
+pub const ROUND_CONSTANTS: [Bn128; WIDTH * ROUNDS] = [
     element("6652655389322448471317061533546982911992554640679550674058582942754771150993"),
     element("2411464732857349694082092299330329691469354396507353145272547491824343787723"),
     element("21491443688002139478732659842894153142870918973450440713149176834049574486740"),
@@ -423,8 +423,8 @@ mod tests {
     /// The PIL's MDS matrix is circom's, row-major.
     #[test]
     fn the_pils_mds_matrix_is_circoms() {
-        let pil = read("plonk2pil/pil/circuits/poseidon_bn254.pil");
-        let decl = &pil[pil.find("const int POSEIDON_BN254_M[").expect("the matrix")..];
+        let pil = read("plonk2pil/pil/circuits/poseidon_bn128.pil");
+        let decl = &pil[pil.find("const int POSEIDON_BN128_M[").expect("the matrix")..];
         let values = &decl[decl.find('=').unwrap()..decl.find(';').unwrap()];
         let circom = circom_constants("POSEIDON_M_ORIGINAL");
         assert_eq!(circom.len(), WIDTH * WIDTH);
@@ -435,11 +435,11 @@ mod tests {
     /// Poseidon: `poseidon([1, 2, 3, 4])`, of state `[0, 1, 2, 3, 4]`, is circomlibjs's test vector.
     #[test]
     fn the_rounds_are_circomlibs_poseidon() {
-        let m: Vec<Bn254> = circom_constants("POSEIDON_M_ORIGINAL")
+        let m: Vec<Bn128> = circom_constants("POSEIDON_M_ORIGINAL")
             .iter()
-            .map(|v| Bn254::from_decimal(&v.to_str_radix(10)).unwrap())
+            .map(|v| Bn128::from_decimal(&v.to_str_radix(10)).unwrap())
             .collect();
-        let mut state: [Bn254; WIDTH] = core::array::from_fn(|j| Bn254::from_int(j as u64));
+        let mut state: [Bn128; WIDTH] = core::array::from_fn(|j| Bn128::from_int(j as u64));
         for r in 0..ROUNDS {
             for (j, lane) in state.iter_mut().enumerate() {
                 *lane += ROUND_CONSTANTS[WIDTH * r + j];
@@ -447,7 +447,7 @@ mod tests {
                     *lane = lane.exp_u64(5);
                 }
             }
-            state = core::array::from_fn(|i| (0..WIDTH).fold(Bn254::ZERO, |acc, j| acc + m[WIDTH * i + j] * state[j]));
+            state = core::array::from_fn(|i| (0..WIDTH).fold(Bn128::ZERO, |acc, j| acc + m[WIDTH * i + j] * state[j]));
         }
         let expected = "18821383157269793795438455681495246036402687001665670618754263018637548127333";
         assert_eq!(state[0].to_string(), expected);

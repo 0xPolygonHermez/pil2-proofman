@@ -393,7 +393,7 @@ fn column_of(info: &PilfflonkInfo, e: &EvMapEntry) -> ColumnRef {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
-    let pilout = compile_bn254("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
+    let pilout = compile_bn128("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
     let dir = Scratch::new("fibonacci");
 
     // The setup, as `setup-pilfflonk --no-packing` runs it.
@@ -501,7 +501,7 @@ fn sum_bus_challenges() -> Vec<Fr> {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_sum_bus_fixtures_are_the_setups_and_the_oracles() {
-    let pilout = compile_bn254("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil");
+    let pilout = compile_bn128("pilfflonk/tests/fixtures/sum_bus/sum_bus.pil");
     let dir = Scratch::new("sum_bus");
     let opts = SetupPilfflonkOptions {
         airout_path: dir.0.join("sum_bus.pilout"),

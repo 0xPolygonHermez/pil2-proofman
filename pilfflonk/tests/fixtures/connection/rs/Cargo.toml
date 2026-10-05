@@ -1,6 +1,6 @@
 [package]
 name = "pilfflonk-connection"
-description = "The pilfflonk witness library of the Connection fixture, over BN254's Fr: a test of the witness-library API"
+description = "The pilfflonk witness library of the Connection fixture, over BN128's Fr: a test of the witness-library API"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

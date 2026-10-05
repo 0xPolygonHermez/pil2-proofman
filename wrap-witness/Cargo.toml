@@ -1,6 +1,6 @@
 [package]
 name = "pilfflonk-wrap-witness"
-description = "The witness of the pilfflonk wrap: the final circuit's circom witness and its BN254 .exec, as the stage-1 columns of a pilfflonk AIR"
+description = "The witness of the pilfflonk wrap: the final circuit's circom witness and its BN128 .exec, as the stage-1 columns of a pilfflonk AIR"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
@@ -33,7 +33,7 @@ rayon = { workspace = true }
 cc = "1"
 
 [dev-dependencies]
-# The tests' circuit: read as BN254, converted to PLONK gates, and its exec written.
+# The tests' circuit: read as BN128, converted to PLONK gates, and its exec written.
 pil2-stark-recurser = { workspace = true }
 # Builds the circuit's witness library as setup-snark builds final.so.
 pil2-stark-setup = { workspace = true }

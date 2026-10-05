@@ -286,7 +286,7 @@ pub(crate) mod tests {
         for absent in ["hash", "curve", "transcriptArity", "aggregationArity", "latticeSize", "hasCompressedFinal"] {
             assert!(!text.contains(&format!("\"{absent}\"")), "{absent} must not be written");
         }
-        assert!(text.contains(&format!("\"modulus\": \"{}\"", crate::field::BN254_R)));
+        assert!(text.contains(&format!("\"modulus\": \"{}\"", crate::field::BN128_R)));
         assert!(text.contains("\"backend\": \"pilfflonk\"") && text.contains("\"transcript\": \"keccak256\""));
     }
 
@@ -304,10 +304,10 @@ pub(crate) mod tests {
         let text = sample().to_json_string().unwrap();
         for (from, to) in [
             ("\"backend\": \"pilfflonk\"", "\"backend\": \"stark\""),
-            ("\"field\": \"bn254\"", "\"field\": \"goldilocks\""),
+            ("\"field\": \"bn128\"", "\"field\": \"goldilocks\""),
             ("\"transcript\": \"keccak256\"", "\"transcript\": \"poseidon2\""),
             ("\"formatVersion\": 1", "\"formatVersion\": 2"),
-            (crate::field::BN254_R, crate::field::BN254_Q),
+            (crate::field::BN128_R, crate::field::BN128_Q),
             ("\"nPublics\": 2", "\"nPublics\": 3"),
             ("\"num_rows\": 16", "\"num_rows\": 12"),
             ("\"num_rows\": 16", "\"num_rows\": 536870912"),

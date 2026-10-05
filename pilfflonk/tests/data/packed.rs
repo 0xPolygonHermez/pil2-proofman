@@ -1,5 +1,5 @@
 //! The witness generator of the synthetic fixture of the packing
-//! (pilfflonk/docs/README.md#fixtures), `tests/fixtures/packed/packed.pil`, over BN254's `Fr` with
+//! (pilfflonk/docs/README.md#fixtures), `tests/fixtures/packed/packed.pil`, over BN128's `Fr` with
 //! `num-bigint`.
 //!
 //! Its fixed columns are the pilout's: `L1`, `LLAST`, `K[i] = [i+1, i+2, …]` and `S = [3, 4, …]`.
@@ -13,7 +13,7 @@
 //! Include it with `#[path = ".../pilfflonk/tests/data/packed.rs"] mod packed;`.
 
 use num_bigint::BigUint;
-use proofman_pilfflonk::{AirInstanceRef, FrBytes, InstanceWitness, Stage1Witness, Witness, BN254_R};
+use proofman_pilfflonk::{AirInstanceRef, FrBytes, InstanceWitness, Stage1Witness, Witness, BN128_R};
 
 /// The fixture's rows: `N = 2^4`.
 pub const N_BITS: u32 = 4;
@@ -21,7 +21,7 @@ pub const N_BITS: u32 = 4;
 /// The witness of the fixture for the input `in1`: one instance of air 0 of airgroup 0, with the
 /// columns `[a[0], …, a[7], c, b]` and the publics `[in1, out]`.
 pub fn witness(in1: u64) -> Witness {
-    let r = BigUint::parse_bytes(BN254_R.as_bytes(), 10).expect("r in decimal");
+    let r = BigUint::parse_bytes(BN128_R.as_bytes(), 10).expect("r in decimal");
     let n = 1usize << N_BITS;
     let k = |i: usize, row: usize| BigUint::from(i + 1 + row);
     let s = |row: usize| BigUint::from(3 + row);

@@ -12,7 +12,7 @@ namespace PilFflonk {
 // AIR, the part of the STARK's starkinfo.json pilfflonk keeps and the layout of the AIR's f_i. The
 // format is owned by the Rust crate proofman-pilfflonk (pilfflonk/src/pilfflonk_info.rs), which
 // writes the file for the setup and documents every field; the fields here keep its names and
-// meaning. BN254 has no extension field: every dim is 1.
+// meaning. BN128 has no extension field: every dim is 1.
 //
 // The reader checks the types of all the fields and that no field is missing or unknown, so that
 // the two sides cannot drift apart silently (pilfflonk/docs/README.md#code-map), and every index

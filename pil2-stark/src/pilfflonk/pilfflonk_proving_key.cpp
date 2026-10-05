@@ -193,8 +193,8 @@ GlobalInfo GlobalInfo::parse(const std::string &text) {
     if (u64(field(j, "formatVersion", ""), "formatVersion") != 1) {
         failGlobalInfo("formatVersion", "must be 1, the version this prover reads");
     }
-    if (str(field(j, "field", ""), "field") != "bn254") {
-        failGlobalInfo("field", "must be \"bn254\"");
+    if (str(field(j, "field", ""), "field") != "bn128") {
+        failGlobalInfo("field", "must be \"bn128\"");
     }
 
     GlobalInfo info;
@@ -466,7 +466,7 @@ AirDegrees airDegrees(const PilfflonkInfo &info, const std::string &name) {
     d.nBitsExt = ceilLog2(std::max(d.qCoefficients, d.n + d.maxOpenings + 1));
     if (d.nBitsExt > MAX_NBITS_EXT) {
         throw FormatError(name + ": the extended domain has 2^" + std::to_string(d.nBitsExt) +
-                          " points, and BN254's roots of unity allow at most 2^28 "
+                          " points, and BN128's roots of unity allow at most 2^28 "
                           "(pilfflonk/docs/protocol.md#degrees)");
     }
 

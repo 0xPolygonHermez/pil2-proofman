@@ -40,7 +40,7 @@ fn its_air_is_found_in_any_airgroup() {
 
 // --- The base field ------------------------------------------------------------------------
 
-/// The pilout pil2com writes for `--field bn254` when it ignores `--field`, as the pinned compiler
+/// The pilout pil2com writes for `--field bn128` when it ignores `--field`, as the pinned compiler
 /// does (pilfflonk/docs/README.md#compile-pil): over Goldilocks. The error says how to compile it.
 #[test]
 fn a_goldilocks_pilout_is_refused() {
@@ -50,7 +50,7 @@ fn a_goldilocks_pilout_is_refused() {
     assert!(matches!(err, SetupError::GoldilocksPilout), "{err}");
     let message = err.to_string();
     assert!(
-        message.contains("Goldilocks") && message.contains("PIL2C_EXEC") && message.contains("--field bn254"),
+        message.contains("Goldilocks") && message.contains("PIL2C_EXEC") && message.contains("--field bn128"),
         "{message}"
     );
 }
@@ -62,7 +62,7 @@ fn a_pilout_over_any_other_field_is_refused() {
         let mut pilout = pilout();
         pilout.base_field = be(&value);
         match refusal(&pilout) {
-            SetupError::NotBn254 { base_field } => assert_eq!(base_field, value.to_str_radix(10)),
+            SetupError::NotBn128 { base_field } => assert_eq!(base_field, value.to_str_radix(10)),
             other => panic!("{other}"),
         }
     }

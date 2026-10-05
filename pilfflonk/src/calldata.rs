@@ -27,7 +27,7 @@
 
 use std::path::Path;
 
-use proofman_fields::{Bn254, Field};
+use proofman_fields::{Bn128, Field};
 use proofman_starks_lib_c::{pilfflonk_keccak256_c, PilFflonkErrorKind};
 
 use crate::error::{invalid, PilfflonkError, PilfflonkResult};
@@ -208,7 +208,7 @@ pub fn verifier_challenges(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> P
 
 /// The auxiliary inverses of the calldata of a proof of `vkey` whose `xiSeed` is `xi_seed`:
 /// `1/(ξ − ω^j)` for each row `j` of [`CalldataLayout::aux_rows`], with `ξ = xiSeed^powerW` and `ω`
-/// the root of unity of the domain, `5^((r − 1)/N)` (`Bn254::W`, `shplonk.js`'s `rootOfUnity`).
+/// the root of unity of the domain, `5^((r − 1)/N)` (`Bn128::W`, `shplonk.js`'s `rootOfUnity`).
 /// Refuses a `ξ` that is a row of the domain: then `Z_H(ξ) = 0`, and the verifier rejects the proof
 /// for its `invZh`.
 pub fn auxiliary_inverses(vkey: &Vkey, xi_seed: &FrBytes) -> PilfflonkResult<Vec<FrBytes>> {
@@ -216,10 +216,10 @@ pub fn auxiliary_inverses(vkey: &Vkey, xi_seed: &FrBytes) -> PilfflonkResult<Vec
     if rows.is_empty() {
         return Ok(Vec::new());
     }
-    let Some(omega) = usize::try_from(vkey.power).ok().and_then(|power| Bn254::W.get(power)) else {
-        return invalid!("power {} is above the 2-adicity of r − 1, {}", vkey.power, Bn254::TWO_ADICITY);
+    let Some(omega) = usize::try_from(vkey.power).ok().and_then(|power| Bn128::W.get(power)) else {
+        return invalid!("power {} is above the 2-adicity of r − 1, {}", vkey.power, Bn128::TWO_ADICITY);
     };
-    let xi = Bn254::from(*xi_seed).exp_u64(vkey.power_w);
+    let xi = Bn128::from(*xi_seed).exp_u64(vkey.power_w);
     rows.iter()
         .map(|&j| match (xi - omega.exp_u64(j)).try_inverse() {
             Some(inverse) => Ok(FrBytes::from(inverse)),

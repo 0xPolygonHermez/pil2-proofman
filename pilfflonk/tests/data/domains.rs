@@ -1,6 +1,6 @@
 //! Synthetic pilouts for the constraint domains (pilfflonk/docs/README.md#fixtures), built in code
 //! with `prost`: the compiler of `develop-0.14.0` emits only `everyRow`, so `firstRow`, `lastRow`
-//! and `everyFrame` are reachable no other way. And their witness generators, over BN254's `Fr`
+//! and `everyFrame` are reachable no other way. And their witness generators, over BN128's `Fr`
 //! with `num-bigint`.
 //!
 //! Each AIR has `N = 2^4` rows, a fixed column `K = [1, 2, …, N]`, one witness column `x<j>` per
@@ -35,7 +35,7 @@
 
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
-use proofman_pilfflonk::{AirInstanceRef, FrBytes, InstanceWitness, Stage1Witness, Witness, BN254_R};
+use proofman_pilfflonk::{AirInstanceRef, FrBytes, InstanceWitness, Stage1Witness, Witness, BN128_R};
 
 /// The AIRs' rows: `N = 2^4`.
 pub const N_BITS: u32 = 4;
@@ -162,7 +162,7 @@ fn symbol(name: &str, kind: SymbolType, id: u32, stage: Option<u32>, air: bool) 
     }
 }
 
-/// The pilout of `air`, over BN254 (see the module).
+/// The pilout of `air`, over BN128 (see the module).
 pub fn pilout(air: Air) -> pb::PilOut {
     use constraint::Constraint as C;
     let rules = air.rules();
@@ -236,7 +236,7 @@ pub fn pilout(air: Air) -> pb::PilOut {
 // ---------------------------------------------------------------------------------------------
 
 fn r() -> BigUint {
-    BigUint::parse_bytes(BN254_R.as_bytes(), 10).expect("r in decimal")
+    BigUint::parse_bytes(BN128_R.as_bytes(), 10).expect("r in decimal")
 }
 
 fn k_at(row: usize) -> BigUint {

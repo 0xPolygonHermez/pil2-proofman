@@ -1,11 +1,11 @@
-//! The wrap's witness on a small circuit over BN254, on an AIR of plain PLONK gates rather than
-//! plonk2pil's BN254 wrap family (`tests/range_checks.rs` has that one): the circuit of plonk2pil's
-//! BN254 test, `setup/stark-recurser/tests/fixtures/bn254/arith.circom`, and its `input.json` as
+//! The wrap's witness on a small circuit over BN128, on an AIR of plain PLONK gates rather than
+//! plonk2pil's BN128 wrap family (`tests/range_checks.rs` has that one): the circuit of plonk2pil's
+//! BN128 test, `setup/stark-recurser/tests/fixtures/bn128/arith.circom`, and its `input.json` as
 //! the zkin.
 //!
 //! The circuit's files are laid out as setup-snark lays out `provingKeySnark/final/`,
 //! `final/final.{so,dat,exec}` (`tests/common`):
-//! - it is compiled with the committed circom (`setup/circom`), for BN254;
+//! - it is compiled with the committed circom (`setup/circom`), for BN128;
 //! - its witness calculator is built as setup-snark builds `final.so`: `WitnessTracker`, with the
 //!   Makefile of `setup/final_snark_circom/`;
 //! - its exec is written by plonk2pil's writer: the additions of `r1cs2plonk`, and a map of a row
@@ -15,7 +15,7 @@
 //! The reference is snarkjs's witness of the same input, from the circom wasm, with the additions
 //! applied naively. The tests need what setup-snark needs to build `final.so` (make, g++, nasm and
 //! nlohmann/json), and Node.js with the snarkjs of `setup/pil2-stark/node_modules` (`npm install`
-//! there): without node or snarkjs, they say why and pass, as plonk2pil's BN254 test does.
+//! there): without node or snarkjs, they say why and pass, as plonk2pil's BN128 test does.
 //!
 //! `the_witness_proves_on_an_air_of_the_gates` proves the witness, loaded with `-w`'s
 //! `load_witness_library`, on a PIL2 AIR of the gates (`tests/fixtures/plonk.pil`, no copy
@@ -45,7 +45,7 @@ use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE
 use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
 use pilfflonk_wrap_witness::{witness_from_circom, WrapArtifacts, WrapWitness, WrapWitnessError};
-use proofman_fields::{Bn254, Field, Goldilocks};
+use proofman_fields::{Bn128, Field, Goldilocks};
 use proofman_pilfflonk::{
     check, compute_witness, js_verifier, load_witness_library, prove, AirShape, CheckOptions, FrBytes, JsonFile,
     PilfflonkError, PilfflonkGlobalInfo, ProveOptions, ProvingKey, Publics, Witness, WitnessShape,
@@ -71,15 +71,15 @@ fn zkin() -> PathBuf {
 struct Circuit {
     /// `final/` holds its files, as `provingKeySnark/final/`.
     dir: PathBuf,
-    gates: Vec<PlonkConstraint<Bn254>>,
+    gates: Vec<PlonkConstraint<Bn128>>,
     /// The r1cs's wire count, from which `r1cs2plonk` numbers the additions.
     n_vars: u32,
-    additions: Vec<PlonkAddition<Bn254>>,
+    additions: Vec<PlonkAddition<Bn128>>,
     /// The map, as plonk2pil's packers make one: a column at a time, `N` rows each.
     s_map: Vec<Vec<u32>>,
     n_bits: u64,
     /// snarkjs's witness of the zkin.
-    reference: Vec<Bn254>,
+    reference: Vec<Bn128>,
 }
 
 impl Circuit {
@@ -150,7 +150,7 @@ fn build_circuit() -> Circuit {
     }
     let r1cs_bytes = build_final(&dir, &fixture("arith.circom"), &[]);
 
-    let r1cs = read_r1cs_from_bytes::<Bn254>(&r1cs_bytes).unwrap();
+    let r1cs = read_r1cs_from_bytes::<Bn128>(&r1cs_bytes).unwrap();
     assert_eq!(r1cs.header.n_outputs as usize + r1cs.header.n_pub_inputs as usize, N_PUBLICS);
     let (gates, additions) = r1cs2plonk(&r1cs);
     assert!(!additions.is_empty(), "the circuit's wide sum must introduce additions");
@@ -177,29 +177,29 @@ fn build_circuit() -> Circuit {
 
 /// The naive reference: snarkjs's witness, the additions appended one after another, and the cell
 /// of each map entry, 0 for none; the columns, and the publics after wire 0.
-fn reference(circuit: &Circuit) -> (Vec<Vec<Bn254>>, Vec<Bn254>) {
+fn reference(circuit: &Circuit) -> (Vec<Vec<Bn128>>, Vec<Bn128>) {
     let mut wires = circuit.reference.clone();
     for addition in &circuit.additions {
         let [l, r] = addition.wires.map(|wire| wires[wire as usize]);
         wires.push(addition.coeffs[0] * l + addition.coeffs[1] * r);
     }
-    let mut columns: Vec<Vec<Bn254>> = circuit
+    let mut columns: Vec<Vec<Bn128>> = circuit
         .s_map
         .iter()
-        .map(|column| column.iter().map(|&wire| if wire == 0 { Bn254::ZERO } else { wires[wire as usize] }).collect())
+        .map(|column| column.iter().map(|&wire| if wire == 0 { Bn128::ZERO } else { wires[wire as usize] }).collect())
         .collect();
-    columns.resize(N_COLS, vec![Bn254::ZERO; circuit.n_rows()]);
+    columns.resize(N_COLS, vec![Bn128::ZERO; circuit.n_rows()]);
     (columns, circuit.reference[1..=N_PUBLICS].to_vec())
 }
 
-fn value(witness: &Witness, row: usize, col: usize) -> Bn254 {
+fn value(witness: &Witness, row: usize, col: usize) -> Bn128 {
     witness.instances[0].stage1.get(row, col).unwrap().into()
 }
 
 /// The gates that fail on the rows of `witness`: `qM·l·r + qL·l + qR·r + qO·o + qC` of gate `k` on
 /// row `N_PUBLICS + k`.
 fn failing_gates(circuit: &Circuit, witness: &Witness) -> Vec<usize> {
-    let fails = |(k, gate): &(usize, &PlonkConstraint<Bn254>)| {
+    let fails = |(k, gate): &(usize, &PlonkConstraint<Bn128>)| {
         let [l, r, o] = [0, 1, 2].map(|col| value(witness, N_PUBLICS + k, col));
         let [q_m, q_l, q_r, q_o, q_c] = gate.coeffs;
         !(q_m * l * r + q_l * l + q_r * r + q_o * o + q_c).is_zero()
@@ -250,7 +250,7 @@ fn every_plonk_gate_holds_on_the_rows() {
     );
     let (k, _) = circuit.gates.iter().enumerate().find(|(_, g)| !g.coeffs[3].is_zero()).unwrap();
     let mut wrong = witness.clone();
-    let o = value(&wrong, N_PUBLICS + k, 2) + Bn254::ONE;
+    let o = value(&wrong, N_PUBLICS + k, 2) + Bn128::ONE;
     wrong.instances[0].stage1.set(N_PUBLICS + k, 2, o.into()).unwrap();
     assert_eq!(failing_gates(circuit, &wrong), vec![k]);
 }
@@ -308,12 +308,12 @@ fn files_and_keys_that_do_not_fit_are_refused() {
         }
     }
 
-    // A Goldilocks exec, and a BN254 one with a gate band of the STARK's.
+    // A Goldilocks exec, and a BN128 one with a gate band of the STARK's.
     let goldilocks = circuit.file("goldilocks.exec");
     circuit.write_exec::<Goldilocks>(&goldilocks, &[], &[]);
     let err = WrapWitness::load(&WrapArtifacts { exec: goldilocks, ..artifacts.clone() }).unwrap_err();
     assert!(matches!(err, WrapWitnessError::Exec(_)), "{err}");
-    assert!(err.to_string().contains("not version 3 with the 4-word ones of BN254"), "{err}");
+    assert!(err.to_string().contains("not version 3 with the 4-word ones of BN128"), "{err}");
     let banded = circuit.file("banded.exec");
     let band = GateBand { row: 0, kind: GateBandKind::Poseidon1CompressorSponge, payload: 0 };
     circuit.write_exec(&banded, &circuit.additions, &[band]);
@@ -384,7 +384,7 @@ fn zkins_the_circuit_cannot_take_are_refused() {
 }
 
 /// The witness, from the cdylib as `-w` loads it, proves on a PIL2 AIR of the circuit's gates over
-/// BN254 (`tests/fixtures/plonk.pil`): `pilfflonk check` passes on it, the JS verifier accepts the
+/// BN128 (`tests/fixtures/plonk.pil`): `pilfflonk check` passes on it, the JS verifier accepts the
 /// proof, and rejects it with another public. The selectors are the AIR's external fixed columns,
 /// as plonk2pil's are the wrap's.
 #[test]
@@ -402,7 +402,7 @@ fn the_witness_proves_on_an_air_of_the_gates() {
         Command::new(compiler)
             .arg(manifest.join("tests/fixtures/plonk.pil"))
             .arg("--field")
-            .arg("bn254")
+            .arg("bn128")
             .arg("-o")
             .arg(&pilout),
         "pil2com",
@@ -457,7 +457,7 @@ fn the_witness_proves_on_an_air_of_the_gates() {
     assert!(report.holds(), "pilfflonk check fails on the witness: {:?}", report.failures().collect::<Vec<_>>());
     let mut wrong = witness.clone();
     let k = N_PUBLICS + circuit.gates.iter().position(|g| !g.coeffs[3].is_zero()).unwrap();
-    let o = value(&wrong, k, 2) + Bn254::ONE;
+    let o = value(&wrong, k, 2) + Bn128::ONE;
     wrong.instances[0].stage1.set(k, 2, o.into()).unwrap();
     assert!(!check(&pk, &wrong, &CheckOptions::default()).unwrap().holds(), "a wrong cell passes pilfflonk check");
 

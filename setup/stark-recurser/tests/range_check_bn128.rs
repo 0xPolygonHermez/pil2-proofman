@@ -1,5 +1,5 @@
-//! The range checks of the BN254 verifier's custom mode, `circuits.bn128/custom/rangecheck.circom`
-//! and `custom/lessthangl.circom`, on `fixtures/bn254/range_check.circom`: a `RangeCheck` of each
+//! The range checks of the BN128 verifier's custom mode, `circuits.bn128/custom/rangecheck.circom`
+//! and `custom/lessthangl.circom`, on `fixtures/bn128/range_check.circom`: a `RangeCheck` of each
 //! width that matters to `Num2Bytes`, and a `LessThanGoldilocks`.
 //!
 //! `Num2Bytes` is a custom gate, which has no r1cs constraint: circom computes its 16-bit chunks and
@@ -20,7 +20,7 @@ use std::sync::OnceLock;
 
 use num_bigint::BigUint;
 use pil2_stark_recurser::plonk2pil::r1cs::types::{read_r1cs_from_bytes, LinearCombination, R1csConstraint, R1csFile};
-use proofman_fields::{Bn254, Field, PrimeField};
+use proofman_fields::{Bn128, Field, PrimeField};
 
 use common::{circom, circuits_bn128, manifest, missing_prerequisite, read_wtns, run, snarkjs};
 
@@ -61,7 +61,7 @@ impl Inputs {
 /// The circuit, compiled once for the tests of this binary.
 struct Circuit {
     dir: PathBuf,
-    r1cs: R1csFile<Bn254>,
+    r1cs: R1csFile<Bn128>,
 }
 
 fn circuit() -> Option<&'static Circuit> {
@@ -80,7 +80,7 @@ fn circuit() -> Option<&'static Circuit> {
 impl Circuit {
     /// As `common::compile_and_witness` compiles a circuit.
     fn compile() -> Self {
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("range_check_bn254");
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("range_check_bn128");
         if dir.exists() {
             fs::remove_dir_all(&dir).unwrap();
         }
@@ -89,7 +89,7 @@ impl Circuit {
             Command::new(circom())
                 .args(["--O1", "--r1cs", "--wasm", "--prime", "bn128", "-l"])
                 .arg(circuits_bn128())
-                .arg(manifest().join("tests/fixtures/bn254/range_check.circom"))
+                .arg(manifest().join("tests/fixtures/bn128/range_check.circom"))
                 .arg("-o")
                 .arg(&dir),
             "circom",
@@ -100,7 +100,7 @@ impl Circuit {
 
     /// The witness of `inputs`, or what snarkjs says when the circuit refuses them. `tag` names its
     /// files.
-    fn witness(&self, tag: &str, inputs: &Inputs) -> Result<Vec<Bn254>, String> {
+    fn witness(&self, tag: &str, inputs: &Inputs) -> Result<Vec<Bn128>, String> {
         let (input, wtns) = (self.dir.join(format!("{tag}.json")), self.dir.join(format!("{tag}.wtns")));
         fs::write(&input, inputs.json()).unwrap();
         let out = Command::new("node")
@@ -118,18 +118,18 @@ impl Circuit {
     }
 
     /// The r1cs constraints `witness` breaks.
-    fn failing_constraints(&self, witness: &[Bn254]) -> Vec<usize> {
-        let eval = |lc: &LinearCombination<Bn254>| {
-            lc.iter().fold(Bn254::ZERO, |acc, (&wire, &q)| acc + q * witness[wire as usize])
+    fn failing_constraints(&self, witness: &[Bn128]) -> Vec<usize> {
+        let eval = |lc: &LinearCombination<Bn128>| {
+            lc.iter().fold(Bn128::ZERO, |acc, (&wire, &q)| acc + q * witness[wire as usize])
         };
-        let holds = |c: &R1csConstraint<Bn254>| eval(&c.a) * eval(&c.b) == eval(&c.c);
+        let holds = |c: &R1csConstraint<Bn128>| eval(&c.a) * eval(&c.b) == eval(&c.c);
         self.r1cs.constraints.iter().enumerate().filter(|(_, c)| !holds(c)).map(|(i, _)| i).collect()
     }
 
     /// Every use of the witness, as `(nBits, in)`, once it is checked to be a `Num2Bytes(nBits)` of
     /// signals `[in, out…]`: `nBits` at most 80, and `out` the `ceil(nBits/16)` chunks of `in`, each
     /// below 2^16, which add up to it.
-    fn uses(&self, witness: &[Bn254]) -> Vec<(u32, BigUint)> {
+    fn uses(&self, witness: &[Bn128]) -> Vec<(u32, BigUint)> {
         let value = |wire: u64| witness[wire as usize].as_canonical_biguint();
         let mut uses: Vec<(u32, BigUint)> = self
             .r1cs
@@ -209,13 +209,13 @@ fn every_use_is_a_num2bytes_of_a_value_and_its_16_bit_chunks() {
 
     // The r1cs adds the two parts of a wide RangeCheck back up to its value: the high part of
     // RangeCheck(154), its only Num2Bytes(74), changed, breaks it.
-    let (gates, n_bits) = (&circuit.r1cs.custom_gates, [Bn254::from_decimal("74").unwrap()]);
+    let (gates, n_bits) = (&circuit.r1cs.custom_gates, [Bn128::from_decimal("74").unwrap()]);
     let high = circuit
         .r1cs
         .custom_gates_uses
         .iter()
         .find(|gate_use| gates[gate_use.id as usize].parameters == n_bits)
         .expect("the Num2Bytes(74) of RangeCheck(154)");
-    witness[high.signals[0] as usize] += Bn254::ONE;
+    witness[high.signals[0] as usize] += Bn128::ONE;
     assert_eq!(circuit.failing_constraints(&witness).len(), 1);
 }

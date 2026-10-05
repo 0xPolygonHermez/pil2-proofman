@@ -42,7 +42,7 @@ the STARK, so the STARK tools refuse this file by themselves and cannot load it 
 - **The STARK's common fields**, with their names and meaning: `name`, `airs` (per airgroup, each
   `{name, num_rows}`), `air_groups`, `aggTypes`, `nPublics`, `numChallenges`, `numProofValues`,
   `proofValuesMap`, `publicsMap`.
-- **pilfflonk's**: `"backend": "pilfflonk"`, `"formatVersion": 1`, `"field": "bn254"`, `"modulus"`
+- **pilfflonk's**: `"backend": "pilfflonk"`, `"formatVersion": 1`, `"field": "bn128"`, `"modulus"`
   (`r` in decimal), `"transcript": "keccak256"`, and `setupParams`, the arguments that fix the layout
   and the degrees: `maxConstraintDegree`, `extraMuls`, `maxQDegree` (the option, whether or not it
   splits `Q`) and `packing` (`false` with `--no-packing`).
@@ -94,7 +94,7 @@ code that computes `Q(ξ)` from the evaluations, and no `queryVerifier`. The set
 `<air>.bin`, revision 3: the code the prover runs over `Fr` (the im pols, `Q`, and the expressions the
 hints refer to), the constraints for `pilfflonk check`, and the prover hints. It is the STARK's prover
 `.bin` field by field (`setup/pil2-stark/src/io/bin_file.rs`, read by `expressions_bin.cpp` and run by
-`expressions_pack.hpp`), every value of dimension 1, and it departs from it only where BN254 and
+`expressions_pack.hpp`), every value of dimension 1, and it departs from it only where BN128 and
 dimension 1 force it to:
 
 - no dimension fields: no `destDim`, `nTemp3`, `maxTmp3` or temporaries of the extension field, and no

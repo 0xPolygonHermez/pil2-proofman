@@ -1,4 +1,4 @@
-// The std's connections over the field of the compilation (tests/std_bn254.rs): compiled over BN254
+// The std's connections over the field of the compilation (tests/std_bn128.rs): compiled over BN128
 // and over Goldilocks, the pilout must carry that field's roots of unity and coset generator. Compile-only.
 require "std_constants.pil"
 require "std_connection.pil"

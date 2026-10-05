@@ -2,7 +2,7 @@
 //! its witness is the generator's (`pilfflonk/tests/data/all.rs`) byte for byte, with pil-fflonk's
 //! publics for pil-fflonk's inputs; its rows are the stage-1 columns of the keys of the fixture on
 //! either bus, in their order; and `src/pil_helpers` is what pil-helpers writes for the fixture's
-//! BN254 pilouts.
+//! BN128 pilouts.
 //!
 //! The library is this crate's, `libpilfflonk_all.so`, which Cargo builds for its tests. A test
 //! cannot link it (a Rust `dylib` would bring a second `std`), so it includes the rows of
@@ -46,10 +46,10 @@ use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE
 use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_cli::commands::pil_helpers::PilHelpersCmd;
-use proofman_fields::Bn254;
+use proofman_fields::Bn128;
 use proofman_pilfflonk::{
     check, compute_witness, load_witness_library, AirInstanceRef, AirShape, CheckOptions, FrBytes, PilfflonkError,
-    PilfflonkInfo, ProvingKey, WitnessShape, BN254_R,
+    PilfflonkInfo, ProvingKey, WitnessShape, BN128_R,
 };
 use witness_libraries::built_library;
 
@@ -134,7 +134,7 @@ fn the_library_refuses_what_it_cannot_compute() {
     let dir = TestDir::new("refusals");
     let mut library = load_witness_library(&all_library(), 0).unwrap();
     // Public inputs that are not Fr values: a JSON number, a value not below r.
-    for text in [r#"{"in1": 1}"#, &format!(r#"{{"in2": "{BN254_R}"}}"#)] {
+    for text in [r#"{"in1": 1}"#, &format!(r#"{{"in2": "{BN128_R}"}}"#)] {
         let path = dir.file("bad.json");
         fs::write(&path, text).unwrap();
         let err = compute_witness(&mut *library, &all_shape(), Some(&path)).unwrap_err();
@@ -150,7 +150,7 @@ fn the_library_refuses_what_it_cannot_compute() {
 // On the compiled fixture (needs PIL2C_EXEC)
 // ---------------------------------------------------------------------------------------------
 
-/// Compiles the fixture on `bus` (`sum` or `prod`) over BN254 with `PIL2C_EXEC` to `dir/all.pilout`,
+/// Compiles the fixture on `bus` (`sum` or `prod`) over BN128 with `PIL2C_EXEC` to `dir/all.pilout`,
 /// as `src/lib.rs` says: the pilout's name, `all`, is the stem of its file, whatever the bus.
 fn compile(dir: &TestDir, bus: &str) -> PathBuf {
     let compiler = std::env::var("PIL2C_EXEC")
@@ -159,7 +159,7 @@ fn compile(dir: &TestDir, bus: &str) -> PathBuf {
     let out = Command::new(compiler)
         .current_dir(repo_root())
         .arg(format!("pilfflonk/tests/fixtures/all/all_{bus}.pil"))
-        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254", "-o"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o"])
         .arg(&pilout)
         .output()
         .expect("PIL2C_EXEC runs");
@@ -201,10 +201,10 @@ fn stage1_columns(info: &PilfflonkInfo) -> Vec<(String, usize)> {
         .collect()
 }
 
-/// The fields of the row, each with its column: its offset in the row, in `Bn254` values.
+/// The fields of the row, each with its column: its offset in the row, in `Bn128` values.
 macro_rules! row_columns {
     ($row:ty: $($field:ident),*) => {
-        vec![$((stringify!($field).to_string(), offset_of!($row, $field) / size_of::<Bn254>())),*]
+        vec![$((stringify!($field).to_string(), offset_of!($row, $field) / size_of::<Bn128>())),*]
     };
 }
 
@@ -215,7 +215,7 @@ macro_rules! row_columns {
 #[test]
 #[ignore = "needs PIL2C_EXEC"]
 fn the_rows_are_the_stage_1_columns_of_the_keys() {
-    type Row = AllTraceRow<Bn254>;
+    type Row = AllTraceRow<Bn128>;
     for bus in ["sum", "prod"] {
         let dir = TestDir::new(&format!("keys_{bus}"));
         let opts = SetupPilfflonkOptions {
@@ -242,8 +242,8 @@ fn the_rows_are_the_stage_1_columns_of_the_keys() {
             plookup_sel, plookup_a, plookup_b, plookup_cc, plookup_mul
         );
         assert_eq!(fields, stage1_columns(info), "{bus}");
-        assert_eq!(AllTrace::<Bn254>::ROW_SIZE, stage1_columns(info).len(), "{bus}");
-        assert_eq!(size_of::<Row>(), AllTrace::<Bn254>::ROW_SIZE * size_of::<Bn254>(), "{bus}: no padding");
+        assert_eq!(AllTrace::<Bn128>::ROW_SIZE, stage1_columns(info).len(), "{bus}");
+        assert_eq!(size_of::<Row>(), AllTrace::<Bn128>::ROW_SIZE * size_of::<Bn128>(), "{bus}: no padding");
         let shape = pk.witness_shape().unwrap();
         assert_eq!(shape, all_shape(), "{bus}");
 

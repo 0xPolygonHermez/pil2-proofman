@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-// C API of the pilfflonk BN254 backend. The Rust side declares it by hand in
+// C API of the pilfflonk BN128 backend. The Rust side declares it by hand in
 // provers/starks-lib-c/bindings_pilfflonk.rs: keep both in sync.
 //
 // Conventions:
@@ -59,7 +59,7 @@ extern "C" {
     // succeeded. The next pilfflonk_* call on the same thread overwrites it.
     int pilfflonk_last_status(void);
 
-    // PILFFLONK_OK if `scalar` (little-endian) is below the BN254 scalar modulus r,
+    // PILFFLONK_OK if `scalar` (little-endian) is below the BN128 scalar modulus r,
     // PILFFLONK_ERR_NON_CANONICAL otherwise.
     int pilfflonk_fr_check_canonical(const uint8_t scalar[32]);
 
@@ -125,7 +125,7 @@ extern "C" {
     // is never left half written.
     // PILFFLONK_ERR_INVALID_ARGUMENT if a path is NULL, if n_g1 is 0 or above 2^32 - 1, or if the
     // ptau has fewer than n_g1 powers [τ^i]₁; PILFFLONK_ERR_IO if a file cannot be opened, read or
-    // written; PILFFLONK_ERR_FORMAT if the ptau is not a BN254 one, a section is missing or cut
+    // written; PILFFLONK_ERR_FORMAT if the ptau is not a BN128 one, a section is missing or cut
     // short, or a point is not valid.
     int pilfflonk_srs_from_ptau(const char *ptau_path, uint64_t n_g1, const char *srs_path);
 

@@ -32,7 +32,7 @@ fn from_hex(hex: &str) -> [u8; 32] {
     bytes
 }
 
-/// BN254's base field modulus q, little-endian.
+/// BN128's base field modulus q, little-endian.
 const Q: &str = "47fd7cd8168c203c8dca7168916a81975d588181b64550b829a031e1724e6430";
 
 /// The generators of G1, (1, 2), and G2 in Montgomery form (c·2^256 mod q), little-endian: as a
@@ -164,7 +164,7 @@ fn commits_fixed_columns_with_a_tau_one_srs() {
 }
 
 /// The generator of G2, canonical big-endian coordinates `x.c0, x.c1, y.c0, y.c1`, as every
-/// BN254 library writes them.
+/// BN128 library writes them.
 const G2_CANONICAL: [&str; 4] = [
     "1800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed",
     "198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c2",

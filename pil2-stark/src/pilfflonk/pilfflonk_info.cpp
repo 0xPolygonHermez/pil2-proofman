@@ -123,7 +123,7 @@ PolMapEntry polMapEntry(const json &value, const std::string &where) {
     p.expId = p.hasExpId ? u64(j["expId"], at(where, "expId")) : 0;
     p.stagePos = u64(j["stagePos"], at(where, "stagePos"));
     if (p.dim != 1) {
-        fail(at(where, "dim"), "must be 1: BN254 has no extension field");
+        fail(at(where, "dim"), "must be 1: BN128 has no extension field");
     }
     return p;
 }
@@ -136,7 +136,7 @@ ChallengeMapEntry challengeMapEntry(const json &value, const std::string &where)
     c.dim = u64(j["dim"], at(where, "dim"));
     c.stageId = u64(j["stageId"], at(where, "stageId"));
     if (c.dim != 1) {
-        fail(at(where, "dim"), "must be 1: BN254 has no extension field");
+        fail(at(where, "dim"), "must be 1: BN128 has no extension field");
     }
     return c;
 }
@@ -219,7 +219,7 @@ void checkIndices(const PilfflonkInfo &info) {
         fail("nStages", "must be at least 1");
     }
     if (info.qDim != 1) {
-        fail("qDim", "must be 1: BN254 has no extension field");
+        fail("qDim", "must be 1: BN128 has no extension field");
     }
     if (info.nConstants != info.constPolsMap.size()) {
         fail("nConstants", "must be the number of entries of constPolsMap");

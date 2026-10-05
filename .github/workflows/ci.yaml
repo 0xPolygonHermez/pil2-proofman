@@ -303,21 +303,20 @@ jobs:
     # prove-snark and verify-snark on that key and proof, and on the Fibonacci fixture, and check
     # that verify-snark refuses a changed evaluation, a changed public and another key's vkey.
     #
-    # Prepared, but not run yet: the wrap's AIR is compiled over BN254, which needs a pil2com that
-    # has `--field` (pilfflonk/docs/README.md#compile-pil): commit PIL2_COMPILER_COMMIT of
-    # pil2-compiler's branch develop-0.14.0-pil2-fflonk, which is not published. Once it is, set the
-    # repository variable PILFFLONK_BN254_CI to "true" (Settings > Secrets and variables > Actions >
-    # Variables) and the job runs, with the compiler at that commit.
+    # The wrap's AIR is compiled over BN128, which needs a pil2com that has `--field`
+    # (pilfflonk/docs/README.md#compile-pil): commit PIL2_COMPILER_COMMIT of pil2-compiler's branch
+    # develop-0.14.0-pil2-fflonk. The job runs when the repository variable PILFFLONK_BN128_CI is
+    # "true" (Settings > Secrets and variables > Actions > Variables).
     #
     # The ptau is a test one, written here (pilfflonk/bench/inputs.rs: its τ is public, good for a
     # test and nothing else), with the fewest powers setup-snark accepts for this key: 2^19 rows,
     # 13·2^19 + 12 powers (it refuses fewer, and says how many it needs). 436 MB, where the Hermez
     # ptau of 2^24 is 19 GB.
     name: Test pilfflonk wrap (fibonacci-square)
-    if: ${{ vars.PILFFLONK_BN254_CI == 'true' }}
+    if: ${{ vars.PILFFLONK_BN128_CI == 'true' }}
     runs-on: ubuntu-latest
     env:
-      PIL2_COMPILER_COMMIT: abe87b8b31398b5f3f9d21d516536b4474fab568
+      PIL2_COMPILER_COMMIT: f4fbf33a9d8aae1381b9e57056b09c293522df2c
       CARGO_FEATURES: proofman-starks-lib-c/cpu-only
       WRAP: target/pilfflonk-wrap
       WRAP_PTAU_POWERS: 6815756
@@ -325,12 +324,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check out pil2-compiler (BN254)
+      - name: Check out pil2-compiler (BN128)
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-compiler
           ref: ${{ env.PIL2_COMPILER_COMMIT }}
-          path: pil2-compiler-bn254
+          path: pil2-compiler-bn128
 
       - name: Install rust
         uses: actions-rs/toolchain@v1
@@ -347,9 +346,9 @@ jobs:
         run: npm install
         working-directory: setup/pil2-stark
 
-      - name: Install Node dependencies (pil2-compiler BN254)
+      - name: Install Node dependencies (pil2-compiler BN128)
         run: npm ci
-        working-directory: pil2-compiler-bn254
+        working-directory: pil2-compiler-bn128
 
       - name: Install Node dependencies (pilfflonk JS verifier)
         run: npm install
@@ -364,12 +363,12 @@ jobs:
 
       # circom is the committed setup/circom/circom (2.2.3), which compiles the final circuit's
       # custom templates. PIL2C_EXEC names the pil2com every compile-pil and setup runs
-      # (resolve_pil2com_exec), Goldilocks ones included: the BN254 compiles of the wrap's AIR and of
+      # (resolve_pil2com_exec), Goldilocks ones included: the BN128 compiles of the wrap's AIR and of
       # the Fibonacci fixture need it.
-      - name: Set up circom and the BN254 compiler
+      - name: Set up circom and the BN128 compiler
         run: |
           echo "$GITHUB_WORKSPACE/setup/circom" >> "$GITHUB_PATH"
-          echo "PIL2C_EXEC=$GITHUB_WORKSPACE/pil2-compiler-bn254/src/pil.js" >> "$GITHUB_ENV"
+          echo "PIL2C_EXEC=$GITHUB_WORKSPACE/pil2-compiler-bn128/src/pil.js" >> "$GITHUB_ENV"
 
       - name: Cargo build (release)
         run: |
@@ -409,7 +408,7 @@ jobs:
       - name: Setup pilfflonk of the Fibonacci fixture
         run: |
           mkdir -p "$WRAP/other"
-          target/release/proofman-setup compile-pil --pil pilfflonk/tests/fixtures/fibonacci/fibonacci.pil -I pil2-components/lib/std/pil --field bn254 -o "$WRAP/other/fibonacci.pilout"
+          target/release/proofman-setup compile-pil --pil pilfflonk/tests/fixtures/fibonacci/fibonacci.pil -I pil2-components/lib/std/pil --field bn128 -o "$WRAP/other/fibonacci.pilout"
           target/release/proofman-setup setup-pilfflonk -a "$WRAP/other/fibonacci.pilout" -b "$WRAP/other" --powers-of-tau "$WRAP/wrap.ptau"
           echo "PROVE_SNARK_OTHER_VKEY=$(ls "$GITHUB_WORKSPACE/$WRAP"/other/provingKey/*/pilfflonk/pilfflonk.vkey.json)" >> "$GITHUB_ENV"
 

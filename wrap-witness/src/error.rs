@@ -31,7 +31,7 @@ pub enum WrapWitnessError {
     #[error("the zkin {}: {reason}", path.display())]
     Zkin { path: PathBuf, reason: String },
 
-    /// The exec cannot be read, is not over BN254, or does not fit the circuit or the AIR.
+    /// The exec cannot be read, is not over BN128, or does not fit the circuit or the AIR.
     #[error("{0}")]
     Exec(#[source] ProofmanError),
 

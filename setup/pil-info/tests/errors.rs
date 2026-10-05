@@ -78,7 +78,7 @@ fn the_air(pilout: &mut pb::PilOut) -> &mut pb::Air {
 
 /// The STARK's passes (FRI) and pilfflonk's (SHPLONK).
 fn cfgs() -> [PilInfoCfg; 2] {
-    [PilInfoCfg::goldilocks(1), PilInfoCfg::bn254()]
+    [PilInfoCfg::goldilocks(1), PilInfoCfg::bn128()]
 }
 
 fn run(pilout: &pb::PilOut, cfg: &PilInfoCfg) -> Result<PilInfoResult, PilInfoError> {
@@ -111,13 +111,13 @@ fn the_pilout_as_built_is_accepted() {
 #[test]
 fn an_air_the_pilout_does_not_have_is_refused() {
     for (airgroup_id, air_id) in [(0, 1), (1, 0)] {
-        let err = pil_info::run(&pilout(), airgroup_id, air_id, &PilInfoCfg::bn254(), &Default::default()).err();
+        let err = pil_info::run(&pilout(), airgroup_id, air_id, &PilInfoCfg::bn128(), &Default::default()).err();
         assert!(
             matches!(err, Some(PilInfoError::NoSuchAir { airgroup_id: a, air_id: b }) if (a, b) == (airgroup_id, air_id)),
             "{err:?}"
         );
     }
-    let err = pil_info::run(&pilout(), 0, 1, &PilInfoCfg::bn254(), &Default::default()).err().unwrap();
+    let err = pil_info::run(&pilout(), 0, 1, &PilInfoCfg::bn128(), &Default::default()).err().unwrap();
     assert_eq!(err.to_string(), "the pilout has no air 1 in airgroup 0");
 }
 
@@ -151,7 +151,7 @@ fn a_custom_column_of_a_custom_commit_the_air_does_not_have_is_refused() {
     let custom =
         op(operand::Operand::CustomCol(operand::CustomCol { commit_id: 2, stage: 0, col_idx: 0, row_offset: 0 }));
     the_air(&mut pilout).expressions[0] = mul(witness(0), custom);
-    let err = run_err(&pilout, &PilInfoCfg::bn254());
+    let err = run_err(&pilout, &PilInfoCfg::bn128());
     assert_eq!(invalid_pilout(&err), "a custom column of custom commit 2, and the air has 0 custom commits");
 }
 
@@ -202,7 +202,7 @@ fn an_opened_column_without_a_symbol_is_refused_by_the_fri_opening() {
         "{err:?}"
     );
     assert_eq!(err.to_string(), "invalid pilout: the constraints evaluate const 0, which has no symbol");
-    run(&pilout, &PilInfoCfg::bn254()).unwrap();
+    run(&pilout, &PilInfoCfg::bn128()).unwrap();
 }
 
 fn global_ref(idx: u32) -> Option<pb::GlobalOperand> {

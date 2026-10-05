@@ -30,7 +30,7 @@ enum Commands {
     Stats(StatsArgs),
     /// Generate final SNARK setup (recursivef + fflonk/plonk/pilfflonk final).
     SetupSnark(SetupSnarkArgs),
-    /// Set up a BN254 pilout for the pilfflonk backend (one AIR, one instance): write its
+    /// Set up a BN128 pilout for the pilfflonk backend (one AIR, one instance): write its
     /// provingKey/.
     SetupPilfflonk(SetupPilfflonkArgs),
     /// Write the Solidity verifier of an existing pilfflonk vkey (pilfflonk.vkey.json), as
@@ -200,7 +200,7 @@ struct SetupSnarkArgs {
 
 #[derive(Parser)]
 struct SetupPilfflonkArgs {
-    /// Path to the compiled .pilout file, over BN254
+    /// Path to the compiled .pilout file, over BN128
     #[arg(short = 'a', long)]
     airout: String,
 
@@ -345,7 +345,7 @@ struct CompilePilArgs {
     fixed_dir: Option<String>,
 
     /// The prime field to compile over, passed to pil2com's `--field`: `goldilocks` (default) or
-    /// `bn254`
+    /// `bn128`
     #[arg(long = "field")]
     field: Option<String>,
 

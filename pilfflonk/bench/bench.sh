@@ -35,7 +35,7 @@
 # Each run records the 1- and 5-minute load averages when it starts. The prover runs with -vv, which
 # prints the C++ timers (TimerStart/TimerStopAndLog, PILFFLONK_*), and a sampler reads its VmRSS
 # every 0.2 s: the peak of each phase. The pilout carries the fixed columns (fixed-to-file does not
-# work over BN254, pilfflonk/docs/README.md#compile-pil), so pil2com's time and memory grow with N
+# work over BN128, pilfflonk/docs/README.md#compile-pil), so pil2com's time and memory grow with N
 # too: `run` records them.
 set -euo pipefail
 
@@ -218,7 +218,7 @@ run_size() {
     mkdir -p "$dir"
     echo "== $program, N = 2^$bits, $THREADS threads"
 
-    # The pilout, with N from the compiler: pil2com compiles over BN254 (--field) with the define.
+    # The pilout, with N from the compiler: pil2com compiles over BN128 (--field) with the define.
     # Its name is its file's stem, the program's; a later run of the size takes it as it is.
     local pilout="$BENCH_DIR/pilouts/$bits/$program.pilout" load status
     if [ ! -f "$pilout" ]; then
@@ -228,7 +228,7 @@ run_size() {
         load="$(loads)"
         status=0
         timed "$dir/compile.time" "$dir/compile.log" node --max-old-space-size="$BENCH_NODE_HEAP_MB" "$PIL2C_EXEC" \
-            "$ROOT/pilfflonk/bench/$program.pil" -I "$ROOT/pil2-components/lib/std/pil" --field bn254 -D "BENCH_BITS=$bits" \
+            "$ROOT/pilfflonk/bench/$program.pil" -I "$ROOT/pil2-components/lib/std/pil" --field bn128 -D "BENCH_BITS=$bits" \
             -o "$pilout.tmp/$program.pilout" || status=$?
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$program" "$bits" "$load" "$status" "$(wall_of "$dir/compile.time")" \
             "$(rss_of "$dir/compile.time")" "$(stat -c %s "$pilout.tmp/$program.pilout" 2>/dev/null || echo -)" \

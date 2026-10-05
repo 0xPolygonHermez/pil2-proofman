@@ -1,6 +1,6 @@
-// Constants wider than 64 bits and negations, to check that the passes keep BN254 values intact
-// (tests/bn254.rs). Compile over BN254 with PIL2C_EXEC pointing at a pil2com that honours
-// `--field`, with --field bn254.
+// Constants wider than 64 bits and negations, to check that the passes keep BN128 values intact
+// (tests/bn128.rs). Compile over BN128 with PIL2C_EXEC pointing at a pil2com that honours
+// `--field`, with --field bn128.
 
 airtemplate WideConstants(const int N = 2**4) {
     col fixed L1 = [1, 0...];

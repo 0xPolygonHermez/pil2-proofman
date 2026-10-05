@@ -1,6 +1,6 @@
 //! The witness library of the final SNARK circuit: the `final.so` (`final.dylib` on macOS) that
 //! setup-snark builds from the circuit's circom C++ and `setup/final_snark_circom/`, with its
-//! `final.dat`. Its `getWitness` computes the circuit's witness over BN254's `Fr` from a zkin, a
+//! `final.dat`. Its `getWitness` computes the circuit's witness over BN128's `Fr` from a zkin, a
 //! `nlohmann::json`. The PLONK and FFLONK wraps hand it the recursivef proof
 //! (`proofman::generate_witness_final_snark`); the pilfflonk wrap's witness (`pilfflonk-wrap-witness`)
 //! hands it that proof too, or a zkin read from a file.

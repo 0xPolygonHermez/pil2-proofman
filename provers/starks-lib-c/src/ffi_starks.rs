@@ -2151,7 +2151,7 @@ mod tests {
     const PLONK_PROTOCOL_ID: i32 = 2;
     const FFLONK_PROTOCOL_ID: i32 = 10;
 
-    /// BN254's base field modulus q and scalar field modulus r, most significant limb first.
+    /// BN128's base field modulus q and scalar field modulus r, most significant limb first.
     const Q: [u64; 4] = [0x30644e72e131a029, 0xb85045b68181585d, 0x97816a916871ca8d, 0x3c208c16d87cfd47];
     const R: [u64; 4] = [0x30644e72e131a029, 0xb85045b68181585d, 0x2833e84879b97091, 0x43e1f593f0000001];
 

@@ -1,10 +1,10 @@
-//! plonk2pil over BN254: a circuit circom compiles for BN254 is read and converted to PLONK gates and
+//! plonk2pil over BN128: a circuit circom compiles for BN128 is read and converted to PLONK gates and
 //! additions by the same generic code the Goldilocks recursion runs, and the result is checked on a
 //! real witness of the circuit.
 //!
-//! The circuit is `fixtures/bn254/arith.circom`, compiled here with the committed circom
+//! The circuit is `fixtures/bn128/arith.circom`, compiled here with the committed circom
 //! (`setup/circom`), so the r1cs cannot go stale. Its witness is computed from
-//! `fixtures/bn254/input.json` by the circom-generated wasm and snarkjs (`common`). Without Node.js
+//! `fixtures/bn128/input.json` by the circom-generated wasm and snarkjs (`common`). Without Node.js
 //! or that snarkjs the test says why and passes, as the circom tests of `stark2circom` do.
 
 mod common;
@@ -16,7 +16,7 @@ use pil2_stark_recurser::plonk2pil::r1cs::types::{
     r1cs_prime, read_r1cs_from_bytes, read_r1cs_header, LinearCombination, PlonkOptions, R1csFile,
 };
 use pil2_stark_recurser::plonk2pil::plonk2pil;
-use proofman_fields::{Bn254, Field, PrimeField};
+use proofman_fields::{Bn128, Field, PrimeField};
 
 use common::{compile_and_witness, manifest, missing_prerequisite, read_wtns, Scratch};
 
@@ -59,22 +59,22 @@ fn plonk_holds<F: Field>(cs: &[PlonkConstraint<F>], adds: &[PlonkAddition<F>], w
 }
 
 #[test]
-fn a_bn254_circuit_converts_to_plonk_gates_that_hold_on_its_witness() {
+fn a_bn128_circuit_converts_to_plonk_gates_that_hold_on_its_witness() {
     if let Some(why) = missing_prerequisite() {
-        eprintln!("skipping the BN254 plonk2pil test: {why}");
+        eprintln!("skipping the BN128 plonk2pil test: {why}");
         return;
     }
-    let scratch = Scratch::new("plonk2pil_bn254");
-    let fixtures = manifest().join("tests/fixtures/bn254");
+    let scratch = Scratch::new("plonk2pil_bn128");
+    let fixtures = manifest().join("tests/fixtures/bn128");
     let (r1cs_bytes, wtns_bytes) =
         compile_and_witness(&scratch.0, &fixtures.join("arith.circom"), &fixtures.join("input.json"));
 
-    assert_eq!(r1cs_prime(&read_r1cs_header(&r1cs_bytes).unwrap()).unwrap(), R1csPrime::Bn254);
-    let r1cs = read_r1cs_from_bytes::<Bn254>(&r1cs_bytes).expect("a BN254 r1cs reads into Bn254");
-    let witness = read_wtns::<Bn254>(&wtns_bytes);
+    assert_eq!(r1cs_prime(&read_r1cs_header(&r1cs_bytes).unwrap()).unwrap(), R1csPrime::Bn128);
+    let r1cs = read_r1cs_from_bytes::<Bn128>(&r1cs_bytes).expect("a BN128 r1cs reads into Bn128");
+    let witness = read_wtns::<Bn128>(&wtns_bytes);
     assert_eq!(r1cs.header.n8, 32);
     assert_eq!(witness.len(), r1cs.header.n_vars as usize);
-    assert_eq!(witness[0], Bn254::ONE, "wire 0 is the constant one");
+    assert_eq!(witness[0], Bn128::ONE, "wire 0 is the constant one");
     assert!(r1cs_holds(&r1cs, &witness), "the r1cs as read must hold on snarkjs's witness");
 
     // What the fixture is for: coefficients no u64 holds, sums wide enough to need additions, and
@@ -95,7 +95,7 @@ fn a_bn254_circuit_converts_to_plonk_gates_that_hold_on_its_witness() {
     let mut checked = 0;
     for wire in 1..witness.len() {
         let mut wrong = witness.clone();
-        wrong[wire] += Bn254::from_decimal("340282366920938463463374607431768211457").unwrap();
+        wrong[wire] += Bn128::from_decimal("340282366920938463463374607431768211457").unwrap();
         let (by_r1cs, by_plonk) = (r1cs_holds(&r1cs, &wrong), plonk_holds(&cs, &adds, &wrong));
         assert_eq!(by_r1cs, by_plonk, "wire {wire}: the r1cs says {by_r1cs}, the PLONK gates {by_plonk}");
         checked += usize::from(!by_r1cs);
@@ -108,5 +108,5 @@ fn a_bn254_circuit_converts_to_plonk_gates_that_hold_on_its_witness() {
 
     // The STARK recursion's families still refuse it: they are over Goldilocks.
     let err = plonk2pil::<u64>(&r1cs_bytes, "aggregation", &PlonkOptions::default()).unwrap_err().to_string();
-    assert!(err.contains("an r1cs over BN254 is set up by the PoseidonBN254 family"), "{err}");
+    assert!(err.contains("an r1cs over BN128 is set up by the PoseidonBN128 family"), "{err}");
 }

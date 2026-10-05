@@ -240,7 +240,7 @@ std::string globalInfoJson(const std::string &backend = "pilfflonk", uint64_t nu
     return "{\"name\": \"" + std::string(NAME) + "\", \"airs\": [[{\"name\": \"" + air +
            "\", \"num_rows\": " + std::to_string(numRows) + "}]], \"air_groups\": [\"" + air +
            "\"], \"aggTypes\": [[]], \"backend\": \"" + backend +
-           "\", \"formatVersion\": 1, \"field\": \"bn254\", \"nPublics\": " + std::to_string(nPublics) +
+           "\", \"formatVersion\": 1, \"field\": \"bn128\", \"nPublics\": " + std::to_string(nPublics) +
            ", \"numChallenges\": [0], \"numProofValues\": [], \"proofValuesMap\": [], \"publicsMap\": []}";
 }
 

@@ -44,7 +44,7 @@ constexpr uint64_t STAGING_HALF_BYTES = uint64_t(32) << 20;
 // What a proof allocates besides the arena that gpuBudget does not count element by element: the
 // allocator's rounding of each allocation to its pages, and sppark's NTT tables, of a few MB.
 constexpr uint64_t MARGIN_BYTES = uint64_t(256) << 20;
-// sppark's MSM: the bits of a BN254 scalar, and a bucket of its xyzz_t<fp_t>::mem_t.
+// sppark's MSM: the bits of a BN128 scalar, and a bucket of its xyzz_t<fp_t>::mem_t.
 constexpr uint64_t SCALAR_BITS = 254;
 constexpr uint64_t BUCKET_BYTES = 4 * sizeof(FrElement);
 

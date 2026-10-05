@@ -1,6 +1,6 @@
 pragma circom 2.1.0;
 
-// plonk2pil's BN254 fixture, for tests/plonk2pil_bn254.rs: multiplications, additions and constants,
+// plonk2pil's BN128 fixture, for tests/plonk2pil_bn128.rs: multiplications, additions and constants,
 // several of them wider than 64 bits, so the r1cs carries 32-byte coefficients. Compiled with --O1,
 // which keeps the linear constraints for plonk2pil's sum gates. No custom gates.
 template Arith() {

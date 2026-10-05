@@ -3,7 +3,7 @@ pragma custom_templates;
 
 include "custom/poseidon.circom";
 
-// The end-to-end test of tests/poseidon_bn254_wrap.rs: a PoseidonT(5) use among multiplications,
+// The end-to-end test of tests/poseidon_bn128_wrap.rs: a PoseidonT(5) use among multiplications,
 // additions and copies, as the final circuit has them, more than its band's rows hold, and one
 // public.
 template Wrap() {

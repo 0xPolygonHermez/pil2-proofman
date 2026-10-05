@@ -21,7 +21,7 @@ pub struct CompilePilOptions {
     /// Optional `-u` directory for fixed columns.
     pub fixed_dir: Option<String>,
     /// Optional `--field` of pil2com, the prime field it compiles over:
-    /// `goldilocks` (its default) or `bn254`.
+    /// `goldilocks` (its default) or `bn128`.
     pub field: Option<String>,
     /// Pass `-O fixed-to-file` to write fixed columns to disk.
     pub fixed_to_file: bool,

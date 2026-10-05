@@ -1,5 +1,5 @@
 //! The witness generator of the fixture `mixed_bus` (pilfflonk/docs/README.md#fixtures),
-//! `tests/fixtures/mixed_bus/mixed_bus.pil`, over BN254's `Fr`: the columns of the Connection's
+//! `tests/fixtures/mixed_bus/mixed_bus.pil`, over BN128's `Fr`: the columns of the Connection's
 //! generator and then the Plookup's for `N = 2^8`, as `tests/data/all.rs` writes them. In the
 //! pilout's order (stage 1, `colIdx` 0 to 7): `connection_a`, `connection_b`, `connection_c`,
 //! `plookup_sel`, `plookup_a`, `plookup_b`, `plookup_cc` and `plookup_mul`; no public.

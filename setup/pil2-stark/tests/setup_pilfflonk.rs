@@ -28,7 +28,7 @@ use proofman_pilfflonk::{
     PilfflonkInfo, PolType, ProofNames, SetupParams, Vkey, WitnessShape,
 };
 
-const BN254_R_BE: [u8; 32] = [
+const BN128_R_BE: [u8; 32] = [
     0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d, 0x28, 0x33, 0xe8,
     0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
 ];
@@ -87,7 +87,7 @@ fn files(dir: &Path) -> Vec<String> {
     out
 }
 
-/// A BN254 pilout of one AIR of 4 rows: fixed columns `F0 = [1, 5, 6, 7]` and `F1 = [0, 1, 0,
+/// A BN128 pilout of one AIR of 4 rows: fixed columns `F0 = [1, 5, 6, 7]` and `F1 = [0, 1, 0,
 /// 1]`, a witness column `a`, one public and the constraint `a − F0 = 0`. `F1` is in no
 /// constraint: it is never opened.
 fn pilout() -> pb::PilOut {
@@ -114,7 +114,7 @@ fn pilout() -> pb::PilOut {
     };
     pb::PilOut {
         name: Some("tiny".into()),
-        base_field: BN254_R_BE.to_vec(),
+        base_field: BN128_R_BE.to_vec(),
         air_groups: vec![pb::AirGroup { name: Some("TinyGroup".into()), air_group_values: vec![], airs: vec![air] }],
         num_challenges: vec![0],
         num_public_values: 1,
@@ -225,7 +225,7 @@ fn the_subcommand_takes_the_documented_arguments() {
     ] {
         assert!(help.contains(arg), "{arg} missing from:\n{help}");
     }
-    // No -u: at BN254 nothing produces the STARK's 8-byte .fixed files
+    // No -u: at BN128 nothing produces the STARK's 8-byte .fixed files
     // (pilfflonk/docs/README.md#compile-pil).
     assert!(!help.contains("-u,"), "{help}");
 
@@ -314,7 +314,7 @@ fn it_writes_the_proving_key_of_a_pilout() {
         assert!(stderr.contains(expected), "{stderr}");
     }
 
-    // A Goldilocks pilout, what the pinned compiler writes for `--field bn254`
+    // A Goldilocks pilout, what the pinned compiler writes for `--field bn128`
     // (pilfflonk/docs/README.md#compile-pil).
     let mut goldilocks = pilout();
     goldilocks.base_field = 0xFFFF_FFFF_0000_0001u64.to_be_bytes().to_vec();
@@ -378,7 +378,7 @@ fn it_writes_the_solidity_verifier_of_the_vkey() {
     assert!(!dir.file("refused.sol").exists());
 }
 
-/// The Fibonacci fixture, compiled over BN254: the `provingKey/`
+/// The Fibonacci fixture, compiled over BN128: the `provingKey/`
 /// (pilfflonk/docs/formats.md#provingkey), with one im pol and `qDeg = 1`
 /// (pilfflonk/docs/protocol.md#degree-search), the bounds of its polynomials
 /// (pilfflonk/docs/protocol.md#degrees), and the same bytes on a second run.
@@ -392,7 +392,7 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
     let out = Command::new(env!("CARGO_BIN_EXE_proofman-setup"))
         .current_dir(&root)
         .args(["compile-pil", "-p", "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil"])
-        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn254"])
+        .args(["-I", "pil2-components/lib/std/pil", "--field", "bn128"])
         .args(["-o", path(&pilout_path)])
         .output()
         .unwrap();

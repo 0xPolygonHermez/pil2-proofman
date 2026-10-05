@@ -14,7 +14,7 @@ namespace PilFflonk {
 
 using FrElement = AltBn128::Engine::FrElement;
 
-// The 2-adicity of the BN254 scalar field, r - 1 = 2^28 · odd: no domain of roots of unity, and so
+// The 2-adicity of the BN128 scalar field, r - 1 = 2^28 · odd: no domain of roots of unity, and so
 // no FFT, has more than 2^28 points (pilfflonk/docs/protocol.md#notation).
 constexpr uint64_t MAX_NBITS_EXT = 28;
 
@@ -34,7 +34,7 @@ FrElement power(const FrElement &base, uint64_t exponent);
 // region can throw.
 bool batchInverse(FrElement *out, const FrElement *values, uint64_t n);
 
-// Moves BN254 columns between evaluations on the trace domain H (N = 2^nBits points), their
+// Moves BN128 columns between evaluations on the trace domain H (N = 2^nBits points), their
 // coefficients, and evaluations on the extended coset g·H' (N' = 2^nBitsExt points, N <= N').
 // It has no NTT of its own: the INTT is rapidsnark's Polynomial::fromEvaluations, and the coset
 // transforms are ffiasm's FFT, which has no coset API, around a scaling by the powers of g.

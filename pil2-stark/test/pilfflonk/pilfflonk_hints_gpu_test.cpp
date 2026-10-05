@@ -420,7 +420,7 @@ struct SumBus {
         files.name = "SumBus";
         files.global = "{\"name\": \"sum\", \"airs\": [[{\"name\": \"SumBus\", \"num_rows\": 32}]], \"air_groups\": "
                        "[\"SumBus\"], \"aggTypes\": [[]], \"backend\": \"pilfflonk\", \"formatVersion\": 1, \"field\": "
-                       "\"bn254\", \"nPublics\": 1, \"numChallenges\": [0], \"numProofValues\": [], "
+                       "\"bn128\", \"nPublics\": 1, \"numChallenges\": [0], \"numProofValues\": [], "
                        "\"proofValuesMap\": [], \"publicsMap\": []}";
         files.info = readText(busFixture("SumBus.pilfflonkinfo.json"));
         files.bin = readBytes(busFixture("SumBus.bin"));

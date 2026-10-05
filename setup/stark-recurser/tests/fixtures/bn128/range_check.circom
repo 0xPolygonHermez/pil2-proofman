@@ -3,7 +3,7 @@ pragma custom_templates;
 
 include "custom/lessthangl.circom";
 
-// The circuit of tests/range_check_bn254.rs: a LessThanGoldilocks, and a RangeCheck of each width
+// The circuit of tests/range_check_bn128.rs: a LessThanGoldilocks, and a RangeCheck of each width
 // that matters to Num2Bytes, whose chunks are 16 bits and whose gates take 80 at most:
 // - 1, 16 and 17: a partial chunk, a whole one, and one bit into the next;
 // - 64 and 65: a Goldilocks element, and one bit more;

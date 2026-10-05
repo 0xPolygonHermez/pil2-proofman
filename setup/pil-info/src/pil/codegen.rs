@@ -801,11 +801,11 @@ mod tests {
         assert!(r.prime.is_none());
     }
 
-    /// An evaluation takes the field's extension dimension: 1 over BN254.
+    /// An evaluation takes the field's extension dimension: 1 over BN128.
     #[test]
     fn test_fix_eval_dim_follows_the_field() {
         let ev_map = vec![EvMapRef { entry_type: "cm".into(), id: 0, prime: 0, opening_pos: 0, commit_id: None }];
-        let ctx = verifier_ctx_with_ev_map(vec![0], ev_map, &FieldCfg::bn254());
+        let ctx = verifier_ctx_with_ev_map(vec![0], ev_map, &FieldCfg::bn128());
         let symbols: Vec<SymbolInfo> = Vec::new();
 
         let mut r = make_code_ref("cm", 0, Some(0));

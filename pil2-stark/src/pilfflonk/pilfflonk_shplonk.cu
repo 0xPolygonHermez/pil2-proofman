@@ -1,5 +1,5 @@
 // The kernels of SHPLONK's opening on the device (pilfflonk_shplonk.hpp), in the GPU library only,
-// over BN254 scalars in sppark's Montgomery arithmetic (BN128GPUScalarField), which keeps every
+// over BN128 scalars in sppark's Montgomery arithmetic (BN128GPUScalarField), which keeps every
 // result fully reduced, as ffiasm does. Their sums are in another order than the CPU's, which in an
 // exact field gives the same element, and so the same bytes.
 #include <cuda.h>

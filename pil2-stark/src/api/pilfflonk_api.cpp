@@ -192,7 +192,7 @@ int pilfflonk_fr_check_canonical(const uint8_t scalar[32]) {
             return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "scalar is NULL");
         }
         if (!PilFflonk::isCanonicalFr(scalar)) {
-            return fail(PILFFLONK_ERR_NON_CANONICAL, function, "scalar is not below the BN254 scalar modulus r");
+            return fail(PILFFLONK_ERR_NON_CANONICAL, function, "scalar is not below the BN128 scalar modulus r");
         }
         return static_cast<int>(PILFFLONK_OK);
     });
@@ -363,7 +363,7 @@ int pilfflonk_g2_check(const uint8_t g2[128]) {
         for (uint64_t c = 0; c < 4; ++c) {
             if (!PilFflonk::isCanonicalFq(g2 + c * PilFflonk::FQ_BYTES)) {
                 return fail(PILFFLONK_ERR_NON_CANONICAL, function,
-                            "coordinate %" PRIu64 " is not below the BN254 base field modulus q", c);
+                            "coordinate %" PRIu64 " is not below the BN128 base field modulus q", c);
             }
         }
         AltBn128::Engine &E = AltBn128::Engine::engine;
@@ -404,7 +404,7 @@ int pilfflonk_commit_fixed(const void *srs, uint64_t n_bits, uint64_t k, const u
         }
         if (n_bits > PilFflonk::MAX_NBITS_EXT) {
             return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function,
-                        "n_bits = %" PRIu64 " exceeds %" PRIu64 ", the 2-adicity of the BN254 scalar field", n_bits,
+                        "n_bits = %" PRIu64 " exceeds %" PRIu64 ", the 2-adicity of the BN128 scalar field", n_bits,
                         PilFflonk::MAX_NBITS_EXT);
         }
         const PilFflonk::Srs &s = *static_cast<const PilFflonk::Srs *>(srs);

@@ -27,7 +27,7 @@ use pil2_pilout::pilout as pb;
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use proofman_pilfflonk::oracle::{self, AirOracle, Domain, Fr, Values};
 use proofman_pilfflonk::{
-    AirInstanceRef, AirShape, FileWitnessSource, FrBytes, Witness, WitnessShape, WitnessSource, BN254_R,
+    AirInstanceRef, AirShape, FileWitnessSource, FrBytes, Witness, WitnessShape, WitnessSource, BN128_R,
 };
 
 use data::fibonacci;
@@ -86,7 +86,7 @@ fn the_generator_follows_sm_fibonacci_js() {
     assert_eq!(small(&l1), ["2", "5", "29", "866"]);
 
     // Every row, recomputed here: l2[i] = l1[i-1] and l1[i] = l2[i-1]² + l1[i-1]² mod r.
-    let r = BigUint::parse_bytes(BN254_R.as_bytes(), 10).unwrap();
+    let r = BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap();
     for i in 1..256 {
         assert_eq!(l2[i], l1[i - 1], "row {i}");
         assert_eq!(l1[i], (l2[i - 1].pow(2) + l1[i - 1].pow(2)) % &r, "row {i}");
@@ -115,29 +115,29 @@ fn the_fibonacci_witness_round_trips_through_its_directory() {
 const N: usize = 1 << N_BITS;
 
 /// The expression of `l1' − next`, `next = l1² + l2²`: the im pol the setup chooses at its default
-/// degree (`setup/pil-info/tests/bn254.rs`, `fibonacci_fixture_over_bn254`), which leaves
+/// degree (`setup/pil-info/tests/bn128.rs`, `fibonacci_fixture_over_bn128`), which leaves
 /// `qDeg = 1` (pilfflonk/docs/protocol.md#degree-search).
 const L1_NEXT_MINUS_NEXT: usize = 6;
 
-/// The fixture compiled over BN254, once for all the tests of this binary.
+/// The fixture compiled over BN128, once for all the tests of this binary.
 fn pilout() -> &'static pb::PilOut {
     static PILOUT: OnceLock<pb::PilOut> = OnceLock::new();
     PILOUT.get_or_init(compile_fibonacci)
 }
 
-/// Compiles the fixture over BN254 with `PIL2C_EXEC`, as `setup/pil-info/tests/bn254.rs` does.
+/// Compiles the fixture over BN128 with `PIL2C_EXEC`, as `setup/pil-info/tests/bn128.rs` does.
 fn compile_fibonacci() -> pb::PilOut {
     let compiler = std::env::var("PIL2C_EXEC")
         .expect("PIL2C_EXEC must name a pil2com that has `--field` (e.g. <pil2-compiler>/src/pil.js)");
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").canonicalize().expect("the repository root");
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fibonacci.bn254.pilout");
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fibonacci.bn128.pilout");
     let status = Command::new(compiler)
         .current_dir(&root)
         .arg("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil")
         .arg("-I")
         .arg("pil2-components/lib/std/pil")
         .arg("--field")
-        .arg("bn254")
+        .arg("bn128")
         .arg("-o")
         .arg(&out)
         .status()
@@ -151,7 +151,7 @@ fn compile_fibonacci() -> pb::PilOut {
 fn oracle_and_values() -> (AirOracle, Values) {
     static CELL: OnceLock<(AirOracle, Values)> = OnceLock::new();
     let (oracle, values) = CELL.get_or_init(|| {
-        let oracle = AirOracle::new(pilout(), 0, 0).expect("a pilout over BN254");
+        let oracle = AirOracle::new(pilout(), 0, 0).expect("a pilout over BN128");
         let dir = scratch("oracle_witness");
         fibonacci::witness(N_BITS, INPUTS).write(&dir, &fibonacci_shape()).unwrap();
         let source = FileWitnessSource::open(&dir, &oracle::witness_shape(pilout()).unwrap()).unwrap();

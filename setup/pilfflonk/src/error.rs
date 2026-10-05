@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use pil_info::PilInfoError;
-use proofman_pilfflonk::{PilfflonkError, BN254_R};
+use proofman_pilfflonk::{PilfflonkError, BN128_R};
 use proofman_starks_lib_c::PilFflonkError;
 
 use crate::grouping::GroupingError;
@@ -16,13 +16,13 @@ pub enum SetupError {
     /// The pilout is over Goldilocks: what pil2com writes when it ignores `--field`, as the pinned
     /// compiler does (pilfflonk/docs/README.md#compile-pil).
     #[error(
-        "the pilout is over Goldilocks, not BN254: compile it with `--field bn254`, and with a pil2com that has \
+        "the pilout is over Goldilocks, not BN128: compile it with `--field bn128`, and with a pil2com that has \
          `--field` (PIL2C_EXEC); the pinned one ignores it and compiles over Goldilocks"
     )]
     GoldilocksPilout,
 
-    #[error("the pilout's base field is {base_field}, not BN254's r = {BN254_R}")]
-    NotBn254 { base_field: String },
+    #[error("the pilout's base field is {base_field}, not BN128's r = {BN128_R}")]
+    NotBn128 { base_field: String },
 
     /// A pilfflonk proof has one instance of one AIR (pilfflonk/docs/README.md#scope).
     #[error("the pilout has {n_airs} AIRs, and a pilfflonk proof holds exactly one instance of one AIR")]
@@ -55,7 +55,7 @@ pub enum SetupError {
     NumRows { air: String, num_rows: u32 },
 
     #[error(
-        "an AIR of 2^{n_bits} rows: BN254's roots of unity allow at most 2^28 (pilfflonk/docs/protocol.md#notation)"
+        "an AIR of 2^{n_bits} rows: BN128's roots of unity allow at most 2^28 (pilfflonk/docs/protocol.md#notation)"
     )]
     NBits { n_bits: u64 },
 
@@ -116,9 +116,9 @@ pub enum SetupError {
     )]
     ColumnName { air: String, name: String, first: String, second: String },
 
-    /// The extended domain does not fit in the 2-adicity of BN254
+    /// The extended domain does not fit in the 2-adicity of BN128
     /// (pilfflonk/docs/protocol.md#degrees).
-    #[error("the extended domain has 2^{n_bits_ext} points, and BN254's roots of unity allow at most 2^28")]
+    #[error("the extended domain has 2^{n_bits_ext} points, and BN128's roots of unity allow at most 2^28")]
     ExtendedDomain { n_bits_ext: u64 },
 
     /// A fixed column without a value per row, which `<air>.const` needs.

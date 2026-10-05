@@ -27,27 +27,27 @@ pub const ALL_AIR_IDS: &[usize] = &[0];
 use serde::Deserialize;
 use serde::Serialize;
 use serde_arrays;
-use proofman_fields::Bn254;
+use proofman_fields::Bn128;
 
 
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AllPublics {
     #[serde(default)]
-    pub in1: Bn254,
+    pub in1: Bn128,
     #[serde(default)]
-    pub in2: Bn254,
+    pub in2: Bn128,
     #[serde(default)]
-    pub out: Bn254,
+    pub out: Bn128,
     
 }
 
 impl Default for AllPublics {
     fn default() -> Self {
         Self {  
-            in1: Bn254::default(),  
-            in2: Bn254::default(),  
-            out: Bn254::default(), 
+            in1: Bn128::default(),  
+            in2: Bn128::default(),  
+            out: Bn128::default(), 
         }
     }
 }
