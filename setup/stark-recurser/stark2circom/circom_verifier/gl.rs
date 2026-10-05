@@ -380,7 +380,10 @@ fn build_tera_context(
             .map(|(i, chunk)| {
                 let mut lines: Vec<String> = Vec::new();
                 let initialized: Vec<u64> = chunk.inputs.iter().chain(chunk.outputs.iter()).copied().collect();
-                let _ = unroll_code(&chunk.code, &initialized, &unroll_ctx, &mut lines);
+                // A codegen error here would silently leave the chunk body short and its
+                // outputs as free circuit signals; abort setup instead.
+                unroll_code(&chunk.code, &initialized, &unroll_ctx, &mut lines)
+                    .unwrap_or_else(|e| panic!("unroll_code failed generating verifier chunk {i}: {e}"));
                 let code = lines.join("\n");
                 let inputs: Vec<serde_json::Value> =
                     chunk.inputs.iter().map(|&id| serde_json::json!({ "id": id, "dim": cc.tmps[&id].dim })).collect();

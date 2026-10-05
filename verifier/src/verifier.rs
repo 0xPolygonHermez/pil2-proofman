@@ -420,6 +420,14 @@ where
             transcript.put(&hash[0..4]);
         }
     }
+    // Everything below is hardcoded for a 2-stage AIR (root1, root2, rootQ) and challenge
+    // slots 0..=5: a different stage count would leave the Q root unabsorbed (forgeable) or
+    // index `roots` out of bounds. Reject rather than mis-verify.
+    if verifier_info.n_stages != 2 {
+        v_error!("verifier only supports 2-stage AIRs, got n_stages = {}", verifier_info.n_stages);
+        return false;
+    }
+
     transcript.put(&roots[0]);
     transcript.get_field(&mut challenges[0].value);
     transcript.get_field(&mut challenges[1].value);
