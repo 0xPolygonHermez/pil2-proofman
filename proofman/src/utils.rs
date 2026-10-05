@@ -864,7 +864,7 @@ pub fn calculate_max_witness_trace_size<F: PrimeField64>(
     let mut max_witness_trace_size_packed = 0;
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
-            if gpu_witness_airs.contains(airgroup_id, air_id) {
+            if gpu_witness_airs.kernel_only(airgroup_id, air_id) {
                 continue;
             }
             let setup = sctx.get_setup(airgroup_id, air_id)?;
