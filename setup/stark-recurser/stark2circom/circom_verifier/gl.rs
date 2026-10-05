@@ -122,6 +122,7 @@ fn build_tera_context(
     let n_proof_values = si["proofValuesMap"].as_array().map_or(0, |a| a.len());
     let challenges_map: Vec<Value> = si["challengesMap"].as_array().map_or(vec![], |a| a.clone());
     let air_values_map: Vec<Value> = si["airValuesMap"].as_array().map_or(vec![], |a| a.clone());
+    let air_group_values_map: Vec<Value> = si["airgroupValuesMap"].as_array().map_or(vec![], |a| a.clone());
     let cm_pols_map: Vec<Value> = si["cmPolsMap"].as_array().map_or(vec![], |a| a.clone());
     let custom_commits_json: Vec<Value> = si["customCommits"].as_array().map_or(vec![], |a| a.clone());
     let custom_commits_map_json: Vec<Value> = si["customCommitsMap"].as_array().map_or(vec![], |a| a.clone());
@@ -538,6 +539,13 @@ fn build_tera_context(
                 t.put(&format!("airValues[{j}]"), 3);
             }
         }
+        // Bind airgroupvalues to Fiat-Shamir: without this they are only read in the Q
+        // check, so a prover could solve for them after seeing the challenges.
+        for (j, agv) in air_group_values_map.iter().enumerate() {
+            if agv["stage"].as_u64() == Some(stage) {
+                t.put(&format!("airgroupvalues[{j}]"), 3);
+            }
+        }
     }
 
     t.get_field("challengeQ");
@@ -647,6 +655,9 @@ fn build_tera_context(
     }
     if n_air_values > 0 {
         transcript_call_inputs.push("airvalues".into());
+    }
+    if n_air_group_values > 0 {
+        transcript_call_inputs.push("airgroupvalues".into());
     }
     for stage in 2..=n_stages {
         transcript_call_inputs.push(format!("root{stage}"));

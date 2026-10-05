@@ -160,6 +160,12 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
             a += 3;
         }
     }
+    // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
+    for(uint64_t i = 0; i < setupCtx.starkInfo.airgroupValuesMap.size(); i++) {
+        if(setupCtx.starkInfo.airgroupValuesMap[i].stage == 2) {
+            starks.addTranscript(transcript, &params.airgroupValues[i * FIELD_EXTENSION], FIELD_EXTENSION);
+        }
+    }
 
     TimerStopAndLog(STARK_STEP_2);
 

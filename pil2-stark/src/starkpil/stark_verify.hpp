@@ -126,6 +126,12 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                 p += 3;
             }
         }
+        // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
+        for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++) {
+            if(starkInfo.airgroupValuesMap[i].stage == s) {
+                transcript.put(&airgroupValues[i * FIELD_EXTENSION], FIELD_EXTENSION);
+            }
+        }
 
         // TODO: ADD PROOF VALUES ??
     }

@@ -44,6 +44,7 @@ template {{ transcript_name }}() {
 {% endif %}
 
 {% if n_air_values > 0 %}    signal input airValues[{{ n_air_values }}][3];
+{% endif %}{% if n_air_group_values > 0 %}    signal input airgroupvalues[{{ n_air_group_values }}][3];
 {% endif %}
 {% for stage in stages_info %}{% if stage.stage > 1 and stage.stage <= n_stages %}    signal input root{{ stage.stage }}[4];
 {% endif %}{% endfor %}    signal input root{{ q_stage }}[4];

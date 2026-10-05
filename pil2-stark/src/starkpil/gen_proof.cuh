@@ -307,6 +307,12 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             a += 3;
         }
     }
+    // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
+    for(uint64_t i = 0; i < setupCtx.starkInfo.airgroupValuesMap.size(); i++) {
+        if(setupCtx.starkInfo.airgroupValuesMap[i].stage == 2) {
+            d_transcript->put(&h_params.airgroupValues[i * FIELD_EXTENSION], FIELD_EXTENSION, stream);
+        }
+    }
     TimerStopCategoryGPU(timer, TRANSCRIPT);
     });
     TimerStopGPU(timer, STARK_COMMIT_STAGE_2);
