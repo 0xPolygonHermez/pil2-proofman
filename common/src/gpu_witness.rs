@@ -6,7 +6,10 @@
 //! kernel writes the commit slot directly and no trace is uploaded.
 //!
 //! The declaration is a guarantee: nothing fills that air's trace on the host,
-//! so a declared air that cannot reach its kernel is a setup error.
+//! so a declared air that cannot reach its kernel is a setup error. An air declared
+//! `with_host_trace` keeps the choice per instance: an instance that staged ops
+//! commits and proves through the kernel, one that carries a full trace goes the
+//! usual host way, so a caller can use the kernel in one phase and the host in another.
 
 /// A kernel's entry point, re-exported from the FFI crate.
 pub use proofman_starks_lib_c::GpuWitnessFillFn;
@@ -115,6 +118,9 @@ pub struct GpuWitnessAir {
     pub emits: TraceLayout,
     /// The kernel itself, carried with the declaration so it cannot be missing.
     pub kernel: GpuWitnessFillFn,
+    /// Instances may also carry a full host trace (no staged ops), committed and proved the
+    /// usual way; the trace pool and the prefetch zone are then sized for this air's trace too.
+    pub host_trace: bool,
 }
 
 impl GpuWitnessAir {
@@ -127,7 +133,13 @@ impl GpuWitnessAir {
         kernel: GpuWitnessFillFn,
     ) -> Self {
         assert!(bytes_per_op > 0, "a staged operation cannot be zero bytes wide");
-        Self { airgroup_id, air_id, input_bytes_per_instance, bytes_per_op, emits, kernel }
+        Self { airgroup_id, air_id, input_bytes_per_instance, bytes_per_op, emits, kernel, host_trace: false }
+    }
+
+    /// Allow instances with a full host trace beside the kernel-filled ones.
+    pub fn with_host_trace(mut self) -> Self {
+        self.host_trace = true;
+        self
     }
 }
 
@@ -157,6 +169,11 @@ impl GpuWitnessAirs {
     /// Whether this air's witness is produced on the device.
     pub fn contains(&self, airgroup_id: usize, air_id: usize) -> bool {
         self.get(airgroup_id, air_id).is_some()
+    }
+
+    /// Whether this air's instances never carry a host trace (declared without `with_host_trace`).
+    pub fn kernel_only(&self, airgroup_id: usize, air_id: usize) -> bool {
+        self.get(airgroup_id, air_id).is_some_and(|a| !a.host_trace)
     }
 
     pub fn get(&self, airgroup_id: usize, air_id: usize) -> Option<&GpuWitnessAir> {

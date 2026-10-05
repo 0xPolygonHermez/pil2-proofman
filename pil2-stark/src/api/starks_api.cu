@@ -1553,9 +1553,12 @@ static bool gpuWitnessFillTrace(DeviceCommitBuffers *d_buffers, StepsParams *par
         exitProcess();
     }
     const uint64_t num_ops = params->witnessOps;
-    if (num_ops == 0 || reg->bytesPerOp == 0) {
+    // No staged ops: this instance carries a host trace (an air declared with host traces), which
+    // the caller uploads as for any other air.
+    if (num_ops == 0) return false;
+    if (reg->bytesPerOp == 0) {
         zklog.error("gpu witness: air " + air + " staged " + std::to_string(num_ops) +
-                    " ops of " + std::to_string(reg->bytesPerOp) + " bytes; nothing to run on");
+                    " ops of 0 bytes; nothing to run on");
         exitProcess();
     }
     const uint64_t input_bytes = num_ops * reg->bytesPerOp;
@@ -3668,16 +3671,17 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // the packed rows straight into the slot; otherwise the commit would hash the inputs.
     GpuWitnessAirReg gwRegCopy;
     const GpuWitnessAirReg *gwReg = gpu_witness_for(d_buffers, airgroupId, airId, &gwRegCopy) ? &gwRegCopy : nullptr;
+    StepsParams *gwParams = (StepsParams *)params_;
+    // A kernel air's instance commits through its kernel when it staged ops; an instance with a
+    // host trace instead (no ops, an air declared with host traces) commits like any other air.
+    const bool kernelCommit = gwReg != nullptr && gwParams != nullptr && gwParams->witnessOps > 0;
     uint64_t *dPacked = (uint64_t *)slotBase + SC_MAX_COLS;   // where streamCommitPacked reads the rows
     const uint64_t packedWords = nRowsSlot * dims.wordsPerRow;
-    if (gwReg != nullptr) {
-        StepsParams *gwParams = (StepsParams *)params_;
-        if (gwParams == nullptr || packed == nullptr) {
+    if (kernelCommit) {
+        if (packed == nullptr) {
             zklog.error("gpu witness: air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
-                        " instance " + std::to_string(instanceId) + " has a registered kernel but no host "
-                        "inputs (params " + std::string(gwParams ? "set" : "null") + ", trace " +
-                        std::string(packed ? "set" : "null") + "): the witness side treated it as a "
-                        "host-filled air. Is gpu_witness_airs declared for this run?");
+                        " instance " + std::to_string(instanceId) + " staged ops but its host inputs are gone "
+                        "(trace is null): the witness side staged or released this buffer as if it were a trace");
             exitProcess();
         }
         if ((gwReg->emits == GPU_WITNESS_PACKED_CM1) != packedAir) {
@@ -3686,9 +3690,9 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             exitProcess();
         }
         const uint64_t nOps = gwParams->witnessOps;
-        if (nOps == 0 || gwReg->bytesPerOp == 0) {
+        if (gwReg->bytesPerOp == 0) {
             zklog.error("gpu witness: air " + std::to_string(airgroupId) + ":" +
-                        std::to_string(airId) + " reached a slot commit with no operations");
+                        std::to_string(airId) + " reached a slot commit with zero-byte operations");
             exitProcess();
         }
         const uint64_t inputBytes = nOps * gwReg->bytesPerOp;
@@ -3735,13 +3739,13 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
 
     // A prover-owned virtual table: its rows come from the device accumulator, as in the legacy
     // commit (row-major, one word per column). After every refusal: the export folds across GPUs.
-    const bool exported = gwReg == nullptr && aii != nullptr && !aii->is_packed &&
+    const bool exported = !kernelCommit && aii != nullptr && !aii->is_packed &&
                           mul_export_to_trace(mulAirKey(airgroupId, airId), gpu, dPacked, nRowsSlot, nCols,
                                               d_buffers->streamCommitStreams[slotIdx]);
     if (exported) packedSrc = (const void *)dPacked;
 
     PrefetchZone *zone = d_buffers->prefetchArmed ? &d_buffers->prefetchZones[gl] : nullptr;
-    if (gwReg == nullptr && !exported && zone != nullptr) {
+    if (!kernelCommit && !exported && zone != nullptr) {
         const uint64_t packedBytes = nRowsSlot * dims.wordsPerRow * sizeof(Goldilocks::Element);
         std::lock_guard<std::mutex> lk(zone->mutex);
         stagedSlot = prefetchFindSpanLocked(*zone, instanceId);

@@ -3402,7 +3402,23 @@ where
                             // A slot commit is synchronous, and the CPU commit reads the host buffer in
                             // place: either way it is free to recycle now.
                             let is_shared_buffer = pctx_clone.is_shared_buffer(instance_id) && !staged;
-                            if is_shared_buffer {
+                            // Staged kernel inputs of an air that also takes host traces served this
+                            // contribution only: the proof recomputes the witness as a host trace, so
+                            // the instance is evicted now rather than reused with its inputs.
+                            let kernel_transient = pctx_clone.get_air_instance_gpu_witness_ops(instance_id) > 0
+                                && match pctx_clone.dctx_get_instance_info(instance_id) {
+                                    Ok((ag, ai)) => !pctx_clone.gpu_witness_airs.kernel_only(ag, ai),
+                                    Err(_) => false,
+                                };
+                            if kernel_transient {
+                                let (is_shared, buf) = pctx_clone.free_instance_traces(instance_id);
+                                if is_shared {
+                                    if let Err(e) = memory_handler_clone.release_buffer(buf) {
+                                        cancellation_info_clone.write_recover().cancel(Some(e));
+                                        break;
+                                    }
+                                }
+                            } else if is_shared_buffer {
                                 memory_handler_clone.to_be_released_buffer(instance_id);
                             }
                         }
@@ -6180,9 +6196,9 @@ where
                 let mut witness_bytes: u64 = 0;
                 for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
                     for (air_id, _) in group.iter().enumerate() {
-                        // A GPU-witness air never uploads a trace, so it must not
+                        // A kernel-only GPU-witness air never uploads a trace, so it must not
                         // widen the slots the uploads share.
-                        if options.gpu_witness_airs.contains(airgroup_id, air_id) {
+                        if options.gpu_witness_airs.kernel_only(airgroup_id, air_id) {
                             continue;
                         }
                         let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
@@ -6606,14 +6622,14 @@ where
     }
 
     /// Per air: wire bytes of its witness (what the zone stages), and whether its host buffer may
-    /// return to the pool once staged. GPU-witness airs are absent.
+    /// return to the pool once staged. Kernel-only GPU-witness airs are absent.
     fn zone_staging_airs(&self) -> HashMap<(usize, usize), (u64, bool)> {
         let mut m = HashMap::new();
         // Their commit transposes the device accumulator and never reads a staging.
         let device_owned = self.pctx.device_owned_table_airs.read().unwrap().clone();
         for (airgroup_id, group) in self.pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in group.iter().enumerate() {
-                if self.options.gpu_witness_airs.contains(airgroup_id, air_id)
+                if self.options.gpu_witness_airs.kernel_only(airgroup_id, air_id)
                     || device_owned.contains(&(airgroup_id, air_id))
                 {
                     continue;
@@ -6653,7 +6669,8 @@ where
             return Ok(WITNESS_NOT_STAGED);
         };
         let trace = pctx.get_air_instance_trace_ptr(instance_id);
-        if trace.is_null() || bytes == 0 {
+        // Staged kernel inputs are not a trace: the commit uploads them itself.
+        if trace.is_null() || bytes == 0 || pctx.get_air_instance_gpu_witness_ops(instance_id) > 0 {
             return Ok(WITNESS_NOT_STAGED);
         }
         // Released only when the commit is certain to read the zone: a slot commit on the zone's GPU

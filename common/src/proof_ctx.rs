@@ -1256,6 +1256,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         self.air_instances[instance_id].read().unwrap().get_trace_ptr()
     }
 
+    /// Ops staged in the instance's trace buffer for a GPU-witness kernel; 0 for a host trace.
+    pub fn get_air_instance_gpu_witness_ops(&self, instance_id: usize) -> u64 {
+        self.air_instances[instance_id].read().unwrap().gpu_witness_ops
+    }
+
     pub fn get_air_instance_stream_id(&self, instance_id: usize) -> u64 {
         self.air_instances[instance_id].read().unwrap().get_stream_id()
     }
