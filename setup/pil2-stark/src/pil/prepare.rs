@@ -13,6 +13,9 @@ pub struct PrepareOptions {
     pub debug: bool,
     /// When true, enable intermediate polynomial batching by stage.
     pub im_pols_stages: bool,
+    /// A basic air: the GPU prover commits its stages in place, which the prover memory
+    /// estimate must know. False for recursion, final and SNARK-wrapper airs.
+    pub inplace_stage_commit: bool,
 }
 
 /// Aggregate result of the preparePil pipeline.

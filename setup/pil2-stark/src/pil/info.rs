@@ -2,7 +2,6 @@
 
 use pil2_pilout::pilout as pb;
 
-use crate::pil::constraint_poly::Boundary;
 use crate::pil::gen_code::{CodeGenParams, PilCodeResult};
 use crate::pil::im_polynomials::{add_im_polynomials, calculate_intermediate_polynomials};
 use crate::pil::map;
@@ -327,7 +326,15 @@ pub fn pil_info(
         println!("Number of evaluations: {}", pil_code.ev_map.len());
     }
 
-    let prover_memory_str = get_prover_memory(&setup, stark_struct, &opening_points, &boundaries);
+    let prover_memory_str = get_prover_memory(
+        &setup,
+        stark_struct,
+        pil_code.ev_map.len(),
+        opening_points.len(),
+        boundaries.len(),
+        q_deg as u64,
+        options.inplace_stage_commit,
+    );
     println!("Prover memory: {} GB", prover_memory_str);
     summary.push_str(&format!("| Prover memory: {} GB", prover_memory_str));
 
@@ -369,72 +376,139 @@ fn get_num_nodes_mt(height: u64, merkle_tree_arity: usize) -> u64 {
     num_nodes * 4
 }
 
+/// GPU prover buffer, in GB: mirrors the GPU branch of `StarkInfo::setMapOffsets`
+/// (pil2-stark/src/starkpil/stark_info.cpp), so it is the `mapTotalN` the prover sizes its
+/// buffer with. Keep the two in step: a layout change there must be repeated here.
+#[allow(clippy::too_many_arguments)]
 fn get_prover_memory(
     setup: &SetupResult,
     stark_struct: &StarkStruct,
-    _opening_points: &[i64],
-    boundaries: &[Boundary],
+    n_evals: usize,
+    n_opening_points: usize,
+    n_boundaries: usize,
+    q_deg: u64,
+    inplace_stage_commit: bool,
 ) -> String {
     if stark_struct.n_bits_ext >= 64 || stark_struct.n_bits >= 64 {
         return "N/A".to_string();
     }
-    let n_extended = 1u64 << stark_struct.n_bits_ext;
+    const HASH_SIZE: u64 = 4;
+    const GRIND_NONCE_BLOCKS_MAX: u64 = 1024;
+    const EVALS_HELPER_CHUNKS: u64 = 16;
+    let fe = FIELD_EXTENSION as u64;
+    let align = |n: u64| (n + 31) & !31u64;
+
     let n = 1u64 << stark_struct.n_bits;
-    let num_nodes = get_num_nodes_mt(n_extended, stark_struct.merkle_tree_arity);
+    let n_ext = 1u64 << stark_struct.n_bits_ext;
+    let arity = stark_struct.merkle_tree_arity as u64;
+    let is_gl = stark_struct.verification_hash_type == "GL";
+    let is_bn128 = stark_struct.verification_hash_type == "BN128";
+    let n_queries = stark_struct.n_queries as u64;
+    let section = |name: &str| *setup.map_sections_n.get(name).unwrap_or(&0) as u64;
 
-    let mut prover_memory: u64 = 0;
-
-    // Custom commits
-    for cc in &setup.custom_commits {
-        if !cc.stage_widths.is_empty() && cc.stage_widths[0] > 0 {
-            prover_memory += cc.stage_widths[0] as u64 * (n + n_extended) + num_nodes;
+    // Commit trees drop their leaf level when the last levels and the build's scratch allow it
+    let drop_leaf_level =
+        is_gl && n_ext > arity.pow(stark_struct.last_level_verification as u32) && n_ext >= arity * arity * arity;
+    let num_nodes_commit = |height: u64| {
+        let full = get_num_nodes_mt(height, stark_struct.merkle_tree_arity);
+        if drop_leaf_level {
+            full - (height + (arity - height % arity) % arity) * HASH_SIZE
+        } else {
+            full
         }
-    }
+    };
+    let num_nodes = num_nodes_commit(n_ext);
 
-    // Constants
+    // Constant tree, then the constants on the small domain
     let n_constants = setup.n_constants as u64;
-    prover_memory += 2 + n_extended * n_constants + num_nodes;
+    let mut total = align(n_ext * n_constants + num_nodes);
+    total += n * n_constants;
 
-    if (n_constants * n * 8) / (1024 * 1024) < 512 {
-        prover_memory += n * n_constants;
-    }
-
-    let mut offset_traces: u64 = 0;
-    let n_stages = setup.n_stages;
-    for i in 1..=(n_stages + 1) {
-        if i == 2 {
-            offset_traces = prover_memory;
-        }
-        let key = format!("cm{}", i);
-        let section_n = *setup.map_sections_n.get(&key).unwrap_or(&0) as u64;
-        prover_memory += section_n * (1u64 << stark_struct.n_bits_ext) + num_nodes;
-    }
-
-    for i in (1..=n_stages).rev() {
-        let key = format!("cm{}", i);
-        let section_n = *setup.map_sections_n.get(&key).unwrap_or(&0) as u64;
-        offset_traces += section_n * n;
-    }
-
-    if offset_traces > prover_memory {
-        prover_memory = offset_traces;
-    }
-
-    prover_memory += (FIELD_EXTENSION as u64 + FIELD_EXTENSION as u64 + boundaries.len() as u64) * n_extended;
-
-    if stark_struct.steps.len() > 1 {
-        for i in 0..stark_struct.steps.len() - 1 {
-            let sb = stark_struct.steps[i + 1].n_bits;
-            let sa = stark_struct.steps[i].n_bits;
-            if sb >= 64 || sa >= 64 {
-                continue;
-            }
-            let height = 1u64 << sb;
-            let width = ((1u64 << sa) / height) * FIELD_EXTENSION as u64;
-            prover_memory += height * width + get_num_nodes_mt(height, stark_struct.merkle_tree_arity);
+    let mut custom_fixed = 0u64;
+    for cc in &setup.custom_commits {
+        let width = cc.stage_widths.first().copied().unwrap_or(0) as u64;
+        if width > 0 {
+            custom_fixed += width * n + width * n_ext + get_num_nodes_mt(n_ext, stark_struct.merkle_tree_arity);
         }
     }
+    total += custom_fixed;
 
-    let gb = (prover_memory as f64 * 8.0) / (1024.0 * 1024.0 * 1024.0);
+    let values_size = |map: &[crate::types::pilout_info::SymbolInfo]| -> u64 {
+        map.iter().map(|v| if v.stage == Some(1) { 1 } else { fe }).sum()
+    };
+    total += setup.n_publics as u64;
+    total += values_size(&setup.proof_values_map);
+    total += values_size(&setup.airgroup_values_map);
+    total += values_size(&setup.air_values_map);
+    total += HASH_SIZE + 1 + GRIND_NONCE_BLOCKS_MAX; // challenge, nonce, nonce blocks
+    if is_bn128 {
+        total = total.div_ceil(4) * 4 + 12;
+    } else {
+        total += HASH_SIZE;
+    }
+    total += n_evals as u64 * fe;
+    total += setup.challenges_map.len() as u64 * fe;
+    total += (n_evals + n_opening_points) as u64 * fe; // folded FRI constants
+    total += n_queries;
+    let perm_bits = stark_struct.steps.first().map_or(0, |s| s.n_bits as u64);
+    total += (n_queries * perm_bits).div_ceil(63);
+
+    // Query proofs
+    let mut max_tree_width = setup.map_sections_n.values().copied().max().unwrap_or(0) as u64;
+    for w in stark_struct.steps.windows(2) {
+        let n_groups = 1u64 << w[1].n_bits;
+        max_tree_width = max_tree_width.max(((1u64 << w[0].n_bits) / n_groups) * fe);
+    }
+    let levels = if stark_struct.n_bits_ext == 0 {
+        0
+    } else if is_bn128 {
+        (stark_struct.n_bits_ext as u64 - 1) / (arity as f64).log2().ceil() as u64 + 1
+    } else {
+        (stark_struct.n_bits_ext as f64 / (arity as f64).log2()).ceil() as u64
+    };
+    let n_siblings = levels.saturating_sub(stark_struct.last_level_verification as u64);
+    let siblings_per_level = if is_bn128 { arity * 4 } else { (arity - 1) * HASH_SIZE };
+    let n_trees = 1 + (setup.n_stages as u64 + 1) + setup.custom_commits.len() as u64;
+    let n_trees_fri = stark_struct.steps.len().saturating_sub(1) as u64;
+    total += (n_trees + n_trees_fri) * (max_tree_width + n_siblings * siblings_per_level) * n_queries;
+    if drop_leaf_level {
+        total += n_queries * (arity - 1) * (max_tree_width + HASH_SIZE);
+    }
+
+    // Stage traces on the extended domain with their trees. In place, each stage is committed
+    // where it lands; otherwise cm1/cm2 keep a small-domain copy that overlaps the next stage.
+    total = align(total);
+    total += n_ext * section("cm1") + align(num_nodes);
+    if inplace_stage_commit {
+        total += n_ext * section("cm2") + align(num_nodes);
+        total += n_ext * section("cm3") + align(num_nodes);
+    } else {
+        let cm1_small = total;
+        total += n_ext * section("cm2") + align(num_nodes);
+        total = total.max(cm1_small + n * section("cm1"));
+        let cm2_small = total;
+        total += n_ext * section("cm3") + align(num_nodes);
+        total = total.max(cm2_small + n * section("cm2"));
+    }
+
+    // Q, with the boundary helpers (zi) above it while the quotient is built
+    let q_offset = total;
+    total += n_ext * fe;
+    let mut max_total = total + n_boundaries as u64 * n_ext;
+    max_total = max_total.max(q_offset + n * fe + 2 * fe + n_evals as u64 * EVALS_HELPER_CHUNKS * fe);
+    max_total = max_total.max(q_offset + n_ext * fe + n_ext * fe + q_deg);
+
+    // FRI layers follow q: x, zi and the expression tmps are dead once folding starts
+    for w in stark_struct.steps.windows(2) {
+        let height = 1u64 << w[1].n_bits;
+        let width = ((1u64 << w[0].n_bits) / height) * fe;
+        total += height * width;
+        if is_gl {
+            total += align(get_num_nodes_mt(height, stark_struct.merkle_tree_arity));
+        }
+    }
+    total = total.max(max_total);
+
+    let gb = (total as f64 * 8.0) / (1024.0 * 1024.0 * 1024.0);
     format!("{:.2}", gb)
 }

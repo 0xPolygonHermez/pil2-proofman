@@ -243,7 +243,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
                 let starkinfo_path = files_dir.join(format!("{}.starkinfo.json", item.air_name));
 
-                let prepare_opts = PrepareOptions { debug: false, im_pols_stages: false };
+                let prepare_opts = PrepareOptions { debug: false, im_pols_stages: false, inplace_stage_commit: true };
                 let pil_result =
                     crate::pil::info::pil_info(&pilout, item.ag_idx, item.air_idx, &stark_struct, &prepare_opts);
                 let setup_result = &pil_result.setup;

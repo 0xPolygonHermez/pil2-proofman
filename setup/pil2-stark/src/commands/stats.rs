@@ -79,7 +79,8 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
 
             let stark_struct = generate_stark_struct(&air_settings, n_bits, &opts.hash);
 
-            let prepare_opts = PrepareOptions { debug: false, im_pols_stages: opts.im_pols_stages };
+            let prepare_opts =
+                PrepareOptions { debug: false, im_pols_stages: opts.im_pols_stages, inplace_stage_commit: true };
 
             tracing::info!("Computing stats for air '{}'", air_name);
             let pil_result = crate::pil::info::pil_info(&pilout, ag_idx, air_idx, &stark_struct, &prepare_opts);
