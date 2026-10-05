@@ -431,6 +431,12 @@ them as Rust writes them.
 - **C++.** `make -C pil2-stark pilfflonk_test` runs the C++ tests against the CPU library, and
   `make -C pil2-stark pilfflonk_gpu_test` the same tests against the GPU library
   ([performance.md#gpu](performance.md#gpu)).
+- **CI.** The workspace's `cargo test` runs what needs neither the compiler nor Foundry.
+  `test-pilfflonk` runs the C++ tests against the CPU library and the JS verifier's,
+  `test-pilfflonk-bn128` the `#[ignore]`d suites with the compiler, Foundry and solc, and
+  `test-pilfflonk-wrap` the wrap end to end
+  ([performance.md#reproducing-the-wrap](performance.md#reproducing-the-wrap)). The GPU tests need a
+  GPU, which CI has not.
 
 ## Fixtures
 

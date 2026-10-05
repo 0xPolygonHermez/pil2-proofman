@@ -297,6 +297,155 @@ jobs:
       #   run: | 
       #     mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=80 target/debug/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
 
+  test-pilfflonk:
+    # pilfflonk's tests that need neither the BN128 compiler nor a GPU (pilfflonk/docs/README.md#tests):
+    # the C++ tests against the CPU library (pil2-stark/test/pilfflonk), which also guard the
+    # rapidsnark Polynomial methods FFLONK shares, and the JS verifier's (pilfflonk/js).
+    name: Test pilfflonk (C++ and JS verifier)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
+          sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "18"
+
+      - name: C++ tests (CPU)
+        run: make -C pil2-stark -j"$(nproc)" pilfflonk_test
+
+      - name: JS verifier tests
+        working-directory: pilfflonk/js
+        run: |
+          npm install
+          npm test
+
+  test-pilfflonk-bn128:
+    # pilfflonk's tests that compile PIL over BN128, #[ignore]d without PIL2C_EXEC
+    # (pilfflonk/docs/README.md#tests): the std over BN128 and the oracle, the setup (the bytecode and
+    # the Solidity verifier on Foundry), the fixtures' witness libraries, the wrap's witness, pil-info
+    # over BN128, plonk2pil's BN128 family and the wrap's gates, and the CLI's `pilfflonk check`,
+    # `verify` and `prove`, with Foundry's end to end and the differential fuzzer
+    # (pilfflonk/docs/verifier.md#tests). The compiler is the wrap job's;
+    # Foundry and solc are the pinned ones (pilfflonk/docs/verifier.md#tools), solc checked against
+    # the sha256 of soliditylang.org's list.
+    #
+    # Skipped: the two tests that the CLI refuses a STARK witness library, which fail while every
+    # library that links proofman exports pilfflonk_init_library (M54), and the wrap-witness test of a
+    # real final circuit, which needs one (PILFFLONK_WRAP_FINAL, PILFFLONK_WRAP_ZKIN). The suites run
+    # with two test threads (pilfflonk/docs/README.md#tests, Threads).
+    name: Test pilfflonk (BN128)
+    runs-on: ubuntu-latest
+    env:
+      PIL2_COMPILER_COMMIT: f4fbf33a9d8aae1381b9e57056b09c293522df2c
+      CARGO_FEATURES: proofman-starks-lib-c/cpu-only
+      FOUNDRY_VERSION: v1.8.3
+      SOLC_URL: https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.37+commit.f401782d
+      SOLC_SHA256: 5de843c2c93563cc66425c99a4fb13fdbf32b4c4ae07469480faaf126e14404a
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Check out pil2-compiler (BN128)
+        uses: actions/checkout@v4
+        with:
+          repository: 0xPolygonHermez/pil2-compiler
+          ref: ${{ env.PIL2_COMPILER_COMMIT }}
+          path: pil2-compiler-bn128
+
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "18"
+
+      - name: Install Node dependencies (pil2-compiler, snarkjs)
+        run: npm install
+        working-directory: setup/pil2-stark
+
+      - name: Install Node dependencies (pil2-compiler BN128)
+        run: npm ci
+        working-directory: pil2-compiler-bn128
+
+      - name: Install Node dependencies (pilfflonk JS verifier)
+        run: npm install
+        working-directory: pilfflonk/js
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
+          sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+
+      - name: Install solc
+        run: |
+          curl -sSfL "$SOLC_URL" -o "$RUNNER_TEMP/solc"
+          echo "$SOLC_SHA256  $RUNNER_TEMP/solc" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/solc"
+
+      - name: Set up circom, the BN128 compiler, Foundry and solc
+        run: |
+          echo "$GITHUB_WORKSPACE/setup/circom" >> "$GITHUB_PATH"
+          echo "PIL2C_EXEC=$GITHUB_WORKSPACE/pil2-compiler-bn128/src/pil.js" >> "$GITHUB_ENV"
+          echo "PILFFLONK_FORGE=$(command -v forge)" >> "$GITHUB_ENV"
+          echo "PILFFLONK_SOLC=$RUNNER_TEMP/solc" >> "$GITHUB_ENV"
+
+      - name: The std over BN128, the oracle and setup-pilfflonk from setup-snark's crate
+        run: |
+          cargo test --release --features "$CARGO_FEATURES" -p proofman-pilfflonk --test std_bn128 --test fibonacci \
+            -p pil2-stark-setup --test setup_pilfflonk -- --ignored --test-threads 2
+
+      - name: setup-pilfflonk (with the Solidity verifier on Foundry)
+        run: cargo test --release --features "$CARGO_FEATURES" -p pilfflonk-setup -- --ignored --test-threads 2
+
+      - name: The fixtures' witness libraries and the wrap's witness
+        run: |
+          cargo test --release --features "$CARGO_FEATURES" -p pilfflonk-fibonacci -p pilfflonk-connection -p pilfflonk-all \
+            -p proofman-starks-lib-c -p pilfflonk-wrap-witness -- --ignored --test-threads 2 \
+            --skip the_witness_of_a_final_circuit_checks
+
+      - name: pil-info over BN128
+        run: cargo test --release -p pil-info --test bn128 -- --ignored --test-threads 2
+
+      # Not #[ignore]d: without node, setup/pil2-stark's snarkjs or PIL2C_EXEC they say why and pass,
+      # as the workspace's cargo test has them; here they have all three.
+      - name: plonk2pil's BN128 family and the wrap's gates
+        run: |
+          cargo test --release --features "$CARGO_FEATURES" -p pil2-stark-recurser -p proofman-starks-lib-c \
+            --test plonk2pil_bn128 --test poseidon_bn128_wrap --test range_check_bn128 -- --test-threads 2
+
+      - name: pilfflonk check and verify
+        run: |
+          cargo test --release --features "$CARGO_FEATURES" -p proofman-cli --test pilfflonk_check --test pilfflonk_verify \
+            -- --ignored --test-threads 2 --skip the_cli_refuses_what_is_not_a_pilfflonk_witness_library
+
+      - name: pilfflonk prove (with Foundry's end to end and the differential fuzzer)
+        run: |
+          cargo test --release --features "$CARGO_FEATURES" -p proofman-cli --test pilfflonk_prove \
+            -- --ignored --test-threads 2 --skip the_prover_refuses_what_is_not_a_pilfflonk_witness_library
+
   test-pilfflonk-wrap:
     # The final SNARK wrap with pilfflonk, end to end on fibonacci-square: a vadcop_final proof,
     # setup-snark --final-snark pilfflonk, and cli/tests/snark_pilfflonk.rs, whose tests run
@@ -305,15 +454,14 @@ jobs:
     #
     # The wrap's AIR is compiled over BN128, which needs a pil2com that has `--field`
     # (pilfflonk/docs/README.md#compile-pil): commit PIL2_COMPILER_COMMIT of pil2-compiler's branch
-    # develop-0.14.0-pil2-fflonk. The job runs when the repository variable PILFFLONK_BN128_CI is
-    # "true" (Settings > Secrets and variables > Actions > Variables).
+    # develop-0.14.0-pil2-fflonk, until that branch is merged and setup/pil2-stark/package.json pins
+    # it.
     #
     # The ptau is a test one, written here (pilfflonk/bench/inputs.rs: its τ is public, good for a
     # test and nothing else), with the fewest powers setup-snark accepts for this key: 2^19 rows,
     # 13·2^19 + 12 powers (it refuses fewer, and says how many it needs). 436 MB, where the Hermez
     # ptau of 2^24 is 19 GB.
     name: Test pilfflonk wrap (fibonacci-square)
-    if: ${{ vars.PILFFLONK_BN128_CI == 'true' }}
     runs-on: ubuntu-latest
     env:
       PIL2_COMPILER_COMMIT: f4fbf33a9d8aae1381b9e57056b09c293522df2c
@@ -323,6 +471,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Check out pil2-compiler (BN128)
         uses: actions/checkout@v4

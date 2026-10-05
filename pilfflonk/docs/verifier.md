@@ -285,7 +285,7 @@ there. Nothing is built in the repository.
   fixture has one), `pilfflonk verify` accepts, `pilfflonk calldata` encodes, and Foundry accepts the
   proof and refuses it with an evaluation changed, a commitment replaced by `W` and a public changed:
   73 proofs accepted and 192 refused.
-- Without the tools (in CI): `setup/pilfflonk/tests/setup/solidity.rs` and
+- Without the tools (the workspace's `cargo test`): `setup/pilfflonk/tests/setup/solidity.rs` and
   `setup/pil2-stark/tests/setup_pilfflonk.rs` check that `--solidity` changes no other file, that
   `pilfflonk-solidity` writes the same bytes, what is refused and the shape of the calldata;
   `cli/tests/pilfflonk_calldata.rs` checks the calldata of keys with and without auxiliary inverses and
@@ -329,9 +329,10 @@ agree on every case.
 
 Foundry v1.8.3 and solc 0.8.37, pinned and installed outside the repository. The tests find them at
 `PILFFLONK_FORGE` and `PILFFLONK_SOLC`, as the compiler at `PIL2C_EXEC`, and are `#[ignore]` without
-them, so CI without Foundry passes. The Foundry project has no `forge-std`: its tests declare the
-cheatcodes they use. `foundry.toml` sets `offline = true` and `solc = "0.8.37"`, and the tests give the
-compiler's path with `FOUNDRY_SOLC=$PILFFLONK_SOLC`, so Foundry downloads nothing.
+them, so a `cargo test` without Foundry passes; CI's `test-pilfflonk-bn128` installs both. The
+Foundry project has no `forge-std`: its tests declare the cheatcodes they use. `foundry.toml` sets
+`offline = true` and `solc = "0.8.37"`, and the tests give the compiler's path with
+`FOUNDRY_SOLC=$PILFFLONK_SOLC`, so Foundry downloads nothing.
 
 ```sh
 export PILFFLONK_FORGE=<forge> PILFFLONK_SOLC=<solc> PIL2C_EXEC=<pil2-compiler>/src/pil.js

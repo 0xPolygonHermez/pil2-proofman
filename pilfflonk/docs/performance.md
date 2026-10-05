@@ -737,8 +737,7 @@ The ptau needs at least 6,815,756 powers `[τ^i]₁`: Hermez's `powersOfTau28_he
 or a larger one, or, for a test,
 `target/release/examples/pilfflonk_bench_inputs ptau 6815756 <out.ptau>` (a public `τ`; 3 min 23 s
 on 64 threads). The CI job `test-pilfflonk-wrap` runs these steps with that test ptau, and then
-`cli/tests/snark_pilfflonk.rs` on the key and the proof; it runs when the repository variable
-`PILFFLONK_BN128_CI` is `"true"` (its comment says where to set it). On the Solidity side, `proofman-cli pilfflonk
+`cli/tests/snark_pilfflonk.rs` on the key and the proof. On the Solidity side, `proofman-cli pilfflonk
 calldata -k <vkey> -p <proof.bin> --publics <publics.json> --format hex` gives `verifyProof`'s
 calldata from the proof's bytes, and its words are `verifySnarkProof`'s `proofBytes`.
 
