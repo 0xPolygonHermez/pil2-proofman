@@ -396,8 +396,8 @@ mod aggregation_arity_tests {
         });
         let gi: GlobalInfo = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(gi.setup_version, None);
-        json["setupVersion"] = serde_json::json!("1.3.1");
+        json["setupVersion"] = serde_json::json!("1.3.2");
         let gi: GlobalInfo = serde_json::from_value(json).unwrap();
-        assert_eq!(gi.setup_version.as_deref(), Some("1.3.1"));
+        assert_eq!(gi.setup_version.as_deref(), Some("1.3.2"));
     }
 }
