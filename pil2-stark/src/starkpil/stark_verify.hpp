@@ -49,9 +49,17 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     }
 
     Goldilocks::Element airgroupValues[starkInfo.airgroupValuesSize];
+    uint64_t ag = 0;
     for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size() ; ++i) {
-        for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
-            airgroupValues[i*FIELD_EXTENSION + j] = Goldilocks::fromString(jproof["airgroupvalues"][i][j]);
+        // airgroupValues is packed by stage width (stark_info.cpp airgroupValuesSize:
+        // 1 for stage 1, FIELD_EXTENSION otherwise); a fixed i*FIELD_EXTENSION stride
+        // overruns the buffer once a stage-1 entry precedes a wider one.
+        if(starkInfo.airgroupValuesMap[i].stage == 1) {
+            airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][0]);
+        } else {
+            airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][0]);
+            airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][1]);
+            airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][2]);
         }
     }
 
@@ -127,9 +135,15 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             }
         }
         // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
+        uint64_t pag = 0;
         for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++) {
-            if(starkInfo.airgroupValuesMap[i].stage == s) {
-                transcript.put(&airgroupValues[i * FIELD_EXTENSION], FIELD_EXTENSION);
+            if(starkInfo.airgroupValuesMap[i].stage == 1) {
+                pag += 1;
+            } else {
+                if(starkInfo.airgroupValuesMap[i].stage == s) {
+                    transcript.put(&airgroupValues[pag], FIELD_EXTENSION);
+                }
+                pag += FIELD_EXTENSION;
             }
         }
 

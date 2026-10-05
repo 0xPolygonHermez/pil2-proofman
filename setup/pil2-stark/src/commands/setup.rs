@@ -81,11 +81,11 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     // Reject stage>=2 proofValues: nothing binds them to the instances (they are absorbed
     // into no transcript and constrained by no AIR), so a prover could pick them after the
     // challenges. Only stage-1 proofValues (folded into the global challenge) are sound today.
-    if let Some(bad) = pilout.symbols.iter().find(|sym| {
-        sym.r#type == pb::SymbolType::ProofValue as i32 && sym.stage.unwrap_or(1) >= 2
-    }) {
+    if let Some(bad) =
+        pilout.symbols.iter().find(|sym| sym.r#type == pb::SymbolType::ProofValue as i32 && sym.stage.unwrap_or(1) != 1)
+    {
         anyhow::bail!(
-            "proofValue '{}' is stage {}; stage >= 2 proofValues are not bound to the proof and are rejected",
+            "proofValue '{}' is stage {}; only stage-1 proofValues are folded into the global              challenge, so any other stage is unbound and is rejected",
             bad.name,
             bad.stage.unwrap_or(1)
         );

@@ -161,9 +161,15 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         }
     }
     // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
+    uint64_t ag = 0;
     for(uint64_t i = 0; i < setupCtx.starkInfo.airgroupValuesMap.size(); i++) {
-        if(setupCtx.starkInfo.airgroupValuesMap[i].stage == 2) {
-            starks.addTranscript(transcript, &params.airgroupValues[i * FIELD_EXTENSION], FIELD_EXTENSION);
+        if(setupCtx.starkInfo.airgroupValuesMap[i].stage == 1) {
+            ag += 1;
+        } else {
+            if(setupCtx.starkInfo.airgroupValuesMap[i].stage == 2) {
+                starks.addTranscript(transcript, &params.airgroupValues[ag], FIELD_EXTENSION);
+            }
+            ag += FIELD_EXTENSION;
         }
     }
 
