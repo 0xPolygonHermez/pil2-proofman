@@ -759,14 +759,9 @@ void reset_device_streams_gpu(void *d_buffers_) {
         }
         for (TimerGPU &t : sd.timers) t.clear();   // events of the dropped proofs
     }
-    // Const slot cache: the pins belong to the finished job's proofs; tags stay (a warm cache
-    // across jobs is the point). Hit/miss counts are per job.
+    // Const slot cache: tags stay (a warm cache across jobs is the point). Hit/miss counts are per job.
     {
         std::lock_guard<std::mutex> lk(d_buffers->constCacheMutex);
-        for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
-            d_buffers->streamsData[i].constSlotPin[0] = -1;
-            d_buffers->streamsData[i].constSlotPin[1] = -1;
-        }
         for (size_t g = 0; g < d_buffers->constCache.size(); g++) {
             DeviceCommitBuffers::ConstSlotCache &cache = d_buffers->constCache[g];
             if (cache.armed() && cache.hits + cache.misses > 0) {
@@ -823,6 +818,7 @@ void free_device_buffers_gpu(void *d_buffers_)
             DeviceCommitBuffers::ConstSlotCache &cache = d_buffers->constCache[i];
             for (uint32_t s = 0; s < cache.nSlots; s++) {
                 if (cache.ready[s] != nullptr) CHECKCUDAERR(cudaEventDestroy(cache.ready[s]));
+                if (cache.consumed[s] != nullptr) CHECKCUDAERR(cudaEventDestroy(cache.consumed[s]));
             }
             cache.nSlots = 0;
         }
@@ -1149,7 +1145,10 @@ void configure_const_slot_cache_gpu(void *d_buffers_, uint64_t baseOffset, uint6
         DeviceCommitBuffers::ConstSlotCache &cache = d_buffers->constCache[i];
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         if (!cache.armed()) {
-            for (uint32_t s = 0; s < nSlots; s++) CHECKCUDAERR(cudaEventCreateWithFlags(&cache.ready[s], cudaEventDisableTiming));
+            for (uint32_t s = 0; s < nSlots; s++) {
+                CHECKCUDAERR(cudaEventCreateWithFlags(&cache.ready[s], cudaEventDisableTiming));
+                CHECKCUDAERR(cudaEventCreateWithFlags(&cache.consumed[s], cudaEventDisableTiming));
+            }
         }
         cache.nSlots = nSlots;
         cache.base = baseOffset;
@@ -1189,23 +1188,12 @@ void load_host_const_pols_gpu(uint64_t airgroupId, uint64_t airId, char *proofTy
     }
 }
 
-// Caller holds constCacheMutex. Is `slot` read by a proof in flight on some stream of this GPU?
-static bool constSlotPinned(DeviceCommitBuffers *d_buffers, uint32_t gpuId, int32_t slot) {
-    for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
-        const StreamData &sd = d_buffers->streamsData[i];
-        if (sd.gpuId != gpuId) continue;
-        if (sd.constSlotPin[0] == slot || sd.constSlotPin[1] == slot) return true;
-    }
-    return false;
-}
-
-// The element offset (in the aggregation const buffer) of `air`'s packed const pols for a launch on
-// `streamId`, whose upload and unpack run on `stream`: the slot holding them, or the least recently
-// used unpinned slot after uploading them there. Pins the slot for the launch (see
-// StreamData::constSlotPin) and orders `stream` behind the slot's upload.
-static uint64_t acquireConstSlot(DeviceCommitBuffers *d_buffers, uint32_t gpuLocalId, uint32_t streamId, uint32_t pin,
-                                 AirInstanceInfo *air, cudaStream_t stream) {
-    std::lock_guard<std::mutex> lk(d_buffers->constCacheMutex);
+// `air`'s packed const pols for a launch whose unpack runs after `stream`: the slot holding them,
+// or the least recently used slot with no pending reader after uploading them there (waits for
+// one when every slot has a reader whose unpack is not enqueued yet). The caller must
+// releaseConstSlot once that unpack is enqueued. Returns the slot.
+static int32_t acquireConstSlot(DeviceCommitBuffers *d_buffers, uint32_t gpuLocalId, AirInstanceInfo *air, cudaStream_t stream) {
+    std::unique_lock<std::mutex> lk(d_buffers->constCacheMutex);
     DeviceCommitBuffers::ConstSlotCache &cache = d_buffers->constCache[gpuLocalId];
     const int64_t key = constAirKey(air->airgroupId, air->airId);
     auto host = d_buffers->hostConstPols.find(key);
@@ -1216,34 +1204,60 @@ static uint64_t acquireConstSlot(DeviceCommitBuffers *d_buffers, uint32_t gpuLoc
     }
     int32_t slot = -1;
     for (uint32_t s = 0; s < cache.nSlots; s++) if (cache.tag[s] == key) { slot = (int32_t)s; break; }
-    const uint32_t gpuId = d_buffers->my_gpu_ids[gpuLocalId];
-    if (slot < 0) {
-        for (uint32_t s = 0; s < cache.nSlots; s++) if (cache.tag[s] == -1) { slot = (int32_t)s; break; }
-        if (slot < 0) {
-            uint64_t oldest = UINT64_MAX;
-            for (uint32_t s = 0; s < cache.nSlots; s++) {
-                if (constSlotPinned(d_buffers, gpuId, (int32_t)s)) continue;
-                if (cache.lastUse[s] < oldest) { oldest = cache.lastUse[s]; slot = (int32_t)s; }
-            }
-        }
-        if (slot < 0) {
-            zklog.error("const slot cache: every slot is pinned by a proof in flight (" + std::to_string(cache.nSlots) + " slots)");
-            exitProcess();
-        }
-        cache.tag[slot] = key;
-        cache.misses++;
-        gl64_t *dst = d_buffers->d_constPolsAggregation[gpuLocalId] + cache.base + (uint64_t)slot * cache.slotElems;
-        CHECKCUDAERR(cudaMemcpyAsync(dst, host->second.ptr, host->second.elems * sizeof(Goldilocks::Element),
-                                     cudaMemcpyHostToDevice, stream));
-        CHECKCUDAERR(cudaEventRecord(cache.ready[slot], stream));
-    } else {
+    if (slot >= 0) {
         cache.hits++;
         // Another stream may still be uploading it.
         CHECKCUDAERR(cudaStreamWaitEvent(stream, cache.ready[slot], 0));
+    } else {
+        for (;;) {
+            uint64_t oldest = UINT64_MAX;
+            for (uint32_t s = 0; s < cache.nSlots; s++) {
+                if (cache.pending[s] != 0) continue;
+                const uint64_t age = cache.tag[s] == -1 ? 0 : cache.lastUse[s];
+                if (age < oldest) { oldest = age; slot = (int32_t)s; }
+            }
+            if (slot >= 0) break;
+            d_buffers->constCacheCv.wait(lk);
+            // The tag may have landed while we waited.
+            for (uint32_t s = 0; s < cache.nSlots; s++) if (cache.tag[s] == key) { slot = (int32_t)s; break; }
+            if (slot >= 0) {
+                cache.hits++;
+                CHECKCUDAERR(cudaStreamWaitEvent(stream, cache.ready[slot], 0));
+                break;
+            }
+        }
+        if (cache.tag[slot] != key) {
+            cache.tag[slot] = key;
+            cache.misses++;
+            // Its previous readers must have unpacked it before the overwrite.
+            CHECKCUDAERR(cudaStreamWaitEvent(stream, cache.consumed[slot], 0));
+            gl64_t *dst = d_buffers->d_constPolsAggregation[gpuLocalId] + cache.base + (uint64_t)slot * cache.slotElems;
+            CHECKCUDAERR(cudaMemcpyAsync(dst, host->second.ptr, host->second.elems * sizeof(Goldilocks::Element),
+                                         cudaMemcpyHostToDevice, stream));
+            CHECKCUDAERR(cudaEventRecord(cache.ready[slot], stream));
+        }
     }
     cache.lastUse[slot] = ++cache.useClock;
-    d_buffers->streamsData[streamId].constSlotPin[pin] = slot;
+    cache.pending[slot]++;
+    return slot;
+}
+
+static uint64_t constSlotOffset(DeviceCommitBuffers *d_buffers, uint32_t gpuLocalId, int32_t slot) {
+    const DeviceCommitBuffers::ConstSlotCache &cache = d_buffers->constCache[gpuLocalId];
     return cache.base + (uint64_t)slot * cache.slotElems;
+}
+
+// The reader's unpack of `slot` is enqueued on `stream`: the slot may be recycled once it runs.
+static void releaseConstSlot(DeviceCommitBuffers *d_buffers, uint32_t gpuLocalId, int32_t slot, cudaStream_t stream) {
+    {
+        std::lock_guard<std::mutex> lk(d_buffers->constCacheMutex);
+        DeviceCommitBuffers::ConstSlotCache &cache = d_buffers->constCache[gpuLocalId];
+        // Chained, so the event left by the last release covers every reader, in any order.
+        CHECKCUDAERR(cudaStreamWaitEvent(stream, cache.consumed[slot], 0));
+        CHECKCUDAERR(cudaEventRecord(cache.consumed[slot], stream));
+        cache.pending[slot]--;
+    }
+    d_buffers->constCacheCv.notify_all();
 }
 
 // Rebuild the region from the resident packed blob on the stream's LOWEST-priority lane: unpack,
@@ -1288,7 +1302,8 @@ static void rebuildCustomCommitsFixed(DeviceCommitBuffers *d_buffers, SetupCtx *
 // fixedTreePending so genProof_gpu skips both steps and waits fixedTreeDone only where Q first
 // reads the extended pols.
 static void prebuildFixedTree(SetupCtx *setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree,
-                              StreamData &sd, TimerGPU &timer) {
+                              StreamData &sd, TimerGPU &timer, DeviceCommitBuffers *d_buffers = nullptr,
+                              uint32_t gpuLocalId = 0, int32_t constSlot = -1) {
     StarkInfo &si = setupCtx->starkInfo;
     uint64_t N = 1ull << si.starkStruct.nBits;
     Goldilocks::Element *packed = (Goldilocks::Element *)d_const_pols;
@@ -1297,6 +1312,7 @@ static void prebuildFixedTree(SetupCtx *setupCtx, gl64_t *d_aux_trace, gl64_t *d
     CHECKCUDAERR(cudaStreamWaitEvent(sd.fixedStream, sd.fixedTreeFork, 0));
     unpack_fixed((uint64_t *)packed, (uint64_t *)(packed + 1), (uint64_t *)(packed + 1 + si.nConstants),
                  (uint64_t *)unpacked, si.nConstants, N, sd.fixedStream, timer);
+    if (constSlot >= 0) releaseConstSlot(d_buffers, gpuLocalId, constSlot, sd.fixedStream);
     CHECKCUDAERR(cudaEventRecord(sd.fixedPolsDone, sd.fixedStream));
     extendAndMerkelizeFixed(*setupCtx, unpacked, (Goldilocks::Element *)d_const_tree, true, timer, sd.fixedStream);
     CHECKCUDAERR(cudaEventRecord(sd.fixedTreeDone, sd.fixedStream));
@@ -2322,9 +2338,10 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     StreamData &sd = d_buffers->streamsData[streamId];
     uint64_t constPolsOffset = air_instance_info->const_pols_offset;
     std::string constKey(recurser_id);
+    int32_t constSlot = -1;
     if (air_instance_info->constCached) {
-        const uint32_t pin = (d_buffers->pipelineMode && !sd.recursive) ? (uint32_t)(sd.launchSeq & 1) : 0;
-        constPolsOffset = acquireConstSlot(d_buffers, gpuLocalId, streamId, pin, air_instance_info, stream);
+        constSlot = acquireConstSlot(d_buffers, gpuLocalId, air_instance_info, stream);
+        constPolsOffset = constSlotOffset(d_buffers, gpuLocalId, constSlot);
         constKey = "cache:" + std::to_string(airgroupId) + ":" + std::to_string(airId);
     }
     bool reuse_constants = sd.adoptFixedSlot(constPolsOffset,
@@ -2387,8 +2404,13 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     // Fixed pols rebuild on the lane, overlapping the witness upload below.
     bool fixedPrebuilt = false;
     if (!reuse_const_tree && setupCtx->starkInfo.calculateFixedExtended) {
-        prebuildFixedTree(setupCtx, d_aux_trace, d_const_pols, d_const_tree, sd, timer);
+        prebuildFixedTree(setupCtx, d_aux_trace, d_const_pols, d_const_tree, sd, timer, d_buffers, gpuLocalId, constSlot);
         fixedPrebuilt = true;
+        constSlot = -1;
+    } else if (constSlot >= 0 && reuse_const_tree) {
+        // The stream still holds this air's unpacked pols and tree: the slot is not read.
+        releaseConstSlot(d_buffers, gpuLocalId, constSlot, stream);
+        constSlot = -1;
     }
 
     TimerStartGPU(timer, STARK_GPU_WITNESS);
@@ -2443,6 +2465,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     // See gen_proof_gpu: the tree-aware flag, not the slot one.
     if (fixedPrebuilt) CHECKCUDAERR(cudaStreamWaitEvent(stream, sd.fixedPolsDone, 0));
     genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, timer, stream, true, reuse_const_tree || fixedPrebuilt, fixedPrebuilt);
+    if (constSlot >= 0) releaseConstSlot(d_buffers, gpuLocalId, constSlot, stream);
     if (d_buffers->pipelineMode && !sd.recursive) {
         // Depth-2 in-flight on the shared stream: snapshot the completion into the ring
         // (the per-stream sd fields will be overwritten by the next launch) and let the
@@ -2486,8 +2509,10 @@ void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     sd.proofType = string(proofType);
     uint64_t constPolsOffset = air_instance_info->const_pols_offset;
     std::string constKey;
+    int32_t constSlot = -1;
     if (air_instance_info->constCached) {
-        constPolsOffset = acquireConstSlot(d_buffers, gpuLocalId, streamId, 0, air_instance_info, stream);
+        constSlot = acquireConstSlot(d_buffers, gpuLocalId, air_instance_info, stream);
+        constPolsOffset = constSlotOffset(d_buffers, gpuLocalId, constSlot);
         constKey = "cache:" + std::to_string(airgroupId) + ":" + std::to_string(airId);
     }
     sd.adoptFixedSlot(constPolsOffset, setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], true, constKey);
@@ -2509,7 +2534,8 @@ void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
     uint64_t* d_num_packed_words = (uint64_t*) d_const_pols;
     unpack_fixed(d_num_packed_words, (uint64_t*)(packed_const_pols + 1), (uint64_t*)(packed_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
-    
+    if (constSlot >= 0) releaseConstSlot(d_buffers, gpuLocalId, constSlot, stream);
+
     gl64_t *d_const_tree = d_aux_trace + offsetConstTree;
     extendAndMerkelizeFixed(*setupCtx, d_const_pols_unpacked, (Goldilocks::Element *)d_const_tree, true, timer, stream);
     CHECKCUDAERR(cudaStreamSynchronize(stream));

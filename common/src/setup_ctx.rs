@@ -469,7 +469,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                 total_custom_commits_reserved_words == 0,
                 "recursive1 setups with custom commits cannot use the const slot cache"
             );
-            RECURSIVE1_CONST_SLOTS.min(n_const_slots)
+            recursive1_const_slots().min(n_const_slots)
         } else {
             0
         };
@@ -520,9 +520,23 @@ pub struct SetupCtx<F: PrimeField64> {
     setup_type: ProofType,
 }
 
-/// Slots of the recursive1 const slot cache: a block uses ~20 distinct recursive1 setups, so 20
-/// makes the second use of an air within a block a hit while freeing (44 - 20) x 100 MiB.
-pub const RECURSIVE1_CONST_SLOTS: usize = 20;
+/// Slots of the recursive1 const slot cache. A slot is free once its proof unpacked it, so two
+/// overlap one upload with one unpack; more slots only add warm-cache hits (measured <= ~1%).
+pub const RECURSIVE1_CONST_SLOTS: usize = 2;
+
+/// Must match `DeviceCommitBuffers::ConstSlotCache::MAX_SLOTS`.
+const RECURSIVE1_CONST_SLOTS_MAX: usize = 64;
+
+/// `PROOFMAN_RECURSIVE1_CONST_SLOTS` overrides [`RECURSIVE1_CONST_SLOTS`] (1..=64).
+fn recursive1_const_slots() -> usize {
+    match std::env::var("PROOFMAN_RECURSIVE1_CONST_SLOTS") {
+        Ok(v) => match v.parse::<usize>() {
+            Ok(n) if (1..=RECURSIVE1_CONST_SLOTS_MAX).contains(&n) => n,
+            _ => panic!("PROOFMAN_RECURSIVE1_CONST_SLOTS='{v}' must be an integer in 1..={RECURSIVE1_CONST_SLOTS_MAX}"),
+        },
+        Err(_) => RECURSIVE1_CONST_SLOTS,
+    }
+}
 
 impl<F: PrimeField64> SetupCtx<F> {
     /// Every custom commit reserves its worst case. Use `new_with_commit_files` when the caller

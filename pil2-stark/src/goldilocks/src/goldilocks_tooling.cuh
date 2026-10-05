@@ -582,12 +582,6 @@ struct StreamData{
         constTreeResident = false;
     }
 
-    // Const-cache slots the proofs in flight on this stream read, by pinned-staging parity (the
-    // ring half the launch rode; 0 on ring-less streams). A parity is reused only once the proof it
-    // belonged to completed (ring depth 2, or the legacy sync-and-collect), so overwriting the pin
-    // there releases the slot exactly when it may be recycled. -1 = none.
-    int32_t constSlotPin[2] = {-1, -1};
-
     // Claim this slot; true if it was already claimed, i.e. the unpacked const pols still
     // apply -- even to a different air sharing them. A change also drops constTreeResident.
     bool adoptFixedSlot(uint64_t offset, uint64_t auxOffset, bool aggBuffer, const string &recurser){
@@ -695,27 +689,31 @@ struct DeviceCommitBuffers
     // set, read once per proof (unpacked into the aux trace, tree rebuilt on device); a block uses
     // ~20 of them. Instead of one resident slot per setup, the aggregation const buffer holds
     // `nSlots` slots (RECURSIVE1_CONST_SLOTS on the Rust side, which sizes the region), each tagged
-    // with the air whose set it holds. A launch hits when a slot holds its air; else it takes an
-    // unpinned slot (least recently used), uploads the set from the host pinned copy on its own
-    // stream ahead of the unpack, and tags it. Slots read by proofs in flight are pinned by their
-    // stream (StreamData::constSlotPin), so a live set is never recycled. `ready[s]` is recorded
-    // after the upload: a hit on another stream waits on it. One cache per GPU, tags shared under
-    // constCacheMutex. hits/misses are per job, logged at reset.
+    // with the air whose set it holds. A launch hits when a slot holds its air; else it takes the
+    // least recently used slot with no pending reader, uploads the set from the host pinned copy
+    // ahead of the unpack, and tags it. A proof reads its slot only to unpack it into its own aux
+    // trace: `pending[s]` counts readers whose unpack is not enqueued yet, and `consumed[s]` is
+    // recorded after the last enqueued unpack, so an upload into `s` waits on it on the GPU.
+    // `ready[s]` is recorded after the upload: a hit on another stream waits on it. One cache per
+    // GPU, tags shared under constCacheMutex. hits/misses are per job, logged at reset.
     struct ConstSlotCache {
-        static constexpr uint32_t MAX_SLOTS = 32;
+        static constexpr uint32_t MAX_SLOTS = 64;  // RECURSIVE1_CONST_SLOTS_MAX on the Rust side
         uint32_t nSlots = 0;
         uint64_t base = 0;        // element offset in d_constPolsAggregation
         uint64_t slotElems = 0;
         int64_t tag[MAX_SLOTS];   // (airgroup << 32 | air) of the set held, -1 = free
         uint64_t lastUse[MAX_SLOTS];
         cudaEvent_t ready[MAX_SLOTS] = {};
+        cudaEvent_t consumed[MAX_SLOTS] = {};
+        uint32_t pending[MAX_SLOTS] = {};
         uint64_t useClock = 0;
         uint64_t hits = 0, misses = 0;
         bool armed() const { return nSlots > 0; }
-        void clearTags() { for (uint32_t s = 0; s < MAX_SLOTS; s++) { tag[s] = -1; lastUse[s] = 0; } }
+        void clearTags() { for (uint32_t s = 0; s < MAX_SLOTS; s++) { tag[s] = -1; lastUse[s] = 0; pending[s] = 0; } }
     };
     std::vector<ConstSlotCache> constCache;   // per GPU (local index)
     std::mutex constCacheMutex;
+    std::condition_variable constCacheCv;   // a slot's last pending reader enqueued its unpack
     struct HostConstPols { Goldilocks::Element *ptr = nullptr; uint64_t elems = 0; };
     std::map<int64_t, HostConstPols> hostConstPols;   // air key -> pinned host copy
     // Pinned copies of the aggregation fixed pols, for the post-borrow re-upload (offsets in elements).
