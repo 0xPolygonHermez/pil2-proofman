@@ -549,7 +549,7 @@ fn link_one(tc: &Toolchain, work: &Path, sym: &str, dest: &Path) -> Result<()> {
 /// only; anything odd (zerofier use, non-canonical output shape, oversized) is left out and
 /// stays on the interpreter. Returns (expId, ir, out_dim) per covered expression.
 fn build_x_items(c: &Candidate, cfg: &GenConfig) -> Vec<(i64, ir::Ir, u64)> {
-    const EXPR_CAP: usize = 512;
+    const EXPR_CAP: usize = 1024;
     let mut items: Vec<(i64, ir::Ir, u64)> = Vec::new();
     for ec in &c.expr_info.expressions_code {
         if ec.exp_id == c.cexp || ec.code.is_empty() || ec.code.len() > EXPR_CAP {
