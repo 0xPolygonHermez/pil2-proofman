@@ -89,6 +89,19 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
         );
     }
 
+    // The provers absorb airgroupvalues only after root 2, so stages above 2 would be unbound.
+    if let Some(bad) = pilout
+        .symbols
+        .iter()
+        .find(|sym| sym.r#type == pb::SymbolType::AirGroupValue as i32 && sym.stage.unwrap_or(1) > 2)
+    {
+        anyhow::bail!(
+            "airgroupValue '{}' is stage {}; only stage 1 and 2 airgroupValues are supported",
+            bad.name,
+            bad.stage.unwrap_or(1)
+        );
+    }
+
     let settings_map: StarkStructsConfig = if let Some(ref settings_path) = opts.stark_structs_path {
         let data = fs::read_to_string(settings_path)?;
         StarkStructsConfig::from_json_str(&data)?
