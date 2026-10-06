@@ -19,11 +19,9 @@
 //!   [`WrapWitness::witness_from_json`] for the recursivef proof in memory, as the PLONK and FFLONK
 //!   wraps hand it to their final circuit; [`witness_from_circom`] if the circuit's witness is at
 //!   hand;
-//! - **as a pilfflonk witness library** (pilfflonk/docs/README.md#witness), the cdylib this crate
-//!   builds, `libpilfflonk_wrap_witness.so`: `pilfflonk prove -w libpilfflonk_wrap_witness.so -i
-//!   inputs.json`, where `inputs.json` is a [`WrapInputs`] that names the zkin and the circuit's
-//!   files. The library's Rust ABI ties it to the build of the `proofman-cli` that loads it, so it
-//!   lives in that build, not beside the circuit's files in `provingKeySnark/`, and `-i` names them.
+//! - **as a pilfflonk witness library** (pilfflonk/docs/README.md#witness): the crate
+//!   `pilfflonk-wrap-witness-lib` (`wrap-witness/lib/`), whose cdylib `pilfflonk prove -w` loads with
+//!   a [`WrapInputs`] as `-i`.
 //!
 //! What it cannot compute is an error, not a panic: a file missing, an exec that is not over BN128,
 //! has gate bands that are not the wrap's range checks or does not fit the circuit's witness (one of
@@ -42,31 +40,7 @@ mod trace;
 mod witness;
 mod zkin;
 
-use std::path::Path;
-
-use proofman_pilfflonk::{
-    pilfflonk_witness_library, PilfflonkError, PilfflonkResult, PilfflonkWitnessLibrary, Witness, WitnessShape,
-};
-
 pub use artifacts::{WrapArtifacts, WrapInputs};
 pub use error::{WrapWitnessError, WrapWitnessResult};
 pub use gl_zkin::gl_proof_zkin;
 pub use witness::{witness_from_circom, DeviceWitness, WrapWitness};
-
-pilfflonk_witness_library!(WrapWitnessLibrary);
-
-/// The cdylib's witness: from the [`WrapInputs`] of `-i`, which it requires, the witness of the key
-/// of `shape`.
-impl PilfflonkWitnessLibrary for WrapWitnessLibrary {
-    fn witness(&mut self, shape: &WitnessShape, public_inputs: Option<&Path>) -> PilfflonkResult<Witness> {
-        let Some(path) = public_inputs else {
-            return Err(PilfflonkError::InvalidFormat(
-                "the wrap's witness library needs -i (--public-inputs): the JSON that names the zkin and the final \
-                 circuit's witnessCalculator, dat and exec"
-                    .to_string(),
-            ));
-        };
-        let inputs = WrapInputs::read(path)?;
-        Ok(WrapWitness::load(&inputs.artifacts)?.witness(shape, &inputs.zkin)?)
-    }
-}

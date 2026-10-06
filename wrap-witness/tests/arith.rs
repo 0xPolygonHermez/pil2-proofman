@@ -269,7 +269,7 @@ fn the_dynamic_library_computes_the_same_witness() {
     });
     fs::write(&inputs, json.to_string()).unwrap();
 
-    let mut library = load_witness_library(&built_library("pilfflonk_wrap_witness"), 0).unwrap();
+    let mut library = load_witness_library(&built_library("pilfflonk_wrap_witness_lib"), 0).unwrap();
     let witness = compute_witness(&mut *library, &circuit.shape(), Some(&inputs)).unwrap();
     let in_process = WrapWitness::load(&circuit.artifacts()).unwrap().witness(&circuit.shape(), &zkin()).unwrap();
     assert_eq!(witness, in_process);
@@ -450,7 +450,7 @@ fn the_witness_proves_on_an_air_of_the_gates() {
         "exec": artifacts.exec,
     });
     fs::write(&inputs, json.to_string()).unwrap();
-    let mut library = load_witness_library(&built_library("pilfflonk_wrap_witness"), 0).unwrap();
+    let mut library = load_witness_library(&built_library("pilfflonk_wrap_witness_lib"), 0).unwrap();
     let witness = compute_witness(&mut *library, &pk.witness_shape().unwrap(), Some(&inputs)).unwrap();
 
     let report = check(&pk, &witness, &CheckOptions::default()).unwrap();

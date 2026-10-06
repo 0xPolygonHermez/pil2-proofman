@@ -1364,6 +1364,7 @@ dependencies = [
  "pil2-stark-recurser",
  "pil2-stark-setup",
  "pilfflonk-setup",
+ "pilfflonk-wrap-witness-lib",
  "proofman-common",
  "proofman-fields",
  "proofman-pilfflonk",
@@ -1373,6 +1374,15 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "pilfflonk-wrap-witness-lib"
+version = "1.4.0-alpha"
+dependencies = [
+ "pilfflonk-wrap-witness",
+ "proofman-common",
+ "proofman-pilfflonk",
 ]
 
 [[package]]

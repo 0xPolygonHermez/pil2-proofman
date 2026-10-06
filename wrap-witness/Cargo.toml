@@ -10,11 +10,6 @@ repository = { workspace = true }
 categories = { workspace = true }
 build = "build.rs"
 
-[lib]
-# The rlib for the wrap, which computes the witness in its own process; the cdylib for
-# `pilfflonk prove -w`, which loads it as a pilfflonk witness library.
-crate-type = ["rlib", "cdylib"]
-
 [dependencies]
 proofman-pilfflonk = { workspace = true }
 # The exec's reader and its application, the final circuit's witness library, and the logger of
@@ -33,6 +28,8 @@ rayon = { workspace = true }
 cc = "1"
 
 [dev-dependencies]
+# The witness library's cdylib, which arith.rs loads.
+pilfflonk-wrap-witness-lib = { workspace = true }
 # The tests' circuit: read as BN128, converted to PLONK gates, and its exec written.
 pil2-stark-recurser = { workspace = true }
 # Builds the circuit's witness library as setup-snark builds final.so.
