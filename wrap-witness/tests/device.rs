@@ -7,7 +7,7 @@
 //! - `the_device_builds_the_hosts_witness`: the witness the GPU builds from its parts
 //!   (`WrapWitness::device_witness`, `proofman_pilfflonk::prove_exec`) is the host's
 //!   (`WrapWitness::witness_from_zkin`): the same columns, and the same proof with the same blinding
-//!   seed. Needs a GPU.
+//!   seed. Without a GPU it says so and passes, as pil2-stark's GPU tests do.
 //!
 //! Both need `PIL2C_EXEC` and, as the other tests here, Node.js and snarkjs:
 //!
@@ -33,8 +33,8 @@ use proofman_common::exec_format::BLAKE3_WRAP_BLOCK_ROWS;
 use proofman_common::hash_family::BLAKE3_BN128_WRAP_FAMILY;
 use proofman_fields::{Bn128, Field, QuotientMap};
 use proofman_pilfflonk::{
-    check, prove, prove_exec, stage_columns, stage_columns_exec, CheckOptions, Device, FrBytes, ProveOptions,
-    ProvingKey, Witness, WitnessSource,
+    check, gpu_available, prove, prove_exec, stage_columns, stage_columns_exec, CheckOptions, Device, FrBytes,
+    ProveOptions, ProvingKey, Witness, WitnessSource,
 };
 
 use common::{build_final, circuits_bn128, missing_prerequisite, repo_root};
@@ -112,9 +112,8 @@ fn the_witness_checks_and_binds_its_inverses() {
 
     let rows = digest_rows(&witness, 2);
     let over = rows.iter().find(|(_, over)| *over).expect("the fixture's Node word over p").0;
-    let bound = rows.iter().find(|(row, over)| {
-        !over && witness.instances[0].stage1.get(*row, D_INV).unwrap() != FrBytes::ZERO
-    });
+    let bound =
+        rows.iter().find(|(row, over)| !over && witness.instances[0].stage1.get(*row, D_INV).unwrap() != FrBytes::ZERO);
     let bound = bound.expect("a word below p whose d_inv is bound").0;
     let changed = |row: usize, col: usize, value: Bn128| {
         let mut wrong = witness.clone();
@@ -134,8 +133,12 @@ fn the_witness_checks_and_binds_its_inverses() {
 }
 
 #[test]
-#[ignore = "needs PIL2C_EXEC and a GPU"]
+#[ignore = "needs PIL2C_EXEC"]
 fn the_device_builds_the_hosts_witness() {
+    if !gpu_available() {
+        eprintln!("skipping the blake3 wrap's device test: no GPU");
+        return;
+    }
     let Some(circuit) = circuit() else { return };
     let pk = ProvingKey::load_on(&circuit.key, Device::Gpu).unwrap();
     let shape = pk.witness_shape().unwrap();

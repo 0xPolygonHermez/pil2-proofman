@@ -339,9 +339,8 @@ jobs:
     # Foundry and solc are the pinned ones (pilfflonk/docs/verifier.md#tools), solc checked against
     # the sha256 of soliditylang.org's list.
     #
-    # Skipped: the two tests that the CLI refuses a STARK witness library, which fail while every
-    # library that links proofman exports pilfflonk_init_library (M54), and the wrap-witness test of a
-    # real final circuit, which needs one (PILFFLONK_WRAP_FINAL, PILFFLONK_WRAP_ZKIN). The suites run
+    # Skipped: the wrap-witness test of a real final circuit, which needs one (PILFFLONK_WRAP_FINAL,
+    # PILFFLONK_WRAP_ZKIN); the GPU tests skip themselves without a GPU. The suites run
     # with two test threads (pilfflonk/docs/README.md#tests, Threads).
     name: Test pilfflonk (BN128)
     runs-on: ubuntu-latest
@@ -439,12 +438,12 @@ jobs:
       - name: pilfflonk check and verify
         run: |
           cargo test --release --features "$CARGO_FEATURES" -p proofman-cli --test pilfflonk_check --test pilfflonk_verify \
-            -- --ignored --test-threads 2 --skip the_cli_refuses_what_is_not_a_pilfflonk_witness_library
+            -- --ignored --test-threads 2
 
       - name: pilfflonk prove (with Foundry's end to end and the differential fuzzer)
         run: |
           cargo test --release --features "$CARGO_FEATURES" -p proofman-cli --test pilfflonk_prove \
-            -- --ignored --test-threads 2 --skip the_prover_refuses_what_is_not_a_pilfflonk_witness_library
+            -- --ignored --test-threads 2
 
   test-pilfflonk-wrap:
     # The final SNARK wrap with pilfflonk, end to end on fibonacci-square: a vadcop_final proof,
@@ -553,14 +552,6 @@ jobs:
       - name: Setup SNARK with pilfflonk
         run: |
           target/release/proofman-setup setup-snark -b "$WRAP/build" --final-snark pilfflonk --powers-of-tau "$WRAP/wrap.ptau" --publics-info examples/fibonacci-square/src/publics_info.json
-
-      # Another key's vkey, for verify-snark to refuse the wrap's proof with: the Fibonacci fixture's.
-      - name: Setup pilfflonk of the Fibonacci fixture
-        run: |
-          mkdir -p "$WRAP/other"
-          target/release/proofman-setup compile-pil --pil pilfflonk/tests/fixtures/fibonacci/fibonacci.pil -I pil2-components/lib/std/pil --field bn128 -o "$WRAP/other/fibonacci.pilout"
-          target/release/proofman-setup setup-pilfflonk -a "$WRAP/other/fibonacci.pilout" -b "$WRAP/other" --powers-of-tau "$WRAP/wrap.ptau"
-          echo "PROVE_SNARK_OTHER_VKEY=$(ls "$GITHUB_WORKSPACE/$WRAP"/other/provingKey/*/pilfflonk/pilfflonk.vkey.json)" >> "$GITHUB_ENV"
 
       - name: Prove and verify the wrap with pilfflonk
         env:
