@@ -2983,13 +2983,12 @@ where
                 })
                 .collect();
 
-            // Airgroups without instances yield the identity (all zeros): no record, since no
-            // recursive proof will ever mark it aggregated.
+            // One record per airgroup, including identity (all-zero) ones: an airgroup without
+            // local proofs gets a null Recursive2 proof whose challenge is that same zero vector.
             let contributions_info = |worker_index: u32| -> Vec<ContributionsInfo> {
                 per_airgroup_contributions_u64
                     .iter()
                     .enumerate()
-                    .filter(|(_, challenge)| challenge.iter().any(|&x| x != 0))
                     .map(|(airgroup_id, challenge)| ContributionsInfo {
                         challenge: challenge.clone(),
                         worker_index,
