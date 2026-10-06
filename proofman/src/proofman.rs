@@ -1894,8 +1894,7 @@ where
             air_id,
             &pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?,
         )?;
-        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] =
-            airgroup_values;
+        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] = airgroup_values;
 
         wcm.debug(&[instance_id], debug_info)?;
 
@@ -4680,12 +4679,7 @@ where
 
             let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(*instance_id)?;
             let setup = self.sctx.get_setup(airgroup_id, air_id)?;
-            let n_airgroup_values = setup
-                .stark_info
-                .airgroupvalues_map
-                .as_ref()
-                .map(|map| map.len() * 3)
-                .unwrap_or(0);
+            let n_airgroup_values = setup.stark_info.airgroupvalues_map.as_ref().map(|map| map.len() * 3).unwrap_or(0);
 
             let airgroup_values: Vec<F> = proof
                 .as_ref()
