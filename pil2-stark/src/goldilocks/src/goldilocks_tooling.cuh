@@ -828,6 +828,9 @@ struct DeviceCommitBuffers
     };
     PrefetchZone *prefetchZones = nullptr;  // [n_gpus], local index
     bool prefetchArmed = false;
+    // The first GPU is the planner's: it stages no host trace and commits only the kernel-witness
+    // airs (set from the proofman once GPU-witness airs are registered on several GPUs).
+    bool plannerGpuDedicated = false;
     uint64_t prefetchSlotStride = 0; // elements between unit bases
     // Witness H2D uploads keep one chunk in flight: a stream with a copy always pending holds the
     // copy engine and starves other streams' copies.

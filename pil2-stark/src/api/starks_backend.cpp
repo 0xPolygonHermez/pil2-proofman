@@ -77,6 +77,7 @@ void *get_first_gpu_buffer_gpu(void *d_buffers_);
 uint64_t get_const_pols_aggregation_offset_gpu(void *d_buffers_);
 uint64_t get_stream_commit_slots_gpu(void *d_buffers_);
 uint64_t get_stream_commit_gpus_gpu(void *d_buffers_);
+void set_planner_gpu_dedicated_gpu(void *d_buffers_, bool on);
 uint64_t get_stream_commit_floor_gpu(void *d_buffers_);
 uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes);
 void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
@@ -157,6 +158,7 @@ StarksBackend cpu_backend = []() {
     backend.get_const_pols_aggregation_offset = nullptr;
     backend.get_stream_commit_slots = nullptr;            // default: 0 (disabled)
     backend.get_stream_commit_gpus = nullptr;
+    backend.set_planner_gpu_dedicated = nullptr;      // default: no-op
     backend.get_stream_commit_floor = nullptr;            // default: UINT64_MAX
     backend.stream_commit_slot_bytes = nullptr;           // default: 0 (not committable)
     backend.configure_stream_commit_slots = nullptr;      // default: no-op
@@ -234,6 +236,7 @@ StarksBackend gpu_backend = []() {
     backend.get_const_pols_aggregation_offset = get_const_pols_aggregation_offset_gpu;
     backend.get_stream_commit_slots = get_stream_commit_slots_gpu;
     backend.get_stream_commit_gpus = get_stream_commit_gpus_gpu;
+    backend.set_planner_gpu_dedicated = set_planner_gpu_dedicated_gpu;
     backend.get_stream_commit_floor = get_stream_commit_floor_gpu;
     backend.stream_commit_slot_bytes = stream_commit_slot_bytes_gpu;
     backend.configure_stream_commit_slots = configure_stream_commit_slots_gpu;
@@ -550,6 +553,12 @@ uint64_t get_stream_commit_slots(void *d_buffers_) {
 uint64_t get_stream_commit_gpus(void *d_buffers_) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->get_stream_commit_gpus ? backend->get_stream_commit_gpus(d_buffers_) : 0;
+}
+
+// The first GPU takes no host-trace commit and stages nothing: planner and kernel-witness airs only.
+void set_planner_gpu_dedicated(void *d_buffers_, bool on) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->set_planner_gpu_dedicated) backend->set_planner_gpu_dedicated(d_buffers_, on);
 }
 
 uint64_t stream_commit_slot_bytes(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes) {

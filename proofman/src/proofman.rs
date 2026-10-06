@@ -154,8 +154,8 @@ use proofman_starks_lib_c::{
     mul_air_device_owned_c, mul_air_has_jobs_c, mul_air_has_owned_c, mul_air_plan_error_c, mul_air_reads_aux_c,
     mul_clear_registry_c, mul_commit_count_c, mul_set_device_export_c, mul_sync_commits_c, MulSync,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
-    wait_trace_h2d_done_c, get_stream_commit_slots_c, get_stream_commit_gpus_c, commit_witness_streaming_c,
-    stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
+    wait_trace_h2d_done_c, get_stream_commit_slots_c, get_stream_commit_gpus_c, set_planner_gpu_dedicated_c,
+    commit_witness_streaming_c, stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
 };
 
 use std::{
@@ -577,6 +577,10 @@ struct SlotCommitCtx {
     committed: AtomicU64,
     /// Packed-witness bytes of the slot commits in flight per GPU: places an unpinned commit.
     load_bytes: Vec<AtomicU64>,
+    /// The first GPU is the planner's: kernel-witness instances commit on its slots and nothing
+    /// else does, so the final plan and the device fills never run beside a host-trace commit.
+    /// Several GPUs with GPU-witness airs registered; off, every slot takes every air.
+    dedicated: bool,
 }
 
 /// A table id the C++ decoders (32-bit `table_id`) would truncate.
@@ -3306,12 +3310,21 @@ where
                         .collect();
                     let packed_info = slot_packed_info(&self.options);
                     let airs = slot_commit_airs(&self.pctx, &self.sctx, &packed_info).1;
+                    let dedicated = n_gpus > 1 && !self.pctx.gpu_witness_airs.is_empty();
+                    set_planner_gpu_dedicated_c(self.pctx.get_device_buffers_ptr(), dedicated);
+                    if dedicated {
+                        tracing::info!(
+                            "Streaming slots: the first GPU is the planner's; {} GPUs take the host-trace commits",
+                            n_gpus - 1
+                        );
+                    }
                     Arc::new(SlotCommitCtx {
                         pools,
                         packed_info,
                         airs,
                         committed: AtomicU64::new(0),
                         load_bytes: (0..n_gpus).map(|_| AtomicU64::new(0)).collect(),
+                        dedicated,
                     })
                 })
             } else {
@@ -6559,27 +6572,36 @@ where
         // Wait for a token (C waits out quiesce and region), so one call commits or errors.
         let timeout = std::time::Duration::from_secs(60);
         let bytes = words_per_row << (ss.n_bits + 3);
-        // Unpinned: a free slot on the least-loaded GPU. None free: the first slot to free up.
+        // With the first GPU dedicated, a kernel-witness instance is pinned to it (its rows are
+        // produced on that GPU) and a host trace never goes there. A staged trace is pinned to the
+        // GPU holding it; otherwise a free slot on the least-loaded eligible GPU, or the first to free.
+        let kernel_witness = pctx.get_air_instance_gpu_witness_ops(instance_id) > 0;
+        let pinned = match (staged_gpu, ctx.dedicated && kernel_witness) {
+            (Some(g), _) => Some(g),
+            (None, true) => Some(0),
+            (None, false) => None,
+        };
+        let eligible: Vec<usize> = (if ctx.dedicated && !kernel_witness { 1 } else { 0 }..ctx.pools.len()).collect();
         let least_loaded_free = || -> Option<(usize, u64)> {
-            let mut order: Vec<usize> = (0..ctx.pools.len()).collect();
+            let mut order = eligible.clone();
             order.sort_by_key(|&g| ctx.load_bytes[g].load(Ordering::Relaxed));
             order.into_iter().find_map(|g| ctx.pools[g].1.try_recv().ok().map(|slot| (g, slot)))
         };
-        let free = if staged_gpu.is_none() { least_loaded_free() } else { None };
-        let (pool, slot) = match (staged_gpu, free) {
+        let free = if pinned.is_none() { least_loaded_free() } else { None };
+        let (pool, slot) = match (pinned, free) {
             (Some(g), _) => (g, ctx.pools[g].1.recv_timeout(timeout).ok()),
             (None, Some((g, slot))) => (g, Some(slot)),
             (None, None) => {
                 let mut sel = crossbeam_channel::Select::new();
-                for (_, rx) in &ctx.pools {
-                    sel.recv(rx);
+                for &g in &eligible {
+                    sel.recv(&ctx.pools[g].1);
                 }
                 match sel.select_timeout(timeout) {
                     Ok(op) => {
-                        let g = op.index();
+                        let g = eligible[op.index()];
                         (g, op.recv(&ctx.pools[g].1).ok())
                     }
-                    Err(_) => (0, None),
+                    Err(_) => (eligible[0], None),
                 }
             }
         };

@@ -1477,7 +1477,7 @@ int64_t stage_witness_gpu(void *d_buffers_, uint64_t instanceId, void *trace, ui
         PrefetchZone &z = d_buffers->prefetchZones[o.second];
         std::lock_guard<std::mutex> lk(z.mutex);
         // Checked under the zone lock: acquire raises the flag, then waits out the -3 units.
-        if (o.second == 0 && firstZoneBorrowed(d_buffers)) continue;
+        if (o.second == 0 && (d_buffers->plannerGpuDedicated || firstZoneBorrowed(d_buffers))) continue;
         slot = prefetchFindFreeRunLocked(z, need);
         if (slot < 0) continue;
         gl = o.second;
@@ -3005,6 +3005,11 @@ uint64_t get_stream_commit_slots_gpu(void *d_buffers_) {
 uint64_t get_stream_commit_gpus_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return 0;
     return ((DeviceCommitBuffers *)d_buffers_)->n_gpus;
+}
+
+void set_planner_gpu_dedicated_gpu(void *d_buffers_, bool on) {
+    if (d_buffers_ == nullptr) return;
+    ((DeviceCommitBuffers *)d_buffers_)->plannerGpuDedicated = on;
 }
 
 uint64_t get_stream_commit_floor_gpu(void *d_buffers_) {
