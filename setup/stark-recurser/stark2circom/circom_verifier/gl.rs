@@ -867,6 +867,26 @@ mod tests {
         }
     }
 
+    /// Stage 1 airgroupvalue absorbs only limb 0 (and limbs 1, 2 are pinned to zero); stage 2
+    /// absorbs all three limbs.
+    #[test]
+    fn airgroupvalues_absorb_by_stage() {
+        let mut si = minimal_stark_info(2, 10, 8);
+        si["airgroupValuesMap"] = json!([{"name": "a", "stage": 1}, {"name": "b", "stage": 2}]);
+        let vi = minimal_verifier_info();
+        let out = gen_stark_verifier_gl(None, &si, &vi, &Pil2CircomOptions::default()).unwrap();
+        let uses = |sig: &str| out.lines().filter(|l| l.contains(sig) && !l.contains("=== 0")).count();
+        assert!(uses("airgroupvalues[0][0]") > 0, "stage 1 limb 0 not absorbed:\n{out}");
+        assert_eq!(uses("airgroupvalues[0][1]"), 0, "stage 1 limb 1 absorbed");
+        assert_eq!(uses("airgroupvalues[0][2]"), 0, "stage 1 limb 2 absorbed");
+        for limb in 0..3 {
+            assert!(uses(&format!("airgroupvalues[1][{limb}]")) > 0, "stage 2 limb {limb} not absorbed");
+        }
+        assert!(out.contains("airgroupvalues[0][1] === 0;"), "stage 1 limb 1 not pinned");
+        assert!(out.contains("airgroupvalues[0][2] === 0;"), "stage 1 limb 2 not pinned");
+        assert!(!out.contains("airgroupvalues[1][1] === 0;"), "stage 2 limbs must not be pinned");
+    }
+
     #[test]
     fn names_without_airgroup_id() {
         let si = minimal_stark_info(2, 10, 8);

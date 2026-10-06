@@ -2983,6 +2983,22 @@ where
                 })
                 .collect();
 
+            // Airgroups without instances yield the identity (all zeros): no record, since no
+            // recursive proof will ever mark it aggregated.
+            let contributions_info = |worker_index: u32| -> Vec<ContributionsInfo> {
+                per_airgroup_contributions_u64
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, challenge)| challenge.iter().any(|&x| x != 0))
+                    .map(|(airgroup_id, challenge)| ContributionsInfo {
+                        challenge: challenge.clone(),
+                        worker_index,
+                        airgroup_id,
+                        aggregated: false,
+                    })
+                    .collect()
+            };
+
             if phase == ProvePhase::Contributions {
                 let witness_time =
                     witness_start_time.read().unwrap().map(|start| start.elapsed().as_millis() as f32).unwrap_or(0.0);
@@ -3001,29 +3017,9 @@ where
                     total_instances: self.pctx.dctx_get_instances().len(),
                 };
                 let worker_index = self.pctx.get_worker_index()? as u32;
-                return Ok(ProvePhaseResult::Contributions(
-                    per_airgroup_contributions_u64
-                        .iter()
-                        .enumerate()
-                        .map(|(airgroup_id, challenge)| ContributionsInfo {
-                            challenge: challenge.clone(),
-                            worker_index,
-                            airgroup_id,
-                            aggregated: false,
-                        })
-                        .collect(),
-                ));
+                return Ok(ProvePhaseResult::Contributions(contributions_info(worker_index)));
             }
-            &per_airgroup_contributions_u64
-                .iter()
-                .enumerate()
-                .map(|(airgroup_id, challenge)| ContributionsInfo {
-                    challenge: challenge.clone(),
-                    worker_index: 0,
-                    airgroup_id,
-                    aggregated: false,
-                })
-                .collect::<Vec<_>>()
+            &contributions_info(0)
         } else {
             match phase_inputs {
                 ProvePhaseInputs::Internal(ref contributions) => contributions,
