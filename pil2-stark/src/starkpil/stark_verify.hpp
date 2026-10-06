@@ -55,6 +55,12 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         for(uint64_t j = 0; j < width; ++j) {
             airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][j]);
         }
+        for(uint64_t j = width; j < FIELD_EXTENSION; ++j) {
+            if(!Goldilocks::isZero(Goldilocks::fromString(jproof["airgroupvalues"][i][j]))) {
+                zklog.error("starkVerify: non-zero padding limb in stage-1 airgroupvalue");
+                return false;
+            }
+        }
     }
 
     Goldilocks::Element airValues[starkInfo.airValuesSize];
