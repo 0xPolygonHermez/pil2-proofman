@@ -251,7 +251,6 @@ pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile> {
 
     // Section count
     let n_sections = read_u32(&mut c)? as usize;
-    let use_custom_gates = n_sections == 5;
 
     // One-pass scan: record the byte position of each section's data.
     let mut data_starts: HashMap<u32, u64> = HashMap::new();
@@ -262,6 +261,11 @@ pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile> {
         c.seek(SeekFrom::Current(sec_size as i64))
             .map_err(|e| anyhow!("section {}: seek past data: {}", sec_type, e))?;
     }
+
+    // Detect custom gates by the presence of their sections (4 = definitions, 5 = uses),
+    // not by `n_sections == 5`: a missing optional section 3, or an extra future section,
+    // would otherwise silently drop every custom gate and leave its `<--` outputs free.
+    let use_custom_gates = data_starts.contains_key(&4) && data_starts.contains_key(&5);
 
     // ── Section 1: Header ───────────────────────────────────────────────────
     c.set_position(*data_starts.get(&1).ok_or_else(|| anyhow!("missing header section (type 1)"))?);

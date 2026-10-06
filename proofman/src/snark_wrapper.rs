@@ -409,11 +409,15 @@ pub fn get_public_bytes_solidity(publics_info: &PublicsInfo, vadcop_public_input
             let n_chunks_per_word = public_def.chunks[0];
             let n_bits_per_chunk = public_def.chunks[1];
             let n_bytes_per_chunk = n_bits_per_chunk / 8;
+            // The final circuit hashes a non-VK public little-endian and in ascending
+            // chunk order (get_sha256_inputs.circom.tera: byte offset (j\8)*8, chunk i at
+            // i*bits). Emitting big-endian / reversed chunks made these bytes disagree
+            // with the proven digest (and with zisk_common::snark_inputs_bytes).
             for _ in 0..n_words {
                 for i in 0..n_chunks_per_word {
-                    let value = vadcop_public_inputs[index + n_chunks_per_word - i - 1];
-                    let be_bytes = value.to_be_bytes();
-                    public_bytes.extend_from_slice(&be_bytes[8 - n_bytes_per_chunk..]);
+                    let value = vadcop_public_inputs[index + i];
+                    let le_bytes = value.to_le_bytes();
+                    public_bytes.extend_from_slice(&le_bytes[..n_bytes_per_chunk]);
                 }
                 index += n_chunks_per_word;
             }
@@ -571,7 +575,41 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     Ok(is_valid)
 }
 
+/// Verify a SNARK proof against a trusted `vkey`, checking snark validity only — the
+/// public input snarkjs is given is the digest the proof carries. That digest is the
+/// committed statement only if the caller already trusts it (e.g. recomputed it from the
+/// publics and a pinned rootC). On its own this does NOT bind the proof to any statement,
+/// so prefer [`verify_snark_proof_with_expected`] with a pinned digest.
 pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> ProofmanResult<()> {
+    verify_snark_proof_with_expected(snark_proof, vkey_path, None)
+}
+
+/// As [`verify_snark_proof`], but when `expected_public_snark_bytes` is `Some`, require the
+/// proof's committed public digest to equal it before verifying. That pins the statement:
+/// the caller supplies the digest it recomputed from the publics and the trusted rootC, so
+/// a proof carrying an attacker-chosen public input is rejected. With `None`, a warning is
+/// emitted that the result attests snark self-consistency only.
+pub fn verify_snark_proof_with_expected(
+    snark_proof: &SnarkProof,
+    vkey_path: &Path,
+    expected_public_snark_bytes: Option<&[u8]>,
+) -> ProofmanResult<()> {
+    match expected_public_snark_bytes {
+        Some(expected) if expected != snark_proof.public_snark_bytes.as_slice() => {
+            return Err(ProofmanError::InvalidProof(
+                "SNARK public digest does not match the expected (pinned) statement".to_string(),
+            ));
+        }
+        Some(_) => {}
+        None => {
+            tracing::warn!(
+                "verify_snark_proof: no expected public digest pinned — this attests snark \
+                 validity against the proof's own public input, not a statement. A relying \
+                 party must pin the digest recomputed from the publics and the trusted rootC."
+            );
+        }
+    }
+
     let (proof_json_value, publics_json_value) = snark_proof
         .convert_to_json()
         .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to convert SNARK proof to JSON: {}", e)))?;
@@ -634,3 +672,49 @@ pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> Proofma
 
 unsafe impl<F: PrimeField64> Send for SnarkWrapper<F> {}
 unsafe impl<F: PrimeField64> Sync for SnarkWrapper<F> {}
+
+#[cfg(test)]
+mod public_bytes_tests {
+    use super::*;
+    use proofman_common::{PublicDefinition, PublicsInfo};
+
+    fn def(name: &str, initial_pos: usize, n_values: usize, chunks: [usize; 2], vk: bool) -> PublicDefinition {
+        PublicDefinition { name: name.into(), initial_pos, n_values, chunks, verification_key: vk }
+    }
+
+    // The final circuit hashes a non-VK public little-endian and in ascending chunk order,
+    // and skips VK sections. This must match zisk_common::snark_inputs_bytes (per-u64 LE),
+    // or the exported Solidity bytes disagree with the proven digest.
+    #[test]
+    fn solidity_public_bytes_are_little_endian_ascending_and_skip_vk() {
+        // VK section (4 limbs, skipped) followed by two u64 user publics.
+        let info = PublicsInfo {
+            n_publics: 6,
+            has_program_vk: true,
+            definitions: vec![def("vk", 0, 4, [1, 64], true), def("inputs", 4, 2, [1, 64], false)],
+        };
+        let inputs: Vec<u64> = vec![0, 0, 0, 0, 0x0102_0304_0506_0708, 0xAABB_CCDD_EEFF_0011];
+        let got = get_public_bytes_solidity(&info, &inputs).unwrap();
+
+        let mut want = Vec::new();
+        want.extend_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes());
+        want.extend_from_slice(&0xAABB_CCDD_EEFF_0011u64.to_le_bytes());
+        assert_eq!(got, want, "non-VK publics must be emitted little-endian, VK skipped");
+
+        // Matches the zisk_common scheme (inputs are the flat LE bytes of each u64).
+        let zisk_style: Vec<u8> = inputs[4..].iter().flat_map(|v| v.to_le_bytes()).collect();
+        assert_eq!(got, zisk_style);
+    }
+
+    // A sub-u64 chunk keeps the low bytes, little-endian; two chunks per word stay in
+    // ascending order (the old code reversed them and used big-endian).
+    #[test]
+    fn sub_u64_chunks_keep_low_bytes_ascending() {
+        let info =
+            PublicsInfo { n_publics: 2, has_program_vk: false, definitions: vec![def("w", 0, 1, [2, 32], false)] };
+        let inputs: Vec<u64> = vec![0x1122_3344, 0x5566_7788];
+        let got = get_public_bytes_solidity(&info, &inputs).unwrap();
+        // chunk 0 = inputs[0] low 4 bytes LE, then chunk 1 = inputs[1] low 4 bytes LE.
+        assert_eq!(got, vec![0x44, 0x33, 0x22, 0x11, 0x88, 0x77, 0x66, 0x55]);
+    }
+}
