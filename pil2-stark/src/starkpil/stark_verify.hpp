@@ -49,9 +49,17 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     }
 
     Goldilocks::Element airgroupValues[starkInfo.airgroupValuesSize];
+    uint64_t ag = 0;
     for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size() ; ++i) {
-        for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
-            airgroupValues[i*FIELD_EXTENSION + j] = Goldilocks::fromString(jproof["airgroupvalues"][i][j]);
+        uint64_t width = starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+        for(uint64_t j = 0; j < width; ++j) {
+            airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][j]);
+        }
+        for(uint64_t j = width; j < FIELD_EXTENSION; ++j) {
+            if(!Goldilocks::isZero(Goldilocks::fromString(jproof["airgroupvalues"][i][j]))) {
+                zklog.error("starkVerify: non-zero padding limb in stage-1 airgroupvalue");
+                return false;
+            }
         }
     }
 
@@ -125,6 +133,24 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                 }
                 p += 3;
             }
+        }
+        // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
+        // Only the Goldilocks transcript absorbs airgroupvalues.
+        if constexpr (!std::is_same<ElementType, Goldilocks::Element>::value) {
+            if(starkInfo.airgroupValuesMap.size() > 0) {
+                zklog.error("starkVerify: airgroupvalues are not supported for BN128");
+                return false;
+            }
+        }
+        uint64_t pag = 0;
+        for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++) {
+            // Stage 1 is absorbed in round 2; wider stages in their own round.
+            uint64_t width = starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+            uint64_t eff = starkInfo.airgroupValuesMap[i].stage < 2 ? 2 : starkInfo.airgroupValuesMap[i].stage;
+            if(eff == s) {
+                transcript.put(&airgroupValues[pag], width);
+            }
+            pag += width;
         }
 
         // TODO: ADD PROOF VALUES ??
