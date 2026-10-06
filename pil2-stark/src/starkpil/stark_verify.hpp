@@ -51,15 +51,9 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     Goldilocks::Element airgroupValues[starkInfo.airgroupValuesSize];
     uint64_t ag = 0;
     for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size() ; ++i) {
-        // airgroupValues is packed by stage width (stark_info.cpp airgroupValuesSize:
-        // 1 for stage 1, FIELD_EXTENSION otherwise); a fixed i*FIELD_EXTENSION stride
-        // overruns the buffer once a stage-1 entry precedes a wider one.
-        if(starkInfo.airgroupValuesMap[i].stage == 1) {
-            airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][0]);
-        } else {
-            airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][0]);
-            airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][1]);
-            airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][2]);
+        uint64_t width = starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+        for(uint64_t j = 0; j < width; ++j) {
+            airgroupValues[ag++] = Goldilocks::fromString(jproof["airgroupvalues"][i][j]);
         }
     }
 
@@ -135,11 +129,16 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             }
         }
         // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
+        // Only the Goldilocks transcript absorbs airgroupvalues.
+        if constexpr (!std::is_same<ElementType, Goldilocks::Element>::value) {
+            if(starkInfo.airgroupValuesMap.size() > 0) {
+                zklog.error("starkVerify: airgroupvalues are not supported for BN128");
+                return false;
+            }
+        }
         uint64_t pag = 0;
         for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++) {
-            // Bind every airgroupvalue once, in its effective round (stage 1 rides in the
-            // first post-stage-1 round, s == 2, as a single base-field limb; wider stages
-            // bind FIELD_EXTENSION limbs in their own round). Packed width per stage.
+            // Stage 1 is absorbed in round 2; wider stages in their own round.
             uint64_t width = starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
             uint64_t eff = starkInfo.airgroupValuesMap[i].stage < 2 ? 2 : starkInfo.airgroupValuesMap[i].stage;
             if(eff == s) {

@@ -689,9 +689,7 @@ uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t h
     ExpressionsPack expressionsCtx(setupCtx, &proverHelpers, 1);
     expressionsCtx.calculateExpressions(params, destStruct, 1, false, false);
 
-    // Packed offset: airgroupValues stores a stage-1 value in 1 limb and others in
-    // FIELD_EXTENSION. Indexing by FIELD_EXTENSION*id lands on the wrong slot (and can
-    // overrun) once a stage-1 airgroupvalue precedes this one. Matches setAirGroupValue.
+    // Packed offset (stage-1 values take 1 limb).
     uint64_t agPos = 0;
     for(uint64_t i = 0; i < hintFieldAirgroupVal.id; ++i) {
         agPos += setupCtx.starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;

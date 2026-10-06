@@ -301,8 +301,7 @@ uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, Steps
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName2, hintOptions2);
 
     opHintFieldsGPU(d_params, destStruct, 1, false, GPUExpressionsCtx, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream); 
-    // Packed offset (see updateAirgroupValue): a stage-1 value occupies 1 limb, not
-    // FIELD_EXTENSION, so FIELD_EXTENSION*id misplaces values after a stage-1 entry.
+    // Packed offset (stage-1 values take 1 limb).
     uint64_t agPos = 0;
     for(uint64_t i = 0; i < hintFieldAirgroupVal.id; ++i) {
         agPos += setupCtx.starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;

@@ -307,11 +307,9 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             a += 3;
         }
     }
-    // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
+    // Bind airgroupvalues to the transcript.
     uint64_t ag_off = 0;
     for(uint64_t i = 0; i < setupCtx.starkInfo.airgroupValuesMap.size(); i++) {
-        // Post-root2 round binds every stage-1 (1 limb) and stage-2 (FIELD_EXTENSION)
-        // airgroupvalue; packed offset per stage. Mirrors the CPU prover and verifier.
         uint64_t width = setupCtx.starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
         if(setupCtx.starkInfo.airgroupValuesMap[i].stage <= 2) {
             d_transcript->put(&h_params.airgroupValues[ag_off], width, stream);

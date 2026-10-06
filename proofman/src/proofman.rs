@@ -8,7 +8,7 @@ use proofman_common::{
     SetupsVadcop, VerboseMode, MAX_INSTANCES, PackedInfo,
 };
 use colored::Colorize;
-use proofman_hints::aggregate_airgroupvals;
+use proofman_hints::{aggregate_airgroupvals, expand_airgroup_values};
 use proofman_starks_lib_c::{
     configure_prefetch_zone_c, get_prefetch_witness_slots_c, harvest_pipeline_c, dump_pipeline_state_c,
     prefetch_witness_c, set_gpu_mode_c, set_pipeline_mode_c, load_device_const_pols_c,
@@ -1888,9 +1888,14 @@ where
         }
 
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
-        let airgroup_values = pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
+        let airgroup_values = expand_airgroup_values(
+            sctx,
+            airgroup_id,
+            air_id,
+            &pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?,
+        )?;
         airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] =
-            airgroup_values.clone();
+            airgroup_values;
 
         wcm.debug(&[instance_id], debug_info)?;
 
@@ -2959,10 +2964,7 @@ where
                 _ => 10,
             };
 
-            // `internal_contribution` is now per-airgroup (one vector each). Flatten, gather
-            // every worker's flattened contributions, then aggregate across workers PER
-            // airgroup so the challenge is absorbed one airgroup at a time (matching the
-            // circuit). Folding all airgroups into one value only matched for a single one.
+            // Per-airgroup contributions: gather all workers, then aggregate per airgroup.
             let n_airgroups_c = self.pctx.global_info.air_groups.len();
             let flat: Vec<u64> = internal_contribution.iter().flatten().copied().collect();
             let all_internal_partial_contributions = self.mpi_ctx.distribute_roots(flat);
@@ -4106,7 +4108,8 @@ where
                     let agg_proof =
                         Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, None, proof.proof.clone());
 
-                    let proof_acc_challenge = get_accumulated_challenge(&self.pctx, proof.airgroup_id as usize, &proof.proof);
+                    let proof_acc_challenge =
+                        get_accumulated_challenge(&self.pctx, proof.airgroup_id as usize, &proof.proof);
                     let mut worker_contributions = self.worker_contributions.write().unwrap();
                     if let Some(contrib) = worker_contributions.iter_mut().find(|contrib| {
                         contrib.worker_index == worker_index as u32 && contrib.airgroup_id == proof.airgroup_id as usize
@@ -4454,9 +4457,7 @@ where
                 }
 
                 let global_challenge = self.pctx.get_global_challenge().clone();
-                // One accumulated challenge per airgroup (each recursive2 proof carries its
-                // airgroup's aggregated stage1Hash); calculate_global_challenge absorbs them
-                // per airgroup, so every airgroup must be passed, not only airgroup 0.
+                // One accumulated challenge per airgroup.
                 let recomputed_contributions: Vec<ContributionsInfo> = agg_proofs_data
                     .iter()
                     .map(|ap| ContributionsInfo {
@@ -4683,7 +4684,7 @@ where
                 .stark_info
                 .airgroupvalues_map
                 .as_ref()
-                .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
+                .map(|map| map.len() * 3)
                 .unwrap_or(0);
 
             let airgroup_values: Vec<F> = proof

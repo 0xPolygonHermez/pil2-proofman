@@ -160,12 +160,9 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
             a += 3;
         }
     }
-    // Bind airgroupvalues to the transcript (they are otherwise only used in the Q check).
+    // Bind airgroupvalues to the transcript.
     uint64_t ag = 0;
     for(uint64_t i = 0; i < setupCtx.starkInfo.airgroupValuesMap.size(); i++) {
-        // This is the post-root2 round; it binds every stage-1 (1 limb) and stage-2
-        // (FIELD_EXTENSION) airgroupvalue. Recursion AIRs are 2-stage, so nothing is left
-        // for a later round. Packed offset per stage, matching airgroupValuesSize.
         uint64_t width = setupCtx.starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
         if(setupCtx.starkInfo.airgroupValuesMap[i].stage <= 2) {
             starks.addTranscript(transcript, &params.airgroupValues[ag], width);

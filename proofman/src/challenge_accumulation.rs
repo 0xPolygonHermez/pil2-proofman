@@ -98,19 +98,15 @@ where
         }
     });
 
-    // Group each instance's contribution by airgroup and sum within the airgroup, so the
-    // global challenge can absorb one aggregated value per airgroup, in airgroup order,
-    // exactly as the circuit's VerifyGlobalChallenges does (one stage1Hash per airgroup).
+    // Sum contributions per airgroup (the circuit absorbs one stage1Hash per airgroup).
     let n_airgroups = pctx.global_info.air_groups.len();
     let mut grouped: Vec<Vec<Vec<F>>> = vec![Vec::new(); n_airgroups];
     for (row, instance_id) in values.into_iter().zip(my_instances.iter()) {
         let (airgroup_id, _) = pctx.dctx_get_instance_info(*instance_id).unwrap();
         grouped[airgroup_id].push(row);
     }
-    let per_airgroup: Vec<Vec<u64>> = grouped
-        .iter()
-        .map(|g| add_contributions(pctx, g).iter().map(|&x| x.as_canonical_u64()).collect())
-        .collect();
+    let per_airgroup: Vec<Vec<u64>> =
+        grouped.iter().map(|g| add_contributions(pctx, g).iter().map(|&x| x.as_canonical_u64()).collect()).collect();
 
     timer_stop_and_log_debug!(CALCULATE_INTERNAL_CONTRIBUTION);
 
@@ -131,9 +127,7 @@ where
         transcript.put(&proof_values_stage);
     }
 
-    // Absorb one aggregated contribution per airgroup, in airgroup order, matching the
-    // circuit (verify_global_challenge.rs puts stage1Hash[k] for each airgroup). Folding
-    // everything into one value, as before, only matched the circuit for a single airgroup.
+    // One aggregated contribution per airgroup, in airgroup order, as in the circuit.
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup_id in 0..n_airgroups {
         let group: Vec<Vec<F>> = all_partial_contributions_u64
@@ -151,20 +145,21 @@ where
     global_challenge
 }
 
+fn identity_contribution<F: PrimeField64>(pctx: &ProofCtx<F>) -> Vec<F> {
+    let size = match pctx.global_info.curve {
+        CurveType::None => pctx.global_info.lattice_size.unwrap(),
+        _ => 10,
+    };
+    vec![F::ZERO; size]
+}
+
 pub fn add_contributions<F>(pctx: &ProofCtx<F>, values: &[Vec<F>]) -> Vec<F>
 where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
-    // An airgroup with no instances on any worker contributes the identity: the zero
-    // vector, which is the lattice sum identity and the curve point-at-infinity encoding
-    // the circuit also treats as "no contribution".
     if values.is_empty() {
-        let size = match pctx.global_info.curve {
-            CurveType::None => pctx.global_info.lattice_size.unwrap(),
-            _ => 10,
-        };
-        return vec![F::ZERO; size];
+        return identity_contribution(pctx);
     }
     match pctx.global_info.curve {
         CurveType::EcGFp5 => {
@@ -224,16 +219,13 @@ where
     F: PrimeField64,
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
-    // An airgroup with no instances on any worker contributes the identity: the zero
-    // vector, which is the lattice sum identity and the curve point-at-infinity encoding
-    // the circuit also treats as "no contribution".
-    if values.is_empty() {
-        let size = match pctx.global_info.curve {
-            CurveType::None => pctx.global_info.lattice_size.unwrap(),
-            _ => 10,
-        };
-        return vec![F::ZERO; size];
+    // The identity is the zero vector, but `Ec*::new(0, 0)` is not infinity: skip it.
+    let non_identity: Vec<Vec<F>> =
+        values.iter().filter(|v| v.iter().any(|x| x.as_canonical_u64() != 0)).cloned().collect();
+    if non_identity.is_empty() {
+        return identity_contribution(pctx);
     }
+    let values = non_identity.as_slice();
     match pctx.global_info.curve {
         CurveType::EcGFp5 => {
             let mut result = EcGFp5::new(

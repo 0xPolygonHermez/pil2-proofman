@@ -78,14 +78,12 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     let pilout = pb::PilOut::decode(pilout_data.as_slice())?;
     let pilout_name = pilout.name.clone().unwrap_or_else(|| "pilout".to_string());
 
-    // Reject stage>=2 proofValues: nothing binds them to the instances (they are absorbed
-    // into no transcript and constrained by no AIR), so a prover could pick them after the
-    // challenges. Only stage-1 proofValues (folded into the global challenge) are sound today.
+    // Only stage-1 proofValues are bound (via the global challenge); reject the rest.
     if let Some(bad) =
         pilout.symbols.iter().find(|sym| sym.r#type == pb::SymbolType::ProofValue as i32 && sym.stage.unwrap_or(1) != 1)
     {
         anyhow::bail!(
-            "proofValue '{}' is stage {}; only stage-1 proofValues are folded into the global              challenge, so any other stage is unbound and is rejected",
+            "proofValue '{}' is stage {}; only stage-1 proofValues are supported",
             bad.name,
             bad.stage.unwrap_or(1)
         );

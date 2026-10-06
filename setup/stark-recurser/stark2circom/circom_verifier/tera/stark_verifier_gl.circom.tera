@@ -505,7 +505,9 @@ template {{ verifier_name }}() {
 {% else %}    signal rootC[4] <== [{{ const_root_str }} ]; // Merkle tree root of the evaluations of constant polynomials
 {% endif %}{% endif %}
     signal input evals[{{ ev_map_len }}][3]; // Evaluations of the set polynomials at a challenge value z and gz
-
+{% for id in airgroup_stage1_ids %}    airgroupvalues[{{ id }}][1] === 0;
+    airgroupvalues[{{ id }}][2] === 0;
+{% endfor %}
     // Leaves values of the merkle tree used to check all the queries
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input s0_vals{{ stage.stage }}[{{ n_queries }}][{{ stage.cm_section_len }}];
 {% endif %}{% endfor %}    signal input s0_vals{{ q_stage }}[{{ n_queries }}][{{ q_stage_cm_section_len }}];

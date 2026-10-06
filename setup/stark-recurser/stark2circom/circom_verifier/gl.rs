@@ -539,12 +539,9 @@ fn build_tera_context(
                 t.put(&format!("airValues[{j}]"), 3);
             }
         }
-        // Bind airgroupvalues to Fiat-Shamir: without this they are only read in the Q
-        // check, so a prover could solve for them after seeing the challenges.
+        // Bind airgroupvalues to Fiat-Shamir.
         for (j, agv) in air_group_values_map.iter().enumerate() {
-            // Bind every airgroupvalue once: stage 1 (one limb) rides in the first
-            // post-stage-1 round, wider stages (3 limbs) bind in their own round. Matches
-            // the prover/verifier effective-stage rule.
+            // Stage 1 is absorbed in round 2; wider stages in their own round.
             let st = agv["stage"].as_u64().unwrap_or(1);
             let eff = st.max(2);
             if eff == stage {
@@ -720,6 +717,14 @@ fn build_tera_context(
     ctx.insert("n_constants", &n_constants);
     ctx.insert("ev_map_len", &ev_map_len);
     ctx.insert("n_air_group_values", &n_air_group_values);
+    // Stage-1 values use limb 0 only; limbs 1 and 2 are pinned to zero in the circuit.
+    let airgroup_stage1_ids: Vec<usize> = air_group_values_map
+        .iter()
+        .enumerate()
+        .filter(|(_, agv)| agv["stage"].as_u64().unwrap_or(1) == 1)
+        .map(|(j, _)| j)
+        .collect();
+    ctx.insert("airgroup_stage1_ids", &airgroup_stage1_ids);
     ctx.insert("n_air_values", &n_air_values);
     ctx.insert("n_proof_values", &n_proof_values);
     ctx.insert("final_pol_size", &final_pol_size);
@@ -760,9 +765,7 @@ fn build_tera_context(
     ctx.insert("calculate_fri_queries_name", &mk("calculateFRIQueries"));
     ctx.insert("transcript_name", &mk("Transcript"));
     ctx.insert("verify_fri_name", &mk("VerifyFRI"));
-    // The per-chunk templates (VerifyEvaluationsChunks{i}/CalculateFRIPolChunks{i}) bypass
-    // `mk`, so without this suffix two airgroups' recursive2 verifiers both define
-    // ...Chunks0 and collide when vadcop_final includes them (T2008 Duplicated symbol).
+    // Chunk templates bypass `mk`; suffix them to avoid duplicate symbols across airgroups.
     let chunk_suffix = if id_suffix.is_empty() { String::new() } else { format!("_{id_suffix}") };
     ctx.insert("chunk_suffix", &chunk_suffix);
     ctx.insert("verify_evaluations_name", &mk("VerifyEvaluations"));
