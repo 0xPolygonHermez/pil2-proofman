@@ -20,4 +20,5 @@ serde_json = { workspace = true }
 rayon = { workspace = true }
 anyhow = { workspace = true }
 regex = "1.12.2"
+num-bigint = { workspace = true }
 tracing = { workspace = true }

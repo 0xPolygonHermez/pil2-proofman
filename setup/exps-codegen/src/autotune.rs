@@ -33,7 +33,7 @@ fn is_recursion_phase(sym: &str) -> bool {
 
 /// Max STACK (spill) bytes across an object's per-arch entries. 0 = no spill;
 /// -1 = cuobjdump could not be run (the caller bails with actionable guidance).
-fn max_stack(obj: &Path) -> i64 {
+pub(crate) fn max_stack(obj: &Path) -> i64 {
     let out =
         match std::process::Command::new(crate::toolchain::cuda_bin("cuobjdump")).arg("-res-usage").arg(obj).output() {
             Ok(o) => o,

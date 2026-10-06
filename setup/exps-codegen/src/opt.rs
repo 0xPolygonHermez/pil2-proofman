@@ -25,7 +25,7 @@
 //! Field arithmetic is exact, so any topological order of the DAG computes
 //! the same value; `check::equivalent` verifies every output anyway.
 
-use crate::field;
+use crate::field::Field;
 use crate::ir::{Instr, Ir, Operand};
 use std::collections::{BTreeMap, BinaryHeap, HashMap, HashSet};
 
@@ -74,11 +74,12 @@ struct Node {
 struct Dag {
     nodes: Vec<Node>,
     memo: HashMap<Kind, NodeId>,
+    field: Field,
 }
 
 impl Dag {
-    fn new() -> Self {
-        Dag { nodes: Vec::new(), memo: HashMap::new() }
+    fn new(field: Field) -> Self {
+        Dag { nodes: Vec::new(), memo: HashMap::new(), field }
     }
     fn intern(&mut self, kind: Kind, dim: u64) -> NodeId {
         if let Some(&id) = self.memo.get(&kind) {
@@ -101,11 +102,7 @@ impl Dag {
     }
     fn op(&mut self, op: u8, a: NodeId, b: NodeId) -> NodeId {
         if let (Some(x), Some(y)) = (self.num(a), self.num(b)) {
-            let v = match op {
-                ADD => field::add(x, y),
-                SUB => field::sub(x, y),
-                _ => field::mul(x, y),
-            };
+            let v = self.field.fold(op_name(op), x, y);
             return self.leaf(&Operand::Num(v));
         }
         let (a, b) = if op != SUB && b < a { (b, a) } else { (a, b) };
@@ -196,7 +193,7 @@ fn max_live(ir: &Ir) -> usize {
 /// Build the hash-consed DAG from SSA straight-line IR. Returns the output
 /// node, or `None` if the IR is not a single-output expression.
 fn build_dag(ir: &Ir) -> Option<(Dag, NodeId)> {
-    let mut dag = Dag::new();
+    let mut dag = Dag::new(ir.field.clone());
     let mut tmp: HashMap<u64, NodeId> = HashMap::new();
     let mut out: Option<NodeId> = None;
     let n = ir.instrs.len();
@@ -282,7 +279,7 @@ fn horner_terms(dag: &Dag, root: NodeId, vc: NodeId) -> Option<Vec<(NodeId, u64)
 fn combination_challenge(dag: &Dag) -> Option<NodeId> {
     let mut best: Option<(u64, NodeId)> = None;
     for (i, n) in dag.nodes.iter().enumerate() {
-        if let Kind::Leaf(Operand::Ch { base }) = n.kind {
+        if let Kind::Leaf(Operand::Ch { base, .. }) = n.kind {
             if best.is_none_or(|(b, _)| base > b) {
                 best = Some((base, i));
             }
@@ -658,7 +655,7 @@ fn distribute_linear(
         let m: Option<NodeId> = match p {
             0 => None,
             1 => Some(vc),
-            j => Some(dag.leaf(&Operand::Pow { base, j })),
+            j => Some(dag.leaf(&Operand::Pow { base, j, dim: dag.nodes[vc].dim })),
         };
         let f = match m {
             Some(m) => lin_scale(dag, &ctx, &f, m),
@@ -708,7 +705,7 @@ fn powers_used(dag: &Dag, root: NodeId) -> Vec<(u64, u64)> {
         }
         seen[n] = true;
         match &dag.nodes[n].kind {
-            Kind::Leaf(Operand::Pow { base, j }) => {
+            Kind::Leaf(Operand::Pow { base, j, .. }) => {
                 let e = mx.entry(*base).or_insert(0);
                 *e = (*e).max(*j);
             }
@@ -823,7 +820,7 @@ fn fold_inner_chains(dag: &mut Dag, root: NodeId, skip: Option<NodeId>) -> (Node
         });
         let nv = match worth {
             Some((ch_node, terms)) => {
-                let Kind::Leaf(Operand::Ch { base }) = dag.nodes[ch_node].kind else { unreachable!() };
+                let Kind::Leaf(Operand::Ch { base, dim }) = dag.nodes[ch_node].kind else { unreachable!() };
                 folded += 1;
                 let mut acc: Option<NodeId> = None;
                 for &(p, x) in &terms {
@@ -832,7 +829,7 @@ fn fold_inner_chains(dag: &mut Dag, root: NodeId, skip: Option<NodeId>) -> (Node
                         0 => xr,
                         1 => dag.op(MUL, ch_node, xr),
                         j => {
-                            let pw = dag.leaf(&Operand::Pow { base, j });
+                            let pw = dag.leaf(&Operand::Pow { base, j, dim });
                             dag.op(MUL, pw, xr)
                         }
                     };
@@ -1428,6 +1425,7 @@ fn linearize(
         tab_out,
         tab_words,
         pow_in_regs: false,
+        field: template.field.clone(),
     }
 }
 
@@ -1586,7 +1584,7 @@ fn optimize_variant(
         let (acc, zi) = strip_zi(&dag, out);
         if let Some(terms) = horner_terms(&dag, acc, vc) {
             stats.horner_terms = terms.len();
-            let Kind::Leaf(Operand::Ch { base }) = dag.nodes[vc].kind else { unreachable!() };
+            let Kind::Leaf(Operand::Ch { base, dim: cdim }) = dag.nodes[vc].kind else { unreachable!() };
             let terms = if std::env::var("EXPS_LTD").ok().is_none_or(|v| v != "0") {
                 let (t, n_lin, n_atoms) = distribute_linear(&mut dag, &terms, vc, base);
                 stats.ltd_terms = n_lin;
@@ -1618,7 +1616,7 @@ fn optimize_variant(
                         0 => c,
                         1 => d2.op(MUL, vc, c),
                         j => {
-                            let pw = d2.leaf(&Operand::Pow { base, j });
+                            let pw = d2.leaf(&Operand::Pow { base, j, dim: cdim });
                             d2.op(MUL, pw, c)
                         }
                     };
@@ -1692,5 +1690,6 @@ fn linearize_identity(ir: &Ir) -> Ir {
         tab_out: Vec::new(),
         tab_words: 0,
         pow_in_regs: false,
+        field: ir.field.clone(),
     }
 }

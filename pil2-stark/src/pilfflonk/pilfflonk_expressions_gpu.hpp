@@ -14,6 +14,8 @@
 // Everything runs on the legacy default stream, after what the caller has queued there.
 
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "pilfflonk_expressions.hpp"
@@ -99,6 +101,34 @@ void encodeOperands(const OperandLayout &layout, const OperandTypes &types, cons
 // Those tables at `base`, on a domain of `size` points.
 OperandTables operandTables(const OperandLayout &layout, const OperandTypes &types, const void *base, uint64_t size);
 
+// <air>.exps.so, next to <air>.bin: kernels generated at setup for some expressions
+// (setup/exps-codegen, `gen-exps`), over the same operand tables as the interpreter's kernel and
+// bit for bit its values. Absent, or PILFFLONK_EXPS=0, it covers nothing.
+class GeneratedExpressions {
+public:
+    // The library of the .bin at binPath, if there is one; throws std::runtime_error if it is
+    // there but cannot be loaded.
+    explicit GeneratedExpressions(const std::string &binPath);
+    ~GeneratedExpressions();
+    GeneratedExpressions(const GeneratedExpressions &) = delete;
+    GeneratedExpressions &operator=(const GeneratedExpressions &) = delete;
+
+    bool loaded() const { return lib != nullptr; }
+    const std::string &file() const { return path; }
+    bool covers(uint64_t expId) const;
+    // The device bytes launch() needs at `scratch`.
+    uint64_t scratchBytes() const { return scratch; }
+    // Queues expId on the default stream; throws std::runtime_error if the launch fails.
+    void launch(uint64_t expId, const ExpressionLaunch &l, void *scratchMemory) const;
+
+private:
+    void *lib = nullptr;
+    int (*coversFn)(unsigned) = nullptr;
+    int (*launchFn)(unsigned, const ExpressionLaunch *, void *) = nullptr;
+    uint64_t scratch = 0;
+    std::string path;
+};
+
 // Expressions on the device: the code of an AIR's .bin, evaluated by the kernel of
 // pilfflonk_expressions.cu with its operand tables, which it writes before each evaluation. The
 // temporaries of a code block go in shared memory if they fit (EXPRESSION_ROWS·nTemp elements per
@@ -128,7 +158,7 @@ public:
 
     // The device memory it holds, in bytes: its tables, and the temporaries that do not fit in
     // shared memory.
-    uint64_t deviceBytes() const { return tables.size() + temporaries.size(); }
+    uint64_t deviceBytes() const { return tables.size() + temporaries.size() + generatedScratch.size(); }
 
     // That of one of `bin` and `info` with sharedBytes, made on a device of `multiprocessors` SMs,
     // before it is made: for a key's budget (GpuBudget::resident).
@@ -144,6 +174,8 @@ private:
     uint32_t temporaryBlocks = 0; // the blocks of a launch whose temporaries are in `temporaries`
     DeviceBuffer tables;
     DeviceBuffer temporaries;
+    std::unique_ptr<GeneratedExpressions> generated;
+    DeviceBuffer generatedScratch;
 };
 
 } // namespace PilFflonk

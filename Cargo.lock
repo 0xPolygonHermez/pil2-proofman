@@ -1533,6 +1533,7 @@ name = "proofman-exps-codegen"
 version = "1.4.0-alpha"
 dependencies = [
  "anyhow",
+ "num-bigint",
  "proofman-starks-src",
  "rayon",
  "regex",

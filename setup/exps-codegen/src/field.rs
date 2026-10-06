@@ -1,9 +1,97 @@
 //! Exact Goldilocks (p = 2^64 - 2^32 + 1) and cubic-extension arithmetic
 //! (Fp[x]/(x^3 - x - 1)), bit-identical to the device helpers in
 //! `gen_common.cuh`. Used for constant folding and for the host-side
-//! equivalence check of the optimized IR.
+//! equivalence check of the optimized IR. [`Field`] selects it or BN128's
+//! scalar field (the pilfflonk target, `bn128.rs`).
+
+use num_bigint::BigUint;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub const P: u64 = 0xFFFF_FFFF_0000_0001;
+
+/// The field an IR computes in. For Goldilocks `Operand::Num(v)` is the value; for BN128 it is a
+/// handle into the IR's [`Bn128Numbers`], whose 0 and 1 are the values 0 and 1.
+#[derive(Clone, Debug, Default)]
+pub enum Field {
+    #[default]
+    Goldilocks,
+    Bn128(Arc<Bn128Numbers>),
+}
+
+impl Field {
+    /// Dimension of a challenge (and so of its powers).
+    pub fn ext_dim(&self) -> u64 {
+        match self {
+            Field::Goldilocks => 3,
+            Field::Bn128(_) => 1,
+        }
+    }
+
+    /// `x op y` of two numbers, as a number of this field.
+    pub fn fold(&self, op: &str, x: u64, y: u64) -> u64 {
+        match self {
+            Field::Goldilocks => match op {
+                "add" => add(x, y),
+                "sub" => sub(x, y),
+                _ => mul(x, y),
+            },
+            Field::Bn128(t) => {
+                let (a, b) = (t.value(x), t.value(y));
+                t.intern(bn128_apply(op, &a, &b))
+            }
+        }
+    }
+}
+
+/// BN128's scalar modulus r.
+pub fn bn128_r() -> &'static BigUint {
+    static R: OnceLock<BigUint> = OnceLock::new();
+    R.get_or_init(|| {
+        BigUint::parse_bytes(b"21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
+            .unwrap()
+    })
+}
+
+/// `a op b` mod r, for a, b < r.
+pub fn bn128_apply(op: &str, a: &BigUint, b: &BigUint) -> BigUint {
+    let r = bn128_r();
+    match op {
+        "add" => (a + b) % r,
+        "sub" => (a + r - b) % r,
+        "mul" => (a * b) % r,
+        other => panic!("unexpected op {other}"),
+    }
+}
+
+/// The interned numbers of a BN128 IR (canonical, < r).
+#[derive(Debug)]
+pub struct Bn128Numbers {
+    inner: Mutex<(Vec<BigUint>, HashMap<BigUint, u64>)>,
+}
+
+impl Bn128Numbers {
+    pub fn new() -> Arc<Self> {
+        let t = Arc::new(Bn128Numbers { inner: Mutex::new((Vec::new(), HashMap::new())) });
+        t.intern(BigUint::from(0u32));
+        t.intern(BigUint::from(1u32));
+        t
+    }
+    pub fn intern(&self, v: BigUint) -> u64 {
+        let v = v % bn128_r();
+        let mut g = self.inner.lock().unwrap();
+        if let Some(&h) = g.1.get(&v) {
+            return h;
+        }
+        let h = g.0.len() as u64;
+        g.0.push(v.clone());
+        g.1.insert(v, h);
+        h
+    }
+    pub fn value(&self, h: u64) -> BigUint {
+        self.inner.lock().unwrap().0[h as usize].clone()
+    }
+}
 
 #[inline]
 pub fn add(a: u64, b: u64) -> u64 {

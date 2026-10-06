@@ -219,7 +219,9 @@ void readCodeFields(Reader &r, ParserParams &p) {
 
 ExpressionsBin ExpressionsBin::load(const std::string &path) {
     const std::string bytes = readText(path, path + ": cannot open the file", path + ": cannot read the file");
-    return parse(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size(), path);
+    ExpressionsBin bin = parse(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size(), path);
+    bin.path = path;
+    return bin;
 }
 
 ExpressionsBin ExpressionsBin::parse(const uint8_t *data, uint64_t size, const std::string &name) {

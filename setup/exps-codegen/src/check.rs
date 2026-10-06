@@ -10,7 +10,8 @@
 //! unset table word, empty program) is reported as `Err`, never a panic: one
 //! bad AIR must not take down the whole generation run.
 
-use crate::field::{self, F3, Rng};
+use crate::field::{self, bn128_apply, bn128_r, Bn128Numbers, Field, Rng, F3};
+use num_bigint::BigUint;
 use crate::ir::{Ir, Operand};
 use std::collections::HashMap;
 
@@ -26,8 +27,8 @@ impl Env {
         Ok(match opnd {
             Operand::Tmp { id, .. } => *tmps.get(id).ok_or_else(|| format!("use of undefined tmp t{id}"))?,
             Operand::Num(v) => F3::base(*v),
-            Operand::Pow { base, j } => {
-                let ch = self.value(&Operand::Ch { base: *base }, tmps)?;
+            Operand::Pow { base, j, dim } => {
+                let ch = self.value(&Operand::Ch { base: *base, dim: *dim }, tmps)?;
                 field::pow3(ch, *j)
             }
             Operand::Tab { idx, .. } => *self.tab.get(idx).ok_or_else(|| format!("use of unset table word {idx}"))?,
@@ -76,6 +77,9 @@ fn eval(ir: &Ir, env: &mut Env) -> Result<(F3, u64), String> {
 /// `Ok(())` if both IRs produce identical outputs on `rounds` random
 /// assignments; `Err` with the first mismatch otherwise.
 pub fn equivalent(original: &Ir, optimized: &Ir, rounds: u64) -> Result<(), String> {
+    if let Field::Bn128(nums) = &original.field {
+        return equivalent_bn128(original, optimized, nums, rounds);
+    }
     for round in 0..rounds {
         let mut env = Env { rng: Rng(0x5eed_0000 + round), leaves: HashMap::new(), tab: HashMap::new() };
         let (vo, do_) = eval(original, &mut env).map_err(|e| format!("original IR: {e}"))?;
@@ -85,6 +89,76 @@ pub fn equivalent(original: &Ir, optimized: &Ir, rounds: u64) -> Result<(), Stri
         let norm = |v: F3, d: u64| if d == 1 { F3::base(v.a) } else { v };
         if norm(vo, do_) != norm(vn, dn) {
             return Err(format!("round {round}: original={vo:?} (dim {do_}) optimized={vn:?} (dim {dn})"));
+        }
+    }
+    Ok(())
+}
+
+/// [`equivalent`] over BN128's scalar field: every value has dimension 1, numbers are handles.
+fn equivalent_bn128(original: &Ir, optimized: &Ir, nums: &Bn128Numbers, rounds: u64) -> Result<(), String> {
+    struct Env<'a> {
+        rng: Rng,
+        nums: &'a Bn128Numbers,
+        leaves: HashMap<Operand, BigUint>,
+        tab: HashMap<u64, BigUint>,
+    }
+    impl Env<'_> {
+        fn value(&mut self, o: &Operand, tmps: &HashMap<u64, BigUint>) -> Result<BigUint, String> {
+            Ok(match o {
+                Operand::Tmp { id, .. } => {
+                    tmps.get(id).cloned().ok_or_else(|| format!("use of undefined tmp t{id}"))?
+                }
+                Operand::Num(h) => self.nums.value(*h),
+                Operand::Pow { base, j, dim } => {
+                    let ch = self.value(&Operand::Ch { base: *base, dim: *dim }, tmps)?;
+                    ch.modpow(&BigUint::from(*j), bn128_r())
+                }
+                Operand::Tab { idx, .. } => {
+                    self.tab.get(idx).cloned().ok_or_else(|| format!("use of unset table word {idx}"))?
+                }
+                leaf => {
+                    if let Some(v) = self.leaves.get(leaf) {
+                        return Ok(v.clone());
+                    }
+                    let mut v = BigUint::from(0u32);
+                    for _ in 0..4 {
+                        v = (v << 64) + BigUint::from(self.rng.next());
+                    }
+                    let v = v % bn128_r();
+                    self.leaves.insert(leaf.clone(), v.clone());
+                    v
+                }
+            })
+        }
+    }
+    fn eval(ir: &Ir, env: &mut Env) -> Result<BigUint, String> {
+        env.tab.clear();
+        let mut ttmps: HashMap<u64, BigUint> = HashMap::new();
+        for i in &ir.tab {
+            let v = bn128_apply(&i.op, &env.value(&i.a, &ttmps)?, &env.value(&i.b, &ttmps)?);
+            ttmps.insert(i.dst_id.ok_or("table op without dst")?, v);
+        }
+        for &(tmp, idx, _) in &ir.tab_out {
+            let v = ttmps.get(&tmp).cloned().ok_or_else(|| format!("table export of undefined tmp t{tmp}"))?;
+            env.tab.insert(idx, v);
+        }
+        let mut tmps: HashMap<u64, BigUint> = HashMap::new();
+        let mut out = None;
+        for i in &ir.instrs {
+            let v = bn128_apply(&i.op, &env.value(&i.a, &tmps)?, &env.value(&i.b, &tmps)?);
+            if i.dst_is_tmp {
+                tmps.insert(i.dst_id.ok_or("tmp op without dst id")?, v.clone());
+            }
+            out = Some(v);
+        }
+        out.ok_or_else(|| "empty IR".to_string())
+    }
+    for round in 0..rounds {
+        let mut env = Env { rng: Rng(0x5eed_0000 + round), nums, leaves: HashMap::new(), tab: HashMap::new() };
+        let vo = eval(original, &mut env).map_err(|e| format!("original IR: {e}"))?;
+        let vn = eval(optimized, &mut env).map_err(|e| format!("optimized IR: {e}"))?;
+        if vo != vn {
+            return Err(format!("round {round}: original={vo} optimized={vn}"));
         }
     }
     Ok(())

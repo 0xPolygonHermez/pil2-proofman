@@ -130,15 +130,16 @@ fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
     match opnd {
         Operand::Num(v) => vec![format!("  gl64_t {name}(uint64_t({v}ull));")],
         Operand::Zi => vec![format!("  gl64_t {name} = aux[off_zi + row];")],
+        Operand::Zb { .. } => unreachable!("Zb is the BN128 target's"),
         Operand::Pub { id } => vec![format!("  gl64_t {name} = pub[{id}];")],
-        Operand::Ch { base } => {
+        Operand::Ch { base, .. } => {
             let i = *base;
             vec![format!("  g3 {name}; {name}.a=ch[{i}]; {name}.b=ch[{}]; {name}.c=ch[{}];", i + 1, i + 2)]
         }
-        Operand::Pow { base, j } if ir.pow_in_regs => {
+        Operand::Pow { base, j, .. } if ir.pow_in_regs => {
             vec![format!("  g3 {name} = pwreg_{base}_{j};")]
         }
-        Operand::Pow { base, j } => {
+        Operand::Pow { base, j, .. } => {
             let i = ir.pow_offset(*base) + 3 * *j;
             vec![format!("  g3 {name}; {name}.a=pw[{i}]; {name}.b=pw[{}]; {name}.c=pw[{}];", i + 1, i + 2)]
         }

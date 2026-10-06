@@ -4,12 +4,17 @@
 // their C linkage.
 #include "pilfflonk_expressions_gpu.hpp"
 
+#include <dlfcn.h>
+#include <sys/stat.h>
+
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
 
 #include "pilfflonk_kernels.hpp"
+#include "zklog.hpp"
 
 namespace PilFflonk {
 
@@ -249,6 +254,62 @@ OperandTables operandTables(const OperandLayout &layout, const OperandTypes &typ
 }
 
 // ---------------------------------------------------------------------------------------------
+// GeneratedExpressions
+// ---------------------------------------------------------------------------------------------
+
+namespace {
+// setup/exps-codegen/src/bn128.rs's PFEXPS_ABI.
+constexpr unsigned GENERATED_ABI = 1;
+} // namespace
+
+GeneratedExpressions::GeneratedExpressions(const std::string &binPath) {
+    const std::string ext = ".bin";
+    const char *env = std::getenv("PILFFLONK_EXPS");
+    if ((env != nullptr && std::string(env) == "0") || binPath.size() < ext.size() ||
+        binPath.compare(binPath.size() - ext.size(), ext.size(), ext) != 0) {
+        return;
+    }
+    path = binPath.substr(0, binPath.size() - ext.size()) + ".exps.so";
+    struct stat st;
+    if (::stat(path.c_str(), &st) != 0) {
+        return;
+    }
+    lib = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (lib == nullptr) {
+        throw std::runtime_error("GeneratedExpressions: cannot load " + path + ": " + dlerror());
+    }
+    auto abi = reinterpret_cast<unsigned (*)()>(dlsym(lib, "pfexps_abi"));
+    auto scratchFn = reinterpret_cast<unsigned long long (*)()>(dlsym(lib, "pfexps_scratch_bytes"));
+    coversFn = reinterpret_cast<int (*)(unsigned)>(dlsym(lib, "pfexps_covers"));
+    launchFn = reinterpret_cast<int (*)(unsigned, const ExpressionLaunch *, void *)>(dlsym(lib, "pfexps_launch"));
+    if (abi == nullptr || scratchFn == nullptr || coversFn == nullptr || launchFn == nullptr ||
+        abi() != GENERATED_ABI) {
+        dlclose(lib);
+        throw std::runtime_error("GeneratedExpressions: " + path +
+                                 " is not a pilfflonk expressions library of this ABI: regenerate it (gen-exps)");
+    }
+    scratch = scratchFn();
+}
+
+GeneratedExpressions::~GeneratedExpressions() {
+    if (lib != nullptr) {
+        dlclose(lib);
+    }
+}
+
+bool GeneratedExpressions::covers(uint64_t expId) const {
+    return lib != nullptr && expId <= UINT32_MAX && coversFn(static_cast<unsigned>(expId)) == 1;
+}
+
+void GeneratedExpressions::launch(uint64_t expId, const ExpressionLaunch &l, void *scratchMemory) const {
+    const int err = launchFn(static_cast<unsigned>(expId), &l, scratchMemory);
+    if (err != 0) {
+        throw std::runtime_error("GeneratedExpressions: " + path + " failed to launch expression " +
+                                 std::to_string(expId) + " (error " + std::to_string(err) + ")");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // ExpressionsGpu
 // ---------------------------------------------------------------------------------------------
 
@@ -262,6 +323,13 @@ ExpressionsGpu::ExpressionsGpu(const ExpressionsBin &bin, const PilfflonkInfo &i
                                     std::to_string(MAX_SHARED_BYTES));
     }
     tables = DeviceBuffer(layout.bytes);
+    generated = std::make_unique<GeneratedExpressions>(bin.path);
+    if (generated->loaded()) {
+        zklog.info("pilfflonk: generated expression kernels from " + generated->file());
+    }
+    if (generated->scratchBytes() > 0) {
+        generatedScratch = DeviceBuffer(generated->scratchBytes());
+    }
     const uint64_t perBlock = temporaryBytesPerBlock(bin, sharedBytes);
     if (perBlock > 0) {
         temporaryBlocks = pilfflonk_gpu_multiprocessors() * TEMPORARY_BLOCKS_PER_SM;
@@ -272,7 +340,8 @@ ExpressionsGpu::ExpressionsGpu(const ExpressionsBin &bin, const PilfflonkInfo &i
 uint64_t ExpressionsGpu::deviceBytesOf(const ExpressionsBin &bin, const PilfflonkInfo &info, uint32_t multiprocessors,
                                        uint64_t sharedBytes) {
     return operandLayout(bin, info.openingPoints.size(), info.boundaries.size()).bytes +
-           uint64_t(multiprocessors) * TEMPORARY_BLOCKS_PER_SM * temporaryBytesPerBlock(bin, sharedBytes);
+           uint64_t(multiprocessors) * TEMPORARY_BLOCKS_PER_SM * temporaryBytesPerBlock(bin, sharedBytes) +
+           GeneratedExpressions(bin.path).scratchBytes();
 }
 
 void ExpressionsGpu::calculateExpression(uint64_t expId, const ExpressionsDomainGpu &domain, const ProverValues &values,
@@ -301,6 +370,10 @@ void ExpressionsGpu::calculateExpression(uint64_t expId, const ExpressionsDomain
     launch.stride = stride;
     launch.temporaries = inShared ? nullptr : temporaries.data();
     launch.tables = operandTables(layout, types, tables.data(), domain.size());
+    if (generated->covers(expId)) {
+        generated->launch(expId, launch, generatedScratch.data());
+        return;
+    }
     pilfflonk_gpu_calculate_expression(&launch);
 }
 

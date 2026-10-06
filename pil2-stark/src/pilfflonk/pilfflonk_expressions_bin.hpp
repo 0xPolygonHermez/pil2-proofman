@@ -135,6 +135,7 @@ public:
     // The indices in hints of the hints named `name`, in their order: the STARK's getHintIdsByName.
     std::vector<uint64_t> hintIds(const std::string &name) const;
 
+    std::string path; // the file load() read; empty from parse()
     uint32_t nStages = 0;
     // The largest nTemp, nArgs and nOps of both sections, as the STARK's.
     uint32_t maxTmp = 0;
