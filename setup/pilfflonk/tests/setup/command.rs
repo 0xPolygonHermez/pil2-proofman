@@ -168,11 +168,13 @@ fn the_command_writes_the_files_of_the_proving_key() {
         files(&proving_key),
         [
             "Synthetic/Group/airs/Sample/air/Sample.bin",
+            "Synthetic/Group/airs/Sample/air/Sample.coefs",
             "Synthetic/Group/airs/Sample/air/Sample.const",
             "Synthetic/Group/airs/Sample/air/Sample.expressionsinfo.json",
             "Synthetic/Group/airs/Sample/air/Sample.pilfflonkinfo.json",
             "Synthetic/Group/airs/Sample/air/Sample.verifierinfo.json",
             "Synthetic/Group/airs/Sample/air/Sample.verkey.json",
+            "Synthetic/pilfflonk/pilfflonk.shift.bin",
             "Synthetic/pilfflonk/pilfflonk.srs.bin",
             "Synthetic/pilfflonk/pilfflonk.vkey.json",
             "pilout.globalConstraints.json",

@@ -325,13 +325,20 @@ std::unique_ptr<ProvingKey> keyOf(const AirFiles &files, Device device,
     if (change) {
         change(bin);
     }
+    const PilfflonkInfo info = PilfflonkInfo::parse(files.info);
     std::shared_ptr<PilFflonk::GpuKey> gpu;
     if (device == Device::Gpu) {
-        gpu = std::make_shared<PilFflonk::GpuKey>(Srs::load(files.srs));
+        const Srs srs = Srs::load(files.srs);
+        gpu = std::make_shared<PilFflonk::GpuKey>(srs);
+        // The setup's shift sums (ProvingKey::precompute).
+        const ExpressionsBin lengthsBin = ExpressionsBin::parse(files.bin.data(), files.bin.size(), files.name + ".bin");
+        gpu->addShiftSums(PilFflonk::shiftSums(
+            srs, AirKey::withoutFixedColumns(info, std::move(lengthsBin), files.name)->msmLengths()));
     }
     std::vector<std::vector<std::unique_ptr<AirKey>>> airs(1);
-    airs[0].push_back(std::make_unique<AirKey>(PilfflonkInfo::parse(files.info), std::move(bin), files.constants.data(),
-                                               files.constants.size(), files.name, gpu.get()));
+    const std::vector<uint8_t> coefs = PilFflonk::fixedCoefficientsOf(files.constants.data(), files.constants.size(),
+                                                                       info.nBits, info.nConstants, files.name);
+    airs[0].push_back(std::make_unique<AirKey>(info, std::move(bin), coefs.data(), coefs.size(), files.name, gpu.get()));
     return std::make_unique<ProvingKey>(GlobalInfo::parse(files.global), Srs::load(files.srs), std::move(airs),
                                         std::move(gpu));
 }

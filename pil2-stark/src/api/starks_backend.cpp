@@ -78,6 +78,7 @@ uint64_t get_const_pols_aggregation_offset_gpu(void *d_buffers_);
 uint64_t get_stream_commit_slots_gpu(void *d_buffers_);
 uint64_t get_stream_commit_gpus_gpu(void *d_buffers_);
 uint64_t get_stream_commit_floor_gpu(void *d_buffers_);
+uint64_t get_aux_trace_end_gpu(void *d_buffers_);
 uint64_t stream_commit_slot_bytes_gpu(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes);
 void configure_stream_commit_slots_gpu(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
 void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes);
@@ -159,6 +160,7 @@ StarksBackend cpu_backend = []() {
     backend.get_stream_commit_slots = nullptr;            // default: 0 (disabled)
     backend.get_stream_commit_gpus = nullptr;
     backend.get_stream_commit_floor = nullptr;            // default: UINT64_MAX
+    backend.get_aux_trace_end = nullptr;                  // default: 0
     backend.stream_commit_slot_bytes = nullptr;           // default: 0 (not committable)
     backend.configure_stream_commit_slots = nullptr;      // default: no-op
     backend.configure_prefetch_zone = nullptr;            // default: no-op
@@ -237,6 +239,7 @@ StarksBackend gpu_backend = []() {
     backend.get_stream_commit_slots = get_stream_commit_slots_gpu;
     backend.get_stream_commit_gpus = get_stream_commit_gpus_gpu;
     backend.get_stream_commit_floor = get_stream_commit_floor_gpu;
+    backend.get_aux_trace_end = get_aux_trace_end_gpu;
     backend.stream_commit_slot_bytes = stream_commit_slot_bytes_gpu;
     backend.configure_stream_commit_slots = configure_stream_commit_slots_gpu;
     backend.configure_prefetch_zone = configure_prefetch_zone_gpu;
@@ -641,6 +644,11 @@ void dump_pipeline_state(void *d_buffers_) {
 uint64_t get_stream_commit_floor(void *d_buffers_) {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->get_stream_commit_floor ? backend->get_stream_commit_floor(d_buffers_) : UINT64_MAX;
+}
+
+uint64_t get_aux_trace_end(void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->get_aux_trace_end ? backend->get_aux_trace_end(d_buffers_) : 0;
 }
 
 // Quiesce the streaming-commit slots before the gpu-mops final planning

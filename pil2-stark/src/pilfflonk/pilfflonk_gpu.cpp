@@ -24,17 +24,6 @@ constexpr InvalidArgument invalid("Gpu::");
 
 } // namespace
 
-// Any element of large order does; a fixed one makes every intermediate value the same from run to
-// run.
-const FrElement &msmShiftRatio() {
-    static const FrElement ratio = [] {
-        FrElement h;
-        Engine::engine.fr.fromString(h, "6277101735386680763835789423207666416102355444464034512659");
-        return h;
-    }();
-    return ratio;
-}
-
 G1Point msmOnDevice(const void *points, const void *scalars, uint64_t n) {
     Engine &E = Engine::engine;
     // sppark's jacobian_t<fp_t>: (X, Y, Z) in Montgomery form, the point (X/Z², Y/Z³).
@@ -83,7 +72,7 @@ DeviceScope::~DeviceScope() {
 
 bool Gpu::available() { return cuda_available(); }
 
-Gpu::Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload) {
+Gpu::Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload, void *at) {
     if (!available()) {
         throw invalid("Gpu", "no GPU: CUDA sees no device of compute capability 7.0 or above (or no driver)");
     }
@@ -94,12 +83,20 @@ Gpu::Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload) {
         throw invalid("Gpu", "no points");
     }
     const DeviceScope device;
-    gpu_plonk_cuda_malloc(&devicePoints, n * sizeof(G1PointAffine));
+    owned = at == nullptr;
+    if (owned) {
+        gpu_plonk_cuda_malloc(&devicePoints, n * sizeof(G1PointAffine));
+    } else {
+        devicePoints = at;
+    }
     nDevicePoints = n;
     upload(devicePoints, points, n * sizeof(G1PointAffine));
 }
 
 Gpu::~Gpu() {
+    if (!owned) {
+        return;
+    }
     const DeviceScope device;
     gpu_plonk_cuda_free(devicePoints);
 }

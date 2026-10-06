@@ -1,6 +1,7 @@
 #ifndef PILFFLONK_PROVER_HPP
 #define PILFFLONK_PROVER_HPP
 
+#include "pilfflonk_wrap_exec.hpp"
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -129,6 +130,11 @@ public:
     // below r (naming its row and column), and, on a key on the GPU, if this thread has another
     // instance of it.
     Instance(const ProvingKey &pk, uint64_t airgroupId, uint64_t airId, const uint8_t *stage1, uint64_t stage1Bytes,
+             std::vector<FrElement> airValues, std::vector<FrElement> publics, std::vector<FrElement> proofValues,
+             std::unique_ptr<BlindingSource> blinding);
+    // As the one above, with the stage-1 witness of the blake3 wrap as its parts
+    // (pilfflonk_wrap_exec.hpp), which the device builds: on a key on the GPU only.
+    Instance(const ProvingKey &pk, uint64_t airgroupId, uint64_t airId, const pilfflonk_exec_witness &exec,
              std::vector<FrElement> airValues, std::vector<FrElement> publics, std::vector<FrElement> proofValues,
              std::unique_ptr<BlindingSource> blinding);
     ~Instance();

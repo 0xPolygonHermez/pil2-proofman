@@ -49,6 +49,13 @@ struct GpuKeyOptions {
     // loads, and never frees it: it must outlive the key.
     void *arena = nullptr;
     uint64_t arenaBytes = 0;
+    // The arena's buffer is the key's alone while it lives: it holds all its device memory, its own
+    // from the start and its proofs' arena from the end (DevicePool), and the key writes it as its own.
+    bool exclusive = false;
+    // With exclusive, the buffer is others' between the proofs (a preloaded wrap's): once loaded the
+    // key copies what it holds there to pinned host memory (GpuKey::snapshot), which restore() writes
+    // back before each proof.
+    bool restorable = false;
 };
 
 // The device memory a key on the GPU needs (ProvingKey::requiredDeviceBytes), in bytes: the arena of
@@ -100,7 +107,7 @@ public:
     // A copy on the device of the n points (n >= 1) at `points`, the powers [τ^i]₁ of an SRS, copied
     // by `upload` (a GpuKey's pinned Staging, which counts them). Throws std::invalid_argument if
     // !available(), points is null or n is 0.
-    Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload);
+    Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload, void *at = nullptr);
     ~Gpu();
     Gpu(const Gpu &) = delete;
     Gpu &operator=(const Gpu &) = delete;
@@ -112,6 +119,7 @@ public:
 private:
     void *devicePoints = nullptr;
     uint64_t nDevicePoints = 0;
+    bool owned = true; // not given at construction
 };
 
 // While it lives, the GPU's device (device 0, Gpu's) is the calling thread's current CUDA device;
@@ -131,9 +139,6 @@ public:
 private:
     int previous;
 };
-
-// The ratio h of the shift ρ_i = h^(i+1) of the MSMs' scalars (GpuKey::commit), in Montgomery form.
-const FrElement &msmShiftRatio();
 
 // Σ_{i<n} scalars[i]·points[i] for n >= 1 scalars in Montgomery form and n points [τ^i]₁, all on the
 // device: msm_bn128_gpu_dev_ptr, after the device is synchronised (the scalars may come from the

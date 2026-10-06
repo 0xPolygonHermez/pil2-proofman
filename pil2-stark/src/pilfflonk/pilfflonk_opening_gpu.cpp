@@ -9,7 +9,9 @@
 #include <string>
 #include <utility>
 
+#include "pilfflonk_gpu.hpp"
 #include "pilfflonk_kernels.hpp"
+#include "pilfflonk_lde_kernels.hpp"
 #include "pilfflonk_prover.hpp"
 #include "pilfflonk_proving_key.hpp"
 #include "pilfflonk_shplonk.hpp"
@@ -22,30 +24,67 @@ using Engine = AltBn128::Engine;
 
 // The block of gpu_plonk_precompute_omega_tables_async's tables: x^(256·b), and x^t for t < 256.
 constexpr uint64_t TABLE_BLOCK = 256;
-// gpu_plonk_compute_div_zerofier's scan: pairs (a, b) of two elements, in blocks of 1024 (256 threads
-// of 4), the totals of each level's blocks after them while there are more than one.
-constexpr uint64_t PAIR_BYTES = 2 * sizeof(FrElement);
-constexpr uint64_t SCAN_BLOCK = 1024;
+// From this many offsets an f_i's components are divided by Z_{T_i} on a coset (two NTTs each), not by
+// one scan per offset.
+constexpr uint64_t NTT_MIN_OFFSETS = 4;
+
+uint64_t nextPowerOfTwo(uint64_t n) {
+    uint64_t p = 1;
+    while (p < n) {
+        p <<= 1;
+    }
+    return p;
+}
 
 // The elements of the tables of the powers of one point, for evaluations of up to n coefficients:
 // x^(256·b) for b <= (n − 1)/256, then x^t for t < 256.
 uint64_t tableElements(uint64_t n) { return (n - 1) / TABLE_BLOCK + 1 + TABLE_BLOCK; }
 
-// The pairs gpu_plonk_compute_div_zerofier uses for n coefficients.
-uint64_t affinePairs(uint64_t n) {
-    if (n < 2) {
-        return 0;
-    }
-    uint64_t level = n - 1, pairs = level;
-    while (level > SCAN_BLOCK) {
-        level = (level + SCAN_BLOCK - 1) / SCAN_BLOCK;
-        pairs += level;
-    }
-    return pairs;
-}
-
 // What fixDegree finds of a polynomial whose coefficients count() counts.
 uint64_t degreeOf(uint64_t count) { return count == 0 ? 0 : count - 1; }
+
+// divideOnCoset's scratch: a component and 1/Z on the coset, the tables of the shift and of its
+// inverse, and a flag.
+struct CosetScratch {
+    FrElement *buffer, *zInverse, *blocks, *powers, *inverseBlocks, *inversePowers;
+    uint32_t *zero;
+};
+
+CosetScratch cosetScratch(FrElement *scratch, uint64_t ext) {
+    const uint64_t table = tableElements(ext), nBlocks = table - TABLE_BLOCK;
+    CosetScratch c;
+    c.buffer = scratch;
+    c.zInverse = scratch + ext;
+    c.blocks = c.zInverse + ext;
+    c.powers = c.blocks + nBlocks;
+    c.inverseBlocks = c.blocks + table;
+    c.inversePowers = c.inverseBlocks + nBlocks;
+    c.zero = reinterpret_cast<uint32_t *>(c.blocks + 2 * table);
+    return c;
+}
+
+// The scan path's scratch: a component and its quotient (alternately), and the chunks' T and S.
+struct LinearScratch {
+    FrElement *a, *b, *T, *S;
+};
+
+LinearScratch linearScratch(FrElement *scratch, uint64_t component) {
+    const uint64_t chunks = pilfflonk_gpu_division_chunks(component) + 1;
+    LinearScratch l;
+    l.a = scratch;
+    l.b = l.a + component;
+    l.T = l.b + component;
+    l.S = l.T + chunks;
+    return l;
+}
+
+uint64_t linearScratchBytes(uint64_t component) {
+    return (2 * component + 2 * (pilfflonk_gpu_division_chunks(component) + 1)) * sizeof(FrElement);
+}
+
+uint64_t cosetScratchBytes(uint64_t ext) {
+    return ext == 0 ? 0 : (2 * ext + 2 * tableElements(ext)) * sizeof(FrElement) + sizeof(uint64_t);
+}
 
 // Where an OpeningGpu keeps its data in its workspace: byte offsets, each a whole number of elements.
 struct Workspace {
@@ -55,9 +94,10 @@ struct Workspace {
     uint64_t descriptors;  // bounds.nEvaluations PilfflonkGpuEvaluation
     uint64_t zero;         // a 64-bit 0: the offset of the one polynomial of a commit or a count
     uint64_t found;        // a 64-bit count of coefficients
+    uint64_t flags;        // bounds.nPoints 32-bit flags: computeW's inexact divisions, by f
     // What is not needed at once: the tables of the distinct points and pilfflonk_gpu_evaluate's
-    // scratch; a component, and its division's pairs after it; L's division's pairs; an MSM's
-    // scalars (GpuKey::commit's work).
+    // scratch; the components' divisions; L and its division's T and S; an MSM's scalars
+    // (GpuKey::commit's work).
     uint64_t scratch;
     uint64_t bytes;
 };
@@ -71,9 +111,10 @@ Workspace workspaceOf(const ShplonkBounds &b) {
     };
     const uint64_t evaluation =
         (b.nPoints * tableElements(b.component) + pilfflonk_gpu_evaluation_scratch(b.nEvaluations)) * sizeof(FrElement);
-    const uint64_t component = b.component * sizeof(FrElement) + affinePairs(b.component) * PAIR_BYTES;
-    const uint64_t l = affinePairs(b.length) * PAIR_BYTES;
+    const uint64_t l = (b.length + 2 * (pilfflonk_gpu_division_chunks(b.length) + 1)) * sizeof(FrElement);
     const uint64_t msm = std::max(b.wMsm, b.wpMsm) * sizeof(FrElement);
+    const uint64_t coset = cosetScratchBytes(b.nttLength);
+    const uint64_t linear = linearScratchBytes(b.component);
     Workspace w;
     w.quotient = take(b.length * sizeof(FrElement));
     w.interpolants = take(b.nEvaluations * sizeof(FrElement));
@@ -81,7 +122,8 @@ Workspace workspaceOf(const ShplonkBounds &b) {
     w.descriptors = take(b.nEvaluations * sizeof(PilfflonkGpuEvaluation));
     w.zero = take(sizeof(uint64_t));
     w.found = take(sizeof(uint64_t));
-    w.scratch = take(std::max({evaluation, component, l, msm}));
+    w.flags = take(b.nPoints * sizeof(uint32_t));
+    w.scratch = take(std::max({evaluation, l, msm, coset, linear}));
     w.bytes = end;
     return w;
 }
@@ -92,27 +134,27 @@ ShplonkBounds shplonkBounds(const AirKey &air) {
     const PilfflonkInfo &info = air.info();
     const uint64_t N = air.n();
     ShplonkBounds b;
-    uint64_t longest = 1;
     for (uint64_t f = 0; f < info.layout.size(); ++f) {
         const LayoutEntry &entry = info.layout[f];
         const uint64_t roots = entry.k * entry.offsets.size();
         b.nEvaluations += roots;
         b.nPoints += entry.offsets.size();
         b.length = std::max({b.length, entry.degree, roots});
-        if (entry.degree > roots) {
-            b.wMsm = std::max(b.wMsm, entry.degree - roots);
-        }
-        longest = std::max(longest, entry.degree);
         b.component = std::max<uint64_t>(b.component, entry.offsets.size());
+        uint64_t widest = entry.offsets.size() + 1; // Z's coefficients
         for (const LayoutPol &pol : entry.pols) {
             const uint64_t coefficients = entry.stage == info.qStage()
                                               ? air.degrees().qPieceCoefficients[info.cmPolsMap[pol.id].stagePos]
                                               : N + air.blindLength(f);
             b.component = std::max(b.component, coefficients);
+            widest = std::max(widest, coefficients);
+        }
+        if (entry.offsets.size() >= NTT_MIN_OFFSETS) {
+            b.nttLength = std::max(b.nttLength, nextPowerOfTwo(widest));
         }
     }
-    b.wMsm = std::max<uint64_t>(b.wMsm, 1);
-    b.wpMsm = std::max<uint64_t>(longest - 1, 1);
+    b.wMsm = air.wMsm();
+    b.wpMsm = air.wpMsm();
     return b;
 }
 
@@ -180,21 +222,6 @@ uint64_t OpeningGpu::count(const FrElement *data, uint64_t n) const {
     uint64_t coefficients = 0;
     key.staging().toHost(&coefficients, found, sizeof(coefficients));
     return coefficients;
-}
-
-bool OpeningGpu::divide(FrElement *data, uint64_t n, const FrElement &beta, void *pairs) const {
-    Engine::Fr &fr = Engine::engine.fr;
-    const FrElement low = read(data);
-    if (n == 1) {
-        // A constant: divisible by X − β only if it is 0, which is then its quotient.
-        return fr.isZero(low);
-    }
-    // The scan's q_{c+1} = (q_c − a_{c+1})/β from q_0 = −a_0/β.
-    FrElement inverse, first;
-    fr.inv(inverse, beta);
-    fr.mul(first, fr.neg(inverse), low);
-    gpu_plonk_compute_div_zerofier(data, n, &inverse, &first, pairs);
-    return fr.isZero(read(data + n - 1));
 }
 
 void OpeningGpu::uploadInterpolants(const ShplonkProver &prover, const ShplonkProver::Interpolants &r) const {
@@ -294,33 +321,122 @@ void OpeningGpu::computeW(const ShplonkProver &prover, const ShplonkProver::Inte
     const uint64_t length = prover.workLength();
     FrElement *W = at<FrElement>(w.quotient);
     const FrElement *interpolants = at<FrElement>(w.interpolants);
-    // A component's p_j − r^(j), then its quotients, with its division's pairs after it.
-    FrElement *buffer = at<FrElement>(w.scratch);
-    void *pairs = buffer + bounds.component;
+    // A component's p_j − r^(j), then its quotients, alternately in two buffers.
+    const LinearScratch scan = linearScratch(at<FrElement>(w.scratch), bounds.component);
+    uint32_t *flags = at<uint32_t>(w.flags);
     pilfflonk_gpu_memset_zero(W, length * sizeof(FrElement));
+    pilfflonk_gpu_memset_zero(flags, prover.size() * sizeof(uint32_t));
     FrElement alphaPower = fr.one();
     uint64_t rStart = 0;
     for (uint64_t i = 0; i < prover.size(); ++i) {
         const uint64_t k = prover.k(i), nRoots = prover.roots(i).size();
         const std::vector<FrElement> &points = prover.points(i);
+        uint64_t widest = points.size() + 1; // Z's coefficients
+        for (const ShplonkComponent &p : prover.components(i)) {
+            widest = std::max(widest, p.degree() + 1);
+        }
+        const uint64_t ext = nextPowerOfTwo(widest);
+        if (points.size() >= NTT_MIN_OFFSETS && ext <= bounds.nttLength &&
+            divideOnCoset(prover, i, ext, interpolants + rStart, alphaPower)) {
+            fr.mul(alphaPower, alphaPower, alpha);
+            rStart += nRoots;
+            continue;
+        }
         for (uint64_t j = 0; j < k; ++j) {
             const uint64_t coefs = prover.components(i)[j].degree() + 1;
             uint64_t n = std::max<uint64_t>(coefs, points.size());
-            pilfflonk_gpu_component_minus(buffer, n, components[i][j], coefs, interpolants + rStart, nRoots, k, j);
-            // Z_{T_i} = Π_{s in O_i} (Y − ξ·ω_N^s) in Y = X^k, one factor at a time.
+            FrElement *dividend = scan.a, *quotient = scan.b;
+            pilfflonk_gpu_component_minus(dividend, n, components[i][j], coefs, interpolants + rStart, nRoots, k, j);
+            // Z_{T_i} = Π_{s in O_i} (Y − ξ·ω_N^s) in Y = X^k, one factor at a time; the flags read below.
             for (const FrElement &point : points) {
-                if (!divide(buffer, n, point, pairs)) {
-                    throw ShplonkProver::remainderNotDivisible(i);
+                pilfflonk_gpu_divide_linear(quotient, dividend, n, &point, scan.T, scan.S, flags + i);
+                if (n == 1) {
+                    // A constant: its quotient is 0 (the flag says whether it was).
+                    pilfflonk_gpu_memset_zero(quotient, sizeof(FrElement));
                 }
+                std::swap(dividend, quotient);
                 n = std::max<uint64_t>(n - 1, 1);
             }
-            pilfflonk_gpu_add_component(W, buffer, n, k, j, &alphaPower);
+            pilfflonk_gpu_add_component(W, dividend, n, k, j, &alphaPower);
         }
         fr.mul(alphaPower, alphaPower, alpha);
         rStart += nRoots;
     }
+    std::vector<uint32_t> inexact(prover.size());
+    key.staging().toHost(inexact.data(), flags, inexact.size() * sizeof(uint32_t));
+    for (uint64_t i = 0; i < prover.size(); ++i) {
+        if (inexact[i] != 0) {
+            throw ShplonkProver::remainderNotDivisible(i);
+        }
+    }
     wCount = count(W, length);
     prover.checkW(degreeOf(wCount));
+}
+
+bool OpeningGpu::divideOnCoset(const ShplonkProver &prover, uint64_t i, uint64_t ext, const FrElement *interpolants,
+                               const FrElement &alphaPower) const {
+    Engine::Fr &fr = Engine::engine.fr;
+    const Workspace w = workspaceOf(bounds);
+    const CosetScratch c = cosetScratch(at<FrElement>(w.scratch), ext);
+    const uint64_t k = prover.k(i), nRoots = prover.roots(i).size(), bits = __builtin_ctzll(ext);
+    const std::vector<FrElement> &points = prover.points(i);
+    const uint64_t m = points.size(), nBlocks = tableElements(ext) - TABLE_BLOCK;
+    FrElement shift, shiftInverse;
+    fr.set(shift, COSET_SHIFT); // pilfflonk_lde.hpp
+    fr.inv(shiftInverse, shift);
+    gpu_plonk_precompute_omega_tables_async(c.blocks, c.powers, &shift, TABLE_BLOCK, static_cast<uint32_t>(nBlocks),
+                                            nullptr);
+    gpu_plonk_precompute_omega_tables_async(c.inverseBlocks, c.inversePowers, &shiftInverse, TABLE_BLOCK,
+                                            static_cast<uint32_t>(nBlocks), nullptr);
+
+    // 1/Z(Y) on the coset, Z = Π_s (Y − ξ·ω_N^s).
+    std::vector<FrElement> z(m + 1, fr.zero());
+    z[0] = fr.one();
+    for (uint64_t s = 0; s < m; ++s) {
+        for (uint64_t d = s + 1; d > 0; --d) {
+            z[d] = fr.sub(z[d - 1], fr.mul(points[s], z[d]));
+        }
+        z[0] = fr.neg(fr.mul(points[s], z[0]));
+    }
+    Staging &staging = key.staging();
+    pilfflonk_gpu_memset_zero(c.zInverse, ext * sizeof(FrElement));
+    staging.toDevice(c.zInverse, z.data(), z.size() * sizeof(FrElement));
+    pilfflonk_gpu_mul_by_powers(c.zInverse, ext, c.blocks, c.powers);
+    transformOnDevice(c.zInverse, bits, false);
+    pilfflonk_gpu_memset_zero(c.zero, sizeof(uint32_t));
+    pilfflonk_gpu_batch_inverse(c.zInverse, c.buffer, ext, c.zero);
+    uint32_t vanishes = 0;
+    staging.toHost(&vanishes, c.zero, sizeof(vanishes));
+    if (vanishes != 0) {
+        return false;
+    }
+    // A guard on the pipeline: 1/Z at the coset's first point, the shift.
+    FrElement zShift = fr.zero();
+    for (uint64_t d = m + 1; d > 0; --d) {
+        zShift = fr.add(fr.mul(zShift, shift), z[d - 1]);
+    }
+    if (!fr.eq(fr.mul(zShift, read(c.zInverse)), fr.one())) {
+        throw std::logic_error("OpeningGpu: 1/Z on the coset is wrong");
+    }
+
+    FrElement *W = at<FrElement>(w.quotient);
+    for (uint64_t j = 0; j < k; ++j) {
+        const uint64_t coefs = prover.components(i)[j].degree() + 1;
+        const uint64_t quotient = std::max<uint64_t>(coefs, m) - m;
+        pilfflonk_gpu_component_minus(c.buffer, ext, components[i][j], coefs, interpolants, nRoots, k, j);
+        pilfflonk_gpu_mul_by_powers(c.buffer, ext, c.blocks, c.powers);
+        transformOnDevice(c.buffer, bits, false);
+        pilfflonk_gpu_mul_pointwise(c.buffer, c.zInverse, ext);
+        transformOnDevice(c.buffer, bits, true);
+        pilfflonk_gpu_mul_by_powers(c.buffer, ext, c.inverseBlocks, c.inversePowers);
+        // Exact iff the result has degree below n − |O|: then it times Z is f − r (both of degree
+        // below ext, equal on the coset).
+        if (count(c.buffer, ext) > quotient) {
+            throw ShplonkProver::remainderNotDivisible(i);
+        }
+        pilfflonk_gpu_add_component(W, c.buffer, std::max<uint64_t>(quotient, 1), k, j, &alphaPower);
+    }
+    return true;
 }
 
 G1Point OpeningGpu::commitW() {
@@ -344,20 +460,31 @@ void OpeningGpu::computeWp(const ShplonkProver &prover, const ShplonkProver::Int
     }
     const Workspace w = workspaceOf(bounds);
     const uint64_t length = prover.workLength();
-    FrElement *L = at<FrElement>(w.quotient);
+    // L in the scratch, so that W' = L/(X − y) goes over W, where it is committed.
+    FrElement *L = at<FrElement>(w.scratch), *Wp = at<FrElement>(w.quotient);
+    FrElement *T = L + length, *S = T + pilfflonk_gpu_division_chunks(length) + 1;
+    uint32_t *inexact = at<uint32_t>(w.flags);
     // L = w·W + Σ_i f[i]·(f_i − r_i(y)), over W, which is zero above its degree.
-    pilfflonk_gpu_scale_add_constant(L, length, &scalars.w, &constant);
+    pilfflonk_gpu_memset_zero(L, length * sizeof(FrElement));
+    pilfflonk_gpu_add_component(L, Wp, length, 1, 0, &scalars.w);
+    const FrElement one = fr.one();
+    pilfflonk_gpu_scale_add_constant(L, 1, &one, &constant);
     for (uint64_t i = 0; i < prover.size(); ++i) {
         for (uint64_t j = 0; j < prover.k(i); ++j) {
             pilfflonk_gpu_add_component(L, components[i][j], prover.components(i)[j].degree() + 1, prover.k(i), j,
                                         &scalars.f[i]);
         }
     }
-    // W' = L/(Z_{T∖T_0}(y)·(X − y)), the 1/Z_{T∖T_0}(y) in L's scalars.
-    if (!divide(L, length, y, at<uint8_t>(w.scratch))) {
+    // W' = L/(Z_{T∖T_0}(y)·(X − y)), the 1/Z_{T∖T_0}(y) in L's scalars; its top coefficient is W's.
+    pilfflonk_gpu_memset_zero(inexact, sizeof(uint32_t));
+    pilfflonk_gpu_divide_linear(Wp, L, length, &y, T, S, inexact);
+    pilfflonk_gpu_memset_zero(Wp + length - 1, sizeof(FrElement));
+    uint32_t notDivisible = 0;
+    key.staging().toHost(&notDivisible, inexact, sizeof(notDivisible));
+    if (notDivisible != 0) {
         throw ShplonkProver::lNotDivisible();
     }
-    wpCount = count(L, length);
+    wpCount = count(Wp, length);
     prover.checkWp(degreeOf(wpCount));
 }
 

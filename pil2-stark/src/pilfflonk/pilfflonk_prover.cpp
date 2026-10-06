@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <limits>
-#include <map>
 #include <numeric>
 #include <stdexcept>
 #include <string>
@@ -90,22 +89,23 @@ void accumulate(FrElement *values, uint64_t n, bool product) {
 
 // Every column Q's code reads (AirKey::qReads), column r of them from its polynomial (polys, by
 // cmPolsMap index, or the key's fixed one) extended to part `part` of 2^partBits points
-// (Lde::extendCosetPart) into partColumns + r·2^partBits, those of as many coefficients in one call.
+// (Lde::extendCosetPart) into partColumns + r·2^partBits, all in one call.
 void extendQPart(const AirKey &key, const std::vector<std::unique_ptr<Poly>> &polys, uint64_t partBits,
                  uint64_t part, FrElement *partColumns) {
     const std::vector<ColumnRead> &reads = key.qReads();
     const uint64_t S = uint64_t(1) << partBits;
-    std::map<uint64_t, std::pair<std::vector<const FrElement *>, std::vector<FrElement *>>> byLength;
+    std::vector<const FrElement *> coefs;
+    std::vector<FrElement *> evals;
+    std::vector<uint64_t> counts;
     for (uint64_t r = 0; r < reads.size(); ++r) {
         const ColumnRead &c = reads[r];
         const Poly *p = c.type == 0 ? key.fixedPolynomial(c.index) : polys[key.cmIds()[c.type][c.index]].get();
-        auto &group = byLength[p->getLength()];
-        group.first.push_back(p->coef);
-        group.second.push_back(partColumns + r * S);
+        coefs.push_back(p->coef);
+        evals.push_back(partColumns + r * S);
+        counts.push_back(p->getLength());
     }
-    for (auto &group : byLength) {
-        key.lde().extendCosetPart(group.second.first.data(), group.second.second.data(), group.second.first.size(),
-                                  group.first, partBits, part);
+    if (!reads.empty()) {
+        key.lde().extendCosetPart(coefs.data(), evals.data(), reads.size(), counts.data(), partBits, part);
     }
 }
 
@@ -223,6 +223,49 @@ Instance::Instance(const ProvingKey &_pk, uint64_t airgroupId, uint64_t airId, c
         }
     }
 
+    challengeValues.assign(info.challengesMap.size(), Engine::engine.fr.zero());
+    coefBuffers.resize(info.cmPolsMap.size());
+    polys.resize(info.cmPolsMap.size());
+    TimerStopAndLog(PILFFLONK_INSTANCE);
+}
+
+Instance::Instance(const ProvingKey &_pk, uint64_t airgroupId, uint64_t airId, const pilfflonk_exec_witness &exec,
+                   std::vector<FrElement> airValues, std::vector<FrElement> publics,
+                   std::vector<FrElement> proofValues, std::unique_ptr<BlindingSource> _blinding)
+    : pk(_pk), key(_pk.air(airgroupId, airId)), blinding(std::move(_blinding)) {
+    const char *function = "Instance";
+    TimerStart(PILFFLONK_INSTANCE);
+    const PilfflonkInfo &info = key.info();
+    const GlobalInfo &global = pk.globalInfo();
+    if (!blinding) {
+        throw invalid(function, "no blinding source");
+    }
+    if (publics.size() != global.nPublics) {
+        throw invalid(function,
+                      std::to_string(publics.size()) + " publics, and the proof has " + std::to_string(global.nPublics));
+    }
+    std::vector<uint64_t> airValueStages;
+    for (const NameStageEntry &e : info.airValuesMap) {
+        airValueStages.push_back(e.stage);
+    }
+    airValueValues = stageOneValues(airValueStages, std::move(airValues), function, "air values");
+    proofValueValues = stageOneValues(global.proofValueStages, std::move(proofValues), function, "proof values");
+    publicValues = std::move(publics);
+
+    columns.resize(info.nStages + 1);
+#ifdef __USE_CUDA__
+    if (key.device() != nullptr) {
+        device = std::make_unique<InstanceGpu>(*key.device(), exec);
+        deviceCopies.resize(info.nStages + 1);
+        copied.resize(info.nStages + 1);
+    }
+    if (device == nullptr) {
+        throw invalid(function, "a witness as its parts (pilfflonk_instance_new_exec) is built on a key on the GPU");
+    }
+#else
+    (void)exec;
+    throw invalid(function, "a witness as its parts (pilfflonk_instance_new_exec) is built on a key on the GPU");
+#endif
     challengeValues.assign(info.challengesMap.size(), Engine::engine.fr.zero());
     coefBuffers.resize(info.cmPolsMap.size());
     polys.resize(info.cmPolsMap.size());

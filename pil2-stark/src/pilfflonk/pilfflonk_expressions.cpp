@@ -10,6 +10,7 @@
 #include "pilfflonk_error.hpp"
 #include "pilfflonk_fr.hpp"
 #include "pilfflonk_lde.hpp"
+#include "pilfflonk_ntt.hpp"
 
 namespace PilFflonk {
 
@@ -46,6 +47,32 @@ struct Source {
     const FrElement *values;
     bool scalar;
 };
+
+// res[j] = op(a[j], b[j]) for j < n, a scalar source the same value on every row.
+template <typename Op> inline void applyOp(FrElement *res, const Source &a, const Source &b, uint64_t n, Op op) {
+    FrElement t;
+    if (!a.scalar && !b.scalar) {
+        for (uint64_t j = 0; j < n; ++j) {
+            op(t, a.values[j], b.values[j]);
+            res[j] = t;
+        }
+    } else if (a.scalar && !b.scalar) {
+        const FrElement x = a.values[0];
+        for (uint64_t j = 0; j < n; ++j) {
+            op(t, x, b.values[j]);
+            res[j] = t;
+        }
+    } else if (!a.scalar) {
+        const FrElement y = b.values[0];
+        for (uint64_t j = 0; j < n; ++j) {
+            op(t, a.values[j], y);
+            res[j] = t;
+        }
+    } else {
+        op(t, a.values[0], b.values[0]);
+        std::fill(res, res + n, t);
+    }
+}
 
 } // namespace
 
@@ -394,9 +421,7 @@ void Expressions::calculate(const ParserParams &params, const ParserArgs &args, 
     // one first, and its destId is the last op's) and a buffer in load().
     const uint64_t perThread = (nTemp + 2) * blockRows;
     const std::unique_ptr<FrElement[]> scratch(new FrElement[perThread * omp_get_max_threads()]);
-    Engine::Fr &fr = Engine::engine.fr;
-
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(dynamic, 8)
     for (uint64_t block = 0; block < nBlocks; ++block) {
         FrElement *tmp = scratch.get() + perThread * omp_get_thread_num();
         FrElement *buffers[2] = {tmp + nTemp * blockRows, tmp + (nTemp + 1) * blockRows};
@@ -443,26 +468,21 @@ void Expressions::calculate(const ParserParams &params, const ParserArgs &args, 
             const Source a = load(op + 2, buffers[0]);
             const Source b = load(op + 5, buffers[1]);
             FrElement *res = tmp + op[1] * blockRows;
-            for (uint64_t j = 0; j < blockRows; ++j) {
-                const FrElement &x = a.values[a.scalar ? 0 : j];
-                const FrElement &y = b.values[b.scalar ? 0 : j];
-                // Into t first: res may be the temporary of a or b.
-                FrElement t;
-                switch (op[0]) {
-                case OP_ADD:
-                    fr.add(t, x, y);
-                    break;
-                case OP_SUB:
-                    fr.sub(t, x, y);
-                    break;
-                case OP_MUL:
-                    fr.mul(t, x, y);
-                    break;
-                default: // OP_SUB_SWAP: the reader refuses any other
-                    fr.sub(t, y, x);
-                    break;
-                }
-                res[j] = t;
+            // The op hoisted out of the rows; each row read before res is written (res may be a or b).
+            switch (op[0]) {
+            case OP_ADD:
+                applyOp(res, a, b, blockRows, [](FrElement &r, const FrElement &x, const FrElement &y) { frAdd(r, x, y); });
+                break;
+            case OP_SUB:
+                applyOp(res, a, b, blockRows, [](FrElement &r, const FrElement &x, const FrElement &y) { frSub(r, x, y); });
+                break;
+            case OP_MUL:
+                applyOp(res, a, b, blockRows,
+                        [](FrElement &r, const FrElement &x, const FrElement &y) { Fr_rawMMul(r.v, x.v, y.v); });
+                break;
+            default: // OP_SUB_SWAP: the reader refuses any other
+                applyOp(res, a, b, blockRows, [](FrElement &r, const FrElement &x, const FrElement &y) { frSub(r, y, x); });
+                break;
             }
         }
         std::copy(tmp + params.destId * blockRows, tmp + (params.destId + 1) * blockRows, dest + row);

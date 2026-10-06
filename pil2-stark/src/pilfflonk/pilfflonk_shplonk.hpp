@@ -7,8 +7,7 @@
 // pilfflonk_kernels.hpp, whose conventions they keep: device pointers but those named host ones,
 // 32-byte BN128 scalars in Montgomery form, polynomials in increasing degree, 64-bit indices, the
 // legacy default stream, nothing launched for an empty range, and a CUDA failure aborting the
-// process. Their divisions are the PLONK GPU prover's (gpu_plonk_compute_div_zerofier), and their
-// MSMs GpuKey::commit's.
+// process. Their MSMs are GpuKey::commit's.
 extern "C" {
 
 // One evaluation of pilfflonk_gpu_evaluate: Σ_{i<n} coefs[i]·x^i, n >= 1, with x^i =
@@ -42,6 +41,22 @@ void pilfflonk_gpu_add_component(void *out, const void *q, uint64_t n, uint64_t 
 
 // data[i] = s·data[i] for i < n, and then data[0] += c, with s at hostScale and c at hostConstant.
 void pilfflonk_gpu_scale_add_constant(void *data, uint64_t n, const void *hostScale, const void *hostConstant);
+
+// data[i] = 1/data[i] for i < n, in place, with n elements of `prefix` as scratch; sets the device
+// uint32 at *zero to 1 (and leaves its chunk of data unspecified) if some data[i] is 0.
+void pilfflonk_gpu_batch_inverse(void *data, void *prefix, uint64_t n, uint32_t *zero);
+
+// The chunks of pilfflonk_gpu_divide_linear's T and S for n coefficients (S has one more).
+uint64_t pilfflonk_gpu_division_chunks(uint64_t n);
+
+// The n coefficients at a divided by Y − β (β at hostBeta), the quotient's n − 1 at q (q ≠ a), in two
+// passes over chunks and one block of carries, T and S their scratch; sets the device uint32 at *flag
+// to 1 if the remainder is not 0. Writes nothing to q for n = 1.
+void pilfflonk_gpu_divide_linear(void *q, const void *a, uint64_t n, const void *hostBeta, void *T, void *S,
+                                 uint32_t *flag);
+
+// data[i] = data[i]·other[i] for i < n.
+void pilfflonk_gpu_mul_pointwise(void *data, const void *other, uint64_t n);
 
 } // extern "C"
 

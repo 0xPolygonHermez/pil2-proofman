@@ -7,11 +7,15 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdio>
+#include <cstring>
 #include <future>
 #include <limits>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
+#include <optional>
 #include <nlohmann/json.hpp>
 
 #include "pilfflonk_error.hpp"
@@ -33,6 +37,7 @@ using json = nlohmann::json;
 const char *const GLOBAL_INFO_FILE = "pilout.globalInfo.json";
 const char *const BACKEND_DIR = "pilfflonk";
 const char *const SRS_FILE = "pilfflonk.srs.bin";
+const char *const SHIFT_SUMS_FILE = "pilfflonk.shift.bin";
 
 // ---------------------------------------------------------------------------------------------
 // pilout.globalInfo.json
@@ -63,7 +68,7 @@ struct FileBytes {
     uint64_t size = 0;
 };
 
-// The bytes of a .const as an AirKey takes them, its own, to release once it has decoded them.
+// The bytes of a .coefs as an AirKey takes them, its own.
 AirKey::ConstantsBytes ownedConstants(FileBytes file) {
     AirKey::ConstantsBytes bytes;
     bytes.data = file.data.get();
@@ -76,7 +81,8 @@ AirKey::ConstantsBytes ownedConstants(FileBytes file) {
 // column, GBs at large N, which one thread copies from the page cache at a fraction of the speed of
 // several, and the buffer is not cleared before (its pages are first touched by the threads that
 // fill them).
-FileBytes readBytes(const std::string &path, const char *what) {
+// The bytes of the file at path past its first `skip`, which it must have.
+FileBytes readBytes(const std::string &path, const char *what, uint64_t skip = 0) {
     const int fd = ::open(path.c_str(), O_RDONLY);
     if (fd < 0) {
         throw IoError(std::string(what) + ": cannot open " + path);
@@ -86,8 +92,12 @@ FileBytes readBytes(const std::string &path, const char *what) {
         ::close(fd);
         throw IoError(std::string(what) + ": cannot read " + path);
     }
+    if (static_cast<uint64_t>(status.st_size) < skip) {
+        ::close(fd);
+        throw FormatError(std::string(what) + ": " + path + " is shorter than its header");
+    }
     FileBytes bytes;
-    bytes.size = static_cast<uint64_t>(status.st_size);
+    bytes.size = static_cast<uint64_t>(status.st_size) - skip;
     bytes.data.reset(new uint8_t[bytes.size]);
     constexpr uint64_t CHUNK = uint64_t(1) << 23;
     const uint64_t nChunks = (bytes.size + CHUNK - 1) / CHUNK;
@@ -97,7 +107,7 @@ FileBytes readBytes(const std::string &path, const char *what) {
     for (uint64_t c = 0; c < nChunks; ++c) {
         const uint64_t end = std::min(bytes.size, (c + 1) * CHUNK);
         for (uint64_t at = c * CHUNK; at < end && !failed;) {
-            const ssize_t n = ::pread(fd, out + at, end - at, static_cast<off_t>(at));
+            const ssize_t n = ::pread(fd, out + at, end - at, static_cast<off_t>(skip + at));
             if (n > 0) {
                 at += static_cast<uint64_t>(n);
             } else if (n == 0 || errno != EINTR) {
@@ -113,8 +123,31 @@ FileBytes readBytes(const std::string &path, const char *what) {
     return bytes;
 }
 
+const char COEFS_MAGIC[9] = "PFFCOEF1";
+
+// An <air>.coefs: its coefficients, and the digest of its header.
+struct Coefs {
+    FileBytes bytes;
+    KeyDigest digest;
+};
+
+Coefs readCoefs(const std::string &path) {
+    uint8_t header[PRECOMPUTED_HEADER_BYTES];
+    const int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) {
+        throw IoError("coefs: cannot open " + path);
+    }
+    const ssize_t got = ::pread(fd, header, sizeof(header), 0);
+    ::close(fd);
+    if (got != static_cast<ssize_t>(sizeof(header))) {
+        throw FormatError("coefs: " + path + " is shorter than its header");
+    }
+    const KeyDigest digest = precomputedDigest(header, COEFS_MAGIC, path);
+    return Coefs{readBytes(path, "coefs", PRECOMPUTED_HEADER_BYTES), digest};
+}
+
 // ---------------------------------------------------------------------------------------------
-// <air>.const
+// <air>.const and <air>.coefs
 // ---------------------------------------------------------------------------------------------
 
 // The nCols columns of n rows of `bytes`, row-major canonical little-endian scalars
@@ -663,73 +696,80 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const std::string &name
 void AirKey::loadFixed(const ConstantsSource &constants, GpuKey *gpu) {
     const uint64_t N = n(), nConstants = pilfflonkInfo.nConstants;
 #ifdef __USE_CUDA__
-    // On the device first what does not need the fixed columns, while the .const may still be read.
+    // On the device first what does not need the fixed columns, while the .coefs may still be read.
     if (gpu != nullptr) {
         deviceKey = std::make_unique<GpuAirKey>(*gpu, *this);
     }
 #endif
-    std::unique_ptr<FrElement[]> evaluations;
-    {
-        // The .const's bytes, released (if they are the source's to give) once they are decoded.
-        const ConstantsBytes bytes = constants();
-        if (nConstants > std::numeric_limits<uint64_t>::max() / FR_BYTES / N ||
-            bytes.size != nConstants * N * FR_BYTES) {
-            failAir(airName, ".const has " + std::to_string(bytes.size) + " bytes, and " +
-                                 std::to_string(nConstants) + " fixed columns of " + std::to_string(N) +
-                                 " rows have " + std::to_string(nConstants * N * FR_BYTES));
-        }
-        if (nConstants > 0) {
-            evaluations.reset(new FrElement[nConstants * N]);
-            decodeColumns(bytes.data, N, nConstants, evaluations.get(), airName + ".const");
-        }
+    ConstantsBytes bytes = constants();
+    if (nConstants > std::numeric_limits<uint64_t>::max() / FR_BYTES / N || bytes.size != nConstants * N * FR_BYTES) {
+        failAir(airName, ".coefs has " + std::to_string(bytes.size) + " bytes, and " + std::to_string(nConstants) +
+                             " fixed columns of " + std::to_string(N) + " coefficients have " +
+                             std::to_string(nConstants * N * FR_BYTES));
+    }
+    const uint64_t total = nConstants * N;
+    const uint64_t first = firstNonCanonicalFr(bytes.data, total);
+    if (first < total) {
+        failAir(airName, ".coefs: the coefficient " + std::to_string(first % N) + " of the fixed column " +
+                             std::to_string(first / N) + " is not below r");
     }
 #ifdef __USE_CUDA__
     if (deviceKey != nullptr) {
-        // Interpolated on the device, where the coefficients stay (fixedPolynomial copies them, and
-        // fixedEvaluations evaluates them again): the host keeps nothing of them.
-        deviceKey->loadFixed(evaluations.get());
+        // Into Montgomery form on the device, where they stay: the host keeps nothing of them, and
+        // frees its 2 GB-scale copy off the load's path.
+        deviceKey->loadFixed(bytes.data);
+        if (bytes.owner) {
+            std::thread([owned = std::move(bytes.owner)] {}).detach();
+        }
         return;
     }
 #else
     (void)gpu;
 #endif
-    fixedEvals = std::move(evaluations);
-    if (nConstants > 0) {
-        fixedCoefs.reset(new FrElement[nConstants * N]);
-        std::vector<FrElement *> evals(nConstants), coefs(nConstants);
-        for (uint64_t c = 0; c < nConstants; ++c) {
-            evals[c] = fixedEvals.get() + c * N;
-            coefs[c] = fixedCoefs.get() + c * N;
-        }
-        TimerStart(PILFFLONK_FIXED_INTT);
-        fixedPolys = extension->intt(evals.data(), coefs.data(), nConstants);
-        TimerStopAndLog(PILFFLONK_FIXED_INTT);
+    // Decoded in place, into the key's own bytes.
+    std::unique_ptr<uint8_t[]> owned = std::move(bytes.owner);
+    if (!owned) {
+        owned.reset(new uint8_t[bytes.size]);
+        std::memcpy(owned.get(), bytes.data, bytes.size);
     }
+    FrElement *coefs = reinterpret_cast<FrElement *>(owned.get());
+#pragma omp parallel for
+    for (uint64_t i = 0; i < total; ++i) {
+        coefs[i] = fromCanonicalFr(owned.get() + i * FR_BYTES);
+    }
+    fixedPolys.reserve(nConstants);
+    for (uint64_t c = 0; c < nConstants; ++c) {
+        fixedPolys.emplace_back(Poly::fromReservedBuffer(AltBn128::Engine::engine, coefs + c * N, N));
+    }
+    fixedCoefs = std::move(owned);
 }
 
 AirKey::~AirKey() = default;
 
 const FrElement *AirKey::fixedEvaluations(uint64_t c) const {
+    // Built aside and kept only once whole: a call that throws leaves nothing, and the next one tries
+    // again.
+    std::call_once(fixedEvaluated, [this] {
+        const uint64_t N = n(), nConstants = pilfflonkInfo.nConstants;
+        if (nConstants == 0) {
+            return;
+        }
+        std::unique_ptr<FrElement[]> evaluations(new FrElement[nConstants * N]);
 #ifdef __USE_CUDA__
-    if (deviceKey != nullptr) {
-        // Built aside and kept only once whole: a call that throws leaves nothing, and the next one
-        // tries again.
-        std::call_once(fixedEvaluated, [this] {
-            const uint64_t N = n(), nConstants = pilfflonkInfo.nConstants;
-            if (nConstants == 0) {
-                return;
-            }
-            std::unique_ptr<FrElement[]> evaluations(new FrElement[nConstants * N]);
+        if (deviceKey != nullptr) {
             deviceKey->fixedToHost(evaluations.get());
-            std::vector<FrElement *> columns(nConstants);
-            for (uint64_t k = 0; k < nConstants; ++k) {
-                columns[k] = evaluations.get() + k * N;
-            }
-            extension->ntt(columns.data(), columns.data(), nConstants);
-            fixedEvals = std::move(evaluations);
-        });
-    }
+        }
 #endif
+        if (fixedCoefs) {
+            std::memcpy(evaluations.get(), fixedCoefs.get(), nConstants * N * sizeof(FrElement));
+        }
+        std::vector<FrElement *> columns(nConstants);
+        for (uint64_t k = 0; k < nConstants; ++k) {
+            columns[k] = evaluations.get() + k * N;
+        }
+        extension->ntt(columns.data(), columns.data(), nConstants);
+        fixedEvals = std::move(evaluations);
+    });
     return fixedEvals.get() + c * n();
 }
 
@@ -739,12 +779,13 @@ Poly *AirKey::fixedPolynomial(uint64_t c) const {
         // As fixedEvaluations: kept only once whole.
         std::call_once(fixedCopied, [this] {
             const uint64_t N = n(), nConstants = pilfflonkInfo.nConstants;
-            std::unique_ptr<FrElement[]> coefs(new FrElement[nConstants * N]);
-            deviceKey->fixedToHost(coefs.get());
+            std::unique_ptr<uint8_t[]> coefs(new uint8_t[nConstants * N * sizeof(FrElement)]);
+            FrElement *elements = reinterpret_cast<FrElement *>(coefs.get());
+            deviceKey->fixedToHost(elements);
             std::vector<std::unique_ptr<Poly>> polys;
             polys.reserve(nConstants);
             for (uint64_t k = 0; k < nConstants; ++k) {
-                polys.push_back(mirrorPolynomial(coefs.get() + k * N, N, deviceKey->fixedCount(k),
+                polys.push_back(mirrorPolynomial(elements + k * N, N, deviceKey->fixedCount(k),
                                                  airName + ": the fixed column " + pilfflonkInfo.constPolsMap[k].name));
             }
             fixedCoefs = std::move(coefs);
@@ -791,11 +832,68 @@ uint64_t AirKey::blindLength(uint64_t f) const {
     return entry.stage >= 1 && entry.stage <= pilfflonkInfo.nStages ? entry.offsets.size() + 1 : 0;
 }
 
+uint64_t AirKey::wMsm() const {
+    uint64_t w = 1;
+    for (const LayoutEntry &entry : pilfflonkInfo.layout) {
+        const uint64_t roots = entry.k * entry.offsets.size();
+        if (entry.degree > roots) {
+            w = std::max(w, entry.degree - roots);
+        }
+    }
+    return w;
+}
+
+uint64_t AirKey::wpMsm() const {
+    uint64_t longest = 1;
+    for (const LayoutEntry &entry : pilfflonkInfo.layout) {
+        longest = std::max(longest, entry.degree);
+    }
+    return std::max<uint64_t>(longest - 1, 1);
+}
+
+std::vector<uint64_t> AirKey::msmLengths() const {
+    std::vector<uint64_t> lengths;
+    for (const LayoutEntry &entry : pilfflonkInfo.layout) {
+        lengths.push_back(entry.degree);
+    }
+    lengths.push_back(wMsm());
+    lengths.push_back(wpMsm());
+    return lengths;
+}
+
+std::vector<uint8_t> fixedCoefficientsOf(const uint8_t *constants, uint64_t bytes, uint64_t nBits, uint64_t nConstants,
+                                         const std::string &name) {
+    const uint64_t N = uint64_t(1) << nBits, total = N * nConstants;
+    if (bytes != total * FR_BYTES) {
+        throw FormatError(name + ": " + std::to_string(bytes) + " bytes, and " + std::to_string(nConstants) +
+                          " fixed columns of " + std::to_string(N) + " rows have " + std::to_string(total * FR_BYTES));
+    }
+    std::vector<uint8_t> out(total * FR_BYTES);
+    if (total == 0) {
+        return out;
+    }
+    std::unique_ptr<FrElement[]> evals(new FrElement[total]), coefs(new FrElement[total]);
+    decodeColumns(constants, N, nConstants, evals.get(), name);
+    std::vector<FrElement *> e(nConstants), c(nConstants);
+    for (uint64_t k = 0; k < nConstants; ++k) {
+        e[k] = evals.get() + k * N;
+        c[k] = coefs.get() + k * N;
+    }
+    Lde(nBits, nBits).intt(e.data(), c.data(), nConstants);
+#pragma omp parallel for
+    for (uint64_t i = 0; i < total; ++i) {
+        FrElement canonical;
+        AltBn128::Engine::engine.fr.fromMontgomery(canonical, coefs[i]);
+        std::memcpy(out.data() + i * FR_BYTES, &canonical, FR_BYTES);
+    }
+    return out;
+}
+
 std::unique_ptr<AirKey> AirKey::load(const std::string &dir, const std::string &name, GpuKey *gpu) {
     const std::string base = dir + "/" + name;
     PilfflonkInfo info = PilfflonkInfo::load(base + ".pilfflonkinfo.json");
     ExpressionsBin bin = ExpressionsBin::load(base + ".bin");
-    FileBytes constants = readBytes(base + ".const", "const");
+    FileBytes constants = readCoefs(base + ".coefs").bytes;
     const AirKey::ConstantsSource source = [&constants] { return ownedConstants(std::move(constants)); };
     return std::make_unique<AirKey>(std::move(info), std::move(bin), source, name, gpu);
 }
@@ -898,6 +996,10 @@ std::string srsPathOf(const std::string &dir, const GlobalInfo &info) {
     return dir + "/" + info.name + "/" + BACKEND_DIR + "/" + SRS_FILE;
 }
 
+std::string shiftSumsPathOf(const std::string &dir, const GlobalInfo &info) {
+    return dir + "/" + info.name + "/" + BACKEND_DIR + "/" + SHIFT_SUMS_FILE;
+}
+
 } // namespace
 
 std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device device, const GpuKeyOptions &options) {
@@ -913,25 +1015,30 @@ std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device devi
     }
     GlobalInfo info = GlobalInfo::load(dir + "/" + GLOBAL_INFO_FILE);
     const std::vector<AirFiles> files = airFilesOf(dir, info);
-    // Each AIR's .const on a thread of its own: the first one's from now, while the SRS is read and
+    // Each AIR's .coefs on a thread of its own: the first one's from now, while the SRS is read and
     // copied to the device, and each next one's from when the AIR before it reads its own, while that
     // AIR's key is built (pilfflonk/docs/performance.md#loading-a-key-on-the-gpu).
     auto readConstants = [&files](uint64_t i) {
-        const std::string path = files[i].base + ".const";
-        return std::async(std::launch::async, [path] { return readBytes(path, "const"); });
+        const std::string path = files[i].base + ".coefs";
+        return std::async(std::launch::async, [path] { return readCoefs(path); });
     };
-    std::future<FileBytes> pending;
+    std::future<Coefs> pending;
     if (!files.empty()) {
         pending = readConstants(0);
     }
+    std::optional<KeyDigest> digest;
     TimerStart(PILFFLONK_LOAD_SRS);
-    Srs srs = Srs::load(srsPathOf(dir, info));
+    // Its points checked only on demand (pilfflonk_ctx_check_srs): the setup made it from a checked ptau.
+    Srs srs = Srs::load(srsPathOf(dir, info), false);
     TimerStopAndLog(PILFFLONK_LOAD_SRS);
     std::shared_ptr<GpuKey> gpu;
 #ifdef __USE_CUDA__
     if (device == Device::Gpu) {
         TimerStart(PILFFLONK_GPU_SRS);
         gpu = std::make_shared<GpuKey>(srs, options);
+        KeyDigest shiftDigest;
+        gpu->addShiftSums(readShiftSums(shiftSumsPathOf(dir, info), &shiftDigest));
+        digest = shiftDigest;
         TimerStopAndLog(PILFFLONK_GPU_SRS);
     }
 #else
@@ -943,11 +1050,18 @@ std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device devi
         PilfflonkInfo airInfo = PilfflonkInfo::load(files[i].base + ".pilfflonkinfo.json");
         ExpressionsBin bin = ExpressionsBin::load(files[i].base + ".bin");
         const AirKey::ConstantsSource source = [&] {
-            FileBytes constants = pending.get();
+            Coefs constants = pending.get();
             if (i + 1 < files.size()) {
                 pending = readConstants(i + 1);
             }
-            return ownedConstants(std::move(constants));
+            // Every precomputed file of one setup's: one digest.
+            if (!digest) {
+                digest = constants.digest;
+            } else if (*digest != constants.digest) {
+                throw FormatError(files[i].base + ".coefs and the key's other precomputed files (the shift sums or "
+                                                  "another AIR's .coefs) were made for different vkeys: rerun setup-pilfflonk");
+            }
+            return ownedConstants(std::move(constants.bytes));
         };
         airs[files[i].airgroup].push_back(
             std::make_unique<AirKey>(std::move(airInfo), std::move(bin), source, files[i].name, gpu.get()));
@@ -958,7 +1072,67 @@ std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device devi
         logCopies(gpu->copies(), "KEY", CopyVolume::Totals());
     }
 #endif
-    return std::make_unique<ProvingKey>(std::move(info), std::move(srs), std::move(airs), std::move(gpu));
+    auto key = std::make_unique<ProvingKey>(std::move(info), std::move(srs), std::move(airs), std::move(gpu));
+    key->precomputed = digest.value_or(KeyDigest{});
+    return key;
+}
+
+#ifdef __USE_CUDA__
+void AirKey::setExec(const pilfflonk_exec_static &exec) const { deviceKey->setExec(exec); }
+#endif
+
+void ProvingKey::setExec(uint64_t airgroupId, uint64_t airId, const pilfflonk_exec_static &exec) const {
+#ifdef __USE_CUDA__
+    if (air(airgroupId, airId).device() != nullptr) {
+        air(airgroupId, airId).setExec(exec);
+        return;
+    }
+#endif
+    (void)airgroupId;
+    (void)airId;
+    (void)exec;
+    throw std::invalid_argument("ProvingKey::setExec: the exec's parts are for a key on the GPU");
+}
+
+void ProvingKey::snapshotDevice() const {
+#ifdef __USE_CUDA__
+    if (gpu) {
+        gpu->snapshot();
+    }
+#endif
+}
+
+void ProvingKey::restoreDevice() const {
+#ifdef __USE_CUDA__
+    if (gpu) {
+        gpu->restore();
+    }
+#endif
+}
+
+void ProvingKey::precompute(const std::string &dir, const KeyDigest &digest) {
+    const GlobalInfo info = GlobalInfo::load(dir + "/" + GLOBAL_INFO_FILE);
+    std::vector<uint64_t> lengths;
+    for (const AirFiles &air : airFilesOf(dir, info)) {
+        const std::unique_ptr<AirKey> key = AirKey::withoutFixedColumns(
+            PilfflonkInfo::load(air.base + ".pilfflonkinfo.json"), ExpressionsBin::load(air.base + ".bin"), air.name);
+        const std::vector<uint64_t> own = key->msmLengths();
+        lengths.insert(lengths.end(), own.begin(), own.end());
+        const FileBytes constants = readBytes(air.base + ".const", "const");
+        const std::vector<uint8_t> coefs = fixedCoefficientsOf(constants.data.get(), constants.size, key->info().nBits,
+                                                               key->info().nConstants, air.name + ".const");
+        const std::string path = air.base + ".coefs";
+        const auto header = precomputedHeader(COEFS_MAGIC, digest);
+        FILE *file = std::fopen(path.c_str(), "wb");
+        const bool written = file != nullptr &&
+                             std::fwrite(header.data(), 1, header.size(), file) == header.size() &&
+                             std::fwrite(coefs.data(), 1, coefs.size(), file) == coefs.size();
+        if (file == nullptr || std::fclose(file) != 0 || !written) {
+            throw IoError(path + ": cannot write the fixed coefficients: " + std::strerror(errno));
+        }
+    }
+    const std::string srsPath = srsPathOf(dir, info);
+    writeShiftSums(shiftSumsPathOf(dir, info), shiftSums(Srs::load(srsPath), lengths), digest);
 }
 
 DeviceBytes ProvingKey::requiredDeviceBytes(const std::string &dir) {

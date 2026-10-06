@@ -360,8 +360,9 @@ what is absorbed, and writes the proof. C++ (`pil2-stark/src/pilfflonk/`) holds 
 the transcript object, and computes. The steps follow the [transcript](#transcript):
 
 1. **Load.** The globalInfo, the vkey (its digest checked), the SRS, and for each AIR the
-   pilfflonkinfo, `<air>.bin` and `<air>.const`. The C++ side derives the [degrees](#degrees) again,
-   which must be Rust's, and recomputes the fixed commitments, which must be the vkey's. The instance
+   pilfflonkinfo, `<air>.bin` and `<air>.coefs` (the fixed columns interpolated by the setup). The
+   C++ side derives the [degrees](#degrees) again, which must be Rust's; a debug build also checks
+   the SRS's points and recomputes the fixed commitments, which must be the vkey's. The instance
    arrives in canonical order. The transcript absorbs the digest, the number of instances and the
    publics.
 2. **Stages.** For each `s = 1 … nStages`, the C++ side:

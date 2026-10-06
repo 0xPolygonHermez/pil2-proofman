@@ -415,7 +415,7 @@ void testTheDeviceCommitsAsTheCpu(Random &random) {
                     pointers.push_back(polys.back().get());
                 }
                 const uint64_t n = k * length + 17;
-                key.addShiftSum(n, work.data());
+                key.addShiftSums(PilFflonk::shiftSums(srs, {n}));
                 const DeviceBuffer dBase = upload(onDevice), dOffsets = upload(offsets);
                 const G1Point onGpu = key.commit(dBase.data(), reinterpret_cast<const uint64_t *>(dOffsets.data()), k,
                                                  length, n, work.data());
@@ -568,7 +568,8 @@ std::vector<ShplonkF> everyK(const std::vector<int64_t> &offsets) {
 // at the edges: fewer coefficients than roots (f = r, nothing in W), constants (a component of one
 // coefficient, whose division is that of a constant), p_j of one coefficient above k·|O|; every f = r
 // (W = 0, [W]₁ at infinity); N = 2, where ω_N = −1; and N = 2^11, whose divisions are of more than
-// one block of the scan, L's of about 12 times as many coefficients.
+// one block of the scan, L's of about 12 times as many coefficients, and with 4 to 7 offsets, divided
+// on a coset.
 std::vector<ShplonkCase> shplonkCases() {
     return {
         {4, everyK({0})},
@@ -579,6 +580,7 @@ std::vector<ShplonkCase> shplonkCases() {
         {4, {{3, {0}, 1}, {1, {0}, 1}, {2, {0, 1}, 1}}},
         {1, {{2, {-1, 0}}, {1, {0}}, {4, {-1}}}},
         {11, {{1, {0, 1}}, {2, {-1, 0}}, {12, {0}}}},
+        {11, {{2, {-2, -1, 0, 1, 2}}, {3, {0, 1, 2, 3}}, {1, {0, 5, 9, 11, 30, 31, -7}}, {4, {0}}}},
     };
 }
 
@@ -659,7 +661,12 @@ void testShplonkCase(const ShplonkCase &c, Random &random, const PilFflonk::Srs 
     }
     const PilFflonk::ShplonkProver host(opening);
     bounds.length = bounds.wMsm = bounds.wpMsm = host.workLength();
-    key.addShiftSum(bounds.length, work.data());
+    // Room for the coset divisions (OpeningGpu::divideOnCoset), which f of 4 offsets or more take.
+    bounds.nttLength = 1;
+    while (bounds.nttLength < bounds.component) {
+        bounds.nttLength <<= 1;
+    }
+    key.addShiftSums(PilFflonk::shiftSums(srs, {bounds.length}));
     const DeviceBuffer workspace(PilFflonk::shplonkWorkspaceBytes(bounds));
     PilFflonk::OpeningGpu gpu(key, components, bounds, workspace.data());
 

@@ -16,10 +16,12 @@ STARK's name where its content has the same role; the files that depend on the p
 └── <name>/                            <name>: the pilout's
     ├── pilfflonk/                     the backend's global files (get_setup_path's convention)
     │   ├── pilfflonk.srs.bin          the ptau's powers the layout needs, and [1]₂, [τ]₂
+    │   ├── pilfflonk.shift.bin        the GPU's MSM shift sums over the SRS, for every AIR's MSMs
     │   ├── pilfflonk.vkey.json        the self-contained vkey, with its digest
     │   └── pilfflonk.verifier.sol     the Solidity verifier, with --solidity
     └── <airgroup>/airs/<air>/air/
         ├── <air>.const                the fixed columns, 32-byte canonical Fr little-endian (8 bytes in the STARK)
+        ├── <air>.coefs                the fixed columns interpolated, which the prover loads
         ├── <air>.pilfflonkinfo.json   starkinfo.json's role: the maps and the layout of the f_i
         ├── <air>.expressionsinfo.json the STARK's format, of dimension 1
         ├── <air>.verifierinfo.json    the STARK's format, only the qVerifier
@@ -27,9 +29,15 @@ STARK's name where its content has the same role; the files that depend on the p
         └── <air>.verkey.json          the commitments of the fixed f_i (in the STARK, the Merkle root of .const)
 ```
 
-The coefficients and the extended evaluations of the fixed columns, the roots and `powerW` are derived
-when the key is loaded, as the STARK derives `.consttree` from `.const`. There is no `<air>.verkey.bin`
-and no `.verifier.bin`: there is no native verifier.
+The setup's last step (`ProvingKey::precompute`, `pilfflonk_precompute`) writes what a key would
+otherwise compute as it loads: `<air>.coefs` from `<air>.const`, and `pilfflonk.shift.bin`. The
+prover loads `<air>.coefs`, not `<air>.const`, on the CPU and on the GPU alike; the evaluations of the
+fixed columns on H, the roots and `powerW` are derived when needed. Both files carry the digest of
+the vkey they were made for ([Precomputed files](#precomputed-files)), which the setup passes once it
+has written the vkey: every prover refuses one of another vkey. The fixed commitments are not
+recomputed: the vkey holds them, and only a debug build recomputes them, to refuse a `.coefs` whose
+coefficients are not those the vkey commits. There is no `<air>.verkey.bin` and no `.verifier.bin`:
+there is no native verifier.
 
 The pilfflonk runtime reads the globalInfo with a type of its own, not `common::GlobalInfo`, which
 validates `hash`, `curve` and `transcriptArity` and sets global C++ state. `curve` is mandatory for
@@ -204,6 +212,22 @@ column without a value per row); and an external column whose name and index no 
 AIR has, one of a column with values in the pilout, two of one column, and one without a value per
 row.
 
+## Precomputed files
+
+`<air>.coefs` and `pilfflonk.shift.bin` start with a header of 64 bytes: an 8-byte magic
+(`PFFCOEF1`, `PFFSHFT1`), the 32-byte digest of the vkey they were made for ([Digest](#digest)), and
+zeros. A key refuses a file of another magic (another version: rerun the setup), files of one key
+whose digests differ, and, as the orchestrator loads it, a digest that is not its vkey's.
+
+## Fixed coefficients
+
+`<air>.coefs`: the header ([Precomputed files](#precomputed-files)), then the coefficients of the
+interpolants of the fixed columns of `<air>.const`, column after column (column `c`'s `N`
+coefficients at `c·N`), each a canonical `Fr` of 32 bytes, little-endian: `64 + N·C·32` bytes, the
+size of `<air>.const` and the header, transposed and interpolated: `fixedCoefficientsOf` derives one
+from the other. A key on the GPU copies them to the device as they are and converts them to
+Montgomery form there; on the CPU it decodes them.
+
 ## Verkey
 
 `<air>.verkey.json`: the commitments `[f_i(τ)]₁` of the fixed `f_i` of the AIR, in the order of its
@@ -223,9 +247,22 @@ their counterparts in the ptau:
 
 The points are affine `x‖y`, each coordinate in Montgomery form, little-endian: sections 2 and 3 of
 the ptau, copied byte for byte. `nG1` is the largest `degree` of the layout. Every point is checked
-when it is read: coordinates below `q`, on the curve, `[1]₁` and `[1]₂` the generators, and `[τ]₂` in
-G2. That catches a corrupt file; whether the points are powers of one `τ` takes pairings
-(`snarkjs powersoftau verify`).
+as the setup reads it from the ptau, and as the setup reads the file back: coordinates below `q`, on
+the curve, `[1]₁` and `[1]₂` the generators, and `[τ]₂` in G2. That catches a corrupt file; whether
+the points are powers of one `τ` takes pairings (`snarkjs powersoftau verify`). A prover loads the
+file unchecked but for `[τ]₂` against the vkey's `X_2`; a debug build checks every point
+(`pilfflonk_ctx_check_srs`).
+
+## Shift sums
+
+`pilfflonk.shift.bin`: for each length `n` of an MSM a proof on the GPU runs (each `f`'s `degree`,
+and the opening's `W` and `W'`), `Σ_{i<n} h^(i+1)·[τ^i]₁` over the SRS, `h` the fixed shift ratio of
+the GPU's MSMs (`msmShiftRatio`): sppark's Pippenger is fast on scalars that look random, so the GPU
+adds `h^(i+1)` to the `i`-th scalar and subtracts this sum. The header
+([Precomputed files](#precomputed-files)), then, little-endian, a `u64` count and for each length in
+increasing order `u64 n` and its sum as a vkey point (64 bytes, `encodeG1`). The setup
+computes them with the CPU's MSM; a key on the GPU refuses an AIR with an MSM length the file lacks
+(a setup before the file existed).
 
 ## Vkey
 
@@ -266,8 +303,9 @@ digest = keccak256( "pilfflonk-v1" ‖ canonical(vkey without its digest field) 
 - **The hash** is Keccak-256, not SHA3-256: rapidsnark's `keccak_wrapper`, through the C API
   (`pilfflonk_keccak256`), the transcript's hash. The workspace has no Keccak crate.
 - **Why the vkey alone.** It holds everything the verification depends on, and the verifier gets no
-  other file. `<air>.bin`, `<air>.const` and `pilfflonk.srs.bin` do not take part; the fixed columns
-  are bound through their commitments.
+  other file. `<air>.bin`, `<air>.const`, `<air>.coefs`, `pilfflonk.srs.bin` and `pilfflonk.shift.bin`
+  do not take part; the fixed columns are bound through their commitments, and the precomputed files
+  to the vkey by its digest in their headers.
 - **In the transcript** it enters as `digest mod r`, read big-endian, as an `Fr`.
 
 ## JSON encoding

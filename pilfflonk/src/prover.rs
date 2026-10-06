@@ -51,6 +51,9 @@ use proofman_starks_lib_c::{
     PilFflonkErrorKind, PilFflonkInstance, PilFflonkInstanceInputs, PilFflonkOpening, PilFflonkProverCtx,
     PilFflonkTranscript,
 };
+pub use proofman_starks_lib_c::{
+    pilfflonk_wrap_block as WrapBlock, PilFflonkExecStatic as ExecStatic, PilFflonkExecWitness as ExecWitness,
+};
 
 use crate::error::{invalid, PilfflonkError, PilfflonkResult};
 use crate::field::{FrBytes, G1Affine, G2Affine};
@@ -133,6 +136,38 @@ impl ProvingKey {
     pub unsafe fn load_on_device_buffer(dir: &Path, buffer: *mut c_void, bytes: u64) -> PilfflonkResult<Self> {
         // SAFETY: the caller's, as this function's contract says.
         unsafe { ProvingKeyFiles::read(dir)?.load_on_device_buffer(buffer, bytes) }
+    }
+
+    /// [`ProvingKeyFiles::load_in_device_buffer`] of the provingKey/ at `dir`.
+    ///
+    /// # Safety
+    ///
+    /// As [`ProvingKeyFiles::load_in_device_buffer`].
+    pub unsafe fn load_in_device_buffer(
+        dir: &Path,
+        buffer: *mut c_void,
+        bytes: u64,
+        restorable: bool,
+    ) -> PilfflonkResult<Self> {
+        // SAFETY: the caller's, as this function's contract says.
+        unsafe { ProvingKeyFiles::read(dir)?.load_in_device_buffer(buffer, bytes, restorable) }
+    }
+
+    /// The blake3 wrap's parts of every proof's witness of `air`, on the GPU with the key, once.
+    pub fn set_exec(&self, air: AirInstanceRef, exec: &ExecStatic<'_>) -> PilfflonkResult<()> {
+        self.ctx.set_exec(air.airgroup_id, air.air_id, exec).map_err(native("putting the exec's parts on the device"))
+    }
+
+    /// On a key loaded `restorable`: its pinned copy of what it holds in its buffer, once all of it
+    /// is there ([`set_exec`](Self::set_exec) included).
+    pub fn snapshot_device(&self) -> PilfflonkResult<()> {
+        self.ctx.snapshot().map_err(native("copying the key's device memory to the host"))
+    }
+
+    /// On a key loaded `restorable`: what it holds in its buffer written back, before a proof, once
+    /// others used the buffer.
+    pub fn restore_device(&self) -> PilfflonkResult<()> {
+        self.ctx.restore().map_err(native("restoring the key's device memory"))
     }
 
     pub fn dir(&self) -> &Path {
@@ -248,6 +283,28 @@ impl ProvingKeyFiles {
         self.checked(ctx)
     }
 
+    /// [`load_on_device_buffer`](Self::load_on_device_buffer) with all the key's device memory in the
+    /// buffer; with `restorable`, others use it between the proofs, and
+    /// [`ProvingKey::restore_device`] writes back what the key holds there.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must be `bytes` bytes of device memory on CUDA device 0, which outlive the key, and
+    /// which nothing else uses while it loads, while a proof runs, and (without `restorable`) at all
+    /// while the key lives.
+    pub unsafe fn load_in_device_buffer(
+        self,
+        buffer: *mut c_void,
+        bytes: u64,
+        restorable: bool,
+    ) -> PilfflonkResult<ProvingKey> {
+        self.one_air()?;
+        // SAFETY: the caller's, as this function's contract says.
+        let ctx = unsafe { PilFflonkProverCtx::load_in_device_buffer(&self.dir, buffer, bytes, restorable) }
+            .map_err(native("loading the provingKey/ into the C++ prover"))?;
+        self.checked(ctx)
+    }
+
     /// Its one AIR: [`read`](Self::read) refuses keys of more.
     fn one_air(&self) -> PilfflonkResult<&PilfflonkInfo> {
         match self.airs.as_slice() {
@@ -308,14 +365,30 @@ pub(crate) fn timed<T>(name: &str, f: impl FnOnce() -> T) -> T {
 
 /// The one instance of a witness (pilfflonk/docs/README.md#scope), read: what its C++ instance is
 /// made of.
-pub(crate) struct WitnessInstance {
+pub(crate) struct WitnessInstance<'a> {
     pub(crate) air: AirInstanceRef,
-    pub(crate) stage1: Stage1Witness,
+    pub(crate) stage1: Stage1<'a>,
     pub(crate) publics: Vec<FrBytes>,
     pub(crate) proof_values: Vec<FrBytes>,
 }
 
-impl WitnessInstance {
+/// The stage-1 witness of an instance: its trace, or the blake3 wrap's parts for the device to
+/// build ([`prove_exec`]).
+pub(crate) enum Stage1<'a> {
+    Trace(Stage1Witness),
+    Exec(ExecWitness<'a>),
+}
+
+impl Stage1<'_> {
+    pub(crate) fn air_values(&self) -> &[FrBytes] {
+        match self {
+            Self::Trace(trace) => trace.air_values(),
+            Self::Exec(_) => &[],
+        }
+    }
+}
+
+impl WitnessInstance<'_> {
     /// Refuses a witness of other than one instance.
     pub(crate) fn read(witness: &impl WitnessSource) -> PilfflonkResult<Self> {
         let instances = witness.instances();
@@ -327,7 +400,7 @@ impl WitnessInstance {
         };
         Ok(Self {
             air: *air,
-            stage1: witness.stage1(0)?,
+            stage1: Stage1::Trace(witness.stage1(0)?),
             publics: witness.publics()?,
             proof_values: witness.proof_values()?,
         })
@@ -339,18 +412,22 @@ impl WitnessInstance {
         pk: &'pk ProvingKey,
         insecure_blinding_seed: Option<&[u8; 32]>,
     ) -> PilfflonkResult<PilFflonkInstance<'pk>> {
-        PilFflonkInstance::new(
-            &pk.ctx,
-            &PilFflonkInstanceInputs {
-                airgroup_id: self.air.airgroup_id,
-                air_id: self.air.air_id,
-                stage1: self.stage1.trace_bytes(),
-                air_values: &le(self.stage1.air_values()),
-                publics: &le(&self.publics),
-                proof_values: &le(&self.proof_values),
-                insecure_blinding_seed,
+        let inputs = PilFflonkInstanceInputs {
+            airgroup_id: self.air.airgroup_id,
+            air_id: self.air.air_id,
+            stage1: match &self.stage1 {
+                Stage1::Trace(trace) => trace.trace_bytes(),
+                Stage1::Exec(_) => &[],
             },
-        )
+            air_values: &le(self.stage1.air_values()),
+            publics: &le(&self.publics),
+            proof_values: &le(&self.proof_values),
+            insecure_blinding_seed,
+        };
+        match &self.stage1 {
+            Stage1::Trace(_) => PilFflonkInstance::new(&pk.ctx, &inputs),
+            Stage1::Exec(exec) => PilFflonkInstance::new_exec(&pk.ctx, &inputs, exec),
+        }
         .map_err(native("creating the instance"))
     }
 }
@@ -392,8 +469,8 @@ fn check_vkey(vkey: &Vkey, info: &PilfflonkInfo, global_info: &PilfflonkGlobalIn
 /// `provingKey/` whose files come from different setups would give proofs that do not verify, and
 /// nothing would say why.
 ///
-/// Always checked: the commitments cost one MSM per fixed f, of its `k·N` points, once per key
-/// loaded, no more than the prover's own commitment of as many columns of stage 1.
+/// The SRS's points and the commitments only in a debug build: a pass over the SRS, and one MSM per
+/// fixed f, of its `k·N` points, per key loaded.
 fn check_srs_and_fixed(
     ctx: &PilFflonkProverCtx,
     vkey: &Vkey,
@@ -408,17 +485,29 @@ fn check_srs_and_fixed(
         )
         .in_file(&global_info.srs_path(dir)));
     }
+    let precomputed = ctx.precomputed_digest().map_err(native("reading the precomputed files' digest"))?;
+    if precomputed != vkey.digest.0 {
+        return Err(PilfflonkError::InvalidFormat(
+            "its .coefs and shift sums were made for another vkey than this one: rerun setup-pilfflonk".into(),
+        )
+        .in_file(&global_info.vkey_path(dir)));
+    }
+    // Debug checks: the setup checked the SRS's points and committed these columns for the vkey.
+    if !cfg!(debug_assertions) {
+        return Ok(());
+    }
+    ctx.check_srs().map_err(native("checking the points of the SRS"))?;
     let committed = ctx
         .fixed_commitments(info.airgroup_id, info.air_id, vkey.fixed_commitments.0.len())
-        .map_err(native("committing the fixed columns of the .const"))?;
+        .map_err(native("committing the fixed columns of the .coefs"))?;
     for (i, (point, expected)) in committed.iter().zip(&vkey.fixed_commitments.0).enumerate() {
         if G1Affine::from_le_bytes(point)? != *expected {
-            let const_path = global_info.air_file(dir, info.airgroup_id, info.air_id, AirFile::Const)?;
+            let coefs_path = global_info.air_file(dir, info.airgroup_id, info.air_id, AirFile::Coefs)?;
             return Err(PilfflonkError::InvalidFormat(format!(
-                "its fixed columns commit to another f{i} than the vkey's: this .const is not the one the vkey was \
+                "its fixed columns commit to another f{i} than the vkey's: this .coefs is not the one the vkey was \
                  set up with (or the SRS is not)"
             ))
-            .in_file(&const_path));
+            .in_file(&coefs_path));
         }
     }
     Ok(())
@@ -601,7 +690,25 @@ pub fn stage_columns(
     witness: &impl WitnessSource,
     options: &ProveOptions,
 ) -> PilfflonkResult<StageColumns> {
-    let read = WitnessInstance::read(witness)?;
+    stage_columns_of(pk, WitnessInstance::read(witness)?, options)
+}
+
+/// [`stage_columns`], of the blake3 wrap's parts ([`prove_exec`]).
+pub fn stage_columns_exec(
+    pk: &ProvingKey,
+    air: AirInstanceRef,
+    exec: ExecWitness<'_>,
+    publics: Vec<FrBytes>,
+    options: &ProveOptions,
+) -> PilfflonkResult<StageColumns> {
+    stage_columns_of(pk, WitnessInstance { air, stage1: Stage1::Exec(exec), publics, proof_values: vec![] }, options)
+}
+
+fn stage_columns_of(
+    pk: &ProvingKey,
+    read: WitnessInstance<'_>,
+    options: &ProveOptions,
+) -> PilfflonkResult<StageColumns> {
     let info = pk.air(read.air)?;
     let mut instance = read.instance(pk, options.insecure_blinding_seed.as_ref())?;
     let committed = commit_stages(pk, &read, &mut instance)?;
@@ -633,7 +740,24 @@ pub(crate) fn read_stage_columns(
 /// A proof of the one instance of `witness` (see [the module](self)).
 pub fn prove(pk: &ProvingKey, witness: &impl WitnessSource, options: &ProveOptions) -> PilfflonkResult<ProofOutput> {
     tracing::info!("··· Reading the witness");
-    let read = WitnessInstance::read(witness)?;
+    prove_instance(pk, WitnessInstance::read(witness)?, options)
+}
+
+/// [`prove`], of an instance of `air` whose stage-1 witness is the blake3 wrap's parts, which the
+/// device builds (pilfflonk/pilfflonk_wrap_exec.hpp), with `publics` and no air or proof values: on
+/// a key on the GPU only.
+pub fn prove_exec(
+    pk: &ProvingKey,
+    air: AirInstanceRef,
+    exec: ExecWitness<'_>,
+    publics: Vec<FrBytes>,
+    options: &ProveOptions,
+) -> PilfflonkResult<ProofOutput> {
+    tracing::info!("··· Building the witness on the device");
+    prove_instance(pk, WitnessInstance { air, stage1: Stage1::Exec(exec), publics, proof_values: vec![] }, options)
+}
+
+fn prove_instance(pk: &ProvingKey, read: WitnessInstance<'_>, options: &ProveOptions) -> PilfflonkResult<ProofOutput> {
     let info = pk.air(read.air)?;
     let global_info = pk.global_info();
     let names = ProofNames::new(global_info, &[info])?;

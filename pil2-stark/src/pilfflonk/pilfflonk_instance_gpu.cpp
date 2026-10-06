@@ -42,6 +42,73 @@ InstanceGpu::InstanceGpu(const GpuAirKey &_air, const uint8_t *stage1)
     committed.assign(key.info().cmPolsMap.size(), false);
 }
 
+InstanceGpu::InstanceGpu(const GpuAirKey &_air, const pilfflonk_exec_witness &exec)
+    : air(_air), lease(_air.gpuKey(), "Instance") {
+    const ProofCall call(air.gpuKey());
+    const CopyLog copies(&air.gpuKey(), "INSTANCE");
+    const AirKey &key = air.airKey();
+    const uint64_t N = key.n(), C = key.witnessColumns().size();
+    constexpr uint64_t WRAP_COLS = 89, TABLE_ROWS = 1ull << 17, RANGE_ROWS = 1ull << 16;
+    const GpuAirKey::Exec *parts = air.exec();
+    if (parts == nullptr) {
+        throw std::invalid_argument("InstanceGpu: the key has no exec parts (pilfflonk_ctx_set_exec)");
+    }
+    if (C != WRAP_COLS || N < TABLE_ROWS || exec.n_blocks * 64 > N || exec.n_wires != parts->nWires) {
+        throw std::invalid_argument("InstanceGpu: the exec witness is not one of the blake3 wrap's AIR (" +
+                                    std::to_string(C) + " columns, 2^" + std::to_string(key.info().nBits) +
+                                    " rows, " + std::to_string(parts->nWires) + " wires)");
+    }
+    Staging &staging = air.gpuKey().staging();
+    uint8_t *arena = air.gpuKey().arena();
+    FrElement *columns = elements(arena, air.arena().evaluations[1]);
+
+    // What the proof adds, end to end at `work`, each at a multiple of 256 bytes.
+    uint64_t at = air.arena().work;
+    const uint64_t end = at + air.arena().workElements * sizeof(FrElement);
+    auto take = [&](uint64_t bytes) {
+        uint8_t *p = arena + at;
+        at += (bytes + 255) / 256 * 256;
+        return p;
+    };
+    const uint64_t fr = sizeof(FrElement);
+    // The wires, then the additions and a zero, the empty cells' wire.
+    uint8_t *wires = take(exec.n_wires * fr);
+    uint8_t *internal = take((parts->nAdds + 1) * fr);
+    uint8_t *blocks = take(exec.n_blocks * sizeof(pilfflonk_wrap_block));
+    uint8_t *counts = take((TABLE_ROWS + RANGE_ROWS) * sizeof(uint32_t));
+    uint8_t *hostRange = take(RANGE_ROWS * sizeof(uint32_t));
+    if (at > end) {
+        throw std::invalid_argument("InstanceGpu: the exec witness needs " + std::to_string(at - air.arena().work) +
+                                    " bytes of scratch, and the arena's work has " +
+                                    std::to_string(end - air.arena().work));
+    }
+    staging.toDevice(wires, exec.wires, exec.n_wires * fr);
+    staging.toDevice(blocks, exec.blocks, exec.n_blocks * sizeof(pilfflonk_wrap_block));
+    staging.toDevice(hostRange, exec.range_counts, RANGE_ROWS * sizeof(uint32_t));
+
+    pilfflonk_gpu_memset_zero(internal + parts->nAdds * fr, fr);
+    if (parts->nAdds > 0) {
+        gpu_plonk_calculate_additions(internal, wires, parts->id1, parts->id2, parts->f1, parts->f2, parts->levels,
+                                      static_cast<uint8_t>(parts->nLevels - 1), static_cast<uint32_t>(parts->nAdds),
+                                      static_cast<uint32_t>(parts->nWires));
+    }
+    // The gathered columns zero-padded by the gather itself; the others zeroed here.
+    const std::vector<uint64_t> &positions = key.witnessColumns();
+    for (uint64_t c = parts->mapRows > 0 ? parts->mapCols : 0; c < C; ++c) {
+        pilfflonk_gpu_memset_zero(columns + positions[c] * N, N * fr);
+    }
+    for (uint64_t c = 0; parts->mapRows > 0 && c < parts->mapCols; ++c) {
+        gpu_plonk_gather_witness(columns + positions[c] * N, parts->map + c * parts->mapRows * sizeof(uint32_t), wires,
+                                 internal, static_cast<uint32_t>(parts->nWires), parts->mapRows, N);
+    }
+    pilfflonk_gpu_memset_zero(counts, (TABLE_ROWS + RANGE_ROWS) * sizeof(uint32_t));
+    uint32_t *tableCounts = reinterpret_cast<uint32_t *>(counts);
+    pilfflonk_gpu_wrap_blake3(columns, air.witnessPositions(), N, blocks, exec.n_blocks, tableCounts,
+                              tableCounts + TABLE_ROWS, reinterpret_cast<const uint32_t *>(hostRange));
+    polyCounts.assign(key.info().cmPolsMap.size(), 0);
+    committed.assign(key.info().cmPolsMap.size(), false);
+}
+
 std::vector<G1Point> InstanceGpu::commitStage(uint64_t stage, const FrElement *factors) {
     const ProofCall call(air.gpuKey());
     const CopyLog copies(&air.gpuKey(), "STAGE_" + std::to_string(stage));

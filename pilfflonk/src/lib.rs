@@ -76,8 +76,9 @@ pub use layout::{Layout, LayoutEntry, LayoutPol};
 pub use pilfflonk_info::{Boundary, ChallengeMapEntry, EvMapEntry, NameStageEntry, PilfflonkInfo, PolMapEntry, PolType};
 pub use proof::{Proof, ProofJson, ProofNames, ProofShape, Publics, SnarkjsG1};
 pub use prover::{
-    gpu_available, gpu_device_bytes, gpu_free_bytes, prove, stage_columns, Device, DeviceBytes, ProofChallenges,
-    ProofOutput, ProveOptions, ProvingKey, ProvingKeyFiles, StageColumns,
+    gpu_available, gpu_device_bytes, gpu_free_bytes, prove, prove_exec, stage_columns, stage_columns_exec, Device,
+    DeviceBytes, ExecStatic, ExecWitness, ProofChallenges, ProofOutput, ProveOptions, ProvingKey, ProvingKeyFiles,
+    StageColumns, WrapBlock,
 };
 pub use verkey::AirVerkey;
 pub use vkey::{FixedCommitments, Vkey, DIGEST_DOMAIN};

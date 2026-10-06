@@ -20,10 +20,10 @@ measurements verifies.
 - **SRS.** A test ptau with a fixed public `τ` (good for measuring only), of 75,497,536 powers
   (`9·2^23 + 64`), 4.8 GB.
 - **Phases.** The prover's C++ timers (`PILFFLONK_*`, logged at `-vv`): the key (`LOAD_SRS`,
-  `LOAD_AIRS` with the INTT of the fixed columns, `FIXED_COMMITMENTS`), the instance, each stage
+  `LOAD_AIRS` with the upload of the fixed coefficients, `FIXED_UPLOAD`), the instance, each stage
   (`STAGE_<s>`: `HINT_COLUMNS_<s>`, `IM_POLS_<s>`, and per `f` `INTT_<f>` and `COMMIT_<f>`, its MSM), `Q`
   (`Q_EXTEND`, `Q_DOMAIN`, `Q_EVALUATE`, `Q_INTERPOLATE`, `Q_COMMIT`), `EVALUATIONS` and the opening
-  (`OPEN`: `SHPLONK_W`, `SHPLONK_COMMIT_W`, `SHPLONK_WP`, `SHPLONK_COMMIT_WP`). They cost nothing
+  (`OPEN`: `SHPLONK_R`, `SHPLONK_W`, `SHPLONK_COMMIT_W`, `SHPLONK_WP`, `SHPLONK_COMMIT_WP`). They cost nothing
   measurable. The Rust side logs its own the same way: `KEY_FILES` (the globalInfo, the vkey and the
   pilfflonkinfo), `WITNESS_READ` (a witness directory's trace and its range check, read while the key
   loads: [the start of a proof](#the-start-of-a-proof)) and `WRITE_PROOF`; with `--gpu`, `GPU_INIT`
@@ -157,7 +157,8 @@ read by one thread:
   (`PilfflonkWitnessArgs::load_with_key` in the CLI, for `prove` and `check`): the Rust side reads the
   key's own files first (`ProvingKeyFiles`), which give the witness's shape, and a thread opens the
   directory and reads the trace (`WITNESS_READ`) meanwhile. The errors are those of before, in the order of before: the key's,
-  then the witness's. A witness library still runs after the key.
+  then the witness's. A witness library, which needs only the shape, runs in that thread too: at the
+  wrap's `2^20` its 2.5–3 s of CPU hide the key's 1.2 s ([the opening at many offsets](#the-opening-at-many-offsets)).
 - **The range check** of the trace in Rust compares two 128-bit halves with `r`, where it allocated a
   `BigUint` per value: 0.7 s for the 16.8 million values of `all_sum` at `2^20`, a few tens of ms now.
 - **CUDA** (`--gpu`): a thread calls `pilfflonk_gpu_available` before any file is read, so that
@@ -309,16 +310,25 @@ with the rest:
 
 1. CUDA's initialisation, started by a thread before any file is read ([the start of a
    proof](#the-start-of-a-proof)); `GPU_INIT` is what is left of it.
-2. Each AIR's `.const` is read on a thread of its own: the first from here on, and each next one from
-   when the AIR before it takes its own (`AirKey::ConstantsSource`).
-3. The SRS is read and checked (`LOAD_SRS`), and its powers go to the device through the pinned,
-   double-buffered staging (`GPU_SRS`), after a check that the device holds them.
-4. For each AIR (`LOAD_AIRS`), first what its pilfflonkinfo and `.bin` give alone, while its `.const`
+2. Each AIR's `.coefs` (its fixed columns already interpolated by the setup,
+   [formats](formats.md#fixed-coefficients)) is read on a thread of its own: the first from here on,
+   and each next one from when the AIR before it takes its own (`AirKey::ConstantsSource`).
+3. The SRS is read, its points unchecked but in a debug build (`LOAD_SRS`), and its powers go to the
+   device through the pinned, double-buffered staging (`GPU_SRS`), after a check that the device
+   holds them; the shift's sums are read from `pilfflonk.shift.bin` (the setup's).
+4. For each AIR (`LOAD_AIRS`), first what its pilfflonkinfo and `.bin` give alone, while its `.coefs`
    may still be read: its degrees, layout and hints; its whole budget checked against the device's
-   free memory ([no fallback](#rules-of-the-device-path)) before anything of it goes up; its bytecode and its interpreter on the
-   device; and the shift's sums (`GPU_SHIFT_SUMS`). Then its fixed columns, decoded from the
-   `.const`, go up, are interpolated (`FIXED_INTT`; only their counts come back) and committed
-   (`FIXED_COMMITMENTS`).
+   free memory ([no fallback](#rules-of-the-device-path)) before anything of it goes up; its bytecode
+   and its interpreter on the device. Then its coefficients go up as they are, into Montgomery form
+   on the device (`FIXED_UPLOAD`; only their counts come back), and the host frees its copy off the
+   load's path. The fixed commitments are computed only when asked for, by a debug build's check
+   against the vkey (`FIXED_COMMITMENTS`).
+
+On the blake3 wrap's key (`2^20`, 65 fixed columns, an SRS of 30.4M powers), RTX 5090, the setup's
+precompute took the load from 1.29 s to 0.72 s: `LOAD_SRS` 0.25 → 0.15 s (no point check),
+`GPU_SHIFT_SUMS` 0.13 s and `FIXED_COMMITMENTS` 0.20 s gone, the `.const`'s decode (0.16 s) and
+`FIXED_INTT` (0.18 s) replaced by `FIXED_UPLOAD` (0.17 s), and the host's frees (0.11 s) off the path.
+The table below is the loading before that, which still interpolated and committed.
 
 On the RTX 5090, 32 threads, a warm GPU, **M**. "Before" is the previous loading, which read the
 files one after the other and copied the fixed columns' coefficients back to the host (three runs
@@ -375,9 +385,18 @@ in the same session); "after" is the first GPU proof of `gpu_check`, and for the
   ([recomputed, not kept](#rules-of-the-device-path)). **M** (two GPU proofs each): the peak RSS of a
   proof of L1 `2^21` is 5.66 GB, against 6.18 GB when the key kept both, and of `fibonacci` `2^22`
   1.53 GB against 1.79 GB, the table of each (512 and 256 MiB); the fixed
-  columns on `H`, decoded from the `.const` while the AIR loads, are freed once they are on the
-  device, so they leave the key's memory but not the load's peak. The `.const`'s bytes themselves
-  are released as soon as they are decoded, before the columns are interpolated and committed.
+  coefficients, read from the `.coefs` while the AIR loads, are freed (off the load's path) once
+  they are on the device, so they leave the key's memory but not the load's peak.
+- **All of the key in the caller's buffer.** `GpuKeyOptions::exclusive`
+  (`pilfflonk_ctx_new_in_device_buffer`, `ProvingKey::load_in_device_buffer`) puts all of the key's
+  device memory in the buffer, its own from the start and the arena from the end: what proofman's
+  unified buffer holds from where its aux traces
+  start to where they end (`get_aux_trace_end`), so that nothing proofman keeps across proofs is
+  written. With `restorable` the buffer is proofman's between the proofs: the key keeps a pinned host
+  copy of its own part (4.17 GB on the blake3 wrap, made once in 0.88 s), which `pilfflonk_ctx_restore`
+  writes back before each proof (0.17 s at 24 GB/s), while the host computes the circuit's witness
+  (`SnarkWrapper` of a blake3 key, preloaded). sppark's MSM allocates its own scratch beside the
+  buffer (`GpuBudget::transient`: 675 MB for the blake3 wrap's largest MSM, and a margin).
 - **The arena given.** The arena can be a buffer of the caller's ([the wrap's device
   buffer](#the-wraps-device-buffer)): `GpuKeyOptions::arena` (C++), `pilfflonk_ctx_new_on_device_buffer`
   (C), `ProvingKey::load_on_device_buffer` (Rust). The key never writes it while it loads (its
@@ -498,6 +517,30 @@ in use, sampled once a second, peaks at 8,257 MiB, L1 `2^21`'s: the SRS's powers
 fixed coefficients (1.68 GB), the arena, whose largest phase is `Q`'s (the 39 columns `Q` reads on a
 part of `N` points, 2.6 GB, after 0.94 GB of committed polynomials), sppark's MSM of `12·N` points,
 and CUDA's context.
+
+### The opening at many offsets
+
+The BN128 wrap's key (`N = 2^20`, 20 `f`, `|O|` up to 57, `Σ k·|O| = 874` roots, at most 252 in one
+`f`) spent 9.04 s of its GPU proof in `OPEN`, 8.6 s of it in `r_i`
+(`ShplonkProver::interpolants`, on the host): rapidsnark's `lagrangePolynomialInterpolation` over the
+`|T_i|` roots, `O(|T_i|³)` and an OpenMP region per `byXSubValue`. `r_i = Σ_j ρ_j(X^k)·X^j`, with
+`ρ_j` the interpolant of degree below `|O_i|` through `(ξ·ω^s, p_j(ξ·ω^s))` (the same polynomial: it
+agrees with `f_i` on `T_i` and has degree below `|T_i|`), costs `O(k·|O_i|²)`: `SHPLONK_R` 8.6 s →
+0.006 s, on either device. On the device, `W` divided each component by `Y − ξ·ω^s` once per offset
+with the PLONK prover's affine scan (`gpu_plonk_compute_div_zerofier`, three host round trips per
+division, about 0.3 ms at `N = 2^20`). Now an `f` of 4 offsets or more divides each component by
+`Z_{T_i}` on a coset (`OpeningGpu::divideOnCoset`: two NTTs, `1/Z` once per `f`, a batch inversion
+whose every lane calls sppark's warp-paired reciprocal), whatever `|O|`, exact if and only if the
+result has degree below `n − |O|`; and the others divide by `Y − β` in two passes over chunks of 128
+coefficients and one block of carries (`pilfflonk_gpu_divide_linear`), out of place, with no host
+round trip: one flag per `f`, read once. `SHPLONK_W` 0.276 → 0.087 s, `OPEN` 9.04 → 0.22 s; every
+proof the same, byte for byte, on the GPU and the CPU (CPU `OPEN` 21.2 s, all but 0.01 s of it `W`
+and the MSMs). On the redesigned wrap key (13 `f`, `|O|` at most 2, `k` up to 24), `SHPLONK_W` 0.089
+→ 0.069 s, of which `addComponent`'s strided writes are 24 ms.
+
+What still grows with `Σ k·|O|`: the evaluations (`EVALUATIONS`, about 24 µs per root at `N = 2^20`,
+21 ms here) and, for the `f` of 1 to 3 offsets, a division per root (about 0.2 ms at `N = 2^20`). The
+rest of the opening grows with the number of components and the degree of the `f`.
 
 ### Open
 

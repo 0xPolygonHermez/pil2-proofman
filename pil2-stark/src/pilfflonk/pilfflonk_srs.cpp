@@ -4,6 +4,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <omp.h>
+
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
@@ -17,6 +19,9 @@
 #include "binfile_utils.hpp"
 #include "binfile_writer.hpp"
 #include "pilfflonk_error.hpp"
+#include "pilfflonk_fr.hpp"
+#include "pilfflonk_msm.hpp"
+#include "pilfflonk_transcript.hpp"
 
 namespace PilFflonk {
 
@@ -341,7 +346,7 @@ Srs Srs::fromPtau(const std::string &ptauPath, uint64_t nG1) {
 #endif
 }
 
-Srs Srs::load(const std::string &path) {
+Srs Srs::load(const std::string &path, bool checkPoints) {
 #ifndef __USE_ASSEMBLY__
     throw std::runtime_error("the SRS needs ffiasm's assembly backend, not built on this platform");
 #else
@@ -350,7 +355,9 @@ Srs Srs::load(const std::string &path) {
     Srs srs(nG1);
     readSectionInParallel(*file, path, SRS_G1_SECTION, srs.g1Powers.get(), nG1 * SRS_G1_BYTES);
     readSection(*file, path, SRS_G2_SECTION, srs.g2Powers, N_G2 * SRS_G2_BYTES);
-    srs.checkPoints(path);
+    if (checkPoints) {
+        srs.checkPoints(path);
+    }
     return srs;
 #endif
 }
@@ -483,13 +490,11 @@ void Srs::checkCommit(const FrElement *coefs, uint64_t nCoefs) const {
 }
 
 G1Point Srs::multiMul(FrElement *scalars, uint64_t nCoefs) const {
-    G1Point result;
-    Engine::engine.g1.multiMulByScalar(result, g1Powers.get(), reinterpret_cast<uint8_t *>(scalars), sizeof(FrElement),
-                                       static_cast<unsigned int>(nCoefs));
-    return result;
+    static_assert(sizeof(FrElement) == 4 * sizeof(uint64_t), "an Fr element is 4 limbs");
+    return msm(g1Powers.get(), reinterpret_cast<const uint64_t *>(scalars), nCoefs);
 }
 
-// ffiasm's MSM reads each scalar as a little-endian integer, so it must be the canonical value:
+// The MSM (pilfflonk_msm.hpp) reads each scalar as a little-endian integer, so it must be the canonical value:
 // Montgomery limbs would commit to p·2^256 instead (pilfflonk/docs/protocol.md#commitments). Each is
 // converted from Montgomery right before it.
 G1Point Srs::commit(const FrElement *coefs, uint64_t nCoefs) const {
@@ -511,6 +516,132 @@ G1Point Srs::commitInPlace(FrElement *coefs, uint64_t nCoefs) const {
         E.fr.fromMontgomery(coefs[i], coefs[i]);
     }
     return multiMul(coefs, nCoefs);
+}
+
+const FrElement &msmShiftRatio() {
+    // Any element of large order does; a fixed one makes every intermediate value the same from run
+    // to run.
+    static const FrElement ratio = [] {
+        FrElement h;
+        Engine::engine.fr.fromString(h, "6277101735386680763835789423207666416102355444464034512659");
+        return h;
+    }();
+    return ratio;
+}
+
+std::map<uint64_t, G1Point> shiftSums(const Srs &srs, std::vector<uint64_t> lengths) {
+    Engine &E = Engine::engine;
+    std::sort(lengths.begin(), lengths.end());
+    lengths.erase(std::unique(lengths.begin(), lengths.end()), lengths.end());
+    std::map<uint64_t, G1Point> sums;
+    if (lengths.empty()) {
+        return sums;
+    }
+    if (lengths.back() > srs.nG1()) {
+        throw std::invalid_argument("shiftSums: an MSM of " + std::to_string(lengths.back()) + " points, and the SRS has " +
+                                    std::to_string(srs.nG1()));
+    }
+    // h^(i+1) for i below the longest, canonical: each thread's run from h^(start+1).
+    const uint64_t n = lengths.back();
+    std::unique_ptr<FrElement[]> scalars(new FrElement[n]);
+    const FrElement &h = msmShiftRatio();
+#pragma omp parallel
+    {
+        const uint64_t threads = omp_get_num_threads(), t = omp_get_thread_num();
+        const uint64_t from = n * t / threads, to = n * (t + 1) / threads;
+        FrElement p = power(h, from + 1);
+        for (uint64_t i = from; i < to; ++i) {
+            E.fr.fromMontgomery(scalars[i], p);
+            E.fr.mul(p, p, h);
+        }
+    }
+    G1Point sum = E.g1.zero();
+    uint64_t from = 0;
+    for (uint64_t length : lengths) {
+        if (length > from) {
+            G1Point range =
+                msm(&srs.g1(from), reinterpret_cast<const uint64_t *>(scalars.get() + from), length - from);
+            E.g1.add(sum, sum, range);
+        }
+        sums[length] = sum;
+        from = length;
+    }
+    return sums;
+}
+
+namespace {
+const char SHIFT_SUMS_MAGIC[9] = "PFFSHFT1";
+}
+
+std::array<uint8_t, PRECOMPUTED_HEADER_BYTES> precomputedHeader(const char (&magic)[9], const KeyDigest &digest) {
+    std::array<uint8_t, PRECOMPUTED_HEADER_BYTES> header{};
+    std::memcpy(header.data(), magic, 8);
+    std::memcpy(header.data() + 8, digest.data(), digest.size());
+    return header;
+}
+
+KeyDigest precomputedDigest(const uint8_t *header, const char (&magic)[9], const std::string &path) {
+    if (std::memcmp(header, magic, 8) != 0) {
+        throw FormatError(path + ": not a file of the setup's precompute of this version (" + magic +
+                          "): rerun setup-pilfflonk");
+    }
+    KeyDigest digest;
+    std::memcpy(digest.data(), header + 8, digest.size());
+    return digest;
+}
+
+void writeShiftSums(const std::string &path, const std::map<uint64_t, G1Point> &sums, const KeyDigest &digest) {
+    const auto header = precomputedHeader(SHIFT_SUMS_MAGIC, digest);
+    std::vector<uint8_t> bytes(header.size() + 8 + sums.size() * (8 + G1_BYTES));
+    std::memcpy(bytes.data(), header.data(), header.size());
+    const uint64_t count = sums.size();
+    std::memcpy(bytes.data() + header.size(), &count, 8);
+    uint8_t *at = bytes.data() + header.size() + 8;
+    for (const auto &[n, point] : sums) {
+        std::memcpy(at, &n, 8);
+        encodeG1(point, at + 8);
+        at += 8 + G1_BYTES;
+    }
+    FILE *file = std::fopen(path.c_str(), "wb");
+    const bool written = file != nullptr && std::fwrite(bytes.data(), 1, bytes.size(), file) == bytes.size();
+    if (file == nullptr || std::fclose(file) != 0 || !written) {
+        throw IoError(path + ": cannot write the shift sums: " + std::strerror(errno));
+    }
+}
+
+std::map<uint64_t, G1Point> readShiftSums(const std::string &path, KeyDigest *digest) {
+    FILE *file = std::fopen(path.c_str(), "rb");
+    if (file == nullptr) {
+        throw IoError(path + ": cannot read the shift sums (the setup writes them): " + std::strerror(errno));
+    }
+    std::vector<uint8_t> bytes;
+    uint8_t chunk[4096];
+    for (size_t got; (got = std::fread(chunk, 1, sizeof(chunk), file)) > 0;) {
+        bytes.insert(bytes.end(), chunk, chunk + got);
+    }
+    std::fclose(file);
+    constexpr uint64_t H = PRECOMPUTED_HEADER_BYTES;
+    if (bytes.size() < H + 8) {
+        throw FormatError(path + ": " + std::to_string(bytes.size()) + " bytes, not a file of shift sums");
+    }
+    *digest = precomputedDigest(bytes.data(), SHIFT_SUMS_MAGIC, path);
+    uint64_t count = 0;
+    std::memcpy(&count, bytes.data() + H, 8);
+    if (count > (bytes.size() - H - 8) / (8 + G1_BYTES) || bytes.size() != H + 8 + count * (8 + G1_BYTES)) {
+        throw FormatError(path + ": " + std::to_string(bytes.size()) + " bytes, not a file of shift sums");
+    }
+    std::map<uint64_t, G1Point> sums;
+    for (uint64_t i = 0; i < count; ++i) {
+        const uint8_t *at = bytes.data() + H + 8 + i * (8 + G1_BYTES);
+        uint64_t n;
+        std::memcpy(&n, at, 8);
+        G1Point point;
+        if (decodeG1(at + 8, point) != AbsorbError::None) {
+            throw FormatError(path + ": the shift sum of " + std::to_string(n) + " points is not a point of G1");
+        }
+        sums[n] = point;
+    }
+    return sums;
 }
 
 } // namespace PilFflonk

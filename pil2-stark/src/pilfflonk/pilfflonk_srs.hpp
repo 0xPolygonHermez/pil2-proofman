@@ -1,9 +1,12 @@
 #ifndef PILFFLONK_SRS_HPP
 #define PILFFLONK_SRS_HPP
 
+#include <array>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "alt_bn128.hpp"
 
@@ -100,7 +103,10 @@ public:
     // Reads pilfflonk.srs.bin. Throws IoError if the file cannot be opened or read, FormatError if
     // it is not such a file (any size or header field that does not match, or a point that is not
     // valid), and std::runtime_error where ffiasm has no assembly backend.
-    static Srs load(const std::string &path);
+    // Without `checkPoints`, its points are trusted (fromPtau checked them as the setup made it):
+    // check() checks them later.
+    static Srs load(const std::string &path, bool checkPoints = true);
+    void check(const std::string &source) const { checkPoints(source); }
 
     // The nG1 of the pilfflonk.srs.bin at `path`, from its header, checked as load checks it: no point
     // is read. Throws as load does.
@@ -148,6 +154,28 @@ private:
     std::unique_ptr<G1PointAffine[]> g1Powers;
     G2PointAffine g2Powers[N_G2];
 };
+
+// The ratio h of the GPU's shifted MSMs (GpuKey::commit): its i-th scalar is shifted by h^(i+1).
+const FrElement &msmShiftRatio();
+
+// The shift's sums Σ_{i<n} h^(i+1)·[τ^i]₁ of `srs` for each n of `lengths` (each at most its nG1), by
+// the CPU's MSM, each from the one of the next shorter length: computed once by the setup.
+std::map<uint64_t, G1Point> shiftSums(const Srs &srs, std::vector<uint64_t> lengths);
+
+// The vkey's digest the setup's precomputed files (.coefs, the shift sums) were made for.
+using KeyDigest = std::array<uint8_t, 32>;
+
+// Their header (pilfflonk/docs/formats.md#precomputed-files): an 8-byte magic, the digest, zeros.
+constexpr uint64_t PRECOMPUTED_HEADER_BYTES = 64;
+std::array<uint8_t, PRECOMPUTED_HEADER_BYTES> precomputedHeader(const char (&magic)[9], const KeyDigest &digest);
+// The digest of a header of `magic`; throws FormatError, naming `path`, for another.
+KeyDigest precomputedDigest(const uint8_t *header, const char (&magic)[9], const std::string &path);
+
+// The file of shift sums next to an SRS (pilfflonk/docs/formats.md#shift-sums): the header, their
+// count, then each n (u64) and its sum (encodeG1), little-endian. readShiftSums throws IoError and
+// FormatError, and sets *digest to the header's.
+void writeShiftSums(const std::string &path, const std::map<uint64_t, G1Point> &sums, const KeyDigest &digest);
+std::map<uint64_t, G1Point> readShiftSums(const std::string &path, KeyDigest *digest);
 
 } // namespace PilFflonk
 

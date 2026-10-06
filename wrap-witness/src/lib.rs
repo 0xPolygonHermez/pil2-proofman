@@ -5,7 +5,7 @@
 //!    (`proofman_common::final_witness`), computes the circuit's witness over BN128's `Fr` from the
 //!    zkin;
 //! 2. the circuit's BN128 `.exec`, which plonk2pil writes, gathers the stage-1 columns and the
-//!    publics out of it, with the STARK's `getCommitedPols` semantics
+//!    publics out of it, with the STARK exec map's semantics
 //!    ([`ExecFile::committed_pols`](proofman_common::exec_format::ExecFile::committed_pols));
 //! 3. if the AIR has range checks (circom's `Num2Bytes`), the multiplicity of their table,
 //!    `RANGE_MUL`, is counted from the chunk cells of the rows the exec's range-check bands name
@@ -34,7 +34,11 @@
 //! calculator stops the process on it, as it does in the PLONK and FFLONK wraps.
 
 mod artifacts;
+mod blake3;
+mod device;
 mod error;
+mod gl_zkin;
+mod trace;
 mod witness;
 mod zkin;
 
@@ -46,7 +50,8 @@ use proofman_pilfflonk::{
 
 pub use artifacts::{WrapArtifacts, WrapInputs};
 pub use error::{WrapWitnessError, WrapWitnessResult};
-pub use witness::{witness_from_circom, WrapWitness};
+pub use gl_zkin::gl_proof_zkin;
+pub use witness::{witness_from_circom, DeviceWitness, WrapWitness};
 
 pilfflonk_witness_library!(WrapWitnessLibrary);
 

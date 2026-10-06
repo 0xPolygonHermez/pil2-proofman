@@ -268,6 +268,11 @@ KeyFiles splitQFiles(bool packed) {
     return files;
 }
 
+// The .coefs of a .const, as the setup writes it.
+std::vector<uint8_t> coefsOf(const std::vector<uint8_t> &constants, const PilfflonkInfo &info) {
+    return PilFflonk::fixedCoefficientsOf(constants.data(), constants.size(), info.nBits, info.nConstants, "test.const");
+}
+
 // A provingKey/ in a fresh directory next to the test binary, removed with it: of an AIR `air`, of
 // an airgroup of that name (the Fibonacci's by default).
 class KeyDir {
@@ -287,6 +292,15 @@ public:
         writeBytes(airDir + "/" + air + ".pilfflonkinfo.json", files.info);
         writeBytes(airDir + "/" + air + ".bin", files.bin);
         writeBytes(airDir + "/" + air + ".const", files.constants);
+        // The setup's last step; of a key it refuses, as the error tests write, the .const as it is.
+        try {
+            PilFflonk::ProvingKey::precompute(root, PilFflonk::KeyDigest{});
+        } catch (const std::exception &) {
+            const auto header = PilFflonk::precomputedHeader("PFFCOEF1", PilFflonk::KeyDigest{});
+            std::vector<uint8_t> coefs(header.begin(), header.end());
+            coefs.insert(coefs.end(), files.constants.begin(), files.constants.end());
+            writeBytes(airDir + "/" + air + ".coefs", coefs);
+        }
     }
     ~KeyDir() { fs::remove_all(root); }
     KeyDir(const KeyDir &) = delete;
@@ -622,7 +636,7 @@ void testRefusesBrokenKeys() {
     }
     {
         const KeyDir dir;
-        fs::remove(dir.airFile("const"));
+        fs::remove(dir.airFile("coefs"));
         assert(pilfflonk_ctx_new_on(dir.path().c_str(), PILFFLONK_DEVICE_CPU) == nullptr &&
                pilfflonk_last_status() == PILFFLONK_ERR_IO);
     }
@@ -637,10 +651,10 @@ void testRefusesBrokenKeys() {
     expectRefused(files, PILFFLONK_ERR_FORMAT, "not valid JSON");
     files = KeyFiles();
     files.constants.pop_back();
-    expectRefused(files, PILFFLONK_ERR_FORMAT, ".const has 16383 bytes");
+    expectRefused(files, PILFFLONK_ERR_FORMAT, ".coefs has 16383 bytes");
     files = KeyFiles();
     std::fill(files.constants.begin() + 3 * 32, files.constants.begin() + 4 * 32, 0xff);
-    expectRefused(files, PILFFLONK_ERR_FORMAT, "Fibonacci.const: the value of row 1, column 1 is not below r");
+    expectRefused(files, PILFFLONK_ERR_FORMAT, ".coefs: the coefficient 3 of the fixed column 0 is not below r");
     files = KeyFiles();
     files.srs = srsBytes(260);
     expectRefused(files, PILFFLONK_ERR_FORMAT, "has 261 coefficients, and the SRS 260 powers");
@@ -1574,9 +1588,9 @@ std::unique_ptr<ProvingKey> changedSumBusKey(const SumBus &bus, const std::funct
     ExpressionsBin bin = ExpressionsBin::parse(files.bin.data(), files.bin.size(), "SumBus.bin");
     change(bin);
     std::vector<std::vector<std::unique_ptr<AirKey>>> airs(1);
-    airs[0].push_back(std::make_unique<AirKey>(PilfflonkInfo::parse(std::string(files.info.begin(), files.info.end())),
-                                               std::move(bin), files.constants.data(), files.constants.size(),
-                                               SUM_BUS));
+    const PilfflonkInfo info = PilfflonkInfo::parse(std::string(files.info.begin(), files.info.end()));
+    const std::vector<uint8_t> coefs = coefsOf(files.constants, info);
+    airs[0].push_back(std::make_unique<AirKey>(info, std::move(bin), coefs.data(), coefs.size(), SUM_BUS));
     return std::make_unique<ProvingKey>(GlobalInfo::parse(globalInfoJson("pilfflonk", SUM_BUS_N, SUM_BUS, 1)),
                                         Srs::load(bus.dir.path() + "/" + NAME + "/pilfflonk/pilfflonk.srs.bin"),
                                         std::move(airs));
@@ -1830,7 +1844,8 @@ void testABrokenBusIsCheckedAndRefused() {
 void testRefusedHints() {
     const std::vector<uint8_t> infoText = readBytes(busFixture("SumBus.pilfflonkinfo.json"));
     const std::vector<uint8_t> binBytes = readBytes(busFixture("SumBus.bin"));
-    const std::vector<uint8_t> constants = readBytes(busFixture("SumBus.const"));
+    const std::vector<uint8_t> constants =
+        coefsOf(readBytes(busFixture("SumBus.const")), PilfflonkInfo::parse(std::string(infoText.begin(), infoText.end())));
     auto refused = [&](const std::function<void(ExpressionsBin &)> &change, const std::string &why) {
         ExpressionsBin bin = ExpressionsBin::parse(binBytes.data(), binBytes.size(), "SumBus.bin");
         change(bin);
@@ -2211,8 +2226,14 @@ std::unique_ptr<ProvingKey> fibonacciKeyOn(const Fibonacci &fib, const KeyFiles 
     std::vector<std::vector<std::unique_ptr<AirKey>>> airs(1);
     PilfflonkInfo info = PilfflonkInfo::parse(std::string(files.info.begin(), files.info.end()));
     ExpressionsBin bin = ExpressionsBin::parse(files.bin.data(), files.bin.size(), "Fibonacci.bin");
-    airs[0].push_back(std::make_unique<AirKey>(std::move(info), std::move(bin), files.constants.data(),
-                                               files.constants.size(), AIR, gpu.get()));
+    // The setup's shift sums (ProvingKey::precompute) and coefficients.
+    gpu->addShiftSums(PilFflonk::shiftSums(
+        Srs::load(srsPath(fib)),
+        AirKey::withoutFixedColumns(info, ExpressionsBin::parse(files.bin.data(), files.bin.size(), "Fibonacci.bin"), AIR)
+            ->msmLengths()));
+    const std::vector<uint8_t> coefs = coefsOf(files.constants, info);
+    airs[0].push_back(std::make_unique<AirKey>(std::move(info), std::move(bin), coefs.data(), coefs.size(), AIR,
+                                               gpu.get()));
     return std::make_unique<ProvingKey>(GlobalInfo::parse(globalInfoJson()), Srs::load(srsPath(fib)), std::move(airs),
                                         std::move(gpu));
 }

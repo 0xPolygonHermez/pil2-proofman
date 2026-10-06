@@ -1682,6 +1682,12 @@ pub fn get_stream_commit_floor_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 
     unsafe { get_stream_commit_floor(d_buffers) }
 }
 
+/// The first GPU's unified buffer from its start (the aux traces') to the aux traces' end, below the
+/// streaming-commit slots: what a borrower may overwrite with nothing to reload.
+pub fn get_aux_trace_end_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_aux_trace_end(d_buffers) }
+}
+
 /// `input_bytes`: a GPU-witness air's staged-input bound (0 otherwise), which rides in the slot.
 pub fn stream_commit_slot_bytes_c(
     n_bits: u64,

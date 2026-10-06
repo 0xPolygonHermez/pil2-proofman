@@ -24,7 +24,8 @@ struct ShplonkBounds {
     uint64_t nPoints = 0;      // Σ_i |O_i|
     uint64_t component = 0;    // the coefficients of a p_j, and |O_i|
     uint64_t length = 0;       // W's, L's and W''s: ShplonkProver::workLength()
-    // The MSMs of W and W', lengths with a shift sum (GpuKey::addShiftSum): at least the bounds of
+    uint64_t nttLength = 0;    // the coset of the divisions by Z in evaluation form (0: none)
+    // The MSMs of W and W', lengths with a shift sum (GpuKey::addShiftSums): at least the bounds of
     // ShplonkProver::checkW and checkWp.
     uint64_t wMsm = 0;
     uint64_t wpMsm = 0;
@@ -47,9 +48,10 @@ uint64_t shplonkWorkspaceBytes(const ShplonkBounds &bounds);
 // The packing f(X) = Σ_{j<k} p_j(X^k)·X^j makes the division of f − r by Z_{T_i}(X) =
 // Π_{s in O_i} (X^k − ξ·ω_N^s) one of each component by Π_s (Y − ξ·ω_N^s), Y = X^k:
 // (f − r)/Z_{T_i} = Σ_j q_j(X^k)·X^j, q_j = (p_j − r^(j))/Π_s (Y − ξ·ω_N^s), with r^(j)[c] = r[c·k + j];
-// it is exact if and only if each one is. So W is built a component at a time: p_j − r^(j) into a
-// buffer, divided by one Y − β after another (gpu_plonk_compute_div_zerofier, with q_0 = −a_0/β from
-// a_0 on the host), and α^i·q_j added to W at c·k + j. L = w·W + Σ_i f[i]·(f_i − r_i(y)) is built in
+// it is exact if and only if each one is. With |O_i| >= NTT_MIN_OFFSETS each is divided on a coset
+// (divideOnCoset), two NTTs whatever |O_i|. Otherwise W is built a component at a time: p_j − r^(j) into a
+// buffer, divided by one Y − β after another (pilfflonk_gpu_divide_linear, its remainder's check a
+// device flag), and α^i·q_j added to W at c·k + j. L = w·W + Σ_i f[i]·(f_i − r_i(y)) is built in
 // W's buffer and divided by X − y. A division by X − β of n coefficients writes the series of
 // a/(X − β) up to X^(n−1): its coefficient n − 1 is zero if and only if it is exact, and below it is
 // the quotient. A buffer of one coefficient divides only if it is zero, as divideExactly.
@@ -103,9 +105,10 @@ private:
     FrElement read(const FrElement *src) const;
     // 1 + the index of the highest coefficient not zero of the n at data (0 if all are).
     uint64_t count(const FrElement *data, uint64_t n) const;
-    // The n coefficients at data divided by X − β in place, the quotient in the first max(n − 1, 1),
-    // with `pairs` for the scan's (gpu_plonk_compute_div_zerofier's work); whether it was exact.
-    bool divide(FrElement *data, uint64_t n, const FrElement &beta, void *pairs) const;
+    // The k components of f_i minus r_i divided by Z_{T_i} on a coset of `ext` points (its |O| at
+    // least NTT_MIN_OFFSETS), each added to W times alphaPower; false if Z vanishes on the coset.
+    bool divideOnCoset(const ShplonkProver &prover, uint64_t i, uint64_t ext, const FrElement *interpolants,
+                       const FrElement &alphaPower) const;
     // r's coefficients to the device, r_i at the first of its |T_i|, zero above its own.
     void uploadInterpolants(const ShplonkProver &prover, const ShplonkProver::Interpolants &r) const;
     // The quotient of `count` coefficients committed with an MSM of n scalars.

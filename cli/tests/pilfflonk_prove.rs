@@ -1467,9 +1467,9 @@ fn the_witness_read_with_the_key_is_refused_after_it() {
     refuses(&no_trace, &format!("{}", no_trace.join(trace).display()));
     refuses(&r_in_trace, "the value of row 0, column 0 is not below r");
 
-    // A .const cut short: the key's error, before the witness's.
+    // A .coefs cut short: the key's error, before the witness's.
     let global_info = PilfflonkGlobalInfo::from_proving_key(&f.proving_key).unwrap();
-    let constants = global_info.air_file(&f.proving_key, 0, 0, AirFile::Const).unwrap();
+    let constants = global_info.air_file(&f.proving_key, 0, 0, AirFile::Coefs).unwrap();
     let mut short = fs::read(&constants).unwrap();
     short.truncate(short.len() - 32);
     fs::write(&constants, short).unwrap();
@@ -1517,39 +1517,47 @@ fn the_prover_refuses_a_proving_key_whose_files_disagree() {
     let err = load_error();
     assert!(err.contains("which the evMap does not have"), "{err}");
 
-    // The vkey restored, the C++ loader's refusals come through: a .const cut short.
+    // The vkey restored, the C++ loader's refusals come through: a .coefs cut short (its 64-byte
+    // header, then the coefficients, which the message counts).
     fs::write(&f.vkey, &original).unwrap();
     ProvingKey::load(&f.proving_key).unwrap();
     let global_info = PilfflonkGlobalInfo::from_proving_key(&f.proving_key).unwrap();
-    let constants = global_info.air_file(&f.proving_key, 0, 0, AirFile::Const).unwrap();
-    let good_constants = fs::read(&constants).unwrap();
-    let mut bytes = good_constants.clone();
+    let coefs = global_info.air_file(&f.proving_key, 0, 0, AirFile::Coefs).unwrap();
+    let good_coefs = fs::read(&coefs).unwrap();
+    let mut bytes = good_coefs.clone();
     bytes.truncate(bytes.len() - 32);
-    fs::write(&constants, bytes).unwrap();
+    fs::write(&coefs, bytes).unwrap();
     let err = load_error();
     assert!(
-        err.contains("loading the provingKey/ into the C++ prover") && err.contains(".const has 16352 bytes"),
+        err.contains("loading the provingKey/ into the C++ prover") && err.contains(".coefs has 16352 bytes"),
         "{err}"
     );
 
-    // A .const of the right size and canonical values, but not the one the vkey was set up with:
-    // the prover would make proofs that do not verify, and refuses the key instead. Row 5 of its
-    // first fixed column, 0 in both L1 and LLAST, becomes 1.
-    let mut bytes = good_constants.clone();
-    let n_fixed = f.info().const_pols_map.len();
-    assert_eq!(bytes[5 * n_fixed * 32], 0);
-    bytes[5 * n_fixed * 32] = 1;
-    fs::write(&constants, &bytes).unwrap();
+    // A .coefs made for another vkey (its header's digest): refused in every build.
+    let mut bytes = good_coefs.clone();
+    bytes[8] ^= 1;
+    fs::write(&coefs, &bytes).unwrap();
     let err = load_error();
-    assert!(
-        err.contains(&constants.display().to_string())
-            && err.contains("its fixed columns commit to another f0 than the vkey's: this .const is not the one"),
-        "{err}"
-    );
-    let out = prove_cli(&f.proving_key, &f.witness, &f.dir.file("tampered_const"), Some(SEED_A));
-    assert!(!out.status.success(), "prove: {}", output(&out));
-    assert!(output(&out).contains("commit to another f0 than the vkey's"), "{}", output(&out));
-    fs::write(&constants, &good_constants).unwrap();
+    assert!(err.contains("were made for another vkey than this one"), "{err}");
+
+    // A .coefs of the vkey's digest and canonical values, but not of the fixed columns the vkey
+    // commits: a debug build recomputes the commitments and refuses it. The constant coefficient of
+    // the first fixed column changes.
+    if cfg!(debug_assertions) {
+        let mut bytes = good_coefs.clone();
+        bytes[64] ^= 1;
+        fs::write(&coefs, &bytes).unwrap();
+        let err = load_error();
+        assert!(
+            err.contains(&coefs.display().to_string())
+                && err.contains("its fixed columns commit to another f0 than the vkey's: this .coefs is not the one"),
+            "{err}"
+        );
+        let out = prove_cli(&f.proving_key, &f.witness, &f.dir.file("tampered_coefs"), Some(SEED_A));
+        assert!(!out.status.success(), "prove: {}", output(&out));
+        assert!(output(&out).contains("commit to another f0 than the vkey's"), "{}", output(&out));
+    }
+    fs::write(&coefs, &good_coefs).unwrap();
     ProvingKey::load(&f.proving_key).unwrap();
 
     // The SRS of another ptau, of another τ: [τ]₂ is not the vkey's X_2.

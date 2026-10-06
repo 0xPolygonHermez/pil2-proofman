@@ -82,9 +82,9 @@ impl PilfflonkWitnessArgs {
     /// witness of a proof of it, as [`open`](Self::open) gives it, sooner
     /// (pilfflonk/docs/performance.md#the-start-of-a-proof): a witness directory is opened, and the
     /// trace of its first instance read, while the C++ core loads the key, and with
-    /// [`Device::Gpu`] CUDA's initialisation starts before any file is read. The errors are those
-    /// of the key first and then those of the witness, as with `load_on` and then `open`. A witness
-    /// library is loaded and run after the key, as `open` does.
+    /// [`Device::Gpu`] CUDA's initialisation starts before any file is read. A witness library is
+    /// loaded and run while the key loads too. The errors are those of the key first and then those
+    /// of the witness, as with `load_on` and then `open`.
     pub fn load_with_key(
         &self,
         proving_key: &Path,
@@ -98,8 +98,14 @@ impl PilfflonkWitnessArgs {
             }
             let files = ProvingKeyFiles::read(proving_key)?;
             // A shape the key cannot give is for `open` to refuse, after the C++ core's errors.
-            let ahead = match (&self.witness, files.witness_shape()) {
-                (Some(dir), Ok(shape)) => Some(scope.spawn(move || PilfflonkWitness::read_ahead(dir, &shape))),
+            let ahead = match (&self.witness, &self.witness_lib, files.witness_shape()) {
+                (Some(dir), _, Ok(shape)) => Some(scope.spawn(move || PilfflonkWitness::read_ahead(dir, &shape))),
+                // The library needs only the shape: it runs on the CPU while the key loads.
+                (None, Some(path), Ok(shape)) => Some(scope.spawn(move || {
+                    let mut library = load_witness_library(path, verbose)?;
+                    let witness = compute_witness(&mut *library, &shape, self.public_inputs.as_deref())?;
+                    Ok(PilfflonkWitness::Library(witness))
+                })),
                 _ => None,
             };
             let pk = files.load_on(device);

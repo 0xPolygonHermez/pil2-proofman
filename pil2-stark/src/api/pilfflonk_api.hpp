@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "../pilfflonk/pilfflonk_wrap_exec.hpp"
+
 // C API of the pilfflonk BN128 backend. The Rust side declares it by hand in
 // provers/starks-lib-c/bindings_pilfflonk.rs: keep both in sync.
 //
@@ -240,6 +242,29 @@ extern "C" {
     void *pilfflonk_ctx_new_on_device_buffer(const char *proving_key_dir, void *device_buffer,
                                              uint64_t device_buffer_bytes);
 
+    // pilfflonk_ctx_new_on_device_buffer, with the buffer the ctx's alone while it lives (a wrap's
+    // buffer it is done with): all its device memory in it, its own from the start and its proofs'
+    // arena from the end, written as its own; beside it only what a proof allocates besides (sppark's
+    // MSM). PILFFLONK_ERR_INVALID_ARGUMENT also if the buffer cannot hold them all. With `restorable`,
+    // the buffer is others' between the proofs: the ctx keeps a pinned host copy of what it holds
+    // there, which pilfflonk_ctx_restore writes back before each proof.
+    void *pilfflonk_ctx_new_in_device_buffer(const char *proving_key_dir, void *device_buffer,
+                                             uint64_t device_buffer_bytes, uint32_t restorable);
+
+    // The blake3 wrap's parts of every proof's witness (pilfflonk/pilfflonk_wrap_exec.hpp), on the
+    // device with the key, once: a ctx on the GPU only. PILFFLONK_ERR_NON_CANONICAL for a coefficient
+    // not below r, PILFFLONK_ERR_INVALID_ARGUMENT for parts not of the AIR's.
+    int pilfflonk_ctx_set_exec(const void *ctx, uint64_t airgroup_id, uint64_t air_id,
+                               const struct pilfflonk_exec_static *exec);
+
+    // A restorable ctx's pinned copy of what it holds in its buffer, once all of it is there (after
+    // pilfflonk_ctx_set_exec): what pilfflonk_ctx_restore writes back. A no-op on other ctxs.
+    int pilfflonk_ctx_snapshot(const void *ctx);
+
+    // Writes back what a restorable ctx holds in its buffer (pilfflonk_ctx_new_in_device_buffer),
+    // once others used it, before an instance of it: a copy from pinned host memory.
+    int pilfflonk_ctx_restore(const void *ctx);
+
     // The device memory a ctx of the provingKey/ at proving_key_dir needs on the GPU, from its files
     // (the globalInfo, the SRS's header, each AIR's pilfflonkinfo and .bin), without loading it:
     // *out_arena, the arena of its proofs, which pilfflonk_ctx_new_on_device_buffer's buffer must
@@ -252,6 +277,16 @@ extern "C" {
     // pilfflonk_ctx_new_on); PILFFLONK_ERR_IO and PILFFLONK_ERR_FORMAT for those files, as
     // pilfflonk_ctx_new_on.
     int pilfflonk_gpu_device_bytes(const char *proving_key_dir, uint64_t *out_arena, uint64_t *out_beside);
+
+    // The setup's last step for the provingKey/ at proving_key_dir (ProvingKey::precompute): each
+    // AIR's <air>.coefs from its .const, and pilfflonk.shift.bin next to the SRS, stamped with the
+    // 32 bytes at vkey_digest, the vkey's digest. PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL;
+    // PILFFLONK_ERR_IO and PILFFLONK_ERR_FORMAT for its files, as pilfflonk_ctx_new_on.
+    int pilfflonk_precompute(const char *proving_key_dir, const uint8_t *vkey_digest);
+
+    // Writes to out_digest the 32-byte vkey digest the ctx's precomputed files were made for.
+    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL.
+    int pilfflonk_ctx_precomputed_digest(const void *ctx, uint8_t *out_digest);
 
     // Writes to *out_free the free memory of CUDA device 0, in bytes (cudaMemGetInfo), what a ctx's
     // load on the GPU checks pilfflonk_gpu_device_bytes's needs against: for a caller that reserves
@@ -277,15 +312,19 @@ extern "C" {
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or i is neither 0 nor 1.
     int pilfflonk_ctx_srs_g2(const void *ctx, uint64_t i, uint8_t out_g2[128]);
 
+    // Checks the ctx's SRS as a fresh load does (every point in its group, [1] the generators): a
+    // ctx loads it unchecked. PILFFLONK_ERR_FORMAT naming the first point refused.
+    int pilfflonk_ctx_check_srs(const void *ctx);
+
     // Writes to out_g1 the n commitments [f(τ)]₁ of the fixed f of air air_id of airgroup
-    // airgroup_id, the first n entries of its layout, computed from its .const as the ctx holds it:
-    // its columns interpolated, packed and committed with the SRS, as setup-pilfflonk commits them
-    // for the vkey (pilfflonk_commit_fixed). The prover never needs them and the verifier takes
-    // them from the vkey: the orchestrator compares them with the vkey's f<i>, so that a .const
-    // other than the one the vkey was set up with is refused rather than giving proofs that do not
-    // verify. One MSM per f, of its k·N points; computed at each call. out_g1 may be NULL if n is 0.
-    // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL as it may not be, if there is no such AIR,
-    // or if n is not its number of fixed f.
+    // airgroup_id, the first n entries of its layout, computed from its fixed coefficients (.coefs)
+    // as the ctx holds them: packed and committed with the SRS, as setup-pilfflonk commits them for
+    // the vkey (pilfflonk_commit_fixed). The prover never needs them and the verifier takes them
+    // from the vkey: a debug build of the orchestrator compares them with the vkey's f<i>, so that
+    // a key whose files come from different setups is refused rather than giving proofs that do
+    // not verify. One MSM per f, of its k·N points; computed on the first call. out_g1 may be NULL
+    // if n is 0. PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL as it may not be, if there is
+    // no such AIR, or if n is not its number of fixed f.
     int pilfflonk_ctx_fixed_commitments(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint8_t *out_g1,
                                         uint64_t n);
 
@@ -311,6 +350,15 @@ extern "C" {
                                  uint64_t stage1_len, const uint8_t *air_values, uint64_t n_air_values,
                                  const uint8_t *publics, uint64_t n_publics, const uint8_t *proof_values,
                                  uint64_t n_proof_values, const uint8_t *insecure_blinding_seed);
+
+    // As pilfflonk_instance_new, the stage-1 witness of the blake3 wrap's AIR as its parts
+    // (pilfflonk/pilfflonk_wrap_exec.hpp), which the device builds: on a ctx on the GPU only, else
+    // PILFFLONK_ERR_INVALID_ARGUMENT, as for an AIR other than the wrap's.
+    void *pilfflonk_instance_new_exec(const void *ctx, uint64_t airgroup_id, uint64_t air_id,
+                                      const struct pilfflonk_exec_witness *exec, const uint8_t *air_values,
+                                      uint64_t n_air_values, const uint8_t *publics, uint64_t n_publics,
+                                      const uint8_t *proof_values, uint64_t n_proof_values,
+                                      const uint8_t *insecure_blinding_seed);
 
     // Releases an instance, which no opening may still use. NULL is a no-op.
     void pilfflonk_instance_free(void *instance);

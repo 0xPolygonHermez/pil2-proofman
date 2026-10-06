@@ -577,7 +577,7 @@ void testTheGpuCommitsAsTheCpu() {
     };
     auto onGpu = [&](const Column &c, uint64_t n) {
         gpu_plonk_memcpy_h2d(coefs.data(), c.data(), n * sizeof(FrElement));
-        key.addShiftSum(n, work.data());
+        key.addShiftSums(PilFflonk::shiftSums(cpu, {n}));
         return key.commit(coefs.data(), reinterpret_cast<const uint64_t *>(zero.data()), 1, n, n, work.data());
     };
     auto sameCommitment = [&](const Column &c, uint64_t n) {

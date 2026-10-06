@@ -3006,6 +3006,16 @@ uint64_t get_stream_commit_floor_gpu(void *d_buffers_) {
     return ((DeviceCommitBuffers *)d_buffers_)->streamCommitFloorBytes;
 }
 
+uint64_t get_aux_trace_end_gpu(void *d_buffers_) {
+    if (d_buffers_ == nullptr) return 0;
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    const uint8_t *base = (const uint8_t *)d_buffers->gpuMemoryBuffer[0];
+    const uint8_t *end = d_buffers->prefetchZones != nullptr && d_buffers->prefetchZones[0].base != nullptr
+                             ? (const uint8_t *)d_buffers->prefetchZones[0].base
+                             : (const uint8_t *)d_buffers->d_constPolsAggregation[0];
+    return std::min<uint64_t>(end - base, d_buffers->streamCommitFloorBytes);
+}
+
 static_assert(STREAM_COMMIT_HOST_WIDTH_WORDS >= SC_MAX_COLS, "a slot's pinned widths must hold its widest air");
 
 // The slot kernels for the active hash family.

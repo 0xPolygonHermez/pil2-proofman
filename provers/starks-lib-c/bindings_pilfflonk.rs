@@ -19,6 +19,49 @@ pub const PILFFLONK_TRANSCRIPT_G1: u32 = 1;
 pub const PILFFLONK_DEVICE_CPU: u32 = 0;
 pub const PILFFLONK_DEVICE_GPU: u32 = 1;
 
+// A block of the blake3 wrap (`struct pilfflonk_wrap_block`, pilfflonk/pilfflonk_wrap_exec.hpp).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct pilfflonk_wrap_block {
+    pub kind: u32,
+    pub flags: u32,
+    pub cv: [u32; 8],
+    pub m: [u32; 16],
+    pub block_len: u32,
+    pub counter_lo: u32,
+    pub over: [u32; 4],
+    pub dinv: [[u8; 32]; 8],
+    pub dinv_ff: [[u8; 32]; 4],
+}
+
+// The blake3 wrap's parts of every proof's witness (`struct pilfflonk_exec_static`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct pilfflonk_exec_static {
+    pub n_wires: u64,
+    pub add_wire1: *const u32,
+    pub add_wire2: *const u32,
+    pub add_coef1: *const u8,
+    pub add_coef2: *const u8,
+    pub add_level: *const u8,
+    pub n_adds: u64,
+    pub n_levels: u64,
+    pub map: *const u32,
+    pub map_rows: u64,
+    pub map_cols: u64,
+}
+
+// What a proof adds to them (`struct pilfflonk_exec_witness`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct pilfflonk_exec_witness {
+    pub wires: *const u8,
+    pub n_wires: u64,
+    pub blocks: *const pilfflonk_wrap_block,
+    pub n_blocks: u64,
+    pub range_counts: *const u32,
+}
+
 extern "C" {
     pub fn pilfflonk_last_error() -> *const ::std::os::raw::c_char;
 
@@ -73,10 +116,38 @@ extern "C" {
         device_buffer_bytes: u64,
     ) -> *mut ::std::os::raw::c_void;
 
+    pub fn pilfflonk_ctx_new_in_device_buffer(
+        proving_key_dir: *const ::std::os::raw::c_char,
+        device_buffer: *mut ::std::os::raw::c_void,
+        device_buffer_bytes: u64,
+        restorable: u32,
+    ) -> *mut ::std::os::raw::c_void;
+
+    pub fn pilfflonk_ctx_restore(ctx: *const ::std::os::raw::c_void) -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_ctx_set_exec(
+        ctx: *const ::std::os::raw::c_void,
+        airgroup_id: u64,
+        air_id: u64,
+        exec: *const pilfflonk_exec_static,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_ctx_snapshot(ctx: *const ::std::os::raw::c_void) -> ::std::os::raw::c_int;
+
     pub fn pilfflonk_gpu_device_bytes(
         proving_key_dir: *const ::std::os::raw::c_char,
         out_arena: *mut u64,
         out_beside: *mut u64,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_precompute(
+        proving_key_dir: *const ::std::os::raw::c_char,
+        vkey_digest: *const u8,
+    ) -> ::std::os::raw::c_int;
+
+    pub fn pilfflonk_ctx_precomputed_digest(
+        ctx: *const ::std::os::raw::c_void,
+        out_digest: *mut u8,
     ) -> ::std::os::raw::c_int;
 
     pub fn pilfflonk_gpu_free_bytes(out_free: *mut u64) -> ::std::os::raw::c_int;
@@ -94,6 +165,8 @@ extern "C" {
 
     pub fn pilfflonk_ctx_srs_g2(ctx: *const ::std::os::raw::c_void, i: u64, out_g2: *mut u8) -> ::std::os::raw::c_int;
 
+    pub fn pilfflonk_ctx_check_srs(ctx: *const ::std::os::raw::c_void) -> ::std::os::raw::c_int;
+
     pub fn pilfflonk_ctx_fixed_commitments(
         ctx: *const ::std::os::raw::c_void,
         airgroup_id: u64,
@@ -108,6 +181,20 @@ extern "C" {
         air_id: u64,
         stage1: *const u8,
         stage1_len: u64,
+        air_values: *const u8,
+        n_air_values: u64,
+        publics: *const u8,
+        n_publics: u64,
+        proof_values: *const u8,
+        n_proof_values: u64,
+        insecure_blinding_seed: *const u8,
+    ) -> *mut ::std::os::raw::c_void;
+
+    pub fn pilfflonk_instance_new_exec(
+        ctx: *const ::std::os::raw::c_void,
+        airgroup_id: u64,
+        air_id: u64,
+        exec: *const pilfflonk_exec_witness,
         air_values: *const u8,
         n_air_values: u64,
         publics: *const u8,

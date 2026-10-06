@@ -280,5 +280,9 @@ pub fn run_setup_pilfflonk_with_external_fixed(
     if let Some(verifier) = verifier {
         write_text(&global_info.backend_dir(&proving_key).join(VERIFIER_SOL_FILE), &verifier)?;
     }
+    // What a key would compute as it loads: the fixed coefficients and the GPU's shift sums.
+    proofman_starks_lib_c::pilfflonk_precompute_c(&proving_key, &vkey.digest.0)
+        .map_err(SetupError::native("cannot precompute the fixed coefficients and shift sums"))?;
+    tracing::info!("wrote the fixed coefficients (.coefs) and the shift sums");
     Ok(())
 }

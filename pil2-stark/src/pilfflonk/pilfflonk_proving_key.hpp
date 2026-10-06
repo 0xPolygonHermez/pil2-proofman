@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "pilfflonk_wrap_exec.hpp"
+
 #include "alt_bn128.hpp"
 #include "pilfflonk_commit.hpp"
 #include "pilfflonk_expressions.hpp"
@@ -132,12 +134,19 @@ struct StdHint {
     HintInput denominator;
 };
 
+// The fixed coefficients of an AIR (<air>.coefs, pilfflonk/docs/formats.md#fixed-coefficients) from its
+// .const's bytes: its nConstants columns of 2^nBits rows interpolated, column after column, each value
+// canonical little-endian. What the setup writes and a key loads. Throws FormatError, naming `name`,
+// for a value not below r or bytes of another size.
+std::vector<uint8_t> fixedCoefficientsOf(const uint8_t *constants, uint64_t bytes, uint64_t nBits, uint64_t nConstants,
+                                         const std::string &name);
+
 // The proving key of one AIR (pilfflonk/docs/protocol.md#proof-sequence, step 1): its
 // pilfflonkinfo, its bytecode, and its fixed columns, both on H (for the intermediate polynomials)
 // and as polynomials (for Q's coset and the opening), with what the prover derives from them.
 // Immutable once built.
 //
-// Checks, besides what each reader checks: the files agree (the .bin's stages and the .const's size
+// Checks, besides what each reader checks: the files agree (the .bin's stages and the .coefs's size
 // are the pilfflonkinfo's, and the rows of the .bin's constraints lie in the trace), and what this
 // prover supports: a layout that packs every committed column once, and every piece of Q once, the
 // pieces Q0 … Q<m−1> of cmPolsMap (Q0 alone if Q is not split, piece i at stageId and stagePos i),
@@ -159,9 +168,9 @@ public:
     AirKey(PilfflonkInfo info, ExpressionsBin bin, const uint8_t *constants, uint64_t constantsBytes,
            const std::string &name, GpuKey *gpu = nullptr);
 
-    // The bytes of an AIR's .const, valid until the constructor they are given to returns. With an
-    // `owner`, they are its own, and the key releases them as soon as it has decoded its fixed
-    // columns from them, before it interpolates and commits them.
+    // The bytes of an AIR's .coefs (fixedCoefficientsOf), valid until the constructor they are given
+    // to returns. With an `owner`, they are its own, and the key keeps them, decoded in place, as its
+    // fixed coefficients on the CPU; on the GPU it releases them once they are on the device.
     struct ConstantsBytes {
         const uint8_t *data = nullptr;
         uint64_t size = 0;
@@ -185,7 +194,7 @@ public:
     static std::unique_ptr<AirKey> withoutFixedColumns(PilfflonkInfo info, ExpressionsBin bin, const std::string &name);
     ~AirKey();
 
-    // Reads <dir>/<name>.pilfflonkinfo.json, <dir>/<name>.bin and <dir>/<name>.const. Throws
+    // Reads <dir>/<name>.pilfflonkinfo.json, <dir>/<name>.bin and <dir>/<name>.coefs. Throws
     // IoError and FormatError, and as the constructor.
     static std::unique_ptr<AirKey> load(const std::string &dir, const std::string &name, GpuKey *gpu = nullptr);
 
@@ -220,6 +229,10 @@ public:
     // device keeps it (ShplonkComponent::elsewhere, of N coefficients and the degree the device found),
     // not copied to the host.
     ShplonkComponent fixedComponent(uint64_t c) const;
+#ifdef __USE_CUDA__
+    // GpuAirKey::setExec of its device side.
+    void setExec(const pilfflonk_exec_static &exec) const;
+#endif
 
     // Where the layout commits constPolsMap[id] or cmPolsMap[id]; f = UINT64_MAX if it does not
     // (a column the evMap never opens, pilfflonk/docs/protocol.md#layout).
@@ -232,6 +245,12 @@ public:
     // one and for Q's (whose pieces, if it is split, are blinded at their boundaries instead:
     // AirDegrees).
     uint64_t blindLength(uint64_t f) const;
+
+    // The lengths of a proof's MSMs on the GPU, the shift sums its key needs: each f's degree, and
+    // the opening's W and W' (wMsm, wpMsm).
+    std::vector<uint64_t> msmLengths() const;
+    uint64_t wMsm() const;
+    uint64_t wpMsm() const;
 
     // The witness of an instance: the stagePos in stage 1 of each of its C columns, column c being
     // the cmPolsMap entry of stage 1 that is not an im pol and has stageId c
@@ -286,11 +305,12 @@ private:
     std::unique_ptr<Expressions> interpreter; // refers to expressionsBin
     AirDegrees airDegrees_;
     std::unique_ptr<Lde> extension;
-    // On a key on the GPU, made by fixedEvaluations's first call (fixedEvaluated).
+    // Made by fixedEvaluations's first call (fixedEvaluated).
     mutable std::unique_ptr<FrElement[]> fixedEvals;
     mutable std::once_flag fixedEvaluated;
-    // On a key on the GPU, made by fixedPolynomial's first call (fixedCopied).
-    mutable std::unique_ptr<FrElement[]> fixedCoefs;
+    // On the CPU the .coefs's bytes decoded in place; on a key on the GPU, made by fixedPolynomial's
+    // first call (fixedCopied).
+    mutable std::unique_ptr<uint8_t[]> fixedCoefs;
     mutable std::vector<std::unique_ptr<Poly>> fixedPolys;
     mutable std::once_flag fixedCopied;
     std::vector<LayoutPosition> constPositions;
@@ -342,6 +362,19 @@ public:
     static std::unique_ptr<ProvingKey> load(const std::string &dir, Device device = Device::Cpu,
                                             const GpuKeyOptions &options = GpuKeyOptions());
 
+    // The setup's last step for the provingKey/ at `dir`, what a key would otherwise compute as it
+    // loads: each AIR's <air>.coefs from its .const, and the SRS's shift sums of every AIR's MSMs
+    // (shiftSums, next to the SRS), each stamped with `digest`, the vkey's. Throws as load.
+    static void precompute(const std::string &dir, const KeyDigest &digest);
+
+    // On a key loaded with GpuKeyOptions::restorable: what it holds in its buffer written back from
+    // its pinned copy (GpuKey::restore), before a proof, once others used the buffer.
+    void restoreDevice() const;
+    // The blake3 wrap's parts of every proof's witness on the device (GpuAirKey::setExec), and, of a
+    // restorable key, its pinned copy once all of it is on the device (GpuKey::snapshot).
+    void setExec(uint64_t airgroupId, uint64_t airId, const pilfflonk_exec_static &exec) const;
+    void snapshotDevice() const;
+
     // The device memory a key loaded from `dir` on the GPU needs (DeviceBytes), from the globalInfo,
     // the SRS's header and each AIR's pilfflonkinfo and .bin (AirKey::withoutFixedColumns), without
     // loading it, as GpuKey and its AIRs reserve it: what a buffer given as its arena
@@ -366,12 +399,16 @@ public:
     Device device() const { return gpu ? Device::Gpu : Device::Cpu; }
     // Its device side, or null on the CPU.
     const GpuKey *gpuKey() const { return gpu.get(); }
+    // The vkey digest its precomputed files were made for (load checks they agree), for the caller
+    // that reads the vkey to compare.
+    const KeyDigest &precomputedDigest() const { return precomputed; }
 
     // The key of air airId of airgroup airgroupId. Throws std::invalid_argument if there is none.
     const AirKey &air(uint64_t airgroupId, uint64_t airId) const;
 
 private:
     GlobalInfo info;
+    KeyDigest precomputed{};
     // Before the SRS and the AIR keys, which point to it: it outlives them. A shared_ptr, whose deleter
     // is the GPU library's, so that a library built without the GPU never needs GpuKey's destructor.
     std::shared_ptr<const GpuKey> gpu;

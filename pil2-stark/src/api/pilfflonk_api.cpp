@@ -460,6 +460,66 @@ void *pilfflonk_ctx_new_on_device_buffer(const char *proving_key_dir, void *devi
     });
 }
 
+void *pilfflonk_ctx_new_in_device_buffer(const char *proving_key_dir, void *device_buffer,
+                                         uint64_t device_buffer_bytes, uint32_t restorable) {
+    const char *function = __func__;
+    return guardNew(function, [&]() -> void * {
+        if (proving_key_dir == nullptr || device_buffer == nullptr) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "proving_key_dir or device_buffer is NULL");
+            return nullptr;
+        }
+        PilFflonk::GpuKeyOptions options;
+        options.arena = device_buffer;
+        options.arenaBytes = device_buffer_bytes;
+        options.exclusive = true;
+        options.restorable = restorable != 0;
+        return PilFflonk::ProvingKey::load(proving_key_dir, PilFflonk::Device::Gpu, options).release();
+    });
+}
+
+int pilfflonk_ctx_set_exec(const void *ctx, uint64_t airgroup_id, uint64_t air_id,
+                           const struct pilfflonk_exec_static *exec) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (ctx == nullptr || exec == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx or exec is NULL");
+        }
+        const uint8_t *scalars[2] = {exec->add_coef1, exec->add_coef2};
+        const char *what[2] = {"coef1", "coef2"};
+        for (int i = 0; i < 2; ++i) {
+            const uint64_t refused = PilFflonk::firstNonCanonicalFr(scalars[i], exec->n_adds);
+            if (refused < exec->n_adds) {
+                return fail(PILFFLONK_ERR_NON_CANONICAL, function, "the %s of addition %" PRIu64 " is not below r",
+                            what[i], refused);
+            }
+        }
+        static_cast<const PilFflonk::ProvingKey *>(ctx)->setExec(airgroup_id, air_id, *exec);
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_ctx_snapshot(const void *ctx) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (ctx == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx is NULL");
+        }
+        static_cast<const PilFflonk::ProvingKey *>(ctx)->snapshotDevice();
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_ctx_restore(const void *ctx) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (ctx == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx is NULL");
+        }
+        static_cast<const PilFflonk::ProvingKey *>(ctx)->restoreDevice();
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
 int pilfflonk_gpu_device_bytes(const char *proving_key_dir, uint64_t *out_arena, uint64_t *out_beside) {
     const char *function = __func__;
     return guard(function, [&] {
@@ -472,6 +532,31 @@ int pilfflonk_gpu_device_bytes(const char *proving_key_dir, uint64_t *out_arena,
         const PilFflonk::DeviceBytes bytes = PilFflonk::ProvingKey::requiredDeviceBytes(proving_key_dir);
         *out_arena = bytes.arena;
         *out_beside = bytes.beside;
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_precompute(const char *proving_key_dir, const uint8_t *vkey_digest) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (proving_key_dir == nullptr || vkey_digest == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "proving_key_dir or vkey_digest is NULL");
+        }
+        PilFflonk::KeyDigest digest;
+        std::memcpy(digest.data(), vkey_digest, digest.size());
+        PilFflonk::ProvingKey::precompute(proving_key_dir, digest);
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
+int pilfflonk_ctx_precomputed_digest(const void *ctx, uint8_t *out_digest) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (ctx == nullptr || out_digest == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx or out_digest is NULL");
+        }
+        const PilFflonk::KeyDigest &digest = static_cast<const PilFflonk::ProvingKey *>(ctx)->precomputedDigest();
+        std::memcpy(out_digest, digest.data(), digest.size());
         return static_cast<int>(PILFFLONK_OK);
     });
 }
@@ -518,6 +603,17 @@ int pilfflonk_ctx_srs_g2(const void *ctx, uint64_t i, uint8_t out_g2[128]) {
             return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx is NULL");
         }
         return srsG2(function, static_cast<const PilFflonk::ProvingKey *>(ctx)->srs(), i, out_g2);
+    });
+}
+
+int pilfflonk_ctx_check_srs(const void *ctx) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        if (ctx == nullptr) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx is NULL");
+        }
+        static_cast<const PilFflonk::ProvingKey *>(ctx)->srs().check("the provingKey's SRS");
+        return static_cast<int>(PILFFLONK_OK);
     });
 }
 
@@ -601,6 +697,48 @@ void *pilfflonk_instance_new(const void *ctx, uint64_t airgroup_id, uint64_t air
                                               : std::make_unique<PilFflonk::BlindingRng>(insecure_blinding_seed);
         return new PilFflonk::Instance(pk, airgroup_id, air_id, stage1, stage1_len, std::move(values[0]),
                                        std::move(values[1]), std::move(values[2]), std::move(blinding));
+    });
+}
+
+void *pilfflonk_instance_new_exec(const void *ctx, uint64_t airgroup_id, uint64_t air_id,
+                                  const struct pilfflonk_exec_witness *exec, const uint8_t *air_values,
+                                  uint64_t n_air_values, const uint8_t *publics, uint64_t n_publics,
+                                  const uint8_t *proof_values, uint64_t n_proof_values,
+                                  const uint8_t *insecure_blinding_seed) {
+    const char *function = __func__;
+    return guardNew(function, [&]() -> void * {
+        if (ctx == nullptr || exec == nullptr) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx or exec is NULL");
+            return nullptr;
+        }
+        const PilFflonk::ProvingKey &pk = *static_cast<const PilFflonk::ProvingKey *>(ctx);
+        // The circom witness's scalars are canonical; the device builds the rest from them.
+        const uint64_t refusedWire = PilFflonk::firstNonCanonicalFr(exec->wires, exec->n_wires);
+        if (refusedWire < exec->n_wires) {
+            fail(PILFFLONK_ERR_NON_CANONICAL, function, "the exec witness's wire %" PRIu64 " is not below r",
+                 refusedWire);
+            return nullptr;
+        }
+        std::vector<PilFflonk::FrElement> values[3];
+        const uint8_t *bytes[3] = {air_values, publics, proof_values};
+        const uint64_t n[3] = {n_air_values, n_publics, n_proof_values};
+        const char *names[3] = {"air_values", "publics", "proof_values"};
+        for (int i = 0; i < 3; ++i) {
+            if (bytes[i] == nullptr && n[i] != 0) {
+                fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "%s is NULL", names[i]);
+                return nullptr;
+            }
+            uint64_t refused = 0;
+            if (!decodeScalars(bytes[i], n[i], values[i], refused)) {
+                fail(PILFFLONK_ERR_NON_CANONICAL, function, "%s[%" PRIu64 "] is not below r", names[i], refused);
+                return nullptr;
+            }
+        }
+        std::unique_ptr<PilFflonk::BlindingSource> blinding =
+            insecure_blinding_seed == nullptr ? std::make_unique<PilFflonk::BlindingRng>()
+                                              : std::make_unique<PilFflonk::BlindingRng>(insecure_blinding_seed);
+        return new PilFflonk::Instance(pk, airgroup_id, air_id, *exec, std::move(values[0]), std::move(values[1]),
+                                       std::move(values[2]), std::move(blinding));
     });
 }
 

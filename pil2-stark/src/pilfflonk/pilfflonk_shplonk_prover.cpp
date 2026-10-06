@@ -384,36 +384,53 @@ uint64_t ShplonkProver::packed(uint64_t i, FrElement *out) const {
 
 ShplonkProver::Interpolants ShplonkProver::interpolants() const {
     Engine &E = Engine::engine;
-    Interpolants r;
-    r.reserve(fs.size());
+    Interpolants r(fs.size());
+    // r_i = Σ_j ρ_j(X^k)·X^j with ρ_j the interpolant of degree < |O| through (ξ·ω_N^s, p_j(ξ·ω_N^s)):
+    // it agrees with f_i on T_i and has degree < |T_i|, so it is r_i. O(k·|O|²) per f_i, not O(|T_i|³).
     for (uint64_t i = 0; i < fs.size(); ++i) {
         const Entry &f = fs[i];
-        const uint64_t k = f.components.size();
-        const uint64_t nRoots = f.roots.size();
-        // f_i(x) = Σ_j p_j(ξ·ω_N^s)·x^j on each root x of offset s, by Horner's rule.
-        std::vector<FrElement> xs = f.roots;
-        std::vector<FrElement> ys(nRoots);
-        for (uint64_t m = 0; m < f.points.size(); ++m) {
-            for (uint64_t j = 0; j < k; ++j) {
-                const FrElement &x = xs[m * k + j];
-                FrElement value = E.fr.zero();
-                for (uint64_t l = k; l > 0; --l) {
-                    E.fr.mul(value, value, x);
-                    E.fr.add(value, value, evals[i][m * k + l - 1]);
+        const uint64_t k = f.components.size(), m = f.points.size();
+        const std::vector<FrElement> &beta = f.points;
+        // Z(Y) = Π_s (Y − β_s), m + 1 coefficients.
+        std::vector<FrElement> z(m + 1, E.fr.zero());
+        z[0] = E.fr.one();
+        for (uint64_t s = 0; s < m; ++s) {
+            for (uint64_t c = s + 1; c > 0; --c) {
+                z[c] = E.fr.sub(z[c - 1], E.fr.mul(beta[s], z[c]));
+            }
+            z[0] = E.fr.neg(E.fr.mul(beta[s], z[0]));
+        }
+        // Barycentric weights 1/Π_{t≠s}(β_s − β_t); the points are distinct (checked when built).
+        std::vector<FrElement> den(m, E.fr.one()), weight(m);
+        for (uint64_t s = 0; s < m; ++s) {
+            for (uint64_t t = 0; t < m; ++t) {
+                if (t != s) {
+                    E.fr.mul(den[s], den[s], E.fr.sub(beta[s], beta[t]));
                 }
-                ys[m * k + j] = value;
             }
         }
-        std::unique_ptr<Poly> ri;
-        if (nRoots == 1) {
-            // lagrangePolynomialInterpolation dereferences a null polynomial for a single point.
-            ri.reset(new Poly(E, 1));
-            ri->coef[0] = ys[0];
-            ri->fixDegree();
-        } else {
-            ri.reset(Poly::lagrangePolynomialInterpolation(xs.data(), ys.data(), static_cast<uint32_t>(nRoots)));
+        if (!batchInverse(weight.data(), den.data(), m)) {
+            throw std::logic_error("ShplonkProver: two points of " + name(i) + " are the same");
         }
-        r.push_back(std::move(ri));
+        std::unique_ptr<Poly> ri(new Poly(E, f.roots.size()));
+        std::vector<FrElement> basis(m);
+        for (uint64_t s = 0; s < m; ++s) {
+            // Z/(Y − β_s), by synthetic division from the top.
+            FrElement carry = E.fr.zero();
+            for (uint64_t c = m; c > 0; --c) {
+                carry = E.fr.add(z[c], E.fr.mul(carry, beta[s]));
+                basis[c - 1] = carry;
+            }
+            for (uint64_t j = 0; j < k; ++j) {
+                const FrElement scale = E.fr.mul(evals[i][s * k + j], weight[s]);
+                for (uint64_t c = 0; c < m; ++c) {
+                    FrElement &out = ri->coef[c * k + j];
+                    E.fr.add(out, out, E.fr.mul(scale, basis[c]));
+                }
+            }
+        }
+        ri->fixDegree();
+        r[i] = std::move(ri);
     }
     return r;
 }
@@ -536,7 +553,9 @@ ShplonkProof ShplonkProver::open(const Srs &srs, Transcript &transcript, Shplonk
     }
 
     // Independent of the challenges: the transcript is untouched if it fails.
+    TimerStart(PILFFLONK_SHPLONK_R);
     const Interpolants r = interpolants();
+    TimerStopAndLog(PILFFLONK_SHPLONK_R);
 
     ShplonkProof proof;
     proof.alpha = transcript.squeeze();

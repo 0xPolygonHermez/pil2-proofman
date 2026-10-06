@@ -26,6 +26,7 @@
 #include "pilfflonk_commit.hpp"
 #include "pilfflonk_gpu.hpp"
 #include "pilfflonk_srs.hpp"
+#include "pilfflonk_wrap_exec.hpp"
 
 namespace PilFflonk {
 
@@ -33,11 +34,34 @@ class AirKey;         // pilfflonk_proving_key.hpp
 class ExpressionsGpu; // pilfflonk_expressions_gpu.hpp
 class ProofCall;      // below
 
-// Device memory on the GPU's device, freed with it.
+// A region of device memory a key places all its buffers in (GpuKeyOptions::exclusive): its own from
+// the start, its proofs' arena from the end.
+struct DevicePool {
+    uint8_t *base = nullptr;
+    uint64_t size = 0;
+    uint64_t bottom = 0; // taken from the start
+    uint64_t top = 0;    // the arena's start
+};
+
+// While it lives, the DeviceBuffers this thread makes are views of `pool` (none if null).
+class PoolScope {
+public:
+    explicit PoolScope(DevicePool *pool);
+    ~PoolScope();
+    PoolScope(const PoolScope &) = delete;
+    PoolScope &operator=(const PoolScope &) = delete;
+
+private:
+    DevicePool *previous;
+};
+
+// Device memory on the GPU's device, freed with it; or a view of a PoolScope's pool.
 class DeviceBuffer {
 public:
     DeviceBuffer() = default;
     explicit DeviceBuffer(uint64_t bytes);
+    // A view of the last `bytes` of `pool`, an arena that grows over a smaller one before it.
+    static DeviceBuffer arenaOf(DevicePool &pool, uint64_t bytes);
     ~DeviceBuffer();
     DeviceBuffer(DeviceBuffer &&other) noexcept;
     DeviceBuffer &operator=(DeviceBuffer &&other) noexcept;
@@ -53,6 +77,7 @@ private:
 
     uint8_t *memory = nullptr;
     uint64_t bytes = 0;
+    bool view = false;
 };
 
 // Copies between pageable host memory and the device through two pinned halves, on a non-blocking
@@ -177,9 +202,8 @@ struct GpuBudget {
 // allocator's rounding and sppark's NTT tables.
 GpuBudget gpuBudget(const AirKey &air, uint32_t multiprocessors);
 
-// The scratch GpuAirKey uses while it loads, in bytes: the shift's scalars of its longest MSM
-// (GpuKey::addShiftSums) and the fixed f packed for theirs (GpuKey::commit), and the counts of the
-// fixed columns' coefficients. Within the arena's work buffer and counts (arenaLayout).
+// The scratch GpuAirKey uses while it loads, in bytes: the counts of the fixed columns' coefficients.
+// Within the arena's counts (arenaLayout).
 uint64_t loadScratchBytes(const AirKey &air);
 
 // The device memory a key on the GPU of an SRS of nG1 powers and of `airs` (in the order they load)
@@ -220,9 +244,7 @@ void logCopies(const CopyVolume &volume, const std::string &phase, const CopyVol
 // h^(256·b) and h^t (t < 256) that gpu_plonk_precompute_omega_tables_async computes with base h.
 // Every MSM of the device path is of a static length, the degree bound of its f in the layout (zero
 // scalars add nothing, so the commitment is the same), and the sum Σ_{i<n} ρ_i·[τ^i]₁ of each length
-// is computed once, when the AIRs that commit with it load (addShiftSums): each from the one of the
-// next shorter length, with an MSM of the points between them, so that the sums of all the lengths
-// take the MSM of the longest.
+// is the setup's (shiftSums, ProvingKey::precompute), which the key reads (addShiftSums).
 //
 // Its AIRs (GpuAirKey) reserve their memory as they load, and each is refused, with how much it needs
 // and how much is free, before anything of it goes to the device, if the device cannot hold it and a
@@ -264,21 +286,22 @@ public:
     // not the memory (requireDeviceMemory), or the arena given in the options is smaller than a
     // proof's.
     void reserve(const std::string &air, const GpuBudget &budget);
-    // While the key loads: Σ_{i<n} ρ_i·[τ^i]₁ for each n of `lengths` (each <= nPowers()) it has not
-    // yet, for commit's MSMs of n scalars, with `work` (the longest's elements on the device) as
-    // scratch: each from the sum of the next shorter length it has, if any, and an MSM of the points
-    // between them (msmOnDevice of the powers from there), in increasing order. Throws
-    // std::runtime_error if an MSM fails.
-    void addShiftSums(std::vector<uint64_t> lengths, void *work);
-    // addShiftSums of n alone.
-    void addShiftSum(uint64_t n, void *work);
+    // While the key loads: the shift's sums Σ_{i<n} ρ_i·[τ^i]₁ of commit's MSMs, the setup's.
+    void addShiftSums(const std::map<uint64_t, G1Point> &sums) { shiftSums.insert(sums.begin(), sums.end()); }
+    bool hasShiftSum(uint64_t n) const { return shiftSums.count(n) != 0; }
 
     // For the holder of a Lease (a given arena is written only then).
     uint8_t *arena() const { return arenaGiven() ? static_cast<uint8_t *>(options.arena) : owned.data(); }
     // Its bytes: the given arena's, or the largest proof's of the AIRs that reserved it.
     uint64_t arenaSize() const { return arenaGiven() ? options.arenaBytes : arenaBytes; }
     // Whether the arena is given (GpuKeyOptions::arena), not its own.
-    bool arenaGiven() const { return options.arena != nullptr; }
+    bool arenaGiven() const { return options.arena != nullptr && !options.exclusive; }
+    // With GpuKeyOptions::restorable: once its AIRs are loaded, a pinned host copy of what it holds in
+    // the buffer; and that copy written back, before a proof, once others used the buffer.
+    void snapshot() const;
+    void restore() const;
+    // The pool of an exclusive buffer (GpuKeyOptions::exclusive), null otherwise.
+    DevicePool *devicePool() { return options.exclusive ? &pool : nullptr; }
     Staging &staging() const { return *transfers; }
 
     // `bytes` bytes from device `src` to host `dst`, counted, from any thread: a plain copy, which
@@ -288,7 +311,7 @@ public:
 
     // [f(τ)]₁ of f(X) = Σ_{j<k} p_j(X^k)·X^j, for k polynomials of `length` coefficients on the device,
     // p_j at base + offsets[j] elements (offsets on the device), committed with an MSM of n scalars,
-    // n >= k·length and a length of addShiftSum: packed and shifted into `work` (n elements), MSM,
+    // n >= k·length and a length of a shift sum (addShiftSums): packed and shifted into `work` (n elements), MSM,
     // and the shift's sum subtracted. Throws std::logic_error if n has no shift sum, and
     // std::runtime_error if the MSM fails (sppark's point at infinity for scalars not all zero).
     G1Point commit(const void *base, const uint64_t *offsets, uint64_t k, uint64_t length, uint64_t n,
@@ -324,10 +347,14 @@ private:
     bool allZero(const void *scalars, uint64_t n) const;
 
     GpuKeyOptions options;
+    DevicePool pool;
     mutable CopyVolume volume;
     uint32_t smCount = 0;
     uint64_t held = 0;
     uint64_t transient = 0; // the most of the AIRs' GpuBudget::transient
+    DeviceBuffer powersMemory; // of an exclusive buffer
+    mutable void *image = nullptr; // snapshot's pinned copy of the pool's own bytes
+    mutable uint64_t imageBytes = 0;
     std::unique_ptr<Gpu> powers;
     const G1PointAffine *hostPowers = nullptr; // those of the Srs it copied
     DeviceBuffer tables;    // h^(256·b), h^t, then a 64-bit 0 (an offset) and a 64-bit count
@@ -368,32 +395,44 @@ private:
 // host but the counts of its fixed columns' coefficients, and their coefficients when they are asked
 // for (fixedToHost).
 //
-// It loads in two steps, so that the host reads the AIR's .const while the device works on what does
-// not need it (ProvingKey::load): the constructor, and then loadFixed with the fixed columns on H.
+// It loads in two steps, so that the host reads the AIR's .coefs while the device works on what does
+// not need it (ProvingKey::load): the constructor, and then loadFixed with the fixed coefficients.
 class GpuAirKey {
 public:
     // The first step of `air`'s, whose host side is derived (but for its fixed columns): reserves its
     // memory in `key` (GpuKey::reserve) before anything of it goes to the device; copies its bytecode
-    // and makes its interpreter on the device; and computes the shift's sums of its MSMs' lengths
-    // (GpuKey::addShiftSums). Throws FormatError if an f has more coefficients than the SRS has powers
-    // (checkSrsFits), and as reserve and addShiftSums.
+    // and makes its interpreter on the device. Throws FormatError if an f has more coefficients than
+    // the SRS has powers (checkSrsFits) or the key has no shift sum of one of its MSMs (a setup before
+    // ProvingKey::precompute), and as reserve.
     GpuAirKey(GpuKey &key, const AirKey &air);
     ~GpuAirKey();
     GpuAirKey(const GpuAirKey &) = delete;
     GpuAirKey &operator=(const GpuAirKey &) = delete;
 
-    // The second step, once: the fixed columns on H (fixedEvaluations, column c at c·N, as
-    // AirKey::fixedEvaluations) to the device, interpolated there (sppark's INTT) into the
-    // coefficients that stay there, the counts of their coefficients back, and the fixed commitments.
-    // Throws as GpuKey::commit, and std::logic_error if called twice.
-    void loadFixed(const FrElement *fixedEvaluations);
+    // The second step, once: the fixed coefficients (the .coefs's canonical bytes, column c at c·N) to
+    // the device, where they stay, in Montgomery form, and the counts of their coefficients back.
+    // Throws std::logic_error if called twice.
+    void loadFixed(const uint8_t *coefficients);
 
     const GpuKey &gpuKey() const { return key; }
     const AirKey &airKey() const { return air; }
     const ArenaLayout &arena() const { return layout; }
 
-    // The commitments of the fixed f, in the order of the layout, as AirKey::fixedCommitments.
-    const std::vector<G1Point> &fixedCommitments() const { return fixedPoints; }
+    // The blake3 wrap's parts of every proof's witness (pilfflonk_exec_static), once: on the device
+    // with the key, its coefficients in Montgomery form. Throws std::invalid_argument for parts that
+    // are not of this AIR's (pilfflonk_wrap_exec.hpp).
+    void setExec(const pilfflonk_exec_static &exec);
+    // Those parts on the device, if set: map | add_wire1 | add_wire2 | add_coef1 | add_coef2 | add_level.
+    struct Exec {
+        const uint8_t *map = nullptr, *id1 = nullptr, *id2 = nullptr, *f1 = nullptr, *f2 = nullptr,
+                      *levels = nullptr;
+        uint64_t nWires = 0, nAdds = 0, nLevels = 0, mapRows = 0, mapCols = 0;
+    };
+    const Exec *exec() const { return execParts.size() == 0 ? nullptr : &execOn; }
+
+    // The commitments of the fixed f, in the order of the layout, as AirKey::fixedCommitments: on the
+    // first call, holding the arena (GpuKey::Lease) for its work, once.
+    const std::vector<G1Point> &fixedCommitments() const;
 
     // The degree of fixed column c's polynomial (0 if it is zero), as the device found it.
     uint64_t fixedDegree(uint64_t c) const;
@@ -426,12 +465,9 @@ public:
     const ColumnRuns &witnessColumns() const { return witnessRuns; }
 
 private:
-    void interpolateFixed(const FrElement *fixedEvaluations);
-    void commitFixed();
     const uint64_t *offsetTable() const;
-    // The scratch of the loading (loadScratchBytes): the arena's work buffer and counts, or, with an
-    // arena given, which the key never writes while it loads, a buffer of its own.
-    void *loadWork() const;
+    // The scratch of the loading (loadScratchBytes): the arena's counts, or, with an arena given,
+    // which the key never writes while it loads, a buffer of its own.
     uint64_t *loadCounts() const;
 
     GpuKey &key;
@@ -444,7 +480,10 @@ private:
     uint64_t piecesStart = 0;         // the entries of Q's pieces
     ColumnRuns witnessRuns;
     std::vector<uint64_t> fixedCounts; // by fixed column, once loadFixed has run
-    std::vector<G1Point> fixedPoints;
+    mutable std::vector<G1Point> fixedPoints;
+    DeviceBuffer execParts;
+    Exec execOn;
+    mutable std::once_flag fixedCommitted;
     std::unique_ptr<ExpressionsGpu> interpreter;
     DeviceBuffer loadScratch; // with an arena given, until loadFixed ends
     bool fixedLoaded = false;

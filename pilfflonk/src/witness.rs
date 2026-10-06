@@ -131,12 +131,13 @@ impl Stage1Witness {
                 trace.len()
             );
         }
-        for (i, chunk) in trace.chunks_exact(FIELD_BYTES).enumerate() {
+        let bad = trace.par_chunks_exact(FIELD_BYTES).position_first(|chunk| {
             let mut bytes = [0u8; FIELD_BYTES];
             bytes.copy_from_slice(chunk);
-            if FrBytes::from_le_bytes(bytes).is_err() {
-                return invalid!("the value of row {}, column {} is not below r", i / n_cols, i % n_cols);
-            }
+            FrBytes::from_le_bytes(bytes).is_err()
+        });
+        if let Some(i) = bad {
+            return invalid!("the value of row {}, column {} is not below r", i / n_cols, i % n_cols);
         }
         Ok(Self { n_rows, n_cols, trace: Arc::new(trace), air_values })
     }

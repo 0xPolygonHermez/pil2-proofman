@@ -19,7 +19,11 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+// B3_NO_GOLDILOCKS: the permutation and its tables alone, over bare uint64_t cells, for a trace of
+// another field (pilfflonk's BN128 wrap, pilfflonk_wrap_exec.cu).
+#ifndef B3_NO_GOLDILOCKS
 #include "goldilocks_base_field.hpp"
+#endif
 
 // The pure arithmetic below runs on both backends: the CPU expander calls it directly, the CUDA
 // kernel calls the same functions on device. Only the trace writing and the multiplicity
@@ -128,9 +132,11 @@ struct Multiplicities {
 //     wraps a u64 and fromU64 is the identity, so the stored bits are the same either way.
 //   * where a lookup count goes. The host thread owns a private Multiplicities and reduces once
 //     (HostSink); a device thread is one band among many and has to add atomically.
+#ifndef B3_NO_GOLDILOCKS
 B3_HD inline void store(Goldilocks::Element &c, uint64_t v) { c.fe = v; }
-B3_HD inline void store(uint64_t &c, uint64_t v) { c = v; }
 B3_HD inline uint64_t load(const Goldilocks::Element &c) { return c.fe; }
+#endif
+B3_HD inline void store(uint64_t &c, uint64_t v) { c = v; }
 B3_HD inline uint64_t load(const uint64_t &c) { return c; }
 
 struct HostSink {
@@ -406,6 +412,7 @@ B3_HD inline void expand_block(T *trace, uint64_t nCols, uint64_t row, uint64_t 
     }
 }
 
+#ifndef B3_NO_GOLDILOCKS
 // Write the accumulated counts into the trace's last two stage-1 columns, which is where
 // blake3Tables puts mul_table and mul_range -- it is called after blake3Lanes, so they are last.
 inline void write_multiplicities(Goldilocks::Element *trace, uint64_t nCols, uint64_t nRows,
@@ -418,6 +425,7 @@ inline void write_multiplicities(Goldilocks::Element *trace, uint64_t nCols, uin
         trace[i * nCols + L.mul_range] = Goldilocks::fromU64(mul.range[i]);
     }
 }
+#endif
 
 }  // namespace blake3
 }  // namespace gate_bands

@@ -12,6 +12,7 @@
 
 #include "pilfflonk_expressions.hpp"
 #include "pilfflonk_key_gpu.hpp"
+#include "pilfflonk_wrap_exec.hpp"
 
 namespace PilFflonk {
 
@@ -32,6 +33,10 @@ public:
     // there into the columns of stage 1 in Montgomery form (ArenaLayout::evaluations). Throws
     // std::invalid_argument, before it waits, if this thread holds the arena for another instance.
     InstanceGpu(const GpuAirKey &air, const uint8_t *stage1);
+    // As the one above, of the wrap's witness as its parts (pilfflonk_wrap_exec.hpp), which the
+    // device builds into the columns of stage 1, its scratch in the arena's `work`. Throws
+    // std::invalid_argument if the AIR is not the wrap's or `work` cannot hold the parts.
+    InstanceGpu(const GpuAirKey &air, const pilfflonk_exec_witness &exec);
     InstanceGpu(const InstanceGpu &) = delete;
     InstanceGpu &operator=(const InstanceGpu &) = delete;
 

@@ -34,12 +34,25 @@ impl Zkin {
         let text = fs::read(path).map_err(|source| WrapWitnessError::Io { path: path.to_path_buf(), source })?;
         serde_json::from_slice::<BTreeMap<String, IgnoredAny>>(&text)
             .map_err(|source| WrapWitnessError::Json { path: path.to_path_buf(), source })?;
-        // SAFETY: `text` is `text.len()` bytes, which the function only reads, during the call.
-        let zkin = unsafe { pilfflonk_wrap_zkin_parse(text.as_ptr().cast(), text.len()) };
-        NonNull::new(zkin).map(Self).ok_or_else(|| WrapWitnessError::Zkin {
+        Self::parse(&text).ok_or_else(|| WrapWitnessError::Zkin {
             path: path.to_path_buf(),
             reason: "nlohmann/json cannot parse it, or there is not memory enough to hold it".to_string(),
         })
+    }
+
+    /// The zkin of the JSON object `zkin`, as [`read`](Self::read) reads one.
+    pub(crate) fn of_value(zkin: &serde_json::Value) -> WrapWitnessResult<Self> {
+        if !zkin.is_object() {
+            return Err(WrapWitnessError::Mismatch("a zkin is a JSON object".to_string()));
+        }
+        Self::parse(zkin.to_string().as_bytes()).ok_or_else(|| {
+            WrapWitnessError::Mismatch("there is not memory enough to hold the zkin in nlohmann/json".to_string())
+        })
+    }
+
+    fn parse(text: &[u8]) -> Option<Self> {
+        // SAFETY: `text` is `text.len()` bytes, which the function only reads, during the call.
+        NonNull::new(unsafe { pilfflonk_wrap_zkin_parse(text.as_ptr().cast(), text.len()) }).map(Self)
     }
 
     /// The `nlohmann::json`, for `getWitness`.

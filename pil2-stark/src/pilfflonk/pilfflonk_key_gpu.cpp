@@ -10,12 +10,14 @@
 #include <stdexcept>
 #include <utility>
 
+#include "pilfflonk_error.hpp"
 #include "pilfflonk_expressions_gpu.hpp"
 #include "pilfflonk_hints_gpu.hpp"
 #include "pilfflonk_kernels.hpp"
 #include "pilfflonk_lde_gpu.hpp"
 #include "pilfflonk_opening_gpu.hpp"
 #include "pilfflonk_proving_key.hpp"
+#include "pilfflonk_wrap_exec.hpp"
 #include "thread_utils.hpp"
 #include "timer.hpp"
 
@@ -131,8 +133,27 @@ GpuAirKey::ColumnRuns runsOf(std::vector<uint64_t> stagePos) {
 // DeviceBuffer, Staging
 // ---------------------------------------------------------------------------------------------
 
+namespace {
+thread_local DevicePool *activePool = nullptr;
+constexpr uint64_t POOL_ALIGN = 256;
+} // namespace
+
+PoolScope::PoolScope(DevicePool *pool) : previous(std::exchange(activePool, pool)) {}
+
+PoolScope::~PoolScope() { activePool = previous; }
+
 DeviceBuffer::DeviceBuffer(uint64_t _bytes) : bytes(_bytes) {
-    if (bytes > 0) {
+    if (bytes > 0 && activePool != nullptr) {
+        const uint64_t at = (activePool->bottom + POOL_ALIGN - 1) / POOL_ALIGN * POOL_ALIGN;
+        if (at > activePool->top || activePool->top - at < bytes) {
+            throw std::invalid_argument("DeviceBuffer: the key's device buffer has " +
+                                        std::to_string(activePool->top - std::min(at, activePool->top)) +
+                                        " bytes left, and it needs " + std::to_string(bytes));
+        }
+        memory = activePool->base + at;
+        activePool->bottom = at + bytes;
+        view = true;
+    } else if (bytes > 0) {
         const DeviceScope device;
         void *allocated = nullptr;
         gpu_plonk_cuda_malloc(&allocated, bytes);
@@ -140,23 +161,40 @@ DeviceBuffer::DeviceBuffer(uint64_t _bytes) : bytes(_bytes) {
     }
 }
 
+DeviceBuffer DeviceBuffer::arenaOf(DevicePool &pool, uint64_t bytes) {
+    const uint64_t at = bytes > pool.size ? 0 : (pool.size - bytes) / POOL_ALIGN * POOL_ALIGN;
+    if (bytes > pool.size || at < pool.bottom) {
+        throw std::invalid_argument("DeviceBuffer: the key's device buffer of " + std::to_string(pool.size) +
+                                    " bytes cannot hold an arena of " + std::to_string(bytes) + " beside the " +
+                                    std::to_string(pool.bottom) + " the key holds");
+    }
+    pool.top = std::min(pool.top, at);
+    DeviceBuffer view;
+    view.memory = pool.base + at;
+    view.bytes = pool.size - at;
+    view.view = true;
+    return view;
+}
+
 DeviceBuffer::~DeviceBuffer() { release(); }
 
 void DeviceBuffer::release() {
-    if (memory != nullptr) {
+    if (memory != nullptr && !view) {
         const DeviceScope device;
         gpu_plonk_cuda_free(memory);
     }
 }
 
 DeviceBuffer::DeviceBuffer(DeviceBuffer &&other) noexcept
-    : memory(std::exchange(other.memory, nullptr)), bytes(std::exchange(other.bytes, 0)) {}
+    : memory(std::exchange(other.memory, nullptr)), bytes(std::exchange(other.bytes, 0)),
+      view(std::exchange(other.view, false)) {}
 
 DeviceBuffer &DeviceBuffer::operator=(DeviceBuffer &&other) noexcept {
     if (this != &other) {
         release();
         memory = std::exchange(other.memory, nullptr);
         bytes = std::exchange(other.bytes, 0);
+        view = std::exchange(other.view, false);
     }
     return *this;
 }
@@ -348,16 +386,17 @@ GpuBudget gpuBudget(const AirKey &air, uint32_t multiprocessors) {
     GpuBudget budget;
     budget.resident = residentLayout(air).bytes + ExpressionsGpu::deviceBytesOf(air.bin(), air.info(), multiprocessors);
     budget.arena = arenaLayout(air).bytes;
-    budget.transient = spparkMsmBytes(largestDegree(air), multiprocessors) + MARGIN_BYTES;
+    // What sppark's MSM allocates for the largest of a proof's MSMs (GpuKey::commit), its NTT tables
+    // and the allocator's rounding.
+    for (uint64_t n : air.msmLengths()) {
+        budget.transient = std::max(budget.transient, spparkMsmBytes(n, multiprocessors));
+    }
+    budget.transient += MARGIN_BYTES;
     budget.loading = loadScratchBytes(air);
     return budget;
 }
 
-uint64_t loadScratchBytes(const AirKey &air) {
-    // The MSMs of the shift sums and the fixed commitments are of the layout's degrees and of W's and
-    // W''s, all within the largest degree (shplonkBounds).
-    return aligned(largestDegree(air) * sizeof(FrElement)) + aligned(air.info().nConstants * sizeof(uint64_t));
-}
+uint64_t loadScratchBytes(const AirKey &air) { return aligned(air.info().nConstants * sizeof(uint64_t)); }
 
 DeviceBytes deviceBytesOf(uint64_t nG1, const std::vector<const AirKey *> &airs, uint32_t multiprocessors) {
     // AIR after AIR, as a key on a given arena checks each before it loads (GpuKey::reserve): what it
@@ -437,6 +476,10 @@ GpuKey::GpuKey(const Srs &srs, GpuKeyOptions _options) : options(_options) {
                                     "driver)");
     }
     const DeviceScope device;
+    if (options.exclusive) {
+        pool = DevicePool{static_cast<uint8_t *>(options.arena), options.arenaBytes, 0, options.arenaBytes};
+    }
+    const PoolScope pooled(devicePool());
     smCount = pilfflonk_gpu_multiprocessors();
     const uint64_t n = srs.nG1();
     const uint64_t nBlocks = shiftBlocks(n);
@@ -446,9 +489,12 @@ GpuKey::GpuKey(const Srs &srs, GpuKeyOptions _options) : options(_options) {
                         available());
     transfers = std::make_unique<Staging>(STAGING_HALF_BYTES, volume);
     // Through the pinned halves of the Staging, as the PLONK GPU prover's d_ptau from registered memory.
-    powers = std::make_unique<Gpu>(&srs.g1(0), n, [this](void *dst, const void *src, uint64_t size) {
-        transfers->toDevice(dst, src, size);
-    });
+    if (options.exclusive) {
+        powersMemory = DeviceBuffer(powersBytes);
+    }
+    powers = std::make_unique<Gpu>(
+        &srs.g1(0), n, [this](void *dst, const void *src, uint64_t size) { transfers->toDevice(dst, src, size); },
+        powersMemory.data());
     hostPowers = &srs.g1(0);
     tables = DeviceBuffer(bytes - powersBytes);
     hBlocks = tables.data();
@@ -461,9 +507,51 @@ GpuKey::GpuKey(const Srs &srs, GpuKeyOptions _options) : options(_options) {
     held = bytes;
 }
 
-GpuKey::~GpuKey() = default;
+GpuKey::~GpuKey() {
+    if (image != nullptr) {
+        gpu_plonk_free_pinned_buffer(image);
+    }
+}
+
+void GpuKey::snapshot() const {
+    if (!options.exclusive || !options.restorable) {
+        return;
+    }
+    const DeviceScope device;
+    gpu_plonk_cuda_device_sync();
+    if (image != nullptr) {
+        gpu_plonk_free_pinned_buffer(image);
+        image = nullptr;
+    }
+    imageBytes = pool.bottom;
+    TimerStart(PILFFLONK_GPU_SNAPSHOT);
+    gpu_plonk_cuda_malloc_pinned_buffer(&image, imageBytes);
+    gpu_plonk_memcpy_d2h(image, pool.base, imageBytes);
+    TimerStopAndLog(PILFFLONK_GPU_SNAPSHOT);
+    zklog.trace("pilfflonk: a pinned copy of the key's " + std::to_string(imageBytes) + " bytes in its buffer");
+}
+
+void GpuKey::restore() const {
+    if (image == nullptr) {
+        return;
+    }
+    // Not under a proof of the key: it would read what this overwrites.
+    std::unique_lock<std::mutex> guard(leaseLock);
+    if (leased && holder == std::this_thread::get_id()) {
+        throw std::logic_error("GpuKey::restore: this thread holds a proof of the key, which would wait for itself");
+    }
+    leaseFree.wait(guard, [this] { return !leased; });
+    const DeviceScope device;
+    TimerStart(PILFFLONK_GPU_RESTORE);
+    gpu_plonk_memcpy_h2d(pool.base, image, imageBytes);
+    volume.addToDevice(imageBytes);
+    TimerStopAndLog(PILFFLONK_GPU_RESTORE);
+}
 
 uint64_t GpuKey::available() const {
+    if (options.exclusive) {
+        return pool.top - std::min(pool.bottom, pool.top);
+    }
     uint64_t free = gpuFreeBytes();
     if (options.memoryLimit != 0) {
         free = std::min(free, options.memoryLimit > held ? options.memoryLimit - held : 0);
@@ -481,6 +569,22 @@ void GpuKey::reserve(const std::string &air, const GpuBudget &budget) {
     // With an arena given, the loading's scratch is beside it while the AIR loads.
     const uint64_t loading = arenaGiven() ? budget.loading : 0;
     transient = std::max(transient, budget.transient);
+    if (options.exclusive) {
+        // In the buffer: the AIR's own and the arena's growth; beside it, a proof's transient.
+        requireDeviceMemory(air + " (its fixed columns, bytecode and tables, " + std::to_string(budget.resident) +
+                                " bytes, and the arena's growth to its proofs', " + std::to_string(growth) +
+                                ", in the key's device buffer)",
+                            budget.resident + growth, available());
+        requireDeviceMemory(air + " (what a proof allocates besides, " + std::to_string(transient) + ")", transient,
+                            gpuFreeBytes());
+        if (growth > 0) {
+            owned = DeviceBuffer::arenaOf(pool, budget.arena);
+            arenaBytes = budget.arena;
+            held += growth;
+        }
+        held += budget.resident;
+        return;
+    }
     requireDeviceMemory(air + " (its fixed columns, bytecode and tables, " + std::to_string(budget.resident) +
                             " bytes; the arena's growth to its proofs', " + std::to_string(growth) +
                             (arenaGiven() ? "; the scratch of its loading, " + std::to_string(loading) : "") +
@@ -494,44 +598,6 @@ void GpuKey::reserve(const std::string &air, const GpuBudget &budget) {
     }
     held += budget.resident;
 }
-
-void GpuKey::addShiftSums(std::vector<uint64_t> lengths, void *work) {
-    std::sort(lengths.begin(), lengths.end());
-    lengths.erase(std::unique(lengths.begin(), lengths.end()), lengths.end());
-    const auto known = [this](uint64_t n) { return shiftSums.count(n) != 0; };
-    lengths.erase(std::remove_if(lengths.begin(), lengths.end(), known), lengths.end());
-    if (lengths.empty()) {
-        return;
-    }
-    // ρ_i for i below the longest; the sum of n is that of the next shorter length it has, if any,
-    // plus Σ ρ_i·[τ^i]₁ over the points between them.
-    pilfflonk_gpu_pack_shift(work, lengths.back(), nullptr, nullptr, 0, 0, hBlocks, hPowers);
-    Engine &E = Engine::engine;
-    for (uint64_t n : lengths) {
-        uint64_t from = 0;
-        G1Point sum = E.g1.zero();
-        auto below = shiftSums.lower_bound(n);
-        if (below != shiftSums.begin()) {
-            --below;
-            from = below->first;
-            sum = below->second;
-        }
-        G1Point range =
-            msmOnDevice(static_cast<const uint8_t *>(powers->devicePowers()) + from * sizeof(G1PointAffine),
-                        static_cast<const uint8_t *>(work) + from * sizeof(FrElement), n - from);
-        if (E.g1.isZero(range)) {
-            throw std::runtime_error("GpuKey: the GPU's MSM of the shift of the points " + std::to_string(from) +
-                                     " to " + std::to_string(n) +
-                                     " gave the point at infinity: msm_bn128_gpu_dev_ptr failed (or τ is a root of "
-                                     "the shift's polynomial)");
-        }
-        G1Point total;
-        E.g1.add(total, sum, range);
-        shiftSums.emplace(n, total);
-    }
-}
-
-void GpuKey::addShiftSum(uint64_t n, void *work) { addShiftSums({n}, work); }
 
 void GpuKey::copyToHost(void *dst, const void *src, uint64_t bytes) const {
     const DeviceScope device;
@@ -577,14 +643,15 @@ GpuKey::Lease::Lease(const GpuKey &key, const char *function) : owner(key) {
     owner.leased = true;
     owner.holder = std::this_thread::get_id();
     guard.unlock();
-    if (owner.arenaGiven()) {
+    // A shared buffer's earlier user may still be writing it.
+    if (owner.arenaGiven() || owner.options.exclusive) {
         const DeviceScope device;
         gpu_plonk_cuda_device_sync();
     }
 }
 
 GpuKey::Lease::~Lease() {
-    if (owner.arenaGiven()) {
+    if (owner.arenaGiven() || owner.options.exclusive) {
         const DeviceScope device;
         gpu_plonk_cuda_device_sync();
     }
@@ -593,7 +660,8 @@ GpuKey::Lease::~Lease() {
         owner.leased = false;
         owner.holder = std::thread::id();
     }
-    owner.leaseFree.notify_one();
+    // All: a restore may be waiting beside the next Lease.
+    owner.leaseFree.notify_all();
 }
 
 void GpuKey::provingHere() const {
@@ -611,6 +679,7 @@ ProofCall::ProofCall(const GpuKey &key) { key.provingHere(); }
 
 GpuAirKey::GpuAirKey(GpuKey &_key, const AirKey &_air) : key(_key), air(_air), layout(arenaLayout(_air)) {
     const DeviceScope device;
+    const PoolScope pooled(key.devicePool());
     const PilfflonkInfo &info = air.info();
     const uint64_t N = air.n();
     checkSrsFits(air, key.nPowers());
@@ -663,72 +732,116 @@ GpuAirKey::GpuAirKey(GpuKey &_key, const AirKey &_air) : key(_key), air(_air), l
         loadScratch = DeviceBuffer(budget.loading);
     }
 
-    // The shift's sums of the MSMs of its f, and of the opening's W and W' (OpeningGpu), all within
-    // the largest degree.
-    TimerStart(PILFFLONK_GPU_SHIFT_SUMS);
-    std::vector<uint64_t> lengths;
-    for (const LayoutEntry &entry : info.layout) {
-        lengths.push_back(entry.degree);
+    for (uint64_t n : air.msmLengths()) {
+        if (!key.hasShiftSum(n)) {
+            throw FormatError(air.name() + ": the key has no shift sum of its MSMs of " + std::to_string(n) +
+                              " points: its setup is older than its .coefs and pilfflonk.shift.bin (run it again)");
+        }
     }
-    const ShplonkBounds opening = shplonkBounds(air);
-    lengths.push_back(opening.wMsm);
-    lengths.push_back(opening.wpMsm);
-    key.addShiftSums(std::move(lengths), loadWork());
-    gpu_plonk_cuda_device_sync();
-    TimerStopAndLog(PILFFLONK_GPU_SHIFT_SUMS);
 }
 
 GpuAirKey::~GpuAirKey() = default;
 
-void GpuAirKey::loadFixed(const FrElement *fixedEvaluations) {
+void GpuAirKey::loadFixed(const uint8_t *coefficients) {
     if (fixedLoaded) {
         throw std::logic_error("GpuAirKey::loadFixed: " + air.name() + "'s fixed columns are loaded already");
     }
     const DeviceScope device;
-    interpolateFixed(fixedEvaluations);
-    commitFixed();
+    const uint64_t nConstants = air.info().nConstants, N = air.n();
+    if (nConstants > 0) {
+        TimerStart(PILFFLONK_FIXED_UPLOAD);
+        uint8_t *coefs = resident.data() + fixedOffset;
+        Staging &staging = key.staging();
+        staging.toDevice(coefs, coefficients, nConstants * N * sizeof(FrElement));
+        pilfflonk_gpu_to_montgomery(coefs, nConstants * N);
+        // Their counts only: the coefficients stay on the device, and go to the host on demand
+        // (fixedToHost).
+        uint64_t *counts = loadCounts();
+        pilfflonk_gpu_count_coefficients(counts, coefs, offsetTable() + fixedColumnsStart, nConstants, N);
+        fixedCounts.assign(nConstants, 0);
+        staging.toHost(fixedCounts.data(), counts, nConstants * sizeof(uint64_t));
+        TimerStopAndLog(PILFFLONK_FIXED_UPLOAD);
+    }
     gpu_plonk_cuda_device_sync();
     loadScratch = DeviceBuffer();
     fixedLoaded = true;
 }
 
-void *GpuAirKey::loadWork() const { return key.arenaGiven() ? loadScratch.data() : key.arena() + layout.work; }
+void GpuAirKey::setExec(const pilfflonk_exec_static &exec) {
+    const uint64_t N = air.n(), C = air.witnessColumns().size();
+    // The additions kernel counts levels in a uint8_t, which wraps past 255.
+    if (execParts.size() != 0 || exec.map_rows > N || exec.map_cols > C || (exec.n_adds > 0 && exec.n_levels == 0) ||
+        exec.n_levels > 255 || exec.n_wires + exec.n_adds > UINT32_MAX) {
+        throw std::invalid_argument("GpuAirKey::setExec: parts of an exec that is not " + air.name() +
+                                    "'s, or set already");
+    }
+    // The device reads them unchecked: an addition reads wires or earlier additions, the map up to
+    // the zero past them.
+    const uint64_t cells = exec.map_rows * exec.map_cols;
+    bool outOfRange = false;
+#pragma omp parallel for reduction(|| : outOfRange)
+    for (uint64_t i = 0; i < exec.n_adds; ++i) {
+        outOfRange = outOfRange || exec.add_wire1[i] >= exec.n_wires + i || exec.add_wire2[i] >= exec.n_wires + i ||
+                     exec.add_level[i] >= exec.n_levels;
+    }
+#pragma omp parallel for reduction(|| : outOfRange)
+    for (uint64_t i = 0; i < cells; ++i) {
+        outOfRange = outOfRange || exec.map[i] > exec.n_wires + exec.n_adds;
+    }
+    if (outOfRange) {
+        throw std::invalid_argument("GpuAirKey::setExec: " + air.name() +
+                                    "'s exec has an addition or a map cell past its wires");
+    }
+    const DeviceScope device;
+    // With the key's other memory: in its buffer, and so in its snapshot, if it has one.
+    const PoolScope pooled(key.devicePool());
+    const uint64_t fr = sizeof(FrElement);
+    auto aligned256 = [](uint64_t bytes) { return (bytes + 255) / 256 * 256; };
+    const uint64_t sizes[6] = {cells * 4, exec.n_adds * 4, exec.n_adds * 4, exec.n_adds * fr, exec.n_adds * fr,
+                               exec.n_adds};
+    uint64_t total = 0;
+    for (uint64_t b : sizes) {
+        total += aligned256(b);
+    }
+    execParts = DeviceBuffer(total);
+    uint8_t *at = execParts.data();
+    const void *sources[6] = {exec.map, exec.add_wire1, exec.add_wire2, exec.add_coef1, exec.add_coef2, exec.add_level};
+    const uint8_t **targets[6] = {&execOn.map, &execOn.id1, &execOn.id2, &execOn.f1, &execOn.f2, &execOn.levels};
+    Staging &staging = key.staging();
+    for (int i = 0; i < 6; ++i) {
+        staging.toDevice(at, sources[i], sizes[i]);
+        *targets[i] = at;
+        at += aligned256(sizes[i]);
+    }
+    // As the PLONK GPU prover: the factors in Montgomery form, the witness in normal form.
+    pilfflonk_gpu_to_montgomery(const_cast<uint8_t *>(execOn.f1), exec.n_adds);
+    pilfflonk_gpu_to_montgomery(const_cast<uint8_t *>(execOn.f2), exec.n_adds);
+    gpu_plonk_cuda_device_sync();
+    execOn.nWires = exec.n_wires;
+    execOn.nAdds = exec.n_adds;
+    execOn.nLevels = exec.n_levels;
+    execOn.mapRows = exec.map_rows;
+    execOn.mapCols = exec.map_cols;
+}
 
 uint64_t *GpuAirKey::loadCounts() const {
-    uint8_t *counts = key.arenaGiven() ? loadScratch.data() + aligned(largestDegree(air) * sizeof(FrElement))
-                                       : key.arena() + layout.counts;
+    uint8_t *counts = key.arenaGiven() ? loadScratch.data() : key.arena() + layout.counts;
     return reinterpret_cast<uint64_t *>(counts);
 }
 
-void GpuAirKey::interpolateFixed(const FrElement *fixedEvaluations) {
-    const uint64_t nConstants = air.info().nConstants, N = air.n();
-    if (nConstants == 0) {
-        return;
-    }
-    TimerStart(PILFFLONK_FIXED_INTT);
-    uint8_t *coefs = resident.data() + fixedOffset;
-    Staging &staging = key.staging();
-    staging.toDevice(coefs, fixedEvaluations, nConstants * N * sizeof(FrElement));
-    for (uint64_t c = 0; c < nConstants; ++c) {
-        transformOnDevice(coefs + c * N * sizeof(FrElement), air.info().nBits, true);
-    }
-    // Their counts only: the coefficients stay on the device, and go to the host on demand
-    // (fixedToHost).
-    uint64_t *counts = loadCounts();
-    pilfflonk_gpu_count_coefficients(counts, coefs, offsetTable() + fixedColumnsStart, nConstants, N);
-    fixedCounts.assign(nConstants, 0);
-    staging.toHost(fixedCounts.data(), counts, nConstants * sizeof(uint64_t));
-    TimerStopAndLog(PILFFLONK_FIXED_INTT);
-}
-
-void GpuAirKey::commitFixed() {
-    TimerStart(PILFFLONK_FIXED_COMMITMENTS);
-    for (uint64_t f = 0; f < air.nFixedF(); ++f) {
-        const LayoutEntry &entry = air.info().layout[f];
-        fixedPoints.push_back(
-            key.commit(fixedCoefficients(), offsets(f), entry.k, air.n(), entry.degree, loadWork()));
-    }
-    TimerStopAndLog(PILFFLONK_FIXED_COMMITMENTS);
+const std::vector<G1Point> &GpuAirKey::fixedCommitments() const {
+    std::call_once(fixedCommitted, [this] {
+        const GpuKey::Lease lease(key, "GpuAirKey::fixedCommitments");
+        const DeviceScope device;
+        TimerStart(PILFFLONK_FIXED_COMMITMENTS);
+        for (uint64_t f = 0; f < air.nFixedF(); ++f) {
+            const LayoutEntry &entry = air.info().layout[f];
+            fixedPoints.push_back(key.commit(fixedCoefficients(), offsets(f), entry.k, air.n(), entry.degree,
+                                             key.arena() + layout.work));
+        }
+        TimerStopAndLog(PILFFLONK_FIXED_COMMITMENTS);
+    });
+    return fixedPoints;
 }
 
 uint64_t GpuAirKey::fixedDegree(uint64_t c) const {

@@ -116,6 +116,8 @@ pub struct SetupParams {
 pub enum AirFile {
     /// `<air>.const`: the fixed columns.
     Const,
+    /// `<air>.coefs`: their coefficients, which the prover loads (pilfflonk/docs/formats.md#fixed-coefficients).
+    Coefs,
     /// `<air>.pilfflonkinfo.json`.
     PilfflonkInfo,
     /// `<air>.expressionsinfo.json`.
@@ -132,6 +134,7 @@ impl AirFile {
     pub fn extension(self) -> &'static str {
         match self {
             AirFile::Const => "const",
+            AirFile::Coefs => "coefs",
             AirFile::PilfflonkInfo => "pilfflonkinfo.json",
             AirFile::ExpressionsInfo => "expressionsinfo.json",
             AirFile::VerifierInfo => "verifierinfo.json",

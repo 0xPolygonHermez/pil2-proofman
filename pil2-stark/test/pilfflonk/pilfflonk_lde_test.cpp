@@ -588,7 +588,7 @@ void testRefusedArguments() {
     expectInvalid([&] { lde.extendCosetPart(&constA, nullptr, 1, 1, 3, 0); }, "Lde::extendCosetPart: evals is null");
     expectInvalid([&] { lde.extendCosetPart(constPair, withNull, 2, 1, 3, 0); },
                   "Lde::extendCosetPart: evals[1] is null");
-    expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, 0, 3, 0); }, "Lde::extendCosetPart: no coefficients");
+    expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, uint64_t(0), 3, 0); }, "Lde::extendCosetPart: no coefficients");
     expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, NExt + 1, 3, 0); }, "33 coefficients exceed the 32");
     expectInvalid([&] { lde.extendCosetPart(&constA, &pb, 1, 1, 2, 0); },
                   "a part of 2^2 points, and the parts have from 8 to 32");

@@ -10,6 +10,9 @@ use std::ptr::NonNull;
 
 include!("../bindings_pilfflonk.rs");
 
+// The C struct's layout (pilfflonk_wrap_exec.hpp).
+const _: () = assert!(std::mem::size_of::<pilfflonk_wrap_block>() == 512);
+
 /// Size of a BN128 scalar at the C API: a canonical (< r) little-endian integer.
 pub const PILFFLONK_FR_BYTES: usize = 32;
 
@@ -338,6 +341,15 @@ pub fn pilfflonk_gpu_device_bytes_c(dir: &Path) -> Result<PilFflonkDeviceBytes, 
     Ok(bytes)
 }
 
+/// The setup's last step for the provingKey/ at `dir`: each AIR's `<air>.coefs` from its `.const`,
+/// and `pilfflonk.shift.bin` next to the SRS, which a key loads instead of computing them, stamped
+/// with `vkey_digest`, the vkey's ([`PilFflonkProverCtx::precomputed_digest`]).
+pub fn pilfflonk_precompute_c(dir: &Path, vkey_digest: &[u8; 32]) -> Result<(), PilFflonkError> {
+    let path = c_path("pilfflonk_precompute", dir)?;
+    // SAFETY: `path` is a NUL-terminated string and `vkey_digest` 32 bytes, both outliving the call.
+    check_status(unsafe { pilfflonk_precompute(path.as_ptr(), vkey_digest.as_ptr()) })
+}
+
 /// The free memory of CUDA device 0, in bytes: what a [`PilFflonkProverCtx`]'s load on the GPU checks
 /// [`pilfflonk_gpu_device_bytes_c`]'s needs against, for a caller that reserves device memory before
 /// it loads a context (the wrap's). Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument)
@@ -408,6 +420,77 @@ impl PilFflonkProverCtx {
         NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
     }
 
+    /// [`load_on_device_buffer`](Self::load_on_device_buffer) with all its device memory in the buffer,
+    /// written as its own. With `restorable`, others use the buffer between the proofs: the context
+    /// keeps a pinned host copy of what it holds there, which [`restore`](Self::restore) writes back.
+    ///
+    /// # Safety
+    ///
+    /// `buffer` must be `bytes` bytes of device memory on CUDA device 0, which outlive the context,
+    /// and which nothing else uses while it loads, while an instance of it lives, and (without
+    /// `restorable`) at all while it lives.
+    pub unsafe fn load_in_device_buffer(
+        dir: &Path,
+        buffer: *mut c_void,
+        bytes: u64,
+        restorable: bool,
+    ) -> Result<Self, PilFflonkError> {
+        let path = c_path("pilfflonk_ctx_new_in_device_buffer", dir)?;
+        // SAFETY: as load_on_device_buffer's.
+        let handle = unsafe { pilfflonk_ctx_new_in_device_buffer(path.as_ptr(), buffer, bytes, u32::from(restorable)) };
+        NonNull::new(handle).map(|handle| Self { handle }).ok_or_else(last_failure)
+    }
+
+    /// The blake3 wrap's parts of every proof's witness, on the device with the context, once.
+    pub fn set_exec(
+        &self,
+        airgroup_id: u64,
+        air_id: u64,
+        exec: &PilFflonkExecStatic<'_>,
+    ) -> Result<(), PilFflonkError> {
+        let n_adds = exec.add_wire1.len();
+        if exec.add_wire2.len() != n_adds
+            || exec.add_coef1.len() != n_adds * PILFFLONK_FR_BYTES
+            || exec.add_coef2.len() != n_adds * PILFFLONK_FR_BYTES
+            || exec.add_level.len() != n_adds
+            || (exec.map_cols == 0 && !exec.map.is_empty())
+            || (exec.map_cols != 0 && !(exec.map.len() as u64).is_multiple_of(exec.map_cols))
+        {
+            return Err(PilFflonkError {
+                kind: PilFflonkErrorKind::InvalidArgument,
+                message: "the exec's arrays are not of the sizes of its additions and map".to_string(),
+            });
+        }
+        let raw = pilfflonk_exec_static {
+            n_wires: exec.n_wires,
+            add_wire1: exec.add_wire1.as_ptr(),
+            add_wire2: exec.add_wire2.as_ptr(),
+            add_coef1: exec.add_coef1.as_ptr(),
+            add_coef2: exec.add_coef2.as_ptr(),
+            add_level: exec.add_level.as_ptr(),
+            n_adds: n_adds as u64,
+            n_levels: exec.n_levels,
+            map: exec.map.as_ptr(),
+            map_rows: (exec.map.len() as u64).checked_div(exec.map_cols).unwrap_or(0),
+            map_cols: exec.map_cols,
+        };
+        // SAFETY: `raw` points into `exec`'s slices, of the lengths it says, alive during the call;
+        // the handle is live.
+        check_status(unsafe { pilfflonk_ctx_set_exec(self.handle.as_ptr(), airgroup_id, air_id, &raw) })
+    }
+
+    /// A restorable context's pinned copy of what it holds in its buffer, once all of it is there.
+    pub fn snapshot(&self) -> Result<(), PilFflonkError> {
+        // SAFETY: the handle is live.
+        check_status(unsafe { pilfflonk_ctx_snapshot(self.handle.as_ptr()) })
+    }
+
+    /// Writes back what a restorable context holds in its buffer, from its pinned copy.
+    pub fn restore(&self) -> Result<(), PilFflonkError> {
+        // SAFETY: the handle is live.
+        check_status(unsafe { pilfflonk_ctx_restore(self.handle.as_ptr()) })
+    }
+
     /// The `nBitsExt` of an AIR (pilfflonk/docs/protocol.md#degrees), as the C++ side derives it.
     pub fn n_bits_ext(&self, airgroup_id: u64, air_id: u64) -> Result<u64, PilFflonkError> {
         let mut out = 0u64;
@@ -424,10 +507,24 @@ impl PilFflonkProverCtx {
         Ok(out)
     }
 
+    /// The vkey digest the context's precomputed files (`.coefs`, the shift sums) were made for.
+    pub fn precomputed_digest(&self) -> Result<[u8; 32], PilFflonkError> {
+        let mut out = [0u8; 32];
+        // SAFETY: the handle is live and `out` has the 32 bytes the call writes.
+        check_status(unsafe { pilfflonk_ctx_precomputed_digest(self.handle.as_ptr(), out.as_mut_ptr()) })?;
+        Ok(out)
+    }
+
+    /// Checks the context's SRS as a fresh load does: it loads it unchecked.
+    pub fn check_srs(&self) -> Result<(), PilFflonkError> {
+        // SAFETY: the handle is live.
+        check_status(unsafe { pilfflonk_ctx_check_srs(self.handle.as_ptr()) })
+    }
+
     /// The commitments of the `n` fixed f of an AIR, the first `n` of its layout, computed from its
-    /// `.const` as the context holds it, as the setup commits them for the vkey: one MSM per f.
-    /// Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if there is no such AIR
-    /// or `n` is not its number of fixed f.
+    /// fixed coefficients as the context holds them, as the setup commits them for the vkey: one MSM
+    /// per f. Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) if there is no
+    /// such AIR or `n` is not its number of fixed f.
     pub fn fixed_commitments(
         &self,
         airgroup_id: u64,
@@ -476,6 +573,37 @@ pub struct PilFflonkInstanceInputs<'a> {
     pub insecure_blinding_seed: Option<&'a [u8; 32]>,
 }
 
+/// The blake3 wrap's parts of every proof's witness, on the device with the key once
+/// ([`PilFflonkProverCtx::set_exec`], pilfflonk/pilfflonk_wrap_exec.hpp): scalars canonical
+/// little-endian.
+#[derive(Clone, Copy, Debug)]
+pub struct PilFflonkExecStatic<'a> {
+    /// The circom witness's wires.
+    pub n_wires: u64,
+    /// Addition i, wire `n_wires + i` = `add_coef1[i]·add_wire1[i] + add_coef2[i]·add_wire2[i]`, of
+    /// level `add_level[i]`, below `n_levels` (at most 255).
+    pub add_wire1: &'a [u32],
+    pub add_wire2: &'a [u32],
+    pub add_coef1: &'a [u8],
+    pub add_coef2: &'a [u8],
+    pub add_level: &'a [u8],
+    pub n_levels: u64,
+    /// `map_cols` columns of wires, column after column; `n_wires + n_adds`, a zero, for none.
+    pub map: &'a [u32],
+    pub map_cols: u64,
+}
+
+/// What a proof adds to [`PilFflonkExecStatic`], for the device to build the stage-1 witness of the
+/// blake3 wrap's AIR (`pilfflonk_instance_new_exec`).
+#[derive(Clone, Copy, Debug)]
+pub struct PilFflonkExecWitness<'a> {
+    /// The circom witness, wire 0 the constant one.
+    pub wires: &'a [u8],
+    pub blocks: &'a [pilfflonk_wrap_block],
+    /// 2^16 counts of the 16-bit table's rows the range-check rows look up.
+    pub range_counts: &'a [u32],
+}
+
 /// An instance of an AIR being proved (pilfflonk/docs/protocol.md#proof-sequence, steps 2 and 3),
 /// owned by the C++ side. It borrows the context it was made from.
 #[derive(Debug)]
@@ -502,6 +630,48 @@ impl<'ctx> PilFflonkInstance<'ctx> {
                 inputs.air_id,
                 ptr_or_null(inputs.stage1),
                 inputs.stage1.len() as u64,
+                ptr_or_null(inputs.air_values),
+                inputs.air_values.len() as u64,
+                ptr_or_null(inputs.publics),
+                inputs.publics.len() as u64,
+                ptr_or_null(inputs.proof_values),
+                inputs.proof_values.len() as u64,
+                seed,
+            )
+        };
+        NonNull::new(handle).map(|handle| Self { handle, _ctx: PhantomData }).ok_or_else(last_failure)
+    }
+
+    /// [`new`](Self::new), the stage-1 witness as its parts, which the device builds: on a context
+    /// on the GPU only. `inputs.stage1` is not read.
+    pub fn new_exec(
+        ctx: &'ctx PilFflonkProverCtx,
+        inputs: &PilFflonkInstanceInputs<'_>,
+        exec: &PilFflonkExecWitness<'_>,
+    ) -> Result<Self, PilFflonkError> {
+        let raw = pilfflonk_exec_witness {
+            wires: exec.wires.as_ptr(),
+            n_wires: exec.wires.len() as u64 / PILFFLONK_FR_BYTES as u64,
+            blocks: exec.blocks.as_ptr(),
+            n_blocks: exec.blocks.len() as u64,
+            range_counts: exec.range_counts.as_ptr(),
+        };
+        if exec.range_counts.len() != 1 << 16 || !exec.wires.len().is_multiple_of(PILFFLONK_FR_BYTES) {
+            return Err(PilFflonkError {
+                kind: PilFflonkErrorKind::InvalidArgument,
+                message: "the exec witness's wires or range counts are not of their sizes".to_string(),
+            });
+        }
+        let seed = inputs.insecure_blinding_seed.map_or(std::ptr::null(), |seed| seed.as_ptr());
+        // SAFETY: `raw` points into `exec`'s vectors, of the lengths it says, alive during the call;
+        // every other pointer is NULL with a count of 0 or holds the scalars the call reads, and the
+        // context is live; the result is either NULL or a handle this value then owns.
+        let handle = unsafe {
+            pilfflonk_instance_new_exec(
+                ctx.handle.as_ptr(),
+                inputs.airgroup_id,
+                inputs.air_id,
+                &raw,
                 ptr_or_null(inputs.air_values),
                 inputs.air_values.len() as u64,
                 ptr_or_null(inputs.publics),

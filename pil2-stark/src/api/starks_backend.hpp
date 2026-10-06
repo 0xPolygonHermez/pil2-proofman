@@ -75,6 +75,7 @@ struct StarksBackend {
     uint64_t (*get_stream_commit_slots)(void *d_buffers_);
     uint64_t (*get_stream_commit_gpus)(void *d_buffers_);
     uint64_t (*get_stream_commit_floor)(void *d_buffers_);
+    uint64_t (*get_aux_trace_end)(void *d_buffers_);
     uint64_t (*stream_commit_slot_bytes)(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes);
     void (*configure_stream_commit_slots)(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
     void (*configure_prefetch_zone)(void *d_buffers_, uint64_t witnessBytes);

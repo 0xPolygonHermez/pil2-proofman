@@ -7,12 +7,17 @@ use std::path::Path;
 
 use proofman_common::exec_format::{ExecFile, RANGE_CHECK_BAND_KIND, RANGE_CHECK_CHUNK_BITS, RANGE_CHECK_CHUNK_COLS};
 use proofman_common::final_witness::{FinalWitnessLibrary, FINAL_WITNESS_VALUE_BYTES};
-use proofman_fields::{Bn128, QuotientMap};
-use proofman_pilfflonk::{AirInstanceRef, AirShape, FrBytes, InstanceWitness, Stage1Witness, Witness, WitnessShape};
-use proofman_util::{timer_start_info, timer_stop_and_log_info};
+use proofman_fields::Bn128;
+use proofman_pilfflonk::{
+    AirInstanceRef, AirShape, ExecStatic, ExecWitness, FrBytes, InstanceWitness, Stage1Witness, Witness, WitnessShape,
+};
+use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
 use rayon::prelude::*;
 
 use crate::artifacts::WrapArtifacts;
+use crate::blake3::Blake3Bands;
+use crate::device::{blocks_of, ExecParts, ProofParts};
+use crate::trace::{put_word, show, trace_of, word, VALUE_BYTES};
 use crate::error::{WrapWitnessError, WrapWitnessResult};
 use crate::zkin::Zkin;
 
@@ -23,6 +28,25 @@ pub struct WrapWitness {
     artifacts: WrapArtifacts,
     calculator: FinalWitnessLibrary,
     exec: ExecFile<Bn128>,
+    bands: Option<Bands>,
+    /// The exec's parts for the device, of a blake3 wrap.
+    device: Option<ExecParts>,
+}
+
+/// The stage-1 witness of a proof of the blake3 wrap as its parts, for the GPU to build
+/// ([`WrapWitness::device_witness`], [`proofman_pilfflonk::prove_exec`]).
+#[derive(Debug)]
+pub struct DeviceWitness {
+    pub air: AirInstanceRef,
+    pub publics: Vec<FrBytes>,
+    proof: ProofParts,
+}
+
+impl DeviceWitness {
+    /// The parts, as `prove_exec` takes them.
+    pub fn exec(&self) -> ExecWitness<'_> {
+        ExecParts::exec_witness(&self.proof)
+    }
 }
 
 impl WrapWitness {
@@ -40,13 +64,18 @@ impl WrapWitness {
             }
         }
         let exec = ExecFile::<Bn128>::read(&artifacts.exec).map_err(WrapWitnessError::Exec)?;
-        RangeChecks::of(&exec)
+        let bands = Bands::of(&exec)
             .map_err(|e| WrapWitnessError::Mismatch(format!("the exec {} {e}", artifacts.exec.display())))?;
         let calculator =
             FinalWitnessLibrary::load(&artifacts.witness_calculator, &artifacts.dat).map_err(|source| {
                 WrapWitnessError::Calculator { path: artifacts.witness_calculator.clone(), zkin: None, source }
             })?;
-        Ok(Self { artifacts: artifacts.clone(), calculator, exec })
+        // With the key's load, rather than in the first proof.
+        let device = match bands {
+            Some(Bands::Blake3(_)) => Some(ExecParts::of(&exec)?),
+            _ => None,
+        };
+        Ok(Self { artifacts: artifacts.clone(), calculator, exec, bands, device })
     }
 
     pub fn artifacts(&self) -> &WrapArtifacts {
@@ -57,11 +86,21 @@ impl WrapWitness {
         &self.exec
     }
 
+    /// The parts of every proof's witness on the device, of a blake3 wrap: what the key takes once
+    /// (`ProvingKey::set_exec`).
+    pub fn exec_static(&self) -> Option<ExecStatic<'_>> {
+        self.device.as_ref().map(ExecParts::exec_static)
+    }
+
     /// The witness of the wrap's AIR, of shape `shape`, from the zkin in the file `zkin`: what the
     /// dynamic library returns for `pilfflonk prove -w`.
     pub fn witness(&self, shape: &WitnessShape, zkin: &Path) -> WrapWitnessResult<Witness> {
         wrap_air(shape)?;
-        witness_from_circom(&self.exec, self.circom_witness(zkin)?, shape)
+        let json = Zkin::read(zkin)?;
+        // SAFETY: `json` is a nlohmann::json of the calculator's nlohmann/json (src/zkin.cpp), alive
+        // and only the calculator's until it returns.
+        let wires = unsafe { self.compute_bytes(json.as_ptr(), Some(zkin))? };
+        witness_from_bytes(&self.exec, self.bands.as_ref(), wires, shape)
     }
 
     /// [`witness`](Self::witness), from a zkin in memory, as the PLONK and FFLONK wraps hand the
@@ -74,7 +113,35 @@ impl WrapWitness {
     /// the call.
     pub unsafe fn witness_from_json(&self, shape: &WitnessShape, zkin: *mut c_void) -> WrapWitnessResult<Witness> {
         wrap_air(shape)?;
-        witness_from_circom(&self.exec, self.circom_witness_from_json(zkin)?, shape)
+        witness_from_bytes(&self.exec, self.bands.as_ref(), self.compute_bytes(zkin, None)?, shape)
+    }
+
+    /// [`witness`](Self::witness), from the zkin `zkin`, a JSON object
+    /// ([`gl_proof_zkin`](crate::gl_proof_zkin)'s).
+    pub fn witness_from_zkin(&self, shape: &WitnessShape, zkin: &serde_json::Value) -> WrapWitnessResult<Witness> {
+        wrap_air(shape)?;
+        let json = Zkin::of_value(zkin)?;
+        // SAFETY: `json` is a nlohmann::json of the calculator's nlohmann/json, alive and only the
+        // calculator's until it returns.
+        let wires = unsafe { self.compute_bytes(json.as_ptr(), None)? };
+        witness_from_bytes(&self.exec, self.bands.as_ref(), wires, shape)
+    }
+
+    /// [`witness_from_zkin`](Self::witness_from_zkin) as its parts, for the GPU to build: of the
+    /// blake3 wrap only, whose exec has blake3 blocks.
+    pub fn device_witness(&self, shape: &WitnessShape, zkin: &serde_json::Value) -> WrapWitnessResult<DeviceWitness> {
+        let air = wrap_air(shape)?;
+        let (Some(Bands::Blake3(bands)), Some(parts)) = (&self.bands, &self.device) else {
+            return Err(WrapWitnessError::Mismatch("the exec has no blake3 blocks for the device to build".into()));
+        };
+        let json = Zkin::of_value(zkin)?;
+        // SAFETY: `json` is a nlohmann::json of the calculator's nlohmann/json, alive and only the
+        // calculator's until it returns.
+        let wires = unsafe { self.compute_bytes(json.as_ptr(), None)? };
+        timer_start_debug!(PILFFLONK_WRAP_DEVICE_PARTS);
+        let (publics, proof) = parts.witness(&self.exec, bands, wires, shape.n_publics())?;
+        timer_stop_and_log_debug!(PILFFLONK_WRAP_DEVICE_PARTS);
+        Ok(DeviceWitness { air: AirInstanceRef { airgroup_id: air.airgroup_id, air_id: air.air_id }, publics, proof })
     }
 
     /// The final circuit's witness for the zkin in the file `zkin`: a value per witness index, wire
@@ -86,15 +153,6 @@ impl WrapWitness {
         unsafe { self.compute(json.as_ptr(), Some(zkin)) }
     }
 
-    /// [`circom_witness`](Self::circom_witness), from a zkin in memory.
-    ///
-    /// # Safety
-    ///
-    /// As [`witness_from_json`](Self::witness_from_json).
-    pub unsafe fn circom_witness_from_json(&self, zkin: *mut c_void) -> WrapWitnessResult<Vec<Bn128>> {
-        self.compute(zkin, None)
-    }
-
     /// The circuit's witness for the zkin `json`, read from the file `zkin` if it was.
     ///
     /// # Safety
@@ -102,13 +160,8 @@ impl WrapWitness {
     /// As [`witness_from_json`](Self::witness_from_json).
     unsafe fn compute(&self, json: *mut c_void, zkin: Option<&Path>) -> WrapWitnessResult<Vec<Bn128>> {
         let path = &self.artifacts.witness_calculator;
-        timer_start_info!(PILFFLONK_WRAP_CIRCOM_WITNESS);
-        let bytes = self.calculator.witness(json).map_err(|source| WrapWitnessError::Calculator {
-            path: path.clone(),
-            zkin: zkin.map(Path::to_path_buf),
-            source,
-        })?;
-        let witness = bytes
+        let bytes = self.compute_bytes(json, zkin)?;
+        bytes
             .par_chunks_exact(FINAL_WITNESS_VALUE_BYTES)
             .enumerate()
             .map(|(wire, value)| {
@@ -117,14 +170,32 @@ impl WrapWitness {
                 Bn128::from_le_bytes(canonical).ok_or(wire)
             })
             .collect::<Result<Vec<_>, usize>>()
-            .map_err(|wire| {
-                WrapWitnessError::Mismatch(format!(
-                    "the witness calculator {} wrote wire {wire} of the circuit's witness not below r",
-                    path.display()
-                ))
-            })?;
-        timer_stop_and_log_info!(PILFFLONK_WRAP_CIRCOM_WITNESS);
-        Ok(witness)
+            .map_err(|wire| not_below_r(path, wire))
+    }
+
+    /// The circuit's witness for the zkin `json`, as the calculator writes it: each value 32 bytes,
+    /// canonical, little endian, each checked below `r`.
+    ///
+    /// # Safety
+    ///
+    /// As [`witness_from_json`](Self::witness_from_json).
+    unsafe fn compute_bytes(&self, json: *mut c_void, zkin: Option<&Path>) -> WrapWitnessResult<Vec<u8>> {
+        let path = &self.artifacts.witness_calculator;
+        timer_start_debug!(PILFFLONK_WRAP_CIRCOM_WITNESS);
+        let bytes = self.calculator.witness(json).map_err(|source| WrapWitnessError::Calculator {
+            path: path.clone(),
+            zkin: zkin.map(Path::to_path_buf),
+            source,
+        })?;
+        if let Some(wire) = bytes.par_chunks_exact(FINAL_WITNESS_VALUE_BYTES).position_any(|value| {
+            let mut canonical = [0u8; FINAL_WITNESS_VALUE_BYTES];
+            canonical.copy_from_slice(value);
+            FrBytes::from_le_bytes(canonical).is_err()
+        }) {
+            return Err(not_below_r(path, wire));
+        }
+        timer_stop_and_log_debug!(PILFFLONK_WRAP_CIRCOM_WITNESS);
+        Ok(bytes)
     }
 }
 
@@ -141,25 +212,51 @@ pub fn witness_from_circom(
     circom: Vec<Bn128>,
     shape: &WitnessShape,
 ) -> WrapWitnessResult<Witness> {
+    let wires = circom.par_iter().flat_map_iter(|v| v.to_le_bytes()).collect();
+    let bands = Bands::of(exec).map_err(|e| WrapWitnessError::Mismatch(format!("the exec {e}")))?;
+    witness_from_bytes(exec, bands.as_ref(), wires, shape)
+}
+
+/// [`witness_from_circom`], of the circom witness's bytes, each value below `r`, and `exec`'s bands.
+fn witness_from_bytes(
+    exec: &ExecFile<Bn128>,
+    bands: Option<&Bands>,
+    wires: Vec<u8>,
+    shape: &WitnessShape,
+) -> WrapWitnessResult<Witness> {
     let air = wrap_air(shape)?;
-    let range_checks = RangeChecks::of(exec).map_err(|e| WrapWitnessError::Mismatch(format!("the exec {e}")))?;
-    timer_start_info!(PILFFLONK_WRAP_EXEC);
+    timer_start_debug!(PILFFLONK_WRAP_EXEC);
     let n_rows = 1usize << air.n_bits;
-    let mut pols =
-        exec.committed_pols(circom, shape.n_publics(), n_rows, air.n_cols).map_err(WrapWitnessError::Exec)?;
-    if let Some(range_checks) = range_checks {
-        range_checks.count(&mut pols.trace, n_rows, air.n_cols)?;
+    let blocks = match bands {
+        Some(Bands::Blake3(blake3)) => Some(blocks_of(exec, blake3, &wires)?),
+        _ => None,
+    };
+    let (publics, mut trace) = trace_of(exec, wires, shape.n_publics(), n_rows, air.n_cols)?;
+    match (bands, blocks) {
+        (Some(Bands::RangeChecks(range_checks)), _) => range_checks.count(&mut trace, n_rows, air.n_cols)?,
+        (Some(Bands::Blake3(blake3)), Some((blocks, range))) => {
+            blake3.fill(&mut trace, n_rows, air.n_cols, &blocks, &range)?
+        }
+        _ => {}
     }
-    let stage1 = Stage1Witness::from_rows(n_rows, air.n_cols, &pols.trace, vec![])?;
-    timer_stop_and_log_info!(PILFFLONK_WRAP_EXEC);
+    let stage1 = Stage1Witness::new(n_rows, air.n_cols, trace, vec![])?;
+    timer_stop_and_log_debug!(PILFFLONK_WRAP_EXEC);
     Ok(Witness {
         instances: vec![InstanceWitness {
             air: AirInstanceRef { airgroup_id: air.airgroup_id, air_id: air.air_id },
             stage1,
         }],
-        publics: pols.publics.into_iter().map(FrBytes::from).collect(),
+        publics,
         proof_values: vec![],
     })
+}
+
+/// A wire of the circuit's witness that its calculator wrote not below `r`.
+fn not_below_r(path: &Path, wire: usize) -> WrapWitnessError {
+    WrapWitnessError::Mismatch(format!(
+        "the witness calculator {} wrote wire {wire} of the circuit's witness not below r",
+        path.display()
+    ))
 }
 
 /// The AIR of the wrap's key: its only one, with no stage-1 air values, in a key with no stage-1
@@ -182,6 +279,25 @@ fn wrap_air(shape: &WitnessShape) -> WrapWitnessResult<&AirShape> {
         ));
     }
     Ok(air)
+}
+
+/// The gate bands of the wrap's AIR: the PoseidonBN128 wrap's range checks, or the blake3 BN128
+/// wrap's blocks and range checks.
+#[derive(Debug)]
+enum Bands {
+    RangeChecks(RangeChecks),
+    Blake3(Blake3Bands),
+}
+
+impl Bands {
+    /// The bands of `exec`, `None` if it has none, or why they are not a wrap's. The error completes
+    /// "the exec ...".
+    fn of(exec: &ExecFile<Bn128>) -> Result<Option<Self>, String> {
+        if let Some(blake3) = Blake3Bands::of(exec)? {
+            return Ok(Some(Self::Blake3(blake3)));
+        }
+        Ok(RangeChecks::of(exec)?.map(Self::RangeChecks))
+    }
 }
 
 /// The range checks of the wrap's AIR, as its exec describes them: a range-check band of the exec
@@ -238,7 +354,7 @@ impl RangeChecks {
     /// them all up. Refuses an AIR of fewer rows than the table's `2^16` or without the
     /// multiplicity's column, a range-check row past its rows, and a chunk of `2^16` or more, which
     /// no row of the table holds: the circuit's witness does not satisfy its `Num2Bytes`.
-    fn count(&self, trace: &mut [Bn128], n_rows: usize, n_cols: usize) -> WrapWitnessResult<()> {
+    fn count(&self, trace: &mut [u8], n_rows: usize, n_cols: usize) -> WrapWitnessResult<()> {
         let mismatch = |e: String| Err(WrapWitnessError::Mismatch(e));
         let table_rows = 1usize << RANGE_CHECK_CHUNK_BITS;
         if n_rows < table_rows {
@@ -252,38 +368,28 @@ impl RangeChecks {
                 self.multiplicity_column
             ));
         }
-        debug_assert_eq!(trace.len(), n_rows * n_cols);
+        debug_assert_eq!(trace.len(), n_rows * n_cols * VALUE_BYTES);
         let mut counts = vec![0u64; table_rows];
         for &row in &self.rows {
             if row >= n_rows {
                 return mismatch(format!("the exec has a range check at row {row}, and the AIR has {n_rows} rows"));
             }
             for col in RANGE_CHECK_CHUNK_COLS {
-                let cell = trace[row * n_cols + col];
-                let Some(chunk) = chunk_value(&cell) else {
+                let Some(chunk) = word(trace, row * n_cols + col).filter(|&v| v < 1 << RANGE_CHECK_CHUNK_BITS) else {
+                    let cell = show(trace, row * n_cols + col);
                     return mismatch(format!(
                         "the chunk of the range check at row {row}, column {col}, is {cell}, not below \
                          2^{RANGE_CHECK_CHUNK_BITS}: the circuit's witness does not satisfy its Num2Bytes"
                     ));
                 };
-                counts[chunk] += 1;
+                counts[chunk as usize] += 1;
             }
         }
         for (row, count) in counts.into_iter().enumerate() {
-            trace[row * n_cols + self.multiplicity_column] = Bn128::from_int(count);
+            put_word(trace, row * n_cols + self.multiplicity_column, count);
         }
         Ok(())
     }
-}
-
-/// The value of `cell` if it is a chunk, below `2^16`.
-fn chunk_value(cell: &Bn128) -> Option<usize> {
-    let bytes = cell.to_le_bytes();
-    let chunk_bytes = RANGE_CHECK_CHUNK_BITS as usize / 8;
-    bytes[chunk_bytes..]
-        .iter()
-        .all(|&b| b == 0)
-        .then(|| bytes[..chunk_bytes].iter().rev().fold(0, |v, &b| v << 8 | b as usize))
 }
 
 #[cfg(test)]
@@ -291,9 +397,19 @@ mod tests {
     use std::collections::HashMap;
 
     use proofman_common::exec_format::{ExecGateBand, ExecLayout};
-    use proofman_fields::{Field, PrimeField};
+    use proofman_fields::{Field, PrimeField, QuotientMap};
 
     use super::*;
+
+    /// [`RangeChecks::count`] on a trace of values.
+    fn count(checks: &RangeChecks, trace: &mut [Bn128], n_rows: usize, n_cols: usize) -> WrapWitnessResult<()> {
+        let mut bytes: Vec<u8> = trace.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let counted = checks.count(&mut bytes, n_rows, n_cols);
+        for (v, b) in trace.iter_mut().zip(bytes.chunks_exact(VALUE_BYTES)) {
+            *v = Bn128::from_le_bytes(b.try_into().unwrap()).unwrap();
+        }
+        counted
+    }
 
     /// The wrap's columns: the 9 wires and `RANGE_MUL`.
     const N_COLS: usize = 10;
@@ -350,7 +466,7 @@ mod tests {
         let checks = RangeChecks::of(&exec(&bands, 9)).unwrap().expect("range checks");
         let mut trace = trace_of(&rows);
         let gathered = trace.clone();
-        checks.count(&mut trace, N_ROWS, N_COLS).unwrap();
+        count(&checks, &mut trace, N_ROWS, N_COLS).unwrap();
 
         let rows: Vec<usize> = rows.iter().map(|&(row, _)| row).collect();
         let counts = naive_counts(&gathered, &rows);
@@ -365,7 +481,7 @@ mod tests {
         // Past the table, at 2^17 rows: the same counts, and zeros after them.
         let mut tall = vec![Bn128::ZERO; 2 * N_ROWS * N_COLS];
         tall[..N_ROWS * N_COLS].copy_from_slice(&gathered);
-        checks.count(&mut tall, 2 * N_ROWS, N_COLS).unwrap();
+        count(&checks, &mut tall, 2 * N_ROWS, N_COLS).unwrap();
         assert_eq!(tall[..N_ROWS * N_COLS], trace[..]);
         assert!(tall[N_ROWS * N_COLS..].iter().all(|v| *v == Bn128::ZERO));
     }
@@ -400,7 +516,7 @@ mod tests {
         let checks = |bands: &[(u64, u64)], column| RangeChecks::of(&exec(bands, column)).unwrap().unwrap();
         let mut trace = trace_of(&[(3, 2)]);
         let err = |checks: RangeChecks, trace: &mut [Bn128], n_rows, n_cols| {
-            checks.count(trace, n_rows, n_cols).unwrap_err().to_string()
+            count(&checks, trace, n_rows, n_cols).unwrap_err().to_string()
         };
         let mut short = vec![Bn128::ZERO; (N_ROWS / 2) * N_COLS];
         assert!(err(checks(&[(3, 2)], 9), &mut short, N_ROWS / 2, N_COLS)

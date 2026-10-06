@@ -28,8 +28,6 @@ Out of scope, and refused by the setup ([What the setup refuses](#what-the-setup
 - more than one AIR, or more than one instance of it;
 - air values, airgroup values, proof values and global constraints;
 - custom commits, periodic columns and public tables;
-- packed trace rows: witness columns declared with `bits(n)`, which the compiler marks with
-  `witness_bits` hints;
 - the constraint domains of pilout v2. The four of pilout v1 are supported: `everyRow`, `firstRow`,
   `lastRow` and `everyFrame`.
 
@@ -154,8 +152,8 @@ The setup stops with an error, before it writes any file, when:
   value, and an unknown name is refused. The witness and debug hints (`gsum_debug_data`,
   `gprod_debug_data` and their `_global` forms, `range_def`, `specified_ranges`,
   `specified_ranges_data`, `virtual_table_data`, `virtual_table_data_global`, `std_sum_users`,
-  `std_prod_users`, `std_rc_users`) are ignored, and are not written to `<air>.bin`;
-- it has a `witness_bits` hint, which asks for packed trace rows (`SetupError::PackedTrace`);
+  `std_prod_users`, `std_rc_users`) are ignored, and are not written to `<air>.bin`; so is
+  `witness_bits`, of a column declared with `bits(n)`: pilfflonk's trace rows are not packed;
 - a column of stage 2 or above is not given by exactly one `im_col`, `gsum_col` or `gprod_col`. This
   is checked after the passes, on the hints `<air>.bin` holds (`validate::check_prover_hints`):
   - the `reference` is a column of a stage ≥ 2, read at its row, and not an im pol;

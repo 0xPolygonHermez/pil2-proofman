@@ -7,8 +7,8 @@
 #include <vector>
 
 #include "alt_bn128.hpp"
-#include "fft.hpp"
 #include "pilfflonk_fr.hpp"
+#include "pilfflonk_ntt.hpp"
 #include "polynomial.hpp"
 
 namespace PilFflonk {
@@ -22,8 +22,8 @@ constexpr unsigned int COSET_SHIFT = 5;
 
 // Moves BN128 columns between evaluations on the trace domain H (N = 2^nBits points), their
 // coefficients, and evaluations on the extended coset g·H' (N' = 2^nBitsExt points, N <= N').
-// It has no NTT of its own: the INTT is rapidsnark's Polynomial::fromEvaluations, and the coset
-// transforms are ffiasm's FFT, which has no coset API, around a scaling by the powers of g.
+// Its transforms are Ntt's (pilfflonk_ntt.hpp), the values of ffiasm's FFT, around a scaling by the
+// powers of g for the coset ones.
 //
 // - The roots are ffiasm's, ω_k = 5^((r-1)/k) (pilfflonk/docs/protocol.md#notation): H = <ω_N>
 //   and H' = <ω_N'>.
@@ -42,7 +42,7 @@ constexpr unsigned int COSET_SHIFT = 5;
 //
 // A key on the GPU runs these transforms on the device instead (pilfflonk_lde_gpu.hpp), with the
 // shifts of the parts and the coset this computes (partShift, shiftInverse): the same bit for bit.
-// Those need no FFT, and ffiasm's table of the N' roots of unity, 32·N' bytes (512 MB at N' = 2^24),
+// Those need no FFT, and the NTT's table of twiddles, 32·N' bytes (512 MB at N' = 2^24),
 // is built by the first transform, once: a key on the GPU, and one without its fixed columns
 // (AirKey::withoutFixedColumns), never builds it but for what the host asks of it
 // (AirKey::fixedEvaluations).
@@ -60,22 +60,22 @@ public:
 
     // INTT: the N evaluations on H of column c, in evals[c], into its N coefficients, followed by
     // blindLength zero coefficients kept for the blinding (pilfflonk/docs/protocol.md#blinding,
-    // Poly::blindCoefficients). This is Poly::fromEvaluations with reserved buffers: coefs[c] holds
+    // Poly::blindCoefficients). As Poly::fromEvaluations with reserved buffers: coefs[c] holds
     // N + blindLength elements, which must be at most N'. The polynomials wrap coefs[c] and do not
     // own it.
     // evals[c] is only read; it is not const because fromEvaluations does not take it as const.
-    // Not in place: fromEvaluations clears coefs[c] before it reads evals[c].
+    // Not in place: coefs[c] is written before evals[c] is read.
     std::vector<std::unique_ptr<Poly>> intt(FrElement *const *evals, FrElement *const *coefs, uint64_t nCols,
                                             uint64_t blindLength = 0) const;
 
     // The NTT, the inverse of intt (without blinding): column c's N coefficients, in coefs[c], into
-    // its N evaluations on H, in evals[c], by ffiasm's FFT. evals[c] may be coefs[c] itself (in
+    // its N evaluations on H, in evals[c], by the NTT. evals[c] may be coefs[c] itself (in
     // place).
     void ntt(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols) const;
 
     // LDE: column c, the polynomial with the nCoefs coefficients in coefs[c] (1 <= nCoefs <= N'),
     // into its N' evaluations on g·H', in evals[c]. Coefficient j is scaled by g^j, and the rest up
-    // to N' set to zero, before ffiasm's FFT. evals[c] may be coefs[c] itself (in place), if that
+    // to N' set to zero, before the NTT. evals[c] may be coefs[c] itself (in place), if that
     // buffer holds N' elements.
     void extendCoset(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs) const;
 
@@ -86,13 +86,16 @@ public:
     // i < S: evaluation i of part p is evaluation p + (N'/S)·i of extendCoset, the same bit for bit,
     // and the N'/S parts are the whole coset; S = N (one coset of H) is the least memory, and
     // S = N' is extendCoset itself. The points of part p are c·ω_S^i for its shift c = g·ω_N'^p, so
-    // coefficient j is scaled by c^j and folded into j mod S before ffiasm's FFT of S points.
+    // coefficient j is scaled by c^j and folded into j mod S before the NTT of S points.
     // evals[c] may be coefs[c] itself (in place), if that buffer holds max(nCoefs, S) elements.
     void extendCosetPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs,
                          uint64_t partBits, uint64_t part) const;
+    // The same, column c of nCoefs[c] coefficients: columns of any lengths in one call.
+    void extendCosetPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols,
+                         const uint64_t *nCoefs, uint64_t partBits, uint64_t part) const;
 
     // The inverse of extendCoset: the N' evaluations on g·H' of column c, in evals[c], into its N'
-    // coefficients, in coefs[c]: ffiasm's inverse FFT, then coefficient j scaled by g^-j.
+    // coefficients, in coefs[c]: the inverse NTT, then coefficient j scaled by g^-j.
     // coefs[c] may be evals[c] itself (in place).
     void interpolateCoset(const FrElement *const *evals, FrElement *const *coefs, uint64_t nCols) const;
 
@@ -105,21 +108,21 @@ public:
 
 private:
     // extendCosetPart once its arguments are checked.
-    void extendPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, uint64_t nCoefs,
+    void extendPart(const FrElement *const *coefs, FrElement *const *evals, uint64_t nCols, const uint64_t *nCoefs,
                     uint64_t partBits, uint64_t part) const;
-    // ffiasm's FFT, built by the first call, once, whatever the thread; called before any parallel
-    // region that uses it.
-    FFT<Engine::Fr> &transforms() const;
+    // The NTT of up to N' points, built by the first call, once, whatever the thread; called before
+    // any parallel region that uses it.
+    const Ntt &transforms() const;
 
     uint64_t N;
     uint64_t NExtended;
     FrElement shift;
     FrElement shiftInv;
     FrElement extendedRoot; // ω_N'
-    // Sized for N', it also serves N. Mutable because FFT::fft and FFT::ifft are not const, although
-    // they only read the FFT's tables, and because transforms() builds it.
-    mutable std::once_flag fftBuilt;
-    mutable std::unique_ptr<FFT<Engine::Fr>> fft;
+    FrElement nInv, nExtendedInv; // 1/N, 1/N'
+    // Sized for N', it also serves N; mutable because transforms() builds it.
+    mutable std::once_flag nttBuilt;
+    mutable std::unique_ptr<Ntt> ntt_;
 };
 
 } // namespace PilFflonk
