@@ -1689,6 +1689,12 @@ pub fn get_stream_commit_gpus_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
     unsafe { get_stream_commit_gpus(d_buffers) }
 }
 
+/// The first GPU stages no host trace and takes no host-trace commit: the planner and the
+/// kernel-witness airs have it to themselves. No-op on the CPU backend.
+pub fn set_planner_gpu_dedicated_c(d_buffers: *mut ::std::os::raw::c_void, on: bool) {
+    unsafe { set_planner_gpu_dedicated(d_buffers, on) }
+}
+
 pub fn get_stream_commit_floor_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
     unsafe { get_stream_commit_floor(d_buffers) }
 }
