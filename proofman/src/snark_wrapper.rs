@@ -16,7 +16,7 @@ use crate::check_const_tree;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
     get_unified_buffer_gpu_for_recursivef_c, pre_allocate_final_snark_prover_c, free_device_buffers_recursivef_c,
-    gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c,
+    gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c, get_aux_trace_end_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{
@@ -139,7 +139,7 @@ impl FinalSnarkKey {
     }
 }
 
-/// The wrap of a vadcop_final proof in the final SNARK: the recursivef proves it, and then the final
+/// [`SnarkWrapper`] of a poseidon key: the recursivef proves the vadcop_final proof, and then the final
 /// SNARK of `provingKeySnark/final/` ([`FinalSnarkKey`]), rapidsnark's PLONK or FFLONK or pilfflonk,
 /// proves the recursivef's verifier circuit.
 ///
@@ -153,7 +153,7 @@ impl FinalSnarkKey {
 /// recursivef's prover buffer, grown to it; the recursivef is done with either when pilfflonk proves.
 /// Its key's own device memory (the SRS's powers, the fixed columns' coefficients) is beside them,
 /// from the start with `preload`.
-pub struct SnarkWrapper<F: PrimeField64> {
+pub(crate) struct PoseidonWrap<F: PrimeField64> {
     pub setup_snark_path: PathBuf,
     pub setup_recursivef: Setup<F>,
     pub vadcop_final_verkey: Vec<u64>,
@@ -171,6 +171,8 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     pub gpu: bool,
     pub final_snark_key: FinalSnarkKey,
+    /// Whether a proof writes the unified buffer past its aux traces (`writes_past_aux_traces`).
+    writes_past_aux_traces: bool,
     /// Held by each proof throughout ([`generate_final_snark_proof`](Self::generate_final_snark_proof)),
     /// so that the wrapper proves one at a time, and pilfflonk's prover, with `preload`. Two proofs at
     /// once would both write the recursivef's prover buffer `aux_trace` and its device buffers, and
@@ -265,7 +267,7 @@ impl SnarkProof {
     }
 }
 
-impl<F: PrimeField64> Drop for SnarkWrapper<F> {
+impl<F: PrimeField64> Drop for PoseidonWrap<F> {
     fn drop(&mut self) {
         if let Some(snark_prover) = self.snark_prover {
             free_final_snark_prover_c(snark_prover);
@@ -333,11 +335,7 @@ fn init_rapidsnark_prover(zkey: &Path, d_buffers_recursivef: *mut c_void) -> Pro
     Ok(snark_prover)
 }
 
-impl<F: PrimeField64> SnarkWrapper<F> {
-    pub fn new(proving_key_path: &Path, verbose_mode: VerboseMode, preload: bool, gpu: bool) -> ProofmanResult<Self> {
-        Self::new_with_preallocated_buffers(proving_key_path, verbose_mode, None, None, None, preload, gpu)
-    }
-
+impl<F: PrimeField64> PoseidonWrap<F> {
     pub fn new_with_preallocated_buffers(
         proving_key_path: &Path,
         verbose_mode: VerboseMode,
@@ -439,6 +437,8 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             + setup_recursivef.stark_info.n_publics;
 
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(1, trace_size as usize));
+        let writes_past_aux_traces =
+            d_buffers.is_some_and(|d| Self::writes_past_aux_traces(&setup_recursivef, &final_snark_key, gpu, d));
 
         Ok(Self {
             aux_trace,
@@ -455,6 +455,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             reload_fixed_pols_gpu,
             gpu,
             final_snark_key,
+            writes_past_aux_traces,
             proving: Mutex::new(pilfflonk_prover),
         })
     }
@@ -491,10 +492,12 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         // One proof at a time (`proving`), until this one is out. A proof that panicked poisons the
         // lock, and the next one takes it all the same: each proof writes its buffers afresh.
         let pilfflonk_prover = self.proving.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        // The wrap's provers write the unified buffer over the STARK's const pols (the snark's carve,
-        // pilfflonk's arena), and one that fails may have written it too: the flag is set as this
-        // proof ends, whatever its outcome, before the lock is let go.
-        let _reload = ReloadFixedPolsOnDrop(self.d_buffers.and(self.reload_fixed_pols_gpu.as_deref()));
+        let _borrow = pilfflonk_wrap::FirstGpuBorrow::new(self.d_buffers.filter(|_| self.gpu));
+        // The recursivef's carve and rapidsnark's prover may write the unified buffer over the STARK's
+        // const pols, and one that fails may have written it too: the flag is set as this proof ends,
+        // whatever its outcome, before the lock is let go. pilfflonk's arena stays in the aux traces.
+        let reload = self.d_buffers.filter(|_| self.writes_past_aux_traces);
+        let _reload = ReloadFixedPolsOnDrop(reload.and(self.reload_fixed_pols_gpu.as_deref()));
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
             &self.memory_handler_recursive_witness,
@@ -516,6 +519,24 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
         Ok(snark_proof)
+    }
+
+    /// Whether a proof writes proofman's unified buffer `d_buffers` past its aux traces: rapidsnark's
+    /// prover, whose carve this does not know, a recursivef whose const tree and buffer pass them, or
+    /// a pilfflonk arena that does.
+    fn writes_past_aux_traces(
+        setup_recursivef: &Setup<F>,
+        final_snark_key: &FinalSnarkKey,
+        gpu: bool,
+        d_buffers: *mut c_void,
+    ) -> bool {
+        let recursivef = (setup_recursivef.const_tree_size as u64 + setup_recursivef.prover_buffer_size)
+            * std::mem::size_of::<F>() as u64;
+        recursivef > get_aux_trace_end_c(d_buffers)
+            || match final_snark_key {
+                FinalSnarkKey::Zkey(_) => true,
+                FinalSnarkKey::Pilfflonk(key) => gpu && pilfflonk_wrap::arena_passes_aux_traces(d_buffers, key),
+            }
     }
 
     /// The PLONK or FFLONK proof of the vadcop proof `proof` (with its publics), of its recursivef
@@ -630,6 +651,202 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     fn public_bytes_solidity(&self, proof: &[u64]) -> ProofmanResult<Vec<u8>> {
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
         get_public_bytes_solidity(&publics_info, &proof[1..1 + proof[0] as usize])
+    }
+}
+
+/// The recursivef's starkinfo setup-snark puts beside the final circuit of a blake3 key, from which
+/// the zkin of a recursivef proof is laid out.
+pub const BLAKE3_RECURSIVEF_STARKINFO: &str = "recursivef.starkinfo.json";
+
+/// [`SnarkWrapper`] of a blake3 key: its recursivef, a Goldilocks STARK of the proving key, is proved
+/// before it (`ProofMan::generate_final_snark_proof`), and this proves the final SNARK of the
+/// recursivef's proofs, pilfflonk's.
+///
+/// **GPU memory.** With proofman's buffers (`d_buffers`), all of the key's device memory is in its
+/// unified buffer, from where the aux traces start to where they end
+/// (`pilfflonk_wrap::unified_buffer`): nothing proofman keeps across proofs is there, so nothing is
+/// reloaded. Preloaded, the key lives across proofs while proofman uses that buffer in between: it
+/// keeps a pinned host copy of what it holds there (~4 GB, its SRS and fixed coefficients), which each
+/// proof writes back while the host computes the circuit's witness. Not preloaded, each proof loads
+/// it. Without buffers, the key's memory is its own.
+pub(crate) struct Blake3Wrap {
+    setup_snark_path: PathBuf,
+    pilfflonk_key: PathBuf,
+    starkinfo: serde_json::Value,
+    publics_info: PublicsInfo,
+    d_buffers: Option<*mut c_void>,
+    gpu: bool,
+    /// The prover, preloaded; else loaded by each proof.
+    prover: Option<PilfflonkWrapProver>,
+    proving: Mutex<()>,
+}
+
+impl Blake3Wrap {
+    fn new(proving_key_snark: &Path, d_buffers: Option<*mut c_void>, preload: bool, gpu: bool) -> ProofmanResult<Self> {
+        ensure_gpu_available(gpu)?;
+        let final_dir = proving_key_snark.join("final");
+        let setup_snark_path = final_dir.join("final");
+        let FinalSnarkKey::Pilfflonk(pilfflonk_key) = FinalSnarkKey::find(&setup_snark_path)? else {
+            return Err(ProofmanError::InvalidSetup(
+                "the final SNARK of a blake3 key is pilfflonk's, and this setup has a zkey".to_string(),
+            ));
+        };
+        let starkinfo_path = final_dir.join(BLAKE3_RECURSIVEF_STARKINFO);
+        let starkinfo: serde_json::Value = std::fs::read_to_string(&starkinfo_path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .ok_or_else(|| {
+                ProofmanError::InvalidSetup(format!(
+                    "Failed to read the recursivef's starkinfo {}",
+                    starkinfo_path.display()
+                ))
+            })?;
+        let mut wrap = Self {
+            setup_snark_path,
+            pilfflonk_key,
+            starkinfo,
+            publics_info: PublicsInfo::from_folder(proving_key_snark)?,
+            d_buffers: d_buffers.filter(|_| gpu),
+            gpu,
+            prover: None,
+            proving: Mutex::new(()),
+        };
+        if preload {
+            let _borrow = pilfflonk_wrap::FirstGpuBorrow::new(wrap.d_buffers);
+            wrap.prover = Some(wrap.load(true)?);
+        }
+        Ok(wrap)
+    }
+
+    /// The key's prover; `restorable` if it lives across proofs in proofman's buffer.
+    fn load(&self, restorable: bool) -> ProofmanResult<PilfflonkWrapProver> {
+        let device = if self.gpu { proofman_pilfflonk::Device::Gpu } else { proofman_pilfflonk::Device::Cpu };
+        let buffer = self.d_buffers.map(pilfflonk_wrap::unified_buffer).transpose()?;
+        timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
+        // SAFETY: SnarkWrapper::new_with_preallocated_buffers's contract: proofman's buffer is idle
+        // while the key loads and while each proof runs.
+        let prover = unsafe {
+            PilfflonkWrapProver::load_on(&self.setup_snark_path, &self.pilfflonk_key, device, buffer, restorable)
+        }?;
+        timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
+        Ok(prover)
+    }
+
+    /// The SNARK proof of `recursivef_proof`, whose publics are `[rootC(4) | the vadcop_final's]`.
+    fn generate_snark_proof(&self, recursivef_proof: &VadcopFinalProof) -> ProofmanResult<SnarkProof> {
+        timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
+        let _proving = self.proving.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let n_publics = self.starkinfo["nPublics"].as_u64().unwrap_or(0) as usize;
+        if recursivef_proof.public_values.len() != n_publics {
+            return Err(ProofmanError::InvalidProof(format!(
+                "a blake3 key's SNARK wraps its recursivef proof, of {n_publics} publics, and this proof has {}: \
+                 a vadcop_final proof goes through ProofMan::generate_final_snark_proof, which proves its recursivef",
+                recursivef_proof.public_values.len()
+            )));
+        }
+        let zkin = pilfflonk_wrap_witness::gl_proof_zkin(
+            &self.starkinfo,
+            &recursivef_proof.proof,
+            &recursivef_proof.public_values,
+        )
+        .map_err(|e| ProofmanError::InvalidProof(e.to_string()))?;
+        let _borrow = pilfflonk_wrap::FirstGpuBorrow::new(self.d_buffers);
+        let loaded;
+        let prover = match &self.prover {
+            Some(prover) => prover,
+            None => {
+                loaded = self.load(false)?;
+                &loaded
+            }
+        };
+        let (snark_proof_bytes, snark_publics_bytes) = prover.prove_zkin(&zkin)?;
+        let vadcop_publics = recursivef_proof.public_values.get(4..).unwrap_or_default();
+        let public_bytes = get_public_bytes_solidity(&self.publics_info, vadcop_publics)?;
+        timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
+        Ok(SnarkProof::new(
+            snark_proof_bytes,
+            public_bytes,
+            snark_publics_bytes,
+            SnarkProtocol::Pilfflonk.protocol_id(),
+        ))
+    }
+}
+
+// SAFETY: as PoseidonWrap's: the key's C++ handles and proofman's device buffers are not tied to the
+// thread that made them, and `proving` keeps the proofs one at a time.
+unsafe impl Send for Blake3Wrap {}
+unsafe impl Sync for Blake3Wrap {}
+
+/// The final SNARK's wrapper of the key in `proving_key_path`, whose proofs are
+/// `ProofMan::generate_final_snark_proof`'s, of either hash: a poseidon key's ([`PoseidonWrap`])
+/// proves the recursivef and then the final SNARK of the vadcop_final proof, a blake3 key's
+/// ([`Blake3Wrap`]) the final SNARK of the recursivef proof proofman proves before it. One proof at
+/// a time.
+pub struct SnarkWrapper<F: PrimeField64> {
+    inner: Wrap<F>,
+}
+
+// One per process; boxing buys nothing.
+#[allow(clippy::large_enum_variant)]
+enum Wrap<F: PrimeField64> {
+    Poseidon(PoseidonWrap<F>),
+    Blake3(Blake3Wrap),
+}
+
+impl<F: PrimeField64> SnarkWrapper<F> {
+    pub fn new(proving_key_path: &Path, verbose_mode: VerboseMode, preload: bool, gpu: bool) -> ProofmanResult<Self> {
+        Self::new_with_preallocated_buffers(proving_key_path, verbose_mode, None, None, None, preload, gpu)
+    }
+
+    /// With proofman's buffers (`d_buffers`, `aux_trace`, `reload_fixed_pols_gpu`, of
+    /// `ProofMan::get_preallocated_buffers`), which must outlive the wrapper, idle while it loads and
+    /// while each of its proofs runs; and with `preload`, the final SNARK's prover loaded now.
+    pub fn new_with_preallocated_buffers(
+        proving_key_path: &Path,
+        verbose_mode: VerboseMode,
+        aux_trace: Option<Arc<Vec<F>>>,
+        d_buffers: Option<*mut c_void>,
+        reload_fixed_pols_gpu: Option<Arc<AtomicBool>>,
+        preload: bool,
+        gpu: bool,
+    ) -> ProofmanResult<Self> {
+        let inner = if Self::is_blake3_key(proving_key_path) {
+            initialize_logger(verbose_mode, None);
+            Wrap::Blake3(Blake3Wrap::new(proving_key_path, d_buffers, preload, gpu)?)
+        } else {
+            Wrap::Poseidon(PoseidonWrap::new_with_preallocated_buffers(
+                proving_key_path,
+                verbose_mode,
+                aux_trace,
+                d_buffers,
+                reload_fixed_pols_gpu,
+                preload,
+                gpu,
+            )?)
+        };
+        Ok(Self { inner })
+    }
+
+    /// Whether `proving_key_snark` is a blake3 key's: setup-snark puts its recursivef's starkinfo in it.
+    pub fn is_blake3_key(proving_key_snark: &Path) -> bool {
+        proving_key_snark.join("final").join(BLAKE3_RECURSIVEF_STARKINFO).is_file()
+    }
+
+    /// The final SNARK proof of `proof`: of a poseidon key the vadcop_final proof (checked against
+    /// `verkey_override` if given, the vadcop_final's verkey otherwise), of a blake3 key the recursivef
+    /// proof (`ProofMan::generate_recursivef_proof`), which takes no verkey.
+    pub(crate) fn generate_final_snark_proof(
+        &self,
+        proof: &VadcopFinalProof,
+        verkey_override: Option<&[u64]>,
+    ) -> ProofmanResult<SnarkProof> {
+        match &self.inner {
+            Wrap::Poseidon(wrap) => wrap.generate_final_snark_proof(proof, verkey_override),
+            Wrap::Blake3(_) if verkey_override.is_some() => Err(ProofmanError::InvalidConfiguration(
+                "a blake3 key's SNARK wraps its recursivef proof, whose verkey the recursivef fixed".to_string(),
+            )),
+            Wrap::Blake3(wrap) => wrap.generate_snark_proof(proof),
+        }
     }
 }
 
@@ -952,7 +1169,7 @@ impl Drop for ReloadFixedPolsOnDrop<'_> {
 //   (pilfflonk_api.hpp), with the status of each call kept per thread and read on the calling
 //   thread right after it, and the final circuit's witness library, a `WrapWitness`, which is
 //   `Send`.
-unsafe impl<F: PrimeField64> Send for SnarkWrapper<F> {}
+unsafe impl<F: PrimeField64> Send for PoseidonWrap<F> {}
 // SAFETY: a shared wrapper proves one proof at a time: `generate_final_snark_proof` holds the lock
 // of `proving` throughout, and only a proof uses pilfflonk's prover and the final circuit's witness
 // calculator, or hands the C++ side what it writes: rapidsnark's prover, the recursivef's and the
@@ -961,7 +1178,7 @@ unsafe impl<F: PrimeField64> Send for SnarkWrapper<F> {}
 // on its errors too. Every other field is `Sync`. The raw pointers are public, and handing one to
 // the C++ side outside a proof is the caller's to order with the wrapper's proofs, as for any call
 // of `proofman_starks_lib_c` with them.
-unsafe impl<F: PrimeField64> Sync for SnarkWrapper<F> {}
+unsafe impl<F: PrimeField64> Sync for PoseidonWrap<F> {}
 
 #[cfg(test)]
 mod tests {

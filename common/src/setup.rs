@@ -379,6 +379,9 @@ impl<F: PrimeField64> Setup<F> {
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let recursive = setup_type != &ProofType::Basic || self_contained;
             let recursive_final = setup_type == &ProofType::RecursiveF;
+            // The poseidon families' recursivef is a BN128 STARK, with a prover of its own (the
+            // SnarkWrapper's); blake3's is a Goldilocks one, a setup as the vadcop_final's.
+            let bn128_recursive_final = recursive_final && stark_info.stark_struct.verification_hash_type == "BN128";
             let p_stark_info =
                 stark_info_new_c(stark_info_path.as_str(), recursive_final, recursive, verify_constraints, false, gpu);
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
@@ -397,7 +400,7 @@ impl<F: PrimeField64> Setup<F> {
 
             let verkey_file = setup_path.display().to_string() + ".verkey.json";
 
-            let verkey = if setup_type == &ProofType::RecursiveF {
+            let verkey = if bn128_recursive_final {
                 vec![]
             } else {
                 let mut file = File::open(&verkey_file).unwrap_or_else(|e| {
@@ -430,7 +433,7 @@ impl<F: PrimeField64> Setup<F> {
                 )
             } else {
                 let mut const_pols_size_packed = 0;
-                if gpu && setup_type != &ProofType::RecursiveF {
+                if gpu && !bn128_recursive_final {
                     let mut header = [0u8; 8];
                     let words_per_row: u64 =
                         match File::open(&const_pols_path).and_then(|mut f| f.read_exact(&mut header)) {
@@ -617,6 +620,12 @@ impl<F: PrimeField64> Setup<F> {
             n_operations_quotient,
             gpu,
         })
+    }
+
+    /// The poseidon families' recursivef: a BN128 STARK, which the SnarkWrapper proves with its own
+    /// buffers and const tree. blake3's recursivef is a Goldilocks setup like any other.
+    pub fn is_bn128_recursivef(&self) -> bool {
+        self.setup_type == ProofType::RecursiveF && self.stark_info.stark_struct.verification_hash_type == "BN128"
     }
 
     pub fn get_vk(&self) -> Vec<u64> {

@@ -13,8 +13,7 @@
 //!   `verify-snark` on its proof, with the same refusals; the publics the Solidity verifier hashes
 //!   are the vadcop_final proof's, as for PLONK and FFLONK. It takes its inputs from the
 //!   environment: `PROVE_SNARK_PROVING_KEY`, the `provingKeySnark/` (the recursivef's `.consttree`
-//!   is written there if it is not), `PROVE_SNARK_PROOF`, the `vadcop_final_proof.bin`, and
-//!   `PROVE_SNARK_OTHER_VKEY`, a pilfflonk vkey of another key.
+//!   is written there if it is not), and `PROVE_SNARK_PROOF`, the `vadcop_final_proof.bin`.
 //!
 //! Both are `#[ignore]`d:
 //!
@@ -23,7 +22,7 @@
 //!     --features proofman-starks-lib-c/cpu-only --test snark_pilfflonk \
 //!     -- --ignored verify_snark_accepts_a_pilfflonk_proof_and_refuses_every_change
 //! PROVE_SNARK_PROVING_KEY=<provingKeySnark> PROVE_SNARK_PROOF=<vadcop_final_proof.bin> \
-//!     PROVE_SNARK_OTHER_VKEY=<pilfflonk.vkey.json> cargo test --release -p proofman-cli \
+//!     cargo test --release -p proofman-cli \
 //!     --features proofman-starks-lib-c/cpu-only --test snark_pilfflonk \
 //!     -- --ignored prove_snark_wraps_a_vadcop_final_proof_in_pilfflonk
 //! ```
@@ -38,6 +37,7 @@ use std::process::{Command, Output};
 use num_bigint::BigUint;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
+use pilfflonk_setup::digest::seal_vkey;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman::{get_public_bytes_solidity, verify_snark_proof, SnarkProof, SnarkProtocol, PILFFLONK_PROTOCOL_ID};
 use proofman_common::{ProofmanError, PublicsInfo};
@@ -212,6 +212,18 @@ fn verify_snark_accepts_a_pilfflonk_proof_and_refuses_every_change() {
     }
 }
 
+/// The vkey at `path` with its first fixed commitment `f0` = (x, y) as (x, q − y), and its digest resealed:
+/// a vkey of another key, of the same shape.
+fn with_a_fixed_commitment_negated(path: &Path) -> Vkey {
+    let q = BigUint::parse_bytes(b"21888242871839275222246405745257275088696311157297823662689037894645226208583", 10)
+        .unwrap();
+    let mut vkey: serde_json::Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let y = &mut vkey["f0"][1];
+    let negated = &q - BigUint::parse_bytes(y.as_str().unwrap().as_bytes(), 10).unwrap();
+    *y = serde_json::Value::String(negated.to_string());
+    seal_vkey(serde_json::from_value(vkey).unwrap()).unwrap()
+}
+
 /// An environment variable the wrap's test takes its inputs from.
 fn env_path(name: &str) -> PathBuf {
     PathBuf::from(std::env::var_os(name).unwrap_or_else(|| panic!("{name} must be set (see the module)")))
@@ -222,7 +234,6 @@ fn env_path(name: &str) -> PathBuf {
 fn prove_snark_wraps_a_vadcop_final_proof_in_pilfflonk() {
     let proving_key_snark = env_path("PROVE_SNARK_PROVING_KEY");
     let vadcop_final_proof = env_path("PROVE_SNARK_PROOF");
-    let other_vkey = env_path("PROVE_SNARK_OTHER_VKEY");
     let dir = TestDir::new("wrap");
 
     let out = cli(
@@ -252,9 +263,12 @@ fn prove_snark_wraps_a_vadcop_final_proof_in_pilfflonk() {
     let not_verified = "SNARK proof was not verified";
     refused(&dir, "evaluation.bin", &with_an_evaluation_changed(&proof, &vkey), &vkey_path, not_verified);
     refused(&dir, "public.bin", &with_a_public_changed(&proof), &vkey_path, not_verified);
-    // Another key's vkey: a proof of its shape that does not verify, or bytes of another shape.
+    // Another key's vkey, of the same shape: its first fixed commitment negated, and resealed.
+    let other_vkey = dir.file("other.vkey.json");
+    fs::write(&other_vkey, serde_json::to_string_pretty(&with_a_fixed_commitment_negated(&vkey_path)).unwrap())
+        .unwrap();
     let other = dir.file("other_vkey.bin");
     proof.save(&other).unwrap();
     let out = verify_snark(&other, &other_vkey);
-    assert!(!out.status.success(), "{}", output(&out));
+    assert!(!out.status.success() && output(&out).contains(not_verified), "{}", output(&out));
 }

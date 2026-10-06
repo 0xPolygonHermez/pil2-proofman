@@ -24,11 +24,12 @@ use std::path::Path;
 use pilfflonk_wrap_witness::{WrapArtifacts, WrapWitness};
 use proofman_common::{ProofmanError, ProofmanResult};
 use proofman_pilfflonk::{
-    gpu_device_bytes, gpu_free_bytes, js_verifier, prove, Device, DeviceBytes, FrBytes, JsonFile, Proof, ProofJson,
-    ProofNames, ProveOptions, ProvingKey, ProvingKeyFiles, Publics, Vkey, Witness, WitnessShape,
+    gpu_device_bytes, gpu_free_bytes, js_verifier, prove, prove_exec, Device, DeviceBytes, FrBytes, JsonFile, Proof,
+    ProofJson, ProofNames, ProveOptions, ProvingKey, ProvingKeyFiles, Publics, Vkey, Witness, WitnessShape,
 };
 use proofman_starks_lib_c::{
-    get_first_gpu_id_c, get_unified_buffer_gpu_for_recursivef_c, get_unified_buffer_gpu_size_c,
+    acquire_first_gpu_buffer_c, get_aux_trace_end_c, get_first_gpu_buffer_c, get_first_gpu_id_c,
+    get_stream_commit_floor_c, get_unified_buffer_gpu_size_c, release_first_gpu_buffer_c,
     reserve_recursivef_aux_trace_c,
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
@@ -44,9 +45,43 @@ pub(crate) struct WrapArena {
     pub(crate) bytes: u64,
 }
 
+/// proofman's unified buffer of `d_buffers` on device 0, from where its aux traces start to where
+/// they end, below its streaming-commit slots: nothing proofman keeps across proofs is there, so the
+/// wrap leaves nothing to reload.
+pub(crate) fn unified_buffer(d_buffers: *mut c_void) -> ProofmanResult<WrapArena> {
+    let gpu_id = get_first_gpu_id_c(d_buffers);
+    if gpu_id != 0 {
+        return Err(ProofmanError::InvalidConfiguration(format!(
+            "pilfflonk proves on CUDA device 0, and proofman's unified buffer is on device {gpu_id}"
+        )));
+    }
+    // The first GPU's, as get_aux_trace_end measures: not the calling thread's current device's.
+    Ok(WrapArena { buffer: get_first_gpu_buffer_c(d_buffers), bytes: get_aux_trace_end_c(d_buffers) })
+}
+
+/// proofman's first GPU borrowed (`acquire_first_gpu_buffer`) while a wrap writes its unified
+/// buffer: no proofman work is placed there meanwhile, and the release drops the streams' cached
+/// const pols and trees the wrap overwrote. None without proofman's buffers.
+pub(crate) struct FirstGpuBorrow(*mut c_void);
+
+impl FirstGpuBorrow {
+    pub(crate) fn new(d_buffers: Option<*mut c_void>) -> Option<Self> {
+        d_buffers.map(|d_buffers| {
+            acquire_first_gpu_buffer_c(d_buffers);
+            Self(d_buffers)
+        })
+    }
+}
+
+impl Drop for FirstGpuBorrow {
+    fn drop(&mut self) {
+        release_first_gpu_buffer_c(self.0);
+    }
+}
+
 /// pilfflonk's arena in the wrap on the GPU, for the key at `proving_key`, as
 /// `pre_allocate_final_snark_prover_c` carves rapidsnark's PLONK prover: proofman's unified buffer
-/// `d_buffers` if there is one, all of it (the key refuses it, as a GPU without the memory, if it
+/// `d_buffers` if there is one, its aux traces ([`unified_buffer`]; the key refuses it, as a GPU without the memory, if it
 /// holds less than a proof's arena: pilfflonk/docs/performance.md#rules-of-the-device-path);
 /// otherwise the recursivef's prover buffer `d_buffers_recursivef`, grown to the arena if it is
 /// smaller. `None` on the CPU. Refused if the unified buffer is not on device 0, where pilfflonk
@@ -64,22 +99,21 @@ pub(crate) fn wrap_arena(
     }
     let needed = gpu_device_bytes(proving_key).map_err(|e| invalid_key(proving_key, e))?;
     if let Some(d_buffers) = d_buffers {
-        let gpu_id = get_first_gpu_id_c(d_buffers);
-        if gpu_id != 0 {
-            return Err(ProofmanError::InvalidConfiguration(format!(
-                "pilfflonk proves on CUDA device 0, and proofman's unified buffer is on device {gpu_id}"
-            )));
+        let mut arena = unified_buffer(d_buffers)?;
+        // Past the aux traces only without streaming-commit slots, which commit during a borrow: the
+        // whole buffer then, whose const pols the wrapper reloads and whose stagings the borrow drops.
+        if needed.arena > arena.bytes && get_stream_commit_floor_c(d_buffers) == u64::MAX {
+            arena.bytes = get_unified_buffer_gpu_size_c(d_buffers);
         }
-        let buffer = get_unified_buffer_gpu_for_recursivef_c(d_buffers, d_buffers_recursivef);
-        let bytes = get_unified_buffer_gpu_size_c(d_buffers);
         require_beside(&needed, gpu_free_bytes().map_err(|e| invalid_key(proving_key, e))?)?;
         tracing::info!(
-            "pilfflonk's GPU arena: {} bytes of the unified buffer's {bytes} (margin {}), and {} bytes beside it",
+            "pilfflonk's GPU arena: {} bytes of the unified buffer's {} (margin {}), and {} bytes beside it",
             needed.arena,
-            i128::from(bytes) - i128::from(needed.arena),
+            arena.bytes,
+            i128::from(arena.bytes) - i128::from(needed.arena),
             needed.beside
         );
-        return Ok(Some(WrapArena { buffer, bytes }));
+        return Ok(Some(arena));
     }
     match reserve_recursivef_aux_trace_c(d_buffers_recursivef, needed.arena) {
         Ok((buffer, bytes)) => {
@@ -97,6 +131,12 @@ pub(crate) fn wrap_arena(
             needed.arena
         ))),
     }
+}
+
+/// Whether the arena of the key at `proving_key` passes the aux traces of the unified buffer
+/// `d_buffers` ([`wrap_arena`]), or cannot be sized.
+pub(crate) fn arena_passes_aux_traces(d_buffers: *mut c_void, proving_key: &Path) -> bool {
+    gpu_device_bytes(proving_key).map_or(true, |needed| needed.arena > get_aux_trace_end_c(d_buffers))
 }
 
 /// Refuses a key that needs more device memory beside its arena (`needed.beside`) than the device has
@@ -119,6 +159,10 @@ pub(crate) struct PilfflonkWrapProver {
     key: ProvingKey,
     shape: WitnessShape,
     witness: WrapWitness,
+    /// The key is on the GPU, which builds the blake3 wrap's witness from its parts.
+    on_gpu: bool,
+    /// The key's device memory is in a buffer others use between the proofs, written back before each.
+    restorable: bool,
 }
 
 impl PilfflonkWrapProver {
@@ -144,7 +188,101 @@ impl PilfflonkWrapProver {
         .map_err(|e| invalid_key(proving_key, e))?;
         let shape = key.witness_shape().map_err(|e| invalid_key(proving_key, e))?;
         let witness = load_wrap_witness(setup_snark_path)?;
-        Ok(Self { key, shape, witness })
+        Ok(Self { key, shape, witness, on_gpu: arena.is_some(), restorable: false })
+    }
+
+    /// [`load`](Self::load), the key on `device`: the wrap of a blake3 key, whose recursivef is
+    /// proved before it ([`SnarkWrapper`](crate::SnarkWrapper)), with all
+    /// its device memory in `buffer` if given (a wrap's buffer it is done with,
+    /// [`ProvingKey::load_in_device_buffer`]), of its own otherwise.
+    ///
+    /// # Safety
+    ///
+    /// A `buffer` must be device memory of its bytes on device 0 that outlives the prover, and that
+    /// nothing else uses while the prover lives.
+    pub(crate) unsafe fn load_on(
+        setup_snark_path: &Path,
+        proving_key: &Path,
+        device: Device,
+        buffer: Option<WrapArena>,
+        restorable: bool,
+    ) -> ProofmanResult<Self> {
+        let on_gpu = matches!(device, Device::Gpu);
+        // The witness's files load while the key does.
+        let (key, witness) = std::thread::scope(|scope| {
+            let witness = scope.spawn(|| load_wrap_witness(setup_snark_path));
+            let key = match buffer {
+                // SAFETY: the caller's, as this function's contract says.
+                Some(b) => unsafe { ProvingKey::load_in_device_buffer(proving_key, b.buffer, b.bytes, restorable) },
+                None => ProvingKey::load_on(proving_key, device),
+            }
+            .map_err(|e| invalid_key(proving_key, e));
+            (key, witness.join().expect("the wrap witness's loading thread panicked"))
+        });
+        let key = key?;
+        let shape = key.witness_shape().map_err(|e| invalid_key(proving_key, e))?;
+        let witness = witness?;
+        if on_gpu {
+            // The parts every proof's witness shares, on the device once; then all of the key is there.
+            if let (Some(exec), [air]) = (witness.exec_static(), shape.airs()) {
+                let air = proofman_pilfflonk::AirInstanceRef { airgroup_id: air.airgroup_id, air_id: air.air_id };
+                key.set_exec(air, &exec).map_err(|e| invalid_key(proving_key, e))?;
+            }
+            if restorable {
+                key.snapshot_device().map_err(|e| invalid_key(proving_key, e))?;
+            }
+        }
+        Ok(Self { key, shape, witness, on_gpu, restorable })
+    }
+
+    /// The proof of the zkin `zkin`, a JSON object: its bytes and the bytes of its publics. On the
+    /// GPU the device builds the witness from its parts ([`WrapWitness::device_witness`]).
+    pub(crate) fn prove_zkin(&self, zkin: &serde_json::Value) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
+        if self.on_gpu {
+            timer_start_info!(CALCULATE_FINAL_WITNESS);
+            // The key's device memory written back while the host computes the witness.
+            // SAFETY: the witness never touches the key: the restore's thread is its only user meanwhile.
+            struct KeyRef<'a>(&'a ProvingKey);
+            unsafe impl Send for KeyRef<'_> {}
+            let key = KeyRef(&self.key);
+            let (device, restored) = std::thread::scope(|scope| {
+                let restored = self.restorable.then(move || {
+                    scope.spawn(move || {
+                        let key = key;
+                        key.0.restore_device()
+                    })
+                });
+                let device = self.witness.device_witness(&self.shape, zkin);
+                (device, restored.map(|r| r.join().expect("the key's restore panicked")))
+            });
+            if let Some(restored) = restored {
+                restored.map_err(|e| invalid_key(self.key.dir(), e))?;
+            }
+            let device = device.map_err(|e| {
+                ProofmanError::InvalidProof(format!("The pilfflonk wrap's witness cannot be computed: {e}"))
+            })?;
+            timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
+            timer_start_info!(CALCULATE_FINAL_PROOF);
+            let output =
+                prove_exec(&self.key, device.air, device.exec(), device.publics.clone(), &ProveOptions::default())
+                    .map_err(|e| ProofmanError::InvalidProof(format!("The pilfflonk prover failed: {e}")))?;
+            timer_stop_and_log_info!(CALCULATE_FINAL_PROOF);
+            return Ok((output.proof.to_bytes(), publics_to_bytes(&output.publics)));
+        }
+        timer_start_info!(CALCULATE_FINAL_WITNESS);
+        let witness = self.witness.witness_from_zkin(&self.shape, zkin).map_err(|e| {
+            ProofmanError::InvalidProof(format!("The pilfflonk wrap's witness cannot be computed: {e}"))
+        })?;
+        timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
+        self.prove_witness(&witness)
+    }
+
+    fn prove_witness(&self, witness: &Witness) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
+        timer_start_info!(CALCULATE_FINAL_PROOF);
+        let output = prove(&self.key, witness, &ProveOptions::default())
+            .map_err(|e| ProofmanError::InvalidProof(format!("The pilfflonk prover failed: {e}")))?;
+        timer_stop_and_log_info!(CALCULATE_FINAL_PROOF);
+        Ok((output.proof.to_bytes(), publics_to_bytes(&output.publics)))
     }
 
     /// The proof of `recursivef_proof`: its bytes and the bytes of its publics.
@@ -155,13 +293,7 @@ impl PilfflonkWrapProver {
     /// `gen_recursive_proof_final_c` returns, alive and used by nothing else during the call.
     pub(crate) unsafe fn prove(&self, recursivef_proof: *mut c_void) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
         let witness = wrap_witness(&self.witness, &self.shape, recursivef_proof)?;
-
-        timer_start_info!(CALCULATE_FINAL_PROOF);
-        let output = prove(&self.key, &witness, &ProveOptions::default())
-            .map_err(|e| ProofmanError::InvalidProof(format!("The pilfflonk prover failed: {e}")))?;
-        timer_stop_and_log_info!(CALCULATE_FINAL_PROOF);
-
-        Ok((output.proof.to_bytes(), publics_to_bytes(&output.publics)))
+        self.prove_witness(&witness)
     }
 }
 
