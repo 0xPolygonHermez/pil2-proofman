@@ -80,7 +80,7 @@ pub enum Check {
     /// A point the transcript absorbs with a coordinate below `2^192` (`checkAbsorbed`;
     /// `transcript.js`, pilfflonk/docs/protocol.md#transcript).
     ShortCoordinate,
-    /// A scalar, an auxiliary inverse or a public not below `r` (`checkField`; `frFromObject`).
+    /// A scalar, an auxiliary inverse or a public not below `r` (`checkFields`; `frFromObject`).
     ScalarNotBelowR,
     /// `Z_H(ξ)·invZh ≠ 1` (`computeZh`).
     InvZh,
@@ -88,11 +88,11 @@ pub enum Check {
     AuxiliaryInverse,
     /// `Σ_i ξ^(i·M·N)·Q_i(ξ) ≠ Q(ξ)` (`checkQPieces`; `joinQPieces`).
     QPieces,
-    /// `xiSeed = 0` (`computeRoots`; `checkOpening`).
+    /// `xiSeed = 0` (`computeZ`; `checkOpening`).
     XiSeedZero,
     /// `Z_T(y) = 0` (`computeInversions`; `verifyOpening`).
     ZeroZerofier,
-    /// `inv·Π ≠ 1` (`inverseArray`; `isValidInverse`).
+    /// `inv·Π ≠ 1` (`checkInv`; `isValidInverse`).
     Inv,
     /// The pairing (`checkPairing`; `isValidPairing`).
     Pairing,
@@ -159,13 +159,13 @@ fn site_check(function: &str, ordinal: usize) -> Check {
         ("checkPointBelongsToBN128Curve", 1) => Check::Infinity,
         ("checkPointBelongsToBN128Curve", 2) => Check::OffCurve,
         ("checkAbsorbed", 0) => Check::ShortCoordinate,
-        ("checkField", 0) => Check::ScalarNotBelowR,
+        ("checkFields", 0) => Check::ScalarNotBelowR,
         ("computeZh", 0) => Check::InvZh,
         ("computeZi", _) => Check::AuxiliaryInverse,
         ("checkQPieces", 0) => Check::QPieces,
-        ("computeRoots", 0) => Check::XiSeedZero,
+        ("computeZ", 0) => Check::XiSeedZero,
         ("computeInversions", _) => Check::ZeroZerofier,
-        ("inverseArray", 0) => Check::Inv,
+        ("checkInv", 0) => Check::Inv,
         ("checkPointResult", 0) => Check::PrecompileResult,
         _ => panic!("the verifier has a fail() of {function} (#{ordinal}) that the probe does not know: see fuzz.rs"),
     }
@@ -184,7 +184,7 @@ pub const STEPS: [&str; 11] = [
     "computeZi",
     "computeQ",
     "checkQPieces",
-    "computeRoots",
+    "computeZ",
     "computeInversions",
     "computeR",
     "computeFEJ",
@@ -248,15 +248,15 @@ impl Probe {
                 sites.push(site_check(&function, *ordinal));
                 *ordinal += 1;
                 out.push(line.replace("fail()", &format!("fail({})", sites.len())));
-            } else if text == "let pMem := mload(0x40)" {
-                assert_eq!(lines[i + 1].trim(), "mstore(0x40, add(pMem, lastMem))", "the body of the template changed");
+            } else if text == "mstore(0x40, lastMem)" {
+                // The body's first statement: the memory is the constants' up to lastMem, and the
+                // probe's words go after it.
                 let at = indent(line);
-                out.push(line.to_string());
-                out.push(format!("{at}mstore(0x40, add(pMem, add(lastMem, {bytes})))"));
-                out.push(format!("{at}let pProbe := add(pMem, lastMem)"));
+                out.push(format!("{at}mstore(0x40, add(lastMem, {bytes}))"));
+                out.push(format!("{at}let pProbe := lastMem"));
                 out.push(format!("{at}let probeStart := gas()"));
                 in_body = true;
-                i += 2;
+                i += 1;
                 continue;
             } else if in_body && text == "mstore(0, isValid)" {
                 assert_eq!(lines[i + 1].trim(), "return(0, 0x20)", "the end of the template changed");

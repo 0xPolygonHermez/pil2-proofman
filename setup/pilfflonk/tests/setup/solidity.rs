@@ -98,7 +98,7 @@ fn solidity_writes_the_verifier_next_to_the_vkey_and_changes_nothing_else() {
     );
     assert!(sol.contains("contract PilfflonkVerifier {"), "{sol}");
     let signature = format!(
-        "function verifyProof(bytes32[{}] calldata proof, uint256[2] calldata pubSignals) public view returns (bool)",
+        "function verifyProof(bytes32[{}] calldata, uint256[2] calldata) public view returns (bool)",
         layout.words()
     );
     assert!(sol.contains(&signature), "{sol}");

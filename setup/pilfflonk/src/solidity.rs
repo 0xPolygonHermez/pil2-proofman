@@ -50,6 +50,11 @@ const VERIFIER_TEMPLATE: &str = include_str!("tera/verifier_pilfflonk.sol.tera")
 /// Bytes of a word of the calldata and of the memory.
 const WORD: u64 = 32;
 
+/// Where the verifier's memory starts: Solidity's first free address, 0x80. verifyProof allocates
+/// nothing before its assembly block, which never returns to Solidity, so the addresses can be
+/// constants and the compiler folds every offset into them.
+const MEM_BASE: u64 = 0x80;
+
 fn fail<T>(message: impl Into<String>) -> Result<T, SetupError> {
     Err(SetupError::Solidity(message.into()))
 }
@@ -115,7 +120,8 @@ fn calldata_offset(word: u64) -> u64 {
 // The memory
 // ---------------------------------------------------------------------------------------------
 
-/// The named regions of the verifier's memory, from `pMem`: each a Solidity constant.
+/// The named regions of the verifier's memory, each a Solidity constant: an absolute address, from
+/// [`MEM_BASE`].
 #[derive(Default)]
 struct Memory {
     next: u64,
@@ -164,10 +170,11 @@ struct Context {
     words: u64,
     proof_words: u64,
     calldata: Vec<Slot>,
-    p_points_end: u64,
-    p_absorbed_end: u64,
-    p_scalars: u64,
-    p_scalars_end: u64,
+    /// The calldata offsets of the points, of those the transcript absorbs, and of the scalars (the
+    /// proof's and the publics), which checkInput checks one by one.
+    check_points: Vec<u64>,
+    check_absorbed: Vec<u64>,
+    check_scalars: Vec<u64>,
     p_public: u64,
 
     // The memory.
@@ -182,7 +189,13 @@ struct Context {
     ks: Vec<KPowers>,
     root_sets: Vec<RootSet>,
     fs: Vec<F>,
-    n_inv: u64,
+    /// The product of the Lagrange denominators the proof's `inv` inverts with the `Z_{T_i}(y)`,
+    /// `B = G·ξ^E·Π_i Z_{T_i}(y)` (`computeInversions`), and the `ξ^(−(t−1))` of the root sets.
+    g: String,
+    e: u64,
+    xi_negs: Vec<XiNeg>,
+    /// The `Z_{T_i}(y)`, `i ≥ 1`, consecutive from `pInvZt1`: how many.
+    n_inv_zt: u64,
 }
 
 #[derive(Serialize)]
@@ -214,45 +227,40 @@ struct QSplit {
     pieces_desc: Vec<String>,
 }
 
-/// The powers of `xiSeed` and `y` each `k` needs.
+/// The power of `y` each `k` needs: `y^k`, with which `Z_T(y) = Π_s (y^k − z_s)`.
 #[derive(Serialize)]
 struct KPowers {
     k: u64,
-    /// `powerW / k`: `seed_k = xiSeed^(powerW/k)`.
-    exponent: u64,
-    p_seed: String,
     p_yk: String,
 }
 
-/// The roots of the `f_i` of one `(k, offsets)` (`shplonk.js`, `computeRoots`), which every `f_i`
-/// of that shape shares.
+/// The offsets of the `f_i` of one `(k, offsets)`, which every `f_i` of that shape shares: its
+/// `z_s = ξ·ω_N^s`, `Z_T(y)` and, with several offsets, the CRT factor of each offset.
 #[derive(Serialize)]
 struct RootSet {
     index: usize,
     k: u64,
     offsets: String,
-    k_minus_1: u64,
-    p_seed: String,
     p_yk: String,
-    w_k: String,
     p_zt: String,
+    /// `ξ^(−(t−1))`, for a set of `t ≥ 2` offsets.
+    p_xi_neg: Option<String>,
     rows: Vec<RootRow>,
 }
 
-/// The `k` roots of one offset `s` of a root set: `x_j = xiSeed^(powerW/k)·ω_{kN}^s·w_k^j`, whose
-/// `k`-th power is `z = ξ·ω_N^s`.
+/// One offset `s` of a root set.
 #[derive(Serialize)]
 struct RootRow {
     s: i64,
-    /// `ω_{kN}^s` and `ω_N^s`, `None` for `s = 0`.
-    omega_kn_s: Option<String>,
+    /// `ω_N^s`, `None` for `s = 0`.
     omega_n_s: Option<String>,
-    /// Where its roots, its `z` and its Lagrange factor are, from `pMem`.
-    roots: String,
     z: String,
-    den1: String,
-    /// Where the `z` of the other rows are.
+    /// Where the `z` of the other offsets are.
     other_z: Vec<String>,
+    /// With several offsets: where its CRT factor `L_s = Π_{s'≠s} (y^k − z_{s'})/(z_s − z_{s'})`
+    /// goes, and `Π_{s'≠s} 1/(ω^s − ω^{s'})`, which with `ξ^(−(t−1))` is its denominator.
+    p_l: Option<String>,
+    d: String,
 }
 
 /// One `f_i` of the layout, in the global order (pilfflonk/docs/protocol.md#global-order).
@@ -265,27 +273,29 @@ struct F {
     /// `f<i>` if fixed, the vkey's; otherwise its calldata constant.
     fixed: bool,
     commitment: String,
-    /// The slot of `Z_{T_i}(y)` in the inverted array, `i ≥ 1`.
+    /// The slot of `Z_{T_i}(y)`, then of its inverse, `i ≥ 1`.
     p_inv_zt: Option<String>,
-    /// `Z_{T_i}(y)` of its root set, `w_k^(−1)`.
+    /// `Z_{T_i}(y)` of its root set.
     p_zt: String,
-    w_k_inv: String,
     p_r: String,
     rows: Vec<FRow>,
 }
 
-/// An offset of an `f_i`: the evaluations `p_j(ξ·ω^s)` its value at a root is made of,
-/// `f_i(x) = Σ_j p_j(ξ·ω^s)·x^j`.
+/// An offset of an `f_i`: the evaluations `p_j(ξ·ω^s)` of `R_s(X) = Σ_j p_j(ξ·ω^s)·X^j`, which is
+/// `f_i` on the roots of the offset, and with several offsets its CRT factor.
 #[derive(Serialize)]
 struct FRow {
-    /// Where its roots and their Lagrange factor are (its root set's), and where its denominators
-    /// go in the inverted array, from `pMem`.
-    roots: String,
-    den1: String,
-    inv_den: String,
     /// Horner's: `p_{k−1}` first, then `p_{k−2} … p_0`.
     horner_first: String,
     horner_rest: Vec<String>,
+    p_l: Option<String>,
+}
+
+/// `ξ^(−(t−1))` of a number `t ≥ 2` of offsets, from `ξ^(−E)`: times `ξ^(E − (t−1))`.
+#[derive(Serialize)]
+struct XiNeg {
+    p: String,
+    exponent: u64,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -331,7 +341,7 @@ impl TranscriptCode {
 
     fn squeeze(&mut self, slot: &str) {
         self.lines.push(format!("c := mod(keccak256(pT, {}), q)", self.len));
-        self.lines.push(format!("mstore(add(pMem, {slot}), c)"));
+        self.lines.push(format!("mstore({slot}, c)"));
         self.lines.push("mstore(pT, c)".to_string());
         self.len = WORD;
     }
@@ -365,83 +375,178 @@ fn index<'a>(list: &'a [String], i: u64, what: &str, at: &str) -> Result<&'a Str
     }
 }
 
-/// An operand as a Yul expression, and whether its value is fixed for the whole code (all but the
-/// temporaries): a copy of such a value is the value itself.
-fn q_operand(
-    value: &Value,
-    at: &str,
-    ops: &QOperands,
-    aliases: &HashMap<u64, String>,
-) -> Result<(String, bool), SetupError> {
+/// An operand that is not a temporary, as a Yul expression: an evaluation, a public, a number, a
+/// challenge or a `Zi`, each fixed for the whole code.
+fn q_leaf(value: &Value, at: &str, ops: &QOperands) -> Result<String, SetupError> {
     let kind = value.get("type").and_then(Value::as_str).unwrap_or_default();
     Ok(match kind {
-        "tmp" => {
-            let id = u64_field(value, "id", at)?;
-            match aliases.get(&id) {
-                Some(expr) => (expr.clone(), true),
-                None => (format!("mload(add(pMem, add({}, {})))", ops.tmp, WORD * id), false),
-            }
-        }
-        "eval" => (format!("calldataload({})", index(ops.eval, u64_field(value, "id", at)?, "evaluation", at)?), true),
-        "public" => (format!("calldataload({})", index(ops.public, u64_field(value, "id", at)?, "public", at)?), true),
+        "eval" => format!("calldataload({})", index(ops.eval, u64_field(value, "id", at)?, "evaluation", at)?),
+        "public" => format!("calldataload({})", index(ops.public, u64_field(value, "id", at)?, "public", at)?),
         "number" => match value.get("value").and_then(Value::as_str) {
-            Some(v) if FrBytes::from_decimal(v).is_ok() => (v.to_string(), true),
+            Some(v) if FrBytes::from_decimal(v).is_ok() => v.to_string(),
             _ => return fail(format!("qVerifier: {at} is not a number below r")),
         },
         "challenge" => {
             let key = (u64_field(value, "stage", at)?, u64_field(value, "stageId", at)?);
             match ops.challenges.get(&key) {
-                Some(slot) => (format!("mload(add(pMem, {slot}))"), true),
+                Some(slot) => format!("mload({slot})"),
                 None => return fail(format!("qVerifier: {at} reads the challenge {key:?}, which there is not")),
             }
         }
-        "Zi" => {
-            let slot = index(ops.zi, u64_field(value, "boundaryId", at)?, "boundary", at)?;
-            (format!("mload(add(pMem, {slot}))"), true)
-        }
+        "Zi" => format!("mload({})", index(ops.zi, u64_field(value, "boundaryId", at)?, "boundary", at)?),
         other => return fail(format!("qVerifier: {at} is an operand {other:?}, which the verifier does not have")),
     })
 }
 
-/// The `qVerifier` of the vkey as Yul: every entry an `mstore` of its temporary, the last one's to
-/// `pQ`. A `copy` of a value fixed for the whole code writes nothing: the temporary stands for the
-/// value until it is written again (the code is straight-line, so this is exact).
-fn q_code(q_verifier: &Value, ops: &QOperands) -> Result<Vec<String>, SetupError> {
+/// A value of the `qVerifier` once its temporaries are values (each write a new one): a leaf, or
+/// an operation on two earlier values.
+enum QValue {
+    Leaf(String),
+    Op(&'static str, usize, usize),
+}
+
+/// How deep the expressions of values used once are nested before one is stored instead.
+const Q_MAX_DEPTH: usize = 8;
+
+/// The `qVerifier` of the vkey as Yul, its result stored to `pQ`, and the words of temporaries it
+/// needs. Its temporaries are taken as values: a value used once is written into the expression
+/// that uses it (up to [`Q_MAX_DEPTH`] deep), the others are stored, each in a slot of `pTmp` that is
+/// reused once the value is last read; a value never read is not computed. The arithmetic is that
+/// of the code, operation for operation: only where the intermediate values are kept changes.
+fn q_code(q_verifier: &Value, ops: &QOperands) -> Result<(Vec<String>, u64), SetupError> {
     let Some(code) = q_verifier.get("code").and_then(Value::as_array) else {
         return fail("the vkey's qVerifier has no code");
     };
-    let mut aliases: HashMap<u64, String> = HashMap::new();
-    let mut lines = Vec::with_capacity(code.len());
+    let mut values: Vec<QValue> = Vec::new();
+    let mut current: HashMap<u64, usize> = HashMap::new();
+    let mut result = None;
     for (i, entry) in code.iter().enumerate() {
         let at = format!("code[{i}]");
         let op = entry.get("op").and_then(Value::as_str).unwrap_or_default();
         let src = entry.get("src").and_then(Value::as_array).cloned().unwrap_or_default();
-        let operands = src
-            .iter()
-            .enumerate()
-            .map(|(j, s)| q_operand(s, &format!("{at}.src[{j}]"), ops, &aliases))
-            .collect::<Result<Vec<_>, _>>()?;
-        let (expr, fixed) = match (op, operands.as_slice()) {
-            ("add", [(a, _), (b, _)]) => (format!("addmod({a}, {b}, q)"), false),
-            ("sub", [(a, _), (b, _)]) => (format!("addmod({a}, sub(q, {b}), q)"), false),
-            ("mul", [(a, _), (b, _)]) => (format!("mulmod({a}, {b}, q)"), false),
-            ("copy", [(a, fixed)]) => (a.clone(), *fixed),
+        let mut operands = Vec::with_capacity(src.len());
+        for (j, s) in src.iter().enumerate() {
+            let at = format!("{at}.src[{j}]");
+            if s.get("type").and_then(Value::as_str) == Some("tmp") {
+                let id = u64_field(s, "id", &at)?;
+                match current.get(&id) {
+                    Some(&v) => operands.push(v),
+                    None => return fail(format!("qVerifier: {at} reads the temporary {id} before it is written")),
+                }
+            } else {
+                values.push(QValue::Leaf(q_leaf(s, &at, ops)?));
+                operands.push(values.len() - 1);
+            }
+        }
+        let value = match (op, operands.as_slice()) {
+            ("copy", &[a]) => a,
+            (name @ ("add" | "sub" | "mul"), &[a, b]) => {
+                let name = match name {
+                    "add" => "add",
+                    "sub" => "sub",
+                    _ => "mul",
+                };
+                values.push(QValue::Op(name, a, b));
+                values.len() - 1
+            }
             _ => return fail(format!("qVerifier: {at} is op {op:?} of {} operands", operands.len())),
         };
         let dest = match entry.get("dest") {
             Some(d) if d.get("type").and_then(Value::as_str) == Some("tmp") => u64_field(d, "id", &at)?,
             _ => return fail(format!("qVerifier: {at} does not write a temporary")),
         };
-        if i + 1 == code.len() {
-            lines.push(format!("mstore(add(pMem, pQ), {expr})"));
-        } else if fixed {
-            aliases.insert(dest, expr);
-        } else {
-            aliases.remove(&dest);
-            lines.push(format!("mstore(add(pMem, add({}, {})), {expr})", ops.tmp, WORD * dest));
+        current.insert(dest, value);
+        result = Some(value);
+    }
+    let Some(result) = result else {
+        return fail("the vkey's qVerifier has no code");
+    };
+
+    // Which values are stored: those read twice or more, and those whose expression would nest too
+    // deep; the result goes to pQ.
+    let mut uses = vec![0usize; values.len()];
+    for v in &values {
+        if let QValue::Op(_, a, b) = *v {
+            uses[a] += 1;
+            uses[b] += 1;
         }
     }
-    Ok(lines)
+    let mut stored = vec![false; values.len()];
+    let mut depth = vec![0usize; values.len()];
+    for (v, value) in values.iter().enumerate() {
+        if let QValue::Op(_, a, b) = *value {
+            let d = |o: usize| if stored[o] || matches!(values[o], QValue::Leaf(_)) { 0 } else { depth[o] };
+            depth[v] = 1 + d(a).max(d(b));
+            stored[v] = v != result && (uses[v] >= 2 || depth[v] > Q_MAX_DEPTH);
+        }
+    }
+
+    // The statements, in the code's order, and the stored values each reads.
+    fn reads(values: &[QValue], stored: &[bool], v: usize, out: &mut Vec<usize>) {
+        if let QValue::Op(_, a, b) = values[v] {
+            for o in [a, b] {
+                if stored[o] {
+                    out.push(o);
+                } else {
+                    reads(values, stored, o, out);
+                }
+            }
+        }
+    }
+    let statements: Vec<usize> = (0..values.len()).filter(|&v| stored[v] || v == result).collect();
+    let mut last_read = vec![0usize; values.len()];
+    for (t, &v) in statements.iter().enumerate() {
+        let mut r = Vec::new();
+        reads(&values, &stored, v, &mut r);
+        for w in r {
+            last_read[w] = t;
+        }
+    }
+
+    fn expr(values: &[QValue], stored: &[bool], slot: &[u64], tmp: &str, v: usize, top: bool) -> String {
+        if !top && stored[v] {
+            return format!("mload(add({tmp}, {}))", WORD * slot[v]);
+        }
+        match &values[v] {
+            QValue::Leaf(e) => e.clone(),
+            QValue::Op(op, a, b) => {
+                let (a, b) = (expr(values, stored, slot, tmp, *a, false), expr(values, stored, slot, tmp, *b, false));
+                match *op {
+                    "add" => format!("addmod({a}, {b}, q)"),
+                    "sub" => format!("addmod({a}, sub(q, {b}), q)"),
+                    _ => format!("mulmod({a}, {b}, q)"),
+                }
+            }
+        }
+    }
+    let mut slot = vec![0u64; values.len()];
+    let mut free: Vec<u64> = Vec::new();
+    let mut n_slots = 0u64;
+    let mut lines = Vec::with_capacity(statements.len());
+    for (t, &v) in statements.iter().enumerate() {
+        let e = expr(&values, &stored, &slot, ops.tmp, v, true);
+        // The slots this statement reads last are free for its own result: mstore evaluates first.
+        let mut r = Vec::new();
+        reads(&values, &stored, v, &mut r);
+        r.sort_unstable();
+        r.dedup();
+        for w in r {
+            if last_read[w] == t {
+                free.push(slot[w]);
+            }
+        }
+        if v == result {
+            lines.push(format!("mstore(pQ, {e})"));
+        } else {
+            free.sort_unstable_by(|x, y| y.cmp(x));
+            slot[v] = free.pop().unwrap_or_else(|| {
+                n_slots += 1;
+                n_slots - 1
+            });
+            lines.push(format!("mstore(add({}, {}), {e})", ops.tmp, WORD * slot[v]));
+        }
+    }
+    Ok((lines, n_slots))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -452,7 +557,7 @@ fn offsets_text(offsets: &[i64]) -> String {
     format!("{offsets:?}")
 }
 
-/// The address `offset` bytes into the memory region `base`, as the template adds it to `pMem`.
+/// The address `offset` bytes into the memory region `base`.
 fn at(base: &str, offset: u64) -> String {
     if offset == 0 {
         base.to_string()
@@ -529,7 +634,11 @@ impl Context {
             }
         }
         let after_pieces = cd.first_scalar() + cd.n_evaluations + cd.n_q_pieces;
-        cd_slot("pInv".into(), after_pieces, "inv = 1/(the product of the pInvs values)".into());
+        cd_slot(
+            "pInv".into(),
+            after_pieces,
+            "inv = 1/(prod_i Z_T_i(y), i >= 1, times the Lagrange denominators)".into(),
+        );
         cd_slot("pInvZh".into(), after_pieces + 1, "invZh = 1/Z_H(xi)".into());
         let aux_slots: Vec<String> = cd
             .aux_rows
@@ -545,7 +654,7 @@ impl Context {
         let public: Vec<String> = (0..vkey.n_public).map(|i| at("pPublic", WORD * i)).collect();
 
         // --- The memory -----------------------------------------------------------------------
-        let mut mem = Memory::default();
+        let mut mem = Memory { next: MEM_BASE, slots: Vec::new() };
         let mut challenges = HashMap::new();
         for s in 2..=n_stages {
             let count = vkey.num_challenges.get(s as usize - 1).copied().unwrap_or(0);
@@ -569,20 +678,29 @@ impl Context {
             .collect();
         mem.alloc("pQ".into(), 1, "Q(xi)".into());
 
-        // The powers of xiSeed and y of each k (shplonk.js, computeRoots and computeZerofiers).
+        // The power of y of each k (shplonk.js, computeZerofiers).
         let mut ks: Vec<u64> = layout.iter().map(|f| f.k).collect();
         ks.sort_unstable();
         ks.dedup();
         let mut k_powers = BTreeMap::new();
         for &k in &ks {
-            let p_seed = mem.alloc(format!("pSeed{k}"), 1, format!("xiSeed^(powerW/{k})"));
             let p_yk = mem.alloc(format!("pYk{k}"), 1, format!("y^{k}"));
-            k_powers.insert(k, KPowers { k, exponent: vkey.power_w / k, p_seed, p_yk });
+            k_powers.insert(k, KPowers { k, p_yk });
         }
 
-        // The root sets: one per (k, offsets).
+        // The root sets: one per (k, offsets). The roots themselves are never computed
+        // (computeInversions, computeR): what the verifier needs of them has a closed form in the
+        // z_s = xi*w^s, whose k-th roots they are. For each set S, of t offsets, the product of the
+        // k Lagrange denominators of an offset s (shplonk.js, computeInverseDenominators) is
+        //   prod_j (y - x_j)*k*x_j^(k-1)*prod_{s' != s} (z_s - z_s')
+        //     = sigma_k*k^k*z_s^(k-1)*prod_{s' != s} (z_s - z_s')^k*(y^k - z_s),
+        // with prod_j (y - x_j) = y^k - z_s, prod_j x_j = (-1)^(k+1)*z_s and sigma_k its sign to the
+        // k-1; and z_s = xi*w^s makes all but the y^k - z_s a constant times a power of xi: over the
+        // offsets, C_S*xi^E_S*Z_T(y), E_S = t*(k-1) + k*t*(t-1).
         let mut root_sets: Vec<RootSet> = Vec::new();
         let mut set_of = Vec::with_capacity(layout.len());
+        let mut set_consts: Vec<(BigUint, u64)> = Vec::new();
+        let mut xi_neg_of: BTreeMap<u64, String> = BTreeMap::new();
         for f in layout {
             if let Some(set) = root_sets.iter().position(|s| s.k == f.k && s.offsets == offsets_text(&f.offsets)) {
                 set_of.push(set);
@@ -591,70 +709,67 @@ impl Context {
             let index = root_sets.len();
             let k = f.k;
             let t = f.offsets.len() as u64;
-            let kn = BigUint::from(k) * &n_big;
-            let omega_kn = root_of_unity(&kn)?;
-            let w_k = root_of_unity(&BigUint::from(k))?;
             let comment = format!("k = {k}, offsets {}", offsets_text(&f.offsets));
-            let p_roots = mem.alloc(format!("pRoots{index}"), k * t, format!("the roots T of {comment}"));
             let p_z = mem.alloc(format!("pZ{index}"), t, format!("xi*w^s of each offset s of {comment}"));
             let p_zt = mem.alloc(format!("pZt{index}"), 1, format!("Z_T(y) of {comment}"));
-            let p_den1 =
-                mem.alloc(format!("pDen1{index}"), t, format!("the Lagrange factor of each offset of {comment}"));
-            let power = |value: BigUint| (value != BigUint::from(1u32)).then(|| value.to_str_radix(10));
-            let rows = f
-                .offsets
-                .iter()
-                .enumerate()
-                .map(|(m, &s)| RootRow {
+            let p_l = (t > 1)
+                .then(|| mem.alloc(format!("pL{index}"), t, format!("the CRT factor of each offset of {comment}")));
+            let p_xi_neg = (t > 1).then(|| {
+                xi_neg_of
+                    .entry(t - 1)
+                    .or_insert_with(|| mem.alloc(format!("pXiNeg{}", t - 1), 1, format!("xi^-{}", t - 1)))
+                    .clone()
+            });
+            let omegas: Vec<BigUint> = f.offsets.iter().map(|&s| signed_pow(&omega_n, s)).collect();
+            let sigma = if k % 2 == 0 { r() - 1u32 } else { BigUint::from(1u32) };
+            let k_pow_k = fr_pow(&BigUint::from(k), k);
+            let mut c = BigUint::from(1u32);
+            let mut rows = Vec::with_capacity(f.offsets.len());
+            for (m, &s) in f.offsets.iter().enumerate() {
+                // prod_{s' != s} (w^s - w^s')
+                let diff = omegas
+                    .iter()
+                    .enumerate()
+                    .filter(|&(l, _)| l != m)
+                    .fold(BigUint::from(1u32), |acc, (_, w)| acc * ((&omegas[m] + r() - w) % r()) % r());
+                c = c * &sigma % r() * &k_pow_k % r() * fr_pow(&omegas[m], k - 1) % r() * fr_pow(&diff, k) % r();
+                rows.push(RootRow {
                     s,
-                    omega_kn_s: power(signed_pow(&omega_kn, s)),
-                    omega_n_s: power(signed_pow(&omega_n, s)),
-                    roots: at(&p_roots, WORD * k * m as u64),
+                    omega_n_s: (omegas[m] != BigUint::from(1u32)).then(|| omegas[m].to_str_radix(10)),
                     z: at(&p_z, WORD * m as u64),
-                    den1: at(&p_den1, WORD * m as u64),
                     other_z: (0..t).filter(|&l| l != m as u64).map(|l| at(&p_z, WORD * l)).collect(),
-                })
-                .collect();
-            let powers = &k_powers[&k];
+                    p_l: p_l.as_ref().map(|p| at(p, WORD * m as u64)),
+                    d: fr_inv(&diff).to_str_radix(10),
+                });
+            }
+            set_consts.push((c, t * (k - 1) + k * t * (t - 1)));
             root_sets.push(RootSet {
                 index,
                 k,
                 offsets: offsets_text(&f.offsets),
-                k_minus_1: k - 1,
-                p_seed: powers.p_seed.clone(),
-                p_yk: powers.p_yk.clone(),
-                w_k: w_k.to_str_radix(10),
+                p_yk: k_powers[&k].p_yk.clone(),
                 p_zt,
+                p_xi_neg,
                 rows,
             });
             set_of.push(index);
         }
+        // B, the product of every f_i's Lagrange denominators: G*xi^E*prod_i Z_{T_i}(y).
+        let (g, e) = set_of.iter().fold((BigUint::from(1u32), 0u64), |(g, e), &set| {
+            let (c, e_s) = &set_consts[set];
+            (g * c % r(), e + e_s)
+        });
+        let xi_negs: Vec<XiNeg> = xi_neg_of.iter().map(|(&t1, p)| XiNeg { p: p.clone(), exponent: e - t1 }).collect();
 
-        // The array the proof's inv inverts, in its order (pilfflonk/docs/protocol.md#inverses):
-        // Z_{T_i}(y) for i ≥ 1, then the Lagrange denominators of each f_i.
-        let n_inv = (layout.len() as u64 - 1) + layout.iter().map(|f| f.k * f.offsets.len() as u64).sum::<u64>();
-        mem.alloc("pInvs".into(), 0, format!("the {n_inv} values the proof's inv inverts, below"));
+        // The Z_{T_i}(y), i >= 1, of the proof's inv with the Lagrange denominators, and their
+        // inverses (pilfflonk/docs/protocol.md#inverses).
         let p_inv_zt: Vec<Option<String>> = (0..layout.len())
             .map(|i| (i > 0).then(|| mem.alloc(format!("pInvZt{i}"), 1, format!("Z_T(y) of f{i}, then its inverse"))))
-            .collect();
-        let p_inv_den: Vec<String> = layout
-            .iter()
-            .enumerate()
-            .map(|(i, f)| {
-                let words = f.k * f.offsets.len() as u64;
-                mem.alloc(
-                    format!("pInvDen{i}"),
-                    words,
-                    format!("the Lagrange denominators of f{i}, then their inverses"),
-                )
-            })
             .collect();
         let p_r: Vec<String> = (0..layout.len()).map(|i| mem.alloc(format!("pR{i}"), 1, format!("r_{i}(y)"))).collect();
         mem.alloc("pF".into(), 2, "[F]_1".into());
         mem.alloc("pE".into(), 2, "[E]_1".into());
         mem.alloc("pJ".into(), 2, "[J]_1".into());
-        let tmp_used = vkey.q_verifier.get("tmpUsed").and_then(Value::as_u64).unwrap_or(0);
-        let tmp = mem.alloc("pTmp".into(), tmp_used, "the temporaries of the qVerifier".into());
 
         // --- The transcript, challenges.js ----------------------------------------------------
         let mut t = TranscriptCode::default();
@@ -723,10 +838,11 @@ impl Context {
         }
 
         // --- The qVerifier (qverifier.js, executeCode) ----------------------------------------
-        let q_code = q_code(
+        let (q_code, n_tmp) = q_code(
             &vkey.q_verifier,
-            &QOperands { eval: &eval, public: &public, zi: &zi_slots, challenges: &challenges, tmp: &tmp },
+            &QOperands { eval: &eval, public: &public, zi: &zi_slots, challenges: &challenges, tmp: "pTmp" },
         )?;
+        mem.alloc("pTmp".into(), n_tmp, "the stored values of the qVerifier".into());
         let q_split = (cd.n_q_pieces > 0).then(|| QSplit {
             max_q_degree: vkey.max_q_degree,
             pieces_desc: piece_slots.values().rev().cloned().collect(),
@@ -757,7 +873,7 @@ impl Context {
                                             None => fail(format!("no piece of Q is named {:?}", p.name)),
                                         }
                                     } else {
-                                        Ok("mload(add(pMem, pQ))".to_string())
+                                        Ok("mload(pQ)".to_string())
                                     }
                                 } else {
                                     match vkey
@@ -777,14 +893,7 @@ impl Context {
                             .collect::<Result<Vec<_>, _>>()?;
                         let mut horner = sources.into_iter().rev();
                         let horner_first = horner.next().unwrap_or_default();
-                        let row = &set.rows[m];
-                        Ok(FRow {
-                            roots: row.roots.clone(),
-                            den1: row.den1.clone(),
-                            inv_den: at(&p_inv_den[i], WORD * f.k * m as u64),
-                            horner_first,
-                            horner_rest: horner.collect(),
-                        })
+                        Ok(FRow { horner_first, horner_rest: horner.collect(), p_l: set.rows[m].p_l.clone() })
                     })
                     .collect::<Result<Vec<_>, SetupError>>()?;
                 Ok(F {
@@ -796,7 +905,6 @@ impl Context {
                     commitment: if f.stage == 0 { format!("f{i}") } else { commitment_of[&i].clone() },
                     p_inv_zt: p_inv_zt[i].clone(),
                     p_zt: set.p_zt.clone(),
-                    w_k_inv: fr_pow(&root_of_unity(&BigUint::from(f.k))?, f.k - 1).to_str_radix(10),
                     p_r: p_r[i].clone(),
                     rows,
                 })
@@ -823,10 +931,12 @@ impl Context {
             words: cd.words(),
             proof_words: cd.proof_words(),
             calldata,
-            p_points_end: calldata_offset(2 * (n_c + 2)),
-            p_absorbed_end: calldata_offset(2 * (n_c + 1)),
-            p_scalars: calldata_offset(cd.first_scalar()),
-            p_scalars_end: calldata_offset(cd.words()),
+            check_points: (0..n_c + 2).map(|i| calldata_offset(2 * i)).collect(),
+            check_absorbed: (0..n_c + 1).map(|i| calldata_offset(2 * i)).collect(),
+            check_scalars: (cd.first_scalar()..cd.words())
+                .map(calldata_offset)
+                .chain((0..vkey.n_public).map(|i| p_public + WORD * i))
+                .collect(),
             p_public,
             memory: mem.slots,
             last_mem: mem.next,
@@ -837,7 +947,10 @@ impl Context {
             ks: k_powers.into_values().collect(),
             root_sets,
             fs,
-            n_inv,
+            g: g.to_str_radix(10),
+            e,
+            xi_negs,
+            n_inv_zt: layout.len() as u64 - 1,
         })
     }
 }
@@ -876,7 +989,48 @@ pub fn verifier_sol(vkey: &Vkey) -> Result<String, SetupError> {
         return fail(format!("the vkey's fixed commitment f{i} is not a point of G1"));
     }
     let context = TeraContext::from_serialize(Context::new(vkey)?).map_err(|e| SetupError::Solidity(e.to_string()))?;
-    render(VERIFIER_TEMPLATE, &context)
+    q_in_memory(&render(VERIFIER_TEMPLATE, &context)?)
+}
+
+/// The memory slot `q` is kept in through `verifyProof`'s assembly: Solidity's zero slot, which the
+/// assembly never hands back to Solidity (it ends in `return`).
+const Q_SLOT: &str = "0x60";
+
+/// `src` with every `q` of its assembly read from [`Q_SLOT`], stored there first. solc at
+/// `optimize-runs 1` copies a 32-byte constant out of the code at each use, about 10 bytes a use: on a
+/// verifier of thousands of field operations that is most of its bytecode (and gas).
+fn q_in_memory(src: &str) -> Result<String, SetupError> {
+    let at = src
+        .find("        assembly {\n")
+        .ok_or_else(|| SetupError::Solidity("the verifier template has no `assembly {` block to keep q in".into()))?;
+    let (solidity, assembly) = src.split_at(at);
+    if !assembly.contains("return(") {
+        return Err(SetupError::Solidity(
+            "the verifier's assembly does not end in return: q's slot is Solidity's".into(),
+        ));
+    }
+    let mut out = String::with_capacity(src.len() + src.len() / 4);
+    out.push_str(solidity);
+    for (i, line) in assembly.split_inclusive('\n').enumerate() {
+        let (code, comment) = line.find("//").map_or((line, ""), |c| line.split_at(c));
+        let bytes = code.as_bytes();
+        let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'.';
+        let mut last = 0;
+        for (j, &b) in bytes.iter().enumerate() {
+            let alone = b == b'q' && (j == 0 || !ident(bytes[j - 1])) && (j + 1 == bytes.len() || !ident(bytes[j + 1]));
+            if alone {
+                out.push_str(&code[last..j]);
+                out.push_str(&format!("mload({Q_SLOT})"));
+                last = j + 1;
+            }
+        }
+        out.push_str(&code[last..]);
+        out.push_str(comment);
+        if i == 0 {
+            out.push_str(&format!("            mstore({Q_SLOT}, q)\n"));
+        }
+    }
+    Ok(out)
 }
 
 /// Writes the Solidity verifier of `vkey` at `path`, replacing any file there.
