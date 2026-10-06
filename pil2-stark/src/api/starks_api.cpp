@@ -13,7 +13,6 @@
 #include "setup_ctx.hpp"
 #include "stark_verify.hpp"
 #include "recursion_trace/gate_bands/gate_bands_cpu.hpp"
-#include "recursion_trace/exec_file.hpp"
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 #include "starks_api_internal.hpp"
@@ -986,9 +985,6 @@ void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint
 
 
 
-void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
-    getCommitedPols((Goldilocks::Element *)circomWitness, execData, (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
-}
 
 uint64_t expand_gate_bands(void *witness, uint64_t* execData, uint64_t nCommitedPols, uint64_t execWords, uint64_t N) {
     gate_bands::ExpandResult res =

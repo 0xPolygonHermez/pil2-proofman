@@ -1,6 +1,6 @@
 // Widening the compact witness buffer into the device trace.
 //
-// Nothing to do with gate bands, but motivated by the same fact: `getCommitedPols` fills only the
+// Nothing to do with gate bands, but motivated by the same fact: `getWitnessTrace` fills only the
 // exec map's columns, leaving the rest for a gate-band expander to rebuild, so those columns need
 // never cross PCIe. The host hands over a compact `N x mapCols` buffer, copied in one contiguous
 // run, and this widens it on device.

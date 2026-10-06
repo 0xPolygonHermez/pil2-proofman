@@ -1179,38 +1179,7 @@ pub fn gen_recursive_proof_final_c(
     }
 }
 
-/// Gathers the circom witness into the committed-polynomial trace, zeroing every cell the
-/// exec file's map does not cover.
-///
-/// `exec_data` must come from `load_exec_file`, which is what rejects a header this build
-/// cannot read and a map wider than the trace. Passing an unvalidated buffer yields a
-/// zero-filled trace at best.
-#[allow(clippy::too_many_arguments)]
-pub fn get_committed_pols_c(
-    circomWitness: *mut u8,
-    exec_data: *mut u64,
-    witness: *mut u8,
-    pPublics: *mut u8,
-    sizeWitness: u64,
-    N: u64,
-    nPublics: u64,
-    nCols: u64,
-) {
-    unsafe {
-        get_committed_pols(
-            circomWitness as *mut std::os::raw::c_void,
-            exec_data,
-            witness as *mut std::os::raw::c_void,
-            pPublics as *mut std::os::raw::c_void,
-            sizeWitness,
-            N,
-            nPublics,
-            nCols,
-        );
-    }
-}
-
-/// Fills the trace cells `get_committed_pols_c` leaves unmapped, from the boundary cells it
+/// Fills the trace cells the witness scatter (`getWitnessTrace`) leaves unmapped, from the boundary cells it
 /// placed. No-op when the setup's exec file carries no band section, so it is safe to call
 /// unconditionally. Returns the number of bands expanded.
 pub fn expand_gate_bands_c(witness: *mut u8, exec_data: *mut u64, n_cols: u64, exec_words: u64, n: u64) -> u64 {

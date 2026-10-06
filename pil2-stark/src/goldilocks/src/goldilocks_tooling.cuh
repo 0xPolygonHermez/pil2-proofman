@@ -125,7 +125,7 @@ struct AirInstanceInfo {
 
     /// Row stride of the HOST trace buffer, i.e. the exec map's width.
     ///
-    /// `getCommitedPols` can only place what the circom witness carries, so it fills these columns and
+    /// `getWitnessTrace` can only place what the circom witness carries, so it fills these columns and
     /// leaves the rest zero for the expander to rebuild -- which means copying the full width ships
     /// zeros the expander overwrites two kernels later. When this is narrower than the air's cm1 the
     /// host hands over a COMPACT buffer and the copy widens it on arrival. 0 means "not known", and

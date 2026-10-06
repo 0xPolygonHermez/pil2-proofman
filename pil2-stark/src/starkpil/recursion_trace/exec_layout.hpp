@@ -1,7 +1,7 @@
 #ifndef EXEC_LAYOUT_HPP
 #define EXEC_LAYOUT_HPP
 
-// The `.exec` file's layout, shared by the map reader (exec_file.hpp) and the gate-band reader
+// The `.exec` file's layout, shared by the loader and the gate-band reader
 // (gate_bands.hpp). Defined by common/src/exec_format.rs, which holds these constants for Rust;
 // written by `write_exec_file` in setup/stark-recurser/plonk2pil/mod.rs.
 //

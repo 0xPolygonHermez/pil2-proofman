@@ -2285,7 +2285,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     // When the exec map is narrower than cm1 the host hands over a COMPACT N x mapCols trace and the
-    // columns it omits -- the expander's, which getCommitedPols could only zero -- never cross PCIe.
+    // columns it omits -- the expander's, which getWitnessTrace could only zero -- never cross PCIe.
     // Every Rust caller that can reach this function fills compactly under the same condition, since
     // both sides read mapCols out of the same exec header. See widenCompactWitnessKernel.
     const uint64_t mapCols = air_instance_info->witness_map_cols;
