@@ -6,7 +6,7 @@ pragma custom_templates;
 // plonk2pil lays out for it constrains every chunk below 2^16 and in to their sum, so what it
 // proves is in < 2^(16·ceil(nBits/16)), a whole number of chunks. The signals of a use in the r1cs
 // are in, then out.
-template custom Num2Bytes(nBits) {
+template custom extern_c Num2Bytes(nBits) {
     assert(nBits <= 80);
     var nBytes = (nBits + 15)\16;
     signal input in;

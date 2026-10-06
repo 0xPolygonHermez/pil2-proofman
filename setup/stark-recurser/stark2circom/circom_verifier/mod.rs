@@ -24,6 +24,7 @@ use serde_json::Value;
 pub use gl::Pil2CircomOptions;
 pub(crate) use gl::gen_stark_verifier_gl;
 pub(crate) use bn128::gen_stark_verifier_bn128;
+pub use bn128::gen_stark_verifier_bn128_blake3;
 
 /// Generate a stark verifier circom (GL or BN128, selected by
 /// `stark_info.starkStruct.verificationHashType`).

@@ -35,11 +35,14 @@ use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, ve
 use crate::plonk2pil::r1cs::to_plonk::{
     blake3_compress_gate_uses, ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info, PlonkConstraint,
 };
-use crate::plonk2pil::r1cs::types::{FixedPol, GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
+use crate::plonk2pil::field::PlonkField;
+use crate::plonk2pil::r1cs::to_plonk::CustomGatesInfo;
+use crate::plonk2pil::r1cs::types::{CustomGateUse, FixedPol, GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
 use crate::plonk2pil::utils::{bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, public_rows};
 use proofman_common::hash_family::GateRole;
-use proofman_fields::{Field, Goldilocks, PrimeField64};
-use std::collections::HashMap;
+use num_bigint::BigUint;
+use proofman_fields::{Field, Goldilocks, PrimeField, QuotientMap};
+use std::collections::{BTreeMap, HashMap};
 
 fn rand_hex() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -80,8 +83,8 @@ pub fn plonk_rows_inside_blocks(blocks: usize, lanes: usize, clocks: usize) -> u
 /// five of their coefficients agree, which is exactly `ckey`. A key with 13 constraints takes three
 /// rows, the last one two-thirds empty -- that waste is the price of one `q` instead of two, and it
 /// is visible in `rows_needed` rather than hidden.
-pub fn plan_plonk_rows(
-    constraints: &[PlonkConstraint<Goldilocks>],
+pub fn plan_plonk_rows<F: PlonkField>(
+    constraints: &[PlonkConstraint<F>],
     blocks: usize,
     lanes: usize,
     clocks: usize,
@@ -166,7 +169,7 @@ pub fn plan_band_blocks(rows: [usize; 6], lanes: usize, layout: &BandLayout) -> 
 /// receiving six transported columns; the cost is the tail of each circuit's last block. `open`
 /// starts a circuit's run and must be called in the PIL's order, so a drift between the two shows
 /// up as a row count that does not match rather than as a constraint that never fires.
-struct RowAlloc {
+pub(crate) struct RowAlloc {
     lanes: usize,
     /// First block no run has claimed yet.
     next_block: usize,
@@ -179,7 +182,7 @@ struct RowAlloc {
 }
 
 impl RowAlloc {
-    fn new(lanes: usize) -> Self {
+    pub(crate) fn new(lanes: usize) -> Self {
         Self { lanes, next_block: 0, block: 0, row: 0, end: 0, step: 1 }
     }
 
@@ -195,7 +198,7 @@ impl RowAlloc {
 
     /// Start the next circuit's run of blocks. `step` is 1 for a one-row circuit and 2 for one that
     /// reads the next row through primes.
-    fn open(&mut self, rows: usize, step: usize) {
+    pub(crate) fn open(&mut self, rows: usize, step: usize) {
         let per_block = (self.interior() / step).max(1);
         self.step = step;
         self.enter(self.next_block);
@@ -203,7 +206,7 @@ impl RowAlloc {
     }
 
     /// The first of `step` consecutive rows, from the current run.
-    fn take(&mut self) -> usize {
+    pub(crate) fn take(&mut self) -> usize {
         if self.row + self.step > self.end {
             self.enter(self.block + 1);
         }
@@ -213,7 +216,7 @@ impl RowAlloc {
     }
 
     /// Blocks the band has consumed.
-    fn blocks_used(&self) -> usize {
+    pub(crate) fn blocks_used(&self) -> usize {
         self.next_block
     }
 }
@@ -232,19 +235,187 @@ fn write_plonk_coeffs(cv: &mut [Vec<Goldilocks>], row: usize, c: &PlonkConstrain
 }
 
 /// One `Blake3Compress` use with its gate's `(flags, isParent)`.
-pub(super) type CompressUse<'a> = (&'a crate::plonk2pil::r1cs::types::CustomGateUse, Goldilocks, Goldilocks);
+pub(crate) type CompressUse<'a, F = Goldilocks> = (&'a CustomGateUse, F, F);
 
 /// Groups `Blake3Compress` uses by their `flags` template parameter, lowest value first.
 ///
 /// `flags` reaches the air as a fixed column filled per whole 56-row block, so the uses that share a
 /// block must agree on it. Sorted by value rather than left in arrival order so the resulting s_map
 /// is a function of the r1cs alone -- the same reason the plonk gates are ordered explicitly.
-pub(super) fn bucket_by_flags(uses: Vec<CompressUse<'_>>) -> Vec<Vec<CompressUse<'_>>> {
-    let mut by_flags: std::collections::BTreeMap<Goldilocks, Vec<_>> = std::collections::BTreeMap::new();
+pub(crate) fn bucket_by_flags<F: PrimeField>(uses: Vec<CompressUse<'_, F>>) -> Vec<Vec<CompressUse<'_, F>>> {
+    let mut by_flags: BTreeMap<BigUint, Vec<_>> = BTreeMap::new();
     for u in uses {
-        by_flags.entry(u.1).or_default().push(u);
+        by_flags.entry(u.1.as_canonical_biguint()).or_default().push(u);
     }
     by_flags.into_values().collect()
+}
+
+/// The BLAKE3 blocks of an air: every `Blake3Node` and `Blake3Compress` use of the r1cs in whole
+/// 56-row blocks of `lanes` lanes, Node blocks first, then chunk, then parent, each Compress kind
+/// bucketed by `flags`. Over either field: the blake3 recursion airs' and the BN128 wrap's.
+pub(crate) struct Blake3Blocks<'a, F> {
+    pub lanes: usize,
+    node_uses: Vec<&'a CustomGateUse>,
+    chunk_buckets: Vec<Vec<CompressUse<'a, F>>>,
+    parent_buckets: Vec<Vec<CompressUse<'a, F>>>,
+    pub n_node_blocks: usize,
+    pub n_chunk_blocks: usize,
+    pub n_parent_blocks: usize,
+}
+
+impl<'a, F: PlonkField + QuotientMap<u64>> Blake3Blocks<'a, F> {
+    pub fn new(r1cs: &'a R1csFile<F>, cgi: &CustomGatesInfo<F>, lanes: usize) -> Self {
+        // Blake3Compress carries `(flags, isParent)` as TEMPLATE PARAMETERS, so circom mints one gate id
+        // per distinct pair and the r1cs records the values. isParent picks the block kind and flags
+        // becomes a fixed column; neither is a trace cell, and neither could be recovered from
+        // `cgu.signals` -- they live on the gate, not the use.
+        let compress_uses = blake3_compress_gate_uses(&r1cs.custom_gates_uses, &cgi.blake3_compress_parameters);
+        let (parent_uses, chunk_uses): (Vec<_>, Vec<_>) = compress_uses.into_iter().partition(|(_, _, ip)| ip.is_one());
+
+        // `flags` is a FIXED column the air fills per whole block, so every use sharing a block has to
+        // share its flags value. Bucket by flags and give each bucket whole blocks. Packing uses in
+        // arrival order instead keeps whichever flags value was written last for the entire block, and
+        // `(BLAKE3_CHUNK * 3'CLK_0) * (vd - FLAGS) === 0` -- st[15] is flags at clock 3 -- then fails on
+        // every block that mixed two values.
+        let chunk_buckets = bucket_by_flags(chunk_uses);
+        let parent_buckets = bucket_by_flags(parent_uses);
+        let blocks_in = |buckets: &[Vec<CompressUse<'_, F>>]| buckets.iter().map(|b| b.len().div_ceil(lanes)).sum();
+        for (label, buckets) in [("chunk", &chunk_buckets), ("parent", &parent_buckets)] {
+            for b in buckets.iter() {
+                tracing::info!(
+                    "Blake3Compress {label} flags={} : {} uses -> {} blocks ({} lanes idle in the last)",
+                    b[0].1,
+                    b.len(),
+                    b.len().div_ceil(lanes),
+                    (lanes - b.len() % lanes) % lanes
+                );
+            }
+        }
+        let node_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::Blake3Node));
+        Self {
+            lanes,
+            n_node_blocks: node_uses.len().div_ceil(lanes),
+            n_chunk_blocks: blocks_in(&chunk_buckets),
+            n_parent_blocks: blocks_in(&parent_buckets),
+            node_uses,
+            chunk_buckets,
+            parent_buckets,
+        }
+    }
+
+    pub fn n_blocks(&self) -> usize {
+        self.n_node_blocks + self.n_chunk_blocks + self.n_parent_blocks
+    }
+
+    /// Every use, in the blocks' order at one lane: its kind (0 Node, 1 chunk, 2 parent), its
+    /// flags and the use.
+    pub fn uses(&self) -> Vec<(u8, u64, &'a CustomGateUse)> {
+        let flags = |f: &F| u64::try_from(&f.as_canonical_biguint()).expect("flags is a byte");
+        let nodes = self.node_uses.iter().map(|&u| (0, 11, u));
+        let compress = |kind: u8, buckets: &[Vec<CompressUse<'a, F>>]| {
+            buckets.iter().flatten().map(|(u, f, _)| (kind, flags(f), *u)).collect::<Vec<_>>()
+        };
+        nodes.chain(compress(1, &self.chunk_buckets)).chain(compress(2, &self.parent_buckets)).collect()
+    }
+
+    /// Writes the blocks' boundary cells into `s_map` (`n` rows), and returns the `FLAGS` column
+    /// and a gate band per block. The 59 columns per lane are the expander's; the setup writes the
+    /// two boundary rows. Lane l of a block reads its input at clock l and writes its output at
+    /// clock 56 - LANES + l (spec 3.2).
+    pub fn place(&self, s_map: &mut [Vec<u32>], n: usize) -> (Vec<F>, Vec<GateBand>) {
+        let lanes = self.lanes;
+        let (n_node_blocks, n_chunk_blocks, n_blocks) = (self.n_node_blocks, self.n_chunk_blocks, self.n_blocks());
+        let node_uses = &self.node_uses;
+        tracing::info!(
+            "Processing {} Node, {} chunk, {} parent gates in {n_blocks} blocks...",
+            node_uses.len(),
+            self.chunk_buckets.iter().map(Vec::len).sum::<usize>(),
+            self.parent_buckets.iter().map(Vec::len).sum::<usize>()
+        );
+        // `flags` is st[15], a per-block constant read off the gate id's parameters.
+        let mut flags_col = vec![F::ZERO; n];
+        let mut gate_bands = Vec::with_capacity(n_blocks);
+
+        // The kind selectors are block-wide, so an idle lane in a partially filled final block still has
+        // to hold a valid BLAKE3 computation. Left alone its `a[]` cells stay zero while the expander
+        // hashes that zero input and writes a real digest into outBytes, and the output binding fails on
+        // exactly those lanes. Repeating the last use into them costs no block and no row: the duplicate
+        // maps the SAME circom signals, so the copy constraints it creates are true by construction and
+        // the lane computes something real.
+        for i in 0..if node_uses.is_empty() { 0 } else { n_node_blocks * lanes } {
+            let cgu = &node_uses[i.min(node_uses.len() - 1)];
+            assert_eq!(cgu.signals.len(), 13, "Blake3Node is in[8] + key + out[4]");
+            let (block, lane) = (i / lanes, i % lanes);
+            let base = block * BLAKE3_CLOCKS;
+            for (j, sig) in cgu.signals[..9].iter().enumerate() {
+                s_map[j][base + lane] = *sig as u32; // in[0..8] then the Merkle path bit
+            }
+            for (j, sig) in cgu.signals[9..13].iter().enumerate() {
+                s_map[j][base + BLAKE3_CLOCKS - lanes + lane] = *sig as u32;
+            }
+        }
+
+        // Each bucket starts on a fresh block, so a block never mixes two flags values. Returns the
+        // first block after everything it placed, which is what pins the placement to the block counts.
+        let place_compress =
+            |buckets: &[Vec<CompressUse<'_, F>>], block_base: usize, s_map: &mut [Vec<u32>], flags_col: &mut [F]| {
+                let mut next_block = block_base;
+                for bucket in buckets {
+                    // Pad the final block's idle lanes with the bucket's last use, for the reason given at
+                    // the Node placement above. Same bucket, so the repeat carries the same flags and the
+                    // block stays uniform.
+                    for i in 0..bucket.len().div_ceil(lanes) * lanes {
+                        let (cgu, flags, _) = &bucket[i.min(bucket.len() - 1)];
+                        assert_eq!(
+                            cgu.signals.len(),
+                            compress_signal::COUNT,
+                            "Blake3Compress is in[16] + blockLen + counterLo + out[16]"
+                        );
+                        let (block, lane) = (next_block + i / lanes, i % lanes);
+                        let base = block * BLAKE3_CLOCKS;
+                        // in[16], blockLen, counterLo -- exactly the band's width, in declaration order
+                        for (j, sig) in cgu.signals[..compress_signal::IN_CELLS].iter().enumerate() {
+                            s_map[j][base + lane] = *sig as u32;
+                        }
+                        // out[0..16] as u32, one cell each
+                        for (j, sig) in cgu.signals[compress_signal::IN_CELLS..].iter().enumerate() {
+                            s_map[j][base + BLAKE3_CLOCKS - lanes + lane] = *sig as u32;
+                        }
+                        // every row of the block carries this block's flags
+                        flags_col[base..base + BLAKE3_CLOCKS].fill(*flags);
+                    }
+                    next_block += bucket.len().div_ceil(lanes);
+                }
+                next_block
+            };
+        let after_chunk = place_compress(&self.chunk_buckets, n_node_blocks, s_map, &mut flags_col);
+        let after_parent = place_compress(&self.parent_buckets, after_chunk, s_map, &mut flags_col);
+        // The air is sized from n_chunk_blocks/n_parent_blocks; if the placement walked past them the
+        // trace would run off the end of a shorter air, so tie the two together rather than trusting it.
+        assert_eq!(after_chunk, n_node_blocks + n_chunk_blocks, "chunk placement disagrees with its block count");
+        assert_eq!(after_parent, n_blocks, "parent placement disagrees with its block count");
+
+        // Blake3Node freezes flags to CHUNK_START | CHUNK_END | ROOT.
+        flags_col[..n_node_blocks * BLAKE3_CLOCKS].fill(F::from_int(11u64));
+
+        // One band per block: the expander rebuilds every lane's interior from the boundary.
+        for block in 0..n_blocks {
+            let kind = if block < n_node_blocks {
+                GateBandKind::Blake3Node
+            } else if block < n_node_blocks + n_chunk_blocks {
+                GateBandKind::Blake3CompressChunk
+            } else {
+                GateBandKind::Blake3CompressParent
+            };
+            // The payload carries this block's `flags`. The expander needs it to run the permutation,
+            // and the AIR holds it in a FIXED column, so it is in neither the witness trace nor
+            // anything expand_gate_bands is handed -- which is what the band section's version 2 is for.
+            let row = block * BLAKE3_CLOCKS;
+            let payload = u64::try_from(&flags_col[row].as_canonical_biguint()).expect("flags is a byte");
+            gate_bands.push(GateBand { row: row as u32, kind, payload });
+        }
+        (flags_col, gate_bands)
+    }
 }
 
 pub fn aggregation_blake3(r1cs: &R1csFile<Goldilocks>, options: &PlonkOptions) -> SetupResult<Goldilocks> {
@@ -266,38 +437,10 @@ pub fn build_blake3_air(
     let lanes = options.blake3_lanes.unwrap_or(DEFAULT_LANES);
     assert!((1..=8).contains(&lanes), "LANES must be in 1..8 (the air's boundary depth caps it), got {lanes}");
 
-    // Blake3Compress carries `(flags, isParent)` as TEMPLATE PARAMETERS, so circom mints one gate id
-    // per distinct pair and the r1cs records the values. isParent picks the block kind and flags
-    // becomes a fixed column; neither is a trace cell, and neither could be recovered from
-    // `cgu.signals` -- they live on the gate, not the use.
-    let compress_uses = blake3_compress_gate_uses(&r1cs.custom_gates_uses, &cgi.blake3_compress_parameters);
-    let (parent_uses, chunk_uses): (Vec<_>, Vec<_>) = compress_uses.into_iter().partition(|(_, _, ip)| ip.is_one());
-    let (n_chunk_uses, n_parent_uses) = (chunk_uses.len(), parent_uses.len());
-
-    // `flags` is a FIXED column the air fills per whole block, so every use sharing a block has to
-    // share its flags value. Bucket by flags and give each bucket whole blocks. Packing uses in
-    // arrival order instead keeps whichever flags value was written last for the entire block, and
-    // `(BLAKE3_CHUNK * 3'CLK_0) * (vd - FLAGS) === 0` -- st[15] is flags at clock 3 -- then fails on
-    // every block that mixed two values.
-    let chunk_buckets = bucket_by_flags(chunk_uses);
-    let parent_buckets = bucket_by_flags(parent_uses);
-    let blocks_in = |buckets: &[Vec<CompressUse<'_>>]| buckets.iter().map(|b| b.len().div_ceil(lanes)).sum::<usize>();
-
+    let blocks = Blake3Blocks::new(r1cs, &cgi, lanes);
+    let (n_node_blocks, n_chunk_blocks, n_parent_blocks) =
+        (blocks.n_node_blocks, blocks.n_chunk_blocks, blocks.n_parent_blocks);
     let n_node = cgi.n(GateRole::Blake3Node);
-    let n_node_blocks = n_node.div_ceil(lanes);
-    let n_chunk_blocks = blocks_in(&chunk_buckets);
-    let n_parent_blocks = blocks_in(&parent_buckets);
-    for (label, buckets) in [("chunk", &chunk_buckets), ("parent", &parent_buckets)] {
-        for b in buckets.iter() {
-            tracing::info!(
-                "Blake3Compress {label} flags={} : {} uses -> {} blocks ({} lanes idle in the last)",
-                b[0].1,
-                b.len(),
-                b.len().div_ceil(lanes),
-                (lanes - b.len() % lanes) % lanes
-            );
-        }
-    }
     let n_blocks = n_node_blocks + n_chunk_blocks + n_parent_blocks;
     let n_blake3_rows = n_blocks * BLAKE3_CLOCKS;
 
@@ -444,9 +587,7 @@ pub fn build_blake3_air(
     let committed = stage1_cols(lanes, layout.band);
     let mut s_map: Vec<Vec<u32>> = (0..committed).map(|_| vec![0u32; n]).collect();
     let mut cv: Vec<Vec<Goldilocks>> = (0..layout.c_cols).map(|_| vec![Goldilocks::ZERO; n]).collect();
-    let mut gate_bands: Vec<GateBand> = Vec::new();
 
-    let node_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::Blake3Node));
     let cmul_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::CMul));
     let fft4_uses = filter_fft4_gate_uses(&r1cs.custom_gates_uses, &cgi.fft4_parameters);
     let ev_pol4_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::EvPol4));
@@ -454,99 +595,7 @@ pub fn build_blake3_air(
     let sel_val_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::SelectValArity2));
 
     // ── BLAKE3 blocks: boundary cells only ────────────────────────────────────
-    // The 59 columns per lane are the expander's; the setup writes the two boundary rows. Lane l of
-    // a block reads its input at clock l and writes its output at clock 56 - LANES + l (spec 3.2).
-    // Kinds are grouped so the air's block-wide selectors stay compact patterns: Node, then chunk,
-    // then parent.
-    tracing::info!(
-        "Processing {} Node, {} chunk, {} parent gates in {n_blocks} blocks...",
-        node_uses.len(),
-        n_chunk_uses,
-        n_parent_uses
-    );
-    // `flags` is st[15], a per-block constant read off the gate id's parameters.
-    let mut flags_col = vec![Goldilocks::ZERO; n];
-
-    // The kind selectors are block-wide, so an idle lane in a partially filled final block still has
-    // to hold a valid BLAKE3 computation. Left alone its `a[]` cells stay zero while the expander
-    // hashes that zero input and writes a real digest into outBytes, and the output binding fails on
-    // exactly those lanes. Repeating the last use into them costs no block and no row: the duplicate
-    // maps the SAME circom signals, so the copy constraints it creates are true by construction and
-    // the lane computes something real.
-    for i in 0..if node_uses.is_empty() { 0 } else { n_node_blocks * lanes } {
-        let cgu = &node_uses[i.min(node_uses.len() - 1)];
-        assert_eq!(cgu.signals.len(), 13, "Blake3Node is in[8] + key + out[4]");
-        let (block, lane) = (i / lanes, i % lanes);
-        let base = block * BLAKE3_CLOCKS;
-        for (j, sig) in cgu.signals[..9].iter().enumerate() {
-            s_map[j][base + lane] = *sig as u32; // in[0..8] then the Merkle path bit
-        }
-        for (j, sig) in cgu.signals[9..13].iter().enumerate() {
-            s_map[j][base + BLAKE3_CLOCKS - lanes + lane] = *sig as u32;
-        }
-    }
-
-    // Each bucket starts on a fresh block, so a block never mixes two flags values. Returns the
-    // first block after everything it placed, which is what pins the placement to the block counts.
-    let place_compress = |buckets: &[Vec<CompressUse<'_>>],
-                          block_base: usize,
-                          s_map: &mut Vec<Vec<u32>>,
-                          flags_col: &mut Vec<Goldilocks>|
-     -> usize {
-        let mut next_block = block_base;
-        for bucket in buckets {
-            // Pad the final block's idle lanes with the bucket's last use, for the reason given at
-            // the Node placement above. Same bucket, so the repeat carries the same flags and the
-            // block stays uniform.
-            for i in 0..bucket.len().div_ceil(lanes) * lanes {
-                let (cgu, flags, _) = &bucket[i.min(bucket.len() - 1)];
-                assert_eq!(
-                    cgu.signals.len(),
-                    compress_signal::COUNT,
-                    "Blake3Compress is in[16] + blockLen + counterLo + out[16]"
-                );
-                let (block, lane) = (next_block + i / lanes, i % lanes);
-                let base = block * BLAKE3_CLOCKS;
-                // in[16], blockLen, counterLo -- exactly the band's width, in declaration order
-                for (j, sig) in cgu.signals[..compress_signal::IN_CELLS].iter().enumerate() {
-                    s_map[j][base + lane] = *sig as u32;
-                }
-                // out[0..16] as u32, one cell each
-                for (j, sig) in cgu.signals[compress_signal::IN_CELLS..].iter().enumerate() {
-                    s_map[j][base + BLAKE3_CLOCKS - lanes + lane] = *sig as u32;
-                }
-                // every row of the block carries this block's flags
-                flags_col[base..base + BLAKE3_CLOCKS].fill(*flags);
-            }
-            next_block += bucket.len().div_ceil(lanes);
-        }
-        next_block
-    };
-    let after_chunk = place_compress(&chunk_buckets, n_node_blocks, &mut s_map, &mut flags_col);
-    let after_parent = place_compress(&parent_buckets, after_chunk, &mut s_map, &mut flags_col);
-    // The air is sized from n_chunk_blocks/n_parent_blocks; if the placement walked past them the
-    // trace would run off the end of a shorter air, so tie the two together rather than trusting it.
-    assert_eq!(after_chunk, n_node_blocks + n_chunk_blocks, "chunk placement disagrees with its block count");
-    assert_eq!(after_parent, n_blocks, "parent placement disagrees with its block count");
-
-    // Blake3Node freezes flags to CHUNK_START | CHUNK_END | ROOT.
-    flags_col[..n_node_blocks * BLAKE3_CLOCKS].fill(Goldilocks::new(11));
-
-    // One band per block: the expander rebuilds every lane's interior from the boundary.
-    for block in 0..n_blocks {
-        let kind = if block < n_node_blocks {
-            GateBandKind::Blake3Node
-        } else if block < n_node_blocks + n_chunk_blocks {
-            GateBandKind::Blake3CompressChunk
-        } else {
-            GateBandKind::Blake3CompressParent
-        };
-        // The payload carries this block's `flags`. The expander needs it to run the permutation,
-        // and the AIR holds it in a FIXED column, so it is in neither the witness trace nor
-        // anything expand_gate_bands is handed -- which is what the band section's version 2 is for.
-        let row = block * BLAKE3_CLOCKS;
-        gate_bands.push(GateBand { row: row as u32, kind, payload: flags_col[row].as_canonical_u64() });
-    }
+    let (flags_col, gate_bands) = blocks.place(&mut s_map, n);
 
     // Runs are opened in the order blake3/aggregator.pil lays the selectors out. The AIR states
     // where each circuit lives; this only has to agree with it.
@@ -704,6 +753,7 @@ mod tests {
         CLOCK_WRAP_ROWS, COMPRESSOR_BAND_COLS, PERM_COLS_PER_LANE,
     };
     use super::*;
+    use proofman_fields::PrimeField64;
 
     /// `flags` reaches the air as a FIXED column filled per whole 56-row block, so the uses sharing a
     /// block have to agree on it. A circuit mints one gate id per distinct value, so a block packed in
@@ -1017,7 +1067,7 @@ mod tests {
     #[test]
     fn no_constraints_needs_no_rows() {
         assert_eq!(
-            plan_plonk_rows(&[], 9361, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row),
+            plan_plonk_rows::<Goldilocks>(&[], 9361, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row),
             PlonkPlan { rows_needed: 0, rows_in_blocks: 0, rows_dedicated: 0 }
         );
     }

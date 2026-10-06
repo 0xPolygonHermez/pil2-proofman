@@ -9,7 +9,8 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 
 use pil2_stark_recurser::stark2circom::{
-    gen_circom_circuit, gen_stark_verifier, CircomGenOptions, GenCircomCircuitInput, StarkVerifierOptions,
+    gen_circom_circuit, gen_stark_verifier, gen_stark_verifier_bn128_blake3, CircomGenOptions, GenCircomCircuitInput,
+    StarkVerifierOptions,
 };
 
 // ── pil2circom ───────────────────────────────────────────────────────────────
@@ -53,6 +54,28 @@ pub fn pil2circom(
     };
     let root: Option<&[String; 4]> = if opts.verkey_input { None } else { Some(const_root) };
     gen_stark_verifier(root, stark_info, verifier_info, &rust_opts).context("gen_stark_verifier failed")
+}
+
+/// The BN128 verifier of a Goldilocks STARK hashed with blake3 (a blake3 key's recursivef), for the
+/// final SNARK's circuit: `pil2circom` over BN128, which the stark info alone does not select.
+pub fn pil2circom_bn128_blake3(
+    const_root: &[String; 4],
+    stark_info: &Value,
+    verifier_info: &Value,
+    opts: &Pil2CircomOptions,
+) -> Result<String> {
+    let rust_opts = StarkVerifierOptions {
+        skip_main: opts.skip_main,
+        verkey_input: opts.verkey_input,
+        enable_input: opts.enable_input,
+        input_challenges: opts.input_challenges,
+        fri_queries_batch_size: None,
+        multi_fri: false,
+        hash: opts.hash.clone(),
+    };
+    let root: Option<&[String; 4]> = if opts.verkey_input { None } else { Some(const_root) };
+    gen_stark_verifier_bn128_blake3(root, stark_info, verifier_info, &rust_opts)
+        .context("gen_stark_verifier_bn128_blake3 failed")
 }
 
 // ── gen_circom ───────────────────────────────────────────────────────────────

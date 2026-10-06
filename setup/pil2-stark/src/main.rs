@@ -5,6 +5,7 @@ use pil2_stark_setup::commands::rebuild_witness::{self as rebuild_witness_cmd, R
 use pil2_stark_setup::commands::setup::{self, SetupOptions};
 use pil2_stark_setup::commands::stats::{self as stats_cmd, StatsOptions};
 use pil2_stark_setup::commands::setup_compressed_final::{self as compressed_final_cmd, SetupCompressedFinalOptions};
+use pil2_stark_setup::commands::setup_recursivef::{self as recursivef_cmd, SetupRecursivefOptions};
 use pil2_stark_setup::commands::setup_recursive_test::{self as recursive_test_cmd, SetupRecursiveTestOptions};
 use pil2_stark_setup::commands::setup_snark::{self as snark_cmd, SetupSnarkOptions};
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE};
@@ -39,6 +40,9 @@ enum Commands {
     /// Run only the `vadcop_final_compressed` stage on top of an existing
     /// provingKey/<name>/vadcop_final/. Useful for iterating on this stage.
     SetupCompressedFinal(SetupCompressedFinalArgs),
+    /// Set up the recursivef of a blake3 proving key (a Goldilocks STARK that verifies one
+    /// vadcop_final proof) in provingKey/<name>/recursivef/, which proofman proves before a blake3 key's final SNARK.
+    SetupRecursivef(SetupRecursivefArgs),
     /// Set up a test recursive circuit from a user-provided circom file.
     SetupRecursiveTest(SetupRecursiveTestArgs),
     /// Rebuild every witness library (.so/.dylib) in an existing provingKey
@@ -196,6 +200,15 @@ struct SetupSnarkArgs {
     /// Only generate the recursivef step; skip the final SNARK
     #[arg(long)]
     only_recursive_final: bool,
+
+    /// pilfflonk: the extra scalar multiplications of its grouping, instead of the wrap family's
+    #[arg(long)]
+    extra_muls: Option<u64>,
+
+    /// pilfflonk: CUDA arch spec of the wrap's Q kernel (.exps.so): auto | major | "89,120" | sm_120.
+    /// No kernel without nvcc.
+    #[arg(long, default_value = "auto")]
+    exps_arch: String,
 }
 
 #[derive(Parser)]
@@ -250,6 +263,23 @@ struct SetupCompressedFinalArgs {
     /// Build directory containing `provingKey/<name>/vadcop_final/`.
     #[arg(short = 'b', long)]
     build_dir: String,
+}
+
+#[derive(Parser)]
+struct SetupRecursivefArgs {
+    /// Build directory containing `provingKey/<name>/vadcop_final/`.
+    #[arg(short = 'b', long)]
+    build_dir: String,
+    /// Its blowup factor, as log2 (the extended domain is 2^(nBits + blowup)).
+    #[arg(long, default_value_t = recursivef_cmd::RECURSIVEF_BLOWUP)]
+    blowup: usize,
+    /// The blake3 lanes of its AIR: compressions side by side in a row.
+    #[arg(long, default_value_t = recursivef_cmd::RECURSIVEF_LANES)]
+    lanes: usize,
+    /// CUDA arch spec of its Q kernel (.exps.so): auto | major | "89,120" | sm_120. No kernel
+    /// without nvcc.
+    #[arg(long, default_value = "auto")]
+    exps_arch: String,
 }
 
 #[derive(Parser)]
@@ -511,6 +541,8 @@ fn main() -> anyhow::Result<()> {
                 final_snark: args.final_snark,
                 publics_info: args.publics_info,
                 only_recursive_final: args.only_recursive_final,
+                extra_muls: args.extra_muls,
+                exps_arch: args.exps_arch,
             };
             snark_cmd::run_setup_snark(&opts)
         }
@@ -547,6 +579,17 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("  build_dir: {}", args.build_dir);
             let opts = SetupCompressedFinalOptions { build_dir: args.build_dir };
             compressed_final_cmd::run_setup_compressed_final(&opts)
+        }
+
+        Commands::SetupRecursivef(args) => {
+            tracing::info!("proofman-setup setup-recursivef: starting");
+            tracing::info!("  build_dir: {}", args.build_dir);
+            recursivef_cmd::run_setup_recursivef(&SetupRecursivefOptions {
+                build_dir: args.build_dir,
+                blowup: args.blowup,
+                lanes: args.lanes,
+                exps_arch: args.exps_arch,
+            })
         }
 
         Commands::RebuildWitnessLibs(args) => {

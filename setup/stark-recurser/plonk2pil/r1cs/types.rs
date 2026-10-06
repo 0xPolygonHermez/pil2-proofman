@@ -155,6 +155,14 @@ pub enum GateBandKind {
     /// wrap's witness counts its chunks into the multiplicity column
     /// ([`RANGE_CHECK_BAND_KIND`](proofman_common::exec_format::RANGE_CHECK_BAND_KIND)).
     PoseidonBn128WrapRangeCheck = proofman_common::exec_format::RANGE_CHECK_BAND_KIND,
+    /// A range-check row of the blake3 BN128 wrap: three `Num2Bytes` uses of `payload` chunks,
+    /// which its witness counts into blake3's 16-bit table
+    /// ([`BLAKE3_WRAP_RANGE_CHECK_BAND_KIND`](proofman_common::exec_format::BLAKE3_WRAP_RANGE_CHECK_BAND_KIND)).
+    Blake3Bn128WrapRangeCheck = proofman_common::exec_format::BLAKE3_WRAP_RANGE_CHECK_BAND_KIND,
+    /// A block of the blake3 BN128 wrap, of each kind, `payload` its flags.
+    Blake3Bn128WrapNode = proofman_common::exec_format::BLAKE3_WRAP_NODE_BAND_KIND,
+    Blake3Bn128WrapChunk = proofman_common::exec_format::BLAKE3_WRAP_CHUNK_BAND_KIND,
+    Blake3Bn128WrapParent = proofman_common::exec_format::BLAKE3_WRAP_PARENT_BAND_KIND,
 }
 
 /// Result returned by every setup function, over the field `F` of the r1cs.

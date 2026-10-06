@@ -21,6 +21,7 @@ use tera::Tera;
 use super::gl_field::{gl_exp, gl_inv, gl_mul, GL_SHIFT, GL_W};
 use super::gl::Pil2CircomOptions;
 use super::transcript_bn128::TranscriptBn128;
+use crate::stark2circom::transcript::Transcript;
 use super::unroll_code::{unroll_code_bn128, UnrollCtx};
 
 // ── Top-level entry-point ─────────────────────────────────────────────────────
@@ -40,8 +41,45 @@ pub fn gen_stark_verifier_bn128(
         bail!("gen_stark_verifier_bn128: expected BN128 hash type, got '{hash_type}'");
     }
 
-    let ctx = build_tera_context_bn128(stark_info, verifier_info, opts, const_root)?;
+    let ctx = build_tera_context_bn128(stark_info, verifier_info, opts, const_root, false)?;
     Tera::one_off(TEMPLATE_BN128, &ctx, false).map_err(|e| anyhow::anyhow!("Tera render error (BN128): {e}"))
+}
+
+/// The BN128 verifier of a Goldilocks STARK hashed with blake3: the recursivef of a blake3 key,
+/// which the final SNARK's circuit verifies. Its arithmetic is the BN128 verifier's (Goldilocks
+/// emulated with `{maxNum}` tags and range checks), its hashing the Goldilocks verifier's: roots of
+/// four words, the transcript of `gl.rs` over the blake3 circuits of `circuits.gl/hash/blake3/` (field parts in `circuits.bn128/b3_field.circom`), binary
+/// Merkle paths with their last levels.
+pub fn gen_stark_verifier_bn128_blake3(
+    const_root: Option<&[String; 4]>,
+    stark_info: &Value,
+    verifier_info: &Value,
+    opts: &Pil2CircomOptions,
+) -> Result<String> {
+    let ss = &stark_info["starkStruct"];
+    if ss["verificationHashType"].as_str().unwrap_or("GL") != "GL" || opts.hash != "blake3" {
+        bail!("gen_stark_verifier_bn128_blake3: expected a Goldilocks STARK hashed with blake3");
+    }
+    if ss["merkleTreeArity"].as_u64() != Some(2) {
+        bail!("gen_stark_verifier_bn128_blake3: blake3 trees are binary");
+    }
+    if stark_info["customCommits"].as_array().is_some_and(|a| !a.is_empty()) {
+        bail!("gen_stark_verifier_bn128_blake3: custom commits are not supported");
+    }
+    // Its transcript absorbs none of them, so they would be free after the challenges.
+    for map in ["airValuesMap", "airgroupValuesMap", "proofValuesMap"] {
+        if stark_info[map].as_array().is_some_and(|a| !a.is_empty()) {
+            bail!("gen_stark_verifier_bn128_blake3: {map} is not supported: the transcript does not absorb it");
+        }
+    }
+    if !opts.skip_main {
+        bail!("gen_stark_verifier_bn128_blake3: the verifier has no Main of its own (skip_main)");
+    }
+    if !uses_custom_templates(stark_info) {
+        bail!("gen_stark_verifier_bn128_blake3: the blake3 gates are custom templates (merkleTreeCustom)");
+    }
+    let ctx = build_tera_context_bn128(stark_info, verifier_info, opts, const_root, true)?;
+    Tera::one_off(TEMPLATE_BN128, &ctx, false).map_err(|e| anyhow::anyhow!("Tera render error (BN128 blake3): {e}"))
 }
 
 /// Whether the BN128 verifier of `stark_info` is written with circom custom templates, the ones of
@@ -59,6 +97,7 @@ fn build_tera_context_bn128(
     vi: &Value,
     opts: &Pil2CircomOptions,
     const_root: Option<&[String; 4]>,
+    blake3: bool,
 ) -> Result<tera::Context> {
     let mut ctx = tera::Context::new();
 
@@ -73,7 +112,7 @@ fn build_tera_context_bn128(
     let n_bits_arity = (arity as f64).log2().ceil() as usize;
     let n_queries = ss["nQueries"].as_u64().unwrap_or(0) as usize;
     let last_level_verification = ss["lastLevelVerification"].as_u64().unwrap_or(0) as usize;
-    if last_level_verification > 0 && custom {
+    if last_level_verification > 0 && custom && !blake3 {
         bail!(
             "gen_stark_verifier_bn128: lastLevelVerification > 0 is not supported with \
              merkleTreeCustom (circuits.bn128/custom/merklehash.circom lacks the templates)"
@@ -357,81 +396,123 @@ fn build_tera_context_bn128(
     // For BN128 the verkey is a single scalar — the caller passes it in slot 0
     // (with slots 1-3 as "0"), so we only emit the first limb. The template uses
     // `signal rootC <== {{ const_root_str }};` which expects a single value.
-    let const_root_str = const_root.map(|r| r[0].clone()).unwrap_or_else(|| "0".to_string());
+    let const_root_str = if blake3 {
+        format!("[{}]", const_root.map(|r| r.join(",")).unwrap_or_else(|| "0,0,0,0".to_string()))
+    } else {
+        const_root.map(|r| r[0].clone()).unwrap_or_else(|| "0".to_string())
+    };
 
     // ── Transcript code strings ─────────────────────────────────────────────
-    let mut t_fri = TranscriptBn128::new(transcript_arity, custom, Some("friQueries".into()));
-    t_fri.put("challengeFRIQueries", 3);
-    if pow_bits > 0 {
-        t_fri.put_single("nonce");
-    }
-    t_fri.get_permutations("queriesFRI", n_queries, step0_bits, n_fields);
-    let calculate_fri_queries_code = t_fri.get_code();
-
-    let mut t = TranscriptBn128::new(transcript_arity, custom, None);
-    let mut transcript_publics_code = String::new();
-    let mut transcript_evals_code = String::new();
-    let mut transcript_last_pol_fri_code = String::new();
-
-    t.put_single("rootC");
-    if n_publics > 0 {
-        if !hash_commits {
-            t.put("publics", n_publics);
-        } else {
-            let mut t_pub = TranscriptBn128::new(transcript_arity, custom, Some("publics".into()));
-            t_pub.put("publics", n_publics);
-            t_pub.get_field_hash("publicsHash");
-            transcript_publics_code = t_pub.get_code();
-            t.put_single("publicsHash");
-        }
-    }
-    for stage in 1..=n_stages {
-        let cnt = challenges_map.iter().filter(|c| c["stage"].as_u64() == Some(stage as u64)).count();
-        for j in 0..cnt {
-            t.get_field(&format!("challengesStage{stage}[{j}]"));
-        }
-        t.put_single(&format!("root{stage}"));
-    }
-    t.get_field("challengeQ");
-    t.put_single(&format!("root{q_stage}"));
-    t.get_field("challengeXi");
-
-    if !hash_commits {
-        for i in 0..ev_map_len {
-            t.put(&format!("evals[{i}]"), 3);
-        }
+    // blake3: the Goldilocks verifier's sequence (gl.rs), squeezed words decomposed with
+    // Num2Bits(64) (canonical, B3Pack in b3_field.circom). The BN128 one otherwise.
+    let mut transcript_code_stage = String::new();
+    let mut transcript_code_fri_mid = String::new();
+    let (
+        calculate_fri_queries_code,
+        transcript_code,
+        transcript_publics_code,
+        transcript_evals_code,
+        transcript_last_pol_fri_code,
+    ) = if blake3 {
+        blake3_transcript(
+            &Blake3TranscriptShape {
+                n_publics,
+                hash_commits,
+                pow_bits,
+                n_queries,
+                step0_bits,
+                n_stages,
+                q_stage,
+                ev_map_len,
+                n_steps,
+                final_pol_size,
+                challenges_map: &challenges_map,
+            },
+            &mut transcript_code_stage,
+            &mut transcript_code_fri_mid,
+        )
     } else {
-        let mut t_evals = TranscriptBn128::new(transcript_arity, custom, Some("evals".into()));
-        for i in 0..ev_map_len {
-            t_evals.put(&format!("evals[{i}]"), 3);
+        let mut t_fri = TranscriptBn128::new(transcript_arity, custom, Some("friQueries".into()));
+        t_fri.put("challengeFRIQueries", 3);
+        if pow_bits > 0 {
+            t_fri.put_single("nonce");
         }
-        t_evals.get_field_hash("evalsHash");
-        transcript_evals_code = t_evals.get_code();
-        t.put_single("evalsHash");
-    }
-    t.get_field("challengesFRI[0]");
-    t.get_field("challengesFRI[1]");
-    for si_idx in 0..n_steps {
-        t.get_field(&format!("challengesFRISteps[{si_idx}]"));
-        if si_idx < n_steps - 1 {
-            t.put_single(&format!("s{}_root", si_idx + 1));
-        } else if !hash_commits {
-            for j in 0..final_pol_size {
-                t.put(&format!("finalPol[{j}]"), 3);
+        t_fri.get_permutations("queriesFRI", n_queries, step0_bits, n_fields);
+        let calculate_fri_queries_code = t_fri.get_code();
+
+        let mut t = TranscriptBn128::new(transcript_arity, custom, None);
+        let mut transcript_publics_code = String::new();
+        let mut transcript_evals_code = String::new();
+        let mut transcript_last_pol_fri_code = String::new();
+
+        t.put_single("rootC");
+        if n_publics > 0 {
+            if !hash_commits {
+                t.put("publics", n_publics);
+            } else {
+                let mut t_pub = TranscriptBn128::new(transcript_arity, custom, Some("publics".into()));
+                t_pub.put("publics", n_publics);
+                t_pub.get_field_hash("publicsHash");
+                transcript_publics_code = t_pub.get_code();
+                t.put_single("publicsHash");
+            }
+        }
+        for stage in 1..=n_stages {
+            let cnt = challenges_map.iter().filter(|c| c["stage"].as_u64() == Some(stage as u64)).count();
+            for j in 0..cnt {
+                t.get_field(&format!("challengesStage{stage}[{j}]"));
+            }
+            t.put_single(&format!("root{stage}"));
+        }
+        t.get_field("challengeQ");
+        t.put_single(&format!("root{q_stage}"));
+        t.get_field("challengeXi");
+
+        if !hash_commits {
+            for i in 0..ev_map_len {
+                t.put(&format!("evals[{i}]"), 3);
             }
         } else {
-            let mut t_fp = TranscriptBn128::new(transcript_arity, custom, Some("lastPolFRI".into()));
-            for j in 0..final_pol_size {
-                t_fp.put(&format!("finalPol[{j}]"), 3);
+            let mut t_evals = TranscriptBn128::new(transcript_arity, custom, Some("evals".into()));
+            for i in 0..ev_map_len {
+                t_evals.put(&format!("evals[{i}]"), 3);
             }
-            t_fp.get_field_hash("lastPolFRIHash");
-            transcript_last_pol_fri_code = t_fp.get_code();
-            t.put_single("lastPolFRIHash");
+            t_evals.get_field_hash("evalsHash");
+            transcript_evals_code = t_evals.get_code();
+            t.put_single("evalsHash");
         }
-    }
-    // Final: challengeFRIQueries field
-    t.get_field("challengeFRIQueries");
-    let transcript_code = t.get_code();
+        t.get_field("challengesFRI[0]");
+        t.get_field("challengesFRI[1]");
+        for si_idx in 0..n_steps {
+            t.get_field(&format!("challengesFRISteps[{si_idx}]"));
+            if si_idx < n_steps - 1 {
+                t.put_single(&format!("s{}_root", si_idx + 1));
+            } else if !hash_commits {
+                for j in 0..final_pol_size {
+                    t.put(&format!("finalPol[{j}]"), 3);
+                }
+            } else {
+                let mut t_fp = TranscriptBn128::new(transcript_arity, custom, Some("lastPolFRI".into()));
+                for j in 0..final_pol_size {
+                    t_fp.put(&format!("finalPol[{j}]"), 3);
+                }
+                t_fp.get_field_hash("lastPolFRIHash");
+                transcript_last_pol_fri_code = t_fp.get_code();
+                t.put_single("lastPolFRIHash");
+            }
+        }
+        // Final: challengeFRIQueries field
+        t.get_field("challengeFRIQueries");
+        let transcript_code = t.get_code();
+
+        (
+            calculate_fri_queries_code,
+            transcript_code,
+            transcript_publics_code,
+            transcript_evals_code,
+            transcript_last_pol_fri_code,
+        )
+    };
 
     // ── query vals joined (VerifySingleQuery → VerifyQuery) ─────────────────
     let mut query_vals_list_gl: Vec<String> = Vec::new();
@@ -499,6 +580,17 @@ fn build_tera_context_bn128(
 
     // ── Insert all context ───────────────────────────────────────────────────
     ctx.insert("custom", &custom);
+    // blake3: the Goldilocks verifier's hashing, roots of four words over binary trees, its query
+    // challenge the last of challengesFRISteps.
+    ctx.insert("blake3", &blake3);
+    ctx.insert("rd", if blake3 { "[4]" } else { "" });
+    ctx.insert("sw", &if blake3 { 4 } else { arity });
+    ctx.insert("ll", if blake3 { "last_mt_levels" } else { "last_levels" });
+    ctx.insert("lld", if blake3 { "[4]" } else { "" });
+    ctx.insert("n_fri_challenges", &(n_steps + usize::from(blake3)));
+    let fri_queries_challenge =
+        if blake3 { format!("challengesFRISteps[{n_steps}]") } else { "challengeFRIQueries".to_string() };
+    ctx.insert("fri_queries_challenge", &fri_queries_challenge);
     ctx.insert("skip_main", &opts.skip_main);
     ctx.insert("verkey_input", &opts.verkey_input);
     ctx.insert("enable_input", &opts.enable_input);
@@ -551,6 +643,8 @@ fn build_tera_context_bn128(
     ctx.insert("transcript_publics_code", &transcript_publics_code);
     ctx.insert("transcript_evals_code", &transcript_evals_code);
     ctx.insert("transcript_last_pol_fri_code", &transcript_last_pol_fri_code);
+    ctx.insert("transcript_code_stage", &transcript_code_stage);
+    ctx.insert("transcript_code_fri_mid", &transcript_code_fri_mid);
     ctx.insert("eval_p_code", &eval_p_code);
     ctx.insert("eval_p_last", &eval_p_last);
     ctx.insert("eval_q_code", &eval_q_code);
@@ -568,6 +662,112 @@ fn build_tera_context_bn128(
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
+
+/// What the blake3 transcript of a verifier depends on.
+struct Blake3TranscriptShape<'a> {
+    n_publics: usize,
+    hash_commits: bool,
+    pow_bits: u64,
+    n_queries: usize,
+    step0_bits: usize,
+    n_stages: usize,
+    q_stage: usize,
+    ev_map_len: usize,
+    n_steps: usize,
+    final_pol_size: usize,
+    challenges_map: &'a [Value],
+}
+
+/// The circom of a blake3 Goldilocks transcript, as the Goldilocks verifier emits it (gl.rs, which
+/// the prover's TranscriptGL follows), with each FRI-query word decomposed by Num2Bits(64): the
+/// FRI queries' code, and the main transcript's in its pieces (`stage` and `fri_mid` are filled with
+/// hashCommits). Returns (queries, main, publics, evals, lastPolFRI).
+fn blake3_transcript(
+    t: &Blake3TranscriptShape<'_>,
+    transcript_code_stage: &mut String,
+    transcript_code_fri_mid: &mut String,
+) -> (String, String, String, String, String) {
+    let family = "blake3";
+    let new = |name: Option<&str>| {
+        let mut tr = Transcript::new(name.map(Into::into), family);
+        tr.set_drain_in_update_state(true);
+        tr.set_n2b_template("Num2Bits(64)");
+        tr
+    };
+    let mut t_fri = new(Some("friQueries"));
+    t_fri.put("challengeFRIQueries", 3);
+    if t.pow_bits > 0 {
+        t_fri.put_single("nonce");
+    }
+    t_fri.get_permutations("queriesFRI", t.n_queries, t.step0_bits);
+    let calculate_fri_queries_code = t_fri.get_code();
+
+    let mut tr = new(None);
+    let mut publics_code = String::new();
+    let mut evals_code = String::new();
+    let mut last_pol_code = String::new();
+    tr.put("rootC", 4);
+    if t.n_publics > 0 {
+        if !t.hash_commits {
+            tr.put("publics", t.n_publics);
+        } else {
+            let mut t_pub = new(Some("publics"));
+            t_pub.put("publics", t.n_publics);
+            t_pub.get_state("publicsHash");
+            publics_code = t_pub.get_code();
+            tr.put("publicsHash", 4);
+        }
+    }
+    tr.put("root1", 4);
+    for i in 1..t.n_stages {
+        let stage = (i + 1) as u64;
+        let cnt = t.challenges_map.iter().filter(|c| c["stage"].as_u64() == Some(stage)).count();
+        for j in 0..cnt {
+            tr.get_field(&format!("challengesStage{stage}[{j}]"));
+        }
+        tr.put(&format!("root{stage}"), 4);
+    }
+    tr.get_field("challengeQ");
+    tr.put(&format!("root{}", t.q_stage), 4);
+    tr.get_field("challengeXi");
+    if t.hash_commits {
+        *transcript_code_stage = tr.get_code();
+        let mut t_evals = new(Some("evals"));
+        for i in 0..t.ev_map_len {
+            t_evals.put(&format!("evals[{i}]"), 3);
+        }
+        t_evals.get_state("evalsHash");
+        evals_code = t_evals.get_code();
+        tr.put("evalsHash", 4);
+    } else {
+        for i in 0..t.ev_map_len {
+            tr.put(&format!("evals[{i}]"), 3);
+        }
+    }
+    tr.get_field("challengesFRI[0]");
+    tr.get_field("challengesFRI[1]");
+    for si in 0..t.n_steps {
+        tr.get_field(&format!("challengesFRISteps[{si}]"));
+        if si < t.n_steps - 1 {
+            tr.put(&format!("s{}_root", si + 1), 4);
+        } else if !t.hash_commits {
+            for j in 0..t.final_pol_size {
+                tr.put(&format!("finalPol[{j}]"), 3);
+            }
+        } else {
+            *transcript_code_fri_mid = tr.get_code();
+            let mut t_fp = new(Some("lastPolFRI"));
+            for j in 0..t.final_pol_size {
+                t_fp.put(&format!("finalPol[{j}]"), 3);
+            }
+            t_fp.get_state("lastPolFRIHash");
+            last_pol_code = t_fp.get_code();
+            tr.put("lastPolFRIHash", 4);
+        }
+    }
+    tr.get_field(&format!("challengesFRISteps[{}]", t.n_steps));
+    (calculate_fri_queries_code, tr.get_code(), publics_code, evals_code, last_pol_code)
+}
 
 #[cfg(test)]
 mod tests {

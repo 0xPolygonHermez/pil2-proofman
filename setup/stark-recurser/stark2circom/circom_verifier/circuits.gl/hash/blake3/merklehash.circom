@@ -4,7 +4,7 @@ pragma custom_templates;
 include "linearhash.circom";
 include "merkle.circom";
 include "utils.circom";
-include "selectval.circom";
+include "b3_field.circom";
 
 /*
     Blake3 merkle-hash verification. Mirrors hash/poseidon2/merklehash.circom
@@ -90,7 +90,7 @@ template VerifyMerkleHashUntilLevel(eSize, elementsInLinear, arity, nLevels, nLa
         num_nodes_level = (num_nodes_level + (arity - 1)) \ arity;
     }
 
-    signal expectedVal[4] <== SelectValue(arity, nLastLevels, num_nodes_level)(last_mt_levels, last_levels_keys);
+    signal expectedVal[4] <== B3SelectValue(arity, nLastLevels, num_nodes_level)(last_mt_levels, last_levels_keys);
 
     enable * (calculatedVal[0] - expectedVal[0]) === 0;
     enable * (calculatedVal[1] - expectedVal[1]) === 0;
@@ -130,7 +130,7 @@ template VerifyMerkleHashUntilLevelBatch(queries, eSize, elementsInLinear, arity
             num_nodes_level = (num_nodes_level + (arity - 1)) \ arity;
         }
 
-        expectedVal[q] <== SelectValue(arity, nLastLevels, num_nodes_level)(last_mt_levels, last_levels_keys[q]);
+        expectedVal[q] <== B3SelectValue(arity, nLastLevels, num_nodes_level)(last_mt_levels, last_levels_keys[q]);
 
         enable * (calculatedVal[q][0] - expectedVal[q][0]) === 0;
         enable * (calculatedVal[q][1] - expectedVal[q][1]) === 0;
@@ -160,7 +160,7 @@ template VerifyMerkleHashUntilLevelEmpty(eSize, elementsInLinear, arity, nLastLe
         num_nodes_level = (num_nodes_level + (arity - 1)) \ arity;
     }
 
-    signal expectedVal[4] <== SelectValue(arity, nLastLevels, num_nodes_level)(last_mt_levels, last_levels_keys);
+    signal expectedVal[4] <== B3SelectValue(arity, nLastLevels, num_nodes_level)(last_mt_levels, last_levels_keys);
 
     enable * (calculatedVal[0] - expectedVal[0]) === 0;
     enable * (calculatedVal[1] - expectedVal[1]) === 0;

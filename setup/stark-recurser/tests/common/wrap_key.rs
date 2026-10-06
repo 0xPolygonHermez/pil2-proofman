@@ -34,9 +34,19 @@ pub enum Ptau {
 /// Compiles the PIL of `res` in `dir` and sets it up there: the key's directory, `provingKey/`.
 /// `repo_root` is the repository's root, where plonk2pil's PIL and the std are.
 pub fn set_up_key(repo_root: &Path, dir: &Path, res: &PlonkResult<Bn128>, ptau: Ptau) -> PathBuf {
-    let pilout = compile_pil(repo_root, dir, &res.pil_str);
     // More powers than the layout's largest degree, 13·N + 12 for L1 at the family's knobs.
-    let n_g1 = 14 << res.n_bits;
+    set_up_key_with_powers(repo_root, dir, res, ptau, 14 << res.n_bits)
+}
+
+/// [`set_up_key`] with a ptau of `n_g1` powers, at least the layout's largest degree.
+pub fn set_up_key_with_powers(
+    repo_root: &Path,
+    dir: &Path,
+    res: &PlonkResult<Bn128>,
+    ptau: Ptau,
+    n_g1: usize,
+) -> PathBuf {
+    let pilout = compile_pil(repo_root, dir, &res.pil_str);
     let powers_of_tau = match ptau {
         Ptau::TauOne => {
             let path = dir.join("tau_one.ptau");

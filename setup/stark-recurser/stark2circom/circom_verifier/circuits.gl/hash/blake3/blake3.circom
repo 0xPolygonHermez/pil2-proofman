@@ -2,6 +2,7 @@ pragma circom 2.1.0;
 pragma custom_templates;
 
 include "blake3_core.circom";
+include "b3_field.circom";
 
 /*
     Blake3 custom gate and the primitives built on it.
@@ -114,8 +115,9 @@ template custom extern_c Blake3Compress(flags, isParent) {
 
     The AIR binds less here, not more: the chaining value is a constant rather
     than eight input cells, and out[i] ties to its own final-state u32 columns
-    as lo + 2^32*hi -- exactly reduction mod p for any u64, so no range check
-    of its own.
+    as lo + 2^32*hi reduced mod p (b3_pack_value). Over Goldilocks that is the
+    field's own reduction; over BN128 the wrap's AIR reduces it with an `over`
+    bit that it holds canonical.
 */
 template custom extern_c Blake3Node() {
     signal input in[8];
@@ -130,7 +132,7 @@ template custom extern_c Blake3Node() {
     var r[16] = b3_compress_gate(iv, 64, 0, 0,
                                  B3_CHUNK_START() + B3_CHUNK_END() + B3_ROOT(), key, 0);
     for (var i = 0; i < 4; i++) {
-        out[i] <-- r[2 * i] + 4294967296 * r[2 * i + 1];
+        out[i] <-- b3_pack_value(r[2 * i], r[2 * i + 1]);
     }
 }
 
@@ -179,7 +181,7 @@ template Blake3Permute8() {
     c.counterLo <== 0;
 
     for (var i = 0; i < 8; i++) {
-        out[i] <== c.out[2 * i] + 4294967296 * c.out[2 * i + 1];
+        out[i] <== B3Pack()(c.out[2 * i], c.out[2 * i + 1]);
     }
 }
 
@@ -272,7 +274,7 @@ template Blake3FinalizeChunk(flags) {
     c.counterLo <== ob;
 
     for (var i = 0; i < 8; i++) {
-        out[i] <== c.out[2 * i] + 4294967296 * c.out[2 * i + 1];
+        out[i] <== B3Pack()(c.out[2 * i], c.out[2 * i + 1]);
     }
 }
 
@@ -295,6 +297,6 @@ template Blake3FinalizeParent() {
     c.counterLo <== ob;
 
     for (var i = 0; i < 8; i++) {
-        out[i] <== c.out[2 * i] + 4294967296 * c.out[2 * i + 1];
+        out[i] <== B3Pack()(c.out[2 * i], c.out[2 * i + 1]);
     }
 }

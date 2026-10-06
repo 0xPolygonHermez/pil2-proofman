@@ -418,11 +418,27 @@ pub struct Transcript {
     last_code_printed: usize,
     /// Counter for `transcriptN2b_N` names emitted by `get_permutations`.
     n2b_cnt: usize,
+    /// The template that turns a squeezed word into its 64 bits in `get_permutations`:
+    /// `Num2Bits_strict()`, the Goldilocks one, by default. Over BN128 the word is a canonical
+    /// Goldilocks value below 2^64, and `Num2Bits(64)` is its decomposition.
+    n2b_template: &'static str,
 }
 
 impl Transcript {
     pub fn new(name: Option<String>, family: &str) -> Self {
-        Self { name, engine: Engine::new(family), code: Vec::new(), last_code_printed: 0, n2b_cnt: 0 }
+        Self {
+            name,
+            engine: Engine::new(family),
+            code: Vec::new(),
+            last_code_printed: 0,
+            n2b_cnt: 0,
+            n2b_template: "Num2Bits_strict()",
+        }
+    }
+
+    /// The template `get_permutations` decomposes each squeezed word with (see `n2b_template`).
+    pub fn set_n2b_template(&mut self, template: &'static str) {
+        self.n2b_template = template;
     }
 
     /// See [`Sponge::drain_in_update_state`].
@@ -497,7 +513,7 @@ impl Transcript {
             let f = self.get_fields1_pub();
             let name = format!("transcriptN2b_{}", self.n2b_cnt);
             self.n2b_cnt += 1;
-            self.code.push(format!("signal {{binary}} {name}[64] <== Num2Bits_strict()({f});"));
+            self.code.push(format!("signal {{binary}} {name}[64] <== {}({f});", self.n2b_template));
             n2b_names.push(name);
         }
 

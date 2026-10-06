@@ -283,7 +283,8 @@ fn copy_dir_contents(src: &Path, dst: &Path) -> Result<()> {
             continue;
         }
         let dest = dst.join(&name);
-        if ty.is_file() {
+        // A link to a file is its file (setup/final_snark_circom/blake3_core.hpp).
+        if ty.is_file() || (ty.is_symlink() && entry.path().is_file()) {
             fs::copy(entry.path(), &dest)?;
         } else if ty.is_dir() {
             fs::create_dir_all(&dest)?;

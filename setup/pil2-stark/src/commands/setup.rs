@@ -67,6 +67,19 @@ pub struct SetupOptions {
 /// codegen resolves it (PATH, `$CUDA_HOME/bin`, `/usr/local/cuda/bin`). Used
 /// to gate `--gen-exps` so a setup run on a machine without the CUDA toolchain
 /// skips expression-kernel codegen cleanly instead of erroring mid-compile.
+/// The exps-codegen settings the setup commands generate a key's Q kernels with.
+pub(crate) fn exps_config(archspec: &str) -> proofman_exps_codegen::GenConfig {
+    proofman_exps_codegen::GenConfig {
+        cap: 60000,
+        chunk: None,
+        archspec: archspec.to_string(),
+        stark_src: None,
+        keep_dir: None,
+        dry_run: false,
+        optimize: true,
+    }
+}
+
 pub(crate) fn nvcc_present() -> bool {
     proofman_exps_codegen::nvcc_present()
 }

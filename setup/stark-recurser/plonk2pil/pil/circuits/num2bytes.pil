@@ -31,6 +31,12 @@ const int NUM2BYTES_CHUNK_BITS = 16;
 // The gate on the rows of `sel`, a fixed column of 0s and 1s, looked up under the bus `opid`.
 function num2bytes(const int opid, const expr value, const expr chunks[], const expr weights[], const expr sel,
                    const expr range, const expr mul) {
+    num2bytesChunks(opid, value, chunks, weights, sel);
+    lookup_proves(opid, [range], mul);
+}
+
+// The gate without its table: for an AIR whose table of [0, 2^16) under `opid` is proved elsewhere.
+function num2bytesChunks(const int opid, const expr value, const expr chunks[], const expr weights[], const expr sel) {
     expr recomposed = 0;
     for (int k = 0; k < NUM2BYTES_CHUNKS; k++) {
         recomposed = recomposed + weights[k] * chunks[k];
@@ -38,5 +44,4 @@ function num2bytes(const int opid, const expr value, const expr chunks[], const 
         lookup_assumes(opid, [chunks[k]], sel: sel, sel_is_binary: 1);
     }
     sel * (value - recomposed) === 0;
-    lookup_proves(opid, [range], mul);
 }

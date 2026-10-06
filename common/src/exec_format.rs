@@ -97,6 +97,67 @@ pub const RANGE_CHECK_CHUNK_COLS: std::ops::Range<usize> = 1..6;
 /// Bits of a chunk: the range checks' table is `[0, 2^16)`.
 pub const RANGE_CHECK_CHUNK_BITS: u32 = 16;
 
+/// The gate band of a range-check row of the blake3 BN128 wrap's AIR: [`BLAKE3_WRAP_RANGE_CHECK_SLOTS`]
+/// `Num2Bytes` uses of `payload` chunks, use `s` on columns `6s..6s+5` as a range-check row of the
+/// PoseidonBN128 wrap holds one on `0..5`. Its chunk cells are looked up in the 16-bit table of the
+/// AIR's blake3 lanes, whose multiplicity the wrap's witness counts them into.
+pub const BLAKE3_WRAP_RANGE_CHECK_BAND_KIND: u64 = 13;
+
+/// The `Num2Bytes` uses of a range-check row of the blake3 BN128 wrap.
+pub const BLAKE3_WRAP_RANGE_CHECK_SLOTS: usize = 3;
+
+/// The gate bands of the blake3 BN128 wrap's blocks, of [`BLAKE3_WRAP_BLOCK_ROWS`] rows from the
+/// band's row: a `Blake3Node`, a `Blake3Compress` chunk and parent, `payload` their flags. The
+/// wrap's witness rebuilds every column of the block but the band's from its input cells.
+pub const BLAKE3_WRAP_NODE_BAND_KIND: u64 = 14;
+pub const BLAKE3_WRAP_CHUNK_BAND_KIND: u64 = 15;
+pub const BLAKE3_WRAP_PARENT_BAND_KIND: u64 = 16;
+
+/// Rows of a block of the blake3 BN128 wrap: 56 G steps, then 8 of feedforward.
+pub const BLAKE3_WRAP_BLOCK_ROWS: usize = 64;
+
+/// Cells of a range-check use of the blake3 BN128 wrap: `in` and its chunks.
+pub const BLAKE3_WRAP_RANGE_CHECK_CELLS: usize = 1 + RANGE_CHECK_CHUNK_COLS.end - RANGE_CHECK_CHUNK_COLS.start;
+
+/// BLAKE3's IV and message schedule, as the blake3 BN128 wrap's blocks use them.
+pub const BLAKE3_IV: [u32; 8] =
+    [0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19];
+pub const BLAKE3_SIGMA: [[usize; 16]; 7] = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8],
+    [3, 4, 10, 12, 13, 2, 7, 14, 6, 5, 9, 0, 11, 15, 8, 1],
+    [10, 7, 12, 9, 14, 3, 13, 15, 4, 0, 11, 2, 5, 8, 1, 6],
+    [12, 13, 9, 11, 15, 10, 14, 8, 7, 2, 5, 3, 0, 1, 6, 4],
+    [9, 14, 11, 5, 8, 12, 15, 1, 13, 3, 0, 10, 2, 6, 4, 7],
+    [11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13],
+];
+
+/// The stage-1 columns of the blake3 BN128 wrap's AIR (plonk2pil's `pil/blake3_bn128/wrap.pil`), in
+/// its order; pil2-stark's `pilfflonk_wrap_exec.cu` has a copy.
+pub mod blake3_wrap_cols {
+    pub const A: usize = 0;
+    pub const ST: usize = 18;
+    pub const VA: usize = 34;
+    pub const VC: usize = 36;
+    pub const VB: usize = 37;
+    pub const VD: usize = 41;
+    pub const X: usize = 45;
+    pub const Y: usize = 47;
+    pub const VA_P: usize = 49;
+    pub const VD_P: usize = 53;
+    pub const VC_P: usize = 57;
+    pub const VB_P_S: usize = 61;
+    pub const VA_PP: usize = 69;
+    pub const VD_PP: usize = 73;
+    pub const VC_PP: usize = 77;
+    pub const VB_PP_XOR: usize = 81;
+    pub const VB_PP_T: usize = 85;
+    pub const D_INV: usize = 86;
+    pub const MUL_TABLE: usize = 87;
+    pub const MUL_RANGE: usize = 88;
+    pub const N_COLS: usize = 89;
+}
+
 /// A field an exec file's coefficients are elements of, and how it writes one.
 pub trait ExecField: Copy {
     /// The field's name, for the errors that refuse a file over another.
@@ -472,35 +533,16 @@ pub struct CommittedPols<F> {
 }
 
 impl<F: ExecField + Field> ExecFile<F> {
-    /// The publics and the trace this file gathers out of `witness`, the circom witness of the
-    /// circuit it was made for, with the semantics of the STARK's `getCommitedPols`
-    /// (pil2-stark/src/starkpil/recursion_trace/exec_file.hpp), over any field:
-    /// - the `n_publics` publics are wires `1 ..= n_publics`, after wire 0, the constant one;
-    /// - the additions run in order, the `i`-th introducing wire `witness.len() + i`, which is
-    ///   `w[sl]·coef_l + w[sr]·coef_r`: one may read a wire an earlier one introduced;
-    /// - the cell at `row`, `col` of the `n_rows x n_cols` trace is the wire its map entry names,
-    ///   and zero for the entry 0 and outside the map's live extent.
-    ///
-    /// The wires are witness indices, the r1cs's, as plonk2pil writes them, and `witness` holds a
-    /// value per witness index, as circom's `getWitness` writes it. They are not circom's signal
-    /// indices: `prepareSignalMap` (setup/circom/main.cpp) folds those in for the STARK's fused
-    /// `getWitnessTrace` only, which reads circom's signal values.
-    ///
-    /// The gate bands are not expanded, as `getCommitedPols` does not expand them: the cells they
-    /// fill come out zero. Where `getCommitedPols` clamps or trusts, this refuses: a witness of
-    /// another length than the r1cs's `n_vars` of a version 3 header (of another compile of the
-    /// circuit, whose additions would sit at other wires), a map wider or taller than the trace, an
-    /// addition or a map entry reading a wire not defined before it, and a witness without its
-    /// publics.
-    pub fn committed_pols(
+    /// The trace's cells, `n_rows x n_cols`, for a circom witness of `n_witness` wires and its
+    /// `n_publics` publics, or why [`committed_pols`](Self::committed_pols) refuses them.
+    pub fn check_witness(
         &self,
-        mut witness: Vec<F>,
+        n_witness: usize,
         n_publics: usize,
         n_rows: usize,
         n_cols: usize,
-    ) -> ProofmanResult<CommittedPols<F>> {
+    ) -> ProofmanResult<usize> {
         let invalid = |e: String| Err(ProofmanError::InvalidSetup(format!("exec: {e}")));
-        let n_witness = witness.len();
         if let Some(n_vars) = self.layout.n_vars.filter(|&n_vars| n_vars != n_witness) {
             return invalid(format!(
                 "the circom witness has {n_witness} wires, and the r1cs the exec was written for has {n_vars}: they \
@@ -530,6 +572,40 @@ impl<F: ExecField + Field> ExecFile<F> {
                 self.additions.len()
             ));
         }
+        Ok(len)
+    }
+
+    /// The publics and the trace this file gathers out of `witness`, the circom witness of the
+    /// circuit it was made for, with the semantics of the STARK's `getCommitedPols`
+    /// (pil2-stark/src/starkpil/recursion_trace/exec_file.hpp), over any field:
+    /// - the `n_publics` publics are wires `1 ..= n_publics`, after wire 0, the constant one;
+    /// - the additions run in order, the `i`-th introducing wire `witness.len() + i`, which is
+    ///   `w[sl]·coef_l + w[sr]·coef_r`: one may read a wire an earlier one introduced;
+    /// - the cell at `row`, `col` of the `n_rows x n_cols` trace is the wire its map entry names,
+    ///   and zero for the entry 0 and outside the map's live extent.
+    ///
+    /// The wires are witness indices, the r1cs's, as plonk2pil writes them, and `witness` holds a
+    /// value per witness index, as circom's `getWitness` writes it. They are not circom's signal
+    /// indices: `prepareSignalMap` (setup/circom/main.cpp) folds those in for the STARK's fused
+    /// `getWitnessTrace` only, which reads circom's signal values.
+    ///
+    /// The gate bands are not expanded, as `getCommitedPols` does not expand them: the cells they
+    /// fill come out zero. Where `getCommitedPols` clamps or trusts, this refuses: a witness of
+    /// another length than the r1cs's `n_vars` of a version 3 header (of another compile of the
+    /// circuit, whose additions would sit at other wires), a map wider or taller than the trace, an
+    /// addition or a map entry reading a wire not defined before it, and a witness without its
+    /// publics.
+    pub fn committed_pols(
+        &self,
+        mut witness: Vec<F>,
+        n_publics: usize,
+        n_rows: usize,
+        n_cols: usize,
+    ) -> ProofmanResult<CommittedPols<F>> {
+        let n_witness = witness.len();
+        let len = self.check_witness(n_witness, n_publics, n_rows, n_cols)?;
+        let (map_rows, map_cols) = (self.layout.map_rows, self.layout.map_cols);
+        let invalid = |e: String| Err(ProofmanError::InvalidSetup(format!("exec: {e}")));
 
         let publics = witness[1..=n_publics].to_vec();
 

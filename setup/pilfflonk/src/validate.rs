@@ -27,8 +27,9 @@ use proofman_pilfflonk::global_info::MAX_NBITS;
 use crate::error::SetupError;
 
 /// The witness and debug hints (pilfflonk/docs/README.md#what-the-setup-refuses): the std's
-/// witness computation and debugging read them, the prover does not. The setup ignores them.
-pub const WITNESS_AND_DEBUG_HINTS: [&str; 12] = [
+/// witness computation and debugging read them, the prover does not. The setup ignores them, and
+/// `witness_bits` too: the STARK's trace packing it asks for, which pilfflonk's unpacked rows skip.
+pub const WITNESS_AND_DEBUG_HINTS: [&str; 13] = [
     "gsum_debug_data",
     "gsum_debug_data_global",
     "gprod_debug_data",
@@ -41,6 +42,7 @@ pub const WITNESS_AND_DEBUG_HINTS: [&str; 12] = [
     "std_sum_users",
     "std_prod_users",
     "std_rc_users",
+    "witness_bits",
 ];
 
 /// The prover hints, those of the std's buses.
@@ -170,8 +172,7 @@ fn only_air(pilout: &pb::PilOut) -> Result<ValidAir<'_>, SetupError> {
 
 /// The hints of the pilout by name (pilfflonk/docs/README.md#what-the-setup-refuses): the witness
 /// and debug ones are ignored, `im_col`, `gsum_col` and `gprod_col` must be of the AIR, and the
-/// others are refused, `witness_bits` among them: the packed trace rows it asks for are not
-/// accepted yet. Returns the number of `im_col`, `gsum_col` and `gprod_col`.
+/// others are refused. Returns the number of `im_col`, `gsum_col` and `gprod_col`.
 fn check_hints(pilout: &pb::PilOut) -> Result<usize, SetupError> {
     let mut n_supported = 0;
     for hint in &pilout.hints {
@@ -199,7 +200,6 @@ fn check_hints(pilout: &pb::PilOut) -> Result<usize, SetupError> {
                 n_supported += 1;
             }
             "im_airval" => return Err(SetupError::ImAirvalHint { location }),
-            "witness_bits" => return Err(SetupError::PackedTrace { location }),
             _ => return Err(SetupError::UnknownHint { name: name.to_string(), location }),
         }
     }

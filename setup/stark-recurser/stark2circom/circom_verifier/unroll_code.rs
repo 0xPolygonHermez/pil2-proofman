@@ -586,13 +586,23 @@ fn resolve_add_sub_pair(
     const_cnt: &mut usize,
     value_cnt: &mut usize,
 ) -> Result<(String, String)> {
+    // A zero against a dim-3 operand is a dim-3 zero: the wrap below leaves zeros alone, which
+    // would hand a GLConst(0) scalar to a GLC op.
+    let zero_vs3 = |s: &Value, d: u64, other: u64| {
+        s["type"].as_str() == Some("number")
+            && d == 1
+            && other == 3
+            && normalise_gl_number(s["value"].as_str().unwrap_or("0")) == 0
+    };
     let raw0 = if s0["type"].as_str() == Some("number") {
-        emit_const_inner(s0["value"].as_str().unwrap_or("0"), d0, out, const_signals, const_cnt)
+        let dim = if zero_vs3(s0, d0, d1) { 3 } else { d0 };
+        emit_const_inner(s0["value"].as_str().unwrap_or("0"), dim, out, const_signals, const_cnt)
     } else {
         ref_operand_bn128(s0, ctx)?
     };
     let raw1 = if s1["type"].as_str() == Some("number") {
-        emit_const_inner(s1["value"].as_str().unwrap_or("0"), d1, out, const_signals, const_cnt)
+        let dim = if zero_vs3(s1, d1, d0) { 3 } else { d1 };
+        emit_const_inner(s1["value"].as_str().unwrap_or("0"), dim, out, const_signals, const_cnt)
     } else {
         ref_operand_bn128(s1, ctx)?
     };

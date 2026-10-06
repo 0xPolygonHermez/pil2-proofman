@@ -4,6 +4,7 @@ pub mod rebuild_witness;
 pub mod recursive_setup;
 pub mod setup;
 pub mod setup_compressed_final;
+pub mod setup_recursivef;
 pub mod setup_recursive_test;
 pub mod setup_snark;
 pub mod stats;

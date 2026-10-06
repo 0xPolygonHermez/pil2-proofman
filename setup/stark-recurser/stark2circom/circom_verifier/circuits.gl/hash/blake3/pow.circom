@@ -2,7 +2,7 @@ pragma circom 2.1.0;
 pragma custom_templates;
 
 include "blake3.circom";
-include "bitify.circom";
+include "b3_field.circom";
 
 /*
     Verify the grinding nonce.
@@ -40,7 +40,7 @@ template VerifyPoW(powBits) {
         _ <== hashOutput[i];
     }
 
-    signal bits[64] <== Num2Bits_strict()(hashOutput[0]);
+    signal bits[64] <== B3PowBits()(hashOutput[0]);
     for (var i = 63; i >= 64 - powBits; i--) {
         enable * bits[i] === 0;
     }

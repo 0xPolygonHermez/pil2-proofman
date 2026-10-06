@@ -22,6 +22,10 @@ pub struct SetupSnarkOptions {
     pub publics_info: Option<String>,
     /// Only generate the recursivef step; skip the final SNARK.
     pub only_recursive_final: bool,
+    /// pilfflonk's `--extra-muls`, instead of the wrap family's.
+    pub extra_muls: Option<u64>,
+    /// pilfflonk: the CUDA arch spec of the wrap's Q kernel.
+    pub exps_arch: String,
 }
 
 /// Run the setup-snark pipeline.
@@ -56,13 +60,14 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
             proofman_common::hash_family::FAMILIES
         );
     }
-    // Refuse before building anything: the recursivef verifier and its circom templates are
-    // poseidon-only, so a blake3 key would produce a snark stage that cannot verify.
-    if !proofman_common::hash_family::supports_snark(&hash) {
+    // Refuse before building anything. blake3 has its own way to a SNARK: its recursivef
+    // (setup-recursivef) verified by a circuit with blake3 custom gates, which only pilfflonk's
+    // wrap lays out; PLONK and FFLONK take an r1cs with no custom gates.
+    if !proofman_common::hash_family::supports_snark(&hash) && final_snark != FinalSnark::Pilfflonk {
         bail!(
-            "the {hash} proving key at {:?} has no SNARK stage: the BN128 wrap is only built for \
-             the poseidon families. Re-run the regular setup with --hash Poseidon1 or Poseidon2 \
-             if you need a snark proof.",
+            "the {hash} proving key at {:?} wraps in a SNARK with --final-snark pilfflonk only (its \
+             circuit has blake3 custom gates), or re-run the regular setup with --hash Poseidon1 or \
+             Poseidon2 for PLONK or FFLONK.",
             global_info_path
         );
     }
@@ -141,6 +146,8 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
         final_snark,
         publics_info,
         only_recursive_final: opts.only_recursive_final,
+        extra_muls: opts.extra_muls,
+        exps_arch: &opts.exps_arch,
     };
 
     gen_snark_setup(&snark_config, &witness_tracker, &const_root, &stark_info, &verifier_info)
@@ -151,7 +158,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
 }
 
 /// Parse a vadcop_final.verkey.json array ([[u64;4]]) into [u64;4].
-fn parse_const_root(json: &Value) -> Result<[u64; 4]> {
+pub(crate) fn parse_const_root(json: &Value) -> Result<[u64; 4]> {
     let arr = json.as_array().ok_or_else(|| anyhow::anyhow!("verkey.json is not an array"))?;
     if arr.len() < 4 {
         bail!("verkey.json has {} elements, expected 4", arr.len());
@@ -187,6 +194,8 @@ mod tests {
             final_snark: final_snark.to_string(),
             publics_info: None,
             only_recursive_final: false,
+            extra_muls: None,
+            exps_arch: "auto".to_string(),
         }
     }
 

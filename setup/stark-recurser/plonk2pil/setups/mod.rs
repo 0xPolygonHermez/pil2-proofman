@@ -8,6 +8,7 @@
 //! `wrap`, and the same `PilTemplateParams` and `gen_pil_str`.
 
 pub mod blake3;
+pub mod blake3_bn128;
 pub mod poseidon1;
 pub mod poseidon2;
 pub mod poseidon_bn128;
@@ -149,6 +150,20 @@ mod tests {
             max_constraint_degree: 6,
         };
         assert_no_drift("poseidon_bn128/wrap.pil", "Wrap", &super::poseidon_bn128::gen_pil_str(&p));
+    }
+
+    /// The blake3 wrap's airtemplate takes what its generator emits.
+    #[test]
+    fn blake3_bn128_generated_call_matches_its_airtemplate() {
+        let p = super::blake3_bn128::PilTemplateParams {
+            template_file: "blake3_bn128/wrap",
+            template_name: "Wrap",
+            namespace_name: "Wrap",
+            n_bits: 20,
+            n_publics: 1,
+            max_constraint_degree: 5,
+        };
+        assert_no_drift("blake3_bn128/wrap.pil", "Wrap", &super::blake3_bn128::gen_pil_str(&p));
     }
 
     /// The gate a family places follows its Merkle arity, and blake3's is forced to 2. If this ever
