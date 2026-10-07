@@ -103,15 +103,12 @@ mod tests {
         }
     }
 
-    /// Both blake3 recursion airs are emitted by ONE generator, so both templates have to keep its
-    /// parameter list -- a rename that lands in only one of them compiles fine and then fails at
-    /// whichever air the pipeline happens to reach second.
+    /// The generated call must keep the blake3 aggregator template's parameter list.
     #[test]
-    fn blake3_generated_call_matches_both_its_airtemplates() {
-        for (file, template) in [("blake3/aggregator.pil", "Aggregator"), ("blake3/compressor.pil", "Compressor")] {
+    fn blake3_generated_call_matches_its_airtemplate() {
+        {
+            let (file, template) = ("blake3/aggregator.pil", "Aggregator");
             let p = super::blake3::PilTemplateParams {
-                template_file: file.trim_end_matches(".pil"),
-                template_name: template,
                 namespace_name: "Recursion",
                 n_bits: 19,
                 n_publics: 0,

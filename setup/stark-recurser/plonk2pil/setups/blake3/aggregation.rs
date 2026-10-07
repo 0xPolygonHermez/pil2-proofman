@@ -28,8 +28,8 @@
 //! 1 there -- so they are spent before any dedicated row is added.
 
 use super::{
-    blake3_max_blocks, compress_signal, gen_pil_str, stage1_cols, BandLayout, PilTemplateParams, AGGREGATOR_LAYOUT,
-    BLAKE3_CLOCKS, CLOCK_WRAP_ROWS, DEFAULT_LANES,
+    blake3_max_blocks, compress_signal, gen_pil_str, stage1_cols, PilTemplateParams, BAND_COLS, BLAKE3_CLOCKS, C_COLS,
+    CLOCK_WRAP_ROWS, CMUL_PER_ROW, DEFAULT_LANES, TWO_ROW_GATE_ROWS,
 };
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use crate::plonk2pil::r1cs::to_plonk::{
@@ -103,11 +103,11 @@ pub fn plan_plonk_rows(
 /// `[C0..C4]` on the gate row and `[C0'..C3']` on the next. Poseidon has `C[10]` and needs no
 /// straddle, which is why its packer writes `cv[i]` directly -- copying that indexing here silently
 /// put fft_type-2's three twiddles into `constFFT[0..3]` instead of `constFFT[6..9]`.
-fn fft4_const_slot(i: usize, c_cols: usize) -> (usize, usize) {
-    if i < c_cols {
+fn fft4_const_slot(i: usize) -> (usize, usize) {
+    if i < C_COLS {
         (i, 0)
     } else {
-        (i - c_cols, 1)
+        (i - C_COLS, 1)
     }
 }
 
@@ -126,10 +126,10 @@ pub struct BandPlan {
 /// number of blocks and fills their interiors. Block granularity is what keeps the AIR's selectors
 /// expressible as repetitions -- see the comment on them in `blake3/aggregator.pil` -- and its only
 /// cost is the tail of each circuit's last block.
-/// `rows` is `[cmul, evPol4, fft4, treeSelector4, selectValArity2, plonk]` -- the order the PIL lays
-/// the bands out in, which is also `CompressorDemand::band_rows_by_circuit`. One array rather than
+/// `rows` is `[cmul rows, evPol4 gates, fft4 gates, treeSelector4 rows, selectValArity2 rows, plonk
+/// rows]` -- the order the PIL lays the bands out in; the two-row gates are counted as gates. One array rather than
 /// six positional arguments: the order is load-bearing and six same-typed parameters hide a swap.
-pub fn plan_band_blocks(rows: [usize; 6], lanes: usize, layout: &BandLayout) -> BandPlan {
+pub fn plan_band_blocks(rows: [usize; 6], lanes: usize) -> BandPlan {
     let [cmul_rows, ev_pol4, fft4, tree, sel_val, plonk_rows] = rows;
     let interior = BLAKE3_CLOCKS - 2 * lanes;
     // A gate that spans two rows fits `interior / 2` per block, and each one it does not fill wastes
@@ -139,8 +139,8 @@ pub fn plan_band_blocks(rows: [usize; 6], lanes: usize, layout: &BandLayout) -> 
     let mut tail_waste = 0;
     for (rows, per_block, step) in [
         (cmul_rows, interior, 1),
-        (ev_pol4, per(layout.evpol4_rows), layout.evpol4_rows),
-        (fft4, per(layout.fft4_rows), layout.fft4_rows),
+        (ev_pol4, per(TWO_ROW_GATE_ROWS), TWO_ROW_GATE_ROWS),
+        (fft4, per(TWO_ROW_GATE_ROWS), TWO_ROW_GATE_ROWS),
         (tree, interior, 1),
         (sel_val, interior, 1),
         (plonk_rows, interior, 1),
@@ -220,13 +220,7 @@ impl RowAlloc {
 /// Coefficients a plonk constraint carries: the array is 3 signals then the `q` values.
 pub const PLONK_COEFFS: usize = std::mem::size_of::<PlonkConstraint>() / std::mem::size_of::<u64>() - 3;
 
-/// Writes one plonk row's coefficients into the `C[..]` columns.
-///
-/// Bounded by the CONSTRAINT, never by `cv.len()`: the two are not the same number. `C[]` is sized
-/// for the widest circuit that uses it -- on the 27-column band that is fft4, with nine constants on
-/// one row -- while plonk always has five. Iterating over `cv` read four `u64` past the end of a
-/// `[u64; 8]` constraint, which is an out-of-bounds panic on the compressor's very first plonk row.
-/// The columns above `PLONK_COEFFS` stay zero, and the PIL's plonk gate reads only `C[0..5]`.
+/// Writes one plonk row's five coefficients into the `C[..]` columns.
 fn write_plonk_coeffs(cv: &mut [Vec<u64>], row: usize, c: &PlonkConstraint) {
     for j in 0..PLONK_COEFFS {
         cv[j][row] = c[3 + j];
@@ -249,19 +243,16 @@ pub(super) fn bucket_by_flags(
 }
 
 pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
-    build_blake3_air(r1cs, options, &AGGREGATOR_LAYOUT)
+    build_blake3_air(r1cs, options)
 }
 
-/// The one placement routine both blake3 recursion airs share; `layout` is all they differ by.
-///
-/// The BLAKE3 block half -- boundary cells, flags, the gate-band list -- is identical between them,
-/// which is why this is one function and not two. The band half reads its packing off the layout.
-pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLayout) -> SetupResult {
+/// The placement routine of the blake3 aggregator air, which recursion and compressor both use.
+pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
     let (plonk_constraints, plonk_additions, copy_merge) = r1cs2plonk_merged(r1cs, options.merge_copies);
 
     let mut cgi = get_custom_gates_info(r1cs);
     let lanes = options.blake3_lanes.unwrap_or(DEFAULT_LANES);
-    assert!((1..=8).contains(&lanes), "LANES must be in 1..8 (the air's boundary depth caps it), got {lanes}");
+    assert!((1..=MAX_LANES).contains(&lanes), "LANES must be in 1..{MAX_LANES} (see aggregator.pil), got {lanes}");
 
     // Blake3Compress carries `(flags, isParent)` as TEMPLATE PARAMETERS, so circom mints one gate id
     // per distinct pair and the r1cs records the values. isParent picks the block kind and flags
@@ -300,50 +291,42 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
     let n_blocks = n_node_blocks + n_chunk_blocks + n_parent_blocks;
     let n_blake3_rows = n_blocks * BLAKE3_CLOCKS;
 
-    let n_cmul_rows = cgi.n(GateRole::CMul).div_ceil(layout.cmul_per_row);
+    let n_cmul_rows = cgi.n(GateRole::CMul).div_ceil(CMUL_PER_ROW);
     let n_ev_pol4 = cgi.n(GateRole::EvPol4);
     let n_fft4 = cgi.n(GateRole::Fft4);
     let n_tree_selector4 = cgi.n(GateRole::TreeSelector);
-    let n_select_val_arity2 = cgi.n(GateRole::SelectValArity2);
-    // Packed like cmul: several gates share a row where the band is wide enough for them, so the
-    // ROW count is what the plan and the allocator want, not the gate count.
-    let n_sel_val_rows = n_select_val_arity2.div_ceil(layout.selval_per_row);
+    // One selectValueArity2 (13 signals) a row.
+    let n_sel_val_rows = cgi.n(GateRole::SelectValArity2);
 
-    // How many rows each gate takes is the layout's; on the 18-column band EvPol4 (27 signals) and
-    // FFT4 (24) need two, on the 27-column band everything fits one.
-    let n_gate_rows =
-        n_cmul_rows + layout.evpol4_rows * n_ev_pol4 + layout.fft4_rows * n_fft4 + n_tree_selector4 + n_sel_val_rows;
+    // EvPol4 (27 signals) and FFT4 (24) span two rows of the 18-column band.
+    let n_gate_rows = n_cmul_rows + TWO_ROW_GATE_ROWS * (n_ev_pol4 + n_fft4) + n_tree_selector4 + n_sel_val_rows;
 
     // Every block's interior is offered to every one of the six band circuits, not just to plonk and
     // not just the Node blocks. Appending the gates in dedicated bands after the BLAKE3 rows instead
     // costs rows the interiors already have free, and enough of them to push the air to the next
     // power of two.
-    let n_plonk_rows =
-        plan_plonk_rows(&plonk_constraints, 0, lanes, BLAKE3_CLOCKS, layout.plonk_gates_per_row).rows_needed;
-    let plan = plan_band_blocks(
-        [n_cmul_rows, n_ev_pol4, n_fft4, n_tree_selector4, n_sel_val_rows, n_plonk_rows],
-        lanes,
-        layout,
-    );
+    let n_plonk_rows = plan_plonk_rows(&plonk_constraints, 0, lanes, BLAKE3_CLOCKS, PLONK_GATES_PER_ROW).rows_needed;
+    let plan =
+        plan_band_blocks([n_cmul_rows, n_ev_pol4, n_fft4, n_tree_selector4, n_sel_val_rows, n_plonk_rows], lanes);
     cgi.n_plonk_rows = n_plonk_rows;
 
     // Reported in one place, with the arithmetic visible: "N gate rows" says nothing about which
     // gate, and a constraint count says nothing about rows until the packing is spelled out.
-    let ideal_plonk_rows = plonk_constraints.len().div_ceil(layout.plonk_gates_per_row);
+    let ideal_plonk_rows = plonk_constraints.len().div_ceil(PLONK_GATES_PER_ROW);
     tracing::info!(
         "Plonk: {} constraints -> {} rows ({} per row, grouped by coefficient key; {} rows part-filled)",
         plonk_constraints.len(),
         n_plonk_rows,
-        layout.plonk_gates_per_row,
+        PLONK_GATES_PER_ROW,
         n_plonk_rows.saturating_sub(ideal_plonk_rows)
     );
     tracing::info!(
         "Gate rows: cmul {} ({} gates, {} per row) + fft4 {} + evPol4 {} + treeSelector4 {} + selectValArity2 {} = {}",
         n_cmul_rows,
         cgi.n(GateRole::CMul),
-        layout.cmul_per_row,
-        layout.fft4_rows * n_fft4,
-        layout.evpol4_rows * n_ev_pol4,
+        CMUL_PER_ROW,
+        TWO_ROW_GATE_ROWS * n_fft4,
+        TWO_ROW_GATE_ROWS * n_ev_pol4,
         n_tree_selector4,
         n_sel_val_rows,
         n_gate_rows
@@ -381,7 +364,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
     }
     let needed = plan.blocks.max(n_blocks);
     let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
-    let n_public_rows = public_rows(n_publics, layout.band);
+    let n_public_rows = public_rows(n_publics, BAND_COLS);
     let n_publics_start = needed * BLAKE3_CLOCKS;
     let n_used = n_publics_start + n_public_rows;
     // The wrap window is part of what the air must hold, not slack on top of it: the clock selectors
@@ -390,8 +373,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
     // block counts below 40,000 do, each missing by exactly one, and each of them tripped the
     // capacity assert below.
     let sized = n_publics_start + CLOCK_WRAP_ROWS.max(n_public_rows);
-    // ceil(log2(sized)) in usize. The u32 `log2` helper would truncate a demand past 2^32 rows into a
-    // small n_bits, and the compressor's planner is allowed to hand us n_bits above its preferred cap.
+    // ceil(log2(sized)) in usize: the u32 `log2` helper would truncate a demand past 2^32 rows.
     let n_bits = sized.next_power_of_two().trailing_zeros().max(1) as usize;
     // Never below the floor: an air reusing another air's starkSetup has to match its rows. The
     // pre-floor size is kept -- it is what decides whether the circuit itself is too big.
@@ -417,8 +399,6 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
     let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| format!("Blake3Agg{}", rand_hex()));
 
     let pil_str = gen_pil_str(&PilTemplateParams {
-        template_file: layout.template,
-        template_name: layout.template_name,
         namespace_name: &airgroup_name,
         n_bits,
         n_publics,
@@ -440,9 +420,9 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
         "NUsed: {n_used}, nBits: {n_bits}, N: {n}, blocks: {n_blocks}, public rows: {n_public_rows}, LANES: {lanes}"
     );
 
-    let committed = stage1_cols(lanes, layout.band);
+    let committed = stage1_cols(lanes);
     let mut s_map: Vec<Vec<u32>> = (0..committed).map(|_| vec![0u32; n]).collect();
-    let mut cv: Vec<Vec<u64>> = (0..layout.c_cols).map(|_| vec![0u64; n]).collect();
+    let mut cv: Vec<Vec<u64>> = (0..C_COLS).map(|_| vec![0u64; n]).collect();
     let mut gate_bands: Vec<GateBand> = Vec::new();
 
     let node_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::Blake3Node));
@@ -557,7 +537,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
     let mut r = 0usize;
     for (i, cgu) in cmul_uses.iter().enumerate() {
         assert_eq!(cgu.signals.len(), 9);
-        let half = i % layout.cmul_per_row;
+        let half = i % CMUL_PER_ROW;
         if half == 0 {
             r = alloc.take();
         }
@@ -566,35 +546,28 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
         }
     }
 
-    // ── EvPol4: 27 signals, over `evpol4_rows` rows of the band ───────────────
+    // ── EvPol4: 27 signals over two rows of the band ─────────────────────────
     // The poseidon airs place only the first 21 and bind nothing to the rest.
     tracing::info!("Processing {} evPol4 gates...", ev_pol4_uses.len());
-    alloc.open(n_ev_pol4, layout.evpol4_rows);
+    alloc.open(n_ev_pol4, TWO_ROW_GATE_ROWS);
     for cgu in &ev_pol4_uses {
         assert_eq!(cgu.signals.len(), EVPOL4_SIGNALS);
         let r = alloc.take();
-        // 27 signals: one row where the band is at least that wide, otherwise the first `band` on the
-        // gate row and the rest on the next -- which is what the PIL reads through primes.
+        // The first 18 on the gate row and the rest on the next, which the PIL reads through primes.
         for (j, sig) in cgu.signals.iter().enumerate() {
-            s_map[j % layout.band][r + j / layout.band] = *sig as u32;
+            s_map[j % BAND_COLS][r + j / BAND_COLS] = *sig as u32;
         }
     }
 
-    // ── FFT4: 24 signals, in at a[0..12] and out over `fft4_rows` rows ───────
+    // ── FFT4: 24 signals, in on the gate row and out on the next, both at a[0..12]
     tracing::info!("Processing {} fft4 gates...", fft4_uses.len());
-    alloc.open(n_fft4, layout.fft4_rows);
+    alloc.open(n_fft4, TWO_ROW_GATE_ROWS);
     for cgu in &fft4_uses {
         assert_eq!(cgu.signals.len(), 24);
         let r = alloc.take();
-        // Two rows: in on the gate row, out on the next, both at a[0..12]. One row: in at a[0..12]
-        // and out at a[12..24], which needs a band of 24.
         for (j, pair) in cgu.signals[..12].iter().zip(&cgu.signals[12..24]).enumerate() {
             s_map[j][r] = *pair.0 as u32;
-            if layout.fft4_rows == 2 {
-                s_map[j][r + 1] = *pair.1 as u32;
-            } else {
-                s_map[12 + j][r] = *pair.1 as u32;
-            }
+            s_map[j][r + 1] = *pair.1 as u32;
         }
         // Build constFFT by ITS OWN index, exactly as poseidon does, then scatter through
         // fft4_const_slot. Writing cv[..] directly would silently misplace fft_type 2.
@@ -617,7 +590,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
             panic!("Invalid FFT4 type: {fft_type}");
         }
         for (i, v) in cfft.iter().enumerate() {
-            let (col, off) = fft4_const_slot(i, layout.c_cols);
+            let (col, off) = fft4_const_slot(i);
             cv[col][r + off] = *v;
         }
     }
@@ -633,18 +606,14 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
         }
     }
 
-    // ── SelectValueArity2: 13 signals each, `selval_per_row` to a row ────────
+    // ── SelectValueArity2: 13 signals in one row ─────────────────────────────
     tracing::info!("Processing {} selectValueArity2 gates...", sel_val_uses.len());
     alloc.open(n_sel_val_rows, 1);
-    let mut sv_row = 0usize;
-    for (i, cgu) in sel_val_uses.iter().enumerate() {
+    for cgu in &sel_val_uses {
         assert_eq!(cgu.signals.len(), 13, "blake3 is an arity-2 family (13 signals), not arity 4 (22)");
-        let slot = i % layout.selval_per_row;
-        if slot == 0 {
-            sv_row = alloc.take();
-        }
+        let r = alloc.take();
         for (j, sig) in cgu.signals.iter().enumerate() {
-            s_map[slot * 13 + j][sv_row] = *sig as u32;
+            s_map[j][r] = *sig as u32;
         }
     }
 
@@ -665,11 +634,11 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
     alloc.open(n_plonk_rows, 1);
     let mut next_row = 0usize;
     for k in &keys {
-        for group in by_key[k].chunks(layout.plonk_gates_per_row) {
+        for group in by_key[k].chunks(PLONK_GATES_PER_ROW) {
             let row = alloc.take();
             next_row += 1;
             write_plonk_coeffs(&mut cv, row, group[0]);
-            for gate in 0..layout.plonk_gates_per_row {
+            for gate in 0..PLONK_GATES_PER_ROW {
                 let c = group[gate.min(group.len() - 1)];
                 s_map[3 * gate][row] = c[0] as u32;
                 s_map[3 * gate + 1][row] = c[1] as u32;
@@ -686,11 +655,11 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
     );
 
     // ── S polynomials ─────────────────────────────────────────────────────────
-    bind_public_signals(&mut s_map, n_publics_start, n_publics, layout.band);
+    bind_public_signals(&mut s_map, n_publics_start, n_publics, BAND_COLS);
 
     apply_remap_to_s_map(&mut s_map, &copy_merge.remap);
-    verify_merge_soundness(&s_map, &copy_merge.merged_reps, layout.band);
-    let sv = build_s_polynomials(layout.band, n, n_bits, n_used, &s_map);
+    verify_merge_soundness(&s_map, &copy_merge.merged_reps, BAND_COLS);
+    let sv = build_s_polynomials(BAND_COLS, n, n_bits, n_used, &s_map);
     let mut fixed_pols = build_fixed_pols(&airgroup_name, &cv, &sv);
     fixed_pols.push(FixedPol { name: format!("{airgroup_name}.FLAGS"), index: 0, values: flags_col });
 
@@ -705,19 +674,140 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions, layout: &BandLa
         plonk_additions,
         airgroup_name: airgroup_name.clone(),
         air_name: airgroup_name,
-        // LANES and the band width, packed: LANES low, band high. Both are setup parameters the
-        // expander cannot derive -- the column count alone cannot tell (band 18, LANES 8) from
-        // (band 27, LANES 8) apart -- and the band decides where every lane column starts. Taking
-        // it from a constant put the compressor's lanes 9 columns too low.
-        band_aux: (lanes as u64) | ((layout.band as u64) << 32),
+        // LANES low, band width high: the expander reads where every lane column starts from them.
+        band_aux: (lanes as u64) | ((BAND_COLS as u64) << 32),
     }
+}
+
+// ── Compressor geometry ──────────────────────────────────────────────────────
+//
+// An air whose `recursive1` would not fit the pinned recursion (2^19, LANES=4) gets a compressor
+// first: this same aggregator air at a geometry of its own. N is the recursion's 2^19, or the next
+// power of two its circuit needs, and LANES the fewest that hold it. The air holds
+// `max(hashing blocks, band blocks)`; more lanes shrink the hashing and narrow the block interiors
+// the band rides, and each one costs 59 stage1 columns the recursive1 above has to open.
+
+/// Lanes the air accepts: lane l's input row is clock l, and only clocks 0..7 carry round 0's identity
+/// message schedule -- see `aggregator.pil`.
+const MAX_LANES: usize = 8;
+
+/// A geometry the compressor can be built at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CompressorGeometry {
+    n_bits: usize,
+    lanes: usize,
+    /// BLAKE3 blocks the hashing needs at this `lanes`.
+    blocks: usize,
+    /// Blocks the band's six circuits need the interiors of.
+    band_blocks: usize,
+}
+
+/// What the sizing is given: the counts, not the r1cs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompressorDemand {
+    /// `Blake3Node` gate uses.
+    node_uses: usize,
+    /// `Blake3Compress` chunk uses, bucketed by `flags`: a fixed column filled per whole block, so
+    /// each bucket takes whole blocks.
+    chunk_buckets: Vec<usize>,
+    /// `Blake3Compress` parent uses, bucketed the same way.
+    parent_buckets: Vec<usize>,
+    /// The six band circuits, as `plan_band_blocks` takes them: evPol4 and fft4 as gates, the rest as rows.
+    band_by_circuit: [usize; 6],
+}
+
+impl CompressorDemand {
+    /// Blocks the hashing needs at `lanes`.
+    fn blocks(&self, lanes: usize) -> usize {
+        let bucketed = |b: &[usize]| b.iter().map(|n| n.div_ceil(lanes)).sum::<usize>();
+        self.node_uses.div_ceil(lanes) + bucketed(&self.chunk_buckets) + bucketed(&self.parent_buckets)
+    }
+
+    /// Blocks whose interiors the band needs at `lanes`.
+    fn band_blocks(&self, lanes: usize) -> usize {
+        plan_band_blocks(self.band_by_circuit, lanes).blocks
+    }
+
+    /// Blocks the air must hold: the hashing's, or the band's if the band wants more.
+    fn blocks_needed(&self, lanes: usize) -> usize {
+        self.blocks(lanes).max(self.band_blocks(lanes))
+    }
+
+    fn fits(&self, n_bits: usize, lanes: usize) -> bool {
+        self.blocks_needed(lanes) <= blake3_max_blocks(1usize << n_bits)
+    }
+}
+
+/// The smallest N from `min_n_bits` up, and at that N the fewest lanes that hold the demand.
+fn plan_compressor_geometry(demand: &CompressorDemand, min_n_bits: usize) -> CompressorGeometry {
+    (min_n_bits..=32)
+        .find_map(|n_bits| {
+            (1..=MAX_LANES).find(|&lanes| demand.fits(n_bits, lanes)).map(|lanes| CompressorGeometry {
+                n_bits,
+                lanes,
+                blocks: demand.blocks(lanes),
+                band_blocks: demand.band_blocks(lanes),
+            })
+        })
+        .expect("some N holds any demand at 8 lanes")
+}
+
+/// Reads the demand off an r1cs, counting what `build_blake3_air` will place.
+fn compressor_demand(r1cs: &R1csFile, options: &PlonkOptions) -> CompressorDemand {
+    let (plonk_constraints, _, _) = r1cs2plonk_merged(r1cs, options.merge_copies);
+    let cgi = get_custom_gates_info(r1cs);
+
+    let compress_uses = blake3_compress_gate_uses(&r1cs.custom_gates_uses, &cgi.blake3_compress_parameters);
+    let (parent_uses, chunk_uses): (Vec<_>, Vec<_>) = compress_uses.into_iter().partition(|(_, _, ip)| *ip == 1);
+    let sizes = |uses: Vec<_>| bucket_by_flags(uses).iter().map(|b| b.len()).collect::<Vec<_>>();
+
+    // With 0 blocks offered, the rows the constraints need outright; `lanes` is irrelevant there.
+    let plonk = plan_plonk_rows(&plonk_constraints, 0, 1, BLAKE3_CLOCKS, PLONK_GATES_PER_ROW).rows_needed;
+    CompressorDemand {
+        node_uses: cgi.n(GateRole::Blake3Node),
+        chunk_buckets: sizes(chunk_uses),
+        parent_buckets: sizes(parent_uses),
+        band_by_circuit: [
+            cgi.n(GateRole::CMul).div_ceil(CMUL_PER_ROW),
+            cgi.n(GateRole::EvPol4),
+            cgi.n(GateRole::Fft4),
+            cgi.n(GateRole::TreeSelector),
+            cgi.n(GateRole::SelectValArity2),
+            plonk,
+        ],
+    }
+}
+
+/// Compressor setup: size the geometry, then build the aggregator air at it.
+pub fn compressor_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
+    let min_n_bits =
+        options.min_n_bits.unwrap_or(0).max(proofman_common::hash_family::recursive_bits_threshold("blake3"));
+    // An explicit --blake3-lanes skips only the lane choice; the floor on N still holds.
+    if options.blake3_lanes.is_some() {
+        return build_blake3_air(r1cs, &PlonkOptions { min_n_bits: Some(min_n_bits), ..options.clone() });
+    }
+
+    let demand = compressor_demand(r1cs, options);
+    let geom = plan_compressor_geometry(&demand, min_n_bits);
+    tracing::info!(
+        "Compressor geometry: N = 2^{}, LANES = {} ({} hashing / {} band blocks of {}), stage1 {} cols",
+        geom.n_bits,
+        geom.lanes,
+        geom.blocks,
+        geom.band_blocks,
+        blake3_max_blocks(1usize << geom.n_bits),
+        stage1_cols(geom.lanes),
+    );
+
+    let opts = PlonkOptions { blake3_lanes: Some(geom.lanes), min_n_bits: Some(geom.n_bits), ..options.clone() };
+    build_blake3_air(r1cs, &opts)
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::{
         blake3_capacity, blake3_max_blocks, stage1_cols, BAND_COLS, BLAKE3_CLOCKS, BOUNDARY_COLS_PER_LANE,
-        CLOCK_WRAP_ROWS, COMPRESSOR_BAND_COLS, PERM_COLS_PER_LANE,
+        CLOCK_WRAP_ROWS, PERM_COLS_PER_LANE,
     };
     use super::*;
 
@@ -866,12 +956,9 @@ mod tests {
     /// from its parts. Asserting the formula against itself would pass with either wrong.
     #[test]
     fn stage1_cols_matches_the_compiled_air() {
-        assert_eq!(stage1_cols(4, BAND_COLS), 256, "the air reports Stage1: 256 at LANES 4");
-        assert_eq!(stage1_cols(1, BAND_COLS), 79);
-        assert_eq!(stage1_cols(8, BAND_COLS), 492);
-        // The compressor's wider band, for the same lanes: nine more columns.
-        assert_eq!(stage1_cols(4, COMPRESSOR_BAND_COLS), 265);
-        assert_eq!(stage1_cols(3, COMPRESSOR_BAND_COLS), 206);
+        assert_eq!(stage1_cols(4), 256, "the air reports Stage1: 256 at LANES 4");
+        assert_eq!(stage1_cols(1), 79);
+        assert_eq!(stage1_cols(8), 492);
         // The per-lane figure, stated once so a change to either constant has to face it.
         assert_eq!(PERM_COLS_PER_LANE + BOUNDARY_COLS_PER_LANE, 59);
     }
@@ -896,36 +983,33 @@ mod tests {
     #[test]
     fn only_same_coefficient_constraints_share_a_row() {
         let same: Vec<_> = (0..6).map(|i| constraint([1, 2, 3, 4, 5], [i, i + 1, i + 2])).collect();
-        assert_eq!(plan_plonk_rows(&same, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row).rows_needed, 1);
+        assert_eq!(plan_plonk_rows(&same, 0, 4, BLAKE3_CLOCKS, PLONK_GATES_PER_ROW).rows_needed, 1);
 
         // one more of the same key spills to a second row
         let seven: Vec<_> = (0..7).map(|i| constraint([1, 2, 3, 4, 5], [i, i + 1, i + 2])).collect();
-        assert_eq!(plan_plonk_rows(&seven, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row).rows_needed, 2);
+        assert_eq!(plan_plonk_rows(&seven, 0, 4, BLAKE3_CLOCKS, PLONK_GATES_PER_ROW).rows_needed, 2);
 
         // six DIFFERENT keys cannot share: one row each, because the air has a single q0
         let distinct: Vec<_> = (0..6).map(|i| constraint([i, 2, 3, 4, 5], [0, 1, 2])).collect();
-        assert_eq!(
-            plan_plonk_rows(&distinct, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row).rows_needed,
-            6
-        );
+        assert_eq!(plan_plonk_rows(&distinct, 0, 4, BLAKE3_CLOCKS, PLONK_GATES_PER_ROW).rows_needed, 6);
     }
 
     /// Interior rows are spent before any dedicated row is added.
     #[test]
     fn block_interiors_are_spent_before_dedicated_rows() {
         let many: Vec<_> = (0..300u64).map(|i| constraint([1, 2, 3, 4, 5], [i, i, i])).collect();
-        assert_eq!(many.len().div_ceil(AGGREGATOR_LAYOUT.plonk_gates_per_row), 50);
+        assert_eq!(many.len().div_ceil(PLONK_GATES_PER_ROW), 50);
 
         // one block at LANES=4 offers 48 interior rows
-        let p = plan_plonk_rows(&many, 1, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row);
+        let p = plan_plonk_rows(&many, 1, 4, BLAKE3_CLOCKS, PLONK_GATES_PER_ROW);
         assert_eq!(p, PlonkPlan { rows_needed: 50, rows_in_blocks: 48, rows_dedicated: 2 });
 
         // two blocks swallow all of it
-        let p = plan_plonk_rows(&many, 2, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row);
+        let p = plan_plonk_rows(&many, 2, 4, BLAKE3_CLOCKS, PLONK_GATES_PER_ROW);
         assert_eq!(p, PlonkPlan { rows_needed: 50, rows_in_blocks: 50, rows_dedicated: 0 });
 
         // and with no blocks every row is dedicated
-        let p = plan_plonk_rows(&many, 0, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row);
+        let p = plan_plonk_rows(&many, 0, 4, BLAKE3_CLOCKS, PLONK_GATES_PER_ROW);
         assert_eq!(p, PlonkPlan { rows_needed: 50, rows_in_blocks: 0, rows_dedicated: 50 });
     }
 
@@ -936,12 +1020,12 @@ mod tests {
     fn fft4_constants_straddle_the_two_rows_in_order() {
         let expected = [(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (0, 1), (1, 1), (2, 1), (3, 1)];
         for (i, want) in expected.iter().enumerate() {
-            assert_eq!(fft4_const_slot(i, 5), *want, "constFFT[{i}]");
+            assert_eq!(fft4_const_slot(i), *want, "constFFT[{i}]");
         }
         // fft_type 4 fills constFFT[0..6]: five on the gate row, one on the next
-        assert!((0..6).all(|i| fft4_const_slot(i, 5).1 == 0 || fft4_const_slot(i, 5) == (0, 1)));
+        assert!((0..6).all(|i| fft4_const_slot(i).1 == 0 || fft4_const_slot(i) == (0, 1)));
         // fft_type 2 fills constFFT[6..9], all on the SECOND row
-        assert!((6..9).all(|i| fft4_const_slot(i, 5).1 == 1));
+        assert!((6..9).all(|i| fft4_const_slot(i).1 == 1));
     }
 
     /// Signal counts read off the circom templates, not off `cells_per_gate` or poseidon's
@@ -1023,7 +1107,7 @@ mod tests {
     #[test]
     fn plan_band_blocks_costs_only_the_last_block_tails() {
         // A fibonacci compressor.
-        let p = plan_band_blocks([3404, 2532, 5088, 4642, 34815, 25023], 4, &AGGREGATOR_LAYOUT);
+        let p = plan_band_blocks([3404, 2532, 5088, 4642, 34815, 25023], 4);
         assert_eq!(p.blocks, 71 + 106 + 212 + 97 + 726 + 522);
         // fft4 wastes nothing; the other five leave a tail. 108 rows of 433k.
         assert_eq!(p.tail_waste, 4 + 24 + 14 + 33 + 33);
@@ -1033,7 +1117,7 @@ mod tests {
     #[test]
     fn no_constraints_needs_no_rows() {
         assert_eq!(
-            plan_plonk_rows(&[], 9361, 4, BLAKE3_CLOCKS, AGGREGATOR_LAYOUT.plonk_gates_per_row),
+            plan_plonk_rows(&[], 9361, 4, BLAKE3_CLOCKS, PLONK_GATES_PER_ROW),
             PlonkPlan { rows_needed: 0, rows_in_blocks: 0, rows_dedicated: 0 }
         );
     }
@@ -1080,42 +1164,12 @@ mod measure {
     }
 }
 
-#[cfg(test)]
-mod plonk_coeff_tests {
-    use super::super::{AGGREGATOR_LAYOUT, COMPRESSOR_LAYOUT};
-    use super::{write_plonk_coeffs, PlonkConstraint, PLONK_COEFFS};
-
-    /// `C[]` is sized for the widest circuit sharing it, which on the 27-column band is fft4's nine
-    /// constants -- NOT for plonk's five. A write bounded by the column count instead of by the
-    /// constraint read past the end of a `[u64; 8]`, panicking on the compressor's first plonk row.
-    /// The trap, as a compile-time fact: the compressor's `C[]` really is wider than plonk needs, so
-    /// a write bounded by the column count really would run off the end of the constraint.
-    const _: () = assert!(COMPRESSOR_LAYOUT.c_cols > PLONK_COEFFS);
-    const _: () = assert!(AGGREGATOR_LAYOUT.c_cols == PLONK_COEFFS);
-
-    #[test]
-    fn a_wider_c_band_does_not_make_plonk_read_past_its_constraint() {
-        assert_eq!(PLONK_COEFFS, 5, "3 signals + 5 q values");
-
-        let c: PlonkConstraint = [101, 102, 103, 11, 22, 33, 44, 55];
-        for layout in [AGGREGATOR_LAYOUT, COMPRESSOR_LAYOUT] {
-            let mut cv: Vec<Vec<u64>> = (0..layout.c_cols).map(|_| vec![0u64; 4]).collect();
-            write_plonk_coeffs(&mut cv, 2, &c);
-            for (j, col) in cv.iter().enumerate() {
-                // Plonk's five carry the coefficients; everything above them is fft4's and a plonk
-                // row must leave it alone. No row other than the target is touched either.
-                let want = if j < PLONK_COEFFS { c[3 + j] } else { 0 };
-                assert_eq!(col[2], want, "c_cols {}: column {j}", layout.c_cols);
-                assert_eq!(col[0], 0, "c_cols {}: column {j} bled into row 0", layout.c_cols);
-                assert_eq!(col[3], 0, "c_cols {}: column {j} bled into row 3", layout.c_cols);
-            }
-        }
-    }
-}
+// `C[]` holds plonk's five coefficients, and fft4's nine constants over two rows.
+const _: () = assert!(C_COLS == PLONK_COEFFS);
 
 #[cfg(test)]
 mod audit_geometry {
-    use super::super::{BLAKE3_CLOCKS as CLOCKS, AGGREGATOR_LAYOUT, COMPRESSOR_LAYOUT};
+    use super::super::BLAKE3_CLOCKS as CLOCKS;
     use super::*;
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1217,127 +1271,165 @@ mod audit_geometry {
     /// its selector is 0 is a gate the AIR never evaluates.
     #[test]
     fn every_placed_gate_row_has_its_selector_on_and_no_row_carries_two() {
-        for layout in [&AGGREGATOR_LAYOUT, &COMPRESSOR_LAYOUT] {
-            for lanes in 1..=8usize {
-                // (rows-or-gates, step) in the order both the PIL and the packer lay them out.
-                let runs = [
-                    (137usize, 1usize),       // cmul rows
-                    (61, layout.evpol4_rows), // evpol4 gates
-                    (49, layout.fft4_rows),   // fft4 gates
-                    (23, 1),                  // treeselector rows
-                    (91, 1),                  // selval rows
-                    (211, 1),                 // plonk rows
-                ];
-                let interior = CLOCKS - 2 * lanes;
-                let total_blocks: usize = runs.iter().map(|(n, s)| n.div_ceil(interior / s)).sum();
-                let air_blocks = total_blocks + 3; // a few filler blocks past the band
+        for lanes in 1..=8usize {
+            // (rows-or-gates, step) in the order both the PIL and the packer lay them out.
+            let runs = [
+                (137usize, 1usize),      // cmul rows
+                (61, TWO_ROW_GATE_ROWS), // evpol4 gates
+                (49, TWO_ROW_GATE_ROWS), // fft4 gates
+                (23, 1),                 // treeselector rows
+                (91, 1),                 // selval rows
+                (211, 1),                // plonk rows
+            ];
+            let interior = CLOCKS - 2 * lanes;
+            let total_blocks: usize = runs.iter().map(|(n, s)| n.div_ceil(interior / s)).sum();
+            let air_blocks = total_blocks + 3; // a few filler blocks past the band
 
-                // Build the six PIL selector columns exactly as the air declares them.
-                let mut at = 0usize;
-                let mut sels: Vec<Vec<bool>> = Vec::new();
-                for (n, step) in runs {
-                    let nb = n.div_ceil(interior / step);
-                    sels.push(pil_selector(at, nb, step, lanes, air_blocks));
-                    at += nb;
+            // Build the six PIL selector columns exactly as the air declares them.
+            let mut at = 0usize;
+            let mut sels: Vec<Vec<bool>> = Vec::new();
+            for (n, step) in runs {
+                let nb = n.div_ceil(interior / step);
+                sels.push(pil_selector(at, nb, step, lanes, air_blocks));
+                at += nb;
+            }
+
+            // Run the real allocator over the same runs.
+            let mut alloc = RowAlloc::new(lanes);
+            let mut placed: Vec<Vec<usize>> = Vec::new();
+            for (n, step) in runs {
+                alloc.open(n, step);
+                placed.push((0..n).map(|_| alloc.take()).collect());
+            }
+            assert_eq!(alloc.blocks_used(), at, "LANES={lanes}: block runs disagree");
+
+            // 1. Every placed row has its own selector on.
+            for (c, rows) in placed.iter().enumerate() {
+                for &r in rows {
+                    assert!(r < sels[c].len(), "LANES={lanes} circuit {c}: row {r} past the air");
+                    assert!(
+                        sels[c][r],
+                        "LANES={lanes} circuit {c}: row {r} placed where the \
+                            selector is OFF -- that gate would be unconstrained"
+                    );
                 }
-
-                // Run the real allocator over the same runs.
-                let mut alloc = RowAlloc::new(lanes);
-                let mut placed: Vec<Vec<usize>> = Vec::new();
-                for (n, step) in runs {
-                    alloc.open(n, step);
-                    placed.push((0..n).map(|_| alloc.take()).collect());
+            }
+            // 2. No row carries two selectors, and no selector touches a boundary row.
+            // r indexes the per-circuit selector vectors, not sels itself.
+            #[allow(clippy::needless_range_loop)]
+            for r in 0..air_blocks * CLOCKS {
+                let on: Vec<usize> = (0..6).filter(|&c| sels[c][r]).collect();
+                assert!(on.len() <= 1, "LANES={lanes}: row {r} carries selectors {on:?}");
+                if let Some(&c) = on.first() {
+                    let clk = r % CLOCKS;
+                    assert!(
+                        matches!(owner(clk, lanes, true), Owner::Band),
+                        "LANES={lanes}: circuit {c} selector is on at clock {clk}, a \
+                             BLAKE3 boundary row"
+                    );
                 }
-                assert_eq!(alloc.blocks_used(), at, "layout={} LANES={lanes}: block runs disagree", layout.template);
-
-                // 1. Every placed row has its own selector on.
-                for (c, rows) in placed.iter().enumerate() {
+            }
+            // 3. A two-row gate's second row is inside the same block and carries no selector.
+            for (c, rows) in placed.iter().enumerate() {
+                let step = runs[c].1;
+                if step == 2 {
                     for &r in rows {
+                        assert_eq!(r / CLOCKS, (r + 1) / CLOCKS, "LANES={lanes}: pair crosses a block");
+                        assert!(!sels[c][r + 1], "LANES={lanes}: pair's second row is also a gate row");
                         assert!(
-                            r < sels[c].len(),
-                            "layout={} LANES={lanes} circuit {c}: row {r} past the air",
-                            layout.template
-                        );
-                        assert!(
-                            sels[c][r],
-                            "layout={} LANES={lanes} circuit {c}: row {r} placed where the \
-                                selector is OFF -- that gate would be unconstrained",
-                            layout.template
+                            matches!(owner((r + 1) % CLOCKS, lanes, true), Owner::Band),
+                            "LANES={lanes}: pair's second row is a boundary row"
                         );
                     }
                 }
-                // 2. No row carries two selectors, and no selector touches a boundary row.
-                // r indexes the per-circuit selector vectors, not sels itself.
-                #[allow(clippy::needless_range_loop)]
-                for r in 0..air_blocks * CLOCKS {
-                    let on: Vec<usize> = (0..6).filter(|&c| sels[c][r]).collect();
-                    assert!(
-                        on.len() <= 1,
-                        "layout={} LANES={lanes}: row {r} carries selectors {on:?}",
-                        layout.template
-                    );
-                    if let Some(&c) = on.first() {
-                        let clk = r % CLOCKS;
-                        assert!(
-                            matches!(owner(clk, lanes, true), Owner::Band),
-                            "layout={} LANES={lanes}: circuit {c} selector is on at clock {clk}, a \
-                                 BLAKE3 boundary row",
-                            layout.template
-                        );
-                    }
-                }
-                // 3. A two-row gate's second row is inside the same block and carries no selector.
-                for (c, rows) in placed.iter().enumerate() {
-                    let step = runs[c].1;
-                    if step == 2 {
-                        for &r in rows {
-                            assert_eq!(
-                                r / CLOCKS,
-                                (r + 1) / CLOCKS,
-                                "layout={} LANES={lanes}: pair crosses a block",
-                                layout.template
-                            );
-                            assert!(
-                                !sels[c][r + 1],
-                                "layout={} LANES={lanes}: pair's second row is also a gate row",
-                                layout.template
-                            );
-                            assert!(
-                                matches!(owner((r + 1) % CLOCKS, lanes, true), Owner::Band),
-                                "layout={} LANES={lanes}: pair's second row is a boundary row",
-                                layout.template
-                            );
-                        }
-                    }
-                }
-                // 4. Selector-on rows a gate does not fill (each circuit's last-block tail) are
-                //    safe: an all-zero row satisfies every band circuit, plonk's q being 0 there.
-                for (c, rows) in placed.iter().enumerate() {
-                    let on: usize = sels[c].iter().filter(|&&b| b).count();
-                    assert!(
-                        on >= rows.len(),
-                        "layout={} LANES={lanes} circuit {c}: fewer selector rows than gates",
-                        layout.template
-                    );
-                }
+            }
+            // 4. Selector-on rows a gate does not fill (each circuit's last-block tail) are
+            //    safe: an all-zero row satisfies every band circuit, plonk's q being 0 there.
+            for (c, rows) in placed.iter().enumerate() {
+                let on: usize = sels[c].iter().filter(|&&b| b).count();
+                assert!(on >= rows.len(), "LANES={lanes} circuit {c}: fewer selector rows than gates");
             }
         }
     }
 
-    /// The band's a[] cells a gate claims must fit the band, at both widths.
+    /// The band's a[] cells a gate claims must fit the band.
     #[test]
-    fn no_gate_reaches_past_the_band_it_is_placed_in() {
-        for layout in [&AGGREGATOR_LAYOUT, &COMPRESSOR_LAYOUT] {
-            let b = layout.band;
-            assert!(layout.cmul_per_row * 9 <= b, "cmul overruns {}", layout.template);
-            assert!(layout.plonk_gates_per_row * 3 <= b, "plonk overruns {}", layout.template);
-            assert!(layout.selval_per_row * 13 <= b, "selval overruns {}", layout.template);
-            assert!(17 <= b, "treeselector overruns {}", layout.template);
-            assert!(24usize.div_ceil(layout.fft4_rows) <= b, "fft4 overruns {}", layout.template);
-            assert!(EVPOL4_SIGNALS.div_ceil(layout.evpol4_rows) <= b, "evpol4 overruns {}", layout.template);
-            // Blake3Compress input row is exactly 18 cells; the band must hold them.
-            assert!(compress_signal::IN_CELLS <= b, "compress input overruns {}", layout.template);
-            assert!(compress_signal::OUT_CELLS <= b, "compress output overruns {}", layout.template);
+    fn no_gate_reaches_past_the_band() {
+        let b = BAND_COLS;
+        assert!(CMUL_PER_ROW * 9 <= b, "cmul");
+        assert!(PLONK_GATES_PER_ROW * 3 <= b, "plonk");
+        assert!(13 <= b, "selval");
+        assert!(17 <= b, "treeselector");
+        assert!(24usize.div_ceil(TWO_ROW_GATE_ROWS) <= b, "fft4");
+        assert!(EVPOL4_SIGNALS.div_ceil(TWO_ROW_GATE_ROWS) <= b, "evpol4");
+        assert!(compress_signal::IN_CELLS <= b, "compress input");
+        assert!(compress_signal::OUT_CELLS <= b, "compress output");
+    }
+}
+
+#[cfg(test)]
+mod compressor_tests {
+    use super::*;
+
+    /// ZisK's Keccakf compressor circuit (blake3, column-batched FRI verifier), its counts as
+    /// `compressor_demand` reads them.
+    fn keccakf() -> CompressorDemand {
+        CompressorDemand {
+            node_uses: 22_924,
+            chunk_buckets: vec![17_239, 2_408, 1_351, 1, 1_065, 480],
+            parent_buckets: vec![506, 423],
+            band_by_circuit: [54_578, 2_954, 5_932, 5_486, 28_485, 202_054],
         }
+    }
+
+    fn hashing(node_uses: usize) -> CompressorDemand {
+        CompressorDemand { node_uses, chunk_buckets: vec![], parent_buckets: vec![], band_by_circuit: [0; 6] }
+    }
+
+    /// At the recursion's 2^19, the fewest lanes whose hashing fits: 5 (9283 of 9361 blocks).
+    #[test]
+    fn keccakf_takes_the_recursion_size_and_the_fewest_lanes_that_fit() {
+        let d = keccakf();
+        let g = plan_compressor_geometry(&d, 19);
+        assert_eq!((g.n_bits, g.lanes), (19, 5));
+        assert_eq!(g.blocks, 9_283);
+        assert!(g.band_blocks < g.blocks, "the hashing binds, not the band");
+        assert!(d.blocks_needed(4) > blake3_max_blocks(1 << 19), "4 lanes must genuinely not fit");
+    }
+
+    /// N grows only when no lane count holds the demand at the floor.
+    #[test]
+    fn n_grows_only_past_eight_lanes() {
+        let cap19 = blake3_max_blocks(1 << 19);
+        let g = plan_compressor_geometry(&hashing(cap19 * MAX_LANES), 19);
+        assert_eq!((g.n_bits, g.lanes), (19, MAX_LANES));
+        let g = plan_compressor_geometry(&hashing(cap19 * MAX_LANES + 1), 19);
+        assert_eq!(g.n_bits, 20);
+        assert_eq!(g.lanes, 4, "at 2^20 the fewest lanes again");
+    }
+
+    /// The floor is a floor: a small demand still takes 2^19, at one lane.
+    #[test]
+    fn a_small_demand_keeps_the_floor_at_one_lane() {
+        let g = plan_compressor_geometry(&hashing(100), 19);
+        assert_eq!(g, CompressorGeometry { n_bits: 19, lanes: 1, blocks: 100, band_blocks: 0 });
+    }
+
+    /// A band-dominated demand runs into filler blocks, and the air holds the band.
+    #[test]
+    fn a_band_dominated_demand_is_sized_by_its_band() {
+        let d = CompressorDemand { band_by_circuit: [0, 0, 0, 0, 0, 500_000], ..hashing(40) };
+        let g = plan_compressor_geometry(&d, 19);
+        assert!(g.band_blocks > g.blocks);
+        assert!(g.band_blocks <= blake3_max_blocks(1usize << g.n_bits));
+    }
+
+    /// `FLAGS` is a fixed column filled per whole block, so two buckets never share one.
+    #[test]
+    fn flags_buckets_cannot_share_a_block() {
+        let one = CompressorDemand { chunk_buckets: vec![2], ..hashing(0) };
+        let two = CompressorDemand { chunk_buckets: vec![1, 1], ..hashing(0) };
+        assert_eq!(one.blocks(4), 1);
+        assert_eq!(two.blocks(4), 2);
     }
 }
