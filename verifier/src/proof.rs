@@ -104,7 +104,7 @@ impl VadcopFinalProof {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let path = path.as_ref();
         let data = std::fs::read(path).map_err(|e| {
-            std::io::Error::new(e.kind(), format!("Failed to open file for loading proof: {}: {}", path.display(), e))
+            std::io::Error::new(e.kind(), format!("Failed to read proof file: {}: {}", path.display(), e))
         })?;
         Ok(Self::from_wire_bytes(&data).map_err(|e| format!("{}: {e}", path.display()))?)
     }
