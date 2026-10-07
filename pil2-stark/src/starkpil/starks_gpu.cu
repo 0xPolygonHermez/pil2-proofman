@@ -1268,8 +1268,8 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
                         d_a, d_k, stream);
     const uint32_t nThreads = air_instance_info->friThreadsPerBlock;
     const Goldilocks::Element wExt = Goldilocks::w(si.starkStruct.nBitsExt), wStep = Goldilocks::pow(wExt, nThreads);
-    computeFRIExpression<<<domainSize / nThreads, nThreads, air_instance_info->friWindowRows * sizeof(Goldilocks3GPU::Element), stream>>>(
-        domainSize, nOpenings, air_instance_info->nFriSegments, air_instance_info->friSegments, air_instance_info->friOpBase,
+    computeFRIExpression<<<domainSize / nThreads, nThreads, friSharedBytes(air_instance_info->friWindowRows), stream>>>(
+        domainSize, nOpenings, air_instance_info->friWindowRows, air_instance_info->nFriSegments, air_instance_info->friSegments, air_instance_info->friOpBase,
         Goldilocks::shift().fe, wExt.fe, wStep.fe, Goldilocks::inv(wStep).fe, (gl64_t*)d_xiChallenge,
         air_instance_info->nFriGroups, air_instance_info->friColStart, air_instance_info->friCols,
         air_instance_info->friOpStart, air_instance_info->friOpGroups, d_b, d_a, d_k, (gl64_t*)h_params.aux_trace,

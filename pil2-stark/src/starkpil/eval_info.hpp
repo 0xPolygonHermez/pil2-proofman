@@ -50,7 +50,10 @@ struct FriWindow
     std::vector<uint32_t> opBase;
 };
 
-// The largest power of two <= 256 threads per block whose segments fit 48 KiB of shared memory (24 bytes a row).
+// computeFRIExpression's shared memory: the window of D (24 bytes a row), then the block's x.
+inline uint64_t friSharedBytes(uint64_t windowRows) { return windowRows * 24 + 8; }
+
+// The largest power of two <= 256 threads per block whose window fits 48 KiB of shared memory.
 inline FriWindow friWindow(const std::vector<int64_t> &openings, uint64_t extendBits, uint64_t domainSize)
 {
     std::vector<int64_t> offsets;
@@ -72,7 +75,7 @@ inline FriWindow friWindow(const std::vector<int64_t> &openings, uint64_t extend
             seg.base = (uint32_t)w.size;
             w.size += seg.len;
         }
-        if (w.size * 24 > 48 * 1024) continue;
+        if (friSharedBytes(w.size) > 48 * 1024) continue;
         for (int64_t op : openings) {
             const int64_t off = -(op * (int64_t)(1ULL << extendBits));
             const FriSegment &seg = *std::prev(std::upper_bound(w.segments.begin(), w.segments.end(), off,

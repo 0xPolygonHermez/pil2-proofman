@@ -70,7 +70,7 @@ static void computeFRIConstants(uint64_t nOpenings, uint64_t nPols, const int64_
 // One thread per row, nThreads rows per block. The block batch-inverts the rows of D it reads (the FriWindow
 // segments) into shared memory; the S_G are kept FRI_GROUP_BATCH groups at a time.
 #define FRI_GROUP_BATCH 16
-static __global__ void computeFRIExpression(uint64_t domainSize, uint64_t nOpenings, uint32_t nSegments,
+static __global__ void computeFRIExpression(uint64_t domainSize, uint64_t nOpenings, uint64_t windowRows, uint32_t nSegments,
                                             const FriSegment *d_segments, const uint32_t *d_opBase, uint64_t shift,
                                             uint64_t wExt, uint64_t wStep, uint64_t wStepInv, gl64_t *d_xi,
                                             uint32_t nGroups, const uint32_t *d_colStart, const FriTerm *d_cols,
@@ -85,7 +85,7 @@ static __global__ void computeFRIExpression(uint64_t domainSize, uint64_t nOpeni
 
     // x[r0 + offset + i] = s wStep^blockIdx wExt^offset wExt^i. Every segment is at least nT long, so the thread
     // has entries tid + j nT in all of them: prefix products over its entries, one inversion, unwind.
-    __shared__ gl64_t xBlock;
+    gl64_t &xBlock = *(gl64_t *)(sD + windowRows);   // all shared memory is dynamic (friSharedBytes)
     if (tid == 0) xBlock = gl64_t(shift) * (gl64_t(wStep) ^ blockIdx.x);
     __syncthreads();
     const gl64_t xThread = xBlock * (gl64_t(wExt) ^ tid);

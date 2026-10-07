@@ -147,9 +147,10 @@ std::vector<Goldilocks::Element> runKernel(const FriCase &c, uint32_t nThreads =
 
     computeFRIConstants(O, nPols, openings, Goldilocks::w(c.nBitsExt - c.extendBits).fe, termStart, terms, evals, vf1, vf2,
                         b, a, k);
-    computeFRIExpression<<<n / w.nThreads, w.nThreads, w.size * sizeof(Goldilocks3GPU::Element)>>>(
-        n, O, w.segments.size(), dSegs, dOpBase, Goldilocks::shift().fe, wExt.fe, wStep.fe, Goldilocks::inv(wStep).fe, xi,
+    computeFRIExpression<<<n / w.nThreads, w.nThreads, friSharedBytes(w.size)>>>(
+        n, O, w.size, w.segments.size(), dSegs, dOpBase, Goldilocks::shift().fe, wExt.fe, wStep.fe, Goldilocks::inv(wStep).fe, xi,
         g.colStart.size() - 1, dColStart, dCols, dOpStart, dOpGroups, b, a, k, cm, custom, fixed, fri);
+    CHECKCUDAERR(cudaGetLastError());
     CHECKCUDAERR(cudaDeviceSynchronize());
 
     std::vector<Goldilocks::Element> out(n * FIELD_EXTENSION);
@@ -230,7 +231,6 @@ TEST(FriExpression, MatchesHostReferenceWideOpeningRange)
     expectMatches(c);
 }
 
-// More groups than one batch of S_G (FRI_GROUP_BATCH).
 // Contiguous openings take one segment; far apart ones a segment each, so the range does not matter.
 TEST(FriExpression, WindowSegments)
 {
@@ -248,9 +248,28 @@ TEST(FriExpression, WindowSegments)
     EXPECT_EQ(w.size, 3 * 256u + 4);
     std::vector<int64_t> sparse;
     for (int64_t o = 0; o < 64; o++) sparse.push_back(o * 1000);
-    EXPECT_EQ(friWindow(sparse, 1, 1 << 22).nThreads, 32u);   // 64 * 32 rows * 24 bytes = 48 KiB
+    EXPECT_EQ(friWindow(sparse, 1, 1 << 22).nThreads, 16u);   // 64 * 32 rows * 24 bytes = 48 KiB, plus the block's x
+    sparse.pop_back();
+    EXPECT_EQ(friWindow(sparse, 1, 1 << 22).nThreads, 32u);
 }
 
+// A window right at the shared-memory limit launches.
+TEST(FriExpression, MatchesHostReferenceAtTheSharedMemoryLimit)
+{
+    FriCase c;
+    c.counts.clear();
+    for (int64_t o = 0; o < 63; o++) {
+        c.openings.push_back(o * 1000);
+        c.counts.push_back(1 + o % 3);
+    }
+    c.build(0x5a3);
+    const FriWindow w = friWindow(c.openings, c.extendBits, c.domainSize());
+    ASSERT_EQ(w.nThreads, 32u);
+    ASSERT_GT(friSharedBytes(w.size), 47u * 1024);
+    expectMatches(c);
+}
+
+// More groups than one batch of S_G (FRI_GROUP_BATCH).
 TEST(FriExpression, MatchesHostReferenceWithManyGroups)
 {
     FriCase c;
@@ -277,3 +296,4 @@ TEST(FriExpression, MatchesHostReferenceAtLargeOpeningCount)
         expectMatches(c);
     }
 }
+
