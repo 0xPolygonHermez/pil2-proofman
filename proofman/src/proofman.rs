@@ -3310,7 +3310,7 @@ where
                         .collect();
                     let packed_info = slot_packed_info(&self.options);
                     let airs = slot_commit_airs(&self.pctx, &self.sctx, &packed_info).1;
-                    let dedicated = n_gpus > 1 && !self.pctx.gpu_witness_airs.is_empty();
+                    let dedicated = n_gpus > 1 && self.options.planner_gpu_dedicated;
                     set_planner_gpu_dedicated_c(self.pctx.get_device_buffers_ptr(), dedicated);
                     if dedicated {
                         tracing::info!(
