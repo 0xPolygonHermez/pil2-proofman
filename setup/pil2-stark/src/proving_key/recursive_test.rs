@@ -61,13 +61,6 @@ pub fn gen_recursive_test_setup(
     if !["compressor", "aggregation"].contains(&setup_type) {
         bail!("Invalid setup type '{}'. Must be one of: compressor, aggregation", setup_type);
     }
-    // blake3 has a single recursion air: its compressor is the aggregator at a geometry of its own.
-    if setup_type == "compressor" && hash == "blake3" {
-        bail!(
-            "blake3 has no compressor air: use -t aggregation, with --blake3-lanes / --min-n-bits / --blowup for \
-             the compressor's geometry"
-        );
-    }
 
     // JS nameFile is always "Compressor" regardless of the setup type.
     const NAME_FILE: &str = "Compressor";

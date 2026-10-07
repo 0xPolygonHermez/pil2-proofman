@@ -25,10 +25,10 @@ use anyhow::{bail, Context, Result};
 /// Scoped by family rather than lowered for everyone because the recursive grinding bits pin a
 /// query count that the committed poseidon native verifiers and circom fixtures already encode.
 ///
-/// blake3's compressor takes the recursion's 2 as well. Measured against blowup 1 on the same
-/// circuit (2^20/LANES=3 against 2^19/LANES=5, both extending to 2^21): degree 3 inflated stage2
-/// (252 columns against 138) and doubled the queries (209 against 106), so blowup 2 proved 16%
-/// faster in 18% less GPU memory and halved both the proof and the hashes its recursive1 verifies.
+/// blake3's compressor takes the recursion's 2 as well. Measured on the test-recursive circuit, 2^20/
+/// LANES=3 at blowup 1 against the 2^19/LANES=4 the compressor now picks at blowup 2: degree 3
+/// inflated stage2 (252 columns against 114) and doubled the queries (209 against 104), so blowup 2
+/// proved 33% faster in 31% less GPU memory, with half the proof its recursive1 verifies.
 pub fn recursive_blowup(template: RecursiveTemplate, hash: &str) -> usize {
     if hash == "blake3" || template == RecursiveTemplate::Compressor {
         2

@@ -126,8 +126,8 @@ pub struct BandPlan {
 /// number of blocks and fills their interiors. Block granularity is what keeps the AIR's selectors
 /// expressible as repetitions -- see the comment on them in `blake3/aggregator.pil` -- and its only
 /// cost is the tail of each circuit's last block.
-/// `rows` is `[cmul, evPol4, fft4, treeSelector4, selectValArity2, plonk]` -- the order the PIL lays
-/// the bands out in, which is also `CompressorDemand::band_rows_by_circuit`. One array rather than
+/// `rows` is `[cmul rows, evPol4 gates, fft4 gates, treeSelector4 rows, selectValArity2 rows, plonk
+/// rows]` -- the order the PIL lays the bands out in; the two-row gates are counted as gates. One array rather than
 /// six positional arguments: the order is load-bearing and six same-typed parameters hide a swap.
 pub fn plan_band_blocks(rows: [usize; 6], lanes: usize) -> BandPlan {
     let [cmul_rows, ev_pol4, fft4, tree, sel_val, plonk_rows] = rows;
@@ -252,7 +252,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
 
     let mut cgi = get_custom_gates_info(r1cs);
     let lanes = options.blake3_lanes.unwrap_or(DEFAULT_LANES);
-    assert!((1..=8).contains(&lanes), "LANES must be in 1..8 (the air's boundary depth caps it), got {lanes}");
+    assert!((1..=MAX_LANES).contains(&lanes), "LANES must be in 1..{MAX_LANES} (see aggregator.pil), got {lanes}");
 
     // Blake3Compress carries `(flags, isParent)` as TEMPLATE PARAMETERS, so circom mints one gate id
     // per distinct pair and the r1cs records the values. isParent picks the block kind and flags
@@ -687,7 +687,8 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
 // `max(hashing blocks, band blocks)`; more lanes shrink the hashing and narrow the block interiors
 // the band rides, and each one costs 59 stage1 columns the recursive1 above has to open.
 
-/// Lanes the air accepts. Above 8 the boundary opening depth exceeds 7 -- see `aggregator.pil`.
+/// Lanes the air accepts: lane l's input row is clock l, and only clocks 0..7 carry round 0's identity
+/// message schedule -- see `aggregator.pil`.
 const MAX_LANES: usize = 8;
 
 /// A geometry the compressor can be built at.
@@ -711,9 +712,8 @@ struct CompressorDemand {
     chunk_buckets: Vec<usize>,
     /// `Blake3Compress` parent uses, bucketed the same way.
     parent_buckets: Vec<usize>,
-    /// ROWS the six band circuits need on the aggregator's band, in `plan_band_blocks` order:
-    /// `[cmul, evPol4, fft4, treeSelector4, selectValArity2, plonk]`.
-    band_rows_by_circuit: [usize; 6],
+    /// The six band circuits, as `plan_band_blocks` takes them: evPol4 and fft4 as gates, the rest as rows.
+    band_by_circuit: [usize; 6],
 }
 
 impl CompressorDemand {
@@ -725,7 +725,7 @@ impl CompressorDemand {
 
     /// Blocks whose interiors the band needs at `lanes`.
     fn band_blocks(&self, lanes: usize) -> usize {
-        plan_band_blocks(self.band_rows_by_circuit, lanes).blocks
+        plan_band_blocks(self.band_by_circuit, lanes).blocks
     }
 
     /// Blocks the air must hold: the hashing's, or the band's if the band wants more.
@@ -767,10 +767,10 @@ fn compressor_demand(r1cs: &R1csFile, options: &PlonkOptions) -> CompressorDeman
         node_uses: cgi.n(GateRole::Blake3Node),
         chunk_buckets: sizes(chunk_uses),
         parent_buckets: sizes(parent_uses),
-        band_rows_by_circuit: [
+        band_by_circuit: [
             cgi.n(GateRole::CMul).div_ceil(CMUL_PER_ROW),
-            TWO_ROW_GATE_ROWS * cgi.n(GateRole::EvPol4),
-            TWO_ROW_GATE_ROWS * cgi.n(GateRole::Fft4),
+            cgi.n(GateRole::EvPol4),
+            cgi.n(GateRole::Fft4),
             cgi.n(GateRole::TreeSelector),
             cgi.n(GateRole::SelectValArity2),
             plonk,
@@ -1378,12 +1378,12 @@ mod compressor_tests {
             node_uses: 22_924,
             chunk_buckets: vec![17_239, 2_408, 1_351, 1, 1_065, 480],
             parent_buckets: vec![506, 423],
-            band_rows_by_circuit: [54_578, 5_908, 11_864, 5_486, 28_485, 202_054],
+            band_by_circuit: [54_578, 2_954, 5_932, 5_486, 28_485, 202_054],
         }
     }
 
     fn hashing(node_uses: usize) -> CompressorDemand {
-        CompressorDemand { node_uses, chunk_buckets: vec![], parent_buckets: vec![], band_rows_by_circuit: [0; 6] }
+        CompressorDemand { node_uses, chunk_buckets: vec![], parent_buckets: vec![], band_by_circuit: [0; 6] }
     }
 
     /// At the recursion's 2^19, the fewest lanes whose hashing fits: 5 (9283 of 9361 blocks).
@@ -1418,7 +1418,7 @@ mod compressor_tests {
     /// A band-dominated demand runs into filler blocks, and the air holds the band.
     #[test]
     fn a_band_dominated_demand_is_sized_by_its_band() {
-        let d = CompressorDemand { band_rows_by_circuit: [0, 0, 0, 0, 0, 500_000], ..hashing(40) };
+        let d = CompressorDemand { band_by_circuit: [0, 0, 0, 0, 0, 500_000], ..hashing(40) };
         let g = plan_compressor_geometry(&d, 19);
         assert!(g.band_blocks > g.blocks);
         assert!(g.band_blocks <= blake3_max_blocks(1usize << g.n_bits));
