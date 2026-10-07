@@ -6,8 +6,6 @@ use proofman_fields::{Goldilocks, PrimeField64};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "std")]
-use std::fs::File;
-#[cfg(feature = "std")]
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,58 +43,70 @@ impl VadcopFinalProof {
         Ok(Self { public_values: publics.to_vec(), proof: proof_u64.to_vec(), compressed, hash })
     }
 
-    /// Written with the legacy bincode config, the same bytes that go on the wire.
+    /// The wire encoding: bincode `legacy()` layout. `save` writes exactly these bytes.
+    ///
+    /// `proof: Vec<u64>`, `public_values: Vec<u64>`, `compressed: bool`, `hash: String`, in
+    /// that order; each length a little-endian u64, each element 8 little-endian bytes, the
+    /// bool one byte, the string UTF-8.
+    pub fn to_wire_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(8 * (3 + self.proof.len() + self.public_values.len()) + 1 + self.hash.len());
+        for words in [&self.proof, &self.public_values] {
+            out.extend_from_slice(&(words.len() as u64).to_le_bytes());
+            out.extend(words.iter().flat_map(|w| w.to_le_bytes()));
+        }
+        out.push(self.compressed as u8);
+        out.extend_from_slice(&(self.hash.len() as u64).to_le_bytes());
+        out.extend_from_slice(self.hash.as_bytes());
+        out
+    }
+
+    /// Decode [`to_wire_bytes`](Self::to_wire_bytes) output.
+    ///
+    /// Every length is checked against the bytes actually left before allocating, so an
+    /// input never allocates more than its own size. Trailing bytes and non-canonical
+    /// publics are rejected.
+    pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self, WireError> {
+        let mut r = WireReader(bytes);
+        let proof = r.words()?;
+        let public_values = r.words()?;
+        let compressed = match r.take(1)?[0] {
+            0 => false,
+            1 => true,
+            b => return Err(WireError::InvalidBool(b)),
+        };
+        let n = r.len(1)?;
+        let hash = core::str::from_utf8(r.take(n)?).map_err(|_| WireError::InvalidUtf8)?.to_string();
+        if !r.0.is_empty() {
+            return Err(WireError::TrailingBytes(r.0.len()));
+        }
+        let proof = Self { proof, public_values, compressed, hash };
+        if let Some(index) = proof.public_values.iter().position(|&w| w >= Goldilocks::ORDER_U64) {
+            return Err(WireError::NonCanonicalPublic { index });
+        }
+        Ok(proof)
+    }
+
+    /// Writes [`to_wire_bytes`](Self::to_wire_bytes).
     #[cfg(feature = "std")]
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let path = path.as_ref();
-
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-
-        let mut file = File::create(path).map_err(|e| {
-            std::io::Error::new(
-                e.kind(),
-                format!("Failed to create file for saving Vadcop Final proof: {}: {}", path.display(), e),
-            )
+        std::fs::write(path, self.to_wire_bytes()).map_err(|e| {
+            std::io::Error::new(e.kind(), format!("Failed to write Vadcop Final proof: {}: {}", path.display(), e))
         })?;
-
-        bincode::serde::encode_into_std_write(self, &mut file, bincode::config::legacy())?;
         Ok(())
     }
 
-    /// Reads both the legacy encoding written by `save` and the `standard()` encoding written
-    /// by earlier versions.
+    /// Reads a file written by [`save`](Self::save), through [`from_wire_bytes`](Self::from_wire_bytes).
     #[cfg(feature = "std")]
     pub fn load(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let data = std::fs::read(path.as_ref()).map_err(|e| {
-            std::io::Error::new(
-                e.kind(),
-                format!("Failed to open file for loading proof: {}: {}", path.as_ref().display(), e),
-            )
+        let path = path.as_ref();
+        let data = std::fs::read(path).map_err(|e| {
+            std::io::Error::new(e.kind(), format!("Failed to open file for loading proof: {}: {}", path.display(), e))
         })?;
-        let proof = Self::decode(&data)?;
-        proof.check_canonical_publics()?;
-        Ok(proof)
-    }
-
-    #[cfg(feature = "std")]
-    fn decode(data: &[u8]) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        // Legacy has a fixed-width layout, so it is recognised exactly before decoding; a
-        // standard (varint) file only passes by coincidence and then fails to decode or to
-        // consume every byte, falling through to standard.
-        if has_legacy_layout(data) {
-            if let Ok((proof, read)) = bincode::serde::decode_from_slice::<Self, _>(data, bincode::config::legacy()) {
-                if read == data.len() {
-                    return Ok(proof);
-                }
-            }
-        }
-        let (proof, read) = bincode::serde::decode_from_slice::<Self, _>(data, bincode::config::standard())?;
-        if read != data.len() {
-            return Err(format!("{} trailing bytes after the proof", data.len() - read).into());
-        }
-        Ok(proof)
+        Ok(Self::from_wire_bytes(&data).map_err(|e| format!("{}: {e}", path.display()))?)
     }
 
     /// Pin the publics to one encoding.
@@ -126,81 +136,128 @@ impl VadcopFinalProof {
     }
 }
 
-/// Whether `data` is exactly `Vec<u64>, Vec<u64>, bool, String` in the legacy fixed-width
-/// layout: u64 lengths, 8-byte elements, one bool byte.
-#[cfg(feature = "std")]
-fn has_legacy_layout(data: &[u8]) -> bool {
-    fn take_len(data: &[u8], pos: usize) -> Option<usize> {
-        let end = pos.checked_add(8)?;
-        usize::try_from(u64::from_le_bytes(data.get(pos..end)?.try_into().ok()?)).ok()
+/// Why [`VadcopFinalProof::from_wire_bytes`] rejected its input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WireError {
+    /// The input ends before a field it declares.
+    Truncated,
+    /// Bytes left over after a complete proof.
+    TrailingBytes(usize),
+    /// The `compressed` byte is neither 0 nor 1.
+    InvalidBool(u8),
+    /// The hash family name is not UTF-8.
+    InvalidUtf8,
+    /// A public is not a canonical Goldilocks element.
+    NonCanonicalPublic { index: usize },
+}
+
+impl core::fmt::Display for WireError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Truncated => write!(f, "input ends before the proof does"),
+            Self::TrailingBytes(n) => write!(f, "{n} trailing bytes after the proof"),
+            Self::InvalidBool(b) => write!(f, "compressed byte {b} is not 0 or 1"),
+            Self::InvalidUtf8 => write!(f, "hash family is not UTF-8"),
+            Self::NonCanonicalPublic { index } => write!(f, "public {index} is not a canonical Goldilocks element"),
+        }
     }
-    let mut pos = 0usize;
-    for _ in 0..2 {
-        let Some(n) = take_len(data, pos) else { return false };
-        let Some(next) = n.checked_mul(8).and_then(|b| b.checked_add(8)).and_then(|b| pos.checked_add(b)) else {
-            return false;
-        };
-        pos = next;
+}
+
+impl core::error::Error for WireError {}
+
+struct WireReader<'a>(&'a [u8]);
+
+impl<'a> WireReader<'a> {
+    fn take(&mut self, n: usize) -> Result<&'a [u8], WireError> {
+        if n > self.0.len() {
+            return Err(WireError::Truncated);
+        }
+        let (head, tail) = self.0.split_at(n);
+        self.0 = tail;
+        Ok(head)
     }
-    if !matches!(data.get(pos), Some(0 | 1)) {
-        return false;
+
+    /// A length prefix, bounded by the bytes left rather than by what the input claims.
+    fn len(&mut self, elem_size: usize) -> Result<usize, WireError> {
+        let n = u64::from_le_bytes(self.take(8)?.try_into().unwrap());
+        match usize::try_from(n).ok().and_then(|n| n.checked_mul(elem_size).map(|b| (n, b))) {
+            Some((n, bytes)) if bytes <= self.0.len() => Ok(n),
+            _ => Err(WireError::Truncated),
+        }
     }
-    pos += 1;
-    let Some(n) = take_len(data, pos) else { return false };
-    pos.checked_add(8).and_then(|p| p.checked_add(n)) == Some(data.len())
+
+    fn words(&mut self) -> Result<Vec<u64>, WireError> {
+        let n = self.len(8)?;
+        Ok(self.take(n * 8)?.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect())
+    }
 }
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
 
+    fn sample() -> VadcopFinalProof {
+        VadcopFinalProof::new(alloc::vec![1, 300, u64::MAX - 5], alloc::vec![4, 5], true, "Poseidon2".into())
+    }
+
+    /// The hand-written encoder is bincode `legacy()` byte for byte, so serde users of that
+    /// config interoperate with `from_wire_bytes`.
     #[test]
-    fn save_and_load_round_trip_the_legacy_encoding() {
-        let proof = VadcopFinalProof::new(alloc::vec![1, 2, 3], alloc::vec![4, 5], true, "Poseidon2".into());
+    fn the_wire_encoding_is_bincode_legacy() {
+        let proof = sample();
+        let bytes = proof.to_wire_bytes();
+        assert_eq!(bytes, bincode::serde::encode_to_vec(&proof, bincode::config::legacy()).unwrap());
+
+        let back = VadcopFinalProof::from_wire_bytes(&bytes).unwrap();
+        assert_eq!(back.proof, proof.proof);
+        assert_eq!(back.public_values, proof.public_values);
+        assert_eq!(back.compressed, proof.compressed);
+        assert_eq!(back.hash, proof.hash);
+    }
+
+    #[test]
+    fn save_writes_the_wire_bytes_and_load_reads_them() {
+        let proof = sample();
         let path = std::env::temp_dir().join(format!("vadcop_final_proof_{}.bin", std::process::id()));
         proof.save(&path).unwrap();
-
-        let expected = bincode::serde::encode_to_vec(&proof, bincode::config::legacy()).unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), expected);
-
-        let loaded = VadcopFinalProof::load(&path).unwrap();
-        assert_eq!(loaded.proof, proof.proof);
-        assert_eq!(loaded.public_values, proof.public_values);
-        assert_eq!(loaded.compressed, proof.compressed);
-        assert_eq!(loaded.hash, proof.hash);
+        assert_eq!(std::fs::read(&path).unwrap(), proof.to_wire_bytes());
+        assert_eq!(VadcopFinalProof::load(&path).unwrap().proof, proof.proof);
         let _ = std::fs::remove_file(&path);
     }
 
     #[test]
-    fn load_reads_standard_encoded_files_and_rejects_corruption() {
-        let proof = VadcopFinalProof::new(alloc::vec![1, 300, u64::MAX - 5], alloc::vec![4, 5], true, "Poseidon2".into());
-        let dir = std::env::temp_dir().join(format!("vadcop_compat_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let load = |name: &str, bytes: &[u8]| {
-            let path = dir.join(name);
-            std::fs::write(&path, bytes).unwrap();
-            VadcopFinalProof::load(&path)
-        };
-
-        let standard = bincode::serde::encode_to_vec(&proof, bincode::config::standard()).unwrap();
-        let legacy = bincode::serde::encode_to_vec(&proof, bincode::config::legacy()).unwrap();
-        assert_ne!(standard, legacy);
-        for (name, bytes) in [("standard", &standard), ("legacy", &legacy)] {
-            let loaded = load(name, bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
-            assert_eq!(loaded.proof, proof.proof, "{name}");
-            assert_eq!(loaded.public_values, proof.public_values, "{name}");
-            assert!(loaded.compressed, "{name}");
-            assert_eq!(loaded.hash, proof.hash, "{name}");
+    fn from_wire_bytes_rejects_malformed_input() {
+        let bytes = sample().to_wire_bytes();
+        for cut in 0..bytes.len() {
+            assert!(VadcopFinalProof::from_wire_bytes(&bytes[..cut]).is_err(), "truncated at {cut}");
         }
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert_eq!(VadcopFinalProof::from_wire_bytes(&trailing).unwrap_err(), WireError::TrailingBytes(1));
 
-        for (name, bytes) in [("standard", &standard), ("legacy", &legacy)] {
-            let mut trailing = bytes.clone();
-            trailing.push(0);
-            assert!(load("trailing", &trailing).is_err(), "{name} with trailing byte");
-            assert!(load("truncated", &bytes[..bytes.len() - 1]).is_err(), "{name} truncated");
+        // The pre-wire `standard()` encoding is not accepted.
+        let standard = bincode::serde::encode_to_vec(sample(), bincode::config::standard()).unwrap();
+        assert!(VadcopFinalProof::from_wire_bytes(&standard).is_err());
+
+        let mut bad_bool = VadcopFinalProof::new(alloc::vec![], alloc::vec![], false, String::new()).to_wire_bytes();
+        bad_bool[16] = 2;
+        assert_eq!(VadcopFinalProof::from_wire_bytes(&bad_bool).unwrap_err(), WireError::InvalidBool(2));
+
+        let alias = VadcopFinalProof::new(alloc::vec![], alloc::vec![0, Goldilocks::ORDER_U64], false, String::new());
+        assert_eq!(
+            VadcopFinalProof::from_wire_bytes(&alias.to_wire_bytes()).unwrap_err(),
+            WireError::NonCanonicalPublic { index: 1 }
+        );
+    }
+
+    /// A declared length beyond the input fails before anything that size is allocated.
+    #[test]
+    fn an_oversized_length_fails_without_allocating() {
+        for n in [u64::MAX, 1 << 40, 1 << 61] {
+            let mut bytes = n.to_le_bytes().to_vec();
+            bytes.extend_from_slice(&[0u8; 64]);
+            assert_eq!(VadcopFinalProof::from_wire_bytes(&bytes).unwrap_err(), WireError::Truncated);
         }
-        assert!(load("empty", &[]).is_err());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Only publics below `2^32 - 1` have an alias at all, since `x + p` has to fit in a u64.
