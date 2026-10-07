@@ -115,7 +115,8 @@ pub fn gen_recursion_final(
 // ── Solidity contracts ────────────────────────────────────────────────────────
 
 /// Port of `src/recursion/contracts/verifier.sol.ejs`.
-pub fn gen_solidity(name: &str, root_c: &[u64; 4], publics: Option<&Value>, use_fflonk: bool) -> String {
+/// `version` is what the contract's `VERSION()` returns.
+pub fn gen_solidity(name: &str, version: &str, root_c: &[u64; 4], publics: Option<&Value>, use_fflonk: bool) -> String {
     let camel = capitalise(name);
     let snark = if use_fflonk { "Fflonk" } else { "Plonk" };
 
@@ -137,6 +138,7 @@ pub fn gen_solidity(name: &str, root_c: &[u64; 4], publics: Option<&Value>, use_
     let mut ctx = TeraCtx::new();
     ctx.insert("name", &camel);
     ctx.insert("snark", snark);
+    ctx.insert("version", version);
     ctx.insert("root_c_0", &root_c[0]);
     ctx.insert("root_c_1", &root_c[1]);
     ctx.insert("root_c_2", &root_c[2]);
@@ -149,7 +151,7 @@ pub fn gen_solidity(name: &str, root_c: &[u64; 4], publics: Option<&Value>, use_
 }
 
 /// Port of `src/recursion/contracts/iverifier.sol.ejs`.
-pub fn gen_iverifier(name: &str, publics: Option<&Value>) -> String {
+pub fn gen_iverifier(name: &str, publics: Option<&Value>, use_fflonk: bool) -> String {
     let camel = capitalise(name);
 
     let has_program_vk = publics
@@ -163,6 +165,7 @@ pub fn gen_iverifier(name: &str, publics: Option<&Value>) -> String {
 
     let mut ctx = TeraCtx::new();
     ctx.insert("name", &camel);
+    ctx.insert("snark_label", if use_fflonk { "FFLONK" } else { "PLONK" });
     ctx.insert("has_program_vk", &has_program_vk);
 
     render(IVERIFIER_SOL_TMPL, &ctx).unwrap_or_else(|e| panic!("iverifier.sol template error: {e:#}"))
@@ -581,4 +584,46 @@ pub fn gen_vadcop_final(
     ctx.insert("n_airgroups", &agg_types.len());
 
     render(VADCOP_FINAL_TMPL, &ctx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn zisk_publics() -> Value {
+        serde_json::json!({
+            "nPublics": 68,
+            "definitions": [
+                {"name": "rom_root", "initialPos": 0, "nValues": 4, "chunks": [1, 64], "verificationKey": true},
+                {"name": "inputs", "initialPos": 4, "nValues": 64, "chunks": [1, 64]}
+            ],
+            "hasProgramVK": true
+        })
+    }
+
+    #[test]
+    fn the_verifier_returns_the_given_version() {
+        let sol = gen_solidity("zisk", "v9.9.9-test", &[1, 2, 3, 4], Some(&zisk_publics()), false);
+        assert!(sol.contains(r#"return "v9.9.9-test";"#), "{sol}");
+        assert!(sol.contains("contract ZiskVerifier is PlonkVerifier, IZiskVerifier"));
+        assert!(sol.contains("must be a constant of the calling contract"));
+    }
+
+    /// The interface carries the key-binding rules a caller needs to verify safely.
+    #[test]
+    fn the_interface_documents_how_to_pin_the_keys() {
+        let isol = gen_iverifier("zisk", Some(&zisk_publics()), false);
+        assert!(isol.contains("Both keys MUST be constants of the calling contract"), "{isol}");
+        assert!(isol.contains("@param programVK"));
+        assert!(isol.contains("@param rootCVadcopFinal"));
+        assert!(isol.contains("the inherited raw PLONK verifier"));
+
+        let fflonk = gen_iverifier("zisk", Some(&zisk_publics()), true);
+        assert!(fflonk.contains("the inherited raw FFLONK verifier"));
+
+        // Without a program key there is one key to pin, and no programVK parameter.
+        let no_vk = gen_iverifier("zisk", None, false);
+        assert!(no_vk.contains("The root MUST be a constant of the calling contract"), "{no_vk}");
+        assert!(!no_vk.contains("programVK"));
+    }
 }

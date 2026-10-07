@@ -46,6 +46,8 @@ pub struct SnarkSetupConfig<'a> {
     pub powers_of_tau: Option<&'a str>,
     /// "fflonk" or "plonk".
     pub final_snark: &'a str,
+    /// What the generated verifier contract's `VERSION()` returns.
+    pub contract_version: &'a str,
     /// Optional publics hash info JSON value.
     pub publics_info: Option<Value>,
     /// When true, only run the recursivef step and stop before the final SNARK.
@@ -528,8 +530,9 @@ pub fn gen_snark_setup(
                 Some(f) => f.to_uppercase().to_string() + c.as_str(),
             }
         };
-        let sol = gen_solidity(config.name, const_root, publics_ref, config.final_snark == "fflonk");
-        let isol = gen_iverifier(config.name, publics_ref);
+        let fflonk = config.final_snark == "fflonk";
+        let sol = gen_solidity(config.name, config.contract_version, const_root, publics_ref, fflonk);
+        let isol = gen_iverifier(config.name, publics_ref, fflonk);
         fs::write(final_dir.join(format!("{camel}Verifier.sol")), sol)?;
         fs::write(final_dir.join(format!("I{camel}Verifier.sol")), isol)?;
     }
