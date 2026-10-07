@@ -45,6 +45,7 @@ impl VadcopFinalProof {
         Ok(Self { public_values: publics.to_vec(), proof: proof_u64.to_vec(), compressed, hash })
     }
 
+    /// Written with the legacy bincode config, the same bytes that go on the wire.
     #[cfg(feature = "std")]
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let path = path.as_ref();
@@ -60,7 +61,7 @@ impl VadcopFinalProof {
             )
         })?;
 
-        bincode::serde::encode_into_std_write(self, &mut file, bincode::config::standard())?;
+        bincode::serde::encode_into_std_write(self, &mut file, bincode::config::legacy())?;
         Ok(())
     }
 
@@ -72,7 +73,7 @@ impl VadcopFinalProof {
                 format!("Failed to open file for loading proof: {}: {}", path.as_ref().display(), e),
             )
         })?;
-        let proof: VadcopFinalProof = bincode::serde::decode_from_std_read(&mut file, bincode::config::standard())?;
+        let proof: VadcopFinalProof = bincode::serde::decode_from_std_read(&mut file, bincode::config::legacy())?;
         proof.check_canonical_publics()?;
         Ok(proof)
     }
@@ -107,6 +108,23 @@ impl VadcopFinalProof {
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_and_load_round_trip_the_legacy_encoding() {
+        let proof = VadcopFinalProof::new(alloc::vec![1, 2, 3], alloc::vec![4, 5], true, "Poseidon2".into());
+        let path = std::env::temp_dir().join(format!("vadcop_final_proof_{}.bin", std::process::id()));
+        proof.save(&path).unwrap();
+
+        let expected = bincode::serde::encode_to_vec(&proof, bincode::config::legacy()).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), expected);
+
+        let loaded = VadcopFinalProof::load(&path).unwrap();
+        assert_eq!(loaded.proof, proof.proof);
+        assert_eq!(loaded.public_values, proof.public_values);
+        assert_eq!(loaded.compressed, proof.compressed);
+        assert_eq!(loaded.hash, proof.hash);
+        let _ = std::fs::remove_file(&path);
+    }
 
     /// Only publics below `2^32 - 1` have an alias at all, since `x + p` has to fit in a u64.
     #[test]
