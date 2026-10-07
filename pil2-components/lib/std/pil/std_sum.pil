@@ -387,7 +387,7 @@ private function piop_gsum_air() {
 
     // The first num_non_reduced terms are not reduced
     // Fractions are folded one at a time, n/d + s/f = (n*f + s*d) / (d*f): the same polynomials as
-    // the expanded sum of cross products, in 2 extension multiplications per term instead of ~k.
+    // the expanded sum of cross products, in 3 extension multiplications per term instead of ~k.
     expr direct_num = 0;
     expr direct_den = 1;
     for (int i = 0; i < num_non_reduced; i++) {
@@ -498,7 +498,7 @@ private function piop_gsum_air() {
         // ---------- + ------ + ------ = -------------------------------------------------------------------
         // direct_den     f1      f2                          direct_den * f1 * f2
 
-        // First, multiply existing direct_num/direct_den by all new denominators
+        // Folded in one term at a time, as the non-reduced terms above
         for (int i = 0; i < direct_terms_count; i++) {
             const int idx = term_idx[direct_terms[i]];
             if (num_non_reduced == 0 && i == 0) {

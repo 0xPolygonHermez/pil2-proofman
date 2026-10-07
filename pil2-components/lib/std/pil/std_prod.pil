@@ -936,10 +936,10 @@ private function piop_gprod_proof() {
         switch (type) {
             case PROD_TYPE_ASSUMES:
                 // The expression is of the form (s·(e+ɣ-1)+1)
-                denominator *= (s * (e + std_gamma - 1) + 1);
+                denominator *= gprod_sel_factor(s, e);
             case PROD_TYPE_PROVES:
                 // The expression is of the form (s·(e+ɣ-1)+1)
-                numerator *= (s * (e + std_gamma - 1) + 1);
+                numerator *= gprod_sel_factor(s, e);
             case PROD_TYPE_FREE:
                 // The expression is of the form (s·(s+1)/2·(e+ɣ-1)+1)/(s·(s-1)/2·(e+ɣ-1)+1)
                 numerator *= (s * (s + 1) * ONE_HALF * (e + std_gamma - 1) + 1);
