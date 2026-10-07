@@ -21,6 +21,7 @@ use tera::Tera;
 use super::gl_field::{gl_exp, gl_inv, gl_mul, GL_SHIFT, GL_W};
 use super::gl::Pil2CircomOptions;
 use super::transcript_bn128::TranscriptBn128;
+use super::expressions_chunks::split_query_independent;
 use super::unroll_code::{unroll_code_bn128, UnrollCtx};
 
 // ── Top-level entry-point ─────────────────────────────────────────────────────
@@ -330,9 +331,20 @@ fn build_tera_context_bn128(
 
     // ── Eval Q code (VerifyQuery inline) ────────────────────────────────────
     let query_verifier_code: Vec<Value> = vi["queryVerifier"]["code"].as_array().map_or(vec![], |a| a.clone());
+    let (fri_once_code, query_code, fri_consts) = split_query_independent(&query_verifier_code, (q_stage + 2) as u64);
+    let mut fri_once_lines: Vec<String> = Vec::new();
+    unroll_code_bn128(&fri_once_code, &[], &unroll_ctx, &mut fri_once_lines)?;
+    let fri_once_code = fri_once_lines.join("\n");
     let mut eval_q_lines: Vec<String> = Vec::new();
-    let eval_q_last = unroll_code_bn128(&query_verifier_code, &[], &unroll_ctx, &mut eval_q_lines)?;
+    let consts_ids: Vec<u64> = fri_consts.iter().map(|&(id, _)| id).collect();
+    let eval_q_last = unroll_code_bn128(&query_code, &consts_ids, &unroll_ctx, &mut eval_q_lines)?;
     let eval_q_code = eval_q_lines.join("\n");
+    // friConsts: challengesFRI, then the query-independent tmps the queries read.
+    let fri_consts_json: Vec<Value> = fri_consts
+        .iter()
+        .enumerate()
+        .map(|(i, &(id, dim))| serde_json::json!({ "idx": i + 2, "id": id, "dim": dim }))
+        .collect();
 
     // ── Q polynomial ev_id ──────────────────────────────────────────────────
     let ev_map: Vec<Value> = si["evMap"].as_array().map_or(vec![], |a| a.clone());
@@ -546,6 +558,9 @@ fn build_tera_context_bn128(
     ctx.insert("eval_p_code", &eval_p_code);
     ctx.insert("eval_p_last", &eval_p_last);
     ctx.insert("eval_q_code", &eval_q_code);
+    ctx.insert("fri_once_code", &fri_once_code);
+    ctx.insert("fri_consts", &fri_consts_json);
+    ctx.insert("n_fri_consts", &(fri_consts.len() + 2));
     ctx.insert("eval_q_last", &eval_q_last);
     // Iterables
     ctx.insert("challenges_per_stage", &challenges_per_stage);

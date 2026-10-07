@@ -288,6 +288,8 @@ pub struct PilCodeResult {
     pub fri_exp_id: usize,
     /// Updated challenges map (with FRI challenges appended).
     pub challenges_map: Vec<ChallengeMapEntry>,
+    /// See `FriPolyResult::batch_size`.
+    pub fri_batch_size: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +329,7 @@ pub fn generate_pil_code(
 ) -> PilCodeResult {
     let mut ev_map_items: Vec<EvMapRef> = Vec::new();
     let mut challenges_map: Vec<ChallengeMapEntry> = Vec::new();
+    let mut fri_batch_size = 0;
 
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
@@ -356,6 +359,7 @@ pub fn generate_pil_code(
             &mut challenges_map,
         );
         params.fri_exp_id = fri_result.fri_exp_id;
+        fri_batch_size = fri_result.batch_size;
 
         qv
     } else {
@@ -416,6 +420,7 @@ pub fn generate_pil_code(
         ev_map: ev_map_items,
         fri_exp_id,
         challenges_map,
+        fri_batch_size,
     }
 }
 

@@ -392,16 +392,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     // 6. Compute FRI
     //--------------------------------
     TimerStartGPU(timer, STARK_STEP_FRI);
-    // Outside the region, not in it: a replay skips the body, so a category timed inside one
-    // stops being sampled. This category happens to cover the whole body, so it can just wrap it.
-    TimerStartCategoryGPU(timer, FRI);
-    cudagraph::run(cudagraph::key(0x46524950ULL ^ graphCtxId), countId, stream, [&] {
-    uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
-    dim3 threads(256);
-    dim3 blocks((NExtended + threads.x - 1) / threads.x);
-    computeX_kernel<<<blocks, threads, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
-    });
-    TimerStopCategoryGPU(timer, FRI);
     // Own capture region, as CALCULATE_IM_POLS: inside the FRIP body these two lost every replay.
     TimerStartGPU(timer, STARK_FRI_POLYNOMIAL);
     TimerStartCategoryGPU(timer, EXPRESSIONS);

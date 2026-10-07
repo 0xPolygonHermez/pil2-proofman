@@ -12,7 +12,7 @@
 //!   - Cross-chunk wiring (the `(out1, out2, ...) <== ChunkI()(inputs...)` call
 //!     sites) uses the correct sorted id lists.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::Value;
 
@@ -60,10 +60,17 @@ const MIN_CHUNK_SIZE: usize = 1000;
 ///
 /// Panics if any instruction has `dest.type != "tmp"` or `dest.dim` ∉ {1, 3}.
 pub fn get_expressions_chunks(code: &[Value]) -> ChunkedCode {
+    get_expressions_chunks_ext(code, &[], &HashSet::new())
+}
+
+/// As [`get_expressions_chunks`], with `external` (id, dim) tmps defined before `code` and `keep` tmps that stay
+/// live (outputs of the chunk defining them) whatever `code` does with them.
+pub fn get_expressions_chunks_ext(code: &[Value], external: &[(u64, u64)], keep: &HashSet<u64>) -> ChunkedCode {
     // ── Pass 1: build tmps map ────────────────────────────────────────────────
     // tmps[id] = {lastPos, dim}
     // For each instruction: record dest; then update lastPos for any tmp srcs.
-    let mut tmps: HashMap<u64, TmpInfo> = HashMap::new();
+    let mut tmps: HashMap<u64, TmpInfo> =
+        external.iter().map(|&(id, dim)| (id, TmpInfo { last_pos: 0, dim })).collect();
 
     for (i, inst) in code.iter().enumerate() {
         let dest = &inst["dest"];
@@ -71,14 +78,14 @@ pub fn get_expressions_chunks(code: &[Value]) -> ChunkedCode {
         let dim = dest["dim"].as_u64().expect("dest.dim must be integer");
         assert!(dim == 1 || dim == 3, "instruction {i}: dest.dim must be 1 or 3, got {dim}");
         let dest_id = dest["id"].as_u64().expect("dest.id must be integer");
-        tmps.insert(dest_id, TmpInfo { last_pos: i, dim });
+        tmps.insert(dest_id, TmpInfo { last_pos: if keep.contains(&dest_id) { usize::MAX } else { i }, dim });
 
         for s in 0..2usize {
             if let Some(src) = inst["src"].get(s) {
                 if src["type"].as_str() == Some("tmp") {
                     let src_id = src["id"].as_u64().expect("src.id must be integer");
                     if let Some(info) = tmps.get_mut(&src_id) {
-                        info.last_pos = i;
+                        info.last_pos = if keep.contains(&src_id) { usize::MAX } else { i };
                     }
                 }
             }
@@ -92,7 +99,7 @@ pub fn get_expressions_chunks(code: &[Value]) -> ChunkedCode {
     // All tmps currently defined and not yet consumed anywhere.
     let mut live_tmps: HashSet<u64> = HashSet::new();
     // Tmps that were live at the end of a previous chunk (available as inputs).
-    let mut previous_live_tmps: HashSet<u64> = HashSet::new();
+    let mut previous_live_tmps: HashSet<u64> = external.iter().map(|&(id, _)| id).collect();
 
     // Cross-chunk tracking for the current chunk being built.
     let mut inputs: HashSet<u64> = HashSet::new();
@@ -160,6 +167,36 @@ pub fn get_expressions_chunks(code: &[Value]) -> ChunkedCode {
     }
 
     ChunkedCode { chunks, tmps }
+}
+
+/// Splits the FRI query code into the ops that only read FRI challenges, evals, numbers and each other (the same
+/// for every query, so computed once) and the rest, with the (id, dim) of the shared tmps the rest reads.
+pub fn split_query_independent(code: &[Value], fri_stage: u64) -> (Vec<Value>, Vec<Value>, Vec<(u64, u64)>) {
+    let mut shared: HashMap<u64, u64> = HashMap::new();
+    let (mut once, mut per_query) = (Vec::new(), Vec::new());
+    for inst in code {
+        let independent = inst["src"].as_array().is_some_and(|srcs| {
+            srcs.iter().all(|s| match s["type"].as_str() {
+                Some("eval") | Some("number") => true,
+                Some("challenge") => s["stage"].as_u64() == Some(fri_stage),
+                Some("tmp") => s["id"].as_u64().is_some_and(|id| shared.contains_key(&id)),
+                _ => false,
+            })
+        });
+        if independent {
+            shared.insert(inst["dest"]["id"].as_u64().unwrap(), inst["dest"]["dim"].as_u64().unwrap());
+            once.push(inst.clone());
+        } else {
+            per_query.push(inst.clone());
+        }
+    }
+    let read: BTreeMap<u64, u64> = per_query
+        .iter()
+        .flat_map(|inst| inst["src"].as_array().into_iter().flatten())
+        .filter(|s| s["type"].as_str() == Some("tmp"))
+        .filter_map(|s| s["id"].as_u64().and_then(|id| shared.get(&id).map(|&dim| (id, dim))))
+        .collect();
+    (once, per_query, read.into_iter().collect())
 }
 
 #[cfg(test)]

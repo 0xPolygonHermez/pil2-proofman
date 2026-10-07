@@ -229,6 +229,16 @@ template parallel {{ verify_evaluations_name }}() {
 }
 {% endfor %}
 
+{% for chunk in fri_once_chunks %}template CalculateFRIConstantsChunks{{ chunk.idx }}() {
+    signal input challengesFRI[2][3];
+    signal input evals[{{ ev_map_len }}][3];
+{% for inp in chunk.inputs %}{% if inp.dim == 1 %}    signal input tmp_{{ inp.id }};
+{% else %}    signal input tmp_{{ inp.id }}[3];
+{% endif %}{% endfor %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal output tmp_{{ out.id }};
+{% else %}    signal output tmp_{{ out.id }}[3];
+{% endif %}{% endfor %}{{ chunk.code }}
+}
+{% endfor %}
 /* 
     Verify that the initial FRI polynomial, which is the lineal combination of the committed polynomials
     during the STARK phases, is built properly
@@ -237,7 +247,7 @@ template {{ verify_query_name }}(currStepBits, nextStepBits) {
     var nextStep = currStepBits - nextStepBits; 
     signal input {binary} queriesFRI[{{ step0_bits }}];
     signal input challengeXi[3];
-    signal input challengesFRI[2][3];
+    signal input friConsts[{{ n_fri_consts }}][3];
     signal input evals[{{ ev_map_len }}][3];
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input cm{{ stage.stage }}[{{ stage.cm_section_len }}];
 {% endif %}{% endfor %}    signal input cm{{ q_stage }}[{{ q_stage_cm_section_len }}];
@@ -257,6 +267,11 @@ template {{ verify_query_name }}(currStepBits, nextStepBits) {
 
 {% for op in opening_points %}    xDivXSubXi[{{ op.idx }}] <== CInv()([xacc[{{ step0_bits - 1 }}] - {{ op.root }} * challengeXi[0], - {{ op.root }} * challengeXi[1], - {{ op.root }} * challengeXi[2]]);
 {% endfor %}
+    // The query-independent terms, computed once in the StarkVerifier.
+    signal challengesFRI[2][3] <== [friConsts[0], friConsts[1]];
+{% for c in fri_consts %}{% if c.dim == 1 %}    signal tmp_{{ c.id }} <== friConsts[{{ c.idx }}][0];
+{% else %}    signal tmp_{{ c.id }}[3] <== friConsts[{{ c.idx }}];
+{% endif %}{% endfor %}
 {% for chunk in eval_q_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
 {% else %}    signal tmp_{{ out.id }}[3];
 {% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIPolChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
@@ -332,7 +347,7 @@ template {{ verify_single_query_name }}() {
     signal input {binary} queriesFRI[{{ step0_bits }}];
 
     signal input challengeXi[3];
-    signal input challengesFRI[2][3];
+    signal input friConsts[{{ n_fri_consts }}][3];
     signal input challengesFRISteps[{{ n_steps + 1 }}][3];
     signal input evals[{{ ev_map_len }}][3];
     signal input {binary} enable;
@@ -406,7 +421,7 @@ template {{ verify_single_query_name }}() {
 {% else %}    VerifyMerkleHashUntilLevel(3, {{ step.exponent }}, {{ arity }}, {{ step.merkle_levels }}, {{ last_level_verification }}, {{ step.mt_size }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle_bits, s{{ step.s }}_last_mt_levels, enable);
 {% endif %}{% else %}    VerifyMerkleHash(3, {{ step.exponent }}, {{ arity }}, {{ step.merkle_levels + last_level_verification }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle_bits, s{{ step.s }}_root, enable);
 {% endif %}{% endif %}{% endfor %}
-    {{ verify_query_name }}({{ step0_bits }}, {{ next_step0_bits }})(queriesFRI, challengeXi, challengesFRI, evals, {{ query_vals_joined }}, {{ next_vals_pol_0 }}, enable);
+    {{ verify_query_name }}({{ step0_bits }}, {{ next_step0_bits }})(queriesFRI, challengeXi, friConsts, evals, {{ query_vals_joined }}, {{ next_vals_pol_0 }}, enable);
 
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal {binary} s{{ step.s }}_queriesFRI[{{ step.n_bits }}];
     for(var i = 0; i < {{ step.n_bits }}; i++) { s{{ step.s }}_queriesFRI[i] <== queriesFRI[i]; }
@@ -417,7 +432,7 @@ template parallel {{ verify_queries_batch_name }}(nQueries) {
     signal input {binary} queriesFRI[nQueries][{{ step0_bits }}];
 
     signal input challengeXi[3];
-    signal input challengesFRI[2][3];
+    signal input friConsts[{{ n_fri_consts }}][3];
     signal input challengesFRISteps[{{ n_steps + 1 }}][3];
     signal input evals[{{ ev_map_len }}][3];
     signal input {binary} enable;
@@ -458,7 +473,7 @@ template parallel {{ verify_queries_batch_name }}(nQueries) {
         {{ verify_single_query_name }}()(
             queriesFRI[q],
             challengeXi,
-            challengesFRI,
+            friConsts,
             challengesFRISteps,
             evals,
             enable,
@@ -574,6 +589,19 @@ template {{ verifier_name }}() {
 {% if pow_bits > 0 %}    ({{ challenge_names_joined }},challengesFRISteps,queriesFRI) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, nonce, enabled);
 {% else %}    ({{ challenge_names_joined }},challengesFRISteps,queriesFRI) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, enabled);
 {% endif %}
+    ///////////
+    // FRI polynomial terms that are the same for every query
+    ///////////
+{% for chunk in fri_once_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
+{% else %}    signal tmp_{{ out.id }}[3];
+{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIConstantsChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
+{% endfor %}
+    signal friConsts[{{ n_fri_consts }}][3];
+    friConsts[0] <== challengesFRI[0];
+    friConsts[1] <== challengesFRI[1];
+{% for c in fri_consts %}{% if c.dim == 1 %}    friConsts[{{ c.idx }}] <== [tmp_{{ c.id }}, 0, 0];
+{% else %}    friConsts[{{ c.idx }}] <== tmp_{{ c.id }};
+{% endif %}{% endfor %}
     ///////////
     // Preprocess s_i vals
     ///////////
@@ -716,7 +744,7 @@ template {{ verifier_name }}() {
         {{ verify_queries_batch_name }}(QUERIES_BATCH_SIZE)(
             batch_work_queriesFRI[b],
             challengeXi,
-            challengesFRI,
+            friConsts,
             challengesFRISteps,
             evals,
             enabled,
@@ -829,7 +857,7 @@ template {{ verifier_name }}() {
     {{ verify_queries_batch_name }}(LAST_BATCH_SIZE)(
         remainder_queriesFRI,
         challengeXi,
-        challengesFRI,
+        friConsts,
         challengesFRISteps,
         evals,
         enabled,

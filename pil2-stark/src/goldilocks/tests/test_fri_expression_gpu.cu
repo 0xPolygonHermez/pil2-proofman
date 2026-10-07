@@ -1,6 +1,6 @@
 // Equivalence tests for the DEEP/FRI polynomial kernels (starkpil/fri_expression.cuh), against a host
 // reference written straight from the definition: it inverts every x[r] - xi_o itself, so it also checks
-// the shifted-denominator identity both kernels rely on.
+// the shifted-denominator identity the kernels rely on.
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <random>
@@ -27,7 +27,7 @@ struct FriCase {
 
     std::vector<FriTerm> terms;   // opening-major
     std::vector<uint64_t> termStart;
-    std::vector<Goldilocks::Element> cm, custom, fixed, evals, xi, xis, x, vf1, vf2;   // xis: reference only
+    std::vector<Goldilocks::Element> cm, custom, fixed, evals, xi, xis, x, vf1, vf2;   // xis, x: reference only
 
     void build(uint64_t seed)
     {
@@ -62,7 +62,7 @@ struct FriCase {
                 const uint64_t col = (o * 3 + j * 7) % nDistinctCols;
                 // evalPos reversed, so the kernels must follow it rather than the term index.
                 terms.push_back(FriTerm{col * n, (uint32_t)(nTerms - 1 - terms.size()), (uint16_t)(col % 3),
-                                        (uint16_t)(col % 4 == 0 ? FIELD_EXTENSION : 1)});
+                                        (uint16_t)(col % 4 == 0 ? FIELD_EXTENSION : 1), (uint32_t)col});
             }
             termStart.push_back(terms.size());
         }
@@ -70,7 +70,7 @@ struct FriCase {
         for (auto &e : evals) e = rnd();
     }
 
-    // fri[r] = SUM_o vf1^(O-1-o) / (x[r] - xi_o) * SUM_j vf2^(n_o-1-j) * (p_j[r] - e_j), by Horner.
+    // fri[r] = SUM_o vf1^e_o / (x[r] - xi_o) * SUM_j vf2^(c_j) * (p_j[r] - e_j), e_o counting later openings with terms.
     std::vector<Goldilocks::Element> reference() const
     {
         const uint64_t n = domainSize();
@@ -88,13 +88,16 @@ struct FriCase {
                     F3::Element term = {pol[0], m.dim == 1 ? Goldilocks::zero() : pol[n],
                                         m.dim == 1 ? Goldilocks::zero() : pol[2 * n]};
                     F3::sub(term, term, *(F3::Element *)&evals[m.evalPos * FIELD_EXTENSION]);
-                    F3::mul(accum, accum, vf2e);
+                    F3::Element p = {Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero()};
+                    for (uint32_t e = 0; e < m.vf2Exp; e++) F3::mul(p, p, vf2e);
+                    F3::mul(term, term, p);
                     F3::add(accum, accum, term);
                 }
                 F3::Element den = {x[r], Goldilocks::zero(), Goldilocks::zero()}, inv;
                 F3::sub(den, den, *(F3::Element *)&xis[o * FIELD_EXTENSION]);
                 F3::inv(inv, den);
                 F3::mul(accum, accum, inv);
+                if (termStart[o + 1] == termStart[o]) continue;   // fri_poly.rs skips openings without evaluations
                 F3::mul(fri, fri, vf1e);
                 F3::add(fri, fri, accum);
             }
@@ -113,48 +116,54 @@ T *upload(const std::vector<T> &v)
     return d;
 }
 
-// Either kernel, as calculateFRIExpression launches them (256 threads).
-std::vector<Goldilocks::Element> runKernel(const FriCase &c, bool shifted)
+// As calculateFRIExpression launches them, nThreads rows per block (friThreads unless given).
+std::vector<Goldilocks::Element> runKernel(const FriCase &c, uint32_t nThreads = 0)
 {
-    const uint64_t n = c.domainSize(), O = c.nOpenings(), nThreads = 256;
+    const uint64_t n = c.domainSize(), O = c.nOpenings();
+    FriWindow w = friWindow(c.openings, c.extendBits, nThreads == 0 ? n : nThreads);
+    EXPECT_NE(w.nThreads, 0u);
+    const Goldilocks::Element wExt = Goldilocks::w(c.nBitsExt), wStep = Goldilocks::pow(wExt, w.nThreads);
+    for (FriSegment &s : w.segments) s.w = Goldilocks::pow(wExt, (uint64_t)s.offset & (n - 1)).fe;
+    uint64_t nPols = 0;
+    for (const FriTerm &t : c.terms) nPols = std::max<uint64_t>(nPols, t.vf2Exp + 1);
+    const FriColGroups g = buildFriColGroups(c.terms, c.termStart, nPols);
+
     gl64_t *cm = (gl64_t *)upload(c.cm), *custom = (gl64_t *)upload(c.custom), *fixed = (gl64_t *)upload(c.fixed);
-    gl64_t *evals = (gl64_t *)upload(c.evals), *xi = (gl64_t *)upload(c.xi), *x = (gl64_t *)upload(c.x);
+    gl64_t *evals = (gl64_t *)upload(c.evals), *xi = (gl64_t *)upload(c.xi);
     gl64_t *vf1 = (gl64_t *)upload(c.vf1), *vf2 = (gl64_t *)upload(c.vf2);
     int64_t *openings = upload(c.openings);
     uint64_t *termStart = upload(c.termStart);
     FriTerm *terms = c.terms.empty() ? nullptr : upload(c.terms);
-    gl64_t *coef = nullptr, *k = nullptr, *fri = nullptr;
-    CHECKCUDAERR(cudaMalloc(&coef, (c.terms.size() + 1) * FIELD_EXTENSION * sizeof(gl64_t)));
+    FriTerm *dCols = g.cols.empty() ? nullptr : upload(g.cols);
+    uint32_t *dColStart = upload(g.colStart), *dOpStart = upload(g.opStart);
+    uint32_t *dOpGroups = g.opGroups.empty() ? nullptr : upload(g.opGroups);
+    FriSegment *dSegs = upload(w.segments);
+    uint32_t *dOpBase = upload(w.opBase);
+    gl64_t *b = nullptr, *a = nullptr, *k = nullptr, *fri = nullptr;
+    CHECKCUDAERR(cudaMalloc(&b, (nPols + 1) * FIELD_EXTENSION * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc(&a, O * FIELD_EXTENSION * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc(&k, O * FIELD_EXTENSION * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc(&fri, n * FIELD_EXTENSION * sizeof(gl64_t)));
 
-    computeFRIFoldedConstants<<<(O + 63) / 64, 64>>>(O, openings, Goldilocks::w(c.nBitsExt - c.extendBits).fe,
-                                                    termStart, terms, evals, vf1, vf2, coef, k);
-    const int64_t oMin = *std::min_element(c.openings.begin(), c.openings.end());
-    const int64_t oMax = *std::max_element(c.openings.begin(), c.openings.end());
-    if (shifted) {
-        const uint64_t window = friShiftedWindow(oMin, oMax, c.extendBits, nThreads);
-        EXPECT_NE(window, 0u);
-        computeFRIExpressionShifted<<<n / nThreads, nThreads, window * sizeof(Goldilocks3GPU::Element)>>>(
-            n, c.extendBits, O, openings, oMax, window, termStart, terms, coef, k, cm, custom, fixed, xi, x, fri);
-    } else {
-        // Fewer blocks than rows / nThreads, so the grid-stride loop runs.
-        computeFRIExpressionFolded<<<2, nThreads>>>(n, c.extendBits, O, openings, termStart, terms, coef, k, cm,
-                                                   custom, fixed, xi, x, fri);
-    }
+    computeFRIConstants(O, nPols, openings, Goldilocks::w(c.nBitsExt - c.extendBits).fe, termStart, terms, evals, vf1, vf2,
+                        b, a, k);
+    computeFRIExpression<<<n / w.nThreads, w.nThreads, w.size * sizeof(Goldilocks3GPU::Element)>>>(
+        n, O, w.segments.size(), dSegs, dOpBase, Goldilocks::shift().fe, wExt.fe, wStep.fe, Goldilocks::inv(wStep).fe, xi,
+        g.colStart.size() - 1, dColStart, dCols, dOpStart, dOpGroups, b, a, k, cm, custom, fixed, fri);
     CHECKCUDAERR(cudaDeviceSynchronize());
 
     std::vector<Goldilocks::Element> out(n * FIELD_EXTENSION);
     CHECKCUDAERR(cudaMemcpy(out.data(), fri, out.size() * sizeof(gl64_t), cudaMemcpyDeviceToHost));
-    for (void *p : {(void *)cm, (void *)custom, (void *)fixed, (void *)evals, (void *)xi, (void *)x, (void *)vf1,
-                    (void *)vf2, (void *)openings, (void *)termStart, (void *)terms, (void *)coef, (void *)k, (void *)fri})
+    for (void *p : {(void *)cm, (void *)custom, (void *)fixed, (void *)evals, (void *)xi, (void *)vf1, (void *)vf2,
+                    (void *)openings, (void *)termStart, (void *)terms, (void *)dCols, (void *)dColStart,
+                    (void *)dOpStart, (void *)dOpGroups, (void *)dSegs, (void *)dOpBase, (void *)b, (void *)a, (void *)k, (void *)fri})
         cudaFree(p);
     return out;
 }
 
-void expectMatches(const FriCase &c, bool shifted)
+void expectMatches(const FriCase &c, uint32_t nThreads = 0)
 {
-    const auto got = runKernel(c, shifted), want = c.reference();
+    const auto got = runKernel(c, nThreads), want = c.reference();
     ASSERT_EQ(got.size(), want.size());
     for (uint64_t i = 0; i < got.size(); i++)
         ASSERT_EQ(Goldilocks::toU64(got[i]), Goldilocks::toU64(want[i])) << "element " << i;
@@ -162,17 +171,15 @@ void expectMatches(const FriCase &c, bool shifted)
 
 } // namespace
 
-// Term counts (a single opening, exact and partial groups of 4, leading empties, a long vf2 chain) x
-// kernel x blowup 1, 2, 4.
-class FriExpressionShapes
-    : public ::testing::TestWithParam<std::tuple<std::vector<uint64_t>, bool, uint64_t>> {};
+// Term counts (a single opening, empty openings, a long vf2 chain) x blowup 1, 2, 4.
+class FriExpressionShapes : public ::testing::TestWithParam<std::tuple<std::vector<uint64_t>, uint64_t>> {};
 
 TEST_P(FriExpressionShapes, MatchesHostReference)
 {
     FriCase c;
-    std::tie(c.counts, std::ignore, c.extendBits) = GetParam();
+    std::tie(c.counts, c.extendBits) = GetParam();
     c.build(0x5eed + c.nOpenings() + c.extendBits);
-    expectMatches(c, std::get<1>(GetParam()));
+    expectMatches(c);
 }
 
 INSTANTIATE_TEST_SUITE_P(Shapes, FriExpressionShapes,
@@ -182,189 +189,91 @@ INSTANTIATE_TEST_SUITE_P(Shapes, FriExpressionShapes,
                                          std::vector<uint64_t>{0, 0, 3},
                                          std::vector<uint64_t>{200, 1, 0, 37, 5, 5, 5},
                                          std::vector<uint64_t>{2, 3, 4, 5, 6, 7, 8, 9}),
-                       ::testing::Bool(), ::testing::Values(0, 1, 2)));
+                       ::testing::Values(0, 1, 2)));
 
-// Openings with gaps and out of order, like the recursive compressors.
-TEST(FriExpression, MatchesHostReferenceWithOpeningGaps)
+// Blocks from one row (a window of D per thread) to 256.
+TEST(FriExpression, MatchesHostReferenceAtAnyBlockSize)
 {
-    for (bool shifted : {false, true}) {
+    for (uint32_t nThreads : {1, 32, 256}) {
         FriCase c;
-        c.extendBits = 2;
-        c.counts = {2, 3, 1, 4, 2, 5};
-        c.openings = {0, -5, -3, 1, 4, 9};
-        c.build(0x6a95);
-        SCOPED_TRACE(shifted ? "shifted" : "folded");
-        expectMatches(c, shifted);
+        c.build(0xd0 + nThreads);
+        SCOPED_TRACE("nThreads = " + std::to_string(nThreads));
+        expectMatches(c, nThreads);
     }
 }
 
-// A range too wide for the shifted kernel's window: calculateFRIExpression takes the fallback.
-TEST(FriExpression, FallbackMatchesWhenWindowDoesNotFit)
+// Openings with gaps, out of order and far apart, like the recursive compressors.
+TEST(FriExpression, MatchesHostReferenceWithOpeningGaps)
 {
-    FriCase c;
-    c.counts = {2, 3, 1, 4, 2};
-    c.openings = {-1000, -400, -3, 0, 5};
-    c.build(0xfa11);
-    ASSERT_EQ(friShiftedWindow(-1000, 5, c.extendBits, 256), 0u);
-    expectMatches(c, false);
+    for (auto ops : {std::vector<int64_t>{0, -5, -3, 1, 4, 9}, std::vector<int64_t>{-1000, -400, -3, 0, 5, 1},
+                     std::vector<int64_t>{100000, -3, 0, -100000, 1, 7}}) {
+        FriCase c;
+        c.extendBits = 2;
+        c.counts = {2, 3, 1, 4, 2, 5};
+        c.openings = ops;
+        c.build(0x6a95 + ops[0]);
+        expectMatches(c);
+    }
 }
 
 // Keccakf-like: openings -144..5, rows reaching around the domain.
 TEST(FriExpression, MatchesHostReferenceWideOpeningRange)
 {
-    for (bool shifted : {false, true}) {
-        FriCase c;
-        c.counts.clear();
-        for (int64_t o = -144; o <= 5; o++) {
-            c.openings.push_back(o);
-            c.counts.push_back((uint64_t)(o + 144) * 7 % 4);   // 0..3, empties included
-        }
-        c.nDistinctCols = 9;
-        c.build(0xacc);
-        SCOPED_TRACE(shifted ? "shifted" : "folded");
-        expectMatches(c, shifted);
+    FriCase c;
+    c.counts.clear();
+    for (int64_t o = -144; o <= 5; o++) {
+        c.openings.push_back(o);
+        c.counts.push_back((uint64_t)(o + 144) * 7 % 4);   // 0..3, empties included
     }
+    c.nDistinctCols = 9;
+    c.build(0xacc);
+    expectMatches(c);
+}
+
+// More groups than one batch of S_G (FRI_GROUP_BATCH).
+// Contiguous openings take one segment; far apart ones a segment each, so the range does not matter.
+TEST(FriExpression, WindowSegments)
+{
+    std::vector<int64_t> keccak;
+    for (int64_t o = -134; o <= 5; o++) keccak.push_back(o);
+    FriWindow w = friWindow(keccak, 1, 1 << 22);
+    EXPECT_EQ(w.nThreads, 256u);
+    EXPECT_EQ(w.segments.size(), 1u);
+    EXPECT_EQ(w.size, 256u + 139 * 2);
+    EXPECT_EQ(w.opBase[0], 139u * 2);   // opening -134 reads the latest rows
+    EXPECT_EQ(friWindow({0, 1792}, 0, 1 << 22).nThreads, 256u);
+    w = friWindow({-100000, 0, 1, 100000}, 2, 1 << 22);
+    EXPECT_EQ(w.nThreads, 256u);
+    EXPECT_EQ(w.segments.size(), 3u);
+    EXPECT_EQ(w.size, 3 * 256u + 4);
+    std::vector<int64_t> sparse;
+    for (int64_t o = 0; o < 64; o++) sparse.push_back(o * 1000);
+    EXPECT_EQ(friWindow(sparse, 1, 1 << 22).nThreads, 32u);   // 64 * 32 rows * 24 bytes = 48 KiB
+}
+
+TEST(FriExpression, MatchesHostReferenceWithManyGroups)
+{
+    FriCase c;
+    c.counts.resize(24);
+    for (uint64_t o = 0; o < 24; o++) c.counts[o] = (o * 7 + 3) % 13;
+    c.nDistinctCols = 97;
+    c.build(0x9a0);
+    uint64_t nPols = 0;
+    for (const FriTerm &t : c.terms) nPols = std::max<uint64_t>(nPols, t.vf2Exp + 1);
+    ASSERT_GT(buildFriColGroups(c.terms, c.termStart, nPols).colStart.size() - 1, FRI_GROUP_BATCH + 1u);
+    expectMatches(c);
 }
 
 // Up to 97 openings (examples/hashes Blake2b), where the vf1 exponent reaches its maximum.
 TEST(FriExpression, MatchesHostReferenceAtLargeOpeningCount)
 {
     for (uint64_t O : {17, 32, 57, 73, 87, 97}) {
-        for (bool shifted : {false, true}) {
-            FriCase c;
-            c.counts.resize(O);
-            for (uint64_t o = 0; o < O; o++) c.counts[o] = (o * 5 + 1) % 9;   // 0..8, empties included
-            c.nDistinctCols = 11;
-            c.build(0xba5e + O);
-            SCOPED_TRACE("nOpeningPoints = " + std::to_string(O) + (shifted ? ", shifted" : ", folded"));
-            expectMatches(c, shifted);
-        }
+        FriCase c;
+        c.counts.resize(O);
+        for (uint64_t o = 0; o < O; o++) c.counts[o] = (o * 5 + 1) % 9;   // 0..8, empties included
+        c.nDistinctCols = 11;
+        c.build(0xba5e + O);
+        SCOPED_TRACE("nOpeningPoints = " + std::to_string(O));
+        expectMatches(c);
     }
-}
-
-TEST(FriExpression, ShiftedWindowFitsSharedMemory)
-{
-    EXPECT_EQ(friShiftedWindow(-144, 5, 1, 256), 256u + 149 * 2);
-    EXPECT_EQ(friShiftedWindow(0, 1792, 0, 256), 2048u);   // 2048 * 24 bytes = 48 KiB
-    EXPECT_EQ(friShiftedWindow(0, 1793, 0, 256), 0u);
-    EXPECT_EQ(friShiftedWindow(-1000, 0, 2, 256), 0u);
-}
-
-// ---------------------------------------------------------------------------
-// Timing at the shapes of the zisk proving key. Disabled by default; run with
-// --gtest_also_run_disabled_tests.
-// ---------------------------------------------------------------------------
-namespace {
-
-struct BenchShape {
-    const char *name;
-    uint64_t nBits, nBitsExt, nOpenings, nEvals, nCols;
-};
-
-// Each column is opened at a run of consecutive openings, as in a real eval map.
-void benchTerms(const BenchShape &sh, std::vector<FriTerm> &terms, std::vector<uint64_t> &termStart)
-{
-    const uint64_t n = 1ULL << sh.nBitsExt, base = sh.nEvals / sh.nCols, extra = sh.nEvals % sh.nCols;
-    std::vector<std::vector<FriTerm>> byOpening(sh.nOpenings);
-    uint64_t evalPos = 0;
-    for (uint64_t c = 0; c < sh.nCols && evalPos < sh.nEvals; c++) {
-        const uint64_t k = std::min(std::max<uint64_t>(base + (c < extra ? 1 : 0), 1), sh.nOpenings);
-        const uint64_t start = (c * 7) % (sh.nOpenings - k + 1);
-        for (uint64_t t = 0; t < k && evalPos < sh.nEvals; t++)
-            byOpening[start + t].push_back(FriTerm{c * n, (uint32_t)evalPos++, 0, (uint16_t)(c % 4 == 0 ? FIELD_EXTENSION : 1)});
-    }
-    termStart = {0};
-    for (const auto &o : byOpening) {
-        terms.insert(terms.end(), o.begin(), o.end());
-        termStart.push_back(terms.size());
-    }
-}
-
-void runBench(const BenchShape &sh)
-{
-    const uint64_t n = 1ULL << sh.nBitsExt, extendBits = sh.nBitsExt - sh.nBits, nThreads = 256;
-    std::vector<FriTerm> terms;
-    std::vector<uint64_t> termStart;
-    benchTerms(sh, terms, termStart);
-    // Openings as in the keys: a run ending at +5 (Main: -1..1).
-    std::vector<int64_t> ops(sh.nOpenings);
-    const int64_t top = std::min<int64_t>(5, (int64_t)(sh.nOpenings - 1) / 2);
-    for (uint64_t o = 0; o < sh.nOpenings; o++) ops[o] = (int64_t)o - (int64_t)(sh.nOpenings - 1) + top;
-
-    gl64_t *pols = nullptr;
-    const size_t polBytes = (size_t)(sh.nCols + FIELD_EXTENSION) * n * sizeof(gl64_t);
-    if (cudaMalloc(&pols, polBytes) != cudaSuccess) {
-        cudaGetLastError();
-        printf("[bench] %-14s SKIPPED (needs %zu MiB for the trace)\n", sh.name, polBytes >> 20);
-        return;
-    }
-    CHECKCUDAERR(cudaMemset(pols, 1, polBytes));
-    std::mt19937_64 rng(7);
-    auto random = [&](uint64_t count) {
-        std::vector<uint64_t> h(count);
-        for (auto &v : h) v = rng() % GOLDILOCKS_PRIME;
-        return (gl64_t *)upload(h);
-    };
-    gl64_t *evals = random(sh.nEvals * FIELD_EXTENSION), *x = random(n), *xi = random(FIELD_EXTENSION);
-    gl64_t *vf1 = random(FIELD_EXTENSION), *vf2 = random(FIELD_EXTENSION);
-    gl64_t *coef = nullptr, *k = nullptr, *fri = nullptr;
-    CHECKCUDAERR(cudaMalloc(&coef, sh.nEvals * FIELD_EXTENSION * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc(&k, sh.nOpenings * FIELD_EXTENSION * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc(&fri, n * FIELD_EXTENSION * sizeof(gl64_t)));
-    int64_t *dOps = upload(ops);
-    uint64_t *dStart = upload(termStart);
-    FriTerm *dTerms = upload(terms);
-    const uint64_t wTrace = Goldilocks::w(sh.nBits).fe;
-    const uint64_t window = friShiftedWindow(ops.front(), ops.back(), extendBits, nThreads);
-
-    auto timeMs = [&](auto &&launch) {
-        const int reps = 5;
-        launch();
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        cudaEvent_t a, b;
-        cudaEventCreate(&a); cudaEventCreate(&b);
-        cudaEventRecord(a);
-        for (int i = 0; i < reps; i++) launch();
-        cudaEventRecord(b);
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        float ms = 0;
-        cudaEventElapsedTime(&ms, a, b);
-        cudaEventDestroy(a); cudaEventDestroy(b);
-        return ms / reps;
-    };
-    auto constants = [&] {
-        computeFRIFoldedConstants<<<(sh.nOpenings + 63) / 64, 64>>>(sh.nOpenings, dOps, wTrace, dStart, dTerms, evals,
-                                                                   vf1, vf2, coef, k);
-    };
-    const float folded = timeMs([&] {
-        constants();
-        computeFRIExpressionFolded<<<n / nThreads, nThreads>>>(n, extendBits, sh.nOpenings, dOps, dStart, dTerms, coef, k,
-                                                              pols, pols, pols, xi, x, fri);
-    });
-    const float shifted = window == 0 ? 0.f : timeMs([&] {
-        constants();
-        computeFRIExpressionShifted<<<n / nThreads, nThreads, window * sizeof(Goldilocks3GPU::Element)>>>(
-            n, extendBits, sh.nOpenings, dOps, ops.back(), window, dStart, dTerms, coef, k, pols, pols, pols, xi, x, fri);
-    });
-    printf("[bench] %-14s O=%-3lu evals=%-5lu cols=%-5lu  folded %8.3f ms  shifted %8.3f ms (window %lu)\n", sh.name,
-           sh.nOpenings, sh.nEvals, sh.nCols, folded, shifted, window);
-    fflush(stdout);
-
-    for (void *p : {(void *)pols, (void *)evals, (void *)x, (void *)xi, (void *)vf1, (void *)vf2, (void *)coef,
-                    (void *)k, (void *)fri, (void *)dOps, (void *)dStart, (void *)dTerms})
-        cudaFree(p);
-}
-
-} // namespace
-
-TEST(FriExpression, DISABLED_BenchZiskShapes)
-{
-    // From the zisk proving key's starkinfo.json (openingPoints, evMap, distinct columns in the eval map).
-    const BenchShape shapes[] = {
-        {"Keccakf",     21, 22, 150, 3635, 520},
-        {"compressor",  20, 21,  66, 1047, 388},
-        {"recursive2",  19, 21,  67, 1200, 341},
-        {"Main",        22, 23,   3,  194, 185},
-    };
-    for (const auto &sh : shapes) runBench(sh);
 }

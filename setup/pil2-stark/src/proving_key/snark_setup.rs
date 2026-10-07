@@ -240,14 +240,14 @@ pub fn gen_snark_setup(
     // Build starkinfo output.
     let opening_points_rf = crate::output::stark_info::collect_opening_points(&pil_result_rf.setup);
     let field_size = crate::types::security::goldilocks_safe_extension_field_size();
-    let ev_map_len_rf = pil_result_rf.pil_code.ev_map.len();
+    let fri_batch_size = pil_result_rf.pil_code.fri_batch_size;
     let log_folding_factors_rf = crate::output::stark_info::compute_log_folding_factors(&stark_struct_rf);
     let regime = crate::types::security::regimes::DecodingRegime::Jbr;
     let fri_config_rf = crate::types::security::pcs::FriConfig {
         field_size,
         trace_length: 1u32 << stark_struct_rf.n_bits,
         rate: 1.0 / (1u64 << (stark_struct_rf.n_bits_ext - stark_struct_rf.n_bits)) as f64,
-        batch_size: ev_map_len_rf.max(1) as u64,
+        batch_size: fri_batch_size.max(1) as u64,
         batching: crate::types::security::pcs::Batching::Powers,
         log_folding_factors: log_folding_factors_rf,
         max_grinding_bits_query: stark_struct_rf.pow_bits as u64,
