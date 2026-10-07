@@ -3925,6 +3925,14 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
 // Quiesce the streaming-commit slots: reject new slot commits and wait for the
 // in-flight ones to drain. Called by the gpu-mops borrower RIGHT BEFORE its
 // final planning phase
+// Lifts the quiesce without waiting for the borrow to end: the borrower's host-paced phase is
+// over and its remaining work on the first GPU is kernels, which coexist with the commits.
+void stream_commit_resume_gpu() {
+    DeviceCommitBuffers *d_buffers = gStreamCommitBuffers.load(std::memory_order_acquire);
+    if (d_buffers == nullptr || d_buffers->streamCommitSlots == 0) return;
+    streamCommitSetQuiesced(d_buffers, 0);
+}
+
 void stream_commit_pause_gpu() {
     DeviceCommitBuffers *d_buffers = gStreamCommitBuffers.load(std::memory_order_acquire);
     if (d_buffers == nullptr || d_buffers->streamCommitSlots == 0) return;
