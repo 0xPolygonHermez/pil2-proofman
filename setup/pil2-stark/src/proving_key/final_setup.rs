@@ -358,14 +358,14 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
     // Build JSON representations using the same helpers as the non-recursive path
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
     let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&final_stark_struct);
-    let ev_map_len = pil_info_result.pil_code.ev_map.len();
+    let fri_batch_size = pil_info_result.pil_code.fri_batch_size;
     let field_size = crate::types::security::goldilocks_safe_extension_field_size();
     let regime = crate::types::security::regimes::DecodingRegime::Jbr;
     let fri_config = crate::types::security::pcs::FriConfig {
         field_size,
         trace_length: 1u32 << final_stark_struct.n_bits,
         rate: 1.0 / (1u64 << (final_stark_struct.n_bits_ext - final_stark_struct.n_bits)) as f64,
-        batch_size: ev_map_len.max(1) as u64,
+        batch_size: fri_batch_size.max(1) as u64,
         batching: crate::types::security::pcs::Batching::Powers,
         log_folding_factors,
         max_grinding_bits_query: final_stark_struct.pow_bits as u64,

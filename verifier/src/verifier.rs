@@ -111,11 +111,13 @@ pub struct FriEvalRef {
     pub bucket: u16,
     pub offset: u16,
     pub dim: u8,
+    /// vf2's exponent: the polynomial's first appearance in the evaluation map.
+    pub col: u16,
 }
 
 impl FriEvalRef {
-    pub const fn new(bucket: u16, offset: u16, dim: u8) -> Self {
-        Self { bucket, offset, dim }
+    pub const fn new(bucket: u16, offset: u16, dim: u8, col: u16) -> Self {
+        Self { bucket, offset, dim, col }
     }
 }
 
@@ -127,8 +129,7 @@ pub struct FriEvalGroup {
 }
 
 /// Evaluates the FRI polynomial at one query point, mirroring the setup's
-/// `fri_poly.rs`: Horner on `vf2` within an opening point, scale by
-/// `xDivXSubXi`, then Horner on `vf1` across opening points.
+/// `fri_poly.rs`: terms weighted by vf2^col, scaled by `xDivXSubXi`, Horner on `vf1` across openings.
 pub fn fri_query_verify(
     info: &VerifierInfo,
     challenges: &[CubicExtensionField<Goldilocks>],
@@ -139,12 +140,20 @@ pub fn fri_query_verify(
     let vf1 = challenges[info.n_challenges as usize - 2];
     let vf2 = challenges[info.n_challenges as usize - 1];
 
+    let n_cols = info.fri_ev_groups.iter().flat_map(|g| g.refs.iter()).map(|e| e.col as usize + 1).max().unwrap_or(0);
+    let mut vf2_pow = Vec::with_capacity(n_cols);
+    let mut p = CubicExtensionField { value: [Goldilocks::ONE, Goldilocks::ZERO, Goldilocks::ZERO] };
+    for _ in 0..n_cols {
+        vf2_pow.push(p);
+        p *= vf2;
+    }
+
     // ev_map is sorted by opening point, so the groups walk `evals` in order.
     let mut eval_idx = 0;
     let mut fri = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
     for (g, group) in info.fri_ev_groups.iter().enumerate() {
         let mut acc = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
-        for (k, e) in group.refs.iter().enumerate() {
+        for e in &group.refs {
             let leaf = &vals[e.bucket as usize];
             let off = e.offset as usize;
             let eval = evals[eval_idx];
@@ -155,7 +164,7 @@ pub fn fri_query_verify(
             } else {
                 CubicExtensionField { value: [leaf[off], leaf[off + 1], leaf[off + 2]] } - eval
             };
-            acc = if k == 0 { term } else { acc * vf2 + term };
+            acc += term * vf2_pow[e.col as usize];
         }
         let scaled = acc * xdivxsub[group.opening as usize];
         fri = if g == 0 { scaled } else { fri * vf1 + scaled };
@@ -792,8 +801,8 @@ mod tests {
         }
     }
 
-    fn r(bucket: u16, offset: u16, dim: u8) -> FriEvalRef {
-        FriEvalRef { bucket, offset, dim }
+    fn r(bucket: u16, offset: u16, dim: u8, col: u16) -> FriEvalRef {
+        FriEvalRef { bucket, offset, dim, col }
     }
 
     // challenges[4] = vf1, challenges[5] = vf2 for n_challenges = 6.
@@ -804,7 +813,7 @@ mod tests {
     /// A single opened column contributes `(col - eval) * xDivXSubXi`.
     #[test]
     fn scales_a_single_opened_column_by_its_opening_weight() {
-        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 2, 1)] }]);
+        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 2, 1, 0)] }]);
         let vals = vec![vec![], vec![Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::new(7)]];
 
         let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3)], &vals, &[gl(5)]);
@@ -812,37 +821,52 @@ mod tests {
         assert_eq!(got, gl((7 - 3) * 5));
     }
 
-    /// Columns sharing an opening point accumulate in a Horner chain on vf2.
+    /// Each column is weighted by vf2 to the power of its global index.
     #[test]
-    fn accumulates_columns_of_one_opening_point_on_vf2() {
-        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 0, 1), r(1, 1, 1)] }]);
+    fn weights_columns_by_vf2_to_their_index() {
+        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 0, 1, 0), r(1, 1, 1, 1)] }]);
         let vals = vec![vec![], vec![Goldilocks::new(7), Goldilocks::new(9)]];
 
         let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3), gl(4)], &vals, &[gl(1)]);
 
-        // acc = (7-3); acc = acc*2 + (9-4) = 8 + 5
-        assert_eq!(got, gl(13));
+        // (7-3)*2^0 + (9-4)*2^1
+        assert_eq!(got, gl(14));
+    }
+
+    /// A column keeps its vf2 power at every opening.
+    #[test]
+    fn a_column_keeps_its_vf2_power_across_openings() {
+        let i = info(vec![
+            FriEvalGroup { opening: 0, refs: vec![r(1, 0, 1, 0), r(1, 1, 1, 1)] },
+            FriEvalGroup { opening: 1, refs: vec![r(1, 1, 1, 1)] },
+        ]);
+        let vals = vec![vec![], vec![Goldilocks::new(7), Goldilocks::new(9)]];
+
+        let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3), gl(4), gl(6)], &vals, &[gl(1), gl(1)]);
+
+        // group0 = 4 + 5*2 = 14, group1 = (9-6)*2 = 6, fri = 14*10 + 6
+        assert_eq!(got, gl(146));
     }
 
     /// Distinct opening points combine in a Horner chain on vf1.
     #[test]
     fn combines_opening_points_on_vf1() {
         let i = info(vec![
-            FriEvalGroup { opening: 0, refs: vec![r(1, 0, 1)] },
-            FriEvalGroup { opening: 1, refs: vec![r(1, 1, 1)] },
+            FriEvalGroup { opening: 0, refs: vec![r(1, 0, 1, 0)] },
+            FriEvalGroup { opening: 1, refs: vec![r(1, 1, 1, 1)] },
         ]);
         let vals = vec![vec![], vec![Goldilocks::new(7), Goldilocks::new(9)]];
 
         let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3), gl(4)], &vals, &[gl(1), gl(1)]);
 
-        // group0 = 4, group1 = 5, fri = 4*10 + 5
-        assert_eq!(got, gl(45));
+        // group0 = 4, group1 = 5*2 (col 1), fri = 4*10 + 10
+        assert_eq!(got, gl(50));
     }
 
     /// An extension-field column reads three consecutive slots of its leaf.
     #[test]
     fn reads_three_slots_for_an_extension_column() {
-        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 0, 3)] }]);
+        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 0, 3, 0)] }]);
         let vals = vec![vec![], vec![Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)]];
         let eval = CubicExtensionField { value: [Goldilocks::new(1), Goldilocks::new(1), Goldilocks::new(1)] };
 
@@ -854,7 +878,7 @@ mod tests {
     /// Empty opening points are skipped, so the index is recorded, not positional.
     #[test]
     fn uses_the_recorded_opening_index_not_the_group_position() {
-        let i = info(vec![FriEvalGroup { opening: 2, refs: vec![r(1, 0, 1)] }]);
+        let i = info(vec![FriEvalGroup { opening: 2, refs: vec![r(1, 0, 1, 0)] }]);
         let vals = vec![vec![], vec![Goldilocks::new(7)]];
 
         let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3)], &vals, &[gl(0), gl(0), gl(5)]);

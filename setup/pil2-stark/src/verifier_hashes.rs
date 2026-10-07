@@ -200,6 +200,7 @@ pub fn geometry_for_family(
     stark_struct: &crate::types::stark_struct::StarkStruct,
     setup: &crate::types::pilout_info::SetupResult,
     n_evals: usize,
+    fri_batch_size: usize,
 ) -> VerifierGeometry {
     use crate::types::security;
     use crate::types::security::pcs::{Batching, Fri, FriConfig};
@@ -215,7 +216,7 @@ pub fn geometry_for_family(
         field_size: security::goldilocks_safe_extension_field_size(),
         trace_length: 1u32 << stark_struct.n_bits,
         rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-        batch_size: n_evals.max(1) as u64,
+        batch_size: fri_batch_size.max(1) as u64,
         batching: Batching::Powers,
         log_folding_factors: crate::output::stark_info::compute_log_folding_factors(stark_struct),
         max_grinding_bits_query: stark_struct.pow_bits as u64,

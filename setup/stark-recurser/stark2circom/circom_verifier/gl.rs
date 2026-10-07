@@ -9,11 +9,13 @@
 //! (`circuits.gl/stark_verifier.circom.tera`) that handles all structural loops,
 //! conditionals and signal declarations.
 
+use std::collections::HashSet;
+
 use anyhow::{bail, Result};
 use serde_json::Value;
 use tera::Tera;
 
-use super::expressions_chunks::get_expressions_chunks;
+use super::expressions_chunks::{get_expressions_chunks, get_expressions_chunks_ext, split_query_independent};
 use super::gl_field::{gl_exp, gl_inv, GL_INV_W, GL_SHIFT, GL_W};
 use crate::stark2circom::transcript::Transcript;
 use super::unroll_code::{unroll_code, UnrollCtx};
@@ -398,7 +400,10 @@ fn build_tera_context(
 
     // ── Eval Q chunks ─────────────────────────────────────────────────────────
     let query_verifier_code: Vec<Value> = vi["queryVerifier"]["code"].as_array().map_or(vec![], |a| a.clone());
-    let eval_q_raw = get_expressions_chunks(&query_verifier_code);
+    let (fri_once_code, query_code, fri_consts) = split_query_independent(&query_verifier_code, (q_stage + 2) as u64);
+    let fri_once_raw = get_expressions_chunks_ext(&fri_once_code, &[], &fri_consts.iter().map(|&(id, _)| id).collect());
+    let mut fri_once_chunks = build_chunk_list(&fri_once_raw);
+    let eval_q_raw = get_expressions_chunks_ext(&query_code, &fri_consts, &HashSet::new());
     let mut eval_q_chunks = build_chunk_list(&eval_q_raw);
 
     // ── inputsP — for VerifyEvaluations chunk calls ───────────────────────────
@@ -458,6 +463,22 @@ fn build_tera_context(
         chunk["call_inputs"] = serde_json::Value::String(call_ins.join(","));
         chunk["call_outputs"] = serde_json::Value::String(call_outs.join(","));
     }
+    for (i, chunk) in fri_once_chunks.iter_mut().enumerate() {
+        let raw = &fri_once_raw.chunks[i];
+        let call_ins: Vec<String> = ["challengesFRI".to_string(), "evals".to_string()]
+            .into_iter()
+            .chain(raw.inputs.iter().map(|id| format!("tmp_{id}")))
+            .collect();
+        let call_outs: Vec<String> = raw.outputs.iter().map(|id| format!("tmp_{id}")).collect();
+        chunk["call_inputs"] = serde_json::Value::String(call_ins.join(","));
+        chunk["call_outputs"] = serde_json::Value::String(call_outs.join(","));
+    }
+    // friConsts: challengesFRI, then the query-independent tmps the queries read.
+    let fri_consts_json: Vec<Value> = fri_consts
+        .iter()
+        .enumerate()
+        .map(|(i, &(id, dim))| serde_json::json!({ "idx": i + 2, "id": id, "dim": dim }))
+        .collect();
     for (i, chunk) in eval_q_chunks.iter_mut().enumerate() {
         let raw = &eval_q_raw.chunks[i];
         let mut call_ins = inputs_q.clone();
@@ -479,11 +500,7 @@ fn build_tera_context(
         .unwrap_or(0);
     let last_dest_id_p =
         vi["qVerifier"]["code"].as_array().and_then(|a| a.last()).and_then(|i| i["dest"]["id"].as_u64()).unwrap_or(0);
-    let last_dest_id_q = vi["queryVerifier"]["code"]
-        .as_array()
-        .and_then(|a| a.last())
-        .and_then(|i| i["dest"]["id"].as_u64())
-        .unwrap_or(0);
+    let last_dest_id_q = query_code.last().and_then(|i| i["dest"]["id"].as_u64()).unwrap_or(0);
 
     // ── constRoot string ──────────────────────────────────────────────────────
     let const_root_str = const_root.map(|r| r.join(",")).unwrap_or_else(|| "0,0,0,0".to_string());
@@ -765,6 +782,9 @@ fn build_tera_context(
     ctx.insert("custom_commits", &custom_commits);
     ctx.insert("eval_p_chunks", &eval_p_chunks);
     ctx.insert("eval_q_chunks", &eval_q_chunks);
+    ctx.insert("fri_once_chunks", &fri_once_chunks);
+    ctx.insert("fri_consts", &fri_consts_json);
+    ctx.insert("n_fri_consts", &(fri_consts.len() + 2));
     ctx.insert("fri_steps_info", &fri_steps_info);
     ctx.insert("opening_points", &opening_points);
     ctx.insert("every_frames", &every_frames);

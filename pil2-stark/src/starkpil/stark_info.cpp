@@ -534,10 +534,9 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("challenges", false)] = mapTotalN;
         mapTotalN += challengesMap.size() * FIELD_EXTENSION;
 
-        // Folded FRI constants (computeFRIFoldedConstants): one cubic coefficient per
-        // eval-map entry followed by one cubic constant per opening point.
-        mapOffsets[std::make_pair("fri_folded", false)] = mapTotalN;
-        mapTotalN += (evMap.size() + openingPoints.size()) * FIELD_EXTENSION;
+        // FRI constants (fri_expression.cuh): vf2^c per polynomial (at most one per eval), a_o and K_o per opening.
+        mapOffsets[std::make_pair("fri_constants", false)] = mapTotalN;
+        mapTotalN += (evMap.size() + 2 * openingPoints.size()) * FIELD_EXTENSION;
 
         mapOffsets[std::make_pair("fri_queries", false)] = mapTotalN;
         mapTotalN += starkStruct.nQueries;
@@ -643,7 +642,6 @@ void StarkInfo::setMapOffsets() {
     if(gpu) {
         maxSizeHelper += boundaries.size() * NExtended;
         mapOffsets[std::make_pair("zi", true)] = mapTotalN;
-        mapOffsets[std::make_pair("x", true)] = mapTotalN;
     }
     
     maxTotalN = std::max(maxTotalN, mapTotalN + maxSizeHelper);
@@ -663,7 +661,7 @@ void StarkInfo::setMapOffsets() {
 
     maxTotalN = std::max(maxTotalN, LEvSize);
 
-    // FRI layers follow q directly: x, zi and the expression tmps are dead once folding starts.
+    // FRI layers follow q directly: zi and the expression tmps are dead once folding starts.
 
     if (!gpu) {
         uint64_t maxTotalNStage2 = mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"];

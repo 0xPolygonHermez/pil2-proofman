@@ -448,7 +448,7 @@ fn get_prover_memory(
     }
     total += n_evals as u64 * fe;
     total += setup.challenges_map.len() as u64 * fe;
-    total += (n_evals + n_opening_points) as u64 * fe; // folded FRI constants
+    total += (n_evals + 2 * n_opening_points) as u64 * fe; // FRI constants
     total += n_queries;
     let perm_bits = stark_struct.steps.first().map_or(0, |s| s.n_bits as u64);
     total += (n_queries * perm_bits).div_ceil(63);
@@ -498,7 +498,7 @@ fn get_prover_memory(
     max_total = max_total.max(q_offset + n * fe + 2 * fe + n_evals as u64 * EVALS_HELPER_CHUNKS * fe);
     max_total = max_total.max(q_offset + n_ext * fe + n_ext * fe + q_deg);
 
-    // FRI layers follow q: x, zi and the expression tmps are dead once folding starts
+    // FRI layers follow q: zi and the expression tmps are dead once folding starts
     for w in stark_struct.steps.windows(2) {
         let height = 1u64 << w[1].n_bits;
         let width = ((1u64 << w[0].n_bits) / height) * fe;

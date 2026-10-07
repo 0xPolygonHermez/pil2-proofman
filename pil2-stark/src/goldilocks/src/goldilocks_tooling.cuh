@@ -15,6 +15,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <map>
+#include <tuple>
 #include <vector>
 #include "cuda_utils.cuh"
 #include "transcriptGL.cuh"
@@ -56,6 +57,16 @@ public:
 };
 
 #ifndef __GOLDILOCKS_ENV__
+template <typename T>
+inline T *uploadVec(const std::vector<T> &v)
+{
+    T *d = nullptr;
+    if (v.empty()) return d;
+    CHECKCUDAERR(cudaMalloc(&d, v.size() * sizeof(T)));
+    CHECKCUDAERR(cudaMemcpy(d, v.data(), v.size() * sizeof(T), cudaMemcpyHostToDevice));
+    return d;
+}
+
 struct AirInstanceInfo {
     uint64_t airgroupId;
     uint64_t airId;
@@ -74,7 +85,16 @@ struct AirInstanceInfo {
     // FRI terms opening-major (friTermStart has nOpenings + 1 bounds), for fri_expression.cuh.
     FriTerm *friTerms = nullptr;
     uint64_t *friTermStart = nullptr;
-    uint64_t friWindow = 0;   // rows of D per block (friShiftedWindow); 0 runs computeFRIExpressionFolded
+    // The FRI kernel's block shape (friWindow).
+    uint32_t friThreadsPerBlock = 0, nFriSegments = 0;
+    uint64_t friWindowRows = 0;
+    FriSegment *friSegments = nullptr;
+    uint32_t *friOpBase = nullptr;
+    // Polynomials grouped by opening set.
+    FriTerm *friCols = nullptr;
+    uint32_t *friColStart = nullptr, *friOpStart = nullptr, *friOpGroups = nullptr;
+    uint32_t nFriGroups = 0;
+    uint64_t nFriPols = 0;
     
     SetupCtx *setupCtx;
 
@@ -202,30 +222,33 @@ struct AirInstanceInfo {
         // Only for proof-generating setups: the verify and verify-constraints branches of
         // StarkInfo::load lay out their own arena and never reach FRI, so the region is
         // legitimately absent there.
-        // The FRI kernel's window of D is sized here for the same reason.
         if (!setupCtx->starkInfo.verify_constraints && !setupCtx->starkInfo.verify) {
-            if (setupCtx->starkInfo.mapOffsets.count(std::make_pair("fri_folded", false)) == 0) {
-                zklog.error("AirInstanceInfo: aux_trace has no fri_folded region (StarkInfo not loaded for gpu)");
+            if (setupCtx->starkInfo.mapOffsets.count(std::make_pair("fri_constants", false)) == 0) {
+                zklog.error("AirInstanceInfo: aux_trace has no fri_constants region (StarkInfo not loaded for gpu)");
                 exitProcess();
             }
-            const auto &openings = setupCtx->starkInfo.openingPoints;
-            const auto [oMin, oMax] = std::minmax_element(openings.begin(), openings.end());
-            const uint64_t extendBits = setupCtx->starkInfo.starkStruct.nBitsExt - setupCtx->starkInfo.starkStruct.nBits;
-            friWindow = friShiftedWindow(*oMin, *oMax, extendBits,
-                                         friThreads(setupCtx->starkInfo.nrowsPack, 1ULL << setupCtx->starkInfo.starkStruct.nBitsExt));
-            if (friWindow == 0) {
-                zklog.warning("AirInstanceInfo: airgroup " + std::to_string(airgroupId) + " air " + std::to_string(airId) +
-                              " opens rows " + std::to_string(*oMin) + ".." + std::to_string(*oMax) + " at blowup " +
-                              std::to_string(1ULL << extendBits) + ": the FRI window of D does not fit 48 KiB of shared "
-                              "memory, so its FRI polynomial takes the slower per-row inversions");
+            const uint64_t nBitsExt = setupCtx->starkInfo.starkStruct.nBitsExt;
+            FriWindow w = friWindow(setupCtx->starkInfo.openingPoints, nBitsExt - setupCtx->starkInfo.starkStruct.nBits, 1ULL << nBitsExt);
+            if (w.nThreads == 0) {
+                zklog.error("AirInstanceInfo: too many opening points for the FRI kernel's shared memory");
+                exitProcess();
             }
+            for (FriSegment &seg : w.segments) seg.w = Goldilocks::pow(Goldilocks::w(nBitsExt), (uint64_t)seg.offset & ((1ULL << nBitsExt) - 1)).fe;
+            friThreadsPerBlock = w.nThreads;
+            friWindowRows = w.size;
+            nFriSegments = w.segments.size();
+            friSegments = uploadVec(w.segments);
+            friOpBase = uploadVec(w.opBase);
         }
 
-        // Each opening's terms in eval-map order, which its vf2 powers follow.
+        // Each opening's terms; vf2's exponent is the polynomial's first appearance in the eval map (fri_poly.rs).
         const uint64_t NExt = 1ULL << setupCtx->starkInfo.starkStruct.nBitsExt;
         std::vector<std::vector<FriTerm>> byOpening(nOpeningPoints);
+        std::map<std::tuple<int, uint64_t, uint64_t>, uint32_t> polIndex;
         for (uint64_t i = 0; i < setupCtx->starkInfo.evMap.size(); i++) {
             const EvMap &ev = setupCtx->starkInfo.evMap[i];
+            const uint64_t commitKey = ev.type == EvMap::eType::custom ? ev.commitId : 0;
+            const uint32_t vf2Exp = polIndex.emplace(std::make_tuple((int)ev.type, commitKey, ev.id), (uint32_t)polIndex.size()).first->second;
             const uint16_t src = ev.type == EvMap::eType::cm ? 0 : ev.type == EvMap::eType::custom ? 1 : 2;
             const PolMap &pol = src == 0 ? setupCtx->starkInfo.cmPolsMap[ev.id]
                               : src == 1 ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id]
@@ -240,7 +263,7 @@ struct AirInstanceInfo {
                 exitProcess();
             }
             byOpening[ev.openingPos].push_back(FriTerm{setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)] + pol.stagePos * NExt,
-                                                       (uint32_t)i, src, (uint16_t)pol.dim});
+                                                       (uint32_t)i, src, (uint16_t)pol.dim, vf2Exp});
         }
         std::vector<FriTerm> terms;
         std::vector<uint64_t> termStart{0};
@@ -248,12 +271,16 @@ struct AirInstanceInfo {
             terms.insert(terms.end(), opening.begin(), opening.end());
             termStart.push_back(terms.size());
         }
-        CHECKCUDAERR(cudaMalloc(&friTermStart, termStart.size() * sizeof(uint64_t)));
-        CHECKCUDAERR(cudaMemcpy(friTermStart, termStart.data(), termStart.size() * sizeof(uint64_t), cudaMemcpyHostToDevice));
-        if (!terms.empty()) {
-            CHECKCUDAERR(cudaMalloc(&friTerms, terms.size() * sizeof(FriTerm)));
-            CHECKCUDAERR(cudaMemcpy(friTerms, terms.data(), terms.size() * sizeof(FriTerm), cudaMemcpyHostToDevice));
-        }
+        const FriColGroups g = buildFriColGroups(terms, termStart, polIndex.size());
+        nFriPols = polIndex.size();
+        nFriGroups = g.colStart.size() - 1;
+        friCols = uploadVec(g.cols);
+        friColStart = uploadVec(g.colStart);
+        friOpStart = uploadVec(g.opStart);
+        friOpGroups = uploadVec(g.opGroups);
+
+        friTerms = uploadVec(terms);
+        friTermStart = uploadVec(termStart);
 
         if (packedInfo != nullptr) {
             is_packed = packedInfo->is_packed;
@@ -299,8 +326,9 @@ struct AirInstanceInfo {
         if (evalGroups != nullptr) CHECKCUDAERR(cudaFree(evalGroups));
         CHECKCUDAERR(cudaFree(d_num_packed_words));
 
-        if (friTerms != nullptr) CHECKCUDAERR(cudaFree(friTerms));
-        if (friTermStart != nullptr) CHECKCUDAERR(cudaFree(friTermStart));
+        for (void *p : {(void *)friTerms, (void *)friTermStart, (void *)friCols, (void *)friColStart, (void *)friOpStart,
+                        (void *)friOpGroups, (void *)friSegments, (void *)friOpBase})
+            if (p != nullptr) CHECKCUDAERR(cudaFree(p));
 
         if (unpack_info != nullptr) {
             CHECKCUDAERR(cudaFree(unpack_info));

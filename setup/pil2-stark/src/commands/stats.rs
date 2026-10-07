@@ -92,6 +92,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
                 &stark_struct,
                 &pil_result.setup,
                 pil_result.pil_code.ev_map.len(),
+                pil_result.pil_code.fri_batch_size,
             );
             let counts = crate::verifier_hashes::verifier_hashes(&geom, family);
 
