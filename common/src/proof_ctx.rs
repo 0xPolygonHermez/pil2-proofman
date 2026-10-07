@@ -209,6 +209,9 @@ pub struct ProofmanOptions {
     /// Airs whose stage-1 witness a GPU kernel writes into the commit slot. They get no host trace
     /// buffer or upload, so the trace pool and prefetch zone are sized without them.
     pub gpu_witness_airs: GpuWitnessAirs,
+    /// With several GPUs, the first one takes only the kernel-witness commits (whose rows are
+    /// produced there) and no host trace.
+    pub planner_gpu_dedicated: bool,
 }
 
 impl Default for ProofmanOptions {
@@ -230,6 +233,7 @@ impl Default for ProofmanOptions {
             self_contained: false,
             std_owned_tables: Vec::new(),
             gpu_witness_airs: GpuWitnessAirs::default(),
+            planner_gpu_dedicated: false,
         }
     }
 }
@@ -313,6 +317,11 @@ impl ProofmanOptions {
     /// `ProofMan::new`, which sizes the trace pool and prefetch zone from it. See [`GpuWitnessAirs`].
     pub fn gpu_witness_airs(&mut self, airs: Vec<GpuWitnessAir>) {
         self.gpu_witness_airs = GpuWitnessAirs::new(airs);
+    }
+
+    /// Keep the first GPU for the kernel-witness commits (several GPUs only).
+    pub fn planner_gpu_dedicated(&mut self, dedicated: bool) {
+        self.planner_gpu_dedicated = dedicated;
     }
 }
 
