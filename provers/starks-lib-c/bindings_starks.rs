@@ -774,6 +774,7 @@ extern "C" {
         params: *mut ::std::os::raw::c_void,
     ) -> i64;
     pub fn stream_commit_pause();
+    pub fn stream_commit_resume();
     pub fn get_unified_buffer_gpu_for_recursivef(d_buffers: *mut ::std::os::raw::c_void, d_buffers_recursivef: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
     pub fn load_fixed_pols_recursivef(pSetupCtx: *mut ::std::os::raw::c_void, pConstTree: *mut ::std::os::raw::c_void, d_buffers: *mut ::std::os::raw::c_void);

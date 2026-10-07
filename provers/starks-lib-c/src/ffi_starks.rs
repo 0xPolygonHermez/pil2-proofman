@@ -1680,6 +1680,12 @@ pub fn stream_commit_pause_c() {
     unsafe { stream_commit_pause() }
 }
 
+/// Lifts the streaming-commit quiesce before the borrow ends: the borrower's host-paced phase
+/// is over. No-op on the CPU backend.
+pub fn stream_commit_resume_c() {
+    unsafe { stream_commit_resume() }
+}
+
 pub fn get_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
     unsafe { get_stream_commit_slots(d_buffers) }
 }

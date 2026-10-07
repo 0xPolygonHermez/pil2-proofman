@@ -96,6 +96,7 @@ void harvest_pipeline_gpu(void *d_buffers_);
 void dump_pipeline_state_gpu(void *d_buffers_);
 int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root, void *params_);
 void stream_commit_pause_gpu();
+void stream_commit_resume_gpu();
 void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffers_recursivef_);
 void load_fixed_pols_recursivef_gpu(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
 void *init_final_snark_prover_gpu(char* zkeyFile, void* d_buffers_recursivef);
@@ -177,6 +178,7 @@ StarksBackend cpu_backend = []() {
     backend.dump_pipeline_state = nullptr;                // default: no-op
     backend.commit_witness_streaming = nullptr;           // default: error (-1)
     backend.stream_commit_pause = nullptr;                // default: no-op
+    backend.stream_commit_resume = nullptr;               // default: no-op
     backend.get_unified_buffer_gpu_for_recursivef = nullptr;
     backend.load_fixed_pols_recursivef = nullptr;
     backend.init_final_snark_prover = init_final_snark_prover_cpu;
@@ -255,6 +257,7 @@ StarksBackend gpu_backend = []() {
     backend.dump_pipeline_state = dump_pipeline_state_gpu;
     backend.commit_witness_streaming = commit_witness_streaming_gpu;
     backend.stream_commit_pause = stream_commit_pause_gpu;
+    backend.stream_commit_resume = stream_commit_resume_gpu;
     backend.get_unified_buffer_gpu_for_recursivef = get_unified_buffer_gpu_for_recursivef_gpu;
     backend.load_fixed_pols_recursivef = load_fixed_pols_recursivef_gpu;
     backend.init_final_snark_prover = init_final_snark_prover_gpu;
@@ -654,6 +657,11 @@ uint64_t get_stream_commit_floor(void *d_buffers_) {
 void stream_commit_pause() {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->stream_commit_pause) backend->stream_commit_pause();
+}
+
+void stream_commit_resume() {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->stream_commit_resume) backend->stream_commit_resume();
 }
 
 int64_t commit_witness_streaming(void *d_buffers_, uint64_t slotIdx,
