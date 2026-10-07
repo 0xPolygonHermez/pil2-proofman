@@ -780,14 +780,14 @@ fn compressor_demand(r1cs: &R1csFile, options: &PlonkOptions) -> CompressorDeman
 
 /// Compressor setup: size the geometry, then build the aggregator air at it.
 pub fn compressor_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
-    // An explicit --blake3-lanes outranks the sizing: the caller is stating the geometry.
+    let min_n_bits =
+        options.min_n_bits.unwrap_or(0).max(proofman_common::hash_family::recursive_bits_threshold("blake3"));
+    // An explicit --blake3-lanes skips only the lane choice; the floor on N still holds.
     if options.blake3_lanes.is_some() {
-        return build_blake3_air(r1cs, options);
+        return build_blake3_air(r1cs, &PlonkOptions { min_n_bits: Some(min_n_bits), ..options.clone() });
     }
 
     let demand = compressor_demand(r1cs, options);
-    let min_n_bits =
-        options.min_n_bits.unwrap_or(0).max(proofman_common::hash_family::recursive_bits_threshold("blake3"));
     let geom = plan_compressor_geometry(&demand, min_n_bits);
     tracing::info!(
         "Compressor geometry: N = 2^{}, LANES = {} ({} hashing / {} band blocks of {}), stage1 {} cols",
