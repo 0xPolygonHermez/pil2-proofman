@@ -118,7 +118,8 @@ export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib
      --gpu -vv
 ```
 
-Use `-t compressor` instead of `-t aggregation` for the compressor variant.
+Use `-t compressor` instead of `-t aggregation` for the compressor variant. blake3 has no compressor
+air -- its compressor is the aggregator at its own geometry -- so it takes `-t aggregation` only.
 
 ## BLAKE3
 

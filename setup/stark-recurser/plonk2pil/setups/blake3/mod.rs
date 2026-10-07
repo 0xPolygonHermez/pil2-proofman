@@ -5,74 +5,23 @@
 //! docs/superpowers/specs/2026-08-25-blake3-recursion-air-design.md.
 
 pub mod aggregation;
-pub mod compressor;
 
 /// Rows in one BLAKE3 block: 7 rounds x 8 G evaluations.
 pub const BLAKE3_CLOCKS: usize = 56;
 
-/// The `a[]` plonk/connection band. Also the `S[]` width.
+/// The `a[]` plonk/connection band, also the `S[]` width: the width of Blake3Compress's input row,
+/// which is also exactly six three-wire plonk gates.
 pub const BAND_COLS: usize = 18;
 
-/// How a band of a given width packs the six circuits.
-///
-/// The two blake3 recursion airs share one permutation, one set of gates and one placement routine,
-/// and differ only here. Two structs rather than two copies of the placement: the BLAKE3 block half
-/// is identical between them, and a second copy would drift. The PILs ARE separate files, because
-/// there the difference is not parametric -- at 27 columns fft4 and evPol4 read their outputs off
-/// the same row instead of the next one, which is a different expression and not a different width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BandLayout {
-    /// Width of `a[..]` and `S[..]`.
-    pub band: usize,
-    /// Coefficient columns `C[..]`. 9 where fft4 takes its nine constants off one row.
-    pub c_cols: usize,
-    pub cmul_per_row: usize,
-    pub plonk_gates_per_row: usize,
-    pub selval_per_row: usize,
-    /// Rows one gate occupies. 2 on the 18-column band, where the outputs land on the next row.
-    pub evpol4_rows: usize,
-    pub fft4_rows: usize,
-    /// PIL template this layout belongs to.
-    pub template: &'static str,
-    pub template_name: &'static str,
-}
+/// Coefficient columns `C[..]`.
+pub const C_COLS: usize = 5;
 
-/// `blake3/aggregator.pil`: the pinned recursion geometry. 18 columns, the width of
-/// Blake3Compress's input row, which is also exactly six three-wire plonk gates.
-pub const AGGREGATOR_LAYOUT: BandLayout = BandLayout {
-    band: BAND_COLS,
-    c_cols: 5,
-    cmul_per_row: 2,
-    plonk_gates_per_row: 6,
-    selval_per_row: 1,
-    evpol4_rows: 2,
-    fft4_rows: 2,
-    template: "blake3/aggregator",
-    template_name: "Aggregator",
-};
+/// CMul gates (9 signals each) sharing one band row.
+pub const CMUL_PER_ROW: usize = 2;
 
-/// `blake3/compressor.pil`: 27 columns, where every gate fits one row.
-pub const COMPRESSOR_LAYOUT: BandLayout = BandLayout {
-    band: COMPRESSOR_BAND_COLS,
-    c_cols: 9,
-    cmul_per_row: 3,
-    plonk_gates_per_row: 9,
-    selval_per_row: 2,
-    evpol4_rows: 1,
-    fft4_rows: 1,
-    template: "blake3/compressor",
-    template_name: "Compressor",
-};
-
-/// Band width a compressor is built at.
-///
-/// A compressor matches nothing, so it can afford a wider band than the pinned recursion -- and it
-/// needs one: the airs that require a compressor are the plonk-dominated ones, where the band and
-/// not the hashing sizes the air. 27 is where four things land at once: plonk packs 9 gates a row
-/// instead of 6, cmul 3 instead of 2, and fft4 (24 signals) and evPol4 (27, with the Estrin
-/// intermediates) each drop from two rows to one. Measured on ZisK's Keccakf recursive1, whose band
-/// falls from 1,056,594 rows to 698,902.
-pub const COMPRESSOR_BAND_COLS: usize = 27;
+/// Rows an EvPol4 (27 signals) or FFT4 (24) gate spans on the 18-column band: the outputs land on
+/// the next row, where the PIL reads them through primes.
+pub const TWO_ROW_GATE_ROWS: usize = 2;
 
 /// Permutation columns `blake3Lanes` declares per lane.
 pub const PERM_COLS_PER_LANE: usize = 51;
@@ -105,8 +54,8 @@ pub mod compress_signal {
 ///
 /// Pinned by a test rather than trusted: this is the number the packer must agree with, and the
 /// per-lane figure changes with every column the air adds or folds away.
-pub fn stage1_cols(lanes: usize, band: usize) -> usize {
-    band + (PERM_COLS_PER_LANE + BOUNDARY_COLS_PER_LANE) * lanes + TABLE_MUL_COLS
+pub fn stage1_cols(lanes: usize) -> usize {
+    BAND_COLS + (PERM_COLS_PER_LANE + BOUNDARY_COLS_PER_LANE) * lanes + TABLE_MUL_COLS
 }
 
 /// Permutations an air of `n` rows with `lanes` lanes can hold.
@@ -134,8 +83,6 @@ pub fn blake3_max_blocks(n: usize) -> usize {
 }
 
 pub struct PilTemplateParams<'a> {
-    pub template_file: &'a str,
-    pub template_name: &'a str,
     pub namespace_name: &'a str,
     pub n_bits: usize,
     pub n_publics: u32,
@@ -146,9 +93,7 @@ pub struct PilTemplateParams<'a> {
     pub n_ev_pol4: usize,
     pub n_fft4: usize,
     pub n_tree_selector4: usize,
-    /// ROWS, not gates: the compressor's band fits two SelectValArity2 per row, and both PILs use
-    /// this to size the band's block run. Passing gates here reserved twice the blocks the packer
-    /// actually filled, which silently shifted every band after it.
+    /// SelectValArity2 rows, one gate a row; the PIL sizes the band's block run with it.
     pub n_sel_val_rows: usize,
     pub n_node_blocks: usize,
     pub n_chunk_blocks: usize,
@@ -158,17 +103,15 @@ pub struct PilTemplateParams<'a> {
 
 pub fn gen_pil_str(p: &PilTemplateParams<'_>) -> String {
     format!(
-        "require \"{tf}.pil\";\n\n\
+        "require \"blake3/aggregator.pil\";\n\n\
          set_std_mode(STD_MODE_ONE_INSTANCE);\n\n\
          set_max_constraint_degree({md});\n\n\
          public publics[{np}];\n\n\
          airgroup {ns}  {{\n    \
-         {tn} (N: 2**{nb}, nPublics: {np}, nPublicsStart: {nps}, nPlonkRows: {npl}, nCMulRows: {ncm}, nEvPol4: {nev}, nFFT4: {nf4}, \
+         Aggregator (N: 2**{nb}, nPublics: {np}, nPublicsStart: {nps}, nPlonkRows: {npl}, nCMulRows: {ncm}, nEvPol4: {nev}, nFFT4: {nf4}, \
          nTreeSelector4: {nts}, nSelValRows: {nsv}, nNodeBlocks: {nnb}, \
          nChunkBlocks: {ncb}, nParentBlocks: {npb}, LANES: {nl}) alias {ns};\n\
          }}",
-        tf = p.template_file,
-        tn = p.template_name,
         ns = p.namespace_name,
         nb = p.n_bits,
         np = p.n_publics,

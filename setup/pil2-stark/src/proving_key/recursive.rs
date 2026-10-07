@@ -25,21 +25,15 @@ use anyhow::{bail, Context, Result};
 /// Scoped by family rather than lowered for everyone because the recursive grinding bits pin a
 /// query count that the committed poseidon native verifiers and circom fixtures already encode.
 ///
-/// blake3's COMPRESSOR runs at 1, alone among the templates: it matches nothing, where recursive1
-/// and recursive2 must be the same air and so share one blowup. Measured on the recursion air at
-/// 2^19/LANES=4, maxDeg 5/blowup 2 against maxDeg 3/blowup 1: stage2 117 -> 308 and total columns
-/// 385 -> 570, because `std_sum` packs `maxDeg - 1` bus terms per im pol; but on a domain half the
-/// size, and prover memory follows the product, 7.50 -> 5.28 GB.
-///
-/// The cost lands elsewhere: rate 1/2 instead of 1/4 takes the solved query count from 106 to 211,
-/// and those queries are Merkle paths the PINNED recursive1 verifies. A compressor is proved once
-/// per air that needs one; recursive1 is shared. Deliberate, not overlooked.
+/// blake3's compressor takes the recursion's 2 as well. Measured against blowup 1 on the same
+/// circuit (2^20/LANES=3 against 2^19/LANES=5, both extending to 2^21): degree 3 inflated stage2
+/// (252 columns against 138) and doubled the queries (209 against 106), so blowup 2 proved 16%
+/// faster in 18% less GPU memory and halved both the proof and the hashes its recursive1 verifies.
 pub fn recursive_blowup(template: RecursiveTemplate, hash: &str) -> usize {
-    match template {
-        RecursiveTemplate::Compressor if hash == "blake3" => 1,
-        RecursiveTemplate::Compressor => 2,
-        _ if hash == "blake3" => 2,
-        _ => 3,
+    if hash == "blake3" || template == RecursiveTemplate::Compressor {
+        2
+    } else {
+        3
     }
 }
 
@@ -1227,18 +1221,7 @@ mod blowup_tests {
         for t in [RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
             assert_eq!(recursive_blowup(t, "blake3"), 2, "blake3 {t:?} is built at degree 5");
         }
-        // The compressor is the one template free to go lower: it matches nothing, where recursive1
-        // and recursive2 must be the same air. 1 -> maxDeg 3, which costs stage2 columns and buys a
-        // domain half the size; see recursive_blowup's table.
-        assert_eq!(recursive_blowup(RecursiveTemplate::Compressor, "blake3"), 1);
-        assert_eq!(
-            proofman_common::hash_family::max_constraint_degree_for_blowup(recursive_blowup(
-                RecursiveTemplate::Compressor,
-                "blake3"
-            )),
-            3,
-            "blowup 1 must derive maxDeg 3, not leave the packer's default of 5"
-        );
+        assert_eq!(recursive_blowup(RecursiveTemplate::Compressor, "blake3"), 2, "measured: see recursive_blowup");
         for h in ["Poseidon1", "Poseidon2"] {
             assert_eq!(recursive_blowup(RecursiveTemplate::Compressor, h), 2);
             assert_eq!(recursive_blowup(RecursiveTemplate::Recursive1, h), 3, "{h} aggregator is degree 8");
