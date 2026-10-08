@@ -1030,6 +1030,20 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance(airgroup_id, air_id, weight, compressor_weight, priority)
     }
 
+    /// [`Self::add_instance_assign`] on a chosen partition.
+    pub fn add_instance_assign_to(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        priority: WitnessPriority,
+        partition_id: usize,
+    ) -> ProofmanResult<usize> {
+        let mut dctx = self.dctx.write().unwrap();
+        let weight = self.get_weight(airgroup_id, air_id) + self.get_recursion_weight(airgroup_id, air_id);
+        let compressor_weight = self.get_compressor_weight(airgroup_id, air_id);
+        dctx.add_instance_in(airgroup_id, air_id, weight, compressor_weight, priority, partition_id)
+    }
+
     /// Registers an instance with no band preference.
     pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> ProofmanResult<usize> {
         self.add_instance_with_priority(airgroup_id, air_id, WitnessPriority::default())

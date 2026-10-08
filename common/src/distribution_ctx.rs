@@ -843,8 +843,31 @@ impl DistributionCtx {
         compressor_weight: u64,
         priority: WitnessPriority,
     ) -> ProofmanResult<usize> {
+        // Placed as created, without knowing the instances still to come: greedy least loaded.
+        // Round-robin on the gid handed out the heaviest airs (Main, Keccakf) blindly, leaving
+        // only the instances of assign_instances() to compensate for it.
+        let partition_id = self.least_loaded_partition();
+        self.add_instance_in(airgroup_id, air_id, weight, compressor_weight, priority, partition_id)
+    }
+
+    /// `add_instance` on a chosen partition; every process must choose the same one.
+    pub fn add_instance_in(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+        compressor_weight: u64,
+        priority: WitnessPriority,
+        partition_id: usize,
+    ) -> ProofmanResult<usize> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
+        }
+        if partition_id >= self.n_partitions {
+            return Err(ProofmanError::InvalidAssignation(format!(
+                "partition {partition_id} out of {}",
+                self.n_partitions
+            )));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
@@ -854,10 +877,7 @@ impl DistributionCtx {
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
         self.witness_states.push(WitnessSlot::default());
         self.n_instances += 1;
-        // Placed as created, without knowing the instances still to come: greedy least loaded.
-        // Round-robin on the gid handed out the heaviest airs (Main, Keccakf) blindly, leaving
-        // only the instances of assign_instances() to compensate for it.
-        let partition_id = self.least_loaded_partition() as u32;
+        let partition_id = partition_id as u32;
         self.instance_partition.push(partition_id as i32);
         self.partition_count[partition_id as usize] += 1;
         self.partition_weight[partition_id as usize] += total_weight;
@@ -1360,6 +1380,20 @@ mod tests {
 
         assert_eq!(dctx.instance_partition, vec![0, 1, 1]);
         assert_eq!(dctx.partition_weight, vec![5000, 200]);
+    }
+
+    /// Booked on the chosen partition; the greedy placement balances around it.
+    #[test]
+    fn instance_added_in_a_partition_is_booked_there() {
+        let mut dctx = ctx(2);
+        dctx.add_instance_in(0, HEAVY_PLAIN.0, HEAVY_PLAIN.1, HEAVY_PLAIN.2, WitnessPriority::default(), 1).unwrap();
+        dctx.add_instance(0, LIGHT_PLAIN.0, LIGHT_PLAIN.1, LIGHT_PLAIN.2, WitnessPriority::default()).unwrap();
+
+        assert_eq!(dctx.instance_partition, vec![1, 0]);
+        assert_eq!(dctx.partition_weight, vec![100, 5000]);
+        assert!(dctx
+            .add_instance_in(0, LIGHT_PLAIN.0, LIGHT_PLAIN.1, LIGHT_PLAIN.2, WitnessPriority::default(), 2)
+            .is_err());
     }
 
     /// The first instance added still lands on partition 0 (zisk relies on it for the Rom instance)
