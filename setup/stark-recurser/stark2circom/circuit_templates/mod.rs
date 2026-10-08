@@ -40,7 +40,7 @@ pub struct CircomGenOptions {
     pub batch_size: usize,
 }
 
-/// Most proofs one recursive1 verifies: its slots are named by letter, a..z.
+/// Most proofs one recursive1 verifies. A deliberate cap, below the 26 the letter-named slots allow.
 pub const MAX_RECURSIVE1_BATCH: usize = 3;
 
 /// All inputs for a [`gen_circom_circuit`] call (mirrors `gencircom.js` parameters).

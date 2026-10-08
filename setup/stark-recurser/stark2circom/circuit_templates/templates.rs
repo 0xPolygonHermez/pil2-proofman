@@ -261,7 +261,7 @@ pub fn gen_recursive1(
     let has_compressor = opts.has_compressor;
     let k = opts.batch_size.max(1);
     if k > super::MAX_RECURSIVE1_BATCH {
-        bail!("gen_recursive1: batch_size {k} exceeds the {} slot names available", super::MAX_RECURSIVE1_BATCH);
+        bail!("gen_recursive1: batch_size {k} exceeds the cap of {}", super::MAX_RECURSIVE1_BATCH);
     }
     let n_publics = vadcop_info["nPublics"].as_u64().unwrap_or(0) as usize;
     let num_proof_values = parse_num_proof_values(&vadcop_info["numProofValues"]);
@@ -698,14 +698,14 @@ mod recursive1_batch_tests {
     }
 
     #[test]
-    fn past_the_slot_names_it_refuses() {
+    fn past_the_cap_it_refuses() {
         let opts = CircomGenOptions {
             airgroup_id: Some(0),
             has_compressor: false,
             has_recursion: false,
             is_final: false,
             agg_arity: 2,
-            batch_size: 27,
+            batch_size: super::super::MAX_RECURSIVE1_BATCH + 1,
         };
         assert!(gen_recursive1(&stark_info(), &["v.circom".into()], &vadcop(), 0, &opts).is_err());
     }
