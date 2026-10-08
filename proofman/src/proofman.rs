@@ -6572,11 +6572,12 @@ where
         // Wait for a token (C waits out quiesce and region), so one call commits or errors.
         let timeout = std::time::Duration::from_secs(60);
         let bytes = words_per_row << (ss.n_bits + 3);
-        // With the first GPU dedicated, a kernel-witness instance is pinned to it (its rows are
-        // produced on that GPU) and a host trace never goes there. A staged trace is pinned to the
-        // GPU holding it; otherwise a free slot on the least-loaded eligible GPU, or the first to free.
+        // A kernel-witness instance is pinned to the first GPU, the planner's, since its rows are
+        // produced there; with that GPU dedicated a host trace never goes there. A staged trace is
+        // pinned to the GPU holding it; otherwise a free slot on the least-loaded eligible GPU, or
+        // the first to free.
         let kernel_witness = pctx.get_air_instance_gpu_witness_ops(instance_id) > 0;
-        let pinned = match (staged_gpu, ctx.dedicated && kernel_witness) {
+        let pinned = match (staged_gpu, kernel_witness) {
             (Some(g), _) => Some(g),
             (None, true) => Some(0),
             (None, false) => None,
