@@ -40,9 +40,6 @@ pub fn merkle_tree_arity(family: &str) -> u64 {
 /// Poseidon recursion settles at 2^17. blake3's is 2^19, because its verification is dominated by
 /// arity-2 Merkle path hashing at 56 AIR rows a compression -- reading 17 here would make every
 /// blake3 air demand a compressor it does not need, and each compressor is a whole extra proof.
-///
-/// The A2 query bump fills a small circuit toward `2^(threshold - 1)`, so this also sets that
-/// target.
 pub fn recursive_bits_threshold(family: &str) -> usize {
     match family {
         "blake3" => 19,

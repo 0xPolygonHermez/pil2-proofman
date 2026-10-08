@@ -110,6 +110,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
             has_recursion: false,
             is_final: false,
             agg_arity: 0,
+            batch_size: 1,
         };
         let rust_input = GenCircomCircuitInput {
             template_name: "src/vadcop/templates/final_compressed.circom.ejs",

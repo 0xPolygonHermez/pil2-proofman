@@ -255,6 +255,61 @@ pub fn geometry_for_family(
     }
 }
 
+/// Geometry off a starkinfo, with the file's own queries: what the proof carries.
+pub fn geometry_from_starkinfo(si: &serde_json::Value) -> anyhow::Result<VerifierGeometry> {
+    use anyhow::Context;
+    let ss = si.get("starkStruct").context("starkinfo has no starkStruct")?;
+    let req = |v: &serde_json::Value, k: &str| -> anyhow::Result<u64> {
+        v.get(k).and_then(|x| x.as_u64()).with_context(|| format!("starkStruct.{k} missing or not a number"))
+    };
+
+    let step_n_bits: Vec<u64> = ss
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().map(|s| s["nBits"].as_u64().unwrap_or(0)).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if step_n_bits.is_empty() {
+        anyhow::bail!("starkStruct.steps is empty; there is no FRI schedule to count");
+    }
+
+    let n_stages = si.get("nStages").and_then(|v| v.as_u64()).context("starkinfo.nStages missing")? as usize;
+    let width = |section: &str| -> u64 {
+        si.get("mapSectionsN").and_then(|m| m.get(section)).and_then(|v| v.as_u64()).unwrap_or(0)
+    };
+    // `stage` is an Option in the maps; a missing one must not read as stage 0.
+    let count_stage = |key: &str, stage: usize| -> u64 {
+        si.get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter(|e| e.get("stage").and_then(|s| s.as_u64()) == Some(stage as u64)).count() as u64)
+            .unwrap_or(0)
+    };
+
+    Ok(VerifierGeometry {
+        n_bits_ext: req(ss, "nBitsExt")?,
+        arity: req(ss, "merkleTreeArity")?,
+        transcript_arity: req(ss, "transcriptArity")?,
+        last_level_verification: ss.get("lastLevelVerification").and_then(|v| v.as_u64()).unwrap_or(0),
+        n_queries: req(ss, "nQueries")?,
+        pow_bits: ss.get("powBits").and_then(|v| v.as_u64()).unwrap_or(0),
+        hash_commits: ss.get("hashCommits").and_then(|v| v.as_bool()).unwrap_or(false),
+        stage_widths: (1..=n_stages + 1).map(|s| width(&format!("cm{s}"))).collect(),
+        n_constants: si.get("nConstants").and_then(|v| v.as_u64()).unwrap_or(0),
+        custom_commit_widths: si
+            .get("customCommits")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter().map(|c| width(&format!("{}0", c["name"].as_str().unwrap_or_default()))).collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        step_n_bits: step_n_bits.clone(),
+        n_publics: si.get("nPublics").and_then(|v| v.as_u64()).unwrap_or(0),
+        n_evals: si.get("evMap").and_then(|v| v.as_array()).map(|a| a.len() as u64).unwrap_or(0),
+        stage_challenges: (2..=n_stages + 1).map(|s| count_stage("challengesMap", s)).collect(),
+        stage_air_values: (2..=n_stages + 1).map(|s| count_stage("airValuesMap", s)).collect(),
+        final_pol_size: 1u64 << step_n_bits[step_n_bits.len() - 1],
+    })
+}
+
 /// Hashes the verifier performs for one air, under `family`.
 pub fn verifier_hashes(geom: &VerifierGeometry, family: &str) -> HashCounts {
     let mut counts = HashCounts::default();
@@ -678,5 +733,84 @@ mod tests {
         assert!(!fit.needs_compressor);
 
         assert!(blake3_recursion_fit(&HashCounts { leaf: 11_283 * 4, ..Default::default() }, 4).needs_compressor);
+    }
+}
+
+#[cfg(test)]
+mod starkinfo_geometry_tests {
+    use super::*;
+
+    /// Two stages, one custom commit, two FRI steps, and a `stage: null` in each map.
+    fn si() -> serde_json::Value {
+        serde_json::json!({
+            "nStages": 2, "nConstants": 7, "nPublics": 8,
+            "mapSectionsN": { "cm1": 5, "cm2": 9, "cm3": 3, "rom0": 2 },
+            "customCommits": [{ "name": "rom" }],
+            "evMap": [{}, {}, {}],
+            "challengesMap": [{"stage": 2}, {"stage": 2}, {"stage": 3}, {"stage": null}],
+            "airValuesMap": [{"stage": 1}, {"stage": 2}, {"stage": null}],
+            "starkStruct": {
+                "nBits": 10, "nBitsExt": 11, "merkleTreeArity": 2, "transcriptArity": 2,
+                "lastLevelVerification": 4, "nQueries": 40, "powBits": 24, "hashCommits": true,
+                "steps": [{"nBits": 11}, {"nBits": 5}]
+            }
+        })
+    }
+
+    #[test]
+    fn every_field_maps_off_the_json() {
+        let g = geometry_from_starkinfo(&si()).unwrap();
+        assert_eq!(g.n_bits_ext, 11);
+        assert_eq!((g.arity, g.transcript_arity), (2, 2));
+        assert_eq!(g.last_level_verification, 4);
+        assert_eq!((g.n_queries, g.pow_bits, g.hash_commits), (40, 24, true));
+        // cm1..cm{nStages+1}; the quotient stage is the last.
+        assert_eq!(g.stage_widths, vec![5, 9, 3]);
+        assert_eq!(g.n_constants, 7);
+        // Widths come from `mapSectionsN["<name>0"]`, not the customCommits entry.
+        assert_eq!(g.custom_commit_widths, vec![2]);
+        assert_eq!(g.step_n_bits, vec![11, 5]);
+        assert_eq!((g.n_publics, g.n_evals), (8, 3));
+        // Stages 2..=nStages+1, so stage-1 values and every null are excluded.
+        assert_eq!(g.stage_challenges, vec![2, 1]);
+        assert_eq!(g.stage_air_values, vec![1, 0]);
+        assert_eq!(g.final_pol_size, 1 << 5);
+    }
+
+    /// Without these the count is silently near-zero rather than wrong-looking.
+    #[test]
+    fn a_missing_query_count_or_schedule_is_an_error() {
+        for key in ["nQueries", "nBitsExt", "merkleTreeArity", "transcriptArity"] {
+            let mut v = si();
+            v["starkStruct"].as_object_mut().unwrap().remove(key);
+            assert!(geometry_from_starkinfo(&v).is_err(), "{key} must be required");
+        }
+        let mut v = si();
+        v["starkStruct"]["steps"] = serde_json::json!([]);
+        assert!(geometry_from_starkinfo(&v).is_err(), "an empty FRI schedule must be an error");
+        let mut v = si();
+        v.as_object_mut().unwrap().remove("nStages");
+        assert!(geometry_from_starkinfo(&v).is_err(), "nStages must be required");
+    }
+
+    /// Pinned to fibonacci's recursive1 PIL (34644 measured); the constant gap is the wrapper's publics.
+    #[test]
+    fn reproduces_the_measured_fibonacci_recursive1_hash_counts() {
+        let mut v = si();
+        v["nStages"] = serde_json::json!(2);
+        v["nConstants"] = serde_json::json!(2);
+        v["nPublics"] = serde_json::json!(8);
+        v["mapSectionsN"] = serde_json::json!({ "cm1": 5, "cm2": 9, "cm3": 3, "rom0": 2 });
+        v["evMap"] = serde_json::json!(vec![serde_json::json!({}); 23]);
+        v["challengesMap"] =
+            serde_json::json!([{"stage":2},{"stage":2},{"stage":3},{"stage":4},{"stage":5},{"stage":5}]);
+        v["airValuesMap"] = serde_json::json!([{"stage":1},{"stage":1},{"stage":2}]);
+        v["starkStruct"]["nBits"] = serde_json::json!(22);
+        v["starkStruct"]["nBitsExt"] = serde_json::json!(23);
+        v["starkStruct"]["nQueries"] = serde_json::json!(211);
+        v["starkStruct"]["steps"] =
+            serde_json::json!([{"nBits":23},{"nBits":19},{"nBits":15},{"nBits":11},{"nBits":8},{"nBits":5}]);
+        let g = geometry_from_starkinfo(&v).unwrap();
+        assert_eq!(verifier_hashes(&g, "blake3").total(), 34587, "FibonacciSquare's measured figure");
     }
 }

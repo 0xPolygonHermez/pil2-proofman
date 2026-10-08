@@ -17,6 +17,7 @@ use crate::types::stark_struct::StarkStructsConfig;
 use crate::output::stark_info::{code_entries_to_json, hint_value_to_json};
 
 /// Build the `globalInfo` JSON value in memory (does not write to disk).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_global_info_json(
     pilout: &pb::PilOut,
     pilout_name: &str,
@@ -25,12 +26,14 @@ pub(crate) fn build_global_info_json(
     agg_arity: usize,
     has_compressed_final: bool,
     setup_version: Option<&str>,
+    // (airgroup, air) -> recursive1 batch size; by index, since air names repeat across airgroups.
+    r1_batch_sizes: &std::collections::HashMap<(usize, usize), usize>,
 ) -> serde_json::Value {
     let mut airs = Vec::new();
     let mut air_groups = Vec::new();
     let mut agg_types = Vec::new();
 
-    for airgroup in &pilout.air_groups {
+    for (ag_idx, airgroup) in pilout.air_groups.iter().enumerate() {
         let ag_name = airgroup.name.clone().unwrap_or_else(|| "unnamed".to_string());
         air_groups.push(ag_name.clone());
 
@@ -39,7 +42,7 @@ pub(crate) fn build_global_info_json(
         agg_types.push(agv);
 
         let mut air_list = Vec::new();
-        for air in &airgroup.airs {
+        for (air_idx, air) in airgroup.airs.iter().enumerate() {
             let a_name = air.name.clone().unwrap_or_else(|| "unnamed".to_string());
             let has_compressor = settings_map.has_compressor(&ag_name, &a_name);
             let mut entry = json!({
@@ -48,6 +51,9 @@ pub(crate) fn build_global_info_json(
             });
             if has_compressor {
                 entry.as_object_mut().unwrap().insert("hasCompressor".to_string(), json!(true));
+            }
+            if let Some(&k) = r1_batch_sizes.get(&(ag_idx, air_idx)).filter(|&&k| k > 1) {
+                entry.as_object_mut().unwrap().insert("r1BatchSize".to_string(), json!(k));
             }
             air_list.push(entry);
         }
@@ -100,11 +106,21 @@ pub(crate) fn write_global_info_json(
     agg_arity: usize,
     has_compressed_final: bool,
     setup_version: Option<&str>,
+    // (airgroup, air) -> recursive1 batch size; by index, since air names repeat across airgroups.
+    r1_batch_sizes: &std::collections::HashMap<(usize, usize), usize>,
 ) -> Result<()> {
     let proving_key_dir = Path::new(build_dir).join("provingKey");
     fs::create_dir_all(&proving_key_dir)?;
-    let global_info =
-        build_global_info_json(pilout, pilout_name, settings_map, hash, agg_arity, has_compressed_final, setup_version);
+    let global_info = build_global_info_json(
+        pilout,
+        pilout_name,
+        settings_map,
+        hash,
+        agg_arity,
+        has_compressed_final,
+        setup_version,
+        r1_batch_sizes,
+    );
     let global_info_str = crate::output::json::to_json_string(&global_info)?;
     fs::write(proving_key_dir.join("pilout.globalInfo.json"), &global_info_str)?;
     Ok(())
@@ -133,6 +149,7 @@ pub(crate) fn write_global_constraints(
         // never read back and any of the two would do.
         true,
         None,
+        &Default::default(),
     );
 
     let global_constraints = build_global_constraints_json(pilout)?;
@@ -181,7 +198,17 @@ pub(crate) fn write_global_info(
     has_compressed_final: bool,
 ) -> Result<()> {
     write_global_constraints(pilout, pilout_name, build_dir, settings_map)?;
-    write_global_info_json(pilout, pilout_name, build_dir, settings_map, hash, agg_arity, has_compressed_final, None)?;
+    write_global_info_json(
+        pilout,
+        pilout_name,
+        build_dir,
+        settings_map,
+        hash,
+        agg_arity,
+        has_compressed_final,
+        None,
+        &Default::default(),
+    )?;
     tracing::info!("Global info and constraints written");
     Ok(())
 }
@@ -646,6 +673,54 @@ pub(crate) fn write_bin_files_native(
 }
 
 #[cfg(test)]
+mod r1_batch_size_tests {
+    use super::*;
+
+    fn pilout() -> pb::PilOut {
+        pb::PilOut {
+            air_groups: vec![pb::AirGroup {
+                name: Some("g".into()),
+                airs: vec![
+                    pb::Air { name: Some("big".into()), num_rows: Some(1024), ..Default::default() },
+                    pb::Air { name: Some("small".into()), num_rows: Some(256), ..Default::default() },
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn airs(v: &serde_json::Value) -> Vec<serde_json::Value> {
+        v["airs"][0].as_array().unwrap().clone()
+    }
+
+    /// Only batched airs get the field; its absence reads as 1.
+    #[test]
+    fn only_a_batched_air_gets_the_field() {
+        let mut sizes = std::collections::HashMap::new();
+        sizes.insert((0usize, 1usize), 5usize);
+        sizes.insert((0usize, 0usize), 1usize);
+        let v =
+            build_global_info_json(&pilout(), "t", &StarkStructsConfig::default(), "blake3", 2, false, None, &sizes);
+        let a = airs(&v);
+        assert_eq!(a[0]["name"], "big");
+        assert!(a[0].get("r1BatchSize").is_none(), "k=1 must not be written");
+        assert_eq!(a[1]["r1BatchSize"], 5);
+    }
+
+    /// The field has to survive the trip, since the prover sizes the witness from it.
+    #[test]
+    fn the_reader_takes_it_back_off_the_json() {
+        let air: proofman_common::global_info::GlobalInfoAir =
+            serde_json::from_value(serde_json::json!({"name": "a", "num_rows": 8, "r1BatchSize": 3})).unwrap();
+        assert_eq!(air.r1_batch_size, Some(3));
+        let plain: proofman_common::global_info::GlobalInfoAir =
+            serde_json::from_value(serde_json::json!({"name": "a", "num_rows": 8})).unwrap();
+        assert_eq!(plain.r1_batch_size, None);
+    }
+}
+
+#[cfg(test)]
 mod agg_arity_tests {
     use super::*;
 
@@ -654,7 +729,16 @@ mod agg_arity_tests {
         let pilout = pb::PilOut::default();
         let settings = StarkStructsConfig::default();
         for arity in [2usize, 3] {
-            let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", arity, true, None);
+            let v = super::build_global_info_json(
+                &pilout,
+                "t",
+                &settings,
+                "Poseidon2",
+                arity,
+                true,
+                None,
+                &Default::default(),
+            );
             assert_eq!(v["aggregationArity"], serde_json::json!(arity));
         }
     }
@@ -663,9 +747,18 @@ mod agg_arity_tests {
     fn the_builder_emits_the_setup_version_only_when_given() {
         let pilout = pb::PilOut::default();
         let settings = StarkStructsConfig::default();
-        let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", 3, true, None);
+        let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", 3, true, None, &Default::default());
         assert!(v.get("setupVersion").is_none());
-        let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", 3, true, Some("1.3.1"));
+        let v = super::build_global_info_json(
+            &pilout,
+            "t",
+            &settings,
+            "Poseidon2",
+            3,
+            true,
+            Some("1.3.1"),
+            &Default::default(),
+        );
         assert_eq!(v["setupVersion"], serde_json::json!("1.3.1"));
     }
 }

@@ -129,6 +129,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
+            &Default::default(),
         )?;
     }
 
@@ -376,14 +377,15 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
+            &Default::default(),
         );
-        let airs_with_compressor = run_recursive_setup(&pilout, &pilout_name, opts, &settings_map, global_info_base)?;
+        let summary = run_recursive_setup(&pilout, &pilout_name, opts, &settings_map, global_info_base)?;
 
         // Build final settings map: start from user-supplied settings and overlay any
         // hasCompressor flags auto-detected at runtime via NeedsCompressorError.
         // Then write globalInfo.json exactly once with the complete information.
         let mut final_settings: StarkStructsConfig = (*settings_map).clone();
-        for air_name in &airs_with_compressor {
+        for air_name in &summary.airs_with_compressor {
             final_settings.set_has_compressor(air_name);
         }
         write_global_info_json(
@@ -395,8 +397,9 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             opts.agg_arity,
             opts.compressed_final,
             opts.setup_version.as_deref(),
+            &summary.r1_batch_sizes,
         )?;
-        tracing::info!("Wrote globalInfo.json with hasCompressor flags");
+        tracing::info!("Wrote globalInfo.json with hasCompressor flags and recursive1 batch sizes");
     }
 
     if opts.gen_exps {

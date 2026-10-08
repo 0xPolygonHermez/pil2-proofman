@@ -679,10 +679,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         (total_cols + n_openings * 3) * (1 << (setup.stark_info.stark_struct.n_bits_ext))
     }
 
-    /// One `recursive1` per instance, plus its share of the `recursive2` tree: collapsing `n`
-    /// leaves at arity `a` takes `(n - 1) / (a - 1)` proofs. Arity >= 2 is enforced by GlobalInfo.
-    fn recursion_weight(w_recursive1: u64, w_recursive2: u64, aggregation_arity: usize) -> u64 {
-        w_recursive1 + w_recursive2 / (aggregation_arity as u64 - 1)
+    /// One `recursive1` per `batch` instances, plus its share of the `recursive2` tree: collapsing
+    /// `n` leaves at arity `a` takes `(n - 1) / (a - 1)` proofs. Arity >= 2 is enforced by GlobalInfo.
+    fn recursion_weight(w_recursive1: u64, w_recursive2: u64, aggregation_arity: usize, batch: usize) -> u64 {
+        (w_recursive1 + w_recursive2 / (aggregation_arity as u64 - 1)) / batch.max(1) as u64
     }
 
     /// Basic proof of every air, its compressor if it has one, and its recursion chain. The
@@ -710,7 +710,12 @@ impl<F: PrimeField64> ProofCtx<F> {
                     let w_recursive2 = Self::setup_weight(sctx_recursive2.get_setup(airgroup_id, 0)?);
                     self.recursion_weights.insert(
                         (airgroup_id, air_id),
-                        Self::recursion_weight(w_recursive1, w_recursive2, self.global_info.aggregation_arity),
+                        Self::recursion_weight(
+                            w_recursive1,
+                            w_recursive2,
+                            self.global_info.aggregation_arity,
+                            self.global_info.get_air_r1_batch_size(airgroup_id, air_id),
+                        ),
                     );
                 }
             }
@@ -1738,16 +1743,23 @@ mod tests {
     /// At arity 2 a leaf pays for a whole recursive2 proof, at arity 3 for half of one
     #[test]
     fn recursion_weight_scales_with_the_aggregation_arity() {
-        assert_eq!(Pctx::recursion_weight(1000, 400, 2), 1400);
-        assert_eq!(Pctx::recursion_weight(1000, 400, 3), 1200);
+        assert_eq!(Pctx::recursion_weight(1000, 400, 2, 1), 1400);
+        assert_eq!(Pctx::recursion_weight(1000, 400, 3, 1), 1200);
+    }
+
+    /// A batched recursive1 verifies k proofs and is one leaf of the tree, so both terms split k ways
+    #[test]
+    fn recursion_weight_splits_over_the_recursive1_batch() {
+        assert_eq!(Pctx::recursion_weight(1000, 400, 2, 2), 700);
+        assert_eq!(Pctx::recursion_weight(1000, 400, 2, 0), 1400, "0 reads as unbatched");
     }
 
     /// Real setup weights: blake3 charges ~15.8x Poseidon, 11.8x circuit x 1.33x arity. This
     /// ratio is what keeps the balance hash-agnostic with no per-family branch.
     #[test]
     fn recursion_weight_separates_the_hash_families() {
-        let blake3 = Pctx::recursion_weight(1_228_931_072, 1_228_931_072, 2);
-        let poseidon = Pctx::recursion_weight(103_809_024, 103_809_024, 3);
+        let blake3 = Pctx::recursion_weight(1_228_931_072, 1_228_931_072, 2, 1);
+        let poseidon = Pctx::recursion_weight(103_809_024, 103_809_024, 3, 1);
         assert_eq!(blake3, 2_457_862_144);
         assert_eq!(poseidon, 155_713_536);
         assert!((15.7..15.9).contains(&(blake3 as f64 / poseidon as f64)));

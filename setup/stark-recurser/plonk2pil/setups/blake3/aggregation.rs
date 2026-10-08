@@ -395,6 +395,24 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
         BLAKE3_CLOCKS - 1
     );
 
+    // Both budgets are linear in the proofs verified, so the side binding here binds at every k.
+    let band_capacity = plonk_rows_inside_blocks(capacity, lanes, BLAKE3_CLOCKS);
+    let band_rows = n_gate_rows + n_plonk_rows;
+    let own_interiors = plonk_rows_inside_blocks(n_blocks.max(plan.blocks), lanes, BLAKE3_CLOCKS);
+    let pct = |num: usize, den: usize| if den == 0 { 0.0 } else { num as f64 * 100.0 / den as f64 };
+    let fits = |num: usize, den: usize| num.checked_div(den).unwrap_or(usize::MAX);
+    let (fits_hash, fits_band) = (fits(capacity, n_blocks), fits(band_capacity, band_rows));
+    tracing::info!(
+        "Budget: hash {n_blocks}/{capacity} blocks ({:.1}%, fits {fits_hash}) | band \
+         {band_rows}/{band_capacity} rows ({:.1}%, fits {fits_band}; {:.1}% of this air's own \
+         interiors) -> {}-bound, room for {} verification(s) of this size",
+        pct(n_blocks, capacity),
+        pct(band_rows, band_capacity),
+        pct(band_rows, own_interiors),
+        if plan.blocks > n_blocks { "band" } else { "hash" },
+        fits_hash.min(fits_band),
+    );
+
     let max_degree = options.max_constraint_degree.unwrap_or(5);
     let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| format!("Blake3Agg{}", rand_hex()));
 

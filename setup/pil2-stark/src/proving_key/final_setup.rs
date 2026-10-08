@@ -188,6 +188,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         has_recursion: false,
         is_final: true,
         agg_arity: 0,
+        batch_size: 1,
     };
 
     let gen_input = GenCircomInput {
