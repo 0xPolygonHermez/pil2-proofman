@@ -150,12 +150,12 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     
     Goldilocks::Element *pBuff = step == 1 ? trace : &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
     Goldilocks::Element *pBuffExtended = &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
- 
 
     if(pBuffHelper != nullptr) {
-        ntt.LDE(pBuffExtended, pBuff, NExtended, N, nCols, pBuffHelper);
+        ntt.LDEBlocked(pBuffExtended, pBuff, NExtended, N, nCols, pBuffHelper);
     } else {
-        ntt.LDE(pBuffExtended, pBuff, NExtended, N, nCols);
+        std::vector<Goldilocks::Element> scratch(NTT_Goldilocks::LDEBlockedScratchSize(NExtended, nCols));
+        ntt.LDEBlocked(pBuffExtended, pBuff, NExtended, N, nCols, scratch.data());
     }
     
     treesGL[step - 1]->setSource(pBuffExtended);
@@ -298,8 +298,9 @@ void Starks<ElementType>::evmap(StepsParams& params, Goldilocks::Element *LEv)
 
     int num_threads = omp_get_max_threads();
     int size_thread = size_eval * FIELD_EXTENSION;
-    Goldilocks::Element *evals_acc = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("evals", true)]];
-    memset(&evals_acc[0], 0, omp_get_max_threads() * size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element));
+    // Per-thread partial sums: a few MB at most, so local rather than a region of the prover buffer.
+    std::vector<Goldilocks::Element> evals_acc_buf(num_threads * size_thread, Goldilocks::zero());
+    Goldilocks::Element *evals_acc = evals_acc_buf.data();
 
 #pragma omp parallel
     {

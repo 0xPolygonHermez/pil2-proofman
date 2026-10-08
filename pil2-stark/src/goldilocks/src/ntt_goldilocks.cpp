@@ -26,8 +26,10 @@ static inline uint64_t BR(uint64_t x, uint64_t domainPow)
  * @param aux auxiliary buffer
  * @param inverse if true, computes the inverse NTT
  * @param extend if true, multiplies the result by r_ (adoc optimization for the LDE)
+ * @param strideSrc, offsetSrc layout of src when it is not dst's (strideSrc 0: dst's)
+ * @param final where the last phase writes instead of dst, with its stride and column offset
  * */
-void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *src, uint64_t nrows, uint64_t offset_cols, uint64_t ncols, uint64_t ncols_all, uint64_t nphase, Goldilocks::Element *aux, bool inverse, bool extend)
+void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *src, uint64_t nrows, uint64_t offset_cols, uint64_t ncols, uint64_t ncols_all, uint64_t nphase, Goldilocks::Element *aux, bool inverse, bool extend, uint64_t strideSrc, uint64_t offsetSrc, Goldilocks::Element *final, uint64_t strideFinal, uint64_t offsetFinal)
 {
     Goldilocks::Element *dst_;
     if (dst != NULL)
@@ -76,7 +78,7 @@ void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *sr
         strideTmp = strideA2;
         offsetTmp = offsetA2;
     }
-    reversePermutation(tmp, strideTmp, offsetTmp, src, ncols_all, offset_cols, nrows, ncols);
+    reversePermutation(tmp, strideTmp, offsetTmp, src, strideSrc ? strideSrc : ncols_all, strideSrc ? offsetSrc : offset_cols, nrows, ncols);
     if (iseven == false)
     {
         tmp = a2;
@@ -106,6 +108,11 @@ void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *sr
         uint64_t rm = (1 << (re - rs)) - 1;
         uint64_t batchSize = 1 << sInc;
         uint64_t nBatches = nrows / batchSize;
+        // The last phase lands in a2, which the start buffer makes dst, unless redirected to final.
+        const bool toFinal = final != NULL && s + maxBatchPow > domainPow;
+        Goldilocks::Element *o = toFinal ? final : a2;
+        const uint64_t strideO = toFinal ? strideFinal : strideA2;
+        const uint64_t offsetO = toFinal ? offsetFinal : offsetA2;
 
         int chunk1 = nBatches / nThreads;
         if (chunk1 == 0)
@@ -150,9 +157,9 @@ void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *sr
                 //case: any phase and not inverse
                 for (uint64_t x = 0; x < batchSize; x++)
                 {
-                    uint64_t offset_a2 = (x * nBatches + b) * strideA2 + offsetA2;
+                    uint64_t offset_a2 = (x * nBatches + b) * strideO + offsetO;
                     uint64_t offset_a = (b * batchSize + x) * strideA + offsetA;
-                    std::memcpy(&a2[offset_a2], &a[offset_a], ncols * sizeof(Goldilocks::Element));
+                    std::memcpy(&o[offset_a2], &a[offset_a], ncols * sizeof(Goldilocks::Element));
                 }
             }
             else
@@ -163,11 +170,11 @@ void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *sr
                     for (uint64_t x = 0; x < batchSize; x++)
                     {
                         uint64_t dsty = intt_idx((x * nBatches + b), nrows);
-                        uint64_t offset_a2 = dsty * strideA2 + offsetA2;
+                        uint64_t offset_a2 = dsty * strideO + offsetO;
                         uint64_t offset_a = (b * batchSize + x) * strideA + offsetA;
                         for (uint64_t k = 0; k < ncols; k++)
                         {
-                            Goldilocks::mul(a2[offset_a2 + k], a[offset_a + k], r_[dsty]);
+                            Goldilocks::mul(o[offset_a2 + k], a[offset_a + k], r_[dsty]);
                         }
                     }
                 }
@@ -178,11 +185,11 @@ void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *sr
                     for (uint64_t x = 0; x < batchSize; x++)
                     {
                         uint64_t dsty = intt_idx((x * nBatches + b), nrows);
-                        uint64_t offset_a2 = dsty * strideA2 + offsetA2;
+                        uint64_t offset_a2 = dsty * strideO + offsetO;
                         uint64_t offset_a = (b * batchSize + x) * strideA + offsetA;
                         for (uint64_t k = 0; k < ncols; k++)
                         {
-                            Goldilocks::mul(a2[offset_a2 + k], a[offset_a + k], powTwoInv[domainPow]);
+                            Goldilocks::mul(o[offset_a2 + k], a[offset_a + k], powTwoInv[domainPow]);
                         }
                     }
                 }
@@ -198,7 +205,7 @@ void NTT_Goldilocks::NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *sr
         strideA = strideTmp;
         offsetA = offsetTmp;
     }
-    if (a != dst_)
+    if (final == NULL && a != dst_)
     {
         if (nrows > 1)
         {
@@ -374,10 +381,13 @@ void NTT_Goldilocks::LDE(Goldilocks::Element *output, Goldilocks::Element *input
 
     NTT_Goldilocks ntt_extension(N_Extended, nThreads, N_Extended / N);
 
+    // The NTT works one column block at a time, so the scratch is one block wide.
+    if (nblock < 1) nblock = 1;
+    if (nblock > ncols) nblock = ncols;
     Goldilocks::Element *tmp = NULL;
     if (buffer == NULL)
     {
-        tmp = (Goldilocks::Element *)malloc(N_Extended * ncols * sizeof(Goldilocks::Element));
+        tmp = (Goldilocks::Element *)malloc(N_Extended * ((ncols + nblock - 1) / nblock) * sizeof(Goldilocks::Element));
         if(tmp == NULL){
             std::cerr << "Error: NTT_Goldilocks::LDE: Memory allocation failed" << std::endl;
             exit(1);
@@ -401,4 +411,35 @@ void NTT_Goldilocks::LDE(Goldilocks::Element *output, Goldilocks::Element *input
         free(tmp);
     }
 //#endif
+}
+
+// LDE of LDE_BLOCK_COLS columns at a time, so the scratch does not grow with ncols. `input` may be
+// `output` itself (its first N rows): a block's columns are read before any of them is written, and no
+// other block's columns are touched.
+void NTT_Goldilocks::LDEBlocked(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t N_Extended, uint64_t N, uint64_t ncols, Goldilocks::Element *scratch)
+{
+    if (ncols <= LDE_BLOCK_COLS)
+    {
+        LDE(output, input, N_Extended, N, ncols, scratch);
+        return;
+    }
+    if (r == NULL)
+    {
+        computeR(N);
+    }
+    static_assert(NUM_PHASES % 2 == 1, "the extension's bit reversal must not land on its source");
+    assert(N_Extended >= (1ull << NUM_PHASES));
+    NTT_Goldilocks ntt_extension(N_Extended, nThreads, N_Extended / N);
+    Goldilocks::Element *P = scratch;
+    Goldilocks::Element *Q = scratch + N_Extended * LDE_BLOCK_COLS;
+    for (uint64_t c0 = 0; c0 < ncols; c0 += LDE_BLOCK_COLS)
+    {
+        const uint64_t cw = std::min<uint64_t>(LDE_BLOCK_COLS, ncols - c0);
+        // INTT straight off the block's columns of `input`; the coefficients stay in P or Q.
+        // INTT reading the block's columns straight off `input`; the coefficients land in P.
+        NTT_iters(P, input, N, 0, cw, cw, NUM_PHASES, Q, true, true, ncols, c0);
+        // The extension's last phase writes the block's columns of `output`. With an odd phase count
+        // the bit reversal writes aux, so Q: the zero-padded permutation cannot run in place on P.
+        ntt_extension.NTT_iters(P, P, N_Extended, 0, cw, cw, NUM_PHASES, Q, false, false, 0, 0, output, ncols, c0);
+    }
 }

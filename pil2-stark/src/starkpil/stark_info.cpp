@@ -13,7 +13,7 @@ StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_cons
     verify_constraints = verify_constraints_;
     verify = verify_;
     gpu = gpu_;
-    inplaceStageCommit = gpu_ && !final_ && !recursive_ && !verify_constraints_ && !verify_;
+    inplaceStageCommit = !final_ && !recursive_ && !verify_constraints_ && !verify_;
 
     // Load contents from json file
     json starkInfoJson;
@@ -625,10 +625,6 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
     mapTotalN += alignRegion(numNodes);
 
-    if(!gpu) {
-        mapOffsets[std::make_pair("evals", true)] = mapTotalN;
-        mapTotalN += alignRegion(evMap.size() * omp_get_max_threads() * FIELD_EXTENSION);
-    }
 
     mapTotalN = std::max(mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"], mapTotalN);
     }
@@ -664,15 +660,13 @@ void StarkInfo::setMapOffsets() {
     // FRI layers follow q directly: zi and the expression tmps are dead once folding starts.
 
     if (!gpu) {
-        uint64_t maxTotalNStage2 = mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"];
-        mapOffsets[std::make_pair("buff_helper_fft_2", false)] = maxTotalNStage2;
-        maxTotalNStage2 += NExtended * mapSectionsN["cm2"];
-        maxTotalN = std::max(maxTotalN, maxTotalNStage2);
-        
-        uint64_t maxTotalNStage1 = mapOffsets[std::make_pair("cm1", false)] + N * mapSectionsN["cm1"];
-        mapOffsets[std::make_pair("buff_helper_fft_1", false)] = maxTotalNStage1;
-        maxTotalNStage1 += NExtended * mapSectionsN["cm1"];
-        maxTotalN = std::max(maxTotalN, maxTotalNStage1);
+        for (uint64_t stage = 1; stage <= nStages; ++stage) {
+            std::string section = "cm" + to_string(stage);
+            uint64_t helper = inplaceStageCommit ? mapOffsets[std::make_pair("cm" + to_string(nStages + 1), true)]
+                                                 : mapOffsets[std::make_pair(section, false)] + N * mapSectionsN[section];
+            mapOffsets[std::make_pair("buff_helper_fft_" + to_string(stage), false)] = helper;
+            maxTotalN = std::max(maxTotalN, helper + NTT_Goldilocks::LDEBlockedScratchSize(NExtended, mapSectionsN[section]));
+        }
 
         uint64_t maxTotalNStageQ = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
         mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] = maxTotalNStageQ;
