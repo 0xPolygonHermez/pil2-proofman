@@ -69,7 +69,9 @@ pub struct Proof<F: PrimeField64> {
     pub air_id: usize,
     pub global_idx: Option<usize>,
     pub proof: Vec<u64>,
-    pub circom_witness: Vec<F>,
+    /// Committed-pol trace, scattered directly by `getWitnessTrace` (witness proofs only).
+    pub trace: Vec<F>,
+    pub publics: Vec<F>,
     pub n_cols: usize,
 }
 
@@ -81,7 +83,7 @@ impl<F: PrimeField64> Proof<F> {
         global_idx: Option<usize>,
         proof: Vec<u64>,
     ) -> Self {
-        Self { proof_type, global_idx, airgroup_id, air_id, proof, circom_witness: Vec::new(), n_cols: 0 }
+        Self { proof_type, global_idx, airgroup_id, air_id, proof, trace: Vec::new(), publics: Vec::new(), n_cols: 0 }
     }
 
     pub fn new_witness(
@@ -89,10 +91,11 @@ impl<F: PrimeField64> Proof<F> {
         airgroup_id: usize,
         air_id: usize,
         global_idx: Option<usize>,
-        circom_witness: Vec<F>,
+        trace: Vec<F>,
+        publics: Vec<F>,
         n_cols: usize,
     ) -> Self {
-        Self { proof_type, global_idx, airgroup_id, air_id, circom_witness, proof: Vec::new(), n_cols }
+        Self { proof_type, global_idx, airgroup_id, air_id, trace, publics, proof: Vec::new(), n_cols }
     }
 }
 

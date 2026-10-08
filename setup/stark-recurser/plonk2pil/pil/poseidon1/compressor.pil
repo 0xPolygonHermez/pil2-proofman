@@ -30,7 +30,7 @@ require "circuits/plonk.pil";
 // all 10 gates, exactly like a pure-plonk row. This layout is identical to the
 // Poseidon2 compressor's — only the round algebra and the tree-selector arity differ.
 // ============================================================================
-airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1Compression, const int nPoseidon1Sponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector8, const int nSelectValArity4) {
+airtemplate Compressor (const int N, const int nPublics, const int nPlonkRows, const int nPoseidon1Compression, const int nPoseidon1Sponge, const int nCMulRows, const int nEvPol4, const int nFFT4, const int nTreeSelector8, const int nSelectValArity4) {
     col witness a[46];
 
     #pragma fixed_external
@@ -76,6 +76,14 @@ airtemplate Compressor (const int N, const int nPlonkRows, const int nPoseidon1C
     col fixed TREESELECTOR8 = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4),                                     1:nTreeSelector8,   0...];
     col fixed SELECTVAL_ARITY4    = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector8),                    1:nSelectValArity4,      0...];
     col fixed PLONK         = [0:(nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector8 + nSelectValArity4),       1:nPlonkRows,       0...];
+
+    if (nPublics > 0) {
+        const int nGateRows = nPoseidonRows + nCMulRows + nEvPol4 + nFFT4 + nTreeSelector8 + nSelectValArity4 + nPlonkRows;
+        col fixed PUBLICS_ROW = [0:nGateRows, 1, 0...];
+        for (int i = 0; i < nPublics; i++) {
+            (i / 30)'PUBLICS_ROW * (a[i % 30] - publics[i]) === 0;
+        }
+    }
 
     const expr q0[5] = [C[0], C[1], C[2], C[3], C[4]];
     const expr q1[5] = [C[5], C[6], C[7], C[8], C[9]];

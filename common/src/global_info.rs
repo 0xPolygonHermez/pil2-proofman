@@ -98,6 +98,11 @@ pub struct GlobalInfo {
     /// than trying to read a starkinfo that was never written.
     #[serde(rename = "hasCompressedFinal", default = "default_has_compressed_final")]
     pub has_compressed_final: bool,
+
+    /// Label the consumer passed to setup (`--setup-version`); `None` for keys built without one.
+    /// Proofman never checks it -- the consumer compares it against the version it expects.
+    #[serde(rename = "setupVersion", default)]
+    pub setup_version: Option<String>,
 }
 
 fn default_has_compressed_final() -> bool {
@@ -111,12 +116,16 @@ pub struct GlobalInfoAir {
     #[serde(rename = "hasCompressor", default)]
     pub has_compressor: Option<bool>,
 
+    /// Proofs this air's recursive1 verifies in one circuit. Absent means 1.
+    #[serde(rename = "r1BatchSize", default)]
+    pub r1_batch_size: Option<usize>,
+
     pub num_rows: usize,
 }
 
 impl GlobalInfoAir {
     pub fn new(name: String) -> Self {
-        Self { name, has_compressor: None, num_rows: 0 }
+        Self { name, has_compressor: None, r1_batch_size: None, num_rows: 0 }
     }
 }
 
@@ -283,6 +292,11 @@ impl GlobalInfo {
         self.airs[airgroup_id][air_id].has_compressor.unwrap_or(false)
     }
 
+    /// Proofs this air's recursive1 verifies in one circuit; 1 for the unbatched circuit.
+    pub fn get_air_r1_batch_size(&self, airgroup_id: usize, air_id: usize) -> usize {
+        self.airs[airgroup_id][air_id].r1_batch_size.unwrap_or(1).max(1)
+    }
+
     pub fn get_n_airs_for_airgroup(&self, airgroup_id: usize) -> usize {
         self.airs[airgroup_id].len()
     }
@@ -380,5 +394,19 @@ mod aggregation_arity_tests {
         });
         let gi: GlobalInfo = serde_json::from_value(json).unwrap();
         assert_eq!(gi.aggregation_arity, 2);
+    }
+
+    #[test]
+    fn the_setup_version_is_optional() {
+        let mut json = serde_json::json!({
+            "folder_path": "", "name": "t", "airs": [[]], "air_groups": [], "curve": "None",
+            "aggTypes": [], "nPublics": 0, "numChallenges": [0],
+            "transcriptArity": 16, "aggregationArity": 2
+        });
+        let gi: GlobalInfo = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(gi.setup_version, None);
+        json["setupVersion"] = serde_json::json!("1.3.1");
+        let gi: GlobalInfo = serde_json::from_value(json).unwrap();
+        assert_eq!(gi.setup_version.as_deref(), Some("1.3.1"));
     }
 }

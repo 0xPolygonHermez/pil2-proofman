@@ -50,9 +50,14 @@ public:
     static void permute(uint64_t *output, const uint64_t *input, cudaStream_t stream = 0);
     static void permuteTrunc(uint64_t *output, const uint64_t *input, cudaStream_t stream = 0);
 
+    // ld: height of the layout d_trace lives in, to hash a row sub-range (0 = num_rows).
     static void linearHash(uint64_t *d_hash_output, uint64_t *d_trace,
                            uint64_t num_cols, uint64_t num_rows,
-                           Layout layout, cudaStream_t stream);
+                           Layout layout, cudaStream_t stream, uint64_t ld = 0);
+
+    static void reduceOneLevel(uint32_t arity, uint64_t *d_nodes, uint64_t pending, cudaStream_t stream);
+
+    static void reduceLevels(uint32_t arity, uint64_t *d_tree, uint64_t pending, cudaStream_t stream);
 
     static void merkletree(uint32_t arity, uint64_t *d_tree, uint64_t *d_input,
                            uint64_t num_cols, uint64_t num_rows,

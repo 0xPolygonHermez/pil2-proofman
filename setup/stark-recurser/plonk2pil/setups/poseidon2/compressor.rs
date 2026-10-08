@@ -5,7 +5,9 @@
 
 use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
 use crate::plonk2pil::r1cs::types::{GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
-use crate::plonk2pil::utils::{build_fixed_pols, build_s_polynomials, log2, mulp, PlonkBand};
+use crate::plonk2pil::utils::{
+    bind_public_signals, build_fixed_pols, build_s_polynomials, log2, mulp, public_rows, PlonkBand,
+};
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use super::{gen_pil_str, PilTemplateParams};
 use proofman_common::hash_family::GateRole;
@@ -110,7 +112,7 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         rows
     };
 
-    let n_used = cgi.n_plonk_rows
+    let n_gate_rows = cgi.n_plonk_rows
         + n_cmul_rows
         + n_poseidon_rows
         + n_fft4_rows
@@ -118,13 +120,15 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
         + n_tree_sel4_rows
         + n_sel_val_arity4_rows;
 
+    let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
+    let n_used = n_gate_rows + public_rows(n_publics, N_COLS);
+
     let n_bits = if n_used <= 1 { 1 } else { log2((n_used - 1) as u32) as usize + 1 };
     // Never below the floor: an air reusing another air's starkSetup has to match its rows. The
     // pre-floor size is kept -- it is what decides whether the circuit itself is too big.
     let n_bits_natural = n_bits;
     let n_bits = n_bits.max(options.min_n_bits.unwrap_or(0));
     let n = 1usize << n_bits;
-    let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
     let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| format!("Compressor{}", rand_hex()));
 
     let pil_str = gen_pil_str(&PilTemplateParams {
@@ -469,12 +473,15 @@ pub fn compressor(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
             r += 1;
         }
     }
-    assert_eq!(r, n_used, "row count mismatch: {} != {}", r, n_used);
+    assert_eq!(r, n_gate_rows, "gate row count mismatch: {} != {}", r, n_gate_rows);
 
     // ── S polynomials ─────────────────────────────────────────────────────────
     // Apply copy-merge remap to every placed cell (incl. custom-gate I/O) so the
     // connection argument ties merged signals — the soundness-critical sweep,
     // then assert each merged equality is actually re-enforced in-band.
+    bind_public_signals(&mut s_map, r, n_publics, N_COLS);
+    r = n_used;
+
     apply_remap_to_s_map(&mut s_map, &copy_merge.remap);
     verify_merge_soundness(&s_map, &copy_merge.merged_reps, N_COLS);
     let sv = build_s_polynomials(N_COLS, n, n_bits, r, &s_map);

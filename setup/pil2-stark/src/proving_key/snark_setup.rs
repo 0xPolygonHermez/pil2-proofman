@@ -108,6 +108,7 @@ pub fn gen_snark_setup(
         has_recursion: false,
         is_final: false,
         agg_arity: 0,
+        batch_size: 1,
     };
     let rf_basic_vk: Vec<Vec<Vec<String>>> = vec![vec![const_root_str.to_vec()]];
     let gen_input_rf = GenCircomInput {
@@ -240,8 +241,10 @@ pub fn gen_snark_setup(
 
     // Build starkinfo output.
     let opening_points_rf = crate::output::stark_info::collect_opening_points(&pil_result_rf.setup);
-    let ev_map_len_rf = pil_result_rf.pil_code.ev_map.len();
-    let ldt = crate::output::stark_info::solve_low_degree_test(&stark_struct_rf, ev_map_len_rf.max(1) as u64);
+    let ldt = crate::output::stark_info::solve_low_degree_test(
+        &stark_struct_rf,
+        pil_result_rf.pil_code.fri_batch_size.max(1) as u64,
+    );
 
     let starkinfo_rf = crate::output::stark_info::build_starkinfo_output(
         &pil_result_rf.setup,
@@ -392,6 +395,7 @@ pub fn gen_snark_setup(
         has_recursion: false,
         is_final: true,
         agg_arity: 0,
+        batch_size: 1,
     };
     let gen_input_final = GenCircomInput {
         template_name: "src/recursion/templates/final.circom.ejs",

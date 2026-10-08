@@ -6,15 +6,14 @@
 #include "expressions_pack.hpp"
 #include "grinding_launch.hpp"
 
-StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_, bool preallocate_, bool single_use_)
+StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_)
 {
 
     recursive = recursive_;
     verify_constraints = verify_constraints_;
     verify = verify_;
     gpu = gpu_;
-    preallocate = preallocate_;
-    singleUse = single_use_;
+    inplaceStageCommit = !final_ && !recursive_ && !verify_constraints_ && !verify_;
 
     // Load contents from json file
     json starkInfoJson;
@@ -302,7 +301,6 @@ void StarkInfo::load(json j)
         gpu = false;
         mapTotalN = 0;
         mapTotalNCustomCommitsFixed = 0;
-        mapTotalNContributions = 0;
         mapOffsets[std::make_pair("const", false)] = 0;
         for(uint64_t stage = 1; stage <= nStages + 1; ++stage) {
             mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
@@ -327,7 +325,6 @@ void StarkInfo::load(json j)
         }
 
         mapTotalNCustomCommitsFixed = 0;
-        mapTotalNContributions = 0;
 
         // Set offsets for custom commits fixed
         for(uint64_t i = 0; i < customCommits.size(); ++i) {
@@ -546,6 +543,10 @@ uint64_t StarkInfo::getPinnedProofSize() {
     return pinnedProofSize;
 }
 
+// Every aux_trace region starts on 256 bytes (32 elements), so every column in it does too: columns start
+// at a multiple of the region's row count. Only the reservations whose size is not such a multiple need it.
+static uint64_t alignRegion(uint64_t n) { return (n + 31) & ~uint64_t(31); }
+
 void StarkInfo::setMapOffsets() {
     uint64_t N = (1 << starkStruct.nBits);
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
@@ -569,32 +570,33 @@ void StarkInfo::setMapOffsets() {
 
     mapTotalN = 0;
 
-    uint64_t numNodes = getNumNodesMT(NExtended);
+    // Level 0 must lie below the last levels, and levels >= 2 must fit the build's leaf scratch.
+    const uint64_t arity = starkStruct.merkleTreeArity;
+    dropLeafLevel = gpu && starkStruct.verificationHashType == "GL" &&
+                    NExtended > (uint64_t)std::pow(arity, starkStruct.lastLevelVerification) &&
+                    NExtended >= arity * arity * arity;
+    uint64_t numNodes = getNumNodesMTCommit(NExtended);
 
-    if(!preallocate && gpu) {    
+    if(gpu) {
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
         MerkleTreeGL mt(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.merkleTreeCustom, NExtended, nConstants);
         uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
-        mapTotalN += constTreeSize;
+        mapTotalN += alignRegion(constTreeSize);
 
-        if (!recursive && (NExtended * nConstants * 8.0 / (1024 * 1024)) >= 512) {
+        // This air's const tree is rebuilt on device (unpack + extend + merkelize from the
+        // resident packed pols). No consttree file is ever read on GPU, so this is false only
+        // for airs with no constants at all.
+        if (nConstants > 0) {
             calculateFixedExtended = true;
         }
-
-        // extendAndMerkelizeFixed is the last reader of the unpacked const pols (quotient, evals
-        // and FRI use the extended tree), and a single-use air never reuses them across proofs, so
-        // they can live in the region they extend into and cost nothing.
-        constPolsAliasTree = singleUse && calculateFixedExtended;
     }
 
     if (gpu) {
-        if (constPolsAliasTree) {
-            mapOffsets[std::make_pair("const", false)] =
-                mapOffsets[std::make_pair("const", true)];
-        } else {
-            mapOffsets[std::make_pair("const", false)] = mapTotalN;
-            mapTotalN += N * nConstants;
-        }
+        // Const pols and const tree are always distinct regions. They used to be allowed to
+        // overlap for single-use airs -- valid only because the merkelize was then the last
+        // reader of the small domain, an ordering a pre-proof rebuild cannot honour.
+        mapOffsets[std::make_pair("const", false)] = mapTotalN;
+        mapTotalN += N * nConstants;
     }
 
     if(gpu) {
@@ -639,13 +641,9 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("challenges", false)] = mapTotalN;
         mapTotalN += challengesMap.size() * FIELD_EXTENSION;
 
-        mapOffsets[std::make_pair("xdivxsub", false)] = mapTotalN;
-        mapTotalN += openingPoints.size() * FIELD_EXTENSION;
-
-        // Folded FRI constants (computeFRIFoldedConstants): one cubic coefficient per
-        // eval-map entry followed by one cubic constant per opening point.
-        mapOffsets[std::make_pair("fri_folded", false)] = mapTotalN;
-        mapTotalN += (evMap.size() + openingPoints.size()) * FIELD_EXTENSION;
+        // FRI constants (deep_expression.cuh): vf2^c per polynomial (at most one per eval), a_o and K_o per opening.
+        mapOffsets[std::make_pair("fri_constants", false)] = mapTotalN;
+        mapTotalN += (evMap.size() + 2 * openingPoints.size()) * FIELD_EXTENSION;
 
         mapOffsets[std::make_pair("fri_queries", false)] = mapTotalN;
         mapTotalN += starkStruct.nQueries;
@@ -688,6 +686,9 @@ void StarkInfo::setMapOffsets() {
 
         mapOffsets[std::make_pair("proof_queries", false)] = mapTotalN;
         mapTotalN += queriesProofSize;
+
+        mapOffsets[std::make_pair("query_rows_scratch", false)] = mapTotalN;
+        if (dropLeafLevel) mapTotalN += starkStruct.nQueries * (starkStruct.merkleTreeArity - 1) * (maxTreeWidth + HASH_SIZE);
         
         // TODO: ADD EXPRESSIONS MEM
     }
@@ -695,34 +696,43 @@ void StarkInfo::setMapOffsets() {
     assert(nStages == 2);
 
     uint64_t maxTotalN = 0;
-    
+
+    mapTotalN = alignRegion(mapTotalN);
     mapOffsets[std::make_pair("cm1", true)] = mapTotalN;
     mapTotalN += NExtended * mapSectionsN["cm1"];
     mapOffsets[std::make_pair("mt1", true)] = mapTotalN;
-    mapTotalN += numNodes;
-    
+    mapTotalN += alignRegion(numNodes);
+
+    if (inplaceStageCommit) {
+        mapOffsets[std::make_pair("cm1", false)] = mapOffsets[std::make_pair("cm1", true)];
+        mapOffsets[std::make_pair("cm2", true)] = mapTotalN;
+        mapOffsets[std::make_pair("cm2", false)] = mapTotalN;
+        mapTotalN += NExtended * mapSectionsN["cm2"];
+        mapOffsets[std::make_pair("mt2", true)] = mapTotalN;
+        mapTotalN += alignRegion(numNodes);
+        mapOffsets[std::make_pair("cm3", true)] = mapTotalN;
+        mapTotalN += NExtended * mapSectionsN["cm3"];
+        mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
+        mapTotalN += alignRegion(numNodes);
+    } else {
     mapOffsets[std::make_pair("cm1", false)] = mapTotalN;
-    mapTotalNContributions = recursive ? 0 : mapTotalN + N * mapSectionsN["cm1"];
 
     mapOffsets[std::make_pair("cm2", true)] = mapTotalN;
     mapTotalN += NExtended * mapSectionsN["cm2"];
     mapOffsets[std::make_pair("mt2", true)] = mapTotalN;
-    mapTotalN += numNodes;
+    mapTotalN += alignRegion(numNodes);
     mapTotalN = std::max(mapOffsets[std::make_pair("cm1", false)] + N * mapSectionsN["cm1"], mapTotalN);
 
     mapOffsets[std::make_pair("cm2", false)] = mapTotalN;
-    
+
     mapOffsets[std::make_pair("cm3", true)] = mapTotalN;
     mapTotalN += NExtended * mapSectionsN["cm3"];
     mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
-    mapTotalN += numNodes;
+    mapTotalN += alignRegion(numNodes);
 
-    if(!gpu) {
-        mapOffsets[std::make_pair("evals", true)] = mapTotalN;
-        mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
-    }
 
     mapTotalN = std::max(mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"], mapTotalN);
+    }
     mapOffsets[std::make_pair("f", true)] = mapTotalN;
     mapOffsets[std::make_pair("q", true)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
@@ -733,40 +743,35 @@ void StarkInfo::setMapOffsets() {
     if(gpu) {
         maxSizeHelper += boundaries.size() * NExtended;
         mapOffsets[std::make_pair("zi", true)] = mapTotalN;
-        mapOffsets[std::make_pair("x", true)] = mapTotalN;
     }
     
     maxTotalN = std::max(maxTotalN, mapTotalN + maxSizeHelper);
     mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN + maxSizeHelper;   
 
     uint64_t LEvSize = mapOffsets[std::make_pair("f", true)];
+    // Opening 0's Lagrange vector serves every opening point (evmap).
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
-    uint64_t maxOpenings = std::min(uint64_t(openingPoints.size()), EVALS_OPENING_BATCH);
-    LEvSize += maxOpenings * N * FIELD_EXTENSION;
-    if(!gpu) {
-        mapOffsets[std::make_pair("buff_helper_fft_lev", false)] = LEvSize;
-        LEvSize += maxOpenings * N * FIELD_EXTENSION;
-    } else {    
-        // Scratch for the evaluations step 
+    LEvSize += N * FIELD_EXTENSION;
+    if(gpu) {
+        // Opening 0's shifted point and factor (computeLEv_inplace), then the stripe partials.
         mapOffsets[std::make_pair("lev_helper", false)] = LEvSize;
-        LEvSize += 2 * maxOpenings * FIELD_EXTENSION + evMap.size() * EVALS_HELPER_CHUNKS * FIELD_EXTENSION;
+        LEvSize += 2 * FIELD_EXTENSION;
+        mapOffsets[std::make_pair("evals_partials", false)] = LEvSize;
+        LEvSize += evMap.size() * EVALS_HELPER_CHUNKS * FIELD_EXTENSION;
     }
 
     maxTotalN = std::max(maxTotalN, LEvSize);
 
-    mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
-    mapTotalN += NExtended * FIELD_EXTENSION;
+    // FRI layers follow q directly: zi and the expression tmps are dead once folding starts.
 
     if (!gpu) {
-        uint64_t maxTotalNStage2 = mapOffsets[std::make_pair("cm2", false)] + N * mapSectionsN["cm2"];
-        mapOffsets[std::make_pair("buff_helper_fft_2", false)] = maxTotalNStage2;
-        maxTotalNStage2 += NExtended * mapSectionsN["cm2"];
-        maxTotalN = std::max(maxTotalN, maxTotalNStage2);
-        
-        uint64_t maxTotalNStage1 = mapOffsets[std::make_pair("cm1", false)] + N * mapSectionsN["cm1"];
-        mapOffsets[std::make_pair("buff_helper_fft_1", false)] = maxTotalNStage1;
-        maxTotalNStage1 += NExtended * mapSectionsN["cm1"];
-        maxTotalN = std::max(maxTotalN, maxTotalNStage1);
+        for (uint64_t stage = 1; stage <= nStages; ++stage) {
+            std::string section = "cm" + to_string(stage);
+            uint64_t helper = inplaceStageCommit ? mapOffsets[std::make_pair("cm" + to_string(nStages + 1), true)]
+                                                 : mapOffsets[std::make_pair(section, false)] + N * mapSectionsN[section];
+            mapOffsets[std::make_pair("buff_helper_fft_" + to_string(stage), false)] = helper;
+            maxTotalN = std::max(maxTotalN, helper + NTT_Goldilocks::LDEBlockedScratchSize(NExtended, mapSectionsN[section]));
+        }
 
         uint64_t maxTotalNStageQ = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
         mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] = maxTotalNStageQ;
@@ -789,7 +794,7 @@ void StarkInfo::setMapOffsets() {
         if(starkStruct.verificationHashType == "GL") {
             uint64_t numNodes = getNumNodesMT(height);
             mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)] = mapTotalN;
-            mapTotalN += numNodes;
+            mapTotalN += alignRegion(numNodes);
         }
     }
 
@@ -845,6 +850,29 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
     if(mapBuffHelper > mapTotalN) {
         mapTotalN = mapBuffHelper;
     }
+}
+
+// In place the small cm1 owns the section's lower half, so the raw trace lands in the upper one.
+uint64_t StarkInfo::getTraceLandingOffset() {
+    uint64_t base = mapOffsets[std::make_pair("cm1", true)];
+    return inplaceStageCommit ? base + (1ull << starkStruct.nBits) * mapSectionsN["cm1"] : base;
+}
+
+uint64_t StarkInfo::getNumNodesMTCommit(uint64_t height) {
+    uint64_t full = getNumNodesMT(height);
+    if (!dropLeafLevel) return full;
+    uint64_t a = starkStruct.merkleTreeArity;
+    return full - (height + (a - height % a) % a) * HASH_SIZE;
+}
+
+uint64_t StarkInfo::getLastLevelOffset(uint64_t height, uint64_t &nNodes) {
+    uint64_t a = starkStruct.merkleTreeArity, offset = 0;
+    nNodes = dropLeafLevel ? (height + a - 1) / a : height;
+    while (nNodes > std::pow(a, starkStruct.lastLevelVerification)) {
+        nNodes = (nNodes + a - 1) / a;
+        offset += nNodes * a * HASH_SIZE;
+    }
+    return offset;
 }
 
 uint64_t StarkInfo::getNumNodesMT(uint64_t height) {

@@ -45,7 +45,17 @@ Circom_CalcWit::Circom_CalcWit (Circom_Circuit *aCircuit, uint maxTh) {
 }
 
 Circom_CalcWit::~Circom_CalcWit() {
-  // ...
+  Circom_Component &main = componentMemory[0];
+  delete[] main.subcomponents;
+  delete[] main.subcomponentsParallel;
+  delete[] main.outputIsSet;
+  delete[] main.mutexes;
+  delete[] main.cvs;
+  delete[] main.sbct;
+
+  delete[] componentMemory;
+  delete[] signalValues;
+  delete[] inputSignalAssigned;
 }
 
 uint Circom_CalcWit::getInputSignalHashPosition(u64 h) {

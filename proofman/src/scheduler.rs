@@ -4,16 +4,15 @@
 //! each stream holds resident (`stream_warm`) so a popular key drains on one stream instead of
 //! reloading its const-tree on every free stream. Reservation picks in three passes: reuse a
 //! warm free stream → fresh-load an unloaded key → (last resort) reload rather than idle.
-//! Resident-tree basics are filler (never starve a ready compressor on the non-recursive pool).
 //!
 //! Wrap in a `Mutex`; the reserve FFIs are non-blocking, so the lock is held only briefly.
 
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ffi::c_void;
 use std::sync::{Condvar, Mutex};
 
 use proofman_fields::PrimeField64;
-use proofman_common::{MemoryHandlerRecursive, Proof, ProofType};
+use proofman_common::{MemoryHandlerRecursive, Proof, ProofType, WitnessPriority};
 
 use crate::Ledger;
 use proofman_starks_lib_c::{release_stream_reservation_c, reserve_best_stream_nonblock_c, reserve_stream_if_free_c};
@@ -51,7 +50,7 @@ pub struct StreamReservation {
 unsafe impl Send for StreamReservation {}
 
 impl StreamReservation {
-    fn new(d_buffers: usize, stream_id: u32) -> Self {
+    pub(crate) fn new(d_buffers: usize, stream_id: u32) -> Self {
         Self { d_buffers, stream_id, armed: true }
     }
 
@@ -101,13 +100,19 @@ pub struct RecursiveScheduler<F: PrimeField64> {
     d_buffers: usize,
     /// Ready recursive/compressor witnesses, bucketed by key.
     queues: HashMap<Key, VecDeque<Proof<F>>>,
-    /// Ready "stored" basic instances (recompute path), bucketed by `(airgroup, air)`.
-    /// Resident-in-GPU basics (skip_recalculation, pinned) never enter here.
+    /// Ready basic instances, bucketed by `(airgroup, air)`.
     basic_queue: HashMap<(usize, usize), VecDeque<usize>>,
-    /// Basic AIRs whose const-tree is resident (preallocated on-device). Held back as filler:
-    /// they load nothing, and a big resident table draining first would starve ready
-    /// compressors on the shared non-recursive streams.
-    resident_keys: HashSet<Key>,
+    // Last key handed out by pop_basic_prefetch. Preferred by the next peek/pop so instances of
+    // the same air dispatch back-to-back: the stream-warm signal lags the dequeue-ahead depth,
+    // and same-air adjacency is what the base/ext split's cross-proof overlap needs.
+    last_prefetch_key: Option<(usize, usize)>,
+    /// Basic AIRs with a dispatch rank: 0 = only fits the whole basic stream (phase A) and has a
+    /// compressor, 1 = phase-A-only, 2 = has a compressor (its chain is the longest: basic, CPU
+    /// witness, compressor, recursive1, recursive2). Unranked airs go by backlog. While any ranked
+    /// air is ready, only the lowest rank present is eligible, whatever the backlog or warmth says:
+    /// phase B cannot open until the phase-A-only airs have run, and a late compressor chain ends the
+    /// block late.
+    big_keys: HashMap<(usize, usize), u8>,
     /// physical stream -> key it currently holds resident (mirrors the CUDA side across
     /// `reset(false)`). Shared across basic and recursive. Ordered, not hashed: pass 1 scans it to
     /// choose among equally-warm free streams, and a `HashMap`'s arbitrary order would make that
@@ -125,9 +130,27 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             d_buffers: d_buffers as usize,
             queues: HashMap::new(),
             basic_queue: HashMap::new(),
-            resident_keys: HashSet::new(),
+            last_prefetch_key: None,
+            big_keys: HashMap::new(),
             stream_warm: BTreeMap::new(),
         }
+    }
+
+    /// Basic AIRs confined to phase A with their rank (see `big_keys`).
+    pub fn set_big_keys(&mut self, keys: HashMap<(usize, usize), u8>) {
+        self.big_keys = keys;
+    }
+
+    /// Ready basic keys most-preferred first: the lowest-ranked phase-A-only airs while any is
+    /// ready, then backlog desc (drain big runs first), then `(airgroup, air)` for determinism.
+    fn ready_basics(&self) -> Vec<((usize, usize), usize)> {
+        let mut ready: Vec<((usize, usize), usize)> =
+            self.basic_queue.iter().filter(|(_, q)| !q.is_empty()).map(|(k, q)| (*k, q.len())).collect();
+        if let Some(best) = ready.iter().filter_map(|(k, _)| self.big_keys.get(k)).min().copied() {
+            ready.retain(|(k, _)| self.big_keys.get(k) == Some(&best));
+        }
+        ready.sort_by(|(ka, ba), (kb, bb)| bb.cmp(ba).then(ka.cmp(kb)));
+        ready
     }
 
     fn d_buffers(&self) -> *mut c_void {
@@ -178,16 +201,27 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         self.next_of_types(&RECURSIVE_ORDER, true)
     }
 
+    /// A ready compressor, reserved, or `None`. Compressors gate phase B (a big air's compressor can
+    /// only run on the whole stream), so the dequeue-ahead worker checks this before its held basics.
+    pub fn next_compressor(&mut self) -> Option<WorkerPick<F>> {
+        self.next_of_types(&[ProofType::Compressor], false).map(|(w, s)| WorkerPick::Recursive(w, s))
+    }
+
     /// Non-recursive stream, one shot: compressor > basic > rec2/rec1. Deciding here (not via two
     /// racy gates) means a worker yields a basic only when it actually takes recursive work — no
-    /// "yield-then-fail-to-place" idle. Resident basics are filler: eligible only when nothing
-    /// recursive/compressor is queued.
+    /// "yield-then-fail-to-place" idle.
     pub fn next_nonrecursive(&mut self) -> Option<WorkerPick<F>> {
         if let Some((w, s)) = self.next_of_types(&[ProofType::Compressor], false) {
             return Some(WorkerPick::Recursive(w, s));
         }
-        let allow_resident = self.is_empty();
-        if let Some((id, s)) = self.next_basic(allow_resident) {
+        // A ready recursive2 ahead of the basics (unless a ranked basic waits): aggregation left
+        // behind the basics drains at the end with little parallelism.
+        if !self.ranked_basic_ready() {
+            if let Some((w, s)) = self.next_of_types(&[ProofType::Recursive2], false) {
+                return Some(WorkerPick::Recursive(w, s));
+            }
+        }
+        if let Some((id, s)) = self.next_basic() {
             return Some(WorkerPick::Basic(id, s));
         }
         if let Some((w, s)) = self.next_of_types(&RECURSIVE_ORDER, false) {
@@ -196,22 +230,17 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         None
     }
 
-    /// Pick + reserve a stream for the next stored basic → `(instance_id, stream)`. Resident
-    /// basics are excluded unless `include_resident` (held back as filler otherwise).
-    pub fn next_basic(&mut self, include_resident: bool) -> Option<(usize, StreamReservation)> {
-        let mut ready: Vec<((usize, usize), usize)> = self
-            .basic_queue
-            .iter()
-            .filter(|(k, q)| {
-                !q.is_empty() && (include_resident || !self.resident_keys.contains(&(k.0, k.1, ProofType::Basic)))
-            })
-            .map(|(k, q)| (*k, q.len()))
-            .collect();
+    /// True while a ranked basic (see `big_keys`) is queued.
+    fn ranked_basic_ready(&self) -> bool {
+        self.basic_queue.iter().any(|(k, q)| !q.is_empty() && self.big_keys.contains_key(k))
+    }
+
+    /// Pick + reserve a stream for the next stored basic → `(instance_id, stream)`.
+    pub fn next_basic(&mut self) -> Option<(usize, StreamReservation)> {
+        let ready = self.ready_basics();
         if ready.is_empty() {
             return None;
         }
-        // Plain key-affinity: backlog desc (drain big runs first), then key for determinism.
-        ready.sort_by(|(ka, ba), (kb, bb)| bb.cmp(ba).then(ka.cmp(kb)));
         let candidates: Vec<Key> = ready.iter().map(|((ag, air), _)| (*ag, *air, ProofType::Basic)).collect();
 
         let (key, s) = self.pick_and_reserve(&candidates, false)?;
@@ -224,12 +253,59 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         Some((id, s))
     }
 
-    /// Enqueue a stored basic instance for key-affinity dispatch. `resident` marks whether
-    /// this AIR's basic const-tree is preallocated on-device (→ treated as filler).
-    pub fn push_basic(&mut self, instance_id: usize, airgroup_id: usize, air_id: usize, resident: bool) {
-        if resident {
-            self.resident_keys.insert((airgroup_id, air_id, ProofType::Basic));
+    /// Predict what `next_basic` would return, without reserving a stream or
+    /// dequeuing: `(instance_id, airgroup_id, air_id)`. Drives the witness-
+    /// prefetch lookahead; a wrong prediction costs only a skipped prefetch --
+    /// gen_proof falls back to the legacy upload when the zone id mismatches.
+    pub fn peek_basic(&self) -> Option<(usize, usize, usize)> {
+        let ready = self.ready_basics();
+        if ready.is_empty() {
+            return None;
         }
+        // Drain the air we last handed out before switching: keeps same-air instances adjacent
+        // even though the stream-warm signal lags the dequeue-ahead depth.
+        if let Some(last) = self.last_prefetch_key {
+            if ready.iter().any(|&(k, _)| k == last) {
+                let id = *self.basic_queue.get(&last).unwrap().front().unwrap();
+                return Some((id, last.0, last.1));
+            }
+        }
+        // Prefer a warm key, mirroring pick_and_reserve's reuse-first pass.
+        for &((ag, air), _) in ready.iter() {
+            if self.is_warm_somewhere((ag, air, ProofType::Basic)) {
+                let id = *self.basic_queue.get(&(ag, air)).unwrap().front().unwrap();
+                return Some((id, ag, air));
+            }
+        }
+        let ((ag, air), _) = ready[0];
+        let id = *self.basic_queue.get(&(ag, air)).unwrap().front().unwrap();
+        Some((id, ag, air))
+    }
+
+    /// Dequeue the basic instance `next_basic` would dispatch next, WITHOUT
+    /// reserving a stream: the single-stream prefetch worker holds it while its
+    /// trace uploads to the zone during the current proof, then launches it via
+    /// [`Self::reserve_for_basic`]. Dequeue-not-peek: the pick cannot be stolen
+    /// or mispredicted. Mirrors `peek_basic`'s warm-preferred order.
+    pub fn pop_basic_prefetch(&mut self) -> Option<(usize, usize, usize)> {
+        let (id, ag, air) = self.peek_basic()?;
+        let q = self.basic_queue.get_mut(&(ag, air)).expect("peeked basic key non-empty");
+        let popped = q.pop_front().expect("peeked basic key non-empty");
+        debug_assert_eq!(popped, id);
+        if q.is_empty() {
+            self.basic_queue.remove(&(ag, air));
+        }
+        self.last_prefetch_key = Some((ag, air));
+        Some((popped, ag, air))
+    }
+
+    /// Reserve a stream for a held (already-dequeued) basic instance.
+    pub fn reserve_for_basic(&mut self, airgroup_id: usize, air_id: usize) -> Option<StreamReservation> {
+        self.pick_and_reserve(&[(airgroup_id, air_id, ProofType::Basic)], false).map(|(_, s)| s)
+    }
+
+    /// Enqueue a stored basic instance for key-affinity dispatch.
+    pub fn push_basic(&mut self, instance_id: usize, airgroup_id: usize, air_id: usize) {
         self.basic_queue.entry((airgroup_id, air_id)).or_default().push_back(instance_id);
     }
 
@@ -246,6 +322,11 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         // Pass 1 — REUSE: a stream already holding this key, free right now.
         for &key in candidates {
             let (ag, air, t) = key;
+            // Recursive2's const pols are resident on every GPU: reuse saves nothing and would stack
+            // recursive2 proofs on one GPU, so let the cold scan spread them.
+            if t == ProofType::Recursive2 {
+                continue;
+            }
             let type_str: &'static str = t.into();
             for (&s, &k) in self.stream_warm.iter() {
                 if k == key && reserve_stream_if_free_c(d, s as u32, ag as u64, air as u64, type_str, force_recursive) {
@@ -255,7 +336,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         }
         // Pass 2 — FRESH.
         for &key in candidates {
-            if self.is_warm_somewhere(key) {
+            if self.is_warm_somewhere(key) && key.2 != ProofType::Recursive2 {
                 continue; // loaded somewhere → not fresh
             }
             if let Some(s) = self.reserve_best(key, force_recursive) {
@@ -295,7 +376,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
     /// Teardown drain: take everything still queued and leave the scheduler empty. Returns the
     /// queued recursive/compressor witnesses and the queued stored-basic instance ids.
     ///
-    /// The caller MUST return each witness's `circom_witness` to its pool and settle its ledger
+    /// The caller MUST return each witness's `trace` to its pool and settle its ledger
     /// unit: these were armed and committed at hand-off, and their buffers came out of the recursive
     /// witness pools, so dropping them shrinks those pools (the compressor pool most visibly, since
     /// it is the smallest) and leaves the pool-integrity check in `reset()` short. Only safe once
@@ -303,7 +384,6 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
     pub fn drain_all(&mut self) -> (Vec<Proof<F>>, Vec<usize>) {
         let witnesses: Vec<Proof<F>> = self.queues.drain().flat_map(|(_, q)| q.into_iter()).collect();
         let basics: Vec<usize> = self.basic_queue.drain().flat_map(|(_, q)| q.into_iter()).collect();
-        self.resident_keys.clear();
         (witnesses, basics)
     }
 }
@@ -328,7 +408,7 @@ impl<F: PrimeField64> SharedScheduler<F> {
 }
 
 /// Recover witnesses taken out of the scheduler by [`RecursiveScheduler::drain_all`]: return each
-/// `circom_witness` to the pool `generate_witness` took it from, and settle the ledger unit that was
+/// `trace` to the pool `generate_witness` took it from, and settle the ledger unit that was
 /// armed for it at hand-off. Returns how many were recovered.
 ///
 /// Split out of the teardown closure so the scheduler/ledger/pool interaction is directly testable:
@@ -343,7 +423,7 @@ pub fn recover_drained_witnesses<F: PrimeField64 + Send + Sync + 'static>(
     let recovered = witnesses.len();
     for mut w in witnesses {
         // Adopt-then-drop returns the buffer to its pool.
-        drop(memory_handler_recursive_witness.adopt_witness(std::mem::take(&mut w.circom_witness)));
+        drop(memory_handler_recursive_witness.adopt_trace(std::mem::take(&mut w.trace)));
         if let Some(idx) = w.global_idx {
             ledger.settle(idx as u64, w.proof_type.as_usize());
         }
@@ -363,6 +443,37 @@ pub fn witness_slot_cap(eligible: usize, n_classes: usize) -> usize {
         return usize::MAX;
     }
     eligible + 1
+}
+
+/// Bands admission may draw from. `Last` is a barrier, not a tie-break: it opens only once the
+/// phase's other instances have finished. An empty pool cannot stand in for that -- the urgent
+/// pools run dry constantly while collectors still feed them -- hence the count, which is
+/// `usize::MAX` until the phase publishes it.
+pub fn bands_in_scope(done: usize, non_last_total: usize) -> usize {
+    if done >= non_last_total {
+        WitnessPriority::BANDS
+    } else {
+        WitnessPriority::Last.index()
+    }
+}
+
+/// `(pool, index)` of the instance to admit next: in the most urgent band with an admissible
+/// entry, the one with the largest `cost` (ties by arrival). `admissible` outranks the band: it
+/// carries the slot cap, the reason this pools at all. So a band held back by the cap yields to a
+/// less urgent one -- which is why a barrier band has to be kept out of `pools` by the caller, not
+/// ranked last here.
+pub(crate) fn next_admission(
+    pools: &[VecDeque<usize>],
+    admissible: impl Fn(usize) -> bool,
+    cost: impl Fn(usize) -> u64,
+) -> Option<(usize, usize)> {
+    pools.iter().enumerate().find_map(|(band, pool)| {
+        pool.iter()
+            .enumerate()
+            .filter(|&(_, &id)| admissible(id))
+            .min_by_key(|&(pos, &id)| (std::cmp::Reverse(cost(id)), pos))
+            .map(|(pos, _)| (band, pos))
+    })
 }
 
 /// Sort key for the basic-proof schedule: `priority_tier` (front-load stored / has-compressor
@@ -466,17 +577,17 @@ mod drain_tests {
         RecursiveScheduler::<F>::new(std::ptr::null_mut())
     }
 
-    /// Four buffers per pool (2 recursive + 2 compressor) so a drained-and-returned buffer is
-    /// distinguishable from a refilled one: `reset()` only passes if the originals come back.
+    /// Two trace buffers per pool so a drained-and-returned buffer is distinguishable from a
+    /// refilled one: `reset()` only passes if the originals come back.
     fn handler() -> MemoryHandlerRecursive<F> {
-        MemoryHandlerRecursive::new(2, 2, W_SIZE, W_SIZE)
+        MemoryHandlerRecursive::new(4, W_SIZE)
     }
 
     /// A witness as the hand-off builds it: `global_idx` set (the ledger keys off it) and holding a
-    /// buffer drawn from the pool its `proof_type` selects.
+    /// trace drawn from the pool its `proof_type` selects.
     fn witness(h: &MemoryHandlerRecursive<F>, t: ProofType, global_idx: usize) -> Proof<F> {
-        let buf = h.take_buffer_witness();
-        Proof::new_witness(t, 0, 0, Some(global_idx), buf, 1)
+        let buf = h.take_buffer_trace();
+        Proof::new_witness(t, 0, 0, Some(global_idx), buf, Vec::new(), 1)
     }
 
     #[test]
@@ -486,8 +597,8 @@ mod drain_tests {
         s.push(witness(&h, ProofType::Compressor, 0));
         s.push(witness(&h, ProofType::Recursive1, 1));
         s.push(witness(&h, ProofType::Recursive2, 2));
-        s.push_basic(10, 0, 0, false);
-        s.push_basic(11, 0, 1, true);
+        s.push_basic(10, 0, 0);
+        s.push_basic(11, 0, 1);
 
         let (witnesses, basics) = s.drain_all();
         assert_eq!(witnesses.len(), 3);
@@ -571,9 +682,9 @@ mod drain_tests {
         // `global_idx` is set for every hand-off path today; if that ever regresses, the buffer must
         // still come back rather than the recovery panicking on an `unwrap`.
         let h = handler();
-        let buf = h.take_buffer_witness();
+        let buf = h.take_buffer_trace();
         let mut s = scheduler();
-        s.push(Proof::new_witness(ProofType::Recursive1, 0, 0, None, buf, 1));
+        s.push(Proof::new_witness(ProofType::Recursive1, 0, 0, None, buf, Vec::new(), 1));
 
         let (witnesses, _) = s.drain_all();
         recover_drained_witnesses(witnesses, &h, &DeviceCompletions::new().acquire(null_ptr()).ledger());
@@ -614,7 +725,8 @@ mod drain_tests {
 
 #[cfg(test)]
 mod admission_tests {
-    use super::{eligible_stream_count, witness_slot_cap};
+    use super::{bands_in_scope, eligible_stream_count, next_admission, witness_slot_cap, WitnessPriority};
+    use std::collections::VecDeque;
 
     /// Measured carve: one 7.42 GB class and two 6.24 GB (MiB).
     const CLASSES: [usize; 3] = [7598, 6390, 6390];
@@ -644,6 +756,87 @@ mod admission_tests {
         assert_eq!(eligible_stream_count(6133, &[]), 0);
         assert_eq!(witness_slot_cap(0, 3), usize::MAX);
         assert_eq!(witness_slot_cap(1, 0), usize::MAX);
+    }
+
+    /// The handler's arrival pools, in band order.
+    fn pools(pairs: &[(usize, WitnessPriority)]) -> [VecDeque<usize>; WitnessPriority::BANDS] {
+        let mut out: [VecDeque<usize>; WitnessPriority::BANDS] = Default::default();
+        for &(id, band) in pairs {
+            out[band.index()].push_back(id);
+        }
+        out
+    }
+
+    /// Arrivals that all took the default band.
+    fn normal(ids: &[usize]) -> [VecDeque<usize>; WitnessPriority::BANDS] {
+        pools(&ids.iter().map(|&id| (id, WitnessPriority::Normal)).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn nothing_to_admit_admits_nothing() {
+        assert_eq!(next_admission(&normal(&[]), |_| true, |_| 0), None, "no pool has anything");
+        assert_eq!(next_admission(&normal(&[7, 2]), |_| false, |_| 0), None, "every candidate is at its cap");
+    }
+
+    /// Within a band, equal-cost arrivals are FIFO, and the band still outranks arrival order.
+    #[test]
+    fn arrival_order_decides_within_a_band() {
+        assert_eq!(next_admission(&normal(&[7, 2, 9]), |_| true, |_| 0), Some((1, 0)));
+        let pending = pools(&[(7, WitnessPriority::Normal), (2, WitnessPriority::First), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&pending, |_| true, |_| 0), Some((0, 0)));
+        assert_eq!(pending[0][0], 2, "the earlier First arrival wins its band");
+    }
+
+    /// The production shape: one band, the head's air at its cap, another air behind it. Without
+    /// this, narrowing the scan to the head alone would pass every other test and stall the pool.
+    #[test]
+    fn a_capped_head_does_not_block_the_rest_of_its_pool() {
+        assert_eq!(next_admission(&normal(&[7, 2]), |id| id != 7, |_| 0), Some((1, 1)));
+    }
+
+    /// The band replaces the priority channel, and the walk runs the whole way down. 7 arrives
+    /// first but sits in the least urgent band; 9 arrives last in the most urgent.
+    #[test]
+    fn bands_outrank_arrival_order() {
+        let all = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&all, |_| true, |_| 0), Some((0, 0)));
+        assert_eq!(all[0][0], 9, "the pools must come back untouched");
+        let no_first = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal)]);
+        assert_eq!(next_admission(&no_first, |_| true, |_| 0), Some((1, 0)));
+        let only_last = pools(&[(7, WitnessPriority::Last)]);
+        assert_eq!(next_admission(&only_last, |_| true, |_| 0), Some((2, 0)));
+    }
+
+    /// The case band ordering alone got wrong: a ready `Last`, alone in the pools, must still wait.
+    #[test]
+    fn last_stays_out_of_scope_until_the_phase_owes_nothing() {
+        let pending = pools(&[(7, WitnessPriority::Last)]);
+        let scope = |done, total| next_admission(&pending[..bands_in_scope(done, total)], |_| true, |_| 0);
+        assert_eq!(scope(0, usize::MAX), None, "unarmed: shut, so nothing slips through on startup");
+        assert_eq!(scope(1, 2), None, "one of two done: ready, alone, and still held");
+        assert_eq!(scope(2, 2), Some((2, 0)), "the last one lands and the band opens");
+        assert_eq!(scope(0, 0), Some((2, 0)), "a phase of only Last instances must not deadlock");
+        assert_eq!(scope(3, 2), Some((2, 0)), "an eviction recompute overshoots; the gate stays open");
+    }
+
+    /// The slot cap outranks the band: holding an air back is why this pools at all.
+    #[test]
+    fn the_slot_cap_outranks_the_band() {
+        let pending = pools(&[(7, WitnessPriority::First), (2, WitnessPriority::Normal), (9, WitnessPriority::Last)]);
+        assert_eq!(next_admission(&pending, |id| id != 7, |_| 0), Some((1, 0)), "a capped First yields to Normal");
+        assert_eq!(next_admission(&pending, |id| id != 7 && id != 2, |_| 0), Some((2, 0)), "and Normal to Last");
+    }
+
+    /// Within a band the largest air goes first, so the long witnesses start early.
+    #[test]
+    fn the_largest_air_goes_first_within_a_band() {
+        let cost = |id: usize| if id == 9 { 100 } else { 10 };
+        assert_eq!(next_admission(&normal(&[7, 2, 9]), |_| true, cost), Some((1, 2)));
+        // Still below the band: a First instance goes ahead of a larger Normal one.
+        let pending = pools(&[(7, WitnessPriority::First), (9, WitnessPriority::Normal)]);
+        assert_eq!(next_admission(&pending, |_| true, cost), Some((0, 0)));
+        // And below the slot cap.
+        assert_eq!(next_admission(&normal(&[7, 2, 9]), |id| id != 9, cost), Some((1, 0)));
     }
 }
 

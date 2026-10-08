@@ -1,7 +1,236 @@
 use std::collections::HashSet;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::collections::hash_map::Entry;
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use crate::{ProofmanResult, ProofmanError};
+
+/// Lifecycle of an instance's witness within one proof. Single answer to "does this still need
+/// computing?": the dispatch-time bool it replaces could disagree with the trace it stood for.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WitnessState {
+    /// Nothing has happened to it in this proof.
+    Absent = 0,
+    /// On the witness channel, waiting for a hook to pick it up.
+    Queued = 1,
+    /// A witness hook owns it right now.
+    Running = 2,
+    /// Its witness exists.
+    Done = 3,
+    /// Was `Done`; its trace was reclaimed, so it must be recomputed before it can be proved.
+    Evicted = 4,
+}
+
+impl WitnessState {
+    fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Absent,
+            1 => Self::Queued,
+            2 => Self::Running,
+            3 => Self::Done,
+            _ => Self::Evicted,
+        }
+    }
+}
+
+/// One instance's witness lifecycle. Every transition goes through `move_to`, so the legal ones are
+/// the only ones expressible and each is a single atomic.
+#[derive(Debug, Default)]
+pub struct WitnessSlot(AtomicU8);
+
+impl WitnessSlot {
+    pub fn get(&self) -> WitnessState {
+        WitnessState::from_u8(self.0.load(Ordering::SeqCst))
+    }
+
+    fn move_to(&self, to: WitnessState, from: &[WitnessState]) -> bool {
+        let mut cur = self.0.load(Ordering::SeqCst);
+        loop {
+            if !from.contains(&WitnessState::from_u8(cur)) {
+                return false;
+            }
+            match self.0.compare_exchange_weak(cur, to as u8, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return true,
+                Err(actual) => cur = actual,
+            }
+        }
+    }
+
+    /// False means it is queued, owned, or already computed: do not enqueue it again. `Evicted` is
+    /// excluded on purpose -- it has had its witness in this phase, and a blanket re-announce would
+    /// put it back on the channel to be recomputed for nobody. `rearm` is the explicit way back.
+    pub fn try_queue(&self) -> bool {
+        self.move_to(WitnessState::Queued, &[WitnessState::Absent])
+    }
+
+    /// The one gate every witness hook goes through. `Evicted` is not a source: its owner may still
+    /// be running, and a second hook taking the slot would make that owner's `release` land on the
+    /// second one's `Running`. `rearm` is the way back, and every recompute path already calls it.
+    pub fn try_acquire(&self) -> bool {
+        self.move_to(WitnessState::Running, &[WitnessState::Absent, WitnessState::Queued])
+    }
+
+    /// End of a hook. Producing nothing returns to `Absent` because the queue slot is spent; only
+    /// from `Running`, so a trace reclaimed mid-hook is not overwritten with `Done`.
+    pub fn release(&self, produced: bool) {
+        let to = if produced { WitnessState::Done } else { WitnessState::Absent };
+        self.move_to(to, &[WitnessState::Running]);
+    }
+
+    /// The trace is gone. Covers `Running` so a buffer freed under a live hook cannot end as `Done`.
+    pub fn mark_evicted(&self) {
+        self.move_to(WitnessState::Evicted, &[WitnessState::Done, WitnessState::Running]);
+    }
+
+    /// Back to square one: this instance is wanted again and must be prepared, queued and computed
+    /// from scratch. Used by the on-demand queries and by the phase boundary.
+    pub fn rearm(&self) -> bool {
+        self.move_to(WitnessState::Absent, &[WitnessState::Evicted, WitnessState::Queued])
+    }
+}
+
+/// Witness-lifecycle diagnostics. Pure observation: nothing reads these to make a decision.
+#[derive(Debug, Default)]
+pub struct WitnessStats {
+    /// Dispatches refused because the instance was already queued or computed.
+    pub duplicate_sends: AtomicUsize,
+    /// Traces reclaimed from computed instances; each is a witness that must be redone.
+    pub evictions: AtomicUsize,
+    /// Witnesses computed over a trace that already held one.
+    pub recomputed_over_trace: AtomicUsize,
+}
+
+impl WitnessStats {
+    pub fn snapshot(&self) -> (usize, usize, usize) {
+        let load = |c: &AtomicUsize| c.load(Ordering::Relaxed);
+        (load(&self.duplicate_sends), load(&self.evictions), load(&self.recomputed_over_trace))
+    }
+}
+
+#[cfg(test)]
+mod witness_slot_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn a_second_queue_of_the_same_instance_is_refused() {
+        let s = WitnessSlot::default();
+        assert!(s.try_queue());
+        assert!(!s.try_queue(), "the duplicate must not reach the channel");
+    }
+
+    #[test]
+    fn a_queued_instance_is_still_acquirable_and_only_once() {
+        let s = WitnessSlot::default();
+        assert!(s.try_queue());
+        assert!(s.try_acquire());
+        assert!(!s.try_acquire());
+        s.release(true);
+        assert_eq!(s.get(), WitnessState::Done);
+        assert!(!s.try_acquire(), "a produced witness must not be computed again");
+    }
+
+    #[test]
+    fn producing_nothing_leaves_the_instance_computable_and_queueable() {
+        let s = WitnessSlot::default();
+        assert!(s.try_queue());
+        assert!(s.try_acquire());
+        s.release(false);
+        assert_eq!(s.get(), WitnessState::Absent);
+        assert!(s.try_queue());
+        assert!(s.try_acquire());
+    }
+
+    #[test]
+    fn reclaiming_a_trace_makes_the_instance_computable_again_once_rearmed() {
+        let s = WitnessSlot::default();
+        assert!(s.try_acquire());
+        s.release(true);
+        s.mark_evicted();
+        assert_eq!(s.get(), WitnessState::Evicted);
+        assert!(!s.try_acquire(), "its owner may still be running");
+        assert!(s.rearm());
+        assert!(s.try_acquire());
+    }
+
+    /// A reclaim mid-hook must not let a second hook in: the first owner's `release` would then
+    /// land on the second one's `Running` and leave that one's result untracked.
+    #[test]
+    fn an_evicted_owner_is_not_displaced_by_a_second_hook() {
+        let s = WitnessSlot::default();
+        assert!(s.try_acquire());
+        s.mark_evicted();
+        assert!(!s.try_acquire(), "the evicted owner has not finished");
+        s.release(true);
+        assert_eq!(s.get(), WitnessState::Evicted, "the late release must not publish Done");
+    }
+
+    #[test]
+    fn an_evicted_instance_is_not_re_queued_by_a_blanket_announce() {
+        let s = WitnessSlot::default();
+        assert!(s.try_acquire());
+        s.release(true);
+        s.mark_evicted();
+        assert!(!s.try_queue(), "a blanket re-announce must not schedule it again");
+        assert!(s.rearm());
+        assert_eq!(s.get(), WitnessState::Absent);
+        assert!(s.try_queue());
+    }
+
+    #[test]
+    fn rearm_leaves_a_computed_instance_alone() {
+        let s = WitnessSlot::default();
+        assert!(s.try_acquire());
+        s.release(true);
+        assert!(!s.rearm());
+        assert_eq!(s.get(), WitnessState::Done);
+    }
+
+    #[test]
+    fn a_reclaim_mid_hook_beats_the_late_release() {
+        let s = WitnessSlot::default();
+        assert!(s.try_acquire());
+        s.mark_evicted();
+        s.release(true);
+        assert_eq!(s.get(), WitnessState::Evicted);
+        assert!(s.rearm());
+        assert!(s.try_acquire());
+    }
+
+    #[test]
+    fn reclaiming_an_instance_that_never_ran_is_a_no_op() {
+        let s = WitnessSlot::default();
+        s.mark_evicted();
+        assert_eq!(s.get(), WitnessState::Absent);
+        assert!(s.try_queue());
+        s.mark_evicted();
+        assert_eq!(s.get(), WitnessState::Queued);
+    }
+
+    /// Both gates must elect exactly one winner under contention.
+    fn race(f: fn(&WitnessSlot) -> bool) -> usize {
+        let s = Arc::new(WitnessSlot::default());
+        let winners = Arc::new(AtomicUsize::new(0));
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                let (s, winners) = (s.clone(), winners.clone());
+                std::thread::spawn(move || {
+                    if f(&s) {
+                        winners.fetch_add(1, Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect();
+        handles.into_iter().for_each(|h| h.join().unwrap());
+        winners.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn concurrent_gates_elect_exactly_one_winner() {
+        assert_eq!(race(WitnessSlot::try_acquire), 1);
+        assert_eq!(race(WitnessSlot::try_queue), 1);
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceChunks {
@@ -9,14 +238,65 @@ pub struct InstanceChunks {
     pub slow: bool,
 }
 
+/// Dispatch-order band for an instance, fixed at registration; says nothing about *why*.
+///
+/// `First` and `Normal` are preferences: they order what is ready now. `Last` is a barrier -- it
+/// starts only once every other instance of the phase has finished, however early it was ready.
+///
+/// Spaced like nice values, not numbered 0, 1, 2: a band added later (a `Bulk` at 20) takes a
+/// free number instead of renumbering the ones above it. Lower is more urgent, and `Ord` follows
+/// the discriminants. The number is not the pool slot -- [`WitnessPriority::index`] is.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[repr(u8)]
+pub enum WitnessPriority {
+    First = 0,
+    #[default]
+    Normal = 10,
+    Last = 30,
+}
+
+impl WitnessPriority {
+    /// Every band, most urgent first; a band's position here is its `index()`. The length is
+    /// explicit: adding a band without bumping it will not compile.
+    pub const ALL: [Self; 3] = [Self::First, Self::Normal, Self::Last];
+
+    /// How many pools `next_admission` walks.
+    pub const BANDS: usize = Self::ALL.len();
+
+    /// This band's admission pool: dense and contiguous, unlike the spaced discriminant, because
+    /// the handler indexes an array with it. A match, not a cast: a new variant must not compile
+    /// until it has a pool, or the handler indexes past the array and dies mid-phase.
+    pub const fn index(self) -> usize {
+        match self {
+            Self::First => 0,
+            Self::Normal => 1,
+            Self::Last => 2,
+        }
+    }
+}
+
+/// Orders `instances` for dispatch. Only `Last` moves anything: `First` is a pooled preference
+/// with no serial analogue here, so honouring it would reorder airs that never actually race.
+/// The sort is stable, so everything else keeps registration order. This is only the order; the
+/// barrier that holds `Last` back is enforced where instances are dispatched.
+pub fn witness_schedule(
+    instances: impl IntoIterator<Item = usize>,
+    band: impl Fn(usize) -> WitnessPriority,
+) -> Vec<usize> {
+    let mut ordered: Vec<usize> = instances.into_iter().collect();
+    ordered.sort_by_key(|&id| band(id) == WitnessPriority::Last);
+    ordered
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
     pub airgroup_id: usize,
     pub air_id: usize,
+    pub priority: WitnessPriority,
     pub table: bool,
     pub shared: bool,
     pub n_chunks: usize,
-    pub weight: u64,
+    pub weight: u64,            // Cost of the basic proof plus the recursion chain it triggers
     pub compressor_weight: u64, // Cost of the compressor proof it triggers, 0 if the air has none
 }
 
@@ -28,11 +308,18 @@ impl InstanceInfo {
         shared: bool,
         weight: u64,
         compressor_weight: u64,
+        priority: WitnessPriority,
     ) -> Self {
-        Self { airgroup_id, air_id, table, shared, n_chunks: 0, weight, compressor_weight }
+        Self { airgroup_id, air_id, priority, table, shared, n_chunks: 0, weight, compressor_weight }
     }
 
-    /// Total cost this instance puts on its owner: its basic proof plus its compressor proof
+    /// A table instance. `shared` distinguishes one-per-worker from one-per-process; a table is
+    /// never witness-dispatched, so it takes no band, but its proof aggregates like any other.
+    pub fn table(airgroup_id: usize, air_id: usize, shared: bool, weight: u64, compressor_weight: u64) -> Self {
+        Self::new(airgroup_id, air_id, true, shared, weight, compressor_weight, WitnessPriority::default())
+    }
+
+    /// Total cost this instance puts on its owner: basic, recursion chain and compressor
     #[inline]
     pub fn total_weight(&self) -> u64 {
         self.weight + self.compressor_weight
@@ -64,28 +351,30 @@ pub struct DistributionCtx {
     // DYNAMIC PARAMETERS
 
     // Instances
-    pub n_instances: usize,                    // Total number of instances
-    pub instances: Vec<InstanceInfo>,          // Instances info
-    pub instances_chunks: Vec<InstanceChunks>, // Chunks info per instance
-    pub instances_calculated: Vec<AtomicBool>, // Whether the witness has been calculated for each instance
-    pub n_tables: usize,                       // Number of table instances
-    pub aux_tables: Vec<InstanceInfo>,         // Table instances info (lately appended to instances)
-    pub aux_table_map: Vec<i32>,               // Map from aux tables to original instances
+    pub n_instances: usize,                               // Total number of instances
+    pub instances: Vec<InstanceInfo>,                     // Instances info
+    pub instances_chunks: Vec<InstanceChunks>,            // Chunks info per instance
+    pub witness_states: Vec<WitnessSlot>,                 // Witness lifecycle per instance
+    pub n_tables: usize,                                  // Number of table instances
+    pub aux_tables: Vec<InstanceInfo>,                    // Table instances info (lately appended to instances)
+    pub aux_table_map: Vec<i32>,                          // Map from aux tables to original instances
+    pub table_assignment: HashMap<(usize, usize), usize>, // (airgroup_id, air_id) -> reference gid the table is forced onto
 
     // Worker-level distribution
-    pub partition_set: bool,                  // Whether the partition assignation is done
+    pub partition_set: bool,                      // Whether the partition assignation is done
     pub instance_partition: Vec<i32>, // Which partition each instance belongs to (>=0 assigned, -1 unassigned, -2 appended table)
-    pub worker_instances: Vec<usize>, // Indexes of instances assigned to this worker
-    pub partition_count: Vec<u32>,    // #instances in each partition (does not include tables)
-    pub partition_weight: Vec<u64>,   // Weight per partition, basic + compressor (does not include tables)
-    pub partition_compressor_count: Vec<u32>, // #compressor instances assigned to each partition
+    pub assigned_table_instances: HashSet<usize>, // Global indices of assigned tables (forced onto a reference instance's node)
+    pub worker_instances: Vec<usize>,             // Indexes of instances assigned to this worker
+    pub partition_count: Vec<u32>,                // #instances per partition, plus any pinned table
+    pub partition_weight: Vec<u64>,               // Weight per partition, basic + compressor + pinned tables
+    pub partition_compressor_count: Vec<u32>,     // #compressor instances assigned to each partition
 
     // Process-level distribution
     pub instance_process: Vec<(i32, usize)>, // For each instance: (process_id or -1 if other worker, local_idx)
     pub process_instances: Vec<usize>,       // Indexes of instances assigned to current process
     pub skipped_process_instances: Vec<usize>, // Indexes of instances assigned to current process but skipped for some reason
     pub process_count: Vec<usize>,             // #instances assigned to each process
-    pub process_weight: Vec<u64>,              // Weight per process, basic + compressor
+    pub process_weight: Vec<u64>,              // Weight per process, basic + recursion + compressor
     pub process_compressor_count: Vec<u32>,    // #compressor instances assigned to each process
 
     pub worker_index: i32, // Index of the current worker
@@ -135,12 +424,14 @@ impl DistributionCtx {
             process_id: 0,
             n_instances: 0,
             instances: Vec::new(),
-            instances_calculated: Vec::new(),
+            witness_states: Vec::new(),
             instances_chunks: Vec::new(),
             n_tables: 0,
             aux_tables: Vec::new(),
             aux_table_map: Vec::new(),
+            table_assignment: HashMap::new(),
             instance_partition: Vec::new(),
+            assigned_table_instances: HashSet::new(),
             worker_instances: Vec::new(),
             partition_count: Vec::new(),
             partition_weight: Vec::new(),
@@ -212,10 +503,12 @@ impl DistributionCtx {
         self.n_instances = 0;
         self.instances.clear();
         self.instances_chunks.clear();
-        self.instances_calculated.clear();
+        self.witness_states.clear();
         self.n_tables = 0;
         self.aux_tables.clear();
         self.aux_table_map.clear();
+        self.table_assignment.clear();
+        self.assigned_table_instances.clear();
 
         // Worker-level
         self.instance_partition.clear();
@@ -327,6 +620,12 @@ impl DistributionCtx {
             )));
         }
         Ok((self.instances[instance_id].airgroup_id, self.instances[instance_id].air_id))
+    }
+
+    /// The band `instance_id` was registered with; an unknown id answers `Normal`, like every other lookup here.
+    #[inline]
+    pub fn instance_priority(&self, instance_id: usize) -> WitnessPriority {
+        self.instances.get(instance_id).map(|i| i.priority).unwrap_or_default()
     }
 
     /// Get the airgroup and air ID of a given table
@@ -502,17 +801,14 @@ impl DistributionCtx {
         None
     }
 
-    /// Partition with the least accumulated cost, ties broken by #compressor instances (to spread
-    /// the recursive pipeline) and then by #instances. Cost must stay the primary criterion: the
-    /// compressor airs are also the heaviest ones, so ordering by compressor count first trades a
-    /// heavy compressor air (Keccakf) for a light one (Sha256f) as if they cost the same.
+    /// Partition with the least accumulated cost, ties broken by #instances. Compressor count is
+    /// not a criterion of its own: that cost is already in the weight.
     #[inline]
-    fn least_loaded_partition(&self, has_compressor: bool) -> usize {
+    fn least_loaded_partition(&self) -> usize {
         let mut best_idx = 0;
-        let mut best_key = (u64::MAX, u32::MAX, u32::MAX);
+        let mut best_key = (u64::MAX, u32::MAX);
         for (i, &weight) in self.partition_weight.iter().enumerate() {
-            let compressors = if has_compressor { self.partition_compressor_count[i] } else { 0 };
-            let key = (weight, compressors, self.partition_count[i]);
+            let key = (weight, self.partition_count[i]);
             if key < best_key {
                 best_key = key;
                 best_idx = i;
@@ -523,12 +819,11 @@ impl DistributionCtx {
 
     /// Same criterion as `least_loaded_partition`, over the processes of this worker
     #[inline]
-    fn least_loaded_process(&self, has_compressor: bool, counts: &[usize]) -> usize {
+    fn least_loaded_process(&self, counts: &[usize]) -> usize {
         let mut best_idx = 0;
-        let mut best_key = (u64::MAX, u32::MAX, usize::MAX);
+        let mut best_key = (u64::MAX, usize::MAX);
         for (i, &weight) in self.process_weight.iter().enumerate() {
-            let compressors = if has_compressor { self.process_compressor_count[i] } else { 0 };
-            let key = (weight, compressors, counts[i]);
+            let key = (weight, counts[i]);
             if key < best_key {
                 best_key = key;
                 best_idx = i;
@@ -546,22 +841,43 @@ impl DistributionCtx {
         air_id: usize,
         weight: u64,
         compressor_weight: u64,
+        priority: WitnessPriority,
+    ) -> ProofmanResult<usize> {
+        // Placed as created, without knowing the instances still to come: greedy least loaded.
+        // Round-robin on the gid handed out the heaviest airs (Main, Keccakf) blindly, leaving
+        // only the instances of assign_instances() to compensate for it.
+        let partition_id = self.least_loaded_partition();
+        self.add_instance_in(airgroup_id, air_id, weight, compressor_weight, priority, partition_id)
+    }
+
+    /// `add_instance` on a chosen partition; every process must choose the same one.
+    pub fn add_instance_in(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+        compressor_weight: u64,
+        priority: WitnessPriority,
+        partition_id: usize,
     ) -> ProofmanResult<usize> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
+        if partition_id >= self.n_partitions {
+            return Err(ProofmanError::InvalidAssignation(format!(
+                "partition {partition_id} out of {}",
+                self.n_partitions
+            )));
+        }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let gid: usize = self.instances.len();
-        let instance = InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight);
+        let instance = InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight, priority);
         let (total_weight, has_compressor) = (instance.total_weight(), instance.has_compressor());
         self.instances.push(instance);
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
-        self.instances_calculated.push(AtomicBool::new(false));
+        self.witness_states.push(WitnessSlot::default());
         self.n_instances += 1;
-        // Placed as created, without knowing the instances still to come: greedy least loaded.
-        // Round-robin on the gid handed out the heaviest airs (Main, Keccakf) blindly, leaving
-        // only the instances of assign_instances() to compensate for it.
-        let partition_id = self.least_loaded_partition(has_compressor) as u32;
+        let partition_id = partition_id as u32;
         self.instance_partition.push(partition_id as i32);
         self.partition_count[partition_id as usize] += 1;
         self.partition_weight[partition_id as usize] += total_weight;
@@ -572,7 +888,7 @@ impl DistributionCtx {
         let mut owner = -1;
         if self.partition_mask[partition_id as usize] {
             self.worker_instances.push(gid);
-            let process_id = self.least_loaded_process(has_compressor, &self.process_count);
+            let process_id = self.least_loaded_process(&self.process_count);
             owner = process_id as i32;
             local_idx = self.process_count[process_id];
             self.process_count[process_id] += 1;
@@ -602,14 +918,15 @@ impl DistributionCtx {
         air_id: usize,
         weight: u64,
         compressor_weight: u64,
+        priority: WitnessPriority,
     ) -> ProofmanResult<usize> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, false, weight, compressor_weight, priority));
         self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
-        self.instances_calculated.push(AtomicBool::new(false));
+        self.witness_states.push(WitnessSlot::default());
         self.instance_partition.push(-1);
         self.instance_process.push((-1, 0_usize));
         self.n_instances += 1;
@@ -617,13 +934,19 @@ impl DistributionCtx {
     }
 
     /// Add local table instances
-    pub fn add_table(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
+    pub fn add_table(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+        compressor_weight: u64,
+    ) -> ProofmanResult<usize> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
-        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, true, weight, 0));
+        self.aux_tables.push(InstanceInfo::table(airgroup_id, air_id, true, weight, compressor_weight));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
         Ok(lid)
@@ -635,13 +958,19 @@ impl DistributionCtx {
         instance_info.slow = slow;
     }
 
-    pub fn add_table_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> ProofmanResult<usize> {
+    pub fn add_table_all(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        weight: u64,
+        compressor_weight: u64,
+    ) -> ProofmanResult<usize> {
         if self.assignation_done {
             return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
         }
         self.validate_static_config().expect("Static configuration invalid or incomplete");
         let lid = self.aux_tables.len();
-        self.aux_tables.push(InstanceInfo::new(airgroup_id, air_id, true, false, weight, 0));
+        self.aux_tables.push(InstanceInfo::table(airgroup_id, air_id, false, weight, compressor_weight));
         self.aux_table_map.push(-1);
         self.n_tables += 1;
         Ok(lid)
@@ -655,11 +984,55 @@ impl DistributionCtx {
         //assign instances
         self.validate_static_config().expect("Static configuration invalid or incomplete");
 
+        // A table pinned by `assign_table_to` lands on its reference's node whatever the balancer
+        // decides, so its cost goes on that node's books before anything else is placed. Credited
+        // where it is appended instead -- after the loop below -- it stays invisible while every
+        // other instance is balanced, and the pinned node ends the phase over its share by it.
+        // Only a reference already placed by `add_instance` can be credited here. One left to the
+        // loop carries its tables' weight into it (`late_pins`): credited where it lands and held
+        // there, so the append pass, which `prepaid` keeps from doubling, finds them paid.
+        // The head count goes to `local_process_count`, the balancing tally, and not to
+        // `process_count`, which numbers local indices: this table takes its own when appended.
+        let mut local_process_count = self.process_count.clone();
+        let mut prepaid = vec![false; self.aux_tables.len()];
+        let mut late_pins: HashMap<usize, (u64, u32)> = HashMap::new();
+        let pinned: Vec<(usize, u64, usize)> = self
+            .aux_tables
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, t)| {
+                self.table_assignment.get(&(t.airgroup_id, t.air_id)).map(|&ref_gid| (idx, t.total_weight(), ref_gid))
+            })
+            .collect();
+        for (table_idx, weight, ref_gid) in pinned {
+            // A bogus or unplaced reference is the append loop's error to report, not this one's.
+            let Some(&ref_partition) = self.instance_partition.get(ref_gid) else { continue };
+            if ref_partition == -1 {
+                let pin = late_pins.entry(ref_gid).or_default();
+                pin.0 += weight;
+                pin.1 += 1;
+                prepaid[table_idx] = true;
+                continue;
+            }
+            if ref_partition < 0 {
+                continue;
+            }
+            self.partition_count[ref_partition as usize] += 1;
+            self.partition_weight[ref_partition as usize] += weight;
+            let ref_process = self.instance_process[ref_gid].0;
+            if ref_process >= 0 {
+                self.process_weight[ref_process as usize] += weight;
+                local_process_count[ref_process as usize] += 1;
+            }
+            prepaid[table_idx] = true;
+        }
+
         // Sort the unassigned instances by proof weight
         let mut unassigned_instances = Vec::new();
         for (gid, &partition_id) in self.instance_partition.iter().enumerate() {
             if partition_id == -1 {
-                unassigned_instances.push((gid, self.instances[gid].total_weight()));
+                let pinned = late_pins.get(&gid).map_or(0, |p| p.0);
+                unassigned_instances.push((gid, self.instances[gid].total_weight() + pinned));
             }
         }
 
@@ -671,34 +1044,46 @@ impl DistributionCtx {
 
         let mut instances_assigned_partition = vec![HashMap::<(usize, usize), usize>::new(); self.n_partitions];
         let mut instances_assigned_process = vec![HashMap::<(usize, usize), usize>::new(); self.n_processes];
+        // Where each `late_pins` reference was credited. Kept out of the per-air quotas, so the chunk
+        // pass below cannot hand that slot to another instance of the same air.
+        let mut reserved_partition: HashMap<usize, usize> = HashMap::new();
+        let mut reserved_process: HashMap<usize, usize> = HashMap::new();
 
-        let mut local_process_count = self.process_count.clone();
-        for (gid, _) in &unassigned_instances {
-            let (airgroup_id, air_id) = self.get_instance_info(*gid)?;
-            let has_compressor = self.instances[*gid].has_compressor();
+        for &(gid, weight) in &unassigned_instances {
+            let (airgroup_id, air_id) = self.get_instance_info(gid)?;
+            let has_compressor = self.instances[gid].has_compressor();
+            let pins = late_pins.get(&gid).map_or(0, |p| p.1);
 
             // Select target partition: least loaded first (see least_loaded_partition)
-            let min_weight_idx = self.least_loaded_partition(has_compressor);
+            let min_weight_idx = self.least_loaded_partition();
             if has_compressor {
                 self.partition_compressor_count[min_weight_idx] += 1;
             }
 
-            *instances_assigned_partition[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
-            self.partition_count[min_weight_idx] += 1;
-            self.partition_weight[min_weight_idx] += self.instances[*gid].total_weight();
+            if pins > 0 {
+                reserved_partition.insert(gid, min_weight_idx);
+            } else {
+                *instances_assigned_partition[min_weight_idx].entry((airgroup_id, air_id)).or_insert(0) += 1;
+            }
+            self.partition_count[min_weight_idx] += 1 + pins;
+            self.partition_weight[min_weight_idx] += weight;
             if self.partition_mask[min_weight_idx] {
                 // Select target process with the same criterion as the partition above
-                let min_weight_process_idx = self.least_loaded_process(has_compressor, &local_process_count);
+                let min_weight_process_idx = self.least_loaded_process(&local_process_count);
                 if has_compressor {
                     self.process_compressor_count[min_weight_process_idx] += 1;
                 }
 
-                local_process_count[min_weight_process_idx] += 1;
-                self.process_weight[min_weight_process_idx] += self.instances[*gid].total_weight();
-                instances_assigned_process[min_weight_process_idx]
-                    .entry((airgroup_id, air_id))
-                    .and_modify(|c| *c += 1)
-                    .or_insert(1);
+                local_process_count[min_weight_process_idx] += 1 + pins as usize;
+                self.process_weight[min_weight_process_idx] += weight;
+                if pins > 0 {
+                    reserved_process.insert(gid, min_weight_process_idx);
+                } else {
+                    instances_assigned_process[min_weight_process_idx]
+                        .entry((airgroup_id, air_id))
+                        .and_modify(|c| *c += 1)
+                        .or_insert(1);
+                }
             }
         }
 
@@ -710,26 +1095,30 @@ impl DistributionCtx {
         for (gid, _) in &unassigned_instances {
             let chunks = &self.instances_chunks[*gid].chunks;
             let (airgroup_id, air_id) = self.get_instance_info(*gid)?;
-            let mut min_chunks = usize::MAX;
-            let mut min_chunks_idx = 0;
-            for partition_id in 0..self.n_partitions {
-                if instances_assigned_partition[partition_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
-                    let mut new_chunks_added = 0;
-                    for chunk in chunks {
-                        if !partitions_chunks[partition_id].contains(chunk) {
-                            new_chunks_added += 1;
+            let min_chunks_idx = if let Some(&reserved) = reserved_partition.get(gid) {
+                reserved
+            } else {
+                let mut min_chunks = usize::MAX;
+                let mut min_chunks_idx = 0;
+                for partition_id in 0..self.n_partitions {
+                    if instances_assigned_partition[partition_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
+                        let mut new_chunks_added = 0;
+                        for chunk in chunks {
+                            if !partitions_chunks[partition_id].contains(chunk) {
+                                new_chunks_added += 1;
+                            }
+                        }
+                        if new_chunks_added < min_chunks {
+                            min_chunks = new_chunks_added;
+                            min_chunks_idx = partition_id;
                         }
                     }
-                    if new_chunks_added < min_chunks {
-                        min_chunks = new_chunks_added;
-                        min_chunks_idx = partition_id;
-                    }
                 }
-            }
-
-            if let Some(c) = instances_assigned_partition[min_chunks_idx].get_mut(&(airgroup_id, air_id)) {
-                *c -= 1;
-            }
+                if let Some(c) = instances_assigned_partition[min_chunks_idx].get_mut(&(airgroup_id, air_id)) {
+                    *c -= 1;
+                }
+                min_chunks_idx
+            };
 
             self.instance_partition[*gid] = min_chunks_idx as i32;
 
@@ -739,22 +1128,30 @@ impl DistributionCtx {
 
             if self.partition_mask[min_chunks_idx] {
                 self.worker_instances.push(*gid);
-                let mut min_chunks = usize::MAX;
-                let mut min_process_id = 0;
-                for process_id in 0..self.n_processes {
-                    if instances_assigned_process[process_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
-                        let mut new_chunks_added = 0;
-                        for chunk in chunks {
-                            if !process_chunks[process_id].contains(chunk) {
-                                new_chunks_added += 1;
+                let min_process_id = if let Some(&reserved) = reserved_process.get(gid) {
+                    reserved
+                } else {
+                    let mut min_chunks = usize::MAX;
+                    let mut min_process_id = 0;
+                    for process_id in 0..self.n_processes {
+                        if instances_assigned_process[process_id].get(&(airgroup_id, air_id)).unwrap_or(&0) > &0 {
+                            let mut new_chunks_added = 0;
+                            for chunk in chunks {
+                                if !process_chunks[process_id].contains(chunk) {
+                                    new_chunks_added += 1;
+                                }
+                            }
+                            if new_chunks_added < min_chunks {
+                                min_chunks = new_chunks_added;
+                                min_process_id = process_id;
                             }
                         }
-                        if new_chunks_added < min_chunks {
-                            min_chunks = new_chunks_added;
-                            min_process_id = process_id;
-                        }
                     }
-                }
+                    if let Some(c) = instances_assigned_process[min_process_id].get_mut(&(airgroup_id, air_id)) {
+                        *c -= 1;
+                    }
+                    min_process_id
+                };
 
                 for chunk in chunks {
                     process_chunks[min_process_id].insert(*chunk);
@@ -767,20 +1164,62 @@ impl DistributionCtx {
                 self.instance_process[*gid].0 = min_process_id as i32;
                 self.instance_process[*gid].1 = self.process_count[min_process_id];
                 self.process_count[min_process_id] += 1;
-                if let Some(c) = instances_assigned_process[min_process_id].get_mut(&(airgroup_id, air_id)) {
-                    *c -= 1;
-                }
             }
         }
 
         // Add tables that
         self.n_tables = 0;
         for (table_idx, table) in self.aux_tables.iter().enumerate() {
-            if table.shared {
-                let process_id = self.least_loaded_process(false, &self.process_count);
+            if let Some(&ref_gid) = self.table_assignment.get(&(table.airgroup_id, table.air_id)) {
+                // Assigned table: single instance forced onto ref_gid's node.
+                if ref_gid >= self.instance_partition.len() {
+                    return Err(ProofmanError::InvalidAssignation(format!(
+                        "Table assignment reference gid {ref_gid} out of bounds"
+                    )));
+                }
+                let ref_partition = self.instance_partition[ref_gid];
+                if ref_partition < 0 {
+                    return Err(ProofmanError::InvalidAssignation(format!(
+                        "Table assignment reference gid {ref_gid} is not assigned to a partition"
+                    )));
+                }
+                // -1 when ref_partition is another worker's: every worker keeps the gid and the
+                // table mapping, only the owner materializes the instance.
+                let ref_process = self.instance_process[ref_gid].0;
+                let credited = prepaid[table_idx];
                 let gid = self.instances.len();
                 self.instances.push(*table);
-                self.instances_calculated.push(AtomicBool::new(false));
+                self.witness_states.push(WitnessSlot::default());
+                self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+                self.n_instances += 1;
+                self.n_tables += 1;
+                self.instance_partition.push(ref_partition); // REAL partition, not -2
+                if !credited {
+                    self.partition_count[ref_partition as usize] += 1;
+                    self.partition_weight[ref_partition as usize] += table.total_weight();
+                }
+                if ref_process >= 0 {
+                    let ref_process = ref_process as usize;
+                    self.worker_instances.push(gid);
+                    let lid = self.process_count[ref_process];
+                    self.process_count[ref_process] += 1;
+                    if !credited {
+                        self.process_weight[ref_process] += table.total_weight();
+                    }
+                    if ref_process == self.process_id {
+                        self.process_instances.push(gid);
+                    }
+                    self.instance_process.push((ref_process as i32, lid));
+                } else {
+                    self.instance_process.push((-1, 0_usize));
+                }
+                self.aux_table_map[table_idx] = gid as i32;
+                self.assigned_table_instances.insert(gid);
+            } else if table.shared {
+                let process_id = self.least_loaded_process(&self.process_count);
+                let gid = self.instances.len();
+                self.instances.push(*table);
+                self.witness_states.push(WitnessSlot::default());
                 self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
                 self.n_instances += 1;
                 self.n_tables += 1;
@@ -788,7 +1227,7 @@ impl DistributionCtx {
                 self.worker_instances.push(gid);
                 let lid = self.process_count[process_id];
                 self.process_count[process_id] += 1;
-                self.process_weight[process_id] += table.weight;
+                self.process_weight[process_id] += table.total_weight();
                 if process_id == self.process_id {
                     self.process_instances.push(gid);
                 }
@@ -797,22 +1236,16 @@ impl DistributionCtx {
             } else {
                 for rank in 0..self.n_processes {
                     let gid = self.instances.len();
-                    self.instances.push(InstanceInfo::new(
-                        table.airgroup_id,
-                        table.air_id,
-                        true,
-                        false,
-                        table.weight,
-                        0,
-                    ));
+                    self.instances.push(*table);
                     self.instances_chunks.push(InstanceChunks { chunks: vec![], slow: false });
+                    self.witness_states.push(WitnessSlot::default());
                     self.n_instances += 1;
                     self.n_tables += 1;
                     self.instance_partition.push(-2); // Mark as table
                     self.worker_instances.push(gid);
                     let lid = self.process_count[rank];
                     self.process_count[rank] += 1;
-                    self.process_weight[rank] += table.weight;
+                    self.process_weight[rank] += table.total_weight();
                     if rank == self.process_id {
                         self.process_instances.push(gid);
                         self.aux_table_map[table_idx] = gid as i32;
@@ -821,14 +1254,51 @@ impl DistributionCtx {
                 }
             }
         }
+        for key in self.table_assignment.keys() {
+            let matched = (0..self.aux_tables.len())
+                .any(|i| self.aux_tables[i].airgroup_id == key.0 && self.aux_tables[i].air_id == key.1);
+            if !matched {
+                return Err(ProofmanError::InvalidAssignation(format!(
+                    "Table assignment for airgroup_id: {}, air_id: {} has no registered table",
+                    key.0, key.1
+                )));
+            }
+        }
         self.aux_tables.clear();
         self.assignation_done = true;
 
         Ok(())
     }
 
+    /// Record that the table for (airgroup_id, air_id) must be assigned to the
+    /// SAME worker (partition) and SAME process as instance `gid`. Recording only;
+    /// the actual placement happens in assign_instances(). Must be called before
+    /// assignation is done. Reference validity is checked in assign_instances().
+    pub fn assign_table_to(&mut self, airgroup_id: usize, air_id: usize, gid: usize) -> ProofmanResult<()> {
+        if self.assignation_done {
+            return Err(ProofmanError::InvalidAssignation("Instances already assigned".to_string()));
+        }
+        match self.table_assignment.entry((airgroup_id, air_id)) {
+            Entry::Occupied(_) => {
+                return Err(ProofmanError::InvalidAssignation(format!(
+                    "Table assignment already set for airgroup_id: {airgroup_id}, air_id: {air_id}"
+                )))
+            }
+            Entry::Vacant(slot) => {
+                slot.insert(gid);
+            }
+        }
+        Ok(())
+    }
+
+    /// True if instance_id is an assigned table (single owner, no cross-rank
+    /// multiplicity reduction). Valid post-assignment.
+    pub fn is_assigned_table(&self, instance_id: usize) -> ProofmanResult<bool> {
+        Ok(self.assigned_table_instances.contains(&instance_id))
+    }
+
     ///  Load balance info for partitions
-    ///  Does not include tables
+    ///  Counts the tables pinned to one partition; not the replicated ones, which shift all alike.
     pub fn load_balance_info_partition(&self) -> (f64, u64, u64, f64) {
         let mut average_partition_weight = 0.0;
         let mut max_partition_weight = 0;
@@ -870,7 +1340,7 @@ impl DistributionCtx {
 
 #[cfg(test)]
 mod tests {
-    use super::DistributionCtx;
+    use super::*;
 
     // A compressor air (weight 1000 + compressor 100) and a heavier plain one (5000)
     const HEAVY_PLAIN: (usize, u64, u64) = (0, 5000, 0);
@@ -884,14 +1354,13 @@ mod tests {
         dctx
     }
 
-    /// A compressor air must not be handed to an overloaded partition just because that partition
-    /// owns fewer compressor instances: with compressor count as the primary criterion the second
-    /// COMPRESSOR lands on partition 0 (6100 vs 1100) instead of partition 1 (5000 vs 2200).
+    /// Were compressor count a criterion of its own, the second COMPRESSOR would land on the
+    /// overloaded partition 0 (6100 vs 1100) instead of partition 1 (5000 vs 2200).
     #[test]
     fn compressor_air_follows_cost_not_compressor_count() {
         let mut dctx = ctx(2);
         for (air_id, weight, compressor_weight) in [HEAVY_PLAIN, COMPRESSOR, COMPRESSOR] {
-            dctx.add_instance_no_assign(0, air_id, weight, compressor_weight).unwrap();
+            dctx.add_instance_no_assign(0, air_id, weight, compressor_weight, WitnessPriority::default()).unwrap();
         }
         dctx.assign_instances().unwrap();
 
@@ -906,18 +1375,32 @@ mod tests {
     fn immediate_assignation_balances_cost_instead_of_round_robin() {
         let mut dctx = ctx(2);
         for (air_id, weight, compressor_weight) in [HEAVY_PLAIN, LIGHT_PLAIN, LIGHT_PLAIN] {
-            dctx.add_instance(0, air_id, weight, compressor_weight).unwrap();
+            dctx.add_instance(0, air_id, weight, compressor_weight, WitnessPriority::default()).unwrap();
         }
 
         assert_eq!(dctx.instance_partition, vec![0, 1, 1]);
         assert_eq!(dctx.partition_weight, vec![5000, 200]);
     }
 
+    /// Booked on the chosen partition; the greedy placement balances around it.
+    #[test]
+    fn instance_added_in_a_partition_is_booked_there() {
+        let mut dctx = ctx(2);
+        dctx.add_instance_in(0, HEAVY_PLAIN.0, HEAVY_PLAIN.1, HEAVY_PLAIN.2, WitnessPriority::default(), 1).unwrap();
+        dctx.add_instance(0, LIGHT_PLAIN.0, LIGHT_PLAIN.1, LIGHT_PLAIN.2, WitnessPriority::default()).unwrap();
+
+        assert_eq!(dctx.instance_partition, vec![1, 0]);
+        assert_eq!(dctx.partition_weight, vec![100, 5000]);
+        assert!(dctx
+            .add_instance_in(0, LIGHT_PLAIN.0, LIGHT_PLAIN.1, LIGHT_PLAIN.2, WitnessPriority::default(), 2)
+            .is_err());
+    }
+
     /// The first instance added still lands on partition 0 (zisk relies on it for the Rom instance)
     #[test]
     fn first_instance_goes_to_partition_zero() {
         let mut dctx = ctx(4);
-        dctx.add_instance(0, LIGHT_PLAIN.0, LIGHT_PLAIN.1, LIGHT_PLAIN.2).unwrap();
+        dctx.add_instance(0, LIGHT_PLAIN.0, LIGHT_PLAIN.1, LIGHT_PLAIN.2, WitnessPriority::default()).unwrap();
 
         assert_eq!(dctx.instance_partition[0], 0);
         assert_eq!(dctx.instance_process[0], (0, 0));
@@ -927,10 +1410,398 @@ mod tests {
     #[test]
     fn compressor_weight_counts_towards_the_partition_load() {
         let mut dctx = ctx(1);
-        dctx.add_instance(0, COMPRESSOR.0, COMPRESSOR.1, COMPRESSOR.2).unwrap();
+        dctx.add_instance(0, COMPRESSOR.0, COMPRESSOR.1, COMPRESSOR.2, WitnessPriority::default()).unwrap();
 
         assert_eq!(dctx.partition_weight, vec![1100]);
         assert_eq!(dctx.process_weight, vec![1100]);
         assert_eq!(dctx.partition_compressor_count, vec![1]);
+    }
+
+    fn dctx_1w_2p() -> DistributionCtx {
+        // 1 partition (this worker owns it), 2 processes, we are process 0
+        let mut dctx = DistributionCtx::new();
+        dctx.setup_partitions(1, vec![0]).expect("setup_partitions");
+        dctx.setup_processes(2, 0).expect("setup_processes");
+        dctx
+    }
+
+    #[test]
+    fn assign_table_to_records_intent() {
+        let mut dctx = dctx_1w_2p();
+        // add a regular instance to act as the reference (immediate path sets coords)
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance");
+        // register the table normally
+        dctx.add_table(7, 1, 50, 0).expect("add_table");
+        // record the assignment intent
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        assert_eq!(dctx.table_assignment.get(&(7, 1)), Some(&rom));
+    }
+
+    #[test]
+    fn assign_table_to_rejects_after_assignation_done() {
+        let mut dctx = dctx_1w_2p();
+        dctx.assignation_done = true;
+        let err = dctx.assign_table_to(7, 1, 0);
+        assert!(matches!(err, Err(ProofmanError::InvalidAssignation(_))));
+    }
+
+    #[test]
+    fn assign_table_to_rejects_duplicate_key() {
+        let mut dctx = dctx_1w_2p();
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance");
+        dctx.add_table(7, 1, 50, 0).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("first assign_table_to");
+        let err = dctx.assign_table_to(7, 1, rom);
+        assert!(matches!(err, Err(ProofmanError::InvalidAssignation(_))));
+    }
+
+    #[test]
+    fn is_assigned_table_false_for_unknown_id() {
+        let dctx = dctx_1w_2p();
+        assert!(!dctx.is_assigned_table(999).expect("is_assigned_table"));
+    }
+
+    #[test]
+    fn assigned_table_copies_reference_coords_and_weight() {
+        let mut dctx = dctx_1w_2p();
+        // Two regular instances so process weights differ; ROM is the reference.
+        let _other = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance other");
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        let rom_partition = dctx.instance_partition[rom];
+        let rom_process = dctx.instance_process[rom].0;
+        let weight_before = dctx.process_weight[rom_process as usize];
+
+        dctx.add_table(7, 1, 50, 0).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        dctx.assign_instances().expect("assign_instances");
+
+        // The table instance is the last instance pushed.
+        let table_gid = dctx.get_table_instance_idx(0).expect("table idx");
+        assert_eq!(dctx.instance_partition[table_gid], rom_partition, "real partition, not -2");
+        assert_eq!(dctx.instance_process[table_gid].0, rom_process, "same process as ROM");
+        assert!(dctx.is_assigned_table(table_gid).expect("is_assigned_table"));
+        assert_eq!(dctx.witness_states.len(), dctx.instances.len(), "witness slots stay aligned");
+        assert_eq!(
+            dctx.process_weight[rom_process as usize],
+            weight_before + 50,
+            "table weight lands on ROM's process"
+        );
+    }
+
+    #[test]
+    fn assigned_table_on_foreign_worker_is_listed_but_not_materialized() {
+        // 2 partitions, this worker owns only partition 1, so the reference lands on partition 0.
+        let mut dctx = DistributionCtx::new();
+        dctx.setup_partitions(2, vec![1]).expect("setup_partitions");
+        dctx.setup_processes(2, 0).expect("setup_processes");
+
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        assert_eq!(dctx.instance_process[rom].0, -1, "reference is not owned by this worker");
+        dctx.add_table(7, 1, 50, 0).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        let counts_before = dctx.process_count.clone();
+        let weights_before = dctx.process_weight.clone();
+        dctx.assign_instances().expect("must not abort on a foreign reference");
+
+        // Still in the global list (same gids on every worker), but not materialized here.
+        let table_gid = dctx.get_table_instance_idx(0).expect("table idx");
+        assert_eq!(dctx.instance_partition[table_gid], 0, "follows the reference partition");
+        assert_eq!(dctx.instance_process[table_gid], (-1, 0), "not owned by any local process");
+        assert!(!dctx.worker_instances.contains(&table_gid));
+        assert!(!dctx.process_instances.contains(&table_gid));
+        assert_eq!(dctx.process_count, counts_before);
+        assert_eq!(dctx.process_weight, weights_before);
+    }
+
+    #[test]
+    fn duplicate_assign_table_to_keeps_the_original_gid() {
+        let mut dctx = dctx_1w_2p();
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        let other = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance other");
+        dctx.add_table(7, 1, 50, 0).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("first assign_table_to");
+        assert!(matches!(dctx.assign_table_to(7, 1, other), Err(ProofmanError::InvalidAssignation(_))));
+        assert_eq!(dctx.table_assignment.get(&(7, 1)), Some(&rom), "rejected assignment must not overwrite");
+    }
+
+    #[test]
+    fn assigned_table_overrides_all_ranks_to_single_instance() {
+        let mut dctx = dctx_1w_2p();
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        let instances_before = dctx.instances.len();
+        // Register as ALL-RANKS (shared=false) but then assign it.
+        dctx.add_table_all(7, 1, 50, 0).expect("add_table_all");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        dctx.assign_instances().expect("assign_instances");
+        // All-ranks would have added n_processes (2) instances; assignment collapses to 1.
+        assert_eq!(dctx.instances.len(), instances_before + 1, "single instance, not replicated");
+    }
+
+    #[test]
+    fn assigned_table_with_out_of_range_reference_errors() {
+        let mut dctx = dctx_1w_2p();
+        let _rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        dctx.add_table(7, 1, 50, 0).expect("add_table");
+        // reference a gid that does not exist
+        dctx.assign_table_to(7, 1, 999).expect("assign_table_to");
+        let err = dctx.assign_instances();
+        assert!(matches!(err, Err(ProofmanError::InvalidAssignation(_))));
+    }
+
+    #[test]
+    fn assigned_table_with_unknown_key_errors() {
+        let mut dctx = dctx_1w_2p();
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        // assignment for a table that was never registered in aux_tables
+        dctx.assign_table_to(7, 99, rom).expect("assign_table_to");
+        let err = dctx.assign_instances();
+        assert!(matches!(err, Err(ProofmanError::InvalidAssignation(_))));
+    }
+
+    #[test]
+    fn ordinary_shared_table_is_not_assigned() {
+        let mut dctx = dctx_1w_2p();
+        let _rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance");
+        dctx.add_table(7, 1, 50, 0).expect("add_table");
+        dctx.assign_instances().expect("assign_instances");
+        let table_gid = dctx.get_table_instance_idx(0).expect("table idx");
+        assert!(!dctx.is_assigned_table(table_gid).expect("is_assigned_table"));
+    }
+
+    #[test]
+    fn reset_clears_assignment_state_across_cycles() {
+        let mut dctx = dctx_1w_2p();
+        // Cycle 1: assign a table to a reference, then run assignment.
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        dctx.add_table(7, 1, 50, 0).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to cycle1");
+        dctx.assign_instances().expect("assign cycle1");
+        let table_gid_c1 = dctx.get_table_instance_idx(0).expect("table idx c1");
+        assert!(dctx.is_assigned_table(table_gid_c1).expect("assigned c1"));
+
+        // Reset for the next proof cycle.
+        dctx.reset_instances();
+
+        // table_assignment must be empty so the same key can be re-registered
+        // without a duplicate-key error.
+        assert!(dctx.table_assignment.is_empty(), "table_assignment not cleared on reset");
+        // assigned_table_instances must be empty so stale gids don't misclassify.
+        assert!(dctx.assigned_table_instances.is_empty(), "assigned_table_instances not cleared on reset");
+
+        // Cycle 2: re-registering the same (ag, air) assignment must succeed.
+        let rom2 = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom cycle2");
+        dctx.add_table(7, 1, 50, 0).expect("add_table cycle2");
+        dctx.assign_table_to(7, 1, rom2).expect("assign_table_to cycle2 must not be duplicate");
+        dctx.assign_instances().expect("assign cycle2");
+        let table_gid_c2 = dctx.get_table_instance_idx(0).expect("table idx c2");
+        assert!(dctx.is_assigned_table(table_gid_c2).expect("assigned c2"));
+    }
+
+    /// The regression the pre-pass exists for: ROM (100) plus its pinned table (500) is 600
+    /// before the two later instances are placed, so both must avoid that partition. Crediting
+    /// the table at the end instead lands one of them on ROM's, leaving 700 against 300.
+    #[test]
+    fn pinned_table_weight_steers_the_instances_placed_after_it() {
+        let mut dctx = ctx(2);
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        let rom_partition = dctx.instance_partition[rom] as usize;
+        dctx.add_table(7, 1, 500, 0).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+
+        let a = dctx.add_instance_no_assign(7, 2, 200, 0, WitnessPriority::default()).expect("add a");
+        let b = dctx.add_instance_no_assign(7, 3, 100, 0, WitnessPriority::default()).expect("add b");
+        dctx.assign_instances().expect("assign_instances");
+
+        assert_ne!(dctx.instance_partition[a] as usize, rom_partition, "heaviest must avoid the pinned partition");
+        assert_ne!(dctx.instance_partition[b] as usize, rom_partition);
+        assert_eq!(dctx.partition_weight[rom_partition], 600, "the table is on the partition's books");
+        assert_eq!(dctx.partition_weight[1 - rom_partition], 300);
+        assert_eq!(dctx.partition_count[rom_partition], 2, "and in its head count");
+    }
+
+    /// Same at process level: the pinned weight must push later instances onto the other process.
+    #[test]
+    fn pinned_table_weight_steers_process_placement_too() {
+        let mut dctx = dctx_1w_2p();
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        let rom_process = dctx.instance_process[rom].0 as usize;
+        dctx.add_table(7, 1, 500, 0).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+
+        let a = dctx.add_instance_no_assign(7, 2, 200, 0, WitnessPriority::default()).expect("add a");
+        dctx.assign_instances().expect("assign_instances");
+
+        assert_ne!(dctx.instance_process[a].0 as usize, rom_process);
+        assert_eq!(dctx.process_weight[rom_process], 600, "ROM plus its table, counted once");
+    }
+
+    /// The pre-pass must not hand a table a local index: `local_idx` has to keep matching the
+    /// instance's position in its process's list, or `get_instance_local_idx` lies.
+    #[test]
+    fn pinned_table_does_not_shift_local_indices() {
+        let mut dctx = dctx_1w_2p();
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        dctx.add_table(7, 1, 500, 0).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        for air_id in 2..6 {
+            dctx.add_instance_no_assign(7, air_id, 100, 0, WitnessPriority::default()).expect("add");
+        }
+        dctx.assign_instances().expect("assign_instances");
+
+        for (position, &gid) in dctx.process_instances.iter().enumerate() {
+            assert_eq!(
+                dctx.get_instance_local_idx(gid).expect("local idx"),
+                position,
+                "instance {gid} is at position {position} of its process but claims another index"
+            );
+        }
+    }
+
+    /// A reference left for `assign_instances` is credited while it is balanced -- once.
+    #[test]
+    fn pinned_table_on_a_late_reference_is_credited_once() {
+        let mut dctx = ctx(1);
+        let rom = dctx.add_instance_no_assign(7, 0, 100, 0, WitnessPriority::default()).expect("add rom");
+        dctx.add_table(7, 1, 500, 0).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        dctx.assign_instances().expect("assign_instances");
+
+        assert_eq!(dctx.partition_weight[0], 600);
+        assert_eq!(dctx.partition_count[0], 2);
+        assert_eq!(dctx.process_weight[0], 600);
+    }
+
+    /// The late-reference case of `pinned_table_weight_steers_the_instances_placed_after_it`: the
+    /// table's weight must count while the rest is balanced, not only once it is appended.
+    #[test]
+    fn a_late_reference_carries_its_pinned_table_into_the_balancing() {
+        let mut dctx = ctx(2);
+        let rom = dctx.add_instance_no_assign(7, 0, 100, 0, WitnessPriority::default()).expect("add rom");
+        dctx.add_table(7, 1, 500, 0).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        let a = dctx.add_instance_no_assign(7, 2, 200, 0, WitnessPriority::default()).expect("add a");
+        let b = dctx.add_instance_no_assign(7, 3, 100, 0, WitnessPriority::default()).expect("add b");
+        dctx.assign_instances().expect("assign_instances");
+
+        let rom_partition = dctx.instance_partition[rom] as usize;
+        assert_ne!(dctx.instance_partition[a] as usize, rom_partition, "heaviest must avoid the pinned partition");
+        assert_ne!(dctx.instance_partition[b] as usize, rom_partition);
+        assert_eq!(dctx.partition_weight[rom_partition], 600, "the table is on the partition's books");
+        assert_eq!(dctx.partition_weight[1 - rom_partition], 300);
+        assert_eq!(dctx.partition_count[rom_partition], 2, "and in its head count");
+    }
+
+    /// A table's proof aggregates like an instance's, so its compressor goes on the books with it,
+    /// replicated or not, and pinned before the rest is balanced.
+    #[test]
+    fn tables_book_their_compressor_too() {
+        let mut dctx = dctx_1w_2p();
+        dctx.add_table(7, 1, 50, 20).expect("add_table");
+        dctx.add_table_all(7, 2, 30, 5).expect("add_table_all");
+        dctx.assign_instances().expect("assign_instances");
+        assert_eq!(dctx.process_weight.iter().sum::<u64>(), 70 + 2 * 35);
+
+        let mut dctx = ctx(2);
+        let rom = dctx.add_instance(7, 0, 100, 0, WitnessPriority::default()).expect("add_instance rom");
+        let rom_partition = dctx.instance_partition[rom] as usize;
+        dctx.add_table(7, 1, 400, 100).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        let a = dctx.add_instance_no_assign(7, 2, 200, 0, WitnessPriority::default()).expect("add a");
+        let b = dctx.add_instance_no_assign(7, 3, 100, 0, WitnessPriority::default()).expect("add b");
+        dctx.assign_instances().expect("assign_instances");
+
+        assert_ne!(dctx.instance_partition[a] as usize, rom_partition, "the compressor steers the pre-pass");
+        assert_ne!(dctx.instance_partition[b] as usize, rom_partition);
+        assert_eq!(dctx.partition_weight[rom_partition], 600);
+    }
+
+    /// Another instance of the reference's air must not take the slot its table was credited to.
+    #[test]
+    fn a_late_reference_lands_where_its_table_was_credited() {
+        let mut dctx = ctx(2);
+        let rom = dctx.add_instance_no_assign(7, 0, 100, 0, WitnessPriority::default()).expect("add rom");
+        let rom2 = dctx.add_instance_no_assign(7, 0, 100, 0, WitnessPriority::default()).expect("add rom2");
+        dctx.add_table(7, 1, 500, 0).expect("add_table");
+        dctx.assign_table_to(7, 1, rom).expect("assign_table_to");
+        dctx.assign_instances().expect("assign_instances");
+
+        let rom_partition = dctx.instance_partition[rom] as usize;
+        let table_gid = dctx.get_table_instance_idx(0).expect("table idx");
+        assert_eq!(dctx.instance_partition[table_gid] as usize, rom_partition, "the table follows its reference");
+        assert_ne!(dctx.instance_partition[rom2] as usize, rom_partition);
+        assert_eq!(dctx.partition_weight[rom_partition], 600, "credited where the reference and table are");
+        assert_eq!(dctx.partition_weight[1 - rom_partition], 100);
+    }
+}
+
+#[cfg(test)]
+mod witness_priority_tests {
+    use super::*;
+
+    /// The band table has to hold together on four counts at once: the default, the numbering,
+    /// the room left between numbers, and the dense pool slots the handler indexes with.
+    #[test]
+    fn the_band_table_is_well_formed() {
+        assert_eq!(WitnessPriority::default(), WitnessPriority::Normal);
+        assert_eq!(
+            [WitnessPriority::First as u8, WitnessPriority::Normal as u8, WitnessPriority::Last as u8],
+            [0, 10, 30]
+        );
+        for (slot, band) in WitnessPriority::ALL.iter().enumerate() {
+            assert_eq!(band.index(), slot, "{band:?} is not in pool slot {slot}");
+        }
+        for pair in WitnessPriority::ALL.windows(2) {
+            let (lower, higher) = (pair[0] as u8, pair[1] as u8);
+            // Urgency order must follow the pools, or `next_admission` walks them backwards.
+            assert!(pair[0] < pair[1], "{:?} must be more urgent than {:?}", pair[0], pair[1]);
+            assert!(higher - lower > 1, "no room to insert a band between {lower} and {higher}");
+        }
+    }
+
+    #[test]
+    fn a_band_survives_construction() {
+        let info = InstanceInfo::new(3, 7, false, false, 100, 0, WitnessPriority::Last);
+        assert_eq!(info.priority, WitnessPriority::Last);
+        assert_eq!((info.airgroup_id, info.air_id), (3, 7), "the band must not disturb the other fields");
+        assert_eq!(InstanceInfo::table(1, 2, true, 50, 0).priority, WitnessPriority::Normal, "a table is Normal");
+    }
+}
+
+#[cfg(test)]
+mod witness_schedule_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn bands(pairs: &[(usize, WitnessPriority)]) -> impl Fn(usize) -> WitnessPriority {
+        let map: HashMap<usize, WitnessPriority> = pairs.iter().copied().collect();
+        move |id| map.get(&id).copied().unwrap_or_default()
+    }
+
+    /// Nothing to reorder: one band throughout, whichever band it is, and the empty set.
+    #[test]
+    fn a_uniform_set_keeps_its_registration_order() {
+        let ids = [7, 2, 9, 4];
+        assert_eq!(witness_schedule(ids.iter().copied(), bands(&[])), vec![7, 2, 9, 4]);
+        assert_eq!(witness_schedule(ids.iter().copied(), |_: usize| WitnessPriority::Last), vec![7, 2, 9, 4]);
+        assert!(witness_schedule([], bands(&[])).is_empty());
+    }
+
+    /// Only `Last` may move -- catches a switch to `Ord`-based ranking here, which would also
+    /// pull `First` forward and reorder airs that never race. `2` starts mid-list on purpose: the
+    /// serial walk relies on this to put `Last` at the back of a list handed to it in any order.
+    #[test]
+    fn only_the_last_band_moves() {
+        let ids = [7, 2, 9, 4];
+        let order =
+            witness_schedule(ids.iter().copied(), bands(&[(9, WitnessPriority::First), (2, WitnessPriority::Last)]));
+        assert_eq!(order, vec![7, 9, 4, 2], "Last moves to the back, First keeps its slot");
+    }
+
+    #[test]
+    fn several_last_instances_keep_their_relative_order() {
+        let ids = [7, 2, 9, 4];
+        let order =
+            witness_schedule(ids.iter().copied(), bands(&[(7, WitnessPriority::Last), (9, WitnessPriority::Last)]));
+        assert_eq!(order, vec![2, 4, 7, 9], "the sort must be stable within the Last band");
     }
 }

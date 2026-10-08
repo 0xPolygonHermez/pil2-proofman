@@ -2,13 +2,13 @@
 use clap::Parser;
 use regex::Regex;
 use proofman_common::{
-    calculate_fixed_tree, exec_header, init_gpu_setup, initialize_logger, load_exec_file, ProofmanOptions, SetupCtx,
-    SetupsVadcop, MpiCtx, ProofCtx, ProofmanError, ProofType,
+    calculate_fixed_tree, init_gpu_setup, initialize_logger, load_exec_file, GetWitnessTraceFunc, ProofmanOptions,
+    SetupCtx, SetupsVadcop, MpiCtx, ProofCtx, ProofmanError, ProofType,
 };
 use proofman::{n_publics_aggregation, verify_proof, ProofMan};
 use proofman_witness::load_packed_info;
 use proofman_starks_lib_c::{
-    add_publics_aggregation_c, expand_gate_bands_c, gen_recursive_proof_c, get_committed_pols_c, get_stream_id_proof_c,
+    add_publics_aggregation_c, expand_gate_bands_c, gen_recursive_proof_c, get_stream_id_proof_c,
     load_device_const_pols_c,
 };
 use libloading::{Library, Symbol};
@@ -24,9 +24,7 @@ use std::str::FromStr;
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
 // Circom witness-library entry points (mirror examples/test-recursive/src/recursive.rs).
-type GetWitnessFunc =
-    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64) -> i64;
-type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
+// `GetWitnessTraceFunc` is shared with proofman_common so the FFI signature has one owner.
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 /// Proves ONE air on its own: the transcript is seeded from its verkey + publics, so the proof
@@ -83,9 +81,38 @@ pub struct ProveAirCmd {
     #[clap(long, requires = "witness_lib")]
     pub no_verify: bool,
 
+    /// Prove the same air N times in one process and report per-run timings. Run 1 is reported
+    /// apart: it pays the lazy CUDA module load, so a single-shot run is never the steady state.
+    #[clap(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+    pub repeat: u32,
+
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
+}
+
+/// Per-run `--repeat` timings. Run 1 is kept out of the stats: it is the cold one.
+fn report_repeat(label: &str, times: &[std::time::Duration]) {
+    let ms = |d: &std::time::Duration| d.as_secs_f64() * 1e3;
+    for (i, d) in times.iter().enumerate() {
+        tracing::info!("    {label} run {:<3} {:>9.2} ms{}", i + 1, ms(d), if i == 0 { "   (cold)" } else { "" });
+    }
+    if times.len() < 2 {
+        return;
+    }
+    let mut warm: Vec<f64> = times[1..].iter().map(ms).collect();
+    warm.sort_by(|a, b| a.total_cmp(b));
+    let mean = warm.iter().sum::<f64>() / warm.len() as f64;
+    let median = warm[warm.len() / 2];
+    tracing::info!(
+        "    {label} warm ({} runs): min {:.2} / median {:.2} / mean {:.2} / max {:.2} ms",
+        warm.len(),
+        warm[0],
+        median,
+        mean,
+        warm[warm.len() - 1],
+    );
+    tracing::info!("    {label} cold run was {:+.1}% against the warm median", 100.0 * (ms(&times[0]) / median - 1.0));
 }
 
 impl ProveAirCmd {
@@ -107,6 +134,7 @@ impl ProveAirCmd {
     fn run_witness_lib(&self, witness_lib: &Path, air: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut options = ProofmanOptions::new();
         options.no_aggregation();
+        options.self_contained();
         if self.gpu {
             options.gpu();
         }
@@ -128,13 +156,22 @@ impl ProveAirCmd {
         options.verbose_mode(self.verbose.into());
 
         let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
-        proofman.generate_air_proof(
-            witness_lib.to_path_buf(),
-            self.public_inputs.clone(),
-            air,
-            self.verbose.into(),
-            !self.no_verify,
-        )?;
+        // ProofMan owns witness generation, so a repeat here times witness + proof together.
+        let mut times = Vec::with_capacity(self.repeat as usize);
+        for _ in 0..self.repeat {
+            let started = std::time::Instant::now();
+            proofman.generate_air_proof(
+                witness_lib.to_path_buf(),
+                self.public_inputs.clone(),
+                air,
+                self.verbose.into(),
+                !self.no_verify,
+            )?;
+            times.push(started.elapsed());
+        }
+        if self.repeat > 1 {
+            report_repeat("witness+proof", &times);
+        }
 
         Ok(())
     }
@@ -205,8 +242,15 @@ impl ProveAirCmd {
             ))));
         };
 
-        let sctx: SetupCtx<Goldilocks> =
-            SetupCtx::new(&pctx.global_info, &setup_proof_type, false, &[], &[], self.gpu)?;
+        // Self-contained: a Basic-slot air must not take the in-place commit.
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new_with_commit_files(
+            &pctx.global_info,
+            &setup_proof_type,
+            false,
+            self.gpu,
+            &std::collections::HashMap::new(),
+            true,
+        )?;
 
         // Without this the CUDA context is unselected and check_device_memory_c returns 0.
         init_gpu_setup(&pctx.global_info.hash, self.gpu)?;
@@ -245,24 +289,41 @@ impl ProveAirCmd {
             init_circom_circuit(dat_filename_ptr)
         };
 
-        let size_witness = unsafe {
-            let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-            get_size_witness()
-        };
-
-        // Total circom witness size = circuit witness + the n_adds from the exec header.
-        let witness_size = (size_witness + exec_header(&exec_file_data).n_adds) as usize;
-        let mut witness: Vec<Goldilocks> = vec![Goldilocks::ZERO; witness_size];
+        // getWitnessTrace scatters straight into the trace + publics; no witness buffer.
+        let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+        let n_publics = setup.stark_info.n_publics;
+        let mut trace: Vec<Goldilocks> = vec![Goldilocks::ZERO; (n_cols * n) as usize];
+        let mut publics: Vec<Goldilocks> = vec![Goldilocks::ZERO; n_publics as usize];
 
         timer_start_info!(WITNESS_GENERATION);
         let res = unsafe {
-            let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-            get_witness(zkin.as_mut_ptr(), circom_circuit_ptr, witness.as_mut_ptr() as *mut c_void, 1)
+            let get_witness_trace: Symbol<GetWitnessTraceFunc> = library.get(b"getWitnessTrace\0")?;
+            get_witness_trace(
+                zkin.as_mut_ptr(),
+                circom_circuit_ptr,
+                exec_file_data.as_mut_ptr(),
+                trace.as_mut_ptr() as *mut c_void,
+                publics.as_mut_ptr() as *mut c_void,
+                n,
+                n_publics,
+                // Same stride the device side expects; see recursion_trace_stride. Handing it
+                // n_cols instead is what made the GPU proof fail its evaluations check.
+                proofman::recursion_trace_stride(&exec_file_data, n_cols, self.gpu),
+                1,
+                std::ptr::null_mut(), // no signalValues pool for a one-shot CLI run
+            )
         };
         timer_stop_and_log_info!(WITNESS_GENERATION);
 
         if res != 0 {
             return Err(Box::new(ProofmanError::InvalidProof("Error generating witness".into())));
+        }
+
+        // The hash gates map only their boundary; fill the rest from it. On GPU the same
+        // reconstruction happens device-side inside gen_recursive_proof_c, so only do it here
+        // when proving on the host. No-op on an exec file without a band section.
+        if !self.gpu {
+            expand_gate_bands_c(trace.as_mut_ptr() as *mut u8, exec_file_data.as_mut_ptr(), n_cols, exec_words, n);
         }
 
         if self.emit_witness_only {
@@ -273,14 +334,9 @@ impl ProveAirCmd {
         // gen_recursive_proof_gpu reads const pols from the *aggregation* buffer, which
         // set_device_buffers only allocates under aggregation=true -- hence an empty SetupsVadcop
         // patched with this AIR's const sizes, then set_device_buffers(aggregation: true).
-        let load_tree = setup.preallocate;
-        let mut setups_vadcop: SetupsVadcop<Goldilocks> =
-            SetupsVadcop::new(&pctx.global_info, false, false, &[], self.gpu)?;
+        let mut setups_vadcop: SetupsVadcop<Goldilocks> = SetupsVadcop::new(&pctx.global_info, false, false, self.gpu)?;
         setups_vadcop.total_const_pols_size = setup.const_pols_size_packed;
-        if load_tree {
-            setups_vadcop.total_const_tree_size = setup.const_tree_size;
-        }
-        pctx.set_device_buffers(&sctx, &setups_vadcop, true, self.gpu, 1, 1, false)?;
+        pctx.set_device_buffers(&sctx, &setups_vadcop, true, self.gpu, 1, 1, false, 0)?;
 
         // The proofType must match the one gen_recursive_proof_c reads the const pols under.
         let proof_type_str: &str = (*proof_type).into();
@@ -295,7 +351,6 @@ impl ProveAirCmd {
             std::ptr::null_mut(),
             Some(&exec_file_data),
         );
-        let tree_path = if load_tree { setup.const_pols_tree_path.as_str() } else { "" };
         load_device_const_pols_c(
             airgroup_id as u64,
             air_id as u64,
@@ -303,8 +358,6 @@ impl ProveAirCmd {
             d_buffers,
             &setup.const_pols_path,
             setup.const_pols_size_packed as u64,
-            tree_path,
-            setup.const_tree_size as u64,
             proof_type_str,
             false,
             // Single AIR, single slot: nothing to share with.
@@ -312,30 +365,6 @@ impl ProveAirCmd {
         );
 
         // Non-final proofs only: the vadcop tail goes through a different entry point.
-        let n = 1u64 << setup.stark_info.stark_struct.n_bits;
-
-        let mut trace: Vec<Goldilocks> = vec![Goldilocks::ZERO; (n_cols * n) as usize];
-        let mut publics: Vec<Goldilocks> = vec![Goldilocks::ZERO; setup.stark_info.n_publics as usize];
-
-        get_committed_pols_c(
-            witness.as_ptr() as *mut u8,
-            exec_file_data.as_mut_ptr(),
-            trace.as_mut_ptr() as *mut u8,
-            publics.as_mut_ptr() as *mut u8,
-            size_witness,
-            n,
-            setup.stark_info.n_publics,
-            // Same stride the device side expects; see recursion_trace_stride. This is the second
-            // caller of get_committed_pols_c, and converting only the other one is what made the
-            // GPU proof fail its evaluations check.
-            proofman::recursion_trace_stride(&exec_file_data, n_cols, self.gpu),
-        );
-        // The hash gates map only their boundary; fill the rest from it. On GPU the same
-        // reconstruction happens device-side inside gen_recursive_proof_c, so only do it here
-        // when proving on the host. No-op on an exec file without a band section.
-        if !self.gpu {
-            expand_gate_bands_c(trace.as_mut_ptr() as *mut u8, exec_file_data.as_mut_ptr(), n_cols, exec_words, n);
-        }
 
         // Layout: aggregation publics in [0..publics_aggregation), then the proof itself.
         let publics_aggregation = n_publics_aggregation(&pctx, airgroup_id);
@@ -365,32 +394,41 @@ impl ProveAirCmd {
 
         let p_setup: *mut c_void = (&setup.p_setup).into();
 
-        timer_start_info!(GEN_RECURSIVE_PROOF);
-        let stream_id = gen_recursive_proof_c(
-            p_setup,
-            trace.as_ptr() as *mut u8,
-            aux_trace.as_ptr() as *mut u8,
-            const_pols_ptr,
-            const_tree_ptr,
-            publics.as_ptr() as *mut u8,
-            proof_buffer[publics_aggregation..].as_mut_ptr(),
-            "",
-            airgroup_id as u64,
-            air_id as u64,
-            0,
-            true,
-            pctx.get_device_buffers_ptr(),
-            &setup.const_pols_path,
-            &setup.const_pols_tree_path,
-            proof_type_str,
-            false,
-            "",
-            u64::MAX, // one-off launch: reserve stream internally
-        );
+        // Deterministic over a fixed trace, so each run rewrites the same proof; the last is verified below.
+        let mut times = Vec::with_capacity(self.repeat as usize);
+        for _ in 0..self.repeat {
+            let started = std::time::Instant::now();
+            timer_start_info!(GEN_RECURSIVE_PROOF);
+            let stream_id = gen_recursive_proof_c(
+                p_setup,
+                trace.as_ptr() as *mut u8,
+                aux_trace.as_ptr() as *mut u8,
+                const_pols_ptr,
+                const_tree_ptr,
+                publics.as_ptr() as *mut u8,
+                proof_buffer[publics_aggregation..].as_mut_ptr(),
+                "",
+                airgroup_id as u64,
+                air_id as u64,
+                0,
+                true,
+                pctx.get_device_buffers_ptr(),
+                &setup.const_pols_path,
+                &setup.const_pols_tree_path,
+                proof_type_str,
+                false,
+                "",
+                u64::MAX, // one-off launch: reserve stream internally
+            );
 
-        // Async: proof_buffer is only filled once the stream drains.
-        get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
-        timer_stop_and_log_info!(GEN_RECURSIVE_PROOF);
+            // Async: proof_buffer is only filled once the stream drains; timed, deliberately.
+            get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
+            timer_stop_and_log_info!(GEN_RECURSIVE_PROOF);
+            times.push(started.elapsed());
+        }
+        if self.repeat > 1 {
+            report_repeat("proof", &times);
+        }
 
         // challenges=None: the verifier reseeds from verkey + publics, as the prover did.
         timer_start_info!(VERIFY_RECURSIVE_PROOF);
@@ -398,7 +436,7 @@ impl ProveAirCmd {
         let expressions_bin_path = setup.setup_path.display().to_string() + ".verifier.bin";
         let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
         let valid = verify_proof::<Goldilocks>(
-            proof_buffer[publics_aggregation..].as_mut_ptr(),
+            &proof_buffer[publics_aggregation..],
             stark_info_path,
             expressions_bin_path,
             verkey_path,

@@ -1362,6 +1362,8 @@ struct NttRun {
         // (r[2][Z] = 16 field elements). Z consecutive 8-byte elements = 64 B = whole
         // memory sectors per coalesced load, and Z independent butterflies give the ILP
         // that hides the multiply-chain latency (these kernels are latency-bound).
+        // Z=4 or tighter __launch_bounds__ are slower: ~80 regs at ~50% occupancy is the right
+        // trade for this latency-bound kernel.
         // Positioning roots are derived once per thread, then extended to the other
         // Z-1 slots with one multiply each (the zStepRoots tables). Grid and shared
         // memory scale with it: num_blocks/Z blocks, (Z+1)*shared_sz bytes -- each
@@ -1459,12 +1461,20 @@ uint32_t nttL2ChunkCols(size_t colBytes, uint64_t nCols)
     if (cudaDeviceGetAttribute(&l2Bytes, cudaDevAttrL2CacheSize, dev) != cudaSuccess || l2Bytes <= 0)
         l2Bytes = 32 << 20;
     uint32_t chunk = (uint32_t)(((size_t)l2Bytes * 3 / 5) / colBytes);
+    // Deliberately under-fills the machine (a few columns per batch): L2 residency beats
+    // occupancy here, wider batches are slower.
     if (chunk < 1) chunk = 1;
     if (chunk > nCols) chunk = (uint32_t)nCols;
     return chunk;
 }
 
 } // anonymous namespace
+
+void NTTGoldilocksGPU::warmTables()
+{
+    nttEnsureTables(false);
+    nttEnsureTables(true);
+}
 
 // ColMajor LDE: iNTT(N) -> coset spread -> NTT(NExt), over L2-sized column chunks. Each chunk
 // stages its iNTT compactly (stride N) and fuses the coset spread into the forward transform's
@@ -1495,8 +1505,8 @@ void NTTGoldilocksGPU::ldeColMajor(gl64_t *d_dst_, gl64_t *d_src_,
         return a0 < b0 + bElems * sizeof(gl64_t) && b0 < a0 + aElems * sizeof(gl64_t);
     };
 
-    // src may alias dst (constPolsAliasTree); chunks then descend so a chunk's writes stay
-    // above the sources still to be read.
+    // src may alias dst (equal-base in-place LDE); chunks then descend so a chunk's writes
+    // stay above the sources still to be read.
     const bool overlaps = rangesOverlap(d_src_, (size_t)nCols * N, d_dst_, (size_t)nCols * Next);
     if (overlaps && d_src_ != d_dst_) {
         printf("[NTT] ERROR: ldeColMajor overlapping src/dst require equal bases (src-dst = %lld elements)\n",

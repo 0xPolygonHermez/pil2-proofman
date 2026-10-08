@@ -287,7 +287,7 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             num_columns_witness: witness_cols,
             num_constraints: setup.stark_info.n_constraints,
             opening_points: setup.stark_info.opening_points.len() as u64,
-            batch_size: setup.stark_info.ev_map.len() as u64,
+            batch_size: setup.stark_info.fri_batch_size.max(setup.stark_info.ev_map.len() as u64),
             power_batching: true,
             low_degree_test: low_degree_test_soundness(&setup.stark_info.stark_struct),
             gap_to_radius: setup.stark_info.security.proximity_gap,
@@ -409,9 +409,9 @@ pub fn soundness_info<F: PrimeField64>(
 
     let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx, false)?;
 
-    let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, &[], false)?);
+    let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false)?);
 
-    let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], false)?;
+    let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, false)?;
 
     let mut circuits = Vec::new();
 

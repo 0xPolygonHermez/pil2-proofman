@@ -37,6 +37,8 @@ pub struct StarkInfoOutput {
     pub n_commitments_stage1: usize,
     pub ev_map: Vec<EvMapEntry>,
     pub deep_exp_id: usize,
+    /// See `DeepPolyResult::batch_size`.
+    pub fri_batch_size: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security: Option<SecurityInfo>,
 }

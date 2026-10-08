@@ -42,7 +42,12 @@ public:
 
     void static permuteTrunc(uint64_t * output, const uint64_t * input, cudaStream_t stream = 0);
 
-    void static linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
+    // ld: height of the layout d_trace lives in, to hash a row sub-range (0 = num_rows).
+    void static linearHash(uint64_t * d_hash_output, uint64_t * d_trace, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream, uint64_t ld = 0);
+
+    void static reduceOneLevel(uint32_t arity, uint64_t *d_nodes, uint64_t pending, cudaStream_t stream);
+
+    void static reduceLevels(uint32_t arity, uint64_t *d_tree, uint64_t pending, cudaStream_t stream);
 
     void static merkletree(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, Layout layout, cudaStream_t stream);
 
@@ -386,11 +391,12 @@ __device__ __forceinline__ void spongeLoad(const uint64_t *in, uint32_t initial_
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__ void spongeLoadTiled(const uint64_t *in, uint64_t num_rows, uint64_t num_cols, uint32_t initial_col, uint32_t ncols, Layout layout)
+__device__ void spongeLoadTiled(const uint64_t *in, uint64_t num_rows, uint64_t num_cols, uint32_t initial_col, uint32_t ncols, Layout layout, uint32_t count)
 {
     gl64_t r[RATE_T];
 
-    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
+    // num_rows is the layout height; threads past count re-read the last row (warp stays converged).
+    uint32_t row = min((uint32_t)(blockIdx.x * blockDim.x + threadIdx.x), count - 1);
 
 #pragma unroll
     for (uint32_t i = 0; i < RATE_T; i++) {
@@ -410,7 +416,7 @@ __device__ void spongeLoadTiled(const uint64_t *in, uint64_t num_rows, uint64_t 
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__ __forceinline__ void spongeStore(uint64_t *__restrict__ out, uint32_t col_stride, size_t row_stride)
+__device__ __forceinline__ void spongeStore(uint64_t *__restrict__ out, uint32_t col_stride, size_t row_stride, size_t count = SIZE_MAX)
 {
     gl64_t r[CAPACITY_T];
 
@@ -423,6 +429,7 @@ __device__ __forceinline__ void spongeStore(uint64_t *__restrict__ out, uint32_t
     __syncwarp();
 
     const size_t tid = threadIdx.x + blockDim.x * (size_t)blockIdx.x;
+    if (tid >= count) return;
     out += tid * col_stride;
 
 #pragma unroll
@@ -468,12 +475,12 @@ __device__ __forceinline__ void spongeAbsorb(const uint64_t *__restrict__ in, ui
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ in, uint32_t num_cols, uint32_t num_rows, Layout layout)
+__device__ __forceinline__ void spongeAbsorbTiled(const uint64_t *__restrict__ in, uint32_t num_cols, uint32_t num_rows, Layout layout, uint32_t count)
 {
     for (uint32_t col = 0;;)
     {
         uint32_t delta = min(num_cols - col, RATE_T);
-        spongeLoadTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, num_rows, num_cols, col, delta, layout);
+        spongeLoadTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(in, num_rows, num_cols, col, delta, layout, count);
         if (delta < RATE_T)
         {
             for (uint32_t i = delta; i < RATE_T; i++)
@@ -548,11 +555,12 @@ __global__ void linearHashKernel(uint64_t *__restrict__ output, uint64_t *__rest
 }
 
 template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t SPONGE_WIDTH_T, uint32_t N_FULL_ROUNDS_TOTAL_T, uint32_t N_PARTIAL_ROUNDS_T>
-__global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows, Layout layout)
+__global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t num_cols, uint32_t num_rows, Layout layout, uint32_t ld)
 {
+    const size_t tid = threadIdx.x + blockDim.x * (size_t)blockIdx.x;
     if (num_cols == 0)
     {
-        const size_t tid = threadIdx.x + blockDim.x * (size_t)blockIdx.x;
+        if (tid >= num_rows) return;
         uint64_t *out = output + tid * CAPACITY_T;
 #pragma unroll
         for (uint32_t i = 0; i < CAPACITY_T; i++)
@@ -564,8 +572,8 @@ __global__ void linearHashTiledKernel(uint64_t *__restrict__ output, uint64_t *_
     for (uint32_t i = 0; i < CAPACITY_T; i++)
         scratchpad[(i + RATE_T) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
 
-    spongeAbsorbTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(input, num_cols, num_rows, layout);
-    spongeStore<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(output, CAPACITY_T, 1);
+    spongeAbsorbTiled<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(input, num_cols, ld, layout, num_rows);
+    spongeStore<RATE_T, CAPACITY_T, SPONGE_WIDTH_T, N_FULL_ROUNDS_TOTAL_T, N_PARTIAL_ROUNDS_T>(output, CAPACITY_T, 1, num_rows);
 }
 
 #endif

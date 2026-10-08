@@ -15,6 +15,10 @@ pub struct SetupRecursiveTestOptions {
     pub hash: String,
     pub blake3_lanes: Option<usize>,
     pub starkstructs: Option<String>,
+    /// `None` keeps `recursive_blowup`.
+    pub blowup: Option<usize>,
+    /// `None` lets the circuit pick its own size.
+    pub min_n_bits: Option<usize>,
 }
 
 /// Resolve the per-hash-family circom fixture.
@@ -79,5 +83,7 @@ pub fn run_setup_recursive_test(opts: &SetupRecursiveTestOptions) -> Result<()> 
         &witness_tracker,
         opts.blake3_lanes,
         &recursion_settings,
+        opts.blowup,
+        opts.min_n_bits,
     )
 }

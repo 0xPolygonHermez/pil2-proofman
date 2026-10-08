@@ -13,9 +13,14 @@
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
 #include <mutex>
+#include <condition_variable>
+#include <map>
+#include <tuple>
+#include <vector>
 #include "cuda_utils.cuh"
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
+#include "eval_groups.hpp"
 #include <limits.h>
 #include "fr.hpp"
 #endif
@@ -52,32 +57,61 @@ public:
 };
 
 #ifndef __GOLDILOCKS_ENV__
+template <typename T>
+inline T *uploadVec(const std::vector<T> &v)
+{
+    T *d = nullptr;
+    if (v.empty()) return d;
+    CHECKCUDAERR(cudaMalloc(&d, v.size() * sizeof(T)));
+    CHECKCUDAERR(cudaMemcpy(d, v.data(), v.size() * sizeof(T), cudaMemcpyHostToDevice));
+    return d;
+}
+
 struct AirInstanceInfo {
     uint64_t airgroupId;
     uint64_t airId;
 
     uint64_t const_pols_offset;
-    uint64_t const_tree_offset;
-
-    bool stored_tree = false;
+    // The packed const pols are not resident: they live in host pinned memory and take a slot of
+    // DeviceCommitBuffers::constCache at launch (const_pols_offset is UINT64_MAX).
+    bool constCached = false;
 
     ExpressionsGPU *expressions_gpu;
     int64_t *opening_points;
 
-    uint64_t numBatchesEvals;
-    EvalInfo **evalsInfo;
-    uint64_t *evalsInfoSizes;
+    EvalGroup *evalGroups = nullptr;
+    uint64_t nEvalGroups = 0;
 
-    EvalInfo **evalsInfoFRI;
-    uint64_t *evalsInfoFRISizes;
+    // FRI terms opening-major (friTermStart has nOpenings + 1 bounds), for deep_expression.cuh.
+    FriTerm *friTerms = nullptr;
+    uint64_t *friTermStart = nullptr;
+    // The FRI kernel's block shape (friWindow).
+    uint32_t friThreadsPerBlock = 0, nFriSegments = 0;
+    uint64_t friWindowRows = 0;
+    FriSegment *friSegments = nullptr;
+    uint32_t *friOpBase = nullptr;
+    // Polynomials grouped by opening set.
+    FriTerm *friCols = nullptr;
+    uint32_t *friColStart = nullptr, *friOpStart = nullptr, *friOpGroups = nullptr;
+    uint32_t nFriGroups = 0;
+    uint64_t nFriPols = 0;
     
     SetupCtx *setupCtx;
+
+    // Packed custom commits, in the same const-pols buffer. Reserved at load time (worst case,
+    // words_per_row == nCols); customPolsPackedWords stays 0 until the blob is uploaded.
+    uint64_t custom_pols_offset = 0;
+    uint64_t customPolsReservedWords = 0;
+    uint64_t customPolsPackedWords = 0;
 
     Goldilocks::Element *verkeyRoot;
 
     bool is_packed = false;
     uint64_t num_packed_words = 0;
     uint64_t *unpack_info = nullptr;
+    std::vector<uint64_t> unpack_info_host;
+    // Host mirrors of the indexed descriptor, for the multiplicity rewriter.
+    std::vector<uint8_t> col_source_host, col_lane_host;
     uint64_t* d_num_packed_words;
 
     // Indexed (compact) cm1 unpack. The program-independent descriptor arrives via PackedInfo
@@ -86,7 +120,9 @@ struct AirInstanceInfo {
     // path -- when it is set, d_instr_table must have been registered before the first
     // unpack, and unpack_trace aborts rather than silently falling back to the plain walk.
     uint8_t  *d_col_source = nullptr;   // per column: 0 = row stream, 1 = table stream
-    uint64_t  index_bits = 0;           // width of the leading index header in a compact row
+    uint8_t  *d_col_lane = nullptr;     // per column: lane whose index selects its entry
+    uint64_t  index_bits = 0;           // width of ONE index in a compact row's header
+    uint64_t  lanes = 0;                // indices per row; 0/1 is the single-lane shape
     uint64_t  words_per_entry = 0;      // u64 words per instruction-table entry
     uint64_t *d_instr_table = nullptr;  // num_entries * words_per_entry, uploaded per program
     uint64_t  num_entries = 0;
@@ -116,24 +152,7 @@ struct AirInstanceInfo {
     /// the full-width path is used.
     uint64_t witness_map_cols = 0;
 
-    /// Landing buffer for the compact host trace, `N * witness_map_cols` words. The copy has to be one
-    /// contiguous run to get PCIe bandwidth: a 2D copy straight into the strided columns is slower than
-    /// shipping the full width, because the rows are only `mapCols * 8` bytes -- too small for the DMA
-    /// engine. So the transfer lands here and a kernel widens it on device, where the strided writes
-    /// are cheap.
-    uint64_t *d_witness_compact = nullptr;
-
-    /// Allocate the landing buffer. Idempotent; must not run while work using it is in flight.
-    void set_witness_map(uint64_t mapCols, uint64_t nRows, uint64_t nCols) {
-        witness_map_cols = mapCols;
-        if (d_witness_compact != nullptr) {
-            CHECKCUDAERR(cudaFree(d_witness_compact));
-            d_witness_compact = nullptr;
-        }
-        if (mapCols > 0 && mapCols < nCols) {
-            CHECKCUDAERR(cudaMalloc(&d_witness_compact, nRows * mapCols * sizeof(uint64_t)));
-        }
-    }
+    void set_witness_map(uint64_t mapCols) { witness_map_cols = mapCols; }
 
     // Caller must have selected the target GPU. Replaces whatever was there.
     void set_gate_bands(const uint64_t *bands, uint64_t nBands, uint64_t aux, uint64_t family) {
@@ -188,56 +207,11 @@ struct AirInstanceInfo {
         CHECKCUDAERR(cudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
 
 
-        uint64_t size_eval = setupCtx->starkInfo.evMap.size();
-        uint64_t num_batches = (setupCtx->starkInfo.openingPoints.size() + EVALS_OPENING_BATCH - 1) / EVALS_OPENING_BATCH;
-
-        evalsInfo = new EvalInfo*[num_batches];
-        evalsInfoSizes = new uint64_t[num_batches];
-        numBatchesEvals = num_batches;
-
-        uint64_t count = 0;
-        for(uint64_t i = 0; i < setupCtx->starkInfo.openingPoints.size(); i += EVALS_OPENING_BATCH) {
-            std::vector<int64_t> openingPoints;
-            for(uint64_t j = 0; j < EVALS_OPENING_BATCH; ++j) {
-                if(i + j < setupCtx->starkInfo.openingPoints.size()) {
-                    openingPoints.push_back(setupCtx->starkInfo.openingPoints[i + j]);
-                }
-            }
-            
-            EvalInfo* evalsInfoHost = new EvalInfo[size_eval];
-
-            uint64_t nEvals = 0;
-
-            for (uint64_t k = 0; k < size_eval; k++)
-            {
-                EvMap ev = setupCtx->starkInfo.evMap[k];
-                auto it = std::find(openingPoints.begin(), openingPoints.end(), ev.prime);
-                bool containsOpening = it != openingPoints.end();
-                if(!containsOpening) continue;
-                string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom"
-                                                                                                : "fixed";
-                PolMap polInfo = type == "cm" ? setupCtx->starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id]
-                                                                                                            : setupCtx->starkInfo.constPolsMap[ev.id];
-                evalsInfoHost[nEvals].type = type == "cm" ? 0 : type == "custom" ? 1
-                                                                        : 2;
-                std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx->starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
-                evalsInfoHost[nEvals].stagePos = polInfo.stagePos;
-                evalsInfoHost[nEvals].offset = setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)];
-                evalsInfoHost[nEvals].stageCols = setupCtx->starkInfo.mapSectionsN[stage];
-                evalsInfoHost[nEvals].dim = polInfo.dim;
-                evalsInfoHost[nEvals].openingPos = std::distance(openingPoints.begin(), it);
-                evalsInfoHost[nEvals].evalPos = k;
-                nEvals++;
-            }
-
-            EvalInfo* d_evalsInfo = nullptr;
-            CHECKCUDAERR(cudaMalloc(&d_evalsInfo, nEvals * sizeof(EvalInfo)));
-            CHECKCUDAERR(cudaMemcpy(d_evalsInfo, evalsInfoHost, nEvals * sizeof(EvalInfo), cudaMemcpyHostToDevice));
-
-            evalsInfo[count] = d_evalsInfo;
-            evalsInfoSizes[count] = nEvals;
-            delete[] evalsInfoHost;
-            count++;
+        const std::vector<EvalGroup> groups = buildEvalGroups(setupCtx->starkInfo);
+        nEvalGroups = groups.size();
+        if (nEvalGroups != 0) {
+            CHECKCUDAERR(cudaMalloc(&evalGroups, nEvalGroups * sizeof(EvalGroup)));
+            CHECKCUDAERR(cudaMemcpy(evalGroups, groups.data(), nEvalGroups * sizeof(EvalGroup), cudaMemcpyHostToDevice));
         }
 
         uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
@@ -248,67 +222,65 @@ struct AirInstanceInfo {
         // Only for proof-generating setups: the verify and verify-constraints branches of
         // StarkInfo::load lay out their own arena and never reach FRI, so the region is
         // legitimately absent there.
-        if (!setupCtx->starkInfo.verify_constraints && !setupCtx->starkInfo.verify &&
-            setupCtx->starkInfo.mapOffsets.count(std::make_pair("fri_folded", false)) == 0) {
-            throw std::runtime_error("AirInstanceInfo: aux_trace has no fri_folded region (StarkInfo not loaded for gpu)");
+        if (!setupCtx->starkInfo.verify_constraints && !setupCtx->starkInfo.verify) {
+            if (setupCtx->starkInfo.mapOffsets.count(std::make_pair("fri_constants", false)) == 0) {
+                zklog.error("AirInstanceInfo: aux_trace has no fri_constants region (StarkInfo not loaded for gpu)");
+                exitProcess();
+            }
+            const uint64_t nBitsExt = setupCtx->starkInfo.starkStruct.nBitsExt;
+            FriWindow w = friWindow(setupCtx->starkInfo.openingPoints, nBitsExt - setupCtx->starkInfo.starkStruct.nBits, 1ULL << nBitsExt);
+            if (w.nThreads == 0) {
+                zklog.error("AirInstanceInfo: too many opening points for the FRI kernel's shared memory");
+                exitProcess();
+            }
+            for (FriSegment &seg : w.segments) seg.w = Goldilocks::pow(Goldilocks::w(nBitsExt), (uint64_t)seg.offset & ((1ULL << nBitsExt) - 1)).fe;
+            friThreadsPerBlock = w.nThreads;
+            friWindowRows = w.size;
+            nFriSegments = w.segments.size();
+            friSegments = uploadVec(w.segments);
+            friOpBase = uploadVec(w.opBase);
         }
 
-        EvalInfo **evalsInfoFRI_ = new EvalInfo*[nOpeningPoints];
-        uint64_t *evalsInfoFRISizes_ = new uint64_t[nOpeningPoints];
-
-        std::fill(evalsInfoFRISizes_, evalsInfoFRISizes_ + nOpeningPoints, 0);
+        // Each opening's terms; vf2's exponent is the polynomial's first appearance in the eval map (fri_poly.rs).
+        const uint64_t NExt = 1ULL << setupCtx->starkInfo.starkStruct.nBitsExt;
+        std::vector<std::vector<FriTerm>> byOpening(nOpeningPoints);
+        std::map<std::tuple<int, uint64_t, uint64_t>, uint32_t> polIndex;
         for (uint64_t i = 0; i < setupCtx->starkInfo.evMap.size(); i++) {
-            evalsInfoFRISizes_[setupCtx->starkInfo.evMap[i].openingPos]++;
+            const EvMap &ev = setupCtx->starkInfo.evMap[i];
+            const uint64_t commitKey = ev.type == EvMap::eType::custom ? ev.commitId : 0;
+            const uint32_t vf2Exp = polIndex.emplace(std::make_tuple((int)ev.type, commitKey, ev.id), (uint32_t)polIndex.size()).first->second;
+            const uint16_t src = ev.type == EvMap::eType::cm ? 0 : ev.type == EvMap::eType::custom ? 1 : 2;
+            const PolMap &pol = src == 0 ? setupCtx->starkInfo.cmPolsMap[ev.id]
+                              : src == 1 ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id]
+                                         : setupCtx->starkInfo.constPolsMap[ev.id];
+            const std::string stage = src == 0 ? "cm" + to_string(pol.stage)
+                                    : src == 1 ? setupCtx->starkInfo.customCommits[pol.commitId].name + "0"
+                                               : "const";
+            const Layout layout = src == 0 ? resolveLayout(setupCtx->starkInfo.starkStruct.nBits, setupCtx->starkInfo.mapSectionsN[stage])
+                                           : fixedLayout();
+            if (layout != Layout::ColMajor) {
+                zklog.error("AirInstanceInfo: FRI terms need ColMajor sections");
+                exitProcess();
+            }
+            byOpening[ev.openingPos].push_back(FriTerm{setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)] + pol.stagePos * NExt,
+                                                       (uint32_t)i, src, (uint16_t)pol.dim, vf2Exp});
         }
-
-        EvalInfo** evalsInfoByOpeningPos = new EvalInfo*[nOpeningPoints];
-        for (uint64_t pos = 0; pos < nOpeningPoints; pos++) {
-            evalsInfoByOpeningPos[pos] = new EvalInfo[evalsInfoFRISizes_[pos]];
+        std::vector<FriTerm> terms;
+        std::vector<uint64_t> termStart{0};
+        for (const auto &opening : byOpening) {
+            terms.insert(terms.end(), opening.begin(), opening.end());
+            termStart.push_back(terms.size());
         }
+        const FriColGroups g = buildFriColGroups(terms, termStart, polIndex.size());
+        nFriPols = polIndex.size();
+        nFriGroups = g.colStart.size() - 1;
+        friCols = uploadVec(g.cols);
+        friColStart = uploadVec(g.colStart);
+        friOpStart = uploadVec(g.opStart);
+        friOpGroups = uploadVec(g.opGroups);
 
-        std::fill(evalsInfoFRISizes_, evalsInfoFRISizes_ + nOpeningPoints, 0);
-        for (uint64_t i = 0; i < setupCtx->starkInfo.evMap.size(); i++) {
-            EvMap ev = setupCtx->starkInfo.evMap[i];
-            uint64_t pos = ev.openingPos;
-
-            std::string type = (ev.type == EvMap::eType::cm) ? "cm" :
-                            (ev.type == EvMap::eType::custom) ? "custom" : "fixed";
-
-            PolMap polInfo = (type == "cm")      ? setupCtx->starkInfo.cmPolsMap[ev.id] :
-                            (type == "custom")  ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id] :
-                                                setupCtx->starkInfo.constPolsMap[ev.id];
-
-            EvalInfo* evInfo = &evalsInfoByOpeningPos[pos][evalsInfoFRISizes_[pos]];
-            evInfo->type = (type == "cm") ? 0 : (type == "custom") ? 1 : 2;
-            std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx->starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
-            evInfo->stagePos = polInfo.stagePos;
-            evInfo->offset = setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)];
-            evInfo->stageCols = setupCtx->starkInfo.mapSectionsN[stage];
-            evInfo->dim = polInfo.dim;
-            evInfo->evalPos = i;
-            evInfo->openingPos = pos;
-
-            evalsInfoFRISizes_[pos]++;
-        }
-
-        for (uint64_t opening = 0; opening < nOpeningPoints; opening++) {
-            CHECKCUDAERR(cudaMalloc(&evalsInfoFRI_[opening], evalsInfoFRISizes_[opening] * sizeof(EvalInfo)));
-            CHECKCUDAERR(cudaMemcpy(evalsInfoFRI_[opening], evalsInfoByOpeningPos[opening],
-                                    evalsInfoFRISizes_[opening] * sizeof(EvalInfo),
-                                    cudaMemcpyHostToDevice));
-            delete[] evalsInfoByOpeningPos[opening];
-        }
-        
-        CHECKCUDAERR(cudaMalloc(&evalsInfoFRI, nOpeningPoints * sizeof(EvalInfo*)));
-        CHECKCUDAERR(cudaMemcpy(evalsInfoFRI, evalsInfoFRI_, nOpeningPoints * sizeof(EvalInfo*), cudaMemcpyHostToDevice));
-        
-        delete[] evalsInfoFRI_;
-        
-        CHECKCUDAERR(cudaMalloc(&evalsInfoFRISizes, nOpeningPoints * sizeof(uint64_t)));
-        CHECKCUDAERR(cudaMemcpy(evalsInfoFRISizes, evalsInfoFRISizes_, nOpeningPoints * sizeof(uint64_t), cudaMemcpyHostToDevice));
-        
-        delete[] evalsInfoFRISizes_;
-        delete[] evalsInfoByOpeningPos;
+        friTerms = uploadVec(terms);
+        friTermStart = uploadVec(termStart);
 
         if (packedInfo != nullptr) {
             is_packed = packedInfo->is_packed;
@@ -317,6 +289,7 @@ struct AirInstanceInfo {
             if (is_packed && num_packed_words > 0) {
                 CHECKCUDAERR(cudaMalloc(&unpack_info, nCols * sizeof(uint64_t)));
                 CHECKCUDAERR(cudaMemcpy(unpack_info, packedInfo->unpack_info, nCols * sizeof(uint64_t), cudaMemcpyHostToDevice));
+                unpack_info_host.assign(packedInfo->unpack_info, packedInfo->unpack_info + nCols);
             }
             cudaMemcpy(d_num_packed_words, &num_packed_words, sizeof(uint64_t), cudaMemcpyHostToDevice);
 
@@ -324,8 +297,17 @@ struct AirInstanceInfo {
             if (packedInfo->col_source != nullptr) {
                 index_bits = packedInfo->index_bits;
                 words_per_entry = packedInfo->words_per_entry;
+                lanes = packedInfo->lanes;
                 CHECKCUDAERR(cudaMalloc(&d_col_source, nCols * sizeof(uint8_t)));
                 CHECKCUDAERR(cudaMemcpy(d_col_source, packedInfo->col_source, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
+                col_source_host.assign(packedInfo->col_source, packedInfo->col_source + nCols);
+                // Left null for a single-lane descriptor: the kernels then read lane 0. An
+                // all-zero map would instead disarm the null checks the refusals downstream rely on.
+                if (packedInfo->col_lane != nullptr) {
+                    CHECKCUDAERR(cudaMalloc(&d_col_lane, nCols * sizeof(uint8_t)));
+                    CHECKCUDAERR(cudaMemcpy(d_col_lane, packedInfo->col_lane, nCols * sizeof(uint8_t), cudaMemcpyHostToDevice));
+                    col_lane_host.assign(packedInfo->col_lane, packedInfo->col_lane + nCols);
+                }
             }
         }
     }
@@ -341,36 +323,12 @@ struct AirInstanceInfo {
 
         delete expressions_gpu;
 
-        for (uint64_t i = 0; i < numBatchesEvals; ++i) {
-            if (evalsInfo[i] != nullptr) {
-                CHECKCUDAERR(cudaFree(evalsInfo[i]));
-            }
-        }
-
-        delete[] evalsInfoSizes;
-        delete[] evalsInfo;
+        if (evalGroups != nullptr) CHECKCUDAERR(cudaFree(evalGroups));
         CHECKCUDAERR(cudaFree(d_num_packed_words));
 
-        if (evalsInfoFRI != nullptr) {
-            uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
-            
-            EvalInfo **host_evalsInfoFRI = new EvalInfo*[nOpeningPoints];
-            CHECKCUDAERR(cudaMemcpy(host_evalsInfoFRI, evalsInfoFRI, nOpeningPoints * sizeof(EvalInfo*), cudaMemcpyDeviceToHost));
-            
-            for (uint64_t i = 0; i < nOpeningPoints; ++i) {
-                if (host_evalsInfoFRI[i] != nullptr) {
-                    CHECKCUDAERR(cudaFree(host_evalsInfoFRI[i]));
-                }
-            }
-            
-            delete[] host_evalsInfoFRI;
-            
-            CHECKCUDAERR(cudaFree(evalsInfoFRI));
-        }
-
-        if (evalsInfoFRISizes != nullptr) {
-            CHECKCUDAERR(cudaFree(evalsInfoFRISizes));
-        }
+        for (void *p : {(void *)friTerms, (void *)friTermStart, (void *)friCols, (void *)friColStart, (void *)friOpStart,
+                        (void *)friOpGroups, (void *)friSegments, (void *)friOpBase})
+            if (p != nullptr) CHECKCUDAERR(cudaFree(p));
 
         if (unpack_info != nullptr) {
             CHECKCUDAERR(cudaFree(unpack_info));
@@ -380,6 +338,10 @@ struct AirInstanceInfo {
             CHECKCUDAERR(cudaFree(d_col_source));
         }
 
+        if (d_col_lane != nullptr) {
+            CHECKCUDAERR(cudaFree(d_col_lane));
+        }
+
         if (d_instr_table != nullptr) {
             CHECKCUDAERR(cudaFree(d_instr_table));
         }
@@ -387,16 +349,18 @@ struct AirInstanceInfo {
         if (d_gate_bands != nullptr) {
             CHECKCUDAERR(cudaFree(d_gate_bands));
         }
-
-        if (d_witness_compact != nullptr) {
-            CHECKCUDAERR(cudaFree(d_witness_compact));
-        }
     }
 };
 
 
 // Upper bound on per-stream staged aux_values; call sites assert the actual size fits.
 #define PINNED_AUX_VALUES_MAX 65536
+
+// Per-slot pinned host scratch (DeviceCommitBuffers::streamCommitHost): root, widths, GW inputs.
+#define STREAM_COMMIT_HOST_ROOT_WORDS 4
+#define STREAM_COMMIT_HOST_WIDTH_WORDS 4096   // SC_MAX_COLS (static_assert in starks_api.cu)
+#define STREAM_COMMIT_HOST_GW_BYTES (16ull << 20)
+#define STREAM_COMMIT_HOST_WORDS (STREAM_COMMIT_HOST_ROOT_WORDS + STREAM_COMMIT_HOST_WIDTH_WORDS + STREAM_COMMIT_HOST_GW_BYTES / 8)
 
 // Slot capacity (one slot per expression launch) of the pinned_buffer_exps_* staging
 // buffers; stageExpsSlot (expressions_gpu.cu) bounds countId against it. Shared by the
@@ -407,15 +371,29 @@ struct StreamData{
 
     //const data
     cudaStream_t stream;
+    // Custom-commit rebuild lane: LOWEST priority. The rebuild fills the proof's front-end gap
+    // (witness H2D), so it must never preempt the proof's own kernels. customFixedFork orders it
+    // after the previous proof's reads of custom_fixed; customFixedDone gates this proof's first use.
+    cudaStream_t customStream;
+    cudaEvent_t customFixedFork;
+    cudaEvent_t customFixedDone;
+    // Fixed-pols rebuild lane (non-aliased airs), same LOWEST priority and protocol: fixedTreeFork
+    // orders it after the previous proof's reads of the const sections; fixedPolsDone (after the
+    // unpack) gates stage 1, fixedTreeDone (after the extend + merkelize) gates Q, so the tree part
+    // runs under stages 1-2.
+    cudaStream_t fixedStream;
+    cudaEvent_t fixedTreeFork;
+    cudaEvent_t fixedPolsDone;
+    cudaEvent_t fixedTreeDone;
+
     uint32_t gpuId;
     uint64_t localStreamId;
     StepsParams *pinned_params;
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_exps_params;
     Goldilocks::Element *pinned_buffer_exps_args;
-    // Per-stream pinned staging for the contributions aux_values H2D, enabling an
-    // async copy (no per-copy stream sync); reused only on event-gated stream
-    // reselect. Used by commit_witness_gpu only.
+    // Per-stream pinned staging for the aux_values H2D of the proof and verify-constraints paths,
+    // enabling an async copy (no per-copy stream sync); reused only on event-gated stream reselect.
     Goldilocks::Element *pinned_aux_values;
     // Dense scratch for whichever gate-band family needs one, gateBandScratchWordsGPU() words. Per
     // STREAM: the expander's memset/fill/scatter are ordered only within one. Allocated on this
@@ -434,7 +412,11 @@ struct StreamData{
     // trace H2D. Distinct from end_event (the whole commit): the buffer can be recycled as soon
     // as the copy is done, and gating that on the LDE/Merkle work kept the pool starved.
     cudaEvent_t trace_copy_event;
-    TimerGPU timer;
+    // One timer per ring slot: the next proof is enqueued while the current one still runs,
+    // so it must record into its own object. launchSeq advances only at ring pushes, so
+    // outside the pipeline every path shares timers[0].
+    TimerGPU timers[2];
+    TimerGPU &curTimer() { return timers[launchSeq & 1]; }
 
     TranscriptGL_GPU *transcript;
     TranscriptGL_GPU *transcript_helper;
@@ -447,13 +429,7 @@ struct StreamData{
     // const-reuse check; empty for normal recursion. Cleared by invalidateContext().
     string recurserId;
 
-    // Scalar "resident witness" marker read locklessly by get_instances_ready (reading
-    // proofType there would race concurrent std::string writes). Set by commit_witness,
-    // cleared by every proof path and invalidateContext; survives reset() like proofType.
-    bool witnessResident;
-
     //callback inputs
-    void *root;
     void *pSetupCtx;
     uint64_t *proofBuffer; 
     string proofFile;
@@ -468,9 +444,8 @@ struct StreamData{
     // separates the two const buffers (unrelated offsets), constRecurserId the recursers
     // (one shared slot). custom_fixed is per-air and stays keyed on the air.
     uint64_t constPolsOffset = UINT64_MAX; // UINT64_MAX = nothing cached
-    // Where the unpacked pols land in the aux trace. Part of the key because two airs can
-    // share a slot yet lay out ("const", false) differently -- a preallocated const tree
-    // moves it, and constPolsAliasTree moves it into the tree's node area.
+    // Where the unpacked pols land in the aux trace. Part of the key because two airs can in
+    // principle share a slot yet lay out ("const", false) differently.
     uint64_t constAuxOffset = 0;
     bool constAggBuffer = false;
     string constRecurserId;
@@ -480,9 +455,11 @@ struct StreamData{
 
     bool recursive;
 
-    // This stream's aux-trace region intersects the streaming-commit slot area
-    // (only ever set on first-GPU streams -- slots exist only there)
+    // This stream's aux-trace region intersects its GPU's streaming-commit slot area.
     bool overlapsStreamCommitRegion = false;
+    // Set while slot commits on this GPU are in flight: the reserve paths must skip the stream.
+    // A flag, not a held mutex: the claiming and the releasing commit are different threads.
+    std::atomic<bool> slotHeld{false};
 
     // Field elements in this stream's slice of the unified buffer: a proof fits only when mapTotalN does.
     uint64_t auxTraceCapacity = 0;
@@ -491,13 +468,53 @@ struct StreamData{
     std::unique_ptr<CudaGraphCache> graph_cache;
 #endif
 
+    // ---- Deep pipeline (DeviceCommitBuffers::pipelineMode): up to 2 basic proofs
+    // in flight on this stream. Completion metadata lives in this 2-slot ring,
+    // harvested off the reserve path (reserve no longer host-syncs), and the
+    // enqueue-time host-written pinned staging (params / aux_values / proof) is
+    // parity-sliced by launchSeq so proof N+1's CPU writes never race proof N's
+    // still-pending async copies.
+    struct PipelineSlot {
+        int64_t instanceId = -1;
+        uint64_t airgroupId = 0, airId = 0;
+        std::string proofType = "basic";   // completion callback tag (ring carries recursives too)
+        void *pSetupCtx = nullptr;
+        uint64_t *proofBuffer = nullptr;
+        std::string proofFile;
+        Goldilocks::Element *pinnedProof = nullptr;
+        cudaEvent_t done = nullptr;
+        TimerGPU *timer = nullptr;   // closed (synced + logged) by the harvester
+    };
+    PipelineSlot pipeSlots[2];
+    uint32_t pipeHead = 0;
+    uint32_t pipeCount = 0;      // guarded by pipeMutex
+    uint64_t launchSeq = 0;      // single-writer (the launching worker)
+    std::mutex pipeMutex;
+    // Serializes harvesters: writeProof runs outside pipeMutex (it is slow and the
+    // enqueue push must not block behind it), so without this two concurrent
+    // harvesters would both claim the same head slot, double-pop, and underflow
+    // pipeCount into a livelock.
+    std::mutex harvestMutex;
+    uint64_t maxProofSize = 0;
+
     std::mutex mutex_stream_selection;
 
     void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint32_t localStreamId_, bool recursive_, uint64_t merkleTreeArity){
         uint64_t maxExps = PINNED_EXPS_SLOTS;
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
-        timer.init(stream);
+        int prioLo = 0, prioHi = 0;
+        CHECKCUDAERR(cudaDeviceGetStreamPriorityRange(&prioLo, &prioHi));
+        CHECKCUDAERR(cudaStreamCreateWithPriority(&customStream, cudaStreamNonBlocking, prioLo));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&customFixedFork, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&customFixedDone, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaStreamCreateWithPriority(&fixedStream, cudaStreamNonBlocking, prioLo));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&fixedTreeFork, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&fixedPolsDone, cudaEventDisableTiming));
+        CHECKCUDAERR(cudaEventCreateWithFlags(&fixedTreeDone, cudaEventDisableTiming));
+        for (TimerGPU &t : timers) t.init(stream);
+        // Fill this device's timer event pool now, not on the first proof's hot path.
+        if (TimerGPU::on()) TimerGPU::prewarmEvents(2048);
         gpuId = gpuId_;
         localStreamId = localStreamId_;
         recursive = recursive_;
@@ -505,16 +522,22 @@ struct StreamData{
         cudaEventCreate(&trace_copy_event);
         instanceId = -1;
         status = 0;
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_aux_values, PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
+        // x2: parity slots for the deep pipeline (slot 0 is the only one used
+        // outside pipeline mode, so single-proof behavior is unchanged).
+        maxProofSize = max_size_proof;
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, 2 * max_size_proof * sizeof(Goldilocks::Element)));
+        // x2: parity halves for the pipeline (see genProof_gpu pipeSlot) -- the next proof's host
+        // staging must not overwrite a slot whose H2D is still queued behind the running proof.
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, 2 * maxExps * 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, 2 * maxExps * sizeof(ExpsArguments)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, 2 * sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_aux_values, 2 * PINNED_AUX_VALUES_MAX * sizeof(Goldilocks::Element)));
+        for (int k = 0; k < 2; k++) {
+            CHECKCUDAERR(cudaEventCreateWithFlags(&pipeSlots[k].done, cudaEventDisableTiming));
+        }
 
-        root = nullptr;
         pSetupCtx = nullptr;
         recurserId = "";
-        witnessResident = false;
         proofBuffer = nullptr;
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
@@ -552,13 +575,12 @@ struct StreamData{
         // destroy/recreate them on every per-instance reset.
         status = reset_status ? 0 : 3;
 
-        root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
 
         // Clear stale open timer categories: a cancel mid-category leaves one open, and the next
         // job's stopCategory then mismatches and CHECKCUDAERR-aborts. Host-side only, no CUDA calls.
-        timer.resetCategories();
+        for (TimerGPU &t : timers) t.resetCategories();
     }
 
     // Invalidate the const-reuse identity so the next proof reloads constants.
@@ -567,11 +589,16 @@ struct StreamData{
         airId = UINT64_MAX;
         proofType = "";
         recurserId = "";
-        witnessResident = false;
         constPolsOffset = UINT64_MAX;
         constRecurserId = "";
         constTreeResident = false;
     }
+
+    // Const-cache slots the proofs in flight on this stream read, by pinned-staging parity (the
+    // ring half the launch rode; 0 on ring-less streams). A parity is reused only once the proof it
+    // belonged to completed (ring depth 2, or the legacy sync-and-collect), so overwriting the pin
+    // there releases the slot exactly when it may be recycled. -1 = none.
+    int32_t constSlotPin[2] = {-1, -1};
 
     // Claim this slot; true if it was already claimed, i.e. the unpacked const pols still
     // apply -- even to a different air sharing them. A change also drops constTreeResident.
@@ -586,20 +613,19 @@ struct StreamData{
         return false;
     }
 
-    // Nothing valid is cached any more: for paths that overwrite the aux trace without
-    // repopulating the const pols.
-    void dropFixedSlot(){
-        constPolsOffset = UINT64_MAX;
-        constRecurserId = "";
-        constTreeResident = false;
-    }
-
     void free(){
         cudaSetDevice(gpuId);
 #ifdef USE_CUDA_GRAPH
         graph_cache.reset();
 #endif
         cudaStreamDestroy(stream);
+        cudaStreamDestroy(customStream);
+        cudaEventDestroy(customFixedFork);
+        cudaEventDestroy(customFixedDone);
+        cudaStreamDestroy(fixedStream);
+        cudaEventDestroy(fixedTreeFork);
+        cudaEventDestroy(fixedPolsDone);
+        cudaEventDestroy(fixedTreeDone);
         cudaEventDestroy(end_event);
         cudaEventDestroy(trace_copy_event);
         cudaFreeHost(pinned_buffer_proof);
@@ -610,6 +636,9 @@ struct StreamData{
         if (d_gate_band_scratch != nullptr) {
             cudaFree(d_gate_band_scratch);
             d_gate_band_scratch = nullptr;
+        }
+        for (int k = 0; k < 2; k++) {
+            if (pipeSlots[k].done != nullptr) cudaEventDestroy(pipeSlots[k].done);
         }
     }
 };
@@ -674,10 +703,35 @@ struct DeviceCommitBuffers
 {
     gl64_t **d_constPols;
     gl64_t **d_constPolsAggregation;
+    // ---- Recursive1 const slot cache. The 44 recursive1 setups each have a 100 MiB packed const
+    // set, read once per proof (unpacked into the aux trace, tree rebuilt on device); a block uses
+    // ~20 of them. Instead of one resident slot per setup, the aggregation const buffer holds
+    // `nSlots` slots (RECURSIVE1_CONST_SLOTS on the Rust side, which sizes the region), each tagged
+    // with the air whose set it holds. A launch hits when a slot holds its air; else it takes an
+    // unpinned slot (least recently used), uploads the set from the host pinned copy on its own
+    // stream ahead of the unpack, and tags it. Slots read by proofs in flight are pinned by their
+    // stream (StreamData::constSlotPin), so a live set is never recycled. `ready[s]` is recorded
+    // after the upload: a hit on another stream waits on it. One cache per GPU, tags shared under
+    // constCacheMutex. hits/misses are per job, logged at reset.
+    struct ConstSlotCache {
+        static constexpr uint32_t MAX_SLOTS = 32;
+        uint32_t nSlots = 0;
+        uint64_t base = 0;        // element offset in d_constPolsAggregation
+        uint64_t slotElems = 0;
+        int64_t tag[MAX_SLOTS];   // (airgroup << 32 | air) of the set held, -1 = free
+        uint64_t lastUse[MAX_SLOTS];
+        cudaEvent_t ready[MAX_SLOTS] = {};
+        uint64_t useClock = 0;
+        uint64_t hits = 0, misses = 0;
+        bool armed() const { return nSlots > 0; }
+        void clearTags() { for (uint32_t s = 0; s < MAX_SLOTS; s++) { tag[s] = -1; lastUse[s] = 0; } }
+    };
+    std::vector<ConstSlotCache> constCache;   // per GPU (local index)
+    std::mutex constCacheMutex;
+    struct HostConstPols { Goldilocks::Element *ptr = nullptr; uint64_t elems = 0; };
+    std::map<int64_t, HostConstPols> hostConstPols;   // air key -> pinned host copy
     gl64_t ***d_aux_trace;
     gl64_t ***d_aux_traceAggregation;
-    Goldilocks::Element **pinned_buffer;
-    Goldilocks::Element **pinned_buffer_extra;
     gl64_t **gpuMemoryBuffer;
     bool recursive;
     uint64_t max_size_proof;
@@ -687,7 +741,6 @@ struct DeviceCommitBuffers
     // Borrow flag for the FIRST GPU's unified buffer only (my_gpu_ids[0]).
     // 0 = free (proofman owns it), 1 = borrowed
     std::atomic<uint32_t> firstGpuBufferBorrowed{0};
-    uint64_t pinned_size = 128 * 1024 * 1024; //256MB
 
     // Device-idle barrier. Worker: increment `device_active` THEN read `cancelled`. Teardown: raise
     // `cancelled` THEN wait for `device_active == 0`. seq_cst on both gives a total order so neither
@@ -703,7 +756,6 @@ struct DeviceCommitBuffers
     uint32_t n_recursive_streams;
     // Aux trace elements per non-recursive stream, largest class first; length n_streams. Owned here.
     uint64_t *aux_trace_sizes = nullptr;
-    std::mutex *mutex_pinned;
     StreamData *streamsData;
 
     
@@ -711,13 +763,83 @@ struct DeviceCommitBuffers
 
     bool packedTrace = false;
 
-    // Streaming-commit slots (STREAM_COMMIT_SLOTS env, 0 = disabled), FIRST
-    // GPU only -- the only one gpu-mops can borrow. Carved from the top of the unified buffer,
-    // immediately below the const-pols aggregation region. They overlap the
-    // Slot i starts at byte offset streamCommitFloorBytes + i * streamCommitSlotBytes
-    // from gpuMemoryBuffer[0]. streamCommitFloorBytes is the ceiling gpu-mops
-    // usage must stay under (UINT64_MAX when disabled, so comparisons degrade
-    // to the const-pols one).
+    // Deep pipeline switch: set by the Rust proofs phase (single-stream zone mode
+    // only), cleared at phase end. Read by the reserve paths and gen_proof.
+    bool pipelineMode = false;
+
+    // ---- Phase B (aggregation with one basic stream). The two recursive-class streams are
+    // ALIASES of the basic stream's buffer: its two halves ([0..A) and [A..2A), A = half of the
+    // stream, which the planner grew to the mops floor), so they cost no memory and may only run
+    // while the basic stream is idle. Phase A runs everything on the whole stream; phase B runs
+    // everything that fits a half -- recursion AND the small basics -- on the two halves, so
+    // basics and recursion overlap. The Rust side requests the switch once every instance that
+    // does NOT fit a half (and its compressor) has completed. phaseBState: 0 = phase A (basic
+    // stream on, halves off); 1 = phase B (halves on, basic stream off); 2 = final (basic stream
+    // back for VadcopFinal). The switch to 1 is REQUESTED by set_phase_b (phaseBClosing: no new
+    // basic-stream reservation) and completed by tryOpenPhaseB once the basic stream has drained.
+    bool phaseBAliased = false;
+    std::atomic<uint32_t> phaseBState{0};
+    std::atomic<bool> phaseBClosing{false};
+    // Phase-A recursion alias: a third recursive-class stream (localStreamId 2) over the basic
+    // stream's tail, from the largest basic's buffer size to the end of the stream, eligible in
+    // phase A only. A Main uses [0, 14.09 GB) of the stream; recursion runs beside it in the rest,
+    // instead of serially between the basics. Its range overlaps the second half, so it is closed
+    // and fenced with the basic stream before phase B opens and its const identity dropped after.
+    // 0 = no alias (the stream was not grown far enough to hold the recursive class beside the
+    // largest basic).
+    uint64_t phaseAAliasOffset = 0;   // elements
+    bool hasPhaseAAlias() const { return phaseBAliased && phaseAAliasOffset > 0; }
+
+    uint64_t prefetchRegionBytes = 0;  // per GPU
+    // Mops-floor pad: raises the region BELOW the const pols to MOPS_FLOOR_BYTES so the
+    // gpu-mops planner's borrow fits. The planner is offered that region MINUS the streaming-
+    // commit slots (its ceiling is the slot floor); it carves 15.03 GiB of fixed regions (zisk
+    // MAX_CHUNKS x MAX_MEMOPS_PER_CHUNK, block-independent) and uses the REST as its ops pool, and whose exhaustion
+    // aborts the process. zisk's own default pool is 2 GiB: 15.03 + 2 + 2 x 2 GiB slots = 21.1
+    // GiB, hence 22 (pool 2.97 GiB). Clamped to what is free on the first GPU minus
+    // POST_ALLOC_HEADROOM_BYTES, the measured headroom the allocations after the unified buffer
+    // need (per-air setup buffers, .exps.so module loads, transcripts). Short of the floor the
+    // planner falls back to CPU mops at setup and says so. PROOFMAN_GPU_HEADROOM_MB overrides the
+    // headroom (see postAllocHeadroomBytes()): raise it on a card or key where the allocations
+    // after the unified buffer run out of memory; every MB comes out of the single basic stream.
+    static constexpr uint64_t MOPS_FLOOR_BYTES = 22ull << 30;
+    static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 2560ull << 20;
+    uint64_t mopsFloorPadBytes = 0;
+
+    // Witness prefetch zone, one per GPU (the unified buffer's prefetch region): a witness is
+    // uploaded on the zone's copy stream ahead of its commit or proof, which consumes it with one
+    // D2D and records `drained` so the next upload never overwrites live data. A run of units, each
+    // half the largest trace: a witness takes ceil(bytes/unit) consecutive units, at most
+    // PREFETCH_UNIT_SPAN. get_prefetch_witness_slots reports UNITS/SPAN. prefetchArmed means
+    // configure ran: every zone's stream and events exist. instanceId == -1 means free.
+    static constexpr uint32_t PREFETCH_WITNESS_SLOTS = 8;
+    static constexpr uint32_t PREFETCH_UNIT_SPAN = 2;
+    struct PrefetchZone {
+        gl64_t *base = nullptr;
+        cudaStream_t stream = nullptr;
+        cudaEvent_t ready[PREFETCH_WITNESS_SLOTS] = {};
+        cudaEvent_t drained[PREFETCH_WITNESS_SLOTS] = {};
+        std::mutex mutex;
+        std::mutex copyMutex;       // one staging copies at a time
+        // Every unit of a span carries the instance id; only the head carries length and bytes.
+        int64_t instanceId[PREFETCH_WITNESS_SLOTS] = {-1, -1, -1, -1, -1, -1, -1, -1};
+        uint64_t traceBytes[PREFETCH_WITNESS_SLOTS] = {};
+        uint32_t spanUnits[PREFETCH_WITNESS_SLOTS] = {};
+    };
+    PrefetchZone *prefetchZones = nullptr;  // [n_gpus], local index
+    bool prefetchArmed = false;
+    uint64_t prefetchSlotStride = 0; // elements between unit bases
+    // Witness H2D uploads keep one chunk in flight: a stream with a copy always pending holds the
+    // copy engine and starves other streams' copies.
+    static constexpr uint64_t HOST_UPLOAD_CHUNK_BYTES = 32ull << 20;
+
+
+    // Streaming-commit slots (0 until configured): streamCommitSlots per GPU,
+    // carved from the top of each unified buffer, immediately below the prefetch region. A slot
+    // index is global, gpuLocal * streamCommitSlots + j; slot j of a GPU starts at byte offset
+    // streamCommitFloorBytes + j * streamCommitSlotBytes of that GPU's buffer (the layout is the
+    // same on every GPU). On the first GPU the floor is also the ceiling gpu-mops usage must stay
+    // under (UINT64_MAX when disabled, so comparisons degrade to the const-pols one).
     uint64_t streamCommitSlots = 0;
     uint64_t streamCommitSlotBytes = 0;
     uint64_t streamCommitFloorBytes = UINT64_MAX;
@@ -725,17 +847,24 @@ struct DeviceCommitBuffers
     // streams differ in size, so only their total is meaningful; per-stream offsets are prefix sums.
     uint64_t auxTraceTotalBytes = 0;
     uint64_t auxTraceRecursiveBytes = 0;
-    cudaStream_t *streamCommitStreams = nullptr;  // [streamCommitSlots], first GPU
-    // Shared-hold of the overlapped legacy streams: the first in-flight slot
-    // commit claims every overlapped stream's selection mutex, the last
-    // releases them (see acquire/release in commit_witness_streaming_gpu).
-    std::mutex streamCommitRegionMutex;
-    uint32_t streamCommitInFlight = 0;
-    // Quiesce: set by the gpu-mops borrower right before its FINAL planning
-    // phase (whose host-paced micro-ops stretch ~40x under concurrent commit
-    // load — see stream_commit_pause). While set, commit_witness_streaming
-    // rejects new commits (-14, silent legacy fallback); cleared on the next
-    // borrow acquire.
+    cudaStream_t *streamCommitStreams = nullptr;  // [n_gpus * streamCommitSlots], global slot index
+    // Pinned per-slot staging for the multiplicity hook's publics/values.
+    // [n_gpus * streamCommitSlots * PINNED_AUX_VALUES_MAX]
+    Goldilocks::Element *streamCommitAuxValues = nullptr;
+    // Pinned per slot (pageable copies block the driver): root, column widths, GPU-witness
+    // input bounce. [n_gpus * streamCommitSlots * STREAM_COMMIT_HOST_WORDS]
+    uint64_t *streamCommitHost = nullptr;
+    // Per GPU: shared hold of that GPU's overlapped legacy streams. The first in-flight slot commit
+    // sets every overlapped stream's `slotHeld` flag, the last clears them. `cv` is signalled
+    // when the quiesce lifts and when the last in-flight commit leaves.
+    struct SlotRegion {
+        std::mutex mutex;
+        uint32_t inFlight = 0;
+        std::condition_variable cv;
+    };
+    SlotRegion *streamCommitRegions = nullptr;  // [n_gpus], local index
+    // Quiesce of the FIRST GPU's slots: set by the gpu-mops borrower before its final planning
+    // phase (see stream_commit_pause), cleared on borrow release. A slot commit there waits.
     std::atomic<uint32_t> streamCommitQuiesced{0};
 
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
@@ -777,16 +906,6 @@ void copy_to_device_in_chunks(
     uint8_t* pinnedBuffer,
     uint64_t pinnedBufferSize,
     cudaStream_t stream);
-
-
-void load_and_copy_to_device_in_chunks(
-    DeviceCommitBuffers* d_buffers,
-    const char* bufferPath,
-    void* dst,
-    uint64_t total_size,
-    uint64_t streamId,
-    uint64_t header_skip_bytes = 0
-    );
 
 #endif
 

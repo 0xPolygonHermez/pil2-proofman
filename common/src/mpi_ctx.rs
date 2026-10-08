@@ -581,48 +581,68 @@ impl MpiCtx {
             let buff_size = _n_cols * (_col_len + 1);
 
             if _owner != self.rank {
-                // Pack multiplicities in a sparse vector
-                let mut packed_multiplicities = vec![0u32; _n_cols];
-                for (col_idx, column) in _multiplicities.chunks(_col_len).enumerate() {
-                    for (idx, mul) in column.iter().enumerate() {
-                        let m = mul.load(Ordering::Relaxed);
-                        if m != 0 {
-                            assert!(m < u32::MAX as u64);
-                            packed_multiplicities[col_idx] += 1;
-                            packed_multiplicities.push(idx as u32);
-                            packed_multiplicities.push(m as u32);
+                // Pack multiplicities in a sparse vector the per-column scan is parallel
+                use rayon::prelude::*;
+                let per_col: Vec<Vec<u32>> = _multiplicities
+                    .par_chunks(_col_len)
+                    .map(|column| {
+                        let mut pairs: Vec<u32> = Vec::new();
+                        for (idx, mul) in column.iter().enumerate() {
+                            let m = mul.load(Ordering::Relaxed);
+                            if m != 0 {
+                                assert!(m < u32::MAX as u64);
+                                pairs.push(idx as u32);
+                                pairs.push(m as u32);
+                            }
                         }
-                    }
+                        pairs
+                    })
+                    .collect();
+                let total: usize = per_col.iter().map(|v| v.len()).sum();
+                let mut packed_multiplicities: Vec<u32> = Vec::with_capacity(_n_cols + total);
+                packed_multiplicities.extend(per_col.iter().map(|v| (v.len() / 2) as u32));
+                for v in &per_col {
+                    packed_multiplicities.extend_from_slice(v);
                 }
-
                 self.world
                     .process_at_rank(_owner)
                     .send_with_tag(&packed_multiplicities[..], _MPI_TAG_DISTRIBUTE_MULTIPLICITIES);
             } else {
-                let mut packed_multiplicities: Vec<u32> = vec![0; buff_size * 2];
+                use rayon::prelude::*;
                 for i in 0..self.n_processes {
                     if i != _owner {
-                        let (msg, _) =
+                        // Receive exactly the message size
+                        let (msg, status) =
                             self.world.process_at_rank(i).matched_probe_with_tag(_MPI_TAG_DISTRIBUTE_MULTIPLICITIES);
-                        msg.matched_receive_into(&mut packed_multiplicities);
-
-                        // Read counters
-                        let mut counters = vec![0usize; _n_cols];
-                        for col_idx in 0.._n_cols {
-                            counters[col_idx] = packed_multiplicities[col_idx] as usize;
+                        let count = status.count(u32::equivalent_datatype()) as usize;
+                        assert!(
+                            count >= _n_cols && count <= buff_size * 2,
+                            "distribute_multiplicities: bad message size {count}"
+                        );
+                        let mut packed_multiplicities: Vec<u32> = vec![0; count];
+                        msg.matched_receive_into(&mut packed_multiplicities[..]);
+                        // Per-column offsets into the pair area, then unpack columns in parallel
+                        // (each column touches only its own atomics; fetch_add keeps it exact).
+                        let mut offsets = Vec::with_capacity(_n_cols + 1);
+                        let mut acc = _n_cols;
+                        for &counter in &packed_multiplicities[.._n_cols] {
+                            offsets.push(acc);
+                            acc += 2 * counter as usize;
                         }
-
-                        // Unpack multiplicities
-                        let mut idx = _n_cols;
-                        for (col_idx, &count) in counters.iter().enumerate() {
+                        offsets.push(acc);
+                        assert_eq!(acc, count, "distribute_multiplicities: counters do not match message size");
+                        let packed = &packed_multiplicities;
+                        (0.._n_cols).into_par_iter().for_each(|col_idx| {
                             let col_base = col_idx * _col_len;
-                            for _ in 0..count {
-                                let row_idx = packed_multiplicities[idx] as usize;
-                                let m = packed_multiplicities[idx + 1] as u64;
+                            let mut idx = offsets[col_idx];
+                            let end = offsets[col_idx + 1];
+                            while idx < end {
+                                let row_idx = packed[idx] as usize;
+                                let m = packed[idx + 1] as u64;
                                 _multiplicities[col_base + row_idx].fetch_add(m, Ordering::Relaxed);
                                 idx += 2;
                             }
-                        }
+                        });
                     }
                 }
             }

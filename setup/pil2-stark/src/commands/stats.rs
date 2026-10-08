@@ -87,7 +87,8 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
 
             let stark_struct = generate_stark_struct(&air_settings, n_bits, &opts.hash);
 
-            let prepare_opts = PrepareOptions { debug: false, im_pols_stages: opts.im_pols_stages };
+            let prepare_opts =
+                PrepareOptions { debug: false, im_pols_stages: opts.im_pols_stages, inplace_stage_commit: true };
 
             tracing::info!("Computing stats for air '{}'", air_name);
             let pil_result = crate::pil::info::pil_info(&pilout, ag_idx, air_idx, &stark_struct, &prepare_opts);
@@ -99,6 +100,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
                 &stark_struct,
                 &pil_result.setup,
                 pil_result.pil_code.ev_map.len(),
+                pil_result.pil_code.fri_batch_size,
             );
             let counts = crate::verifier_hashes::verifier_hashes(&geom, family);
             let verifier_hashes = counts.total().to_string();
@@ -193,7 +195,7 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
     // (name, group, geometry)
     let mut circuits: Vec<(String, String, crate::verifier_hashes::VerifierGeometry)> = Vec::new();
 
-    let sctx = SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, &[], &[], false)
+    let sctx = SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, false)
         .map_err(|e| anyhow::anyhow!("Failed to load basic setups: {e:?}"))?;
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, air) in air_group.iter().enumerate() {
@@ -204,9 +206,8 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
     }
 
     if opts.aggregation {
-        let sctx_compressor =
-            SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Compressor, false, &[], &[], false)
-                .map_err(|e| anyhow::anyhow!("Failed to load compressor setups: {e:?}"))?;
+        let sctx_compressor = SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Compressor, false, false)
+            .map_err(|e| anyhow::anyhow!("Failed to load compressor setups: {e:?}"))?;
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, air) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
@@ -218,9 +219,8 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
         }
 
         // recursive1 shares recursive2's circuit, so one entry covers both.
-        let sctx_recursive2 =
-            SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Recursive2, false, &[], &[], false)
-                .map_err(|e| anyhow::anyhow!("Failed to load recursive2 setups: {e:?}"))?;
+        let sctx_recursive2 = SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Recursive2, false, false)
+            .map_err(|e| anyhow::anyhow!("Failed to load recursive2 setups: {e:?}"))?;
         for airgroup_id in 0..pctx.global_info.air_groups.len() {
             let setup = sctx_recursive2.get_setup(airgroup_id, 0).map_err(|e| anyhow::anyhow!("{e:?}"))?;
             let geom = crate::verifier_hashes::geometry_from_stark_info(&setup.stark_info);
@@ -244,9 +244,9 @@ fn run_stats_proving_key(opts: &StatsOptions) -> Result<()> {
                 &proof_type,
                 false,
                 false,
-                false,
-                false,
                 None,
+                &std::collections::HashMap::new(),
+                false,
             )
             .map_err(|e| anyhow::anyhow!("{e:?}"))?;
             let geom = crate::verifier_hashes::geometry_from_stark_info(&setup.stark_info);

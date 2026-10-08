@@ -12,7 +12,9 @@ use colored::*;
 use proofman_common::{
     format_bytes, FixedGroup, MpiCtx, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup, SetupCtx, SetupsVadcop,
 };
-use proofman_starks_lib_c::load_device_const_pols_c;
+use proofman_starks_lib_c::{
+    configure_const_slot_cache_c, load_device_const_pols_c, load_host_const_pols_c, reserve_custom_commit_slot_c,
+};
 use proofman_starks_lib_c::get_unified_buffer_gpu_c;
 use proofman_starks_lib_c::verify_root_bn128_from_tree_c;
 use proofman_starks_lib_c::pack_const_pols_c;
@@ -21,7 +23,7 @@ use proofman_starks_lib_c::{
     prepare_blocks_c, tile_const_pols_c, load_const_pols_c,
 };
 use proofman_util::create_buffer_fast;
-use proofman_common::{PackedInfo, VerboseMode, GlobalInfo};
+use proofman_common::{GpuWitnessAirs, PackedInfo, VerboseMode, GlobalInfo};
 
 use pil2_std_lib::Std;
 use proofman_witness::WitnessManager;
@@ -265,6 +267,10 @@ pub fn print_summary<F: PrimeField64>(
 }
 
 pub fn needs_const_tree_regeneration<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<bool> {
+    if !setup.needs_const_tree_file() {
+        return Ok(false);
+    }
+
     let const_pols_tree_path = &setup.const_pols_tree_path;
     let const_pols_tree_size = setup.const_tree_size;
 
@@ -324,6 +330,10 @@ pub fn needs_const_tree_regeneration<F: PrimeField64>(setup: &Setup<F>) -> Proof
 }
 
 pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*mut c_void>) -> ProofmanResult<()> {
+    if !setup.needs_const_tree_file() {
+        return Ok(());
+    }
+
     let const_pols_tree_path = &setup.const_pols_tree_path;
     let const_pols_tree_size = setup.const_tree_size;
 
@@ -839,16 +849,26 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Set
     Ok(())
 }
 
+/// Size the host trace pool: the largest thing the host still has to hold.
+///
+/// A `gpu_witness_airs` air counts by its staged *inputs*, not its trace: it still takes a
+/// (pinned) pool buffer to stage them from. Taking the max keeps this correct if inputs ever
+/// exceed every remaining trace.
 pub fn calculate_max_witness_trace_size<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
+    gpu_witness_airs: &GpuWitnessAirs,
 ) -> ProofmanResult<(usize, usize)> {
     let mut max_witness_trace_size = 0;
     let mut max_witness_trace_size_packed = 0;
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
+            if gpu_witness_airs.contains(airgroup_id, air_id) {
+                continue;
+            }
             let setup = sctx.get_setup(airgroup_id, air_id)?;
+
             let n = 1 << setup.stark_info.stark_struct.n_bits;
             let num_packed_words =
                 packed_info.get(&(airgroup_id, air_id)).map(|info| info.num_packed_words).unwrap_or(0);
@@ -861,7 +881,9 @@ pub fn calculate_max_witness_trace_size<F: PrimeField64>(
             max_witness_trace_size_packed = max_witness_trace_size_packed.max(trace_size_packed as usize);
         }
     }
-    Ok((max_witness_trace_size, max_witness_trace_size_packed))
+    // In elements (8-byte F), like the traces above.
+    let input_elems = gpu_witness_airs.max_input_bytes().div_ceil(8) as usize;
+    Ok((max_witness_trace_size.max(input_elems), max_witness_trace_size_packed.max(input_elems)))
 }
 
 pub fn load_device_setups<F: PrimeField64>(
@@ -939,8 +961,8 @@ pub fn load_device_setups<F: PrimeField64>(
     Ok(())
 }
 
-/// Uploads one air's packed const pols -- plus its tree when the group is preallocated --
-/// at `*offset`, then advances past the slot. Only a group owner transfers anything; later
+/// Uploads one air's packed const pols at `*offset`, then advances past the slot (the const
+/// tree is rebuilt on device). Only a group owner transfers anything; later
 /// members are just pointed at its offset. `slots` is per const buffer. Must stay in lockstep
 /// with the sizing in `SetupRepository::new`, which walks the same airs in the same order.
 #[allow(clippy::too_many_arguments)]
@@ -950,17 +972,11 @@ fn load_const_pols_slot<F: PrimeField64>(
     group: FixedGroup,
     airgroup_id: usize,
     air_id: usize,
-    verify_constraints: bool,
     only_first_gpu: bool,
     slots: &mut HashMap<(usize, usize), u64>,
     offset: &mut u64,
 ) {
     let proof_type: &str = setup.setup_type.into();
-    let load_tree = group.load_tree && !verify_constraints;
-    let tree_path = match load_tree {
-        true => setup.const_pols_tree_path.as_str(),
-        false => "",
-    };
 
     let shared_slot = slots.get(&group.owner).copied();
     let slot_offset = shared_slot.unwrap_or(*offset);
@@ -979,39 +995,44 @@ fn load_const_pols_slot<F: PrimeField64>(
         d_buffers,
         &setup.const_pols_path,
         setup.const_pols_size_packed as u64,
-        tree_path,
-        setup.const_tree_size as u64,
         proof_type,
         only_first_gpu,
         shared_slot.is_some(),
     );
 
+    // Every air, shared or not: a slot-sharing air must learn the offset too. Must mirror the
+    // order SetupRepository::new sizes them in -- const pols, then custom commits.
+    if setup.custom_commits_reserved_words > 0 {
+        let custom_offset = slot_offset + setup.const_pols_size_packed as u64;
+        reserve_custom_commit_slot_c(
+            airgroup_id as u64,
+            air_id as u64,
+            proof_type,
+            custom_offset,
+            setup.custom_commits_reserved_words as u64,
+            d_buffers,
+            only_first_gpu,
+        );
+    }
+
     if shared_slot.is_none() {
         slots.insert(group.owner, slot_offset);
         *offset += setup.const_pols_size_packed as u64;
-        if load_tree {
-            *offset += setup.const_tree_size as u64;
-        }
+        *offset += group.custom_words.unwrap_or(setup.custom_commits_reserved_words) as u64;
     }
 }
 
 /// Defaults to a group of its own for setups the repository did not fingerprint: the
 /// standalone vadcop_final setups, and any air without a verkey.
-fn fixed_group_or_own<F: PrimeField64>(
-    sctx: Option<&SetupCtx<F>>,
-    setup: &Setup<F>,
-    airgroup_id: usize,
-    air_id: usize,
-) -> FixedGroup {
+fn fixed_group_or_own<F: PrimeField64>(sctx: Option<&SetupCtx<F>>, airgroup_id: usize, air_id: usize) -> FixedGroup {
     sctx.and_then(|s| s.get_fixed_group(airgroup_id, air_id))
-        .unwrap_or(FixedGroup { owner: (airgroup_id, air_id), load_tree: setup.preallocate })
+        .unwrap_or(FixedGroup { owner: (airgroup_id, air_id), custom_words: None })
 }
 
 pub fn load_device_const_pols<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     setups: &SetupsVadcop<F>,
-    verify_constraints: bool,
     aggregation: bool,
     only_first_gpu: bool,
 ) -> ProofmanResult<u64> {
@@ -1025,14 +1046,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
             if setup.gpu {
-                let group = fixed_group_or_own(Some(sctx), setup, airgroup_id, air_id);
+                let group = fixed_group_or_own(Some(sctx), airgroup_id, air_id);
                 load_const_pols_slot(
                     d_buffers,
                     setup,
                     group,
                     airgroup_id,
                     air_id,
-                    verify_constraints,
                     only_first_gpu,
                     &mut basic_slots,
                     &mut offset,
@@ -1053,14 +1073,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
                     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
                     let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
                     if setup.gpu {
-                        let group = fixed_group_or_own(Some(sctx_compressor), setup, airgroup_id, air_id);
+                        let group = fixed_group_or_own(Some(sctx_compressor), airgroup_id, air_id);
                         load_const_pols_slot(
                             d_buffers,
                             setup,
                             group,
                             airgroup_id,
                             air_id,
-                            verify_constraints,
                             only_first_gpu,
                             &mut compressor_slots,
                             &mut offset_aggregation,
@@ -1070,23 +1089,48 @@ pub fn load_device_const_pols<F: PrimeField64>(
             }
         }
 
-        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-            for (air_id, _) in air_group.iter().enumerate() {
-                let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
-                let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
-                if setup.gpu {
-                    let group = fixed_group_or_own(Some(sctx_recursive1), setup, airgroup_id, air_id);
-                    load_const_pols_slot(
-                        d_buffers,
-                        setup,
-                        group,
-                        airgroup_id,
-                        air_id,
-                        verify_constraints,
-                        only_first_gpu,
-                        &mut recursive1_slots,
-                        &mut offset_aggregation,
-                    );
+        // Recursive1: a slot cache instead of resident slots (SetupCtx::const_slot_cache_slots). The
+        // packed sets stay on the host (pinned) and the loader carves the cache region here, in the
+        // same position the resident slots occupied, so the sizing stays in lockstep.
+        let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
+        if sctx_recursive1.const_slot_cache_slots > 0 {
+            for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in air_group.iter().enumerate() {
+                    let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
+                    if setup.gpu {
+                        load_host_const_pols_c(
+                            airgroup_id as u64,
+                            air_id as u64,
+                            setup.setup_type.into(),
+                            &setup.const_pols_path,
+                            setup.const_pols_size_packed as u64,
+                            d_buffers,
+                            only_first_gpu,
+                        );
+                    }
+                }
+            }
+            let slot_elems = sctx_recursive1.max_const_pols_size_packed as u64;
+            let slots = sctx_recursive1.const_slot_cache_slots as u32;
+            configure_const_slot_cache_c(d_buffers, offset_aggregation, slot_elems, slots);
+            offset_aggregation += slots as u64 * slot_elems;
+        } else {
+            for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in air_group.iter().enumerate() {
+                    let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
+                    if setup.gpu {
+                        let group = fixed_group_or_own(Some(sctx_recursive1), airgroup_id, air_id);
+                        load_const_pols_slot(
+                            d_buffers,
+                            setup,
+                            group,
+                            airgroup_id,
+                            air_id,
+                            only_first_gpu,
+                            &mut recursive1_slots,
+                            &mut offset_aggregation,
+                        );
+                    }
                 }
             }
         }
@@ -1096,14 +1140,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
             let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
             let setup = sctx_recursive2.get_setup(airgroup_id, 0)?;
             if setup.gpu {
-                let group = fixed_group_or_own(Some(sctx_recursive2), setup, airgroup_id, 0);
+                let group = fixed_group_or_own(Some(sctx_recursive2), airgroup_id, 0);
                 load_const_pols_slot(
                     d_buffers,
                     setup,
                     group,
                     airgroup_id,
                     0,
-                    verify_constraints,
                     only_first_gpu,
                     &mut recursive2_slots,
                     &mut offset_aggregation,
@@ -1116,14 +1159,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
 
         let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
         if setup_vadcop_final.gpu {
-            let group = fixed_group_or_own(None::<&SetupCtx<F>>, setup_vadcop_final, 0, 0);
+            let group = fixed_group_or_own(None::<&SetupCtx<F>>, 0, 0);
             load_const_pols_slot(
                 d_buffers,
                 setup_vadcop_final,
                 group,
                 0,
                 0,
-                verify_constraints,
                 only_first_gpu,
                 &mut final_slots,
                 &mut offset_aggregation,
@@ -1135,14 +1177,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
         if let Some(setup_vadcop_final_compressed) = setups.setup_vadcop_final_compressed.as_ref() {
             if setup_vadcop_final_compressed.gpu {
                 // Distinct key from vadcop_final above: both report (0, 0) but are separate slots.
-                let group = FixedGroup { owner: (0, 1), load_tree: setup_vadcop_final_compressed.preallocate };
+                let group = FixedGroup { owner: (0, 1), custom_words: None };
                 load_const_pols_slot(
                     d_buffers,
                     setup_vadcop_final_compressed,
                     group,
                     0,
                     0,
-                    verify_constraints,
                     only_first_gpu,
                     &mut final_slots,
                     &mut offset_aggregation,
@@ -1214,19 +1255,16 @@ pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
     wcm.register_component_std(std.prod_bus.clone());
     wcm.register_component_std(std.sum_bus.clone());
     wcm.register_component_std(std.range_check.clone());
-
-    if std.range_check.u8air.is_some() {
-        wcm.register_component_std(std.range_check.u8air.clone().unwrap());
+    // Only non-virtual ranges have these airs (virtual ones are `None`); the std counts them.
+    if let Some(air) = std.range_check.u8air.clone() {
+        wcm.register_component_std(air);
     }
-
-    if std.range_check.u16air.is_some() {
-        wcm.register_component_std(std.range_check.u16air.clone().unwrap());
+    if let Some(air) = std.range_check.u16air.clone() {
+        wcm.register_component_std(air);
     }
-
-    if std.range_check.specified_ranges_air.is_some() {
-        wcm.register_component_std(std.range_check.specified_ranges_air.clone().unwrap());
+    if let Some(air) = std.range_check.specified_ranges_air.clone() {
+        wcm.register_component_std(air);
     }
-
     wcm.register_component_std(std.virtual_table.clone());
     if std.virtual_table.virtual_table_airs.is_some() {
         for air in std.virtual_table.virtual_table_airs.clone().unwrap() {
@@ -1235,37 +1273,36 @@ pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
     }
 }
 
-pub fn register_std_dev<F: PrimeField64>(
-    wcm: &WitnessManager<F>,
-    std: &Std<F>,
-    register_u8: bool,
-    register_u16: bool,
-    register_specified_ranges: bool,
-) {
-    wcm.register_component_std(std.prod_bus.clone());
-    wcm.register_component_std(std.sum_bus.clone());
-    wcm.register_component_std(std.range_check.clone());
+/// Each instance's stage-1 root. Its commit writes it through `ptr`, possibly from the device after
+/// the call returns, so the cells are interior-mutable; nothing reads one before its commit lands.
+pub struct InstanceRoots<F>(Vec<std::cell::UnsafeCell<[F; 4]>>);
 
-    if register_u8 && std.range_check.u8air.is_some() {
-        wcm.register_component_std(std.range_check.u8air.clone().unwrap());
+// SAFETY: each cell is written only by its own instance's commit and read once that commit is done.
+unsafe impl<F: Send> Sync for InstanceRoots<F> {}
+
+impl<F: Copy + Default> InstanceRoots<F> {
+    pub fn new(n: usize) -> Self {
+        Self((0..n).map(|_| std::cell::UnsafeCell::new([F::default(); 4])).collect())
     }
 
-    if register_u16 && std.range_check.u16air.is_some() {
-        wcm.register_component_std(std.range_check.u16air.clone().unwrap());
+    /// Where instance `i`'s commit writes its root.
+    pub fn ptr(&self, i: usize) -> *mut c_void {
+        self.0[i].get() as *mut c_void
     }
 
-    if register_specified_ranges && std.range_check.specified_ranges_air.is_some() {
-        wcm.register_component_std(std.range_check.specified_ranges_air.clone().unwrap());
+    /// # Safety
+    /// Instance `i`'s commit, if any, has completed.
+    pub unsafe fn get(&self, i: usize) -> [F; 4] {
+        unsafe { *self.0[i].get() }
     }
-
-    wcm.register_component_std(std.virtual_table.clone());
 }
 
-pub fn print_roots<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &[[F; 4]]) {
+pub fn print_roots<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &InstanceRoots<F>) {
     let instances = pctx.dctx_get_instances();
     for (instance_id, &instance_info) in instances.iter().enumerate() {
         let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
-        let contribution = roots_contributions[instance_id];
+        // SAFETY: called once the contributions are in.
+        let contribution = unsafe { roots_contributions.get(instance_id) };
         tracing::info!(
             "Contribution for instance id {} [{}:{}] is: {:?}",
             instance_id,

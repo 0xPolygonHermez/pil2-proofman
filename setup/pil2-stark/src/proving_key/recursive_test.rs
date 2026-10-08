@@ -56,6 +56,8 @@ pub fn gen_recursive_test_setup(
     witness_tracker: &WitnessTracker,
     blake3_lanes: Option<usize>,
     recursion_settings: &crate::types::stark_struct::StarkSettings,
+    blowup_override: Option<usize>,
+    min_n_bits: Option<usize>,
 ) -> Result<()> {
     if !["compressor", "aggregation"].contains(&setup_type) {
         bail!("Invalid setup type '{}'. Must be one of: compressor, aggregation", setup_type);
@@ -142,9 +144,9 @@ pub fn gen_recursive_test_setup(
     // it built the compressor air at degree 5 where production builds it at 3 -- same template, same
     // parameters, but 177 intermediate polynomials against far fewer, so stage 2 came out 501 columns
     // wide against 255. A fixture that verifies THAT air says nothing about the one being shipped.
-    let max_constraint_degree = Some(proofman_common::hash_family::max_constraint_degree_for_blowup(
-        crate::proving_key::recursive::recursive_blowup(template, hash),
-    ));
+    // `--blowup` overrides the template's; the degree follows it, which is the coupling being swept.
+    let blowup = blowup_override.unwrap_or_else(|| crate::proving_key::recursive::recursive_blowup(template, hash));
+    let max_constraint_degree = Some(proofman_common::hash_family::max_constraint_degree_for_blowup(blowup));
     let plonk_opts = PlonkOptions {
         airgroup_name: Some(NAME_FILE.to_string()),
         max_constraint_degree,
@@ -152,7 +154,8 @@ pub fn gen_recursive_test_setup(
         merge_copies: true,
         // None takes the air's default of 4; --blake3-lanes overrides it.
         blake3_lanes,
-        min_n_bits: None,
+        // Floors the air so a geometry can be measured at a size the circuit alone would not pick.
+        min_n_bits,
     };
     let r1cs_path = build_inner.join(format!("{}.r1cs", circom_name));
     let r1cs_data =
@@ -218,7 +221,9 @@ pub fn gen_recursive_test_setup(
     // Exactly the real recursion layers' settings (low-degree test, blowup, terminal degree,
     // grinding, kept levels), so a test key matches their geometry: left to generic defaults the
     // fixture once verified a FRI shape the pipeline never builds.
-    let settings = crate::proving_key::recursive::recursive_stark_settings(template, hash, recursion_settings);
+    let mut settings = crate::proving_key::recursive::recursive_stark_settings(template, hash, recursion_settings);
+    // finalDegree is the final polynomial's degree bound, so an overridden blowup leaves it alone.
+    settings.initial_blowup_factor = Some(blowup);
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);
 
     let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default());
@@ -227,8 +232,10 @@ pub fn gen_recursive_test_setup(
     // Step 10: Build and write starkinfo JSON.
     // -------------------------------------------------------------------------
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let ev_map_len = pil_info_result.pil_code.ev_map.len();
-    let ldt = crate::output::stark_info::solve_low_degree_test(&stark_struct, ev_map_len.max(1) as u64);
+    let ldt = crate::output::stark_info::solve_low_degree_test(
+        &stark_struct,
+        pil_info_result.pil_code.fri_batch_size.max(1) as u64,
+    );
 
     let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
         &pil_info_result.setup,

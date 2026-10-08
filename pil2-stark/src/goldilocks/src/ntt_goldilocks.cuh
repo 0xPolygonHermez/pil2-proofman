@@ -154,6 +154,8 @@ public:
                         cudaStream_t stream);
 
     // In-house ColMajor LDE
+    // Builds the current device's ColMajor twiddle tables now instead of on the first transform.
+    static void warmTables();
     void ldeColMajor(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
                  cudaStream_t stream, bool preserve_src = false, gl64_t* preserve_scratch = nullptr,
                  size_t scratch_elems = 0);

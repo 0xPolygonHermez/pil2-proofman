@@ -301,6 +301,16 @@ template parallel {{ verify_evaluations_name }}() {
 }
 {% endfor %}
 
+{% for chunk in fri_once_chunks %}template CalculateFRIConstantsChunks{{ chunk.idx }}() {
+    signal input challengesDeep[2][3];
+    signal input evals[{{ ev_map_len }}][3];
+{% for inp in chunk.inputs %}{% if inp.dim == 1 %}    signal input tmp_{{ inp.id }};
+{% else %}    signal input tmp_{{ inp.id }}[3];
+{% endif %}{% endfor %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal output tmp_{{ out.id }};
+{% else %}    signal output tmp_{{ out.id }}[3];
+{% endif %}{% endfor %}{{ chunk.code }}
+}
+{% endfor %}
 /*
     The committed openings really are the openings, at one query point.
 
@@ -311,7 +321,8 @@ template parallel {{ verify_evaluations_name }}() {
         f_0(x) = sum over opening points, vf1-folded, of
                  [ sum over polynomials, vf2-folded, of (pol(x) - pol(g^s*z)) ] / (x - g^s*z)
     from this query's opened leaves - the trace/quotient/fixed/custom values of row i, which
-    the caller has already checked against their Merkle roots.
+    the caller has already checked against their Merkle roots. The query-independent terms
+    arrive precomputed in `friConsts`, whose first two entries are vf1 and vf2.
 
     The value must match the prover's committed f_0 oracle: the caller passes the whole opened
     coset of f_0 above x, and TreeSelector picks the member x corresponds to using the query
@@ -322,7 +333,7 @@ template {{ verify_query_name }}(currStepBits, nextStepBits) {
     var nextStep = currStepBits - nextStepBits; 
     signal input {binary} queriesL0[{{ step0_bits }}];
     signal input challengeOut[3];
-    signal input challengesDeep[2][3];
+    signal input friConsts[{{ n_fri_consts }}][3];
     signal input evals[{{ ev_map_len }}][3];
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input cm{{ stage.stage }}[{{ stage.cm_section_len }}];
 {% endif %}{% endfor %}    signal input cm{{ q_stage }}[{{ q_stage_cm_section_len }}];
@@ -342,6 +353,11 @@ template {{ verify_query_name }}(currStepBits, nextStepBits) {
 
 {% for op in opening_points %}    xDivXSubXi[{{ op.idx }}] <== CInv()([xacc[{{ step0_bits - 1 }}] - {{ op.root }} * challengeOut[0], - {{ op.root }} * challengeOut[1], - {{ op.root }} * challengeOut[2]]);
 {% endfor %}
+    // The query-independent terms, computed once in the StarkVerifier.
+    signal challengesDeep[2][3] <== [friConsts[0], friConsts[1]];
+{% for c in fri_consts %}{% if c.dim == 1 %}    signal tmp_{{ c.id }} <== friConsts[{{ c.idx }}][0];
+{% else %}    signal tmp_{{ c.id }}[3] <== friConsts[{{ c.idx }}];
+{% endif %}{% endfor %}
 {% for chunk in eval_q_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
 {% else %}    signal tmp_{{ out.id }}[3];
 {% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateDeepPolChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
@@ -434,7 +450,7 @@ template {{ verify_single_query_name }}() {
     signal input {binary} queriesL0[{{ step0_bits }}];
 
     signal input challengeOut[3];
-    signal input challengesDeep[2][3];
+    signal input friConsts[{{ n_fri_consts }}][3];
 {% if is_stir %}    signal input rFold0[3];
 {% else %}    signal input rFold[{{ n_folds }}][3];
 {% endif %}    signal input evals[{{ ev_map_len }}][3];
@@ -519,7 +535,7 @@ template {{ verify_single_query_name }}() {
 {% endif %}{% else %}    VerifyMerkleHash(3, {{ r0.coset_size }}, {{ arity }}, {{ r0.merkle_levels + last_level_verification }})(s1_vals_p, s1_siblings, s1_keys_merkle_bits, s1_root, enable);
 {% endif %}    // The DEEP cross-check: the recomputed f₀ value must equal member raw / nLeaves of the
     // opened coset (the high bits select the member, exactly VerifyQuery's hand-off).
-    {{ verify_query_name }}({{ step0_bits }}, {{ next_step0_bits }})(queriesL0, challengeOut, challengesDeep, evals, {{ query_vals_joined }}, {{ next_vals_pol_0 }}, enable);
+    {{ verify_query_name }}({{ step0_bits }}, {{ next_step0_bits }})(queriesL0, challengeOut, friConsts, evals, {{ query_vals_joined }}, {{ next_vals_pol_0 }}, enable);
 
     signal {binary} s1_leaf_bits[{{ r0.log_leaves }}];
     for (var i = 0; i < {{ r0.log_leaves }}; i++) { s1_leaf_bits[i] <== queriesL0[i]; }
@@ -539,7 +555,7 @@ template {{ verify_single_query_name }}() {
 {% else %}    VerifyMerkleHashUntilLevel(3, {{ step.exponent }}, {{ arity }}, {{ step.merkle_levels }}, {{ last_level_verification }}, {{ step.mt_size }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle_bits, s{{ step.s }}_last_mt_levels, enable);
 {% endif %}{% else %}    VerifyMerkleHash(3, {{ step.exponent }}, {{ arity }}, {{ step.merkle_levels + last_level_verification }})(s{{ step.s }}_vals_p, s{{ step.s }}_siblings, s{{ step.s }}_keys_merkle_bits, s{{ step.s }}_root, enable);
 {% endif %}{% endif %}{% endfor %}
-    {{ verify_query_name }}({{ step0_bits }}, {{ next_step0_bits }})(queriesL0, challengeOut, challengesDeep, evals, {{ query_vals_joined }}, {{ next_vals_pol_0 }}, enable);
+    {{ verify_query_name }}({{ step0_bits }}, {{ next_step0_bits }})(queriesL0, challengeOut, friConsts, evals, {{ query_vals_joined }}, {{ next_vals_pol_0 }}, enable);
 
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal {binary} s{{ step.s }}_queriesL0[{{ step.n_bits }}];
     for (var i = 0; i < {{ step.n_bits }}; i++) { s{{ step.s }}_queriesL0[i] <== queriesL0[i]; }
@@ -557,7 +573,7 @@ template parallel {{ verify_queries_batch_name }}(nQueries) {
     signal input {binary} queriesL0[nQueries][{{ step0_bits }}];
 
     signal input challengeOut[3];
-    signal input challengesDeep[2][3];
+    signal input friConsts[{{ n_fri_consts }}][3];
 {% if is_stir %}    signal input rFold0[3];
 {% else %}    signal input rFold[{{ n_folds }}][3];
 {% endif %}    signal input evals[{{ ev_map_len }}][3];
@@ -604,7 +620,7 @@ template parallel {{ verify_queries_batch_name }}(nQueries) {
         {% if is_stir %}foldVals[q] <== {% endif %}{{ verify_single_query_name }}()(
             queriesL0[q],
             challengeOut,
-            challengesDeep,
+            friConsts,
 {% if is_stir %}            rFold0,
 {% else %}            rFold,
 {% endif %}            evals,
@@ -777,6 +793,19 @@ template {{ verifier_name }}() {
 {% else %}{% if pow_bits > 0 %}    ({{ challenge_names_joined }},rFold,queriesL0) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, nonce, enabled);
 {% else %}    ({{ challenge_names_joined }},rFold,queriesL0) <== {{ transcript_name }}()({% for inp in transcript_call_inputs %}{{ inp }},{% endfor %}root{{ q_stage }},evals{% if si_roots_joined != "" %},{{ si_roots_joined }}{% endif %},finalPol, enabled);
 {% endif %}{% endif %}
+    ///////////
+    // DEEP polynomial terms that are the same for every query
+    ///////////
+{% for chunk in fri_once_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
+{% else %}    signal tmp_{{ out.id }}[3];
+{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIConstantsChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
+{% endfor %}
+    signal friConsts[{{ n_fri_consts }}][3];
+    friConsts[0] <== challengesDeep[0];
+    friConsts[1] <== challengesDeep[1];
+{% for c in fri_consts %}{% if c.dim == 1 %}    friConsts[{{ c.idx }}] <== [tmp_{{ c.id }}, 0, 0];
+{% else %}    friConsts[{{ c.idx }}] <== tmp_{{ c.id }};
+{% endif %}{% endfor %}
     ///////////
     // Check constraints are consistent with Q polynomial at the out-of-domain points
     ///////////
@@ -952,7 +981,7 @@ template {{ verifier_name }}() {
         {% if is_stir %}batchFoldVals[b] <== {% endif %}{{ verify_queries_batch_name }}(QUERIES_BATCH_SIZE)(
             batch_work_queriesL0[b],
             challengeOut,
-            challengesDeep,
+            friConsts,
 {% if is_stir %}            rFold[0],
 {% else %}            rFold,
 {% endif %}            evals,
@@ -1085,7 +1114,7 @@ template {{ verifier_name }}() {
         {% if is_stir %}remainderFoldVals <== {% endif %}{{ verify_queries_batch_name }}(LAST_BATCH_SIZE)(
             remainder_queriesL0,
             challengeOut,
-            challengesDeep,
+            friConsts,
 {% if is_stir %}            rFold[0],
 {% else %}            rFold,
 {% endif %}            evals,

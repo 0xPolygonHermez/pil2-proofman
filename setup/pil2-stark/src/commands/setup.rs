@@ -40,6 +40,8 @@ pub struct SetupOptions {
     /// `hash_family::compressed_final_by_default` -- and can be added later with the
     /// `setup-compressed-final` subcommand.
     pub compressed_final: bool,
+    /// Label written as `setupVersion` in globalInfo.json; the consumer (ZisK) checks it at load.
+    pub setup_version: Option<String>,
     /// Pin every recursive air to 2^N rows (see the CLI flag).
     pub recursive_n_bits: Option<usize>,
     /// Generate + compile per-AIR Q-expression CUDA kernels (`.exps.so`) at the
@@ -123,6 +125,8 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             &opts.hash,
             opts.agg_arity,
             opts.compressed_final,
+            opts.setup_version.as_deref(),
+            &Default::default(),
         )?;
     }
 
@@ -237,15 +241,14 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
                 let starkinfo_path = files_dir.join(format!("{}.starkinfo.json", item.air_name));
 
-                let prepare_opts = PrepareOptions { debug: false, im_pols_stages: false };
+                let prepare_opts = PrepareOptions { debug: false, im_pols_stages: false, inplace_stage_commit: true };
                 let pil_result =
                     crate::pil::info::pil_info(&pilout, item.ag_idx, item.air_idx, &stark_struct, &prepare_opts);
                 let setup_result = &pil_result.setup;
                 let pil_code = &pil_result.pil_code;
 
-                let ev_map_len = pil_code.ev_map.len();
                 let opening_points = collect_opening_points(setup_result);
-                let ldt = solve_low_degree_test(&stark_struct, ev_map_len.max(1) as u64);
+                let ldt = solve_low_degree_test(&stark_struct, pil_code.fri_batch_size.max(1) as u64);
 
                 let starkinfo_output = build_starkinfo_output(
                     setup_result,
@@ -359,14 +362,16 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             &opts.hash,
             opts.agg_arity,
             opts.compressed_final,
+            opts.setup_version.as_deref(),
+            &Default::default(),
         );
-        let airs_with_compressor = run_recursive_setup(&pilout, &pilout_name, opts, &settings_map, global_info_base)?;
+        let summary = run_recursive_setup(&pilout, &pilout_name, opts, &settings_map, global_info_base)?;
 
         // Build final settings map: start from user-supplied settings and overlay any
         // hasCompressor flags auto-detected at runtime via NeedsCompressorError.
         // Then write globalInfo.json exactly once with the complete information.
         let mut final_settings: StarkStructsConfig = (*settings_map).clone();
-        for air_name in &airs_with_compressor {
+        for air_name in &summary.airs_with_compressor {
             final_settings.set_has_compressor(air_name);
         }
         write_global_info_json(
@@ -377,8 +382,10 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
             &opts.hash,
             opts.agg_arity,
             opts.compressed_final,
+            opts.setup_version.as_deref(),
+            &summary.r1_batch_sizes,
         )?;
-        tracing::info!("Wrote globalInfo.json with hasCompressor flags");
+        tracing::info!("Wrote globalInfo.json with hasCompressor flags and recursive1 batch sizes");
     }
 
     if opts.gen_exps {
@@ -454,6 +461,7 @@ mod tests {
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
+            setup_version: None,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -509,6 +517,7 @@ mod tests {
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
+            setup_version: None,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,
@@ -557,6 +566,7 @@ mod tests {
             agg_arity: 3,
             recursive_n_bits: None,
             compressed_final: true,
+            setup_version: None,
             gen_exps: false,
             exps_arch: "auto".to_string(),
             exps_cap: 60000,

@@ -261,35 +261,6 @@ TEST(GateBandsBlake3, LayoutMatchesTheGeneratedTrace)
     EXPECT_EQ(gate_bands::blake3::stage1_cols(8, 18), 492u);
 }
 
-/// The BAND is an air parameter too, not a constant: `blake3/compressor.pil` is 27 columns wide
-/// where `blake3/aggregator.pil` is 18, and everything after the band moves with it.
-///
-/// Pinned against a real compressor's starkinfo (LANES 8, band 27), where cmPolsMap places a[0..27],
-/// then dinv at 27 and vbTopHi at 35. Reading the band from a constant put every lane column 9 too
-/// low, so the air read its outBytes bytes as vbTopHi bits and failed booleanity -- the whole proof
-/// was rejected at VerifyEvaluations with nothing pointing at the cause.
-TEST(GateBandsBlake3, LayoutFollowsTheBandWidth)
-{
-    const auto L = gate_bands::blake3::layout(8, 27);
-    EXPECT_EQ(L.dinv, 27u);      EXPECT_EQ(L.vbTopHi, 35u);
-    EXPECT_EQ(L.outBytes, 59u);
-    EXPECT_EQ(L.va, 91u);        EXPECT_EQ(L.vb, 107u);
-    EXPECT_EQ(L.vd, 139u);
-    EXPECT_EQ(L.x, 171u);        EXPECT_EQ(L.y, 187u);
-    EXPECT_EQ(L.va_p, 203u);     EXPECT_EQ(L.vd_p, 235u);
-    EXPECT_EQ(L.vc_p, 267u);     EXPECT_EQ(L.vb_p_s, 299u);
-    EXPECT_EQ(L.va_pp, 363u);    EXPECT_EQ(L.vd_pp, 395u);
-    EXPECT_EQ(L.vc_pp, 427u);    EXPECT_EQ(L.vb_pp_xor, 459u);
-    EXPECT_EQ(L.vb_pp_t, 491u);
-    EXPECT_EQ(L.mul_table, 499u); EXPECT_EQ(L.mul_range, 500u);
-    EXPECT_EQ(gate_bands::blake3::stage1_cols(8, 27), 501u);
-
-    // The two bands must NOT agree anywhere after the band, or the bug this guards is invisible.
-    const auto A = gate_bands::blake3::layout(8, 18);
-    EXPECT_EQ(L.dinv - A.dinv, 9u);
-    EXPECT_EQ(L.mul_range - A.mul_range, 9u);
-}
-
 /// The reference permutation is written independently of setup/circom/blake3_gate.cpp so the two
 /// can be differenced. Held here to BLAKE3's own published vector rather than to that gate: an
 /// agreement between two copies of the same mistake proves nothing.

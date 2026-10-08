@@ -40,9 +40,6 @@ pub fn merkle_tree_arity(family: &str) -> u64 {
 /// Poseidon recursion settles at 2^17. blake3's is 2^19, because its verification is dominated by
 /// arity-2 Merkle path hashing at 56 AIR rows a compression -- reading 17 here would make every
 /// blake3 air demand a compressor it does not need, and each compressor is a whole extra proof.
-///
-/// The A2 query bump fills a small circuit toward `2^(threshold - 1)`, so this also sets that
-/// target.
 pub fn recursive_bits_threshold(family: &str) -> usize {
     match family {
         "blake3" => 19,
@@ -221,12 +218,14 @@ pub fn default_grinding_bits(family: &str) -> usize {
 /// per proof verified, while the grinding itself costs the verifier a single hash -- it checks the
 /// nonce, and the 2^bits is all prover work.
 ///
-/// Poseidon's 20 is pinned by its committed native verifiers and circom fixtures, which encode the
-/// query count it buys. blake3's fixtures are not committed to a figure, so it takes the 24 its own
-/// family default asks for.
+/// Poseidon's 21 buys 72 queries: at the recursion's rate of 2^-3 a query is worth ~1.48 bits, so
+/// the solver takes `ceil((128 - 21) / 1.48)`. It sits on a step -- 22 buys nothing further, the
+/// next query comes off at 23. blake3 takes its own family default of 24.
+///
+/// Changing this changes the proof shape, and with it every proving key already built.
 pub fn recursive_grinding_bits(family: &str) -> usize {
     match family {
-        "Poseidon1" | "Poseidon2" => 20,
+        "Poseidon1" | "Poseidon2" => 21,
         "blake3" => 24,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -284,7 +283,7 @@ pub fn transcript_out_size(arity: u64) -> u64 {
 /// re-checks via get_hash_family() and returns -15 on mismatch, so this list
 /// must stay in sync with commit_witness_streaming_gpu's family gate.
 pub fn supports_stream_commit(family: &str) -> bool {
-    matches!(family, "Poseidon1" | "blake3")
+    matches!(family, "Poseidon1" | "Poseidon2" | "blake3")
 }
 
 /// True when the family's kernels support exactly one tree geometry
@@ -390,11 +389,14 @@ pub fn rust_grinding_type(family: &str) -> &'static str {
 mod tests {
     /// Recursion grinds harder than the basic airs, and blake3 harder than poseidon: a query is
     /// expensive to verify in-circuit while the grinding costs the verifier one hash.
+    ///
+    /// Poseidon's 21 is asserted because it sets the query count, so moving it invalidates every
+    /// proving key already built.
     #[test]
     fn recursive_grinding_bits_exceed_the_basic_defaults() {
         assert_eq!(super::recursive_grinding_bits("blake3"), 24);
-        assert_eq!(super::recursive_grinding_bits("Poseidon1"), 20);
-        assert_eq!(super::recursive_grinding_bits("Poseidon2"), 20);
+        assert_eq!(super::recursive_grinding_bits("Poseidon1"), 21);
+        assert_eq!(super::recursive_grinding_bits("Poseidon2"), 21);
         for f in super::FAMILIES {
             assert!(
                 super::recursive_grinding_bits(f) >= super::default_grinding_bits(f),
@@ -412,7 +414,7 @@ mod tests {
         }
     }
 
-    /// The final stage grinds harder than the recursion for poseidon (22 vs 20) and the same for
+    /// The final stage grinds harder than the recursion for poseidon (22 vs 21) and the same for
     /// blake3 (24), and every family grinds at least as hard as its basic airs.
     #[test]
     fn final_grinding_bits_are_pinned_per_family() {

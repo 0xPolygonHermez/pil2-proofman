@@ -304,6 +304,7 @@ pub fn build_starkinfo_output(
         n_commitments_stage1,
         ev_map,
         deep_exp_id,
+        fri_batch_size: pil_code.fri_batch_size,
         security: Some(SecurityInfo {
             proximity_gap: ldt.proximity_gap(),
             proximity_parameter: ldt.proximity_parameter(),

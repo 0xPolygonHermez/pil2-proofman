@@ -12,6 +12,7 @@
 #include <net/if.h>
 #include <arpa/inet.h>
 #include "utils.hpp"
+#include "pack_columns.hpp"
 
 using namespace std;
 using namespace std::filesystem;
@@ -405,34 +406,6 @@ void pack_cpu(
     const uint64_t *pack_info,
     uint64_t words_per_row
 ) {
-    for (uint64_t row = 0; row < nRows; ++row) {
-        uint64_t* packed_row = &dst[row * words_per_row];
-        uint64_t word = 0;
-        uint64_t bit_offset = 0;
-        uint64_t word_idx = 0;
-
-        for (uint64_t c = 0; c < nCols; ++c) {
-            uint64_t nbits = pack_info[c];
-            uint64_t val = src[row * nCols + c] & ((nbits == 64) ? ~0ULL : ((1ULL << nbits) - 1ULL));
-            uint64_t bits_left = 64 - bit_offset;
-
-            if (nbits <= bits_left) {
-                word |= (val << bit_offset);
-                bit_offset += nbits;
-                if (bit_offset == 64) {
-                    packed_row[word_idx++] = word;
-                    word = 0;
-                    bit_offset = 0;
-                }
-            } else {
-                word |= (val << bit_offset);
-                packed_row[word_idx++] = word;
-                word = val >> bits_left;
-                bit_offset = nbits - bits_left;
-            }
-        }
-
-        if (bit_offset > 0) packed_row[word_idx] = word;
-    }
+    packRowsBits(src, dst, nRows, nCols, pack_info, words_per_row);
 }
 

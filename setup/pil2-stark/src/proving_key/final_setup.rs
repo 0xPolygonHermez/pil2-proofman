@@ -188,6 +188,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         has_recursion: false,
         is_final: true,
         agg_arity: 0,
+        batch_size: 1,
     };
 
     let gen_input = GenCircomInput {
@@ -362,8 +363,10 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
 
     // Build JSON representations using the same helpers as the non-recursive path
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let ev_map_len = pil_info_result.pil_code.ev_map.len();
-    let ldt = crate::output::stark_info::solve_low_degree_test(&final_stark_struct, ev_map_len.max(1) as u64);
+    let ldt = crate::output::stark_info::solve_low_degree_test(
+        &final_stark_struct,
+        pil_info_result.pil_code.fri_batch_size.max(1) as u64,
+    );
 
     let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
         &pil_info_result.setup,

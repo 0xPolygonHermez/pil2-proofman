@@ -1,4 +1,7 @@
 #include "zkglobals.hpp"
+#include "starks_backend.hpp"
+#include "multiplicity.hpp"
+#include "multiplicity_cpu.hpp"
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
 #include "global_constraints.hpp"
@@ -14,6 +17,7 @@
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 #include "starks_api_internal.hpp"
+#include "pack_columns.hpp"
 #include "build_const_tree.hpp"
 #include "../rapidsnark/fflonk_setup.hpp"
 #include "../rapidsnark/plonk_setup.hpp"
@@ -279,15 +283,19 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate, bool single_use)
+void *stark_info_new(char *filename, bool recursive_final, bool recursive, bool verify_constraints, bool verify, bool gpu)
 {
-    auto starkInfo = new StarkInfo(filename, recursive_final, recursive, verify_constraints, verify, gpu, preallocate, single_use);
+    auto starkInfo = new StarkInfo(filename, recursive_final, recursive, verify_constraints, verify, gpu);
 
     return starkInfo;
 }
 
 uint64_t get_proof_size(void *pStarkInfo) {
     return ((StarkInfo *)pStarkInfo)->proofSize;
+}
+
+uint64_t get_n_publics(void *pStarkInfo) {
+    return ((StarkInfo *)pStarkInfo)->nPublics;
 }
 
 uint64_t get_proof_pinned_size(void *pStarkInfo) {
@@ -315,10 +323,6 @@ uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
     return ((StarkInfo *)pStarkInfo)->mapTotalNCustomCommitsFixed;
 }
 
-uint64_t get_map_total_n_contributions(void *pStarkInfo)
-{
-    return ((StarkInfo *)pStarkInfo)->mapTotalNContributions;
-}
 
 void stark_info_free(void *pStarkInfo)
 {
@@ -617,18 +621,40 @@ uint64_t custom_commit_size(void *pSetup, uint64_t commitId) {
     return (N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended);
 }
 
-void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *bufferFile)
+void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *bufferFile, uint64_t wordsPerRow)
 {
     auto setupCtx = *(SetupCtx *)pSetup;
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    uint64_t arity = setupCtx.starkInfo.starkStruct.merkleTreeArity;
 
     std::string section = setupCtx.starkInfo.customCommits[commitId].name + "0";
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-    
+
     Goldilocks::Element *bufferGL = (Goldilocks::Element *)buffer;
-    loadFileParallel(&bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]], bufferFile, ((N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended)) * sizeof(Goldilocks::Element), true, 32);
+    Goldilocks::Element *base = &bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]];
+    Goldilocks::Element *extended = &bufferGL[setupCtx.starkInfo.mapOffsets[std::make_pair(section, true)]];
+
+    // One read of everything past the root: loadFileParallel only does whole-file loads (it
+    // asserts size + skipBytes == the file size).
+    std::vector<uint64_t> blob(1 + nCols + N * wordsPerRow);
+    loadFileParallel(blob.data(), bufferFile, blob.size() * sizeof(uint64_t), true, 32);
+    if (blob[0] != wordsPerRow) {
+        zklog.error("load_custom_commit: " + string(bufferFile) + " header says words_per_row " +
+                    to_string(blob[0]) + ", caller said " + to_string(wordsPerRow));
+        exitProcess();
+    }
+
+    unpackRowsBits(&blob[1 + nCols], (uint64_t *)base, N, nCols, &blob[1], wordsPerRow);
+
+    // Same three calls write_custom_commit_cpu makes, so the root the caller read still matches.
+    MerkleTreeGL mt(arity, 0, true, NExtended, nCols);
+    mt.setSource(extended);
+    mt.setNodes(&extended[NExtended * nCols]);
+    NTT_Goldilocks ntt(N);
+    ntt.LDE(mt.source, base, NExtended, N, nCols);
+    mt.merkelize();
 }
 
 void write_custom_commit_cpu(void* root, uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *d_buffers_, void *buffer, char *bufferFile)
@@ -647,12 +673,18 @@ void write_custom_commit_cpu(void* root, uint64_t arity, uint64_t nBits, uint64_
     mt.getRoot(&rootGL[0]);
 
     if(std::string(bufferFile) != "") {
+        // Packed small domain only: the LDE leaves and nodes are rebuilt by whoever loads it.
+        std::vector<uint64_t> pack_info(nCols, 0);
+        uint64_t words_per_row = packWidthsRowMajor((const uint64_t *)buffer, N, nCols, pack_info.data());
+        std::vector<uint64_t> packed(N * words_per_row, 0);
+        packRowsBits((const uint64_t *)buffer, packed.data(), N, nCols, pack_info.data(), words_per_row);
+
         std::string buffFile = string(bufferFile);
         ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
         writeFileParallel(buffFile, root, 32, 0);
-        writeFileParallel(buffFile, buffer, N * nCols * sizeof(Goldilocks::Element), 32);
-        writeFileParallel(buffFile, mt.source, NExtended * nCols * sizeof(Goldilocks::Element), 32 + N * nCols * sizeof(Goldilocks::Element));
-        writeFileParallel(buffFile, mt.nodes, mt.numNodes * sizeof(Goldilocks::Element), 32 + (NExtended + N) * nCols * sizeof(Goldilocks::Element));
+        writeFileParallel(buffFile, &words_per_row, sizeof(uint64_t), 32);
+        writeFileParallel(buffFile, pack_info.data(), nCols * sizeof(uint64_t), 40);
+        writeFileParallel(buffFile, packed.data(), N * words_per_row * sizeof(uint64_t), 40 + nCols * sizeof(uint64_t));
         fw.close();
     }
 }
@@ -677,7 +709,8 @@ static void unpack_cm1_cpu(DeviceCommitBuffersCPU *d_buffers, uint64_t airgroupI
     }
     d_buffers->unpack_cpu_indexed(src, table, dst, nRows, nCols, pInfo->num_packed_words,
                                   pInfo->words_per_entry, pInfo->unpack_info, pInfo->col_source,
-                                  pInfo->index_bits, d_buffers->getInstructionTableEntries(airgroupId, airId),
+                                  pInfo->col_lane, pInfo->index_bits, pInfo->lanes,
+                                  d_buffers->getInstructionTableEntries(airgroupId, airId),
                                   airgroupId, airId);
 }
 
@@ -702,25 +735,29 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
     // The witness buffer is only num_packed_words wide, so read the unpacked cm1 where it lands.
     StepsParams paramsUnpacked = *params;
-    // mt1 is smaller than the LDE's N_Extended*nCols scratch, so the scratch runs into cm1(false).
-    // Harmless while the source is the caller's buffer; not once it IS cm1(false).
-    Goldilocks::Element *ldeScratch = &auxTraceGL[offset_mt];
     if (packed_info != nullptr && packed_info->is_packed) {
         unpack_cm1_cpu(d_buffers, airgroupId, airId, packed_info, (uint64_t *)params->trace,
                        (uint64_t *)&auxTraceGL[offset_src], N, nCols);
         paramsUnpacked.trace = &auxTraceGL[offset_src];
-        auto it = setupCtx->starkInfo.mapOffsets.find(std::make_pair(std::string("buff_helper_fft_1"), false));
-        // Starts exactly past the unpacked cm1 and is sized for the LDE; null makes the NTT malloc.
-        ldeScratch = it == setupCtx->starkInfo.mapOffsets.end() ? nullptr : &auxTraceGL[it->second];
     }
+    Goldilocks::Element *ldeScratch = &auxTraceGL[setupCtx->starkInfo.mapOffsets[std::make_pair("buff_helper_fft_1", false)]];
 
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(*setupCtx, &proverHelpers);
 
     calculateWitnessExpr(*setupCtx, paramsUnpacked, expressionsCtx);
 
+    // Prover-side multiplicities, at the point the GPU backend scatters (witness filled, untransformed).
+    // Gated on the active backend, not __USE_CUDA__: the CUDA build also proves on the CPU.
+
+    if (!starks_gpu_mode_active()) {
+        mul_cpu_alloc();   // idempotent; the accumulators are not allocated on a CPU run otherwise
+        mul_scatter_cpu(*setupCtx, paramsUnpacked, airgroupId, airId, false);
+        mul_note_commit();
+    }
+
     NTT_Goldilocks ntt(N);
-    ntt.LDE(&auxTraceGL[offset_dst], paramsUnpacked.trace, NExtended, N, nCols, ldeScratch);
+    ntt.LDEBlocked(&auxTraceGL[offset_dst], paramsUnpacked.trace, NExtended, N, nCols, ldeScratch);
     mt.setSource(&auxTraceGL[offset_dst]);
     mt.setNodes(&auxTraceGL[offset_mt]);
     mt.merkelize();
@@ -813,7 +850,7 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
 
 // Gen proof
 // =================================================================================
-uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained)  {
+uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained)  {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
     StepsParams *params = (StepsParams *)params_;
@@ -874,7 +911,9 @@ void load_device_setup_cpu(uint64_t airgroupId, uint64_t airId, char *proofType,
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
     PackedInfo *packedInfo = (PackedInfo *)packedInfo_;
     if (packedInfo != nullptr) {
-        d_buffers->addPackedInfoCPU(airgroupId, airId, nCols, packedInfo->is_packed, packedInfo->num_packed_words, packedInfo->unpack_info, packedInfo->col_source, packedInfo->index_bits, packedInfo->words_per_entry);
+        d_buffers->addPackedInfoCPU(airgroupId, airId, nCols, packedInfo->is_packed, packedInfo->num_packed_words,
+                                    packedInfo->unpack_info, packedInfo->col_source, packedInfo->col_lane,
+                                    packedInfo->index_bits, packedInfo->words_per_entry, packedInfo->lanes);
     }
 }
 
@@ -1042,6 +1081,11 @@ void gen_final_snark_proof_cpu(void *prover, void *circomWitnessFinal, uint8_t* 
     genFinalSnarkProof(prover, circomWitnessFinal, proof, publicsSnark);
 }
 
+
+// The zkin json gen_recursive_proof_final returns; host-only, so one definition serves CPU and GPU.
+void free_recursivef_proof(void *zkin) {
+    delete (json *)zkin;
+}
 
 void free_json_string(char* json_str) {
     if (json_str != nullptr) {

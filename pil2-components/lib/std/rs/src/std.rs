@@ -99,32 +99,26 @@ impl<F: PrimeField64> Std<F> {
     /// Increments the multiplicities for multiple value/multiplicity pairs in the range check with id `id`
     pub fn range_check_batch<V: RCValue, M: RCMultiplicity>(&self, id: usize, vals: &[V], muls: &[M]) {
         let id = self.unwrap_range_check_id(id);
-        let vals: Vec<i64> = vals.iter().map(|&v| v.to_i64()).collect();
-        let muls: Vec<u64> = muls.iter().map(|&m| m.to_u64()).collect();
-        self.range_check.assign_values(id, &vals, &muls);
+        self.range_check.assign_values(id, vals, muls);
     }
 
     /// Increments the multiplicity by 1 for each value in `vals`
     pub fn range_check_batch_one<V: RCValue>(&self, id: usize, vals: &[V]) {
         let id = self.unwrap_range_check_id(id);
-        let vals: Vec<i64> = vals.iter().map(|&v| v.to_i64()).collect();
-        self.range_check.assign_values_same_mul(id, &vals, 1);
+        self.range_check.assign_values_same_mul(id, vals, 1);
     }
 
     /// Increments the multiplicities for multiple values with the same multiplicity in the range check with id `id`
     pub fn range_checks_same_mul<V: RCValue, M: RCMultiplicity>(&self, id: usize, vals: &[V], mul: M) {
         let id = self.unwrap_range_check_id(id);
-        let vals: Vec<i64> = vals.iter().map(|&v| v.to_i64()).collect();
-        self.range_check.assign_values_same_mul(id, &vals, mul.to_u64());
+        self.range_check.assign_values_same_mul(id, vals, mul.to_u64());
     }
 
     /// Increments the multiplicities of a list of values `[start, start + N]` in the range check with id `id`.
     /// If `start` is `None`, then it is set to be the minimum of the range
     pub fn range_check_ranged<M: RCMultiplicity>(&self, id: usize, start: Option<i64>, muls: &[M]) {
         let id = self.unwrap_range_check_id(id);
-        let start = start.map(|s| s.to_i64());
-        let muls: Vec<u64> = muls.iter().map(|&m| m.to_u64()).collect();
-        self.range_check.assign_values_ranged(id, start, &muls)
+        self.range_check.assign_values_ranged(id, start, muls)
     }
 
     #[inline(always)]
@@ -172,32 +166,26 @@ impl<F: PrimeField64> Std<F> {
     /// Increments the multiplicities for multiple row/multiplicity pairs in the virtual table with id `id`
     pub fn inc_virtual_row_batch<M: RCMultiplicity>(&self, id: usize, rows: &[M], muls: &[M]) {
         let id = self.unwrap_virtual_table_id(id);
-        let rows: Vec<u64> = rows.iter().map(|&r| r.to_u64()).collect();
-        let muls: Vec<u64> = muls.iter().map(|&m| m.to_u64()).collect();
-        self.virtual_table.inc_virtual_rows(id, &rows, &muls);
+        self.virtual_table.inc_virtual_rows(id, rows, muls);
     }
 
     /// Increments the multiplicity by 1 for each row in `rows`
     pub fn inc_virtual_row_batch_one<M: RCMultiplicity>(&self, id: usize, rows: &[M]) {
         let id = self.unwrap_virtual_table_id(id);
-        let rows: Vec<u64> = rows.iter().map(|&r| r.to_u64()).collect();
-        self.virtual_table.inc_virtual_rows_same_mul(id, &rows, 1);
+        self.virtual_table.inc_virtual_rows_same_mul(id, rows, 1);
     }
 
     /// Increments the multiplicities for multiple rows with the same multiplicity in the virtual table with id `id`
     pub fn inc_virtual_rows_same_mul<M: RCMultiplicity>(&self, id: usize, rows: &[M], mul: M) {
         let id = self.unwrap_virtual_table_id(id);
-        let rows: Vec<u64> = rows.iter().map(|&r| r.to_u64()).collect();
-        self.virtual_table.inc_virtual_rows_same_mul(id, &rows, mul.to_u64());
+        self.virtual_table.inc_virtual_rows_same_mul(id, rows, mul.to_u64());
     }
 
     /// Increments the multiplicities of a list of rows `[start, start + N]` in the virtual table with id `id`.
     /// If `start` is `None`, then it is set to be 0
     pub fn inc_virtual_rows_ranged<M: RCMultiplicity>(&self, id: usize, start: Option<u64>, muls: &[M]) {
         let id = self.unwrap_virtual_table_id(id);
-        let start = start.map(|s| s.to_u64());
-        let muls: Vec<u64> = muls.iter().map(|&m| m.to_u64()).collect();
-        self.virtual_table.inc_virtual_rows_ranged(id, start, &muls);
+        self.virtual_table.inc_virtual_rows_ranged(id, start, muls);
     }
 
     #[inline(always)]
@@ -217,4 +205,37 @@ impl<F: PrimeField64> Std<F> {
             id
         }
     }
+}
+
+/// Compile-only guard for the call shapes ZisK uses against `Std`. Nothing here runs; the
+/// assertion is that it type-checks, so a change to these signatures (or to the widths the
+/// generics accept) fails the build here instead of downstream.
+#[cfg(test)]
+#[allow(dead_code)]
+fn zisk_call_shapes<F: PrimeField64>(std: &Arc<Std<F>>, id: usize) {
+    // `&vec[a..b]` of u32 counts — precompiles/common range_check_cache
+    let counts: Vec<u32> = vec![0; 64];
+    std.range_check_ranged(id, None, &counts[0..16]);
+    std.inc_virtual_rows_ranged(id, None, &counts[16..]);
+
+    // `&Vec<u64>` by reference, and an explicit u64 start — state-machines/binary binary_tally
+    let spill: Vec<u64> = vec![0; 8];
+    std.inc_virtual_row_batch_one(id, &spill);
+    std.inc_virtual_rows_ranged(id, Some(3u64), &counts[..8]);
+
+    // A borrowed `&Vec<u32>` straight from an iterator — precompiles/dma dma_pre_post
+    let nested: Vec<Vec<u32>> = vec![vec![0; 4]];
+    for muls in nested.iter() {
+        std.inc_virtual_rows_ranged(id, None, muls);
+    }
+
+    // Non-ranged batches, mixed widths
+    let vals: Vec<u64> = vec![0; 8];
+    let muls32: Vec<u32> = vec![1; 8];
+    std.range_check_batch(id, &vals, &muls32);
+    std.range_check_batch_one(id, &vals);
+    std.range_checks_same_mul(id, &vals, 3u32);
+    std.inc_virtual_row_batch(id, &muls32, &muls32);
+    std.inc_virtual_rows_same_mul(id, &muls32, 2u32);
+    std.range_check_ranged(id, Some(-5i64), &muls32);
 }

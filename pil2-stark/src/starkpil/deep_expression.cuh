@@ -3,154 +3,161 @@
 
 // The DEEP polynomial evaluated over the extended domain:
 //
-//   fri = SUM_o  1/(x[r] - xi_o) * SUM_{j in o} vf2^(n_o-1-j) * (p_j[r] - e_j) * vf1^(O-1-o)
+//   fri[r] = SUM_o vf1^(O-1-o) / (x[r] - xi_o) * SUM_{c in o} vf2^c * (p_c[r] - e_(o,c))
 //
-// Self-contained on purpose (only the cubic-extension helpers, the trace layout
-// and the POD EvalInfo) so the kernels below can be unit tested against a host
-// reference without the SetupCtx/StarkInfo translation units.
+// With xi_o = xi w^o, x[r] = s wExt^r and w = wExt^B (B the blowup), 1 / (x[r] - xi_o) = w^-o D[r - o B] for
+// D[q] = 1 / (x[q] - xi). Grouping the polynomials G by the set of openings they are in:
+//
+//   fri[r] = SUM_o D[r - o B] a_o (SUM_{G with o} S_G[r] + K_o)      S_G[r] = SUM_{c in G} b_c p_c[r]
+//   b_c = vf2^c     a_o = w^-o vf1^e_o     K_o = -SUM_{c in o} vf2^c e_(o,c)
+//
+// e_o counts the later openings that have evaluations, as the setup's Horner on vf1 (fri_poly.rs).
+//
+// Self-contained (cubic extension and the POD FriTerm) so the kernels are unit tested against a host
+// reference without the SetupCtx translation units.
 #include "eval_info.hpp"
 #include "goldilocks_cubic_extension.cuh"
-#include "goldilocks_trace_layout.cuh"
 
-// Every vf1/vf2 power and every opening evaluation e_j is a per-proof constant,
-// not a per-row value, so the two Horner chains above collapse to
-//
-//   fri[r] = SUM_o 1/(x[r] - xi_o) * ( SUM_j coef_j * p_j[r] + K_o )
-//   coef_j = vf1^(O-1-o) * vf2^(n_o-1-j)        K_o = -SUM_j coef_j * e_j
-//
-// which is one mul31 + one add33 per base-field column instead of a sub33, a
-// mul33 and an add33 -- half the muls and half the adds -- and drops the evals
-// load out of the row loop entirely. The constants are precomputed once per
-// proof by computeFRIFoldedConstants.
-//
-// Replaced a Horner form (accum = accum*vf2 + (p_j - e_j), then fri = fri*vf1 +
-// accum*inv_g) that recomputed all of that per row; measured 10-37% faster
-// across the zisk AIR shapes.
-
-// One thread per opening point. coef is indexed by evalPos so it lines up with
-// the eval map; K is indexed by opening.
-static __global__ void computeFRIFoldedConstants(uint64_t nOpeningPoints, uint64_t *d_countsPerOpeningPos,
-                                                EvalInfo **d_evalInfoPerOpening, gl64_t *d_evals,
-                                                gl64_t *vf1, gl64_t *vf2, gl64_t *d_coef, gl64_t *d_k)
+// b_c for every polynomial and a_o for every opening, one thread each.
+static __global__ void computeFRIPowers(uint64_t nOpenings, uint64_t nPols, const int64_t *d_openingPoints, uint64_t wTrace,
+                                        const uint64_t *d_termStart, gl64_t *vf1, gl64_t *vf2, gl64_t *d_b, gl64_t *d_a)
 {
-    uint64_t o = blockIdx.x * blockDim.x + threadIdx.x;
-    if (o >= nOpeningPoints) return;
-
-    Goldilocks3GPU::Element &vf1e = *(Goldilocks3GPU::Element *)vf1;
-    Goldilocks3GPU::Element &vf2e = *(Goldilocks3GPU::Element *)vf2;
-
-    // pow() squares its base in place, so it must never see the shared vf1 buffer.
-    Goldilocks3GPU::Element base, c, k, t;
-    Goldilocks3GPU::copy(base, vf1e);
-    Goldilocks3GPU::pow(base, nOpeningPoints - 1 - o, c);
-    Goldilocks3GPU::zero(k);
-
-    const uint64_t n = d_countsPerOpeningPos[o];
-    // Walk j downwards so the vf2 exponent runs 0,1,2,... and matches vf2^(n-1-j).
-    for (uint64_t s = 0; s < n; ++s) {
-        const EvalInfo evalInfo = d_evalInfoPerOpening[o][n - 1 - s];
-        gl64_t *dst = &d_coef[evalInfo.evalPos * FIELD_EXTENSION];
-        dst[0] = c[0];
-        dst[1] = c[1];
-        dst[2] = c[2];
-
-        Goldilocks3GPU::Element &eval = *(Goldilocks3GPU::Element *)(d_evals + evalInfo.evalPos * FIELD_EXTENSION);
-        Goldilocks3GPU::mul(t, c, eval);
-        Goldilocks3GPU::sub(k, k, t);
-        Goldilocks3GPU::mul(c, c, vf2e);
+    const uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    // pow() squares its base in place, so it must never see the shared challenge buffers.
+    Goldilocks3GPU::Element base;
+    if (i < nPols) {
+        Goldilocks3GPU::copy(base, *(Goldilocks3GPU::Element *)vf2);
+        Goldilocks3GPU::pow(base, i, *(Goldilocks3GPU::Element *)(d_b + i * FIELD_EXTENSION));
     }
-
-    gl64_t *kd = &d_k[o * FIELD_EXTENSION];
-    kd[0] = k[0];
-    kd[1] = k[1];
-    kd[2] = k[2];
+    if (i >= nOpenings) return;
+    Goldilocks3GPU::Element &a = *(Goldilocks3GPU::Element *)(d_a + i * FIELD_EXTENSION);
+    uint64_t e = 0;
+    for (uint64_t o = i + 1; o < nOpenings; ++o) e += d_termStart[o + 1] > d_termStart[o];
+    Goldilocks3GPU::copy(base, *(Goldilocks3GPU::Element *)vf1);
+    Goldilocks3GPU::pow(base, e, a);
+    const int64_t op = d_openingPoints[i];
+    gl64_t w = gl64_t(wTrace) ^ (uint32_t)(op < 0 ? -op : op);
+    if (op > 0) w = w.reciprocal();
+    Goldilocks3GPU::mul(a, a, w);
 }
 
-static __global__ void computeFRIExpressionFolded(uint64_t domainSize, uint64_t nBits, uint64_t nOpeningPoints,
-                                                 gl64_t *d_fri, uint64_t *d_countsPerOpeningPos,
-                                                 EvalInfo **d_evalInfoPerOpening, gl64_t *d_coef, gl64_t *d_k,
-                                                 gl64_t *d_cmPols, gl64_t *d_xDivXSub, gl64_t *d_x,
-                                                 gl64_t *d_fixedPols, gl64_t *d_customComits)
+// K_o for every opening, one thread each.
+static __global__ void computeFRIK(uint64_t nOpenings, const uint64_t *d_termStart, const FriTerm *d_terms,
+                                   gl64_t *d_evals, gl64_t *d_b, gl64_t *d_k)
 {
-    int chunk_idx = blockIdx.x;
-    uint64_t nchunks = domainSize / blockDim.x;
-
-    while (chunk_idx < nchunks) {
-        Goldilocks3GPU::Element fri_pol, accum, res, term, val;
-
-        uint64_t i = chunk_idx * blockDim.x;
-        uint64_t r = i + threadIdx.x;
-        // Montgomery-batched denominators, groups of 4 openings: one Fp3 inversion
-        // per group instead of one per opening
-        Goldilocks3GPU::Element inv_g[4];
-        for (uint64_t og = 0; og < nOpeningPoints; og += 4) {
-            const uint32_t gn = (nOpeningPoints - og < 4) ? (uint32_t)(nOpeningPoints - og) : 4u;
-
-            // Batch-invert the gn denominators (x[r] - xDivXSub[og+k]):
-            // forward prefix products, one Fp3 inversion, backward unwind.
-            Goldilocks3GPU::Element den, t;
-            for (uint32_t k = 0; k < gn; ++k) {
-                Goldilocks3GPU::Element &xdiv = *(Goldilocks3GPU::Element *)(&d_xDivXSub[(og + k) * FIELD_EXTENSION]);
-                Goldilocks3GPU::sub(den, d_x[r], xdiv);
-                if (k == 0) Goldilocks3GPU::copy(inv_g[0], den);
-                else Goldilocks3GPU::mul(inv_g[k], inv_g[k - 1], den);
-            }
-            Goldilocks3GPU::inv(t, inv_g[gn - 1]);
-            for (uint32_t k = gn - 1; k > 0; --k) {
-                Goldilocks3GPU::Element &xdiv = *(Goldilocks3GPU::Element *)(&d_xDivXSub[(og + k) * FIELD_EXTENSION]);
-                Goldilocks3GPU::sub(den, d_x[r], xdiv);
-                Goldilocks3GPU::mul(inv_g[k], t, inv_g[k - 1]);
-                Goldilocks3GPU::mul(t, t, den);
-            }
-            Goldilocks3GPU::copy(inv_g[0], t);
-
-            for (uint64_t o = og; o < og + gn; ++o) {
-                // K_o carries the folded evaluations; an opening with no columns
-                // contributes K_o = 0.
-                Goldilocks3GPU::copy(accum, *(Goldilocks3GPU::Element *)(d_k + o * FIELD_EXTENSION));
-
-                for (uint64_t j = 0; j < d_countsPerOpeningPos[o]; ++j) {
-                    EvalInfo evalInfo = d_evalInfoPerOpening[o][j];
-                    Goldilocks3GPU::Element &coef =
-                        *(Goldilocks3GPU::Element *)(d_coef + evalInfo.evalPos * FIELD_EXTENSION);
-                    // cm sections (type 0) follow resolveLayout (keyed on the small domain nBits); custom
-                    // commits (1) and fixed/const (2) follow fixedLayout().
-                    gl64_t *pol;
-                    Layout polLayout;
-                    if (evalInfo.type == 0) {
-                        pol = d_cmPols;
-                        polLayout = resolveLayout(nBits, evalInfo.stageCols);
-                    } else if (evalInfo.type == 1) {
-                        pol = d_customComits;
-                        polLayout = fixedLayout();
-                    } else {
-                        pol = d_fixedPols;
-                        polLayout = fixedLayout();
-                    }
-
-                    if (evalInfo.dim == 1) {
-                        gl64_t v = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
-                        Goldilocks3GPU::mul(term, coef, v);
-                    } else {
-                        val[0] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos, domainSize, evalInfo.stageCols, polLayout)];
-                        val[1] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 1, domainSize, evalInfo.stageCols, polLayout)];
-                        val[2] = pol[evalInfo.offset + getBufferOffset(r, evalInfo.stagePos + 2, domainSize, evalInfo.stageCols, polLayout)];
-                        Goldilocks3GPU::mul(term, coef, val);
-                    }
-                    Goldilocks3GPU::add(accum, accum, term);
-                }
-
-                Goldilocks3GPU::copy(res, inv_g[o - og]);
-                Goldilocks3GPU::mul(accum, accum, res);
-                if (o == 0) Goldilocks3GPU::copy(fri_pol, accum);
-                else Goldilocks3GPU::add(fri_pol, fri_pol, accum);
-            }
-        }
-        d_fri[r * FIELD_EXTENSION] = fri_pol[0];
-        d_fri[r * FIELD_EXTENSION + 1] = fri_pol[1];
-        d_fri[r * FIELD_EXTENSION + 2] = fri_pol[2];
-        chunk_idx += gridDim.x;
+    const uint64_t o = blockIdx.x * blockDim.x + threadIdx.x;
+    if (o >= nOpenings) return;
+    Goldilocks3GPU::Element k, t;
+    Goldilocks3GPU::zero(k);
+    for (uint64_t j = d_termStart[o]; j < d_termStart[o + 1]; ++j) {
+        Goldilocks3GPU::mul(t, *(Goldilocks3GPU::Element *)(d_b + (uint64_t)d_terms[j].vf2Exp * FIELD_EXTENSION),
+                            *(Goldilocks3GPU::Element *)(d_evals + (uint64_t)d_terms[j].evalPos * FIELD_EXTENSION));
+        Goldilocks3GPU::sub(k, k, t);
     }
+    Goldilocks3GPU::copy(*(Goldilocks3GPU::Element *)(d_k + o * FIELD_EXTENSION), k);
+}
+
+// The per-proof constants.
+static void computeFRIConstants(uint64_t nOpenings, uint64_t nPols, const int64_t *d_openingPoints, uint64_t wTrace,
+                                const uint64_t *d_termStart, const FriTerm *d_terms, gl64_t *d_evals, gl64_t *vf1,
+                                gl64_t *vf2, gl64_t *d_b, gl64_t *d_a, gl64_t *d_k, cudaStream_t stream = 0)
+{
+    const uint64_t n = nOpenings > nPols ? nOpenings : nPols;
+    computeFRIPowers<<<(n + 63) / 64, 64, 0, stream>>>(nOpenings, nPols, d_openingPoints, wTrace, d_termStart, vf1, vf2, d_b, d_a);
+    computeFRIK<<<(nOpenings + 63) / 64, 64, 0, stream>>>(nOpenings, d_termStart, d_terms, d_evals, d_b, d_k);
+}
+
+// One thread per row, nThreads rows per block. The block batch-inverts the rows of D it reads (the FriWindow
+// segments) into shared memory; the S_G are kept FRI_GROUP_BATCH groups at a time.
+#define FRI_GROUP_BATCH 16
+static __global__ void computeFRIExpression(uint64_t domainSize, uint64_t nOpenings, uint64_t windowRows, uint32_t nSegments,
+                                            const FriSegment *d_segments, const uint32_t *d_opBase, uint64_t shift,
+                                            uint64_t wExt, uint64_t wStep, uint64_t wStepInv, gl64_t *d_xi,
+                                            uint32_t nGroups, const uint32_t *d_colStart, const FriTerm *d_cols,
+                                            const uint32_t *d_opStart, const uint32_t *d_opGroups, gl64_t *d_b,
+                                            gl64_t *d_a, gl64_t *d_k, const gl64_t *d_cmPols,
+                                            const gl64_t *d_customCommits, const gl64_t *d_fixedPols, gl64_t *d_fri)
+{
+    extern __shared__ Goldilocks3GPU::Element sD[];
+    const uint32_t tid = threadIdx.x, nT = blockDim.x;
+    const uint64_t r = (uint64_t)blockIdx.x * nT + tid;
+    auto at = [](gl64_t *v, uint64_t i) -> Goldilocks3GPU::Element & { return *(Goldilocks3GPU::Element *)(v + i * FIELD_EXTENSION); };
+
+    // x[r0 + offset + i] = s wStep^blockIdx wExt^offset wExt^i. Every segment is at least nT long, so the thread
+    // has entries tid + j nT in all of them: prefix products over its entries, one inversion, unwind.
+    gl64_t &xBlock = *(gl64_t *)(sD + windowRows);   // all shared memory is dynamic (friSharedBytes)
+    if (tid == 0) xBlock = gl64_t(shift) * (gl64_t(wStep) ^ blockIdx.x);
+    __syncthreads();
+    const gl64_t xThread = xBlock * (gl64_t(wExt) ^ tid);
+    auto lastOf = [&](const FriSegment &seg) { return seg.base + tid + (seg.len - 1 - tid) / nT * nT; };
+    Goldilocks3GPU::Element &xi = *(Goldilocks3GPU::Element *)d_xi;
+    Goldilocks3GPU::Element den, inv;
+    uint32_t prev = 0;
+    for (uint32_t s = 0; s < nSegments; ++s) {
+        const FriSegment seg = d_segments[s];
+        gl64_t x = xThread * gl64_t(seg.w);
+        for (uint32_t i = seg.base + tid; i < seg.base + seg.len; i += nT, x = x * gl64_t(wStep)) {
+            Goldilocks3GPU::sub(den, x, xi);
+            if (i == tid) Goldilocks3GPU::copy(sD[i], den);
+            else Goldilocks3GPU::mul(sD[i], sD[prev], den);
+            prev = i;
+        }
+    }
+    Goldilocks3GPU::inv(inv, sD[prev]);
+    for (uint32_t s = nSegments; s-- > 0;) {
+        const FriSegment seg = d_segments[s];
+        uint32_t i = lastOf(seg);
+        gl64_t x = xThread * gl64_t(seg.w) * (gl64_t(wStep) ^ ((i - seg.base) / nT));
+        for (; i != tid; i -= nT, x = x * gl64_t(wStepInv)) {
+            const bool first = i == seg.base + tid;
+            Goldilocks3GPU::sub(den, x, xi);
+            Goldilocks3GPU::mul(sD[i], inv, sD[first ? lastOf(d_segments[s - 1]) : i - nT]);
+            Goldilocks3GPU::mul(inv, inv, den);
+            if (first) break;
+        }
+    }
+    Goldilocks3GPU::copy(sD[tid], inv);
+    __syncthreads();
+
+    Goldilocks3GPU::Element fri, S[FRI_GROUP_BATCH], W, t;
+    Goldilocks3GPU::zero(fri);
+    for (uint32_t g0 = 0; g0 < nGroups || g0 == 0; g0 += FRI_GROUP_BATCH) {
+        const uint32_t g1 = min(g0 + FRI_GROUP_BATCH, nGroups);
+        for (uint32_t g = g0; g < g1; ++g) {
+            Goldilocks3GPU::Element acc;
+            Goldilocks3GPU::zero(acc);
+            for (uint32_t c = d_colStart[g]; c < d_colStart[g + 1]; ++c) {
+                const FriTerm m = d_cols[c];
+                const gl64_t *pol = (m.src == 0 ? d_cmPols : m.src == 1 ? d_customCommits : d_fixedPols) + m.col + r;
+                if (m.dim == 1) {
+                    gl64_t v = pol[0];
+                    Goldilocks3GPU::mul(t, at(d_b, m.vf2Exp), v);
+                } else {
+                    Goldilocks3GPU::Element v = {pol[0], pol[domainSize], pol[2 * domainSize]};
+                    Goldilocks3GPU::mul(t, at(d_b, m.vf2Exp), v);
+                }
+                Goldilocks3GPU::add(acc, acc, t);
+            }
+            Goldilocks3GPU::copy(S[g - g0], acc);
+        }
+        for (uint64_t o = 0; o < nOpenings; ++o) {
+            // K_o goes in with the first batch.
+            bool any = g0 == 0;
+            if (any) Goldilocks3GPU::copy(W, at(d_k, o));
+            else Goldilocks3GPU::zero(W);
+            for (uint32_t j = d_opStart[o]; j < d_opStart[o + 1]; ++j) {
+                const uint32_t g = d_opGroups[j];
+                if (g < g0 || g >= g1) continue;
+                Goldilocks3GPU::add(W, W, S[g - g0]);
+                any = true;
+            }
+            if (!any) continue;
+            Goldilocks3GPU::mul(W, W, at(d_a, o));
+            Goldilocks3GPU::mul(t, W, sD[d_opBase[o] + tid]);
+            Goldilocks3GPU::add(fri, fri, t);
+        }
+    }
+    Goldilocks3GPU::copy(at(d_fri, r), fri);
 }
 
 #endif

@@ -29,7 +29,7 @@ fn load(name: &str) -> Fixture {
     let path = format!("{}/tests/data/{}", env!("CARGO_MANIFEST_DIR"), name);
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
     assert_eq!(bytes.len() % 8, 0, "{path} is not a u64 stream");
-    let words: Vec<u64> = bytes.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+    let words: Vec<u64> = bytes.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect();
 
     let mut p = 0usize;
     let m = words[p] as usize;

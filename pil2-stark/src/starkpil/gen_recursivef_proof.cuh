@@ -93,7 +93,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     uint64_t offsetProofValues = setupCtx.starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
     uint64_t offsetEvals = setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)];
     uint64_t offsetChallenges = setupCtx.starkInfo.mapOffsets[std::make_pair("challenges", false)];
-    uint64_t offsetXDivXSub = setupCtx.starkInfo.mapOffsets[std::make_pair("xdivxsub", false)];
     uint64_t offsetFriQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("fri_queries", false)];
     uint64_t offsetChallenge = setupCtx.starkInfo.mapOffsets[std::make_pair("challenge", false)];
     uint64_t offsetNonce = setupCtx.starkInfo.mapOffsets[std::make_pair("nonce", false)];
@@ -103,7 +102,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
     uint64_t offsetQ = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
     uint64_t offsetFRI = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
-    uint64_t offsetHelper = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
 
 
     StepsParams h_params = {
@@ -115,7 +113,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         airgroupValues : (Goldilocks::Element *)d_aux_trace + offsetAirgroupValues,
         airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
         evals : (Goldilocks::Element *)d_aux_trace + offsetEvals,
-        xDivXSub : (Goldilocks::Element *)d_aux_trace + offsetXDivXSub,
+        xDivXSub : nullptr,
         pConstPolsAddress: (Goldilocks::Element *)d_aux_trace + offsetConstPols,
         pConstPolsExtendedTreeAddress:d_constTree,
         pCustomCommitsFixed: pCustomCommitsFixed,
@@ -222,20 +220,9 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     Goldilocks::Element *d_xiChallenge = &h_params.challenges[xiChallengeIndex * FIELD_EXTENSION];
     gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
-    CHECKCUDAERR(cudaMemsetAsync(h_params.evals, 0, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), stream));
-    uint64_t count = 0;
     TimerStopCategoryGPU(timer, EVALS);
-    for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += EVALS_OPENING_BATCH) {
-        std::vector<int64_t> openingPoints;
-        for(uint64_t j = 0; j < EVALS_OPENING_BATCH; ++j) {
-            if(i + j < setupCtx.starkInfo.openingPoints.size()) {
-                openingPoints.push_back(setupCtx.starkInfo.openingPoints[i + j]);
-            }
-        }
-        uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("lev_helper", false)];
-        computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), &air_instance_info->opening_points[i], (gl64_t*) d_aux_trace, offset_helper, d_LEv, timer, stream);
-        evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), air_instance_info, (Goldilocks::Element*)d_LEv, offset_helper, timer, stream);
-    }
+    computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, (gl64_t*) d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("lev_helper", false)], d_LEv, timer, stream);
+    evmap_inplace(setupCtx, h_params, air_instance_info, (Goldilocks::Element*)d_LEv, timer, stream);
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         d_transcript.put(h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream, &timer);
     } else {
@@ -256,15 +243,10 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
             d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
-    calculateXis_inplace(setupCtx, h_params, air_instance_info->opening_points, d_xiChallenge, stream);    
-    uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
-    dim3 threads(256);
-    dim3 blocks((NExtended + threads.x - 1) / threads.x);
-    computeX_kernel<<<blocks, threads, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
     TimerStopCategoryGPU(timer, FRI);
     TimerStartGPU(timer, STARK_FRI_POLYNOMIAL);
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    calculateFRIExpression(setupCtx, h_params, air_instance_info, stream);
+    calculateFRIExpression(setupCtx, h_params, air_instance_info, d_xiChallenge, stream);
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 
     TimerStopGPU(timer, STARK_FRI_POLYNOMIAL);    
@@ -277,7 +259,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step];
         if (step > 0) {
             uint64_t prevBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step - 1];
-            fold_inplace(step, offsetFRI, offsetHelper, h_params.challenges, nBits, prevBits, currentBits, (gl64_t *)d_aux_trace, timer, stream);
+            fold_inplace(step, offsetFRI, h_params.challenges, nBits, prevBits, currentBits, (gl64_t *)d_aux_trace, timer, stream);
         }
         if (step < nStepsFRI - 1)
         {

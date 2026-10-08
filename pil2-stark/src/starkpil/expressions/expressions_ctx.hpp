@@ -51,16 +51,16 @@ struct ExpsArguments
 
 
 struct Params {
-    uint64_t expId;
-    uint64_t dim;
-    uint64_t stage;
-    uint64_t stagePos;
-    uint64_t polsMapId;
-    uint64_t rowOffsetIndex;
+    uint64_t expId = 0;   // only meaningful for op == tmp
+    uint64_t dim = 0;
+    uint64_t stage = 0;
+    uint64_t stagePos = 0;
+    uint64_t polsMapId = 0;
+    uint64_t rowOffsetIndex = 0;
     bool inverse = false;
     bool batch = true;
     opType op;
-    uint64_t value;
+    uint64_t value = 0;
     
     Params(uint64_t expId_, uint64_t dim_, bool inverse_ = false, bool batch_ = true) : expId(expId_), dim(dim_), inverse(inverse_), batch(batch_), op(opType::tmp) {
         op = opType::tmp;

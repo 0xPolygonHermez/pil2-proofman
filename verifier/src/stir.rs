@@ -461,7 +461,7 @@ impl QuotientContext {
             if den == e3_zero() {
                 return false;
             }
-            rhs = rhs + (ans_rho - *y) * den.inverse();
+            rhs += (ans_rho - *y) * den.inverse();
         }
         lhs == rhs
     }
@@ -1211,8 +1211,8 @@ mod tests {
             let mut naive = e3_zero();
             let mut pow = e3_one();
             for _ in 0..=exp {
-                naive = naive + pow;
-                pow = pow * y;
+                naive += pow;
+                pow *= y;
             }
             assert_eq!(geometric_sum(y, exp), naive);
         }
@@ -1270,7 +1270,7 @@ mod tests {
         for (a, y) in ctx.points.iter().zip(&ctx.values) {
             let mut acc = ans[n - 1];
             for j in (0..n - 1).rev() {
-                shake[j] = shake[j] + acc;
+                shake[j] += acc;
                 acc = acc * *a + ans[j];
             }
             assert_eq!(acc, *y, "Âns must interpolate G");
@@ -1283,7 +1283,7 @@ mod tests {
         assert!(ctx.check_shake(&padded, rho));
         // …a different Âns is not.
         let mut other = ctx.ans_coeffs.clone();
-        other[0] = other[0] + e(1, 0, 0);
+        other[0] += e(1, 0, 0);
         ctx.set_ans(&other);
         assert!(!ctx.check_shake(&shake, rho));
     }

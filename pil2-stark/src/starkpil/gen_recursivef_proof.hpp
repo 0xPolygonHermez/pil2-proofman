@@ -173,16 +173,8 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
     Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("lev", false)]];
 
-    for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i+= 4) {
-        std::vector<int64_t> openingPoints;
-        for(uint64_t j = 0; j < 4; ++j) {
-            if(i + j < setupCtx.starkInfo.openingPoints.size()) {
-                openingPoints.push_back(setupCtx.starkInfo.openingPoints[i + j]);
-            }
-        }
-        starks.computeLEv(xiChallenge, LEv, openingPoints, ntt);
-        starks.computeEvals(params ,LEv, proof, openingPoints);
-    }
+    starks.computeLEv(xiChallenge, LEv, ntt);
+    starks.computeEvals(params ,LEv, proof);
 
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         starks.addTranscriptGL(transcript, evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);

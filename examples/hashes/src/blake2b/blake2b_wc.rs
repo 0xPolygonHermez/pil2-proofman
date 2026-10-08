@@ -82,6 +82,11 @@ impl Blake2bAir {
                         range_counts[range_row(limb)] += 1;
                     }
                 }
+                // rotl-by-1 carries: 256·(2·b - 256·t) = 256·(2·b mod 256), b the top byte of each limb
+                let z_b = z.to_le_bytes();
+                for b in [z_b[3], z_b[7]] {
+                    range_counts[range_row(((b << 1) as u16) << 8)] += 1;
+                }
 
                 // XOR table
                 let vb_b = vb.to_le_bytes();
@@ -155,8 +160,8 @@ impl Blake2bAir {
         //      · 32 - xor_check(a: 0, b: 0, c: 0)
         table_counts[table_row(0, 0)] += (num_padding_rows * 32) as u64;
 
-        // Perform the padding range checks: 16 zero limbs
-        let count_zeros = num_padding_rows * 16;
+        // Perform the padding range checks: 16 zero limbs + 2 zero carry checks
+        let count_zeros = num_padding_rows * 18;
         range_counts[range_row(0)] += count_zeros as u64;
 
         // Write the multiplicity columns

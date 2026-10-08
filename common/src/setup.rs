@@ -2,20 +2,33 @@ use std::os::raw::{c_void, c_char};
 use proofman_fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::fs::File;
-use std::fs;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use libloading::{Library, Symbol};
 use std::ffi::CString;
 use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
 
-pub type GetWitnessFunc =
-    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64) -> i64;
+pub type GetWitnessTraceFunc = unsafe extern "C" fn(
+    zkin: *mut u64,
+    circom_circuit: *mut c_void,
+    exec_data: *mut u64,
+    trace: *mut c_void,
+    publics: *mut c_void,
+    n: u64,
+    n_publics: u64,
+    n_committed_pols: u64,
+    n_mutexes: u64,
+    signal_values: *mut c_void, // optional pool buffer (>= total_signal_no u64s); null => self-alloc
+) -> i64;
+
+pub type GetTotalSignalNoFunc = unsafe extern "C" fn() -> u64;
+pub type PrepareSignalMapFunc = unsafe extern "C" fn(circuit: *mut c_void, exec_data: *mut u64, exec_words: u64) -> i64;
 
 #[derive(Debug)]
 pub struct CircomState {
     library: Option<Library>,
     pub circuit: Option<*mut c_void>,
-    pub get_witness_fn: Option<GetWitnessFunc>,
+    pub get_witness_trace_fn: Option<GetWitnessTraceFunc>,
 }
 
 unsafe impl Send for CircomState {}
@@ -24,12 +37,11 @@ unsafe impl Sync for CircomState {}
 use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
-    get_map_totaln_custom_commits_fixed_c, get_map_totaln_contributions_c, get_proof_size_c, get_max_n_tmp1_c,
-    get_max_n_tmp3_c, get_const_tree_size_c, get_proof_pinned_size_c, get_operations_quotient_c,
-    calculate_words_per_row_c, load_device_setup_c,
+    get_map_totaln_custom_commits_fixed_c, get_proof_size_c, get_max_n_tmp1_c, get_max_n_tmp3_c, get_const_tree_size_c,
+    get_proof_pinned_size_c, get_operations_quotient_c, calculate_words_per_row_c, load_device_setup_c,
 };
 
-use crate::{GlobalInfoAir, ProofmanError};
+use crate::{custom_commit_reserved_words, custom_commit_words_per_row, GlobalInfoAir, ProofmanError};
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
@@ -39,6 +51,7 @@ pub type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 pub type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 pub type FreeCircomCircuitFunc = unsafe extern "C" fn(circuit: *mut c_void);
+pub type FreeComponentCacheFunc = unsafe extern "C" fn();
 
 #[derive(Debug)]
 #[repr(C)]
@@ -73,39 +86,48 @@ pub struct Setup<F: PrimeField64> {
     pub stark_info: StarkInfo,
     pub const_pols_size: usize,
     pub const_pols_size_packed: usize,
+    pub custom_commits_reserved_words: usize,
+    /// Packed `words_per_row` reserved per custom commit (column count if unresolved at sizing).
+    /// `initialize_custom_commits` refuses a wider file, which would overrun the const buffer.
+    pub custom_commits_words_per_row: Vec<u64>,
     pub const_tree_size: usize,
     pub const_pols_path: String,
     pub const_pols_tree_path: String,
     pub prover_buffer_size: u64,
-    pub contributions_size: u64,
     pub custom_commits_fixed_buffer_size: u64,
     pub proof_size: u64,
     pub pinned_proof_size: u64,
     pub setup_path: PathBuf,
     pub setup_type: ProofType,
-    pub size_witness: Option<u64>,
+    pub total_signal_no: Option<u64>,
     pub circom_state: RwLock<CircomState>,
     pub exec_data_path: Option<String>,
     pub exec_data: Option<Arc<Vec<u64>>>,
-    pub n_adds: Option<u64>,
     pub air_name: String,
     pub verkey: Vec<F>,
     pub verkey_file: String,
     pub n_cols: u64,
     pub n_operations_quotient: u64,
-    pub preallocate: bool,
     pub gpu: bool,
 }
 
 impl<F: PrimeField64> Drop for Setup<F> {
     fn drop(&mut self) {
         let mut state = self.circom_state.write().unwrap();
-        if let Some(circom_circuit) = state.circuit.take() {
-            if let Some(circom_library) = &state.library {
+        let circuit = state.circuit.take();
+        if let Some(circom_library) = &state.library {
+            if let Some(circom_circuit) = circuit {
                 unsafe {
                     let free_circom_circuit: Symbol<FreeCircomCircuitFunc> =
                         circom_library.get(b"freeCircuit\0").expect("Failed to get freeCircuit symbol");
                     free_circom_circuit(circom_circuit);
+                }
+            }
+            // Best-effort: absent from an older proving key's library.
+            unsafe {
+                if let Ok(free_component_cache) = circom_library.get::<FreeComponentCacheFunc>(b"freeComponentCache\0")
+                {
+                    free_component_cache();
                 }
             }
         }
@@ -273,11 +295,14 @@ impl<F: PrimeField64> Setup<F> {
         air_info: &GlobalInfoAir,
         setup_type: &ProofType,
         verify_constraints: bool,
-        preallocate: bool,
-        // Table air: proved at most once, so its const pols need not survive the proof.
-        single_use: bool,
         gpu: bool,
         starkinfo_source_path: Option<&PathBuf>,
+        // Commit name -> packed file, when the caller knows them before the const buffer is
+        // sized. Empty reserves each custom commit's worst case.
+        custom_commits_fixed: &HashMap<String, PathBuf>,
+        // Proved with no global challenge (prove-air): the cm1 root enters the transcript before
+        // stage 2, so the StarkInfo is built as recursive to keep it off the in-place commit.
+        self_contained: bool,
     ) -> ProofmanResult<Self> {
         let starkinfo_borrow_path = match setup_type {
             ProofType::Recursive1 => Some(
@@ -322,7 +347,6 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_size_packed,
             const_tree_size,
             prover_buffer_size,
-            contributions_size,
             custom_commits_fixed_buffer_size,
             proof_size,
             pinned_proof_size,
@@ -345,32 +369,21 @@ impl<F: PrimeField64> Setup<F> {
                 0,
                 0,
                 0,
-                0,
             )
         } else {
             // Otherwise, initialize the pointers with their respective values
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
                 .unwrap_or_else(|_| panic!("Failed to read file {}", stark_info_path));
             let stark_info = StarkInfo::from_json(&stark_info_json);
-            let recursive = setup_type != &ProofType::Basic;
+            let recursive = setup_type != &ProofType::Basic || self_contained;
             let recursive_final = setup_type == &ProofType::RecursiveF;
-            let preallocate_const = preallocate && gpu;
-            let p_stark_info = stark_info_new_c(
-                stark_info_path.as_str(),
-                recursive_final,
-                recursive,
-                verify_constraints,
-                false,
-                gpu,
-                preallocate_const,
-                single_use && gpu,
-            );
+            let p_stark_info =
+                stark_info_new_c(stark_info_path.as_str(), recursive_final, recursive, verify_constraints, false, gpu);
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
             let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin);
             let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);
             set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
             let prover_buffer_size = get_map_totaln_c(p_stark_info);
-            let contributions_size = get_map_totaln_contributions_c(p_stark_info);
             let custom_commits_fixed_buffer_size = get_map_totaln_custom_commits_fixed_c(p_stark_info);
             let proof_size = get_proof_size_c(p_stark_info);
             let pinned_proof_size = get_proof_pinned_size_c(p_stark_info);
@@ -407,7 +420,6 @@ impl<F: PrimeField64> Setup<F> {
                     0,
                     const_tree_size,
                     prover_buffer_size,
-                    contributions_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
                     pinned_proof_size,
@@ -417,16 +429,20 @@ impl<F: PrimeField64> Setup<F> {
             } else {
                 let mut const_pols_size_packed = 0;
                 if gpu && setup_type != &ProofType::RecursiveF {
-                    let words_per_row: u64 = if Path::new(&const_pols_path).exists() {
-                        let bytes = fs::read(&const_pols_path).expect("Failed to read const_pols file");
-                        if bytes.len() >= 8 {
-                            u64::from_le_bytes(bytes[..8].try_into().unwrap())
-                        } else {
-                            0
-                        }
-                    } else {
-                        calculate_words_per_row_c(p_stark_info, &(setup_path.display().to_string() + ".const"))
-                    };
+                    let mut header = [0u8; 8];
+                    let words_per_row: u64 =
+                        match File::open(&const_pols_path).and_then(|mut f| f.read_exact(&mut header)) {
+                            Ok(()) => u64::from_le_bytes(header),
+                            // Missing or truncated: regenerated later, size it from the source .const.
+                            Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::UnexpectedEof) => {
+                                calculate_words_per_row_c(p_stark_info, &(setup_path.display().to_string() + ".const"))
+                            }
+                            Err(e) => {
+                                return Err(ProofmanError::InvalidSetup(format!(
+                                    "Failed to read GPU const pols header {const_pols_path}: {e}"
+                                )))
+                            }
+                        };
                     const_pols_size_packed =
                         (words_per_row * (1 << stark_info.stark_struct.n_bits) + 1 + stark_info.n_constants) as usize;
                 }
@@ -440,7 +456,6 @@ impl<F: PrimeField64> Setup<F> {
                     const_pols_size_packed,
                     const_tree_size,
                     prover_buffer_size,
-                    contributions_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
                     pinned_proof_size,
@@ -457,7 +472,7 @@ impl<F: PrimeField64> Setup<F> {
             _ => setup_type != &ProofType::Basic,
         };
 
-        let (circom_library, circom_circuit, get_witness_fn, size_witness, exec_data_path, exec_data, n_adds) =
+        let (circom_library, circom_circuit, get_witness_trace_fn, total_signal_no, exec_data_path, exec_data) =
             if needs_circom {
                 let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
                 let rust_lib_filename = setup_path.display().to_string() + lib_extension;
@@ -479,35 +494,93 @@ impl<F: PrimeField64> Setup<F> {
                     let init_circom_circuit: Symbol<GetCircomCircuitFunc> = library.get(b"initCircuit\0")?;
                     init_circom_circuit(dat_filename_ptr)
                 };
+                // loadCircuit returns nullptr on a bad .dat; unchecked it segfaults in getWitnessTrace.
+                if circom_circuit_ptr.is_null() {
+                    return Err(ProofmanError::InvalidSetup(format!(
+                        "initCircuit failed for {dat_filename} (see the loadCircuit error above)"
+                    )));
+                }
 
-                let witness_size = unsafe {
-                    let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-                    get_size_witness()
+                // Sizes the pooled signalValues buffers, so it must be exact: a `getSizeWitness`
+                // fallback would under-count (signals >= witness entries) and overflow them.
+                let total_signal_no = unsafe {
+                    let get_total_signal_no: Symbol<GetTotalSignalNoFunc> = library.get(b"getTotalSignalNo\0")?;
+                    get_total_signal_no()
                 };
 
-                // Load the getWitness function pointer for later use
-                let get_witness_fn = unsafe {
-                    let get_witness_symbol: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-                    Some(*get_witness_symbol)
-                };
+                let get_witness_trace_fn =
+                    unsafe { library.get::<GetWitnessTraceFunc>(b"getWitnessTrace\0").ok().map(|sym| *sym) };
 
-                // Pre-loaded so every `get_committed_pols_c` reads it at RAM speed.
+                // Pre-loaded so every `getWitnessTrace` scatter reads it at RAM speed.
                 let exec_filename = setup_path.display().to_string() + ".exec";
-                let exec_data = load_exec_file(&exec_filename, n_cols)?;
-                let n_adds = exec_header(&exec_data).n_adds;
+                let mut exec_data = load_exec_file(&exec_filename, n_cols)?;
+
+                // Best-effort: getWitnessTrace reads the exec map directly if this is absent,
+                // as it is in an older proving key's library.
+                unsafe {
+                    if let Ok(prepare) = library.get::<PrepareSignalMapFunc>(b"prepareSignalMap\0") {
+                        let words = exec_data.len() as u64;
+                        prepare(circom_circuit_ptr, exec_data.as_mut_ptr(), words);
+                    }
+                }
 
                 (
                     Some(library),
                     Some(circom_circuit_ptr),
-                    get_witness_fn,
-                    Some(witness_size),
+                    get_witness_trace_fn,
+                    Some(total_signal_no),
                     Some(exec_filename),
                     Some(Arc::new(exec_data)),
-                    Some(n_adds),
                 )
             } else {
-                (None, None, None, None, None, None, None)
+                (None, None, None, None, None, None)
             };
+
+        // Packed width comes from the commit file header when the caller named it; otherwise
+        // reserve the worst case (one word per column). Registration must not exceed this.
+        let mut custom_commits_words_per_row: Vec<u64> = Vec::new();
+        let custom_commits_reserved_words = match gpu {
+            true => {
+                let widths: Vec<u64> = stark_info
+                    .custom_commits
+                    .iter()
+                    .map(|c| c.stage_widths.first().copied().unwrap_or(0) as u64)
+                    .collect();
+                let n = 1u64 << stark_info.stark_struct.n_bits;
+                let n_extended = 1u64 << stark_info.stark_struct.n_bits_ext;
+                let arity = stark_info.stark_struct.merkle_tree_arity;
+                let packed: Vec<Option<u64>> = stark_info
+                    .custom_commits
+                    .iter()
+                    .zip(&widths)
+                    .map(|(commit, &n_cols)| {
+                        if n_cols == 0 {
+                            return None;
+                        }
+                        let path = custom_commits_fixed.get(&commit.name)?;
+                        match custom_commit_words_per_row(path, n, n_extended, n_cols, arity) {
+                            Ok(words) => Some(words),
+                            // Not fatal: registration validates the file and reports errors.
+                            Err(e) => {
+                                tracing::debug!("custom commit '{}' not sized from its file: {e}", commit.name);
+                                None
+                            }
+                        }
+                    })
+                    .collect();
+                custom_commits_words_per_row = widths
+                    .iter()
+                    .zip(&packed)
+                    .map(|(&n_cols, resolved)| resolved.filter(|&p| p > 0 && p <= n_cols).unwrap_or(n_cols))
+                    .collect();
+                custom_commit_reserved_words(
+                    stark_info.stark_struct.n_bits as u32,
+                    &widths,
+                    &custom_commits_words_per_row.iter().copied().map(Some).collect::<Vec<_>>(),
+                )
+            }
+            false => 0,
+        };
 
         Ok(Self {
             air_id,
@@ -516,19 +589,23 @@ impl<F: PrimeField64> Setup<F> {
             p_setup: SetupC { p_stark_info, p_expressions_bin },
             const_pols_size,
             const_pols_size_packed,
+            custom_commits_reserved_words,
+            custom_commits_words_per_row,
             const_tree_size,
             verkey,
             verkey_file,
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
-            contributions_size,
             proof_size,
             pinned_proof_size,
-            size_witness,
-            circom_state: RwLock::new(CircomState { library: circom_library, circuit: circom_circuit, get_witness_fn }),
+            total_signal_no,
+            circom_state: RwLock::new(CircomState {
+                library: circom_library,
+                circuit: circom_circuit,
+                get_witness_trace_fn,
+            }),
             exec_data_path,
             exec_data,
-            n_adds,
             setup_path: setup_path.to_path_buf().clone(),
             setup_type: *setup_type,
             air_name: air_info.name.clone(),
@@ -536,7 +613,6 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_tree_path,
             n_cols,
             n_operations_quotient,
-            preallocate,
             gpu,
         })
     }
@@ -544,10 +620,10 @@ impl<F: PrimeField64> Setup<F> {
     pub fn get_vk(&self) -> Vec<u64> {
         self.verkey.iter().map(|x| x.as_canonical_u64()).collect()
     }
-
-    pub fn get_circom_witness_size(&self) -> usize {
-        let base_size = self.size_witness.unwrap_or(0) as usize;
-        let exec_offset = self.n_adds.unwrap_or(0) as usize;
-        base_size + exec_offset
+    /// GPU airs merkelize const pols on device; only CPU and BN128/RecursiveF ever read the
+    /// tree file back.
+    pub fn needs_const_tree_file(&self) -> bool {
+        let goldilocks = self.stark_info.stark_struct.verification_hash_type == "GL";
+        !self.gpu || !goldilocks
     }
 }

@@ -140,6 +140,28 @@ pub fn build_s_polynomials(n_cols: usize, n: usize, n_bits: usize, r: usize, s_m
     sv
 }
 
+/// Number of dedicated rows needed to bind every R1CS public signal into the
+/// connection band.
+pub fn public_rows(n_publics: u32, n_cols: usize) -> usize {
+    (n_publics as usize).div_ceil(n_cols)
+}
+
+/// Append one connection-covered occurrence of each R1CS public signal.
+///
+/// Circom numbers the constant-one wire as 0 and public wires as
+/// `1..=n_publics`. The matching PIL constraints bind these cells to
+/// `publics[0..n_publics]`; the connection argument then binds every other
+/// occurrence of the same signal in the Plonk/custom-gate trace.
+pub fn bind_public_signals(s_map: &mut [Vec<u32>], first_row: usize, n_publics: u32, n_cols: usize) {
+    assert!(n_cols > 0 && n_cols <= s_map.len());
+    for public in 0..n_publics as usize {
+        let col = public % n_cols;
+        let row = first_row + public / n_cols;
+        assert_eq!(s_map[col][row], 0, "public binding cell a[{col}] at row {row} is already occupied");
+        s_map[col][row] = public as u32 + 1;
+    }
+}
+
 /// Compute the permuted initialSt for a Poseidon1_16 gate, mirroring the
 /// `CustPoseidon1_16` input-ordering in circom:
 ///   key=(0,0) → initialSt = in
@@ -235,5 +257,22 @@ impl PlonkBand {
         s_map[3 * g][row] = c[0] as u32;
         s_map[3 * g + 1][row] = c[1] as u32;
         s_map[3 * g + 2][row] = c[2] as u32;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bind_public_signals, public_rows};
+
+    #[test]
+    fn public_signals_are_appended_in_connection_rows() {
+        let mut s_map = vec![vec![0; 8]; 4];
+
+        assert_eq!(public_rows(0, 4), 0);
+        assert_eq!(public_rows(5, 4), 2);
+        bind_public_signals(&mut s_map, 3, 5, 4);
+
+        assert_eq!([s_map[0][3], s_map[1][3], s_map[2][3], s_map[3][3]], [1, 2, 3, 4]);
+        assert_eq!(s_map[0][4], 5);
     }
 }

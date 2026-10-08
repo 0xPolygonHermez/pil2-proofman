@@ -246,6 +246,33 @@ template parallel VerifyEvaluations() {
     enable * normC[2] === 0;
 }
 
+// The DEEP polynomial terms that are the same for every query: challengesDeep, then the tmps the queries read.
+template CalculateFRIConstants() {
+    signal input {maxNum} challengesDeep[2][3];
+    signal input {maxNum} evals[{{ ev_map_len }}][3];
+    signal output {maxNum} friConsts[{{ n_fri_consts }}][3];
+
+{{ fri_once_code }}
+
+    var q = 0xFFFFFFFFFFFFFFFF;
+    friConsts.maxNum = q;
+    for (var i = 0; i < 2; i++) {
+        if (challengesDeep.maxNum > q) {
+            friConsts[i] <== GLCNorm()(challengesDeep[i]);
+        } else {
+            friConsts[i] <== challengesDeep[i];
+        }
+    }
+{% for c in fri_consts %}{% if c.dim == 1 %}    friConsts[{{ c.idx }}][0] <== GLNorm()(tmp_{{ c.id }});
+    friConsts[{{ c.idx }}][1] <== 0;
+    friConsts[{{ c.idx }}][2] <== 0;
+{% else %}    if (tmp_{{ c.id }}.maxNum > q) {
+        friConsts[{{ c.idx }}] <== GLCNorm()(tmp_{{ c.id }});
+    } else {
+        friConsts[{{ c.idx }}] <== tmp_{{ c.id }};
+    }
+{% endif %}{% endfor %}}
+
 /* 
     Verify that the DEEP polynomial is built properly
 */
@@ -253,7 +280,7 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
     var nextStep = currStepBits - nextStepBits;
     signal input {binary} queriesL0[{{ step0_bits }}];
     signal input {maxNum} challengeOut[3];
-    signal input {maxNum} challengesDeep[2][3];
+    signal input {maxNum} friConsts[{{ n_fri_consts }}][3];
     signal input {maxNum} evals[{{ ev_map_len }}][3];
 {% for stage_info in stages_info %}{% if stage_info.has_cm and stage_info.stage <= n_stages %}    signal input {maxNum} cm{{ stage_info.stage }}[{{ stage_info.cm_section_len }}];
 {% endif %}{% endfor %}    signal input {maxNum} cm{{ q_stage }}[{{ q_stage_cm_section_len }}];
@@ -316,6 +343,18 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
     xDivXSubXi[{{ op.idx }}] <== GLCInv()(sub{{ op.idx }});
 {% endif %}{% endfor %}
 
+    // The query-independent terms, computed once by CalculateFRIConstants.
+    signal {maxNum} challengesDeep[2][3];
+    challengesDeep.maxNum = friConsts.maxNum;
+    challengesDeep[0] <== friConsts[0];
+    challengesDeep[1] <== friConsts[1];
+{% for c in fri_consts %}{% if c.dim == 1 %}    signal {maxNum} tmp_{{ c.id }};
+    tmp_{{ c.id }}.maxNum = friConsts.maxNum;
+    tmp_{{ c.id }} <== friConsts[{{ c.idx }}][0];
+{% else %}    signal {maxNum} tmp_{{ c.id }}[3];
+    tmp_{{ c.id }}.maxNum = friConsts.maxNum;
+    tmp_{{ c.id }} <== friConsts[{{ c.idx }}];
+{% endif %}{% endfor %}
 {{ eval_q_code }}
 
     // Final Normalization
@@ -381,7 +420,7 @@ template VerifyFinalPol() {
 template parallel VerifySingleQuery() {
     signal input {binary} queriesL0[{{ step0_bits }}];
     signal input {maxNum} challengeOut[3];
-    signal input {maxNum} challengesDeep[2][3];
+    signal input {maxNum} friConsts[{{ n_fri_consts }}][3];
     signal input {maxNum} rFold[{{ n_folds }}][3];
     signal input {maxNum} evals[{{ ev_map_len }}][3];
     signal input {binary} enable;
@@ -475,7 +514,7 @@ template parallel VerifySingleQuery() {
 {% endif %}{% endif %}{% endfor %}
 
     // Verify the DEEP polynomial query
-    VerifyQuery({{ step0_bits }}, {{ next_step0_bits }})(queriesL0, challengeOut, challengesDeep, evals, {{ query_vals_gl_joined }}, {{ next_vals_pol_0 }}, enable);
+    VerifyQuery({{ step0_bits }}, {{ next_step0_bits }})(queriesL0, challengeOut, friConsts, evals, {{ query_vals_gl_joined }}, {{ next_vals_pol_0 }}, enable);
 
     // Verify FRI construction for each folding step
 {% for step in fri_steps_info %}{% if step.s > 0 %}    signal {binary} s{{ step.s }}_queriesL0[{{ step.n_bits }}];
@@ -587,6 +626,8 @@ template StarkVerifier() {
 
     VerifyEvaluations()({{ verify_evals_inputs_joined }});
 
+    signal {maxNum} friConsts[{{ n_fri_consts }}][3] <== CalculateFRIConstants()(challengesDeepGL, evalsGL);
+
     ///////////
     // Verify queries
     ///////////
@@ -598,7 +639,7 @@ template StarkVerifier() {
         VerifySingleQuery()(
             queriesL0GL[q],
             challengeOutGL,
-            challengesDeepGL,
+            friConsts,
             rFoldGL,
             evalsGL,
             enabled,

@@ -222,7 +222,7 @@ template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint
          uint32_t TPB_V, uint32_t MINB>
 __global__ void __launch_bounds__(TPB_V, MINB) linearHashTiledKernel_pos1(uint64_t *__restrict__ output,
                                            uint64_t *__restrict__ input,
-                                           uint32_t num_cols, uint32_t num_rows, Layout layout)
+                                           uint32_t num_cols, uint32_t num_rows, Layout layout, uint32_t ld)
 {
     const uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= num_rows) return;
@@ -261,7 +261,7 @@ __global__ void __launch_bounds__(TPB_V, MINB) linearHashTiledKernel_pos1(uint64
         uint32_t col0 = num_cols - remaining;
         for (uint32_t i = 0; i < n; ++i)
         {
-            uint64_t idx = getBufferOffset(row, col0 + i, num_rows, num_cols, layout);
+            uint64_t idx = getBufferOffset(row, col0 + i, ld, num_cols, layout);
             scratchpad[i * blockDim.x + threadIdx.x] = ((gl64_t *)input)[idx];
         }
         for (uint32_t i = n; i < RATE_T; ++i)
@@ -503,7 +503,7 @@ void PoseidonGoldilocksGPU<W>::permuteTrunc(uint64_t *output, const uint64_t *in
 template<uint32_t W>
 void PoseidonGoldilocksGPU<W>::linearHash(uint64_t *d_hash_output, uint64_t *d_trace,
                                           uint64_t num_cols, uint64_t num_rows,
-                                          Layout layout, cudaStream_t stream)
+                                          Layout layout, cudaStream_t stream, uint64_t ld)
 {
     if (num_rows == 0) return;
 
@@ -529,7 +529,8 @@ void PoseidonGoldilocksGPU<W>::linearHash(uint64_t *d_hash_output, uint64_t *d_t
     {
         linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS,
                                    pos1Tpb<SPONGE_WIDTH>(), POS1_TILED_MINB>
-            <<<blks, tpb, smem_bytes, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows, layout);
+            <<<blks, tpb, smem_bytes, stream>>>(d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows, layout,
+                                                (uint32_t)(ld ? ld : num_rows));
     }
     CHECKCUDAERR(cudaGetLastError());
 }
@@ -547,69 +548,48 @@ void PoseidonGoldilocksGPU<W>::merkletree(uint32_t arity, uint64_t *d_tree, uint
     assert(arity * 4 <= W &&
            "PoseidonGoldilocksGPU::merkletree: arity*CAPACITY exceeds SPONGE_WIDTH");
     if (num_rows == 0) return;
+    linearHash(d_tree, d_input, num_cols, num_rows, layout, stream);
+    reduceLevels(arity, d_tree, num_rows, stream);
+}
 
-    constexpr u32 tpbW = pos1Tpb<SPONGE_WIDTH>();
-    u32 tpb = tpbW;
-    u32 blks = (num_rows + tpbW - 1) / tpbW;
-    if (num_rows < tpbW)
+// `pending` digests (a multiple of arity) at d_nodes -> their parents, written right after them.
+template<uint32_t W>
+void PoseidonGoldilocksGPU<W>::reduceOneLevel(uint32_t arity, uint64_t *d_nodes, uint64_t pending, cudaStream_t stream)
+{
+    const uint64_t nextN = pending / arity;
+    if (nextN <= POS1_MERKLE_WARP_MAX_NODES)
     {
-        tpb = (u32)num_rows;
-        blks = 1;
-    }
-
-    size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
-
-    // RowMajor reads contiguous columns per row (flat kernel); ColMajor and ColMajorTiled both go
-    // through the getBufferOffset-based kernel, which honors the exact layout passed in.
-    if (layout == Layout::RowMajor)
-    {
-        linearHashKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<blks, tpb, smem_bytes, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows);
+        u32 tpb_w = 256;
+        u32 blks_w = (u32)((nextN * 32 + tpb_w - 1) / tpb_w);
+        merkleNodeWarpKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+            <<<blks_w, tpb_w, 0, stream>>>(nextN, 0, pending, arity, d_nodes);
     }
     else
     {
-        linearHashTiledKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS,
-                                   pos1Tpb<SPONGE_WIDTH>(), POS1_TILED_MINB>
-            <<<blks, tpb, smem_bytes, stream>>>(d_tree, d_input, (uint32_t)num_cols, (uint32_t)num_rows, layout);
+        u32 tpb = pos1Tpb<SPONGE_WIDTH>();
+        u32 blks = (u32)((nextN + tpb - 1) / tpb);
+        size_t smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
+        merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
+            <<<blks, tpb, smem_bytes, stream>>>(nextN, 0, pending, arity, d_nodes);
     }
     CHECKCUDAERR(cudaGetLastError());
+}
 
-    uint64_t pending = num_rows;
-    uint64_t nextN = (pending + (arity - 1)) / arity;
+// Every level above the `pending` digests at the start of d_tree.
+template<uint32_t W>
+void PoseidonGoldilocksGPU<W>::reduceLevels(uint32_t arity, uint64_t *d_tree, uint64_t pending, cudaStream_t stream)
+{
     uint64_t nextIndex = 0;
-
     while (pending > 1)
     {
         uint64_t extraZeros = (arity - (pending % arity)) % arity;
         if (extraZeros > 0)
-            CHECKCUDAERR(cudaMemsetAsync(
-                (uint64_t *)(d_tree + nextIndex + pending * CAPACITY),
-                0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
-
-        if (nextN <= POS1_MERKLE_WARP_MAX_NODES)
-        {
-            u32 tpb_w = 256;
-            u32 blks_w = (u32)((nextN * 32 + tpb_w - 1) / tpb_w);
-            merkleNodeWarpKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-                <<<blks_w, tpb_w, 0, stream>>>(nextN, nextIndex,
-                                               pending + extraZeros, arity, d_tree);
-        }
-        else
-        {
-            tpb = pos1Tpb<SPONGE_WIDTH>();
-            blks = (u32)((nextN + tpb - 1) / tpb);
-            smem_bytes = (size_t)tpb * SPONGE_WIDTH * sizeof(uint64_t);
-
-            merkleNodeKernel_pos1<RATE, CAPACITY, SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-                <<<blks, tpb, smem_bytes, stream>>>(nextN, nextIndex,
-                                                    pending + extraZeros, arity, d_tree);
-        }
-
+            CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY),
+                                         0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
+        reduceOneLevel(arity, d_tree + nextIndex, pending + extraZeros, stream);
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;
-        nextN = (pending + (arity - 1)) / arity;
     }
-    CHECKCUDAERR(cudaGetLastError());
 }
 
 // ---------------------------------------------------------------------------
