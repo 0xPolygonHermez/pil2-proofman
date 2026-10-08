@@ -5,6 +5,7 @@
 #include "multiplicity_decoders.hpp"
 #include "multiplicity.cuh"
 #include "multiplicity_kernel.cuh"
+#include "multiplicity_stream.cuh"
 #include "multiplicity_cpu.hpp"
 #include "zklog.hpp"
 #include "goldilocks_tooling.cuh"
@@ -14,6 +15,35 @@
 using namespace std;
 
 void stream_commit_warmup_gpu(void *d_buffers_);   // starks_api.cu
+
+void mul_release_device(int gpuId) {
+    CHECKCUDAERR(cudaSetDevice(gpuId));
+    mulPlanDeviceRelease(gpuId);
+    mulPackedProgramRelease(gpuId);
+    slotHintRelease(gpuId);
+    for (auto it = mulAccs().begin(); it != mulAccs().end();) {
+        if (it->first.second != gpuId) { ++it; continue; }
+        lateRelease(gpuId, it->second->d_acc);
+        delete it->second;
+        it = mulAccs().erase(it);
+    }
+    for (auto it = mulMapDev().begin(); it != mulMapDev().end();) {
+        if (it->first.second != gpuId) { ++it; continue; }
+        lateRelease(gpuId, it->second.first);
+        it = mulMapDev().erase(it);
+    }
+    auto oob = mulOobMap().find(gpuId);
+    if (oob != mulOobMap().end()) { lateRelease(gpuId, oob->second); mulOobMap().erase(oob); }
+    auto peer = mulPeers().find(gpuId);
+    if (peer != mulPeers().end()) {
+        for (int k = 0; k < 2; k++) {
+            lateRelease(gpuId, peer->second.stage[k]);
+            if (peer->second.stream[k] != nullptr) CHECKCUDAERR(cudaStreamDestroy(peer->second.stream[k]));
+            if (peer->second.done[k] != nullptr) CHECKCUDAERR(cudaEventDestroy(peer->second.done[k]));
+        }
+        mulPeers().erase(peer);
+    }
+}
 
 extern "C" {
 
@@ -98,6 +128,14 @@ void mul_alloc(void *d_buffers_) {
     }
     // After the accumulators: the warm-up builds the scatter programs that point into them.
     stream_commit_warmup_gpu(d_buffers_);
+    // Once per process, like the coverage line.
+    static std::once_flag lateLogged;
+    std::call_once(lateLogged, [&] {
+        for (int id : gpuIds)
+            if (lateArenaBound(id))
+                zklog.info("Late region gpu " + to_string(id) + ": " + to_string(lateArenaUsed(id) >> 20) +
+                           " MB used of the planned " + to_string(lateArenaCap(id) >> 20) + " MB");
+    });
 }
 
 void mul_reset() {

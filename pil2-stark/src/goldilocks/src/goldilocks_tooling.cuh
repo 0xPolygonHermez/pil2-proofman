@@ -25,6 +25,7 @@
 #include "fr.hpp"
 #endif
 #include "gl64_t.cuh"
+#include "unified_buffer_layout.hpp"
 
 // Reduce a Goldilocks value from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
 // This is needed when converting Goldilocks values to other field representations (e.g., BN128)
@@ -730,6 +731,11 @@ struct DeviceCommitBuffers
     std::mutex constCacheMutex;
     struct HostConstPols { Goldilocks::Element *ptr = nullptr; uint64_t elems = 0; };
     std::map<int64_t, HostConstPols> hostConstPols;   // air key -> pinned host copy
+    // Pinned copies of the aggregation fixed pols, for the post-borrow re-upload (offsets in elements).
+    struct ResidentConst { uint64_t offset, elems; Goldilocks::Element *host; };
+    std::vector<ResidentConst> residentAgg;
+    uint64_t recurserConstOffset = UINT64_MAX;   // elements
+    uint64_t debugClobberTop = 0;                // test knob (set_debug_clobber_top)
     gl64_t ***d_aux_trace;
     gl64_t ***d_aux_traceAggregation;
     gl64_t **gpuMemoryBuffer;
@@ -738,6 +744,7 @@ struct DeviceCommitBuffers
 
     uint64_t constPolsSize;
     uint64_t unifiedBufferSize = 0;
+    ubl::Layout layout;  // identical on every GPU
     // Borrow flag for the FIRST GPU's unified buffer only (my_gpu_ids[0]).
     // 0 = free (proofman owns it), 1 = borrowed
     std::atomic<uint32_t> firstGpuBufferBorrowed{0};
@@ -791,20 +798,10 @@ struct DeviceCommitBuffers
     bool hasPhaseAAlias() const { return phaseBAliased && phaseAAliasOffset > 0; }
 
     uint64_t prefetchRegionBytes = 0;  // per GPU
-    // Mops-floor pad: raises the region BELOW the const pols to MOPS_FLOOR_BYTES so the
-    // gpu-mops planner's borrow fits. The planner is offered that region MINUS the streaming-
-    // commit slots (its ceiling is the slot floor); it carves 15.03 GiB of fixed regions (zisk
-    // MAX_CHUNKS x MAX_MEMOPS_PER_CHUNK, block-independent) and uses the REST as its ops pool, and whose exhaustion
-    // aborts the process. zisk's own default pool is 2 GiB: 15.03 + 2 + 2 x 2 GiB slots = 21.1
-    // GiB, hence 22 (pool 2.97 GiB). Clamped to what is free on the first GPU minus
-    // POST_ALLOC_HEADROOM_BYTES, the measured headroom the allocations after the unified buffer
-    // need (per-air setup buffers, .exps.so module loads, transcripts). Short of the floor the
-    // planner falls back to CPU mops at setup and says so. PROOFMAN_GPU_HEADROOM_MB overrides the
-    // headroom (see postAllocHeadroomBytes()): raise it on a card or key where the allocations
-    // after the unified buffer run out of memory; every MB comes out of the single basic stream.
+    // Borrowable span from auxBase, slots included: zisk's 15.03 GiB fixed + 2 GiB pool + 2 x 2 GiB slots.
+    // The headroom is kept free after the unified buffer (PROOFMAN_GPU_HEADROOM_MB overrides it).
     static constexpr uint64_t MOPS_FLOOR_BYTES = 22ull << 30;
-    static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 2560ull << 20;
-    uint64_t mopsFloorPadBytes = 0;
+    static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 512ull << 20;
 
     // Witness prefetch zone, one per GPU (the unified buffer's prefetch region): a witness is
     // uploaded on the zone's copy stream ahead of its commit or proof, which consumes it with one
@@ -834,18 +831,11 @@ struct DeviceCommitBuffers
     static constexpr uint64_t HOST_UPLOAD_CHUNK_BYTES = 32ull << 20;
 
 
-    // Streaming-commit slots (0 until configured): streamCommitSlots per GPU,
-    // carved from the top of each unified buffer, immediately below the prefetch region. A slot
-    // index is global, gpuLocal * streamCommitSlots + j; slot j of a GPU starts at byte offset
-    // streamCommitFloorBytes + j * streamCommitSlotBytes of that GPU's buffer (the layout is the
-    // same on every GPU). On the first GPU the floor is also the ceiling gpu-mops usage must stay
-    // under (UINT64_MAX when disabled, so comparisons degrade to the const-pols one).
+    // Streaming-commit slots (0 until configured): streamCommitSlots per GPU at ubl::slotOffset. A
+    // slot index is global, gpuLocal * streamCommitSlots + j.
     uint64_t streamCommitSlots = 0;
-    uint64_t streamCommitSlotBytes = 0;
-    uint64_t streamCommitFloorBytes = UINT64_MAX;
-    // Stashed at allocation for configure_stream_commit_slots' overlap computation. Non-recursive
-    // streams differ in size, so only their total is meaningful; per-stream offsets are prefix sums.
-    uint64_t auxTraceTotalBytes = 0;
+    uint64_t streamCommitSlotBytes = 0;  // set by the allocation, which carves the slots
+    // Stashed at allocation for configure_stream_commit_slots' overlap computation.
     uint64_t auxTraceRecursiveBytes = 0;
     cudaStream_t *streamCommitStreams = nullptr;  // [n_gpus * streamCommitSlots], global slot index
     // Pinned per-slot staging for the multiplicity hook's publics/values.
@@ -860,6 +850,8 @@ struct DeviceCommitBuffers
     struct SlotRegion {
         std::mutex mutex;
         uint32_t inFlight = 0;
+        // Bumped when inFlight returns to 0: legacy streams may overwrite the slots' scratch from then on.
+        uint32_t gen = 0;
         std::condition_variable cv;
     };
     SlotRegion *streamCommitRegions = nullptr;  // [n_gpus], local index

@@ -1496,6 +1496,7 @@ pub fn gen_device_streams_c(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn alloc_device_large_buffers_c(
     d_buffers: *mut ::std::os::raw::c_void,
     aux_trace_recursive_area: u64,
@@ -1505,6 +1506,10 @@ pub fn alloc_device_large_buffers_c(
     prefetch_region_area: u64,
     // Phase-A recursion alias offset (elements) over the basic stream, 0 = none.
     phase_a_alias_offset: u64,
+    late_region_bytes: u64,
+    // Streaming-commit slots, carved at the bottom of the aux area; the size is rounded up to 1 MiB.
+    n_slots: u64,
+    slot_bytes: u64,
 ) {
     unsafe {
         alloc_device_large_buffers(
@@ -1515,6 +1520,9 @@ pub fn alloc_device_large_buffers_c(
             unified_buffer_pad_area,
             prefetch_region_area,
             phase_a_alias_offset,
+            late_region_bytes,
+            n_slots,
+            slot_bytes,
         );
     }
 }
@@ -1671,9 +1679,36 @@ pub fn get_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::
     unsafe { get_first_gpu_buffer(d_buffers) }
 }
 
-/// Byte offset of the aggregation const-pols region within the first GPU's unified buffer.
-pub fn get_const_pols_aggregation_offset_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
-    unsafe { get_const_pols_aggregation_offset(d_buffers) }
+/// Byte offset of a carve boundary in each GPU's unified buffer: 0 late, 1 prefetch, 2 auxBase,
+/// 3 mopsBase, 4 aggBase, 5 end (0 on the CPU backend).
+pub fn get_layout_offset_c(d_buffers: *mut ::std::os::raw::c_void, which: u32) -> u64 {
+    unsafe { get_layout_offset(d_buffers, which) }
+}
+
+/// Re-upload GPU 0's aggregation fixed pols below `to_agg_byte` (from the aggregation base).
+/// Bit 0 of the result: the recurser slot was hit.
+pub fn reload_aggregation_const_pols_c(d_buffers: *mut ::std::os::raw::c_void, to_agg_byte: u64) -> u64 {
+    unsafe { reload_aggregation_const_pols(d_buffers, to_agg_byte) }
+}
+
+/// Test knob: the next first-GPU buffer release fills `[mopsBase, top_byte)` with 0xFF.
+pub fn set_debug_clobber_top_c(d_buffers: *mut ::std::os::raw::c_void, top_byte: u64) {
+    unsafe { set_debug_clobber_top(d_buffers, top_byte) }
+}
+
+/// Test knob: fill GPU 0's whole unified buffer with 0xFF, as a snark carve would leave it.
+pub fn debug_clobber_unified_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { debug_clobber_unified(d_buffers) }
+}
+
+/// Bump GPU 0's late-region generation, so its maps and scratch are re-filled on next use.
+pub fn late_region_invalidate_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { late_region_invalidate(d_buffers) }
+}
+
+/// Drop every stream's const-reuse identity, so its next proof reloads the constants cached in aux.
+pub fn invalidate_stream_contexts_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { invalidate_stream_contexts(d_buffers) }
 }
 
 pub fn stream_commit_pause_c() {
@@ -1689,23 +1724,53 @@ pub fn get_stream_commit_gpus_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
     unsafe { get_stream_commit_gpus(d_buffers) }
 }
 
-pub fn get_stream_commit_floor_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
-    unsafe { get_stream_commit_floor(d_buffers) }
+/// One air's slot layout, in bytes: its commit area (with the col-major tail), its side, const and
+/// custom scratch, and where the last ends. None when no slot can commit the air.
+/// `input_bytes`: a GPU-witness air's staged-input bound (0 otherwise), which rides in the slot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SlotAirLayout {
+    pub commit: u64,
+    pub side: u64,
+    pub cons: u64,
+    pub custom: u64,
+    pub end: u64,
 }
 
-/// `input_bytes`: a GPU-witness air's staged-input bound (0 otherwise), which rides in the slot.
-pub fn stream_commit_slot_bytes_c(
+#[allow(clippy::too_many_arguments)]
+pub fn stream_commit_slot_layout_c(
+    p_setup: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
     n_bits: u64,
     n_bits_ext: u64,
     n_cols: u64,
     words_per_row: u64,
     input_bytes: u64,
-) -> u64 {
-    unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row, input_bytes) }
+    packed: bool,
+    indexed: bool,
+) -> Option<SlotAirLayout> {
+    let mut o = [0u64; 5];
+    let end = unsafe {
+        stream_commit_slot_layout(
+            p_setup,
+            airgroup_id,
+            air_id,
+            n_bits,
+            n_bits_ext,
+            n_cols,
+            words_per_row,
+            input_bytes,
+            packed as u64,
+            indexed as u64,
+            o.as_mut_ptr(),
+        )
+    };
+    (end != 0).then_some(SlotAirLayout { commit: o[0], side: o[1], cons: o[2], custom: o[3], end: o[4] })
 }
 
-pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64) {
-    unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes) }
+/// Enable the slots `alloc_device_large_buffers_c` carved.
+pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { configure_stream_commit_slots(d_buffers) }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1942,10 +2007,11 @@ pub fn gpu_witness_register_c(
     airgroup_id: u64,
     air_id: u64,
     bytes_per_op: u64,
+    input_bytes_max: u64,
     emits: i32,
     fill: GpuWitnessFillFn,
 ) {
-    unsafe { gpu_witness_register(d_buffers, airgroup_id, air_id, bytes_per_op, emits, fill) }
+    unsafe { gpu_witness_register(d_buffers, airgroup_id, air_id, bytes_per_op, input_bytes_max, emits, fill) }
 }
 
 /// How many airs the C++ side has registered.
@@ -2059,6 +2125,11 @@ pub unsafe fn mul_scatter_c(
 /// Whether the air looks up any table the prover counts.
 pub fn mul_air_has_jobs_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
     unsafe { mul_air_has_jobs(p_setup, airgroup_id, air_id) != 0 }
+}
+
+/// Late-region bytes per GPU (the multiplicity mirrors; the slot scratch lives in the slots).
+pub fn late_region_bytes_c(with_peers: bool) -> u64 {
+    unsafe { late_region_bytes(with_peers as u64) }
 }
 
 /// Why the air's lookups into prover-owned tables cannot be counted, if they cannot.
