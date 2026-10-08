@@ -121,6 +121,9 @@ pub struct GpuWitnessAir {
     /// Instances may also carry a full host trace (no staged ops), committed and proved the
     /// usual way; the trace pool and the prefetch zone are then sized for this air's trace too.
     pub host_trace: bool,
+    /// The kernel produces the rows on the first GPU only (the planner's), so a kernel commit of
+    /// this air is pinned there whether or not that GPU is dedicated.
+    pub planner_gpu: bool,
 }
 
 impl GpuWitnessAir {
@@ -133,12 +136,27 @@ impl GpuWitnessAir {
         kernel: GpuWitnessFillFn,
     ) -> Self {
         assert!(bytes_per_op > 0, "a staged operation cannot be zero bytes wide");
-        Self { airgroup_id, air_id, input_bytes_per_instance, bytes_per_op, emits, kernel, host_trace: false }
+        Self {
+            airgroup_id,
+            air_id,
+            input_bytes_per_instance,
+            bytes_per_op,
+            emits,
+            kernel,
+            host_trace: false,
+            planner_gpu: false,
+        }
     }
 
     /// Allow instances with a full host trace beside the kernel-filled ones.
     pub fn with_host_trace(mut self) -> Self {
         self.host_trace = true;
+        self
+    }
+
+    /// The kernel runs on the first GPU only: its commits are pinned there.
+    pub fn with_planner_gpu(mut self) -> Self {
+        self.planner_gpu = true;
         self
     }
 }
