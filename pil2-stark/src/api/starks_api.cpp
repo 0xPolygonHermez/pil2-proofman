@@ -735,17 +735,12 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
     // The witness buffer is only num_packed_words wide, so read the unpacked cm1 where it lands.
     StepsParams paramsUnpacked = *params;
-    // mt1 is smaller than the LDE's N_Extended*nCols scratch, so the scratch runs into cm1(false).
-    // Harmless while the source is the caller's buffer; not once it IS cm1(false).
-    Goldilocks::Element *ldeScratch = &auxTraceGL[offset_mt];
     if (packed_info != nullptr && packed_info->is_packed) {
         unpack_cm1_cpu(d_buffers, airgroupId, airId, packed_info, (uint64_t *)params->trace,
                        (uint64_t *)&auxTraceGL[offset_src], N, nCols);
         paramsUnpacked.trace = &auxTraceGL[offset_src];
-        auto it = setupCtx->starkInfo.mapOffsets.find(std::make_pair(std::string("buff_helper_fft_1"), false));
-        // Starts exactly past the unpacked cm1 and is sized for the LDE; null makes the NTT malloc.
-        ldeScratch = it == setupCtx->starkInfo.mapOffsets.end() ? nullptr : &auxTraceGL[it->second];
     }
+    Goldilocks::Element *ldeScratch = &auxTraceGL[setupCtx->starkInfo.mapOffsets[std::make_pair("buff_helper_fft_1", false)]];
 
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(*setupCtx, &proverHelpers);
@@ -762,7 +757,7 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     }
 
     NTT_Goldilocks ntt(N);
-    ntt.LDE(&auxTraceGL[offset_dst], paramsUnpacked.trace, NExtended, N, nCols, ldeScratch);
+    ntt.LDEBlocked(&auxTraceGL[offset_dst], paramsUnpacked.trace, NExtended, N, nCols, ldeScratch);
     mt.setSource(&auxTraceGL[offset_dst]);
     mt.setNodes(&auxTraceGL[offset_mt]);
     mt.merkelize();

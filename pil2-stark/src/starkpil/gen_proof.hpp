@@ -122,9 +122,16 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     TimerStopAndLog(STARK_STEP_0);
 
+    const bool inplace = setupCtx.starkInfo.inplaceStageCommit;
+    if (selfContained && inplace) {
+        zklog.error("genProof: a self-contained proof needs the cm1 root before stage 2, which the in-place commit defers");
+        exitProcess();
+    }
     TimerStart(STARK_STEP_1);
     calculateWitnessExpr(setupCtx, params, expressionsCtx);
-    starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_1"));
+    if (!inplace) {
+        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_1"));
+    }
     if(selfContained) {
         starks.addTranscript(transcript, &proof.proof.roots[0][0], HASH_SIZE);
     }
@@ -146,6 +153,12 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStart(CALCULATE_IM_POLS);
     starks.calculateImPolsExpressions(2, params, expressionsCtx);
     TimerStopAndLog(CALCULATE_IM_POLS);
+
+    if (inplace) {
+        TimerStart(STARK_COMMIT_STAGE_1);
+        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_1"));
+        TimerStopAndLog(STARK_COMMIT_STAGE_1);
+    }
 
     TimerStart(STARK_COMMIT_STAGE_2);
     starks.commitStage(2, nullptr, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_2"));
