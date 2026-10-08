@@ -16,12 +16,13 @@ serde = { version = "1.0.130", default-features = false, features = ["derive"] }
 num-bigint = { version = "0.4", default-features = false }
 blake3 = { workspace = true, default-features = false }
 
-# Native STARKS C library — host-only (x86_64).
+# Native STARKS C library — host-only (x86_64). Optional, so that a consumer which only verifies
+# does not build it: every call into it is already compiled out under `verify`.
 [target.'cfg(target_arch = "x86_64")'.dependencies]
-proofman-starks-lib-c = { workspace = true }
+proofman-starks-lib-c = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["dep:proofman-starks-lib-c"]
 verify = []
 
 [dev-dependencies]
