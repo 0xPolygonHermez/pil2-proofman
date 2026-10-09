@@ -78,6 +78,30 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     let pilout = pb::PilOut::decode(pilout_data.as_slice())?;
     let pilout_name = pilout.name.clone().unwrap_or_else(|| "pilout".to_string());
 
+    // Only stage-1 proofValues are bound (via the global challenge); reject the rest.
+    if let Some(bad) =
+        pilout.symbols.iter().find(|sym| sym.r#type == pb::SymbolType::ProofValue as i32 && sym.stage.unwrap_or(1) != 1)
+    {
+        anyhow::bail!(
+            "proofValue '{}' is stage {}; only stage-1 proofValues are supported",
+            bad.name,
+            bad.stage.unwrap_or(1)
+        );
+    }
+
+    // The provers absorb airgroupvalues only after root 2, so stages above 2 would be unbound.
+    if let Some(bad) = pilout
+        .symbols
+        .iter()
+        .find(|sym| sym.r#type == pb::SymbolType::AirGroupValue as i32 && sym.stage.unwrap_or(1) > 2)
+    {
+        anyhow::bail!(
+            "airgroupValue '{}' is stage {}; only stage 1 and 2 airgroupValues are supported",
+            bad.name,
+            bad.stage.unwrap_or(1)
+        );
+    }
+
     let settings_map: StarkStructsConfig = if let Some(ref settings_path) = opts.stark_structs_path {
         let data = fs::read_to_string(settings_path)?;
         StarkStructsConfig::from_json_str(&data)?
@@ -492,6 +516,91 @@ mod tests {
         let got = nvcc_present();
         if which::which("nvcc").is_ok() {
             assert!(got);
+        }
+    }
+
+    // Build a minimal pilout (one empty air) carrying one ProofValue symbol at `stage`.
+    fn pilout_with_proof_value(stage: Option<u32>) -> Vec<u8> {
+        let pilout_proto = pb::PilOut {
+            name: Some("pvtest".to_string()),
+            air_groups: vec![pb::AirGroup {
+                name: Some("G".to_string()),
+                airs: vec![pb::Air { name: Some("A".to_string()), num_rows: Some(0), ..Default::default() }],
+                ..Default::default()
+            }],
+            symbols: vec![pb::Symbol {
+                name: "pv".to_string(),
+                r#type: pb::SymbolType::ProofValue as i32,
+                stage,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        pilout_proto.encode(&mut buf).unwrap();
+        buf
+    }
+
+    fn setup_opts_for(pilout_path: &str, build_dir: &str) -> SetupOptions {
+        SetupOptions {
+            airout_path: pilout_path.to_string(),
+            build_dir: build_dir.to_string(),
+            fixed_dir: None,
+            stark_structs_path: None,
+            recursive: false,
+            recursive_jobs: 1,
+            setup_jobs: 1,
+            stats_output_path: None,
+            hash: "Poseidon2".to_string(),
+            agg_arity: 3,
+            recursive_n_bits: None,
+            compressed_final: true,
+            setup_version: None,
+            gen_exps: false,
+            exps_arch: "auto".to_string(),
+            exps_cap: 60000,
+            exps_chunk: None,
+            exps_stark_src: None,
+        }
+    }
+
+    // A stage-2 proof value is absorbed into no transcript and bound by no AIR, so setup
+    // must reject it, naming the symbol and its stage. A stage-1 (or stageless) proof value
+    // is folded into the global challenge and must be accepted.
+    #[test]
+    fn rejects_non_stage_1_proof_values() {
+        for stage in [Some(2u32), Some(0u32)] {
+            let tmp = std::env::temp_dir().join(format!("pil2_pv_reject_{}_{}", stage.unwrap(), std::process::id()));
+            let _ = std::fs::remove_dir_all(&tmp);
+            let build_dir = tmp.join("build");
+            std::fs::create_dir_all(&build_dir).unwrap();
+            let pilout_path = tmp.join("test.pilout");
+            std::fs::write(&pilout_path, pilout_with_proof_value(stage)).unwrap();
+
+            let err = run_setup(&setup_opts_for(pilout_path.to_str().unwrap(), build_dir.to_str().unwrap()))
+                .expect_err("stage != 1 proof value must be rejected");
+            let msg = format!("{err:#}");
+            assert!(msg.contains("pv"), "error must name the symbol: {msg}");
+            assert!(msg.contains("stage"), "error must mention the stage: {msg}");
+            let _ = std::fs::remove_dir_all(&tmp);
+        }
+    }
+
+    #[test]
+    fn accepts_stage_1_and_stageless_proof_values() {
+        for stage in [Some(1u32), None] {
+            let tmp = std::env::temp_dir().join(format!("pil2_pv_ok_{:?}_{}", stage, std::process::id()));
+            let _ = std::fs::remove_dir_all(&tmp);
+            let build_dir = tmp.join("build");
+            std::fs::create_dir_all(&build_dir).unwrap();
+            let pilout_path = tmp.join("test.pilout");
+            std::fs::write(&pilout_path, pilout_with_proof_value(stage)).unwrap();
+
+            // The single air has num_rows 0 and is skipped, so setup reaches completion:
+            // the proof-value guard is the only thing that could reject, and it must not.
+            let result = run_setup(&setup_opts_for(pilout_path.to_str().unwrap(), build_dir.to_str().unwrap()));
+            assert!(result.is_ok(), "stage-1/stageless proof value must be accepted: {:#}", result.unwrap_err());
+            let _ = std::fs::remove_dir_all(&tmp);
         }
     }
 

@@ -22,6 +22,9 @@ pub struct SetupSnarkOptions {
     pub publics_info: Option<String>,
     /// Only generate the recursivef step; skip the final SNARK.
     pub only_recursive_final: bool,
+    /// What the generated verifier contract's `VERSION()` returns; defaults to this
+    /// crate's version. A project versions its own contracts, so it should pass its own.
+    pub contract_version: Option<String>,
 }
 
 /// Run the setup-snark pipeline.
@@ -118,6 +121,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
 
     let witness_tracker = WitnessTracker::with_goldilocks_src(&goldilocks_src_dir);
 
+    let contract_version = opts.contract_version.clone().unwrap_or_else(|| format!("v{}", env!("CARGO_PKG_VERSION")));
     let snark_config = SnarkSetupConfig {
         build_dir,
         name: &name,
@@ -133,6 +137,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
         final_snark_circom_helpers_dir: &final_snark_circom_helpers_dir,
         powers_of_tau: opts.powers_of_tau.as_deref(),
         final_snark: &opts.final_snark,
+        contract_version: &contract_version,
         publics_info,
         only_recursive_final: opts.only_recursive_final,
     };

@@ -23,6 +23,8 @@ airtemplate FibonacciSquare(const int N = 2**8) {
     airval fibo1[2];
     airval stage(2) fibo3;
 
+    airgroupval stage(1) aggregate(sum) default(0) fibo_ag1;
+
     col fixed L1 = [1,0...];
     col witness a,b;
 
@@ -44,6 +46,7 @@ airtemplate FibonacciSquare(const int N = 2**8) {
 
     module * value1 - value2 === 0;
     2*fibo1[0] - fibo1[1] === 0;
+    L1 * (fibo_ag1 - fibo1[0]) === 0;
 
     line - (flags + 1) === 0;
 
