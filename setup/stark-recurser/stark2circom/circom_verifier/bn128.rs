@@ -89,6 +89,10 @@ fn build_tera_context_bn128(
     let n_constants = si["nConstants"].as_u64().unwrap_or(0) as usize;
     let ev_map_len = si["evMap"].as_array().map_or(0, |a| a.len());
     let n_air_group_values = si["airgroupValuesMap"].as_array().map_or(0, |a| a.len());
+    // Only the GL transcript binds airgroupvalues.
+    if n_air_group_values > 0 {
+        bail!("BN128 verifier does not support airgroupvalues (they are not bound to the transcript)");
+    }
     let challenges_map: Vec<Value> = si["challengesMap"].as_array().map_or(vec![], |a| a.clone());
     let cm_pols_map: Vec<Value> = si["cmPolsMap"].as_array().map_or(vec![], |a| a.clone());
     let custom_commits_json: Vec<Value> = si["customCommits"].as_array().map_or(vec![], |a| a.clone());

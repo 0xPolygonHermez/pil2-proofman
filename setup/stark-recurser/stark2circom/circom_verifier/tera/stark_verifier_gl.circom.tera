@@ -44,6 +44,7 @@ template {{ transcript_name }}() {
 {% endif %}
 
 {% if n_air_values > 0 %}    signal input airValues[{{ n_air_values }}][3];
+{% endif %}{% if n_air_group_values > 0 %}    signal input airgroupvalues[{{ n_air_group_values }}][3];
 {% endif %}
 {% for stage in stages_info %}{% if stage.stage > 1 and stage.stage <= n_stages %}    signal input root{{ stage.stage }}[4];
 {% endif %}{% endfor %}    signal input root{{ q_stage }}[4];
@@ -113,7 +114,7 @@ template {{ verify_fri_name }}(nBitsExt, prevStepBits, currStepBits, nextStepBit
     Verify that all committed polynomials are calculated correctly
 */
 
-{% for chunk in eval_p_chunks %}template VerifyEvaluationsChunks{{ chunk.idx }}() {
+{% for chunk in eval_p_chunks %}template VerifyEvaluationsChunks{{ chunk.idx }}{{ chunk_suffix }}() {
 {% for cp in challenges_per_stage %}    signal input challengesStage{{ cp.stage }}[{{ cp.count }}][3];
 {% endfor %}    signal input challengeQ[3];
     signal input challengeXi[3];
@@ -174,7 +175,7 @@ template parallel {{ verify_evaluations_name }}() {
     // calculate the sum of q_i, i.e, q_0(X) + challenge * q_1(X) + challenge^2 * q_2(X) +  ... + challenge^(l-1) * q_l-1(X) evaluated at z 
 {% for chunk in eval_p_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
 {% else %}    signal tmp_{{ out.id }}[3];
-{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== VerifyEvaluationsChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
+{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== VerifyEvaluationsChunks{{ chunk.idx }}{{ chunk_suffix }}()({{ chunk.call_inputs }});
 {% endfor %}
     signal xAcc[{{ q_deg }}][3]; //Stores, at each step, x^i evaluated at z
     signal qStep[{{ q_deg - 1 }}][3]; // Stores the evaluations of Q_i
@@ -201,7 +202,7 @@ template parallel {{ verify_evaluations_name }}() {
     enable * (tmp_{{ last_dest_id_p }}[2] - qAcc[{{ q_deg - 1 }}][2]) === 0;
 }
 
-{% for chunk in eval_q_chunks %}template CalculateFRIPolChunks{{ chunk.idx }}() {
+{% for chunk in eval_q_chunks %}template CalculateFRIPolChunks{{ chunk.idx }}{{ chunk_suffix }}() {
     signal input challengesFRI[2][3];
     signal input evals[{{ ev_map_len }}][3];
 
@@ -259,7 +260,7 @@ template {{ verify_query_name }}(currStepBits, nextStepBits) {
 {% endfor %}
 {% for chunk in eval_q_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};
 {% else %}    signal tmp_{{ out.id }}[3];
-{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIPolChunks{{ chunk.idx }}()({{ chunk.call_inputs }});
+{% endif %}{% endfor %}    ({{ chunk.call_outputs }}) <== CalculateFRIPolChunks{{ chunk.idx }}{{ chunk_suffix }}()({{ chunk.call_inputs }});
 {% endfor %}
     signal queryVals[3];
     queryVals[0] <== tmp_{{ last_dest_id_q }}[0];
@@ -504,7 +505,9 @@ template {{ verifier_name }}() {
 {% else %}    signal rootC[4] <== [{{ const_root_str }} ]; // Merkle tree root of the evaluations of constant polynomials
 {% endif %}{% endif %}
     signal input evals[{{ ev_map_len }}][3]; // Evaluations of the set polynomials at a challenge value z and gz
-
+{% for id in airgroup_stage1_ids %}    airgroupvalues[{{ id }}][1] === 0;
+    airgroupvalues[{{ id }}][2] === 0;
+{% endfor %}
     // Leaves values of the merkle tree used to check all the queries
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input s0_vals{{ stage.stage }}[{{ n_queries }}][{{ stage.cm_section_len }}];
 {% endif %}{% endfor %}    signal input s0_vals{{ q_stage }}[{{ n_queries }}][{{ q_stage_cm_section_len }}];

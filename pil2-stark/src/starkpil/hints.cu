@@ -301,7 +301,12 @@ uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, Steps
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName2, hintOptions2);
 
     opHintFieldsGPU(d_params, destStruct, 1, false, GPUExpressionsCtx, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream); 
-    opAirgroupValueGPU(h_params.airgroupValues + FIELD_EXTENSION*hintFieldAirgroupVal.id, destStruct.dest_gpu, destStruct.dim, add, stream);
+    // Packed offset (stage-1 values take 1 limb).
+    uint64_t agPos = 0;
+    for(uint64_t i = 0; i < hintFieldAirgroupVal.id; ++i) {
+        agPos += setupCtx.starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+    }
+    opAirgroupValueGPU(h_params.airgroupValues + agPos, destStruct.dest_gpu, destStruct.dim, add, stream);
     return hintFieldAirgroupVal.id;
 }
 

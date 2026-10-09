@@ -665,8 +665,8 @@ mod agg_arity_tests {
         let settings = StarkStructsConfig::default();
         let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", 3, true, None);
         assert!(v.get("setupVersion").is_none());
-        let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", 3, true, Some("1.3.1"));
-        assert_eq!(v["setupVersion"], serde_json::json!("1.3.1"));
+        let v = super::build_global_info_json(&pilout, "t", &settings, "Poseidon2", 3, true, Some("1.3.2"));
+        assert_eq!(v["setupVersion"], serde_json::json!("1.3.2"));
     }
 }
 

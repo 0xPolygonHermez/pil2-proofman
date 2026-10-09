@@ -3,6 +3,7 @@ pragma custom_templates;
 
 include "mux1.circom";
 include "bitify.circom";
+include "cmul.circom";
 
 
 template AggregateAirgroupValues() {
@@ -13,12 +14,26 @@ template AggregateAirgroupValues() {
 
     signal output airgroupValueAB[3];
 
+    // Products are Fp³ products, as the prover aggregates them (global_hints.rs)
     signal values[2][3];
     values[0] <== [airgroupValueA[0] + airgroupValueB[0], airgroupValueA[1] + airgroupValueB[1], airgroupValueA[2] + airgroupValueB[2]];
-    values[1] <== [airgroupValueA[0] * airgroupValueB[0], airgroupValueA[1] * airgroupValueB[1], airgroupValueA[2] * airgroupValueB[2]];
+    values[1] <== CMul()(airgroupValueA, airgroupValueB);
 
     // Either add or multiply the airgroupvalues according to the aggregation type and then return the result
     airgroupValueAB <== MultiMux1(3)(values, aggregationType);
+}
+
+// What a null proof contributes: the identity of the aggregation, 0 for addition and 1 for multiplication
+template NullifyAirgroupValue() {
+    signal input airgroupValue[3];
+    signal input {binary} aggregationType;
+    signal input {binary} isNull;
+
+    signal output out[3];
+
+    out[0] <== airgroupValue[0] + isNull * (aggregationType - airgroupValue[0]);
+    out[1] <== (1 - isNull) * airgroupValue[1];
+    out[2] <== (1 - isNull) * airgroupValue[2];
 }
 
 template AggregateAirgroupValuesNull() {
@@ -28,21 +43,12 @@ template AggregateAirgroupValuesNull() {
     signal input {binary} isNullA; // 1 if is circuit type A is 0 (null), 0 otherwise 
     signal input {binary} isNullB; // 1 if is circuit type B is 0 (null), 0 otherwise 
 
-
     signal output airgroupValueAB[3];
 
-    // If circuit type A is null, then its airgroupvalue is zero;
-    signal valueA[3] <== [ (1 - isNullA)*airgroupValueA[0], (1 - isNullA)*airgroupValueA[1], (1 - isNullA)*airgroupValueA[2] ];
+    signal valueA[3] <== NullifyAirgroupValue()(airgroupValueA, aggregationType, isNullA);
+    signal valueB[3] <== NullifyAirgroupValue()(airgroupValueB, aggregationType, isNullB);
 
-    // If circuit type B is null, then its airgroupvalue is zero;
-    signal valueB[3] <== [ (1 - isNullB)*airgroupValueB[0], (1 - isNullB)*airgroupValueB[1], (1 - isNullB)*airgroupValueB[2] ];
-
-    signal values[2][3];
-    values[0] <== [valueA[0] + valueB[0], valueA[1] + valueB[1], valueA[2] + valueB[2]];
-    values[1] <== [valueA[0] * valueB[0], valueA[1] * valueB[1], valueA[2] * valueB[2]];
-
-    // Either add or multiply the airgroupvalues according to the aggregation type and then return the result
-    airgroupValueAB <== MultiMux1(3)(values, aggregationType);
+    airgroupValueAB <== AggregateAirgroupValues()(valueA, valueB, aggregationType);
 }
 
 template AggregateValues(n) {

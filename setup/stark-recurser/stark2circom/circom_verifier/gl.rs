@@ -122,6 +122,7 @@ fn build_tera_context(
     let n_proof_values = si["proofValuesMap"].as_array().map_or(0, |a| a.len());
     let challenges_map: Vec<Value> = si["challengesMap"].as_array().map_or(vec![], |a| a.clone());
     let air_values_map: Vec<Value> = si["airValuesMap"].as_array().map_or(vec![], |a| a.clone());
+    let air_group_values_map: Vec<Value> = si["airgroupValuesMap"].as_array().map_or(vec![], |a| a.clone());
     let cm_pols_map: Vec<Value> = si["cmPolsMap"].as_array().map_or(vec![], |a| a.clone());
     let custom_commits_json: Vec<Value> = si["customCommits"].as_array().map_or(vec![], |a| a.clone());
     let custom_commits_map_json: Vec<Value> = si["customCommitsMap"].as_array().map_or(vec![], |a| a.clone());
@@ -538,6 +539,16 @@ fn build_tera_context(
                 t.put(&format!("airValues[{j}]"), 3);
             }
         }
+        // Bind airgroupvalues to Fiat-Shamir.
+        for (j, agv) in air_group_values_map.iter().enumerate() {
+            // Stage 1 is absorbed in round 2; wider stages in their own round.
+            let st = agv["stage"].as_u64().unwrap_or(1);
+            let eff = st.max(2);
+            if eff == stage {
+                let w = if st == 1 { 1 } else { 3 };
+                t.put(&format!("airgroupvalues[{j}]"), w);
+            }
+        }
     }
 
     t.get_field("challengeQ");
@@ -648,6 +659,9 @@ fn build_tera_context(
     if n_air_values > 0 {
         transcript_call_inputs.push("airvalues".into());
     }
+    if n_air_group_values > 0 {
+        transcript_call_inputs.push("airgroupvalues".into());
+    }
     for stage in 2..=n_stages {
         transcript_call_inputs.push(format!("root{stage}"));
     }
@@ -703,6 +717,14 @@ fn build_tera_context(
     ctx.insert("n_constants", &n_constants);
     ctx.insert("ev_map_len", &ev_map_len);
     ctx.insert("n_air_group_values", &n_air_group_values);
+    // Stage-1 values use limb 0 only; limbs 1 and 2 are pinned to zero in the circuit.
+    let airgroup_stage1_ids: Vec<usize> = air_group_values_map
+        .iter()
+        .enumerate()
+        .filter(|(_, agv)| agv["stage"].as_u64().unwrap_or(1) == 1)
+        .map(|(j, _)| j)
+        .collect();
+    ctx.insert("airgroup_stage1_ids", &airgroup_stage1_ids);
     ctx.insert("n_air_values", &n_air_values);
     ctx.insert("n_proof_values", &n_proof_values);
     ctx.insert("final_pol_size", &final_pol_size);
@@ -743,6 +765,9 @@ fn build_tera_context(
     ctx.insert("calculate_fri_queries_name", &mk("calculateFRIQueries"));
     ctx.insert("transcript_name", &mk("Transcript"));
     ctx.insert("verify_fri_name", &mk("VerifyFRI"));
+    // Chunk templates bypass `mk`; suffix them to avoid duplicate symbols across airgroups.
+    let chunk_suffix = if id_suffix.is_empty() { String::new() } else { format!("_{id_suffix}") };
+    ctx.insert("chunk_suffix", &chunk_suffix);
     ctx.insert("verify_evaluations_name", &mk("VerifyEvaluations"));
     ctx.insert("map_values_name", &mk("MapValues"));
     ctx.insert("verify_query_name", &mk("VerifyQuery"));
@@ -840,6 +865,26 @@ mod tests {
             }
             assert!(!line.contains("[4]") && !line.contains("[5]"), "{sig} reads past the digest: {line}");
         }
+    }
+
+    /// Stage 1 airgroupvalue absorbs only limb 0 (and limbs 1, 2 are pinned to zero); stage 2
+    /// absorbs all three limbs.
+    #[test]
+    fn airgroupvalues_absorb_by_stage() {
+        let mut si = minimal_stark_info(2, 10, 8);
+        si["airgroupValuesMap"] = json!([{"name": "a", "stage": 1}, {"name": "b", "stage": 2}]);
+        let vi = minimal_verifier_info();
+        let out = gen_stark_verifier_gl(None, &si, &vi, &Pil2CircomOptions::default()).unwrap();
+        let uses = |sig: &str| out.lines().filter(|l| l.contains(sig) && !l.contains("=== 0")).count();
+        assert!(uses("airgroupvalues[0][0]") > 0, "stage 1 limb 0 not absorbed:\n{out}");
+        assert_eq!(uses("airgroupvalues[0][1]"), 0, "stage 1 limb 1 absorbed");
+        assert_eq!(uses("airgroupvalues[0][2]"), 0, "stage 1 limb 2 absorbed");
+        for limb in 0..3 {
+            assert!(uses(&format!("airgroupvalues[1][{limb}]")) > 0, "stage 2 limb {limb} not absorbed");
+        }
+        assert!(out.contains("airgroupvalues[0][1] === 0;"), "stage 1 limb 1 not pinned");
+        assert!(out.contains("airgroupvalues[0][2] === 0;"), "stage 1 limb 2 not pinned");
+        assert!(!out.contains("airgroupvalues[1][1] === 0;"), "stage 2 limbs must not be pinned");
     }
 
     #[test]

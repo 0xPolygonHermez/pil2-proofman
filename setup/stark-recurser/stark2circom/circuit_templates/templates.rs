@@ -115,7 +115,8 @@ pub fn gen_recursion_final(
 // ── Solidity contracts ────────────────────────────────────────────────────────
 
 /// Port of `src/recursion/contracts/verifier.sol.ejs`.
-pub fn gen_solidity(name: &str, root_c: &[u64; 4], publics: Option<&Value>, use_fflonk: bool) -> String {
+/// `version` is what the contract's `VERSION()` returns.
+pub fn gen_solidity(name: &str, version: &str, root_c: &[u64; 4], publics: Option<&Value>, use_fflonk: bool) -> String {
     let camel = capitalise(name);
     let snark = if use_fflonk { "Fflonk" } else { "Plonk" };
 
@@ -137,6 +138,7 @@ pub fn gen_solidity(name: &str, root_c: &[u64; 4], publics: Option<&Value>, use_
     let mut ctx = TeraCtx::new();
     ctx.insert("name", &camel);
     ctx.insert("snark", snark);
+    ctx.insert("version", version);
     ctx.insert("root_c_0", &root_c[0]);
     ctx.insert("root_c_1", &root_c[1]);
     ctx.insert("root_c_2", &root_c[2]);
@@ -149,7 +151,7 @@ pub fn gen_solidity(name: &str, root_c: &[u64; 4], publics: Option<&Value>, use_
 }
 
 /// Port of `src/recursion/contracts/iverifier.sol.ejs`.
-pub fn gen_iverifier(name: &str, publics: Option<&Value>) -> String {
+pub fn gen_iverifier(name: &str, publics: Option<&Value>, use_fflonk: bool) -> String {
     let camel = capitalise(name);
 
     let has_program_vk = publics
@@ -163,6 +165,7 @@ pub fn gen_iverifier(name: &str, publics: Option<&Value>) -> String {
 
     let mut ctx = TeraCtx::new();
     ctx.insert("name", &camel);
+    ctx.insert("snark_label", if use_fflonk { "FFLONK" } else { "PLONK" });
     ctx.insert("has_program_vk", &has_program_vk);
 
     render(IVERIFIER_SOL_TMPL, &ctx).unwrap_or_else(|e| panic!("iverifier.sol template error: {e:#}"))
@@ -512,15 +515,56 @@ pub fn gen_vadcop_final(
         assign_sections.push(section);
     }
 
-    // airgroupvalues wiring names for verifyGlobalConstraints
-    let airgroupvalues_names: Vec<String> = agg_types
+    // A null proof leaves its airgroup's values unconstrained, so the global checks must
+    // see what an airgroup with no instances contributes, never the prover's values.
+    // A single airgroup can never be null (the proof count below), so it needs no mask.
+    let mask_null = multi_air && agg_types.len() > 1;
+    let curve = vadcop_info["curve"].as_str().unwrap_or("None");
+    let lattice_size = vadcop_info["latticeSize"].as_u64().unwrap_or(0) as usize;
+    let src = |i: usize, what: &str| if mask_null { format!("s{i}_masked_{what}") } else { format!("s{i}_sv_{what}") };
+    let mut null_sections: Vec<String> = Vec::new();
+    if mask_null {
+        for (i, ag) in agg_types.iter().enumerate() {
+            let mut section = String::new();
+            if curve == "None" {
+                section.push_str(&format!(
+                    "    signal s{i}_masked_stage1Hash[{lattice_size}];\n    for (var k = 0; k < {lattice_size}; k++) {{\n        s{i}_masked_stage1Hash[k] <== (1 - s{i}_sv_isNull) * s{i}_sv_stage1Hash[k];\n    }}\n"
+                ));
+            } else {
+                section.push_str(&format!(
+                    "    signal s{i}_masked_stage1Hash[2][5];\n    for (var k = 0; k < 2; k++) {{\n        for (var l = 0; l < 5; l++) {{\n            s{i}_masked_stage1Hash[k][l] <== (1 - s{i}_sv_isNull) * s{i}_sv_stage1Hash[k][l];\n        }}\n    }}\n"
+                ));
+            }
+            let types = ag.as_array().cloned().unwrap_or_default();
+            if !types.is_empty() {
+                section.push_str(&format!("    signal s{i}_masked_airgroupvalues[{}][3];\n", types.len()));
+                for (j, t) in types.iter().enumerate() {
+                    // The identity of the aggregation: 0 for a sum, 1 for a product.
+                    let v = format!("s{i}_sv_airgroupvalues[{j}]");
+                    let first = if t["aggType"].as_u64() == Some(1) {
+                        format!("{v}[0] + s{i}_sv_isNull * (1 - {v}[0])")
+                    } else {
+                        format!("(1 - s{i}_sv_isNull) * {v}[0]")
+                    };
+                    section.push_str(&format!(
+                        "    s{i}_masked_airgroupvalues[{j}] <== [{first}, (1 - s{i}_sv_isNull) * {v}[1], (1 - s{i}_sv_isNull) * {v}[2]];\n"
+                    ));
+                }
+            }
+            null_sections.push(section);
+        }
+    }
+
+    // (verifyGlobalConstraints input, source) for each airgroup that has airgroupvalues
+    let airgroupvalues_wires: Vec<serde_json::Value> = agg_types
         .iter()
         .enumerate()
         .filter(|(_, ag)| ag.as_array().map(|a| a.len()).unwrap_or(0) > 0)
-        .map(|(i, _)| format!("s{i}_sv_airgroupvalues"))
+        .map(|(i, _)| serde_json::json!({ "dst": format!("s{i}_airgroupvalues"), "src": src(i, "airgroupvalues") }))
         .collect();
 
     let stage1hash_indices: Vec<usize> = (0..agg_types.len()).collect();
+    let stage1hash_srcs: Vec<String> = stage1hash_indices.iter().map(|&i| src(i, "stage1Hash")).collect();
 
     let mut ctx = TeraCtx::new();
     ctx.insert("verifier_filenames", verifier_filenames);
@@ -533,8 +577,53 @@ pub fn gen_vadcop_final(
     ctx.insert("define_sections", &define_sections);
     ctx.insert("assign_sections", &assign_sections);
     ctx.insert("stage1hash_indices", &stage1hash_indices);
-    ctx.insert("airgroupvalues_names", &airgroupvalues_names);
+    ctx.insert("stage1hash_srcs", &stage1hash_srcs);
+    ctx.insert("airgroupvalues_wires", &airgroupvalues_wires);
+    ctx.insert("multi_air", &multi_air);
+    ctx.insert("null_sections", &null_sections);
     ctx.insert("n_airgroups", &agg_types.len());
 
     render(VADCOP_FINAL_TMPL, &ctx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn zisk_publics() -> Value {
+        serde_json::json!({
+            "nPublics": 68,
+            "definitions": [
+                {"name": "rom_root", "initialPos": 0, "nValues": 4, "chunks": [1, 64], "verificationKey": true},
+                {"name": "inputs", "initialPos": 4, "nValues": 64, "chunks": [1, 64]}
+            ],
+            "hasProgramVK": true
+        })
+    }
+
+    #[test]
+    fn the_verifier_returns_the_given_version() {
+        let sol = gen_solidity("zisk", "v9.9.9-test", &[1, 2, 3, 4], Some(&zisk_publics()), false);
+        assert!(sol.contains(r#"return "v9.9.9-test";"#), "{sol}");
+        assert!(sol.contains("contract ZiskVerifier is PlonkVerifier, IZiskVerifier"));
+        assert!(sol.contains("must be a constant of the calling contract"));
+    }
+
+    /// The interface carries the key-binding rules a caller needs to verify safely.
+    #[test]
+    fn the_interface_documents_how_to_pin_the_keys() {
+        let isol = gen_iverifier("zisk", Some(&zisk_publics()), false);
+        assert!(isol.contains("Both keys MUST be constants of the calling contract"), "{isol}");
+        assert!(isol.contains("@param programVK"));
+        assert!(isol.contains("@param rootCVadcopFinal"));
+        assert!(isol.contains("the inherited raw PLONK verifier"));
+
+        let fflonk = gen_iverifier("zisk", Some(&zisk_publics()), true);
+        assert!(fflonk.contains("the inherited raw FFLONK verifier"));
+
+        // Without a program key there is one key to pin, and no programVK parameter.
+        let no_vk = gen_iverifier("zisk", None, false);
+        assert!(no_vk.contains("The root MUST be a constant of the calling contract"), "{no_vk}");
+        assert!(!no_vk.contains("programVK"));
+    }
 }
