@@ -48,7 +48,7 @@ airtemplate Aggregator (const int N, const int nPublics, const int nPublicsStart
     const int air.CLOCKS = 56;
 
     // Structural: lane l's input row is clock l, and only clocks 0..7 carry round 0's identity
-    // schedule. Not an opening-depth bound -- the deepest boundary prime is 15 at every LANES.
+    // schedule. Not an opening-depth bound -- the deepest boundary prime is 36 at every LANES.
     if (LANES < 1 || LANES > 8) {
         error(`LANES must be in 1..8 (lane l's input row is clock l, and only clocks 0..7 carry ` +
               `round 0's identity message schedule), got ${LANES}`);
@@ -101,7 +101,7 @@ airtemplate Aggregator (const int N, const int nPublics, const int nPublicsStart
     #pragma fixed_external
     col fixed FLAGS;
 
-    // Sixteen output-host clocks, 40..55: the feedforward needs all sixteen, and the output row
+    // Sixteen output-row clocks, 40..55, for NODE_OUT_CLK: the output row
     // (clock 56-LANES+lane) is always inside them at LANES <= 8.
     const int OUT_FIRST = air.CLOCKS - 16;
 

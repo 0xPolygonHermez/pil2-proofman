@@ -353,10 +353,10 @@ B3_HD inline void expand_boundary_columns(T *trace, uint64_t nCols, uint64_t bas
         }
     }
 
-    // cv[0..4]'s bytes at clocks 0..3, aliased onto the feedforward group -- live at clocks 40..55,
+    // cv[0..4]'s bytes at clocks 0..7, aliased onto the feedforward group -- live at clocks 24..55,
     // so the two never collide. Written for EVERY kind, Node included: the feedforward below reads
     // `in.cv` for out[8..16] whatever the kind, and blake3FeedforwardAll looks those bytes up out of
-    // these cells. A Node's clocks 0..3 of this group are free, which is what makes the write safe.
+    // these cells. A Node's clocks 0..7 of this group are free, which is what makes the write safe.
     for (int c = 0; c < 4; c++) {
         for (int b = 0; b < 4; b++) {
             put(base + cv_clock(c, b), L.outBytes + lane * 2 + b % 2, (in.cv[c] >> (8 * b)) & 0xFF);

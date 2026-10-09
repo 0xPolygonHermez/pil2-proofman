@@ -648,7 +648,7 @@ function blake3NodeBoundary(const int LANES, const int lane,
             v[8..12] = vc''@54,55,52,53        v[12..16] = vd''@53,54,55,52
 
         Those words are NOT computed here: blake3FeedforwardAll computes all sixteen for every kind
-        over clocks 40..55, and the four maps above are the first four rows of its srcClk table.
+        over clocks 24..55, and the four maps above are the first four rows of its srcClk table.
         Only the binding below is Node-specific.
     */
     // The output cell is a definition, not a claim -- once the permutation has run the right-hand
