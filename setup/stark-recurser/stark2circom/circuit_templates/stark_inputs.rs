@@ -44,6 +44,10 @@ pub struct StarkInputOptions {
     pub is_final: bool,
     /// Emit `parallel` keyword on the `StarkVerifier` component (for recursive2).
     pub parallel: bool,
+    /// With `add_publics`, wire the verifier to the template's own `publics` rather than to
+    /// `{prefix_}publics`: every proof a recursive1 folds is of the same air and run, while a
+    /// template verifying unrelated proofs (the ZisK recurser) gives each one its own.
+    pub shared_publics: bool,
 }
 
 /// Generate the signal declarations for a StarkVerifier proof input block.
@@ -283,11 +287,11 @@ pub fn assign_stark_inputs(
     };
     out.push_str(&format!("    component {component_name} = {comp_type};\n"));
 
-    // Publics are the template's, shared by every verifier in it, so unprefixed.
     if opts.add_publics && n_publics > 0 {
+        let source = if opts.shared_publics { "publics".to_string() } else { format!("{prefix_}publics") };
         out.push_str(&format!(
             "    for (var i=0; i< {n_publics}; i++) {{\n        \
-             {component_name}.publics[i] <== publics[i];\n    }}\n"
+             {component_name}.publics[i] <== {source}[i];\n    }}\n"
         ));
     }
 
@@ -437,8 +441,11 @@ mod tests {
     #[test]
     fn bn128_define_emits_last_levels() {
         let si = bn128_stark_info(2);
-        let out =
-            define_stark_inputs(&si, "", &StarkInputOptions { add_publics: false, is_final: true, parallel: false });
+        let out = define_stark_inputs(
+            &si,
+            "",
+            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
+        );
         assert!(out.contains("signal input s0_siblingsC[4][3][4];"), "out:\n{out}");
         assert!(out.contains("signal input s0_last_levelsC[16];"), "out:\n{out}");
         assert!(out.contains("signal input s0_last_levels1[16];"), "out:\n{out}");
@@ -448,8 +455,11 @@ mod tests {
     #[test]
     fn bn128_define_llv_zero_unchanged() {
         let si = bn128_stark_info(0);
-        let out =
-            define_stark_inputs(&si, "", &StarkInputOptions { add_publics: false, is_final: true, parallel: false });
+        let out = define_stark_inputs(
+            &si,
+            "",
+            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
+        );
         assert!(out.contains("signal input s0_siblingsC[4][5][4];"), "out:\n{out}");
         assert!(!out.contains("last_levels"), "out:\n{out}");
     }
@@ -461,7 +471,7 @@ mod tests {
             "sV",
             "",
             &si,
-            &StarkInputOptions { add_publics: false, is_final: true, parallel: false },
+            &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
             &EnableInput::None,
         );
         assert!(out.contains("sV.s0_last_levelsC <== s0_last_levelsC;"), "out:\n{out}");
@@ -469,5 +479,19 @@ mod tests {
         assert!(out.contains("sV.s1_last_levels <== s1_last_levels;"), "out:\n{out}");
         // GL naming must NOT appear for BN128
         assert!(!out.contains("last_mt_levels"), "out:\n{out}");
+    }
+
+    /// A recursive1 folding k proofs of one air shares the template's publics; the ZisK recurser
+    /// verifies two unrelated proofs and must read each one's own.
+    #[test]
+    fn publics_are_shared_only_when_asked() {
+        let mut si = bn128_stark_info(0);
+        si["nPublics"] = json!(3);
+        let assign = |shared| {
+            let opts = StarkInputOptions { add_publics: true, shared_publics: shared, ..Default::default() };
+            assign_stark_inputs("vA", "a_sv", &si, &opts, &EnableInput::None)
+        };
+        assert!(assign(false).contains("vA.publics[i] <== a_sv_publics[i];"), "{}", assign(false));
+        assert!(assign(true).contains("vA.publics[i] <== publics[i];"), "{}", assign(true));
     }
 }

@@ -108,11 +108,12 @@ pub fn recursive_last_level_verification(family: &str) -> Option<usize> {
 ///
 /// Its own function rather than `recursive_grinding_bits`, because the two differ for poseidon: the
 /// recursion grinds 20 and the final stage 22, and both are pinned by what the committed verifiers
-/// encode. blake3 grinds 24 throughout -- it hashes fast enough to afford it, and every bit comes
-/// straight off the query count, which is what a verifier pays for per tree per query.
+/// encode. blake3 grinds 27 here: at blowup 2^4 a query is worth ~2 bits, and the exact solver gives
+/// 52 queries at 26, 51 at 27 and 28. The compressed final that verifies this proof sits at ~99% of
+/// its hash blocks, so that one query is the difference between 2^18 and 2^19 rows there.
 pub fn final_grinding_bits(family: &str) -> usize {
     match family {
-        "blake3" => 24,
+        "blake3" => 27,
         "Poseidon1" | "Poseidon2" => 22,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -124,7 +125,7 @@ pub fn final_grinding_bits(family: &str) -> usize {
 /// airgroup count must not move it. Poseidon has no committed final verifier, so it sizes itself.
 pub fn final_n_bits(family: &str) -> Option<usize> {
     match family {
-        "blake3" => Some(19),
+        "blake3" => Some(18),
         "Poseidon1" | "Poseidon2" => None,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -139,17 +140,14 @@ pub fn final_n_bits(family: &str) -> Option<usize> {
 /// for a fraction more proof is the right side of that trade for a
 /// family whose final air already sits at 99% of its BLAKE3 block capacity.
 ///
-/// blake3 takes 2, but NOT on the trade the paragraph above describes -- measured, it does not halve
-/// the memory. This air's constraints are naturally degree 8, so it needs no intermediate polynomials
-/// at all; at 2 the cap falls to 5 and the packer adds 125 of them, 387 base-field columns against
-/// 21. The extra columns cancel the halved domain almost exactly: 2^22 x 346 cells against
-/// 2^21 x 712. What 2 does buy is a smaller extended domain to hold at once, and it costs queries --
-/// 70 to 106 -- and the proof with them. Deliberate, not an oversight.
+/// blake3 takes 4 at 2^18 rows: the same extended domain as 2^19 at blowup 2, half the queries,
+/// and degree-8 constraints with no intermediate polynomials. Its proof is what the compressed final
+/// verifies, so fewer queries is what lets that layer fit 2^18 at two lanes.
 ///
 /// Poseidon keeps 4, which its committed verifiers and circom fixtures encode.
 pub fn final_blowup_factor(family: &str) -> usize {
     match family {
-        "blake3" => 2,
+        "blake3" => 4,
         "Poseidon1" | "Poseidon2" => 4,
         fam => panic!("Unknown hash family: {fam}"),
     }
@@ -172,17 +170,69 @@ pub fn max_constraint_degree_for_blowup(blowup: usize) -> usize {
 
 /// Whether the pipeline builds the `vadcop_final_compressed` stage by default.
 ///
-/// The stage exists to shrink the final proof before whatever consumes it. Whether it does depends
-/// on the tree: it trades Merkle path levels -- through a higher `lastLevelVerification` -- for data
-/// sent in the clear, and with a binary tree that trade is close to even -- a couple of percent of
-/// proof size for a whole extra recursion layer, and that layer's prover memory. Poseidon's arity-4
-/// paths are half as long, so the same level costs it
-/// less to keep and the compression is worth having.
+/// The stage exists to shrink the final proof before whatever consumes it: the BN128 wrap for
+/// poseidon, the shipped proof itself for blake3, which has no snark stage.
 ///
 /// Off is not the same as unavailable: `proofman-setup setup-compressed-final` adds the stage to an
 /// existing proving key, so a key built without it can gain it later.
-pub fn compressed_final_by_default(family: &str) -> bool {
-    family != "blake3"
+pub fn compressed_final_by_default(_family: &str) -> bool {
+    true
+}
+
+/// Blowup the `vadcop_final_compressed` air is built at, as log2.
+///
+/// blake3's compressed proof is the one that ships, so it trades prover memory (~2x per step) for
+/// proof size; it is proven once per block, so the memory is not held next to anything else.
+/// Poseidon keeps the final air's blowup, which its BN128 wrap encodes.
+pub fn compressed_final_blowup_factor(family: &str) -> usize {
+    match family {
+        "blake3" => 5,
+        "Poseidon1" | "Poseidon2" => final_blowup_factor(family),
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+
+/// Proof-of-work bits the `vadcop_final_compressed` stage grinds for.
+///
+/// blake3: at blowup 2^5 a query is worth ~2.5 bits, so the count only moves every few bits of
+/// grinding: the exact solver gives 42 queries at 26, 41 at 27 and 28. 27 is the cheapest grind for 41.
+pub fn compressed_final_grinding_bits(family: &str) -> usize {
+    match family {
+        "blake3" => 27,
+        "Poseidon1" | "Poseidon2" => final_grinding_bits(family),
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+
+/// Merkle levels the blake3 `vadcop_final_compressed` proof carries outright, and the FRI degree it stops at.
+///
+/// Nothing verifies this proof in a circuit, so both are pure proof-size knobs: against the family's
+/// 5 and 2^7, 6 and 2^8 are each ~1% smaller and the pair ~2% (modelled on the setup's proof-size formula);
+/// 7 and 2^9 are both larger again.
+pub fn compressed_final_last_level_verification(family: &str) -> Option<usize> {
+    match family {
+        "blake3" => Some(6),
+        "Poseidon1" | "Poseidon2" => Some(6),
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+pub fn compressed_final_fri_terminal_degree(family: &str) -> usize {
+    match family {
+        "blake3" => 8,
+        "Poseidon1" | "Poseidon2" => 10,
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+
+/// blake3 lanes of the `vadcop_final_compressed` air, or `None` for the air's default.
+///
+/// It verifies one proof rather than the final air's two, so half the lanes hold it at 2^18.
+pub fn compressed_final_blake3_lanes(family: &str) -> Option<usize> {
+    match family {
+        "blake3" => Some(2),
+        "Poseidon1" | "Poseidon2" => None,
+        fam => panic!("Unknown hash family: {fam}"),
+    }
 }
 
 /// Proofs one recursive2 circuit aggregates, by family.
@@ -408,7 +458,7 @@ mod tests {
     /// Changing the pin means regenerating every verifier in `verifier/src/<family>/`.
     #[test]
     fn the_final_air_is_pinned_only_where_a_committed_verifier_encodes_it() {
-        assert_eq!(super::final_n_bits("blake3"), Some(19));
+        assert_eq!(super::final_n_bits("blake3"), Some(18));
         for f in ["Poseidon1", "Poseidon2"] {
             assert_eq!(super::final_n_bits(f), None, "{f}");
         }
@@ -418,7 +468,7 @@ mod tests {
     /// blake3 (24), and every family grinds at least as hard as its basic airs.
     #[test]
     fn final_grinding_bits_are_pinned_per_family() {
-        assert_eq!(super::final_grinding_bits("blake3"), 24);
+        assert_eq!(super::final_grinding_bits("blake3"), 27);
         assert_eq!(super::final_grinding_bits("Poseidon1"), 22);
         assert_eq!(super::final_grinding_bits("Poseidon2"), 22);
         for f in super::FAMILIES {
@@ -430,7 +480,7 @@ mod tests {
     /// air's own constraints need -- so the degree cap never becomes the thing that forces it.
     #[test]
     fn final_blowup_is_per_family_and_carries_the_degree() {
-        assert_eq!(super::final_blowup_factor("blake3"), 2);
+        assert_eq!(super::final_blowup_factor("blake3"), 4);
         assert_eq!(super::final_blowup_factor("Poseidon2"), 4);
         for f in super::FAMILIES {
             let b = super::final_blowup_factor(f);
@@ -452,8 +502,8 @@ mod tests {
     /// blake3 skips the compressed final because it measured a 2% saving for a whole extra layer;
     /// poseidon keeps it. Neither is unavailable -- the standalone subcommand adds it either way.
     #[test]
-    fn compressed_final_is_off_only_for_blake3() {
-        assert!(!super::compressed_final_by_default("blake3"));
+    fn compressed_final_is_on_for_every_family() {
+        assert!(super::compressed_final_by_default("blake3"));
         assert!(super::compressed_final_by_default("Poseidon1"));
         assert!(super::compressed_final_by_default("Poseidon2"));
     }
