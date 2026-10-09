@@ -1236,21 +1236,24 @@ template {{ verifier_name }}() {
     signal ansAt{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal uAt{{ r.i }}[{{ r.t }}][{{ r.coset_size }}];
     signal cD{{ r.i }}[{{ r.t }}];
+    // (r_comb·c)^e = r_comb^e · c^e: the extension power is shared by every query of the round.
+    signal rCombE{{ r.i }}[3] <== StirPowE3({{ prev.exp_bits }})(rComb[{{ prev.i }}], expBits{{ prev.i }});
+    signal cE{{ r.i }}[{{ r.t }}];
     signal zPow{{ r.i }}[{{ r.t }}][3];
     signal xD{{ r.i }}[{{ r.t }}][{{ r.coset_size }}];
     signal vD{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal den{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal vP{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
-    signal vPinv{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal num{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal numS{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
-    signal quot{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
+    signal gNum{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     signal fx{{ r.i }}[{{ r.t }}][{{ r.coset_size }}][3];
     for (var q = 0; q < {{ r.t }}; q++) {
         ansAt{{ r.i }}[q] <== StirCosetEval3({{ prev.n_g_max }}, {{ r.log_k }})(ansCoeffs{{ prev.i }}, cPt{{ r.i }}[q]);
         uAt{{ r.i }}[q] <== StirCosetEval1({{ prev.t + 1 }}, {{ r.log_k }})(uCoefs{{ prev.i }}, cPt{{ r.i }}[q]);
         cD{{ r.i }}[q] <== StirPowBase({{ prev.exp_bits }})(cPt{{ r.i }}[q], dBits{{ prev.i }});
-        zPow{{ r.i }}[q] <== StirPowE3({{ prev.exp_bits }})([rComb[{{ prev.i }}][0] * cPt{{ r.i }}[q], rComb[{{ prev.i }}][1] * cPt{{ r.i }}[q], rComb[{{ prev.i }}][2] * cPt{{ r.i }}[q]], expBits{{ prev.i }});
+        cE{{ r.i }}[q] <== StirPowBase({{ prev.exp_bits }})(cPt{{ r.i }}[q], expBits{{ prev.i }});
+        for (var e = 0; e < 3; e++) { zPow{{ r.i }}[q][e] <== rCombE{{ r.i }}[e] * cE{{ r.i }}[q]; }
         for (var j = 0; j < {{ r.coset_size }}; j++) {
             // V_G(x) = (x − r_out) · U(x) · x^{−d}; G ∩ L = ∅ (Remark 5.3) keeps it nonzero. The
             // x^d = c^d·ω^{jd} is applied to the inverse below.
@@ -1265,14 +1268,13 @@ template {{ verifier_name }}() {
                 den{{ r.i }}[q][j][e] <== rComb[{{ prev.i }}][e] * xm{{ r.i }}[q][j] - (e == 0 ? 1 : 0);
                 num{{ r.i }}[q][j][e] <== zPow{{ r.i }}[q][e] * wE{{ r.i }}[j] - (e == 0 ? 1 : 0);
             }
-            // One inversion for V_G(x)·(y − 1): f(x) = (g(x) − Ans(x)) · x^d·num / ((x − r_out)·U(x)·(y − 1)).
+            // One division by V_G(x)·(y − 1): f(x) = (g(x) − Ans(x)) · x^d·num / ((x − r_out)·U(x)·(y − 1)).
             vP{{ r.i }}[q][j] <== CMul()(vD{{ r.i }}[q][j], den{{ r.i }}[q][j]);
-            vPinv{{ r.i }}[q][j] <== CInv()(vP{{ r.i }}[q][j]);
             for (var e = 0; e < 3; e++) {
                 numS{{ r.i }}[q][j][e] <== num{{ r.i }}[q][j][e] * xD{{ r.i }}[q][j];
             }
-            quot{{ r.i }}[q][j] <== CMul()([s{{ r.tree }}_vals_p[q][j][0] - ansAt{{ r.i }}[q][j][0], s{{ r.tree }}_vals_p[q][j][1] - ansAt{{ r.i }}[q][j][1], s{{ r.tree }}_vals_p[q][j][2] - ansAt{{ r.i }}[q][j][2]], vPinv{{ r.i }}[q][j]);
-            fx{{ r.i }}[q][j] <== CMul()(quot{{ r.i }}[q][j], numS{{ r.i }}[q][j]);
+            gNum{{ r.i }}[q][j] <== CMul()([s{{ r.tree }}_vals_p[q][j][0] - ansAt{{ r.i }}[q][j][0], s{{ r.tree }}_vals_p[q][j][1] - ansAt{{ r.i }}[q][j][1], s{{ r.tree }}_vals_p[q][j][2] - ansAt{{ r.i }}[q][j][2]], numS{{ r.i }}[q][j]);
+            fx{{ r.i }}[q][j] <== CDiv()(gNum{{ r.i }}[q][j], vP{{ r.i }}[q][j]);
         }
     }
     // Fold(f_{{ r.i }}, 2^{{ r.log_k }}, r^fold_{{ r.i }}) at this round's points.

@@ -37,3 +37,34 @@ template CInv() {
     signal check[3] <== CMul()(in, out);
     check === [1,0,0];
 }
+
+// a / b in Fp³: the quotient is a hint, checked with a single CMul (b must be nonzero).
+template CDiv() {
+    signal input a[3];
+    signal input b[3];
+    signal output out[3];
+
+    var aa = b[0] * b[0];
+    var ac = b[0] * b[2];
+    var ba = b[1] * b[0];
+    var bb = b[1] * b[1];
+    var bc = b[1] * b[2];
+    var cc = b[2] * b[2];
+
+    var t = -aa*b[0] -aa*b[2]-aa*b[2] +bc*b[0]+bc*b[0]+bc*b[0] + ba*b[1] - ac*b[2] - bb*b[1] + bc*b[2] - cc*b[2];
+    var tinv = 1/t;
+    var inv[3] = [(-aa -ac-ac +bc + bb - cc)*tinv, (ba -cc)*tinv, (-bb +ac + cc)*tinv];
+
+    var A = (a[0] + a[1]) * (inv[0] + inv[1]);
+    var B = (a[0] + a[2]) * (inv[0] + inv[2]);
+    var C = (a[1] + a[2]) * (inv[1] + inv[2]);
+    var D = a[0] * inv[0];
+    var E = a[1] * inv[1];
+    var F = a[2] * inv[2];
+    out[0] <-- C + D - E - F;
+    out[1] <-- A + C - E - E - D;
+    out[2] <-- B - D + E;
+
+    signal check[3] <== CMul()(out, b);
+    check === a;
+}
