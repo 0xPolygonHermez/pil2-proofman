@@ -60,7 +60,8 @@ impl VadcopFinalProof {
             )
         })?;
 
-        bincode::serde::encode_into_std_write(self, &mut file, bincode::config::standard())?;
+        // Fixed-width ints: a Goldilocks element takes 8 bytes, where the default varint spends 9.
+        bincode::serde::encode_into_std_write(self, &mut file, bincode::config::standard().with_fixed_int_encoding())?;
         Ok(())
     }
 
@@ -72,7 +73,8 @@ impl VadcopFinalProof {
                 format!("Failed to open file for loading proof: {}: {}", path.as_ref().display(), e),
             )
         })?;
-        let proof: VadcopFinalProof = bincode::serde::decode_from_std_read(&mut file, bincode::config::standard())?;
+        let proof: VadcopFinalProof =
+            bincode::serde::decode_from_std_read(&mut file, bincode::config::standard().with_fixed_int_encoding())?;
         proof.check_canonical_publics()?;
         Ok(proof)
     }
