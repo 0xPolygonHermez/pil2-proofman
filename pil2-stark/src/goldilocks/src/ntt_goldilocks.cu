@@ -756,18 +756,18 @@ __device__ __forceinline__ gl64_t nttCosetLoadVal_(const gl64_t *src,
 // cmQ column c = (p, k) with p = c / qDim, k = c % qDim. The bit-rev-order input at
 // index idx is coeff[r] of the coset-shifted zero-padded column, r = bitrev(idx):
 //   coeff[r] = (r < N) ? q_k[r + p*N] * shiftIn^p : 0
-// and q's coefficients come from a DIF iNTT, i.e. bit-reversed:
-//   q_k[m] = q_rev[k][bitrev_NExt(m)].
+// and q's coefficients come from a DIF iNTT over its own NQ points, i.e. bit-reversed:
+//   q_k[m] = q_rev[k][bitrev_NQ(m)].
 // Replaces the two bit-reversal passes and the materialized coset-shift pass of the
 // NN-order flow with index math inside the loads -- identical field values.
 __device__ __forceinline__ gl64_t nttQRevLoadVal_(const gl64_t *q_rev_k, uint32_t lg_next,
                                                   uint32_t lg_n, uint32_t pN, gl64_t spow,
-                                                  uint32_t idx)
+                                                  uint32_t idx, uint32_t lg_q)
 {
     uint32_t r = nttBitRev(idx, lg_next);
     if (r >> lg_n)
         return gl64_t(uint64_t(0));
-    return q_rev_k[nttBitRev(r + pN, lg_next)] * spow;
+    return q_rev_k[nttBitRev(r + pN, lg_q)] * spow;
 }
 
 // DIT (decimation-in-time) step: bit-reversed input order, natural output -- the
@@ -777,7 +777,7 @@ __device__ __forceinline__ gl64_t nttQRevLoadVal_(const gl64_t *q_rev_k, uint32_
 // WRITES d_inout -- hazard-free provided d_csrc is disjoint from the written columns.
 // qrev_load (stage-0, non-coalesced): the fused computeQ load above; then d_csrc is the
 // base of q's qDim bit-reversed columns (stride csrc_stride), lg_blowup carries
-// nBits | (qDim << 8), and domain_inv carries shiftIn.
+// nBits | (qDim << 8) | (qStepLg << 12), and domain_inv carries shiftIn.
 template<int z_count, bool coalesced = false, bool coset_load = false, bool qrev_load = false>
 __launch_bounds__(768, 1) __global__
 void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
@@ -793,10 +793,11 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
     gl64_t *d_inout = d_base + (size_t)blockIdx.y * col_stride;
     if constexpr (coset_load)
         d_csrc += (size_t)blockIdx.y * csrc_stride;
-    uint32_t qrev_pN = 0, qrev_lgn = 0;
+    uint32_t qrev_pN = 0, qrev_lgn = 0, qrev_lgq = 0;
     gl64_t qrev_spow = gl64_t(uint64_t(1));
     if constexpr (qrev_load) {
-        const uint32_t qDim = (lg_blowup >> 8) & 0xff;
+        const uint32_t qDim = (lg_blowup >> 8) & 0xf;
+        qrev_lgq = lg_domain_size - ((lg_blowup >> 12) & 0xf);
         qrev_lgn = lg_blowup & 0xff;
         const uint32_t col = (lg_blowup >> 16) + blockIdx.y;
         const uint32_t pq = col / qDim;
@@ -836,9 +837,9 @@ void nttDitColMajorKernel(const uint32_t radix, const uint32_t lg_domain_size,
         for (int z = 0; z < z_count; z++) {
             if constexpr (qrev_load) {
                 r[0][z] = nttQRevLoadVal_(d_csrc, lg_domain_size, qrev_lgn, qrev_pN, qrev_spow,
-                                          idx0 + ((uint32_t)z << z_shift));
+                                          idx0 + ((uint32_t)z << z_shift), qrev_lgq);
                 r[1][z] = nttQRevLoadVal_(d_csrc, lg_domain_size, qrev_lgn, qrev_pN, qrev_spow,
-                                          idx1 + ((uint32_t)z << z_shift));
+                                          idx1 + ((uint32_t)z << z_shift), qrev_lgq);
             } else if constexpr (coset_load) {
                 r[0][z] = nttCosetLoadVal_(d_csrc, d_cosetPows, lg_domain_size, lg_blowup,
                                            idx0 + ((uint32_t)z << z_shift));
@@ -1608,30 +1609,34 @@ void NTTGoldilocksGPU::inttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols,
 // zero-pad into cmQ (disjoint region) -> NTT(NN) each cmQ column.
 void NTTGoldilocksGPU::computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                                         Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
-                                        uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream)
+                                        uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream, uint32_t qStepLg)
 {
     assert(nBitsExt <= NTT_MAX_LG);
     const NttTables &tf = nttEnsureTables(false);
     const NttTables &ti = nttEnsureTables(true);
 
-    gl64_t *d_q = d_aux_trace + offset_q;       // flat, qDim cols, NExt rows
+    gl64_t *d_q = d_aux_trace + offset_q;       // flat, qDim cols, NQ rows
     gl64_t *d_cmQ = d_aux_trace + offset_cmQ;   // flat, nCols cols, NExt rows
     uint32_t N = 1u << nBits;
     uint32_t Next = 1u << nBitsExt;
+    // q was evaluated at every 2^qStepLg-th point of the extended coset only: the same coset
+    // shift on a 2^qStepLg times smaller subgroup, enough while qDeg * N <= NQ.
+    uint32_t lgNQ = (uint32_t)nBitsExt - qStepLg;
+    uint32_t NQ = 1u << lgNQ;
 
-    // The qrev stage-0 load packs nBits | qDim << 8 | firstCol << 16 into one word and
-    // derives its q reads from col / qDim (see nttDitColMajorKernel<..., qrev_load>).
-    assert(nBitsExt >= nBits);
-    assert(qDim > 0 && qDim <= 0xff);
+    // The qrev stage-0 load packs nBits | qDim << 8 | qStepLg << 12 | firstCol << 16 into one
+    // word and derives its q reads from col / qDim (see nttDitColMajorKernel<..., qrev_load>).
+    assert(nBitsExt >= nBits && qStepLg <= 0xf);
+    assert(qDim > 0 && qDim <= 0xf);
     assert(nCols == qDeg * qDim && nCols <= 0xffff);
-    assert(qDeg <= (1ull << (nBitsExt - nBits)));
+    assert(qDeg * N <= NQ);
 
     // q iNTT as DIF (natural -> bit-reversed coefficients, 1/N folded into the last step):
     // the intermediate order is internal, so the NN flow's bit-reversal pass is unnecessary.
-    uint32_t chunk = nttL2ChunkCols((size_t)Next * sizeof(gl64_t), qDim);
+    uint32_t chunk = nttL2ChunkCols((size_t)NQ * sizeof(gl64_t), qDim);
     for (uint32_t c0 = 0; c0 < qDim; c0 += chunk) {
         uint32_t nc = (c0 + chunk <= qDim) ? chunk : (uint32_t)(qDim - c0);
-        NttRun{d_q + (size_t)c0 * Next, Next, nc, (int)nBitsExt, true, ti, stream, false}.run();
+        NttRun{d_q + (size_t)c0 * NQ, NQ, nc, (int)lgNQ, true, ti, stream, false}.run();
     }
 
     // cmQ forward NTT as DIT (bit-reversed in -> natural out) with the coset shift,
@@ -1644,8 +1649,8 @@ void NTTGoldilocksGPU::computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, 
         NttRun fwd{d_cmQ + (size_t)c0 * Next, Next, nc, (int)nBitsExt, false, tf, stream, true};
         fwd.qrev = true;
         fwd.cosetSrc = d_q;
-        fwd.cosetStride = Next;
-        fwd.lgBlowup = (uint32_t)nBits | ((uint32_t)qDim << 8) | (c0 << 16);
+        fwd.cosetStride = NQ;
+        fwd.lgBlowup = (uint32_t)nBits | ((uint32_t)qDim << 8) | (qStepLg << 12) | (c0 << 16);
         fwd.shiftQ = shiftIn.fe;
         fwd.run();
     }
@@ -1692,7 +1697,7 @@ void NTTGoldilocksGPU::computeQTiled(uint64_t offset_cmQ, uint64_t offset_q, uin
 void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                                 Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                                 uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper,
-                                TimerGPU &timer, cudaStream_t stream)
+                                TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg)
 {
     if (nCols == 0 || nBitsExt == 0)
     {
@@ -1710,7 +1715,7 @@ void NTTGoldilocksGPU::computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t
     }
 
     (void)offset_helper;   // only the legacy tiled backend needed helper space (may be usedful in the future)
-    computeQColMajor(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream);
+    computeQColMajor(offset_cmQ, offset_q, qDeg, qDim, shiftIn, nBits, nBitsExt, nCols, d_aux_trace, stream, qStepLg);
 
     TimerStopCategoryGPU(timer, NTT);
 }

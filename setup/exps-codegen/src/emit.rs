@@ -255,9 +255,9 @@ fn store_qq(out_dim: u64) -> &'static str {
     // q (the cmQ output) is ColMajor like everything else (resolveLayout) -- matches how the cmQ
     // commit/Merkle reads it back.
     if out_dim == 3 {
-        "    q[OFF(row,0,NExt,3,Layout::ColMajor)]=qq.a; q[OFF(row,1,NExt,3,Layout::ColMajor)]=qq.b; q[OFF(row,2,NExt,3,Layout::ColMajor)]=qq.c;"
+        "    q[OFF(jq,0,NQ,3,Layout::ColMajor)]=qq.a; q[OFF(jq,1,NQ,3,Layout::ColMajor)]=qq.b; q[OFF(jq,2,NQ,3,Layout::ColMajor)]=qq.c;"
     } else {
-        "    q[OFF(row,0,NExt,3,Layout::ColMajor)]=qq; q[OFF(row,1,NExt,3,Layout::ColMajor)]=gl64_t(uint64_t(0)); q[OFF(row,2,NExt,3,Layout::ColMajor)]=gl64_t(uint64_t(0));"
+        "    q[OFF(jq,0,NQ,3,Layout::ColMajor)]=qq; q[OFF(jq,1,NQ,3,Layout::ColMajor)]=gl64_t(uint64_t(0)); q[OFF(jq,2,NQ,3,Layout::ColMajor)]=gl64_t(uint64_t(0));"
     }
 }
 
@@ -288,7 +288,13 @@ fn c_abi_exports(sym: &str, n_slots: u64, ir: &Ir) -> String {
     format!(
         r#"extern "C" void exps_launch(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
     uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, cudaStream_t stream) {{
-    launch_gen_{sym}(d_params, q, scratch, scratchElems, NExt, off_cm1, off_cm2, off_cm3, off_zi, stream);
+    launch_gen_{sym}(d_params, q, scratch, scratchElems, NExt, off_cm1, off_cm2, off_cm3, off_zi, 0u, stream);
+}}
+// Q at every 2^qs-th row of the extended domain only, written compactly (NExt >> qs rows): enough
+// whenever qDeg * N <= NExt >> qs, and the caller's iNTT must then run over NExt >> qs.
+extern "C" void exps_launch_step(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
+    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs, cudaStream_t stream) {{
+    launch_gen_{sym}(d_params, q, scratch, scratchElems, NExt, off_cm1, off_cm2, off_cm3, off_zi, qs, stream);
 }}
 extern "C" unsigned long long exps_min_scratch() {{ return {n_slots} * {GEN_BLK}ull + {}ull; }}"#,
         pow_region_words(ir, sym)
@@ -539,7 +545,7 @@ fn single_kernel_tu(sym: &str, kernel: &str, launcher_body: &str, ir: &Ir) -> St
 {pow_decl}
 {kernel}
 void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
-    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, cudaStream_t stream) {{
+    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs, cudaStream_t stream) {{
 {guard}
 {prologue}
 {launcher_body}
@@ -561,8 +567,8 @@ fn chunk_tu(sym: &str, lo: usize, hi: usize, kernels: &[String]) -> String {
         parts.push(format!(
             r#"extern "C" void run_{sym}_c{i}(uint64_t grid, uint64_t blk, cudaStream_t stream, StepsParams* d_params,
     gl64_t* q, gl64_t* scratch, const gl64_t* pw, uint64_t NExt, uint64_t base,
-    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi) {{
-  gen_{sym}_c{i}<<<grid,blk,0,stream>>>(d_params,q,scratch,pw,NExt,base,off_cm1,off_cm2,off_cm3,off_zi);
+    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs) {{
+  gen_{sym}_c{i}<<<grid,blk,0,stream>>>(d_params,q,scratch,pw,NExt,base,off_cm1,off_cm2,off_cm3,off_zi,qs);
 }}"#
         ));
     }
@@ -583,13 +589,13 @@ fn launcher_tu(sym: &str, n_chunks: usize, total_slots: u64, ir: &Ir) -> String 
     let decls: Vec<String> = (0..n_chunks)
         .map(|i| {
             format!(
-                "extern \"C\" void run_{sym}_c{i}(uint64_t, uint64_t, cudaStream_t, StepsParams*, gl64_t*, gl64_t*, const gl64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);"
+                "extern \"C\" void run_{sym}_c{i}(uint64_t, uint64_t, cudaStream_t, StepsParams*, gl64_t*, gl64_t*, const gl64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint32_t);"
             )
         })
         .collect();
     let calls: Vec<String> = (0..n_chunks)
         .map(|i| {
-            format!("    run_{sym}_c{i}(grid, BLK, stream, d_params, q, scratch, pw, NExt, base, off_cm1, off_cm2, off_cm3, off_zi);")
+            format!("    run_{sym}_c{i}(grid, BLK, stream, d_params, q, scratch, pw, NExt, base, off_cm1, off_cm2, off_cm3, off_zi, qs);")
         })
         .collect();
     let (pow_decl, prologue) = pow_glue(sym, ir);
@@ -601,7 +607,7 @@ fn launcher_tu(sym: &str, n_chunks: usize, total_slots: u64, ir: &Ir) -> String 
 // adaptive grid: shrink so total_slots*grid*BLK <= scratchElems (per-wave scratch fits the tmp region);
 // each chunk kernel computes WAVE=gridDim*blockDim at runtime, so any grid is correct.
 void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
-    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, cudaStream_t stream) {{
+    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs, cudaStream_t stream) {{
   const uint64_t BLK = {GEN_BLK}ull;
 {guard}
 {prologue}
@@ -609,11 +615,12 @@ void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_
   // (shared scratch). Occupancy saturates well below the scratch limit, so take what the scratch
   // allows but never more blocks than there is work for: extra waves only add serialization.
   uint64_t grid = {total_slots}ull ? (scratchElems / ({total_slots}ull*BLK)) : 512ull;
-  const uint64_t need = (NExt + BLK - 1) / BLK;
+  const uint64_t NQ = NExt >> qs;
+  const uint64_t need = (NQ + BLK - 1) / BLK;
   if (grid > need) grid = need;
   if (grid < 1ull) grid = 1ull;
   const uint64_t WAVE = grid * BLK;
-  for (uint64_t base=0; base<NExt; base+=WAVE) {{
+  for (uint64_t base=0; base<NQ; base+=WAVE) {{
 {}
   }}
 }}
@@ -643,13 +650,14 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
         }
         let kernel = format!(
             r#"__global__ void gen_{sym}_kernel(const StepsParams* __restrict__ P, gl64_t* __restrict__ q, [[maybe_unused]] const gl64_t* __restrict__ pw,
-    uint64_t NExt, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi) {{
-  const uint64_t MASK = NExt-1;
+    uint64_t NExt, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs) {{
+  const uint64_t MASK = NExt-1; const uint64_t NQ = NExt >> qs;
   const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsExtendedTreeAddress;
   const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
   const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
   [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;
-  for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<NExt; row+=gridDim.x*blockDim.x) {{
+  for (uint64_t jq=blockIdx.x*blockDim.x+threadIdx.x; jq<NQ; jq+=gridDim.x*blockDim.x) {{
+  const uint64_t row = jq << qs;
 {}
 {}
   }}
@@ -658,7 +666,7 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
             store_qq(plan.out_dim)
         );
         let launcher_body = format!(
-            "  (void)scratchElems; gen_{sym}_kernel<<<512,256,0,stream>>>(d_params,q,pw,NExt,off_cm1,off_cm2,off_cm3,off_zi);"
+            "  (void)scratchElems; gen_{sym}_kernel<<<512,256,0,stream>>>(d_params,q,pw,NExt,off_cm1,off_cm2,off_cm3,off_zi,qs);"
         );
         return vec![(format!("gen_{sym}.cu"), single_kernel_tu(sym, &kernel, &launcher_body, ir))];
     }
@@ -727,10 +735,11 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
         kernels.push(format!(
             r#"__global__ void gen_{sym}_c{chunk_idx}(const StepsParams* __restrict__ P, gl64_t* __restrict__ q, gl64_t* __restrict__ scratch,
     [[maybe_unused]] const gl64_t* __restrict__ pw,
-    uint64_t NExt, uint64_t tileBase, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi) {{
-  const uint64_t MASK = NExt-1; const uint64_t WAVE = (uint64_t)gridDim.x*blockDim.x;
-  const uint64_t lo_ = blockIdx.x*blockDim.x + threadIdx.x; const uint64_t row = tileBase + lo_;
-  if (row >= NExt) return;
+    uint64_t NExt, uint64_t tileBase, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs) {{
+  const uint64_t MASK = NExt-1; const uint64_t WAVE = (uint64_t)gridDim.x*blockDim.x; const uint64_t NQ = NExt >> qs;
+  const uint64_t lo_ = blockIdx.x*blockDim.x + threadIdx.x; const uint64_t jq = tileBase + lo_;
+  if (jq >= NQ) return;
+  const uint64_t row = jq << qs;
   const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsExtendedTreeAddress;
   const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
   const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
