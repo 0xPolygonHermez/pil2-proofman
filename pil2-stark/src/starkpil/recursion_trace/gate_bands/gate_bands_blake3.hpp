@@ -5,7 +5,7 @@
 //
 // The block is 56 rows (7 rounds x 8 G) hosting LANES permutations in parallel column groups. The
 // setup places only two rows per lane -- inputs at clock `lane`, outputs at clock 56-LANES+lane --
-// and the 59 columns per lane in between are a pure function of them, so they are recomputed here.
+// and the 54 columns per lane in between are a pure function of them, so they are recomputed here.
 //
 // Unlike the poseidon expanders this one also owes MULTIPLICITIES: BLAKE3 is the first recursion
 // family whose air uses lookup tables, and `mul_table` / `mul_range` are witness columns nobody
@@ -38,7 +38,7 @@ constexpr int CLOCKS = 56;
 constexpr int ROUNDS = 7;
 constexpr int G_PER_ROUND = 8;
 constexpr int BAND_COLS = 18;
-constexpr int COLS_PER_LANE = 59;
+constexpr int COLS_PER_LANE = 54;
 
 constexpr uint64_t TABLE_SIZE = 1ull << 17;  // (a:8, b:8, rot:1)
 constexpr uint64_t RANGE_SIZE = 1ull << 16;
@@ -82,7 +82,7 @@ struct Layout {
     uint64_t va, vb, vd, x, y;
     uint64_t va_p, vd_p, vc_p, vb_p_s;
     uint64_t va_pp, vd_pp, vc_pp, vb_pp_xor, vb_pp_t;
-    uint64_t dinv, vbTopHi, outBytes, mul_table, mul_range;
+    uint64_t dinv, outBytes, mul_table, mul_range;
 };
 
 // `band` is the width of the shared a[]/S[] band; it arrives in the aux word beside LANES, so the
@@ -94,7 +94,7 @@ B3_HD inline Layout layout(uint64_t lanes, uint64_t band) {
     // Declaration order in blake3/aggregator.pil, which is what fixes the trace layout. The
     // BOUNDARY columns come first: the air has to declare them before it calls blake3Lanes, because
     // that function binds them and PIL2 needs an argument declared before it is passed.
-    l.dinv = take(1); l.vbTopHi = take(3); l.outBytes = take(4);
+    l.dinv = take(1); l.outBytes = take(2);
     l.va = take(2);   l.vb = take(4);   l.vd = take(4);
     l.x  = take(2);   l.y  = take(2);
     l.va_p = take(4); l.vd_p = take(4); l.vc_p = take(4); l.vb_p_s = take(8);
@@ -103,6 +103,16 @@ B3_HD inline Layout layout(uint64_t lanes, uint64_t band) {
     l.mul_table = o;  l.mul_range = o + 1;
     return l;
 }
+
+// The two-column out_bytes group, clock and column of each role (see blake3OutByte and cv_bytes
+// in the air): feedforward word i's byte b, cv[c]'s byte b, and the top bit j of vb'' (1..3) of clock c.
+B3_HD inline uint64_t out_clock(int i, int b) {
+    const int g = i / 4, k = i % 4;
+    return (uint64_t)(CLOCKS - 32 + 8 * g + 4 * (b / 2) + (k - g + 4) % 4);
+}
+B3_HD inline uint64_t cv_clock(int c, int b) { return (uint64_t)(c + 4 * (b / 2)); }
+B3_HD inline uint64_t top_bit_clock(int c, int j) { return (uint64_t)(c - (j == 3 ? 32 : 36)); }
+B3_HD inline uint64_t top_bit_col(int j) { return j == 2 ? 1 : 0; }
 
 B3_HD inline uint64_t stage1_cols(uint64_t lanes, uint64_t band) { return band + COLS_PER_LANE * lanes + 2; }
 
@@ -349,33 +359,32 @@ B3_HD inline void expand_boundary_columns(T *trace, uint64_t nCols, uint64_t bas
     // these cells. A Node's clocks 0..3 of this group are free, which is what makes the write safe.
     for (int c = 0; c < 4; c++) {
         for (int b = 0; b < 4; b++) {
-            put(base + (uint64_t)c, L.outBytes + lane * 4 + b, (in.cv[c] >> (8 * b)) & 0xFF);
+            put(base + cv_clock(c, b), L.outBytes + lane * 2 + b % 2, (in.cv[c] >> (8 * b)) & 0xFF);
         }
     }
 
-    // The output feedforward, one word per clock over 40..55.
+    // The output feedforward, half a word per clock over 24..55.
     //   out[i]   = st_final[i] ^ st_final[i+8]      i = 0..8
     //   out[8+i] = st_final[8+i] ^ cv[i]            i = 0..8
     for (int i = 0; i < 16; i++) {
         const uint32_t lo = fs[i];
         const uint32_t hi = i < 8 ? fs[i + 8] : in.cv[i - 8];
         const uint32_t out = lo ^ hi;
-        const uint64_t row = base + (uint64_t)(CLOCKS - 16 + i);
         for (int b = 0; b < 4; b++) {
             const uint8_t la = (lo >> (8 * b)) & 0xFF, hb = (hi >> (8 * b)) & 0xFF;
-            put(row, L.outBytes + lane * 4 + b, (out >> (8 * b)) & 0xFF);
+            put(base + out_clock(i, b), L.outBytes + lane * 2 + b % 2, (out >> (8 * b)) & 0xFF);
             mul.table(table_row(la, hb, 0));
         }
     }
 
-    // vb'' top bits, clocks 52..55: bits 7 of z[1..4]. z[0]'s bit is vb_pp_t, which the permutation
-    // already writes on every row.
+    // vb'' top bits of clocks 52..55 (bits 7 of z[1..4]; z[0]'s is vb_pp_t), parked in the
+    // out_bytes group at clocks 16..23, which no other role uses.
     for (int c = CLOCKS - 4; c < CLOCKS; c++) {
         const uint64_t row = base + (uint64_t)c;
         const uint64_t zcol = L.vb_pp_xor + lane * 4;
         for (int j = 1; j < 4; j++) {
             const uint64_t zb = load(trace[row * nCols + zcol + j]);
-            put(row, L.vbTopHi + lane * 3 + (j - 1), (zb >> 7) & 1);
+            put(base + top_bit_clock(c, j), L.outBytes + lane * 2 + top_bit_col(j), (zb >> 7) & 1);
         }
     }
 }

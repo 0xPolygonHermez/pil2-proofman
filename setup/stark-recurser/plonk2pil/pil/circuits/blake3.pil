@@ -62,7 +62,7 @@ function blake3Add3Check(const expr a, const expr b, const expr c, const expr d,
 function blake3Lanes(const int LANES, const expr BLOCK_ID, const expr SEL,
                      const int TABLE_ID, const int RANGE_ID, const int MSG_ID,
                      const int BIND_BOUNDARY, const int VC_AT_IV,
-                     const expr a[], const expr d_inv[], const expr vb_pp_t_hi[][],
+                     const expr a[], const expr d_inv[],
                      const expr out_bytes[][], const expr cv_bytes[][],
                      const expr NODE_SEL, const int OUT_FIRST,
                      const expr CHUNK_SEL,
@@ -325,14 +325,15 @@ function blake3Lanes(const int LANES, const expr BLOCK_ID, const expr SEL,
         // ───────────────────────────────────────────────────────────────────────
         // The packed state words above are locals, so this is the only scope that can tie a
         // caller's trace cells to them. vb'' has no byte columns of its own: callers get
-        // z = vb' ^ vc'' plus the four top bits (vb_pp_t4[0] is this permutation's, the rest the
-        // caller's vb_pp_t_hi) and rebuild the bytes linearly.
+        // z = vb' ^ vc'' plus the four top bits (vb_pp_t4[0] is this permutation's) and rebuild the
+        // bytes linearly. The other three are only read at clocks 52..55, so they ride the out_bytes
+        // group at rows nothing else uses: t1, t2 at clocks 16..19, t3 at 20..23.
         if (BIND_BOUNDARY != 0) {
             const expr vb_pp_t4[4];
             vb_pp_t4[0] = vb_pp_t[l];
-            for (int j = 1; j < 4; j++) {
-                vb_pp_t4[j] = vb_pp_t_hi[l][j - 1];
-            }
+            vb_pp_t4[1] = (36)'out_bytes[l][0];
+            vb_pp_t4[2] = (36)'out_bytes[l][1];
+            vb_pp_t4[3] = (32)'out_bytes[l][0];
 
             // The IV part of the initial state, for the two kinds that share it -- Node and Parent.
             // First, because each per-shape call below assumes it and states only what its own
@@ -371,7 +372,7 @@ function blake3Lanes(const int LANES, const expr BLOCK_ID, const expr SEL,
                 SEL * air.CLK[c] * (pack_bytes(cv_bytes[l]) - va_packed) === 0;
             }
 
-            blake3FeedforwardAll(CLOCKS_ALL, TABLE_ID, OUT_CLK16,
+            blake3FeedforwardAll(CLOCKS_ALL, TABLE_ID, air.CLK,
                                  va_prime_prime[l], vb_pp_xor[l], vb_pp_t4,
                                  vc_prime_prime[l], vd_prime_prime[l],
                                  cv_bytes[l], vb[l], out_bytes[l]);
@@ -651,40 +652,62 @@ function blake3NodeBoundary(const int LANES, const int lane,
         Only the binding below is Node-specific.
     */
     // The output cell is a definition, not a claim -- once the permutation has run the right-hand
-    // side has no degree of freedom left. Node packs pairs into Goldilocks, reading both halves off
-    // the feedforward group at clocks 40+2j and 40+2j+1; the XOF half at 48..55 is unread.
+    // side has no degree of freedom left. Node packs pairs into Goldilocks, words 2j and 2j+1 of the
+    // feedforward group; the XOF half, out[8..16], is unread.
     const int R = CLOCKS - LANES + lane;
     const expr OUT_ROW = OUT_CLK[R - OUT_FIRST];
     for (int j = 0; j < 4; j++) {
         const expr blo[4];
         const expr bhi[4];
         for (int b = 0; b < 4; b++) {
-            blo[b] = blake3Shift(out_bytes[b], R - (CLOCKS - 16 + 2 * j));
-            bhi[b] = blake3Shift(out_bytes[b], R - (CLOCKS - 16 + 2 * j + 1));
+            blo[b] = blake3OutByte(out_bytes, CLOCKS, R, 2 * j, b);
+            bhi[b] = blake3OutByte(out_bytes, CLOCKS, R, 2 * j + 1, b);
         }
         OUT_ROW * (a[j] - pack_bytes(blo) - P2_32 * pack_bytes(bhi)) === 0;
     }
 }
 
+// The clock hosting half h (bytes 2h, 2h+1) of feedforward word i = 4g + k. Each (g, h) takes a run
+// of four clocks that follows the diagonal mixing's rotation (srcClk[g][k] = 52 + (k - g) mod 4), so
+// every source byte the run reads sits at ONE fixed shift, as it did at one word per clock.
+function blake3OutClock(const int CLOCKS, const int i, const int h): int {
+    const int g = i / 4;
+    const int k = i % 4;
+    return CLOCKS - 32 + 8 * g + 4 * h + (k - g + 4) % 4;
+}
+
+// Byte b of feedforward word i, read from row R: column b%2 of half b/2's clock.
+function blake3OutByte(const expr out_bytes[], const int CLOCKS, const int R, const int i,
+                       const int b): expr {
+    return blake3Shift(out_bytes[b % 2], R - blake3OutClock(CLOCKS, i, b / 2));
+}
+
 /*
-    The output feedforward for every kind, emitted once: all sixteen words in ONE four-column group
-    over clocks 40..55, since 64 byte results over 16 rows is 4 columns against 8 over eight rows.
-    out[0..8] = st[i] ^ st[i+8] and out[8..16] = st[8+i] ^ cv[i]; the four state families and the cv
-    take their turn on the group, one word per clock. Callers bind their output cells against this
-    group and nothing else.
+    The output feedforward for every kind, emitted once: all sixteen words in ONE two-column group
+    over clocks 24..55, two bytes a row -- 64 byte results over 32 rows. out[0..8] = st[i] ^ st[i+8]
+    and out[8..16] = st[8+i] ^ cv[i]; the four state families and the cv take their turn on the
+    group, half a word per clock (blake3OutClock). Callers bind their output cells against this
+    group and nothing else, through blake3OutByte.
 */
-function blake3FeedforwardAll(const int CLOCKS, const int TABLE_ID, const expr CLK16[],
+function blake3FeedforwardAll(const int CLOCKS, const int TABLE_ID, const expr CLK_P[],
                               const expr vaPPBytes[], const expr vbXor[], const expr vb_pp_t4[],
                               const expr vcPPBytes[], const expr vdPPBytes[],
                               const expr cvLo[], const expr vbBytes[], const expr out_bytes[]) {
-    // Sixteen shifts of CLK_0, so at most one fires on a row: the sum is 0/1 by construction, which
-    // is what lets the lookups below declare SEL_IS_BINARY.
+    // Thirty-two shifts of CLK_0, so at most one fires on a row: the sum is 0/1 by construction,
+    // which is what lets the lookups below declare SEL_IS_BINARY.
+    const int FF_FIRST = CLOCKS - 32;
     expr ANY = 0;
-    for (int i = 0; i < 16; i++) {
-        ANY += CLK16[i];
+    for (int r = FF_FIRST; r < CLOCKS; r++) {
+        ANY += CLK_P[r];
+    }
+    // Only where vb'' is read, clocks 52..55: the bits live elsewhere in the group, and nothing pins
+    // those cells on the other rows.
+    expr VB_SRC = 0;
+    for (int c = CLOCKS - 4; c < CLOCKS; c++) {
+        VB_SRC += CLK_P[c];
     }
     for (int j = 1; j < 4; j++) {
-        ANY * (vb_pp_t4[j] * (1 - vb_pp_t4[j])) === 0;
+        VB_SRC * (vb_pp_t4[j] * (1 - vb_pp_t4[j])) === 0;
     }
     const expr vbPP[4];
     for (int j = 0; j < 4; j++) {
@@ -715,25 +738,23 @@ function blake3FeedforwardAll(const int CLOCKS, const int TABLE_ID, const expr C
     // out[i] = st[i] ^ st[i+8] and out[8+i] = st[8+i] ^ cv[i] are the same rule: XOR a word with the
     // word eight later. A group holds four consecutive words, so the partner is always two groups
     // on -- which is why the six groups are laid out in that order and no index table is needed.
-    const expr lo[4];
-    const expr hi[4];
-    for (int b = 0; b < 4; b++) {
+    // Column c of the row hosting half h of word i holds byte 2h + c.
+    for (int c = 0; c < 2; c++) {
         expr al = 0;
         expr ah = 0;
         for (int i = 0; i < 16; i++) {
-            const int host = CLOCKS - 16 + i;
             const int g = i / 4;   // which group this output word falls in
             const int k = i % 4;   // and which word inside it
-            al += CLK16[i] * blake3Shift(src[g][b],     host - srcClk[g][k]);
-            ah += CLK16[i] * blake3Shift(src[g + 2][b], host - srcClk[g + 2][k]);
+            for (int h = 0; h < 2; h++) {
+                const int host = blake3OutClock(CLOCKS, i, h);
+                const int b = 2 * h + c;
+                al += CLK_P[host] * blake3Shift(src[g][b],     host - srcClk[g][k]);
+                ah += CLK_P[host] * blake3Shift(src[g + 2][b], host - srcClk[g + 2][k]);
+            }
         }
-        lo[b] = al;
-        hi[b] = ah;
-    }
-    // Four lookups for all sixteen words: byte b of whichever word this row hosts. The result bytes
-    // need no range check of their own -- the table bounds each one.
-    for (int b = 0; b < 4; b++) {
-        blake3XorRotr(TABLE_ID, ANY, lo[b], hi[b], 0, out_bytes[b], 0, 1);
+        // One lookup per column for all sixteen words. The result bytes need no range check of
+        // their own -- the table bounds each one.
+        blake3XorRotr(TABLE_ID, ANY, al, ah, 0, out_bytes[c], 0, 1);
     }
 }
 
@@ -848,13 +869,13 @@ function blake3CompressBoundaryShared(const int LANES, const int lane,
     const int R = CLOCKS - LANES + lane;
     const expr OUT_ROW = SEL * CLK_P[R];
 
-    // All sixteen words ride ONE four-column group over clocks 40..55, one per clock and in order:
-    // out[0..8] the chaining value, out[8..16] the XOF half. Compress binds both -- the three
-    // finalizers pack every word -- where Blake3Node reads only clocks 40..47.
+    // All sixteen words ride ONE two-column group, in order: out[0..8] the chaining value,
+    // out[8..16] the XOF half. Compress binds both -- the three finalizers pack every word -- where
+    // Blake3Node reads only out[0..8].
     for (int i = 0; i < 16; i++) {
         const expr b0[4];
         for (int j = 0; j < 4; j++) {
-            b0[j] = blake3Shift(out_bytes[j], R - (CLOCKS - 16 + i));
+            b0[j] = blake3OutByte(out_bytes, CLOCKS, R, i, j);
         }
         OUT_ROW * (a[i] - pack_bytes(b0)) === 0;
     }

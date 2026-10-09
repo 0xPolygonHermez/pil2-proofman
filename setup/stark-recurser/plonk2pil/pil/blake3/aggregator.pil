@@ -187,31 +187,31 @@ airtemplate Aggregator (const int N, const int nPublics, const int nPublicsStart
     // boundary constraint against zero, since an initialised `const expr` array keeps the caller's
     // value. See the comment on blake3Lanes in circuits/blake3.pil.
     //
-    // The canonicity witness, the three extra vb'' top bits and the feedforward result bytes are not
-    // part of the permutation, so they belong here.
+    // The canonicity witness and the feedforward result bytes are not part of the permutation, so
+    // they belong here.
     // d_inv witnesses 1/d for the canonical-split check, d = hi - (2^32 - 1); see
     // blake3SplitCanonicalGadget. Junk at lo = 0, where the constraint is vacuous.
     col witness d_inv[LANES];
-    col witness bits(1) vb_pp_t_hi[LANES][3];
     // Blake3Node binds out[0..8]; Compress binds all sixteen words, because the three finalizers
-    // pack every one of them.
-    col witness bits(8) out_bytes[LANES][4];
+    // pack every one of them. Two bytes a row over clocks 24..55, see blake3OutClock.
+    col witness bits(8) out_bytes[LANES][2];
 
     // cv[0..4]'s bytes, for out[8..16]: that half of the chaining value arrives as va, two 16-bit
-    // limbs, while cv[4..8] arrives as vb which already is bytes. They ALIAS the out_bytes group,
-    // live at clocks 40..55 while cv is written at 0..3 -- disjoint at every LANES, since both
-    // ranges are fixed clocks -- and both roles are bits(8), which is what makes the alias sound.
+    // limbs, while cv[4..8] arrives as vb which already is bytes. They ALIAS the out_bytes group:
+    // cv[c]'s bytes 0,1 at clock c and bytes 2,3 four rows later, so clocks 0..7, while the
+    // feedforward lives at 24..55 and the top bits of vb'' at 16..23 (see blake3Lanes) -- disjoint at
+    // every LANES, since all three are fixed clocks. Read at clock c, each byte is one fixed shift.
     const expr cv_bytes[LANES][4];
     for (int l = 0; l < LANES; l++) {
         for (int i = 0; i < 4; i++) {
-            cv_bytes[l][i] = out_bytes[l][i];
+            cv_bytes[l][i] = blake3Shift(out_bytes[l][i % 2], -4 * (i / 2));
         }
     }
 
     // BIND_BOUNDARY 1, VC_AT_IV 1: every block here is a BLAKE3 compression, so st[8..12] is the
     // IV and blake3Lanes builds vc as an expression rather than a column.
     blake3Lanes(LANES, BLOCK_ID, BLAKE3_ANY, BLAKE3_TABLE_ID, RANGE_CHECKER_ID, BLAKE3_MSG_ID,
-                1, 1, a, d_inv, vb_pp_t_hi, out_bytes, cv_bytes,
+                1, 1, a, d_inv, out_bytes, cv_bytes,
                 BLAKE3_NODE, OUT_FIRST,
                 BLAKE3_CHUNK, BLAKE3_PARENT, FLAGS,
                 OUT_CLK16, air.CLOCKS);
