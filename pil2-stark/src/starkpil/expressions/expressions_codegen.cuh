@@ -17,6 +17,9 @@
 // (extern "C" exps_launch in setup/exps-codegen/src/emit.rs).
 typedef void (*ExpsQLaunchFn)(StepsParams*, gl64_t*, gl64_t*, uint64_t, uint64_t,
                               uint64_t, uint64_t, uint64_t, uint64_t, cudaStream_t);
+// Same, at every 2^qs-th extended row only (exps_launch_step; absent from older .so).
+typedef void (*ExpsQLaunchStepFn)(StepsParams*, gl64_t*, gl64_t*, uint64_t, uint64_t,
+                                  uint64_t, uint64_t, uint64_t, uint64_t, uint32_t, cudaStream_t);
 
 // Generic (non-Q) expression kernels 
 // Store modes — must match exps_expr_store in the emitted gen_common.cuh.
@@ -42,6 +45,7 @@ typedef int (*ExprPairLaunchFn)(unsigned long long, unsigned long long, StepsPar
 struct ExpsKernel {
     void* lib = nullptr;
     ExpsQLaunchFn qLaunch = nullptr;
+    ExpsQLaunchStepFn qLaunchStep = nullptr;
     uint64_t qMinScratch = 0;
     ExprCoveredFn exprCovered = nullptr;
     ExprLaunchFn exprLaunch = nullptr;
@@ -76,6 +80,7 @@ inline ExpsKernel expsOpenForAir(SetupCtx& sc) {
     auto minf = (unsigned long long (*)())dlsym(h, "exps_min_scratch");
     if (!qLaunch || !minf) { fprintf(stderr, "[EXPS] missing symbols in %s\n", path.c_str()); dlclose(h); return r; }
     r.lib = h; r.qLaunch = qLaunch; r.qMinScratch = (uint64_t)minf();
+    r.qLaunchStep = (ExpsQLaunchStepFn)dlsym(h, "exps_launch_step");
     r.exprCovered = (ExprCoveredFn)dlsym(h, "exps_expr_covered");
     r.exprLaunch = (ExprLaunchFn)dlsym(h, "exps_launch_expr");
     r.exprPairLaunch = (ExprPairLaunchFn)dlsym(h, "exps_launch_expr_pair");
@@ -138,9 +143,12 @@ inline bool expsWarmup(SetupCtx& sc, const ExpsKernel& ek) {
 
 // Launch the AIR's pre-resolved Q kernel. Returns false (caller falls back to the interpreter) if
 // the kernel's single-block scratch requirement doesn't fit the tmp...destVals region.
+// `stepFn`/`qStepLg` ask for q at every 2^qStepLg-th extended row only; `*qStepLgUsed` reports
+// what the launch did (0 without exps_launch_step), and the caller's computeQ must use it.
 inline bool tryLaunchExpsQ(SetupCtx& sc, ExpsQLaunchFn fn, uint64_t minScratch,
                           StepsParams* d_params, gl64_t* d_q, cudaStream_t stream,
-                          bool* launchVerified = nullptr) {
+                          bool* launchVerified = nullptr, ExpsQLaunchStepFn stepFn = nullptr,
+                          uint32_t qStepLg = 0, uint32_t* qStepLgUsed = nullptr) {
     uint64_t scratchAvail = expsScratchAvail(sc);
     if (minScratch > scratchAvail) return false;
     uint64_t NExt = 1ull << sc.starkInfo.starkStruct.nBitsExt;
@@ -157,7 +165,10 @@ inline bool tryLaunchExpsQ(SetupCtx& sc, ExpsQLaunchFn fn, uint64_t minScratch,
     if (verify) {
         CHECKCUDAERR(cudaMemsetAsync(os, 0, sizeof(uint64_t), stream));
     }
-    fn(d_params, d_q, os, scratchAvail, NExt, o1, o2, o3, oz, stream);
+    const uint32_t qs = stepFn != nullptr ? qStepLg : 0;
+    if (qs > 0) stepFn(d_params, d_q, os, scratchAvail, NExt, o1, o2, o3, oz, qs, stream);
+    else fn(d_params, d_q, os, scratchAvail, NExt, o1, o2, o3, oz, stream);
+    if (qStepLgUsed != nullptr) *qStepLgUsed = qs;
     cudaError_t launchErr = cudaGetLastError();
     if (launchErr != cudaSuccess) {
         fprintf(stderr, "[exps] Q kernel launch failed (%s); falling back to the interpreter\n",

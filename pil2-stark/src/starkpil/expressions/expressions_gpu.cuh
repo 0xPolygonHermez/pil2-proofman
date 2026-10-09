@@ -52,7 +52,11 @@ public:
 
     void *expsLib = nullptr;
     void *qLaunchFn = nullptr;
+    void *qLaunchStepFn = nullptr;
     uint64_t qMinScratch = 0;
+    // The row step (log2) the last Q evaluation used. Kept here rather than only returned because a
+    // replayed CUDA graph skips the host code that returns it; the choice is fixed per air.
+    uint32_t qStepLgUsed = 0;
     // Set once tryLaunchExpsQ's first-call sentinel has proven this air's Q kernel runs.
     bool qLaunchVerified = false;
     void *exprCoveredFn = nullptr;
@@ -63,6 +67,7 @@ public:
     ~ExpressionsGPU();
 
     void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints = false);
-    void calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream);
+    // Returns the log2 row step q was evaluated at (0 = every extended row); computeQ must match it.
+    uint32_t calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg = 0);
 };
 #endif
