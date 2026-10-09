@@ -675,6 +675,9 @@ void StarkInfo::setMapOffsets() {
     } else {
         uint64_t maxTotalNStageQ = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
         mapOffsets[std::make_pair("extra_helper_fft", false)] = maxTotalNStageQ;
+        // The FRI polynomial's 1/(x - xi) planes: zi and the Q helper are dead by then, and the first fold
+        // (fri_1, placed right after q) overwrites them only once f is complete.
+        mapOffsets[std::make_pair("fri_denominators", true)] = maxTotalNStageQ;
         maxTotalNStageQ += NExtended * FIELD_EXTENSION + qDeg;
         maxTotalN = std::max(maxTotalN, maxTotalNStageQ);
     }
