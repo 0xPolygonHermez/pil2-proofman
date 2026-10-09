@@ -416,7 +416,8 @@ pub fn gen_recursive_setup(
         tracing::info!("Compiling {}...", name_filename);
         let compile_status = std::process::Command::new(config.circom_exec)
             .args([
-                "--O2",
+                // plonk2pil merges the linear constraints itself: --O2 yields the same air, slower.
+                "--O1",
                 "--r1cs",
                 "--prime",
                 "goldilocks",

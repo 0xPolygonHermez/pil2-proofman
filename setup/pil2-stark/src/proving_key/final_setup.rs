@@ -211,7 +211,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
     tracing::info!("Compiling vadcop_final...");
     let compile_output = std::process::Command::new(config.circom_exec)
         .args([
-            "--O2",
+            "--O1",
             "--r1cs",
             "--prime",
             "goldilocks",
