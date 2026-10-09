@@ -223,6 +223,8 @@ impl GlobalInfo {
             ProofType::Compressor => "compressor",
             ProofType::Recursive1 => "recursive1",
             ProofType::Recursive2 => "recursive2",
+            ProofType::VadcopFinal => return self.get_setup_path("vadcop_final"),
+            ProofType::VadcopFinalCompressed => return self.get_setup_path("vadcop_final_compressed"),
             _ => panic!(),
         };
 
