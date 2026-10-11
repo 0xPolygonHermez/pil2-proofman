@@ -1,0 +1,320 @@
+{
+ "name": "RangeCheck1",
+ "cmPolsMap": [
+  {
+   "stage": 1,
+   "name": "a1",
+   "dim": 1,
+   "polsMapId": 0,
+   "stageId": 0,
+   "stagePos": 0
+  },
+  {
+   "stage": 1,
+   "name": "a2",
+   "dim": 1,
+   "polsMapId": 1,
+   "stageId": 1,
+   "stagePos": 1
+  },
+  {
+   "stage": 1,
+   "name": "a3",
+   "dim": 1,
+   "polsMapId": 2,
+   "stageId": 2,
+   "stagePos": 2
+  },
+  {
+   "stage": 1,
+   "name": "a4",
+   "dim": 1,
+   "polsMapId": 3,
+   "stageId": 3,
+   "stagePos": 3
+  },
+  {
+   "stage": 1,
+   "name": "a5",
+   "dim": 1,
+   "polsMapId": 4,
+   "stageId": 4,
+   "stagePos": 4
+  },
+  {
+   "stage": 1,
+   "name": "sel1",
+   "dim": 1,
+   "polsMapId": 5,
+   "stageId": 5,
+   "stagePos": 5
+  },
+  {
+   "stage": 1,
+   "name": "sel2",
+   "dim": 1,
+   "polsMapId": 6,
+   "stageId": 6,
+   "stagePos": 6
+  },
+  {
+   "stage": 1,
+   "name": "sel3",
+   "dim": 1,
+   "polsMapId": 7,
+   "stageId": 7,
+   "stagePos": 7
+  },
+  {
+   "stage": 2,
+   "name": "gsum",
+   "dim": 3,
+   "polsMapId": 8,
+   "stageId": 0,
+   "stagePos": 0
+  },
+  {
+   "stage": 2,
+   "name": "im_cluster",
+   "dim": 3,
+   "polsMapId": 9,
+   "stageId": 1,
+   "stagePos": 3
+  },
+  {
+   "stage": 2,
+   "name": "im_cluster",
+   "dim": 3,
+   "polsMapId": 10,
+   "stageId": 2,
+   "stagePos": 6
+  },
+  {
+   "stage": 3,
+   "name": "Q0",
+   "dim": 3,
+   "polsMapId": 11,
+   "stagePos": 0,
+   "stageId": 0
+  },
+  {
+   "stage": 3,
+   "name": "Q1",
+   "dim": 3,
+   "polsMapId": 12,
+   "stagePos": 3,
+   "stageId": 1
+  }
+ ],
+ "constPolsMap": [
+  {
+   "stage": 0,
+   "name": "__L1__",
+   "dim": 1,
+   "polsMapId": 0,
+   "stageId": 0
+  }
+ ],
+ "challengesMap": [
+  {
+   "name": "std_alpha",
+   "stage": 2,
+   "dim": 3,
+   "stageId": 0
+  },
+  {
+   "name": "std_gamma",
+   "stage": 2,
+   "dim": 3,
+   "stageId": 1
+  },
+  {
+   "name": "std_vc",
+   "stage": 3,
+   "dim": 3,
+   "stageId": 0
+  },
+  {
+   "name": "std_xi",
+   "stage": 4,
+   "dim": 3,
+   "stageId": 0
+  },
+  {
+   "name": "std_vf1",
+   "stage": 5,
+   "dim": 3,
+   "stageId": 0
+  },
+  {
+   "name": "std_vf2",
+   "stage": 5,
+   "dim": 3,
+   "stageId": 1
+  }
+ ],
+ "publicsMap": [],
+ "proofValuesMap": [],
+ "airgroupValuesMap": [
+  {
+   "name": "RangeCheck1.gsum_result",
+   "stage": 2
+  }
+ ],
+ "airValuesMap": [],
+ "mapSectionsN": {
+  "const": 1,
+  "cm1": 8,
+  "cm2": 9,
+  "cm3": 6
+ },
+ "airId": 0,
+ "airgroupId": 2,
+ "nConstants": 1,
+ "nPublics": 0,
+ "airGroupValues": [
+  {
+   "aggType": 0,
+   "stage": 2
+  }
+ ],
+ "nStages": 2,
+ "customCommits": [],
+ "customCommitsMap": [],
+ "starkStruct": {
+  "nBits": 3,
+  "merkleTreeArity": 4,
+  "transcriptArity": 4,
+  "merkleTreeCustom": true,
+  "lastLevelVerification": 2,
+  "powBits": 16,
+  "hashCommits": true,
+  "nBitsExt": 4,
+  "verificationHashType": "GL",
+  "steps": [
+   {
+    "nBits": 4
+   }
+  ],
+  "nQueries": 228
+ },
+ "boundaries": [
+  {
+   "name": "everyRow"
+  }
+ ],
+ "openingPoints": [
+  -1,
+  0,
+  1
+ ],
+ "cExpId": 86,
+ "qDim": 3,
+ "qDeg": 2,
+ "nConstraints": 4,
+ "nCommitmentsStage1": 0,
+ "evMap": [
+  {
+   "type": "cm",
+   "id": 8,
+   "prime": -1,
+   "openingPos": 0
+  },
+  {
+   "type": "const",
+   "id": 0,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 0,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 1,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 2,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 3,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 4,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 5,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 6,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 7,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 8,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 9,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 10,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 11,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "cm",
+   "id": 12,
+   "prime": 0,
+   "openingPos": 1
+  },
+  {
+   "type": "const",
+   "id": 0,
+   "prime": 1,
+   "openingPos": 2
+  }
+ ],
+ "friExpId": 87,
+ "security": {
+  "proximityGap": 0.0033333333333333335,
+  "proximityParameter": 0.2895598854801191,
+  "regime": "JBR"
+ }
+}

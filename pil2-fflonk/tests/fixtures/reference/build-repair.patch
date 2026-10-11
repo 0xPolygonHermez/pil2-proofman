@@ -1,0 +1,58 @@
+diff --git a/Makefile b/Makefile
+index b5aa978..693f358 100644
+--- a/Makefile
++++ b/Makefile
+@@ -3,7 +3,14 @@
+ # Directories
+ BUILD_DIR := build
+ SRC_DIRS  := src
+-DPNDS_DIR := depends/ffiasm/c
++# ffiasm's pinned commit (38003c1a) no longer exists upstream, and its master has
++# since changed BinFile's API, dropped binfile_writer.hpp and thread_utils.hpp,
++# and gained an fft.hpp that needs a ThreadPool it does not ship. pil2-stark
++# vendors a working ffiasm -- it is what libstarks.a is built from -- so the
++# dependencies are taken from there instead of from a dead ref.
++PIL2_STARK := /home/xavi/dev/pil2-proofman/pil2-stark/src
++DPNDS_DIR := $(PIL2_STARK)/bn128/src/ffiasm
++RAPIDSNARK_DIR := $(PIL2_STARK)/rapidsnark
+ TEST_DIRS := src test
+ 
+ # Libraries
+@@ -16,7 +23,7 @@ endif
+ CXX := g++
+ AS := nasm
+ 
+-CXXFLAGS := -std=c++17 -g3 -Wall -pthread -flarge-source-files -Wno-unused-label -rdynamic -mavx2 -lgmp #-Wfatal-errors
++CXXFLAGS := -std=c++17 -D__USE_ASSEMBLY__ -g3 -Wall -pthread -flarge-source-files -Wno-unused-label -rdynamic -mavx2 -lgmp #-Wfatal-errors
+ LDFLAGS := -lsodium -lpthread -lgmp -lstdc++ -lomp -lgmpxx -L$(LIBOMP) -lgtest
+ CFLAGS := -fopenmp
+ ASFLAGS := -felf64
+@@ -26,12 +33,14 @@ TARGET_PFP := pfProver
+ TARGET_SETUP := pfSetup
+ TARGET_TEST := pfProverTest
+ 
+-INC_DIRS := depends/ffiasm/c depends/json/single_include/nlohmann depends/xkcp/Standalone/CompactFIPS202/C src/chelpers
++INC_DIRS := $(DPNDS_DIR) $(RAPIDSNARK_DIR) $(PIL2_STARK)/XKCP depends/json/single_include/nlohmann src/chelpers
+ INC_FLAGS := $(addprefix -I,$(INC_DIRS))
+ 
+ # Files
+ SRCS_PFP := $(shell find $(SRC_DIRS) -name *.cpp)
+-SRCS_PFP += $(addprefix $(DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp misc.cpp binfile_utils.cpp binfile_writer.cpp naf.cpp splitparstr.cpp)
++SRCS_PFP += $(addprefix $(DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp fec.cpp fnec.cpp misc.cpp naf.cpp splitparstr.cpp)
++SRCS_PFP += $(addprefix $(RAPIDSNARK_DIR)/, binfile_utils.cpp binfile_writer.cpp)
++SRCS_PFP += $(PIL2_STARK)/XKCP/Keccak-more-compact.cpp
+ SRCS_PFP += $(shell find $(DPNDS_DIR) -name *.asm)
+ OBJS_PFP := $(patsubst %,$(BUILD_DIR)/%.o,$(SRCS_PFP))
+ OBJS_PFP := $(filter-out $(BUILD_DIR)/src/main_setup.cpp.o, $(OBJS_PFP)) # Exclude main.cpp from test build
+diff --git a/src/pilfflonk_transcript.cpp b/src/pilfflonk_transcript.cpp
+index 8368521..782dd08 100644
+--- a/src/pilfflonk_transcript.cpp
++++ b/src/pilfflonk_transcript.cpp
+@@ -1,6 +1,6 @@
+ #include "pilfflonk_transcript.hpp"
+ #include <cstring>
+-#include "Keccak-more-compact.c"
++#include "Keccak-more-compact.hpp"
+ 
+ PilFflonkTranscript::PilFflonkTranscript(AltBn128::Engine &_E) : E(_E)
+ {

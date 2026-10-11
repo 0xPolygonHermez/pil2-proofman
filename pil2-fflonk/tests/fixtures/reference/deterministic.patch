@@ -1,0 +1,34 @@
+diff --git a/src/pilfflonk_prover.cpp b/src/pilfflonk_prover.cpp
+index cfd7cbb..71dc2b5 100644
+--- a/src/pilfflonk_prover.cpp
++++ b/src/pilfflonk_prover.cpp
+@@ -697,8 +697,7 @@ namespace PilFflonk
+         if(zkey->maxQDegree) {
+             FrElement rand1;
+             FrElement rand2;
+-            randombytes_buf((void *)&(rand1), sizeof(FrElement)-1);
+-            randombytes_buf((void *)&(rand2), sizeof(FrElement)-1);
++            rand1 = E.fr.zero(); rand2 = E.fr.zero(); // DETERMINISTIC-CAPTURE
+ 
+             u_int64_t nQ = std::ceil(domainSizeQ - (fflonkInfo->maxPolsOpenings * (fflonkInfo->qDeg + 1)) / (zkey->maxQDegree * N));
+ 
+@@ -713,8 +712,7 @@ namespace PilFflonk
+                 if(i < nQ - 1) {
+                     u_int64_t len = zkey->maxQDegree * N;
+ 
+-                    randombytes_buf((void *)&(rand1), sizeof(FrElement)-1);
+-                    randombytes_buf((void *)&(rand2), sizeof(FrElement)-1);
++                    rand1 = E.fr.zero(); rand2 = E.fr.zero(); // DETERMINISTIC-CAPTURE
+ 
+                     shPlonkProver->addRandomCoef("Q" + std::to_string(i), len, rand1);
+                     shPlonkProver->addRandomCoef("Q" + std::to_string(i), len + 1, rand2);
+@@ -754,8 +752,7 @@ namespace PilFflonk
+             u_int32_t openings = findNumberOpenings(name, stage);
+             for (u_int32_t j = 0; j < openings; ++j)
+             {
+-                FrElement b;
+-                randombytes_buf((void *)&(b), sizeof(FrElement)-1);
++                FrElement b = E.fr.zero(); // DETERMINISTIC-CAPTURE
+ 
+                 buffCoefs[j * nPols + i] = E.fr.add(buffCoefs[j * nPols + i], E.fr.neg(b));
+                 buffCoefs[(j + N) * nPols + i] = E.fr.add(buffCoefs[(j + N) * nPols + i], b);

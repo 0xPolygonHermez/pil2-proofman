@@ -15,6 +15,7 @@
 #include "keccak_256_transcript.hpp"
 #include "wtns_utils.hpp"
 #include "zkey.hpp"
+#include "msm_bn128.hpp"
 
 using json = nlohmann::json;
 using namespace std::chrono;
