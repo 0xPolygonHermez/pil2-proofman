@@ -226,6 +226,9 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     // Compressed final stark struct settings
     // Poseidon: arity, llv and final_degree are this circuit's own geometry, set for the BN128 wrap.
     // blake3: no wrap reads it, so llv and the terminal are proof-size knobs (hash_family).
+    let stir_schedule = (config.low_degree_test == Some(crate::types::stark_struct::LowDegreeTestKind::Stir))
+        .then(|| proofman_common::hash_family::compressed_final_stir_schedule(config.hash))
+        .flatten();
     let compressed_settings = crate::types::stark_struct::StarkSettings {
         initial_blowup_factor: Some(proofman_common::hash_family::compressed_final_blowup_factor(config.hash)),
         initial_folding_factor: Some(if config.hash == "blake3" { 4 } else { 3 }),
@@ -238,6 +241,8 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
                 - proofman_common::hash_family::compressed_final_blowup_factor(config.hash),
         ),
         low_degree_test: config.low_degree_test,
+        folding_factors: stir_schedule.as_ref().map(|(folds, _)| folds.clone()),
+        grinding_bits_queries: stir_schedule.as_ref().map(|(_, grinding)| grinding.clone()),
         ..Default::default()
     };
     let compressed_stark_struct =

@@ -30,6 +30,11 @@ pub struct StarkSettings {
     /// so a decaying schedule shifts proof-of-work to where queries hurt most.
     #[serde(default)]
     pub grinding_bits_queries: Option<Vec<usize>>,
+    /// STIR only: the folds `kᵢ` in bits, in place of folding by `initialFoldingFactor` down to
+    /// `finalDegree`; the final degree is what they leave. Proof size is not monotonic in the
+    /// schedule, so it is picked by measurement rather than derived.
+    #[serde(default)]
+    pub folding_factors: Option<Vec<usize>>,
     #[serde(default)]
     pub has_compressor: Option<bool>,
 }
@@ -436,6 +441,33 @@ pub fn generate_stir_schedule(
     }
 }
 
+/// The STIR schedule of explicit folds: `log₂ dᵢ` drops by each `kᵢ`, the domain halves per round.
+pub fn stir_schedule_from_folds(
+    log_degree: usize,
+    log_domain_size: usize,
+    folding_factors: &[usize],
+    grinding_bits: usize,
+) -> StirStruct {
+    assert!(!folding_factors.is_empty(), "STIR folding factors must not be empty");
+    assert!(folding_factors.iter().all(|&k| k >= 1), "STIR folding factors must be >= 1 bit");
+    let total: usize = folding_factors.iter().sum();
+    assert!(total < log_degree, "STIR folds {folding_factors:?} take degree 2^{log_degree} below 2^1");
+    let mut log_degrees = vec![log_degree];
+    let mut log_domain_sizes = vec![log_domain_size];
+    for &k in folding_factors {
+        log_degrees.push(log_degrees.last().unwrap() - k);
+        log_domain_sizes.push(log_domain_sizes.last().unwrap() - 1);
+    }
+    StirStruct {
+        kind: StirKind::Stir,
+        folding_factors: folding_factors.to_vec(),
+        log_degrees,
+        log_domain_sizes,
+        num_queries: vec![],
+        grinding_bits_queries: vec![grinding_bits; folding_factors.len()],
+    }
+}
+
 /// Nodes the proof carries at the tree's bottom kept level. Fixing the node count rather than
 /// the level count keeps what the proof carries per tree constant across arities.
 pub const LAST_LEVEL_NODES: usize = 16;
@@ -569,6 +601,7 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
                 settings.grinding_bits_queries.is_none(),
                 "grindingBitsQueries is per-iteration and STIR-only; FRI has a single query phase, use grindingBits"
             );
+            assert!(settings.folding_factors.is_none(), "foldingFactors is STIR-only");
             let final_degree = final_degree.min(n_bits);
             if proofman_common::hash_family::uses_optimal_fri_schedule(hash) {
                 // The solved schedule walks committed DOMAIN sizes down to a terminal domain; the
@@ -592,13 +625,16 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
             }
         }
         LowDegreeTestKind::Stir => {
-            let mut schedule = generate_stir_schedule(
-                n_bits,
-                n_bits_ext,
-                initial_folding_factor,
-                final_degree.min(n_bits.saturating_sub(1)),
-                pow_bits,
-            );
+            let mut schedule = match &settings.folding_factors {
+                Some(folds) => stir_schedule_from_folds(n_bits, n_bits_ext, folds, pow_bits),
+                None => generate_stir_schedule(
+                    n_bits,
+                    n_bits_ext,
+                    initial_folding_factor,
+                    final_degree.min(n_bits.saturating_sub(1)),
+                    pow_bits,
+                ),
+            };
             // Per-round override of the default grinding schedule; the security solver
             // turns each budget into that round's query count.
             if let Some(budgets) = &settings.grinding_bits_queries {
@@ -966,6 +1002,36 @@ mod tests {
         assert!(s.num_queries.is_empty());
         // The grinding budget seeds every round uniformly until the solver overwrites it.
         assert_eq!(s.grinding_bits_queries, vec![24; 5]);
+    }
+
+    #[test]
+    fn explicit_stir_folds_set_the_schedule_and_per_round_grinding() {
+        let settings = StarkSettings {
+            low_degree_test: Some(LowDegreeTestKind::Stir),
+            initial_blowup_factor: Some(5),
+            folding_factors: Some(vec![4, 3, 3]),
+            grinding_bits_queries: Some(vec![27, 26, 27]),
+            ..Default::default()
+        };
+        let ss = generate_stark_struct(&settings, 18, "blake3");
+        let stir = ss.low_degree_test.stir().unwrap();
+        assert_eq!(stir.folding_factors, vec![4, 3, 3]);
+        assert_eq!(stir.log_degrees, vec![18, 14, 11, 8]);
+        assert_eq!(stir.log_domain_sizes, vec![23, 22, 21, 20]);
+        assert_eq!(stir.grinding_bits_queries, vec![27, 26, 27]);
+    }
+
+    #[test]
+    #[should_panic(expected = "must be >= 1 bit")]
+    fn a_zero_bit_fold_is_refused() {
+        stir_schedule_from_folds(18, 23, &[4, 0, 3], 27);
+    }
+
+    #[test]
+    #[should_panic(expected = "foldingFactors is STIR-only")]
+    fn explicit_folds_are_refused_under_fri() {
+        let settings = StarkSettings { folding_factors: Some(vec![4, 3, 3]), ..Default::default() };
+        generate_stark_struct(&settings, 18, "blake3");
     }
 
     /// Selecting STIR must not disturb the FRI output, and vice versa: the default
