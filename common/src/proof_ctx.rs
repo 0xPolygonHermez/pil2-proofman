@@ -1608,7 +1608,7 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         // Pad the unified buffer up to the snark floor (see GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES),
         // taking only the layout's unused slack. Runs without a wrapper skip it.
-        let unified_buffer_pad_area: u64 = if gpu && final_snark {
+        let unified_buffer_pad_area: u64 = if gpu && final_snark && self.global_info.hash != "blake3" {
             let predicted_unified_buffer: u64 = aux_trace_sizes.iter().sum::<u64>()
                 + prefetch_region_area
                 + if self.phase_b {
