@@ -168,7 +168,12 @@ pub fn ref_operand(r: &Value, is_dest: bool, initialized: &[u64], ctx: &UnrollCt
         }
         "airgroupvalue" => {
             let id = r["id"].as_u64().unwrap_or(0);
-            Ok(format!("airgroupvalues[{id}]"))
+            let dim = r["dim"].as_u64().unwrap_or(3);
+            if dim == 1 {
+                Ok(format!("airgroupvalues[{id}][0]"))
+            } else {
+                Ok(format!("airgroupvalues[{id}]"))
+            }
         }
         "airvalue" => {
             let id = r["id"].as_u64().unwrap_or(0);
@@ -222,14 +227,17 @@ pub fn unroll_code(code: &[Value], initialized: &[u64], ctx: &UnrollCtx<'_>, out
             }
         }
 
-        // Force dim=3 on Zi and airgroupvalue sources (matching EJS logic).
+        // Zi is always extension; airgroupvalue is a single limb at stage 1.
         let mut s0 = src.get(0).cloned().unwrap_or(Value::Null);
         let mut s1 = src.get(1).cloned().unwrap_or(Value::Null);
-        if matches!(s0["type"].as_str(), Some("Zi") | Some("airgroupvalue")) {
-            s0["dim"] = 3.into();
-        }
-        if matches!(s1["type"].as_str(), Some("Zi") | Some("airgroupvalue")) {
-            s1["dim"] = 3.into();
+        for s in [&mut s0, &mut s1] {
+            match s["type"].as_str() {
+                Some("Zi") => s["dim"] = 3.into(),
+                Some("airgroupvalue") => {
+                    s["dim"] = if s["stage"].as_u64() == Some(1) { 1.into() } else { 3.into() };
+                }
+                _ => {}
+            }
         }
 
         let dest_str = ref_operand(dest, true, &declared, ctx)?;
@@ -370,11 +378,14 @@ pub fn unroll_code_bn128(
 
         let mut s0 = src.get(0).cloned().unwrap_or(Value::Null);
         let mut s1 = src.get(1).cloned().unwrap_or(Value::Null);
-        if matches!(s0["type"].as_str(), Some("Zi") | Some("airgroupvalue")) {
-            s0["dim"] = 3.into();
-        }
-        if matches!(s1["type"].as_str(), Some("Zi") | Some("airgroupvalue")) {
-            s1["dim"] = 3.into();
+        for s in [&mut s0, &mut s1] {
+            match s["type"].as_str() {
+                Some("Zi") => s["dim"] = 3.into(),
+                Some("airgroupvalue") => {
+                    s["dim"] = if s["stage"].as_u64() == Some(1) { 1.into() } else { 3.into() };
+                }
+                _ => {}
+            }
         }
 
         let dest_dim = dest["dim"].as_u64().unwrap_or(1);
@@ -557,7 +568,11 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
             let raw = r["value"].as_str().unwrap_or("0");
             Ok(normalise_gl_number(raw).to_string())
         }
-        "airgroupvalue" => Ok(format!("airgroupvalues[{}]", r["id"].as_u64().unwrap_or(0))),
+        "airgroupvalue" => {
+            let id = r["id"].as_u64().unwrap_or(0);
+            let dim = r["dim"].as_u64().unwrap_or(3);
+            Ok(if dim == 1 { format!("airgroupvalues[{id}][0]") } else { format!("airgroupvalues[{id}]") })
+        }
         "airvalue" => {
             let id = r["id"].as_u64().unwrap_or(0);
             let dim = r["dim"].as_u64().unwrap_or(1);

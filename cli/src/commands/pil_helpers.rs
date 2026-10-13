@@ -488,7 +488,7 @@ impl PilHelpersCmd {
                             }
                             air.airgroup_values[0].values.push(ColumnCtx {
                                 name: name.to_owned(),
-                                r#type: ext_type,
+                                r#type: if symbol.stage == Some(1) { r#type } else { ext_type },
                                 type_packed: String::new(),
                             });
                         } else {
