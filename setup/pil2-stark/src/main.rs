@@ -209,6 +209,10 @@ struct SetupSnarkArgs {
     /// No kernel without nvcc.
     #[arg(long, default_value = "auto")]
     exps_arch: String,
+
+    /// What the generated verifier contract's VERSION() returns (default: this tool's version)
+    #[arg(long)]
+    contract_version: Option<String>,
 }
 
 #[derive(Parser)]
@@ -543,6 +547,7 @@ fn main() -> anyhow::Result<()> {
                 only_recursive_final: args.only_recursive_final,
                 extra_muls: args.extra_muls,
                 exps_arch: args.exps_arch,
+                contract_version: args.contract_version,
             };
             snark_cmd::run_setup_snark(&opts)
         }

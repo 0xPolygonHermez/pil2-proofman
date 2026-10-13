@@ -75,6 +75,7 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     ExpsKernel ek = expsOpenForAir(setupCtx);
     expsLib = ek.lib;
     qLaunchFn = (void *)ek.qLaunch;
+    qLaunchStepFn = (void *)ek.qLaunchStep;
     qMinScratch = ek.qMinScratch;
     exprCoveredFn = (void *)ek.exprCovered;
     exprLaunchFn = (void *)ek.exprLaunch;
@@ -297,17 +298,20 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
 
-void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream)
+uint32_t ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg)
 {
     // Generated Q kernel first: it takes everything by value, so the interpreter's
     // pinned-slot staging below is dead weight on this path (and poisons graph capture).
     if (dest.dest_gpu != nullptr && qLaunchFn != nullptr) {
         TimerStartCategoryGPU(timer, EXPRESSIONS);
-        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream, &qLaunchVerified);
+        uint32_t used = 0;
+        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream, &qLaunchVerified,
+                                       (ExpsQLaunchStepFn)qLaunchStepFn, qStepLg, &used);
         TimerStopCategoryGPU(timer, EXPRESSIONS);
         if (computed) {
             CHECKCUDAERR(cudaGetLastError());
-            return;
+            qStepLgUsed = used;
+            return used;
         }
     }
 
@@ -396,6 +400,8 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, EXPRESSIONS);
+    qStepLgUsed = 0;
+    return 0;
 }
 
 __device__ __forceinline__ void load__(

@@ -9,7 +9,7 @@ use proofman_common::{
     WITNESS_STAGED_RELEASED, WITNESS_STAGED_KIND, witness_staged_on, witness_staged_gpu,
 };
 use colored::Colorize;
-use proofman_hints::aggregate_airgroupvals;
+use proofman_hints::{aggregate_airgroupvals, expand_airgroup_values};
 use proofman_starks_lib_c::{
     mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c,
     register_mul_vt_c,
@@ -2083,9 +2083,13 @@ where
         }
 
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
-        let airgroup_values = pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
-        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] =
-            airgroup_values.clone();
+        let airgroup_values = expand_airgroup_values(
+            sctx,
+            airgroup_id,
+            air_id,
+            &pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?,
+        )?;
+        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_local_idx(instance_id)?] = airgroup_values;
 
         wcm.debug(&[instance_id], debug_info)?;
 
@@ -3607,16 +3611,40 @@ where
                 _ => 10,
             };
 
-            let all_internal_partial_contributions = self.mpi_ctx.distribute_roots(internal_contribution);
-            let all_internal_partial_contributions_split: Vec<Vec<F>> = all_internal_partial_contributions
-                .chunks(contributions_size)
-                .map(|chunk| chunk.iter().map(|&x| F::from_u64(x)).collect())
+            // Per-airgroup contributions: gather all workers, then aggregate per airgroup.
+            let n_airgroups_c = self.pctx.global_info.air_groups.len();
+            let flat: Vec<u64> = internal_contribution.iter().flatten().copied().collect();
+            let all_internal_partial_contributions = self.mpi_ctx.distribute_roots(flat);
+            let n_workers_gathered = all_internal_partial_contributions.len() / (n_airgroups_c * contributions_size);
+            let per_airgroup_contributions_u64: Vec<Vec<u64>> = (0..n_airgroups_c)
+                .map(|airgroup_id| {
+                    let group: Vec<Vec<F>> = (0..n_workers_gathered)
+                        .map(|w| {
+                            let base = w * n_airgroups_c * contributions_size + airgroup_id * contributions_size;
+                            all_internal_partial_contributions[base..base + contributions_size]
+                                .iter()
+                                .map(|&x| F::from_u64(x))
+                                .collect()
+                        })
+                        .collect();
+                    aggregate_contributions(&self.pctx, &group).iter().map(|&x| x.as_canonical_u64()).collect()
+                })
                 .collect();
 
-            let internal_contribution = aggregate_contributions(&self.pctx, &all_internal_partial_contributions_split);
-
-            let internal_contribution_u64: Vec<u64> =
-                internal_contribution.iter().map(|&x| x.as_canonical_u64()).collect::<Vec<u64>>();
+            // One record per airgroup, including identity (all-zero) ones: an airgroup without
+            // local proofs gets a null Recursive2 proof whose challenge is that same zero vector.
+            let contributions_info = |worker_index: u32| -> Vec<ContributionsInfo> {
+                per_airgroup_contributions_u64
+                    .iter()
+                    .enumerate()
+                    .map(|(airgroup_id, challenge)| ContributionsInfo {
+                        challenge: challenge.clone(),
+                        worker_index,
+                        airgroup_id,
+                        aggregated: false,
+                    })
+                    .collect()
+            };
 
             if phase == ProvePhase::Contributions {
                 let witness_time =
@@ -3635,19 +3663,10 @@ where
                     witness_time,
                     total_instances: self.pctx.dctx_get_instances().len(),
                 };
-                return Ok(ProvePhaseResult::Contributions(vec![ContributionsInfo {
-                    challenge: internal_contribution_u64,
-                    worker_index: self.pctx.get_worker_index()? as u32,
-                    airgroup_id: 0,
-                    aggregated: false,
-                }]));
+                let worker_index = self.pctx.get_worker_index()? as u32;
+                return Ok(ProvePhaseResult::Contributions(contributions_info(worker_index)));
             }
-            &vec![ContributionsInfo {
-                challenge: internal_contribution_u64,
-                worker_index: 0,
-                airgroup_id: 0,
-                aggregated: false,
-            }]
+            &contributions_info(0)
         } else {
             match phase_inputs {
                 ProvePhaseInputs::Internal(ref contributions) => contributions,
@@ -3715,11 +3734,23 @@ where
         let instances = self.pctx.dctx_get_instances();
         let mut my_instances = self.pctx.dctx_get_process_instances();
 
-        let mut n_airgroup_proofs = vec![0; n_airgroups];
+        // Proofs this process feeds each air's recursive1, Basic or compressed.
+        let mut expected_rec1: Vec<Vec<usize>> =
+            (0..n_airgroups).map(|ag| vec![0usize; self.pctx.global_info.get_n_airs_for_airgroup(ag)]).collect();
         for &instance_id in my_instances.iter() {
-            let instance_info = instances[instance_id];
-            n_airgroup_proofs[instance_info.airgroup_id] += 1;
+            let info = instances[instance_id];
+            expected_rec1[info.airgroup_id][info.air_id] += 1;
         }
+        let batch_sizes: Vec<Vec<usize>> = (0..n_airgroups)
+            .map(|ag| {
+                (0..self.pctx.global_info.get_n_airs_for_airgroup(ag))
+                    .map(|air| self.pctx.global_info.get_air_r1_batch_size(ag, air))
+                    .collect()
+            })
+            .collect();
+        // The tree counts recursive1 circuits, not instances.
+        let n_airgroup_proofs = crate::recursive1_counts_per_airgroup(&expected_rec1, &batch_sizes);
+        let rec1_batcher = Arc::new(crate::Recursive1Batcher::<F>::new(expected_rec1));
 
         if options.aggregation {
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
@@ -3863,6 +3894,7 @@ where
             let proofs_clone = self.proofs.clone();
             let compressor_proofs_clone = self.compressor_proofs.clone();
             let recursive1_proofs_clone = self.recursive1_proofs.clone();
+            let rec1_batcher_clone = rec1_batcher.clone();
             let recursive2_proofs_clone = self.recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = self.recursive2_proofs_ongoing.clone();
             let proofs_pending_clone = proofs_pending.clone();
@@ -3981,34 +4013,38 @@ where
                             }
                             None => None,
                         }
-                    } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
-                        let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        let w = gen_witness_recursive(
+                    } else if new_proof_type == ProofType::Compressor as usize {
+                        // Compressors are never batched; only the recursive1 above them.
+                        let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
+                        match gen_witness_recursive(
                             &pctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
-                            &compressor_proof,
-                        );
-                        match w {
+                            &proof,
+                        ) {
                             Ok(witness) => Some(witness),
                             Err(e) => {
-                                tracing::info!("Error generating recursive1 witness from compressor proof: {}", e);
+                                tracing::info!("Error generating compressor witness: {}", e);
                                 cancellation_info_clone.write_recover().cancel(Some(e));
                                 break;
                             }
                         }
                     } else {
-                        let proof = proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        let w = gen_witness_recursive(
+                        // Held until the air's batch is full.
+                        let proof = if p == ProofType::Compressor {
+                            compressor_proofs_clone[id as usize].write().unwrap().take().unwrap()
+                        } else {
+                            proofs_clone[id as usize].write().unwrap().take().unwrap()
+                        };
+                        match rec1_batcher_clone.offer(
                             &pctx_clone,
                             &memory_handler_recursive_witness,
                             &setups_clone,
-                            &proof,
-                        );
-                        match w {
-                            Ok(witness) => Some(witness),
+                            proof,
+                        ) {
+                            Ok(witness) => witness,
                             Err(e) => {
-                                tracing::info!("Error generating recursive1 witness from basic proof: {}", e);
+                                tracing::info!("Error generating recursive1 witness: {}", e);
                                 cancellation_info_clone.write_recover().cancel(Some(e));
                                 break;
                             }
@@ -4633,7 +4669,8 @@ where
                     let agg_proof =
                         Proof::new(ProofType::Recursive2, proof.airgroup_id as usize, 0, None, proof.proof.clone());
 
-                    let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
+                    let proof_acc_challenge =
+                        get_accumulated_challenge(&self.pctx, proof.airgroup_id as usize, &proof.proof);
                     let mut worker_contributions = self.worker_contributions.write().unwrap();
                     if let Some(contrib) = worker_contributions.iter_mut().find(|contrib| {
                         contrib.worker_index == worker_index as u32 && contrib.airgroup_id == proof.airgroup_id as usize
@@ -4865,12 +4902,12 @@ where
             // those with no indexes -- so it is rejected here rather than left to either outcome.
             if proof.worker_indexes.is_empty() {
                 self.cancellation_info.write_recover().cancel(Some(ProofmanError::InvalidProof(format!(
-                    "Aggregated proof for airgroup {} names no worker indexes, so the contributions                      its accumulated challenge must match cannot be identified",
+                    "Aggregated proof for airgroup {} names no worker indexes, so the contributions its accumulated challenge must match cannot be identified",
                     proof.airgroup_id
                 ))));
                 break;
             }
-            let proof_acc_challenge = get_accumulated_challenge(&self.pctx, &proof.proof);
+            let proof_acc_challenge = get_accumulated_challenge(&self.pctx, proof.airgroup_id as usize, &proof.proof);
             let mut stored_contributions = Vec::new();
             for w in &proof.worker_indexes {
                 let mut worker_contributions = self.worker_contributions.write().unwrap();
@@ -5047,16 +5084,17 @@ where
                 }
 
                 let global_challenge = self.pctx.get_global_challenge().clone();
-                let accumulated_challenge = get_accumulated_challenge(&self.pctx, &agg_proofs_data[0].proof);
-                let global_challenge_calculated = calculate_global_challenge(
-                    &self.pctx,
-                    &[ContributionsInfo {
-                        challenge: accumulated_challenge.clone(),
-                        airgroup_id: 0,
+                // One accumulated challenge per airgroup.
+                let recomputed_contributions: Vec<ContributionsInfo> = agg_proofs_data
+                    .iter()
+                    .map(|ap| ContributionsInfo {
+                        challenge: get_accumulated_challenge(&self.pctx, ap.airgroup_id as usize, &ap.proof),
+                        airgroup_id: ap.airgroup_id as usize,
                         worker_index: 0,
                         aggregated: true,
-                    }],
-                );
+                    })
+                    .collect();
+                let global_challenge_calculated = calculate_global_challenge(&self.pctx, &recomputed_contributions);
 
                 if global_challenge_calculated != *global_challenge {
                     let error =
@@ -5283,12 +5321,7 @@ where
 
             let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(*instance_id)?;
             let setup = self.sctx.get_setup(airgroup_id, air_id)?;
-            let n_airgroup_values = setup
-                .stark_info
-                .airgroupvalues_map
-                .as_ref()
-                .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
-                .unwrap_or(0);
+            let n_airgroup_values = setup.stark_info.airgroupvalues_map.as_ref().map(|map| map.len() * 3).unwrap_or(0);
 
             let airgroup_values: Vec<F> = proof
                 .as_ref()

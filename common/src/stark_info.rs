@@ -188,6 +188,9 @@ pub struct StarkInfo {
     pub airvalues_map: Option<Vec<PolMap>>,
     #[serde(rename = "evMap")]
     pub ev_map: Vec<EvMap>,
+    /// 0 on keys older than the field.
+    #[serde(default, rename = "friBatchSize")]
+    pub fri_batch_size: u64,
 
     #[serde(rename = "customCommits")]
     pub custom_commits: Vec<CustomCommits>,

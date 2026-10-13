@@ -10,6 +10,32 @@ use std::collections::HashMap;
 
 use proofman_common::{skip_prover_instance, ProofCtx, SetupCtx, ProofmanResult, ProofmanError};
 
+/// Packed (1 limb for stage 1, else 3) -> expanded (3 limbs per entry).
+pub fn expand_airgroup_values<F: PrimeField64>(
+    sctx: &SetupCtx<F>,
+    airgroup_id: usize,
+    air_id: usize,
+    packed: &[F],
+) -> ProofmanResult<Vec<F>> {
+    if packed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let setup = sctx.get_setup(airgroup_id, air_id)?;
+    let map = setup.stark_info.airgroupvalues_map.as_deref().unwrap_or(&[]);
+    let mut expanded = Vec::with_capacity(map.len() * 3);
+    let mut pos = 0;
+    for entry in map {
+        if entry.stage == 1 {
+            expanded.extend_from_slice(&[packed[pos], F::ZERO, F::ZERO]);
+            pos += 1;
+        } else {
+            expanded.extend_from_slice(&packed[pos..pos + 3]);
+            pos += 3;
+        }
+    }
+    Ok(expanded)
+}
+
 pub fn aggregate_airgroupvals<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     airgroup_values: &[Vec<F>],
@@ -119,8 +145,12 @@ fn get_global_hint_f<F: PrimeField64>(
             if !skip_prover_instance(pctx, *instance_id)?.0 {
                 let (airgroup_id, air_id) = pctx.dctx_get_instance_info(*instance_id)?;
                 let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id)?;
-                airgroup_values_air_instances[my_instance_idx] =
-                    pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?;
+                airgroup_values_air_instances[my_instance_idx] = expand_airgroup_values(
+                    sctx,
+                    airgroup_id,
+                    air_id,
+                    &pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id)?,
+                )?;
             }
         }
         let mut airgroupvals = aggregate_airgroupvals(pctx, &airgroup_values_air_instances)?;

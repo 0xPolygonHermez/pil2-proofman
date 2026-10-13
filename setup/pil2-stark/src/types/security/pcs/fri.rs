@@ -359,18 +359,6 @@ impl Fri {
         &self.sec_params
     }
 
-    /// Raise the query count above the security-optimal value, e.g. because a
-    /// caller sizes a circuit by its query count. Never lowers it, so the
-    /// solved security floor is preserved and soundness only ever strengthens.
-    /// Returns whether the count actually changed.
-    pub fn raise_n_queries(&mut self, n_queries: u64) -> bool {
-        if n_queries > self.sec_params.n_queries {
-            self.sec_params.n_queries = n_queries;
-            return true;
-        }
-        false
-    }
-
     /// The deduced gap-widening factor.
     pub fn alpha(&self) -> f64 {
         self.alpha
@@ -672,24 +660,6 @@ mod tests {
         assert!(fri.proof_size_bits() > 0);
     }
 
-    /// The nQueries override must survive into the reported security params and
-    /// must never weaken the solved security floor.
-    #[test]
-    fn test_raise_n_queries() {
-        let mut fri = Fri::new(test_config(1 << 16, 0.03125, 139, vec![4, 4, 4, 4], 22));
-        let floor = fri.security_params().n_queries;
-
-        assert!(!fri.raise_n_queries(floor - 1), "must not lower below the floor");
-        assert_eq!(fri.security_params().n_queries, floor);
-
-        assert!(fri.raise_n_queries(floor + 10));
-        assert_eq!(fri.security_params().n_queries, floor + 10);
-        assert!(fri.total_security_bits() >= 128);
-    }
-
-    /// The property the whole calculator exists for: every geometry the pipeline can generate must
-    /// clear the 128-bit target. Sweeps the grinding defaults too, including blake3's 24, which no
-    /// other test reaches.
     #[test]
     fn every_generated_geometry_reaches_the_security_target() {
         use crate::types::stark_struct::{generate_stark_struct, StarkSettings};

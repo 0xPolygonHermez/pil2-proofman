@@ -13,6 +13,15 @@ use crate::commands::setup::SetupOptions;
 use crate::types::stark_struct::StarkStructsConfig;
 use crate::output::witness_gen::WitnessTracker;
 
+/// What the recursive pipeline learned that globalInfo.json has to record.
+#[derive(Debug, Default)]
+pub(crate) struct RecursiveSetupSummary {
+    /// Airs that needed a compressor, whether from settings or auto-detected.
+    pub airs_with_compressor: std::collections::HashSet<String>,
+    /// (airgroup, air) -> proofs its recursive1 verifies; absent means 1.
+    pub r1_batch_sizes: std::collections::HashMap<(usize, usize), usize>,
+}
+
 /// Run the recursive setup pipeline after non-recursive AIR setup.
 ///
 /// For each airgroup/air:
@@ -30,7 +39,7 @@ pub(crate) fn run_recursive_setup(
     opts: &SetupOptions,
     settings_map: &StarkStructsConfig,
     global_info: serde_json::Value,
-) -> Result<std::collections::HashSet<String>> {
+) -> Result<RecursiveSetupSummary> {
     use crate::proving_key::compressed_final;
     use crate::proving_key::final_setup;
 
@@ -87,6 +96,9 @@ pub(crate) fn run_recursive_setup(
     // with the correct hasCompressor flags regardless of whether a starkstructs path was given.
     let mut airs_with_compressor: std::collections::HashSet<String> = Default::default();
 
+    // Proofs each air's recursive1 verifies, keyed by index: two airgroups may share a name.
+    let mut r1_batch_sizes: std::collections::HashMap<(usize, usize), usize> = Default::default();
+
     for (ag_idx, airgroup) in pilout.air_groups.iter().enumerate() {
         let airgroup_name = airgroup.name.clone().unwrap_or_else(|| format!("airgroup_{}", ag_idx));
 
@@ -98,9 +110,6 @@ pub(crate) fn run_recursive_setup(
             verifier_info: serde_json::Value,
             const_root_strings: [String; 4],
             has_compressor: bool,
-            /// Path to the original air's starkinfo.json — used to persist A2 nQueries
-            /// adjustments made inside gen_recursive_setup back to disk.
-            si_path: PathBuf,
         }
 
         let mut air_items: Vec<AirItem> = Vec::new();
@@ -148,7 +157,6 @@ pub(crate) fn run_recursive_setup(
                 verifier_info,
                 const_root_strings,
                 has_compressor,
-                si_path,
             });
         }
 
@@ -158,7 +166,7 @@ pub(crate) fn run_recursive_setup(
         }
 
         // Helper closure: runs compressor (if needed) then recursive1 for one air.
-        // Returns (air_idx, vk_strings, Option<existing_pil_info>, has_compressor, r1_n_bits).
+        // Returns (air_idx, vk_strings, Option<existing_pil_info>, has_compressor, r1_n_bits, batch).
         // existing_pil_info is Some only when the input `existing` was None (first air).
         // has_compressor may be upgraded to true if NeedsCompressorError fires at runtime.
         // r1_n_bits is the recursive1 circuit size; the caller compares it against
@@ -172,6 +180,7 @@ pub(crate) fn run_recursive_setup(
             Option<(serde_json::Value, serde_json::Value, serde_json::Value)>,
             bool,
             usize,
+            usize,
         )> {
             // Inside, not at the call sites: air[0] runs sequentially and the rest in a pool, and
             // every line plonk2pil, circom and pil2com emit from here names no air of its own.
@@ -180,26 +189,13 @@ pub(crate) fn run_recursive_setup(
             let mut has_compressor = item.has_compressor;
             let mut compressor_result: Option<crate::proving_key::recursive::RecursiveSetupResult> = None;
 
-            // Compressor→recursive1 with two retry triggers, resolved in one loop:
-            //   NeedsCompressorError   (recursive1 too BIG, no compressor) → enable a compressor.
-            //   RecursiveTooSmallError (has-compressor recursive1 too SMALL) → bump the compressor's
-            //     nQueries (enlarging recursive1's verifier) and recompress, so recursive1 fills the
-            //     shared 2^(THRESHOLD-1) domain. Queries only ever INCREASE → soundness never weakens.
-            let mut compressor_ss_override: Option<serde_json::Value> = None; // bumped starkStruct
-                                                                              // recursive1's n_used is affine in the compressor's nQueries (n_used = base + k*nQueries;
-                                                                              // base is large & query-independent), so a proportional guess undershoots. After one
-                                                                              // measured point we fit the slope from two points and solve for the exact nQueries.
-            let mut prev_point: Option<(u64, u64)> = None; // (nQueries, n_used)
-            const MAX_R1_ATTEMPTS: usize = 6;
+            // One retry trigger: NeedsCompressorError → enable a compressor. Two passes at most.
+            const MAX_R1_ATTEMPTS: usize = 2;
             let r1_result = (|| -> Result<crate::proving_key::recursive::RecursiveSetupResult> {
-                for attempt in 0..MAX_R1_ATTEMPTS {
+                for _ in 0..MAX_R1_ATTEMPTS {
                     // (Re)run the compressor if this air has one.
                     if has_compressor {
-                        tracing::info!(
-                            "Running compressor setup for air '{}'{}",
-                            item.air_name,
-                            if compressor_ss_override.is_some() { " (resized)" } else { "" }
-                        );
+                        tracing::info!("Running compressor setup for air '{}'", item.air_name);
                         let cfg = RecursiveSetupConfig {
                             build_dir,
                             hash: &opts.hash,
@@ -215,13 +211,7 @@ pub(crate) fn run_recursive_setup(
                             verification_keys: &[],
                             stark_info: &item.stark_info,
                             verifier_info: &item.verifier_info,
-                            stark_struct: compressor_ss_override.as_ref(),
                             has_compressor: false,
-                            stark_info_path: None,
-                            // Defer the compressor witness-lib gen: the resize loop may
-                            // supersede this attempt with a nQueries bump. We generate the
-                            // winning compressor's witness lib exactly once after the loop.
-                            defer_witness_lib: true,
                             existing_pil_info: None,
                             circom_exec: &circom_exec,
                             circuits_gl_path: &circuits_gl_path,
@@ -266,13 +256,7 @@ pub(crate) fn run_recursive_setup(
                         verification_keys: &[],
                         stark_info: r1_si,
                         verifier_info: r1_vi,
-                        stark_struct: None,
                         has_compressor,
-                        // A2: the original air's starkinfo path is only the right nQueries knob
-                        // for the NO-compressor path; with a compressor the knob is the
-                        // compressor's nQueries (handled via RecursiveTooSmallError below).
-                        stark_info_path: if compressor_result.is_none() { Some(item.si_path.as_path()) } else { None },
-                        defer_witness_lib: false, // recursive1 that bails too-small skips its own gen anyway
                         existing_pil_info: existing.clone(),
                         circom_exec: &circom_exec,
                         circuits_gl_path: &circuits_gl_path,
@@ -307,110 +291,19 @@ pub(crate) fn run_recursive_setup(
                             has_compressor = true;
                             // loop: recompress + recursive1 with the now-enabled compressor.
                         }
-                        Err(e) if e.is::<crate::proving_key::recursive::RecursiveTooSmallError>() => {
-                            let too_small =
-                                e.downcast_ref::<crate::proving_key::recursive::RecursiveTooSmallError>().unwrap();
-                            // Bump the compressor's nQueries so recursive1 fills to 2^(THRESHOLD-1).
-                            // recursive1's n_used scales ~linearly with the compressor's nQueries;
-                            // target NUsed = 2^(THRESHOLD-1)+2^12 (identical to the non-compressor A2).
-                            // One source of truth with gen_recursive_setup. Spelling the threshold
-                            // out here instead, with a "must match" comment, is the shape a
-                            // family-scoped value breaks silently.
-                            let threshold = proofman_common::hash_family::recursive_bits_threshold(&opts.hash);
-                            let target_rows: u64 = (1u64 << (threshold - 1)) + (1u64 << 12);
-                            let comp_ss = compressor_result
-                                .as_ref()
-                                .and_then(|cr| cr.stark_info.as_ref())
-                                .and_then(|si| si.get("starkStruct"))
-                                .cloned();
-                            let Some(comp_ss) = comp_ss else {
-                                return Err(anyhow::anyhow!(
-                                    "Air '{}' recursive1 too small (n_bits={}) but compressor starkStruct is missing; \
-                                     cannot resize",
-                                    item.air_name,
-                                    too_small.n_bits
-                                ));
-                            };
-                            let cur_q = comp_ss.get("nQueries").and_then(|v| v.as_u64()).unwrap_or(0);
-                            let cur_used = (too_small.n_used as u64).max(1);
-                            if cur_q == 0 {
-                                return Err(anyhow::anyhow!(
-                                    "Air '{}' recursive1 too small (n_bits={}) but compressor nQueries is 0; \
-                                     cannot resize",
-                                    item.air_name,
-                                    too_small.n_bits
-                                ));
-                            }
-                            // recursive1's n_used is AFFINE in the compressor's nQueries:
-                            // n_used = base + k*q, where base is the large query-independent cost of
-                            // verifying the compressor's structure. A pure-proportional guess
-                            // (base=0) undershoots. Once we have a second measured point, fit the
-                            // slope k from the two points and solve for the exact q (secant step).
-                            let want_q = match prev_point {
-                                Some((pq, pu)) if cur_q != pq => {
-                                    // k = Δused / Δq (per-query row cost); q = cur_q + (TARGET-cur_used)/k.
-                                    let (hi_q, hi_u, lo_q, lo_u) =
-                                        if cur_q > pq { (cur_q, cur_used, pq, pu) } else { (pq, pu, cur_q, cur_used) };
-                                    let d_used = hi_u.saturating_sub(lo_u).max(1);
-                                    let d_q = hi_q - lo_q;
-                                    // want = cur_q + ceil((TARGET - cur_used) * d_q / d_used)
-                                    let deficit = target_rows.saturating_sub(cur_used);
-                                    cur_q + (deficit * d_q).div_ceil(d_used)
-                                }
-                                // First bump (or degenerate): proportional guess, which under the
-                                // affine model is a lower bound — the secant corrects it next round.
-                                _ => (target_rows * cur_q).div_ceil(cur_used),
-                            };
-                            // Always make real progress even if the model rounds flat.
-                            let want_q = want_q.max(cur_q + 1);
-                            prev_point = Some((cur_q, cur_used));
-                            tracing::info!(
-                                "Air '{}' recursive1 packs to 2^{} (n_used={}) below 2^{}; bumping compressor \
-                                 nQueries {} → {} and recompressing (attempt {}/{})",
-                                item.air_name,
-                                too_small.n_bits,
-                                too_small.n_used,
-                                threshold,
-                                cur_q,
-                                want_q,
-                                attempt + 1,
-                                MAX_R1_ATTEMPTS
-                            );
-                            let mut bumped = comp_ss;
-                            if let Some(obj) = bumped.as_object_mut() {
-                                obj.insert("nQueries".to_string(), serde_json::json!(want_q));
-                            }
-                            compressor_ss_override = Some(bumped);
-                            // loop: recompress with the bumped starkStruct + rerun recursive1.
-                        }
                         Err(e) => {
                             return Err(e.context(format!("Recursive1 setup failed for air '{}'", item.air_name)));
                         }
                     }
                 }
                 Err(anyhow::anyhow!(
-                    "Air '{}' recursive1 did not converge to the shared domain after {} attempts",
+                    "Air '{}' recursive1 still asks for a compressor after {} attempts",
                     item.air_name,
                     MAX_R1_ATTEMPTS
                 ))
             })()?;
 
             tracing::info!("Recursive1 setup complete for air '{}'", item.air_name);
-
-            // The compressor deferred its witness-library generation inside the resize loop
-            // (so superseded attempts didn't waste one). Now that `compressor_result` holds
-            // the winning compressor, generate its witness lib exactly once.
-            if let Some((name_filename, files_dir)) =
-                compressor_result.as_ref().and_then(|cr| cr.witness_lib_params.clone())
-            {
-                witness_tracker.run_witness_library_generation(
-                    build_dir,
-                    &files_dir,
-                    &name_filename,
-                    "compressor",
-                    &circom_helpers_dir,
-                );
-            }
 
             let vk_str: Vec<String> = r1_result.const_root.iter().map(|v| v.to_string()).collect();
             let produced_pil_info = if existing.is_none() {
@@ -425,19 +318,22 @@ pub(crate) fn run_recursive_setup(
                 None
             };
 
-            Ok((item.air_idx, vk_str, produced_pil_info, has_compressor, r1_result.n_bits))
+            Ok((item.air_idx, vk_str, produced_pil_info, has_compressor, r1_result.n_bits, r1_result.batch_size))
         };
 
         // --- air[0]: run serially to produce existing_pil_info ---
         // Logged, not just propagated: tracing goes to stdout and the returned anyhow error surfaces
         // on stderr, so a run redirected with `> log` recorded 42 airs succeeding and simply no line
         // at all for the one that failed -- the air looked skipped rather than broken.
-        let (_, first_vk, first_pil_info, first_hc, first_air_r1_n_bits) =
+        let (_, first_vk, first_pil_info, first_hc, first_air_r1_n_bits, first_batch) =
             run_one_air(&air_items[0], ag_existing_pil_info[ag_idx].clone()).inspect_err(|e| {
                 tracing::error!("Recursive setup FAILED for air '{}': {e:#}", air_items[0].air_name)
             })?;
         if first_hc {
             airs_with_compressor.insert(air_items[0].air_name.clone());
+        }
+        if first_batch > 1 {
+            r1_batch_sizes.insert((ag_idx, air_items[0].air_idx), first_batch);
         }
 
         let mut ag_vkeys: Vec<Vec<String>> = vec![first_vk];
@@ -460,27 +356,30 @@ pub(crate) fn run_recursive_setup(
                 .context("Failed to build recursive-jobs rayon pool")?;
 
             #[allow(clippy::type_complexity)]
-            let parallel_results: Vec<Result<(usize, String, Vec<String>, bool)>> = pool.install(|| {
+            let parallel_results: Vec<Result<(usize, String, Vec<String>, bool, usize)>> = pool.install(|| {
                 use rayon::prelude::*;
                 air_items[1..]
                     .par_iter()
                     .map(|item| {
-                        let (air_idx, vk, _, hc, _) =
+                        let (air_idx, vk, _, hc, _, batch) =
                             run_one_air(item, existing_for_rest.clone()).inspect_err(|e| {
                                 tracing::error!("Recursive setup FAILED for air '{}': {e:#}", item.air_name)
                             })?;
-                        Ok((air_idx, item.air_name.clone(), vk, hc))
+                        Ok((air_idx, item.air_name.clone(), vk, hc, batch))
                     })
                     .collect()
             });
 
-            let mut indexed: Vec<(usize, String, Vec<String>, bool)> =
+            let mut indexed: Vec<(usize, String, Vec<String>, bool, usize)> =
                 parallel_results.into_iter().collect::<Result<_>>()?;
-            indexed.sort_by_key(|(idx, _, _, _)| *idx);
-            for (_, air_name, vk, hc) in indexed {
+            indexed.sort_by_key(|(idx, _, _, _, _)| *idx);
+            for (air_idx, air_name, vk, hc, batch) in indexed {
                 ag_vkeys.push(vk);
                 if hc {
                     airs_with_compressor.insert(air_name);
+                }
+                if batch > 1 {
+                    r1_batch_sizes.insert((ag_idx, air_idx), batch);
                 }
             }
         }
@@ -525,10 +424,7 @@ pub(crate) fn run_recursive_setup(
                 verification_keys: &vkeys_nested,
                 stark_info: &r2_stark_info,
                 verifier_info: &r2_verifier_info,
-                stark_struct: None,
                 has_compressor: false,
-                stark_info_path: None,
-                defer_witness_lib: false,
                 existing_pil_info: None, // recursive2 always computes its own starkSetup
                 circom_exec: &circom_exec,
                 circuits_gl_path: &circuits_gl_path,
@@ -624,7 +520,7 @@ pub(crate) fn run_recursive_setup(
     witness_tracker.await_all()?;
 
     tracing::info!("Recursive setup complete");
-    Ok(airs_with_compressor)
+    Ok(RecursiveSetupSummary { airs_with_compressor, r1_batch_sizes })
 }
 
 /// Parse a verkey.json file and return exactly 4 u64 limb strings.

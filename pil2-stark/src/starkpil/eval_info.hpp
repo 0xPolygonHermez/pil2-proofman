@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <map>
+#include <vector>
 
 // One (polynomial, opening point) pair of the evaluation map. Split out of
 // stark_info.hpp so the FRI/evaluation device code can be compiled (and unit
@@ -19,28 +21,52 @@ struct EvalInfo
 };
 
 // One term of the FRI polynomial (fri_expression.cuh): its column's first element in the buffer `src`
-// selects (0: cm, 1: custom, 2: fixed), ColMajor over the extended domain.
+// selects (0: cm, 1: custom, 2: fixed), ColMajor over the extended domain. vf2Exp: the polynomial's
+// first appearance in the eval map.
 struct FriTerm
 {
     uint64_t col;
     uint32_t evalPos;
     uint16_t src;
     uint16_t dim;
+    uint32_t vf2Exp;
 };
 
-// Threads per block: a power of two dividing the domain. nrowsPack is a power of two <= 256 on the
-// prover path, the only one that reaches the FRI polynomial.
-inline uint32_t friThreads(uint64_t nrowsPack, uint64_t domainSize)
+// The polynomials grouped by the set of openings they are in: group g is cols[colStart[g], colStart[g + 1]),
+// and opening o is in the groups opGroups[opStart[o], opStart[o + 1]).
+struct FriColGroups
 {
-    return (uint32_t)std::min<uint64_t>(std::max<uint64_t>(nrowsPack, 256), domainSize);
-}
+    std::vector<FriTerm> cols;
+    std::vector<uint32_t> colStart{0}, opStart, opGroups;
+};
 
-// Rows of D a block of nThreads reads, or 0 when they do not fit the default 48 KiB of shared
-// memory (cubic elements, 24 bytes each) and the FRI polynomial takes the per-row fallback.
-inline uint64_t friShiftedWindow(int64_t oMin, int64_t oMax, uint64_t extendBits, uint64_t nThreads)
+// From the opening-major terms of nPols polynomials.
+inline FriColGroups buildFriColGroups(const std::vector<FriTerm> &terms, const std::vector<uint64_t> &termStart, uint64_t nPols)
 {
-    const uint64_t window = nThreads + ((uint64_t)(oMax - oMin) << extendBits);
-    return window * 3 * sizeof(uint64_t) <= 48 * 1024 ? window : 0;
+    const uint64_t nOpenings = termStart.size() - 1;
+    std::vector<FriTerm> polTerm(nPols);
+    std::vector<std::vector<uint32_t>> polOps(nPols);
+    for (uint32_t o = 0; o < nOpenings; o++) {
+        for (uint64_t j = termStart[o]; j < termStart[o + 1]; j++) {
+            polTerm[terms[j].vf2Exp] = terms[j];
+            polOps[terms[j].vf2Exp].push_back(o);
+        }
+    }
+    std::map<std::vector<uint32_t>, std::vector<uint32_t>> bySet;
+    for (uint32_t c = 0; c < nPols; c++) bySet[polOps[c]].push_back(c);
+    FriColGroups r;
+    std::vector<std::vector<uint32_t>> byOpening(nOpenings);
+    for (const auto &[ops, pols] : bySet) {
+        for (uint32_t o : ops) byOpening[o].push_back(r.colStart.size() - 1);
+        for (uint32_t c : pols) r.cols.push_back(polTerm[c]);
+        r.colStart.push_back(r.cols.size());
+    }
+    r.opStart.push_back(0);
+    for (const auto &g : byOpening) {
+        r.opGroups.insert(r.opGroups.end(), g.begin(), g.end());
+        r.opStart.push_back(r.opGroups.size());
+    }
+    return r;
 }
 
 #endif

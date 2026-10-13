@@ -143,6 +143,12 @@ fn prepare_verifier_rust(
     // the evaluation map instead of an unrolled per-air function.
     let mut group_strs: Vec<String> = Vec::new();
     let mut next_eval = 0usize;
+    // vf2's exponent: each polynomial's first appearance in the eval map (fri_poly.rs).
+    let mut pol_index: std::collections::HashMap<(String, u64, u64), usize> = std::collections::HashMap::new();
+    for ev in &stark_info.ev_map {
+        let n = pol_index.len();
+        pol_index.entry((ev.ev_type.clone(), ev.commit_id, ev.id)).or_insert(n);
+    }
     for (o, opening) in stark_info.opening_points.iter().enumerate() {
         let mut ref_strs: Vec<String> = Vec::new();
         for (i, ev) in stark_info.ev_map.iter().enumerate() {
@@ -161,7 +167,8 @@ fn prepare_verifier_rust(
             // The runtime indexes `evals` with a running counter.
             assert_eq!(i, next_eval, "evMap is not ordered by opening point");
             next_eval += 1;
-            ref_strs.push(format!("FriEvalRef::new({bucket}, {offset}, {dim})"));
+            let col = pol_index[&(ev.ev_type.clone(), ev.commit_id, ev.id)];
+            ref_strs.push(format!("FriEvalRef::new({bucket}, {offset}, {dim}, {col})"));
         }
         // Opening points from hint expressions have no evaluations.
         if ref_strs.is_empty() {

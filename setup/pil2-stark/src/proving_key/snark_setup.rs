@@ -142,6 +142,8 @@ pub struct SnarkSetupConfig<'a> {
     pub powers_of_tau: Option<&'a str>,
     /// The protocol that proves the final circuit.
     pub final_snark: FinalSnark,
+    /// What the generated verifier contract's `VERSION()` returns.
+    pub contract_version: &'a str,
     /// Optional publics hash info JSON value.
     pub publics_info: Option<Value>,
     /// When true, only run the recursivef step and stop before the final SNARK.
@@ -336,6 +338,7 @@ fn gen_final_snark(
         has_recursion: false,
         is_final: true,
         agg_arity: 0,
+        batch_size: 1,
     };
     let gen_input_final = GenCircomInput {
         template_name: "src/recursion/templates/final.circom.ejs",
@@ -475,6 +478,7 @@ pub fn gen_recursivef_setup(
         has_recursion: false,
         is_final: false,
         agg_arity: 0,
+        batch_size: 1,
     };
     let rf_basic_vk: Vec<Vec<Vec<String>>> = vec![vec![const_root_str.to_vec()]];
     let gen_input_rf = GenCircomInput {
@@ -590,14 +594,14 @@ pub fn gen_recursivef_setup(
     // Build starkinfo output.
     let opening_points_rf = crate::output::stark_info::collect_opening_points(&pil_result_rf.setup);
     let field_size = crate::types::security::goldilocks_safe_extension_field_size();
-    let ev_map_len_rf = pil_result_rf.pil_code.ev_map.len();
+    let fri_batch_size = pil_result_rf.pil_code.fri_batch_size;
     let log_folding_factors_rf = crate::output::stark_info::compute_log_folding_factors(&stark_struct_rf);
     let regime = crate::types::security::regimes::DecodingRegime::Jbr;
     let fri_config_rf = crate::types::security::pcs::FriConfig {
         field_size,
         trace_length: 1u32 << stark_struct_rf.n_bits,
         rate: 1.0 / (1u64 << (stark_struct_rf.n_bits_ext - stark_struct_rf.n_bits)) as f64,
-        batch_size: ev_map_len_rf.max(1) as u64,
+        batch_size: fri_batch_size.max(1) as u64,
         batching: crate::types::security::pcs::Batching::Powers,
         log_folding_factors: log_folding_factors_rf,
         max_grinding_bits_query: stark_struct_rf.pow_bits as u64,
@@ -1012,8 +1016,8 @@ fn write_project_verifier(
             Some(f) => f.to_uppercase().to_string() + c.as_str(),
         }
     };
-    let sol = gen_solidity(config.name, const_root, publics_ref, verifier);
-    let isol = gen_iverifier(config.name, publics_ref);
+    let sol = gen_solidity(config.name, config.contract_version, const_root, publics_ref, verifier);
+    let isol = gen_iverifier(config.name, publics_ref, verifier);
     fs::write(final_dir.join(format!("{camel}Verifier.sol")), sol)?;
     fs::write(final_dir.join(format!("I{camel}Verifier.sol")), isol)?;
     Ok(())

@@ -4,10 +4,24 @@ pragma solidity ^0.8.20;
 /// @title {{ name }} Verifier Interface
 /// @author SilentSig
 /// @notice This contract is the interface for the {{ name }} Verifier.
+/// @dev `verifySnarkProof` is the only {{ name }}-binding entry point. The deployed
+/// `{{ name }}Verifier` also carries `verifyProof`, the inherited raw {{ snark_label }} verifier -- public
+/// because its assembly reads arguments at fixed calldata offsets -- which proves only
+/// that some proof satisfies some digest, with no {{ name }} statement attached. Note the names
+/// invert the usual convention: the raw one is the shorter.
 interface I{{ name }}Verifier {
     /// @notice Verifies a proof with given public values and vkey.
-    {% if has_program_vk %}/// @param programVK The verification key for the RISC-V program.
-    {% endif %}/// @param publicValues The public values encoded as bytes.
+    /// @dev {% if has_program_vk %}Both keys MUST{% else %}The root MUST{% endif %} be {% if has_program_vk %}constants{% else %}a constant{% endif %} of the calling contract, never {% if has_program_vk %}values{% else %}a value{% endif %} taken
+    /// from the submitted proof, or verification is self-keyed and authenticates
+    /// nothing.{% if has_program_vk %} For an aggregated proof both are the recurser's verkey, and pinning
+    /// them together is what extends that recurser's leaf allow-list over the whole
+    /// fold tree.{% endif %}
+    {% if has_program_vk %}/// @param programVK The identity committed by the proof: the ROM root of the
+    /// RISC-V program for a plain proof, the recursion domain for an aggregated one.
+    {% endif %}/// @param rootCVadcopFinal The recursion root the proof was wrapped under:
+    /// `{{ name }}Verifier.getRootCVadcopFinal()` for a leaf, the recurser's own verkey for
+    /// an aggregate. It is not fixed by the verifier because those differ.
+    /// @param publicValues The public values encoded as bytes.
     /// @param proofBytes The proof of the program execution the {{ name }} zkVM encoded as bytes.
     function verifySnarkProof(
         {% if has_program_vk %}bytes32 programVK,

@@ -243,10 +243,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
             d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
-    uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
-    dim3 threads(256);
-    dim3 blocks((NExtended + threads.x - 1) / threads.x);
-    computeX_kernel<<<blocks, threads, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
     TimerStopCategoryGPU(timer, FRI);
     TimerStartGPU(timer, STARK_FRI_POLYNOMIAL);
     TimerStartCategoryGPU(timer, EXPRESSIONS);

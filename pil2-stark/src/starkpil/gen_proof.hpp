@@ -122,9 +122,16 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     TimerStopAndLog(STARK_STEP_0);
 
+    const bool inplace = setupCtx.starkInfo.inplaceStageCommit;
+    if (selfContained && inplace) {
+        zklog.error("genProof: a self-contained proof needs the cm1 root before stage 2, which the in-place commit defers");
+        exitProcess();
+    }
     TimerStart(STARK_STEP_1);
     calculateWitnessExpr(setupCtx, params, expressionsCtx);
-    starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_1"));
+    if (!inplace) {
+        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_1"));
+    }
     if(selfContained) {
         starks.addTranscript(transcript, &proof.proof.roots[0][0], HASH_SIZE);
     }
@@ -147,6 +154,12 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     starks.calculateImPolsExpressions(2, params, expressionsCtx);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
+    if (inplace) {
+        TimerStart(STARK_COMMIT_STAGE_1);
+        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_1"));
+        TimerStopAndLog(STARK_COMMIT_STAGE_1);
+    }
+
     TimerStart(STARK_COMMIT_STAGE_2);
     starks.commitStage(2, nullptr, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_2"));
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
@@ -159,6 +172,15 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
             starks.addTranscript(transcript, &params.airValues[a], FIELD_EXTENSION);
             a += 3;
         }
+    }
+    // Bind airgroupvalues to the transcript.
+    uint64_t ag = 0;
+    for(uint64_t i = 0; i < setupCtx.starkInfo.airgroupValuesMap.size(); i++) {
+        uint64_t width = setupCtx.starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+        if(setupCtx.starkInfo.airgroupValuesMap[i].stage <= 2) {
+            starks.addTranscript(transcript, &params.airgroupValues[ag], width);
+        }
+        ag += width;
     }
 
     TimerStopAndLog(STARK_STEP_2);

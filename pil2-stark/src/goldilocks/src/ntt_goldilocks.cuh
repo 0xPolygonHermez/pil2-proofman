@@ -165,14 +165,15 @@ public:
     void computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                   Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                   uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper,
-                  TimerGPU &timer, cudaStream_t stream);
+                  TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg = 0);
     // legacy tiled backend (ColMajorTiled): pure kernels (graph-capturable).
     void computeQTiled(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                              Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                              uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, cudaStream_t stream);
+    // qStepLg: q holds the quotient at every 2^qStepLg-th extended point only, compactly.
     void computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                           Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
-                          uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream);
+                          uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream, uint32_t qStepLg = 0);
 
     void NTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
 
