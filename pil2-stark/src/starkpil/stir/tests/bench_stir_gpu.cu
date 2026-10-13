@@ -60,6 +60,11 @@ Sched sched(uint64_t nBits)
     throw std::runtime_error("no schedule for this nBits");
 }
 
+// ZisK (build_cf provingKey): STIR is what generate_stark_struct + the solver emit for a STIR key
+// (friBatchSize 194 / 3628); FRI is the key's real starkinfo steps.
+Sched ziskMain() { return {blake3Stir({4, 4, 4, 3}, {22, 18, 14, 10, 7}, {23, 22, 21, 20, 19}, {211, 53, 31, 22}), {23, 19, 15, 11, 8, 5}, 211, 24}; }
+Sched ziskKeccakf() { return {blake3Stir({4, 4, 4, 2}, {21, 17, 13, 9, 7}, {22, 21, 20, 19, 18}, {211, 53, 31, 22}), {22, 18, 14, 11, 8, 5}, 211, 24}; }
+
 double median(std::vector<double> v) { std::sort(v.begin(), v.end()); return v[v.size() / 2]; }
 
 void report(const char *what, uint64_t nBits, const std::vector<double> &ms)
@@ -382,18 +387,18 @@ cudaStream_t benchStream()
 
 std::vector<FE> f0For(uint64_t nBits, const StirParams &p) { std::vector<FE> f0; honestF0(f0, p, 1000 + nBits); return f0; }
 
-void benchGpuStir(uint64_t nBits)
+void benchGpuStir(uint64_t nBits, const char *what = "GPU_STIR", const Sched *custom = nullptr)
 {
-    Sched sc = sched(nBits);
+    Sched sc = custom ? *custom : sched(nBits);
     StirGpu r(sc.stir, f0For(nBits, sc.stir), benchStream());
-    report("GPU_STIR", nBits, timeGpu(r));
+    report(what, nBits, timeGpu(r));
 }
 
-void benchGpuFri(uint64_t nBits)
+void benchGpuFri(uint64_t nBits, const char *what = "GPU_FRI_LDT", const Sched *custom = nullptr)
 {
-    Sched sc = sched(nBits);
+    Sched sc = custom ? *custom : sched(nBits);
     FriGpu r(sc, f0For(nBits, sc.stir), benchStream());
-    report("GPU_FRI_LDT", nBits, timeGpu(r));
+    report(what, nBits, timeGpu(r));
 }
 
 cudaStream_t newStream() { cudaStream_t x; CHECKCUDAERR(cudaStreamCreateWithFlags(&x, cudaStreamNonBlocking)); return x; }
@@ -457,6 +462,10 @@ TEST_F(StirBench, DISABLED_BenchGraphStir19b2) { benchGraphAndConcurrent<StirGpu
 TEST_F(StirBench, DISABLED_BenchGraphStir20) { benchGraphAndConcurrent<StirGpuS>("GPU_STIR", 20); }
 TEST_F(StirBench, DISABLED_BenchGraphFri19b2) { benchGraphAndConcurrent<FriGpu>("GPU_FRI_LDT", 19); }
 TEST_F(StirBench, DISABLED_BenchGraphFri20) { benchGraphAndConcurrent<FriGpu>("GPU_FRI_LDT", 20); }
+TEST_F(StirBench, DISABLED_BenchZiskMainStir) { Sched sc = ziskMain(); benchGpuStir(22, "GPU_STIR_ZISK_MAIN", &sc); }
+TEST_F(StirBench, DISABLED_BenchZiskMainFri) { Sched sc = ziskMain(); benchGpuFri(22, "GPU_FRI_LDT_ZISK_MAIN", &sc); }
+TEST_F(StirBench, DISABLED_BenchZiskKeccakfStir) { Sched sc = ziskKeccakf(); benchGpuStir(21, "GPU_STIR_ZISK_KECCAKF", &sc); }
+TEST_F(StirBench, DISABLED_BenchZiskKeccakfFri) { Sched sc = ziskKeccakf(); benchGpuFri(21, "GPU_FRI_LDT_ZISK_KECCAKF", &sc); }
 TEST_F(StirBench, DISABLED_BenchCpuStir17) { benchCpuStir(17); }
 TEST_F(StirBench, DISABLED_BenchCpuStir19b2) { benchCpuStir(19); }
 TEST_F(StirBench, DISABLED_BenchCpuStir20) { benchCpuStir(20); }
