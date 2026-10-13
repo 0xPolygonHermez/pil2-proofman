@@ -116,14 +116,12 @@ T *upload(const std::vector<T> &v)
     return d;
 }
 
-// As calculateFRIExpression launches them, nThreads rows per block (friThreads unless given).
-std::vector<Goldilocks::Element> runKernel(const FriCase &c, uint32_t nThreads = 0)
+// As calculateFRIExpression launches them: the denominators at their own shape, then nThreads rows per block.
+std::vector<Goldilocks::Element> runKernel(const FriCase &c, uint32_t nThreads = 256)
 {
     const uint64_t n = c.domainSize(), O = c.nOpenings();
-    FriWindow w = friWindow(c.openings, c.extendBits, nThreads == 0 ? n : nThreads);
-    EXPECT_NE(w.nThreads, 0u);
-    const Goldilocks::Element wExt = Goldilocks::w(c.nBitsExt), wStep = Goldilocks::pow(wExt, w.nThreads);
-    for (FriSegment &s : w.segments) s.w = Goldilocks::pow(wExt, (uint64_t)s.offset & (n - 1)).fe;
+    const uint32_t denThreads = friDenominatorThreads(n);
+    const Goldilocks::Element wExt = Goldilocks::w(c.nBitsExt), wDen = Goldilocks::pow(wExt, denThreads);
     uint64_t nPols = 0;
     for (const FriTerm &t : c.terms) nPols = std::max<uint64_t>(nPols, t.vf2Exp + 1);
     const FriColGroups g = buildFriColGroups(c.terms, c.termStart, nPols);
@@ -137,9 +135,8 @@ std::vector<Goldilocks::Element> runKernel(const FriCase &c, uint32_t nThreads =
     FriTerm *dCols = g.cols.empty() ? nullptr : upload(g.cols);
     uint32_t *dColStart = upload(g.colStart), *dOpStart = upload(g.opStart);
     uint32_t *dOpGroups = g.opGroups.empty() ? nullptr : upload(g.opGroups);
-    FriSegment *dSegs = upload(w.segments);
-    uint32_t *dOpBase = upload(w.opBase);
-    gl64_t *b = nullptr, *a = nullptr, *k = nullptr, *fri = nullptr;
+    gl64_t *b = nullptr, *a = nullptr, *k = nullptr, *fri = nullptr, *den = nullptr;
+    CHECKCUDAERR(cudaMalloc(&den, n * FIELD_EXTENSION * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc(&b, (nPols + 1) * FIELD_EXTENSION * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc(&a, O * FIELD_EXTENSION * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc(&k, O * FIELD_EXTENSION * sizeof(gl64_t)));
@@ -147,9 +144,12 @@ std::vector<Goldilocks::Element> runKernel(const FriCase &c, uint32_t nThreads =
 
     computeFRIConstants(O, nPols, openings, Goldilocks::w(c.nBitsExt - c.extendBits).fe, termStart, terms, evals, vf1, vf2,
                         b, a, k);
-    computeFRIExpression<<<n / w.nThreads, w.nThreads, friSharedBytes(w.size)>>>(
-        n, O, w.size, w.segments.size(), dSegs, dOpBase, Goldilocks::shift().fe, wExt.fe, wStep.fe, Goldilocks::inv(wStep).fe, xi,
-        g.colStart.size() - 1, dColStart, dCols, dOpStart, dOpGroups, b, a, k, cm, custom, fixed, fri);
+    computeFRIDenominators<<<friDenominatorBlocks(n, denThreads), denThreads>>>(
+        n, Goldilocks::shift().fe, wExt.fe, wDen.fe, Goldilocks::inv(wDen).fe, xi, den);
+    CHECKCUDAERR(cudaGetLastError());
+    computeFRIExpression<<<n / nThreads, nThreads>>>(
+        n, O, c.extendBits, openings, den, g.colStart.size() - 1, dColStart, dCols, dOpStart, dOpGroups, b, a, k, cm, custom,
+        fixed, fri);
     CHECKCUDAERR(cudaGetLastError());
     CHECKCUDAERR(cudaDeviceSynchronize());
 
@@ -157,12 +157,12 @@ std::vector<Goldilocks::Element> runKernel(const FriCase &c, uint32_t nThreads =
     CHECKCUDAERR(cudaMemcpy(out.data(), fri, out.size() * sizeof(gl64_t), cudaMemcpyDeviceToHost));
     for (void *p : {(void *)cm, (void *)custom, (void *)fixed, (void *)evals, (void *)xi, (void *)vf1, (void *)vf2,
                     (void *)openings, (void *)termStart, (void *)terms, (void *)dCols, (void *)dColStart,
-                    (void *)dOpStart, (void *)dOpGroups, (void *)dSegs, (void *)dOpBase, (void *)b, (void *)a, (void *)k, (void *)fri})
+                    (void *)dOpStart, (void *)dOpGroups, (void *)den, (void *)b, (void *)a, (void *)k, (void *)fri})
         cudaFree(p);
     return out;
 }
 
-void expectMatches(const FriCase &c, uint32_t nThreads = 0)
+void expectMatches(const FriCase &c, uint32_t nThreads = 256)
 {
     const auto got = runKernel(c, nThreads), want = c.reference();
     ASSERT_EQ(got.size(), want.size());
@@ -192,7 +192,7 @@ INSTANTIATE_TEST_SUITE_P(Shapes, FriExpressionShapes,
                                          std::vector<uint64_t>{2, 3, 4, 5, 6, 7, 8, 9}),
                        ::testing::Values(0, 1, 2)));
 
-// Blocks from one row (a window of D per thread) to 256.
+// Blocks from one row to 256.
 TEST(FriExpression, MatchesHostReferenceAtAnyBlockSize)
 {
     for (uint32_t nThreads : {1, 32, 256}) {
@@ -231,51 +231,13 @@ TEST(FriExpression, MatchesHostReferenceWideOpeningRange)
     expectMatches(c);
 }
 
-// Contiguous openings take one segment; far apart ones a segment each, so the range does not matter.
-TEST(FriExpression, WindowSegments)
-{
-    std::vector<int64_t> keccak;
-    for (int64_t o = -134; o <= 5; o++) keccak.push_back(o);
-    FriWindow w = friWindow(keccak, 1, 1 << 22);
-    EXPECT_EQ(w.nThreads, 256u);
-    EXPECT_EQ(w.segments.size(), 1u);
-    EXPECT_EQ(w.size, 256u + 139 * 2);
-    EXPECT_EQ(w.opBase[0], 139u * 2);   // opening -134 reads the latest rows
-    EXPECT_EQ(friWindow({0, 1792}, 0, 1 << 22).nThreads, 256u);
-    w = friWindow({-100000, 0, 1, 100000}, 2, 1 << 22);
-    EXPECT_EQ(w.nThreads, 256u);
-    EXPECT_EQ(w.segments.size(), 3u);
-    EXPECT_EQ(w.size, 3 * 256u + 4);
-    std::vector<int64_t> sparse;
-    for (int64_t o = 0; o < 64; o++) sparse.push_back(o * 1000);
-    EXPECT_EQ(friWindow(sparse, 1, 1 << 22).nThreads, 16u);   // 64 * 32 rows * 24 bytes = 48 KiB, plus the block's x
-    sparse.pop_back();
-    EXPECT_EQ(friWindow(sparse, 1, 1 << 22).nThreads, 32u);
-}
-
-// A window right at the shared-memory limit launches.
-TEST(FriExpression, MatchesHostReferenceAtTheSharedMemoryLimit)
-{
-    FriCase c;
-    c.counts.clear();
-    for (int64_t o = 0; o < 63; o++) {
-        c.openings.push_back(o * 1000);
-        c.counts.push_back(1 + o % 3);
-    }
-    c.build(0x5a3);
-    const FriWindow w = friWindow(c.openings, c.extendBits, c.domainSize());
-    ASSERT_EQ(w.nThreads, 32u);
-    ASSERT_GT(friSharedBytes(w.size), 47u * 1024);
-    expectMatches(c);
-}
-
 // More groups than one batch of S_G (FRI_GROUP_BATCH).
 TEST(FriExpression, MatchesHostReferenceWithManyGroups)
 {
     FriCase c;
-    c.counts.resize(24);
-    for (uint64_t o = 0; o < 24; o++) c.counts[o] = (o * 7 + 3) % 13;
-    c.nDistinctCols = 97;
+    c.counts.resize(48);
+    for (uint64_t o = 0; o < 48; o++) c.counts[o] = (o * 7 + 3) % 13;
+    c.nDistinctCols = 97;   // 52 groups: two batches, the second partial
     c.build(0x9a0);
     uint64_t nPols = 0;
     for (const FriTerm &t : c.terms) nPols = std::max<uint64_t>(nPols, t.vf2Exp + 1);

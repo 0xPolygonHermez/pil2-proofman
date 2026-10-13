@@ -85,11 +85,6 @@ struct AirInstanceInfo {
     // FRI terms opening-major (friTermStart has nOpenings + 1 bounds), for fri_expression.cuh.
     FriTerm *friTerms = nullptr;
     uint64_t *friTermStart = nullptr;
-    // The FRI kernel's block shape (friWindow).
-    uint32_t friThreadsPerBlock = 0, nFriSegments = 0;
-    uint64_t friWindowRows = 0;
-    FriSegment *friSegments = nullptr;
-    uint32_t *friOpBase = nullptr;
     // Polynomials grouped by opening set.
     FriTerm *friCols = nullptr;
     uint32_t *friColStart = nullptr, *friOpStart = nullptr, *friOpGroups = nullptr;
@@ -227,18 +222,10 @@ struct AirInstanceInfo {
                 zklog.error("AirInstanceInfo: aux_trace has no fri_constants region (StarkInfo not loaded for gpu)");
                 exitProcess();
             }
-            const uint64_t nBitsExt = setupCtx->starkInfo.starkStruct.nBitsExt;
-            FriWindow w = friWindow(setupCtx->starkInfo.openingPoints, nBitsExt - setupCtx->starkInfo.starkStruct.nBits, 1ULL << nBitsExt);
-            if (w.nThreads == 0) {
-                zklog.error("AirInstanceInfo: too many opening points for the FRI kernel's shared memory");
+            if (setupCtx->starkInfo.mapOffsets.count(std::make_pair("fri_denominators", true)) == 0) {
+                zklog.error("AirInstanceInfo: aux_trace has no fri_denominators region (StarkInfo not loaded for gpu)");
                 exitProcess();
             }
-            for (FriSegment &seg : w.segments) seg.w = Goldilocks::pow(Goldilocks::w(nBitsExt), (uint64_t)seg.offset & ((1ULL << nBitsExt) - 1)).fe;
-            friThreadsPerBlock = w.nThreads;
-            friWindowRows = w.size;
-            nFriSegments = w.segments.size();
-            friSegments = uploadVec(w.segments);
-            friOpBase = uploadVec(w.opBase);
         }
 
         // Each opening's terms; vf2's exponent is the polynomial's first appearance in the eval map (fri_poly.rs).
@@ -327,7 +314,7 @@ struct AirInstanceInfo {
         CHECKCUDAERR(cudaFree(d_num_packed_words));
 
         for (void *p : {(void *)friTerms, (void *)friTermStart, (void *)friCols, (void *)friColStart, (void *)friOpStart,
-                        (void *)friOpGroups, (void *)friSegments, (void *)friOpBase})
+                        (void *)friOpGroups})
             if (p != nullptr) CHECKCUDAERR(cudaFree(p));
 
         if (unpack_info != nullptr) {

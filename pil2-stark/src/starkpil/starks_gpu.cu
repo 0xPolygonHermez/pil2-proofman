@@ -1266,11 +1266,16 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
                         Goldilocks::w(si.starkStruct.nBits).fe, air_instance_info->friTermStart, air_instance_info->friTerms,
                         (gl64_t*)h_params.evals, challenges + 4 * FIELD_EXTENSION, challenges + 5 * FIELD_EXTENSION, d_b,
                         d_a, d_k, stream);
-    const uint32_t nThreads = air_instance_info->friThreadsPerBlock;
-    const Goldilocks::Element wExt = Goldilocks::w(si.starkStruct.nBitsExt), wStep = Goldilocks::pow(wExt, nThreads);
-    computeFRIExpression<<<domainSize / nThreads, nThreads, friSharedBytes(air_instance_info->friWindowRows), stream>>>(
-        domainSize, nOpenings, air_instance_info->friWindowRows, air_instance_info->nFriSegments, air_instance_info->friSegments, air_instance_info->friOpBase,
-        Goldilocks::shift().fe, wExt.fe, wStep.fe, Goldilocks::inv(wStep).fe, (gl64_t*)d_xiChallenge,
+    // 1/(x - xi) once over the domain: dead zi/helper space behind q, overwritten by the first fold (fri_1).
+    gl64_t *d_den = (gl64_t*)h_params.aux_trace + si.mapOffsets[std::make_pair("fri_denominators", true)];
+    const uint32_t denThreads = friDenominatorThreads(domainSize);
+    const Goldilocks::Element wExt = Goldilocks::w(si.starkStruct.nBitsExt), wDen = Goldilocks::pow(wExt, denThreads);
+    computeFRIDenominators<<<friDenominatorBlocks(domainSize, denThreads), denThreads, 0, stream>>>(
+        domainSize, Goldilocks::shift().fe, wExt.fe, wDen.fe, Goldilocks::inv(wDen).fe, (gl64_t*)d_xiChallenge, d_den);
+    CHECKCUDAERR(cudaGetLastError());
+    const uint32_t nThreads = 256;
+    computeFRIExpression<<<domainSize / nThreads, nThreads, 0, stream>>>(
+        domainSize, nOpenings, si.starkStruct.nBitsExt - si.starkStruct.nBits, air_instance_info->opening_points, d_den,
         air_instance_info->nFriGroups, air_instance_info->friColStart, air_instance_info->friCols,
         air_instance_info->friOpStart, air_instance_info->friOpGroups, d_b, d_a, d_k, (gl64_t*)h_params.aux_trace,
         (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)h_params.pConstPolsExtendedTreeAddress, d_fri);
