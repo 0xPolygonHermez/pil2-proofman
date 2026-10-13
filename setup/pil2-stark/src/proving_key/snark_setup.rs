@@ -540,7 +540,11 @@ pub fn gen_recursivef_setup(
         fs::read(&r1cs_rf).with_context(|| format!("Failed to read recursivef.r1cs: {}", r1cs_rf.display()))?;
     let plonk_opts_rf = PlonkOptions {
         airgroup_name: Some("Recursivef".to_string()),
-        max_constraint_degree: None,
+        // blake3's follows its blowup, as the compressed final's does.
+        max_constraint_degree: settings
+            .blowup_factor
+            .filter(|_| config.hash == "blake3")
+            .map(proofman_common::hash_family::max_constraint_degree_for_blowup),
         hash_id: config.hash.to_string(),
         merge_copies: true,
         blake3_lanes,

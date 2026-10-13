@@ -280,6 +280,18 @@ struct SetupRecursivefArgs {
     /// The blake3 lanes of its AIR: compressions side by side in a row.
     #[arg(long, default_value_t = recursivef_cmd::RECURSIVEF_LANES)]
     lanes: usize,
+    /// Its FRI folding factor, as log2.
+    #[arg(long, default_value_t = recursivef_cmd::RECURSIVEF_FOLDING)]
+    folding: usize,
+    /// Its proof-of-work bits.
+    #[arg(long, default_value_t = recursivef_cmd::RECURSIVEF_GRINDING)]
+    grinding: usize,
+    /// The Merkle levels its proof carries whole.
+    #[arg(long, default_value_t = recursivef_cmd::RECURSIVEF_LAST_LEVELS)]
+    last_levels: usize,
+    /// Its FRI terminal, as log2 of the domain.
+    #[arg(long, default_value_t = recursivef_cmd::RECURSIVEF_TERMINAL)]
+    terminal: usize,
     /// CUDA arch spec of its Q kernel (.exps.so): auto | major | "89,120" | sm_120. No kernel
     /// without nvcc.
     #[arg(long, default_value = "auto")]
@@ -591,7 +603,13 @@ fn main() -> anyhow::Result<()> {
             tracing::info!("  build_dir: {}", args.build_dir);
             recursivef_cmd::run_setup_recursivef(&SetupRecursivefOptions {
                 build_dir: args.build_dir,
-                blowup: args.blowup,
+                geometry: recursivef_cmd::RecursivefGeometry {
+                    blowup: args.blowup,
+                    folding: args.folding,
+                    grinding: args.grinding,
+                    last_levels: args.last_levels,
+                    terminal: args.terminal,
+                },
                 lanes: args.lanes,
                 exps_arch: args.exps_arch,
             })

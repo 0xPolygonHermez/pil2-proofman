@@ -16,39 +16,47 @@ use serde_json::Value;
 use crate::commands::recursive_setup::{resolve_circom_exec, resolve_path_env};
 use crate::commands::setup_snark::parse_const_root;
 use crate::output::witness_gen::WitnessTracker;
-use crate::proving_key::recursive::{self, RecursiveTemplate::Recursive2};
 use crate::proving_key::snark_setup::{gen_recursivef_setup, RecursivefSetupConfig};
 use crate::types::stark_struct::StarkSettings;
 
-/// The blake3 recursivef's blowup by default: 3, measured against 4 on the blake3 wrap: 70 queries
-/// and an extension of 2^23 (14 GB of prover) against 53 and 2^24 (27.7 GB), a GPU proof of 136 ms
-/// against 234 ms, and the same wrap (2^20 rows, the same gas).
-pub const RECURSIVEF_BLOWUP: usize = 3;
+/// The blake3 recursivef's geometry by default: what its BN128 wrap verifies, so set for the wrap's
+/// rows, not for a proof's size (41 queries, a 2^19 wrap; blowup 4: 51 queries, 2^20).
+pub const RECURSIVEF_BLOWUP: usize = 5;
+pub const RECURSIVEF_LANES: usize = 2;
+pub const RECURSIVEF_FOLDING: usize = 4;
+pub const RECURSIVEF_GRINDING: usize = 27;
+pub const RECURSIVEF_LAST_LEVELS: usize = 6;
+/// The FRI terminal, as log2 of its domain.
+pub const RECURSIVEF_TERMINAL: usize = 8;
 
-/// Its lanes by default: it verifies one proof, so what it pays for is its width, which is what its
-/// verifier opens (2 lanes: 3% more hashes, for 31% less prover memory).
-pub const RECURSIVEF_LANES: usize = 1;
+/// The recursivef's FRI and grinding knobs.
+#[derive(Clone, Copy, Debug)]
+pub struct RecursivefGeometry {
+    pub blowup: usize,
+    pub folding: usize,
+    pub grinding: usize,
+    pub last_levels: usize,
+    pub terminal: usize,
+}
 
-/// The blake3 recursivef's stark struct at `blowup`: the recursion's grinding and kept levels, with
-/// finalDegree (a terminal DOMAIN size) shifted by the blowup so that the terminal polynomial's
-/// degree is the recursion's.
-pub fn recursivef_settings(hash: &str, blowup: usize) -> StarkSettings {
-    let terminal =
-        proofman_common::hash_family::fri_terminal_degree(hash) - recursive::recursive_blowup(Recursive2, hash);
-    StarkSettings {
-        blowup_factor: Some(blowup),
-        final_degree: Some(terminal + blowup),
-        last_level_verification: recursive::recursive_last_level_verification(Recursive2, hash),
-        pow_bits: Some(recursive::recursive_grinding_bits(Recursive2, hash)),
-        ..Default::default()
+impl RecursivefGeometry {
+    fn settings(&self) -> StarkSettings {
+        StarkSettings {
+            blowup_factor: Some(self.blowup),
+            folding_factor: Some(self.folding),
+            final_degree: Some(self.terminal),
+            last_level_verification: Some(self.last_levels),
+            pow_bits: Some(self.grinding),
+            ..Default::default()
+        }
     }
 }
 
 pub struct SetupRecursivefOptions {
     /// Build directory containing `provingKey/<name>/vadcop_final/`.
     pub build_dir: String,
-    /// Its blowup ([`RECURSIVEF_BLOWUP`] by default) and its blake3 lanes ([`RECURSIVEF_LANES`]).
-    pub blowup: usize,
+    pub geometry: RecursivefGeometry,
+    /// Its blake3 lanes ([`RECURSIVEF_LANES`] by default).
     pub lanes: usize,
     /// CUDA arch spec of its Q kernel, `.exps.so` ([`crate::commands::gen_exps`]).
     pub exps_arch: String,
@@ -125,9 +133,9 @@ pub fn run_setup_recursivef(opts: &SetupRecursivefOptions) -> Result<()> {
     };
     let recursivef_dir = proving_key_dir.join("recursivef");
     tracing::info!(
-        "Running the {hash} recursivef setup for '{name}' in {}: blowup {}, {} lane(s)",
+        "Running the {hash} recursivef setup for '{name}' in {}: {:?}, {} lane(s)",
         recursivef_dir.display(),
-        opts.blowup,
+        opts.geometry,
         opts.lanes
     );
     gen_recursivef_setup(
@@ -137,7 +145,7 @@ pub fn run_setup_recursivef(opts: &SetupRecursivefOptions) -> Result<()> {
         &stark_info,
         &verifier_info,
         &recursivef_dir,
-        &recursivef_settings(&hash, opts.blowup),
+        &opts.geometry.settings(),
         Some(opts.lanes),
     )
     .context("recursivef setup failed")?;
