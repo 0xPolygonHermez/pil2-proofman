@@ -35,16 +35,19 @@ pub enum Ptau {
 /// `repo_root` is the repository's root, where plonk2pil's PIL and the std are.
 pub fn set_up_key(repo_root: &Path, dir: &Path, res: &PlonkResult<Bn128>, ptau: Ptau) -> PathBuf {
     // More powers than the layout's largest degree, 13·N + 12 for L1 at the family's knobs.
-    set_up_key_with_powers(repo_root, dir, res, ptau, 14 << res.n_bits)
+    set_up_key_with(repo_root, dir, res, ptau, 14 << res.n_bits, EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE)
 }
 
-/// [`set_up_key`] with a ptau of `n_g1` powers, at least the layout's largest degree.
-pub fn set_up_key_with_powers(
+/// [`set_up_key`] with a ptau of `n_g1` powers, at least the layout's largest degree, and the
+/// family's `extra_muls` and `max_constraint_degree` (the blake3 wrap's are not the poseidon one's).
+pub fn set_up_key_with(
     repo_root: &Path,
     dir: &Path,
     res: &PlonkResult<Bn128>,
     ptau: Ptau,
     n_g1: usize,
+    extra_muls: u64,
+    max_constraint_degree: u64,
 ) -> PathBuf {
     let pilout = compile_pil(repo_root, dir, &res.pil_str);
     let powers_of_tau = match ptau {
@@ -59,8 +62,8 @@ pub fn set_up_key_with_powers(
         airout_path: pilout,
         build_dir: dir.join("build"),
         powers_of_tau,
-        max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
-        extra_muls: EXTRA_MULS,
+        max_constraint_degree,
+        extra_muls,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
         no_packing: false,
         solidity: false,

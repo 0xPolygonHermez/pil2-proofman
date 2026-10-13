@@ -7,7 +7,8 @@
 //! - `the_device_builds_the_hosts_witness`: the witness the GPU builds from its parts
 //!   (`WrapWitness::device_witness`, `proofman_pilfflonk::prove_exec`) is the host's
 //!   (`WrapWitness::witness_from_zkin`): the same columns, and the same proof with the same blinding
-//!   seed. Without a GPU it says so and passes, as pil2-stark's GPU tests do.
+//!   seed. Without a GPU it says so and passes, and fails with PILFFLONK_GPU=1, as pil2-stark's
+//!   GPU tests do.
 //!
 //! Both need `PIL2C_EXEC` and, as the other tests here, Node.js and snarkjs:
 //!
@@ -38,7 +39,8 @@ use proofman_pilfflonk::{
 };
 
 use common::{build_final, circuits_bn128, missing_prerequisite, repo_root};
-use wrap_key::{set_up_key_with_powers, Ptau};
+use pil2_stark_recurser::plonk2pil::setups::blake3_bn128::wrap as blake3_wrap;
+use wrap_key::{set_up_key_with, Ptau};
 
 /// The circuit's files, its wrap and its key, built once for the tests of this binary.
 struct Circuit {
@@ -86,8 +88,16 @@ fn build_circuit() -> Circuit {
     fs::write(dir.join("final/final.exec"), exec).unwrap();
     let key_dir = dir.join("key");
     fs::create_dir_all(&key_dir).unwrap();
-    // The blake3 wrap's largest f, 32·N + 31.
-    let key = set_up_key_with_powers(&repo_root(), &key_dir, &res, Ptau::TauOne, 33 << res.n_bits);
+    // The blake3 wrap's knobs, as setup-snark's; a ptau past its largest f, 32·N + 31.
+    let key = set_up_key_with(
+        &repo_root(),
+        &key_dir,
+        &res,
+        Ptau::TauOne,
+        33 << res.n_bits,
+        blake3_wrap::EXTRA_MULS,
+        blake3_wrap::MAX_CONSTRAINT_DEGREE as u64,
+    );
     let zkin = serde_json::from_slice(&fs::read(fixtures.join("blake3_wrap.json")).unwrap()).unwrap();
     Circuit { dir, key, zkin }
 }
@@ -136,6 +146,8 @@ fn the_witness_checks_and_binds_its_inverses() {
 #[ignore = "needs PIL2C_EXEC"]
 fn the_device_builds_the_hosts_witness() {
     if !gpu_available() {
+        // As pil2-stark's GPU tests: PILFFLONK_GPU=1 asks for the GPU, and then a skip fails.
+        assert!(std::env::var_os("PILFFLONK_GPU").is_none_or(|v| v != "1"), "PILFFLONK_GPU=1 and no GPU");
         eprintln!("skipping the blake3 wrap's device test: no GPU");
         return;
     }

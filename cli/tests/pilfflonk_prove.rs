@@ -2577,3 +2577,48 @@ fn foundry_and_the_js_verifier_agree_on_mutated_proofs() {
         problems.join("\n")
     );
 }
+
+/// The Q kernels gen-exps generates (`<air>.exps.so`, setup/exps-codegen's pilfflonk target) give
+/// the interpreter's proof: each program's key, with its kernels, proved on the GPU once with them
+/// and once with `PILFFLONK_EXPS=0`, with one seed, gives the same bytes, and the first run loaded
+/// them. Without a GPU or nvcc it says so and passes; with `PILFFLONK_GPU=1` a missing GPU fails.
+#[test]
+#[ignore = "needs PIL2C_EXEC, nvcc and a GPU"]
+fn the_generated_q_kernels_prove_as_the_interpreter_does() {
+    if !gpu_available() {
+        assert_ne!(std::env::var("PILFFLONK_GPU").as_deref(), Ok("1"), "PILFFLONK_GPU=1, and there is no GPU");
+        eprintln!("skipping the generated Q kernels' test: no GPU");
+        return;
+    }
+    if !Command::new("nvcc").arg("--version").output().is_ok_and(|o| o.status.success()) {
+        eprintln!("skipping the generated Q kernels' test: no nvcc on PATH");
+        return;
+    }
+    for program in [Program::Fibonacci, Program::Signed, Program::SumBus, Program::ProdBus] {
+        let f = fixture(&format!("exps_{program:?}"), program, Packing::ExtraMuls(DEFAULT_EXTRA_MULS));
+        let summary = proofman_exps_codegen::generate_all(&f.proving_key, &Default::default()).unwrap();
+        assert!(summary.placed > 0 && summary.skipped.is_empty(), "{program:?}: no kernel ({:?})", summary.skipped);
+        let prove = |out: &Path, interpreter: bool| {
+            let (key, witness) = (f.proving_key.to_str().unwrap(), f.witness.to_str().unwrap());
+            let mut command = Command::new(env!("CARGO_BIN_EXE_proofman-cli"));
+            command.args(["pilfflonk", "prove", "-k", key, "--witness", witness, "-o", out.to_str().unwrap()]);
+            command.args(["--insecure-blinding-seed", SEED_A, "--gpu"]);
+            if interpreter {
+                command.env("PILFFLONK_EXPS", "0");
+            }
+            let run = command.output().expect("proofman-cli runs");
+            assert!(run.status.success(), "{program:?}: {}", output(&run));
+            output(&run)
+        };
+        let (generated, interpreted) = (f.dir.file("generated"), f.dir.file("interpreted"));
+        assert!(prove(&generated, false).contains("generated expression kernels from"), "{program:?}: not loaded");
+        assert!(!prove(&interpreted, true).contains("generated expression kernels from"), "{program:?}: loaded");
+        for file in ["proof.json", "publics.json"] {
+            assert_eq!(
+                fs::read(generated.join(file)).unwrap(),
+                fs::read(interpreted.join(file)).unwrap(),
+                "{program:?}: {file} with the generated kernels"
+            );
+        }
+    }
+}

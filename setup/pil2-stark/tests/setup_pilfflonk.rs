@@ -145,10 +145,11 @@ fn column_symbol(name: &str, kind: pb::SymbolType, id: u32, stage: u32) -> pb::S
 /// airgroup and its AIR.
 fn proving_key_files(name: &str, airgroup: &str, air: &str) -> Vec<String> {
     let mut files: Vec<String> =
-        ["bin", "const", "expressionsinfo.json", "pilfflonkinfo.json", "verifierinfo.json", "verkey.json"]
+        ["bin", "coefs", "const", "expressionsinfo.json", "pilfflonkinfo.json", "verifierinfo.json", "verkey.json"]
             .iter()
             .map(|ext| format!("{name}/{airgroup}/airs/{air}/air/{air}.{ext}"))
             .collect();
+    files.push(format!("{name}/pilfflonk/pilfflonk.shift.bin"));
     files.push(format!("{name}/pilfflonk/pilfflonk.srs.bin"));
     files.push(format!("{name}/pilfflonk/pilfflonk.vkey.json"));
     files.push("pilout.globalConstraints.json".into());
