@@ -534,6 +534,7 @@ pub(crate) fn run_recursive_setup(
             std_pil_path: &std_pil_path,
             recurser_pil_path: &recurser_pil_path,
             circom_helpers_dir: &circom_helpers_dir,
+            low_degree_test: None,
         };
 
         compressed_final::gen_compressed_final_setup(&compressed_config, &witness_tracker)

@@ -212,6 +212,10 @@ struct SetupCompressedFinalArgs {
     /// Build directory containing `provingKey/<name>/vadcop_final/`.
     #[arg(short = 'b', long)]
     build_dir: String,
+
+    /// Low-degree test of the compressed proof: FRI (default) or STIR
+    #[arg(long)]
+    low_degree_test: Option<String>,
 }
 
 #[derive(Parser)]
@@ -481,7 +485,13 @@ fn main() -> anyhow::Result<()> {
         Commands::SetupCompressedFinal(args) => {
             tracing::info!("proofman-setup setup-compressed-final: starting");
             tracing::info!("  build_dir: {}", args.build_dir);
-            let opts = SetupCompressedFinalOptions { build_dir: args.build_dir };
+            let low_degree_test = match args.low_degree_test.as_deref() {
+                None => None,
+                Some("FRI") => Some(pil2_stark_setup::types::stark_struct::LowDegreeTestKind::Fri),
+                Some("STIR") => Some(pil2_stark_setup::types::stark_struct::LowDegreeTestKind::Stir),
+                Some(other) => anyhow::bail!("--low-degree-test must be FRI or STIR (got {other:?})"),
+            };
+            let opts = SetupCompressedFinalOptions { build_dir: args.build_dir, low_degree_test };
             compressed_final_cmd::run_setup_compressed_final(&opts)
         }
 

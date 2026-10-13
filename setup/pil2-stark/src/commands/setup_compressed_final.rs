@@ -15,6 +15,8 @@ use crate::proving_key::compressed_final::{gen_compressed_final_setup, Compresse
 pub struct SetupCompressedFinalOptions {
     /// Build directory containing `provingKey/<name>/vadcop_final/`.
     pub build_dir: String,
+    /// Low-degree test of the compressed proof; `None` is FRI.
+    pub low_degree_test: Option<crate::types::stark_struct::LowDegreeTestKind>,
 }
 
 pub fn run_setup_compressed_final(opts: &SetupCompressedFinalOptions) -> Result<()> {
@@ -97,6 +99,7 @@ pub fn run_setup_compressed_final(opts: &SetupCompressedFinalOptions) -> Result<
         std_pil_path: &std_pil_path,
         recurser_pil_path: &recurser_pil_path,
         circom_helpers_dir: &circom_helpers_dir,
+        low_degree_test: opts.low_degree_test,
     };
 
     tracing::info!("Running compressed final setup (standalone) for '{}'", name);

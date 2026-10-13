@@ -46,12 +46,22 @@ pub struct CompressedFinalConfig<'a> {
     pub std_pil_path: &'a str,
     pub recurser_pil_path: &'a str,
     pub circom_helpers_dir: &'a str,
+    /// Low-degree test of the compressed proof; `None` is FRI.
+    pub low_degree_test: Option<crate::types::stark_struct::LowDegreeTestKind>,
 }
 
 /// Run the compressed final setup.
 ///
 /// Ports `genCompressedFinalSetup()` from `generateCompressedFinalSetup.js`.
 pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tracker: &WitnessTracker) -> Result<()> {
+    if config.low_degree_test == Some(crate::types::stark_struct::LowDegreeTestKind::Stir)
+        && proofman_common::hash_family::supports_snark(config.hash)
+    {
+        bail!(
+            "{} compressed proofs go into the BN128 wrap, which verifies FRI only: build this compressed final with FRI",
+            config.hash
+        );
+    }
     let template = "vadcop_final_compressed";
     let verifier_name = "vadcop_final_stark.verifier.circom";
     let build_dir = PathBuf::from(config.build_dir);
@@ -227,6 +237,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
             proofman_common::hash_family::compressed_final_fri_terminal_degree(config.hash)
                 - proofman_common::hash_family::compressed_final_blowup_factor(config.hash),
         ),
+        low_degree_test: config.low_degree_test,
         ..Default::default()
     };
     let compressed_stark_struct =
