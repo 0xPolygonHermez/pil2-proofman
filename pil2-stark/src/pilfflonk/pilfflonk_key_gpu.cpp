@@ -781,8 +781,13 @@ void GpuAirKey::setExec(const pilfflonk_exec_static &exec) {
     bool outOfRange = false;
 #pragma omp parallel for reduction(|| : outOfRange)
     for (uint64_t i = 0; i < exec.n_adds; ++i) {
-        outOfRange = outOfRange || exec.add_wire1[i] >= exec.n_wires + i || exec.add_wire2[i] >= exec.n_wires + i ||
-                     exec.add_level[i] >= exec.n_levels;
+        const uint32_t reads[2] = {exec.add_wire1[i], exec.add_wire2[i]};
+        bool bad = exec.add_level[i] >= exec.n_levels;
+        for (uint32_t w : reads) {
+            // An addition read is of a level below: the kernel runs the levels in order.
+            bad = bad || w >= exec.n_wires + i || (w >= exec.n_wires && exec.add_level[w - exec.n_wires] >= exec.add_level[i]);
+        }
+        outOfRange = outOfRange || bad;
     }
 #pragma omp parallel for reduction(|| : outOfRange)
     for (uint64_t i = 0; i < cells; ++i) {

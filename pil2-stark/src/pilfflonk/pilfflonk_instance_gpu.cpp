@@ -53,7 +53,7 @@ InstanceGpu::InstanceGpu(const GpuAirKey &_air, const pilfflonk_exec_witness &ex
     if (parts == nullptr) {
         throw std::invalid_argument("InstanceGpu: the key has no exec parts (pilfflonk_ctx_set_exec)");
     }
-    if (C != WRAP_COLS || N < TABLE_ROWS || exec.n_blocks * 64 > N || exec.n_wires != parts->nWires) {
+    if (C != WRAP_COLS || N < TABLE_ROWS || exec.n_blocks > N / 64 || exec.n_wires != parts->nWires) {
         throw std::invalid_argument("InstanceGpu: the exec witness is not one of the blake3 wrap's AIR (" +
                                     std::to_string(C) + " columns, 2^" + std::to_string(key.info().nBits) +
                                     " rows, " + std::to_string(parts->nWires) + " wires)");

@@ -484,6 +484,11 @@ int pilfflonk_ctx_set_exec(const void *ctx, uint64_t airgroup_id, uint64_t air_i
         if (ctx == nullptr || exec == nullptr) {
             return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx or exec is NULL");
         }
+        const bool adds = exec->add_wire1 != nullptr && exec->add_wire2 != nullptr && exec->add_coef1 != nullptr &&
+                          exec->add_coef2 != nullptr && exec->add_level != nullptr;
+        if ((exec->n_adds != 0 && !adds) || (exec->map_rows * exec->map_cols != 0 && exec->map == nullptr)) {
+            return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "an array of the exec is NULL");
+        }
         const uint8_t *scalars[2] = {exec->add_coef1, exec->add_coef2};
         const char *what[2] = {"coef1", "coef2"};
         for (int i = 0; i < 2; ++i) {
@@ -710,6 +715,19 @@ void *pilfflonk_instance_new_exec(const void *ctx, uint64_t airgroup_id, uint64_
         if (ctx == nullptr || exec == nullptr) {
             fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "ctx or exec is NULL");
             return nullptr;
+        }
+        if ((exec->n_wires != 0 && exec->wires == nullptr) || (exec->n_blocks != 0 && exec->blocks == nullptr) ||
+            exec->range_counts == nullptr) {
+            fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "an array of the exec witness is NULL");
+            return nullptr;
+        }
+        // The blocks' inverses the device writes as they are.
+        for (uint64_t b = 0; b < exec->n_blocks; ++b) {
+            const pilfflonk_wrap_block &blk = exec->blocks[b];
+            if (PilFflonk::firstNonCanonicalFr(blk.dinv[0], 8) < 8 || PilFflonk::firstNonCanonicalFr(blk.dinv_ff[0], 4) < 4) {
+                fail(PILFFLONK_ERR_NON_CANONICAL, function, "an inverse of block %" PRIu64 " is not below r", b);
+                return nullptr;
+            }
         }
         const PilFflonk::ProvingKey &pk = *static_cast<const PilFflonk::ProvingKey *>(ctx);
         // The circom witness's scalars are canonical; the device builds the rest from them.
