@@ -176,6 +176,8 @@ In order to generate a proof in the GPU, the following commands need to be execu
 
 Note that `gen-custom-commits-fixed` must be invoked with `--gpu` so the resulting `rom_gpu.bin` is laid out for the GPU Merkle hasher; the file produced without `--gpu` is the CPU layout and is not interchangeable.
 
+STIR works on the GPU too: run the setup with `-s ./examples/fibonacci-square/src/config.stir.json --recursive-n-bits 18` (this example's recursive2 needs 2^18 rows under STIR), then prove with `--gpu` as below. The BN128 final layer (`setup-snark` / `prove-snark`) stays FRI.
+
 ```bash
 cargo build --workspace \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \

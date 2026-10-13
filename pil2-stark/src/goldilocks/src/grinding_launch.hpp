@@ -1,7 +1,8 @@
 #ifndef GRINDING_LAUNCH_HPP
 #define GRINDING_LAUNCH_HPP
 
-// nonce block maximum across all hash families, used to dimension the unified buffer
+// The aux trace's nonce_blocks region: one result per block of the BN128 grinding grid. The GL
+// families grind with grindMin, which only uses its first word as a counter.
 #define GRIND_NONCE_BLOCKS_MAX 1024
 
 #endif

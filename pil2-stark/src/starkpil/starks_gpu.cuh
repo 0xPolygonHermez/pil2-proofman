@@ -91,6 +91,10 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &d_param, uint64_t ste
 void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *queriesL0, uint64_t nQueries, MerkleTreeGL **trees, uint64_t nTrees, gl64_t *d_aux_trace, gl64_t* d_const_tree, uint32_t nStages, cudaStream_t stream);
 void proveFRIQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t step, uint64_t currentBits, uint64_t *queriesL0, uint64_t nQueries, MerkleTreeGL *treeFRI, cudaStream_t stream);
 
+// Open a coset-leaf tree at d_idx; query q goes to d_buff + q·(width + siblings).
+void proveLeafQueries_gpu(gl64_t *d_buff, const gl64_t *treeSrc, const gl64_t *treeNodes, uint64_t width, uint64_t height,
+                          const uint64_t *d_idx, uint64_t nQueries, uint64_t arity, uint64_t lastLevel, cudaStream_t);
+
 void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU *expressionsCtx, StepsParams &h_params, StepsParams *d_params, int64_t step, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream);
 
 // The quotient has qDeg * N coefficients, so it only needs the smallest power-of-two subgroup of the

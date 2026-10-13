@@ -64,6 +64,8 @@ enum class LowDegreeTestKind
 
 /// STIR schedule, in the notation of the paper (Construction 5.2). Iteration i folds f_i by
 /// 2^{k_i} and commits g_{i+1} on the next domain L_{i+1}, of half the size.
+struct StirLayout;
+
 class StirStruct
 {
 public:
@@ -252,6 +254,8 @@ public:
     uint64_t stirProofSectionSize() const;
 
     void setMapOffsets();
+    StirLayout stirLayout() const; // valid after setMapOffsets on a GPU STIR stark info
+    uint64_t stirBase = 0;         // where setMapOffsets placed the STIR regions
 
     void setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3);
 

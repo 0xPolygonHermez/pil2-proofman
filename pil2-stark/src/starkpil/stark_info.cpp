@@ -5,6 +5,7 @@
 #include "exit_process.hpp"
 #include "expressions_pack.hpp"
 #include "grinding_launch.hpp"
+#include "stir/stir_layout.hpp"
 
 StarkInfo::StarkInfo(string file, bool final_, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_)
 {
@@ -476,11 +477,7 @@ void StarkInfo::getProofSize() {
 }
 
 uint64_t StarkInfo::getPinnedProofSize() {
-    // The pinned (GPU) layout is untested for STIR but sized generously below.
-    // An upper bound on the proof buffer, not an exact layout — expressed through the
-    // low-degree-test helpers, so FRI's value is unchanged and STIR gets a valid bound.
     const bool stirTest = starkStruct.lowDegreeTest == LowDegreeTestKind::STIR;
-    const uint64_t M = stirTest ? starkStruct.stir.numIterations() : 0;
     const uint64_t nLdtTrees = numLowDegreeTestTrees();
 
     uint64_t pinnedProofSize = 0;
@@ -529,12 +526,7 @@ uint64_t StarkInfo::getPinnedProofSize() {
     pinnedProofSize += airValuesSize;
 
     if(stirTest) {
-        pinnedProofSize += (M - 1) * starkStruct.stir.numOodSamples * FIELD_EXTENSION; // out-of-domain answers
-        pinnedProofSize += (uint64_t(1) << starkStruct.stir.logDegrees[M]) * FIELD_EXTENSION; // p, in coefficients
-        pinnedProofSize += M; // one nonce per query message
-        for (uint64_t i = 1; i < M; ++i) { // Âns and shake coefficients, zero-padded
-            pinnedProofSize += 2 * (starkStruct.stir.numOodSamples + starkStruct.stir.numQueries[i - 1]) * FIELD_EXTENSION;
-        }
+        pinnedProofSize += stirLayout().proofSize; // the device proof block, copied as one
     } else {
         uint64_t finalPolDegree = 1 << starkStruct.logDomainSizes[starkStruct.logDomainSizes.size() - 1];
         pinnedProofSize += finalPolDegree * FIELD_EXTENSION; // Final polynomial values
@@ -546,6 +538,11 @@ uint64_t StarkInfo::getPinnedProofSize() {
 // Every aux_trace region starts on 256 bytes (32 elements), so every column in it does too: columns start
 // at a multiple of the region's row count. Only the reservations whose size is not such a multiple need it.
 static uint64_t alignRegion(uint64_t n) { return (n + 31) & ~uint64_t(31); }
+
+StirLayout StarkInfo::stirLayout() const {
+    StarkInfo *self = const_cast<StarkInfo *>(this); // getNumNodesMT is non-const
+    return makeStirLayout(stirParamsFromStarkInfo(*this), stirBase, [self](uint64_t h) { return self->getNumNodesMT(h); });
+}
 
 void StarkInfo::setMapOffsets() {
     uint64_t N = (1 << starkStruct.nBits);
@@ -801,6 +798,23 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
+    if (gpu && starkStruct.lowDegreeTest == LowDegreeTestKind::STIR) {
+        if (starkStruct.verificationHashType != "GL") {
+            zklog.error("setMapOffsets: GPU STIR supports GL verification hashes only");
+            exitProcess();
+        }
+        if (starkStruct.stir.logDomainSizes[0] != starkStruct.nBitsExt) {
+            zklog.error("setMapOffsets: GPU STIR expects |L_0| = 2^nBitsExt");
+            exitProcess();
+        }
+        stirBase = alignRegion(mapTotalN);
+        StirLayout l = stirLayout();
+        mapTotalN = l.total;
+        // Rounds reuse fri_queries (t_0 raw indices) and fri_queries_perm; both are sized for t_0·nBitsExt.
+        for (uint64_t i = 0; i < starkStruct.stir.numIterations(); i++) {
+            assert(starkStruct.stir.numQueries[i] * starkStruct.stir.logDomainSizes[i] <= starkStruct.nQueries * starkStruct.nBitsExt);
+        }
+    }
 
     mapTotalN = std::max(mapTotalN, maxTotalN);
 }

@@ -314,6 +314,13 @@ plonk_prove: $(BUILD_DIR)/$(TARGET_PROVE_PLONK)
 
 stir_test: $(BUILD_DIR)/$(TARGET_STIR_TEST)
 
+TARGET_STIR_TEST_GPU := stirTestsGpu
+stir_test_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_STIR_TEST_GPU)
+
+# Low-degree-test benchmarks (all DISABLED_; run with --gtest_also_run_disabled_tests).
+TARGET_STIR_BENCH_GPU := stirBenchGpu
+stir_bench_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_STIR_BENCH_GPU)
+
 # Built into a temp file and moved into place: `ar r` on an existing archive keeps members whose
 # source is gone, and a linker reading it mid-rewrite sees a half-updated archive -- which shows
 # up as "undefined symbol" for a function that is right there in the source.
@@ -333,6 +340,15 @@ $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU): $(OBJS_STARKS_LIB_GPU)
 	$(AR) rcs $@.tmp $^
 	mv -f $@.tmp $@
 	cp src/api/starks_api.hpp $(LIB_DIR_GPU)/include/starks_lib_gpu.h
+
+# The STIR GPU tests drive the real device primitives (transcript, Merkle, NTT, grinding), so they
+# link the whole GPU archive rather than a subset. gtest_main goes first: the archive also holds a main.
+DEPS_STIR_GPU := $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/test_stir_gpu.cu.d $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/bench_stir_gpu.cu.d
+$(BUILD_DIR_GPU)/$(TARGET_STIR_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/test_stir_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
+	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
+
+$(BUILD_DIR_GPU)/$(TARGET_STIR_BENCH_GPU): $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/bench_stir_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
+	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
 
 $(BUILD_DIR)/$(TARGET_BCT): $(OBJS_BCT)
 	$(CXX) $(OBJS_BCT) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS)
@@ -393,7 +409,7 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean clean_cpu clean_gpu stir_test
+.PHONY: clean clean_cpu clean_gpu stir_test stir_test_gpu stir_bench_gpu
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
@@ -411,5 +427,6 @@ clean_gpu:
 -include $(DEPS_BCT)
 -include $(DEPS_STARKS_LIB)
 -include $(DEPS_STARKS_LIB_GPU)
+-include $(DEPS_STIR_GPU)
 
 MKDIR_P ?= mkdir -p
