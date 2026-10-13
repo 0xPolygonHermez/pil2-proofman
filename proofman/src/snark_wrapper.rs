@@ -656,6 +656,8 @@ impl<F: PrimeField64> PoseidonWrap<F> {
 /// The recursivef's starkinfo setup-snark puts beside the final circuit of a blake3 key, from which
 /// the zkin of a recursivef proof is laid out.
 pub const BLAKE3_RECURSIVEF_STARKINFO: &str = "recursivef.starkinfo.json";
+/// Its verkey, beside it: the root the final circuit verifies the recursivef with.
+pub const BLAKE3_RECURSIVEF_VERKEY: &str = "recursivef.verkey.json";
 
 /// [`SnarkWrapper`] of a blake3 key: its recursivef, a Goldilocks STARK of the proving key, is proved
 /// before it (`ProofMan::generate_final_snark_proof`), and this proves the final SNARK of the
@@ -672,6 +674,7 @@ pub(crate) struct Blake3Wrap {
     setup_snark_path: PathBuf,
     pilfflonk_key: PathBuf,
     starkinfo: serde_json::Value,
+    verkey: serde_json::Value,
     publics_info: PublicsInfo,
     d_buffers: Option<*mut c_void>,
     gpu: bool,
@@ -690,20 +693,19 @@ impl Blake3Wrap {
                 "the final SNARK of a blake3 key is pilfflonk's, and this setup has a zkey".to_string(),
             ));
         };
-        let starkinfo_path = final_dir.join(BLAKE3_RECURSIVEF_STARKINFO);
-        let starkinfo: serde_json::Value = std::fs::read_to_string(&starkinfo_path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .ok_or_else(|| {
-                ProofmanError::InvalidSetup(format!(
-                    "Failed to read the recursivef's starkinfo {}",
-                    starkinfo_path.display()
-                ))
-            })?;
+        let read = |name: &str| -> ProofmanResult<serde_json::Value> {
+            let path = final_dir.join(name);
+            std::fs::read_to_string(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
+                .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to read {}: {e}", path.display())))
+        };
+        let (starkinfo, verkey) = (read(BLAKE3_RECURSIVEF_STARKINFO)?, read(BLAKE3_RECURSIVEF_VERKEY)?);
         let mut wrap = Self {
             setup_snark_path,
             pilfflonk_key,
             starkinfo,
+            verkey,
             publics_info: PublicsInfo::from_folder(proving_key_snark)?,
             d_buffers: d_buffers.filter(|_| gpu),
             gpu,
@@ -826,9 +828,22 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         Ok(Self { inner })
     }
 
-    /// Whether `proving_key_snark` is a blake3 key's: setup-snark puts its recursivef's starkinfo in it.
+    /// Whether `proving_key_snark` is a blake3 key's: setup-snark puts its recursivef's starkinfo,
+    /// a Goldilocks STARK's, in it.
     pub fn is_blake3_key(proving_key_snark: &Path) -> bool {
-        proving_key_snark.join("final").join(BLAKE3_RECURSIVEF_STARKINFO).is_file()
+        let path = proving_key_snark.join("final").join(BLAKE3_RECURSIVEF_STARKINFO);
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|si| si["starkStruct"]["verificationHashType"].as_str() == Some("GL"))
+    }
+
+    /// Of a blake3 key, the starkinfo and the verkey of the recursivef its SNARK's circuit verifies.
+    pub(crate) fn blake3_recursivef(&self) -> Option<(&serde_json::Value, &serde_json::Value)> {
+        match &self.inner {
+            Wrap::Blake3(wrap) => Some((&wrap.starkinfo, &wrap.verkey)),
+            Wrap::Poseidon(_) => None,
+        }
     }
 
     /// The final SNARK proof of `proof`: of a poseidon key the vadcop_final proof (checked against

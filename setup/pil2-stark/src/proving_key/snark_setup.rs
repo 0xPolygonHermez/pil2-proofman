@@ -391,9 +391,18 @@ fn gen_final_snark(
         bail!("final.r1cs not found at {}: circom compilation may have failed", r1cs_final.display());
     }
 
-    // The prover of a blake3 key lays the zkin of its recursivef proof out from it.
+    // The prover of a blake3 key lays the zkin of its recursivef proof out from it, and tells the
+    // key's hash by it: a poseidon setup removes an earlier blake3 one's. With the verkey, what
+    // proofman checks the key's recursivef against: the circuit has its root.
+    let rf_starkinfo = final_dir.join("recursivef.starkinfo.json");
+    let rf_verkey = final_dir.join("recursivef.verkey.json");
     if blake3 {
-        fs::write(final_dir.join("recursivef.starkinfo.json"), starkinfo_rf_json)?;
+        fs::write(&rf_starkinfo, starkinfo_rf_json)?;
+        fs::copy(verkey_rf_path, &rf_verkey)?;
+    } else {
+        for stale in [&rf_starkinfo, &rf_verkey].into_iter().filter(|f| f.exists()) {
+            fs::remove_file(stale)?;
+        }
     }
 
     match config.final_snark {

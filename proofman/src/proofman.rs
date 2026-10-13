@@ -2614,15 +2614,17 @@ where
     /// has it: a poseidon key's wrapper proves its recursivef itself; a blake3 key's recursivef is a
     /// Goldilocks STARK this run proves ([`generate_recursivef_proof`](Self::generate_recursivef_proof))
     /// before the wrapper's SNARK. `verkey_override`, the verkey the recursivef checks the proof
-    /// against, is the vadcop_final's by default.
+    /// against, is the vadcop_final's by default. It holds this ProofMan's `computing` throughout (the
+    /// wrap writes its buffers), so it never overlaps one of its proofs; the process-wide guard only
+    /// for the recursivef.
     pub fn generate_final_snark_proof(
         &self,
         snark_wrapper: &SnarkWrapper<F>,
         vadcop_final_proof: &VadcopFinalProof,
         verkey_override: Option<&[u64]>,
     ) -> ProofmanResult<SnarkProof> {
-        // Held across both steps: the SNARK writes this run's buffers too.
-        let _computing = self.acquire_computing("generate_final_snark_proof");
+        // `computing` across both steps: the SNARK writes this run's buffers too.
+        let (_computing, proving) = self.acquire_computing("generate_final_snark_proof");
         if self.setups.setup_recursivef.is_none() && self.pctx.global_info.hash == "blake3" {
             return Err(ProofmanError::InvalidConfiguration(
                 "a blake3 key's final SNARK needs its recursivef: a ProofMan made with options.final_snark, of a key \
@@ -2633,8 +2635,26 @@ where
         if self.setups.setup_recursivef.is_none() {
             return snark_wrapper.generate_final_snark_proof(vadcop_final_proof, verkey_override);
         }
+        self.check_wrapper_recursivef(snark_wrapper)?;
         let recursivef_proof = self.recursivef_proof(vadcop_final_proof, verkey_override)?;
+        // The process-wide guard is the STARKs' (their C++ multiplicities); the SNARK has none.
+        drop(proving);
         snark_wrapper.generate_final_snark_proof(&recursivef_proof, None)
+    }
+
+    /// That `snark_wrapper`'s circuit verifies this key's recursivef, its shape and its root: the
+    /// provingKeySnark/ of another setup would take its proofs and fail in the wrap's witness, or later.
+    fn check_wrapper_recursivef(&self, snark_wrapper: &SnarkWrapper<F>) -> ProofmanResult<()> {
+        let stem = self.pctx.global_info.get_setup_path("recursivef").display().to_string();
+        let own = |ext: &str| -> Option<serde_json::Value> {
+            std::fs::read_to_string(format!("{stem}.{ext}.json")).ok().and_then(|text| serde_json::from_str(&text).ok())
+        };
+        match (own("starkinfo"), own("verkey"), snark_wrapper.blake3_recursivef()) {
+            (Some(starkinfo), Some(verkey), Some(wrapped)) if (&starkinfo, &verkey) == wrapped => Ok(()),
+            _ => Err(ProofmanError::InvalidSetup(format!(
+                "the final SNARK's key is not of this key's recursivef ({stem}): rerun setup-snark after setup-recursivef"
+            ))),
+        }
     }
 
     /// The recursivef of a vadcop_final proof (setup-recursivef, blake3), on this run's buffers,
