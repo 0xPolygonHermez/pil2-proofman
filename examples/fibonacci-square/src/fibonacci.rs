@@ -6,7 +6,10 @@ use proofman_common::{
 use proofman_witness::WitnessComponent;
 use proofman_fields::PrimeField64;
 
-use crate::{BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace};
+use crate::{
+    BuildPublicValues, FibonacciSquareAirGroupValues, FibonacciSquareAirValues, FibonacciSquareRomTrace,
+    FibonacciSquareTrace,
+};
 
 pub struct FibonacciSquare {
     instance_ids: RwLock<Vec<usize>>,
@@ -73,7 +76,13 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
             air_values.fibo1[1] = F::from_u64(2);
             air_values.fibo3 = [F::from_u64(5), F::from_u64(5), F::from_u64(5)];
 
-            let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace).with_air_values(&mut air_values));
+            let mut air_group_values = FibonacciSquareAirGroupValues::<F>::new();
+            // Stage-1 airgroupvalue bound by `L1 * (fibo_ag1 - fibo1[0]) === 0`.
+            air_group_values.fibo_ag1 = F::from_u64(1);
+
+            let air_instance = AirInstance::new_from_trace(
+                FromTrace::new(&mut trace).with_air_values(&mut air_values).with_airgroup_values(&mut air_group_values),
+            );
             pctx.add_air_instance(air_instance, instance_id);
         }
         Ok(())
