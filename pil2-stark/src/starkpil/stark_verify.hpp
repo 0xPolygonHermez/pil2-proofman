@@ -20,7 +20,8 @@ inline RawFr::Element fromString(const std::string& element) {
 }
 
 // Read the STIR section of a proof out of its JSON form (the keys pointer2json / proof2json
-// write: "s{i+1}_root/_vals/_siblings/_last_levels", "betas", "finalPol", "nonces").
+// write: "s{i+1}_root/_vals/_siblings/_last_levels", "betas", "finalPol", "nonces",
+// "ansCoeffs{i}", "shakeCoeffs{i}").
 template <typename ElementType>
 StirProof<ElementType> stirProofFromJson(json &jproof, const StirParams &params, uint64_t nFieldElements)
 {
@@ -82,10 +83,10 @@ StirProof<ElementType> stirProofFromJson(json &jproof, const StirParams &params,
     }
     for (uint64_t i = 0; i + 1 < M; ++i) {
         for (uint64_t l = 0; l < proof.ansCoeffs[i].size(); l++) {
-            proof.ansCoeffs[i][l] = Goldilocks::fromString(jproof["ansCoeffs"][i][l]);
+            proof.ansCoeffs[i][l] = Goldilocks::fromString(jproof["ansCoeffs" + std::to_string(i)][l]);
         }
         for (uint64_t l = 0; l < proof.shakeCoeffs[i].size(); l++) {
-            proof.shakeCoeffs[i][l] = Goldilocks::fromString(jproof["shakeCoeffs"][i][l]);
+            proof.shakeCoeffs[i][l] = Goldilocks::fromString(jproof["shakeCoeffs" + std::to_string(i)][l]);
         }
     }
     return proof;

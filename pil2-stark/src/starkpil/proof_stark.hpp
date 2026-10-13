@@ -719,18 +719,15 @@ public:
                 j["nonces"][i] = std::to_string(stir.nonces[i]);
             }
 
-            j["ansCoeffs"] = json::array();
+            // One key per round, named as the circuits' inputs: |G_i| differs per round.
             for(uint64_t i = 0; i + 1 < M; ++i) {
-                j["ansCoeffs"][i] = json::array();
+                j["ansCoeffs" + std::to_string(i)] = json::array();
+                j["shakeCoeffs" + std::to_string(i)] = json::array();
                 for(uint64_t l = 0; l < stir.ansCoeffs[i].size(); l++) {
-                    j["ansCoeffs"][i][l] = Goldilocks::toString(stir.ansCoeffs[i][l]);
+                    j["ansCoeffs" + std::to_string(i)][l] = Goldilocks::toString(stir.ansCoeffs[i][l]);
                 }
-            }
-            j["shakeCoeffs"] = json::array();
-            for(uint64_t i = 0; i + 1 < M; ++i) {
-                j["shakeCoeffs"][i] = json::array();
                 for(uint64_t l = 0; l < stir.shakeCoeffs[i].size(); l++) {
-                    j["shakeCoeffs"][i][l] = Goldilocks::toString(stir.shakeCoeffs[i][l]);
+                    j["shakeCoeffs" + std::to_string(i)][l] = Goldilocks::toString(stir.shakeCoeffs[i][l]);
                 }
             }
 
