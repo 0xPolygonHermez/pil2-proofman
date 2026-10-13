@@ -3914,9 +3914,10 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
     std::call_once(logged, [&] {
         zklog.info("Streaming-commit warm-up: per slot " + std::to_string(perSlot * 8 >> 20) +
                    " MB of hint/const buffers");
+        // A warning: a run may never prove those airs (prove-snark's), and one that does fails at the commit.
         if (!refused.empty())
-            zklog.error("Streaming-commit warm-up: a slot will refuse air(s)" + refused
-                        + "; an instance of any of them fails its commit");
+            zklog.warning("Streaming-commit warm-up: a slot will refuse air(s)" + refused
+                          + "; an instance of any of them fails its commit");
     });
 }
 

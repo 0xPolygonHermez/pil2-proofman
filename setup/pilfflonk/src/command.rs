@@ -274,15 +274,16 @@ pub fn run_setup_pilfflonk_with_external_fixed(
     // With --solidity, the verifier of this vkey, made before the vkey is written: a vkey it cannot
     // be made of is refused as the setup refuses the rest.
     let verifier = if opts.solidity { Some(verifier_sol(&vkey).with_context(refused)?) } else { None };
+    // What a key would compute as it loads, the fixed coefficients and the GPU's shift sums, before
+    // the vkey: a key with a vkey has them.
+    proofman_starks_lib_c::pilfflonk_precompute_c(&proving_key, &vkey.digest.0)
+        .map_err(SetupError::native("cannot precompute the fixed coefficients and shift sums"))?;
+    tracing::info!("wrote the fixed coefficients (.coefs) and the shift sums");
     let vkey_path = global_info.vkey_path(&proving_key);
     vkey.write(&vkey_path)?;
     tracing::info!("wrote {} (digest {})", vkey_path.display(), vkey.digest.to_hex());
     if let Some(verifier) = verifier {
         write_text(&global_info.backend_dir(&proving_key).join(VERIFIER_SOL_FILE), &verifier)?;
     }
-    // What a key would compute as it loads: the fixed coefficients and the GPU's shift sums.
-    proofman_starks_lib_c::pilfflonk_precompute_c(&proving_key, &vkey.digest.0)
-        .map_err(SetupError::native("cannot precompute the fixed coefficients and shift sums"))?;
-    tracing::info!("wrote the fixed coefficients (.coefs) and the shift sums");
     Ok(())
 }
