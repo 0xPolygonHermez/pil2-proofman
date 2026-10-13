@@ -268,7 +268,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         fromRowMajorToColMajor(N, setupCtx.starkInfo.mapSectionsN["cm1"], (gl64_t *)h_params.aux_trace + offsetTraceLanding, (gl64_t*)h_params.trace, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.mapSectionsN["cm1"]), stream);
     }
     
-    cudagraph::run(cudagraph::key(0x57455850ULL ^ graphCtxId), countId, stream, [&] {
+    cudagraph::run(cudagraph::key(0x57455850ULL, graphCtxId), countId, stream, [&] {
         calculateWitnessExpr_gpu(setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     });
     TimerStopGPU(timer, STARK_STEP_0);
@@ -277,7 +277,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     // The transcript is unchanged: a non-recursive proof never absorbs the cm1 root.
     auto commitStage1 = [&] {
         TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
-        cudagraph::run(cudagraph::key(0x434d5431ULL ^ graphCtxId, recursive), countId, stream, [&] {
+        cudagraph::run(cudagraph::key(0x434d5431ULL, graphCtxId, recursive), countId, stream, [&] {
         commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, recursive ? d_transcript : nullptr, timer, stream);
         });
         TimerStopGPU(timer, STARK_COMMIT_STAGE_1);
@@ -285,7 +285,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     if (!setupCtx.starkInfo.inplaceStageCommit) commitStage1();
 
     TimerStartGPU(timer, STARK_CALCULATE_WITNESS_STD);
-    cudagraph::run(cudagraph::key(0x53544432ULL ^ graphCtxId), countId, stream, [&] {
+    cudagraph::run(cudagraph::key(0x53544432ULL, graphCtxId), countId, stream, [&] {
     TimerStartCategoryGPU(timer, TRANSCRIPT);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
@@ -303,7 +303,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     // Own capture region so the section timers stay outside every region body: a replay returns
     // before the body, so a start/stop pair split across it loses the stop event.
     TimerStartGPU(timer, CALCULATE_IM_POLS);
-    cudagraph::run(cudagraph::key(0x494d504cULL ^ graphCtxId), countId, stream, [&] {
+    cudagraph::run(cudagraph::key(0x494d504cULL, graphCtxId), countId, stream, [&] {
         calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     });
     TimerStopGPU(timer, CALCULATE_IM_POLS);
@@ -311,7 +311,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     if (setupCtx.starkInfo.inplaceStageCommit) commitStage1();
     
     TimerStartGPU(timer, STARK_COMMIT_STAGE_2);
-    cudagraph::run(cudagraph::key(0x434d5432ULL ^ graphCtxId), countId, stream, [&] {
+    cudagraph::run(cudagraph::key(0x434d5432ULL, graphCtxId), countId, stream, [&] {
     commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_transcript, timer, stream);
 
     uint64_t a = 0;
@@ -357,12 +357,12 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     }
 
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
-    cudagraph::run(cudagraph::key(0x51455850ULL ^ graphCtxId), countId, stream, [&] {
+    cudagraph::run(cudagraph::key(0x51455850ULL, graphCtxId), countId, stream, [&] {
         calculateExpressionQ(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, qStepLgFor(setupCtx.starkInfo));
     });
     TimerStopGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
     const uint32_t qStepLg = air_instance_info->expressions_gpu->qStepLgUsed;
-    cudagraph::run(cudagraph::key(0x434d5451ULL ^ graphCtxId), countId, stream, [&] {
+    cudagraph::run(cudagraph::key(0x434d5451ULL, graphCtxId), countId, stream, [&] {
         commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, d_transcript, timer, stream, qStepLg);
     });
     TimerStopGPU(timer, STARK_STEP_Q);
@@ -382,7 +382,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     Goldilocks::Element *d_xiChallenge = &h_params.challenges[xiChallengeIndex * FIELD_EXTENSION];
     gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
-    cudagraph::run(cudagraph::key(0x4556414cULL ^ graphCtxId), countId, stream, [&] {
+    cudagraph::run(cudagraph::key(0x4556414cULL, graphCtxId), countId, stream, [&] {
     computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("lev_helper", false)], d_LEv, timer, stream);
     evmap_inplace(setupCtx, h_params, air_instance_info, (Goldilocks::Element*)d_LEv, timer, stream);
     
@@ -411,7 +411,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     // Own capture region, as CALCULATE_IM_POLS: inside the FRIP body these two lost every replay.
     TimerStartGPU(timer, STARK_FRI_POLYNOMIAL);
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    cudagraph::run(cudagraph::key(0x46524558ULL ^ graphCtxId), countId, stream, [&] {
+    cudagraph::run(cudagraph::key(0x46524558ULL, graphCtxId), countId, stream, [&] {
         calculateFRIExpression(setupCtx, h_params, air_instance_info, d_xiChallenge, stream);
     });
     TimerStopCategoryGPU(timer, EXPRESSIONS);
@@ -434,7 +434,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         // Not FRI: foldStir's fold_inplace opens FRI itself, and a nested start drops the outer pair.
         TimerStartCategoryGPU(timer, STIR);
         // d_const_tree joins the key as in QUY: openStageTrees reads the const tree through it.
-        cudagraph::run(cudagraph::key(0x53544952ULL ^ graphCtxId ^ (uint64_t)(uintptr_t)d_const_tree), countId, stream, [&] {
+        cudagraph::run(cudagraph::key(0x53544952ULL, graphCtxId, (uint64_t)(uintptr_t)d_const_tree), countId, stream, [&] {
             stirProve_gpu(stirParams, io, d_transcript, d_transcript_helper, openStageTrees, timer, stream);
         });
         TimerStopCategoryGPU(timer, STIR);
@@ -455,7 +455,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         {
             uint64_t currentBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step];
 
-            cudagraph::run(cudagraph::key(0x465249ULL ^ graphCtxId, step, nBitsExt, currentBits), countId, stream, [&] {
+            cudagraph::run(cudagraph::key(0x465249ULL, graphCtxId, step, nBitsExt, currentBits), countId, stream, [&] {
                 if (step > 0) {
                     uint64_t prevBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step - 1];
                     fold_inplace(step, deepPol_offset, d_challenge, nBitsExt, prevBits, currentBits, d_aux_trace, timer, stream);
@@ -480,7 +480,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
         TimerStartCategoryGPU(timer, GRINDING);
         Goldilocks::Element *d_input_hash_nonce = (Goldilocks::Element *)d_aux_trace + offsetInputHashNonce;
         CHECKCUDAERR(cudaMemcpyAsync(d_input_hash_nonce, d_challenge, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToDevice, stream));
-        cudagraph::run(cudagraph::key(0x4752494EULL ^ graphCtxId, setupCtx.starkInfo.starkStruct.grindingBitsQueries), countId, stream, [&] {
+        cudagraph::run(cudagraph::key(0x4752494EULL, graphCtxId, setupCtx.starkInfo.starkStruct.grindingBitsQueries), countId, stream, [&] {
             runGrindingGPU((uint64_t *)d_nonce, (uint64_t *)d_nonceBlocks, (uint64_t *)d_input_hash_nonce, setupCtx.starkInfo.starkStruct.grindingBitsQueries, stream);
         });
         CHECKCUDAERR(cudaGetLastError());
@@ -494,7 +494,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
         // d_const_tree joins the key: preloaded const trees give the same air a different
         // (but per-stream-stable) tree pointer, and the query kernels read through it.
-        cudagraph::run(cudagraph::key(0x515559ULL ^ graphCtxId ^ (uint64_t)(uintptr_t)d_const_tree, nTrees, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.logDomainSizes.size()), countId, stream, [&] {
+        cudagraph::run(cudagraph::key(0x515559ULL, graphCtxId, (uint64_t)(uintptr_t)d_const_tree, nTrees, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.logDomainSizes.size()), countId, stream, [&] {
             proveQueries_inplace(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_aux_trace, d_const_tree, setupCtx.starkInfo.nStages, stream);
             for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1; ++step) {
                 proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1], friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
