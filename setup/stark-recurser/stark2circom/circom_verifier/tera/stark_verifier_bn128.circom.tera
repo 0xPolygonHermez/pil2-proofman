@@ -145,7 +145,7 @@ template VerifyFRI(prevStepBits, currStepBits, nextStepBits, e0, e1) {
         s_X <== [mul, 0, 0];
     }
 
-    signal {maxNum} coefs[1 << step][3] <== FFT(step, 1)(s_vals_curr);
+    signal {maxNum} coefs[1 << step][3] <== {% if custom %}FFT{% else %}FFTLazy{% endif %}(step, 1)(s_vals_curr);
     signal {maxNum} evalXprime[3] <== GLCMul()(challengeFRIStep, s_X);
     signal {maxNum} evalPol[3] <== EvalPol(1 << step)(coefs, evalXprime);
 
