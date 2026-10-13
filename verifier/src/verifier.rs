@@ -508,7 +508,8 @@ where
         state[3] = nonce;
     }
     <GrindingHash as Hash<Goldilocks>>::hash(&mut pow_state);
-    if pow_state.as_ref()[0].as_canonical_u64() >= 1 << (64 - verifier_info.pow_bits) {
+    // At 0 bits every nonce passes (and the shift below would overflow).
+    if verifier_info.pow_bits > 0 && pow_state.as_ref()[0].as_canonical_u64() >= 1 << (64 - verifier_info.pow_bits) {
         v_error!("Proof of work verification failed");
         return false;
     }

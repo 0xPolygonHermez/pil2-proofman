@@ -101,6 +101,7 @@ void PoseidonBN128::mix(vector<FrElement> *new_state, vector<FrElement> state, c
 }
 
 void PoseidonBN128::grinding(uint64_t &nonce, vector<RawFr::Element> &state, const uint32_t n_bits){
+    if (n_bits == 0) { nonce = 0; return; }   // 1 << 64 below is UB, and there is no work to do
     uint64_t checkChunk = omp_get_max_threads() * 512;
 	uint64_t level   = uint64_t(1) << (64 - n_bits);
     uint64_t* chunkIdxs = new uint64_t[omp_get_max_threads()];
@@ -159,6 +160,22 @@ void PoseidonBN128::grinding(uint64_t &nonce, vector<RawFr::Element> &state, con
         throw std::runtime_error("Poseidon_opt::grinding: could not find a valid nonce");
 
     delete[] chunkIdxs;
+}
+
+bool PoseidonBN128::verifyGrinding(uint64_t nonce, const vector<RawFr::Element> &state, const uint32_t n_bits)
+{
+    if (n_bits == 0) return true;
+    vector<RawFr::Element> localState(state.size() + 2);
+    localState[0] = RawFr::field.zero();
+    std::memcpy(&localState[1], &state[0], state.size() * sizeof(RawFr::Element));
+    RawFr::Element tmp = RawFr::field.zero();
+    tmp.v[0] = nonce;
+    RawFr::field.toMontgomery(tmp, tmp);
+    localState[state.size() + 1] = tmp;
+    hash(localState);
+    RawFr::Element res;
+    RawFr::field.fromMontgomery(res, localState[0]);
+    return res.v[0] < (uint64_t(1) << (64 - n_bits));
 }
 
 void PoseidonBN128::linearHash(FrElement* output, Goldilocks::Element* input, uint64_t inputSize, uint64_t t, bool custom)

@@ -349,12 +349,23 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         x[0] = challenge[0]; x[1] = challenge[1]; x[2] = challenge[2];
         x[3] = nonce;
         runGrindingPermute(result, x);
-        if (Goldilocks::toU64(result[0]) >= (1ULL << (64 - starkInfo.starkStruct.grindingBitsQueries))) {
+        if (starkInfo.starkStruct.grindingBitsQueries > 0 &&   // 1 << 64 is UB; 0 bits checks nothing
+            Goldilocks::toU64(result[0]) >= (1ULL << (64 - starkInfo.starkStruct.grindingBitsQueries))) {
             zklog.error("starkVerify: PoW verification failed");
             return false;
         }
     } else {
-        // TODO
+        std::vector<RawFr::Element> state(FIELD_EXTENSION);
+        for (uint64_t k = 0; k < FIELD_EXTENSION; k++) {
+            state[k] = RawFr::field.zero();
+            state[k].v[0] = Goldilocks::toU64(challenge[k]);
+            RawFr::field.toMontgomery(state[k], state[k]);
+        }
+        PoseidonBN128 p;
+        if (!p.verifyGrinding(Goldilocks::toU64(nonce), state, starkInfo.starkStruct.grindingBitsQueries)) {
+            zklog.error("starkVerify: PoW verification failed");
+            return false;
+        }
     }
 
     TranscriptType transcriptPermutation(starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.merkleTreeCustom);
