@@ -304,13 +304,10 @@ pub fn recursive_grinding_bits(family: &str) -> usize {
     }
 }
 
-/// Whether the family's `vadcop_final` proof can be wrapped in a BN128 SNARK.
-///
-/// The snark stage recurses the final Goldilocks proof into a circom circuit over BN128, and only
-/// the poseidon families have that path built: the `recursivef` verifier and its circom templates
-/// are poseidon-only. A blake3 proving key therefore has no snark stage, and `setup-snark` /
-/// `prove-snark` refuse it up front rather than emit artifacts that cannot verify.
-pub fn supports_snark(family: &str) -> bool {
+/// Whether the family's final SNARK wraps a BN128 recursivef: the poseidon families', which any final
+/// SNARK (PLONK, FFLONK, pilfflonk) takes. blake3's recursivef is a Goldilocks STARK of the key
+/// (setup-recursivef), whose verifier only the pilfflonk wrap has.
+pub fn has_bn128_recursivef(family: &str) -> bool {
     // Listed rather than `!= "blake3"`: this is a guard, so an unrecognised family has to fail
     // closed. The `!=` form its neighbours use is fine for a preference, not for a refusal.
     matches!(family, "Poseidon1" | "Poseidon2")
@@ -619,7 +616,7 @@ mod tests {
         assert_eq!(lookup_gate("Num2Bytes"), Some((GateRole::RangeCheck, None)));
         for family in [BN128_WRAP_FAMILY, BLAKE3_BN128_WRAP_FAMILY] {
             assert!(!is_known_family(family));
-            assert!(!supports_snark(family));
+            assert!(!has_bn128_recursivef(family));
         }
     }
 
@@ -689,14 +686,14 @@ mod tests {
         assert_eq!((transcript_pending_size(2), transcript_out_size(2)), (4, 8));
     }
 
-    /// The BN128 wrap is poseidon-only; blake3 has no recursivef circom verifier.
+    /// The BN128 recursivef is poseidon-only; blake3's is a Goldilocks STARK of its key.
     #[test]
-    fn only_the_poseidon_families_can_be_wrapped_in_a_snark() {
-        assert!(!super::supports_snark("blake3"));
-        assert!(super::supports_snark("Poseidon1"));
-        assert!(super::supports_snark("Poseidon2"));
+    fn only_the_poseidon_families_have_a_bn128_recursivef() {
+        assert!(!super::has_bn128_recursivef("blake3"));
+        assert!(super::has_bn128_recursivef("Poseidon1"));
+        assert!(super::has_bn128_recursivef("Poseidon2"));
         // A guard fails closed: a family this build does not know cannot be wrapped either.
-        assert!(!super::supports_snark("Keccak"));
+        assert!(!super::has_bn128_recursivef("Keccak"));
     }
 
     #[test]

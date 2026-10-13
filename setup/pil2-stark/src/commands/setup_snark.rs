@@ -66,7 +66,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
     // Refuse before building anything. blake3 has its own way to a SNARK: its recursivef
     // (setup-recursivef) verified by a circuit with blake3 custom gates, which only pilfflonk's
     // wrap lays out; PLONK and FFLONK take an r1cs with no custom gates.
-    if !proofman_common::hash_family::supports_snark(&hash) && final_snark != FinalSnark::Pilfflonk {
+    if !proofman_common::hash_family::has_bn128_recursivef(&hash) && final_snark != FinalSnark::Pilfflonk {
         bail!(
             "the {hash} proving key at {:?} wraps in a SNARK with --final-snark pilfflonk only (its \
              circuit has blake3 custom gates), or re-run the regular setup with --hash Poseidon1 or \

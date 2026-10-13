@@ -185,7 +185,7 @@ pub fn gen_snark_setup(
     // blake3's recursivef is a Goldilocks layer of its proving key (setup-recursivef), which
     // proofman proves: the final circuit verifies it as it is. The poseidon families'
     // is the BN128 bridge, set up here.
-    let blake3 = !proofman_common::hash_family::supports_snark(config.hash);
+    let blake3 = !proofman_common::hash_family::has_bn128_recursivef(config.hash);
     let recursivef_dir = if blake3 {
         build_dir.join("provingKey").join(config.name).join("recursivef")
     } else {

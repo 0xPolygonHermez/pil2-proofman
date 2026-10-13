@@ -76,7 +76,7 @@ pub fn run_setup_recursivef(opts: &SetupRecursivefOptions) -> Result<()> {
             proofman_common::hash_family::FAMILIES
         );
     }
-    if proofman_common::hash_family::supports_snark(&hash) {
+    if proofman_common::hash_family::has_bn128_recursivef(&hash) {
         bail!(
             "the {hash} proving key at {:?} has its recursivef in `setup-snark` (a BN128 STARK, in \
              provingKeySnark/recursivef/); setup-recursivef is for the families without one (blake3)",

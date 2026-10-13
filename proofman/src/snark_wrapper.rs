@@ -468,10 +468,9 @@ impl<F: PrimeField64> PoseidonWrap<F> {
     ) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
-        if !proofman_common::hash_family::supports_snark(&vadcop_proof.hash) {
+        if !proofman_common::hash_family::has_bn128_recursivef(&vadcop_proof.hash) {
             return Err(ProofmanError::InvalidConfiguration(format!(
-                "{} proofs have no SNARK stage: the BN128 wrap is only built for the poseidon \
-                 families",
+                "{} proofs have no BN128 recursivef: their final SNARK is ProofMan::generate_final_snark_proof's",
                 vadcop_proof.hash
             )));
         }
@@ -927,9 +926,9 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
 
     ensure_gpu_available(gpu)?;
 
-    if !proofman_common::hash_family::supports_snark(&vadcop_proof.hash) {
+    if !proofman_common::hash_family::has_bn128_recursivef(&vadcop_proof.hash) {
         return Err(ProofmanError::InvalidConfiguration(format!(
-            "{} proofs have no SNARK stage: the BN128 wrap is only built for the poseidon families",
+            "{} proofs have no BN128 recursivef (setup-snark's): a blake3 key's recursivef is a STARK of its key",
             vadcop_proof.hash
         )));
     }
