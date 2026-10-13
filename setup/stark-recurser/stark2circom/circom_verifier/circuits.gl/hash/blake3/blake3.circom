@@ -181,7 +181,11 @@ template Blake3Permute8() {
     c.counterLo <== 0;
 
     for (var i = 0; i < 8; i++) {
-        out[i] <== B3Pack()(c.out[2 * i], c.out[2 * i + 1]);
+        if (b3_field_is_gl()) {
+            out[i] <== c.out[2 * i] + 4294967296 * c.out[2 * i + 1];
+        } else {
+            out[i] <== B3Pack()(c.out[2 * i], c.out[2 * i + 1]);
+        }
     }
 }
 
@@ -274,7 +278,11 @@ template Blake3FinalizeChunk(flags) {
     c.counterLo <== ob;
 
     for (var i = 0; i < 8; i++) {
-        out[i] <== B3Pack()(c.out[2 * i], c.out[2 * i + 1]);
+        if (b3_field_is_gl()) {
+            out[i] <== c.out[2 * i] + 4294967296 * c.out[2 * i + 1];
+        } else {
+            out[i] <== B3Pack()(c.out[2 * i], c.out[2 * i + 1]);
+        }
     }
 }
 
@@ -297,6 +305,10 @@ template Blake3FinalizeParent() {
     c.counterLo <== ob;
 
     for (var i = 0; i < 8; i++) {
-        out[i] <== B3Pack()(c.out[2 * i], c.out[2 * i + 1]);
+        if (b3_field_is_gl()) {
+            out[i] <== c.out[2 * i] + 4294967296 * c.out[2 * i + 1];
+        } else {
+            out[i] <== B3Pack()(c.out[2 * i], c.out[2 * i + 1]);
+        }
     }
 }

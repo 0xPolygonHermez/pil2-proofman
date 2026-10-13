@@ -563,7 +563,9 @@ template parallel VerifySingleQuery() {
 {% endif %}{% endfor %}}
 
 template StarkVerifier() {
-{% if n_publics > 0 %}    signal input publics[{{ n_publics }}];
+{% if blake3 %}    // circuits.bn128's b3_field and selectval, not circuits.gl's: their pick is the include path's.
+    assert(b3_field_is_gl() == 0);
+{% endif %}{% if n_publics > 0 %}    signal input publics[{{ n_publics }}];
 {% endif %}{% if n_air_group_values > 0 %}    signal input airgroupvalues[{{ n_air_group_values }}][3];
 {% endif %}{% for stage_info in stages_info %}{% if stage_info.stage <= n_stages %}    signal input root{{ stage_info.stage }}{{ rd }};
 {% endif %}{% endfor %}    signal input root{{ q_stage }}{{ rd }};

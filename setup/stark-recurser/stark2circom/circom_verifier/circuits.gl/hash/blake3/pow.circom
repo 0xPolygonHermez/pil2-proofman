@@ -40,7 +40,12 @@ template VerifyPoW(powBits) {
         _ <== hashOutput[i];
     }
 
-    signal bits[64] <== B3PowBits()(hashOutput[0]);
+    signal bits[64];
+    if (b3_field_is_gl()) {
+        bits <== Num2Bits_strict()(hashOutput[0]);
+    } else {
+        bits <== B3PowBits()(hashOutput[0]);
+    }
     for (var i = 63; i >= 64 - powBits; i--) {
         enable * bits[i] === 0;
     }

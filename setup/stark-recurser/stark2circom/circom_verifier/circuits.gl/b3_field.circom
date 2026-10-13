@@ -7,7 +7,11 @@ pragma custom_templates;
 */
 
 include "bitify.circom";
-include "selectval.circom";
+
+// The circuits are Goldilocks's: a compile-time choice, so its r1cs is the plain one's.
+function b3_field_is_gl() {
+    return 1;
+}
 
 // A u32 pair as a canonical Goldilocks word, for a witness.
 function b3_pack_value(lo, hi) {
@@ -29,13 +33,4 @@ template B3PowBits() {
     signal output out[64];
 
     out <== Num2Bits_strict()(in);
-}
-
-// A node of the published last levels, through the custom gate SelectValueArity2.
-template B3SelectValue(arity, nLastLevels, num_nodes_level) {
-    signal input values[arity**nLastLevels][4];
-    signal input {binary} key[nLastLevels][1];
-    signal output selected_value[4];
-
-    selected_value <== SelectValue(arity, nLastLevels, num_nodes_level)(values, key);
 }
