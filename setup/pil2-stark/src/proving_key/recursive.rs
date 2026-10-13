@@ -188,8 +188,8 @@ pub fn recursive_stark_settings(
             crate::types::stark_struct::LowDegreeTestKind::Stir => 4,
         })),
         final_degree: Some(user.final_degree.unwrap_or_else(default_final_degree)),
-        // The round-0 grinding budget (STIR's later rounds default to 4 bits less, see
-        // `stark_struct::default_stir_grinding`); the solver derives every tᵢ from it.
+        // The grinding budget; under STIR every round grinds it unless grindingBitsQueries
+        // sets a per-round one. The solver derives every query count from it.
         grinding_bits: Some(user.grinding_bits.unwrap_or_else(|| recursive_grinding_bits(template, hash))),
         // STIR only: a per-round budget overriding the seed (generate_stark_struct rejects it for FRI).
         grinding_bits_queries: user.grinding_bits_queries.clone(),

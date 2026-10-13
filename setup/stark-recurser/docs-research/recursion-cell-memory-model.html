@@ -7,6 +7,7 @@
 <meta name="description" content="Decision map for recursive-verifier linear-hash cells, fit checks, and GPU memory across N and blowup.">
 <style>
   :root {
+    color-scheme: dark;
     --bg: #0e141b;
     --panel: #161f2a;
     --panel-2: #1d2835;
@@ -94,6 +95,9 @@
   }
   .cell.over .gb { text-shadow: none; text-decoration: line-through; opacity: .7; }
   .cell.over::after { display: none; }
+  .cell .kmark, .kmark { font-family: var(--mono); font-size: 9px; font-weight: 700; color: #0b0f14;
+    background: var(--warn); border-radius: 3px; padding: 0 3px; line-height: 13px; }
+  .cell .kmark { position: absolute; bottom: 3px; left: 4px; }
   .cell .gb { text-shadow: 0 1px 0 rgba(255,255,255,.25); }
   /* feasibility markers */
   .cell.feasible { border-color: var(--teal); }
@@ -175,7 +179,7 @@
     <p class="eyebrow">Recursion setup · linear-hash model</p>
     <h1>Cell &amp; GPU-memory decision map</h1>
     <p class="sub">Each cell is a recursive-verifier configuration at 2<sup>N</sup> rows, blowup&nbsp;2<sup>b</sup>, Merkle arity from the hash (blake3 and SHA-256 binary, blake2b quaternary). The folding schedule is not a single factor: <strong>STIR folds by 4 for every family</strong>, while <strong>FRI is solved, not folded</strong>, for the binary-tree families &mdash; <code>optimal_fri_steps</code> gives blake3 2<sup>21</sup>&nbsp;&rarr;&nbsp;17&nbsp;&rarr;&nbsp;13&nbsp;&rarr;&nbsp;10&nbsp;&rarr;&nbsp;7, folds of 4/4/3/3, because path cost is linear in the bits and leaf cost exponential in the fold. Both tests stop at the family's <code>fri_terminal_degree</code> (blake3&nbsp;7), which FRI reads as the last committed <em>domain</em> and STIR as the degree bound <em>d<sub>M</sub></em> itself. Hash counts mirror <code>verifier_hashes.rs</code> rule for rule &mdash; leaf hashes, Merkle paths to <code>lastLevelVerification</code>, per-tree root reductions, the real <code>generate_stark_struct</code> schedule. Transcript and grinding are left out. Paths dominate, 60&ndash;75% of the total. Color is prover GPU memory; a teal ring marks <strong>feasible</strong>: the verifier self-fits, a ZisK&nbsp;Main proof fits the cell budget, and memory stays under 32&nbsp;GB.</p>
-    <p class="sub" style="margin-top:10px">Blake3's stage widths are <strong>measured on the <code>test-recursive</code> recursion air</strong>, not extrapolated from the <code>examples/hashes</code> precompile. <code>stage1&nbsp;=&nbsp;59k&nbsp;+&nbsp;20</code>, <strong>affine</strong> in <em>k</em> rather than proportional: a lane costs 59 columns, the 18-wide plonk band and 2 multiplicity columns are shared. <code>fixed&nbsp;=&nbsp;42</code>. Widths also move <strong>along the blowup axis</strong> &mdash; 2<sup>b</sup> lets the quotient span 2<sup>b</sup> chunks, so <code>maxDeg&nbsp;=&nbsp;min(2<sup>b</sup>+1,&nbsp;8)</code> and a higher degree lets <code>std_sum</code> pack more bus terms behind each <code>im</code>. Blowup&nbsp;2 is measured at <strong>k&nbsp;=&nbsp;2/3/4/5</strong> (stage1 138/197/256/315, stage2 69/93/117/141); other blowups are the model's own <code>im</code> arithmetic. Self-fit is a <strong>fixed point</strong> &mdash; each lane widens the trace the verifier must hash itself &mdash; and <strong>LANES trades rows for columns while the next layer pays for the columns</strong>, so packing lanes shortens this air and makes the one verifying it dearer. Blake3 is 56 clocks, SHA-256 72, Blake2b 96 &mdash; and <strong>only blake3's lane geometry is a recursion air</strong>. SHA-256's is the <code>examples/hashes</code> <strong>precompile</strong>, anchored to its one measured point (115&nbsp;committed columns &times; 72&nbsp;clocks = <strong>8,280</strong> cells at LANES&nbsp;1, blowup&nbsp;1). Its lane does not amortize with <em>k</em> &mdash; <code>sha2.pil</code> has no LANES parameter to share columns across &mdash; but it <em>does</em> move along the blowup axis, and <strong>the wrong way</strong>: 8,280&nbsp;&rarr;&nbsp;8,496&nbsp;&rarr;&nbsp;9,144 at blowup 1/2/3. Degree headroom lets <code>std_sum</code> cluster more bus terms behind each <code>im</code>, but the <code>im</code> constraint then becomes the air's highest-degree one, so <code>stageQ</code> grows unconditionally. Blake3 wins that trade with 48 columns of stage2 to give back; sha2 has 6, so it pays the stageQ growth for almost nothing. Blake2b's is extrapolated. Read SHA-256's cells as a <strong>floor</strong>, not a like-for-like &mdash; blake3's own precompile is 4,382 against the 5,264 its recursion air costs at the same k=4/blowup&nbsp;2, a 20% gap, and 115 counts stageQ where blake3's 94 does not.</p>
+    <p class="sub" style="margin-top:10px">Blake3's stage widths are <strong>measured on the <code>test-recursive</code> recursion air</strong>, not extrapolated from the <code>examples/hashes</code> precompile. <code>stage1&nbsp;=&nbsp;54k&nbsp;+&nbsp;20</code>, <strong>affine</strong> in <em>k</em> rather than proportional: a lane costs 54 columns (51 for the permutation, 3 for its boundary since the 2026-10-09 packing, down from 8), the 18-wide plonk band and 2 multiplicity columns are shared. <code>fixed&nbsp;=&nbsp;43</code>. Widths also move <strong>along the blowup axis</strong> &mdash; 2<sup>b</sup> lets the quotient span 2<sup>b</sup> chunks, so <code>maxDeg&nbsp;=&nbsp;min(2<sup>b</sup>+1,&nbsp;8)</code> and a higher degree lets <code>std_sum</code> pack more bus terms behind each <code>im</code>. Blowup&nbsp;2 is measured at <strong>k&nbsp;=&nbsp;2/3/4/5/6</strong> (stage1 128/182/236/290/344, stage2 60/81/102/123/144); other blowups are the model's own <code>im</code> arithmetic. Self-fit is a <strong>fixed point</strong> &mdash; each lane widens the trace the verifier must hash itself &mdash; and <strong>LANES trades rows for columns while the next layer pays for the columns</strong>, so packing lanes shortens this air and makes the one verifying it dearer. Blake3 is 56 clocks, SHA-256 72, Blake2b 96 &mdash; and <strong>only blake3's lane geometry is a recursion air</strong>. SHA-256's is the <code>examples/hashes</code> <strong>precompile</strong>, anchored to its one measured point (115&nbsp;committed columns &times; 72&nbsp;clocks = <strong>8,280</strong> cells at LANES&nbsp;1, blowup&nbsp;1). Its lane does not amortize with <em>k</em> &mdash; <code>sha2.pil</code> has no LANES parameter to share columns across &mdash; but it <em>does</em> move along the blowup axis, and <strong>the wrong way</strong>: 8,280&nbsp;&rarr;&nbsp;8,496&nbsp;&rarr;&nbsp;9,144 at blowup 1/2/3. Degree headroom lets <code>std_sum</code> cluster more bus terms behind each <code>im</code>, but the <code>im</code> constraint then becomes the air's highest-degree one, so <code>stageQ</code> grows unconditionally. Blake3 wins that trade with 48 columns of stage2 to give back; sha2 has 6, so it pays the stageQ growth for almost nothing. Blake2b's is extrapolated. Read SHA-256's cells as a <strong>floor</strong>, not a like-for-like &mdash; blake3's own precompile is 4,382 against the 4,760 its recursion air costs at the same k=4/blowup&nbsp;2, a 9% gap, and 115 counts stageQ where blake3's 85 does not.</p>
   </header>
 
   <div class="controls">
@@ -205,8 +209,8 @@
       <input type="range" id="grinding" min="0" max="32" step="1" value="24">
     </div>
     <div class="ctrl">
-      <label>lastLevelVerification <b id="llvVal">4</b></label>
-      <input type="range" id="llv" min="0" max="8" step="1" value="4">
+      <label>lastLevelVerification <b id="llvVal">5</b></label>
+      <input type="range" id="llv" min="0" max="8" step="1" value="5">
       <span class="budget-note" id="llvnote">&nbsp;</span>
     </div>
     <div class="ctrl" style="flex:0 0 auto; min-width:120px;">
@@ -231,6 +235,7 @@
           <div class="ramp-lbl"><span id="rampLo">low</span><span id="rampHi">high</span></div>
         </div>
         <div class="key"><span class="swatch"></span> feasible: self-fit &amp; Main fits &amp; &lt;32&nbsp;GB</div>
+        <div class="key"><span class="kmark">K</span> Keccakf fits with no compressor (hashes and band)</div>
         <div class="key"><span class="dot" style="background:#222c38;box-shadow:0 0 0 1px var(--line)"></span> over 32&nbsp;GB (shows GB)</div>
       </div>
     </div>
@@ -244,6 +249,7 @@
       </div>
       <div class="row"><span class="k">self-fit</span><span class="v" id="dSelf">—</span></div>
       <div class="row"><span class="k">main-fit</span><span class="v" id="dMainPct">—</span></div>
+      <div class="row"><span class="k">keccakf, no compressor</span><span class="v" id="dKecPct">—</span></div>
       <div class="row"><span class="k">prover memory</span><span class="v" id="dMem">—</span></div>
 
       <div class="grp">geometry</div>
@@ -284,10 +290,21 @@
           <div class="calc" id="dMainCalc">—</div>
           <table class="bd" id="dMainLeafTbl"></table>
           <div class="row"><span class="k">main total cells</span><span class="v" id="dMain">—</span></div>
+          <div class="row"><span class="k">main plonk band (est.)</span><span class="v" id="dMainBand">—</span></div>
         </div>
       </details>
 
-      <p class="hint">Click a cell to inspect. Main verifier is hardcoded (ZisK Main, nBits 22).</p>
+      <details>
+        <summary>ZisK Keccakf verifier, no compressor</summary>
+        <div class="body">
+          <div class="calc" id="dKecCalc">—</div>
+          <table class="bd" id="dKecLeafTbl"></table>
+          <div class="row"><span class="k">keccakf total cells</span><span class="v" id="dKec">—</span></div>
+          <div class="row"><span class="k">keccakf plonk band (est.)</span><span class="v" id="dKecBand">—</span></div>
+        </div>
+      </details>
+
+      <p class="hint">Click a cell to inspect. Main and Keccakf are ZisK's current airs (zisk.pilout, 2026-10-09), proved with the selected test.</p>
     </div>
   </div>
 
@@ -295,13 +312,14 @@
     Hash rules follow <b>pil2-stark verifier_hashes.rs</b> &mdash; pinned against an instrumented native verifier for FRI, a structural mirror of <code>STIR::verify</code> for STIR; memory follows <b>pil::info::get_prover_memory</b>.
     <br>&middot; digest 4 field elements &middot; extension degree 3 &middot; target 128-bit (JBR) &middot; Merkle arity per hash family &middot; grinding on the slider, starting at <code>hash_family::recursive_grinding_bits</code> (24 blake3, 20 poseidon, blake2b extrapolated to 24).
     <br>&middot; Leaf hashes are block compressions, not rate-limited sponge absorptions: blake3 8 elements per 64-byte block plus a parent per extra 1024-byte chunk, blake2b 16 per 128-byte block, SHA-256 <code>ceil((8w+9)/64)</code> because FIPS appends the terminator and length as message data (one extra block exactly when <code>w mod 8</code> is 0 or 7). Merkle arity follows the block &mdash; blake3 and SHA-256 fold 2 digests per 64B block (binary), blake2b 4 per 128B (quaternary) &mdash; one permutation per node, which for SHA-256 holds only under a domain-separated, length-free node hash; with literal FIPS nodes a 64-byte arity-2 node costs two compressions and that variant is not modelled here.
-    <br>&middot; Paths stop at the slider's <code>lastLevelVerification</code>, which counts LEVELS at any arity, so the kept level holds <code>arity^llv</code> nodes; each tree pays its root reduction once, as <code>merkleTreeGL</code> does. <code>generate_stark_struct</code> defaults it to <code>floor(log_arity(16))</code>.
+    <br>&middot; Paths stop at the slider's <code>lastLevelVerification</code>, which counts LEVELS at any arity, so the kept level holds <code>arity^llv</code> nodes; each tree pays its root reduction once, as <code>merkleTreeGL</code> does. <code>generate_stark_struct</code> defaults it to <code>floor(log_arity(16))</code>, but the recursion pins blake3 at 5 (<code>hash_family::recursive_last_level_verification</code>), which is where the slider starts.
     <br>&middot; Query counts come from <code>security::pcs::Fri</code> and a port of <code>security::pcs::Stir</code> &mdash; the same calculators that size proving keys. At powBits 24 / blowup 2 the closed form gives 106, which is what the pipeline generated &mdash; and STIR's <em>t<sub>0</sub></em> is the same 106, since round 0 sees the same rate under the same regime. Only its later rounds collapse (43, 27), because STIR halves the domain while the degree drops by 2<sup>k</sup>, so the rate improves every round (1:2<sup>2</sup>&nbsp;&rarr;&nbsp;2<sup>5</sup>&nbsp;&rarr;&nbsp;2<sup>8</sup>&nbsp;&rarr;&nbsp;2<sup>11</sup>) where FRI's stays pinned.
     <br>&middot; SHA-256 = 72 clocks (<code>sha2.pil</code>: 4 load-state + 16 load-input + 48 mixing + 4 write-state), grinding 24 read off a real sha256 proving key, block/arity/padding exact arithmetic; its <code>fold</code> is inert, since an arity-2 family solves its FRI schedule rather than folding uniformly. Its WIDTHS are anchored to the <code>examples/hashes</code> precompile at LANES 1 / blowup 1 &mdash; fixed 5, stage1 103, stage2 6, stageQ 6, 115 committed &mdash; with <code>bus 3</code> back-fitted from that stage2 so the model reproduces the point and runs its own <code>im</code> arithmetic above it. stage1 does not amortize with <em>k</em> (no LANES parameter to share across) and no sha256 recursion air exists to fit a slope to; building one is what would pin it. Its <code>laneCols</code> counts stageQ, following README.md's cells/hash convention, where the recursion-air families' does not. Earlier revisions instead scaled blake3's recursion slopes by the two precompiles' widths (103/53); measured, sha2's stage2 is 6 against blake3's 48, so that overstated its bus by roughly 8x and its cells/permutation by 50%.
     <br>&middot; <strong>Folding schedules follow <code>stark_struct.rs</code>, not a uniform factor.</strong> STIR: <code>generate_stir_schedule</code> folds the DEGREE bound by 4 (<code>initial_folding_factor.unwrap_or(is_stir ? 4 : 3)</code>) until it reaches <code>fri_terminal_degree</code>, shortening the last fold to land exactly &mdash; blake3 at 2<sup>19</sup> gives 19&nbsp;&rarr;&nbsp;15&nbsp;&rarr;&nbsp;11&nbsp;&rarr;&nbsp;7 at every blowup, since the stopping point is a family constant and does not move with the rate. FRI: arity-2 families run <code>optimal_fri_steps</code>, a DP over committed domains costed as (compressions/query, trees), ported here in full; arity-4 families fold uniformly by 3. An earlier revision of this page folded STIR to <code>5 &minus; blowup</code> and FRI uniformly to a constant 2<sup>5</sup> domain, which ran STIR one phantom round past its terminal (19&nbsp;&rarr;&nbsp;15&nbsp;&rarr;&nbsp;11&nbsp;&rarr;&nbsp;7&nbsp;&rarr;&nbsp;3) and overstated its hash bill by 1.9%, and put FRI on 21&nbsp;&rarr;&nbsp;17&nbsp;&rarr;&nbsp;13&nbsp;&rarr;&nbsp;9&nbsp;&rarr;&nbsp;5 instead of the solved 21&nbsp;&rarr;&nbsp;17&nbsp;&rarr;&nbsp;13&nbsp;&rarr;&nbsp;10&nbsp;&rarr;&nbsp;7. Both are now checked against the repo: at 2<sup>19</sup>&nbsp;/&nbsp;blowup&nbsp;2 the model reproduces <code>generate_stark_struct</code>'s schedules and the solver's <em>q</em>&nbsp;=&nbsp;106, <em>t</em>&nbsp;=&nbsp;[106,&nbsp;43,&nbsp;27] exactly.
     <br>&middot; <strong>Grinding is uniform across STIR rounds</strong>, which is what <code>generate_stir_schedule</code> emits (<code>vec![grinding_bits; M]</code>). The per-round <code>grindingBitsQueries</code> override exists and is the one untaken lever &mdash; round 0 alone is worth &minus;7.7% at 24&nbsp;&rarr;&nbsp;32, since <em>t<sub>0</sub></em> is what multiplies the four trace trees &mdash; but it is prover proof-of-work, not a free saving, and the slider here models the uniform default.
-    <br>&middot; blake3 = 56 clocks &times; the lane width; stage1 59k+20, fixed 42, stage2/stageQ follow maxDeg &mdash; <strong>measured at k = 2/3/4/5, blowup 2, on the <code>test-recursive</code> air</strong> (42/256/117/12 at k=4), the rest extrapolated. blake2b = 96 clocks, stage1 98k+2, fixed 6, 12 rounds; <code>blake2b.pil</code> has no LANES parameter, so its per-lane split is extrapolated from the same bus decomposition (52 lane-local lookups + 2 shared).
-    <br>&middot; Main: nBits 22, blowup 1, fixed 3 / stageQ 6 / stage2 24 / stage1 38, 3 opening points, not blake-packed.
+    <br>&middot; blake3 = 56 clocks &times; the lane width; stage1 54k+20, fixed 43, stage2/stageQ follow maxDeg &mdash; <strong>measured at k = 2/3/4/5/6, blowup 2, on the <code>test-recursive</code> air</strong> (43/236/102/12 at k=4, after the boundary packing), the rest extrapolated. blake2b = 96 clocks, stage1 98k+2, fixed 6, 12 rounds; <code>blake2b.pil</code> has no LANES parameter, so its per-lane split is extrapolated from the same bus decomposition (52 lane-local lookups + 2 shared).
+    <br>&middot; ZisK airs, from <code>proofman-setup stats</code> on <code>zisk.pilout</code> (2026-10-09), proved with the selected test like ZisK's own <code>default</code> starkStruct: <strong>Main</strong> nBits 22, blowup 1, fixed 2 / stage1 152 / stage2 87 / stageQ 6, 194 evals; <strong>Keccakf</strong> nBits 21, blowup 1, fixed 3 / stage1 467 / stage2 142 / stageQ 6, 3,628 evals over 140 opening points. A basic air's FRI stops at the domain 5&nbsp;+&nbsp;blowup (<code>generate_stark_struct</code>'s own <code>final_degree</code> 5), not the family terminal. The model reproduces stats' blake3 totals exactly, transcript and grinding excluded: Main 36,201 FRI / 29,551 STIR, Keccakf 44,641 / 38,940.
+    <br>&middot; <strong>K</strong> marks a cell whose recursive1 could verify Keccakf <strong>without its compressor</strong>: its hashes fit the cells AND its arithmetic fits the PLONK band. The band is an <strong>estimate</strong> fitted to the blake3 fibonacci setups, rows&nbsp;=&nbsp;A&middot;hashes&nbsp;+&nbsp;B&middot;(evals&nbsp;&times;&nbsp;t<sub>0</sub>) (FRI 2.45 / 0.735, STIR 3.63 / 0.808), against 84% of 2<sup>N</sup> rows. Keccakf's 3,628 evals put its DEEP sum at ~560k rows on its own, so the band, not the hashes, is what keeps its compressor.
   </footer>
 </div>
 
@@ -316,20 +334,22 @@ const MAX_EXT_BITS = 31;
 
 // Hash families: compression-block geometry (see leafHashes) plus the lane geometry.
 // Two knobs move the widths: the packed lane count k, and the max constraint degree, which the
-// blowup fixes (see maxDegFor). stage1 is structural (59k + 20 for blake3's recursion air) and
+// blowup fixes (see maxDegFor). stage1 is structural (54k + 20 for blake3's recursion air) and
 // moves with neither; stage2 and stageQ move with the degree.
 //
-// blake3's numbers come from the REAL recursion air, measured 2026-08-26 with
-// `proofman-setup setup-recursive-test --hash blake3 -t aggregation`:
+// blake3's numbers come from the REAL recursion air, re-measured 2026-10-09 after the boundary
+// packing (8 -> 3 boundary columns per lane) with
+// `proofman-setup setup-recursive-test --hash blake3 -t aggregation --blake3-lanes k`:
 //
-//   LANES 4, blowup 2^2 (maxDeg 5):  fixed 42 · stage1 256 · stage2 117 · stageQ 12 · total 385
+//   LANES 2..6, blowup 2^2 (maxDeg 5):  fixed 43 · stage1 128/182/236/290/344 · stage2 60/81/102/123/144
+//   · stageQ 12  (LANES 4: total 350, against 385 measured 2026-08-26 before the packing)
 //
 // Earlier revisions of this page took blake3's widths from the examples/hashes PRECOMPILE
 // (stage1 53k + 2, fixed 8) as a proxy, measured over a LANES 1-4 x blowup 1-3 grid. The
 // recursion air is a different air -- it carries the plonk band, the custom-gate circuits and
 // the block-kind selectors on top of the lanes -- so those figures understated it by a wide
-// margin. Only the k=4 / blowup 2 point is measured here; the grid's other cells are the
-// model's own im arithmetic, which reproduces the measured point exactly.
+// margin. Blowup 2 is measured at k = 2..6; the other blowups are the model's own im
+// arithmetic, which reproduces every measured point exactly.
 const HASHES = {
   // `block` = compression-block width in Goldilocks elements (blake3 64B = 8,
   // blake2b 128B = 16). Merkle nodes are sized by this and not by a sponge rate: a node is
@@ -341,16 +361,16 @@ const HASHES = {
   // `stage1`/`bus` are the marginal cost of one lane, `*Base` the shared part.
   // `bus` is the marginal bus TERMS one lane contributes and `busBase` the shared ones. Both are
   // FITTED to four measured airs, not decomposed by hand -- `--blake3-lanes 2/3/4/5` give stage2
-  // 69/93/117/141, exactly +24 a lane, and 32k+25 is the only slope that reproduces all four
-  // (38k+2, fitted to k=4 alone, gives 60/90/117/147 and is right only where it was fitted).
+  // 60/81/102/123/144, exactly +21 a lane, and 28k+21 reproduces all five (before the boundary packing
+  // it was 69/93/117/141 and 32k+25: the packing took two feedforward lookups off each lane).
   // blake2b's 52/2 has no measured air behind it at any k.
   // `chunkElems`: blake3 hashes 1024-byte (128-element) chunks and adds one parent
   // compression per extra chunk; blake2b is sequential and has none.
   // `grinding`: hash_family::default_grinding_bits — the prover searches 2^bits, so what a
   // family affords tracks how fast it hashes; Poseidon takes 16, blake3 24.
-  // Where the fitted slopes come from: stage1 = 59k + 20 (the 18-wide plonk band and the 2
-  // multiplicity columns are shared), busOps = 32k + 25 -- at k=4 that is 153, im = ceil(150/4)
-  // = 38, stage2 = 3*39 = 117, reproducing the measured air above.
+  // Where the fitted slopes come from: stage1 = 54k + 20 (the 18-wide plonk band and the 2
+  // multiplicity columns are shared), busOps = 28k + 21 -- at k=4 that is 133, im = ceil(130/4)
+  // = 33, stage2 = 3*34 = 102, reproducing the measured air above.
   // `fold` is the UNIFORM FRI fold, used only by families that do not solve their schedule --
   // `uses_optimal_fri_schedule(family) = merkle_tree_arity(family) == 2`, so arity-2 families
   // (blake3, sha256) run optimal_fri_steps instead and this field is unused for them. STIR never
@@ -359,8 +379,8 @@ const HASHES = {
   // FRI reads as a DOMAIN size (degree bound = terminal - blowup) and STIR as the degree bound
   // d_M itself. Only blake3's 7 and poseidon's 5 exist in the repo; blake2b and sha256 have no
   // family entry at all, so they take the value of the arity they share (arity 2 -> 7, arity 4 -> 5).
-  blake3: { label: 'Blake3', block: 8,  chunkElems: 128, arity: 2, clocks: 56, fixed: 42, grinding: 24,
-            fold: 4, terminal: 7, stage1: 59, stage1Base: 20, bus: 32, busBase: 25 },
+  blake3: { label: 'Blake3', block: 8,  chunkElems: 128, arity: 2, clocks: 56, fixed: 43, grinding: 24, recursionLlv: 5,
+            fold: 4, terminal: 7, stage1: 54, stage1Base: 20, bus: 28, busBase: 21 },
   blake2: { label: 'Blake2', block: 16, chunkElems: 0,   arity: 4, clocks: 96, fixed: 6, grinding: 24,
             fold: 3, terminal: 5, stage1: 98, stage1Base: 2, bus: 52, busBase: 2 },
   // SHA-256, and it is modelled on a DIFFERENT AIR from the other two -- deliberately. blake3's
@@ -427,14 +447,14 @@ const MAXDEG_CAP = 8;
 function maxDegFor(blowup) { return Math.min(2 ** blowup + 1, MAXDEG_CAP); }
 
 // Committed widths of k packed lanes at the degree the blowup unlocks.
-//   stage1  structural witness columns: 59k + 20 for blake3. Independent of maxDeg.
+//   stage1  structural witness columns: 54k + 20 for blake3. Independent of maxDeg.
 //   stage2  the bus argument. std_sum first folds as many terms as fit into the
 //           direct fraction (maxDeg - 2 of them), then clusters the rest
 //           maxDeg - 1 at a time behind one `im` -- the im constraint is
 //           im * prod(f_i + gamma), degree 1 + cluster. Each im, and gsum
 //           itself, is one extension element = 3 Goldilocks columns.
 //   stageQ  the quotient, maxDeg - 1 chunks x 3.
-// Reproduces the measured recursion air at k=4 / maxDeg 5: stage1 256, stage2 117, stageQ 12.
+// Reproduces the measured recursion air at k=4 / maxDeg 5: stage1 236, stage2 102, stageQ 12.
 function geometry(h, k, blowup) {
   const maxDeg = maxDegFor(blowup);
   const busOps = h.bus * k + h.busBase;
@@ -494,6 +514,9 @@ function defaultLlv(arity) {
   while (nodes * arity <= LAST_LEVEL_NODES) { nodes *= arity; levels++; }
   return levels;
 }
+// What the recursion tree actually builds: hash_family::recursive_last_level_verification pins
+// blake3 at 5 (32 kept nodes); a family without an entry takes the arity default above.
+function recursionLlv(fam) { return fam.recursionLlv ?? defaultLlv(fam.arity); }
 function merklePathPerms(heightBits, arity, blockElems, llv) {
   return Math.max(0, merklePathDepth(heightBits, arity) - llv) * merkleNodePerms(arity, blockElems);
 }
@@ -546,9 +569,12 @@ const FRI_FOLD = 3;
 // Either way the walk STOPS at the family's terminal DOMAIN, `terminal` -- not at a constant 5.
 // steps[0] is the committed domain and has no tree of its own; every later step commits a tree
 // the queries open, and the final polynomial is sent in the clear.
-function friSteps(n, blowup, h) {
+// A BASIC air takes generate_stark_struct's own default instead, final_degree 5, so its FRI stops at
+// the domain 5 + blowup; only recursive_stark_settings substitutes the family terminal.
+const BASIC_FRI_FINAL_DEGREE = 5;
+function friSteps(n, blowup, h, basic = false) {
   const ext = n + blowup;
-  const terminal = Math.min(h.terminal, ext);
+  const terminal = Math.min(basic ? BASIC_FRI_FINAL_DEGREE + blowup : h.terminal, ext);
   if (h.arity === 2) return optimalFriSteps(ext, terminal, getLlv(), h);
   // generate_fri_schedule works in DEGREE bounds; the domain is the bound plus the (constant) rate.
   const finalDeg = Math.max(0, Math.min(terminal - blowup, n));
@@ -789,7 +815,7 @@ function ldtLayers(p) {
     // No schedule at this geometry (the alpha loop diverged): fall back to FRI rather
     // than reporting a cell the scheme cannot express.
   }
-  const steps = friSteps(p.n, p.blowup, p.hash);
+  const steps = friSteps(p.n, p.blowup, p.hash, p.basic);
   const q = nQueries(p.n, p.blowup);
   const oracles = [];
   for (let i = 1; i < steps.length; i++) {
@@ -883,13 +909,34 @@ function estimate(p) {
            totalCells, blakesNeeded, rowsPerPerm: rpp, fits, memGb, ldt };
 }
 
-const MAIN = { n: 22, blowup: 1, fixed: 3, stageQ: 6, stage2: 24, stage1: 38, openings: 3, proofs: 1, blakes: 0 };
-function mainParams(fold, cpb, laneCols) {
+// The basic airs a recursive1 has to verify, from `proofman-setup stats` on zisk/pil/zisk.pilout
+// (feat/proofman-update-1.4.0, 2026-10-09). Both run under the page's low-degree test, like ZisK's
+// own `default` starkStruct. Keccakf is the air ZisK gives a compressor (starkstructs.blake3.json),
+// so it is checked here as "fits WITHOUT one". Reproduces stats' blake3 hash totals (transcript and
+// grinding excluded, as everywhere on this page): Main FRI 36,201 / STIR 29,551, Keccakf FRI 44,641 /
+// STIR 38,940.
+const MAIN = { name: 'Main', basic: true, n: 22, blowup: 1, fixed: 2, stageQ: 6, stage2: 87, stage1: 152, openings: 3, proofs: 1, blakes: 0 };
+const KECCAKF = { name: 'Keccakf', basic: true, n: 21, blowup: 1, fixed: 3, stageQ: 6, stage2: 142, stage1: 467, openings: 140, proofs: 1, blakes: 0 };
+function airParams(air, fold, cpb, laneCols) {
   const h = currentHash();
-  return { ...MAIN, fold, cpb, hash: h, block: h.block, chunkElems: h.chunkElems, padBytes: h.padBytes || 0,
+  return { ...air, fold, cpb, hash: h, block: h.block, chunkElems: h.chunkElems, padBytes: h.padBytes || 0,
            arity: h.arity, llv: getLlv(), instanceCols: laneCols };
 }
-function mainEstimate(fold, cpb, laneCols) { return estimate(mainParams(fold, cpb, laneCols)); }
+function airEstimate(air, fold, cpb, laneCols) { return estimate(airParams(air, fold, cpb, laneCols)); }
+
+// The PLONK band, which hashes alone do not size. Fitted to the blake3 fibonacci setups (three
+// recursive1, recursive2 and vadcop_final, 2026-10-09) as rows = A * hashes + B * (nEvals * t_0):
+// the DEEP sum every trace query evaluates is linear in the evals. The fit is within ~10k rows on
+// each point, and the capacity is the measured block-interior share of a blake3 air (84% of 2^n).
+// An ESTIMATE: it is what keeps Keccakf's compressor.
+const BAND_FIT = { fri: [2.45, 0.735], stir: [3.63, 0.808] };
+const BAND_SHARE = 0.84;
+const AIR_EVALS = { Main: 194, Keccakf: 3628 };
+function bandRows(air, e) {
+  const [a, b] = BAND_FIT[e.ldt.kind];
+  return Math.round(a * e.totalHashes + b * AIR_EVALS[air.name] * e.ldt.traceQueries);
+}
+function bandCapacity(n) { return Math.round(BAND_SHARE * 2 ** n); }
 
 // One row per ORACLE the verifier opens: a leaf hash for that oracle's payload, a Merkle path
 // for its tree, and its OWN query count -- which is the whole point under STIR, where the trace
@@ -970,7 +1017,7 @@ function recParams() {
     // `openings` is the memory formula's term, NOT nOpeningPoints. The measured recursion air
     // reports nOpeningPoints 67 -- the clock selectors are read with primes at depth 0..55, and
     // each distinct offset is an opening point -- but feeding that here overshoots the measured
-    // memory by ~12%. At 4 the model lands at 7.564 GB against the measured 7.50 (+0.9%) and
+    // memory by ~12%. At 4 the model lands at 7.02 GB against the measured 6.81 (+3.1%; 8.20 vs 8.07 at k=5) and
     // 1.315 against poseidon2's 1.29 (+1.9%), so 4 is what get_prover_memory's term counts.
     openings: 4, proofs: 2,
     // FRI's uniform fold, for the arity-4 path only; the arity-2 families solve their schedule
@@ -1029,7 +1076,7 @@ function render() {
     `at 2^${ext}, arity ${hashDef.arity}: path ${depth} → ${Math.max(0, depth - llv)} levels · ` +
     `kept level holds ${(hashDef.arity ** llv).toLocaleString()} nodes · ` +
     `${rootReductionPerms(hashDef.arity, ext, llv).toLocaleString()} root-reduction hashes/tree` +
-    `${llv === defaultLlv(hashDef.arity) ? ' · setup default' : ` · setup default is ${defaultLlv(hashDef.arity)}`}`;
+    `${llv === recursionLlv(hashDef) ? ' · recursion default' : ` · recursion default is ${recursionLlv(hashDef)}`}`;
   // The LDT note reports the SELECTED cell's schedule against the other test's, so the
   // trade -- taller trees, far fewer openings -- is visible without opening the panel.
   {
@@ -1060,11 +1107,13 @@ function render() {
   for (const n of N_RANGE) for (const b of B_RANGE) {
     const p = withGeom(base, n, b);
     const e = estimate(p);
-    const main = mainEstimate(base.fold, p.cpb, p.laneCols);
+    const main = airEstimate(MAIN, base.fold, p.cpb, p.laneCols);
+    const kec = airEstimate(KECCAKF, base.fold, p.cpb, p.laneCols);
     // "Main fits" means its verification fits the cells this air HAS, not that it
     // happens to be cheaper than the verifier's own two-proof workload.
     const cellsAvail = p.laneCols * base.blakes * (2 ** n);
     const mainFits = main.totalCells <= cellsAvail;
+    const kecFits = kec.totalCells <= cellsAvail && bandRows(KECCAKF, kec) <= bandCapacity(n);
     const outOfRange = n + b > MAX_EXT_BITS;
     const over = e.memGb >= MEM_BUDGET_GB;
     const feasible = e.fits && mainFits && !over && !outOfRange;
@@ -1073,8 +1122,8 @@ function render() {
                     : metric==='cells' ? e.totalCells
                     : metric==='hashes' ? e.totalHashes
                     : metric==='blakes' ? (minBk === null ? Infinity : minBk) : e.q;
-    data[n+'_'+b] = { e, p, mainFits, feasible, over, outOfRange, metricVal, minBk,
-                      mainCells: main.totalCells, cellsAvail };
+    data[n+'_'+b] = { e, p, mainFits, kecFits, feasible, over, outOfRange, metricVal, minBk,
+                      mainCells: main.totalCells, kecCells: kec.totalCells, cellsAvail };
     if (!over && !outOfRange && Number.isFinite(metricVal)) vals.push(metricVal);
   }
   if (vals.length === 0) vals = [0, 1];
@@ -1109,7 +1158,7 @@ function render() {
                   : metric==='hashes' ? fmt(d.e.totalHashes)
                   : metric==='blakes' ? (d.minBk === null ? '—' : d.minBk) : d.e.q;
       const klass = 'cell' + (greyCell?' over':'') + (d.feasible?' feasible':'') + (sel.n===n&&sel.blowup===b?' sel':'');
-      html += `<td><div class="${klass}" style="background:${c}" data-n="${n}" data-b="${b}"><span class="gb">${label}</span></div></td>`;
+      html += `<td><div class="${klass}" style="background:${c}" data-n="${n}" data-b="${b}"><span class="gb">${label}</span>${d.kecFits && !greyCell ? '<span class="kmark">K</span>' : ''}</div></td>`;
     }
     html += '</tr>';
   }
@@ -1185,8 +1234,11 @@ function renderDetail(data, base) {
   set('dSpare', spare >= 0 ? `${spare.toLocaleString()} perms`
                            : `none — ${(-spare).toLocaleString()} short`);
 
-  const m = mainEstimate(base.fold, p.cpb, p.laneCols);
+  const m = airEstimate(MAIN, base.fold, p.cpb, p.laneCols);
+  const kq = airEstimate(KECCAKF, base.fold, p.cpb, p.laneCols);
+  const bandCap = bandCapacity(sel.n);
   set('dMainPct', `${Math.round(100 * d.mainCells / d.cellsAvail)}% of budget`);
+  set('dKecPct', `${Math.round(100 * d.kecCells / d.cellsAvail)}% cells · band ${Math.round(100 * bandRows(KECCAKF, kq) / bandCap)}%`);
   set('dMem', `${e.memGb.toFixed(2)} / ${MEM_BUDGET_GB} GB`);
 
   // ---- where the hashes come from ----
@@ -1217,12 +1269,14 @@ function renderDetail(data, base) {
   set('dMarg', `one more blake: +${fmt(buys)} cells of room, +${fmt(Math.round(gain * buys))} of work (${gain.toFixed(2)}x)`);
 
   // ---- ZisK Main: its own N/blowup/stages, single proof, never blake-packed ----
-  set('dMainCalc', `N=${MAIN.n} blowup=2^${MAIN.blowup} (2^${MAIN.n + MAIN.blowup} extended), not blake-packed\n`
-    + `(${m.hpq} leaf + ${m.merklePerQuery} merkle) x ${m.q} queries x ${MAIN.proofs} proof = ${m.totalHashes.toLocaleString()}`);
-  const mp = mainParams(base.fold, p.cpb, p.laneCols);
-  const mbd = hashBreakdown(mp, m);
-  fillBreakdown('dMainLeafTbl', mbd, m.hpq, m.merklePerQuery, m.q, MAIN.proofs, m.totalHashes);
-  set('dMain', d.mainCells.toLocaleString());
+  for (const [air, est, pre] of [[MAIN, m, 'dMain'], [KECCAKF, kq, 'dKec']]) {
+    set(pre + 'Calc', `N=${air.n} blowup=2^${air.blowup} (2^${air.n + air.blowup} extended), ${air.stage1 + air.stage2 + air.stageQ + air.fixed} cols, `
+      + `${AIR_EVALS[air.name]} evals\n${est.totalHashes.toLocaleString()} hashes, ${est.ldt.kind.toUpperCase()} t_0 = ${est.q}`);
+    fillBreakdown(pre + 'LeafTbl', hashBreakdown(airParams(air, base.fold, p.cpb, p.laneCols), est),
+                  est.hpq, est.merklePerQuery, est.q, air.proofs, est.totalHashes);
+    set(pre, (est.totalCells).toLocaleString());
+    set(pre + 'Band', `${bandRows(air, est).toLocaleString()} of ~${bandCap.toLocaleString()} rows`);
+  }
 }
 
 // ---- grinding reader ----
@@ -1239,15 +1293,15 @@ function getLdt() { return ldtSelect.value; } // 'fri' | 'stir'
 
 const llvInput = document.getElementById('llv');
 const llvValEl = document.getElementById('llvVal');
-function getLlv() { return parseInt(llvInput.value, 10); } // 0..6, stark_struct default 2
+function getLlv() { return parseInt(llvInput.value, 10); } // 0..8, starts at the family's recursionLlv
 llvInput.addEventListener('input', () => { llvValEl.textContent = llvInput.value; render(); });
 
 ['blakes','metric','ldt'].forEach(id =>
   document.getElementById(id).addEventListener('input', render));
-// A new family means a new arity, and the setup's llv default follows the arity.
+// A new family means a new arity, and the recursion's llv follows the family.
 document.getElementById('hash').addEventListener('input', () => {
   const fam = HASHES[document.getElementById('hash').value];
-  const d = defaultLlv(fam.arity);
+  const d = recursionLlv(fam);
   llvInput.value = String(d);
   llvValEl.textContent = String(d);
   grindingInput.value = String(fam.grinding);
