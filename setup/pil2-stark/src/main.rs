@@ -201,6 +201,10 @@ struct SetupSnarkArgs {
     /// Only generate the recursivef step; skip the final SNARK
     #[arg(long)]
     only_recursive_final: bool,
+
+    /// What the generated verifier contract's VERSION() returns (default: this tool's version)
+    #[arg(long)]
+    contract_version: Option<String>,
 }
 
 #[derive(Parser)]
@@ -469,6 +473,7 @@ fn main() -> anyhow::Result<()> {
                 final_snark: args.final_snark,
                 publics_info: args.publics_info,
                 only_recursive_final: args.only_recursive_final,
+                contract_version: args.contract_version,
             };
             snark_cmd::run_setup_snark(&opts)
         }

@@ -756,10 +756,10 @@ mod agg_arity_tests {
             "Poseidon2",
             3,
             true,
-            Some("1.3.1"),
+            Some("1.4.0"),
             &Default::default(),
         );
-        assert_eq!(v["setupVersion"], serde_json::json!("1.3.1"));
+        assert_eq!(v["setupVersion"], serde_json::json!("1.4.0"));
     }
 }
 

@@ -263,7 +263,7 @@ static void buildCommitTreeGPU(bool dropLeaves, uint32_t arity, uint64_t *nodes,
     else buildMerkleTreeGPU(arity, nodes, src, nCols, nRows, layout, stream);
 }
 
-void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)
+void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg)
 {
     if (step <= setupCtx.starkInfo.nStages)
     {
@@ -272,7 +272,7 @@ void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **trees
     }
     else
     {
-        computeQ_MerkleTree_inplace(step, setupCtx, treesGL, d_aux_trace, d_transcript, timer, stream);
+        computeQ_MerkleTree_inplace(step, setupCtx, treesGL, d_aux_trace, d_transcript, timer, stream, qStepLg);
     }
 }
 
@@ -344,7 +344,7 @@ void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPol
                               setupCtx.starkInfo.dropLeafLevel);
 }
 
-void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace,TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream)
+void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace,TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg)
 {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -367,7 +367,7 @@ void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft", false)];
         NTTGoldilocksGPU nttExtended;
 
-        nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
+        nttExtended.computeQ(offset_cmQ, offset_q, qDeg, qDim, shiftIn, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream, qStepLg);
         TimerStartCategoryGPU(timer, MERKLE_TREE);
         buildCommitTreeGPU(setupCtx.starkInfo.dropLeafLevel, setupCtx.starkInfo.starkStruct.merkleTreeArity, (uint64_t*)pNodes, (uint64_t*)(d_aux_trace + offset_cmQ), nCols, NExtended, resolveLayout(setupCtx.starkInfo.starkStruct.nBits, nCols), stream);
         TimerStopCategoryGPU(timer, MERKLE_TREE);
@@ -987,7 +987,14 @@ void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU* expressionsC
         
 }
 
-void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream){
+uint32_t qStepLgFor(const StarkInfo& starkInfo) {
+    uint32_t lgQDeg = 0;
+    while ((1ull << lgQDeg) < starkInfo.qDeg) lgQDeg++;
+    const uint64_t lgBlowup = starkInfo.starkStruct.nBitsExt - starkInfo.starkStruct.nBits;
+    return lgBlowup > lgQDeg ? (uint32_t)(lgBlowup - lgQDeg) : 0;
+}
+
+uint32_t calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU& timer, cudaStream_t stream, uint32_t qStepLg){
     
     uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     bool domainExtended = true;
@@ -996,8 +1003,7 @@ void calculateExpressionQ(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, St
     destStruct.addParams(setupCtx.starkInfo.cExpId, setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cExpId].destDim, false);
     destStruct.dest_gpu = dest_gpu;
     countId++;
-    expressionsCtx->calculateExpressionsQ_gpu(d_params, destStruct, domainSize, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
-
+    return expressionsCtx->calculateExpressionsQ_gpu(d_params, destStruct, domainSize, domainExtended, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, qStepLg);
 }
 
 void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::Element *h_const_tree, Goldilocks::Element *proof_buffer_pinned, cudaStream_t stream) {
@@ -1266,11 +1272,16 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
                         Goldilocks::w(si.starkStruct.nBits).fe, air_instance_info->friTermStart, air_instance_info->friTerms,
                         (gl64_t*)h_params.evals, challenges + 4 * FIELD_EXTENSION, challenges + 5 * FIELD_EXTENSION, d_b,
                         d_a, d_k, stream);
-    const uint32_t nThreads = air_instance_info->friThreadsPerBlock;
-    const Goldilocks::Element wExt = Goldilocks::w(si.starkStruct.nBitsExt), wStep = Goldilocks::pow(wExt, nThreads);
-    computeFRIExpression<<<domainSize / nThreads, nThreads, friSharedBytes(air_instance_info->friWindowRows), stream>>>(
-        domainSize, nOpenings, air_instance_info->friWindowRows, air_instance_info->nFriSegments, air_instance_info->friSegments, air_instance_info->friOpBase,
-        Goldilocks::shift().fe, wExt.fe, wStep.fe, Goldilocks::inv(wStep).fe, (gl64_t*)d_xiChallenge,
+    // 1/(x - xi) once over the domain: dead zi/helper space behind q, overwritten by the first fold (fri_1).
+    gl64_t *d_den = (gl64_t*)h_params.aux_trace + si.mapOffsets[std::make_pair("fri_denominators", true)];
+    const uint32_t denThreads = friDenominatorThreads(domainSize);
+    const Goldilocks::Element wExt = Goldilocks::w(si.starkStruct.nBitsExt), wDen = Goldilocks::pow(wExt, denThreads);
+    computeFRIDenominators<<<friDenominatorBlocks(domainSize, denThreads), denThreads, 0, stream>>>(
+        domainSize, Goldilocks::shift().fe, wExt.fe, wDen.fe, Goldilocks::inv(wDen).fe, (gl64_t*)d_xiChallenge, d_den);
+    CHECKCUDAERR(cudaGetLastError());
+    const uint32_t nThreads = 256;
+    computeFRIExpression<<<domainSize / nThreads, nThreads, 0, stream>>>(
+        domainSize, nOpenings, si.starkStruct.nBitsExt - si.starkStruct.nBits, air_instance_info->opening_points, d_den,
         air_instance_info->nFriGroups, air_instance_info->friColStart, air_instance_info->friCols,
         air_instance_info->friOpStart, air_instance_info->friOpGroups, d_b, d_a, d_k, (gl64_t*)h_params.aux_trace,
         (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)h_params.pConstPolsExtendedTreeAddress, d_fri);

@@ -22,6 +22,7 @@ template Final() {
 {% for section in define_sections %}{{ section }}
 {% endfor %}
 {% for section in assign_sections %}{{ section }}
+{% endfor %}{% for section in null_sections %}{{ section }}
 {% endfor %}
     // Calculate transcript and check that matches with the global challenges
     component verifyChallenges = VerifyGlobalChallenges();
@@ -29,7 +30,7 @@ template Final() {
 {% endif %}
 {% if has_proof_values %}    verifyChallenges.proofValues <== proofValues;
 {% endif %}
-{% for i in stage1hash_indices %}    verifyChallenges.stage1Hash[{{ i }}] <== s{{ i }}_sv_stage1Hash;
+{% for i in stage1hash_indices %}    verifyChallenges.stage1Hash[{{ i }}] <== {{ stage1hash_srcs[i] }};
 {% endfor %}    verifyChallenges.globalChallenge <== globalChallenge;
 
     // Verify global constraints
@@ -38,14 +39,22 @@ template Final() {
 {% endif %}
 {% if has_proof_values %}    verifyGlobalConstraints.proofValues <== proofValues;
 {% endif %}    verifyGlobalConstraints.globalChallenge <== globalChallenge;
-{% for name in airgroupvalues_names %}    verifyGlobalConstraints.{{ name | replace(from="_sv_airgroupvalues", to="_airgroupvalues") }} <== {{ name }};
+{% for w in airgroupvalues_wires %}    verifyGlobalConstraints.{{ w.dst }} <== {{ w.src }};
 {% endfor %}
+{% if multi_air %}    // Some airgroup must contribute a proof: with all of them null nothing is verified
     signal {binary} isNull[{{ n_airgroups }}];
+    signal nAggregatedProofs[{{ n_airgroups }}];
+{% for i in stage1hash_indices %}    isNull[{{ i }}] <== s{{ i }}_sv_isNull;
+    nAggregatedProofs[{{ i }}] <== s{{ i }}_sv_aggregatedProofs;
+{% endfor %}    signal totalAggregatedProofs <== AggregateProofsNull({{ n_airgroups }})(nAggregatedProofs, isNull);
+    signal noAggregatedProofs <== IsZero()(totalAggregatedProofs);
+    noAggregatedProofs === 0;
+{% else %}    signal {binary} isNull[{{ n_airgroups }}];
     signal nAggregatedProofs[{{ n_airgroups }}];
 {% for i in stage1hash_indices %}    isNull[{{ i }}] <== IsZero()(s{{ i }}_sv_circuitType);
     nAggregatedProofs[{{ i }}] <== s{{ i }}_sv_aggregatedProofs;
 {% endfor %}    _ <== AggregateProofsNull({{ n_airgroups }})(nAggregatedProofs, isNull);
-
+{% endif %}
 }
 
 {% if has_publics %}component main {public [publics]} = Final();

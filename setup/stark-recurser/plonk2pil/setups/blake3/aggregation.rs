@@ -451,7 +451,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
     let sel_val_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::SelectValArity2));
 
     // ── BLAKE3 blocks: boundary cells only ────────────────────────────────────
-    // The 59 columns per lane are the expander's; the setup writes the two boundary rows. Lane l of
+    // The 54 columns per lane are the expander's; the setup writes the two boundary rows. Lane l of
     // a block reads its input at clock l and writes its output at clock 56 - LANES + l (spec 3.2).
     // Kinds are grouped so the air's block-wide selectors stay compact patterns: Node, then chunk,
     // then parent.
@@ -703,7 +703,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
 // first: this same aggregator air at a geometry of its own. N is the recursion's 2^19, or the next
 // power of two its circuit needs, and LANES the fewest that hold it. The air holds
 // `max(hashing blocks, band blocks)`; more lanes shrink the hashing and narrow the block interiors
-// the band rides, and each one costs 59 stage1 columns the recursive1 above has to open.
+// the band rides, and each one costs 54 stage1 columns the recursive1 above has to open.
 
 /// Lanes the air accepts: lane l's input row is clock l, and only clocks 0..7 carry round 0's identity
 /// message schedule -- see `aggregator.pil`.
@@ -965,20 +965,20 @@ mod tests {
     }
 
     /// Pinned against what the air actually compiles to. `proofman-setup setup --hash blake3` reports
-    /// `Stage1: 256` at LANES 4, and the C++ expander asserts the same figure in
+    /// `Stage1: 236` at LANES 4, and the C++ expander asserts the same figure in
     /// test_gate_bands_cpu.cpp -- the two sides index the same trace, so a disagreement is a wrong
     /// stride.
     ///
-    /// A pinned number is only a pin if it came from the thing it claims to pin. 256 is the
-    /// compiler's, read off the generated air; `18 + 59*4 + 2` is what `stage1_cols` must reproduce
+    /// A pinned number is only a pin if it came from the thing it claims to pin. 236 is the
+    /// compiler's, read off the generated air; `18 + 54*4 + 2` is what `stage1_cols` must reproduce
     /// from its parts. Asserting the formula against itself would pass with either wrong.
     #[test]
     fn stage1_cols_matches_the_compiled_air() {
-        assert_eq!(stage1_cols(4), 256, "the air reports Stage1: 256 at LANES 4");
-        assert_eq!(stage1_cols(1), 79);
-        assert_eq!(stage1_cols(8), 492);
+        assert_eq!(stage1_cols(4), 236, "the air reports Stage1: 236 at LANES 4");
+        assert_eq!(stage1_cols(1), 74);
+        assert_eq!(stage1_cols(8), 452);
         // The per-lane figure, stated once so a change to either constant has to face it.
-        assert_eq!(PERM_COLS_PER_LANE + BOUNDARY_COLS_PER_LANE, 59);
+        assert_eq!(PERM_COLS_PER_LANE + BOUNDARY_COLS_PER_LANE, 54);
     }
 
     /// `PLONK` in the air is `[[0:LANES, 1:(56-2*LANES), 0:LANES]:nNodeBlocks, ...]`.

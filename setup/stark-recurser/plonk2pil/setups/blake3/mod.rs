@@ -26,15 +26,15 @@ pub const TWO_ROW_GATE_ROWS: usize = 2;
 /// Permutation columns `blake3Lanes` declares per lane.
 pub const PERM_COLS_PER_LANE: usize = 51;
 
-/// Boundary columns the aggregator declares per lane: 1 canonicity witness (`dinv`), 3 `vb''` top
-/// bits, and 4 feedforward result bytes.
+/// Boundary columns the aggregator declares per lane: 1 canonicity witness (`dinv`) and 2
+/// feedforward result bytes.
 ///
-/// Four, not eight: `outBytes` is ONE 4-byte group per lane, and `cvBytes` aliases it -- the chaining
-/// value is written at clocks 0..3 while the feedforward result lands at 52..55, so the two never
-/// share a row. Counting the alias twice does not break the exec file, since `write_exec_file` trims
+/// `outBytes` is ONE 2-byte group per lane: the feedforward result at clocks 24..55, two bytes a row,
+/// with `cvBytes` aliased onto it at clocks 0..7 and `vb''`'s three top bits at 16..23 -- fixed
+/// clocks that never share a row. Counting the alias twice does not break the exec file, since `write_exec_file` trims
 /// all-zero columns, but it makes `stage1_cols` disagree with the air and any capacity check built on
 /// it wrong.
-pub const BOUNDARY_COLS_PER_LANE: usize = 8;
+pub const BOUNDARY_COLS_PER_LANE: usize = 3;
 
 /// `mul_table` and `mul_range`, shared by every lane.
 pub const TABLE_MUL_COLS: usize = 2;

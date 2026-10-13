@@ -223,6 +223,8 @@ impl GlobalInfo {
             ProofType::Compressor => "compressor",
             ProofType::Recursive1 => "recursive1",
             ProofType::Recursive2 => "recursive2",
+            ProofType::VadcopFinal => return self.get_setup_path("vadcop_final"),
+            ProofType::VadcopFinalCompressed => return self.get_setup_path("vadcop_final_compressed"),
             _ => panic!(),
         };
 
@@ -405,8 +407,8 @@ mod aggregation_arity_tests {
         });
         let gi: GlobalInfo = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(gi.setup_version, None);
-        json["setupVersion"] = serde_json::json!("1.3.1");
+        json["setupVersion"] = serde_json::json!("1.4.0");
         let gi: GlobalInfo = serde_json::from_value(json).unwrap();
-        assert_eq!(gi.setup_version.as_deref(), Some("1.3.1"));
+        assert_eq!(gi.setup_version.as_deref(), Some("1.4.0"));
     }
 }

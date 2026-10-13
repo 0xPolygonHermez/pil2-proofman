@@ -320,6 +320,15 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             a += 3;
         }
     }
+    // Bind airgroupvalues to the transcript.
+    uint64_t ag_off = 0;
+    for(uint64_t i = 0; i < setupCtx.starkInfo.airgroupValuesMap.size(); i++) {
+        uint64_t width = setupCtx.starkInfo.airgroupValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+        if(setupCtx.starkInfo.airgroupValuesMap[i].stage <= 2) {
+            d_transcript->put(&h_params.airgroupValues[ag_off], width, stream);
+        }
+        ag_off += width;
+    }
     TimerStopCategoryGPU(timer, TRANSCRIPT);
     });
     TimerStopGPU(timer, STARK_COMMIT_STAGE_2);
@@ -346,11 +355,12 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
     cudagraph::run(cudagraph::key(0x51455850ULL ^ graphCtxId), countId, stream, [&] {
-        calculateExpressionQ(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
+        calculateExpressionQ(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream, qStepLgFor(setupCtx.starkInfo));
     });
     TimerStopGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
+    const uint32_t qStepLg = air_instance_info->expressions_gpu->qStepLgUsed;
     cudagraph::run(cudagraph::key(0x434d5451ULL ^ graphCtxId), countId, stream, [&] {
-        commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, d_transcript, timer, stream);
+        commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, d_transcript, timer, stream, qStepLg);
     });
     TimerStopGPU(timer, STARK_STEP_Q);
     TimerStartGPU(timer, STARK_STEP_EVALS);
