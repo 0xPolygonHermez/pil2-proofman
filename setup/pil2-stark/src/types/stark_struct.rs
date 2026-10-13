@@ -26,8 +26,9 @@ pub struct StarkSettings {
     #[serde(default)]
     pub grinding_bits: Option<usize>,
     /// STIR only: a grinding budget per iteration (length `M`), overriding the
-    /// uniform `grinding_bits` seed. Queries into `f₀` are the expensive ones,
-    /// so a decaying schedule shifts proof-of-work to where queries hurt most.
+    /// uniform `grinding_bits` seed (basic airs default to `[grinding_bits, 0, …]`). Queries into
+    /// `f₀` are the expensive ones, so a decaying schedule shifts proof-of-work to where queries
+    /// hurt most.
     #[serde(default)]
     pub grinding_bits_queries: Option<Vec<usize>>,
     /// STIR only: the folds `kᵢ` in bits, in place of folding by `initialFoldingFactor` down to
@@ -665,6 +666,15 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
     }
 }
 
+/// A basic air's StarkStruct: unless configured, STIR grinds only round 1 (queries into f₀).
+pub fn generate_basic_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str) -> StarkStruct {
+    let mut ss = generate_stark_struct(settings, n_bits, hash);
+    if let (LowDegreeTest::Stir(stir), None) = (&mut ss.low_degree_test, &settings.grinding_bits_queries) {
+        stir.grinding_bits_queries.iter_mut().skip(1).for_each(|g| *g = 0);
+    }
+    ss
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1019,6 +1029,27 @@ mod tests {
         assert_eq!(stir.log_degrees, vec![18, 14, 11, 8]);
         assert_eq!(stir.log_domain_sizes, vec![23, 22, 21, 20]);
         assert_eq!(stir.grinding_bits_queries, vec![27, 26, 27]);
+    }
+
+    /// A basic air grinds its STIR only on round 1 unless the config says otherwise; FRI and
+    /// the shared `generate_stark_struct` (recursion, finals) keep the uniform seed.
+    #[test]
+    fn basic_air_stir_grinds_only_the_first_round() {
+        let stir = StarkSettings { low_degree_test: Some(LowDegreeTestKind::Stir), ..Default::default() };
+        let basic = generate_basic_stark_struct(&stir, 22, "blake3");
+        assert_eq!(basic.low_degree_test.stir().unwrap().grinding_bits_queries, vec![24, 0, 0, 0]);
+        let shared = generate_stark_struct(&stir, 22, "blake3");
+        assert_eq!(shared.low_degree_test.stir().unwrap().grinding_bits_queries, vec![24; 4]);
+
+        let explicit = StarkSettings { grinding_bits_queries: Some(vec![24, 20, 10, 0]), ..stir };
+        let basic = generate_basic_stark_struct(&explicit, 22, "blake3");
+        assert_eq!(basic.low_degree_test.stir().unwrap().grinding_bits_queries, vec![24, 20, 10, 0]);
+
+        let fri = generate_basic_stark_struct(&StarkSettings::default(), 22, "Poseidon2");
+        assert_eq!(
+            fri.low_degree_test,
+            generate_stark_struct(&StarkSettings::default(), 22, "Poseidon2").low_degree_test
+        );
     }
 
     #[test]

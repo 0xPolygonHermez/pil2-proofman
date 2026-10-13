@@ -8,7 +8,7 @@ use pil2_pilout::pilout as pb;
 use prost::Message;
 
 use crate::pil::prepare::PrepareOptions;
-use crate::types::stark_struct::{generate_stark_struct, StarkStructsConfig};
+use crate::types::stark_struct::{generate_basic_stark_struct, StarkStructsConfig};
 
 /// Options for the stats subcommand.
 pub struct StatsOptions {
@@ -85,7 +85,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
 
             let air_settings = settings_map.resolve(&airgroup_name, &air_name);
 
-            let stark_struct = generate_stark_struct(&air_settings, n_bits, &opts.hash);
+            let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, &opts.hash);
 
             let prepare_opts =
                 PrepareOptions { debug: false, im_pols_stages: opts.im_pols_stages, inplace_stage_commit: true };

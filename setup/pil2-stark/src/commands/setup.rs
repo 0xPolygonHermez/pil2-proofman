@@ -12,7 +12,7 @@ use prost::Message;
 use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
 use crate::pil::prepare::PrepareOptions;
 use crate::commands::recursive_setup::run_recursive_setup;
-use crate::types::stark_struct::{generate_stark_struct, StarkStructsConfig};
+use crate::types::stark_struct::{generate_basic_stark_struct, StarkStructsConfig};
 use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, solve_low_degree_test};
 
 /// Setup options parsed from CLI args.
@@ -175,7 +175,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
                 let air_settings = settings_map.resolve(&item.airgroup_name, &item.air_name);
 
-                let stark_struct = generate_stark_struct(&air_settings, n_bits, &opts.hash);
+                let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, &opts.hash);
 
                 let files_dir = PathBuf::from(&build_dir)
                     .join("provingKey")
