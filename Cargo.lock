@@ -1438,7 +1438,6 @@ dependencies = [
  "cfg-if",
  "num-bigint",
  "paste",
- "proofman-starks-lib-c",
  "rand 0.10.3",
  "serde",
 ]
