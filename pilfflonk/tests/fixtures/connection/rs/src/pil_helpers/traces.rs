@@ -12,7 +12,7 @@ pub use proofman_macros::values;
 use proofman_fields::PrimeField64;
 use std::fmt;
 
-pub const PILOUT_HASH: &str = "2b2f0f7504193c38e27e44264351eba7e1acce633b578077c49e50ebf6825752";
+pub const PILOUT_HASH: &str = "1ac9b1c3817a5f62463cb4c5416b8cd6920d29fb9202f35f1b28f98d607391d3";
 
 //AIRGROUP CONSTANTS
 
