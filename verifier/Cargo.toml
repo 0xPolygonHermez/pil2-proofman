@@ -18,7 +18,6 @@ tracing = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
 
 [features]
-default = ["std", "verify"]
+default = ["std"]
 std = ["dep:tracing", "dep:bincode", "serde/std"]
-verify = ["proofman-fields/verify"]
 parallel = ["std", "dep:rayon"]
