@@ -5,7 +5,7 @@
 // - each result (its length, its degree and its coefficients) is also pinned by a Keccak-256 digest
 //   to what the code returned when these tests were written, quirks included: add() and
 //   byXSubValue() grow the buffer without updating the length, and a polynomial on a reserved
-//   buffer moves to a buffer of its own when it grows or is divided;
+//   buffer moves to a buffer of its own when it grows or divBy or divByVanishing divide it;
 // - the interpolations and zerofiers have the FflonkProver's sizes: R0, R1 and R2 interpolate 8, 4
 //   and 6 points, and ZT and ZTS2 vanish on 18 and 10.
 // Under AddressSanitizer they also show that these functions free what they allocate, and nothing
@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -153,9 +154,10 @@ std::string digest(const Poly &p, uint64_t n) {
     return s;
 }
 
-// divByMonic(m, β) on a = q·(X^m - β) + r, deg r < m: the quotient q, on an owned buffer and on a
-// reserved one, which it leaves as it was. (4, 3) and (6, 5) have deg a = 2m - 1, the least it
-// takes (it writes below its buffer otherwise), for which only its first loop runs.
+// divByMonic(m, β) on a = q·(X^m - β) + r, deg r < m: the quotient q, in place, on an owned buffer
+// and on a reserved one, and false, for r is not zero. The digests are those of the quotient that
+// divByMonic left in a buffer of its own before it divided in place. (4, 3) and (6, 5) have
+// deg a = 2m - 1, the least that one took.
 TEST(PolynomialTest, div_by_monic_leaves_the_quotient) {
     struct Case {
         uint32_t m;
@@ -180,7 +182,7 @@ TEST(PolynomialTest, div_by_monic_leaves_the_quotient) {
         Poly owned(E, length);
         load(owned, a);
         ASSERT_EQ(owned.getDegree(), c.qDegree + c.m);
-        owned.divByMonic(c.m, beta);
+        EXPECT_FALSE(owned.divByMonic(c.m, beta));
         EXPECT_EQ(owned.getLength(), length);
         EXPECT_EQ(owned.getDegree(), c.qDegree);
         EXPECT_TRUE(holds(owned, q, length));
@@ -189,13 +191,194 @@ TEST(PolynomialTest, div_by_monic_leaves_the_quotient) {
         Column reserved(length);
         Poly borrowed(E, reserved.data(), length);
         load(borrowed, a);
-        borrowed.divByMonic(c.m, beta);
+        EXPECT_FALSE(borrowed.divByMonic(c.m, beta));
+        EXPECT_EQ(borrowed.coef, reserved.data());
         EXPECT_EQ(borrowed.getLength(), length);
         EXPECT_EQ(borrowed.getDegree(), c.qDegree);
         EXPECT_TRUE(holds(borrowed, q, length));
-        EXPECT_TRUE(same(reserved.data(), a));
         EXPECT_EQ(digest(borrowed, length), c.expected);
     }
+}
+
+// The OpenMP threads, for the scope of the object.
+class Threads {
+public:
+    explicit Threads(int n) : saved(omp_get_max_threads()) {
+        omp_set_num_threads(n);
+    }
+
+    ~Threads() {
+        omp_set_num_threads(saved);
+    }
+
+private:
+    const int saved;
+};
+
+// The degree that fixDegree finds in these coefficients.
+uint64_t degreeOf(const Column &coefs) {
+    uint64_t degree = coefs.size() - 1;
+    while (degree != 0 && E.fr.isZero(coefs[degree])) {
+        --degree;
+    }
+    return degree;
+}
+
+// divByMonic before it divided in place, the reference for the quotient: its loops as they were,
+// over the coefficients of a polynomial of degree d >= 2m - 1 (it wrote below its buffer
+// otherwise), into a new column of the same length.
+Column divByMonicBefore(const Column &coef, uint64_t d, uint32_t m, FrElement beta) {
+    Column polResult(coef.size(), E.fr.zero());
+    Column bArr(m);
+
+    for (uint32_t i = 0; i < m; i++) {
+        polResult[(d - i) - m] = coef[d - i];
+        bArr[i] = coef[d - i];
+    }
+
+    uint32_t nThreads = m;
+    #pragma omp parallel for
+    for(uint32_t k = 0; k<nThreads;k++) {
+        for (int i = d - 2 * m - k; i >= 0; i = i - nThreads) {
+            if(i<0) break;
+            uint32_t idx = k;
+            bArr[idx] = E.fr.add(coef[i + m], E.fr.mul(bArr[idx], beta));
+            polResult[i] = bArr[idx];
+        }
+    }
+
+    return polResult;
+}
+
+// divByMonic against the one it replaced (divByMonicBefore), coefficient by coefficient over the
+// whole buffer, and the length and the degree, wherever that one was defined (deg a >= 2m - 1);
+// below, against the quotient written out, q_j = a_{j+m}. Whether it is exact against the remainder
+// a_j + β·q_j (j < m) written out. For m = 1 to 9, a = q·(X^m - β) + ρ with q of 1, m, 2m - 1 and
+// 2m coefficients, of a block, one more and one less, two and three blocks around their
+// boundaries, and 2^18 + 3; q random, all ones, or zero but its top and bottom; β random, 0, 1 or
+// -1; ρ zero, or ρ·X^j for a j below m (not exact) or in the top block (not exact unless β = 0),
+// which runs through every carry. On 1 thread (a single block), and on 2 and 32 threads when q
+// spans more than one block; and on a reserved buffer, which it keeps.
+TEST(PolynomialTest, div_by_monic_is_the_division_it_replaces) {
+    Random random(6002);
+    const FrElement betas[] = {random.element(), E.fr.zero(), E.fr.one(), E.fr.negOne()};
+    for (uint64_t m = 1; m <= 9; ++m) {
+        const uint64_t block = Poly::divByMonicBlockLength(m);
+        ASSERT_EQ(block % m, 0u);
+        ASSERT_GE(block, 4096 - m);
+        ASSERT_LE(block, 4096u);
+        const uint64_t lengths[] = {1,         m,         2 * m - 1, 2 * m,     block - 1, block,     block + 1,
+                                    2 * block - 1, 2 * block, 2 * block + 1, 3 * block + m, (uint64_t(1) << 18) + 3};
+        for (uint64_t qLength : lengths) {
+            const bool large = qLength > 4 * block;
+            for (int kind = 0; kind < (large ? 1 : 3); ++kind) {
+                Column q(qLength, E.fr.zero());
+                for (uint64_t j = 0; j < qLength; ++j) {
+                    if (kind == 0) {
+                        q[j] = random.element();
+                    } else if (kind == 1) {
+                        q[j] = E.fr.one();
+                    }
+                }
+                q.front() = kind == 2 ? E.fr.one() : q.front();
+                q.back() = E.fr.isZero(q.back()) || kind == 2 ? E.fr.one() : q.back();
+                for (int b = 0; b < (large ? 1 : 4); ++b) {
+                    const FrElement &beta = betas[b];
+                    const uint64_t d = qLength - 1 + m;
+                    for (int rho = 0; rho < 3; ++rho) {
+                        SCOPED_TRACE("m = " + std::to_string(m) + ", q of " + std::to_string(qLength) +
+                                     " coefficients, kind " + std::to_string(kind) + ", beta " +
+                                     std::to_string(b) + ", rho " + std::to_string(rho));
+                        Column a = multiple(q, m, beta, {}, d + 3);
+                        if (rho == 1) {
+                            a[m - 1] = E.fr.add(a[m - 1], random.element());
+                        } else if (rho == 2) {
+                            a[d - 1] = E.fr.add(a[d - 1], E.fr.one());
+                        }
+
+                        Column quotient(a.size(), E.fr.zero());
+                        if (d >= 2 * m - 1) {
+                            quotient = divByMonicBefore(a, d, static_cast<uint32_t>(m), beta);
+                        } else {
+                            for (uint64_t j = 0; j <= d - m; ++j) {
+                                quotient[j] = a[j + m];
+                            }
+                        }
+                        bool exact = true;
+                        for (uint64_t j = 0; j < m; ++j) {
+                            exact = exact && E.fr.isZero(E.fr.add(a[j], E.fr.mul(beta, quotient[j])));
+                        }
+                        if (rho == 0) {
+                            ASSERT_TRUE(exact);
+                            ASSERT_TRUE(same(quotient.data(), padded(q, a.size())));
+                        } else if (rho == 1) {
+                            ASSERT_FALSE(exact);
+                        } else {
+                            ASSERT_EQ(exact, E.fr.isZero(beta) && d - 1 >= m);
+                        }
+
+                        for (int t : {1, 2, 32}) {
+                            if (t != 32 && qLength <= block) {
+                                continue;
+                            }
+                            SCOPED_TRACE(std::to_string(t) + " threads");
+                            const Threads threads(t);
+                            Poly owned(E, a.size());
+                            load(owned, a);
+                            ASSERT_EQ(owned.getDegree(), d);
+                            const FrElement *buffer = owned.coef;
+                            ASSERT_EQ(owned.divByMonic(m, beta), exact);
+                            ASSERT_EQ(owned.coef, buffer);
+                            ASSERT_EQ(owned.getLength(), a.size());
+                            ASSERT_EQ(owned.getDegree(), degreeOf(quotient));
+                            ASSERT_TRUE(same(owned.coef, quotient));
+                        }
+
+                        Column reserved(a.size());
+                        Poly borrowed(E, reserved.data(), reserved.size());
+                        load(borrowed, a);
+                        ASSERT_EQ(borrowed.divByMonic(m, beta), exact);
+                        ASSERT_EQ(borrowed.coef, reserved.data());
+                        ASSERT_EQ(borrowed.getLength(), a.size());
+                        ASSERT_EQ(borrowed.getDegree(), degreeOf(quotient));
+                        ASSERT_TRUE(same(reserved.data(), quotient));
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The message of the std::runtime_error that call throws, or "" if it throws none.
+template <typename Call>
+std::string runtimeError(Call call) {
+    try {
+        call();
+    } catch (const std::runtime_error &e) {
+        return e.what();
+    }
+    return "";
+}
+
+// A divisor of degree 0 or above the polynomial's.
+TEST(PolynomialTest, div_by_monic_refuses_a_divisor_of_degree_0_or_too_high) {
+    Random random(0xdeb);
+    const FrElement beta = random.element();
+    Column coefs = random.column(8);
+    coefs.back() = E.fr.one();
+    Poly a(E, coefs.size());
+    load(a, coefs);
+    ASSERT_EQ(a.getDegree(), 7u);
+    const std::string degree0 = "divByMonic: X^0 - beta is not of degree at least 1";
+    const std::string tooHigh = "divByMonic: X^m - beta is of a degree above the polynomial's";
+    EXPECT_EQ(runtimeError([&] { a.divByMonic(0, beta); }), degree0);
+    EXPECT_EQ(runtimeError([] { Poly::divByMonicBlockLength(0); }), degree0);
+    EXPECT_EQ(runtimeError([&] { a.divByMonic(8, beta); }), tooHigh);
+    EXPECT_TRUE(same(a.coef, coefs));
+    Poly constant(E, 4);
+    constant.coef[0] = beta;
+    constant.fixDegree();
+    EXPECT_EQ(runtimeError([&] { constant.divByMonic(1, beta); }), tooHigh);
 }
 
 // byXSubValue(x): p·(X - x). On a reserved buffer it leaves -x·p there (it scales p in place) and

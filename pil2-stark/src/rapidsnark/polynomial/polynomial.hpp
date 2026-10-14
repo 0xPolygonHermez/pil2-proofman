@@ -3,6 +3,8 @@
 
 #include "assert.h"
 #include <sstream>
+#include <algorithm>
+#include <vector>
 #include <gmp.h>
 #include "fft.hpp"
 
@@ -21,6 +23,13 @@ class Polynomial {
     void initialize(u_int64_t length, u_int64_t blindLength = 0, bool createBuffer = true);
 
     static Polynomial<Engine>* computeLagrangePolynomial(u_int64_t i, FrElement xArr[], FrElement yArr[], u_int32_t length);
+
+    // The steps of divByMonic
+    template<bool Write>
+    void divByMonicRecurrence(u_int64_t lo, u_int64_t hi, u_int64_t m, const FrElement &beta, FrElement *q,
+                              FrElement *above);
+
+    void divByMonicSlots(FrElement *slots, u_int64_t from, u_int64_t m) const;
 public:
     FrElement *coef;
 
@@ -89,7 +98,17 @@ public:
     // Euclidean division, returns reminder polygon
     Polynomial<Engine>* divBy(Polynomial<Engine> &polynomial);
 
-    void divByMonic(uint32_t m, FrElement beta);
+    // Division by X^m - beta, 1 <= m <= d for the degree d, in place: the quotient q replaces the
+    // coefficients, q_j at j <= d - m and zeros at d - m < j <= d, in the same buffer, owned or
+    // reserved, and the degree is fixed. Returns whether the remainder, a_j + beta * q_j for j < m, is
+    // zero: whether the division is exact. The degree must be up to date: coefficients above it are
+    // neither read nor written. Throws std::runtime_error if m is 0 or above d.
+    // It runs on every thread, in parallel over blocks of the quotient's coefficients.
+    bool divByMonic(u_int64_t m, const FrElement &beta);
+
+    // The coefficients of a block of divByMonic(m, beta), m >= 1: a whole number of rows of m, about
+    // 2^12.
+    static u_int64_t divByMonicBlockLength(u_int64_t m);
 
     Polynomial<Engine>* divByVanishing(uint32_t m, FrElement beta);
 
