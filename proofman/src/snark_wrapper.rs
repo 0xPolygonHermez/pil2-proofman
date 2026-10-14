@@ -288,17 +288,18 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         let verkey_str: String = serde_json::from_str(&contents)
             .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
 
-        let d_buffers_recursivef = gen_device_buffers_recursivef_c(
+        // Freed if the final SNARK's prover cannot be loaded.
+        let d_buffers_recursivef = RecursivefDeviceBuffers(gen_device_buffers_recursivef_c(
             p_setup as *mut u8,
             setup_recursivef.prover_buffer_size,
             d_buffers_vadcop as *mut u8,
             &verkey_str,
-        ) as *mut c_void;
+        ) as *mut c_void);
 
         timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
         let zkey_filename = setup_snark_path.display().to_string() + ".zkey";
         let snark_prover = if preload {
-            let snark_prover = init_final_snark_prover_c(zkey_filename.as_str(), d_buffers_recursivef);
+            let snark_prover = init_final_snark_prover_c(zkey_filename.as_str(), d_buffers_recursivef.as_ptr());
             if snark_prover.is_null() {
                 return Err(std::io::Error::other(format!(
                     "Failed to initialize final snark prover from zkey file '{}'",
@@ -329,7 +330,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             proving_key_path: proving_key_path.to_path_buf(),
             vadcop_final_verkey,
             d_buffers,
-            d_buffers_recursivef,
+            d_buffers_recursivef: d_buffers_recursivef.into_raw(),
             memory_handler_recursive_witness,
             reload_fixed_pols_gpu,
             gpu,
@@ -581,12 +582,13 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     let verkey_str: String = serde_json::from_str(&contents)
         .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
 
-    let d_buffers_recursivef = gen_device_buffers_recursivef_c(
+    // Freed when this returns, whatever its outcome.
+    let d_buffers_recursivef = RecursivefDeviceBuffers(gen_device_buffers_recursivef_c(
         p_setup as *mut u8,
         setup_recursivef.prover_buffer_size,
         std::ptr::null_mut(),
         &verkey_str,
-    ) as *mut c_void;
+    ) as *mut c_void);
 
     let trace_size = setup_recursivef.stark_info.map_sections_n["cm1"]
         * (1 << setup_recursivef.stark_info.stark_struct.n_bits)
@@ -604,7 +606,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &recursivef_const_tree,
         &vadcop_final_verkey,
         setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
-        d_buffers_recursivef,
+        d_buffers_recursivef.as_ptr(),
     )?;
     timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
@@ -619,8 +621,6 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     if setup_snark_path.parent().is_some_and(|p| p.exists()) {
         generate_witness_final_snark(recursivef_proof.as_ptr(), &setup_snark_path)?;
     }
-
-    free_device_buffers_recursivef_c(d_buffers_recursivef);
 
     Ok(is_valid)
 }
@@ -766,6 +766,32 @@ fn snarkjs_verdict(protocol: &SnarkProtocol, success: bool, stdout: &str) -> Sna
         SnarkjsVerdict::Rejected
     } else {
         SnarkjsVerdict::Failed
+    }
+}
+
+/// The recursivef's device buffers (`gen_device_buffers_recursivef_c`), freed when dropped unless
+/// handed over with [`into_raw`](Self::into_raw), so that an error does not leak them. The CPU
+/// backend has none: the pointer is null and nothing is freed.
+struct RecursivefDeviceBuffers(*mut c_void);
+
+impl RecursivefDeviceBuffers {
+    fn as_ptr(&self) -> *mut c_void {
+        self.0
+    }
+
+    /// The buffers, which the caller frees from now on.
+    fn into_raw(self) -> *mut c_void {
+        let buffers = self.0;
+        std::mem::forget(self);
+        buffers
+    }
+}
+
+impl Drop for RecursivefDeviceBuffers {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            free_device_buffers_recursivef_c(self.0);
+        }
     }
 }
 
