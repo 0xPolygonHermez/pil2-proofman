@@ -265,7 +265,17 @@ pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile> {
     // Detect custom gates by the presence of their sections (4 = definitions, 5 = uses),
     // not by `n_sections == 5`: a missing optional section 3, or an extra future section,
     // would otherwise silently drop every custom gate and leave its `<--` outputs free.
-    let use_custom_gates = data_starts.contains_key(&4) && data_starts.contains_key(&5);
+    // One without the other is malformed, and reading it as "no custom gates" would do the same.
+    let use_custom_gates = match (data_starts.contains_key(&4), data_starts.contains_key(&5)) {
+        (true, true) => true,
+        (false, false) => false,
+        (has_definitions, has_uses) => {
+            return Err(anyhow!(
+                "custom gate sections must come together: definitions (4) present: {has_definitions}, \
+                 uses (5) present: {has_uses}"
+            ))
+        }
+    };
 
     // ── Section 1: Header ───────────────────────────────────────────────────
     c.set_position(*data_starts.get(&1).ok_or_else(|| anyhow!("missing header section (type 1)"))?);

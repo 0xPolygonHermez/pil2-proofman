@@ -356,13 +356,26 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             })
         };
 
-        let (snark_proof_bytes, snark_publics_bytes) = generate_snark_proof(
+        let generated = generate_snark_proof(
             snark_prover,
             &self.setup_snark_path,
             recursivef_proof.as_ptr(),
             prealloc_handle,
             self.d_buffers_recursivef,
-        )?;
+        );
+
+        // The snark's carve overwrote the const-pols regions inside the unified buffer; the
+        // flag is consumed after the next wcm.execute() and re-uploads them before any proof.
+        // Released before anything below can return, so no error path leaves them behind.
+        if self.d_buffers.is_some() {
+            if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
+                reload_flag.store(true, Ordering::SeqCst);
+            }
+        }
+        if self.snark_prover.is_none() {
+            free_final_snark_prover_c(snark_prover);
+        }
+        let (snark_proof_bytes, snark_publics_bytes) = generated?;
 
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
         let publics = &proof[1..1 + proof[0] as usize];
@@ -382,18 +395,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         timer_stop_and_log_debug!(GENERATING_SNARK_PROOF);
 
         timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
-
-        // The snark's carve overwrote the const-pols regions inside the unified buffer; the
-        // flag is consumed after the next wcm.execute() and re-uploads them before any proof.
-        if self.d_buffers.is_some() {
-            if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
-                reload_flag.store(true, Ordering::SeqCst);
-            }
-        }
-
-        if self.snark_prover.is_none() {
-            free_final_snark_prover_c(snark_prover);
-        }
 
         Ok(snark_proof)
     }
@@ -575,7 +576,7 @@ pub fn verify_snark_proof_with_expected(
     vkey_path: &Path,
     expected_public_snark_bytes: Option<&[u8]>,
 ) -> ProofmanResult<()> {
-    run_snarkjs_verify(snark_proof, vkey_path, expected_public_snark_bytes, &mut TempJsonFiles::default())
+    run_snarkjs_verify(snark_proof, vkey_path, expected_public_snark_bytes, &TempJsonFiles::new()?)
 }
 
 /// As [`verify_snark_proof_with_expected`], with the verification key given as its JSON
@@ -585,34 +586,24 @@ pub fn verify_snark_proof_with_vkey(
     vkey_json: &str,
     expected_public_snark_bytes: Option<&[u8]>,
 ) -> ProofmanResult<()> {
-    let mut temp = TempJsonFiles::default();
+    let temp = TempJsonFiles::new()?;
     let vkey_path = temp.write("snark_vkey", vkey_json)?;
-    run_snarkjs_verify(snark_proof, &vkey_path, expected_public_snark_bytes, &mut temp)
+    run_snarkjs_verify(snark_proof, &vkey_path, expected_public_snark_bytes, &temp)
 }
 
-/// JSON files snarkjs reads, removed when dropped, on every return path.
-#[derive(Default)]
-struct TempJsonFiles(Vec<PathBuf>);
+/// JSON files snarkjs reads, in a private directory (random name, owner-only) that is
+/// removed with them when dropped, on every return path.
+struct TempJsonFiles(tempfile::TempDir);
 
 impl TempJsonFiles {
-    fn write(&mut self, name: &str, contents: &str) -> ProofmanResult<PathBuf> {
-        // Unique per call, so concurrent verifications in one process do not collide.
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("{name}_{}_{id}.json", std::process::id()));
-        std::fs::write(&path, contents)?;
-        self.0.push(path.clone());
-        Ok(path)
+    fn new() -> ProofmanResult<Self> {
+        Ok(Self(tempfile::Builder::new().prefix("snarkjs_").tempdir()?))
     }
-}
 
-impl Drop for TempJsonFiles {
-    fn drop(&mut self) {
-        for path in &self.0 {
-            if let Err(e) = std::fs::remove_file(path) {
-                tracing::warn!("Failed to remove temporary SNARK file {}: {}", path.display(), e);
-            }
-        }
+    fn write(&self, name: &str, contents: &str) -> ProofmanResult<PathBuf> {
+        let path = self.0.path().join(format!("{name}.json"));
+        std::fs::write(&path, contents)?;
+        Ok(path)
     }
 }
 
@@ -620,7 +611,7 @@ fn run_snarkjs_verify(
     snark_proof: &SnarkProof,
     vkey_path: &Path,
     expected_public_snark_bytes: Option<&[u8]>,
-    temp: &mut TempJsonFiles,
+    temp: &TempJsonFiles,
 ) -> ProofmanResult<()> {
     match expected_public_snark_bytes {
         Some(expected) if expected != snark_proof.public_snark_bytes.as_slice() => {
