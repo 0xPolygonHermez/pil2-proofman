@@ -154,19 +154,20 @@ std::pair<std::string, std::string> snark_proof_to_json(
     
     size_t offset = 0;
     
-    // Parse commitments (G1 points - each has x and y coordinates)
+    // Parse commitments (G1 points - each has x and y coordinates). Coordinates live in the
+    // base field: reading them as Fr would reduce a coordinate in [r, q) to another point.
     for (const auto& key : orderedCommitments) {
         json point = json::array();
         
-        AltBn128::FrElement x;
-        AltBn128::Fr.fromRprBE(x, proof_bytes + offset, AltBn128::Fr.bytes());
-        point.push_back(AltBn128::Fr.toString(x));
-        offset += AltBn128::Fr.bytes();
+        AltBn128::F1Element x;
+        AltBn128::F1.fromRprBE(x, proof_bytes + offset, AltBn128::F1.bytes());
+        point.push_back(AltBn128::F1.toString(x));
+        offset += AltBn128::F1.bytes();
         
-        AltBn128::FrElement y;
-        AltBn128::Fr.fromRprBE(y, proof_bytes + offset, AltBn128::Fr.bytes());
-        point.push_back(AltBn128::Fr.toString(y));
-        offset += AltBn128::Fr.bytes();
+        AltBn128::F1Element y;
+        AltBn128::F1.fromRprBE(y, proof_bytes + offset, AltBn128::F1.bytes());
+        point.push_back(AltBn128::F1.toString(y));
+        offset += AltBn128::F1.bytes();
         
         point.push_back("1");
         

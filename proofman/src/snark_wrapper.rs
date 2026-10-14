@@ -50,6 +50,12 @@ impl SnarkProtocol {
         }
     }
 
+    /// Serialized proof length: 24 big-endian 32-byte words for both protocols (PLONK: 9 G1
+    /// points and 6 evaluations; FFLONK: 4 points and 16 evaluations).
+    pub fn proof_bytes(&self) -> usize {
+        24 * 32
+    }
+
     pub fn protocol_name(&self) -> &'static str {
         match self {
             SnarkProtocol::Plonk => "plonk",
@@ -128,6 +134,25 @@ impl SnarkProof {
     pub fn convert_to_json(
         &self,
     ) -> Result<(serde_json::Value, serde_json::Value), Box<dyn std::error::Error + Send + Sync>> {
+        // The C parser throws on an unknown protocol or a short proof, which aborts the process
+        // across the FFI, and reads the digest in 32-byte words past a ragged end. Refuse here.
+        let protocol = SnarkProtocol::from_protocol_id(self.protocol_id)?;
+        if self.proof_bytes.len() != protocol.proof_bytes() {
+            return Err(format!(
+                "{} proof is {} bytes, expected {}",
+                protocol.protocol_name(),
+                self.proof_bytes.len(),
+                protocol.proof_bytes()
+            )
+            .into());
+        }
+        if self.public_snark_bytes.is_empty() || !self.public_snark_bytes.len().is_multiple_of(32) {
+            return Err(format!(
+                "SNARK public input is {} bytes, not whole 32-byte field elements",
+                self.public_snark_bytes.len()
+            )
+            .into());
+        }
         let (proof_json, publics_json) =
             snark_proof_bytes_to_json_c(&self.proof_bytes, &self.public_snark_bytes, self.protocol_id as i32);
 
@@ -649,21 +674,95 @@ fn run_snarkjs_verify(
         .output()
         .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to execute snarkjs: {}", e)))?;
 
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stdout.contains("OK") {
+    // snarkjs reports everything on stdout and exits 1 both when it rejects a proof and when it
+    // cannot run (unreadable vkey, missing file, ...), so only its messages tell them apart.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    match snarkjs_verdict(output.status.success(), &stdout) {
+        SnarkjsVerdict::Verified => {
             tracing::info!("    {}", "\u{2713} SNARK proof was verified".bright_green().bold());
             Ok(())
-        } else {
-            tracing::info!("··· {}", "\u{2717} SNARK proof was not verified".bright_red().bold());
-            Err(ProofmanError::InvalidProof("SNARK proof was not verified".to_string()))
         }
+        SnarkjsVerdict::Rejected => {
+            tracing::info!("··· {}", "\u{2717} SNARK proof was not verified".bright_red().bold());
+            Err(ProofmanError::InvalidProof(format!("SNARK proof was not verified: {}", stdout.trim())))
+        }
+        SnarkjsVerdict::Failed => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(ProofmanError::InvalidConfiguration(format!(
+                "snarkjs could not verify the proof ({}): {} {}",
+                output.status,
+                stdout.trim(),
+                stderr.trim()
+            )))
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SnarkjsVerdict {
+    Verified,
+    /// The checks ran and the proof failed them.
+    Rejected,
+    /// Nothing was decided: snarkjs could not read its inputs, or the key does not fit.
+    Failed,
+}
+
+/// What snarkjs 0.7's `plonk verify` / `fflonk verify` concluded from its exit status and stdout.
+fn snarkjs_verdict(success: bool, stdout: &str) -> SnarkjsVerdict {
+    // A key with another public count is misconfiguration, not a false proof.
+    const REJECTED: [&str; 5] = [
+        "Invalid Proof",
+        "Proof commitments are not valid",
+        "Proof evaluations are not valid",
+        "Public inputs are not valid",
+        "Invalid number of public inputs",
+    ];
+    if success && stdout.contains("OK!") {
+        SnarkjsVerdict::Verified
+    } else if !success && REJECTED.iter().any(|m| stdout.contains(m)) {
+        SnarkjsVerdict::Rejected
     } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        tracing::info!("··· {}", "\u{2717} SNARK verification failed".bright_red().bold());
-        Err(ProofmanError::InvalidProof(format!("SNARK proof verification failed: {}", stderr)))
+        SnarkjsVerdict::Failed
     }
 }
 
 unsafe impl<F: PrimeField64> Send for SnarkWrapper<F> {}
 unsafe impl<F: PrimeField64> Sync for SnarkWrapper<F> {}
+
+#[cfg(test)]
+mod snarkjs_verdict_tests {
+    use super::*;
+
+    #[test]
+    fn only_snarkjs_rejections_count_as_a_rejected_proof() {
+        assert_eq!(snarkjs_verdict(true, "[INFO]  snarkJS: OK!\n"), SnarkjsVerdict::Verified);
+        assert_eq!(snarkjs_verdict(false, "[WARN]  snarkJS: Invalid Proof\n"), SnarkjsVerdict::Rejected);
+        assert_eq!(
+            snarkjs_verdict(false, "[ERROR] snarkJS: Proof commitments are not valid.\n"),
+            SnarkjsVerdict::Rejected
+        );
+        // Exit 0 without OK!, a key that does not fit, an unreadable file: nothing decided.
+        assert_eq!(snarkjs_verdict(true, ""), SnarkjsVerdict::Failed);
+        assert_eq!(
+            snarkjs_verdict(false, "[ERROR] snarkJS: Number of public signals does not match with vk\n"),
+            SnarkjsVerdict::Failed
+        );
+        assert_eq!(snarkjs_verdict(false, "[ERROR] snarkJS: Error: ENOENT: no such file\n"), SnarkjsVerdict::Failed);
+        assert_eq!(snarkjs_verdict(false, ""), SnarkjsVerdict::Failed);
+    }
+
+    #[test]
+    fn convert_to_json_refuses_what_the_native_parser_cannot_read() {
+        let proof = |proof_len: usize, digest_len: usize, protocol_id: u64| SnarkProof {
+            proof_bytes: vec![0; proof_len],
+            public_bytes: vec![],
+            public_snark_bytes: vec![0; digest_len],
+            protocol_id,
+        };
+        let plonk = SnarkProtocol::Plonk.protocol_id();
+        assert!(proof(767, 32, plonk).convert_to_json().is_err());
+        assert!(proof(768, 31, plonk).convert_to_json().is_err());
+        assert!(proof(768, 0, plonk).convert_to_json().is_err());
+        assert!(proof(768, 32, 99).convert_to_json().is_err());
+    }
+}

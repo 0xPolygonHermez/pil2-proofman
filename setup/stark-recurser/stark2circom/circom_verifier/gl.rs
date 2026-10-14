@@ -505,7 +505,7 @@ fn build_tera_context(
     };
 
     // Helper: build chunk JSON list from ChunkedCode
-    let build_chunk_list = |cc: &super::expressions_chunks::ChunkedCode| -> Vec<serde_json::Value> {
+    let build_chunk_list = |cc: &super::expressions_chunks::ChunkedCode| -> Result<Vec<serde_json::Value>> {
         cc.chunks
             .iter()
             .enumerate()
@@ -513,15 +513,15 @@ fn build_tera_context(
                 let mut lines: Vec<String> = Vec::new();
                 let initialized: Vec<u64> = chunk.inputs.iter().chain(chunk.outputs.iter()).copied().collect();
                 // A codegen error here would silently leave the chunk body short and its
-                // outputs as free circuit signals; abort setup instead.
+                // outputs as free circuit signals; fail setup instead.
                 unroll_code(&chunk.code, &initialized, &unroll_ctx, &mut lines)
-                    .unwrap_or_else(|e| panic!("unroll_code failed generating verifier chunk {i}: {e}"));
+                    .map_err(|e| anyhow::anyhow!("unroll_code failed generating verifier chunk {i}: {e}"))?;
                 let code = lines.join("\n");
                 let inputs: Vec<serde_json::Value> =
                     chunk.inputs.iter().map(|&id| serde_json::json!({ "id": id, "dim": cc.tmps[&id].dim })).collect();
                 let outputs: Vec<serde_json::Value> =
                     chunk.outputs.iter().map(|&id| serde_json::json!({ "id": id, "dim": cc.tmps[&id].dim })).collect();
-                serde_json::json!({ "idx": i, "inputs": inputs, "outputs": outputs, "code": code })
+                Ok(serde_json::json!({ "idx": i, "inputs": inputs, "outputs": outputs, "code": code }))
             })
             .collect()
     };
@@ -529,15 +529,15 @@ fn build_tera_context(
     // ── Eval P chunks ─────────────────────────────────────────────────────────
     let q_verifier_code: Vec<Value> = vi["qVerifier"]["code"].as_array().map_or(vec![], |a| a.clone());
     let eval_p_raw = get_expressions_chunks(&q_verifier_code);
-    let mut eval_p_chunks = build_chunk_list(&eval_p_raw);
+    let mut eval_p_chunks = build_chunk_list(&eval_p_raw)?;
 
     // ── Eval Q chunks ─────────────────────────────────────────────────────────
     let query_verifier_code: Vec<Value> = vi["queryVerifier"]["code"].as_array().map_or(vec![], |a| a.clone());
     let (fri_once_code, query_code, fri_consts) = split_query_independent(&query_verifier_code, (q_stage + 2) as u64);
     let fri_once_raw = get_expressions_chunks_ext(&fri_once_code, &[], &fri_consts.iter().map(|&(id, _)| id).collect());
-    let mut fri_once_chunks = build_chunk_list(&fri_once_raw);
+    let mut fri_once_chunks = build_chunk_list(&fri_once_raw)?;
     let eval_q_raw = get_expressions_chunks_ext(&query_code, &fri_consts, &HashSet::new());
-    let mut eval_q_chunks = build_chunk_list(&eval_q_raw);
+    let mut eval_q_chunks = build_chunk_list(&eval_q_raw)?;
 
     // ── inputsP — for VerifyEvaluations chunk calls ───────────────────────────
     let mut inputs_p: Vec<String> = Vec::new();

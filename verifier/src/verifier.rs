@@ -505,7 +505,8 @@ where
     // The grinding hash and the query indices below are read from the LAST challenge slot, and the
     // loop above wrote slot `c`. Those must be the same slot: were they to diverge, the queries
     // would come from an all-zero challenge the prover can predict. It holds iff
-    // n_challenges_total == 7 + n_fri_steps, which nothing else states.
+    // n_challenges_total == challenges_map.len() + n_fri_steps (6 + n for the 2-stage AIRs this
+    // verifier handles), as the generator emits it; nothing else states it.
     let last_challenge_index = challenges.len() - 1;
     if c != last_challenge_index {
         v_error!(
