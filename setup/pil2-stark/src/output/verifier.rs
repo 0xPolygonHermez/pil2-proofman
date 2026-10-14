@@ -27,6 +27,12 @@ pub fn write_verifier_rust_file(
         stark_info.custom_commits.is_empty(),
         "{path}: the native Rust verifier does not support custom commits"
     );
+    // Its transcript replay (stark_verify and stark_verify_stir) is laid out for three roots.
+    anyhow::ensure!(
+        stark_info.n_stages == 2,
+        "{path}: the native Rust verifier supports nStages = 2 only (got {})",
+        stark_info.n_stages
+    );
 
     println!("> Writing rust verifier file");
 
