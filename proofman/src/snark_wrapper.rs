@@ -575,6 +575,53 @@ pub fn verify_snark_proof_with_expected(
     vkey_path: &Path,
     expected_public_snark_bytes: Option<&[u8]>,
 ) -> ProofmanResult<()> {
+    run_snarkjs_verify(snark_proof, vkey_path, expected_public_snark_bytes, &mut TempJsonFiles::default())
+}
+
+/// As [`verify_snark_proof_with_expected`], with the verification key given as its JSON
+/// rather than a file.
+pub fn verify_snark_proof_with_vkey(
+    snark_proof: &SnarkProof,
+    vkey_json: &str,
+    expected_public_snark_bytes: Option<&[u8]>,
+) -> ProofmanResult<()> {
+    let mut temp = TempJsonFiles::default();
+    let vkey_path = temp.write("snark_vkey", vkey_json)?;
+    run_snarkjs_verify(snark_proof, &vkey_path, expected_public_snark_bytes, &mut temp)
+}
+
+/// JSON files snarkjs reads, removed when dropped, on every return path.
+#[derive(Default)]
+struct TempJsonFiles(Vec<PathBuf>);
+
+impl TempJsonFiles {
+    fn write(&mut self, name: &str, contents: &str) -> ProofmanResult<PathBuf> {
+        // Unique per call, so concurrent verifications in one process do not collide.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("{name}_{}_{id}.json", std::process::id()));
+        std::fs::write(&path, contents)?;
+        self.0.push(path.clone());
+        Ok(path)
+    }
+}
+
+impl Drop for TempJsonFiles {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            if let Err(e) = std::fs::remove_file(path) {
+                tracing::warn!("Failed to remove temporary SNARK file {}: {}", path.display(), e);
+            }
+        }
+    }
+}
+
+fn run_snarkjs_verify(
+    snark_proof: &SnarkProof,
+    vkey_path: &Path,
+    expected_public_snark_bytes: Option<&[u8]>,
+    temp: &mut TempJsonFiles,
+) -> ProofmanResult<()> {
     match expected_public_snark_bytes {
         Some(expected) if expected != snark_proof.public_snark_bytes.as_slice() => {
             return Err(ProofmanError::InvalidProof(
@@ -591,34 +638,17 @@ pub fn verify_snark_proof_with_expected(
         }
     }
 
-    let (proof_json_value, publics_json_value) = snark_proof
+    let (proof_json, publics_json) = snark_proof
         .convert_to_json()
         .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to convert SNARK proof to JSON: {}", e)))?;
+    let to_json = |value| {
+        serde_json::to_string(value)
+            .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to serialize SNARK JSON: {}", e)))
+    };
+    let proof_path = temp.write("snark_proof", &to_json(&proof_json)?)?;
+    let publics_path = temp.write("snark_publics", &to_json(&publics_json)?)?;
 
-    // Write JSON to temporary files with unique names to avoid race conditions
-    let temp_dir = std::env::temp_dir();
-    let unique_id = format!(
-        "{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
-            .as_nanos()
-    );
-    let proof_path = temp_dir.join(format!("snark_proof_{}.json", unique_id));
-    let publics_path = temp_dir.join(format!("snark_publics_{}.json", unique_id));
-
-    let proof_json_str = serde_json::to_string_pretty(&proof_json_value)
-        .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to serialize proof JSON: {}", e)))?;
-    let publics_json_str = serde_json::to_string_pretty(&publics_json_value)
-        .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to serialize publics JSON: {}", e)))?;
-    std::fs::write(&proof_path, proof_json_str)?;
-    std::fs::write(&publics_path, publics_json_str)?;
-
-    // Determine protocol
     let protocol = SnarkProtocol::from_protocol_id(snark_proof.protocol_id)?;
-
-    // Call snarkjs verify
     let output = Command::new("snarkjs")
         .arg(protocol.protocol_name())
         .arg("verify")
@@ -627,13 +657,6 @@ pub fn verify_snark_proof_with_expected(
         .arg(&proof_path)
         .output()
         .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to execute snarkjs: {}", e)))?;
-
-    if let Err(e) = std::fs::remove_file(&proof_path) {
-        tracing::warn!("Failed to remove temporary SNARK proof file {}: {}", proof_path.display(), e);
-    }
-    if let Err(e) = std::fs::remove_file(&publics_path) {
-        tracing::warn!("Failed to remove temporary SNARK publics file {}: {}", publics_path.display(), e);
-    }
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
