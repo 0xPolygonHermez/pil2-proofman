@@ -6,7 +6,7 @@ use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug
 use proofman_verifier::VadcopFinalProof;
 use proofman_fields::PrimeField64;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::fs::File;
 use std::process::Command;
 use colored::Colorize;
@@ -99,6 +99,10 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub proving_key_path: PathBuf,
     pub memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     pub gpu: bool,
+    /// Held by each proof throughout ([`generate_final_snark_proof`](Self::generate_final_snark_proof)),
+    /// so that the wrapper proves one at a time: two proofs at once would both write the
+    /// recursivef's prover buffer `aux_trace` and its device buffers, and rapidsnark's prover.
+    proving: Mutex<()>,
 }
 
 /// The BN254 scalar order `r`, big-endian.
@@ -334,6 +338,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             memory_handler_recursive_witness,
             reload_fixed_pols_gpu,
             gpu,
+            proving: Mutex::new(()),
         })
     }
 
@@ -366,10 +371,14 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         // wrapper transcript (VerifyPoW aborts).
         let verkey = verkey_override.unwrap_or(&self.vadcop_final_verkey);
 
+        // One proof at a time (`proving`), until this one is out. A proof that panicked poisons the
+        // lock, and the next one takes it all the same: each proof writes its buffers afresh.
+        let _proving = self.proving.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
         // The recursivef's const tree and prover buffer, and the snark's carve, live in the unified
         // buffer and may overwrite its const-pols regions, also in a proof that fails. The flag,
         // consumed after the next wcm.execute(), re-uploads them before any proof; it is set as
-        // this proof ends, whatever its outcome.
+        // this proof ends, whatever its outcome, before the lock is let go.
         let _reload = ReloadFixedPolsOnDrop(self.d_buffers.and(self.reload_fixed_pols_gpu.as_deref()));
 
         let recursivef_proof = generate_recursivef_proof(
@@ -807,7 +816,23 @@ impl Drop for ReloadFixedPolsOnDrop<'_> {
     }
 }
 
+// SAFETY: every field is `Send` but the raw pointers, and none of those is tied to the thread
+// that made it: `snark_prover` (rapidsnark's prover of `final.zkey`) and `d_buffers_recursivef`
+// (the recursivef's device buffers) are the wrapper's, which its `Drop` frees, and `d_buffers`
+// (the caller's unified buffer) it never frees. They are C++ objects of the process and CUDA
+// memory of its contexts, which each proof already hands to threads it spawns: the recursivef's
+// loader of its fixed columns, and the GPU pre-allocation of rapidsnark's prover.
 unsafe impl<F: PrimeField64> Send for SnarkWrapper<F> {}
+// SAFETY: a shared wrapper proves one proof at a time: `generate_final_snark_proof` holds the lock
+// of `proving` throughout, and only a proof hands the C++ side what it writes: rapidsnark's
+// prover, the recursivef's and the caller's device buffers (the raw pointers), and the
+// recursivef's prover buffer `aux_trace`, through a pointer of the shared `Vec`. The threads a
+// proof spawns are joined before it returns, on its errors too: its own (the recursivef's loader
+// of its fixed columns, the GPU pre-allocation of rapidsnark's prover) and those rapidsnark's GPU
+// prover starts, which its pre-allocation and its proof join before they return. Every other
+// field is `Sync`. The raw pointers are public, and handing one to the C++ side outside a proof is
+// the caller's to order with the wrapper's proofs, as for any call of `proofman_starks_lib_c`
+// with them.
 unsafe impl<F: PrimeField64> Sync for SnarkWrapper<F> {}
 
 #[cfg(test)]
