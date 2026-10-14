@@ -283,7 +283,7 @@ jobs:
     name: Test pilfflonk (BN128)
     runs-on: ubuntu-latest
     env:
-      PIL2_COMPILER_COMMIT: f4fbf33a9d8aae1381b9e57056b09c293522df2c
+      PIL2_COMPILER_COMMIT: 8515f9f1a53416debaeed9fc9c30ddf1b53e66b6
       CARGO_FEATURES: proofman-starks-lib-c/cpu-only
       FOUNDRY_VERSION: v1.8.3
       SOLC_URL: https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.37+commit.f401782d
@@ -401,7 +401,7 @@ jobs:
     name: Test pilfflonk wrap (fibonacci-square)
     runs-on: ubuntu-latest
     env:
-      PIL2_COMPILER_COMMIT: f4fbf33a9d8aae1381b9e57056b09c293522df2c
+      PIL2_COMPILER_COMMIT: 8515f9f1a53416debaeed9fc9c30ddf1b53e66b6
       CARGO_FEATURES: proofman-starks-lib-c/cpu-only
       WRAP: target/pilfflonk-wrap
       WRAP_PTAU_POWERS: 6815756
