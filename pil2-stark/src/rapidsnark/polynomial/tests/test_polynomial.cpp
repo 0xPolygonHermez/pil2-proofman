@@ -100,6 +100,17 @@ Column scaled(const Column &a, const FrElement &s) {
     return r;
 }
 
+// The coefficients of the product of the polynomials with coefficients a and b.
+Column product(const Column &a, const Column &b) {
+    Column c(a.size() + b.size() - 1, E.fr.zero());
+    for (uint64_t i = 0; i < a.size(); ++i) {
+        for (uint64_t j = 0; j < b.size(); ++j) {
+            c[i + j] = E.fr.add(c[i + j], E.fr.mul(a[i], b[j]));
+        }
+    }
+    return c;
+}
+
 // q·(X^m - β) + r in `length` coefficients, deg r < m.
 Column multiple(const Column &q, uint64_t m, const FrElement &beta, const Column &r, uint64_t length) {
     Column a = padded(r, length);
@@ -242,6 +253,62 @@ TEST(PolynomialTest, by_x_sub_value_multiplies_by_x_minus_value) {
     EXPECT_TRUE(holds(borrowedFull, quadratic, 3));
     EXPECT_TRUE(same(reservedFull.data(), scaled(linear, E.fr.neg(x1))));
     EXPECT_EQ(digest(borrowedFull, 3), grown);
+}
+
+// byXNSubValue(n, v): p·(X^n + v), for it adds v·p (byXSubValue adds -x·p) to X^n·p. On a
+// reserved buffer it leaves v·p there and moves to a buffer of its own. When the product does not
+// fit, the buffer grows by n, but the length stays and the degree is found below it, as with
+// byXSubValue. The expected values are the products written out: until it detached the buffer it
+// takes, it freed that buffer and read it back.
+TEST(PolynomialTest, by_xn_sub_value_multiplies_by_xn_plus_value) {
+    Random random(0xb7e);
+    const Column p = random.column(3);
+    FrElement v1 = random.element();
+    FrElement v2 = random.element();
+    // p·(X^2 + v1) and p·(X^2 + v1)·(X + v2)
+    const Column first = product(p, {v1, E.fr.zero(), E.fr.one()});
+    const Column second = product(first, {v2, E.fr.one()});
+
+    Poly owned(E, 8);
+    load(owned, p);
+    owned.byXNSubValue(2, v1);
+    EXPECT_EQ(owned.getLength(), 8u);
+    EXPECT_EQ(owned.getDegree(), 4u);
+    EXPECT_TRUE(holds(owned, first, 8));
+    owned.byXNSubValue(1, v2);
+    EXPECT_EQ(owned.getLength(), 8u);
+    EXPECT_EQ(owned.getDegree(), 5u);
+    EXPECT_TRUE(holds(owned, second, 8));
+
+    Column reserved(8);
+    Poly borrowed(E, reserved.data(), 8);
+    load(borrowed, p);
+    borrowed.byXNSubValue(2, v1);
+    EXPECT_NE(borrowed.coef, reserved.data());
+    EXPECT_EQ(borrowed.getDegree(), 4u);
+    EXPECT_TRUE(holds(borrowed, first, 8));
+    EXPECT_TRUE(same(reserved.data(), padded(scaled(p, v1), 8)));
+    borrowed.byXNSubValue(1, v2);
+    EXPECT_EQ(borrowed.getLength(), 8u);
+    EXPECT_EQ(borrowed.getDegree(), 5u);
+    EXPECT_TRUE(holds(borrowed, second, 8));
+    EXPECT_TRUE(same(reserved.data(), padded(scaled(p, v1), 8)));
+
+    Poly full(E, 3);
+    load(full, p);
+    full.byXNSubValue(2, v1);
+    EXPECT_EQ(full.getLength(), 3u);
+    EXPECT_EQ(full.getDegree(), 2u);
+    EXPECT_TRUE(holds(full, first, 5));
+
+    Column reservedFull(3);
+    Poly borrowedFull(E, reservedFull.data(), 3);
+    load(borrowedFull, p);
+    borrowedFull.byXNSubValue(2, v1);
+    EXPECT_EQ(borrowedFull.getLength(), 3u);
+    EXPECT_EQ(borrowedFull.getDegree(), 2u);
+    EXPECT_TRUE(holds(borrowedFull, first, 5));
+    EXPECT_TRUE(same(reservedFull.data(), scaled(p, v1)));
 }
 
 // add(b) and addBlinding(b, s), a + b and a + s·b: in place when b is not longer; otherwise into a

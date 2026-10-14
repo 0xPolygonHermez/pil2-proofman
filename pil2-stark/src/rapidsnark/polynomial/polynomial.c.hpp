@@ -396,6 +396,9 @@ void Polynomial<Engine>::byXNSubValue(int n, FrElement &value) {
     // Swap buffers
     if(this->createBuffer) delete[] this->coef;
     this->coef = pol->coef;
+    // pol's buffer is this polynomial's own now, even if the one it replaces was a reserved one
+    this->createBuffer = true;
+    pol->coef = nullptr;
     delete pol;
 
     fixDegree();
