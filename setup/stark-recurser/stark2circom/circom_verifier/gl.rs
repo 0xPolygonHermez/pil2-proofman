@@ -734,7 +734,7 @@ fn build_tera_context(
     let mut transcript_code_fri_mid = String::new();
     if is_stir {
         // STIR (stir.hpp verify): T₀ root → r_fold_0; per iteration i = 1..M−1: T_i root →
-        // r_out (a single squeeze — the circuit assumes the 2^{-128} re-squeeze case away) → β_i →
+        // r_out (a single squeeze; prover and native verifiers abort/reject if it lands in L_i) → β_i →
         // r_fold_i, r_comb_i → the round's query challenge c_i → the Âns_i and shake hints, zero
         // padding included → ρ_i (step 2(f), the shake check's random point). The grinding nonce
         // is not absorbed here: each c_i seeds its own query transcript (calculateStirQueries).

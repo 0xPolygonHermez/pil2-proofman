@@ -1257,7 +1257,7 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
         StirLayout sl = starkInfo.stirLayout();
         const Goldilocks::Element *sp = airValues + starkInfo.airValuesSize;
         if (sp[sl.oodFlag].fe != 0) {
-            throw std::runtime_error("STIR: an out-of-domain sample fell in L_i (probability ~2^-150); re-run the proof");
+            throw std::runtime_error("STIR: an out-of-domain sample fell in L_i (probability |L_i|/|F^3| < 2^-160); the verifier would reject this proof");
         }
         for (uint64_t i = 0; i < M; ++i) emit(friHeadersBase + i * treeHeaderStride, HASH_SIZE);
         for (uint64_t i = 0; i < M; ++i) {

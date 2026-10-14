@@ -247,7 +247,7 @@ fn low_degree_test_soundness(stark_struct: &proofman_common::StarkStruct) -> Low
         LowDegreeTest::Fri(fri) => LowDegreeTestSoundness::Fri {
             num_queries: fri.num_queries,
             fri_folding_factors: fri.folding_factors.iter().map(|&k| 1 << k).collect(),
-            fri_early_stop_degree: 1 << fri.log_domain_sizes.last().unwrap(),
+            fri_early_stop_degree: 1 << fri.log_degrees.last().unwrap(), // d_M, as the STIR branch reports
             grinding_query_phase: fri.grinding_bits_queries,
         },
         LowDegreeTest::Stir(stir) => {

@@ -56,7 +56,7 @@ void stirProve_gpu(const StirParams &p, const StirGpuIo &io, TranscriptGL_GPU *t
         foldAndInterpolate(i - 1);
         coeffsToEvalsColMajor(B, gHat, 1ull << p.logDegrees[i], p.logDomainSizes[i], shift, stream);
         commit(i, B, /*colMajor=*/true);
-        // 2(b) r_out; an in-domain draw raises the flag instead of re-squeezing (no host read).
+        // 2(b) r_out, one squeeze; an in-domain draw raises the flag, writeProof throws (no host read).
         for (uint64_t j = 0; j < s; j++) tr->getField((uint64_t *)(rOut + j * FIELD_EXTENSION), stream);
         oodFlag(flag, rOut, s, shift, p.logDomainSizes[i], stream);
         // 2(c) β_{i,j} := ĝ_i(r_out^{i,j})

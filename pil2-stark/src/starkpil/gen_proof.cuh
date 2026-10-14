@@ -90,7 +90,7 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
 void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, uint32_t stream_id, uint64_t instance_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, TimerGPU &timer, cudaStream_t stream, bool recursive = false, bool reuse_constants = false, bool fixedTreePending = false) {
     const bool stirLdt = setupCtx.starkInfo.starkStruct.lowDegreeTest == LowDegreeTestKind::STIR;
     if (stirLdt && setupCtx.starkInfo.starkStruct.verificationHashType != "GL") {
-        zklog.error("genProof_gpu: STIR with BN128 verification hashes is CPU-only");
+        zklog.error("genProof_gpu: STIR supports GL verification hashes only");
         exitProcess();
     }
     // On a basic air `recursive` means selfContained, whose cm1 root must precede stage 2.

@@ -40,6 +40,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -250,15 +251,13 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
         commit(*trees[i], proof.trees[i], prover.g_next().data(), math.L(i), params.logFoldingFactors[i]);
         transcript.put(&proof.trees[i].root[0], proof.trees[i].root.size());
 
-        // 2(b)  r_out^{i,1..s} ← F \ L_i. A squeezed element lies in L_i with probability
-        //       |L_i| / |F| ≈ 2^{−170}; we still honour the definition by re-squeezing.
+        // 2(b)  r_out^{i,1..s} ← F \ L_i: one squeeze each; landing in L_i (|L_i|/|F³| < 2^{−160}) aborts.
         std::vector<E3Box> rOut(params.numOodSamples);
         for (uint64_t j = 0; j < params.numOodSamples; j++)
         {
-            do
-            {
-                getChallenge(transcript, rOut[j].v);
-            } while (math.L(i).contains(rOut[j].v));
+            getChallenge(transcript, rOut[j].v);
+            if (math.L(i).contains(rOut[j].v))
+                throw std::runtime_error("STIR prove: r_out lands in L_" + std::to_string(i) + " (probability |L_i|/|F^3| < 2^-160); the verifier would reject this proof");
         }
 
         // 2(c)  β_{i,j} := ĝ_i(r_out^{i,j}).
@@ -474,14 +473,12 @@ bool STIR<ElementType>::verify(const StirProof<ElementType> &proof, const StirPa
     {
         put(proof.trees[i].root);
 
-        // 2(b)  r_out^{i,1..s} ← F \ L_i, drawn exactly as the prover drew them.
+        // 2(b)  r_out^{i,1..s} ← F \ L_i: one squeeze each, rejected if it lands in L_i.
         std::vector<E3Box> rOut(params.numOodSamples);
         for (uint64_t j = 0; j < params.numOodSamples; j++)
         {
-            do
-            {
-                getChallenge(transcript, rOut[j].v);
-            } while (math.L(i).contains(rOut[j].v));
+            getChallenge(transcript, rOut[j].v);
+            if (math.L(i).contains(rOut[j].v)) return fail("r_out lands in L_" + std::to_string(i));
         }
 
         // 2(c)  the prover's β_{i,·}.

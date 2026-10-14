@@ -137,10 +137,23 @@ pub fn fri_query_verify(
     vals: &[Vec<Goldilocks>],
     xdivxsub: &[CubicExtensionField<Goldilocks>],
 ) -> CubicExtensionField<Goldilocks> {
-    let vf1 = challenges[info.n_challenges as usize - 2];
-    let vf2 = challenges[info.n_challenges as usize - 1];
+    deep_query_eval(&info.fri_ev_groups, info.n_challenges, challenges, evals, vals, xdivxsub)
+}
 
-    let n_cols = info.fri_ev_groups.iter().flat_map(|g| g.refs.iter()).map(|e| e.col as usize + 1).max().unwrap_or(0);
+/// The DEEP polynomial at one query point from its `FriEvalGroup` table: FRI's first-layer value
+/// and STIR's f_0 alike (both are the setup's `deepExpId`).
+pub fn deep_query_eval(
+    fri_ev_groups: &[FriEvalGroup],
+    n_challenges: u64,
+    challenges: &[CubicExtensionField<Goldilocks>],
+    evals: &[CubicExtensionField<Goldilocks>],
+    vals: &[Vec<Goldilocks>],
+    xdivxsub: &[CubicExtensionField<Goldilocks>],
+) -> CubicExtensionField<Goldilocks> {
+    let vf1 = challenges[n_challenges as usize - 2];
+    let vf2 = challenges[n_challenges as usize - 1];
+
+    let n_cols = fri_ev_groups.iter().flat_map(|g| g.refs.iter()).map(|e| e.col as usize + 1).max().unwrap_or(0);
     let mut vf2_pow = Vec::with_capacity(n_cols);
     let mut p = CubicExtensionField { value: [Goldilocks::ONE, Goldilocks::ZERO, Goldilocks::ZERO] };
     for _ in 0..n_cols {
@@ -151,7 +164,7 @@ pub fn fri_query_verify(
     // ev_map is sorted by opening point, so the groups walk `evals` in order.
     let mut eval_idx = 0;
     let mut fri = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
-    for (g, group) in info.fri_ev_groups.iter().enumerate() {
+    for (g, group) in fri_ev_groups.iter().enumerate() {
         let mut acc = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
         for e in &group.refs {
             let leaf = &vals[e.bucket as usize];

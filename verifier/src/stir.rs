@@ -14,9 +14,8 @@
 //  - Âns_i is taken from the proof (`ansCoeffs`) and checked to interpolate G_i at one random
 //    point ρ_i through the shake polynomial `shakeCoeffs` (step 2(f) in stir.hpp) — never
 //    interpolated here. Both hints are absorbed, zero padding included, before ρ_i is squeezed.
-//  - r_out is re-squeezed while it lands in L_i, exactly as the prover drew it. (The recursion
-//    circuit instead assumes a single squeeze — a proof whose r_out needed a re-squeeze
-//    verifies here but is not recursable; completeness loss 2^-128 per sample.)
+//  - r_out is squeezed once; a proof whose r_out lands in L_i is rejected (the prover aborts
+//    there), the same single-squeeze rule as the recursion circuit.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -29,7 +28,7 @@ use proofman_fields::{
     TranscriptLike,
 };
 
-use crate::verifier::Boundary;
+use crate::verifier::{deep_query_eval, Boundary, FriEvalGroup};
 
 type E3 = CubicExtensionField<Goldilocks>;
 
@@ -129,6 +128,8 @@ pub struct StirVerifierInfo {
     pub boundaries: Vec<Boundary>,
     pub q_deg: u64,
     pub q_index: u64,
+    /// The DEEP polynomial's evaluation table, the same one FRI's `VerifierInfo` carries.
+    pub fri_ev_groups: Vec<FriEvalGroup>,
     pub stir: StirParams,
 }
 
@@ -468,7 +469,7 @@ impl QuotientContext {
 
     ///   fᵢ(x) = ( (gᵢ(x) − Âns(x)) / ∏_{a∈G}(x − a) ) · Σ_{j=0}^{|G|} (r_comb·x)ʲ.
     /// The denominator is non-zero because G ∩ L = ∅ for every domain this runs on: the
-    /// out-of-domain samples are re-squeezed out of Lᵢ and the shift queries live in
+    /// out-of-domain samples are rejected if they land in Lᵢ and the shift queries live in
     /// Lᵢ₋₁^{kᵢ₋₁}, disjoint from Lᵢ by Remark 5.3 (checked in `validate`).
     fn apply(&self, gx: E3, x: E3) -> E3 {
         let ans = eval_pol_e3(&self.ans_coeffs, x);
@@ -677,13 +678,12 @@ where
     for i in 1..m {
         transcript.put(&section.roots[i]);
 
-        // 2(b)  r_out ← F \ Lᵢ (s = 1), drawn exactly as the prover drew it.
+        // 2(b)  r_out ← F \ Lᵢ (s = 1): one squeeze; the prover aborts if it lands in Lᵢ.
         let mut r_out = e3_zero();
-        loop {
-            transcript.get_field(&mut r_out.value);
-            if !domain_contains(shift, params.log_domain_sizes[i], r_out) {
-                break;
-            }
+        transcript.get_field(&mut r_out.value);
+        if domain_contains(shift, params.log_domain_sizes[i], r_out) {
+            v_error!("r_out lands in L_{}", i);
+            return false;
         }
 
         // 2(c)  the prover's β.
@@ -800,8 +800,7 @@ where
 
 /// The STIR counterpart of `stark_verify`, for proofs of circuits whose low-degree test is STIR.
 /// Same contract: `proof` is [n_publics, publics…, flat proof], `vk` the 4-limb constant root,
-/// and the two function pointers are the generated straight-line evaluators (they are
-/// LDT-agnostic — identical to the ones a FRI verifier of the same circuit would bake in).
+/// `q_verify` the generated quotient evaluator; f_0 is recomputed from `fri_ev_groups`.
 #[allow(clippy::type_complexity)]
 pub fn stark_verify_stir<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
@@ -811,12 +810,6 @@ pub fn stark_verify_stir<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
         &[CubicExtensionField<Goldilocks>],
         &[CubicExtensionField<Goldilocks>],
         &[Goldilocks],
-        &[CubicExtensionField<Goldilocks>],
-    ) -> CubicExtensionField<Goldilocks>,
-    queries_verify: fn(
-        &[CubicExtensionField<Goldilocks>],
-        &[CubicExtensionField<Goldilocks>],
-        &[Vec<Goldilocks>],
         &[CubicExtensionField<Goldilocks>],
     ) -> CubicExtensionField<Goldilocks>,
 ) -> bool
@@ -1123,7 +1116,14 @@ where
 
         // 3) DEEP consistency: the recomputed DEEP polynomial at this row must equal what T_0's
         //    leaf claimed for f_0 there — the STIR counterpart of FRI's s1_vals comparison.
-        let deep = queries_verify(&challenges, &evals, &s0_vals[q], &xdivxsub[q]);
+        let deep = deep_query_eval(
+            &verifier_info.fri_ev_groups,
+            verifier_info.n_challenges,
+            &challenges,
+            &evals,
+            &s0_vals[q],
+            &xdivxsub[q],
+        );
         if deep != f0_claims[q] {
             v_error!("DEEP/f_0 consistency check failed for query {}", q);
             return false;

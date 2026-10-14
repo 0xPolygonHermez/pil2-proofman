@@ -60,6 +60,10 @@ void StarkInfo::load(json j)
     std::string lowDegreeTest = j["starkStruct"].contains("lowDegreeTest") ? j["starkStruct"]["lowDegreeTest"].get<std::string>() : "FRI";
     if (lowDegreeTest == "STIR") {
         starkStruct.lowDegreeTest = LowDegreeTestKind::STIR;
+        if (starkStruct.verificationHashType != "GL") {
+            zklog.error("StarkInfo::load() STIR supports GL verification hashes only, got " + starkStruct.verificationHashType);
+            exitProcess();
+        }
         json stir = j["starkStruct"];
         starkStruct.stir.foldingFactors = stir["foldingFactors"].get<vector<uint64_t>>();
         starkStruct.stir.logDegrees = stir["logDegrees"].get<vector<uint64_t>>();
@@ -369,13 +373,6 @@ void StarkInfo::load(json j)
         mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN;
     } else {
         setMapOffsets();
-    }
-}
-
-void StarkInfo::requireFri(const std::string &what) const {
-    if (starkStruct.lowDegreeTest != LowDegreeTestKind::FRI) {
-        zklog.error(what + ": the stark info selects the STIR low-degree test, which this code path does not implement (FRI only)");
-        exitProcess();
     }
 }
 
@@ -800,7 +797,7 @@ void StarkInfo::setMapOffsets() {
 
     if (gpu && starkStruct.lowDegreeTest == LowDegreeTestKind::STIR) {
         if (starkStruct.verificationHashType != "GL") {
-            zklog.error("setMapOffsets: GPU STIR supports GL verification hashes only");
+            zklog.error("setMapOffsets: STIR supports GL verification hashes only");
             exitProcess();
         }
         if (starkStruct.stir.logDomainSizes[0] != starkStruct.nBitsExt) {

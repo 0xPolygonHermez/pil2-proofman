@@ -242,10 +242,6 @@ public:
     /* Loads data from a json object */
     void load (json j);
 
-    /// The prover, verifier and proof layout only implement FRI so far: stop with a clear message
-    /// rather than misread a STIR stark info as a FRI one.
-    void requireFri(const std::string &what) const;
-
     /// Number of Merkle trees the low-degree test commits, and the leaf width of each.
     uint64_t numLowDegreeTestTrees() const;
     uint64_t lowDegreeTestTreeWidth(uint64_t i) const;

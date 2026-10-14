@@ -428,5 +428,6 @@ clean_gpu:
 -include $(DEPS_STARKS_LIB)
 -include $(DEPS_STARKS_LIB_GPU)
 -include $(DEPS_STIR_GPU)
+-include $(DEPS_STIR_TEST)
 
 MKDIR_P ?= mkdir -p

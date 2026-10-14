@@ -22,6 +22,12 @@ pub fn write_verifier_rust_file(
         return Ok(());
     }
 
+    // The native verifier parses no custom-commit openings; fail here, not at verification.
+    anyhow::ensure!(
+        stark_info.custom_commits.is_empty(),
+        "{path}: the native Rust verifier does not support custom commits"
+    );
+
     println!("> Writing rust verifier file");
 
     let rust_verifier = prepare_verifier_rust(stark_info, verifier_info, vadcop_final_proof, hash_id)?;
@@ -67,7 +73,10 @@ fn prepare_verifier_rust(
     lines
         .push(format!("use proofman_fields::{{Goldilocks, CubicExtensionField, Field, {}}};", hash_imports.join(", ")));
     if is_stir {
-        lines.push("use crate::{stark_verify_stir, Boundary, StirParams, StirVerifierInfo};".to_string());
+        lines.push(
+            "use crate::{stark_verify_stir, Boundary, FriEvalGroup, FriEvalRef, StirParams, StirVerifierInfo};"
+                .to_string(),
+        );
     } else {
         lines.push("use crate::{stark_verify, Boundary, FriEvalGroup, FriEvalRef, VerifierInfo};".to_string());
     }
@@ -221,7 +230,7 @@ fn prepare_verifier_rust(
             // challenges — `num_ldt_challenges` in common/src/stark_info.rs.
             lines.push(format!(
                 "        n_challenges_total: {},",
-                stark_info.challenges_map.len() + 1 + (m - 1) * 3 + m
+                stark_info.challenges_map.len() + 1 + m.saturating_sub(1) * 3 + m
             ));
 
             lines.push(format!("        num_vals: vec![{}],", num_vals.join(", ")));
@@ -229,6 +238,7 @@ fn prepare_verifier_rust(
             lines.push(format!("        boundaries: vec![{}],", boundary_strs.join(", ")));
             lines.push(format!("        q_deg: {},", stark_info.q_deg));
             lines.push(format!("        q_index: {},", q_ev_index));
+            lines.push(fri_ev_groups_str.clone());
 
             lines.push("        stir: StirParams {".to_string());
             lines.push(format!("            folding_factors: vec![{}],", vec_str(&stir.folding_factors)));
@@ -251,18 +261,19 @@ fn prepare_verifier_rust(
 
     // verify function. Generics: leaf, compression, transcript, grinding hashes.
     let generics = format!("{merkle_hash_type}, {merkle_hash_type}, {transcript_type}, {grinding_type}");
+    let verify_fn = if is_stir { "stark_verify_stir" } else { "stark_verify" };
     if vadcop_final_proof {
         lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".to_string());
         lines.push(format!(
-            "    stark_verify::<{generics}>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify)"
+            "    {verify_fn}::<{generics}>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify)"
         ));
         lines.push("}\n".to_string());
         lines.push("pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {".to_string());
-        lines.push(format!("    stark_verify::<{generics}>(proof, vk, &verifier_info(), q_verify)"));
+        lines.push(format!("    {verify_fn}::<{generics}>(proof, vk, &verifier_info(), q_verify)"));
         lines.push("}\n".to_string());
     } else {
         lines.push("pub fn verify(proof: &[u64], vk: &[u64]) -> bool {".to_string());
-        lines.push(format!("    stark_verify::<{generics}>(proof, vk, &verifier_info(), q_verify)"));
+        lines.push(format!("    {verify_fn}::<{generics}>(proof, vk, &verifier_info(), q_verify)"));
         lines.push("}\n".to_string());
     }
 

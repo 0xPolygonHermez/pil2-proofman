@@ -157,13 +157,20 @@ TEST(STIR_TEST, quotient_and_degree_correction_preserve_low_degree)
     E3 rComb;
     rng.e3(rComb);
 
+    auto quotient = [&](std::vector<FE> &f) {
+        stir::QuotientContext ctx;
+        ctx.reset(rComb);
+        for (uint64_t a = 0; a < nS; a++) ctx.add((const E3 &)points[a * FIELD_EXTENSION], (const E3 &)values[a * FIELD_EXTENSION]);
+        ctx.build();
+        stir::quotientAndDegreeCorrect(f.data(), g.data(), L, ctx);
+    };
     std::vector<FE> f(L.size() * FIELD_EXTENSION);
-    stir::quotientAndDegreeCorrect(f.data(), g.data(), L, points.data(), values.data(), nS, rComb);
+    quotient(f);
     ASSERT_LE(degreeBoundOn(f, L), d);
 
     // Corrupt one answer: the quotient is no longer a polynomial of degree < d − |S| on L.
     values[0] = values[0] + Goldilocks::one();
-    stir::quotientAndDegreeCorrect(f.data(), g.data(), L, points.data(), values.data(), nS, rComb);
+    quotient(f);
     ASSERT_GT(degreeBoundOn(f, L), d);
 }
 
@@ -192,18 +199,16 @@ TEST(STIR_TEST, honest_execution)
         prover.fold(rFold);
         ASSERT_LE(degreeBoundOn(prover.g_next(), params.L(i)), params.d(i)) << "g_" << i;
 
-        std::vector<E3> rOut(s), beta(s);
+        std::vector<stir::E3Box> rOut(s), beta(s);
         for (uint64_t j = 0; j < s; j++)
         {
-            do
-            {
-                rng.e3(rOut[j]);
-            } while (params.L(i).contains(rOut[j]));
-            prover.outOfDomainAnswer(beta[j], rOut[j]);
+            rng.e3(rOut[j].v);   // single draw, as the prover: in-domain aborts
+            ASSERT_FALSE(params.L(i).contains(rOut[j].v));
+            prover.outOfDomainAnswer(beta[j].v, rOut[j].v);
             // β is ĝ_i(r_out): consistent with the committed evaluations of g_i
             E3 check;
-            stir::evalPoly(check, prover.gHat_next().data(), params.d(i), rOut[j]);
-            ASSERT_TRUE(stir::equal(check, beta[j]));
+            stir::evalPoly(check, prover.gHat_next().data(), params.d(i), rOut[j].v);
+            ASSERT_TRUE(stir::equal(check, beta[j].v));
         }
 
         E3 rFoldNext, rComb;
