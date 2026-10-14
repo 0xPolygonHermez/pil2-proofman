@@ -16,6 +16,12 @@ serde = { version = "1.0.130", default-features = false, features = ["derive"] }
 num-bigint = { version = "0.4", default-features = false }
 blake3 = { workspace = true, default-features = false }
 
+[features]
+# Gates nothing. Kept only because setup/pil2-stark and setup/stark-recurser enable it:
+# ZisK keys its setup cache on proofman's setup/ tree, so editing those manifests would
+# force every consumer to rebuild its setup. Drop it with the next setup change.
+verify = []
+
 [dev-dependencies]
 rand = { workspace = true }
 
