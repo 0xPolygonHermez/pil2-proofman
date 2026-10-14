@@ -365,6 +365,12 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         // wrapper transcript (VerifyPoW aborts).
         let verkey = verkey_override.unwrap_or(&self.vadcop_final_verkey);
 
+        // The recursivef's const tree and prover buffer, and the snark's carve, live in the unified
+        // buffer and may overwrite its const-pols regions, also in a proof that fails. The flag,
+        // consumed after the next wcm.execute(), re-uploads them before any proof; it is set as
+        // this proof ends, whatever its outcome.
+        let _reload = ReloadFixedPolsOnDrop(self.d_buffers.and(self.reload_fixed_pols_gpu.as_deref()));
+
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
             &self.memory_handler_recursive_witness,
@@ -435,14 +441,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             self.d_buffers_recursivef,
         );
 
-        // The snark's carve overwrote the const-pols regions inside the unified buffer; the
-        // flag is consumed after the next wcm.execute() and re-uploads them before any proof.
-        // Released before anything below can return, so no error path leaves them behind.
-        if self.d_buffers.is_some() {
-            if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
-                reload_flag.store(true, Ordering::SeqCst);
-            }
-        }
         if self.snark_prover.is_none() {
             free_final_snark_prover_c(snark_prover);
         }
@@ -771,6 +769,18 @@ fn snarkjs_verdict(protocol: &SnarkProtocol, success: bool, stdout: &str) -> Sna
     }
 }
 
+/// Sets proofman's `reload_fixed_pols_gpu`, if any, when it goes: on any return of a wrap's proof,
+/// an error or a panic included.
+struct ReloadFixedPolsOnDrop<'a>(Option<&'a AtomicBool>);
+
+impl Drop for ReloadFixedPolsOnDrop<'_> {
+    fn drop(&mut self) {
+        if let Some(flag) = self.0 {
+            flag.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
 unsafe impl<F: PrimeField64> Send for SnarkWrapper<F> {}
 unsafe impl<F: PrimeField64> Sync for SnarkWrapper<F> {}
 
@@ -814,6 +824,32 @@ mod snarkjs_verdict_tests {
         );
         assert_eq!(snarkjs_verdict(fflonk, true, "[INFO]  snarkJS: OK!\n"), SnarkjsVerdict::Failed);
         assert_eq!(snarkjs_verdict(&SnarkProtocol::Plonk, true, fflonk_ok), SnarkjsVerdict::Failed);
+    }
+
+    /// The reload flag is set as a wrap's proof ends, on its errors and panics too, and without one
+    /// (no unified buffer) nothing is.
+    #[test]
+    fn the_reload_flag_is_set_whatever_the_proof_ends_with() {
+        let proof = |flag: Option<&AtomicBool>, fails: bool| -> Result<(), ()> {
+            let _reload = ReloadFixedPolsOnDrop(flag);
+            assert!(flag.is_none_or(|f| !f.load(Ordering::SeqCst)), "set before the proof ends");
+            if fails {
+                return Err(());
+            }
+            Ok(())
+        };
+        for fails in [false, true] {
+            let flag = AtomicBool::new(false);
+            assert_eq!(proof(Some(&flag), fails).is_err(), fails);
+            assert!(flag.load(Ordering::SeqCst), "fails: {fails}");
+            assert_eq!(proof(None, fails).is_err(), fails);
+        }
+        let flag = AtomicBool::new(false);
+        let panicked = std::panic::catch_unwind(|| {
+            let _reload = ReloadFixedPolsOnDrop(Some(&flag));
+            panic!("a proof that panics");
+        });
+        assert!(panicked.is_err() && flag.load(Ordering::SeqCst));
     }
 
     #[test]
