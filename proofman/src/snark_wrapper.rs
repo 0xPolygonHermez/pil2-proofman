@@ -356,16 +356,39 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             })
         };
 
-        let (snark_proof_bytes, snark_publics_bytes) = generate_snark_proof(
+        let generated = generate_snark_proof(
             snark_prover,
             &self.setup_snark_path,
             recursivef_proof.as_ptr(),
             prealloc_handle,
             self.d_buffers_recursivef,
-        )?;
+        );
+
+        // The snark's carve overwrote the const-pols regions inside the unified buffer; the
+        // flag is consumed after the next wcm.execute() and re-uploads them before any proof.
+        // Released before anything below can return, so no error path leaves them behind.
+        if self.d_buffers.is_some() {
+            if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
+                reload_flag.store(true, Ordering::SeqCst);
+            }
+        }
+        if self.snark_prover.is_none() {
+            free_final_snark_prover_c(snark_prover);
+        }
+        let (snark_proof_bytes, snark_publics_bytes) = generated?;
 
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
-        let public_bytes = get_public_bytes_solidity(&publics_info, &proof[1..1 + proof[0] as usize])?;
+        let publics = &proof[1..1 + proof[0] as usize];
+        // The digest verifiers recompute must be the one the circuit committed to.
+        let rootc: &[u64; 4] = verkey.try_into().map_err(|_| {
+            ProofmanError::InvalidConfiguration(format!("verkey has {} limbs, expected 4", verkey.len()))
+        })?;
+        if publics_info.snark_public_digest(publics, rootc)?.as_slice() != snark_publics_bytes.as_slice() {
+            return Err(ProofmanError::InvalidProof(
+                "the SNARK's public digest differs from PublicsInfo::snark_public_digest".to_string(),
+            ));
+        }
+        let public_bytes = get_public_bytes_solidity(&publics_info, publics)?;
         let snark_proof =
             SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, self.protocol.protocol_id());
 
@@ -373,57 +396,14 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
-        // The snark's carve overwrote the const-pols regions inside the unified buffer; the
-        // flag is consumed after the next wcm.execute() and re-uploads them before any proof.
-        if self.d_buffers.is_some() {
-            if let Some(reload_flag) = &self.reload_fixed_pols_gpu {
-                reload_flag.store(true, Ordering::SeqCst);
-            }
-        }
-
-        if self.snark_prover.is_none() {
-            free_final_snark_prover_c(snark_prover);
-        }
-
         Ok(snark_proof)
     }
 }
 
+/// The `publicValues` bytes a Solidity verifier takes. See
+/// [`PublicsInfo::solidity_public_bytes`].
 pub fn get_public_bytes_solidity(publics_info: &PublicsInfo, vadcop_public_inputs: &[u64]) -> ProofmanResult<Vec<u8>> {
-    let vadcop_public_inputs = if vadcop_public_inputs.len() == publics_info.n_publics + 1 {
-        &vadcop_public_inputs[1..]
-    } else {
-        vadcop_public_inputs
-    };
-    if vadcop_public_inputs.len() != publics_info.n_publics {
-        return Err(ProofmanError::InvalidConfiguration(format!(
-            "Number of vadcop public inputs ({}) does not match expected number of publics ({})",
-            vadcop_public_inputs.len(),
-            publics_info.n_publics
-        )));
-    }
-
-    let mut public_bytes = vec![];
-    let mut index = 0;
-    for public_def in &publics_info.definitions {
-        let n_words = public_def.n_values;
-        if !public_def.verification_key {
-            let n_chunks_per_word = public_def.chunks[0];
-            let n_bits_per_chunk = public_def.chunks[1];
-            let n_bytes_per_chunk = n_bits_per_chunk / 8;
-            for _ in 0..n_words {
-                for i in 0..n_chunks_per_word {
-                    let value = vadcop_public_inputs[index + n_chunks_per_word - i - 1];
-                    let be_bytes = value.to_be_bytes();
-                    public_bytes.extend_from_slice(&be_bytes[8 - n_bytes_per_chunk..]);
-                }
-                index += n_chunks_per_word;
-            }
-        } else {
-            index += n_words;
-        }
-    }
-    Ok(public_bytes)
+    publics_info.solidity_public_bytes(vadcop_public_inputs)
 }
 
 pub fn check_setup_snark<F: PrimeField64>(
@@ -577,35 +557,89 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     Ok(is_valid)
 }
 
+/// Verify a SNARK proof against a trusted `vkey`, checking snark validity only — the
+/// public input snarkjs is given is the digest the proof carries. That digest is the
+/// committed statement only if the caller already trusts it (e.g. recomputed it from the
+/// publics and a pinned rootC). On its own this does NOT bind the proof to any statement,
+/// so prefer [`verify_snark_proof_with_expected`] with a pinned digest.
 pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> ProofmanResult<()> {
-    let (proof_json_value, publics_json_value) = snark_proof
+    verify_snark_proof_with_expected(snark_proof, vkey_path, None)
+}
+
+/// As [`verify_snark_proof`], but when `expected_public_snark_bytes` is `Some`, require the
+/// proof's committed public digest to equal it before verifying. That pins the statement:
+/// the caller supplies the digest it recomputed from the publics and the trusted rootC, so
+/// a proof carrying an attacker-chosen public input is rejected. With `None`, a warning is
+/// emitted that the result attests snark self-consistency only.
+pub fn verify_snark_proof_with_expected(
+    snark_proof: &SnarkProof,
+    vkey_path: &Path,
+    expected_public_snark_bytes: Option<&[u8]>,
+) -> ProofmanResult<()> {
+    run_snarkjs_verify(snark_proof, vkey_path, expected_public_snark_bytes, &TempJsonFiles::new()?)
+}
+
+/// As [`verify_snark_proof_with_expected`], with the verification key given as its JSON
+/// rather than a file.
+pub fn verify_snark_proof_with_vkey(
+    snark_proof: &SnarkProof,
+    vkey_json: &str,
+    expected_public_snark_bytes: Option<&[u8]>,
+) -> ProofmanResult<()> {
+    let temp = TempJsonFiles::new()?;
+    let vkey_path = temp.write("snark_vkey", vkey_json)?;
+    run_snarkjs_verify(snark_proof, &vkey_path, expected_public_snark_bytes, &temp)
+}
+
+/// JSON files snarkjs reads, in a private directory (random name, owner-only) that is
+/// removed with them when dropped, on every return path.
+struct TempJsonFiles(tempfile::TempDir);
+
+impl TempJsonFiles {
+    fn new() -> ProofmanResult<Self> {
+        Ok(Self(tempfile::Builder::new().prefix("snarkjs_").tempdir()?))
+    }
+
+    fn write(&self, name: &str, contents: &str) -> ProofmanResult<PathBuf> {
+        let path = self.0.path().join(format!("{name}.json"));
+        std::fs::write(&path, contents)?;
+        Ok(path)
+    }
+}
+
+fn run_snarkjs_verify(
+    snark_proof: &SnarkProof,
+    vkey_path: &Path,
+    expected_public_snark_bytes: Option<&[u8]>,
+    temp: &TempJsonFiles,
+) -> ProofmanResult<()> {
+    match expected_public_snark_bytes {
+        Some(expected) if expected != snark_proof.public_snark_bytes.as_slice() => {
+            return Err(ProofmanError::InvalidProof(
+                "SNARK public digest does not match the expected (pinned) statement".to_string(),
+            ));
+        }
+        Some(_) => {}
+        None => {
+            tracing::warn!(
+                "verify_snark_proof: no expected public digest pinned — this attests snark \
+                 validity against the proof's own public input, not a statement. A relying \
+                 party must pin the digest recomputed from the publics and the trusted rootC."
+            );
+        }
+    }
+
+    let (proof_json, publics_json) = snark_proof
         .convert_to_json()
         .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to convert SNARK proof to JSON: {}", e)))?;
+    let to_json = |value| {
+        serde_json::to_string(value)
+            .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to serialize SNARK JSON: {}", e)))
+    };
+    let proof_path = temp.write("snark_proof", &to_json(&proof_json)?)?;
+    let publics_path = temp.write("snark_publics", &to_json(&publics_json)?)?;
 
-    // Write JSON to temporary files with unique names to avoid race conditions
-    let temp_dir = std::env::temp_dir();
-    let unique_id = format!(
-        "{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
-            .as_nanos()
-    );
-    let proof_path = temp_dir.join(format!("snark_proof_{}.json", unique_id));
-    let publics_path = temp_dir.join(format!("snark_publics_{}.json", unique_id));
-
-    let proof_json_str = serde_json::to_string_pretty(&proof_json_value)
-        .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to serialize proof JSON: {}", e)))?;
-    let publics_json_str = serde_json::to_string_pretty(&publics_json_value)
-        .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to serialize publics JSON: {}", e)))?;
-    std::fs::write(&proof_path, proof_json_str)?;
-    std::fs::write(&publics_path, publics_json_str)?;
-
-    // Determine protocol
     let protocol = SnarkProtocol::from_protocol_id(snark_proof.protocol_id)?;
-
-    // Call snarkjs verify
     let output = Command::new("snarkjs")
         .arg(protocol.protocol_name())
         .arg("verify")
@@ -614,13 +648,6 @@ pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> Proofma
         .arg(&proof_path)
         .output()
         .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to execute snarkjs: {}", e)))?;
-
-    if let Err(e) = std::fs::remove_file(&proof_path) {
-        tracing::warn!("Failed to remove temporary SNARK proof file {}: {}", proof_path.display(), e);
-    }
-    if let Err(e) = std::fs::remove_file(&publics_path) {
-        tracing::warn!("Failed to remove temporary SNARK publics file {}: {}", publics_path.display(), e);
-    }
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
