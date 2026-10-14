@@ -8,7 +8,9 @@
 //! The values are the pilout's, but for the columns it declares `#pragma fixed_external`, which it
 //! has none of: a caller of the library gives those ([`ExternalFixedColumn`],
 //! [`FixedColumns::from_air_with_external`]), as the STARK's recursive setup gives `plonk2pil`'s
-//! `S` and `C` to `write_const_file` (`setup/pil2-stark/src/io/fixed_cols.rs`).
+//! `S` and `C` to `write_const_file` (`setup/pil2-stark/src/io/fixed_cols.rs`). Or they are those of
+//! the file `compile-pil --fixed-to-file -u <dir>` writes, `<dir>/<air>.fixed`, of this same layout
+//! ([`FixedColumns::from_fixed_dir`]), as the STARK's setup copies it to its `.const`.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -156,8 +158,9 @@ impl FixedColumns {
         result.map_err(io)
     }
 
-    /// Reads the `<air>.const` at `path` of `n_columns` columns of `2^n_bits` rows. Refuses a file
-    /// of any other size, and a value that is not below `r`.
+    /// Reads the `<air>.const` at `path` of `n_columns` columns of `2^n_bits` rows, or a compiler's
+    /// `<air>.fixed`, which has its layout. Refuses a file of any other size, and a value that is not
+    /// below `r`.
     pub fn read_const(path: &Path, n_bits: u64, n_columns: usize) -> Result<Self, SetupError> {
         if n_bits > MAX_NBITS {
             return Err(SetupError::NBits { n_bits });
@@ -189,6 +192,47 @@ impl FixedColumns {
             columns[index % n_columns].push(value);
         }
         Self::new(n_bits, columns)
+    }
+}
+
+impl FixedColumns {
+    /// The fixed columns of `air` from `<dir>/<air>.fixed`, the file `compile-pil --fixed-to-file -u
+    /// <dir>` writes (pilfflonk/docs/formats.md#fixed-columns): every column of the AIR, in the
+    /// pilout's order, read as [`Self::read_const`] reads `<air>.const`. The compiler writes none of
+    /// the columns it declares `#pragma fixed_external`, so a file of such an AIR has fewer columns
+    /// and is refused, saying so. A column the pilout has values of must have those in the file: one
+    /// of another compilation is refused. An AIR without fixed columns needs no file.
+    pub fn from_fixed_dir(dir: &Path, air: &pb::Air) -> Result<Self, SetupError> {
+        let n_bits = n_bits_of(air)?;
+        let n_columns = air.fixed_cols.len();
+        if n_columns == 0 {
+            return Self::new(n_bits, Vec::new());
+        }
+        let name = air.name.as_deref().unwrap_or_default();
+        let path = dir.join(format!("{name}.fixed"));
+        let n_rows = 1usize << n_bits;
+        let column_bytes = n_rows * FIELD_BYTES;
+        let len = std::fs::metadata(&path).map_err(SetupError::io(&path))?.len();
+        if len % column_bytes as u64 == 0 && len < (n_columns * column_bytes) as u64 {
+            let reason = format!(
+                "{} columns of {n_rows} rows, not the {n_columns} of air {name}: the compiler writes none of the \
+                 columns it declares `#pragma fixed_external` to it, and those take their values from a caller of \
+                 the library",
+                len / column_bytes as u64
+            );
+            return Err(SetupError::ConstFile { path, reason });
+        }
+        let fixed = Self::read_const(&path, n_bits, n_columns)?;
+        for (column, col) in air.fixed_cols.iter().enumerate().filter(|(_, col)| !col.values.is_empty()) {
+            let values = decode_column(column, col, n_rows)?;
+            if let Some(row) = values.iter().zip(&fixed.columns[column]).position(|(pilout, file)| pilout != file) {
+                let reason = format!(
+                    "row {row} of fixed column {column} is not the pilout's: the file is of another compilation"
+                );
+                return Err(SetupError::ConstFile { path, reason });
+            }
+        }
+        Ok(fixed)
     }
 }
 

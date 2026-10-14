@@ -5,7 +5,9 @@
 //! (`pil2-stark-setup` hosts it; this crate does not depend on that one:
 //! pilfflonk/docs/README.md#code-map). [`command::run_setup_pilfflonk_with_external_fixed`] is the
 //! same with the values of the fixed columns that the pilout declares `#pragma fixed_external`, for
-//! a caller in the same process (pilfflonk/docs/formats.md#fixed-columns). Its steps
+//! a caller in the same process (pilfflonk/docs/formats.md#fixed-columns), and
+//! [`command::run_setup_pilfflonk_with_fixed_dir`] with those of the file `compile-pil
+//! --fixed-to-file` writes, as `setup-pilfflonk -u` runs it. Its steps
 //! (pilfflonk/docs/README.md#setup-pilfflonk):
 //!
 //! | Step | Module |
@@ -41,6 +43,9 @@ pub mod validate;
 #[cfg(feature = "test-ptau")]
 pub mod test_ptau;
 
-pub use command::{run_setup_pilfflonk, run_setup_pilfflonk_with_external_fixed, SetupPilfflonkOptions};
+pub use command::{
+    run_setup_pilfflonk, run_setup_pilfflonk_with_external_fixed, run_setup_pilfflonk_with_fixed_dir,
+    SetupPilfflonkOptions,
+};
 pub use error::SetupError;
 pub use fixed::ExternalFixedColumn;

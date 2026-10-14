@@ -1,7 +1,8 @@
 //! `setup-pilfflonk` as `proofman-setup` runs it, `run_setup_pilfflonk`, on `common`'s pilout: its
 //! arguments, `pilout.globalInfo.json`, and the files of the `provingKey/` it writes
 //! (pilfflonk/docs/formats.md#provingkey); and `run_setup_pilfflonk_with_external_fixed`, with the
-//! values of the fixed columns the pilout has none of (pilfflonk/docs/formats.md#fixed-columns).
+//! values of the fixed columns the pilout has none of (pilfflonk/docs/formats.md#fixed-columns),
+//! and `run_setup_pilfflonk_with_fixed_dir`, with those of the compiler's `<air>.fixed`.
 //! The same through the binary, and on the compiled Fibonacci fixture, is in
 //! `setup/pil2-stark/tests/setup_pilfflonk.rs`; with external columns on compiled fixtures, in
 //! `external_fixed`.
@@ -17,7 +18,10 @@ use pilfflonk_setup::fixed::FixedColumns;
 use pilfflonk_setup::global_info::global_info;
 use pilfflonk_setup::layout::Packing;
 use pilfflonk_setup::test_ptau::write_tau_one_ptau;
-use pilfflonk_setup::{run_setup_pilfflonk, run_setup_pilfflonk_with_external_fixed, SetupError, SetupPilfflonkOptions};
+use pilfflonk_setup::{
+    run_setup_pilfflonk, run_setup_pilfflonk_with_external_fixed, run_setup_pilfflonk_with_fixed_dir, SetupError,
+    SetupPilfflonkOptions,
+};
 use prost::Message;
 use proofman_pilfflonk::global_info::GLOBAL_CONSTRAINTS_FILE;
 use proofman_pilfflonk::{
@@ -452,5 +456,41 @@ fn external_fixed_columns_give_the_proving_key_of_the_pilout_with_their_values()
     let err = run_setup_pilfflonk(&opts).unwrap_err();
     let message = format!("{err:#}");
     assert!(message.contains("fixed column 1 has 0 values, not one per row (8)"), "{message}");
+    assert!(!opts.build_dir.exists());
+}
+
+/// `common`'s pilout without any fixed values, as `compile-pil --fixed-to-file` writes it, set up
+/// from the `<air>.fixed` of them in a directory (`setup-pilfflonk -u`): the `provingKey/` of the
+/// pilout with them, byte for byte. A file of a column fewer, as the compiler writes of an AIR with a
+/// `#pragma fixed_external` column, is refused with the pilout's path before any file is written.
+#[test]
+fn a_fixed_dir_gives_the_proving_key_of_the_pilout_with_its_values() {
+    let _cpp = cpp_core();
+    let dir = TestDir::new("command_fixed_dir");
+    let opts = inputs(&dir, &pilout(), 64);
+    run_setup_pilfflonk(&opts).unwrap();
+    let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
+    let inline = contents(&proving_key);
+    fs::remove_dir_all(&opts.build_dir).unwrap();
+
+    let fixed = FixedColumns::from_air(&pilout().air_groups[0].airs[0]).unwrap();
+    let fixed_dir = dir.file("fixed");
+    fs::create_dir_all(&fixed_dir).unwrap();
+    fixed.write_const(&fixed_dir.join("Sample.fixed")).unwrap();
+    let mut without_values = pilout();
+    the_air(&mut without_values).fixed_cols.iter_mut().for_each(|col| col.values.clear());
+    fs::write(&opts.airout_path, without_values.encode_to_vec()).unwrap();
+    run_setup_pilfflonk_with_fixed_dir(&opts, &fixed_dir).unwrap();
+    assert_eq!(contents(&proving_key), inline);
+    fs::remove_dir_all(&opts.build_dir).unwrap();
+
+    let three = (0..3).map(|c| fixed.column(c).unwrap().to_vec()).collect();
+    FixedColumns::new(N_BITS, three).unwrap().write_const(&fixed_dir.join("Sample.fixed")).unwrap();
+    let err = run_setup_pilfflonk_with_fixed_dir(&opts, &fixed_dir).unwrap_err();
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("synthetic.pilout cannot be set up") && message.contains("not the 4 of air Sample"),
+        "{message}"
+    );
     assert!(!opts.build_dir.exists());
 }

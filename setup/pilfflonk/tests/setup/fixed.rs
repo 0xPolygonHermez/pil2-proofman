@@ -1,6 +1,6 @@
 //! The fixed columns of an AIR and `<air>.const` (pilfflonk/docs/formats.md#fixed-columns):
 //! decoding the pilout's values, the external columns of those it has none of, the file's layout,
-//! its round trip and what the reader refuses.
+//! its round trip and what the reader refuses, and the compiler's `<air>.fixed` of that layout.
 
 use std::fs;
 
@@ -300,4 +300,57 @@ fn fixed_symbols_that_do_not_fit_the_columns_are_refused() {
         matches!(&err, SetupError::InvalidPilout(m) if m == "fixed column 3 has two symbols, Sample.U and Sample.X"),
         "{err}"
     );
+}
+
+/// `<air>.fixed`, which `compile-pil --fixed-to-file` writes, has the layout of `<air>.const`: its
+/// columns are the pilout's, whether the pilout has their values too or none, as the compiler then
+/// writes it.
+#[test]
+fn a_fixed_file_gives_the_pilouts_columns() {
+    let dir = TestDir::new("fixed_dir");
+    columns().write_const(&dir.file("Sample.fixed")).unwrap();
+    let mut pilout = pilout();
+    let air = the_air(&mut pilout);
+    assert_eq!(FixedColumns::from_fixed_dir(&dir.0, air).unwrap(), columns());
+    air.fixed_cols.iter_mut().for_each(|col| col.values.clear());
+    assert_eq!(FixedColumns::from_fixed_dir(&dir.0, air).unwrap(), columns());
+}
+
+/// What the reader of a fixed file refuses besides what [`FixedColumns::read_const`] does: no file,
+/// one of a column fewer (the compiler writes none of the columns it declares `#pragma
+/// fixed_external`), and one whose values are not those the pilout has. An AIR without fixed
+/// columns needs no file.
+#[test]
+fn the_fixed_file_reader_refuses_a_file_that_is_not_the_pilouts() {
+    let dir = TestDir::new("fixed_dir_refused");
+    let mut pilout = pilout();
+    let air = the_air(&mut pilout);
+    assert!(matches!(FixedColumns::from_fixed_dir(&dir.0, air), Err(SetupError::Io { .. })));
+
+    let path = dir.file("Sample.fixed");
+    let fixed = columns();
+    let column = |c: usize| fixed.column(c).unwrap().to_vec();
+    FixedColumns::new(N_BITS, (0..3).map(column).collect()).unwrap().write_const(&path).unwrap();
+    let err = FixedColumns::from_fixed_dir(&dir.0, air).unwrap_err();
+    assert!(
+        matches!(&err, SetupError::ConstFile { reason, .. }
+            if reason.contains("3 columns of 8 rows, not the 4 of air Sample") && reason.contains("fixed_external")),
+        "{err}"
+    );
+
+    let mut other: Vec<Vec<FrBytes>> = (0..4).map(column).collect();
+    other[2][5] = fr("12345");
+    FixedColumns::new(N_BITS, other.clone()).unwrap().write_const(&path).unwrap();
+    let err = FixedColumns::from_fixed_dir(&dir.0, air).unwrap_err();
+    assert!(
+        matches!(&err, SetupError::ConstFile { reason, .. } if reason.contains("row 5 of fixed column 2 is not the pilout's")),
+        "{err}"
+    );
+    // The same file, for a pilout without values: they are the file's.
+    air.fixed_cols.iter_mut().for_each(|col| col.values.clear());
+    assert_eq!(FixedColumns::from_fixed_dir(&dir.0, air).unwrap(), FixedColumns::new(N_BITS, other).unwrap());
+
+    air.fixed_cols.clear();
+    let empty = TestDir::new("fixed_dir_empty");
+    assert_eq!(FixedColumns::from_fixed_dir(&empty.0, air).unwrap().n_columns(), 0);
 }

@@ -115,7 +115,7 @@ pub enum SetupError {
     /// A fixed column without a value per row, which `<air>.const` needs.
     #[error(
         "fixed column {column} has {n_values} values, not one per row ({n_rows}); a pilout compiled with its fixed \
-         columns to a file, or without their values, has none"
+         columns to a file, or without their values, has none: give that file's directory with -u"
     )]
     FixedValues { column: usize, n_values: usize, n_rows: usize },
 

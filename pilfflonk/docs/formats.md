@@ -190,6 +190,16 @@ new temporary (`tmpUsed`), as in the STARK. The encoding is deterministic.
 `constPolsMap`'s), each value a canonical `Fr` of 32 bytes, little-endian. A pilout value that is
 not below `r` is refused.
 
+The values come from the pilout, or from the file `compile-pil -u <dir> --fixed-to-file` writes,
+`<dir>/<air>.fixed`, which `setup-pilfflonk -u <dir>` reads (`run_setup_pilfflonk_with_fixed_dir`).
+That file has the layout of `<air>.const`: the compiler writes each value as four 64-bit limbs,
+little-endian, in the same order, and no header. The setup refuses a file that is not there, one of
+any other size, and one with a value not below `r`; one of fewer columns than the AIR, which is the
+file of an AIR with `#pragma fixed_external` columns, as the compiler writes none of them; and one
+whose values are not those the pilout has of a column, which is the file of another compilation. An
+AIR without fixed columns needs no file. The `provingKey/` is the one of the same pilout with the
+values in it, byte for byte.
+
 The values are the pilout's, but for the columns it declares `#pragma fixed_external`, which pil2com
 writes without values; the std's `connection()` keeps its own column, `ID`, in the pilout. The
 caller of the setup gives those values, as the STARK's recursive setup gives `plonk2pil`'s `S` and

@@ -88,11 +88,11 @@ proofman-setup compile-pil -p <program.pil> -o <program.pilout> -I <std dir> --f
 The compiler must have `--field` (`PIL2C_EXEC` points at it): it is `../pil2-compiler` on its branch
 `develop-0.14.0-pil2-fflonk`, which also encodes field values of 64 bits and more correctly. The
 pinned compiler ignores `--field` and compiles over Goldilocks; setup-pilfflonk then refuses the
-pilout, saying so. With `--field bn128`, the pilout's `baseField` is `r`. Its writers
-`fixed-to-file` and `extern_fixed_file` work with `u64` and refuse a field wider than 64 bits, so
-the fixed columns stay in the pilout, but for those it declares `#pragma fixed_external`: the
-compiler writes them without values, and the caller of the setup gives these
-([formats.md#fixed-columns](formats.md#fixed-columns)).
+pilout, saying so. With `--field bn128`, the pilout's `baseField` is `r`. The fixed columns are in
+the pilout, or, with `-u <dir> --fixed-to-file`, in `<dir>/<air>.fixed`, each value four 64-bit
+limbs, little-endian: the layout of `<air>.const`, which `setup-pilfflonk -u <dir>` reads
+([formats.md#fixed-columns](formats.md#fixed-columns)). Either way, the compiler writes no values of
+the columns it declares `#pragma fixed_external`, and the caller of the setup gives these.
 
 The std works over BN128 through `pil2-components/lib/std/pil/bn128.pil`, selected when `PRIME` is
 `r`: `Bn128_Gen[i] = 5^((r−1)/2^i)` for `i ≤ 28` and `Bn128_k = 5^(2^28)`, the root of unity and the
@@ -106,6 +106,7 @@ proofman-setup setup-pilfflonk -a <pilout> -b <build dir> --powers-of-tau <ptau>
     [--extra-muls E]              default 2, as pil-stark: f_i the grouping may add
     [--max-q-degree M]            default 0: Q is not split
     [--solidity]                  also write pilfflonk.verifier.sol
+    [-u, --fixed-dir <dir>]       the fixed columns from <dir>/<air>.fixed, not from the pilout
     [--no-packing]                for tests: one polynomial per f_i, k = 1
 ```
 
@@ -117,7 +118,7 @@ the degree of every `f_i` and `N·2^extendBits` by `2^28`: with `qDeg` up to 8, 
 The steps, each a pure function but for the file I/O and the fixed commitments:
 
 1. Read the pilout and validate it ([What the setup refuses](#what-the-setup-refuses)), and its
-   fixed columns, with the values of the external ones if it has any
+   fixed columns, with the values of the external ones if it has any, or from `-u`'s fixed file
    ([formats.md#fixed-columns](formats.md#fixed-columns)).
 2. Run the symbolic passes of `pil-info`, the STARK's, with `PilInfoCfg::bn128()`: field `r`,
    extension dimension 1, the degree search of
@@ -133,7 +134,8 @@ The steps, each a pure function but for the file I/O and the fixed commitments:
 A caller in the same process gives the values of the fixed columns that the pilout declares
 `#pragma fixed_external` to `run_setup_pilfflonk_with_external_fixed`, the library entry of the
 command ([formats.md#fixed-columns](formats.md#fixed-columns)); the command line has no option for
-them, and `run_setup_pilfflonk`, which it calls, gives none.
+them, and `run_setup_pilfflonk`, which it calls, gives none. With `-u <dir>` it calls
+`run_setup_pilfflonk_with_fixed_dir`, which reads the fixed columns of `<dir>/<air>.fixed`.
 
 It writes the `provingKey/` of [formats.md#provingkey](formats.md#provingkey), in a deterministic
 order, after validating everything. `--solidity` writes the Solidity verifier next to the vkey and

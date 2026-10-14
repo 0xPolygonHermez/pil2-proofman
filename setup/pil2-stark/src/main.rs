@@ -10,7 +10,7 @@ use pil2_stark_setup::commands::setup_recursive_test::{self as recursive_test_cm
 use pil2_stark_setup::commands::setup_snark::{self as snark_cmd, SetupSnarkOptions};
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE};
 use pilfflonk_setup::solidity::export_verifier_sol;
-use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
+use pilfflonk_setup::{run_setup_pilfflonk, run_setup_pilfflonk_with_fixed_dir, SetupPilfflonkOptions};
 
 // Uses the default system allocator (glibc malloc). After each AIR,
 // setup_cmd calls malloc_trim(0) to return freed pages to the OS and
@@ -249,6 +249,11 @@ struct SetupPilfflonkArgs {
     /// Also write the Solidity verifier of the vkey, pilfflonk.verifier.sol, next to it
     #[arg(long)]
     solidity: bool,
+
+    /// Directory of the fixed files compile-pil writes with --fixed-to-file (<air>.fixed): the fixed
+    /// columns are read from them instead of from the pilout
+    #[arg(short = 'u', long = "fixed-dir")]
+    fixed_dir: Option<String>,
 }
 
 #[derive(Parser)]
@@ -579,7 +584,13 @@ fn main() -> anyhow::Result<()> {
                 no_packing: args.no_packing,
                 solidity: args.solidity,
             };
-            run_setup_pilfflonk(&opts)
+            match args.fixed_dir {
+                Some(fixed_dir) => {
+                    tracing::info!("  fixed_dir: {fixed_dir}");
+                    run_setup_pilfflonk_with_fixed_dir(&opts, std::path::Path::new(&fixed_dir))
+                }
+                None => run_setup_pilfflonk(&opts),
+            }
         }
 
         Commands::PilfflonkSolidity(args) => {

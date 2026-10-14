@@ -3,7 +3,9 @@
 //! functions; this module reports their errors with `anyhow`, as the other setup commands do
 //! (pilfflonk/docs/README.md#conventions). A caller in the same process that computes the fixed
 //! columns the pilout declares `#pragma fixed_external` gives them to
-//! [`run_setup_pilfflonk_with_external_fixed`] (pilfflonk/docs/formats.md#fixed-columns).
+//! [`run_setup_pilfflonk_with_external_fixed`] (pilfflonk/docs/formats.md#fixed-columns); with
+//! `-u <dir>`, the fixed columns are those of the compiler's `<dir>/<air>.fixed`
+//! ([`run_setup_pilfflonk_with_fixed_dir`]).
 //!
 //! It writes the `provingKey/` (pilfflonk/docs/formats.md#provingkey) under the build directory,
 //! for the one AIR of the pilout (pilfflonk/docs/README.md#scope):
@@ -54,7 +56,7 @@ use crate::keys::{air_verkey, load_srs, write_srs, x_2};
 use crate::layout::{max_degree, Packing};
 use crate::passes::run_passes;
 use crate::solidity::{verifier_sol, VERIFIER_SOL_FILE};
-use crate::validate::{check_extended_domain, check_prover_hints, validate};
+use crate::validate::{check_extended_domain, check_prover_hints, validate, ValidAir};
 
 /// The directory the setup writes under the build directory.
 pub use proofman_pilfflonk::global_info::PROVING_KEY_DIR;
@@ -160,11 +162,27 @@ pub fn run_setup_pilfflonk_with_external_fixed(
     opts: &SetupPilfflonkOptions,
     external: Vec<ExternalFixedColumn>,
 ) -> Result<()> {
+    setup(opts, |pilout, air| FixedColumns::from_air_with_external(pilout, air, external))
+}
+
+/// Runs `setup-pilfflonk -u <dir>` (pilfflonk/docs/README.md#setup-pilfflonk): the fixed columns
+/// are those of `<dir>/<air>.fixed`, which `compile-pil --fixed-to-file -u <dir>` writes, and not
+/// the pilout's, which then has none ([`FixedColumns::from_fixed_dir`]). They go into
+/// `<air>.const`, the fixed commitments and the vkey as the pilout's own values would.
+pub fn run_setup_pilfflonk_with_fixed_dir(opts: &SetupPilfflonkOptions, fixed_dir: &Path) -> Result<()> {
+    setup(opts, |_, air| FixedColumns::from_fixed_dir(fixed_dir, air.air))
+}
+
+/// The setup, with the fixed columns that `fixed_columns` gives for the validated AIR.
+fn setup<F>(opts: &SetupPilfflonkOptions, fixed_columns: F) -> Result<()>
+where
+    F: for<'a> FnOnce(&'a pb::PilOut, ValidAir<'a>) -> Result<FixedColumns, SetupError>,
+{
     opts.check()?;
     let refused = || format!("{} cannot be set up", opts.airout_path.display());
     let pilout = read_pilout(&opts.airout_path)?;
     let air = validate(&pilout).with_context(refused)?;
-    let fixed = FixedColumns::from_air_with_external(&pilout, air, external).with_context(refused)?;
+    let fixed = fixed_columns(&pilout, air).with_context(refused)?;
     let global_info = global_info(&pilout, opts.setup_params())?;
     let (airgroup_id, air_id) = (air.airgroup_id as u64, air.air_id as u64);
     let air_ref = AirRef { name: &global_info.air(airgroup_id, air_id)?.name, airgroup_id, air_id };

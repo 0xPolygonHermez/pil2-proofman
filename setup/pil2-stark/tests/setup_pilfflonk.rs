@@ -223,12 +223,11 @@ fn the_subcommand_takes_the_documented_arguments() {
         "--no-packing",
         // The Solidity verifier (pilfflonk/docs/verifier.md#solidity-verifier).
         "--solidity",
+        // The fixed files of compile-pil --fixed-to-file (pilfflonk/docs/README.md#compile-pil).
+        "-u, --fixed-dir <FIXED_DIR>",
     ] {
         assert!(help.contains(arg), "{arg} missing from:\n{help}");
     }
-    // No -u: at BN128 nothing produces the STARK's 8-byte .fixed files
-    // (pilfflonk/docs/README.md#compile-pil).
-    assert!(!help.contains("-u,"), "{help}");
 
     // -a, -b and --powers-of-tau are required.
     let out = proofman_setup(&["setup-pilfflonk", "-a", "x.pilout", "-b", "build"]);
@@ -575,5 +574,63 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
         let out = proofman_setup(&args);
         assert!(out.status.success(), "setup-pilfflonk: {}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(contents(&proving_key), before);
+    }
+}
+
+/// The Fibonacci fixture compiled with its fixed columns to a file (`compile-pil --fixed-to-file -u
+/// <dir>`, which writes `<dir>/Fibonacci.fixed` and a pilout without their values), set up with
+/// `setup-pilfflonk -u <dir>`: the `provingKey/` of the fixture compiled with them in the pilout,
+/// byte for byte. Without `-u`, that pilout is refused, saying why.
+#[test]
+#[ignore = "needs PIL2C_EXEC"]
+fn a_fixed_dir_sets_up_the_fibonacci_fixture_compiled_with_its_fixed_columns_to_a_file() {
+    std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that writes BN128 fixed files");
+    let dir = TestDir::new("fibonacci_fixed_dir");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+    let ptau = dir.file("tau_one.ptau");
+    write_tau_one_ptau(&ptau, 1024).unwrap();
+
+    // The same pilout name in both, as the provingKey/'s directory is named after it.
+    let compile = |name: &str, fixed: Option<&Path>| -> PathBuf {
+        let pilout = dir.file(name).join("fibonacci.pilout");
+        fs::create_dir_all(pilout.parent().unwrap()).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_proofman-setup"));
+        command.current_dir(&root).args(["compile-pil", "-p", "pilfflonk/tests/fixtures/fibonacci/fibonacci.pil"]);
+        command.args(["-I", "pil2-components/lib/std/pil", "--field", "bn128", "-o", path(&pilout)]);
+        if let Some(fixed) = fixed {
+            command.args(["-u", path(fixed), "--fixed-to-file"]);
+        }
+        let out = command.output().unwrap();
+        assert!(out.status.success(), "compile-pil: {}", String::from_utf8_lossy(&out.stderr));
+        pilout
+    };
+    let setup = |pilout: &Path, fixed: Option<&Path>| -> Output {
+        let build = pilout.parent().unwrap().join("build");
+        let mut args = vec!["setup-pilfflonk", "-a", path(pilout), "-b", path(&build), "--powers-of-tau", path(&ptau)];
+        if let Some(fixed) = fixed {
+            args.extend(["-u", path(fixed)]);
+        }
+        proofman_setup(&args)
+    };
+
+    let inline = compile("inline", None);
+    let out = setup(&inline, None);
+    assert!(out.status.success(), "setup-pilfflonk: {}", String::from_utf8_lossy(&out.stderr));
+
+    let fixed = dir.file("to_file").join("fixed");
+    let to_file = compile("to_file", Some(&fixed));
+    assert_eq!(fs::read(fixed.join("Fibonacci.fixed")).unwrap().len(), 256 * 2 * 32, "2 fixed columns of 256 rows");
+    let out = setup(&to_file, None);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("has 0 values, not one per row (256)"), "{stderr}");
+    let out = setup(&to_file, Some(&fixed));
+    assert!(out.status.success(), "setup-pilfflonk -u: {}", String::from_utf8_lossy(&out.stderr));
+
+    let inline_key = dir.file("inline").join("build/provingKey");
+    let file_key = dir.file("to_file").join("build/provingKey");
+    assert_eq!(files(&file_key), files(&inline_key));
+    for file in files(&inline_key) {
+        assert!(fs::read(inline_key.join(&file)).unwrap() == fs::read(file_key.join(&file)).unwrap(), "{file}");
     }
 }
