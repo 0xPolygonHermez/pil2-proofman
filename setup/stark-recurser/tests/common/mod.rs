@@ -26,7 +26,7 @@ pub fn repo_root() -> PathBuf {
     manifest().join("../..")
 }
 
-/// The committed circom, as the plonk2pil golden picks it.
+/// The committed circom, as `resolve_circom_exec` picks it.
 pub fn circom() -> PathBuf {
     repo_root().join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" })
 }

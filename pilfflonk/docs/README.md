@@ -556,8 +556,7 @@ degree. `all` on the product bus has it (`im_low[3] = 1/im_low[2]`).
 name and no index, so an AIR with two of them has two columns of the same name. The STARK does not
 mind, but the proof names each evaluation by its column: the setup gives the columns of a map that
 share a name and have no `lengths` an index in the pilout's order, `im_cluster[0]`, `im_cluster[1]`,
-… ([formats.md#proof-names](formats.md#proof-names)). The std, the STARK and its golden files do not
-change.
+… ([formats.md#proof-names](formats.md#proof-names)). The std and the STARK do not change.
 
 ### std range check
 
