@@ -20,7 +20,7 @@ struct EvalInfo
     uint64_t evalPos;
 };
 
-// One term of the FRI polynomial (fri_expression.cuh): its column's first element in the buffer `src`
+// One term of the FRI polynomial (deep_expression.cuh): its column's first element in the buffer `src`
 // selects (0: cm, 1: custom, 2: fixed), ColMajor over the extended domain. vf2Exp: the polynomial's
 // first appearance in the eval map.
 struct FriTerm

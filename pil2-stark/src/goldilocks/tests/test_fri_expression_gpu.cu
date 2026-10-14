@@ -1,4 +1,4 @@
-// Equivalence tests for the DEEP/FRI polynomial kernels (starkpil/fri_expression.cuh), against a host
+// Equivalence tests for the DEEP polynomial kernels (starkpil/deep_expression.cuh), against a host
 // reference written straight from the definition: it inverts every x[r] - xi_o itself, so it also checks
 // the shifted-denominator identity the kernels rely on.
 #include <gtest/gtest.h>
@@ -7,7 +7,7 @@
 #include <tuple>
 #include <vector>
 #include "cuda_utils.cuh"
-#include "../../starkpil/fri_expression.cuh"
+#include "../../starkpil/deep_expression.cuh"
 
 namespace {
 

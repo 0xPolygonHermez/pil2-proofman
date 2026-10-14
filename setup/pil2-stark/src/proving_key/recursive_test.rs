@@ -17,7 +17,7 @@ use crate::output::witness_gen::WitnessTracker;
 use crate::proving_key::bctree;
 use crate::proving_key::recursive::compile_pil;
 use crate::commands::recursive_setup::resolve_path_env;
-use crate::types::stark_struct::{generate_stark_struct, StarkSettings};
+use crate::types::stark_struct::generate_stark_struct;
 
 /// Run the recursive test setup from a user-provided circom file.
 ///
@@ -55,6 +55,7 @@ pub fn gen_recursive_test_setup(
     circom_helpers_dir: &str,
     witness_tracker: &WitnessTracker,
     blake3_lanes: Option<usize>,
+    recursion_settings: &crate::types::stark_struct::StarkSettings,
     blowup_override: Option<usize>,
     min_n_bits: Option<usize>,
 ) -> Result<()> {
@@ -217,18 +218,12 @@ pub fn gen_recursive_test_setup(
     // reproduce the geometry being debugged: blake3's recursion runs at blowup 2, where maxDeg 5
     // fits exactly, and a fixture at 3 would carry a quotient the production air does not have.
     // `recursive_blowup` gives 2 for blake3 and keeps poseidon's 3, which its README documents.
-    // finalDegree is a terminal DOMAIN size here, so an overridden blowup has to shift it to keep
-    // the terminal polynomial degree -- and the schedule -- where the family put it.
-    let terminal = proofman_common::hash_family::fri_terminal_degree(hash);
-    let settings = StarkSettings {
-        blowup_factor: Some(blowup),
-        last_level_verification: crate::proving_key::recursive::recursive_last_level_verification(template, hash),
-        final_degree: Some(
-            (terminal + blowup).saturating_sub(crate::proving_key::recursive::recursive_blowup(template, hash)),
-        ),
-        pow_bits: Some(crate::proving_key::recursive::recursive_grinding_bits(template, hash)),
-        ..Default::default()
-    };
+    // Exactly the real recursion layers' settings (low-degree test, blowup, terminal degree,
+    // grinding, kept levels), so a test key matches their geometry: left to generic defaults the
+    // fixture once verified a FRI shape the pipeline never builds.
+    let mut settings = crate::proving_key::recursive::recursive_stark_settings(template, hash, recursion_settings);
+    // finalDegree is the final polynomial's degree bound, so an overridden blowup leaves it alone.
+    settings.initial_blowup_factor = Some(blowup);
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);
 
     let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default());
@@ -237,38 +232,28 @@ pub fn gen_recursive_test_setup(
     // Step 10: Build and write starkinfo JSON.
     // -------------------------------------------------------------------------
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&stark_struct);
-    let fri_batch_size = pil_info_result.pil_code.fri_batch_size;
-    let field_size = crate::types::security::goldilocks_safe_extension_field_size();
-    let regime = crate::types::security::regimes::DecodingRegime::Jbr;
-    let fri_config = crate::types::security::pcs::FriConfig {
-        field_size,
-        trace_length: 1u32 << stark_struct.n_bits,
-        rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-        batch_size: fri_batch_size.max(1) as u64,
-        batching: crate::types::security::pcs::Batching::Powers,
-        log_folding_factors,
-        max_grinding_bits_query: stark_struct.pow_bits as u64,
-        use_max_grinding_bits_query: true,
-        tree_arity: stark_struct.merkle_tree_arity as u64,
-        hash_size_bits: 256,
-        target_security_bits: 128,
-        regime,
-    };
-    let fri = crate::types::security::pcs::Fri::new(fri_config);
+    let ldt = crate::output::stark_info::solve_low_degree_test(
+        &stark_struct,
+        pil_info_result.pil_code.fri_batch_size.max(1) as u64,
+    );
 
     let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
         &pil_info_result.setup,
         &stark_struct,
         &pil_info_result.pil_code,
         &opening_points,
-        &fri,
+        &ldt,
         0,
         0,
         NAME_FILE,
         pil_info_result.c_exp_id,
-        pil_info_result.fri_exp_id,
+        pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
+    );
+    tracing::info!(
+        "Circuit '{}' low-degree test: {}",
+        circom_name,
+        starkinfo_output.stark_struct.low_degree_test.describe()
     );
 
     let starkinfo_path = files_dir.join(format!("{}.starkinfo.json", NAME_FILE));

@@ -48,7 +48,6 @@ pub fn pil2circom(
         enable_input: opts.enable_input,
         input_challenges: opts.input_challenges,
         fri_queries_batch_size: None,
-        multi_fri: false,
         hash: opts.hash.clone(),
     };
     let root: Option<&[String; 4]> = if opts.verkey_input { None } else { Some(const_root) };

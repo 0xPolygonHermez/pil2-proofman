@@ -324,7 +324,7 @@ template Transcript0() {
 
     signal output challengesStage2[2][3];
     signal output challengeQ[3];
-    signal output challengeXi[3];
+    signal output challengeOut[3];
     signal output challengesFRI[2][3];
     signal output challengesFRISteps[7][3];
     signal output {binary} queriesFRI[73][20];
@@ -512,7 +512,7 @@ template Transcript0() {
     }
 
     signal transcriptHash_2[16] <== Poseidon2(4, 16)([root3[0],root3[1],root3[2],root3[3],0,0,0,0,0,0,0,0], [transcriptHash_1[0],transcriptHash_1[1],transcriptHash_1[2],transcriptHash_1[3]]);
-    challengeXi <== [transcriptHash_2[0], transcriptHash_2[1], transcriptHash_2[2]];
+    challengeOut <== [transcriptHash_2[0], transcriptHash_2[1], transcriptHash_2[2]];
 
     signal transcriptHash_evals_0[16] <== Poseidon2(4, 16)([evals[0][0],evals[0][1],evals[0][2],evals[1][0],evals[1][1],evals[1][2],evals[2][0],evals[2][1],evals[2][2],evals[3][0],evals[3][1],evals[3][2]], [0,0,0,0]);
     for(var i = 4; i < 16; i++){
@@ -797,7 +797,7 @@ template VerifyFRI0(nBitsExt, prevStepBits, currStepBits, nextStepBits, e0) {
 template VerifyEvaluationsChunks0() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[127][3];
     signal input publics[395];
 
@@ -1819,7 +1819,7 @@ template VerifyEvaluationsChunks0() {
 template VerifyEvaluationsChunks1() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[127][3];
     signal input publics[395];
 
@@ -2871,7 +2871,7 @@ template VerifyEvaluationsChunks1() {
 template VerifyEvaluationsChunks2() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[127][3];
     signal input publics[395];
 
@@ -3915,7 +3915,7 @@ template VerifyEvaluationsChunks2() {
 template VerifyEvaluationsChunks3() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[127][3];
     signal input publics[395];
 
@@ -4660,16 +4660,16 @@ template VerifyEvaluationsChunks3() {
 template parallel VerifyEvaluations0() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[127][3];
     signal input publics[395];
     signal input {binary} enable;
 
-    // zMul stores all the powers of z (which is stored in challengeXi) up to nBits, i.e, [z, z^2, ..., z^nBits]
+    // zMul stores all the powers of z (which is stored in challengeOut) up to nBits, i.e, [z, z^2, ..., z^nBits]
     signal zMul[17][3];
     for (var i=0; i< 17 ; i++) {
         if(i==0){
-            zMul[i] <== CMul()(challengeXi, challengeXi);
+            zMul[i] <== CMul()(challengeOut, challengeOut);
         } else {
             zMul[i] <== CMul()(zMul[i-1], zMul[i-1]);
         }
@@ -4695,7 +4695,7 @@ template parallel VerifyEvaluations0() {
     signal tmp_4710[3];
     signal tmp_4720[3];
     signal tmp_4723[3];
-    (tmp_4667,tmp_4671,tmp_4675,tmp_4685,tmp_4690,tmp_4693,tmp_4703,tmp_4708,tmp_4710,tmp_4720,tmp_4723) <== VerifyEvaluationsChunks0()(challengesStage2,challengeQ,challengeXi,evals,publics,Zh);
+    (tmp_4667,tmp_4671,tmp_4675,tmp_4685,tmp_4690,tmp_4693,tmp_4703,tmp_4708,tmp_4710,tmp_4720,tmp_4723) <== VerifyEvaluationsChunks0()(challengesStage2,challengeQ,challengeOut,evals,publics,Zh);
     signal tmp_4848[3];
     signal tmp_4853[3];
     signal tmp_4906[3];
@@ -4726,13 +4726,13 @@ template parallel VerifyEvaluations0() {
     signal tmp_5718[3];
     signal tmp_5721[3];
     signal tmp_5722[3];
-    (tmp_4848,tmp_4853,tmp_4906,tmp_4911,tmp_4930,tmp_4935,tmp_4948,tmp_4953,tmp_4965,tmp_4970,tmp_4988,tmp_4993,tmp_5674,tmp_5677,tmp_5679,tmp_5682,tmp_5685,tmp_5688,tmp_5691,tmp_5694,tmp_5697,tmp_5700,tmp_5703,tmp_5706,tmp_5709,tmp_5712,tmp_5715,tmp_5718,tmp_5721,tmp_5722) <== VerifyEvaluationsChunks1()(challengesStage2,challengeQ,challengeXi,evals,publics,Zh,tmp_4667,tmp_4671,tmp_4675,tmp_4685,tmp_4690,tmp_4693,tmp_4703,tmp_4708,tmp_4710,tmp_4720,tmp_4723);
+    (tmp_4848,tmp_4853,tmp_4906,tmp_4911,tmp_4930,tmp_4935,tmp_4948,tmp_4953,tmp_4965,tmp_4970,tmp_4988,tmp_4993,tmp_5674,tmp_5677,tmp_5679,tmp_5682,tmp_5685,tmp_5688,tmp_5691,tmp_5694,tmp_5697,tmp_5700,tmp_5703,tmp_5706,tmp_5709,tmp_5712,tmp_5715,tmp_5718,tmp_5721,tmp_5722) <== VerifyEvaluationsChunks1()(challengesStage2,challengeQ,challengeOut,evals,publics,Zh,tmp_4667,tmp_4671,tmp_4675,tmp_4685,tmp_4690,tmp_4693,tmp_4703,tmp_4708,tmp_4710,tmp_4720,tmp_4723);
     signal tmp_6711[3];
     signal tmp_6720[3];
     signal tmp_6721[3];
-    (tmp_6711,tmp_6720,tmp_6721) <== VerifyEvaluationsChunks2()(challengesStage2,challengeQ,challengeXi,evals,publics,Zh,tmp_4848,tmp_4853,tmp_4906,tmp_4911,tmp_4930,tmp_4935,tmp_4948,tmp_4953,tmp_4965,tmp_4970,tmp_4988,tmp_4993,tmp_5674,tmp_5677,tmp_5679,tmp_5682,tmp_5685,tmp_5688,tmp_5691,tmp_5694,tmp_5697,tmp_5700,tmp_5703,tmp_5706,tmp_5709,tmp_5712,tmp_5715,tmp_5718,tmp_5721,tmp_5722);
+    (tmp_6711,tmp_6720,tmp_6721) <== VerifyEvaluationsChunks2()(challengesStage2,challengeQ,challengeOut,evals,publics,Zh,tmp_4848,tmp_4853,tmp_4906,tmp_4911,tmp_4930,tmp_4935,tmp_4948,tmp_4953,tmp_4965,tmp_4970,tmp_4988,tmp_4993,tmp_5674,tmp_5677,tmp_5679,tmp_5682,tmp_5685,tmp_5688,tmp_5691,tmp_5694,tmp_5697,tmp_5700,tmp_5703,tmp_5706,tmp_5709,tmp_5712,tmp_5715,tmp_5718,tmp_5721,tmp_5722);
     signal tmp_7448[3];
-    (tmp_7448) <== VerifyEvaluationsChunks3()(challengesStage2,challengeQ,challengeXi,evals,publics,Zh,tmp_6711,tmp_6720,tmp_6721);
+    (tmp_7448) <== VerifyEvaluationsChunks3()(challengesStage2,challengeQ,challengeOut,evals,publics,Zh,tmp_6711,tmp_6720,tmp_6721);
 
     signal xAcc[7][3]; //Stores, at each step, x^i evaluated at z
     signal qStep[6][3]; // Stores the evaluations of Q_i
@@ -5173,7 +5173,7 @@ template CalculateFRIPolChunks0() {
 template VerifyQuery0(currStepBits, nextStepBits) {
     var nextStep = currStepBits - nextStepBits; 
     signal input {binary} queriesFRI[20];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input challengesFRI[2][3];
     signal input evals[127][3];
     signal input cm1[48];
@@ -5192,10 +5192,10 @@ template VerifyQuery0(currStepBits, nextStepBits) {
 
     signal xDivXSubXi[4][3];
 
-    xDivXSubXi[0] <== CInv()([xacc[19] - 15139302138664925958 * challengeXi[0], - 15139302138664925958 * challengeXi[1], - 15139302138664925958 * challengeXi[2]]);
-    xDivXSubXi[1] <== CInv()([xacc[19] - 1 * challengeXi[0], - 1 * challengeXi[1], - 1 * challengeXi[2]]);
-    xDivXSubXi[2] <== CInv()([xacc[19] - 5718075921287398682 * challengeXi[0], - 5718075921287398682 * challengeXi[1], - 5718075921287398682 * challengeXi[2]]);
-    xDivXSubXi[3] <== CInv()([xacc[19] - 8167150655112846419 * challengeXi[0], - 8167150655112846419 * challengeXi[1], - 8167150655112846419 * challengeXi[2]]);
+    xDivXSubXi[0] <== CInv()([xacc[19] - 15139302138664925958 * challengeOut[0], - 15139302138664925958 * challengeOut[1], - 15139302138664925958 * challengeOut[2]]);
+    xDivXSubXi[1] <== CInv()([xacc[19] - 1 * challengeOut[0], - 1 * challengeOut[1], - 1 * challengeOut[2]]);
+    xDivXSubXi[2] <== CInv()([xacc[19] - 5718075921287398682 * challengeOut[0], - 5718075921287398682 * challengeOut[1], - 5718075921287398682 * challengeOut[2]]);
+    xDivXSubXi[3] <== CInv()([xacc[19] - 8167150655112846419 * challengeOut[0], - 8167150655112846419 * challengeOut[1], - 8167150655112846419 * challengeOut[2]]);
 
     signal tmp_383[3];
     (tmp_383) <== CalculateFRIPolChunks0()(challengesFRI,evals,cm1,cm2,cm3,consts,xDivXSubXi);
@@ -5380,7 +5380,7 @@ template VerifyFinalPol0() {
 template VerifySingleQuery0() {
     signal input {binary} queriesFRI[20];
 
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input challengesFRI[2][3];
     signal input challengesFRISteps[7][3];
     signal input evals[127][3];
@@ -5504,7 +5504,7 @@ template VerifySingleQuery0() {
 
     VerifyMerkleHashUntilLevel(3, 8, 4, 1, 2, 32)(s5_vals_p, s5_siblings, s5_keys_merkle_bits, s5_last_mt_levels, enable);
 
-    VerifyQuery0(20, 17)(queriesFRI, challengeXi, challengesFRI, evals, s0_vals1, s0_vals2, s0_vals3, s0_valsC, s1_vals_p, enable);
+    VerifyQuery0(20, 17)(queriesFRI, challengeOut, challengesFRI, evals, s0_vals1, s0_vals2, s0_vals3, s0_valsC, s1_vals_p, enable);
 
     signal {binary} s1_queriesFRI[17];
     for(var i = 0; i < 17; i++) { s1_queriesFRI[i] <== queriesFRI[i]; }
@@ -5526,7 +5526,7 @@ template VerifySingleQuery0() {
 template parallel VerifyQueriesBatch0(nQueries) {
     signal input {binary} queriesFRI[nQueries][20];
 
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input challengesFRI[2][3];
     signal input challengesFRISteps[7][3];
     signal input evals[127][3];
@@ -5574,7 +5574,7 @@ template parallel VerifyQueriesBatch0(nQueries) {
     for (var q = 0; q < nQueries; q++) {
         VerifySingleQuery0()(
             queriesFRI[q],
-            challengeXi,
+            challengeOut,
             challengesFRI,
             challengesFRISteps,
             evals,
@@ -5687,7 +5687,7 @@ template StarkVerifier0() {
     signal challengesStage2[2][3];
 
     signal challengeQ[3];
-    signal challengeXi[3];
+    signal challengeOut[3];
     signal challengesFRI[2][3];
 
     // challengesFRISteps contains the random value provided by the verifier at each step of the folding so that 
@@ -5704,7 +5704,7 @@ template StarkVerifier0() {
     // Calculate challenges, challengesFRISteps and queriesFRI
     ///////////
 
-    (challengesStage2,challengeQ,challengeXi,challengesFRI,challengesFRISteps,queriesFRI) <== Transcript0()(publics,rootC,root1,root2,root3,evals,s1_root,s2_root,s3_root,s4_root,s5_root,finalPol, nonce, enabled);
+    (challengesStage2,challengeQ,challengeOut,challengesFRI,challengesFRISteps,queriesFRI) <== Transcript0()(publics,rootC,root1,root2,root3,evals,s1_root,s2_root,s3_root,s4_root,s5_root,finalPol, nonce, enabled);
 
     ///////////
     // Preprocess s_i vals
@@ -5919,7 +5919,7 @@ template StarkVerifier0() {
         // Call batch verifier with slice [b] of work buffers
         VerifyQueriesBatch0(QUERIES_BATCH_SIZE)(
             batch_work_queriesFRI[b],
-            challengeXi,
+            challengeOut,
             challengesFRI,
             challengesFRISteps,
             evals,
@@ -6095,7 +6095,7 @@ template StarkVerifier0() {
     if (LAST_BATCH_SIZE > 0) {
     VerifyQueriesBatch0(LAST_BATCH_SIZE)(
         remainder_queriesFRI,
-        challengeXi,
+        challengeOut,
         challengesFRI,
         challengesFRISteps,
         evals,
@@ -6139,7 +6139,7 @@ template StarkVerifier0() {
     // Check constraints polynomial in the evaluation point
     ///////////
 
-    VerifyEvaluations0()(challengesStage2, challengeQ, challengeXi, evals, publics, enabled);
+    VerifyEvaluations0()(challengesStage2, challengeQ, challengeOut, evals, publics, enabled);
 
 
     VerifyMerkleRoot(2, 4, 1048576)(s0_last_mt_levels1, root1, enabled);

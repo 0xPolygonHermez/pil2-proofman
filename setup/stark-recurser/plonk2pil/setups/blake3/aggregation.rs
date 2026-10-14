@@ -676,7 +676,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
     bind_public_signals(&mut s_map, n_publics_start, n_publics, BAND_COLS);
 
     apply_remap_to_s_map(&mut s_map, &copy_merge.remap);
-    verify_merge_soundness(&s_map, &copy_merge.merged_reps, BAND_COLS);
+    verify_merge_soundness(&s_map, &copy_merge.merged_reps, &copy_merge.remap, BAND_COLS);
     let sv = build_s_polynomials(BAND_COLS, n, n_bits, n_used, &s_map);
     let mut fixed_pols = build_fixed_pols(&airgroup_name, &cv, &sv);
     fixed_pols.push(FixedPol { name: format!("{airgroup_name}.FLAGS"), index: 0, values: flags_col });

@@ -8,7 +8,7 @@ use crate::pil::map;
 use crate::types::pilout_info::{SetupResult, FIELD_EXTENSION};
 use crate::pil::prepare::{prepare_pil, PrepareOptions};
 use crate::expr::print::PrintCtx;
-use crate::types::stark_struct::StarkStruct;
+use crate::types::stark_struct::{LowDegreeTest, StarkStruct};
 
 /// The assembled pil info result returned by `pil_info`.
 pub struct PilInfoResult {
@@ -22,8 +22,8 @@ pub struct PilInfoResult {
     pub im_pols_info: (Vec<String>, Vec<String>),
     /// Constraint polynomial expression ID.
     pub c_exp_id: usize,
-    /// FRI polynomial expression ID (distinct from c_exp_id).
-    pub fri_exp_id: usize,
+    /// DEEP polynomial expression ID (distinct from c_exp_id).
+    pub deep_exp_id: usize,
     /// Polynomial Q degree.
     pub q_deg: i64,
 }
@@ -100,7 +100,7 @@ pub fn pil_info(
     // Compute opening points from ALL expressions that will be code-generated:
     // constraints, kept expressions (from hints), and imPol expressions.
     // This mirrors the filter in generate_expressions_code which processes
-    // expressions with keep=true, im_pol=true, or matching c_exp_id/fri_exp_id.
+    // expressions with keep=true, im_pol=true, or matching c_exp_id/deep_exp_id.
     let mut opening_points: Vec<i64> = vec![0];
     for c in &setup.constraints {
         let offsets = &setup.expressions[c.e].rows_offsets;
@@ -123,13 +123,13 @@ pub fn pil_info(
 
     // Build code-gen params
     let n_stages = setup.n_stages;
-    // fri_exp_id will be updated by generate_pil_code after FRI polynomial generation
+    // deep_exp_id will be updated by generate_pil_code after DEEP polynomial generation
     let mut params = CodeGenParams {
         air_id,
         airgroup_id,
         n_stages,
         c_exp_id,
-        fri_exp_id: c_exp_id, // placeholder; will be overwritten
+        deep_exp_id: c_exp_id, // placeholder; will be overwritten
         q_deg: q_deg as usize,
         q_dim: q_dim_final,
         opening_points: opening_points.clone(),
@@ -346,7 +346,7 @@ pub fn pil_info(
     setup.opening_points = opening_points;
 
     let im_pols_info = setup.im_pols_info.clone();
-    let fri_exp_id = pil_code.fri_exp_id;
+    let deep_exp_id = pil_code.deep_exp_id;
 
     PilInfoResult {
         setup,
@@ -355,7 +355,7 @@ pub fn pil_info(
         prover_memory: prover_memory_str,
         im_pols_info,
         c_exp_id,
-        fri_exp_id,
+        deep_exp_id,
         q_deg,
     }
 }
@@ -403,7 +403,13 @@ fn get_prover_memory(
     let arity = stark_struct.merkle_tree_arity as u64;
     let is_gl = stark_struct.verification_hash_type == "GL";
     let is_bn128 = stark_struct.verification_hash_type == "BN128";
-    let n_queries = stark_struct.n_queries as u64;
+    let ldt = &stark_struct.low_degree_test;
+    // Queries into f0 (STIR's first round is the widest), and the low-degree test's committed oracles.
+    let n_queries = match ldt {
+        LowDegreeTest::Fri(fri) => fri.num_queries,
+        LowDegreeTest::Stir(stir) => stir.num_queries.iter().copied().max().unwrap_or(0),
+    } as u64;
+    let ldt_trees = ldt.commitment_trees();
     let section = |name: &str| *setup.map_sections_n.get(name).unwrap_or(&0) as u64;
 
     // Commit trees drop their leaf level when the last levels and the build's scratch allow it
@@ -450,14 +456,13 @@ fn get_prover_memory(
     total += setup.challenges_map.len() as u64 * fe;
     total += (n_evals + 2 * n_opening_points) as u64 * fe; // FRI constants
     total += n_queries;
-    let perm_bits = stark_struct.steps.first().map_or(0, |s| s.n_bits as u64);
+    let perm_bits = ldt.log_domain_sizes().first().map_or(0, |&b| b as u64);
     total += (n_queries * perm_bits).div_ceil(63);
 
     // Query proofs
     let mut max_tree_width = setup.map_sections_n.values().copied().max().unwrap_or(0) as u64;
-    for w in stark_struct.steps.windows(2) {
-        let n_groups = 1u64 << w[1].n_bits;
-        max_tree_width = max_tree_width.max(((1u64 << w[0].n_bits) / n_groups) * fe);
+    for &(_, width) in &ldt_trees {
+        max_tree_width = max_tree_width.max(width as u64);
     }
     let levels = if stark_struct.n_bits_ext == 0 {
         0
@@ -469,7 +474,7 @@ fn get_prover_memory(
     let n_siblings = levels.saturating_sub(stark_struct.last_level_verification as u64);
     let siblings_per_level = if is_bn128 { arity * 4 } else { (arity - 1) * HASH_SIZE };
     let n_trees = 1 + (setup.n_stages as u64 + 1) + setup.custom_commits.len() as u64;
-    let n_trees_fri = stark_struct.steps.len().saturating_sub(1) as u64;
+    let n_trees_fri = ldt_trees.len() as u64;
     total += (n_trees + n_trees_fri) * (max_tree_width + n_siblings * siblings_per_level) * n_queries;
     if drop_leaf_level {
         total += n_queries * (arity - 1) * (max_tree_width + HASH_SIZE);
@@ -498,11 +503,10 @@ fn get_prover_memory(
     max_total = max_total.max(q_offset + n * fe + 2 * fe + n_evals as u64 * EVALS_HELPER_CHUNKS * fe);
     max_total = max_total.max(q_offset + n_ext * fe + n_ext * fe + q_deg);
 
-    // FRI layers follow q: zi and the expression tmps are dead once folding starts
-    for w in stark_struct.steps.windows(2) {
-        let height = 1u64 << w[1].n_bits;
-        let width = ((1u64 << w[0].n_bits) / height) * fe;
-        total += height * width;
+    // The low-degree test's layers follow q: zi and the expression tmps are dead once folding starts
+    for &(log_height, width) in &ldt_trees {
+        let height = 1u64 << log_height;
+        total += height * width as u64;
         if is_gl {
             total += align(get_num_nodes_mt(height, stark_struct.merkle_tree_arity));
         }

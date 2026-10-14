@@ -82,7 +82,7 @@ struct AirInstanceInfo {
     EvalGroup *evalGroups = nullptr;
     uint64_t nEvalGroups = 0;
 
-    // FRI terms opening-major (friTermStart has nOpenings + 1 bounds), for fri_expression.cuh.
+    // FRI terms opening-major (friTermStart has nOpenings + 1 bounds), for deep_expression.cuh.
     FriTerm *friTerms = nullptr;
     uint64_t *friTermStart = nullptr;
     // Polynomials grouped by opening set.

@@ -4,29 +4,30 @@ use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::EvMapItem;
 use crate::types::pilout_info::{SymbolInfo, FIELD_EXTENSION};
 
-/// Result of FRI polynomial generation.
+/// Result of DEEP polynomial generation.
 #[derive(Debug, Clone)]
-pub struct FriPolyResult {
-    /// Expression index of the FRI polynomial in the expression arena.
-    pub fri_exp_id: usize,
-    /// Power-batching size matching the FRI polynomial's degree in (vf1, vf2).
+pub struct DeepPolyResult {
+    /// Expression index of the DEEP polynomial in the expression arena.
+    pub deep_exp_id: usize,
+    /// Power-batching size matching the DEEP polynomial's degree in (vf1, vf2).
     pub batch_size: usize,
 }
 
-/// Generate the FRI polynomial expression.
+/// Generate the DEEP polynomial expression — the initial polynomial f₀ the
+/// low-degree test (FRI or STIR) is run on.
 ///
 /// In the JS version, all intermediate nodes are built inline and only ONE
 /// `expressions.push(friExp)` happens at the end. We match that by building
 /// the entire FRI tree with inline `ExprChild::Inline` children and pushing
 /// only the final composite expression.
-pub fn generate_fri_polynomial(
+pub fn generate_deep_polynomial(
     n_stages: usize,
     expressions: &mut Vec<Expression>,
     symbols: &mut Vec<SymbolInfo>,
     ev_map: &[EvMapItem],
     opening_points: &[i64],
     challenges_map: &mut Vec<ChallengeMapEntry>,
-) -> FriPolyResult {
+) -> DeepPolyResult {
     let stage = n_stages + 3;
 
     // Create std_vf1 challenge
@@ -212,7 +213,7 @@ pub fn generate_fri_polynomial(
 
     expressions.push(fri_final);
 
-    FriPolyResult { fri_exp_id: fri_final_id, batch_size }
+    DeepPolyResult { deep_exp_id: fri_final_id, batch_size }
 }
 
 /// Get dimension for an inline expression tree.
@@ -349,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_fri_polynomial_basic() {
+    fn test_generate_deep_polynomial_basic() {
         let mut expressions: Vec<Expression> = Vec::new();
         let mut symbols = vec![make_witness_symbol("w0", 0, 1), make_fixed_symbol("f0", 0)];
         let ev_map = vec![
@@ -360,9 +361,9 @@ mod tests {
         let mut challenges_map = Vec::new();
 
         let result =
-            generate_fri_polynomial(1, &mut expressions, &mut symbols, &ev_map, &opening_points, &mut challenges_map);
+            generate_deep_polynomial(1, &mut expressions, &mut symbols, &ev_map, &opening_points, &mut challenges_map);
 
-        assert_eq!(result.fri_exp_id, expressions.len() - 1);
+        assert_eq!(result.deep_exp_id, expressions.len() - 1);
         assert_eq!(result.batch_size, 2);
         assert!(!expressions.is_empty());
 
@@ -375,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_fri_polynomial_multiple_openings() {
+    fn test_generate_deep_polynomial_multiple_openings() {
         let mut expressions: Vec<Expression> = Vec::new();
         let mut symbols = vec![make_witness_symbol("w0", 0, 1), make_witness_symbol("w1", 1, 1)];
         let ev_map = vec![
@@ -386,10 +387,10 @@ mod tests {
         let mut challenges_map = Vec::new();
 
         let result =
-            generate_fri_polynomial(1, &mut expressions, &mut symbols, &ev_map, &opening_points, &mut challenges_map);
+            generate_deep_polynomial(1, &mut expressions, &mut symbols, &ev_map, &opening_points, &mut challenges_map);
 
-        // fri_exp_id is a valid index into the expressions arena
-        assert!(result.fri_exp_id < expressions.len());
+        // deep_exp_id is a valid index into the expressions arena
+        assert!(result.deep_exp_id < expressions.len());
         assert!(!expressions.is_empty());
         // Disjoint openings: degree 1 + 1 exceeds the 2-entry ev_map's power-batching degree.
         assert_eq!(result.batch_size, 3);
@@ -397,7 +398,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "opened twice")]
-    fn test_generate_fri_polynomial_rejects_duplicate_evaluation() {
+    fn test_generate_deep_polynomial_rejects_duplicate_evaluation() {
         let mut expressions: Vec<Expression> = Vec::new();
         let mut symbols = vec![make_witness_symbol("w0", 0, 1)];
         let ev_map = vec![
@@ -405,6 +406,6 @@ mod tests {
             EvMapItem { entry_type: "cm".to_string(), id: 0, prime: 0, commit_id: None },
         ];
         let mut challenges_map = Vec::new();
-        generate_fri_polynomial(1, &mut expressions, &mut symbols, &ev_map, &[0], &mut challenges_map);
+        generate_deep_polynomial(1, &mut expressions, &mut symbols, &ev_map, &[0], &mut challenges_map);
     }
 }

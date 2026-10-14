@@ -180,6 +180,7 @@ public:
     void INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
     void inttTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);  // ColMajorTiled (legacy)
     void inttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
+    void nttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);   // forward twin; no nBits >= 8 floor, unlike NTT
 
     // Allocates the static twiddle/coset tables (16B * 2^maxLogDomainSize per GPU) used ONLY by the
     // legacy tiled backend and NTT(). The prover never calls this anymore -- the ColMajor engine

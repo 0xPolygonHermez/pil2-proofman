@@ -60,7 +60,7 @@ struct SetupArgs {
     #[arg(short = 'r', long)]
     recursive: bool,
 
-    /// Path to starkstructs.json settings
+    /// Path to starkstructs.json settings (default to a STARK with FRI-based configuration)
     #[arg(short = 's', long)]
     stark_structs: Option<String>,
 
@@ -133,8 +133,23 @@ struct SetupArgs {
 #[derive(Parser)]
 struct StatsArgs {
     /// Path to compiled .pilout file
-    #[arg(short = 'a', long)]
+    #[arg(
+        short = 'a',
+        long,
+        required_unless_present = "proving_key",
+        conflicts_with = "proving_key",
+        default_value = ""
+    )]
     airout: String,
+
+    /// A built proving key to read as-built circuit stats from (uses the key's own hash
+    /// family and the solved query counts, and can include the recursion circuits).
+    #[arg(short = 'k', long)]
+    proving_key: Option<String>,
+
+    /// Include the recursion circuits (compressor/recursive/final) of the proving key.
+    #[arg(long, requires = "proving_key")]
+    aggregation: bool,
 
     /// Hash family the setup will use; determines tree/transcript geometry.
     #[arg(long, default_value = proofman_common::hash_family::DEFAULT_HASH_ID)]
@@ -144,7 +159,7 @@ struct StatsArgs {
     #[arg(short = 'o', long)]
     output: Option<String>,
 
-    /// Path to starkstructs.json settings
+    /// Path to starkstructs.json settings (default to a STARK with FRI-based configuration)
     #[arg(short = 's', long)]
     starkstructs: Option<String>,
 
@@ -197,6 +212,10 @@ struct SetupCompressedFinalArgs {
     /// Build directory containing `provingKey/<name>/vadcop_final/`.
     #[arg(short = 'b', long)]
     build_dir: String,
+
+    /// Low-degree test of the compressed proof: FRI (default) or STIR
+    #[arg(long)]
+    low_degree_test: Option<String>,
 }
 
 #[derive(Parser)]
@@ -241,6 +260,9 @@ struct SetupRecursiveTestArgs {
     #[arg(long)]
     blake3_lanes: Option<usize>,
 
+    /// starkstructs.json whose "recursion" entry picks the tree's low-degree test (default FRI)
+    #[arg(short = 's', long)]
+    starkstructs: Option<String>,
     /// Floor the fixture's air at 2^n rows; omit to take what the circuit needs. Harness-only.
     #[arg(long)]
     min_n_bits: Option<usize>,
@@ -423,6 +445,8 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("unknown --hash {:?}; known: {:?}", args.hash, proofman_common::hash_family::FAMILIES);
             }
             let opts = StatsOptions {
+                proving_key_path: args.proving_key,
+                aggregation: args.aggregation,
                 airout_path: args.airout,
                 hash: args.hash,
                 output_path: args.output,
@@ -461,7 +485,13 @@ fn main() -> anyhow::Result<()> {
         Commands::SetupCompressedFinal(args) => {
             tracing::info!("proofman-setup setup-compressed-final: starting");
             tracing::info!("  build_dir: {}", args.build_dir);
-            let opts = SetupCompressedFinalOptions { build_dir: args.build_dir };
+            let low_degree_test = match args.low_degree_test.as_deref() {
+                None => None,
+                Some("FRI") => Some(pil2_stark_setup::types::stark_struct::LowDegreeTestKind::Fri),
+                Some("STIR") => Some(pil2_stark_setup::types::stark_struct::LowDegreeTestKind::Stir),
+                Some(other) => anyhow::bail!("--low-degree-test must be FRI or STIR (got {other:?})"),
+            };
+            let opts = SetupCompressedFinalOptions { build_dir: args.build_dir, low_degree_test };
             compressed_final_cmd::run_setup_compressed_final(&opts)
         }
 
@@ -512,6 +542,7 @@ fn main() -> anyhow::Result<()> {
                 setup_type: args.r#type,
                 hash: args.hash,
                 blake3_lanes: args.blake3_lanes,
+                starkstructs: args.starkstructs,
                 blowup: args.blowup,
                 min_n_bits: args.min_n_bits,
             };

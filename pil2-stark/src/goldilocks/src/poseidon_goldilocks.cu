@@ -11,6 +11,7 @@
 
 #include "poseidon_goldilocks.hpp"
 #include "poseidon_goldilocks.cuh"
+#include "grinding_gpu.cuh"
 #include "poseidon_goldilocks_constants.hpp"
 
 // Pull in the STARK_POSEIDON1 toggle from the API-internal header when reachable
@@ -348,98 +349,27 @@ __global__ void merkleNodeWarpKernel_pos1(uint64_t nextN, uint64_t nextIndex,
     }
 }
 
-// Grinding kernel. Uses an in-register state and the register-path permute.
+// Grinding hash: [c0, c1, c2, nonce, 0, ...] -> first output limb, on the register-path permute.
 template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
-__global__ void grindingKernel_pos1(uint64_t *nonce,
-                                    uint64_t *__restrict__ nonceBlock,
-                                    uint64_t *__restrict__ input,
-                                    uint64_t n_bits,
-                                    uint64_t hashes_per_thread,
-                                    uint64_t nonces_offset)
+struct Pos1GrindHash
 {
-    if (nonces_offset != 0 && nonce[0] != UINT64_MAX)
-        return;
-
-    // Dynamic shared-mem scratchpad (declared by poseidon2_goldilocks.cuh).
-    // We use it only for the per-block reduction of found nonces.
-    uint64_t *shared_nonces = (uint64_t *)&scratchpad[0];
-
-    if (threadIdx.x == 0)
-    {
-        shared_nonces[0] = UINT64_MAX;
-        if (blockIdx.x == 0)
-            nonce[0] = UINT64_MAX;
-        if (nonces_offset != 0)
-        {
-            for (int i = 0; i < (int)gridDim.x; ++i)
-            {
-                if (nonceBlock[i] != UINT64_MAX)
-                {
-                    shared_nonces[0] = nonceBlock[i];
-                    if (blockIdx.x == 0) nonce[0] = nonceBlock[i];
-                    break;
-                }
-            }
-        }
-    }
-    __syncthreads();
-    if (shared_nonces[0] != UINT64_MAX)
-        return;
-
-    nonceBlock[blockIdx.x] = UINT64_MAX;
-
-    const uint64_t idx   = nonces_offset + ((uint64_t)blockIdx.x * blockDim.x + threadIdx.x) * hashes_per_thread;
-    const uint64_t level = 1ULL << (64 - n_bits);
-    uint64_t locId = UINT64_MAX;
-
-    gl64_t state[W];
+    static constexpr uint32_t ROUNDS = 1;
     gl64_t in_reg[W];
-
-#pragma unroll
-    for (uint32_t i = 0; i < W; ++i)
-        in_reg[i] = (gl64_t)(uint64_t)0;
-
-    for (uint64_t k = 0; k < hashes_per_thread; ++k)
+    __device__ explicit Pos1GrindHash(const uint64_t *in)
     {
-        uint64_t idx_k = idx + k;
-        // STARK grinding contract:
-        //   in_reg[0..2] = FIELD_EXTENSION challenge
-        //   in_reg[3]    = nonce
-        //   in_reg[4..W-1] = 0 (already zero from init above)
 #pragma unroll
-        for (uint32_t i = 0; i < 3; ++i)
-            in_reg[i] = input[i];
-        in_reg[3] = (gl64_t)idx_k;
-
-        poseidon1PermuteReg<W, HALF_F, N_PART>(
-            state, in_reg,
-            Pos1ConstGPU<W>::C(),
-            Pos1ConstGPU<W>::S(),
-            Pos1ConstGPU<W>::M(),
-            Pos1ConstGPU<W>::P());
-
-        uint64_t hash_val = (uint64_t)state[0];
-        if (hash_val < level)
-        {
-            locId = idx_k;
-            break;
-        }
+        for (uint32_t i = 0; i < W; ++i)
+            in_reg[i] = (gl64_t)(i < 3 ? in[i] : (uint64_t)0);
     }
-
-    shared_nonces[threadIdx.x] = locId;
-    __syncthreads();
-
-    uint32_t alive = blockDim.x >> 1;
-    while (alive > 0)
+    __device__ uint64_t operator()(uint64_t n)
     {
-        if (threadIdx.x < alive && shared_nonces[threadIdx.x + alive] < shared_nonces[threadIdx.x])
-            shared_nonces[threadIdx.x] = shared_nonces[threadIdx.x + alive];
-        __syncthreads();
-        alive >>= 1;
+        gl64_t state[W];
+        in_reg[3] = (gl64_t)n;
+        poseidon1PermuteReg<W, HALF_F, N_PART>(state, in_reg, Pos1ConstGPU<W>::C(), Pos1ConstGPU<W>::S(),
+                                               Pos1ConstGPU<W>::M(), Pos1ConstGPU<W>::P());
+        return (uint64_t)state[0];
     }
-    if (threadIdx.x == 0)
-        nonceBlock[blockIdx.x] = shared_nonces[0];
-}
+};
 
 // ---------------------------------------------------------------------------
 // Public API: initConstants — upload __constant__ arrays to each GPU.
@@ -662,48 +592,14 @@ void PoseidonGoldilocksGPU<W>::merkletreeReduce(uint64_t *d_root, uint64_t *d_in
 }
 
 // ---------------------------------------------------------------------------
-// Public API: grinding — same launch strategy as Poseidon2 (launch_iters
-// rounds × POSEIDON1_GRIND_GRID blocks × POSEIDON1_GRIND_BLOCKS threads).
-// Shared mem: one uint64 per thread for the block-local nonce reduction.
+// Public API: grinding (see grinding_gpu.cuh).
 // ---------------------------------------------------------------------------
 template<uint32_t W>
 void PoseidonGoldilocksGPU<W>::grinding(uint64_t *d_nonce, uint64_t *d_nonceBlock,
                                         const uint64_t *d_in, const uint32_t n_bits,
                                         cudaStream_t stream)
 {
-    uint64_t log_launch_iters = 7;
-    uint64_t launch_iters = 1ULL << log_launch_iters;
-    uint64_t log_N = POSEIDON1_GRIND_BITS;
-    uint64_t N = 1ULL << log_N;
-    uint64_t security = 128;
-
-    // Numerical notes:
-    //   eps    = 2^-n_bits is built with ldexp (exact; no integer shift).
-    //   log1p  = ln(1 + x) without the cancellation that hits `log(1.0 - eps)`
-    double eps                 = ldexp(1.0, -int(n_bits));
-    double totalHashesRequired = -double(security) * log(2.0) / log1p(-eps);
-    uint64_t log_totalHashesRequired = (uint64_t)ceil(log2(totalHashesRequired));
-    uint64_t log_hashesPerThread = (log_totalHashesRequired > log_launch_iters + log_N)
-                                   ? log_totalHashesRequired - log_launch_iters - log_N : 0;
-    uint64_t hashesPerThread = 1ULL << log_hashesPerThread;
-
-    dim3 blockSize(POSEIDON1_GRIND_BLOCKS);
-    dim3 gridSize(POSEIDON1_GRIND_GRID);
-
-    // Only need blockDim.x uint64_t slots for the block-local reduction.
-    size_t shared_mem_size = blockSize.x * sizeof(uint64_t);
-
-    uint64_t nonces_offset = 0;
-    uint64_t nonces_per_iteration = N * hashesPerThread;
-
-    for (uint64_t i = 0; i < launch_iters; ++i)
-    {
-        grindingKernel_pos1<SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>
-            <<<gridSize, blockSize, shared_mem_size, stream>>>(
-                (uint64_t *)d_nonce, (uint64_t *)d_nonceBlock,
-                (uint64_t *)d_in, n_bits, hashesPerThread, nonces_offset);
-        nonces_offset += nonces_per_iteration;
-    }
+    grindMin<Pos1GrindHash<SPONGE_WIDTH, HALF_N_FULL_ROUNDS, N_PARTIAL_ROUNDS>>(d_nonce, d_nonceBlock, d_in, n_bits, stream);
 }
 
 // ---------------------------------------------------------------------------
