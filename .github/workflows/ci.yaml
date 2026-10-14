@@ -459,8 +459,12 @@ jobs:
 
       - name: Cargo build (release)
         run: |
-          cargo build --release -p pil2-stark-setup -p proofman-cli -p fibonacci-square --features "$CARGO_FEATURES"
+          # The example first: building proofman-cli's examples and tests links its dev-dependency
+          # fibonacci-square, a dylib, with a dynamic std over target/release/libfibonacci_square.so,
+          # which then needs libstd-*.so to load. The build of fibonacci-square itself, last, writes
+          # the one the steps below load.
           cargo build --release -p proofman-cli --example pilfflonk_bench_inputs --features "$CARGO_FEATURES"
+          cargo build --release -p pil2-stark-setup -p proofman-cli -p fibonacci-square --features "$CARGO_FEATURES"
 
       - name: Setup Fibonacci Square
         run: |
