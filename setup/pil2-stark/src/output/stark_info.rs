@@ -347,7 +347,7 @@ pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> Low
             }))
         }
         crate::types::stark_struct::LowDegreeTest::Stir(stir) => {
-            LowDegreeTest::Stir(security::pcs::Stir::new(security::pcs::StirConfig {
+            let solved = security::pcs::Stir::new(security::pcs::StirConfig {
                 field_size,
                 trace_length: 1u32 << stark_struct.n_bits,
                 rate,
@@ -361,7 +361,17 @@ pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> Low
                 base_field_bits: 64,
                 target_security_bits: 128,
                 regime: DecodingRegime::Jbr,
-            }))
+            });
+            // The GPU prover sizes every query buffer for round 1's count.
+            let t = &solved.security_params().num_queries;
+            if let Some(i) = t.iter().position(|&ti| ti > t[0]) {
+                panic!(
+                    "STIR schedule needs {} queries in round {i} but {} in round 0 (queries {t:?}, grinding {:?}); \
+                     every round must need at most round 0's queries: raise the later rounds' grindingBitsQueries",
+                    t[i], t[0], stir.grinding_bits_queries
+                );
+            }
+            LowDegreeTest::Stir(solved)
         }
     }
 }
@@ -719,4 +729,37 @@ pub fn code_ref_to_json(r: &CodeRef) -> serde_json::Value {
         }
     }
     serde_json::Value::Object(obj)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::stark_struct::{generate_stark_struct, LowDegreeTest as Ldt, LowDegreeTestKind, StarkSettings};
+
+    fn stir(n_bits: usize, blowup: usize, fold: usize, grinding: &[usize]) -> StarkStruct {
+        let settings = StarkSettings {
+            low_degree_test: Some(LowDegreeTestKind::Stir),
+            initial_blowup_factor: Some(blowup),
+            initial_folding_factor: Some(fold),
+            ..Default::default()
+        };
+        let mut ss = generate_stark_struct(&settings, n_bits, "blake3");
+        if let Ldt::Stir(s) = &mut ss.low_degree_test {
+            s.grinding_bits_queries =
+                grinding.iter().copied().chain(std::iter::repeat(0)).take(s.folding_factors.len()).collect();
+        }
+        ss
+    }
+
+    #[test]
+    fn basic_air_schedule_needs_no_more_queries_after_round_0() {
+        solve_low_degree_test(&stir(22, 1, 4, &[24]), 200);
+    }
+
+    /// The GPU sizes its query buffers for round 0; a schedule that needs more later fails at setup.
+    #[test]
+    #[should_panic(expected = "every round must need at most round 0's queries")]
+    fn later_round_needing_more_queries_is_refused() {
+        solve_low_degree_test(&stir(20, 4, 2, &[30]), 200);
+    }
 }

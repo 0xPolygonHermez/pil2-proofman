@@ -90,7 +90,7 @@ public:
     uint64_t merkleTreeArity;
     bool merkleTreeCustom;
     uint64_t transcriptArity;
-    uint64_t grindingBitsQueries; // FRI-only grinding (proof-of-work) budget on the query phase; 0 for STIR (see stir.grindingBitsQueries)
+    uint64_t grindingBitsQueries = 0; // FRI-only grinding (proof-of-work) budget on the query phase; 0 for STIR (see stir.grindingBitsQueries)
 
     // Which low-degree test the stark info selects. FRI's schedule is `logDomainSizes` (log2|L_i|
     // per round, STIR notation) + `numQueries`, STIR's is `stir`; the other one is left empty.

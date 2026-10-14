@@ -193,6 +193,7 @@ pub fn recursive_stark_settings(
         grinding_bits: Some(user.grinding_bits.unwrap_or_else(|| recursive_grinding_bits(template, hash))),
         // STIR only: a per-round budget overriding the seed (generate_stark_struct rejects it for FRI).
         grinding_bits_queries: user.grinding_bits_queries.clone(),
+        folding_factors: user.folding_factors.clone(),
         last_level_verification: recursive_last_level_verification(template, hash),
         ..Default::default()
     }
@@ -1235,5 +1236,21 @@ mod batch_fit_tests {
     fn no_estimate_for_a_family_without_a_block_model() {
         assert!(recursion_batch_fit("Poseidon1", 17, L, &si(40)).is_none());
         assert!(recursion_batch_fit("Poseidon2", 17, L, &si(40)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::types::stark_struct::{LowDegreeTestKind, StarkSettings};
+
+    #[test]
+    fn recursion_settings_keep_explicit_stir_folds() {
+        let user = StarkSettings {
+            low_degree_test: Some(LowDegreeTestKind::Stir),
+            folding_factors: Some(vec![4, 3, 3]),
+            ..Default::default()
+        };
+        let s = super::recursive_stark_settings(super::RecursiveTemplate::Recursive2, "blake3", &user);
+        assert_eq!(s.folding_factors, Some(vec![4, 3, 3]));
     }
 }
