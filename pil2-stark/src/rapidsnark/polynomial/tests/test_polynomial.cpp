@@ -442,11 +442,12 @@ TEST(PolynomialTest, by_x_sub_value_multiplies_by_x_minus_value) {
     EXPECT_EQ(digest(borrowedFull, 3), grown);
 }
 
-// byXNSubValue(n, v): p·(X^n + v), for it adds v·p (byXSubValue adds -x·p) to X^n·p. On a
-// reserved buffer it leaves v·p there and moves to a buffer of its own. When the product does not
-// fit, the buffer grows by n, but the length stays and the degree is found below it, as with
-// byXSubValue. The expected values are the products written out: until it detached the buffer it
-// takes, it freed that buffer and read it back.
+// byXNSubValue(n, v): p·(X^n + v), for it adds v·p (byXSubValue adds -x·p) to X^n·p, as snarkjs's
+// byXNSubValue does and says (polynomial.js: "Multiply current polynomial by the polynomial
+// (X^n + value)"), whatever the name. On a reserved buffer it leaves v·p there and moves to a
+// buffer of its own. When the product does not fit, the buffer grows by n, but the length stays
+// and the degree is found below it, as with byXSubValue. The expected values are the products
+// written out: until it detached the buffer it takes, it freed that buffer and read it back.
 TEST(PolynomialTest, by_xn_sub_value_multiplies_by_xn_plus_value) {
     Random random(0xb7e);
     const Column p = random.column(3);

@@ -386,7 +386,7 @@ void Polynomial<Engine>::byXSubValue(FrElement &value) {
     fixDegree();
 }
 
-// Multiply current polynomial by the polynomial (X - value)
+// Multiply current polynomial by the polynomial (X^n + value), as snarkjs's byXNSubValue does
 template<typename Engine>
 void Polynomial<Engine>::byXNSubValue(int n, FrElement &value) {
     const bool resize = !((this->length - n - 1) >= this->degree);
@@ -394,7 +394,7 @@ void Polynomial<Engine>::byXNSubValue(int n, FrElement &value) {
     u_int64_t length = resize ? this->length + n : this->length;
     Polynomial<Engine> *pol = new Polynomial<Engine>(E, length);
 
-    // Step 0: Set current coefficients to the new buffer shifted one position
+    // Step 0: Set current coefficients to the new buffer shifted n positions
     int nThreads = omp_get_max_threads() / 2;
     ThreadUtils::parcpy(&pol->coef[n], this->coef, (this->degree + 1) * sizeof(FrElement), nThreads);
     pol->fixDegree();

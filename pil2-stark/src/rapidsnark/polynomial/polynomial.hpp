@@ -97,6 +97,7 @@ public:
     // Multiply current polynomial by the polynomial (X - value)
     void byXSubValue(FrElement &value);
 
+    // Multiply current polynomial by the polynomial (X^n + value)
     void byXNSubValue(int n, FrElement &value);
 
     // Euclidean division, returns reminder polygon
