@@ -365,7 +365,17 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         )?;
 
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
-        let public_bytes = get_public_bytes_solidity(&publics_info, &proof[1..1 + proof[0] as usize])?;
+        let publics = &proof[1..1 + proof[0] as usize];
+        // The digest verifiers recompute must be the one the circuit committed to.
+        let rootc: &[u64; 4] = verkey.try_into().map_err(|_| {
+            ProofmanError::InvalidConfiguration(format!("verkey has {} limbs, expected 4", verkey.len()))
+        })?;
+        if publics_info.snark_public_digest(publics, rootc)?.as_slice() != snark_publics_bytes.as_slice() {
+            return Err(ProofmanError::InvalidProof(
+                "the SNARK's public digest differs from PublicsInfo::snark_public_digest".to_string(),
+            ));
+        }
+        let public_bytes = get_public_bytes_solidity(&publics_info, publics)?;
         let snark_proof =
             SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, self.protocol.protocol_id());
 
@@ -389,45 +399,10 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     }
 }
 
+/// The `publicValues` bytes a Solidity verifier takes. See
+/// [`PublicsInfo::solidity_public_bytes`].
 pub fn get_public_bytes_solidity(publics_info: &PublicsInfo, vadcop_public_inputs: &[u64]) -> ProofmanResult<Vec<u8>> {
-    let vadcop_public_inputs = if vadcop_public_inputs.len() == publics_info.n_publics + 1 {
-        &vadcop_public_inputs[1..]
-    } else {
-        vadcop_public_inputs
-    };
-    if vadcop_public_inputs.len() != publics_info.n_publics {
-        return Err(ProofmanError::InvalidConfiguration(format!(
-            "Number of vadcop public inputs ({}) does not match expected number of publics ({})",
-            vadcop_public_inputs.len(),
-            publics_info.n_publics
-        )));
-    }
-
-    let mut public_bytes = vec![];
-    let mut index = 0;
-    for public_def in &publics_info.definitions {
-        let n_words = public_def.n_values;
-        if !public_def.verification_key {
-            let n_chunks_per_word = public_def.chunks[0];
-            let n_bits_per_chunk = public_def.chunks[1];
-            let n_bytes_per_chunk = n_bits_per_chunk / 8;
-            // The final circuit hashes a non-VK public little-endian and in ascending
-            // chunk order (get_sha256_inputs.circom.tera: byte offset (j\8)*8, chunk i at
-            // i*bits). Emitting big-endian / reversed chunks made these bytes disagree
-            // with the proven digest (and with zisk_common::snark_inputs_bytes).
-            for _ in 0..n_words {
-                for i in 0..n_chunks_per_word {
-                    let value = vadcop_public_inputs[index + i];
-                    let le_bytes = value.to_le_bytes();
-                    public_bytes.extend_from_slice(&le_bytes[..n_bytes_per_chunk]);
-                }
-                index += n_chunks_per_word;
-            }
-        } else {
-            index += n_words;
-        }
-    }
-    Ok(public_bytes)
+    publics_info.solidity_public_bytes(vadcop_public_inputs)
 }
 
 pub fn check_setup_snark<F: PrimeField64>(
@@ -678,49 +653,3 @@ pub fn verify_snark_proof_with_expected(
 
 unsafe impl<F: PrimeField64> Send for SnarkWrapper<F> {}
 unsafe impl<F: PrimeField64> Sync for SnarkWrapper<F> {}
-
-#[cfg(test)]
-mod public_bytes_tests {
-    use super::*;
-    use proofman_common::{PublicDefinition, PublicsInfo};
-
-    fn def(name: &str, initial_pos: usize, n_values: usize, chunks: [usize; 2], vk: bool) -> PublicDefinition {
-        PublicDefinition { name: name.into(), initial_pos, n_values, chunks, verification_key: vk }
-    }
-
-    // The final circuit hashes a non-VK public little-endian and in ascending chunk order,
-    // and skips VK sections. This must match zisk_common::snark_inputs_bytes (per-u64 LE),
-    // or the exported Solidity bytes disagree with the proven digest.
-    #[test]
-    fn solidity_public_bytes_are_little_endian_ascending_and_skip_vk() {
-        // VK section (4 limbs, skipped) followed by two u64 user publics.
-        let info = PublicsInfo {
-            n_publics: 6,
-            has_program_vk: true,
-            definitions: vec![def("vk", 0, 4, [1, 64], true), def("inputs", 4, 2, [1, 64], false)],
-        };
-        let inputs: Vec<u64> = vec![0, 0, 0, 0, 0x0102_0304_0506_0708, 0xAABB_CCDD_EEFF_0011];
-        let got = get_public_bytes_solidity(&info, &inputs).unwrap();
-
-        let mut want = Vec::new();
-        want.extend_from_slice(&0x0102_0304_0506_0708u64.to_le_bytes());
-        want.extend_from_slice(&0xAABB_CCDD_EEFF_0011u64.to_le_bytes());
-        assert_eq!(got, want, "non-VK publics must be emitted little-endian, VK skipped");
-
-        // Matches the zisk_common scheme (inputs are the flat LE bytes of each u64).
-        let zisk_style: Vec<u8> = inputs[4..].iter().flat_map(|v| v.to_le_bytes()).collect();
-        assert_eq!(got, zisk_style);
-    }
-
-    // A sub-u64 chunk keeps the low bytes, little-endian; two chunks per word stay in
-    // ascending order (the old code reversed them and used big-endian).
-    #[test]
-    fn sub_u64_chunks_keep_low_bytes_ascending() {
-        let info =
-            PublicsInfo { n_publics: 2, has_program_vk: false, definitions: vec![def("w", 0, 1, [2, 32], false)] };
-        let inputs: Vec<u64> = vec![0x1122_3344, 0x5566_7788];
-        let got = get_public_bytes_solidity(&info, &inputs).unwrap();
-        // chunk 0 = inputs[0] low 4 bytes LE, then chunk 1 = inputs[1] low 4 bytes LE.
-        assert_eq!(got, vec![0x44, 0x33, 0x22, 0x11, 0x88, 0x77, 0x66, 0x55]);
-    }
-}
