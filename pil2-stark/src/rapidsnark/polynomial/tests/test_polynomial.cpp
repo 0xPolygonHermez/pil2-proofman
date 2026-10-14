@@ -8,6 +8,8 @@
 //   buffer moves to a buffer of its own when it grows or is divided;
 // - the interpolations and zerofiers have the FflonkProver's sizes: R0, R1 and R2 interpolate 8, 4
 //   and 6 points, and ZT and ZTS2 vanish on 18 and 10.
+// Under AddressSanitizer they also show that these functions free what they allocate, and nothing
+// else, on owned and reserved buffers alike.
 #include <gtest/gtest.h>
 
 #include <omp.h>
@@ -311,7 +313,9 @@ TEST(PolynomialTest, add_and_add_blinding_grow_into_a_new_buffer) {
     EXPECT_EQ(digest(borrowedBlinded, 5), "0a1d89e0b7f47a4a5fdbd9b4abd566e7e4dbb23ae28e9822b8053fc390864900");
 }
 
-// divBy(b), Euclidean division: a := q and the remainder r returned, for a = q·b + r.
+// divBy(b), Euclidean division: a := q and the remainder r returned, for a = q·b + r. On a
+// reserved buffer the remainder stays there, in a polynomial that does not free it, and a moves to
+// a buffer of its own.
 TEST(PolynomialTest, div_by_returns_the_remainder) {
     Random random(0xd1b);
     const Column b = random.column(4);
@@ -340,9 +344,24 @@ TEST(PolynomialTest, div_by_returns_the_remainder) {
     EXPECT_TRUE(holds(*ownedRemainder, r, length));
     EXPECT_EQ(digest(owned, length), quotient);
     EXPECT_EQ(digest(*ownedRemainder, length), remainder);
+
+    Column reserved(length);
+    Poly borrowed(E, reserved.data(), length);
+    load(borrowed, a);
+    const std::unique_ptr<Poly> borrowedRemainder(borrowed.divBy(pb));
+    EXPECT_EQ(borrowedRemainder->coef, reserved.data());
+    EXPECT_EQ(borrowed.getLength(), length);
+    EXPECT_EQ(borrowed.getDegree(), 5u);
+    EXPECT_TRUE(holds(borrowed, q, length));
+    EXPECT_EQ(borrowedRemainder->getLength(), length);
+    EXPECT_EQ(borrowedRemainder->getDegree(), 2u);
+    EXPECT_TRUE(holds(*borrowedRemainder, r, length));
+    EXPECT_EQ(digest(borrowed, length), quotient);
+    EXPECT_EQ(digest(*borrowedRemainder, length), remainder);
 }
 
-// divByVanishing(m, β) on a = q·(X^m - β) + r, deg r < m: a := q and r returned.
+// divByVanishing(m, β) on a = q·(X^m - β) + r, deg r < m: a := q and r returned. On a reserved
+// buffer the remainder stays there, as with divBy.
 TEST(PolynomialTest, div_by_vanishing_returns_the_remainder) {
     struct Case {
         uint32_t m;
@@ -380,6 +399,20 @@ TEST(PolynomialTest, div_by_vanishing_returns_the_remainder) {
         EXPECT_TRUE(holds(*ownedRemainder, r, length));
         EXPECT_EQ(digest(owned, length), c.quotient);
         EXPECT_EQ(digest(*ownedRemainder, length), c.remainder);
+
+        Column reserved(length);
+        Poly borrowed(E, reserved.data(), length);
+        load(borrowed, a);
+        const std::unique_ptr<Poly> borrowedRemainder(borrowed.divByVanishing(c.m, beta));
+        EXPECT_EQ(borrowedRemainder->coef, reserved.data());
+        EXPECT_EQ(borrowed.getLength(), length);
+        EXPECT_EQ(borrowed.getDegree(), c.qDegree);
+        EXPECT_TRUE(holds(borrowed, q, length));
+        EXPECT_EQ(borrowedRemainder->getLength(), length);
+        EXPECT_EQ(borrowedRemainder->getDegree(), c.m - 1);
+        EXPECT_TRUE(holds(*borrowedRemainder, r, length));
+        EXPECT_EQ(digest(borrowed, length), c.quotient);
+        EXPECT_EQ(digest(*borrowedRemainder, length), c.remainder);
     }
 }
 
