@@ -89,6 +89,18 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub gpu: bool,
 }
 
+/// The BN254 scalar order `r`, big-endian.
+const BN254_R_BE: [u8; 32] = [
+    0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d, 0x28, 0x33, 0xe8,
+    0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
+];
+
+/// The first 32-byte big-endian word at or above `r`, if any. Words of equal length compare as
+/// numbers.
+fn first_word_not_below_r(bytes: &[u8]) -> Option<usize> {
+    bytes.chunks_exact(32).position(|word| word >= &BN254_R_BE[..])
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnarkProof {
     pub proof_bytes: Vec<u8>,
@@ -152,6 +164,18 @@ impl SnarkProof {
                 self.public_snark_bytes.len()
             )
             .into());
+        }
+        // The Solidity verifiers snarkjs generates for both protocols require every proof word
+        // below `r` (their `checkField`), while the parser reads coordinates mod q and
+        // evaluations mod r: a word past either bound is another encoding of the same proof,
+        // which would verify here and be rejected on-chain. A digest is reduced mod `r` too.
+        if let Some(i) = first_word_not_below_r(&self.proof_bytes) {
+            return Err(
+                format!("{} proof word {i} is not below the BN254 scalar order", protocol.protocol_name()).into()
+            );
+        }
+        if let Some(i) = first_word_not_below_r(&self.public_snark_bytes) {
+            return Err(format!("SNARK public input {i} is not below the BN254 scalar order").into());
         }
         let (proof_json, publics_json) =
             snark_proof_bytes_to_json_c(&self.proof_bytes, &self.public_snark_bytes, self.protocol_id as i32);
@@ -764,5 +788,46 @@ mod snarkjs_verdict_tests {
         assert!(proof(768, 31, plonk).convert_to_json().is_err());
         assert!(proof(768, 0, plonk).convert_to_json().is_err());
         assert!(proof(768, 32, 99).convert_to_json().is_err());
+    }
+
+    /// Adding `r` to a word, or `q` to a coordinate, re-encodes the same proof for the native
+    /// parser; the on-chain verifier rejects both, so these are refused before parsing.
+    #[test]
+    fn convert_to_json_refuses_a_word_at_or_above_r() {
+        const R_MINUS_1: [u8; 32] = {
+            let mut w = BN254_R_BE;
+            w[31] -= 1;
+            w
+        };
+        let digest = R_MINUS_1.to_vec();
+        for protocol in [SnarkProtocol::Plonk, SnarkProtocol::Fflonk] {
+            for i in [0, 17, 18, 23] {
+                for word in [BN254_R_BE, [0xff; 32]] {
+                    let mut proof_bytes = vec![0; protocol.proof_bytes()];
+                    proof_bytes[32 * i..32 * (i + 1)].copy_from_slice(&word);
+                    let proof = SnarkProof::new(proof_bytes, vec![], digest.clone(), protocol.protocol_id());
+                    let err = proof.convert_to_json().unwrap_err().to_string();
+                    assert!(err.contains(&format!("proof word {i} ")), "{err}");
+                }
+            }
+        }
+
+        let proof = SnarkProof::new(vec![0; 768], vec![], BN254_R_BE.to_vec(), SnarkProtocol::Plonk.protocol_id());
+        assert!(proof.convert_to_json().unwrap_err().to_string().contains("public input 0 "));
+    }
+
+    #[test]
+    fn first_word_not_below_r_compares_whole_words() {
+        let mut below = BN254_R_BE;
+        below[31] -= 1;
+        let mut above_despite_a_smaller_last_byte = BN254_R_BE;
+        above_despite_a_smaller_last_byte[1] += 1;
+        above_despite_a_smaller_last_byte[31] = 0;
+
+        assert_eq!(first_word_not_below_r(&below), None);
+        assert_eq!(first_word_not_below_r(&[0; 64]), None);
+        assert_eq!(first_word_not_below_r(&BN254_R_BE), Some(0));
+        assert_eq!(first_word_not_below_r(&above_despite_a_smaller_last_byte), Some(0));
+        assert_eq!(first_word_not_below_r(&[below, BN254_R_BE].concat()), Some(1));
     }
 }
