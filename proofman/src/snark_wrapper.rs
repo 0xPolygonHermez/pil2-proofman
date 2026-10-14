@@ -830,4 +830,44 @@ mod snarkjs_verdict_tests {
         assert_eq!(first_word_not_below_r(&above_despite_a_smaller_last_byte), Some(0));
         assert_eq!(first_word_not_below_r(&[below, BN254_R_BE].concat()), Some(1));
     }
+
+    /// 24 words 1, 2, ..., 24: 9 commitments and 6 evaluations for PLONK, 4 and 16 for FFLONK.
+    fn proof_of_words(protocol: SnarkProtocol) -> SnarkProof {
+        let word = |value: u8| {
+            let mut word = [0u8; 32];
+            word[31] = value;
+            word
+        };
+        SnarkProof::new((1..=24).flat_map(word).collect(), vec![], word(25).to_vec(), protocol.protocol_id())
+    }
+
+    #[test]
+    fn a_plonk_proof_converts_to_snarkjs_plonk_json() {
+        let (proof, publics) = proof_of_words(SnarkProtocol::Plonk).convert_to_json().unwrap();
+        assert_eq!(proof["protocol"], "plonk");
+        assert_eq!(proof["curve"], "bn128");
+        assert_eq!(proof["A"], serde_json::json!(["1", "2", "1"]));
+        assert_eq!(proof["Wxiw"], serde_json::json!(["17", "18", "1"]));
+        assert_eq!(proof["eval_a"], "19");
+        assert_eq!(proof["eval_zw"], "24");
+        assert_eq!(proof.as_object().unwrap().len(), 9 + 6 + 2);
+        assert_eq!(publics, serde_json::json!(["25"]));
+    }
+
+    /// snarkjs reads an FFLONK proof's commitments under `polynomials` and its evaluations under
+    /// `evaluations` (`fromObjectProof`).
+    #[test]
+    fn an_fflonk_proof_converts_to_snarkjs_fflonk_json() {
+        let (proof, publics) = proof_of_words(SnarkProtocol::Fflonk).convert_to_json().unwrap();
+        assert_eq!(proof["protocol"], "fflonk");
+        assert_eq!(proof["curve"], "bn128");
+        assert_eq!(proof["polynomials"]["C1"], serde_json::json!(["1", "2", "1"]));
+        assert_eq!(proof["polynomials"]["W2"], serde_json::json!(["7", "8", "1"]));
+        assert_eq!(proof["evaluations"]["ql"], "9");
+        assert_eq!(proof["evaluations"]["inv"], "24");
+        assert_eq!(proof["polynomials"].as_object().unwrap().len(), 4);
+        assert_eq!(proof["evaluations"].as_object().unwrap().len(), 16);
+        assert_eq!(proof.as_object().unwrap().len(), 4);
+        assert_eq!(publics, serde_json::json!(["25"]));
+    }
 }
