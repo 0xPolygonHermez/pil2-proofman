@@ -576,6 +576,61 @@ TEST(PolynomialTest, add_and_add_blinding_grow_into_a_new_buffer) {
     EXPECT_EQ(digest(borrowedBlinded, 5), "0d2da86669a5459b891eb01aa55d1c4331cb8fb338c023706d876e3c7be35d8b");
 }
 
+// sub(b) and subBlinding(b, s), a - b and a - s·b: in place when b is not longer; otherwise into a
+// buffer of b's length, which becomes its length, as add does (they wrote past a's buffer): the
+// difference is then the one computed in place. A reserved buffer is then left as it was.
+TEST(PolynomialTest, sub_and_sub_blinding_grow_into_a_new_buffer) {
+    Random random(0x5b0);
+    const Column a = random.column(3);
+    const Column b = random.column(5);
+    FrElement s = random.element();
+    Column difference(5), blinded(5);
+    for (uint64_t i = 0; i < 5; ++i) {
+        const FrElement ai = i < 3 ? a[i] : E.fr.zero();
+        difference[i] = E.fr.sub(ai, b[i]);
+        blinded[i] = E.fr.sub(ai, E.fr.mul(s, b[i]));
+    }
+    Poly pb(E, 5);
+    load(pb, b);
+
+    for (int blinding = 0; blinding < 2; ++blinding) {
+        SCOPED_TRACE(blinding ? "subBlinding" : "sub");
+        const Column &expected = blinding ? blinded : difference;
+        auto subtract = [&](Poly &p) {
+            if (blinding) {
+                p.subBlinding(pb, s);
+            } else {
+                p.sub(pb);
+            }
+        };
+
+        Poly inPlace(E, 5);
+        load(inPlace, a);
+        subtract(inPlace);
+        EXPECT_EQ(inPlace.getLength(), 5u);
+        EXPECT_EQ(inPlace.getDegree(), 4u);
+        EXPECT_TRUE(holds(inPlace, expected, 5));
+
+        Poly owned(E, 3);
+        load(owned, a);
+        subtract(owned);
+        EXPECT_EQ(owned.getLength(), 5u);
+        EXPECT_EQ(owned.getDegree(), 4u);
+        EXPECT_TRUE(holds(owned, expected, 5));
+        EXPECT_EQ(digest(owned, 5), digest(inPlace, 5));
+
+        Column reserved(3);
+        Poly borrowed(E, reserved.data(), 3);
+        load(borrowed, a);
+        subtract(borrowed);
+        EXPECT_NE(borrowed.coef, reserved.data());
+        EXPECT_EQ(borrowed.getLength(), 5u);
+        EXPECT_EQ(borrowed.getDegree(), 4u);
+        EXPECT_TRUE(holds(borrowed, expected, 5));
+        EXPECT_TRUE(same(reserved.data(), a));
+    }
+}
+
 // divBy(b), Euclidean division: a := q and the remainder r returned, for a = q·b + r. On a
 // reserved buffer the remainder stays there, in a polynomial that does not free it, and a moves to
 // a buffer of its own.

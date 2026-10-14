@@ -302,16 +302,24 @@ void Polynomial<Engine>::addBlinding(Polynomial<Engine> &polynomial, FrElement &
     fixDegree();
 }
 
-//TODO when the polynomial subtracted is bigger than the current one
 template<typename Engine>
 void Polynomial<Engine>::sub(Polynomial<Engine> &polynomial) {
     u_int64_t length = std::max(this->length, polynomial.length);
+    // Into a buffer of the polynomial's length when it is longer, as add does
+    FrElement *newCoef = length > this->length ? new FrElement[length] : this->coef;
 
     #pragma omp parallel for
     for (u_int64_t i = 0; i < length; i++) {
         FrElement a = i < this->length ? this->coef[i] : E.fr.zero();
         FrElement b = i < polynomial.length ? polynomial.coef[i] : E.fr.zero();
-        this->coef[i] = E.fr.sub(a, b);
+        newCoef[i] = E.fr.sub(a, b);
+    }
+
+    if (newCoef != this->coef) {
+        if(createBuffer) delete[] this->coef;
+        this->coef = newCoef;
+        this->createBuffer = true;
+        this->length = length;
     }
 
     fixDegree();
@@ -321,6 +329,8 @@ template <typename Engine>
 void Polynomial<Engine>::subBlinding(Polynomial<Engine> &polynomial, FrElement &blindingValue)
 {
     u_int64_t length = std::max(this->length, polynomial.length);
+    // Into a buffer of the polynomial's length when it is longer, as addBlinding does
+    FrElement *newCoef = length > this->length ? new FrElement[length] : this->coef;
 
 #pragma omp parallel for
     for (u_int64_t i = 0; i < length; i++)
@@ -330,7 +340,16 @@ void Polynomial<Engine>::subBlinding(Polynomial<Engine> &polynomial, FrElement &
 
         b = E.fr.mul(b, blindingValue);
 
-        this->coef[i] = E.fr.sub(a, b);
+        newCoef[i] = E.fr.sub(a, b);
+    }
+
+    if (newCoef != this->coef)
+    {
+        if (createBuffer)
+            delete[] this->coef;
+        this->coef = newCoef;
+        this->createBuffer = true;
+        this->length = length;
     }
 
     fixDegree();
