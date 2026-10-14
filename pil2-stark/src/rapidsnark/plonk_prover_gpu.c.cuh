@@ -187,10 +187,29 @@ namespace PlonkGPU
     template <typename Engine>
     PlonkProverGPU<Engine>::~PlonkProverGPU()
     {
+        joinAsyncThreads();
         this->removePrecomputedData();
 
         delete transcript;
         delete proof;
+    }
+
+    template <typename Engine>
+    void PlonkProverGPU<Engine>::joinAsyncThreads()
+    {
+        bool joined = false;
+        for (std::thread *t : {&asyncTransferSigma, &asyncTransferQ, &asyncComputePI, &asyncTransferPolsBatch1,
+                               &asyncTransferPolsBatch2, &asyncEvalNTT}) {
+            if (t->joinable()) {
+                t->join();
+                joined = true;
+            }
+        }
+        // As prove() does after joining asyncEvalNTT: what was queued on the device completes too.
+        if (joined) {
+            gpu_plonk_set_device(gpuId);
+            gpu_plonk_cuda_device_sync();
+        }
     }
 
     template <typename Engine>
@@ -595,6 +614,9 @@ namespace PlonkGPU
         LOG_TRACE("> Pre-allocating GPU static eval buffers (round0)");
         d_unifiedBuffer = unified_buffer_gpu;
         round0();
+        // Nothing round0 started outlives the pre-allocation: a caller whose final witness fails
+        // returns without a prove(), and the next proof writes these buffers again.
+        joinAsyncThreads();
         preAllocated = true;
     }
 
@@ -915,6 +937,8 @@ namespace PlonkGPU
     template <typename Engine>
     void PlonkProverGPU<Engine>::round0()
     {
+        joinAsyncThreads();
+
         uint64_t ptauBytes = (N + 6) * sizeof(G1PointAffine);
         uint32_t numBlocks4N = (uint32_t)(NExt / 256);
         uint32_t numBlocksN = (uint32_t)(N / 256);
