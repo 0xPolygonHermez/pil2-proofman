@@ -248,6 +248,7 @@ void Polynomial<Engine>::add(Polynomial<Engine> &polynomial) {
         this->coef = newCoef;
         // newCoef is this polynomial's own, even if the buffer it replaces was a reserved one
         this->createBuffer = true;
+        this->length = polyLength;
     }
 
     fixDegree();
@@ -295,6 +296,7 @@ void Polynomial<Engine>::addBlinding(Polynomial<Engine> &polynomial, FrElement &
         this->coef = newCoef;
         // newCoef is this polynomial's own, even if the buffer it replaces was a reserved one
         this->createBuffer = true;
+        this->length = polyLength;
     }
 
     fixDegree();
@@ -380,6 +382,7 @@ void Polynomial<Engine>::byXSubValue(FrElement &value) {
     this->coef = pol->coef;
     // pol's buffer is this polynomial's own now, even if the one it replaces was a reserved one
     this->createBuffer = true;
+    this->length = length;
     pol->coef = nullptr;
     delete pol;
 
@@ -410,6 +413,7 @@ void Polynomial<Engine>::byXNSubValue(int n, FrElement &value) {
     this->coef = pol->coef;
     // pol's buffer is this polynomial's own now, even if the one it replaces was a reserved one
     this->createBuffer = true;
+    this->length = length;
     pol->coef = nullptr;
     delete pol;
 

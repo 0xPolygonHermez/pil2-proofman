@@ -3,9 +3,9 @@
 // - each result is checked for what it is: quotients and remainders, products, interpolants and
 //   zerofiers, and what is left in a reserved buffer;
 // - each result (its length, its degree and its coefficients) is also pinned by a Keccak-256 digest
-//   to what the code returned when these tests were written, quirks included: add() and
-//   byXSubValue() grow the buffer without updating the length, and a polynomial on a reserved
-//   buffer moves to a buffer of its own when it grows or divBy or divByVanishing divide it;
+//   to what the code returned when these tests were written, but for the length and the degree of a
+//   polynomial that grows, which did not follow its buffer then; quirks included: a polynomial on a
+//   reserved buffer moves to a buffer of its own when it grows or divBy or divByVanishing divide it;
 // - the interpolations and zerofiers have the FflonkProver's sizes: R0, R1 and R2 interpolate 8, 4
 //   and 6 points, and ZT and ZTS2 vanish on 18 and 10.
 // divByMonic and CPolynomial::getPolynomial are also checked against the code they replaced, kept
@@ -134,8 +134,7 @@ void load(Poly &p, const Column &coefs) {
 }
 
 // Keccak-256 of the length and the degree, as u64 little-endian, then of the n coefficients from
-// coef[0], each as 32 canonical little-endian bytes. n can exceed the length, for the buffers that
-// add() and byXSubValue() grow without updating it.
+// coef[0], each as 32 canonical little-endian bytes.
 std::string digest(const Poly &p, uint64_t n) {
     std::vector<uint8_t> bytes(16 + 32 * n, 0);
     const uint64_t header[2] = {p.getLength(), p.getDegree()};
@@ -386,8 +385,8 @@ TEST(PolynomialTest, div_by_monic_refuses_a_divisor_of_degree_0_or_too_high) {
 }
 
 // byXSubValue(x): p·(X - x). On a reserved buffer it leaves -x·p there (it scales p in place) and
-// moves to a buffer of its own. When the top coefficient is not zero the buffer grows by one, but
-// the length and the degree stay: the product is all there, past the length.
+// moves to a buffer of its own. When the top coefficient is not zero the buffer and the length grow
+// by one, and the next product grows from there.
 TEST(PolynomialTest, by_x_sub_value_multiplies_by_x_minus_value) {
     Random random(0xb75);
     const Column xs = random.column(3);
@@ -397,7 +396,7 @@ TEST(PolynomialTest, by_x_sub_value_multiplies_by_x_minus_value) {
     // (X - x0)(X - x1)
     const Column quadratic = {E.fr.mul(xs[0], xs[1]), E.fr.neg(E.fr.add(xs[0], xs[1])), E.fr.one()};
     const char *const cubic = "027fc3f4bfe89323cb3bdfe2730a52bc44d9ec8144281fab9d9b6da6e5b34408";
-    const char *const grown = "1d1cf187b229ba2b513c86736427e57b2d364bc99edb65faff9d5aea8ad98b41";
+    const char *const grown = "bedfdbc13193caaa248bab75907a6de9b9c9aedf2a95fa83373a022a7c6eefbf";
 
     Poly owned(E, 4);
     load(owned, linear);
@@ -426,17 +425,22 @@ TEST(PolynomialTest, by_x_sub_value_multiplies_by_x_minus_value) {
     Poly full(E, 2);
     load(full, linear);
     full.byXSubValue(x1);
-    EXPECT_EQ(full.getLength(), 2u);
-    EXPECT_EQ(full.getDegree(), 1u);
+    EXPECT_EQ(full.getLength(), 3u);
+    EXPECT_EQ(full.getDegree(), 2u);
     EXPECT_TRUE(holds(full, quadratic, 3));
     EXPECT_EQ(digest(full, 3), grown);
+    // The cubic again, grown from two coefficients.
+    full.byXSubValue(x2);
+    EXPECT_EQ(full.getLength(), 4u);
+    EXPECT_EQ(full.getDegree(), 3u);
+    EXPECT_EQ(digest(full, 4), cubic);
 
     Column reservedFull(2);
     Poly borrowedFull(E, reservedFull.data(), 2);
     load(borrowedFull, linear);
     borrowedFull.byXSubValue(x1);
-    EXPECT_EQ(borrowedFull.getLength(), 2u);
-    EXPECT_EQ(borrowedFull.getDegree(), 1u);
+    EXPECT_EQ(borrowedFull.getLength(), 3u);
+    EXPECT_EQ(borrowedFull.getDegree(), 2u);
     EXPECT_TRUE(holds(borrowedFull, quadratic, 3));
     EXPECT_TRUE(same(reservedFull.data(), scaled(linear, E.fr.neg(x1))));
     EXPECT_EQ(digest(borrowedFull, 3), grown);
@@ -445,9 +449,9 @@ TEST(PolynomialTest, by_x_sub_value_multiplies_by_x_minus_value) {
 // byXNSubValue(n, v): p·(X^n + v), for it adds v·p (byXSubValue adds -x·p) to X^n·p, as snarkjs's
 // byXNSubValue does and says (polynomial.js: "Multiply current polynomial by the polynomial
 // (X^n + value)"), whatever the name. On a reserved buffer it leaves v·p there and moves to a
-// buffer of its own. When the product does not fit, the buffer grows by n, but the length stays
-// and the degree is found below it, as with byXSubValue. The expected values are the products
-// written out: until it detached the buffer it takes, it freed that buffer and read it back.
+// buffer of its own. When the product does not fit, the buffer and the length grow by n, and the
+// next product grows from there. The expected values are the products written out: until it
+// detached the buffer it takes, it freed that buffer and read it back.
 TEST(PolynomialTest, by_xn_sub_value_multiplies_by_xn_plus_value) {
     Random random(0xb7e);
     const Column p = random.column(3);
@@ -485,23 +489,27 @@ TEST(PolynomialTest, by_xn_sub_value_multiplies_by_xn_plus_value) {
     Poly full(E, 3);
     load(full, p);
     full.byXNSubValue(2, v1);
-    EXPECT_EQ(full.getLength(), 3u);
-    EXPECT_EQ(full.getDegree(), 2u);
+    EXPECT_EQ(full.getLength(), 5u);
+    EXPECT_EQ(full.getDegree(), 4u);
     EXPECT_TRUE(holds(full, first, 5));
+    full.byXNSubValue(1, v2);
+    EXPECT_EQ(full.getLength(), 6u);
+    EXPECT_EQ(full.getDegree(), 5u);
+    EXPECT_TRUE(holds(full, second, 6));
 
     Column reservedFull(3);
     Poly borrowedFull(E, reservedFull.data(), 3);
     load(borrowedFull, p);
     borrowedFull.byXNSubValue(2, v1);
-    EXPECT_EQ(borrowedFull.getLength(), 3u);
-    EXPECT_EQ(borrowedFull.getDegree(), 2u);
+    EXPECT_EQ(borrowedFull.getLength(), 5u);
+    EXPECT_EQ(borrowedFull.getDegree(), 4u);
     EXPECT_TRUE(holds(borrowedFull, first, 5));
     EXPECT_TRUE(same(reservedFull.data(), scaled(p, v1)));
 }
 
 // add(b) and addBlinding(b, s), a + b and a + s·b: in place when b is not longer; otherwise into a
-// buffer of b's length, keeping a's length (and so a degree below a's length). A reserved buffer
-// is then left as it was.
+// buffer of b's length, which becomes its length: the sum is then the one computed in place, digest
+// included. A reserved buffer is then left as it was.
 TEST(PolynomialTest, add_and_add_blinding_grow_into_a_new_buffer) {
     Random random(0xadd);
     const Column a = random.column(3);
@@ -527,20 +535,20 @@ TEST(PolynomialTest, add_and_add_blinding_grow_into_a_new_buffer) {
     Poly owned(E, 3);
     load(owned, a);
     owned.add(pb);
-    EXPECT_EQ(owned.getLength(), 3u);
-    EXPECT_EQ(owned.getDegree(), 2u);
+    EXPECT_EQ(owned.getLength(), 5u);
+    EXPECT_EQ(owned.getDegree(), 4u);
     EXPECT_TRUE(holds(owned, sum, 5));
-    EXPECT_EQ(digest(owned, 5), "a7180635a20ee8a9b7a4228201a0c0fcca92c5f3d66d7d73fb8ace6475f4521a");
+    EXPECT_EQ(digest(owned, 5), "423376dca8c902cd6e80f29b506745c9186e1a34215434c24a0df2efb43f75e2");
 
     Column reserved(3);
     Poly borrowed(E, reserved.data(), 3);
     load(borrowed, a);
     borrowed.add(pb);
-    EXPECT_EQ(borrowed.getLength(), 3u);
-    EXPECT_EQ(borrowed.getDegree(), 2u);
+    EXPECT_EQ(borrowed.getLength(), 5u);
+    EXPECT_EQ(borrowed.getDegree(), 4u);
     EXPECT_TRUE(holds(borrowed, sum, 5));
     EXPECT_TRUE(same(reserved.data(), a));
-    EXPECT_EQ(digest(borrowed, 5), "a7180635a20ee8a9b7a4228201a0c0fcca92c5f3d66d7d73fb8ace6475f4521a");
+    EXPECT_EQ(digest(borrowed, 5), "423376dca8c902cd6e80f29b506745c9186e1a34215434c24a0df2efb43f75e2");
 
     Poly blindedInPlace(E, 5);
     load(blindedInPlace, a);
@@ -552,20 +560,20 @@ TEST(PolynomialTest, add_and_add_blinding_grow_into_a_new_buffer) {
     Poly blindedOwned(E, 3);
     load(blindedOwned, a);
     blindedOwned.addBlinding(pb, s);
-    EXPECT_EQ(blindedOwned.getLength(), 3u);
-    EXPECT_EQ(blindedOwned.getDegree(), 2u);
+    EXPECT_EQ(blindedOwned.getLength(), 5u);
+    EXPECT_EQ(blindedOwned.getDegree(), 4u);
     EXPECT_TRUE(holds(blindedOwned, blinded, 5));
-    EXPECT_EQ(digest(blindedOwned, 5), "0a1d89e0b7f47a4a5fdbd9b4abd566e7e4dbb23ae28e9822b8053fc390864900");
+    EXPECT_EQ(digest(blindedOwned, 5), "0d2da86669a5459b891eb01aa55d1c4331cb8fb338c023706d876e3c7be35d8b");
 
     Column reservedBlinded(3);
     Poly borrowedBlinded(E, reservedBlinded.data(), 3);
     load(borrowedBlinded, a);
     borrowedBlinded.addBlinding(pb, s);
-    EXPECT_EQ(borrowedBlinded.getLength(), 3u);
-    EXPECT_EQ(borrowedBlinded.getDegree(), 2u);
+    EXPECT_EQ(borrowedBlinded.getLength(), 5u);
+    EXPECT_EQ(borrowedBlinded.getDegree(), 4u);
     EXPECT_TRUE(holds(borrowedBlinded, blinded, 5));
     EXPECT_TRUE(same(reservedBlinded.data(), a));
-    EXPECT_EQ(digest(borrowedBlinded, 5), "0a1d89e0b7f47a4a5fdbd9b4abd566e7e4dbb23ae28e9822b8053fc390864900");
+    EXPECT_EQ(digest(borrowedBlinded, 5), "0d2da86669a5459b891eb01aa55d1c4331cb8fb338c023706d876e3c7be35d8b");
 }
 
 // divBy(b), Euclidean division: a := q and the remainder r returned, for a = q·b + r. On a
