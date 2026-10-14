@@ -14,7 +14,7 @@ use std::io::Read;
 use std::ffi::c_void;
 use crate::check_const_tree;
 use proofman_starks_lib_c::{
-    init_final_snark_prover_c, free_final_snark_prover_c, snark_proof_bytes_to_json_c,
+    init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
     get_unified_buffer_gpu_for_recursivef_c, pre_allocate_final_snark_prover_c, free_device_buffers_recursivef_c,
     gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c,
 };
@@ -70,6 +70,19 @@ impl SnarkProtocol {
             _ => Err(ProofmanError::InvalidConfiguration(format!("Unsupported snark protocol id: {}", protocol_id))),
         }
     }
+
+    /// The protocol of a loaded final SNARK prover: the one its zkey names.
+    fn from_snark_prover(snark_prover: *mut c_void) -> ProofmanResult<Self> {
+        Self::from_protocol_id(get_snark_protocol_id_c(snark_prover))
+    }
+
+    /// What `snarkjs <protocol> verify` prints when the proof verifies.
+    fn verified_message(&self) -> &'static str {
+        match self {
+            SnarkProtocol::Plonk => "OK!",
+            SnarkProtocol::Fflonk => "PROOF VERIFIED SUCCESSFULLY",
+        }
+    }
 }
 
 pub struct SnarkWrapper<F: PrimeField64> {
@@ -84,7 +97,6 @@ pub struct SnarkWrapper<F: PrimeField64> {
     pub snark_prover: Option<*mut c_void>,
     pub d_buffers_recursivef: *mut c_void,
     pub proving_key_path: PathBuf,
-    pub protocol: SnarkProtocol,
     pub memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     pub gpu: bool,
 }
@@ -315,7 +327,6 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             setup_snark_path,
             snark_prover,
             proving_key_path: proving_key_path.to_path_buf(),
-            protocol: SnarkProtocol::Plonk, // Default to Plonk, can be changed later if needed
             vadcop_final_verkey,
             d_buffers,
             d_buffers_recursivef,
@@ -386,6 +397,17 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             }
         };
 
+        // The zkey names the protocol, and the loaded prover read it.
+        let protocol = match SnarkProtocol::from_snark_prover(snark_prover) {
+            Ok(protocol) => protocol,
+            Err(e) => {
+                if self.snark_prover.is_none() {
+                    free_final_snark_prover_c(snark_prover);
+                }
+                return Err(e);
+            }
+        };
+
         //  Spawn GPU pre-allocation on a separate thread so it overlaps with CPU witness computation
         let prealloc_handle = {
             let snark_prover = snark_prover as usize;
@@ -438,8 +460,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             ));
         }
         let public_bytes = get_public_bytes_solidity(&publics_info, publics)?;
-        let snark_proof =
-            SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, self.protocol.protocol_id());
+        let snark_proof = SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, protocol.protocol_id());
 
         timer_stop_and_log_debug!(GENERATING_SNARK_PROOF);
 
@@ -701,7 +722,7 @@ fn run_snarkjs_verify(
     // snarkjs reports everything on stdout and exits 1 both when it rejects a proof and when it
     // cannot run (unreadable vkey, missing file, ...), so only its messages tell them apart.
     let stdout = String::from_utf8_lossy(&output.stdout);
-    match snarkjs_verdict(output.status.success(), &stdout) {
+    match snarkjs_verdict(&protocol, output.status.success(), &stdout) {
         SnarkjsVerdict::Verified => {
             tracing::info!("    {}", "\u{2713} SNARK proof was verified".bright_green().bold());
             Ok(())
@@ -732,7 +753,7 @@ enum SnarkjsVerdict {
 }
 
 /// What snarkjs 0.7's `plonk verify` / `fflonk verify` concluded from its exit status and stdout.
-fn snarkjs_verdict(success: bool, stdout: &str) -> SnarkjsVerdict {
+fn snarkjs_verdict(protocol: &SnarkProtocol, success: bool, stdout: &str) -> SnarkjsVerdict {
     // A key with another public count is misconfiguration, not a false proof.
     const REJECTED: [&str; 5] = [
         "Invalid Proof",
@@ -741,7 +762,7 @@ fn snarkjs_verdict(success: bool, stdout: &str) -> SnarkjsVerdict {
         "Public inputs are not valid",
         "Invalid number of public inputs",
     ];
-    if success && stdout.contains("OK!") {
+    if success && stdout.contains(protocol.verified_message()) {
         SnarkjsVerdict::Verified
     } else if !success && REJECTED.iter().any(|m| stdout.contains(m)) {
         SnarkjsVerdict::Rejected
@@ -759,20 +780,89 @@ mod snarkjs_verdict_tests {
 
     #[test]
     fn only_snarkjs_rejections_count_as_a_rejected_proof() {
-        assert_eq!(snarkjs_verdict(true, "[INFO]  snarkJS: OK!\n"), SnarkjsVerdict::Verified);
-        assert_eq!(snarkjs_verdict(false, "[WARN]  snarkJS: Invalid Proof\n"), SnarkjsVerdict::Rejected);
+        let plonk = &SnarkProtocol::Plonk;
+        assert_eq!(snarkjs_verdict(plonk, true, "[INFO]  snarkJS: OK!\n"), SnarkjsVerdict::Verified);
+        assert_eq!(snarkjs_verdict(plonk, false, "[WARN]  snarkJS: Invalid Proof\n"), SnarkjsVerdict::Rejected);
         assert_eq!(
-            snarkjs_verdict(false, "[ERROR] snarkJS: Proof commitments are not valid.\n"),
+            snarkjs_verdict(plonk, false, "[ERROR] snarkJS: Proof commitments are not valid.\n"),
             SnarkjsVerdict::Rejected
         );
         // Exit 0 without OK!, a key that does not fit, an unreadable file: nothing decided.
-        assert_eq!(snarkjs_verdict(true, ""), SnarkjsVerdict::Failed);
+        assert_eq!(snarkjs_verdict(plonk, true, ""), SnarkjsVerdict::Failed);
         assert_eq!(
-            snarkjs_verdict(false, "[ERROR] snarkJS: Number of public signals does not match with vk\n"),
+            snarkjs_verdict(plonk, false, "[ERROR] snarkJS: Number of public signals does not match with vk\n"),
             SnarkjsVerdict::Failed
         );
-        assert_eq!(snarkjs_verdict(false, "[ERROR] snarkJS: Error: ENOENT: no such file\n"), SnarkjsVerdict::Failed);
-        assert_eq!(snarkjs_verdict(false, ""), SnarkjsVerdict::Failed);
+        assert_eq!(
+            snarkjs_verdict(plonk, false, "[ERROR] snarkJS: Error: ENOENT: no such file\n"),
+            SnarkjsVerdict::Failed
+        );
+        assert_eq!(snarkjs_verdict(plonk, false, ""), SnarkjsVerdict::Failed);
+    }
+
+    /// `snarkjs fflonk verify` prints its own success message, not PLONK's `OK!`, and each is
+    /// only the verdict of its protocol.
+    #[test]
+    fn each_protocol_is_verified_by_its_own_message() {
+        let fflonk = &SnarkProtocol::Fflonk;
+        let fflonk_ok = "[INFO]  snarkJS: PROOF VERIFIED SUCCESSFULLY\n[INFO]  snarkJS: FFLONK VERIFIER FINISHED\n";
+        assert_eq!(snarkjs_verdict(fflonk, true, fflonk_ok), SnarkjsVerdict::Verified);
+        assert_eq!(snarkjs_verdict(fflonk, false, "[WARN]  snarkJS: Invalid Proof\n"), SnarkjsVerdict::Rejected);
+        assert_eq!(
+            snarkjs_verdict(fflonk, false, "[ERROR] snarkJS: Proof evaluations are not valid.\n"),
+            SnarkjsVerdict::Rejected
+        );
+        assert_eq!(snarkjs_verdict(fflonk, true, "[INFO]  snarkJS: OK!\n"), SnarkjsVerdict::Failed);
+        assert_eq!(snarkjs_verdict(&SnarkProtocol::Plonk, true, fflonk_ok), SnarkjsVerdict::Failed);
+    }
+
+    #[test]
+    fn protocol_ids_map_to_protocols() {
+        assert!(matches!(SnarkProtocol::from_protocol_id(2), Ok(SnarkProtocol::Plonk)));
+        assert!(matches!(SnarkProtocol::from_protocol_id(10), Ok(SnarkProtocol::Fflonk)));
+        for protocol in [SnarkProtocol::Plonk, SnarkProtocol::Fflonk] {
+            let id = protocol.protocol_id();
+            assert_eq!(
+                SnarkProtocol::from_protocol_id(id).map(|p| p.protocol_name()).ok(),
+                Some(protocol.protocol_name())
+            );
+        }
+        assert_eq!(SnarkProtocol::Plonk.protocol_name(), "plonk");
+        assert_eq!(SnarkProtocol::Fflonk.protocol_name(), "fflonk");
+        for id in [0, 1, 3, 9, 11, u64::MAX] {
+            assert!(SnarkProtocol::from_protocol_id(id).is_err(), "protocol id {id}");
+        }
+    }
+
+    /// The PLONK and FFLONK zkeys of `x * x = y` in `tests/data/` report, once loaded, the protocol
+    /// each names.
+    ///
+    /// They were made once with rapidsnark's setup, as setup-snark runs it:
+    /// `generate_plonk_zkey_c(r1cs, ptau, "square_plonk.zkey")` and
+    /// `generate_fflonk_zkey_c(r1cs, ptau, "square_fflonk.zkey")`, where the r1cs is
+    /// `circom square.circom --r1cs` (circom 2.2.3) of
+    /// `template Square() { signal input x; signal output y; y <== x * x; } component main = Square();`
+    /// and the ptau is the snarkjs README's `powersOfTau28_hez_final_08.ptau`, whose blake2b is
+    /// d6a8fb3a04feb600096c3b791f936a578c4e664d262e4aa24beed1b7a9a96aa5
+    /// eb72864d628db247e9293384b74b36ffb52ca8d148d6e1b8b51e279fdf57b583.
+    #[test]
+    fn the_protocol_is_the_one_the_zkey_names() {
+        for expected in [SnarkProtocol::Plonk, SnarkProtocol::Fflonk] {
+            let zkey = format!("{}/tests/data/square_{}.zkey", env!("CARGO_MANIFEST_DIR"), expected.protocol_name());
+            // A zkey that cannot be read aborts the C++ loader: refuse a missing one first.
+            assert!(Path::new(&zkey).is_file(), "no fixture at {zkey}");
+
+            let prover = init_final_snark_prover_c(&zkey, std::ptr::null_mut());
+            assert!(!prover.is_null(), "{zkey}");
+            let protocol = SnarkProtocol::from_snark_prover(prover).map(|p| p.protocol_id());
+            free_final_snark_prover_c(prover);
+            assert_eq!(protocol.ok(), Some(expected.protocol_id()), "{zkey}");
+        }
+    }
+
+    #[test]
+    fn a_prover_that_is_not_loaded_has_no_protocol() {
+        assert!(SnarkProtocol::from_snark_prover(std::ptr::null_mut()).is_err());
     }
 
     #[test]
