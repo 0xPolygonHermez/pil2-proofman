@@ -57,6 +57,18 @@ Polynomial<Engine>::fromPolynomial(Engine &_E, Polynomial<Engine> &polynomial, F
 }
 
 template<typename Engine>
+Polynomial<Engine> *Polynomial<Engine>::fromReservedBuffer(Engine &_E, FrElement *reservedBuffer, u_int64_t length) {
+    // Over no coefficients, so that none is cleared, then over the length
+    Polynomial<Engine> *pol = new Polynomial<Engine>(_E, reservedBuffer, 0);
+    pol->length = length;
+    if (length > 0) {
+        pol->fixDegree();
+    }
+
+    return pol;
+}
+
+template<typename Engine>
 Polynomial<Engine> *
 Polynomial<Engine>::fromEvaluations(Engine &_E, FFT<typename Engine::Fr> *fft, FrElement *evaluations, u_int64_t length,
                                     u_int64_t blindLength) {

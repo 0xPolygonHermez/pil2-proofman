@@ -42,6 +42,10 @@ public:
 
     static Polynomial<Engine>* fromPolynomial(Engine &_E, Polynomial<Engine> &polynomial, FrElement *reservedBuffer, u_int64_t blindLength = 0);
 
+    // Over the coefficients already in reservedBuffer[0, length), which it neither clears (as the
+    // constructor on a reserved buffer does) nor copies, and does not free. The degree is fixed.
+    static Polynomial<Engine>* fromReservedBuffer(Engine &_E, FrElement *reservedBuffer, u_int64_t length);
+
     // From evaluations
     static Polynomial<Engine>* fromEvaluations(Engine &_E, FFT<typename Engine::Fr> *fft, FrElement *evaluations, u_int64_t length, u_int64_t blindLength = 0);
 

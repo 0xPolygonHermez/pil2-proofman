@@ -8,6 +8,8 @@
 //   buffer moves to a buffer of its own when it grows or divBy or divByVanishing divide it;
 // - the interpolations and zerofiers have the FflonkProver's sizes: R0, R1 and R2 interpolate 8, 4
 //   and 6 points, and ZT and ZTS2 vanish on 18 and 10.
+// divByMonic and CPolynomial::getPolynomial are also checked against the code they replaced, kept
+// here as it was.
 // Under AddressSanitizer they also show that these functions free what they allocate, and nothing
 // else, on owned and reserved buffers alike.
 #include <gtest/gtest.h>
@@ -15,6 +17,7 @@
 #include <omp.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <random>
@@ -23,6 +26,7 @@
 #include <vector>
 
 #include "alt_bn128.hpp"
+#include "cpolynomial.hpp"
 #include "keccak_wrapper.hpp"
 #include "polynomial.hpp"
 
@@ -760,6 +764,257 @@ TEST(PolynomialTest, zerofier_vanishes_on_the_points) {
             EXPECT_TRUE(E.fr.isZero(p->evaluate(x)));
         }
         EXPECT_EQ(digest(*p, c.n + 1), c.expected);
+    }
+}
+
+// fromReservedBuffer(buffer, n): a polynomial over the n coefficients the buffer holds, which it
+// neither clears nor copies (the constructor on a reserved buffer clears them), with its degree
+// fixed, and which leaves the buffer to its owner; what is beyond n is not touched. Then
+// divByMonic on it, in the same buffer.
+TEST(PolynomialTest, from_reserved_buffer_takes_the_coefficients_in_it) {
+    Random random(0xf2b);
+    const FrElement beta = random.element();
+    const Column q = random.column(9);
+    // q·(X^3 - β) in the first 12 coefficients, then stale ones at 12 and 15.
+    Column a = multiple(q, 3, beta, {}, 16);
+    a[12] = random.element();
+    a[15] = random.element();
+    Column buffer = a;
+    {
+        const std::unique_ptr<Poly> p(Poly::fromReservedBuffer(E, buffer.data(), 12));
+        EXPECT_EQ(p->coef, buffer.data());
+        EXPECT_EQ(p->getLength(), 12u);
+        EXPECT_EQ(p->getDegree(), 11u);
+        EXPECT_TRUE(same(buffer.data(), a));
+        EXPECT_TRUE(p->divByMonic(3, beta));
+        EXPECT_EQ(p->coef, buffer.data());
+        EXPECT_EQ(p->getDegree(), 8u);
+        EXPECT_TRUE(holds(*p, q, 12));
+    }
+    EXPECT_TRUE(same(buffer.data() + 12, Column(a.begin() + 12, a.end())));
+
+    // Zeros at the top: the degree is fixed below them; none at all: degree 0, nothing read.
+    const std::unique_ptr<Poly> zeros(Poly::fromReservedBuffer(E, buffer.data() + 9, 3));
+    EXPECT_EQ(zeros->getLength(), 3u);
+    EXPECT_EQ(zeros->getDegree(), 0u);
+    const std::unique_ptr<Poly> empty(Poly::fromReservedBuffer(E, buffer.data(), 0));
+    EXPECT_EQ(empty->getLength(), 0u);
+    EXPECT_EQ(empty->getDegree(), 0u);
+    EXPECT_EQ(empty->coef, buffer.data());
+}
+
+// Polynomials of these degrees, -1 for no polynomial and -2 for the zero polynomial, each in two
+// coefficients more than its degree, which are zero, added to a CPolynomial at their positions.
+struct Packing {
+    std::vector<std::unique_ptr<Poly>> owned;
+    std::vector<Poly *> polys;
+    std::unique_ptr<CPolynomial<Engine>> cpolynomial;
+
+    Packing(const std::vector<int64_t> &degrees, Random &random)
+        : cpolynomial(new CPolynomial<Engine>(E, static_cast<int>(degrees.size()))) {
+        for (uint64_t i = 0; i < degrees.size(); ++i) {
+            if (degrees[i] == -1) {
+                polys.push_back(nullptr);
+                continue;
+            }
+            const uint64_t degree = degrees[i] < 0 ? 0 : static_cast<uint64_t>(degrees[i]);
+            owned.emplace_back(new Poly(E, degree + 3));
+            Poly &p = *owned.back();
+            if (degrees[i] >= 0) {
+                for (uint64_t c = 0; c <= degree; ++c) {
+                    p.coef[c] = random.element();
+                }
+                p.coef[degree] = E.fr.isZero(p.coef[degree]) ? E.fr.one() : p.coef[degree];
+            }
+            p.fixDegree();
+            polys.push_back(&p);
+            cpolynomial->addPolynomial(static_cast<int>(i), &p);
+        }
+    }
+};
+
+// The packing of CPolynomial written out: coefficient c·k + i of f is coefficient c of p_i up to
+// its degree, zero above it and where no p_i was added, in 1 + max_i(k·deg p_i + i) coefficients,
+// over the positions with a polynomial.
+Column interleaved(const std::vector<Poly *> &polys) {
+    const uint64_t k = polys.size();
+    uint64_t bound = 0;
+    for (uint64_t i = 0; i < k; ++i) {
+        if (polys[i] != nullptr) {
+            bound = std::max(bound, k * polys[i]->getDegree() + i);
+        }
+    }
+    Column f(bound + 1, E.fr.zero());
+    for (uint64_t i = 0; i < k; ++i) {
+        if (polys[i] != nullptr) {
+            for (uint64_t c = 0; c <= polys[i]->getDegree(); ++c) {
+                f[c * k + i] = polys[i]->coef[c];
+            }
+        }
+    }
+    return f;
+}
+
+// CPolynomial::getCoefficients against the packing written out (interleaved: the coefficients and
+// their count), on 1, 2 and 32 threads. k = 1 and 12, constants, zeros, mixed degrees, a degree
+// bound a power of two and above deg f (zero top polynomials), a position with no polynomial, and
+// f of 12,286 coefficients. It writes into a buffer of stale data, and nothing beyond the count.
+TEST(CPolynomialTest, get_coefficients_is_the_packing) {
+    Random random(0xc0f);
+    const std::vector<std::vector<int64_t>> cases = {
+        {0}, {1}, {4}, {16}, {1000}, {-2},
+        {0, 0}, {3, 0}, {0, 3}, {-2, -2}, {1, -1},
+        {0, -2, -2}, {5, -1, 2}, {4095, 4094, 100},
+        {7, 2, 0, 5},
+        {63, 62, 7, 0, -2, 63, 62, 7, 0, -2, 1, -1},
+    };
+    for (const std::vector<int64_t> &degrees : cases) {
+        std::string name = "degrees";
+        for (int64_t degree : degrees) {
+            name += " " + std::to_string(degree);
+        }
+        SCOPED_TRACE(name);
+        const Packing packing(degrees, random);
+        const Column expected = interleaved(packing.polys);
+        ASSERT_EQ(packing.cpolynomial->getDegree(), expected.size() - 1);
+
+        const Column stale = random.column(expected.size() + 5);
+        for (int t : {1, 2, 32}) {
+            SCOPED_TRACE(std::to_string(t) + " threads");
+            const Threads threads(t);
+            Column buffer = stale;
+            EXPECT_EQ(packing.cpolynomial->getCoefficients(buffer.data()), expected.size());
+            EXPECT_TRUE(same(buffer.data(), expected));
+            EXPECT_TRUE(same(buffer.data() + expected.size(), Column(stale.begin() + expected.size(), stale.end())));
+        }
+    }
+}
+
+// CPolynomial::getPolynomial before it packed in one pass, the reference: its body as it was, over
+// the polynomials and the degree bound (its getDegree()) of a CPolynomial.
+Poly *getPolynomialBefore(const std::vector<Poly *> &polynomials, uint64_t degreeBound, FrElement *reservedBuffer) {
+    const int n = static_cast<int>(polynomials.size());
+    std::vector<u_int64_t> degrees(n);
+
+    for (int i = 0; i < n; i++) {
+        degrees[i] = polynomials[i] == NULL ? 0 : polynomials[i]->getDegree();
+    }
+
+    u_int64_t maxDegree = degreeBound;
+    u_int64_t lengthBuffer = std::pow(2, ((u_int64_t)log2(maxDegree - 1)) + 1);
+    Polynomial<Engine> *polynomial = new Polynomial<Engine>(E, reservedBuffer, lengthBuffer);
+
+    #pragma omp parallel for
+    for (u_int64_t i = 0; i < maxDegree+1; i++) {
+        for (int j = 0; j < n; j++) {
+            if (polynomials[j] != NULL) {
+                if (i <= degrees[j]) polynomial->coef[i * n + j] = polynomials[j]->coef[i];
+            }
+        }
+    }
+
+    polynomial->fixDegree();
+
+    return polynomial;
+}
+
+// getPolynomial against getPolynomialBefore on a CPolynomial of polynomials of these degrees (see
+// Packing), on the same stale buffer, on 1, 2 and 32 threads: the buffer it returns, the length,
+// the degree, and the whole buffer, before, over and past the length.
+void expectGetPolynomialAsBefore(const std::vector<int64_t> &degrees, Random &random) {
+    const Packing packing(degrees, random);
+    const uint64_t bound = packing.cpolynomial->getDegree();
+    ASSERT_GE(bound, 2u);
+    // The length is below 2·bound.
+    const Column stale = random.column(2 * bound + 8);
+    Column before = stale;
+    const std::unique_ptr<Poly> reference(getPolynomialBefore(packing.polys, bound, before.data()));
+    ASSERT_LE(reference->getLength(), 2 * bound);
+    for (int t : {1, 2, 32}) {
+        SCOPED_TRACE(std::to_string(t) + " threads");
+        const Threads threads(t);
+        Column after = stale;
+        const std::unique_ptr<Poly> f(packing.cpolynomial->getPolynomial(after.data()));
+        ASSERT_EQ(f->coef, after.data());
+        ASSERT_EQ(f->getLength(), reference->getLength());
+        ASSERT_EQ(f->getDegree(), reference->getDegree());
+        ASSERT_TRUE(same(after.data(), before));
+    }
+}
+
+// getPolynomial against the one it replaced. FFLONK's shapes, for a domain of D = 8, 64 and 1024
+// and at their top degrees and below: C0 (setup), 8 polynomials of degree below D; C1, a, b and c
+// of degree below D and T0 below 2D - 2; C2, z below D + 3, T1 below D + 2 and T2 below 3D. Then
+// k = 1 to 5 with random degrees, positions with no polynomial, zero polynomials and constants,
+// and degree bounds powers of two (the top coefficient is then past the length) and one more.
+TEST(CPolynomialTest, get_polynomial_is_the_packing_it_replaces) {
+    Random random(0x9e7);
+    for (int64_t D : {8, 64, 1024}) {
+        const std::vector<std::vector<int64_t>> shapes = {
+            std::vector<int64_t>(8, D - 1),
+            {D - 1, D - 2, D - 1, D - 3, D / 2, D - 1, D - 1, D - 2},
+            {D - 1, D - 1, D - 1, 2 * D - 3},
+            {D - 2, D - 1, D - 3, D},
+            {D + 2, D + 1, 3 * D - 1},
+            {D + 1, D, 3 * D - 3},
+        };
+        for (const std::vector<int64_t> &degrees : shapes) {
+            std::string name = "D = " + std::to_string(D) + ", degrees";
+            for (int64_t degree : degrees) {
+                name += " " + std::to_string(degree);
+            }
+            SCOPED_TRACE(name);
+            expectGetPolynomialAsBefore(degrees, random);
+            if (HasFatalFailure()) {
+                return;
+            }
+        }
+    }
+
+    // Degree bounds 2, a power of two (16) and one more, k·d + i.
+    const std::vector<std::vector<int64_t>> edges = {
+        {2}, {16}, {17}, {1, 0}, {8, -1}, {8, 0}, {-2, 8}, {5, -1, 0}, {5, 0, -2}, {4, 3, 3, 3},
+    };
+    for (const std::vector<int64_t> &degrees : edges) {
+        std::string name = "degrees";
+        for (int64_t degree : degrees) {
+            name += " " + std::to_string(degree);
+        }
+        SCOPED_TRACE(name);
+        expectGetPolynomialAsBefore(degrees, random);
+        if (HasFatalFailure()) {
+            return;
+        }
+    }
+
+    for (int trial = 0; trial < 200; ++trial) {
+        const uint64_t k = 1 + trial % 5;
+        std::vector<int64_t> degrees(k);
+        bool some = false;
+        for (uint64_t i = 0; i < k; ++i) {
+            const uint64_t r = random.element().v[0] % 10;
+            degrees[i] = r == 0 ? -1 : r == 1 ? -2 : static_cast<int64_t>(random.element().v[0] % 300);
+            some = some || degrees[i] >= 0;
+        }
+        degrees[k - 1] = some ? degrees[k - 1] : 3;
+        uint64_t bound = 0;
+        for (uint64_t i = 0; i < k; ++i) {
+            if (degrees[i] != -1) {
+                bound = std::max<uint64_t>(bound, k * std::max<int64_t>(degrees[i], 0) + i);
+            }
+        }
+        if (bound < 2) {
+            continue;
+        }
+        std::string name = "trial " + std::to_string(trial) + ", degrees";
+        for (int64_t degree : degrees) {
+            name += " " + std::to_string(degree);
+        }
+        SCOPED_TRACE(name);
+        expectGetPolynomialAsBefore(degrees, random);
+        if (HasFatalFailure()) {
+            return;
+        }
     }
 }
 
