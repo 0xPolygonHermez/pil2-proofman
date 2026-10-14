@@ -671,9 +671,7 @@ TEST(PolynomialTest, div_by_vanishing_returns_the_remainder) {
 }
 
 // fastDivByVanishing(buffer, m, β) on a = q·(X^m - β) + r, deg r < m: a := q, with a copied to
-// the buffer. On one thread: on more, the steps that every thread runs race with the last one (no
-// barrier separates them), and the quotient is sometimes wrong. It reads coef[deg a + 1], so the
-// degree is below length - 1.
+// the buffer, on one thread (the tests below run it on more).
 TEST(PolynomialTest, fast_div_by_vanishing_leaves_the_quotient) {
     struct Case {
         uint32_t m;
@@ -707,6 +705,79 @@ TEST(PolynomialTest, fast_div_by_vanishing_leaves_the_quotient) {
         EXPECT_EQ(digest(p, length), c.expected);
     }
     omp_set_num_threads(threads);
+}
+
+// fastDivByVanishing(buffer, m, β) on a = q·(X^m - β) + r, a of `length` coefficients and degree
+// qDegree + m: on `threads` threads, `runs` times, the quotient q, which divByVanishing gives too,
+// and a copied to the buffer. Returns in how many runs the quotient was not q.
+int fastDivByVanishingMisses(uint32_t m, uint64_t length, uint64_t qDegree, int threads, int runs, Random &random) {
+    const Column q = random.column(qDegree + 1);
+    const Column r = random.column(m);
+    const FrElement beta = random.element();
+    const Column a = multiple(q, m, beta, r, length);
+
+    Poly reference(E, length);
+    load(reference, a);
+    const std::unique_ptr<Poly> remainder(reference.divByVanishing(m, beta));
+    EXPECT_TRUE(holds(reference, q, length));
+
+    const Threads scope(threads);
+    int misses = 0;
+    for (int run = 0; run < runs; ++run) {
+        Poly p(E, length);
+        load(p, a);
+        Column buffer(length);
+        p.fastDivByVanishing(buffer.data(), m, beta);
+        const bool right = p.getLength() == length && p.getDegree() == qDegree && holds(p, q, length) &&
+                           same(buffer.data(), a);
+        misses += right ? 0 : 1;
+    }
+    return misses;
+}
+
+// On 1, 2, 4 and 32 threads, 50 times each, chunks of many rows per thread: the quotient every
+// time. Every thread computed the rows below the chunks, and read the chunks' lowest rows, while
+// others were already correcting them, and the quotient was wrong about once in 8 runs on 4
+// threads.
+TEST(PolynomialTest, fast_div_by_vanishing_is_the_quotient_on_any_threads) {
+    struct Case {
+        uint32_t m;
+        uint64_t length;
+        uint64_t qDegree;
+    };
+    const Case cases[] = {{1, 1024, 1000}, {3, 2048, 2000}, {4, 4096, 4000}, {8, 1 << 14, 16000}};
+    Random random(0xfd8);
+    for (const Case &c : cases) {
+        for (int t : {1, 2, 4, 32}) {
+            EXPECT_EQ(fastDivByVanishingMisses(c.m, c.length, c.qDegree, t, 50, random), 0)
+                << "m = " << c.m << ", length " << c.length << ", " << t << " threads";
+        }
+    }
+}
+
+// A degree of length - 1: it fixed the quotient's degree from coef[deg + 1], past the buffer.
+TEST(PolynomialTest, fast_div_by_vanishing_reads_nothing_past_the_buffer) {
+    Random random(0xfd9);
+    EXPECT_EQ(fastDivByVanishingMisses(1, 1024, 1022, 1, 1, random), 0);
+    EXPECT_EQ(fastDivByVanishingMisses(4, 4096, 4091, 1, 1, random), 0);
+}
+
+// Fewer rows of m than threads, or less than a row: fewer chunks, or none (it wrote far past the
+// buffer, sizing a chunk to no row).
+TEST(PolynomialTest, fast_div_by_vanishing_has_fewer_rows_than_threads) {
+    struct Case {
+        uint32_t m;
+        uint64_t length;
+        uint64_t qDegree;
+    };
+    const Case cases[] = {{1, 2, 0}, {3, 4, 0}, {4, 7, 2}, {3, 40, 30}, {4, 64, 59}, {2, 20, 17}};
+    Random random(0xfda);
+    for (const Case &c : cases) {
+        for (int t : {1, 2, 4, 32}) {
+            EXPECT_EQ(fastDivByVanishingMisses(c.m, c.length, c.qDegree, t, 10, random), 0)
+                << "m = " << c.m << ", length " << c.length << ", " << t << " threads";
+        }
+    }
 }
 
 // lagrangePolynomialInterpolation over n points: the polynomial of degree < n through them, in a

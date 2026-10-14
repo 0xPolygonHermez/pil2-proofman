@@ -648,9 +648,10 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
 
     Polynomial<Engine> *polTmp = new Polynomial<Engine>(this->E, reservedBuffer, this->length);
 
-    int nThreads = omp_get_max_threads();
+    // A chunk of whole rows of m per thread, and fewer chunks than threads when there are fewer rows
+    int nThreads = std::min<u_int64_t>(omp_get_max_threads(), (this->length - m) / m);
     u_int32_t nElements = this->length - m;
-    u_int32_t nElementsBucket = (u_int32_t)(nElements / nThreads / m);
+    u_int32_t nElementsBucket = nThreads == 0 ? 0 : (u_int32_t)(nElements / nThreads / m);
     u_int32_t nElementsChunk = nElementsBucket * m;
     u_int32_t nElementsLast = nElements - nThreads * nElementsChunk;
 
@@ -664,7 +665,7 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
         for (int k = 0; k < nThreads; k++) {
             uint32_t idx0 = (k + 1) * nElementsChunk + nElementsLast;
 
-            for (int i = 0; i < m; i++) {
+            for (uint32_t i = 0; i < m; i++) {
                 coef[idx0 + i - m] = polTmp->coef[idx0 + i];
             }
 
@@ -676,22 +677,25 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
         }
 
         //STEP 2: Setejar els valors del elements last NO PARAL·LELITZAR
-        int idx0 = nElementsLast;
-        int pending = nElementsLast;
+        #pragma omp single
+        {
+            int idx0 = nElementsLast;
+            int pending = nElementsLast;
 
-        for (int i = 0; i < m && pending; i++) {
-            coef[idx0 - i - 1] = polTmp->coef[idx0 + m - i - 1];
-            pending--;
-        }
+            for (uint32_t i = 0; i < m && pending; i++) {
+                coef[idx0 - i - 1] = polTmp->coef[idx0 + m - i - 1];
+                pending--;
+            }
 
-        for (int i = 0; i < pending; i++) {
-            uint32_t offset = idx0 - i - 1;
-            FrElement val = E.fr.add(polTmp->coef[offset], E.fr.mul(beta, coef[offset]));
-            coef[offset - m] = val;
+            for (int i = 0; i < pending; i++) {
+                uint32_t offset = idx0 - i - 1;
+                FrElement val = E.fr.add(polTmp->coef[offset], E.fr.mul(beta, coef[offset]));
+                coef[offset - m] = val;
+            }
         }
 
         //Step 3: calcular acumulats
-        FrElement acc[nThreads][m];
+        FrElement acc[std::max(nThreads, 1)][m];
         FrElement betaPow = E.fr.one();
         for (uint32_t i = 0; i < nElementsBucket; i++) {
             betaPow = E.fr.mul(betaPow, beta);
@@ -702,7 +706,7 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
             int idThread = k - 1;
             uint32_t idx0 = idThread * nElementsChunk + nElementsLast;
 
-            for (int i = 0; i < m; i++) {
+            for (uint32_t i = 0; i < m; i++) {
                 acc[idThread][i] = coef[idx0 + i];
 
                 if (k != nThreads) {
@@ -711,6 +715,9 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
             }
             currentBeta = E.fr.mul(currentBeta, betaPow);
         }
+
+        // Every thread has read the chunks' lowest rows before any is corrected
+        #pragma omp barrier
 
         //STEP 4 recalcular
         #pragma omp for
@@ -738,7 +745,7 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
     }
     delete polTmp;
 
-    fixDegreeFrom(this->degree+1);
+    fixDegreeFrom(this->degree);
 }
 
 template<typename Engine>
