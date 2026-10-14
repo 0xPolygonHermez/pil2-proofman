@@ -225,9 +225,9 @@ pub fn write_exec_file<F: PlonkField>(
         gate_bands.len() as u64,
         band_aux,
     ]);
-    let band_words = buff[bands_at + GATE_BAND_HEADER_WORDS..].chunks_exact_mut(GATE_BAND_WORDS);
+    let band_words = buff[bands_at + GATE_BAND_HEADER_WORDS..].as_chunks_mut::<GATE_BAND_WORDS>().0;
     for (b, words) in gate_bands.iter().zip(band_words) {
-        words.copy_from_slice(&[b.row as u64, b.kind as u64, b.payload]);
+        *words = [b.row as u64, b.kind as u64, b.payload];
     }
 
     buff

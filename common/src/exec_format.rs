@@ -202,10 +202,8 @@ impl ExecField for Bn128 {
 
     fn write_exec_words(&self, out: &mut [u64]) {
         let mut words = [0u64; 4];
-        for (word, chunk) in words.iter_mut().zip(self.to_le_bytes().chunks_exact(8)) {
-            let mut bytes = [0u8; 8];
-            bytes.copy_from_slice(chunk);
-            *word = u64::from_le_bytes(bytes);
+        for (word, bytes) in words.iter_mut().zip(self.to_le_bytes().as_chunks::<8>().0) {
+            *word = u64::from_le_bytes(*bytes);
         }
         out.copy_from_slice(&words);
     }
@@ -213,8 +211,8 @@ impl ExecField for Bn128 {
     fn read_exec_words(words: &[u64]) -> Option<Self> {
         let words: &[u64; 4] = words.try_into().ok()?;
         let mut bytes = [0u8; 32];
-        for (chunk, word) in bytes.chunks_exact_mut(8).zip(words) {
-            chunk.copy_from_slice(&word.to_le_bytes());
+        for (chunk, word) in bytes.as_chunks_mut::<8>().0.iter_mut().zip(words) {
+            *chunk = word.to_le_bytes();
         }
         Self::from_le_bytes(bytes)
     }
@@ -433,14 +431,7 @@ impl<F: ExecField> ExecFile<F> {
         if bytes.len() % 8 != 0 {
             return Err(invalid(format!("is {} bytes, not a multiple of 8", bytes.len())));
         }
-        let words: Vec<u64> = bytes
-            .chunks_exact(8)
-            .map(|chunk| {
-                let mut word = [0u8; 8];
-                word.copy_from_slice(chunk);
-                u64::from_le_bytes(word)
-            })
-            .collect();
+        let words: Vec<u64> = bytes.as_chunks::<8>().0.iter().map(|word| u64::from_le_bytes(*word)).collect();
         Self::parse(&words).map_err(invalid)
     }
 
@@ -515,7 +506,9 @@ impl<F: ExecField> ExecFile<F> {
             ));
         }
         let bands = body
-            .chunks_exact(GATE_BAND_WORDS)
+            .as_chunks::<GATE_BAND_WORDS>()
+            .0
+            .iter()
             .map(|band| ExecGateBand { row: band[0], kind: band[1], payload: band[2] })
             .collect();
 

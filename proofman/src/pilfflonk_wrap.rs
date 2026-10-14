@@ -396,19 +396,16 @@ fn publics_to_bytes(publics: &Publics) -> Vec<u8> {
 /// The publics of their bytes ([`publics_to_bytes`]). Refuses a length that is not a multiple of 32
 /// and a public that is not below `r`.
 fn publics_from_bytes(bytes: &[u8]) -> ProofmanResult<Publics> {
-    let chunks = bytes.chunks_exact(PUBLIC_BYTES);
-    if !chunks.remainder().is_empty() {
+    let (chunks, rest) = bytes.as_chunks::<PUBLIC_BYTES>();
+    if !rest.is_empty() {
         return Err(ProofmanError::InvalidProof(format!(
             "The publics of a pilfflonk proof are {PUBLIC_BYTES} bytes each, and it has {} bytes of them",
             bytes.len()
         )));
     }
     let publics = chunks
-        .map(|chunk| {
-            let mut public = [0u8; PUBLIC_BYTES];
-            public.copy_from_slice(chunk);
-            FrBytes::from_be_bytes(public)
-        })
+        .iter()
+        .map(|public| FrBytes::from_be_bytes(*public))
         .collect::<Result<_, _>>()
         .map_err(|e| ProofmanError::InvalidProof(format!("A public of the pilfflonk proof is not in Fr: {e}")))?;
     Ok(Publics(publics))

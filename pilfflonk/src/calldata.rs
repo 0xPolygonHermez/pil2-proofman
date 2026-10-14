@@ -291,14 +291,7 @@ impl Calldata {
             );
         }
         let bytes = proof.to_bytes();
-        let mut words: Vec<Word> = bytes
-            .chunks_exact(FIELD_BYTES)
-            .map(|chunk| {
-                let mut word = [0u8; FIELD_BYTES];
-                word.copy_from_slice(chunk);
-                word
-            })
-            .collect();
+        let mut words: Vec<Word> = bytes.as_chunks::<FIELD_BYTES>().0.to_vec();
         words.extend(aux.iter().map(FrBytes::to_be_bytes));
         if words.len() as u64 != layout.words() {
             return invalid!("the calldata has {} words, and the vkey's {}", words.len(), layout.words());

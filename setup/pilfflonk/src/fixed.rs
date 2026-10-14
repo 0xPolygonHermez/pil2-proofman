@@ -177,10 +177,8 @@ impl FixedColumns {
             return Err(SetupError::ConstFile { path: path.to_path_buf(), reason });
         }
         let mut columns = vec![Vec::with_capacity(n_rows); n_columns];
-        for (index, value) in bytes.chunks_exact(FIELD_BYTES).enumerate() {
-            let mut le = [0u8; FIELD_BYTES];
-            le.copy_from_slice(value);
-            let value = FrBytes::from_le_bytes(le).map_err(|_| SetupError::ConstFile {
+        for (index, le) in bytes.as_chunks::<FIELD_BYTES>().0.iter().enumerate() {
+            let value = FrBytes::from_le_bytes(*le).map_err(|_| SetupError::ConstFile {
                 path: path.to_path_buf(),
                 reason: format!(
                     "the value of row {} of column {} is not below r",

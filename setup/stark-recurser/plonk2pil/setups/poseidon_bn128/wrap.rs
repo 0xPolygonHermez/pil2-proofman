@@ -131,7 +131,7 @@ pub fn wrap(r1cs: &R1csFile<Bn128>, options: &PlonkOptions) -> Result<SetupResul
     // ── PoseidonT bands ──────────────────────────────────────────────────────
     for (b, cgu) in uses.poseidon_t.iter().enumerate() {
         let first_row = BAND_ROWS * b;
-        for (k, lanes) in cgu.signals.chunks_exact(WIDTH).enumerate() {
+        for (k, lanes) in cgu.signals.as_chunks::<WIDTH>().0.iter().enumerate() {
             for (column, &signal) in s_map.iter_mut().zip(lanes) {
                 // Below n_vars, which is a u32: gate_uses checks it.
                 column[first_row + k] = signal as u32;

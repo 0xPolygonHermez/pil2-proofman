@@ -1445,7 +1445,7 @@ fn read_code<const N: usize>(
     }
     r.finish()?;
 
-    let mut words = args.chunks_exact(4).map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]));
+    let mut words = args.as_chunks::<4>().0.iter().map(|w| u32::from_le_bytes(*w));
     let mut used = vec![false; numbers.len()];
     let mut entries = Vec::with_capacity(headers.len());
     for (i, h) in headers.into_iter().enumerate() {

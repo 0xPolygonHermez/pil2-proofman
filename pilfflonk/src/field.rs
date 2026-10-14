@@ -329,9 +329,9 @@ impl G2Affine {
     /// `pilfflonk_g2_check` reads.
     pub fn to_le_bytes(&self) -> [u8; G2_BYTES] {
         let mut bytes = [0u8; G2_BYTES];
-        for (chunk, coordinate) in bytes.chunks_exact_mut(FIELD_BYTES).zip([self.x[0], self.x[1], self.y[0], self.y[1]])
-        {
-            chunk.copy_from_slice(&coordinate.to_le_bytes());
+        let coordinates = [self.x[0], self.x[1], self.y[0], self.y[1]];
+        for (chunk, coordinate) in bytes.as_chunks_mut::<FIELD_BYTES>().0.iter_mut().zip(coordinates) {
+            *chunk = coordinate.to_le_bytes();
         }
         bytes
     }
@@ -340,10 +340,8 @@ impl G2Affine {
     /// (`pilfflonk_srs_g2`). Refuses a coordinate that is not below `q`.
     pub fn from_le_bytes(bytes: &[u8; G2_BYTES]) -> PilfflonkResult<Self> {
         let mut coordinates = [FqBytes::ZERO; 4];
-        for (coordinate, chunk) in coordinates.iter_mut().zip(bytes.chunks_exact(FIELD_BYTES)) {
-            let mut le = [0u8; FIELD_BYTES];
-            le.copy_from_slice(chunk);
-            *coordinate = FqBytes::from_le_bytes(le)?;
+        for (coordinate, le) in coordinates.iter_mut().zip(bytes.as_chunks::<FIELD_BYTES>().0) {
+            *coordinate = FqBytes::from_le_bytes(*le)?;
         }
         let [x_c0, x_c1, y_c0, y_c1] = coordinates;
         Ok(Self { x: [x_c0, x_c1], y: [y_c0, y_c1] })

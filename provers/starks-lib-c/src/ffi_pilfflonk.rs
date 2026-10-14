@@ -273,14 +273,7 @@ impl Drop for PilFflonkSrs {
 
 /// `n` points of [`PILFFLONK_G1_BYTES`] from a buffer the C side wrote.
 fn points(bytes: &[u8]) -> Vec<[u8; PILFFLONK_G1_BYTES]> {
-    bytes
-        .chunks_exact(PILFFLONK_G1_BYTES)
-        .map(|chunk| {
-            let mut point = [0u8; PILFFLONK_G1_BYTES];
-            point.copy_from_slice(chunk);
-            point
-        })
-        .collect()
+    bytes.as_chunks::<PILFFLONK_G1_BYTES>().0.to_vec()
 }
 
 /// A slice's pointer for the C side, NULL for an empty one: the C API reads nothing then, and a

@@ -121,10 +121,8 @@ impl Bn128 {
     /// From its canonical 32 bytes, little-endian. `None` if the value is not below `r`.
     pub fn from_le_bytes(bytes: [u8; 32]) -> Option<Self> {
         let mut limbs = [0u64; 4];
-        for (limb, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(8)) {
-            let mut word = [0u8; 8];
-            word.copy_from_slice(chunk);
-            *limb = u64::from_le_bytes(word);
+        for (limb, word) in limbs.iter_mut().zip(bytes.as_chunks::<8>().0) {
+            *limb = u64::from_le_bytes(*word);
         }
         Self::from_canonical_limbs(limbs)
     }
@@ -132,8 +130,8 @@ impl Bn128 {
     /// The canonical value, 32 bytes little-endian.
     pub fn to_le_bytes(&self) -> [u8; 32] {
         let mut bytes = [0u8; 32];
-        for (chunk, limb) in bytes.chunks_exact_mut(8).zip(self.canonical_limbs()) {
-            chunk.copy_from_slice(&limb.to_le_bytes());
+        for (word, limb) in bytes.as_chunks_mut::<8>().0.iter_mut().zip(self.canonical_limbs()) {
+            *word = limb.to_le_bytes();
         }
         bytes
     }
