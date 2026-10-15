@@ -264,7 +264,11 @@ DEPS_BCT := $(OBJS_BCT:.o=.d)
 # rapidsnark Polynomial tests (gtest). The polynomials are header-only templates over ffiasm's
 # BN128 engine, so this links ffiasm and the Keccak of the tests' digests rather than the library.
 SRCS_POLYNOMIAL_TEST := $(shell find ./src/rapidsnark/polynomial/tests ./src/rapidsnark/keccak_wrapper.cpp ./src/XKCP -name "*.cpp")
-SRCS_POLYNOMIAL_TEST += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp misc.cpp naf.cpp splitparstr.cpp fr.asm fq.asm)
+SRCS_POLYNOMIAL_TEST += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp misc.cpp naf.cpp splitparstr.cpp)
+ifneq ($(UNAME_S),Darwin)
+    # macOS builds ffiasm without its assembly, as the library does
+    SRCS_POLYNOMIAL_TEST += $(addprefix $(SETUP_DPNDS_DIR)/, fr.asm fq.asm)
+endif
 OBJS_POLYNOMIAL_TEST := $(SRCS_POLYNOMIAL_TEST:%=$(BUILD_DIR)/%.o)
 DEPS_POLYNOMIAL_TEST := $(OBJS_POLYNOMIAL_TEST:.o=.d)
 
