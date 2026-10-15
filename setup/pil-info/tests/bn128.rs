@@ -221,7 +221,7 @@ fn im_pols(result: &PilInfoResult) -> usize {
     result.setup.cm_pols_map.iter().filter(|p| p.im_pol).count()
 }
 
-/// Everything a pilfflonk run must give: dimension 1 everywhere, and no trace of the FRI opening
+/// Everything a pilfflonk run must give: dimension 1 everywhere, and no trace of the DEEP opening
 /// (pilfflonk/docs/README.md#setup-pilfflonk).
 fn assert_bn128_shape(result: &PilInfoResult) {
     let setup = &result.setup;
@@ -244,7 +244,7 @@ fn assert_bn128_shape(result: &PilInfoResult) {
         }
     }
 
-    // No FRI: no DEEP polynomial, no queryVerifier, no FRI challenges, no quotient evaluations.
+    // No DEEP opening: no DEEP polynomial, no queryVerifier, no FRI challenges, no quotient evaluations.
     assert_eq!(result.deep_exp_id, None);
     assert_eq!(result.pil_code.deep_exp_id, None);
     assert!(result.pil_code.verifier_info.query_verifier.is_none());
@@ -252,7 +252,7 @@ fn assert_bn128_shape(result: &PilInfoResult) {
     let challenges: Vec<&str> = setup.challenges_map.iter().map(|c| c.name.as_str()).collect();
     assert_eq!(challenges, ["std_vc", "std_xi"]);
     for e in &setup.expressions {
-        assert!(!matches!(e.op.as_str(), "xDivXSubXi" | "eval"), "a FRI node: {}", e.op);
+        assert!(!matches!(e.op.as_str(), "xDivXSubXi" | "eval"), "a DEEP polynomial node: {}", e.op);
     }
     for c in all_code(result) {
         assert_ne!(c.dest.ref_type, "f", "the DEEP polynomial's destination");
@@ -273,7 +273,7 @@ fn assert_bn128_shape(result: &PilInfoResult) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn bn128_has_dimension_one_and_no_fri() {
+fn bn128_has_dimension_one_and_no_deep_opening() {
     let result = run(&wide_constants_pilout(), &PilInfoCfg::bn128());
     assert_bn128_shape(&result);
 }
@@ -293,9 +293,9 @@ fn bn128_keeps_wide_constants_and_negates_with_r_minus_one() {
     assert_eq!(in_arena.iter().filter(|n| *n == R_MINUS_ONE).count(), 2, "{in_arena:?}");
 }
 
-/// The same pilout under the STARK's configuration still gets the FRI opening.
+/// The same pilout under the STARK's configuration still gets the DEEP opening.
 #[test]
-fn goldilocks_keeps_the_fri_opening() {
+fn goldilocks_keeps_the_deep_opening() {
     let pilout = wide_constants_pilout();
     let result = run(&pilout, &PilInfoCfg::goldilocks(1));
 

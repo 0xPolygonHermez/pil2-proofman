@@ -17,9 +17,9 @@
 //!   - `Zi`, the index `boundaryId` of a boundary.
 //!
 //! Air values, airgroup values and proof values do not exist in format version 1, nor do custom
-//! commits (pilfflonk/docs/README.md#scope), and `xDivXSubXi` is FRI's: any other operand is
-//! refused. Other keys, such as a block's `line` or a `Zi`'s `id`, are not looked at, as the
-//! verifier does not.
+//! commits (pilfflonk/docs/README.md#scope), and `xDivXSubXi` is the DEEP opening's: any other
+//! operand is refused. Other keys, such as a block's `line` or a `Zi`'s `id`, are not looked at, as
+//! the verifier does not.
 
 use std::collections::HashSet;
 
@@ -344,7 +344,7 @@ mod tests {
                 "airgroupvalues do not exist",
             ),
             (
-                "FRI's xDivXSubXi",
+                "the DEEP opening's xDivXSubXi",
                 vec![entry("copy", 0, &[operand("xDivXSubXi", json!({"id": 0}))])],
                 "\"xDivXSubXi\" is not one of the qVerifier's",
             ),

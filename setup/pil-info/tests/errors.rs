@@ -76,7 +76,7 @@ fn the_air(pilout: &mut pb::PilOut) -> &mut pb::Air {
     &mut pilout.air_groups[0].airs[0]
 }
 
-/// The STARK's passes (FRI) and pilfflonk's (SHPLONK).
+/// The STARK's passes (DEEP) and pilfflonk's (SHPLONK).
 fn cfgs() -> [PilInfoCfg; 2] {
     [PilInfoCfg::goldilocks(1), PilInfoCfg::bn128()]
 }
@@ -193,7 +193,7 @@ fn a_hint_field_without_a_value_is_refused() {
 /// Was `panic!("Symbol not found for ev type=const id=0")`: the DEEP polynomial needs the stage and
 /// dimension of every column it opens, and SHPLONK builds no DEEP polynomial.
 #[test]
-fn an_opened_column_without_a_symbol_is_refused_by_the_fri_opening() {
+fn an_opened_column_without_a_symbol_is_refused_by_the_deep_opening() {
     let mut pilout = pilout();
     pilout.symbols.retain(|s| s.name != "Synthetic.L1");
     let err = run_err(&pilout, &PilInfoCfg::goldilocks(1));

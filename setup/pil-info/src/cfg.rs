@@ -110,7 +110,7 @@ pub enum Opening {
     /// The STARK's: the DEEP polynomial (`deepExpId`, its challenges `std_vf1`/`std_vf2` and the
     /// `queryVerifier`), which its low-degree test, FRI or STIR, runs on, and the quotient's pieces
     /// in the `evMap`, whose evaluations the verifier receives and checks against `Q(ξ)`.
-    Fri,
+    Deep,
     /// pilfflonk's: the prover opens the committed polynomials with SHPLONK outside these passes,
     /// and the verifier computes `Q(ξ)` rather than receiving it
     /// (pilfflonk/docs/protocol.md#constraint-polynomial), so there is neither a DEEP polynomial nor
@@ -133,7 +133,7 @@ impl PilInfoCfg {
         Self {
             field: FieldCfg::goldilocks(),
             degree_policy: DegreePolicy::FromBlowup { blowup_bits },
-            opening: Opening::Fri,
+            opening: Opening::Deep,
         }
     }
 
@@ -199,7 +199,7 @@ mod tests {
         let stark = PilInfoCfg::goldilocks(2);
         assert_eq!(stark.field, FieldCfg::goldilocks());
         assert_eq!(stark.degree_policy, DegreePolicy::FromBlowup { blowup_bits: 2 });
-        assert_eq!(stark.opening, Opening::Fri);
+        assert_eq!(stark.opening, Opening::Deep);
 
         let fflonk = PilInfoCfg::bn128();
         assert_eq!(fflonk.field, FieldCfg::bn128());

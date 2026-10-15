@@ -21,7 +21,7 @@ pub struct PilInfoResult {
     pub im_pols_info: (Vec<String>, Vec<String>),
     /// Constraint polynomial expression ID.
     pub c_exp_id: usize,
-    /// DEEP polynomial expression ID (distinct from c_exp_id): `None` unless the opening is FRI.
+    /// DEEP polynomial expression ID (distinct from c_exp_id): `None` unless the opening is DEEP.
     pub deep_exp_id: Option<usize>,
     /// Polynomial Q degree.
     pub q_deg: i64,

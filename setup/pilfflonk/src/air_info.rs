@@ -263,7 +263,7 @@ fn name_stage_entries(map: &[SymbolInfo], what: &str) -> Result<Vec<NameStageEnt
 
 fn challenges_map(result: &PilInfoResult) -> Result<Vec<ChallengeMapEntry>, SetupError> {
     if !result.pil_code.challenges_map.is_empty() {
-        return passes_output("the code added challenges, as FRI does".to_string());
+        return passes_output("the code added challenges, as the DEEP opening does".to_string());
     }
     result
         .setup

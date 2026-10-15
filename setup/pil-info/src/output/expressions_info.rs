@@ -93,7 +93,7 @@ pub fn build_verifier_info_json(info: &crate::pil::gen_code::VerifierInfo) -> se
     let mut result = serde_json::Map::new();
     result.insert("qVerifier".to_string(), serde_json::Value::Object(qv));
 
-    // queryVerifier: {tmpUsed, code, expId, stage, line}, for the FRI opening only
+    // queryVerifier: {tmpUsed, code, expId, stage, line}, for the DEEP opening only
     if let Some(query_verifier) = &info.query_verifier {
         let mut qr = serde_json::Map::new();
         qr.insert("tmpUsed".to_string(), json!(query_verifier.tmp_used));

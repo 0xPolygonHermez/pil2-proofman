@@ -3,7 +3,7 @@
 //! Produces code blocks for:
 //! - Expression computations (witness polynomials, intermediate polynomials)
 //! - Constraint polynomial (Q stage)
-//! - DEEP polynomial (the FRI opening only)
+//! - DEEP polynomial (the DEEP opening only)
 //! - Verifier evaluations
 //! - Hint computations
 
@@ -230,7 +230,7 @@ pub struct ProcessedHint {
 #[derive(Debug, Clone)]
 pub struct VerifierInfo {
     pub q_verifier: ExpressionCodeEntry,
-    /// The DEEP polynomial's code, evaluated at each query: `None` unless the opening is FRI.
+    /// The DEEP polynomial's code, evaluated at each query: `None` unless the opening is DEEP.
     pub query_verifier: Option<ExpressionCodeEntry>,
 }
 
@@ -290,9 +290,9 @@ pub struct PilCodeResult {
     /// The evaluation map built during verifier code generation.
     pub ev_map: Vec<EvMapRef>,
     /// The DEEP polynomial expression ID (may differ from c_exp_id): `None` unless the opening is
-    /// FRI.
+    /// DEEP.
     pub deep_exp_id: Option<usize>,
-    /// Updated challenges map (with FRI challenges appended; empty unless the opening is FRI).
+    /// Updated challenges map (with FRI challenges appended; empty unless the opening is DEEP).
     pub challenges_map: Vec<ChallengeMapEntry>,
     /// See `DeepPolyResult::batch_size`.
     pub fri_batch_size: usize,
@@ -309,7 +309,7 @@ pub struct CodeGenParams {
     pub airgroup_id: usize,
     pub n_stages: usize,
     pub c_exp_id: usize,
-    /// Set by `generate_pil_code`: the DEEP polynomial's expression, `None` unless the opening is FRI.
+    /// Set by `generate_pil_code`: the DEEP polynomial's expression, `None` unless the opening is DEEP.
     pub deep_exp_id: Option<usize>,
     pub q_deg: usize,
     pub q_dim: usize,
@@ -318,8 +318,8 @@ pub struct CodeGenParams {
     pub custom_commits_count: usize,
     /// The field the code computes over.
     pub field: FieldCfg,
-    /// How the committed polynomials are opened: FRI adds the DEEP polynomial and the quotient's
-    /// evaluations.
+    /// How the committed polynomials are opened: the DEEP opening adds the DEEP polynomial and the
+    /// quotient's evaluations.
     pub opening: Opening,
 }
 
@@ -330,7 +330,7 @@ pub struct CodeGenParams {
 /// Orchestrate code generation for all stages.
 ///
 /// Mirrors JS `generatePilCode(res, symbols, constraints, expressions, hints, debug)`. The opening
-/// hook: only `Opening::Fri` generates the DEEP polynomial, sets `deep_exp_id` and builds the
+/// hook: only `Opening::Deep` generates the DEEP polynomial, sets `deep_exp_id` and builds the
 /// `queryVerifier`.
 pub fn generate_pil_code(
     params: &mut CodeGenParams,
@@ -348,7 +348,7 @@ pub fn generate_pil_code(
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
 
-    // In non-debug mode: generate verifier code, then, for FRI, the DEEP polynomial
+    // In non-debug mode: generate verifier code, then, for the DEEP opening, the DEEP polynomial
     let q_verifier = if !debug {
         let qv = generate_constraint_polynomial_verifier_code(
             params,
@@ -359,7 +359,7 @@ pub fn generate_pil_code(
         )?;
 
         params.deep_exp_id = match params.opening {
-            Opening::Fri => {
+            Opening::Deep => {
                 // Generate the DEEP polynomial (mirrors JS: generateFRIPolynomial(res, symbols, expressions))
                 let ev_map_for_fri: Vec<EvMapItem> = ev_map_items
                     .iter()
@@ -388,9 +388,10 @@ pub fn generate_pil_code(
 
         qv
     } else {
-        // Debug mode builds no DEEP polynomial; for FRI, cExpId stands in for it (as in the JS setup).
+        // Debug mode builds no DEEP polynomial; for the DEEP opening, cExpId stands in for it (as in the
+        // JS setup).
         params.deep_exp_id = match params.opening {
-            Opening::Fri => Some(params.c_exp_id),
+            Opening::Deep => Some(params.c_exp_id),
             Opening::Shplonk => None,
         };
         ExpressionCodeEntry { tmp_used: 0, code: Vec::new(), exp_id: 0, stage: 0, dest: None, line: String::new() }
@@ -707,10 +708,10 @@ fn generate_constraint_polynomial_verifier_code(
         ctx.ev_map.push(rf);
     }
 
-    // Add Q polynomial columns to ev_map. FRI opens the quotient's pieces and the verifier checks
-    // their evaluations against Q(xi); with SHPLONK the verifier computes Q(xi) itself
-    // (pilfflonk/docs/protocol.md#constraint-polynomial).
-    if params.opening == Opening::Fri {
+    // Add Q polynomial columns to ev_map. The DEEP opening opens the quotient's pieces and the
+    // verifier checks their evaluations against Q(xi); with SHPLONK the verifier computes Q(xi)
+    // itself (pilfflonk/docs/protocol.md#constraint-polynomial).
+    if params.opening == Opening::Deep {
         let q_index = params
             .cm_pols_map
             .iter()
@@ -955,7 +956,7 @@ mod tests {
             cm_pols_map: vec![SymbolInfo { stage: Some(2), stage_id: Some(0), ..Default::default() }],
             custom_commits_count: 0,
             field: FieldCfg::goldilocks(),
-            opening: Opening::Fri,
+            opening: Opening::Deep,
         }
     }
 
@@ -983,7 +984,7 @@ mod tests {
             cm_pols_map: Vec::new(),
             custom_commits_count: 0,
             field: FieldCfg::goldilocks(),
-            opening: Opening::Fri,
+            opening: Opening::Deep,
         };
 
         let wi = build_witness_index(&symbols, 0, 0);
@@ -1047,7 +1048,7 @@ mod tests {
             cm_pols_map: Vec::new(),
             custom_commits_count: 0,
             field: FieldCfg::goldilocks(),
-            opening: Opening::Fri,
+            opening: Opening::Deep,
         };
 
         let wi2 = build_witness_index(&symbols, 0, 0);

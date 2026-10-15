@@ -520,7 +520,7 @@ impl TryFrom<&crate::pil::gen_code::VerifierInfo> for VerifierInfo {
         let query_verifier = vi
             .query_verifier
             .as_ref()
-            .ok_or_else(|| anyhow!("the STARK verifier needs a queryVerifier, which only the FRI opening has"))?;
+            .ok_or_else(|| anyhow!("the STARK verifier needs a queryVerifier, which only the DEEP opening has"))?;
         Ok(VerifierInfo {
             q_verifier: expression_entry_to_exp_code(&vi.q_verifier).context("the qVerifier")?,
             query_verifier: expression_entry_to_exp_code(query_verifier).context("the queryVerifier")?,
