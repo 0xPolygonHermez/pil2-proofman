@@ -117,6 +117,7 @@ TARGET_STARKS_LIB_GPU := libstarksgpu.a
 TARGET_SETUP_PLONK := plonkSetup
 TARGET_PROVE_PLONK := plonkProve
 TARGET_STIR_TEST := stirTests
+TARGET_POLYNOMIAL_TEST := polynomialTests
 
 BUILD_DIR := ./build
 BUILD_DIR_GPU := ./build-gpu
@@ -227,15 +228,15 @@ endif
 ifeq ($(UNAME_S),Darwin)
     # macOS - exclude assembly files (.asm)
     SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
-SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
+SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
 else
     # Linux - include all files including assembly
     SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
-SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
+SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
 endif
 SRCS_STARKS_LIB := $(filter-out %_gpu.cpp %_gpu.cc,$(SRCS_STARKS_LIB))
 SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
-SRCS_STARKS_LIB_GPU := $(filter-out ./src/starkpil/stir/tests/%,$(SRCS_STARKS_LIB_GPU))  # gtest sources are not library sources
+SRCS_STARKS_LIB_GPU := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/%,$(SRCS_STARKS_LIB_GPU))  # gtest sources are not library sources
 # Sppark utility for GPU (provides gpu_props function)
 SPPARK_GPU_OBJ := $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
@@ -260,11 +261,18 @@ OBJS_STIR_TEST := $(SRCS_STIR_TEST:%=$(BUILD_DIR)/%.o)
 DEPS_STIR_TEST := $(OBJS_STIR_TEST:.o=.d)
 DEPS_BCT := $(OBJS_BCT:.o=.d)
 
+# rapidsnark Polynomial tests (gtest). The polynomials are header-only templates over ffiasm's
+# BN128 engine, so this links ffiasm and the Keccak of the tests' digests rather than the library.
+SRCS_POLYNOMIAL_TEST := $(shell find ./src/rapidsnark/polynomial/tests ./src/rapidsnark/keccak_wrapper.cpp ./src/XKCP -name "*.cpp")
+SRCS_POLYNOMIAL_TEST += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp misc.cpp naf.cpp splitparstr.cpp fr.asm fq.asm)
+OBJS_POLYNOMIAL_TEST := $(SRCS_POLYNOMIAL_TEST:%=$(BUILD_DIR)/%.o)
+DEPS_POLYNOMIAL_TEST := $(OBJS_POLYNOMIAL_TEST:.o=.d)
+
 SRCS_BINFILE := $(shell find ./src/binfile/main.cpp ./src/goldilocks/src ./src/starkpil/expressions/expressions_bin.cpp ./src/starkpil/expressions/expressions_info.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/starkpil/stark_info.cpp ./src/rapidsnark/logger.* ./src/rapidsnark/binfile_utils.* ./src/rapidsnark/binfile_writer.* ./src/utils/* -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 OBJS_BINFILE := $(SRCS_BINFILE:%=$(BUILD_DIR)/%.o)
 DEPS_BINFILE := $(OBJS_BINFILE:.o=.d)
 
-SRCS_SETUP := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" -name "*.cpp")
+SRCS_SETUP := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" ! -path "./src/rapidsnark/polynomial/tests/*" -name "*.cpp")
 SRCS_SETUP += $(shell find src/XKCP -name "*.cpp")
 SRCS_SETUP += $(shell find src/fflonk_setup -name fflonk_setup.cpp)
 SRCS_SETUP += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp fnec.cpp fec.cpp misc.cpp naf.cpp splitparstr.cpp)
@@ -274,7 +282,7 @@ OBJS_SETUP := $(filter-out $(BUILD_DIR)/src/main.cpp.o, $(OBJS_SETUP)) # Exclude
 OBJS_SETUP := $(filter-out $(BUILD_DIR)/src/main_test.cpp.o, $(OBJS_SETUP)) # Exclude main.cpp from test build
 DEPS_SETUP := $(OBJS_SETUP:.o=.d)
 
-SRCS_SETUP_PLONK := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" -name *.cpp)
+SRCS_SETUP_PLONK := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" ! -path "./src/rapidsnark/polynomial/tests/*" -name *.cpp)
 SRCS_SETUP_PLONK += $(shell find src/XKCP -name *.cpp)
 SRCS_SETUP_PLONK += $(shell find src/plonk_setup -name plonk_setup.cpp)
 SRCS_SETUP_PLONK += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp fnec.cpp fec.cpp misc.cpp naf.cpp splitparstr.cpp)
@@ -284,7 +292,7 @@ OBJS_SETUP_PLONK := $(filter-out $(BUILD_DIR)/src/main.cpp.o, $(OBJS_SETUP_PLONK
 OBJS_SETUP_PLONK := $(filter-out $(BUILD_DIR)/src/main_test.cpp.o, $(OBJS_SETUP_PLONK)) # Exclude main.cpp from test build
 DEPS_SETUP_PLONK := $(OBJS_SETUP_PLONK:.o=.d)
 
-SRCS_PROVE_PLONK := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" -name *.cpp)
+SRCS_PROVE_PLONK := $(shell find $(SETUP_DIRS) ! -path "./src/sm/*" ! -path "./src/main_sm/*" ! -path "./src/rapidsnark/polynomial/tests/*" -name *.cpp)
 SRCS_PROVE_PLONK += $(shell find src/XKCP -name *.cpp)
 SRCS_PROVE_PLONK += $(shell find src/plonk_setup -name main_prover.cpp)
 SRCS_PROVE_PLONK += $(shell find src/utils -name *.cpp)
@@ -313,6 +321,13 @@ plonk_setup: $(BUILD_DIR)/$(TARGET_SETUP_PLONK)
 plonk_prove: $(BUILD_DIR)/$(TARGET_PROVE_PLONK)
 
 stir_test: $(BUILD_DIR)/$(TARGET_STIR_TEST)
+
+ifeq ($(UNAME_S),Darwin)
+polynomial_test:
+	$(error polynomial_test needs ffiasm's assembly field arithmetic, which macOS builds without)
+else
+polynomial_test: $(BUILD_DIR)/$(TARGET_POLYNOMIAL_TEST)
+endif
 
 TARGET_STIR_TEST_GPU := stirTestsGpu
 stir_test_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_STIR_TEST_GPU)
@@ -355,6 +370,9 @@ $(BUILD_DIR)/$(TARGET_BCT): $(OBJS_BCT)
 
 $(BUILD_DIR)/$(TARGET_STIR_TEST): $(OBJS_STIR_TEST)
 	$(CXX) $(OBJS_STIR_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
+
+$(BUILD_DIR)/$(TARGET_POLYNOMIAL_TEST): $(OBJS_POLYNOMIAL_TEST)
+	$(CXX) $(OBJS_POLYNOMIAL_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
 
 $(BUILD_DIR)/$(TARGET_SETUP): $(OBJS_SETUP)
 	$(CXX) $(OBJS_SETUP) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS)
@@ -409,7 +427,7 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean clean_cpu clean_gpu stir_test stir_test_gpu stir_bench_gpu
+.PHONY: clean clean_cpu clean_gpu stir_test stir_test_gpu stir_bench_gpu polynomial_test
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
@@ -429,5 +447,6 @@ clean_gpu:
 -include $(DEPS_STARKS_LIB_GPU)
 -include $(DEPS_STIR_GPU)
 -include $(DEPS_STIR_TEST)
+-include $(DEPS_POLYNOMIAL_TEST)
 
 MKDIR_P ?= mkdir -p
