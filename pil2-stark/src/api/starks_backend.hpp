@@ -98,6 +98,7 @@ struct StarksBackend {
     // Final SNARK
     void *(*init_final_snark_prover)(char* zkeyFile, void* d_buffers_recursivef);
     void (*free_final_snark_prover)(void *snark_prover);
+    uint64_t (*get_snark_protocol_id)(void *snark_prover);
     void (*gen_final_snark_proof)(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef);
     void (*pre_allocate_final_snark_prover)(void *snark_prover, void* unified_buffer_gpu, void* d_buffers_recursivef);
 };

@@ -1038,7 +1038,7 @@ void *load_zkey(char* zkeyFile) {
     return zkey.get();
 }
 
-uint64_t get_snark_protocol_id(void *snark_prover) {
+uint64_t get_snark_protocol_id_cpu(void *snark_prover) {
     FinalSnark* finalSnarkProver = (FinalSnark*)snark_prover;
     return finalSnarkProver->protocolId;
 }

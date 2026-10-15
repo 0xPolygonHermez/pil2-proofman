@@ -24,6 +24,7 @@ uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t 
 void *gen_recursive_proof_final_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, uint64_t proverBufferSize, void* d_buffers);
 void *init_final_snark_prover_cpu(char* zkeyFile, void* d_buffers_recursivef);
 void free_final_snark_prover_cpu(void *snark_prover);
+uint64_t get_snark_protocol_id_cpu(void *snark_prover);
 void gen_final_snark_proof_cpu(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef);
 
 // ============================================================================
@@ -99,6 +100,7 @@ void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffer
 void load_fixed_pols_recursivef_gpu(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
 void *init_final_snark_prover_gpu(char* zkeyFile, void* d_buffers_recursivef);
 void free_final_snark_prover_gpu(void *snark_prover);
+uint64_t get_snark_protocol_id_gpu(void *snark_prover);
 void gen_final_snark_proof_gpu(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef);
 void pre_allocate_final_snark_prover_gpu(void *snark_prover, void* unified_buffer_gpu, void* d_buffers_recursivef);
 #endif
@@ -179,6 +181,7 @@ StarksBackend cpu_backend = []() {
     backend.load_fixed_pols_recursivef = nullptr;
     backend.init_final_snark_prover = init_final_snark_prover_cpu;
     backend.free_final_snark_prover = free_final_snark_prover_cpu;
+    backend.get_snark_protocol_id = get_snark_protocol_id_cpu;
     backend.gen_final_snark_proof = gen_final_snark_proof_cpu;
     backend.pre_allocate_final_snark_prover = nullptr;
     return backend;
@@ -256,6 +259,7 @@ StarksBackend gpu_backend = []() {
     backend.load_fixed_pols_recursivef = load_fixed_pols_recursivef_gpu;
     backend.init_final_snark_prover = init_final_snark_prover_gpu;
     backend.free_final_snark_prover = free_final_snark_prover_gpu;
+    backend.get_snark_protocol_id = get_snark_protocol_id_gpu;
     backend.gen_final_snark_proof = gen_final_snark_proof_gpu;
     backend.pre_allocate_final_snark_prover = pre_allocate_final_snark_prover_gpu;
     return backend;
@@ -685,6 +689,11 @@ void *init_final_snark_prover(char* zkeyFile, void* d_buffers_recursivef) {
 void free_final_snark_prover(void *snark_prover) {
     auto backend = active_backend.load(std::memory_order_acquire);
     backend->free_final_snark_prover(snark_prover);
+}
+
+uint64_t get_snark_protocol_id(void *snark_prover) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    return backend->get_snark_protocol_id(snark_prover);
 }
 
 void gen_final_snark_proof(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef) {
