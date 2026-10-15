@@ -98,7 +98,7 @@ const BN254_R_BE: [u8; 32] = [
 /// The first 32-byte big-endian word at or above `r`, if any. Words of equal length compare as
 /// numbers.
 fn first_word_not_below_r(bytes: &[u8]) -> Option<usize> {
-    bytes.chunks_exact(32).position(|word| word >= &BN254_R_BE[..])
+    bytes.as_chunks::<32>().0.iter().position(|word| word >= &BN254_R_BE)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
