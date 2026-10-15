@@ -1294,10 +1294,13 @@ pub fn generate_snark_proof(
     prealloc_handle: std::thread::JoinHandle<()>,
     d_buffers_recursivef: *mut c_void,
 ) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
-    let witness = generate_witness_final_snark(proof, setup_path)?;
-
-    // Wait for GPU pre-allocation
-    prealloc_handle.join().unwrap();
+    // Wait for GPU pre-allocation on every way out of the witness, an error or a panic included: it
+    // uses the prover and the recursivef's device buffers, which the caller frees or reuses once
+    // this returns.
+    let prealloc_handle = JoinOnDrop::new(prealloc_handle);
+    let witness = generate_witness_final_snark(proof, setup_path);
+    prealloc_handle.join_now().unwrap();
+    let witness = witness?;
 
     timer_start_info!(CALCULATE_FINAL_PROOF);
 
@@ -1821,5 +1824,31 @@ mod arity_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod snark_proof_tests {
+    use super::generate_snark_proof;
+    use std::path::Path;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// A final witness that cannot be computed (here, no witness library) is reported once the
+    /// GPU pre-allocation thread is done, not while it still writes the prover.
+    #[test]
+    fn the_preallocation_is_joined_when_the_final_witness_fails() {
+        let preallocated = Arc::new(AtomicBool::new(false));
+        let prealloc_handle = {
+            let preallocated = preallocated.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                preallocated.store(true, Ordering::SeqCst);
+            })
+        };
+        let missing = Path::new("/nonexistent/provingKeySnark/final/final");
+        let null = std::ptr::null_mut();
+        assert!(generate_snark_proof(null, missing, null, prealloc_handle, null).is_err());
+        assert!(preallocated.load(Ordering::SeqCst), "returned before the pre-allocation ended");
     }
 }
