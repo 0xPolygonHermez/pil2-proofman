@@ -714,7 +714,7 @@ extern "C" {
         slotBytes: u64,
     );
 
-    pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64);
+    pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64, nUnits: u32);
     pub fn stage_witness(
         d_buffers_: *mut ::std::os::raw::c_void,
         instanceId: u64,
@@ -723,11 +723,18 @@ extern "C" {
         host_sync: bool,
     ) -> i64;
     pub fn release_staged_witness(d_buffers_: *mut ::std::os::raw::c_void, instanceId: u64);
-    pub fn get_prefetch_witness_slots() -> u32;
     pub fn get_mops_floor_bytes() -> u64;
     pub fn get_post_alloc_headroom_bytes() -> u64;
-    pub fn configure_const_slot_cache(d_buffers_: *mut ::std::os::raw::c_void, baseOffset: u64, slotElems: u64, nSlots: u32);
-    pub fn load_host_const_pols(airgroupId: u64, airId: u64, proofType: *mut ::std::os::raw::c_char, constFilename: *mut ::std::os::raw::c_char, constSize: u64, d_buffers_: *mut ::std::os::raw::c_void, onlyFirstGPU: bool);
+    pub fn configure_const_slot_cache(
+        d_buffers_: *mut ::std::os::raw::c_void,
+        baseOffset: u64,
+        bigElems: u64,
+        normalElems: u64,
+        nLru: u32,
+    ) -> u64;
+    pub fn pin_const_slot(d_buffers_: *mut ::std::os::raw::c_void, key: i64, elems: u64) -> u64;
+    pub fn set_basic_fixed_on_host(d_buffers_: *mut ::std::os::raw::c_void, onHost: bool);
+    pub fn load_host_const_pols(airgroupId: u64, airId: u64, proofType: *mut ::std::os::raw::c_char, key: i64, constFilename: *mut ::std::os::raw::c_char, constSize: u64, d_buffers_: *mut ::std::os::raw::c_void);
     pub fn set_pipeline_mode(d_buffers_: *mut ::std::os::raw::c_void, enable: bool);
     pub fn configure_phase_b(d_buffers_: *mut ::std::os::raw::c_void);
     pub fn set_phase_b(d_buffers_: *mut ::std::os::raw::c_void, state: u32) -> i64;
@@ -755,7 +762,7 @@ extern "C" {
     pub fn get_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
     pub fn get_layout_offset(d_buffers: *mut ::std::os::raw::c_void, which: u32) -> u64;
-    pub fn reload_aggregation_const_pols(d_buffers: *mut ::std::os::raw::c_void, to_agg_byte: u64) -> u64;
+    pub fn reload_aggregation_const_pols(d_buffers: *mut ::std::os::raw::c_void, to_agg_byte: u64);
     pub fn set_debug_clobber_top(d_buffers: *mut ::std::os::raw::c_void, top_byte: u64);
     pub fn debug_clobber_unified(d_buffers: *mut ::std::os::raw::c_void);
     pub fn late_region_invalidate(d_buffers: *mut ::std::os::raw::c_void);

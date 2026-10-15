@@ -10,10 +10,12 @@ use std::os::raw::c_void;
 use colored::*;
 
 use proofman_common::{
-    format_bytes, FixedGroup, MpiCtx, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup, SetupCtx, SetupsVadcop,
+    format_bytes, CacheSetKind, FixedGroup, MpiCtx, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup,
+    SetupCtx, SetupsVadcop,
 };
 use proofman_starks_lib_c::{
-    configure_const_slot_cache_c, load_device_const_pols_c, load_host_const_pols_c, reserve_custom_commit_slot_c,
+    configure_const_slot_cache_c, load_device_const_pols_c, load_host_const_pols_c, pin_const_slot_c,
+    reserve_custom_commit_slot_c,
 };
 use proofman_starks_lib_c::{get_layout_offset_c, get_unified_buffer_gpu_c, invalidate_stream_contexts_c};
 use proofman_starks_lib_c::verify_root_bn128_from_tree_c;
@@ -1039,12 +1041,14 @@ fn load_const_pols_slot<F: PrimeField64>(
     // order SetupRepository::new sizes them in -- const pols, then custom commits.
     if setup.custom_commits_reserved_words > 0 {
         let custom_offset = slot_offset + setup.const_pols_size_packed as u64;
+        // The group's slot size, not this air's: members upload their own files into the one slot.
+        let reserved = group.custom_words.unwrap_or(setup.custom_commits_reserved_words);
         reserve_custom_commit_slot_c(
             airgroup_id as u64,
             air_id as u64,
             proof_type,
             custom_offset,
-            setup.custom_commits_reserved_words as u64,
+            reserved as u64,
             d_buffers,
             only_first_gpu,
         );
@@ -1057,11 +1061,9 @@ fn load_const_pols_slot<F: PrimeField64>(
     }
 }
 
-/// Defaults to a group of its own for setups the repository did not fingerprint: the
-/// standalone vadcop_final setups, and any air without a verkey.
-fn fixed_group_or_own<F: PrimeField64>(sctx: Option<&SetupCtx<F>>, airgroup_id: usize, air_id: usize) -> FixedGroup {
-    sctx.and_then(|s| s.get_fixed_group(airgroup_id, air_id))
-        .unwrap_or(FixedGroup { owner: (airgroup_id, air_id), custom_words: None })
+/// Defaults to a group of its own for an air the repository did not fingerprint (no verkey).
+fn fixed_group_or_own<F: PrimeField64>(sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize) -> FixedGroup {
+    sctx.get_fixed_group(airgroup_id, air_id).unwrap_or(FixedGroup { owner: (airgroup_id, air_id), custom_words: None })
 }
 
 pub fn load_device_const_pols<F: PrimeField64>(
@@ -1070,7 +1072,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
     setups: &SetupsVadcop<F>,
     aggregation: bool,
     only_first_gpu: bool,
-) -> ProofmanResult<u64> {
+) -> ProofmanResult<()> {
     let d_buffers = pctx.get_device_buffers_ptr();
 
     // Phase 2: Load all constant polynomials. One slot map per const buffer -- basic lives in
@@ -1081,7 +1083,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id)?;
             if setup.gpu {
-                let group = fixed_group_or_own(Some(sctx), airgroup_id, air_id);
+                let group = fixed_group_or_own(sctx, airgroup_id, air_id);
                 load_const_pols_slot(
                     d_buffers,
                     setup,
@@ -1096,136 +1098,65 @@ pub fn load_device_const_pols<F: PrimeField64>(
         }
     }
 
-    let mut offset_aggregation = 0;
+    if aggregation && pctx.gpu && pctx.const_cache_lru_slots == 0 {
+        return Err(ProofmanError::InvalidSetup(
+            "GPU aggregation needs the const cache, but no recursive1 setup has const pols to size it".into(),
+        ));
+    }
     if aggregation {
-        let mut compressor_slots: HashMap<(usize, usize), u64> = HashMap::new();
-        let mut recursive1_slots: HashMap<(usize, usize), u64> = HashMap::new();
-        let mut recursive2_slots: HashMap<(usize, usize), u64> = HashMap::new();
-
-        // Recursive1 first: a slot cache (SetupCtx::const_slot_cache_slots) of host-pinned sets. At
-        // offset 0, a borrow just past aggBase costs only its tags.
-        let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
-        if sctx_recursive1.const_slot_cache_slots > 0 {
-            for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-                for (air_id, _) in air_group.iter().enumerate() {
-                    let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
-                    if setup.gpu {
-                        load_host_const_pols_c(
-                            airgroup_id as u64,
-                            air_id as u64,
-                            setup.setup_type.into(),
-                            &setup.const_pols_path,
-                            setup.const_pols_size_packed as u64,
-                            d_buffers,
-                            only_first_gpu,
-                        );
-                    }
-                }
-            }
-            let slot_elems = sctx_recursive1.max_const_pols_size_packed as u64;
-            let slots = sctx_recursive1.const_slot_cache_slots as u32;
-            configure_const_slot_cache_c(d_buffers, offset_aggregation, slot_elems, slots);
-            offset_aggregation += slots as u64 * slot_elems;
-        } else {
-            for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-                for (air_id, _) in air_group.iter().enumerate() {
-                    let setup = sctx_recursive1.get_setup(airgroup_id, air_id)?;
-                    if setup.gpu {
-                        let group = fixed_group_or_own(Some(sctx_recursive1), airgroup_id, air_id);
-                        load_const_pols_slot(
-                            d_buffers,
-                            setup,
-                            group,
-                            airgroup_id,
-                            air_id,
-                            only_first_gpu,
-                            &mut recursive1_slots,
-                            &mut offset_aggregation,
-                        );
-                    }
-                }
-            }
-        }
-
-        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-            for (air_id, _) in air_group.iter().enumerate() {
-                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                    let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
-                    let setup = sctx_compressor.get_setup(airgroup_id, air_id)?;
-                    if setup.gpu {
-                        let group = fixed_group_or_own(Some(sctx_compressor), airgroup_id, air_id);
-                        load_const_pols_slot(
-                            d_buffers,
-                            setup,
-                            group,
-                            airgroup_id,
-                            air_id,
-                            only_first_gpu,
-                            &mut compressor_slots,
-                            &mut offset_aggregation,
-                        );
-                    }
-                }
-            }
-        }
-
-        let n_airgroups = pctx.global_info.air_groups.len();
-        for airgroup_id in 0..n_airgroups {
-            let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
-            let setup = sctx_recursive2.get_setup(airgroup_id, 0)?;
-            if setup.gpu {
-                let group = fixed_group_or_own(Some(sctx_recursive2), airgroup_id, 0);
-                load_const_pols_slot(
-                    d_buffers,
-                    setup,
-                    group,
-                    airgroup_id,
-                    0,
-                    only_first_gpu,
-                    &mut recursive2_slots,
-                    &mut offset_aggregation,
-                );
-            }
-        }
-
-        // The two finals are single setups, not repository entries: each is its own group.
-        let mut final_slots: HashMap<(usize, usize), u64> = HashMap::new();
-
-        let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-        if setup_vadcop_final.gpu {
-            let group = fixed_group_or_own(None::<&SetupCtx<F>>, 0, 0);
-            load_const_pols_slot(
+        let sets = setups.cache_sets(&pctx.global_info)?;
+        for set in sets.iter().filter(|s| s.setup.gpu) {
+            load_host_const_pols_c(
+                set.airgroup_id as u64,
+                set.air_id as u64,
+                set.setup.setup_type.into(),
+                const_set_key(&set.setup.const_pols_path),
+                &set.setup.const_pols_path,
+                set.setup.const_pols_size_packed as u64,
                 d_buffers,
-                setup_vadcop_final,
-                group,
-                0,
-                0,
-                only_first_gpu,
-                &mut final_slots,
-                &mut offset_aggregation,
             );
         }
 
-        // `else` is not needed: an absent stage claims no slot, and the aggregation offset it
-        // would have advanced simply stays where vadcop_final left it.
-        if let Some(setup_vadcop_final_compressed) = setups.setup_vadcop_final_compressed.as_ref() {
-            if setup_vadcop_final_compressed.gpu {
-                // Distinct key from vadcop_final above: both report (0, 0) but are separate slots.
-                let group = FixedGroup { owner: (0, 1), custom_words: None };
-                load_const_pols_slot(
+        // LRU first (slot 0 lowest), then the final pins, then recursive2 on top: a borrow reaches them last.
+        let mut end = configure_const_slot_cache_c(
+            d_buffers,
+            0,
+            setups.cache_big_words,
+            setups.cache_normal_words,
+            pctx.const_cache_lru_slots as u32,
+        );
+        let pinned_kinds = if pctx.const_cache_pin_finals {
+            &[CacheSetKind::Final, CacheSetKind::Recursive2][..]
+        } else {
+            &[CacheSetKind::Recursive2]
+        };
+        for kind in pinned_kinds {
+            for set in sets.iter().filter(|s| s.kind == *kind && s.setup.gpu) {
+                end = pin_const_slot_c(
                     d_buffers,
-                    setup_vadcop_final_compressed,
-                    group,
-                    0,
-                    0,
-                    only_first_gpu,
-                    &mut final_slots,
-                    &mut offset_aggregation,
+                    const_set_key(&set.setup.const_pols_path),
+                    set.setup.const_pols_size_packed as u64,
                 );
             }
         }
+        // The cache and its pins must fit the area the planner reserved.
+        if pctx.gpu && end > pctx.aggregation_const_words {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "the const cache ends at {} but the aggregation area holds {}",
+                format_bytes(end as f64 * 8.0),
+                format_bytes(pctx.aggregation_const_words as f64 * 8.0),
+            )));
+        }
     }
-    Ok(offset_aggregation)
+    Ok(())
+}
+
+/// A const set's identity in the GPU const cache: its packed file is unique per set, recursers included.
+pub fn const_set_key(const_pols_path: &str) -> i64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    const_pols_path.hash(&mut h);
+    (h.finish() >> 1) as i64 // non-negative: -1 marks a free slot
 }
 
 pub fn add_publics_circom<F: PrimeField64>(

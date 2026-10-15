@@ -72,7 +72,7 @@ struct StarksBackend {
     uint32_t (*get_first_gpu_id)(void *d_buffers_);
     void *(*get_first_gpu_buffer)(void *d_buffers_);
     uint64_t (*get_layout_offset)(void *d_buffers_, uint32_t which);
-    uint64_t (*reload_aggregation_const_pols)(void *d_buffers_, uint64_t toAggByte);
+    void (*reload_aggregation_const_pols)(void *d_buffers_, uint64_t toAggByte);
     void (*set_debug_clobber_top)(void *d_buffers_, uint64_t topByte);
     void (*debug_clobber_unified)(void *d_buffers_);
     void (*late_region_invalidate)(void *d_buffers_);
@@ -81,14 +81,15 @@ struct StarksBackend {
     uint64_t (*get_stream_commit_gpus)(void *d_buffers_);
     uint64_t (*stream_commit_slot_layout)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes, uint64_t packed, uint64_t indexed, uint64_t *out);
     void (*configure_stream_commit_slots)(void *d_buffers_);
-    void (*configure_prefetch_zone)(void *d_buffers_, uint64_t witnessBytes);
+    void (*configure_prefetch_zone)(void *d_buffers_, uint64_t witnessBytes, uint32_t nUnits);
     int64_t (*stage_witness)(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size, bool hostSync);
     void (*release_staged_witness)(void *d_buffers_, uint64_t instanceId);
-    uint32_t (*get_prefetch_witness_slots)();
     uint64_t (*get_mops_floor_bytes)();
     uint64_t (*get_post_alloc_headroom_bytes)();
-    void (*configure_const_slot_cache)(void *d_buffers_, uint64_t baseOffset, uint64_t slotElems, uint32_t nSlots);
-    void (*load_host_const_pols)(uint64_t airgroupId, uint64_t airId, char *proofType, char *constFilename, uint64_t constSize, void *d_buffers_, bool onlyFirstGPU);
+    uint64_t (*configure_const_slot_cache)(void *d_buffers_, uint64_t baseOffset, uint64_t bigElems, uint64_t normalElems, uint32_t nLru);
+    uint64_t (*pin_const_slot)(void *d_buffers_, int64_t key, uint64_t elems);
+    void (*set_basic_fixed_on_host)(void *d_buffers_, bool onHost);
+    void (*load_host_const_pols)(uint64_t airgroupId, uint64_t airId, char *proofType, int64_t key, char *constFilename, uint64_t constSize, void *d_buffers_);
     void (*set_pipeline_mode)(void *d_buffers_, bool enable);
     void (*configure_phase_b)(void *d_buffers_);
     int64_t (*set_phase_b)(void *d_buffers_, uint32_t state);

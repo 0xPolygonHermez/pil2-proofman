@@ -1527,8 +1527,8 @@ pub fn alloc_device_large_buffers_c(
     }
 }
 
-pub fn configure_prefetch_zone_c(d_buffers: *mut ::std::os::raw::c_void, witness_bytes: u64) {
-    unsafe { configure_prefetch_zone(d_buffers, witness_bytes) }
+pub fn configure_prefetch_zone_c(d_buffers: *mut ::std::os::raw::c_void, witness_bytes: u64, n_units: u32) {
+    unsafe { configure_prefetch_zone(d_buffers, witness_bytes, n_units) }
 }
 
 /// Stage a witness into the prefetch zone ahead of its commit. Returns the zone's GPU, or -1 when
@@ -1565,10 +1565,6 @@ pub fn release_staged_witness_c(d_buffers: *mut c_void, instance_id: u64) {
 #[cfg(feature = "cpu-only")]
 pub fn release_staged_witness_c(_d_buffers: *mut c_void, _instance_id: u64) {}
 
-pub fn get_prefetch_witness_slots_c() -> u32 {
-    unsafe { get_prefetch_witness_slots() }
-}
-
 pub fn get_mops_floor_bytes_c() -> u64 {
     unsafe { get_mops_floor_bytes() }
 }
@@ -1577,23 +1573,37 @@ pub fn get_post_alloc_headroom_bytes_c() -> u64 {
     unsafe { get_post_alloc_headroom_bytes() }
 }
 
+/// Carves the aggregation const cache's LRU slots; returns its end offset (elements).
 pub fn configure_const_slot_cache_c(
     d_buffers: *mut ::std::os::raw::c_void,
     base_offset: u64,
-    slot_elems: u64,
-    n_slots: u32,
-) {
-    unsafe { configure_const_slot_cache(d_buffers, base_offset, slot_elems, n_slots) }
+    big_elems: u64,
+    normal_elems: u64,
+    n_lru: u32,
+) -> u64 {
+    unsafe { configure_const_slot_cache(d_buffers, base_offset, big_elems, normal_elems, n_lru) }
 }
 
+/// Appends a pinned slot for the set `key`; returns the cache's new end offset (elements).
+pub fn pin_const_slot_c(d_buffers: *mut ::std::os::raw::c_void, key: i64, elems: u64) -> u64 {
+    unsafe { pin_const_slot(d_buffers, key, elems) }
+}
+
+/// Basic fixed pols stay in pinned host memory and are read in place (they did not fit the GPU).
+pub fn set_basic_fixed_on_host_c(d_buffers: *mut ::std::os::raw::c_void, on_host: bool) {
+    unsafe { set_basic_fixed_on_host(d_buffers, on_host) }
+}
+
+/// Keeps a set's packed const pols in pinned host memory for the const cache under `key`, the set's
+/// identity (see `const_set_key`), and marks the air cached.
 pub fn load_host_const_pols_c(
     airgroup_id: u64,
     air_id: u64,
     proof_type: &str,
+    key: i64,
     const_filename: &str,
     const_size: u64,
     d_buffers: *mut ::std::os::raw::c_void,
-    only_first_gpu: bool,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let const_filename_name = CString::new(const_filename).unwrap();
@@ -1602,10 +1612,10 @@ pub fn load_host_const_pols_c(
             airgroup_id,
             air_id,
             proof_type_name.as_ptr() as *mut c_char,
+            key,
             const_filename_name.as_ptr() as *mut c_char,
             const_size,
             d_buffers,
-            only_first_gpu,
         )
     }
 }
@@ -1685,9 +1695,9 @@ pub fn get_layout_offset_c(d_buffers: *mut ::std::os::raw::c_void, which: u32) -
     unsafe { get_layout_offset(d_buffers, which) }
 }
 
-/// Re-upload GPU 0's aggregation fixed pols below `to_agg_byte` (from the aggregation base).
-/// Bit 0 of the result: the recurser slot was hit.
-pub fn reload_aggregation_const_pols_c(d_buffers: *mut ::std::os::raw::c_void, to_agg_byte: u64) -> u64 {
+/// Drop GPU 0's const-cache tags below `to_agg_byte` (from the aggregation base): those slots reload
+/// from their host copies on demand.
+pub fn reload_aggregation_const_pols_c(d_buffers: *mut ::std::os::raw::c_void, to_agg_byte: u64) {
     unsafe { reload_aggregation_const_pols(d_buffers, to_agg_byte) }
 }
 

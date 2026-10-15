@@ -12,6 +12,7 @@
 #include "goldilocks_trace_layout.cuh"  // Layout enum, getBufferOffset (fromRowMajorToColMajor)
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
+#include "const_slot_table.hpp"
 #include <mutex>
 #include <condition_variable>
 #include <map>
@@ -76,6 +77,10 @@ struct AirInstanceInfo {
     // The packed const pols are not resident: they live in host pinned memory and take a slot of
     // DeviceCommitBuffers::constCache at launch (const_pols_offset is UINT64_MAX).
     bool constCached = false;
+    int64_t constKey = -1;  // slot-cache key, set by load_host_const_pols
+    // Host mode (DeviceCommitBuffers::basicFixedOnHost): the pinned packed blobs the readers use.
+    Goldilocks::Element *hostConstPols = nullptr;
+    Goldilocks::Element *hostCustomPols = nullptr;
 
     ExpressionsGPU *expressions_gpu;
     int64_t *opening_points;
@@ -429,8 +434,8 @@ struct StreamData{
 
     // Which fixed columns this stream's aux trace holds, not which air it last served: airs
     // with identical fixed share a const-pols slot, so the offset is the key. constAggBuffer
-    // separates the two const buffers (unrelated offsets), constRecurserId the recursers
-    // (one shared slot). custom_fixed is per-air and stays keyed on the air.
+    // separates the two const buffers (unrelated offsets); constRecurserId holds a const-cached
+    // set's "cache:<key>" (its offset is UINT64_MAX). custom_fixed is per-air and stays keyed on the air.
     uint64_t constPolsOffset = UINT64_MAX; // UINT64_MAX = nothing cached
     // Where the unpacked pols land in the aux trace. Part of the key because two airs can in
     // principle share a slot yet lay out ("const", false) differently.
@@ -685,41 +690,34 @@ struct DeviceCommitBuffers
 {
     gl64_t **d_constPols;
     gl64_t **d_constPolsAggregation;
-    // ---- Recursive1 const slot cache. The 44 recursive1 setups each have a 100 MiB packed const
-    // set, read once per proof (unpacked into the aux trace, tree rebuilt on device); a block uses
-    // ~20 of them. Instead of one resident slot per setup, the aggregation const buffer holds
-    // `nSlots` slots (RECURSIVE1_CONST_SLOTS on the Rust side, which sizes the region), each tagged
-    // with the air whose set it holds. A launch hits when a slot holds its air; else it takes the
-    // least recently used slot with no pending reader, uploads the set from the host pinned copy
-    // ahead of the unpack, and tags it. A proof reads its slot only to unpack it into its own aux
-    // trace: `pending[s]` counts readers whose unpack is not enqueued yet, and `consumed[s]` is
-    // recorded after the last enqueued unpack, so an upload into `s` waits on it on the GPU.
+    // ---- Aggregation const slot cache. Every aggregation const set (recursive1, compressor,
+    // recursive2, the finals) lives in host pinned memory and takes a slot at launch: slot 0 fits
+    // the largest set, the other LRU slots the recursive size, and pinned slots (recursive2, the
+    // finals when planned) sit above them (ConstSlotTable). Tags are typed keys (constSlotKey). A
+    // launch hits when a slot holds its key; else a pinned key reloads its own slot and any other
+    // key takes the least recently used LRU slot that fits with no pending reader, uploading the
+    // set from the host copy ahead of the unpack. A proof reads its slot only to unpack it into its
+    // own aux trace: `pending[s]` counts readers whose unpack is not enqueued yet, and `consumed[s]`
+    // is recorded after the last enqueued unpack, so an upload into `s` waits on it on the GPU.
     // `ready[s]` is recorded after the upload: a hit on another stream waits on it. One cache per
     // GPU, tags shared under constCacheMutex. hits/misses are per job, logged at reset.
     struct ConstSlotCache {
-        static constexpr uint32_t MAX_SLOTS = 64;  // RECURSIVE1_CONST_SLOTS_MAX on the Rust side
-        uint32_t nSlots = 0;
-        uint64_t base = 0;        // element offset in d_constPolsAggregation
-        uint64_t slotElems = 0;
-        int64_t tag[MAX_SLOTS];   // (airgroup << 32 | air) of the set held, -1 = free
-        uint64_t lastUse[MAX_SLOTS];
-        cudaEvent_t ready[MAX_SLOTS] = {};
-        cudaEvent_t consumed[MAX_SLOTS] = {};
-        uint32_t pending[MAX_SLOTS] = {};
-        uint64_t useClock = 0;
+        ConstSlotTable t;
+        cudaEvent_t ready[ConstSlotTable::MAX_SLOTS] = {};
+        cudaEvent_t consumed[ConstSlotTable::MAX_SLOTS] = {};
+        bool eventsCreated = false;
         uint64_t hits = 0, misses = 0;
-        bool armed() const { return nSlots > 0; }
-        void clearTags() { for (uint32_t s = 0; s < MAX_SLOTS; s++) { tag[s] = -1; lastUse[s] = 0; pending[s] = 0; } }
+        bool armed() const { return t.nLru > 0; }
     };
     std::vector<ConstSlotCache> constCache;   // per GPU (local index)
+    // Basic fixed pols left in pinned host memory (they did not fit the GPU): kernels read them in
+    // place over PCIe (UVA). Keyed by their offset in the basic const area, shared by groups.
+    bool basicFixedOnHost = false;
+    std::map<uint64_t, Goldilocks::Element *> hostBasicFixed;
     std::mutex constCacheMutex;
     std::condition_variable constCacheCv;   // a slot's last pending reader enqueued its unpack
     struct HostConstPols { Goldilocks::Element *ptr = nullptr; uint64_t elems = 0; };
     std::map<int64_t, HostConstPols> hostConstPols;   // air key -> pinned host copy
-    // Pinned copies of the aggregation fixed pols, for the post-borrow re-upload (offsets in elements).
-    struct ResidentConst { uint64_t offset, elems; Goldilocks::Element *host; };
-    std::vector<ResidentConst> residentAgg;
-    uint64_t recurserConstOffset = UINT64_MAX;   // elements
     uint64_t debugClobberTop = 0;                // test knob (set_debug_clobber_top)
     gl64_t ***d_aux_trace;
     gl64_t ***d_aux_traceAggregation;
@@ -792,21 +790,22 @@ struct DeviceCommitBuffers
     // uploaded on the zone's copy stream ahead of its commit or proof, which consumes it with one
     // D2D and records `drained` so the next upload never overwrites live data. A run of units, each
     // half the largest trace: a witness takes ceil(bytes/unit) consecutive units, at most
-    // PREFETCH_UNIT_SPAN. get_prefetch_witness_slots reports UNITS/SPAN. prefetchArmed means
-    // configure ran: every zone's stream and events exist. instanceId == -1 means free.
-    static constexpr uint32_t PREFETCH_WITNESS_SLOTS = 8;
+    // PREFETCH_UNIT_SPAN. The planner picks nUnits (<= PREFETCH_UNITS_MAX, which sizes the arrays).
+    // prefetchArmed means configure ran: every zone's stream and events exist. instanceId == -1 means free.
+    static constexpr uint32_t PREFETCH_UNITS_MAX = 8;
     static constexpr uint32_t PREFETCH_UNIT_SPAN = 2;
     struct PrefetchZone {
         gl64_t *base = nullptr;
         cudaStream_t stream = nullptr;
-        cudaEvent_t ready[PREFETCH_WITNESS_SLOTS] = {};
-        cudaEvent_t drained[PREFETCH_WITNESS_SLOTS] = {};
+        uint32_t nUnits = 0;
+        cudaEvent_t ready[PREFETCH_UNITS_MAX] = {};
+        cudaEvent_t drained[PREFETCH_UNITS_MAX] = {};
         std::mutex mutex;
         std::mutex copyMutex;       // one staging copies at a time
         // Every unit of a span carries the instance id; only the head carries length and bytes.
-        int64_t instanceId[PREFETCH_WITNESS_SLOTS] = {-1, -1, -1, -1, -1, -1, -1, -1};
-        uint64_t traceBytes[PREFETCH_WITNESS_SLOTS] = {};
-        uint32_t spanUnits[PREFETCH_WITNESS_SLOTS] = {};
+        int64_t instanceId[PREFETCH_UNITS_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1};
+        uint64_t traceBytes[PREFETCH_UNITS_MAX] = {};
+        uint32_t spanUnits[PREFETCH_UNITS_MAX] = {};
     };
     PrefetchZone *prefetchZones = nullptr;  // [n_gpus], local index
     bool prefetchArmed = false;

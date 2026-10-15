@@ -18,10 +18,9 @@ use pil2_std_lib::{
     collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps, global_sum_assumed_tables,
 };
 use proofman_starks_lib_c::{
-    configure_prefetch_zone_c, get_prefetch_witness_slots_c, stage_witness_c, release_staged_witness_c,
-    gpu_witness_count_c, harvest_pipeline_c, dump_pipeline_state_c, set_gpu_mode_c, set_pipeline_mode_c,
-    load_device_const_pols_c, debug_clobber_unified_c, get_layout_offset_c, reload_aggregation_const_pols_c,
-    late_region_invalidate_c, invalidate_stream_contexts_c,
+    configure_prefetch_zone_c, stage_witness_c, release_staged_witness_c, gpu_witness_count_c, harvest_pipeline_c,
+    dump_pipeline_state_c, set_gpu_mode_c, set_pipeline_mode_c, load_host_const_pols_c, debug_clobber_unified_c,
+    get_layout_offset_c, reload_aggregation_const_pols_c, late_region_invalidate_c, invalidate_stream_contexts_c,
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
@@ -169,7 +168,7 @@ use proofman_witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
-    load_device_const_pols,
+    load_device_const_pols, const_set_key,
 };
 use crate::{
     verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof, verify_proof, StreamReservation,
@@ -706,7 +705,6 @@ pub struct ProofMan<F: PrimeField64> {
     mpi_ctx: Arc<MpiCtx>,
     setups: Arc<SetupsVadcop<F>>,
     recurser_setups: RwLock<HashMap<String, Arc<Setup<F>>>>,
-    recurser_const_offset: u64,
     recurser_device_registered: Mutex<Option<String>>,
     /// Folds write the instance-shared scratch buffers (`aux_trace`, const
     /// slices) through FFI, so they must be single-flight per instance.
@@ -913,15 +911,19 @@ impl<F: PrimeField64> ProofMan<F> {
             return Ok(());
         }
         timer_start_info!(RESTORE_AFTER_SNARK);
-        let restored = load_device_const_pols(&self.pctx, &self.sctx, &self.setups, self.options.aggregation, true)
+        // Aggregation sets only lose GPU 0's cache tags: their host copies, layout and pins stand.
+        let restored = load_device_const_pols(&self.pctx, &self.sctx, &self.setups, false, true)
             .and_then(|_| self.pctx.reupload_custom_commits(&self.sctx));
+        if self.options.aggregation {
+            reload_aggregation_const_pols_c(self.pctx.get_device_buffers_ptr(), self.pctx.aggregation_const_words * 8);
+        }
         match &restored {
             Ok(()) => {
                 let p = self.pctx.get_device_buffers_ptr();
                 late_region_invalidate_c(p);
                 // The streams' cached consts sat in the carve too; reset also drops them in reset_device_streams.
+                // A recurser's device setup is outside the carve and its consts reload from the cache.
                 invalidate_stream_contexts_c(p);
-                *self.recurser_device_registered.lock().unwrap() = None;
             }
             // Keep the flag so the next caller retries.
             Err(_) => self.pctx.reload_fixed_pols_gpu.store(true, Ordering::SeqCst),
@@ -2462,7 +2464,7 @@ where
             match device_slot.as_deref() {
                 Some(existing) if existing != recurser_id => {
                     tracing::info!(
-                        "recurser '{existing}' currently occupies the GPU const slot; \
+                        "recurser '{existing}' is the loaded device setup; \
                          '{recurser_id}' will be swapped in on demand at prove time"
                     );
                 }
@@ -2488,36 +2490,28 @@ where
     }
 
     fn load_recurser_setup_on_device(&self, setup: &Setup<F>) -> ProofmanResult<()> {
-        let packed_len_bytes = std::fs::metadata(&setup.const_pols_path)
+        let packed_len = std::fs::metadata(&setup.const_pols_path)
             .map_err(|e| {
                 ProofmanError::InvalidSetup(format!(
                     "recurser packed const pols missing at {}: {e}",
                     setup.const_pols_path
                 ))
             })?
-            .len();
-        let packed_len = packed_len_bytes / 8;
-        let slot = self.setups.recurser_const_slot_size as u64;
+            .len()
+            / 8;
+        // Slot 0 is the only LRU slot sized for it; failing here beats exiting at prove time.
+        let slot = if self.pctx.const_cache_lru_slots > 0 { self.setups.cache_big_words } else { 0 };
         if packed_len > slot {
             return Err(ProofmanError::InvalidSetup(format!(
-                "recurser packed const pols ({packed_len} elements) exceed the reserved GPU slot ({slot})"
+                "recurser packed const pols ({packed_len} elements) exceed the const cache's largest slot ({slot})"
             )));
         }
         let proof_type: &str = setup.setup_type.into();
         let d_buffers_ptr = self.pctx.get_device_buffers_ptr();
         setup.load_device(0, 0, d_buffers_ptr, std::ptr::null_mut());
-        load_device_const_pols_c(
-            0,
-            0,
-            self.recurser_const_offset,
-            d_buffers_ptr,
-            &setup.const_pols_path,
-            packed_len,
-            proof_type,
-            false,
-            // Recursers swap through a single reserved slot; each one really is uploaded.
-            false,
-        );
+        // Its own key in the const cache: a swap back finds its slot still warm.
+        let key = const_set_key(&setup.const_pols_path);
+        load_host_const_pols_c(0, 0, proof_type, key, &setup.const_pols_path, packed_len, d_buffers_ptr);
         Ok(())
     }
 
@@ -2575,19 +2569,17 @@ where
         // No reset runs on this path, so a preceding snark's carve is undone here.
         self.restore_after_snark()?;
 
-        // The GPU const slot holds one recurser at a time; swap this one in if another is resident
-        // (same-recurser folds pay nothing). Safe under the fold lock: nothing reads the slot while
-        // we overwrite it.
+        // One recurser's device setup is loaded at a time (its consts live in the const cache under
+        // their own key); swap this one in if another is loaded. Safe under the fold lock.
         if self.options.gpu {
             let mut device_slot = self.recurser_device_registered.lock().unwrap();
             if device_slot.as_deref() != Some(recurser_id) {
                 tracing::info!(
-                    "Swapping recurser '{recurser_id}' into the GPU const slot (was {:?})",
+                    "Swapping recurser '{recurser_id}' in as the device setup (was {:?})",
                     device_slot.as_deref()
                 );
-                // Advance the marker only after a confirmed load. A failed load may leave the const
-                // buffer partially overwritten, so mark the slot None — else the next fold proves
-                // against those partial bytes (a silent wrong proof).
+                // Advance the marker only after a confirmed load; a failed one leaves None so the next
+                // fold reloads instead of proving against a half-loaded setup.
                 match self.load_recurser_setup_on_device(&setup) {
                     Ok(()) => *device_slot = Some(recurser_id.to_string()),
                     Err(e) => {
@@ -2710,15 +2702,8 @@ where
             RankInfo { world_rank: mpi_ctx.rank, local_rank: mpi_ctx.node_rank, n_processes: mpi_ctx.n_processes };
         initialize_logger(options.verbose_mode, Some(&rank_info));
 
-        let (
-            pctx,
-            sctx,
-            setups_vadcop,
-            n_streams_per_gpu,
-            n_aggregation_workers_per_gpu,
-            n_gpus,
-            recurser_const_offset,
-        ) = Self::initialize_proofman(mpi_ctx.clone(), proving_key_path, &options)?;
+        let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus) =
+            Self::initialize_proofman(mpi_ctx.clone(), proving_key_path, &options)?;
 
         timer_start_info!(INIT_PROOFMAN);
 
@@ -2859,7 +2844,6 @@ where
             wcm,
             setups: setups_vadcop,
             recurser_setups: RwLock::new(HashMap::new()),
-            recurser_const_offset,
             recurser_device_registered: Mutex::new(None),
             recurser_fold_lock: Mutex::new(()),
             n_streams,
@@ -5366,9 +5350,7 @@ where
             timer_start_info!(RELOAD_AGGREGATION_FIXED);
             let p = self.pctx.get_device_buffers_ptr();
             let to_agg = top.saturating_sub(get_layout_offset_c(p, 4));
-            if reload_aggregation_const_pols_c(p, to_agg) & 1 != 0 {
-                *self.recurser_device_registered.lock().unwrap() = None;
-            }
+            reload_aggregation_const_pols_c(p, to_agg);
             timer_stop_and_log_info!(RELOAD_AGGREGATION_FIXED);
         }
 
@@ -6217,7 +6199,7 @@ where
         mpi_ctx: Arc<MpiCtx>,
         proving_key_path: PathBuf,
         options: &ProofmanOptions,
-    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64, u64)> {
+    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
         if !set_gpu_mode_c(options.gpu) {
             return Err(ProofmanError::InvalidConfiguration(
                 "GPU mode requested but library was built without CUDA support".into(),
@@ -6269,35 +6251,42 @@ where
         // Prefetch-zone sizing, needed BEFORE the unified-buffer allocation: the zone is
         // carved from a region INSIDE the unified buffer (below the consts), so it shares
         // one planned budget. Witness bytes = the largest basic trace (packed width when
-        // the air is packed). Default ON; PROOFMAN_PREFETCH=0 disables.
-        let prefetch_witness_bytes: u64 =
-            if options.gpu && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true) {
-                let mut witness_bytes: u64 = 0;
-                for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
-                    for (air_id, _) in group.iter().enumerate() {
-                        // A GPU-witness air never uploads a trace, so it must not
-                        // widen the slots the uploads share.
-                        if options.gpu_witness_airs.contains(airgroup_id, air_id) {
-                            continue;
-                        }
-                        let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
-                        let n = 1u64 << setup.stark_info.stark_struct.n_bits;
-                        let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
-                        let packed_words = options
-                            .packed_info
-                            .get(&(airgroup_id, air_id))
-                            .filter(|pi| pi.is_packed && options.packed)
-                            .map(|pi| pi.num_packed_words);
-                        witness_bytes = witness_bytes.max(packed_words.unwrap_or(cm1) * n * 8);
+        // the air is packed). Default ON; PROOFMAN_PREFETCH=0 disables. Verify-constraints never stages.
+        let prefetch_witness_bytes: u64 = if options.gpu
+            && !options.verify_constraints
+            && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true)
+        {
+            let mut witness_bytes: u64 = 0;
+            for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in group.iter().enumerate() {
+                    // A GPU-witness air never uploads a trace, so it must not
+                    // widen the slots the uploads share.
+                    if options.gpu_witness_airs.contains(airgroup_id, air_id) {
+                        continue;
                     }
+                    let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
+                    let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+                    let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
+                    let packed_words = options
+                        .packed_info
+                        .get(&(airgroup_id, air_id))
+                        .filter(|pi| pi.is_packed && options.packed)
+                        .map(|pi| pi.num_packed_words);
+                    witness_bytes = witness_bytes.max(packed_words.unwrap_or(cm1) * n * 8);
                 }
-                witness_bytes
-            } else {
-                0
-            };
-        // Slot count comes from the C++ side (DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS),
-        // the single source of truth configure_prefetch_zone sizes against.
-        let prefetch_region_area: u64 = (prefetch_witness_bytes * get_prefetch_witness_slots_c() as u64).div_ceil(8);
+            }
+            witness_bytes
+        } else {
+            0
+        };
+        // One prefetch unit; the planner in set_device_buffers decides how many.
+        let unit_words = proofman_common::prefetch_unit_words(prefetch_witness_bytes);
+        if prefetch_witness_bytes > 0 && unit_words == 0 {
+            tracing::warn!(
+                "Largest witness ({prefetch_witness_bytes} B) does not split into {} units: no prefetch zone",
+                proofman_common::PREFETCH_UNIT_SPAN
+            );
+        }
 
         let (slot_bytes, unfit) = if options.gpu {
             let (layouts, _, unfit) = slot_commit_airs(&pctx, &sctx, &slot_packed_info(options));
@@ -6321,7 +6310,7 @@ where
             options.max_number_streams,
             options.max_number_recursive_streams,
             options.final_snark,
-            prefetch_region_area,
+            unit_words,
             late_region_bytes,
             // Verify-constraints and debug-info commit no slots, and so keep the late region outside aux.
             if options.verify_constraints { 0 } else { STREAM_COMMIT_SLOTS },
@@ -6330,10 +6319,9 @@ where
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
 
-        // Arm the prefetch zone with the size computed above: the zone IS the unified
-        // buffer's region (arming refuses on a mismatch).
-        if prefetch_witness_bytes > 0 {
-            configure_prefetch_zone_c(pctx.get_device_buffers_ptr(), prefetch_witness_bytes);
+        // Arm the zone the planner sized: the zone IS the unified buffer's region.
+        if pctx.prefetch_units > 0 {
+            configure_prefetch_zone_c(pctx.get_device_buffers_ptr(), prefetch_witness_bytes, pctx.prefetch_units);
         }
 
         // GPU witness airs, once the zone's fate is known. They have no host trace, so every
@@ -6424,16 +6412,14 @@ where
         mpi_ctx.barrier();
 
         timer_start_info!(LOADING_FIXED_POLS);
-        // End of the init-time aggregation const-pols uploads = start of the
-        // reserved recurser slot (see register_recurser_setup).
-        let aggregation_const_end = load_device_const_pols(&pctx, &sctx, &setups_vadcop, options.aggregation, false)?;
+        load_device_const_pols(&pctx, &sctx, &setups_vadcop, options.aggregation, false)?;
         timer_stop_and_log_info!(LOADING_FIXED_POLS);
 
         let pctx = Arc::new(pctx);
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
 
-        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus, aggregation_const_end))
+        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus))
     }
 
     #[allow(dead_code)]

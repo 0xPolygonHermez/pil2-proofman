@@ -76,7 +76,7 @@ uint32_t is_first_gpu_buffer_borrowed_gpu(void *d_buffers_);
 uint32_t get_first_gpu_id_gpu(void *d_buffers_);
 void *get_first_gpu_buffer_gpu(void *d_buffers_);
 uint64_t get_layout_offset_gpu(void *d_buffers_, uint32_t which);
-uint64_t reload_aggregation_const_pols_gpu(void *d_buffers_, uint64_t toAggByte);
+void reload_aggregation_const_pols_gpu(void *d_buffers_, uint64_t toAggByte);
 void set_debug_clobber_top_gpu(void *d_buffers_, uint64_t topByte);
 void debug_clobber_unified_gpu(void *d_buffers_);
 void late_region_invalidate_gpu(void *d_buffers_);
@@ -85,14 +85,15 @@ uint64_t get_stream_commit_slots_gpu(void *d_buffers_);
 uint64_t get_stream_commit_gpus_gpu(void *d_buffers_);
 uint64_t stream_commit_slot_layout_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes, uint64_t packed, uint64_t indexed, uint64_t *out);
 void configure_stream_commit_slots_gpu(void *d_buffers_);
-void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes);
+void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint32_t nUnits);
 int64_t stage_witness_gpu(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size, bool hostSync);
 void release_staged_witness_gpu(void *d_buffers_, uint64_t instanceId);
-uint32_t get_prefetch_witness_slots_gpu();
 uint64_t get_mops_floor_bytes_gpu();
 uint64_t get_post_alloc_headroom_bytes_gpu();
-void configure_const_slot_cache_gpu(void *d_buffers_, uint64_t baseOffset, uint64_t slotElems, uint32_t nSlots);
-void load_host_const_pols_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, char *constFilename, uint64_t constSize, void *d_buffers_, bool onlyFirstGPU);
+uint64_t configure_const_slot_cache_gpu(void *d_buffers_, uint64_t baseOffset, uint64_t bigElems, uint64_t normalElems, uint32_t nLru);
+uint64_t pin_const_slot_gpu(void *d_buffers_, int64_t key, uint64_t elems);
+void set_basic_fixed_on_host_gpu(void *d_buffers_, bool onHost);
+void load_host_const_pols_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, int64_t key, char *constFilename, uint64_t constSize, void *d_buffers_);
 void set_pipeline_mode_gpu(void *d_buffers_, bool enable);
 void configure_phase_b_gpu(void *d_buffers_);
 int64_t set_phase_b_gpu(void *d_buffers_, uint32_t state);
@@ -161,7 +162,7 @@ StarksBackend cpu_backend = []() {
     backend.get_first_gpu_id = nullptr;                   // default: 0
     backend.get_first_gpu_buffer = nullptr;               // default: nullptr
     backend.get_layout_offset = nullptr;
-    backend.reload_aggregation_const_pols = nullptr;     // default: 0 (nothing resident)
+    backend.reload_aggregation_const_pols = nullptr;     // default: no-op
     backend.set_debug_clobber_top = nullptr;
     backend.debug_clobber_unified = nullptr;
     backend.late_region_invalidate = nullptr;
@@ -173,11 +174,12 @@ StarksBackend cpu_backend = []() {
     backend.configure_prefetch_zone = nullptr;            // default: no-op
     backend.stage_witness = nullptr;                      // default: no look-ahead
     backend.release_staged_witness = nullptr;
-    backend.get_prefetch_witness_slots = nullptr;         // default: 0 (no zone)
     backend.get_mops_floor_bytes = nullptr;               // default: 0 (no floor)
     backend.get_post_alloc_headroom_bytes = nullptr;      // default: 0
     backend.configure_const_slot_cache = nullptr;         // default: no-op
+    backend.pin_const_slot = nullptr;
     backend.load_host_const_pols = nullptr;               // default: no-op
+    backend.set_basic_fixed_on_host = nullptr;
     backend.set_pipeline_mode = nullptr;                  // default: no-op
     backend.configure_phase_b = nullptr;
     backend.set_phase_b = nullptr;
@@ -255,11 +257,12 @@ StarksBackend gpu_backend = []() {
     backend.configure_prefetch_zone = configure_prefetch_zone_gpu;
     backend.stage_witness = stage_witness_gpu;
     backend.release_staged_witness = release_staged_witness_gpu;
-    backend.get_prefetch_witness_slots = get_prefetch_witness_slots_gpu;
     backend.get_mops_floor_bytes = get_mops_floor_bytes_gpu;
     backend.get_post_alloc_headroom_bytes = get_post_alloc_headroom_bytes_gpu;
     backend.configure_const_slot_cache = configure_const_slot_cache_gpu;
+    backend.pin_const_slot = pin_const_slot_gpu;
     backend.load_host_const_pols = load_host_const_pols_gpu;
+    backend.set_basic_fixed_on_host = set_basic_fixed_on_host_gpu;
     backend.set_pipeline_mode = set_pipeline_mode_gpu;
     backend.configure_phase_b = configure_phase_b_gpu;
     backend.set_phase_b = set_phase_b_gpu;
@@ -550,9 +553,9 @@ uint64_t get_layout_offset(void *d_buffers_, uint32_t which) {
     return backend->get_layout_offset ? backend->get_layout_offset(d_buffers_, which) : 0;
 }
 
-uint64_t reload_aggregation_const_pols(void *d_buffers_, uint64_t toAggByte) {
+void reload_aggregation_const_pols(void *d_buffers_, uint64_t toAggByte) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    return backend->reload_aggregation_const_pols ? backend->reload_aggregation_const_pols(d_buffers_, toAggByte) : 0;
+    if (backend->reload_aggregation_const_pols) backend->reload_aggregation_const_pols(d_buffers_, toAggByte);
 }
 
 void set_debug_clobber_top(void *d_buffers_, uint64_t topByte) {
@@ -598,10 +601,10 @@ void configure_stream_commit_slots(void *d_buffers_) {
     if (backend->configure_stream_commit_slots) backend->configure_stream_commit_slots(d_buffers_);
 }
 
-void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes) {
+void configure_prefetch_zone(void *d_buffers_, uint64_t witnessBytes, uint32_t nUnits) {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->configure_prefetch_zone)
-        backend->configure_prefetch_zone(d_buffers_, witnessBytes);
+        backend->configure_prefetch_zone(d_buffers_, witnessBytes, nUnits);
 }
 
 // -1 when there is no backend, zone or free slot: the caller keeps its buffer and the commit
@@ -618,11 +621,6 @@ void release_staged_witness(void *d_buffers_, uint64_t instanceId) {
     if (backend->release_staged_witness) backend->release_staged_witness(d_buffers_, instanceId);
 }
 
-uint32_t get_prefetch_witness_slots() {
-    auto backend = active_backend.load(std::memory_order_acquire);
-    return backend->get_prefetch_witness_slots ? backend->get_prefetch_witness_slots() : 0;
-}
-
 uint64_t get_mops_floor_bytes() {
     auto backend = active_backend.load(std::memory_order_acquire);
     return backend->get_mops_floor_bytes ? backend->get_mops_floor_bytes() : 0;
@@ -633,14 +631,27 @@ uint64_t get_post_alloc_headroom_bytes() {
     return backend->get_post_alloc_headroom_bytes ? backend->get_post_alloc_headroom_bytes() : 0;
 }
 
-void configure_const_slot_cache(void *d_buffers_, uint64_t baseOffset, uint64_t slotElems, uint32_t nSlots) {
+uint64_t configure_const_slot_cache(void *d_buffers_, uint64_t baseOffset, uint64_t bigElems, uint64_t normalElems,
+                                    uint32_t nLru) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->configure_const_slot_cache) backend->configure_const_slot_cache(d_buffers_, baseOffset, slotElems, nSlots);
+    return backend->configure_const_slot_cache
+               ? backend->configure_const_slot_cache(d_buffers_, baseOffset, bigElems, normalElems, nLru)
+               : baseOffset;
 }
 
-void load_host_const_pols(uint64_t airgroupId, uint64_t airId, char *proofType, char *constFilename, uint64_t constSize, void *d_buffers_, bool onlyFirstGPU) {
+uint64_t pin_const_slot(void *d_buffers_, int64_t key, uint64_t elems) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->load_host_const_pols) backend->load_host_const_pols(airgroupId, airId, proofType, constFilename, constSize, d_buffers_, onlyFirstGPU);
+    return backend->pin_const_slot ? backend->pin_const_slot(d_buffers_, key, elems) : 0;
+}
+
+void set_basic_fixed_on_host(void *d_buffers_, bool onHost) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->set_basic_fixed_on_host) backend->set_basic_fixed_on_host(d_buffers_, onHost);
+}
+
+void load_host_const_pols(uint64_t airgroupId, uint64_t airId, char *proofType, int64_t key, char *constFilename, uint64_t constSize, void *d_buffers_) {
+    auto backend = active_backend.load(std::memory_order_acquire);
+    if (backend->load_host_const_pols) backend->load_host_const_pols(airgroupId, airId, proofType, key, constFilename, constSize, d_buffers_);
 }
 
 void set_pipeline_mode(void *d_buffers_, bool enable) {

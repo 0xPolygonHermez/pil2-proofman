@@ -717,7 +717,7 @@ void reset_device_streams_gpu(void *d_buffers_) {
         for (uint32_t g = 0; g < d_buffers->n_gpus; g++) {
             PrefetchZone &z = d_buffers->prefetchZones[g];
             std::lock_guard<std::mutex> lk(z.mutex);
-            for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
+            for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_UNITS_MAX; s++) {
                 z.instanceId[s] = -1;
                 z.spanUnits[s] = 0;
                 z.traceBytes[s] = 0;
@@ -816,11 +816,12 @@ void free_device_buffers_gpu(void *d_buffers_)
         }
         if (i < (int)d_buffers->constCache.size()) {
             DeviceCommitBuffers::ConstSlotCache &cache = d_buffers->constCache[i];
-            for (uint32_t s = 0; s < cache.nSlots; s++) {
+            for (uint32_t s = 0; cache.eventsCreated && s < ConstSlotTable::MAX_SLOTS; s++) {
                 if (cache.ready[s] != nullptr) CHECKCUDAERR(cudaEventDestroy(cache.ready[s]));
                 if (cache.consumed[s] != nullptr) CHECKCUDAERR(cudaEventDestroy(cache.consumed[s]));
             }
-            cache.nSlots = 0;
+            cache.eventsCreated = false;
+            cache.t = ConstSlotTable();
         }
 
         // Free CPU pointer arrays
@@ -837,7 +838,7 @@ void free_device_buffers_gpu(void *d_buffers_)
         for (uint32_t g = 0; g < d_buffers->n_gpus; g++) {
             CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[g]));
             PrefetchZone &z = d_buffers->prefetchZones[g];
-            for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
+            for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_UNITS_MAX; s++) {
                 if (z.ready[s] != nullptr) CHECKCUDAERR(cudaEventDestroy(z.ready[s]));
                 if (z.drained[s] != nullptr) CHECKCUDAERR(cudaEventDestroy(z.drained[s]));
             }
@@ -880,8 +881,14 @@ void free_device_buffers_gpu(void *d_buffers_)
     free(d_buffers->d_constPols);
     free(d_buffers->d_constPolsAggregation);
     free(d_buffers->gpuMemoryBuffer);
-    for (const DeviceCommitBuffers::ResidentConst &r : d_buffers->residentAgg) cudaFreeHost(r.host);
-    d_buffers->residentAgg.clear();
+    {
+        // The const cache's pinned host copies: every aggregation set since the unified cache.
+        std::lock_guard<std::mutex> lk(d_buffers->constCacheMutex);
+        for (auto &kv : d_buffers->hostConstPols) cudaFreeHost(kv.second.ptr);
+        d_buffers->hostConstPols.clear();
+    }
+    for (auto &kv : d_buffers->hostBasicFixed) cudaFreeHost(kv.second);
+    d_buffers->hostBasicFixed.clear();
 
     for (auto &outer_pair : d_buffers->air_instances) {
         for (auto &inner_pair : outer_pair.second) {
@@ -1030,68 +1037,54 @@ void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t in
 
     uint64_t const_pols_offset = initial_offset;
 
-    // Sharing a slot with an air already uploaded: point this air's info at it, transfer nothing.
-    if (alreadyLoaded) {
-        for(int i=0; i<d_buffers->n_gpus; ++i){
-            if (onlyFirstGPU && i > 0) break;
-            AirInstanceInfo* air_instance_info = d_buffers->air_instances[key][proofType][i];
-            air_instance_info->const_pols_offset = const_pols_offset;
-        }
-        return;
-    }
-
-    // Recursers swap through one slot: only its offset is kept, Rust re-registers them.
-    const bool recurser = strcmp(proofType, "recurser_aggregator") == 0;
-    const bool resident = strcmp(proofType, "basic") != 0 && !recurser;
-    if (recurser) d_buffers->recurserConstOffset = const_pols_offset;
-
+    // Host mode keeps a basic set in one pinned blob per offset (shared by groups and restores) that
+    // the readers use in place; otherwise it is copied to the device, once per slot.
+    const bool basic = strcmp(proofType, "basic") == 0;
+    const bool onHost = basic && d_buffers->basicFixedOnHost;
     Goldilocks::Element *constPols = nullptr;
-    if (resident) {
-        for (const DeviceCommitBuffers::ResidentConst &r : d_buffers->residentAgg)
-            if (r.offset == const_pols_offset && r.elems == constSize) { constPols = r.host; break; }
-        if (constPols == nullptr) {
-            CHECKCUDAERR(cudaMallocHost((void **)&constPols, sizeConstPols));
-            loadFileParallel(constPols, constFilename, sizeConstPols);
-            d_buffers->residentAgg.push_back({const_pols_offset, constSize, constPols});
+    if (onHost) {
+        Goldilocks::Element *&blob = d_buffers->hostBasicFixed[const_pols_offset];
+        if (blob == nullptr) {
+            CHECKCUDAERR(cudaMallocHost((void **)&blob, sizeConstPols));
+            loadFileParallel(blob, constFilename, sizeConstPols);
         }
-    } else {
+        constPols = blob;
+    } else if (!alreadyLoaded) {
         constPols = new Goldilocks::Element[constSize];
         loadFileParallel(constPols, constFilename, sizeConstPols);
     }
 
-    for(int i=0; i<d_buffers->n_gpus; ++i){
+    for (int i = 0; i < d_buffers->n_gpus; ++i) {
         if (onlyFirstGPU && i > 0) break;
-        cudaSetDevice(d_buffers->my_gpu_ids[i]);
-        gl64_t *d_constPols = (strcmp(proofType, "basic") == 0) ? d_buffers->d_constPols[i] : d_buffers->d_constPolsAggregation[i];
-        CHECKCUDAERR(cudaMemcpy(d_constPols + const_pols_offset, constPols, sizeConstPols, cudaMemcpyHostToDevice));
-        AirInstanceInfo* air_instance_info = d_buffers->air_instances[key][proofType][i];
+        if (!onHost && !alreadyLoaded) {
+            cudaSetDevice(d_buffers->my_gpu_ids[i]);
+            gl64_t *d_constPols = basic ? d_buffers->d_constPols[i] : d_buffers->d_constPolsAggregation[i];
+            CHECKCUDAERR(cudaMemcpy(d_constPols + const_pols_offset, constPols, sizeConstPols, cudaMemcpyHostToDevice));
+        }
+        AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][proofType][i];
         air_instance_info->const_pols_offset = const_pols_offset;
+        if (onHost) air_instance_info->hostConstPols = constPols;
     }
 
-    if (!resident) delete[] constPols;
+    if (!onHost) delete[] constPols;
 }
 
-// GPU 0 only. `toAggByte` is relative to d_constPolsAggregation; bit 0 of the result: the recurser slot was hit.
-uint64_t reload_aggregation_const_pols_gpu(void *d_buffers_, uint64_t toAggByte) {
-    if (d_buffers_ == nullptr) return 0;
+// GPU 0 only: drop the const-cache tags below `toAggByte` (relative to d_constPolsAggregation), which a
+// borrow or a snark carve overwrote; the sets come back from their host copies on the next launch.
+void reload_aggregation_const_pols_gpu(void *d_buffers_, uint64_t toAggByte) {
+    if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d = (DeviceCommitBuffers *)d_buffers_;
     CHECKCUDAERR(cudaSetDevice(d->my_gpu_ids[0]));
     const uint64_t toElem = (toAggByte + sizeof(Goldilocks::Element) - 1) / sizeof(Goldilocks::Element);
     {
         std::lock_guard<std::mutex> lk(d->constCacheMutex);
-        if (!d->constCache.empty() && d->constCache[0].armed() && d->constCache[0].base < toElem)
-            d->constCache[0].clearTags();
+        if (!d->constCache.empty() && d->constCache[0].armed()) d->constCache[0].t.clearBelow(toElem);
     }
-    for (const DeviceCommitBuffers::ResidentConst &r : d->residentAgg)
-        if (r.offset < toElem)
-            CHECKCUDAERR(cudaMemcpy(d->d_constPolsAggregation[0] + r.offset, r.host, r.elems * sizeof(Goldilocks::Element),
-                                    cudaMemcpyHostToDevice));
     for (uint64_t i = 0; i < d->n_total_streams; i++)
         if (d->streamsData[i].gpuId == d->my_gpu_ids[0]) {
             std::lock_guard<std::mutex> lg(d->streamsData[i].mutex_stream_selection);
             d->streamsData[i].invalidateContext();
         }
-    return d->recurserConstOffset < toElem ? 1 : 0;
 }
 
 void set_debug_clobber_top_gpu(void *d_buffers_, uint64_t topByte) {
@@ -1126,17 +1119,18 @@ void late_region_invalidate_gpu(void *d_buffers_) {
     slotConstCacheClear();
 }
 
-// ---- Recursive1 const slot cache (DeviceCommitBuffers::constCache) ----
-static int64_t constAirKey(uint64_t airgroupId, uint64_t airId) { return (int64_t)((airgroupId << 32) | airId); }
+// ---- Aggregation const slot cache (DeviceCommitBuffers::constCache) ----
 
-// Carve `nSlots` slots of `slotElems` elements at `baseOffset` of every GPU's aggregation const
-// buffer. Called by the Rust const loader in place of the recursive1 uploads; a restore calls it
-// again, which drops every tag: the device copies may be garbage.
-void configure_const_slot_cache_gpu(void *d_buffers_, uint64_t baseOffset, uint64_t slotElems, uint32_t nSlots) {
+// Carve the LRU slots (slot 0 = bigElems, then nLru-1 slots of normalElems) at `baseOffset` of every
+// GPU's aggregation const buffer, then pin_const_slot appends the pins. Init only: a restore drops
+// GPU 0's tags instead (reload_aggregation_const_pols). Returns the end offset.
+uint64_t configure_const_slot_cache_gpu(void *d_buffers_, uint64_t baseOffset, uint64_t bigElems, uint64_t normalElems,
+                                        uint32_t nLru) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    if (d_buffers == nullptr) return;
-    if (nSlots > DeviceCommitBuffers::ConstSlotCache::MAX_SLOTS) {
-        zklog.error("const slot cache: " + std::to_string(nSlots) + " slots exceed MAX_SLOTS");
+    if (d_buffers == nullptr) return baseOffset;
+    if (nLru == 0 || nLru > ConstSlotTable::MAX_SLOTS || normalElems > bigElems) {
+        zklog.error("const slot cache: invalid layout (" + std::to_string(nLru) + " LRU slots, large " +
+                    std::to_string(bigElems) + ", normal " + std::to_string(normalElems) + " elements)");
         exitProcess();
     }
     std::lock_guard<std::mutex> lk(d_buffers->constCacheMutex);
@@ -1144,107 +1138,127 @@ void configure_const_slot_cache_gpu(void *d_buffers_, uint64_t baseOffset, uint6
     for (int i = 0; i < d_buffers->n_gpus; i++) {
         DeviceCommitBuffers::ConstSlotCache &cache = d_buffers->constCache[i];
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
-        if (!cache.armed()) {
-            for (uint32_t s = 0; s < nSlots; s++) {
+        if (!cache.eventsCreated) {
+            for (uint32_t s = 0; s < ConstSlotTable::MAX_SLOTS; s++) {
                 CHECKCUDAERR(cudaEventCreateWithFlags(&cache.ready[s], cudaEventDisableTiming));
                 CHECKCUDAERR(cudaEventCreateWithFlags(&cache.consumed[s], cudaEventDisableTiming));
             }
+            cache.eventsCreated = true;
         }
-        cache.nSlots = nSlots;
-        cache.base = baseOffset;
-        cache.slotElems = slotElems;
-        cache.clearTags();
+        cache.t.layout(baseOffset, bigElems, normalElems, nLru);
     }
-    zklog.info("Const slot cache: " + std::to_string(nSlots) + " x " + std::to_string((slotElems * sizeof(Goldilocks::Element)) >> 20) +
-               " MB slots for the recursive1 const pols");
+    zklog.info("Const slot cache: " + std::to_string(nLru) + " LRU slots (" +
+               std::to_string((bigElems * sizeof(Goldilocks::Element)) >> 20) + " MB + " + std::to_string(nLru - 1) +
+               " x " + std::to_string((normalElems * sizeof(Goldilocks::Element)) >> 20) + " MB)");
+    return baseOffset + d_buffers->constCache[0].t.end();
 }
 
-// Keep `constFilename`'s packed const pols in host pinned memory for the slot cache and mark the
-// air cached (no resident slot). Idempotent: a second call (const reload) keeps the host copy and
-// drops the air's device tags, since the device copies may be garbage.
-void load_host_const_pols_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, char *constFilename, uint64_t constSize,
-                              void *d_buffers_, bool onlyFirstGPU) {
+// Append a pinned slot of `elems` for the set `key` on every GPU; returns the cache's new end offset.
+uint64_t pin_const_slot_gpu(void *d_buffers_, int64_t key, uint64_t elems) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    const int64_t key = constAirKey(airgroupId, airId);
-    std::pair<uint64_t, uint64_t> airKey = {airgroupId, airId};
+    if (d_buffers == nullptr) return 0;
     std::lock_guard<std::mutex> lk(d_buffers->constCacheMutex);
-    auto it = d_buffers->hostConstPols.find(key);
-    if (it == d_buffers->hostConstPols.end()) {
+    if (d_buffers->constCache.empty() || !d_buffers->constCache[0].armed()) {
+        zklog.error("const slot cache: pin before configure");
+        exitProcess();
+    }
+    for (DeviceCommitBuffers::ConstSlotCache &cache : d_buffers->constCache) {
+        if (cache.t.pin(key, elems) < 0) {
+            zklog.error("const slot cache: no room for another pinned slot (" + std::to_string(ConstSlotTable::MAX_SLOTS) +
+                        " slots)");
+            exitProcess();
+        }
+    }
+    return d_buffers->constCache[0].t.base + d_buffers->constCache[0].t.end();
+}
+
+// Keep `constFilename`'s packed const pols in host pinned memory under `key` (the caller's set
+// identity) and mark the air cached. Idempotent: a recurser swapped back keeps its copy and warm slot.
+void load_host_const_pols_gpu(uint64_t airgroupId, uint64_t airId, char *proofType, int64_t key, char *constFilename,
+                              uint64_t constSize, void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    std::pair<uint64_t, uint64_t> airKey = {airgroupId, airId};
+    bool present;
+    {
+        std::lock_guard<std::mutex> lk(d_buffers->constCacheMutex);
+        present = d_buffers->hostConstPols.count(key) != 0;
+    }
+    // Pin and read outside the lock: launches on every GPU take it.
+    if (!present) {
         DeviceCommitBuffers::HostConstPols host;
         host.elems = constSize;
         CHECKCUDAERR(cudaMallocHost((void **)&host.ptr, constSize * sizeof(Goldilocks::Element)));
         loadFileParallel(host.ptr, constFilename, constSize * sizeof(Goldilocks::Element));
-        d_buffers->hostConstPols[key] = host;
-    } else {
-        for (DeviceCommitBuffers::ConstSlotCache &cache : d_buffers->constCache) {
-            for (uint32_t s = 0; s < cache.nSlots; s++) if (cache.tag[s] == key) cache.tag[s] = -1;
-        }
+        std::lock_guard<std::mutex> lk(d_buffers->constCacheMutex);
+        if (!d_buffers->hostConstPols.emplace(key, host).second) cudaFreeHost(host.ptr);
     }
     for (int i = 0; i < d_buffers->n_gpus; ++i) {
-        if (onlyFirstGPU && i > 0) break;
         AirInstanceInfo *air = d_buffers->air_instances[airKey][proofType][i];
         air->constCached = true;
+        air->constKey = key;
         air->const_pols_offset = UINT64_MAX;
     }
 }
 
 // `air`'s packed const pols for a launch whose unpack runs after `stream`: the slot holding them,
-// or the least recently used slot with no pending reader after uploading them there (waits for
-// one when every slot has a reader whose unpack is not enqueued yet). The caller must
-// releaseConstSlot once that unpack is enqueued. Returns the slot.
-static int32_t acquireConstSlot(DeviceCommitBuffers *d_buffers, uint32_t gpuLocalId, AirInstanceInfo *air, cudaStream_t stream) {
+// its pinned slot, or the least recently used LRU slot that fits with no pending reader after
+// uploading them there (waits for one when every fitting slot has a reader whose unpack is not
+// enqueued yet). The caller must releaseConstSlot once that unpack is enqueued. Returns the slot.
+static int32_t acquireConstSlot(DeviceCommitBuffers *d_buffers, uint32_t gpuLocalId, AirInstanceInfo *air,
+                                const char *proofType, cudaStream_t stream) {
     std::unique_lock<std::mutex> lk(d_buffers->constCacheMutex);
     DeviceCommitBuffers::ConstSlotCache &cache = d_buffers->constCache[gpuLocalId];
-    const int64_t key = constAirKey(air->airgroupId, air->airId);
+    ConstSlotTable &t = cache.t;
+    const int64_t key = air->constKey;
+    auto who = [&]() {
+        return std::string(proofType) + " (" + std::to_string(air->airgroupId) + "," + std::to_string(air->airId) + ")";
+    };
     auto host = d_buffers->hostConstPols.find(key);
     if (!cache.armed() || host == d_buffers->hostConstPols.end()) {
-        zklog.error("const slot cache: no host copy for air (" + std::to_string(air->airgroupId) + "," +
-                    std::to_string(air->airId) + ")");
+        zklog.error("const slot cache: no host copy for " + who());
         exitProcess();
     }
-    int32_t slot = -1;
-    for (uint32_t s = 0; s < cache.nSlots; s++) if (cache.tag[s] == key) { slot = (int32_t)s; break; }
-    if (slot >= 0) {
+    const uint64_t need = host->second.elems;
+    int32_t slot = t.find(key);
+    if (slot < 0) slot = t.pinnedSlot(key);
+    if (slot >= 0 && t.elems[slot] < need) {
+        zklog.error("const slot cache: " + who() + " needs " + std::to_string(need) + " elements, its slot has " +
+                    std::to_string(t.elems[slot]));
+        exitProcess();
+    }
+    if (slot < 0 && !t.fitsAnyLru(need)) {
+        zklog.error("const slot cache: " + who() + " needs " + std::to_string(need) + " elements, the largest slot has " +
+                    std::to_string(t.elems[0]));
+        exitProcess();
+    }
+    while (slot < 0) {
+        slot = t.pickLru(need);
+        if (slot >= 0) break;
+        d_buffers->constCacheCv.wait(lk);
+        slot = t.find(key);  // the tag may have landed while we waited
+    }
+    if (t.tag[slot] == key) {
         cache.hits++;
         // Another stream may still be uploading it.
         CHECKCUDAERR(cudaStreamWaitEvent(stream, cache.ready[slot], 0));
     } else {
-        for (;;) {
-            uint64_t oldest = UINT64_MAX;
-            for (uint32_t s = 0; s < cache.nSlots; s++) {
-                if (cache.pending[s] != 0) continue;
-                const uint64_t age = cache.tag[s] == -1 ? 0 : cache.lastUse[s];
-                if (age < oldest) { oldest = age; slot = (int32_t)s; }
-            }
-            if (slot >= 0) break;
-            d_buffers->constCacheCv.wait(lk);
-            // The tag may have landed while we waited.
-            for (uint32_t s = 0; s < cache.nSlots; s++) if (cache.tag[s] == key) { slot = (int32_t)s; break; }
-            if (slot >= 0) {
-                cache.hits++;
-                CHECKCUDAERR(cudaStreamWaitEvent(stream, cache.ready[slot], 0));
-                break;
-            }
-        }
-        if (cache.tag[slot] != key) {
-            cache.tag[slot] = key;
-            cache.misses++;
-            // Its previous readers must have unpacked it before the overwrite.
-            CHECKCUDAERR(cudaStreamWaitEvent(stream, cache.consumed[slot], 0));
-            gl64_t *dst = d_buffers->d_constPolsAggregation[gpuLocalId] + cache.base + (uint64_t)slot * cache.slotElems;
-            CHECKCUDAERR(cudaMemcpyAsync(dst, host->second.ptr, host->second.elems * sizeof(Goldilocks::Element),
-                                         cudaMemcpyHostToDevice, stream));
-            CHECKCUDAERR(cudaEventRecord(cache.ready[slot], stream));
-        }
+        t.fill(slot, key, need);
+        cache.misses++;
+        // Its previous readers must have unpacked it before the overwrite.
+        CHECKCUDAERR(cudaStreamWaitEvent(stream, cache.consumed[slot], 0));
+        gl64_t *dst = d_buffers->d_constPolsAggregation[gpuLocalId] + t.base + t.offset[slot];
+        CHECKCUDAERR(cudaMemcpyAsync(dst, host->second.ptr, need * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice,
+                                     stream));
+        CHECKCUDAERR(cudaEventRecord(cache.ready[slot], stream));
     }
-    cache.lastUse[slot] = ++cache.useClock;
-    cache.pending[slot]++;
+    t.lastUse[slot] = ++t.useClock;
+    t.pending[slot]++;
     return slot;
 }
 
 static uint64_t constSlotOffset(DeviceCommitBuffers *d_buffers, uint32_t gpuLocalId, int32_t slot) {
-    const DeviceCommitBuffers::ConstSlotCache &cache = d_buffers->constCache[gpuLocalId];
-    return cache.base + (uint64_t)slot * cache.slotElems;
+    const ConstSlotTable &t = d_buffers->constCache[gpuLocalId].t;
+    return t.base + t.offset[slot];
 }
 
 // The reader's unpack of `slot` is enqueued on `stream`: the slot may be recycled once it runs.
@@ -1252,20 +1266,35 @@ static void releaseConstSlot(DeviceCommitBuffers *d_buffers, uint32_t gpuLocalId
     {
         std::lock_guard<std::mutex> lk(d_buffers->constCacheMutex);
         DeviceCommitBuffers::ConstSlotCache &cache = d_buffers->constCache[gpuLocalId];
-        // Chained, so the event left by the last release covers every reader, in any order.
-        CHECKCUDAERR(cudaStreamWaitEvent(stream, cache.consumed[slot], 0));
-        CHECKCUDAERR(cudaEventRecord(cache.consumed[slot], stream));
-        cache.pending[slot]--;
+        // Chained, so the event left by the last release covers every reader, in any order. A pinned
+        // slot is only rewritten with its own bytes while nothing reads it: no chain to couple streams.
+        if ((uint32_t)slot < cache.t.nLru) {
+            CHECKCUDAERR(cudaStreamWaitEvent(stream, cache.consumed[slot], 0));
+            CHECKCUDAERR(cudaEventRecord(cache.consumed[slot], stream));
+        }
+        cache.t.pending[slot]--;
     }
     d_buffers->constCacheCv.notify_all();
 }
 
-// Rebuild the region from the resident packed blob on the stream's LOWEST-priority lane: unpack,
-// then LDE + merkelize with the same calls that produced the root. No H2D -- the source never left
-// the device. preserve_src keeps the small domain, which the expressions read. customFixedFork
-// fences against the previous proof's reads of custom_fixed (conservatively: all prior work on
-// `stream`); the caller waits customFixedDone before the first use, AFTER enqueuing the witness
-// copies, or the overlap is lost.
+// Host mode reads the pinned blob in place (device-accessible under UVA); else the resident copy.
+static inline gl64_t *basicConstPols(DeviceCommitBuffers *d, uint32_t gpu, AirInstanceInfo *air) {
+    return d->basicFixedOnHost ? (gl64_t *)air->hostConstPols : d->d_constPols[gpu] + air->const_pols_offset;
+}
+static inline gl64_t *basicCustomPols(DeviceCommitBuffers *d, uint32_t gpu, AirInstanceInfo *air) {
+    return d->basicFixedOnHost ? (gl64_t *)air->hostCustomPols : d->d_constPols[gpu] + air->custom_pols_offset;
+}
+
+void set_basic_fixed_on_host_gpu(void *d_buffers_, bool onHost) {
+    if (d_buffers_ != nullptr) ((DeviceCommitBuffers *)d_buffers_)->basicFixedOnHost = onHost;
+}
+
+// Rebuild the region from the packed blob on the stream's LOWEST-priority lane: unpack, then LDE +
+// merkelize with the same calls that produced the root. No explicit H2D: the source is the resident
+// blob, or in host mode the pinned one read in place. preserve_src keeps the small domain, which the
+// expressions read. customFixedFork fences against the previous proof's reads of custom_fixed
+// (conservatively: all prior work on `stream`); the caller waits customFixedDone before the first
+// use, AFTER enqueuing the witness copies, or the overlap is lost.
 static void rebuildCustomCommitsFixed(DeviceCommitBuffers *d_buffers, SetupCtx *setupCtx, AirInstanceInfo *air,
                                       uint32_t gpuLocalId, Goldilocks::Element *dst, StreamData &sd,
                                       TimerGPU &timer) {
@@ -1278,8 +1307,7 @@ static void rebuildCustomCommitsFixed(DeviceCommitBuffers *d_buffers, SetupCtx *
     uint64_t w = si.mapSectionsN[si.customCommits[0].name + "0"];
 
     // Custom commits are a basic-air section, so they only ever live in the basic const buffer.
-    Goldilocks::Element *packed =
-        (Goldilocks::Element *)(d_buffers->d_constPols[gpuLocalId] + air->custom_pols_offset);
+    Goldilocks::Element *packed = (Goldilocks::Element *)basicCustomPols(d_buffers, gpuLocalId, air);
 
     CHECKCUDAERR(cudaEventRecord(sd.customFixedFork, sd.stream));
     CHECKCUDAERR(cudaStreamWaitEvent(sd.customStream, sd.customFixedFork, 0));
@@ -1334,25 +1362,46 @@ void upload_custom_commit_packed_gpu(uint64_t airgroupId, uint64_t airId, char *
     auto itT = itK->second.find(std::string(proofType));
     if (itT == itK->second.end()) return;
 
-    // new[], not vector: the load overwrites every word, so zero-init would be 256 MB of waste.
-    // Header word + widths + rows -- the device blob keeps the file layout, so its own header
-    // describes it, the same trick the packed const pols use.
-    std::unique_ptr<uint64_t[]> host(new uint64_t[words]);
-    loadFileParallel(host.get(), std::string(customFile), words * sizeof(uint64_t), true, CUSTOM_COMMIT_ROOT_BYTES);
+    // Reserved-only: a path that reserved just GPU 0 leaves the others at offset 0, which is the const
+    // pols' own slot. Every GPU's air shares GPU 0's reserve (the group's slot).
+    AirInstanceInfo *first = itT->second.empty() ? nullptr : itT->second[0];
+    if (first == nullptr || first->customPolsReservedWords == 0) return;
+    if (words > first->customPolsReservedWords) {
+        zklog.error("upload_custom_commit_packed: " + std::to_string(words) + " words exceeds the reserved " +
+                    std::to_string(first->customPolsReservedWords));
+        exitProcess();
+    }
+
+    // Header word + widths + rows: the blob keeps the file layout, so its own header describes it.
+    // Host mode keeps it pinned for the readers to use in place, reloaded on every call (a
+    // re-registration may name another file); otherwise a temporary new[] (no 256 MB zero-init).
+    const bool onHost = d_buffers->basicFixedOnHost;
+    std::unique_ptr<uint64_t[]> tmp;
+    uint64_t *blob;
+    if (onHost) {
+        Goldilocks::Element *&pinned = d_buffers->hostBasicFixed[first->custom_pols_offset];
+        if (pinned == nullptr) {
+            // A caller thread with no device would open a context on GPU 0, maybe another rank's.
+            CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[0]));
+            CHECKCUDAERR(cudaMallocHost((void **)&pinned, first->customPolsReservedWords * sizeof(uint64_t)));
+        }
+        blob = (uint64_t *)pinned;
+    } else {
+        tmp.reset(new uint64_t[words]);
+        blob = tmp.get();
+    }
+    loadFileParallel(blob, std::string(customFile), words * sizeof(uint64_t), true, CUSTOM_COMMIT_ROOT_BYTES);
 
     for (int i = 0; i < d_buffers->n_gpus && i < (int)itT->second.size(); ++i) {
         AirInstanceInfo *air = itT->second[i];
-        // Reserved-only: a path that reserved just GPU 0 leaves the others at offset 0, which is
-        // the const pols' own slot.
         if (air == nullptr || air->customPolsReservedWords == 0) continue;
-        if (words > air->customPolsReservedWords) {
-            zklog.error("upload_custom_commit_packed: " + std::to_string(words) +
-                        " words exceeds the reserved " + std::to_string(air->customPolsReservedWords));
-            exitProcess();
+        if (onHost) {
+            air->hostCustomPols = (Goldilocks::Element *)blob;
+        } else {
+            cudaSetDevice(d_buffers->my_gpu_ids[i]);
+            CHECKCUDAERR(cudaMemcpy(d_buffers->d_constPols[i] + air->custom_pols_offset, blob, words * sizeof(uint64_t),
+                                    cudaMemcpyHostToDevice));
         }
-        cudaSetDevice(d_buffers->my_gpu_ids[i]);
-        CHECKCUDAERR(cudaMemcpy(d_buffers->d_constPols[i] + air->custom_pols_offset, host.get(),
-                                words * sizeof(uint64_t), cudaMemcpyHostToDevice));
         air->customPolsPackedWords = words;
     }
 }
@@ -1445,7 +1494,7 @@ static inline void prefetchFreeSpanLocked(PrefetchZone &z, int head) {
 // Head of the span holding `instanceId`, or -1. Frees by id land here too: a tail keeps
 // traceBytes == 0, so only the head can match a sized lookup.
 static inline int prefetchFindSpanLocked(const PrefetchZone &z, uint64_t instanceId) {
-    for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++)
+    for (uint32_t s = 0; s < z.nUnits; s++)
         if (z.instanceId[s] == (int64_t)instanceId) return (int)s;
     return -1;
 }
@@ -1469,7 +1518,7 @@ static void uploadOneChunkInFlight(void *dst, const void *src, uint64_t bytes, c
 // workers stage at once and a sibling's upload still has a consumer coming.
 static int prefetchFindFreeRunLocked(const PrefetchZone &z, uint32_t need) {
     if (need == 0 || need > DeviceCommitBuffers::PREFETCH_UNIT_SPAN) return -1;
-    for (uint32_t s = 0; s + need <= DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
+    for (uint32_t s = 0; s + need <= z.nUnits; s++) {
         uint32_t k = 0;
         while (k < need && z.instanceId[s + k] == -1) k++;
         if (k == need) return (int)s;
@@ -1526,14 +1575,14 @@ int64_t stage_witness_gpu(void *d_buffers_, uint64_t instanceId, void *trace, ui
         int nFree = 0, run = 0, bestRun = 0;
         PrefetchZone &zr = d_buffers->prefetchZones[g];
         std::lock_guard<std::mutex> lk(zr.mutex);   // instanceId is written under it, not atomically
-        for (uint32_t u = 0; u < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; u++) {
+        for (uint32_t u = 0; u < zr.nUnits; u++) {
             const bool isFree = zr.instanceId[u] == -1;
             nFree += isFree;
             run = isFree ? run + 1 : 0;
             bestRun = std::max(bestRun, run);
         }
         const int fits = bestRun >= (int)need ? 1 : 0;
-        order.push_back({-(fits * (int)DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS + nFree), g});
+        order.push_back({-(fits * (int)DeviceCommitBuffers::PREFETCH_UNITS_MAX + nFree), g});
     }
     std::stable_sort(order.begin(), order.end(),
                      [](const auto &x, const auto &y) { return x.first < y.first; });
@@ -1725,7 +1774,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     uint64_t offsetStage1Extended = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)];
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
 
-    gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
+    gl64_t *d_const_pols = basicConstPols(d_buffers, gpuLocalId, air_instance_info);
     // find(), not operator[]: operator[] would silently insert offset 0 for a starkinfo with no
     // aux tree slot -- the tree would then be written over the aux BASE.
     auto itConstTree = setupCtx->starkInfo.mapOffsets.find(std::make_pair("const", true));
@@ -2007,7 +2056,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)(d_aux_trace + offsetPublicInputs), aux_values, totalCopySize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
     
-    gl64_t *d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
+    gl64_t *d_const_pols = basicConstPols(d_buffers, gpuLocalId, air_instance_info);
     
     uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
     Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
@@ -2332,22 +2381,23 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     auto key = std::make_pair(airgroupId, airId);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
 
-    // Keyed on the slot, so airs with identical fixed reuse each other's pols. Recursers are
-    // the exception: they share one slot, so recurser_id stays part of the key; a cached air's
-    // slot changes content, so the air is part of its key too.
+    // Keyed on the resident offset, so airs with identical fixed reuse each other's pols; a cached set
+    // (offset UINT64_MAX) on its cache key alone: which slot carried it does not matter once unpacked.
     StreamData &sd = d_buffers->streamsData[streamId];
-    uint64_t constPolsOffset = air_instance_info->const_pols_offset;
-    std::string constKey(recurser_id);
-    int32_t constSlot = -1;
-    if (air_instance_info->constCached) {
-        constSlot = acquireConstSlot(d_buffers, gpuLocalId, air_instance_info, stream);
-        constPolsOffset = constSlotOffset(d_buffers, gpuLocalId, constSlot);
-        constKey = "cache:" + std::to_string(airgroupId) + ":" + std::to_string(airId);
-    }
-    bool reuse_constants = sd.adoptFixedSlot(constPolsOffset,
+    const bool constCached = air_instance_info->constCached;
+    const std::string constKey =
+        constCached ? "cache:" + std::to_string(air_instance_info->constKey) : std::string(recurser_id);
+    bool reuse_constants = sd.adoptFixedSlot(air_instance_info->const_pols_offset,
                                              setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], true,
                                              constKey);
     bool reuse_const_tree = reuse_constants && sd.constTreeResident;
+    // A cached set takes a slot (and maybe an upload) only when this stream has to unpack it again.
+    uint64_t constPolsOffset = air_instance_info->const_pols_offset;
+    int32_t constSlot = -1;
+    if (constCached && !reuse_const_tree) {
+        constSlot = acquireConstSlot(d_buffers, gpuLocalId, air_instance_info, proofType, stream);
+        constPolsOffset = constSlotOffset(d_buffers, gpuLocalId, constSlot);
+    }
 
     sd.pSetupCtx = pSetupCtx_;
     // Pipeline on the shared stream: completion metadata rides the ring below.
@@ -2379,7 +2429,9 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     // Getting the witness onto the device happens BEFORE genProof_gpu opens STARK_GPU_PROOF, so it
     // is a timer of its own rather than a category: a category here would be divided by a window
     // that does not contain it, which is what made that table total 102% with OTHER pinned at zero.
-    gl64_t *d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + constPolsOffset;
+    // Unread (nullptr) when the stream reuses its unpacked copy of a cached set.
+    gl64_t *d_const_pols = (constCached && constSlot < 0)
+        ? nullptr : d_buffers->d_constPolsAggregation[gpuLocalId] + constPolsOffset;
     // find(), not operator[]: operator[] would silently insert offset 0 for a starkinfo with no
     // aux tree slot -- the tree would then be written over the aux BASE.
     auto itConstTree = setupCtx->starkInfo.mapOffsets.find(std::make_pair("const", true));
@@ -2406,10 +2458,6 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     if (!reuse_const_tree && setupCtx->starkInfo.calculateFixedExtended) {
         prebuildFixedTree(setupCtx, d_aux_trace, d_const_pols, d_const_tree, sd, timer, d_buffers, gpuLocalId, constSlot);
         fixedPrebuilt = true;
-        constSlot = -1;
-    } else if (constSlot >= 0 && reuse_const_tree) {
-        // The stream still holds this air's unpacked pols and tree: the slot is not read.
-        releaseConstSlot(d_buffers, gpuLocalId, constSlot, stream);
         constSlot = -1;
     }
 
@@ -2511,11 +2559,13 @@ void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     std::string constKey;
     int32_t constSlot = -1;
     if (air_instance_info->constCached) {
-        constSlot = acquireConstSlot(d_buffers, gpuLocalId, air_instance_info, stream);
+        constSlot = acquireConstSlot(d_buffers, gpuLocalId, air_instance_info, proofType, stream);
         constPolsOffset = constSlotOffset(d_buffers, gpuLocalId, constSlot);
-        constKey = "cache:" + std::to_string(airgroupId) + ":" + std::to_string(airId);
+        constKey = "cache:" + std::to_string(air_instance_info->constKey);
     }
-    sd.adoptFixedSlot(constPolsOffset, setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], true, constKey);
+    // Same identity as gen_recursive_proof_gpu, so its launch on this stream reuses the tree.
+    sd.adoptFixedSlot(air_instance_info->const_pols_offset, setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)],
+                      true, constKey);
 
     gl64_t *d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + constPolsOffset;
 
@@ -3780,7 +3830,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             uint64_t *dConst = slotScratch("slot.const", slot.at.constOff, slot.constBytes, nConst * nRowsSlot);
             // A slot's scratch keeps the last air it expanded while the region stays held: consecutive
             // instances of one air unpack once. Ordered by the slot's own stream, which alone uses it.
-            slotExpandFixed(gpu, j, false, dConst, d_buffers->d_constPols[gl] + aii->const_pols_offset, nConst,
+            slotExpandFixed(gpu, j, false, dConst, basicConstPols(d_buffers, gl, aii), nConst,
                             nRowsSlot, aii->setupCtx, slotGen, d_buffers->streamCommitStreams[slotIdx], timer);
             dConstUnpacked = dConst;
         }
@@ -3797,7 +3847,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
         }
         const uint64_t w = slotCustomWidth(si);
         uint64_t *dCustom = slotScratch("slot.custom", slot.at.customOff, slot.customBytes, w * nRowsSlot);
-        slotExpandFixed(gpu, j, true, dCustom, d_buffers->d_constPols[gl] + aii->custom_pols_offset, w, nRowsSlot,
+        slotExpandFixed(gpu, j, true, dCustom, basicCustomPols(d_buffers, gl, aii), w, nRowsSlot,
                         aii->setupCtx, slotGen, d_buffers->streamCommitStreams[slotIdx], timer);
         dCustomUnpacked = dCustom;
     }
@@ -4133,16 +4183,16 @@ uint64_t get_post_alloc_headroom_bytes_gpu() {
 }
 
 
-// How many LARGEST-TRACE witnesses the Rust side sizes the prefetch region for (not the unit count).
-uint32_t get_prefetch_witness_slots_gpu() {
-    return DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS / DeviceCommitBuffers::PREFETCH_UNIT_SPAN;
-}
-
-// Arm the witness prefetch zone (idempotent; no-op when witnessBytes == 0, i.e. the
-// feature is off). `witnessBytes` is the largest trace the zone stages.
-void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes) {
+// Arm the witness prefetch zone with `nUnits` units of half `witnessBytes` each (idempotent; no-op
+// when either is 0, i.e. the feature is off). `witnessBytes` is the largest trace the zone stages.
+void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint32_t nUnits) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    if (d_buffers == nullptr || witnessBytes == 0 || d_buffers->prefetchArmed) return;
+    if (d_buffers == nullptr || witnessBytes == 0 || nUnits == 0 || d_buffers->prefetchArmed) return;
+    if (nUnits > DeviceCommitBuffers::PREFETCH_UNITS_MAX) {
+        zklog.error("Prefetch zone: " + std::to_string(nUnits) + " units exceed the maximum of " +
+                    std::to_string(DeviceCommitBuffers::PREFETCH_UNITS_MAX));
+        exitProcess();
+    }
     // witnessBytes is the largest trace (power-of-two rows), so it must split exactly into units.
     if (witnessBytes % (DeviceCommitBuffers::PREFETCH_UNIT_SPAN * sizeof(gl64_t)) != 0) {
         zklog.warning("Prefetch witness size " + std::to_string(witnessBytes) + " B does not split into " +
@@ -4150,9 +4200,8 @@ void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes) {
         return;
     }
     const uint64_t unitBytes = witnessBytes / DeviceCommitBuffers::PREFETCH_UNIT_SPAN;
-    uint64_t witnessArea = unitBytes * DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS;
+    const uint64_t needed = unitBytes * nUnits;
     d_buffers->prefetchSlotStride = unitBytes / sizeof(gl64_t);
-    const uint64_t needed = witnessArea;
     // The zone IS the unified buffer's prefetch region, always: the Rust side sizes the
     // region from the same numbers it passes here, so a mismatch is a bug -- refuse to
     // arm (proofs fall back to the legacy upload) rather than allocate elsewhere.
@@ -4164,8 +4213,7 @@ void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes) {
     }
     zklog.info("Prefetch zone armed (" + std::to_string(needed >> 20) + " MB of " +
                std::to_string(d_buffers->prefetchRegionBytes >> 20) + " MB region): " +
-               std::to_string(DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS) + " units x " +
-               std::to_string(unitBytes >> 20) + " MB, up to " +
+               std::to_string(nUnits) + " units x " + std::to_string(unitBytes >> 20) + " MB, up to " +
                std::to_string(DeviceCommitBuffers::PREFETCH_UNIT_SPAN) + " per witness, on each of " +
                std::to_string(d_buffers->n_gpus) + " GPUs");
     int prevDevice = 0;
@@ -4174,7 +4222,8 @@ void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes) {
         CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[g]));
         PrefetchZone &z = d_buffers->prefetchZones[g];
         CHECKCUDAERR(cudaStreamCreateWithFlags(&z.stream, cudaStreamNonBlocking));
-        for (uint32_t s = 0; s < DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS; s++) {
+        z.nUnits = nUnits;
+        for (uint32_t s = 0; s < nUnits; s++) {
             CHECKCUDAERR(cudaEventCreateWithFlags(&z.ready[s], cudaEventDisableTiming));
             CHECKCUDAERR(cudaEventCreateWithFlags(&z.drained[s], cudaEventDisableTiming));
             z.instanceId[s] = -1;
@@ -4233,11 +4282,9 @@ void *get_unified_buffer_gpu_for_recursivef_gpu(void *d_buffers_, void *d_buffer
     return get_unified_buffer_gpu(d_buffers_);
 }
 
-// The const-pols slot a request will land on; UINT64_MAX when unknowable here: no
-// AirInstanceInfo for the key, or a recurser (one shared slot, so the offset says nothing
-// about which recurser is in it).
+// The AirInstanceInfo a request will use, whose const_pols_offset is the slot it lands on (UINT64_MAX
+// for a const-cached set, recursers included, placed at launch); nullptr when there is none.
 static const AirInstanceInfo *requestedAirInstance(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, const std::string &proofType){
-    if (proofType == "recurser_aggregator") return nullptr;
     // commit_witness tags its stream "witness", but its setup key is the basic one.
     const std::string keyType = (proofType == "witness") ? std::string("basic") : proofType;
     auto air = d_buffers->air_instances.find({airgroupId, airId});

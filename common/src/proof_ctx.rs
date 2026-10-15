@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8};
 use std::sync::Arc;
 use std::sync::Mutex;
 use crate::{plan_stream_layout, StreamClass, StreamLayout};
+use crate::{plan_buffer, BufferPlan, BufferPlanInput, CONST_CACHE_SLOTS_PLAN_MAX};
 use crate::{GpuWitnessAir, GpuWitnessAirs, MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
@@ -24,7 +25,7 @@ use proofman_starks_lib_c::{
     upload_custom_commit_packed_c, check_device_memory_c, configure_phase_b_c, get_num_gpus_c, gen_device_buffers_c,
     gen_device_streams_c, alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
     get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c, get_mops_floor_bytes_c,
-    get_post_alloc_headroom_bytes_c, get_layout_offset_c, set_debug_clobber_top_c,
+    get_post_alloc_headroom_bytes_c, get_layout_offset_c, set_debug_clobber_top_c, set_basic_fixed_on_host_c,
 };
 use proofman_util::DeviceBuffer;
 
@@ -361,6 +362,8 @@ pub struct ProofCtx<F: PrimeField64> {
     pub reload_fixed_pols_gpu: Arc<AtomicBool>,
     /// The late region lives in aux, through the contributions only (set by `set_device_buffers`).
     pub late_in_aux: bool,
+    /// Basic fixed pols (custom commits included) stay in pinned host memory (set by `set_device_buffers`).
+    pub basic_fixed_on_host: bool,
     /// Highest byte (from the buffer base) a mops borrow wrote past `aggBase`, or 0.
     pub reload_aggregation_to: Arc<AtomicU64>,
     /// Set while a contributions witness thread stages the instance before dispatching it itself;
@@ -391,6 +394,14 @@ pub struct ProofCtx<F: PrimeField64> {
     /// Phase B: capacity (elements) of each half of the basic stream. An instance whose buffer
     /// exceeds it can only run in phase A; the phase-A countdown counts exactly those.
     pub phase_b_half: usize,
+    /// Witness prefetch units the planner gave each GPU (0 = no zone).
+    pub prefetch_units: u32,
+    /// LRU slots of the aggregation const cache, slot 0 included (the loader carves this many).
+    pub const_cache_lru_slots: usize,
+    /// The planner had room to pin vadcop_final and vadcop_final_compressed.
+    pub const_cache_pin_finals: bool,
+    /// Aggregation const area the carve reserved (words): the loader checks its layout fits.
+    pub aggregation_const_words: u64,
     /// This prover's GPU witness declarations, copied from the options at startup: the one source the
     /// witness side asks before staging kernel inputs.
     pub gpu_witness_airs: GpuWitnessAirs,
@@ -479,6 +490,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             packed_airs: HashSet::new(),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
             late_in_aux: false,
+            basic_fixed_on_host: false,
             reload_aggregation_to: Arc::new(AtomicU64::new(0)),
             dispatch_deferred: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
             dispatch_pending: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
@@ -486,6 +498,10 @@ impl<F: PrimeField64> ProofCtx<F> {
             basic_stream_sizes: Vec::new(),
             phase_b: false,
             phase_b_half: 0,
+            prefetch_units: 0,
+            const_cache_lru_slots: 0,
+            const_cache_pin_finals: false,
+            aggregation_const_words: 0,
         })
     }
 
@@ -682,6 +698,10 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     /// Re-upload every registered custom commit from its file.
     pub fn reupload_custom_commits(&self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+        // In host mode they live in pinned host blobs, which a carve of the device buffer never touches.
+        if self.basic_fixed_on_host {
+            return Ok(());
+        }
         let registered = self.custom_commits_values.lock().unwrap().clone();
         for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
@@ -1403,8 +1423,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         max_number_streams_gpu: usize,
         max_number_recursive_streams_gpu: usize,
         final_snark: bool,
-        // Witness prefetch-region area (elements), carved inside the unified buffer (0 = none).
-        prefetch_region_area: u64,
+        // One witness prefetch unit (words), half the largest basic trace (0 = no zone).
+        prefetch_unit_words: u64,
         // Late region (bytes), and the streaming-commit slots (count, bytes each).
         late_region_bytes: u64,
         n_slots: u64,
@@ -1452,12 +1472,14 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut total_const_area = 0;
         let mut total_const_area_aggregation = 0;
 
-        if gpu {
-            total_const_area += sctx.total_const_pols_size as u64;
-            if aggregation {
-                total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
-            }
+        // Basic fixed: the planner decides whether they are resident (else read from host memory).
+        let basic_fixed_words = if gpu { sctx.total_const_pols_size as u64 } else { 0 };
+        if gpu && aggregation {
+            total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
         }
+        // The const cache: SetupsVadcop counts slot 0 + one normal slot, the planner adds the rest.
+        let cache_on = gpu && aggregation && setups_vadcop.cache_normal_words > 0;
+        let lru_cap = CONST_CACHE_SLOTS_PLAN_MAX.min(setups_vadcop.cache_n_lru_keys.max(2));
 
         // Wrapping here would carve streams out of a budget the card does not have, and only fail
         // later inside cudaMalloc.
@@ -1494,9 +1516,55 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let basic_sizes: Vec<usize> = sctx.prover_buffer_sizes.iter().map(|(_, size)| *size).collect();
 
-        // The prefetch region is carved INSIDE the unified buffer after planning;
-        // hide it from the planner's budget or its streams overrun VRAM.
-        let max_size_buffer = max_size_buffer.saturating_sub(prefetch_region_area);
+        // Prefetch first, then the const cache, then the streams (see buffer_plan.rs).
+        let plan_input = BufferPlanInput {
+            free_words: (free_memory_gpu / 8.0).floor() as u64,
+            fixed_words: total_const_area + total_const_area_aggregation + late_area,
+            cache_min_words: if cache_on { setups_vadcop.total_const_pols_size as u64 } else { 0 },
+            budget_words: max_size_buffer,
+            min_stream_words: (sctx
+                .max_prover_buffer_size
+                .max(recursive_capable_size)
+                .max(max_prover_recursive2_buffer_size)) as u64,
+            prefetch_unit_words: if gpu { prefetch_unit_words } else { 0 },
+            // SetupsVadcop's minimum holds slot 0 and one normal slot.
+            cache_slot_words: if cache_on { setups_vadcop.cache_normal_words } else { 0 },
+            cache_slots_min: if cache_on { 2 } else { 0 },
+            cache_slots_cap: if cache_on { lru_cap } else { 0 },
+            optional_pin_words: if cache_on { setups_vadcop.finals_pin_words } else { 0 },
+            basic_fixed_words,
+        };
+        let plan = if gpu {
+            plan_buffer(&plan_input)?
+        } else {
+            BufferPlan {
+                prefetch_units: 0,
+                cache_slots: plan_input.cache_slots_min,
+                pin_finals: false,
+                basic_resident: true,
+            }
+        };
+        total_const_area = plan.basic_words(&plan_input);
+        self.basic_fixed_on_host = gpu && !plan.basic_resident;
+        set_basic_fixed_on_host_c(d_buffers.get_ptr(), self.basic_fixed_on_host);
+        let prefetch_region_area = plan.prefetch_words(prefetch_unit_words);
+        let extra_cache = plan.extra_cache_words(&plan_input);
+        total_const_area_aggregation += extra_cache;
+        self.prefetch_units = plan.prefetch_units;
+        self.const_cache_lru_slots = plan.cache_slots;
+        self.const_cache_pin_finals = plan.pin_finals;
+        if gpu {
+            tracing::info!(
+                "Buffer plan: basic fixed {}, {} prefetch units ({}), {} const cache LRU slots{}, {} left for the streams",
+                if plan.basic_resident { "resident" } else { "on host" },
+                plan.prefetch_units,
+                format_bytes(prefetch_region_area as f64 * 8.0),
+                self.const_cache_lru_slots,
+                if plan.pin_finals { ", finals pinned" } else { "" },
+                format_bytes((max_size_buffer - total_const_area - prefetch_region_area - extra_cache) as f64 * 8.0),
+            );
+        }
+        let max_size_buffer = max_size_buffer - total_const_area - prefetch_region_area - extra_cache;
 
         let layout = match gpu {
             true => plan_stream_layout(
@@ -1674,6 +1742,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             0
         };
 
+        self.aggregation_const_words = total_const_area_aggregation;
         alloc_device_large_buffers_c(
             d_buffers.get_ptr(),
             recursive_stream_size as u64,
