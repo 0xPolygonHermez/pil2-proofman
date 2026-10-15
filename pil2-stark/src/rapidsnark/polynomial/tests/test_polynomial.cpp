@@ -477,6 +477,38 @@ TEST(PolynomialTest, by_x_sub_value_multiplies_by_x_minus_value) {
 // buffer of its own. When the product does not fit, the buffer and the length grow by n, and the
 // next product grows from there. The expected values are the products written out: until it
 // detached the buffer it takes, it freed that buffer and read it back.
+// The factor may be one of the polynomial's own coefficients: mulScalar and byXNSubValue scale by
+// the value it had when they were called.
+TEST(PolynomialTest, scaling_by_an_own_coefficient_uses_its_value_at_the_call) {
+    Random random(0x5ca1);
+    const uint64_t length = 4096 + 7;
+    const Column p = random.column(length);
+    for (uint64_t k : {uint64_t(0), length / 2, length - 1}) {
+        for (int t : {1, 32}) {
+            SCOPED_TRACE("k = " + std::to_string(k) + ", " + std::to_string(t) + " threads");
+            const Threads threads(t);
+            FrElement factor = p[k];
+
+            Poly expected(E, length);
+            load(expected, p);
+            expected.mulScalar(factor);
+            Poly aliased(E, length);
+            load(aliased, p);
+            aliased.mulScalar(aliased.coef[k]);
+            ASSERT_TRUE(same(aliased.coef, Column(expected.coef, expected.coef + length)));
+
+            Poly expectedShift(E, length);
+            load(expectedShift, p);
+            expectedShift.byXNSubValue(2, factor);
+            Poly aliasedShift(E, length);
+            load(aliasedShift, p);
+            aliasedShift.byXNSubValue(2, aliasedShift.coef[k]);
+            ASSERT_EQ(aliasedShift.getDegree(), expectedShift.getDegree());
+            ASSERT_TRUE(same(aliasedShift.coef, Column(expectedShift.coef, expectedShift.coef + length + 2)));
+        }
+    }
+}
+
 // A shift n at or above the length grows the buffer to hold the product, and a negative n is
 // refused.
 TEST(PolynomialTest, by_xn_sub_value_grows_for_any_shift) {

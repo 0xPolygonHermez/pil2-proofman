@@ -357,9 +357,11 @@ void Polynomial<Engine>::subBlinding(Polynomial<Engine> &polynomial, FrElement &
 
 template<typename Engine>
 void Polynomial<Engine>::mulScalar(FrElement &value) {
+    // A copy: value may be one of the coefficients the loop overwrites
+    const FrElement factor = value;
     #pragma omp parallel for
     for (u_int64_t i = 0; i < this->length; i++) {
-        this->coef[i] = E.fr.mul(this->coef[i], value);
+        this->coef[i] = E.fr.mul(this->coef[i], factor);
     }
 }
 
