@@ -302,7 +302,7 @@ jobs:
     name: Test pilfflonk (BN128)
     runs-on: ubuntu-latest
     env:
-      PIL2_COMPILER_COMMIT: 8515f9f1a53416debaeed9fc9c30ddf1b53e66b6
+      PIL2_COMPILER_COMMIT: 33cf6c0e7f29363da9dda17569bc3ffbd9efeca9
       CARGO_FEATURES: proofman-starks-lib-c/cpu-only
       FOUNDRY_VERSION: v1.8.3
       SOLC_URL: https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.37+commit.f401782d
@@ -425,8 +425,7 @@ jobs:
     #
     # The wrap's AIR is compiled over BN128, which needs a pil2com that has `--field`
     # (pilfflonk/docs/README.md#compile-pil): commit PIL2_COMPILER_COMMIT of pil2-compiler's branch
-    # develop-0.14.0-pil2-fflonk, until that branch is merged and setup/pil2-stark/package.json pins
-    # it.
+    # develop-0.15.0, until setup/pil2-stark/package.json pins that version.
     #
     # The ptau is the official one of power 22 (pilfflonk/tests/download-ptau.sh), the smallest that
     # holds the powers setup-snark needs for this key, 13·2^19 + 12 for 2^19 rows: 2^23 − 1 powers,
@@ -435,7 +434,7 @@ jobs:
     name: Test pilfflonk wrap (fibonacci-square)
     runs-on: ubuntu-latest
     env:
-      PIL2_COMPILER_COMMIT: 8515f9f1a53416debaeed9fc9c30ddf1b53e66b6
+      PIL2_COMPILER_COMMIT: 33cf6c0e7f29363da9dda17569bc3ffbd9efeca9
       CARGO_FEATURES: proofman-starks-lib-c/cpu-only
       WRAP: target/pilfflonk-wrap
     steps:

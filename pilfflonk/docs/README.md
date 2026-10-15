@@ -86,7 +86,7 @@ proofman-setup compile-pil -p <program.pil> -o <program.pilout> -I <std dir> --f
 `bn128`, the scalar field `r` of BN128 that pilfflonk proves over. Any other name is refused.
 
 The compiler must have `--field` (`PIL2C_EXEC` points at it): it is `../pil2-compiler` on its branch
-`develop-0.14.0-pil2-fflonk`, which also encodes field values of 64 bits and more correctly. The
+`develop-0.15.0`, which also encodes field values of 64 bits and more correctly. The
 pinned compiler ignores `--field` and compiles over Goldilocks; setup-pilfflonk then refuses the
 pilout, saying so. With `--field bn128`, the pilout's `baseField` is `r`. The fixed columns are in
 the pilout, or, with `-u <dir> --fixed-to-file`, in `<dir>/<air>.fixed`, each value four 64-bit
@@ -331,7 +331,7 @@ witnesses only: the prover's arithmetic is ffiasm's.
 
 | Component | Where | Language | What it does |
 |---|---|---|---|
-| Compiler | `../pil2-compiler`, branch `develop-0.14.0-pil2-fflonk` | JS | the pilout over BN128 |
+| Compiler | `../pil2-compiler`, branch `develop-0.15.0` | JS | the pilout over BN128 |
 | Std constants | `pil2-components/lib/std/pil/bn128.pil` | PIL | `GEN` and `k_coset` over BN128 |
 | Symbolic passes | `pil-info`, `setup/pil-info/` | Rust | the STARK's passes, parameterised by the field (`PilInfoCfg`); the `"chps"` container; temporaries; `globalConstraints.json` |
 | Setup | `pilfflonk-setup`, `setup/pilfflonk/` | Rust | validation, layout, bytecode, keys, `provingKey/`, digest, Solidity |
