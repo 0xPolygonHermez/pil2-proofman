@@ -386,9 +386,9 @@ the transcript object, and computes. The steps follow the [transcript](#transcri
 5. **Opening.** One SHPLONK opening of every `f_i` in the global order: `pilfflonk_open` squeezes
    `α_S`, computes `W` and absorbs `[W]₁`, squeezes `y`, and computes `W'`, `inv` and `invZh`. It is
    pil-fflonk's `ShPlonkProver` orchestration, generalised to signed offsets and several instances, on
-   rapidsnark's `Polynomial`, with its parallel division by `X^m − β`, `divByMonicInPlace`
+   rapidsnark's `Polynomial`, with its parallel division by `X^m − β`, `divByMonic`
    ([performance.md#the-shplonk-division](performance.md#the-shplonk-division)), in place of
-   `divByXSubValue` and `divByMonic`.
+   `divByXSubValue` and the serial `divByMonic`.
 6. **Output.** Rust writes `proof.json` and `publics.json` ([formats.md#proof](formats.md#proof)).
 
 `Q` has a coefficient beyond its bound exactly when some constraint fails on some row: the prover

@@ -525,10 +525,10 @@ the root `ω^N = 1`, where `:47-56` uses `ω^(N−1)`; and `:57` seems to test `
 - `Polynomial` leaked memory in `divByMonic`, `lagrangePolynomialInterpolation`, `byXSubValue`,
   `fastDivByVanishing` and when it took ownership of a reserved buffer. **Fixed in rapidsnark**,
   without changing any result; the wrap's `FflonkProver` benefits too.
-- `divByMonic` writes before its buffer when the degree is below `2m − 1`, does not check the
-  remainder, and runs on `m` threads; `PilFflonk::divideExactly` calls
-  `Polynomial::divByMonicInPlace`, added to rapidsnark next to it, which gives the same quotient at
-  every degree, in place and in parallel, and whether the remainder is zero
+- `divByMonic` wrote before its buffer when the degree was below `2m − 1`, did not check the
+  remainder, and ran on `m` threads. **Replaced in rapidsnark**, under the same name, by the division
+  `PilFflonk::divideExactly` calls, which gives the same quotient at every degree, in place and in
+  parallel, and whether the remainder is zero
   ([performance.md#the-shplonk-division](performance.md#the-shplonk-division)).
 - `BinFile`'s direct-read mode dereferences a null pointer, and `readSectionToParallel` throws inside a
   `std::thread`; pilfflonk only uses `readSectionTo`.
