@@ -6,7 +6,7 @@
 //!   Fibonacci fixture, set up with the official ptau of the tests (pilfflonk/docs/README.md#tests),
 //!   in a `snark_proof.bin`: it is read back as it was written, its JSON views are pilfflonk's, and
 //!   `verify-snark` accepts it, and refuses it with a byte of the proof changed, with a public
-//!   changed, cut short or extended, and against the vkey of a setup with another `τ`: each one an
+//!   changed, cut short or extended, and against the vkey of a setup with another `[τ]₂`: each one an
 //!   `InvalidProof`, where a verifier that cannot run is an `InvalidConfiguration`. It compiles the
 //!   fixture with the compiler `PIL2C_EXEC` names, which must have `--field`, and needs Node.js.
 //! - `prove_snark_wraps_a_vadcop_final_proof_in_pilfflonk`: the wrap of a real vadcop_final proof,
@@ -39,7 +39,6 @@ use std::process::{Command, Output};
 
 use num_bigint::BigUint;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
-use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::digest::seal_vkey;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman::{get_public_bytes_solidity, verify_snark_proof, SnarkProof, SnarkProtocol, PILFFLONK_PROTOCOL_ID};
@@ -205,8 +204,9 @@ fn verify_snark_accepts_a_pilfflonk_proof_and_refuses_every_change() {
     compile_fibonacci(&pilout);
     // More powers than the Fibonacci's largest degree, grouped by default (pilfflonk_verify.rs).
     let (proving_key, vkey_path) = set_up(&pilout, &dir.file("build"), &ptau::official(1024));
+    // The key of a ptau whose [τ]₂ is the official one's [τ²]₂: the same commitments, another X_2.
     let other_ptau = dir.file("other_tau.ptau");
-    write_fixed_tau_ptau(&other_ptau, 1024, &(test_tau() + 1u32)).unwrap();
+    ptau::with_another_tau_in_g2(&ptau::official(1024), &other_ptau);
     let (_, other_vkey) = set_up(&pilout, &dir.file("other"), &other_ptau);
 
     let proved = {

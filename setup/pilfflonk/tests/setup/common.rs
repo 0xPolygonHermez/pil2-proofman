@@ -1,6 +1,6 @@
 //! What the tests share: pilouts built in code (pilouts are not versioned), a
-//! directory of their own, the points a ptau with `τ = 1` commits to, and the lock of the tests
-//! that call the C++ core.
+//! directory of their own, some points of G1 and G2, and the lock of the tests that call the C++
+//! core.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -45,9 +45,8 @@ pub fn fr(decimal: &str) -> FrBytes {
 pub const N_BITS: u64 = 3;
 pub const N: usize = 1 << N_BITS;
 
-/// The fixed columns of [`pilout`]. The first rows are 1, 2, 3 and 0, so that with `τ = 1` the
-/// unpacked f of each commits to G, 2G, 3G and the point at infinity (see [`multiple_of_g`]). The
-/// other rows hold values of every width, 0 and `r − 1` included.
+/// The fixed columns of [`pilout`]. The first rows are 1, 2, 3 and 0; the other rows hold values of
+/// every width, 0 and `r − 1` included.
 pub fn fixed_values() -> Vec<Vec<BigUint>> {
     let row = |first: u64, seed: u64| -> Vec<BigUint> {
         let mut column = vec![BigUint::from(first)];
@@ -258,7 +257,8 @@ fn point(x: &str, y: &str) -> G1Affine {
 
 /// `m·G` for the generator `G = (1, 2)` of G1, for the `m` the tests need: BN128's well-known
 /// multiples, written out independently of the C++ core (as `provers/starks-lib-c/tests/
-/// pilfflonk_srs.rs` has them); `0·G` is the point at infinity, `(0, 0)`.
+/// pilfflonk_srs.rs` has them), points of the vkeys built in code; `0·G` is the point at infinity,
+/// `(0, 0)`.
 pub fn multiple_of_g(m: u64) -> G1Affine {
     match m {
         0 => G1Affine::INFINITY,
@@ -280,7 +280,7 @@ pub fn multiple_of_g(m: u64) -> G1Affine {
 }
 
 /// The generator of G2, canonical, `x.c0, x.c1, y.c0, y.c1` in decimal: the `[1]₂` of every
-/// BN128 library, and `[τ]₂` of a ptau with `τ = 1`.
+/// BN128 library.
 pub const G2_GENERATOR: [&str; 4] = [
     "10857046999023057135944570762232829481370756359578518086990519993285655852781",
     "11559732032986387107991004021392285783925812861821192530917403151452391805634",

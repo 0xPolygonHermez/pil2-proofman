@@ -40,7 +40,6 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use num_bigint::BigUint;
-use pilfflonk_setup::test_ptau::g1_times;
 use proofman_pilfflonk::calldata::{Word, SELECTOR_BYTES};
 use proofman_pilfflonk::names::{INV, INV_ZH, W, WP};
 use proofman_pilfflonk::{
@@ -680,13 +679,19 @@ impl Generator<'_> {
         self.rng.random_range(0..n)
     }
 
-    /// A random point of G1 other than the point at infinity: `s·[1]₁`.
+    /// A random point of G1 other than the point at infinity: `(x, y)` for the first `x` from a
+    /// random one with `x³ + 3` a square, `y` its square root `(x³ + 3)^((q+1)/4)` (`q ≡ 3 mod 4`).
+    /// G1 has cofactor 1: every point of the curve is in it.
     fn point(&mut self) -> G1Affine {
+        let q = q();
+        let mut x = self.below(&q);
         loop {
-            let s = self.below(&r());
-            if s != BigUint::ZERO {
-                return g1_times(&s);
+            let y = (&x * &x * &x + 3u32).modpow(&((&q + 1u32) >> 2u32), &q);
+            if on_curve(&x, &y) {
+                let fq = |c: &BigUint| FqBytes::from_decimal(&c.to_str_radix(10)).unwrap();
+                return G1Affine { x: fq(&x), y: fq(&y) };
             }
+            x = (x + 1u32) % &q;
         }
     }
 

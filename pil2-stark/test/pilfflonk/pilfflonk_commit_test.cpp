@@ -1,7 +1,9 @@
-// Tests for the KZG commitment, the fflonk packing and the fixed commitments, with a test SRS of
-// known τ: commit(p) must be [p(τ)]₁; pack() must interleave as f(X) = Σ_j p_j(X^k)·X^j, so that
-// its commitment is that of the interleaved coefficients and [f(τ)]₁ with f(τ) = Σ_j p_j(τ^k)·τ^j;
-// and pilfflonk_commit_fixed must equal INTT + packing + commitment done by hand.
+// Tests for the KZG commitment, the fflonk packing and the fixed commitments, on the SRS of the
+// official ptau: commit(p) must be the MSM of p's canonical coefficients on the SRS's powers (whose
+// MSM pilfflonk_msm_test.cpp checks against ffiasm's); pack() must interleave as
+// f(X) = Σ_j p_j(X^k)·X^j, so that its commitment is that of the interleaved coefficients, whose
+// polynomial at any x is Σ_j p_j(x^k)·x^j; and pilfflonk_commit_fixed must equal INTT + packing +
+// commitment done by hand.
 #include "pilfflonk_test.hpp"
 
 #include <climits>
@@ -17,7 +19,6 @@
 #include "pilfflonk_gpu.hpp"
 #include "pilfflonk_lde.hpp"
 #include "pilfflonk_srs.hpp"
-#include "pilfflonk_test_ptau.hpp"
 #include "polynomial.hpp"
 #ifdef __USE_CUDA__
 #include "pilfflonk_key_gpu.hpp"
@@ -38,7 +39,7 @@ using PilFflonk::Srs;
 
 Engine &E = Engine::engine;
 
-// The powers of the test SRS: enough for k·N = 12·64.
+// The powers of the SRS: enough for k·N = 12·64.
 constexpr uint64_t N_G1 = 1024;
 
 const std::vector<uint64_t> PACKINGS = {1, 2, 3, 4, 6, 12};
@@ -69,14 +70,9 @@ private:
     std::mt19937_64 generator;
 };
 
-// The SRS every test commits with: the first N_G1 powers of a test ptau.
+// The SRS every test commits with: the first N_G1 powers of the official ptau.
 const Srs &testSrs() {
-    static const Srs srs = [] {
-        TestDir dir;
-        const std::string ptau = dir.file("commit.ptau");
-        writeTestPtau(ptau, N_G1);
-        return Srs::fromPtau(ptau, N_G1);
-    }();
+    static const Srs srs = Srs::fromPtau(officialPtau(N_G1), N_G1);
     return srs;
 }
 
@@ -106,17 +102,23 @@ std::vector<Poly *> pointers(const std::vector<std::unique_ptr<Poly>> &polys) {
     return raw;
 }
 
-// f(τ) = Σ_j p_j(τ^k)·τ^j, by Horner's rule on each p_j (rapidsnark's Polynomial::evaluate).
-FrElement packedAt(const std::vector<Poly *> &polys, const FrElement &tau) {
+// f(x) = Σ_j p_j(x^k)·x^j, by Horner's rule on each p_j (rapidsnark's Polynomial::evaluate).
+FrElement packedAt(const std::vector<Poly *> &polys, const FrElement &x) {
     const uint64_t k = polys.size();
-    const FrElement tauK = power(tau, k);
+    const FrElement xK = power(x, k);
     FrElement sum = E.fr.zero();
-    FrElement tauJ = E.fr.one();
+    FrElement xJ = E.fr.one();
     for (uint64_t j = 0; j < k; ++j) {
-        E.fr.add(sum, sum, E.fr.mul(polys[j]->evaluate(tauK), tauJ));
-        E.fr.mul(tauJ, tauJ, tau);
+        E.fr.add(sum, sum, E.fr.mul(polys[j]->evaluate(xK), xJ));
+        E.fr.mul(xJ, xJ, x);
     }
     return sum;
+}
+
+// Whether the polynomial of the coefficients `f` is the packing of `polys`, at a point `x` taken at
+// random: the interleaving is f(X) = Σ_j p_j(X^k)·X^j.
+bool packsAt(const Column &f, const std::vector<Poly *> &polys, const FrElement &x) {
+    return E.fr.eq(polynomial(f)->evaluate(x), packedAt(polys, x));
 }
 
 // Written out here: coefficient i·k + j of f is coefficient i of p_j.
@@ -162,21 +164,19 @@ void expectInvalid(Call call, const char *message) {
     assert(!"expected std::invalid_argument");
 }
 
-void testCommitIsTheEvaluationAtTau() {
+void testCommit() {
     Random random(1);
     const Srs &srs = testSrs();
-    const FrElement tau = testTau();
-    for (uint64_t n : {1, 2, 3, 5, 64, 257, 1023, 1024}) {
-        const Column coefs = random.column(n);
-        assert(samePoint(srs.commit(coefs.data(), n), g1Times(polynomial(coefs)->evaluate(tau))));
-    }
 
-    // The scalars are the canonical values, not Montgomery limbs: 1 commits to G, X to [τ]₁.
+    // The scalars are the canonical values, not Montgomery limbs: 1 commits to G, X to [τ]₁, X^1023
+    // to [τ^1023]₁.
     const Column one = {E.fr.one()};
     assert(samePoint(srs.commit(one.data(), 1), E.g1.oneAffine()));
     const Column x = {E.fr.zero(), E.fr.one()};
     assert(samePoint(srs.commit(x.data(), 2), srs.g1(1)));
-    assert(samePoint(g1Times(tau), srs.g1(1)));
+    Column last(N_G1);
+    last[N_G1 - 1] = E.fr.one();
+    assert(samePoint(srs.commit(last.data(), N_G1), srs.g1(N_G1 - 1)));
     // No coefficients, or only zeros: the point at infinity.
     G1Point none = srs.commit(nullptr, 0);
     assert(E.g1.isZero(none));
@@ -207,7 +207,7 @@ void testPackedBufferLength() {
 void testPackInterleaves() {
     Random random(2);
     const Srs &srs = testSrs();
-    const FrElement tau = testTau();
+    const FrElement x = random.element();
     const uint64_t n = 64;
     for (uint64_t k : PACKINGS) {
         std::vector<std::unique_ptr<Poly>> owned;
@@ -233,9 +233,9 @@ void testPackInterleaves() {
         assert(identical(f.data(), hand.data(), nCoefs));
         assert(allZero(hand.data() + nCoefs, hand.size() - nCoefs));
 
+        assert(packsAt(hand, polys, x));
         const G1Point commitment = srs.commit(f.data(), nCoefs);
         assert(samePoint(commitment, srs.commit(hand.data(), hand.size())));
-        assert(samePoint(commitment, g1Times(packedAt(polys, tau))));
     }
 }
 
@@ -244,7 +244,7 @@ void testPackInterleaves() {
 void testPackDegreeAPowerOfTwo() {
     Random random(3);
     const Srs &srs = testSrs();
-    const FrElement tau = testTau();
+    const FrElement x = random.element();
     struct Case {
         std::vector<uint64_t> lengths; // the coefficients of each p_j, the last one nonzero
         uint64_t nCoefs;
@@ -268,7 +268,8 @@ void testPackDegreeAPowerOfTwo() {
         const Column hand = interleave(polys);
         assert(nCoefs == test.nCoefs);
         assert(identical(f.data(), hand.data(), nCoefs));
-        assert(samePoint(srs.commit(f.data(), nCoefs), g1Times(packedAt(polys, tau))));
+        assert(packsAt(hand, polys, x));
+        assert(samePoint(srs.commit(f.data(), nCoefs), srs.commit(hand.data(), hand.size())));
     }
 }
 
@@ -276,7 +277,7 @@ void testPackDegreeAPowerOfTwo() {
 void testPackDegenerate() {
     Random random(4);
     const Srs &srs = testSrs();
-    const FrElement tau = testTau();
+    const FrElement x = random.element();
     const FrElement a = random.element(), b = random.element();
     struct Case {
         std::vector<Column> coefs;
@@ -300,7 +301,8 @@ void testPackDegenerate() {
         const Column f = packed(polys, nCoefs, random);
         assert(nCoefs == test.f.size());
         assert(identical(f.data(), test.f.data(), nCoefs));
-        assert(samePoint(srs.commit(f.data(), nCoefs), g1Times(packedAt(polys, tau))));
+        assert(packsAt(test.f, polys, x));
+        assert(samePoint(srs.commit(f.data(), nCoefs), srs.commit(test.f.data(), test.f.size())));
     }
 }
 
@@ -343,13 +345,8 @@ Column evaluationsOf(const Column &coefs, uint64_t nBits) {
 }
 
 // What pilfflonk_commit_fixed does, one step at a time: Lde's INTT, the interleaving written out
-// here, and the MSM. Also [f(τ)]₁ from the INTT's polynomials.
-struct ByHand {
-    G1Point commitment;
-    G1Point atTau;
-};
-
-ByHand commitByHand(const Lde &lde, std::vector<Column> columns) {
+// here, and the MSM.
+G1Point commitByHand(const Lde &lde, std::vector<Column> columns) {
     const Srs &srs = testSrs();
     const uint64_t N = lde.domainSize();
     std::vector<Column> coefs(columns.size(), Column(N));
@@ -360,7 +357,7 @@ ByHand commitByHand(const Lde &lde, std::vector<Column> columns) {
     }
     const std::vector<std::unique_ptr<Poly>> polys = lde.intt(in.data(), out.data(), columns.size());
     const Column f = interleave(pointers(polys));
-    return {srs.commit(f.data(), f.size()), g1Times(packedAt(pointers(polys), testTau()))};
+    return srs.commit(f.data(), f.size());
 }
 
 G1Point commitFixed(const Lde &lde, std::vector<Column> columns) {
@@ -386,10 +383,7 @@ void testCommitFixed() {
             for (uint64_t j = 0; j < k; ++j) {
                 columns.push_back(random.column(N));
             }
-            const G1Point commitment = commitFixed(lde, columns);
-            const ByHand expected = commitByHand(lde, columns);
-            assert(samePoint(commitment, expected.commitment));
-            assert(samePoint(commitment, expected.atTau));
+            assert(samePoint(commitFixed(lde, columns), commitByHand(lde, columns)));
         }
     }
 }
@@ -398,7 +392,6 @@ void testCommitFixed() {
 void testCommitFixedSpecialColumns() {
     Random random(7);
     const Srs &srs = testSrs();
-    const FrElement tau = testTau();
     const Lde lde(4, 4);
     Column x4(5);
     x4[4] = E.fr.one();
@@ -411,14 +404,16 @@ void testCommitFixedSpecialColumns() {
     assert(samePoint(commitFixed(lde, {evalsX4}), srs.g1(4)));
     assert(samePoint(commitFixed(lde, {evalsX4, zero}), srs.g1(8)));
     assert(samePoint(commitFixed(lde, {zero, evalsX4}), srs.g1(9)));
-    // Constants and a linear column: CPolynomial's degree bound is below 2.
+    // Constants and a linear column: CPolynomial's degree bound is below 2. a commits to a·G, and
+    // two constants and a linear column to the commitment of a + b·X.
     assert(samePoint(commitFixed(lde, {constantA}), g1Times(a)));
-    assert(samePoint(commitFixed(lde, {constantA, constantB}), g1Times(E.fr.add(a, E.fr.mul(b, tau)))));
-    assert(samePoint(commitFixed(lde, {linear}), g1Times(E.fr.add(a, E.fr.mul(b, tau)))));
+    const Column ab = {a, b};
+    assert(samePoint(commitFixed(lde, {constantA, constantB}), srs.commit(ab.data(), 2)));
+    assert(samePoint(commitFixed(lde, {linear}), srs.commit(ab.data(), 2)));
     // And past it: a + c·X + b·X^2 + ... for k = 3.
     const Column constantC(16, c);
-    const FrElement expected = E.fr.add(E.fr.add(a, E.fr.mul(c, tau)), E.fr.mul(b, E.fr.mul(tau, tau)));
-    assert(samePoint(commitFixed(lde, {constantA, constantC, constantB}), g1Times(expected)));
+    const Column acb = {a, c, b};
+    assert(samePoint(commitFixed(lde, {constantA, constantC, constantB}), srs.commit(acb.data(), 3)));
     // Nothing: the point at infinity.
     G1Point none = commitFixed(lde, {zero, zero, zero});
     assert(E.g1.isZero(none));
@@ -475,10 +470,8 @@ void expectStatus(int status, int expected, const char *text) {
 void testApiCommitFixed() {
     Random random(9);
     TestDir dir;
-    const std::string ptau = dir.file("api.ptau");
     const std::string srsPath = dir.file("api.srs.bin");
-    writeTestPtau(ptau, N_G1);
-    assert(pilfflonk_srs_from_ptau(ptau.c_str(), 256, srsPath.c_str()) == PILFFLONK_OK);
+    assert(pilfflonk_srs_from_ptau(officialPtau(256).c_str(), 256, srsPath.c_str()) == PILFFLONK_OK);
     void *srs = pilfflonk_srs_load(srsPath.c_str());
     assert(srs != nullptr);
 
@@ -494,7 +487,7 @@ void testApiCommitFixed() {
             encodeColumns(columns, bytes);
             assert(pilfflonk_commit_fixed(srs, nBits, k, bytes.data(), out) == PILFFLONK_OK);
             assert(pilfflonk_last_status() == PILFFLONK_OK && pilfflonk_last_error()[0] == '\0');
-            assert(samePoint(commitByHand(lde, columns).commitment, decodeG1(out)));
+            assert(samePoint(commitByHand(lde, columns), decodeG1(out)));
         }
     }
 
@@ -636,7 +629,7 @@ void testTheGpuShift() {
 } // namespace
 
 void runCommitTests() {
-    testCommitIsTheEvaluationAtTau();
+    testCommit();
     testPackedBufferLength();
     testPackInterleaves();
     testPackDegreeAPowerOfTwo();

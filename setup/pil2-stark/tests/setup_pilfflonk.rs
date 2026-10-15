@@ -23,23 +23,33 @@ use pil2_pilout::pilout::{self as pb, constraint, expression, operand};
 use pilfflonk_setup::bytecode::Bytecode;
 use pilfflonk_setup::digest::keccak256;
 use pilfflonk_setup::fixed::FixedColumns;
-use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use prost::Message;
 use proofman_pilfflonk::global_info::GLOBAL_CONSTRAINTS_FILE;
 use proofman_pilfflonk::{
-    AirFile, AirVerkey, FqBytes, FrBytes, G1Affine, GlobalInfoAir, JsonFile, NameStageEntry, PilfflonkGlobalInfo,
-    PilfflonkInfo, PolType, ProofNames, SetupParams, Vkey, WitnessShape,
+    AirFile, AirVerkey, FrBytes, G1Affine, GlobalInfoAir, JsonFile, NameStageEntry, PilfflonkGlobalInfo, PilfflonkInfo,
+    PolType, ProofNames, SetupParams, Vkey, WitnessShape,
 };
+use proofman_starks_lib_c::PilFflonkSrs;
 
 const BN128_R_BE: [u8; 32] = [
     0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d, 0x28, 0x33, 0xe8,
     0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
 ];
 
-/// The generator of G1, `(1, 2)`: with `τ = 1`, the commitment of a fixed column whose first
-/// row is 1. One whose first row is 0 commits to the point at infinity, `(0, 0)`.
-fn g() -> G1Affine {
-    G1Affine { x: FqBytes::from_u64(1), y: FqBytes::from_u64(2) }
+/// The commitment of the fixed `f` that packs `columns`, of 2^n_bits rows each, in that order, with
+/// the SRS of the key at `proving_key`: the C API's (`PilFflonkSrs::commit_fixed`), whose MSM the
+/// C++ tests check against ffiasm's (`make -C pil2-stark pilfflonk_test`).
+fn commitment(proving_key: &Path, n_bits: u64, columns: &[&[FrBytes]]) -> G1Affine {
+    let gi = PilfflonkGlobalInfo::from_proving_key(proving_key).unwrap();
+    let srs = PilFflonkSrs::load(&gi.srs_path(proving_key)).unwrap();
+    let evals: Vec<[u8; 32]> = columns.iter().flat_map(|c| c.iter().map(FrBytes::to_le_bytes)).collect();
+    G1Affine::from_le_bytes(&srs.commit_fixed(n_bits, columns.len() as u64, &evals).unwrap()).unwrap()
+}
+
+/// The column of 2^n_bits rows that is 1 on row `one` and 0 elsewhere: the std's `L1` (row 0) and
+/// the Fibonacci's `LLAST` (the last).
+fn lagrange(n_bits: u64, one: u64) -> Vec<FrBytes> {
+    (0..1u64 << n_bits).map(|i| FrBytes::from_u64((i == one) as u64)).collect()
 }
 
 /// A fresh directory for one test under the target's temporary directory, removed when dropped.
@@ -242,10 +252,9 @@ fn the_subcommand_takes_the_documented_arguments() {
 fn it_writes_the_proving_key_of_a_pilout() {
     let dir = TestDir::new("tiny");
     let pilout_path = dir.file("tiny.pilout");
-    let ptau = dir.file("tau_one.ptau");
+    let ptau = ptau::official(16);
     let build = dir.file("build");
     fs::write(&pilout_path, pilout().encode_to_vec()).unwrap();
-    write_tau_one_ptau(&ptau, 16).unwrap();
 
     let args = ["setup-pilfflonk", "-a", path(&pilout_path), "-b", path(&build), "--powers-of-tau", path(&ptau)];
     let out =
@@ -275,7 +284,7 @@ fn it_writes_the_proving_key_of_a_pilout() {
     let column: Vec<FrBytes> = [1, 5, 6, 7].map(FrBytes::from_u64).to_vec();
     assert_eq!(fixed.column(0).unwrap(), column.as_slice());
     let verkey = AirVerkey::read(&gi.air_file(&proving_key, 0, 0, AirFile::Verkey).unwrap()).unwrap();
-    assert_eq!(verkey, AirVerkey(vec![g()]));
+    assert_eq!(verkey, AirVerkey(vec![commitment(&proving_key, 2, &[&column])]));
 
     // A second run writes the same bytes.
     let before = contents(&proving_key);
@@ -400,8 +409,7 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
         .unwrap();
     assert!(out.status.success(), "compile-pil: {}", String::from_utf8_lossy(&out.stderr));
 
-    let ptau = dir.file("tau_one.ptau");
-    write_tau_one_ptau(&ptau, 1024).unwrap();
+    let ptau = ptau::official(1024);
     let build = dir.file("build");
     let args = [
         "setup-pilfflonk",
@@ -476,8 +484,9 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
     assert_eq!(info.opening_points, [0, 1]);
     assert_eq!(info.ev_map.len(), 7);
 
-    // With τ = 1: L1(1)·G = G and LLAST(1)·G, the point at infinity.
-    assert_eq!(vkey.fixed_commitments.0, [g(), G1Affine::INFINITY]);
+    // The commitments of L1 and LLAST.
+    let (l1, llast) = (lagrange(8, 0), lagrange(8, 255));
+    assert_eq!(vkey.fixed_commitments.0, [commitment(&proving_key, 8, &[&l1]), commitment(&proving_key, 8, &[&llast])]);
     assert_eq!((vkey.n_public, vkey.power, vkey.power_w, vkey.q_deg), (3, 8, 1, 1));
 
     // The SRS: the 261 powers of Q's f, the largest of the layout.
@@ -565,8 +574,8 @@ fn it_writes_the_proving_key_of_the_fibonacci_fixture() {
                 packing: true
             }
         );
-        // τ = 1: the fixed f of LLAST and L1 commits to (LLAST(1) + L1(1))·G = G.
-        assert_eq!(vkey.fixed_commitments.0, [g()]);
+        // The fixed f of LLAST and L1, packed in that order.
+        assert_eq!(vkey.fixed_commitments.0, [commitment(&proving_key, 8, &[&llast, &l1])]);
         // The SRS holds the powers of the largest f.
         let largest = expected.iter().map(|f| f.4).max().unwrap();
         let srs = fs::read(gi.srs_path(&proving_key)).unwrap();

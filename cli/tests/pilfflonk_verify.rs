@@ -1,10 +1,8 @@
 //! `proofman-cli pilfflonk verify` (pilfflonk/docs/verifier.md#js-verifier) on the keys of the
-//! Fibonacci fixture, set up (grouped, the default) with the ptau of `τ = 1`
-//! (pilfflonk/docs/README.md#tests). The proof is forged by `forgeProof` of
-//! `pilfflonk/js/test/proofs.js`, which opens anything since it knows `τ`; the prover's proofs are
-//! verified with a full-width `τ` in `pilfflonk_prove.rs`. The command must exit with 0 on it, and
-//! with another status on a tampered copy, on malformed files and on every vkey `Vkey::validate`
-//! refuses, which the JS verifier must refuse too.
+//! Fibonacci fixture, set up (grouped, the default) with the official ptau of the tests
+//! (pilfflonk/docs/README.md#tests), and the prover's proof of its witness for the inputs `[1, 2]`.
+//! The command must exit with 0 on it, and with another status on a tampered copy, on malformed
+//! files and on every vkey `Vkey::validate` refuses, which the JS verifier must refuse too.
 //!
 //! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
 //! which must have `--field`, and is `#[ignore]` without it. It needs Node.js:
@@ -14,32 +12,23 @@
 //!     --test pilfflonk_verify -- --ignored
 //! ```
 
+#[path = "../../pilfflonk/tests/data/fibonacci.rs"]
+mod fibonacci;
+#[path = "../../pilfflonk/tests/data/ptau.rs"]
+mod ptau;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::digest::seal_vkey;
-use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
-use proofman_pilfflonk::{JsonFile, PilfflonkGlobalInfo, Vkey, BN128_R};
+use proofman_pilfflonk::{prove, JsonFile, PilfflonkGlobalInfo, ProveOptions, ProvingKey, Vkey, BN128_R};
 use serde_json::{json, Value};
 
 /// The Fibonacci's publics for the inputs 1 and 2 (`pil-fflonk/runtime/public.json`).
 const PUBLICS: [&str; 3] = ["1", "2", "590308608561184158373097535019708483037277117989374906445627411437315467687"];
-
-/// Writes the proof `forgeProof` forges for the vkey and the publics at the paths it is given.
-const FORGE: &str = r#"
-import { readFileSync, writeFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-
-const [js, vkeyPath, publicsPath, proofPath] = process.argv.slice(1);
-const { forgeProof } = await import(pathToFileURL(`${js}/test/proofs.js`).href);
-const { newCurve } = await import(pathToFileURL(`${js}/test/support.js`).href);
-const read = (path) => JSON.parse(readFileSync(path, "utf8"));
-const proof = forgeProof(await newCurve(), read(vkeyPath), read(publicsPath));
-writeFileSync(proofPath, JSON.stringify(proof, null, 1));
-"#;
 
 /// A fresh directory for the test under the target's temporary directory, removed when dropped.
 struct TestDir(PathBuf);
@@ -99,16 +88,6 @@ fn verify(vkey: &Path, publics: &Path, proof: &Path) -> Output {
         .expect("proofman-cli runs")
 }
 
-fn forge_proof(vkey: &Path, publics: &Path, proof: &Path) {
-    let out = Command::new("node")
-        .args(["--input-type=module", "-e", FORGE])
-        .arg(repo_root().join("pilfflonk/js"))
-        .args([vkey, publics, proof])
-        .output()
-        .expect("node runs");
-    assert!(out.status.success(), "forgeProof: {}", stderr(&out));
-}
-
 /// `value + 1 mod r`, in decimal.
 fn plus_one(value: &Value) -> Value {
     let r = num_bigint::BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap();
@@ -144,7 +123,9 @@ fn it_verifies_a_proof_of_the_fibonacci_and_rejects_every_change() {
     let opts = SetupPilfflonkOptions {
         airout_path: dir.file("fibonacci.pilout"),
         build_dir: dir.file("build"),
-        powers_of_tau: dir.file("tau_one.ptau"),
+        // More powers than the Fibonacci's largest degree, grouped by default: 513, the f of L1 and
+        // LLAST.
+        powers_of_tau: ptau::official(1024),
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
@@ -152,9 +133,6 @@ fn it_verifies_a_proof_of_the_fibonacci_and_rejects_every_change() {
         solidity: false,
     };
     compile_fibonacci(&opts.airout_path);
-    // More powers than the Fibonacci's largest degree, grouped by default: 513, the f of L1 and
-    // LLAST.
-    write_tau_one_ptau(&opts.powers_of_tau, 1024).unwrap();
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
     let vkey_path = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap().vkey_path(&proving_key);
@@ -169,11 +147,16 @@ fn it_verifies_a_proof_of_the_fibonacci_and_rejects_every_change() {
     };
 
     // A proof that is not JSON, which also installs the verifier's dependencies if they are
-    // missing: the forging needs them.
+    // missing.
     fs::write(&proof_path, "not JSON").unwrap();
     rejected(&vkey_path, &publics_path, &proof_path, "cannot read the vkey, the publics or the proof");
 
-    forge_proof(&vkey_path, &publics_path, &proof_path);
+    // The prover's proof, of the publics of pil-fflonk.
+    let proved =
+        prove(&ProvingKey::load(&proving_key).unwrap(), &fibonacci::witness(8, [1, 2]), &ProveOptions::default())
+            .unwrap();
+    assert_eq!(proved.publics.0.iter().map(|p| p.to_decimal()).collect::<Vec<_>>(), PUBLICS);
+    proved.proof_json().unwrap().write(&proof_path).unwrap();
     let out = verify(&vkey_path, &publics_path, &proof_path);
     assert!(out.status.success(), "{}", output(&out));
     assert!(stderr(&out).contains("OK: the proof verifies"), "{}", output(&out));

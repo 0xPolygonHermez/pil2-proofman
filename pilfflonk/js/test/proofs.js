@@ -2,13 +2,14 @@
 // - sampleVkey(): the vkey of the pinned digest vector (setup/pilfflonk/tests/setup/digest.rs);
 // - syntheticVkey(): a vkey of two stages, packing, signed offsets, every domain
 //   (pilfflonk/docs/protocol.md#constraint-polynomial) and every operand of the qVerifier;
-// - forgeProof(): a proof that verifies against a vkey whose [τ]₂ is [1]₂, the vkeys of the ptau
-//   with τ = 1 of the tests (pilfflonk/docs/README.md#tests). Knowing τ, anyone can open anything:
-//   random commitments and evaluations, the challenges they give, W' = (F − E − J)/(1 − y), which
-//   makes the pairing (pilfflonk/docs/protocol.md#pairing-check) hold, e(F − E − J + y·W', [1]₂) =
+// - forgeProof(): a proof that verifies against a vkey whose [τ]₂ is [1]₂, as the synthetic vkeys
+//   here have it: of τ = 1, which no ptau has, and with which anyone can open anything: random
+//   commitments and evaluations, the challenges they give, W' = (F − E − J)/(1 − y), which makes
+//   the pairing (pilfflonk/docs/protocol.md#pairing-check) hold, e(F − E − J + y·W', [1]₂) =
 //   e(W', [1]₂), and the inv those give. It is not a prover and says nothing about the prover's
-//   agreement with the verifier (the end-to-end tests of cli/tests/pilfflonk_prove.rs do): it runs
-//   the whole verifier on a proof it accepts, so that each change to it can be shown to be rejected;
+//   agreement with the verifier (the end-to-end tests of cli/tests/pilfflonk_prove.rs and
+//   setup.test.js do, on proofs of the prover): it runs the whole verifier on a proof it accepts,
+//   so that each change to it can be shown to be rejected;
 // - RecordingTranscript and recordingLogger, to observe what the verifier does.
 
 import { keccak_256 } from "@noble/hashes/sha3";
@@ -32,7 +33,7 @@ import { Keccak256Transcript } from "../src/transcript.js";
 import { computeQ, openingEvaluations } from "../src/verify.js";
 import { fromObjectVk, vkeyDigest } from "../src/vkey.js";
 
-// [1]₂: the X_2 of a ptau with τ = 1 (setup/pilfflonk/tests/setup/common.rs, G2_GENERATOR).
+// [1]₂, the X_2 of the synthetic vkeys (setup/pilfflonk/tests/setup/common.rs, G2_GENERATOR).
 export const G2_GENERATOR = [
     [
         "10857046999023057135944570762232829481370756359578518086990519993285655852781",

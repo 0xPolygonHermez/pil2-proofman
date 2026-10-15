@@ -10,7 +10,6 @@
 // byte for byte against the CPU's code on seeded inputs, edge values (0, 1, r − 1, all equal) and
 // sizes around the warp, the block of 256 threads and powers of two.
 #include "pilfflonk_test.hpp"
-#include "pilfflonk_test_ptau.hpp"
 
 #include <algorithm>
 #include <cstdio>

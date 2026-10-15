@@ -83,7 +83,7 @@ use num_bigint::BigUint;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::digest::seal_vkey;
 use pilfflonk_setup::solidity::{export_verifier_sol, VERIFIER_SOL_FILE};
-use pilfflonk_setup::test_ptau::{g1_times, g2_times, test_tau};
+use pilfflonk_setup::keys::{load_srs, write_srs, x_2};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use prost::Message;
 use proofman_pilfflonk::calldata::SELECTOR_BYTES;
@@ -91,6 +91,7 @@ use proofman_pilfflonk::{
     js_verifier, prove, verifier_challenges, Calldata, CalldataLayout, FqBytes, FrBytes, G1Affine, JsonFile,
     PilfflonkGlobalInfo, Proof, ProofNames, ProveOptions, ProvingKey, Publics, Vkey, Witness,
 };
+use proofman_starks_lib_c::PilFflonkSrs;
 use serde_json::json;
 
 use foundry::{check_on_foundry, compile_with_solc, Case, Outcome, Tools};
@@ -465,27 +466,45 @@ fn foundry_verifies_the_proofs_of_every_domain() {
     }
 }
 
+/// The commitment of the polynomial `p`, of fewer than 2^n_bits coefficients, on `srs`: the C API's
+/// commitment of its evaluations on the domain of 2^n_bits points (`PilFflonkSrs::commit_fixed`
+/// with one column, which interpolates them), `p` given by its values.
+fn commit(srs: &PilFflonkSrs, n_bits: u64, p: impl Fn(&BigUint) -> BigUint) -> G1Affine {
+    let r = r();
+    let omega = BigUint::from(5u32).modpow(&((&r - 1u32) >> n_bits), &r);
+    let mut x = BigUint::from(1u32);
+    let mut evals = Vec::new();
+    for _ in 0..1u64 << n_bits {
+        evals.push(fr(&p(&x)).to_le_bytes());
+        x = x * &omega % &r;
+    }
+    G1Affine::from_le_bytes(&srs.commit_fixed(n_bits, 1, &evals).unwrap()).unwrap()
+}
+
 /// A split `Q` and no evaluation, an edge case of the vkey format: one `f`, `Q`'s, of `k = 2` with
 /// its pieces in the order `Q1`, `Q0`, so that the calldata's scalars start with `Q1`, and the
 /// transcript absorbs the pieces from there, not from `Q0` (pilfflonk/docs/verifier.md#steps, step
-/// 4). No pilout gives such a key: the vkey and its proof are made here with the test ptau's `τ`,
-/// for the statement `public = 5` (`Q = (p − 5)/Z_H` is then 0, and its pieces only PLONK's
-/// blinding, pilfflonk/docs/protocol.md#q-pieces): `f(X) = Q1(X²) + X·Q0(X²)` with `Q0 = b0·X^N +
-/// b1·X^(N+1)` and `Q1 = −b0 − b1·X`, committed as `f(τ)·G`, and `W` and `W'` as the prover defines
-/// them for one `f` (pilfflonk/docs/protocol.md#pairing-check).
+/// 4). No pilout gives such a key: the vkey and its proof are made here, with the SRS of the
+/// official ptau, for the statement `public = 5` (`Q = (p − 5)/Z_H` is then 0, and its pieces only
+/// PLONK's blinding, pilfflonk/docs/protocol.md#q-pieces): `f(X) = Q1(X²) + X·Q0(X²)` with
+/// `Q0 = b0·X^N + b1·X^(N+1)` and `Q1 = −b0 − b1·X`, and `W` and `W'` as the prover defines them for
+/// one `f` (pilfflonk/docs/protocol.md#pairing-check), each committed from its values on a domain
+/// of 2^10 points, more than its coefficients ([`commit`]).
 #[test]
 #[ignore = "needs PILFFLONK_FORGE, PILFFLONK_SOLC and Node.js"]
 fn foundry_verifies_a_split_q_without_evaluations() {
     let _cpp = cpp_core();
     let tools = Tools::from_env();
     let dir = TestDir::new("noeval");
-    let tau = test_tau();
+    let srs_path = dir.file("pilfflonk.srs.bin");
+    write_srs(&ptau::official(1024), 1024, &srs_path).unwrap();
+    let srs = load_srs(&srs_path).unwrap();
     let r = r();
     let n: u64 = 1 << 8;
     let tmp = |id: u64| json!({"type": "tmp", "id": id, "dim": 1});
     let vkey_json = json!({
         "protocol": "pilfflonk", "curve": "bn128", "formatVersion": 1, "nPublic": 1, "power": 8, "powerW": 2,
-        "X_2": g2_times(&tau), "numChallenges": [0], "evMap": [],
+        "X_2": x_2(&srs).unwrap(), "numChallenges": [0], "evMap": [],
         "layout": [{
             "stage": 2, "pols": [{"id": 0, "name": "Q1"}, {"id": 1, "name": "Q0"}], "k": 2, "offsets": [0],
             "degree": 2 * n + 4,
@@ -510,12 +529,13 @@ fn foundry_verifies_a_split_q_without_evaluations() {
     let pow = |b: &BigUint, e: u64| b.modpow(&BigUint::from(e), &r);
     let q0 = |x: &BigUint| (&b0 * pow(x, n) + &b1 * pow(x, n + 1)) % &r;
     let q1 = |x: &BigUint| fr_sub(&BigUint::ZERO, &((&b0 + &b1 * x) % &r));
-    let f_tau = (q1(&pow(&tau, 2)) + &tau * q0(&pow(&tau, 2))) % &r;
+    let f = |x: &BigUint| (q1(&pow(x, 2)) + x * q0(&pow(x, 2))) % &r;
+    let f_commitment = commit(&srs, 10, f);
     let mut proof = Proof {
-        commitments: vec![g1_times(&f_tau)],
+        commitments: vec![f_commitment],
         // Any W and evaluations for now: the transcript absorbs them after xiSeed.
-        w: g1_times(&f_tau),
-        wp: g1_times(&BigUint::from(1u32)),
+        w: f_commitment,
+        wp: G1Affine { x: FqBytes::from_u64(1), y: FqBytes::from_u64(2) },
         evaluations: vec![FrBytes::ZERO; 2],
         air_values: vec![],
         airgroup_values: vec![],
@@ -527,15 +547,16 @@ fn foundry_verifies_a_split_q_without_evaluations() {
     let (q1_xi, q0_xi) = (q1(&xi), q0(&xi));
     // The pieces in the order of the layout: Q1, Q0.
     proof.evaluations = vec![fr(&q1_xi), fr(&q0_xi)];
-    // r(X) = Q1(ξ) + X·Q0(ξ) interpolates f on T = {±xiSeed}, the roots of Z_T = X² − ξ; h = (f − r)/Z_T.
+    // r(X) = Q1(ξ) + X·Q0(ξ) interpolates f on T = {±xiSeed}, the roots of Z_T = X² − ξ; h = (f − r)/Z_T,
+    // a polynomial, given by its values off T.
     let r_at = |x: &BigUint| (&q1_xi + x * &q0_xi) % &r;
-    let h_tau = fr_sub(&f_tau, &r_at(&tau)) * fr_inv(&fr_sub(&pow(&tau, 2), &xi)) % &r;
-    proof.w = g1_times(&h_tau);
+    let h = |x: &BigUint| fr_sub(&f(x), &r_at(x)) * fr_inv(&fr_sub(&pow(x, 2), &xi)) % &r;
+    proof.w = commit(&srs, 10, h);
     let y = big(&verifier_challenges(&vkey, &proof, &publics).unwrap().y);
-    // W' = L/(X − y) at τ, with L = f − r(y) − Z_T(y)·h: q_0 = Z_T(y) for one f
+    // W' = L/(X − y), with L = f − r(y) − Z_T(y)·h: q_0 = Z_T(y) for one f
     // (pilfflonk/docs/protocol.md#pairing-check).
-    let l_tau = fr_sub(&fr_sub(&f_tau, &r_at(&y)), &(fr_sub(&pow(&y, 2), &xi) * &h_tau % &r));
-    proof.wp = g1_times(&(l_tau * fr_inv(&fr_sub(&tau, &y)) % &r));
+    let l = |x: &BigUint| fr_sub(&fr_sub(&f(x), &r_at(&y)), &(fr_sub(&pow(&y, 2), &xi) * h(x) % &r));
+    proof.wp = commit(&srs, 10, |x| l(x) * fr_inv(&fr_sub(x, &y)) % &r);
     let proof = fixup(&vkey, proof, &publics);
 
     // The JSON view, by hand: no pilfflonkinfo names this proof (f0, W, Wp; Q1, Q0, inv, invZh:

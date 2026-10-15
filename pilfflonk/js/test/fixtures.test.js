@@ -18,15 +18,7 @@ import {
     g1ToObject,
     g2FromObject,
 } from "../src/elements.js";
-import {
-    computeE,
-    computeF,
-    computeJ,
-    computeQuotients,
-    computeR,
-    computeRoots,
-    computeZerofiers,
-} from "../src/shplonk.js";
+import { computeRoots } from "../src/shplonk.js";
 import { Keccak256Transcript } from "../src/transcript.js";
 import { EXPECTED_CASES, FIXTURES_DIR, NO_FIXTURES, loadFixtures, newCurve, openingOf, verifies } from "./support.js";
 
@@ -101,32 +93,14 @@ function run(dir) {
                 });
             });
 
-            await t.test("its SRS is τ's: [1]₂ is the generator and [τ]₂ = τ·[1]₂", () => {
-                const G2 = curve.G2;
-                const one = g2FromObject(curve, fixture.X2.one, "[1]₂");
-                const tau = g2FromObject(curve, fixture.X2.tau, "[τ]₂");
-                assert.ok(G2.eq(one, G2.one));
-                assert.ok(G2.eq(tau, G2.timesFr(G2.one, frFromObject(curve, fixture.tau, "τ"))));
+            await t.test("its [1]₂ is the generator", () => {
+                assert.ok(curve.G2.eq(g2FromObject(curve, fixture.X2.one, "[1]₂"), curve.G2.one));
             });
 
             await t.test("is accepted, whichever of its f_i are the fixed ones", async () => {
                 for (const nFixed of new Set([0, 1, fixture.f.length])) {
                     assert.equal(await verifies(curve, fixture, { nFixed }), true, `${nFixed} fixed`);
                 }
-            });
-
-            await t.test("F - E - J + y·[W'] = τ·[W'], the pairing's equation with the known τ", () => {
-                const G1 = curve.G1;
-                const o = openingOf(curve, fixture);
-                const { f: roots } = computeRoots(curve, o, o.xiSeed);
-                const zerofiers = computeZerofiers(curve, roots, o.y);
-                const r = computeR(curve, o.f, roots, o.evaluations, zerofiers, o.y);
-                const q = computeQuotients(curve, zerofiers, o.alpha);
-                const F = computeF(curve, o.commitments, q);
-                const E = computeE(curve, r, q);
-                const J = computeJ(curve, o.W, q[0]);
-                const lhs = G1.add(G1.sub(G1.sub(F, E), J), G1.timesFr(o.Wp, o.y));
-                assert.ok(G1.eq(lhs, G1.timesFr(o.Wp, frFromObject(curve, fixture.tau, "τ"))));
             });
 
             await t.test("every tampered proof or key is rejected", async () => {

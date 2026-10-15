@@ -9,12 +9,12 @@ use std::path::{Path, PathBuf};
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::digest::seal_vkey;
 use pilfflonk_setup::solidity::{export_verifier_sol, verifier_sol, VERIFIER_SOL_FILE};
-use pilfflonk_setup::test_ptau::{fixed_tau_ptau, test_tau, write_tau_one_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupError, SetupPilfflonkOptions};
 use prost::Message;
 use proofman_pilfflonk::{Boundary, CalldataLayout, FqBytes, G1Affine, G2Affine, JsonFile, PilfflonkGlobalInfo, Vkey};
 
 use crate::common::*;
+use crate::ptau;
 
 /// Every file under `dir`, relative to it, sorted, with its bytes.
 fn contents(dir: &Path) -> Vec<(String, Vec<u8>)> {
@@ -35,13 +35,13 @@ fn contents(dir: &Path) -> Vec<(String, Vec<u8>)> {
     out
 }
 
-/// Sets up `common`'s pilout in `dir/<build>` with `--no-packing` and a ptau with `τ = 1`, with
+/// Sets up `common`'s pilout in `dir/<build>` with `--no-packing` and the official ptau, with
 /// `--solidity` or not, and returns its `provingKey/`.
 fn setup(dir: &TestDir, build: &str, solidity: bool) -> PathBuf {
     let opts = SetupPilfflonkOptions {
         airout_path: dir.file("synthetic.pilout"),
         build_dir: dir.file(build),
-        powers_of_tau: dir.file("tau_one.ptau"),
+        powers_of_tau: ptau::official(64),
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
@@ -50,7 +50,6 @@ fn setup(dir: &TestDir, build: &str, solidity: bool) -> PathBuf {
     };
     if !opts.airout_path.exists() {
         fs::write(&opts.airout_path, pilout().encode_to_vec()).unwrap();
-        write_tau_one_ptau(&opts.powers_of_tau, 64).unwrap();
     }
     run_setup_pilfflonk(&opts).unwrap();
     opts.build_dir.join(PROVING_KEY_DIR)
@@ -104,14 +103,15 @@ fn solidity_writes_the_verifier_next_to_the_vkey_and_changes_nothing_else() {
     assert!(sol.contains(&signature), "{sol}");
     assert!(sol.contains(&format!("digest {}", vkey.digest.to_hex())), "{sol}");
     assert!(sol.contains(&format!("uint256 constant DIGEST = {};", vkey.digest.to_fr().to_decimal())), "{sol}");
-    // The fixed commitments, the vkey's: with τ = 1, G, 2G and 3G.
-    for (i, g) in [multiple_of_g(1), multiple_of_g(2), multiple_of_g(3)].iter().enumerate() {
+    // The fixed commitments, the vkey's: of L1, C[0] and C[1].
+    assert_eq!(vkey.fixed_commitments.0.len(), 3);
+    for (i, g) in vkey.fixed_commitments.0.iter().enumerate() {
         assert!(sol.contains(&format!("uint256 constant f{i}x = {};", g.x.to_decimal())), "f{i}: {sol}");
         assert!(sol.contains(&format!("uint256 constant f{i}y = {};", g.y.to_decimal())), "f{i}: {sol}");
     }
-    // [τ]₂ = [1]₂ with τ = 1.
-    assert!(sol.contains(&format!("uint256 constant X2x1 = {};", G2_GENERATOR[0])), "{sol}");
-    assert!(sol.contains(&format!("uint256 constant X2y2 = {};", G2_GENERATOR[3])), "{sol}");
+    // [τ]₂, the vkey's.
+    assert!(sol.contains(&format!("uint256 constant X2x1 = {};", vkey.x_2.x[0].to_decimal())), "{sol}");
+    assert!(sol.contains(&format!("uint256 constant X2y2 = {};", vkey.x_2.y[1].to_decimal())), "{sol}");
 }
 
 #[test]
@@ -216,11 +216,8 @@ fn a_ptau_whose_tau_g2_is_the_point_at_infinity_is_refused() {
         solidity: true,
     };
     fs::write(&opts.airout_path, pilout().encode_to_vec()).unwrap();
-    // [τ]₂ is section 3's second point, the file's last 128 bytes.
-    let mut ptau = fixed_tau_ptau(64, &test_tau());
-    let at = ptau.len() - 128;
-    ptau[at..].fill(0);
-    fs::write(&opts.powers_of_tau, ptau).unwrap();
+    // A copy of the official ptau with [τ]₂, section 3's second point, zeroed.
+    ptau::patched_copy(&ptau::official(64), &opts.powers_of_tau, 3, ptau::G2_BYTES as u64, &[0u8; ptau::G2_BYTES]);
     let err = format!("{:#}", run_setup_pilfflonk(&opts).unwrap_err());
     assert!(err.contains("[τ^1]₂ is the point at infinity"), "{err}");
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);

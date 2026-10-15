@@ -1,14 +1,16 @@
-// Tests for PilFflonk::ShplonkProver, with a test SRS of known τ and no pairing:
+// Tests for PilFflonk::ShplonkProver, on the SRS of the official ptau, whose τ is nobody's, and with
+// no pairing:
 // - the roots are the x with x^k = ξ·ω_N^s (negative s too), derived here independently, and the
 //   evaluations are p_j(ξ·ω_N^s);
 // - r_i agrees with f_i on T_i, each f_i - r_i is divisible by Z_{T_i}, and W and W' are what the
 //   prover's formulas (pilfflonk/docs/protocol.md#pairing-check) give when computed literally here
 //   (rapidsnark's Euclidean division, the zerofiers as polynomials), with the expected degrees;
-// - the verifier's identity F - E - J + y·W' = τ·W', both on the values at τ and on the G1
-//   commitments, with α_S and y replayed from the transcript as a verifier would
-//   (pilfflonk/docs/protocol.md#transcript);
-// - tampering an evaluation, W, W' or a commitment breaks it; bad arguments throw; the same
-//   inputs give the same proof on any number of threads.
+// - the verifier's identity F - E - J + y·W' = X·W' on the polynomials' values at a point taken at
+//   random, with α_S and y replayed from the transcript as a verifier would
+//   (pilfflonk/docs/protocol.md#transcript); the pairing that checks it on the commitments is the
+//   JS verifier's, on the fixtures below;
+// - tampering an evaluation, W, W' or an f_i breaks it; bad arguments throw; the same inputs give
+//   the same proof on any number of threads.
 //
 // With PILFFLONK_SHPLONK_FIXTURES=<dir> in the environment, every opening checked here is also
 // written to <dir>/shplonk_<name>.json for the JS verifier (pilfflonk/docs/README.md#tests); the
@@ -36,7 +38,6 @@
 #include "pilfflonk_commit.hpp"
 #include "pilfflonk_shplonk_prover.hpp"
 #include "pilfflonk_srs.hpp"
-#include "pilfflonk_test_ptau.hpp"
 #include "pilfflonk_transcript.hpp"
 #include "polynomial.hpp"
 
@@ -62,7 +63,7 @@ using Evaluations = ShplonkProver::Evaluations;
 
 Engine &E = Engine::engine;
 
-// The powers of the test SRS: enough for the longest f, 12·(16 + 4 + 1) coefficients.
+// The powers of the SRS: enough for the longest f, 12·(16 + 4 + 1) coefficients.
 constexpr uint64_t N_G1 = 1024;
 
 // Elements below 2^253 < r from a fixed seed, used as Montgomery limbs as they are.
@@ -83,14 +84,9 @@ private:
     std::mt19937_64 generator;
 };
 
-// The SRS every test commits with: the first N_G1 powers of a test ptau.
+// The SRS every test commits with: the first N_G1 powers of the official ptau.
 const Srs &testSrs() {
-    static const Srs srs = [] {
-        TestDir dir;
-        const std::string ptau = dir.file("shplonk.ptau");
-        writeTestPtau(ptau, N_G1);
-        return Srs::fromPtau(ptau, N_G1);
-    }();
+    static const Srs srs = Srs::fromPtau(officialPtau(N_G1), N_G1);
     return srs;
 }
 
@@ -134,27 +130,6 @@ uint64_t lcm(const std::vector<uint64_t> &ks) {
         l = std::lcm(l, k);
     }
     return l;
-}
-
-// Scalar multiplication x·p through ffiasm's mulByScalar on the canonical value of x.
-G1Point times(G1Point p, const FrElement &x) {
-    FrElement canonical;
-    E.fr.fromMontgomery(canonical, x);
-    G1Point r;
-    E.g1.mulByScalar(r, p, reinterpret_cast<uint8_t *>(canonical.v), sizeof(canonical.v));
-    return r;
-}
-
-G1Point add(G1Point a, G1Point b) {
-    G1Point r;
-    E.g1.add(r, a, b);
-    return r;
-}
-
-G1Point sub(G1Point a, G1Point b) {
-    G1Point r;
-    E.g1.sub(r, a, b);
-    return r;
 }
 
 // A polynomial owning `length` coefficients, the first of them `coefs`, with its degree fixed.
@@ -354,46 +329,29 @@ Quotients quotientsOf(const std::vector<Column> &roots, const Evaluations &evalu
     return result;
 }
 
-// F - E - J + y·W' = τ·W' on the values at τ: fTau[i] = f_i(τ), wTau = W(τ), wpTau = W'(τ).
-bool scalarIdentityHolds(const Opened &o, const Challenges &c, const Column &fTau, const FrElement &wTau,
-                         const FrElement &wpTau) {
+// F - E - J + y·W' = X·W' on the values at x: fAt[i] = f_i(x), wAt = W(x), wpAt = W'(x).
+bool scalarIdentityHolds(const Opened &o, const Challenges &c, const Column &fAt, const FrElement &wAt,
+                         const FrElement &wpAt, const FrElement &x) {
     const std::vector<Column> roots = rootsOf(o.nBits, o.powerW, c.xiSeed, o.shapes);
     const Quotients q = quotientsOf(roots, o.evaluations, o.shapes, c.alpha, c.y);
-    FrElement F = fTau[0];
-    for (uint64_t i = 1; i < fTau.size(); ++i) {
-        E.fr.add(F, F, E.fr.mul(q.q[i], fTau[i]));
+    FrElement F = fAt[0];
+    for (uint64_t i = 1; i < fAt.size(); ++i) {
+        E.fr.add(F, F, E.fr.mul(q.q[i], fAt[i]));
     }
-    const FrElement J = E.fr.mul(q.q[0], wTau);
-    const FrElement lhs = E.fr.add(E.fr.sub(E.fr.sub(F, q.e), J), E.fr.mul(c.y, wpTau));
-    return equal(lhs, E.fr.mul(testTau(), wpTau));
+    const FrElement J = E.fr.mul(q.q[0], wAt);
+    const FrElement lhs = E.fr.add(E.fr.sub(E.fr.sub(F, q.e), J), E.fr.mul(c.y, wpAt));
+    return equal(lhs, E.fr.mul(x, wpAt));
 }
 
-// The same identity in G1, e(F - E - J + y·[W'], [1]₂) = e([W'], [τ]₂) with the pairing replaced
-// by the known τ: F - E - J + y·[W'] = τ·[W'].
-bool identityHolds(const Opened &o, const Challenges &c) {
-    const std::vector<Column> roots = rootsOf(o.nBits, o.powerW, c.xiSeed, o.shapes);
-    const Quotients q = quotientsOf(roots, o.evaluations, o.shapes, c.alpha, c.y);
-    G1Point F = o.commitments[0];
-    for (uint64_t i = 1; i < o.commitments.size(); ++i) {
-        F = add(F, times(o.commitments[i], q.q[i]));
-    }
-    const G1Point J = times(o.w, q.q[0]);
-    const G1Point lhs = add(sub(sub(F, g1Times(q.e)), J), times(o.wp, c.y));
-    return samePoint(lhs, times(o.wp, testTau()));
-}
-
-// What a verifier does: replay the transcript, then check the identity.
-bool verifies(const Opened &o) {
-    return identityHolds(o, replay(o));
-}
-
-// Everything a checked opening leaves, for the negative tests and the fixtures.
+// Everything a checked opening leaves, for the negative tests and the fixtures: among it the values
+// of f_i, W and W' at a point x taken at random.
 struct Result {
     Opened opened;
     Challenges challenges;
-    Column fTau;
-    FrElement wTau;
-    FrElement wpTau;
+    FrElement x;
+    Column fAt;
+    FrElement wAt;
+    FrElement wpAt;
     std::vector<Column> points;
     FrElement xi;
 };
@@ -456,6 +414,8 @@ Result prove(const Case &c, uint64_t seed) {
     std::vector<std::vector<std::unique_ptr<Poly>>> components;
     std::vector<std::unique_ptr<Poly>> fs;
     Result result;
+    // A point of its own, so that the cases are those of the seed.
+    result.x = Random(~seed).element();
     Opened &o = result.opened;
     o.nBits = c.nBits;
     o.shapes = c.shapes;
@@ -467,10 +427,8 @@ Result prove(const Case &c, uint64_t seed) {
         components.push_back(componentsOf(f, N, constant, lowDegree, random));
         fs.push_back(packedOf(components.back(), f.k * f.offsets.size()));
         o.commitments.push_back(srs.commit(fs.back()->coef, fs.back()->getDegree() + 1));
-        // [f_i] = f_i(τ)·G, and one the transcript can absorb
-        // (pilfflonk/docs/protocol.md#transcript).
-        result.fTau.push_back(fs.back()->evaluate(testTau()));
-        assert(samePoint(o.commitments.back(), g1Times(result.fTau.back())));
+        // [f_i], one the transcript can absorb (pilfflonk/docs/protocol.md#transcript).
+        result.fAt.push_back(fs.back()->evaluate(result.x));
         uint8_t bytes[PilFflonk::G1_BYTES];
         G1Point decoded;
         PilFflonk::encodeG1(o.commitments.back(), bytes);
@@ -604,8 +562,7 @@ Result prove(const Case &c, uint64_t seed) {
     assert(samePolynomial(*W, *expectedW));
     assert(W->getDegree() == wDegree);
     assert(samePoint(proof.w, srs.commit(W->coef, W->getDegree() + 1)));
-    result.wTau = W->evaluate(testTau());
-    assert(samePoint(proof.w, g1Times(result.wTau)));
+    result.wAt = W->evaluate(result.x);
 
     // W' = L/(Z_{T∖T_0}(y)·(X - y)) with L = Σ_i α^i·Z_{T∖T_i}(y)·(f_i - r_i(y)) - Z_T(y)·W, the
     // zerofiers evaluated from rapidsnark's zerofier polynomials, Z_T with repetitions and
@@ -652,13 +609,10 @@ Result prove(const Case &c, uint64_t seed) {
     assert(samePolynomial(*Wp, *L));
     assert(Wp->getDegree() == (maxDegree > 0 ? maxDegree - 1 : 0));
     assert(samePoint(proof.wp, srs.commit(Wp->coef, Wp->getDegree() + 1)));
-    result.wpTau = Wp->evaluate(testTau());
-    assert(samePoint(proof.wp, g1Times(result.wpTau)));
+    result.wpAt = Wp->evaluate(result.x);
 
-    // The identity, on the values at τ and on the commitments, as the verifier replays it.
-    assert(scalarIdentityHolds(o, result.challenges, result.fTau, result.wTau, result.wpTau));
-    assert(identityHolds(o, result.challenges));
-    assert(verifies(o));
+    // The identity, on the values at x, as the verifier replays it.
+    assert(scalarIdentityHolds(o, result.challenges, result.fAt, result.wAt, result.wpAt, result.x));
     return result;
 }
 
@@ -703,7 +657,6 @@ nlohmann::json scalarsJson(const Column &scalars) {
 //   "alpha": "...", "y": "...",     α_S and y
 //   "W": ["x", "y"], "Wp": ["x", "y"],
 //   "X2": { "one": [[x.c0, x.c1], [y.c0, y.c1]], "tau": [...] },   [1]₂ and [τ]₂, c0 + c1·u
-//   "tau": "...",                   the test SRS's τ: never known for a real one
 //   "transcript": [                 every operation, in order, from a new Keccak256Transcript
 //     {"op": "absorb", "kind": "fr", "values": ["..."]},                      the seed
 //     {"op": "absorb", "kind": "g1", "values": [["x", "y"], ...]},           every [f_i]
@@ -752,7 +705,6 @@ void writeFixture(const std::string &dir, const std::string &name, const Result 
     fixture["W"] = g1Json(o.w);
     fixture["Wp"] = g1Json(o.wp);
     fixture["X2"] = {{"one", g2Json(srs.g2(0))}, {"tau", g2Json(srs.g2(1))}};
-    fixture["tau"] = decimal(testTau());
 
     nlohmann::json commitments = nlohmann::json::array();
     for (const G1Point &p : o.commitments) {
@@ -828,48 +780,29 @@ void testOpenings() {
     }
 }
 
-// Changing any evaluation, [W]₁, [W']₁ or [f_i]₁ breaks the identity: with the challenges the
-// transcript gives for the changed proof, and with the original ones.
+// Changing any evaluation, W, W' or an f_i breaks the identity at x. On the commitments, the JS
+// verifier's tests of the fixtures change each one (pilfflonk/js/test/fixtures.test.js).
 void testTamperingBreaksTheIdentity() {
     const Result result = prove(cases()[4], 2000);
     const Opened &o = result.opened;
-    assert(verifies(o));
-
-    const auto rejected = [&](const Opened &tampered) {
-        return !verifies(tampered) && !identityHolds(tampered, result.challenges);
-    };
-    const G1Point g = g1Times(E.fr.one());
+    const Challenges &c = result.challenges;
+    const FrElement &x = result.x;
+    assert(scalarIdentityHolds(o, c, result.fAt, result.wAt, result.wpAt, x));
+    const FrElement one = E.fr.one();
+    assert(!scalarIdentityHolds(o, c, result.fAt, E.fr.add(result.wAt, one), result.wpAt, x));
+    assert(!scalarIdentityHolds(o, c, result.fAt, result.wAt, E.fr.add(result.wpAt, one), x));
+    for (uint64_t i = 0; i < result.fAt.size(); ++i) {
+        Column fAt = result.fAt;
+        E.fr.add(fAt[i], fAt[i], one);
+        assert(!scalarIdentityHolds(o, c, fAt, result.wAt, result.wpAt, x));
+    }
     for (uint64_t i = 0; i < o.evaluations.size(); ++i) {
         for (uint64_t m = 0; m < o.evaluations[i].size(); ++m) {
             Opened tampered = o;
-            E.fr.add(tampered.evaluations[i][m], tampered.evaluations[i][m], E.fr.one());
-            assert(rejected(tampered));
+            E.fr.add(tampered.evaluations[i][m], tampered.evaluations[i][m], one);
+            assert(!scalarIdentityHolds(tampered, c, result.fAt, result.wAt, result.wpAt, x));
         }
-        Opened tampered = o;
-        tampered.commitments[i] = add(tampered.commitments[i], g);
-        assert(rejected(tampered));
     }
-    Opened tampered = o;
-    tampered.w = add(tampered.w, g);
-    assert(rejected(tampered));
-    tampered = o;
-    tampered.wp = add(tampered.wp, g);
-    assert(rejected(tampered));
-
-    // And on the values at τ.
-    const Challenges &c = result.challenges;
-    assert(scalarIdentityHolds(o, c, result.fTau, result.wTau, result.wpTau));
-    const FrElement one = E.fr.one();
-    assert(!scalarIdentityHolds(o, c, result.fTau, E.fr.add(result.wTau, one), result.wpTau));
-    assert(!scalarIdentityHolds(o, c, result.fTau, result.wTau, E.fr.add(result.wpTau, one)));
-    for (uint64_t i = 0; i < result.fTau.size(); ++i) {
-        Column fTau = result.fTau;
-        E.fr.add(fTau[i], fTau[i], one);
-        assert(!scalarIdentityHolds(o, c, fTau, result.wTau, result.wpTau));
-    }
-    Opened wrongEvaluation = o;
-    E.fr.add(wrongEvaluation.evaluations[2][5], wrongEvaluation.evaluations[2][5], one);
-    assert(!scalarIdentityHolds(wrongEvaluation, c, result.fTau, result.wTau, result.wpTau));
 }
 
 // The same inputs give the same proof, bit for bit, whatever the number of threads.

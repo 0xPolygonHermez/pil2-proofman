@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gmp.h>
@@ -92,6 +93,31 @@ std::string repoPath(const std::string &relative);
 // power k holds 2^(k+1) - 1 powers [τ^i]₁ and 2^k powers [τ^i]₂. Fails, naming the file to
 // download, if there is none.
 std::string officialPtau(uint64_t nG1);
+
+// A fresh directory for the files a test writes, next to the test binary: in the build directory,
+// which git ignores, and apart from any other run. Removed, with the files file() named, when it
+// goes out of scope; a failed assert leaves it behind to look at.
+class TestDir {
+public:
+    TestDir();
+    ~TestDir();
+    TestDir(const TestDir &) = delete;
+    TestDir &operator=(const TestDir &) = delete;
+
+    const std::string &path() const { return dir; }
+
+    // path()/name, removed with the directory.
+    std::string file(const std::string &name);
+
+private:
+    std::string dir;
+    std::vector<std::string> files;
+};
+
+// Writes a binfile (rapidsnark's BinFileWriter) of `type` and `version` with these sections, in
+// this order: for the tests of the readers, a file made of another's sections, changed or not.
+void writeBinFile(const std::string &path, const std::string &type, uint32_t version,
+                  const std::vector<std::pair<uint32_t, std::vector<uint8_t>>> &sections);
 
 #ifdef __USE_CUDA__
 // `bytes` bytes at `data` in device memory of their own, one byte at least: an upload always has an

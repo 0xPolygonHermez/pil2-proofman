@@ -21,7 +21,6 @@
 
 #include "pilfflonk_error.hpp"
 #include "pilfflonk_info.hpp"
-#include "pilfflonk_test_ptau.hpp"
 
 namespace PilFflonkTest {
 

@@ -1,9 +1,12 @@
-//! Fixtures for the JS verifier, for what only Rust has: the ptau with `τ = 1` and `Q(ξ)` from the
+//! Fixtures for the JS verifier, for what only Rust has: a proof of the prover and `Q(ξ)` from the
 //! oracle (pilfflonk/docs/README.md#tests). `pilfflonk/js/test/setup-fixtures.sh` runs them around
 //! `proofman-setup`, into the directory `PILFFLONK_JS_FIXTURES` names:
 //!
-//! 1. `tau_one_ptau` writes `tau_one.ptau`, for `proofman-setup setup-pilfflonk`;
-//! 2. the script compiles the Fibonacci fixture to `fibonacci.pilout` and sets it up in `build/`;
+//! 1. the script compiles the Fibonacci fixture to `fibonacci.pilout` and sets it up in `build/`
+//!    with the official ptau of the tests;
+//! 2. `fibonacci_proof` writes `proof.json` and `publics.json`: the prover's proof of the Fibonacci
+//!    for the inputs `[1, 2]` with the key of `build/provingKey`, which the JS tests verify, and
+//!    change to see it rejected;
 //! 3. `q_at_xi` writes `q_at_xi.json`: for a few points `ξ` and challenges `std_vc`, the
 //!    evaluation at `ξ·ω^prime` of every entry of the evMap of `build/provingKey`, named as the
 //!    proof names it (`ProofNames`), and the oracle's `Q(ξ)` from the same columns. The JS test
@@ -14,11 +17,10 @@
 //!
 //! ```text
 //! PILFFLONK_JS_FIXTURES=<dir> cargo test -p pilfflonk-setup --features proofman-starks-lib-c/cpu-only \
-//!     --test js_fixtures -- --ignored --exact tau_one_ptau
+//!     --test js_fixtures -- --ignored --exact fibonacci_proof
 //! ```
 //!
-//! They are this crate's, not `proofman-pilfflonk`'s, because the ptau is (`test_ptau`): this crate
-//! depends on `proofman-pilfflonk`, and a dev-dependency back on this one would be a cycle.
+//! They are this crate's, as the setup whose key they read.
 
 /// The Fibonacci's generator, `proofman-pilfflonk`'s test module, included as it is.
 #[path = "../../../pilfflonk/tests/data/fibonacci.rs"]
@@ -28,16 +30,12 @@ use std::fs;
 use std::path::PathBuf;
 
 use pil2_pilout::pilout_proxy::PilOutProxy;
-use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use proofman_pilfflonk::oracle::{self, AirOracle, ColumnRef, Fr, Values};
 use proofman_pilfflonk::{
-    AirFile, EvMapEntry, FileWitnessSource, JsonFile, PilfflonkGlobalInfo, PilfflonkInfo, PolType, ProofNames, Vkey,
+    prove, AirFile, EvMapEntry, FileWitnessSource, JsonFile, PilfflonkGlobalInfo, PilfflonkInfo, PolType, ProofNames,
+    ProveOptions, ProvingKey, Vkey,
 };
 use serde_json::{json, Map, Value};
-
-/// The powers `[τ^i]₁` of the ptau: more than the Fibonacci's largest degree, 513 grouped, 261
-/// unpacked.
-const PTAU_G1: usize = 1024;
 
 /// The fixture's size and inputs, as `pilfflonk/tests/fibonacci.rs`
 /// (pilfflonk/docs/README.md#fixtures).
@@ -63,9 +61,12 @@ fn decimal(v: &Fr) -> String {
 
 #[test]
 #[ignore = "writes the JS verifier's fixtures into PILFFLONK_JS_FIXTURES"]
-fn tau_one_ptau() {
+fn fibonacci_proof() {
     let Some(dir) = fixtures_dir() else { return };
-    write_tau_one_ptau(&dir.join("tau_one.ptau"), PTAU_G1).unwrap();
+    let proving_key = ProvingKey::load(&dir.join("build").join("provingKey")).unwrap();
+    let out = prove(&proving_key, &fibonacci::witness(N_BITS, INPUTS), &ProveOptions::default()).unwrap();
+    out.proof_json().unwrap().write(&dir.join("proof.json")).unwrap();
+    out.publics.write(&dir.join("publics.json")).unwrap();
 }
 
 /// The column of the oracle an evaluation is of: a fixed column by its index, which is the

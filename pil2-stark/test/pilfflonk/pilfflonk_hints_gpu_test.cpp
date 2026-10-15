@@ -18,7 +18,6 @@
 // The scratch of a stage in the arena (StageScratch) is checked without a GPU too, and so are the
 // keys under test, on the CPU alone: their columns from commitStage, check's.
 #include "pilfflonk_test.hpp"
-#include "pilfflonk_test_ptau.hpp"
 
 #ifdef __USE_CUDA__
 

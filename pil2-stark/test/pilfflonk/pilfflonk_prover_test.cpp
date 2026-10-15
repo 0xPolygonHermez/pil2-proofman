@@ -5,10 +5,9 @@
 // the interpreter's fixtures (setup/pilfflonk/tests/fixtures/bytecode/fibonacci/: its
 // pilfflonkinfo, .bin and .const, the Fibonacci's witness, the qVerifier as a bytecode, and the
 // oracle's evaluations and Q at a point). Each test writes a provingKey/ around them, with a
-// globalInfo of that AIR and an SRS of the test ptau, whose τ it knows: so it can check every
-// commitment against [p(τ)]₁ and the whole SHPLONK opening against the identity
-// F − E − J + y·W' = τ·W' (pilfflonk/docs/protocol.md#pairing-check), as the verifier's pairing
-// would.
+// globalInfo of that AIR and an SRS of the official ptau: it checks every commitment against the
+// SRS's commitment of the polynomial it is of. That the proofs verify, and that each change to one
+// is rejected, the CLI's end-to-end tests check with the verifiers (cli/tests/pilfflonk_prove.rs).
 //
 // - With the blinding at zero (a BlindingSource of the tests: the C API has none), the prover's
 //   evaluations at the oracle's ξ and its Q(ξ) are the oracle's, exactly.
@@ -25,7 +24,6 @@
 // the oracle's for the same challenges, a denominator 0 on a row of each hint, a broken bus, and
 // the hints AirKey refuses: what it cannot compute, and what reads a column not computed before it.
 #include "pilfflonk_test.hpp"
-#include "pilfflonk_test_ptau.hpp"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -166,26 +164,6 @@ std::vector<FrElement> frs(const json &values) {
 
 bool eq(const FrElement &a, const FrElement &b) { return E.fr.eq(a, b); }
 
-G1Point times(G1Point p, const FrElement &x) {
-    FrElement canonical;
-    E.fr.fromMontgomery(canonical, x);
-    G1Point r;
-    E.g1.mulByScalar(r, p, reinterpret_cast<uint8_t *>(canonical.v), sizeof(canonical.v));
-    return r;
-}
-
-G1Point add(G1Point a, G1Point b) {
-    G1Point r;
-    E.g1.add(r, a, b);
-    return r;
-}
-
-G1Point sub(G1Point a, G1Point b) {
-    G1Point r;
-    E.g1.sub(r, a, b);
-    return r;
-}
-
 // The blinding factors at zero: the polynomials are then the columns' interpolants, as the oracle
 // computes them. Only a test can do this; the C API always blinds
 // (pilfflonk/docs/protocol.md#blinding).
@@ -214,13 +192,11 @@ std::string globalInfoJson(const std::string &backend = "pilfflonk", uint64_t nu
            ", \"numChallenges\": [0], \"numProofValues\": [], \"proofValuesMap\": [], \"publicsMap\": []}";
 }
 
-// The SRS of the test ptau, with its first nG1 powers.
+// The SRS of the official ptau, with its first nG1 powers.
 std::vector<uint8_t> srsBytes(uint64_t nG1) {
     TestDir dir;
-    const std::string ptau = dir.file("prover.ptau");
     const std::string srs = dir.file("prover.srs.bin");
-    writeTestPtau(ptau, nG1);
-    Srs::fromPtau(ptau, nG1).save(srs);
+    Srs::fromPtau(officialPtau(nG1), nG1).save(srs);
     return readBytes(srs);
 }
 
@@ -374,21 +350,6 @@ Proved prove(const Fibonacci &fib, std::unique_ptr<BlindingSource> blinding, uin
     return p;
 }
 
-// Where evaluation e of the proof (pilfflonk/docs/protocol.md#transcript, step 4) is, as
-// (f, offset): the evMap's const entries in order, then its cm entries.
-std::vector<std::pair<uint64_t, int64_t>> evaluationPlaces(const AirKey &air) {
-    std::vector<std::pair<uint64_t, int64_t>> places;
-    for (PilFflonk::PolType type : {PilFflonk::PolType::Const, PilFflonk::PolType::Cm}) {
-        for (const PilFflonk::EvMapEntry &e : air.info().evMap) {
-            if (e.type == type) {
-                const uint64_t f = (type == PilFflonk::PolType::Const ? air.constPosition(e.id) : air.cmPosition(e.id)).f;
-                places.push_back({f, e.prime});
-            }
-        }
-    }
-    return places;
-}
-
 // The verifier's Q(ξ): the qVerifier (the interpreter's fixture) at ξ from the proof's evaluations.
 FrElement qVerifierAt(const Fibonacci &fib, const std::vector<FrElement> &evaluations, const FrElement &stdVc,
                       const FrElement &xiSeed, const FrElement &xi) {
@@ -401,91 +362,6 @@ FrElement qVerifierAt(const Fibonacci &fib, const std::vector<FrElement> &evalua
     point.publics = fib.publics;
     point.challenges = {stdVc, xiSeed};
     return expressions.evaluateExpressionAt(fib.air().info().cExpId, point);
-}
-
-// The verifier's SHPLONK check (pilfflonk/docs/protocol.md#pairing-check) with τ known (every f has
-// k = 1, as --no-packing's layout): F − E − J + y·W' = τ·W', with the challenges α and y the
-// opening squeezed, the fixed commitments computed here, and the value of Q's f at ξ the
-// verifier's, or, if Q is split, the proof's Q_i(ξ).
-bool shplonkIdentityHolds(const Fibonacci &fib, const Proved &p, const std::vector<FrElement> &evaluations) {
-    const AirKey &air = fib.air();
-    const std::vector<LayoutEntry> &layout = air.info().layout;
-    const uint64_t N = air.n();
-    const FrElement xi = p.xiSeed; // powerW = 1
-    const FrElement w = PilFflonk::rootOfUnity(air.info().nBits);
-    const FrElement alpha = p.proof.shplonk.alpha, y = p.proof.shplonk.y;
-
-    // f_i's commitment, roots and values at them.
-    std::vector<G1Point> commitments;
-    for (uint64_t f = 0; f < air.nFixedF(); ++f) {
-        assert(layout[f].k == 1);
-        commitments.push_back(fib.pk->srs().commit(air.fixedPolynomial(layout[f].pols[0].id)->coef, N));
-    }
-    commitments.insert(commitments.end(), p.commitments.begin(), p.commitments.end());
-    std::vector<std::vector<FrElement>> roots(layout.size()), values(layout.size());
-    for (uint64_t f = 0; f < layout.size(); ++f) {
-        for (int64_t s : layout[f].offsets) {
-            roots[f].push_back(E.fr.mul(xi, power(w, static_cast<uint64_t>(s))));
-            values[f].push_back(E.fr.zero());
-        }
-    }
-    const std::vector<std::pair<uint64_t, int64_t>> places = evaluationPlaces(air);
-    for (uint64_t e = 0; e < places.size(); ++e) {
-        const std::vector<int64_t> &offsets = layout[places[e].first].offsets;
-        const uint64_t m = std::find(offsets.begin(), offsets.end(), places[e].second) - offsets.begin();
-        values[places[e].first][m] = evaluations[e];
-    }
-    if (air.nQPieces() == 1) {
-        values[air.qPosition(0).f][0] = qVerifierAt(fib, evaluations, p.stdVc, p.xiSeed, xi);
-    } else {
-        // Split, Q's f are opened at the proof's Q_i(ξ), after the columns' evaluations
-        // (pilfflonk/docs/protocol.md#transcript, step 4.3).
-        uint64_t e = places.size();
-        for (uint64_t f = 0; f < layout.size(); ++f) {
-            if (layout[f].stage == air.info().qStage()) {
-                assert(layout[f].k == 1);
-                values[f][0] = evaluations[e++];
-            }
-        }
-        assert(e == evaluations.size());
-    }
-
-    // Z_{T_i}(y), r_i(y) by Lagrange, and q_i.
-    std::vector<FrElement> z(layout.size()), r(layout.size()), q(layout.size());
-    for (uint64_t f = 0; f < layout.size(); ++f) {
-        z[f] = E.fr.one();
-        for (const FrElement &x : roots[f]) E.fr.mul(z[f], z[f], E.fr.sub(y, x));
-        r[f] = E.fr.zero();
-        for (uint64_t m = 0; m < roots[f].size(); ++m) {
-            FrElement basis = E.fr.one();
-            for (uint64_t l = 0; l < roots[f].size(); ++l) {
-                if (l == m) continue;
-                E.fr.mul(basis, basis, E.fr.mul(E.fr.sub(y, roots[f][l]), inverse(E.fr.sub(roots[f][m], roots[f][l]))));
-            }
-            E.fr.add(r[f], r[f], E.fr.mul(values[f][m], basis));
-        }
-    }
-    FrElement alphaPower = E.fr.one();
-    q[0] = z[0];
-    for (uint64_t f = 1; f < layout.size(); ++f) {
-        E.fr.mul(alphaPower, alphaPower, alpha);
-        q[f] = E.fr.mul(alphaPower, E.fr.mul(z[0], inverse(z[f])));
-    }
-
-    G1Point F = commitments[0];
-    FrElement e = r[0];
-    for (uint64_t f = 1; f < layout.size(); ++f) {
-        F = add(F, times(commitments[f], q[f]));
-        E.fr.add(e, e, E.fr.mul(q[f], r[f]));
-    }
-    const G1Point lhs =
-        add(sub(sub(F, g1Times(e)), times(p.proof.shplonk.w, q[0])), times(p.proof.shplonk.wp, y));
-    return samePoint(lhs, times(p.proof.shplonk.wp, testTau()));
-}
-
-// The same, with the proof's evaluations.
-bool shplonkIdentityHolds(const Fibonacci &fib, const Proved &p) {
-    return shplonkIdentityHolds(fib, p, p.opening->evaluations());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -581,14 +457,14 @@ void testLoadsTheFibonaccisKey() {
     assert(pilfflonk_ctx_n_bits_ext(ctx, 0, 1, &nBitsExt) == PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(pilfflonk_ctx_n_bits_ext(ctx, 0, 0, nullptr) == PILFFLONK_ERR_INVALID_ARGUMENT);
 
-    // The commitments of the fixed f, unpacked here (k = 1): [p(τ)]₁ of each fixed column's
-    // interpolant, what the setup writes in the vkey, from AirKey and through the C API.
+    // The commitments of the fixed f, unpacked here (k = 1): of each fixed column's interpolant,
+    // what the setup writes in the vkey, from AirKey and through the C API.
     const std::vector<G1Point> fixed = air.fixedCommitments(fib.pk->srs());
     assert(fixed.size() == 2);
     std::vector<uint8_t> fixedBytes(2 * PilFflonk::G1_BYTES);
     assert(pilfflonk_ctx_fixed_commitments(ctx, 0, 0, fixedBytes.data(), 2) == PILFFLONK_OK);
     for (uint64_t c = 0; c < 2; ++c) {
-        const G1Point expected = g1Times(air.fixedPolynomial(c)->evaluate(testTau()));
+        const G1Point expected = fib.pk->srs().commit(air.fixedPolynomial(c)->coef, 256);
         assert(samePoint(fixed[c], expected));
         uint8_t encoded[PilFflonk::G1_BYTES];
         PilFflonk::encodeG1(expected, encoded);
@@ -727,7 +603,7 @@ void testUnblindedIsTheOracle() {
     for (uint64_t f = 2; f < 6; ++f) {
         const Poly *p = inst->polynomial(f, 0);
         const G1Point &c = f < 5 ? stage1[f - 2] : q[0];
-        assert(samePoint(c, g1Times(p->evaluate(testTau()))));
+        assert(samePoint(c, fib.pk->srs().commit(p->coef, p->getDegree() + 1)));
         // Unblinded, a column has at most N coefficients, and Q at most qDeg·N.
         assert(p->getDegree() < 256);
     }
@@ -819,13 +695,7 @@ void testBlindedProof() {
             }
         }
         assert(eq(E.fr.mul(p->proof.inv, product), E.fr.one()));
-        // The verifier's SHPLONK check, with τ known.
-        assert(shplonkIdentityHolds(fib, *p));
     }
-    // A W off by G breaks it.
-    Proved tampered = prove(fib, std::make_unique<BlindingRng>(seed));
-    tampered.proof.shplonk.w = add(tampered.proof.shplonk.w, g1Times(E.fr.one()));
-    assert(!shplonkIdentityHolds(fib, tampered));
 }
 
 // Q split in two (pilfflonk/docs/protocol.md#q-pieces), on the keys of splitQFiles, unpacked and
@@ -833,10 +703,9 @@ void testBlindedProof() {
 // factors come after theirs):
 // - the pieces have their bounds, and the factors of their boundary, which cancel:
 //   Σ_i X^(i·S)·Q_i(X) is the unsplit proof's Q, coefficient by coefficient;
-// - each f of Q's stage commits to [f(τ)]₁ of its pieces packed;
+// - each f of Q's stage commits to its pieces packed;
 // - the evaluations end with the pieces' Q_i(ξ), in the order of the layout, and q(0), the verifier's
-//   Q(ξ), is Q_0(ξ) + ξ^S·Q_1(ξ);
-// - unpacked, the SHPLONK identity holds with the pieces' f, and breaks with a Q_i(ξ) off by one.
+//   Q(ξ), is Q_0(ξ) + ξ^S·Q_1(ξ).
 // Unblinded, the pieces are Q's coefficients, split at S, and q(0) is the oracle's Q(ξ).
 void testSplitQ() {
     const Fibonacci whole;
@@ -844,7 +713,6 @@ void testSplitQ() {
     const Proved unsplit = prove(whole, std::make_unique<BlindingRng>(seed));
     const Poly &q = *unsplit.instance->qPiece(0);
     assert(q.getLength() == 261 && unsplit.instance->qPiece(1) == nullptr);
-    const FrElement tau = testTau();
 
     for (bool packed : {false, true}) {
         const Fibonacci fib(splitQFiles(packed));
@@ -869,14 +737,16 @@ void testSplitQ() {
             assert(eq(joined, c < q.getLength() ? q.coef[c] : E.fr.zero()));
         }
 
+        const Srs &srs = fib.pk->srs();
         if (packed) {
-            // f5(X) = Q1(X^2) + X·Q0(X^2).
-            const FrElement tau2 = E.fr.square(tau);
-            const FrElement f = E.fr.add(q1.evaluate(tau2), E.fr.mul(tau, q0.evaluate(tau2)));
-            assert(samePoint(p.commitments[3], g1Times(f)));
+            // f5(X) = Q1(X^2) + X·Q0(X^2): Q1's coefficients at the even powers, Q0's at the odd.
+            std::vector<FrElement> f5(2 * std::max(q0.getLength(), q1.getLength()), E.fr.zero());
+            for (uint64_t c = 0; c < q1.getLength(); ++c) f5[2 * c] = q1.coef[c];
+            for (uint64_t c = 0; c < q0.getLength(); ++c) f5[2 * c + 1] = q0.coef[c];
+            assert(samePoint(p.commitments[3], srs.commit(f5.data(), f5.size())));
         } else {
-            assert(samePoint(p.commitments[3], g1Times(q0.evaluate(tau))));
-            assert(samePoint(p.commitments[4], g1Times(q1.evaluate(tau))));
+            assert(samePoint(p.commitments[3], srs.commit(q0.coef, q0.getLength())));
+            assert(samePoint(p.commitments[4], srs.commit(q1.coef, q1.getLength())));
         }
 
         const FrElement xi = p.opening->xi();
@@ -889,19 +759,9 @@ void testSplitQ() {
         assert(eq(p.opening->q(0), joined));
         const std::vector<FrElement> columns(evaluations.begin(), evaluations.begin() + 7);
         assert(eq(p.opening->q(0), qVerifierAt(fib, columns, p.stdVc, p.xiSeed, xi)));
-        if (!packed) {
-            assert(shplonkIdentityHolds(fib, p));
-        }
     }
 
-    // A piece's evaluation off by one breaks the identity.
     const Fibonacci fib(splitQFiles(false));
-    const Proved p = prove(fib, std::make_unique<BlindingRng>(seed));
-    for (uint64_t e : {7, 8}) {
-        std::vector<FrElement> tampered = p.opening->evaluations();
-        E.fr.add(tampered[e], tampered[e], E.fr.one());
-        assert(!shplonkIdentityHolds(fib, p, tampered));
-    }
 
     // Unblinded: Q's coefficients, split at S; Q(ξ) the oracle's.
     std::unique_ptr<Instance> inst = fib.instance(std::make_unique<ZeroBlinding>());

@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 
+#include "binfile_writer.hpp"
 #include "pilfflonk_api.hpp"
 #include "pilfflonk_fr.hpp"
 
@@ -129,6 +130,47 @@ std::string officialPtau(uint64_t nG1) {
                  "pilfflonk/tests/download-ptau.sh %u\n",
                  static_cast<unsigned long long>(nG1), dir.c_str(), fewest);
     std::exit(1);
+}
+
+TestDir::TestDir() {
+    char exe[PATH_MAX];
+    const ssize_t length = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    assert(length > 0);
+    exe[length] = '\0';
+    std::string pattern(exe);
+    pattern = pattern.substr(0, pattern.rfind('/') + 1) + "pilfflonk_test.XXXXXX";
+    std::vector<char> buffer(pattern.begin(), pattern.end());
+    buffer.push_back('\0');
+    assert(mkdtemp(buffer.data()) != nullptr);
+    dir = buffer.data();
+}
+
+TestDir::~TestDir() {
+    for (const std::string &name : files) {
+        std::remove(name.c_str());
+    }
+    rmdir(dir.c_str());
+}
+
+std::string TestDir::file(const std::string &name) {
+    const std::string path = dir + "/" + name;
+    // SRS writers go through path + ".tmp": gone if they succeed, not always if they fail.
+    files.push_back(path);
+    files.push_back(path + ".tmp");
+    return path;
+}
+
+void writeBinFile(const std::string &path, const std::string &type, uint32_t version,
+                  const std::vector<std::pair<uint32_t, std::vector<uint8_t>>> &sections) {
+    BinFileUtils::BinFileWriter writer(path, type, version, sections.size());
+    for (const auto &section : sections) {
+        // write() takes a non-const buffer.
+        std::vector<uint8_t> bytes = section.second;
+        writer.startWriteSection(section.first);
+        writer.write(bytes.data(), bytes.size());
+        writer.endWriteSection();
+    }
+    writer.close();
 }
 
 #ifdef __USE_CUDA__

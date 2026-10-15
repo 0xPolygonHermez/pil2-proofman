@@ -126,7 +126,6 @@ use pilfflonk_setup::digest::seal_vkey;
 use pilfflonk_setup::keys::write_srs;
 use pilfflonk_setup::layout::max_degree;
 use pilfflonk_setup::solidity::{export_verifier_sol, VERIFIER_SOL_FILE};
-use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::oracle::{AirOracle, ColumnRef, Domain, Fr, HintKind};
 use proofman_pilfflonk::oracle::Values;
@@ -1546,12 +1545,13 @@ fn the_prover_refuses_a_proving_key_whose_files_disagree() {
     fs::write(&coefs, &good_coefs).unwrap();
     ProvingKey::load(&f.proving_key).unwrap();
 
-    // The SRS of another ptau, of another τ: [τ]₂ is not the vkey's X_2.
+    // The SRS of another ptau, whose [τ]₂ is the official one's [τ²]₂: not the vkey's X_2.
     let srs = global_info.srs_path(&f.proving_key);
     let good_srs = fs::read(&srs).unwrap();
     let other_ptau = f.dir.file("other_tau.ptau");
-    write_fixed_tau_ptau(&other_ptau, 1024, &(test_tau() + 1u32)).unwrap();
-    write_srs(&other_ptau, max_degree(&f.info().layout), &srs).unwrap();
+    let n_g1 = max_degree(&f.info().layout);
+    ptau::with_another_tau_in_g2(&ptau::official(n_g1 as usize), &other_ptau);
+    write_srs(&other_ptau, n_g1, &srs).unwrap();
     let err = load_error();
     assert!(
         err.contains(&srs.display().to_string())

@@ -16,8 +16,8 @@ use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE
 use pilfflonk_setup::digest::keccak256;
 use pilfflonk_setup::fixed::FixedColumns;
 use pilfflonk_setup::global_info::global_info;
+use pilfflonk_setup::keys::{commit_fixed_f, x_2};
 use pilfflonk_setup::layout::Packing;
-use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{
     run_setup_pilfflonk, run_setup_pilfflonk_with_external_fixed, run_setup_pilfflonk_with_fixed_dir, SetupError,
     SetupPilfflonkOptions,
@@ -25,19 +25,20 @@ use pilfflonk_setup::{
 use prost::Message;
 use proofman_pilfflonk::global_info::GLOBAL_CONSTRAINTS_FILE;
 use proofman_pilfflonk::{
-    AggType, AirFile, AirVerkey, FqBytes, G2Affine, GlobalInfoAir, JsonFile, NameStageEntry, PilfflonkGlobalInfo,
-    PilfflonkInfo, PolType, ProofNames, SetupParams, Vkey, WitnessShape,
+    AggType, AirFile, AirVerkey, GlobalInfoAir, JsonFile, NameStageEntry, PilfflonkGlobalInfo, PilfflonkInfo, PolType,
+    ProofNames, SetupParams, Vkey, WitnessShape,
 };
 use proofman_starks_lib_c::PilFflonkSrs;
 
 use crate::common::*;
+use crate::ptau;
 
 /// The arguments of the command with its defaults: grouped with `--extra-muls 2`.
 fn options(dir: &TestDir) -> SetupPilfflonkOptions {
     SetupPilfflonkOptions {
         airout_path: dir.file("synthetic.pilout"),
         build_dir: dir.file("build"),
-        powers_of_tau: dir.file("tau_one.ptau"),
+        powers_of_tau: dir.file("official_cut.ptau"),
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
@@ -46,11 +47,11 @@ fn options(dir: &TestDir) -> SetupPilfflonkOptions {
     }
 }
 
-/// Writes `pilout` and a ptau with `τ = 1` of `n_g1` powers where [`options`] expects them.
+/// Writes `pilout`, and the official ptau cut down to `n_g1` powers, where [`options`] expects them.
 fn inputs(dir: &TestDir, pilout: &pb::PilOut, n_g1: usize) -> SetupPilfflonkOptions {
     let opts = options(dir);
     fs::write(&opts.airout_path, pilout.encode_to_vec()).unwrap();
-    write_tau_one_ptau(&opts.powers_of_tau, n_g1).unwrap();
+    ptau::truncated_copy(&ptau::official(n_g1), &opts.powers_of_tau, n_g1);
     opts
 }
 
@@ -230,10 +231,11 @@ fn the_command_writes_the_files_of_the_proving_key() {
     let srs = PilFflonkSrs::load(&gi.srs_path(&proving_key)).unwrap();
     assert!(srs.commit_fixed(N_BITS, 1, &vec![[0u8; 32]; N]).is_ok());
 
-    // A commitment per fixed f of the layout, τ = 1: the first rows of L1, C[0] and C[1], 1, 2
-    // and 3. U, whose first row is 0, is not committed.
+    // A commitment per fixed f of the layout: of L1, C[0] and C[1]. U, never opened, is not
+    // committed.
     let verkey = AirVerkey::read(&air_file(AirFile::Verkey)).unwrap();
-    assert_eq!(verkey, AirVerkey(vec![multiple_of_g(1), multiple_of_g(2), multiple_of_g(3)]));
+    let expected = [0, 1, 2].map(|c| commit_fixed_f(&srs, &fixed, &[c]).unwrap());
+    assert_eq!(verkey, AirVerkey(expected.to_vec()));
 
     // The code, in the STARK's formats: the verifierinfo has the qVerifier only.
     let json = |file| -> serde_json::Value { serde_json::from_slice(&fs::read(air_file(file)).unwrap()).unwrap() };
@@ -253,7 +255,7 @@ fn the_command_writes_the_files_of_the_proving_key() {
     assert_eq!(global_constraints, serde_json::json!({"constraints": [], "hints": []}));
 
     // The vkey: the pilfflonkinfo's evMap, layout and degrees, the verkey's points, [τ]₂ of the
-    // SRS (the generator of G2 with τ = 1), the qVerifier of the verifierinfo, and its digest.
+    // SRS, the qVerifier of the verifierinfo, and its digest.
     let vkey = Vkey::read(&gi.vkey_path(&proving_key)).unwrap();
     assert!(vkey.digest_matches(|data| keccak256(data).unwrap()).unwrap());
     assert_eq!(
@@ -264,8 +266,7 @@ fn the_command_writes_the_files_of_the_proving_key() {
     assert_eq!(vkey.num_challenges, gi.num_challenges);
     assert_eq!(vkey.fixed_commitments.0, verkey.0);
     assert_eq!(vkey.q_verifier, verifier_info["qVerifier"]);
-    let g2 = G2_GENERATOR.map(|c| FqBytes::from_decimal(c).unwrap());
-    assert_eq!(vkey.x_2, G2Affine { x: [g2[0], g2[1]], y: [g2[2], g2[3]] });
+    assert_eq!(vkey.x_2, x_2(&srs).unwrap());
 
     // Running again gives the same bytes.
     let before: Vec<Vec<u8>> = files(&proving_key).iter().map(|f| fs::read(proving_key.join(f)).unwrap()).collect();
@@ -383,10 +384,12 @@ fn the_command_groups_the_polynomials_by_default() {
     // The SRS holds the 17 powers of the largest f.
     let srs_bytes = fs::read(gi.srs_path(&proving_key)).unwrap();
     assert_eq!(srs_bytes.len(), 12 + 3 * 12 + 88 + 17 * 64 + 2 * 128);
-    // τ = 1: [f] = Σ_j p_j(1)·G, the first rows of the columns it packs: 3 for C[1], 2 + 1 for C[0]
-    // and L1.
+    // The commitments of C[1] and of C[0] and L1 packed, in that order.
+    let srs = PilFflonkSrs::load(&gi.srs_path(&proving_key)).unwrap();
+    let fixed = FixedColumns::from_air(&pilout().air_groups[0].airs[0]).unwrap();
     let verkey = AirVerkey::read(&air_file(AirFile::Verkey)).unwrap();
-    assert_eq!(verkey, AirVerkey(vec![multiple_of_g(3), multiple_of_g(3)]));
+    let commitment = |pols: &[u64]| commit_fixed_f(&srs, &fixed, pols).unwrap();
+    assert_eq!(verkey, AirVerkey(vec![commitment(&[2]), commitment(&[1, 0])]));
     let vkey = Vkey::read(&gi.vkey_path(&proving_key)).unwrap();
     assert!(vkey.digest_matches(|data| keccak256(data).unwrap()).unwrap());
     assert_eq!((&vkey.layout, &vkey.ev_map, vkey.power_w), (&info.layout, &info.ev_map, 2));
