@@ -411,7 +411,11 @@ void Polynomial<Engine>::byXSubValue(FrElement &value) {
 // Multiply current polynomial by the polynomial (X^n + value), as snarkjs's byXNSubValue does
 template<typename Engine>
 void Polynomial<Engine>::byXNSubValue(int n, FrElement &value) {
-    const bool resize = !((this->length - n - 1) >= this->degree);
+    if (n < 0) {
+        throw std::runtime_error("byXNSubValue: X^n with a negative n");
+    }
+    // The product has degree deg + n
+    const bool resize = this->degree + n + 1 > this->length;
 
     u_int64_t length = resize ? this->length + n : this->length;
     Polynomial<Engine> *pol = new Polynomial<Engine>(E, length);
