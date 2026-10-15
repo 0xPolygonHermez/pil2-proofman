@@ -40,15 +40,24 @@ pub struct RecursivefGeometry {
 }
 
 impl RecursivefGeometry {
-    fn settings(&self) -> StarkSettings {
-        StarkSettings {
-            blowup_factor: Some(self.blowup),
-            folding_factor: Some(self.folding),
-            final_degree: Some(self.terminal),
+    /// Its stark struct settings, whose `finalDegree` is a log degree: the terminal's domain less
+    /// the blowup, as the final setup's.
+    fn settings(&self) -> Result<StarkSettings> {
+        let Some(final_degree) = self.terminal.checked_sub(self.blowup) else {
+            bail!(
+                "the FRI terminal's domain, 2^{}, is below the blowup, 2^{}: it holds no degree bound",
+                self.terminal,
+                self.blowup
+            );
+        };
+        Ok(StarkSettings {
+            initial_blowup_factor: Some(self.blowup),
+            initial_folding_factor: Some(self.folding),
+            final_degree: Some(final_degree),
             last_level_verification: Some(self.last_levels),
-            pow_bits: Some(self.grinding),
+            grinding_bits: Some(self.grinding),
             ..Default::default()
-        }
+        })
     }
 }
 
@@ -145,7 +154,7 @@ pub fn run_setup_recursivef(opts: &SetupRecursivefOptions) -> Result<()> {
         &stark_info,
         &verifier_info,
         &recursivef_dir,
-        &opts.geometry.settings(),
+        &opts.geometry.settings()?,
         Some(opts.lanes),
     )
     .context("recursivef setup failed")?;

@@ -141,6 +141,64 @@ pub enum RecursiveTemplate {
     Recursive2,
 }
 
+/// The stark settings of a recursion circuit — the configuration the whole recursion tree is
+/// built from. There is no per-circuit config file: the defaults below are per template and
+/// family, and `user` — the starkstructs `"recursion"` entry, see
+/// `StarkStructsConfig::recursion_settings` — overlays the low-degree-test knobs on top of them
+/// (`lowDegreeTest`, `initialFoldingFactor`, `grindingBits`, `grindingBitsQueries`,
+/// `finalDegree`). An explicit `starkStruct` override only ever raises the query count, see
+/// `gen_recursive_setup`.
+///
+/// FRI is the default low-degree test of compressor, recursive1 and recursive2, for every
+/// family: the STIR schedules tried so far put blake3's recursive2 past the 2^19 every recursion
+/// circuit shares (the quotient machinery outweighs the queries it saves), so STIR is opt-in
+/// through `lowDegreeTest: "STIR"` in the recursion entry until a parameter set fits. The
+/// vadcop-final layers are FRI regardless: their proofs are checked by the committed native Rust
+/// verifiers, which are FRI builds.
+pub fn recursive_stark_settings(
+    template: RecursiveTemplate,
+    hash: &str,
+    user: &crate::types::stark_struct::StarkSettings,
+) -> crate::types::stark_struct::StarkSettings {
+    let low_degree_test = user.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Fri);
+    let blowup = recursive_blowup(template, hash);
+    // finalDegree is the final polynomial's log-degree bound, for both tests.
+    //
+    // FRI: the family's `fri_terminal_degree` is the log2 of the last committed DOMAIN -- the
+    // `finalPol` the verifier evaluates at every query, which is what the constant was sized
+    // on -- so the degree bound is that minus the (constant) log rate.
+    //
+    // STIR: the constant is taken as the degree bound d_M itself. Every quotient round needs
+    // |Gᵢ| = tᵢ₋₁ + 1 < dᵢ, and the last one is the tight spot: with d_M = 2^5 the last fold
+    // (≥ 1 bit) leaves d_{M−1} ≥ 64 against |G| ≈ 25–35 at these rates, at every trace size a
+    // recursion circuit takes — a smaller bound breaks whenever the schedule needs a shortened
+    // last fold (e.g. a compressor at 2^19). 32 coefficients in the clear cost nothing.
+    let default_final_degree = || {
+        let terminal = proofman_common::hash_family::fri_terminal_degree(hash);
+        match low_degree_test {
+            crate::types::stark_struct::LowDegreeTestKind::Fri => terminal.saturating_sub(blowup),
+            crate::types::stark_struct::LowDegreeTestKind::Stir => terminal,
+        }
+    };
+    crate::types::stark_struct::StarkSettings {
+        low_degree_test: Some(low_degree_test),
+        initial_blowup_factor: Some(blowup),
+        initial_folding_factor: Some(user.initial_folding_factor.unwrap_or(match low_degree_test {
+            crate::types::stark_struct::LowDegreeTestKind::Fri => 3,
+            crate::types::stark_struct::LowDegreeTestKind::Stir => 4,
+        })),
+        final_degree: Some(user.final_degree.unwrap_or_else(default_final_degree)),
+        // The grinding budget; under STIR every round grinds it unless grindingBitsQueries
+        // sets a per-round one. The solver derives every query count from it.
+        grinding_bits: Some(user.grinding_bits.unwrap_or_else(|| recursive_grinding_bits(template, hash))),
+        // STIR only: a per-round budget overriding the seed (generate_stark_struct rejects it for FRI).
+        grinding_bits_queries: user.grinding_bits_queries.clone(),
+        folding_factors: user.folding_factors.clone(),
+        last_level_verification: recursive_last_level_verification(template, hash),
+        ..Default::default()
+    }
+}
+
 impl RecursiveTemplate {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -182,6 +240,9 @@ pub struct RecursiveSetupConfig<'a> {
     pub verifier_info: &'a Value,
     pub has_compressor: bool,
     pub hash: &'a str,
+    /// The user's knobs on the recursion tree's own low-degree test (the starkstructs
+    /// `"recursion"` entry), overlaid on `recursive_stark_settings`' defaults.
+    pub recursion_settings: &'a crate::types::stark_struct::StarkSettings,
     /// Number of proofs the `recursive2` circuit aggregates. Ignored by the
     /// compressor and recursive1 templates.
     pub agg_arity: usize,
@@ -356,7 +417,8 @@ pub fn gen_recursive_setup(
         tracing::info!("Compiling {}...", name_filename);
         let compile_status = std::process::Command::new(config.circom_exec)
             .args([
-                "--O2",
+                // plonk2pil merges the linear constraints itself: --O2 yields the same air, slower.
+                "--O1",
                 "--r1cs",
                 "--prime",
                 "goldilocks",
@@ -558,6 +620,25 @@ pub fn gen_recursive_setup(
             // We still need to write the JSON and binary files for this air's
             // directory (the const tree needs a starkinfo.json on disk).
             let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(existing_si)?;
+            tracing::info!(
+                "Air '{}' {} low-degree test (reused): {}",
+                config.air_name,
+                template_str,
+                stark_info_loaded.stark_struct.low_degree_test.describe()
+            );
+
+            // The reused setup assumes every air's circuit has the same shape; a mismatch
+            // would otherwise surface as a bare exit inside the C++ const-tree loader.
+            if (1u64 << stark_info_loaded.stark_struct.n_bits) != (1u64 << plonk_result.n_bits) {
+                bail!(
+                    "{} for air '{}' has 2^{} rows but the reused setup expects 2^{} — the \
+                     recursive circuits are not uniform (query-count equalization failed?)",
+                    template_str,
+                    config.air_name,
+                    plonk_result.n_bits,
+                    stark_info_loaded.stark_struct.n_bits,
+                );
+            }
 
             // Write const file: load pilout to get inline selector polynomial values
             {
@@ -627,61 +708,44 @@ pub fn gen_recursive_setup(
             let n_bits_air = if num_rows_air > 0 { (num_rows_air as f64).log2() as usize } else { plonk_result.n_bits };
 
             // Generate stark struct for this recursive circuit.
-            let make_recursive_settings = || {
-                let blowup = recursive_blowup(template, config.hash);
-                crate::types::stark_struct::StarkSettings {
-                    blowup_factor: Some(blowup),
-                    folding_factor: Some(3),
-                    // The terminal the schedule stops at. For a family whose FRI steps are solved
-                    // for rather than folded uniformly, this is the ceiling the solver works under
-                    // rather than the exact degree it lands on.
-                    final_degree: Some(proofman_common::hash_family::fri_terminal_degree(config.hash)),
-                    pow_bits: Some(recursive_grinding_bits(template, config.hash)),
-                    last_level_verification: recursive_last_level_verification(template, config.hash),
-                    ..Default::default()
-                }
-            };
-            let stark_struct =
-                crate::types::stark_struct::generate_stark_struct(&make_recursive_settings(), n_bits_air, config.hash);
+            let stark_struct = crate::types::stark_struct::generate_stark_struct(
+                &recursive_stark_settings(template, config.hash, config.recursion_settings),
+                n_bits_air,
+                config.hash,
+            );
 
             // Run pil_info to get real starkinfo/expressionsinfo/verifierinfo
             let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default())?;
 
             // Build JSON representations using the same helpers as the non-recursive path
             let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-            let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&stark_struct);
-            let fri_batch_size = pil_info_result.pil_code.fri_batch_size;
-            let field_size = crate::types::security::goldilocks_safe_extension_field_size();
-            let regime = crate::types::security::regimes::DecodingRegime::Jbr;
-            let fri_config = crate::types::security::pcs::FriConfig {
-                field_size,
-                trace_length: 1u32 << stark_struct.n_bits,
-                rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                batch_size: fri_batch_size.max(1) as u64,
-                batching: crate::types::security::pcs::Batching::Powers,
-                log_folding_factors,
-                max_grinding_bits_query: stark_struct.pow_bits as u64,
-                use_max_grinding_bits_query: true,
-                tree_arity: stark_struct.merkle_tree_arity as u64,
-                hash_size_bits: 256,
-                target_security_bits: 128,
-                regime,
-            };
-            let fri = crate::types::security::pcs::Fri::new(fri_config);
+            let ldt = crate::output::stark_info::solve_low_degree_test(
+                &stark_struct,
+                pil_info_result.pil_code.fri_batch_size.max(1) as u64,
+            );
 
             let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
                 &pil_info_result.setup,
                 &stark_struct,
                 &pil_info_result.pil_code,
                 &opening_points,
-                &fri,
+                &ldt,
                 config.airgroup_id,
                 config.air_id,
                 &airgroup_pil_name,
                 pil_info_result.c_exp_id,
-                pil_info_result.fri_exp_id,
+                pil_info_result.deep_exp_id,
                 pil_info_result.q_deg,
             );
+
+            // Say which low-degree test this circuit runs, with the solved schedule
+            // (recursive2 is one circuit per airgroup, the others one per air).
+            let circuit = match template {
+                RecursiveTemplate::Recursive2 => format!("Airgroup '{}' recursive2", config.airgroup_name),
+                _ => format!("Air '{}' {}", config.air_name, template_str),
+            };
+            tracing::info!("{} low-degree test: {}", circuit, starkinfo_output.stark_struct.low_degree_test.describe());
+
             let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
             let expressions_info_ref = &pil_info_result.pil_code.expressions_info;
             let si_json = serde_json::to_value(&starkinfo_output)?;
@@ -1135,8 +1199,10 @@ mod batch_fit_tests {
             "evMap": [{}], "challengesMap": [{"stage": 2}], "airValuesMap": [],
             "starkStruct": {
                 "nBits": 8, "nBitsExt": 9, "merkleTreeArity": 2, "transcriptArity": 2,
-                "lastLevelVerification": 4, "nQueries": n_queries, "powBits": 24,
-                "hashCommits": true, "steps": [{"nBits": 9}, {"nBits": 5}]
+                "merkleTreeCustom": false, "verificationHashType": "GL",
+                "lastLevelVerification": 4, "hashCommits": true,
+                "foldingFactors": [4], "logDegrees": [8, 4], "logDomainSizes": [9, 5],
+                "numQueries": n_queries, "grindingBitsQueries": 24
             }
         })
     }
@@ -1171,5 +1237,21 @@ mod batch_fit_tests {
     fn no_estimate_for_a_family_without_a_block_model() {
         assert!(recursion_batch_fit("Poseidon1", 17, L, &si(40)).is_none());
         assert!(recursion_batch_fit("Poseidon2", 17, L, &si(40)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::types::stark_struct::{LowDegreeTestKind, StarkSettings};
+
+    #[test]
+    fn recursion_settings_keep_explicit_stir_folds() {
+        let user = StarkSettings {
+            low_degree_test: Some(LowDegreeTestKind::Stir),
+            folding_factors: Some(vec![4, 3, 3]),
+            ..Default::default()
+        };
+        let s = super::recursive_stark_settings(super::RecursiveTemplate::Recursive2, "blake3", &user);
+        assert_eq!(s.folding_factors, Some(vec![4, 3, 3]));
     }
 }

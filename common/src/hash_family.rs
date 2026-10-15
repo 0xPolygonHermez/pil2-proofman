@@ -93,7 +93,7 @@ pub fn compression_block_elements(family: &str) -> usize {
     }
 }
 
-/// The FRI layer degree the recursion stops folding at, as log2.
+/// The FRI layer the recursion stops folding at, as the log2 of its committed DOMAIN.
 ///
 /// Everything below the terminal is sent in the clear, and the verifier evaluates it at every query
 /// -- which is `2^terminal` extension multiplications a query, arithmetic rather than hashing. Above
@@ -243,6 +243,22 @@ pub fn compressed_final_fri_terminal_degree(family: &str) -> usize {
     match family {
         "blake3" => 8,
         "Poseidon1" | "Poseidon2" => 10,
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+
+/// Folds and per-round grinding of the `vadcop_final_compressed` proof when it is built with STIR
+/// (`setup-compressed-final --low-degree-test STIR`), or `None` for the generic schedule.
+///
+/// blake3, measured on fibonacci over nine schedules: [4,3,3] (degree 2^18 to 2^8) is the smallest,
+/// against 277,015 B for the generic [4,4,4,3] and 295,511 for FRI. Round 2 keeps 26 queries from 26
+/// to 29 bits. Round 3 grinds 23: 22 queries, 264,935 B (27 bits would keep it at 21, 264,359 B).
+/// The folds are absolute, measured with the compressed air at 2^18: at another size they land on
+/// another final degree, so a change of size (lanes, verifier) wants the sweep run again.
+pub fn compressed_final_stir_schedule(family: &str) -> Option<(Vec<usize>, Vec<usize>)> {
+    match family {
+        "blake3" => Some((vec![4, 3, 3], vec![27, 26, 23])),
+        "Poseidon1" | "Poseidon2" => None,
         fam => panic!("Unknown hash family: {fam}"),
     }
 }

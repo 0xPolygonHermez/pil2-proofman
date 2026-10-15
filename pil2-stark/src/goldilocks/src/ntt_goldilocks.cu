@@ -1605,6 +1605,21 @@ void NTTGoldilocksGPU::inttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols,
     }
 }
 
+void NTTGoldilocksGPU::nttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream)
+{
+    if (nCols == 0 || nBits == 0)
+        return;
+    assert(nBits <= NTT_MAX_LG);
+    const NttTables &tf = nttEnsureTables(false);
+    size_t N = (size_t)1 << nBits;
+
+    uint32_t chunk = nttL2ChunkCols(N * sizeof(gl64_t), nCols);
+    for (uint32_t c0 = 0; c0 < nCols; c0 += chunk) {
+        uint32_t nc = (c0 + chunk <= nCols) ? chunk : (uint32_t)(nCols - c0);
+        nttTransformNN(dst + (size_t)c0 * N, N, nc, (int)nBits, false, tf, stream);
+    }
+}
+
 // ColMajor computeQ: iNTT(NN) each q column over the extended domain -> coset shift +
 // zero-pad into cmQ (disjoint region) -> NTT(NN) each cmQ column.
 void NTTGoldilocksGPU::computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,

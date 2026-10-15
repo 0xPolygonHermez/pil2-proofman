@@ -1,5 +1,5 @@
 //! The passes over BN128 (`PilInfoCfg::bn128()`): every value has dimension 1, a negation is a
-//! multiplication by `r − 1`, constants keep all their bits, there is no FRI polynomial, and the
+//! multiplication by `r − 1`, constants keep all their bits, there is no DEEP polynomial, and the
 //! degree search follows `DegreePolicy::Search`.
 //!
 //! The pilouts are built in code; pilouts are not versioned. The `#[ignore]` tests compile real PIL
@@ -244,9 +244,9 @@ fn assert_bn128_shape(result: &PilInfoResult) {
         }
     }
 
-    // No FRI: no FRI polynomial, no queryVerifier, no FRI challenges, no quotient evaluations.
-    assert_eq!(result.fri_exp_id, None);
-    assert_eq!(result.pil_code.fri_exp_id, None);
+    // No FRI: no DEEP polynomial, no queryVerifier, no FRI challenges, no quotient evaluations.
+    assert_eq!(result.deep_exp_id, None);
+    assert_eq!(result.pil_code.deep_exp_id, None);
     assert!(result.pil_code.verifier_info.query_verifier.is_none());
     assert!(result.pil_code.challenges_map.is_empty());
     let challenges: Vec<&str> = setup.challenges_map.iter().map(|c| c.name.as_str()).collect();
@@ -255,7 +255,7 @@ fn assert_bn128_shape(result: &PilInfoResult) {
         assert!(!matches!(e.op.as_str(), "xDivXSubXi" | "eval"), "a FRI node: {}", e.op);
     }
     for c in all_code(result) {
-        assert_ne!(c.dest.ref_type, "f", "the FRI polynomial's destination");
+        assert_ne!(c.dest.ref_type, "f", "the DEEP polynomial's destination");
         assert!(c.src.iter().all(|r| r.ref_type != "xDivXSubXi"));
     }
     for ev in &result.pil_code.ev_map {
@@ -299,10 +299,10 @@ fn goldilocks_keeps_the_fri_opening() {
     let pilout = wide_constants_pilout();
     let result = run(&pilout, &PilInfoCfg::goldilocks(1));
 
-    let fri_exp_id = result.fri_exp_id.expect("friExpId");
-    assert_eq!(result.pil_code.fri_exp_id, Some(fri_exp_id));
+    let deep_exp_id = result.deep_exp_id.expect("deepExpId");
+    assert_eq!(result.pil_code.deep_exp_id, Some(deep_exp_id));
     let query_verifier = result.pil_code.verifier_info.query_verifier.as_ref().expect("queryVerifier");
-    assert_eq!(query_verifier.exp_id, fri_exp_id);
+    assert_eq!(query_verifier.exp_id, deep_exp_id);
     let names: Vec<&str> = result.pil_code.challenges_map.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"std_vf1") && names.contains(&"std_vf2"), "{names:?}");
     let verifier_info = serde_json::to_value(&result.pil_code.verifier_info).expect("serializable");

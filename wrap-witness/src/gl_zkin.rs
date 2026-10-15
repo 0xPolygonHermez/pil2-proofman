@@ -20,14 +20,19 @@ pub fn gl_proof_zkin(stark_info: &Value, proof: &[u64], publics: &[u64]) -> Wrap
         }
     }
     let ss = &stark_info["starkStruct"];
+    if ss["lowDegreeTest"].as_str() == Some("STIR") {
+        return Err(bad("the starkinfo's low-degree test is STIR, and the final circuit verifies FRI".into()));
+    }
     let arity = num(&ss["merkleTreeArity"], "merkleTreeArity")?;
     let llv = ss["lastLevelVerification"].as_u64().unwrap_or(0);
-    let n_queries = num(&ss["nQueries"], "nQueries")? as usize;
-    let steps: Vec<u64> = ss["steps"]
+    let n_queries = num(&ss["numQueries"], "numQueries")? as usize;
+    // The FRI domains, f0's first.
+    let steps: Vec<u64> = ss["logDomainSizes"]
         .as_array()
-        .ok_or_else(|| bad("the starkinfo has no steps".into()))?
+        .filter(|a| !a.is_empty())
+        .ok_or_else(|| bad("the starkinfo has no logDomainSizes".into()))?
         .iter()
-        .map(|s| num(&s["nBits"], "steps' nBits"))
+        .map(|s| num(s, "logDomainSizes"))
         .collect::<WrapWitnessResult<_>>()?;
     let n_stages = num(&stark_info["nStages"], "nStages")?;
     let n_evals = stark_info["evMap"].as_array().map_or(0, Vec::len);
@@ -105,7 +110,7 @@ pub fn gl_proof_zkin(stark_info: &Value, proof: &[u64], publics: &[u64]) -> Wrap
     }
     zkin.insert("finalPol".into(), many(1 << steps[steps.len() - 1], 3, &mut take)?);
     let nonce = take(1)?;
-    if ss["powBits"].as_u64().unwrap_or(0) > 0 {
+    if ss["grindingBitsQueries"].as_u64().unwrap_or(0) > 0 {
         zkin.insert("nonce".into(), nonce[0].clone());
     }
     let rest = words.count();

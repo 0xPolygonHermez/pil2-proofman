@@ -17,7 +17,9 @@ extern crate alloc;
 mod log;
 
 mod proof;
+mod stir;
 mod verifier;
 
 pub use proof::*;
+pub use stir::*;
 pub use verifier::*;

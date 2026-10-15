@@ -12,13 +12,8 @@ use prost::Message;
 use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
 use crate::pil::prepare::PrepareOptions;
 use crate::commands::recursive_setup::run_recursive_setup;
-use crate::types::security::{
-    self,
-    pcs::{FriConfig, Fri, Batching},
-    regimes::DecodingRegime,
-};
-use crate::types::stark_struct::{generate_stark_struct, StarkStructsConfig};
-use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, compute_log_folding_factors};
+use crate::types::stark_struct::{generate_basic_stark_struct, StarkStructsConfig};
+use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, solve_low_degree_test};
 
 /// Setup options parsed from CLI args.
 pub struct SetupOptions {
@@ -121,6 +116,8 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     } else {
         StarkStructsConfig::default()
     };
+    // A malformed "recursion" entry should fail here, not after the per-air setup has run.
+    settings_map.recursion_settings()?;
 
     struct AirWorkItem {
         ag_idx: usize,
@@ -191,7 +188,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
                 let air_settings = settings_map.resolve(&item.airgroup_name, &item.air_name);
 
-                let stark_struct = generate_stark_struct(&air_settings, n_bits, &opts.hash);
+                let stark_struct = generate_basic_stark_struct(&air_settings, n_bits, &opts.hash);
 
                 let files_dir = PathBuf::from(&build_dir)
                     .join("provingKey")
@@ -232,50 +229,42 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     Ok(())
                 };
 
-                if let Some(ref fd) = fixed_dir {
-                    let src = Path::new(fd).join(format!("{}.fixed", item.air_name));
-                    if src.exists() {
-                        fs::copy(&src, &const_path)?;
-                    } else {
-                        tracing::warn!("Fixed file not found: {}, skipping copy", src.display());
-                        drop_stale_const("its .fixed source is missing")?;
-                    }
+                // `.const` comes from `<fixed_dir>/<air>.fixed` when present, else from the
+                // pilout's inline fixed_cols. An air whose fixed columns neither source can
+                // supply is an error: without `.const` there is no verkey, and the key would
+                // only fail at prove time.
+                let air = &pilout.air_groups[item.ag_idx].airs[item.air_idx];
+                let fixed_file = fixed_dir.as_ref().map(|fd| Path::new(fd).join(format!("{}.fixed", item.air_name)));
+                if let Some(src) = fixed_file.as_ref().filter(|src| src.exists()) {
+                    fs::copy(src, &const_path)?;
+                } else if air.fixed_cols.is_empty() {
+                    tracing::debug!("Air '{}': no fixed columns — skipping .const generation", item.air_name);
+                    drop_stale_const("the air has no fixed columns")?;
+                } else if air.fixed_cols.iter().all(|fc| !fc.values.is_empty()) {
+                    crate::io::fixed_cols::write_const_file(
+                        const_path.to_str().unwrap_or(""),
+                        air,
+                        &[], // no external plonk polynomial values needed
+                    )?;
+                    tracing::info!(
+                        "Generated .const from pilout inline fixed_cols for air '{}' ({} columns, {} rows)",
+                        item.air_name,
+                        air.fixed_cols.len(),
+                        air.num_rows.unwrap_or(0)
+                    );
                 } else {
-                    // No --fixed-dir: try to generate .const from inline fixed_cols in the pilout.
-                    // The pil2-compiler embeds selector/constant polynomial values directly in the
-                    // pilout protobuf when they are statically known.  If every fixed_col entry has
-                    // non-empty inline values we can write the .const file without an external file.
-                    // If any entry has empty values (large external polynomials), we warn and skip —
-                    // the downstream bctree / prover will fail to find the file.
-                    let air = &pilout.air_groups[item.ag_idx].airs[item.air_idx];
-                    if air.fixed_cols.is_empty() {
-                        tracing::debug!("Air '{}': no fixed columns — skipping .const generation", item.air_name);
-                        drop_stale_const("the air has no fixed columns")?;
-                    } else {
-                        let has_external = air.fixed_cols.iter().any(|fc| fc.values.is_empty());
-                        if has_external {
-                            tracing::warn!(
-                                "Air '{}': .const file cannot be generated from pilout — \
-                             some fixed columns have no inline values. \
-                             Provide --fixed-dir (-u) to supply the pre-computed .const file.",
-                                item.air_name
-                            );
-                            drop_stale_const("no --fixed-dir and its values are not inline")?;
-                        } else {
-                            // All fixed columns are inline — write .const directly.
-                            crate::io::fixed_cols::write_const_file(
-                                const_path.to_str().unwrap_or(""),
-                                air,
-                                &[], // no external plonk polynomial values needed
-                            )?;
-                            tracing::info!(
-                                "Generated .const from pilout inline fixed_cols for air '{}' \
-                             ({} columns, {} rows)",
-                                item.air_name,
-                                air.fixed_cols.len(),
-                                air.num_rows.unwrap_or(0)
-                            );
-                        }
+                    drop_stale_const("its fixed columns have no source")?;
+                    match fixed_file {
+                        Some(src) => anyhow::bail!(
+                            "Air '{}': fixed file not found: {} (its fixed columns are not inline in the pilout)",
+                            item.air_name,
+                            src.display()
+                        ),
+                        None => anyhow::bail!(
+                            "Air '{}': some fixed columns have no inline values in the pilout; \
+                             provide --fixed-dir (-u) with its .fixed file",
+                            item.air_name
+                        ),
                     }
                 }
 
@@ -287,39 +276,28 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 let setup_result = &pil_result.setup;
                 let pil_code = &pil_result.pil_code;
 
-                let fri_batch_size = pil_code.fri_batch_size;
-                let log_folding_factors = compute_log_folding_factors(&stark_struct);
                 let opening_points = collect_opening_points(setup_result);
-                let field_size = security::goldilocks_safe_extension_field_size();
-                let regime = DecodingRegime::Jbr;
-                let fri_config = FriConfig {
-                    field_size,
-                    trace_length: 1u32 << stark_struct.n_bits,
-                    rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                    batch_size: fri_batch_size.max(1) as u64,
-                    batching: Batching::Powers,
-                    log_folding_factors,
-                    max_grinding_bits_query: stark_struct.pow_bits as u64,
-                    use_max_grinding_bits_query: true,
-                    tree_arity: stark_struct.merkle_tree_arity as u64,
-                    hash_size_bits: 256,
-                    target_security_bits: 128,
-                    regime,
-                };
-                let fri = Fri::new(fri_config);
+                let ldt = solve_low_degree_test(&stark_struct, pil_code.fri_batch_size.max(1) as u64);
 
                 let starkinfo_output = build_starkinfo_output(
                     setup_result,
                     &stark_struct,
                     pil_code,
                     &opening_points,
-                    &fri,
+                    &ldt,
                     item.ag_idx,
                     item.air_idx,
                     &item.air_name,
                     pil_result.c_exp_id,
-                    pil_result.fri_exp_id,
+                    pil_result.deep_exp_id,
                     pil_result.q_deg,
+                );
+
+                // Say which low-degree test this air runs, with the solved schedule.
+                tracing::info!(
+                    "Air '{}' low-degree test: {}",
+                    item.air_name,
+                    starkinfo_output.stark_struct.low_degree_test.describe()
                 );
 
                 let starkinfo_json = crate::output::json::to_json_string(&starkinfo_output)?;
@@ -618,6 +596,43 @@ mod tests {
             assert!(result.is_ok(), "stage-1/stageless proof value must be accepted: {:#}", result.unwrap_err());
             let _ = std::fs::remove_dir_all(&tmp);
         }
+    }
+
+    // An air whose fixed column has no inline values needs a `.fixed` file; without one setup
+    // must fail rather than write a key with no `.const`/verkey for that air.
+    #[test]
+    fn rejects_air_with_unsourced_fixed_columns() {
+        let pilout_proto = pb::PilOut {
+            name: Some("fixedtest".to_string()),
+            air_groups: vec![pb::AirGroup {
+                name: Some("G".to_string()),
+                airs: vec![pb::Air {
+                    name: Some("A".to_string()),
+                    num_rows: Some(4),
+                    fixed_cols: vec![pb::FixedCol { values: vec![] }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let tmp = std::env::temp_dir().join(format!("pil2_fixed_missing_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let build_dir = tmp.join("build");
+        let fixed_dir = tmp.join("fixed");
+        std::fs::create_dir_all(&build_dir).unwrap();
+        std::fs::create_dir_all(&fixed_dir).unwrap();
+        let pilout_path = tmp.join("test.pilout");
+        std::fs::write(&pilout_path, pilout_proto.encode_to_vec()).unwrap();
+
+        let mut opts = setup_opts_for(pilout_path.to_str().unwrap(), build_dir.to_str().unwrap());
+        let msg = format!("{:#}", run_setup(&opts).expect_err("no --fixed-dir must be rejected"));
+        assert!(msg.contains("'A'") && msg.contains("--fixed-dir"), "{msg}");
+
+        opts.fixed_dir = Some(fixed_dir.to_str().unwrap().to_string());
+        let msg = format!("{:#}", run_setup(&opts).expect_err("missing .fixed must be rejected"));
+        assert!(msg.contains("'A'") && msg.contains("A.fixed"), "{msg}");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

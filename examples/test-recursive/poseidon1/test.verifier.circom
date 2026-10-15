@@ -324,7 +324,7 @@ template Transcript0() {
 
     signal output challengesStage2[2][3];
     signal output challengeQ[3];
-    signal output challengeXi[3];
+    signal output challengeOut[3];
     signal output challengesFRI[2][3];
     signal output challengesFRISteps[7][3];
     signal output {binary} queriesFRI[73][20];
@@ -512,7 +512,7 @@ template Transcript0() {
     }
 
     signal transcriptHash_2[16] <== Poseidon(16)([root3[0],root3[1],root3[2],root3[3],0,0,0,0,0,0,0,0], [transcriptHash_1[0],transcriptHash_1[1],transcriptHash_1[2],transcriptHash_1[3]]);
-    challengeXi <== [transcriptHash_2[0], transcriptHash_2[1], transcriptHash_2[2]];
+    challengeOut <== [transcriptHash_2[0], transcriptHash_2[1], transcriptHash_2[2]];
 
     signal transcriptHash_evals_0[16] <== Poseidon(16)([evals[0][0],evals[0][1],evals[0][2],evals[1][0],evals[1][1],evals[1][2],evals[2][0],evals[2][1],evals[2][2],evals[3][0],evals[3][1],evals[3][2]], [0,0,0,0]);
     for(var i = 4; i < 16; i++){
@@ -807,7 +807,7 @@ template VerifyFRI0(nBitsExt, prevStepBits, currStepBits, nextStepBits, e0) {
 template VerifyEvaluationsChunks0() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[135][3];
     signal input publics[395];
 
@@ -1855,7 +1855,7 @@ template VerifyEvaluationsChunks0() {
 template VerifyEvaluationsChunks1() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[135][3];
     signal input publics[395];
 
@@ -2939,7 +2939,7 @@ template VerifyEvaluationsChunks1() {
 template VerifyEvaluationsChunks2() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[135][3];
     signal input publics[395];
 
@@ -3991,7 +3991,7 @@ template VerifyEvaluationsChunks2() {
 template VerifyEvaluationsChunks3() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[135][3];
     signal input publics[395];
 
@@ -5056,7 +5056,7 @@ template VerifyEvaluationsChunks3() {
 template VerifyEvaluationsChunks4() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[135][3];
     signal input publics[395];
 
@@ -6099,7 +6099,7 @@ template VerifyEvaluationsChunks4() {
 template VerifyEvaluationsChunks5() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[135][3];
     signal input publics[395];
 
@@ -7122,7 +7122,7 @@ template VerifyEvaluationsChunks5() {
 template VerifyEvaluationsChunks6() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[135][3];
     signal input publics[395];
 
@@ -7212,16 +7212,16 @@ template VerifyEvaluationsChunks6() {
 template parallel VerifyEvaluations0() {
     signal input challengesStage2[2][3];
     signal input challengeQ[3];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input evals[135][3];
     signal input publics[395];
     signal input {binary} enable;
 
-    // zMul stores all the powers of z (which is stored in challengeXi) up to nBits, i.e, [z, z^2, ..., z^nBits]
+    // zMul stores all the powers of z (which is stored in challengeOut) up to nBits, i.e, [z, z^2, ..., z^nBits]
     signal zMul[17][3];
     for (var i=0; i< 17 ; i++) {
         if(i==0){
-            zMul[i] <== CMul()(challengeXi, challengeXi);
+            zMul[i] <== CMul()(challengeOut, challengeOut);
         } else {
             zMul[i] <== CMul()(zMul[i-1], zMul[i-1]);
         }
@@ -7273,7 +7273,7 @@ template parallel VerifyEvaluations0() {
     signal tmp_6656[3];
     signal tmp_7063[3];
     signal tmp_7064[3];
-    (tmp_6066,tmp_6068,tmp_6405,tmp_6414,tmp_6421,tmp_6428,tmp_6435,tmp_6443,tmp_6450,tmp_6459,tmp_6466,tmp_6474,tmp_6481,tmp_6490,tmp_6497,tmp_6506,tmp_6513,tmp_6522,tmp_6529,tmp_6537,tmp_6544,tmp_6553,tmp_6560,tmp_6569,tmp_6576,tmp_6585,tmp_6592,tmp_6601,tmp_6608,tmp_6617,tmp_6624,tmp_6633,tmp_6640,tmp_6649,tmp_6656,tmp_7063,tmp_7064) <== VerifyEvaluationsChunks0()(challengesStage2,challengeQ,challengeXi,evals,publics,Zh);
+    (tmp_6066,tmp_6068,tmp_6405,tmp_6414,tmp_6421,tmp_6428,tmp_6435,tmp_6443,tmp_6450,tmp_6459,tmp_6466,tmp_6474,tmp_6481,tmp_6490,tmp_6497,tmp_6506,tmp_6513,tmp_6522,tmp_6529,tmp_6537,tmp_6544,tmp_6553,tmp_6560,tmp_6569,tmp_6576,tmp_6585,tmp_6592,tmp_6601,tmp_6608,tmp_6617,tmp_6624,tmp_6633,tmp_6640,tmp_6649,tmp_6656,tmp_7063,tmp_7064) <== VerifyEvaluationsChunks0()(challengesStage2,challengeQ,challengeOut,evals,publics,Zh);
     signal tmp_7423[3];
     signal tmp_7428[3];
     signal tmp_7433[3];
@@ -7311,10 +7311,10 @@ template parallel VerifyEvaluations0() {
     signal tmp_8040[3];
     signal tmp_8062[3];
     signal tmp_8063[3];
-    (tmp_7423,tmp_7428,tmp_7433,tmp_7438,tmp_7444,tmp_7449,tmp_7456,tmp_7461,tmp_7467,tmp_7472,tmp_7479,tmp_7484,tmp_7491,tmp_7496,tmp_7503,tmp_7508,tmp_7514,tmp_7519,tmp_7526,tmp_7531,tmp_7538,tmp_7543,tmp_7550,tmp_7555,tmp_7562,tmp_7567,tmp_7574,tmp_7579,tmp_7586,tmp_7591,tmp_7598,tmp_7603,tmp_8034,tmp_8036,tmp_8040,tmp_8062,tmp_8063) <== VerifyEvaluationsChunks1()(challengesStage2,challengeQ,challengeXi,evals,publics,Zh,tmp_6066,tmp_6405,tmp_6414,tmp_6421,tmp_6428,tmp_6435,tmp_6443,tmp_6450,tmp_6459,tmp_6466,tmp_6474,tmp_6481,tmp_6490,tmp_6497,tmp_6506,tmp_6513,tmp_6522,tmp_6529,tmp_6537,tmp_6544,tmp_6553,tmp_6560,tmp_6569,tmp_6576,tmp_6585,tmp_6592,tmp_6601,tmp_6608,tmp_6617,tmp_6624,tmp_6633,tmp_6640,tmp_6649,tmp_6656,tmp_7063,tmp_7064);
+    (tmp_7423,tmp_7428,tmp_7433,tmp_7438,tmp_7444,tmp_7449,tmp_7456,tmp_7461,tmp_7467,tmp_7472,tmp_7479,tmp_7484,tmp_7491,tmp_7496,tmp_7503,tmp_7508,tmp_7514,tmp_7519,tmp_7526,tmp_7531,tmp_7538,tmp_7543,tmp_7550,tmp_7555,tmp_7562,tmp_7567,tmp_7574,tmp_7579,tmp_7586,tmp_7591,tmp_7598,tmp_7603,tmp_8034,tmp_8036,tmp_8040,tmp_8062,tmp_8063) <== VerifyEvaluationsChunks1()(challengesStage2,challengeQ,challengeOut,evals,publics,Zh,tmp_6066,tmp_6405,tmp_6414,tmp_6421,tmp_6428,tmp_6435,tmp_6443,tmp_6450,tmp_6459,tmp_6466,tmp_6474,tmp_6481,tmp_6490,tmp_6497,tmp_6506,tmp_6513,tmp_6522,tmp_6529,tmp_6537,tmp_6544,tmp_6553,tmp_6560,tmp_6569,tmp_6576,tmp_6585,tmp_6592,tmp_6601,tmp_6608,tmp_6617,tmp_6624,tmp_6633,tmp_6640,tmp_6649,tmp_6656,tmp_7063,tmp_7064);
     signal tmp_9013[3];
     signal tmp_9062[3];
-    (tmp_9013,tmp_9062) <== VerifyEvaluationsChunks2()(challengesStage2,challengeQ,challengeXi,evals,publics,Zh,tmp_6066,tmp_6405,tmp_7423,tmp_7428,tmp_7433,tmp_7438,tmp_7444,tmp_7449,tmp_7456,tmp_7461,tmp_7467,tmp_7472,tmp_7479,tmp_7484,tmp_7491,tmp_7496,tmp_7503,tmp_7508,tmp_7514,tmp_7519,tmp_7526,tmp_7531,tmp_7538,tmp_7543,tmp_7550,tmp_7555,tmp_7562,tmp_7567,tmp_7574,tmp_7579,tmp_7586,tmp_7591,tmp_7598,tmp_7603,tmp_8034,tmp_8036,tmp_8040,tmp_8062,tmp_8063);
+    (tmp_9013,tmp_9062) <== VerifyEvaluationsChunks2()(challengesStage2,challengeQ,challengeOut,evals,publics,Zh,tmp_6066,tmp_6405,tmp_7423,tmp_7428,tmp_7433,tmp_7438,tmp_7444,tmp_7449,tmp_7456,tmp_7461,tmp_7467,tmp_7472,tmp_7479,tmp_7484,tmp_7491,tmp_7496,tmp_7503,tmp_7508,tmp_7514,tmp_7519,tmp_7526,tmp_7531,tmp_7538,tmp_7543,tmp_7550,tmp_7555,tmp_7562,tmp_7567,tmp_7574,tmp_7579,tmp_7586,tmp_7591,tmp_7598,tmp_7603,tmp_8034,tmp_8036,tmp_8040,tmp_8062,tmp_8063);
     signal tmp_9986[3];
     signal tmp_9990[3];
     signal tmp_9995[3];
@@ -7333,7 +7333,7 @@ template parallel VerifyEvaluations0() {
     signal tmp_10057[3];
     signal tmp_10060[3];
     signal tmp_10061[3];
-    (tmp_9986,tmp_9990,tmp_9995,tmp_10000,tmp_10005,tmp_10010,tmp_10015,tmp_10020,tmp_10025,tmp_10030,tmp_10035,tmp_10040,tmp_10045,tmp_10050,tmp_10055,tmp_10057,tmp_10060,tmp_10061) <== VerifyEvaluationsChunks3()(challengesStage2,challengeQ,challengeXi,evals,publics,Zh,tmp_6066,tmp_6068,tmp_7423,tmp_7428,tmp_7433,tmp_7438,tmp_7444,tmp_7449,tmp_7456,tmp_7461,tmp_7467,tmp_7472,tmp_7479,tmp_7484,tmp_7491,tmp_7496,tmp_7503,tmp_7508,tmp_7514,tmp_7519,tmp_7526,tmp_7531,tmp_7538,tmp_7543,tmp_7550,tmp_7555,tmp_7562,tmp_7567,tmp_7574,tmp_7579,tmp_7586,tmp_7591,tmp_7598,tmp_7603,tmp_9013,tmp_9062);
+    (tmp_9986,tmp_9990,tmp_9995,tmp_10000,tmp_10005,tmp_10010,tmp_10015,tmp_10020,tmp_10025,tmp_10030,tmp_10035,tmp_10040,tmp_10045,tmp_10050,tmp_10055,tmp_10057,tmp_10060,tmp_10061) <== VerifyEvaluationsChunks3()(challengesStage2,challengeQ,challengeOut,evals,publics,Zh,tmp_6066,tmp_6068,tmp_7423,tmp_7428,tmp_7433,tmp_7438,tmp_7444,tmp_7449,tmp_7456,tmp_7461,tmp_7467,tmp_7472,tmp_7479,tmp_7484,tmp_7491,tmp_7496,tmp_7503,tmp_7508,tmp_7514,tmp_7519,tmp_7526,tmp_7531,tmp_7538,tmp_7543,tmp_7550,tmp_7555,tmp_7562,tmp_7567,tmp_7574,tmp_7579,tmp_7586,tmp_7591,tmp_7598,tmp_7603,tmp_9013,tmp_9062);
     signal tmp_10901[3];
     signal tmp_10955[3];
     signal tmp_10960[3];
@@ -7341,14 +7341,14 @@ template parallel VerifyEvaluations0() {
     signal tmp_10970[3];
     signal tmp_10975[3];
     signal tmp_11060[3];
-    (tmp_10901,tmp_10955,tmp_10960,tmp_10965,tmp_10970,tmp_10975,tmp_11060) <== VerifyEvaluationsChunks4()(challengesStage2,challengeQ,challengeXi,evals,publics,Zh,tmp_6068,tmp_7538,tmp_7550,tmp_7562,tmp_7574,tmp_7586,tmp_7598,tmp_9986,tmp_9990,tmp_9995,tmp_10000,tmp_10005,tmp_10010,tmp_10015,tmp_10020,tmp_10025,tmp_10030,tmp_10035,tmp_10040,tmp_10045,tmp_10050,tmp_10055,tmp_10057,tmp_10060,tmp_10061);
+    (tmp_10901,tmp_10955,tmp_10960,tmp_10965,tmp_10970,tmp_10975,tmp_11060) <== VerifyEvaluationsChunks4()(challengesStage2,challengeQ,challengeOut,evals,publics,Zh,tmp_6068,tmp_7538,tmp_7550,tmp_7562,tmp_7574,tmp_7586,tmp_7598,tmp_9986,tmp_9990,tmp_9995,tmp_10000,tmp_10005,tmp_10010,tmp_10015,tmp_10020,tmp_10025,tmp_10030,tmp_10035,tmp_10040,tmp_10045,tmp_10050,tmp_10055,tmp_10057,tmp_10060,tmp_10061);
     signal tmp_11955[3];
     signal tmp_12018[3];
     signal tmp_12058[3];
     signal tmp_12059[3];
-    (tmp_11955,tmp_12018,tmp_12058,tmp_12059) <== VerifyEvaluationsChunks5()(challengesStage2,challengeQ,challengeXi,evals,publics,Zh,tmp_6068,tmp_10901,tmp_10955,tmp_10960,tmp_10965,tmp_10970,tmp_10975,tmp_11060);
+    (tmp_11955,tmp_12018,tmp_12058,tmp_12059) <== VerifyEvaluationsChunks5()(challengesStage2,challengeQ,challengeOut,evals,publics,Zh,tmp_6068,tmp_10901,tmp_10955,tmp_10960,tmp_10965,tmp_10970,tmp_10975,tmp_11060);
     signal tmp_12130[3];
-    (tmp_12130) <== VerifyEvaluationsChunks6()(challengesStage2,challengeQ,challengeXi,evals,publics,Zh,tmp_11955,tmp_12018,tmp_12058,tmp_12059);
+    (tmp_12130) <== VerifyEvaluationsChunks6()(challengesStage2,challengeQ,challengeOut,evals,publics,Zh,tmp_11955,tmp_12018,tmp_12058,tmp_12059);
 
     signal xAcc[7][3]; //Stores, at each step, x^i evaluated at z
     signal qStep[6][3]; // Stores the evaluations of Q_i
@@ -7814,7 +7814,7 @@ template CalculateFRIPolChunks0() {
 template VerifyQuery0(currStepBits, nextStepBits) {
     var nextStep = currStepBits - nextStepBits; 
     signal input {binary} queriesFRI[20];
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input challengesFRI[2][3];
     signal input evals[135][3];
     signal input cm1[48];
@@ -7833,11 +7833,11 @@ template VerifyQuery0(currStepBits, nextStepBits) {
 
     signal xDivXSubXi[5][3];
 
-    xDivXSubXi[0] <== CInv()([xacc[19] - 9071788333329385449 * challengeXi[0], - 9071788333329385449 * challengeXi[1], - 9071788333329385449 * challengeXi[2]]);
-    xDivXSubXi[1] <== CInv()([xacc[19] - 15139302138664925958 * challengeXi[0], - 15139302138664925958 * challengeXi[1], - 15139302138664925958 * challengeXi[2]]);
-    xDivXSubXi[2] <== CInv()([xacc[19] - 1 * challengeXi[0], - 1 * challengeXi[1], - 1 * challengeXi[2]]);
-    xDivXSubXi[3] <== CInv()([xacc[19] - 5718075921287398682 * challengeXi[0], - 5718075921287398682 * challengeXi[1], - 5718075921287398682 * challengeXi[2]]);
-    xDivXSubXi[4] <== CInv()([xacc[19] - 8167150655112846419 * challengeXi[0], - 8167150655112846419 * challengeXi[1], - 8167150655112846419 * challengeXi[2]]);
+    xDivXSubXi[0] <== CInv()([xacc[19] - 9071788333329385449 * challengeOut[0], - 9071788333329385449 * challengeOut[1], - 9071788333329385449 * challengeOut[2]]);
+    xDivXSubXi[1] <== CInv()([xacc[19] - 15139302138664925958 * challengeOut[0], - 15139302138664925958 * challengeOut[1], - 15139302138664925958 * challengeOut[2]]);
+    xDivXSubXi[2] <== CInv()([xacc[19] - 1 * challengeOut[0], - 1 * challengeOut[1], - 1 * challengeOut[2]]);
+    xDivXSubXi[3] <== CInv()([xacc[19] - 5718075921287398682 * challengeOut[0], - 5718075921287398682 * challengeOut[1], - 5718075921287398682 * challengeOut[2]]);
+    xDivXSubXi[4] <== CInv()([xacc[19] - 8167150655112846419 * challengeOut[0], - 8167150655112846419 * challengeOut[1], - 8167150655112846419 * challengeOut[2]]);
 
     signal tmp_408[3];
     (tmp_408) <== CalculateFRIPolChunks0()(challengesFRI,evals,cm1,cm2,cm3,consts,xDivXSubXi);
@@ -8022,7 +8022,7 @@ template VerifyFinalPol0() {
 template VerifySingleQuery0() {
     signal input {binary} queriesFRI[20];
 
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input challengesFRI[2][3];
     signal input challengesFRISteps[7][3];
     signal input evals[135][3];
@@ -8146,7 +8146,7 @@ template VerifySingleQuery0() {
 
     VerifyMerkleHashUntilLevel(3, 8, 4, 1, 2, 32)(s5_vals_p, s5_siblings, s5_keys_merkle_bits, s5_last_mt_levels, enable);
 
-    VerifyQuery0(20, 17)(queriesFRI, challengeXi, challengesFRI, evals, s0_vals1, s0_vals2, s0_vals3, s0_valsC, s1_vals_p, enable);
+    VerifyQuery0(20, 17)(queriesFRI, challengeOut, challengesFRI, evals, s0_vals1, s0_vals2, s0_vals3, s0_valsC, s1_vals_p, enable);
 
     signal {binary} s1_queriesFRI[17];
     for(var i = 0; i < 17; i++) { s1_queriesFRI[i] <== queriesFRI[i]; }
@@ -8168,7 +8168,7 @@ template VerifySingleQuery0() {
 template parallel VerifyQueriesBatch0(nQueries) {
     signal input {binary} queriesFRI[nQueries][20];
 
-    signal input challengeXi[3];
+    signal input challengeOut[3];
     signal input challengesFRI[2][3];
     signal input challengesFRISteps[7][3];
     signal input evals[135][3];
@@ -8216,7 +8216,7 @@ template parallel VerifyQueriesBatch0(nQueries) {
     for (var q = 0; q < nQueries; q++) {
         VerifySingleQuery0()(
             queriesFRI[q],
-            challengeXi,
+            challengeOut,
             challengesFRI,
             challengesFRISteps,
             evals,
@@ -8329,7 +8329,7 @@ template StarkVerifier0() {
     signal challengesStage2[2][3];
 
     signal challengeQ[3];
-    signal challengeXi[3];
+    signal challengeOut[3];
     signal challengesFRI[2][3];
 
     // challengesFRISteps contains the random value provided by the verifier at each step of the folding so that 
@@ -8346,7 +8346,7 @@ template StarkVerifier0() {
     // Calculate challenges, challengesFRISteps and queriesFRI
     ///////////
 
-    (challengesStage2,challengeQ,challengeXi,challengesFRI,challengesFRISteps,queriesFRI) <== Transcript0()(publics,rootC,root1,root2,root3,evals,s1_root,s2_root,s3_root,s4_root,s5_root,finalPol, nonce, enabled);
+    (challengesStage2,challengeQ,challengeOut,challengesFRI,challengesFRISteps,queriesFRI) <== Transcript0()(publics,rootC,root1,root2,root3,evals,s1_root,s2_root,s3_root,s4_root,s5_root,finalPol, nonce, enabled);
 
     ///////////
     // Preprocess s_i vals
@@ -8561,7 +8561,7 @@ template StarkVerifier0() {
         // Call batch verifier with slice [b] of work buffers
         VerifyQueriesBatch0(QUERIES_BATCH_SIZE)(
             batch_work_queriesFRI[b],
-            challengeXi,
+            challengeOut,
             challengesFRI,
             challengesFRISteps,
             evals,
@@ -8737,7 +8737,7 @@ template StarkVerifier0() {
     if (LAST_BATCH_SIZE > 0) {
     VerifyQueriesBatch0(LAST_BATCH_SIZE)(
         remainder_queriesFRI,
-        challengeXi,
+        challengeOut,
         challengesFRI,
         challengesFRISteps,
         evals,
@@ -8781,7 +8781,7 @@ template StarkVerifier0() {
     // Check constraints polynomial in the evaluation point
     ///////////
 
-    VerifyEvaluations0()(challengesStage2, challengeQ, challengeXi, evals, publics, enabled);
+    VerifyEvaluations0()(challengesStage2, challengeQ, challengeOut, evals, publics, enabled);
 
 
     VerifyMerkleRoot(2, 4, 1048576)(s0_last_mt_levels1, root1, enabled);

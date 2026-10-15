@@ -24,7 +24,7 @@ class Polynomial {
 
     static Polynomial<Engine>* computeLagrangePolynomial(u_int64_t i, FrElement xArr[], FrElement yArr[], u_int32_t length);
 
-    // The steps of divByMonicInPlace
+    // The steps of divByMonic
     template<bool Write>
     void divByMonicRecurrence(u_int64_t lo, u_int64_t hi, u_int64_t m, const FrElement &beta, FrElement *q,
                               FrElement *above);
@@ -97,27 +97,24 @@ public:
     // Multiply current polynomial by the polynomial (X - value)
     void byXSubValue(FrElement &value);
 
+    // Multiply current polynomial by the polynomial (X^n + value)
     void byXNSubValue(int n, FrElement &value);
 
     // Euclidean division, returns reminder polygon
     Polynomial<Engine>* divBy(Polynomial<Engine> &polynomial);
 
-    void divByMonic(uint32_t m, FrElement beta);
-
     // Division by X^m - beta, 1 <= m <= d for the degree d, in place: the quotient q replaces the
-    // coefficients, q_j at j <= d - m and zeros at d - m < j <= d, and the degree is fixed. Returns
-    // whether the remainder, a_j + beta * q_j for j < m, is zero: whether the division is exact.
-    // The degree must be up to date: coefficients above it are neither read nor written. Throws
-    // std::runtime_error if m is 0 or above d.
-    // Unlike divByMonic, which runs on m threads (one per residue of j mod m), moves to a buffer of
-    // its own, does not compute the remainder and needs d >= 2m - 1, it runs on every thread, in
-    // parallel over blocks of the quotient's coefficients, keeps its buffer, owned or reserved, and
-    // computes the remainder. The quotient is the same, coefficient by coefficient.
-    bool divByMonicInPlace(u_int64_t m, const FrElement &beta);
+    // coefficients, q_j at j <= d - m and zeros at d - m < j <= d, in the same buffer, owned or
+    // reserved, and the degree is fixed. Returns whether the remainder, a_j + beta * q_j for j < m, is
+    // zero: whether the division is exact. The degree must be up to date: coefficients above it are
+    // neither read nor written. Throws std::runtime_error if m is 0 or above d. beta is taken by
+    // value, so it may be one of the coefficients the quotient overwrites.
+    // It runs on every thread, in parallel over blocks of the quotient's coefficients.
+    bool divByMonic(u_int64_t m, FrElement beta);
 
-    // The coefficients of a block of divByMonicInPlace(m, beta), m >= 1: a whole number of rows of
-    // m, about 2^12.
-    static u_int64_t divByMonicInPlaceBlockLength(u_int64_t m);
+    // The coefficients of a block of divByMonic(m, beta), m >= 1: a whole number of rows of m, about
+    // 2^12.
+    static u_int64_t divByMonicBlockLength(u_int64_t m);
 
     Polynomial<Engine>* divByVanishing(uint32_t m, FrElement beta);
 

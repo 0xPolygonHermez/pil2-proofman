@@ -611,8 +611,8 @@ impl Bytecode {
     /// (pilfflonk/docs/README.md#what-the-setup-refuses). Any other hint is refused: it is none the
     /// prover computes.
     pub fn from_pil_info(result: &PilInfoResult) -> BytecodeResult<Self> {
-        if result.fri_exp_id.is_some() {
-            return encode_error("a result with a FRI polynomial: pilfflonk opens with SHPLONK (PilInfoCfg::bn128())");
+        if result.deep_exp_id.is_some() {
+            return encode_error("a result with a DEEP polynomial: pilfflonk opens with SHPLONK (PilInfoCfg::bn128())");
         }
         let context = CodeContext::from_pil_info(result)?;
         let info = &result.pil_code.expressions_info;

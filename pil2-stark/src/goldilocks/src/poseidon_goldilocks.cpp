@@ -200,6 +200,7 @@ template<uint32_t SPONGE_WIDTH_T>
 void PoseidonGoldilocks<SPONGE_WIDTH_T>::grinding(
     uint64_t &nonce, const uint64_t *in, const uint32_t n_bits)
 {
+    if (n_bits == 0) { nonce = 0; return; } // every nonce passes (and 1 << 64 below is UB)
     // Total hashes needed for S-bit security at n_bits target difficulty:
     //   N = -S · ln(2) / ln(1 - 2^-n_bits).  Same formula as the GPU path;
     // log1p/ldexp keep precision for small 2^-n_bits.

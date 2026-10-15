@@ -137,10 +137,23 @@ pub fn fri_query_verify(
     vals: &[Vec<Goldilocks>],
     xdivxsub: &[CubicExtensionField<Goldilocks>],
 ) -> CubicExtensionField<Goldilocks> {
-    let vf1 = challenges[info.n_challenges as usize - 2];
-    let vf2 = challenges[info.n_challenges as usize - 1];
+    deep_query_eval(&info.fri_ev_groups, info.n_challenges, challenges, evals, vals, xdivxsub)
+}
 
-    let n_cols = info.fri_ev_groups.iter().flat_map(|g| g.refs.iter()).map(|e| e.col as usize + 1).max().unwrap_or(0);
+/// The DEEP polynomial at one query point from its `FriEvalGroup` table: FRI's first-layer value
+/// and STIR's f_0 alike (both are the setup's `deepExpId`).
+pub fn deep_query_eval(
+    fri_ev_groups: &[FriEvalGroup],
+    n_challenges: u64,
+    challenges: &[CubicExtensionField<Goldilocks>],
+    evals: &[CubicExtensionField<Goldilocks>],
+    vals: &[Vec<Goldilocks>],
+    xdivxsub: &[CubicExtensionField<Goldilocks>],
+) -> CubicExtensionField<Goldilocks> {
+    let vf1 = challenges[n_challenges as usize - 2];
+    let vf2 = challenges[n_challenges as usize - 1];
+
+    let n_cols = fri_ev_groups.iter().flat_map(|g| g.refs.iter()).map(|e| e.col as usize + 1).max().unwrap_or(0);
     let mut vf2_pow = Vec::with_capacity(n_cols);
     let mut p = CubicExtensionField { value: [Goldilocks::ONE, Goldilocks::ZERO, Goldilocks::ZERO] };
     for _ in 0..n_cols {
@@ -151,7 +164,7 @@ pub fn fri_query_verify(
     // ev_map is sorted by opening point, so the groups walk `evals` in order.
     let mut eval_idx = 0;
     let mut fri = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
-    for (g, group) in info.fri_ev_groups.iter().enumerate() {
+    for (g, group) in fri_ev_groups.iter().enumerate() {
         let mut acc = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
         for e in &group.refs {
             let leaf = &vals[e.bucket as usize];
@@ -429,6 +442,14 @@ where
             transcript.put(&hash[0..4]);
         }
     }
+    // Everything below is hardcoded for a 2-stage AIR (root1, root2, rootQ) and challenge
+    // slots 0..=5: a different stage count would leave the Q root unabsorbed (forgeable) or
+    // index `roots` out of bounds. Reject rather than mis-verify.
+    if verifier_info.n_stages != 2 {
+        v_error!("verifier only supports 2-stage AIRs, got n_stages = {}", verifier_info.n_stages);
+        return false;
+    }
+
     transcript.put(&roots[0]);
     transcript.get_field(&mut challenges[0].value);
     transcript.get_field(&mut challenges[1].value);
@@ -456,11 +477,12 @@ where
     transcript.get_field(&mut challenges[5].value);
 
     let mut c = 6;
+    // r^fold_{i-1} is drawn after the root of f_{i-1}; nothing precedes f_0's root.
     for i in 0..verifier_info.n_fri_steps {
         if i > 0 {
             transcript.get_field(&mut challenges[c].value);
+            c += 1;
         }
-        c += 1;
         if i < verifier_info.n_fri_steps - 1 {
             transcript.put(&roots_fri[i as usize]);
         } else {
@@ -483,7 +505,8 @@ where
     // The grinding hash and the query indices below are read from the LAST challenge slot, and the
     // loop above wrote slot `c`. Those must be the same slot: were they to diverge, the queries
     // would come from an all-zero challenge the prover can predict. It holds iff
-    // n_challenges_total == 7 + n_fri_steps, which nothing else states.
+    // n_challenges_total == challenges_map.len() + n_fri_steps (6 + n for the 2-stage AIRs this
+    // verifier handles), as the generator emits it; nothing else states it.
     let last_challenge_index = challenges.len() - 1;
     if c != last_challenge_index {
         v_error!(
@@ -507,7 +530,8 @@ where
         state[3] = nonce;
     }
     <GrindingHash as Hash<Goldilocks>>::hash(&mut pow_state);
-    if pow_state.as_ref()[0].as_canonical_u64() >= 1 << (64 - verifier_info.pow_bits) {
+    // At 0 bits every nonce passes (and the shift below would overflow).
+    if verifier_info.pow_bits > 0 && pow_state.as_ref()[0].as_canonical_u64() >= 1 << (64 - verifier_info.pow_bits) {
         v_error!("Proof of work verification failed");
         return false;
     }
@@ -632,7 +656,7 @@ where
                 verifier_info.n_bits_ext,
                 verifier_info.fri_steps[s as usize + 1],
                 verifier_info.fri_steps[s as usize],
-                challenges[verifier_info.n_challenges as usize + s as usize + 1],
+                challenges[verifier_info.n_challenges as usize + s as usize], // r^fold_s
                 idx,
                 &vals_fri[q][s as usize],
             );

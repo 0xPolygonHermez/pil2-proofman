@@ -1,7 +1,7 @@
 #ifndef FRI_EXPRESSION_CUH
 #define FRI_EXPRESSION_CUH
 
-// The DEEP/FRI polynomial over the extended domain:
+// The DEEP polynomial evaluated over the extended domain:
 //
 //   fri[r] = SUM_o vf1^(O-1-o) / (x[r] - xi_o) * SUM_{c in o} vf2^c * (p_c[r] - e_(o,c))
 //

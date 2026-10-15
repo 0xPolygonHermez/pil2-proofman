@@ -1096,9 +1096,19 @@ void snark_proof_bytes_to_json(
     char** proof_json_out,
     char** publics_json_out
 ) {
-    auto [proof_json, publics_json] = snark_proof_to_json(
-        proof_bytes, proof_size, public_bytes, public_size, protocol_id
-    );
+    // An exception must not cross the C boundary, where it aborts the process. On failure both
+    // outputs stay null, which the Rust side reports as an error.
+    *proof_json_out = nullptr;
+    *publics_json_out = nullptr;
+    std::string proof_json, publics_json;
+    try {
+        std::tie(proof_json, publics_json) = snark_proof_to_json(
+            proof_bytes, proof_size, public_bytes, public_size, protocol_id
+        );
+    } catch (const std::exception &e) {
+        zklog.error("snark_proof_bytes_to_json: " + std::string(e.what()));
+        return;
+    }
     
     *proof_json_out = (char*)malloc(proof_json.size() + 1);
     *publics_json_out = (char*)malloc(publics_json.size() + 1);

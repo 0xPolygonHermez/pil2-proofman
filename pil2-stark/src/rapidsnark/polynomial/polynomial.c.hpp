@@ -57,6 +57,18 @@ Polynomial<Engine>::fromPolynomial(Engine &_E, Polynomial<Engine> &polynomial, F
 }
 
 template<typename Engine>
+Polynomial<Engine> *Polynomial<Engine>::fromReservedBuffer(Engine &_E, FrElement *reservedBuffer, u_int64_t length) {
+    // Over no coefficients, so that none is cleared, then over the length
+    Polynomial<Engine> *pol = new Polynomial<Engine>(_E, reservedBuffer, 0);
+    pol->length = length;
+    if (length > 0) {
+        pol->fixDegree();
+    }
+
+    return pol;
+}
+
+template<typename Engine>
 Polynomial<Engine> *
 Polynomial<Engine>::fromEvaluations(Engine &_E, FFT<typename Engine::Fr> *fft, FrElement *evaluations, u_int64_t length,
                                     u_int64_t blindLength) {
@@ -236,6 +248,7 @@ void Polynomial<Engine>::add(Polynomial<Engine> &polynomial) {
         this->coef = newCoef;
         // newCoef is this polynomial's own, even if the buffer it replaces was a reserved one
         this->createBuffer = true;
+        this->length = polyLength;
     }
 
     fixDegree();
@@ -283,21 +296,30 @@ void Polynomial<Engine>::addBlinding(Polynomial<Engine> &polynomial, FrElement &
         this->coef = newCoef;
         // newCoef is this polynomial's own, even if the buffer it replaces was a reserved one
         this->createBuffer = true;
+        this->length = polyLength;
     }
 
     fixDegree();
 }
 
-//TODO when the polynomial subtracted is bigger than the current one
 template<typename Engine>
 void Polynomial<Engine>::sub(Polynomial<Engine> &polynomial) {
     u_int64_t length = std::max(this->length, polynomial.length);
+    // Into a buffer of the polynomial's length when it is longer, as add does
+    FrElement *newCoef = length > this->length ? new FrElement[length] : this->coef;
 
     #pragma omp parallel for
     for (u_int64_t i = 0; i < length; i++) {
         FrElement a = i < this->length ? this->coef[i] : E.fr.zero();
         FrElement b = i < polynomial.length ? polynomial.coef[i] : E.fr.zero();
-        this->coef[i] = E.fr.sub(a, b);
+        newCoef[i] = E.fr.sub(a, b);
+    }
+
+    if (newCoef != this->coef) {
+        if(createBuffer) delete[] this->coef;
+        this->coef = newCoef;
+        this->createBuffer = true;
+        this->length = length;
     }
 
     fixDegree();
@@ -307,6 +329,8 @@ template <typename Engine>
 void Polynomial<Engine>::subBlinding(Polynomial<Engine> &polynomial, FrElement &blindingValue)
 {
     u_int64_t length = std::max(this->length, polynomial.length);
+    // Into a buffer of the polynomial's length when it is longer, as addBlinding does
+    FrElement *newCoef = length > this->length ? new FrElement[length] : this->coef;
 
 #pragma omp parallel for
     for (u_int64_t i = 0; i < length; i++)
@@ -316,7 +340,16 @@ void Polynomial<Engine>::subBlinding(Polynomial<Engine> &polynomial, FrElement &
 
         b = E.fr.mul(b, blindingValue);
 
-        this->coef[i] = E.fr.sub(a, b);
+        newCoef[i] = E.fr.sub(a, b);
+    }
+
+    if (newCoef != this->coef)
+    {
+        if (createBuffer)
+            delete[] this->coef;
+        this->coef = newCoef;
+        this->createBuffer = true;
+        this->length = length;
     }
 
     fixDegree();
@@ -324,9 +357,11 @@ void Polynomial<Engine>::subBlinding(Polynomial<Engine> &polynomial, FrElement &
 
 template<typename Engine>
 void Polynomial<Engine>::mulScalar(FrElement &value) {
+    // A copy: value may be one of the coefficients the loop overwrites
+    const FrElement factor = value;
     #pragma omp parallel for
     for (u_int64_t i = 0; i < this->length; i++) {
-        this->coef[i] = E.fr.mul(this->coef[i], value);
+        this->coef[i] = E.fr.mul(this->coef[i], factor);
     }
 }
 
@@ -368,21 +403,26 @@ void Polynomial<Engine>::byXSubValue(FrElement &value) {
     this->coef = pol->coef;
     // pol's buffer is this polynomial's own now, even if the one it replaces was a reserved one
     this->createBuffer = true;
+    this->length = length;
     pol->coef = nullptr;
     delete pol;
 
     fixDegree();
 }
 
-// Multiply current polynomial by the polynomial (X - value)
+// Multiply current polynomial by the polynomial (X^n + value), as snarkjs's byXNSubValue does
 template<typename Engine>
 void Polynomial<Engine>::byXNSubValue(int n, FrElement &value) {
-    const bool resize = !((this->length - n - 1) >= this->degree);
+    if (n < 0) {
+        throw std::runtime_error("byXNSubValue: X^n with a negative n");
+    }
+    // The product has degree deg + n
+    const bool resize = this->degree + n + 1 > this->length;
 
     u_int64_t length = resize ? this->length + n : this->length;
     Polynomial<Engine> *pol = new Polynomial<Engine>(E, length);
 
-    // Step 0: Set current coefficients to the new buffer shifted one position
+    // Step 0: Set current coefficients to the new buffer shifted n positions
     int nThreads = omp_get_max_threads() / 2;
     ThreadUtils::parcpy(&pol->coef[n], this->coef, (this->degree + 1) * sizeof(FrElement), nThreads);
     pol->fixDegree();
@@ -396,6 +436,10 @@ void Polynomial<Engine>::byXNSubValue(int n, FrElement &value) {
     // Swap buffers
     if(this->createBuffer) delete[] this->coef;
     this->coef = pol->coef;
+    // pol's buffer is this polynomial's own now, even if the one it replaces was a reserved one
+    this->createBuffer = true;
+    this->length = length;
+    pol->coef = nullptr;
     delete pol;
 
     fixDegree();
@@ -431,40 +475,135 @@ Polynomial<Engine> *Polynomial<Engine>::divBy(Polynomial<Engine> &polynomial) {
 }
 
 template<typename Engine>
-void Polynomial<Engine>::divByMonic(uint32_t m, FrElement beta) {
-    u_int64_t d = this->degree;
+u_int64_t Polynomial<Engine>::divByMonicBlockLength(u_int64_t m) {
+    if (m == 0) {
+        throw std::runtime_error("divByMonic: X^0 - beta is not of degree at least 1");
+    }
+    // The quotients that cost, of millions of coefficients, have thousands of blocks to share among
+    // the threads, the m carries of a block cost nothing next to it, and a block fits in a core's
+    // L2 cache.
+    const u_int64_t blockLength = u_int64_t(1) << 12;
+    return std::max<u_int64_t>(1, blockLength / m) * m;
+}
 
-    Polynomial<Engine> *polResult = new Polynomial<Engine>(this->E, this->length);
-    FrElement *bArr = new FrElement[m];
+// The recurrence of the quotient by X^m - beta, q_j = a_{j+m} + beta * q_{j+m}, for j from hi - 1
+// down to lo. Slot s of q and above holds q_p and a_p for the p with p = s mod m: on entry those of
+// the p in [hi, hi + m), on exit those of the p in [lo, lo + m) (a slot that no j reaches, when
+// hi - lo < m, keeps its entry). With Write, q_j replaces a_j, and above keeps a_j for q_{j-m}.
+template<typename Engine>
+template<bool Write>
+void Polynomial<Engine>::divByMonicRecurrence(u_int64_t lo, u_int64_t hi, u_int64_t m, const FrElement &beta,
+                                              FrElement *q, FrElement *above) {
+    FrElement *a = this->coef;
+    u_int64_t s = (hi - 1) % m;
+    for (u_int64_t j = hi; j-- > lo;) {
+        FrElement qj;
+        E.fr.mul(qj, beta, q[s]);
+        E.fr.add(qj, qj, above[s]);
+        above[s] = a[j];
+        q[s] = qj;
+        if (Write) {
+            a[j] = qj;
+        }
+        s = s == 0 ? m - 1 : s - 1;
+    }
+}
 
-    for (uint32_t i = 0; i < m; i++) {
-        polResult->coef[(d - i) - m] = this->coef[d - i];
-        bArr[i] = this->coef[d - i];
+// Slot (from + c) mod m of slots := coef[from + c], for c < m.
+template<typename Engine>
+void Polynomial<Engine>::divByMonicSlots(FrElement *slots, u_int64_t from, u_int64_t m) const {
+    for (u_int64_t c = 0; c < m; c++) {
+        slots[(from + c) % m] = coef[from + c];
+    }
+}
+
+// q_j = a_{j+m} + beta * q_{j+m} (q_j = 0 for j > d - m) runs down each residue of j mod m. A
+// blocked scan makes it parallel over blocks of the d - m + 1 coefficients of q, not only over the
+// m residues: a block [lo, hi) of R * m coefficients (the top one may be shorter) depends on the
+// blocks above it only through its carries, q_p for p in [hi, hi + m), and linearly. From zero
+// carries its recurrence gives some q'_p for p in [lo, lo + m), and from its true carries
+// q_p = q'_p + beta^R * q_{p+R*m}, p + R * m being the carry of the residue of p. Three passes:
+//   1. every block but the lowest, in parallel: its q'_p from zero carries, and its a_p, p in
+//      [lo, lo + m), which the block below reads in pass 3, after this block overwrote them;
+//   2. the carries, from the top block's (zero) down: m multiplications and additions per block;
+//   3. every block, in parallel: the recurrence from its carries, writing q in place.
+// Twice the work of the serial recurrence, over every thread; on one thread, a single block, which
+// is the serial recurrence. The quotient is unique and the arithmetic exact: q is the serial
+// recurrence's, whatever the blocks and the threads.
+template<typename Engine>
+bool Polynomial<Engine>::divByMonic(u_int64_t m, FrElement beta) {
+    u_int64_t blockLength = divByMonicBlockLength(m);
+    if (this->degree < m) {
+        throw std::runtime_error("divByMonic: X^m - beta is of a degree above the polynomial's");
     }
 
-    uint32_t nThreads = m;
-    #pragma omp parallel for
-    for(uint32_t k = 0; k<nThreads;k++) {
-        for (int i = d - 2 * m - k; i >= 0; i = i - nThreads) {
-            if(i<0) break;
-            uint32_t idx = k;
-            bArr[idx] = E.fr.add(this->coef[i + m], E.fr.mul(bArr[idx], beta));
-            polResult->coef[i] = bArr[idx];
+    const u_int64_t d = this->degree;
+    const u_int64_t nq = d - m + 1;
+    if (omp_get_max_threads() == 1) {
+        blockLength = (nq + m - 1) / m * m;
+    }
+    const u_int64_t rows = blockLength / m;
+    const u_int64_t nBlocks = nq / blockLength + (nq % blockLength != 0);
+    // Block b is [b * blockLength, min(nq, (b + 1) * blockLength)). Its slots: local[b], q' of its
+    // lowest m positions (pass 1); carry[b], q of the m above it (pass 2); above[b], a of those m.
+    std::vector<FrElement> local(nBlocks * m, E.fr.zero());
+    std::vector<FrElement> carry(nBlocks * m, E.fr.zero());
+    std::vector<FrElement> above(nBlocks * m);
+    const std::vector<FrElement> low(coef, coef + m);
+    // Above the top block: the top m coefficients, which pass 3 does not overwrite.
+    divByMonicSlots(&above[(nBlocks - 1) * m], nq, m);
+
+    #pragma omp parallel for schedule(static) if (nBlocks > 1)
+    for (u_int64_t b = 1; b < nBlocks; b++) {
+        const u_int64_t lo = b * blockLength;
+        const u_int64_t hi = std::min(nq, lo + blockLength);
+        // From the a above this block (no block has written yet) to the a of its lowest m.
+        FrElement *belowAbove = &above[(b - 1) * m];
+        divByMonicSlots(belowAbove, hi, m);
+        divByMonicRecurrence<false>(lo, hi, m, beta, &local[b * m], belowAbove);
+    }
+
+    // beta^rows, by square-and-multiply. The top block's carries are zero, so its own length,
+    // short or not, does not matter.
+    FrElement betaRows = E.fr.one();
+    FrElement betaPower = beta;
+    for (u_int64_t e = rows; e != 0; e >>= 1) {
+        if (e & 1) {
+            E.fr.mul(betaRows, betaRows, betaPower);
+        }
+        E.fr.square(betaPower, betaPower);
+    }
+    for (u_int64_t b = nBlocks - 1; b > 0; b--) {
+        for (u_int64_t s = 0; s < m; s++) {
+            FrElement shifted;
+            E.fr.mul(shifted, betaRows, carry[b * m + s]);
+            E.fr.add(carry[(b - 1) * m + s], local[b * m + s], shifted);
         }
     }
-    delete[] bArr;
 
-    // Swap buffers
-    if(createBuffer) {
-        delete[] this->coef;
+    #pragma omp parallel for schedule(static) if (nBlocks > 1)
+    for (u_int64_t b = 0; b < nBlocks; b++) {
+        const u_int64_t lo = b * blockLength;
+        const u_int64_t hi = std::min(nq, lo + blockLength);
+        divByMonicRecurrence<true>(lo, hi, m, beta, &carry[b * m], &above[b * m]);
     }
-    this->coef = polResult->coef;
-    // polResult's buffer is this polynomial's own now, even if the one it replaces was a reserved one
-    this->createBuffer = true;
-    polResult->coef = nullptr;
-    delete polResult;
 
-    fixDegree();
+    for (u_int64_t j = nq; j <= d; j++) {
+        coef[j] = E.fr.zero();
+    }
+    // coef[j] is q_j, or 0 for j > d - m.
+    bool exact = true;
+    for (u_int64_t j = 0; j < m && exact; j++) {
+        FrElement remainder;
+        E.fr.mul(remainder, beta, coef[j]);
+        E.fr.add(remainder, remainder, low[j]);
+        exact = E.fr.isZero(remainder);
+    }
+
+    // q_{d-m} = a_d, not zero if the degree is up to date.
+    fixDegreeFrom(d - m);
+
+    return exact;
 }
 
 template<typename Engine>
@@ -538,9 +677,10 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
 
     Polynomial<Engine> *polTmp = new Polynomial<Engine>(this->E, reservedBuffer, this->length);
 
-    int nThreads = omp_get_max_threads();
+    // A chunk of whole rows of m per thread, and fewer chunks than threads when there are fewer rows
+    int nThreads = std::min<u_int64_t>(omp_get_max_threads(), (this->length - m) / m);
     u_int32_t nElements = this->length - m;
-    u_int32_t nElementsBucket = (u_int32_t)(nElements / nThreads / m);
+    u_int32_t nElementsBucket = nThreads == 0 ? 0 : (u_int32_t)(nElements / nThreads / m);
     u_int32_t nElementsChunk = nElementsBucket * m;
     u_int32_t nElementsLast = nElements - nThreads * nElementsChunk;
 
@@ -554,7 +694,7 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
         for (int k = 0; k < nThreads; k++) {
             uint32_t idx0 = (k + 1) * nElementsChunk + nElementsLast;
 
-            for (int i = 0; i < m; i++) {
+            for (uint32_t i = 0; i < m; i++) {
                 coef[idx0 + i - m] = polTmp->coef[idx0 + i];
             }
 
@@ -566,22 +706,25 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
         }
 
         //STEP 2: Setejar els valors del elements last NO PARAL·LELITZAR
-        int idx0 = nElementsLast;
-        int pending = nElementsLast;
+        #pragma omp single
+        {
+            int idx0 = nElementsLast;
+            int pending = nElementsLast;
 
-        for (int i = 0; i < m && pending; i++) {
-            coef[idx0 - i - 1] = polTmp->coef[idx0 + m - i - 1];
-            pending--;
-        }
+            for (uint32_t i = 0; i < m && pending; i++) {
+                coef[idx0 - i - 1] = polTmp->coef[idx0 + m - i - 1];
+                pending--;
+            }
 
-        for (int i = 0; i < pending; i++) {
-            uint32_t offset = idx0 - i - 1;
-            FrElement val = E.fr.add(polTmp->coef[offset], E.fr.mul(beta, coef[offset]));
-            coef[offset - m] = val;
+            for (int i = 0; i < pending; i++) {
+                uint32_t offset = idx0 - i - 1;
+                FrElement val = E.fr.add(polTmp->coef[offset], E.fr.mul(beta, coef[offset]));
+                coef[offset - m] = val;
+            }
         }
 
         //Step 3: calcular acumulats
-        FrElement acc[nThreads][m];
+        FrElement acc[std::max(nThreads, 1)][m];
         FrElement betaPow = E.fr.one();
         for (uint32_t i = 0; i < nElementsBucket; i++) {
             betaPow = E.fr.mul(betaPow, beta);
@@ -592,7 +735,7 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
             int idThread = k - 1;
             uint32_t idx0 = idThread * nElementsChunk + nElementsLast;
 
-            for (int i = 0; i < m; i++) {
+            for (uint32_t i = 0; i < m; i++) {
                 acc[idThread][i] = coef[idx0 + i];
 
                 if (k != nThreads) {
@@ -601,6 +744,9 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
             }
             currentBeta = E.fr.mul(currentBeta, betaPow);
         }
+
+        // Every thread has read the chunks' lowest rows before any is corrected
+        #pragma omp barrier
 
         //STEP 4 recalcular
         #pragma omp for
@@ -628,7 +774,7 @@ void Polynomial<Engine>::fastDivByVanishing(FrElement *reservedBuffer, uint32_t 
     }
     delete polTmp;
 
-    fixDegreeFrom(this->degree+1);
+    fixDegreeFrom(this->degree);
 }
 
 template<typename Engine>
@@ -840,144 +986,4 @@ void Polynomial<Engine>::print() {
         }
     }
     LOG_TRACE(res);
-}
-
-template<typename Engine>
-Polynomial<Engine> *Polynomial<Engine>::fromReservedBuffer(Engine &_E, FrElement *reservedBuffer, u_int64_t length) {
-    // Over no coefficients, so that none is cleared, then over the length
-    Polynomial<Engine> *pol = new Polynomial<Engine>(_E, reservedBuffer, 0);
-    pol->length = length;
-    if (length > 0) {
-        pol->fixDegree();
-    }
-
-    return pol;
-}
-
-template<typename Engine>
-u_int64_t Polynomial<Engine>::divByMonicInPlaceBlockLength(u_int64_t m) {
-    if (m == 0) {
-        throw std::runtime_error("divByMonicInPlace: X^0 - beta is not of degree at least 1");
-    }
-    // The quotients that cost, of millions of coefficients, have thousands of blocks to share among
-    // the threads, the m carries of a block cost nothing next to it, and a block fits in a core's
-    // L2 cache.
-    const u_int64_t blockLength = u_int64_t(1) << 12;
-    return std::max<u_int64_t>(1, blockLength / m) * m;
-}
-
-// The recurrence of the quotient by X^m - beta, q_j = a_{j+m} + beta * q_{j+m}, for j from hi - 1
-// down to lo. Slot s of q and above holds q_p and a_p for the p with p = s mod m: on entry those of
-// the p in [hi, hi + m), on exit those of the p in [lo, lo + m) (a slot that no j reaches, when
-// hi - lo < m, keeps its entry). With Write, q_j replaces a_j, and above keeps a_j for q_{j-m}.
-template<typename Engine>
-template<bool Write>
-void Polynomial<Engine>::divByMonicRecurrence(u_int64_t lo, u_int64_t hi, u_int64_t m, const FrElement &beta,
-                                              FrElement *q, FrElement *above) {
-    FrElement *a = this->coef;
-    u_int64_t s = (hi - 1) % m;
-    for (u_int64_t j = hi; j-- > lo;) {
-        FrElement qj;
-        E.fr.mul(qj, beta, q[s]);
-        E.fr.add(qj, qj, above[s]);
-        above[s] = a[j];
-        q[s] = qj;
-        if (Write) {
-            a[j] = qj;
-        }
-        s = s == 0 ? m - 1 : s - 1;
-    }
-}
-
-// Slot (from + c) mod m of slots := coef[from + c], for c < m.
-template<typename Engine>
-void Polynomial<Engine>::divByMonicSlots(FrElement *slots, u_int64_t from, u_int64_t m) const {
-    for (u_int64_t c = 0; c < m; c++) {
-        slots[(from + c) % m] = coef[from + c];
-    }
-}
-
-// q_j = a_{j+m} + beta * q_{j+m} (q_j = 0 for j > d - m) runs down each residue of j mod m. A
-// blocked scan makes it parallel over blocks of the d - m + 1 coefficients of q, not only over the
-// m residues: a block [lo, hi) of R * m coefficients (the top one may be shorter) depends on the
-// blocks above it only through its carries, q_p for p in [hi, hi + m), and linearly. From zero
-// carries its recurrence gives some q'_p for p in [lo, lo + m), and from its true carries
-// q_p = q'_p + beta^R * q_{p+R*m}, p + R * m being the carry of the residue of p. Three passes:
-//   1. every block but the lowest, in parallel: its q'_p from zero carries, and its a_p, p in
-//      [lo, lo + m), which the block below reads in pass 3, after this block overwrote them;
-//   2. the carries, from the top block's (zero) down: m multiplications and additions per block;
-//   3. every block, in parallel: the recurrence from its carries, writing q in place.
-// Twice the work of the serial recurrence, over every thread. The quotient is unique and the
-// arithmetic exact: q is the serial recurrence's, whatever the blocks and the threads.
-template<typename Engine>
-bool Polynomial<Engine>::divByMonicInPlace(u_int64_t m, const FrElement &beta) {
-    const u_int64_t blockLength = divByMonicInPlaceBlockLength(m);
-    if (this->degree < m) {
-        throw std::runtime_error("divByMonicInPlace: X^m - beta is of a degree above the polynomial's");
-    }
-
-    const u_int64_t d = this->degree;
-    const u_int64_t nq = d - m + 1;
-    const u_int64_t rows = blockLength / m;
-    const u_int64_t nBlocks = nq / blockLength + (nq % blockLength != 0);
-    // Block b is [b * blockLength, min(nq, (b + 1) * blockLength)). Its slots: local[b], q' of its
-    // lowest m positions (pass 1); carry[b], q of the m above it (pass 2); above[b], a of those m.
-    std::vector<FrElement> local(nBlocks * m, E.fr.zero());
-    std::vector<FrElement> carry(nBlocks * m, E.fr.zero());
-    std::vector<FrElement> above(nBlocks * m);
-    const std::vector<FrElement> low(coef, coef + m);
-    // Above the top block: the top m coefficients, which pass 3 does not overwrite.
-    divByMonicSlots(&above[(nBlocks - 1) * m], nq, m);
-
-    #pragma omp parallel for schedule(static) if (nBlocks > 1)
-    for (u_int64_t b = 1; b < nBlocks; b++) {
-        const u_int64_t lo = b * blockLength;
-        const u_int64_t hi = std::min(nq, lo + blockLength);
-        // From the a above this block (no block has written yet) to the a of its lowest m.
-        FrElement *belowAbove = &above[(b - 1) * m];
-        divByMonicSlots(belowAbove, hi, m);
-        divByMonicRecurrence<false>(lo, hi, m, beta, &local[b * m], belowAbove);
-    }
-
-    // beta^rows, by square-and-multiply. The top block's carries are zero, so its own length,
-    // short or not, does not matter.
-    FrElement betaRows = E.fr.one();
-    FrElement betaPower = beta;
-    for (u_int64_t e = rows; e != 0; e >>= 1) {
-        if (e & 1) {
-            E.fr.mul(betaRows, betaRows, betaPower);
-        }
-        E.fr.square(betaPower, betaPower);
-    }
-    for (u_int64_t b = nBlocks - 1; b > 0; b--) {
-        for (u_int64_t s = 0; s < m; s++) {
-            FrElement shifted;
-            E.fr.mul(shifted, betaRows, carry[b * m + s]);
-            E.fr.add(carry[(b - 1) * m + s], local[b * m + s], shifted);
-        }
-    }
-
-    #pragma omp parallel for schedule(static) if (nBlocks > 1)
-    for (u_int64_t b = 0; b < nBlocks; b++) {
-        const u_int64_t lo = b * blockLength;
-        const u_int64_t hi = std::min(nq, lo + blockLength);
-        divByMonicRecurrence<true>(lo, hi, m, beta, &carry[b * m], &above[b * m]);
-    }
-
-    for (u_int64_t j = nq; j <= d; j++) {
-        coef[j] = E.fr.zero();
-    }
-    // coef[j] is q_j, or 0 for j > d - m.
-    bool exact = true;
-    for (u_int64_t j = 0; j < m && exact; j++) {
-        FrElement remainder;
-        E.fr.mul(remainder, beta, coef[j]);
-        E.fr.add(remainder, remainder, low[j]);
-        exact = E.fr.isZero(remainder);
-    }
-
-    // q_{d-m} = a_d, not zero if the degree is up to date.
-    fixDegreeFrom(d - m);
-
-    return exact;
 }

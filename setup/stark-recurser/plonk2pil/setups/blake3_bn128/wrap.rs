@@ -276,7 +276,7 @@ pub fn wrap(r1cs: &R1csFile<Bn128>, options: &PlonkOptions) -> Result<SetupResul
         fixed.one("PUBLICS_ROW", k, first_public_row + k);
     }
     apply_remap_to_s_map(&mut s_map, &copy_merge.remap);
-    verify_merge_soundness(&s_map, &copy_merge.merged_reps, BAND_COLS);
+    verify_merge_soundness(&s_map, &copy_merge.merged_reps, &copy_merge.remap, BAND_COLS);
     let sv = build_s_polynomials::<Bn128>(BAND_COLS, n, n_bits, n_used, &s_map);
 
     let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| AIRGROUP_NAME.to_string());

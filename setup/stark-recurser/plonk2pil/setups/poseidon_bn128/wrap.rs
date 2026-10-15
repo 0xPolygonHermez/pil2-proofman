@@ -181,7 +181,7 @@ pub fn wrap(r1cs: &R1csFile<Bn128>, options: &PlonkOptions) -> Result<SetupResul
     // The copy-merge remap on every placed cell, the custom gates' included, then the check that
     // each merged equality is still enforced: every wire is in the connection.
     apply_remap_to_s_map(&mut s_map, &copy_merge.remap);
-    verify_merge_soundness(&s_map, &copy_merge.merged_reps, N_WIRES);
+    verify_merge_soundness(&s_map, &copy_merge.merged_reps, &copy_merge.remap, N_WIRES);
     let sv = build_s_polynomials::<Bn128>(N_WIRES, n, n_bits, n_used, &s_map);
 
     let airgroup_name = options.airgroup_name.clone().unwrap_or_else(|| AIRGROUP_NAME.to_string());

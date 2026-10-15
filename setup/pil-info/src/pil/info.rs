@@ -21,8 +21,8 @@ pub struct PilInfoResult {
     pub im_pols_info: (Vec<String>, Vec<String>),
     /// Constraint polynomial expression ID.
     pub c_exp_id: usize,
-    /// FRI polynomial expression ID (distinct from c_exp_id): `None` unless the opening is FRI.
-    pub fri_exp_id: Option<usize>,
+    /// DEEP polynomial expression ID (distinct from c_exp_id): `None` unless the opening is FRI.
+    pub deep_exp_id: Option<usize>,
     /// Polynomial Q degree.
     pub q_deg: i64,
     /// Boundary definitions.
@@ -111,7 +111,7 @@ pub fn pil_info(
     // Compute opening points from ALL expressions that will be code-generated:
     // constraints, kept expressions (from hints), and imPol expressions.
     // This mirrors the filter in generate_expressions_code which processes
-    // expressions with keep=true, im_pol=true, or matching c_exp_id/fri_exp_id.
+    // expressions with keep=true, im_pol=true, or matching c_exp_id/deep_exp_id.
     let mut opening_points: Vec<i64> = vec![0];
     for c in &setup.constraints {
         let offsets = &setup.expressions[c.e].rows_offsets;
@@ -139,7 +139,7 @@ pub fn pil_info(
         airgroup_id,
         n_stages,
         c_exp_id,
-        fri_exp_id: None, // set by generate_pil_code, as cfg.opening says
+        deep_exp_id: None, // set by generate_pil_code, as cfg.opening says
         q_deg: q_deg as usize,
         q_dim: q_dim_final,
         opening_points: opening_points.clone(),
@@ -185,7 +185,7 @@ pub fn pil_info(
     setup.opening_points = opening_points;
 
     let im_pols_info = setup.im_pols_info.clone();
-    let fri_exp_id = pil_code.fri_exp_id;
+    let deep_exp_id = pil_code.deep_exp_id;
 
-    Ok(PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, fri_exp_id, q_deg, boundaries })
+    Ok(PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, deep_exp_id, q_deg, boundaries })
 }

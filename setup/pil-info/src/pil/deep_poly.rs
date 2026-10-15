@@ -6,16 +6,17 @@ use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::EvMapItem;
 use crate::types::pilout_info::SymbolInfo;
 
-/// Result of FRI polynomial generation.
+/// Result of DEEP polynomial generation.
 #[derive(Debug, Clone)]
-pub struct FriPolyResult {
-    /// Expression index of the FRI polynomial in the expression arena.
-    pub fri_exp_id: usize,
-    /// Power-batching size matching the FRI polynomial's degree in (vf1, vf2).
+pub struct DeepPolyResult {
+    /// Expression index of the DEEP polynomial in the expression arena.
+    pub deep_exp_id: usize,
+    /// Power-batching size matching the DEEP polynomial's degree in (vf1, vf2).
     pub batch_size: usize,
 }
 
-/// Generate the FRI polynomial expression.
+/// Generate the DEEP polynomial expression — the initial polynomial f₀ the
+/// low-degree test (FRI or STIR) is run on.
 ///
 /// In the JS version, all intermediate nodes are built inline and only ONE
 /// `expressions.push(friExp)` happens at the end. We match that by building
@@ -24,7 +25,7 @@ pub struct FriPolyResult {
 ///
 /// Fails on an evaluation of a column without a symbol, and when there is no evaluation to
 /// combine.
-pub fn generate_fri_polynomial(
+pub fn generate_deep_polynomial(
     n_stages: usize,
     expressions: &mut Vec<Expression>,
     symbols: &mut Vec<SymbolInfo>,
@@ -32,7 +33,7 @@ pub fn generate_fri_polynomial(
     opening_points: &[i64],
     challenges_map: &mut Vec<ChallengeMapEntry>,
     field: &FieldCfg,
-) -> Result<FriPolyResult> {
+) -> Result<DeepPolyResult> {
     let dim = field.ext_dim();
     let stage = n_stages + 3;
 
@@ -127,7 +128,7 @@ pub fn generate_fri_polynomial(
     let present: Vec<(usize, i64)> =
         opening_points.iter().copied().enumerate().filter(|&(_, op)| ev_map.iter().any(|ev| ev.prime == op)).collect();
     if present.is_empty() {
-        return Err(PilInfoError::FriWithoutEvaluations);
+        return Err(PilInfoError::DeepWithoutEvaluations);
     }
     let n_open = present.len();
     // Degree in (vf1, vf2), for the security calculator.
@@ -214,7 +215,7 @@ pub fn generate_fri_polynomial(
 
     expressions.push(fri_final);
 
-    Ok(FriPolyResult { fri_exp_id: fri_final_id, batch_size })
+    Ok(DeepPolyResult { deep_exp_id: fri_final_id, batch_size })
 }
 
 /// Get dimension for an inline expression tree. Fails on an op it does not know.
@@ -352,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_fri_polynomial_basic() {
+    fn test_generate_deep_polynomial_basic() {
         let mut expressions: Vec<Expression> = Vec::new();
         let mut symbols = vec![make_witness_symbol("w0", 0, 1), make_fixed_symbol("f0", 0)];
         let ev_map = vec![
@@ -362,7 +363,7 @@ mod tests {
         let opening_points = vec![0];
         let mut challenges_map = Vec::new();
 
-        let result = generate_fri_polynomial(
+        let result = generate_deep_polynomial(
             1,
             &mut expressions,
             &mut symbols,
@@ -373,7 +374,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.fri_exp_id, expressions.len() - 1);
+        assert_eq!(result.deep_exp_id, expressions.len() - 1);
         assert_eq!(result.batch_size, 2);
         assert!(!expressions.is_empty());
 
@@ -386,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_fri_polynomial_multiple_openings() {
+    fn test_generate_deep_polynomial_multiple_openings() {
         let mut expressions: Vec<Expression> = Vec::new();
         let mut symbols = vec![make_witness_symbol("w0", 0, 1), make_witness_symbol("w1", 1, 1)];
         let ev_map = vec![
@@ -396,7 +397,7 @@ mod tests {
         let opening_points = vec![0, 1];
         let mut challenges_map = Vec::new();
 
-        let result = generate_fri_polynomial(
+        let result = generate_deep_polynomial(
             1,
             &mut expressions,
             &mut symbols,
@@ -407,8 +408,8 @@ mod tests {
         )
         .unwrap();
 
-        // fri_exp_id is a valid index into the expressions arena
-        assert!(result.fri_exp_id < expressions.len());
+        // deep_exp_id is a valid index into the expressions arena
+        assert!(result.deep_exp_id < expressions.len());
         assert!(!expressions.is_empty());
         // Disjoint openings: degree 1 + 1 exceeds the 2-entry ev_map's power-batching degree.
         assert_eq!(result.batch_size, 3);
@@ -416,7 +417,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "opened twice")]
-    fn test_generate_fri_polynomial_rejects_duplicate_evaluation() {
+    fn test_generate_deep_polynomial_rejects_duplicate_evaluation() {
         let mut expressions: Vec<Expression> = Vec::new();
         let mut symbols = vec![make_witness_symbol("w0", 0, 1)];
         let ev_map = vec![
@@ -424,7 +425,7 @@ mod tests {
             EvMapItem { entry_type: "cm".to_string(), id: 0, prime: 0, commit_id: None },
         ];
         let mut challenges_map = Vec::new();
-        let _ = generate_fri_polynomial(
+        let _ = generate_deep_polynomial(
             1,
             &mut expressions,
             &mut symbols,
@@ -435,9 +436,9 @@ mod tests {
         );
     }
 
-    fn fri_err(ev_map: &[EvMapItem]) -> PilInfoError {
+    fn deep_err(ev_map: &[EvMapItem]) -> PilInfoError {
         let mut symbols = vec![make_witness_symbol("w0", 0, 1)];
-        let result = generate_fri_polynomial(
+        let result = generate_deep_polynomial(
             1,
             &mut Vec::new(),
             &mut symbols,
@@ -447,16 +448,16 @@ mod tests {
             &FieldCfg::goldilocks(),
         );
         match result {
-            Ok(_) => panic!("the FRI polynomial was built"),
+            Ok(_) => panic!("the DEEP polynomial was built"),
             Err(err) => err,
         }
     }
 
     /// Were `expect("At least one opening point required")` and `panic!("Unknown ev type")`.
     #[test]
-    fn a_fri_polynomial_without_evaluations_or_of_an_unknown_one_is_an_error() {
-        assert!(matches!(fri_err(&[]), PilInfoError::FriWithoutEvaluations));
+    fn a_deep_polynomial_without_evaluations_or_of_an_unknown_one_is_an_error() {
+        assert!(matches!(deep_err(&[]), PilInfoError::DeepWithoutEvaluations));
         let ev = EvMapItem { entry_type: "tmp".to_string(), id: 0, prime: 0, commit_id: None };
-        assert!(matches!(fri_err(&[ev]), PilInfoError::UnknownEvaluation(t) if t == "tmp"));
+        assert!(matches!(deep_err(&[ev]), PilInfoError::UnknownEvaluation(t) if t == "tmp"));
     }
 }

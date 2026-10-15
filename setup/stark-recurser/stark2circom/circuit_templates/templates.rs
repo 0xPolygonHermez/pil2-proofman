@@ -614,7 +614,7 @@ pub fn gen_vadcop_final(
             "    sV{i}.rootC <== {sel_fn}({airs_i_len})(s{i}_sv_circuitType, s{i}_sv_rootCBasics, s{i}_sv_rootCAgg);\n"
         ));
         section.push_str(&format!(
-            "    for (var i=0; i<4; i++) {{\n        sV{i}.publics[{} + i] <== s{i}_sv_rootCAgg[i];\n    }}\n",
+            "    for (var i = 0; i < 4; i++) {{\n        sV{i}.publics[{} + i] <== s{i}_sv_rootCAgg[i];\n    }}\n",
             n_pub_raw - 4
         ));
         assign_sections.push(section);
@@ -709,15 +709,17 @@ mod tests {
         json!({
             "starkStruct": {
                 "verificationHashType": "BN128",
-                "nQueries": 4,
+                "numQueries": 4,
                 "nBits": 6,
                 "nBitsExt": 10,
-                "powBits": 0,
+                "grindingBitsQueries": 0,
                 "merkleTreeArity": 4,
                 "merkleTreeCustom": merkle_tree_custom,
                 "lastLevelVerification": 0,
                 "hashCommits": false,
-                "steps": [{"nBits": 10}, {"nBits": 6}]
+                "foldingFactors": [4],
+                "logDegrees": [6, 2],
+                "logDomainSizes": [10, 6]
             },
             "nStages": 2,
             "nPublics": 6,
@@ -931,8 +933,10 @@ mod recursive1_batch_tests {
             "customCommits": [], "evMap": [{}], "airValuesMap": [], "challengesMap": [],
             "starkStruct": {
                 "nBits": 10, "nBitsExt": 11, "merkleTreeArity": 2, "transcriptArity": 2,
-                "lastLevelVerification": 4, "nQueries": 8, "powBits": 24, "hashCommits": true,
-                "verificationHashType": "GL", "steps": [{"nBits": 11}, {"nBits": 5}]
+                "merkleTreeCustom": false, "verificationHashType": "GL",
+                "lastLevelVerification": 4, "hashCommits": true,
+                "foldingFactors": [6], "logDegrees": [10, 4], "logDomainSizes": [11, 5],
+                "numQueries": 8, "grindingBitsQueries": 24
             }
         })
     }

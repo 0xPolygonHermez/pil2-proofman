@@ -6,7 +6,7 @@
 //! Key differences from the GL generator (`pil2circom.rs`):
 //!
 //! - Hash primitive: `PoseidonEx` (or `CustomPoseidon` when `custom=true`)
-//! - No expression chunking (`VerifyEvaluationsChunks`/`CalculateFRIPolChunks`)
+//! - No expression chunking (`VerifyEvaluationsChunks`/`CalculateDeepPolChunks`)
 //! - No `airgroupId` suffix on template names
 //! - No batched query verification (`VerifyQueriesBatch`) — queries loop in `StarkVerifier`
 //! - Has a `Main()` wrapper template (with SHA256 publics hash) that wraps `StarkVerifier`
@@ -64,6 +64,9 @@ pub fn gen_stark_verifier_bn128_blake3(
     if ss["merkleTreeArity"].as_u64() != Some(2) {
         bail!("gen_stark_verifier_bn128_blake3: blake3 trees are binary");
     }
+    if ss["lowDegreeTest"].as_str() == Some("STIR") {
+        bail!("gen_stark_verifier_bn128_blake3: the BN128 verifier checks FRI, and this STARK opens with STIR");
+    }
     if stark_info["customCommits"].as_array().is_some_and(|a| !a.is_empty()) {
         bail!("gen_stark_verifier_bn128_blake3: custom commits are not supported");
     }
@@ -111,7 +114,7 @@ fn build_tera_context_bn128(
     let custom = uses_custom_templates(si);
     let transcript_arity = if custom { arity } else { 16usize };
     let n_bits_arity = (arity as f64).log2().ceil() as usize;
-    let n_queries = ss["nQueries"].as_u64().unwrap_or(0) as usize;
+    let n_queries = ss["numQueries"].as_u64().unwrap_or(0) as usize;
     let last_level_verification = ss["lastLevelVerification"].as_u64().unwrap_or(0) as usize;
     if last_level_verification > 0 && custom && !blake3 {
         bail!(
@@ -122,13 +125,14 @@ fn build_tera_context_bn128(
     let s0_last_mt_size = if last_level_verification > 0 { arity.pow(last_level_verification as u32) } else { 0 };
     let n_bits = ss["nBits"].as_u64().unwrap_or(0) as usize;
     let n_bits_ext = ss["nBitsExt"].as_u64().unwrap_or(0) as usize;
-    let pow_bits = ss["powBits"].as_u64().unwrap_or(0);
+    let pow_bits = ss["grindingBitsQueries"].as_u64().unwrap_or(0);
     let hash_commits = ss["hashCommits"].as_bool().unwrap_or(false);
     let q_deg = si["qDeg"].as_u64().unwrap_or(1) as usize;
-    let steps: Vec<Value> = ss["steps"].as_array().map_or(vec![], |a| a.clone());
+    let steps: Vec<u64> =
+        ss["logDomainSizes"].as_array().map_or(vec![], |a| a.iter().filter_map(|v| v.as_u64()).collect());
     let n_steps = steps.len();
-    let step0_bits = steps.first().and_then(|s| s["nBits"].as_u64()).unwrap_or(0) as usize;
-    let last_step_bits = steps.last().and_then(|s| s["nBits"].as_u64()).unwrap_or(0) as usize;
+    let step0_bits = steps.first().copied().unwrap_or(0) as usize;
+    let last_step_bits = steps.last().copied().unwrap_or(0) as usize;
     let final_pol_size: usize = 1 << last_step_bits;
     let n_last_bits = last_step_bits;
     let max_deg_bits = (n_last_bits as isize - (n_bits_ext - n_bits) as isize).max(0) as usize;
@@ -303,9 +307,9 @@ fn build_tera_context_bn128(
     // ── FRI step info ───────────────────────────────────────────────────────
     let fri_steps_info: Vec<serde_json::Value> = (0..n_steps)
         .map(|s| {
-            let n_bits_s = steps[s]["nBits"].as_u64().unwrap_or(0) as usize;
-            let prev_bits = if s == 0 { n_bits_s } else { steps[s - 1]["nBits"].as_u64().unwrap_or(0) as usize };
-            let next_bits = if s < n_steps - 1 { steps[s + 1]["nBits"].as_u64().unwrap_or(0) as usize } else { 0 };
+            let n_bits_s = steps[s] as usize;
+            let prev_bits = if s == 0 { n_bits_s } else { steps[s - 1] as usize };
+            let next_bits = if s < n_steps - 1 { steps[s + 1] as usize } else { 0 };
             let exponent = if s == 0 { 1usize } else { 1 << (prev_bits - n_bits_s) };
             let full_ml = if n_bits_s == 0 { 0usize } else { ((n_bits_s - 1) / n_bits_arity) + 1 };
             let ml = full_ml.saturating_sub(last_level_verification);
@@ -341,6 +345,7 @@ fn build_tera_context_bn128(
                 "e1": e1,
                 "is_last": is_last,
                 "next_pol": next_pol,
+                "fold_idx": s.saturating_sub(1),
             })
         })
         .collect();
@@ -390,7 +395,7 @@ fn build_tera_context_bn128(
     let consts_ids: Vec<u64> = fri_consts.iter().map(|&(id, _)| id).collect();
     let eval_q_last = unroll_code_bn128(&query_code, &consts_ids, &unroll_ctx, &mut eval_q_lines)?;
     let eval_q_code = eval_q_lines.join("\n");
-    // friConsts: challengesFRI, then the query-independent tmps the queries read.
+    // friConsts: challengesDeep, then the query-independent tmps the queries read.
     let fri_consts_json: Vec<Value> = fri_consts
         .iter()
         .enumerate()
@@ -453,7 +458,7 @@ fn build_tera_context_bn128(
         if pow_bits > 0 {
             t_fri.put_single("nonce");
         }
-        t_fri.get_permutations("queriesFRI", n_queries, step0_bits, n_fields);
+        t_fri.get_permutations("queriesL0", n_queries, step0_bits, n_fields);
         let calculate_fri_queries_code = t_fri.get_code();
 
         let mut t = TranscriptBn128::new(transcript_arity, custom, None);
@@ -482,7 +487,7 @@ fn build_tera_context_bn128(
         }
         t.get_field("challengeQ");
         t.put_single(&format!("root{q_stage}"));
-        t.get_field("challengeXi");
+        t.get_field("challengeOut");
 
         if !hash_commits {
             for i in 0..ev_map_len {
@@ -497,10 +502,13 @@ fn build_tera_context_bn128(
             transcript_evals_code = t_evals.get_code();
             t.put_single("evalsHash");
         }
-        t.get_field("challengesFRI[0]");
-        t.get_field("challengesFRI[1]");
+        t.get_field("challengesDeep[0]");
+        t.get_field("challengesDeep[1]");
+        // r^fold_s is drawn right after the root of f_s (nothing before f_0's root): M = n_steps − 1.
         for si_idx in 0..n_steps {
-            t.get_field(&format!("challengesFRISteps[{si_idx}]"));
+            if si_idx > 0 {
+                t.get_field(&format!("rFold[{}]", si_idx - 1));
+            }
             if si_idx < n_steps - 1 {
                 t.put_single(&format!("s{}_root", si_idx + 1));
             } else if !hash_commits {
@@ -544,7 +552,7 @@ fn build_tera_context_bn128(
         query_vals_list_gl.push(format!("s0_vals_{name}_0GL"));
     }
     let query_vals_gl_joined = query_vals_list_gl.join(", ");
-    let next_step0_bits = if n_steps > 1 { steps[1]["nBits"].as_u64().unwrap_or(0) as usize } else { 0 };
+    let next_step0_bits = if n_steps > 1 { steps[1] as usize } else { 0 };
     let next_vals_pol_0 = if n_steps > 1 { "s1_vals_p" } else { "finalPol" };
 
     // ── challengeNames (Transcript output signals) ───────────────────────────
@@ -554,7 +562,7 @@ fn build_tera_context_bn128(
             challenge_names.push(format!("challengesStage{stage}GL"));
         }
     }
-    challenge_names.extend(["challengeQGL", "challengeXiGL", "challengesFRIGL"].iter().map(|s| s.to_string()));
+    challenge_names.extend(["challengeQGL", "challengeOutGL", "challengesDeepGL"].iter().map(|s| s.to_string()));
     let challenge_names_joined = challenge_names.join(",");
 
     // ── transcript_call_inputs ───────────────────────────────────────────────
@@ -580,7 +588,7 @@ fn build_tera_context_bn128(
             verify_evals_inputs.push(format!("challengesStage{stage}GL"));
         }
     }
-    verify_evals_inputs.extend(["challengeQGL", "challengeXiGL", "evalsGL"].iter().map(|s| s.to_string()));
+    verify_evals_inputs.extend(["challengeQGL", "challengeOutGL", "evalsGL"].iter().map(|s| s.to_string()));
     if n_publics > 0 {
         verify_evals_inputs.push("publicsGL".into());
     }
@@ -597,16 +605,13 @@ fn build_tera_context_bn128(
     // ── Insert all context ───────────────────────────────────────────────────
     ctx.insert("custom", &custom);
     // blake3: the Goldilocks verifier's hashing, roots of four words over binary trees, its query
-    // challenge the last of challengesFRISteps.
+    // challenge challengeQueries, the main transcript's last squeeze, as gl.rs's.
     ctx.insert("blake3", &blake3);
     ctx.insert("rd", if blake3 { "[4]" } else { "" });
     ctx.insert("sw", &if blake3 { 4 } else { arity });
     ctx.insert("ll", if blake3 { "last_mt_levels" } else { "last_levels" });
     ctx.insert("lld", if blake3 { "[4]" } else { "" });
-    ctx.insert("n_fri_challenges", &(n_steps + usize::from(blake3)));
-    let fri_queries_challenge =
-        if blake3 { format!("challengesFRISteps[{n_steps}]") } else { "challengeFRIQueries".to_string() };
-    ctx.insert("fri_queries_challenge", &fri_queries_challenge);
+    ctx.insert("fri_queries_challenge", if blake3 { "challengeQueries" } else { "challengeFRIQueries" });
     ctx.insert("skip_main", &opts.skip_main);
     ctx.insert("verkey_input", &opts.verkey_input);
     ctx.insert("enable_input", &opts.enable_input);
@@ -624,6 +629,7 @@ fn build_tera_context_bn128(
     ctx.insert("ev_map_len", &ev_map_len);
     ctx.insert("n_air_group_values", &n_air_group_values);
     ctx.insert("n_steps", &n_steps);
+    ctx.insert("n_folds", &n_steps.saturating_sub(1));
     ctx.insert("arity", &arity);
     ctx.insert("n_bits_arity", &n_bits_arity);
     ctx.insert("merkle_levels_s0", &merkle_levels_s0);
@@ -718,7 +724,7 @@ fn blake3_transcript(
     if t.pow_bits > 0 {
         t_fri.put_single("nonce");
     }
-    t_fri.get_permutations("queriesFRI", t.n_queries, t.step0_bits);
+    t_fri.get_permutations("queriesL0", t.n_queries, t.step0_bits);
     let calculate_fri_queries_code = t_fri.get_code();
 
     let mut tr = new(None);
@@ -748,7 +754,7 @@ fn blake3_transcript(
     }
     tr.get_field("challengeQ");
     tr.put(&format!("root{}", t.q_stage), 4);
-    tr.get_field("challengeXi");
+    tr.get_field("challengeOut");
     if t.hash_commits {
         *transcript_code_stage = tr.get_code();
         let mut t_evals = new(Some("evals"));
@@ -763,10 +769,13 @@ fn blake3_transcript(
             tr.put(&format!("evals[{i}]"), 3);
         }
     }
-    tr.get_field("challengesFRI[0]");
-    tr.get_field("challengesFRI[1]");
+    tr.get_field("challengesDeep[0]");
+    tr.get_field("challengesDeep[1]");
+    // r^fold_s is drawn right after the root of f_s (nothing before f_0's root): M = n_steps − 1.
     for si in 0..t.n_steps {
-        tr.get_field(&format!("challengesFRISteps[{si}]"));
+        if si > 0 {
+            tr.get_field(&format!("rFold[{}]", si - 1));
+        }
         if si < t.n_steps - 1 {
             tr.put(&format!("s{}_root", si + 1), 4);
         } else if !t.hash_commits {
@@ -784,7 +793,7 @@ fn blake3_transcript(
             tr.put("lastPolFRIHash", 4);
         }
     }
-    tr.get_field(&format!("challengesFRISteps[{}]", t.n_steps));
+    tr.get_field("challengeQueries");
     (calculate_fri_queries_code, tr.get_code(), publics_code, evals_code, last_pol_code)
 }
 
@@ -797,15 +806,15 @@ mod tests {
         json!({
             "starkStruct": {
                 "verificationHashType": "BN128",
-                "nQueries": n_queries,
+                "numQueries": n_queries,
                 "nBits": 16,
                 "nBitsExt": 17,
-                "powBits": 0,
+                "grindingBitsQueries": 0,
                 "merkleTreeArity": 16,
                 "merkleTreeCustom": false,
                 "lastLevelVerification": 0,
                 "hashCommits": false,
-                "steps": [{"nBits": step0_bits}]
+                "logDomainSizes": [step0_bits]
             },
             "nStages": n_stages,
             "nPublics": 0,
@@ -893,7 +902,7 @@ mod tests {
         let mut si = minimal_stark_info(2, 4, 10);
         si["starkStruct"]["merkleTreeArity"] = json!(4);
         si["starkStruct"]["lastLevelVerification"] = json!(2);
-        si["starkStruct"]["steps"] = json!([{"nBits": 10}, {"nBits": 6}]);
+        si["starkStruct"]["logDomainSizes"] = json!([10, 6]);
         si["mapSectionsN"] = json!({"cm1": 2, "cm2": 2, "cm3": 2});
         si
     }

@@ -161,8 +161,8 @@ std::pair<std::string, std::string> snark_proof_to_json(
     json &commitments_json = nested ? proof_json["polynomials"] : proof_json;
     json &evaluations_json = nested ? proof_json["evaluations"] : proof_json;
     
-    // Parse commitments (G1 points - each has x and y coordinates). A coordinate is an element of
-    // Fq, not Fr: q > r, so one in [r, q) read in Fr would print reduced mod r.
+    // Parse commitments (G1 points - each has x and y coordinates). Coordinates live in the
+    // base field: reading them as Fr would reduce a coordinate in [r, q) to another point.
     for (const auto& key : orderedCommitments) {
         json point = json::array();
         

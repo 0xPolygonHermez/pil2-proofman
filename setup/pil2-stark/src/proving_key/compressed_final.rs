@@ -46,12 +46,22 @@ pub struct CompressedFinalConfig<'a> {
     pub std_pil_path: &'a str,
     pub recurser_pil_path: &'a str,
     pub circom_helpers_dir: &'a str,
+    /// Low-degree test of the compressed proof; `None` is FRI.
+    pub low_degree_test: Option<crate::types::stark_struct::LowDegreeTestKind>,
 }
 
 /// Run the compressed final setup.
 ///
 /// Ports `genCompressedFinalSetup()` from `generateCompressedFinalSetup.js`.
 pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tracker: &WitnessTracker) -> Result<()> {
+    if config.low_degree_test == Some(crate::types::stark_struct::LowDegreeTestKind::Stir)
+        && proofman_common::hash_family::has_bn128_recursivef(config.hash)
+    {
+        bail!(
+            "{} compressed proofs go into the BN128 wrap, which verifies FRI only: build this compressed final with FRI",
+            config.hash
+        );
+    }
     let template = "vadcop_final_compressed";
     let verifier_name = "vadcop_final_stark.verifier.circom";
     let build_dir = PathBuf::from(config.build_dir);
@@ -75,7 +85,6 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
             enable_input: false,
             input_challenges: false,
             fri_queries_batch_size: None,
-            multi_fri: false,
         };
         let circom_src =
             gen_stark_verifier(Some(config.const_root), config.stark_info, config.verifier_info, &rust_opts)
@@ -217,13 +226,23 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     // Compressed final stark struct settings
     // Poseidon: arity, llv and final_degree are this circuit's own geometry, set for the BN128 wrap.
     // blake3: no wrap reads it, so llv and the terminal are proof-size knobs (hash_family).
+    let stir_schedule = (config.low_degree_test == Some(crate::types::stark_struct::LowDegreeTestKind::Stir))
+        .then(|| proofman_common::hash_family::compressed_final_stir_schedule(config.hash))
+        .flatten();
     let compressed_settings = crate::types::stark_struct::StarkSettings {
-        blowup_factor: Some(proofman_common::hash_family::compressed_final_blowup_factor(config.hash)),
-        folding_factor: Some(if config.hash == "blake3" { 4 } else { 3 }),
-        pow_bits: Some(proofman_common::hash_family::compressed_final_grinding_bits(config.hash)),
+        initial_blowup_factor: Some(proofman_common::hash_family::compressed_final_blowup_factor(config.hash)),
+        initial_folding_factor: Some(if config.hash == "blake3" { 4 } else { 3 }),
+        grinding_bits: Some(proofman_common::hash_family::compressed_final_grinding_bits(config.hash)),
         merkle_tree_arity: (config.hash != "blake3").then_some(2),
         last_level_verification: proofman_common::hash_family::compressed_final_last_level_verification(config.hash),
-        final_degree: Some(proofman_common::hash_family::compressed_final_fri_terminal_degree(config.hash)),
+        // final_degree is a log degree here; the helper gives the terminal FRI domain.
+        final_degree: Some(
+            proofman_common::hash_family::compressed_final_fri_terminal_degree(config.hash)
+                - proofman_common::hash_family::compressed_final_blowup_factor(config.hash),
+        ),
+        low_degree_test: config.low_degree_test,
+        folding_factors: stir_schedule.as_ref().map(|(folds, _)| folds.clone()),
+        grinding_bits_queries: stir_schedule.as_ref().map(|(_, grinding)| grinding.clone()),
         ..Default::default()
     };
     let compressed_stark_struct =
@@ -247,38 +266,28 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
 
     // Build JSON representations using the same helpers as the non-recursive path
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-    let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&compressed_stark_struct);
-    let fri_batch_size = pil_info_result.pil_code.fri_batch_size;
-    let field_size = crate::types::security::goldilocks_safe_extension_field_size();
-    let regime = crate::types::security::regimes::DecodingRegime::Jbr;
-    let fri_config = crate::types::security::pcs::FriConfig {
-        field_size,
-        trace_length: 1u32 << compressed_stark_struct.n_bits,
-        rate: 1.0 / (1u64 << (compressed_stark_struct.n_bits_ext - compressed_stark_struct.n_bits)) as f64,
-        batch_size: fri_batch_size.max(1) as u64,
-        batching: crate::types::security::pcs::Batching::Powers,
-        log_folding_factors,
-        max_grinding_bits_query: compressed_stark_struct.pow_bits as u64,
-        use_max_grinding_bits_query: true,
-        tree_arity: compressed_stark_struct.merkle_tree_arity as u64,
-        hash_size_bits: 256,
-        target_security_bits: 128,
-        regime,
-    };
-    let fri = crate::types::security::pcs::Fri::new(fri_config);
+    let ldt = crate::output::stark_info::solve_low_degree_test(
+        &compressed_stark_struct,
+        pil_info_result.pil_code.fri_batch_size.max(1) as u64,
+    );
 
     let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
         &pil_info_result.setup,
         &compressed_stark_struct,
         &pil_info_result.pil_code,
         &opening_points,
-        &fri,
+        &ldt,
         0,
         0,
         "compressed_final",
         pil_info_result.c_exp_id,
-        pil_info_result.fri_exp_id,
+        pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
+    );
+    tracing::info!(
+        "Circuit '{}' low-degree test: {}",
+        template,
+        starkinfo_output.stark_struct.low_degree_test.describe()
     );
     let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
     let expressions_info_ref = &pil_info_result.pil_code.expressions_info;

@@ -586,7 +586,7 @@ fn the_starks_passes_are_refused() {
     let result =
         pil_info::run(&wide_constants_pilout(), 0, 0, &PilInfoCfg::goldilocks(1), &Default::default()).unwrap();
     let err = Bytecode::from_pil_info(&result).unwrap_err().to_string();
-    assert!(err.contains("FRI polynomial"), "{err}");
+    assert!(err.contains("DEEP polynomial"), "{err}");
 }
 
 // ---------------------------------------------------------------------------------------------

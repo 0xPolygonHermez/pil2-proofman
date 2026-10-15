@@ -282,7 +282,6 @@ fn read_sections(c: &mut Cursor<&[u8]>) -> Result<(HashMap<u32, u64>, bool)> {
 
     // Section count
     let n_sections = read_u32(c)? as usize;
-    let use_custom_gates = n_sections == 5;
 
     // One-pass scan: record the byte position of each section's data.
     let mut data_starts: HashMap<u32, u64> = HashMap::new();
@@ -293,6 +292,21 @@ fn read_sections(c: &mut Cursor<&[u8]>) -> Result<(HashMap<u32, u64>, bool)> {
         c.seek(SeekFrom::Current(sec_size as i64))
             .map_err(|e| anyhow!("section {}: seek past data: {}", sec_type, e))?;
     }
+
+    // Detect custom gates by the presence of their sections (4 = definitions, 5 = uses),
+    // not by `n_sections == 5`: a missing optional section 3, or an extra future section,
+    // would otherwise silently drop every custom gate and leave its `<--` outputs free.
+    // One without the other is malformed, and reading it as "no custom gates" would do the same.
+    let use_custom_gates = match (data_starts.contains_key(&4), data_starts.contains_key(&5)) {
+        (true, true) => true,
+        (false, false) => false,
+        (has_definitions, has_uses) => {
+            return Err(anyhow!(
+                "custom gate sections must come together: definitions (4) present: {has_definitions}, \
+                 uses (5) present: {has_uses}"
+            ))
+        }
+    };
     Ok((data_starts, use_custom_gates))
 }
 

@@ -13,7 +13,7 @@ categories = { workspace = true }
 path = "lib.rs"
 
 [dependencies]
-proofman-fields = { workspace = true, features = ["verify"] }
+proofman-fields = { workspace = true }
 proofman-common = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }

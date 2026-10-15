@@ -16,14 +16,6 @@ serde = { version = "1.0.130", default-features = false, features = ["derive"] }
 num-bigint = { version = "0.4", default-features = false }
 blake3 = { workspace = true, default-features = false }
 
-# Native STARKS C library — host-only (x86_64).
-[target.'cfg(target_arch = "x86_64")'.dependencies]
-proofman-starks-lib-c = { workspace = true }
-
-[features]
-default = []
-verify = []
-
 [dev-dependencies]
 rand = { workspace = true }
 # Only for the serde tests of `Bn128`.

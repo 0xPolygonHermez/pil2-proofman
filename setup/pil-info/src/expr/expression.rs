@@ -3,7 +3,7 @@ pub type ExprId = usize;
 
 /// A child of an expression node: either a reference to an arena entry
 /// (used by pilout-parsed expressions) or an inline expression object
-/// (used by constraint/FRI polynomial builders to match JS semantics
+/// (used by constraint/DEEP polynomial builders to match JS semantics
 /// where helper nodes are not pushed to the expressions array).
 #[derive(Debug, Clone)]
 pub enum ExprChild {

@@ -48,7 +48,6 @@ void runLdeTests();
 void runSrsTests();
 void runCommitTests();
 void runMsmTests();
-void runPolynomialTests();
 void runShplonkTests();
 void runInfoTests();
 void runExpressionsTests();

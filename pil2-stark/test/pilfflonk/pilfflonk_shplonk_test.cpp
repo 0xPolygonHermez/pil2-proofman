@@ -1146,15 +1146,15 @@ void testDivideExactly() {
                                         "X^0 - β is not monic");
 }
 
-// divideExactly across the blocks of rapidsnark's divByMonicInPlace, whose division
-// pilfflonk_polynomial_test.cpp checks: for m in {1, 3}, a = q·(X^m − β) with q of two blocks and
+// divideExactly across the blocks of rapidsnark's divByMonic, whose division
+// rapidsnark's test_polynomial.cpp checks: for m in {1, 3}, a = q·(X^m − β) with q of two blocks and
 // one coefficient is divided back to q, in a buffer it does not own, which it keeps, on 1 and 32
 // threads; a + ρ·X^(m−1) and a + X^(d−1) are refused, naming what was divided.
 void testDivideExactlyAcrossBlocks() {
     const int threads = omp_get_max_threads();
     Random random(6002);
     for (uint64_t m : {1, 3}) {
-        Column q(2 * Poly::divByMonicInPlaceBlockLength(m) + 1);
+        Column q(2 * Poly::divByMonicBlockLength(m) + 1);
         for (FrElement &c : q) {
             c = random.element();
         }

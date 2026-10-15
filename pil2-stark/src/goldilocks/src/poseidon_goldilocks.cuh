@@ -15,15 +15,6 @@
 
 #include "grinding_launch.hpp"
 
-// Grinding launch geometry for POSEIDON1.
-#define POSEIDON1_GRIND_BITS   19
-#define POSEIDON1_GRIND_BLOCKS 512
-#define POSEIDON1_GRIND_GRID \
-    ((((1ULL << POSEIDON1_GRIND_BITS) + POSEIDON1_GRIND_BLOCKS - 1) / POSEIDON1_GRIND_BLOCKS))
-
-static_assert(POSEIDON1_GRIND_GRID <= GRIND_NONCE_BLOCKS_MAX,
-              "POSEIDON1 grinding grid exceeds the reserved nonce_blocks region");
-
 // ---------------------------------------------------------------------------
 // Public class (W=12).
 // ---------------------------------------------------------------------------
@@ -900,10 +891,5 @@ template<uint32_t RATE_T, uint32_t CAPACITY_T, uint32_t W, uint32_t HALF_F, uint
 __global__ void merkleNodeKernel_pos1(uint64_t nextN, uint64_t nextIndex,
                                       uint64_t pending, uint32_t arity,
                                       uint64_t *cursor);
-
-template<uint32_t W, uint32_t HALF_F, uint32_t N_PART>
-__global__ void grindingKernel_pos1(uint64_t *nonce, uint64_t *__restrict__ nonceBlock,
-                                    uint64_t *__restrict__ input, uint64_t n_bits,
-                                    uint64_t hashes_per_thread, uint64_t nonces_offset);
 
 #endif  // POSEIDON_GOLDILOCKS_CUH

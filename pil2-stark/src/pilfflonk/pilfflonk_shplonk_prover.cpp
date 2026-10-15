@@ -139,7 +139,7 @@ void divideExactly(Poly &a, uint64_t m, const FrElement &beta, const std::string
     }
     // rapidsnark's parallel division (pilfflonk/docs/performance.md#the-shplonk-division): the
     // quotient in place, and whether the remainder a_j + β·q_j (j < m) is zero.
-    if (!a.divByMonicInPlace(m, beta)) {
+    if (!a.divByMonic(m, beta)) {
         throw notDivisible(what);
     }
 }

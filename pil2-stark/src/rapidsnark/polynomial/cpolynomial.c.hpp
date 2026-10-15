@@ -41,37 +41,17 @@ u_int64_t CPolynomial<Engine>::getDegree() const {
 
 template<typename Engine>
 Polynomial<Engine> *CPolynomial<Engine>::getPolynomial(FrElement *reservedBuffer) const {
-    u_int64_t degrees[n];
-
-    for (int i = 0; i < n; i++) {
-        degrees[i] = polynomials[i] == NULL ? 0 : polynomials[i]->getDegree();
-    }
-
     u_int64_t maxDegree = this->getDegree();
     u_int64_t lengthBuffer = std::pow(2, ((u_int64_t)log2(maxDegree - 1)) + 1);
-    Polynomial<Engine> *polynomial = new Polynomial<Engine>(E, reservedBuffer, lengthBuffer);
 
-    #pragma omp parallel for
-    for (u_int64_t i = 0; i < maxDegree+1; i++) {
-        for (int j = 0; j < n; j++) {
-            if (polynomials[j] != NULL) {
-                if (i <= degrees[j]) polynomial->coef[i * n + j] = polynomials[j]->coef[i];
-            }
-        }
+    // The coefficients, then zeros up to the length where they did not reach
+    u_int64_t nCoefs = getCoefficients(reservedBuffer);
+    if (nCoefs < lengthBuffer) {
+        int nThreads = omp_get_max_threads() / 2;
+        ThreadUtils::parset(&reservedBuffer[nCoefs], 0, (lengthBuffer - nCoefs) * sizeof(FrElement), nThreads);
     }
 
-    polynomial->fixDegree();
-
-    return polynomial;
-}
-
-template<typename Engine>
-typename Engine::G1Point CPolynomial<Engine>::multiExponentiation(G1PointAffine *PTau) const {
-//    LOG_TRACE("> Computing C2 multi exponentiation");
-//    u_int64_t lengths[3] = {polynomials["Z"]->getDegree() + 1,
-//                            polynomials["T1"]->getDegree() + 1,
-//                            polynomials["T2"]->getDegree() + 1};
-//    G1Point C2 = multiExponentiation(polynomials["C2"], 3, lengths);
+    return Polynomial<Engine>::fromReservedBuffer(E, reservedBuffer, lengthBuffer);
 }
 
 template<typename Engine>
@@ -102,6 +82,15 @@ u_int64_t CPolynomial<Engine>::getCoefficients(FrElement *buffer) const {
     }
 
     return nCoefs;
+}
+
+template<typename Engine>
+typename Engine::G1Point CPolynomial<Engine>::multiExponentiation(G1PointAffine *PTau) const {
+//    LOG_TRACE("> Computing C2 multi exponentiation");
+//    u_int64_t lengths[3] = {polynomials["Z"]->getDegree() + 1,
+//                            polynomials["T1"]->getDegree() + 1,
+//                            polynomials["T2"]->getDegree() + 1};
+//    G1Point C2 = multiExponentiation(polynomials["C2"], 3, lengths);
 }
 
 #endif

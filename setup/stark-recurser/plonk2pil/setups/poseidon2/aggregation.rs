@@ -429,7 +429,7 @@ pub fn aggregation_compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOption
     r = n_used;
 
     apply_remap_to_s_map(&mut s_map, &copy_merge.remap);
-    verify_merge_soundness(&s_map, &copy_merge.merged_reps, N_COLS);
+    verify_merge_soundness(&s_map, &copy_merge.merged_reps, &copy_merge.remap, N_COLS);
     let sv = build_s_polynomials(N_COLS, n, n_bits, r, &s_map);
     let fixed_pols = build_fixed_pols(&airgroup_name, &cv, &sv);
 

@@ -245,7 +245,7 @@ public:
 
 // a := a / (X^m − β), m >= 1, which must be exact: throws std::logic_error, naming `what`, if it is
 // not, leaving `a` unspecified. a's degree must be up to date (Poly::fixDegree), so that the
-// coefficients above it are zero. By rapidsnark's Polynomial::divByMonicInPlace where deg a >= m:
+// coefficients above it are zero. By rapidsnark's Polynomial::divByMonic where deg a >= m:
 // in place, in a's buffer, owned or not, in parallel over blocks of the quotient's coefficients,
 // and with the remainder a_j + β·q_j (j < m), which must be zero
 // (pilfflonk/docs/performance.md#the-shplonk-division). Throws std::invalid_argument for m = 0.

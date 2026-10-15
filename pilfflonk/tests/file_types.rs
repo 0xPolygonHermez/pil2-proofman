@@ -307,7 +307,7 @@ fn the_pilfflonkinfo_has_the_fields_of_a6_in_a_fixed_order() {
             "layout",
         ]
     );
-    for absent in ["starkStruct", "friExpId", "customCommits", "customCommitsMap", "publicsMap", "security"] {
+    for absent in ["starkStruct", "deepExpId", "customCommits", "customCommitsMap", "publicsMap", "security"] {
         assert!(!text.contains(&format!("\"{absent}\"")), "{absent}");
     }
     // A layout entry, with its fields in order.

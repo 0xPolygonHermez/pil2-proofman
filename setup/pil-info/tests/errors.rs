@@ -190,8 +190,8 @@ fn a_hint_field_without_a_value_is_refused() {
     assert!(matches!(&err, PilInfoError::HintFieldWithoutValue { hint } if hint == "broken"), "{err:?}");
 }
 
-/// Was `panic!("Symbol not found for ev type=const id=0")`: the FRI polynomial needs the stage and
-/// dimension of every column it opens, and SHPLONK builds no FRI polynomial.
+/// Was `panic!("Symbol not found for ev type=const id=0")`: the DEEP polynomial needs the stage and
+/// dimension of every column it opens, and SHPLONK builds no DEEP polynomial.
 #[test]
 fn an_opened_column_without_a_symbol_is_refused_by_the_fri_opening() {
     let mut pilout = pilout();

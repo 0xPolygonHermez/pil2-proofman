@@ -28,10 +28,11 @@
 //!
 //! ## Soundness condition
 //! Dropping a copy is only sound if the connection re-enforces the equality, which
-//! requires the representative to occupy >= 2 cells in connection-covered columns
-//! (`col < n_cols`). [`verify_merge_soundness`] checks this on the final `s_map` and
-//! panics otherwise. The condition depends on the verifier circuit's layout, so it is
-//! enforced at runtime rather than assumed.
+//! requires a representative placed more than once to occupy >= 2 cells in
+//! connection-covered columns (`col < n_cols`); one placed once had a dead partner and
+//! needs nothing. [`verify_merge_soundness`] checks this, and that the sweep left no
+//! merged-away id, on the final `s_map`, and panics otherwise. The condition depends on
+//! the verifier circuit's layout, so it is enforced at runtime rather than assumed.
 
 use proofman_fields::Field;
 
@@ -173,37 +174,40 @@ pub fn merge_copy_signals<F: Field>(
 /// Assert the soundness condition on the swept `s_map`; run after
 /// [`apply_remap_to_s_map`].
 ///
-/// The connection argument only enforces equality between cells in columns
-/// `col < n_cols`. A dropped copy's equality is therefore re-enforced only if its
-/// representative occupies >= 2 such cells. Panics if any `merged_reps` entry has an
-/// in-band multiplicity below 2 (its equality would be unenforced).
-pub fn verify_merge_soundness(s_map: &[Vec<u32>], merged_reps: &[u32], n_cols: usize) {
+/// Two things must hold. The sweep reached every placement: no cell still holds an id that is
+/// not its own representative. And every merged representative placed more than once has >= 2
+/// cells in the connection band (`col < n_cols`), the only columns whose equalities the
+/// permutation enforces. A representative placed once is a copy whose other endpoint is dead
+/// (placed nowhere), so the dropped copy constrained nothing -- what circom --O1 leaves behind
+/// and --O2 would have removed.
+pub fn verify_merge_soundness(s_map: &[Vec<u32>], merged_reps: &[u32], remap: &[u32], n_cols: usize) {
     use std::collections::HashMap;
-    // In-band multiplicity of each id (only columns < n_cols are in the connection).
-    let mut in_band_mult: HashMap<u32, usize> = HashMap::new();
-    for col in s_map.iter().take(n_cols) {
+    let mut in_band: HashMap<u32, usize> = HashMap::new();
+    let mut total: HashMap<u32, usize> = HashMap::new();
+    let mut stale = 0usize;
+    for (c, col) in s_map.iter().enumerate() {
         for &cell in col {
-            if cell != 0 {
-                *in_band_mult.entry(cell).or_insert(0) += 1;
+            if cell == 0 {
+                continue;
+            }
+            if remap.get(cell as usize).is_some_and(|&r| r != cell) {
+                stale += 1;
+            }
+            *total.entry(cell).or_insert(0) += 1;
+            if c < n_cols {
+                *in_band.entry(cell).or_insert(0) += 1;
             }
         }
     }
-    let mut bad = 0usize;
-    for &rep in merged_reps {
-        if in_band_mult.get(&rep).copied().unwrap_or(0) < 2 {
-            bad += 1;
-        }
-    }
-    // Two situations land here and only one is a bug, so the message says both. A merge where one
-    // endpoint has no other placement is BENIGN -- that endpoint is dead and the dropped copy
-    // constrained nothing -- and this guard cannot tell it from the real fault, which is a cell the
-    // remap sweep never reached.
+    assert_eq!(stale, 0, "merge_copies: {stale} cells still hold a merged-away id: apply_remap_to_s_map missed them");
+    let unenforced = merged_reps
+        .iter()
+        .filter(|rep| total.get(rep).copied().unwrap_or(0) >= 2 && in_band.get(rep).copied().unwrap_or(0) < 2)
+        .count();
     assert_eq!(
-        bad, 0,
-        "merge_copies: {bad} merged representatives have in-band (col<{n_cols}) multiplicity < 2. \
-         Either one endpoint of those copies is unused (harmless), or a placement was not reached \
-         by apply_remap_to_s_map, in which case the dropped copy equality is unenforced. Check the \
-         second before trusting the first; disabling merge_copies restores the copy gates either way."
+        unenforced, 0,
+        "merge_copies: {unenforced} merged representatives are placed more than once but in fewer than 2 \
+         connection-covered cells (col < {n_cols}): their dropped copy equalities are unenforced"
     );
 }
 
@@ -430,28 +434,40 @@ mod tests {
         assert_eq!(violations, 0, "merged copy endpoints must unify in s_map (sound)");
     }
 
+    fn ident(n: u32) -> Vec<u32> {
+        (0..n).collect()
+    }
+
     #[test]
     fn guard_passes_when_rep_has_two_in_band_cells() {
         // rep 5 appears twice in-band (cols < n_cols=4) -> sound.
         let s_map = vec![vec![5u32], vec![5u32], vec![0u32], vec![0u32]];
-        verify_merge_soundness(&s_map, &[5], 4);
+        verify_merge_soundness(&s_map, &[5], &ident(8), 4);
     }
 
     #[test]
-    #[should_panic(expected = "multiplicity < 2")]
-    fn guard_fires_when_rep_only_out_of_band() {
-        // rep 5 appears only in col 4 (>= n_cols=4, out of connection band) -> unsound.
-        // cols 0..3 in-band hold nothing; col 4 holds 5.
-        let s_map = vec![vec![0u32], vec![0u32], vec![0u32], vec![0u32], vec![5u32]];
-        verify_merge_soundness(&s_map, &[5], 4);
-    }
-
-    #[test]
-    #[should_panic(expected = "multiplicity < 2")]
-    fn guard_fires_when_rep_in_band_multiplicity_one() {
-        // rep 5 appears once in-band -> connection cycle length 1, equality unenforced.
+    fn guard_passes_a_dead_endpoint() {
+        // rep 5 is placed once: its copy partner is placed nowhere, so the copy bound nothing.
         let s_map = vec![vec![5u32], vec![0u32], vec![0u32], vec![0u32]];
-        verify_merge_soundness(&s_map, &[5], 4);
+        verify_merge_soundness(&s_map, &[5], &ident(8), 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "unenforced")]
+    fn guard_fires_when_a_second_placement_is_out_of_band() {
+        // rep 5 in col 0 and in col 4 (>= n_cols=4): the permutation never sees the second cell.
+        let s_map = vec![vec![5u32], vec![0u32], vec![0u32], vec![0u32], vec![5u32]];
+        verify_merge_soundness(&s_map, &[5], &ident(8), 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "missed them")]
+    fn guard_fires_when_the_sweep_missed_a_cell() {
+        // 6 merged into 5, but a cell still holds 6: the remap never reached it.
+        let mut remap = ident(8);
+        remap[6] = 5;
+        let s_map = vec![vec![5u32], vec![6u32], vec![0u32], vec![0u32]];
+        verify_merge_soundness(&s_map, &[5], &remap, 4);
     }
 
     #[test]

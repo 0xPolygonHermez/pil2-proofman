@@ -411,7 +411,7 @@ static void GRINDING_GPU_BLAKE3_BENCH(benchmark::State &state)
     uint64_t *d_in, *d_nonce, *d_nonceBlock;
     CUDA_OK(cudaMalloc((void **)&d_in,         4 * sizeof(uint64_t)));
     CUDA_OK(cudaMalloc((void **)&d_nonce,      sizeof(uint64_t)));
-    CUDA_OK(cudaMalloc((void **)&d_nonceBlock, BLAKE3_GRIND_GRID * sizeof(uint64_t)));
+    CUDA_OK(cudaMalloc((void **)&d_nonceBlock, sizeof(uint64_t)));
 
     uint64_t h_in[GRIND_CHALLENGE_ELEMS];
     uint64_t iteration = 0;

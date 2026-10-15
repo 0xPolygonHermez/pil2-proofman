@@ -324,8 +324,8 @@ pub fn air_setup(
     max_q_degree: u64,
     packing: Packing,
 ) -> Result<AirSetup, SetupError> {
-    if result.fri_exp_id.is_some() {
-        return passes_output("a FRI polynomial: the passes must run with PilInfoCfg::bn128()".to_string());
+    if result.deep_exp_id.is_some() {
+        return passes_output("a DEEP polynomial: the passes must run with PilInfoCfg::bn128()".to_string());
     }
     let setup = &result.setup;
     let q_deg = u64::try_from(result.q_deg).map_err(|_| SetupError::QDegree(result.q_deg))?;

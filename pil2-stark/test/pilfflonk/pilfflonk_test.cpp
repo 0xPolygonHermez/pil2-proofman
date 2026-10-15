@@ -196,7 +196,6 @@ int main() {
     PilFflonkTest::runSrsTests();
     PilFflonkTest::runCommitTests();
     PilFflonkTest::runMsmTests();
-    PilFflonkTest::runPolynomialTests();
     PilFflonkTest::runShplonkTests();
     PilFflonkTest::runInfoTests();
     PilFflonkTest::runExpressionsTests();

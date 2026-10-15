@@ -292,7 +292,7 @@ static void GRINDING_GPU_POS1_BENCH(benchmark::State &state)
     gl64_t *d_in, *d_nonce, *d_nonceBlock;
     CHECKCUDAERR(cudaMalloc((void **)&d_in,          PoseidonGoldilocksGPUGrinding::SPONGE_WIDTH * sizeof(gl64_t)));
     CHECKCUDAERR(cudaMalloc((void **)&d_nonce,       sizeof(gl64_t)));
-    CHECKCUDAERR(cudaMalloc((void **)&d_nonceBlock,  POSEIDON1_GRIND_GRID * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc((void **)&d_nonceBlock,  sizeof(gl64_t)));
 
     Goldilocks::Element h_in[GRIND_CHALLENGE_ELEMS];
     uint64_t iteration = 0;

@@ -25,7 +25,7 @@ pub enum PilInfoError {
     )]
     CustomColumnStage { name: String, stage: usize },
 
-    /// An evaluation of a column that has no symbol: the FRI polynomial needs its stage and
+    /// An evaluation of a column that has no symbol: the DEEP polynomial needs its stage and
     /// dimension.
     #[error("invalid pilout: the constraints evaluate {entry_type} {id}, which has no symbol")]
     NoSymbolForEvaluation { entry_type: String, id: usize },
@@ -34,9 +34,9 @@ pub enum PilInfoError {
     #[error("no choice of intermediate polynomials brings the constraints down to a degree in 2..={max}")]
     NoFeasibleDegree { max: usize },
 
-    /// The FRI polynomial combines the evaluations at each opening point, and there are none.
-    #[error("the FRI polynomial has no evaluation to combine: the constraints evaluate no column")]
-    FriWithoutEvaluations,
+    /// The DEEP polynomial combines the evaluations at each opening point, and there are none.
+    #[error("the DEEP polynomial has no evaluation to combine: the constraints evaluate no column")]
+    DeepWithoutEvaluations,
 
     // --- An invariant of the passes broken: a bug of pil-info, not of the pilout -------------
     #[error("{pass}: unknown expression op `{op}`")]
@@ -51,8 +51,8 @@ pub enum PilInfoError {
     #[error("a hint field of op `{0}`, which no hint holds")]
     UnknownHintOp(String),
 
-    #[error("no code was generated for the FRI polynomial, expression {0}")]
-    FriCodeMissing(usize),
+    #[error("no code was generated for the DEEP polynomial, expression {0}")]
+    DeepCodeMissing(usize),
 
     /// Verifier code whose ops all write temporaries, as `fix_dimensions_verifier` requires.
     #[error(

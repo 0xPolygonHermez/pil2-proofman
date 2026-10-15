@@ -10,10 +10,12 @@ use crate::pil::gen_code::PilCodeResult;
 use crate::types::pilout_info::SetupResult;
 use crate::types::FIELD_EXTENSION;
 use crate::types::security;
-use crate::types::stark_struct::StarkStruct;
+use crate::types::security::pcs::{Batching, LowDegreeTest, Pcs};
+use crate::types::security::regimes::DecodingRegime;
+use crate::types::stark_struct::{FriStruct, StarkStruct, StirStruct};
 use crate::types::output::{
     BoundaryOutput, ChallengeMapEntryOutput, EvMapEntry, NameStageEntry, PolMapEntry, PublicMapEntry, SecurityInfo,
-    StarkInfoOutput, StarkStructOutput, StepOutput,
+    StarkInfoOutput, StarkStructOutput,
 };
 
 /// Build the StarkInfoOutput for JSON serialization from internal types.
@@ -23,29 +25,50 @@ pub fn build_starkinfo_output(
     stark_struct: &StarkStruct,
     pil_code: &PilCodeResult,
     opening_points: &[i64],
-    fri: &security::pcs::Fri,
+    ldt: &LowDegreeTest,
     airgroup_id: usize,
     air_id: usize,
     air_name: &str,
     c_exp_id: usize,
-    fri_exp_id: usize,
+    deep_exp_id: usize,
     q_deg: i64,
 ) -> StarkInfoOutput {
-    let steps: Vec<StepOutput> = stark_struct.steps.iter().map(|s| StepOutput { n_bits: s.n_bits }).collect();
-
-    let fri_security = fri.security_params();
+    // The query counts and grinding bits are the solved values, not the settings.
+    let low_degree_test = match (ldt, &stark_struct.low_degree_test) {
+        (LowDegreeTest::Fri(fri), crate::types::stark_struct::LowDegreeTest::Fri(schedule)) => {
+            let sec = fri.security_params();
+            let solved = FriStruct {
+                num_queries: sec.n_queries as usize,
+                grinding_bits_queries: sec.grinding_bits_query as usize,
+                ..schedule.clone()
+            };
+            crate::types::stark_struct::LowDegreeTest::Fri(solved)
+        }
+        (LowDegreeTest::Stir(stir), crate::types::stark_struct::LowDegreeTest::Stir(schedule)) => {
+            let sec = stir.security_params();
+            let solved = StirStruct {
+                num_queries: sec.num_queries.iter().map(|&t| t as usize).collect(),
+                grinding_bits_queries: sec.grinding_bits_queries.iter().map(|&g| g as usize).collect(),
+                ..schedule.clone()
+            };
+            crate::types::stark_struct::LowDegreeTest::Stir(solved)
+        }
+        (ldt, schedule) => panic!(
+            "solved low-degree test {} does not match the stark struct's {:?}",
+            ldt.identifier(),
+            schedule.kind()
+        ),
+    };
     let stark_struct_out = StarkStructOutput {
         n_bits: stark_struct.n_bits,
         merkle_tree_arity: stark_struct.merkle_tree_arity,
         transcript_arity: stark_struct.transcript_arity,
         merkle_tree_custom: stark_struct.merkle_tree_custom,
         last_level_verification: stark_struct.last_level_verification,
-        pow_bits: fri_security.grinding_bits_query as usize,
         hash_commits: stark_struct.hash_commits,
         n_bits_ext: stark_struct.n_bits_ext,
         verification_hash_type: stark_struct.verification_hash_type.clone(),
-        steps,
-        n_queries: fri_security.n_queries as usize,
+        low_degree_test,
     };
 
     let boundaries: Vec<BoundaryOutput> = {
@@ -282,12 +305,12 @@ pub fn build_starkinfo_output(
         n_constraints: setup.constraints.len(),
         n_commitments_stage1,
         ev_map,
-        fri_exp_id,
+        deep_exp_id,
         fri_batch_size: pil_code.fri_batch_size,
         security: Some(SecurityInfo {
-            proximity_gap: fri.proximity_gap(),
-            proximity_parameter: fri.proximity_parameter(),
-            regime: "JBR".to_string(),
+            proximity_gap: ldt.proximity_gap(),
+            proximity_parameter: ldt.proximity_parameter(),
+            regime: ldt.regime_identifier().to_string(),
         }),
     }
 }
@@ -297,10 +320,93 @@ pub fn collect_opening_points(setup: &SetupResult) -> Vec<i64> {
 }
 
 pub fn compute_log_folding_factors(stark_struct: &StarkStruct) -> Vec<u32> {
-    let steps = &stark_struct.steps;
-    let mut factors = Vec::new();
-    for i in 0..steps.len() - 1 {
-        factors.push((steps[i].n_bits - steps[i + 1].n_bits) as u32);
+    stark_struct.low_degree_test.log_folding_factors()
+}
+
+/// Solve the security parameters (query counts, grinding) of the low-degree
+/// test the stark struct selects, for a DEEP polynomial batching `batch_size`
+/// openings. The 128-bit JBR target and the geometry (rate, tree arity, pow
+/// bits) come from the stark struct, as the FRI-only callers always did.
+pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> LowDegreeTest {
+    let field_size = security::goldilocks_safe_extension_field_size();
+    let rate = 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64;
+    let log_folding_factors = compute_log_folding_factors(stark_struct);
+    match &stark_struct.low_degree_test {
+        crate::types::stark_struct::LowDegreeTest::Fri(fri) => {
+            LowDegreeTest::Fri(security::pcs::Fri::new(security::pcs::FriConfig {
+                field_size,
+                trace_length: 1u32 << stark_struct.n_bits,
+                rate,
+                batch_size,
+                batching: Batching::Powers,
+                log_folding_factors,
+                max_grinding_bits_query: fri.grinding_bits_queries as u64,
+                use_max_grinding_bits_query: true,
+                tree_arity: stark_struct.merkle_tree_arity as u64,
+                hash_size_bits: 256,
+                target_security_bits: 128,
+                regime: DecodingRegime::Jbr,
+            }))
+        }
+        crate::types::stark_struct::LowDegreeTest::Stir(stir) => {
+            let solved = security::pcs::Stir::new(security::pcs::StirConfig {
+                field_size,
+                trace_length: 1u32 << stark_struct.n_bits,
+                rate,
+                batch_size,
+                batching: Batching::Powers,
+                log_folding_factors,
+                max_grinding_bits_queries: stir.grinding_bits_queries.iter().map(|&g| g as u64).collect(),
+                use_max_grinding_bits_query: true,
+                tree_arity: stark_struct.merkle_tree_arity as u64,
+                hash_size_bits: 256,
+                base_field_bits: 64,
+                target_security_bits: 128,
+                regime: DecodingRegime::Jbr,
+            });
+            // The GPU prover sizes every query buffer for round 1's count.
+            let t = &solved.security_params().num_queries;
+            if let Some(i) = t.iter().position(|&ti| ti > t[0]) {
+                panic!(
+                    "STIR schedule needs {} queries in round {i} but {} in round 0 (queries {t:?}, grinding {:?}); \
+                     every round must need at most round 0's queries: raise the later rounds' grindingBitsQueries",
+                    t[i], t[0], stir.grinding_bits_queries
+                );
+            }
+            LowDegreeTest::Stir(solved)
+        }
     }
-    factors
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::stark_struct::{generate_stark_struct, LowDegreeTest as Ldt, LowDegreeTestKind, StarkSettings};
+
+    fn stir(n_bits: usize, blowup: usize, fold: usize, grinding: &[usize]) -> StarkStruct {
+        let settings = StarkSettings {
+            low_degree_test: Some(LowDegreeTestKind::Stir),
+            initial_blowup_factor: Some(blowup),
+            initial_folding_factor: Some(fold),
+            ..Default::default()
+        };
+        let mut ss = generate_stark_struct(&settings, n_bits, "blake3");
+        if let Ldt::Stir(s) = &mut ss.low_degree_test {
+            s.grinding_bits_queries =
+                grinding.iter().copied().chain(std::iter::repeat(0)).take(s.folding_factors.len()).collect();
+        }
+        ss
+    }
+
+    #[test]
+    fn basic_air_schedule_needs_no_more_queries_after_round_0() {
+        solve_low_degree_test(&stir(22, 1, 4, &[24]), 200);
+    }
+
+    /// The GPU sizes its query buffers for round 0; a schedule that needs more later fails at setup.
+    #[test]
+    #[should_panic(expected = "every round must need at most round 0's queries")]
+    fn later_round_needing_more_queries_is_refused() {
+        solve_low_degree_test(&stir(20, 4, 2, &[30]), 200);
+    }
 }

@@ -65,6 +65,16 @@ impl SnarkProtocol {
         }
     }
 
+    /// Serialized proof length: 24 big-endian 32-byte words for both rapidsnark protocols (PLONK: 9
+    /// G1 points and 6 evaluations; FFLONK: 4 points and 16 evaluations). None for pilfflonk, whose
+    /// length is its key's: only its vkey says where the parts of its bytes end.
+    pub fn proof_bytes(&self) -> Option<usize> {
+        match self {
+            SnarkProtocol::Plonk | SnarkProtocol::Fflonk => Some(24 * 32),
+            SnarkProtocol::Pilfflonk => None,
+        }
+    }
+
     pub fn protocol_name(&self) -> &'static str {
         match self {
             SnarkProtocol::Plonk => "plonk",
@@ -181,6 +191,18 @@ pub(crate) struct PoseidonWrap<F: PrimeField64> {
     proving: Mutex<Option<PilfflonkWrapProver>>,
 }
 
+/// The BN254 scalar order `r`, big-endian.
+const BN254_R_BE: [u8; 32] = [
+    0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d, 0x28, 0x33, 0xe8,
+    0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
+];
+
+/// The first 32-byte big-endian word at or above `r`, if any. Words of equal length compare as
+/// numbers.
+fn first_word_not_below_r(bytes: &[u8]) -> Option<usize> {
+    bytes.as_chunks::<32>().0.iter().position(|word| word >= &BN254_R_BE)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnarkProof {
     pub proof_bytes: Vec<u8>,
@@ -229,11 +251,41 @@ impl SnarkProof {
     pub fn convert_to_json(
         &self,
     ) -> Result<(serde_json::Value, serde_json::Value), Box<dyn std::error::Error + Send + Sync>> {
+        // The C parser throws on an unknown protocol or a short proof, which aborts the process
+        // across the FFI, and reads the digest in 32-byte words past a ragged end. Refuse here.
         let protocol = SnarkProtocol::from_protocol_id(self.protocol_id)?;
-        if let SnarkProtocol::Pilfflonk = protocol {
+        let Some(proof_bytes) = protocol.proof_bytes() else {
             return Err("A pilfflonk proof's bytes do not say where their parts end, its vkey does: \
                  convert it with convert_to_json_with_vkey"
                 .into());
+        };
+        if self.proof_bytes.len() != proof_bytes {
+            return Err(format!(
+                "{} proof is {} bytes, expected {}",
+                protocol.protocol_name(),
+                self.proof_bytes.len(),
+                proof_bytes
+            )
+            .into());
+        }
+        if self.public_snark_bytes.is_empty() || !self.public_snark_bytes.len().is_multiple_of(32) {
+            return Err(format!(
+                "SNARK public input is {} bytes, not whole 32-byte field elements",
+                self.public_snark_bytes.len()
+            )
+            .into());
+        }
+        // The Solidity verifiers snarkjs generates for both protocols require every proof word
+        // below `r` (their `checkField`), while the parser reads coordinates mod q and
+        // evaluations mod r: a word past either bound is another encoding of the same proof,
+        // which would verify here and be rejected on-chain. A digest is reduced mod `r` too.
+        if let Some(i) = first_word_not_below_r(&self.proof_bytes) {
+            return Err(
+                format!("{} proof word {i} is not below the BN254 scalar order", protocol.protocol_name()).into()
+            );
+        }
+        if let Some(i) = first_word_not_below_r(&self.public_snark_bytes) {
+            return Err(format!("SNARK public input {i} is not below the BN254 scalar order").into());
         }
         let (proof_json, publics_json) =
             snark_proof_bytes_to_json_c(&self.proof_bytes, &self.public_snark_bytes, protocol.protocol_id() as i32);
@@ -509,10 +561,14 @@ impl<F: PrimeField64> PoseidonWrap<F> {
             self.d_buffers_recursivef,
         )?;
         let snark_proof = match &self.final_snark_key {
-            FinalSnarkKey::Zkey(zkey) => self.generate_rapidsnark_proof(zkey, &proof, &recursivef_proof)?,
-            FinalSnarkKey::Pilfflonk(pilfflonk_key) => {
-                self.generate_pilfflonk_proof(pilfflonk_key, pilfflonk_prover.as_ref(), &proof, &recursivef_proof)?
-            }
+            FinalSnarkKey::Zkey(zkey) => self.generate_rapidsnark_proof(zkey, &proof, verkey, &recursivef_proof)?,
+            FinalSnarkKey::Pilfflonk(pilfflonk_key) => self.generate_pilfflonk_proof(
+                pilfflonk_key,
+                pilfflonk_prover.as_ref(),
+                &proof,
+                verkey,
+                &recursivef_proof,
+            )?,
         };
 
         timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
@@ -539,11 +595,13 @@ impl<F: PrimeField64> PoseidonWrap<F> {
     }
 
     /// The PLONK or FFLONK proof of the vadcop proof `proof` (with its publics), of its recursivef
-    /// proof `recursivef_proof`: rapidsnark's prover of the zkey `zkey`. Under the lock of `proving`.
+    /// proof `recursivef_proof` against `verkey`: rapidsnark's prover of the zkey `zkey`. Under the
+    /// lock of `proving`.
     fn generate_rapidsnark_proof(
         &self,
         zkey: &Path,
         proof: &[u64],
+        verkey: &[u64],
         recursivef_proof: &RecursivefProof,
     ) -> ProofmanResult<SnarkProof> {
         timer_start_debug!(GENERATING_SNARK_PROOF);
@@ -582,37 +640,40 @@ impl<F: PrimeField64> PoseidonWrap<F> {
             })
         };
 
-        let (snark_proof_bytes, snark_publics_bytes) = generate_snark_proof(
+        let generated = generate_snark_proof(
             snark_prover,
             &self.setup_snark_path,
             recursivef_proof.as_ptr(),
             prealloc_handle,
             self.d_buffers_recursivef,
-        )?;
+        );
 
-        let public_bytes = self.public_bytes_solidity(proof)?;
-        let snark_proof = SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, protocol.protocol_id());
-
-        timer_stop_and_log_debug!(GENERATING_SNARK_PROOF);
-
+        // Released before anything below can return, so no error path leaks it.
         if self.snark_prover.is_none() {
             free_final_snark_prover_c(snark_prover);
         }
+        let (snark_proof_bytes, snark_publics_bytes) = generated?;
+
+        let public_bytes = self.public_bytes_solidity(proof, verkey, &snark_publics_bytes)?;
+        let snark_proof = SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, protocol.protocol_id());
+
+        timer_stop_and_log_debug!(GENERATING_SNARK_PROOF);
 
         Ok(snark_proof)
     }
 
     /// The pilfflonk proof of the vadcop proof `proof` (with its publics), of its recursivef proof
-    /// `recursivef_proof`, with the key at `pilfflonk_key`, whose prover is `preloaded` with
-    /// `preload` (the one `proving` holds). Under the lock of `proving`. The recursivef proved in the
-    /// wrapper's device buffers; pilfflonk, its key loaded now without `preload`, proves the wrap's
-    /// witness, which it computes from the recursivef proof, in its arena, which the recursivef is
-    /// done with.
+    /// `recursivef_proof` against `verkey`, with the key at `pilfflonk_key`, whose prover is
+    /// `preloaded` with `preload` (the one `proving` holds). Under the lock of `proving`. The
+    /// recursivef proved in the wrapper's device buffers; pilfflonk, its key loaded now without
+    /// `preload`, proves the wrap's witness, which it computes from the recursivef proof, in its
+    /// arena, which the recursivef is done with.
     fn generate_pilfflonk_proof(
         &self,
         pilfflonk_key: &Path,
         preloaded: Option<&PilfflonkWrapProver>,
         proof: &[u64],
+        verkey: &[u64],
         recursivef_proof: &RecursivefProof,
     ) -> ProofmanResult<SnarkProof> {
         timer_start_debug!(GENERATING_SNARK_PROOF);
@@ -632,7 +693,7 @@ impl<F: PrimeField64> PoseidonWrap<F> {
         // SAFETY: `recursivef_proof` is the recursivef proof, which nothing else uses.
         let (snark_proof_bytes, snark_publics_bytes) = unsafe { prover.prove(recursivef_proof.as_ptr()) }?;
 
-        let public_bytes = self.public_bytes_solidity(proof)?;
+        let public_bytes = self.public_bytes_solidity(proof, verkey, &snark_publics_bytes)?;
         let snark_proof = SnarkProof::new(
             snark_proof_bytes,
             public_bytes,
@@ -646,10 +707,26 @@ impl<F: PrimeField64> PoseidonWrap<F> {
     }
 
     /// The publics of the vadcop proof `proof` as the Solidity verifier takes them
-    /// ([`get_public_bytes_solidity`]).
-    fn public_bytes_solidity(&self, proof: &[u64]) -> ProofmanResult<Vec<u8>> {
+    /// ([`get_public_bytes_solidity`]), once `snark_publics_bytes`, the SNARK's public, is checked
+    /// to be the digest of those publics and the root `verkey` ([`PublicsInfo::snark_public_digest`]).
+    fn public_bytes_solidity(
+        &self,
+        proof: &[u64],
+        verkey: &[u64],
+        snark_publics_bytes: &[u8],
+    ) -> ProofmanResult<Vec<u8>> {
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
-        get_public_bytes_solidity(&publics_info, &proof[1..1 + proof[0] as usize])
+        let publics = &proof[1..1 + proof[0] as usize];
+        // The digest verifiers recompute must be the one the circuit committed to.
+        let rootc: &[u64; 4] = verkey.try_into().map_err(|_| {
+            ProofmanError::InvalidConfiguration(format!("verkey has {} limbs, expected 4", verkey.len()))
+        })?;
+        if publics_info.snark_public_digest(publics, rootc)?.as_slice() != snark_publics_bytes {
+            return Err(ProofmanError::InvalidProof(
+                "the SNARK's public digest differs from PublicsInfo::snark_public_digest".to_string(),
+            ));
+        }
+        get_public_bytes_solidity(&publics_info, publics)
     }
 }
 
@@ -864,41 +941,10 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     }
 }
 
+/// The `publicValues` bytes a Solidity verifier takes. See
+/// [`PublicsInfo::solidity_public_bytes`].
 pub fn get_public_bytes_solidity(publics_info: &PublicsInfo, vadcop_public_inputs: &[u64]) -> ProofmanResult<Vec<u8>> {
-    let vadcop_public_inputs = if vadcop_public_inputs.len() == publics_info.n_publics + 1 {
-        &vadcop_public_inputs[1..]
-    } else {
-        vadcop_public_inputs
-    };
-    if vadcop_public_inputs.len() != publics_info.n_publics {
-        return Err(ProofmanError::InvalidConfiguration(format!(
-            "Number of vadcop public inputs ({}) does not match expected number of publics ({})",
-            vadcop_public_inputs.len(),
-            publics_info.n_publics
-        )));
-    }
-
-    let mut public_bytes = vec![];
-    let mut index = 0;
-    for public_def in &publics_info.definitions {
-        let n_words = public_def.n_values;
-        if !public_def.verification_key {
-            let n_chunks_per_word = public_def.chunks[0];
-            let n_bits_per_chunk = public_def.chunks[1];
-            let n_bytes_per_chunk = n_bits_per_chunk / 8;
-            for _ in 0..n_words {
-                for i in 0..n_chunks_per_word {
-                    let value = vadcop_public_inputs[index + n_chunks_per_word - i - 1];
-                    let be_bytes = value.to_be_bytes();
-                    public_bytes.extend_from_slice(&be_bytes[8 - n_bytes_per_chunk..]);
-                }
-                index += n_chunks_per_word;
-            }
-        } else {
-            index += n_words;
-        }
-    }
-    Ok(public_bytes)
+    publics_info.solidity_public_bytes(vadcop_public_inputs)
 }
 
 pub fn check_setup_snark<F: PrimeField64>(
@@ -1052,32 +1098,108 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     Ok(is_valid)
 }
 
-/// Verifies `snark_proof` against the verification key at `vkey_path`: `snarkjs <protocol> verify`
-/// with snarkjs's `final.verkey.json` for PLONK and FFLONK, and pilfflonk's JS verifier with
-/// `pilfflonk.vkey.json` (`provingKeySnark/final/provingKey/<name>/pilfflonk/`) for pilfflonk.
+/// Verify a SNARK proof against a trusted `vkey`, checking snark validity only — the
+/// public input the verifier is given is the digest the proof carries. That digest is the
+/// committed statement only if the caller already trusts it (e.g. recomputed it from the
+/// publics and a pinned rootC). On its own this does NOT bind the proof to any statement,
+/// so prefer [`verify_snark_proof_with_expected`] with a pinned digest.
+///
+/// The verifier is `snarkjs <protocol> verify` with snarkjs's `final.verkey.json` for PLONK and
+/// FFLONK, and pilfflonk's JS verifier with `pilfflonk.vkey.json`
+/// (`provingKeySnark/final/provingKey/<name>/pilfflonk/`) for pilfflonk.
 pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> ProofmanResult<()> {
+    verify_snark_proof_with_expected(snark_proof, vkey_path, None)
+}
+
+/// As [`verify_snark_proof`], but when `expected_public_snark_bytes` is `Some`, require the
+/// proof's committed public digest to equal it before verifying. That pins the statement:
+/// the caller supplies the digest it recomputed from the publics and the trusted rootC, so
+/// a proof carrying an attacker-chosen public input is rejected. With `None`, a warning is
+/// emitted that the result attests snark self-consistency only.
+pub fn verify_snark_proof_with_expected(
+    snark_proof: &SnarkProof,
+    vkey_path: &Path,
+    expected_public_snark_bytes: Option<&[u8]>,
+) -> ProofmanResult<()> {
+    run_snarkjs_verify(snark_proof, vkey_path, expected_public_snark_bytes, &TempJsonFiles::new()?)
+}
+
+/// As [`verify_snark_proof_with_expected`], with the verification key given as its JSON
+/// rather than a file.
+pub fn verify_snark_proof_with_vkey(
+    snark_proof: &SnarkProof,
+    vkey_json: &str,
+    expected_public_snark_bytes: Option<&[u8]>,
+) -> ProofmanResult<()> {
+    let temp = TempJsonFiles::new()?;
+    let vkey_path = temp.write("snark_vkey", vkey_json)?;
+    run_snarkjs_verify(snark_proof, &vkey_path, expected_public_snark_bytes, &temp)
+}
+
+/// JSON files snarkjs reads, in a private directory (random name, owner-only) that is
+/// removed with them when dropped, on every return path.
+struct TempJsonFiles(tempfile::TempDir);
+
+impl TempJsonFiles {
+    fn new() -> ProofmanResult<Self> {
+        Ok(Self(tempfile::Builder::new().prefix("snarkjs_").tempdir()?))
+    }
+
+    fn write(&self, name: &str, contents: &str) -> ProofmanResult<PathBuf> {
+        let path = self.path(name);
+        std::fs::write(&path, contents)?;
+        Ok(path)
+    }
+
+    /// The path of the file `name`, which a verifier's caller writes itself.
+    fn path(&self, name: &str) -> PathBuf {
+        self.0.path().join(format!("{name}.json"))
+    }
+}
+
+/// The verification of [`verify_snark_proof_with_expected`]: snarkjs's for PLONK and FFLONK, and
+/// pilfflonk's JS verifier for pilfflonk ([`verify_pilfflonk_snark_proof`]), with their JSON files in
+/// `temp`.
+fn run_snarkjs_verify(
+    snark_proof: &SnarkProof,
+    vkey_path: &Path,
+    expected_public_snark_bytes: Option<&[u8]>,
+    temp: &TempJsonFiles,
+) -> ProofmanResult<()> {
+    match expected_public_snark_bytes {
+        Some(expected) if expected != snark_proof.public_snark_bytes.as_slice() => {
+            return Err(ProofmanError::InvalidProof(
+                "SNARK public digest does not match the expected (pinned) statement".to_string(),
+            ));
+        }
+        Some(_) => {}
+        None => {
+            tracing::warn!(
+                "verify_snark_proof: no expected public digest pinned — this attests snark \
+                 validity against the proof's own public input, not a statement. A relying \
+                 party must pin the digest recomputed from the publics and the trusted rootC."
+            );
+        }
+    }
+
     let protocol = SnarkProtocol::from_protocol_id(snark_proof.protocol_id)?;
     // What `snarkjs <protocol> verify` prints when the proof verifies.
     let verified_message = match protocol {
-        SnarkProtocol::Pilfflonk => return verify_pilfflonk_snark_proof(snark_proof, vkey_path),
-        SnarkProtocol::Plonk => "OK",
+        SnarkProtocol::Pilfflonk => return verify_pilfflonk_snark_proof(snark_proof, vkey_path, temp),
+        SnarkProtocol::Plonk => "OK!",
         SnarkProtocol::Fflonk => "PROOF VERIFIED SUCCESSFULLY",
     };
 
-    let (proof_json_value, publics_json_value) = snark_proof
+    let (proof_json, publics_json) = snark_proof
         .convert_to_json()
         .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to convert SNARK proof to JSON: {}", e)))?;
+    let to_json = |value| {
+        serde_json::to_string(value)
+            .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to serialize SNARK JSON: {}", e)))
+    };
+    let proof_path = temp.write("snark_proof", &to_json(&proof_json)?)?;
+    let publics_path = temp.write("snark_publics", &to_json(&publics_json)?)?;
 
-    let (proof_path, publics_path) = temp_json_paths();
-
-    let proof_json_str = serde_json::to_string_pretty(&proof_json_value)
-        .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to serialize proof JSON: {}", e)))?;
-    let publics_json_str = serde_json::to_string_pretty(&publics_json_value)
-        .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to serialize publics JSON: {}", e)))?;
-    std::fs::write(&proof_path, proof_json_str)?;
-    std::fs::write(&publics_path, publics_json_str)?;
-
-    // Call snarkjs verify
     let output = Command::new("snarkjs")
         .arg(protocol.protocol_name())
         .arg("verify")
@@ -1087,56 +1209,80 @@ pub fn verify_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> Proofma
         .output()
         .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to execute snarkjs: {}", e)))?;
 
-    remove_temp_json(&proof_path, &publics_path);
+    // snarkjs reports everything on stdout and exits 1 both when it rejects a proof and when it
+    // cannot run (unreadable vkey, missing file, ...), so only its messages tell them apart.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    match snarkjs_verdict(verified_message, output.status.success(), &stdout) {
+        SnarkjsVerdict::Verified => {
+            tracing::info!("    {}", "\u{2713} SNARK proof was verified".bright_green().bold());
+            Ok(())
+        }
+        SnarkjsVerdict::Rejected => {
+            tracing::info!("··· {}", "\u{2717} SNARK proof was not verified".bright_red().bold());
+            Err(ProofmanError::InvalidProof(format!("SNARK proof was not verified: {}", stdout.trim())))
+        }
+        SnarkjsVerdict::Failed => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(ProofmanError::InvalidConfiguration(format!(
+                "snarkjs could not verify the proof ({}): {} {}",
+                output.status,
+                stdout.trim(),
+                stderr.trim()
+            )))
+        }
+    }
+}
 
-    let verdict = if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).contains(verified_message))
+#[derive(Debug, PartialEq, Eq)]
+enum SnarkjsVerdict {
+    Verified,
+    /// The checks ran and the proof failed them.
+    Rejected,
+    /// Nothing was decided: snarkjs could not read its inputs, or the key does not fit.
+    Failed,
+}
+
+/// What snarkjs 0.7's `plonk verify` / `fflonk verify` concluded from its exit status and stdout,
+/// where it prints `verified_message` when the proof verifies.
+fn snarkjs_verdict(verified_message: &str, success: bool, stdout: &str) -> SnarkjsVerdict {
+    // A key with another public count is misconfiguration, not a false proof.
+    const REJECTED: [&str; 5] = [
+        "Invalid Proof",
+        "Proof commitments are not valid",
+        "Proof evaluations are not valid",
+        "Public inputs are not valid",
+        "Invalid number of public inputs",
+    ];
+    if success && stdout.contains(verified_message) {
+        SnarkjsVerdict::Verified
+    } else if !success && REJECTED.iter().any(|m| stdout.contains(m)) {
+        SnarkjsVerdict::Rejected
     } else {
-        Err(String::from_utf8_lossy(&output.stderr).into_owned())
-    };
-    report_verdict(verdict)
+        SnarkjsVerdict::Failed
+    }
 }
 
 /// [`verify_snark_proof`] of a pilfflonk proof: its JSON views, named by the vkey at `vkey_path`
-/// (`pilfflonk_wrap::json_views`), go to pilfflonk's JS verifier. Bytes that are not those of a
-/// proof of the vkey, or not as many publics as it has, are refused as the verifier refuses a proof.
-fn verify_pilfflonk_snark_proof(snark_proof: &SnarkProof, vkey_path: &Path) -> ProofmanResult<()> {
+/// (`pilfflonk_wrap::json_views`), go to pilfflonk's JS verifier, in `temp`. Bytes that are not
+/// those of a proof of the vkey, or not as many publics as it has, are refused as the verifier
+/// refuses a proof.
+fn verify_pilfflonk_snark_proof(
+    snark_proof: &SnarkProof,
+    vkey_path: &Path,
+    temp: &TempJsonFiles,
+) -> ProofmanResult<()> {
     let views = pilfflonk_wrap::read_vkey(vkey_path)
         .and_then(|vkey| pilfflonk_wrap::json_views(&snark_proof.proof_bytes, &snark_proof.public_snark_bytes, &vkey));
     let verdict = views.and_then(|(proof_json, publics)| {
-        let (proof_path, publics_path) = temp_json_paths();
-        let verdict = pilfflonk_wrap::verify_json(vkey_path, &proof_json, &publics, &proof_path, &publics_path);
-        remove_temp_json(&proof_path, &publics_path);
-        verdict
+        pilfflonk_wrap::verify_json(
+            vkey_path,
+            &proof_json,
+            &publics,
+            &temp.path("snark_proof"),
+            &temp.path("snark_publics"),
+        )
     });
     report_verdict(verdict.map_err(|e| e.to_string()))
-}
-
-/// Paths for the JSON views of a proof and of its publics in the temporary directory, unique to
-/// this process and this call, so that verifications do not race.
-fn temp_json_paths() -> (PathBuf, PathBuf) {
-    let temp_dir = std::env::temp_dir();
-    let unique_id = format!(
-        "{}_{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
-            .as_nanos()
-    );
-    let proof_path = temp_dir.join(format!("snark_proof_{}.json", unique_id));
-    let publics_path = temp_dir.join(format!("snark_publics_{}.json", unique_id));
-    (proof_path, publics_path)
-}
-
-/// Removes the files of [`temp_json_paths`], with a warning for each it cannot remove.
-fn remove_temp_json(proof_path: &Path, publics_path: &Path) {
-    if let Err(e) = std::fs::remove_file(proof_path) {
-        tracing::warn!("Failed to remove temporary SNARK proof file {}: {}", proof_path.display(), e);
-    }
-    if let Err(e) = std::fs::remove_file(publics_path) {
-        tracing::warn!("Failed to remove temporary SNARK publics file {}: {}", publics_path.display(), e);
-    }
 }
 
 /// The result of a verifier's verdict, logged: whether the proof verifies, or why the verifier
@@ -1193,6 +1339,92 @@ unsafe impl<F: PrimeField64> Send for PoseidonWrap<F> {}
 // the C++ side outside a proof is the caller's to order with the wrapper's proofs, as for any call
 // of `proofman_starks_lib_c` with them.
 unsafe impl<F: PrimeField64> Sync for PoseidonWrap<F> {}
+
+#[cfg(test)]
+mod snarkjs_verdict_tests {
+    use super::*;
+
+    #[test]
+    fn only_snarkjs_rejections_count_as_a_rejected_proof() {
+        assert_eq!(snarkjs_verdict("OK!", true, "[INFO]  snarkJS: OK!\n"), SnarkjsVerdict::Verified);
+        let fflonk_verified = "[INFO]  snarkJS: PROOF VERIFIED SUCCESSFULLY\n";
+        assert_eq!(snarkjs_verdict("PROOF VERIFIED SUCCESSFULLY", true, fflonk_verified), SnarkjsVerdict::Verified);
+        // Each protocol's message, and no other, says its proof verified.
+        assert_eq!(snarkjs_verdict("OK!", true, fflonk_verified), SnarkjsVerdict::Failed);
+        assert_eq!(snarkjs_verdict("OK!", false, "[WARN]  snarkJS: Invalid Proof\n"), SnarkjsVerdict::Rejected);
+        assert_eq!(
+            snarkjs_verdict("OK!", false, "[ERROR] snarkJS: Proof commitments are not valid.\n"),
+            SnarkjsVerdict::Rejected
+        );
+        // Exit 0 without OK!, a key that does not fit, an unreadable file: nothing decided.
+        assert_eq!(snarkjs_verdict("OK!", true, ""), SnarkjsVerdict::Failed);
+        assert_eq!(
+            snarkjs_verdict("OK!", false, "[ERROR] snarkJS: Number of public signals does not match with vk\n"),
+            SnarkjsVerdict::Failed
+        );
+        assert_eq!(
+            snarkjs_verdict("OK!", false, "[ERROR] snarkJS: Error: ENOENT: no such file\n"),
+            SnarkjsVerdict::Failed
+        );
+        assert_eq!(snarkjs_verdict("OK!", false, ""), SnarkjsVerdict::Failed);
+    }
+
+    #[test]
+    fn convert_to_json_refuses_what_the_native_parser_cannot_read() {
+        let proof = |proof_len: usize, digest_len: usize, protocol_id: u64| SnarkProof {
+            proof_bytes: vec![0; proof_len],
+            public_bytes: vec![],
+            public_snark_bytes: vec![0; digest_len],
+            protocol_id,
+        };
+        let plonk = SnarkProtocol::Plonk.protocol_id();
+        assert!(proof(767, 32, plonk).convert_to_json().is_err());
+        assert!(proof(768, 31, plonk).convert_to_json().is_err());
+        assert!(proof(768, 0, plonk).convert_to_json().is_err());
+        assert!(proof(768, 32, 99).convert_to_json().is_err());
+    }
+
+    /// Adding `r` to a word, or `q` to a coordinate, re-encodes the same proof for the native
+    /// parser; the on-chain verifier rejects both, so these are refused before parsing.
+    #[test]
+    fn convert_to_json_refuses_a_word_at_or_above_r() {
+        const R_MINUS_1: [u8; 32] = {
+            let mut w = BN254_R_BE;
+            w[31] -= 1;
+            w
+        };
+        let digest = R_MINUS_1.to_vec();
+        for protocol in [SnarkProtocol::Plonk, SnarkProtocol::Fflonk] {
+            for i in [0, 17, 18, 23] {
+                for word in [BN254_R_BE, [0xff; 32]] {
+                    let mut proof_bytes = vec![0; protocol.proof_bytes().unwrap()];
+                    proof_bytes[32 * i..32 * (i + 1)].copy_from_slice(&word);
+                    let proof = SnarkProof::new(proof_bytes, vec![], digest.clone(), protocol.protocol_id());
+                    let err = proof.convert_to_json().unwrap_err().to_string();
+                    assert!(err.contains(&format!("proof word {i} ")), "{err}");
+                }
+            }
+        }
+
+        let proof = SnarkProof::new(vec![0; 768], vec![], BN254_R_BE.to_vec(), SnarkProtocol::Plonk.protocol_id());
+        assert!(proof.convert_to_json().unwrap_err().to_string().contains("public input 0 "));
+    }
+
+    #[test]
+    fn first_word_not_below_r_compares_whole_words() {
+        let mut below = BN254_R_BE;
+        below[31] -= 1;
+        let mut above_despite_a_smaller_last_byte = BN254_R_BE;
+        above_despite_a_smaller_last_byte[1] += 1;
+        above_despite_a_smaller_last_byte[31] = 0;
+
+        assert_eq!(first_word_not_below_r(&below), None);
+        assert_eq!(first_word_not_below_r(&[0; 64]), None);
+        assert_eq!(first_word_not_below_r(&BN254_R_BE), Some(0));
+        assert_eq!(first_word_not_below_r(&above_despite_a_smaller_last_byte), Some(0));
+        assert_eq!(first_word_not_below_r(&[below, BN254_R_BE].concat()), Some(1));
+    }
+}
 
 #[cfg(test)]
 mod tests {

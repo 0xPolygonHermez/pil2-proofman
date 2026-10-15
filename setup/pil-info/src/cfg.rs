@@ -2,9 +2,10 @@
 //! (pilfflonk/docs/README.md#setup-pilfflonk): the field, how the constraint degree is bounded and
 //! how the committed polynomials are opened.
 //!
-//! The STARK runs the passes over Goldilocks with its cubic extension and opens with FRI; pilfflonk
-//! runs them over the BN128 scalar field, with no extension, and opens with SHPLONK. This is a
-//! run-time value, not a cargo feature, because `proofman-setup` hosts both setups in one binary.
+//! The STARK runs the passes over Goldilocks with its cubic extension and opens with its low-degree
+//! test, FRI or STIR, on the DEEP polynomial; pilfflonk runs them over the BN128 scalar field, with
+//! no extension, and opens with SHPLONK. This is a run-time value, not a cargo feature, because
+//! `proofman-setup` hosts both setups in one binary.
 
 use num_bigint::BigUint;
 
@@ -106,13 +107,13 @@ impl DegreePolicy {
 /// constraint polynomial.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Opening {
-    /// The STARK's: the FRI polynomial (`friExpId`, its challenges `std_vf1`/`std_vf2` and the
-    /// `queryVerifier`), and the quotient's pieces in the `evMap`, whose evaluations the verifier
-    /// receives and checks against `Q(ξ)`.
+    /// The STARK's: the DEEP polynomial (`deepExpId`, its challenges `std_vf1`/`std_vf2` and the
+    /// `queryVerifier`), which its low-degree test, FRI or STIR, runs on, and the quotient's pieces
+    /// in the `evMap`, whose evaluations the verifier receives and checks against `Q(ξ)`.
     Fri,
     /// pilfflonk's: the prover opens the committed polynomials with SHPLONK outside these passes,
     /// and the verifier computes `Q(ξ)` rather than receiving it
-    /// (pilfflonk/docs/protocol.md#constraint-polynomial), so there is neither a FRI polynomial nor
+    /// (pilfflonk/docs/protocol.md#constraint-polynomial), so there is neither a DEEP polynomial nor
     /// a quotient in the `evMap`.
     Shplonk,
 }

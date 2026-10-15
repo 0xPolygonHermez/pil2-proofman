@@ -14,6 +14,7 @@ pub struct SetupRecursiveTestOptions {
     pub setup_type: String,
     pub hash: String,
     pub blake3_lanes: Option<usize>,
+    pub starkstructs: Option<String>,
     /// `None` keeps `recursive_blowup`.
     pub blowup: Option<usize>,
     /// `None` lets the circuit pick its own size.
@@ -62,6 +63,12 @@ pub fn run_setup_recursive_test(opts: &SetupRecursiveTestOptions) -> Result<()> 
     let circom_path = resolve_hash_circom_path(&opts.circom_path, &opts.hash);
     tracing::info!("Using circom fixture: {} (hash={})", circom_path, opts.hash);
 
+    let recursion_settings = match &opts.starkstructs {
+        Some(path) => crate::types::stark_struct::StarkStructsConfig::from_json_str(&std::fs::read_to_string(path)?)?
+            .recursion_settings()?,
+        None => Default::default(),
+    };
+
     gen_recursive_test_setup(
         &opts.build_dir,
         &circom_path,
@@ -75,6 +82,7 @@ pub fn run_setup_recursive_test(opts: &SetupRecursiveTestOptions) -> Result<()> 
         &circom_helpers_dir,
         &witness_tracker,
         opts.blake3_lanes,
+        &recursion_settings,
         opts.blowup,
         opts.min_n_bits,
     )

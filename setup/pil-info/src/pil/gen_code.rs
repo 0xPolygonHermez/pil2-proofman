@@ -3,7 +3,7 @@
 //! Produces code blocks for:
 //! - Expression computations (witness polynomials, intermediate polynomials)
 //! - Constraint polynomial (Q stage)
-//! - FRI polynomial (the FRI opening only)
+//! - DEEP polynomial (the FRI opening only)
 //! - Verifier evaluations
 //! - Hint computations
 
@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::pil::codegen::{build_code, pil_code_gen, rebuild_ev_map_index, CalcEntry, CodeGenCtx, EvMapRef};
 use crate::expr::expression::Expression;
-use crate::pil::fri_poly::{self, ChallengeMapEntry};
+use crate::pil::deep_poly::{self, ChallengeMapEntry};
 use crate::expr::helpers::{add_info_expressions_symbols, EvMapItem};
 use crate::types::pilout_info::{ConstraintInfo, HintFieldValue, HintInfo, SymbolInfo};
 use crate::expr::print::PrintCtx;
@@ -230,7 +230,7 @@ pub struct ProcessedHint {
 #[derive(Debug, Clone)]
 pub struct VerifierInfo {
     pub q_verifier: ExpressionCodeEntry,
-    /// The FRI polynomial's code, evaluated at each query: `None` unless the opening is FRI.
+    /// The DEEP polynomial's code, evaluated at each query: `None` unless the opening is FRI.
     pub query_verifier: Option<ExpressionCodeEntry>,
 }
 
@@ -289,12 +289,12 @@ pub struct PilCodeResult {
     pub verifier_info: VerifierInfo,
     /// The evaluation map built during verifier code generation.
     pub ev_map: Vec<EvMapRef>,
-    /// The FRI polynomial expression ID (may differ from c_exp_id): `None` unless the opening is
+    /// The DEEP polynomial expression ID (may differ from c_exp_id): `None` unless the opening is
     /// FRI.
-    pub fri_exp_id: Option<usize>,
+    pub deep_exp_id: Option<usize>,
     /// Updated challenges map (with FRI challenges appended; empty unless the opening is FRI).
     pub challenges_map: Vec<ChallengeMapEntry>,
-    /// See `FriPolyResult::batch_size`.
+    /// See `DeepPolyResult::batch_size`.
     pub fri_batch_size: usize,
 }
 
@@ -309,8 +309,8 @@ pub struct CodeGenParams {
     pub airgroup_id: usize,
     pub n_stages: usize,
     pub c_exp_id: usize,
-    /// Set by `generate_pil_code`: the FRI polynomial's expression, `None` unless the opening is FRI.
-    pub fri_exp_id: Option<usize>,
+    /// Set by `generate_pil_code`: the DEEP polynomial's expression, `None` unless the opening is FRI.
+    pub deep_exp_id: Option<usize>,
     pub q_deg: usize,
     pub q_dim: usize,
     pub opening_points: Vec<i64>,
@@ -318,7 +318,7 @@ pub struct CodeGenParams {
     pub custom_commits_count: usize,
     /// The field the code computes over.
     pub field: FieldCfg,
-    /// How the committed polynomials are opened: FRI adds the FRI polynomial and the quotient's
+    /// How the committed polynomials are opened: FRI adds the DEEP polynomial and the quotient's
     /// evaluations.
     pub opening: Opening,
 }
@@ -330,7 +330,7 @@ pub struct CodeGenParams {
 /// Orchestrate code generation for all stages.
 ///
 /// Mirrors JS `generatePilCode(res, symbols, constraints, expressions, hints, debug)`. The opening
-/// hook: only `Opening::Fri` generates the FRI polynomial, sets `fri_exp_id` and builds the
+/// hook: only `Opening::Fri` generates the DEEP polynomial, sets `deep_exp_id` and builds the
 /// `queryVerifier`.
 pub fn generate_pil_code(
     params: &mut CodeGenParams,
@@ -348,7 +348,7 @@ pub fn generate_pil_code(
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
 
-    // In non-debug mode: generate verifier code, then, for FRI, the FRI polynomial
+    // In non-debug mode: generate verifier code, then, for FRI, the DEEP polynomial
     let q_verifier = if !debug {
         let qv = generate_constraint_polynomial_verifier_code(
             params,
@@ -358,9 +358,9 @@ pub fn generate_pil_code(
             &witness_index,
         )?;
 
-        params.fri_exp_id = match params.opening {
+        params.deep_exp_id = match params.opening {
             Opening::Fri => {
-                // Generate FRI polynomial (mirrors JS: generateFRIPolynomial(res, symbols, expressions))
+                // Generate the DEEP polynomial (mirrors JS: generateFRIPolynomial(res, symbols, expressions))
                 let ev_map_for_fri: Vec<EvMapItem> = ev_map_items
                     .iter()
                     .map(|e| EvMapItem {
@@ -371,7 +371,7 @@ pub fn generate_pil_code(
                     })
                     .collect();
 
-                let fri_result = fri_poly::generate_fri_polynomial(
+                let fri_result = deep_poly::generate_deep_polynomial(
                     params.n_stages,
                     expressions,
                     symbols,
@@ -381,15 +381,15 @@ pub fn generate_pil_code(
                     &params.field,
                 )?;
                 fri_batch_size = fri_result.batch_size;
-                Some(fri_result.fri_exp_id)
+                Some(fri_result.deep_exp_id)
             }
             Opening::Shplonk => None,
         };
 
         qv
     } else {
-        // Debug mode builds no FRI polynomial; for FRI, cExpId stands in for it (as in the JS setup).
-        params.fri_exp_id = match params.opening {
+        // Debug mode builds no DEEP polynomial; for FRI, cExpId stands in for it (as in the JS setup).
+        params.deep_exp_id = match params.opening {
             Opening::Fri => Some(params.c_exp_id),
             Opening::Shplonk => None,
         };
@@ -404,13 +404,13 @@ pub fn generate_pil_code(
     // In JS, `find` returns a reference, so modifying the found element also
     // modifies the `expressionsCode` array. We replicate this by modifying
     // the entry in-place in `expressions_code` first, then cloning.
-    let query_verifier = match params.fri_exp_id {
+    let query_verifier = match params.deep_exp_id {
         None => None,
-        Some(fri_exp_id) => {
+        Some(deep_exp_id) => {
             let fri_entry_idx = expressions_code
                 .iter()
-                .position(|e| e.exp_id == fri_exp_id)
-                .ok_or(PilInfoError::FriCodeMissing(fri_exp_id))?;
+                .position(|e| e.exp_id == deep_exp_id)
+                .ok_or(PilInfoError::DeepCodeMissing(deep_exp_id))?;
 
             // Overwrite last dest to be a tmp with the extension's dim (in-place)
             let fri_entry = &mut expressions_code[fri_entry_idx];
@@ -437,7 +437,7 @@ pub fn generate_pil_code(
 
     let constraints_code = generate_constraints_debug_code(params, symbols, constraints, expressions, &witness_index)?;
 
-    let fri_exp_id = params.fri_exp_id;
+    let deep_exp_id = params.deep_exp_id;
 
     // Verifier entries only: these feed the Rust/C++ verifiers and the circom
     // recursion circuit, none of which is the prover's cExp.
@@ -455,7 +455,7 @@ pub fn generate_pil_code(
         expressions_info: ExpressionsInfo { hints_info, expressions_code, constraints: constraints_code },
         verifier_info: VerifierInfo { q_verifier, query_verifier },
         ev_map: ev_map_items,
-        fri_exp_id,
+        deep_exp_id,
         challenges_map,
         fri_batch_size,
     })
@@ -478,19 +478,19 @@ fn generate_expressions_code(
 
     for j in 0..expressions.len() {
         let exp = &expressions[j];
-        let is_fri_exp = params.fri_exp_id == Some(j);
-        let dominated = !exp.keep.unwrap_or(false) && !exp.im_pol && j != params.c_exp_id && !is_fri_exp;
+        let is_deep_exp = params.deep_exp_id == Some(j);
+        let dominated = !exp.keep.unwrap_or(false) && !exp.im_pol && j != params.c_exp_id && !is_deep_exp;
         if dominated {
             continue;
         }
 
-        let dom = if j == params.c_exp_id || is_fri_exp { "ext" } else { "n" };
+        let dom = if j == params.c_exp_id || is_deep_exp { "ext" } else { "n" };
 
         let mut ctx =
             CodeGenCtx::new(params.air_id, params.airgroup_id, exp.stage, dom, false, Vec::new(), &params.field);
         ctx.witness_by_exp_id = Arc::clone(witness_index);
 
-        if is_fri_exp {
+        if is_deep_exp {
             ctx.opening_points = params.opening_points.clone();
         }
 
@@ -543,7 +543,7 @@ fn generate_expressions_code(
             }
         }
 
-        if is_fri_exp {
+        if is_deep_exp {
             if let Some(last) = block.code.last_mut() {
                 last.dest = CodeRef {
                     ref_type: "f".to_string(),
@@ -948,7 +948,7 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 2,
-            fri_exp_id: Some(3),
+            deep_exp_id: Some(3),
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
@@ -976,7 +976,7 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 999, // not matching any expr
-            fri_exp_id: Some(998),
+            deep_exp_id: Some(998),
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
@@ -1040,7 +1040,7 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 2,
-            fri_exp_id: Some(999),
+            deep_exp_id: Some(999),
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
