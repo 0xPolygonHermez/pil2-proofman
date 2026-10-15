@@ -612,7 +612,21 @@ namespace PlonkGPU
     void PlonkProverGPU<Engine>::preAllocate(void* unified_buffer_gpu)
     {
         LOG_TRACE("> Pre-allocating GPU static eval buffers (round0)");
-        d_unifiedBuffer = unified_buffer_gpu;
+        // Nothing an earlier round0 started may still use the buffer replaced below.
+        joinAsyncThreads();
+        if (unified_buffer_gpu != nullptr) {
+            // The caller's buffer, which this prover does not own: one of its own from an earlier
+            // proof is freed first.
+            if (isMyDeviceBuffer && d_unifiedBuffer != nullptr) {
+                gpu_plonk_set_device(gpuId);
+                gpu_plonk_cuda_free(d_unifiedBuffer);
+            }
+            isMyDeviceBuffer = false;
+            d_unifiedBuffer = unified_buffer_gpu;
+        } else if (!isMyDeviceBuffer) {
+            // round0 allocates one of its own; one it allocated for an earlier proof is kept.
+            d_unifiedBuffer = nullptr;
+        }
         round0();
         // Nothing round0 started outlives the pre-allocation: a caller whose final witness fails
         // returns without a prove(), and the next proof writes these buffers again.
