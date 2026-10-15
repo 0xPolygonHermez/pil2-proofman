@@ -525,7 +525,7 @@ void Polynomial<Engine>::divByMonicSlots(FrElement *slots, u_int64_t from, u_int
 // is the serial recurrence. The quotient is unique and the arithmetic exact: q is the serial
 // recurrence's, whatever the blocks and the threads.
 template<typename Engine>
-bool Polynomial<Engine>::divByMonic(u_int64_t m, const FrElement &beta) {
+bool Polynomial<Engine>::divByMonic(u_int64_t m, FrElement beta) {
     u_int64_t blockLength = divByMonicBlockLength(m);
     if (this->degree < m) {
         throw std::runtime_error("divByMonic: X^m - beta is of a degree above the polynomial's");

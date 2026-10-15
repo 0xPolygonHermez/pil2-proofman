@@ -107,9 +107,10 @@ public:
     // coefficients, q_j at j <= d - m and zeros at d - m < j <= d, in the same buffer, owned or
     // reserved, and the degree is fixed. Returns whether the remainder, a_j + beta * q_j for j < m, is
     // zero: whether the division is exact. The degree must be up to date: coefficients above it are
-    // neither read nor written. Throws std::runtime_error if m is 0 or above d.
+    // neither read nor written. Throws std::runtime_error if m is 0 or above d. beta is taken by
+    // value, so it may be one of the coefficients the quotient overwrites.
     // It runs on every thread, in parallel over blocks of the quotient's coefficients.
-    bool divByMonic(u_int64_t m, const FrElement &beta);
+    bool divByMonic(u_int64_t m, FrElement beta);
 
     // The coefficients of a block of divByMonic(m, beta), m >= 1: a whole number of rows of m, about
     // 2^12.

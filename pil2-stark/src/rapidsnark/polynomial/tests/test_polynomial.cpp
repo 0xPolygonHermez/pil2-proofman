@@ -384,6 +384,31 @@ TEST(PolynomialTest, div_by_monic_refuses_a_divisor_of_degree_0_or_too_high) {
     EXPECT_EQ(runtimeError([&] { constant.divByMonic(1, beta); }), tooHigh);
 }
 
+// beta may be one of the polynomial's own coefficients, which the quotient overwrites: the division
+// is the one by the value it had when divByMonic was called.
+TEST(PolynomialTest, div_by_monic_takes_beta_by_value) {
+    Random random(0xbe7a);
+    const uint64_t length = 3 * Poly::divByMonicBlockLength(1) + 5;
+    const Column a = random.column(length);
+    for (uint64_t m : {1, 3}) {
+        for (uint64_t k : {uint64_t(0), length / 2, length - 1 - m}) {
+            for (int t : {1, 32}) {
+                SCOPED_TRACE("m = " + std::to_string(m) + ", k = " + std::to_string(k) + ", " + std::to_string(t) +
+                             " threads");
+                const Threads threads(t);
+                Poly expected(E, length);
+                load(expected, a);
+                const bool exact = expected.divByMonic(m, a[k]);
+                Poly aliased(E, length);
+                load(aliased, a);
+                ASSERT_EQ(aliased.divByMonic(m, aliased.coef[k]), exact);
+                ASSERT_EQ(aliased.getDegree(), expected.getDegree());
+                ASSERT_TRUE(same(aliased.coef, Column(expected.coef, expected.coef + length)));
+            }
+        }
+    }
+}
+
 // byXSubValue(x): p·(X - x). On a reserved buffer it leaves -x·p there (it scales p in place) and
 // moves to a buffer of its own. When the top coefficient is not zero the buffer and the length grow
 // by one, and the next product grows from there.
