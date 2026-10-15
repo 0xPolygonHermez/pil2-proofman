@@ -6,8 +6,8 @@
 //!   Fibonacci fixture, set up with the full-width `τ` of the tests (pilfflonk/docs/README.md#tests),
 //!   in a `snark_proof.bin`: it is read back as it was written, its JSON views are pilfflonk's, and
 //!   `verify-snark` accepts it, and refuses it with a byte of the proof changed, with a public
-//!   changed, cut short, and against the vkey of a setup with another `τ`. It compiles the fixture
-//!   with the compiler `PIL2C_EXEC` names, which must have `--field`, and needs Node.js.
+//!   changed, cut short or extended, and against the vkey of a setup with another `τ`. It compiles
+//!   the fixture with the compiler `PIL2C_EXEC` names, which must have `--field`, and needs Node.js.
 //! - `prove_snark_wraps_a_vadcop_final_proof_in_pilfflonk`: the wrap of a real vadcop_final proof,
 //!   `prove-snark` on the `provingKeySnark/` of `setup-snark --final-snark pilfflonk`, and
 //!   `verify-snark` on its proof, with the same refusals; the publics the Solidity verifier hashes
@@ -142,10 +142,10 @@ fn with_a_public_changed(proof: &SnarkProof) -> SnarkProof {
     changed
 }
 
-/// `proof` without its last byte.
-fn cut_short(proof: &SnarkProof) -> SnarkProof {
+/// `proof` with `delta` bytes more, zeros, or fewer: a proof of another length than its vkey's.
+fn resized(proof: &SnarkProof, delta: isize) -> SnarkProof {
     let mut changed = proof.clone();
-    changed.proof_bytes.pop();
+    changed.proof_bytes.resize(proof.proof_bytes.len().checked_add_signed(delta).unwrap(), 0);
     changed
 }
 
@@ -157,6 +157,22 @@ fn refused(dir: &TestDir, name: &str, proof: &SnarkProof, vkey: &Path, reason: &
     let out = verify_snark(&path, vkey);
     assert!(!out.status.success(), "{name}: {}", output(&out));
     assert!(output(&out).contains(reason), "{name}: {}", output(&out));
+}
+
+/// `verify-snark` and `verify_snark_proof` refuse `proof` cut short and extended, by a byte and by a
+/// word, before the verifier runs: its bytes are not those of a proof of `vkey`.
+fn other_lengths_refused(dir: &TestDir, proof: &SnarkProof, vkey: &Path) {
+    let not_of_the_vkey = "not those of a proof of the vkey";
+    for delta in [-32, -1, 1, 32] {
+        let changed = resized(proof, delta);
+        refused(dir, &format!("resized{delta}.bin"), &changed, vkey, not_of_the_vkey);
+        match verify_snark_proof(&changed, vkey) {
+            Err(ProofmanError::InvalidProof(message)) => {
+                assert!(message.contains(not_of_the_vkey), "{delta}: {message}")
+            }
+            other => panic!("{delta}: {other:?}"),
+        }
+    }
 }
 
 #[test]
@@ -203,13 +219,7 @@ fn verify_snark_accepts_a_pilfflonk_proof_and_refuses_every_change() {
     refused(&dir, "evaluation.bin", &with_an_evaluation_changed(&proof, &vkey), &vkey_path, not_verified);
     refused(&dir, "public.bin", &with_a_public_changed(&proof), &vkey_path, not_verified);
     refused(&dir, "other_vkey.bin", &proof, &other_vkey, not_verified);
-    refused(&dir, "short.bin", &cut_short(&proof), &vkey_path, "verification failed");
-    match verify_snark_proof(&cut_short(&proof), &vkey_path) {
-        Err(ProofmanError::InvalidProof(message)) => {
-            assert!(message.contains("not those of a proof of the vkey"), "{message}")
-        }
-        other => panic!("{other:?}"),
-    }
+    other_lengths_refused(&dir, &proof, &vkey_path);
 }
 
 /// The vkey at `path` with its first fixed commitment `f0` = (x, y) as (x, q − y), and its digest resealed:
@@ -263,6 +273,7 @@ fn prove_snark_wraps_a_vadcop_final_proof_in_pilfflonk() {
     let not_verified = "SNARK proof was not verified";
     refused(&dir, "evaluation.bin", &with_an_evaluation_changed(&proof, &vkey), &vkey_path, not_verified);
     refused(&dir, "public.bin", &with_a_public_changed(&proof), &vkey_path, not_verified);
+    other_lengths_refused(&dir, &proof, &vkey_path);
     // Another key's vkey, of the same shape: its first fixed commitment negated, and resealed.
     let other_vkey = dir.file("other.vkey.json");
     fs::write(&other_vkey, serde_json::to_string_pretty(&with_a_fixed_commitment_negated(&vkey_path)).unwrap())

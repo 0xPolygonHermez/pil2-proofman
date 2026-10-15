@@ -797,8 +797,11 @@ fn the_proof_bytes_follow_a6() {
     assert_eq!(bytes[values_at + 96..values_at + 128], FrBytes::from_u64(7).to_be_bytes());
     assert_eq!(bytes[values_at + 128..], FrBytes::from_u64(8).to_be_bytes());
 
-    // The wrong length, and a scalar that is not canonical, are refused.
+    // The wrong length, short or long, and a scalar that is not canonical, are refused.
     assert!(Proof::from_bytes(&bytes[1..], &names.shape()).is_err());
+    assert!(Proof::from_bytes(&bytes[..bytes.len() - 32], &names.shape()).is_err());
+    assert!(Proof::from_bytes(&[bytes.as_slice(), &[0]].concat(), &names.shape()).is_err());
+    assert!(Proof::from_bytes(&[bytes.as_slice(), &[0; 32]].concat(), &names.shape()).is_err());
     let mut bad = bytes.clone();
     bad[scalars_at..scalars_at + 32].copy_from_slice(&[0xff; 32]);
     assert!(Proof::from_bytes(&bad, &names.shape()).is_err());
