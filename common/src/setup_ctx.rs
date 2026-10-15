@@ -58,14 +58,17 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_prover_recursive2_buffer_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
-    /// Aggregation const area minimum: the const cache's slot 0 + one normal slot + recursive2 pins.
-    /// The planner adds normal slots and the final pins; recursers go through the cache too.
+    /// Resident aggregation const area, for callers without the const cache (prove-air sets it); 0
+    /// otherwise: the planner sizes the cache.
     pub total_const_pols_size: usize,
     /// Const cache slot 0 (largest set it can take) and normal (recursive1-sized) slots, in words.
     pub cache_big_words: u64,
     pub cache_normal_words: u64,
     /// LRU slots the sets that always use the LRU can keep busy (see useful_lru_slots).
     pub cache_n_lru_keys: usize,
+    /// recursive2 pins, all airgroups; each set fits slot 0, so they can go through the LRU instead.
+    pub rec2_words: u64,
+    pub rec2_fits_lru: bool,
     /// Final pins the planner takes when it has room.
     pub finals_pin_words: u64,
 }
@@ -220,8 +223,10 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .chain(words_of(CacheSetKind::Final))
                 .fold(cache_normal_words.max(recurser_words), u64::max);
             let cache_n_lru_keys = useful_lru_slots(&lru_sizes, cache_normal_words);
+            let rec2_fits_lru = words_of(CacheSetKind::Recursive2).all(|w| w <= cache_big_words);
             drop(sets);
-            let total_const_pols_size = (cache_big_words + cache_normal_words + rec2_words) as usize;
+            // The planner sizes the const cache; this resident area is for callers without one (prove-air).
+            let total_const_pols_size = 0;
 
             let max_const_size = sctx_compressor
                 .max_const_size
@@ -330,6 +335,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 cache_big_words,
                 cache_normal_words,
                 cache_n_lru_keys,
+                rec2_words,
+                rec2_fits_lru,
                 finals_pin_words,
             })
         } else {
@@ -343,6 +350,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 cache_big_words: 0,
                 cache_normal_words: 0,
                 cache_n_lru_keys: 0,
+                rec2_words: 0,
+                rec2_fits_lru: false,
                 finals_pin_words: 0,
                 max_const_tree_size: 0,
                 max_const_size: 0,

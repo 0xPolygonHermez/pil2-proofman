@@ -1125,12 +1125,14 @@ pub fn load_device_const_pols<F: PrimeField64>(
             setups.cache_normal_words,
             pctx.const_cache_lru_slots as u32,
         );
-        let pinned_kinds = if pctx.const_cache_pin_finals {
-            &[CacheSetKind::Final, CacheSetKind::Recursive2][..]
-        } else {
-            &[CacheSetKind::Recursive2]
+        let pinned = |kind: CacheSetKind| match kind {
+            CacheSetKind::Final => pctx.const_cache_pin_finals,
+            CacheSetKind::Recursive2 => pctx.const_cache_pin_rec2,
+            CacheSetKind::Lru => false,
         };
-        for kind in pinned_kinds {
+        let pinned_kinds: Vec<CacheSetKind> =
+            [CacheSetKind::Final, CacheSetKind::Recursive2].into_iter().filter(|&k| pinned(k)).collect();
+        for kind in &pinned_kinds {
             for set in sets.iter().filter(|s| s.kind == *kind && s.setup.gpu) {
                 end = pin_const_slot_c(
                     d_buffers,
