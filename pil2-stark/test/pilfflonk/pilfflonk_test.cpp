@@ -90,6 +90,47 @@ std::string repoPath(const std::string &relative) {
     return dir.substr(0, dir.rfind('/')) + "/../../" + relative;
 }
 
+std::string officialPtau(uint64_t nG1) {
+    // A variable set to nothing is not set, as for the script.
+    const auto var = [](const char *name) -> std::string {
+        const char *value = std::getenv(name);
+        return value == nullptr ? std::string() : std::string(value);
+    };
+    std::string dir = var("PILFFLONK_PTAU_DIR");
+    if (dir.empty()) {
+        const std::string cache = var("XDG_CACHE_HOME");
+        const std::string home = var("HOME");
+        assert(!cache.empty() || !home.empty());
+        dir = (cache.empty() ? home + "/.cache" : cache) + "/pilfflonk/ptau";
+    }
+    // The README's table: powers 8 to 28, the last one's file without a suffix.
+    uint32_t fewest = 0;
+    for (uint32_t power = 8; power <= 28; ++power) {
+        if ((uint64_t(2) << power) - 1 < nG1) {
+            continue;
+        }
+        if (fewest == 0) {
+            fewest = power;
+        }
+        char name[64];
+        if (power == 28) {
+            std::snprintf(name, sizeof(name), "powersOfTau28_hez_final.ptau");
+        } else {
+            std::snprintf(name, sizeof(name), "powersOfTau28_hez_final_%02u.ptau", power);
+        }
+        const std::string path = dir + "/" + name;
+        if (access(path.c_str(), R_OK) == 0) {
+            return path;
+        }
+    }
+    assert(fewest != 0 && "no official ptau holds that many powers");
+    std::fprintf(stderr,
+                 "pilfflonk_test: no official ptau of at least %llu powers [τ^i]₁ in %s (PILFFLONK_PTAU_DIR): run "
+                 "pilfflonk/tests/download-ptau.sh %u\n",
+                 static_cast<unsigned long long>(nG1), dir.c_str(), fewest);
+    std::exit(1);
+}
+
 #ifdef __USE_CUDA__
 PilFflonk::DeviceBuffer upload(const void *data, uint64_t bytes) {
     PilFflonk::DeviceBuffer device(std::max<uint64_t>(bytes, 1));

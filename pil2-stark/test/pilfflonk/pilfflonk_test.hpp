@@ -85,6 +85,14 @@ std::vector<uint8_t> readBytes(const std::string &path);
 // binary's directory, pil2-stark/build or pil2-stark/build-gpu.
 std::string repoPath(const std::string &relative);
 
+// The official powers-of-tau file of the fewest powers [τ^i]₁ that holds at least nG1: one of the
+// Hermez ceremony's, which pilfflonk/tests/download-ptau.sh downloads into $PILFFLONK_PTAU_DIR (by
+// default $XDG_CACHE_HOME/pilfflonk/ptau, or ~/.cache/pilfflonk/ptau) and checks against the
+// blake2b of snarkjs's README (pilfflonk/docs/README.md#tests). Its τ is nobody's. The file of
+// power k holds 2^(k+1) - 1 powers [τ^i]₁ and 2^k powers [τ^i]₂. Fails, naming the file to
+// download, if there is none.
+std::string officialPtau(uint64_t nG1);
+
 #ifdef __USE_CUDA__
 // `bytes` bytes at `data` in device memory of their own, one byte at least: an upload always has an
 // address, which an operand's null pointer would not (a hint's number).

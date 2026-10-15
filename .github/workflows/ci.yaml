@@ -27,6 +27,15 @@ jobs:
       - name: Install Node dependencies (pil2-compiler)
         run: npm install
         working-directory: setup/pil2-stark
+      # The official ptau files the tests read (pilfflonk/docs/README.md#tests), checked against the
+      # blake2b of snarkjs's README: downloaded when the cache does not have them.
+      - name: Cache the official ptau of power 12
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pilfflonk/ptau/powersOfTau28_hez_final_12.ptau
+          key: ptau-powersOfTau28_hez_final_12.ptau
+      - name: Download the official ptau
+        run: pilfflonk/tests/download-ptau.sh 12
       - name: cargo test
         run: cargo test --workspace
   cargo-check:
@@ -258,6 +267,16 @@ jobs:
         with:
           node-version: "18"
 
+      # The official ptau files the tests read (pilfflonk/docs/README.md#tests), checked against the
+      # blake2b of snarkjs's README: downloaded when the cache does not have them.
+      - name: Cache the official ptau of power 12
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pilfflonk/ptau/powersOfTau28_hez_final_12.ptau
+          key: ptau-powersOfTau28_hez_final_12.ptau
+      - name: Download the official ptau
+        run: pilfflonk/tests/download-ptau.sh 12
+
       - name: C++ tests (CPU)
         run: make -C pil2-stark -j"$(nproc)" pilfflonk_test
 
@@ -348,6 +367,21 @@ jobs:
           echo "PIL2C_EXEC=$GITHUB_WORKSPACE/pil2-compiler-bn128/src/pil.js" >> "$GITHUB_ENV"
           echo "PILFFLONK_FORGE=$(command -v forge)" >> "$GITHUB_ENV"
           echo "PILFFLONK_SOLC=$RUNNER_TEMP/solc" >> "$GITHUB_ENV"
+
+      # The official ptau files the tests read (pilfflonk/docs/README.md#tests), checked against the
+      # blake2b of snarkjs's README: downloaded when the cache does not have them.
+      - name: Cache the official ptau of power 12
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pilfflonk/ptau/powersOfTau28_hez_final_12.ptau
+          key: ptau-powersOfTau28_hez_final_12.ptau
+      - name: Cache the official ptau of power 19
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pilfflonk/ptau/powersOfTau28_hez_final_19.ptau
+          key: ptau-powersOfTau28_hez_final_19.ptau
+      - name: Download the official ptau
+        run: pilfflonk/tests/download-ptau.sh 12 19
 
       - name: The std over BN128, the oracle and setup-pilfflonk from setup-snark's crate
         run: |
