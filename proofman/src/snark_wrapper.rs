@@ -717,17 +717,29 @@ impl<F: PrimeField64> PoseidonWrap<F> {
     ) -> ProofmanResult<Vec<u8>> {
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
         let publics = &proof[1..1 + proof[0] as usize];
-        // The digest verifiers recompute must be the one the circuit committed to.
-        let rootc: &[u64; 4] = verkey.try_into().map_err(|_| {
-            ProofmanError::InvalidConfiguration(format!("verkey has {} limbs, expected 4", verkey.len()))
-        })?;
-        if publics_info.snark_public_digest(publics, rootc)?.as_slice() != snark_publics_bytes {
-            return Err(ProofmanError::InvalidProof(
-                "the SNARK's public digest differs from PublicsInfo::snark_public_digest".to_string(),
-            ));
-        }
+        check_snark_public_digest(&publics_info, publics, verkey, snark_publics_bytes)?;
         get_public_bytes_solidity(&publics_info, publics)
     }
+}
+
+/// Checks that `snark_publics_bytes`, the public of a final SNARK, is the digest of the vadcop_final
+/// publics `publics` and the root `verkey` ([`PublicsInfo::snark_public_digest`]): the digest
+/// verifiers recompute must be the one the circuit committed to.
+fn check_snark_public_digest(
+    publics_info: &PublicsInfo,
+    publics: &[u64],
+    verkey: &[u64],
+    snark_publics_bytes: &[u8],
+) -> ProofmanResult<()> {
+    let rootc: &[u64; 4] = verkey
+        .try_into()
+        .map_err(|_| ProofmanError::InvalidConfiguration(format!("verkey has {} limbs, expected 4", verkey.len())))?;
+    if publics_info.snark_public_digest(publics, rootc)?.as_slice() != snark_publics_bytes {
+        return Err(ProofmanError::InvalidProof(
+            "the SNARK's public digest differs from PublicsInfo::snark_public_digest".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// The recursivef's starkinfo setup-snark puts beside the final circuit of a blake3 key, from which
@@ -753,6 +765,9 @@ pub(crate) struct Blake3Wrap {
     starkinfo: serde_json::Value,
     verkey: serde_json::Value,
     publics_info: PublicsInfo,
+    /// The vadcop_final's verkey, the root the recursivef verifies its proofs against unless another
+    /// is given, which the SNARK's public digest hashes.
+    vadcop_final_verkey: Vec<u64>,
     d_buffers: Option<*mut c_void>,
     gpu: bool,
     /// The prover, preloaded; else loaded by each proof.
@@ -770,20 +785,21 @@ impl Blake3Wrap {
                 "the final SNARK of a blake3 key is pilfflonk's, and this setup has a zkey".to_string(),
             ));
         };
-        let read = |name: &str| -> ProofmanResult<serde_json::Value> {
-            let path = final_dir.join(name);
-            std::fs::read_to_string(&path)
+        fn read<T: serde::de::DeserializeOwned>(path: &Path) -> ProofmanResult<T> {
+            std::fs::read_to_string(path)
                 .map_err(|e| e.to_string())
                 .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
                 .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to read {}: {e}", path.display())))
-        };
-        let (starkinfo, verkey) = (read(BLAKE3_RECURSIVEF_STARKINFO)?, read(BLAKE3_RECURSIVEF_VERKEY)?);
+        }
+        let starkinfo = read(&final_dir.join(BLAKE3_RECURSIVEF_STARKINFO))?;
+        let verkey = read(&final_dir.join(BLAKE3_RECURSIVEF_VERKEY))?;
         let mut wrap = Self {
             setup_snark_path,
             pilfflonk_key,
             starkinfo,
             verkey,
             publics_info: PublicsInfo::from_folder(proving_key_snark)?,
+            vadcop_final_verkey: read(&proving_key_snark.join("vadcop_final.verkey.json"))?,
             d_buffers: d_buffers.filter(|_| gpu),
             gpu,
             prover: None,
@@ -810,8 +826,15 @@ impl Blake3Wrap {
         Ok(prover)
     }
 
-    /// The SNARK proof of `recursivef_proof`, whose publics are `[rootC(4) | the vadcop_final's]`.
-    fn generate_snark_proof(&self, recursivef_proof: &VadcopFinalProof) -> ProofmanResult<SnarkProof> {
+    /// The SNARK proof of `recursivef_proof`, whose publics are `[rootC(4) | the vadcop_final's]`,
+    /// once its public is checked, as [`PoseidonWrap`]'s, to be the digest of the vadcop_final's
+    /// publics and the root the recursivef verified the vadcop_final proof against
+    /// ([`PublicsInfo::snark_public_digest`]): `verkey_override`, or the vadcop_final's verkey.
+    fn generate_snark_proof(
+        &self,
+        recursivef_proof: &VadcopFinalProof,
+        verkey_override: Option<&[u64]>,
+    ) -> ProofmanResult<SnarkProof> {
         timer_start_info!(GENERATING_WRAPPER_SNARK_PROOF);
         let _proving = self.proving.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let n_publics = self.starkinfo["nPublics"].as_u64().unwrap_or(0) as usize;
@@ -839,6 +862,8 @@ impl Blake3Wrap {
         };
         let (snark_proof_bytes, snark_publics_bytes) = prover.prove_zkin(&zkin)?;
         let vadcop_publics = recursivef_proof.public_values.get(4..).unwrap_or_default();
+        let verkey = verkey_override.unwrap_or(&self.vadcop_final_verkey);
+        check_snark_public_digest(&self.publics_info, vadcop_publics, verkey, &snark_publics_bytes)?;
         let public_bytes = get_public_bytes_solidity(&self.publics_info, vadcop_publics)?;
         timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
         Ok(SnarkProof::new(
@@ -925,7 +950,9 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
     /// The final SNARK proof of `proof`: of a poseidon key the vadcop_final proof (checked against
     /// `verkey_override` if given, the vadcop_final's verkey otherwise), of a blake3 key the recursivef
-    /// proof (`ProofMan::generate_recursivef_proof`), which takes no verkey.
+    /// proof (`ProofMan::generate_recursivef_proof`) of the vadcop_final proof checked against that
+    /// same verkey. Either SNARK's public is checked to be the digest of the vadcop_final's publics and
+    /// that verkey.
     pub(crate) fn generate_final_snark_proof(
         &self,
         proof: &VadcopFinalProof,
@@ -933,10 +960,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     ) -> ProofmanResult<SnarkProof> {
         match &self.inner {
             Wrap::Poseidon(wrap) => wrap.generate_final_snark_proof(proof, verkey_override),
-            Wrap::Blake3(_) if verkey_override.is_some() => Err(ProofmanError::InvalidConfiguration(
-                "a blake3 key's SNARK wraps its recursivef proof, whose verkey the recursivef fixed".to_string(),
-            )),
-            Wrap::Blake3(wrap) => wrap.generate_snark_proof(proof),
+            Wrap::Blake3(wrap) => wrap.generate_snark_proof(proof, verkey_override),
         }
     }
 }
@@ -1414,9 +1438,10 @@ mod snarkjs_verdict_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        verify_snark_proof, FinalSnarkKey, ReloadFixedPolsOnDrop, SnarkProof, SnarkProtocol, PILFFLONK_PROTOCOL_ID,
+        check_snark_public_digest, verify_snark_proof, FinalSnarkKey, ReloadFixedPolsOnDrop, SnarkProof, SnarkProtocol,
+        PILFFLONK_PROTOCOL_ID,
     };
-    use proofman_common::ProofmanError;
+    use proofman_common::{ProofmanError, PublicDefinition, PublicsInfo};
     use proofman_starks_lib_c::{
         free_final_snark_prover_c, generate_fflonk_zkey_c, generate_plonk_zkey_c, init_final_snark_prover_c,
     };
@@ -1798,5 +1823,41 @@ mod tests {
                 (proof.proof_bytes, proof.public_bytes, proof.public_snark_bytes, proof.protocol_id)
             );
         }
+    }
+
+    /// A final SNARK's public is checked to be the digest of the vadcop_final's publics and the root:
+    /// another digest, other publics or another root are refused as a proof whose public is not the
+    /// statement's, and a root that is not 4 limbs as a misconfiguration.
+    #[test]
+    fn the_snark_public_must_be_the_digest_of_the_publics_and_the_root() {
+        let out = PublicDefinition {
+            name: "out".to_string(),
+            initial_pos: 0,
+            n_values: 3,
+            chunks: [1, 64],
+            verification_key: false,
+        };
+        let info = PublicsInfo { n_publics: 3, definitions: vec![out], has_program_vk: false };
+        let (publics, rootc) = ([1, 2, 3], [11, 12, 13, 14]);
+        let digest = info.snark_public_digest(&publics, &rootc).unwrap();
+        assert!(check_snark_public_digest(&info, &publics, &rootc, &digest).is_ok());
+
+        let check =
+            |publics: &[u64], rootc: &[u64], digest: &[u8]| check_snark_public_digest(&info, publics, rootc, digest);
+        let mut other_digest = digest;
+        other_digest[31] ^= 1;
+        for refused in [
+            check(&publics, &rootc, &other_digest),
+            check(&[1, 2, 4], &rootc, &digest),
+            check(&publics, &[11, 12, 13, 15], &digest),
+        ] {
+            match refused {
+                Err(ProofmanError::InvalidProof(message)) => {
+                    assert!(message.contains("public digest differs"), "{message}")
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(matches!(check(&publics, &rootc[..3], &digest), Err(ProofmanError::InvalidConfiguration(_))));
     }
 }

@@ -2614,9 +2614,9 @@ where
     /// has it: a poseidon key's wrapper proves its recursivef itself; a blake3 key's recursivef is a
     /// Goldilocks STARK this run proves ([`generate_recursivef_proof`](Self::generate_recursivef_proof))
     /// before the wrapper's SNARK. `verkey_override`, the verkey the recursivef checks the proof
-    /// against, is the vadcop_final's by default. It holds this ProofMan's `computing` throughout (the
-    /// wrap writes its buffers), so it never overlaps one of its proofs; the process-wide guard only
-    /// for the recursivef.
+    /// against and the root of the SNARK's public digest, is the vadcop_final's by default. It holds
+    /// this ProofMan's `computing` throughout (the wrap writes its buffers), so it never overlaps one
+    /// of its proofs; the process-wide guard only for the recursivef.
     pub fn generate_final_snark_proof(
         &self,
         snark_wrapper: &SnarkWrapper<F>,
@@ -2639,7 +2639,7 @@ where
         let recursivef_proof = self.recursivef_proof(vadcop_final_proof, verkey_override)?;
         // The process-wide guard is the STARKs' (their C++ multiplicities); the SNARK has none.
         drop(proving);
-        snark_wrapper.generate_final_snark_proof(&recursivef_proof, None)
+        snark_wrapper.generate_final_snark_proof(&recursivef_proof, verkey_override)
     }
 
     /// That `snark_wrapper`'s circuit verifies this key's recursivef, its shape and its root: the
