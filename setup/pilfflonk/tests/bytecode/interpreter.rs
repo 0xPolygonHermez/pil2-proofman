@@ -33,7 +33,6 @@ use serde_json::{json, Value};
 
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::passes;
-use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::oracle::{self, omega, AirOracle, ColumnRef, Domain, Fr};
 use proofman_pilfflonk::{
@@ -48,6 +47,9 @@ mod fibonacci;
 /// The generator of the sum bus.
 #[path = "../../../../pilfflonk/tests/data/sum_bus.rs"]
 mod sum_bus;
+/// The official ptau files (pilfflonk/docs/README.md#tests).
+#[path = "../../../../pilfflonk/tests/data/ptau.rs"]
+mod ptau;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/bytecode");
 
@@ -400,7 +402,7 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
     let opts = SetupPilfflonkOptions {
         airout_path: dir.0.join("fibonacci.pilout"),
         build_dir: dir.0.join("build"),
-        powers_of_tau: dir.0.join("tau_one.ptau"),
+        powers_of_tau: ptau::official(1024),
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
@@ -408,7 +410,6 @@ fn the_fibonacci_fixtures_are_the_setups_and_the_oracles() {
         solidity: false,
     };
     fs::write(&opts.airout_path, pilout.encode_to_vec()).unwrap();
-    write_tau_one_ptau(&opts.powers_of_tau, 1024).unwrap();
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
     let gi = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap();
@@ -506,7 +507,7 @@ fn the_sum_bus_fixtures_are_the_setups_and_the_oracles() {
     let opts = SetupPilfflonkOptions {
         airout_path: dir.0.join("sum_bus.pilout"),
         build_dir: dir.0.join("build"),
-        powers_of_tau: dir.0.join("tau_one.ptau"),
+        powers_of_tau: ptau::official(1024),
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
@@ -514,7 +515,6 @@ fn the_sum_bus_fixtures_are_the_setups_and_the_oracles() {
         solidity: false,
     };
     fs::write(&opts.airout_path, pilout.encode_to_vec()).unwrap();
-    write_tau_one_ptau(&opts.powers_of_tau, 1024).unwrap();
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
     let gi = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap();

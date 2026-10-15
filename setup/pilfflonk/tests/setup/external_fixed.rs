@@ -46,7 +46,6 @@ use pil2_pilout::pilout::{self as pb, constraint};
 use pilfflonk_setup::bytecode::Bytecode;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::fixed::FixedColumns;
-use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{
     run_setup_pilfflonk, run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupError,
     SetupPilfflonkOptions,
@@ -57,6 +56,7 @@ use proofman_pilfflonk::{
 };
 
 use crate::common::{cpp_core, TestDir};
+use crate::ptau;
 
 /// The blinding seed of the proofs (pilfflonk/docs/protocol.md#blinding).
 const SEED: [u8; 32] = [0x3c; 32];
@@ -69,7 +69,8 @@ struct Fixture {
     /// The names of the external columns' symbols.
     columns: &'static [&'static str],
     witness: fn() -> Witness,
-    /// More powers than the largest degree of its layout: the Connection's (`N = 2^10`) is 3080.
+    /// The powers of its ptau, more than the largest degree of its layout: the Connection's
+    /// (`N = 2^10`) is 3080.
     ptau_powers: usize,
 }
 
@@ -229,8 +230,7 @@ fn key_contents(opts: &SetupPilfflonkOptions) -> Vec<(String, String)> {
 fn external_columns_give_the_inline_key(fixture: &Fixture) {
     let _cpp = cpp_core();
     let dir = TestDir::new(&format!("external_fixed_{}", fixture.name));
-    let ptau = dir.file("fixed_tau.ptau");
-    write_fixed_tau_ptau(&ptau, fixture.ptau_powers, &test_tau()).unwrap();
+    let ptau = ptau::official(fixture.ptau_powers);
     let (inline_dir, external_dir) = (dir.file("inline"), dir.file("external"));
     fs::create_dir_all(&inline_dir).unwrap();
     fs::create_dir_all(&external_dir).unwrap();

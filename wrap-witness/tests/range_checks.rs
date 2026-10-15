@@ -8,7 +8,7 @@
 //!   range-check rows that hold `v`.
 //! - `pilfflonk_check_holds_on_the_witness` needs `PIL2C_EXEC`: the check holds on the witness,
 //!   with the key of the wrap's AIR, and fails with a multiplicity changed. The key is set up with
-//!   the ptau of `τ = 1`, which the check does not read.
+//!   the official ptau of the tests, which the check does not read.
 //! - `the_witness_of_a_final_circuit_checks` is the check on a real final circuit, ignored by
 //!   default: `PILFFLONK_WRAP_FINAL` names a directory with its `final.r1cs`, `final.so` and
 //!   `final.dat` (setup-snark's, or circom's `--c` with `setup/final_snark_circom`'s Makefile), and
@@ -41,7 +41,7 @@ use proofman_fields::{Bn128, Field, PrimeField, QuotientMap};
 use proofman_pilfflonk::{check, AirShape, CheckOptions, FrBytes, ProvingKey, Witness, WitnessShape};
 
 use common::{build_final, circuits_bn128, fixture, missing_prerequisite, repo_root, snarkjs_witness};
-use wrap_key::{set_up_key, Ptau};
+use wrap_key::set_up_key;
 
 /// The circuit's input: values of the bits of their Num2Bytes, the top ones included (`a` and `b`
 /// are all ones), and the PoseidonT(5) use's.
@@ -182,7 +182,7 @@ fn pilfflonk_check_holds_on_the_witness() {
     let circuit = circuit().expect("node and the snarkjs of setup/pil2-stark/node_modules");
     let key_dir = circuit.dir.join("key");
     fs::create_dir_all(&key_dir).unwrap();
-    let pk = ProvingKey::load(&set_up_key(&repo_root(), &key_dir, &circuit.res, Ptau::TauOne)).unwrap();
+    let pk = ProvingKey::load(&set_up_key(&repo_root(), &key_dir, &circuit.res)).unwrap();
     assert_eq!(pk.witness_shape().unwrap(), circuit.shape());
 
     let witness = WrapWitness::load(&circuit.artifacts()).unwrap().witness(&circuit.shape(), &circuit.zkin()).unwrap();
@@ -223,7 +223,7 @@ fn the_witness_of_a_final_circuit_checks() {
     write_exec(&res, &artifacts.exec);
 
     let start = Instant::now();
-    let pk = ProvingKey::load(&set_up_key(&repo_root(), &dir, &res, Ptau::TauOne)).unwrap();
+    let pk = ProvingKey::load(&set_up_key(&repo_root(), &dir, &res)).unwrap();
     eprintln!("setup: {:.1} s", start.elapsed().as_secs_f64());
     let start = Instant::now();
     let witness = WrapWitness::load(&artifacts).unwrap().witness(&pk.witness_shape().unwrap(), &zkin).unwrap();

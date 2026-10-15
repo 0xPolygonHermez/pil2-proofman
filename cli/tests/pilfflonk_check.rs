@@ -52,6 +52,8 @@ mod plookup;
 mod prod_bus;
 #[path = "../../pilfflonk/tests/data/prod_bus_im.rs"]
 mod prod_bus_im;
+#[path = "../../pilfflonk/tests/data/ptau.rs"]
+mod ptau;
 #[path = "../../pilfflonk/tests/data/range_check.rs"]
 mod range_check;
 #[path = "../../pilfflonk/tests/data/signed.rs"]
@@ -68,7 +70,6 @@ use std::process::{Command, Output};
 
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
-use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_pilfflonk::oracle::{AirOracle, Fr};
 use proofman_pilfflonk::{
@@ -177,8 +178,7 @@ struct Fixture {
     witness_dir: PathBuf,
 }
 
-/// The Fibonacci compiled and set up (`--no-packing`; the check commits nothing, so the ptau of
-/// `τ = 1` does), and its witness written.
+/// The Fibonacci compiled and set up (`--no-packing`), and its witness written.
 fn fixture(name: &str) -> Fixture {
     fixture_of(name, FIBONACCI, fibonacci::witness(8, [1, 2]), DEFAULT_MAX_CONSTRAINT_DEGREE, true)
 }
@@ -190,7 +190,8 @@ fn fixture_of(name: &str, program: Program, witness: Witness, max_constraint_deg
     let opts = SetupPilfflonkOptions {
         airout_path: dir.file(&program.pilout_file()),
         build_dir: dir.file("build"),
-        powers_of_tau: dir.file("tau_one.ptau"),
+        // More powers than the largest degree of every layout here: 3080, the Connection's of N = 2^10.
+        powers_of_tau: ptau::official(4096),
         max_constraint_degree,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
@@ -198,8 +199,6 @@ fn fixture_of(name: &str, program: Program, witness: Witness, max_constraint_deg
         solidity: false,
     };
     compile(program, &opts.airout_path);
-    // More powers than the largest degree of every layout here: 3080, the Connection's of N = 2^10.
-    write_tau_one_ptau(&opts.powers_of_tau, 4096).unwrap();
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
     let witness_dir = dir.file("witness");

@@ -1171,12 +1171,12 @@ pub(crate) mod tests {
     use std::process::Command;
 
     use pilfflonk_setup::layout::max_degree;
-    use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau, write_tau_one_ptau};
     use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap::RANGE_MUL_COLUMN;
     use proofman_common::exec_format::{ExecFile, EXEC_FORMAT_VERSION_WIDE, RANGE_CHECK_BAND_KIND};
     use proofman_pilfflonk::{AirFile, PilfflonkInfo, SetupParams, WitnessShape};
 
     use super::*;
+    use crate::ptau;
 
     fn repo_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -1376,16 +1376,17 @@ pub(crate) mod tests {
         let includes = ["setup/stark-recurser/plonk2pil/pil", "pil2-components/lib/std/pil"]
             .map(|include| root.join(include).to_string_lossy().into_owned());
 
+        // An official ptau cut down to 64 powers: none is that small.
         let small = dir.join("small.ptau");
-        write_tau_one_ptau(&small, 64).unwrap();
+        ptau::truncated_copy(&ptau::official(64), &small, 64);
         let refused = set_up_wrap_air(&r1cs, &files, &includes, &small, &dir.join("refused"), &WrapFamily::POSEIDON)
             .err()
             .expect("refused");
         let refused = format!("{refused:#}");
         assert!(refused.contains("holds 64 powers [τ^i]₁, fewer than the "), "{refused}");
 
-        let ptau = dir.join("fixed_tau.ptau");
-        write_fixed_tau_ptau(&ptau, 8192, &test_tau()).unwrap();
+        // More powers than the 8·N + 7 = 1031 the layout of N = 2^7 rows needs.
+        let ptau = ptau::official(2048);
         let key_dir = dir.join("key");
         let key = set_up_wrap_air(&r1cs, &files, &includes, &ptau, &key_dir, &WrapFamily::POSEIDON)
             .unwrap_or_else(|e| panic!("{e:#}"));

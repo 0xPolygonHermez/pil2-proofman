@@ -3,7 +3,7 @@
 //! and its public the final circuit's publics hash, verified by pilfflonk's JS verifier.
 //!
 //! - `verify_snark_accepts_a_pilfflonk_proof_and_refuses_every_change`: a pilfflonk proof of the
-//!   Fibonacci fixture, set up with the full-width `τ` of the tests (pilfflonk/docs/README.md#tests),
+//!   Fibonacci fixture, set up with the official ptau of the tests (pilfflonk/docs/README.md#tests),
 //!   in a `snark_proof.bin`: it is read back as it was written, its JSON views are pilfflonk's, and
 //!   `verify-snark` accepts it, and refuses it with a byte of the proof changed, with a public
 //!   changed, cut short or extended, and against the vkey of a setup with another `τ`: each one an
@@ -30,6 +30,8 @@
 
 #[path = "../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
+#[path = "../../pilfflonk/tests/data/ptau.rs"]
+mod ptau;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -100,15 +102,12 @@ fn compile_fibonacci(pilout: &Path) {
     assert!(out.status.success(), "pil2com: {}", output(&out));
 }
 
-/// The pilfflonk key of `pilout` in `build`, set up with a ptau of the fixed `tau`, and its vkey.
-fn set_up(pilout: &Path, build: &Path, tau: &BigUint) -> (PathBuf, PathBuf) {
-    let ptau = build.with_extension("ptau");
-    // More powers than the Fibonacci's largest degree, grouped by default (pilfflonk_verify.rs).
-    write_fixed_tau_ptau(&ptau, 1024, tau).unwrap();
+/// The pilfflonk key of `pilout` in `build`, set up with the ptau at `ptau`, and its vkey.
+fn set_up(pilout: &Path, build: &Path, ptau: &Path) -> (PathBuf, PathBuf) {
     let opts = SetupPilfflonkOptions {
         airout_path: pilout.to_path_buf(),
         build_dir: build.to_path_buf(),
-        powers_of_tau: ptau,
+        powers_of_tau: ptau.to_path_buf(),
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
@@ -204,8 +203,11 @@ fn verify_snark_accepts_a_pilfflonk_proof_and_refuses_every_change() {
     let dir = TestDir::new("fibonacci");
     let pilout = dir.file("fibonacci.pilout");
     compile_fibonacci(&pilout);
-    let (proving_key, vkey_path) = set_up(&pilout, &dir.file("build"), &test_tau());
-    let (_, other_vkey) = set_up(&pilout, &dir.file("other"), &(test_tau() + 1u32));
+    // More powers than the Fibonacci's largest degree, grouped by default (pilfflonk_verify.rs).
+    let (proving_key, vkey_path) = set_up(&pilout, &dir.file("build"), &ptau::official(1024));
+    let other_ptau = dir.file("other_tau.ptau");
+    write_fixed_tau_ptau(&other_ptau, 1024, &(test_tau() + 1u32)).unwrap();
+    let (_, other_vkey) = set_up(&pilout, &dir.file("other"), &other_ptau);
 
     let proved = {
         let key = ProvingKey::load(&proving_key).unwrap();

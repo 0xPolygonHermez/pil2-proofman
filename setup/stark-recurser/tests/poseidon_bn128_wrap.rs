@@ -52,7 +52,7 @@ use proofman_pilfflonk::{
     PilfflonkGlobalInfo, PolType, ProveOptions, ProvingKey, Publics, Stage1Witness, Witness,
 };
 
-use common::wrap_key::{set_up_key, Ptau};
+use common::wrap_key::set_up_key;
 use common::{compile_and_witness, manifest, missing_prerequisite, read_wtns, repo_root, Scratch};
 
 /// The blinding seed of the proofs (pilfflonk/docs/protocol.md#blinding).
@@ -115,8 +115,8 @@ struct Wrap {
 
 impl Wrap {
     /// Compiles `circuit` and computes its witness of `input` (JSON), runs plonk2pil's wrap on it,
-    /// and sets up its key with `ptau` ([`set_up_key`]).
-    fn set_up(name: &str, circuit: &str, input: &str, ptau: Ptau) -> Self {
+    /// and sets up its key ([`set_up_key`]).
+    fn set_up(name: &str, circuit: &str, input: &str) -> Self {
         let scratch = Scratch::new(name);
         let input_path = scratch.file("input.json");
         fs::write(&input_path, input).unwrap();
@@ -127,7 +127,7 @@ impl Wrap {
 
         let options = PlonkOptions { hash_id: BN128_WRAP_FAMILY.into(), ..Default::default() };
         let res: PlonkResult<Bn128> = plonk2pil(&r1cs, "wrap", &options).unwrap();
-        let proving_key = set_up_key(&repo_root(), &scratch.0, &res, ptau);
+        let proving_key = set_up_key(&repo_root(), &scratch.0, &res);
         Self { witness: read_wtns(&wtns), n_publics, res, proving_key, scratch }
     }
 
@@ -226,7 +226,7 @@ fn the_rounds_hold_on_circoms_intermediates_and_fail_on_any_other() {
     let initial_state = inputs.element();
     let blocks: Vec<String> = (0..N_HASHES).map(|_| json_list(&inputs.elements(4))).collect();
     let input = format!("{{\"initialState\": \"{initial_state}\", \"in\": [{}]}}", blocks.join(", "));
-    let wrap = Wrap::set_up("poseidon_bn128_gate", "poseidon_chain.circom", &input, Ptau::TauOne);
+    let wrap = Wrap::set_up("poseidon_bn128_gate", "poseidon_chain.circom", &input);
     assert!(wrap.res.n_used >= N_HASHES * BAND_ROWS);
 
     let pk = ProvingKey::load(&wrap.proving_key).unwrap();
@@ -262,7 +262,7 @@ fn a_small_wrap_checks_proves_and_verifies() {
     let mut inputs = Inputs(INPUT_SEED + 1);
     let [a, b] = [inputs.element(), inputs.element()];
     let input = format!("{{\"a\": \"{a}\", \"b\": \"{b}\", \"x\": {}}}", json_list(&inputs.elements(4)));
-    let wrap = Wrap::set_up("poseidon_bn128_wrap", "wrap.circom", &input, Ptau::FixedTau);
+    let wrap = Wrap::set_up("poseidon_bn128_wrap", "wrap.circom", &input);
     assert_eq!(wrap.n_publics, 1);
     assert!(wrap.res.n_used > BAND_ROWS + 1, "PLONK rows past the band, to check gates 0 and 1 too");
 
@@ -324,7 +324,7 @@ fn range_checks_hold_and_every_attack_on_them_fails() {
         "{{\"x\": \"{x}\", \"y\": \"{y}\", \"a\": \"{a}\", \"b\": \"{b}\", \"c\": \"{c}\", \"s\": {}}}",
         json_list(&inputs.elements(4))
     );
-    let wrap = Wrap::set_up("poseidon_bn128_num2bytes", "num2bytes.circom", &input, Ptau::FixedTau);
+    let wrap = Wrap::set_up("poseidon_bn128_num2bytes", "num2bytes.circom", &input);
     assert_eq!((wrap.n_publics, wrap.res.n_bits), (1, RANGE_CHECK_CHUNK_BITS as usize), "the table's 2^16 rows");
 
     let file = ExecFile::<Bn128>::from_words(&wrap.res.exec).unwrap();
@@ -398,7 +398,7 @@ fn more_publics_than_a_row_check_prove_and_verify() {
     let mut inputs = Inputs(INPUT_SEED + 3);
     let [s, k] = [inputs.element(), inputs.element()];
     let input = format!("{{\"s\": \"{s}\", \"k\": \"{k}\", \"x\": {}}}", json_list(&inputs.elements(4)));
-    let wrap = Wrap::set_up("poseidon_bn128_publics", "publics.circom", &input, Ptau::FixedTau);
+    let wrap = Wrap::set_up("poseidon_bn128_publics", "publics.circom", &input);
     assert_eq!(wrap.n_publics, 14);
 
     let pk = ProvingKey::load(&wrap.proving_key).unwrap();

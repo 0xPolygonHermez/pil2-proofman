@@ -20,6 +20,8 @@ mod connection;
 #[allow(unused_imports)]
 #[path = "../src/pil_helpers/mod.rs"]
 mod pil_helpers;
+#[path = "../../../../data/ptau.rs"]
+mod ptau;
 #[path = "../../../../data/witness_libraries.rs"]
 mod witness_libraries;
 
@@ -29,7 +31,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
-use pilfflonk_setup::test_ptau::write_tau_one_ptau;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_cli::commands::pil_helpers::PilHelpersCmd;
 use proofman_fields::Bn128;
@@ -188,16 +189,14 @@ fn the_rows_are_the_stage_1_columns_of_the_keys() {
         let opts = SetupPilfflonkOptions {
             airout_path: compile(&dir, bus),
             build_dir: dir.file("build"),
-            powers_of_tau: dir.file("tau_one.ptau"),
+            // More powers than the largest degree of the layout, 3080 (`cli/tests/pilfflonk_prove.rs`).
+            powers_of_tau: ptau::official(4096),
             max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
             extra_muls: DEFAULT_EXTRA_MULS,
             max_q_degree: DEFAULT_MAX_Q_DEGREE,
             no_packing: false,
             solidity: false,
         };
-        // More powers than the largest degree of the layout, 3080 (`cli/tests/pilfflonk_prove.rs`); the
-        // check commits nothing, so the ptau of τ = 1 does.
-        write_tau_one_ptau(&opts.powers_of_tau, 4096).unwrap();
         run_setup_pilfflonk(&opts).unwrap();
         let pk = ProvingKey::load(&opts.build_dir.join(PROVING_KEY_DIR)).unwrap();
         let info = pk.air(AirInstanceRef { airgroup_id: 0, air_id: 0 }).unwrap();

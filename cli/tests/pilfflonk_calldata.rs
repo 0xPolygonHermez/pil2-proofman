@@ -5,8 +5,8 @@
 //! its calldata two auxiliary inverses, and `Frames`, whose `everyFrame` give none and which has no
 //! publics.
 //!
-//! The keys are set up with the ptau of the full-width `τ` of the C++ test helper
-//! (pilfflonk/docs/README.md#tests), and the proofs are the prover's, with a fixed blinding seed;
+//! The keys are set up with the official ptau of the tests (pilfflonk/docs/README.md#tests), and
+//! the proofs are the prover's, with a fixed blinding seed;
 //! the calldata is checked against the prover's `ξ` and against the selectors solc 0.8.37 gives the
 //! signatures (`solc --hashes`). The command must write the same calldata from the proof's JSON
 //! view and from its bytes, print it without `-o`, and refuse, with exit code 1, a clear message
@@ -18,6 +18,8 @@
 #[allow(dead_code)]
 #[path = "../../pilfflonk/tests/data/domains.rs"]
 mod domains;
+#[path = "../../pilfflonk/tests/data/ptau.rs"]
+mod ptau;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,7 +28,6 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use num_bigint::BigUint;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
-use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use prost::Message;
 use proofman_pilfflonk::{
@@ -89,7 +90,7 @@ fn fixture(name: &str, air: domains::Air) -> Fixture {
     let opts = SetupPilfflonkOptions {
         airout_path: dir.file("program.pilout"),
         build_dir: dir.file("build"),
-        powers_of_tau: dir.file("fixed_tau.ptau"),
+        powers_of_tau: ptau::official(1024),
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
@@ -97,7 +98,6 @@ fn fixture(name: &str, air: domains::Air) -> Fixture {
         solidity: false,
     };
     fs::write(&opts.airout_path, domains::pilout(air).encode_to_vec()).unwrap();
-    write_fixed_tau_ptau(&opts.powers_of_tau, 1024, &test_tau()).unwrap();
     run_setup_pilfflonk(&opts).unwrap();
     let proving_key = opts.build_dir.join(PROVING_KEY_DIR);
     let vkey_path = PilfflonkGlobalInfo::from_proving_key(&proving_key).unwrap().vkey_path(&proving_key);

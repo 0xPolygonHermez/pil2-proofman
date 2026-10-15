@@ -1,6 +1,6 @@
 //! The blake3 BN128 wrap's witness of `tests/fixtures/blake3_wrap.circom`, a Node of each `over`, a
 //! Node with a free `d_inv`, a chunk and a parent Compress and a range check, wrapped by plonk2pil and
-//! set up with the ptau of `τ = 1` (`tests/common`, `wrap_key`):
+//! set up with the official ptau of the tests (`tests/common`, `wrap_key`):
 //!
 //! - `the_witness_checks_and_binds_its_inverses`: pilfflonk's check holds on the host's witness, and
 //!   fails with the `d_inv` of a digest word changed, or with its `over` bit flipped.
@@ -40,7 +40,7 @@ use proofman_pilfflonk::{
 
 use common::{build_final, circuits_bn128, missing_prerequisite, repo_root};
 use pil2_stark_recurser::plonk2pil::setups::blake3_bn128::wrap as blake3_wrap;
-use wrap_key::{set_up_key_with, Ptau};
+use wrap_key::set_up_key_with;
 
 /// The circuit's files, its wrap and its key, built once for the tests of this binary.
 struct Circuit {
@@ -93,7 +93,6 @@ fn build_circuit() -> Circuit {
         &repo_root(),
         &key_dir,
         &res,
-        Ptau::TauOne,
         33 << res.n_bits,
         blake3_wrap::EXTRA_MULS,
         blake3_wrap::MAX_CONSTRAINT_DEGREE as u64,

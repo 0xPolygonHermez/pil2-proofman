@@ -16,6 +16,8 @@
 
 #[path = "../../../../data/fibonacci.rs"]
 mod fibonacci;
+#[path = "../../../../data/ptau.rs"]
+mod ptau;
 #[path = "../../../../data/witness_libraries.rs"]
 mod witness_libraries;
 
@@ -24,7 +26,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
-use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use proofman_cli::commands::pil_helpers::PilHelpersCmd;
 use proofman_pilfflonk::witness_library::INIT_SYMBOL;
@@ -207,13 +208,11 @@ fn the_pil_helpers_are_those_pil_helpers_writes() {
 #[ignore = "needs PIL2C_EXEC"]
 fn the_librarys_witness_proves_and_verifies() {
     let dir = TestDir::new("prove");
-    let ptau = dir.file("fixed_tau.ptau");
-    // More powers than the Fibonacci's largest `degree` (779, cli/tests/pilfflonk_prove.rs).
-    write_fixed_tau_ptau(&ptau, 1024, &test_tau()).unwrap();
     let opts = SetupPilfflonkOptions {
         airout_path: compile(&dir),
         build_dir: dir.file("build"),
-        powers_of_tau: ptau,
+        // More powers than the Fibonacci's largest `degree` (779, cli/tests/pilfflonk_prove.rs).
+        powers_of_tau: ptau::official(1024),
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,

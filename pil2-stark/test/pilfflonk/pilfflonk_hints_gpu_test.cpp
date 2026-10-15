@@ -357,7 +357,7 @@ AirFiles airFilesOf(const std::string &dir, uint64_t airgroupId, uint64_t airId)
                     readBytes(base + ".const")};
 }
 
-// The sum bus's fixture as a key of its own, with an SRS of the test ptau.
+// The sum bus's fixture as a key of its own, with an SRS of the official ptau.
 struct SumBus {
     TestDir dir;
     AirFiles files;
@@ -365,10 +365,8 @@ struct SumBus {
     std::vector<uint8_t> witness = readBytes(busFixture("SumBus.witness.bin"));
 
     SumBus() {
-        const std::string ptau = dir.file("sum_bus.ptau");
-        writeTestPtau(ptau, 512);
         files.srs = dir.file("sum_bus.srs.bin");
-        Srs::fromPtau(ptau, 512).save(files.srs);
+        Srs::fromPtau(officialPtau(512), 512).save(files.srs);
         files.name = "SumBus";
         files.global = "{\"name\": \"sum\", \"airs\": [[{\"name\": \"SumBus\", \"num_rows\": 32}]], \"air_groups\": "
                        "[\"SumBus\"], \"aggTypes\": [[]], \"backend\": \"pilfflonk\", \"formatVersion\": 1, \"field\": "

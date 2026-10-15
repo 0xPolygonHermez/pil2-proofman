@@ -9,6 +9,10 @@
 //!
 //! One test crate, so that the pilouts built in code (`common`) are shared.
 
+/// The official ptau files (pilfflonk/docs/README.md#tests).
+#[path = "../../../../pilfflonk/tests/data/ptau.rs"]
+mod ptau;
+
 mod command;
 mod common;
 mod digest;

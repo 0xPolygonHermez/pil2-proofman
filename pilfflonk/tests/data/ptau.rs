@@ -128,6 +128,27 @@ pub fn patched_copy(from: &Path, to: &Path, id: u32, offset: u64, bytes: &[u8]) 
     fs::write(to, contents).unwrap();
 }
 
+/// A copy of the ptau at `from` at `to` with only its first `n_g1` powers `[τ^i]₁`: section 2 cut
+/// short, the others as they are. A ptau with fewer powers than any official one, for the tests of
+/// a ptau too small.
+pub fn truncated_copy(from: &Path, to: &Path, n_g1: usize) {
+    let contents = fs::read(from).unwrap();
+    let n_sections = u32::from_le_bytes(contents[8..12].try_into().unwrap());
+    let mut out = contents[..12].to_vec();
+    let mut at = 12;
+    for _ in 0..n_sections {
+        let id = u32::from_le_bytes(contents[at..at + 4].try_into().unwrap());
+        let size = u64::from_le_bytes(contents[at + 4..at + 12].try_into().unwrap()) as usize;
+        let kept = if id == 2 { n_g1 * G1_BYTES } else { size };
+        assert!(kept <= size, "{} holds {} powers [τ^i]₁", from.display(), size / G1_BYTES);
+        out.extend(id.to_le_bytes());
+        out.extend((kept as u64).to_le_bytes());
+        out.extend(&contents[at + 12..at + 12 + kept]);
+        at += 12 + size;
+    }
+    fs::write(to, out).unwrap();
+}
+
 /// A copy of the ptau at `from` at `to` whose `[τ]₂` is its `[τ²]₂`: an SRS whose `[τ^i]₁` are
 /// those of `from`, and whose `[τ]₂`, a point of G2 all the same, is not their `τ`'s. A key set up
 /// with it has the commitments of `from`'s, and another `X_2`: its pairing refuses their proofs.

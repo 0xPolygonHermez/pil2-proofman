@@ -27,6 +27,8 @@
 //!     --features proofman-starks-lib-c/cpu-only -- --include-ignored
 //! ```
 
+#[path = "../../pilfflonk/tests/data/ptau.rs"]
+mod ptau;
 #[path = "../../pilfflonk/tests/data/witness_libraries.rs"]
 mod witness_libraries;
 
@@ -42,7 +44,6 @@ use pil2_stark_recurser::plonk2pil::r1cs::to_plonk::{r1cs2plonk, PlonkAddition, 
 use pil2_stark_recurser::plonk2pil::r1cs::types::{read_r1cs_from_bytes, GateBand, GateBandKind};
 use pil2_stark_recurser::plonk2pil::write_exec_file;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
-use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
 use pilfflonk_wrap_witness::{witness_from_circom, WrapArtifacts, WrapWitness, WrapWitnessError};
 use proofman_fields::{Bn128, Field, Goldilocks};
@@ -424,12 +425,10 @@ fn the_witness_proves_on_an_air_of_the_gates() {
         values[i] = FrBytes::from_u64(1);
         external.push(ExternalFixedColumn { name: "Plonk.P".to_string(), index: i, values });
     }
-    let ptau = dir.join("fixed_tau.ptau");
-    write_fixed_tau_ptau(&ptau, 1024, &test_tau()).unwrap();
     let opts = SetupPilfflonkOptions {
         airout_path: pilout,
         build_dir: dir.join("build"),
-        powers_of_tau: ptau,
+        powers_of_tau: ptau::official(1024),
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls: DEFAULT_EXTRA_MULS,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,

@@ -184,13 +184,13 @@ mod tests {
     use pilfflonk_setup::command::PROVING_KEY_DIR;
     use pilfflonk_setup::layout::max_degree;
     use pilfflonk_setup::solidity::VERIFIER_SOL_FILE;
-    use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau};
     use proofman_fields::Bn128;
     use proofman_pilfflonk::global_info::{GLOBAL_CONSTRAINTS_FILE, GLOBAL_INFO_FILE};
     use proofman_pilfflonk::{AirFile, CalldataLayout, JsonFile, PilfflonkGlobalInfo, Vkey};
 
     use super::*;
     use crate::proving_key::snark_setup::tests::{assert_exec_gathers_the_air_columns, assert_set_up_at_the_family_knobs};
+    use crate::ptau;
 
     fn options(build_dir: &str, final_snark: &str) -> SetupSnarkOptions {
         SetupSnarkOptions {
@@ -219,9 +219,9 @@ mod tests {
         }
     }
 
-    /// The powers `[τ^i]₁` of the test ptau [`pilfflonk_final_circuit`] writes: fibonacci-square's
+    /// The powers `[τ^i]₁` of the ptau of [`pilfflonk_final_circuit`] by default: fibonacci-square's
     /// final circuit is an AIR of 2^19 rows, whose layout needs `13·2^19 + 12` with range checks,
-    /// and this is `14·N`, as plonk2pil's wrap tests size theirs.
+    /// and this is `14·N`, as plonk2pil's wrap tests size theirs: the official ptau of power 22.
     const TEST_PTAU_POWERS: usize = 14 << 19;
 
     /// setup-snark for pilfflonk on the `vadcop_final` of a real program: the recursivef with custom
@@ -233,17 +233,16 @@ mod tests {
     /// `SETUP_SNARK_BUILD_DIR` names the build dir of a recursive setup (`proofman-setup setup -r`
     /// with a poseidon family; fibonacci-square's takes some 11 minutes), and the test writes the
     /// outputs of setup-snark into it, as `setup-snark -b` does. `SETUP_SNARK_PUBLICS_INFO`, if set,
-    /// is the `--publics-info`. `SETUP_SNARK_POWERS_OF_TAU` is the `--powers-of-tau`: if there is no
-    /// file there, the test writes a ptau of [`TEST_PTAU_POWERS`] powers there, with the fixed τ of
-    /// the tests (`pilfflonk_setup::test_ptau`), never to be used for a real key. The PIL of the AIR
-    /// is compiled over BN128 with `PIL2C_EXEC`, which must have `--field`
+    /// is the `--publics-info`. `SETUP_SNARK_POWERS_OF_TAU` is the `--powers-of-tau`, by default the
+    /// official ptau of the tests of [`TEST_PTAU_POWERS`] powers (pilfflonk/docs/README.md#tests).
+    /// The PIL of the AIR is compiled over BN128 with `PIL2C_EXEC`, which must have `--field`
     /// (pilfflonk/docs/README.md#compile-pil). With fibonacci-square and the Hermez ptau of 2^24 on
     /// 32 threads, that takes some 4 minutes and 3.5 GB, most of it the build of the final
-    /// circuit's witness library; the test ptau holds 0.47 GB on disk:
+    /// circuit's witness library:
     ///
     /// ```text
     /// SETUP_SNARK_BUILD_DIR=<dir> SETUP_SNARK_PUBLICS_INFO=$PWD/examples/fibonacci-square/src/publics_info.json \
-    ///     SETUP_SNARK_POWERS_OF_TAU=<ptau> PIL2C_EXEC=<pil2-compiler>/src/pil.js \
+    ///     PIL2C_EXEC=<pil2-compiler>/src/pil.js \
     ///     cargo test --release -p pil2-stark-setup --features proofman-starks-lib-c/cpu-only \
     ///     --lib pilfflonk_final_circuit -- --ignored --nocapture
     /// ```
@@ -254,11 +253,8 @@ mod tests {
             eprintln!("skipped: SETUP_SNARK_BUILD_DIR does not name a recursive setup's build dir");
             return;
         };
-        let ptau = std::env::var("SETUP_SNARK_POWERS_OF_TAU").expect("SETUP_SNARK_POWERS_OF_TAU names a ptau");
-        if !Path::new(&ptau).exists() {
-            eprintln!("writing a test ptau of {TEST_PTAU_POWERS} powers at {ptau}");
-            write_fixed_tau_ptau(Path::new(&ptau), TEST_PTAU_POWERS, &test_tau()).unwrap();
-        }
+        let ptau = std::env::var("SETUP_SNARK_POWERS_OF_TAU")
+            .unwrap_or_else(|_| ptau::official(TEST_PTAU_POWERS).display().to_string());
         let opts = SetupSnarkOptions {
             powers_of_tau: Some(ptau),
             publics_info: std::env::var("SETUP_SNARK_PUBLICS_INFO").ok(),

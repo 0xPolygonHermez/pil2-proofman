@@ -14,54 +14,36 @@ use std::process::Command;
 use pil2_stark_recurser::plonk2pil::setups::poseidon_bn128::wrap::EXTRA_MULS;
 use pil2_stark_recurser::plonk2pil::PlonkResult;
 use pilfflonk_setup::command::{DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
-use pilfflonk_setup::test_ptau::{test_tau, write_fixed_tau_ptau, write_tau_one_ptau};
 use pilfflonk_setup::{run_setup_pilfflonk_with_external_fixed, ExternalFixedColumn, SetupPilfflonkOptions};
 use proofman_fields::Bn128;
 use proofman_pilfflonk::FrBytes;
 
-/// The powers of tau of a key (`pilfflonk_setup::test_ptau`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Ptau {
-    /// `τ = 1`: written at once, and enough to `pilfflonk check` a witness, which reads no
-    /// commitment; but anyone can open anything with it, so a proof of it means nothing.
-    TauOne,
-    /// The full-width `τ` of the C++ helper: a proof verifies only if it is sound. Its powers take
-    /// a scalar multiplication each over `num-bigint`, minutes for the 2^20 of a 2^16-row wrap in a
-    /// debug build, so it is written once into the target's temporary directory and kept there.
-    FixedTau,
-}
+#[path = "../../../../pilfflonk/tests/data/ptau.rs"]
+mod ptau;
 
 /// Compiles the PIL of `res` in `dir` and sets it up there: the key's directory, `provingKey/`.
 /// `repo_root` is the repository's root, where plonk2pil's PIL and the std are.
-pub fn set_up_key(repo_root: &Path, dir: &Path, res: &PlonkResult<Bn128>, ptau: Ptau) -> PathBuf {
+pub fn set_up_key(repo_root: &Path, dir: &Path, res: &PlonkResult<Bn128>) -> PathBuf {
     // More powers than the layout's largest degree, 13·N + 12 for L1 at the family's knobs.
-    set_up_key_with(repo_root, dir, res, ptau, 14 << res.n_bits, EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE)
+    set_up_key_with(repo_root, dir, res, 14 << res.n_bits, EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE)
 }
 
-/// [`set_up_key`] with a ptau of `n_g1` powers, at least the layout's largest degree, and the
-/// family's `extra_muls` and `max_constraint_degree` (the blake3 wrap's are not the poseidon one's).
+/// [`set_up_key`] with an official ptau of at least `n_g1` powers, at least the layout's largest
+/// degree, and the family's `extra_muls` and `max_constraint_degree` (the blake3 wrap's are not the
+/// poseidon one's).
 pub fn set_up_key_with(
     repo_root: &Path,
     dir: &Path,
     res: &PlonkResult<Bn128>,
-    ptau: Ptau,
     n_g1: usize,
     extra_muls: u64,
     max_constraint_degree: u64,
 ) -> PathBuf {
     let pilout = compile_pil(repo_root, dir, &res.pil_str);
-    let powers_of_tau = match ptau {
-        Ptau::TauOne => {
-            let path = dir.join("tau_one.ptau");
-            write_tau_one_ptau(&path, n_g1).unwrap();
-            path
-        }
-        Ptau::FixedTau => fixed_tau_ptau(n_g1),
-    };
     let setup = SetupPilfflonkOptions {
         airout_path: pilout,
         build_dir: dir.join("build"),
-        powers_of_tau,
+        powers_of_tau: ptau::official(n_g1),
         max_constraint_degree,
         extra_muls,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,
@@ -101,16 +83,4 @@ pub fn compile_pil(repo_root: &Path, dir: &Path, pil: &str) -> PathBuf {
     let log = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(out.status.success(), "pil2com: {log}");
     pilout
-}
-
-/// The [`Ptau::FixedTau`] ptau of `n_g1` powers: written once into the target's temporary
-/// directory, through a file of its own that is renamed when whole, and read from there after.
-fn fixed_tau_ptau(n_g1: usize) -> PathBuf {
-    let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("pilfflonk_fixed_tau_{n_g1}.ptau"));
-    if !path.is_file() {
-        let partial = path.with_extension(format!("{}.partial", std::process::id()));
-        write_fixed_tau_ptau(&partial, n_g1, &test_tau()).unwrap();
-        fs::rename(&partial, &path).unwrap();
-    }
-    path
 }

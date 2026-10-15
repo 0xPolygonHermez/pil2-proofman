@@ -68,6 +68,8 @@ mod permutation;
 #[allow(dead_code)]
 #[path = "../../../pilfflonk/tests/data/plookup.rs"]
 mod plookup;
+#[path = "../../../pilfflonk/tests/data/ptau.rs"]
+mod ptau;
 #[allow(dead_code)]
 #[path = "../../../pilfflonk/tests/data/signed.rs"]
 mod signed;
@@ -81,7 +83,7 @@ use num_bigint::BigUint;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::digest::seal_vkey;
 use pilfflonk_setup::solidity::{export_verifier_sol, VERIFIER_SOL_FILE};
-use pilfflonk_setup::test_ptau::{g1_times, g2_times, test_tau, write_fixed_tau_ptau};
+use pilfflonk_setup::test_ptau::{g1_times, g2_times, test_tau};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use prost::Message;
 use proofman_pilfflonk::calldata::SELECTOR_BYTES;
@@ -212,12 +214,10 @@ struct Key {
 impl Key {
     fn new(setup: &Setup) -> Self {
         let dir = TestDir::new(setup.name);
-        let ptau = dir.file("fixed_tau.ptau");
-        write_fixed_tau_ptau(&ptau, setup.program.ptau_powers(), &test_tau()).unwrap();
         let opts = SetupPilfflonkOptions {
             airout_path: dir.file("program.pilout"),
             build_dir: dir.file("build"),
-            powers_of_tau: ptau,
+            powers_of_tau: ptau::official(setup.program.ptau_powers()),
             max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
             extra_muls: DEFAULT_EXTRA_MULS,
             max_q_degree: setup.max_q_degree,

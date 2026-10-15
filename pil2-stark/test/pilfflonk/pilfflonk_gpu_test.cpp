@@ -391,10 +391,7 @@ void testBlindQBoundaries(Random &random) {
 // polynomials (the point at infinity on both); refused for a length with no shift sum.
 void testTheDeviceCommitsAsTheCpu(Random &random) {
     constexpr uint64_t N_G1 = 1024;
-    TestDir dir;
-    const std::string ptau = dir.file("gpu_kernels.ptau");
-    writeTestPtau(ptau, N_G1);
-    const PilFflonk::Srs srs = PilFflonk::Srs::fromPtau(ptau, N_G1);
+    const PilFflonk::Srs srs = PilFflonk::Srs::fromPtau(officialPtau(N_G1), N_G1);
     PilFflonk::GpuKey key(srs);
     const DeviceBuffer work(N_G1 * sizeof(FrElement));
     for (uint64_t k : {uint64_t(1), uint64_t(2), uint64_t(3)}) {
@@ -719,10 +716,7 @@ void testShplonkOnTheDevice() {
     }
     // Enough powers for the longest f, 12·(2^11 + 2) coefficients.
     constexpr uint64_t N_G1 = uint64_t(1) << 15;
-    TestDir dir;
-    const std::string ptau = dir.file("gpu_shplonk.ptau");
-    writeTestPtau(ptau, N_G1);
-    const PilFflonk::Srs srs = PilFflonk::Srs::fromPtau(ptau, N_G1);
+    const PilFflonk::Srs srs = PilFflonk::Srs::fromPtau(officialPtau(N_G1), N_G1);
     PilFflonk::GpuKey key(srs);
     const DeviceBuffer work(N_G1 * sizeof(FrElement));
     Random random(62);

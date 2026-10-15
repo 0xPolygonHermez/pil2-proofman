@@ -57,11 +57,8 @@
 //!   fixed seed by default; `PILFFLONK_FUZZ_CASES` sets another number, and `PILFFLONK_FUZZ_SEED`
 //!   another seed.
 //!
-//! The ptau is `PILFFLONK_TEST_PTAU` if it is set, and otherwise one this test writes with the
-//! full-width `τ` of the C++ test helper (`pilfflonk_setup::test_ptau::fixed_tau_ptau`,
-//! pilfflonk/docs/README.md#tests): not the ptau of `τ = 1`, under which the blinding vanishes from
-//! every commitment and any proof verifies. With it, the verifier accepts the prover's proofs only
-//! if they are sound, and rejects every change to one.
+//! The ptau is an official one (pilfflonk/docs/README.md#tests), whose `τ` nobody knows: the
+//! verifier accepts the prover's proofs only if they are sound, and rejects every change to one.
 //!
 //! Pilouts are not versioned: the test compiles the fixtures with the compiler `PIL2C_EXEC` names,
 //! which must have `--field`, and is `#[ignore]` without it. Those of the domains build their
@@ -107,6 +104,8 @@ mod plookup;
 mod prod_bus;
 #[path = "../../pilfflonk/tests/data/prod_bus_im.rs"]
 mod prod_bus_im;
+#[path = "../../pilfflonk/tests/data/ptau.rs"]
+mod ptau;
 #[path = "../../pilfflonk/tests/data/range_check.rs"]
 mod range_check;
 #[path = "../../pilfflonk/tests/data/signed.rs"]
@@ -393,19 +392,6 @@ fn plus_one(value: &Value) -> Value {
     json!(((v + 1u32) % r).to_string())
 }
 
-/// The ptau of the test (see the module), of `n_g1` powers, more than the largest degree of the
-/// layouts of its setups ([`Program::ptau_powers`]).
-fn ptau(dir: &TestDir, n_g1: usize) -> PathBuf {
-    match std::env::var_os("PILFFLONK_TEST_PTAU") {
-        Some(path) => PathBuf::from(path),
-        None => {
-            let path = dir.file("fixed_tau.ptau");
-            write_fixed_tau_ptau(&path, n_g1, &test_tau()).unwrap();
-            path
-        }
-    }
-}
-
 /// How the setup lays out the `f`: grouped with `--extra-muls`, or `--no-packing`.
 #[derive(Clone, Copy, Debug)]
 enum Packing {
@@ -448,7 +434,7 @@ fn setup_options(dir: &TestDir, program: Program, packing: Packing) -> SetupPilf
     SetupPilfflonkOptions {
         airout_path: dir.file("program.pilout"),
         build_dir: dir.file("build"),
-        powers_of_tau: ptau(dir, program.ptau_powers()),
+        powers_of_tau: ptau::official(program.ptau_powers()),
         max_constraint_degree: DEFAULT_MAX_CONSTRAINT_DEGREE,
         extra_muls,
         max_q_degree: DEFAULT_MAX_Q_DEGREE,

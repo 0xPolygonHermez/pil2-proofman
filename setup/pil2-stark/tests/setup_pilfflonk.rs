@@ -12,6 +12,9 @@
 //!     --test setup_pilfflonk -- --include-ignored
 //! ```
 
+#[path = "../../../pilfflonk/tests/data/ptau.rs"]
+mod ptau;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -337,9 +340,8 @@ fn it_writes_the_solidity_verifier_of_the_vkey() {
 
     let dir = TestDir::new("solidity");
     let pilout_path = dir.file("tiny.pilout");
-    let ptau = dir.file("tau_one.ptau");
+    let ptau = ptau::official(16);
     fs::write(&pilout_path, pilout().encode_to_vec()).unwrap();
-    write_tau_one_ptau(&ptau, 16).unwrap();
     let run = |build: &Path, solidity: bool| {
         let mut args = vec!["setup-pilfflonk", "-a", path(&pilout_path), "-b", path(build), "--powers-of-tau"];
         args.extend([path(&ptau), "--no-packing", "--max-constraint-degree", "4", "--extra-muls", "0"]);
@@ -587,8 +589,7 @@ fn a_fixed_dir_sets_up_the_fibonacci_fixture_compiled_with_its_fixed_columns_to_
     std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that writes BN128 fixed files");
     let dir = TestDir::new("fibonacci_fixed_dir");
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-    let ptau = dir.file("tau_one.ptau");
-    write_tau_one_ptau(&ptau, 1024).unwrap();
+    let ptau = ptau::official(1024);
 
     // The same pilout name in both, as the provingKey/'s directory is named after it.
     let compile = |name: &str, fixed: Option<&Path>| -> PathBuf {
