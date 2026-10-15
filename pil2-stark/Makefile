@@ -264,11 +264,7 @@ DEPS_BCT := $(OBJS_BCT:.o=.d)
 # rapidsnark Polynomial tests (gtest). The polynomials are header-only templates over ffiasm's
 # BN128 engine, so this links ffiasm and the Keccak of the tests' digests rather than the library.
 SRCS_POLYNOMIAL_TEST := $(shell find ./src/rapidsnark/polynomial/tests ./src/rapidsnark/keccak_wrapper.cpp ./src/XKCP -name "*.cpp")
-SRCS_POLYNOMIAL_TEST += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp misc.cpp naf.cpp splitparstr.cpp)
-ifneq ($(UNAME_S),Darwin)
-    # macOS builds ffiasm without its assembly, as the library does
-    SRCS_POLYNOMIAL_TEST += $(addprefix $(SETUP_DPNDS_DIR)/, fr.asm fq.asm)
-endif
+SRCS_POLYNOMIAL_TEST += $(addprefix $(SETUP_DPNDS_DIR)/, alt_bn128.cpp fr.cpp fq.cpp misc.cpp naf.cpp splitparstr.cpp fr.asm fq.asm)
 OBJS_POLYNOMIAL_TEST := $(SRCS_POLYNOMIAL_TEST:%=$(BUILD_DIR)/%.o)
 DEPS_POLYNOMIAL_TEST := $(OBJS_POLYNOMIAL_TEST:.o=.d)
 
@@ -326,7 +322,12 @@ plonk_prove: $(BUILD_DIR)/$(TARGET_PROVE_PLONK)
 
 stir_test: $(BUILD_DIR)/$(TARGET_STIR_TEST)
 
+ifeq ($(UNAME_S),Darwin)
+polynomial_test:
+	$(error polynomial_test needs ffiasm's assembly field arithmetic, which macOS builds without)
+else
 polynomial_test: $(BUILD_DIR)/$(TARGET_POLYNOMIAL_TEST)
+endif
 
 TARGET_STIR_TEST_GPU := stirTestsGpu
 stir_test_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_STIR_TEST_GPU)
