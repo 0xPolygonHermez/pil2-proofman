@@ -279,7 +279,10 @@ recursivef, computes the wrap's witness from the recursivef proof in the same pr
 (`pilfflonk-wrap-witness`, with `final.so`, `final.dat` and `final.exec`), and proves it, on the CPU
 or, with `--gpu`, as `pilfflonk prove --gpu` does. `snark_proof.bin` holds the proof's bytes and its
 one public, the final circuit's publics hash ([formats.md#proof](formats.md#proof)). `verify-snark`
-names the bytes with the vkey and runs the JS verifier, as `pilfflonk verify`.
+names the bytes with the vkey and runs the JS verifier, as `pilfflonk verify`. As with snarkjs, a
+proof the verifier rejects, and bytes that are not those of a proof of the vkey (another length, a
+value outside its field, another number of publics), are an `InvalidProof`; a vkey that cannot be
+read, and a verifier that cannot run, an `InvalidConfiguration`.
 
 On the GPU, pilfflonk proves in the wrap's own device memory, where the PLONK prover carves its
 buffers (`pre_allocate_final_snark_prover`): a wrapper built on proofman's unified GPU buffer

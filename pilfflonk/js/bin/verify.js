@@ -5,14 +5,13 @@
 //     node pilfflonk/js/bin/verify.js <pilfflonk.vkey.json> <publics.json> <proof.json>
 //
 // Exit status: 0 if the proof verifies, 1 if it does not (a malformed input included), 2 if the
-// arguments are wrong or a file cannot be read as JSON. Unlike pil-stark's main_verifier.js, which
-// exits with 0 either way, only a proof that verifies gives 0. The steps are logged to stderr, and
-// the verdict is the last line.
+// arguments are wrong or a file cannot be read as JSON, and 3 if the verifier fails without a
+// verdict: it does not load, or it throws what is not a malformed input. Unlike pil-stark's
+// main_verifier.js, which exits with 0 either way, only a proof that verifies gives 0. The steps are
+// logged to stderr, and the verdict is the last line.
 
 import { readFileSync } from "node:fs";
 import { argv, exit, stderr } from "node:process";
-
-import { verify } from "../src/verify.js";
 
 const USAGE = "usage: verify.js <pilfflonk.vkey.json> <publics.json> <proof.json>";
 
@@ -38,6 +37,15 @@ if (args.length !== 3) {
     exit(2);
 }
 const [vkey, publics, proof] = args.map(readJson);
-const verified = await verify(vkey, publics, proof, logger);
+// Imported here, so that a verifier that does not load fails as one that throws: Node exits with 1,
+// a rejection's status, on an error it does not catch.
+let verified;
+try {
+    const { verify } = await import("../src/verify.js");
+    verified = await verify(vkey, publics, proof, logger);
+} catch (e) {
+    stderr.write(`[ERROR] the verifier failed: ${e?.stack ?? e}\n`);
+    exit(3);
+}
 stderr.write(verified ? "OK: the proof verifies\n" : "INVALID: the proof does not verify\n");
 exit(verified ? 0 : 1);

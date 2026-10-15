@@ -1263,45 +1263,30 @@ fn snarkjs_verdict(verified_message: &str, success: bool, stdout: &str) -> Snark
 }
 
 /// [`verify_snark_proof`] of a pilfflonk proof: its JSON views, named by the vkey at `vkey_path`
-/// (`pilfflonk_wrap::json_views`), go to pilfflonk's JS verifier, in `temp`. Bytes that are not
-/// those of a proof of the vkey, or not as many publics as it has, are refused as the verifier
-/// refuses a proof.
+/// (`pilfflonk_wrap::json_views`), go to pilfflonk's JS verifier, in `temp`. As snarkjs's verdicts
+/// are told apart: a proof the verifier rejects, and bytes that are not those of a proof of the vkey
+/// or not as many publics as it has, are an `InvalidProof`; a vkey that cannot be read and a verifier
+/// that cannot run, an `InvalidConfiguration`.
 fn verify_pilfflonk_snark_proof(
     snark_proof: &SnarkProof,
     vkey_path: &Path,
     temp: &TempJsonFiles,
 ) -> ProofmanResult<()> {
-    let views = pilfflonk_wrap::read_vkey(vkey_path)
-        .and_then(|vkey| pilfflonk_wrap::json_views(&snark_proof.proof_bytes, &snark_proof.public_snark_bytes, &vkey));
-    let verdict = views.and_then(|(proof_json, publics)| {
-        pilfflonk_wrap::verify_json(
-            vkey_path,
-            &proof_json,
-            &publics,
-            &temp.path("snark_proof"),
-            &temp.path("snark_publics"),
-        )
-    });
-    report_verdict(verdict.map_err(|e| e.to_string()))
-}
-
-/// The result of a verifier's verdict, logged: whether the proof verifies, or why the verifier
-/// could not say.
-fn report_verdict(verdict: Result<bool, String>) -> ProofmanResult<()> {
-    match verdict {
-        Ok(true) => {
-            tracing::info!("    {}", "\u{2713} SNARK proof was verified".bright_green().bold());
-            Ok(())
+    let vkey = pilfflonk_wrap::read_vkey(vkey_path)?;
+    let rejected = match pilfflonk_wrap::json_views(&snark_proof.proof_bytes, &snark_proof.public_snark_bytes, &vkey) {
+        Ok((proof_json, publics)) => {
+            let (proof_path, publics_path) = (temp.path("snark_proof"), temp.path("snark_publics"));
+            if pilfflonk_wrap::verify_json(vkey_path, &proof_json, &publics, &proof_path, &publics_path)? {
+                tracing::info!("    {}", "\u{2713} SNARK proof was verified".bright_green().bold());
+                return Ok(());
+            }
+            "the pilfflonk verifier rejects it".to_string()
         }
-        Ok(false) => {
-            tracing::info!("··· {}", "\u{2717} SNARK proof was not verified".bright_red().bold());
-            Err(ProofmanError::InvalidProof("SNARK proof was not verified".to_string()))
-        }
-        Err(reason) => {
-            tracing::info!("··· {}", "\u{2717} SNARK verification failed".bright_red().bold());
-            Err(ProofmanError::InvalidProof(format!("SNARK proof verification failed: {}", reason)))
-        }
-    }
+        Err(ProofmanError::InvalidProof(malformed)) => malformed,
+        Err(failure) => return Err(failure),
+    };
+    tracing::info!("··· {}", "\u{2717} SNARK proof was not verified".bright_red().bold());
+    Err(ProofmanError::InvalidProof(format!("SNARK proof was not verified: {rejected}")))
 }
 
 /// Sets proofman's `reload_fixed_pols_gpu`, if any, when it goes, on any return of a wrap's proof, an
@@ -1752,8 +1737,9 @@ mod tests {
         }
     }
 
-    /// A pilfflonk proof against a file that is not its vkey is refused before the JS verifier runs,
-    /// as a proof that does not verify.
+    /// A pilfflonk proof against a file that is not its vkey is not verified, before the JS verifier
+    /// runs: the verification fails, as snarkjs's with a vkey it cannot read, and does not reject
+    /// the proof.
     #[test]
     fn a_pilfflonk_proof_without_its_vkey_does_not_verify() {
         let dir = TestDir::new("verify_not_a_vkey");
@@ -1761,8 +1747,8 @@ mod tests {
         std::fs::write(&plonk_vkey, r#"{"protocol": "plonk", "curve": "bn128", "nPublic": 1}"#).unwrap();
         for vkey in [dir.0.join("none.json"), plonk_vkey] {
             match verify_snark_proof(&proof_of_words(PILFFLONK_PROTOCOL_ID), &vkey) {
-                Err(ProofmanError::InvalidProof(message)) => {
-                    assert!(message.starts_with("SNARK proof verification failed"), "{message}")
+                Err(ProofmanError::InvalidConfiguration(message)) => {
+                    assert!(message.starts_with("Failed to read the pilfflonk vkey"), "{message}")
                 }
                 other => panic!("{}: {other:?}", vkey.display()),
             }

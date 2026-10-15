@@ -6,8 +6,9 @@
 //!   Fibonacci fixture, set up with the full-width `τ` of the tests (pilfflonk/docs/README.md#tests),
 //!   in a `snark_proof.bin`: it is read back as it was written, its JSON views are pilfflonk's, and
 //!   `verify-snark` accepts it, and refuses it with a byte of the proof changed, with a public
-//!   changed, cut short or extended, and against the vkey of a setup with another `τ`. It compiles
-//!   the fixture with the compiler `PIL2C_EXEC` names, which must have `--field`, and needs Node.js.
+//!   changed, cut short or extended, and against the vkey of a setup with another `τ`: each one an
+//!   `InvalidProof`, where a verifier that cannot run is an `InvalidConfiguration`. It compiles the
+//!   fixture with the compiler `PIL2C_EXEC` names, which must have `--field`, and needs Node.js.
 //! - `prove_snark_wraps_a_vadcop_final_proof_in_pilfflonk`: the wrap of a real vadcop_final proof,
 //!   `prove-snark` on the `provingKeySnark/` of `setup-snark --final-snark pilfflonk`, and
 //!   `verify-snark` on its proof, with the same refusals; the publics the Solidity verifier hashes
@@ -159,6 +160,16 @@ fn refused(dir: &TestDir, name: &str, proof: &SnarkProof, vkey: &Path, reason: &
     assert!(output(&out).contains(reason), "{name}: {}", output(&out));
 }
 
+/// `verify_snark_proof` rejects `proof` against `vkey`, an `InvalidProof`, with the reason `reason`.
+fn rejected(proof: &SnarkProof, vkey: &Path, reason: &str) {
+    match verify_snark_proof(proof, vkey) {
+        Err(ProofmanError::InvalidProof(message)) => {
+            assert!(message.starts_with("SNARK proof was not verified: ") && message.contains(reason), "{message}")
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
 /// `verify-snark` and `verify_snark_proof` refuse `proof` cut short and extended, by a byte and by a
 /// word, before the verifier runs: its bytes are not those of a proof of `vkey`.
 fn other_lengths_refused(dir: &TestDir, proof: &SnarkProof, vkey: &Path) {
@@ -166,13 +177,25 @@ fn other_lengths_refused(dir: &TestDir, proof: &SnarkProof, vkey: &Path) {
     for delta in [-32, -1, 1, 32] {
         let changed = resized(proof, delta);
         refused(dir, &format!("resized{delta}.bin"), &changed, vkey, not_of_the_vkey);
-        match verify_snark_proof(&changed, vkey) {
-            Err(ProofmanError::InvalidProof(message)) => {
-                assert!(message.contains(not_of_the_vkey), "{delta}: {message}")
-            }
-            other => panic!("{delta}: {other:?}"),
-        }
+        rejected(&changed, vkey, not_of_the_vkey);
     }
+}
+
+/// `verify-snark` does not verify the proof at `proof` when the pilfflonk verifier cannot run, its
+/// directory (`PILFFLONK_JS`) one without it: the verification fails, and does not reject the proof.
+fn fails_without_its_verifier(dir: &TestDir, proof: &Path, vkey: &Path) {
+    let out = Command::new(env!("CARGO_BIN_EXE_proofman-cli"))
+        .args(["verify-snark", "-p", proof.to_str().unwrap(), "-k", vkey.to_str().unwrap()])
+        .env("PILFFLONK_JS", &dir.0)
+        .output()
+        .expect("proofman-cli runs");
+    assert!(!out.status.success(), "{}", output(&out));
+    let failed = "Invalid configuration: Failed to run the pilfflonk verifier";
+    assert!(
+        output(&out).contains(failed) && output(&out).contains("is not the pilfflonk verifier"),
+        "{}",
+        output(&out)
+    );
 }
 
 #[test]
@@ -219,7 +242,9 @@ fn verify_snark_accepts_a_pilfflonk_proof_and_refuses_every_change() {
     refused(&dir, "evaluation.bin", &with_an_evaluation_changed(&proof, &vkey), &vkey_path, not_verified);
     refused(&dir, "public.bin", &with_a_public_changed(&proof), &vkey_path, not_verified);
     refused(&dir, "other_vkey.bin", &proof, &other_vkey, not_verified);
+    rejected(&with_an_evaluation_changed(&proof, &vkey), &vkey_path, "the pilfflonk verifier rejects it");
     other_lengths_refused(&dir, &proof, &vkey_path);
+    fails_without_its_verifier(&dir, &path, &vkey_path);
 }
 
 /// The vkey at `path` with its first fixed commitment `f0` = (x, y) as (x, q − y), and its digest resealed:
@@ -273,7 +298,9 @@ fn prove_snark_wraps_a_vadcop_final_proof_in_pilfflonk() {
     let not_verified = "SNARK proof was not verified";
     refused(&dir, "evaluation.bin", &with_an_evaluation_changed(&proof, &vkey), &vkey_path, not_verified);
     refused(&dir, "public.bin", &with_a_public_changed(&proof), &vkey_path, not_verified);
+    rejected(&with_a_public_changed(&proof), &vkey_path, "the pilfflonk verifier rejects it");
     other_lengths_refused(&dir, &proof, &vkey_path);
+    fails_without_its_verifier(&dir, &path, &vkey_path);
     // Another key's vkey, of the same shape: its first fixed commitment negated, and resealed.
     let other_vkey = dir.file("other.vkey.json");
     fs::write(&other_vkey, serde_json::to_string_pretty(&with_a_fixed_commitment_negated(&vkey_path)).unwrap())

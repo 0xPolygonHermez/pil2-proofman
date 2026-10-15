@@ -2,11 +2,11 @@
 // τ is 1: a forged proof verifies, and each change to it, to the publics or to the vkey is
 // rejected, independently of the prover (whose proofs cli/tests/pilfflonk_prove.rs verifies). Every
 // malformed input gives false with a logged reason (verify.js), and the CLI exits with 0 only on a
-// proof that verifies.
+// proof that verifies, and with 3 when the verifier fails without a verdict.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -257,5 +257,28 @@ test("bin/verify.js exits with 0 only on a proof that verifies", async (t) => {
         assert.equal(run(vk, pub, good, good).status, 2);
         assert.equal(run(vk, pub, join(dir, "missing.json")).status, 2);
         assert.equal(run(vk, pub, file("text.json", "not json")).status, 2);
+    });
+    // A copy of the command beside a src/verify.js that throws, or that does not load: no verdict,
+    // where Node alone would exit with 1, a rejection's status.
+    await t.test("a verifier that fails: 3", () => {
+        const throws = 'export async function verify() { throw new TypeError("a bug"); }\n';
+        const doesNotLoad = 'import "./missing.js";\nexport async function verify() { return true; }\n';
+        for (const [name, source, message] of [
+            ["throws", throws, /TypeError: a bug/],
+            ["does-not-load", doesNotLoad, /missing\.js/],
+        ]) {
+            const copy = join(dir, name);
+            mkdirSync(join(copy, "bin"), { recursive: true });
+            mkdirSync(join(copy, "src"));
+            writeFileSync(join(copy, "package.json"), '{ "type": "module" }\n');
+            copyFileSync(VERIFY_BIN, join(copy, "bin", "verify.js"));
+            writeFileSync(join(copy, "src", "verify.js"), source);
+            const out = spawnSync(process.execPath, [join(copy, "bin", "verify.js"), vk, pub, good], {
+                encoding: "utf8",
+            });
+            assert.equal(out.status, 3, `${name}: ${out.stderr}`);
+            assert.match(out.stderr, /\[ERROR\] the verifier failed: /, name);
+            assert.match(out.stderr, message, name);
+        }
     });
 });

@@ -27,7 +27,8 @@ use crate::error::{PilfflonkError, PilfflonkResult};
 pub const JS_DIR_VAR: &str = "PILFFLONK_JS";
 
 /// The verifier's command, relative to its directory: exit status 0 if the proof verifies, 1 if
-/// it does not (a malformed input included), 2 if a file cannot be read, or not as JSON.
+/// it does not (a malformed input included), 2 if a file cannot be read, or not as JSON, and 3 if
+/// the verifier fails without a verdict.
 const VERIFY_SCRIPT: &str = "bin/verify.js";
 
 /// The programs the verifier runs with.

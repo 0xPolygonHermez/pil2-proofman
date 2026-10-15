@@ -344,14 +344,17 @@ unsafe fn wrap_witness(
 
 /// `proof.json` and `publics.json` of a pilfflonk proof's bytes and of its publics' bytes
 /// (pilfflonk/docs/formats.md#proof), named by `vkey`, as pilfflonk writes them. Refuses bytes that
-/// are not those of a proof of `vkey`, or not as many publics as it has.
+/// are not those of a proof of `vkey`, or not as many publics as it has, as an `InvalidProof`, and a
+/// vkey that does not name a proof's values as an `InvalidConfiguration`.
 pub(crate) fn json_views(
     proof_bytes: &[u8],
     publics_bytes: &[u8],
     vkey: &Vkey,
 ) -> ProofmanResult<(ProofJson, Publics)> {
+    let names = ProofNames::of_vkey(vkey).map_err(|e| {
+        ProofmanError::InvalidConfiguration(format!("The pilfflonk vkey does not name a proof's values: {e}"))
+    })?;
     let not_of_vkey = |e| ProofmanError::InvalidProof(format!("The bytes are not those of a proof of the vkey: {e}"));
-    let names = ProofNames::of_vkey(vkey).map_err(not_of_vkey)?;
     let proof = Proof::from_bytes(proof_bytes, &names.shape()).map_err(not_of_vkey)?;
     let proof_json = proof.to_json(&names).map_err(not_of_vkey)?;
     let publics = publics_from_bytes(publics_bytes)?;

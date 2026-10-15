@@ -14,13 +14,15 @@ says; the files they read are in [formats.md](formats.md).
 node pilfflonk/js/bin/verify.js <pilfflonk.vkey.json> <publics.json> <proof.json>
 ```
 
-It exits with 0 if the proof verifies, 1 if it does not (a malformed input included) and 2 if the
-arguments are wrong or a file cannot be read as JSON. pil-stark's old `main_verifier.js` exited with 0
-either way; this one does not. `proofman-cli pilfflonk verify` runs it with Node, as `verify-snark`
-runs snarkjs (`proofman_pilfflonk::js_verifier`). The verifier is the crate's `js/` directory, or the
-copy `PILFFLONK_JS` names. Its dependencies, `ffjavascript` (BN128 and the pairing) and
-`@noble/hashes` (Keccak-256), those of snarkjs 0.7.6, are looked for as Node looks for them, in a
-`node_modules/` of that directory or of an ancestor; if one is missing, `npm install` runs there.
+It exits with 0 if the proof verifies, 1 if it does not (a malformed input included), 2 if the
+arguments are wrong or a file cannot be read as JSON, and 3 if the verifier fails without a verdict
+(it does not load, or it throws what is not a malformed input). pil-stark's old `main_verifier.js`
+exited with 0 either way; this one does not. `proofman-cli pilfflonk verify` runs it with Node, as
+`verify-snark` runs snarkjs (`proofman_pilfflonk::js_verifier`). The verifier is the crate's `js/`
+directory, or the copy `PILFFLONK_JS` names. Its dependencies, `ffjavascript` (BN128 and the
+pairing) and `@noble/hashes` (Keccak-256), those of snarkjs 0.7.6, are looked for as Node looks for
+them, in a `node_modules/` of that directory or of an ancestor; if one is missing, `npm install` runs
+there.
 
 **Template.** snarkjs's FFLONK verifier (`src/fflonk_verify.js`), the existing FFLONK's: its
 interface, its steps 1–3 (commitments in G1, evaluations and publics in `Fr`), its transcript pattern,
