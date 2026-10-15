@@ -4546,6 +4546,10 @@ void free_final_snark_prover_gpu(void *snark_prover) {
     freeFinalSnarkProverGPU(snark_prover);
 }
 
+uint64_t get_snark_protocol_id_gpu(void *snark_prover) {
+    return getFinalSnarkProtocolIdGPU(snark_prover);
+}
+
 void gen_final_snark_proof_gpu(void *prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef) {
     if (d_buffers_recursivef != nullptr) {
         DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_recursivef;

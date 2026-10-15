@@ -101,6 +101,16 @@ impl SnarkProtocol {
             protocol => Ok(protocol),
         }
     }
+
+    /// What `snarkjs <protocol> verify` prints when the proof verifies. None for pilfflonk, which
+    /// snarkjs does not verify: its JS verifier's verdict is its exit status.
+    fn verified_message(&self) -> Option<&'static str> {
+        match self {
+            SnarkProtocol::Plonk => Some("OK!"),
+            SnarkProtocol::Fflonk => Some("PROOF VERIFIED SUCCESSFULLY"),
+            SnarkProtocol::Pilfflonk => None,
+        }
+    }
 }
 
 /// The key of the final SNARK in a setup's `provingKeySnark/final/`, which setup-snark writes for
@@ -1207,12 +1217,9 @@ fn run_snarkjs_verify(
     }
 
     let protocol = SnarkProtocol::from_protocol_id(snark_proof.protocol_id)?;
-    // What `snarkjs <protocol> verify` prints when the proof verifies.
-    let verified_message = match protocol {
-        SnarkProtocol::Pilfflonk => return verify_pilfflonk_snark_proof(snark_proof, vkey_path, temp),
-        SnarkProtocol::Plonk => "OK!",
-        SnarkProtocol::Fflonk => "PROOF VERIFIED SUCCESSFULLY",
-    };
+    if let SnarkProtocol::Pilfflonk = protocol {
+        return verify_pilfflonk_snark_proof(snark_proof, vkey_path, temp);
+    }
 
     let (proof_json, publics_json) = snark_proof
         .convert_to_json()
@@ -1236,7 +1243,7 @@ fn run_snarkjs_verify(
     // snarkjs reports everything on stdout and exits 1 both when it rejects a proof and when it
     // cannot run (unreadable vkey, missing file, ...), so only its messages tell them apart.
     let stdout = String::from_utf8_lossy(&output.stdout);
-    match snarkjs_verdict(verified_message, output.status.success(), &stdout) {
+    match snarkjs_verdict(&protocol, output.status.success(), &stdout) {
         SnarkjsVerdict::Verified => {
             tracing::info!("    {}", "\u{2713} SNARK proof was verified".bright_green().bold());
             Ok(())
@@ -1266,9 +1273,8 @@ enum SnarkjsVerdict {
     Failed,
 }
 
-/// What snarkjs 0.7's `plonk verify` / `fflonk verify` concluded from its exit status and stdout,
-/// where it prints `verified_message` when the proof verifies.
-fn snarkjs_verdict(verified_message: &str, success: bool, stdout: &str) -> SnarkjsVerdict {
+/// What snarkjs 0.7's `plonk verify` / `fflonk verify` concluded from its exit status and stdout.
+fn snarkjs_verdict(protocol: &SnarkProtocol, success: bool, stdout: &str) -> SnarkjsVerdict {
     // A key with another public count is misconfiguration, not a false proof.
     const REJECTED: [&str; 5] = [
         "Invalid Proof",
@@ -1277,7 +1283,7 @@ fn snarkjs_verdict(verified_message: &str, success: bool, stdout: &str) -> Snark
         "Public inputs are not valid",
         "Invalid number of public inputs",
     ];
-    if success && stdout.contains(verified_message) {
+    if success && protocol.verified_message().is_some_and(|message| stdout.contains(message)) {
         SnarkjsVerdict::Verified
     } else if !success && REJECTED.iter().any(|m| stdout.contains(m)) {
         SnarkjsVerdict::Rejected
@@ -1344,9 +1350,12 @@ unsafe impl<F: PrimeField64> Send for PoseidonWrap<F> {}
 // calculator, or hands the C++ side what it writes: rapidsnark's prover, the recursivef's and the
 // caller's device buffers (the raw pointers), and the recursivef's prover buffer `aux_trace`,
 // through a pointer of the shared `Vec`. The threads a proof spawns are joined before it returns,
-// on its errors too. Every other field is `Sync`. The raw pointers are public, and handing one to
-// the C++ side outside a proof is the caller's to order with the wrapper's proofs, as for any call
-// of `proofman_starks_lib_c` with them.
+// on its errors too: its own (the recursivef's loader of its fixed columns, the GPU pre-allocation
+// of rapidsnark's prover, which `generate_snark_proof` holds in a `JoinOnDrop`, and pilfflonk's,
+// which are scoped) and those rapidsnark's GPU prover starts, which its pre-allocation and its
+// proof join before they return. Every other field is `Sync`. The raw pointers are public, and
+// handing one to the C++ side outside a proof is the caller's to order with the wrapper's proofs, as
+// for any call of `proofman_starks_lib_c` with them.
 unsafe impl<F: PrimeField64> Sync for PoseidonWrap<F> {}
 
 #[cfg(test)]
@@ -1355,27 +1364,43 @@ mod snarkjs_verdict_tests {
 
     #[test]
     fn only_snarkjs_rejections_count_as_a_rejected_proof() {
-        assert_eq!(snarkjs_verdict("OK!", true, "[INFO]  snarkJS: OK!\n"), SnarkjsVerdict::Verified);
-        let fflonk_verified = "[INFO]  snarkJS: PROOF VERIFIED SUCCESSFULLY\n";
-        assert_eq!(snarkjs_verdict("PROOF VERIFIED SUCCESSFULLY", true, fflonk_verified), SnarkjsVerdict::Verified);
-        // Each protocol's message, and no other, says its proof verified.
-        assert_eq!(snarkjs_verdict("OK!", true, fflonk_verified), SnarkjsVerdict::Failed);
-        assert_eq!(snarkjs_verdict("OK!", false, "[WARN]  snarkJS: Invalid Proof\n"), SnarkjsVerdict::Rejected);
+        let plonk = &SnarkProtocol::Plonk;
+        assert_eq!(snarkjs_verdict(plonk, true, "[INFO]  snarkJS: OK!\n"), SnarkjsVerdict::Verified);
+        assert_eq!(snarkjs_verdict(plonk, false, "[WARN]  snarkJS: Invalid Proof\n"), SnarkjsVerdict::Rejected);
         assert_eq!(
-            snarkjs_verdict("OK!", false, "[ERROR] snarkJS: Proof commitments are not valid.\n"),
+            snarkjs_verdict(plonk, false, "[ERROR] snarkJS: Proof commitments are not valid.\n"),
             SnarkjsVerdict::Rejected
         );
         // Exit 0 without OK!, a key that does not fit, an unreadable file: nothing decided.
-        assert_eq!(snarkjs_verdict("OK!", true, ""), SnarkjsVerdict::Failed);
+        assert_eq!(snarkjs_verdict(plonk, true, ""), SnarkjsVerdict::Failed);
         assert_eq!(
-            snarkjs_verdict("OK!", false, "[ERROR] snarkJS: Number of public signals does not match with vk\n"),
+            snarkjs_verdict(plonk, false, "[ERROR] snarkJS: Number of public signals does not match with vk\n"),
             SnarkjsVerdict::Failed
         );
         assert_eq!(
-            snarkjs_verdict("OK!", false, "[ERROR] snarkJS: Error: ENOENT: no such file\n"),
+            snarkjs_verdict(plonk, false, "[ERROR] snarkJS: Error: ENOENT: no such file\n"),
             SnarkjsVerdict::Failed
         );
-        assert_eq!(snarkjs_verdict("OK!", false, ""), SnarkjsVerdict::Failed);
+        assert_eq!(snarkjs_verdict(plonk, false, ""), SnarkjsVerdict::Failed);
+    }
+
+    /// `snarkjs fflonk verify` prints its own success message, not PLONK's `OK!`, and each is
+    /// only the verdict of its protocol. snarkjs verifies no pilfflonk proof: no message of it is one.
+    #[test]
+    fn each_protocol_is_verified_by_its_own_message() {
+        let fflonk = &SnarkProtocol::Fflonk;
+        let fflonk_ok = "[INFO]  snarkJS: PROOF VERIFIED SUCCESSFULLY\n[INFO]  snarkJS: FFLONK VERIFIER FINISHED\n";
+        assert_eq!(snarkjs_verdict(fflonk, true, fflonk_ok), SnarkjsVerdict::Verified);
+        assert_eq!(snarkjs_verdict(fflonk, false, "[WARN]  snarkJS: Invalid Proof\n"), SnarkjsVerdict::Rejected);
+        assert_eq!(
+            snarkjs_verdict(fflonk, false, "[ERROR] snarkJS: Proof evaluations are not valid.\n"),
+            SnarkjsVerdict::Rejected
+        );
+        assert_eq!(snarkjs_verdict(fflonk, true, "[INFO]  snarkJS: OK!\n"), SnarkjsVerdict::Failed);
+        assert_eq!(snarkjs_verdict(&SnarkProtocol::Plonk, true, fflonk_ok), SnarkjsVerdict::Failed);
+        for stdout in ["[INFO]  snarkJS: OK!\n", fflonk_ok] {
+            assert_eq!(snarkjs_verdict(&SnarkProtocol::Pilfflonk, true, stdout), SnarkjsVerdict::Failed);
+        }
     }
 
     #[test]
@@ -1442,9 +1467,7 @@ mod tests {
         PILFFLONK_PROTOCOL_ID,
     };
     use proofman_common::{ProofmanError, PublicDefinition, PublicsInfo};
-    use proofman_starks_lib_c::{
-        free_final_snark_prover_c, generate_fflonk_zkey_c, generate_plonk_zkey_c, init_final_snark_prover_c,
-    };
+    use proofman_starks_lib_c::{free_final_snark_prover_c, init_final_snark_prover_c};
     use serde_json::json;
     use std::path::{Path, PathBuf};
 
@@ -1464,62 +1487,6 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
-    }
-
-    /// 32 little-endian bytes from 64 hex digits of a big-endian number.
-    fn le_from_hex(hex: &str) -> Vec<u8> {
-        let mut bytes: Vec<u8> = (0..32).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect();
-        bytes.reverse();
-        bytes
-    }
-
-    /// BN128's base field modulus q and scalar field modulus r.
-    const Q: &str = "30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47";
-    const R: &str = "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001";
-
-    /// A binfile as snarkjs and rapidsnark write them: type, version, sections as (id, bytes).
-    fn binfile(file_type: &[u8; 4], sections: &[(u32, Vec<u8>)]) -> Vec<u8> {
-        let mut bytes = file_type.to_vec();
-        bytes.extend(1u32.to_le_bytes());
-        bytes.extend((sections.len() as u32).to_le_bytes());
-        for (id, contents) in sections {
-            bytes.extend(id.to_le_bytes());
-            bytes.extend((contents.len() as u64).to_le_bytes());
-            bytes.extend(contents);
-        }
-        bytes
-    }
-
-    /// A ptau of `n_g1` G1 points and two G2 points, all zero: rapidsnark's setup copies and
-    /// commits with them without checking them, and the protocol of the zkey does not depend on
-    /// them. Section 12 is empty: the setup only checks that it exists.
-    fn zero_ptau(n_g1: usize) -> Vec<u8> {
-        let mut header = 32u32.to_le_bytes().to_vec();
-        header.extend(le_from_hex(Q));
-        header.extend(8u32.to_le_bytes());
-        header.extend(8u32.to_le_bytes());
-        binfile(b"ptau", &[(1, header), (2, vec![0; 64 * n_g1]), (3, vec![0; 2 * 128]), (12, vec![])])
-    }
-
-    /// The r1cs of `x * x = y`: wire 0 is the constant 1, wire 1 the public output y, wire 2 the
-    /// private input x.
-    fn square_r1cs() -> Vec<u8> {
-        let mut header = 32u32.to_le_bytes().to_vec();
-        header.extend(le_from_hex(R));
-        for count in [3u32, 1, 0, 1] {
-            header.extend(count.to_le_bytes()); // wires, outputs, public inputs, private inputs
-        }
-        header.extend(3u64.to_le_bytes()); // labels
-        header.extend(1u32.to_le_bytes()); // constraints
-        let one = le_from_hex(&format!("{:064x}", 1));
-        let mut constraints = Vec::new();
-        for wire in [2u32, 2, 1] {
-            constraints.extend(1u32.to_le_bytes());
-            constraints.extend(wire.to_le_bytes());
-            constraints.extend(&one);
-        }
-        let wire_to_label = (0..3u64).flat_map(u64::to_le_bytes).collect();
-        binfile(b"r1cs", &[(1, header), (2, constraints), (3, wire_to_label)])
     }
 
     /// The reload flag is set as a wrap's proof ends, on its errors and panics too, and without one
@@ -1655,38 +1622,41 @@ mod tests {
         assert!(message.contains("is not a pilfflonk key"), "{message}");
     }
 
-    /// rapidsnark's own setup writes a tiny zkey of each protocol, and the prover loaded from each
+    /// The PLONK and FFLONK zkeys of `x * x = y` in `tests/data/`, each in a `provingKeySnark/final/`
+    /// as setup-snark writes it, are the final SNARK's key there, and the prover loaded from each
     /// reports the protocol that zkey names.
+    ///
+    /// They were made once with rapidsnark's setup, as setup-snark runs it:
+    /// `generate_plonk_zkey_c(r1cs, ptau, "square_plonk.zkey")` and
+    /// `generate_fflonk_zkey_c(r1cs, ptau, "square_fflonk.zkey")`, where the r1cs is
+    /// `circom square.circom --r1cs` (circom 2.2.3) of
+    /// `template Square() { signal input x; signal output y; y <== x * x; } component main = Square();`
+    /// and the ptau is the snarkjs README's `powersOfTau28_hez_final_08.ptau`, whose blake2b is
+    /// d6a8fb3a04feb600096c3b791f936a578c4e664d262e4aa24beed1b7a9a96aa5
+    /// eb72864d628db247e9293384b74b36ffb52ca8d148d6e1b8b51e279fdf57b583.
     #[test]
     fn the_protocol_is_the_one_the_zkey_names() {
-        let dir = std::env::temp_dir().join(format!("proofman_snark_protocol_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let r1cs = dir.join("square.r1cs");
-        let ptau = dir.join("zero.ptau");
-        std::fs::write(&r1cs, square_r1cs()).unwrap();
-        std::fs::write(&ptau, zero_ptau(256)).unwrap();
+        let dir = TestDir::new("zkey_protocol");
+        for expected in [SnarkProtocol::Plonk, SnarkProtocol::Fflonk] {
+            let fixture = format!("{}/tests/data/square_{}.zkey", env!("CARGO_MANIFEST_DIR"), expected.protocol_name());
+            // A zkey that cannot be read aborts the C++ loader: refuse a missing one first.
+            assert!(Path::new(&fixture).is_file(), "no fixture at {fixture}");
 
-        type ZkeySetup = fn(&str, &str, &str) -> i32;
-        let setups: [(ZkeySetup, SnarkProtocol); 2] =
-            [(generate_plonk_zkey_c, SnarkProtocol::Plonk), (generate_fflonk_zkey_c, SnarkProtocol::Fflonk)];
-        for (setup, expected) in setups {
             // As setup-snark writes it: provingKeySnark/final/final.zkey, which is the final SNARK key.
-            let stem = dir.join(expected.protocol_name()).join("final").join("final");
+            let stem = dir.0.join(expected.protocol_name()).join("final").join("final");
             std::fs::create_dir_all(stem.parent().unwrap()).unwrap();
-            let zkey = stem.with_extension("zkey");
             assert_eq!(FinalSnarkKey::find(&stem).ok(), None);
-            let zkey = zkey.to_str().unwrap();
-            assert_eq!(setup(r1cs.to_str().unwrap(), ptau.to_str().unwrap(), zkey), 0, "{zkey}");
-            assert_eq!(FinalSnarkKey::find(&stem).unwrap(), FinalSnarkKey::Zkey(PathBuf::from(zkey)));
+            let zkey = stem.with_extension("zkey");
+            std::fs::copy(&fixture, &zkey).unwrap();
+            assert_eq!(FinalSnarkKey::find(&stem).unwrap(), FinalSnarkKey::Zkey(zkey.clone()));
 
+            let zkey = zkey.to_str().unwrap();
             let prover = init_final_snark_prover_c(zkey, std::ptr::null_mut());
             assert!(!prover.is_null(), "{zkey}");
             let protocol = SnarkProtocol::from_snark_prover(prover).map(|p| p.protocol_id());
             free_final_snark_prover_c(prover);
             assert_eq!(protocol.ok(), Some(expected.protocol_id()), "{zkey}");
         }
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
