@@ -216,50 +216,42 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     Ok(())
                 };
 
-                if let Some(ref fd) = fixed_dir {
-                    let src = Path::new(fd).join(format!("{}.fixed", item.air_name));
-                    if src.exists() {
-                        fs::copy(&src, &const_path)?;
-                    } else {
-                        tracing::warn!("Fixed file not found: {}, skipping copy", src.display());
-                        drop_stale_const("its .fixed source is missing")?;
-                    }
+                // `.const` comes from `<fixed_dir>/<air>.fixed` when present, else from the
+                // pilout's inline fixed_cols. An air whose fixed columns neither source can
+                // supply is an error: without `.const` there is no verkey, and the key would
+                // only fail at prove time.
+                let air = &pilout.air_groups[item.ag_idx].airs[item.air_idx];
+                let fixed_file = fixed_dir.as_ref().map(|fd| Path::new(fd).join(format!("{}.fixed", item.air_name)));
+                if let Some(src) = fixed_file.as_ref().filter(|src| src.exists()) {
+                    fs::copy(src, &const_path)?;
+                } else if air.fixed_cols.is_empty() {
+                    tracing::debug!("Air '{}': no fixed columns — skipping .const generation", item.air_name);
+                    drop_stale_const("the air has no fixed columns")?;
+                } else if air.fixed_cols.iter().all(|fc| !fc.values.is_empty()) {
+                    crate::io::fixed_cols::write_const_file(
+                        const_path.to_str().unwrap_or(""),
+                        air,
+                        &[], // no external plonk polynomial values needed
+                    )?;
+                    tracing::info!(
+                        "Generated .const from pilout inline fixed_cols for air '{}' ({} columns, {} rows)",
+                        item.air_name,
+                        air.fixed_cols.len(),
+                        air.num_rows.unwrap_or(0)
+                    );
                 } else {
-                    // No --fixed-dir: try to generate .const from inline fixed_cols in the pilout.
-                    // The pil2-compiler embeds selector/constant polynomial values directly in the
-                    // pilout protobuf when they are statically known.  If every fixed_col entry has
-                    // non-empty inline values we can write the .const file without an external file.
-                    // If any entry has empty values (large external polynomials), we warn and skip —
-                    // the downstream bctree / prover will fail to find the file.
-                    let air = &pilout.air_groups[item.ag_idx].airs[item.air_idx];
-                    if air.fixed_cols.is_empty() {
-                        tracing::debug!("Air '{}': no fixed columns — skipping .const generation", item.air_name);
-                        drop_stale_const("the air has no fixed columns")?;
-                    } else {
-                        let has_external = air.fixed_cols.iter().any(|fc| fc.values.is_empty());
-                        if has_external {
-                            tracing::warn!(
-                                "Air '{}': .const file cannot be generated from pilout — \
-                             some fixed columns have no inline values. \
-                             Provide --fixed-dir (-u) to supply the pre-computed .const file.",
-                                item.air_name
-                            );
-                            drop_stale_const("no --fixed-dir and its values are not inline")?;
-                        } else {
-                            // All fixed columns are inline — write .const directly.
-                            crate::io::fixed_cols::write_const_file(
-                                const_path.to_str().unwrap_or(""),
-                                air,
-                                &[], // no external plonk polynomial values needed
-                            )?;
-                            tracing::info!(
-                                "Generated .const from pilout inline fixed_cols for air '{}' \
-                             ({} columns, {} rows)",
-                                item.air_name,
-                                air.fixed_cols.len(),
-                                air.num_rows.unwrap_or(0)
-                            );
-                        }
+                    drop_stale_const("its fixed columns have no source")?;
+                    match fixed_file {
+                        Some(src) => anyhow::bail!(
+                            "Air '{}': fixed file not found: {} (its fixed columns are not inline in the pilout)",
+                            item.air_name,
+                            src.display()
+                        ),
+                        None => anyhow::bail!(
+                            "Air '{}': some fixed columns have no inline values in the pilout; \
+                             provide --fixed-dir (-u) with its .fixed file",
+                            item.air_name
+                        ),
                     }
                 }
 
@@ -591,6 +583,43 @@ mod tests {
             assert!(result.is_ok(), "stage-1/stageless proof value must be accepted: {:#}", result.unwrap_err());
             let _ = std::fs::remove_dir_all(&tmp);
         }
+    }
+
+    // An air whose fixed column has no inline values needs a `.fixed` file; without one setup
+    // must fail rather than write a key with no `.const`/verkey for that air.
+    #[test]
+    fn rejects_air_with_unsourced_fixed_columns() {
+        let pilout_proto = pb::PilOut {
+            name: Some("fixedtest".to_string()),
+            air_groups: vec![pb::AirGroup {
+                name: Some("G".to_string()),
+                airs: vec![pb::Air {
+                    name: Some("A".to_string()),
+                    num_rows: Some(4),
+                    fixed_cols: vec![pb::FixedCol { values: vec![] }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let tmp = std::env::temp_dir().join(format!("pil2_fixed_missing_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let build_dir = tmp.join("build");
+        let fixed_dir = tmp.join("fixed");
+        std::fs::create_dir_all(&build_dir).unwrap();
+        std::fs::create_dir_all(&fixed_dir).unwrap();
+        let pilout_path = tmp.join("test.pilout");
+        std::fs::write(&pilout_path, pilout_proto.encode_to_vec()).unwrap();
+
+        let mut opts = setup_opts_for(pilout_path.to_str().unwrap(), build_dir.to_str().unwrap());
+        let msg = format!("{:#}", run_setup(&opts).expect_err("no --fixed-dir must be rejected"));
+        assert!(msg.contains("'A'") && msg.contains("--fixed-dir"), "{msg}");
+
+        opts.fixed_dir = Some(fixed_dir.to_str().unwrap().to_string());
+        let msg = format!("{:#}", run_setup(&opts).expect_err("missing .fixed must be rejected"));
+        assert!(msg.contains("'A'") && msg.contains("A.fixed"), "{msg}");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
