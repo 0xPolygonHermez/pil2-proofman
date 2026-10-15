@@ -1393,7 +1393,6 @@ dependencies = [
  "num-bigint",
  "pil-info",
  "pil2-pilout",
- "pilfflonk-setup",
  "proofman-pilfflonk",
  "proofman-starks-lib-c",
  "prost",

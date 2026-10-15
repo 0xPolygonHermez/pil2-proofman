@@ -25,8 +25,8 @@ serde_arrays = { workspace = true }
 [dev-dependencies]
 # Regenerates `src/pil_helpers` to check it is what pil-helpers writes.
 proofman-cli = { workspace = true }
-# Sets up the fixture's key, with the ptau of the tests (pilfflonk/docs/README.md#tests).
-pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
+# Sets up the fixture's key, with the official ptau of the tests (pilfflonk/docs/README.md#tests).
+pilfflonk-setup = { workspace = true }
 # The generator of `pilfflonk/tests/data/fibonacci.rs`, which the library's witness is checked against.
 num-bigint = { workspace = true }
 libloading = { workspace = true }

@@ -23,8 +23,6 @@
 //! | the vkey's digest (pilfflonk/docs/formats.md#digest) | [`digest`] |
 //! | `<air>.bin` | [`bytecode`] |
 //! | `pilfflonk.verifier.sol`, with `--solidity` (pilfflonk/docs/verifier.md#solidity-verifier) | [`solidity`] |
-//!
-//! With the feature `test-ptau`, the module `test_ptau` writes a ptau with `τ = 1`, for tests only.
 
 pub mod air_info;
 pub mod bytecode;
@@ -39,9 +37,6 @@ pub mod layout;
 pub mod passes;
 pub mod solidity;
 pub mod validate;
-
-#[cfg(feature = "test-ptau")]
-pub mod test_ptau;
 
 pub use command::{
     run_setup_pilfflonk, run_setup_pilfflonk_with_external_fixed, run_setup_pilfflonk_with_fixed_dir,

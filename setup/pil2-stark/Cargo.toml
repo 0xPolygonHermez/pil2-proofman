@@ -42,10 +42,6 @@ rayon = { workspace = true }
 clap = { version = "4.5.38", features = ["derive", "env"] }
 which = "6"
 
-[dev-dependencies]
-# The test ptau of the setup-pilfflonk tests.
-pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
-
 # Distributed mode (mpi) is only supported on Linux x86_64
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 mpi = { workspace = true }

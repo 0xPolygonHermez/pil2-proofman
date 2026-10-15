@@ -39,9 +39,8 @@ regex = "1.12.2"
 toml = "0.9.8"
 
 [dev-dependencies]
-# The keys and the test ptaus (pilfflonk/docs/README.md#tests) of the `pilfflonk verify` and
-# `pilfflonk prove` tests.
-pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
+# The keys of the `pilfflonk verify` and `pilfflonk prove` tests.
+pilfflonk-setup = { workspace = true }
 # The Rust oracle, which the `pilfflonk prove` test checks the prover against.
 proofman-pilfflonk = { workspace = true, features = ["oracle"] }
 serde_json = { workspace = true }
@@ -61,8 +60,8 @@ pilfflonk-all = { path = "../pilfflonk/tests/fixtures/all/rs" }
 fibonacci-square = { path = "../examples/fibonacci-square" }
 
 # The inputs of the pilfflonk benchmark (pilfflonk/bench/bench.sh,
-# pilfflonk/docs/performance.md#reproducing): a test ptau and the witnesses of its programs, from
-# the fixtures' generators, as the tests take them.
+# pilfflonk/docs/performance.md#reproducing): the witnesses of its programs, from the fixtures'
+# generators, as the tests take them.
 [[example]]
 name = "pilfflonk_bench_inputs"
 path = "../pilfflonk/bench/inputs.rs"

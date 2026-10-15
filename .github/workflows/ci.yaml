@@ -428,17 +428,16 @@ jobs:
     # develop-0.14.0-pil2-fflonk, until that branch is merged and setup/pil2-stark/package.json pins
     # it.
     #
-    # The ptau is a test one, written here (pilfflonk/bench/inputs.rs: its τ is public, good for a
-    # test and nothing else), with the fewest powers setup-snark accepts for this key: 2^19 rows,
-    # 13·2^19 + 12 powers (it refuses fewer, and says how many it needs). 436 MB, where the Hermez
-    # ptau of 2^24 is 19 GB.
+    # The ptau is the official one of power 22 (pilfflonk/tests/download-ptau.sh), the smallest that
+    # holds the powers setup-snark needs for this key, 13·2^19 + 12 for 2^19 rows: 2^23 − 1 powers,
+    # 4.8 GB, kept in the cache. The Fibonacci fixture's keys of snark_pilfflonk.rs read the one of
+    # power 12.
     name: Test pilfflonk wrap (fibonacci-square)
     runs-on: ubuntu-latest
     env:
       PIL2_COMPILER_COMMIT: 8515f9f1a53416debaeed9fc9c30ddf1b53e66b6
       CARGO_FEATURES: proofman-starks-lib-c/cpu-only
       WRAP: target/pilfflonk-wrap
-      WRAP_PTAU_POWERS: 6815756
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -492,13 +491,7 @@ jobs:
           echo "PIL2C_EXEC=$GITHUB_WORKSPACE/pil2-compiler-bn128/src/pil.js" >> "$GITHUB_ENV"
 
       - name: Cargo build (release)
-        run: |
-          # The example first: building proofman-cli's examples and tests links its dev-dependency
-          # fibonacci-square, a dylib, with a dynamic std over target/release/libfibonacci_square.so,
-          # which then needs libstd-*.so to load. The build of fibonacci-square itself, last, writes
-          # the one the steps below load.
-          cargo build --release -p proofman-cli --example pilfflonk_bench_inputs --features "$CARGO_FEATURES"
-          cargo build --release -p pil2-stark-setup -p proofman-cli -p fibonacci-square --features "$CARGO_FEATURES"
+        run: cargo build --release -p pil2-stark-setup -p proofman-cli -p fibonacci-square --features "$CARGO_FEATURES"
 
       - name: Setup Fibonacci Square
         run: |
@@ -512,22 +505,24 @@ jobs:
           target/release/proofman-cli prove --witness-lib target/release/libfibonacci_square.so --proving-key "$WRAP/build/provingKey/" --public-inputs examples/fibonacci-square/src/inputs.json --output-dir "$WRAP/proofs" --custom-commits rom="$WRAP/build/rom.bin" -a
           target/release/proofman-cli verify-stark --proof "$WRAP/proofs/vadcop_final_proof.bin" --verkey "$WRAP/build/provingKey/build/vadcop_final/vadcop_final.verkey.bin"
 
-      # About 3.5 CPU-hours (3 min 23 s on 64 threads): kept in the cache while its generator and
-      # its size do not change.
-      - name: Cache the test ptau
-        id: wrap-ptau
+      # The official ptau files the tests read (pilfflonk/docs/README.md#tests), checked against the
+      # blake2b of snarkjs's README: downloaded when the cache does not have them.
+      - name: Cache the official ptau of power 12
         uses: actions/cache@v4
         with:
-          path: ${{ env.WRAP }}/wrap.ptau
-          key: pilfflonk-wrap-ptau-${{ env.WRAP_PTAU_POWERS }}-${{ hashFiles('setup/pilfflonk/src/test_ptau.rs', 'pilfflonk/bench/inputs.rs') }}
-
-      - name: Write the test ptau
-        if: steps.wrap-ptau.outputs.cache-hit != 'true'
-        run: target/release/examples/pilfflonk_bench_inputs ptau "$WRAP_PTAU_POWERS" "$WRAP/wrap.ptau"
+          path: ~/.cache/pilfflonk/ptau/powersOfTau28_hez_final_12.ptau
+          key: ptau-powersOfTau28_hez_final_12.ptau
+      - name: Cache the official ptau of power 22
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pilfflonk/ptau/powersOfTau28_hez_final_22.ptau
+          key: ptau-powersOfTau28_hez_final_22.ptau
+      - name: Download the official ptau
+        run: pilfflonk/tests/download-ptau.sh 12 22
 
       - name: Setup SNARK with pilfflonk
         run: |
-          target/release/proofman-setup setup-snark -b "$WRAP/build" --final-snark pilfflonk --powers-of-tau "$WRAP/wrap.ptau" --publics-info examples/fibonacci-square/src/publics_info.json
+          target/release/proofman-setup setup-snark -b "$WRAP/build" --final-snark pilfflonk --powers-of-tau "$HOME/.cache/pilfflonk/ptau/powersOfTau28_hez_final_22.ptau" --publics-info examples/fibonacci-square/src/publics_info.json
 
       - name: Prove and verify the wrap with pilfflonk
         env:

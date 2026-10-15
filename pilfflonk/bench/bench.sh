@@ -3,8 +3,6 @@
 # setup, of the prover, phase by phase, and of the JS verifier, for a benchmark program at
 # N = 2^bits. Every proof it times must verify, or the run stops.
 #
-#   pilfflonk/bench/bench.sh ptau <powers>          writes $BENCH_PTAU: a test ptau (its τ is
-#                                                   public: never for a real proof)
 #   pilfflonk/bench/bench.sh run <program> <bits>…  measures each size of pilfflonk/bench/<program>.pil
 #                                                   (fibonacci, all_sum, all_prod)
 #   pilfflonk/bench/bench.sh summary                the median and the spread of every point
@@ -19,8 +17,10 @@
 #                   (pilfflonk/docs/README.md#compile-pil)
 #   BENCH_DIR       where everything goes (default target/tmp/pilfflonk-bench); the results are
 #                   $BENCH_DIR/{compile,setup,prove}.tsv
-#   BENCH_PTAU      the ptau (default $BENCH_DIR/bench.ptau): at least as many powers as the
-#                   largest layout degree of the keys (the setup refuses fewer)
+#   BENCH_PTAU      the ptau (`run`): an official one (pilfflonk/tests/download-ptau.sh), with at
+#                   least as many powers as the largest layout degree of the keys (the setup refuses
+#                   fewer). powersOfTau28_hez_final_24.ptau, of 2^25 − 1 powers, holds the fibonacci
+#                   packed up to 2^23 and all_sum up to 2^21 (pilfflonk/docs/performance.md#reproducing)
 #   BENCH_PACKING   the layouts, "packed" (the default of setup-pilfflonk), "nopacking" or both
 #                   (default "packed")
 #   BENCH_REPEATS   runs of each setup and each proof (default 2)
@@ -41,7 +41,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BENCH_DIR="${BENCH_DIR:-$ROOT/target/tmp/pilfflonk-bench}"
-BENCH_PTAU="${BENCH_PTAU:-$BENCH_DIR/bench.ptau}"
+BENCH_PTAU="${BENCH_PTAU:-}"
 BENCH_PACKING="${BENCH_PACKING:-packed}"
 BENCH_REPEATS="${BENCH_REPEATS:-2}"
 BENCH_KEEP="${BENCH_KEEP:-0}"
@@ -299,23 +299,17 @@ run_size() {
 }
 
 main() {
-    [ $# -ge 1 ] || die "usage: bench.sh ptau <powers> | run <program> <bits>... | summary"
+    [ $# -ge 1 ] || die "usage: bench.sh run <program> <bits>... | summary"
     mkdir -p "$BENCH_DIR"
     header "$BENCH_DIR/compile.tsv" "$(printf 'program\tbits\tload1\tload5\texit\twall_s\trss_kb\tpilout_bytes')"
     header "$BENCH_DIR/setup.tsv" "$(printf 'program\tbits\tpacking\tthreads\trep\tload1\tload5\texit\twall_s\trss_kb\tnBits\tnBitsExt\tqDeg\tnF\tsrs_powers\tconst_bytes\tsrs_bytes')"
     header "$BENCH_DIR/prove.tsv" "$(printf 'program\tbits\tpacking\tthreads\trep\tload1\tload5\texit\twall_s\trss_kb\tverify_exit\tverify_s\tverify_rss_kb\tproof_bytes\t%s\t%s' \
         "$(tr ' ' '\t' <<<"$PHASES")" "$(tr ' ' '\t' <<<"$RSS_PHASES")")"
     case "$1" in
-    ptau)
-        [ $# = 2 ] || die "usage: bench.sh ptau <powers>"
-        [ -x "$INPUTS" ] || die "build $INPUTS first (see the header of this script)"
-        timed "$BENCH_PTAU.time" "$BENCH_PTAU.log" "$INPUTS" ptau "$2" "$BENCH_PTAU" || die "the ptau failed: $BENCH_PTAU.log"
-        echo "wrote $BENCH_PTAU ($2 powers) in $(wall_of "$BENCH_PTAU.time") s, $(rss_of "$BENCH_PTAU.time") kB"
-        ;;
     run)
         [ $# -ge 3 ] || die "usage: bench.sh run <program> <bits>..."
         [ -n "${PIL2C_EXEC:-}" ] || die "PIL2C_EXEC must name pil2com"
-        [ -f "$BENCH_PTAU" ] || die "no ptau at $BENCH_PTAU: bench.sh ptau <powers>"
+        [ -f "$BENCH_PTAU" ] || die "BENCH_PTAU names no ptau: an official one (pilfflonk/tests/download-ptau.sh)"
         for binary in "$CLI" "$SETUP" "$INPUTS"; do
             [ -x "$binary" ] || die "build $binary first (see the header of this script)"
         done
@@ -328,7 +322,7 @@ main() {
     summary)
         node "$ROOT/pilfflonk/bench/summary.mjs" "$BENCH_DIR"
         ;;
-    *) die "usage: bench.sh ptau <powers> | run <program> <bits>... | summary" ;;
+    *) die "usage: bench.sh run <program> <bits>... | summary" ;;
     esac
 }
 

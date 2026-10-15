@@ -35,4 +35,4 @@ pil2-stark-recurser = { workspace = true }
 # Builds the circuit's witness library as setup-snark builds final.so.
 pil2-stark-setup = { workspace = true }
 # The end-to-end test's key, with the ptau of the tests (pilfflonk/docs/README.md#tests).
-pilfflonk-setup = { workspace = true, features = ["test-ptau"] }
+pilfflonk-setup = { workspace = true }
