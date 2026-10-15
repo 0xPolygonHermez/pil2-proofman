@@ -407,20 +407,25 @@ them as Rust writes them.
 
 ## Tests
 
-- **Powers of tau.** No ptau is downloaded and no JS runs to make one: the tests write small ones,
-  with only sections 1 to 3, which is all pilfflonk reads. `pilfflonk_setup::test_ptau` (feature
-  `test-ptau`) writes one with `τ = 1`, whose commitments a test knows in advance but with which
-  anyone can open anything, and one with a fixed full-width `τ` (`TEST_TAU`), the C++ helper's
-  (`pil2-stark/test/pilfflonk/pilfflonk_test_ptau.hpp`), with which a proof verifies only if it is
-  sound. Outside the tests the ptau is an input of the setup.
+- **Powers of tau.** The tests read official ptau files of the Hermez ceremony, those of the table in
+  snarkjs's README, and never make one. `pilfflonk/tests/download-ptau.sh [<power>...]` downloads
+  them from circom.info into `PILFFLONK_PTAU_DIR` (by default `$XDG_CACHE_HOME/pilfflonk/ptau`, or
+  `~/.cache/pilfflonk/ptau`) and checks each against the README's blake2b, pinned in the script;
+  without arguments it downloads the powers the tests read, 12 (8191 powers `[τ^i]₁`, 4.8 MB) and 19
+  (1,048,575, 604 MB, for the wraps' keys). A test takes the file of the fewest powers that holds
+  what it needs (`pilfflonk/tests/data/ptau.rs` in Rust, `officialPtau` in C++), and fails, naming
+  the file to download, if there is none; the tests never download. Nobody knows the files' `τ`: a
+  test checks a commitment against the SRS's, or a proof by verifying it, and a malformed ptau, or
+  one of another `[τ]₂`, is a copy of an official one changed. Outside the tests the ptau is an
+  input of the setup.
 - **The oracle.** `proofman_pilfflonk::oracle` (feature `oracle`, tests only) evaluates a pilout's
   constraints, the std's hint columns and `Q` from the pilout alone, with `num-bigint`. The prover's
   bytecode, the `qVerifier` and `pilfflonk check` are checked against it.
 - **Cross-checks with the JS verifier.** The C++ SHPLONK tests write their openings as fixtures, and
   `pilfflonk/js/test/fixtures.sh` runs the JS tests on them: the JS verifier accepts every opening and
   refuses it with any bit changed, signed offsets and shared roots included. The C++, Rust and JS
-  transcripts are pinned to the same challenges. `pilfflonk/js/test/setup-fixtures.sh` sets up the
-  Fibonacci (with the `τ = 1` ptau) and runs the JS tests on its key and on the oracle's `Q(ξ)`.
+  transcripts are pinned to the same challenges. `pilfflonk/js/test/setup-fixtures.sh` sets up and
+  proves the Fibonacci, and runs the JS tests on its key, its proof and the oracle's `Q(ξ)`.
 - **The compiler.** The end-to-end tests compile their programs with `PIL2C_EXEC`, and are
   `#[ignore]` without it.
 - **Foundry.** The Solidity tests need `PILFFLONK_FORGE` and `PILFFLONK_SOLC`
@@ -438,8 +443,9 @@ them as Rust writes them.
   `test-pilfflonk` runs the C++ tests against the CPU library and the JS verifier's,
   `test-pilfflonk-bn128` the `#[ignore]`d suites with the compiler, Foundry and solc, and
   `test-pilfflonk-wrap` the wrap end to end
-  ([performance.md#reproducing-the-wrap](performance.md#reproducing-the-wrap)). The GPU tests need a
-  GPU, which CI has not.
+  ([performance.md#reproducing-the-wrap](performance.md#reproducing-the-wrap)), with the official
+  ptau of power 22. Each job caches the ptau files it reads, by name, and runs the download script.
+  The GPU tests need a GPU, which CI has not; `pilfflonk_gpu_test` reads the ptau of power 19.
 
 ## Fixtures
 

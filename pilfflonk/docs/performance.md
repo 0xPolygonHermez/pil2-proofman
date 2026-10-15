@@ -778,10 +778,8 @@ target/release/proofman-cli verify-snark -p $B/wrap/snark_proof.bin \
 ```
 
 The ptau needs at least 6,815,756 powers `[τ^i]₁`: Hermez's `powersOfTau28_hez_final_22` (2^23 − 1)
-or a larger one, or, for a test,
-`target/release/examples/pilfflonk_bench_inputs ptau 6815756 <out.ptau>` (a public `τ`; 3 min 23 s
-on 64 threads). The CI job `test-pilfflonk-wrap` runs these steps with that test ptau, and then
-`cli/tests/snark_pilfflonk.rs` on the key and the proof. On the Solidity side, `proofman-cli pilfflonk
+or a larger one (`pilfflonk/tests/download-ptau.sh 22`). The CI job `test-pilfflonk-wrap` runs these
+steps with it, and then `cli/tests/snark_pilfflonk.rs` on the key and the proof. On the Solidity side, `proofman-cli pilfflonk
 calldata -k <vkey> -p <proof.bin> --publics <publics.json> --format hex` gives `verifyProof`'s
 calldata from the proof's bytes, and its words are `verifySnarkProof`'s `proofBytes`.
 
@@ -793,12 +791,19 @@ calldata from the proof's bytes, and its words are `verifySnarkProof`'s `proofBy
 ```sh
 cargo build --release --features proofman-starks-lib-c/cpu-only \
     --bin proofman-cli --bin proofman-setup --example pilfflonk_bench_inputs
+pilfflonk/tests/download-ptau.sh 24             # 2^25 − 1 powers, 19 GB
 export BENCH_DIR=/tmp/pilfflonk-bench PIL2C_EXEC=<pil2-compiler>/src/pil.js
-pilfflonk/bench/bench.sh ptau 75497536          # 9·2^23 + 64 powers: 4.8 GB, about 20 min
-BENCH_PACKING="packed nopacking" BENCH_REPEATS=3 pilfflonk/bench/bench.sh run fibonacci 10 12 14 16 18 20 22 24
+export BENCH_PTAU=~/.cache/pilfflonk/ptau/powersOfTau28_hez_final_24.ptau
+BENCH_PACKING="packed nopacking" BENCH_REPEATS=3 pilfflonk/bench/bench.sh run fibonacci 10 12 14 16 18 20 22
 BENCH_PACKING="packed nopacking" BENCH_REPEATS=3 pilfflonk/bench/bench.sh run all_sum 10 12 14 16 18 20
 pilfflonk/bench/bench.sh summary
 ```
+
+`BENCH_PTAU` is an official ptau (`download-ptau.sh <power>`), read in place. The one of power 24
+holds 2^25 − 1 powers: the `fibonacci` packed up to `2^23` (its largest `f`, of `L1` and `LLAST`, has
+`2N + 1` coefficients, two more than the file at `2^24`) and `all_sum` up to `2^21` (`9N + 8`);
+beyond that, `powersOfTau28_hez_final_25` or `_26` (36 and 72 GB). The setup refuses a ptau too
+small, saying how many powers it needs.
 
 `run` compiles once (the pilouts stay in `$BENCH_DIR/pilouts`), sets up, writes the witness with the
 example `pilfflonk_bench_inputs` (`pilfflonk/bench/inputs.rs`), proves and verifies, and writes
@@ -808,7 +813,7 @@ needs about 5 GB besides the ptau, `all_sum` at `2^23` about 13 GB.
 
 **GPU** (`pilfflonk/bench/gpu_check.sh`):
 
-1. Make the key and the witness with the CPU tools: after `bench.sh ptau <powers>`,
+1. Make the key and the witness with the CPU tools: with `BENCH_PTAU` an official ptau,
    `BENCH_KEEP=1 BENCH_REPEATS=1 pilfflonk/bench/bench.sh run fibonacci <bits>` leaves the key in
    `$BENCH_DIR/<program>/<bits>/build_packed/provingKey` and the witness in
    `$BENCH_DIR/<program>/<bits>/witness`.
