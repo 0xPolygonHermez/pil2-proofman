@@ -147,7 +147,7 @@ impl Wrap {
 }
 
 /// THE NAIVE REFERENCE of the wrap's witness: circom's witness through the `.exec`, as the STARK
-/// prover's `getCommitedPols` reads its own, and the range checks' multiplicity. The additions
+/// prover's `getWitnessTrace` reads its own, and the range checks' multiplicity. The additions
 /// extend the witness in order, each wire `n_vars + i`; a cell of the map's live extent is the
 /// witness at its signal, but for the sentinel 0, which is 0; every other cell is 0. With
 /// range-check bands, the column the band section's aux word names is [`range_multiplicity`] of

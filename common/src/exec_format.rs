@@ -28,13 +28,13 @@
 //!   BN128, four words (the original pil-fflonk's 32-byte `Fr`), for the pilfflonk wrap. Its header
 //!   also records `n_vars`, the r1cs's wire count, from which the additions' wires are numbered, so
 //!   that a reader refuses the witness of another compile of the circuit rather than gathering
-//!   other wires; version 2 leaves it to the witness's length, as `getCommitedPols` does.
+//!   other wires; version 2 leaves it to the witness's length, as `getWitnessTrace` does.
 //!
 //! The map and the bands do not depend on the field, and are laid out alike in both.
 //!
 //! [`ExecFile::committed_pols`] applies a file to a circom witness, over either field: the
-//! semantics of the STARK's `getCommitedPols` (pil2-stark/src/starkpil/recursion_trace/exec_file.hpp),
-//! which the STARK prover runs in C++ over Goldilocks. The pilfflonk wrap runs it over BN128.
+//! semantics of the gather the STARK prover runs in C++ over Goldilocks, in the witness library's
+//! `getWitnessTrace` (setup/circom/main.cpp). The pilfflonk wrap runs it over BN128.
 
 use std::path::Path;
 
@@ -569,8 +569,8 @@ impl<F: ExecField + Field> ExecFile<F> {
     }
 
     /// The publics and the trace this file gathers out of `witness`, the circom witness of the
-    /// circuit it was made for, with the semantics of the STARK's `getCommitedPols`
-    /// (pil2-stark/src/starkpil/recursion_trace/exec_file.hpp), over any field:
+    /// circuit it was made for, with the semantics of the STARK's gather in `getWitnessTrace`
+    /// (setup/circom/main.cpp), over any field:
     /// - the `n_publics` publics are wires `1 ..= n_publics`, after wire 0, the constant one;
     /// - the additions run in order, the `i`-th introducing wire `witness.len() + i`, which is
     ///   `w[sl]·coef_l + w[sr]·coef_r`: one may read a wire an earlier one introduced;
@@ -582,8 +582,8 @@ impl<F: ExecField + Field> ExecFile<F> {
     /// indices: `prepareSignalMap` (setup/circom/main.cpp) folds those in for the STARK's fused
     /// `getWitnessTrace` only, which reads circom's signal values.
     ///
-    /// The gate bands are not expanded, as `getCommitedPols` does not expand them: the cells they
-    /// fill come out zero. Where `getCommitedPols` clamps or trusts, this refuses: a witness of
+    /// The gate bands are not expanded, as `getWitnessTrace` does not expand them: the cells they
+    /// fill come out zero. Where `getWitnessTrace` clamps or trusts, this refuses: a witness of
     /// another length than the r1cs's `n_vars` of a version 3 header (of another compile of the
     /// circuit, whose additions would sit at other wires), a map wider or taller than the trace, an
     /// addition or a map entry reading a wire not defined before it, and a witness without its
@@ -787,7 +787,7 @@ mod tests {
         (got, CommittedPols { publics: vec![f(5), f(7)], trace })
     }
 
-    /// `getCommitedPols`'s semantics, over both fields: the publics after wire 0, the additions in
+    /// `getWitnessTrace`'s gather, over both fields: the publics after wire 0, the additions in
     /// order, the cells the map names, and zeros for its empty cells and outside its extent.
     #[test]
     fn an_exec_gathers_the_trace_as_get_commited_pols_does() {
@@ -802,7 +802,7 @@ mod tests {
         );
     }
 
-    /// What `getCommitedPols` clamps or trusts is refused, saying why.
+    /// What `getWitnessTrace` clamps or trusts is refused, saying why.
     #[test]
     fn an_exec_that_does_not_fit_its_witness_or_trace_is_refused() {
         let f = |v: u64| Bn128::from_int(v);
@@ -843,7 +843,7 @@ mod tests {
     /// The witness of another compile, one wire longer, would have put the addition at wire 4,
     /// which nothing reads, and gathered the witness's own wire 3 in its place: refused over BN128,
     /// whose header records `n_vars`. Version 2 does not, and numbers the additions from whatever
-    /// witness it is given, as `getCommitedPols` does.
+    /// witness it is given, as `getWitnessTrace` does.
     #[test]
     fn the_witness_of_another_compile_is_refused_over_bn128() {
         fn file<F: ExecField + Field>() -> ExecFile<F> {

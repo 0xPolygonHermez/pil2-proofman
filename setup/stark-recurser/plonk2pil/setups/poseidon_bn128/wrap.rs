@@ -556,7 +556,7 @@ mod tests {
     }
 
     /// The witness extended with the additions, then gathered through the map as the prover's
-    /// `getCommitedPols` does: a cell the map leaves out is 0.
+    /// `getWitnessTrace` does: a cell the map leaves out is 0.
     fn trace(res: &SetupResult<Bn128>, witness: &[Bn128]) -> Vec<Vec<Bn128>> {
         let mut w = witness.to_vec();
         for PlonkAddition { wires, coeffs } in &res.plonk_additions {
