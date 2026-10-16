@@ -380,8 +380,14 @@ jobs:
         with:
           path: ~/.cache/pilfflonk/ptau/powersOfTau28_hez_final_19.ptau
           key: ptau-powersOfTau28_hez_final_19.ptau
+      # wrap-witness's device test sets up a blake3 wrap key of 2^17 rows: 33·2^17 powers.
+      - name: Cache the official ptau of power 22
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pilfflonk/ptau/powersOfTau28_hez_final_22.ptau
+          key: ptau-powersOfTau28_hez_final_22.ptau
       - name: Download the official ptau
-        run: pilfflonk/tests/download-ptau.sh 12 19
+        run: pilfflonk/tests/download-ptau.sh 12 19 22
 
       - name: The std over BN128, the oracle and setup-pilfflonk from setup-snark's crate
         run: |

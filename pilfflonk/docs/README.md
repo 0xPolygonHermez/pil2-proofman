@@ -411,8 +411,9 @@ them as Rust writes them.
   snarkjs's README, and never make one. `pilfflonk/tests/download-ptau.sh [<power>...]` downloads
   them from circom.info into `PILFFLONK_PTAU_DIR` (by default `$XDG_CACHE_HOME/pilfflonk/ptau`, or
   `~/.cache/pilfflonk/ptau`) and checks each against the README's blake2b, pinned in the script;
-  without arguments it downloads the powers the tests read, 12 (8191 powers `[τ^i]₁`, 4.8 MB) and 19
-  (1,048,575, 604 MB, for the wraps' keys). A test takes the file of the fewest powers that holds
+  without arguments it downloads 12 (8191 powers `[τ^i]₁`, 4.8 MB) and 19 (1,048,575, 604 MB, for the
+  wraps' keys); the blake3 wrap key of wrap-witness's device test, and the wrap end to end, read 22
+  (8,388,607, 4.8 GB). A test takes the file of the fewest powers that holds
   what it needs (`pilfflonk/tests/data/ptau.rs` in Rust, `officialPtau` in C++), and fails, naming
   the file to download, if there is none; the tests never download. Nobody knows the files' `τ`: a
   test checks a commitment against the SRS's, or a proof by verifying it, and a malformed ptau, or
@@ -441,7 +442,8 @@ them as Rust writes them.
   ([performance.md#gpu](performance.md#gpu)).
 - **CI.** The workspace's `cargo test` runs what needs neither the compiler nor Foundry.
   `test-pilfflonk` runs the C++ tests against the CPU library and the JS verifier's,
-  `test-pilfflonk-bn128` the `#[ignore]`d suites with the compiler, Foundry and solc, and
+  `test-pilfflonk-bn128` the `#[ignore]`d suites with the compiler, Foundry and solc (ptau of powers 12,
+  19 and 22), and
   `test-pilfflonk-wrap` the wrap end to end
   ([performance.md#reproducing-the-wrap](performance.md#reproducing-the-wrap)), with the official
   ptau of power 22. Each job caches the ptau files it reads, by name, and runs the download script.
