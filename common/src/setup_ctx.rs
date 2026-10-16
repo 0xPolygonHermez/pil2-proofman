@@ -71,6 +71,9 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub rec2_fits_lru: bool,
     /// Final pins the planner takes when it has room.
     pub finals_pin_words: u64,
+    /// Pinned slots each pin kind takes.
+    pub rec2_sets: usize,
+    pub finals_sets: usize,
 }
 
 unsafe impl<F: PrimeField64> Send for SetupsVadcop<F> {}
@@ -206,6 +209,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             let lru_sizes: Vec<u64> = words_of(CacheSetKind::Lru).collect();
             let rec2_words: u64 = words_of(CacheSetKind::Recursive2).sum();
             let finals_pin_words: u64 = words_of(CacheSetKind::Final).sum();
+            let rec2_sets = words_of(CacheSetKind::Recursive2).count();
+            let finals_sets = words_of(CacheSetKind::Final).count();
             let cache_normal_words = sctx_recursive1.max_const_pols_size_packed as u64;
             // A recurser has vadcop_final's shape but its own constants, so its packed size is only
             // bounded by the unpacked worst case; it always uses the LRU, so slot 0 keeps room for it.
@@ -338,6 +343,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 rec2_words,
                 rec2_fits_lru,
                 finals_pin_words,
+                rec2_sets,
+                finals_sets,
             })
         } else {
             Ok(SetupsVadcop {
@@ -353,6 +360,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 rec2_words: 0,
                 rec2_fits_lru: false,
                 finals_pin_words: 0,
+                rec2_sets: 0,
+                finals_sets: 0,
                 max_const_tree_size: 0,
                 max_const_size: 0,
                 max_prover_buffer_size: 0,

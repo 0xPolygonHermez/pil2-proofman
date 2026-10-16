@@ -76,14 +76,12 @@ uint32_t is_first_gpu_buffer_borrowed_gpu(void *d_buffers_);
 uint32_t get_first_gpu_id_gpu(void *d_buffers_);
 void *get_first_gpu_buffer_gpu(void *d_buffers_);
 uint64_t get_layout_offset_gpu(void *d_buffers_, uint32_t which);
-void reload_aggregation_const_pols_gpu(void *d_buffers_, uint64_t toAggByte);
-void set_debug_clobber_top_gpu(void *d_buffers_, uint64_t topByte);
+void restore_after_carve_gpu(void *d_buffers_);
 void debug_clobber_unified_gpu(void *d_buffers_);
-void late_region_invalidate_gpu(void *d_buffers_);
 void invalidate_stream_contexts_gpu(void *d_buffers_);
 uint64_t get_stream_commit_slots_gpu(void *d_buffers_);
 uint64_t get_stream_commit_gpus_gpu(void *d_buffers_);
-uint64_t stream_commit_slot_layout_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes, uint64_t packed, uint64_t indexed, uint64_t *out);
+uint64_t stream_commit_slot_bytes_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes, uint64_t packed, uint64_t indexed);
 void configure_stream_commit_slots_gpu(void *d_buffers_);
 void configure_prefetch_zone_gpu(void *d_buffers_, uint64_t witnessBytes, uint32_t nUnits);
 int64_t stage_witness_gpu(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size, bool hostSync);
@@ -162,14 +160,12 @@ StarksBackend cpu_backend = []() {
     backend.get_first_gpu_id = nullptr;                   // default: 0
     backend.get_first_gpu_buffer = nullptr;               // default: nullptr
     backend.get_layout_offset = nullptr;
-    backend.reload_aggregation_const_pols = nullptr;     // default: no-op
-    backend.set_debug_clobber_top = nullptr;
+    backend.restore_after_carve = nullptr;     // default: no-op
     backend.debug_clobber_unified = nullptr;
-    backend.late_region_invalidate = nullptr;
     backend.invalidate_stream_contexts = nullptr;
     backend.get_stream_commit_slots = nullptr;            // default: 0 (disabled)
     backend.get_stream_commit_gpus = nullptr;
-    backend.stream_commit_slot_layout = nullptr;          // default: 0 (not committable)
+    backend.stream_commit_slot_bytes = nullptr;          // default: 0 (not committable)
     backend.configure_stream_commit_slots = nullptr;      // default: no-op
     backend.configure_prefetch_zone = nullptr;            // default: no-op
     backend.stage_witness = nullptr;                      // default: no look-ahead
@@ -245,14 +241,12 @@ StarksBackend gpu_backend = []() {
     backend.get_first_gpu_id = get_first_gpu_id_gpu;
     backend.get_first_gpu_buffer = get_first_gpu_buffer_gpu;
     backend.get_layout_offset = get_layout_offset_gpu;
-    backend.reload_aggregation_const_pols = reload_aggregation_const_pols_gpu;
-    backend.set_debug_clobber_top = set_debug_clobber_top_gpu;
+    backend.restore_after_carve = restore_after_carve_gpu;
     backend.debug_clobber_unified = debug_clobber_unified_gpu;
-    backend.late_region_invalidate = late_region_invalidate_gpu;
     backend.invalidate_stream_contexts = invalidate_stream_contexts_gpu;
     backend.get_stream_commit_slots = get_stream_commit_slots_gpu;
     backend.get_stream_commit_gpus = get_stream_commit_gpus_gpu;
-    backend.stream_commit_slot_layout = stream_commit_slot_layout_gpu;
+    backend.stream_commit_slot_bytes = stream_commit_slot_bytes_gpu;
     backend.configure_stream_commit_slots = configure_stream_commit_slots_gpu;
     backend.configure_prefetch_zone = configure_prefetch_zone_gpu;
     backend.stage_witness = stage_witness_gpu;
@@ -553,24 +547,14 @@ uint64_t get_layout_offset(void *d_buffers_, uint32_t which) {
     return backend->get_layout_offset ? backend->get_layout_offset(d_buffers_, which) : 0;
 }
 
-void reload_aggregation_const_pols(void *d_buffers_, uint64_t toAggByte) {
+void restore_after_carve(void *d_buffers_) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->reload_aggregation_const_pols) backend->reload_aggregation_const_pols(d_buffers_, toAggByte);
-}
-
-void set_debug_clobber_top(void *d_buffers_, uint64_t topByte) {
-    auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->set_debug_clobber_top) backend->set_debug_clobber_top(d_buffers_, topByte);
+    if (backend->restore_after_carve) backend->restore_after_carve(d_buffers_);
 }
 
 void debug_clobber_unified(void *d_buffers_) {
     auto backend = active_backend.load(std::memory_order_acquire);
     if (backend->debug_clobber_unified) backend->debug_clobber_unified(d_buffers_);
-}
-
-void late_region_invalidate(void *d_buffers_) {
-    auto backend = active_backend.load(std::memory_order_acquire);
-    if (backend->late_region_invalidate) backend->late_region_invalidate(d_buffers_);
 }
 
 void invalidate_stream_contexts(void *d_buffers_) {
@@ -591,9 +575,9 @@ uint64_t get_stream_commit_gpus(void *d_buffers_) {
     return backend->get_stream_commit_gpus ? backend->get_stream_commit_gpus(d_buffers_) : 0;
 }
 
-uint64_t stream_commit_slot_layout(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes, uint64_t packed, uint64_t indexed, uint64_t *out) {
+uint64_t stream_commit_slot_bytes(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes, uint64_t packed, uint64_t indexed) {
     auto backend = active_backend.load(std::memory_order_acquire);
-    return backend->stream_commit_slot_layout ? backend->stream_commit_slot_layout(pSetupCtx, airgroupId, airId, nBits, nBitsExt, nCols, wordsPerRow, inputBytes, packed, indexed, out) : 0;
+    return backend->stream_commit_slot_bytes ? backend->stream_commit_slot_bytes(pSetupCtx, airgroupId, airId, nBits, nBitsExt, nCols, wordsPerRow, inputBytes, packed, indexed) : 0;
 }
 
 void configure_stream_commit_slots(void *d_buffers_) {

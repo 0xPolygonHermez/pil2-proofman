@@ -718,7 +718,6 @@ struct DeviceCommitBuffers
     std::condition_variable constCacheCv;   // a slot's last pending reader enqueued its unpack
     struct HostConstPols { Goldilocks::Element *ptr = nullptr; uint64_t elems = 0; };
     std::map<int64_t, HostConstPols> hostConstPols;   // air key -> pinned host copy
-    uint64_t debugClobberTop = 0;                // test knob (set_debug_clobber_top)
     gl64_t ***d_aux_trace;
     gl64_t ***d_aux_traceAggregation;
     gl64_t **gpuMemoryBuffer;
@@ -781,9 +780,9 @@ struct DeviceCommitBuffers
     bool hasPhaseAAlias() const { return phaseBAliased && phaseAAliasOffset > 0; }
 
     uint64_t prefetchRegionBytes = 0;  // per GPU
-    // Borrowable span from auxBase, slots included: zisk's 15.03 GiB fixed + 2 GiB pool + 2 x 2 GiB slots.
+    // The mops window [mopsBase, recursiveBase) zisk's GPU planner needs: 15.03 GiB fixed + 2 GiB pool.
     // The headroom is kept free after the unified buffer (PROOFMAN_GPU_HEADROOM_MB overrides it).
-    static constexpr uint64_t MOPS_FLOOR_BYTES = 22ull << 30;
+    static constexpr uint64_t MOPS_FLOOR_BYTES = 18ull << 30;
     static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 512ull << 20;
 
     // Witness prefetch zone, one per GPU (the unified buffer's prefetch region): a witness is

@@ -10,6 +10,8 @@ pub const PREFETCH_UNITS_MIN: u32 = 2;
 pub const PREFETCH_UNITS_PLAN_MAX: u32 = 6;
 /// LRU slots of the aggregation const cache, slot 0 included.
 pub const CONST_CACHE_SLOTS_PLAN_MAX: usize = 10;
+/// `ConstSlotTable::MAX_SLOTS`: LRU slots and pins together.
+pub const CONST_CACHE_MAX_SLOTS: usize = 64;
 
 /// The aggregation const cache's pieces (words).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +25,9 @@ pub struct CacheInput {
     pub rec2_fits_lru: bool,
     /// Final pins, taken only once the LRU reaches its cap.
     pub finals_words: u64,
+    /// Slots each pin kind takes (one per set).
+    pub rec2_sets: usize,
+    pub finals_sets: usize,
     /// Useful LRU slots, slot 0 included (>= 2).
     pub slots_cap: usize,
 }
@@ -98,7 +103,9 @@ fn floors(input: &BufferPlanInput) -> Vec<Floor> {
     let Some(c) = &input.cache else {
         return (0..=units).rev().map(|units| Floor { slots: 0, pin_rec2: false, units }).collect();
     };
-    let pinned = Floor { slots: 2, pin_rec2: c.rec2_words > 0, units };
+    // Too many recursive2 sets to pin go through the LRU (plan_buffer refuses them if they cannot).
+    let pin_rec2 = c.rec2_words > 0 && 2 + c.rec2_sets <= CONST_CACHE_MAX_SLOTS;
+    let pinned = Floor { slots: 2, pin_rec2, units };
     let mut floors = vec![pinned];
     let mut f = pinned;
     if f.pin_rec2 && c.rec2_fits_lru {
@@ -121,6 +128,14 @@ pub fn plan_buffer(input: &BufferPlanInput) -> ProofmanResult<BufferPlan> {
             + f.units as u64 * unit
             + input.cache.as_ref().map_or(0, |c| cache_min_words(c, f.slots, f.pin_rec2))
     };
+    if let Some(c) = &input.cache {
+        if c.rec2_words > 0 && !c.rec2_fits_lru && 2 + c.rec2_sets > CONST_CACHE_MAX_SLOTS {
+            return Err(ProofmanError::InvalidConfiguration(format!(
+                "{} recursive2 const sets must be pinned but the const cache holds {} slots",
+                c.rec2_sets, CONST_CACHE_MAX_SLOTS
+            )));
+        }
+    }
     let floors = floors(input);
     let Some(i) = floors.iter().position(|f| need(f) <= input.budget_words) else {
         let f = floors.last().unwrap();
@@ -155,12 +170,17 @@ pub fn plan_buffer(input: &BufferPlanInput) -> ProofmanResult<BufferPlan> {
     let mut cache_slots = floor.slots;
     let mut pin_finals = false;
     if let Some(c) = &input.cache {
+        let pins = if floor.pin_rec2 { c.rec2_sets } else { 0 };
+        let slots_cap = c.slots_cap.min(CONST_CACHE_MAX_SLOTS - pins);
         if let Some(fit) = spare.checked_div(c.normal_words) {
-            let extra = fit.min(c.slots_cap.saturating_sub(floor.slots) as u64);
+            let extra = fit.min(slots_cap.saturating_sub(floor.slots) as u64);
             cache_slots += extra as usize;
             spare -= extra * c.normal_words;
         }
-        pin_finals = c.finals_words > 0 && cache_slots >= c.slots_cap && spare >= c.finals_words;
+        pin_finals = c.finals_words > 0
+            && cache_slots >= slots_cap
+            && spare >= c.finals_words
+            && cache_slots + pins + c.finals_sets <= CONST_CACHE_MAX_SLOTS;
     }
 
     Ok(BufferPlan { prefetch_units, cache_slots, pin_rec2: floor.pin_rec2, pin_finals, basic_resident, relaxed: i > 0 })
@@ -196,6 +216,8 @@ mod tests {
             rec2_words: SLOT,
             rec2_fits_lru: true,
             finals_words: 0,
+            rec2_sets: 1,
+            finals_sets: 0,
             slots_cap: 10,
         }
     }
@@ -316,6 +338,20 @@ mod tests {
         let budget = FLOOR + 4 * UNIT + pins + SLOT / 2;
         let i = BufferPlanInput { cache: Some(CacheInput { finals_words: pins, ..cache() }), ..input(budget) };
         assert_eq!(plan_buffer(&i).unwrap(), plan(6, 2, true, false, false));
+    }
+
+    #[test]
+    fn pins_respect_the_slot_table() {
+        // 63 recursive2 sets cannot be pinned beside 2 LRU slots: they go through the LRU.
+        let c = CacheInput { rec2_sets: 63, ..cache() };
+        let i = BufferPlanInput { cache: Some(c.clone()), ..input(28 * GIB_WORDS) };
+        assert!(!plan_buffer(&i).unwrap().pin_rec2);
+        let i = BufferPlanInput { cache: Some(CacheInput { rec2_fits_lru: false, ..c }), ..input(28 * GIB_WORDS) };
+        assert!(plan_buffer(&i).is_err());
+        // 60 pinned: the LRU shrinks to 4, and the finals no longer fit.
+        let c = CacheInput { rec2_sets: 60, finals_words: SLOT, finals_sets: 2, ..cache() };
+        let p = plan_buffer(&BufferPlanInput { cache: Some(c), ..input(28 * GIB_WORDS) }).unwrap();
+        assert_eq!((p.pin_rec2, p.cache_slots, p.pin_finals), (true, 4, false));
     }
 
     #[test]

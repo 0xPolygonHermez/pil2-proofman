@@ -172,6 +172,12 @@ void mul_begin_job(void *d_buffers_) {
     if (d_buffers == nullptr || !d_buffers->lateInAux) return;
     for (uint32_t g = 0; g < d_buffers->n_gpus; ++g) lateArenaInvalidate((int)d_buffers->my_gpu_ids[g]);
     mulLateLive() = true;
+}
+
+// When the contributions start, so a reset that is not followed by them (cancel, execute) holds nothing.
+void mul_hold_late_region(void *d_buffers_) {
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    if (d_buffers == nullptr || !d_buffers->lateInAux) return;
     lateRegionHold(d_buffers, true);
 }
 
@@ -180,6 +186,9 @@ void mul_end_contributions(void *d_buffers_) {
     if (d_buffers == nullptr || !d_buffers->lateInAux) return;
     mul_snapshot_wait();
     mulLateLive() = false;
+    // Async zero/map copies into the late region must land before stream 0 reuses it.
+    for (uint32_t g = 0; g < d_buffers->n_gpus; ++g)
+        CHECKCUDAERR(cudaStreamSynchronize(mulXferStream((int)d_buffers->my_gpu_ids[g])));
     lateRegionHold(d_buffers, false);
 }
 

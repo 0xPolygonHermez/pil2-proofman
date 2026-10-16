@@ -1069,29 +1069,6 @@ void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t in
     if (!onHost) delete[] constPols;
 }
 
-// GPU 0 only: drop the const-cache tags below `toAggByte` (relative to d_constPolsAggregation), which a
-// borrow or a snark carve overwrote; the sets come back from their host copies on the next launch.
-void reload_aggregation_const_pols_gpu(void *d_buffers_, uint64_t toAggByte) {
-    if (d_buffers_ == nullptr) return;
-    DeviceCommitBuffers *d = (DeviceCommitBuffers *)d_buffers_;
-    CHECKCUDAERR(cudaSetDevice(d->my_gpu_ids[0]));
-    const uint64_t toElem = (toAggByte + sizeof(Goldilocks::Element) - 1) / sizeof(Goldilocks::Element);
-    {
-        std::lock_guard<std::mutex> lk(d->constCacheMutex);
-        if (!d->constCache.empty() && d->constCache[0].armed()) d->constCache[0].t.clearBelow(toElem);
-    }
-    for (uint64_t i = 0; i < d->n_total_streams; i++)
-        if (d->streamsData[i].gpuId == d->my_gpu_ids[0]) {
-            std::lock_guard<std::mutex> lg(d->streamsData[i].mutex_stream_selection);
-            d->streamsData[i].invalidateContext();
-        }
-}
-
-void set_debug_clobber_top_gpu(void *d_buffers_, uint64_t topByte) {
-    if (d_buffers_ == nullptr) return;
-    ((DeviceCommitBuffers *)d_buffers_)->debugClobberTop = topByte;
-}
-
 void debug_clobber_unified_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return;
     DeviceCommitBuffers *d = (DeviceCommitBuffers *)d_buffers_;
@@ -1112,18 +1089,24 @@ void invalidate_stream_contexts_gpu(void *d_buffers_) {
     slotConstCacheClear();
 }
 
-void late_region_invalidate_gpu(void *d_buffers_) {
+// After a snark carved GPU 0's buffer (basic fixed pols reloaded by the caller): the aggregation
+// sets come back from their host copies, the late region and every cached const are refilled on next use.
+void restore_after_carve_gpu(void *d_buffers_) {
     if (d_buffers_ == nullptr) return;
-    lateArenaInvalidate((int)((DeviceCommitBuffers *)d_buffers_)->my_gpu_ids[0]);
-    // The snark's carve covered the slots too.
-    slotConstCacheClear();
+    DeviceCommitBuffers *d = (DeviceCommitBuffers *)d_buffers_;
+    {
+        std::lock_guard<std::mutex> lk(d->constCacheMutex);
+        if (!d->constCache.empty() && d->constCache[0].armed()) d->constCache[0].t.forget();
+    }
+    lateArenaInvalidate((int)d->my_gpu_ids[0]);
+    invalidate_stream_contexts_gpu(d_buffers_);
 }
 
 // ---- Aggregation const slot cache (DeviceCommitBuffers::constCache) ----
 
 // Carve the LRU slots (slot 0 = bigElems, then nLru-1 slots of normalElems) at `baseOffset` of every
 // GPU's aggregation const buffer, then pin_const_slot appends the pins. Init only: a restore drops
-// GPU 0's tags instead (reload_aggregation_const_pols). Returns the end offset.
+// GPU 0's tags instead (restore_after_carve). Returns the end offset.
 uint64_t configure_const_slot_cache_gpu(void *d_buffers_, uint64_t baseOffset, uint64_t bigElems, uint64_t normalElems,
                                         uint32_t nLru) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -3110,7 +3093,7 @@ void *get_first_gpu_buffer_gpu(void *d_buffers_) {
     return (void *)d_buffers->gpuMemoryBuffer[0];
 }
 
-// 0 late, 1 prefetch, 2 auxBase, 3 mopsBase, 4 aggBase, 5 end (bytes from the buffer base).
+// 0 late, 1 prefetch, 2 auxBase, 3 mopsBase, 4 aggBase, 5 end, 6 recursiveBase (bytes from the buffer base).
 uint64_t get_layout_offset_gpu(void *d_buffers_, uint32_t which) {
     if (d_buffers_ == nullptr) return 0;
     const ubl::Layout &L = ((DeviceCommitBuffers *)d_buffers_)->layout;
@@ -3121,6 +3104,7 @@ uint64_t get_layout_offset_gpu(void *d_buffers_, uint32_t which) {
         case 3: return L.mopsBase;
         case 4: return L.aggBase;
         case 5: return L.end;
+        case 6: return L.recursiveBase;
         default:
             zklog.error("get_layout_offset: unknown boundary " + std::to_string(which));
             exitProcess();
@@ -3176,7 +3160,7 @@ struct SlotAirPlan {
     ubl::SlotAir at{};
 };
 
-// The slot sizing (Rust, through stream_commit_slot_layout) and the commit both lay an air out here.
+// The slot sizing (Rust, through stream_commit_slot_bytes) and the commit both lay an air out here.
 static SlotAirPlan slotAirPlan(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits,
                                uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes,
                                bool packed, bool indexed) {
@@ -3225,18 +3209,11 @@ static SlotAirPlan slotAirPlanCached(void *pSetupCtx, uint64_t airgroupId, uint6
     return p;
 }
 
-uint64_t stream_commit_slot_layout_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits,
-                                       uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes,
-                                       uint64_t packed, uint64_t indexed, uint64_t *out) {
+uint64_t stream_commit_slot_bytes_gpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits,
+                                      uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes,
+                                      uint64_t packed, uint64_t indexed) {
     const SlotAirPlan p = slotAirPlan(pSetupCtx, airgroupId, airId, nBits, nBitsExt, nCols, wordsPerRow, inputBytes,
                                       packed != 0, indexed != 0);
-    if (out != nullptr) {
-        out[0] = p.commitBytes;
-        out[1] = p.sideBytes;
-        out[2] = p.constBytes;
-        out[3] = p.customBytes;
-        out[4] = p.at.end;
-    }
     return p.commitBytes == 0 ? 0 : p.at.end;
 }
 
@@ -3396,20 +3373,27 @@ void lateRegionHold(DeviceCommitBuffers *d_buffers, bool live) {
     if (d_buffers->streamCommitRegions == nullptr) return;
     for (uint32_t gl = 0; gl < d_buffers->n_gpus; gl++) {
         DeviceCommitBuffers::SlotRegion &r = d_buffers->streamCommitRegions[gl];
-        std::lock_guard<std::mutex> lk(r.mutex);
-        r.lateLive = live;
-        // A commit in flight keeps its own hold; its release drops it.
-        const bool touch = live || r.inFlight == 0;
-        const uint32_t gpuId = d_buffers->my_gpu_ids[gl];
-        for (uint32_t i = 0; touch && i < d_buffers->n_total_streams; i++) {
-            StreamData &sd = d_buffers->streamsData[i];
-            if (!sd.overlapsStreamCommitRegion || sd.gpuId != gpuId) continue;
-            if (live && sd.status != 0 && sd.status != 3) {
-                zklog.error("late region: stream " + std::to_string(i) + " is busy (status " + std::to_string(sd.status) +
-                            ") at job start; its work would overwrite the counters");
-                exitProcess();
+        std::unique_lock<std::mutex> lk(r.mutex);
+        if (live) {
+            // Claimed like a slot commit (under each stream's lock, once it drained); waits out a busy stream.
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+            while (!streamCommitClaimRegionLocked(d_buffers, gl)) {
+                if (std::chrono::steady_clock::now() >= deadline) {
+                    zklog.error("late region: a stream over gpu " + std::to_string(d_buffers->my_gpu_ids[gl]) +
+                                "'s slots stayed busy for 60 s at the contributions start");
+                    exitProcess();
+                }
+                r.cv.wait_for(lk, std::chrono::milliseconds(1));
             }
-            sd.slotHeld.store(live, std::memory_order_release);
+            r.lateLive = true;
+            continue;
+        }
+        r.lateLive = false;
+        // A commit in flight keeps its own hold; its release drops it.
+        const uint32_t gpuId = d_buffers->my_gpu_ids[gl];
+        for (uint32_t i = 0; r.inFlight == 0 && i < d_buffers->n_total_streams; i++) {
+            StreamData &sd = d_buffers->streamsData[i];
+            if (sd.overlapsStreamCommitRegion && sd.gpuId == gpuId) sd.slotHeld.store(false, std::memory_order_release);
         }
         r.cv.notify_all();
     }
@@ -4170,8 +4154,7 @@ void acquire_first_gpu_buffer_gpu(void *d_buffers_) {
 }
 
 
-// The mops floor (bytes below the const pols the mem-ops planner needs); the Rust side grows
-// the single basic stream to it so phase B's halves are as large as the memory allows.
+// The mops window the mem-ops planner needs; the Rust side grows the basic streams to it.
 uint64_t get_mops_floor_bytes_gpu() {
     return DeviceCommitBuffers::MOPS_FLOOR_BYTES;
 }
@@ -4240,10 +4223,6 @@ void release_first_gpu_buffer_gpu(void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     CHECKCUDAERR(cudaSetDevice(d_buffers->my_gpu_ids[0]));
     CHECKCUDAERR(cudaDeviceSynchronize());
-    if (d_buffers->debugClobberTop > d_buffers->layout.mopsBase)  // test knob
-        CHECKCUDAERR(cudaMemset((uint8_t *)d_buffers->gpuMemoryBuffer[0] + d_buffers->layout.mopsBase, 0xFF,
-                                d_buffers->debugClobberTop - d_buffers->layout.mopsBase));
-    d_buffers->debugClobberTop = 0;
     // The borrower overwrote this GPU's aux traces (incl. the cached const pols/tree),
     // so invalidate every affected stream's reuse context, forcing a constants reload.
     const uint32_t firstGpuId = d_buffers->my_gpu_ids[0];

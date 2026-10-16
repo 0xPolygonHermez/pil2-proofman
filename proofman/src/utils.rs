@@ -1117,7 +1117,7 @@ pub fn load_device_const_pols<F: PrimeField64>(
             );
         }
 
-        // LRU first (slot 0 lowest), then the final pins, then recursive2 on top: a borrow reaches them last.
+        // LRU first (slot 0 lowest), then the final pins, then recursive2 on top.
         let mut end = configure_const_slot_cache_c(
             d_buffers,
             0,

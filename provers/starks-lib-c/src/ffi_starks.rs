@@ -1690,30 +1690,19 @@ pub fn get_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::
 }
 
 /// Byte offset of a carve boundary in each GPU's unified buffer: 0 late, 1 prefetch, 2 auxBase,
-/// 3 mopsBase, 4 aggBase, 5 end (0 on the CPU backend).
+/// 3 mopsBase, 4 aggBase, 5 end, 6 recursiveBase (0 on the CPU backend).
 pub fn get_layout_offset_c(d_buffers: *mut ::std::os::raw::c_void, which: u32) -> u64 {
     unsafe { get_layout_offset(d_buffers, which) }
 }
 
-/// Drop GPU 0's const-cache tags below `to_agg_byte` (from the aggregation base): those slots reload
-/// from their host copies on demand.
-pub fn reload_aggregation_const_pols_c(d_buffers: *mut ::std::os::raw::c_void, to_agg_byte: u64) {
-    unsafe { reload_aggregation_const_pols(d_buffers, to_agg_byte) }
-}
-
-/// Test knob: the next first-GPU buffer release fills `[mopsBase, top_byte)` with 0xFF.
-pub fn set_debug_clobber_top_c(d_buffers: *mut ::std::os::raw::c_void, top_byte: u64) {
-    unsafe { set_debug_clobber_top(d_buffers, top_byte) }
+/// After a snark's carve of GPU 0: drop its const-cache tags, late region and every stream's cached consts.
+pub fn restore_after_carve_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { restore_after_carve(d_buffers) }
 }
 
 /// Test knob: fill GPU 0's whole unified buffer with 0xFF, as a snark carve would leave it.
 pub fn debug_clobber_unified_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe { debug_clobber_unified(d_buffers) }
-}
-
-/// Bump GPU 0's late-region generation, so its maps and scratch are re-filled on next use.
-pub fn late_region_invalidate_c(d_buffers: *mut ::std::os::raw::c_void) {
-    unsafe { late_region_invalidate(d_buffers) }
 }
 
 /// Drop every stream's const-reuse identity, so its next proof reloads the constants cached in aux.
@@ -1734,20 +1723,10 @@ pub fn get_stream_commit_gpus_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
     unsafe { get_stream_commit_gpus(d_buffers) }
 }
 
-/// One air's slot layout, in bytes: its commit area (with the col-major tail), its side, const and
-/// custom scratch, and where the last ends. None when no slot can commit the air.
-/// `input_bytes`: a GPU-witness air's staged-input bound (0 otherwise), which rides in the slot.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SlotAirLayout {
-    pub commit: u64,
-    pub side: u64,
-    pub cons: u64,
-    pub custom: u64,
-    pub end: u64,
-}
-
+/// One air's slot bytes (its commit area with the col-major tail, then its scratch). None when no
+/// slot can commit the air. `input_bytes`: a GPU-witness air's staged-input bound (0 otherwise).
 #[allow(clippy::too_many_arguments)]
-pub fn stream_commit_slot_layout_c(
+pub fn stream_commit_slot_bytes_c(
     p_setup: *mut c_void,
     airgroup_id: u64,
     air_id: u64,
@@ -1758,10 +1737,9 @@ pub fn stream_commit_slot_layout_c(
     input_bytes: u64,
     packed: bool,
     indexed: bool,
-) -> Option<SlotAirLayout> {
-    let mut o = [0u64; 5];
-    let end = unsafe {
-        stream_commit_slot_layout(
+) -> Option<u64> {
+    let bytes = unsafe {
+        stream_commit_slot_bytes(
             p_setup,
             airgroup_id,
             air_id,
@@ -1772,10 +1750,9 @@ pub fn stream_commit_slot_layout_c(
             input_bytes,
             packed as u64,
             indexed as u64,
-            o.as_mut_ptr(),
         )
     };
-    (end != 0).then_some(SlotAirLayout { commit: o[0], side: o[1], cons: o[2], custom: o[3], end: o[4] })
+    (bytes != 0).then_some(bytes)
 }
 
 /// Enable the slots `alloc_device_large_buffers_c` carved.
@@ -2202,6 +2179,11 @@ pub fn mul_reset_c() {
 /// In-aux late region: once per job, before `mul_alloc_c`.
 pub fn mul_begin_job_c(d_buffers: *mut c_void) {
     unsafe { mul_begin_job(d_buffers) }
+}
+
+/// In-aux late region: when the contributions start.
+pub fn mul_hold_late_region_c(d_buffers: *mut c_void) {
+    unsafe { mul_hold_late_region(d_buffers) }
 }
 
 /// In-aux late region: after the last commit.

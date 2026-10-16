@@ -11,7 +11,7 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::{aggregate_airgroupvals, expand_airgroup_values};
 use proofman_starks_lib_c::{
-    mul_alloc_c, mul_begin_job_c, mul_end_contributions_c, mul_fold_c, mul_migrated_tables_c,
+    mul_alloc_c, mul_begin_job_c, mul_end_contributions_c, mul_hold_late_region_c, mul_fold_c, mul_migrated_tables_c,
     mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
 };
 use pil2_std_lib::{
@@ -20,7 +20,7 @@ use pil2_std_lib::{
 use proofman_starks_lib_c::{
     configure_prefetch_zone_c, stage_witness_c, release_staged_witness_c, gpu_witness_count_c, harvest_pipeline_c,
     dump_pipeline_state_c, set_gpu_mode_c, set_pipeline_mode_c, load_host_const_pols_c, debug_clobber_unified_c,
-    get_layout_offset_c, reload_aggregation_const_pols_c, late_region_invalidate_c, invalidate_stream_contexts_c,
+    restore_after_carve_c,
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
@@ -155,8 +155,8 @@ use proofman_starks_lib_c::{
     mul_clear_registry_c, mul_commit_count_c, mul_set_device_export_c, mul_sync_commits_c, MulSync,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
     wait_trace_h2d_done_c, get_stream_commit_slots_c, get_stream_commit_gpus_c, commit_witness_streaming_c,
-    stream_commit_slot_layout_c, configure_stream_commit_slots_c, get_stream_id_proof_c, late_region_bytes_c,
-    get_num_gpus_c, SlotAirLayout,
+    stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c, late_region_bytes_c,
+    get_num_gpus_c,
 };
 
 use std::{
@@ -308,6 +308,33 @@ impl Drop for CancellationThread {
             handle.thread().unpark();
             let _ = handle.join();
         }
+    }
+}
+
+/// The in-aux late region's stream hold for one contributions phase; released on every exit.
+struct LateRegionHold {
+    d_buffers: *mut c_void,
+    held: bool,
+}
+
+impl LateRegionHold {
+    fn new(d_buffers: *mut c_void, late_in_aux: bool) -> Self {
+        if late_in_aux {
+            mul_hold_late_region_c(d_buffers);
+        }
+        Self { d_buffers, held: late_in_aux }
+    }
+
+    fn release(&mut self) {
+        if std::mem::take(&mut self.held) {
+            mul_end_contributions_c(self.d_buffers);
+        }
+    }
+}
+
+impl Drop for LateRegionHold {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 
@@ -608,16 +635,16 @@ fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool
         && setup.stark_info.stark_struct.merkle_tree_arity == proofman_common::hash_family::merkle_tree_arity(hash)
 }
 
-/// This air's slot layout (the commit lays it out with the same C++ function), or None when no slot
+/// This air's slot bytes (the commit lays it out with the same C++ function), or None when no slot
 /// can take it. `input_bytes` is the air's declared GPU-witness input bound, 0 for a host-filled air.
-fn slot_commit_layout<F: PrimeField64>(
+fn slot_commit_bytes<F: PrimeField64>(
     hash: &str,
     setup: &Setup<F>,
     ag: usize,
     ai: usize,
     pi: &PackedInfo,
     input_bytes: u64,
-) -> Option<SlotAirLayout> {
+) -> Option<u64> {
     if !stream_commit_eligible(hash, setup) {
         return None;
     }
@@ -625,7 +652,7 @@ fn slot_commit_layout<F: PrimeField64>(
     let ss = &setup.stark_info.stark_struct;
     // An unpacked air is the degenerate packing: one word per column.
     let words = if pi.is_packed { pi.num_packed_words } else { n_cols };
-    stream_commit_slot_layout_c(
+    stream_commit_slot_bytes_c(
         (&setup.p_setup).into(),
         ag as u64,
         ai as u64,
@@ -639,27 +666,17 @@ fn slot_commit_layout<F: PrimeField64>(
     )
 }
 
-/// The slot size: the largest air's own layout. The second value is what the sum of the per-part
-/// maxima would have cost, for the log.
-fn slot_bytes_of(layouts: &[SlotAirLayout]) -> (u64, u64) {
-    let per_air = layouts.iter().map(|l| l.end).max().unwrap_or(0);
-    let max = |f: fn(&SlotAirLayout) -> u64| layouts.iter().map(f).max().unwrap_or(0);
-    let align = |v: u64| v.div_ceil(256) * 256;
-    let maxima = align(max(|l| l.commit)) + align(max(|l| l.side)) + align(max(|l| l.cons)) + max(|l| l.custom);
-    (per_air, maxima)
-}
-
-/// Every slot-eligible air's layout and every air a slot can take, packed or not: an air without
-/// packing info (virtual tables, Rom), or any air of a run that writes unpacked traces, commits with
-/// the identity packing. `packed_info` must describe the host rows (see `slot_packed_info`). The
-/// third value names the airs no slot can take (family, arity, width).
+/// The slot size (the largest air's commit and scratch) and every air a slot can take, packed or not: an air
+/// without packing info (virtual tables, Rom), or any air of a run that writes unpacked traces,
+/// commits with the identity packing. `packed_info` must describe the host rows (see
+/// `slot_packed_info`). The third value names the airs no slot can take (family, arity, width).
 fn slot_commit_airs<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     packed_info: &HashMap<(usize, usize), PackedInfo>,
-) -> (Vec<SlotAirLayout>, std::collections::HashSet<(usize, usize)>, Vec<String>) {
+) -> (u64, std::collections::HashSet<(usize, usize)>, Vec<String>) {
     let identity = PackedInfo::default();
-    let mut layouts = Vec::new();
+    let mut slot_bytes = 0u64;
     let mut airs = std::collections::HashSet::new();
     let mut unfit = Vec::new();
     for (ag, group) in pctx.global_info.airs.iter().enumerate() {
@@ -667,16 +684,16 @@ fn slot_commit_airs<F: PrimeField64>(
             let Ok(setup) = sctx.get_setup(ag, ai) else { continue };
             let pi = packed_info.get(&(ag, ai)).unwrap_or(&identity);
             let input_bytes = pctx.gpu_witness_airs.get(ag, ai).map_or(0, |d| d.input_bytes_per_instance);
-            match slot_commit_layout(&pctx.global_info.hash, setup, ag, ai, pi, input_bytes) {
-                Some(l) => {
-                    layouts.push(l);
+            match slot_commit_bytes(&pctx.global_info.hash, setup, ag, ai, pi, input_bytes) {
+                Some(b) => {
+                    slot_bytes = slot_bytes.max(b);
                     airs.insert((ag, ai));
                 }
                 None => unfit.push(format!("{} [{ag}:{ai}]", air.name)),
             }
         }
     }
-    (layouts, airs, unfit)
+    (slot_bytes, airs, unfit)
 }
 
 /// The packing info the slots must read the host rows with: none unless the run writes packed traces.
@@ -914,17 +931,9 @@ impl<F: PrimeField64> ProofMan<F> {
         // Aggregation sets only lose GPU 0's cache tags: their host copies, layout and pins stand.
         let restored = load_device_const_pols(&self.pctx, &self.sctx, &self.setups, false, true)
             .and_then(|_| self.pctx.reupload_custom_commits(&self.sctx));
-        if self.options.aggregation {
-            reload_aggregation_const_pols_c(self.pctx.get_device_buffers_ptr(), self.pctx.aggregation_const_words * 8);
-        }
+        // A recurser's device setup is outside the carve and its consts reload from the cache.
         match &restored {
-            Ok(()) => {
-                let p = self.pctx.get_device_buffers_ptr();
-                late_region_invalidate_c(p);
-                // The streams' cached consts sat in the carve too; reset also drops them in reset_device_streams.
-                // A recurser's device setup is outside the carve and its consts reload from the cache.
-                invalidate_stream_contexts_c(p);
-            }
+            Ok(()) => restore_after_carve_c(self.pctx.get_device_buffers_ptr()),
             // Keep the flag so the next caller retries.
             Err(_) => self.pctx.reload_fixed_pols_gpu.store(true, Ordering::SeqCst),
         }
@@ -2411,6 +2420,8 @@ where
     fn debug_clobber_after_job(&self) {
         if self.pctx.gpu && std::env::var("PROOFMAN_DEBUG_CLOBBER_AFTER_JOB").as_deref() == Ok("1") {
             tracing::warn!("PROOFMAN_DEBUG_CLOBBER_AFTER_JOB: clobbering GPU 0's unified buffer");
+            // The job released the locks: retake them so no other job or snark is using the buffer.
+            let _computing = self.acquire_computing("debug_clobber_after_job");
             debug_clobber_unified_c(self.pctx.get_device_buffers_ptr());
             self.pctx.reload_fixed_pols_gpu.store(true, Ordering::SeqCst);
         }
@@ -3302,10 +3313,17 @@ where
             self.cancellation_info.write_recover().reset();
             self.reset_unguarded()?;
             self.pctx.dctx_reset();
+        } else {
+            // No reset runs on this path, so a preceding snark's carve is undone here.
+            self.restore_after_snark()?;
         }
 
         let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
 
+        let contributions = phase == ProvePhase::Contributions || phase == ProvePhase::Full;
+        // Before the workers' guard, so on an early return they are joined before the hold drops.
+        let mut late_hold =
+            LateRegionHold::new(self.pctx.get_device_buffers_ptr(), contributions && self.pctx.late_in_aux);
         let _contributions_guard = WorkerPoolGuard {
             sentinel: usize::MAX,
             tx: self.contributions_tx.clone(),
@@ -3316,7 +3334,7 @@ where
         // it drops LAST — joining before either has signalled would hang.
         let mut _recursives_guard = JoinAllGuard::new(self.handle_recursives.clone());
 
-        let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
+        let all_partial_contributions_u64 = if contributions {
             if !options.minimal_memory && self.pctx.gpu {
                 self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
             }
@@ -3624,9 +3642,7 @@ where
 
             // Every commit is done and the snapshot D2H overlapped the challenge: the proofs may reuse
             // the late region from here.
-            if self.pctx.late_in_aux {
-                mul_end_contributions_c(self.pctx.get_device_buffers_ptr());
-            }
+            late_hold.release();
 
             if phase == ProvePhase::Contributions {
                 let witness_time =
@@ -4825,6 +4841,8 @@ where
         if options.compressed {
             self.ensure_compressed_final_supported()?;
         }
+        // No reset runs on this path, so a preceding snark's carve is undone here.
+        self.restore_after_snark()?;
         self.receive_aggregated_proofs_inner(agg_proofs, last_proof, final_proof, keep_resident, options)
     }
 
@@ -5342,16 +5360,6 @@ where
 
         if let Err(e) = self.wcm.execute() {
             self.cancellation_info.write_recover().cancel(Some(e));
-        }
-
-        // A gpu-mops borrow during execute() reached the aggregation region: re-upload what it hit.
-        let top = self.pctx.reload_aggregation_to.swap(0, Ordering::SeqCst);
-        if self.pctx.gpu && top != 0 {
-            timer_start_info!(RELOAD_AGGREGATION_FIXED);
-            let p = self.pctx.get_device_buffers_ptr();
-            let to_agg = top.saturating_sub(get_layout_offset_c(p, 4));
-            reload_aggregation_const_pols_c(p, to_agg);
-            timer_stop_and_log_info!(RELOAD_AGGREGATION_FIXED);
         }
 
         self.check_cancel(true)?;
@@ -6252,10 +6260,10 @@ where
         // carved from a region INSIDE the unified buffer (below the consts), so it shares
         // one planned budget. Witness bytes = the largest basic trace (packed width when
         // the air is packed). Default ON; PROOFMAN_PREFETCH=0 disables. Verify-constraints never stages.
-        let prefetch_witness_bytes: u64 = if options.gpu
+        let prefetch_on = options.gpu
             && !options.verify_constraints
-            && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true)
-        {
+            && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true);
+        let prefetch_witness_bytes: u64 = if prefetch_on {
             let mut witness_bytes: u64 = 0;
             for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
                 for (air_id, _) in group.iter().enumerate() {
@@ -6289,14 +6297,8 @@ where
         }
 
         let (slot_bytes, unfit) = if options.gpu {
-            let (layouts, _, unfit) = slot_commit_airs(&pctx, &sctx, &slot_packed_info(options));
-            let (per_air, maxima) = slot_bytes_of(&layouts);
-            tracing::info!(
-                "Streaming-commit slot: {} with each air's scratch behind its own commit area ({} as the sum of maxima)",
-                proofman_common::format_bytes(per_air as f64),
-                proofman_common::format_bytes(maxima as f64)
-            );
-            (per_air, unfit)
+            let (slot_bytes, _, unfit) = slot_commit_airs(&pctx, &sctx, &slot_packed_info(options));
+            (slot_bytes, unfit)
         } else {
             (0, Vec::new())
         };
@@ -6954,32 +6956,5 @@ mod thread_budget_tests {
         assert_eq!(*budget.available.lock().unwrap(), 8);
         drop(tokens);
         assert_eq!(*budget.available.lock().unwrap(), 10);
-    }
-}
-
-#[cfg(test)]
-mod slot_sizing_tests {
-    use super::*;
-
-    fn l(commit: u64, side: u64, cons: u64, custom: u64) -> SlotAirLayout {
-        let a = |v: u64| v.div_ceil(256) * 256;
-        SlotAirLayout { commit, side, cons, custom, end: a(a(a(commit) + side) + cons) + custom }
-    }
-
-    #[test]
-    fn slot_is_the_largest_air_not_the_sum_of_maxima() {
-        const MB: u64 = 1 << 20;
-        // A wide air with no scratch beside a narrower one that expands its const pols.
-        let (per_air, maxima) = slot_bytes_of(&[l(2288 * MB, 0, 0, 0), l(1200 * MB, 64 * MB, 256 * MB, 64 * MB)]);
-        assert_eq!(per_air, 2288 * MB);
-        assert_eq!(maxima, 2288 * MB + 384 * MB);
-        // When the widest air also has the widest scratch, both agree.
-        let (per_air, maxima) = slot_bytes_of(&[l(2288 * MB, 64 * MB, 256 * MB, 64 * MB), l(MB, 8, 8, 8)]);
-        assert_eq!(per_air, maxima);
-    }
-
-    #[test]
-    fn no_slot_air_means_no_slot() {
-        assert_eq!(slot_bytes_of(&[]), (0, 0));
     }
 }

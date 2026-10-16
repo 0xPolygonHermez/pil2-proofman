@@ -60,7 +60,7 @@ struct ConstSlotTable {
     void fill(int32_t s, int64_t key, uint64_t elemsHeld) { tag[s] = key; held[s] = elemsHeld; }
 
     // Least recently used free LRU slot that fits, normal slots winning ties. Slot 0 is passed over
-    // while it holds a set no normal slot fits, the sets it alone can take.
+    // while it holds a set no normal slot fits, unless every normal slot is busy (better than waiting).
     int32_t pickLru(uint64_t needElems) const {
         int32_t best = -1;
         uint64_t bestAge = UINT64_MAX;
@@ -80,8 +80,6 @@ struct ConstSlotTable {
 
     void clearTags() { for (uint32_t s = 0; s < MAX_SLOTS; s++) { tag[s] = -1; held[s] = 0; lastUse[s] = 0; pending[s] = 0; } }
 
-    void clearBelow(uint64_t toElem) {
-        for (uint32_t s = 0; s < nSlots; s++)
-            if (base + offset[s] < toElem) { tag[s] = -1; lastUse[s] = 0; }
-    }
+    // Every slot's contents are gone (nothing in flight): keep the layout and pins, drop the tags.
+    void forget() { for (uint32_t s = 0; s < nSlots; s++) { tag[s] = -1; lastUse[s] = 0; } }
 };

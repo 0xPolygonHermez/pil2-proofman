@@ -43,10 +43,16 @@ TEST(UnifiedBufferLayout, slot_offsets_stay_inside_the_first_stream) {
     EXPECT_LE(ubl::slotOffset(L, slotBytes, 1) + slotBytes, L.auxBase + in.auxTotal);
 }
 
-TEST(UnifiedBufferLayout, mops_window_is_the_top) {
-    const ubl::Layout L = ubl::plan(zisk());
-    EXPECT_EQ(L.end - L.mopsBase, L.end - L.auxBase - zisk().slots);
-    EXPECT_GE(L.end - L.auxBase, 22 * GiB);  // MOPS_FLOOR_BYTES semantics hold on this shape
+TEST(UnifiedBufferLayout, mops_window_is_the_basic_streams) {
+    const ubl::In in = zisk();
+    const ubl::Layout L = ubl::plan(in);
+    EXPECT_GE(L.mopsBase, L.late + in.lateRegion);  // past the in-aux late region
+    EXPECT_LE(L.recursiveBase, L.aggBase);           // below the recursive streams and the const cache
+    ubl::In withRec = in;
+    withRec.recursiveTotal = 3 * GiB;
+    const ubl::Layout R = ubl::plan(withRec);
+    EXPECT_EQ(R.recursiveBase, R.auxBase + in.auxTotal);
+    EXPECT_EQ(R.aggBase, R.recursiveBase + 3 * GiB);
 }
 
 TEST(UnifiedBufferLayout, overlap_is_relative_to_aux_base) {

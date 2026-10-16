@@ -83,12 +83,12 @@ TEST(ConstSlotTable, find_hits_any_slot) {
     EXPECT_EQ(t.find(k), 2);
 }
 
-TEST(ConstSlotTable, clear_below_keeps_higher_slots) {
-    ConstSlotTable t = table(2);             // slots at [1000,1300) [1300,1400)
-    t.pin(3003, 100);       // [1400,1500)
+TEST(ConstSlotTable, forget_keeps_layout_and_pins) {
+    ConstSlotTable t = table(2);
+    t.pin(3003, 100);
     for (uint32_t s = 0; s < 3; s++) t.tag[s] = (int64_t)s + 10;
-    t.clearBelow(1350);                      // reaches slots 0 and 1 only
-    EXPECT_EQ(t.tag[0], -1);
-    EXPECT_EQ(t.tag[1], -1);
-    EXPECT_EQ(t.tag[2], 12);
+    t.forget();
+    for (uint32_t s = 0; s < 3; s++) EXPECT_EQ(t.tag[s], -1);
+    EXPECT_EQ(t.pinnedSlot(3003), 2);
+    EXPECT_EQ(t.nSlots, 3u);
 }

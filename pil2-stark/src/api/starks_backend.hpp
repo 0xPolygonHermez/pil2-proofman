@@ -72,14 +72,12 @@ struct StarksBackend {
     uint32_t (*get_first_gpu_id)(void *d_buffers_);
     void *(*get_first_gpu_buffer)(void *d_buffers_);
     uint64_t (*get_layout_offset)(void *d_buffers_, uint32_t which);
-    void (*reload_aggregation_const_pols)(void *d_buffers_, uint64_t toAggByte);
-    void (*set_debug_clobber_top)(void *d_buffers_, uint64_t topByte);
+    void (*restore_after_carve)(void *d_buffers_);
     void (*debug_clobber_unified)(void *d_buffers_);
-    void (*late_region_invalidate)(void *d_buffers_);
     void (*invalidate_stream_contexts)(void *d_buffers_);
     uint64_t (*get_stream_commit_slots)(void *d_buffers_);
     uint64_t (*get_stream_commit_gpus)(void *d_buffers_);
-    uint64_t (*stream_commit_slot_layout)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes, uint64_t packed, uint64_t indexed, uint64_t *out);
+    uint64_t (*stream_commit_slot_bytes)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes, uint64_t packed, uint64_t indexed);
     void (*configure_stream_commit_slots)(void *d_buffers_);
     void (*configure_prefetch_zone)(void *d_buffers_, uint64_t witnessBytes, uint32_t nUnits);
     int64_t (*stage_witness)(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size, bool hostSync);

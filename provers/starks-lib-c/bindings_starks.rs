@@ -762,14 +762,12 @@ extern "C" {
     pub fn get_first_gpu_buffer(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 
     pub fn get_layout_offset(d_buffers: *mut ::std::os::raw::c_void, which: u32) -> u64;
-    pub fn reload_aggregation_const_pols(d_buffers: *mut ::std::os::raw::c_void, to_agg_byte: u64);
-    pub fn set_debug_clobber_top(d_buffers: *mut ::std::os::raw::c_void, top_byte: u64);
+    pub fn restore_after_carve(d_buffers: *mut ::std::os::raw::c_void);
     pub fn debug_clobber_unified(d_buffers: *mut ::std::os::raw::c_void);
-    pub fn late_region_invalidate(d_buffers: *mut ::std::os::raw::c_void);
     pub fn invalidate_stream_contexts(d_buffers: *mut ::std::os::raw::c_void);
     pub fn get_stream_commit_slots(d_buffers: *mut ::std::os::raw::c_void) -> u64;
     pub fn get_stream_commit_gpus(d_buffers: *mut ::std::os::raw::c_void) -> u64;
-    pub fn stream_commit_slot_layout(
+    pub fn stream_commit_slot_bytes(
         pSetupCtx: *mut ::std::os::raw::c_void,
         airgroupId: u64,
         airId: u64,
@@ -780,7 +778,6 @@ extern "C" {
         inputBytes: u64,
         packed: u64,
         indexed: u64,
-        out: *mut u64,
     ) -> u64;
     pub fn configure_stream_commit_slots(d_buffers: *mut ::std::os::raw::c_void);
     pub fn commit_witness_streaming(
@@ -878,6 +875,7 @@ extern "C" {
     ) -> u64;
     pub fn mul_reset();
     pub fn mul_begin_job(d_buffers_: *mut ::std::os::raw::c_void);
+    pub fn mul_hold_late_region(d_buffers_: *mut ::std::os::raw::c_void);
     pub fn mul_end_contributions(d_buffers_: *mut ::std::os::raw::c_void);
     pub fn mul_clear_registry();
     pub fn mul_fold(airId: u64, hostAcc: *mut u64);
