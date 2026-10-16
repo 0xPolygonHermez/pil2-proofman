@@ -12,6 +12,8 @@
 #include "goldilocks_trace_layout.cuh"  // Layout enum, getBufferOffset (fromRowMajorToColMajor)
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
+#include "const_slot_table.hpp"
+#include "unified_buffer_layout.hpp"  // PINNED_AUX_VALUES_MAX
 #include <mutex>
 #include <condition_variable>
 #include <map>
@@ -25,6 +27,7 @@
 #include "fr.hpp"
 #endif
 #include "gl64_t.cuh"
+#include "unified_buffer_layout.hpp"
 
 // Reduce a Goldilocks value from partially reduced form [0, 2*MOD) to canonical form [0, MOD)
 // This is needed when converting Goldilocks values to other field representations (e.g., BN128)
@@ -75,6 +78,10 @@ struct AirInstanceInfo {
     // The packed const pols are not resident: they live in host pinned memory and take a slot of
     // DeviceCommitBuffers::constCache at launch (const_pols_offset is UINT64_MAX).
     bool constCached = false;
+    int64_t constKey = -1;  // slot-cache key, set by load_host_const_pols
+    // Host mode (DeviceCommitBuffers::basicFixedOnHost): the pinned packed blobs the readers use.
+    Goldilocks::Element *hostConstPols = nullptr;
+    Goldilocks::Element *hostCustomPols = nullptr;
 
     ExpressionsGPU *expressions_gpu;
     int64_t *opening_points;
@@ -340,9 +347,6 @@ struct AirInstanceInfo {
 };
 
 
-// Upper bound on per-stream staged aux_values; call sites assert the actual size fits.
-#define PINNED_AUX_VALUES_MAX 65536
-
 // Per-slot pinned host scratch (DeviceCommitBuffers::streamCommitHost): root, widths, GW inputs.
 #define STREAM_COMMIT_HOST_ROOT_WORDS 4
 #define STREAM_COMMIT_HOST_WIDTH_WORDS 4096   // SC_MAX_COLS (static_assert in starks_api.cu)
@@ -428,8 +432,8 @@ struct StreamData{
 
     // Which fixed columns this stream's aux trace holds, not which air it last served: airs
     // with identical fixed share a const-pols slot, so the offset is the key. constAggBuffer
-    // separates the two const buffers (unrelated offsets), constRecurserId the recursers
-    // (one shared slot). custom_fixed is per-air and stays keyed on the air.
+    // separates the two const buffers (unrelated offsets); constRecurserId holds a const-cached
+    // set's "cache:<key>" (its offset is UINT64_MAX). custom_fixed is per-air and stays keyed on the air.
     uint64_t constPolsOffset = UINT64_MAX; // UINT64_MAX = nothing cached
     // Where the unpacked pols land in the aux trace. Part of the key because two airs can in
     // principle share a slot yet lay out ("const", false) differently.
@@ -581,12 +585,6 @@ struct StreamData{
         constTreeResident = false;
     }
 
-    // Const-cache slots the proofs in flight on this stream read, by pinned-staging parity (the
-    // ring half the launch rode; 0 on ring-less streams). A parity is reused only once the proof it
-    // belonged to completed (ring depth 2, or the legacy sync-and-collect), so overwriting the pin
-    // there releases the slot exactly when it may be recycled. -1 = none.
-    int32_t constSlotPin[2] = {-1, -1};
-
     // Claim this slot; true if it was already claimed, i.e. the unpacked const pols still
     // apply -- even to a different air sharing them. A change also drops constTreeResident.
     bool adoptFixedSlot(uint64_t offset, uint64_t auxOffset, bool aggBuffer, const string &recurser){
@@ -690,33 +688,34 @@ struct DeviceCommitBuffers
 {
     gl64_t **d_constPols;
     gl64_t **d_constPolsAggregation;
-    // ---- Recursive1 const slot cache. The 44 recursive1 setups each have a 100 MiB packed const
-    // set, read once per proof (unpacked into the aux trace, tree rebuilt on device); a block uses
-    // ~20 of them. Instead of one resident slot per setup, the aggregation const buffer holds
-    // `nSlots` slots (RECURSIVE1_CONST_SLOTS on the Rust side, which sizes the region), each tagged
-    // with the air whose set it holds. A launch hits when a slot holds its air; else it takes an
-    // unpinned slot (least recently used), uploads the set from the host pinned copy on its own
-    // stream ahead of the unpack, and tags it. Slots read by proofs in flight are pinned by their
-    // stream (StreamData::constSlotPin), so a live set is never recycled. `ready[s]` is recorded
-    // after the upload: a hit on another stream waits on it. One cache per GPU, tags shared under
-    // constCacheMutex. hits/misses are per job, logged at reset.
+    // ---- Aggregation const slot cache. Every aggregation const set (recursive1, compressor,
+    // recursive2, the finals) lives in host pinned memory and takes a slot at launch: slot 0 fits
+    // the largest set, the other LRU slots the recursive size, and pinned slots (recursive2, the
+    // finals when planned) sit above them (ConstSlotTable). Tags are typed keys (constSlotKey). A
+    // launch hits when a slot holds its key; else a pinned key reloads its own slot and any other
+    // key takes the least recently used LRU slot that fits with no pending reader, uploading the
+    // set from the host copy ahead of the unpack. A proof reads its slot only to unpack it into its
+    // own aux trace: `pending[s]` counts readers whose unpack is not enqueued yet, and `consumed[s]`
+    // is recorded after the last enqueued unpack, so an upload into `s` waits on it on the GPU.
+    // `ready[s]` is recorded after the upload: a hit on another stream waits on it. One cache per
+    // GPU, tags shared under constCacheMutex. hits/misses are per job, logged at reset.
     struct ConstSlotCache {
-        static constexpr uint32_t MAX_SLOTS = 32;
-        uint32_t nSlots = 0;
-        uint64_t base = 0;        // element offset in d_constPolsAggregation
-        uint64_t slotElems = 0;
-        int64_t tag[MAX_SLOTS];   // (airgroup << 32 | air) of the set held, -1 = free
-        uint64_t lastUse[MAX_SLOTS];
-        cudaEvent_t ready[MAX_SLOTS] = {};
-        uint64_t useClock = 0;
+        ConstSlotTable t;
+        cudaEvent_t ready[ConstSlotTable::MAX_SLOTS] = {};
+        cudaEvent_t consumed[ConstSlotTable::MAX_SLOTS] = {};
+        bool eventsCreated = false;
         uint64_t hits = 0, misses = 0;
-        bool armed() const { return nSlots > 0; }
-        void clearTags() { for (uint32_t s = 0; s < MAX_SLOTS; s++) { tag[s] = -1; lastUse[s] = 0; } }
+        bool armed() const { return t.nLru > 0; }
     };
     std::vector<ConstSlotCache> constCache;   // per GPU (local index)
+    // Basic fixed pols left in pinned host memory (they did not fit the GPU): kernels read them in
+    // place over PCIe (UVA). Keyed by their offset in the basic const area, shared by groups.
+    bool basicFixedOnHost = false;
+    std::map<uint64_t, Goldilocks::Element *> hostBasicFixed;
     std::mutex constCacheMutex;
+    std::condition_variable constCacheCv;   // a slot's last pending reader enqueued its unpack
     struct HostConstPols { Goldilocks::Element *ptr = nullptr; uint64_t elems = 0; };
-    std::map<int64_t, HostConstPols> hostConstPols;   // air key -> pinned host copy
+    std::map<int64_t, HostConstPols> hostConstPols;   // const set key -> pinned host copy
     gl64_t ***d_aux_trace;
     gl64_t ***d_aux_traceAggregation;
     gl64_t **gpuMemoryBuffer;
@@ -725,6 +724,7 @@ struct DeviceCommitBuffers
 
     uint64_t constPolsSize;
     uint64_t unifiedBufferSize = 0;
+    ubl::Layout layout;  // identical on every GPU
     // Borrow flag for the FIRST GPU's unified buffer only (my_gpu_ids[0]).
     // 0 = free (proofman owns it), 1 = borrowed
     std::atomic<uint32_t> firstGpuBufferBorrowed{0};
@@ -778,40 +778,31 @@ struct DeviceCommitBuffers
     bool hasPhaseAAlias() const { return phaseBAliased && phaseAAliasOffset > 0; }
 
     uint64_t prefetchRegionBytes = 0;  // per GPU
-    // Mops-floor pad: raises the region BELOW the const pols to MOPS_FLOOR_BYTES so the
-    // gpu-mops planner's borrow fits. The planner is offered that region MINUS the streaming-
-    // commit slots (its ceiling is the slot floor); it carves 15.03 GiB of fixed regions (zisk
-    // MAX_CHUNKS x MAX_MEMOPS_PER_CHUNK, block-independent) and uses the REST as its ops pool, and whose exhaustion
-    // aborts the process. zisk's own default pool is 2 GiB: 15.03 + 2 + 2 x 2 GiB slots = 21.1
-    // GiB, hence 22 (pool 2.97 GiB). Clamped to what is free on the first GPU minus
-    // POST_ALLOC_HEADROOM_BYTES, the measured headroom the allocations after the unified buffer
-    // need (per-air setup buffers, .exps.so module loads, transcripts). Short of the floor the
-    // planner falls back to CPU mops at setup and says so. PROOFMAN_GPU_HEADROOM_MB overrides the
-    // headroom (see postAllocHeadroomBytes()): raise it on a card or key where the allocations
-    // after the unified buffer run out of memory; every MB comes out of the single basic stream.
-    static constexpr uint64_t MOPS_FLOOR_BYTES = 22ull << 30;
-    static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 2560ull << 20;
-    uint64_t mopsFloorPadBytes = 0;
+    // The mops window [mopsBase, recursiveBase) zisk's GPU planner needs: 15.03 GiB fixed + 2 GiB pool.
+    // The headroom is kept free after the unified buffer (PROOFMAN_GPU_HEADROOM_MB overrides it).
+    static constexpr uint64_t MOPS_FLOOR_BYTES = 18ull << 30;
+    static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 512ull << 20;
 
     // Witness prefetch zone, one per GPU (the unified buffer's prefetch region): a witness is
     // uploaded on the zone's copy stream ahead of its commit or proof, which consumes it with one
     // D2D and records `drained` so the next upload never overwrites live data. A run of units, each
     // half the largest trace: a witness takes ceil(bytes/unit) consecutive units, at most
-    // PREFETCH_UNIT_SPAN. get_prefetch_witness_slots reports UNITS/SPAN. prefetchArmed means
-    // configure ran: every zone's stream and events exist. instanceId == -1 means free.
-    static constexpr uint32_t PREFETCH_WITNESS_SLOTS = 8;
+    // PREFETCH_UNIT_SPAN. The planner picks nUnits (<= PREFETCH_UNITS_MAX, which sizes the arrays).
+    // prefetchArmed means configure ran: every zone's stream and events exist. instanceId == -1 means free.
+    static constexpr uint32_t PREFETCH_UNITS_MAX = 8;
     static constexpr uint32_t PREFETCH_UNIT_SPAN = 2;
     struct PrefetchZone {
         gl64_t *base = nullptr;
         cudaStream_t stream = nullptr;
-        cudaEvent_t ready[PREFETCH_WITNESS_SLOTS] = {};
-        cudaEvent_t drained[PREFETCH_WITNESS_SLOTS] = {};
+        uint32_t nUnits = 0;
+        cudaEvent_t ready[PREFETCH_UNITS_MAX] = {};
+        cudaEvent_t drained[PREFETCH_UNITS_MAX] = {};
         std::mutex mutex;
         std::mutex copyMutex;       // one staging copies at a time
         // Every unit of a span carries the instance id; only the head carries length and bytes.
-        int64_t instanceId[PREFETCH_WITNESS_SLOTS] = {-1, -1, -1, -1, -1, -1, -1, -1};
-        uint64_t traceBytes[PREFETCH_WITNESS_SLOTS] = {};
-        uint32_t spanUnits[PREFETCH_WITNESS_SLOTS] = {};
+        int64_t instanceId[PREFETCH_UNITS_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1};
+        uint64_t traceBytes[PREFETCH_UNITS_MAX] = {};
+        uint32_t spanUnits[PREFETCH_UNITS_MAX] = {};
     };
     PrefetchZone *prefetchZones = nullptr;  // [n_gpus], local index
     bool prefetchArmed = false;
@@ -821,18 +812,11 @@ struct DeviceCommitBuffers
     static constexpr uint64_t HOST_UPLOAD_CHUNK_BYTES = 32ull << 20;
 
 
-    // Streaming-commit slots (0 until configured): streamCommitSlots per GPU,
-    // carved from the top of each unified buffer, immediately below the prefetch region. A slot
-    // index is global, gpuLocal * streamCommitSlots + j; slot j of a GPU starts at byte offset
-    // streamCommitFloorBytes + j * streamCommitSlotBytes of that GPU's buffer (the layout is the
-    // same on every GPU). On the first GPU the floor is also the ceiling gpu-mops usage must stay
-    // under (UINT64_MAX when disabled, so comparisons degrade to the const-pols one).
+    // Streaming-commit slots (0 until configured): streamCommitSlots per GPU at ubl::slotOffset. A
+    // slot index is global, gpuLocal * streamCommitSlots + j.
     uint64_t streamCommitSlots = 0;
-    uint64_t streamCommitSlotBytes = 0;
-    uint64_t streamCommitFloorBytes = UINT64_MAX;
-    // Stashed at allocation for configure_stream_commit_slots' overlap computation. Non-recursive
-    // streams differ in size, so only their total is meaningful; per-stream offsets are prefix sums.
-    uint64_t auxTraceTotalBytes = 0;
+    uint64_t streamCommitSlotBytes = 0;  // set by the allocation, which carves the slots
+    // Stashed at allocation for configure_stream_commit_slots' overlap computation.
     uint64_t auxTraceRecursiveBytes = 0;
     cudaStream_t *streamCommitStreams = nullptr;  // [n_gpus * streamCommitSlots], global slot index
     // Pinned per-slot staging for the multiplicity hook's publics/values.
@@ -847,6 +831,8 @@ struct DeviceCommitBuffers
     struct SlotRegion {
         std::mutex mutex;
         uint32_t inFlight = 0;
+        // Bumped when inFlight returns to 0: legacy streams may overwrite the slots' scratch from then on.
+        uint32_t gen = 0;
         std::condition_variable cv;
     };
     SlotRegion *streamCommitRegions = nullptr;  // [n_gpus], local index

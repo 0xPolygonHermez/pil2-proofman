@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8};
 use std::sync::Arc;
 use std::sync::Mutex;
 use crate::{plan_stream_layout, StreamClass, StreamLayout};
+use crate::{plan_buffer, BufferPlan, BufferPlanInput, CacheInput, CONST_CACHE_SLOTS_PLAN_MAX};
 use crate::{GpuWitnessAir, GpuWitnessAirs, MpiCtx, ProofmanError};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::fs::File;
@@ -23,8 +24,8 @@ use std::ffi::c_void;
 use proofman_starks_lib_c::{
     upload_custom_commit_packed_c, check_device_memory_c, configure_phase_b_c, get_num_gpus_c, gen_device_buffers_c,
     gen_device_streams_c, alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
-    get_stream_commit_floor_c, get_unified_buffer_gpu_size_c, get_first_gpu_id_c, get_first_gpu_buffer_c,
-    get_mops_floor_bytes_c, get_post_alloc_headroom_bytes_c, get_const_pols_aggregation_offset_c,
+    get_first_gpu_id_c, get_first_gpu_buffer_c, get_mops_floor_bytes_c, get_post_alloc_headroom_bytes_c,
+    get_layout_offset_c, set_basic_fixed_on_host_c, LayoutBoundary,
 };
 use proofman_util::DeviceBuffer;
 
@@ -63,8 +64,6 @@ pub type InstanceMap = HashMap<usize, InstancesInfo>;
 
 pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 
-/// GPU memory (in MB) left unallocated for consumers outside our arena.
-const GPU_MEMORY_RESERVE_MB: u64 = 1536;
 /// Extra free memory (MB) kept when the layout adds the phase-A recursion alias stream: its CUDA
 /// graphs and per-stream device buffers (measured ~0.3 GB at 712 tx, rounded up).
 const PHASE_A_ALIAS_HEADROOM_MB: u64 = 512;
@@ -361,6 +360,8 @@ pub struct ProofCtx<F: PrimeField64> {
     /// pair the device gates on, so a global flag cannot disagree with the per-air setup.
     pub packed_airs: HashSet<(usize, usize)>,
     pub reload_fixed_pols_gpu: Arc<AtomicBool>,
+    /// Basic fixed pols (custom commits included) stay in pinned host memory (set by `set_device_buffers`).
+    pub basic_fixed_on_host: bool,
     /// Set while a contributions witness thread stages the instance before dispatching it itself;
     /// `add_air_instance` then skips the send.
     pub dispatch_deferred: Vec<AtomicBool>,
@@ -374,10 +375,6 @@ pub struct ProofCtx<F: PrimeField64> {
     /// Range tables the prover counts itself, and their counts, keyed by the virtual table's host air.
     /// Held here because the witness library and the host binary each link their own libstarks.
     pub prover_owned_tables: RwLock<Vec<u64>>,
-    /// Set once the prover multiplicities are registered; `prover_owned_tables` may legitimately stay
-    /// empty, so it cannot double as the guard. The C++ registry behind it is process-wide (see
-    /// `register_prover_multiplicities`).
-    pub prover_multiplicities_registered: Mutex<bool>,
 
     /// Virtual-table airs the device produces end to end: the host must neither build their trace nor
     /// skip the instance for looking empty.
@@ -393,12 +390,40 @@ pub struct ProofCtx<F: PrimeField64> {
     /// Phase B: capacity (elements) of each half of the basic stream. An instance whose buffer
     /// exceeds it can only run in phase A; the phase-A countdown counts exactly those.
     pub phase_b_half: usize,
+    /// Witness prefetch units the planner gave each GPU (0 = no zone).
+    pub prefetch_units: u32,
+    /// LRU slots of the aggregation const cache, slot 0 included (the loader carves this many).
+    pub const_cache_lru_slots: usize,
+    /// recursive2 has its pinned slots (false when memory was short: it goes through the LRU).
+    pub const_cache_pin_rec2: bool,
+    /// The planner had room to pin vadcop_final and vadcop_final_compressed.
+    pub const_cache_pin_finals: bool,
+    /// Aggregation const area the carve reserved (words): the loader checks its layout fits.
+    pub aggregation_const_words: u64,
     /// This prover's GPU witness declarations, copied from the options at startup: the one source the
     /// witness side asks before staging kernel inputs.
     pub gpu_witness_airs: GpuWitnessAirs,
 }
 
 pub const MAX_INSTANCES: u64 = 1 << 17;
+
+/// `ubl::AUX_ALIGN`: auxBase and the slot size are rounded up to it.
+const UBL_AUX_ALIGN_BYTES: u64 = 1 << 20;
+/// Streams stay 1 MiB-sized when the mops floor grows them (words).
+const MIB_WORDS: usize = (1 << 20) / 8;
+
+/// Pad (elements) that brings the buffer to `floor_bytes`, aligning auxBase exactly as `ubl::plan` does.
+fn snark_pad_elems(below_aux_bytes: u64, above_aux_elems: u64, floor_bytes: u64) -> u64 {
+    let end = below_aux_bytes.next_multiple_of(UBL_AUX_ALIGN_BYTES) + above_aux_elems * 8;
+    floor_bytes.saturating_sub(end).div_ceil(8)
+}
+
+/// The phase-B basic stream's size: at least the mops floor, at most all the slack.
+fn phase_b_target(current: usize, unused: usize, mops_floor: usize, headroom_extra: usize, align: usize) -> usize {
+    let floor = mops_floor.next_multiple_of(align);
+    let target = current.max(floor).max((current + unused).saturating_sub(headroom_extra)).min(current + unused);
+    (target & !(align - 1)).max(current)
+}
 
 impl<F: PrimeField64> ProofCtx<F> {
     /// The declaration this prover's kernel for the air was registered from, or `None` when the host
@@ -440,7 +465,6 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         Ok(Self {
             prover_owned_tables: RwLock::new(Vec::new()),
-            prover_multiplicities_registered: Mutex::new(false),
             gpu_witness_airs: GpuWitnessAirs::default(),
             device_owned_table_airs: RwLock::new(Vec::new()),
             prover_counts: RwLock::new(HashMap::new()),
@@ -465,12 +489,18 @@ impl<F: PrimeField64> ProofCtx<F> {
             gpu,
             packed_airs: HashSet::new(),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
+            basic_fixed_on_host: false,
             dispatch_deferred: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
             dispatch_pending: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
             witness_staged: (0..MAX_INSTANCES).map(|_| AtomicU8::new(WITNESS_NOT_STAGED)).collect(),
             basic_stream_sizes: Vec::new(),
             phase_b: false,
             phase_b_half: 0,
+            prefetch_units: 0,
+            const_cache_lru_slots: 0,
+            const_cache_pin_rec2: false,
+            const_cache_pin_finals: false,
+            aggregation_const_words: 0,
         })
     }
 
@@ -630,23 +660,61 @@ impl<F: PrimeField64> ProofCtx<F> {
                             )));
                         }
 
-                        // Resident for the process lifetime: no proof DMAs a custom commit.
-                        if setup.gpu && words_per_row > 0 {
-                            upload_custom_commit_packed_c(
-                                airgroup_id as u64,
-                                air_id as u64,
-                                setup.setup_type.into(),
-                                &custom_file_path.to_string_lossy(),
-                                words_per_row,
-                                (&setup.p_setup).into(),
-                                self.get_device_buffers_ptr(),
-                            );
-                        }
+                        self.upload_custom_commit(setup, airgroup_id, air_id, custom_file_path, words_per_row, false);
 
                         self.custom_commits_values.lock().unwrap().insert(
                             custom_commit.name.clone(),
                             (custom_file_path.clone(), root_bytes.to_vec(), words_per_row),
                         );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // Resident (no proof DMAs a custom commit) until a snark carve clobbers it.
+    fn upload_custom_commit(
+        &self,
+        setup: &Setup<F>,
+        airgroup_id: usize,
+        air_id: usize,
+        custom_file_path: &std::path::Path,
+        words_per_row: u64,
+        only_first_gpu: bool,
+    ) {
+        if setup.gpu && words_per_row > 0 {
+            upload_custom_commit_packed_c(
+                airgroup_id as u64,
+                air_id as u64,
+                setup.setup_type.into(),
+                &custom_file_path.to_string_lossy(),
+                words_per_row,
+                (&setup.p_setup).into(),
+                self.get_device_buffers_ptr(),
+                only_first_gpu,
+            );
+        }
+    }
+
+    /// Re-upload every registered custom commit from its file to the first GPU, the one a snark carves.
+    pub fn reupload_custom_commits(&self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
+        // In host mode they live in pinned host blobs, which a carve of the device buffer never touches.
+        if self.basic_fixed_on_host {
+            return Ok(());
+        }
+        let registered = self.custom_commits_values.lock().unwrap().clone();
+        // Airs of one fixed group share the slot: one upload per group and commit.
+        let mut uploaded = HashSet::new();
+        for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
+            for (air_id, _) in airs.iter().enumerate() {
+                let setup = sctx.get_setup(airgroup_id, air_id)?;
+                let owner = sctx.get_fixed_group(airgroup_id, air_id).map_or((airgroup_id, air_id), |g| g.owner);
+                for custom_commit in setup.stark_info.custom_commits.iter().filter(|c| c.stage_widths[0] > 0) {
+                    if let Some((path, _, words_per_row)) = registered.get(&custom_commit.name) {
+                        if uploaded.insert((owner, custom_commit.name.clone())) {
+                            self.upload_custom_commit(setup, airgroup_id, air_id, path, *words_per_row, true);
+                        }
                     }
                 }
             }
@@ -1361,8 +1429,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         max_number_streams_gpu: usize,
         max_number_recursive_streams_gpu: usize,
         final_snark: bool,
-        // Witness prefetch-region area (elements), carved inside the unified buffer (0 = none).
-        prefetch_region_area: u64,
+        // One witness prefetch unit (words), half the largest basic trace (0 = no zone).
+        prefetch_unit_words: u64,
+        // Late region (bytes), and the streaming-commit slots (count, bytes each).
+        late_region_bytes: u64,
+        n_slots: u64,
+        slot_bytes: u64,
         // -> (basic streams/GPU, aggregation workers/GPU, GPUs)
     ) -> ProofmanResult<(u64, u64, u64)> {
         let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
@@ -1379,14 +1451,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         };
 
         if gpu {
-            // Without aggregation nothing later trims the streams back to the post-allocation
-            // headroom (slot scratch, setup buffers, module loads), so reserve it here.
-            let reserve_bytes = if aggregation {
-                GPU_MEMORY_RESERVE_MB * 1024 * 1024
-            } else {
-                (GPU_MEMORY_RESERVE_MB * 1024 * 1024).max(get_post_alloc_headroom_bytes_c())
-            };
-            let reserve = reserve_bytes as f64;
+            // The one headroom for everything allocated after the unified buffer.
+            let reserve = get_post_alloc_headroom_bytes_c() as f64;
             free_memory_gpu = (free_memory_gpu - reserve).max(0.0);
             tracing::info!("Reserving {} of GPU memory for other device consumers", format_bytes(reserve));
         }
@@ -1412,27 +1478,33 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut total_const_area = 0;
         let mut total_const_area_aggregation = 0;
 
-        if gpu {
-            total_const_area += sctx.total_const_pols_size as u64;
-            if aggregation {
-                total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
-            }
+        // Basic fixed: the planner decides whether they are resident (else read from host memory).
+        let basic_fixed_words = if gpu { sctx.total_const_pols_size as u64 } else { 0 };
+        // The planner sizes the const cache; without one (prove-air) the aggregation area is resident.
+        let cache_on = gpu && aggregation && setups_vadcop.cache_normal_words > 0;
+        if gpu && aggregation && !cache_on {
+            total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
         }
 
         // Wrapping here would carve streams out of a budget the card does not have, and only fail
         // later inside cudaMalloc.
+        // + ubl::AUX_ALIGN slack.
+        let late_area = if gpu { (late_region_bytes + UBL_AUX_ALIGN_BYTES).div_ceil(8) } else { 0 };
+        // The first stream must hold one slot, or the carve drops the slots.
+        let slot_floor =
+            if gpu && n_slots > 0 { slot_bytes.next_multiple_of(UBL_AUX_ALIGN_BYTES).div_ceil(8) } else { 0 };
         let max_size_buffer = ((free_memory_gpu / 8.0).floor() as u64)
-            .checked_sub(total_const_area + total_const_area_aggregation)
+            .checked_sub(total_const_area + total_const_area_aggregation + late_area)
             .ok_or_else(|| {
                 ProofmanError::InvalidConfiguration(format!(
-                    "Fixed polynomials need {} but only {} is free on the GPU",
-                    format_bytes((total_const_area + total_const_area_aggregation) as f64 * 8.0),
+                    "Fixed polynomials + late region need {} but only {} is free on the GPU",
+                    format_bytes((total_const_area + total_const_area_aggregation + late_area) as f64 * 8.0),
                     format_bytes(free_memory_gpu),
                 ))
             })?;
 
         // Non-recursive streams also take compressor/vadcop_final launches, which floors their classes.
-        let recursive_capable_size = setups_vadcop.max_prover_recursive_buffer_size;
+        let recursive_capable_size = setups_vadcop.max_prover_recursive_buffer_size.max(slot_floor as usize);
         let max_prover_recursive2_buffer_size =
             if aggregation { setups_vadcop.max_prover_recursive2_buffer_size } else { 0 };
 
@@ -1450,9 +1522,70 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let basic_sizes: Vec<usize> = sctx.prover_buffer_sizes.iter().map(|(_, size)| *size).collect();
 
-        // The prefetch region is carved INSIDE the unified buffer after planning;
-        // hide it from the planner's budget or its streams overrun VRAM.
-        let max_size_buffer = max_size_buffer.saturating_sub(prefetch_region_area);
+        // Prefetch first, then the const cache, then the streams (see buffer_plan.rs).
+        let plan_input = BufferPlanInput {
+            free_words: (free_memory_gpu / 8.0).floor() as u64,
+            fixed_words: total_const_area + total_const_area_aggregation + late_area,
+            budget_words: max_size_buffer,
+            min_stream_words: (sctx
+                .max_prover_buffer_size
+                .max(recursive_capable_size)
+                .max(max_prover_recursive2_buffer_size)) as u64,
+            prefetch_unit_words: if gpu { prefetch_unit_words } else { 0 },
+            basic_fixed_words,
+            cache: cache_on.then(|| CacheInput {
+                slot0_words: setups_vadcop.cache_big_words,
+                normal_words: setups_vadcop.cache_normal_words,
+                rec2_words: setups_vadcop.rec2_words,
+                rec2_fits_lru: setups_vadcop.rec2_fits_lru,
+                finals_words: setups_vadcop.finals_pin_words,
+                rec2_sets: setups_vadcop.rec2_sets,
+                finals_sets: setups_vadcop.finals_sets,
+                slots_cap: CONST_CACHE_SLOTS_PLAN_MAX.min(setups_vadcop.cache_n_lru_keys.max(2)),
+            }),
+        };
+        let plan = if gpu {
+            plan_buffer(&plan_input)?
+        } else {
+            BufferPlan {
+                prefetch_units: 0,
+                cache_slots: 0,
+                pin_rec2: false,
+                pin_finals: false,
+                basic_resident: true,
+                relaxed: false,
+            }
+        };
+        total_const_area = plan.basic_words(&plan_input);
+        self.basic_fixed_on_host = gpu && !plan.basic_resident;
+        set_basic_fixed_on_host_c(d_buffers.get_ptr(), self.basic_fixed_on_host);
+        let prefetch_region_area = plan.prefetch_words(prefetch_unit_words);
+        let cache_words = plan.cache_words(&plan_input);
+        total_const_area_aggregation += cache_words;
+        self.prefetch_units = plan.prefetch_units;
+        self.const_cache_lru_slots = plan.cache_slots;
+        self.const_cache_pin_rec2 = plan.pin_rec2;
+        self.const_cache_pin_finals = plan.pin_finals;
+        if plan.relaxed {
+            tracing::warn!(
+                "GPU memory is short: the plan keeps {} prefetch units, a {}-slot const cache and recursive2 {}",
+                plan.prefetch_units,
+                plan.cache_slots,
+                if plan.pin_rec2 { "pinned" } else { "through the LRU" },
+            );
+        }
+        let max_size_buffer = max_size_buffer - total_const_area - prefetch_region_area - cache_words;
+        if gpu {
+            tracing::info!(
+                "Buffer plan: basic fixed {}, {} prefetch units ({}), {} const cache LRU slots{}, {} left for the streams",
+                if plan.basic_resident { "resident" } else { "on host" },
+                plan.prefetch_units,
+                format_bytes(prefetch_region_area as f64 * 8.0),
+                self.const_cache_lru_slots,
+                if plan.pin_finals { ", finals pinned" } else { "" },
+                format_bytes(max_size_buffer as f64 * 8.0),
+            );
+        }
 
         let layout = match gpu {
             true => plan_stream_layout(
@@ -1475,23 +1608,24 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         // Phase B splits the single basic stream in two halves that host recursion and every basic
         // that fits them (the big ones ran in phase A). The stream is grown into all the slack the
-        // post-allocation headroom leaves (at least to the mops floor, the pre-const area the pad would
-        // otherwise fill), which makes the halves as large as the card allows: the more airs fit a
-        // half, the shorter phase A. The halves must hold the recursive1/recursive2 class. The budget
-        // already excludes GPU_MEMORY_RESERVE_MB, so only the difference to the C++ headroom is kept.
+        // post-allocation headroom leaves (at least to the mops floor), which makes the halves as large
+        // as the card allows: the more airs fit a half, the shorter phase A. The halves must hold the
+        // recursive1/recursive2 class.
+        // The mops window [mopsBase, recursiveBase) starts past the slots.
+        let mops_floor = if gpu {
+            (get_mops_floor_bytes_c() + n_slots * slot_bytes.next_multiple_of(UBL_AUX_ALIGN_BYTES)).div_ceil(8) as usize
+        } else {
+            0
+        };
         let mut layout = layout;
         let mut phase_b_half: usize = 0;
+        let mut alias_headroom_kept = false;
         if gpu && aggregation && layout.n_basic_streams() == 1 && layout.recursive.count == 0 {
-            let floor_area = (get_mops_floor_bytes_c() / 8) as usize;
-            let mut headroom_extra =
-                (get_post_alloc_headroom_bytes_c().saturating_sub(GPU_MEMORY_RESERVE_MB * 1024 * 1024) / 8) as usize;
+            // 2 MiB granularity, so both halves stay 1 MiB aligned.
+            const HALVES_ALIGN: usize = 2 * MIB_WORDS;
+            let mut headroom_extra: usize = 0;
             let current = layout.basic[0].size;
-            let grow_to = |headroom_extra: usize| {
-                current
-                    .max(floor_area.saturating_sub(prefetch_region_area as usize))
-                    .max((current + layout.unused).saturating_sub(headroom_extra))
-                    .min(current + layout.unused)
-            };
+            let grow_to = |extra: usize| phase_b_target(current, layout.unused, mops_floor, extra, HALVES_ALIGN);
             let mut target = grow_to(headroom_extra);
             // The phase-A recursion alias (below) is a fourth device stream, and every stream brings
             // its own CUDA graphs and small device buffers (~0.3 GB measured at 712 tx); when the
@@ -1499,12 +1633,8 @@ impl<F: PrimeField64> ProofCtx<F> {
             if target >= sctx.max_prover_buffer_size + max_prover_recursive2_buffer_size {
                 headroom_extra += (PHASE_A_ALIAS_HEADROOM_MB * 1024 * 1024 / 8) as usize;
                 target = grow_to(headroom_extra);
-            }
-            // 2 MiB granularity, so both halves (and the slot ceiling above them) stay 1 MiB aligned.
-            const HALVES_ALIGN: usize = 2 * (1 << 20) / 8;
-            let aligned = target & !(HALVES_ALIGN - 1);
-            if aligned >= current {
-                target = aligned;
+                // The mops floor may have taken it.
+                alias_headroom_kept = current + layout.unused - target >= headroom_extra;
             }
             let half = target / 2;
             if half >= max_prover_recursive2_buffer_size {
@@ -1520,6 +1650,22 @@ impl<F: PrimeField64> ProofCtx<F> {
             }
         }
 
+        // Phase B already took all the slack; otherwise the large class grows (evenly, so its streams
+        // stay interchangeable) until the basic streams reach the mops floor. Short of it, mops runs on the CPU.
+        if gpu && phase_b_half == 0 {
+            let short = mops_floor.saturating_sub(layout.basic_stream_sizes().iter().sum());
+            let n = layout.basic[0].count;
+            let per = short.div_ceil(n).next_multiple_of(MIB_WORDS).min(layout.unused / n / MIB_WORDS * MIB_WORDS);
+            layout.basic[0].size += per;
+            layout.unused -= per * n;
+            if per * n < short {
+                tracing::warn!(
+                    "the basic streams hold {} of the {} the GPU mops planner needs: it will run on the CPU",
+                    format_bytes(layout.basic_stream_sizes().iter().sum::<usize>() as f64 * 8.0),
+                    format_bytes(mops_floor as f64 * 8.0),
+                );
+            }
+        }
         let aux_trace_sizes: Vec<u64> = layout.basic_stream_sizes().iter().map(|&s| s as u64).collect();
         // Retained so the witness admission can tell which airs are confined to a subset of streams.
         self.basic_stream_sizes = layout.basic_stream_sizes();
@@ -1546,7 +1692,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             n_recursive_streams_per_gpu = 2;
             self.phase_b_half = phase_b_half;
             let largest_basic = sctx.max_prover_buffer_size;
-            if layout.basic[0].size >= largest_basic + max_prover_recursive2_buffer_size {
+            if alias_headroom_kept && layout.basic[0].size >= largest_basic + max_prover_recursive2_buffer_size {
                 phase_a_alias_offset = largest_basic;
                 n_recursive_streams_per_gpu = 3;
             } else {
@@ -1609,28 +1755,27 @@ impl<F: PrimeField64> ProofCtx<F> {
         // Pad the unified buffer up to the snark floor (see GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES),
         // taking only the layout's unused slack. Runs without a wrapper skip it.
         let unified_buffer_pad_area: u64 = if gpu && final_snark {
-            let predicted_unified_buffer: u64 = aux_trace_sizes.iter().sum::<u64>()
-                + prefetch_region_area
+            let below_aux_bytes = (total_const_area + prefetch_region_area) * 8 + late_region_bytes;
+            let above_aux_elems = aux_trace_sizes.iter().sum::<u64>()
                 + if self.phase_b {
                     0
                 } else {
                     n_recursive_streams_per_gpu as u64 * max_prover_recursive2_buffer_size as u64
                 }
-                + total_const_area_aggregation
-                + total_const_area;
-            let floor_elems = GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES.div_ceil(8);
-            let pad = floor_elems.saturating_sub(predicted_unified_buffer).min(layout.unused as u64);
+                + total_const_area_aggregation;
+            let need = snark_pad_elems(below_aux_bytes, above_aux_elems, GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES);
+            let pad = need.min(layout.unused as u64);
             if pad > 0 {
                 tracing::info!(
                     "Padding the unified buffer by {} to reach the {} snark floor",
                     format_bytes(pad as f64 * 8.0),
                     format_bytes(GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES as f64),
                 );
-                if floor_elems.saturating_sub(predicted_unified_buffer) > layout.unused as u64 {
+                if need > layout.unused as u64 {
                     tracing::warn!(
                         "Snark floor not reachable: layout slack is {} short; the final snark \
                          prover will not fit the unified buffer",
-                        format_bytes((floor_elems - predicted_unified_buffer - layout.unused as u64) as f64 * 8.0),
+                        format_bytes((need - layout.unused as u64) as f64 * 8.0),
                     );
                 }
             }
@@ -1639,6 +1784,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             0
         };
 
+        self.aggregation_const_words = total_const_area_aggregation;
         alloc_device_large_buffers_c(
             d_buffers.get_ptr(),
             recursive_stream_size as u64,
@@ -1647,6 +1793,9 @@ impl<F: PrimeField64> ProofCtx<F> {
             unified_buffer_pad_area,
             prefetch_region_area,
             phase_a_alias_offset as u64,
+            late_region_bytes,
+            n_slots,
+            slot_bytes,
         );
 
         self.d_buffers = d_buffers;
@@ -1670,71 +1819,40 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    /// Unified buffer of the FIRST GPU (my_gpu_ids[0]) — the one borrowed via
-    /// `acquire_first_gpu_buffer`, does not touch the current device.
-    ///
-    /// When streaming-commit slots are enabled they occupy the top of the
-    /// buffer and host commits WHILE it is borrowed, so the borrower's usable
-    /// region is capped at the slot floor (allocation-time enforcement: the
-    /// borrower's planner sizes itself within what it is handed). No-op when
-    /// slots are disabled (floor = u64::MAX); the const-pols tail then stays
-    /// reachable and the post-hoc reload check keeps covering it.
+    /// The mops borrow window `[mopsBase, recursiveBase)` of the FIRST GPU's (my_gpu_ids[0]) unified
+    /// buffer: the basic streams past the slots. The recursive streams and the
+    /// aggregation fixed pols above it stay untouched.
     pub fn get_first_gpu_buffer(&self) -> (usize, u64) {
-        let device_buffers_ptr = self.d_buffers.get_ptr();
-        let gpu_buf_ptr = get_first_gpu_buffer_c(device_buffers_ptr) as usize;
-        let gpu_buf_size = get_unified_buffer_gpu_size_c(device_buffers_ptr);
-        let usable = gpu_buf_size.min(get_stream_commit_floor_c(device_buffers_ptr));
-        (gpu_buf_ptr, usable)
+        let (mops_base, size) = self.mops_window();
+        (get_first_gpu_buffer_c(self.d_buffers.get_ptr()) as usize + mops_base as usize, size)
     }
 
-    /// Report how many bytes a borrower of the first GPU's unified buffer actually used.
-    ///
-    /// The buffer's tail holds the once-uploaded fixed pols of every aggregation
-    /// setup (compressor/recursive1/recursive2/vadcop_final). If the borrower's
-    /// usage reached that region they are now garbage, so this raises
-    /// `reload_fixed_pols_gpu`; the proving flow consumes it right after
-    /// `wcm.execute()` and re-uploads them before any proof of the block.
-    /// Call after the borrower finished writing, before or at buffer release.
-    /// No-op on CPU.
+    /// `(mopsBase, size)` of the mops window, in bytes from the buffer base.
+    fn mops_window(&self) -> (u64, u64) {
+        let p = self.d_buffers.get_ptr();
+        let mops_base = get_layout_offset_c(p, LayoutBoundary::MopsBase);
+        (mops_base, get_layout_offset_c(p, LayoutBoundary::RecursiveBase) - mops_base)
+    }
+
+    /// Report how many bytes (from the window base) a borrower of the first GPU's buffer used. Call
+    /// after the borrower finished writing, before or at buffer release. No-op on CPU.
     pub fn report_first_gpu_buffer_usage(&self, used_bytes: u64) {
         if !self.gpu {
             return;
         }
-        let consts_offset = get_const_pols_aggregation_offset_c(self.d_buffers.get_ptr());
-        let buffer_size = get_unified_buffer_gpu_size_c(self.d_buffers.get_ptr());
-        const GB: f64 = (1u64 << 30) as f64;
-        tracing::info!(
-            "GPU mops used {:.2} GB of {:.2} GB unified buffer (const pols at {:.2} GB)",
-            used_bytes as f64 / GB,
-            buffer_size as f64 / GB,
-            consts_offset as f64 / GB,
-        );
-
-        // Streaming-commit slots sit below the const-pols region (u64::MAX when
-        // disabled): usage reaching the slot floor means commits running during
-        // the borrow window may have read clobbered data. Corrupted contribution
-        // roots cannot be repaired post-hoc, so this is a hard error -- the real
-        // protection is the allocation-time capacity handed to the borrower.
-        // `used_bytes` is a count, so the borrower occupies [0, used_bytes) and
-        // the slots start AT `slots_floor`: using exactly the capacity it was
-        // handed is legal, overlapping requires strictly more.
-        let slots_floor = get_stream_commit_floor_c(self.d_buffers.get_ptr());
-        if used_bytes > slots_floor {
+        let (mops_base, size) = self.mops_window();
+        if used_bytes > size {
             panic!(
-                "first-GPU unified buffer borrower used {used_bytes} bytes, reaching the \
-                 streaming-commit slots at offset {slots_floor}; slot commits issued during \
-                 the borrow window are untrustworthy"
+                "first-GPU unified buffer borrower used {used_bytes} bytes, past the {size}-byte window it \
+                 was handed at offset {mops_base}"
             );
         }
-
-        if used_bytes >= consts_offset {
-            tracing::warn!(
-                "first-GPU unified buffer borrower used {used_bytes} bytes, reaching the \
-                 aggregation const-pols region at offset {consts_offset}; scheduling \
-                 fixed-pols re-upload"
-            );
-            self.reload_fixed_pols_gpu.store(true, std::sync::atomic::Ordering::SeqCst);
-        }
+        tracing::info!(
+            "GPU mops used {} of {} (window from {})",
+            format_bytes(used_bytes as f64),
+            format_bytes(size as f64),
+            format_bytes(mops_base as f64),
+        );
     }
 
     /// Device of the first GPU (my_gpu_ids[0]) — the GPU `get_first_gpu_buffer`
@@ -1753,6 +1871,21 @@ mod tests {
     use proofman_fields::Goldilocks;
 
     type Pctx = super::ProofCtx<Goldilocks>;
+
+    /// The padded buffer reaches the floor whatever alignment auxBase gets.
+    #[test]
+    fn snark_pad_matches_the_aux_alignment() {
+        const MIB: u64 = 1 << 20;
+        let end = |below: u64, above: u64, pad: u64| below.next_multiple_of(MIB) + (above + pad) * 8;
+        for below in [MIB, MIB + 8, 2 * MIB - 8] {
+            let floor = 64 * MIB + 4;
+            let pad = super::snark_pad_elems(below, 1000, floor);
+            assert!(end(below, 1000, pad) >= floor);
+            assert!(end(below, 1000, pad) < floor + 8);
+        }
+        // Already past the floor: no pad.
+        assert_eq!(super::snark_pad_elems(64 * MIB, 0, 32 * MIB), 0);
+    }
 
     /// At arity 2 a leaf pays for a whole recursive2 proof, at arity 3 for half of one
     #[test]
@@ -1777,5 +1910,40 @@ mod tests {
         assert_eq!(blake3, 2_457_862_144);
         assert_eq!(poseidon, 155_713_536);
         assert!((15.7..15.9).contains(&(blake3 as f64 / poseidon as f64)));
+    }
+
+    const MIB: usize = (1 << 20) / 8;
+
+    #[test]
+    fn phase_b_grows_into_all_slack_with_one_headroom() {
+        // 1 GB slack, no extra headroom: the stream takes all of it (2 MiB aligned).
+        assert_eq!(super::phase_b_target(20_000 * MIB, 1024 * MIB, 0, 0, 2 * MIB), 21_024 * MIB);
+    }
+
+    #[test]
+    fn phase_b_reaches_the_mops_floor_when_slack_allows() {
+        assert_eq!(
+            super::phase_b_target(10_000 * MIB, 20_000 * MIB, 19_000 * MIB, 25_000 * MIB, 2 * MIB),
+            19_000 * MIB
+        );
+    }
+
+    #[test]
+    fn phase_b_never_exceeds_the_slack() {
+        assert_eq!(super::phase_b_target(10_000 * MIB, 100 * MIB, 50_000 * MIB, 0, 2 * MIB), 10_100 * MIB);
+    }
+
+    #[test]
+    fn phase_b_rounds_an_unaligned_floor_up() {
+        assert_eq!(
+            super::phase_b_target(10_000 * MIB, 20_000 * MIB, 19_001 * MIB, 25_000 * MIB, 2 * MIB),
+            19_002 * MIB
+        );
+    }
+
+    #[test]
+    fn phase_b_keeps_current_when_alignment_would_shrink_it() {
+        // Half a MiB of slack: aligning down falls below `current`, so the stream stays as is.
+        assert_eq!(super::phase_b_target(10_001 * MIB, MIB / 2, 0, 0, 2 * MIB), 10_001 * MIB);
     }
 }

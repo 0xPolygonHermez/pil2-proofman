@@ -1,6 +1,7 @@
 use proofman_common::{
-    GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark,
-    load_const_pols_recursivef, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode, initialize_logger,
+    format_bytes, GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup,
+    calculate_fixed_tree_snark, load_const_pols_recursivef, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode,
+    initialize_logger,
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 use proofman_verifier::VadcopFinalProof;
@@ -16,10 +17,10 @@ use crate::check_const_tree;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
     get_unified_buffer_gpu_for_recursivef_c, pre_allocate_final_snark_prover_c, free_device_buffers_recursivef_c,
-    gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c,
+    gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c, get_unified_buffer_gpu_size_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
-use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof};
+use crate::{verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof, PROVING};
 use serde::{Deserialize, Serialize};
 
 /// Sets GPU mode and verifies that a usable GPU is available when `gpu` is requested.
@@ -234,6 +235,12 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         ensure_gpu_available(gpu)?;
 
+        if d_buffers.is_some() && reload_fixed_pols_gpu.is_none() {
+            return Err(ProofmanError::InvalidConfiguration(
+                "A shared device buffer needs its owner's reload flag: the wrap overwrites it".to_string(),
+            ));
+        }
+
         let setup_recursivef_path =
             PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "recursivef", "recursivef"));
         let setup_snark_path = PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "final", "final"));
@@ -261,7 +268,11 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             false,
         )?;
 
-        check_const_tree(&setup_recursivef, &d_buffers)?;
+        {
+            // On a shared buffer the tree is built over its aux area: not while a ProofMan job runs.
+            let _proving = d_buffers.map(|_| PROVING.lock().unwrap_or_else(|e| e.into_inner()));
+            check_const_tree(&setup_recursivef, &d_buffers)?;
+        }
 
         let mut recursivef_const_pols_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_pols_size];
         load_const_pols_recursivef(&setup_recursivef, &mut recursivef_const_pols_buf);
@@ -291,6 +302,18 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         let verkey_str: String = serde_json::from_str(&contents)
             .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
+
+        if gpu && !d_buffers_vadcop.is_null() {
+            let need = 8 * (setup_recursivef.const_tree_size as u64 + setup_recursivef.prover_buffer_size);
+            let total = get_unified_buffer_gpu_size_c(d_buffers_vadcop);
+            if need > total {
+                return Err(ProofmanError::InvalidConfiguration(format!(
+                    "recursiveF needs {} of device memory but the unified buffer holds {}",
+                    format_bytes(need as f64),
+                    format_bytes(total as f64),
+                )));
+            }
+        }
 
         // Freed if the final SNARK's prover cannot be loaded.
         let d_buffers_recursivef = RecursivefDeviceBuffers(gen_device_buffers_recursivef_c(
@@ -374,11 +397,13 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         // One proof at a time (`proving`), until this one is out. A proof that panicked poisons the
         // lock, and the next one takes it all the same: each proof writes its buffers afresh.
         let _proving = self.proving.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // A shared buffer: no ProofMan job or reset runs while recursiveF and the snark write it.
+        let _shared = self.d_buffers.map(|_| PROVING.lock().unwrap_or_else(|e| e.into_inner()));
 
         // The recursivef's const tree and prover buffer, and the snark's carve, live in the unified
         // buffer and may overwrite its const-pols regions, also in a proof that fails. The flag,
-        // consumed after the next wcm.execute(), re-uploads them before any proof; it is set as
-        // this proof ends, whatever its outcome, before the lock is let go.
+        // consumed by the next job's restore_after_snark, re-uploads them before any proof; it is set as
+        // this proof ends, whatever its outcome, before the locks are let go.
         let _reload = ReloadFixedPolsOnDrop(self.d_buffers.and(self.reload_fixed_pols_gpu.as_deref()));
 
         let recursivef_proof = generate_recursivef_proof(

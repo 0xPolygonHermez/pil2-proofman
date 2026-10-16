@@ -1465,6 +1465,7 @@ pub fn gen_device_streams_c(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn alloc_device_large_buffers_c(
     d_buffers: *mut ::std::os::raw::c_void,
     aux_trace_recursive_area: u64,
@@ -1474,6 +1475,10 @@ pub fn alloc_device_large_buffers_c(
     prefetch_region_area: u64,
     // Phase-A recursion alias offset (elements) over the basic stream, 0 = none.
     phase_a_alias_offset: u64,
+    late_region_bytes: u64,
+    // Streaming-commit slots, carved at the bottom of the aux area; the size is rounded up to 1 MiB.
+    n_slots: u64,
+    slot_bytes: u64,
 ) {
     unsafe {
         alloc_device_large_buffers(
@@ -1484,12 +1489,15 @@ pub fn alloc_device_large_buffers_c(
             unified_buffer_pad_area,
             prefetch_region_area,
             phase_a_alias_offset,
+            late_region_bytes,
+            n_slots,
+            slot_bytes,
         );
     }
 }
 
-pub fn configure_prefetch_zone_c(d_buffers: *mut ::std::os::raw::c_void, witness_bytes: u64) {
-    unsafe { configure_prefetch_zone(d_buffers, witness_bytes) }
+pub fn configure_prefetch_zone_c(d_buffers: *mut ::std::os::raw::c_void, witness_bytes: u64, n_units: u32) {
+    unsafe { configure_prefetch_zone(d_buffers, witness_bytes, n_units) }
 }
 
 /// Stage a witness into the prefetch zone ahead of its commit. Returns the zone's GPU, or -1 when
@@ -1526,10 +1534,6 @@ pub fn release_staged_witness_c(d_buffers: *mut c_void, instance_id: u64) {
 #[cfg(feature = "cpu-only")]
 pub fn release_staged_witness_c(_d_buffers: *mut c_void, _instance_id: u64) {}
 
-pub fn get_prefetch_witness_slots_c() -> u32 {
-    unsafe { get_prefetch_witness_slots() }
-}
-
 pub fn get_mops_floor_bytes_c() -> u64 {
     unsafe { get_mops_floor_bytes() }
 }
@@ -1538,23 +1542,36 @@ pub fn get_post_alloc_headroom_bytes_c() -> u64 {
     unsafe { get_post_alloc_headroom_bytes() }
 }
 
+/// Carves the aggregation const cache's LRU slots; returns its end offset (elements).
 pub fn configure_const_slot_cache_c(
     d_buffers: *mut ::std::os::raw::c_void,
-    base_offset: u64,
-    slot_elems: u64,
-    n_slots: u32,
-) {
-    unsafe { configure_const_slot_cache(d_buffers, base_offset, slot_elems, n_slots) }
+    big_elems: u64,
+    normal_elems: u64,
+    n_lru: u32,
+) -> u64 {
+    unsafe { configure_const_slot_cache(d_buffers, big_elems, normal_elems, n_lru) }
 }
 
+/// Appends a pinned slot for the set `key`; returns the cache's new end offset (elements).
+pub fn pin_const_slot_c(d_buffers: *mut ::std::os::raw::c_void, key: i64, elems: u64) -> u64 {
+    unsafe { pin_const_slot(d_buffers, key, elems) }
+}
+
+/// Basic fixed pols stay in pinned host memory and are read in place (they did not fit the GPU).
+pub fn set_basic_fixed_on_host_c(d_buffers: *mut ::std::os::raw::c_void, on_host: bool) {
+    unsafe { set_basic_fixed_on_host(d_buffers, on_host) }
+}
+
+/// Keeps a set's packed const pols in pinned host memory for the const cache under `key`, the set's
+/// identity (see `const_set_key`), and marks the air cached.
 pub fn load_host_const_pols_c(
     airgroup_id: u64,
     air_id: u64,
     proof_type: &str,
+    key: i64,
     const_filename: &str,
     const_size: u64,
     d_buffers: *mut ::std::os::raw::c_void,
-    only_first_gpu: bool,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let const_filename_name = CString::new(const_filename).unwrap();
@@ -1563,10 +1580,10 @@ pub fn load_host_const_pols_c(
             airgroup_id,
             air_id,
             proof_type_name.as_ptr() as *mut c_char,
+            key,
             const_filename_name.as_ptr() as *mut c_char,
             const_size,
             d_buffers,
-            only_first_gpu,
         )
     }
 }
@@ -1640,9 +1657,37 @@ pub fn get_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::
     unsafe { get_first_gpu_buffer(d_buffers) }
 }
 
-/// Byte offset of the aggregation const-pols region within the first GPU's unified buffer.
-pub fn get_const_pols_aggregation_offset_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
-    unsafe { get_const_pols_aggregation_offset(d_buffers) }
+/// A carve boundary of the unified buffer, numbered as `get_layout_offset_gpu`'s switch reads it.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug)]
+pub enum LayoutBoundary {
+    Late = 0,
+    Prefetch = 1,
+    AuxBase = 2,
+    MopsBase = 3,
+    AggBase = 4,
+    End = 5,
+    RecursiveBase = 6,
+}
+
+/// Byte offset of a carve boundary in each GPU's unified buffer (0 on the CPU backend).
+pub fn get_layout_offset_c(d_buffers: *mut ::std::os::raw::c_void, which: LayoutBoundary) -> u64 {
+    unsafe { get_layout_offset(d_buffers, which as u32) }
+}
+
+/// After a snark's carve of GPU 0: drop its const-cache tags, late region and every stream's cached consts.
+pub fn restore_after_carve_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { restore_after_carve(d_buffers) }
+}
+
+/// Test knob: fill GPU 0's whole unified buffer with 0xFF, as a snark carve would leave it.
+pub fn debug_clobber_unified_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { debug_clobber_unified(d_buffers) }
+}
+
+/// Drop every stream's const-reuse identity, so its next proof reloads the constants cached in aux.
+pub fn invalidate_stream_contexts_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { invalidate_stream_contexts(d_buffers) }
 }
 
 pub fn stream_commit_pause_c() {
@@ -1658,23 +1703,41 @@ pub fn get_stream_commit_gpus_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
     unsafe { get_stream_commit_gpus(d_buffers) }
 }
 
-pub fn get_stream_commit_floor_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
-    unsafe { get_stream_commit_floor(d_buffers) }
-}
-
-/// `input_bytes`: a GPU-witness air's staged-input bound (0 otherwise), which rides in the slot.
+/// One air's slot bytes (its commit area with the col-major tail, then its scratch). None when no
+/// slot can commit the air. `input_bytes`: a GPU-witness air's staged-input bound (0 otherwise).
+#[allow(clippy::too_many_arguments)]
 pub fn stream_commit_slot_bytes_c(
+    p_setup: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
     n_bits: u64,
     n_bits_ext: u64,
     n_cols: u64,
     words_per_row: u64,
     input_bytes: u64,
-) -> u64 {
-    unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row, input_bytes) }
+    packed: bool,
+    indexed: bool,
+) -> Option<u64> {
+    let bytes = unsafe {
+        stream_commit_slot_bytes(
+            p_setup,
+            airgroup_id,
+            air_id,
+            n_bits,
+            n_bits_ext,
+            n_cols,
+            words_per_row,
+            input_bytes,
+            packed as u64,
+            indexed as u64,
+        )
+    };
+    (bytes != 0).then_some(bytes)
 }
 
-pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64) {
-    unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes) }
+/// Enable the slots `alloc_device_large_buffers_c` carved.
+pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { configure_stream_commit_slots(d_buffers) }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1769,7 +1832,7 @@ pub fn load_device_setup_c(
     }
 }
 
-/// Upload an air's packed custom commit into its reserved const-buffer slot. Once per air per GPU.
+/// Upload an air's packed custom commit into its reserved const-buffer slot, on every GPU or the first.
 #[allow(clippy::too_many_arguments)]
 pub fn upload_custom_commit_packed_c(
     airgroup_id: u64,
@@ -1779,6 +1842,7 @@ pub fn upload_custom_commit_packed_c(
     words_per_row: u64,
     p_setup_ctx: *mut c_void,
     d_buffers: *mut ::std::os::raw::c_void,
+    only_first_gpu: bool,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let custom_file_name = CString::new(custom_file).unwrap();
@@ -1791,6 +1855,7 @@ pub fn upload_custom_commit_packed_c(
             words_per_row,
             p_setup_ctx,
             d_buffers,
+            only_first_gpu,
         );
     }
 }
@@ -1911,10 +1976,11 @@ pub fn gpu_witness_register_c(
     airgroup_id: u64,
     air_id: u64,
     bytes_per_op: u64,
+    input_bytes_max: u64,
     emits: i32,
     fill: GpuWitnessFillFn,
 ) {
-    unsafe { gpu_witness_register(d_buffers, airgroup_id, air_id, bytes_per_op, emits, fill) }
+    unsafe { gpu_witness_register(d_buffers, airgroup_id, air_id, bytes_per_op, input_bytes_max, emits, fill) }
 }
 
 /// How many airs the C++ side has registered.
@@ -2028,6 +2094,11 @@ pub unsafe fn mul_scatter_c(
 /// Whether the air looks up any table the prover counts.
 pub fn mul_air_has_jobs_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
     unsafe { mul_air_has_jobs(p_setup, airgroup_id, air_id) != 0 }
+}
+
+/// Late-region bytes per GPU (the multiplicity mirrors; the slot scratch lives in the slots).
+pub fn late_region_bytes_c(with_peers: bool) -> u64 {
+    unsafe { late_region_bytes(with_peers as u64) }
 }
 
 /// Why the air's lookups into prover-owned tables cannot be counted, if they cannot.

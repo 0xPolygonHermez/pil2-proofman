@@ -704,10 +704,13 @@ void StarkInfo::setMapOffsets() {
         mapTotalN += NExtended * mapSectionsN["cm2"];
         mapOffsets[std::make_pair("mt2", true)] = mapTotalN;
         mapTotalN += alignRegion(numNodes);
-        mapOffsets[std::make_pair("cm3", true)] = mapTotalN;
-        mapTotalN += NExtended * mapSectionsN["cm3"];
-        mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
-        mapTotalN += alignRegion(numNodes);
+        // On GPU cm3/mt3 go after q's FRI zone (end of this function) so the expression scratch spans them.
+        if (!gpu) {
+            mapOffsets[std::make_pair("cm3", true)] = mapTotalN;
+            mapTotalN += NExtended * mapSectionsN["cm3"];
+            mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
+            mapTotalN += alignRegion(numNodes);
+        }
     } else {
     mapOffsets[std::make_pair("cm1", false)] = mapTotalN;
 
@@ -813,6 +816,16 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
+    // cm3/mt3 are first written by the quotient commit, so until then the expression scratch
+    // (from mem_exps) runs through them; FRI/STIR only need q and the zone after it.
+    if (gpu && inplaceStageCommit) {
+        mapTotalN = alignRegion(std::max(mapTotalN, maxTotalN));
+        mapOffsets[std::make_pair("cm3", true)] = mapTotalN;
+        mapTotalN += NExtended * mapSectionsN["cm3"];
+        mapOffsets[std::make_pair("mt3", true)] = mapTotalN;
+        mapTotalN += alignRegion(numNodes);
+    }
+
     mapTotalN = std::max(mapTotalN, maxTotalN);
 }
 
@@ -832,7 +845,10 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             maxNBlocks = 512;
 
             uint64_t tmpsUsed = nTmp1 + (nTmp3 + 2) * FIELD_EXTENSION;
-            uint64_t maxTotal = recursive ? mapTotalN + (1 << 26) : mapTotalN + (1 << 25);
+            // The interpreter's grid is sized as if cm3/mt3 still sat below q: same grid, never more memory.
+            uint64_t NExtended = 1ull << starkStruct.nBitsExt;
+            uint64_t cm3Above = inplaceStageCommit ? NExtended * mapSectionsN["cm3"] + alignRegion(getNumNodesMTCommit(NExtended)) : 0;
+            uint64_t maxTotal = (recursive ? mapTotalN + (1 << 26) : mapTotalN + (1 << 25)) - cm3Above;
             while((mapBuffHelper + tmpsUsed * nrowsPack * maxNBlocks) > maxTotal) {
                 if (nrowsPack > 128) {
                     nrowsPack /= 2;
@@ -859,6 +875,11 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
         uint64_t destVals = 2 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
         mapOffsets[std::make_pair("destVals", false)] = mapBuffHelper;
         mapBuffHelper += destVals;
+    }
+
+    // Everything past mem_exps is dead while the quotient runs: the generated Q kernel may use all of it.
+    if(gpu && !verify) {
+        mapOffsets[std::make_pair("mem_exps_end", false)] = std::max(mapBuffHelper, mapTotalN);
     }
 
     if(mapBuffHelper > mapTotalN) {
