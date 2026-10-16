@@ -9,7 +9,7 @@ use pil2_pilout::pilout::hint_field::Value::StringValue;
 use pil2_pilout::pilout::hint_field::Value::Operand;
 use pil2_pilout::pilout::operand::Operand::Constant;
 use proofman_common::initialize_logger;
-use proofman_fields::{Bn128, Field, PrimeField};
+use proofman_fields::{Bn128, Field, Goldilocks, PrimeField};
 use serde::Serialize;
 use tinytemplate::TinyTemplate;
 use std::{fs, path::PathBuf};
@@ -116,14 +116,26 @@ struct StageColumnCtx {
     columns: Vec<ColumnCtx>,
 }
 
-/// Whether `pilout` is over BN128's `Fr`: whether its `baseField`, a big-endian integer, is `r`, the
-/// modulus of [`Bn128`]. Its helpers are then rows over `Bn128` with no packed rows, which are of
+/// Whether `pilout` is over BN128's `Fr` rather than Goldilocks: whether its `baseField`, a big-endian
+/// integer, is `r`, the modulus of [`Bn128`], or Goldilocks' `p` (or empty, as in a pilout that
+/// predates the field). Its helpers are then rows over `Bn128` with no packed rows, which are of
 /// 64-bit words; values of dimension 1, as BN128 has no extension field; and publics that are
-/// `Bn128` values.
-fn is_bn128(pilout: &pil2_pilout::pilout::PilOut) -> bool {
-    let r = Bn128::NEG_ONE.as_canonical_biguint() + 1u32;
+/// `Bn128` values. A pilout over any other field is an error: the helpers are over these two.
+fn is_bn128(pilout: &pil2_pilout::pilout::PilOut) -> Result<bool, String> {
     // An integer: leading zero bytes do not change it.
-    pilout.base_field.iter().skip_while(|&&byte| byte == 0).eq(&r.to_bytes_be())
+    let modulus: Vec<u8> = pilout.base_field.iter().copied().skip_while(|&byte| byte == 0).collect();
+    let r = Bn128::NEG_ONE.as_canonical_biguint() + 1u32;
+    let p = Goldilocks::NEG_ONE.as_canonical_biguint() + 1u32;
+    if modulus == r.to_bytes_be() {
+        Ok(true)
+    } else if pilout.base_field.is_empty() || modulus == p.to_bytes_be() {
+        Ok(false)
+    } else {
+        let hex: String = modulus.iter().map(|byte| format!("{byte:02x}")).collect();
+        Err(format!(
+            "the pilout is over the field of modulus 0x{hex}: pil-helpers writes helpers over Goldilocks and BN128"
+        ))
+    }
 }
 
 impl PilHelpersCmd {
@@ -163,7 +175,7 @@ impl PilHelpersCmd {
 
         // Read the pilout file
         let pilout = PilOutProxy::new(&self.pilout.display().to_string())?;
-        let is_bn128 = is_bn128(&pilout);
+        let is_bn128 = is_bn128(&pilout)?;
         // BN128 has no extension field: every value has dimension 1.
         let extension = if is_bn128 { "F" } else { "FieldExtension<F>" };
         // The type of a public in the public inputs a library reads, and its zero.
@@ -710,6 +722,19 @@ mod tests {
         assert!(!traces.contains("Bn128"), "{traces}");
         assert!(traces.contains("use proofman_common::PackedInfoConst;\n"), "{traces}");
         assert!(traces.contains("pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[\n];"), "{traces}");
+    }
+
+    /// A pilout over a field that is neither Goldilocks nor BN128 is refused, and nothing is written;
+    /// one without a `baseField` is over Goldilocks.
+    #[test]
+    fn a_pilout_over_another_field_is_refused() {
+        let dir = TempDir::new("other_field");
+        let err = pil_helpers(&dir, &pilout(vec![0x7f])).unwrap_err();
+        assert!(err.contains("modulus 0x7f") && err.contains("over Goldilocks and BN128"), "{err}");
+        assert!(!dir.0.join("src").join("pil_helpers").join("traces.rs").exists());
+
+        let traces = pil_helpers(&dir, &pilout(Vec::new())).unwrap();
+        assert!(traces.contains("type FieldExtension<F> = [F; 3];"), "{traces}");
     }
 
     /// A packed row is of 64-bit words: a BN128 pilout with a `witness_bits` hint is refused, and
