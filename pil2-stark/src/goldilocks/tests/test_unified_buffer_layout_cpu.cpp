@@ -27,7 +27,6 @@ TEST(UnifiedBufferLayout, regions_are_ordered_and_contiguous) {
     EXPECT_EQ(L.auxBase % ubl::AUX_ALIGN, 0u);
     EXPECT_GE(L.auxBase, L.prefetch + in.prefetch);
     EXPECT_LT(L.auxBase - (L.prefetch + in.prefetch), ubl::AUX_ALIGN);
-    EXPECT_EQ(L.slotsBase, L.auxBase);
     EXPECT_EQ(L.mopsBase, L.auxBase + in.slots);
     EXPECT_EQ(L.recursiveBase, L.auxBase + in.auxTotal);
     EXPECT_EQ(L.aggBase, L.recursiveBase + in.recursiveTotal);
@@ -46,7 +45,7 @@ TEST(UnifiedBufferLayout, slot_offsets_stay_inside_the_first_stream) {
 TEST(UnifiedBufferLayout, mops_window_is_the_basic_streams) {
     const ubl::In in = zisk();
     const ubl::Layout L = ubl::plan(in);
-    EXPECT_EQ(L.mopsBase, L.slotsEnd);            // past the slots; the late region sits below aux
+    EXPECT_EQ(L.mopsBase, L.auxBase + in.slots);  // past the slots; the late region sits below aux
     EXPECT_LE(L.late + in.lateRegion, L.auxBase);
     EXPECT_LE(L.recursiveBase, L.aggBase);        // below the recursive streams and the const cache
     ubl::In withRec = in;

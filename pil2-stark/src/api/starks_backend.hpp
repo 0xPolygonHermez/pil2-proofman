@@ -55,7 +55,7 @@ struct StarksBackend {
     void (*free_device_buffers)(void *d_buffers);
     void *(*gen_device_buffers_recursivef)(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers, char* verkey);
     void (*free_device_buffers_recursivef)(void *d_buffers);
-    void (*upload_custom_commit_packed)(uint64_t airgroupId, uint64_t airId, char *proofType, char *customFile, uint64_t wordsPerRow, void *pSetupCtx_, void *d_buffers_);
+    void (*upload_custom_commit_packed)(uint64_t airgroupId, uint64_t airId, char *proofType, char *customFile, uint64_t wordsPerRow, void *pSetupCtx_, void *d_buffers_, bool onlyFirstGPU);
     void (*reserve_custom_commit_slot)(uint64_t airgroupId, uint64_t airId, char *proofType, uint64_t offset, uint64_t reservedWords, void *d_buffers_, bool onlyFirstGPU);
     void (*load_device_const_pols)(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
     void (*load_device_setup)(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords);
@@ -84,7 +84,7 @@ struct StarksBackend {
     void (*release_staged_witness)(void *d_buffers_, uint64_t instanceId);
     uint64_t (*get_mops_floor_bytes)();
     uint64_t (*get_post_alloc_headroom_bytes)();
-    uint64_t (*configure_const_slot_cache)(void *d_buffers_, uint64_t baseOffset, uint64_t bigElems, uint64_t normalElems, uint32_t nLru);
+    uint64_t (*configure_const_slot_cache)(void *d_buffers_, uint64_t bigElems, uint64_t normalElems, uint32_t nLru);
     uint64_t (*pin_const_slot)(void *d_buffers_, int64_t key, uint64_t elems);
     void (*set_basic_fixed_on_host)(void *d_buffers_, bool onHost);
     void (*load_host_const_pols)(uint64_t airgroupId, uint64_t airId, char *proofType, int64_t key, char *constFilename, uint64_t constSize, void *d_buffers_);

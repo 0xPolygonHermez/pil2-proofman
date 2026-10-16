@@ -655,6 +655,7 @@ extern "C" {
         wordsPerRow: u64,
         pSetupCtx_: *mut ::std::os::raw::c_void,
         d_buffers_: *mut ::std::os::raw::c_void,
+        onlyFirstGPU: bool,
     );
 
     pub fn reserve_custom_commit_slot(
@@ -727,7 +728,6 @@ extern "C" {
     pub fn get_post_alloc_headroom_bytes() -> u64;
     pub fn configure_const_slot_cache(
         d_buffers_: *mut ::std::os::raw::c_void,
-        baseOffset: u64,
         bigElems: u64,
         normalElems: u64,
         nLru: u32,

@@ -12,6 +12,7 @@
 #include "witness_hints_slot.hpp"
 #include "zklog.hpp"
 #include "late_arena.hpp"
+#include "unified_buffer_layout.hpp"
 
 extern "C" {
 
@@ -191,9 +192,8 @@ void stream_commit_scratch_elems(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     SetupCtx &s = *(SetupCtx *)pSetupCtx_;
     const StarkInfo &si = s.starkInfo;
     const uint64_t N = 1ull << si.starkStruct.nBits;
-    // 65536 = PINNED_AUX_VALUES_MAX, from a CUDA-only header.
     const uint64_t nAll = si.nPublics + si.proofValuesSize + si.airgroupValuesSize + si.airValuesSize;
-    const uint64_t nVals = nAll <= 65536 ? nAll : 0;
+    const uint64_t nVals = nAll <= PINNED_AUX_VALUES_MAX ? nAll : 0;
     const int64_t dest = slotHintDestCount(s);
     const bool hints = dest > 0;
     const bool jobs = !mulDecoders().empty() && !mulPlanFor(s, airgroupId, airId).jobs.empty();

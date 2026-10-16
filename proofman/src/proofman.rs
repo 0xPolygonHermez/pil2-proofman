@@ -3722,11 +3722,8 @@ where
         // Dequeue-ahead prefetch (witness-zone mode): the worker dequeues the next
         // ready basics from the scheduler ahead of dispatch. Only READY
         // (stored/computed) witnesses ever enter the scheduler queue, so a held
-        // instance is always launchable. Single basic stream only; default ON with
-        // the zone, PROOFMAN_PREFETCH=0 disables.
-        let prefetch_dequeue_ahead = self.pctx.gpu
-            && self.n_streams_non_recursive == 1
-            && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true);
+        // instance is always launchable. Single basic stream only; on with the zone the planner armed.
+        let prefetch_dequeue_ahead = self.pctx.gpu && self.n_streams_non_recursive == 1 && self.pctx.prefetch_units > 0;
         self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
 
         // Key-affinity recursive scheduler (GPU only; CPU has no streams and uses the witness

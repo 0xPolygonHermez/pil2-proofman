@@ -9,12 +9,13 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "unified_buffer_layout.hpp"
 
 // A tag keeps its address for the buffer's life (scatter programs embed it); invalidation only bumps gen.
 constexpr uint64_t LATE_ALIGN = 256;
 enum class LateRc { Ok, Unbound, Overrun, Regrow };
 
-inline uint64_t lateAlignUp(uint64_t v) { return (v + LATE_ALIGN - 1) / LATE_ALIGN * LATE_ALIGN; }
+inline uint64_t lateAlignUp(uint64_t v) { return ubl::alignUp(v, LATE_ALIGN); }
 
 // Bytes lateArenaAlloc needs for `blocks`; +LATE_ALIGN: the base is only 8-byte aligned.
 inline uint64_t latePlanBytes(const std::vector<uint64_t> &blocks) {
@@ -45,10 +46,11 @@ inline void lateArenaResetLocked(LateArenaState &a, void *base, uint64_t cap) {
 inline void lateArenaBind(int gpuId, void *base, uint64_t cap) {
     std::lock_guard<std::mutex> lk(lateArenaMutex());
     LateArenaState &a = lateArenas()[gpuId];
-    // Live tags mean caches still hold pointers into the old region; mul_release_device first.
-    if (a.base != nullptr && !a.tags.empty()) {
-        fprintf(stderr, "lateArenaBind: gpu %d is still bound with %zu tags; release it before rebinding\n", gpuId,
-                a.tags.size());
+    // The multiplicity state is process-wide: a second live unified buffer on this GPU would move it
+    // under the first one's feet. Freeing the buffers unbinds, so ProofMans may follow each other.
+    if (a.base != nullptr) {
+        fprintf(stderr, "lateArenaBind: gpu %d's late region is still bound to another live unified buffer; "
+                        "only one GPU ProofMan per process may be alive at a time\n", gpuId);
         abort();
     }
     lateArenaResetLocked(a, base, cap);

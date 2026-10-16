@@ -17,7 +17,7 @@ use proofman_starks_lib_c::{
     configure_const_slot_cache_c, load_device_const_pols_c, load_host_const_pols_c, pin_const_slot_c,
     reserve_custom_commit_slot_c,
 };
-use proofman_starks_lib_c::{get_layout_offset_c, get_unified_buffer_gpu_c, invalidate_stream_contexts_c};
+use proofman_starks_lib_c::{get_layout_offset_c, get_unified_buffer_gpu_c, invalidate_stream_contexts_c, LayoutBoundary};
 use proofman_starks_lib_c::verify_root_bn128_from_tree_c;
 use proofman_starks_lib_c::pack_const_pols_c;
 use proofman_starks_lib_c::{
@@ -346,7 +346,10 @@ fn const_tree_scratch<F: PrimeField64>(setup: &Setup<F>, d_buffers: *mut c_void)
     } else {
         2 * n_ext * n_const
     };
-    let (aux, agg) = (get_layout_offset_c(d_buffers, 2), get_layout_offset_c(d_buffers, 4));
+    let (aux, agg) = (
+        get_layout_offset_c(d_buffers, LayoutBoundary::AuxBase),
+        get_layout_offset_c(d_buffers, LayoutBoundary::AggBase),
+    );
     if need > agg.saturating_sub(aux) {
         return Err(ProofmanError::InvalidConfiguration(format!(
             "const-tree regeneration of {} needs {} of device scratch but the aux area holds {}",
@@ -1120,19 +1123,13 @@ pub fn load_device_const_pols<F: PrimeField64>(
         // LRU first (slot 0 lowest), then the final pins, then recursive2 on top.
         let mut end = configure_const_slot_cache_c(
             d_buffers,
-            0,
             setups.cache_big_words,
             setups.cache_normal_words,
             pctx.const_cache_lru_slots as u32,
         );
-        let pinned = |kind: CacheSetKind| match kind {
-            CacheSetKind::Final => pctx.const_cache_pin_finals,
-            CacheSetKind::Recursive2 => pctx.const_cache_pin_rec2,
-            CacheSetKind::Lru => false,
-        };
-        let pinned_kinds: Vec<CacheSetKind> =
-            [CacheSetKind::Final, CacheSetKind::Recursive2].into_iter().filter(|&k| pinned(k)).collect();
-        for kind in &pinned_kinds {
+        let pinned_kinds =
+            [(CacheSetKind::Final, pctx.const_cache_pin_finals), (CacheSetKind::Recursive2, pctx.const_cache_pin_rec2)];
+        for kind in pinned_kinds.iter().filter(|(_, on)| *on).map(|(kind, _)| kind) {
             for set in sets.iter().filter(|s| s.kind == *kind && s.setup.gpu) {
                 end = pin_const_slot_c(
                     d_buffers,

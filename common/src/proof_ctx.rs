@@ -25,7 +25,7 @@ use proofman_starks_lib_c::{
     upload_custom_commit_packed_c, check_device_memory_c, configure_phase_b_c, get_num_gpus_c, gen_device_buffers_c,
     gen_device_streams_c, alloc_device_large_buffers_c, acquire_first_gpu_buffer_c, release_first_gpu_buffer_c,
     get_first_gpu_id_c, get_first_gpu_buffer_c, get_mops_floor_bytes_c, get_post_alloc_headroom_bytes_c,
-    get_layout_offset_c, set_basic_fixed_on_host_c,
+    get_layout_offset_c, set_basic_fixed_on_host_c, LayoutBoundary,
 };
 use proofman_util::DeviceBuffer;
 
@@ -660,7 +660,7 @@ impl<F: PrimeField64> ProofCtx<F> {
                             )));
                         }
 
-                        self.upload_custom_commit(setup, airgroup_id, air_id, custom_file_path, words_per_row);
+                        self.upload_custom_commit(setup, airgroup_id, air_id, custom_file_path, words_per_row, false);
 
                         self.custom_commits_values.lock().unwrap().insert(
                             custom_commit.name.clone(),
@@ -681,6 +681,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         air_id: usize,
         custom_file_path: &std::path::Path,
         words_per_row: u64,
+        only_first_gpu: bool,
     ) {
         if setup.gpu && words_per_row > 0 {
             upload_custom_commit_packed_c(
@@ -691,23 +692,29 @@ impl<F: PrimeField64> ProofCtx<F> {
                 words_per_row,
                 (&setup.p_setup).into(),
                 self.get_device_buffers_ptr(),
+                only_first_gpu,
             );
         }
     }
 
-    /// Re-upload every registered custom commit from its file.
+    /// Re-upload every registered custom commit from its file to the first GPU, the one a snark carves.
     pub fn reupload_custom_commits(&self, sctx: &SetupCtx<F>) -> ProofmanResult<()> {
         // In host mode they live in pinned host blobs, which a carve of the device buffer never touches.
         if self.basic_fixed_on_host {
             return Ok(());
         }
         let registered = self.custom_commits_values.lock().unwrap().clone();
+        // Airs of one fixed group share the slot: one upload per group and commit.
+        let mut uploaded = HashSet::new();
         for (airgroup_id, airs) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id)?;
+                let owner = sctx.get_fixed_group(airgroup_id, air_id).map_or((airgroup_id, air_id), |g| g.owner);
                 for custom_commit in setup.stark_info.custom_commits.iter().filter(|c| c.stage_widths[0] > 0) {
                     if let Some((path, _, words_per_row)) = registered.get(&custom_commit.name) {
-                        self.upload_custom_commit(setup, airgroup_id, air_id, path, *words_per_row);
+                        if uploaded.insert((owner, custom_commit.name.clone())) {
+                            self.upload_custom_commit(setup, airgroup_id, air_id, path, *words_per_row, true);
+                        }
                     }
                 }
             }
@@ -1567,6 +1574,7 @@ impl<F: PrimeField64> ProofCtx<F> {
                 if plan.pin_rec2 { "pinned" } else { "through the LRU" },
             );
         }
+        let max_size_buffer = max_size_buffer - total_const_area - prefetch_region_area - cache_words;
         if gpu {
             tracing::info!(
                 "Buffer plan: basic fixed {}, {} prefetch units ({}), {} const cache LRU slots{}, {} left for the streams",
@@ -1575,10 +1583,9 @@ impl<F: PrimeField64> ProofCtx<F> {
                 format_bytes(prefetch_region_area as f64 * 8.0),
                 self.const_cache_lru_slots,
                 if plan.pin_finals { ", finals pinned" } else { "" },
-                format_bytes((max_size_buffer - total_const_area - prefetch_region_area - cache_words) as f64 * 8.0),
+                format_bytes(max_size_buffer as f64 * 8.0),
             );
         }
-        let max_size_buffer = max_size_buffer - total_const_area - prefetch_region_area - cache_words;
 
         let layout = match gpu {
             true => plan_stream_layout(
@@ -1615,7 +1622,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut alias_headroom_kept = false;
         if gpu && aggregation && layout.n_basic_streams() == 1 && layout.recursive.count == 0 {
             // 2 MiB granularity, so both halves stay 1 MiB aligned.
-            const HALVES_ALIGN: usize = 2 * (1 << 20) / 8;
+            const HALVES_ALIGN: usize = 2 * MIB_WORDS;
             let mut headroom_extra: usize = 0;
             let current = layout.basic[0].size;
             let grow_to = |extra: usize| phase_b_target(current, layout.unused, mops_floor, extra, HALVES_ALIGN);
@@ -1816,9 +1823,15 @@ impl<F: PrimeField64> ProofCtx<F> {
     /// buffer: the basic streams past the slots. The recursive streams and the
     /// aggregation fixed pols above it stay untouched.
     pub fn get_first_gpu_buffer(&self) -> (usize, u64) {
+        let (mops_base, size) = self.mops_window();
+        (get_first_gpu_buffer_c(self.d_buffers.get_ptr()) as usize + mops_base as usize, size)
+    }
+
+    /// `(mopsBase, size)` of the mops window, in bytes from the buffer base.
+    fn mops_window(&self) -> (u64, u64) {
         let p = self.d_buffers.get_ptr();
-        let mops_base = get_layout_offset_c(p, 3);
-        (get_first_gpu_buffer_c(p) as usize + mops_base as usize, get_layout_offset_c(p, 6) - mops_base)
+        let mops_base = get_layout_offset_c(p, LayoutBoundary::MopsBase);
+        (mops_base, get_layout_offset_c(p, LayoutBoundary::RecursiveBase) - mops_base)
     }
 
     /// Report how many bytes (from the window base) a borrower of the first GPU's buffer used. Call
@@ -1827,9 +1840,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         if !self.gpu {
             return;
         }
-        let p = self.d_buffers.get_ptr();
-        let mops_base = get_layout_offset_c(p, 3);
-        let size = get_layout_offset_c(p, 6) - mops_base;
+        let (mops_base, size) = self.mops_window();
         if used_bytes > size {
             panic!(
                 "first-GPU unified buffer borrower used {used_bytes} bytes, past the {size}-byte window it \

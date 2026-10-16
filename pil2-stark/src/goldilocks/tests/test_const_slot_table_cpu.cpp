@@ -3,7 +3,7 @@
 
 static ConstSlotTable table(uint32_t nLru) {
     ConstSlotTable t;
-    t.layout(1000, 300, 100, nLru);
+    t.layout(300, 100, nLru);
     return t;
 }
 

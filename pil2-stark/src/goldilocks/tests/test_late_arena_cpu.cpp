@@ -77,10 +77,10 @@ TEST(LateArena, misaligned_base_aligns_absolute_address) {
 }
 
 TEST(LateArena, empty_region_stays_unbound) {
-    lateArenaBind(7, mem, sizeof(mem));
     const uint32_t g = lateArenaGen(7);
     lateArenaBind(7, mem, 0);
     EXPECT_NE(lateArenaGen(7), g);
+    EXPECT_FALSE(lateArenaBound(7));
     void *a = nullptr;
     EXPECT_EQ(lateArenaAlloc(7, "x", 8, &a), LateRc::Unbound);
     EXPECT_EQ(lateArenaCap(7), 0u);
@@ -102,11 +102,14 @@ TEST(LateArena, owns_only_its_bound_range) {
     EXPECT_FALSE(lateArenaOwns(7, a));
 }
 
-TEST(LateArenaDeathTest, rebind_with_tags_is_refused) {
+TEST(LateArenaDeathTest, rebind_while_bound_is_refused) {
     lateArenaBind(8, mem, sizeof(mem));
+    EXPECT_DEATH(lateArenaBind(8, mem, sizeof(mem)), "still bound");  // even without tags
     void *a = nullptr;
     ASSERT_EQ(lateArenaAlloc(8, "x", 8, &a), LateRc::Ok);
     EXPECT_DEATH(lateArenaBind(8, mem, sizeof(mem)), "still bound");
+    lateArenaUnbind(8);
+    lateArenaBind(8, mem, sizeof(mem));  // a later buffer may bind once the first unbinds
     lateArenaUnbind(8);
 }
 

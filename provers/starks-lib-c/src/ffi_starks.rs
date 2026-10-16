@@ -1576,12 +1576,11 @@ pub fn get_post_alloc_headroom_bytes_c() -> u64 {
 /// Carves the aggregation const cache's LRU slots; returns its end offset (elements).
 pub fn configure_const_slot_cache_c(
     d_buffers: *mut ::std::os::raw::c_void,
-    base_offset: u64,
     big_elems: u64,
     normal_elems: u64,
     n_lru: u32,
 ) -> u64 {
-    unsafe { configure_const_slot_cache(d_buffers, base_offset, big_elems, normal_elems, n_lru) }
+    unsafe { configure_const_slot_cache(d_buffers, big_elems, normal_elems, n_lru) }
 }
 
 /// Appends a pinned slot for the set `key`; returns the cache's new end offset (elements).
@@ -1689,10 +1688,22 @@ pub fn get_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::
     unsafe { get_first_gpu_buffer(d_buffers) }
 }
 
-/// Byte offset of a carve boundary in each GPU's unified buffer: 0 late, 1 prefetch, 2 auxBase,
-/// 3 mopsBase, 4 aggBase, 5 end, 6 recursiveBase (0 on the CPU backend).
-pub fn get_layout_offset_c(d_buffers: *mut ::std::os::raw::c_void, which: u32) -> u64 {
-    unsafe { get_layout_offset(d_buffers, which) }
+/// A carve boundary of the unified buffer, numbered as `get_layout_offset_gpu`'s switch reads it.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug)]
+pub enum LayoutBoundary {
+    Late = 0,
+    Prefetch = 1,
+    AuxBase = 2,
+    MopsBase = 3,
+    AggBase = 4,
+    End = 5,
+    RecursiveBase = 6,
+}
+
+/// Byte offset of a carve boundary in each GPU's unified buffer (0 on the CPU backend).
+pub fn get_layout_offset_c(d_buffers: *mut ::std::os::raw::c_void, which: LayoutBoundary) -> u64 {
+    unsafe { get_layout_offset(d_buffers, which as u32) }
 }
 
 /// After a snark's carve of GPU 0: drop its const-cache tags, late region and every stream's cached consts.
@@ -1852,7 +1863,7 @@ pub fn load_device_setup_c(
     }
 }
 
-/// Upload an air's packed custom commit into its reserved const-buffer slot. Once per air per GPU.
+/// Upload an air's packed custom commit into its reserved const-buffer slot, on every GPU or the first.
 #[allow(clippy::too_many_arguments)]
 pub fn upload_custom_commit_packed_c(
     airgroup_id: u64,
@@ -1862,6 +1873,7 @@ pub fn upload_custom_commit_packed_c(
     words_per_row: u64,
     p_setup_ctx: *mut c_void,
     d_buffers: *mut ::std::os::raw::c_void,
+    only_first_gpu: bool,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let custom_file_name = CString::new(custom_file).unwrap();
@@ -1874,6 +1886,7 @@ pub fn upload_custom_commit_packed_c(
             words_per_row,
             p_setup_ctx,
             d_buffers,
+            only_first_gpu,
         );
     }
 }

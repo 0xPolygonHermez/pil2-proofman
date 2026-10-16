@@ -8,7 +8,6 @@ struct ConstSlotTable {
     static constexpr uint32_t MAX_SLOTS = 64;
     uint32_t nSlots = 0;
     uint32_t nLru = 0;
-    uint64_t base = 0;
     uint64_t offset[MAX_SLOTS] = {};
     uint64_t elems[MAX_SLOTS] = {};
     int64_t pinnedKey[MAX_SLOTS];
@@ -18,12 +17,11 @@ struct ConstSlotTable {
     uint32_t pending[MAX_SLOTS] = {};
     uint64_t useClock = 0;
 
-    ConstSlotTable() { layout(0, 0, 0, 0); }
+    ConstSlotTable() { layout(0, 0, 0); }
 
     uint64_t end() const { return nSlots == 0 ? 0 : offset[nSlots - 1] + elems[nSlots - 1]; }
 
-    void layout(uint64_t base_, uint64_t bigElems, uint64_t normalElems, uint32_t nLru_) {
-        base = base_;
+    void layout(uint64_t bigElems, uint64_t normalElems, uint32_t nLru_) {
         nLru = nLru_;
         nSlots = nLru_;
         uint64_t off = 0;

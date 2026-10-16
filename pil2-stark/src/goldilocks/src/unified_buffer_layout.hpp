@@ -3,6 +3,10 @@
 
 #include <cstdint>
 
+// Upper bound on per-stream staged aux_values (call sites assert the actual size fits); the slot side
+// scratch is sized to it.
+#define PINNED_AUX_VALUES_MAX 65536
+
 // The one place that knows the unified buffer's order.
 namespace ubl {
 
@@ -21,7 +25,7 @@ struct In {  // bytes
 
 struct Layout {  // byte offsets from the buffer base; the basic fixed pols sit at 0
     uint64_t late = 0, prefetch = 0;
-    uint64_t auxBase = 0, slotsBase = 0, slotsEnd = 0, mopsBase = 0;
+    uint64_t auxBase = 0, mopsBase = 0;  // the slots fill [auxBase, mopsBase)
     uint64_t recursiveBase = 0, aggBase = 0, end = 0;
 };
 
@@ -32,16 +36,14 @@ inline Layout plan(const In& in) {
     L.late = in.basicConst;
     L.prefetch = L.late + in.lateRegion;
     L.auxBase = alignUp(L.prefetch + in.prefetch, AUX_ALIGN);
-    L.slotsBase = L.auxBase;
-    L.slotsEnd = L.auxBase + in.slots;
-    L.mopsBase = L.slotsEnd;
+    L.mopsBase = L.auxBase + in.slots;
     L.recursiveBase = L.auxBase + in.auxTotal;
     L.aggBase = L.recursiveBase + in.recursiveTotal;
     L.end = L.aggBase + in.aggConst + in.snarkPad;
     return L;
 }
 
-inline uint64_t slotOffset(const Layout& L, uint64_t slotBytes, uint64_t j) { return L.slotsBase + j * slotBytes; }
+inline uint64_t slotOffset(const Layout& L, uint64_t slotBytes, uint64_t j) { return L.auxBase + j * slotBytes; }
 
 constexpr uint64_t SLOT_SCRATCH_ALIGN = 256;
 

@@ -152,13 +152,16 @@ pub fn plan_buffer(input: &BufferPlanInput) -> ProofmanResult<BufferPlan> {
             format_bytes((need(f) - input.budget_words) as f64 * 8.0),
         )));
     };
+    // Resident basic fixed outrank the recursive2 pin, never the slots or the prefetch units: only
+    // the floors that differ by the pin alone may make room for them.
+    let pin_only = floors.iter().take_while(|f| f.slots == floors[0].slots && f.units == floors[0].units).count();
+    let fits_basic = |j: usize| need(&floors[j]) + input.basic_fixed_words <= input.budget_words;
+    let (i, basic_resident) = match (i..pin_only).find(|&j| fits_basic(j)) {
+        Some(j) => (j, true),
+        None => (i, fits_basic(i)),
+    };
     let floor = floors[i];
-    let mut spare = input.budget_words - need(&floor);
-
-    let basic_resident = spare >= input.basic_fixed_words;
-    if basic_resident {
-        spare -= input.basic_fixed_words;
-    }
+    let mut spare = input.budget_words - need(&floor) - if basic_resident { input.basic_fixed_words } else { 0 };
 
     let mut prefetch_units = floor.units;
     if let Some(fit) = spare.checked_div(unit) {
@@ -370,11 +373,17 @@ mod tests {
         let p = plan_buffer(&i).unwrap();
         assert!(p.basic_resident);
         assert_eq!(p.basic_words(&i), basic);
-        // Room for the minimums and less than the basic fixed: host mode, its words fund prefetch.
+        // One word short beside the recursive2 pin: recursive2 goes through the LRU instead.
         let i = BufferPlanInput { basic_fixed_words: basic, ..input(FLOOR + basic - 1) };
+        let p = plan_buffer(&i).unwrap();
+        assert!(p.basic_resident);
+        assert!(!p.pin_rec2 && p.relaxed);
+        // Short even without the pin: host mode, the pin stays and its words fund prefetch.
+        let i = BufferPlanInput { basic_fixed_words: basic, ..input(FLOOR - SLOT + basic - 1) };
         let p = plan_buffer(&i).unwrap();
         assert!(!p.basic_resident);
         assert_eq!(p.basic_words(&i), 0);
+        assert!(p.pin_rec2 && !p.relaxed);
         assert_eq!(p.prefetch_units, 4);
     }
 

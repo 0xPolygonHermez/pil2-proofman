@@ -13,6 +13,7 @@
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
 #include "const_slot_table.hpp"
+#include "unified_buffer_layout.hpp"  // PINNED_AUX_VALUES_MAX
 #include <mutex>
 #include <condition_variable>
 #include <map>
@@ -345,9 +346,6 @@ struct AirInstanceInfo {
     }
 };
 
-
-// Upper bound on per-stream staged aux_values; call sites assert the actual size fits.
-#define PINNED_AUX_VALUES_MAX 65536
 
 // Per-slot pinned host scratch (DeviceCommitBuffers::streamCommitHost): root, widths, GW inputs.
 #define STREAM_COMMIT_HOST_ROOT_WORDS 4
@@ -717,7 +715,7 @@ struct DeviceCommitBuffers
     std::mutex constCacheMutex;
     std::condition_variable constCacheCv;   // a slot's last pending reader enqueued its unpack
     struct HostConstPols { Goldilocks::Element *ptr = nullptr; uint64_t elems = 0; };
-    std::map<int64_t, HostConstPols> hostConstPols;   // air key -> pinned host copy
+    std::map<int64_t, HostConstPols> hostConstPols;   // const set key -> pinned host copy
     gl64_t ***d_aux_trace;
     gl64_t ***d_aux_traceAggregation;
     gl64_t **gpuMemoryBuffer;
