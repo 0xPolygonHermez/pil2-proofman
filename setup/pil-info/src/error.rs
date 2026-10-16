@@ -47,6 +47,11 @@ pub enum PilInfoError {
     #[error("an evaluation of a `{0}`, which is neither a cm, a const nor a custom column")]
     UnknownEvaluation(String),
 
+    /// The evaluations' map holds each (column, opening) once, and the DEEP polynomial combines each
+    /// once.
+    #[error("the DEEP polynomial evaluates {entry_type} {id} twice at opening {opening}")]
+    DuplicateEvaluation { entry_type: String, id: usize, opening: i64 },
+
     #[error("a hint field of op `{0}`, which no hint holds")]
     UnknownHintOp(String),
 

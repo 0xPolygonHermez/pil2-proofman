@@ -115,13 +115,13 @@ pub fn generate_deep_polynomial(
             col_evals.push(Vec::new());
             col_evals.len() - 1
         });
-        assert!(
-            col_evals[c].iter().all(|&(o, _)| o != ev.prime),
-            "FRI: {} {} opened twice at {}",
-            ev.entry_type,
-            ev.id,
-            ev.prime
-        );
+        if col_evals[c].iter().any(|&(o, _)| o == ev.prime) {
+            return Err(PilInfoError::DuplicateEvaluation {
+                entry_type: ev.entry_type.clone(),
+                id: ev.id,
+                opening: ev.prime,
+            });
+        }
         col_evals[c].push((ev.prime, i));
     }
 
@@ -416,24 +416,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "opened twice")]
     fn test_generate_deep_polynomial_rejects_duplicate_evaluation() {
-        let mut expressions: Vec<Expression> = Vec::new();
-        let mut symbols = vec![make_witness_symbol("w0", 0, 1)];
-        let ev_map = vec![
-            EvMapItem { entry_type: "cm".to_string(), id: 0, prime: 0, commit_id: None },
-            EvMapItem { entry_type: "cm".to_string(), id: 0, prime: 0, commit_id: None },
-        ];
-        let mut challenges_map = Vec::new();
-        let _ = generate_deep_polynomial(
-            1,
-            &mut expressions,
-            &mut symbols,
-            &ev_map,
-            &[0],
-            &mut challenges_map,
-            &FieldCfg::goldilocks(),
-        );
+        let ev = EvMapItem { entry_type: "cm".to_string(), id: 0, prime: 0, commit_id: None };
+        assert!(matches!(
+            deep_err(&[ev.clone(), ev]),
+            PilInfoError::DuplicateEvaluation { entry_type, id: 0, opening: 0 } if entry_type == "cm"
+        ));
     }
 
     fn deep_err(ev_map: &[EvMapItem]) -> PilInfoError {
