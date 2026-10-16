@@ -37,6 +37,12 @@ convert_case = "0.8"
 regex = "1.12.2"
 toml = "0.9.8"
 
+[dev-dependencies]
+# Encodes the tests' pilouts, built in code.
+prost = { workspace = true }
+# The tests' `baseField`, a big integer.
+num-bigint = { workspace = true }
+
 [features]
 default = ["mpi"]
 mpi = ["proofman/mpi", "proofman-common/mpi"]

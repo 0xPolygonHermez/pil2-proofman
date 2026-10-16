@@ -181,7 +181,7 @@ impl PilHelpersCmd {
                             has_packed: has_witness_bits,
                             columns: Vec::new(),
                             fixed: Vec::new(),
-                            stages_columns: vec![StageColumnCtx::default(); pilout.num_challenges.len() - 1],
+                            stages_columns: vec![StageColumnCtx::default(); pilout.num_stages() as usize - 1],
                             custom_columns: Vec::new(),
                             air_values: Vec::new(),
                             airgroup_values: Vec::new(),
@@ -539,5 +539,98 @@ impl PilHelpersCmd {
         )?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use num_bigint::BigUint;
+    use pil2_pilout::pilout as pb;
+    use prost::Message;
+
+    /// Goldilocks, `2^64 − 2^32 + 1`.
+    const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+
+    /// A fresh directory of its own for a test, removed when it is dropped.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(test: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("proofman_cli_pil_helpers_{test}_{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            TempDir(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn symbol(name: &str, kind: SymbolType, stage: u32, lengths: &[u32]) -> pb::Symbol {
+        let of_air = !matches!(kind, SymbolType::PublicValue | SymbolType::ProofValue);
+        pb::Symbol {
+            name: name.to_string(),
+            air_group_id: of_air.then_some(0),
+            air_id: (of_air && kind != SymbolType::AirGroupValue).then_some(0),
+            r#type: kind as i32,
+            stage: Some(stage),
+            lengths: lengths.to_vec(),
+            ..Default::default()
+        }
+    }
+
+    /// A pilout of one AIR, `Main`, of stage 1 only (no challenges, as a program without the std's
+    /// buses has), with every kind of value pil-helpers writes: witness and fixed columns, publics,
+    /// an air value, an airgroup value and a proof value of stage 2, over the field `base_field`.
+    fn pilout(base_field: Vec<u8>) -> pb::PilOut {
+        let air = pb::Air { name: Some("Main".into()), num_rows: Some(8), stage_widths: vec![3], ..Default::default() };
+        pb::PilOut {
+            name: Some("Program".into()),
+            base_field,
+            air_groups: vec![pb::AirGroup { name: Some("Group".into()), airs: vec![air], ..Default::default() }],
+            symbols: vec![
+                symbol("Main.a", SymbolType::WitnessCol, 1, &[]),
+                symbol("Main.b", SymbolType::WitnessCol, 1, &[2]),
+                symbol("Main.L1", SymbolType::FixedCol, 0, &[]),
+                symbol("p", SymbolType::PublicValue, 1, &[]),
+                symbol("q", SymbolType::PublicValue, 1, &[2]),
+                symbol("Main.av", SymbolType::AirValue, 2, &[]),
+                symbol("Group.agv", SymbolType::AirGroupValue, 2, &[]),
+                symbol("pv", SymbolType::ProofValue, 2, &[]),
+            ],
+            ..Default::default()
+        }
+    }
+
+    /// Runs pil-helpers on `pilout` in `dir`, and returns its `traces.rs`. One test at a time: the
+    /// command sets up the global logger, which two threads cannot both do.
+    fn pil_helpers(dir: &TempDir, pilout: &pb::PilOut) -> Result<String, String> {
+        static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let path = dir.0.join("program.pilout");
+        fs::write(&path, pilout.encode_to_vec()).unwrap();
+        let out = dir.0.join("src");
+        let cmd = PilHelpersCmd { pilout: path, path: out.clone(), overide: true, verbose: 0 };
+        cmd.run().map_err(|e| e.to_string())?;
+        Ok(fs::read_to_string(out.join("pil_helpers").join("traces.rs")).unwrap())
+    }
+
+    /// A program over Goldilocks gets the STARK's helpers: its extension field, its `u64` publics
+    /// and its `PACKED_INFO`. It has no challenges, and so one stage, not none.
+    #[test]
+    fn a_goldilocks_pilout_keeps_the_starks_helpers() {
+        let dir = TempDir::new("goldilocks");
+        let traces = pil_helpers(&dir, &pilout(BigUint::from(GOLDILOCKS).to_bytes_be())).unwrap();
+        assert!(traces.contains("#[allow(dead_code)]\ntype FieldExtension<F> = [F; 3];\n"), "{traces}");
+        for value in [" av: FieldExtension<F>,", " agv: FieldExtension<F>,", " pv: FieldExtension<F>,"] {
+            assert!(traces.contains(value), "{value}: {traces}");
+        }
+        assert!(traces.contains("    pub p: u64,\n") && traces.contains("    pub q: [u64; 2],\n"), "{traces}");
+        assert!(traces.contains("use proofman_common::PackedInfoConst;\n"), "{traces}");
+        assert!(traces.contains("pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[\n];"), "{traces}");
     }
 }
