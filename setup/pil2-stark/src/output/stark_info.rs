@@ -7,7 +7,8 @@
 use serde_json::json;
 
 use crate::pil::gen_code::PilCodeResult;
-use crate::types::pilout_info::{SetupResult, FIELD_EXTENSION};
+use crate::types::pilout_info::SetupResult;
+use crate::types::FIELD_EXTENSION;
 use crate::types::security;
 use crate::types::security::pcs::{Batching, LowDegreeTest, Pcs};
 use crate::types::security::regimes::DecodingRegime;

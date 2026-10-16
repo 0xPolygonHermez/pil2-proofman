@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use tracing::info;
 
+use crate::cfg::FieldCfg;
 use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::{add_info_expression_inline, get_exp_dim};
-use crate::types::pilout_info::{ConstraintInfo, SymbolInfo, FIELD_EXTENSION};
+use crate::types::pilout_info::{ConstraintInfo, SymbolInfo};
 
 // ---------------------------------------------------------------------------
 // calculateExpDeg
@@ -517,8 +518,9 @@ pub fn add_im_polynomials(
     q_deg: i64,
     im_pols_stages: bool,
     boundaries: &[(String, Option<i64>, Option<i64>)],
+    field: &FieldCfg,
 ) -> usize {
-    let dim = FIELD_EXTENSION;
+    let dim = field.ext_dim();
     let stage = n_stages + 1;
 
     // Count existing challenges before this stage for vc_id
@@ -540,7 +542,7 @@ pub fn add_im_polynomials(
 
         let stage_id = symbols.iter().filter(|s| s.sym_type == "witness" && s.stage == Some(stage_im)).count();
 
-        let exp_dim = get_exp_dim(expressions, exp_id);
+        let exp_dim = get_exp_dim(expressions, exp_id, field);
 
         let pol_id = *n_commitments;
         *n_commitments += 1;
@@ -583,7 +585,7 @@ pub fn add_im_polynomials(
             values: vec![ExprChild::Inline(Box::new(cm_node)), ExprChild::Inline(Box::new(im_expr_copy))],
             ..Default::default()
         };
-        add_info_expression_inline(expressions, &mut sub_expr);
+        add_info_expression_inline(expressions, &mut sub_expr, field);
         expressions.push(sub_expr);
         let constraint_id = expressions.len() - 1;
 
@@ -606,7 +608,7 @@ pub fn add_im_polynomials(
             values: vec![ExprChild::Inline(Box::new(vc_expr.clone())), ExprChild::Inline(Box::new(c_exp_ref))],
             ..Default::default()
         };
-        add_info_expression_inline(expressions, &mut weighted);
+        add_info_expression_inline(expressions, &mut weighted, field);
         expressions.push(weighted);
         let weighted_id = expressions.len() - 1;
 
@@ -631,7 +633,7 @@ pub fn add_im_polynomials(
             values: vec![ExprChild::Inline(Box::new(weighted_ref)), ExprChild::Inline(Box::new(constraint_ref))],
             ..Default::default()
         };
-        add_info_expression_inline(expressions, &mut accum);
+        add_info_expression_inline(expressions, &mut accum, field);
         expressions.push(accum);
         *c_exp_id = expressions.len() - 1;
     }
@@ -654,12 +656,12 @@ pub fn add_im_polynomials(
         values: vec![ExprChild::Inline(Box::new(c_exp_copy)), ExprChild::Inline(Box::new(zi_node))],
         ..Default::default()
     };
-    add_info_expression_inline(expressions, &mut q_expr);
+    add_info_expression_inline(expressions, &mut q_expr, field);
     expressions.push(q_expr);
     // JS does: res.cExpId++ after push, which means cExpId = expressions.length - 1
     *c_exp_id = expressions.len() - 1;
 
-    let c_exp_dim = get_exp_dim(expressions, *c_exp_id);
+    let c_exp_dim = get_exp_dim(expressions, *c_exp_id, field);
     expressions[*c_exp_id].dim = c_exp_dim;
 
     let q_dim = c_exp_dim;
@@ -866,6 +868,7 @@ mod tests {
             1, // q_deg
             false,
             &boundaries,
+            &FieldCfg::goldilocks(),
         );
 
         // Should have added 1 Q polynomial witness symbol
@@ -910,6 +913,7 @@ mod tests {
             1,
             false,
             &boundaries,
+            &FieldCfg::goldilocks(),
         );
 
         // Should have: 1 ImPol witness + 1 Q witness = 2 symbols

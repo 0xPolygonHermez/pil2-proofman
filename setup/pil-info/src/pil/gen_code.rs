@@ -7,6 +7,7 @@
 //! - Verifier evaluations
 //! - Hint computations
 
+use crate::cfg::FieldCfg;
 use crate::pil::cse;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -16,7 +17,7 @@ use crate::pil::codegen::{build_code, pil_code_gen, rebuild_ev_map_index, CalcEn
 use crate::expr::expression::Expression;
 use crate::pil::deep_poly::{self, ChallengeMapEntry};
 use crate::expr::helpers::{add_info_expressions_symbols, EvMapItem};
-use crate::types::pilout_info::{ConstraintInfo, HintFieldValue, HintInfo, SymbolInfo, FIELD_EXTENSION};
+use crate::types::pilout_info::{ConstraintInfo, HintFieldValue, HintInfo, SymbolInfo};
 use crate::expr::print::PrintCtx;
 
 /// Build a HashMap from (exp_id, air_id, airgroup_id) -> symbol index
@@ -309,6 +310,8 @@ pub struct CodeGenParams {
     pub opening_points: Vec<i64>,
     pub cm_pols_map: Vec<SymbolInfo>,
     pub custom_commits_count: usize,
+    /// The field the code computes over.
+    pub field: FieldCfg,
 }
 
 // ---------------------------------------------------------------------------
@@ -357,6 +360,7 @@ pub fn generate_pil_code(
             &ev_map_for_fri,
             &params.opening_points,
             &mut challenges_map,
+            &params.field,
         );
         params.deep_exp_id = fri_result.deep_exp_id;
         fri_batch_size = fri_result.batch_size;
@@ -377,14 +381,14 @@ pub fn generate_pil_code(
     let fri_entry_idx =
         expressions_code.iter().position(|e| e.exp_id == params.deep_exp_id).expect("FRI expression code not found");
 
-    // Overwrite last dest to be a tmp with FIELD_EXTENSION dim (in-place)
+    // Overwrite last dest to be a tmp with the extension's dim (in-place)
     {
         let fri_entry = &mut expressions_code[fri_entry_idx];
         if let Some(last) = fri_entry.code.last_mut() {
             last.dest = CodeRef {
                 ref_type: "tmp".to_string(),
                 id: fri_entry.tmp_used - 1,
-                dim: FIELD_EXTENSION,
+                dim: params.field.ext_dim(),
                 prime: None,
                 value: None,
                 stage: None,
@@ -448,7 +452,8 @@ fn generate_expressions_code(
 
         let dom = if j == params.c_exp_id || j == params.deep_exp_id { "ext" } else { "n" };
 
-        let mut ctx = CodeGenCtx::new(params.air_id, params.airgroup_id, exp.stage, dom, false, Vec::new(), Vec::new());
+        let mut ctx =
+            CodeGenCtx::new(params.air_id, params.airgroup_id, exp.stage, dom, false, Vec::new(), &params.field);
         ctx.witness_by_exp_id = Arc::clone(witness_index);
 
         if j == params.deep_exp_id {
@@ -509,7 +514,7 @@ fn generate_expressions_code(
                 last.dest = CodeRef {
                     ref_type: "f".to_string(),
                     id: 0,
-                    dim: FIELD_EXTENSION,
+                    dim: params.field.ext_dim(),
                     prime: None,
                     value: None,
                     stage: None,
@@ -565,7 +570,7 @@ fn generate_constraints_debug_code(
 
     for constraint in constraints {
         let mut ctx =
-            CodeGenCtx::new(params.air_id, params.airgroup_id, params.n_stages, "n", false, Vec::new(), Vec::new());
+            CodeGenCtx::new(params.air_id, params.airgroup_id, params.n_stages, "n", false, Vec::new(), &params.field);
         ctx.witness_by_exp_id = Arc::clone(witness_index);
 
         // Pre-mark imPol expressions as calculated
@@ -630,7 +635,7 @@ fn generate_constraint_polynomial_verifier_code(
         "n",
         true,
         params.opening_points.clone(),
-        Vec::new(),
+        &params.field,
     );
     ctx.witness_by_exp_id = Arc::clone(witness_index);
 
@@ -910,6 +915,7 @@ mod tests {
             opening_points: vec![0],
             cm_pols_map: vec![SymbolInfo { stage: Some(2), stage_id: Some(0), ..Default::default() }],
             custom_commits_count: 0,
+            field: FieldCfg::goldilocks(),
         }
     }
 
@@ -936,6 +942,7 @@ mod tests {
             opening_points: vec![0],
             cm_pols_map: Vec::new(),
             custom_commits_count: 0,
+            field: FieldCfg::goldilocks(),
         };
 
         let wi = build_witness_index(&symbols, 0, 0);
@@ -998,6 +1005,7 @@ mod tests {
             opening_points: vec![0],
             cm_pols_map: Vec::new(),
             custom_commits_count: 0,
+            field: FieldCfg::goldilocks(),
         };
 
         let wi2 = build_witness_index(&symbols, 0, 0);

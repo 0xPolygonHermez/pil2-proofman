@@ -1261,6 +1261,7 @@ version = "1.4.0-alpha"
 dependencies = [
  "anyhow",
  "indexmap",
+ "num-bigint",
  "pil2-pilout",
  "serde",
  "serde_json",

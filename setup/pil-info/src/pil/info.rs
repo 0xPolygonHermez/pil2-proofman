@@ -1,5 +1,6 @@
 //! Orchestrates the symbolic passes that follow `prepare_pil` for a single air.
 
+use crate::cfg::PilInfoCfg;
 use crate::pil::constraint_poly::Boundary;
 use crate::pil::gen_code::{CodeGenParams, PilCodeResult};
 use crate::pil::im_polynomials::{add_im_polynomials, calculate_intermediate_polynomials};
@@ -24,10 +25,10 @@ pub struct PilInfoResult {
     pub boundaries: Vec<Boundary>,
 }
 
-/// Run the passes on the output of `prepare_pil`.
+/// Run the passes on the output of `prepare_pil`, which must have been prepared over `cfg.field`.
 ///
 /// Steps:
-/// 1. calculate_intermediate_polynomials, bounded by `max_deg`
+/// 1. calculate_intermediate_polynomials, bounded by `cfg.max_constraint_degree`
 /// 2. add_intermediate_polynomials
 /// 3. map
 /// 4. generate_pil_code
@@ -35,7 +36,7 @@ pub fn pil_info(
     prepared: PreparePilResult,
     airgroup_id: usize,
     air_id: usize,
-    max_deg: usize,
+    cfg: &PilInfoCfg,
     options: &PrepareOptions,
 ) -> PilInfoResult {
     let mut setup = prepared.setup;
@@ -50,7 +51,8 @@ pub fn pil_info(
     let q_dim = constraint_poly.q_dim;
 
     // Calculate intermediate polynomials
-    let im_result = calculate_intermediate_polynomials(&expressions, c_exp_id, max_deg, q_dim, &symbols);
+    let im_result =
+        calculate_intermediate_polynomials(&expressions, c_exp_id, cfg.max_constraint_degree, q_dim, &symbols);
     let im_exps = im_result.im_exps;
     let q_deg = im_result.q_deg;
 
@@ -76,6 +78,7 @@ pub fn pil_info(
         q_deg,
         options.im_pols_stages,
         &boundary_tuples,
+        &cfg.field,
     );
     setup.n_commitments = n_commitments;
 
@@ -125,6 +128,7 @@ pub fn pil_info(
         opening_points: opening_points.clone(),
         cm_pols_map: setup.cm_pols_map.clone(),
         custom_commits_count: setup.custom_commits.len(),
+        field: cfg.field.clone(),
     };
 
     // Store hints back into setup for generate_pil_code

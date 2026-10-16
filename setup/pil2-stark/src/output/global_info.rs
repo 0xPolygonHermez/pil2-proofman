@@ -153,7 +153,7 @@ pub(crate) fn write_global_constraints(
         &Default::default(),
     );
 
-    let global_constraints = build_global_constraints_json(pilout)?;
+    let global_constraints = build_global_constraints_json(pilout, &pil_info::FieldCfg::goldilocks())?;
     let gc_str = crate::output::json::to_json_string(&global_constraints)?;
     fs::write(proving_key_dir.join("pilout.globalConstraints.json"), &gc_str)?;
 
