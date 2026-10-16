@@ -272,7 +272,7 @@ proofman-cli prove-snark -p <vadcop_final_proof.bin> -k <provingKeySnark> -o <di
 proofman-cli verify-snark -p <dir>/snark_proof.bin -k <provingKeySnark>/final/provingKey/<name>/pilfflonk/pilfflonk.vkey.json
 ```
 
-The wrap of `setup-snark --final-snark pilfflonk`, beside the PLONK and FFLONK ones, which do not
+The wrap of `setup-snark`'s pilfflonk, its default, beside the PLONK and FFLONK ones, which do not
 change. `prove-snark` takes the final SNARK from the files of `provingKeySnark/final/`: `final.zkey`
 is rapidsnark's, which names PLONK or FFLONK, and `provingKey/` a pilfflonk key, whose globalInfo says
 `"backend": "pilfflonk"`; with both or neither it stops, saying so. With pilfflonk it proves the
@@ -413,8 +413,9 @@ them as Rust writes them.
   them from circom.info into `PILFFLONK_PTAU_DIR` (by default `$XDG_CACHE_HOME/pilfflonk/ptau`, or
   `~/.cache/pilfflonk/ptau`) and checks each against the README's blake2b, pinned in the script;
   without arguments it downloads 12 (8191 powers `[τ^i]₁`, 4.8 MB) and 19 (1,048,575, 604 MB, for the
-  wraps' keys); the blake3 wrap key of wrap-witness's device test, and the wrap end to end, read 22
-  (8,388,607, 4.8 GB). A test takes the file of the fewest powers that holds
+  wraps' keys); the blake3 wrap key of wrap-witness's device test, and the wrap end to end of
+  fibonacci-square's Poseidon2 key, read 22 (8,388,607, 4.8 GB), and the wrap of its blake3 key, the
+  default, 23 (16,777,215, 9.7 GB). A test takes the file of the fewest powers that holds
   what it needs (`pilfflonk/tests/data/ptau.rs` in Rust, `officialPtau` in C++), and fails, naming
   the file to download, if there is none; the tests never download. Nobody knows the files' `τ`: a
   test checks a commitment against the SRS's, or a proof by verifying it, and a malformed ptau, or
@@ -445,9 +446,12 @@ them as Rust writes them.
   `test-pilfflonk` runs the C++ tests against the CPU library and the JS verifier's,
   `test-pilfflonk-bn128` the `#[ignore]`d suites with the compiler, Foundry and solc (ptau of powers 12,
   19 and 22), and
-  `test-pilfflonk-wrap` the wrap end to end
+  `test-pilfflonk-wrap` the wrap end to end on fibonacci-square's Poseidon2 key
   ([performance.md#reproducing-the-wrap](performance.md#reproducing-the-wrap)), with the official
-  ptau of power 22. Each job caches the ptau files it reads, by name, and runs the download script.
+  ptau of power 22. The default blake3 key's wrap needs about 35 GB of memory in `prove-snark` and the
+  ptau of power 23, more than the runner holds; `setup/pil2-stark/tests/setup_snark.rs` covers how
+  `setup-snark` sets up its recursivef. Each job caches the ptau files it reads, by name, and runs
+  the download script.
   The GPU tests need a GPU, which CI has not; `pilfflonk_gpu_test` reads the ptau of power 19.
 
 ## Fixtures

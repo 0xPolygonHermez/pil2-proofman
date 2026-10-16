@@ -31,6 +31,7 @@ proofman-setup setup \
     --build-dir build \
     [--fixed-dir <dir>] \
     [--stark-structs starkstructs.json] \
+    [--hash blake3] \
     [--recursive] \
     [--recursive-jobs N] [--setup-jobs N] \
     [--output stats.txt]
@@ -42,6 +43,7 @@ proofman-setup setup \
 | `-b, --build-dir` | Output directory; will contain `provingKey/`, `circom/`, `build/`, `pil/` |
 | `-u, --fixed-dir` | Directory with `.fixed` columns (optional; falls back to inline pilout values) |
 | `-s, --stark-structs` | `starkstructs.json` overriding default stark settings per AIR |
+| `--hash` | Hash family of the key: `blake3` (default), `Poseidon1` or `Poseidon2`. [`setup-snark`](#setup-snark) wraps a blake3 key in pilfflonk only |
 | `-r, --recursive` | Also run compressor → recursive1 → recursive2 → vadcop_final → vadcop_final_compressed |
 | `--recursive-jobs` | Parallel recursive1 air pipelines (env: `RECURSIVE_JOBS`, default 1). Sized by RAM |
 | `--setup-jobs` | Parallel AIRs for the non-recursive setup (env: `SETUP_JOBS`, default 1) |
@@ -85,13 +87,14 @@ Read-only — does not write to `provingKey/`.
 ## `setup-snark`
 
 Continues from a `provingKey/` produced by `setup --recursive`, generating the
-final SNARK layer (`recursivef` + `fflonk`, `plonk` or `pilfflonk` final).
+final SNARK layer (`recursivef` + `pilfflonk` final by default, or `plonk` or
+`fflonk`).
 
 ```bash
 proofman-setup setup-snark \
     --build-dir build \
     [--powers-of-tau ptau.ptau] \
-    [--final-snark fflonk] \
+    [--final-snark pilfflonk] \
     [--publics-info publics.json] \
     [--only-recursive-final]
 ```
@@ -100,12 +103,20 @@ proofman-setup setup-snark \
 |---|---|
 | `-b, --build-dir` | Build directory containing `provingKey/` from a prior `setup --recursive` |
 | `--powers-of-tau` | `.ptau` file consumed by the final SNARK's setup |
-| `--final-snark` | `fflonk` (default), `plonk` or `pilfflonk` |
+| `--final-snark` | `pilfflonk` (default), `plonk` or `fflonk`. PLONK and FFLONK take a key of a poseidon family only (`setup --hash Poseidon1` or `Poseidon2`) |
 | `--publics-info` | Optional JSON describing the publics-hash layout |
 | `--only-recursive-final` | Stop after `recursivef`; skip the final SNARK step |
 
 Requires `vadcop_final/vadcop_final.{starkinfo,verifierinfo,verkey}.json` to
 already exist.
+
+The `recursivef` depends on the key's hash family. A poseidon key's is a BN128
+STARK that `setup-snark` sets up in `provingKeySnark/recursivef/`, for any final
+SNARK. A blake3 key's, the default, is a Goldilocks STARK of the proving key, in
+`provingKey/<name>/recursivef/`, whose verifier only the pilfflonk wrap has:
+`setup-snark` reuses it if the key has one, and otherwise sets it up first, as
+`setup-recursivef -b <build dir>` does with its defaults. Run `setup-recursivef`
+first for another geometry (`--blowup`, `--lanes`, `--grinding`, ...).
 
 With `pilfflonk`, the final circuit is laid out as a PIL2 AIR over BN128 by
 plonk2pil, compiled with `--field bn128` (by a pil2-compiler that has `--field`, as
@@ -115,9 +126,11 @@ up with `setup-pilfflonk`'s steps at the wrap family's knobs (plonk2pil's
 `wrap::MAX_CONSTRAINT_DEGREE` and `wrap::EXTRA_MULS`): `provingKeySnark/final/`
 gets the circuit's witness calculator and `.exec`, the pilfflonk `provingKey/`
 and the Solidity verifiers. The ptau needs at least as many powers `[τ^i]₁` as
-the layout's largest degree: `13·N + 12` for the wrap's AIR of `N` rows with
-range checks (fibonacci-square's: `N = 2^19`, 6,815,756 powers). `proofman-cli
-prove-snark` and `verify-snark` prove and verify with that key
+the layout's largest degree, which the setup logs with the SRS it writes
+(`pilfflonk.srs.bin`). fibonacci-square's wrap is an AIR of `N = 2^19` rows
+either way: its blake3 key's needs 15,204,438 powers (the official ptau of power
+23), and its Poseidon2 key's 6,815,756, `13·N + 12` with range checks (power
+22). `proofman-cli prove-snark` and `verify-snark` prove and verify with that key
 ([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#prove-snark-and-verify-snark)).
 
 ## `setup-recursive-test`
@@ -245,7 +258,7 @@ that resolve relative to the repo or the executable's parent directories.
 | `GOLDILOCKS_SRC_DIR` | `pil2-stark/src/goldilocks/src` | Goldilocks C++ sources copied into the witness build |
 | `RECURSIVE_JOBS` | `1` | Parallelism for recursive1 air pipelines |
 | `SETUP_JOBS` | `1` | Parallelism for non-recursive AIR setup |
-| `PIL2C_EXEC` | `pil2com` from `node_modules/.bin`, or on `PATH` | The pil2-compiler's `pil.js`. Compiling over BN128 (`compile-pil --field bn128`, `setup-snark --final-snark pilfflonk`) needs one that has `--field` ([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)) |
+| `PIL2C_EXEC` | `pil2com` from `node_modules/.bin`, or on `PATH` | The pil2-compiler's `pil.js`. Compiling over BN128 (`compile-pil --field bn128`, `setup-snark` with pilfflonk, its default) needs one that has `--field` ([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)) |
 | `REBUILD_JOBS` | `1` | Parallelism for `rebuild-witness-libs` circom compiles |
 
 Path resolution checks (in order): the env var, the path relative to CWD, then
@@ -260,7 +273,7 @@ proofman-setup setup \
     -a pil/zisk.pilout -b build \
     -s starkstructs.json -r --recursive-jobs 4 --setup-jobs 4
 
-# 2. Final SNARK on top
+# 2. Final SNARK on top: by default the recursivef of the blake3 key and the pilfflonk wrap
 proofman-setup setup-snark -b build --powers-of-tau ptau/pot24.ptau
 
 # 3. (Cross-platform) regenerate witness libs for the other OS

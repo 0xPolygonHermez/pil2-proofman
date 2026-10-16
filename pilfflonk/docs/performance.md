@@ -779,7 +779,9 @@ target/release/proofman-cli verify-snark -p $B/wrap/snark_proof.bin \
 
 The ptau needs at least 6,815,756 powers `[τ^i]₁`: Hermez's `powersOfTau28_hez_final_22` (2^23 − 1)
 or a larger one (`pilfflonk/tests/download-ptau.sh 22`). The CI job `test-pilfflonk-wrap` runs these
-steps with it, and then `cli/tests/snark_pilfflonk.rs` on the key and the proof. On the Solidity side, `proofman-cli pilfflonk
+steps with it, and then `cli/tests/snark_pilfflonk.rs` on the key and the proof. With the defaults,
+`setup` without `--hash` and `setup-snark` without `--final-snark`, the key is blake3's, whose
+recursivef `setup-snark` sets up, and its wrap needs 15,204,438 powers, the ptau of power 23. On the Solidity side, `proofman-cli pilfflonk
 calldata -k <vkey> -p <proof.bin> --publics <publics.json> --format hex` gives `verifyProof`'s
 calldata from the proof's bytes, and its words are `verifySnarkProof`'s `proofBytes`.
 
