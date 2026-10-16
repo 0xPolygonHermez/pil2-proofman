@@ -22,6 +22,7 @@ fn main() {
         fixed_dir: None,
         fixed_to_file: false,
         no_proto_fixed_data: false,
+        ..Default::default()
     })
     .expect("build.rs: compile-pil failed");
 

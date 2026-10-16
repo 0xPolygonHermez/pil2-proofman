@@ -991,6 +991,7 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
         fixed_dir: None,
         fixed_to_file: false,
         no_proto_fixed_data: false,
+        ..Default::default()
     };
     run_compile_pil(&opts)
 }

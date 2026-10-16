@@ -39,6 +39,7 @@ pub fn compile(pil_path: &str, build: &Path) -> Result<PathBuf, String> {
         fixed_dir: Some(fixed.to_string_lossy().into_owned()),
         fixed_to_file: true,
         no_proto_fixed_data: false,
+        ..Default::default()
     })
     .map_err(|e| format!("compile-pil: {e}"))?;
 
