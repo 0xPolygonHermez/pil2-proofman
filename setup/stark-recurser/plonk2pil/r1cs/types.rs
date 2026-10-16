@@ -5,7 +5,7 @@
 //! No temporary files.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{Cursor, Read};
 
 use anyhow::{anyhow, bail, ensure, Result};
 use num_bigint::BigUint;
@@ -279,9 +279,13 @@ fn read_sections(c: &mut Cursor<&[u8]>) -> Result<(HashMap<u32, u64>, bool)> {
     for _ in 0..n_sections {
         let sec_type = read_u32(c)?;
         let sec_size = read_u64(c)?;
-        data_starts.insert(sec_type, c.position());
-        c.seek(SeekFrom::Current(sec_size as i64))
-            .map_err(|e| anyhow!("section {}: seek past data: {}", sec_type, e))?;
+        let start = c.position();
+        let end = start
+            .checked_add(sec_size)
+            .filter(|&end| end <= c.get_ref().len() as u64)
+            .ok_or_else(|| anyhow!("section {sec_type}: its {sec_size} bytes run past the end of the file"))?;
+        data_starts.insert(sec_type, start);
+        c.set_position(end);
     }
 
     // Detect custom gates by the presence of their sections (4 = definitions, 5 = uses),

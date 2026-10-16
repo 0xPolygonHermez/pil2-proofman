@@ -376,6 +376,21 @@ mod tests {
         }
     }
 
+    /// A section whose size runs past the end of the file is an error, however large the size: one
+    /// above i64::MAX included, which a seek by it would have wrapped backwards.
+    #[test]
+    fn a_section_past_the_end_is_an_error() {
+        let data = build_simple_r1cs_bytes();
+        // The header section's size: past the magic, the version, the section count and its type.
+        let at = 4 + 4 + 4 + 4;
+        for size in [u64::MAX, i64::MAX as u64 + 1, data.len() as u64] {
+            let mut bad = data.clone();
+            bad[at..at + 8].copy_from_slice(&size.to_le_bytes());
+            let err = read_r1cs_from_bytes::<Goldilocks>(&bad).unwrap_err().to_string();
+            assert!(err.contains("run past the end of the file"), "size {size}: {err}");
+        }
+    }
+
     /// A count beyond what the file holds sizes no allocation: it is an error at the read that runs
     /// out, as for any truncated file.
     #[test]
