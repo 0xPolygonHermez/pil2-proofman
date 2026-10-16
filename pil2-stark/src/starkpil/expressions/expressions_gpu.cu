@@ -737,6 +737,32 @@ void op_31_gpu_p2(
     }
 }
 
+// Out of line: inside op_33_gpu_p2's switch, ptxas 12.8 -O1+ sank its "A - p" reductions into case 1 (stale register when A >= p).
+__device__ __noinline__ void op33_mul_(gl64_t *C, gl64_t A0, gl64_t A1, gl64_t A2, gl64_t B0, gl64_t B1, gl64_t B2)
+{
+    const gl64_t A01 = A0 + A1;
+    const gl64_t A02 = A0 + A2;
+    const gl64_t A12 = A1 + A2;
+
+    const gl64_t B01 = B0 + B1;
+    const gl64_t B02 = B0 + B2;
+    const gl64_t B12 = B1 + B2;
+
+    const gl64_t D = A0 * B0;
+    const gl64_t E = A1 * B1;
+    const gl64_t F = A2 * B2;
+
+    const gl64_t G = D - E;
+
+    const gl64_t R0 = A12 * B12;
+    const gl64_t R1 = A01 * B01;
+    const gl64_t R2 = A02 * B02;
+
+    C[threadIdx.x] = (R0 + G) - F;
+    C[blockDim.x + threadIdx.x] = ((R1 + R0) - E - E) - D;
+    C[2 * blockDim.x + threadIdx.x] = R2 - G;
+}
+
 __device__ __forceinline__
 void op_33_gpu_p2(
     uint64_t op,
@@ -774,30 +800,8 @@ void op_33_gpu_p2(
         return;
 
     case 2:
-    {
-        const gl64_t A01 = A0 + A1;
-        const gl64_t A02 = A0 + A2;
-        const gl64_t A12 = A1 + A2;
-
-        const gl64_t B01 = B0 + B1;
-        const gl64_t B02 = B0 + B2;
-        const gl64_t B12 = B1 + B2;
-
-        const gl64_t D = A0 * B0;
-        const gl64_t E = A1 * B1;
-        const gl64_t F = A2 * B2;
-
-        const gl64_t G = D - E;
-
-        const gl64_t R0 = A12 * B12;
-        const gl64_t R1 = A01 * B01;
-        const gl64_t R2 = A02 * B02;
-
-        C[threadIdx.x] = (R0 + G) - F;
-        C[blockDim.x + threadIdx.x] = ((R1 + R0) - E - E) - D;
-        C[2 * blockDim.x + threadIdx.x] = R2 - G;
+        op33_mul_(C, A0, A1, A2, B0, B1, B2);
         return;
-    }
 
     case 3:
         C[threadIdx.x] = B0 - A0;
