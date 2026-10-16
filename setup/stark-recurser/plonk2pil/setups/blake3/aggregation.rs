@@ -36,7 +36,7 @@ use crate::plonk2pil::r1cs::to_plonk::{
     blake3_compress_gate_uses, ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info, PlonkConstraint,
 };
 use crate::plonk2pil::r1cs::types::{FixedPol, GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
-use crate::plonk2pil::utils::{bind_public_signals, build_fixed_pols, build_s_polynomials, public_rows};
+use crate::plonk2pil::utils::{bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, public_rows};
 use proofman_common::hash_family::GateRole;
 use proofman_fields::{Field, Goldilocks, PrimeField64};
 use std::collections::HashMap;
@@ -587,24 +587,7 @@ pub fn build_blake3_air(r1cs: &R1csFile<Goldilocks>, options: &PlonkOptions) -> 
         // Build constFFT by ITS OWN index, exactly as poseidon does, then scatter through
         // fft4_const_slot. Writing cv[..] directly would silently misplace fft_type 2.
         let p = cgi.fft4_parameters.get(&cgu.id).expect("FFT4 params");
-        let (fft_type, scale, first_w, inc_w) = (p[3], p[2], p[0], p[1]);
-        let fw2 = first_w * first_w;
-        let mut cfft = [Goldilocks::ZERO; 9];
-        if fft_type == Goldilocks::new(4) {
-            cfft[0] = scale;
-            cfft[1] = scale * fw2;
-            cfft[2] = scale * first_w;
-            cfft[3] = scale * first_w * fw2;
-            cfft[4] = scale * first_w * inc_w;
-            cfft[5] = scale * first_w * fw2 * inc_w;
-        } else if fft_type == Goldilocks::new(2) {
-            cfft[6] = scale;
-            cfft[7] = scale * first_w;
-            cfft[8] = scale * first_w * inc_w;
-        } else {
-            panic!("Invalid FFT4 type: {fft_type}");
-        }
-        for (i, v) in cfft.iter().enumerate() {
+        for (i, v) in fft4_constants(p).iter().enumerate() {
             let (col, off) = fft4_const_slot(i);
             cv[col][r + off] = *v;
         }

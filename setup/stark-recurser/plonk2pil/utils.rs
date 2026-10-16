@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use proofman_fields::Field;
+
 use super::field::PlonkField;
 use super::r1cs::to_plonk::PlonkConstraint;
 use super::r1cs_types::FixedPol;
@@ -111,6 +113,30 @@ pub fn bind_public_signals(s_map: &mut [Vec<u32>], first_row: usize, n_publics: 
     }
 }
 
+/// The nine `constFFT` values of an `FFT4` gate from its parameters `[firstW, incW, scale, type]`:
+/// slots 0..6 for a radix-4 step (`type` 4) and 6..9 for a radix-2 one (`type` 2), the others zero.
+/// Every family's air reads them in this order; where each slot lives in `C[]` is the family's.
+pub fn fft4_constants<F: Field>(params: &[F]) -> [F; 9] {
+    let (first_w, inc_w, scale, fft_type) = (params[0], params[1], params[2], params[3]);
+    let fw2 = first_w * first_w;
+    let mut c = [F::ZERO; 9];
+    if fft_type == F::TWO.double() {
+        c[0] = scale;
+        c[1] = scale * fw2;
+        c[2] = scale * first_w;
+        c[3] = scale * first_w * fw2;
+        c[4] = scale * first_w * inc_w;
+        c[5] = scale * first_w * fw2 * inc_w;
+    } else if fft_type == F::TWO {
+        c[6] = scale;
+        c[7] = scale * first_w;
+        c[8] = scale * first_w * inc_w;
+    } else {
+        panic!("Invalid FFT4 type: {fft_type}");
+    }
+    c
+}
+
 pub fn build_fixed_pols<F: Clone>(airgroup_name: &str, cv: &[Vec<F>], sv: &[Vec<F>]) -> Vec<FixedPol<F>> {
     let mut pols = Vec::with_capacity(cv.len() + sv.len());
     for (k, cv_values) in cv.iter().enumerate() {
@@ -176,7 +202,29 @@ impl PlonkBand {
 
 #[cfg(test)]
 mod tests {
-    use super::{bind_public_signals, public_rows};
+    use super::{bind_public_signals, fft4_constants, public_rows};
+    use proofman_fields::Goldilocks;
+
+    /// `[firstW, incW, scale, type]` = `[3, 5, 7, type]`: small enough that every constant is the
+    /// integer it is in any field.
+    fn fft4(fft_type: u64) -> Vec<u64> {
+        let p = [3, 5, 7, fft_type].map(Goldilocks::new);
+        fft4_constants(&p).iter().map(proofman_fields::PrimeField64::as_canonical_u64).collect()
+    }
+
+    #[test]
+    fn fft4_constants_fill_the_slots_of_their_type() {
+        // scale, scale·w², scale·w, scale·w³, scale·w·inc, scale·w³·inc
+        assert_eq!(fft4(4), [7, 63, 21, 189, 105, 945, 0, 0, 0]);
+        // scale, scale·w, scale·w·inc, in the last three slots
+        assert_eq!(fft4(2), [0, 0, 0, 0, 0, 0, 7, 21, 105]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid FFT4 type: 3")]
+    fn fft4_constants_refuse_another_type() {
+        fft4(3);
+    }
 
     #[test]
     fn public_signals_are_appended_in_connection_rows() {

@@ -6,7 +6,9 @@
 use super::{gen_pil_str, PilTemplateParams};
 use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
 use crate::plonk2pil::r1cs::types::{GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
-use crate::plonk2pil::utils::{bind_public_signals, build_fixed_pols, build_s_polynomials, log2, public_rows};
+use crate::plonk2pil::utils::{
+    bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, log2, public_rows,
+};
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use proofman_common::hash_family::GateRole;
 use proofman_fields::{Field, Goldilocks};
@@ -268,29 +270,11 @@ pub fn aggregation_compressor(r1cs: &R1csFile<Goldilocks>, options: &PlonkOption
             item[r] = cgu.signals[i] as u32;
         }
         let p = cgi.fft4_parameters.get(&cgu.id).expect("FFT4 params");
-        let (fft_type, scale, first_w, inc_w) = (p[3], p[2], p[0], p[1]);
-        let fw2 = first_w * first_w;
-        if fft_type == Goldilocks::new(4) {
-            cv[0][r] = scale;
-            cv[1][r] = scale * fw2;
-            cv[2][r] = scale * first_w;
-            cv[3][r] = scale * first_w * fw2;
-            cv[4][r] = scale * first_w * inc_w;
-            cv[5][r] = scale * first_w * fw2 * inc_w;
-            for item in cv.iter_mut().skip(6) {
-                item[r] = Goldilocks::ZERO;
-            }
-        } else if fft_type == Goldilocks::new(2) {
-            for item in cv.iter_mut().take(6) {
-                item[r] = Goldilocks::ZERO;
-            }
-            cv[6][r] = scale;
-            cv[7][r] = scale * first_w;
-            cv[8][r] = scale * first_w * inc_w;
-            cv[9][r] = Goldilocks::ZERO;
-        } else {
-            panic!("Invalid FFT4 type: {}", fft_type);
+        // constFFT[0..9] on C[0..9]; C[9] is not one of them.
+        for (col, v) in cv.iter_mut().zip(fft4_constants(p)) {
+            col[r] = v;
         }
+        cv[9][r] = Goldilocks::ZERO;
         r += 1;
     }
 
