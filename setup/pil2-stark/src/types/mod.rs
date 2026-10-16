@@ -1,5 +1,10 @@
 pub mod output;
-pub use pil_info::types::pilout_info;
+/// The pilout's info, which the passes' move took to `pil_info`, with `FIELD_EXTENSION` still
+/// where it was.
+pub mod pilout_info {
+    pub use super::FIELD_EXTENSION;
+    pub use pil_info::types::pilout_info::*;
+}
 pub mod security;
 pub mod stark_info;
 pub mod stark_struct;
@@ -37,6 +42,13 @@ mod tests {
     #[test]
     fn field_extension_is_goldilocks_ext_dim() {
         assert_eq!(FIELD_EXTENSION, pil_info::FieldCfg::goldilocks().ext_dim());
+    }
+
+    /// The items the passes' move took to `pil_info` are still named by their old paths.
+    #[test]
+    fn the_old_paths_name_the_moved_items() {
+        assert_eq!(crate::types::pilout_info::FIELD_EXTENSION, FIELD_EXTENSION);
+        let _: Option<crate::types::output::CodeOutput> = None;
     }
 
     #[test]

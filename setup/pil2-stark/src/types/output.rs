@@ -137,4 +137,4 @@ pub struct SecurityInfo {
     pub regime: String,
 }
 
-pub use pil_info::types::output::{CodeEntry, CodeRef};
+pub use pil_info::types::output::{CodeEntry, CodeOutput, CodeRef};
