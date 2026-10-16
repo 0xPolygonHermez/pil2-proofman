@@ -18,6 +18,8 @@ blake3 = { workspace = true, default-features = false }
 
 [dev-dependencies]
 rand = { workspace = true }
+# Only for the serde tests of `Bn128`.
+serde_json = { workspace = true }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
