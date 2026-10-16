@@ -31,7 +31,8 @@ pub struct PilInfoResult {
 
 /// Prepare the air and run every pass on it for `cfg`: `prepare_pil` then `pil_info`.
 ///
-/// Fails on a pilout or constraints the passes cannot process; see [`crate::PilInfoError`].
+/// Fails on an air the pilout does not have, on a pilout that breaks its own format and on
+/// constraints the passes cannot process; see [`crate::PilInfoError`].
 pub fn run(
     pilout: &pb::PilOut,
     airgroup_id: usize,

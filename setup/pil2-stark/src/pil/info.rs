@@ -422,3 +422,18 @@ fn get_prover_memory(
     let gb = (total as f64 * 8.0) / (1024.0 * 1024.0 * 1024.0);
     format!("{:.2}", gb)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the passes refuse, which they used to `panic!` on, is an error of the STARK setup.
+    #[test]
+    fn what_the_passes_refuse_is_an_error() {
+        let err = pil_info(&pb::PilOut::default(), 0, 5, &StarkStruct::default(), &PrepareOptions::default()).err();
+        assert_eq!(
+            err.map(|e| format!("{e:#}")).as_deref(),
+            Some("the symbolic passes failed on air 5 of airgroup 0: the pilout has no air 5 in airgroup 0")
+        );
+    }
+}

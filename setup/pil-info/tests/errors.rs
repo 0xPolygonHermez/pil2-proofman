@@ -1,8 +1,8 @@
 //! What the passes refuse: a pilout that breaks its own format, or constraints they cannot
-//! process, is a `PilInfoError` the setups report, where the passes used to `panic!`. The pilouts
-//! are built in code, each one well formed but for one piece.
+//! process, is a `PilInfoError` the setups report, where the passes used to `panic!` or index out
+//! of range. The pilouts are built in code, each one well formed but for one piece.
 
-use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
+use pil2_pilout::pilout::{self as pb, constraint, expression, global_expression, global_operand, operand, SymbolType};
 use pil_info::output::global_constraints::build_global_constraints_json;
 use pil_info::{FieldCfg, PilInfoCfg, PilInfoError, PilInfoResult};
 
@@ -72,6 +72,10 @@ fn pilout() -> pb::PilOut {
     }
 }
 
+fn the_air(pilout: &mut pb::PilOut) -> &mut pb::Air {
+    &mut pilout.air_groups[0].airs[0]
+}
+
 /// The STARK's passes, at a blowup of 2.
 fn cfg() -> PilInfoCfg {
     PilInfoCfg::goldilocks(1)
@@ -88,10 +92,61 @@ fn run_err(pilout: &pb::PilOut) -> PilInfoError {
     }
 }
 
+fn invalid_pilout(err: &PilInfoError) -> &str {
+    match err {
+        PilInfoError::InvalidPilout(message) => message,
+        other => panic!("not an InvalidPilout: {other:?}"),
+    }
+}
+
 #[test]
 fn the_pilout_as_built_is_accepted() {
     run(&pilout()).unwrap();
     build_global_constraints_json(&pilout(), &FieldCfg::goldilocks()).unwrap();
+}
+
+/// Was an index out of range on `air_groups` or `airs`.
+#[test]
+fn an_air_the_pilout_does_not_have_is_refused() {
+    for (airgroup_id, air_id) in [(0, 1), (1, 0)] {
+        let err = pil_info::run(&pilout(), airgroup_id, air_id, &cfg(), &Default::default()).err();
+        assert!(
+            matches!(err, Some(PilInfoError::NoSuchAir { airgroup_id: a, air_id: b }) if (a, b) == (airgroup_id, air_id)),
+            "{err:?}"
+        );
+    }
+    let err = pil_info::run(&pilout(), 0, 1, &cfg(), &Default::default()).err().unwrap();
+    assert_eq!(err.to_string(), "the pilout has no air 1 in airgroup 0");
+}
+
+/// Was an index out of range on the expressions.
+#[test]
+fn a_constraint_on_an_expression_the_air_does_not_have_is_refused() {
+    let mut pilout = pilout();
+    the_air(&mut pilout).constraints.push(every_row(9));
+    let err = run_err(&pilout);
+    assert_eq!(invalid_pilout(&err), "constraint 1 of air Synthetic is expression 9, and there are 2");
+}
+
+/// Was an index out of range on the expressions, once the passes followed the reference.
+#[test]
+fn a_reference_to_an_expression_the_air_does_not_have_is_refused() {
+    let mut pilout = pilout();
+    the_air(&mut pilout).expressions[1] = mul(fixed(0), exp(7));
+    let err = run_err(&pilout);
+    assert_eq!(invalid_pilout(&err), "expression 1 refers to expression 7, and the air has 2");
+    assert_eq!(err.to_string(), "invalid pilout: expression 1 refers to expression 7, and the air has 2");
+}
+
+/// Was an index out of range on the custom commits.
+#[test]
+fn a_custom_column_of_a_custom_commit_the_air_does_not_have_is_refused() {
+    let mut pilout = pilout();
+    let custom =
+        op(operand::Operand::CustomCol(operand::CustomCol { commit_id: 2, stage: 0, col_idx: 0, row_offset: 0 }));
+    the_air(&mut pilout).expressions[0] = mul(witness(0), custom);
+    let err = run_err(&pilout);
+    assert_eq!(invalid_pilout(&err), "a custom column of custom commit 2, and the air has 0 custom commits");
 }
 
 /// Was `panic!("Invalid stage {} for a custom commit")`.
@@ -139,4 +194,79 @@ fn an_opened_column_without_a_symbol_is_refused() {
         "{err:?}"
     );
     assert_eq!(err.to_string(), "invalid pilout: the constraints evaluate const 0, which has no symbol");
+}
+
+fn global_ref(idx: u32) -> Option<pb::GlobalOperand> {
+    Some(pb::GlobalOperand { operand: Some(global_operand::Operand::Expression(global_operand::Expression { idx })) })
+}
+
+/// Were indices out of range on the global expressions.
+#[test]
+fn global_references_to_nothing_are_refused() {
+    let constant = Some(pb::GlobalOperand {
+        operand: Some(global_operand::Operand::Constant(global_operand::Constant { value: vec![1] })),
+    });
+    let global_constraint =
+        |idx| pb::GlobalConstraint { expression_idx: Some(global_operand::Expression { idx }), debug_line: None };
+
+    let mut pilout = pilout();
+    pilout.constraints.push(global_constraint(4));
+    let err = build_global_constraints_json(&pilout, &FieldCfg::goldilocks()).unwrap_err();
+    assert_eq!(invalid_pilout(&err), "constraint 0 of the global constraints is expression 4, and there are 0");
+
+    let mut pilout = self::pilout();
+    pilout.expressions.push(pb::GlobalExpression {
+        operation: Some(global_expression::Operation::Mul(global_expression::Mul {
+            lhs: constant,
+            rhs: global_ref(9),
+        })),
+    });
+    pilout.constraints.push(global_constraint(0));
+    let err = build_global_constraints_json(&pilout, &FieldCfg::goldilocks()).unwrap_err();
+    assert_eq!(invalid_pilout(&err), "global expression 0 refers to global expression 9, and the pilout has 1");
+}
+
+/// Was a recursion until the stack overflowed, which aborted the process: expressions that refer to
+/// each other in a cycle, which no pilout can mean. Refused before any pass runs, whether a
+/// constraint reaches the cycle or not, for the air's expressions and the global ones.
+#[test]
+fn expressions_that_refer_to_each_other_in_a_cycle_are_refused() {
+    // Expression 0 is a·exp(2) and the new expression 2 is b·exp(0): the constraint, L1·exp(0),
+    // reaches the cycle 0 → 2 → 0.
+    let mut pilout = pilout();
+    let air = the_air(&mut pilout);
+    air.expressions[0] = mul(witness(0), exp(2));
+    air.expressions.push(mul(witness(1), exp(0)));
+    let err = run_err(&pilout);
+    assert_eq!(invalid_pilout(&err), "expression 0 refers to itself, through the references 0 → 2 → 0");
+
+    // An expression that refers to itself, which no constraint reaches.
+    let mut pilout = self::pilout();
+    the_air(&mut pilout).expressions.push(mul(witness(1), exp(2)));
+    let err = run_err(&pilout);
+    assert_eq!(invalid_pilout(&err), "expression 2 refers to itself, through the references 2 → 2");
+
+    // References that meet without a cycle are no cycle: 2 and 3 both refer to 0.
+    let add = |lhs, rhs| pb::Expression { operation: Some(expression::Operation::Add(expression::Add { lhs, rhs })) };
+    let mut pilout = self::pilout();
+    let air = the_air(&mut pilout);
+    air.expressions.push(add(exp(0), exp(0)));
+    air.expressions.push(add(exp(2), exp(0)));
+    air.constraints.push(every_row(3));
+    run(&pilout).unwrap();
+
+    // The global expressions: 0 → 1 → 0.
+    let constant = Some(pb::GlobalOperand {
+        operand: Some(global_operand::Operand::Constant(global_operand::Constant { value: vec![1] })),
+    });
+    let global_mul = |lhs, rhs| pb::GlobalExpression {
+        operation: Some(global_expression::Operation::Mul(global_expression::Mul { lhs, rhs })),
+    };
+    let mut pilout = self::pilout();
+    pilout.expressions = vec![global_mul(constant.clone(), global_ref(1)), global_mul(constant, global_ref(0))];
+    pilout
+        .constraints
+        .push(pb::GlobalConstraint { expression_idx: Some(global_operand::Expression { idx: 0 }), debug_line: None });
+    let err = build_global_constraints_json(&pilout, &FieldCfg::goldilocks()).unwrap_err();
+    assert_eq!(invalid_pilout(&err), "global expression 0 refers to itself, through the references 0 → 1 → 0");
 }

@@ -6,6 +6,13 @@
 #[derive(Debug, thiserror::Error)]
 pub enum PilInfoError {
     // --- A pilout the passes cannot process --------------------------------------------------
+    #[error("the pilout has no air {air_id} in airgroup {airgroup_id}")]
+    NoSuchAir { airgroup_id: usize, air_id: usize },
+
+    /// A pilout that breaks its own format: an index to nothing.
+    #[error("invalid pilout: {0}")]
+    InvalidPilout(String),
+
     /// A hint field with neither an operand, a string nor an array of fields.
     #[error("invalid pilout: a field of hint `{hint}` has no value")]
     HintFieldWithoutValue { hint: String },

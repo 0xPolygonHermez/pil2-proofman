@@ -146,8 +146,10 @@ struct FormatCtx<'a> {
 impl<'a> FormatCtx<'a> {
     /// Format a protobuf Operand into an inline Expression (not pushed to arena).
     /// Matches JS behavior where child operands are inline objects.
-    fn format_operand_inline(&mut self, op: &operand::Operand) -> Expression {
-        match op {
+    ///
+    /// Fails on a custom column of a custom commit the air does not have.
+    fn format_operand_inline(&mut self, op: &operand::Operand) -> Result<Expression> {
+        let formatted = match op {
             operand::Operand::Expression(expr_ref) => {
                 let id = expr_ref.idx as usize;
                 // Optimization: unwrap add/sub(X, 0) where LHS is not an expression ref
@@ -183,7 +185,13 @@ impl<'a> FormatCtx<'a> {
             }
             operand::Operand::CustomCol(cc) => {
                 let commit_id = cc.commit_id as usize;
-                let custom_stage_widths = &self.custom_commits[commit_id].stage_widths;
+                let Some(custom_commit) = self.custom_commits.get(commit_id) else {
+                    return Err(PilInfoError::InvalidPilout(format!(
+                        "a custom column of custom commit {commit_id}, and the air has {} custom commits",
+                        self.custom_commits.len()
+                    )));
+                };
+                let custom_stage_widths = &custom_commit.stage_widths;
                 let stage_id = cc.col_idx as usize;
                 let row_offset = cc.row_offset as i64;
                 let stage = cc.stage as usize;
@@ -260,12 +268,13 @@ impl<'a> FormatCtx<'a> {
                     ..Default::default()
                 }
             }
-        }
+        };
+        Ok(formatted)
     }
 
     /// Try to unwrap add/sub(X, const(0)) where LHS is not an expression reference.
     /// Returns an inline Expression instead of an arena index.
-    fn try_unwrap_zero_rhs_inline(&mut self, operation: &expr_mod::Operation) -> Option<Expression> {
+    fn try_unwrap_zero_rhs_inline(&mut self, operation: &expr_mod::Operation) -> Option<Result<Expression>> {
         let (lhs_operand, rhs_operand) = match operation {
             expr_mod::Operation::Add(add) => (add.lhs.as_ref()?, add.rhs.as_ref()?),
             expr_mod::Operation::Sub(sub) => (sub.lhs.as_ref()?, sub.rhs.as_ref()?),
@@ -289,49 +298,63 @@ impl<'a> FormatCtx<'a> {
         None
     }
 
-    /// Format an `Option<&Operand>` into an inline ExprChild.
-    fn format_operand_child(&mut self, operand: Option<&pb::Operand>) -> ExprChild {
+    /// Format an `Option<&Operand>`, a child of expression `parent`, into an inline ExprChild.
+    ///
+    /// Fails on a reference to an expression the air does not have.
+    fn format_operand_child(&mut self, parent: usize, operand: Option<&pb::Operand>) -> Result<ExprChild> {
         match operand.and_then(|o| o.operand.as_ref()) {
-            Some(op) => ExprChild::Inline(Box::new(self.format_operand_inline(op))),
-            None => ExprChild::Inline(Box::new(Expression {
+            Some(op) => {
+                if let operand::Operand::Expression(expr_ref) = op {
+                    let n = self.air_expressions.len();
+                    if expr_ref.idx as usize >= n {
+                        return Err(PilInfoError::InvalidPilout(format!(
+                            "expression {parent} refers to expression {}, and the air has {n}",
+                            expr_ref.idx
+                        )));
+                    }
+                }
+                Ok(ExprChild::Inline(Box::new(self.format_operand_inline(op)?)))
+            }
+            None => Ok(ExprChild::Inline(Box::new(Expression {
                 op: "number".to_string(),
                 value: Some("0".to_string()),
                 ..Default::default()
-            })),
+            }))),
         }
     }
 
-    /// Format a single top-level protobuf Expression (add/sub/mul/neg with children).
-    /// Children are stored as inline ExprChild values (not pushed to arena).
-    fn format_expression_node(&mut self, expr: &pb::Expression) -> Expression {
+    /// Format a single top-level protobuf Expression, the air's expression `i` (add/sub/mul/neg
+    /// with children). Children are stored as inline ExprChild values (not pushed to arena).
+    fn format_expression_node(&mut self, i: usize, expr: &pb::Expression) -> Result<Expression> {
         let operation = match &expr.operation {
             Some(op) => op,
             None => {
-                return Expression { op: "number".to_string(), value: Some("0".to_string()), ..Default::default() };
+                return Ok(Expression { op: "number".to_string(), value: Some("0".to_string()), ..Default::default() });
             }
         };
 
-        match operation {
+        let formatted = match operation {
             expr_mod::Operation::Add(add) => {
-                let lhs = self.format_operand_child(add.lhs.as_ref());
-                let rhs = self.format_operand_child(add.rhs.as_ref());
+                let lhs = self.format_operand_child(i, add.lhs.as_ref())?;
+                let rhs = self.format_operand_child(i, add.rhs.as_ref())?;
                 Expression { op: "add".to_string(), values: vec![lhs, rhs], ..Default::default() }
             }
             expr_mod::Operation::Sub(sub) => {
-                let lhs = self.format_operand_child(sub.lhs.as_ref());
-                let rhs = self.format_operand_child(sub.rhs.as_ref());
+                let lhs = self.format_operand_child(i, sub.lhs.as_ref())?;
+                let rhs = self.format_operand_child(i, sub.rhs.as_ref())?;
                 Expression { op: "sub".to_string(), values: vec![lhs, rhs], ..Default::default() }
             }
             expr_mod::Operation::Mul(mul) => {
-                let lhs = self.format_operand_child(mul.lhs.as_ref());
-                let rhs = self.format_operand_child(mul.rhs.as_ref());
+                let lhs = self.format_operand_child(i, mul.lhs.as_ref())?;
+                let rhs = self.format_operand_child(i, mul.rhs.as_ref())?;
                 Expression { op: "mul".to_string(), values: vec![lhs, rhs], ..Default::default() }
             }
             expr_mod::Operation::Neg(neg) => {
-                let val = self.format_operand_child(neg.value.as_ref());
+                let val = self.format_operand_child(i, neg.value.as_ref())?;
                 Expression { op: "neg".to_string(), values: vec![val], ..Default::default() }
             }
-        }
+        };
+        Ok(formatted)
     }
 }
 
@@ -344,6 +367,9 @@ impl<'a> FormatCtx<'a> {
 /// Top-level expressions occupy indices 0..N-1. Child operands are stored
 /// as inline `ExprChild::Inline` values within each expression, matching
 /// the JS representation where child nodes are nested objects.
+///
+/// Fails on a reference to an expression or a custom commit the air does not have, and on
+/// expressions that refer to each other in a cycle.
 pub fn format_expressions(
     air_expressions: &[pb::Expression],
     stage_widths: &[u32],
@@ -352,7 +378,7 @@ pub fn format_expressions(
     air_group_values: &[pb::AirGroupValue],
     custom_commits: &[pb::CustomCommit],
     field: &FieldCfg,
-) -> Vec<Expression> {
+) -> Result<Vec<Expression>> {
     let n = air_expressions.len();
 
     let mut ctx = FormatCtx {
@@ -373,11 +399,89 @@ pub fn format_expressions(
 
     // Now format each top-level expression. Children get pushed at indices >= N.
     for (i, air_expr) in air_expressions.iter().enumerate() {
-        let formatted = ctx.format_expression_node(air_expr);
+        let formatted = ctx.format_expression_node(i, air_expr)?;
         ctx.arena[i] = formatted;
     }
 
-    ctx.arena
+    check_reference_cycles(&ctx.arena, "expression")?;
+    Ok(ctx.arena)
+}
+
+// ---------------------------------------------------------------------------
+// Reference cycles
+// ---------------------------------------------------------------------------
+
+/// The expressions `e` refers to, `exp` operands at any depth of its children, in the order of
+/// its operands.
+fn references(e: &Expression) -> Vec<usize> {
+    let mut refs = Vec::new();
+    let mut pending: Vec<&ExprChild> = e.values.iter().rev().collect();
+    while let Some(child) = pending.pop() {
+        match child {
+            ExprChild::Id(id) => refs.push(*id),
+            ExprChild::Inline(inner) => {
+                if inner.op == "exp" {
+                    refs.extend(inner.id);
+                }
+                pending.extend(inner.values.iter().rev());
+            }
+        }
+    }
+    refs
+}
+
+/// Refuses formatted expressions that refer to each other in a cycle, which a pilout cannot mean:
+/// an expression would be defined by itself. Every pass follows the references recursively, and a
+/// cycle recursed until the stack overflowed, which aborts the process. `what` names the
+/// expressions in the error: `"expression"` or `"global expression"`.
+///
+/// A depth-first search with an explicit stack, so that a long chain of references cannot
+/// overflow the stack here either.
+fn check_reference_cycles(expressions: &[Expression], what: &str) -> Result<()> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Visit {
+        New,
+        OnPath,
+        Done,
+    }
+    let refs: Vec<Vec<usize>> = expressions.iter().map(references).collect();
+    let mut visit = vec![Visit::New; expressions.len()];
+    for root in 0..expressions.len() {
+        if visit[root] != Visit::New {
+            continue;
+        }
+        // The path from `root`, each expression with the index of the next reference to follow.
+        let mut path: Vec<(usize, usize)> = vec![(root, 0)];
+        visit[root] = Visit::OnPath;
+        while let Some(top) = path.last_mut() {
+            let node = top.0;
+            let Some(&next) = refs[node].get(top.1) else {
+                visit[node] = Visit::Done;
+                path.pop();
+                continue;
+            };
+            top.1 += 1;
+            // An index beyond the expressions is refused where it is formatted; here it is no
+            // cycle.
+            match visit.get(next) {
+                Some(Visit::New) => {
+                    visit[next] = Visit::OnPath;
+                    path.push((next, 0));
+                }
+                Some(Visit::OnPath) => {
+                    let start = path.iter().position(|&(e, _)| e == next).unwrap_or(0);
+                    let cycle: Vec<String> =
+                        path[start..].iter().map(|&(e, _)| e.to_string()).chain([next.to_string()]).collect();
+                    return Err(PilInfoError::InvalidPilout(format!(
+                        "{what} {next} refers to itself, through the references {}",
+                        cycle.join(" → ")
+                    )));
+                }
+                Some(Visit::Done) | None => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -467,15 +571,29 @@ impl<'a> GlobalFormatCtx<'a> {
         }
     }
 
-    /// Format an `Option<&GlobalOperand>` into an inline ExprChild.
-    fn format_global_operand_child(&mut self, operand: Option<&pb::GlobalOperand>) -> ExprChild {
+    /// Format an `Option<&GlobalOperand>`, a child of global expression `parent`, into an inline
+    /// ExprChild.
+    ///
+    /// Fails on a reference to a global expression the pilout does not have.
+    fn format_global_operand_child(&mut self, parent: usize, operand: Option<&pb::GlobalOperand>) -> Result<ExprChild> {
         match operand.and_then(|o| o.operand.as_ref()) {
-            Some(op) => ExprChild::Inline(Box::new(self.format_global_operand_inline(op))),
-            None => ExprChild::Inline(Box::new(Expression {
+            Some(op) => {
+                if let global_operand::Operand::Expression(expr_ref) = op {
+                    let n = self.global_expressions.len();
+                    if expr_ref.idx as usize >= n {
+                        return Err(PilInfoError::InvalidPilout(format!(
+                            "global expression {parent} refers to global expression {}, and the pilout has {n}",
+                            expr_ref.idx
+                        )));
+                    }
+                }
+                Ok(ExprChild::Inline(Box::new(self.format_global_operand_inline(op))))
+            }
+            None => Ok(ExprChild::Inline(Box::new(Expression {
                 op: "number".to_string(),
                 value: Some("0".to_string()),
                 ..Default::default()
-            })),
+            }))),
         }
     }
 
@@ -504,48 +622,51 @@ impl<'a> GlobalFormatCtx<'a> {
         None
     }
 
-    /// Format a single top-level GlobalExpression.
-    fn format_global_expression_node(&mut self, expr: &pb::GlobalExpression) -> Expression {
+    /// Format a single top-level GlobalExpression, the pilout's global expression `i`.
+    fn format_global_expression_node(&mut self, i: usize, expr: &pb::GlobalExpression) -> Result<Expression> {
         let operation = match &expr.operation {
             Some(op) => op,
             None => {
-                return Expression { op: "number".to_string(), value: Some("0".to_string()), ..Default::default() };
+                return Ok(Expression { op: "number".to_string(), value: Some("0".to_string()), ..Default::default() });
             }
         };
 
-        match operation {
+        let formatted = match operation {
             gexpr_mod::Operation::Add(add) => {
-                let lhs = self.format_global_operand_child(add.lhs.as_ref());
-                let rhs = self.format_global_operand_child(add.rhs.as_ref());
+                let lhs = self.format_global_operand_child(i, add.lhs.as_ref())?;
+                let rhs = self.format_global_operand_child(i, add.rhs.as_ref())?;
                 Expression { op: "add".to_string(), values: vec![lhs, rhs], ..Default::default() }
             }
             gexpr_mod::Operation::Sub(sub) => {
-                let lhs = self.format_global_operand_child(sub.lhs.as_ref());
-                let rhs = self.format_global_operand_child(sub.rhs.as_ref());
+                let lhs = self.format_global_operand_child(i, sub.lhs.as_ref())?;
+                let rhs = self.format_global_operand_child(i, sub.rhs.as_ref())?;
                 Expression { op: "sub".to_string(), values: vec![lhs, rhs], ..Default::default() }
             }
             gexpr_mod::Operation::Mul(mul) => {
-                let lhs = self.format_global_operand_child(mul.lhs.as_ref());
-                let rhs = self.format_global_operand_child(mul.rhs.as_ref());
+                let lhs = self.format_global_operand_child(i, mul.lhs.as_ref())?;
+                let rhs = self.format_global_operand_child(i, mul.rhs.as_ref())?;
                 Expression { op: "mul".to_string(), values: vec![lhs, rhs], ..Default::default() }
             }
             gexpr_mod::Operation::Neg(neg) => {
-                let val = self.format_global_operand_child(neg.value.as_ref());
+                let val = self.format_global_operand_child(i, neg.value.as_ref())?;
                 Expression { op: "neg".to_string(), values: vec![val], ..Default::default() }
             }
-        }
+        };
+        Ok(formatted)
     }
 }
 
 /// Format all pilout-level global expressions into a flat `Vec<Expression>`.
 ///
-/// Mirrors JS `formatExpressions(pilout, true)` for global mode.
+/// Mirrors JS `formatExpressions(pilout, true)` for global mode. Fails on a reference to a global
+/// expression the pilout does not have, and on global expressions that refer to each other in a
+/// cycle.
 pub fn format_global_expressions(
     global_expressions: &[pb::GlobalExpression],
     num_challenges: &[u32],
     air_groups: &[pb::AirGroup],
     field: &FieldCfg,
-) -> Vec<Expression> {
+) -> Result<Vec<Expression>> {
     let n = global_expressions.len();
 
     let mut ctx =
@@ -558,11 +679,12 @@ pub fn format_global_expressions(
 
     // Now format each top-level expression.
     for (i, gexpr) in global_expressions.iter().enumerate() {
-        let formatted = ctx.format_global_expression_node(gexpr);
+        let formatted = ctx.format_global_expression_node(i, gexpr)?;
         ctx.arena[i] = formatted;
     }
 
-    ctx.arena
+    check_reference_cycles(&ctx.arena, "global expression")?;
+    Ok(ctx.arena)
 }
 
 /// Format global constraints from pilout.
@@ -585,6 +707,18 @@ pub fn format_global_constraints(constraints: &[pb::GlobalConstraint]) -> Vec<Co
             })
         })
         .collect()
+}
+
+/// Refuses a constraint of `constraints` whose expression is not one of the `n_expressions` of
+/// its air, or of the pilout for the global constraints; `whose` says which in the error.
+pub fn check_constraint_expressions(constraints: &[ConstraintInfo], n_expressions: usize, whose: &str) -> Result<()> {
+    match constraints.iter().enumerate().find(|(_, c)| c.e >= n_expressions) {
+        Some((i, c)) => Err(PilInfoError::InvalidPilout(format!(
+            "constraint {i} of {whose} is expression {}, and there are {n_expressions}",
+            c.e
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// Format global symbols (symbols not tied to a specific air).
@@ -1365,7 +1499,8 @@ fn generate_multi_array_symbols(
 
 /// Format hints from protobuf, mirroring JS `formatHints`.
 ///
-/// Fails on a hint field without a value.
+/// Fails on a hint field without a value, or on an operand of a custom commit the air does not
+/// have.
 #[allow(clippy::too_many_arguments)]
 pub fn format_hints(
     raw_hints: &[pb::Hint],
@@ -1497,7 +1632,7 @@ fn process_hint_field(
                     custom_commits,
                     arena: Vec::new(),
                 };
-                let value = ctx.format_operand_inline(op);
+                let value = ctx.format_operand_inline(op)?;
 
                 // If the value is an "exp" reference, mark keep=true
                 if value.op == "exp" {
@@ -1538,22 +1673,25 @@ fn process_hint_field(
 
 /// Extract pilout info for a single air, mirroring JS `getPiloutInfo`.
 ///
-/// Fails on the parts of the air the passes cannot process: a custom column of a stage other than
-/// 0, a hint field without a value.
+/// Fails on an air the pilout does not have, and on the parts of the air that refer to nothing
+/// or that the passes cannot process.
 pub fn get_pilout_info(
     pilout: &pb::PilOut,
     airgroup_id: usize,
     air_id: usize,
     field: &FieldCfg,
 ) -> Result<SetupResult> {
-    let airgroup = &pilout.air_groups[airgroup_id];
-    let air = &airgroup.airs[air_id];
+    let found = pilout.air_groups.get(airgroup_id).and_then(|ag| ag.airs.get(air_id).map(|air| (ag, air)));
+    let Some((airgroup, air)) = found else {
+        return Err(PilInfoError::NoSuchAir { airgroup_id, air_id });
+    };
 
     let air_name = air.name.clone().unwrap_or_default();
     let num_rows = air.num_rows.unwrap_or(0);
     let pil_power = if num_rows > 0 { (num_rows as f64).log2() as u32 } else { 0 };
 
     let constraints = format_constraints(&air.constraints);
+    check_constraint_expressions(&constraints, air.expressions.len(), &format!("air {air_name}"))?;
 
     let mut expressions = format_expressions(
         &air.expressions,
@@ -1563,7 +1701,7 @@ pub fn get_pilout_info(
         &airgroup.air_group_values,
         &air.custom_commits,
         field,
-    );
+    )?;
 
     // Gather symbols for this air from the global pilout symbols list
     let air_symbols: Vec<pb::Symbol> = pilout
