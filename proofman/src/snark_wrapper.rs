@@ -1,6 +1,7 @@
 use proofman_common::{
-    GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree_snark,
-    load_const_pols_recursivef, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode, initialize_logger,
+    format_bytes, GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup,
+    calculate_fixed_tree_snark, load_const_pols_recursivef, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode,
+    initialize_logger,
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_start_debug, timer_stop_and_log_debug};
 use proofman_verifier::VadcopFinalProof;
@@ -16,11 +17,12 @@ use crate::check_const_tree;
 use proofman_starks_lib_c::{
     init_final_snark_prover_c, free_final_snark_prover_c, get_snark_protocol_id_c, snark_proof_bytes_to_json_c,
     get_unified_buffer_gpu_for_recursivef_c, pre_allocate_final_snark_prover_c, free_device_buffers_recursivef_c,
-    gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c, get_aux_trace_end_c,
+    gen_device_buffers_recursivef_c, set_gpu_mode_c, get_num_gpus_c, init_gpu_setup_c, get_unified_buffer_gpu_size_c,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use crate::{
     verify_proof_bn128, generate_witness_final_snark, generate_recursivef_proof, generate_snark_proof, RecursivefProof,
+    PROVING,
 };
 use crate::pilfflonk_wrap::{self, PilfflonkWrapProver};
 use proofman_pilfflonk::global_info::PROVING_KEY_DIR;
@@ -169,7 +171,7 @@ impl FinalSnarkKey {
 /// **GPU memory with pilfflonk.** As for PLONK, the recursivef's device buffers are the wrapper's
 /// (in `d_buffers`, proofman's unified buffer, if there is one), and pilfflonk's proofs keep their data
 /// where `pre_allocate_final_snark_prover_c` carves the PLONK prover's (`pilfflonk_wrap::wrap_arena`):
-/// in the unified buffer, which must hold a proof's arena (or the key is refused), or else in the
+/// in the unified buffer's aux area, which must hold a proof's arena (or the key is refused), or else in the
 /// recursivef's prover buffer, grown to it; the recursivef is done with either when pilfflonk proves.
 /// Its key's own device memory (the SRS's powers, the fixed columns' coefficients) is beside them,
 /// from the start with `preload`.
@@ -191,8 +193,6 @@ pub(crate) struct PoseidonWrap<F: PrimeField64> {
     pub memory_handler_recursive_witness: Arc<MemoryHandlerRecursive<F>>,
     pub gpu: bool,
     pub final_snark_key: FinalSnarkKey,
-    /// Whether a proof writes the unified buffer past its aux traces (`writes_past_aux_traces`).
-    writes_past_aux_traces: bool,
     /// Held by each proof throughout ([`generate_final_snark_proof`](Self::generate_final_snark_proof)),
     /// so that the wrapper proves one at a time, and pilfflonk's prover, with `preload`. Two proofs at
     /// once would both write the recursivef's prover buffer `aux_trace` and its device buffers, and
@@ -411,6 +411,12 @@ impl<F: PrimeField64> PoseidonWrap<F> {
 
         ensure_gpu_available(gpu)?;
 
+        if d_buffers.is_some() && reload_fixed_pols_gpu.is_none() {
+            return Err(ProofmanError::InvalidConfiguration(
+                "A shared device buffer needs its owner's reload flag: the wrap overwrites it".to_string(),
+            ));
+        }
+
         let setup_recursivef_path =
             PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "recursivef", "recursivef"));
         let setup_snark_path = PathBuf::from(format!("{}/{}/{}", proving_key_path.display(), "final", "final"));
@@ -439,7 +445,11 @@ impl<F: PrimeField64> PoseidonWrap<F> {
             false,
         )?;
 
-        check_const_tree(&setup_recursivef, &d_buffers)?;
+        {
+            // On a shared buffer the tree is built over its aux area: not while a ProofMan job runs.
+            let _proving = d_buffers.map(|_| PROVING.lock().unwrap_or_else(|e| e.into_inner()));
+            check_const_tree(&setup_recursivef, &d_buffers)?;
+        }
 
         let mut recursivef_const_pols_buf: Vec<F> = vec![F::ZERO; setup_recursivef.const_pols_size];
         load_const_pols_recursivef(&setup_recursivef, &mut recursivef_const_pols_buf);
@@ -466,6 +476,18 @@ impl<F: PrimeField64> PoseidonWrap<F> {
         let verkey_str: String = serde_json::from_str(&contents)
             .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
 
+        if let (true, Some(d_buffers_vadcop)) = (gpu, d_buffers) {
+            let need = 8 * (setup_recursivef.const_tree_size as u64 + setup_recursivef.prover_buffer_size);
+            let total = get_unified_buffer_gpu_size_c(d_buffers_vadcop);
+            if need > total {
+                return Err(ProofmanError::InvalidConfiguration(format!(
+                    "recursiveF needs {} of device memory but the unified buffer holds {}",
+                    format_bytes(need as f64),
+                    format_bytes(total as f64),
+                )));
+            }
+        }
+
         // The recursivef's, freed if the final SNARK's prover cannot be loaded.
         let recursivef_buffers = RecursivefDeviceBuffers::new(&setup_recursivef, d_buffers, &verkey_str);
         let mut pilfflonk_prover = None;
@@ -478,10 +500,13 @@ impl<F: PrimeField64> PoseidonWrap<F> {
                 }
                 timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
             }
-            // pilfflonk's arena is in the unified buffer or in the recursivef's buffers.
+            // pilfflonk's arena is in the unified buffer's aux area or in the recursivef's buffers.
             FinalSnarkKey::Pilfflonk(pilfflonk_key) => {
                 if preload {
                     timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
+                    // On a shared buffer the key loads while no ProofMan job runs.
+                    let _shared = d_buffers.filter(|_| gpu).map(|_| PROVING.lock().unwrap_or_else(|e| e.into_inner()));
+                    let _aux = pilfflonk_wrap::AuxAreaUse::new(d_buffers.filter(|_| gpu));
                     let arena = pilfflonk_wrap::wrap_arena(gpu, d_buffers, recursivef_buffers.as_ptr(), pilfflonk_key)?;
                     // SAFETY: the arena is the unified buffer or the recursivef's prover buffer, which
                     // outlive the prover (the wrapper's `Drop` drops it first), and which a proof uses
@@ -499,8 +524,6 @@ impl<F: PrimeField64> PoseidonWrap<F> {
             + setup_recursivef.stark_info.n_publics;
 
         let memory_handler_recursive_witness = Arc::new(MemoryHandlerRecursive::new(1, trace_size as usize));
-        let writes_past_aux_traces =
-            d_buffers.is_some_and(|d| Self::writes_past_aux_traces(&setup_recursivef, &final_snark_key, gpu, d));
 
         Ok(Self {
             aux_trace,
@@ -517,7 +540,6 @@ impl<F: PrimeField64> PoseidonWrap<F> {
             reload_fixed_pols_gpu,
             gpu,
             final_snark_key,
-            writes_past_aux_traces,
             proving: Mutex::new(pilfflonk_prover),
         })
     }
@@ -553,12 +575,15 @@ impl<F: PrimeField64> PoseidonWrap<F> {
         // One proof at a time (`proving`), until this one is out. A proof that panicked poisons the
         // lock, and the next one takes it all the same: each proof writes its buffers afresh.
         let pilfflonk_prover = self.proving.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let _borrow = pilfflonk_wrap::FirstGpuBorrow::new(self.d_buffers.filter(|_| self.gpu));
-        // The recursivef's carve and rapidsnark's prover may write the unified buffer over the STARK's
-        // const pols, and one that fails may have written it too: the flag is set as this proof ends,
-        // whatever its outcome, before the lock is let go. pilfflonk's arena stays in the aux traces.
-        let reload = self.d_buffers.filter(|_| self.writes_past_aux_traces);
-        let _reload = ReloadFixedPolsOnDrop(reload.and(self.reload_fixed_pols_gpu.as_deref()));
+        // On a shared buffer the caller, ProofMan::generate_final_snark_proof, holds the process-wide
+        // PROVING throughout: no ProofMan job or reset runs while recursiveF and the snark write it.
+
+        // The recursivef's const tree and prover buffer, and the snark's carve, live in the unified
+        // buffer and may overwrite its const-pols regions, also in a proof that fails. The flag,
+        // consumed by the next job's restore_after_snark, re-uploads them before any proof; it is set as
+        // this proof ends, whatever its outcome, before the locks are let go.
+        let _reload = ReloadFixedPolsOnDrop(self.d_buffers.and(self.reload_fixed_pols_gpu.as_deref()));
+
         let recursivef_proof = generate_recursivef_proof(
             &self.setup_recursivef,
             &self.memory_handler_recursive_witness,
@@ -584,24 +609,6 @@ impl<F: PrimeField64> PoseidonWrap<F> {
         timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
         Ok(snark_proof)
-    }
-
-    /// Whether a proof writes proofman's unified buffer `d_buffers` past its aux traces: rapidsnark's
-    /// prover, whose carve this does not know, a recursivef whose const tree and buffer pass them, or
-    /// a pilfflonk arena that does.
-    fn writes_past_aux_traces(
-        setup_recursivef: &Setup<F>,
-        final_snark_key: &FinalSnarkKey,
-        gpu: bool,
-        d_buffers: *mut c_void,
-    ) -> bool {
-        let recursivef = (setup_recursivef.const_tree_size as u64 + setup_recursivef.prover_buffer_size)
-            * std::mem::size_of::<F>() as u64;
-        recursivef > get_aux_trace_end_c(d_buffers)
-            || match final_snark_key {
-                FinalSnarkKey::Zkey(_) => true,
-                FinalSnarkKey::Pilfflonk(key) => gpu && pilfflonk_wrap::arena_passes_aux_traces(d_buffers, key),
-            }
     }
 
     /// The PLONK or FFLONK proof of the vadcop proof `proof` (with its publics), of its recursivef
@@ -762,10 +769,9 @@ pub const BLAKE3_RECURSIVEF_VERKEY: &str = "recursivef.verkey.json";
 /// before it (`ProofMan::generate_final_snark_proof`), and this proves the final SNARK of the
 /// recursivef's proofs, pilfflonk's.
 ///
-/// **GPU memory.** With proofman's buffers (`d_buffers`), all of the key's device memory is in its
-/// unified buffer, from where the aux traces start to where they end
-/// (`pilfflonk_wrap::unified_buffer`): nothing proofman keeps across proofs is there, so nothing is
-/// reloaded. Preloaded, the key lives across proofs while proofman uses that buffer in between: it
+/// **GPU memory.** With proofman's buffers (`d_buffers`), all of the key's device memory is in the aux
+/// area of its unified buffer (`pilfflonk_wrap::unified_buffer`): nothing proofman keeps across proofs
+/// is there but the streams' cached const pols, which each proof drops, so nothing is reloaded. Preloaded, the key lives across proofs while proofman uses that buffer in between: it
 /// keeps a pinned host copy of what it holds there (~4 GB, its SRS and fixed coefficients), which each
 /// proof writes back while the host computes the circuit's witness. Not preloaded, each proof loads
 /// it. Without buffers, the key's memory is its own.
@@ -816,7 +822,9 @@ impl Blake3Wrap {
             proving: Mutex::new(()),
         };
         if preload {
-            let _borrow = pilfflonk_wrap::FirstGpuBorrow::new(wrap.d_buffers);
+            // The key loads into proofman's aux area while no ProofMan job runs.
+            let _shared = wrap.d_buffers.map(|_| PROVING.lock().unwrap_or_else(|e| e.into_inner()));
+            let _aux = pilfflonk_wrap::AuxAreaUse::new(wrap.d_buffers);
             wrap.prover = Some(wrap.load(true)?);
         }
         Ok(wrap)
@@ -861,7 +869,8 @@ impl Blake3Wrap {
             &recursivef_proof.public_values,
         )
         .map_err(|e| ProofmanError::InvalidProof(e.to_string()))?;
-        let _borrow = pilfflonk_wrap::FirstGpuBorrow::new(self.d_buffers);
+        // The caller, ProofMan::generate_final_snark_proof, holds the process-wide PROVING throughout.
+        let _aux = pilfflonk_wrap::AuxAreaUse::new(self.d_buffers);
         let loaded;
         let prover = match &self.prover {
             Some(prover) => prover,

@@ -390,10 +390,10 @@ in the same session); "after" is the first GPU proof of `gpu_check`, and for the
   they are on the device, so they leave the key's memory but not the load's peak.
 - **All of the key in the caller's buffer.** `GpuKeyOptions::exclusive`
   (`pilfflonk_ctx_new_in_device_buffer`, `ProvingKey::load_in_device_buffer`) puts all of the key's
-  device memory in the buffer, its own from the start and the arena from the end: what proofman's
-  unified buffer holds from where its aux traces
-  start to where they end (`get_aux_trace_end`), so that nothing proofman keeps across proofs is
-  written. With `restorable` the buffer is proofman's between the proofs: the key keeps a pinned host
+  device memory in the buffer, its own from the start and the arena from the end: the aux area of
+  proofman's unified buffer, `[auxBase, aggBase)` of its layout (`pilfflonk_wrap::unified_buffer`),
+  whose streams' cached const pols the wrap drops after it, so that nothing proofman keeps across
+  proofs is written. With `restorable` the buffer is proofman's between the proofs: the key keeps a pinned host
   copy of its own part (4.17 GB on the blake3 wrap, made once in 0.88 s), which `pilfflonk_ctx_restore`
   writes back before each proof (0.17 s at 24 GB/s), while the host computes the circuit's witness
   (`SnarkWrapper` of a blake3 key, preloaded). sppark's MSM allocates its own scratch beside the
@@ -424,12 +424,16 @@ In `prove-snark` with pilfflonk on the GPU, the key's proofs keep their arena in
 memory, as rapidsnark's PLONK prover is carved out of it by `pre_allocate_final_snark_prover_c`
 (`pilfflonk_wrap::wrap_arena`, `proofman/src/pilfflonk_wrap.rs`):
 
-- with `d_buffers`, proofman's unified buffer (`SnarkWrapper::new_with_preallocated_buffers`): all of
-  it, which the key refuses, as a GPU without the memory ([no fallback](#rules-of-the-device-path)), if it holds less than a
-  proof's arena; the unified buffer must be on device 0, where pilfflonk proves. The wrapper then
-  re-uploads the STARK's fixed columns that the proof overwrote, as after PLONK's
-  (`reload_fixed_pols_gpu`): the flag is set as each wrap's proof ends, whatever its outcome, as a
-  proof that fails may have written the buffer too (for PLONK and FFLONK as for pilfflonk);
+- with `d_buffers`, proofman's unified buffer (`SnarkWrapper::new_with_preallocated_buffers`): its
+  aux area, `[auxBase, aggBase)` of its layout, which the key refuses, as a GPU without the memory
+  ([no fallback](#rules-of-the-device-path)), if it holds less than a proof's arena; the unified
+  buffer must be on device 0, where pilfflonk proves. The wrap runs under proofman's process-wide
+  `PROVING`, so no proofman job runs meanwhile, and drops the streams' cached const pols there after
+  it. The recursivef of a poseidon key still carves the buffer from its start, as for PLONK, and the
+  wrapper re-uploads the STARK's fixed columns it overwrote (`reload_fixed_pols_gpu`): the flag is
+  set as each wrap's proof ends, whatever its outcome, as a proof that fails may have written the
+  buffer too. A final-snark run keeps 1.5 GB free beside the unified buffer for the key's own memory
+  (`FINAL_SNARK_RESERVE_MB`);
 - without (`prove-snark`): the recursivef's prover buffer, which the wrapper now holds for its life, as
   for PLONK, grown to the arena if it is smaller (`reserve_recursivef_aux_trace`), or refused if the
   device cannot hold it.

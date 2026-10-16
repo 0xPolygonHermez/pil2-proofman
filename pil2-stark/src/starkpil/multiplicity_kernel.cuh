@@ -23,12 +23,19 @@ void mul_scatter_launch(const MulJobDev* d_jobs, uint32_t nJobs, uint64_t rows, 
                         uint64_t indexBits = 0, uint32_t packedColMajor = 0);
 
 // One device copy of the plan per (air, gpu); mul_alloc builds every one before the first proof.
-struct MulPlanDev { const MulJobDev* jobs = nullptr; const MulInsnDev* prog = nullptr; };
+struct MulPlanDev {
+    const MulJobDev* jobs = nullptr; const MulInsnDev* prog = nullptr; const uint32_t* keyRefs = nullptr;
+};
+
+inline std::map<std::tuple<uint64_t,uint64_t,int>, MulPlanDev>& mulPlanDevs() {
+    static std::map<std::tuple<uint64_t,uint64_t,int>, MulPlanDev> m;
+    return m;
+}
+inline std::mutex& mulPlanDevsMutex() { static std::mutex m; return m; }
 
 inline MulPlanDev mulPlanDevice(const MulPlan& plan, uint64_t airgroupId, uint64_t airId, int gpuId) {
-    static std::map<std::tuple<uint64_t,uint64_t,int>, MulPlanDev> bufs;
-    static std::mutex mtx;
-    std::lock_guard<std::mutex> lock(mtx);
+    auto& bufs = mulPlanDevs();
+    std::lock_guard<std::mutex> lock(mulPlanDevsMutex());
     auto key = std::make_tuple(airgroupId, airId, gpuId);
     auto it = bufs.find(key);
     if (it != bufs.end()) return it->second;
@@ -72,6 +79,7 @@ inline MulPlanDev mulPlanDevice(const MulPlan& plan, uint64_t airgroupId, uint64
         // Never on the default stream: it would poison concurrent graph captures.
         mulCopySync(gpuId, dj, hj.data(), jb, cudaMemcpyHostToDevice);
         d.jobs = dj;
+        d.keyRefs = dk;
     }
     // The air's instruction buffer. Failure is fatal: jobs would silently count nothing.
     if (!plan.prog.empty()) {
@@ -90,6 +98,19 @@ inline MulPlanDev mulPlanDevice(const MulPlan& plan, uint64_t airgroupId, uint64
     }
     bufs[key] = d;
     return d;
+}
+
+// The jobs embed this GPU's map pointers, so they must not outlive its unified buffer.
+inline void mulPlanDeviceRelease(int gpuId) {
+    std::lock_guard<std::mutex> lock(mulPlanDevsMutex());
+    auto& bufs = mulPlanDevs();
+    for (auto it = bufs.begin(); it != bufs.end();) {
+        if (std::get<2>(it->first) != gpuId) { ++it; continue; }
+        CHECKCUDAERR(cudaFree((void*)it->second.jobs));
+        CHECKCUDAERR(cudaFree((void*)it->second.prog));
+        CHECKCUDAERR(cudaFree((void*)it->second.keyRefs));
+        it = bufs.erase(it);
+    }
 }
 
 #endif

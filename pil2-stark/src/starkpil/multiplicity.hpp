@@ -97,6 +97,7 @@ struct MulTableMap {
     uint64_t slots = 0;
 };
 
+static constexpr uint64_t MUL_PEER_CHUNK = 4ull << 20;   // counters per staging (32 MB)
 inline std::map<uint64_t, MulTableMap>& mulTableMaps() {
     static std::map<uint64_t, MulTableMap> m;
     return m;

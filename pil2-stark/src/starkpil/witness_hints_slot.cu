@@ -80,12 +80,17 @@ void slotHintPatchLaunch(uint64_t *dst, uint32_t c0, uint32_t cc, uint64_t dstRo
     CHECKCUDAERR(cudaGetLastError());
 }
 
+static std::map<std::tuple<uint64_t,uint64_t,int,const SlotHintPlan*>, SlotHintPlanDev> &slotHintPlanDevs() {
+    static std::map<std::tuple<uint64_t,uint64_t,int,const SlotHintPlan*>, SlotHintPlanDev> m;
+    return m;
+}
+static std::mutex slotHintPlanDevsMutex;
+
 SlotHintPlanDev slotHintPlanDevice(const SlotHintPlan &plan, uint64_t airgroupId, uint64_t airId,
                                    int gpuId) {
     // By plan too: slotHintPlanFor keeps one per row layout, and its entries never move.
-    static std::map<std::tuple<uint64_t,uint64_t,int,const SlotHintPlan*>, SlotHintPlanDev> bufs;
-    static std::mutex mtx;
-    std::lock_guard<std::mutex> lock(mtx);
+    auto &bufs = slotHintPlanDevs();
+    std::lock_guard<std::mutex> lock(slotHintPlanDevsMutex);
     auto key = std::make_tuple(airgroupId, airId, gpuId, &plan);
     auto it = bufs.find(key);
     if (it != bufs.end()) return it->second;
@@ -124,8 +129,14 @@ SlotHintPlanDev slotHintPlanDevice(const SlotHintPlan &plan, uint64_t airgroupId
     return d;
 }
 
-uint64_t *slotHintSideBuffer(int gpuId, uint64_t slotIdx, size_t elems, bool grow) {
-    // Reuses the scatter's per-(device, slot) cache.
-    static MulStreamBufs bufs;
-    return mulStreamBuf(bufs, gpuId, slotIdx, elems, grow);
+void slotHintRelease(int gpuId) {
+    std::lock_guard<std::mutex> lock(slotHintPlanDevsMutex);
+    auto &bufs = slotHintPlanDevs();
+    for (auto it = bufs.begin(); it != bufs.end();) {
+        if (std::get<2>(it->first) != gpuId) { ++it; continue; }
+        CHECKCUDAERR(cudaFree((void *)it->second.prog));
+        CHECKCUDAERR(cudaFree((void *)it->second.destCols));
+        CHECKCUDAERR(cudaFree((void *)it->second.destSlots));
+        it = bufs.erase(it);
+    }
 }

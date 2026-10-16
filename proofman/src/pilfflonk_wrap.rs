@@ -15,8 +15,9 @@
 //!
 //! On the GPU the key's proofs keep their data in device memory of the wrap's ([`wrap_arena`],
 //! pilfflonk/docs/performance.md#the-wraps-device-buffer), as rapidsnark's PLONK prover is carved out
-//! of it by `pre_allocate_final_snark_prover_c`: proofman's unified buffer if the wrap has one, and
-//! otherwise the recursivef's prover buffer, which the recursivef is done with when pilfflonk proves.
+//! of it by `pre_allocate_final_snark_prover_c`: the aux area of proofman's unified buffer if the
+//! wrap has one, and otherwise the recursivef's prover buffer, which the recursivef is done with when
+//! pilfflonk proves.
 
 use std::ffi::c_void;
 use std::path::Path;
@@ -28,9 +29,8 @@ use proofman_pilfflonk::{
     ProofJson, ProofNames, ProveOptions, ProvingKey, ProvingKeyFiles, Publics, Vkey, Witness, WitnessShape,
 };
 use proofman_starks_lib_c::{
-    acquire_first_gpu_buffer_c, get_aux_trace_end_c, get_first_gpu_buffer_c, get_first_gpu_id_c,
-    get_stream_commit_floor_c, get_unified_buffer_gpu_size_c, release_first_gpu_buffer_c,
-    reserve_recursivef_aux_trace_c,
+    get_first_gpu_buffer_c, get_first_gpu_id_c, get_layout_offset_c, invalidate_stream_contexts_c,
+    reserve_recursivef_aux_trace_c, LayoutBoundary,
 };
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
@@ -45,9 +45,11 @@ pub(crate) struct WrapArena {
     pub(crate) bytes: u64,
 }
 
-/// proofman's unified buffer of `d_buffers` on device 0, from where its aux traces start to where
-/// they end, below its streaming-commit slots: nothing proofman keeps across proofs is there, so the
-/// wrap leaves nothing to reload.
+/// The aux area of proofman's unified buffer of `d_buffers` on device 0, `[auxBase, aggBase)` of its
+/// layout: the streaming-commit slots and the proof streams, which hold nothing proofman keeps across
+/// proofs but the streams' cached const pols ([`AuxAreaUse`] drops them), as for the const trees
+/// proofman builds there (`const_tree_scratch`). The basic fixed pols and the late region below it,
+/// and the aggregation const cache above it, stay as they are, so the wrap leaves nothing to reload.
 pub(crate) fn unified_buffer(d_buffers: *mut c_void) -> ProofmanResult<WrapArena> {
     let gpu_id = get_first_gpu_id_c(d_buffers);
     if gpu_id != 0 {
@@ -55,33 +57,34 @@ pub(crate) fn unified_buffer(d_buffers: *mut c_void) -> ProofmanResult<WrapArena
             "pilfflonk proves on CUDA device 0, and proofman's unified buffer is on device {gpu_id}"
         )));
     }
-    // The first GPU's, as get_aux_trace_end measures: not the calling thread's current device's.
-    Ok(WrapArena { buffer: get_first_gpu_buffer_c(d_buffers), bytes: get_aux_trace_end_c(d_buffers) })
+    // The first GPU's buffer: not the calling thread's current device's. Every GPU has the same layout.
+    let aux_base = get_layout_offset_c(d_buffers, LayoutBoundary::AuxBase);
+    let agg_base = get_layout_offset_c(d_buffers, LayoutBoundary::AggBase);
+    let buffer = (get_first_gpu_buffer_c(d_buffers) as *mut u8).wrapping_add(aux_base as usize) as *mut c_void;
+    Ok(WrapArena { buffer, bytes: agg_base.saturating_sub(aux_base) })
 }
 
-/// proofman's first GPU borrowed (`acquire_first_gpu_buffer`) while a wrap writes its unified
-/// buffer: no proofman work is placed there meanwhile, and the release drops the streams' cached
-/// const pols and trees the wrap overwrote. None without proofman's buffers.
-pub(crate) struct FirstGpuBorrow(*mut c_void);
+/// A wrap's writes to the aux area of proofman's unified buffer ([`unified_buffer`]): when it goes,
+/// the streams' cached const pols and trees and the slots' const expansions there are dropped
+/// (`invalidate_stream_contexts`), as after proofman's own const-tree scratch. No ProofMan job runs
+/// meanwhile: the caller holds the process-wide `PROVING`. None without proofman's buffers.
+pub(crate) struct AuxAreaUse(*mut c_void);
 
-impl FirstGpuBorrow {
+impl AuxAreaUse {
     pub(crate) fn new(d_buffers: Option<*mut c_void>) -> Option<Self> {
-        d_buffers.map(|d_buffers| {
-            acquire_first_gpu_buffer_c(d_buffers);
-            Self(d_buffers)
-        })
+        d_buffers.map(Self)
     }
 }
 
-impl Drop for FirstGpuBorrow {
+impl Drop for AuxAreaUse {
     fn drop(&mut self) {
-        release_first_gpu_buffer_c(self.0);
+        invalidate_stream_contexts_c(self.0);
     }
 }
 
 /// pilfflonk's arena in the wrap on the GPU, for the key at `proving_key`, as
 /// `pre_allocate_final_snark_prover_c` carves rapidsnark's PLONK prover: proofman's unified buffer
-/// `d_buffers` if there is one, its aux traces ([`unified_buffer`]; the key refuses it, as a GPU without the memory, if it
+/// `d_buffers` if there is one, its aux area ([`unified_buffer`]; the key refuses it, as a GPU without the memory, if it
 /// holds less than a proof's arena: pilfflonk/docs/performance.md#rules-of-the-device-path);
 /// otherwise the recursivef's prover buffer `d_buffers_recursivef`, grown to the arena if it is
 /// smaller. `None` on the CPU. Refused if the unified buffer is not on device 0, where pilfflonk
@@ -99,12 +102,7 @@ pub(crate) fn wrap_arena(
     }
     let needed = gpu_device_bytes(proving_key).map_err(|e| invalid_key(proving_key, e))?;
     if let Some(d_buffers) = d_buffers {
-        let mut arena = unified_buffer(d_buffers)?;
-        // Past the aux traces only without streaming-commit slots, which commit during a borrow: the
-        // whole buffer then, whose const pols the wrapper reloads and whose stagings the borrow drops.
-        if needed.arena > arena.bytes && get_stream_commit_floor_c(d_buffers) == u64::MAX {
-            arena.bytes = get_unified_buffer_gpu_size_c(d_buffers);
-        }
+        let arena = unified_buffer(d_buffers)?;
         require_beside(&needed, gpu_free_bytes().map_err(|e| invalid_key(proving_key, e))?)?;
         tracing::info!(
             "pilfflonk's GPU arena: {} bytes of the unified buffer's {} (margin {}), and {} bytes beside it",
@@ -131,12 +129,6 @@ pub(crate) fn wrap_arena(
             needed.arena
         ))),
     }
-}
-
-/// Whether the arena of the key at `proving_key` passes the aux traces of the unified buffer
-/// `d_buffers` ([`wrap_arena`]), or cannot be sized.
-pub(crate) fn arena_passes_aux_traces(d_buffers: *mut c_void, proving_key: &Path) -> bool {
-    gpu_device_bytes(proving_key).map_or(true, |needed| needed.arena > get_aux_trace_end_c(d_buffers))
 }
 
 /// Refuses a key that needs more device memory beside its arena (`needed.beside`) than the device has

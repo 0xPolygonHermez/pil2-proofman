@@ -60,9 +60,11 @@ inline std::string expsSoPath(const std::string& binFile) {
     return binFile.substr(0, binFile.size()-ext.size()) + ".exps.so";
 }
 
-// Scratch memory available in the aux_trace tmp...destVals region
+// Scratch memory available from tmp1 to the end of the region dead during the quotient
 inline uint64_t expsScratchAvail(SetupCtx& sc) {
     uint64_t o1 = sc.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
+    auto end = sc.starkInfo.mapOffsets.find(std::make_pair("mem_exps_end", false));
+    if (end != sc.starkInfo.mapOffsets.end()) return end->second - o1;
     uint64_t od = sc.starkInfo.mapOffsets[std::make_pair("destVals", false)];
     return (od - o1) + 2ull * 3 * sc.starkInfo.nrowsPack * sc.starkInfo.maxNBlocks;
 }

@@ -18,9 +18,9 @@ use pil2_std_lib::{
     collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps, global_sum_assumed_tables,
 };
 use proofman_starks_lib_c::{
-    configure_prefetch_zone_c, get_prefetch_witness_slots_c, stage_witness_c, release_staged_witness_c,
-    gpu_witness_count_c, harvest_pipeline_c, dump_pipeline_state_c, set_gpu_mode_c, set_pipeline_mode_c,
-    load_device_const_pols_c,
+    configure_prefetch_zone_c, stage_witness_c, release_staged_witness_c, gpu_witness_count_c, harvest_pipeline_c,
+    dump_pipeline_state_c, set_gpu_mode_c, set_pipeline_mode_c, load_host_const_pols_c, debug_clobber_unified_c,
+    restore_after_carve_c,
 };
 use proofman_starks_lib_c::{
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, reset_device_streams_c, set_phase_b_c,
@@ -155,7 +155,8 @@ use proofman_starks_lib_c::{
     mul_clear_registry_c, mul_commit_count_c, mul_set_device_export_c, mul_sync_commits_c, MulSync,
     calculate_witness_expressions_c, launch_callback_c, initialize_instance_c, calculate_trace_instance_c,
     wait_trace_h2d_done_c, get_stream_commit_slots_c, get_stream_commit_gpus_c, commit_witness_streaming_c,
-    stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c,
+    stream_commit_slot_bytes_c, configure_stream_commit_slots_c, get_stream_id_proof_c, late_region_bytes_c,
+    get_num_gpus_c,
 };
 
 use std::{
@@ -167,7 +168,7 @@ use proofman_witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
 use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
-    load_device_const_pols,
+    load_device_const_pols, const_set_key,
 };
 use crate::{
     verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof, verify_proof, StreamReservation,
@@ -195,6 +196,10 @@ use proofman_util::{
 };
 
 use serde::Serialize;
+
+/// Process-wide: the C++ multiplicity state is global, and a SNARK wrap carves the shared unified
+/// buffer, so no two of them may interleave.
+pub(crate) static PROVING: Mutex<()> = Mutex::new(());
 
 #[derive(Default, Debug, Clone)]
 pub struct WitnessInfo {
@@ -604,9 +609,16 @@ fn stream_commit_eligible<F: PrimeField64>(hash: &str, setup: &Setup<F>) -> bool
         && setup.stark_info.stark_struct.merkle_tree_arity == proofman_common::hash_family::merkle_tree_arity(hash)
 }
 
-/// Bytes a streaming slot needs to commit this air, or None when it cannot take one.
-/// `input_bytes` is the air's declared GPU-witness input bound, 0 for a host-filled air.
-fn slot_commit_bytes<F: PrimeField64>(hash: &str, setup: &Setup<F>, pi: &PackedInfo, input_bytes: u64) -> Option<u64> {
+/// This air's slot bytes (the commit lays it out with the same C++ function), or None when no slot
+/// can take it. `input_bytes` is the air's declared GPU-witness input bound, 0 for a host-filled air.
+fn slot_commit_bytes<F: PrimeField64>(
+    hash: &str,
+    setup: &Setup<F>,
+    ag: usize,
+    ai: usize,
+    pi: &PackedInfo,
+    input_bytes: u64,
+) -> Option<u64> {
     if !stream_commit_eligible(hash, setup) {
         return None;
     }
@@ -614,18 +626,21 @@ fn slot_commit_bytes<F: PrimeField64>(hash: &str, setup: &Setup<F>, pi: &PackedI
     let ss = &setup.stark_info.stark_struct;
     // An unpacked air is the degenerate packing: one word per column.
     let words = if pi.is_packed { pi.num_packed_words } else { n_cols };
-    let bytes = stream_commit_slot_bytes_c(ss.n_bits, ss.n_bits_ext, n_cols, words, input_bytes);
-    if bytes == 0 {
-        return None;
-    }
-    // Tail room for a column-major copy of the rows (read by unpack and the multiplicity scatter).
-    // Reserved for every non-indexed packed air so the copy is never refused mid-commit, which would
-    // corrupt the global challenge. The indexed layout and unpacked rows take no copy.
-    let tail = if pi.is_packed && pi.col_source.is_empty() { (1u64 << ss.n_bits) * words * 8 } else { 0 };
-    Some(bytes + tail)
+    stream_commit_slot_bytes_c(
+        (&setup.p_setup).into(),
+        ag as u64,
+        ai as u64,
+        ss.n_bits,
+        ss.n_bits_ext,
+        n_cols,
+        words,
+        input_bytes,
+        pi.is_packed,
+        !pi.col_source.is_empty(),
+    )
 }
 
-/// The slot size (the largest air's commit) and every air a slot can take, packed or not: an air
+/// The slot size (the largest air's commit and scratch) and every air a slot can take, packed or not: an air
 /// without packing info (virtual tables, Rom), or any air of a run that writes unpacked traces,
 /// commits with the identity packing. `packed_info` must describe the host rows (see
 /// `slot_packed_info`). The third value names the airs no slot can take (family, arity, width).
@@ -643,7 +658,7 @@ fn slot_commit_airs<F: PrimeField64>(
             let Ok(setup) = sctx.get_setup(ag, ai) else { continue };
             let pi = packed_info.get(&(ag, ai)).unwrap_or(&identity);
             let input_bytes = pctx.gpu_witness_airs.get(ag, ai).map_or(0, |d| d.input_bytes_per_instance);
-            match slot_commit_bytes(&pctx.global_info.hash, setup, pi, input_bytes) {
+            match slot_commit_bytes(&pctx.global_info.hash, setup, ag, ai, pi, input_bytes) {
                 Some(b) => {
                     slot_bytes = slot_bytes.max(b);
                     airs.insert((ag, ai));
@@ -664,13 +679,23 @@ fn slot_packed_info(options: &ProofmanOptions) -> HashMap<(usize, usize), Packed
     }
 }
 
+/// Streaming-commit slots per GPU; each one lowers what gpu-mops may borrow.
+const STREAM_COMMIT_SLOTS: u64 = 2;
+
+/// Bytes of the late region (the multiplicity mirrors); the fit must have run.
+fn plan_late_region(options: &ProofmanOptions, n_gpus: u64, n_processes: usize) -> u64 {
+    if !options.gpu {
+        return 0;
+    }
+    late_region_bytes_c(n_gpus > 1 && n_processes == 1)
+}
+
 pub struct ProofMan<F: PrimeField64> {
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx<F>>,
     mpi_ctx: Arc<MpiCtx>,
     setups: Arc<SetupsVadcop<F>>,
     recurser_setups: RwLock<HashMap<String, Arc<Setup<F>>>>,
-    recurser_const_offset: u64,
     recurser_device_registered: Mutex<Option<String>>,
     /// Folds write the instance-shared scratch buffers (`aux_trace`, const
     /// slices) through FFI, so they must be single-flight per instance.
@@ -776,6 +801,8 @@ impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
         self.memory_handler.cancel();
         self.memory_handler_recursive_witness.cancel();
+        // The buffers are freed next: skip a pending post-snark restore.
+        self.pctx.reload_fixed_pols_gpu.store(false, Ordering::SeqCst);
         if let Err(e) = self.reset() {
             eprintln!("Error during ProofMan cleanup: {:?}", e);
         }
@@ -849,11 +876,8 @@ impl<F: PrimeField64> ProofMan<F> {
         self.options.clone()
     }
 
-    /// Acquire `computing`, and the process-wide `PROVING` before it. Warns if the wait exceeded 50ms.
+    /// Acquire `computing`, and the process-wide [`PROVING`] before it. Warns if the wait exceeded 50ms.
     fn acquire_computing(&self, caller: &'static str) -> (MutexGuard<'_, ()>, MutexGuard<'static, ()>) {
-        // The C++ multiplicity accumulators and commit counter are process-global: two live ProofMans
-        // must not interleave proofs.
-        static PROVING: Mutex<()> = Mutex::new(());
         let t0 = std::time::Instant::now();
         let global = PROVING.lock().unwrap_or_else(|e| e.into_inner());
         let g = self.computing.lock().unwrap_or_else(|e| e.into_inner());
@@ -870,6 +894,25 @@ impl<F: PrimeField64> ProofMan<F> {
     pub fn reset(&self) -> ProofmanResult<()> {
         let _computing = self.acquire_computing("reset");
         self.reset_unguarded()
+    }
+
+    /// After a snark, re-upload what its carve overwrote; a no-op otherwise. Caller holds `computing`.
+    fn restore_after_snark(&self) -> ProofmanResult<()> {
+        if !(self.pctx.gpu && self.pctx.reload_fixed_pols_gpu.swap(false, Ordering::SeqCst)) {
+            return Ok(());
+        }
+        timer_start_info!(RESTORE_AFTER_SNARK);
+        // Aggregation sets only lose GPU 0's cache tags: their host copies, layout and pins stand.
+        let restored = load_device_const_pols(&self.pctx, &self.sctx, &self.setups, false, true)
+            .and_then(|_| self.pctx.reupload_custom_commits(&self.sctx));
+        // A recurser's device setup is outside the carve and its consts reload from the cache.
+        match &restored {
+            Ok(()) => restore_after_carve_c(self.pctx.get_device_buffers_ptr()),
+            // Keep the flag so the next caller retries.
+            Err(_) => self.pctx.reload_fixed_pols_gpu.store(true, Ordering::SeqCst),
+        }
+        timer_stop_and_log_info!(RESTORE_AFTER_SNARK);
+        restored
     }
 
     /// `reset` for callers already holding `computing`.
@@ -928,10 +971,10 @@ impl<F: PrimeField64> ProofMan<F> {
 
         self.worker_contributions.write().unwrap_or_else(|e| e.into_inner()).clear();
         reset_device_streams_c(self.pctx.get_device_buffers_ptr());
-        // Not before registration succeeds: its warm-up fills process-wide plan caches, which a prover
-        // dropped after a failed first registration would leave for a different setup.
-        let registered = *self.pctx.prover_multiplicities_registered.lock().unwrap();
-        if self.pctx.gpu && registered {
+        // A snark carved the whole buffer: restore it before this job's contributions read it. The rest
+        // of reset must still run on an error.
+        let restore_err = self.restore_after_snark().err();
+        if self.pctx.gpu {
             unsafe { mul_alloc_c(self.pctx.get_device_buffers_ptr()) };
             // Record which airs the device can produce whole; see `device_owned_table_airs`.
             if let Ok(layouts) = collect_virtual_table_layouts(&self.pctx, &self.sctx) {
@@ -984,7 +1027,7 @@ impl<F: PrimeField64> ProofMan<F> {
         // memory_handler.reset() fails its `free.len() == n_buffers` invariant. No `?` inside the
         // sweep: bailing on the first bad release would leave every later instance's buffer
         // unreturned, converting one failure into a pool-wide shortfall.
-        let mut first_err = None;
+        let mut first_err = restore_err;
         for instance_id in 0..MAX_INSTANCES as usize {
             let (is_shared, buf) = self.pctx.free_instance(instance_id);
             if is_shared {
@@ -1224,8 +1267,6 @@ where
     }
 
     pub fn execute_from_lib(&self, output_path: Option<PathBuf>) -> ProofmanResult<PlanningInfo> {
-        // A statically linked witness library never goes through `register_witness`.
-        self.register_prover_multiplicities()?;
         self.execute_(output_path)
     }
 
@@ -1522,8 +1563,6 @@ where
     /// Computes only the witness without generating a proof neither verifying constraints.
     /// This is useful for debugging or benchmarking purposes.
     pub fn compute_witness_from_lib(&self, debug_info: &DebugInfo, options: ProofOptions) -> ProofmanResult<()> {
-        // A statically linked witness library never goes through `register_witness`.
-        self.register_prover_multiplicities()?;
         self.pctx.set_debug_info(debug_info);
         self.compute_witness_(options)
     }
@@ -1639,8 +1678,6 @@ where
     }
 
     pub fn get_debug_info_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
-        // A statically linked witness library never goes through `register_witness`.
-        self.register_prover_multiplicities()?;
         self._get_debug_info(debug_info)
     }
 
@@ -1793,8 +1830,6 @@ where
     }
 
     pub fn verify_proof_constraints_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
-        // A statically linked witness library never goes through `register_witness`.
-        self.register_prover_multiplicities()?;
         self._verify_proof_constraints(debug_info)
     }
 
@@ -2169,8 +2204,6 @@ where
                 "prove-air --witness-lib is not supported on GPU: basic airs commit stages 1-2 in place".into(),
             ));
         }
-        // A statically linked witness library never goes through `register_witness`.
-        self.register_prover_multiplicities()?;
         let _computing = self.acquire_computing("generate_air_proof");
 
         self.set_partition(1, vec![0], 0)?;
@@ -2340,7 +2373,20 @@ where
         }
 
         self.set_partition(1, vec![0], 0)?;
-        self._generate_proof(ProvePhaseInputs::Full(), proof_options, ProvePhase::Full)
+        let result = self._generate_proof(ProvePhaseInputs::Full(), proof_options, ProvePhase::Full)?;
+        self.debug_clobber_after_job();
+        Ok(result)
+    }
+
+    /// Test knob (PROOFMAN_DEBUG_CLOBBER_AFTER_JOB=1): leave GPU 0's buffer as a snark carve would.
+    fn debug_clobber_after_job(&self) {
+        if self.pctx.gpu && std::env::var("PROOFMAN_DEBUG_CLOBBER_AFTER_JOB").as_deref() == Ok("1") {
+            tracing::warn!("PROOFMAN_DEBUG_CLOBBER_AFTER_JOB: clobbering GPU 0's unified buffer");
+            // The job released the locks: retake them so no other job or snark is using the buffer.
+            let _computing = self.acquire_computing("debug_clobber_after_job");
+            debug_clobber_unified_c(self.pctx.get_device_buffers_ptr());
+            self.pctx.reload_fixed_pols_gpu.store(true, Ordering::SeqCst);
+        }
     }
 
     pub fn register_recurser_setup(&self, recurser_id: &str, recurser_path_stem: &Path) -> ProofmanResult<()> {
@@ -2391,7 +2437,7 @@ where
             match device_slot.as_deref() {
                 Some(existing) if existing != recurser_id => {
                     tracing::info!(
-                        "recurser '{existing}' currently occupies the GPU const slot; \
+                        "recurser '{existing}' is the loaded device setup; \
                          '{recurser_id}' will be swapped in on demand at prove time"
                     );
                 }
@@ -2417,36 +2463,28 @@ where
     }
 
     fn load_recurser_setup_on_device(&self, setup: &Setup<F>) -> ProofmanResult<()> {
-        let packed_len_bytes = std::fs::metadata(&setup.const_pols_path)
+        let packed_len = std::fs::metadata(&setup.const_pols_path)
             .map_err(|e| {
                 ProofmanError::InvalidSetup(format!(
                     "recurser packed const pols missing at {}: {e}",
                     setup.const_pols_path
                 ))
             })?
-            .len();
-        let packed_len = packed_len_bytes / 8;
-        let slot = self.setups.recurser_const_slot_size as u64;
+            .len()
+            / 8;
+        // Slot 0 is the only LRU slot sized for it; failing here beats exiting at prove time.
+        let slot = if self.pctx.const_cache_lru_slots > 0 { self.setups.cache_big_words } else { 0 };
         if packed_len > slot {
             return Err(ProofmanError::InvalidSetup(format!(
-                "recurser packed const pols ({packed_len} elements) exceed the reserved GPU slot ({slot})"
+                "recurser packed const pols ({packed_len} elements) exceed the const cache's largest slot ({slot})"
             )));
         }
         let proof_type: &str = setup.setup_type.into();
         let d_buffers_ptr = self.pctx.get_device_buffers_ptr();
         setup.load_device(0, 0, d_buffers_ptr, std::ptr::null_mut());
-        load_device_const_pols_c(
-            0,
-            0,
-            self.recurser_const_offset,
-            d_buffers_ptr,
-            &setup.const_pols_path,
-            packed_len,
-            proof_type,
-            false,
-            // Recursers swap through a single reserved slot; each one really is uploaded.
-            false,
-        );
+        // Its own key in the const cache: a swap back finds its slot still warm.
+        let key = const_set_key(&setup.const_pols_path);
+        load_host_const_pols_c(0, 0, proof_type, key, &setup.const_pols_path, packed_len, d_buffers_ptr);
         Ok(())
     }
 
@@ -2501,20 +2539,20 @@ where
         }
 
         let _fold_guard = self.recurser_fold_lock.lock().unwrap();
+        // No reset runs on this path, so a preceding snark's carve is undone here.
+        self.restore_after_snark()?;
 
-        // The GPU const slot holds one recurser at a time; swap this one in if another is resident
-        // (same-recurser folds pay nothing). Safe under the fold lock: nothing reads the slot while
-        // we overwrite it.
+        // One recurser's device setup is loaded at a time (its consts live in the const cache under
+        // their own key); swap this one in if another is loaded. Safe under the fold lock.
         if self.options.gpu {
             let mut device_slot = self.recurser_device_registered.lock().unwrap();
             if device_slot.as_deref() != Some(recurser_id) {
                 tracing::info!(
-                    "Swapping recurser '{recurser_id}' into the GPU const slot (was {:?})",
+                    "Swapping recurser '{recurser_id}' in as the device setup (was {:?})",
                     device_slot.as_deref()
                 );
-                // Advance the marker only after a confirmed load. A failed load may leave the const
-                // buffer partially overwritten, so mark the slot None — else the next fold proves
-                // against those partial bytes (a silent wrong proof).
+                // Advance the marker only after a confirmed load; a failed one leaves None so the next
+                // fold reloads instead of proving against a half-loaded setup.
                 match self.load_recurser_setup_on_device(&setup) {
                     Ok(()) => *device_slot = Some(recurser_id.to_string()),
                     Err(e) => {
@@ -2552,8 +2590,6 @@ where
         proof_options: ProofOptions,
         phase: ProvePhase,
     ) -> ProofmanResult<ProvePhaseResult> {
-        // A statically linked witness library never goes through `register_witness`.
-        self.register_prover_multiplicities()?;
         if self.options.verify_constraints {
             return Err(ProofmanError::InvalidParameters(
                 "Proofman has been initialized in verify_constraints mode".into(),
@@ -2566,7 +2602,12 @@ where
             ));
         }
 
-        self._generate_proof(phase_inputs, proof_options, phase)
+        let ends_job = phase != ProvePhase::Contributions;
+        let result = self._generate_proof(phase_inputs, proof_options, phase)?;
+        if ends_job {
+            self.debug_clobber_after_job();
+        }
+        Ok(result)
     }
 
     /// Error unless the loaded proving key was built with the `vadcop_final_compressed` stage.
@@ -2596,6 +2637,8 @@ where
             ));
         }
 
+        // No reset runs on this path, so a preceding snark's carve is undone here.
+        self.restore_after_snark()?;
         let vadcop_final_proof_compressed = generate_vadcop_final_compressed_proof(
             &self.pctx,
             &self.memory_handler_recursive_witness,
@@ -2615,16 +2658,16 @@ where
     /// Goldilocks STARK this run proves ([`generate_recursivef_proof`](Self::generate_recursivef_proof))
     /// before the wrapper's SNARK. `verkey_override`, the verkey the recursivef checks the proof
     /// against and the root of the SNARK's public digest, is the vadcop_final's by default. It holds
-    /// this ProofMan's `computing` throughout (the wrap writes its buffers), so it never overlaps one
-    /// of its proofs; the process-wide guard only for the recursivef.
+    /// this ProofMan's `computing` and the process-wide [`PROVING`] throughout: the wrap writes the
+    /// unified buffer, so no job or reset of any ProofMan runs meanwhile.
     pub fn generate_final_snark_proof(
         &self,
         snark_wrapper: &SnarkWrapper<F>,
         vadcop_final_proof: &VadcopFinalProof,
         verkey_override: Option<&[u64]>,
     ) -> ProofmanResult<SnarkProof> {
-        // `computing` across both steps: the SNARK writes this run's buffers too.
-        let (_computing, proving) = self.acquire_computing("generate_final_snark_proof");
+        // `computing` and PROVING across both steps: the SNARK writes this run's buffers too.
+        let (_computing, _proving) = self.acquire_computing("generate_final_snark_proof");
         if self.setups.setup_recursivef.is_none() && self.pctx.global_info.hash == "blake3" {
             return Err(ProofmanError::InvalidConfiguration(
                 "a blake3 key's final SNARK needs its recursivef: a ProofMan made with options.final_snark, of a key \
@@ -2637,8 +2680,6 @@ where
         }
         self.check_wrapper_recursivef(snark_wrapper)?;
         let recursivef_proof = self.recursivef_proof(vadcop_final_proof, verkey_override)?;
-        // The process-wide guard is the STARKs' (their C++ multiplicities); the SNARK has none.
-        drop(proving);
         snark_wrapper.generate_final_snark_proof(&recursivef_proof, verkey_override)
     }
 
@@ -2716,15 +2757,8 @@ where
             RankInfo { world_rank: mpi_ctx.rank, local_rank: mpi_ctx.node_rank, n_processes: mpi_ctx.n_processes };
         initialize_logger(options.verbose_mode, Some(&rank_info));
 
-        let (
-            pctx,
-            sctx,
-            setups_vadcop,
-            n_streams_per_gpu,
-            n_aggregation_workers_per_gpu,
-            n_gpus,
-            recurser_const_offset,
-        ) = Self::initialize_proofman(mpi_ctx.clone(), proving_key_path, &options)?;
+        let (pctx, sctx, setups_vadcop, n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus) =
+            Self::initialize_proofman(mpi_ctx.clone(), proving_key_path, &options)?;
 
         timer_start_info!(INIT_PROOFMAN);
 
@@ -2865,7 +2899,6 @@ where
             wcm,
             setups: setups_vadcop,
             recurser_setups: RwLock::new(HashMap::new()),
-            recurser_const_offset,
             recurser_device_registered: Mutex::new(None),
             recurser_fold_lock: Mutex::new(()),
             n_streams,
@@ -2915,15 +2948,6 @@ where
             witness_info: RwLock::new(WitnessInfo::default()),
             computing: Mutex::new(()),
         };
-
-        // Fitting reads only the proving key, so do it here rather than inside the first proof.
-        // Memoized (see `register_prover_multiplicities`).
-        timer_start_info!(FITTING_VIRTUAL_TABLES);
-        proofman.register_prover_multiplicities()?;
-        // Single rank: a fully prover-owned table can be produced and committed on the device. With
-        // several ranks the host must gather every rank's share.
-        mul_set_device_export_c(proofman.mpi_ctx.n_processes == 1);
-        timer_stop_and_log_info!(FITTING_VIRTUAL_TABLES);
 
         Ok(proofman)
     }
@@ -3002,8 +3026,6 @@ where
 
     pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) -> ProofmanResult<()> {
         timer_start_info!(REGISTERING_WITNESS);
-        // Normally already fitted in `new`; memoized safety net for other construction paths.
-        self.register_prover_multiplicities()?;
         witness_lib.register_witness(&self.wcm)?;
         self.wcm.set_init_witness(true, library);
         timer_stop_and_log_info!(REGISTERING_WITNESS);
@@ -3014,22 +3036,18 @@ where
     /// Hand the prover the range tables it can count itself plus the geometry those counters live
     /// in, and record which it accepted. Must run in the host binary: the witness library links its
     /// own copy of libstarks, so a registration made there is invisible to the scatter and fold.
-    fn register_prover_multiplicities(&self) -> ProofmanResult<()> {
+    fn register_prover_multiplicities(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        options: &ProofmanOptions,
+    ) -> ProofmanResult<()> {
         use rayon::prelude::*;
-        // Reached from `register_witness` and every `*_from_lib` entry; held throughout so a
-        // concurrent caller waits instead of registering twice.
-        let mut registered = self.pctx.prover_multiplicities_registered.lock().unwrap();
-        if *registered {
-            return Ok(());
-        }
         // What the caller kept for itself. Everything else is the prover's; a table it cannot fit is
         // an error, since the fallback silently costs a full-table pass every proof.
-        let std_owned: std::collections::HashSet<u64> = self.options.std_owned_tables.iter().copied().collect();
+        let std_owned: std::collections::HashSet<u64> = options.std_owned_tables.iter().copied().collect();
 
-        let owned: Vec<(u64, i64)> = collect_prover_owned_ranges(&self.pctx, &self.sctx)?
-            .into_iter()
-            .filter(|(id, _)| !std_owned.contains(id))
-            .collect();
+        let owned: Vec<(u64, i64)> =
+            collect_prover_owned_ranges(pctx, sctx)?.into_iter().filter(|(id, _)| !std_owned.contains(id)).collect();
         // Range tables (`std_rc_users`) and generic virtual tables (`virtual_table_data_global`) are
         // independent hints, so neither may gate the other's registration.
         let (range_ids, range_biases): (Vec<u64>, Vec<i64>) = owned.into_iter().unzip();
@@ -3037,8 +3055,8 @@ where
         // An exact map over each table's entries, verified against every entry. A table that does not
         // fit must be in `std_owned_tables`.
         let range_owned: std::collections::HashSet<u64> = range_ids.iter().copied().collect();
-        let layouts = collect_virtual_table_layouts(&self.pctx, &self.sctx)?;
-        let (fitted, vt_summary) = fit_virtual_table_maps(&self.pctx, &self.sctx, &layouts, &range_owned)?;
+        let layouts = collect_virtual_table_layouts(pctx, sctx)?;
+        let (fitted, vt_summary) = fit_virtual_table_maps(pctx, sctx, &layouts, &range_owned)?;
 
         // Unkept and unclaimed by both the range path and the fitter (`unclaimed_ids` excludes the
         // fitted ones): fail with the ids rather than run a slow path.
@@ -3079,7 +3097,7 @@ where
                 && !std_owned.contains(t)
                 && (range_owned.contains(t) || fitted.iter().any(|m| m.table_id == *t))
         };
-        if let Some(t) = global_sum_assumed_tables(&self.sctx)?.into_iter().find(owning) {
+        if let Some(t) = global_sum_assumed_tables(sctx)?.into_iter().find(owning) {
             return Err(ProofmanError::InvalidSetup(format!(
                 "table {t} is looked up by a global sum, which the prover does not count; declare it in \
                  ProofmanOptions::std_owned_tables"
@@ -3091,17 +3109,11 @@ where
         // inputs (fixed-column roots, expressions, packing, owned ids), since map slot order is not
         // deterministic.
         static REGISTERED: Mutex<Option<blake3::Hash>> = Mutex::new(None);
-        let airs: Vec<(usize, usize)> = self
-            .pctx
-            .global_info
-            .airs
-            .iter()
-            .enumerate()
-            .flat_map(|(ag, a)| (0..a.len()).map(move |ai| (ag, ai)))
-            .collect();
+        let airs: Vec<(usize, usize)> =
+            pctx.global_info.airs.iter().enumerate().flat_map(|(ag, a)| (0..a.len()).map(move |ai| (ag, ai))).collect();
         let air_hashes: Vec<blake3::Hash> = airs
             .par_iter()
-            .filter_map(|&(ag, ai)| self.sctx.get_setup(ag, ai).ok().map(|s| (ag, ai, s)))
+            .filter_map(|&(ag, ai)| sctx.get_setup(ag, ai).ok().map(|s| (ag, ai, s)))
             .map(|(ag, ai, setup)| {
                 let mut h = blake3::Hasher::new();
                 for ext in [".bin", ".starkinfo.json", ".verkey.bin"] {
@@ -3111,9 +3123,9 @@ where
                     hash_words(&mut h, &[bytes.len() as u64]);
                     h.update(&bytes);
                 }
-                let pi = self.options.packed_info.get(&(ag, ai));
+                let pi = options.packed_info.get(&(ag, ai));
                 // The air's effective packing, which its slot programs are compiled for.
-                let effectively_packed = self.options.packed && pi.is_some_and(|pi| pi.is_packed);
+                let effectively_packed = options.packed && pi.is_some_and(|pi| pi.is_packed);
                 hash_words(&mut h, &[effectively_packed as u64]);
                 if let Some(pi) = pi {
                     let flags = [pi.is_packed as u64, pi.num_packed_words, pi.index_bits, pi.words_per_entry, pi.lanes];
@@ -3133,7 +3145,7 @@ where
         hash_words(&mut h, &range_biases.iter().map(|b| *b as u64).collect::<Vec<_>>());
         hash_words(&mut h, &map_ids);
         // The slot programs are compiled for one row layout: packed and unpacked runs must not share them.
-        hash_words(&mut h, &[self.options.packed as u64]);
+        hash_words(&mut h, &[options.packed as u64]);
         for ah in &air_hashes {
             h.update(ah.as_bytes());
         }
@@ -3189,9 +3201,9 @@ where
         // Every commit counts before stage 2, so a lookup over a stage-2 or im-pol value into a table
         // the prover counts cannot be counted. Needs the decoders: the plans are built from them.
         let (mut reads_aux, mut plan_errors) = (Vec::new(), Vec::new());
-        for (airgroup_id, airs) in self.pctx.global_info.airs.iter().enumerate() {
+        for (airgroup_id, airs) in pctx.global_info.airs.iter().enumerate() {
             for air_id in 0..airs.len() {
-                let Ok(setup) = self.sctx.get_setup(airgroup_id, air_id) else { continue };
+                let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
                 let p_setup = (&setup.p_setup).into();
                 if let Some(e) = mul_air_plan_error_c(p_setup, airgroup_id as u64, air_id as u64) {
                     plan_errors.push(e);
@@ -3224,8 +3236,7 @@ where
             tracing::warn!("Range tables {unhosted:?} are hosted by no virtual-table air; the std counts them");
         }
         // Read lazily by the std (VirtualTableAir::is_prover_owned), through this shared ProofCtx.
-        *self.pctx.prover_owned_tables.write().unwrap() = migrated;
-        *registered = true;
+        *pctx.prover_owned_tables.write().unwrap() = migrated;
         Ok(())
     }
 
@@ -3346,6 +3357,9 @@ where
             self.cancellation_info.write_recover().reset();
             self.reset_unguarded()?;
             self.pctx.dctx_reset();
+        } else {
+            // No reset runs on this path, so a preceding snark's carve is undone here.
+            self.restore_after_snark()?;
         }
 
         let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
@@ -3794,11 +3808,8 @@ where
         // Dequeue-ahead prefetch (witness-zone mode): the worker dequeues the next
         // ready basics from the scheduler ahead of dispatch. Only READY
         // (stored/computed) witnesses ever enter the scheduler queue, so a held
-        // instance is always launchable. Single basic stream only; default ON with
-        // the zone, PROOFMAN_PREFETCH=0 disables.
-        let prefetch_dequeue_ahead = self.pctx.gpu
-            && self.n_streams_non_recursive == 1
-            && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true);
+        // instance is always launchable. Single basic stream only; on with the zone the planner armed.
+        let prefetch_dequeue_ahead = self.pctx.gpu && self.n_streams_non_recursive == 1 && self.pctx.prefetch_units > 0;
         self.pctx.set_proof_tx(Some(self.proofs_tx.clone()));
 
         // Key-affinity recursive scheduler (GPU only; CPU has no streams and uses the witness
@@ -4863,6 +4874,8 @@ where
         if options.compressed {
             self.ensure_compressed_final_supported()?;
         }
+        // No reset runs on this path, so a preceding snark's carve is undone here.
+        self.restore_after_snark()?;
         self.receive_aggregated_proofs_inner(agg_proofs, last_proof, final_proof, keep_resident, options)
     }
 
@@ -5380,13 +5393,6 @@ where
 
         if let Err(e) = self.wcm.execute() {
             self.cancellation_info.write_recover().cancel(Some(e));
-        }
-
-        if self.pctx.gpu && self.pctx.reload_fixed_pols_gpu.load(Ordering::SeqCst) {
-            timer_start_info!(RELOAD_FIXED_POLS);
-            let _ = load_device_const_pols(&self.pctx, &self.sctx, &self.setups, self.options.aggregation, true)?;
-            self.pctx.reload_fixed_pols_gpu.store(false, Ordering::SeqCst);
-            timer_stop_and_log_info!(RELOAD_FIXED_POLS);
         }
 
         self.check_cancel(true)?;
@@ -6234,7 +6240,7 @@ where
         mpi_ctx: Arc<MpiCtx>,
         proving_key_path: PathBuf,
         options: &ProofmanOptions,
-    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64, u64)> {
+    ) -> ProofmanResult<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>, u64, u64, u64)> {
         if !set_gpu_mode_c(options.gpu) {
             return Err(ProofmanError::InvalidConfiguration(
                 "GPU mode requested but library was built without CUDA support".into(),
@@ -6248,6 +6254,8 @@ where
             mpi_ctx.clone(),
             options.gpu,
         )?;
+        // Slot sizing, before the allocation, reads it.
+        pctx.gpu_witness_airs = options.gpu_witness_airs.clone();
 
         // Components must pack exactly the airs the device will unpack: it gates every packed
         // read path on `packedTrace && is_packed`, so a global flag alone would corrupt the trace.
@@ -6276,38 +6284,59 @@ where
 
         pctx.set_weights(&sctx, &setups_vadcop)?;
 
+        // Before the allocation: the late region and slots are sized from the fitted plans.
+        timer_start_info!(FITTING_VIRTUAL_TABLES);
+        Self::register_prover_multiplicities(&pctx, &sctx, options)?;
+        mul_set_device_export_c(mpi_ctx.n_processes == 1);
+        timer_stop_and_log_info!(FITTING_VIRTUAL_TABLES);
+
         // Prefetch-zone sizing, needed BEFORE the unified-buffer allocation: the zone is
         // carved from a region INSIDE the unified buffer (below the consts), so it shares
         // one planned budget. Witness bytes = the largest basic trace (packed width when
-        // the air is packed). Default ON; PROOFMAN_PREFETCH=0 disables.
-        let prefetch_witness_bytes: u64 =
-            if options.gpu && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true) {
-                let mut witness_bytes: u64 = 0;
-                for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
-                    for (air_id, _) in group.iter().enumerate() {
-                        // A GPU-witness air never uploads a trace, so it must not
-                        // widen the slots the uploads share.
-                        if options.gpu_witness_airs.contains(airgroup_id, air_id) {
-                            continue;
-                        }
-                        let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
-                        let n = 1u64 << setup.stark_info.stark_struct.n_bits;
-                        let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
-                        let packed_words = options
-                            .packed_info
-                            .get(&(airgroup_id, air_id))
-                            .filter(|pi| pi.is_packed && options.packed)
-                            .map(|pi| pi.num_packed_words);
-                        witness_bytes = witness_bytes.max(packed_words.unwrap_or(cm1) * n * 8);
+        // the air is packed). Default ON; PROOFMAN_PREFETCH=0 disables. Verify-constraints never stages.
+        let prefetch_on = options.gpu
+            && !options.verify_constraints
+            && std::env::var("PROOFMAN_PREFETCH").map(|v| v != "0").unwrap_or(true);
+        let prefetch_witness_bytes: u64 = if prefetch_on {
+            let mut witness_bytes: u64 = 0;
+            for (airgroup_id, group) in pctx.global_info.airs.iter().enumerate() {
+                for (air_id, _) in group.iter().enumerate() {
+                    // A GPU-witness air never uploads a trace, so it must not
+                    // widen the slots the uploads share.
+                    if options.gpu_witness_airs.contains(airgroup_id, air_id) {
+                        continue;
                     }
+                    let Ok(setup) = sctx.get_setup(airgroup_id, air_id) else { continue };
+                    let n = 1u64 << setup.stark_info.stark_struct.n_bits;
+                    let cm1 = setup.stark_info.map_sections_n.get("cm1").copied().unwrap_or(0);
+                    let packed_words = options
+                        .packed_info
+                        .get(&(airgroup_id, air_id))
+                        .filter(|pi| pi.is_packed && options.packed)
+                        .map(|pi| pi.num_packed_words);
+                    witness_bytes = witness_bytes.max(packed_words.unwrap_or(cm1) * n * 8);
                 }
-                witness_bytes
-            } else {
-                0
-            };
-        // Slot count comes from the C++ side (DeviceCommitBuffers::PREFETCH_WITNESS_SLOTS),
-        // the single source of truth configure_prefetch_zone sizes against.
-        let prefetch_region_area: u64 = (prefetch_witness_bytes * get_prefetch_witness_slots_c() as u64).div_ceil(8);
+            }
+            witness_bytes
+        } else {
+            0
+        };
+        // One prefetch unit; the planner in set_device_buffers decides how many.
+        let unit_words = proofman_common::prefetch_unit_words(prefetch_witness_bytes);
+        if prefetch_witness_bytes > 0 && unit_words == 0 {
+            tracing::warn!(
+                "Largest witness ({prefetch_witness_bytes} B) does not split into {} units: no prefetch zone",
+                proofman_common::PREFETCH_UNIT_SPAN
+            );
+        }
+
+        let (slot_bytes, unfit) = if options.gpu {
+            let (slot_bytes, _, unfit) = slot_commit_airs(&pctx, &sctx, &slot_packed_info(options));
+            (slot_bytes, unfit)
+        } else {
+            (0, Vec::new())
+        };
+        let late_region_bytes = plan_late_region(options, get_num_gpus_c(), mpi_ctx.n_processes as usize);
 
         let (n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus) = pctx.set_device_buffers(
             &sctx,
@@ -6317,15 +6346,18 @@ where
             options.max_number_streams,
             options.max_number_recursive_streams,
             options.final_snark,
-            prefetch_region_area,
+            unit_words,
+            late_region_bytes,
+            // Verify-constraints and debug-info commit nothing, so they carve no slots.
+            if options.verify_constraints { 0 } else { STREAM_COMMIT_SLOTS },
+            slot_bytes,
         )?;
 
         use_packed_trace_c(pctx.get_device_buffers_ptr(), options.packed);
 
-        // Arm the prefetch zone with the size computed above: the zone IS the unified
-        // buffer's region (arming refuses on a mismatch).
-        if prefetch_witness_bytes > 0 {
-            configure_prefetch_zone_c(pctx.get_device_buffers_ptr(), prefetch_witness_bytes);
+        // Arm the zone the planner sized: the zone IS the unified buffer's region.
+        if pctx.prefetch_units > 0 {
+            configure_prefetch_zone_c(pctx.get_device_buffers_ptr(), prefetch_witness_bytes, pctx.prefetch_units);
         }
 
         // GPU witness airs, once the zone's fate is known. They have no host trace, so every
@@ -6354,14 +6386,11 @@ where
             }
             tracing::info!("GPU witness kernels registered: {registered}");
         }
-        pctx.gpu_witness_airs = options.gpu_witness_airs.clone();
 
         // Streaming-commit slots, the GPU's only contributions path. The slot COUNT is a memory-budget
         // knob (each slot lowers the ceiling on what gpu-mops may borrow); the slot SIZE is the largest
         // air's commit, from `slot_commit_airs`, the same set try_slot_commit admits.
-        const STREAM_COMMIT_SLOTS: u64 = 2;
         if options.gpu {
-            let (slot_bytes, _, unfit) = slot_commit_airs(&pctx, &sctx, &slot_packed_info(options));
             // Fatal only if one is instantiated (try_slot_commit): an unused air must not stop the run.
             if !unfit.is_empty() {
                 tracing::warn!(
@@ -6371,14 +6400,12 @@ where
                     unfit.join(", ")
                 );
             }
-            if slot_bytes > 0 {
-                configure_stream_commit_slots_c(pctx.get_device_buffers_ptr(), STREAM_COMMIT_SLOTS, slot_bytes);
-            }
-            if get_stream_commit_slots_c(pctx.get_device_buffers_ptr()) == 0 {
-                return Err(ProofmanError::InvalidConfiguration(format!(
-                    "no streaming-commit slot of {} fits the unified buffer",
-                    proofman_common::format_bytes(slot_bytes as f64)
-                )));
+            configure_stream_commit_slots_c(pctx.get_device_buffers_ptr());
+            // Verify-constraints and debug-info commit nothing, so they carve none.
+            if !options.verify_constraints && get_stream_commit_slots_c(pctx.get_device_buffers_ptr()) == 0 {
+                return Err(ProofmanError::InvalidConfiguration(
+                    "no air can commit in a streaming slot, the GPU's only contributions path".into(),
+                ));
             }
         }
 
@@ -6421,16 +6448,14 @@ where
         mpi_ctx.barrier();
 
         timer_start_info!(LOADING_FIXED_POLS);
-        // End of the init-time aggregation const-pols uploads = start of the
-        // reserved recurser slot (see register_recurser_setup).
-        let aggregation_const_end = load_device_const_pols(&pctx, &sctx, &setups_vadcop, options.aggregation, false)?;
+        load_device_const_pols(&pctx, &sctx, &setups_vadcop, options.aggregation, false)?;
         timer_stop_and_log_info!(LOADING_FIXED_POLS);
 
         let pctx = Arc::new(pctx);
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
 
-        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus, aggregation_const_end))
+        Ok((pctx, sctx, setups_vadcop, n_streams_per_gpu, n_aggregation_workers_per_gpu, n_gpus))
     }
 
     #[allow(dead_code)]
