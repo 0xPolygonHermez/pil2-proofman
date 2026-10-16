@@ -135,11 +135,11 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     std::mem::transmute(vec)
                 };
 
+                // Every u64 word of the rows, whatever the width of their field's elements.
                 #[cfg(feature = "diagnostic")]
                 unsafe {
                     let mut ptr = buffer.as_mut_ptr() as *mut u64;
-                    let expected_len = num_rows;
-                    for _ in 0..expected_len * #row_struct_name::<#generics>::ROW_SIZE {
+                    for _ in 0..num_rows * std::mem::size_of::<#row_struct_name<#generics>>() / std::mem::size_of::<u64>() {
                         ptr.write(u64::MAX - 1);
                         ptr = ptr.add(1);
                     }
@@ -203,8 +203,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 if cfg!(feature = "diagnostic") {
                     unsafe {
                         let mut ptr = buffer.as_mut_ptr() as *mut u64;
-                        let expected_len = num_rows;
-                        for _ in 0..expected_len * #row_struct_name::<#generics>::ROW_SIZE {
+                        for _ in 0..expected_len * std::mem::size_of::<#generics>() / std::mem::size_of::<u64>() {
                             ptr.write(u64::MAX - 1);
                             ptr = ptr.add(1);
                         }

@@ -97,11 +97,11 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
             std::mem::transmute(vec)
         };
 
+        // Every u64 word of the rows, whatever the width of their field's elements.
         #[cfg(feature = "diagnostic")]
         unsafe {
             let mut ptr = buffer.as_mut_ptr() as *mut u64;
-            let expected_len = num_rows;
-            for _ in 0..expected_len * R::ROW_SIZE {
+            for _ in 0..num_rows * std::mem::size_of::<R>() / std::mem::size_of::<u64>() {
                 ptr.write(u64::MAX - 1);
                 ptr = ptr.add(1);
             }
@@ -162,7 +162,7 @@ impl<R: TraceRow, const NUM_ROWS: usize, const AIRGROUP_ID: usize, const AIR_ID:
         if cfg!(feature = "diagnostic") {
             unsafe {
                 let mut ptr = buffer.as_mut_ptr() as *mut u64;
-                for _ in 0..expected_len {
+                for _ in 0..expected_len * std::mem::size_of::<F>() / std::mem::size_of::<u64>() {
                     ptr.write(u64::MAX - 1);
                     ptr = ptr.add(1);
                 }

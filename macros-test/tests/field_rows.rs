@@ -93,3 +93,17 @@ fn a_row_with_typed_columns_still_holds_bn128_values() {
         (fr(7), Bn128::ONE, [Bn128::ZERO, Bn128::ZERO, Bn128::ZERO, Bn128::TWO])
     );
 }
+
+/// A diagnostic build poisons an unwritten trace word by word, so that a cell its witness never
+/// writes shows: over the trace's whole length, whatever the width of its field's elements.
+#[cfg(feature = "diagnostic")]
+#[test]
+fn a_diagnostic_trace_over_bn128_is_poisoned_whole() {
+    fn poisoned(flat: &[Bn128]) -> bool {
+        let words = std::mem::size_of_val(flat) / std::mem::size_of::<u64>();
+        unsafe { std::slice::from_raw_parts(flat.as_ptr() as *const u64, words) }.iter().all(|&w| w == u64::MAX - 1)
+    }
+    assert!(poisoned(&FrTrace::<Bn128>::with_capacity(4).get_buffer::<Bn128>()));
+    let from_vec = FrTrace::<Bn128>::new_from_vec(vec![Bn128::ZERO; 4 * 8]).unwrap().get_buffer::<Bn128>();
+    assert!(poisoned(&from_vec));
+}
