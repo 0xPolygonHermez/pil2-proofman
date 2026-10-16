@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Cursor, Read};
+use std::ops::Range;
 
 use anyhow::{anyhow, bail, ensure, Result};
 use num_bigint::BigUint;
@@ -234,19 +235,24 @@ fn read_cstring(c: &mut Cursor<&[u8]>) -> Result<String> {
     String::from_utf8(bytes).map_err(|e| anyhow!("cstring is not valid UTF-8: {}", e))
 }
 
-/// Read a linear combination: n_terms × (wire_id u32, coeff n8 bytes).
-fn read_lc<F: PlonkField>(c: &mut Cursor<&[u8]>, n8: usize) -> Result<LinearCombination<F>> {
+/// Read a linear combination: n_terms × (wire_id u32, coeff n8 bytes), each wire one of the header's
+/// `n_vars`.
+fn read_lc<F: PlonkField>(c: &mut Cursor<&[u8]>, n8: usize, n_vars: u32) -> Result<LinearCombination<F>> {
     let n_terms = read_u32(c)? as usize;
     let mut lc = LinearCombination::new();
     for _ in 0..n_terms {
         let wire_id = read_u32(c)?;
+        ensure!(wire_id < n_vars, "wire {wire_id} is not one of the header's {n_vars} wires");
         let coeff = read_field(c, n8)?;
         lc.insert(wire_id, coeff);
     }
     Ok(lc)
 }
 
-/// The byte position of each section's data, and whether the file has the custom-gate sections.
+/// The bytes of each section's data in the file, by the section's type.
+type Sections = HashMap<u32, Range<usize>>;
+
+/// The bytes of each section's data, and whether the file has the custom-gate sections.
 ///
 /// R1CS binary layout:
 /// ```text
@@ -258,7 +264,7 @@ fn read_lc<F: PlonkField>(c: &mut Cursor<&[u8]>, n8: usize) -> Result<LinearComb
 ///     size:   u64 LE   (byte count of data)
 ///     data:   size bytes
 /// ```
-fn read_sections(c: &mut Cursor<&[u8]>) -> Result<(HashMap<u32, u64>, bool)> {
+fn read_sections(c: &mut Cursor<&[u8]>) -> Result<(Sections, bool)> {
     // Magic
     let magic = read_slice(c, 4)?;
     if magic != b"r1cs" {
@@ -274,8 +280,8 @@ fn read_sections(c: &mut Cursor<&[u8]>) -> Result<(HashMap<u32, u64>, bool)> {
     // Section count
     let n_sections = read_u32(c)? as usize;
 
-    // One-pass scan: record the byte position of each section's data.
-    let mut data_starts: HashMap<u32, u64> = HashMap::new();
+    // One-pass scan: record the bytes of each section's data.
+    let mut sections = Sections::new();
     for _ in 0..n_sections {
         let sec_type = read_u32(c)?;
         let sec_size = read_u64(c)?;
@@ -284,7 +290,7 @@ fn read_sections(c: &mut Cursor<&[u8]>) -> Result<(HashMap<u32, u64>, bool)> {
             .checked_add(sec_size)
             .filter(|&end| end <= c.get_ref().len() as u64)
             .ok_or_else(|| anyhow!("section {sec_type}: its {sec_size} bytes run past the end of the file"))?;
-        data_starts.insert(sec_type, start);
+        ensure!(sections.insert(sec_type, start as usize..end as usize).is_none(), "section {sec_type} appears twice");
         c.set_position(end);
     }
 
@@ -292,7 +298,7 @@ fn read_sections(c: &mut Cursor<&[u8]>) -> Result<(HashMap<u32, u64>, bool)> {
     // not by `n_sections == 5`: a missing optional section 3, or an extra future section,
     // would otherwise silently drop every custom gate and leave its `<--` outputs free.
     // One without the other is malformed, and reading it as "no custom gates" would do the same.
-    let use_custom_gates = match (data_starts.contains_key(&4), data_starts.contains_key(&5)) {
+    let use_custom_gates = match (sections.contains_key(&4), sections.contains_key(&5)) {
         (true, true) => true,
         (false, false) => false,
         (has_definitions, has_uses) => {
@@ -302,12 +308,18 @@ fn read_sections(c: &mut Cursor<&[u8]>) -> Result<(HashMap<u32, u64>, bool)> {
             ))
         }
     };
-    Ok((data_starts, use_custom_gates))
+    Ok((sections, use_custom_gates))
+}
+
+/// A reader of section `sec_type`'s data alone, so that no read of it runs into the next section.
+fn section<'a>(data: &'a [u8], sections: &Sections, sec_type: u32, what: &str) -> Result<Cursor<&'a [u8]>> {
+    let bytes = sections.get(&sec_type).ok_or_else(|| anyhow!("missing {what} section (type {sec_type})"))?;
+    Ok(Cursor::new(&data[bytes.clone()]))
 }
 
 /// Section 1, the header.
-fn read_header(c: &mut Cursor<&[u8]>, data_starts: &HashMap<u32, u64>, use_custom_gates: bool) -> Result<R1csHeader> {
-    c.set_position(*data_starts.get(&1).ok_or_else(|| anyhow!("missing header section (type 1)"))?);
+fn read_header(data: &[u8], sections: &Sections, use_custom_gates: bool) -> Result<R1csHeader> {
+    let c = &mut section(data, sections, 1, "header")?;
     let n8 = read_u32(c)?;
     let prime_bytes = read_slice(c, n8 as usize)?.to_vec();
     Ok(R1csHeader {
@@ -326,9 +338,8 @@ fn read_header(c: &mut Cursor<&[u8]>, data_starts: &HashMap<u32, u64>, use_custo
 /// Parse only the header of an R1CS file: enough to tell which field it is over
 /// ([`r1cs_prime`]) before reading it into one.
 pub fn read_r1cs_header(data: &[u8]) -> Result<R1csHeader> {
-    let mut c = Cursor::new(data);
-    let (data_starts, use_custom_gates) = read_sections(&mut c)?;
-    read_header(&mut c, &data_starts, use_custom_gates)
+    let (sections, use_custom_gates) = read_sections(&mut Cursor::new(data))?;
+    read_header(data, &sections, use_custom_gates)
 }
 
 /// The prime an r1cs is over, or an error naming it if plonk2pil does not read that one.
@@ -347,11 +358,10 @@ pub fn r1cs_prime(header: &R1csHeader) -> Result<R1csPrime> {
 /// A file over another prime is refused, naming the prime: its elements would not be elements of
 /// `F`, and on a narrower field, not even its coefficients' bytes.
 pub fn read_r1cs_from_bytes<F: PlonkField>(data: &[u8]) -> Result<R1csFile<F>> {
-    let mut c = Cursor::new(data);
-    let (data_starts, use_custom_gates) = read_sections(&mut c)?;
+    let (sections, use_custom_gates) = read_sections(&mut Cursor::new(data))?;
 
     // ── Section 1: Header ───────────────────────────────────────────────────
-    let header = read_header(&mut c, &data_starts, use_custom_gates)?;
+    let header = read_header(data, &sections, use_custom_gates)?;
     let prime = r1cs_prime(&header)?;
     ensure!(prime == F::PRIME, "the r1cs is over {prime}, and is read as {}", F::PRIME);
     // The prime's own width, since the prime is F's.
@@ -360,19 +370,19 @@ pub fn read_r1cs_from_bytes<F: PlonkField>(data: &[u8]) -> Result<R1csFile<F>> {
     let n_vars = header.n_vars;
 
     // ── Section 2: Constraints ─────────────────────────────────────────────
-    c.set_position(*data_starts.get(&2).ok_or_else(|| anyhow!("missing constraints section (type 2)"))?);
+    let mut c = section(data, &sections, 2, "constraints")?;
     // A constraint is three linear combinations, each at least its 4-byte term count.
     let mut constraints = Vec::with_capacity(bounded_capacity(&c, n_constraints as usize, 12));
     for _ in 0..n_constraints {
-        let a = read_lc(&mut c, n8)?;
-        let b = read_lc(&mut c, n8)?;
-        let lc_c = read_lc(&mut c, n8)?;
+        let a = read_lc(&mut c, n8, n_vars)?;
+        let b = read_lc(&mut c, n8, n_vars)?;
+        let lc_c = read_lc(&mut c, n8, n_vars)?;
         constraints.push(R1csConstraint { a, b, c: lc_c });
     }
 
     // ── Section 3: Wire-to-label (optional) ───────────────────────────────
-    let wire_to_label = if let Some(&pos) = data_starts.get(&3) {
-        c.set_position(pos);
+    let wire_to_label = if sections.contains_key(&3) {
+        let mut c = section(data, &sections, 3, "wire-to-label")?;
         let mut v = Vec::with_capacity(bounded_capacity(&c, n_vars as usize, 8));
         for _ in 0..n_vars {
             v.push(read_u64(&mut c)?);
@@ -388,7 +398,7 @@ pub fn read_r1cs_from_bytes<F: PlonkField>(data: &[u8]) -> Result<R1csFile<F>> {
 
     if use_custom_gates {
         // Section 4: gate definitions (name + parameters)
-        c.set_position(*data_starts.get(&4).ok_or_else(|| anyhow!("missing custom gates used section (type 4)"))?);
+        let mut c = section(data, &sections, 4, "custom gates used")?;
         let n_gates = read_u32(&mut c)? as usize;
         // A gate is at least its name's terminating NUL and its 4-byte parameter count.
         custom_gates = Vec::with_capacity(bounded_capacity(&c, n_gates, 5));
@@ -403,16 +413,22 @@ pub fn read_r1cs_from_bytes<F: PlonkField>(data: &[u8]) -> Result<R1csFile<F>> {
         }
 
         // Section 5: gate applications (gate_id + signal list)
-        c.set_position(*data_starts.get(&5).ok_or_else(|| anyhow!("missing custom gates applied section (type 5)"))?);
+        let mut c = section(data, &sections, 5, "custom gates applied")?;
         let n_apps = read_u32(&mut c)? as usize;
         // A use is at least its 4-byte gate id and 4-byte signal count.
         custom_gates_uses = Vec::with_capacity(bounded_capacity(&c, n_apps, 8));
         for _ in 0..n_apps {
             let id = read_u32(&mut c)?;
+            ensure!((id as usize) < n_gates, "a custom gate use of gate {id}, and the file defines {n_gates}");
             let n_signals = read_u32(&mut c)? as usize;
             let mut signals = Vec::with_capacity(bounded_capacity(&c, n_signals, 8));
             for _ in 0..n_signals {
-                signals.push(read_u64(&mut c)?);
+                let signal = read_u64(&mut c)?;
+                ensure!(
+                    signal < u64::from(n_vars),
+                    "a use of gate {id}: wire {signal} is not one of the header's {n_vars} wires"
+                );
+                signals.push(signal);
             }
             custom_gates_uses.push(CustomGateUse { id, signals });
         }

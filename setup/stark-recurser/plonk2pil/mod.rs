@@ -391,6 +391,42 @@ mod tests {
         }
     }
 
+    /// The bytes of the constraints section of `build_simple_r1cs_bytes`, its last: three linear
+    /// combinations of one term each, a 4-byte term count, a 4-byte wire and an 8-byte coefficient.
+    const CONSTRAINTS_BYTES: usize = 3 * (4 + 4 + 8);
+
+    /// Each section is read within its own bytes: one that declares fewer bytes than its reads take
+    /// is an error, not a read of the bytes after it.
+    #[test]
+    fn a_read_past_its_section_is_an_error() {
+        let mut data = build_simple_r1cs_bytes();
+        let size_at = data.len() - CONSTRAINTS_BYTES - 8;
+        data[size_at..size_at + 8].copy_from_slice(&(CONSTRAINTS_BYTES as u64 - 1).to_le_bytes());
+        assert!(read_r1cs_from_bytes::<Goldilocks>(&data).is_err());
+    }
+
+    /// A section type that appears twice is an error, not one of the two read as the other.
+    #[test]
+    fn a_section_twice_is_an_error() {
+        let mut data = build_simple_r1cs_bytes();
+        // The constraints section's type, before its size, made the header's.
+        let type_at = data.len() - CONSTRAINTS_BYTES - 8 - 4;
+        data[type_at..type_at + 4].copy_from_slice(&1u32.to_le_bytes());
+        let err = read_r1cs_from_bytes::<Goldilocks>(&data).unwrap_err().to_string();
+        assert!(err.contains("section 1 appears twice"), "{err}");
+    }
+
+    /// A wire is one of the header's: a constraint on wire `n_vars` is an error.
+    #[test]
+    fn a_wire_beyond_the_headers_is_an_error() {
+        let mut data = build_simple_r1cs_bytes();
+        // The first linear combination's wire, after its term count.
+        let wire_at = data.len() - CONSTRAINTS_BYTES + 4;
+        data[wire_at..wire_at + 4].copy_from_slice(&4u32.to_le_bytes());
+        let err = read_r1cs_from_bytes::<Goldilocks>(&data).unwrap_err().to_string();
+        assert!(err.contains("wire 4 is not one of the header's 4 wires"), "{err}");
+    }
+
     /// A count beyond what the file holds sizes no allocation: it is an error at the read that runs
     /// out, as for any truncated file.
     #[test]
