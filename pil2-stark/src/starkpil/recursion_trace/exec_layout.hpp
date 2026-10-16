@@ -8,7 +8,7 @@
 //   [1] nAdds   [2] mapRows   [3] mapCols
 //   additions: (sl, sr, coefL, coefR) each
 //   map: mapRows * mapCols u32 entries, row-major, two per word, padded to a whole word
-//   gate bands: version, count, (row, kind) per band
+//   gate bands: version, count, aux, then (row, kind, payload) per band
 //
 // The map covers only the rows and columns that carry placements -- the packers fill rows from 0
 // and leave the power-of-two padding alone, and a gate band's interior columns are never mapped.
