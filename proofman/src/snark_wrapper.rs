@@ -458,15 +458,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
         let publics = &proof[1..1 + proof[0] as usize];
-        // The digest verifiers recompute must be the one the circuit committed to.
-        let rootc: &[u64; 4] = verkey.try_into().map_err(|_| {
-            ProofmanError::InvalidConfiguration(format!("verkey has {} limbs, expected 4", verkey.len()))
-        })?;
-        if publics_info.snark_public_digest(publics, rootc)?.as_slice() != snark_publics_bytes.as_slice() {
-            return Err(ProofmanError::InvalidProof(
-                "the SNARK's public digest differs from PublicsInfo::snark_public_digest".to_string(),
-            ));
-        }
+        check_snark_public_digest(&publics_info, publics, verkey, &snark_publics_bytes)?;
         let public_bytes = get_public_bytes_solidity(&publics_info, publics)?;
         let snark_proof = SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, protocol.protocol_id());
 
@@ -476,6 +468,26 @@ impl<F: PrimeField64> SnarkWrapper<F> {
 
         Ok(snark_proof)
     }
+}
+
+/// Checks that `snark_publics_bytes`, the public of a final SNARK, is the digest of the vadcop_final
+/// publics `publics` and the root `verkey` ([`PublicsInfo::snark_public_digest`]): the digest
+/// verifiers recompute must be the one the circuit committed to.
+fn check_snark_public_digest(
+    publics_info: &PublicsInfo,
+    publics: &[u64],
+    verkey: &[u64],
+    snark_publics_bytes: &[u8],
+) -> ProofmanResult<()> {
+    let rootc: &[u64; 4] = verkey
+        .try_into()
+        .map_err(|_| ProofmanError::InvalidConfiguration(format!("verkey has {} limbs, expected 4", verkey.len())))?;
+    if publics_info.snark_public_digest(publics, rootc)?.as_slice() != snark_publics_bytes {
+        return Err(ProofmanError::InvalidProof(
+            "the SNARK's public digest differs from PublicsInfo::snark_public_digest".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// The `publicValues` bytes a Solidity verifier takes. See
@@ -1046,5 +1058,83 @@ mod snarkjs_verdict_tests {
         assert_eq!(proof["evaluations"].as_object().unwrap().len(), 16);
         assert_eq!(proof.as_object().unwrap().len(), 4);
         assert_eq!(publics, serde_json::json!(["25"]));
+    }
+
+    /// Each value's varint in bincode's standard configuration: one byte below 251, and 251 and
+    /// the two bytes of a `u16` up to its maximum.
+    fn varint(value: u64) -> Vec<u8> {
+        match u16::try_from(value) {
+            Ok(value) if value < 251 => vec![value as u8],
+            Ok(value) => [vec![251], value.to_le_bytes().to_vec()].concat(),
+            Err(_) => unreachable!("the test's values are below 2^16"),
+        }
+    }
+
+    /// `snark_proof.bin` holds the fields of a [`SnarkProof`] in order, each byte vector its length
+    /// and its bytes, and the protocol id last: the layout PLONK and FFLONK proofs have always had
+    /// (768 bytes of proof, 24 words). Every protocol's proof is read back as it was saved.
+    #[test]
+    fn a_snark_proof_is_saved_as_its_fields_and_read_back() {
+        let dir = tempfile::tempdir().unwrap();
+        for (protocol, proof_len) in [(SnarkProtocol::Plonk, 768), (SnarkProtocol::Fflonk, 768)] {
+            let proof_bytes: Vec<u8> = (0..proof_len).map(|i| (i % 256) as u8).collect();
+            let proof = SnarkProof::new(proof_bytes.clone(), vec![7; 32], vec![9; 32], protocol.protocol_id());
+            let path = dir.path().join(format!("{}_snark_proof.bin", protocol.protocol_name()));
+            proof.save(&path).unwrap();
+
+            let expected = [
+                varint(proof_len as u64),
+                proof_bytes,
+                varint(32),
+                vec![7; 32],
+                varint(32),
+                vec![9; 32],
+                varint(protocol.protocol_id()),
+            ]
+            .concat();
+            assert_eq!(std::fs::read(&path).unwrap(), expected, "{}", protocol.protocol_name());
+
+            let back = SnarkProof::load(&path).unwrap();
+            assert_eq!(
+                (back.proof_bytes, back.public_bytes, back.public_snark_bytes, back.protocol_id),
+                (proof.proof_bytes, proof.public_bytes, proof.public_snark_bytes, proof.protocol_id)
+            );
+        }
+    }
+
+    /// A final SNARK's public is checked to be the digest of the vadcop_final's publics and the root:
+    /// another digest, other publics or another root are refused as a proof whose public is not the
+    /// statement's, and a root that is not 4 limbs as a misconfiguration.
+    #[test]
+    fn the_snark_public_must_be_the_digest_of_the_publics_and_the_root() {
+        let out = proofman_common::PublicDefinition {
+            name: "out".to_string(),
+            initial_pos: 0,
+            n_values: 3,
+            chunks: [1, 64],
+            verification_key: false,
+        };
+        let info = PublicsInfo { n_publics: 3, definitions: vec![out], has_program_vk: false };
+        let (publics, rootc) = ([1, 2, 3], [11, 12, 13, 14]);
+        let digest = info.snark_public_digest(&publics, &rootc).unwrap();
+        assert!(check_snark_public_digest(&info, &publics, &rootc, &digest).is_ok());
+
+        let check =
+            |publics: &[u64], rootc: &[u64], digest: &[u8]| check_snark_public_digest(&info, publics, rootc, digest);
+        let mut other_digest = digest;
+        other_digest[31] ^= 1;
+        for refused in [
+            check(&publics, &rootc, &other_digest),
+            check(&[1, 2, 4], &rootc, &digest),
+            check(&publics, &[11, 12, 13, 15], &digest),
+        ] {
+            match refused {
+                Err(ProofmanError::InvalidProof(message)) => {
+                    assert!(message.contains("public digest differs"), "{message}")
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(matches!(check(&publics, &rootc[..3], &digest), Err(ProofmanError::InvalidConfiguration(_))));
     }
 }
