@@ -1153,7 +1153,7 @@ mod measure {
     fn coefficient_key_distribution() {
         let path = std::env::var("BLAKE3_MEASURE_R1CS").expect("set BLAKE3_MEASURE_R1CS");
         let data = std::fs::read(&path).unwrap();
-        let r1cs = read_r1cs_from_bytes(&data).unwrap();
+        let r1cs = read_r1cs_from_bytes::<Goldilocks>(&data).unwrap();
         let (cs, _adds) = r1cs2plonk(&r1cs);
 
         let mut per_key: HashMap<String, usize> = HashMap::new();

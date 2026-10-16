@@ -291,7 +291,7 @@ mod tests {
             return;
         };
         let bytes = std::fs::read(&f).unwrap_or_else(|e| panic!("read {f}: {e}"));
-        let r1cs = read_r1cs_from_bytes(&bytes).unwrap();
+        let r1cs = read_r1cs_from_bytes::<Goldilocks>(&bytes).unwrap();
         let cmp = compare_cells(&r1cs);
         eprintln!("\n=== {f}");
         eprint!("{}", cmp.report());

@@ -367,7 +367,7 @@ mod tests {
             return;
         };
         let bytes = std::fs::read(&f).unwrap_or_else(|e| panic!("read {f}: {e}"));
-        let r1cs = read_r1cs_from_bytes(&bytes).unwrap();
+        let r1cs = read_r1cs_from_bytes::<Goldilocks>(&bytes).unwrap();
         let n_publics = r1cs.header.n_outputs + r1cs.header.n_pub_inputs;
 
         // Recompute the remap the packer will use.

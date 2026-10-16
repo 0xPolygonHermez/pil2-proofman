@@ -1,15 +1,16 @@
 //! R1CS types and direct `&[u8]` parser for use by plonk2pil setup routines.
 //!
-//! The types are over a field `F`: an r1cs's coefficients and its custom gates' parameters are
-//! elements of `F`, its wire ids and signals integers. The parser reads Goldilocks, whose elements
-//! fit in 8 bytes. No BigInt, no temporary files.
+//! An r1cs is read into the field it is over (`F`, a [`PlonkField`]): its coefficients and its
+//! custom gates' parameters become elements of `F`, its wire ids and signals stay integers.
+//! No temporary files.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
-use anyhow::{anyhow, bail, Result};
-use proofman_fields::Goldilocks;
+use anyhow::{anyhow, bail, ensure, Result};
+use num_bigint::BigUint;
 
+use crate::plonk2pil::field::{PlonkField, R1csPrime};
 use crate::plonk2pil::r1cs::to_plonk::PlonkAddition;
 
 // ─── Public types ───────────────────────────────────────────────────────────
@@ -193,18 +194,30 @@ fn read_u64(c: &mut Cursor<&[u8]>) -> Result<u64> {
     Ok(u64::from_le_bytes(buf))
 }
 
-/// Read `field_size` bytes (≤ 8) as a little-endian u64.
-fn read_field(c: &mut Cursor<&[u8]>, field_size: usize) -> Result<u64> {
-    debug_assert!(field_size <= 8);
-    let mut buf = [0u8; 8];
-    c.read_exact(&mut buf[..field_size]).map_err(|e| anyhow!("read field ({} bytes): {}", field_size, e))?;
-    Ok(u64::from_le_bytes(buf))
+/// The next `n` bytes, borrowed. Bounded by the data before anything is taken, so a corrupt length
+/// is an error rather than an allocation of that size.
+fn read_slice<'a>(c: &mut Cursor<&'a [u8]>, n: usize) -> Result<&'a [u8]> {
+    let data: &'a [u8] = c.get_ref();
+    let start = c.position() as usize;
+    let end = start.checked_add(n).filter(|&end| end <= data.len());
+    let end = end.ok_or_else(|| anyhow!("read {} bytes at {}: the data ends at {}", n, start, data.len()))?;
+    c.set_position(end as u64);
+    Ok(&data[start..end])
 }
 
-fn read_bytes_vec(c: &mut Cursor<&[u8]>, n: usize) -> Result<Vec<u8>> {
-    let mut buf = vec![0u8; n];
-    c.read_exact(&mut buf).map_err(|e| anyhow!("read {} bytes: {}", n, e))?;
-    Ok(buf)
+/// Read one element of `F`: `n8` bytes, little-endian, canonical.
+fn read_field<F: PlonkField>(c: &mut Cursor<&[u8]>, n8: usize) -> Result<F> {
+    let bytes = read_slice(c, n8)?;
+    F::from_canonical_le(bytes).ok_or_else(|| {
+        anyhow!("{} is not an element of {}: it is not below the prime", BigUint::from_bytes_le(bytes), F::PRIME)
+    })
+}
+
+/// A capacity for `count` entries of at least `entry_bytes` bytes each, but no more than the rest of
+/// the data holds: a header's count does not size an allocation the file cannot fill.
+fn bounded_capacity(c: &Cursor<&[u8]>, count: usize, entry_bytes: usize) -> usize {
+    let rest = (c.get_ref().len() as u64).saturating_sub(c.position()) as usize;
+    count.min(rest / entry_bytes.max(1))
 }
 
 /// Read a null-terminated ASCII string.
@@ -221,19 +234,19 @@ fn read_cstring(c: &mut Cursor<&[u8]>) -> Result<String> {
     String::from_utf8(bytes).map_err(|e| anyhow!("cstring is not valid UTF-8: {}", e))
 }
 
-/// Read a linear combination: n_terms × (wire_id u32, coeff field_size bytes).
-fn read_lc(c: &mut Cursor<&[u8]>, field_size: usize) -> Result<LinearCombination<Goldilocks>> {
+/// Read a linear combination: n_terms × (wire_id u32, coeff n8 bytes).
+fn read_lc<F: PlonkField>(c: &mut Cursor<&[u8]>, n8: usize) -> Result<LinearCombination<F>> {
     let n_terms = read_u32(c)? as usize;
     let mut lc = LinearCombination::new();
     for _ in 0..n_terms {
         let wire_id = read_u32(c)?;
-        let coeff = read_field(c, field_size)?;
-        lc.insert(wire_id, Goldilocks::new(coeff));
+        let coeff = read_field(c, n8)?;
+        lc.insert(wire_id, coeff);
     }
     Ok(lc)
 }
 
-/// Parse an R1CS file over Goldilocks from raw bytes.
+/// The byte position of each section's data, and whether the file has the custom-gate sections.
 ///
 /// R1CS binary layout:
 /// ```text
@@ -245,29 +258,27 @@ fn read_lc(c: &mut Cursor<&[u8]>, field_size: usize) -> Result<LinearCombination
 ///     size:   u64 LE   (byte count of data)
 ///     data:   size bytes
 /// ```
-pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile<Goldilocks>> {
-    let mut c = Cursor::new(data);
-
+fn read_sections(c: &mut Cursor<&[u8]>) -> Result<(HashMap<u32, u64>, bool)> {
     // Magic
-    let magic = read_bytes_vec(&mut c, 4)?;
+    let magic = read_slice(c, 4)?;
     if magic != b"r1cs" {
         bail!("Invalid R1CS magic (expected \"r1cs\", got {:?})", magic);
     }
 
     // Version
-    let version = read_u32(&mut c)?;
+    let version = read_u32(c)?;
     if version != 1 {
         bail!("Unsupported R1CS version: {} (expected 1)", version);
     }
 
     // Section count
-    let n_sections = read_u32(&mut c)? as usize;
+    let n_sections = read_u32(c)? as usize;
 
     // One-pass scan: record the byte position of each section's data.
     let mut data_starts: HashMap<u32, u64> = HashMap::new();
     for _ in 0..n_sections {
-        let sec_type = read_u32(&mut c)?;
-        let sec_size = read_u64(&mut c)?;
+        let sec_type = read_u32(c)?;
+        let sec_size = read_u64(c)?;
         data_starts.insert(sec_type, c.position());
         c.seek(SeekFrom::Current(sec_size as i64))
             .map_err(|e| anyhow!("section {}: seek past data: {}", sec_type, e))?;
@@ -287,44 +298,78 @@ pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile<Goldilocks>> {
             ))
         }
     };
+    Ok((data_starts, use_custom_gates))
+}
+
+/// Section 1, the header.
+fn read_header(c: &mut Cursor<&[u8]>, data_starts: &HashMap<u32, u64>, use_custom_gates: bool) -> Result<R1csHeader> {
+    c.set_position(*data_starts.get(&1).ok_or_else(|| anyhow!("missing header section (type 1)"))?);
+    let n8 = read_u32(c)?;
+    let prime_bytes = read_slice(c, n8 as usize)?.to_vec();
+    Ok(R1csHeader {
+        n8,
+        prime_bytes,
+        n_vars: read_u32(c)?,
+        n_outputs: read_u32(c)?,
+        n_pub_inputs: read_u32(c)?,
+        n_prv_inputs: read_u32(c)?,
+        n_labels: read_u64(c)?,
+        n_constraints: read_u32(c)?,
+        use_custom_gates,
+    })
+}
+
+/// Parse only the header of an R1CS file: enough to tell which field it is over
+/// ([`r1cs_prime`]) before reading it into one.
+pub fn read_r1cs_header(data: &[u8]) -> Result<R1csHeader> {
+    let mut c = Cursor::new(data);
+    let (data_starts, use_custom_gates) = read_sections(&mut c)?;
+    read_header(&mut c, &data_starts, use_custom_gates)
+}
+
+/// The prime an r1cs is over, or an error naming it if plonk2pil does not read that one.
+pub fn r1cs_prime(header: &R1csHeader) -> Result<R1csPrime> {
+    R1csPrime::from_modulus_le(&header.prime_bytes).ok_or_else(|| {
+        anyhow!(
+            "the r1cs is over the prime {} (n8 = {}), which plonk2pil does not read: it reads Goldilocks and BN128",
+            BigUint::from_bytes_le(&header.prime_bytes),
+            header.n8
+        )
+    })
+}
+
+/// Parse an R1CS file from raw bytes into `F`, the field it is over.
+///
+/// A file over another prime is refused, naming the prime: its elements would not be elements of
+/// `F`, and on a narrower field, not even its coefficients' bytes.
+pub fn read_r1cs_from_bytes<F: PlonkField>(data: &[u8]) -> Result<R1csFile<F>> {
+    let mut c = Cursor::new(data);
+    let (data_starts, use_custom_gates) = read_sections(&mut c)?;
 
     // ── Section 1: Header ───────────────────────────────────────────────────
-    c.set_position(*data_starts.get(&1).ok_or_else(|| anyhow!("missing header section (type 1)"))?);
-    let field_size = read_u32(&mut c)? as usize;
-    let prime_bytes = read_bytes_vec(&mut c, field_size)?;
-    let n_vars = read_u32(&mut c)?;
-    let n_outputs = read_u32(&mut c)?;
-    let n_pub_inputs = read_u32(&mut c)?;
-    let n_prv_inputs = read_u32(&mut c)?;
-    let n_labels = read_u64(&mut c)?;
-    let n_constraints = read_u32(&mut c)?;
-
-    let header = R1csHeader {
-        n8: field_size as u32,
-        prime_bytes,
-        n_vars,
-        n_outputs,
-        n_pub_inputs,
-        n_prv_inputs,
-        n_labels,
-        n_constraints,
-        use_custom_gates,
-    };
+    let header = read_header(&mut c, &data_starts, use_custom_gates)?;
+    let prime = r1cs_prime(&header)?;
+    ensure!(prime == F::PRIME, "the r1cs is over {prime}, and is read as {}", F::PRIME);
+    // The prime's own width, since the prime is F's.
+    let n8 = header.n8 as usize;
+    let n_constraints = header.n_constraints;
+    let n_vars = header.n_vars;
 
     // ── Section 2: Constraints ─────────────────────────────────────────────
     c.set_position(*data_starts.get(&2).ok_or_else(|| anyhow!("missing constraints section (type 2)"))?);
-    let mut constraints = Vec::with_capacity(n_constraints as usize);
+    // A constraint is three linear combinations, each at least its 4-byte term count.
+    let mut constraints = Vec::with_capacity(bounded_capacity(&c, n_constraints as usize, 12));
     for _ in 0..n_constraints {
-        let a = read_lc(&mut c, field_size)?;
-        let b = read_lc(&mut c, field_size)?;
-        let lc_c = read_lc(&mut c, field_size)?;
+        let a = read_lc(&mut c, n8)?;
+        let b = read_lc(&mut c, n8)?;
+        let lc_c = read_lc(&mut c, n8)?;
         constraints.push(R1csConstraint { a, b, c: lc_c });
     }
 
     // ── Section 3: Wire-to-label (optional) ───────────────────────────────
     let wire_to_label = if let Some(&pos) = data_starts.get(&3) {
         c.set_position(pos);
-        let mut v = Vec::with_capacity(n_vars as usize);
+        let mut v = Vec::with_capacity(bounded_capacity(&c, n_vars as usize, 8));
         for _ in 0..n_vars {
             v.push(read_u64(&mut c)?);
         }
@@ -334,20 +379,21 @@ pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile<Goldilocks>> {
     };
 
     // ── Sections 4 & 5: Custom gates (only present when n_sections == 5) ──
-    let mut custom_gates: Vec<CustomGate<Goldilocks>> = Vec::new();
+    let mut custom_gates: Vec<CustomGate<F>> = Vec::new();
     let mut custom_gates_uses: Vec<CustomGateUse> = Vec::new();
 
     if use_custom_gates {
         // Section 4: gate definitions (name + parameters)
         c.set_position(*data_starts.get(&4).ok_or_else(|| anyhow!("missing custom gates used section (type 4)"))?);
         let n_gates = read_u32(&mut c)? as usize;
-        custom_gates = Vec::with_capacity(n_gates);
+        // A gate is at least its name's terminating NUL and its 4-byte parameter count.
+        custom_gates = Vec::with_capacity(bounded_capacity(&c, n_gates, 5));
         for _ in 0..n_gates {
             let template_name = read_cstring(&mut c)?;
             let n_params = read_u32(&mut c)? as usize;
-            let mut parameters = Vec::with_capacity(n_params);
+            let mut parameters = Vec::with_capacity(bounded_capacity(&c, n_params, n8));
             for _ in 0..n_params {
-                parameters.push(Goldilocks::new(read_field(&mut c, field_size)?));
+                parameters.push(read_field(&mut c, n8)?);
             }
             custom_gates.push(CustomGate { template_name, parameters });
         }
@@ -355,11 +401,12 @@ pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile<Goldilocks>> {
         // Section 5: gate applications (gate_id + signal list)
         c.set_position(*data_starts.get(&5).ok_or_else(|| anyhow!("missing custom gates applied section (type 5)"))?);
         let n_apps = read_u32(&mut c)? as usize;
-        custom_gates_uses = Vec::with_capacity(n_apps);
+        // A use is at least its 4-byte gate id and 4-byte signal count.
+        custom_gates_uses = Vec::with_capacity(bounded_capacity(&c, n_apps, 8));
         for _ in 0..n_apps {
             let id = read_u32(&mut c)?;
             let n_signals = read_u32(&mut c)? as usize;
-            let mut signals = Vec::with_capacity(n_signals);
+            let mut signals = Vec::with_capacity(bounded_capacity(&c, n_signals, 8));
             for _ in 0..n_signals {
                 signals.push(read_u64(&mut c)?);
             }
