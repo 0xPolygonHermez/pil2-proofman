@@ -1,15 +1,16 @@
 use pil2_pilout::pilout as pb;
 
+use crate::cfg::FieldCfg;
+use crate::error::Result;
 use crate::pil::constraint_poly::{generate_constraint_polynomial, Boundary, ConstraintPolyResult};
 use crate::expr::expression::Expression;
 use crate::expr::helpers::add_info_expressions;
 use crate::types::pilout_info::{ConstraintInfo, HintInfo, SetupResult, SymbolInfo};
-use crate::types::stark_struct::StarkStruct;
 
 /// Options controlling the preparePil flow.
 #[derive(Debug, Clone, Default)]
 pub struct PrepareOptions {
-    /// When true, skip starkStruct validation and code generation.
+    /// When true, skip code generation here, and the starkStruct validation in the STARK setup.
     pub debug: bool,
     /// When true, enable intermediate polynomial batching by stage.
     pub im_pols_stages: bool,
@@ -42,18 +43,19 @@ pub struct PreparePilResult {
 /// This function:
 /// 1. Calls `get_pilout_info` to extract raw pilout data
 /// 2. Sets up mapSectionsN for each stage
-/// 3. Validates starkStruct.nBits matches pilPower (unless debug mode)
-/// 4. Calls add_info_expressions on all constraints and remaining expressions
-/// 5. Computes opening points
-/// 6. Calls generate_constraint_polynomial
+/// 3. Calls add_info_expressions on all constraints and remaining expressions
+/// 4. Computes opening points
+/// 5. Calls generate_constraint_polynomial
+///
+/// Every step computes over `field`; `pil_info` must then run with the same field. Fails on what
+/// `get_pilout_info` refuses and on what the passes cannot process.
 pub fn prepare_pil(
     pilout: &pb::PilOut,
     airgroup_id: usize,
     air_id: usize,
-    stark_struct: &StarkStruct,
-    options: &PrepareOptions,
-) -> PreparePilResult {
-    let mut setup = crate::types::pilout_info::get_pilout_info(pilout, airgroup_id, air_id);
+    field: &FieldCfg,
+) -> Result<PreparePilResult> {
+    let mut setup = crate::types::pilout_info::get_pilout_info(pilout, airgroup_id, air_id, field)?;
 
     // Set all expression stages to 1 (mirrors JS: pil.expressions[i].stage = 1)
     for expr in setup.expressions.iter_mut() {
@@ -67,24 +69,6 @@ pub fn prepare_pil(
         setup.map_sections_n.insert(format!("cm{}", s), 0);
     }
 
-    // Validate starkStruct
-    if !options.debug {
-        if stark_struct.n_bits != setup.pil_power as usize {
-            panic!(
-                "starkStruct and pilfile have degree mismatch (airId: {} airgroupId: {} starkStruct:{} pilfile:{})",
-                air_id, airgroup_id, stark_struct.n_bits, setup.pil_power
-            );
-        }
-
-        let initial_domain = stark_struct.low_degree_test.log_domain_sizes()[0];
-        if stark_struct.n_bits_ext != initial_domain {
-            panic!(
-                "starkStruct.nBitsExt and the low-degree test's initial domain have a mismatch (nBitsExt:{} domain:{})",
-                stark_struct.n_bits_ext, initial_domain
-            );
-        }
-    }
-
     let mut expressions = std::mem::take(&mut setup.expressions);
     let mut constraints = std::mem::take(&mut setup.constraints);
     let mut symbols = std::mem::take(&mut setup.symbols);
@@ -92,14 +76,14 @@ pub fn prepare_pil(
 
     // Run add_info_expressions on all constraints
     for i in 0..constraints.len() {
-        add_info_expressions(&mut expressions, constraints[i].e);
+        add_info_expressions(&mut expressions, constraints[i].e, field)?;
         constraints[i].stage = Some(expressions[constraints[i].e].stage);
     }
 
     // Run add_info_expressions on remaining expressions that have not been processed.
     for i in 0..expressions.len() {
         if expressions[i].op != "__placeholder__" {
-            add_info_expressions(&mut expressions, i);
+            add_info_expressions(&mut expressions, i, field)?;
         }
     }
 
@@ -119,8 +103,14 @@ pub fn prepare_pil(
     let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
 
     // Generate constraint polynomial
-    let constraint_poly =
-        generate_constraint_polynomial(setup.n_stages, &mut expressions, &mut symbols, &constraints, &mut boundaries);
+    let constraint_poly = generate_constraint_polynomial(
+        setup.n_stages,
+        &mut expressions,
+        &mut symbols,
+        &constraints,
+        &mut boundaries,
+        field,
+    )?;
 
-    PreparePilResult { setup, expressions, constraints, symbols, hints, boundaries, constraint_poly }
+    Ok(PreparePilResult { setup, expressions, constraints, symbols, hints, boundaries, constraint_poly })
 }

@@ -1,14 +1,14 @@
 #ifndef EXEC_LAYOUT_HPP
 #define EXEC_LAYOUT_HPP
 
-// The `.exec` file's layout, shared by the map reader (exec_file.hpp) and the gate-band reader
+// The `.exec` file's layout, shared by the loader and the gate-band reader
 // (gate_bands.hpp). Written by `write_exec_file` in plonk2pil/mod.rs, which owns the format.
 //
 //   [0] EXEC_MAGIC | EXEC_FORMAT_VERSION
 //   [1] nAdds   [2] mapRows   [3] mapCols
 //   additions: (sl, sr, coefL, coefR) each
 //   map: mapRows * mapCols u32 entries, row-major, two per word, padded to a whole word
-//   gate bands: version, count, (row, kind) per band
+//   gate bands: version, count, aux, then (row, kind, payload) per band
 //
 // The map covers only the rows and columns that carry placements -- the packers fill rows from 0
 // and leave the power-of-two padding alone, and a gate band's interior columns are never mapped.

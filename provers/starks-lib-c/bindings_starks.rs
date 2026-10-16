@@ -476,18 +476,6 @@ extern "C" {
         d_buffers_: *mut ::std::os::raw::c_void
     );
     
-    
-    pub fn get_committed_pols(
-        circomWitness: *mut ::std::os::raw::c_void,
-        execData: *mut u64,
-        witness: *mut ::std::os::raw::c_void,
-        pPublics: *mut ::std::os::raw::c_void,
-        sizeWitness: u64,
-        N: u64,
-        nPublics: u64,
-        nCols: u64,
-    );
-    
     pub fn expand_gate_bands(
         witness: *mut ::std::os::raw::c_void,
         execData: *mut u64,

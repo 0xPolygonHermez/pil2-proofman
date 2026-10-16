@@ -1,6 +1,8 @@
+use crate::cfg::FieldCfg;
+use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::{add_info_expression_inline, get_exp_dim};
-use crate::types::pilout_info::{ConstraintInfo, SymbolInfo, FIELD_EXTENSION};
+use crate::types::pilout_info::{ConstraintInfo, SymbolInfo};
 
 /// Result of constraint polynomial generation, attached to the setup result.
 #[derive(Debug, Clone)]
@@ -34,8 +36,9 @@ pub fn generate_constraint_polynomial(
     symbols: &mut Vec<SymbolInfo>,
     constraints: &[ConstraintInfo],
     boundaries: &mut Vec<Boundary>,
-) -> ConstraintPolyResult {
-    let dim = FIELD_EXTENSION;
+    field: &FieldCfg,
+) -> Result<ConstraintPolyResult> {
+    let dim = field.ext_dim();
     let stage = n_stages + 1;
 
     // Create std_vc challenge
@@ -73,10 +76,10 @@ pub fn generate_constraint_polynomial(
 
     let mut c_exp_id: Option<usize> = None;
 
-    for (i, constraint) in constraints.iter().enumerate() {
+    for constraint in constraints {
         let boundary = &constraint.boundary;
         if !["everyRow", "firstRow", "lastRow", "everyFrame"].contains(&boundary.as_str()) {
-            panic!("Boundary {} not supported", boundary);
+            return Err(PilInfoError::UnsupportedBoundary(boundary.clone()));
         }
 
         // Build inline expression reference to the constraint's expression
@@ -128,11 +131,7 @@ pub fn generate_constraint_polynomial(
             constraint.e
         };
 
-        if i == 0 {
-            c_exp_id = Some(constraint_id);
-        } else {
-            let prev_c_exp_id = c_exp_id.unwrap();
-
+        if let Some(prev_c_exp_id) = c_exp_id {
             // weightedConstraint = mul(vc, exp(prev_c_exp_id))
             // All children are inline, ONE push (matches JS)
             let prev_exp_ref = Expression {
@@ -147,7 +146,7 @@ pub fn generate_constraint_polynomial(
                 values: vec![ExprChild::Inline(Box::new(vc_expr.clone())), ExprChild::Inline(Box::new(prev_exp_ref))],
                 ..Default::default()
             };
-            add_info_expression_inline(expressions, &mut weighted);
+            add_info_expression_inline(expressions, &mut weighted, field)?;
             expressions.push(weighted);
             let weighted_id = expressions.len() - 1;
 
@@ -172,11 +171,13 @@ pub fn generate_constraint_polynomial(
                 values: vec![ExprChild::Inline(Box::new(weighted_ref)), ExprChild::Inline(Box::new(constraint_ref))],
                 ..Default::default()
             };
-            add_info_expression_inline(expressions, &mut accumulated);
+            add_info_expression_inline(expressions, &mut accumulated, field)?;
             expressions.push(accumulated);
             let accumulated_id = expressions.len() - 1;
 
             c_exp_id = Some(accumulated_id);
+        } else {
+            c_exp_id = Some(constraint_id);
         }
     }
 
@@ -189,10 +190,10 @@ pub fn generate_constraint_polynomial(
                 Expression { op: "number".to_string(), value: Some("0".to_string()), dim: 1, ..Default::default() };
             let c_exp_id = expressions.len();
             expressions.push(dummy);
-            return ConstraintPolyResult { c_exp_id, q_dim: 1, initial_q_degree: 0 };
+            return Ok(ConstraintPolyResult { c_exp_id, q_dim: 1, initial_q_degree: 0 });
         }
     };
-    let q_dim = get_exp_dim(expressions, c_exp_id);
+    let q_dim = get_exp_dim(expressions, c_exp_id, field)?;
 
     // Create std_xi challenge for evaluation
     let xi_id =
@@ -202,7 +203,7 @@ pub fn generate_constraint_polynomial(
         sym_type: "challenge".to_string(),
         name: "std_xi".to_string(),
         stage: Some(stage + 1),
-        dim: FIELD_EXTENSION,
+        dim: field.ext_dim(),
         stage_id: Some(0),
         id: Some(xi_id),
         pol_id: None,
@@ -221,25 +222,30 @@ pub fn generate_constraint_polynomial(
     let initial_q_degree = if expressions[c_exp_id].exp_deg > 0 {
         expressions[c_exp_id].exp_deg
     } else {
-        calculate_exp_deg(expressions, c_exp_id, &[], true)
+        calculate_exp_deg(expressions, c_exp_id, &[], true)?
     };
 
     tracing::info!("The maximum constraint degree is {} (without intermediate polynomials)", initial_q_degree);
 
-    ConstraintPolyResult { c_exp_id, q_dim, initial_q_degree }
+    Ok(ConstraintPolyResult { c_exp_id, q_dim, initial_q_degree })
 }
 
 /// Calculate the degree of an expression tree.
-/// Mirrors `calculateExpDeg` from `imPolynomials.js`.
-pub fn calculate_exp_deg(expressions: &[Expression], idx: usize, im_exps: &[usize], _cache_values: bool) -> i64 {
+/// Mirrors `calculateExpDeg` from `imPolynomials.js`. Fails on an op it does not know.
+pub fn calculate_exp_deg(
+    expressions: &[Expression],
+    idx: usize,
+    im_exps: &[usize],
+    _cache_values: bool,
+) -> Result<i64> {
     let exp = &expressions[idx];
-    match exp.op.as_str() {
+    let deg = match exp.op.as_str() {
         "exp" => {
             let ref_id = exp.id.unwrap_or(0);
             if im_exps.contains(&ref_id) {
-                return 1;
+                return Ok(1);
             }
-            calculate_exp_deg(expressions, ref_id, im_exps, _cache_values)
+            calculate_exp_deg(expressions, ref_id, im_exps, _cache_values)?
         }
         "const" | "cm" | "custom" => 1,
         "Zi" => {
@@ -253,18 +259,18 @@ pub fn calculate_exp_deg(expressions: &[Expression], idx: usize, im_exps: &[usiz
         "neg" => {
             let child = exp.values[0].resolve(expressions);
             match &exp.values[0] {
-                ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, _cache_values),
-                ExprChild::Inline(_) => calculate_exp_deg_inline(expressions, child, im_exps, _cache_values),
+                ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, _cache_values)?,
+                ExprChild::Inline(_) => calculate_exp_deg_inline(expressions, child, im_exps, _cache_values)?,
             }
         }
         "add" | "sub" | "mul" => {
             let lhs_deg = match &exp.values[0] {
-                ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, _cache_values),
-                ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, _cache_values),
+                ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, _cache_values)?,
+                ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, _cache_values)?,
             };
             let rhs_deg = match &exp.values[1] {
-                ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, _cache_values),
-                ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, _cache_values),
+                ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, _cache_values)?,
+                ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, _cache_values)?,
             };
             if exp.op == "mul" {
                 lhs_deg + rhs_deg
@@ -272,8 +278,9 @@ pub fn calculate_exp_deg(expressions: &[Expression], idx: usize, im_exps: &[usiz
                 lhs_deg.max(rhs_deg)
             }
         }
-        _ => panic!("Exp op not defined: {}", exp.op),
-    }
+        _ => return Err(PilInfoError::UnknownOp { pass: "calculate_exp_deg", op: exp.op.clone() }),
+    };
+    Ok(deg)
 }
 
 /// Calculate degree for an inline (non-arena) expression.
@@ -282,14 +289,14 @@ fn calculate_exp_deg_inline(
     exp: &Expression,
     im_exps: &[usize],
     cache_values: bool,
-) -> i64 {
-    match exp.op.as_str() {
+) -> Result<i64> {
+    let deg = match exp.op.as_str() {
         "exp" => {
             let ref_id = exp.id.unwrap_or(0);
             if im_exps.contains(&ref_id) {
-                return 1;
+                return Ok(1);
             }
-            calculate_exp_deg(expressions, ref_id, im_exps, cache_values)
+            calculate_exp_deg(expressions, ref_id, im_exps, cache_values)?
         }
         "const" | "cm" | "custom" => 1,
         "Zi" => {
@@ -301,17 +308,17 @@ fn calculate_exp_deg_inline(
         }
         "number" | "public" | "challenge" | "eval" | "airgroupvalue" | "airvalue" | "proofvalue" => 0,
         "neg" => match &exp.values[0] {
-            ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, cache_values),
-            ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, cache_values),
+            ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, cache_values)?,
+            ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, cache_values)?,
         },
         "add" | "sub" | "mul" => {
             let lhs_deg = match &exp.values[0] {
-                ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, cache_values),
-                ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, cache_values),
+                ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, cache_values)?,
+                ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, cache_values)?,
             };
             let rhs_deg = match &exp.values[1] {
-                ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, cache_values),
-                ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, cache_values),
+                ExprChild::Id(id) => calculate_exp_deg(expressions, *id, im_exps, cache_values)?,
+                ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, cache_values)?,
             };
             if exp.op == "mul" {
                 lhs_deg + rhs_deg
@@ -319,8 +326,9 @@ fn calculate_exp_deg_inline(
                 lhs_deg.max(rhs_deg)
             }
         }
-        _ => panic!("Exp op not defined: {}", exp.op),
-    }
+        _ => return Err(PilInfoError::UnknownOp { pass: "calculate_exp_deg", op: exp.op.clone() }),
+    };
+    Ok(deg)
 }
 
 /// Find or add a boundary by name. Returns the index.
@@ -362,20 +370,20 @@ mod tests {
     #[test]
     fn test_calculate_exp_deg_leaf() {
         let exprs = vec![Expression { op: "number".to_string(), value: Some("42".to_string()), ..Default::default() }];
-        assert_eq!(calculate_exp_deg(&exprs, 0, &[], false), 0);
+        assert_eq!(calculate_exp_deg(&exprs, 0, &[], false).unwrap(), 0);
     }
 
     #[test]
     fn test_calculate_exp_deg_cm() {
         let exprs = vec![make_cm(0, 1)];
-        assert_eq!(calculate_exp_deg(&exprs, 0, &[], false), 1);
+        assert_eq!(calculate_exp_deg(&exprs, 0, &[], false).unwrap(), 1);
     }
 
     #[test]
     fn test_calculate_exp_deg_mul() {
         // mul(cm0, cm1) -> degree 2
         let exprs = vec![make_cm(0, 1), make_cm(1, 1), make_mul(0, 1)];
-        assert_eq!(calculate_exp_deg(&exprs, 2, &[], false), 2);
+        assert_eq!(calculate_exp_deg(&exprs, 2, &[], false).unwrap(), 2);
     }
 
     #[test]
@@ -396,7 +404,15 @@ mod tests {
         }];
         let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
 
-        let result = generate_constraint_polynomial(1, &mut expressions, &mut symbols, &constraints, &mut boundaries);
+        let result = generate_constraint_polynomial(
+            1,
+            &mut expressions,
+            &mut symbols,
+            &constraints,
+            &mut boundaries,
+            &FieldCfg::goldilocks(),
+        )
+        .unwrap();
 
         // With one everyRow constraint, c_exp_id is the original expression
         assert_eq!(result.c_exp_id, 0);
@@ -440,11 +456,56 @@ mod tests {
         ];
         let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
 
-        let result = generate_constraint_polynomial(1, &mut expressions, &mut symbols, &constraints, &mut boundaries);
+        let result = generate_constraint_polynomial(
+            1,
+            &mut expressions,
+            &mut symbols,
+            &constraints,
+            &mut boundaries,
+            &FieldCfg::goldilocks(),
+        )
+        .unwrap();
 
         // With two constraints: 2 original + 1 weighted + 1 accumulated = 4 total
         assert_eq!(result.c_exp_id, 3);
         assert!(result.q_dim >= 1);
+    }
+
+    /// The folding challenge, and so the constraint polynomial, lives in the field's extension:
+    /// dimension 3 over Goldilocks, 1 over BN128.
+    #[test]
+    fn test_folding_follows_the_field() {
+        for (field, dim) in [(FieldCfg::goldilocks(), 3), (FieldCfg::bn128(), 1)] {
+            let mut expressions = vec![make_cm(0, 1), make_cm(1, 1)];
+            let mut symbols = Vec::new();
+            let every_row = |e| ConstraintInfo {
+                boundary: "everyRow".to_string(),
+                e,
+                line: None,
+                offset_min: None,
+                offset_max: None,
+                stage: None,
+                im_pol: false,
+            };
+            let constraints = vec![every_row(0), every_row(1)];
+            let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
+
+            let result = generate_constraint_polynomial(
+                1,
+                &mut expressions,
+                &mut symbols,
+                &constraints,
+                &mut boundaries,
+                &field,
+            )
+            .unwrap();
+
+            assert_eq!(result.q_dim, dim);
+            for name in ["std_vc", "std_xi"] {
+                let challenge = symbols.iter().find(|s| s.name == name).expect("challenge added");
+                assert_eq!(challenge.dim, dim, "{name}");
+            }
+        }
     }
 
     #[test]
@@ -463,11 +524,42 @@ mod tests {
         }];
         let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
 
-        let result = generate_constraint_polynomial(1, &mut expressions, &mut symbols, &constraints, &mut boundaries);
+        let result = generate_constraint_polynomial(
+            1,
+            &mut expressions,
+            &mut symbols,
+            &constraints,
+            &mut boundaries,
+            &FieldCfg::goldilocks(),
+        )
+        .unwrap();
 
         // Should have added "firstRow" boundary
         assert!(boundaries.iter().any(|b| b.name == "firstRow"));
         // Degree should be 2 (cm * Zi)
         assert_eq!(result.initial_q_degree, 2);
+    }
+
+    /// Was `panic!("Boundary {} not supported")`.
+    #[test]
+    fn a_constraint_of_an_unknown_boundary_is_an_error() {
+        let constraint = ConstraintInfo {
+            boundary: "everyOtherRow".to_string(),
+            e: 0,
+            line: None,
+            offset_min: None,
+            offset_max: None,
+            stage: None,
+            im_pol: false,
+        };
+        let result = generate_constraint_polynomial(
+            1,
+            &mut vec![make_cm(0, 1)],
+            &mut Vec::new(),
+            &[constraint],
+            &mut Vec::new(),
+            &FieldCfg::goldilocks(),
+        );
+        assert!(matches!(result, Err(PilInfoError::UnsupportedBoundary(b)) if b == "everyOtherRow"));
     }
 }

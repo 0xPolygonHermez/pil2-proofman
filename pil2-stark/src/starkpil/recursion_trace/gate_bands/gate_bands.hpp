@@ -3,7 +3,7 @@
 
 // Rebuilding a hash gate's interior trace cells from its boundary cells.
 //
-// `getCommitedPols` can only place values the circom witness carries. A gate's interiors are a
+// `getWitnessTrace` can only place values the circom witness carries. A gate's interiors are a
 // pure function of its inputs, and those inputs are boundary cells the map already places, so
 // they are recomputed here rather than routed through the witness.
 //

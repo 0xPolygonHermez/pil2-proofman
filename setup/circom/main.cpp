@@ -521,8 +521,7 @@ extern "C" __attribute__((visibility("default"))) int64_t getWitnessTrace(
     auto cw = [&](uint64_t k) -> uint64_t { return ctx->signalValues[circuit->witness2SignalList[k]]; };
 
     // Layout owned by exec_layout.hpp: [magic|version, nAdds, mapRows, mapCols], additions,
-    // then the map as u32 entries packed two per word. Mirrors getCommitedPols in
-    // starkpil/recursion_trace/exec_file.hpp, which this call replaces.
+    // then the map as u32 entries packed two per word.
     const exec_layout::Header h = exec_layout::header(exec_data, exec_layout::HEADER_WORDS);
     const uint64_t *p_adds = &exec_data[exec_layout::HEADER_WORDS];
     // Entries are u32 pairs inside the u64 buffer, read through a byte pointer because aliasing

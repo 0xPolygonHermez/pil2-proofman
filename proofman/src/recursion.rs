@@ -1361,12 +1361,16 @@ pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> Pr
     }
 }
 
-/// Writes the zkin under the name `prove-air --proof` parses, when `PIL2_DUMP_ZKIN` names this
-/// proof type (or `all`). Errors are logged, never returned: this is a diagnostic.
+/// Exec header for [`recursion_trace_stride`]. Empty when a setup carries no exec file, which
+/// makes the stride fall back to the full width.
+fn setup_exec_slice<F: PrimeField64>(setup: &Setup<F>) -> &[u64] {
+    setup.exec_data.as_deref().map_or(&[][..], |e| e.as_slice())
+}
+
 /// Row stride to fill the recursion trace with: the exec map's width when the device widens it, the
 /// air's own width otherwise.
 ///
-/// `getCommitedPols` takes this as the row stride, so handing it the map's width makes it write a
+/// `getWitnessTrace` takes this as the row stride, so handing it the map's width makes it write a
 /// compact `N x map_cols` buffer with no gaps. The columns it then skips belong to a gate-band
 /// expander, which rebuilds them on device -- so on the GPU path they need never cross PCIe.
 ///
@@ -1377,12 +1381,6 @@ pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> Pr
 /// because that side decides the same question from the same exec header. Filling wide while it reads
 /// compact hands it `map_cols` columns' worth of an `n_cols`-wide row, and the proof then fails its
 /// evaluations check with nothing pointing at the cause.
-/// Exec header for [`recursion_trace_stride`]. Empty when a setup carries no exec file, which
-/// makes the stride fall back to the full width.
-fn setup_exec_slice<F: PrimeField64>(setup: &Setup<F>) -> &[u64] {
-    setup.exec_data.as_deref().map_or(&[][..], |e| e.as_slice())
-}
-
 pub fn recursion_trace_stride(exec: &[u64], n_cols: u64, gpu: bool) -> u64 {
     // Mirrors `plonk2pil::{EXEC_MAGIC, EXEC_FORMAT_VERSION, EXEC_HEADER_WORDS}`, which write the
     // header, and `exec_layout` in pil2-stark/src/starkpil/exec_layout.hpp, which reads it. Spelled
@@ -1406,6 +1404,8 @@ pub fn recursion_trace_stride(exec: &[u64], n_cols: u64, gpu: bool) -> u64 {
     }
 }
 
+/// Writes the zkin under the name `prove-air --proof` parses, when `PIL2_DUMP_ZKIN` names this
+/// proof type (or `all`). Errors are logged, never returned: this is a diagnostic.
 fn dump_zkin_if_requested<F: PrimeField64>(setup: &Setup<F>, instance_id: usize, zkin: &[u64]) {
     let Ok(want) = std::env::var("PIL2_DUMP_ZKIN") else {
         return;
