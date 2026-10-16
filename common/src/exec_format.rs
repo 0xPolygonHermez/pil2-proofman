@@ -790,7 +790,7 @@ mod tests {
     /// `getWitnessTrace`'s gather, over both fields: the publics after wire 0, the additions in
     /// order, the cells the map names, and zeros for its empty cells and outside its extent.
     #[test]
-    fn an_exec_gathers_the_trace_as_get_commited_pols_does() {
+    fn an_exec_gathers_the_trace_as_get_witness_trace_does() {
         let (got, want) = gathered::<Goldilocks>();
         assert_eq!(got, want);
         let (got, want) = gathered::<Bn128>();
