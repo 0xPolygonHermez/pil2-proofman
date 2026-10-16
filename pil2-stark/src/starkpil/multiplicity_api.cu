@@ -15,7 +15,6 @@
 using namespace std;
 
 void stream_commit_warmup_gpu(void *d_buffers_);   // starks_api.cu
-void lateRegionHold(DeviceCommitBuffers *d_buffers, bool live);   // starks_api.cu
 
 void mul_release_device(int gpuId) {
     CHECKCUDAERR(cudaSetDevice(gpuId));
@@ -35,21 +34,6 @@ void mul_release_device(int gpuId) {
     }
     auto oob = mulOobMap().find(gpuId);
     if (oob != mulOobMap().end()) { lateRelease(gpuId, oob->second); mulOobMap().erase(oob); }
-    auto ready = mulLateReadyEvents().find(gpuId);
-    if (ready != mulLateReadyEvents().end()) { CHECKCUDAERR(cudaEventDestroy(ready->second)); mulLateReadyEvents().erase(ready); }
-    // Shared by every device: freed with the last one.
-    if (mulMapDev().empty()) {
-        for (auto& kv : mulTableMapsPinned()) CHECKCUDAERR(cudaFreeHost(kv.second));
-        mulTableMapsPinned().clear();
-    }
-    if (mulAccs().empty()) {
-        std::lock_guard<std::mutex> lk(mulAccSnapshotMutex());
-        for (auto& kv : mulAccSnapshot()) {
-            if (kv.second.host != nullptr) CHECKCUDAERR(cudaFreeHost(kv.second.host));
-            if (kv.second.done != nullptr) CHECKCUDAERR(cudaEventDestroy(kv.second.done));
-        }
-        mulAccSnapshot().clear();
-    }
     auto peer = mulPeers().find(gpuId);
     if (peer != mulPeers().end()) {
         for (int k = 0; k < 2; k++) {
@@ -99,13 +83,6 @@ void mul_alloc(void *d_buffers_) {
     for (uint32_t g = 0; g < d_buffers->n_gpus; ++g) gpuIds[g] = (int)d_buffers->my_gpu_ids[g];
     mul_alloc_devices(gpuIds.data(), (int)gpuIds.size());
     for (int id : gpuIds) { mul_alloc_oob(id); mul_alloc_maps(id); }
-    if (mulLateInAux()) {
-        for (int id : gpuIds) {   // the per-GPU refill event, off the commit path
-            if (mulLateReady(id) != nullptr) continue;
-            CHECKCUDAERR(cudaSetDevice(id));
-            CHECKCUDAERR(cudaEventCreateWithFlags(&mulLateReadyEvents()[id], cudaEventDisableTiming));
-        }
-    }
     if (gpuIds.size() > 1 && mulDeviceExportEnabled()) mul_alloc_peers(gpuIds);
 
     // Coverage, then GPU memory per device (it competes with that device's prover arena). Once,
@@ -164,32 +141,6 @@ void mul_alloc(void *d_buffers_) {
 void mul_reset() {
     mul_reset_all();
     mul_cpu_reset();
-}
-
-// Once per job, before mul_alloc: the generation bump makes mul_alloc_maps re-copy the maps.
-void mul_begin_job(void *d_buffers_) {
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    if (d_buffers == nullptr || !d_buffers->lateInAux) return;
-    for (uint32_t g = 0; g < d_buffers->n_gpus; ++g) lateArenaInvalidate((int)d_buffers->my_gpu_ids[g]);
-    mulLateLive() = true;
-}
-
-// When the contributions start, so a reset that is not followed by them (cancel, execute) holds nothing.
-void mul_hold_late_region(void *d_buffers_) {
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    if (d_buffers == nullptr || !d_buffers->lateInAux) return;
-    lateRegionHold(d_buffers, true);
-}
-
-void mul_end_contributions(void *d_buffers_) {
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    if (d_buffers == nullptr || !d_buffers->lateInAux) return;
-    mul_snapshot_wait();
-    mulLateLive() = false;
-    // Async zero/map copies into the late region must land before stream 0 reuses it.
-    for (uint32_t g = 0; g < d_buffers->n_gpus; ++g)
-        CHECKCUDAERR(cudaStreamSynchronize(mulXferStream((int)d_buffers->my_gpu_ids[g])));
-    lateRegionHold(d_buffers, false);
 }
 
 } // extern "C"

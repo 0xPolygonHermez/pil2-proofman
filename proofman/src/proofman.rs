@@ -11,8 +11,8 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::{aggregate_airgroupvals, expand_airgroup_values};
 use proofman_starks_lib_c::{
-    mul_alloc_c, mul_begin_job_c, mul_end_contributions_c, mul_hold_late_region_c, mul_fold_c, mul_migrated_tables_c,
-    mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c, register_mul_vt_c,
+    mul_alloc_c, mul_fold_c, mul_migrated_tables_c, mul_register_range_tables_c, mul_register_table_map_c, mul_reset_c,
+    register_mul_vt_c,
 };
 use pil2_std_lib::{
     collect_prover_owned_ranges, collect_virtual_table_layouts, fit_virtual_table_maps, global_sum_assumed_tables,
@@ -308,33 +308,6 @@ impl Drop for CancellationThread {
             handle.thread().unpark();
             let _ = handle.join();
         }
-    }
-}
-
-/// The in-aux late region's stream hold for one contributions phase; released on every exit.
-struct LateRegionHold {
-    d_buffers: *mut c_void,
-    held: bool,
-}
-
-impl LateRegionHold {
-    fn new(d_buffers: *mut c_void, late_in_aux: bool) -> Self {
-        if late_in_aux {
-            mul_hold_late_region_c(d_buffers);
-        }
-        Self { d_buffers, held: late_in_aux }
-    }
-
-    fn release(&mut self) {
-        if std::mem::take(&mut self.held) {
-            mul_end_contributions_c(self.d_buffers);
-        }
-    }
-}
-
-impl Drop for LateRegionHold {
-    fn drop(&mut self) {
-        self.release();
     }
 }
 
@@ -1001,9 +974,6 @@ impl<F: PrimeField64> ProofMan<F> {
         // of reset must still run on an error.
         let restore_err = self.restore_after_snark().err();
         if self.pctx.gpu {
-            if self.pctx.late_in_aux {
-                mul_begin_job_c(self.pctx.get_device_buffers_ptr());
-            }
             unsafe { mul_alloc_c(self.pctx.get_device_buffers_ptr()) };
             // Record which airs the device can produce whole; see `device_owned_table_airs`.
             if let Ok(layouts) = collect_virtual_table_layouts(&self.pctx, &self.sctx) {
@@ -1707,19 +1677,8 @@ where
         self._get_debug_info(debug_info)
     }
 
-    /// Verify-constraints and debug-info scatter from the ordinary aux streams while the counters are live.
-    fn require_counters_outside_aux(&self) -> ProofmanResult<()> {
-        if self.pctx.late_in_aux {
-            return Err(ProofmanError::InvalidConfiguration(
-                "verify-constraints/debug-info need a ProofMan built with verify_constraints".into(),
-            ));
-        }
-        Ok(())
-    }
-
     fn _get_debug_info(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
         let _computing = self.acquire_computing("_get_debug_info");
-        self.require_counters_outside_aux()?;
 
         self.set_partition(1, vec![0], 0)?;
 
@@ -1874,7 +1833,6 @@ where
         timer_start_info!(VERIFYING_PROOF_CONSTRAINTS);
 
         let _computing = self.acquire_computing("_verify_proof_constraints");
-        self.require_counters_outside_aux()?;
 
         self.set_partition(1, vec![0], 0)?;
 
@@ -3320,10 +3278,6 @@ where
 
         let _cancellation_thread = CancellationThread::new(self.cancellation_info.clone(), self.mpi_ctx.clone());
 
-        let contributions = phase == ProvePhase::Contributions || phase == ProvePhase::Full;
-        // Before the workers' guard, so on an early return they are joined before the hold drops.
-        let mut late_hold =
-            LateRegionHold::new(self.pctx.get_device_buffers_ptr(), contributions && self.pctx.late_in_aux);
         let _contributions_guard = WorkerPoolGuard {
             sentinel: usize::MAX,
             tx: self.contributions_tx.clone(),
@@ -3334,7 +3288,7 @@ where
         // it drops LAST — joining before either has signalled would hang.
         let mut _recursives_guard = JoinAllGuard::new(self.handle_recursives.clone());
 
-        let all_partial_contributions_u64 = if contributions {
+        let all_partial_contributions_u64 = if phase == ProvePhase::Contributions || phase == ProvePhase::Full {
             if !options.minimal_memory && self.pctx.gpu {
                 self.pctx.set_witness_tx(Some(self.witness_tx.clone()));
             }
@@ -3639,10 +3593,6 @@ where
                     })
                     .collect()
             };
-
-            // Every commit is done and the snapshot D2H overlapped the challenge: the proofs may reuse
-            // the late region from here.
-            late_hold.release();
 
             if phase == ProvePhase::Contributions {
                 let witness_time =
@@ -6314,7 +6264,7 @@ where
             options.final_snark,
             unit_words,
             late_region_bytes,
-            // Verify-constraints and debug-info commit no slots, and so keep the late region outside aux.
+            // Verify-constraints and debug-info commit nothing, so they carve no slots.
             if options.verify_constraints { 0 } else { STREAM_COMMIT_SLOTS },
             slot_bytes,
         )?;

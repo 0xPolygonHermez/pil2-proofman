@@ -818,7 +818,6 @@ struct DeviceCommitBuffers
     // slot index is global, gpuLocal * streamCommitSlots + j.
     uint64_t streamCommitSlots = 0;
     uint64_t streamCommitSlotBytes = 0;  // set by the allocation, which carves the slots
-    bool lateInAux = false;   // ubl::In::lateInAux of this buffer's carve
     // Stashed at allocation for configure_stream_commit_slots' overlap computation.
     uint64_t auxTraceRecursiveBytes = 0;
     cudaStream_t *streamCommitStreams = nullptr;  // [n_gpus * streamCommitSlots], global slot index
@@ -836,8 +835,6 @@ struct DeviceCommitBuffers
         uint32_t inFlight = 0;
         // Bumped when inFlight returns to 0: legacy streams may overwrite the slots' scratch from then on.
         uint32_t gen = 0;
-        // The late region (in aux) is live: the overlapped streams stay held between commits too.
-        bool lateLive = false;
         std::condition_variable cv;
     };
     SlotRegion *streamCommitRegions = nullptr;  // [n_gpus], local index

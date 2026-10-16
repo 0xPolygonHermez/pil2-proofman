@@ -6,7 +6,6 @@
 #include <atomic>
 #include <vector>
 #include <map>
-#include <cstring>
 #include <utility>
 #include <mutex>
 #include <thread>
@@ -70,60 +69,6 @@ inline void mulCopySync(int gpuId, void* dst, const void* src, size_t bytes, cud
     cudaStream_t s = mulXferStream(gpuId);
     CHECKCUDAERR(cudaMemcpyAsync(dst, src, bytes, kind, s));
     CHECKCUDAERR(cudaStreamSynchronize(s));
-}
-
-// Set at the carve: the late region sits in aux, refilled each job and dead once the contributions end.
-inline bool& mulLateInAux() { static bool v = false; return v; }
-
-// The late region holds this job's live counters (mul_begin_job .. mul_end_contributions).
-inline std::atomic<bool>& mulLateLive() { static std::atomic<bool> v{false}; return v; }
-
-// A device-owned air's folded accumulator, copied to host at its first export (the table's slot
-// commit); the exports after the contributions read it. Host buffers are reserved by mul_alloc.
-struct MulSnapshot { uint64_t* host = nullptr; cudaEvent_t done = nullptr; int doneGpu = -1; bool taken = false; };
-inline std::map<uint64_t, MulSnapshot>& mulAccSnapshot() { static std::map<uint64_t, MulSnapshot> m; return m; }
-inline std::mutex& mulAccSnapshotMutex() { static std::mutex m; return m; }
-
-inline const MulSnapshot* mulSnapshotFind(uint64_t airKey) {
-    std::lock_guard<std::mutex> lk(mulAccSnapshotMutex());
-    auto it = mulAccSnapshot().find(airKey);
-    return it != mulAccSnapshot().end() && it->second.taken ? &it->second : nullptr;
-}
-
-// Once per job per air, behind the fold on `stream`; gpuId is the current device.
-inline void mulSnapshotCapture(uint64_t airKey, const uint64_t* acc, uint64_t words, int gpuId, cudaStream_t stream) {
-    std::lock_guard<std::mutex> lk(mulAccSnapshotMutex());
-    MulSnapshot& snap = mulAccSnapshot()[airKey];
-    if (snap.taken) return;
-    if (snap.host == nullptr) {
-        zklog.error("multiplicity: air " + std::to_string(airKey) + " has no reserved accumulator snapshot");
-        exitProcess();
-    }
-    if (snap.doneGpu != gpuId) {   // an event records only on its own device's streams
-        if (snap.done != nullptr) CHECKCUDAERR(cudaEventDestroy(snap.done));
-        CHECKCUDAERR(cudaEventCreateWithFlags(&snap.done, cudaEventDisableTiming));
-        snap.doneGpu = gpuId;
-    }
-    CHECKCUDAERR(cudaMemcpyAsync(snap.host, acc, words * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
-    CHECKCUDAERR(cudaEventRecord(snap.done, stream));
-    snap.taken = true;
-}
-
-inline void mul_snapshot_wait() {
-    std::vector<cudaEvent_t> done;
-    {
-        std::lock_guard<std::mutex> lk(mulAccSnapshotMutex());
-        for (auto& kv : mulAccSnapshot()) if (kv.second.taken) done.push_back(kv.second.done);
-    }
-    for (cudaEvent_t e : done) CHECKCUDAERR(cudaEventSynchronize(e));
-}
-
-// Per GPU, recorded on mulXferStream after the job's map copies and zeroing. Created by mul_alloc,
-// read without a lock by every slot scatter.
-inline std::map<int, cudaEvent_t>& mulLateReadyEvents() { static std::map<int, cudaEvent_t> m; return m; }
-inline cudaEvent_t mulLateReady(int gpuId) {
-    auto it = mulLateReadyEvents().find(gpuId);
-    return it == mulLateReadyEvents().end() ? nullptr : it->second;
 }
 
 // Each scatter re-records its stream's event and the fold waits on those, since
@@ -234,9 +179,6 @@ inline std::map<std::pair<uint64_t,int>, std::pair<uint64_t*, uint32_t>>& mulMap
     return m;
 }
 
-// Pinned host mirrors of the table maps (late region in aux only), shared by every GPU.
-inline std::map<uint64_t, uint64_t*>& mulTableMapsPinned() { static std::map<uint64_t, uint64_t*> m; return m; }
-
 // Mirror every table's map onto one GPU, once per (table, gpu) and arena generation.
 inline void mul_alloc_maps(int gpuId) {
     CHECKCUDAERR(cudaSetDevice(gpuId));
@@ -252,36 +194,8 @@ inline void mul_alloc_maps(int gpuId) {
         uint64_t* d = it != mulMapDev().end()
             ? it->second.first
             : (uint64_t*)lateAllocOrDie(gpuId, "mul.map." + std::to_string(kv.first), bytes);
-        if (mulLateInAux()) {
-            // Every job re-copies: from a pinned mirror, so the copy overlaps the execution.
-            uint64_t*& pinned = mulTableMapsPinned()[kv.first];
-            if (pinned == nullptr) {
-                CHECKCUDAERR(cudaMallocHost((void**)&pinned, bytes));
-                memcpy(pinned, host.data(), bytes);
-            }
-            CHECKCUDAERR(cudaMemcpyAsync(d, pinned, bytes, cudaMemcpyHostToDevice, mulXferStream(gpuId)));
-        } else {
-            mulCopySync(gpuId, d, host.data(), bytes, cudaMemcpyHostToDevice);
-        }
+        mulCopySync(gpuId, d, host.data(), bytes, cudaMemcpyHostToDevice);
         mulMapDev()[key] = {d, gen};
-    }
-}
-
-// At the carve, so no proof pays for page-locking: the pinned map mirrors and accumulator snapshots
-// an in-aux late region needs.
-inline void mul_reserve_host() {
-    for (const auto& kv : mulTableMaps()) {
-        const std::vector<uint64_t>& host = kv.second.kv;
-        uint64_t*& pinned = mulTableMapsPinned()[kv.first];
-        if (host.empty() || pinned != nullptr) continue;
-        CHECKCUDAERR(cudaMallocHost((void**)&pinned, host.size() * sizeof(uint64_t)));
-        memcpy(pinned, host.data(), host.size() * sizeof(uint64_t));
-    }
-    std::lock_guard<std::mutex> lk(mulAccSnapshotMutex());
-    for (const auto& L : mulVtLayouts()) {
-        if (!mulLayoutHostsMigrated(L)) continue;
-        MulSnapshot& snap = mulAccSnapshot()[L.airKey];
-        if (snap.host == nullptr) CHECKCUDAERR(cudaMallocHost((void**)&snap.host, L.nCounters * sizeof(uint64_t)));
     }
 }
 
@@ -390,25 +304,14 @@ void mul_release_device(int gpuId);
 inline void mul_reset_all() {
     mul_reset_commits();
     mulFoldedOn().clear();
-    {
-        std::lock_guard<std::mutex> lk(mulAccSnapshotMutex());
-        for (auto& kv : mulAccSnapshot()) kv.second.taken = false;
+    for (auto& kv : mulOobMap()) {
+        if (kv.second == nullptr) continue;
+        CHECKCUDAERR(cudaSetDevice(kv.first));
+        mulMemsetSync(kv.first, kv.second, 0, MUL_OOB_SLOTS * sizeof(uint64_t));
     }
-    // In aux the zeroing overlaps the execution: the slot scatters order behind mulLateReady.
-    const bool async = mulLateInAux();
-    auto zero = [async](int g, void* p, size_t bytes) {
-        CHECKCUDAERR(cudaSetDevice(g));
-        if (async) CHECKCUDAERR(cudaMemsetAsync(p, 0, bytes, mulXferStream(g)));
-        else mulMemsetSync(g, p, 0, bytes);
-    };
-    for (auto& kv : mulOobMap())
-        if (kv.second != nullptr) zero(kv.first, kv.second, MUL_OOB_SLOTS * sizeof(uint64_t));
-    for (auto& kv : mulAccs()) zero(kv.second->gpuId, kv.second->d_acc, kv.second->n_counters * sizeof(uint64_t));
-    if (async) {
-        for (auto& kv : mulLateReadyEvents()) {   // covers the map copies too: same stream
-            CHECKCUDAERR(cudaSetDevice(kv.first));
-            CHECKCUDAERR(cudaEventRecord(kv.second, mulXferStream(kv.first)));
-        }
+    for (auto& kv : mulAccs()) {
+        CHECKCUDAERR(cudaSetDevice(kv.second->gpuId));
+        mulMemsetSync(kv.second->gpuId, kv.second->d_acc, 0, kv.second->n_counters * sizeof(uint64_t));
     }
 }
 
@@ -460,10 +363,8 @@ inline bool mul_air_fully_owned(uint64_t airKey) { return mulFullyOwnedLayout(ai
 // Write air `airKey`'s counts straight into the committed trace at `dst`, on the device.
 // False when the air is not device-owned: the caller takes the host path, which a cross-rank
 // reduction also needs. A device-owned air that cannot be exported is fatal: nothing fills its trace.
-// Once the late region is dead the counts come from the host snapshot, staged in `scratch`
-// (>= numRows * nCols device words, free until the transpose).
 inline bool mul_export_to_trace(uint64_t airKey, int gpuId, uint64_t* dst,
-                                uint64_t numRows, uint64_t nCols, cudaStream_t stream, uint64_t* scratch = nullptr) {
+                                uint64_t numRows, uint64_t nCols, cudaStream_t stream) {
     // Off with several ranks (the host reduces them) or when the std still counts a table here.
     // All or nothing: the transpose writes the whole cm1.
     const MulVtLayout* L = dst != nullptr ? mulFullyOwnedLayout(airKey) : nullptr;
@@ -475,19 +376,6 @@ inline bool mul_export_to_trace(uint64_t airKey, int gpuId, uint64_t* dst,
                     + "x" + std::to_string(nCols) + " but its accumulator holds "
                     + std::to_string(L->nCounters) + " counters");
         exitProcess();
-    }
-
-    if (mulLateInAux() && !mulLateLive()) {
-        const MulSnapshot* snap = mulSnapshotFind(airKey);
-        if (snap == nullptr || scratch == nullptr) {
-            zklog.error("multiplicity: air " + mulAirName(airKey) + " is exported after the contributions without "
-                        "its accumulator snapshot or a scratch: its trace would be garbage");
-            exitProcess();
-        }
-        CHECKCUDAERR(cudaSetDevice(gpuId));
-        CHECKCUDAERR(cudaMemcpyAsync(scratch, snap->host, L->nCounters * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
-        mul_transpose_acc_launch(scratch, dst, numRows, nCols, stream);
-        return true;
     }
 
     MulAcc* local = nullptr;
@@ -537,7 +425,6 @@ inline bool mul_export_to_trace(uint64_t airKey, int gpuId, uint64_t* dst,
     }
 
     mul_transpose_acc_launch(local->d_acc, dst, numRows, nCols, stream);
-    if (mulLateInAux()) mulSnapshotCapture(airKey, local->d_acc, L->nCounters, gpuId, stream);
     return true;
 }
 

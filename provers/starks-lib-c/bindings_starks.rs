@@ -874,9 +874,6 @@ extern "C" {
         len: u64,
     ) -> u64;
     pub fn mul_reset();
-    pub fn mul_begin_job(d_buffers_: *mut ::std::os::raw::c_void);
-    pub fn mul_hold_late_region(d_buffers_: *mut ::std::os::raw::c_void);
-    pub fn mul_end_contributions(d_buffers_: *mut ::std::os::raw::c_void);
     pub fn mul_clear_registry();
     pub fn mul_fold(airId: u64, hostAcc: *mut u64);
     pub fn mul_air_has_owned(airId: u64) -> u64;

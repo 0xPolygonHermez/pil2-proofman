@@ -7,10 +7,6 @@
 namespace ubl {
 
 constexpr uint64_t AUX_ALIGN = 1ull << 20;  // slot bases must stay at least 16-byte aligned
-constexpr uint64_t LATE_ALIGN = 256;         // late_arena's LATE_ALIGN
-
-// First-stream bytes an in-aux late region takes behind the slots, alignment gap included.
-inline uint64_t lateFootprint(uint64_t lateRegion) { return lateRegion + LATE_ALIGN; }
 
 struct In {  // bytes
     uint64_t basicConst = 0;
@@ -21,7 +17,6 @@ struct In {  // bytes
     uint64_t slots = 0;           // nSlots * slotBytes
     uint64_t aggConst = 0;
     uint64_t snarkPad = 0;
-    bool lateInAux = false;       // the late region sits after the slots and lives only through the contributions
 };
 
 struct Layout {  // byte offsets from the buffer base; the basic fixed pols sit at 0
@@ -35,15 +30,11 @@ inline uint64_t alignUp(uint64_t v, uint64_t a) { return (v + a - 1) / a * a; }
 inline Layout plan(const In& in) {
     Layout L;
     L.late = in.basicConst;
-    L.prefetch = L.late + (in.lateInAux ? 0 : in.lateRegion);
+    L.prefetch = L.late + in.lateRegion;
     L.auxBase = alignUp(L.prefetch + in.prefetch, AUX_ALIGN);
     L.slotsBase = L.auxBase;
     L.slotsEnd = L.auxBase + in.slots;
     L.mopsBase = L.slotsEnd;
-    if (in.lateInAux) {
-        L.late = alignUp(L.slotsEnd, LATE_ALIGN);
-        L.mopsBase = L.late + in.lateRegion;
-    }
     L.recursiveBase = L.auxBase + in.auxTotal;
     L.aggBase = L.recursiveBase + in.recursiveTotal;
     L.end = L.aggBase + in.aggConst + in.snarkPad;

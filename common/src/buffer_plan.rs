@@ -37,7 +37,7 @@ pub struct BufferPlanInput {
     /// Free GPU words after the headroom, and what the fixed regions take of them (for the error).
     pub free_words: u64,
     pub fixed_words: u64,
-    /// Words left after the headroom, the fixed regions and a late region outside aux (the cache is
+    /// Words left after the headroom, the fixed regions and the late region (the cache is
     /// planned here, so it is not taken out yet).
     pub budget_words: u64,
     /// The single stream that must exist: the largest proof of any kind.

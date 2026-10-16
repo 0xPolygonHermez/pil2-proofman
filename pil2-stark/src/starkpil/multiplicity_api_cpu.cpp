@@ -46,10 +46,6 @@ void mul_alloc(void *d_buffers_) {
     mul_log_coverage();
 }
 
-void mul_begin_job(void *) {}
-void mul_hold_late_region(void *) {}
-void mul_end_contributions(void *) {}
-
 void mul_reset() {
     mul_reset_commits();
     mul_cpu_reset();

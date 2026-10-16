@@ -360,8 +360,6 @@ pub struct ProofCtx<F: PrimeField64> {
     /// pair the device gates on, so a global flag cannot disagree with the per-air setup.
     pub packed_airs: HashSet<(usize, usize)>,
     pub reload_fixed_pols_gpu: Arc<AtomicBool>,
-    /// The late region lives in aux, through the contributions only (set by `set_device_buffers`).
-    pub late_in_aux: bool,
     /// Basic fixed pols (custom commits included) stay in pinned host memory (set by `set_device_buffers`).
     pub basic_fixed_on_host: bool,
     /// Set while a contributions witness thread stages the instance before dispatching it itself;
@@ -413,8 +411,6 @@ pub const MAX_INSTANCES: u64 = 1 << 17;
 const UBL_AUX_ALIGN_BYTES: u64 = 1 << 20;
 /// Streams stay 1 MiB-sized when the mops floor grows them (words).
 const MIB_WORDS: usize = (1 << 20) / 8;
-/// `ubl::LATE_ALIGN`: the in-aux late region's alignment gap (`ubl::lateFootprint`).
-const UBL_LATE_ALIGN_BYTES: u64 = 256;
 
 /// Pad (elements) that brings the buffer to `floor_bytes`, aligning auxBase exactly as `ubl::plan` does.
 fn snark_pad_elems(below_aux_bytes: u64, above_aux_elems: u64, floor_bytes: u64) -> u64 {
@@ -493,7 +489,6 @@ impl<F: PrimeField64> ProofCtx<F> {
             gpu,
             packed_airs: HashSet::new(),
             reload_fixed_pols_gpu: Arc::new(AtomicBool::new(false)),
-            late_in_aux: false,
             basic_fixed_on_host: false,
             dispatch_deferred: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
             dispatch_pending: (0..MAX_INSTANCES).map(|_| AtomicBool::new(false)).collect(),
@@ -1486,17 +1481,11 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         // Wrapping here would carve streams out of a budget the card does not have, and only fail
         // later inside cudaMalloc.
-        // Behind the slots (as the carve places it) it lives inside the first stream: nothing taken from the
-        // budget. The ubl::AUX_ALIGN gap below auxBase is taken either way.
-        let late_in_aux = gpu && n_slots > 0 && slot_bytes > 0;
-        let late_area =
-            if gpu { (if late_in_aux { 0 } else { late_region_bytes } + UBL_AUX_ALIGN_BYTES).div_ceil(8) } else { 0 };
-        // The first stream must hold one slot and the late region behind it, or the carve drops them out of aux.
-        let slot_late_floor = if late_in_aux {
-            (slot_bytes.next_multiple_of(UBL_AUX_ALIGN_BYTES) + late_region_bytes + UBL_LATE_ALIGN_BYTES).div_ceil(8)
-        } else {
-            0
-        };
+        // + ubl::AUX_ALIGN slack.
+        let late_area = if gpu { (late_region_bytes + UBL_AUX_ALIGN_BYTES).div_ceil(8) } else { 0 };
+        // The first stream must hold one slot, or the carve drops the slots.
+        let slot_floor =
+            if gpu && n_slots > 0 { slot_bytes.next_multiple_of(UBL_AUX_ALIGN_BYTES).div_ceil(8) } else { 0 };
         let max_size_buffer = ((free_memory_gpu / 8.0).floor() as u64)
             .checked_sub(total_const_area + total_const_area_aggregation + late_area)
             .ok_or_else(|| {
@@ -1508,7 +1497,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             })?;
 
         // Non-recursive streams also take compressor/vadcop_final launches, which floors their classes.
-        let recursive_capable_size = setups_vadcop.max_prover_recursive_buffer_size.max(slot_late_floor as usize);
+        let recursive_capable_size = setups_vadcop.max_prover_recursive_buffer_size.max(slot_floor as usize);
         let max_prover_recursive2_buffer_size =
             if aggregation { setups_vadcop.max_prover_recursive2_buffer_size } else { 0 };
 
@@ -1615,14 +1604,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         // post-allocation headroom leaves (at least to the mops floor), which makes the halves as large
         // as the card allows: the more airs fit a half, the shorter phase A. The halves must hold the
         // recursive1/recursive2 class.
-        // The mops window [mopsBase, recursiveBase) starts past the slots and the in-aux late region.
+        // The mops window [mopsBase, recursiveBase) starts past the slots.
         let mops_floor = if gpu {
-            let below_window = if late_in_aux {
-                n_slots * slot_bytes.next_multiple_of(UBL_AUX_ALIGN_BYTES) + late_region_bytes + UBL_LATE_ALIGN_BYTES
-            } else {
-                0
-            };
-            (get_mops_floor_bytes_c() + below_window).div_ceil(8) as usize
+            (get_mops_floor_bytes_c() + n_slots * slot_bytes.next_multiple_of(UBL_AUX_ALIGN_BYTES)).div_ceil(8) as usize
         } else {
             0
         };
@@ -1764,8 +1748,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         // Pad the unified buffer up to the snark floor (see GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES),
         // taking only the layout's unused slack. Runs without a wrapper skip it.
         let unified_buffer_pad_area: u64 = if gpu && final_snark {
-            let below_aux_bytes =
-                (total_const_area + prefetch_region_area) * 8 + if late_in_aux { 0 } else { late_region_bytes };
+            let below_aux_bytes = (total_const_area + prefetch_region_area) * 8 + late_region_bytes;
             let above_aux_elems = aux_trace_sizes.iter().sum::<u64>()
                 + if self.phase_b {
                     0
@@ -1807,7 +1790,6 @@ impl<F: PrimeField64> ProofCtx<F> {
             n_slots,
             slot_bytes,
         );
-        self.late_in_aux = late_in_aux;
 
         self.d_buffers = d_buffers;
 
@@ -1831,7 +1813,7 @@ impl<F: PrimeField64> ProofCtx<F> {
     }
 
     /// The mops borrow window `[mopsBase, recursiveBase)` of the FIRST GPU's (my_gpu_ids[0]) unified
-    /// buffer: the basic streams past the slots and the late region. The recursive streams and the
+    /// buffer: the basic streams past the slots. The recursive streams and the
     /// aggregation fixed pols above it stay untouched.
     pub fn get_first_gpu_buffer(&self) -> (usize, u64) {
         let p = self.d_buffers.get_ptr();

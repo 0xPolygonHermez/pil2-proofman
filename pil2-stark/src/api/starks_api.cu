@@ -453,30 +453,15 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
     in.recursiveTotal = totalAuxTraceRecursiveSize;
     // 1 MiB keeps slot bases 16-byte aligned for vectorized kernel accesses.
     d_buffers->streamCommitSlotBytes = ubl::alignUp(slotBytes, 1ull << 20);
-    // The slots (and, in aux, the late region behind them) live inside the first basic stream; fewer
-    // slots beat none, and none is the caller's to report.
+    // The slots live inside the first basic stream; fewer slots beat none, and none is the caller's to report.
     const uint64_t firstStreamBytes = d_buffers->n_streams > 0 ? d_buffers->aux_trace_sizes[0] * sizeof(Goldilocks::Element) : 0;
-    // The late region lives behind the slots: none (verify-constraints, debug, tools) keeps it outside aux.
-    bool lateInAux = nSlots > 0 && d_buffers->streamCommitSlotBytes > 0;
-    const uint64_t lateInStream = lateInAux ? ubl::lateFootprint(lateRegionBytes) : 0;
-    if (lateInStream > firstStreamBytes) {
-        zklog.error("late region (" + std::to_string(lateInStream >> 20) + " MB) exceeds the first basic stream (" +
-                    std::to_string(firstStreamBytes >> 20) + " MB)");
-        exitProcess();
-    }
-    if (d_buffers->streamCommitSlotBytes > 0 && nSlots * d_buffers->streamCommitSlotBytes + lateInStream > firstStreamBytes) {
-        const uint64_t fit = (firstStreamBytes - lateInStream) / d_buffers->streamCommitSlotBytes;
+    if (d_buffers->streamCommitSlotBytes > 0 && nSlots * d_buffers->streamCommitSlotBytes > firstStreamBytes) {
+        const uint64_t fit = firstStreamBytes / d_buffers->streamCommitSlotBytes;
         zklog.warning("streaming-commit slots: " + std::to_string(nSlots) + " x " +
-                      std::to_string(d_buffers->streamCommitSlotBytes >> 20) + " MB + the late region (" +
-                      std::to_string(lateInStream >> 20) + " MB) exceed the first basic stream (" +
+                      std::to_string(d_buffers->streamCommitSlotBytes >> 20) + " MB exceed the first basic stream (" +
                       std::to_string(firstStreamBytes >> 20) + " MB); using " + std::to_string(fit));
         nSlots = fit;
-        lateInAux = nSlots > 0;
     }
-    in.lateInAux = lateInAux;
-    d_buffers->lateInAux = lateInAux;
-    mulLateInAux() = lateInAux;
-    if (lateInAux) mul_reserve_host();
     in.slots = nSlots * d_buffers->streamCommitSlotBytes;
     in.aggConst = constPolsAggregationSize;
     in.snarkPad = unifiedBufferPadSize;
@@ -580,7 +565,7 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
         d_buffers->d_constPolsAggregation[i] = at(L.aggBase);
 
         if (i == 0)
-            zklog.info("Unified buffer carve (GB): basic 0 | late " + gb(L.late) + (lateInAux ? " (in aux)" : "") + " | prefetch " + gb(L.prefetch) +
+            zklog.info("Unified buffer carve (GB): basic 0 | late " + gb(L.late) + " | prefetch " + gb(L.prefetch) +
                        " | aux/slots " + gb(L.auxBase) + " | mops " + gb(L.mopsBase) + " | agg " + gb(L.aggBase) +
                        " | end " + gb(L.end));
     }
@@ -1805,8 +1790,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // Device-owned table: re-derive cm1 from the live accumulator (reset per proof, not per phase).
     // Must match the slot commit (commit_witness_streaming_gpu), or the contribution root will not match.
     const bool mulExported = !air_instance_info->is_packed &&
-                             mul_export_to_trace(mulAirKey(airgroupId, airId), (int)sd.gpuId, dst, N, nCols, stream,
-                                                 (uint64_t *)(d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", true)]));
+                             mul_export_to_trace(mulAirKey(airgroupId, airId), (int)sd.gpuId, dst, N, nCols, stream);
     // A virtual table is never also a caller's kernel air, so the order is free.
     const bool kernelFilled = !mulExported &&
                               gpuWitnessFillTrace(d_buffers, params, airgroupId, airId, instanceId,
@@ -3234,7 +3218,6 @@ void configure_stream_commit_slots_gpu(void *d_buffers_) {
     if (d_buffers->streamCommitSlots != 0) return;  // already configured
     const ubl::Layout &L = d_buffers->layout;
     const uint64_t slotBytes = d_buffers->streamCommitSlotBytes;
-    // slotsEnd, not mopsBase: in aux the late region sits between them.
     const uint64_t nSlots = slotBytes == 0 ? 0 : (L.slotsEnd - L.slotsBase) / slotBytes;
     if (nSlots == 0) return;
 
@@ -3306,8 +3289,7 @@ void configure_stream_commit_slots_gpu(void *d_buffers_) {
 // Caller holds the GPU's region mutex.
 static bool streamCommitClaimRegionLocked(DeviceCommitBuffers *d_buffers, uint32_t gl) {
     DeviceCommitBuffers::SlotRegion &r = d_buffers->streamCommitRegions[gl];
-    // Live late region: lateRegionHold already holds them, and a failed claim must not drop that.
-    if (r.inFlight != 0 || r.lateLive) return true;
+    if (r.inFlight != 0) return true;
     const uint32_t gpuId = d_buffers->my_gpu_ids[gl];
     std::vector<uint32_t> held;
     for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
@@ -3360,40 +3342,8 @@ static void streamCommitReleaseRegion(DeviceCommitBuffers *d_buffers, uint32_t g
         const uint32_t gpuId = d_buffers->my_gpu_ids[gl];
         for (uint32_t i = 0; i < d_buffers->n_total_streams; i++) {
             StreamData &sd = d_buffers->streamsData[i];
-            if (sd.overlapsStreamCommitRegion && sd.gpuId == gpuId && !r.lateLive)   // the job hold keeps them
+            if (sd.overlapsStreamCommitRegion && sd.gpuId == gpuId)
                 sd.slotHeld.store(false, std::memory_order_release);
-        }
-        r.cv.notify_all();
-    }
-}
-
-// Hold (or release) every stream overlapping a GPU's slots + late region for the whole contributions:
-// in aux the counters must outlive each commit, not just the one in flight.
-void lateRegionHold(DeviceCommitBuffers *d_buffers, bool live) {
-    if (d_buffers->streamCommitRegions == nullptr) return;
-    for (uint32_t gl = 0; gl < d_buffers->n_gpus; gl++) {
-        DeviceCommitBuffers::SlotRegion &r = d_buffers->streamCommitRegions[gl];
-        std::unique_lock<std::mutex> lk(r.mutex);
-        if (live) {
-            // Claimed like a slot commit (under each stream's lock, once it drained); waits out a busy stream.
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-            while (!streamCommitClaimRegionLocked(d_buffers, gl)) {
-                if (std::chrono::steady_clock::now() >= deadline) {
-                    zklog.error("late region: a stream over gpu " + std::to_string(d_buffers->my_gpu_ids[gl]) +
-                                "'s slots stayed busy for 60 s at the contributions start");
-                    exitProcess();
-                }
-                r.cv.wait_for(lk, std::chrono::milliseconds(1));
-            }
-            r.lateLive = true;
-            continue;
-        }
-        r.lateLive = false;
-        // A commit in flight keeps its own hold; its release drops it.
-        const uint32_t gpuId = d_buffers->my_gpu_ids[gl];
-        for (uint32_t i = 0; r.inFlight == 0 && i < d_buffers->n_total_streams; i++) {
-            StreamData &sd = d_buffers->streamsData[i];
-            if (sd.overlapsStreamCommitRegion && sd.gpuId == gpuId) sd.slotHeld.store(false, std::memory_order_release);
         }
         r.cv.notify_all();
     }
