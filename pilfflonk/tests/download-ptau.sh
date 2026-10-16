@@ -9,8 +9,10 @@
 # and holds 2^(k+1) - 1 powers [τ^i]₁. They go to $PILFFLONK_PTAU_DIR, by default
 # ${XDG_CACHE_HOME:-$HOME/.cache}/pilfflonk/ptau, where the tests look for them; the tests never
 # download anything. Without arguments, the powers the tests read: 12 (8191 powers, 4.8 MB) and
-# 19 (1,048,575, 604 MB, for the wraps' keys). The CI job test-pilfflonk-wrap reads 22 (8,388,607,
-# 4.8 GB), for the key of fibonacci-square's wrap.
+# 19 (1,048,575, 604 MB, for the wraps' keys). The CI jobs read 22 (8,388,607, 4.8 GB):
+# test-pilfflonk-bn128 for wrap-witness's blake3 wrap key, test-pilfflonk-wrap for the key of
+# fibonacci-square's Poseidon2 wrap. fibonacci-square's blake3 wrap, the default, reads 23
+# (16,777,215, 9.7 GB).
 #
 # A file already there is checked and kept if its hash is the README's; otherwise it is
 # downloaded again. A download goes to a file of its own, renamed into place once checked.

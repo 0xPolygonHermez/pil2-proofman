@@ -10,11 +10,13 @@
 //!   `InvalidProof`, where a verifier that cannot run is an `InvalidConfiguration`. It compiles the
 //!   fixture with the compiler `PIL2C_EXEC` names, which must have `--field`, and needs Node.js.
 //! - `prove_snark_wraps_a_vadcop_final_proof_in_pilfflonk`: the wrap of a real vadcop_final proof,
-//!   `prove-snark` on the `provingKeySnark/` of `setup-snark --final-snark pilfflonk`, and
-//!   `verify-snark` on its proof, with the same refusals; the publics the Solidity verifier hashes
-//!   are the vadcop_final proof's, as for PLONK and FFLONK. It takes its inputs from the
-//!   environment: `PROVE_SNARK_PROVING_KEY`, the `provingKeySnark/` (the recursivef's `.consttree`
-//!   is written there if it is not), and `PROVE_SNARK_PROOF`, the `vadcop_final_proof.bin`.
+//!   `prove-snark` on the `provingKeySnark/` of `setup-snark` with pilfflonk, its default, of a
+//!   blake3 key or a poseidon one (CI's), and `verify-snark` on its proof, with the same refusals;
+//!   the publics the Solidity verifier hashes are the vadcop_final proof's, as for PLONK and FFLONK.
+//!   It takes its inputs from the environment: `PROVE_SNARK_PROVING_KEY`, the `provingKeySnark/`,
+//!   beside the key's `provingKey/` (the recursivef's `.consttree` is written if it is not: in
+//!   `provingKey/<name>/recursivef/` for a blake3 key, in `provingKeySnark/recursivef/` for a
+//!   poseidon one), and `PROVE_SNARK_PROOF`, the `vadcop_final_proof.bin`.
 //!
 //! Both are `#[ignore]`d:
 //!

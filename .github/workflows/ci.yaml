@@ -425,6 +425,11 @@ jobs:
     # holds the powers setup-snark needs for this key, 13·2^19 + 12 for 2^19 rows: 2^23 − 1 powers,
     # 4.8 GB, kept in the cache. The Fibonacci fixture's keys of snark_pilfflonk.rs read the one of
     # power 12.
+    #
+    # The key is Poseidon2's, not the default blake3 one: the blake3 wrap of fibonacci-square needs
+    # about 35 GB of memory in prove-snark and the ptau of power 23 (9.7 GB), more than this runner
+    # and the cache hold. setup/pil2-stark/tests/setup_snark.rs covers how setup-snark sets up a
+    # blake3 key's recursivef, and test-pilfflonk-bn128 the blake3 wrap's witness and key.
     name: Test pilfflonk wrap (fibonacci-square)
     runs-on: ubuntu-latest
     env:
