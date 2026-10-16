@@ -1,7 +1,7 @@
 #ifndef EXEC_LAYOUT_HPP
 #define EXEC_LAYOUT_HPP
 
-// The `.exec` file's layout, shared by the map reader (exec_file.hpp) and the gate-band reader
+// The `.exec` file's layout, shared by the loader and the gate-band reader
 // (gate_bands.hpp). Written by `write_exec_file` in plonk2pil/mod.rs, which owns the format.
 //
 //   [0] EXEC_MAGIC | EXEC_FORMAT_VERSION

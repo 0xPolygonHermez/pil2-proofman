@@ -1366,7 +1366,7 @@ pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> Pr
 /// Row stride to fill the recursion trace with: the exec map's width when the device widens it, the
 /// air's own width otherwise.
 ///
-/// `getCommitedPols` takes this as the row stride, so handing it the map's width makes it write a
+/// `getWitnessTrace` takes this as the row stride, so handing it the map's width makes it write a
 /// compact `N x map_cols` buffer with no gaps. The columns it then skips belong to a gate-band
 /// expander, which rebuilds them on device -- so on the GPU path they need never cross PCIe.
 ///
