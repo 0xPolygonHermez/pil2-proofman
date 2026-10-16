@@ -36,8 +36,9 @@ use crate::plonk2pil::r1cs::to_plonk::{
     blake3_compress_gate_uses, ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info, PlonkConstraint,
 };
 use crate::plonk2pil::r1cs::types::{FixedPol, GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
-use crate::plonk2pil::utils::{bind_public_signals, build_fixed_pols, build_s_polynomials, mulp, public_rows};
+use crate::plonk2pil::utils::{bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, public_rows};
 use proofman_common::hash_family::GateRole;
+use proofman_fields::{Field, Goldilocks, PrimeField64};
 use std::collections::HashMap;
 
 fn rand_hex() -> String {
@@ -80,7 +81,7 @@ pub fn plonk_rows_inside_blocks(blocks: usize, lanes: usize, clocks: usize) -> u
 /// rows, the last one two-thirds empty -- that waste is the price of one `q` instead of two, and it
 /// is visible in `rows_needed` rather than hidden.
 pub fn plan_plonk_rows(
-    constraints: &[PlonkConstraint],
+    constraints: &[PlonkConstraint<Goldilocks>],
     blocks: usize,
     lanes: usize,
     clocks: usize,
@@ -217,37 +218,35 @@ impl RowAlloc {
     }
 }
 
-/// Coefficients a plonk constraint carries: the array is 3 signals then the `q` values.
-pub const PLONK_COEFFS: usize = std::mem::size_of::<PlonkConstraint>() / std::mem::size_of::<u64>() - 3;
-
 /// Writes one plonk row's five coefficients into the `C[..]` columns.
-fn write_plonk_coeffs(cv: &mut [Vec<u64>], row: usize, c: &PlonkConstraint) {
-    for j in 0..PLONK_COEFFS {
-        cv[j][row] = c[3 + j];
+fn write_plonk_coeffs(cv: &mut [Vec<Goldilocks>], row: usize, c: &PlonkConstraint<Goldilocks>) {
+    for (j, &q) in c.coeffs.iter().enumerate() {
+        cv[j][row] = q;
     }
 }
+
+/// One `Blake3Compress` use with its gate's `(flags, isParent)`.
+pub(super) type CompressUse<'a> = (&'a crate::plonk2pil::r1cs::types::CustomGateUse, Goldilocks, Goldilocks);
 
 /// Groups `Blake3Compress` uses by their `flags` template parameter, lowest value first.
 ///
 /// `flags` reaches the air as a fixed column filled per whole 56-row block, so the uses that share a
 /// block must agree on it. Sorted by value rather than left in arrival order so the resulting s_map
 /// is a function of the r1cs alone -- the same reason the plonk gates are ordered explicitly.
-pub(super) fn bucket_by_flags(
-    uses: Vec<(&crate::plonk2pil::r1cs::types::CustomGateUse, u64, u64)>,
-) -> Vec<Vec<(&crate::plonk2pil::r1cs::types::CustomGateUse, u64, u64)>> {
-    let mut by_flags: std::collections::BTreeMap<u64, Vec<_>> = std::collections::BTreeMap::new();
+pub(super) fn bucket_by_flags(uses: Vec<CompressUse<'_>>) -> Vec<Vec<CompressUse<'_>>> {
+    let mut by_flags: std::collections::BTreeMap<Goldilocks, Vec<_>> = std::collections::BTreeMap::new();
     for u in uses {
         by_flags.entry(u.1).or_default().push(u);
     }
     by_flags.into_values().collect()
 }
 
-pub fn aggregation_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
+pub fn aggregation_blake3(r1cs: &R1csFile<Goldilocks>, options: &PlonkOptions) -> SetupResult<Goldilocks> {
     build_blake3_air(r1cs, options)
 }
 
 /// The placement routine of the blake3 aggregator air, which recursion and compressor both use.
-pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
+pub fn build_blake3_air(r1cs: &R1csFile<Goldilocks>, options: &PlonkOptions) -> SetupResult<Goldilocks> {
     let (plonk_constraints, plonk_additions, copy_merge) = r1cs2plonk_merged(r1cs, options.merge_copies);
 
     let mut cgi = get_custom_gates_info(r1cs);
@@ -259,7 +258,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
     // becomes a fixed column; neither is a trace cell, and neither could be recovered from
     // `cgu.signals` -- they live on the gate, not the use.
     let compress_uses = blake3_compress_gate_uses(&r1cs.custom_gates_uses, &cgi.blake3_compress_parameters);
-    let (parent_uses, chunk_uses): (Vec<_>, Vec<_>) = compress_uses.into_iter().partition(|(_, _, ip)| *ip == 1);
+    let (parent_uses, chunk_uses): (Vec<_>, Vec<_>) = compress_uses.into_iter().partition(|(_, _, ip)| ip.is_one());
     let (n_chunk_uses, n_parent_uses) = (chunk_uses.len(), parent_uses.len());
 
     // `flags` is a FIXED column the air fills per whole block, so every use sharing a block has to
@@ -269,9 +268,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
     // every block that mixed two values.
     let chunk_buckets = bucket_by_flags(chunk_uses);
     let parent_buckets = bucket_by_flags(parent_uses);
-    let blocks_in = |buckets: &[Vec<(&crate::plonk2pil::r1cs::types::CustomGateUse, u64, u64)>]| {
-        buckets.iter().map(|b| b.len().div_ceil(lanes)).sum::<usize>()
-    };
+    let blocks_in = |buckets: &[Vec<CompressUse<'_>>]| buckets.iter().map(|b| b.len().div_ceil(lanes)).sum::<usize>();
 
     let n_node = cgi.n(GateRole::Blake3Node);
     let n_node_blocks = n_node.div_ceil(lanes);
@@ -440,7 +437,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
 
     let committed = stage1_cols(lanes);
     let mut s_map: Vec<Vec<u32>> = (0..committed).map(|_| vec![0u32; n]).collect();
-    let mut cv: Vec<Vec<u64>> = (0..C_COLS).map(|_| vec![0u64; n]).collect();
+    let mut cv: Vec<Vec<Goldilocks>> = (0..C_COLS).map(|_| vec![Goldilocks::ZERO; n]).collect();
     let mut gate_bands: Vec<GateBand> = Vec::new();
 
     let node_uses = filter_gate_uses(&r1cs.custom_gates_uses, cgi.role_id(GateRole::Blake3Node));
@@ -462,7 +459,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
         n_parent_uses
     );
     // `flags` is st[15], a per-block constant read off the gate id's parameters.
-    let mut flags_col = vec![0u64; n];
+    let mut flags_col = vec![Goldilocks::ZERO; n];
 
     // The kind selectors are block-wide, so an idle lane in a partially filled final block still has
     // to hold a valid BLAKE3 computation. Left alone its `a[]` cells stay zero while the expander
@@ -485,10 +482,10 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
 
     // Each bucket starts on a fresh block, so a block never mixes two flags values. Returns the
     // first block after everything it placed, which is what pins the placement to the block counts.
-    let place_compress = |buckets: &[Vec<(&crate::plonk2pil::r1cs::types::CustomGateUse, u64, u64)>],
+    let place_compress = |buckets: &[Vec<CompressUse<'_>>],
                           block_base: usize,
                           s_map: &mut Vec<Vec<u32>>,
-                          flags_col: &mut Vec<u64>|
+                          flags_col: &mut Vec<Goldilocks>|
      -> usize {
         let mut next_block = block_base;
         for bucket in buckets {
@@ -527,7 +524,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
     assert_eq!(after_parent, n_blocks, "parent placement disagrees with its block count");
 
     // Blake3Node freezes flags to CHUNK_START | CHUNK_END | ROOT.
-    flags_col[..n_node_blocks * BLAKE3_CLOCKS].fill(11);
+    flags_col[..n_node_blocks * BLAKE3_CLOCKS].fill(Goldilocks::new(11));
 
     // One band per block: the expander rebuilds every lane's interior from the boundary.
     for block in 0..n_blocks {
@@ -542,7 +539,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
         // and the AIR holds it in a FIXED column, so it is in neither the witness trace nor
         // anything expand_gate_bands is handed -- which is what the band section's version 2 is for.
         let row = block * BLAKE3_CLOCKS;
-        gate_bands.push(GateBand { row: row as u32, kind, payload: flags_col[row] });
+        gate_bands.push(GateBand { row: row as u32, kind, payload: flags_col[row].as_canonical_u64() });
     }
 
     // Runs are opened in the order blake3/aggregator.pil lays the selectors out. The AIR states
@@ -590,24 +587,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
         // Build constFFT by ITS OWN index, exactly as poseidon does, then scatter through
         // fft4_const_slot. Writing cv[..] directly would silently misplace fft_type 2.
         let p = cgi.fft4_parameters.get(&cgu.id).expect("FFT4 params");
-        let (fft_type, scale, first_w, inc_w) = (p[3], p[2], p[0], p[1]);
-        let fw2 = mulp(first_w, first_w);
-        let mut cfft = [0u64; 9];
-        if fft_type == 4 {
-            cfft[0] = scale;
-            cfft[1] = mulp(scale, fw2);
-            cfft[2] = mulp(scale, first_w);
-            cfft[3] = mulp(mulp(scale, first_w), fw2);
-            cfft[4] = mulp(mulp(scale, first_w), inc_w);
-            cfft[5] = mulp(mulp(mulp(scale, first_w), fw2), inc_w);
-        } else if fft_type == 2 {
-            cfft[6] = scale;
-            cfft[7] = mulp(scale, first_w);
-            cfft[8] = mulp(mulp(scale, first_w), inc_w);
-        } else {
-            panic!("Invalid FFT4 type: {fft_type}");
-        }
-        for (i, v) in cfft.iter().enumerate() {
+        for (i, v) in fft4_constants(p).iter().enumerate() {
             let (col, off) = fft4_const_slot(i);
             cv[col][r + off] = *v;
         }
@@ -641,7 +621,7 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
     // constraint fires wherever PLONK is 1, so an untouched gate would read signal 0 in all three
     // wires and fail. Duplication is what poseidon's `partial`/`half` slots do too.
     tracing::info!("Placing {} plonk constraints...", plonk_constraints.len());
-    let mut by_key: HashMap<String, Vec<&PlonkConstraint>> = HashMap::new();
+    let mut by_key: HashMap<String, Vec<&PlonkConstraint<Goldilocks>>> = HashMap::new();
     for c in &plonk_constraints {
         by_key.entry(ckey(c)).or_default().push(c);
     }
@@ -658,9 +638,9 @@ pub fn build_blake3_air(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult 
             write_plonk_coeffs(&mut cv, row, group[0]);
             for gate in 0..PLONK_GATES_PER_ROW {
                 let c = group[gate.min(group.len() - 1)];
-                s_map[3 * gate][row] = c[0] as u32;
-                s_map[3 * gate + 1][row] = c[1] as u32;
-                s_map[3 * gate + 2][row] = c[2] as u32;
+                s_map[3 * gate][row] = c.wires[0];
+                s_map[3 * gate + 1][row] = c.wires[1];
+                s_map[3 * gate + 2][row] = c.wires[2];
             }
         }
     }
@@ -771,12 +751,12 @@ fn plan_compressor_geometry(demand: &CompressorDemand, min_n_bits: usize) -> Com
 }
 
 /// Reads the demand off an r1cs, counting what `build_blake3_air` will place.
-fn compressor_demand(r1cs: &R1csFile, options: &PlonkOptions) -> CompressorDemand {
+fn compressor_demand(r1cs: &R1csFile<Goldilocks>, options: &PlonkOptions) -> CompressorDemand {
     let (plonk_constraints, _, _) = r1cs2plonk_merged(r1cs, options.merge_copies);
     let cgi = get_custom_gates_info(r1cs);
 
     let compress_uses = blake3_compress_gate_uses(&r1cs.custom_gates_uses, &cgi.blake3_compress_parameters);
-    let (parent_uses, chunk_uses): (Vec<_>, Vec<_>) = compress_uses.into_iter().partition(|(_, _, ip)| *ip == 1);
+    let (parent_uses, chunk_uses): (Vec<_>, Vec<_>) = compress_uses.into_iter().partition(|(_, _, ip)| ip.is_one());
     let sizes = |uses: Vec<_>| bucket_by_flags(uses).iter().map(|b| b.len()).collect::<Vec<_>>();
 
     // With 0 blocks offered, the rows the constraints need outright; `lanes` is irrelevant there.
@@ -797,7 +777,7 @@ fn compressor_demand(r1cs: &R1csFile, options: &PlonkOptions) -> CompressorDeman
 }
 
 /// Compressor setup: size the geometry, then build the aggregator air at it.
-pub fn compressor_blake3(r1cs: &R1csFile, options: &PlonkOptions) -> SetupResult {
+pub fn compressor_blake3(r1cs: &R1csFile<Goldilocks>, options: &PlonkOptions) -> SetupResult<Goldilocks> {
     let min_n_bits =
         options.min_n_bits.unwrap_or(0).max(proofman_common::hash_family::recursive_bits_threshold("blake3"));
     // An explicit --blake3-lanes skips only the lane choice; the floor on N still holds.
@@ -840,7 +820,7 @@ mod tests {
         let uses: Vec<CustomGateUse> = (0..10).map(|i| CustomGateUse { id: i, signals: vec![i as u64] }).collect();
         // Interleaved on purpose: arrival order is what the r1cs hands over.
         let flags = [11u64, 0, 1, 0, 11, 1, 0, 10, 1, 0];
-        let tagged: Vec<_> = uses.iter().zip(flags).map(|(u, f)| (u, f, 0u64)).collect();
+        let tagged: Vec<_> = uses.iter().zip(flags).map(|(u, f)| (u, Goldilocks::new(f), Goldilocks::ZERO)).collect();
 
         let buckets = bucket_by_flags(tagged);
 
@@ -848,7 +828,7 @@ mod tests {
         for b in &buckets {
             assert!(b.iter().all(|u| u.1 == b[0].1), "a bucket has to be one flags value");
         }
-        let seen: Vec<u64> = buckets.iter().map(|b| b[0].1).collect();
+        let seen: Vec<u64> = buckets.iter().map(|b| b[0].1.as_canonical_u64()).collect();
         assert_eq!(seen, vec![0, 1, 10, 11], "sorted by value, so the s_map is a function of the r1cs");
     }
 
@@ -993,8 +973,8 @@ mod tests {
         assert_eq!(plonk_rows_inside_blocks(1, 40, BLAKE3_CLOCKS), 0);
     }
 
-    fn constraint(coeffs: [u64; 5], wires: [u64; 3]) -> PlonkConstraint {
-        [wires[0], wires[1], wires[2], coeffs[0], coeffs[1], coeffs[2], coeffs[3], coeffs[4]]
+    fn constraint(coeffs: [u64; 5], wires: [u32; 3]) -> PlonkConstraint<Goldilocks> {
+        PlonkConstraint { wires, coeffs: coeffs.map(Goldilocks::new) }
     }
 
     /// Constraints coalesce six to a row only when all five coefficients agree.
@@ -1015,7 +995,7 @@ mod tests {
     /// Interior rows are spent before any dedicated row is added.
     #[test]
     fn block_interiors_are_spent_before_dedicated_rows() {
-        let many: Vec<_> = (0..300u64).map(|i| constraint([1, 2, 3, 4, 5], [i, i, i])).collect();
+        let many: Vec<_> = (0..300u32).map(|i| constraint([1, 2, 3, 4, 5], [i, i, i])).collect();
         assert_eq!(many.len().div_ceil(PLONK_GATES_PER_ROW), 50);
 
         // one block at LANES=4 offers 48 interior rows
@@ -1156,7 +1136,7 @@ mod measure {
     fn coefficient_key_distribution() {
         let path = std::env::var("BLAKE3_MEASURE_R1CS").expect("set BLAKE3_MEASURE_R1CS");
         let data = std::fs::read(&path).unwrap();
-        let r1cs = read_r1cs_from_bytes(&data).unwrap();
+        let r1cs = read_r1cs_from_bytes::<Goldilocks>(&data).unwrap();
         let (cs, _adds) = r1cs2plonk(&r1cs);
 
         let mut per_key: HashMap<String, usize> = HashMap::new();
@@ -1183,7 +1163,7 @@ mod measure {
 }
 
 // `C[]` holds plonk's five coefficients, and fft4's nine constants over two rows.
-const _: () = assert!(C_COLS == PLONK_COEFFS);
+const _: () = assert!(C_COLS == crate::plonk2pil::r1cs::to_plonk::PLONK_COEFFS);
 
 #[cfg(test)]
 mod audit_geometry {
