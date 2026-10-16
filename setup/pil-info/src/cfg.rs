@@ -173,11 +173,12 @@ mod tests {
     }
 
     #[test]
-    fn from_blowup_bound_is_the_blowup_plus_one() {
+    fn the_starks_bound_is_the_blowup_plus_one() {
         // The bound pil2-stark-setup computed as (1 << (nBitsExt - nBits)) + 1.
-        assert_eq!(DegreePolicy::FromBlowup { blowup_bits: 1 }.max_constraint_degree(), 3);
-        assert_eq!(DegreePolicy::FromBlowup { blowup_bits: 2 }.max_constraint_degree(), 5);
-        assert_eq!(DegreePolicy::FromBlowup { blowup_bits: 3 }.max_constraint_degree(), 9);
+        assert_eq!(PilInfoCfg::goldilocks(1).degree_policy.max_constraint_degree(), 3);
+        assert_eq!(PilInfoCfg::goldilocks(2).degree_policy.max_constraint_degree(), 5);
+        assert_eq!(PilInfoCfg::goldilocks(3).degree_policy.max_constraint_degree(), 9);
+        assert_eq!(PilInfoCfg::goldilocks(2).field, FieldCfg::goldilocks());
     }
 
     #[test]

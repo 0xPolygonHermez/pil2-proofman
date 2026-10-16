@@ -511,8 +511,9 @@ impl TryFrom<&crate::pil::gen_code::ExpressionsInfo> for ExpressionsInfo {
     }
 }
 
-/// Fails on the verifier code of a backend that does not open with FRI: the STARK verifier needs
-/// the `queryVerifier`.
+/// Fails on a number that is not a Goldilocks element, on an operand of an unknown type, and on the
+/// verifier code of a backend that does not open with FRI: the STARK verifier needs the
+/// `queryVerifier`.
 impl TryFrom<&crate::pil::gen_code::VerifierInfo> for VerifierInfo {
     type Error = anyhow::Error;
 

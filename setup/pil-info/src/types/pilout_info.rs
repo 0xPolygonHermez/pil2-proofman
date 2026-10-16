@@ -155,8 +155,8 @@ impl<'a> FormatCtx<'a> {
                 // Optimization: unwrap add/sub(X, 0) where LHS is not an expression ref
                 if let Some(inner_expr) = self.air_expressions.get(id) {
                     if let Some(ref operation) = inner_expr.operation {
-                        if let Some(lhs) = zero_rhs_lhs(operation) {
-                            return self.format_operand_inline(lhs);
+                        if let Some(unwrapped) = self.try_unwrap_zero_rhs_inline(operation) {
+                            return unwrapped;
                         }
                     }
                 }
@@ -272,6 +272,32 @@ impl<'a> FormatCtx<'a> {
         Ok(formatted)
     }
 
+    /// Try to unwrap add/sub(X, const(0)) where LHS is not an expression reference.
+    /// Returns an inline Expression instead of an arena index.
+    fn try_unwrap_zero_rhs_inline(&mut self, operation: &expr_mod::Operation) -> Option<Result<Expression>> {
+        let (lhs_operand, rhs_operand) = match operation {
+            expr_mod::Operation::Add(add) => (add.lhs.as_ref()?, add.rhs.as_ref()?),
+            expr_mod::Operation::Sub(sub) => (sub.lhs.as_ref()?, sub.rhs.as_ref()?),
+            _ => return None,
+        };
+
+        let lhs_op = lhs_operand.operand.as_ref()?;
+        let rhs_op = rhs_operand.operand.as_ref()?;
+
+        if matches!(lhs_op, operand::Operand::Expression(_)) {
+            return None;
+        }
+
+        if let operand::Operand::Constant(c) = rhs_op {
+            let val = buf_to_bigint_string(&c.value);
+            if val == "0" {
+                return Some(self.format_operand_inline(lhs_op));
+            }
+        }
+
+        None
+    }
+
     /// Format an `Option<&Operand>`, a child of expression `parent`, into an inline ExprChild.
     ///
     /// Fails on a reference to an expression the air does not have.
@@ -330,32 +356,6 @@ impl<'a> FormatCtx<'a> {
         };
         Ok(formatted)
     }
-}
-
-/// The LHS of add/sub(X, const(0)) where X is not an expression reference: what such an
-/// expression is unwrapped to, inline, instead of an arena index.
-fn zero_rhs_lhs(operation: &expr_mod::Operation) -> Option<&operand::Operand> {
-    let (lhs_operand, rhs_operand) = match operation {
-        expr_mod::Operation::Add(add) => (add.lhs.as_ref()?, add.rhs.as_ref()?),
-        expr_mod::Operation::Sub(sub) => (sub.lhs.as_ref()?, sub.rhs.as_ref()?),
-        _ => return None,
-    };
-
-    let lhs_op = lhs_operand.operand.as_ref()?;
-    let rhs_op = rhs_operand.operand.as_ref()?;
-
-    if matches!(lhs_op, operand::Operand::Expression(_)) {
-        return None;
-    }
-
-    if let operand::Operand::Constant(c) = rhs_op {
-        let val = buf_to_bigint_string(&c.value);
-        if val == "0" {
-            return Some(lhs_op);
-        }
-    }
-
-    None
 }
 
 // ---------------------------------------------------------------------------

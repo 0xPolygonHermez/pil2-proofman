@@ -248,7 +248,7 @@ pub fn write_const_file(path: &str, air: &pil2_pilout::pilout::Air, plonk_pol_va
                     break;
                 }
                 flat_buffer[row * n_constants + col_idx] =
-                    goldilocks_from_be(val_bytes).with_context(|| format!("fixed column {col_idx}, row {row}"))?;
+                    bytes_to_u64_be(val_bytes).with_context(|| format!("fixed column {col_idx}, row {row}"))?;
             }
         }
     }
@@ -301,7 +301,7 @@ fn read_string(reader: &mut impl Read) -> io::Result<String> {
 ///
 /// Pilout stores fixed col values big-endian (JS bint2buf uses writeBigUInt64BE), of any length.
 /// A value that is not below p is an error: it is neither truncated nor reduced.
-fn goldilocks_from_be(bytes: &[u8]) -> Result<u64> {
+fn bytes_to_u64_be(bytes: &[u8]) -> Result<u64> {
     let significant = &bytes[bytes.iter().take_while(|&&b| b == 0).count()..];
     if significant.len() <= 8 {
         let value = significant.iter().fold(0u64, |acc, &b| (acc << 8) | u64::from(b));
