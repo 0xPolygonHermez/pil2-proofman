@@ -279,7 +279,7 @@ mod tests {
 
     /// Reporting harness: print the raw-vs-merged cell breakdown for one R1CS.
     /// Point it at any `.r1cs` via the `ESTIMATE_R1CS` env var (no fixture committed):
-    ///   ESTIMATE_R1CS=path/to/x.r1cs cargo test -p stark-recurser estimate_report -- --ignored --nocapture
+    ///   ESTIMATE_R1CS=path/to/x.r1cs cargo test -p pil2-stark-recurser estimate_report -- --ignored --nocapture
     #[test]
     #[ignore]
     fn estimate_report() {

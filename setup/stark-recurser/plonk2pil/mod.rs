@@ -15,7 +15,6 @@ pub mod setups;
 pub mod utils;
 
 // Re-export old flat module names as aliases for backward compatibility
-pub use r1cs::reader as r1cs_reader;
 pub use r1cs::to_plonk as r1cs2plonk;
 pub use r1cs::types as r1cs_types;
 pub use setups::poseidon1::aggregation as aggregation_setup;
@@ -194,7 +193,7 @@ mod tests {
     /// assert + verify_merge_soundness). ESTIMATE_HASH picks the family; it defaults to
     /// `hash_family::DEFAULT_HASH_ID`.
     ///   ESTIMATE_R1CS=/path/x.r1cs [ESTIMATE_HASH=Poseidon2] \
-    ///     cargo test -p stark-recurser run_compressor --release -- --ignored --nocapture
+    ///     cargo test -p pil2-stark-recurser run_compressor --release -- --ignored --nocapture
     #[test]
     #[ignore]
     fn run_compressor() {
