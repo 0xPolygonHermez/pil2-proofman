@@ -29,6 +29,9 @@ pub struct SetupSnarkOptions {
 
 /// Run the setup-snark pipeline.
 pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
+    if !matches!(opts.final_snark.as_str(), "fflonk" | "plonk") {
+        bail!("unknown --final-snark {:?}: expected fflonk or plonk", opts.final_snark);
+    }
     let build_dir = &opts.build_dir;
 
     // Read globalInfo to get the name.
@@ -161,4 +164,33 @@ fn parse_const_root(json: &Value) -> Result<[u64; 4]> {
             .ok_or_else(|| anyhow::anyhow!("verkey.json element {} is not a valid u64: {}", idx, v))
     };
     Ok([parse_one(&arr[0], 0)?, parse_one(&arr[1], 1)?, parse_one(&arr[2], 2)?, parse_one(&arr[3], 3)?])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn options(build_dir: &str, final_snark: &str) -> SetupSnarkOptions {
+        SetupSnarkOptions {
+            build_dir: build_dir.to_string(),
+            powers_of_tau: None,
+            final_snark: final_snark.to_string(),
+            publics_info: None,
+            only_recursive_final: false,
+            contract_version: None,
+        }
+    }
+
+    /// The command takes FFLONK and PLONK, and refuses anything else before it reads the build dir.
+    #[test]
+    fn takes_the_two_final_snarks_and_refuses_others_up_front() {
+        let missing = "/nonexistent/setup-snark/build";
+        let err = run_setup_snark(&options(missing, "groth16")).unwrap_err().to_string();
+        assert!(err.contains("unknown --final-snark \"groth16\": expected fflonk or plonk"), "{err}");
+        // One it takes gets as far as the build dir.
+        for final_snark in ["fflonk", "plonk"] {
+            let err = run_setup_snark(&options(missing, final_snark)).unwrap_err().to_string();
+            assert!(err.contains("Global info file not found"), "{final_snark}: {err}");
+        }
+    }
 }
