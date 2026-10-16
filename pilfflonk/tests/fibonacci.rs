@@ -4,7 +4,7 @@
 //! `tests/fixtures/fibonacci/fibonacci.pil`.
 //!
 //! Pilouts are not versioned: the `#[ignore]` tests compile the fixture with the compiler
-//! `PIL2C_EXEC` names, which must have `--field` (the pinned one silently compiles over
+//! `PIL2C_EXEC` names, which must have `--field` (develop-0.14.0's silently compiles over
 //! Goldilocks):
 //!
 //! ```text

@@ -3,7 +3,7 @@
 //! degree search follows `DegreePolicy::Search`.
 //!
 //! The pilouts are built in code; pilouts are not versioned. The `#[ignore]` tests compile real PIL
-//! with the compiler `PIL2C_EXEC` names, which must have `--field` (the pinned one silently
+//! with the compiler `PIL2C_EXEC` names, which must have `--field` (develop-0.14.0's silently
 //! compiles over Goldilocks):
 //!
 //! ```text

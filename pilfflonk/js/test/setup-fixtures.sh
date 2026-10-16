@@ -5,7 +5,7 @@
 #     PIL2C_EXEC=<pil2-compiler>/src/pil.js pilfflonk/js/test/setup-fixtures.sh [dir]
 #
 # 1. `proofman-setup compile-pil` compiles pilfflonk/tests/fixtures/fibonacci over BN128 with the
-#    compiler PIL2C_EXEC names, which must have `--field` (the pinned one silently compiles over
+#    compiler PIL2C_EXEC names, which must have `--field` (develop-0.14.0's silently compiles over
 #    Goldilocks), and `proofman-setup setup-pilfflonk` writes <dir>/build/provingKey, grouped as it
 #    does by default, with the official ptau of power 12 (pilfflonk/tests/download-ptau.sh) in
 #    $PILFFLONK_PTAU_DIR;

@@ -40,8 +40,9 @@ fn its_air_is_found_in_any_airgroup() {
 
 // --- The base field ------------------------------------------------------------------------
 
-/// The pilout pil2com writes for `--field bn128` when it ignores `--field`, as the pinned compiler
-/// does (pilfflonk/docs/README.md#compile-pil): over Goldilocks. The error says how to compile it.
+/// The pilout pil2com writes for `--field bn128` when it ignores `--field`, as develop-0.14.0's
+/// compiler does (pilfflonk/docs/README.md#compile-pil): over Goldilocks. The error says how to
+/// compile it.
 #[test]
 fn a_goldilocks_pilout_is_refused() {
     let mut pilout = pilout();

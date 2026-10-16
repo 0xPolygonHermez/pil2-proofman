@@ -1,5 +1,5 @@
 //! Synthetic pilouts for the constraint domains (pilfflonk/docs/README.md#fixtures), built in code
-//! with `prost`: the compiler of `develop-0.14.0` emits only `everyRow`, so `firstRow`, `lastRow`
+//! with `prost`: the compiler of `develop-0.15.0` emits only `everyRow`, so `firstRow`, `lastRow`
 //! and `everyFrame` are reachable no other way. And their witness generators, over BN128's `Fr`
 //! with `num-bigint`.
 //!

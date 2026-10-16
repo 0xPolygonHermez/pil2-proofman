@@ -108,8 +108,8 @@ Requires `vadcop_final/vadcop_final.{starkinfo,verifierinfo,verkey}.json` to
 already exist.
 
 With `pilfflonk`, the final circuit is laid out as a PIL2 AIR over BN128 by
-plonk2pil, compiled with `--field bn128` (`PIL2C_EXEC` must name a
-pil2-compiler that has `--field`, see
+plonk2pil, compiled with `--field bn128` (by a pil2-compiler that has `--field`, as
+this crate's does, see
 [pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)), and set
 up with `setup-pilfflonk`'s steps at the wrap family's knobs (plonk2pil's
 `wrap::MAX_CONSTRAINT_DEGREE` and `wrap::EXTRA_MULS`): `provingKeySnark/final/`

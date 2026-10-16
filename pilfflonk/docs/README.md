@@ -85,11 +85,12 @@ proofman-setup compile-pil -p <program.pil> -o <program.pilout> -I <std dir> --f
 `--field` is passed to pil2com, which knows two fields by name: `goldilocks`, its default, and
 `bn128`, the scalar field `r` of BN128 that pilfflonk proves over. Any other name is refused.
 
-The compiler must have `--field` (`PIL2C_EXEC` points at it): it is `../pil2-compiler` on its branch
-`develop-0.15.0`, which also encodes field values of 64 bits and more correctly. The
-pinned compiler ignores `--field` and compiles over Goldilocks; setup-pilfflonk then refuses the
-pilout, saying so. With `--field bn128`, the pilout's `baseField` is `r`. The fixed columns are in
-the pilout, or, with `-u <dir> --fixed-to-file`, in `<dir>/<air>.fixed`, each value four 64-bit
+The compiler must have `--field`. setup/pil2-stark's has it: `package.json` takes it from
+pil2-compiler's branch `develop-0.15.0`, which also encodes field values of 64 bits and more
+correctly. `PIL2C_EXEC` names another. One without `--field`, such as `develop-0.14.0`'s, ignores
+it and compiles over Goldilocks; setup-pilfflonk then refuses the pilout, saying so. With
+`--field bn128`, the pilout's `baseField` is `r`. The fixed columns are in the pilout, or, with
+`-u <dir> --fixed-to-file`, in `<dir>/<air>.fixed`, each value four 64-bit
 limbs, little-endian: the layout of `<air>.const`, which `setup-pilfflonk -u <dir>` reads
 ([formats.md#fixed-columns](formats.md#fixed-columns)). Either way, the compiler writes no values of
 the columns it declares `#pragma fixed_external`, and the caller of the setup gives these.
@@ -331,7 +332,7 @@ witnesses only: the prover's arithmetic is ffiasm's.
 
 | Component | Where | Language | What it does |
 |---|---|---|---|
-| Compiler | `../pil2-compiler`, branch `develop-0.15.0` | JS | the pilout over BN128 |
+| Compiler | `pil2-compiler`, branch `develop-0.15.0` (`setup/pil2-stark/package.json`) | JS | the pilout over BN128 |
 | Std constants | `pil2-components/lib/std/pil/bn128.pil` | PIL | `GEN` and `k_coset` over BN128 |
 | Symbolic passes | `pil-info`, `setup/pil-info/` | Rust | the STARK's passes, parameterised by the field (`PilInfoCfg`); the `"chps"` container; temporaries; `globalConstraints.json` |
 | Setup | `pilfflonk-setup`, `setup/pilfflonk/` | Rust | validation, layout, bytecode, keys, `provingKey/`, digest, Solidity |

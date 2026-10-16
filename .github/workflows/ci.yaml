@@ -292,7 +292,7 @@ jobs:
     # the Solidity verifier on Foundry), the fixtures' witness libraries, the wrap's witness, pil-info
     # over BN128, plonk2pil's BN128 family and the wrap's gates, and the CLI's `pilfflonk check`,
     # `verify` and `prove`, with Foundry's end to end and the differential fuzzer
-    # (pilfflonk/docs/verifier.md#tests). The compiler is the wrap job's;
+    # (pilfflonk/docs/verifier.md#tests). The compiler is setup/pil2-stark's;
     # Foundry and solc are the pinned ones (pilfflonk/docs/verifier.md#tools), solc checked against
     # the sha256 of soliditylang.org's list.
     #
@@ -302,7 +302,6 @@ jobs:
     name: Test pilfflonk (BN128)
     runs-on: ubuntu-latest
     env:
-      PIL2_COMPILER_COMMIT: 33cf6c0e7f29363da9dda17569bc3ffbd9efeca9
       CARGO_FEATURES: proofman-starks-lib-c/cpu-only
       FOUNDRY_VERSION: v1.8.3
       SOLC_URL: https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.37+commit.f401782d
@@ -312,13 +311,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Check out pil2-compiler (BN128)
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygonHermez/pil2-compiler
-          ref: ${{ env.PIL2_COMPILER_COMMIT }}
-          path: pil2-compiler-bn128
 
       - name: Install rust
         uses: actions-rs/toolchain@v1
@@ -334,10 +326,6 @@ jobs:
       - name: Install Node dependencies (pil2-compiler, snarkjs)
         run: npm install
         working-directory: setup/pil2-stark
-
-      - name: Install Node dependencies (pil2-compiler BN128)
-        run: npm ci
-        working-directory: pil2-compiler-bn128
 
       - name: Install Node dependencies (pilfflonk JS verifier)
         run: npm install
@@ -364,7 +352,7 @@ jobs:
       - name: Set up circom, the BN128 compiler, Foundry and solc
         run: |
           echo "$GITHUB_WORKSPACE/setup/circom" >> "$GITHUB_PATH"
-          echo "PIL2C_EXEC=$GITHUB_WORKSPACE/pil2-compiler-bn128/src/pil.js" >> "$GITHUB_ENV"
+          echo "PIL2C_EXEC=$GITHUB_WORKSPACE/setup/pil2-stark/node_modules/pil2-compiler/src/pil.js" >> "$GITHUB_ENV"
           echo "PILFFLONK_FORGE=$(command -v forge)" >> "$GITHUB_ENV"
           echo "PILFFLONK_SOLC=$RUNNER_TEMP/solc" >> "$GITHUB_ENV"
 
@@ -430,8 +418,8 @@ jobs:
     # that verify-snark refuses a changed evaluation, a changed public and another key's vkey.
     #
     # The wrap's AIR is compiled over BN128, which needs a pil2com that has `--field`
-    # (pilfflonk/docs/README.md#compile-pil): commit PIL2_COMPILER_COMMIT of pil2-compiler's branch
-    # develop-0.15.0, until setup/pil2-stark/package.json pins that version.
+    # (pilfflonk/docs/README.md#compile-pil): setup/pil2-stark's, which package.json takes from
+    # pil2-compiler's branch develop-0.15.0.
     #
     # The ptau is the official one of power 22 (pilfflonk/tests/download-ptau.sh), the smallest that
     # holds the powers setup-snark needs for this key, 13·2^19 + 12 for 2^19 rows: 2^23 − 1 powers,
@@ -440,7 +428,6 @@ jobs:
     name: Test pilfflonk wrap (fibonacci-square)
     runs-on: ubuntu-latest
     env:
-      PIL2_COMPILER_COMMIT: 33cf6c0e7f29363da9dda17569bc3ffbd9efeca9
       CARGO_FEATURES: proofman-starks-lib-c/cpu-only
       WRAP: target/pilfflonk-wrap
     steps:
@@ -448,13 +435,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Check out pil2-compiler (BN128)
-        uses: actions/checkout@v4
-        with:
-          repository: 0xPolygonHermez/pil2-compiler
-          ref: ${{ env.PIL2_COMPILER_COMMIT }}
-          path: pil2-compiler-bn128
 
       - name: Install rust
         uses: actions-rs/toolchain@v1
@@ -471,10 +451,6 @@ jobs:
         run: npm install
         working-directory: setup/pil2-stark
 
-      - name: Install Node dependencies (pil2-compiler BN128)
-        run: npm ci
-        working-directory: pil2-compiler-bn128
-
       - name: Install Node dependencies (pilfflonk JS verifier)
         run: npm install
         working-directory: pilfflonk/js
@@ -487,13 +463,13 @@ jobs:
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
 
       # circom is the committed setup/circom/circom (2.2.3), which compiles the final circuit's
-      # custom templates. PIL2C_EXEC names the pil2com every compile-pil and setup runs
-      # (resolve_pil2com_exec), Goldilocks ones included: the BN128 compiles of the wrap's AIR and of
-      # the Fibonacci fixture need it.
+      # custom templates. compile-pil and setup run setup/pil2-stark's pil2com
+      # (resolve_pil2com_exec), and PIL2C_EXEC names it for snark_pilfflonk.rs, which compiles the
+      # Fibonacci fixture over BN128 with it.
       - name: Set up circom and the BN128 compiler
         run: |
           echo "$GITHUB_WORKSPACE/setup/circom" >> "$GITHUB_PATH"
-          echo "PIL2C_EXEC=$GITHUB_WORKSPACE/pil2-compiler-bn128/src/pil.js" >> "$GITHUB_ENV"
+          echo "PIL2C_EXEC=$GITHUB_WORKSPACE/setup/pil2-stark/node_modules/pil2-compiler/src/pil.js" >> "$GITHUB_ENV"
 
       - name: Cargo build (release)
         run: cargo build --release -p pil2-stark-setup -p proofman-cli -p fibonacci-square --features "$CARGO_FEATURES"

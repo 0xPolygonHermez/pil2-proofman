@@ -4,7 +4,7 @@
 //! fixture. Its steps are tested in `setup/pilfflonk/tests/`.
 //!
 //! Pilouts are not versioned: the `#[ignore]` test compiles the fixture with `compile-pil` and
-//! the compiler `PIL2C_EXEC` names, which must have `--field` (the pinned one silently compiles
+//! the compiler `PIL2C_EXEC` names, which must have `--field` (develop-0.14.0's silently compiles
 //! over Goldilocks):
 //!
 //! ```text
@@ -326,7 +326,7 @@ fn it_writes_the_proving_key_of_a_pilout() {
         assert!(stderr.contains(expected), "{stderr}");
     }
 
-    // A Goldilocks pilout, what the pinned compiler writes for `--field bn128`
+    // A Goldilocks pilout, what develop-0.14.0's compiler writes for `--field bn128`
     // (pilfflonk/docs/README.md#compile-pil).
     let mut goldilocks = pilout();
     goldilocks.base_field = 0xFFFF_FFFF_0000_0001u64.to_be_bytes().to_vec();

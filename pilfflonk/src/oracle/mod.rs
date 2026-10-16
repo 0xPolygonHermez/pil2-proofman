@@ -30,7 +30,7 @@
 //!   `lastRow` row `N − 1`, and `everyFrame { offsetMin, offsetMax }` every row but the first
 //!   `offsetMin` and the last `offsetMax`, as the STARK's zerofier excludes them
 //!   (`pil2-stark/src/starkpil/setup_ctx.hpp`, `buildFrameZerofierInv`) and `Boundary::EveryFrame`
-//!   says. The compiler of `develop-0.14.0` only emits `everyRow`
+//!   says. The compiler of `develop-0.15.0` only emits `everyRow`
 //!   (pilfflonk/docs/protocol.md#constraint-polynomial); the other three are exercised with pilouts
 //!   built in code.
 //! - **Points.** A column at offset `s` at a point `z` is its interpolant over `H` at `z·ω^s`, by

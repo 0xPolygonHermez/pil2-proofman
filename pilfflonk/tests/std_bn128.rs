@@ -4,7 +4,7 @@
 //! must carry the roots of unity and the coset generator of that field.
 //!
 //! The `#[ignore]` tests compile the fixture with the compiler `PIL2C_EXEC` names, which must have
-//! `--field` (the pinned one silently compiles over Goldilocks):
+//! `--field` (develop-0.14.0's silently compiles over Goldilocks):
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p proofman-pilfflonk --features proofman-common/cpu-only \
