@@ -1,7 +1,7 @@
 //! Rust port of `vadcop/helpers/templates/calculate_hashes.circom.ejs`.
 //!
 //! Generates the `CalculateStage1Hash` circom template which computes a
-//! Poseidon2 hash of `rootC + root1 + airValues` producing either an elliptic-
+//! Poseidon2 hash of `rootC + root1 + airgroupId + airId + airValues` producing either an elliptic-
 //! curve point (when `vadcopInfo.curve != "None"`) or a lattice vector.
 //!
 //! Implementation: the order-dependent `Transcript` state machine drives the
@@ -38,6 +38,9 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     let air_values_map = stark_info["airValuesMap"].as_array().cloned().unwrap_or_default();
     let air_values_len = air_values_map.len();
     let has_stage1_air_values = air_values_map.iter().any(|v| v["stage"].as_u64() == Some(1));
+    // rootC alone does not name the air: airs with equal fixed columns share it.
+    let airgroup_id = stark_info["airgroupId"].as_u64().expect("calculate_hashes: starkInfo.airgroupId");
+    let air_id = stark_info["airId"].as_u64().expect("calculate_hashes: starkInfo.airId");
 
     // The contribution hash must use the same family as the proof being recursed
     // (carried in globalInfo.hash). Poseidon2 ⇒ `Poseidon2(4, …)`, else Poseidon1
@@ -48,6 +51,8 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     let mut transcript = Transcript::new(None, hash_family);
     transcript.put("rootC", 4);
     transcript.put("root1", 4);
+    transcript.put_single(&airgroup_id.to_string());
+    transcript.put_single(&air_id.to_string());
     for (j, av) in air_values_map.iter().enumerate() {
         if av["stage"].as_u64() == Some(1) {
             transcript.put_single(&format!("airValues[{j}][0]"));
@@ -166,6 +171,8 @@ mod tests {
 
     fn stark_info(arity: u64, air_values_map: Value) -> Value {
         json!({
+            "airgroupId": 3,
+            "airId": 7,
             "starkStruct": { "merkleTreeArity": arity },
             "airValuesMap": air_values_map,
         })
@@ -188,6 +195,8 @@ mod tests {
         assert!(out.contains("Poseidon2(4, 16)("), "out:\n{out}");
         assert!(!out.contains("<== Poseidon(16)("), "must not emit Poseidon1 template:\n{out}");
         assert!(out.contains("values[0] <=="));
+        // The air's identity follows root1, so airs sharing a rootC hash apart.
+        assert!(out.contains("root1[3],3,7,0"), "airgroupId/airId not absorbed:\n{out}");
         // out_w = 16 → first round fills values[0..16]
         assert!(out.contains("values[15] <=="));
         assert!(!out.contains("HashToCurve"));
