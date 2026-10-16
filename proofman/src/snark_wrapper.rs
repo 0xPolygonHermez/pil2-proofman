@@ -67,8 +67,8 @@ impl SnarkProtocol {
         }
     }
 
-    /// Serialized proof length: 24 big-endian 32-byte words for both rapidsnark protocols (PLONK: 9
-    /// G1 points and 6 evaluations; FFLONK: 4 points and 16 evaluations). None for pilfflonk, whose
+    /// Serialized proof length: 24 big-endian 32-byte words for both protocols (PLONK: 9 G1
+    /// points and 6 evaluations; FFLONK: 4 points and 16 evaluations). None for pilfflonk, whose
     /// length is its key's: only its vkey says where the parts of its bytes end.
     pub fn proof_bytes(&self) -> Option<usize> {
         match self {
@@ -194,10 +194,10 @@ pub(crate) struct PoseidonWrap<F: PrimeField64> {
     pub gpu: bool,
     pub final_snark_key: FinalSnarkKey,
     /// Held by each proof throughout ([`generate_final_snark_proof`](Self::generate_final_snark_proof)),
-    /// so that the wrapper proves one at a time, and pilfflonk's prover, with `preload`. Two proofs at
-    /// once would both write the recursivef's prover buffer `aux_trace` and its device buffers, and
-    /// rapidsnark's prover. pilfflonk's prover, a C++ handle, is neither `Send` nor `Sync`: it is only
-    /// used under this lock, which the wrapper's `Send` and `Sync` rely on.
+    /// so that the wrapper proves one at a time: two proofs at once would both write the
+    /// recursivef's prover buffer `aux_trace` and its device buffers, and rapidsnark's prover.
+    /// With `preload`, it holds pilfflonk's prover, a C++ handle that is neither `Send` nor `Sync`:
+    /// it is only used under this lock, which the wrapper's `Send` and `Sync` rely on.
     proving: Mutex<Option<PilfflonkWrapProver>>,
 }
 
@@ -298,7 +298,7 @@ impl SnarkProof {
             return Err(format!("SNARK public input {i} is not below the BN254 scalar order").into());
         }
         let (proof_json, publics_json) =
-            snark_proof_bytes_to_json_c(&self.proof_bytes, &self.public_snark_bytes, protocol.protocol_id() as i32);
+            snark_proof_bytes_to_json_c(&self.proof_bytes, &self.public_snark_bytes, self.protocol_id as i32);
 
         let proof_json_value: serde_json::Value = serde_json::from_str(&proof_json)?;
         let publics_json_value: serde_json::Value = serde_json::from_str(&publics_json)?;
@@ -336,65 +336,8 @@ impl<F: PrimeField64> Drop for PoseidonWrap<F> {
         }
         // pilfflonk's key first, whose arena may be the recursivef's prover buffer.
         drop(self.proving.get_mut().unwrap_or_else(|poisoned| poisoned.into_inner()).take());
-        // Null on the CPU, whose backend has no device buffers to free.
-        if !self.d_buffers_recursivef.is_null() {
-            free_device_buffers_recursivef_c(self.d_buffers_recursivef);
-        }
+        free_device_buffers_recursivef_c(self.d_buffers_recursivef);
     }
-}
-
-/// The recursivef's device buffers (`gen_device_buffers_recursivef_c`), freed when dropped unless
-/// handed over ([`into_raw`](Self::into_raw)). The CPU backend has none: the pointer is null, and
-/// nothing is freed.
-struct RecursivefDeviceBuffers(*mut c_void);
-
-impl RecursivefDeviceBuffers {
-    /// The device buffers of `setup`'s proofs, in proofman's unified buffer `d_buffers` if there is
-    /// one, for the recursivef verkey `verkey`.
-    fn new<F: PrimeField64>(setup: &Setup<F>, d_buffers: Option<*mut c_void>, verkey: &str) -> Self {
-        let p_setup: *mut c_void = (&setup.p_setup).into();
-        let d_buffers_vadcop = d_buffers.unwrap_or(std::ptr::null_mut());
-        Self(gen_device_buffers_recursivef_c(
-            p_setup as *mut u8,
-            setup.prover_buffer_size,
-            d_buffers_vadcop as *mut u8,
-            verkey,
-        ) as *mut c_void)
-    }
-
-    fn as_ptr(&self) -> *mut c_void {
-        self.0
-    }
-
-    /// The buffers, which the caller frees from now on.
-    fn into_raw(self) -> *mut c_void {
-        let buffers = self.0;
-        std::mem::forget(self);
-        buffers
-    }
-}
-
-impl Drop for RecursivefDeviceBuffers {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            free_device_buffers_recursivef_c(self.0);
-        }
-    }
-}
-
-/// rapidsnark's prover of the zkey `zkey`, whose device buffers are carved out of the recursivef's
-/// `d_buffers_recursivef`.
-fn init_rapidsnark_prover(zkey: &Path, d_buffers_recursivef: *mut c_void) -> ProofmanResult<*mut c_void> {
-    let zkey_filename = zkey.display().to_string();
-    let snark_prover = init_final_snark_prover_c(&zkey_filename, d_buffers_recursivef);
-    if snark_prover.is_null() {
-        return Err(std::io::Error::other(format!(
-            "Failed to initialize final snark prover from zkey file '{}'",
-            zkey_filename
-        ))
-        .into());
-    }
-    Ok(snark_prover)
 }
 
 impl<F: PrimeField64> PoseidonWrap<F> {
@@ -468,6 +411,10 @@ impl<F: PrimeField64> PoseidonWrap<F> {
             Arc::new(vec![F::ZERO; setup_recursivef.prover_buffer_size as usize])
         };
 
+        let d_buffers_vadcop = if let Some(d_buffers) = d_buffers { d_buffers } else { std::ptr::null_mut() };
+
+        let p_setup: *mut c_void = (&setup_recursivef.p_setup).into();
+
         let verkey_path = setup_recursivef.verkey_file.clone();
         let mut contents = String::new();
         let mut file = File::open(verkey_path).unwrap();
@@ -476,7 +423,7 @@ impl<F: PrimeField64> PoseidonWrap<F> {
         let verkey_str: String = serde_json::from_str(&contents)
             .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
 
-        if let (true, Some(d_buffers_vadcop)) = (gpu, d_buffers) {
+        if gpu && !d_buffers_vadcop.is_null() {
             let need = 8 * (setup_recursivef.const_tree_size as u64 + setup_recursivef.prover_buffer_size);
             let total = get_unified_buffer_gpu_size_c(d_buffers_vadcop);
             if need > total {
@@ -488,36 +435,45 @@ impl<F: PrimeField64> PoseidonWrap<F> {
             }
         }
 
-        // The recursivef's, freed if the final SNARK's prover cannot be loaded.
-        let recursivef_buffers = RecursivefDeviceBuffers::new(&setup_recursivef, d_buffers, &verkey_str);
-        let mut pilfflonk_prover = None;
-        let mut snark_prover = None;
-        match &final_snark_key {
-            FinalSnarkKey::Zkey(zkey) => {
-                timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
-                if preload {
-                    snark_prover = Some(init_rapidsnark_prover(zkey, recursivef_buffers.as_ptr())?);
-                }
-                timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
+        // Freed if the final SNARK's prover cannot be loaded.
+        let d_buffers_recursivef = RecursivefDeviceBuffers(gen_device_buffers_recursivef_c(
+            p_setup as *mut u8,
+            setup_recursivef.prover_buffer_size,
+            d_buffers_vadcop as *mut u8,
+            &verkey_str,
+        ) as *mut c_void);
+
+        timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
+        let zkey_filename = setup_snark_path.display().to_string() + ".zkey";
+        let snark_prover = if preload && matches!(final_snark_key, FinalSnarkKey::Zkey(_)) {
+            let snark_prover = init_final_snark_prover_c(zkey_filename.as_str(), d_buffers_recursivef.as_ptr());
+            if snark_prover.is_null() {
+                return Err(std::io::Error::other(format!(
+                    "Failed to initialize final snark prover from zkey file '{}'",
+                    zkey_filename
+                ))
+                .into());
             }
-            // pilfflonk's arena is in the unified buffer's aux area or in the recursivef's buffers.
-            FinalSnarkKey::Pilfflonk(pilfflonk_key) => {
-                if preload {
-                    timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
-                    // On a shared buffer the key loads while no ProofMan job runs.
-                    let _shared = d_buffers.filter(|_| gpu).map(|_| PROVING.lock().unwrap_or_else(|e| e.into_inner()));
-                    let _aux = pilfflonk_wrap::AuxAreaUse::new(d_buffers.filter(|_| gpu));
-                    let arena = pilfflonk_wrap::wrap_arena(gpu, d_buffers, recursivef_buffers.as_ptr(), pilfflonk_key)?;
-                    // SAFETY: the arena is the unified buffer or the recursivef's prover buffer, which
-                    // outlive the prover (the wrapper's `Drop` drops it first), and which a proof uses
-                    // only for the recursivef until pilfflonk proves.
-                    pilfflonk_prover =
-                        Some(unsafe { PilfflonkWrapProver::load(&setup_snark_path, pilfflonk_key, arena) }?);
-                    timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
-                }
+            Some(snark_prover)
+        } else {
+            None
+        };
+        // pilfflonk's arena is in the unified buffer's aux area or in the recursivef's buffers.
+        let pilfflonk_prover = match &final_snark_key {
+            FinalSnarkKey::Pilfflonk(pilfflonk_key) if preload => {
+                // On a shared buffer the key loads while no ProofMan job runs.
+                let _shared = d_buffers.filter(|_| gpu).map(|_| PROVING.lock().unwrap_or_else(|e| e.into_inner()));
+                let _aux = pilfflonk_wrap::AuxAreaUse::new(d_buffers.filter(|_| gpu));
+                let arena = pilfflonk_wrap::wrap_arena(gpu, d_buffers, d_buffers_recursivef.as_ptr(), pilfflonk_key)?;
+                // SAFETY: the arena is the unified buffer or the recursivef's prover buffer, which
+                // outlive the prover (the wrapper's `Drop` drops it first), and which a proof uses
+                // only for the recursivef until pilfflonk proves.
+                Some(unsafe { PilfflonkWrapProver::load(&setup_snark_path, pilfflonk_key, arena) }?)
             }
-        }
-        let d_buffers_recursivef = recursivef_buffers.into_raw();
+            _ => None,
+        };
+
+        timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
 
         let trace_size = setup_recursivef.stark_info.map_sections_n["cm1"]
             * (1 << setup_recursivef.stark_info.stark_struct.n_bits)
@@ -535,7 +491,7 @@ impl<F: PrimeField64> PoseidonWrap<F> {
             proving_key_path: proving_key_path.to_path_buf(),
             vadcop_final_verkey,
             d_buffers,
-            d_buffers_recursivef,
+            d_buffers_recursivef: d_buffers_recursivef.into_raw(),
             memory_handler_recursive_witness,
             reload_fixed_pols_gpu,
             gpu,
@@ -595,39 +551,40 @@ impl<F: PrimeField64> PoseidonWrap<F> {
             self.setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
             self.d_buffers_recursivef,
         )?;
-        let snark_proof = match &self.final_snark_key {
-            FinalSnarkKey::Zkey(zkey) => self.generate_rapidsnark_proof(zkey, &proof, verkey, &recursivef_proof)?,
-            FinalSnarkKey::Pilfflonk(pilfflonk_key) => self.generate_pilfflonk_proof(
+
+        if let FinalSnarkKey::Pilfflonk(pilfflonk_key) = &self.final_snark_key {
+            let snark_proof = self.generate_pilfflonk_proof(
                 pilfflonk_key,
                 pilfflonk_prover.as_ref(),
                 &proof,
                 verkey,
                 &recursivef_proof,
-            )?,
-        };
+            )?;
+            timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
+            return Ok(snark_proof);
+        }
 
-        timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
-
-        Ok(snark_proof)
-    }
-
-    /// The PLONK or FFLONK proof of the vadcop proof `proof` (with its publics), of its recursivef
-    /// proof `recursivef_proof` against `verkey`: rapidsnark's prover of the zkey `zkey`. Under the
-    /// lock of `proving`.
-    fn generate_rapidsnark_proof(
-        &self,
-        zkey: &Path,
-        proof: &[u64],
-        verkey: &[u64],
-        recursivef_proof: &RecursivefProof,
-    ) -> ProofmanResult<SnarkProof> {
         timer_start_debug!(GENERATING_SNARK_PROOF);
 
         let snark_prover = match self.snark_prover {
             Some(prover) => prover,
-            None => init_rapidsnark_prover(zkey, self.d_buffers_recursivef)?,
+            None => {
+                let prover = init_final_snark_prover_c(
+                    &(self.setup_snark_path.display().to_string() + ".zkey"),
+                    self.d_buffers_recursivef,
+                );
+                if prover.is_null() {
+                    return Err(std::io::Error::other(format!(
+                        "Failed to initialize final snark prover from zkey file '{}'",
+                        self.setup_snark_path.display().to_string() + ".zkey"
+                    ))
+                    .into());
+                }
+                prover
+            }
         };
 
+        // The zkey names the protocol, and the loaded prover read it.
         let protocol = match SnarkProtocol::from_snark_prover(snark_prover) {
             Ok(protocol) => protocol,
             Err(e) => {
@@ -665,16 +622,20 @@ impl<F: PrimeField64> PoseidonWrap<F> {
             self.d_buffers_recursivef,
         );
 
-        // Released before anything below can return, so no error path leaks it.
         if self.snark_prover.is_none() {
             free_final_snark_prover_c(snark_prover);
         }
         let (snark_proof_bytes, snark_publics_bytes) = generated?;
 
-        let public_bytes = self.public_bytes_solidity(proof, verkey, &snark_publics_bytes)?;
+        let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
+        let publics = &proof[1..1 + proof[0] as usize];
+        check_snark_public_digest(&publics_info, publics, verkey, &snark_publics_bytes)?;
+        let public_bytes = get_public_bytes_solidity(&publics_info, publics)?;
         let snark_proof = SnarkProof::new(snark_proof_bytes, public_bytes, snark_publics_bytes, protocol.protocol_id());
 
         timer_stop_and_log_debug!(GENERATING_SNARK_PROOF);
+
+        timer_stop_and_log_info!(GENERATING_WRAPPER_SNARK_PROOF);
 
         Ok(snark_proof)
     }
@@ -710,7 +671,10 @@ impl<F: PrimeField64> PoseidonWrap<F> {
         // SAFETY: `recursivef_proof` is the recursivef proof, which nothing else uses.
         let (snark_proof_bytes, snark_publics_bytes) = unsafe { prover.prove(recursivef_proof.as_ptr()) }?;
 
-        let public_bytes = self.public_bytes_solidity(proof, verkey, &snark_publics_bytes)?;
+        let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
+        let publics = &proof[1..1 + proof[0] as usize];
+        check_snark_public_digest(&publics_info, publics, verkey, &snark_publics_bytes)?;
+        let public_bytes = get_public_bytes_solidity(&publics_info, publics)?;
         let snark_proof = SnarkProof::new(
             snark_proof_bytes,
             public_bytes,
@@ -721,21 +685,6 @@ impl<F: PrimeField64> PoseidonWrap<F> {
         timer_stop_and_log_debug!(GENERATING_SNARK_PROOF);
 
         Ok(snark_proof)
-    }
-
-    /// The publics of the vadcop proof `proof` as the Solidity verifier takes them
-    /// ([`get_public_bytes_solidity`]), once `snark_publics_bytes`, the SNARK's public, is checked
-    /// to be the digest of those publics and the root `verkey` ([`PublicsInfo::snark_public_digest`]).
-    fn public_bytes_solidity(
-        &self,
-        proof: &[u64],
-        verkey: &[u64],
-        snark_publics_bytes: &[u8],
-    ) -> ProofmanResult<Vec<u8>> {
-        let publics_info = PublicsInfo::from_folder(&self.proving_key_path)?;
-        let publics = &proof[1..1 + proof[0] as usize];
-        check_snark_public_digest(&publics_info, publics, verkey, snark_publics_bytes)?;
-        get_public_bytes_solidity(&publics_info, publics)
     }
 }
 
@@ -771,8 +720,9 @@ pub const BLAKE3_RECURSIVEF_VERKEY: &str = "recursivef.verkey.json";
 ///
 /// **GPU memory.** With proofman's buffers (`d_buffers`), all of the key's device memory is in the aux
 /// area of its unified buffer (`pilfflonk_wrap::unified_buffer`): nothing proofman keeps across proofs
-/// is there but the streams' cached const pols, which each proof drops, so nothing is reloaded. Preloaded, the key lives across proofs while proofman uses that buffer in between: it
-/// keeps a pinned host copy of what it holds there (~4 GB, its SRS and fixed coefficients), which each
+/// is there but the streams' cached const pols, which each proof drops, so nothing is reloaded.
+/// Preloaded, the key lives across proofs while proofman uses that buffer in between: it keeps a
+/// pinned host copy of what it holds there (~4 GB, its SRS and fixed coefficients), which each
 /// proof writes back while the host computes the circuit's witness. Not preloaded, each proof loads
 /// it. Without buffers, the key's memory is its own.
 pub(crate) struct Blake3Wrap {
@@ -1087,6 +1037,8 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
     file.read_to_string(&mut json_str).expect("Unable to read file");
     let vadcop_final_verkey: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
 
+    let p_setup: *mut c_void = (&setup_recursivef.p_setup).into();
+
     let verkey_path = setup_recursivef.verkey_file.clone();
     let mut contents = String::new();
     let mut file = File::open(verkey_path).unwrap();
@@ -1096,7 +1048,12 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         .map_err(|err| ProofmanError::InvalidSetup(format!("Failed to parse verkey as string: {}", err)))?;
 
     // Freed when this returns, whatever its outcome.
-    let recursivef_buffers = RecursivefDeviceBuffers::new(&setup_recursivef, None, &verkey_str);
+    let d_buffers_recursivef = RecursivefDeviceBuffers(gen_device_buffers_recursivef_c(
+        p_setup as *mut u8,
+        setup_recursivef.prover_buffer_size,
+        std::ptr::null_mut(),
+        &verkey_str,
+    ) as *mut c_void);
 
     let trace_size = setup_recursivef.stark_info.map_sections_n["cm1"]
         * (1 << setup_recursivef.stark_info.stark_struct.n_bits)
@@ -1114,7 +1071,7 @@ pub fn generate_and_verify_recursivef<F: PrimeField64>(
         &recursivef_const_tree,
         &vadcop_final_verkey,
         setup_recursivef.prover_buffer_size as usize * std::mem::size_of::<F>(),
-        recursivef_buffers.as_ptr(),
+        d_buffers_recursivef.as_ptr(),
     )?;
     timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
@@ -1328,10 +1285,34 @@ fn verify_pilfflonk_snark_proof(
     Err(ProofmanError::InvalidProof(format!("SNARK proof was not verified: {rejected}")))
 }
 
-/// Sets proofman's `reload_fixed_pols_gpu`, if any, when it goes, on any return of a wrap's proof, an
-/// error or a panic included: the snark's carve and pilfflonk's arena overwrote the const-pols regions
-/// inside the unified buffer, or may have, and the flag, consumed after the next `wcm.execute()`,
-/// re-uploads them before any proof.
+/// The recursivef's device buffers (`gen_device_buffers_recursivef_c`), freed when dropped unless
+/// handed over with [`into_raw`](Self::into_raw), so that an error does not leak them. The CPU
+/// backend has none: the pointer is null and nothing is freed.
+struct RecursivefDeviceBuffers(*mut c_void);
+
+impl RecursivefDeviceBuffers {
+    fn as_ptr(&self) -> *mut c_void {
+        self.0
+    }
+
+    /// The buffers, which the caller frees from now on.
+    fn into_raw(self) -> *mut c_void {
+        let buffers = self.0;
+        std::mem::forget(self);
+        buffers
+    }
+}
+
+impl Drop for RecursivefDeviceBuffers {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            free_device_buffers_recursivef_c(self.0);
+        }
+    }
+}
+
+/// Sets proofman's `reload_fixed_pols_gpu`, if any, when it goes: on any return of a wrap's proof,
+/// an error or a panic included.
 struct ReloadFixedPolsOnDrop<'a>(Option<&'a AtomicBool>);
 
 impl Drop for ReloadFixedPolsOnDrop<'_> {
@@ -1342,29 +1323,29 @@ impl Drop for ReloadFixedPolsOnDrop<'_> {
     }
 }
 
-// SAFETY: every field is `Send` but the raw pointers and pilfflonk's prover in `proving`, and none
-// of those is tied to the thread that made it:
-// - `snark_prover` (rapidsnark's prover of `final.zkey`) and `d_buffers_recursivef` (the
-//   recursivef's device buffers) are the wrapper's, which its `Drop` frees, and `d_buffers` (the
-//   caller's unified buffer) it never frees. They are C++ objects of the process and CUDA memory of
-//   its contexts, which each proof already hands to threads it spawns: the recursivef's loader of
-//   its fixed columns, and the GPU preallocation of rapidsnark's prover;
-// - pilfflonk's prover owns its key, whose `PilFflonkProverCtx` is a C++ object any thread may use
-//   (pilfflonk_api.hpp), with the status of each call kept per thread and read on the calling
-//   thread right after it, and the final circuit's witness library, a `WrapWitness`, which is
-//   `Send`.
+// SAFETY: every field is `Send` but the raw pointers and pilfflonk's prover, and none of those is tied to the thread
+// that made it: `snark_prover` (rapidsnark's prover of `final.zkey`) and `d_buffers_recursivef`
+// (the recursivef's device buffers) are the wrapper's, which its `Drop` frees, and `d_buffers`
+// (the caller's unified buffer) it never frees. They are C++ objects of the process and CUDA
+// memory of its contexts, which each proof already hands to threads it spawns: the recursivef's
+// loader of its fixed columns, and the GPU pre-allocation of rapidsnark's prover.
+// pilfflonk's prover, in `proving`, owns its key, whose `PilFflonkProverCtx` is a C++ object any
+// thread may use (pilfflonk_api.hpp), with the status of each call kept per thread and read on the
+// calling thread right after it, and the final circuit's witness library, a `WrapWitness`, which
+// is `Send`.
 unsafe impl<F: PrimeField64> Send for PoseidonWrap<F> {}
 // SAFETY: a shared wrapper proves one proof at a time: `generate_final_snark_proof` holds the lock
-// of `proving` throughout, and only a proof uses pilfflonk's prover and the final circuit's witness
-// calculator, or hands the C++ side what it writes: rapidsnark's prover, the recursivef's and the
-// caller's device buffers (the raw pointers), and the recursivef's prover buffer `aux_trace`,
-// through a pointer of the shared `Vec`. The threads a proof spawns are joined before it returns,
-// on its errors too: its own (the recursivef's loader of its fixed columns, the GPU pre-allocation
-// of rapidsnark's prover, which `generate_snark_proof` holds in a `JoinOnDrop`, and pilfflonk's,
-// which are scoped) and those rapidsnark's GPU prover starts, which its pre-allocation and its
-// proof join before they return. Every other field is `Sync`. The raw pointers are public, and
-// handing one to the C++ side outside a proof is the caller's to order with the wrapper's proofs, as
-// for any call of `proofman_starks_lib_c` with them.
+// of `proving` throughout, and only a proof hands the C++ side what it writes: rapidsnark's
+// prover, the recursivef's and the caller's device buffers (the raw pointers), and the
+// recursivef's prover buffer `aux_trace`, through a pointer of the shared `Vec`. The threads a
+// proof spawns are joined before it returns, on its errors too: its own (the recursivef's loader
+// of its fixed columns, the GPU pre-allocation of rapidsnark's prover) and those rapidsnark's GPU
+// prover starts, which its pre-allocation and its proof join before they return. Every other
+// field is `Sync`. The raw pointers are public, and handing one to the C++ side outside a proof is
+// the caller's to order with the wrapper's proofs, as for any call of `proofman_starks_lib_c`
+// with them.
+// Only a proof, under that lock, uses pilfflonk's prover in `proving` and the final circuit's
+// witness calculator, and the threads pilfflonk's proof starts are scoped.
 unsafe impl<F: PrimeField64> Sync for PoseidonWrap<F> {}
 
 #[cfg(test)]
@@ -1412,97 +1393,10 @@ mod snarkjs_verdict_tests {
         }
     }
 
-    #[test]
-    fn convert_to_json_refuses_what_the_native_parser_cannot_read() {
-        let proof = |proof_len: usize, digest_len: usize, protocol_id: u64| SnarkProof {
-            proof_bytes: vec![0; proof_len],
-            public_bytes: vec![],
-            public_snark_bytes: vec![0; digest_len],
-            protocol_id,
-        };
-        let plonk = SnarkProtocol::Plonk.protocol_id();
-        assert!(proof(767, 32, plonk).convert_to_json().is_err());
-        assert!(proof(768, 31, plonk).convert_to_json().is_err());
-        assert!(proof(768, 0, plonk).convert_to_json().is_err());
-        assert!(proof(768, 32, 99).convert_to_json().is_err());
-    }
-
-    /// Adding `r` to a word, or `q` to a coordinate, re-encodes the same proof for the native
-    /// parser; the on-chain verifier rejects both, so these are refused before parsing.
-    #[test]
-    fn convert_to_json_refuses_a_word_at_or_above_r() {
-        const R_MINUS_1: [u8; 32] = {
-            let mut w = BN254_R_BE;
-            w[31] -= 1;
-            w
-        };
-        let digest = R_MINUS_1.to_vec();
-        for protocol in [SnarkProtocol::Plonk, SnarkProtocol::Fflonk] {
-            for i in [0, 17, 18, 23] {
-                for word in [BN254_R_BE, [0xff; 32]] {
-                    let mut proof_bytes = vec![0; protocol.proof_bytes().unwrap()];
-                    proof_bytes[32 * i..32 * (i + 1)].copy_from_slice(&word);
-                    let proof = SnarkProof::new(proof_bytes, vec![], digest.clone(), protocol.protocol_id());
-                    let err = proof.convert_to_json().unwrap_err().to_string();
-                    assert!(err.contains(&format!("proof word {i} ")), "{err}");
-                }
-            }
-        }
-
-        let proof = SnarkProof::new(vec![0; 768], vec![], BN254_R_BE.to_vec(), SnarkProtocol::Plonk.protocol_id());
-        assert!(proof.convert_to_json().unwrap_err().to_string().contains("public input 0 "));
-    }
-
-    #[test]
-    fn first_word_not_below_r_compares_whole_words() {
-        let mut below = BN254_R_BE;
-        below[31] -= 1;
-        let mut above_despite_a_smaller_last_byte = BN254_R_BE;
-        above_despite_a_smaller_last_byte[1] += 1;
-        above_despite_a_smaller_last_byte[31] = 0;
-
-        assert_eq!(first_word_not_below_r(&below), None);
-        assert_eq!(first_word_not_below_r(&[0; 64]), None);
-        assert_eq!(first_word_not_below_r(&BN254_R_BE), Some(0));
-        assert_eq!(first_word_not_below_r(&above_despite_a_smaller_last_byte), Some(0));
-        assert_eq!(first_word_not_below_r(&[below, BN254_R_BE].concat()), Some(1));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        check_snark_public_digest, verify_snark_proof, FinalSnarkKey, ReloadFixedPolsOnDrop, SnarkProof, SnarkProtocol,
-        PILFFLONK_PROTOCOL_ID,
-    };
-    use proofman_common::{ProofmanError, PublicDefinition, PublicsInfo};
-    use proofman_starks_lib_c::{free_final_snark_prover_c, init_final_snark_prover_c};
-    use serde_json::json;
-    use std::path::{Path, PathBuf};
-
-    /// A fresh directory under the temporary directory, removed when dropped.
-    struct TestDir(PathBuf);
-
-    impl TestDir {
-        fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("proofman_snark_wrapper_{name}_{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            TestDir(dir)
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
     /// The reload flag is set as a wrap's proof ends, on its errors and panics too, and without one
     /// (no unified buffer) nothing is.
     #[test]
     fn the_reload_flag_is_set_whatever_the_proof_ends_with() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         let proof = |flag: Option<&AtomicBool>, fails: bool| -> Result<(), ()> {
             let _reload = ReloadFixedPolsOnDrop(flag);
             assert!(flag.is_none_or(|f| !f.load(Ordering::SeqCst)), "set before the proof ends");
@@ -1566,8 +1460,8 @@ mod tests {
 
     /// A `provingKeySnark/final/` in `dir` with a `final.zkey` if `zkey`, and a `provingKey/` whose
     /// globalInfo is `global_info` if there is one; and the stem of its files, `final/final`.
-    fn final_dir(dir: &TestDir, zkey: bool, global_info: Option<&str>) -> PathBuf {
-        let final_dir = dir.0.join("final");
+    fn final_dir(dir: &Path, zkey: bool, global_info: Option<&str>) -> PathBuf {
+        let final_dir = dir.join("final");
         std::fs::create_dir_all(&final_dir).unwrap();
         if zkey {
             std::fs::write(final_dir.join("final.zkey"), b"zkey").unwrap();
@@ -1588,27 +1482,27 @@ mod tests {
 
     #[test]
     fn the_final_snark_key_is_final_zkey_or_a_pilfflonk_proving_key() {
-        let dir = TestDir::new("zkey");
-        let stem = final_dir(&dir, true, None);
-        assert_eq!(FinalSnarkKey::find(&stem).unwrap(), FinalSnarkKey::Zkey(dir.0.join("final/final.zkey")));
+        let dir = tempfile::tempdir().unwrap();
+        let stem = final_dir(dir.path(), true, None);
+        assert_eq!(FinalSnarkKey::find(&stem).unwrap(), FinalSnarkKey::Zkey(dir.path().join("final/final.zkey")));
 
-        let dir = TestDir::new("pilfflonk");
-        let stem = final_dir(&dir, false, Some(PILFFLONK_GLOBAL_INFO));
-        assert_eq!(FinalSnarkKey::find(&stem).unwrap(), FinalSnarkKey::Pilfflonk(dir.0.join("final/provingKey")));
+        let dir = tempfile::tempdir().unwrap();
+        let stem = final_dir(dir.path(), false, Some(PILFFLONK_GLOBAL_INFO));
+        assert_eq!(FinalSnarkKey::find(&stem).unwrap(), FinalSnarkKey::Pilfflonk(dir.path().join("final/provingKey")));
     }
 
     #[test]
     fn a_final_dir_with_both_keys_or_none_is_refused() {
-        let dir = TestDir::new("both");
-        let message = setup_error(FinalSnarkKey::find(&final_dir(&dir, true, Some(PILFFLONK_GLOBAL_INFO))));
+        let dir = tempfile::tempdir().unwrap();
+        let message = setup_error(FinalSnarkKey::find(&final_dir(dir.path(), true, Some(PILFFLONK_GLOBAL_INFO))));
         assert!(message.contains("two final SNARK keys") && message.contains("final.zkey"), "{message}");
         assert!(message.contains("provingKey"), "{message}");
         // What fixes the directory: setup-snark of the protocol to prove with removes the other key.
         assert!(message.contains("setup-snark writes the key of one protocol and removes the other's"), "{message}");
         assert!(message.contains("running it again with the --final-snark to prove with"), "{message}");
 
-        let dir = TestDir::new("none");
-        let message = setup_error(FinalSnarkKey::find(&final_dir(&dir, false, None)));
+        let dir = tempfile::tempdir().unwrap();
+        let message = setup_error(FinalSnarkKey::find(&final_dir(dir.path(), false, None)));
         assert!(message.contains("no final SNARK key") && message.contains("final.zkey"), "{message}");
     }
 
@@ -1621,19 +1515,19 @@ mod tests {
             "proofValuesMap": [], "publicsMap": [], "hash": "Poseidon2"}"#;
         let other_backend = PILFFLONK_GLOBAL_INFO.replace("\"backend\": \"pilfflonk\"", "\"backend\": \"stark\"");
         for (name, global_info) in [("stark", stark), ("backend", &other_backend), ("text", "not JSON")] {
-            let dir = TestDir::new(name);
-            let message = setup_error(FinalSnarkKey::find(&final_dir(&dir, false, Some(global_info))));
+            let dir = tempfile::tempdir().unwrap();
+            let message = setup_error(FinalSnarkKey::find(&final_dir(dir.path(), false, Some(global_info))));
             assert!(message.contains("is not a pilfflonk key"), "{name}: {message}");
         }
-        let dir = TestDir::new("empty");
-        std::fs::create_dir_all(dir.0.join("final/provingKey")).unwrap();
-        let message = setup_error(FinalSnarkKey::find(&dir.0.join("final/final")));
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("final/provingKey")).unwrap();
+        let message = setup_error(FinalSnarkKey::find(&dir.path().join("final/final")));
         assert!(message.contains("is not a pilfflonk key"), "{message}");
     }
 
-    /// The PLONK and FFLONK zkeys of `x * x = y` in `tests/data/`, each in a `provingKeySnark/final/`
-    /// as setup-snark writes it, are the final SNARK's key there, and the prover loaded from each
-    /// reports the protocol that zkey names.
+    /// The PLONK and FFLONK zkeys of `x * x = y` in `tests/data/` report, once loaded, the protocol
+    /// each names, and each, in a `provingKeySnark/final/` as setup-snark writes it, is the final
+    /// SNARK's key there.
     ///
     /// They were made once with rapidsnark's setup, as setup-snark runs it:
     /// `generate_plonk_zkey_c(r1cs, ptau, "square_plonk.zkey")` and
@@ -1645,22 +1539,20 @@ mod tests {
     /// eb72864d628db247e9293384b74b36ffb52ca8d148d6e1b8b51e279fdf57b583.
     #[test]
     fn the_protocol_is_the_one_the_zkey_names() {
-        let dir = TestDir::new("zkey_protocol");
+        let dir = tempfile::tempdir().unwrap();
         for expected in [SnarkProtocol::Plonk, SnarkProtocol::Fflonk] {
-            let fixture = format!("{}/tests/data/square_{}.zkey", env!("CARGO_MANIFEST_DIR"), expected.protocol_name());
+            let zkey = format!("{}/tests/data/square_{}.zkey", env!("CARGO_MANIFEST_DIR"), expected.protocol_name());
             // A zkey that cannot be read aborts the C++ loader: refuse a missing one first.
-            assert!(Path::new(&fixture).is_file(), "no fixture at {fixture}");
+            assert!(Path::new(&zkey).is_file(), "no fixture at {zkey}");
 
             // As setup-snark writes it: provingKeySnark/final/final.zkey, which is the final SNARK key.
-            let stem = dir.0.join(expected.protocol_name()).join("final").join("final");
+            let stem = dir.path().join(expected.protocol_name()).join("final").join("final");
             std::fs::create_dir_all(stem.parent().unwrap()).unwrap();
             assert_eq!(FinalSnarkKey::find(&stem).ok(), None);
-            let zkey = stem.with_extension("zkey");
-            std::fs::copy(&fixture, &zkey).unwrap();
-            assert_eq!(FinalSnarkKey::find(&stem).unwrap(), FinalSnarkKey::Zkey(zkey.clone()));
+            std::fs::copy(&zkey, stem.with_extension("zkey")).unwrap();
+            assert_eq!(FinalSnarkKey::find(&stem).unwrap(), FinalSnarkKey::Zkey(stem.with_extension("zkey")));
 
-            let zkey = zkey.to_str().unwrap();
-            let prover = init_final_snark_prover_c(zkey, std::ptr::null_mut());
+            let prover = init_final_snark_prover_c(&zkey, std::ptr::null_mut());
             assert!(!prover.is_null(), "{zkey}");
             let protocol = SnarkProtocol::from_snark_prover(prover).map(|p| p.protocol_id());
             free_final_snark_prover_c(prover);
@@ -1673,70 +1565,130 @@ mod tests {
         assert!(SnarkProtocol::from_snark_prover(std::ptr::null_mut()).is_err());
     }
 
+    #[test]
+    fn convert_to_json_refuses_what_the_native_parser_cannot_read() {
+        let proof = |proof_len: usize, digest_len: usize, protocol_id: u64| SnarkProof {
+            proof_bytes: vec![0; proof_len],
+            public_bytes: vec![],
+            public_snark_bytes: vec![0; digest_len],
+            protocol_id,
+        };
+        let plonk = SnarkProtocol::Plonk.protocol_id();
+        assert!(proof(767, 32, plonk).convert_to_json().is_err());
+        assert!(proof(768, 31, plonk).convert_to_json().is_err());
+        assert!(proof(768, 0, plonk).convert_to_json().is_err());
+        assert!(proof(768, 32, 99).convert_to_json().is_err());
+    }
+
+    /// Adding `r` to a word, or `q` to a coordinate, re-encodes the same proof for the native
+    /// parser; the on-chain verifier rejects both, so these are refused before parsing.
+    #[test]
+    fn convert_to_json_refuses_a_word_at_or_above_r() {
+        const R_MINUS_1: [u8; 32] = {
+            let mut w = BN254_R_BE;
+            w[31] -= 1;
+            w
+        };
+        let digest = R_MINUS_1.to_vec();
+        for protocol in [SnarkProtocol::Plonk, SnarkProtocol::Fflonk] {
+            for i in [0, 17, 18, 23] {
+                for word in [BN254_R_BE, [0xff; 32]] {
+                    let mut proof_bytes = vec![0; protocol.proof_bytes().unwrap()];
+                    proof_bytes[32 * i..32 * (i + 1)].copy_from_slice(&word);
+                    let proof = SnarkProof::new(proof_bytes, vec![], digest.clone(), protocol.protocol_id());
+                    let err = proof.convert_to_json().unwrap_err().to_string();
+                    assert!(err.contains(&format!("proof word {i} ")), "{err}");
+                }
+            }
+        }
+
+        let proof = SnarkProof::new(vec![0; 768], vec![], BN254_R_BE.to_vec(), SnarkProtocol::Plonk.protocol_id());
+        assert!(proof.convert_to_json().unwrap_err().to_string().contains("public input 0 "));
+    }
+
+    #[test]
+    fn first_word_not_below_r_compares_whole_words() {
+        let mut below = BN254_R_BE;
+        below[31] -= 1;
+        let mut above_despite_a_smaller_last_byte = BN254_R_BE;
+        above_despite_a_smaller_last_byte[1] += 1;
+        above_despite_a_smaller_last_byte[31] = 0;
+
+        assert_eq!(first_word_not_below_r(&below), None);
+        assert_eq!(first_word_not_below_r(&[0; 64]), None);
+        assert_eq!(first_word_not_below_r(&BN254_R_BE), Some(0));
+        assert_eq!(first_word_not_below_r(&above_despite_a_smaller_last_byte), Some(0));
+        assert_eq!(first_word_not_below_r(&[below, BN254_R_BE].concat()), Some(1));
+    }
+
     /// 24 words 1, 2, ..., 24: 9 commitments and 6 evaluations for PLONK, 4 and 16 for FFLONK.
-    fn proof_of_words(protocol_id: u64) -> SnarkProof {
+    fn proof_of_words(protocol: SnarkProtocol) -> SnarkProof {
         let word = |value: u8| {
             let mut word = [0u8; 32];
             word[31] = value;
             word
         };
-        SnarkProof::new((1..=24).flat_map(word).collect(), vec![], word(25).to_vec(), protocol_id)
+        SnarkProof::new((1..=24).flat_map(word).collect(), vec![], word(25).to_vec(), protocol.protocol_id())
     }
 
     #[test]
     fn a_plonk_proof_converts_to_snarkjs_plonk_json() {
-        let (proof, publics) = proof_of_words(2).convert_to_json().unwrap();
+        let (proof, publics) = proof_of_words(SnarkProtocol::Plonk).convert_to_json().unwrap();
         assert_eq!(proof["protocol"], "plonk");
         assert_eq!(proof["curve"], "bn128");
-        assert_eq!(proof["A"], json!(["1", "2", "1"]));
-        assert_eq!(proof["Wxiw"], json!(["17", "18", "1"]));
+        assert_eq!(proof["A"], serde_json::json!(["1", "2", "1"]));
+        assert_eq!(proof["Wxiw"], serde_json::json!(["17", "18", "1"]));
         assert_eq!(proof["eval_a"], "19");
         assert_eq!(proof["eval_zw"], "24");
         assert_eq!(proof.as_object().unwrap().len(), 9 + 6 + 2);
-        assert_eq!(publics, json!(["25"]));
+        assert_eq!(publics, serde_json::json!(["25"]));
     }
 
+    /// snarkjs reads an FFLONK proof's commitments under `polynomials` and its evaluations under
+    /// `evaluations` (`fromObjectProof`).
     #[test]
     fn an_fflonk_proof_converts_to_snarkjs_fflonk_json() {
-        let (proof, publics) = proof_of_words(10).convert_to_json().unwrap();
+        let (proof, publics) = proof_of_words(SnarkProtocol::Fflonk).convert_to_json().unwrap();
         assert_eq!(proof["protocol"], "fflonk");
         assert_eq!(proof["curve"], "bn128");
-        assert_eq!(proof["polynomials"]["C1"], json!(["1", "2", "1"]));
-        assert_eq!(proof["polynomials"]["W2"], json!(["7", "8", "1"]));
+        assert_eq!(proof["polynomials"]["C1"], serde_json::json!(["1", "2", "1"]));
+        assert_eq!(proof["polynomials"]["W2"], serde_json::json!(["7", "8", "1"]));
         assert_eq!(proof["evaluations"]["ql"], "9");
         assert_eq!(proof["evaluations"]["inv"], "24");
         assert_eq!(proof["polynomials"].as_object().unwrap().len(), 4);
         assert_eq!(proof["evaluations"].as_object().unwrap().len(), 16);
         assert_eq!(proof.as_object().unwrap().len(), 4);
-        assert_eq!(publics, json!(["25"]));
+        assert_eq!(publics, serde_json::json!(["25"]));
     }
 
     #[test]
     fn a_proof_of_an_unknown_protocol_does_not_convert() {
-        assert!(proof_of_words(7).convert_to_json().is_err());
-        assert!(proof_of_words(7).convert_to_json_with_vkey(Path::new("vkey.json")).is_err());
+        let proof = SnarkProof { protocol_id: 7, ..proof_of_words(SnarkProtocol::Plonk) };
+        assert!(proof.convert_to_json().is_err());
+        assert!(proof.convert_to_json_with_vkey(Path::new("vkey.json")).is_err());
     }
 
     /// PLONK's and FFLONK's bytes name themselves: the vkey is not read, and need not be there.
     #[test]
     fn a_rapidsnark_proof_converts_as_snarkjs_reads_it_whatever_the_vkey() {
         for protocol in [SnarkProtocol::Plonk, SnarkProtocol::Fflonk] {
-            let proof = proof_of_words(protocol.protocol_id());
+            let name = protocol.protocol_name();
+            let proof = proof_of_words(protocol);
             let with_vkey = proof.convert_to_json_with_vkey(Path::new("no/such/vkey.json")).unwrap();
-            assert_eq!(with_vkey, proof.convert_to_json().unwrap(), "{}", protocol.protocol_name());
+            assert_eq!(with_vkey, proof.convert_to_json().unwrap(), "{name}");
         }
     }
 
     /// A pilfflonk proof's bytes need the vkey's names, and a vkey that cannot be read refuses them.
     #[test]
     fn a_pilfflonk_proof_converts_only_with_its_vkey() {
-        let proof = proof_of_words(PILFFLONK_PROTOCOL_ID);
+        let proof = proof_of_words(SnarkProtocol::Pilfflonk);
         let error = proof.convert_to_json().unwrap_err().to_string();
         assert!(error.contains("convert_to_json_with_vkey"), "{error}");
-        let dir = TestDir::new("not_a_vkey");
-        let not_a_vkey = dir.0.join("pilfflonk.vkey.json");
+        let dir = tempfile::tempdir().unwrap();
+        let not_a_vkey = dir.path().join("pilfflonk.vkey.json");
         std::fs::write(&not_a_vkey, "{}").unwrap();
-        for vkey in [dir.0.join("none.json"), not_a_vkey] {
+        for vkey in [dir.path().join("none.json"), not_a_vkey] {
             assert!(proof.convert_to_json_with_vkey(&vkey).is_err(), "{}", vkey.display());
         }
     }
@@ -1746,11 +1698,11 @@ mod tests {
     /// the proof.
     #[test]
     fn a_pilfflonk_proof_without_its_vkey_does_not_verify() {
-        let dir = TestDir::new("verify_not_a_vkey");
-        let plonk_vkey = dir.0.join("final.verkey.json");
+        let dir = tempfile::tempdir().unwrap();
+        let plonk_vkey = dir.path().join("final.verkey.json");
         std::fs::write(&plonk_vkey, r#"{"protocol": "plonk", "curve": "bn128", "nPublic": 1}"#).unwrap();
-        for vkey in [dir.0.join("none.json"), plonk_vkey] {
-            match verify_snark_proof(&proof_of_words(PILFFLONK_PROTOCOL_ID), &vkey) {
+        for vkey in [dir.path().join("none.json"), plonk_vkey] {
+            match verify_snark_proof(&proof_of_words(SnarkProtocol::Pilfflonk), &vkey) {
                 Err(ProofmanError::InvalidConfiguration(message)) => {
                     assert!(message.starts_with("Failed to read the pilfflonk vkey"), "{message}")
                 }
@@ -1775,13 +1727,13 @@ mod tests {
     /// Every protocol's proof is read back as it was saved.
     #[test]
     fn a_snark_proof_is_saved_as_its_fields_and_read_back() {
-        let dir = TestDir::new("save");
+        let dir = tempfile::tempdir().unwrap();
         for (protocol, proof_len) in
             [(SnarkProtocol::Plonk, 768), (SnarkProtocol::Fflonk, 768), (SnarkProtocol::Pilfflonk, 2048)]
         {
             let proof_bytes: Vec<u8> = (0..proof_len).map(|i| (i % 256) as u8).collect();
             let proof = SnarkProof::new(proof_bytes.clone(), vec![7; 32], vec![9; 32], protocol.protocol_id());
-            let path = dir.0.join(format!("{}_snark_proof.bin", protocol.protocol_name()));
+            let path = dir.path().join(format!("{}_snark_proof.bin", protocol.protocol_name()));
             proof.save(&path).unwrap();
 
             let expected = [
@@ -1809,7 +1761,7 @@ mod tests {
     /// statement's, and a root that is not 4 limbs as a misconfiguration.
     #[test]
     fn the_snark_public_must_be_the_digest_of_the_publics_and_the_root() {
-        let out = PublicDefinition {
+        let out = proofman_common::PublicDefinition {
             name: "out".to_string(),
             initial_pos: 0,
             n_values: 3,
