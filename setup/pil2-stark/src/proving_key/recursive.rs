@@ -768,14 +768,14 @@ pub fn gen_recursive_setup(
                     crate::output::json::to_json_string(expressions_info_ref)?,
                 )?;
 
-                let expressions_loaded = crate::types::stark_info::ExpressionsInfo::from(expressions_info_ref);
+                let expressions_loaded = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info_ref)?;
                 crate::io::bin_file::write_expressions_bin_file(
                     files_dir.join(format!("{}.bin", template_str)).to_str().unwrap(),
                     &stark_info_loaded,
                     &expressions_loaded,
                 )?;
 
-                let verifier_loaded = crate::types::stark_info::VerifierInfo::from(verifier_info_ref);
+                let verifier_loaded = crate::types::stark_info::VerifierInfo::try_from(verifier_info_ref)?;
                 crate::io::bin_file::write_verifier_expressions_bin_file(
                     files_dir.join(format!("{}.verifier.bin", template_str)).to_str().unwrap(),
                     &stark_info_loaded,

@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use crate::io::bin_file_writer::BinFileWriter;
 use crate::io::parser_args::{get_parser_args, ExpsInfo};
+use crate::types::goldilocks_u64;
 use crate::types::stark_info::{ExpressionsInfo, Hint, OpType, StarkInfo, VerifierInfo};
 
 const CHELPERS_NSECTIONS: u32 = 3;
@@ -265,8 +266,7 @@ fn write_expressions_section(
 
     // Write numbers as u64 LE
     for num_str in numbers_exps {
-        let num: u64 = num_str.parse().unwrap_or(0);
-        writer.write_u64(num)?;
+        writer.write_u64(goldilocks_u64(num_str)?)?;
     }
 
     writer.end_write_section()?;
@@ -335,8 +335,7 @@ fn write_constraints_section(
         writer.write_u16(*arg)?;
     }
     for num_str in numbers_constraints {
-        let num: u64 = num_str.parse().unwrap_or(0);
-        writer.write_u64(num)?;
+        writer.write_u64(goldilocks_u64(num_str)?)?;
     }
 
     writer.end_write_section()?;

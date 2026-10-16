@@ -404,14 +404,14 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         let si_val: serde_json::Value = serde_json::from_str(&fs::read_to_string(&starkinfo_path)?)?;
         let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(&si_val)?;
 
-        let expressions_loaded = crate::types::stark_info::ExpressionsInfo::from(expressions_info_ref);
+        let expressions_loaded = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info_ref)?;
         crate::io::bin_file::write_expressions_bin_file(
             files_dir.join("vadcop_final.bin").to_str().unwrap(),
             &stark_info_loaded,
             &expressions_loaded,
         )?;
 
-        let verifier_loaded = crate::types::stark_info::VerifierInfo::from(verifier_info_ref);
+        let verifier_loaded = crate::types::stark_info::VerifierInfo::try_from(verifier_info_ref)?;
         crate::io::bin_file::write_verifier_expressions_bin_file(
             files_dir.join("vadcop_final.verifier.bin").to_str().unwrap(),
             &stark_info_loaded,

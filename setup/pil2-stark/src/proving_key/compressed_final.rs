@@ -307,14 +307,14 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         let si_val: serde_json::Value = serde_json::from_str(&fs::read_to_string(&starkinfo_path)?)?;
         let si_loaded = crate::types::stark_info::StarkInfo::from_json(&si_val)?;
 
-        let expr_loaded = crate::types::stark_info::ExpressionsInfo::from(expressions_info_ref);
+        let expr_loaded = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info_ref)?;
         crate::io::bin_file::write_expressions_bin_file(
             files_dir.join(format!("{}.bin", template)).to_str().unwrap(),
             &si_loaded,
             &expr_loaded,
         )?;
 
-        let ver_loaded = crate::types::stark_info::VerifierInfo::from(verifier_info_ref);
+        let ver_loaded = crate::types::stark_info::VerifierInfo::try_from(verifier_info_ref)?;
         crate::io::bin_file::write_verifier_expressions_bin_file(
             files_dir.join(format!("{}.verifier.bin", template)).to_str().unwrap(),
             &si_loaded,
