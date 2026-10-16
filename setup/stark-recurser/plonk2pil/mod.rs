@@ -4,10 +4,14 @@
 //! It reads R1CS binary files, converts constraints to PLONK format, and runs
 //! one of several setup routines to produce PIL source and fixed polynomials.
 //!
+//! The PLONK conversion is generic over the r1cs's field ([`field::PlonkField`]: Goldilocks or
+//! BN128). The reader, the setup families and the `.exec` format are over Goldilocks.
+//!
 //! The main entry point is [`plonk2pil`], which dispatches to the appropriate
 //! setup variant based on the `setup_type` argument.
 
 pub mod estimate;
+pub mod field;
 pub mod merge_copies;
 pub mod packers;
 pub mod r1cs;
@@ -21,6 +25,7 @@ pub use setups::poseidon1::aggregation as aggregation_setup;
 pub use setups::poseidon1::compressor as compressor_setup;
 
 use anyhow::{bail, Result};
+use proofman_fields::{Goldilocks, PrimeField64};
 
 use r1cs::types::{read_r1cs_from_bytes, PlonkOptions};
 pub use r1cs::types::{FixedPol, SetupResult};
@@ -33,7 +38,8 @@ pub struct PlonkResult {
     pub exec: Vec<u64>,
     /// Generated PIL source string.
     pub pil_str: String,
-    /// Fixed polynomial values, as a flat list of (name, index, values).
+    /// Fixed polynomial values, as a flat list of (name, index, values), each value the canonical
+    /// word of a Goldilocks element.
     pub fixed_pols: Vec<FixedPol>,
     /// log2(number of rows).
     pub n_bits: usize,
@@ -68,11 +74,14 @@ pub const GATE_BAND_FORMAT_VERSION: u64 = 2;
 
 /// Serialize PLONK additions and the signal map into an exec buffer.
 ///
+/// Over Goldilocks: a coefficient is one word, which an element of a wider field is not. The
+/// signature is what keeps one from reaching it.
+///
 /// Layout, all u64 LE:
 /// - `[0]`: [`EXEC_MAGIC`] | [`EXEC_FORMAT_VERSION`]
 /// - `[1]`: number of additions
 /// - `[2]`: mapped rows, `[3]`: mapped columns
-/// - additions: `(sl, sr, coef_l, coef_r)` each
+/// - additions: `(sl, sr, coef_l, coef_r)` each, a coefficient its canonical word
 /// - map: `map_rows * map_cols` u32 entries, row-major, two to a word, padded to a whole word
 /// - gate bands: format version, band count, a per-air aux word, then `(row, kind, payload)` per band
 ///
@@ -82,7 +91,7 @@ pub const GATE_BAND_FORMAT_VERSION: u64 = 2;
 /// extent, which is what those cells held anyway. Both bounds are measured rather than assumed, so
 /// a packer that starts using a row or column cannot silently have it dropped.
 fn write_exec_file(
-    adds: &[r1cs::to_plonk::PlonkAddition],
+    adds: &[r1cs::to_plonk::PlonkAddition<Goldilocks>],
     s_map: &[Vec<u32>],
     gate_bands: &[r1cs::types::GateBand],
     band_aux: u64,
@@ -119,10 +128,10 @@ fn write_exec_file(
 
     for (i, add) in adds.iter().enumerate() {
         let at = EXEC_HEADER_WORDS + i * 4;
-        buff[at] = add[0];
-        buff[at + 1] = add[1];
-        buff[at + 2] = add[2];
-        buff[at + 3] = add[3];
+        buff[at] = add.wires[0] as u64;
+        buff[at + 1] = add.wires[1] as u64;
+        buff[at + 2] = add.coeffs[0].as_canonical_u64();
+        buff[at + 3] = add.coeffs[1].as_canonical_u64();
     }
 
     // Two u32 entries per word, low half first: the order the bytes come out in on a little-endian
@@ -163,7 +172,7 @@ pub fn plonk2pil(r1cs_data: &[u8], setup_type: &str, options: &PlonkOptions) -> 
 
     let r1cs = read_r1cs_from_bytes(r1cs_data)?;
 
-    let res: SetupResult = match setup_type {
+    let res: SetupResult<Goldilocks> = match setup_type {
         "compressor" => packers::pack_compressor(&r1cs, options),
         "aggregation" => packers::pack_aggregation(&r1cs, options),
         _ => unreachable!(),
@@ -174,7 +183,7 @@ pub fn plonk2pil(r1cs_data: &[u8], setup_type: &str, options: &PlonkOptions) -> 
     Ok(PlonkResult {
         exec,
         pil_str: res.pil_str,
-        fixed_pols: res.fixed_pols,
+        fixed_pols: res.fixed_pols.into_iter().map(canonical_words).collect(),
         n_bits: res.n_bits,
         n_bits_natural: res.n_bits_natural,
         n_used: res.n_used,
@@ -183,11 +192,22 @@ pub fn plonk2pil(r1cs_data: &[u8], setup_type: &str, options: &PlonkOptions) -> 
     })
 }
 
+/// A fixed column as the STARK setup takes it: each value its canonical word.
+fn canonical_words(pol: FixedPol<Goldilocks>) -> FixedPol {
+    // `Goldilocks` and `u64` share a layout, so the collect reuses the column's allocation.
+    FixedPol {
+        name: pol.name,
+        index: pol.index,
+        values: pol.values.into_iter().map(|v| v.as_canonical_u64()).collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::r1cs::to_plonk::*;
     use super::r1cs::types::read_r1cs_from_bytes;
     use super::*;
+    use proofman_fields::Field;
 
     /// Run the real compressor packer end-to-end on an r1cs (exercises the row-count
     /// assert + verify_merge_soundness). ESTIMATE_HASH picks the family; it defaults to
@@ -274,7 +294,7 @@ mod tests {
         assert_eq!(constraints.len(), 1);
         assert!(additions.is_empty());
         // Should be a multiplication gate: qM != 0
-        assert_ne!(constraints[0][3], 0);
+        assert!(!constraints[0].coeffs[0].is_zero());
     }
 
     /// One map entry, by row and column, out of the packed u32 pairs.
@@ -285,7 +305,10 @@ mod tests {
 
     #[test]
     fn test_write_exec_file_roundtrip() {
-        let adds: Vec<PlonkAddition> = vec![[10, 20, 30, 40], [50, 60, 70, 80]];
+        let adds: Vec<PlonkAddition<Goldilocks>> = vec![
+            PlonkAddition { wires: [10, 20], coeffs: [Goldilocks::new(30), Goldilocks::new(40)] },
+            PlonkAddition { wires: [50, 60], coeffs: [Goldilocks::new(70), Goldilocks::new(80)] },
+        ];
         let s_map: Vec<Vec<u32>> = vec![vec![1, 2, 3, 4], vec![5, 6, 7, 8]];
 
         let exec = write_exec_file(&adds, &s_map, &[], 0);
@@ -373,7 +396,7 @@ mod tests {
     #[test]
     fn write_exec_file_appends_bands_past_the_map() {
         use r1cs::types::{GateBand, GateBandKind};
-        let adds = vec![[10u64, 20, 1, 1]];
+        let adds = vec![PlonkAddition { wires: [10, 20], coeffs: [Goldilocks::ONE; 2] }];
         // Tall enough to contain both bands: a band's boundary is always inside the live extent.
         let s_map = vec![(1..=12).collect::<Vec<u32>>(), (13..=24).collect::<Vec<u32>>()];
         let bands = vec![

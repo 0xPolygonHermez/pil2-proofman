@@ -1,25 +1,32 @@
 //! R1CS types and direct `&[u8]` parser for use by plonk2pil setup routines.
 //!
-//! All field elements are u64 (Goldilocks fits in 8 bytes).
-//! No BigInt, no temporary files.
+//! The types are over a field `F`: an r1cs's coefficients and its custom gates' parameters are
+//! elements of `F`, its wire ids and signals integers. The parser reads Goldilocks, whose elements
+//! fit in 8 bytes. No BigInt, no temporary files.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use anyhow::{anyhow, bail, Result};
+use proofman_fields::Goldilocks;
+
+use crate::plonk2pil::r1cs::to_plonk::PlonkAddition;
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
-/// Wire index → Goldilocks coefficient. Ordered, so every pass over a combination's terms sees them
-/// Ordered, so the plonk placement it feeds is reproducible.
-pub type LinearCombination = BTreeMap<u32, u64>;
+/// Wire index → coefficient. Ordered, so every pass over a combination's terms sees them in the
+/// same order and the plonk placement it feeds is reproducible.
+pub type LinearCombination<F> = BTreeMap<u32, F>;
 
 /// A single R1CS constraint: A * B = C.
+///
+/// Ordered by the canonical values of its coefficients (the order of `F`), which is what the reader
+/// sorts the constraints by and so what the row placement follows.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct R1csConstraint {
-    pub a: LinearCombination,
-    pub b: LinearCombination,
-    pub c: LinearCombination,
+pub struct R1csConstraint<F> {
+    pub a: LinearCombination<F>,
+    pub b: LinearCombination<F>,
+    pub c: LinearCombination<F>,
 }
 
 /// R1CS header fields.
@@ -38,9 +45,9 @@ pub struct R1csHeader {
 
 /// A custom gate definition (template name + parameters).
 #[derive(Debug, Clone)]
-pub struct CustomGate {
+pub struct CustomGate<F> {
     pub template_name: String,
-    pub parameters: Vec<u64>,
+    pub parameters: Vec<F>,
 }
 
 /// One application of a custom gate (gate index + wire signals).
@@ -50,13 +57,13 @@ pub struct CustomGateUse {
     pub signals: Vec<u64>,
 }
 
-/// Complete parsed R1CS file.
+/// Complete parsed R1CS file, over the field `F`.
 #[derive(Debug, Clone)]
-pub struct R1csFile {
+pub struct R1csFile<F> {
     pub header: R1csHeader,
-    pub constraints: Vec<R1csConstraint>,
+    pub constraints: Vec<R1csConstraint<F>>,
     pub wire_to_label: Vec<u64>,
-    pub custom_gates: Vec<CustomGate>,
+    pub custom_gates: Vec<CustomGate<F>>,
     pub custom_gates_uses: Vec<CustomGateUse>,
 }
 
@@ -97,11 +104,15 @@ impl Default for PlonkOptions {
 }
 
 /// A single fixed polynomial column.
+///
+/// `V` is a field element while plonk2pil builds the column. The default, `u64`, is the canonical
+/// word of a Goldilocks value, which is how [`crate::plonk2pil::PlonkResult`] hands the columns to
+/// the STARK setup and how a `.const` file stores them.
 #[derive(Debug, Clone)]
-pub struct FixedPol {
+pub struct FixedPol<V = u64> {
     pub name: String,
     pub index: usize,
-    pub values: Vec<u64>,
+    pub values: Vec<V>,
 }
 
 /// One expandable row band: where it starts, and which gate shape fills it. The layout
@@ -140,10 +151,10 @@ pub enum GateBandKind {
     Blake3CompressParent = 11,
 }
 
-/// Result returned by every setup function.
+/// Result returned by every setup function, over the field `F` of the r1cs.
 #[derive(Debug, Clone)]
-pub struct SetupResult {
-    pub fixed_pols: Vec<FixedPol>,
+pub struct SetupResult<F> {
+    pub fixed_pols: Vec<FixedPol<F>>,
     pub pil_str: String,
     pub n_bits: usize,
     /// The size the circuit would take on its own, before any `min_n_bits` floor. The floor states
@@ -157,7 +168,7 @@ pub struct SetupResult {
     /// rather than gathering them out of the circom witness. One per hash-gate application --
     /// the only gates whose row band is wider than its inputs and outputs.
     pub gate_bands: Vec<GateBand>,
-    pub plonk_additions: Vec<[u64; 4]>,
+    pub plonk_additions: Vec<PlonkAddition<F>>,
     pub airgroup_name: String,
     pub air_name: String,
     /// A per-AIR parameter the band expander needs but cannot infer.
@@ -211,18 +222,18 @@ fn read_cstring(c: &mut Cursor<&[u8]>) -> Result<String> {
 }
 
 /// Read a linear combination: n_terms × (wire_id u32, coeff field_size bytes).
-fn read_lc(c: &mut Cursor<&[u8]>, field_size: usize) -> Result<LinearCombination> {
+fn read_lc(c: &mut Cursor<&[u8]>, field_size: usize) -> Result<LinearCombination<Goldilocks>> {
     let n_terms = read_u32(c)? as usize;
     let mut lc = LinearCombination::new();
     for _ in 0..n_terms {
         let wire_id = read_u32(c)?;
         let coeff = read_field(c, field_size)?;
-        lc.insert(wire_id, coeff);
+        lc.insert(wire_id, Goldilocks::new(coeff));
     }
     Ok(lc)
 }
 
-/// Parse an R1CS file from raw bytes.
+/// Parse an R1CS file over Goldilocks from raw bytes.
 ///
 /// R1CS binary layout:
 /// ```text
@@ -234,7 +245,7 @@ fn read_lc(c: &mut Cursor<&[u8]>, field_size: usize) -> Result<LinearCombination
 ///     size:   u64 LE   (byte count of data)
 ///     data:   size bytes
 /// ```
-pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile> {
+pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile<Goldilocks>> {
     let mut c = Cursor::new(data);
 
     // Magic
@@ -323,7 +334,7 @@ pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile> {
     };
 
     // ── Sections 4 & 5: Custom gates (only present when n_sections == 5) ──
-    let mut custom_gates: Vec<CustomGate> = Vec::new();
+    let mut custom_gates: Vec<CustomGate<Goldilocks>> = Vec::new();
     let mut custom_gates_uses: Vec<CustomGateUse> = Vec::new();
 
     if use_custom_gates {
@@ -336,7 +347,7 @@ pub fn read_r1cs_from_bytes(data: &[u8]) -> Result<R1csFile> {
             let n_params = read_u32(&mut c)? as usize;
             let mut parameters = Vec::with_capacity(n_params);
             for _ in 0..n_params {
-                parameters.push(read_field(&mut c, field_size)?);
+                parameters.push(Goldilocks::new(read_field(&mut c, field_size)?));
             }
             custom_gates.push(CustomGate { template_name, parameters });
         }
