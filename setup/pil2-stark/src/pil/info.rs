@@ -1,14 +1,14 @@
-//! Top-level orchestrator for computing pil info for a single air.
+//! Top-level orchestrator for computing pil info for a single air: the passes of `pil-info`,
+//! plus what is STARK-specific (the starkStruct validation, the degree bound from the blowup, the
+//! prover memory estimate and the printed AIR info summary).
 
 use pil2_pilout::pilout as pb;
 
-use crate::pil::gen_code::{CodeGenParams, PilCodeResult};
-use crate::pil::im_polynomials::{add_im_polynomials, calculate_intermediate_polynomials};
-use crate::pil::map;
+use crate::pil::gen_code::PilCodeResult;
 use crate::types::pilout_info::{SetupResult, FIELD_EXTENSION};
 use crate::pil::prepare::{prepare_pil, PrepareOptions};
-use crate::expr::print::PrintCtx;
 use crate::types::stark_struct::{LowDegreeTest, StarkStruct};
+use pil_info::pil::info as passes;
 
 /// The assembled pil info result returned by `pil_info`.
 pub struct PilInfoResult {
@@ -32,11 +32,9 @@ pub struct PilInfoResult {
 ///
 /// Steps:
 /// 1. prepare_pil
-/// 2. calculate_intermediate_polynomials
-/// 3. add_intermediate_polynomials
-/// 4. map
-/// 5. generate_pil_code
-/// 6. compute prover memory estimate and print AIR info summary
+/// 2. validate starkStruct against the air (unless debug mode)
+/// 3. the remaining passes, with the degree bound the blowup allows
+/// 4. compute prover memory estimate and print AIR info summary
 pub fn pil_info(
     pilout: &pb::PilOut,
     airgroup_id: usize,
@@ -44,130 +42,32 @@ pub fn pil_info(
     stark_struct: &StarkStruct,
     options: &PrepareOptions,
 ) -> PilInfoResult {
-    let result = prepare_pil(pilout, airgroup_id, air_id, stark_struct, options);
+    let prepared = prepare_pil(pilout, airgroup_id, air_id);
 
-    let mut setup = result.setup;
-    let mut expressions = result.expressions;
-    let mut constraints = result.constraints;
-    let mut symbols = result.symbols;
-    let hints = result.hints;
-    let boundaries = result.boundaries;
-    let constraint_poly = result.constraint_poly;
+    // Validate starkStruct
+    if !options.debug {
+        if stark_struct.n_bits != prepared.setup.pil_power as usize {
+            panic!(
+                "starkStruct and pilfile have degree mismatch (airId: {} airgroupId: {} starkStruct:{} pilfile:{})",
+                air_id, airgroup_id, stark_struct.n_bits, prepared.setup.pil_power
+            );
+        }
 
-    let mut c_exp_id = constraint_poly.c_exp_id;
-    let q_dim = constraint_poly.q_dim;
+        let initial_domain = stark_struct.low_degree_test.log_domain_sizes()[0];
+        if stark_struct.n_bits_ext != initial_domain {
+            panic!(
+                "starkStruct.nBitsExt and the low-degree test's initial domain have a mismatch (nBitsExt:{} domain:{})",
+                stark_struct.n_bits_ext, initial_domain
+            );
+        }
+    }
 
     let max_deg = (1usize << (stark_struct.n_bits_ext - stark_struct.n_bits)) + 1;
 
-    // Calculate intermediate polynomials
-    let im_result = calculate_intermediate_polynomials(&expressions, c_exp_id, max_deg, q_dim, &symbols);
-    let im_exps = im_result.im_exps;
-    let q_deg = im_result.q_deg;
-
-    // Build boundary tuples for add_im_polynomials
-    let boundary_tuples: Vec<(String, Option<i64>, Option<i64>)> = boundaries
-        .iter()
-        .map(|b| (b.name.clone(), b.offset_min.map(|v| v as i64), b.offset_max.map(|v| v as i64)))
-        .collect();
-
-    // Add intermediate polynomials
-    let mut n_commitments = setup.n_commitments;
-    let q_dim_final = add_im_polynomials(
-        &mut expressions,
-        &mut constraints,
-        &mut symbols,
-        &setup.name,
-        air_id,
-        airgroup_id,
-        setup.n_stages,
-        &mut n_commitments,
-        &mut c_exp_id,
-        &im_exps,
-        q_deg,
-        options.im_pols_stages,
-        &boundary_tuples,
-    );
-    setup.n_commitments = n_commitments;
-
-    // Store back into setup for mapping
-    setup.expressions = expressions;
-    setup.constraints = constraints;
-    setup.symbols = symbols;
-
-    // Map
-    map::map(&mut setup, false);
-
-    // Compute opening points from ALL expressions that will be code-generated:
-    // constraints, kept expressions (from hints), and imPol expressions.
-    // This mirrors the filter in generate_expressions_code which processes
-    // expressions with keep=true, im_pol=true, or matching c_exp_id/deep_exp_id.
-    let mut opening_points: Vec<i64> = vec![0];
-    for c in &setup.constraints {
-        let offsets = &setup.expressions[c.e].rows_offsets;
-        for &offset in offsets {
-            if !opening_points.contains(&offset) {
-                opening_points.push(offset);
-            }
-        }
-    }
-    for expr in &setup.expressions {
-        if expr.keep.unwrap_or(false) || expr.im_pol {
-            for &offset in &expr.rows_offsets {
-                if !opening_points.contains(&offset) {
-                    opening_points.push(offset);
-                }
-            }
-        }
-    }
-    opening_points.sort();
-
-    // Build code-gen params
+    let passes::PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, deep_exp_id, q_deg, boundaries } =
+        passes::pil_info(prepared, airgroup_id, air_id, max_deg, options);
     let n_stages = setup.n_stages;
-    // deep_exp_id will be updated by generate_pil_code after DEEP polynomial generation
-    let mut params = CodeGenParams {
-        air_id,
-        airgroup_id,
-        n_stages,
-        c_exp_id,
-        deep_exp_id: c_exp_id, // placeholder; will be overwritten
-        q_deg: q_deg as usize,
-        q_dim: q_dim_final,
-        opening_points: opening_points.clone(),
-        cm_pols_map: setup.cm_pols_map.clone(),
-        custom_commits_count: setup.custom_commits.len(),
-    };
-
-    // Store hints back into setup for generate_pil_code
-    setup.hints = hints;
-
-    // Temporarily take out mutable fields to allow PrintCtx to borrow map fields
-    let mut expressions = std::mem::take(&mut setup.expressions);
-    let mut symbols = std::mem::take(&mut setup.symbols);
-
-    let print_ctx = PrintCtx {
-        cm_pols_map: &setup.cm_pols_map,
-        const_pols_map: &setup.const_pols_map,
-        custom_commits_map: &setup.custom_commits_map,
-        publics_map: &setup.publics_map,
-        challenges_map: &setup.challenges_map,
-        air_values_map: &setup.air_values_map,
-        airgroup_values_map: &setup.airgroup_values_map,
-        proof_values_map: &setup.proof_values_map,
-    };
-
-    let pil_code = crate::pil::gen_code::generate_pil_code(
-        &mut params,
-        &mut symbols,
-        &setup.constraints,
-        &mut expressions,
-        &setup.hints,
-        options.debug,
-        Some(&print_ctx),
-    );
-
-    // Put expressions and symbols back
-    setup.expressions = expressions;
-    setup.symbols = symbols;
+    let opening_points = &setup.opening_points;
 
     // Print AIR info summary
     let mut summary = String::new();
@@ -341,12 +241,6 @@ pub fn pil_info(
     println!("------------------------------------------------------------");
     println!("SUMMARY | {} | {}", setup.name, summary);
     println!("------------------------------------------------------------");
-
-    // Store the sorted opening points in the setup result so callers don't recompute them.
-    setup.opening_points = opening_points;
-
-    let im_pols_info = setup.im_pols_info.clone();
-    let deep_exp_id = pil_code.deep_exp_id;
 
     PilInfoResult {
         setup,
