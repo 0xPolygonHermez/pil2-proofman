@@ -29,7 +29,7 @@ enum Commands {
     Setup(SetupArgs),
     /// Compute per-AIR statistics (constraints, intermediate polynomials, etc.).
     Stats(StatsArgs),
-    /// Generate final SNARK setup (recursivef + fflonk/plonk/pilfflonk final).
+    /// Generate final SNARK setup (recursivef + pilfflonk final by default, or plonk/fflonk).
     SetupSnark(SetupSnarkArgs),
     /// Set up a BN128 pilout for the pilfflonk backend (one AIR, one instance): write its
     /// provingKey/.
@@ -204,8 +204,9 @@ struct SetupSnarkArgs {
     #[arg(long)]
     powers_of_tau: Option<String>,
 
-    /// Final SNARK type: fflonk (default), plonk or pilfflonk
-    #[arg(long, default_value = "fflonk")]
+    /// Final SNARK type: pilfflonk (default), plonk or fflonk. PLONK and FFLONK take a key of a
+    /// poseidon family only (setup --hash Poseidon1 or Poseidon2)
+    #[arg(long, default_value = "pilfflonk")]
     final_snark: String,
 
     /// Path to publics hash info JSON (optional)

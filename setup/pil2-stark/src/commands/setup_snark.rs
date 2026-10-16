@@ -16,7 +16,7 @@ pub struct SetupSnarkOptions {
     pub build_dir: String,
     /// Powers-of-tau (.ptau) file path.
     pub powers_of_tau: Option<String>,
-    /// SNARK type: "fflonk" (default), "plonk" or "pilfflonk".
+    /// SNARK type: "pilfflonk" (the CLI's default), "plonk" or "fflonk".
     pub final_snark: String,
     /// Optional path to publics hash info JSON.
     pub publics_info: Option<String>,
