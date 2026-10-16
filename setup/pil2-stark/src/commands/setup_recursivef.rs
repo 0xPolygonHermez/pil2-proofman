@@ -39,6 +39,19 @@ pub struct RecursivefGeometry {
     pub terminal: usize,
 }
 
+/// The geometry of the defaults above, `setup-recursivef`'s without flags.
+impl Default for RecursivefGeometry {
+    fn default() -> Self {
+        RecursivefGeometry {
+            blowup: RECURSIVEF_BLOWUP,
+            folding: RECURSIVEF_FOLDING,
+            grinding: RECURSIVEF_GRINDING,
+            last_levels: RECURSIVEF_LAST_LEVELS,
+            terminal: RECURSIVEF_TERMINAL,
+        }
+    }
+}
+
 impl RecursivefGeometry {
     /// Its stark struct settings, whose `finalDegree` is a log degree: the terminal's domain less
     /// the blowup, as the final setup's.

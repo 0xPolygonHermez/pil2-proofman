@@ -42,6 +42,7 @@ enum Commands {
     SetupCompressedFinal(SetupCompressedFinalArgs),
     /// Set up the recursivef of a blake3 proving key (a Goldilocks STARK that verifies one
     /// vadcop_final proof) in provingKey/<name>/recursivef/, which proofman proves before a blake3 key's final SNARK.
+    /// setup-snark runs it, at its defaults, on a blake3 key that has none.
     SetupRecursivef(SetupRecursivefArgs),
     /// Set up a test recursive circuit from a user-provided circom file.
     SetupRecursiveTest(SetupRecursiveTestArgs),
@@ -221,8 +222,8 @@ struct SetupSnarkArgs {
     #[arg(long)]
     extra_muls: Option<u64>,
 
-    /// pilfflonk: CUDA arch spec of the wrap's Q kernel (.exps.so): auto | major | "89,120" | sm_120.
-    /// No kernel without nvcc.
+    /// CUDA arch spec of the Q kernels (.exps.so), pilfflonk's wrap's and a blake3 key's recursivef's
+    /// when setup-snark sets it up: auto | major | "89,120" | sm_120. No kernel without nvcc.
     #[arg(long, default_value = "auto")]
     exps_arch: String,
 

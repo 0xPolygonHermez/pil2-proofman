@@ -9,6 +9,9 @@ use serde_json::Value;
 use crate::output::witness_gen::WitnessTracker;
 use crate::proving_key::snark_setup::{gen_snark_setup, FinalSnark, SnarkSetupConfig};
 use crate::commands::recursive_setup::{resolve_circom_exec, resolve_path_env};
+use crate::commands::setup_recursivef::{
+    run_setup_recursivef, RecursivefGeometry, SetupRecursivefOptions, RECURSIVEF_LANES,
+};
 
 /// Options for the setup-snark subcommand.
 pub struct SetupSnarkOptions {
@@ -24,7 +27,8 @@ pub struct SetupSnarkOptions {
     pub only_recursive_final: bool,
     /// pilfflonk's `--extra-muls`, instead of the wrap family's.
     pub extra_muls: Option<u64>,
-    /// pilfflonk: the CUDA arch spec of the wrap's Q kernel.
+    /// The CUDA arch spec of the Q kernels: pilfflonk's wrap's, and a blake3 key's recursivef's
+    /// when setup-snark sets that up.
     pub exps_arch: String,
     /// What the generated verifier contract's `VERSION()` returns; defaults to this
     /// crate's version. A project versions its own contracts, so it should pass its own.
@@ -64,8 +68,9 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
         );
     }
     // Refuse before building anything. blake3 has its own way to a SNARK: its recursivef
-    // (setup-recursivef) verified by a circuit with blake3 custom gates, which only pilfflonk's
-    // wrap lays out; PLONK and FFLONK take an r1cs with no custom gates.
+    // (setup-recursivef's, which setup-snark sets up if the key has none) verified by a circuit
+    // with blake3 custom gates, which only pilfflonk's wrap lays out; PLONK and FFLONK take an r1cs
+    // with no custom gates.
     if !proofman_common::hash_family::has_bn128_recursivef(&hash) && final_snark != FinalSnark::Pilfflonk {
         bail!(
             "the {hash} proving key at {:?} wraps in a SNARK with --final-snark pilfflonk only (its \
@@ -90,6 +95,10 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
         if !p.exists() {
             bail!("Required file not found: {:?}. Make sure you have run the regular setup first.", p);
         }
+    }
+
+    if !proofman_common::hash_family::has_bn128_recursivef(&hash) {
+        set_up_recursivef_if_missing(opts, &name, &hash)?;
     }
 
     let const_root_json: Value = serde_json::from_str(&fs::read_to_string(&const_root_path)?)?;
@@ -160,6 +169,28 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
 
     tracing::info!("setup-snark completed successfully");
     Ok(())
+}
+
+/// The recursivef of a blake3 key, in `provingKey/<name>/recursivef/`, which its final circuit
+/// verifies: reused if the key has one (its `recursivef.starkinfo.json`, which proofman looks for),
+/// and otherwise set up by setup-recursivef's step at that command's defaults.
+fn set_up_recursivef_if_missing(opts: &SetupSnarkOptions, name: &str, hash: &str) -> Result<()> {
+    let recursivef_dir = PathBuf::from(&opts.build_dir).join("provingKey").join(name).join("recursivef");
+    if recursivef_dir.join("recursivef.starkinfo.json").exists() {
+        tracing::info!("setup-snark: reusing the {hash} key's recursivef in {}", recursivef_dir.display());
+        return Ok(());
+    }
+    tracing::info!(
+        "setup-snark: the {hash} key has no recursivef in {}: running setup-recursivef's step at its defaults",
+        recursivef_dir.display()
+    );
+    run_setup_recursivef(&SetupRecursivefOptions {
+        build_dir: opts.build_dir.clone(),
+        geometry: RecursivefGeometry::default(),
+        lanes: RECURSIVEF_LANES,
+        exps_arch: opts.exps_arch.clone(),
+    })
+    .with_context(|| format!("setup-recursivef's step on the {hash} key"))
 }
 
 /// Parse a vadcop_final.verkey.json array ([[u64;4]]) into [u64;4].
