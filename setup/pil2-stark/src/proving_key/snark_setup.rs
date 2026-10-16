@@ -948,10 +948,8 @@ fn set_up_wrap_air(
         pil_path: files.pil.to_string_lossy().into_owned(),
         output_path: files.pilout.to_string_lossy().into_owned(),
         include_paths: includes.to_vec(),
-        fixed_dir: None,
         field: Some("bn128".to_string()),
-        fixed_to_file: false,
-        no_proto_fixed_data: false,
+        ..Default::default()
     })?;
 
     tracing::info!("Running the pilfflonk setup of {}...", files.pilout.display());

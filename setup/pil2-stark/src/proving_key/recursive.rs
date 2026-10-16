@@ -988,9 +988,6 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
         pil_path: pil_path.to_string(),
         output_path: output_path.to_string(),
         include_paths: vec![std_pil_path.to_string(), recurser_pil_path.to_string()],
-        fixed_dir: None,
-        fixed_to_file: false,
-        no_proto_fixed_data: false,
         ..Default::default()
     };
     run_compile_pil(&opts)

@@ -14,9 +14,9 @@ use proofman_fields::{Bn128, Goldilocks, PrimeField, PrimeField64, QuotientMap};
 
 /// A prime field plonk2pil converts an r1cs over.
 ///
-/// A trait of its own because what it adds is plonk2pil's, not the field's: how an r1cs spells an
-/// element, and the constants the PIL std builds its connection argument from. [`ExecField`] is
-/// how the `.exec` plonk2pil writes spells one.
+/// A trait of its own because what it adds is plonk2pil's, not the field's: the prime an r1cs names
+/// and how it spells an element, and the constants the PIL std builds its connection argument from.
+/// [`ExecField`] is how the `.exec` plonk2pil writes spells one.
 pub trait PlonkField: PrimeField + ExecField {
     /// The prime, as an r1cs header names it.
     const PRIME: R1csPrime;

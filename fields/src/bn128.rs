@@ -3,8 +3,9 @@
 //! of the curve's groups. Not its base field `Fq`, where the coordinates of the points live. It is
 //! named after its curve, as `Goldilocks` is after its prime.
 //!
-//! It is for computing a pilfflonk witness in Rust (pilfflonk/docs/README.md#witness): the BN128
-//! arithmetic of the prover is ffiasm's, in C++, and this type is not used there.
+//! It is for computing over BN128 in Rust, as the values of a trace over BN128 are, a pilfflonk
+//! witness's among them (pilfflonk/docs/README.md#witness): the BN128 arithmetic of the C++ provers
+//! is ffiasm's (`pil2-stark/src/bn128`), and this type is not used there.
 //!
 //! An element is kept in Montgomery form, `a·2^256 mod r`, in four 64-bit limbs, little-endian, and
 //! always below `r`: ffiasm's representation of an element of `Fr` (`RawFr::Element`). Being always
@@ -12,13 +13,15 @@
 //! canonical value.
 //!
 //! The canonical value leaves the type in two forms:
-//! - 32 bytes little-endian (`to_le_bytes`, `from_le_bytes`): pilfflonk's witness and `.const`
-//!   encoding (pilfflonk/docs/formats.md#witness-directory, pilfflonk/docs/formats.md#fixed-columns);
-//! - a decimal string, without sign, spaces or leading zeros (`Display`, `from_decimal`):
-//!   pilfflonk's JSON encoding (pilfflonk/docs/formats.md#json-encoding), and the one serde uses.
+//! - 32 bytes little-endian (`to_le_bytes`, `from_le_bytes`), as circom's `.r1cs` and `.wtns` files
+//!   hold an element, and pilfflonk's witness and `.const` (pilfflonk/docs/formats.md#witness-directory,
+//!   pilfflonk/docs/formats.md#fixed-columns);
+//! - a decimal string, without sign, spaces or leading zeros (`Display`, `from_decimal`), as
+//!   snarkjs's JSON files hold one, and pilfflonk's (pilfflonk/docs/formats.md#json-encoding), and
+//!   the one serde uses.
 //!   The `Field` trait only asks for `Serialize` and `DeserializeOwned`: `Goldilocks` is a JSON
 //!   number, but a JSON number cannot hold 254 bits in most readers. Only the canonical spelling is
-//!   read back, as with `FrBytes`.
+//!   read back.
 
 use core::cmp::Ordering;
 use core::fmt;
@@ -545,8 +548,8 @@ mod tests {
 
     fn from_limbs(limbs: [u64; 4]) -> BigUint {
         let mut bytes = [0u8; 32];
-        for (chunk, limb) in bytes.chunks_exact_mut(8).zip(limbs) {
-            chunk.copy_from_slice(&limb.to_le_bytes());
+        for (chunk, limb) in bytes.as_chunks_mut::<8>().0.iter_mut().zip(limbs) {
+            *chunk = limb.to_le_bytes();
         }
         BigUint::from_bytes_le(&bytes)
     }
@@ -587,8 +590,8 @@ mod tests {
         let edges = values.len();
         while values.len() < edges + n {
             let mut bytes = [0u8; 32];
-            for chunk in bytes.chunks_exact_mut(8) {
-                chunk.copy_from_slice(&rng.next_u64().to_le_bytes());
+            for chunk in bytes.as_chunks_mut::<8>().0 {
+                *chunk = rng.next_u64().to_le_bytes();
             }
             bytes[31] &= 0x3f;
             let v = BigUint::from_bytes_le(&bytes);
@@ -856,11 +859,11 @@ mod tests {
         assert_eq!(Bn128::from_int(4u8).exp_u256(to_limbs(&(&r_minus_1 >> 1u32))), Bn128::ONE);
     }
 
-    /// Values and the results of the operations on them, from ffiasm's `RawFr`, the prover's `Fr`
+    /// Values and the results of the operations on them, from ffiasm's `RawFr`, the C++ provers' `Fr`
     /// (`pil2-stark/src/bn128/src/ffiasm`, `fr.asm` with `__USE_ASSEMBLY__`), and computed again in
-    /// Python: the two agree. `mont_a` is ffiasm's raw Montgomery form of `a`. For `k` = 0…3, `a`,
-    /// `b` and `e` are the SHA-256, read big-endian, of `pilfflonk M38a a<k>`, `… b<k>` and
-    /// `… e<k>`, `a` and `b` mod `r`; then two rows of edge values.
+    /// Python: the two agree. `mont_a` is ffiasm's raw Montgomery form of `a`. The first four rows'
+    /// `a`, `b` and `e` are SHA-256 digests read big-endian, `a` and `b` mod `r`; then two rows of
+    /// edge values.
     struct Vector {
         a: &'static str,
         b: &'static str,

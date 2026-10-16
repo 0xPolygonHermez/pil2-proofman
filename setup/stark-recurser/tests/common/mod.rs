@@ -1,5 +1,5 @@
-//! What the BN128 tests share: the committed circom, the snarkjs that computes a circuit's witness,
-//! a scratch directory of their own and the reader of a `.wtns` file.
+//! What a test of a circom circuit over BN128 needs: the committed circom, the snarkjs that computes
+//! the circuit's witness, a scratch directory of its own and the reader of a `.wtns` file.
 //!
 //! A circuit is compiled with the committed circom (`setup/circom`), so its r1cs cannot go stale,
 //! and its witness is computed by the circom-generated wasm and the snarkjs of

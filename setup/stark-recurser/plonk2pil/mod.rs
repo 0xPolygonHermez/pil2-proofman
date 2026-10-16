@@ -160,7 +160,7 @@ mod sealed {
 /// The map is stored at its live extent, not the trace's: the packers fill rows from 0 and leave
 /// the power-of-two padding untouched, and the columns a gate band fills are never mapped -- the
 /// expander writes those from the band's boundary, and the BN128 wrap's witness the multiplicity of
-/// its range-check bands, whose own cells the map gathers. `getCommitedPols` zeroes everything
+/// its range-check bands, whose own cells the map gathers. `getWitnessTrace` zeroes everything
 /// outside the extent, which is what those cells held anyway. Both bounds are measured rather than
 /// assumed, so a packer that starts using a row or column cannot silently have it dropped.
 ///
@@ -457,6 +457,69 @@ mod tests {
         for len in [0, 3, 12, 30, data.len() - 1] {
             assert!(read_r1cs_from_bytes::<Goldilocks>(&data[..len]).is_err(), "{len} bytes");
         }
+    }
+
+    /// A section whose size runs past the end of the file is an error, however large the size: one
+    /// above i64::MAX included, which a seek by it would have wrapped backwards.
+    #[test]
+    fn a_section_past_the_end_is_an_error() {
+        let data = build_simple_r1cs_bytes();
+        // The header section's size: past the magic, the version, the section count and its type.
+        let at = 4 + 4 + 4 + 4;
+        for size in [u64::MAX, i64::MAX as u64 + 1, data.len() as u64] {
+            let mut bad = data.clone();
+            bad[at..at + 8].copy_from_slice(&size.to_le_bytes());
+            let err = read_r1cs_from_bytes::<Goldilocks>(&bad).unwrap_err().to_string();
+            assert!(err.contains("run past the end of the file"), "size {size}: {err}");
+        }
+    }
+
+    /// The bytes of the constraints section of `build_simple_r1cs_bytes`, its last: three linear
+    /// combinations of one term each, a 4-byte term count, a 4-byte wire and an 8-byte coefficient.
+    const CONSTRAINTS_BYTES: usize = 3 * (4 + 4 + 8);
+
+    /// Each section is read within its own bytes: one that declares fewer bytes than its reads take
+    /// is an error, not a read of the bytes after it.
+    #[test]
+    fn a_read_past_its_section_is_an_error() {
+        let mut data = build_simple_r1cs_bytes();
+        let size_at = data.len() - CONSTRAINTS_BYTES - 8;
+        data[size_at..size_at + 8].copy_from_slice(&(CONSTRAINTS_BYTES as u64 - 1).to_le_bytes());
+        assert!(read_r1cs_from_bytes::<Goldilocks>(&data).is_err());
+    }
+
+    /// A section type that appears twice is an error, not one of the two read as the other.
+    #[test]
+    fn a_section_twice_is_an_error() {
+        let mut data = build_simple_r1cs_bytes();
+        // The constraints section's type, before its size, made the header's.
+        let type_at = data.len() - CONSTRAINTS_BYTES - 8 - 4;
+        data[type_at..type_at + 4].copy_from_slice(&1u32.to_le_bytes());
+        let err = read_r1cs_from_bytes::<Goldilocks>(&data).unwrap_err().to_string();
+        assert!(err.contains("section 1 appears twice"), "{err}");
+    }
+
+    /// A wire is one of the header's: a constraint on wire `n_vars` is an error.
+    #[test]
+    fn a_wire_beyond_the_headers_is_an_error() {
+        let mut data = build_simple_r1cs_bytes();
+        // The first linear combination's wire, after its term count.
+        let wire_at = data.len() - CONSTRAINTS_BYTES + 4;
+        data[wire_at..wire_at + 4].copy_from_slice(&4u32.to_le_bytes());
+        let err = read_r1cs_from_bytes::<Goldilocks>(&data).unwrap_err().to_string();
+        assert!(err.contains("wire 4 is not one of the header's 4 wires"), "{err}");
+    }
+
+    /// A count beyond what the file holds sizes no allocation: it is an error at the read that runs
+    /// out, as for any truncated file.
+    #[test]
+    fn a_count_beyond_the_data_is_an_error() {
+        let mut data = build_simple_r1cs_bytes();
+        // nConstraints, the header's last word: past the magic, the version, the section count, the
+        // header's type and size, n8, the 8-byte prime, four u32 counts and nLabels.
+        let at = 4 + 4 + 4 + 4 + 8 + 4 + 8 + 4 * 4 + 8;
+        data[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(read_r1cs_from_bytes::<Goldilocks>(&data).is_err());
     }
 
     /// The STARK recursion's families are over Goldilocks: asked for a `PlonkResult` of words,

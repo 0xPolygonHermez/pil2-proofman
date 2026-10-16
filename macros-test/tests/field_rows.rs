@@ -1,15 +1,15 @@
 // The generated packed accessors trip int_plus_one on narrow array columns -- a lint in
 // generated code, which is why the generated pil-helpers allow clippy wholesale.
 #![allow(clippy::int_plus_one)]
-// Rows over a field that is not 64-bit: BN128's `Fr`, which a pilfflonk witness is computed in
-// (pilfflonk/docs/README.md#witness). An unpacked row and its `*Ops` trait take any field; only the
-// typed columns' accessors, which convert through 64 bits, and the packed row need `PrimeField64`.
+// Rows over a field that is not 64-bit: BN128's `Fr`, which the trace of a PIL program compiled over
+// BN128 holds, as a pilfflonk witness does (pilfflonk/docs/README.md#witness). An unpacked row and its `*Ops` trait take any field; only the typed columns'
+// accessors, which convert through 64 bits, and the packed row need `PrimeField64`.
 use proofman_common::trace::TraceRow;
 use proofman_common::GenericTrace;
 use proofman_fields::{Bn128, Field, Goldilocks, PrimeField64, QuotientMap};
 use proofman_macros::trace_row;
 
-// A row as pil-helpers writes it for a BN128 pilout: every column an `F`.
+// A row of a trace over BN128: every column an `F`.
 trace_row!(
     FrRow<F> {
         a: F,
@@ -54,7 +54,7 @@ fn a_row_over_bn128_is_its_columns_in_order() {
     }
     assert_eq!(trace[2].get_a(), fr(20));
 
-    // Row after row, each its columns in declaration order, arrays flattened: the layout
+    // Row after row, each its columns in declaration order, arrays flattened: the layout pilfflonk's
     // `Stage1Witness::from_rows` reads.
     let flat: Vec<Bn128> = trace.get_buffer();
     assert_eq!(flat.len(), 4 * 8);
@@ -93,4 +93,18 @@ fn a_row_with_typed_columns_still_holds_bn128_values() {
         (row.get_x(), row.byte, row.flags),
         (fr(7), Bn128::ONE, [Bn128::ZERO, Bn128::ZERO, Bn128::ZERO, Bn128::TWO])
     );
+}
+
+/// A diagnostic build poisons an unwritten trace word by word, so that a cell its witness never
+/// writes shows: over the trace's whole length, whatever the width of its field's elements.
+#[cfg(feature = "diagnostic")]
+#[test]
+fn a_diagnostic_trace_over_bn128_is_poisoned_whole() {
+    fn poisoned(flat: &[Bn128]) -> bool {
+        let words = std::mem::size_of_val(flat) / std::mem::size_of::<u64>();
+        unsafe { std::slice::from_raw_parts(flat.as_ptr() as *const u64, words) }.iter().all(|&w| w == u64::MAX - 1)
+    }
+    assert!(poisoned(&FrTrace::<Bn128>::with_capacity(4).get_buffer::<Bn128>()));
+    let from_vec = FrTrace::<Bn128>::new_from_vec(vec![Bn128::ZERO; 4 * 8]).unwrap().get_buffer::<Bn128>();
+    assert!(poisoned(&from_vec));
 }

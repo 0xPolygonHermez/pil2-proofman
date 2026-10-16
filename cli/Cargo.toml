@@ -39,15 +39,15 @@ regex = "1.12.2"
 toml = "0.9.8"
 
 [dev-dependencies]
+# Encodes the tests' pilouts, built in code.
+prost = { workspace = true }
+# The tests' `baseField`, a big integer, and the values of `Fr` of the pilfflonk tests.
+num-bigint = { workspace = true }
 # The keys of the `pilfflonk verify` and `pilfflonk prove` tests.
 pilfflonk-setup = { workspace = true }
 # The Rust oracle, which the `pilfflonk prove` test checks the prover against.
 proofman-pilfflonk = { workspace = true, features = ["oracle"] }
 serde_json = { workspace = true }
-# The tests' pilouts and values: a `baseField` and the values of `Fr` are big integers.
-num-bigint = { workspace = true }
-# Encodes the synthetic pilouts of the domains tests, built in code.
-prost = { workspace = true }
 # The seeded mutations of the differential fuzzer of the Solidity verifier
 # (pilfflonk/docs/verifier.md#differential-fuzzer).
 rand = { workspace = true }

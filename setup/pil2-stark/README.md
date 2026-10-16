@@ -258,7 +258,7 @@ that resolve relative to the repo or the executable's parent directories.
 | `GOLDILOCKS_SRC_DIR` | `pil2-stark/src/goldilocks/src` | Goldilocks C++ sources copied into the witness build |
 | `RECURSIVE_JOBS` | `1` | Parallelism for recursive1 air pipelines |
 | `SETUP_JOBS` | `1` | Parallelism for non-recursive AIR setup |
-| `PIL2C_EXEC` | `pil2com` from `node_modules/.bin`, or on `PATH` | The pil2-compiler's `pil.js`. Compiling over BN128 (`compile-pil --field bn128`, `setup-snark` with pilfflonk, its default) needs one that has `--field` ([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)) |
+| `PIL2C_EXEC` | `pil2com` from `node_modules/.bin`, or on `PATH` | The pil2-compiler's `pil.js`. Compiling over BN128 (`compile-pil --field bn128`, `setup-snark` with pilfflonk, its default) needs one that has `--field`, as the branch `develop-0.15.0` that `package.json` pins does ([pilfflonk/docs/README.md](../../pilfflonk/docs/README.md#compile-pil)) |
 | `REBUILD_JOBS` | `1` | Parallelism for `rebuild-witness-libs` circom compiles |
 
 Path resolution checks (in order): the env var, the path relative to CWD, then

@@ -9,7 +9,7 @@ use pil2_pilout::pilout::hint_field::Value::StringValue;
 use pil2_pilout::pilout::hint_field::Value::Operand;
 use pil2_pilout::pilout::operand::Operand::Constant;
 use proofman_common::initialize_logger;
-use proofman_pilfflonk::field::is_r_be;
+use proofman_fields::{Bn128, Field, Goldilocks, PrimeField};
 use serde::Serialize;
 use tinytemplate::TinyTemplate;
 use std::{fs, path::PathBuf};
@@ -116,14 +116,31 @@ struct StageColumnCtx {
     columns: Vec<ColumnCtx>,
 }
 
-/// Whether `pilout` is over BN128's `Fr`, the field of `setup-pilfflonk`
-/// (pilfflonk/docs/README.md#what-the-setup-refuses), from its `baseField` as the pilfflonk setup
-/// reads it. Its helpers are then those of a pilfflonk witness library
-/// (pilfflonk/docs/README.md#witness): rows over `Bn128` with no packed rows, which pilfflonk does
-/// not accept yet; values of dimension 1, as BN128 has no extension field; and publics that are
-/// `Bn128` values.
-fn is_bn128(pilout: &pil2_pilout::pilout::PilOut) -> bool {
-    is_r_be(&pilout.base_field)
+/// Whether `pilout` is over BN128's `Fr` rather than Goldilocks: whether its `baseField`, a big-endian
+/// integer, is `r`, the modulus of [`Bn128`], or Goldilocks' `p` (or no bytes at all, as in a pilout
+/// that predates the field). Its helpers are then those of a pilfflonk witness library
+/// (pilfflonk/docs/README.md#witness): rows over `Bn128` with no packed rows, which are of 64-bit
+/// words; values of dimension 1, as BN128 has no extension field; and publics that are `Bn128`
+/// values. A pilout over any other field is an error: the helpers are over these two.
+fn is_bn128(pilout: &pil2_pilout::pilout::PilOut) -> Result<bool, String> {
+    if pilout.base_field.is_empty() {
+        return Ok(false);
+    }
+    // An integer: leading zero bytes do not change it.
+    let modulus: Vec<u8> = pilout.base_field.iter().copied().skip_while(|&byte| byte == 0).collect();
+    let r = Bn128::NEG_ONE.as_canonical_biguint() + 1u32;
+    let p = Goldilocks::NEG_ONE.as_canonical_biguint() + 1u32;
+    if modulus == r.to_bytes_be() {
+        Ok(true)
+    } else if modulus == p.to_bytes_be() {
+        Ok(false)
+    } else {
+        let hex: String = modulus.iter().map(|byte| format!("{byte:02x}")).collect();
+        let hex = if hex.is_empty() { "0".to_string() } else { hex };
+        Err(format!(
+            "the pilout is over the field of modulus 0x{hex}: pil-helpers writes helpers over Goldilocks and BN128"
+        ))
+    }
 }
 
 impl PilHelpersCmd {
@@ -163,7 +180,7 @@ impl PilHelpersCmd {
 
         // Read the pilout file
         let pilout = PilOutProxy::new(&self.pilout.display().to_string())?;
-        let is_bn128 = is_bn128(&pilout);
+        let is_bn128 = is_bn128(&pilout)?;
         // BN128 has no extension field: every value has dimension 1.
         let extension = if is_bn128 { "F" } else { "FieldExtension<F>" };
         // The type of a public in the public inputs a library reads, and its zero.
@@ -228,12 +245,12 @@ impl PilHelpersCmd {
             }
         }
 
-        // The packed rows of `witness_bits` are 64-bit, and pilfflonk does not accept packed traces yet.
+        // The packed rows of `witness_bits` are of 64-bit words, which an element of BN128 is not.
         if is_bn128 {
             if let Some(air) = wcctxs.iter().flat_map(|airgroup| &airgroup.airs).find(|air| air.has_packed) {
                 return Err(format!(
                     "air {} has `witness_bits` hints, from columns declared with `bits(n)`, which ask for packed trace \
-                     rows, and pilfflonk does not accept packed traces yet",
+                     rows, and a packed row is of 64-bit words: a trace over BN128 is not packed",
                     air.name
                 )
                 .into());
@@ -637,8 +654,11 @@ mod tests {
         }
     }
 
+    /// BN128's `r`, big-endian.
     fn bn128() -> Vec<u8> {
-        proofman_pilfflonk::field::r().to_bytes_be()
+        BigUint::parse_bytes(b"21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
+            .unwrap()
+            .to_bytes_be()
     }
 
     /// The `witness_bits` hint `col witness bits(8) a` gives.
@@ -709,15 +729,31 @@ mod tests {
         assert!(traces.contains("pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[\n];"), "{traces}");
     }
 
-    /// pilfflonk does not accept packed traces yet: a BN128 pilout with a `witness_bits` hint is
-    /// refused, and nothing is written.
+    /// A pilout over a field that is neither Goldilocks nor BN128 is refused, and nothing is written;
+    /// one without a `baseField` is over Goldilocks.
+    #[test]
+    fn a_pilout_over_another_field_is_refused() {
+        let dir = TempDir::new("other_field");
+        let err = pil_helpers(&dir, &pilout(vec![0x7f])).unwrap_err();
+        assert!(err.contains("modulus 0x7f") && err.contains("over Goldilocks and BN128"), "{err}");
+        assert!(!dir.0.join("src").join("pil_helpers").join("traces.rs").exists());
+        // A modulus of zero, however many bytes it takes, is no field either.
+        let err = pil_helpers(&dir, &pilout(vec![0, 0])).unwrap_err();
+        assert!(err.contains("modulus 0x0:"), "{err}");
+
+        let traces = pil_helpers(&dir, &pilout(Vec::new())).unwrap();
+        assert!(traces.contains("type FieldExtension<F> = [F; 3];"), "{traces}");
+    }
+
+    /// A packed row is of 64-bit words: a BN128 pilout with a `witness_bits` hint is refused, and
+    /// nothing is written.
     #[test]
     fn a_bn128_pilout_with_packed_columns_is_refused() {
         let dir = TempDir::new("bn128_packed");
         let mut pilout = pilout(bn128());
         pilout.hints.push(witness_bits());
         let err = pil_helpers(&dir, &pilout).unwrap_err();
-        assert!(err.contains("air Main") && err.contains("pilfflonk does not accept packed traces yet"), "{err}");
+        assert!(err.contains("air Main") && err.contains("a trace over BN128 is not packed"), "{err}");
         assert!(!dir.0.join("src").join("pil_helpers").join("traces.rs").exists());
 
         // Over Goldilocks the same hint packs the column.
