@@ -7,6 +7,7 @@ use pil2_pilout::pilout::{
 };
 
 use crate::cfg::FieldCfg;
+use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression, ExpressionArena};
 
 // ---------------------------------------------------------------------------
@@ -717,7 +718,13 @@ pub fn format_global_symbols(all_symbols: &[pb::Symbol], _num_challenges: &[u32]
 ///
 /// Uses the same hint formatting as air-level hints but processes only
 /// global hints from the pilout.
-pub fn format_global_hints(pilout: &pb::PilOut, expressions: &mut [Expression], field: &FieldCfg) -> Vec<HintInfo> {
+///
+/// Fails on a hint field without a value.
+pub fn format_global_hints(
+    pilout: &pb::PilOut,
+    expressions: &mut [Expression],
+    field: &FieldCfg,
+) -> Result<Vec<HintInfo>> {
     // Filter hints that are global (no airGroupId and no airId)
     let global_hints: Vec<&pb::Hint> =
         pilout.hints.iter().filter(|h| h.air_group_id.is_none() && h.air_id.is_none()).collect();
@@ -741,7 +748,7 @@ pub fn format_global_hints(pilout: &pb::PilOut, expressions: &mut [Expression], 
         let mut fields = Vec::new();
         for hint_field in inner_fields {
             let name = hint_field.name.clone().unwrap_or_default();
-            let (values, lengths) = process_global_hint_field(hint_field, pilout, expressions, field);
+            let (values, lengths) = process_global_hint_field(&hint_name, hint_field, pilout, expressions, field)?;
             let entry = if lengths.is_none() {
                 HintFieldEntry { name, values: vec![values], lengths: None }
             } else {
@@ -759,27 +766,28 @@ pub fn format_global_hints(pilout: &pb::PilOut, expressions: &mut [Expression], 
         hints.push(HintInfo { name: hint_name, fields });
     }
 
-    hints
+    Ok(hints)
 }
 
-/// Recursively process a global hint field.
+/// Recursively process a global hint field of hint `hint`.
 ///
 /// Global hint fields use regular Operand types (not GlobalOperand),
 /// but with global-mode resolution for airGroupValue.
 fn process_global_hint_field(
+    hint: &str,
     hint_field: &pb::HintField,
     pilout: &pb::PilOut,
     expressions: &mut [Expression],
     field: &FieldCfg,
-) -> (HintFieldValue, Option<Vec<usize>>) {
-    match &hint_field.value {
+) -> Result<(HintFieldValue, Option<Vec<usize>>)> {
+    let processed = match &hint_field.value {
         Some(hint_field::Value::HintFieldArray(arr)) => {
             let fields = &arr.hint_fields;
             let mut result_fields = Vec::new();
             let mut lengths: Vec<usize> = Vec::new();
 
             for sub_field in fields {
-                let (values, sub_lengths) = process_global_hint_field(sub_field, pilout, expressions, field);
+                let (values, sub_lengths) = process_global_hint_field(hint, sub_field, pilout, expressions, field)?;
                 result_fields.push(values);
 
                 if lengths.is_empty() {
@@ -831,8 +839,9 @@ fn process_global_hint_field(
             })),
             None,
         ),
-        None => panic!("Unknown hint field"),
-    }
+        None => return Err(PilInfoError::HintFieldWithoutValue { hint: hint.to_string() }),
+    };
+    Ok(processed)
 }
 
 /// Format a regular Operand in global hint context.
@@ -1070,13 +1079,15 @@ pub fn format_constraints(constraints: &[pb::Constraint]) -> Vec<ConstraintInfo>
 // ---------------------------------------------------------------------------
 
 /// Format symbols from pilout, mirroring JS `formatSymbols`.
+///
+/// Fails on a custom column of a stage other than 0.
 pub fn format_symbols(
     all_symbols: &[pb::Symbol],
     _num_challenges: &[u32],
     air_group_values: &[pb::AirGroupValue],
     air_values: &[pb::AirValue],
     field: &FieldCfg,
-) -> Vec<SymbolInfo> {
+) -> Result<Vec<SymbolInfo>> {
     let mut result = Vec::new();
 
     for s in all_symbols {
@@ -1092,7 +1103,7 @@ pub fn format_symbols(
         {
             let stage = s.stage.unwrap_or(0) as usize;
             if stype == SymbolType::CustomCol as i32 && stage != 0 {
-                panic!("Invalid stage {} for a custom commit", stage);
+                return Err(PilInfoError::CustomColumnStage { name: s.name.clone(), stage });
             }
 
             let type_str = if stype == SymbolType::FixedCol as i32 {
@@ -1273,7 +1284,7 @@ pub fn format_symbols(
         // Other types (PeriodicCol, PublicTable) are skipped
     }
 
-    result
+    Ok(result)
 }
 
 /// Compute the polId for a fixed/witness/custom column symbol.
@@ -1353,6 +1364,8 @@ fn generate_multi_array_symbols(
 // ---------------------------------------------------------------------------
 
 /// Format hints from protobuf, mirroring JS `formatHints`.
+///
+/// Fails on a hint field without a value.
 #[allow(clippy::too_many_arguments)]
 pub fn format_hints(
     raw_hints: &[pb::Hint],
@@ -1364,7 +1377,7 @@ pub fn format_hints(
     custom_commits: &[pb::CustomCommit],
     expressions: &mut [Expression],
     field: &FieldCfg,
-) -> Vec<HintInfo> {
+) -> Result<Vec<HintInfo>> {
     let mut hints = Vec::new();
 
     for raw_hint in raw_hints {
@@ -1385,6 +1398,7 @@ pub fn format_hints(
         for hint_field in inner_fields {
             let name = hint_field.name.clone().unwrap_or_default();
             let (values, lengths) = process_hint_field(
+                &hint_name,
                 hint_field,
                 air_expressions,
                 stage_widths,
@@ -1394,7 +1408,7 @@ pub fn format_hints(
                 custom_commits,
                 expressions,
                 field,
-            );
+            )?;
             let entry = if lengths.is_none() {
                 HintFieldEntry { name, values: vec![values], lengths: None }
             } else {
@@ -1412,12 +1426,13 @@ pub fn format_hints(
         hints.push(HintInfo { name: hint_name, fields });
     }
 
-    hints
+    Ok(hints)
 }
 
-/// Recursively process a hint field.
+/// Recursively process a hint field of hint `hint`.
 #[allow(clippy::too_many_arguments)]
 fn process_hint_field(
+    hint: &str,
     hint_field: &pb::HintField,
     air_expressions: &[pb::Expression],
     stage_widths: &[u32],
@@ -1427,8 +1442,8 @@ fn process_hint_field(
     custom_commits: &[pb::CustomCommit],
     expressions: &mut [Expression],
     field: &FieldCfg,
-) -> (HintFieldValue, Option<Vec<usize>>) {
-    match &hint_field.value {
+) -> Result<(HintFieldValue, Option<Vec<usize>>)> {
+    let processed = match &hint_field.value {
         Some(hint_field::Value::HintFieldArray(arr)) => {
             let fields = &arr.hint_fields;
             let mut result_fields = Vec::new();
@@ -1436,6 +1451,7 @@ fn process_hint_field(
 
             for sub_field in fields {
                 let (values, sub_lengths) = process_hint_field(
+                    hint,
                     sub_field,
                     air_expressions,
                     stage_widths,
@@ -1445,7 +1461,7 @@ fn process_hint_field(
                     custom_commits,
                     expressions,
                     field,
-                );
+                )?;
                 result_fields.push(values);
 
                 if lengths.is_empty() {
@@ -1511,8 +1527,9 @@ fn process_hint_field(
             })),
             None,
         ),
-        None => panic!("Unknown hint field"),
-    }
+        None => return Err(PilInfoError::HintFieldWithoutValue { hint: hint.to_string() }),
+    };
+    Ok(processed)
 }
 
 // ---------------------------------------------------------------------------
@@ -1520,7 +1537,15 @@ fn process_hint_field(
 // ---------------------------------------------------------------------------
 
 /// Extract pilout info for a single air, mirroring JS `getPiloutInfo`.
-pub fn get_pilout_info(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize, field: &FieldCfg) -> SetupResult {
+///
+/// Fails on the parts of the air the passes cannot process: a custom column of a stage other than
+/// 0, a hint field without a value.
+pub fn get_pilout_info(
+    pilout: &pb::PilOut,
+    airgroup_id: usize,
+    air_id: usize,
+    field: &FieldCfg,
+) -> Result<SetupResult> {
     let airgroup = &pilout.air_groups[airgroup_id];
     let air = &airgroup.airs[air_id];
 
@@ -1553,7 +1578,7 @@ pub fn get_pilout_info(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize, f
         .collect();
 
     let mut all_symbols =
-        format_symbols(&air_symbols, &pilout.num_challenges, &airgroup.air_group_values, &air.air_values, field);
+        format_symbols(&air_symbols, &pilout.num_challenges, &airgroup.air_group_values, &air.air_values, field)?;
 
     // Filter: keep only witness/fixed that match this air
     all_symbols.retain(|s| {
@@ -1600,7 +1625,7 @@ pub fn get_pilout_info(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize, f
         &air.custom_commits,
         &mut expressions,
         field,
-    );
+    )?;
 
     // Build custom commits info
     let mut map_sections_n = IndexMap::new();
@@ -1625,7 +1650,7 @@ pub fn get_pilout_info(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize, f
         }
     }
 
-    SetupResult {
+    Ok(SetupResult {
         name: air_name,
         air_id,
         airgroup_id,
@@ -1652,7 +1677,7 @@ pub fn get_pilout_info(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize, f
         n_commitments_stage1: 0,
         im_pols_info: (Vec::new(), Vec::new()),
         opening_points: Vec::new(),
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------

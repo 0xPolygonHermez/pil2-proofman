@@ -226,7 +226,7 @@ pub fn get_parser_args(
         .unwrap_or(0);
     let mut id1d = vec![-1i64; maxid];
     let mut id3d = vec![-1i64; maxid];
-    let (count1d, count3d) = get_id_maps(maxid, &mut id1d, &mut id3d, code_info_code, FIELD_EXTENSION);
+    let (count1d, count3d) = get_id_maps(maxid, &mut id1d, &mut id3d, code_info_code, FIELD_EXTENSION)?;
 
     for r in code_info_code {
         let (op, _dest_dim_val, sorted_src, src0_dim, src1_dim) = get_operation(r, verify);

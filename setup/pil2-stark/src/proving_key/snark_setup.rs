@@ -239,7 +239,7 @@ pub fn gen_snark_setup(
     };
     let stark_struct_rf = generate_stark_struct(&bn128_settings, n_bits_rf, config.hash);
 
-    let pil_result_rf = crate::pil::info::pil_info(pilout_inner, 0, 0, &stark_struct_rf, &Default::default());
+    let pil_result_rf = crate::pil::info::pil_info(pilout_inner, 0, 0, &stark_struct_rf, &Default::default())?;
 
     // Build starkinfo output.
     let opening_points_rf = crate::output::stark_info::collect_opening_points(&pil_result_rf.setup);

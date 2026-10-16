@@ -226,7 +226,7 @@ pub fn gen_recursive_test_setup(
     settings.initial_blowup_factor = Some(blowup);
     let stark_struct = generate_stark_struct(&settings, n_bits_air, hash);
 
-    let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default());
+    let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default())?;
 
     // -------------------------------------------------------------------------
     // Step 10: Build and write starkinfo JSON.

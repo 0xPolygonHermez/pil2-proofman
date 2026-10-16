@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use crate::cfg::FieldCfg;
+use crate::error::{PilInfoError, Result};
 use crate::expr::expression::Expression;
 use crate::types::pilout_info::SymbolInfo;
 use crate::types::output::{CodeEntry, CodeRef};
@@ -133,21 +134,22 @@ fn make_ref(ref_type: &str, id: usize, dim: usize) -> CodeRef {
 
 /// Generate evaluation code for a single expression.
 ///
-/// Mirrors JS `pilCodeGen(ctx, symbols, expressions, expId, prime)`.
+/// Mirrors JS `pilCodeGen(ctx, symbols, expressions, expId, prime)`. Fails on an op it does not
+/// know.
 pub fn pil_code_gen(
     ctx: &mut CodeGenCtx,
     symbols: &[SymbolInfo],
     expressions: &[Expression],
     exp_id: usize,
     prime: i64,
-) {
+) -> Result<()> {
     if let Some(inner) = ctx.calculated.get(&exp_id) {
         if inner.contains_key(&prime) {
-            return;
+            return Ok(());
         }
     }
 
-    calculate_deps(ctx, symbols, expressions, &expressions[exp_id], prime);
+    calculate_deps(ctx, symbols, expressions, &expressions[exp_id], prime)?;
 
     let e = &expressions[exp_id];
 
@@ -171,7 +173,7 @@ pub fn pil_code_gen(
         witness_by_exp_id: std::sync::Arc::clone(&ctx.witness_by_exp_id),
     };
 
-    let ret_ref = eval_exp(&mut code_ctx, symbols, expressions, e, prime);
+    let ret_ref = eval_exp(&mut code_ctx, symbols, expressions, e, prime)?;
 
     let mut r = CodeRef {
         ref_type: "exp".to_string(),
@@ -211,6 +213,7 @@ pub fn pil_code_gen(
     if code_ctx.tmp_used > ctx.tmp_used {
         ctx.tmp_used = code_ctx.tmp_used;
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -226,13 +229,13 @@ fn eval_exp(
     expressions: &[Expression],
     exp: &Expression,
     prime: i64,
-) -> CodeRef {
-    match exp.op.as_str() {
+) -> Result<CodeRef> {
+    let r = match exp.op.as_str() {
         "add" | "sub" | "mul" => {
             let mut values = Vec::new();
             for child in &exp.values {
                 let child_expr = child.resolve(expressions);
-                values.push(eval_exp(ctx, symbols, expressions, child_expr, prime));
+                values.push(eval_exp(ctx, symbols, expressions, child_expr, prime)?);
             }
             let max_dim = values.iter().map(|v| v.dim).max().unwrap_or(1);
             let r = make_ref("tmp", ctx.tmp_used, max_dim);
@@ -380,8 +383,9 @@ fn eval_exp(
             airgroup_id: None,
             exp_id: None,
         },
-        _ => panic!("Invalid op: {}", exp.op),
-    }
+        _ => return Err(PilInfoError::UnknownOp { pass: "code generation", op: exp.op.clone() }),
+    };
+    Ok(r)
 }
 
 /// Build a CodeRef for column-like ops (cm, const, custom), optionally via
@@ -432,21 +436,22 @@ fn calculate_deps(
     expressions: &[Expression],
     exp: &Expression,
     prime: i64,
-) {
+) -> Result<()> {
     match exp.op.as_str() {
         "exp" => {
             let p = exp.row_offset.unwrap_or(prime);
             let ref_id = exp.id.unwrap_or(0);
-            pil_code_gen(ctx, symbols, expressions, ref_id, p);
+            pil_code_gen(ctx, symbols, expressions, ref_id, p)?;
         }
         "add" | "sub" | "mul" => {
             for child in &exp.values {
                 let child_expr = child.resolve(expressions);
-                calculate_deps(ctx, symbols, expressions, child_expr, prime);
+                calculate_deps(ctx, symbols, expressions, child_expr, prime)?;
             }
         }
         _ => {}
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -529,13 +534,15 @@ fn fix_expression(r: &mut CodeRef, ctx: &mut CodeGenCtx) {
 // fixDimensionsVerifier
 // ---------------------------------------------------------------------------
 
-/// Recompute dimensions for verifier code where all destinations are tmps.
-fn fix_dimensions_verifier(code: &mut [CodeEntry], ext_dim: usize) {
+/// Recompute dimensions for verifier code, which must only add, subtract, multiply or copy into
+/// tmps.
+fn fix_dimensions_verifier(code: &mut [CodeEntry], ext_dim: usize) -> Result<()> {
     let mut tmp_dim: Vec<usize> = Vec::new();
 
-    for entry in code.iter_mut() {
-        assert!(matches!(entry.op.as_str(), "add" | "sub" | "mul" | "copy"), "Invalid op: {}", entry.op,);
-        assert_eq!(entry.dest.ref_type, "tmp", "Invalid dest type: {}", entry.dest.ref_type);
+    for (index, entry) in code.iter_mut().enumerate() {
+        if !matches!(entry.op.as_str(), "add" | "sub" | "mul" | "copy") || entry.dest.ref_type != "tmp" {
+            return Err(PilInfoError::VerifierCode { index, op: entry.op.clone(), dest: entry.dest.ref_type.clone() });
+        }
 
         let new_dim = entry.src.iter().map(|s| get_dim(s, &tmp_dim, ext_dim)).max().unwrap_or(1);
 
@@ -553,6 +560,7 @@ fn fix_dimensions_verifier(code: &mut [CodeEntry], ext_dim: usize) {
             s.dim = d;
         }
     }
+    Ok(())
 }
 
 /// In verifier code a zerofier is evaluated at `ξ`, which lies in the extension.
@@ -573,8 +581,8 @@ fn get_dim(r: &CodeRef, tmp_dim: &[usize], ext_dim: usize) -> usize {
 /// Finalize generated code: resolve expression references to temporaries,
 /// optionally fix verifier dimensions, and return the code block.
 ///
-/// Resets the context for re-use.
-pub fn build_code(ctx: &mut CodeGenCtx) -> CodeBlock {
+/// Resets the context for re-use. Fails on verifier code that `fix_dimensions_verifier` refuses.
+pub fn build_code(ctx: &mut CodeGenCtx) -> Result<CodeBlock> {
     ctx.exp_map.clear();
 
     for i in 0..ctx.code.len() {
@@ -596,7 +604,7 @@ pub fn build_code(ctx: &mut CodeGenCtx) -> CodeBlock {
     }
 
     if ctx.verifier_evaluations {
-        fix_dimensions_verifier(&mut ctx.code, ctx.ext_dim);
+        fix_dimensions_verifier(&mut ctx.code, ctx.ext_dim)?;
     }
 
     let code = CodeBlock { tmp_used: ctx.tmp_used, code: std::mem::take(&mut ctx.code) };
@@ -604,7 +612,7 @@ pub fn build_code(ctx: &mut CodeGenCtx) -> CodeBlock {
     ctx.calculated.clear();
     ctx.tmp_used = 0;
 
-    code
+    Ok(code)
 }
 
 // ---------------------------------------------------------------------------
@@ -670,8 +678,8 @@ mod tests {
         let symbols: Vec<SymbolInfo> = Vec::new();
         let mut ctx = new_ctx();
 
-        pil_code_gen(&mut ctx, &symbols, &expressions, 2, 0);
-        let block = build_code(&mut ctx);
+        pil_code_gen(&mut ctx, &symbols, &expressions, 2, 0).unwrap();
+        let block = build_code(&mut ctx).unwrap();
 
         // Should have at least one code entry
         assert!(!block.code.is_empty());
@@ -685,8 +693,8 @@ mod tests {
         let symbols: Vec<SymbolInfo> = Vec::new();
         let mut ctx = new_ctx();
 
-        pil_code_gen(&mut ctx, &symbols, &expressions, 2, 0);
-        let block = build_code(&mut ctx);
+        pil_code_gen(&mut ctx, &symbols, &expressions, 2, 0).unwrap();
+        let block = build_code(&mut ctx).unwrap();
 
         assert!(!block.code.is_empty());
         assert_eq!(block.code[0].op, "mul");
@@ -705,8 +713,8 @@ mod tests {
         let symbols: Vec<SymbolInfo> = Vec::new();
         let mut ctx = new_ctx();
 
-        pil_code_gen(&mut ctx, &symbols, &expressions, 5, 0);
-        let block = build_code(&mut ctx);
+        pil_code_gen(&mut ctx, &symbols, &expressions, 5, 0).unwrap();
+        let block = build_code(&mut ctx).unwrap();
 
         // Should have code for the inner add + the outer mul
         assert!(block.code.len() >= 2);
@@ -718,8 +726,8 @@ mod tests {
         let symbols: Vec<SymbolInfo> = Vec::new();
         let mut ctx = new_ctx();
 
-        pil_code_gen(&mut ctx, &symbols, &expressions, 2, 0);
-        let _ = build_code(&mut ctx);
+        pil_code_gen(&mut ctx, &symbols, &expressions, 2, 0).unwrap();
+        let _ = build_code(&mut ctx).unwrap();
 
         // After build_code, context should be reset
         assert!(ctx.code.is_empty());
@@ -733,8 +741,8 @@ mod tests {
         let symbols: Vec<SymbolInfo> = Vec::new();
         let mut ctx = new_ctx();
 
-        pil_code_gen(&mut ctx, &symbols, &expressions, 0, 0);
-        let block = build_code(&mut ctx);
+        pil_code_gen(&mut ctx, &symbols, &expressions, 0, 0).unwrap();
+        let block = build_code(&mut ctx).unwrap();
 
         assert!(!block.code.is_empty());
         // The last entry should be a copy with source being a number
@@ -853,5 +861,23 @@ mod tests {
 
         assert_eq!(r.ref_type, "eval");
         assert_eq!(r.id, 0); // first entry at index 0, not index 1
+    }
+
+    /// Was `panic!("Invalid op")`.
+    #[test]
+    fn code_of_an_unknown_op_is_an_error() {
+        let exprs = vec![Expression { op: "bogus".to_string(), ..Default::default() }];
+        let err = pil_code_gen(&mut new_ctx(), &[], &exprs, 0, 0).unwrap_err();
+        assert_eq!(err.to_string(), "code generation: unknown expression op `bogus`");
+    }
+
+    /// Were the `assert!`s of `fix_dimensions_verifier`.
+    #[test]
+    fn verifier_code_that_does_not_write_tmps_is_an_error() {
+        let mut ctx = CodeGenCtx::new(0, 0, 1, "n", true, vec![0], &FieldCfg::goldilocks());
+        ctx.code =
+            vec![CodeEntry { op: "add".to_string(), dest: make_ref("cm", 0, 1), src: vec![make_ref("tmp", 0, 1)] }];
+        let err = build_code(&mut ctx).unwrap_err();
+        assert!(matches!(&err, PilInfoError::VerifierCode { index: 0, op, dest } if op == "add" && dest == "cm"));
     }
 }

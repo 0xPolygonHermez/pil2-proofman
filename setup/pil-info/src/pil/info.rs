@@ -1,12 +1,16 @@
-//! Orchestrates the symbolic passes that follow `prepare_pil` for a single air.
+//! Orchestrates the symbolic passes for a single air: `run` from a pilout, or `pil_info` after
+//! `prepare_pil`.
+
+use pil2_pilout::pilout as pb;
 
 use crate::cfg::PilInfoCfg;
+use crate::error::Result;
 use crate::pil::constraint_poly::Boundary;
 use crate::pil::gen_code::{CodeGenParams, PilCodeResult};
 use crate::pil::im_polynomials::{add_im_polynomials, calculate_intermediate_polynomials};
 use crate::pil::map;
 use crate::types::pilout_info::SetupResult;
-use crate::pil::prepare::{PrepareOptions, PreparePilResult};
+use crate::pil::prepare::{prepare_pil, PrepareOptions, PreparePilResult};
 use crate::expr::print::PrintCtx;
 
 /// The result of the passes, as returned by `pil_info`.
@@ -25,6 +29,20 @@ pub struct PilInfoResult {
     pub boundaries: Vec<Boundary>,
 }
 
+/// Prepare the air and run every pass on it for `cfg`: `prepare_pil` then `pil_info`.
+///
+/// Fails on a pilout or constraints the passes cannot process; see [`crate::PilInfoError`].
+pub fn run(
+    pilout: &pb::PilOut,
+    airgroup_id: usize,
+    air_id: usize,
+    cfg: &PilInfoCfg,
+    options: &PrepareOptions,
+) -> Result<PilInfoResult> {
+    let prepared = prepare_pil(pilout, airgroup_id, air_id, &cfg.field)?;
+    pil_info(prepared, airgroup_id, air_id, cfg, options)
+}
+
 /// Run the passes on the output of `prepare_pil`, which must have been prepared over `cfg.field`.
 ///
 /// Steps:
@@ -38,7 +56,7 @@ pub fn pil_info(
     air_id: usize,
     cfg: &PilInfoCfg,
     options: &PrepareOptions,
-) -> PilInfoResult {
+) -> Result<PilInfoResult> {
     let mut setup = prepared.setup;
     let mut expressions = prepared.expressions;
     let mut constraints = prepared.constraints;
@@ -52,7 +70,7 @@ pub fn pil_info(
 
     // Calculate intermediate polynomials
     let im_result =
-        calculate_intermediate_polynomials(&expressions, c_exp_id, cfg.max_constraint_degree, q_dim, &symbols);
+        calculate_intermediate_polynomials(&expressions, c_exp_id, cfg.max_constraint_degree, q_dim, &symbols)?;
     let im_exps = im_result.im_exps;
     let q_deg = im_result.q_deg;
 
@@ -79,7 +97,7 @@ pub fn pil_info(
         options.im_pols_stages,
         &boundary_tuples,
         &cfg.field,
-    );
+    )?;
     setup.n_commitments = n_commitments;
 
     // Store back into setup for mapping
@@ -157,7 +175,7 @@ pub fn pil_info(
         &setup.hints,
         options.debug,
         Some(&print_ctx),
-    );
+    )?;
 
     // Put expressions and symbols back
     setup.expressions = expressions;
@@ -169,5 +187,5 @@ pub fn pil_info(
     let im_pols_info = setup.im_pols_info.clone();
     let deep_exp_id = pil_code.deep_exp_id;
 
-    PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, deep_exp_id, q_deg, boundaries }
+    Ok(PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, deep_exp_id, q_deg, boundaries })
 }

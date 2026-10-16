@@ -2,6 +2,7 @@
 //! plus what is STARK-specific (the starkStruct validation, the degree bound from the blowup, the
 //! prover memory estimate and the printed AIR info summary).
 
+use anyhow::{bail, Context, Result};
 use pil2_pilout::pilout as pb;
 
 use crate::pil::gen_code::PilCodeResult;
@@ -37,29 +38,37 @@ pub struct PilInfoResult {
 /// 2. validate starkStruct against the air (unless debug mode)
 /// 3. the remaining passes, with the degree bound the blowup allows
 /// 4. compute prover memory estimate and print AIR info summary
+///
+/// Fails on what the passes refuse (`pil_info::PilInfoError`) and on a starkStruct that does not
+/// fit the air.
 pub fn pil_info(
     pilout: &pb::PilOut,
     airgroup_id: usize,
     air_id: usize,
     stark_struct: &StarkStruct,
     options: &PrepareOptions,
-) -> PilInfoResult {
-    let prepared = prepare_pil(pilout, airgroup_id, air_id, &FieldCfg::goldilocks());
+) -> Result<PilInfoResult> {
+    let passes_failed = || format!("the symbolic passes failed on air {air_id} of airgroup {airgroup_id}");
+    let prepared = prepare_pil(pilout, airgroup_id, air_id, &FieldCfg::goldilocks()).with_context(passes_failed)?;
 
     // Validate starkStruct
     if !options.debug {
         if stark_struct.n_bits != prepared.setup.pil_power as usize {
-            panic!(
+            bail!(
                 "starkStruct and pilfile have degree mismatch (airId: {} airgroupId: {} starkStruct:{} pilfile:{})",
-                air_id, airgroup_id, stark_struct.n_bits, prepared.setup.pil_power
+                air_id,
+                airgroup_id,
+                stark_struct.n_bits,
+                prepared.setup.pil_power
             );
         }
 
         let initial_domain = stark_struct.low_degree_test.log_domain_sizes()[0];
         if stark_struct.n_bits_ext != initial_domain {
-            panic!(
+            bail!(
                 "starkStruct.nBitsExt and the low-degree test's initial domain have a mismatch (nBitsExt:{} domain:{})",
-                stark_struct.n_bits_ext, initial_domain
+                stark_struct.n_bits_ext,
+                initial_domain
             );
         }
     }
@@ -68,7 +77,7 @@ pub fn pil_info(
     let cfg = PilInfoCfg::goldilocks(stark_struct.n_bits_ext - stark_struct.n_bits);
 
     let passes::PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, deep_exp_id, q_deg, boundaries } =
-        passes::pil_info(prepared, airgroup_id, air_id, &cfg, options);
+        passes::pil_info(prepared, airgroup_id, air_id, &cfg, options).with_context(passes_failed)?;
     let n_stages = setup.n_stages;
     let opening_points = &setup.opening_points;
 
@@ -245,7 +254,7 @@ pub fn pil_info(
     println!("SUMMARY | {} | {}", setup.name, summary);
     println!("------------------------------------------------------------");
 
-    PilInfoResult {
+    Ok(PilInfoResult {
         setup,
         pil_code,
         summary,
@@ -254,7 +263,7 @@ pub fn pil_info(
         c_exp_id,
         deep_exp_id,
         q_deg,
-    }
+    })
 }
 
 fn get_num_nodes_mt(height: u64, merkle_tree_arity: usize) -> u64 {

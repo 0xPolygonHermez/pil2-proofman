@@ -359,7 +359,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         bail!("vadcop_final pilout has no AIR groups");
     }
 
-    let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &final_stark_struct, &Default::default());
+    let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &final_stark_struct, &Default::default())?;
 
     // Build JSON representations using the same helpers as the non-recursive path
     let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);

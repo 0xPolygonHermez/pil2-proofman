@@ -8,6 +8,7 @@
 //! - Hint computations
 
 use crate::cfg::FieldCfg;
+use crate::error::{PilInfoError, Result};
 use crate::pil::cse;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -329,7 +330,7 @@ pub fn generate_pil_code(
     hints: &[HintInfo],
     debug: bool,
     print_ctx: Option<&PrintCtx>,
-) -> PilCodeResult {
+) -> Result<PilCodeResult> {
     let mut ev_map_items: Vec<EvMapRef> = Vec::new();
     let mut challenges_map: Vec<ChallengeMapEntry> = Vec::new();
     let mut fri_batch_size = 0;
@@ -345,7 +346,7 @@ pub fn generate_pil_code(
             expressions,
             &mut ev_map_items,
             &witness_index,
-        );
+        )?;
 
         // Generate the DEEP polynomial (mirrors JS: generateFRIPolynomial(res, symbols, expressions))
         let ev_map_for_fri: Vec<EvMapItem> = ev_map_items
@@ -361,7 +362,7 @@ pub fn generate_pil_code(
             &params.opening_points,
             &mut challenges_map,
             &params.field,
-        );
+        )?;
         params.deep_exp_id = fri_result.deep_exp_id;
         fri_batch_size = fri_result.batch_size;
 
@@ -370,16 +371,18 @@ pub fn generate_pil_code(
         ExpressionCodeEntry { tmp_used: 0, code: Vec::new(), exp_id: 0, stage: 0, dest: None, line: String::new() }
     };
 
-    let hints_info = add_hints_info(params, expressions, hints, false, print_ctx);
+    let hints_info = add_hints_info(params, expressions, hints, false, print_ctx)?;
 
-    let mut expressions_code = generate_expressions_code(params, symbols, expressions, &witness_index);
+    let mut expressions_code = generate_expressions_code(params, symbols, expressions, &witness_index)?;
 
     // Build query_verifier from the FRI expression code entry.
     // In JS, `find` returns a reference, so modifying the found element also
     // modifies the `expressionsCode` array. We replicate this by modifying
     // the entry in-place in `expressions_code` first, then cloning.
-    let fri_entry_idx =
-        expressions_code.iter().position(|e| e.exp_id == params.deep_exp_id).expect("FRI expression code not found");
+    let fri_entry_idx = expressions_code
+        .iter()
+        .position(|e| e.exp_id == params.deep_exp_id)
+        .ok_or(PilInfoError::DeepCodeMissing(params.deep_exp_id))?;
 
     // Overwrite last dest to be a tmp with the extension's dim (in-place)
     {
@@ -404,7 +407,7 @@ pub fn generate_pil_code(
 
     let query_verifier = expressions_code[fri_entry_idx].clone();
 
-    let constraints_code = generate_constraints_debug_code(params, symbols, constraints, expressions, &witness_index);
+    let constraints_code = generate_constraints_debug_code(params, symbols, constraints, expressions, &witness_index)?;
 
     let deep_exp_id = params.deep_exp_id;
 
@@ -418,14 +421,14 @@ pub fn generate_pil_code(
         entry.code = result.code;
     }
 
-    PilCodeResult {
+    Ok(PilCodeResult {
         expressions_info: ExpressionsInfo { hints_info, expressions_code, constraints: constraints_code },
         verifier_info: VerifierInfo { q_verifier, query_verifier },
         ev_map: ev_map_items,
         deep_exp_id,
         challenges_map,
         fri_batch_size,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -440,7 +443,7 @@ fn generate_expressions_code(
     symbols: &[SymbolInfo],
     expressions: &[Expression],
     witness_index: &Arc<HashMap<(usize, usize, usize), usize>>,
-) -> Vec<ExpressionCodeEntry> {
+) -> Result<Vec<ExpressionCodeEntry>> {
     let mut result = Vec::new();
 
     for j in 0..expressions.len() {
@@ -487,8 +490,8 @@ fn generate_expressions_code(
             None
         };
 
-        pil_code_gen(&mut ctx, symbols, expressions, j, 0);
-        let mut block = build_code(&mut ctx);
+        pil_code_gen(&mut ctx, symbols, expressions, j, 0)?;
+        let mut block = build_code(&mut ctx)?;
 
         if j == params.c_exp_id {
             if let Some(last) = block.code.last_mut() {
@@ -549,7 +552,7 @@ fn generate_expressions_code(
         });
     }
 
-    result
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -565,7 +568,7 @@ fn generate_constraints_debug_code(
     constraints: &[ConstraintInfo],
     expressions: &[Expression],
     witness_index: &Arc<HashMap<(usize, usize, usize), usize>>,
-) -> Vec<ConstraintCodeEntry> {
+) -> Result<Vec<ConstraintCodeEntry>> {
     let mut result = Vec::new();
 
     for constraint in constraints {
@@ -586,8 +589,8 @@ fn generate_constraints_debug_code(
             }
         }
 
-        pil_code_gen(&mut ctx, symbols, expressions, constraint.e, 0);
-        let block = build_code(&mut ctx);
+        pil_code_gen(&mut ctx, symbols, expressions, constraint.e, 0)?;
+        let block = build_code(&mut ctx)?;
 
         let stage =
             if constraint.stage == Some(0) || constraint.stage.is_none() { 1 } else { constraint.stage.unwrap_or(1) };
@@ -611,7 +614,7 @@ fn generate_constraints_debug_code(
         result.push(entry);
     }
 
-    result
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -627,7 +630,7 @@ fn generate_constraint_polynomial_verifier_code(
     expressions: &[Expression],
     ev_map_out: &mut Vec<EvMapRef>,
     witness_index: &Arc<HashMap<(usize, usize, usize), usize>>,
-) -> ExpressionCodeEntry {
+) -> Result<ExpressionCodeEntry> {
     let mut ctx = CodeGenCtx::new(
         params.air_id,
         params.airgroup_id,
@@ -706,19 +709,19 @@ fn generate_constraint_polynomial_verifier_code(
     // Build the hash index after sorting so fix_eval can do O(1) lookups
     rebuild_ev_map_index(&mut ctx);
 
-    pil_code_gen(&mut ctx, symbols, expressions, params.c_exp_id, 0);
-    let block = build_code(&mut ctx);
+    pil_code_gen(&mut ctx, symbols, expressions, params.c_exp_id, 0)?;
+    let block = build_code(&mut ctx)?;
 
     *ev_map_out = ctx.ev_map;
 
-    ExpressionCodeEntry {
+    Ok(ExpressionCodeEntry {
         tmp_used: block.tmp_used,
         code: block.code,
         exp_id: params.c_exp_id,
         stage: 0,
         dest: None,
         line: String::new(),
-    }
+    })
 }
 
 /// Compute a sort key for ev_map type ordering.
@@ -747,14 +750,14 @@ fn add_hints_info(
     hints: &[HintInfo],
     _global: bool,
     print_ctx: Option<&PrintCtx>,
-) -> Vec<ProcessedHint> {
+) -> Result<Vec<ProcessedHint>> {
     let mut result = Vec::new();
 
     for hint in hints {
         let mut processed_fields = Vec::new();
 
         for field in &hint.fields {
-            let flat_values = process_hint_field_values(&field.values, params, expressions, &[], print_ctx);
+            let flat_values = process_hint_field_values(&field.values, params, expressions, &[], print_ctx)?;
 
             let mut entry = ProcessedHintFieldEntry { name: field.name.clone(), values: flat_values };
 
@@ -771,7 +774,7 @@ fn add_hints_info(
         result.push(ProcessedHint { name: hint.name.clone(), fields: processed_fields });
     }
 
-    result
+    Ok(result)
 }
 
 /// Recursively flatten hint field values.
@@ -781,7 +784,7 @@ fn process_hint_field_values(
     expressions: &mut Vec<Expression>,
     pos: &[usize],
     print_ctx: Option<&PrintCtx>,
-) -> Vec<ProcessedHintField> {
+) -> Result<Vec<ProcessedHintField>> {
     let mut result = Vec::new();
 
     for (j, field) in values.iter().enumerate() {
@@ -790,17 +793,17 @@ fn process_hint_field_values(
 
         match field {
             HintFieldValue::Array(arr) => {
-                let inner = process_hint_field_values(arr, params, expressions, &current_pos, print_ctx);
+                let inner = process_hint_field_values(arr, params, expressions, &current_pos, print_ctx)?;
                 result.extend(inner);
             }
             HintFieldValue::Single(expr) => {
-                let processed = process_single_hint_field(expr, params, expressions, &current_pos, print_ctx);
+                let processed = process_single_hint_field(expr, params, expressions, &current_pos, print_ctx)?;
                 result.push(processed);
             }
         }
     }
 
-    result
+    Ok(result)
 }
 
 /// Process a single (leaf) hint field expression.
@@ -810,8 +813,8 @@ fn process_single_hint_field(
     expressions: &mut [Expression],
     pos: &[usize],
     print_ctx: Option<&PrintCtx>,
-) -> ProcessedHintField {
-    match expr.op.as_str() {
+) -> Result<ProcessedHintField> {
+    let processed = match expr.op.as_str() {
         "exp" => {
             let ref_id = expr.id.unwrap_or(0);
             let dim = expressions.get(ref_id).map_or(expr.dim.max(1), |e| e.dim);
@@ -871,8 +874,9 @@ fn process_single_hint_field(
                 airgroup_id: expr.airgroup_id,
             }
         }
-        _ => panic!("Invalid hint op: {}", expr.op),
-    }
+        _ => return Err(PilInfoError::UnknownHintOp(expr.op.clone())),
+    };
+    Ok(processed)
 }
 
 // ---------------------------------------------------------------------------
@@ -946,7 +950,7 @@ mod tests {
         };
 
         let wi = build_witness_index(&symbols, 0, 0);
-        let code = generate_expressions_code(&params, &symbols, &expressions, &wi);
+        let code = generate_expressions_code(&params, &symbols, &expressions, &wi).unwrap();
         // Only expression[2] has keep=true, so we should get 1 entry
         assert_eq!(code.len(), 1);
         assert_eq!(code[0].exp_id, 2);
@@ -972,7 +976,7 @@ mod tests {
             }],
         }];
 
-        let result = add_hints_info(&params, &mut expressions, &hints, false, None);
+        let result = add_hints_info(&params, &mut expressions, &hints, false, None).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "test_hint");
         assert_eq!(result[0].fields.len(), 1);
@@ -1009,7 +1013,7 @@ mod tests {
         };
 
         let wi2 = build_witness_index(&symbols, 0, 0);
-        let result = generate_constraints_debug_code(&params, &symbols, &constraints, &expressions, &wi2);
+        let result = generate_constraints_debug_code(&params, &symbols, &constraints, &expressions, &wi2).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].boundary, "everyRow");
         assert_eq!(result[0].stage, 1);
@@ -1036,10 +1040,18 @@ mod tests {
             })),
         ]))];
 
-        let result = process_hint_field_values(&values, &params, &mut expressions, &[], None);
+        let result = process_hint_field_values(&values, &params, &mut expressions, &[], None).unwrap();
         // Should flatten to 2 entries
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].pos, vec![0, 0]);
         assert_eq!(result[1].pos, vec![0, 1]);
+    }
+
+    /// Was `panic!("Invalid hint op")`.
+    #[test]
+    fn a_hint_field_of_an_unknown_op_is_an_error() {
+        let zi = Expression { op: "Zi".to_string(), ..Default::default() };
+        let err = process_single_hint_field(&zi, &make_params(), &mut [], &[0], None).unwrap_err();
+        assert!(matches!(&err, PilInfoError::UnknownHintOp(op) if op == "Zi"), "{err}");
     }
 }

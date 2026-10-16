@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::cfg::FieldCfg;
+use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::EvMapItem;
 use crate::types::pilout_info::SymbolInfo;
@@ -21,6 +22,9 @@ pub struct DeepPolyResult {
 /// `expressions.push(friExp)` happens at the end. We match that by building
 /// the entire FRI tree with inline `ExprChild::Inline` children and pushing
 /// only the final composite expression.
+///
+/// Fails on an evaluation of a column without a symbol, and when there is no evaluation to
+/// combine.
 pub fn generate_deep_polynomial(
     n_stages: usize,
     expressions: &mut Vec<Expression>,
@@ -29,7 +33,7 @@ pub fn generate_deep_polynomial(
     opening_points: &[i64],
     challenges_map: &mut Vec<ChallengeMapEntry>,
     field: &FieldCfg,
-) -> DeepPolyResult {
+) -> Result<DeepPolyResult> {
     let dim = field.ext_dim();
     let stage = n_stages + 3;
 
@@ -123,7 +127,9 @@ pub fn generate_deep_polynomial(
 
     let present: Vec<(usize, i64)> =
         opening_points.iter().copied().enumerate().filter(|&(_, op)| ev_map.iter().any(|ev| ev.prime == op)).collect();
-    assert!(!present.is_empty(), "At least one opening point required");
+    if present.is_empty() {
+        return Err(PilInfoError::DeepWithoutEvaluations);
+    }
     let n_open = present.len();
     // Degree in (vf1, vf2), for the security calculator.
     let batch_size = ev_map.len().max(n_open + col_evals.len() - 1);
@@ -187,14 +193,12 @@ pub fn generate_deep_polynomial(
 
     let mut terms = Vec::new();
     for (ops, cols) in &groups {
-        let s = sum(cols
-            .iter()
-            .map(|&c| {
-                let ev = &ev_map[col_evals[c][0].1];
-                mul(&vf2_pow[c], build_column_expr(ev, &find_symbol_for_ev(symbols, ev)))
-            })
-            .collect());
-        terms.push(op("mul", s, sum(ops.iter().map(|&r| a_of[r].clone()).collect())));
+        let mut columns = Vec::with_capacity(cols.len());
+        for &c in cols {
+            let ev = &ev_map[col_evals[c][0].1];
+            columns.push(mul(&vf2_pow[c], build_column_expr(ev, &find_symbol_for_ev(symbols, ev)?)));
+        }
+        terms.push(op("mul", sum(columns), sum(ops.iter().map(|&r| a_of[r].clone()).collect())));
     }
     let mut fri_exp = sum(terms);
     for (r, k) in k_terms.into_iter().enumerate() {
@@ -206,25 +210,25 @@ pub fn generate_deep_polynomial(
     let fri_final_id = expressions.len();
 
     // Set dim and stage on the final expression
-    fri_final.dim = get_exp_dim_inline(expressions, &fri_final, field);
+    fri_final.dim = get_exp_dim_inline(expressions, &fri_final, field)?;
     fri_final.stage = n_stages + 2;
 
     expressions.push(fri_final);
 
-    DeepPolyResult { deep_exp_id: fri_final_id, batch_size }
+    Ok(DeepPolyResult { deep_exp_id: fri_final_id, batch_size })
 }
 
-/// Get dimension for an inline expression tree.
-fn get_exp_dim_inline(expressions: &[Expression], exp: &Expression, field: &FieldCfg) -> usize {
+/// Get dimension for an inline expression tree. Fails on an op it does not know.
+fn get_exp_dim_inline(expressions: &[Expression], exp: &Expression, field: &FieldCfg) -> Result<usize> {
     if exp.dim > 0 && exp.op != "add" && exp.op != "sub" && exp.op != "mul" {
-        return exp.dim;
+        return Ok(exp.dim);
     }
-    match exp.op.as_str() {
+    let dim = match exp.op.as_str() {
         "add" | "sub" | "mul" => {
             let mut max_dim = 0;
             for child in &exp.values {
                 let child_expr = child.resolve(expressions);
-                let d = get_exp_dim_inline(expressions, child_expr, field);
+                let d = get_exp_dim_inline(expressions, child_expr, field)?;
                 if d > max_dim {
                     max_dim = d;
                 }
@@ -233,7 +237,7 @@ fn get_exp_dim_inline(expressions: &[Expression], exp: &Expression, field: &Fiel
         }
         "exp" => {
             let id = exp.id.unwrap_or(0);
-            get_exp_dim_inline(expressions, &expressions[id], field)
+            get_exp_dim_inline(expressions, &expressions[id], field)?
         }
         "cm" | "custom" => {
             if exp.dim > 0 {
@@ -244,8 +248,9 @@ fn get_exp_dim_inline(expressions: &[Expression], exp: &Expression, field: &Fiel
         }
         "const" | "number" | "public" | "Zi" => 1,
         "challenge" | "eval" | "xDivXSubXi" => field.ext_dim(),
-        _ => panic!("Exp op not defined: {}", exp.op),
-    }
+        _ => return Err(PilInfoError::UnknownOp { pass: "get_exp_dim", op: exp.op.clone() }),
+    };
+    Ok(dim)
 }
 
 /// Entry in the challenges map (matches JSON output format).
@@ -271,12 +276,12 @@ fn extend_challenges_map(challenges_map: &mut Vec<ChallengeMapEntry>, id: usize,
 }
 
 /// Find the symbol matching an evaluation map entry.
-fn find_symbol_for_ev(symbols: &[SymbolInfo], ev: &EvMapItem) -> SymbolInfo {
+fn find_symbol_for_ev(symbols: &[SymbolInfo], ev: &EvMapItem) -> Result<SymbolInfo> {
     let sym_type_target = match ev.entry_type.as_str() {
         "const" => "fixed",
         "cm" => "witness",
         "custom" => "custom",
-        other => panic!("Unknown ev type: {}", other),
+        other => return Err(PilInfoError::UnknownEvaluation(other.to_string())),
     };
 
     symbols
@@ -286,8 +291,8 @@ fn find_symbol_for_ev(symbols: &[SymbolInfo], ev: &EvMapItem) -> SymbolInfo {
                 && s.sym_type == sym_type_target
                 && (ev.entry_type != "custom" || s.commit_id == ev.commit_id)
         })
-        .unwrap_or_else(|| panic!("Symbol not found for ev type={} id={}", ev.entry_type, ev.id))
-        .clone()
+        .cloned()
+        .ok_or_else(|| PilInfoError::NoSymbolForEvaluation { entry_type: ev.entry_type.clone(), id: ev.id })
 }
 
 /// Build a column expression node for an evaluation entry.
@@ -366,7 +371,8 @@ mod tests {
             &opening_points,
             &mut challenges_map,
             &FieldCfg::goldilocks(),
-        );
+        )
+        .unwrap();
 
         assert_eq!(result.deep_exp_id, expressions.len() - 1);
         assert_eq!(result.batch_size, 2);
@@ -399,7 +405,8 @@ mod tests {
             &opening_points,
             &mut challenges_map,
             &FieldCfg::goldilocks(),
-        );
+        )
+        .unwrap();
 
         // deep_exp_id is a valid index into the expressions arena
         assert!(result.deep_exp_id < expressions.len());
@@ -418,7 +425,7 @@ mod tests {
             EvMapItem { entry_type: "cm".to_string(), id: 0, prime: 0, commit_id: None },
         ];
         let mut challenges_map = Vec::new();
-        generate_deep_polynomial(
+        let _ = generate_deep_polynomial(
             1,
             &mut expressions,
             &mut symbols,
@@ -427,5 +434,30 @@ mod tests {
             &mut challenges_map,
             &FieldCfg::goldilocks(),
         );
+    }
+
+    fn deep_err(ev_map: &[EvMapItem]) -> PilInfoError {
+        let mut symbols = vec![make_witness_symbol("w0", 0, 1)];
+        let result = generate_deep_polynomial(
+            1,
+            &mut Vec::new(),
+            &mut symbols,
+            ev_map,
+            &[0],
+            &mut Vec::new(),
+            &FieldCfg::goldilocks(),
+        );
+        match result {
+            Ok(_) => panic!("the DEEP polynomial was built"),
+            Err(err) => err,
+        }
+    }
+
+    /// Were `expect("At least one opening point required")` and `panic!("Unknown ev type")`.
+    #[test]
+    fn a_deep_polynomial_without_evaluations_or_of_an_unknown_one_is_an_error() {
+        assert!(matches!(deep_err(&[]), PilInfoError::DeepWithoutEvaluations));
+        let ev = EvMapItem { entry_type: "tmp".to_string(), id: 0, prime: 0, commit_id: None };
+        assert!(matches!(deep_err(&[ev]), PilInfoError::UnknownEvaluation(t) if t == "tmp"));
     }
 }

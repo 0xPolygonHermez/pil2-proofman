@@ -196,7 +196,8 @@ pub fn write_fixed_pols_bin(
     }
 
     writer.end_write_section()?;
-    writer.close()
+    writer.close()?;
+    Ok(())
 }
 
 /// Write the `.const` file from the pilout and plonk fixed polynomial values.
