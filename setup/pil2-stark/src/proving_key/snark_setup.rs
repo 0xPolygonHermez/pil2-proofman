@@ -262,7 +262,6 @@ fn gen_final_snark(
     // ── Phase 2: final SNARK ──────────────────────────────────────────────────
     let final_dir = snark_dir.join("final");
     fs::create_dir_all(&final_dir)?;
-    remove_other_keys(config.final_snark, &final_dir)?;
 
     let rf_const_root_json: Value = serde_json::from_str(
         &fs::read_to_string(verkey_rf_path)
@@ -406,15 +405,15 @@ fn gen_final_snark(
         }
     }
 
-    match config.final_snark {
-        FinalSnark::Fflonk => gen_rapidsnark_key(config, witness_tracker, &r1cs_final, &final_dir, const_root, true)?,
-        FinalSnark::Plonk => gen_rapidsnark_key(config, witness_tracker, &r1cs_final, &final_dir, const_root, false)?,
+    set_up_replacing_other_keys(config.final_snark, &final_dir, || match config.final_snark {
+        FinalSnark::Fflonk => gen_rapidsnark_key(config, witness_tracker, &r1cs_final, &final_dir, const_root, true),
+        FinalSnark::Plonk => gen_rapidsnark_key(config, witness_tracker, &r1cs_final, &final_dir, const_root, false),
         FinalSnark::Pilfflonk => {
             let mut family = if blake3 { WrapFamily::BLAKE3 } else { WrapFamily::POSEIDON };
             family.extra_muls = config.extra_muls.unwrap_or(family.extra_muls);
-            gen_pilfflonk_key(config, witness_tracker, &build_path, &pil_dir, &final_dir, const_root, &family)?
+            gen_pilfflonk_key(config, witness_tracker, &build_path, &pil_dir, &final_dir, const_root, &family)
         }
-    }
+    })?;
 
     // Write publics_info.json if provided.
     if let Some(ref pi) = config.publics_info {
@@ -680,6 +679,18 @@ pub fn gen_recursivef_setup(
     )?;
 
     Ok(starkinfo_rf_json)
+}
+
+/// Sets up `final_snark`'s key in `final_dir`, `provingKeySnark/final/`, with `set_up`, and only
+/// once it is set up removes the other protocols' keys there ([`remove_other_keys`]): a setup that
+/// fails leaves them as they were.
+fn set_up_replacing_other_keys(
+    final_snark: FinalSnark,
+    final_dir: &Path,
+    set_up: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    set_up()?;
+    remove_other_keys(final_snark, final_dir)
 }
 
 /// Removes from `final_dir`, `provingKeySnark/final/`, the key of every protocol but
@@ -1304,6 +1315,27 @@ pub(crate) mod tests {
             assert_eq!(entries(&dir), kept, "{final_snark}, run again");
             fs::remove_dir_all(&dir).unwrap();
         }
+    }
+
+    /// The other protocols' keys go only once the setup's own key is set up: a setup that fails
+    /// leaves every entry as it was, and one that succeeds finds them all while it runs.
+    #[test]
+    fn the_other_protocols_keys_go_only_once_the_key_is_set_up() {
+        let dir = fresh_dir("snark_setup_replacing_keys");
+        write_final_dir_of_every_key(&dir);
+        let before = entries(&dir);
+
+        let failed = set_up_replacing_other_keys(FinalSnark::Pilfflonk, &dir, || bail!("the key's setup failed"));
+        assert!(format!("{:#}", failed.unwrap_err()).contains("the key's setup failed"));
+        assert_eq!(entries(&dir), before, "a failed setup removed entries");
+
+        set_up_replacing_other_keys(FinalSnark::Pilfflonk, &dir, || {
+            assert_eq!(entries(&dir), before, "entries removed before the key was set up");
+            Ok(())
+        })
+        .unwrap();
+        assert!(!dir.join(ZKEY_FILE).exists(), "the zkey is still there once the key is set up");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// An entry of another protocol's key that is a symlink is unlinked, and what it points to is
