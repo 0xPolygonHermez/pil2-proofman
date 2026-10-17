@@ -977,19 +977,20 @@ pub fn generate_recursivef_gl_proof<F: PrimeField64>(
                 .to_string(),
         )
     })?;
+    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().ok_or_else(|| {
+        ProofmanError::InvalidConfiguration(
+            "this run did not load the vadcop_final the recursivef verifies".to_string(),
+        )
+    })?;
     let root = match verkey {
         Some(verkey) if verkey.len() == 4 => verkey.to_vec(),
         Some(verkey) => {
             return Err(ProofmanError::InvalidParameters(format!("a verkey is 4 words, and this one {}", verkey.len())))
         }
-        None => setups.setup_vadcop_final.as_ref().unwrap().get_vk(),
+        None => setup_vadcop_final.get_vk(),
     };
-    let Some(proof) = vadcop_final_proof.get(1..) else {
-        return Err(ProofmanError::InvalidProof("an empty vadcop_final proof".to_string()));
-    };
-    let mut zkin = Vec::with_capacity(root.len() + proof.len());
-    zkin.extend_from_slice(&root);
-    zkin.extend_from_slice(proof);
+    let body_words = (setup_vadcop_final.stark_info.n_publics + setup_vadcop_final.proof_size) as usize;
+    let zkin = recursivef_gl_zkin(&root, vadcop_final_proof, body_words)?;
     timer_start_info!(GENERATE_RECURSIVEF_PROOF);
     let proof = generate_final_layer_proof(
         pctx,
@@ -1004,6 +1005,24 @@ pub fn generate_recursivef_gl_proof<F: PrimeField64>(
     )?;
     timer_stop_and_log_info!(GENERATE_RECURSIVEF_PROOF);
     Ok(proof)
+}
+
+/// The zkin of a blake3 key's recursivef: the root `root`, then the vadcop_final proof
+/// `vadcop_final_proof` (`proof_with_publics`) without its count of publics, which must be
+/// `body_words` words, the vadcop_final's publics and proof: the recursivef's witness reads as many.
+fn recursivef_gl_zkin(root: &[u64], vadcop_final_proof: &[u64], body_words: usize) -> ProofmanResult<Vec<u64>> {
+    let body = vadcop_final_proof.get(1..).unwrap_or_default();
+    if body.len() != body_words {
+        return Err(ProofmanError::InvalidProof(format!(
+            "the recursivef verifies a vadcop_final proof of {body_words} words (its publics and proof), and this one \
+             has {}",
+            body.len()
+        )));
+    }
+    let mut zkin = Vec::with_capacity(root.len() + body.len());
+    zkin.extend_from_slice(root);
+    zkin.extend_from_slice(body);
+    Ok(zkin)
 }
 
 /// A one-off proof of a layer after the vadcop_final (the compressed final, a blake3 key's
@@ -1888,6 +1907,28 @@ mod stride_tests {
         assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION), 8, false), 8, "the CPU keeps the air's width");
         assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION_WIDE), 8, true), 8);
         assert_eq!(recursion_trace_stride(&[], 8, true), 8, "no exec file");
+    }
+}
+
+#[cfg(test)]
+mod recursivef_gl_zkin_tests {
+    use super::recursivef_gl_zkin;
+
+    /// The zkin is the root, then the proof's publics and proof, of exactly the vadcop_final's words:
+    /// a proof of more or fewer, or none, is refused.
+    #[test]
+    fn a_vadcop_final_proof_of_other_than_its_words_is_refused() {
+        let root = [1, 2, 3, 4];
+        // Two publics, 10 and 11, and a proof of 3 words; then one word too many.
+        let proof = [2, 10, 11, 20, 21, 22, 23];
+        assert_eq!(recursivef_gl_zkin(&root, &proof[..6], 5).unwrap(), [1, 2, 3, 4, 10, 11, 20, 21, 22]);
+        for (proof, words) in [(&proof[..5], 4), (&proof[..], 6), (&proof[..1], 0), (&[][..], 0)] {
+            let refused = recursivef_gl_zkin(&root, proof, 5).expect_err("refused");
+            assert!(
+                refused.to_string().contains(&format!("of 5 words (its publics and proof), and this one has {words}")),
+                "{refused}"
+            );
+        }
     }
 }
 
