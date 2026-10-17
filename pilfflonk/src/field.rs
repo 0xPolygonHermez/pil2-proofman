@@ -307,7 +307,7 @@ pub struct G2Affine {
 }
 
 /// `[1]₂`, the generator of G2, as `x.c0, x.c1, y.c0, y.c1` in decimal: the `[1]₂` of every BN128
-/// library and every ptau, and the `[τ]₂` of a ptau with `τ = 1`.
+/// library and every ptau.
 pub const G2_GENERATOR: [&str; 4] = [
     "10857046999023057135944570762232829481370756359578518086990519993285655852781",
     "11559732032986387107991004021392285783925812861821192530917403151452391805634",

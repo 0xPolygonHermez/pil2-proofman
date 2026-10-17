@@ -17,8 +17,10 @@ measurements verifies.
   columns and an im pol; 2 fixed; `qDeg = 1`) and `all_sum` (`all` on the sum bus: 14 committed
   columns of stage 1 and 6 of stage 2, 10 fixed, `qDeg = 2`), and `all_prod` at two sizes. Packed
   (`--extra-muls 2`) and `--no-packing`.
-- **SRS.** A test ptau with a fixed public `τ` (good for measuring only), of 75,497,536 powers
-  (`9·2^23 + 64`), 4.8 GB.
+- **SRS.** A ptau of 75,497,536 powers (`9·2^23 + 64`), 4.8 GB, with a fixed public `τ`: these
+  measurements predate the official ptau files the tests and the benchmark now read. The prover's
+  work does not depend on `τ`; the official ptau that holds these powers is
+  `powersOfTau28_hez_final_26`.
 - **Phases.** The prover's C++ timers (`PILFFLONK_*`, logged at `-vv`): the key (`LOAD_SRS`,
   `LOAD_AIRS` with the upload of the fixed coefficients, `FIXED_UPLOAD`), the instance, each stage
   (`STAGE_<s>`: `HINT_COLUMNS_<s>`, `IM_POLS_<s>`, and per `f` `INTT_<f>` and `COMMIT_<f>`, its MSM), `Q`
@@ -613,8 +615,8 @@ On 64 threads, **M**:
   `pilfflonk.verifier.sol` and the project contract of an earlier run byte for byte; its `final.exec`
   differs in the header only, which now records the r1cs's `n_vars`, and has the same body.
 - **`verify-snark`** accepts the proof, and refuses it with a byte of an evaluation or of a commitment
-  changed, with its public changed, against the vkey of the same AIR set up with another SRS (CI's
-  test ptau), and against the vkey of the 2^22 key below ("a proof of this shape has 2048 bytes, not
+  changed, with its public changed, against the vkey of the same AIR set up with another SRS, and
+  against the vkey of the 2^22 key below ("a proof of this shape has 2048 bytes, not
   2208").
 
 `prove-snark`'s phases, **M**:
@@ -635,8 +637,9 @@ and `[W']₁`, 1.24 s each); loading the key, 2.61 s of the 3.28 s are its fixed
 ### Against FFLONK and PLONK
 
 FFLONK and PLONK are rapidsnark's provers on the stock recursivef and final circuit (measured before
-pilfflonk's wrap existed, on the same machine and program, 32 threads; FFLONK with a fixed-`τ` test
-ptau of `9·2^24` powers, as the Hermez one is too small for it). The 2^22 pilfflonk key is the one
+pilfflonk's wrap existed, on the same machine and program, 32 threads; FFLONK with a ptau of
+`9·2^24` powers and a fixed public `τ`, as the official one that holds them,
+`powersOfTau28_hez_final_27`, is 155 GB). The 2^22 pilfflonk key is the one
 before the range-check gates, whose final circuit checks the Goldilocks ranges bit by bit
 (`Num2Bits`), on 64 threads.
 
