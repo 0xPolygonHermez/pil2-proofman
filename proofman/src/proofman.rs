@@ -2721,6 +2721,8 @@ where
                 "the recursivef verifies a vadcop_final proof, not a compressed one".to_string(),
             ));
         }
+        // No reset runs on this path, so a preceding snark's carve is undone here.
+        self.restore_after_snark()?;
         let recursivef_proof = generate_recursivef_gl_proof(
             &self.pctx,
             &self.memory_handler_recursive_witness,
