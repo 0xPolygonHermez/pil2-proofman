@@ -162,7 +162,7 @@ fn gives_the_g2_powers_canonical() {
 /// A G2 point from canonical big-endian coordinates `x.c0, x.c1, y.c0, y.c1`, as the C API takes it.
 fn g2(coordinates: [&str; 4]) -> [u8; PILFFLONK_G2_BYTES] {
     let mut point = [0u8; PILFFLONK_G2_BYTES];
-    for (chunk, coordinate) in point.chunks_exact_mut(32).zip(coordinates) {
+    for (chunk, coordinate) in point.as_chunks_mut::<32>().0.iter_mut().zip(coordinates) {
         chunk.copy_from_slice(&from_hex(coordinate));
     }
     point

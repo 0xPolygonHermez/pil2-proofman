@@ -405,8 +405,8 @@ mod tests {
     fn count(checks: &RangeChecks, trace: &mut [Bn128], n_rows: usize, n_cols: usize) -> WrapWitnessResult<()> {
         let mut bytes: Vec<u8> = trace.iter().flat_map(|v| v.to_le_bytes()).collect();
         let counted = checks.count(&mut bytes, n_rows, n_cols);
-        for (v, b) in trace.iter_mut().zip(bytes.chunks_exact(VALUE_BYTES)) {
-            *v = Bn128::from_le_bytes(b.try_into().unwrap()).unwrap();
+        for (v, b) in trace.iter_mut().zip(bytes.as_chunks::<VALUE_BYTES>().0) {
+            *v = Bn128::from_le_bytes(*b).unwrap();
         }
         counted
     }
