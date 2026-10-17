@@ -127,12 +127,13 @@ pub struct GateBand {
     ///
     /// BLAKE3 puts `flags` here -- st[15], a compile-time constant of the circom gate that the AIR
     /// carries as a FIXED column, so it is in neither the witness nor anything `expand_gate_bands`
-    /// is handed. The poseidon kinds need nothing and write 0.
+    /// is handed. The BN128 wrap's range check puts its number of chunks. The poseidon kinds need
+    /// nothing and write 0.
     pub payload: u64,
 }
 
-/// Gate shapes with recomputable interiors. Serialized into the exec file, so the discriminants
-/// are a wire format -- append, never renumber.
+/// Gate shapes with recomputable interiors, and the BN128 wrap's range-check rows. Serialized into
+/// the exec file, so the discriminants are a wire format -- append, never renumber.
 ///
 /// Both axes are encoded because an expander needs both: the setup type fixes the band geometry
 /// (10 rows with one chain slot, or 5 with two) and the family picks the permutation.
@@ -151,6 +152,18 @@ pub enum GateBandKind {
     Blake3Node = 9,
     Blake3CompressChunk = 10,
     Blake3CompressParent = 11,
+    /// A `Num2Bytes` row of the BN128 wrap: nothing to rebuild, the map gathers it whole, and the
+    /// wrap's witness counts its chunks into the multiplicity column
+    /// ([`RANGE_CHECK_BAND_KIND`](proofman_common::exec_format::RANGE_CHECK_BAND_KIND)).
+    PoseidonBn128WrapRangeCheck = proofman_common::exec_format::RANGE_CHECK_BAND_KIND,
+    /// A range-check row of the blake3 BN128 wrap: three `Num2Bytes` uses of `payload` chunks,
+    /// which its witness counts into blake3's 16-bit table
+    /// ([`BLAKE3_WRAP_RANGE_CHECK_BAND_KIND`](proofman_common::exec_format::BLAKE3_WRAP_RANGE_CHECK_BAND_KIND)).
+    Blake3Bn128WrapRangeCheck = proofman_common::exec_format::BLAKE3_WRAP_RANGE_CHECK_BAND_KIND,
+    /// A block of the blake3 BN128 wrap, of each kind, `payload` its flags.
+    Blake3Bn128WrapNode = proofman_common::exec_format::BLAKE3_WRAP_NODE_BAND_KIND,
+    Blake3Bn128WrapChunk = proofman_common::exec_format::BLAKE3_WRAP_CHUNK_BAND_KIND,
+    Blake3Bn128WrapParent = proofman_common::exec_format::BLAKE3_WRAP_PARENT_BAND_KIND,
 }
 
 /// Result returned by every setup function, over the field `F` of the r1cs.
@@ -168,7 +181,8 @@ pub struct SetupResult<F> {
     pub s_map: Vec<Vec<u32>>,
     /// Row bands whose interior cells a trace expander recomputes from their boundary cells
     /// rather than gathering them out of the circom witness. One per hash-gate application --
-    /// the only gates whose row band is wider than its inputs and outputs.
+    /// the only gates whose row band is wider than its inputs and outputs -- and, in the BN128
+    /// wrap, one per range-check row, whose chunks its witness counts.
     pub gate_bands: Vec<GateBand>,
     pub plonk_additions: Vec<PlonkAddition<F>>,
     pub airgroup_name: String,
@@ -177,7 +191,9 @@ pub struct SetupResult<F> {
     ///
     /// BLAKE3 puts LANES here. It is a setup parameter, so deriving it from the column count would
     /// be reading a decision back out of its own consequence -- and that arithmetic means nothing
-    /// for an air of another family. The poseidon setups write 0.
+    /// for an air of another family. The poseidon setups write 0. The BN128 wrap writes the
+    /// stage-1 column of its range checks' multiplicity, which its witness fills, if it has
+    /// range-check rows.
     pub band_aux: u64,
 }
 

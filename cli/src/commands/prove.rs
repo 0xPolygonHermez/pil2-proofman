@@ -92,6 +92,12 @@ pub struct ProveCmd {
 }
 
 impl ProveCmd {
+    /// Whether the run wraps a proof in the final SNARK of `-s`: only one that aggregates (`-a`) and
+    /// does not verify constraints (`-d`) makes a vadcop_final proof.
+    fn wraps_a_proof(&self, verify_constraints: bool) -> bool {
+        self.proving_key_snark.is_some() && self.aggregation && !verify_constraints
+    }
+
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("{} Prove", format!("{: >12}", "Command").bright_green().bold());
         println!();
@@ -103,6 +109,7 @@ impl ProveCmd {
         };
 
         let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
+        let wraps_a_proof = self.wraps_a_proof(verify_constraints);
 
         let mut options = ProofmanOptions::new();
 
@@ -126,6 +133,9 @@ impl ProveCmd {
         if self.gpu {
             options.gpu();
         }
+        if wraps_a_proof {
+            options.final_snark();
+        }
         options.verbose_mode(self.verbose.into());
 
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
@@ -142,6 +152,23 @@ impl ProveCmd {
 
         let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
         proofman.register_custom_commits(custom_commits_map)?;
+        // The final SNARK's wrapper of a run that wraps a proof, on proofman's buffers, as ZisK builds
+        // it: loaded now, while they are idle, and proving after the vadcop_final.
+        let snark_wrapper = match &self.proving_key_snark {
+            Some(key) if wraps_a_proof => {
+                let (aux_trace, d_buffers, reload_fixed_pols_gpu) = proofman.get_preallocated_buffers();
+                Some(SnarkWrapper::<Goldilocks>::new_with_preallocated_buffers(
+                    key,
+                    self.verbose.into(),
+                    Some(aux_trace),
+                    self.gpu.then_some(d_buffers),
+                    Some(reload_fixed_pols_gpu),
+                    true,
+                    self.gpu,
+                )?)
+            }
+            _ => None,
+        };
 
         let proof_options = ProofOptions::new(
             false,
@@ -189,10 +216,9 @@ impl ProveCmd {
                     // Save the vadcop final proof using the struct's save method
                     vadcop_final_proof.save(self.output_dir.join("vadcop_final_proof.bin"))?;
 
-                    if let Some(proving_key_snark) = &self.proving_key_snark {
-                        let snark_wrapper: SnarkWrapper<Goldilocks> =
-                            SnarkWrapper::new(proving_key_snark, self.verbose.into(), true, self.gpu)?;
-                        snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, None)?;
+                    if let Some(wrapper) = &snark_wrapper {
+                        let snark_proof = proofman.generate_final_snark_proof(wrapper, &vadcop_final_proof, None)?;
+                        snark_proof.save(self.output_dir.join("snark_proof.bin"))?;
                     }
                 }
                 times.push(started.elapsed());
@@ -203,5 +229,25 @@ impl ProveCmd {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::ProveCmd;
+
+    fn prove(args: &[&str]) -> ProveCmd {
+        ProveCmd::try_parse_from(["prove", "-w", "libwitness.so", "-k", "provingKey"].iter().chain(args)).unwrap()
+    }
+
+    /// The final SNARK's wrapper is built only for a run that makes a vadcop_final proof to wrap.
+    #[test]
+    fn only_an_aggregated_proof_is_wrapped() {
+        assert!(prove(&["-s", "provingKeySnark", "-a"]).wraps_a_proof(false));
+        assert!(!prove(&["-s", "provingKeySnark", "-a"]).wraps_a_proof(true), "verify constraints");
+        assert!(!prove(&["-s", "provingKeySnark"]).wraps_a_proof(false), "no aggregation");
+        assert!(!prove(&["-a"]).wraps_a_proof(false), "no -s");
     }
 }

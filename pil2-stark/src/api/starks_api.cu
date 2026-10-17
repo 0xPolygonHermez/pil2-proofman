@@ -925,10 +925,7 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
             exitProcess();
         }
         if (bandView.status == gate_bands::BandSection::UnsupportedExecFormat) {
-            zklog.error("load_device_setup: " + air + " has exec file format version " +
-                        std::to_string(bandView.version) + ", but this build reads version " +
-                        std::to_string(exec_layout::EXEC_FORMAT_VERSION) +
-                        "; regenerate the proving key with a matching setup");
+            zklog.error("load_device_setup: " + air + ": " + exec_layout::refused_version(bandView.version));
             exitProcess();
         }
         if (bandView.status == gate_bands::BandSection::UnsupportedVersion) {
@@ -2767,6 +2764,15 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     uint32_t gpuId = d_buffers->gpuId;
     cudaSetDevice(gpuId);
 
+    // A buffer of its own that reserve_recursivef_aux_trace_gpu could not grow nor restore.
+    if (d_buffers->owns_aux_trace && d_buffers->aux_trace_size < proverBufferSize) {
+        CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
+        d_buffers->d_aux_trace = nullptr;
+        d_buffers->aux_trace_size = 0;
+        CHECKCUDAERR(cudaMalloc((void **)&d_buffers->d_aux_trace, proverBufferSize));
+        d_buffers->aux_trace_size = proverBufferSize;
+    }
+
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
     uint64_t sizeWitness = N * nCols * sizeof(Goldilocks::Element);
@@ -4048,9 +4054,10 @@ void stream_commit_warmup_gpu(void *d_buffers_) {
     CHECKCUDAERR(cudaSetDevice(prevDevice));
     static std::once_flag logged;
     std::call_once(logged, [&] {
+        // A warning: a run may never prove those airs (prove-snark's), and one that does fails at the commit.
         if (!refused.empty())
-            zklog.error("Streaming-commit warm-up: a slot will refuse air(s)" + refused
-                        + "; an instance of any of them fails its commit");
+            zklog.warning("Streaming-commit warm-up: a slot will refuse air(s)" + refused
+                          + "; an instance of any of them fails its commit");
     });
 }
 
@@ -4681,5 +4688,49 @@ void pre_allocate_final_snark_prover_gpu(void *snark_prover, void* unified_buffe
         }
     }
     preAllocateFinalSnarkProverGPU(snark_prover, unified_buffer_gpu);
+}
+
+void *reserve_recursivef_aux_trace_gpu(void *d_buffers_recursivef, uint64_t bytes, uint64_t *out_bytes) {
+    *out_bytes = 0;
+    if (d_buffers_recursivef == nullptr) {
+        return nullptr;
+    }
+    DeviceRecursiveFBuffers *d_buffers = (DeviceRecursiveFBuffers *)d_buffers_recursivef;
+    if (!d_buffers->owns_aux_trace) {
+        return nullptr;
+    }
+    CHECKCUDAERR(cudaSetDevice(d_buffers->gpuId));
+    if (bytes > d_buffers->aux_trace_size) {
+        // As pre_allocate_final_snark_prover_gpu for PLONK, but refused rather than aborted when the
+        // device cannot hold it: the old buffer's bytes come back once it is freed.
+        size_t freeBytes = 0, totalBytes = 0;
+        CHECKCUDAERR(cudaMemGetInfo(&freeBytes, &totalBytes));
+        const uint64_t most = (uint64_t)freeBytes + d_buffers->aux_trace_size;
+        if (bytes > most) {
+            *out_bytes = most;
+            return nullptr;
+        }
+        const uint64_t held = d_buffers->aux_trace_size;
+        CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
+        d_buffers->d_aux_trace = nullptr;
+        d_buffers->aux_trace_size = 0;
+        if (cudaMalloc((void **)&d_buffers->d_aux_trace, bytes) != cudaSuccess) {
+            // Refused too, with the buffer back at its size, or none if the device no longer holds
+            // that: the recursivef's next proof allocates it again (gen_recursive_proof_final_gpu).
+            cudaGetLastError();
+            d_buffers->d_aux_trace = nullptr;
+            if (held > 0 && cudaMalloc((void **)&d_buffers->d_aux_trace, held) == cudaSuccess) {
+                d_buffers->aux_trace_size = held;
+            } else {
+                cudaGetLastError();
+                d_buffers->d_aux_trace = nullptr;
+            }
+            *out_bytes = d_buffers->aux_trace_size;
+            return nullptr;
+        }
+        d_buffers->aux_trace_size = bytes;
+    }
+    *out_bytes = d_buffers->aux_trace_size;
+    return d_buffers->d_aux_trace;
 }
 #endif

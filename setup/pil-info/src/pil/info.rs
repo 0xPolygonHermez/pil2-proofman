@@ -21,8 +21,8 @@ pub struct PilInfoResult {
     pub im_pols_info: (Vec<String>, Vec<String>),
     /// Constraint polynomial expression ID.
     pub c_exp_id: usize,
-    /// DEEP polynomial expression ID (distinct from c_exp_id).
-    pub deep_exp_id: usize,
+    /// DEEP polynomial expression ID (distinct from c_exp_id): `None` unless the opening is DEEP.
+    pub deep_exp_id: Option<usize>,
     /// Polynomial Q degree.
     pub q_deg: i64,
     /// Boundary definitions.
@@ -47,7 +47,7 @@ pub fn run(
 /// Run the passes on the output of `prepare_pil`, which must have been prepared over `cfg.field`.
 ///
 /// Steps:
-/// 1. calculate_intermediate_polynomials, bounded by `cfg.max_constraint_degree`
+/// 1. calculate_intermediate_polynomials, as `cfg.degree_policy` says
 /// 2. add_intermediate_polynomials
 /// 3. map
 /// 4. generate_pil_code
@@ -70,8 +70,7 @@ pub fn pil_info(
     let q_dim = constraint_poly.q_dim;
 
     // Calculate intermediate polynomials
-    let im_result =
-        calculate_intermediate_polynomials(&expressions, c_exp_id, cfg.max_constraint_degree, q_dim, &symbols)?;
+    let im_result = calculate_intermediate_polynomials(&expressions, c_exp_id, &cfg.degree_policy, q_dim, &symbols)?;
     let im_exps = im_result.im_exps;
     let q_deg = im_result.q_deg;
 
@@ -135,19 +134,19 @@ pub fn pil_info(
 
     // Build code-gen params
     let n_stages = setup.n_stages;
-    // deep_exp_id will be updated by generate_pil_code after DEEP polynomial generation
     let mut params = CodeGenParams {
         air_id,
         airgroup_id,
         n_stages,
         c_exp_id,
-        deep_exp_id: c_exp_id, // placeholder; will be overwritten
+        deep_exp_id: None, // set by generate_pil_code, as cfg.opening says
         q_deg: q_deg as usize,
         q_dim: q_dim_final,
         opening_points: opening_points.clone(),
         cm_pols_map: setup.cm_pols_map.clone(),
         custom_commits_count: setup.custom_commits.len(),
         field: cfg.field.clone(),
+        opening: cfg.opening,
     };
 
     // Store hints back into setup for generate_pil_code

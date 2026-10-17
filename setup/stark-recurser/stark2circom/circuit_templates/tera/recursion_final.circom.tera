@@ -1,5 +1,6 @@
 pragma circom 2.1.0;
-
+{% if custom_templates %}pragma custom_templates;
+{% endif %}
 {% for vf in verifier_filenames %}    include "{{ vf }}";
 {% endfor %}
 {{ sha256_template }}

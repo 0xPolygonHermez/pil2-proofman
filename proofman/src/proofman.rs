@@ -174,9 +174,10 @@ use crate::{
     verify_constraints_proof, verify_basic_proof, verify_global_constraints_proof, verify_proof, StreamReservation,
 };
 use crate::{print_summary_info, get_recursive_buffer_sizes, n_publics_aggregation};
+use crate::{SnarkProof, SnarkWrapper};
 use crate::{
     get_accumulated_challenge, gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof,
-    generate_vadcop_final_proof, generate_vadcop_final_compressed_proof,
+    generate_vadcop_final_proof, generate_vadcop_final_compressed_proof, generate_recursivef_gl_proof,
 };
 use crate::{total_recursive_proofs, InstanceRoots};
 use crate::check_const_pols_gpu;
@@ -1188,7 +1189,7 @@ where
 
         let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx, gpu)?;
 
-        let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, gpu)?);
+        let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, gpu, true)?);
 
         let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, gpu)?;
 
@@ -1227,6 +1228,9 @@ where
             calculate_fixed_tree(setup_vadcop_final);
             if let Some(setup_vadcop_final_compressed) = setups_aggregation.setup_vadcop_final_compressed.as_ref() {
                 calculate_fixed_tree(setup_vadcop_final_compressed);
+            }
+            if let Some(setup_recursivef) = setups_aggregation.setup_recursivef.as_ref() {
+                calculate_fixed_tree(setup_recursivef);
             }
         }
 
@@ -2647,6 +2651,90 @@ where
 
         VadcopFinalProof::new_from_proof(&vadcop_final_proof_compressed.proof, true, self.pctx.global_info.hash.clone())
             .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e)))
+    }
+
+    /// The final SNARK of `vadcop_final_proof`, the wrap of `snark_wrapper`, as the proving key's hash
+    /// has it: a poseidon key's wrapper proves its recursivef itself; a blake3 key's recursivef is a
+    /// Goldilocks STARK this run proves ([`generate_recursivef_proof`](Self::generate_recursivef_proof))
+    /// before the wrapper's SNARK. `verkey_override`, the verkey the recursivef checks the proof
+    /// against and the root of the SNARK's public digest, is the vadcop_final's by default. It holds
+    /// this ProofMan's `computing` and the process-wide [`PROVING`] throughout: the wrap writes the
+    /// unified buffer, so no job or reset of any ProofMan runs meanwhile.
+    pub fn generate_final_snark_proof(
+        &self,
+        snark_wrapper: &SnarkWrapper<F>,
+        vadcop_final_proof: &VadcopFinalProof,
+        verkey_override: Option<&[u64]>,
+    ) -> ProofmanResult<SnarkProof> {
+        // `computing` and PROVING across both steps: the SNARK writes this run's buffers too.
+        let (_computing, _proving) = self.acquire_computing("generate_final_snark_proof");
+        if self.setups.setup_recursivef.is_none() && self.pctx.global_info.hash == "blake3" {
+            return Err(ProofmanError::InvalidConfiguration(
+                "a blake3 key's final SNARK needs its recursivef: a ProofMan made with options.final_snark, of a key \
+                 with setup-recursivef"
+                    .to_string(),
+            ));
+        }
+        if self.setups.setup_recursivef.is_none() {
+            return snark_wrapper.generate_final_snark_proof(vadcop_final_proof, verkey_override);
+        }
+        self.check_wrapper_recursivef(snark_wrapper)?;
+        let recursivef_proof = self.recursivef_proof(vadcop_final_proof, verkey_override)?;
+        snark_wrapper.generate_final_snark_proof(&recursivef_proof, verkey_override)
+    }
+
+    /// That `snark_wrapper`'s circuit verifies this key's recursivef, its shape and its root: the
+    /// provingKeySnark/ of another setup would take its proofs and fail in the wrap's witness, or later.
+    fn check_wrapper_recursivef(&self, snark_wrapper: &SnarkWrapper<F>) -> ProofmanResult<()> {
+        let stem = self.pctx.global_info.get_setup_path("recursivef").display().to_string();
+        let own = |ext: &str| -> Option<serde_json::Value> {
+            std::fs::read_to_string(format!("{stem}.{ext}.json")).ok().and_then(|text| serde_json::from_str(&text).ok())
+        };
+        match (own("starkinfo"), own("verkey"), snark_wrapper.blake3_recursivef()) {
+            (Some(starkinfo), Some(verkey), Some(wrapped)) if (&starkinfo, &verkey) == wrapped => Ok(()),
+            _ => Err(ProofmanError::InvalidSetup(format!(
+                "the final SNARK's key is not of this key's recursivef ({stem}): rerun setup-snark after setup-recursivef"
+            ))),
+        }
+    }
+
+    /// The recursivef of a vadcop_final proof (setup-recursivef, blake3), on this run's buffers,
+    /// checked against `verkey_override` (the vadcop_final's verkey by default): the proof the final
+    /// SNARK of a blake3 key wraps.
+    pub fn generate_recursivef_proof(
+        &self,
+        vadcop_final_proof: &VadcopFinalProof,
+        verkey_override: Option<&[u64]>,
+    ) -> ProofmanResult<VadcopFinalProof> {
+        let _computing = self.acquire_computing("generate_recursivef_proof");
+        self.recursivef_proof(vadcop_final_proof, verkey_override)
+    }
+
+    /// [`generate_recursivef_proof`](Self::generate_recursivef_proof), under the caller's `computing`.
+    fn recursivef_proof(
+        &self,
+        vadcop_final_proof: &VadcopFinalProof,
+        verkey_override: Option<&[u64]>,
+    ) -> ProofmanResult<VadcopFinalProof> {
+        if vadcop_final_proof.compressed {
+            return Err(ProofmanError::InvalidConfiguration(
+                "the recursivef verifies a vadcop_final proof, not a compressed one".to_string(),
+            ));
+        }
+        // No reset runs on this path, so a preceding snark's carve is undone here.
+        self.restore_after_snark()?;
+        let recursivef_proof = generate_recursivef_gl_proof(
+            &self.pctx,
+            &self.memory_handler_recursive_witness,
+            &self.setups,
+            &vadcop_final_proof.proof_with_publics(),
+            &self.aux_trace,
+            &self.const_pols,
+            &self.const_tree,
+            verkey_override,
+        )?;
+        VadcopFinalProof::new_from_proof(&recursivef_proof.proof, false, self.pctx.global_info.hash.clone())
+            .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to create the recursivef proof: {}", e)))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6193,6 +6281,7 @@ where
             options.verify_constraints,
             options.aggregation,
             options.gpu,
+            options.final_snark,
         )?);
 
         pctx.set_weights(&sctx, &setups_vadcop)?;

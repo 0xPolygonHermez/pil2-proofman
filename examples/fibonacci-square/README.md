@@ -73,21 +73,26 @@ After compiling the PIL files, generate the setup:
 ```bash
 cargo run --bin proofman-setup -- setup \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed \
-     --hash Poseidon2
+     -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed
 ```
 
-`--hash Poseidon2` is required for the snark steps below and only for those: the BN128 wrap is
-built for the poseidon families only, and `setup-snark` refuses a key built with the default
-family. Drop the flag if you are not going on to a snark proof.
-
-Additionally, to run the snark setup:
+The key's hash family is blake3, the default. Additionally, to run the snark setup:
 
 ```bash
 cargo run --bin proofman-setup -- setup-snark \
      -b ./examples/fibonacci-square/build \
-     --final-snark plonk --publics-info examples/fibonacci-square/src/publics_info.json --powers-of-tau <powers_of_tau>
+     --publics-info examples/fibonacci-square/src/publics_info.json --powers-of-tau <powers_of_tau>
 ```
+
+By default the final SNARK is pilfflonk, which wraps the blake3 key's recursivef
+(`provingKey/build/recursivef/`): `setup-snark` sets that up first, as `setup-recursivef` does, if the
+key has none. The ptau needs 15,204,438 powers `[τ^i]₁`: the official
+`powersOfTau28_hez_final_23.ptau` or a larger one (`pilfflonk/tests/download-ptau.sh 23` downloads
+it). The wrap's AIR is compiled over BN128 by a pil2-compiler that has `--field`, as
+`setup/pil2-stark`'s does.
+
+PLONK and FFLONK take a key of a poseidon family instead: run `setup` with `--hash Poseidon1` or
+`--hash Poseidon2`, and `setup-snark` with `--final-snark plonk` or `--final-snark fflonk`.
 
 If only wants to generate the recursive final for debugging purposes, run:
 
@@ -170,6 +175,19 @@ cargo run --bin proofman-cli prove \
      --aggregation --verify-proofs
 ```
 
+With the snark setup of 2.2, `prove-snark` wraps that proof in the final SNARK and `verify-snark`
+verifies it, here with pilfflonk's vkey:
+
+```bash
+cargo run --bin proofman-cli prove-snark \
+     -p examples/fibonacci-square/build/proofs/vadcop_final_proof.bin \
+     -k examples/fibonacci-square/build/provingKeySnark \
+     -o examples/fibonacci-square/build/proofs \
+&& cargo run --bin proofman-cli verify-snark \
+     -p examples/fibonacci-square/build/proofs/snark_proof.bin \
+     -k examples/fibonacci-square/build/provingKeySnark/final/provingKey/final/pilfflonk/pilfflonk.vkey.json
+```
+
 ### 2.9 Generating GPU proof
 
 In order to generate a proof in the GPU, the following commands need to be executed after generating the setup and pil-helpers.
@@ -225,7 +243,8 @@ export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dyli
      --custom-commits rom=examples/fibonacci-square/build/rom.bin -y
 ```
 
-**With recursion (Poseidon2):**
+**With recursion (blake3, the default hash; `--hash Poseidon1` or `Poseidon2` in `setup` for the
+poseidon families):**
 
 ```bash
 export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
@@ -235,7 +254,6 @@ export PIL2_PROOFMAN_EXT=$(if [[  "$(uname -s)" == "Darwin" ]]; then echo ".dyli
 && cargo run --bin proofman-setup -- setup \
      -a ./examples/fibonacci-square/pil/build.pilout \
      -b ./examples/fibonacci-square/build -r \
-     --hash Poseidon2 \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \

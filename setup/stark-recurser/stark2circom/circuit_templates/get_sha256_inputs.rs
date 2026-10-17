@@ -30,10 +30,16 @@ struct Sha256Def<'a> {
 ///
 /// * `publics` — the publics info JSON (`publics_info.json` or `--publics-info` arg).
 ///   Must contain `.nPublics: usize` and `.definitions: [...]`.
+/// * `custom_templates` — whether the circuit's verifier uses circom custom templates
+///   ([`uses_custom_templates`]). Its `LessThanGoldilocks` is then the one of
+///   `custom/lessthangl.circom`, with Num2Bytes gates, which the publics' range checks take too:
+///   circom refuses a template defined twice.
 ///
 /// Returns a circom fragment (without the `pragma` header, just the template body
 /// and any `include` lines) suitable for inclusion at the top-level of another circom.
-pub fn gen_get_sha256_inputs(publics: &Value) -> String {
+///
+/// [`uses_custom_templates`]: crate::stark2circom::circom_verifier::bn128::uses_custom_templates
+pub fn gen_get_sha256_inputs(publics: &Value, custom_templates: bool) -> String {
     let n_publics = publics["nPublics"].as_u64().unwrap_or(0) as usize;
 
     let empty = Vec::new();
@@ -72,6 +78,7 @@ pub fn gen_get_sha256_inputs(publics: &Value) -> String {
     let total_bits = offset + 256; // + rootCVadcopFinal (4×64 bits)
 
     let mut ctx = TeraCtx::new();
+    ctx.insert("custom_templates", &custom_templates);
     ctx.insert("n_publics", &n_publics);
     ctx.insert("total_bits", &total_bits);
     ctx.insert("final_offset", &final_offset);
@@ -86,7 +93,7 @@ mod tests {
     use serde_json::json;
 
     fn run(publics: Value) -> String {
-        gen_get_sha256_inputs(&publics)
+        gen_get_sha256_inputs(&publics, false)
     }
 
     #[test]
@@ -203,5 +210,15 @@ mod tests {
         assert!(out.contains("component rootCVadcopFinalBits[4]"));
         assert!(out.contains("component b2nPublicsHash = Bits2Num(256);"));
         assert!(out.contains("publicsHash <== b2nPublicsHash.out;"));
+    }
+
+    #[test]
+    fn publics_behind_a_custom_verifier_take_its_less_than_goldilocks() {
+        let publics = json!({ "nPublics": 1, "definitions": [] });
+        let custom = gen_get_sha256_inputs(&publics, true);
+        assert!(custom.starts_with("include \"custom/lessthangl.circom\";\n"), "out:\n{custom}");
+        // Only the include differs.
+        let stock = gen_get_sha256_inputs(&publics, false);
+        assert_eq!(custom.replacen("custom/lessthangl", "lessthangl", 1), stock);
     }
 }

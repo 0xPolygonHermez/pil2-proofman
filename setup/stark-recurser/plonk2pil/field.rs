@@ -1,20 +1,23 @@
 //! The prime fields plonk2pil converts an r1cs over.
 //!
-//! The arithmetic is `proofman-fields`'s, [`Goldilocks`] and [`Bn128`] through [`Field`].
-//! [`PlonkField`] adds what plonk2pil needs on top of it, and [`R1csPrime`] names the primes an r1cs
-//! header can carry.
+//! The arithmetic is `proofman-fields`'s, [`Goldilocks`] and [`Bn128`] through [`Field`], and how an
+//! `.exec` file writes a coefficient is `proofman-common`'s, through [`ExecField`]. [`PlonkField`]
+//! adds what plonk2pil needs on top of them, and [`R1csPrime`] names the primes an r1cs header can
+//! carry.
 
 use std::fmt;
 use std::fmt::Write as _;
 
 use num_bigint::BigUint;
+use proofman_common::exec_format::ExecField;
 use proofman_fields::{Bn128, Goldilocks, PrimeField, PrimeField64, QuotientMap};
 
 /// A prime field plonk2pil converts an r1cs over.
 ///
 /// A trait of its own because what it adds is plonk2pil's, not the field's: the prime an r1cs names
 /// and how it spells an element, and the constants the PIL std builds its connection argument from.
-pub trait PlonkField: PrimeField {
+/// [`ExecField`] is how the `.exec` plonk2pil writes spells one.
+pub trait PlonkField: PrimeField + ExecField {
     /// The prime, as an r1cs header names it.
     const PRIME: R1csPrime;
 
@@ -42,7 +45,7 @@ pub trait PlonkField: PrimeField {
 pub enum R1csPrime {
     /// `2^64 − 2^32 + 1`, the STARK recursion's.
     Goldilocks,
-    /// The order of BN128's groups (circom's `bn128`).
+    /// The order of BN128's groups (circom's `bn128`), the final SNARK wrap's.
     Bn128,
 }
 
@@ -258,6 +261,14 @@ mod tests {
         assert_eq!(Bn128::from_canonical_le(&p_minus(&r)), Some(Bn128::NEG_ONE));
         assert_eq!(Bn128::from_canonical_le(&r), None, "r itself is not canonical");
         assert_eq!(Bn128::from_canonical_le(&p), None, "8 bytes are not an element of Fr");
+    }
+
+    /// An `.exec` coefficient is as wide as an element in the r1cs: a word for Goldilocks, and for
+    /// BN128 the 32 bytes of the original pil-fflonk's `Fr`.
+    #[test]
+    fn an_exec_coefficient_is_as_wide_as_an_r1cs_element() {
+        assert_eq!(Goldilocks::COEF_WORDS * 8, n8::<Goldilocks>());
+        assert_eq!(Bn128::COEF_WORDS * 8, n8::<Bn128>());
     }
 
     /// `prime − 1`, in the same little-endian width.

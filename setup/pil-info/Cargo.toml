@@ -1,6 +1,6 @@
 [package]
 name = "pil-info"
-description = "Field-parameterised symbolic analysis of a pilout: the passes of the STARK setup"
+description = "Field-parameterised symbolic analysis of a pilout, shared by the STARK and pilfflonk setups"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }

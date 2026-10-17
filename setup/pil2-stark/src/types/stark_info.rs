@@ -511,14 +511,20 @@ impl TryFrom<&crate::pil::gen_code::ExpressionsInfo> for ExpressionsInfo {
     }
 }
 
-/// Fails on a number that is not a Goldilocks element, and on an operand of an unknown type.
+/// Fails on a number that is not a Goldilocks element, on an operand of an unknown type, and on the
+/// verifier code of a backend that does not open with FRI: the STARK verifier needs the
+/// `queryVerifier`.
 impl TryFrom<&crate::pil::gen_code::VerifierInfo> for VerifierInfo {
     type Error = anyhow::Error;
 
     fn try_from(vi: &crate::pil::gen_code::VerifierInfo) -> Result<Self> {
+        let query_verifier = vi
+            .query_verifier
+            .as_ref()
+            .ok_or_else(|| anyhow!("the STARK verifier needs a queryVerifier, which only the DEEP opening has"))?;
         Ok(VerifierInfo {
             q_verifier: expression_entry_to_exp_code(&vi.q_verifier).context("the qVerifier")?,
-            query_verifier: expression_entry_to_exp_code(&vi.query_verifier).context("the queryVerifier")?,
+            query_verifier: expression_entry_to_exp_code(query_verifier).context("the queryVerifier")?,
         })
     }
 }

@@ -50,6 +50,10 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub sctx_recursive2: Option<SetupCtx<F>>,
     pub setup_vadcop_final: Option<Setup<F>>,
     pub setup_vadcop_final_compressed: Option<Setup<F>>,
+    /// The key's recursivef (setup-recursivef, blake3): loaded when the key's hash is blake3 and it
+    /// has one, as the key's other setups are; the final SNARK wraps it
+    /// (`ProofMan::generate_final_snark_proof`).
+    pub setup_recursivef: Option<Setup<F>>,
     pub max_compact_trace_size: usize,
     pub max_const_size: usize,
     pub max_const_tree_size: usize,
@@ -86,7 +90,8 @@ pub enum CacheSetKind {
     Lru,
     /// Pinned, one slot per airgroup.
     Recursive2,
-    /// vadcop_final and its compressed variant: pinned when the planner has room, else LRU.
+    /// vadcop_final, its compressed variant and a blake3 key's recursivef: pinned when the planner
+    /// has room, else LRU.
     Final,
 }
 
@@ -105,6 +110,7 @@ fn cache_sets<'a, F: PrimeField64>(
     recursive2: &'a SetupCtx<F>,
     vadcop_final: &'a Setup<F>,
     vadcop_final_compressed: Option<&'a Setup<F>>,
+    recursivef: Option<&'a Setup<F>>,
 ) -> ProofmanResult<Vec<CacheSet<'a, F>>> {
     let mut sets = Vec::new();
     for (ag, group) in global_info.airs.iter().enumerate() {
@@ -131,7 +137,7 @@ fn cache_sets<'a, F: PrimeField64>(
             kind: CacheSetKind::Recursive2,
         });
     }
-    for setup in std::iter::once(vadcop_final).chain(vadcop_final_compressed) {
+    for setup in std::iter::once(vadcop_final).chain(vadcop_final_compressed).chain(recursivef) {
         sets.push(CacheSet { setup, airgroup_id: 0, air_id: 0, kind: CacheSetKind::Final });
     }
     Ok(sets)
@@ -147,14 +153,17 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             self.sctx_recursive2.as_ref().unwrap(),
             self.setup_vadcop_final.as_ref().unwrap(),
             self.setup_vadcop_final_compressed.as_ref(),
+            self.setup_recursivef.as_ref(),
         )
     }
 
+    /// `final_snark`: the run makes final SNARKs, so a blake3 key's recursivef is loaded.
     pub fn new(
         global_info: &GlobalInfo,
         verify_constraints: bool,
         aggregation: bool,
         gpu: bool,
+        final_snark: bool,
     ) -> ProofmanResult<Self> {
         let custom_commits_fixed = &HashMap::new();
         if aggregation {
@@ -195,6 +204,28 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 None
             };
 
+            // A Goldilocks STARK of the key's own family, the layer after the vadcop_final; the
+            // poseidon families' recursivef is setup-snark's (BN128) and the SnarkWrapper's.
+            let path = global_info.get_setup_path("recursivef");
+            let has_recursivef = PathBuf::from(format!("{}.starkinfo.json", path.display())).exists();
+            let setup_recursivef = if final_snark && global_info.hash == "blake3" && has_recursivef {
+                Some(Setup::new(
+                    &path,
+                    0,
+                    0,
+                    &GlobalInfoAir::new("RecursiveF".to_string()),
+                    &ProofType::RecursiveF,
+                    verify_constraints,
+                    gpu,
+                    None,
+                    custom_commits_fixed,
+                    false,
+                )?)
+            } else {
+                None
+            };
+            let finals = || [setup_vadcop_final_compressed.as_ref(), setup_recursivef.as_ref()].into_iter().flatten();
+
             let sets = cache_sets(
                 global_info,
                 &sctx_recursive1,
@@ -202,6 +233,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 &sctx_recursive2,
                 &setup_vadcop_final,
                 setup_vadcop_final_compressed.as_ref(),
+                setup_recursivef.as_ref(),
             )?;
             let words_of = |kind: CacheSetKind| {
                 sets.iter().filter(move |s| s.kind == kind).map(|s| s.setup.const_pols_size_packed as u64)
@@ -237,19 +269,20 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max_const_size
                 .max(sctx_recursive1.max_const_size)
                 .max(sctx_recursive2.max_const_size)
-                .max(setup_vadcop_final.const_pols_size);
+                .max(setup_vadcop_final.const_pols_size)
+                .max(setup_recursivef.as_ref().map_or(0, |s| s.const_pols_size));
             let max_const_tree_size = sctx_compressor
                 .max_const_tree_size
                 .max(sctx_recursive1.max_const_tree_size)
                 .max(sctx_recursive2.max_const_tree_size)
                 .max(setup_vadcop_final.const_tree_size)
-                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.const_tree_size));
+                .max(finals().map(|s| s.const_tree_size).max().unwrap_or(0));
             let max_prover_buffer_size = sctx_compressor
                 .max_prover_buffer_size
                 .max(sctx_recursive1.max_prover_buffer_size)
                 .max(sctx_recursive2.max_prover_buffer_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize)
-                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.prover_buffer_size as usize));
+                .max(finals().map(|s| s.prover_buffer_size as usize).max().unwrap_or(0));
 
             // Recursive-capable buffers = prover buffer (mapTotalN) + witness tail: the room past the
             // proof layout where the recursive proof's COMPACT host trace lands (staging cols x N:
@@ -265,6 +298,9 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             let vadcop_final_compressed_tail = setup_vadcop_final_compressed
                 .as_ref()
                 .map_or(0, |s| (recursion_staging_cols(s, gpu) * (1 << s.stark_info.stark_struct.n_bits)) as usize);
+            let recursivef_tail = setup_recursivef
+                .as_ref()
+                .map_or(0, |s| (recursion_staging_cols(s, gpu) * (1 << s.stark_info.stark_struct.n_bits)) as usize);
             let max_prover_recursive2_buffer_size = (sctx_recursive2.max_prover_buffer_size
                 + sctx_recursive2.max_compact_trace_size)
                 .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_compact_trace_size);
@@ -278,7 +314,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                     setup_vadcop_final_compressed
                         .as_ref()
                         .map_or(0, |c| c.prover_buffer_size as usize + vadcop_final_compressed_tail),
-                );
+                )
+                .max(setup_recursivef.as_ref().map_or(0, |c| c.prover_buffer_size as usize + recursivef_tail));
 
             // This floors every non-recursive GPU stream class, so which term dominates decides
             // whether a regular class fits at all.
@@ -301,13 +338,14 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_pinned_proof_size)
                 .max(sctx_recursive2.max_pinned_proof_size)
                 .max(setup_vadcop_final.proof_size as usize)
-                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |c| c.proof_size as usize));
+                .max(finals().map(|c| c.proof_size as usize).max().unwrap_or(0));
 
             let max_n_bits_ext = sctx_compressor
                 .max_n_bits_ext
                 .max(sctx_recursive1.max_n_bits_ext)
                 .max(sctx_recursive2.max_n_bits_ext)
-                .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize);
+                .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize)
+                .max(setup_recursivef.as_ref().map_or(0, |s| s.stark_info.stark_struct.n_bits_ext as usize));
 
             // Largest compact (staging-width) trace over every recursive proof kind, compressor
             // included: they share one host pool (see MemoryHandlerRecursive::trace), and it is also
@@ -320,7 +358,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 // buffer's and stays full. Sizing the shared pool from it put every buffer at the
                 // air's full width, which is what made the pool 7x what it holds.
                 .max(vadcop_final_tail)
-                .max(vadcop_final_compressed_tail);
+                .max(vadcop_final_compressed_tail)
+                .max(recursivef_tail);
 
             Ok(SetupsVadcop {
                 sctx_compressor: Some(sctx_compressor),
@@ -328,6 +367,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 sctx_recursive2: Some(sctx_recursive2),
                 setup_vadcop_final: Some(setup_vadcop_final),
                 setup_vadcop_final_compressed,
+                setup_recursivef,
                 max_const_tree_size,
                 max_const_size,
                 max_prover_buffer_size,
@@ -353,6 +393,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 sctx_recursive2: None,
                 setup_vadcop_final: None,
                 setup_vadcop_final_compressed: None,
+                setup_recursivef: None,
                 total_const_pols_size: 0,
                 cache_big_words: 0,
                 cache_normal_words: 0,
@@ -391,8 +432,13 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         {
             sizes.extend(sctx.total_signal_nos());
         }
-        for setup in
-            [self.setup_vadcop_final.as_ref(), self.setup_vadcop_final_compressed.as_ref()].into_iter().flatten()
+        for setup in [
+            self.setup_vadcop_final.as_ref(),
+            self.setup_vadcop_final_compressed.as_ref(),
+            self.setup_recursivef.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             if let Some(n) = setup.total_signal_no {
                 sizes.push(n as usize);
@@ -411,6 +457,11 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             // stage (blake3's default) legitimately have none.
             ProofType::VadcopFinalCompressed => self.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
                 ProofmanError::InvalidSetup("Proving key was built without the vadcop_final_compressed stage".into())
+            }),
+            ProofType::RecursiveF => self.setup_recursivef.as_ref().ok_or_else(|| {
+                ProofmanError::InvalidSetup(
+                    "the proving key has no recursivef: a blake3 key's comes from setup-recursivef".into(),
+                )
             }),
             _ => Err(ProofmanError::InvalidSetup("Invalid setup type".into())),
         }

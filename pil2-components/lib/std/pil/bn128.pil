@@ -61,4 +61,5 @@ const int Bn128_Gen[29] = [
 //
 // It is F.k = nqr^(2^s) of ffjavascript's F1Field over r (nqr = 5, s = 28), as Goldilocks_k is F.k over Goldilocks,
 // so it is the k of pilcom's getKs, which pil-stark's fflonk used for its connections.
+// pilfflonk/tests/std_bn128.rs checks the constants of this file numerically.
 const int Bn128_k = 5266228460530200451425464971825753823072228272503274930591399474110020095489;

@@ -45,6 +45,7 @@ use crate::{custom_commit_reserved_words, custom_commit_words_per_row, GlobalInf
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
+use crate::exec_format::{EXEC_FORMAT_VERSION, EXEC_FORMAT_VERSION_WIDE, EXEC_HEADER_WORDS, EXEC_MAGIC, EXEC_MAGIC_MASK};
 
 pub type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
@@ -134,13 +135,6 @@ impl<F: PrimeField64> Drop for Setup<F> {
     }
 }
 
-/// Magic and layout version of the `.exec` file, mirroring `EXEC_MAGIC` / `EXEC_FORMAT_VERSION`
-/// in stark-recurser's plonk2pil, which writes them, and `exec_layout.hpp`, which also reads them.
-const EXEC_MAGIC: u64 = 0x5058_4543_0000_0000;
-const EXEC_MAGIC_MASK: u64 = 0xFFFF_FFFF_0000_0000;
-const EXEC_FORMAT_VERSION: u64 = 2;
-const EXEC_HEADER_WORDS: usize = 4;
-
 /// Dimensions from a loaded `.exec` buffer's header.
 pub struct ExecHeader {
     pub n_adds: u64,
@@ -162,9 +156,11 @@ pub fn exec_header(exec: &[u64]) -> ExecHeader {
 
 /// Reads a whole `.exec` file into memory and validates its header.
 ///
-/// The layout is `exec_layout.hpp`'s: magic and version, `n_adds`, then the map's row and column
-/// extent, then the additions, the map as u32 pairs, and a gate-band section. This reads to the
-/// end of the file rather than to the map's length, so the band section comes along.
+/// The layout is version 2 of [`exec_format`](crate::exec_format), Goldilocks', the only one the
+/// STARK prover reads: magic and version, `n_adds`, then the map's row and column extent, then the
+/// additions, the map as u32 pairs, and a gate-band section. This reads to the end of the file
+/// rather than to the map's length, so the band section comes along. A version 3 file, the BN128
+/// exec of the pilfflonk wrap, is refused as one.
 pub fn load_exec_file(exec_filename: &str, n_cols: u64) -> ProofmanResult<Vec<u64>> {
     let mut file = File::open(exec_filename)?;
 
@@ -196,6 +192,12 @@ pub fn load_exec_file(exec_filename: &str, n_cols: u64) -> ProofmanResult<Vec<u6
         )));
     }
     let version = header[0] & !EXEC_MAGIC_MASK;
+    if version == EXEC_FORMAT_VERSION_WIDE {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} is format version {version}, the BN128 exec plonk2pil writes for \
+             the pilfflonk wrap; the STARK prover reads only version {EXEC_FORMAT_VERSION}, over Goldilocks"
+        )));
+    }
     if version != EXEC_FORMAT_VERSION {
         return Err(ProofmanError::InvalidSetup(format!(
             "exec file {exec_filename} is format version {version}, but this build reads version \
@@ -377,6 +379,9 @@ impl<F: PrimeField64> Setup<F> {
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let recursive = setup_type != &ProofType::Basic || self_contained;
             let recursive_final = setup_type == &ProofType::RecursiveF;
+            // The poseidon families' recursivef is a BN128 STARK, with a prover of its own (the
+            // SnarkWrapper's); blake3's is a Goldilocks one, a setup as the vadcop_final's.
+            let bn128_recursive_final = recursive_final && stark_info.stark_struct.verification_hash_type == "BN128";
             let p_stark_info =
                 stark_info_new_c(stark_info_path.as_str(), recursive_final, recursive, verify_constraints, false, gpu);
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
@@ -395,7 +400,7 @@ impl<F: PrimeField64> Setup<F> {
 
             let verkey_file = setup_path.display().to_string() + ".verkey.json";
 
-            let verkey = if setup_type == &ProofType::RecursiveF {
+            let verkey = if bn128_recursive_final {
                 vec![]
             } else {
                 let mut file = File::open(&verkey_file).unwrap_or_else(|e| {
@@ -428,7 +433,7 @@ impl<F: PrimeField64> Setup<F> {
                 )
             } else {
                 let mut const_pols_size_packed = 0;
-                if gpu && setup_type != &ProofType::RecursiveF {
+                if gpu && !bn128_recursive_final {
                     let mut header = [0u8; 8];
                     let words_per_row: u64 =
                         match File::open(&const_pols_path).and_then(|mut f| f.read_exact(&mut header)) {
@@ -615,6 +620,12 @@ impl<F: PrimeField64> Setup<F> {
             n_operations_quotient,
             gpu,
         })
+    }
+
+    /// The poseidon families' recursivef: a BN128 STARK, which the SnarkWrapper proves with its own
+    /// buffers and const tree. blake3's recursivef is a Goldilocks setup like any other.
+    pub fn is_bn128_recursivef(&self) -> bool {
+        self.setup_type == ProofType::RecursiveF && self.stark_info.stark_struct.verification_hash_type == "BN128"
     }
 
     pub fn get_vk(&self) -> Vec<u64> {

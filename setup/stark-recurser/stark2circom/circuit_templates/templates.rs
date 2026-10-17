@@ -27,6 +27,7 @@ use super::calculate_hashes::gen_calculate_hashes;
 use super::verify_global_challenge::gen_verify_global_challenge;
 use super::verify_global_constraints::gen_verify_global_constraints;
 use super::CircomGenOptions;
+use crate::stark2circom::circom_verifier::bn128::uses_custom_templates;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -96,7 +97,10 @@ pub fn gen_recursion_final(
     let stark_signals = define_stark_inputs(stark_info, "", &def_opts);
     let stark_assign = assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None);
 
-    let sha256_template = publics.map(gen_get_sha256_inputs).unwrap_or_default();
+    // The circuit includes the recursivef's verifier: when that one uses custom templates, circom
+    // wants the pragma here too, and the publics hash takes the verifier's LessThanGoldilocks.
+    let custom_templates = uses_custom_templates(stark_info);
+    let sha256_template = publics.map(|p| gen_get_sha256_inputs(p, custom_templates)).unwrap_or_default();
     let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0) as usize;
     // Incoming `publics` = [rootCVadcopFinal(4) | is_vadcop_final_proof(1) | real publics].
     // rootC takes the first 4, the flag the next 1, and the remaining
@@ -105,6 +109,7 @@ pub fn gen_recursion_final(
     let n_publics_proof = n_publics.saturating_sub(5);
 
     let mut ctx = TeraCtx::new();
+    ctx.insert("custom_templates", &custom_templates);
     ctx.insert("verifier_filenames", verifier_filenames);
     ctx.insert("sha256_template", &sha256_template);
     ctx.insert("stark_signals", &stark_signals);
@@ -116,11 +121,76 @@ pub fn gen_recursion_final(
 
 // ── Solidity contracts ────────────────────────────────────────────────────────
 
-/// Port of `src/recursion/contracts/verifier.sol.ejs`.
-/// `version` is what the contract's `VERSION()` returns.
-pub fn gen_solidity(name: &str, version: &str, root_c: &[u64; 4], publics: Option<&Value>, use_fflonk: bool) -> String {
+/// The verifier of the final SNARK that the project's Solidity verifier ([`gen_solidity`]) extends:
+/// the contract that checks the final circuit's proof, where it is, and the proof its `verifyProof`
+/// takes, with the publics hash as its one public.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SnarkVerifier {
+    /// snarkjs's `FflonkVerifier`, in `FflonkVerifier.sol` beside the project's: a proof of 24
+    /// `bytes32`.
+    Fflonk,
+    /// snarkjs's `PlonkVerifier`, in `PlonkVerifier.sol` beside the project's: a proof of 24
+    /// `uint256`.
+    Plonk,
+    /// pilfflonk's `PilfflonkVerifier`, the verifier of the final circuit's vkey
+    /// (`pilfflonk.verifier.sol`): a proof of `words` `bytes32`, the vkey's calldata
+    /// (pilfflonk/docs/formats.md#calldata), whose number depends on the vkey.
+    Pilfflonk {
+        /// The path the project's verifier imports `pilfflonk.verifier.sol` from.
+        source: String,
+        /// The words of the `proof` argument of its `verifyProof`.
+        words: u64,
+    },
+}
+
+impl SnarkVerifier {
+    /// The contract's name, without `Verifier`.
+    fn name(&self) -> &'static str {
+        match self {
+            SnarkVerifier::Fflonk => "Fflonk",
+            SnarkVerifier::Plonk => "Plonk",
+            SnarkVerifier::Pilfflonk { .. } => "Pilfflonk",
+        }
+    }
+
+    /// How the interface names the inherited verifier.
+    fn label(&self) -> &'static str {
+        match self {
+            SnarkVerifier::Fflonk => "FFLONK",
+            SnarkVerifier::Plonk => "PLONK",
+            SnarkVerifier::Pilfflonk { .. } => "pilfflonk",
+        }
+    }
+
+    /// The path the project's verifier imports the contract from.
+    fn source(&self) -> String {
+        match self {
+            SnarkVerifier::Fflonk | SnarkVerifier::Plonk => format!("./{}Verifier.sol", self.name()),
+            SnarkVerifier::Pilfflonk { source, .. } => source.clone(),
+        }
+    }
+
+    /// The statement that decodes `proofBytes` into `proofDecoded`, the `proof` of `verifyProof`.
+    fn proof_decode(&self) -> String {
+        let (word, words) = match self {
+            SnarkVerifier::Fflonk => ("bytes32", 24),
+            SnarkVerifier::Plonk => ("uint256", 24),
+            SnarkVerifier::Pilfflonk { words, .. } => ("bytes32", *words),
+        };
+        format!("{word}[{words}] memory proofDecoded = abi.decode(proofBytes, ({word}[{words}]));")
+    }
+}
+
+/// Port of `src/recursion/contracts/verifier.sol.ejs`: the project's verifier, which extends
+/// `verifier`. `version` is what the contract's `VERSION()` returns.
+pub fn gen_solidity(
+    name: &str,
+    version: &str,
+    root_c: &[u64; 4],
+    publics: Option<&Value>,
+    verifier: &SnarkVerifier,
+) -> String {
     let camel = capitalise(name);
-    let snark = if use_fflonk { "Fflonk" } else { "Plonk" };
 
     let (has_program_vk, first_is_vk) = publics
         .and_then(|v| v["definitions"].as_array())
@@ -131,15 +201,10 @@ pub fn gen_solidity(name: &str, version: &str, root_c: &[u64; 4], publics: Optio
         })
         .unwrap_or((false, false));
 
-    let proof_decode = if use_fflonk {
-        "bytes32[24] memory proofDecoded = abi.decode(proofBytes, (bytes32[24]));"
-    } else {
-        "uint256[24] memory proofDecoded = abi.decode(proofBytes, (uint256[24]));"
-    };
-
     let mut ctx = TeraCtx::new();
     ctx.insert("name", &camel);
-    ctx.insert("snark", snark);
+    ctx.insert("snark", verifier.name());
+    ctx.insert("snark_source", &verifier.source());
     ctx.insert("version", version);
     ctx.insert("root_c_0", &root_c[0]);
     ctx.insert("root_c_1", &root_c[1]);
@@ -147,13 +212,13 @@ pub fn gen_solidity(name: &str, version: &str, root_c: &[u64; 4], publics: Optio
     ctx.insert("root_c_3", &root_c[3]);
     ctx.insert("has_program_vk", &has_program_vk);
     ctx.insert("first_is_vk", &first_is_vk);
-    ctx.insert("proof_decode", proof_decode);
+    ctx.insert("proof_decode", &verifier.proof_decode());
 
     render(VERIFIER_SOL_TMPL, &ctx).unwrap_or_else(|e| panic!("verifier.sol template error: {e:#}"))
 }
 
 /// Port of `src/recursion/contracts/iverifier.sol.ejs`.
-pub fn gen_iverifier(name: &str, publics: Option<&Value>, use_fflonk: bool) -> String {
+pub fn gen_iverifier(name: &str, publics: Option<&Value>, verifier: &SnarkVerifier) -> String {
     let camel = capitalise(name);
 
     let has_program_vk = publics
@@ -167,7 +232,7 @@ pub fn gen_iverifier(name: &str, publics: Option<&Value>, use_fflonk: bool) -> S
 
     let mut ctx = TeraCtx::new();
     ctx.insert("name", &camel);
-    ctx.insert("snark_label", if use_fflonk { "FFLONK" } else { "PLONK" });
+    ctx.insert("snark_label", verifier.label());
     ctx.insert("has_program_vk", &has_program_vk);
 
     render(IVERIFIER_SOL_TMPL, &ctx).unwrap_or_else(|e| panic!("iverifier.sol template error: {e:#}"))
@@ -627,6 +692,228 @@ pub fn gen_vadcop_final(
 }
 
 #[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
+
+    use super::*;
+    use crate::stark2circom::circom_verifier::{gen_stark_verifier_bn128, Pil2CircomOptions};
+    use crate::plonk2pil::r1cs_types::read_r1cs_from_bytes;
+    use proofman_fields::Bn128;
+    use serde_json::json;
+
+    /// A recursivef starkinfo, whose trees are custom or not, with what the final circuit and the
+    /// head of its verifier read.
+    fn recursivef_stark_info(merkle_tree_custom: bool) -> Value {
+        json!({
+            "starkStruct": {
+                "verificationHashType": "BN128",
+                "numQueries": 4,
+                "nBits": 6,
+                "nBitsExt": 10,
+                "grindingBitsQueries": 0,
+                "merkleTreeArity": 4,
+                "merkleTreeCustom": merkle_tree_custom,
+                "lastLevelVerification": 0,
+                "hashCommits": false,
+                "foldingFactors": [4],
+                "logDegrees": [6, 2],
+                "logDomainSizes": [10, 6]
+            },
+            "nStages": 2,
+            "nPublics": 6,
+            "nConstants": 3,
+            "evMap": [],
+            "cmPolsMap": [],
+            "customCommits": [],
+            "customCommitsMap": [],
+            "challengesMap": [],
+            "boundaries": [{"name": "everyRow"}],
+            "airgroupValuesMap": [],
+            "airValuesMap": [],
+            "proofValuesMap": [],
+            "mapSectionsN": {"cm1": 2, "cm2": 2, "cm3": 2},
+            "openingPoints": [],
+            "qDeg": 1
+        })
+    }
+
+    /// The final circuit around a recursivef whose trees are custom or not.
+    fn final_circuit(merkle_tree_custom: bool) -> String {
+        let opts = CircomGenOptions {
+            airgroup_id: None,
+            has_compressor: false,
+            has_recursion: false,
+            is_final: true,
+            agg_arity: 0,
+            batch_size: 1,
+        };
+        let verifiers = ["recursivef.verifier.circom".to_string()];
+        gen_recursion_final(&recursivef_stark_info(merkle_tree_custom), &verifiers, Some(&Value::Null), &opts).unwrap()
+    }
+
+    #[test]
+    fn final_declares_custom_templates_for_custom_trees() {
+        let out = final_circuit(true);
+        assert!(
+            out.starts_with(
+                "pragma circom 2.1.0;\npragma custom_templates;\n\n    include \"recursivef.verifier.circom\";\n"
+            ),
+            "out:\n{out}"
+        );
+    }
+
+    #[test]
+    fn final_without_custom_trees_is_unchanged() {
+        let out = final_circuit(false);
+        assert!(
+            out.starts_with("pragma circom 2.1.0;\n\n    include \"recursivef.verifier.circom\";\n"),
+            "out:\n{out}"
+        );
+        assert!(!out.contains("custom_templates"), "out:\n{out}");
+    }
+
+    /// The project's verifier of a program whose publics end with its verification key, extending
+    /// `verifier`.
+    fn project_verifier(verifier: &SnarkVerifier) -> String {
+        let publics = json!({"definitions": [{"name": "out"}, {"name": "rom_root", "verificationKey": true}]});
+        gen_solidity("build", "v0", &[1, 2, 3, u64::MAX], Some(&publics), verifier)
+    }
+
+    /// The lines of `verifier`'s project verifier that are not FFLONK's.
+    fn lines_unlike_fflonk(verifier: &SnarkVerifier) -> Vec<String> {
+        let fflonk = project_verifier(&SnarkVerifier::Fflonk);
+        let out = project_verifier(verifier);
+        assert_eq!(out.lines().count(), fflonk.lines().count(), "out:\n{out}");
+        out.lines()
+            .zip(fflonk.lines())
+            .filter(|(line, other)| line != other)
+            .map(|(line, _)| line.trim().to_string())
+            .collect()
+    }
+
+    /// snarkjs's verifiers are beside the project's, and take a proof of 24 words.
+    #[test]
+    fn the_snarkjs_verifiers_are_imported_from_beside_the_contract() {
+        let fflonk = project_verifier(&SnarkVerifier::Fflonk);
+        for line in [
+            "import {FflonkVerifier} from \"./FflonkVerifier.sol\";",
+            "contract BuildVerifier is FflonkVerifier, IBuildVerifier {",
+            "bytes32[24] memory proofDecoded = abi.decode(proofBytes, (bytes32[24]));",
+            "bool success = this.verifyProof(proofDecoded, [publicValuesDigest]);",
+        ] {
+            assert!(fflonk.contains(line), "{line} missing from:\n{fflonk}");
+        }
+        assert_eq!(
+            lines_unlike_fflonk(&SnarkVerifier::Plonk),
+            [
+                "import {PlonkVerifier} from \"./PlonkVerifier.sol\";",
+                "contract BuildVerifier is PlonkVerifier, IBuildVerifier {",
+                "uint256[24] memory proofDecoded = abi.decode(proofBytes, (uint256[24]));",
+            ]
+        );
+    }
+
+    /// pilfflonk's verifier is imported from where the key has it, and takes a proof of the words of
+    /// the vkey's calldata; the rest of the contract is FFLONK's.
+    #[test]
+    fn the_pilfflonk_verifier_is_imported_from_its_source_with_a_proof_of_its_words() {
+        let source = "./provingKey/final/pilfflonk/pilfflonk.verifier.sol".to_string();
+        assert_eq!(
+            lines_unlike_fflonk(&SnarkVerifier::Pilfflonk { source, words: 47 }),
+            [
+                "import {PilfflonkVerifier} from \"./provingKey/final/pilfflonk/pilfflonk.verifier.sol\";",
+                "contract BuildVerifier is PilfflonkVerifier, IBuildVerifier {",
+                "bytes32[47] memory proofDecoded = abi.decode(proofBytes, (bytes32[47]));",
+            ]
+        );
+    }
+
+    /// The include graph of the final circuit around a recursivef with custom trees, which circom
+    /// checks before anything else: every file on the way to a custom template declares
+    /// `pragma custom_templates;` (CG04 otherwise), and no template is defined twice (T2008). The
+    /// final circuit's head (its pragmas, the verifier's include and the publics hash, with its own
+    /// includes) and the verifier's (its pragmas and includes), as the templates render them, are
+    /// compiled over the libraries of the snark setup, with a main that instantiates
+    /// `CustomPoseidon`, `LessThanGoldilocks` and two `RangeCheck`s, whose custom gates the r1cs
+    /// has. The whole circuit, from a real recursivef, is compiled by setup-snark's
+    /// `pilfflonk_final_circuit` test.
+    ///
+    /// Needs circomlib, from `npm install` in `setup/pil2-stark`; without it the test says so and
+    /// passes.
+    #[test]
+    fn custom_final_includes_compile() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let circomlib = root.join("setup/pil2-stark/node_modules/circomlib/circuits");
+        if !circomlib.is_dir() {
+            eprintln!("skipped: {} not present (npm install in setup/pil2-stark)", circomlib.display());
+            return;
+        }
+        let circom = root.join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" });
+        let libraries = Path::new(env!("CARGO_MANIFEST_DIR")).join("stark2circom/circom_verifier");
+
+        let stark_info = recursivef_stark_info(true);
+        let verifier_info = json!({ "qVerifier": { "code": [] }, "queryVerifier": { "code": [] } });
+        let opts = Pil2CircomOptions { skip_main: true, ..Pil2CircomOptions::default() };
+        let root_c = ["1".to_string(), "0".to_string(), "0".to_string(), "0".to_string()];
+        let verifier = gen_stark_verifier_bn128(Some(&root_c), &stark_info, &verifier_info, &opts).unwrap();
+        let verifier_head = &verifier[..verifier.find("\ntemplate ").expect("a template in the verifier")];
+        let circuit = final_circuit(true);
+        let circuit_head = &circuit[..circuit.find("template Main()").expect("the final circuit's Main")];
+
+        let dir = std::env::temp_dir().join(format!("custom_final_includes_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("recursivef.verifier.circom"), verifier_head).unwrap();
+        const MAIN: &str = r#"template Main() {
+    signal input in[4];
+    signal output hash[5] <== CustomPoseidon(4)(in, 0);
+    signal output gl <== LessThanGoldilocks()(in[0]);
+    RangeCheck(65)(in[1]);
+    RangeCheck(154)(in[2]);
+}
+
+component main = Main();
+"#;
+        fs::write(dir.join("final.circom"), format!("{circuit_head}{MAIN}")).unwrap();
+
+        // The libraries of `snark_setup.rs`'s final compile, in its order.
+        let out = Command::new(&circom)
+            .arg(dir.join("final.circom"))
+            .args(["--O1", "--r1cs", "-o"])
+            .arg(&dir)
+            .arg("-l")
+            .arg(libraries.join("helper_circuits"))
+            .arg("-l")
+            .arg(libraries.join("circuits.bn128"))
+            .arg("-l")
+            .arg(&circomlib)
+            .output()
+            .unwrap_or_else(|e| panic!("run {}: {e}", circom.display()));
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "circom failed:\n{stderr}{}", String::from_utf8_lossy(&out.stdout));
+
+        // The custom templates are compiled as such, the custom ones of LessThanGoldilocks among
+        // them: a Num2Bytes(64) on its in and one on in + 2^64 - p. RangeCheck(154) takes two, on
+        // its low 80 bits and on the rest.
+        let r1cs = read_r1cs_from_bytes::<Bn128>(&fs::read(dir.join("final.r1cs")).unwrap()).unwrap();
+        let gate = |id: u32| {
+            let gate = &r1cs.custom_gates[id as usize];
+            let parameters: Vec<String> = gate.parameters.iter().map(Bn128::to_string).collect();
+            format!("{}({})", gate.template_name, parameters.join(", "))
+        };
+        let mut uses: Vec<String> = r1cs.custom_gates_uses.iter().map(|gate_use| gate(gate_use.id)).collect();
+        uses.sort();
+        assert_eq!(
+            uses,
+            ["Num2Bytes(64)", "Num2Bytes(64)", "Num2Bytes(65)", "Num2Bytes(74)", "Num2Bytes(80)", "PoseidonT(5)"]
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
 mod recursive1_batch_tests {
     use super::*;
 
@@ -763,7 +1050,7 @@ mod recursive1_batch_tests {
 }
 
 #[cfg(test)]
-mod tests {
+mod solidity_version_tests {
     use super::*;
 
     fn zisk_publics() -> Value {
@@ -779,7 +1066,7 @@ mod tests {
 
     #[test]
     fn the_verifier_returns_the_given_version() {
-        let sol = gen_solidity("zisk", "v9.9.9-test", &[1, 2, 3, 4], Some(&zisk_publics()), false);
+        let sol = gen_solidity("zisk", "v9.9.9-test", &[1, 2, 3, 4], Some(&zisk_publics()), &SnarkVerifier::Plonk);
         assert!(sol.contains(r#"return "v9.9.9-test";"#), "{sol}");
         assert!(sol.contains("contract ZiskVerifier is PlonkVerifier, IZiskVerifier"));
         assert!(sol.contains("must be a constant of the calling contract"));
@@ -788,17 +1075,17 @@ mod tests {
     /// The interface carries the key-binding rules a caller needs to verify safely.
     #[test]
     fn the_interface_documents_how_to_pin_the_keys() {
-        let isol = gen_iverifier("zisk", Some(&zisk_publics()), false);
+        let isol = gen_iverifier("zisk", Some(&zisk_publics()), &SnarkVerifier::Plonk);
         assert!(isol.contains("Both keys MUST be constants of the calling contract"), "{isol}");
         assert!(isol.contains("@param programVK"));
         assert!(isol.contains("@param rootCVadcopFinal"));
         assert!(isol.contains("the inherited raw PLONK verifier"));
 
-        let fflonk = gen_iverifier("zisk", Some(&zisk_publics()), true);
+        let fflonk = gen_iverifier("zisk", Some(&zisk_publics()), &SnarkVerifier::Fflonk);
         assert!(fflonk.contains("the inherited raw FFLONK verifier"));
 
         // Without a program key there is one key to pin, and no programVK parameter.
-        let no_vk = gen_iverifier("zisk", None, false);
+        let no_vk = gen_iverifier("zisk", None, &SnarkVerifier::Plonk);
         assert!(no_vk.contains("The root MUST be a constant of the calling contract"), "{no_vk}");
         assert!(!no_vk.contains("programVK"));
     }

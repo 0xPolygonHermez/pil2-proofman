@@ -106,7 +106,7 @@ fn a_bn128_circuit_converts_to_plonk_gates_that_hold_on_its_witness() {
     let (merged_cs, merged_adds, _) = r1cs2plonk_merged(&r1cs, true);
     assert!(plonk_holds(&merged_cs, &merged_adds, &witness), "the copy-merged gates fail on the witness");
 
-    // plonk2pil's setups are over Goldilocks: it refuses the r1cs, saying so.
-    let err = plonk2pil(&r1cs_bytes, "aggregation", &PlonkOptions::default()).unwrap_err().to_string();
-    assert!(err.contains("the r1cs is over BN128"), "{err}");
+    // The STARK recursion's families still refuse it: they are over Goldilocks.
+    let err = plonk2pil::<u64>(&r1cs_bytes, "aggregation", &PlonkOptions::default()).unwrap_err().to_string();
+    assert!(err.contains("an r1cs over BN128 is set up by the PoseidonBN128 family"), "{err}");
 }

@@ -78,6 +78,7 @@ pub fn pil_info(
 
     let passes::PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, deep_exp_id, q_deg, boundaries } =
         passes::pil_info(prepared, airgroup_id, air_id, &cfg, options).with_context(passes_failed)?;
+    let deep_exp_id = deep_exp_id.context("the DEEP opening yielded no deepExpId")?;
     let n_stages = setup.n_stages;
     let opening_points = &setup.opening_points;
 
