@@ -2764,6 +2764,15 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     uint32_t gpuId = d_buffers->gpuId;
     cudaSetDevice(gpuId);
 
+    // A buffer of its own that reserve_recursivef_aux_trace_gpu could not grow nor restore.
+    if (d_buffers->owns_aux_trace && d_buffers->aux_trace_size < proverBufferSize) {
+        CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
+        d_buffers->d_aux_trace = nullptr;
+        d_buffers->aux_trace_size = 0;
+        CHECKCUDAERR(cudaMalloc((void **)&d_buffers->d_aux_trace, proverBufferSize));
+        d_buffers->aux_trace_size = proverBufferSize;
+    }
+
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
     uint64_t sizeWitness = N * nCols * sizeof(Goldilocks::Element);
@@ -4701,8 +4710,24 @@ void *reserve_recursivef_aux_trace_gpu(void *d_buffers_recursivef, uint64_t byte
             *out_bytes = most;
             return nullptr;
         }
+        const uint64_t held = d_buffers->aux_trace_size;
         CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
-        CHECKCUDAERR(cudaMalloc((void **)&d_buffers->d_aux_trace, bytes));
+        d_buffers->d_aux_trace = nullptr;
+        d_buffers->aux_trace_size = 0;
+        if (cudaMalloc((void **)&d_buffers->d_aux_trace, bytes) != cudaSuccess) {
+            // Refused too, with the buffer back at its size, or none if the device no longer holds
+            // that: the recursivef's next proof allocates it again (gen_recursive_proof_final_gpu).
+            cudaGetLastError();
+            d_buffers->d_aux_trace = nullptr;
+            if (held > 0 && cudaMalloc((void **)&d_buffers->d_aux_trace, held) == cudaSuccess) {
+                d_buffers->aux_trace_size = held;
+            } else {
+                cudaGetLastError();
+                d_buffers->d_aux_trace = nullptr;
+            }
+            *out_bytes = d_buffers->aux_trace_size;
+            return nullptr;
+        }
         d_buffers->aux_trace_size = bytes;
     }
     *out_bytes = d_buffers->aux_trace_size;
