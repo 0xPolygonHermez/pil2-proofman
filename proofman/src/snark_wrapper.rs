@@ -403,13 +403,7 @@ impl<F: PrimeField64> PoseidonWrap<F> {
 
         timer_stop_and_log_info!(LOADING_RECURSIVE_F_SETUP);
 
-        let aux_trace = if let Some(buffer) = _aux_trace {
-            buffer
-        } else if gpu {
-            Arc::new(Vec::new())
-        } else {
-            Arc::new(vec![F::ZERO; setup_recursivef.prover_buffer_size as usize])
-        };
+        let aux_trace = recursivef_prover_buffer(_aux_trace, gpu, setup_recursivef.prover_buffer_size as usize);
 
         let d_buffers_vadcop = if let Some(d_buffers) = d_buffers { d_buffers } else { std::ptr::null_mut() };
 
@@ -1285,6 +1279,24 @@ fn verify_pilfflonk_snark_proof(
     Err(ProofmanError::InvalidProof(format!("SNARK proof was not verified: {rejected}")))
 }
 
+/// The recursivef's host prover buffer, of `words` words on the CPU: `given`, the caller's
+/// (proofman's `aux_trace`, sized for its own proofs), if it holds that many, else one of its own.
+/// On the GPU the recursivef proves in its device buffers, and `given` (or none) is kept as it is.
+fn recursivef_prover_buffer<F: PrimeField64>(given: Option<Arc<Vec<F>>>, gpu: bool, words: usize) -> Arc<Vec<F>> {
+    match given {
+        Some(buffer) if gpu || buffer.len() >= words => buffer,
+        None if gpu => Arc::new(Vec::new()),
+        Some(short) => {
+            tracing::info!(
+                "the recursivef's prover buffer: {words} words of its own, the given one holds {}",
+                short.len()
+            );
+            Arc::new(vec![F::ZERO; words])
+        }
+        None => Arc::new(vec![F::ZERO; words]),
+    }
+}
+
 /// The recursivef's device buffers (`gen_device_buffers_recursivef_c`), freed when dropped unless
 /// handed over with [`into_raw`](Self::into_raw), so that an error does not leak them. The CPU
 /// backend has none: the pointer is null and nothing is freed.
@@ -1390,6 +1402,28 @@ mod snarkjs_verdict_tests {
         assert_eq!(snarkjs_verdict(&SnarkProtocol::Plonk, true, fflonk_ok), SnarkjsVerdict::Failed);
         for stdout in ["[INFO]  snarkJS: OK!\n", fflonk_ok] {
             assert_eq!(snarkjs_verdict(&SnarkProtocol::Pilfflonk, true, stdout), SnarkjsVerdict::Failed);
+        }
+    }
+
+    /// On the CPU the recursivef proves in the given buffer only if it holds the recursivef's words,
+    /// and else in one of its own of that many; on the GPU the given buffer, or none, is kept.
+    #[test]
+    fn the_recursivef_proves_in_the_given_buffer_only_if_it_holds_its_words() {
+        use proofman_fields::{Field, Goldilocks};
+        // (words of the given buffer, gpu) and (words of the buffer, whether it is the given one).
+        for (words_given, gpu, expected) in [
+            (Some(100), false, (100, true)),
+            (Some(101), false, (101, true)),
+            (Some(99), false, (100, false)),
+            (Some(0), false, (100, false)),
+            (None, false, (100, false)),
+            (Some(99), true, (99, true)),
+            (None, true, (0, false)),
+        ] {
+            let given = words_given.map(|words| Arc::new(vec![Goldilocks::ZERO; words]));
+            let buffer = recursivef_prover_buffer(given.clone(), gpu, 100);
+            let is_given = given.as_ref().is_some_and(|given| Arc::ptr_eq(&buffer, given));
+            assert_eq!((buffer.len(), is_given), expected, "given {words_given:?}, gpu {gpu}");
         }
     }
 
