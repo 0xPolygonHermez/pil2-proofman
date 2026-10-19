@@ -110,6 +110,8 @@ pub fn gen_recursion_final(
     ctx.insert("stark_signals", &stark_signals);
     ctx.insert("stark_assign", &stark_assign);
     ctx.insert("n_publics_proof", &n_publics_proof);
+    // Only a proof with room for a program VK can be a recurser aggregate.
+    ctx.insert("has_program_vk", &(n_publics_proof >= 4));
 
     render(FINAL_TMPL, &ctx)
 }
@@ -765,6 +767,48 @@ mod recursive1_batch_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn recursion_final(n_publics: u64) -> String {
+        let stark_info = serde_json::json!({
+            "airId": 0, "airgroupId": 0, "nStages": 2, "nPublics": n_publics, "nConstants": 2,
+            "mapSectionsN": { "cm1": 3, "cm2": 6, "cm3": 3 },
+            "customCommits": [], "evMap": [{}], "airValuesMap": [], "challengesMap": [],
+            "starkStruct": {
+                "nBits": 10, "nBitsExt": 11, "merkleTreeArity": 2, "transcriptArity": 2,
+                "merkleTreeCustom": false, "verificationHashType": "BN128",
+                "lastLevelVerification": 4, "hashCommits": true,
+                "foldingFactors": [6], "logDegrees": [10, 4], "logDomainSizes": [11, 5],
+                "numQueries": 8, "grindingBitsQueries": 24
+            }
+        });
+        let opts = CircomGenOptions {
+            airgroup_id: None,
+            has_compressor: false,
+            has_recursion: false,
+            is_final: true,
+            agg_arity: 0,
+            batch_size: 1,
+        };
+        gen_recursion_final(&stark_info, &["v.circom".into()], None, &opts).unwrap()
+    }
+
+    /// An aggregate (flag 0) must declare as its program VK the key it was verified under, or a
+    /// fold over a child verified under its own declared key would wrap under the recurser's key.
+    #[test]
+    fn recursion_final_binds_an_aggregate_program_vk_to_its_root_c() {
+        let out = recursion_final(73);
+        assert!(
+            out.contains("(1 - is_vadcop_final_proof) * (rootC[i] - publics[5 + i]) === 0;"),
+            "aggregate program VK not bound to rootC:\n{out}"
+        );
+    }
+
+    /// Fewer than four real publics leave no program VK to bind, and publics[5 + i] would not exist.
+    #[test]
+    fn recursion_final_without_room_for_a_program_vk_emits_no_binding() {
+        let out = recursion_final(4 + 1 + 3);
+        assert!(!out.contains("rootC[i] - publics[5 + i]"), "{out}");
+    }
 
     fn zisk_publics() -> Value {
         serde_json::json!({
