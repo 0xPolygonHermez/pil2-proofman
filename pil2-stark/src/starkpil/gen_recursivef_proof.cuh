@@ -84,6 +84,10 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
     
     Starks<RawFr::Element> starks(setupCtx, d_constTree, pCustomCommitsFixed, false, false);
+    if (layTreeNodes_bn128_gpu(setupCtx, starks, (uint8_t *)d_aux_trace + d_buffers->tree_nodes_offset) > d_buffers->tree_nodes_bytes) {
+        zklog.error("recursivef: its trees' nodes outgrow the bytes gen_device_buffers_recursivef laid out for them");
+        exitProcess();
+    }
     uint64_t nFieldElements = 1;
     
     uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
@@ -326,18 +330,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     TimerStopGPU(timer, STARK_SAVE_PROOF);
     TimerStartGPU(timer, STARK_CLEANUP);
 
-    // Free stark trees (skip constants tree at nStages+1 - passed in from outside)
-    for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2; i++)
-    {
-        if (i != setupCtx.starkInfo.nStages + 1) {
-            cudaFree(starks.treesGL[i]->get_nodes_ptr());
-        }
-    }
-    // free FRI trees
-    for (uint64_t i = 0; i < nTreesFRI; i++)
-    {
-        cudaFree(starks.treesFRI[i]->get_nodes_ptr());
-    }
+    // The trees' nodes are in d_aux_trace (layTreeNodes_bn128_gpu): nothing to free.
 
     // Free AirInstanceInfo (and all its GPU allocations)
     delete air_instance_info;

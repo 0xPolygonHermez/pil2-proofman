@@ -2676,16 +2676,27 @@ void *gen_device_buffers_recursivef_gpu(void *pSetupCtx_, uint64_t proverBufferS
 
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
     uint64_t sizeAuxTrace = proverBufferSize * sizeof(Goldilocks::Element);
+    // The trees' nodes follow the prover buffer, in the same allocation (layTreeNodes_bn128_gpu).
+    d_buffers->tree_nodes_offset = (sizeAuxTrace + 255) & ~uint64_t(255);
+    d_buffers->tree_nodes_bytes = treeNodesBytes_bn128_gpu(*setupCtx);
+    const uint64_t sizeAuxRegion = d_buffers->tree_nodes_offset + d_buffers->tree_nodes_bytes;
 
     if (d_commit_buffer_ == nullptr) {
         // Allocate new device buffers
         d_buffers->owns_aux_trace = true;
         d_buffers->owns_const_tree = true;
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace, sizeAuxTrace));
+        CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace, sizeAuxRegion));
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_const_tree, sizeConstTree));
-        d_buffers->aux_trace_size = sizeAuxTrace;
+        d_buffers->aux_trace_size = sizeAuxRegion;
     } else {
         DeviceCommitBuffers *d_commit_buffer = (DeviceCommitBuffers *)d_commit_buffer_;
+        if (sizeConstTree + sizeAuxRegion > d_commit_buffer->unifiedBufferSize) {
+            zklog.error("recursiveF needs " + std::to_string(sizeConstTree + sizeAuxRegion) +
+                        " bytes of the unified buffer (const tree, prover buffer and trees' nodes), and it holds " +
+                        std::to_string(d_commit_buffer->unifiedBufferSize));
+            delete d_buffers;
+            return nullptr;
+        }
         gl64_t *d_unifiedBuffer = d_commit_buffer->gpuMemoryBuffer[d_commit_buffer->gpus_g2l[gpuId]];
         // Always reuse first buffer for d_aux_trace
         d_buffers->owns_aux_trace = false;
@@ -2765,12 +2776,13 @@ void *gen_recursive_proof_final_gpu(void *pSetupCtx_, uint64_t airgroupId, uint6
     cudaSetDevice(gpuId);
 
     // A buffer of its own that reserve_recursivef_aux_trace_gpu could not grow nor restore.
-    if (d_buffers->owns_aux_trace && d_buffers->aux_trace_size < proverBufferSize) {
+    const uint64_t sizeAuxRegion = d_buffers->tree_nodes_offset + d_buffers->tree_nodes_bytes;
+    if (d_buffers->owns_aux_trace && d_buffers->aux_trace_size < sizeAuxRegion) {
         CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace));
         d_buffers->d_aux_trace = nullptr;
         d_buffers->aux_trace_size = 0;
-        CHECKCUDAERR(cudaMalloc((void **)&d_buffers->d_aux_trace, proverBufferSize));
-        d_buffers->aux_trace_size = proverBufferSize;
+        CHECKCUDAERR(cudaMalloc((void **)&d_buffers->d_aux_trace, sizeAuxRegion));
+        d_buffers->aux_trace_size = sizeAuxRegion;
     }
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);

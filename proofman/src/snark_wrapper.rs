@@ -169,12 +169,12 @@ impl FinalSnarkKey {
 /// run one after another: each proof uses its buffers and provers alone.
 ///
 /// **GPU memory with pilfflonk.** As for PLONK, the recursivef's device buffers are the wrapper's
-/// (in `d_buffers`, proofman's unified buffer, if there is one), and pilfflonk's proofs keep their data
-/// where `pre_allocate_final_snark_prover_c` carves the PLONK prover's (`pilfflonk_wrap::wrap_arena`):
-/// in the unified buffer's aux area, which must hold a proof's arena (or the key is refused), or else in the
-/// recursivef's prover buffer, grown to it; the recursivef is done with either when pilfflonk proves.
-/// Its key's own device memory (the SRS's powers, the fixed columns' coefficients) is beside them,
-/// from the start with `preload`.
+/// (in `d_buffers`, proofman's unified buffer, if there is one). With the unified buffer, all of
+/// pilfflonk's key (the SRS's powers, the fixed columns' coefficients, its proofs' arena) is in its
+/// aux area (`pilfflonk_wrap::load_poseidon_wrap`), which the recursivef writes over: preloaded, the
+/// key keeps a pinned host copy of it and writes it back before each proof. Without it, pilfflonk's
+/// proofs keep their data in the recursivef's prover buffer (`pilfflonk_wrap::wrap_arena`), where
+/// `pre_allocate_final_snark_prover_c` carves the PLONK prover's, and the key's own memory is beside it.
 pub(crate) struct PoseidonWrap<F: PrimeField64> {
     pub setup_snark_path: PathBuf,
     pub setup_recursivef: Setup<F>,
@@ -436,6 +436,11 @@ impl<F: PrimeField64> PoseidonWrap<F> {
             d_buffers_vadcop as *mut u8,
             &verkey_str,
         ) as *mut c_void);
+        if gpu && d_buffers_recursivef.as_ptr().is_null() {
+            return Err(ProofmanError::InvalidConfiguration(
+                "recursiveF's device buffers do not fit the unified buffer (the log says by how much)".to_string(),
+            ));
+        }
 
         timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
         let zkey_filename = setup_snark_path.display().to_string() + ".zkey";
@@ -458,11 +463,19 @@ impl<F: PrimeField64> PoseidonWrap<F> {
                 // On a shared buffer the key loads while no ProofMan job runs.
                 let _shared = d_buffers.filter(|_| gpu).map(|_| PROVING.lock().unwrap_or_else(|e| e.into_inner()));
                 let _aux = pilfflonk_wrap::AuxAreaUse::new(d_buffers.filter(|_| gpu));
-                let arena = pilfflonk_wrap::wrap_arena(gpu, d_buffers, d_buffers_recursivef.as_ptr(), pilfflonk_key)?;
-                // SAFETY: the arena is the unified buffer or the recursivef's prover buffer, which
-                // outlive the prover (the wrapper's `Drop` drops it first), and which a proof uses
-                // only for the recursivef until pilfflonk proves.
-                Some(unsafe { PilfflonkWrapProver::load(&setup_snark_path, pilfflonk_key, arena) }?)
+                // SAFETY: the unified buffer or the recursivef's prover buffer, which outlive the prover
+                // (the wrapper's `Drop` drops it first), and which a proof uses only for the recursivef
+                // until pilfflonk proves.
+                Some(unsafe {
+                    pilfflonk_wrap::load_poseidon_wrap(
+                        &setup_snark_path,
+                        pilfflonk_key,
+                        gpu,
+                        d_buffers,
+                        d_buffers_recursivef.as_ptr(),
+                        true,
+                    )
+                }?)
             }
             _ => None,
         };
@@ -654,11 +667,18 @@ impl<F: PrimeField64> PoseidonWrap<F> {
         let prover = match preloaded {
             Some(prover) => prover,
             None => {
-                let arena =
-                    pilfflonk_wrap::wrap_arena(self.gpu, self.d_buffers, self.d_buffers_recursivef, pilfflonk_key)?;
-                // SAFETY: as for the preloaded prover (`new_with_preallocated_buffers`): the arena
-                // outlives this prover, which this proof drops, and the recursivef is done with it.
-                loaded = unsafe { PilfflonkWrapProver::load(&self.setup_snark_path, pilfflonk_key, arena) }?;
+                // SAFETY: as for the preloaded prover (`new_with_preallocated_buffers`): the buffers
+                // outlive this prover, which this proof drops, and the recursivef is done with them.
+                loaded = unsafe {
+                    pilfflonk_wrap::load_poseidon_wrap(
+                        &self.setup_snark_path,
+                        pilfflonk_key,
+                        self.gpu,
+                        self.d_buffers,
+                        self.d_buffers_recursivef,
+                        false,
+                    )
+                }?;
                 &loaded
             }
         };

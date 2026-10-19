@@ -13,11 +13,11 @@
 //!   [`verify_json`] runs pilfflonk's JS verifier on them, as `verify_snark_proof` runs snarkjs for
 //!   PLONK and FFLONK.
 //!
-//! On the GPU the key's proofs keep their data in device memory of the wrap's ([`wrap_arena`],
-//! pilfflonk/docs/performance.md#the-wraps-device-buffer), as rapidsnark's PLONK prover is carved out
-//! of it by `pre_allocate_final_snark_prover_c`: the aux area of proofman's unified buffer if the
-//! wrap has one, and otherwise the recursivef's prover buffer, which the recursivef is done with when
-//! pilfflonk proves.
+//! On the GPU, with proofman's unified buffer, all of the key's device memory is in its aux area
+//! ([`unified_buffer`], pilfflonk/docs/performance.md#the-wraps-device-buffer); without it, the key's
+//! proofs keep their data in the recursivef's prover buffer ([`wrap_arena`]), which the recursivef is
+//! done with when pilfflonk proves, as rapidsnark's PLONK prover is carved out of it by
+//! `pre_allocate_final_snark_prover_c`.
 
 use std::ffi::c_void;
 use std::path::Path;
@@ -82,18 +82,14 @@ impl Drop for AuxAreaUse {
     }
 }
 
-/// pilfflonk's arena in the wrap on the GPU, for the key at `proving_key`, as
-/// `pre_allocate_final_snark_prover_c` carves rapidsnark's PLONK prover: proofman's unified buffer
-/// `d_buffers` if there is one, its aux area ([`unified_buffer`]; the key refuses it, as a GPU without the memory, if it
-/// holds less than a proof's arena: pilfflonk/docs/performance.md#rules-of-the-device-path);
-/// otherwise the recursivef's prover buffer `d_buffers_recursivef`, grown to the arena if it is
-/// smaller. `None` on the CPU. Refused if the unified buffer is not on device 0, where pilfflonk
-/// proves, if the recursivef's buffer cannot grow, or if, the arena in place, the device has less
-/// free memory than the key needs beside it ([`DeviceBytes::beside`], its loading's scratch
+/// pilfflonk's arena in the wrap on the GPU without proofman's unified buffer, for the key at
+/// `proving_key`, as `pre_allocate_final_snark_prover_c` carves rapidsnark's PLONK prover: the
+/// recursivef's prover buffer `d_buffers_recursivef`, grown to the arena if it is smaller. `None` on
+/// the CPU. Refused if the recursivef's buffer cannot grow, or if, the arena in place, the device has
+/// less free memory than the key needs beside it ([`DeviceBytes::beside`], its loading's scratch
 /// included): before the key loads anything.
 pub(crate) fn wrap_arena(
     gpu: bool,
-    d_buffers: Option<*mut c_void>,
     d_buffers_recursivef: *mut c_void,
     proving_key: &Path,
 ) -> ProofmanResult<Option<WrapArena>> {
@@ -101,18 +97,6 @@ pub(crate) fn wrap_arena(
         return Ok(None);
     }
     let needed = gpu_device_bytes(proving_key).map_err(|e| invalid_key(proving_key, e))?;
-    if let Some(d_buffers) = d_buffers {
-        let arena = unified_buffer(d_buffers)?;
-        require_beside(&needed, gpu_free_bytes().map_err(|e| invalid_key(proving_key, e))?)?;
-        tracing::info!(
-            "pilfflonk's GPU arena: {} bytes of the unified buffer's {} (margin {}), and {} bytes beside it",
-            needed.arena,
-            arena.bytes,
-            i128::from(arena.bytes) - i128::from(needed.arena),
-            needed.beside
-        );
-        return Ok(Some(arena));
-    }
     match reserve_recursivef_aux_trace_c(d_buffers_recursivef, needed.arena) {
         Ok((buffer, bytes)) => {
             require_beside(&needed, gpu_free_bytes().map_err(|e| invalid_key(proving_key, e))?)?;
@@ -128,6 +112,39 @@ pub(crate) fn wrap_arena(
              buffer can hold {most} (pilfflonk/docs/performance.md#selection-memory-and-errors)",
             needed.arena
         ))),
+    }
+}
+
+/// pilfflonk's prover of a poseidon key's wrap, the key at `proving_key`: on the GPU with proofman's
+/// unified buffer `d_buffers`, all of its device memory in the buffer's aux area ([`unified_buffer`]),
+/// `restorable` if it lives across proofs (the recursivef and proofman's jobs write that area);
+/// otherwise its arena in the recursivef's prover buffer ([`wrap_arena`]), or none on the CPU.
+///
+/// # Safety
+///
+/// As [`PilfflonkWrapProver::load`]: the buffers outlive the prover, and nothing else uses them while
+/// it proves.
+pub(crate) unsafe fn load_poseidon_wrap(
+    setup_snark_path: &Path,
+    proving_key: &Path,
+    gpu: bool,
+    d_buffers: Option<*mut c_void>,
+    d_buffers_recursivef: *mut c_void,
+    restorable: bool,
+) -> ProofmanResult<PilfflonkWrapProver> {
+    match d_buffers.filter(|_| gpu) {
+        Some(d_buffers) => {
+            let buffer = unified_buffer(d_buffers)?;
+            // SAFETY: the caller's.
+            unsafe {
+                PilfflonkWrapProver::load_on(setup_snark_path, proving_key, Device::Gpu, Some(buffer), restorable)
+            }
+        }
+        None => {
+            let arena = wrap_arena(gpu, d_buffers_recursivef, proving_key)?;
+            // SAFETY: the caller's.
+            unsafe { PilfflonkWrapProver::load(setup_snark_path, proving_key, arena) }
+        }
     }
 }
 
@@ -183,10 +200,9 @@ impl PilfflonkWrapProver {
         Ok(Self { key, shape, witness, on_gpu: arena.is_some(), restorable: false })
     }
 
-    /// [`load`](Self::load), the key on `device`: the wrap of a blake3 key, whose recursivef is
-    /// proved before it ([`SnarkWrapper`](crate::SnarkWrapper)), with all
-    /// its device memory in `buffer` if given (a wrap's buffer it is done with,
-    /// [`ProvingKey::load_in_device_buffer`]), of its own otherwise.
+    /// [`load`](Self::load), the key on `device`, with all its device memory in `buffer` if given (a
+    /// wrap's buffer it is done with, [`ProvingKey::load_in_device_buffer`]), of its own otherwise;
+    /// `restorable` if others write that buffer between its proofs, which then write it back.
     ///
     /// # Safety
     ///
@@ -284,8 +300,27 @@ impl PilfflonkWrapProver {
     /// `recursivef_proof` must be the recursivef proof, the `nlohmann::json` that
     /// `gen_recursive_proof_final_c` returns, alive and used by nothing else during the call.
     pub(crate) unsafe fn prove(&self, recursivef_proof: *mut c_void) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
-        let witness = wrap_witness(&self.witness, &self.shape, recursivef_proof)?;
-        self.prove_witness(&witness)
+        if !self.restorable {
+            // SAFETY: the caller's.
+            let witness = unsafe { wrap_witness(&self.witness, &self.shape, recursivef_proof) }?;
+            return self.prove_witness(&witness);
+        }
+        // The key's device memory, which the recursivef wrote over, written back while the host
+        // computes the witness. SAFETY: the witness never touches the key.
+        struct KeyRef<'a>(&'a ProvingKey);
+        unsafe impl Send for KeyRef<'_> {}
+        let key = KeyRef(&self.key);
+        let (witness, restored) = std::thread::scope(|scope| {
+            let restored = scope.spawn(move || {
+                let key = key;
+                key.0.restore_device()
+            });
+            // SAFETY: the caller's.
+            let witness = unsafe { wrap_witness(&self.witness, &self.shape, recursivef_proof) };
+            (witness, restored.join().expect("the key's restore panicked"))
+        });
+        restored.map_err(|e| invalid_key(self.key.dir(), e))?;
+        self.prove_witness(&witness?)
     }
 }
 

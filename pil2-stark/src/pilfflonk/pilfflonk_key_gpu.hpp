@@ -198,8 +198,7 @@ struct GpuBudget {
 
 // The budget of `air` on a device of `multiprocessors` SMs. `resident` counts the device memory of its
 // interpreter (ExpressionsGpu::deviceBytesOf); `transient` is the most that sppark's MSM allocates
-// for the largest f (msm_t of pippenger.cuh, which grows with the SMs), and a margin for the
-// allocator's rounding and sppark's NTT tables.
+// for the largest f (msm_t of pippenger.cuh, which grows with the SMs), as its memory pool reserves it.
 GpuBudget gpuBudget(const AirKey &air, uint32_t multiprocessors);
 
 // The scratch GpuAirKey uses while it loads, in bytes: the counts of the fixed columns' coefficients.

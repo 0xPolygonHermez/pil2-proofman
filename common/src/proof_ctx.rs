@@ -68,13 +68,6 @@ pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
 /// graphs and per-stream device buffers (measured ~0.3 GB at 712 tx, rounded up).
 const PHASE_A_ALIAS_HEADROOM_MB: u64 = 512;
 
-/// Free GPU memory (MB) a final-snark run keeps beside the unified buffer on top of the
-/// post-allocation headroom: what the final SNARK's prover allocates outside the buffer. pilfflonk's
-/// key of a poseidon key keeps its own device memory beside its arena (1.34 GB for fibonacci-square's
-/// Poseidon2 wrap), and sppark's MSM its scratch (~0.7 GB for the blake3 wrap's). 1.5 GB, the reserve
-/// final-snark runs kept before the buffer was planned from free memory.
-const FINAL_SNARK_RESERVE_MB: u64 = 1536;
-
 /// Unified-buffer floor (bytes) for final-snark runs: the snark prover borrows the buffer
 /// whole and carves ~27.97 GiB (2^24 plonk key), regardless of what the streams need.
 /// Padded from the layout's unused slack only, so it never eats into the reserve.
@@ -1458,10 +1451,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         };
 
         if gpu {
-            // The one headroom for everything allocated after the unified buffer, and what the final
-            // SNARK's prover allocates beside it.
-            let final_snark_reserve = if final_snark { FINAL_SNARK_RESERVE_MB * 1024 * 1024 } else { 0 };
-            let reserve = (get_post_alloc_headroom_bytes_c() + final_snark_reserve) as f64;
+            // The one headroom for everything allocated after the unified buffer, the final SNARK's
+            // sppark pool included.
+            let reserve = get_post_alloc_headroom_bytes_c() as f64;
             free_memory_gpu = (free_memory_gpu - reserve).max(0.0);
             tracing::info!("Reserving {} of GPU memory for other device consumers", format_bytes(reserve));
         }

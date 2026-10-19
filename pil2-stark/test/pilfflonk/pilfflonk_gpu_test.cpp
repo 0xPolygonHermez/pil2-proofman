@@ -726,9 +726,10 @@ void testShplonkOnTheDevice() {
 
 // What a key on the GPU budgets and refuses, which needs no GPU: sppark's MSM's own memory at 50 M
 // points on 170 SMs (pippenger.cuh: windows of 18 bits, 15 of them, buckets of 128 bytes, and 4
-// batches of 12.5 M digits and temporaries), and the refusal's message.
+// batches of 12.5 M digits and temporaries), each allocation in 32 MiB steps of the pool, and the
+// refusal's message.
 void testBudgets() {
-    assert(PilFflonk::spparkMsmBytes(50000000, 170) == 259696640 + 950000000);
+    assert(PilFflonk::spparkMsmBytes(50000000, 170) == 268435456 + 973078528);
     assert(PilFflonk::spparkMsmBytes(0, 170) == 0);
     PilFflonk::requireDeviceMemory("the test", 10, 10);
     bool refused = false;

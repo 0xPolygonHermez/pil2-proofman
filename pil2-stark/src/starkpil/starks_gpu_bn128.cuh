@@ -16,6 +16,13 @@ void calculateHashBN128_gpu(TranscriptBN128_GPU *d_transcript ,PoseidonBN128GPU:
 
 void convertGLToBN128ScalarField(PoseidonBN128GPU::FrElement *output, const uint64_t *input, uint64_t n, cudaStream_t stream);
 
+// Points the stage, Q and FRI trees of `starks` at device nodes laid one after another from `base`
+// (256-byte aligned; none if null), and returns their bytes.
+uint64_t layTreeNodes_bn128_gpu(SetupCtx &setupCtx, Starks<RawFr::Element> &starks, uint8_t *base);
+
+// The bytes layTreeNodes_bn128_gpu lays for a recursivef of `setupCtx`.
+uint64_t treeNodesBytes_bn128_gpu(SetupCtx &setupCtx);
+
 void commitStage_bn128_gpu(uint64_t step, SetupCtx& setupCtx, MerkleTreeBN128**treesGL, Goldilocks::Element* d_witness, Goldilocks::Element* d_aux_trace, TranscriptBN128_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);
 
 void extendAndMerkelize_bn128_gpu(uint64_t step, SetupCtx& setupCtx, MerkleTreeBN128** treesGL, Goldilocks::Element* d_trace, Goldilocks::Element* d_aux_trace, TranscriptBN128_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream);

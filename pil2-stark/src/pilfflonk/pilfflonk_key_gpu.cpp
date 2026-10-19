@@ -29,9 +29,8 @@ using Engine = AltBn128::Engine;
 
 // Each half of the Staging's pinned buffer.
 constexpr uint64_t STAGING_HALF_BYTES = uint64_t(32) << 20;
-// What a proof allocates besides the arena that gpuBudget does not count element by element: the
-// allocator's rounding of each allocation to its pages, and sppark's NTT tables, of a few MB.
-constexpr uint64_t MARGIN_BYTES = uint64_t(256) << 20;
+// sppark's cudaMallocAsync goes through the device's default pool, which grows in steps of 32 MiB.
+constexpr uint64_t POOL_GRANULE_BYTES = uint64_t(32) << 20;
 // sppark's MSM: the bits of a BN128 scalar, and a bucket of its xyzz_t<fp_t>::mem_t.
 constexpr uint64_t SCALAR_BITS = 254;
 constexpr uint64_t BUCKET_BYTES = 4 * sizeof(FrElement);
@@ -379,19 +378,22 @@ uint64_t spparkMsmBytes(uint64_t n, uint32_t multiprocessors) {
     const uint64_t lgn = log2Floor(n + n / 2);
     const uint64_t batch = std::max<uint64_t>(1, (uint64_t(1) << (std::max(lgn, wbits) - wbits)) >> 6);
     const uint64_t stride = (((n + batch - 1) / batch) + 31) & ~uint64_t(31);
-    return blob + stride * 2 * 2 * sizeof(uint32_t) + nwins * stride * sizeof(uint32_t);
+    const uint64_t temp = stride * 2 * 2 * sizeof(uint32_t) + nwins * stride * sizeof(uint32_t);
+    // Each of the two allocations as the pool reserves it.
+    const auto pooled = [](uint64_t bytes) {
+        return (bytes + POOL_GRANULE_BYTES - 1) / POOL_GRANULE_BYTES * POOL_GRANULE_BYTES;
+    };
+    return pooled(blob) + pooled(temp);
 }
 
 GpuBudget gpuBudget(const AirKey &air, uint32_t multiprocessors) {
     GpuBudget budget;
     budget.resident = residentLayout(air).bytes + ExpressionsGpu::deviceBytesOf(air.bin(), air.info(), multiprocessors);
     budget.arena = arenaLayout(air).bytes;
-    // What sppark's MSM allocates for the largest of a proof's MSMs (GpuKey::commit), its NTT tables
-    // and the allocator's rounding.
+    // What sppark's MSM allocates for the largest of a proof's MSMs (GpuKey::commit).
     for (uint64_t n : air.msmLengths()) {
         budget.transient = std::max(budget.transient, spparkMsmBytes(n, multiprocessors));
     }
-    budget.transient += MARGIN_BYTES;
     budget.loading = loadScratchBytes(air);
     return budget;
 }
