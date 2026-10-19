@@ -105,7 +105,7 @@ fn main() {
     let target = if use_gpu { "starks_lib_gpu" } else { "starks_lib" };
 
     // Clean build when the Makefile itself changes: compiler flag edits (e.g.
-    // toggling -D__AVX512__) aren't tracked by make's .d files, so a flag flip
+    // toggling a -D define) aren't tracked by make's .d files, so a flag flip
     // would otherwise leave stale objects linked into the new library.
     if makefile_changed {
         eprintln!("Makefile changed — running clean rebuild...");
