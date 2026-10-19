@@ -582,6 +582,12 @@ fn the_vkey_refuses_what_the_verifier_refuses() {
         (with(&|v| v.x_2 = G2Affine::default()), "the point at infinity of G2"),
         (with(&|v| v.x_2.y[1] = FqBytes::from_u64(1)), "not on the twist"),
         (with(&|v| v.x_2 = twist_not_g2), "not in G2"),
+        // Two values of the proof of one name (crate::names), as names.js refuses them: an evaluation
+        // named as another at an offset (`Sample.a` at offset 1 is `Sample.aw`), two columns named
+        // alike, and an evaluation named as the proof's `inv`.
+        (with(&|v| v.layout.0[2].pols[0].name = "Sample.aw".into()), "two values of the proof are named \"Sample.aw\""),
+        (with(&|v| v.layout.0[2].pols[0].name = "Sample.a".into()), "two values of the proof are named \"Sample.a\""),
+        (with(&|v| v.layout.0[2].pols[1].name = "inv".into()), "two values of the proof are named \"inv\""),
         (with(&|v| v.num_challenges = vec![0]), "numChallenges has 1 stages, and the layout 2"),
         (with(&|v| v.num_challenges = vec![0, 2, 0]), "numChallenges has 3 stages, and the layout 2"),
         (with(&|v| v.num_challenges = vec![1, 2]), "the transcript squeezes no challenge of stage 1"),

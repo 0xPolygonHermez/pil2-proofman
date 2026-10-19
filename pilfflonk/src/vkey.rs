@@ -16,6 +16,7 @@ use crate::global_info::{FORMAT_VERSION, MAX_NBITS};
 use crate::json::{canonical_json, serialize_sorted, JsonFile};
 use crate::layout::{q_pieces, split_max_q_degree, Layout, LayoutCheck};
 use crate::pilfflonk_info::{Boundary, EvMapEntry, PilfflonkInfo};
+use crate::proof::ProofNames;
 use crate::prover::native;
 use crate::q_verifier::{check_q_verifier, QVerifierShape};
 use crate::tag::{Curve, Protocol};
@@ -265,6 +266,8 @@ impl JsonFile for Vkey {
                 self.layout.n_fixed()
             );
         }
+        // The values of its proofs have a name each, as the JS verifier names them (crate::names).
+        ProofNames::of_vkey(self)?;
 
         // What the verifier needs to replay the transcript and compute Q(ξ), as it checks it
         // (pilfflonk/js/src/vkey.js, fromObjectVk).
