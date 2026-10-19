@@ -6738,6 +6738,12 @@ where
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
         let setup = sctx.get_setup(airgroup_id, air_id)?;
         let p_setup: *mut c_void = (&setup.p_setup).into();
+        // Checked before the commit so a stale setup fails without touching the trace.
+        let circuit_type = setup.stark_info.circuit_type.ok_or_else(|| {
+            ProofmanError::InvalidSetup(format!(
+                "air [{airgroup_id}:{air_id}] has no circuitType in its starkinfo: regenerate the setup"
+            ))
+        })?;
 
         let air_values = &pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id)?;
 
@@ -6803,7 +6809,9 @@ where
             .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
             .unwrap_or(0);
 
-        let size = 2 * n_field_elements + n_airvalues;
+        // [rootC | root1 | circuitType | stage-1 airvalues], as CalculateStage1Hash absorbs it.
+        let n_header = 2 * n_field_elements + 1;
+        let size = n_header + n_airvalues;
 
         let mut values_hash = vec![F::ZERO; size];
 
@@ -6811,13 +6819,15 @@ where
         for (i, value) in values_hash.iter_mut().enumerate().take(n_field_elements) {
             *value = F::from_u64(vk[i]);
         }
+        // rootC alone does not name the air: airs with equal fixed columns share it.
+        values_hash[2 * n_field_elements] = F::from_u64(circuit_type);
 
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
         let mut p = 0;
         let mut count = 0;
         for air_value in airvalues_map {
             if air_value.stage == 1 {
-                values_hash[2 * n_field_elements + count] = air_values[p];
+                values_hash[n_header + count] = air_values[p];
                 count += 1;
                 p += 1;
             }

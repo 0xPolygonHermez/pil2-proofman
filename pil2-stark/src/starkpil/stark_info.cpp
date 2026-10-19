@@ -105,6 +105,9 @@ void StarkInfo::load(json j)
     nPublics = j["nPublics"];
     nConstants = j["nConstants"];
 
+    hasCircuitType = j.contains("circuitType");
+    if (hasCircuitType) circuitType = j["circuitType"];
+
     nStages = j["nStages"];
 
     qDeg = j["qDeg"];

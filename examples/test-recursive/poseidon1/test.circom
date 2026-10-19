@@ -8,15 +8,17 @@ include "acc_points.circom";
 include "test.verifier.circom";
 
 template Recursive2() {
+    var airgroupId = 0;
+    var circuitType = 1; // circuitTypeOf(airgroupId, 0)
     var rootCBasics[3][4];
 
-    rootCBasics[0] = [980647010064068478,10701144283099651160,6837289131134076246,16583492275638428975];
-    rootCBasics[1] = [15004976358208890361,11449930915467271150,17909009088349874596,316614887384505336];
-    rootCBasics[2] = [1023463803580202087,6751031460228607713,1055049959073546006,7803397412280535186];
+    rootCBasics[0] = [15888095544973178522,18097331276733069627,5961057599051898850,13995333006100556138];
+    rootCBasics[1] = [10093855824943693966,315592600678857803,39799995136856706,18356347887605707897];
+    rootCBasics[2] = [17767987172803407234,3767875557947684689,6044542393135073347,7001863772793767094];
     signal output sv_circuitType;
     signal output sv_aggregatedProofs;
-    signal output sv_aggregationTypes[1];
-    signal output sv_airgroupvalues[1][3];
+    signal output sv_aggregationTypes[2];
+    signal output sv_airgroupvalues[2][3];
     signal output sv_stage1Hash[368];
 
     signal input publics[8];
@@ -28,144 +30,144 @@ template Recursive2() {
 
     signal input a_sv_circuitType;
     signal input a_sv_aggregatedProofs;
-    signal input a_sv_aggregationTypes[1];
-    signal input a_sv_airgroupvalues[1][3];
+    signal input a_sv_aggregationTypes[2];
+    signal input a_sv_airgroupvalues[2][3];
     signal input a_sv_stage1Hash[368];
 
     signal input a_root1[4];
     signal input a_root2[4];
     signal input a_root3[4];
-    signal input a_evals[135][3];
+    signal input a_evals[152][3];
 
-    signal input a_s0_valsC[73][45];
-    signal input a_s0_siblingsC[73][8][12];
+    signal input a_s0_valsC[72][46];
+    signal input a_s0_siblingsC[72][8][12];
     signal input a_s0_last_mt_levelsC[16][4];
-    signal input a_s0_vals1[73][48];
-    signal input a_s0_siblings1[73][8][12];
+    signal input a_s0_vals1[72][48];
+    signal input a_s0_siblings1[72][8][12];
     signal input a_s0_last_mt_levels1[16][4];
-    signal input a_s0_vals2[73][12];
-    signal input a_s0_siblings2[73][8][12];
+    signal input a_s0_vals2[72][12];
+    signal input a_s0_siblings2[72][8][12];
     signal input a_s0_last_mt_levels2[16][4];
-    signal input a_s0_vals3[73][21];
-    signal input a_s0_siblings3[73][8][12];
+    signal input a_s0_vals3[72][21];
+    signal input a_s0_siblings3[72][8][12];
     signal input a_s0_last_mt_levels3[16][4];
     signal input a_s1_root[4];
     signal input a_s2_root[4];
     signal input a_s3_root[4];
     signal input a_s4_root[4];
     signal input a_s5_root[4];
-    signal input a_s1_vals[73][24];
-    signal input a_s1_siblings[73][7][12];
+    signal input a_s1_vals[72][24];
+    signal input a_s1_siblings[72][7][12];
     signal input a_s1_last_mt_levels[16][4];
-    signal input a_s2_vals[73][24];
-    signal input a_s2_siblings[73][5][12];
+    signal input a_s2_vals[72][24];
+    signal input a_s2_siblings[72][5][12];
     signal input a_s2_last_mt_levels[16][4];
-    signal input a_s3_vals[73][24];
-    signal input a_s3_siblings[73][4][12];
+    signal input a_s3_vals[72][24];
+    signal input a_s3_siblings[72][4][12];
     signal input a_s3_last_mt_levels[16][4];
-    signal input a_s4_vals[73][24];
-    signal input a_s4_siblings[73][2][12];
+    signal input a_s4_vals[72][24];
+    signal input a_s4_siblings[72][2][12];
     signal input a_s4_last_mt_levels[16][4];
-    signal input a_s5_vals[73][24];
-    signal input a_s5_siblings[73][1][12];
+    signal input a_s5_vals[72][24];
+    signal input a_s5_siblings[72][1][12];
     signal input a_s5_last_mt_levels[16][4];
     signal input a_finalPol[32][3];
     signal input a_nonce;
 
     signal input b_sv_circuitType;
     signal input b_sv_aggregatedProofs;
-    signal input b_sv_aggregationTypes[1];
-    signal input b_sv_airgroupvalues[1][3];
+    signal input b_sv_aggregationTypes[2];
+    signal input b_sv_airgroupvalues[2][3];
     signal input b_sv_stage1Hash[368];
 
     signal input b_root1[4];
     signal input b_root2[4];
     signal input b_root3[4];
-    signal input b_evals[135][3];
+    signal input b_evals[152][3];
 
-    signal input b_s0_valsC[73][45];
-    signal input b_s0_siblingsC[73][8][12];
+    signal input b_s0_valsC[72][46];
+    signal input b_s0_siblingsC[72][8][12];
     signal input b_s0_last_mt_levelsC[16][4];
-    signal input b_s0_vals1[73][48];
-    signal input b_s0_siblings1[73][8][12];
+    signal input b_s0_vals1[72][48];
+    signal input b_s0_siblings1[72][8][12];
     signal input b_s0_last_mt_levels1[16][4];
-    signal input b_s0_vals2[73][12];
-    signal input b_s0_siblings2[73][8][12];
+    signal input b_s0_vals2[72][12];
+    signal input b_s0_siblings2[72][8][12];
     signal input b_s0_last_mt_levels2[16][4];
-    signal input b_s0_vals3[73][21];
-    signal input b_s0_siblings3[73][8][12];
+    signal input b_s0_vals3[72][21];
+    signal input b_s0_siblings3[72][8][12];
     signal input b_s0_last_mt_levels3[16][4];
     signal input b_s1_root[4];
     signal input b_s2_root[4];
     signal input b_s3_root[4];
     signal input b_s4_root[4];
     signal input b_s5_root[4];
-    signal input b_s1_vals[73][24];
-    signal input b_s1_siblings[73][7][12];
+    signal input b_s1_vals[72][24];
+    signal input b_s1_siblings[72][7][12];
     signal input b_s1_last_mt_levels[16][4];
-    signal input b_s2_vals[73][24];
-    signal input b_s2_siblings[73][5][12];
+    signal input b_s2_vals[72][24];
+    signal input b_s2_siblings[72][5][12];
     signal input b_s2_last_mt_levels[16][4];
-    signal input b_s3_vals[73][24];
-    signal input b_s3_siblings[73][4][12];
+    signal input b_s3_vals[72][24];
+    signal input b_s3_siblings[72][4][12];
     signal input b_s3_last_mt_levels[16][4];
-    signal input b_s4_vals[73][24];
-    signal input b_s4_siblings[73][2][12];
+    signal input b_s4_vals[72][24];
+    signal input b_s4_siblings[72][2][12];
     signal input b_s4_last_mt_levels[16][4];
-    signal input b_s5_vals[73][24];
-    signal input b_s5_siblings[73][1][12];
+    signal input b_s5_vals[72][24];
+    signal input b_s5_siblings[72][1][12];
     signal input b_s5_last_mt_levels[16][4];
     signal input b_finalPol[32][3];
     signal input b_nonce;
 
     signal input c_sv_circuitType;
     signal input c_sv_aggregatedProofs;
-    signal input c_sv_aggregationTypes[1];
-    signal input c_sv_airgroupvalues[1][3];
+    signal input c_sv_aggregationTypes[2];
+    signal input c_sv_airgroupvalues[2][3];
     signal input c_sv_stage1Hash[368];
 
     signal input c_root1[4];
     signal input c_root2[4];
     signal input c_root3[4];
-    signal input c_evals[135][3];
+    signal input c_evals[152][3];
 
-    signal input c_s0_valsC[73][45];
-    signal input c_s0_siblingsC[73][8][12];
+    signal input c_s0_valsC[72][46];
+    signal input c_s0_siblingsC[72][8][12];
     signal input c_s0_last_mt_levelsC[16][4];
-    signal input c_s0_vals1[73][48];
-    signal input c_s0_siblings1[73][8][12];
+    signal input c_s0_vals1[72][48];
+    signal input c_s0_siblings1[72][8][12];
     signal input c_s0_last_mt_levels1[16][4];
-    signal input c_s0_vals2[73][12];
-    signal input c_s0_siblings2[73][8][12];
+    signal input c_s0_vals2[72][12];
+    signal input c_s0_siblings2[72][8][12];
     signal input c_s0_last_mt_levels2[16][4];
-    signal input c_s0_vals3[73][21];
-    signal input c_s0_siblings3[73][8][12];
+    signal input c_s0_vals3[72][21];
+    signal input c_s0_siblings3[72][8][12];
     signal input c_s0_last_mt_levels3[16][4];
     signal input c_s1_root[4];
     signal input c_s2_root[4];
     signal input c_s3_root[4];
     signal input c_s4_root[4];
     signal input c_s5_root[4];
-    signal input c_s1_vals[73][24];
-    signal input c_s1_siblings[73][7][12];
+    signal input c_s1_vals[72][24];
+    signal input c_s1_siblings[72][7][12];
     signal input c_s1_last_mt_levels[16][4];
-    signal input c_s2_vals[73][24];
-    signal input c_s2_siblings[73][5][12];
+    signal input c_s2_vals[72][24];
+    signal input c_s2_siblings[72][5][12];
     signal input c_s2_last_mt_levels[16][4];
-    signal input c_s3_vals[73][24];
-    signal input c_s3_siblings[73][4][12];
+    signal input c_s3_vals[72][24];
+    signal input c_s3_siblings[72][4][12];
     signal input c_s3_last_mt_levels[16][4];
-    signal input c_s4_vals[73][24];
-    signal input c_s4_siblings[73][2][12];
+    signal input c_s4_vals[72][24];
+    signal input c_s4_siblings[72][2][12];
     signal input c_s4_last_mt_levels[16][4];
-    signal input c_s5_vals[73][24];
-    signal input c_s5_siblings[73][1][12];
+    signal input c_s5_vals[72][24];
+    signal input c_s5_siblings[72][1][12];
     signal input c_s5_last_mt_levels[16][4];
     signal input c_finalPol[32][3];
     signal input c_nonce;
 
-    signal aggregationTypes[1];
-    for(var i = 0; i < 1; i++) {
+    signal aggregationTypes[2];
+    for(var i = 0; i < 2; i++) {
         aggregationTypes[i] <== a_sv_aggregationTypes[i];
         a_sv_aggregationTypes[i] === b_sv_aggregationTypes[i];
         a_sv_aggregationTypes[i] === c_sv_aggregationTypes[i];
@@ -292,101 +294,101 @@ template Recursive2() {
 
     vA.publics[0] <== a_sv_circuitType;
     vA.publics[1] <== a_sv_aggregatedProofs;
-    for(var i = 0; i < 1; i++) {
+    for(var i = 0; i < 2; i++) {
         vA.publics[2 + i] <== a_sv_aggregationTypes[i];
     }
-    for(var i = 0; i < 1; i++) {
-        vA.publics[3 + 3*i] <== a_sv_airgroupvalues[i][0];
-        vA.publics[3 + 3*i + 1] <== a_sv_airgroupvalues[i][1];
-        vA.publics[3 + 3*i + 2] <== a_sv_airgroupvalues[i][2];
+    for(var i = 0; i < 2; i++) {
+        vA.publics[4 + 3*i] <== a_sv_airgroupvalues[i][0];
+        vA.publics[4 + 3*i + 1] <== a_sv_airgroupvalues[i][1];
+        vA.publics[4 + 3*i + 2] <== a_sv_airgroupvalues[i][2];
     }
     for (var i = 0; i < 368; i++) {
-        vA.publics[6 + i] <== a_sv_stage1Hash[i];
+        vA.publics[10 + i] <== a_sv_stage1Hash[i];
     }
     for(var i = 0; i < 8; i++) {
-        vA.publics[374 + i] <== publics[i];
+        vA.publics[378 + i] <== publics[i];
     }
     for(var i = 0; i < 2; i++) {
-        vA.publics[382 + 3*i] <== proofValues[i][0];
-        vA.publics[382 + 3*i + 1] <== proofValues[i][1];
-        vA.publics[382 + 3*i + 2] <== proofValues[i][2];
+        vA.publics[386 + 3*i] <== proofValues[i][0];
+        vA.publics[386 + 3*i + 1] <== proofValues[i][1];
+        vA.publics[386 + 3*i + 2] <== proofValues[i][2];
     }
-    vA.publics[388] <== globalChallenge[0];
-    vA.publics[388 +1] <== globalChallenge[1];
-    vA.publics[388 +2] <== globalChallenge[2];
+    vA.publics[392] <== globalChallenge[0];
+    vA.publics[392 +1] <== globalChallenge[1];
+    vA.publics[392 +2] <== globalChallenge[2];
     signal {binary} a_sv_isNull <== IsZero()(a_sv_circuitType);
     vA.enable <== 1 - a_sv_isNull;
 
     vB.publics[0] <== b_sv_circuitType;
     vB.publics[1] <== b_sv_aggregatedProofs;
-    for(var i = 0; i < 1; i++) {
+    for(var i = 0; i < 2; i++) {
         vB.publics[2 + i] <== b_sv_aggregationTypes[i];
     }
-    for(var i = 0; i < 1; i++) {
-        vB.publics[3 + 3*i] <== b_sv_airgroupvalues[i][0];
-        vB.publics[3 + 3*i + 1] <== b_sv_airgroupvalues[i][1];
-        vB.publics[3 + 3*i + 2] <== b_sv_airgroupvalues[i][2];
+    for(var i = 0; i < 2; i++) {
+        vB.publics[4 + 3*i] <== b_sv_airgroupvalues[i][0];
+        vB.publics[4 + 3*i + 1] <== b_sv_airgroupvalues[i][1];
+        vB.publics[4 + 3*i + 2] <== b_sv_airgroupvalues[i][2];
     }
     for (var i = 0; i < 368; i++) {
-        vB.publics[6 + i] <== b_sv_stage1Hash[i];
+        vB.publics[10 + i] <== b_sv_stage1Hash[i];
     }
     for(var i = 0; i < 8; i++) {
-        vB.publics[374 + i] <== publics[i];
+        vB.publics[378 + i] <== publics[i];
     }
     for(var i = 0; i < 2; i++) {
-        vB.publics[382 + 3*i] <== proofValues[i][0];
-        vB.publics[382 + 3*i + 1] <== proofValues[i][1];
-        vB.publics[382 + 3*i + 2] <== proofValues[i][2];
+        vB.publics[386 + 3*i] <== proofValues[i][0];
+        vB.publics[386 + 3*i + 1] <== proofValues[i][1];
+        vB.publics[386 + 3*i + 2] <== proofValues[i][2];
     }
-    vB.publics[388] <== globalChallenge[0];
-    vB.publics[388 +1] <== globalChallenge[1];
-    vB.publics[388 +2] <== globalChallenge[2];
+    vB.publics[392] <== globalChallenge[0];
+    vB.publics[392 +1] <== globalChallenge[1];
+    vB.publics[392 +2] <== globalChallenge[2];
     signal {binary} b_sv_isNull <== IsZero()(b_sv_circuitType);
     vB.enable <== 1 - b_sv_isNull;
 
     vC.publics[0] <== c_sv_circuitType;
     vC.publics[1] <== c_sv_aggregatedProofs;
-    for(var i = 0; i < 1; i++) {
+    for(var i = 0; i < 2; i++) {
         vC.publics[2 + i] <== c_sv_aggregationTypes[i];
     }
-    for(var i = 0; i < 1; i++) {
-        vC.publics[3 + 3*i] <== c_sv_airgroupvalues[i][0];
-        vC.publics[3 + 3*i + 1] <== c_sv_airgroupvalues[i][1];
-        vC.publics[3 + 3*i + 2] <== c_sv_airgroupvalues[i][2];
+    for(var i = 0; i < 2; i++) {
+        vC.publics[4 + 3*i] <== c_sv_airgroupvalues[i][0];
+        vC.publics[4 + 3*i + 1] <== c_sv_airgroupvalues[i][1];
+        vC.publics[4 + 3*i + 2] <== c_sv_airgroupvalues[i][2];
     }
     for (var i = 0; i < 368; i++) {
-        vC.publics[6 + i] <== c_sv_stage1Hash[i];
+        vC.publics[10 + i] <== c_sv_stage1Hash[i];
     }
     for(var i = 0; i < 8; i++) {
-        vC.publics[374 + i] <== publics[i];
+        vC.publics[378 + i] <== publics[i];
     }
     for(var i = 0; i < 2; i++) {
-        vC.publics[382 + 3*i] <== proofValues[i][0];
-        vC.publics[382 + 3*i + 1] <== proofValues[i][1];
-        vC.publics[382 + 3*i + 2] <== proofValues[i][2];
+        vC.publics[386 + 3*i] <== proofValues[i][0];
+        vC.publics[386 + 3*i + 1] <== proofValues[i][1];
+        vC.publics[386 + 3*i + 2] <== proofValues[i][2];
     }
-    vC.publics[388] <== globalChallenge[0];
-    vC.publics[388 +1] <== globalChallenge[1];
-    vC.publics[388 +2] <== globalChallenge[2];
+    vC.publics[392] <== globalChallenge[0];
+    vC.publics[392 +1] <== globalChallenge[1];
+    vC.publics[392 +2] <== globalChallenge[2];
     signal {binary} c_sv_isNull <== IsZero()(c_sv_circuitType);
     vC.enable <== 1 - c_sv_isNull;
 
-    vA.rootC <== SelectVerificationKeyNull(3)(a_sv_circuitType, rootCBasics, rootCAgg);
-    vB.rootC <== SelectVerificationKeyNull(3)(b_sv_circuitType, rootCBasics, rootCAgg);
-    vC.rootC <== SelectVerificationKeyNull(3)(c_sv_circuitType, rootCBasics, rootCAgg);
+    vA.rootC <== SelectVerificationKeyNull(3, airgroupId)(a_sv_circuitType, rootCBasics, rootCAgg);
+    vB.rootC <== SelectVerificationKeyNull(3, airgroupId)(b_sv_circuitType, rootCBasics, rootCAgg);
+    vC.rootC <== SelectVerificationKeyNull(3, airgroupId)(c_sv_circuitType, rootCBasics, rootCAgg);
 
-    sv_circuitType <== 1;
+    sv_circuitType <== circuitType;
 
     sv_aggregationTypes <== aggregationTypes;
-    signal {binary} aggTypes[1];
-    for (var i = 0; i < 1; i++) {
+    signal {binary} aggTypes[2];
+    for (var i = 0; i < 2; i++) {
         sv_aggregationTypes[i] * (sv_aggregationTypes[i] - 1) === 0;
         aggTypes[i] <== sv_aggregationTypes[i];
     }
 
     signal {binary} AB_isNull <== IsZero()(2 - a_sv_isNull - b_sv_isNull);
-    signal airgroupValues_AB[1][3];
-    for (var i = 0; i < 1; i++) {
+    signal airgroupValues_AB[2][3];
+    for (var i = 0; i < 2; i++) {
         airgroupValues_AB[i] <== AggregateAirgroupValuesNull()(a_sv_airgroupvalues[i], b_sv_airgroupvalues[i], aggTypes[i], a_sv_isNull, b_sv_isNull);
         sv_airgroupvalues[i] <== AggregateAirgroupValuesNull()(airgroupValues_AB[i], c_sv_airgroupvalues[i], aggTypes[i], AB_isNull, c_sv_isNull);
     }
@@ -399,9 +401,9 @@ template Recursive2() {
 
 
     for (var i=0; i<4; i++) {
-        vA.publics[391 + i] <== rootCAgg[i];
-        vB.publics[391 + i] <== rootCAgg[i];
-        vC.publics[391 + i] <== rootCAgg[i];
+        vA.publics[395 + i] <== rootCAgg[i];
+        vB.publics[395 + i] <== rootCAgg[i];
+        vC.publics[395 + i] <== rootCAgg[i];
     }
 }
 

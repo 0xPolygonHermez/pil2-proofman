@@ -269,6 +269,9 @@ pub struct StarkInfo {
     pub airgroup_id: u64,
     #[serde(default, rename = "airId")]
     pub air_id: u64,
+    /// Set on basic airs by the setup; see `circuit_type_of`.
+    #[serde(default, rename = "circuitType")]
+    pub circuit_type: Option<u64>,
 
     #[serde(rename = "nPublics")]
     pub n_publics: u64,

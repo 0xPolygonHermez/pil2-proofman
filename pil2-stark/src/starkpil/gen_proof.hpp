@@ -118,6 +118,10 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
             }
         }
     } else {
+        if (!setupCtx.starkInfo.hasCircuitType || setupCtx.starkInfo.nStages < 2) {
+            zklog.error("genProof: a basic air needs a circuitType and stage 2 to absorb it after; regenerate the setup");
+            exitProcess();
+        }
         starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
     }
 
@@ -144,6 +148,11 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
         }
+    }
+    // The air's identity, after the stage-2 (bus) challenges every air shares.
+    if (!selfContained) {
+        Goldilocks::Element circuitType = Goldilocks::fromU64(setupCtx.starkInfo.circuitType);
+        starks.addTranscriptGL(transcript, &circuitType, 1);
     }
 
     calculateImHints(setupCtx, params, expressionsCtx);

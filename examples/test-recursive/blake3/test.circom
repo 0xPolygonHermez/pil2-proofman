@@ -6,7 +6,7 @@ include "test.verifier.circom";
 
 include "elliptic_curve.circom";
 
-template CalculateStage1Hash() {
+template CalculateStage1Hash(circuitType) {
     signal input rootC[4];
     signal input root1[4];
     signal input airValues[3][3];
@@ -14,7 +14,7 @@ template CalculateStage1Hash() {
 
     signal b3blk_0[8] <== Blake3AbsorbBlock(1)([1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225], [rootC[0], rootC[1], rootC[2], rootC[3], root1[0], root1[1], root1[2], root1[3]], 64, 0);
 
-    signal b3fin_1[8] <== Blake3FinalizeChunk(10)(b3blk_0, [airValues[0][0], airValues[1][0], 0, 0, 0, 0, 0, 0], 16, 0);
+    signal b3fin_1[8] <== Blake3FinalizeChunk(10)(b3blk_0, [circuitType, airValues[0][0], airValues[1][0], 0, 0, 0, 0, 0], 24, 0);
     _ <== airValues[2]; // Unused air values at stage 1
     values[0] <== b3fin_1[0];
     values[1] <== b3fin_1[1];
@@ -254,14 +254,17 @@ template CalculateStage1Hash() {
 
 
 template Recursive1() {
+    var airgroupId = 0;
+    var airId = 0;
+    var circuitType = 2; // circuitTypeOf(airgroupId, airId + 1)
 
     signal output sv_circuitType;
     signal output sv_aggregatedProofs;
-    signal output sv_aggregationTypes[1];
-    signal output sv_airgroupvalues[1][3];
+    signal output sv_aggregationTypes[2];
+    signal output sv_airgroupvalues[2][3];
     signal output sv_stage1Hash[368];
 
-    signal input airgroupvalues[1][3];
+    signal input airgroupvalues[2][3];
     signal input airvalues[3][3];
     signal input root1[4];
     signal input root2[4];
@@ -287,23 +290,19 @@ template Recursive1() {
     signal input s2_root[4];
     signal input s3_root[4];
     signal input s4_root[4];
-    signal input s5_root[4];
-    signal input s1_vals[211][48];
-    signal input s1_siblings[211][15][4];
+    signal input s1_vals[211][96];
+    signal input s1_siblings[211][14][4];
     signal input s1_last_mt_levels[16][4];
     signal input s2_vals[211][48];
-    signal input s2_siblings[211][11][4];
+    signal input s2_siblings[211][10][4];
     signal input s2_last_mt_levels[16][4];
     signal input s3_vals[211][48];
-    signal input s3_siblings[211][7][4];
+    signal input s3_siblings[211][6][4];
     signal input s3_last_mt_levels[16][4];
-    signal input s4_vals[211][24];
-    signal input s4_siblings[211][4][4];
+    signal input s4_vals[211][48];
+    signal input s4_siblings[211][2][4];
     signal input s4_last_mt_levels[16][4];
-    signal input s5_vals[211][24];
-    signal input s5_siblings[211][1][4];
-    signal input s5_last_mt_levels[16][4];
-    signal input finalPol[32][3];
+    signal input finalPol[64][3];
     signal input nonce;
 
     signal input publics[8];
@@ -344,7 +343,6 @@ template Recursive1() {
     sV.s2_root <== s2_root;
     sV.s3_root <== s3_root;
     sV.s4_root <== s4_root;
-    sV.s5_root <== s5_root;
     sV.s1_vals <== s1_vals;
     sV.s1_siblings <== s1_siblings;
     sV.s1_last_mt_levels <== s1_last_mt_levels;
@@ -357,9 +355,6 @@ template Recursive1() {
     sV.s4_vals <== s4_vals;
     sV.s4_siblings <== s4_siblings;
     sV.s4_last_mt_levels <== s4_last_mt_levels;
-    sV.s5_vals <== s5_vals;
-    sV.s5_siblings <== s5_siblings;
-    sV.s5_last_mt_levels <== s5_last_mt_levels;
     sV.finalPol <== finalPol;
     sV.nonce <== nonce;
 
@@ -367,11 +362,12 @@ template Recursive1() {
     sV.globalChallenge <== globalChallenge;
 
     // --> Assign the VADCOP data
-    sv_circuitType <== 2;
+    sv_circuitType <== circuitType;
     sv_aggregatedProofs <== 1;
-    sv_aggregationTypes <== [0];
+    sv_aggregationTypes <== [0,0];
     sv_airgroupvalues[0] <== airgroupvalues[0];
-    sv_stage1Hash <== CalculateStage1Hash()(sV.rootC, root1, airvalues);
+    sv_airgroupvalues[1] <== airgroupvalues[1];
+    sv_stage1Hash <== CalculateStage1Hash(circuitType)(sV.rootC, root1, airvalues);
 
 }
 

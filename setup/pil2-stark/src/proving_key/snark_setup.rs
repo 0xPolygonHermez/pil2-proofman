@@ -256,6 +256,7 @@ pub fn gen_snark_setup(
         &ldt,
         0,
         0,
+        None,
         "Recursivef",
         pil_result_rf.c_exp_id,
         pil_result_rf.deep_exp_id,
