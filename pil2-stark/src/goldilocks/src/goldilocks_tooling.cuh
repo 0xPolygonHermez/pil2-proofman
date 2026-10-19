@@ -791,10 +791,14 @@ struct DeviceCommitBuffers
     bool hasPhaseAAlias() const { return phaseBAliased && phaseAAliasOffset > 0; }
 
     uint64_t prefetchRegionBytes = 0;  // per GPU
-    // The mops window [mopsBase, recursiveBase) zisk's GPU planner needs: 15.03 GiB fixed + 2 GiB pool.
+    // The least the mops window [mopsBase, recursiveBase) must hold for zisk's GPU planner to set
+    // up: its fixed tables (2.3 GiB with a 2 GiB input region), the 2.5 GiB MemAlign region of the
+    // device memory witness and 1 GiB of dynamic room. On the phase-B layout the basic stream
+    // takes all the slack anyway and the floor only binds when the slack is short of it; the
+    // window a block actually gets is reported by "GPU mops used".
     // The headroom is kept free after the unified buffer (PROOFMAN_GPU_HEADROOM_MB overrides it): the
     // allocations after it, and a final SNARK's sppark MSM pool (pilfflonk's key is in the buffer).
-    static constexpr uint64_t MOPS_FLOOR_BYTES = 18ull << 30;
+    static constexpr uint64_t MOPS_FLOOR_BYTES = 6ull << 30;
     static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 756ull << 20;
 
     // Witness prefetch zone, one per GPU (the unified buffer's prefetch region): a witness is
