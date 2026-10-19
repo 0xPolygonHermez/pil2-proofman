@@ -82,9 +82,9 @@ and then splits it.
 
 The **degree of an `f_i`**, the `degree` of its layout entry, is its bound in coefficients,
 `max_j(deg_j·k + j)` with `deg_j` the bound of `p_j` ([Layout](#layout)). The SRS must hold at least
-as many powers `[τ^i]₁` as the largest `degree` of the layout. The largest ptau there is has `2^28`,
-so the degree of every `f_i` and `N·2^extendBits` are at most `2^28`: with `qDeg` up to 8,
-`N ≤ 2^24`.
+as many powers `[τ^i]₁` as the largest `degree` of the layout. The largest ptau there is, of power 28,
+has `2^29 − 1`, which bounds the degree of every `f_i`. The size of an AIR is bounded by the extended
+domain instead, `nBitsExt ≤ 28`: with `qDeg` up to 8, `N ≤ 2^24`.
 
 ## Q pieces
 

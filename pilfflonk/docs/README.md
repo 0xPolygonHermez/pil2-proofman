@@ -113,8 +113,9 @@ proofman-setup setup-pilfflonk -a <pilout> -b <build dir> --powers-of-tau <ptau>
 
 The ptau is a snarkjs powers-of-tau file. Only its sections 2 (`[τ^i]₁`) and 3 (`[τ^i]₂`) are read, so
 it need not be prepared for phase 2, and it needs at least as many powers as the largest `degree` of
-the layout. The largest ptau there is has `2^28` powers (`powersOfTau28_hez_final.ptau`), which bounds
-the degree of every `f_i` and `N·2^extendBits` by `2^28`: with `qDeg` up to 8, `N ≤ 2^24`.
+the layout. The largest ptau there is has `2^29 − 1` powers (`powersOfTau28_hez_final.ptau`), which
+bounds the degree of every `f_i`. The size of an AIR is bounded by the extended domain instead,
+`N·2^extendBits ≤ 2^28` ([protocol.md#degrees](protocol.md#degrees)): with `qDeg` up to 8, `N ≤ 2^24`.
 
 The steps, each a pure function but for the file I/O and the fixed commitments:
 
