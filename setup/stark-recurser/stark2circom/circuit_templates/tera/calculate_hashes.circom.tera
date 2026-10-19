@@ -9,6 +9,9 @@ template CalculateStage1Hash() {
 {%- else %}
     signal output values[{{ lattice_size }}];
 {%- endif %}
+
+    var airgroupId = {{ airgroup_id }};
+    var airId = {{ air_id }};
 {{ transcript_code }}
 {%- for j in unused_air_values %}
     _ <== airValues[{{ j }}]; // Unused air values at stage 1

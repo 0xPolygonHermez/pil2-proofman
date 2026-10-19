@@ -51,8 +51,8 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     let mut transcript = Transcript::new(None, hash_family);
     transcript.put("rootC", 4);
     transcript.put("root1", 4);
-    transcript.put_single(&airgroup_id.to_string());
-    transcript.put_single(&air_id.to_string());
+    transcript.put_single("airgroupId");
+    transcript.put_single("airId");
     for (j, av) in air_values_map.iter().enumerate() {
         if av["stage"].as_u64() == Some(1) {
             transcript.put_single(&format!("airValues[{j}][0]"));
@@ -137,6 +137,8 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     // ── Build Tera context ───────────────────────────────────────────────────
     let mut ctx = TeraCtx::new();
     ctx.insert("has_stage1_air_values", &has_stage1_air_values);
+    ctx.insert("airgroup_id", &airgroup_id);
+    ctx.insert("air_id", &air_id);
     ctx.insert("air_values_len", &air_values_len);
     ctx.insert("is_ec", &is_ec);
     ctx.insert("lattice_size", &lattice_size);
@@ -196,7 +198,9 @@ mod tests {
         assert!(!out.contains("<== Poseidon(16)("), "must not emit Poseidon1 template:\n{out}");
         assert!(out.contains("values[0] <=="));
         // The air's identity follows root1, so airs sharing a rootC hash apart.
-        assert!(out.contains("root1[3],3,7,0"), "airgroupId/airId not absorbed:\n{out}");
+        assert!(out.contains("var airgroupId = 3;"), "out:\n{out}");
+        assert!(out.contains("var airId = 7;"), "out:\n{out}");
+        assert!(out.contains("root1[3],airgroupId,airId,0"), "airgroupId/airId not absorbed:\n{out}");
         // out_w = 16 → first round fills values[0..16]
         assert!(out.contains("values[15] <=="));
         assert!(!out.contains("HashToCurve"));
