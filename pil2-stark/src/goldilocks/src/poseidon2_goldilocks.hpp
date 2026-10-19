@@ -85,7 +85,7 @@ private:
     inline void static pow7add_avx(__m256i *x, const Goldilocks::Element C_[SPONGE_WIDTH]);
     inline void static element_pow7_avx(__m256i &x);
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
     inline void static matmul_external_batch_avx512(__m512i *x);
     inline void static matmul_m4_batch_avx512(__m512i &st0, __m512i &st1, __m512i &st2, __m512i &st3);
     inline void static pow7add_avx512(__m512i *x, const Goldilocks::Element C_[SPONGE_WIDTH]);
@@ -126,7 +126,7 @@ private:
                                      uint64_t num_cols, uint64_t num_rows, uint64_t arity,
                                      int num_threads = 0, uint64_t dim = 1);
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
     // AVX512 8-lane batch (single-sponge AVX512 is intentionally not
     // implemented — see Poseidon2Mode enum comment).
     static void permute_batch_avx512(Goldilocks::Element *, const Goldilocks::Element *);
@@ -337,7 +337,7 @@ inline void Poseidon2Goldilocks<W>::merkletree(
     Poseidon2Mode mode, int num_threads, uint64_t dim)
 {
     if (mode == Poseidon2Mode::Auto) {
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
         mode = Goldilocks::hasAvx512() ? Poseidon2Mode::Avx512Batch : Poseidon2Mode::AvxBatch;
 #elif defined(__AVX2__)
         mode = Poseidon2Mode::AvxBatch;
@@ -354,7 +354,7 @@ inline void Poseidon2Goldilocks<W>::merkletree(
         case Poseidon2Mode::AvxBatch:
             merkletree_batch_avx(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
         case Poseidon2Mode::Avx512Batch:
             merkletree_batch_avx512(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
 #endif
@@ -366,7 +366,7 @@ inline void Poseidon2Goldilocks<W>::merkletree(
 
 #include "poseidon2_goldilocks_avx.hpp"
 
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
  #include "poseidon2_goldilocks_avx512.hpp"
  #endif
 

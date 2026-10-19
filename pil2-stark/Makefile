@@ -183,9 +183,10 @@ else ifeq ($(UNAME_S),Linux)
     LDFLAGS += $(MPI_LDFLAGS)
     # Fixed SIMD baseline, never probed from the build host: libstarks.a is
     # CI-cached and linked into release binaries, so host-tuned flags SIGILL on
-    # the next machine. __AVX512__ compiles the AVX-512 paths in without a global
-    # -mavx512f (their bodies scope it themselves); hasAvx512() selects at runtime.
-    CXXFLAGS += -mavx2 -D__AVX2__ -D__AVX512__ -D__USE_ASSEMBLY__
+    # the next machine. GOLDILOCKS_AVX512_PATHS compiles the AVX-512 paths in
+    # without a global -mavx512f (their bodies scope it themselves);
+    # hasAvx512() selects at runtime.
+    CXXFLAGS += -mavx2 -D__AVX2__ -DGOLDILOCKS_AVX512_PATHS
 
     # CUDA arch staleness check: gencode flags are baked into the GPU objects
     # and make's .d files don't track them, so a flag change (CUDA_ARCHS=89 ->

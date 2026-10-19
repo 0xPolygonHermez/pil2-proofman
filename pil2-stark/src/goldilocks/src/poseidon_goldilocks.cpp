@@ -446,7 +446,7 @@ inline void element_pow7_avx(__m256i &x) {
     Goldilocks::mult_avx(x, x3, x4);
 }
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 // Scoped AVX-512 codegen; a global -mavx512f would leak EVEX library-wide.
 #pragma GCC push_options
 #pragma GCC target("avx512f")
@@ -717,7 +717,7 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(
 // AVX512 (8-sponge batch only).
 // ---------------------------------------------------------------------------
 
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 // Scoped AVX-512 codegen; a global -mavx512f would leak EVEX library-wide.
 #pragma GCC push_options
 #pragma GCC target("avx512f")
@@ -965,7 +965,7 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(
 }
 
 #pragma GCC pop_options
-#endif // __AVX512__
+#endif // GOLDILOCKS_AVX512_PATHS
 
 // ---------------------------------------------------------------------------
 // Explicit template instantiation.

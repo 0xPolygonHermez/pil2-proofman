@@ -36,7 +36,7 @@ ifeq ($(UNAME_S),Linux)
     # STARK_POSEIDON1 in case the environment inherited it from the outer build, like this both paths are reached
     CXXFLAGS += -U STARK_POSEIDON1
     # Same fixed baseline as pil2-stark/Makefile; selection happens at runtime.
-    CXXFLAGS += -D__AVX512__
+    CXXFLAGS += -DGOLDILOCKS_AVX512_PATHS
 
     # CUDA/GPU build options (Linux only)
     NVCC := /usr/local/cuda/bin/nvcc

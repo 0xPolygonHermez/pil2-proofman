@@ -116,7 +116,7 @@ private:
                                      uint64_t num_cols, uint64_t num_rows, uint64_t arity,
                                      int num_threads = 0, uint64_t dim = 1);
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
     // AVX512 8-sponge batch: 12 __m512i registers, each holding one state
     // element across 8 sponges (strided layout).
     static void permute_batch_avx512(Goldilocks::Element *, const Goldilocks::Element *);
@@ -320,7 +320,7 @@ inline void PoseidonGoldilocks<W>::merkletree(
     PoseidonMode mode, int num_threads, uint64_t dim)
 {
     if (mode == PoseidonMode::Auto) {
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
         mode = Goldilocks::hasAvx512() ? PoseidonMode::Avx512Batch : PoseidonMode::AvxBatch;
 #elif defined(__AVX2__)
         mode = PoseidonMode::AvxBatch;
@@ -340,7 +340,7 @@ inline void PoseidonGoldilocks<W>::merkletree(
         case PoseidonMode::AvxBatch:
             merkletree_batch_avx(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
         case PoseidonMode::Avx512Batch:
             merkletree_batch_avx512(tree, input, num_cols, num_rows, arity, num_threads, dim); return;
 #endif

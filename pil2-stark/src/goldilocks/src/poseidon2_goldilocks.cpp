@@ -553,7 +553,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(Goldilocks::Eleme
 }
 #endif
 
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 // Scoped AVX-512 codegen; a global -mavx512f would leak EVEX library-wide.
 #pragma GCC push_options
 #pragma GCC target("avx512f")

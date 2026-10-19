@@ -1,12 +1,12 @@
 #ifndef POSEIDON2_GOLDILOCKS_AVX512
 #define POSEIDON2_GOLDILOCKS_AVX512
-#ifdef __AVX512__
-// Scoped AVX-512 codegen; a global -mavx512f would leak EVEX library-wide.
-#pragma GCC push_options
-#pragma GCC target("avx512f")
+#ifdef GOLDILOCKS_AVX512_PATHS
 #include "poseidon2_goldilocks.hpp"
 #include "goldilocks_base_field.hpp"
 #include <immintrin.h>
+// Scoped AVX-512 codegen, opened after the includes so they stay baseline.
+#pragma GCC push_options
+#pragma GCC target("avx512f")
 
 
 template<uint32_t SPONGE_WIDTH_T>
