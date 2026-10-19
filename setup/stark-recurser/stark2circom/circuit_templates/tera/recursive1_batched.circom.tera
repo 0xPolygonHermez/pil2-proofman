@@ -2,6 +2,7 @@ pragma circom 2.1.0;
 pragma custom_templates;
 
 include "iszero.circom";
+include "circuit_type.circom";
 include "agg_values.circom";
 include "acc_points.circom";
 {% for vf in verifier_filenames %}include "{{ vf }}";

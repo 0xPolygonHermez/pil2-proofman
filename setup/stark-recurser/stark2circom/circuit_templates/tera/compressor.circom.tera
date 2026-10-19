@@ -3,6 +3,7 @@ pragma custom_templates;
 
 {% for vf in verifier_filenames %}include "{{ vf }}";
 {% endfor %}include "elliptic_curve.circom";
+include "circuit_type.circom";
 
 {{ calculate_hashes }}
 template Compressor() {

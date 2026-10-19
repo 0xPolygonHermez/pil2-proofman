@@ -473,7 +473,6 @@ pub fn gen_recursive2(
     ctx.insert("agg_types_consistency", &agg_types_consistency(vadcop_info, airgroup_id, &slot_prefixes, false));
     ctx.insert("sel_fn", sel_fn);
     ctx.insert("airgroup_id", &airgroup_id);
-    ctx.insert("circuit_type", &proofman_common::circuit_type_of(airgroup_id as u64, 0));
     ctx.insert("agg_vadcop", &agg_vadcop_inputs(vadcop_info, airgroup_id, &slot_prefixes, "sv", &Default::default()));
     ctx.insert("n_publics_minus_4", &(n_publics_raw - 4));
     ctx.insert("pub_names", &pub_names.join(", "));
@@ -715,7 +714,8 @@ mod recursive1_batch_tests {
     #[test]
     fn the_fold_keeps_the_airs_circuit_type() {
         let out = gen(2, false);
-        assert!(out.contains("var circuitType = 5;"), "{out}");
+        assert!(out.contains("var circuitType = circuitTypeOf(airgroupId, airId + 1);"), "{out}");
+        assert!(out.contains("include \"circuit_type.circom\";"), "{out}");
         assert!(out.contains("sv_circuitType <== circuitType;"), "the air's own type\n{out}");
         assert!(!out.contains("sv_circuitType <== 1;"), "must not claim the aggregated type");
     }
@@ -740,7 +740,7 @@ mod recursive1_batch_tests {
         let rec2 =
             gen_recursive2(&stark_info(), &["v.circom".into()], &vadcop, 1, std::slice::from_ref(&vk), &opts).unwrap();
         assert!(rec2.contains("var airgroupId = 1;"), "{rec2}");
-        assert!(rec2.contains("var circuitType = 3;"), "recursive2 of airgroup 1 is circuit_type_of(1, 0)\n{rec2}");
+        assert!(rec2.contains("var circuitType = circuitTypeOf(airgroupId, 0);"), "{rec2}");
         assert!(rec2.contains(", airgroupId)("), "{rec2}");
 
         let fin = gen_vadcop_final(

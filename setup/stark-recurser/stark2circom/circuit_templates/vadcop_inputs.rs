@@ -199,7 +199,7 @@ pub fn assign_vadcop_inputs(
     out
 }
 
-/// The air's `var airgroupId/airId/circuitType`; derived from the ids, since a compressor's starkinfo has no circuitType.
+/// The air's `var airgroupId/airId/circuitType`; circom computes the type, which a basic starkinfo must agree with.
 pub fn air_id_vars(stark_info: &Value) -> String {
     let airgroup_id = stark_info["airgroupId"].as_u64().expect("starkInfo.airgroupId");
     let air_id = stark_info["airId"].as_u64().expect("starkInfo.airId");
@@ -208,7 +208,7 @@ pub fn air_id_vars(stark_info: &Value) -> String {
         assert_eq!(recorded, circuit_type, "starkInfo.circuitType disagrees with ({airgroup_id}, {air_id})");
     }
     format!(
-        "    var airgroupId = {airgroup_id};\n    var airId = {air_id};\n    var circuitType = {circuit_type}; // circuitTypeOf(airgroupId, airId + 1)\n"
+        "    var airgroupId = {airgroup_id};\n    var airId = {air_id};\n    var circuitType = circuitTypeOf(airgroupId, airId + 1);\n"
     )
 }
 
@@ -579,9 +579,9 @@ mod fold_tests {
 
     /// A compressor's starkinfo carries the basic air's ids but no circuitType.
     #[test]
-    fn air_id_vars_derive_the_circuit_type_from_the_ids() {
+    fn air_id_vars_compute_the_circuit_type_from_the_ids() {
         let out = air_id_vars(&serde_json::json!({ "airgroupId": 0, "airId": 1 }));
-        assert!(out.contains("var circuitType = 5;"), "{out}");
+        assert!(out.contains("var circuitType = circuitTypeOf(airgroupId, airId + 1);"), "{out}");
     }
 
     #[test]

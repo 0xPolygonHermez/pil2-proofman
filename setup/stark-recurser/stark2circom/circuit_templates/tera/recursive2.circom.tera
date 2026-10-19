@@ -9,7 +9,7 @@ include "acc_points.circom";
 {% endfor %}
 template Recursive2() {
     var airgroupId = {{ airgroup_id }};
-    var circuitType = {{ circuit_type }}; // circuitTypeOf(airgroupId, 0)
+    var circuitType = circuitTypeOf(airgroupId, 0);
     var rootCBasics[{{ airs_in_group }}][4];
 
 {{ rootc_basics }}
