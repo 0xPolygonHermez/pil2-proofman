@@ -263,9 +263,9 @@ jobs:
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
 
       - name: Set up Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v7
         with:
-          node-version: "18"
+          node-version: "24"
 
       # The official ptau files the tests read (pilfflonk/docs/README.md#tests), checked against the
       # blake2b of snarkjs's README: downloaded when the cache does not have them.
@@ -319,9 +319,9 @@ jobs:
           override: true
 
       - name: Set up Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v7
         with:
-          node-version: "18"
+          node-version: "24"
 
       - name: Install Node dependencies (pil2-compiler, snarkjs)
         run: npm install
@@ -448,9 +448,9 @@ jobs:
           override: true
 
       - name: Set up Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v7
         with:
-          node-version: "18"
+          node-version: "24"
 
       - name: Install Node dependencies (pil2-compiler, snarkjs)
         run: npm install
