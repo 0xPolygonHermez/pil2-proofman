@@ -3269,7 +3269,12 @@ where
             }
 
             self.cancellation_info.write_recover().reset();
-            self.reset_unguarded()?;
+            // Collective: whether a short buffer pool fails the job depends on each rank's own
+            // `cancelled` flag, so ranks can disagree and the ones that go on hang in the next MPI
+            // exchange. Every rank learns every rank's outcome before any of them goes on.
+            let local = self.reset_unguarded();
+            let all_ok = self.mpi_ctx.all_finished_ok(local.is_ok());
+            agree_on_reset(local, all_ok)?;
             self.pctx.dctx_reset();
         } else {
             // No reset runs on this path, so a preceding snark's carve is undone here.
@@ -6846,9 +6851,27 @@ where
     }
 }
 
+/// A rank's reset outcome once every rank's is known: its own error if it has one, else a peer's
+/// failure, so that no rank starts a job the others have abandoned.
+fn agree_on_reset(local: ProofmanResult<()>, all_ok: bool) -> ProofmanResult<()> {
+    match local {
+        Err(e) => Err(e),
+        Ok(()) if all_ok => Ok(()),
+        Ok(()) => Err(ProofmanError::MpiCancellation("a peer rank failed to reset before the job".into())),
+    }
+}
+
 #[cfg(test)]
 mod thread_budget_tests {
     use super::*;
+
+    #[test]
+    fn a_rank_whose_peer_failed_its_reset_fails_too() {
+        assert!(agree_on_reset(Ok(()), true).is_ok());
+        assert!(matches!(agree_on_reset(Ok(()), false), Err(ProofmanError::MpiCancellation(_))));
+        let own = agree_on_reset(Err(ProofmanError::Cancelled), false);
+        assert!(matches!(own, Err(ProofmanError::Cancelled)), "a rank keeps its own error");
+    }
 
     #[test]
     fn table_ids_past_32_bits_are_caught() {
