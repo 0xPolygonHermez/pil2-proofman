@@ -31,9 +31,9 @@ use std::path::Path;
 
 use num_bigint::BigUint;
 use proofman_pilfflonk::calldata::SELECTOR_BYTES;
-use proofman_pilfflonk::field::{q, r};
+use proofman_pilfflonk::field::r;
 use proofman_pilfflonk::names::evaluation_name;
-use proofman_pilfflonk::{Boundary, CalldataLayout, FrBytes, G1Affine, JsonFile, PolType, Vkey};
+use proofman_pilfflonk::{Boundary, CalldataLayout, FrBytes, JsonFile, PolType, Vkey};
 use serde::Serialize;
 use serde_json::Value;
 use tera::{Context as TeraContext, Tera};
@@ -93,18 +93,6 @@ fn signed_pow(base: &BigUint, s: i64) -> BigUint {
     } else {
         power
     }
-}
-
-/// Whether a fixed commitment is a point of G1 or the point at infinity, `(0, 0)`, as the JS verifier
-/// reads the vkey's (`vkey.js`, `g1FromObject` with `allowInfinity`): the cofactor of G1 is 1, and
-/// the curve `y² = x³ + 3` is the group.
-fn is_g1(point: &G1Affine) -> bool {
-    if point.is_infinity() {
-        return true;
-    }
-    let x = BigUint::from_bytes_le(&point.x.to_le_bytes());
-    let y = BigUint::from_bytes_le(&point.y.to_le_bytes());
-    (&y * &y) % q() == (&x * &x * &x + 3u32) % q()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -974,9 +962,8 @@ fn render(template: &str, context: &TeraContext) -> Result<String, SetupError> {
     Ok(tera.render("verifier_pilfflonk.sol", context).map_err(error)?.trim_start().to_string())
 }
 
-/// The Solidity verifier of `vkey` (see the module). Refuses a vkey the verifier would not read,
-/// one whose digest is not that of its contents (the JS verifier accepts no proof of it) and one
-/// with a fixed commitment off the curve.
+/// The Solidity verifier of `vkey` (see the module). Refuses a vkey the verifier would not read and
+/// one whose digest is not that of its contents (the JS verifier accepts no proof of it).
 pub fn verifier_sol(vkey: &Vkey) -> Result<String, SetupError> {
     vkey.validate()?;
     if vkey.compute_digest()? != vkey.digest {
@@ -984,9 +971,6 @@ pub fn verifier_sol(vkey: &Vkey) -> Result<String, SetupError> {
             "the vkey's digest is not the digest of its contents (pilfflonk/docs/formats.md#digest): the JS verifier \
              accepts no proof of it",
         );
-    }
-    if let Some(i) = vkey.fixed_commitments.0.iter().position(|p| !is_g1(p)) {
-        return fail(format!("the vkey's fixed commitment f{i} is not a point of G1"));
     }
     let context = TeraContext::from_serialize(Context::new(vkey)?).map_err(|e| SetupError::Solidity(e.to_string()))?;
     q_in_memory(&render(VERIFIER_TEMPLATE, &context)?)
@@ -1075,17 +1059,5 @@ mod tests {
         assert_eq!((w * w_inv) % r(), BigUint::from(1u32));
         assert_eq!((fr_neg(&omega) + &omega) % r(), BigUint::ZERO);
         assert_eq!(fr_neg(&BigUint::ZERO), BigUint::ZERO);
-    }
-
-    #[test]
-    fn g1_is_the_curve_and_the_point_at_infinity() {
-        let point = |x: u64, y: u64| G1Affine {
-            x: proofman_pilfflonk::FqBytes::from_u64(x),
-            y: proofman_pilfflonk::FqBytes::from_u64(y),
-        };
-        assert!(is_g1(&point(1, 2)));
-        assert!(is_g1(&G1Affine::INFINITY));
-        assert!(!is_g1(&point(1, 3)));
-        assert!(!is_g1(&point(0, 1)));
     }
 }

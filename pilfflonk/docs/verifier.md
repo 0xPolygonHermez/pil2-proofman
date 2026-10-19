@@ -126,11 +126,12 @@ repeated when two `f` share roots, as [protocol.md#inverses](protocol.md#inverse
 
 ### Refused vkeys
 
-The generator refuses a vkey the verifier would not read (`Vkey::validate`), one whose digest is not
-that of its content (the JS accepts no proof of it), and one with a fixed commitment off the curve (the
-point at infinity, that of a fixed column that vanishes at `τ`, is allowed). `Vkey::validate`, which
-the setup runs when it writes a vkey and the prover when it reads one, also checks, as the JS does:
+The generator refuses a vkey the verifier would not read (`Vkey::validate`) and one whose digest is
+not that of its content (the JS accepts no proof of it). `Vkey::validate`, which the setup runs when it
+writes a vkey and the prover when it reads one, also checks, as the JS does:
 
+- **Each fixed commitment is a point of G1** (`elements.js`, `g1FromObject`): on the curve, or the
+  point at infinity, that of a fixed column that vanishes at `τ`.
 - **`X_2` is a point of G2 other than the point at infinity**: on the twist and in its `r`-torsion
   (`elements.js`, `g2FromObject`), checked by the C++ core's SRS functions (`checkG2`) through
   `pilfflonk_g2_check`, as Rust has no G2 arithmetic. The precompile `0x08` takes `(0, 0, 0, 0)` as the

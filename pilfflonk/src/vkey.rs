@@ -266,6 +266,11 @@ impl JsonFile for Vkey {
                 self.layout.n_fixed()
             );
         }
+        // A fixed commitment is a point of G1 or, that of a fixed f that vanishes at τ, the point at
+        // infinity, as the JS verifier reads it (elements.js, g1FromObject with allowInfinity).
+        if let Some(i) = self.fixed_commitments.0.iter().position(|p| !p.is_in_g1()) {
+            return invalid!("the vkey's fixed commitment f{i} is not a point of G1");
+        }
         // The values of its proofs have a name each, as the JS verifier names them (crate::names).
         ProofNames::of_vkey(self)?;
 

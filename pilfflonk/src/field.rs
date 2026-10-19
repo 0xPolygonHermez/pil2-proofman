@@ -9,8 +9,8 @@
 //! whether it is computed over the file or over the value read from it.
 //!
 //! Only the ranges are checked (`< r`, `< q`): whether a point is on its curve is for the
-//! verifier to check on its input (pilfflonk/docs/verifier.md#steps, steps 1–3), and for the C++
-//! that computes the points.
+//! verifier to check on its input (pilfflonk/docs/verifier.md#steps, steps 1–3), for
+//! `Vkey::validate` on the vkey's points, and for the C++ that computes the points.
 
 use std::fmt;
 use std::sync::OnceLock;
@@ -247,6 +247,17 @@ impl G1Affine {
         self.x.is_zero() && self.y.is_zero()
     }
 
+    /// Whether the point is in G1: the point at infinity or a point of the curve `y² = x³ + 3`,
+    /// which is the group, as the cofactor of G1 is 1.
+    pub fn is_in_g1(&self) -> bool {
+        if self.is_infinity() {
+            return true;
+        }
+        let x = BigUint::from_bytes_le(&self.x.to_le_bytes());
+        let y = BigUint::from_bytes_le(&self.y.to_le_bytes());
+        (&y * &y) % q() == (&x * &x * &x + 3u32) % q()
+    }
+
     /// `x‖y`, each coordinate 32 bytes big-endian: the transcript's and the proof's encoding
     /// (pilfflonk/docs/protocol.md#transcript, pilfflonk/docs/formats.md#proof).
     pub fn to_be_bytes(&self) -> [u8; G1_BYTES] {
@@ -480,6 +491,15 @@ mod tests {
                 assert_eq!(is_below(&v, bytes), BigUint::from_bytes_le(&v) < *modulus, "{v:?}");
             }
         }
+    }
+
+    #[test]
+    fn g1_is_the_curve_and_the_point_at_infinity() {
+        let point = |x: u64, y: u64| G1Affine { x: FqBytes::from_u64(x), y: FqBytes::from_u64(y) };
+        assert!(point(1, 2).is_in_g1());
+        assert!(G1Affine::INFINITY.is_in_g1());
+        assert!(!point(1, 3).is_in_g1());
+        assert!(!point(0, 1).is_in_g1());
     }
 
     #[test]

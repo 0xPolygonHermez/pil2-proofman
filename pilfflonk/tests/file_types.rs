@@ -185,9 +185,9 @@ fn fake_hash(preimage: &[u8]) -> [u8; 32] {
 }
 
 fn sample_vkey() -> Vkey {
-    // A point of G2, as X_2 must be (Vkey::validate): [1]₂.
+    // Points of G2 and G1, as X_2 and a fixed commitment must be (Vkey::validate): [1]₂ and [1]₁.
     let x_2 = G2Affine::generator().unwrap();
-    let verkey = AirVerkey(vec![point(100)]);
+    let verkey = AirVerkey(vec![point(1)]);
     Vkey::new(&sample_info(), 2, vec![0, 2], x_2, &verkey, q_verifier()).unwrap().seal(fake_hash).unwrap()
 }
 
@@ -346,7 +346,7 @@ fn the_vkey_has_the_fields_of_a6_in_a_fixed_order() {
     assert_eq!(value["curve"], "bn128");
     assert_eq!(value["power"], 4);
     assert_eq!(value["powerW"], 6, "the lcm of k = 3, 2, 2, 2, 1");
-    assert_eq!(value["f0"], json!(["100", "101"]));
+    assert_eq!(value["f0"], json!(["1", "2"]));
     let [x_c0, x_c1, y_c0, y_c1] = G2_GENERATOR;
     assert_eq!(value["X_2"], json!([[x_c0, x_c1], [y_c0, y_c1]]));
     assert!(value["digest"].as_str().unwrap().starts_with("0x"));
@@ -582,6 +582,8 @@ fn the_vkey_refuses_what_the_verifier_refuses() {
         (with(&|v| v.x_2 = G2Affine::default()), "the point at infinity of G2"),
         (with(&|v| v.x_2.y[1] = FqBytes::from_u64(1)), "not on the twist"),
         (with(&|v| v.x_2 = twist_not_g2), "not in G2"),
+        // A fixed commitment off the curve (elements.js, g1FromObject).
+        (with(&|v| v.fixed_commitments.0[0] = point(2)), "fixed commitment f0 is not a point of G1"),
         // Two values of the proof of one name (crate::names), as names.js refuses them: an evaluation
         // named as another at an offset (`Sample.a` at offset 1 is `Sample.aw`), two columns named
         // alike, and an evaluation named as the proof's `inv`.
