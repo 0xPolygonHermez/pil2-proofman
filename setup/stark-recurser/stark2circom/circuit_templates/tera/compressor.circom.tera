@@ -6,6 +6,7 @@ pragma custom_templates;
 
 {{ calculate_hashes }}
 template Compressor() {
+{{ air_id_vars }}
 {% if has_publics %}    // --> AIR public inputs
     signal input publics[{{ n_publics }}];
 

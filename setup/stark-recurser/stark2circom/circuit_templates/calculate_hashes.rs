@@ -1,8 +1,9 @@
 //! Rust port of `vadcop/helpers/templates/calculate_hashes.circom.ejs`.
 //!
 //! Generates the `CalculateStage1Hash` circom template which computes a
-//! Poseidon2 hash of `rootC + root1 + airgroupId + airId + airValues` producing either an elliptic-
-//! curve point (when `vadcopInfo.curve != "None"`) or a lattice vector.
+//! Poseidon2 hash of `rootC + root1 + airgroupId + airId + airValues` (the ids are
+//! template parameters) producing either an elliptic-curve point (when
+//! `vadcopInfo.curve != "None"`) or a lattice vector.
 //!
 //! Implementation: the order-dependent `Transcript` state machine drives the
 //! Poseidon2 chain in Rust, and the resulting code + collected output fields
@@ -28,7 +29,7 @@ struct ChainRound {
 
 /// Port of `calculate_hashes.circom.ejs`.
 ///
-/// Returns the complete `template CalculateStage1Hash() { ... }` block as a string.
+/// Returns the complete `template CalculateStage1Hash(airgroupId, airId) { ... }` block as a string.
 pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     let arity = stark_info["starkStruct"]["merkleTreeArity"].as_u64().unwrap_or(2) as usize;
     let curve = vadcop_info["curve"].as_str().unwrap_or("None");
@@ -38,9 +39,6 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     let air_values_map = stark_info["airValuesMap"].as_array().cloned().unwrap_or_default();
     let air_values_len = air_values_map.len();
     let has_stage1_air_values = air_values_map.iter().any(|v| v["stage"].as_u64() == Some(1));
-    // rootC alone does not name the air: airs with equal fixed columns share it.
-    let airgroup_id = stark_info["airgroupId"].as_u64().expect("calculate_hashes: starkInfo.airgroupId");
-    let air_id = stark_info["airId"].as_u64().expect("calculate_hashes: starkInfo.airId");
 
     // The contribution hash must use the same family as the proof being recursed
     // (carried in globalInfo.hash). Poseidon2 ⇒ `Poseidon2(4, …)`, else Poseidon1
@@ -51,6 +49,7 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     let mut transcript = Transcript::new(None, hash_family);
     transcript.put("rootC", 4);
     transcript.put("root1", 4);
+    // rootC alone does not name the air: airs with equal fixed columns share it.
     transcript.put_single("airgroupId");
     transcript.put_single("airId");
     for (j, av) in air_values_map.iter().enumerate() {
@@ -137,8 +136,6 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     // ── Build Tera context ───────────────────────────────────────────────────
     let mut ctx = TeraCtx::new();
     ctx.insert("has_stage1_air_values", &has_stage1_air_values);
-    ctx.insert("airgroup_id", &airgroup_id);
-    ctx.insert("air_id", &air_id);
     ctx.insert("air_values_len", &air_values_len);
     ctx.insert("is_ec", &is_ec);
     ctx.insert("lattice_size", &lattice_size);
@@ -173,8 +170,6 @@ mod tests {
 
     fn stark_info(arity: u64, air_values_map: Value) -> Value {
         json!({
-            "airgroupId": 3,
-            "airId": 7,
             "starkStruct": { "merkleTreeArity": arity },
             "airValuesMap": air_values_map,
         })
@@ -190,7 +185,7 @@ mod tests {
         });
         let out = gen_calculate_hashes(&stark, &vadcop);
 
-        assert!(out.contains("template CalculateStage1Hash()"));
+        assert!(out.contains("template CalculateStage1Hash(airgroupId, airId)"));
         assert!(out.contains("signal output values[32]"));
         assert!(!out.contains("signal input airValues"));
         // Poseidon2 family must emit the Poseidon2 template, never the (undefined-here) Poseidon1 one.
@@ -198,8 +193,7 @@ mod tests {
         assert!(!out.contains("<== Poseidon(16)("), "must not emit Poseidon1 template:\n{out}");
         assert!(out.contains("values[0] <=="));
         // The air's identity follows root1, so airs sharing a rootC hash apart.
-        assert!(out.contains("var airgroupId = 3;"), "out:\n{out}");
-        assert!(out.contains("var airId = 7;"), "out:\n{out}");
+        assert!(out.contains("template CalculateStage1Hash(airgroupId, airId)"), "out:\n{out}");
         assert!(out.contains("root1[3],airgroupId,airId,0"), "airgroupId/airId not absorbed:\n{out}");
         // out_w = 16 → first round fills values[0..16]
         assert!(out.contains("values[15] <=="));

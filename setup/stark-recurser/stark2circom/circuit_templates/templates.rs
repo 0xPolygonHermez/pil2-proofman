@@ -20,8 +20,8 @@ use tera::{Context as TeraCtx, Tera};
 use super::get_sha256_inputs::gen_get_sha256_inputs;
 use super::stark_inputs::{assign_stark_inputs, define_stark_inputs, EnableInput, StarkInputOptions};
 use super::vadcop_inputs::{
-    agg_types_consistency, agg_vadcop_inputs, assign_vadcop_inputs, basic_circuit_type, define_vadcop_inputs,
-    init_vadcop_inputs, AggVadcopOptions, AssignVadcopOptions, VadcopSignals,
+    agg_types_consistency, agg_vadcop_inputs, air_id_vars, assign_vadcop_inputs, basic_circuit_type,
+    define_vadcop_inputs, init_vadcop_inputs, AggVadcopOptions, AssignVadcopOptions, VadcopSignals,
 };
 use super::calculate_hashes::gen_calculate_hashes;
 use super::verify_global_challenge::gen_verify_global_challenge;
@@ -240,6 +240,7 @@ pub fn gen_compressor(
     let mut ctx = TeraCtx::new();
     ctx.insert("verifier_filenames", verifier_filenames);
     ctx.insert("calculate_hashes", &gen_calculate_hashes(stark_info, vadcop_info));
+    ctx.insert("air_id_vars", &air_id_vars(stark_info));
     ctx.insert("has_publics", &(n_publics > 0));
     ctx.insert("n_publics", &n_publics);
     ctx.insert("has_proof_values", &(num_proof_values > 0));
@@ -281,6 +282,7 @@ pub fn gen_recursive1(
         "calculate_hashes",
         &if !has_compressor { gen_calculate_hashes(stark_info, vadcop_info) } else { String::new() },
     );
+    ctx.insert("air_id_vars", &air_id_vars(stark_info));
     ctx.insert("has_publics", &(n_publics > 0));
     ctx.insert("n_publics", &n_publics);
     ctx.insert("has_proof_values", &(num_proof_values > 0));
@@ -355,7 +357,7 @@ pub fn gen_recursive1(
         );
         let agg_opts = AggVadcopOptions { own_circuit_type: true, force_null: true };
         ctx.insert("agg_vadcop", &agg_vadcop_inputs(vadcop_info, airgroup_id, &prefixes, "sv", &agg_opts));
-        ctx.insert("circuit_type", &basic_circuit_type(stark_info, vadcop_info));
+        ctx.insert("circuit_type", &basic_circuit_type(vadcop_info));
         RECURSIVE1_BATCHED_TMPL
     };
 
@@ -712,7 +714,8 @@ mod recursive1_batch_tests {
     #[test]
     fn the_fold_keeps_the_airs_circuit_type() {
         let out = gen(2, false);
-        assert!(out.contains("sv_circuitType <== 3;"), "airId 1 + 2 in a multi-air group\n{out}");
+        assert!(out.contains("var airId = 1;"), "{out}");
+        assert!(out.contains("sv_circuitType <== airId + 2;"), "airId 1 + 2 in a multi-air group\n{out}");
         assert!(!out.contains("sv_circuitType <== 1;"), "must not claim the aggregated type");
     }
 

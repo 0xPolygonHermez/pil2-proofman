@@ -1,4 +1,4 @@
-template CalculateStage1Hash() {
+template CalculateStage1Hash(airgroupId, airId) {
     signal input rootC[4];
     signal input root1[4];
 {%- if has_stage1_air_values %}
@@ -9,9 +9,6 @@ template CalculateStage1Hash() {
 {%- else %}
     signal output values[{{ lattice_size }}];
 {%- endif %}
-
-    var airgroupId = {{ airgroup_id }};
-    var airId = {{ air_id }};
 {{ transcript_code }}
 {%- for j in unused_air_values %}
     _ <== airValues[{{ j }}]; // Unused air values at stage 1

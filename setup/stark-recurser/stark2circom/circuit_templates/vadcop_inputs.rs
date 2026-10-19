@@ -199,17 +199,21 @@ pub fn assign_vadcop_inputs(
     out
 }
 
+/// `var airgroupId` / `var airId` for a main template; [`basic_circuit_type`] and
+/// `CalculateStage1Hash` read them.
+pub fn air_id_vars(stark_info: &Value) -> String {
+    let airgroup_id = stark_info["airgroupId"].as_u64().expect("starkInfo.airgroupId");
+    let air_id = stark_info["airId"].as_u64().expect("starkInfo.airId");
+    format!("    var airgroupId = {airgroup_id};\n    var airId = {air_id};\n")
+}
+
 /// The `circuitType` of this air's proofs, offset by 2 where type 0 marks a null proof.
-pub fn basic_circuit_type(stark_info: &Value, vadcop_info: &Value) -> u64 {
+pub fn basic_circuit_type(vadcop_info: &Value) -> String {
     let air_groups_len = vadcop_info["air_groups"].as_array().map(|a| a.len()).unwrap_or(0);
     let airs_0_len =
         vadcop_info["airs"].as_array().and_then(|a| a.first()).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    let air_id = stark_info["airId"].as_u64().unwrap_or(0);
-    if air_groups_len > 1 || airs_0_len > 1 {
-        air_id + 2
-    } else {
-        air_id + 1
-    }
+    let offset = if air_groups_len > 1 || airs_0_len > 1 { 2 } else { 1 };
+    format!("airId + {offset}")
 }
 
 /// `aggregationTypes` from slot 0, every slot required to agree; slot 0 is never empty (batches fill from it).
@@ -267,7 +271,7 @@ pub fn init_vadcop_inputs(
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
     let prefix_stark_ = if prefix_stark.is_empty() { String::new() } else { format!("{prefix_stark}_") };
 
-    let circuit_type = basic_circuit_type(stark_info, vadcop_info);
+    let circuit_type = basic_circuit_type(vadcop_info);
 
     let agg_types_len = vadcop_info["aggTypes"]
         .as_array()
@@ -289,7 +293,7 @@ pub fn init_vadcop_inputs(
     match is_null {
         None => out.push_str(&format!("    {prefix_}circuitType <== {circuit_type};\n")),
         Some(n) => out.push_str(&format!(
-            "    signal {{binary}} {prefix_}isNull <== {n};\n    {prefix_}circuitType <== (1 - {n}) * {circuit_type};\n"
+            "    signal {{binary}} {prefix_}isNull <== {n};\n    {prefix_}circuitType <== (1 - {n}) * ({circuit_type});\n"
         )),
     }
     // Stays 1 for an empty slot too: AggregateProofsNull multiplies it out.
@@ -315,11 +319,11 @@ pub fn init_vadcop_inputs(
     let air_values_map_len = stark_info["airValuesMap"].as_array().map(|a| a.len()).unwrap_or(0);
     if air_values_stage1_len > 0 && air_values_map_len > 0 {
         out.push_str(&format!(
-            "    {prefix_}stage1Hash <== CalculateStage1Hash()({component_name}.rootC, {prefix_stark_}root1, {prefix_stark_}airvalues);\n"
+            "    {prefix_}stage1Hash <== CalculateStage1Hash(airgroupId, airId)({component_name}.rootC, {prefix_stark_}root1, {prefix_stark_}airvalues);\n"
         ));
     } else {
         out.push_str(&format!(
-            "    {prefix_}stage1Hash <== CalculateStage1Hash()({component_name}.rootC, {prefix_stark_}root1);\n"
+            "    {prefix_}stage1Hash <== CalculateStage1Hash(airgroupId, airId)({component_name}.rootC, {prefix_stark_}root1);\n"
         ));
     }
 

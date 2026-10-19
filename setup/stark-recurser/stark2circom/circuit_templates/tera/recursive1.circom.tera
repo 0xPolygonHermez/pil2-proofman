@@ -9,7 +9,7 @@ include "iszero.circom";
 {{ calculate_hashes }}
 {% endif %}
 template Recursive1() {
-
+{{ air_id_vars }}
 {{ vadcop_define }}
 {{ stark_signals }}
 {% if has_publics %}    signal input publics[{{ n_publics }}];
