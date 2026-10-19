@@ -4757,21 +4757,25 @@ where
     }
 
     pub fn register_aggregated_proofs(&self, agg_proofs: Vec<AggProofsRegister>) -> ProofmanResult<()> {
-        let mut received = self.received_agg_proofs.write().unwrap();
+        // Released before `check_cancel`: on a cancelled job it resets, and the reset takes this lock
+        // again. Held across it, the thread waited on itself for good.
+        {
+            let mut received = self.received_agg_proofs.write().unwrap();
 
-        for proof in agg_proofs {
-            let airgroup_vec = &mut received[proof.airgroup_id as usize];
+            for proof in agg_proofs {
+                let airgroup_vec = &mut received[proof.airgroup_id as usize];
 
-            for &worker_idx in &proof.worker_indexes {
-                if airgroup_vec.contains(&worker_idx) {
-                    let error_message = ProofmanError::InvalidProof(format!(
-                        "Received duplicated proof from worker {} for airgroup {}",
-                        worker_idx, proof.airgroup_id
-                    ));
-                    self.cancellation_info.write_recover().cancel(Some(error_message));
-                    break;
+                for &worker_idx in &proof.worker_indexes {
+                    if airgroup_vec.contains(&worker_idx) {
+                        let error_message = ProofmanError::InvalidProof(format!(
+                            "Received duplicated proof from worker {} for airgroup {}",
+                            worker_idx, proof.airgroup_id
+                        ));
+                        self.cancellation_info.write_recover().cancel(Some(error_message));
+                        break;
+                    }
+                    airgroup_vec.push(worker_idx);
                 }
-                airgroup_vec.push(worker_idx);
             }
         }
 
