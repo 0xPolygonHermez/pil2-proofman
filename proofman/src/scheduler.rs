@@ -566,6 +566,7 @@ mod tests {
 mod drain_tests {
     use super::*;
     use crate::{DeviceBuffersPtr, DeviceCompletions};
+    use tokio_util::sync::CancellationToken;
     use proofman_fields::{Field, Goldilocks};
     use proofman_common::MemoryHandlerRecursive;
 
@@ -609,7 +610,11 @@ mod drain_tests {
         let (w2, b2) = s.drain_all();
         assert!(w2.is_empty() && b2.is_empty());
 
-        recover_drained_witnesses(witnesses, &h, &DeviceCompletions::new().acquire(null_ptr()).ledger());
+        recover_drained_witnesses(
+            witnesses,
+            &h,
+            &DeviceCompletions::new().acquire(null_ptr(), CancellationToken::new()).ledger(),
+        );
     }
 
     fn null_ptr() -> DeviceBuffersPtr {
@@ -627,7 +632,7 @@ mod drain_tests {
         // Both compressor buffers are out of the pool now; a drop here would lose them for good.
         let (witnesses, _) = s.drain_all();
 
-        let owner = DeviceCompletions::new().acquire(null_ptr());
+        let owner = DeviceCompletions::new().acquire(null_ptr(), CancellationToken::new());
         assert_eq!(recover_drained_witnesses(witnesses, &h, &owner.ledger()), 2);
 
         // Every buffer is back in the pool it came from, so the integrity check passes. This is the
@@ -638,7 +643,7 @@ mod drain_tests {
     #[test]
     fn recovery_settles_the_units_armed_at_hand_off() {
         let h = handler();
-        let owner = DeviceCompletions::new().acquire(null_ptr());
+        let owner = DeviceCompletions::new().acquire(null_ptr(), CancellationToken::new());
         let ledger = owner.ledger();
 
         let mut s = scheduler();
@@ -660,7 +665,7 @@ mod drain_tests {
         // Guards the key pairing: a drained compressor must settle (id, Compressor), never the basic
         // unit that shares its numeric id and is still legitimately in flight.
         let h = handler();
-        let owner = DeviceCompletions::new().acquire(null_ptr());
+        let owner = DeviceCompletions::new().acquire(null_ptr(), CancellationToken::new());
         let ledger = owner.ledger();
         ledger.arm(7, ProofType::Basic.as_usize()).commit();
         ledger.arm(7, ProofType::Compressor.as_usize()).commit();
@@ -687,7 +692,11 @@ mod drain_tests {
         s.push(Proof::new_witness(ProofType::Recursive1, 0, 0, None, buf, Vec::new(), 1));
 
         let (witnesses, _) = s.drain_all();
-        recover_drained_witnesses(witnesses, &h, &DeviceCompletions::new().acquire(null_ptr()).ledger());
+        recover_drained_witnesses(
+            witnesses,
+            &h,
+            &DeviceCompletions::new().acquire(null_ptr(), CancellationToken::new()).ledger(),
+        );
         h.reset().expect("buffer returned even with no unit to settle");
     }
 

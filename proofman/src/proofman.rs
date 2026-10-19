@@ -3721,7 +3721,10 @@ where
         // Tear down any running outer-aggregation service before taking the capability: the Internal
         // phase never reset()s, so it could still hold it and `acquire` would block.
         self.stop_outer_aggregations();
-        let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
+        let completions = self.completions.acquire(
+            DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()),
+            self.cancellation_info.read_recover().token.clone(),
+        );
         let proofs_pending = completions.ledger();
 
         // Dequeue-ahead prefetch (witness-zone mode): the worker dequeues the next
@@ -5090,7 +5093,10 @@ where
 
     fn outer_aggregations(&self) -> CompletionOwner {
         self.outer_agg_proofs_finished.store(false, Ordering::SeqCst);
-        let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
+        let completions = self.completions.acquire(
+            DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()),
+            self.cancellation_info.read_recover().token.clone(),
+        );
 
         if self.pctx.gpu {
             let pctx_clone = self.pctx.clone();
@@ -5337,7 +5343,10 @@ where
 
         let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
 
-        let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
+        let completions = self.completions.acquire(
+            DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()),
+            self.cancellation_info.read_recover().token.clone(),
+        );
 
         let instances = self.pctx.dctx_get_instances();
         let n_airgroups = self.pctx.global_info.air_groups.len();
