@@ -126,7 +126,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     // (air, stream, region) gets its own graph:
     //   0x57455850 "WEXP"  witness expressions
     //   0x434d5431 "CM1"   commit stage 1 (+ recursive)
-    //   0x53544432 "STD2"  stage-2 getFields + gsum/gprod + im hints
+    //   0x53544432 "STD2"  stage-2 getFields + circuitType put + gsum/gprod + im hints (+ recursive)
     //   0x494d504c "IMPL"  im pols
     //   0x434d5432 "CM2"   commit stage 2 + airValues transcript puts
     //   0x51455850 "QEXP"  Q expression
@@ -256,6 +256,10 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             }
         }
     } else {
+       if (air_instance_info->d_circuitType == nullptr || setupCtx.starkInfo.nStages < 2) {
+           zklog.error("genProof_gpu: a basic air needs a circuitType and stage 2 to absorb it after; regenerate the setup");
+           exitProcess();
+       }
        d_transcript->put(d_challenge, FIELD_EXTENSION, stream);
     }
     TimerStopCategoryGPU(timer, TRANSCRIPT);
@@ -285,13 +289,15 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     if (!setupCtx.starkInfo.inplaceStageCommit) commitStage1();
 
     TimerStartGPU(timer, STARK_CALCULATE_WITNESS_STD);
-    cudagraph::run(cudagraph::key(0x53544432ULL, graphCtxId), countId, stream, [&] {
+    cudagraph::run(cudagraph::key(0x53544432ULL, graphCtxId, recursive), countId, stream, [&] {
     TimerStartCategoryGPU(timer, TRANSCRIPT);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
             d_transcript->getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
+    // The air's identity, after the stage-2 (bus) challenges every air shares.
+    if (!recursive) d_transcript->put(air_instance_info->d_circuitType, 1, stream);
     TimerStopCategoryGPU(timer, TRANSCRIPT);
     calculateImHints_gpu(setupCtx, h_params, d_params, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     calculateWitnessSTD_gpu(setupCtx, h_params, d_params, true, air_instance_info->expressions_gpu, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);

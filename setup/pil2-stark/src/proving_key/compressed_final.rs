@@ -279,6 +279,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         &ldt,
         0,
         0,
+        None,
         "compressed_final",
         pil_info_result.c_exp_id,
         pil_info_result.deep_exp_id,

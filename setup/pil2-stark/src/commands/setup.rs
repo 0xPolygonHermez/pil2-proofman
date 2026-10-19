@@ -274,6 +274,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     &ldt,
                     item.ag_idx,
                     item.air_idx,
+                    Some(proofman_common::circuit_type_of(item.ag_idx as u64, item.air_idx as u64 + 1)),
                     &item.air_name,
                     pil_result.c_exp_id,
                     pil_result.deep_exp_id,

@@ -199,21 +199,17 @@ pub fn assign_vadcop_inputs(
     out
 }
 
-/// `var airgroupId` / `var airId` for a main template; [`basic_circuit_type`] and
-/// `CalculateStage1Hash` read them.
+/// The air's `var airgroupId/airId/circuitType`; derived from the ids, since a compressor's starkinfo has no circuitType.
 pub fn air_id_vars(stark_info: &Value) -> String {
     let airgroup_id = stark_info["airgroupId"].as_u64().expect("starkInfo.airgroupId");
     let air_id = stark_info["airId"].as_u64().expect("starkInfo.airId");
-    format!("    var airgroupId = {airgroup_id};\n    var airId = {air_id};\n")
-}
-
-/// The `circuitType` of this air's proofs, offset by 2 where type 0 marks a null proof.
-pub fn basic_circuit_type(vadcop_info: &Value) -> String {
-    let air_groups_len = vadcop_info["air_groups"].as_array().map(|a| a.len()).unwrap_or(0);
-    let airs_0_len =
-        vadcop_info["airs"].as_array().and_then(|a| a.first()).and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    let offset = if air_groups_len > 1 || airs_0_len > 1 { 2 } else { 1 };
-    format!("airId + {offset}")
+    let circuit_type = proofman_common::circuit_type_of(airgroup_id, air_id + 1);
+    if let Some(recorded) = stark_info["circuitType"].as_u64() {
+        assert_eq!(recorded, circuit_type, "starkInfo.circuitType disagrees with ({airgroup_id}, {air_id})");
+    }
+    format!(
+        "    var airgroupId = {airgroup_id};\n    var airId = {air_id};\n    var circuitType = {circuit_type}; // circuitTypeOf(airgroupId, airId + 1)\n"
+    )
 }
 
 /// `aggregationTypes` from slot 0, every slot required to agree; slot 0 is never empty (batches fill from it).
@@ -271,8 +267,6 @@ pub fn init_vadcop_inputs(
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
     let prefix_stark_ = if prefix_stark.is_empty() { String::new() } else { format!("{prefix_stark}_") };
 
-    let circuit_type = basic_circuit_type(vadcop_info);
-
     let agg_types_len = vadcop_info["aggTypes"]
         .as_array()
         .and_then(|a| a.get(airgroup_id))
@@ -291,9 +285,9 @@ pub fn init_vadcop_inputs(
 
     // The verifier's compile-time rootC fixes the air, so an empty slot may report 0.
     match is_null {
-        None => out.push_str(&format!("    {prefix_}circuitType <== {circuit_type};\n")),
+        None => out.push_str(&format!("    {prefix_}circuitType <== circuitType;\n")),
         Some(n) => out.push_str(&format!(
-            "    signal {{binary}} {prefix_}isNull <== {n};\n    {prefix_}circuitType <== (1 - {n}) * ({circuit_type});\n"
+            "    signal {{binary}} {prefix_}isNull <== {n};\n    {prefix_}circuitType <== (1 - {n}) * circuitType;\n"
         )),
     }
     // Stays 1 for an empty slot too: AggregateProofsNull multiplies it out.
@@ -319,11 +313,11 @@ pub fn init_vadcop_inputs(
     let air_values_map_len = stark_info["airValuesMap"].as_array().map(|a| a.len()).unwrap_or(0);
     if air_values_stage1_len > 0 && air_values_map_len > 0 {
         out.push_str(&format!(
-            "    {prefix_}stage1Hash <== CalculateStage1Hash(airgroupId, airId)({component_name}.rootC, {prefix_stark_}root1, {prefix_stark_}airvalues);\n"
+            "    {prefix_}stage1Hash <== CalculateStage1Hash(circuitType)({component_name}.rootC, {prefix_stark_}root1, {prefix_stark_}airvalues);\n"
         ));
     } else {
         out.push_str(&format!(
-            "    {prefix_}stage1Hash <== CalculateStage1Hash(airgroupId, airId)({component_name}.rootC, {prefix_stark_}root1);\n"
+            "    {prefix_}stage1Hash <== CalculateStage1Hash(circuitType)({component_name}.rootC, {prefix_stark_}root1);\n"
         ));
     }
 
@@ -380,10 +374,9 @@ pub fn agg_vadcop_inputs(
 
     let multi_air = air_groups_len > 1 || airs_0_len > 1;
 
-    // circuitType — constant based on topology
+    // The caller declares `var circuitType` (the recursive2's own, or the batched air's).
     if !opts.own_circuit_type {
-        let circuit_type_val = if multi_air { 1 } else { 0 };
-        out.push_str(&format!("    {prefix_}circuitType <== {circuit_type_val};\n\n"));
+        out.push_str(&format!("    {prefix_}circuitType <== circuitType;\n\n"));
     }
 
     if agg_types_len > 0 {
@@ -522,7 +515,7 @@ mod fold_tests {
     // The exact text `agg_vadcop_inputs` emitted for three slots before it became a fold.
     // Inlined rather than kept as fixture files so the expected output is readable beside
     // the assertion. Byte-exact: this is the whole point of the test.
-    const EXPECTED_N3_SINGLE: &str = r#"    sv_circuitType <== 0;
+    const EXPECTED_N3_SINGLE: &str = r#"    sv_circuitType <== circuitType;
 
     sv_aggregationTypes <== aggregationTypes;
     signal {binary} aggTypes[1];
@@ -543,7 +536,7 @@ mod fold_tests {
     sv_stage1Hash <== AggregateValues(368)(AB_stage1Hash, c_sv_stage1Hash);
 "#;
 
-    const EXPECTED_N3_MULTI: &str = r#"    sv_circuitType <== 1;
+    const EXPECTED_N3_MULTI: &str = r#"    sv_circuitType <== circuitType;
 
     sv_aggregationTypes <== aggregationTypes;
     signal {binary} aggTypes[1];
@@ -582,5 +575,18 @@ mod fold_tests {
         // fold declares no intermediate accumulator at all.
         assert!(!out.contains("AB_stage1Hash"), "N=2 needs no intermediate:\n{out}");
         assert!(out.contains("sv_stage1Hash <== "), "N=2 must write the output directly:\n{out}");
+    }
+
+    /// A compressor's starkinfo carries the basic air's ids but no circuitType.
+    #[test]
+    fn air_id_vars_derive_the_circuit_type_from_the_ids() {
+        let out = air_id_vars(&serde_json::json!({ "airgroupId": 0, "airId": 1 }));
+        assert!(out.contains("var circuitType = 5;"), "{out}");
+    }
+
+    #[test]
+    #[should_panic(expected = "circuitType")]
+    fn air_id_vars_reject_a_circuit_type_that_disagrees_with_the_ids() {
+        air_id_vars(&serde_json::json!({ "airgroupId": 0, "airId": 1, "circuitType": 99 }));
     }
 }

@@ -39,7 +39,7 @@ template Recursive1() {
     noProofs === 0;
 
     // The air's own type: the aggregated one would make recursive2 select rootCAgg.
-    sv_circuitType <== {{ circuit_type }};
+    sv_circuitType <== circuitType;
 }
 
 component main {public [{{ pub_names }}]} = Recursive1();

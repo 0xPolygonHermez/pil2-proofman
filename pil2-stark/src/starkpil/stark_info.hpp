@@ -171,6 +171,10 @@ public:
     uint64_t airgroupId;
     uint64_t airId;
 
+    // Basic airs only: absorbed by the transcript after the stage-2 challenges.
+    bool hasCircuitType = false;
+    uint64_t circuitType = 0;
+
     uint64_t nPublics;
     uint64_t nConstants;
     

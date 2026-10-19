@@ -376,6 +376,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         &ldt,
         0,
         0,
+        None,
         "vadcop_final",
         pil_info_result.c_exp_id,
         pil_info_result.deep_exp_id,

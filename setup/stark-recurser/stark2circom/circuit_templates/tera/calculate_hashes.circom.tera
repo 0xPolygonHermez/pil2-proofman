@@ -1,4 +1,4 @@
-template CalculateStage1Hash(airgroupId, airId) {
+template CalculateStage1Hash(circuitType) {
     signal input rootC[4];
     signal input root1[4];
 {%- if has_stage1_air_values %}

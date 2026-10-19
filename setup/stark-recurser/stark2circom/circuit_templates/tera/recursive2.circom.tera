@@ -8,6 +8,8 @@ include "acc_points.circom";
 {% for vf in verifier_filenames %}include "{{ vf }}";
 {% endfor %}
 template Recursive2() {
+    var airgroupId = {{ airgroup_id }};
+    var circuitType = {{ circuit_type }}; // circuitTypeOf(airgroupId, 0)
     var rootCBasics[{{ airs_in_group }}][4];
 
 {{ rootc_basics }}
@@ -24,7 +26,7 @@ template Recursive2() {
 {% endfor %}{{ agg_types_consistency }}
 {% for s in slots %}{{ s.stark_assign }}
 {% endfor %}{% for s in slots %}{{ s.vadcop_assign }}
-{% endfor %}{% for s in slots %}    v{{ s.upper }}.rootC <== {{ sel_fn }}({{ airs_in_group }})({{ s.prefix }}_circuitType, rootCBasics, rootCAgg);
+{% endfor %}{% for s in slots %}    v{{ s.upper }}.rootC <== {{ sel_fn }}({{ airs_in_group }}, airgroupId)({{ s.prefix }}_circuitType, rootCBasics, rootCAgg);
 {% endfor %}
 {{ agg_vadcop }}
 
