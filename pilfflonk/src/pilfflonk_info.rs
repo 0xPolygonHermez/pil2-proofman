@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::error::{invalid, PilfflonkResult};
 use crate::global_info::MAX_NBITS;
@@ -160,10 +160,16 @@ pub enum Boundary {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BoundaryRepr {
     name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     offset_min: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     offset_max: Option<u64>,
+}
+
+/// An offset that may be left out but is not `null`: serde reads `null` as an absent `Option`, and
+/// the JS verifier refuses it (vkey.js, readBoundary).
+fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
+    u64::deserialize(deserializer).map(Some)
 }
 
 impl TryFrom<BoundaryRepr> for Boundary {

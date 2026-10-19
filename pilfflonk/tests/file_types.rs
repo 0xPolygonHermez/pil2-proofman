@@ -638,6 +638,7 @@ fn the_vkey_refuses_what_the_verifier_refuses() {
     for (from, to) in [
         ("\"numChallenges\": [\n  0,\n  2\n ]", "\"numChallenges\": [1, 2]"),
         ("\"boundaries\": [\n  {\n   \"name\": \"everyRow\"\n  },", "\"boundaries\": ["),
+        ("\"name\": \"everyRow\"", "\"name\": \"everyRow\", \"offsetMin\": null"),
         ("\"op\": \"mul\"", "\"op\": \"div\""),
     ] {
         assert!(text.contains(from), "{from}");
