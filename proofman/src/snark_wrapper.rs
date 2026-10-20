@@ -936,7 +936,7 @@ impl<F: PrimeField64> SnarkWrapper<F> {
     /// proof (`ProofMan::generate_recursivef_proof`) of the vadcop_final proof checked against that
     /// same verkey. Either SNARK's public is checked to be the digest of the vadcop_final's publics and
     /// that verkey.
-    pub(crate) fn generate_final_snark_proof(
+    pub fn generate_final_snark_proof(
         &self,
         proof: &VadcopFinalProof,
         verkey_override: Option<&[u64]>,
