@@ -1,7 +1,9 @@
 use crossbeam_channel::{bounded, Sender, Receiver};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::ffi::c_void;
+use std::mem::MaybeUninit;
 use std::sync::{Arc, LazyLock, Mutex};
+use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use crate::ProofCtx;
@@ -45,23 +47,74 @@ fn aligned_host_range(ptr: usize, bytes: usize) -> Option<(usize, usize)> {
     if ptr == 0 || bytes == 0 {
         return None;
     }
+    let page_size = page_size();
+    let base = ptr & !(page_size - 1);
+    let offset = ptr - base;
+    let size = (bytes + offset + page_size - 1) & !(page_size - 1);
+    Some((base, size))
+}
+
+fn page_size() -> usize {
     // `libc` is Linux-only (the only GPU-backend target); elsewhere pinning is a no-op, so a
     // default page size is fine.
     #[cfg(target_os = "linux")]
-    let page_size = {
+    {
         let ps = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         if ps > 0 {
             ps as usize
         } else {
             4096
         }
-    };
+    }
     #[cfg(not(target_os = "linux"))]
-    let page_size = 4096usize;
-    let base = ptr & !(page_size - 1);
-    let offset = ptr - base;
-    let size = (bytes + offset + page_size - 1) & !(page_size - 1);
-    Some((base, size))
+    4096
+}
+
+/// Keep a pinned buffer's pages out of forked children. fork() cannot share a pinned page
+/// copy-on-write (the device may still write the parent's), so it copies it on the spot, ~3 GB/s,
+/// splitting its huge page in the parent first: each ASM service the worker started took ~20 s
+/// over the 56 GB basic-trace pool, and left the pool on 4 KB pages. Our children exec at once and
+/// never read these pages. Only the buffer's whole pages: a neighbour sharing its first or last
+/// page must still reach the child. Returns the range to hand to [`share_with_children`].
+fn keep_from_children<T>(buffer: &[T]) -> Option<(usize, usize)> {
+    #[cfg(target_os = "linux")]
+    {
+        let page = page_size();
+        let ptr = buffer.as_ptr() as usize;
+        let start = (ptr + page - 1) & !(page - 1);
+        let end = (ptr + std::mem::size_of_val(buffer)) & !(page - 1);
+        if end <= start {
+            return None;
+        }
+        // SAFETY: the range lies inside a live allocation of this process; the advice only decides
+        // whether fork() maps it into the child.
+        if unsafe { libc::madvise(start as *mut c_void, end - start, libc::MADV_DONTFORK) } != 0 {
+            tracing::debug!(
+                "madvise(MADV_DONTFORK) on {} MB refused: {}",
+                (end - start) >> 20,
+                std::io::Error::last_os_error()
+            );
+            return None;
+        }
+        Some((start, end - start))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = buffer;
+        None
+    }
+}
+
+/// Undo [`keep_from_children`] before the buffer is freed: its pages may then hold what a child
+/// does read before it execs, such as its arguments.
+fn share_with_children((start, len): (usize, usize)) {
+    // SAFETY: as in `keep_from_children`; the buffer is still alive.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::madvise(start as *mut c_void, len, libc::MADV_DOFORK);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (start, len);
 }
 
 /// Register a pool with all-or-nothing pinning: all buffers' pages pin (GPU) or none (CPU no-op);
@@ -122,6 +175,48 @@ fn register_pool<F: PrimeField64>(buffers: &[Vec<F>]) -> Vec<usize> {
     registered
 }
 
+/// Transparent huge page size: what `MADV_HUGEPAGE` maps a pool buffer with.
+const HUGE_PAGE: usize = 2 << 20;
+
+/// A pool buffer of `len` zeros, written from every rayon thread and, on Linux, on transparent huge
+/// pages. One thread zeroing 4 KB pages, then pinning them one by one, took ~1 s per GB: the
+/// basic-trace pool (56 GB on one rank of an 8-GPU host) held the worker's start for 56 s. On huge
+/// pages written in parallel it takes ~2 s, pinning included (512 times fewer pages to lock).
+fn zeroed_buffer<F: PrimeField64 + Send + Sync>(len: usize) -> Vec<F> {
+    let mut buffer: Vec<F> = Vec::with_capacity(len);
+    advise_huge_pages(buffer.as_mut_ptr() as usize, len * std::mem::size_of::<F>());
+    let per_page = (HUGE_PAGE / std::mem::size_of::<F>().max(1)).max(1);
+    buffer.spare_capacity_mut()[..len].par_chunks_mut(per_page).for_each(|page| page.fill(MaybeUninit::new(F::ZERO)));
+    // SAFETY: the first `len` elements were all just written.
+    unsafe { buffer.set_len(len) };
+    buffer
+}
+
+/// Ask for transparent huge pages on the whole 2 MB pages inside `[ptr, ptr + bytes)`, before they
+/// are first touched. Best effort: with THP off (or not built in) the kernel refuses and the
+/// buffer stays on 4 KB pages.
+fn advise_huge_pages(ptr: usize, bytes: usize) {
+    #[cfg(target_os = "linux")]
+    {
+        let start = (ptr + HUGE_PAGE - 1) & !(HUGE_PAGE - 1);
+        let end = (ptr + bytes) & !(HUGE_PAGE - 1);
+        if end > start {
+            // SAFETY: the range lies inside a live allocation of this process; the advice changes
+            // how its pages are backed, never their contents.
+            let rc = unsafe { libc::madvise(start as *mut c_void, end - start, libc::MADV_HUGEPAGE) };
+            if rc != 0 {
+                tracing::debug!(
+                    "madvise(MADV_HUGEPAGE) on {} MB refused: {}",
+                    (end - start) >> 20,
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (ptr, bytes);
+}
+
 /// Single fixed-size buffer pool over a bounded channel (internal to `MemoryHandlerRecursive`).
 /// `take()` waits on the channel with a backoff timeout so the abort path (`cancelled`) can wake it.
 struct Pool<F: PrimeField64 + Send + Sync + 'static> {
@@ -134,6 +229,8 @@ struct Pool<F: PrimeField64 + Send + Sync + 'static> {
     /// Distinct page-locked base pages the pool registered. Empty iff pinning is
     /// disabled (CPU backend). Used only to unregister on Drop (one call per page).
     registered_buffers: Vec<usize>,
+    /// The pinned buffers' ranges kept out of forked children; given back on Drop.
+    kept_from_children: Vec<(usize, usize)>,
     /// Shared with the owning `MemoryHandlerRecursive`; set on the abort path so a
     /// blocking `take()` exits instead of parking forever on `recv`.
     cancelled: Arc<AtomicBool>,
@@ -151,9 +248,14 @@ struct Pool<F: PrimeField64 + Send + Sync + 'static> {
 impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
     fn new(name: &'static str, n_buffers: usize, buffer_size: usize, pin: bool, cancelled: Arc<AtomicBool>) -> Self {
         let (sender, receiver) = bounded(n_buffers);
-        let buffers: Vec<Vec<F>> = (0..n_buffers).map(|_| vec![F::ZERO; buffer_size]).collect();
+        let buffers: Vec<Vec<F>> = (0..n_buffers).map(|_| zeroed_buffer(buffer_size)).collect();
         // A zero-sized pool has nothing to pin: an empty Vec's pointer is dangling, not a page.
         let registered_buffers: Vec<usize> = if pin && buffer_size > 0 { register_pool(&buffers) } else { Vec::new() };
+        let kept_from_children: Vec<(usize, usize)> = if registered_buffers.is_empty() {
+            Vec::new()
+        } else {
+            buffers.iter().filter_map(|buffer| keep_from_children(buffer)).collect()
+        };
         // Record our own buffers by pointer; they're never reallocated, so the pointers stay stable.
         let original_ptrs: HashSet<usize> = buffers.iter().map(|b| b.as_ptr() as usize).collect();
         for buffer in buffers {
@@ -166,6 +268,7 @@ impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
             n_buffers,
             buffer_size,
             registered_buffers,
+            kept_from_children,
             cancelled,
             original_ptrs,
             deficit: AtomicUsize::new(0),
@@ -359,6 +462,9 @@ impl<F: PrimeField64 + Send + Sync + 'static> Drop for Pool<F> {
         // Runs before fields drop, so the pooled Vecs are still alive while we unregister their pages.
         for ptr in &self.registered_buffers {
             unregister_host_memory_c(*ptr as *mut c_void);
+        }
+        for range in self.kept_from_children.drain(..) {
+            share_with_children(range);
         }
     }
 }
@@ -914,6 +1020,59 @@ mod tests {
         h.release_buffer_trace(fresh).unwrap(); // unpooled: dropped, never pooled
                                                 // A clean reset (the escapee's slot still missing) keeps reporting it.
         assert!(h.reset().is_err());
+    }
+
+    #[test]
+    fn a_pool_buffer_is_all_zeros_whatever_its_length() {
+        let per_page = HUGE_PAGE / std::mem::size_of::<F>();
+        for len in [0, 1, per_page - 1, per_page, per_page + 1, 3 * per_page + 7] {
+            let buffer: Vec<F> = zeroed_buffer(len);
+            assert_eq!(buffer.len(), len);
+            assert!(buffer.iter().all(|x| *x == F::ZERO), "length {len}");
+        }
+    }
+
+    /// The kernel's flags on the mapping holding `addr`, from /proc/self/smaps ("dc": not copied
+    /// into a forked child).
+    #[cfg(target_os = "linux")]
+    fn vm_flags_at(addr: usize) -> Vec<String> {
+        let smaps = std::fs::read_to_string("/proc/self/smaps").unwrap();
+        let mut inside = false;
+        for line in smaps.lines() {
+            let range = line.split_whitespace().next().and_then(|r| r.split_once('-'));
+            if let Some((Ok(start), Ok(end))) =
+                range.map(|(s, e)| (usize::from_str_radix(s, 16), usize::from_str_radix(e, 16)))
+            {
+                inside = (start..end).contains(&addr);
+            } else if let Some(flags) = line.strip_prefix("VmFlags:").filter(|_| inside) {
+                return flags.split_whitespace().map(str::to_string).collect();
+            }
+        }
+        panic!("no mapping holds {addr:#x}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_buffer_kept_from_children_is_whole_pages_and_given_back() {
+        let page = page_size();
+        let buffer: Vec<F> = zeroed_buffer(4 * page / std::mem::size_of::<F>() + 3);
+        let (ptr, bytes) = (buffer.as_ptr() as usize, std::mem::size_of_val(&buffer[..]));
+
+        let (start, len) = keep_from_children(&buffer).expect("the buffer spans whole pages");
+        assert!(start >= ptr && start + len <= ptr + bytes, "only pages inside the buffer");
+        assert_eq!(start % page, 0);
+        assert!(len >= 3 * page, "every whole page inside it");
+        assert!(vm_flags_at(start).iter().any(|f| f == "dc"));
+        assert!(vm_flags_at(start + len - 1).iter().any(|f| f == "dc"));
+
+        share_with_children((start, len));
+        assert!(!vm_flags_at(start).iter().any(|f| f == "dc"));
+    }
+
+    #[test]
+    fn a_buffer_inside_one_page_is_not_kept_from_children() {
+        let buffer = [F::ZERO; 4];
+        assert_eq!(keep_from_children(&buffer[..]), None);
     }
 
     #[test]
