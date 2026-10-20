@@ -3343,6 +3343,22 @@ where
     ) -> ProofmanResult<ProvePhaseResult> {
         let _computing = self.acquire_computing("_generate_proof");
 
+        // The witness components' `end` runs on every exit of the proving path, success or error,
+        // as it does on the constraint-check paths: a component that still holds something for
+        // the proof (zisk's executor keeps the memory-ops window until its memory witnesses are
+        // done) hands it back here instead of at the next job. The std components act only in
+        // debug mode, which the proving path never sets.
+        struct EndOnExit<'a, F: PrimeField64>(&'a WitnessManager<F>);
+        impl<F: PrimeField64> Drop for EndOnExit<'_, F> {
+            fn drop(&mut self) {
+                let debug_info = self.0.get_pctx().debug_info.read().unwrap().clone();
+                if let Err(e) = self.0.end(&debug_info) {
+                    tracing::warn!("a witness component's end failed: {e}");
+                }
+            }
+        }
+        let _end = EndOnExit(&self.wcm);
+
         // Fail before the inner proofs, not after them: the compressed stage is the last thing a
         // full run does, so an unsupported request would otherwise burn the whole proof first.
         if options.compressed {
