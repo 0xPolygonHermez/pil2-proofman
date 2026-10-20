@@ -3825,7 +3825,10 @@ where
         // Tear down any running outer-aggregation service before taking the capability: the Internal
         // phase never reset()s, so it could still hold it and `acquire` would block.
         self.stop_outer_aggregations();
-        let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
+        let completions = self.completions.acquire(
+            DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()),
+            self.cancellation_info.read_recover().token.clone(),
+        );
         let proofs_pending = completions.ledger();
 
         // Dequeue-ahead prefetch (witness-zone mode): the worker dequeues the next
@@ -4858,21 +4861,25 @@ where
     }
 
     pub fn register_aggregated_proofs(&self, agg_proofs: Vec<AggProofsRegister>) -> ProofmanResult<()> {
-        let mut received = self.received_agg_proofs.write().unwrap();
+        // Released before `check_cancel`: on a cancelled job it resets, and the reset takes this lock
+        // again. Held across it, the thread waited on itself for good.
+        {
+            let mut received = self.received_agg_proofs.write().unwrap();
 
-        for proof in agg_proofs {
-            let airgroup_vec = &mut received[proof.airgroup_id as usize];
+            for proof in agg_proofs {
+                let airgroup_vec = &mut received[proof.airgroup_id as usize];
 
-            for &worker_idx in &proof.worker_indexes {
-                if airgroup_vec.contains(&worker_idx) {
-                    let error_message = ProofmanError::InvalidProof(format!(
-                        "Received duplicated proof from worker {} for airgroup {}",
-                        worker_idx, proof.airgroup_id
-                    ));
-                    self.cancellation_info.write_recover().cancel(Some(error_message));
-                    break;
+                for &worker_idx in &proof.worker_indexes {
+                    if airgroup_vec.contains(&worker_idx) {
+                        let error_message = ProofmanError::InvalidProof(format!(
+                            "Received duplicated proof from worker {} for airgroup {}",
+                            worker_idx, proof.airgroup_id
+                        ));
+                        self.cancellation_info.write_recover().cancel(Some(error_message));
+                        break;
+                    }
+                    airgroup_vec.push(worker_idx);
                 }
-                airgroup_vec.push(worker_idx);
             }
         }
 
@@ -5194,7 +5201,10 @@ where
 
     fn outer_aggregations(&self) -> CompletionOwner {
         self.outer_agg_proofs_finished.store(false, Ordering::SeqCst);
-        let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
+        let completions = self.completions.acquire(
+            DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()),
+            self.cancellation_info.read_recover().token.clone(),
+        );
 
         if self.pctx.gpu {
             let pctx_clone = self.pctx.clone();
@@ -5441,7 +5451,10 @@ where
 
         let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
 
-        let completions = self.completions.acquire(DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()));
+        let completions = self.completions.acquire(
+            DeviceBuffersPtr(self.pctx.get_device_buffers_ptr()),
+            self.cancellation_info.read_recover().token.clone(),
+        );
 
         let instances = self.pctx.dctx_get_instances();
         let n_airgroups = self.pctx.global_info.air_groups.len();
@@ -5864,11 +5877,18 @@ where
                     if stage_first {
                         pctx_clone.dispatch_deferred[instance_id].store(true, Ordering::SeqCst);
                     }
-                    if let Err(e) =
-                        wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
-                    {
-                        cancellation_info_clone.write_recover().cancel(Some(e));
-                    }
+                    let computed = match wcm.calculate_witness(
+                        1,
+                        &[instance_id],
+                        n_threads_witness,
+                        memory_handler_clone.as_ref(),
+                    ) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            cancellation_info_clone.write_recover().cancel(Some(e));
+                            false
+                        }
+                    };
                     // The staging below is an H2D wait, not CPU work: give the tokens and the
                     // admission slot back first so the next witness can start.
                     drop(tokens);
@@ -5877,15 +5897,20 @@ where
                     let (slot, wake) = if stage_first {
                         let wake = slot.wake.clone();
                         drop(slot);
-                        match Self::stage_for_commit(
-                            &pctx_clone,
-                            &zone_airs,
-                            memory_handler_clone.as_ref(),
-                            &slot_airs,
-                            instance_id,
-                        ) {
-                            Ok(s) => pctx_clone.witness_staged[instance_id].store(s, Ordering::Release),
-                            Err(e) => cancellation_info_clone.write_recover().cancel(Some(e)),
+                        // Only a witness computed in full has a trace to upload, and a cancelled job commits
+                        // nothing: a failed witness can leave its instance a trace pointer to no live
+                        // buffer, and copying from it ended the process (SIGSEGV in the H2D copy).
+                        if computed && !cancellation_info_clone.read_recover().token.is_cancelled() {
+                            match Self::stage_for_commit(
+                                &pctx_clone,
+                                &zone_airs,
+                                memory_handler_clone.as_ref(),
+                                &slot_airs,
+                                instance_id,
+                            ) {
+                                Ok(s) => pctx_clone.witness_staged[instance_id].store(s, Ordering::Release),
+                                Err(e) => cancellation_info_clone.write_recover().cancel(Some(e)),
+                            }
                         }
                         pctx_clone.end_deferred_dispatch(instance_id);
                         (None, Some(wake))
