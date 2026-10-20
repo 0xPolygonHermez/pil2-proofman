@@ -10,8 +10,8 @@ use std::os::raw::c_void;
 use colored::*;
 
 use proofman_common::{
-    format_bytes, CacheSetKind, FixedGroup, MpiCtx, ProofCtx, ProofType, ProofmanError, ProofmanResult, Setup,
-    SetupCtx, SetupsVadcop,
+    format_bytes, CacheSetKind, FixedGroup, MpiCtx, ProofCtx, ProofmanError, ProofmanResult, Setup, SetupCtx,
+    SetupsVadcop,
 };
 use proofman_starks_lib_c::{
     configure_const_slot_cache_c, load_device_const_pols_c, load_host_const_pols_c, pin_const_slot_c,
@@ -299,7 +299,7 @@ pub fn needs_const_tree_regeneration<F: PrimeField64>(setup: &Setup<F>) -> Proof
     let mut buffer = [0u8; 32];
     file.read_exact(&mut buffer)?;
 
-    if setup.setup_type != ProofType::RecursiveF {
+    if !setup.is_bn128_recursivef() {
         let verkey_path = setup.verkey_file.clone();
         let mut contents = String::new();
         let mut file = File::open(verkey_path).unwrap();
@@ -394,7 +394,7 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*m
                     let mut buffer = [0u8; 32];
                     file.read_exact(&mut buffer)?;
 
-                    if setup.setup_type != ProofType::RecursiveF {
+                    if !setup.is_bn128_recursivef() {
                         let verkey_path = setup.verkey_file.clone();
                         let mut contents = String::new();
                         let mut file = File::open(verkey_path).unwrap();
@@ -450,7 +450,7 @@ pub fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, d_buffers: &Option<*m
         needs_regeneration = true;
     }
 
-    if setup.gpu && setup.setup_type == ProofType::RecursiveF && !needs_regeneration {
+    if setup.gpu && setup.is_bn128_recursivef() && !needs_regeneration {
         let expected_const_gpu_size = setup.const_pols_size * 8;
         let const_gpu_valid = PathBuf::from(&setup.const_pols_path).exists()
             && fs::metadata(&setup.const_pols_path)
@@ -802,6 +802,21 @@ pub fn needs_regeneration_vadcop_fixed<F: PrimeField64>(
             }
         }
     }
+    // Only for a run that may prove the key's recursivef: it is loaded only then.
+    if let Some(setup_recursivef) = setups.setup_recursivef.as_ref() {
+        if needs_const_pols_gpu_regeneration(setup_recursivef)? {
+            needs_const_regen = true;
+            tracing::debug!("Recursivef const pols regeneration needed");
+        }
+        if needs_const_tree_regeneration(setup_recursivef)? {
+            needs_tree_regen = true;
+            tracing::debug!("Recursivef tree regeneration needed");
+            if setup_recursivef.gpu {
+                needs_const_regen = true;
+                tracing::debug!("Recursivef const pols regeneration also needed due to tree regeneration");
+            }
+        }
+    }
 
     Ok((needs_const_regen, needs_tree_regen))
 }
@@ -837,6 +852,9 @@ pub fn check_const_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Se
 
     if let Some(setup_vadcop_final_compressed) = setups.setup_vadcop_final_compressed.as_ref() {
         check_const_pols_gpu(setup_vadcop_final_compressed)?;
+    }
+    if let Some(setup_recursivef) = setups.setup_recursivef.as_ref() {
+        check_const_pols_gpu(setup_recursivef)?;
     }
     Ok(())
 }
@@ -884,6 +902,9 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &Set
 
     if let Some(setup_vadcop_final_compressed) = setups.setup_vadcop_final_compressed.as_ref() {
         check_const_tree(setup_vadcop_final_compressed, &d_buffers)?;
+    }
+    if let Some(setup_recursivef) = setups.setup_recursivef.as_ref() {
+        check_const_tree(setup_recursivef, &d_buffers)?;
     }
 
     Ok(())
@@ -996,6 +1017,13 @@ pub fn load_device_setups<F: PrimeField64>(
                 tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
             }
             setup_vadcop_final_compressed.load_device(0, 0, d_buffers, std::ptr::null_mut());
+        }
+        if let Some(setup_recursivef) = setups.setup_recursivef.as_ref() {
+            let proof_type: &str = setup_recursivef.setup_type.into();
+            if setup_recursivef.gpu {
+                tracing::debug!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
+            }
+            setup_recursivef.load_device(0, 0, d_buffers, std::ptr::null_mut());
         }
     }
     Ok(())

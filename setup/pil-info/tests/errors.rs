@@ -76,17 +76,17 @@ fn the_air(pilout: &mut pb::PilOut) -> &mut pb::Air {
     &mut pilout.air_groups[0].airs[0]
 }
 
-/// The STARK's passes, at a blowup of 2.
-fn cfg() -> PilInfoCfg {
-    PilInfoCfg::goldilocks(1)
+/// The STARK's passes (DEEP) and pilfflonk's (SHPLONK).
+fn cfgs() -> [PilInfoCfg; 2] {
+    [PilInfoCfg::goldilocks(1), PilInfoCfg::bn128()]
 }
 
-fn run(pilout: &pb::PilOut) -> Result<PilInfoResult, PilInfoError> {
-    pil_info::run(pilout, 0, 0, &cfg(), &Default::default())
+fn run(pilout: &pb::PilOut, cfg: &PilInfoCfg) -> Result<PilInfoResult, PilInfoError> {
+    pil_info::run(pilout, 0, 0, cfg, &Default::default())
 }
 
-fn run_err(pilout: &pb::PilOut) -> PilInfoError {
-    match run(pilout) {
+fn run_err(pilout: &pb::PilOut, cfg: &PilInfoCfg) -> PilInfoError {
+    match run(pilout, cfg) {
         Ok(_) => panic!("the passes accepted the pilout"),
         Err(err) => err,
     }
@@ -101,7 +101,9 @@ fn invalid_pilout(err: &PilInfoError) -> &str {
 
 #[test]
 fn the_pilout_as_built_is_accepted() {
-    run(&pilout()).unwrap();
+    for cfg in cfgs() {
+        run(&pilout(), &cfg).unwrap();
+    }
     build_global_constraints_json(&pilout(), &FieldCfg::goldilocks()).unwrap();
 }
 
@@ -109,13 +111,13 @@ fn the_pilout_as_built_is_accepted() {
 #[test]
 fn an_air_the_pilout_does_not_have_is_refused() {
     for (airgroup_id, air_id) in [(0, 1), (1, 0)] {
-        let err = pil_info::run(&pilout(), airgroup_id, air_id, &cfg(), &Default::default()).err();
+        let err = pil_info::run(&pilout(), airgroup_id, air_id, &PilInfoCfg::bn128(), &Default::default()).err();
         assert!(
             matches!(err, Some(PilInfoError::NoSuchAir { airgroup_id: a, air_id: b }) if (a, b) == (airgroup_id, air_id)),
             "{err:?}"
         );
     }
-    let err = pil_info::run(&pilout(), 0, 1, &cfg(), &Default::default()).err().unwrap();
+    let err = pil_info::run(&pilout(), 0, 1, &PilInfoCfg::bn128(), &Default::default()).err().unwrap();
     assert_eq!(err.to_string(), "the pilout has no air 1 in airgroup 0");
 }
 
@@ -124,8 +126,10 @@ fn an_air_the_pilout_does_not_have_is_refused() {
 fn a_constraint_on_an_expression_the_air_does_not_have_is_refused() {
     let mut pilout = pilout();
     the_air(&mut pilout).constraints.push(every_row(9));
-    let err = run_err(&pilout);
-    assert_eq!(invalid_pilout(&err), "constraint 1 of air Synthetic is expression 9, and there are 2");
+    for cfg in cfgs() {
+        let err = run_err(&pilout, &cfg);
+        assert_eq!(invalid_pilout(&err), "constraint 1 of air Synthetic is expression 9, and there are 2");
+    }
 }
 
 /// Was an index out of range on the expressions, once the passes followed the reference.
@@ -133,9 +137,11 @@ fn a_constraint_on_an_expression_the_air_does_not_have_is_refused() {
 fn a_reference_to_an_expression_the_air_does_not_have_is_refused() {
     let mut pilout = pilout();
     the_air(&mut pilout).expressions[1] = mul(fixed(0), exp(7));
-    let err = run_err(&pilout);
-    assert_eq!(invalid_pilout(&err), "expression 1 refers to expression 7, and the air has 2");
-    assert_eq!(err.to_string(), "invalid pilout: expression 1 refers to expression 7, and the air has 2");
+    for cfg in cfgs() {
+        let err = run_err(&pilout, &cfg);
+        assert_eq!(invalid_pilout(&err), "expression 1 refers to expression 7, and the air has 2");
+        assert_eq!(err.to_string(), "invalid pilout: expression 1 refers to expression 7, and the air has 2");
+    }
 }
 
 /// Was an index out of range on the custom commits.
@@ -145,7 +151,7 @@ fn a_custom_column_of_a_custom_commit_the_air_does_not_have_is_refused() {
     let custom =
         op(operand::Operand::CustomCol(operand::CustomCol { commit_id: 2, stage: 0, col_idx: 0, row_offset: 0 }));
     the_air(&mut pilout).expressions[0] = mul(witness(0), custom);
-    let err = run_err(&pilout);
+    let err = run_err(&pilout, &PilInfoCfg::bn128());
     assert_eq!(invalid_pilout(&err), "a custom column of custom commit 2, and the air has 0 custom commits");
 }
 
@@ -154,7 +160,7 @@ fn a_custom_column_of_a_custom_commit_the_air_does_not_have_is_refused() {
 fn a_custom_column_of_a_stage_other_than_0_is_refused() {
     let mut pilout = pilout();
     pilout.symbols.push(pb::Symbol { commit_id: Some(0), ..column_symbol("Synthetic.c", SymbolType::CustomCol, 1, 0) });
-    let err = run_err(&pilout);
+    let err = run_err(&pilout, &PilInfoCfg::goldilocks(1));
     assert!(matches!(&err, PilInfoError::CustomColumnStage { name, stage: 1 } if name == "Synthetic.c"), "{err:?}");
 }
 
@@ -172,9 +178,11 @@ fn hint_without_value(air: Option<u32>) -> pb::Hint {
 fn a_hint_field_without_a_value_is_refused() {
     let mut pilout = pilout();
     pilout.hints.push(hint_without_value(Some(0)));
-    let err = run_err(&pilout);
-    assert!(matches!(&err, PilInfoError::HintFieldWithoutValue { hint } if hint == "broken"), "{err:?}");
-    assert_eq!(err.to_string(), "invalid pilout: a field of hint `broken` has no value");
+    for cfg in cfgs() {
+        let err = run_err(&pilout, &cfg);
+        assert!(matches!(&err, PilInfoError::HintFieldWithoutValue { hint } if hint == "broken"), "{err:?}");
+        assert_eq!(err.to_string(), "invalid pilout: a field of hint `broken` has no value");
+    }
 
     let mut pilout = self::pilout();
     pilout.hints.push(hint_without_value(None));
@@ -183,17 +191,18 @@ fn a_hint_field_without_a_value_is_refused() {
 }
 
 /// Was `panic!("Symbol not found for ev type=const id=0")`: the DEEP polynomial needs the stage and
-/// dimension of every column it opens.
+/// dimension of every column it opens, and SHPLONK builds no DEEP polynomial.
 #[test]
-fn an_opened_column_without_a_symbol_is_refused() {
+fn an_opened_column_without_a_symbol_is_refused_by_the_deep_opening() {
     let mut pilout = pilout();
     pilout.symbols.retain(|s| s.name != "Synthetic.L1");
-    let err = run_err(&pilout);
+    let err = run_err(&pilout, &PilInfoCfg::goldilocks(1));
     assert!(
         matches!(&err, PilInfoError::NoSymbolForEvaluation { entry_type, id: 0 } if entry_type == "const"),
         "{err:?}"
     );
     assert_eq!(err.to_string(), "invalid pilout: the constraints evaluate const 0, which has no symbol");
+    run(&pilout, &PilInfoCfg::bn128()).unwrap();
 }
 
 fn global_ref(idx: u32) -> Option<pb::GlobalOperand> {
@@ -237,14 +246,18 @@ fn expressions_that_refer_to_each_other_in_a_cycle_are_refused() {
     let air = the_air(&mut pilout);
     air.expressions[0] = mul(witness(0), exp(2));
     air.expressions.push(mul(witness(1), exp(0)));
-    let err = run_err(&pilout);
-    assert_eq!(invalid_pilout(&err), "expression 0 refers to itself, through the references 0 → 2 → 0");
+    for cfg in cfgs() {
+        let err = run_err(&pilout, &cfg);
+        assert_eq!(invalid_pilout(&err), "expression 0 refers to itself, through the references 0 → 2 → 0");
+    }
 
     // An expression that refers to itself, which no constraint reaches.
     let mut pilout = self::pilout();
     the_air(&mut pilout).expressions.push(mul(witness(1), exp(2)));
-    let err = run_err(&pilout);
-    assert_eq!(invalid_pilout(&err), "expression 2 refers to itself, through the references 2 → 2");
+    for cfg in cfgs() {
+        let err = run_err(&pilout, &cfg);
+        assert_eq!(invalid_pilout(&err), "expression 2 refers to itself, through the references 2 → 2");
+    }
 
     // References that meet without a cycle are no cycle: 2 and 3 both refer to 0.
     let add = |lhs, rhs| pb::Expression { operation: Some(expression::Operation::Add(expression::Add { lhs, rhs })) };
@@ -253,7 +266,9 @@ fn expressions_that_refer_to_each_other_in_a_cycle_are_refused() {
     air.expressions.push(add(exp(0), exp(0)));
     air.expressions.push(add(exp(2), exp(0)));
     air.constraints.push(every_row(3));
-    run(&pilout).unwrap();
+    for cfg in cfgs() {
+        run(&pilout, &cfg).unwrap();
+    }
 
     // The global expressions: 0 → 1 → 0.
     let constant = Some(pb::GlobalOperand {

@@ -17,6 +17,7 @@
 //! * [`generate_all`]  — a provingKey dir -> every AIR's `.exps.so`.
 
 mod autotune;
+mod bn128;
 mod check;
 mod emit;
 mod field;
@@ -117,6 +118,11 @@ struct Placement {
 
 /// Recursively collect `*.starkinfo.json` paths under `root`, sorted.
 fn find_starkinfos(root: &Path) -> Vec<PathBuf> {
+    find_suffix(root, ".starkinfo.json")
+}
+
+/// Recursively collect the paths under `root` whose name ends in `suffix`, sorted.
+fn find_suffix(root: &Path, suffix: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -125,7 +131,7 @@ fn find_starkinfos(root: &Path) -> Vec<PathBuf> {
             let p = e.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.file_name().and_then(|s| s.to_str()).is_some_and(|s| s.ends_with(".starkinfo.json")) {
+            } else if p.file_name().and_then(|s| s.to_str()).is_some_and(|s| s.ends_with(suffix)) {
                 out.push(p);
             }
         }
@@ -232,6 +238,14 @@ pub fn generate_all(proving_key: &Path, cfg: &GenConfig) -> Result<GenSummary> {
     }
 
     let mut summary = run_pipeline(&tc, work.path(), &candidates, &placements, cfg)?;
+    for info in find_suffix(proving_key, ".pilfflonkinfo.json") {
+        let name = info.strip_prefix(proving_key).unwrap_or(&info).display().to_string();
+        match generate_pilfflonk(&tc, work.path(), &info, cfg) {
+            Ok(Some(_)) => summary.placed += 1,
+            Ok(None) => {}
+            Err(e) => skipped.push((name, format!("pilfflonk: {e:#}"))),
+        }
+    }
     summary.skipped.extend(skipped);
     summary.skipped.sort();
     print_summary(&summary, cfg);
@@ -274,6 +288,66 @@ pub fn generate_air(air_dir: &Path, cfg: &GenConfig) -> Result<PathBuf> {
         let why = summary.skipped.first().map(|(_, w)| w.clone()).unwrap_or_else(|| "unknown".into());
         anyhow::bail!("{}: not generated ({why})", candidate.name)
     }
+}
+
+/// The pilfflonk (BN128) target for one AIR: `<base>.pilfflonkinfo.json` + `<base>.bin` ->
+/// `<base>.exps.so` next to them, covering Q (cExpId). `Ok(None)` when the dry run leaves no
+/// library. The prover falls back to its interpreter for whatever the library does not cover.
+fn generate_pilfflonk(tc: &Toolchain, work: &Path, info_path: &Path, cfg: &GenConfig) -> Result<Option<PathBuf>> {
+    let dir = info_path.parent().context("pilfflonkinfo without a directory")?;
+    let fname = info_path.file_name().unwrap().to_string_lossy();
+    let base = fname.strip_suffix(".pilfflonkinfo.json").context("not a pilfflonkinfo")?.to_string();
+    let info: bn128::PilfflonkInfo = serde_json::from_slice(&std::fs::read(info_path)?)
+        .with_context(|| format!("parsing {}", info_path.display()))?;
+    let bin = bn128::read_bin(&dir.join(format!("{base}.bin")))?;
+    if bin.n_stages as u64 != info.n_stages {
+        anyhow::bail!("{base}.bin has {} stages, its pilfflonkinfo {}", bin.n_stages, info.n_stages);
+    }
+    let sym = format!("pf_{}_b{}_e{}", info.name, info.n_bits, info.c_exp_id);
+    let nums = field::Bn128Numbers::new();
+    let q = bn128::build_ir(&bin, info.c_exp_id as u32, info.n_bits, &nums)?;
+    let q = if cfg.optimize {
+        let (o, st) = opt::optimize(&q);
+        if let Err(e) = check::equivalent(&q, &o, 3) {
+            anyhow::bail!("optimized IR mismatch: {e}");
+        }
+        eprintln!(
+            "[exps-codegen] {sym}: ops {} -> {} (+{} hoisted, {} table words), max live {} -> {}, horner terms {}, inner chains {}, ltd {}/{}",
+            st.ops_before,
+            st.ops_after,
+            st.tab_ops,
+            o.table_words(),
+            st.max_live_before,
+            st.max_live_after,
+            st.horner_terms,
+            st.inner_chains,
+            st.ltd_terms,
+            st.ltd_atoms
+        );
+        o
+    } else {
+        q
+    };
+    let cu = work.join(format!("gen_{sym}.cu"));
+    std::fs::write(&cu, bn128::emit_tu(&[(info.c_exp_id as u32, q)], &nums))?;
+    if cfg.dry_run {
+        return Ok(None);
+    }
+    let obj = cu.with_extension("o");
+    let t0 = std::time::Instant::now();
+    let (ok, log) = tc.compile_tu(&cu, &obj, Some(work))?;
+    if !ok {
+        anyhow::bail!("nvcc failed for {}:\n{log}", cu.display());
+    }
+    eprintln!(
+        "[exps-codegen] {sym}: compiled in {:.1}s, stack {} bytes",
+        t0.elapsed().as_secs_f64(),
+        autotune::max_stack(&obj)
+    );
+    let dest = dir.join(format!("{base}.exps.so"));
+    tc.link_objs(&[obj], &dest)?;
+    eprintln!("[exps-codegen] {sym}: -> {}", dest.display());
+    Ok(Some(dest))
 }
 
 /// Optimize the Q IR and prove the result equivalent to the original on random

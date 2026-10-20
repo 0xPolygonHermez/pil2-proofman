@@ -6,6 +6,11 @@
 //! `setup/pil2-stark/node_modules` (`npm install` there). Without Node.js or that snarkjs a test
 //! says why and passes, as the circom tests of `stark2circom` do.
 
+// Each test crate that includes it uses some of it.
+#![allow(dead_code)]
+
+pub mod wrap_key;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -24,6 +29,11 @@ pub fn repo_root() -> PathBuf {
 /// The committed circom, as `resolve_circom_exec` picks it.
 pub fn circom() -> PathBuf {
     repo_root().join("setup/circom").join(if cfg!(target_os = "macos") { "circom_mac" } else { "circom" })
+}
+
+/// The circom library of the BN128 verifier, whose `custom/` has the `PoseidonT` gate.
+pub fn circuits_bn128() -> PathBuf {
+    manifest().join("stark2circom/circom_verifier/circuits.bn128")
 }
 
 pub fn snarkjs() -> PathBuf {
@@ -52,6 +62,10 @@ impl Scratch {
         fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         Self(dir)
     }
+
+    pub fn file(&self, name: &str) -> PathBuf {
+        self.0.join(name)
+    }
 }
 
 impl Drop for Scratch {
@@ -71,12 +85,18 @@ pub fn run(cmd: &mut Command, what: &str) {
     );
 }
 
-/// Compiles `src` for BN128 into `dir` and computes its witness of `input`: the r1cs and the `.wtns`.
+/// Compiles `src` for BN128 into `dir`, with the BN128 verifier's circom library on the include
+/// path, and computes its witness of `input`: the r1cs and the `.wtns`.
 pub fn compile_and_witness(dir: &Path, src: &Path, input: &Path) -> (Vec<u8>, Vec<u8>) {
     let name = src.file_stem().and_then(|s| s.to_str()).expect("a circuit file name");
     // --O1 keeps the linear constraints, which are what reach plonk2pil's sum gates.
     run(
-        Command::new(circom()).args(["--O1", "--r1cs", "--wasm", "--prime", "bn128"]).arg(src).arg("-o").arg(dir),
+        Command::new(circom())
+            .args(["--O1", "--r1cs", "--wasm", "--prime", "bn128", "-l"])
+            .arg(circuits_bn128())
+            .arg(src)
+            .arg("-o")
+            .arg(dir),
         "circom",
     );
     let wtns = dir.join(format!("{name}.wtns"));

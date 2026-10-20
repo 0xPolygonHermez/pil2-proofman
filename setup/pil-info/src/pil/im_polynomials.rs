@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use tracing::info;
 
-use crate::cfg::FieldCfg;
+use crate::cfg::{DegreePolicy, FieldCfg};
 use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression};
 use crate::expr::helpers::{add_info_expression_inline, get_exp_dim};
@@ -116,20 +116,29 @@ pub struct ImPolsResult {
     pub q_deg: i64,
 }
 
-/// Greedy search over constraint degrees 2..=max_q_deg to find the split
-/// that minimizes added base-field columns.
+/// Greedy search over constraint degrees 2..=`policy.max_constraint_degree()` to find the split
+/// with the lowest `policy` cost: the fewest added base-field columns for the STARK, the lowest
+/// `nImPols + qDeg` for pilfflonk.
 ///
 /// Returns the optimal `(im_exps, q_deg)`, or an error if no degree is feasible.
 pub fn calculate_intermediate_polynomials(
     expressions: &[Expression],
     c_exp_id: usize,
-    max_q_deg: usize,
+    policy: &DegreePolicy,
     q_dim: usize,
     symbols: &[SymbolInfo],
 ) -> Result<ImPolsResult> {
+    let max_q_deg = policy.max_constraint_degree();
     info!("-------------------- POSSIBLE DEGREES ----------------------");
-    let blowup = if max_q_deg > 1 { (max_q_deg as f64 - 1.0).log2() } else { 0.0 };
-    info!("Considering degrees between 2 and {} (blowup factor: {:.0})", max_q_deg, blowup);
+    match policy {
+        DegreePolicy::FromBlowup { .. } => {
+            let blowup = if max_q_deg > 1 { (max_q_deg as f64 - 1.0).log2() } else { 0.0 };
+            info!("Considering degrees between 2 and {} (blowup factor: {:.0})", max_q_deg, blowup);
+        }
+        DegreePolicy::Search { .. } => {
+            info!("Considering degrees between 2 and {} (minimising nImPols + qDeg)", max_q_deg);
+        }
+    }
     info!("------------------------------------------------------------");
 
     // Shared memo across degree iterations — the cache key includes `max_deg`,
@@ -153,7 +162,7 @@ pub fn calculate_intermediate_polynomials(
             info!("Infeasible: no valid intermediate split exists at this degree");
             continue;
         };
-        let new_added = calculate_added_cols(d, expressions, &im_exps_p, q_deg_p, q_dim);
+        let new_added = calculate_cost(policy, d, expressions, &im_exps_p, q_deg_p, q_dim);
         let no_intermediates = im_exps_p.is_empty();
 
         // On ties, keep the lowest feasible degree.
@@ -265,7 +274,9 @@ fn render_expr(expressions: &[Expression], symbols: &[SymbolInfo], e: &Expressio
     }
 }
 
-fn calculate_added_cols(
+/// The `policy` cost of the split found for `max_deg`, logging what it adds.
+fn calculate_cost(
+    policy: &DegreePolicy,
     max_deg: usize,
     expressions: &[Expression],
     im_exps: &[usize],
@@ -273,11 +284,8 @@ fn calculate_added_cols(
     q_dim: usize,
 ) -> i64 {
     let q_cols = q_deg * q_dim as i64;
-    let mut im_cols: i64 = 0;
-    for &exp_id in im_exps {
-        im_cols += expressions[exp_id].dim as i64;
-    }
-    let added_cols = q_cols + im_cols;
+    let im_cols: usize = im_exps.iter().map(|&exp_id| expressions[exp_id].dim).sum();
+    let added_cols = q_cols + im_cols as i64;
     info!("Max constraint degree: {}", max_deg);
     info!("Number of intermediate polynomials: {}", im_exps.len());
     info!("Polynomial Q degree: {}", q_deg);
@@ -285,7 +293,11 @@ fn calculate_added_cols(
         "Number of columns added in the basefield: {} (Polynomial Q columns: {} + Intermediate polynomials columns: {})",
         added_cols, q_cols, im_cols
     );
-    added_cols
+    let cost = policy.cost(im_exps.len(), im_cols, q_deg, q_dim);
+    if let DegreePolicy::Search { .. } = policy {
+        info!("nImPols + qDeg: {}", cost);
+    }
+    cost
 }
 
 // ---------------------------------------------------------------------------
@@ -807,7 +819,9 @@ mod tests {
             make_cm(1, 1),     // 1
             make_mul(0, 1, 2), // 2: deg 2
         ];
-        let result = calculate_intermediate_polynomials(&exprs, 2, 3, 1, &[]).unwrap();
+        let result =
+            calculate_intermediate_polynomials(&exprs, 2, &DegreePolicy::FromBlowup { blowup_bits: 1 }, 1, &[])
+                .unwrap();
         assert!(
             result.im_exps.is_empty(),
             "No intermediate polynomials should be needed for degree-2 expr with maxQDeg=3"
@@ -831,11 +845,162 @@ mod tests {
         exprs[3].exp_deg = 2;
         exprs[7].exp_deg = 2;
 
-        let result = calculate_intermediate_polynomials(&exprs, 8, 2, 1, &[]).unwrap();
+        let result = calculate_intermediate_polynomials(&exprs, 8, &DegreePolicy::Search { max: 2 }, 1, &[]).unwrap();
         assert!(
             !result.im_exps.is_empty(),
             "Intermediate polynomials should be needed for degree-4 expr with maxQDeg=2"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Degree policies
+    // -----------------------------------------------------------------------
+
+    /// An inline stage-1 column, as the pilout formatter builds them.
+    fn col(id: usize) -> ExprChild {
+        ExprChild::Inline(Box::new(Expression {
+            op: "cm".to_string(),
+            id: Some(id),
+            stage: 1,
+            row_offset: Some(0),
+            ..Default::default()
+        }))
+    }
+
+    /// An inline reference to arena expression `id`: the only kind of node the search can promote.
+    fn exp(id: usize) -> ExprChild {
+        ExprChild::Inline(Box::new(Expression { op: "exp".to_string(), id: Some(id), ..Default::default() }))
+    }
+
+    fn node(op: &str, lhs: ExprChild, rhs: ExprChild) -> Expression {
+        Expression { op: op.to_string(), values: vec![lhs, rhs], ..Default::default() }
+    }
+
+    fn inline(e: Expression) -> ExprChild {
+        ExprChild::Inline(Box::new(e))
+    }
+
+    /// `x·y·z` over three fresh columns starting at `first`: degree 3.
+    fn cube(first: usize) -> Expression {
+        node("mul", inline(node("mul", col(first), col(first + 1))), col(first + 2))
+    }
+
+    /// Run `add_info_expressions` from the root, as `prepare_pil` does, so every node has its degree.
+    fn with_info(mut exprs: Vec<Expression>, root: usize, field: &FieldCfg) -> Vec<Expression> {
+        crate::expr::helpers::add_info_expressions(&mut exprs, root, field).unwrap();
+        exprs
+    }
+
+    /// `e0·u + e1·v` with `e0`, `e1` cubes: degree 4. Without im pols `qDeg = 3`; promoting both
+    /// cubes gives degree 3 and `qDeg = 2`. The root is expression 4.
+    fn sum_of_quartics(field: &FieldCfg) -> Vec<Expression> {
+        with_info(
+            vec![
+                cube(0),                     // 0: e0, degree 3
+                cube(3),                     // 1: e1, degree 3
+                node("mul", exp(0), col(6)), // 2: e0·u, degree 4
+                node("mul", exp(1), col(7)), // 3: e1·v, degree 4
+                node("add", exp(2), exp(3)), // 4: degree 4
+            ],
+            4,
+            field,
+        )
+    }
+
+    /// `e0·e1·e2` with the `e_i` cubes: degree 9. Without im pols `qDeg = 8`; promoting the three
+    /// cubes gives degree 3 and `qDeg = 2`. The root is expression 3.
+    fn product_of_cubes(field: &FieldCfg) -> Vec<Expression> {
+        with_info(
+            vec![
+                cube(0),                                                  // 0: degree 3
+                cube(3),                                                  // 1: degree 3
+                cube(6),                                                  // 2: degree 3
+                node("mul", inline(node("mul", exp(0), exp(1))), exp(2)), // 3: degree 9
+            ],
+            3,
+            field,
+        )
+    }
+
+    /// `nImPols + qDeg` of the split found for every single degree in `2..=max`, by the same inner
+    /// search the policy runs; `None` where the degree is infeasible.
+    fn cost_per_degree(exprs: &[Expression], root: usize, max: usize) -> Vec<(usize, Option<(usize, i64)>)> {
+        let mut memo = HashMap::new();
+        (2..=max)
+            .map(|d| (d, calculate_im_pols(exprs, root, d, &mut memo).map(|(ims, q_deg)| (ims.len(), q_deg))))
+            .collect()
+    }
+
+    fn cost(result: &ImPolsResult) -> i64 {
+        result.im_exps.len() as i64 + result.q_deg
+    }
+
+    /// With `Search { max: 9 }` the chosen split has the minimum `nImPols + qDeg` over every
+    /// degree 2..=9 (pilfflonk/docs/protocol.md#degree-search), here reached with no im pols at
+    /// degree 4.
+    #[test]
+    fn test_search_minimises_im_pols_plus_q_deg() {
+        let field = FieldCfg::bn128();
+        let exprs = sum_of_quartics(&field);
+        let per_degree = cost_per_degree(&exprs, 4, 9);
+        println!("sum of quartics, (degree, (nImPols, qDeg)): {per_degree:?}");
+        let min = per_degree.iter().filter_map(|(_, c)| c.map(|(n, q)| n as i64 + q)).min().unwrap();
+
+        let chosen = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 9 }, 1, &[]).unwrap();
+
+        assert_eq!(cost(&chosen), min, "per degree: {per_degree:?}");
+        assert!(chosen.im_exps.is_empty());
+        assert_eq!(chosen.q_deg, 3);
+    }
+
+    /// A lower bound forces the im pols the unbounded optimum does without.
+    #[test]
+    fn test_search_with_a_lower_max_adds_im_pols() {
+        let field = FieldCfg::bn128();
+        let exprs = sum_of_quartics(&field);
+
+        let unbounded =
+            calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 9 }, 1, &[]).unwrap();
+        let bounded = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 3 }, 1, &[]).unwrap();
+
+        assert_eq!(bounded.im_exps, vec![0, 1]);
+        assert_eq!(bounded.q_deg, 2);
+        assert!(bounded.im_exps.len() > unbounded.im_exps.len());
+        assert!(cost(&bounded) > cost(&unbounded));
+    }
+
+    /// The optimum need not be at the bound: for a degree-9 constraint, degree 3 with three im
+    /// pols (`3 + 2`) beats degree 9 with none (`0 + 8`).
+    #[test]
+    fn test_search_finds_an_interior_optimum() {
+        let field = FieldCfg::bn128();
+        let exprs = product_of_cubes(&field);
+        let per_degree = cost_per_degree(&exprs, 3, 9);
+        println!("product of cubes, (degree, (nImPols, qDeg)): {per_degree:?}");
+        assert_eq!(per_degree.last(), Some(&(9, Some((0, 8)))));
+        let min = per_degree.iter().filter_map(|(_, c)| c.map(|(n, q)| n as i64 + q)).min().unwrap();
+
+        let chosen = calculate_intermediate_polynomials(&exprs, 3, &DegreePolicy::Search { max: 9 }, 1, &[]).unwrap();
+
+        assert_eq!(cost(&chosen), min, "per degree: {per_degree:?}");
+        assert_eq!(chosen.im_exps, vec![0, 1, 2]);
+        assert_eq!(chosen.q_deg, 2);
+    }
+
+    /// The STARK's policy scores base-field columns: with a cubic quotient (`qDim = 3`) and
+    /// base-field im pols, degree 3 (`2·3 + 2 = 8` columns) beats degree 4 (`3·3 = 9`), where
+    /// pilfflonk's `nImPols + qDeg` prefers degree 4 (`3` against `4`). Same bound (9), same search.
+    #[test]
+    fn test_from_blowup_scores_columns_not_polynomials() {
+        let field = FieldCfg::goldilocks();
+        let exprs = sum_of_quartics(&field);
+
+        let stark = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::FromBlowup { blowup_bits: 3 }, 3, &[])
+            .unwrap();
+        let fflonk = calculate_intermediate_polynomials(&exprs, 4, &DegreePolicy::Search { max: 9 }, 3, &[]).unwrap();
+
+        assert_eq!((stark.im_exps.len(), stark.q_deg), (2, 2));
+        assert_eq!((fflonk.im_exps.len(), fflonk.q_deg), (0, 3));
     }
 
     // -----------------------------------------------------------------------

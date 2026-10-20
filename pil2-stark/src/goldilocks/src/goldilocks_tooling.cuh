@@ -651,6 +651,9 @@ struct DeviceRecursiveFBuffers
     uint8_t* pinnedBufferConstTree;
     size_t pinnedBufferSize = 256 * 1024 * 1024;
     size_t aux_trace_size = 0;  // bytes of d_aux_trace when owned (standalone mode)
+    // The stage, Q and FRI trees' nodes, at this byte offset of d_aux_trace, past the prover buffer.
+    uint64_t tree_nodes_offset = 0;
+    uint64_t tree_nodes_bytes = 0;
     bool owns_aux_trace;
     bool owns_const_tree;
     std::atomic<bool> const_tree_loaded{false};  // CPU flag: true when const tree copy is complete
@@ -789,9 +792,10 @@ struct DeviceCommitBuffers
 
     uint64_t prefetchRegionBytes = 0;  // per GPU
     // The mops window [mopsBase, recursiveBase) zisk's GPU planner needs: 15.03 GiB fixed + 2 GiB pool.
-    // The headroom is kept free after the unified buffer (PROOFMAN_GPU_HEADROOM_MB overrides it).
+    // The headroom is kept free after the unified buffer (PROOFMAN_GPU_HEADROOM_MB overrides it): the
+    // allocations after it, and a final SNARK's sppark MSM pool (pilfflonk's key is in the buffer).
     static constexpr uint64_t MOPS_FLOOR_BYTES = 18ull << 30;
-    static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 512ull << 20;
+    static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 756ull << 20;
 
     // Witness prefetch zone, one per GPU (the unified buffer's prefetch region): a witness is
     // uploaded on the zone's copy stream ahead of its commit or proof, which consumes it with one

@@ -1,4 +1,5 @@
 pub mod pilout;
+pub mod pilfflonk;
 pub mod field;
 pub mod pil_helpers;
 pub mod prove;

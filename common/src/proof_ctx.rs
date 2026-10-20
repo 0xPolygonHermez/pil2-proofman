@@ -1451,7 +1451,8 @@ impl<F: PrimeField64> ProofCtx<F> {
         };
 
         if gpu {
-            // The one headroom for everything allocated after the unified buffer.
+            // The one headroom for everything allocated after the unified buffer, the final SNARK's
+            // sppark pool included.
             let reserve = get_post_alloc_headroom_bytes_c() as f64;
             free_memory_gpu = (free_memory_gpu - reserve).max(0.0);
             tracing::info!("Reserving {} of GPU memory for other device consumers", format_bytes(reserve));
@@ -1753,8 +1754,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         );
 
         // Pad the unified buffer up to the snark floor (see GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES),
-        // taking only the layout's unused slack. Runs without a wrapper skip it.
-        let unified_buffer_pad_area: u64 = if gpu && final_snark {
+        // taking only the layout's unused slack. Runs without a wrapper skip it, and so do blake3
+        // keys': their final SNARK carves no BN128 recursivef nor rapidsnark prover.
+        let unified_buffer_pad_area: u64 = if gpu && final_snark && self.global_info.hash != "blake3" {
             let below_aux_bytes = (total_const_area + prefetch_region_area) * 8 + late_region_bytes;
             let above_aux_elems = aux_trace_sizes.iter().sum::<u64>()
                 + if self.phase_b {

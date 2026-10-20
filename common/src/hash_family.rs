@@ -15,9 +15,32 @@ pub enum GateRole {
     SelectValArity2,
     Blake3Node,
     Blake3Compress,
+    /// circom's `PoseidonT(t)`: the original Poseidon over BN128, with every round's state as an
+    /// output of the gate. The gate of the final SNARK wrap ([`BN128_WRAP_FAMILY`]).
+    PoseidonT,
+    /// circom's `Num2Bytes(nBits)`: its input `in` as `⌈nBits/16⌉` chunks of 16 bits, `out`, least
+    /// significant first, so that `in < 2^(16·⌈nBits/16⌉)`. The range check of the final SNARK
+    /// wraps, of any hash, which look every chunk up in a table of `[0, 2^16)`.
+    RangeCheck,
 }
 
+/// The STARK's hash families: what `--hash`, a proof and a `globalInfo.json` name, and what every
+/// per-family function below answers for. All of them are over Goldilocks.
 pub const FAMILIES: &[&str] = &["Poseidon1", "Poseidon2", "blake3"];
+
+/// The family of the final SNARK wrap's AIR, which plonk2pil sets up over BN128 for pilfflonk. Its
+/// hash gate is circom's `PoseidonT`: the original Poseidon (the C++'s `PoseidonBN128`) over BN128.
+///
+/// Its name is its hash's, as the STARK families' are, and its field's: the original Poseidon over
+/// Goldilocks is `Poseidon1`. It is not one of [`FAMILIES`]: no STARK hashes with it, so the
+/// per-family functions here refuse it as unknown. It owns its gates in `GATES`, `PoseidonT` and
+/// the range check `Num2Bytes`, which is how an r1cs is told to be the wrap's.
+pub const BN128_WRAP_FAMILY: &str = "PoseidonBN128";
+
+/// The family of the final SNARK wrap's AIR of a blake3 proving key, over BN128: its hash gates
+/// are blake3's (`Blake3Node`, `Blake3Compress`), and its range check `Num2Bytes`, as the
+/// [`BN128_WRAP_FAMILY`]'s. Not one of [`FAMILIES`], as that one.
+pub const BLAKE3_BN128_WRAP_FAMILY: &str = "blake3BN128";
 
 /// The family a caller gets when it does not choose one: every `--hash` default, every `Default`
 /// impl that carries a family, and the read-back value for a `globalInfo.json` with no `hash`.
@@ -297,13 +320,10 @@ pub fn recursive_grinding_bits(family: &str) -> usize {
     }
 }
 
-/// Whether the family's `vadcop_final` proof can be wrapped in a BN128 SNARK.
-///
-/// The snark stage recurses the final Goldilocks proof into a circom circuit over BN128, and only
-/// the poseidon families have that path built: the `recursivef` verifier and its circom templates
-/// are poseidon-only. A blake3 proving key therefore has no snark stage, and `setup-snark` /
-/// `prove-snark` refuse it up front rather than emit artifacts that cannot verify.
-pub fn supports_snark(family: &str) -> bool {
+/// Whether the family's final SNARK wraps a BN128 recursivef: the poseidon families', which any final
+/// SNARK (PLONK, FFLONK, pilfflonk) takes. blake3's recursivef is a Goldilocks STARK of the key
+/// (setup-recursivef), whose verifier only the pilfflonk wrap has.
+pub fn has_bn128_recursivef(family: &str) -> bool {
     // Listed rather than `!= "blake3"`: this is a guard, so an unrecognised family has to fail
     // closed. The `!=` form its neighbours use is fine for a preference, not for a refusal.
     matches!(family, "Poseidon1" | "Poseidon2")
@@ -380,6 +400,11 @@ const GATES: &[(&str, GateRole, Option<&str>)] = &[
     ("SelectValueArity2", GateRole::SelectValArity2, None),
     ("Blake3Node", GateRole::Blake3Node, Some("blake3")),
     ("Blake3Compress", GateRole::Blake3Compress, Some("blake3")),
+    // `PoseidonT(t)`: circom mints one gate id per width t, as for FFT4's parameters.
+    ("PoseidonT", GateRole::PoseidonT, Some(BN128_WRAP_FAMILY)),
+    // `Num2Bytes(nBits)`: one gate id per nBits, as for PoseidonT. Of no family: the wraps of every
+    // hash range-check with it.
+    ("Num2Bytes", GateRole::RangeCheck, None),
 ];
 
 pub fn lookup_gate(name: &str) -> Option<(GateRole, Option<&'static str>)> {
@@ -598,6 +623,19 @@ mod tests {
         }
     }
 
+    /// The wrap's hash gate is its family's, and its range check of no family; the wrap families
+    /// are no STARK's: a `--hash`, a proof or a globalInfo naming one is refused as any unknown
+    /// family is.
+    #[test]
+    fn the_gates_of_the_bn128_wrap_are_of_its_family_which_is_no_stark_family() {
+        assert_eq!(lookup_gate("PoseidonT"), Some((GateRole::PoseidonT, Some(BN128_WRAP_FAMILY))));
+        assert_eq!(lookup_gate("Num2Bytes"), Some((GateRole::RangeCheck, None)));
+        for family in [BN128_WRAP_FAMILY, BLAKE3_BN128_WRAP_FAMILY] {
+            assert!(!is_known_family(family));
+            assert!(!has_bn128_recursivef(family));
+        }
+    }
+
     #[test]
     fn every_family_has_at_least_one_gate() {
         for fam in FAMILIES {
@@ -664,14 +702,14 @@ mod tests {
         assert_eq!((transcript_pending_size(2), transcript_out_size(2)), (4, 8));
     }
 
-    /// The BN128 wrap is poseidon-only; blake3 has no recursivef circom verifier.
+    /// The BN128 recursivef is poseidon-only; blake3's is a Goldilocks STARK of its key.
     #[test]
-    fn only_the_poseidon_families_can_be_wrapped_in_a_snark() {
-        assert!(!super::supports_snark("blake3"));
-        assert!(super::supports_snark("Poseidon1"));
-        assert!(super::supports_snark("Poseidon2"));
+    fn only_the_poseidon_families_have_a_bn128_recursivef() {
+        assert!(!super::has_bn128_recursivef("blake3"));
+        assert!(super::has_bn128_recursivef("Poseidon1"));
+        assert!(super::has_bn128_recursivef("Poseidon2"));
         // A guard fails closed: a family this build does not know cannot be wrapped either.
-        assert!(!super::supports_snark("Keccak"));
+        assert!(!super::has_bn128_recursivef("Keccak"));
     }
 
     #[test]

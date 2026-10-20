@@ -3,9 +3,9 @@
 //! of the curve's groups. Not its base field `Fq`, where the coordinates of the points live. It is
 //! named after its curve, as `Goldilocks` is after its prime.
 //!
-//! It is for computing over BN128 in Rust, as the values of a trace over BN128 are: the BN128
-//! arithmetic of the C++ provers is ffiasm's (`pil2-stark/src/bn128`), and this type is not used
-//! there.
+//! It is for computing over BN128 in Rust, as the values of a trace over BN128 are, a pilfflonk
+//! witness's among them (pilfflonk/docs/README.md#witness): the BN128 arithmetic of the C++ provers
+//! is ffiasm's (`pil2-stark/src/bn128`), and this type is not used there.
 //!
 //! An element is kept in Montgomery form, `a·2^256 mod r`, in four 64-bit limbs, little-endian, and
 //! always below `r`: ffiasm's representation of an element of `Fr` (`RawFr::Element`). Being always
@@ -14,9 +14,11 @@
 //!
 //! The canonical value leaves the type in two forms:
 //! - 32 bytes little-endian (`to_le_bytes`, `from_le_bytes`), as circom's `.r1cs` and `.wtns` files
-//!   hold an element;
+//!   hold an element, and pilfflonk's witness and `.const` (pilfflonk/docs/formats.md#witness-directory,
+//!   pilfflonk/docs/formats.md#fixed-columns);
 //! - a decimal string, without sign, spaces or leading zeros (`Display`, `from_decimal`), as
-//!   snarkjs's JSON files hold one, and the one serde uses.
+//!   snarkjs's JSON files hold one, and pilfflonk's (pilfflonk/docs/formats.md#json-encoding), and
+//!   the one serde uses.
 //!   The `Field` trait only asks for `Serialize` and `DeserializeOwned`: `Goldilocks` is a JSON
 //!   number, but a JSON number cannot hold 254 bits in most readers. Only the canonical spelling is
 //!   read back.
@@ -427,7 +429,8 @@ impl Field for Bn128 {
         Self::MODULUS[2],
         Self::MODULUS[3],
     ]);
-    /// 5, the smallest quadratic non-residue: the generator of ffjavascript and ffiasm.
+    /// 5, the smallest quadratic non-residue: the generator of ffjavascript and ffiasm, and
+    /// pilfflonk's coset shift (pilfflonk/docs/protocol.md#extended-coset).
     const GENERATOR: Self = Self::from_canonical_limbs_unchecked([5, 0, 0, 0]);
 
     /// By Fermat: `self^(r − 2)`.
@@ -841,7 +844,8 @@ mod tests {
                 assert_eq!(w.square(), Bn128::W[i - 1]);
             }
         }
-        // ffjavascript 0.3.1's `Fr.w[8]` and `Fr.w[28]` for BN128.
+        // ffjavascript 0.3.1's `Fr.w[8]` and `Fr.w[28]` for BN128, as `pilfflonk/src/oracle/fr.rs`
+        // pins them.
         assert_eq!(
             Bn128::W[8].to_string(),
             "3478517300119284901893091970156912948790432420133812234316178878452092729974"

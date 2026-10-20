@@ -2,7 +2,7 @@
 // generated code, which is why the generated pil-helpers allow clippy wholesale.
 #![allow(clippy::int_plus_one)]
 // Rows over a field that is not 64-bit: BN128's `Fr`, which the trace of a PIL program compiled over
-// BN128 holds. An unpacked row and its `*Ops` trait take any field; only the typed columns'
+// BN128 holds, as a pilfflonk witness does (pilfflonk/docs/README.md#witness). An unpacked row and its `*Ops` trait take any field; only the typed columns'
 // accessors, which convert through 64 bits, and the packed row need `PrimeField64`.
 use proofman_common::trace::TraceRow;
 use proofman_common::GenericTrace;
@@ -54,7 +54,8 @@ fn a_row_over_bn128_is_its_columns_in_order() {
     }
     assert_eq!(trace[2].get_a(), fr(20));
 
-    // Row after row, each its columns in declaration order, arrays flattened.
+    // Row after row, each its columns in declaration order, arrays flattened: the layout pilfflonk's
+    // `Stage1Witness::from_rows` reads.
     let flat: Vec<Bn128> = trace.get_buffer();
     assert_eq!(flat.len(), 4 * 8);
     for (k, value) in flat.iter().enumerate() {

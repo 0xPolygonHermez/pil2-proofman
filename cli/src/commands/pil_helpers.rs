@@ -118,9 +118,10 @@ struct StageColumnCtx {
 
 /// Whether `pilout` is over BN128's `Fr` rather than Goldilocks: whether its `baseField`, a big-endian
 /// integer, is `r`, the modulus of [`Bn128`], or Goldilocks' `p` (or no bytes at all, as in a pilout
-/// that predates the field). Its helpers are then rows over `Bn128` with no packed rows, which are of
-/// 64-bit words; values of dimension 1, as BN128 has no extension field; and publics that are
-/// `Bn128` values. A pilout over any other field is an error: the helpers are over these two.
+/// that predates the field). Its helpers are then those of a pilfflonk witness library
+/// (pilfflonk/docs/README.md#witness): rows over `Bn128` with no packed rows, which are of 64-bit
+/// words; values of dimension 1, as BN128 has no extension field; and publics that are `Bn128`
+/// values. A pilout over any other field is an error: the helpers are over these two.
 fn is_bn128(pilout: &pil2_pilout::pilout::PilOut) -> Result<bool, String> {
     if pilout.base_field.is_empty() {
         return Ok(false);

@@ -1,0 +1,20 @@
+// Constants wider than 64 bits and negations, to check that the passes keep BN128 values intact
+// (tests/bn128.rs). Compile over BN128 with PIL2C_EXEC pointing at a pil2com that honours
+// `--field`, with --field bn128.
+
+airtemplate WideConstants(const int N = 2**4) {
+    col fixed L1 = [1, 0...];
+    col witness a, b;
+
+    // 2^200 + 7: wider than any Goldilocks element, and than a u128.
+    L1 * (a - (2**200 + 7)) === 0;
+    // r - 2: the largest constant short of r - 1.
+    L1 * (b - 21888242871839275222246405745257275088548364400416034343698204186575808495615) === 0;
+    // Negations.
+    (-a) * b + b' === 0;
+    -(a' * a) + b === 0;
+}
+
+airgroup WideConstants {
+    WideConstants(N: 2**4);
+}

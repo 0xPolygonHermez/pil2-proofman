@@ -4,6 +4,7 @@
 //! `color()` breaks ties on `(def_chunk, temp_id)` so the scratch-slot
 //! assignment is fully deterministic, independent of hash-map iteration order.
 
+use crate::field::Field;
 use crate::model::{ExpressionsInfo, StarkInfo};
 use std::collections::{HashMap, HashSet};
 
@@ -34,8 +35,13 @@ pub enum Operand {
         stride: i64,
     },
     Zi,
+    /// Zi of boundary `boundary` >= 1 (BN128 target only; boundary 0 is `Zi`).
+    Zb {
+        boundary: u64,
+    },
     Ch {
         base: u64,
+        dim: u64,
     },
     Av {
         pos: u64,
@@ -53,6 +59,7 @@ pub enum Operand {
     Pow {
         base: u64,
         j: u64,
+        dim: u64,
     },
     /// Word `idx` of the hoisted-invariants table that follows the powers in
     /// the same per-launch region: a subexpression built only from challenges,
@@ -72,9 +79,10 @@ impl Operand {
             | Operand::Custom { dim, .. }
             | Operand::Av { dim, .. }
             | Operand::Agv { dim, .. }
-            | Operand::Tab { dim, .. } => *dim,
-            Operand::Ch { .. } | Operand::Pow { .. } => 3,
-            Operand::Num(_) | Operand::Const { .. } | Operand::Zi | Operand::Pub { .. } => 1,
+            | Operand::Tab { dim, .. }
+            | Operand::Ch { dim, .. }
+            | Operand::Pow { dim, .. } => *dim,
+            Operand::Num(_) | Operand::Const { .. } | Operand::Zi | Operand::Zb { .. } | Operand::Pub { .. } => 1,
         }
     }
     /// `(id, dim)` if this is a tmp operand.
@@ -123,16 +131,18 @@ pub struct Ir {
     /// challenge powers are computed once per thread into registers in the
     /// kernel prologue instead, and `Operand::Pow` reads `pwreg_<base>_<j>`.
     pub pow_in_regs: bool,
+    /// The field the IR computes in: how numbers fold, and the challenges' dimension.
+    pub field: Field,
 }
 
 impl Ir {
     /// Words of the powers table (3 per power, summed over the challenges).
     pub fn pow_words(&self) -> u64 {
-        self.pow.iter().map(|&(_, n)| 3 * n).sum()
+        self.pow.iter().map(|&(_, n)| self.field.ext_dim() * n).sum()
     }
     /// Word offset of `base`'s region inside the powers table.
     pub fn pow_offset(&self, base: u64) -> u64 {
-        self.pow.iter().take_while(|&&(b, _)| b != base).map(|&(_, n)| 3 * n).sum()
+        self.pow.iter().take_while(|&&(b, _)| b != base).map(|&(_, n)| self.field.ext_dim() * n).sum()
     }
     /// Total per-launch table words carved off the head of scratch.
     pub fn table_words(&self) -> u64 {
@@ -287,7 +297,7 @@ pub fn build_ir_expr(
                 }
             }
             "Zi" => Operand::Zi,
-            "challenge" => Operand::Ch { base: 3 * src.id.unwrap() },
+            "challenge" => Operand::Ch { base: 3 * src.id.unwrap(), dim: 3 },
             "airvalue" => Operand::Av { pos: pos_of(src.id.unwrap(), &stark_info.air_values_map), dim },
             "airgroupvalue" => Operand::Agv { pos: pos_of(src.id.unwrap(), &stark_info.airgroup_values_map), dim },
             "public" => Operand::Pub { id: src.id.unwrap() },
@@ -327,6 +337,7 @@ pub fn build_ir_expr(
         tab_out: Vec::new(),
         tab_words: 0,
         pow_in_regs: false,
+        field: Field::Goldilocks,
     })
 }
 

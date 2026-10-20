@@ -1,7 +1,5 @@
 use borsh::{BorshSerialize, BorshDeserialize};
-use libloading::{Library, Symbol};
 use proofman_fields::PrimeField64;
-use std::ffi::CString;
 use std::fmt;
 use proofman_starks_lib_c::*;
 use std::path::Path;
@@ -10,10 +8,12 @@ use std::io::Write;
 
 use proofman_common::{
     CurveType, MpiCtx, MemoryHandlerRecursive, Proof, ProofCtx, ProofType, ProofmanResult, ProofmanError, Setup,
-    SetupsVadcop, GetSizeWitnessFunc,
+    SetupsVadcop,
 };
+use proofman_common::exec_format::{EXEC_FORMAT_VERSION, EXEC_HEADER_WORDS, EXEC_MAGIC};
+use proofman_common::final_witness::FinalWitnessLibrary;
 
-use std::os::raw::{c_void, c_char};
+use std::os::raw::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -24,8 +24,7 @@ use proofman_util::{
 
 use crate::{add_publics_circom, add_publics_aggregation};
 
-pub type GetWitnessFinalFunc =
-    unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64) -> i64;
+pub use proofman_common::final_witness::GetWitnessFinalFunc;
 
 /// Joins a background FFI thread on drop, so an early `?` or panic can't detach a thread still
 /// writing shared device state (the const-tree buffer) and let the next proof race it.
@@ -502,6 +501,12 @@ pub fn get_accumulated_challenge<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_i
     }
 }
 
+/// The layers the chain ends with, one proof of one air at (0, 0) whose proof carries its publics:
+/// the vadcop_final, and the compressed final or (blake3) the recursivef after it.
+fn is_final_layer(proof_type: &ProofType) -> bool {
+    matches!(proof_type, ProofType::VadcopFinal | ProofType::VadcopFinalCompressed | ProofType::RecursiveF)
+}
+
 pub fn gen_recursive_proof_size<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
@@ -515,7 +520,7 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
 
     let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
 
-    if witness.proof_type != ProofType::VadcopFinal && witness.proof_type != ProofType::VadcopFinalCompressed {
+    if !is_final_layer(&witness.proof_type) {
         new_proof_size += publics_aggregation as u64;
     } else {
         new_proof_size += 1 + setup.stark_info.n_publics;
@@ -559,12 +564,11 @@ pub unsafe fn generate_recursive_proof<F: PrimeField64>(
         witness.air_id
     );
 
-    let (airgroup_id, air_id, instance_id, vadcop) =
-        if witness.proof_type == ProofType::VadcopFinal || witness.proof_type == ProofType::VadcopFinalCompressed {
-            (0, 0, 0, false)
-        } else {
-            (witness.airgroup_id, witness.air_id, witness.global_idx.unwrap(), true)
-        };
+    let (airgroup_id, air_id, instance_id, vadcop) = if is_final_layer(&witness.proof_type) {
+        (0, 0, 0, false)
+    } else {
+        (witness.airgroup_id, witness.air_id, witness.global_idx.unwrap(), true)
+    };
 
     let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type)?;
 
@@ -594,16 +598,12 @@ pub unsafe fn generate_recursive_proof<F: PrimeField64>(
     let publics_aggregation = n_publics_aggregation(pctx, airgroup_id);
 
     let initial_idx =
-        if witness.proof_type == ProofType::VadcopFinal || witness.proof_type == ProofType::VadcopFinalCompressed {
-            1 + setup.stark_info.n_publics as usize
-        } else {
-            publics_aggregation
-        };
+        if is_final_layer(&witness.proof_type) { 1 + setup.stark_info.n_publics as usize } else { publics_aggregation };
 
-    if witness.proof_type != ProofType::VadcopFinal && witness.proof_type != ProofType::VadcopFinalCompressed {
+    if !is_final_layer(&witness.proof_type) {
         add_publics_aggregation_c(new_proof as *mut u8, 0, publics.as_ptr() as *mut u8, publics_aggregation as u64);
     }
-    // For VadcopFinal / VadcopFinalCompressed the caller writes the public section from the `publics`
+    // For the final layers (is_final_layer) the caller writes the public section from the `publics`
     // returned below — the circuit's OUTPUT publics (flag at index 0), NOT `pctx.get_publics()`, which
     // holds only the flag-free INPUT publics and is one element too short.
 
@@ -955,8 +955,13 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     Ok(final_proof)
 }
 
+/// The recursivef of a blake3 key (setup-recursivef), after its vadcop_final: a Goldilocks STARK
+/// proved as the compressed final is, on the run's own buffers. Its circuit takes the vadcop_final's
+/// root as an input, which it makes a public, then the vadcop_final proof's publics and proof, the
+/// zkin the poseidon families' BN128 recursivef takes too (`generate_recursivef_proof`): `verkey`, or
+/// the vadcop_final's own, as the root.
 #[allow(clippy::too_many_arguments)]
-pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
+pub fn generate_recursivef_gl_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
     setups: &SetupsVadcop<F>,
@@ -964,18 +969,79 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     prover_buffer: &[F],
     const_pols: &[F],
     const_tree: &[F],
+    verkey: Option<&[u64]>,
+) -> ProofmanResult<Proof<F>> {
+    let setup = setups.setup_recursivef.as_ref().ok_or_else(|| {
+        ProofmanError::InvalidConfiguration(
+            "this run did not load a recursivef: its key's hash has none, or the key has not set it up (setup-recursivef)"
+                .to_string(),
+        )
+    })?;
+    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().ok_or_else(|| {
+        ProofmanError::InvalidConfiguration(
+            "this run did not load the vadcop_final the recursivef verifies".to_string(),
+        )
+    })?;
+    let root = match verkey {
+        Some(verkey) if verkey.len() == 4 => verkey.to_vec(),
+        Some(verkey) => {
+            return Err(ProofmanError::InvalidParameters(format!("a verkey is 4 words, and this one {}", verkey.len())))
+        }
+        None => setup_vadcop_final.get_vk(),
+    };
+    let body_words = (setup_vadcop_final.stark_info.n_publics + setup_vadcop_final.proof_size) as usize;
+    let zkin = recursivef_gl_zkin(&root, vadcop_final_proof, body_words)?;
+    timer_start_info!(GENERATE_RECURSIVEF_PROOF);
+    let proof = generate_final_layer_proof(
+        pctx,
+        memory_handler_recursive_witness,
+        setups,
+        setup,
+        ProofType::RecursiveF,
+        &zkin,
+        prover_buffer,
+        const_pols,
+        const_tree,
+    )?;
+    timer_stop_and_log_info!(GENERATE_RECURSIVEF_PROOF);
+    Ok(proof)
+}
+
+/// The zkin of a blake3 key's recursivef: the root `root`, then the vadcop_final proof
+/// `vadcop_final_proof` (`proof_with_publics`) without its count of publics, which must be
+/// `body_words` words, the vadcop_final's publics and proof: the recursivef's witness reads as many.
+fn recursivef_gl_zkin(root: &[u64], vadcop_final_proof: &[u64], body_words: usize) -> ProofmanResult<Vec<u64>> {
+    let body = vadcop_final_proof.get(1..).unwrap_or_default();
+    if body.len() != body_words {
+        return Err(ProofmanError::InvalidProof(format!(
+            "the recursivef verifies a vadcop_final proof of {body_words} words (its publics and proof), and this one \
+             has {}",
+            body.len()
+        )));
+    }
+    let mut zkin = Vec::with_capacity(root.len() + body.len());
+    zkin.extend_from_slice(root);
+    zkin.extend_from_slice(body);
+    Ok(zkin)
+}
+
+/// A one-off proof of a layer after the vadcop_final (the compressed final, a blake3 key's
+/// recursivef): `setup`'s, of type `proof_type`, of the zkin `zkin`, on the run's own buffers.
+#[allow(clippy::too_many_arguments)]
+fn generate_final_layer_proof<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
+    setups: &SetupsVadcop<F>,
+    setup: &Setup<F>,
+    proof_type: ProofType,
+    zkin: &[u64],
+    prover_buffer: &[F],
+    const_pols: &[F],
+    const_tree: &[F],
 ) -> ProofmanResult<Proof<F>> {
     if pctx.gpu {
         let _ = set_phase_b_c(pctx.get_device_buffers_ptr(), 2);
     }
-    timer_start_info!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF);
-    let setup = setups.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
-        ProofmanError::InvalidConfiguration(
-            "Proving key was built without the vadcop_final_compressed stage; no compressed final setup to prove with"
-                .to_string(),
-        )
-    })?;
-
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
     let p_setup_addr = p_setup as usize;
@@ -993,25 +1059,17 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
         );
     }));
 
-    timer_start_debug!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF_WITNESS);
-    let (trace_vadcop_final_compressed, publics_vadcop_final_compressed) = generate_witness::<F>(
+    timer_start_debug!(GENERATE_FINAL_LAYER_WITNESS);
+    let (trace, publics) = generate_witness::<F>(
         setup,
         memory_handler_recursive_witness,
         0,
-        &vadcop_final_proof[1..],
+        zkin,
         recursion_trace_stride(setup_exec_slice(setup), setup.n_cols, pctx.gpu),
         memory_handler_recursive_witness.witness_threads(),
     )?;
-    timer_stop_and_log_debug!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF_WITNESS);
-    let mut witness_final_proof = Proof::new_witness(
-        ProofType::VadcopFinalCompressed,
-        0,
-        0,
-        None,
-        trace_vadcop_final_compressed,
-        publics_vadcop_final_compressed,
-        setup.n_cols as usize,
-    );
+    timer_stop_and_log_debug!(GENERATE_FINAL_LAYER_WITNESS);
+    let mut witness_final_proof = Proof::new_witness(proof_type, 0, 0, None, trace, publics, setup.n_cols as usize);
 
     let mut final_proof = match gen_recursive_proof_size::<F>(pctx, setups, &witness_final_proof) {
         Ok(p) => p,
@@ -1039,13 +1097,43 @@ pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
     }?;
     get_stream_id_proof_c(pctx.get_device_buffers_ptr(), stream_id);
 
-    // Write the compressed proof's public section from the circuit's OUTPUT publics
+    // Write the proof's public section from the circuit's OUTPUT publics
     // returned by `generate_recursive_proof`, not from `pctx.get_publics()`.
     write_vadcop_final_publics(&mut final_proof, setup.stark_info.n_publics, &publics);
 
-    timer_stop_and_log_info!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF);
-
     Ok(final_proof)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn generate_vadcop_final_compressed_proof<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    memory_handler_recursive_witness: &MemoryHandlerRecursive<F>,
+    setups: &SetupsVadcop<F>,
+    vadcop_final_proof: &[u64],
+    prover_buffer: &[F],
+    const_pols: &[F],
+    const_tree: &[F],
+) -> ProofmanResult<Proof<F>> {
+    let setup = setups.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
+        ProofmanError::InvalidConfiguration(
+            "Proving key was built without the vadcop_final_compressed stage; no compressed final setup to prove with"
+                .to_string(),
+        )
+    })?;
+    timer_start_info!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF);
+    let proof = generate_final_layer_proof(
+        pctx,
+        memory_handler_recursive_witness,
+        setups,
+        setup,
+        ProofType::VadcopFinalCompressed,
+        &vadcop_final_proof[1..],
+        prover_buffer,
+        const_pols,
+        const_tree,
+    )?;
+    timer_stop_and_log_info!(GENERATE_VADCOP_FINAL_COMPRESSED_PROOF);
+    Ok(proof)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1324,41 +1412,20 @@ pub fn generate_snark_proof(
     Ok((snark_proof, snark_publics))
 }
 
+// `proof` must be the recursivef proof, a nlohmann::json (`FinalWitnessLibrary::witness`). The
+// signature is the one this function always had: the pointer used to reach `getWitness` through a
+// symbol of the library, which clippy does not follow.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn generate_witness_final_snark(proof: *mut c_void, setup_path: &Path) -> ProofmanResult<Vec<u8>> {
-    let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
-    let rust_lib_filename = setup_path.display().to_string() + lib_extension;
-    let rust_lib_path = Path::new(rust_lib_filename.as_str());
+    let (library, dat) = FinalWitnessLibrary::paths(setup_path);
+    let library = FinalWitnessLibrary::load(&library, &dat)?;
 
-    if !rust_lib_path.exists() {
-        return Err(ProofmanError::InvalidSetup(format!(
-            "Rust lib dynamic library not found at path: {rust_lib_path:?}"
-        )));
-    }
-    let library: Library = unsafe { Library::new(rust_lib_path)? };
+    timer_start_info!(CALCULATE_FINAL_WITNESS);
+    // SAFETY: `proof` is the recursivef proof, the nlohmann::json `gen_recursive_proof_final_c` returns.
+    let witness = unsafe { library.witness(proof) }?;
+    timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
 
-    let dat_filename = setup_path.display().to_string() + ".dat";
-    let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
-    let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
-
-    unsafe {
-        timer_start_info!(CALCULATE_FINAL_WITNESS);
-
-        let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-        let size_witness = get_size_witness();
-
-        let mut witness: Vec<u8> = vec![0; (size_witness * 32) as usize];
-        let witness_ptr = witness.as_mut_ptr();
-
-        let get_witness_final: Symbol<GetWitnessFinalFunc> = library.get(b"getWitness\0")?;
-        let nmutex = std::cmp::min(8, rayon::current_num_threads());
-        let res = get_witness_final(proof, dat_filename_ptr, witness_ptr as *mut c_void, nmutex as u64);
-        if res != 0 {
-            return Err(ProofmanError::InvalidProof("Error generating final witness from rust".into()));
-        }
-        timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
-
-        Ok(witness)
-    }
+    Ok(witness)
 }
 
 /// Exec header for [`recursion_trace_stride`]. Empty when a setup carries no exec file, which
@@ -1382,13 +1449,10 @@ fn setup_exec_slice<F: PrimeField64>(setup: &Setup<F>) -> &[u64] {
 /// compact hands it `map_cols` columns' worth of an `n_cols`-wide row, and the proof then fails its
 /// evaluations check with nothing pointing at the cause.
 pub fn recursion_trace_stride(exec: &[u64], n_cols: u64, gpu: bool) -> u64 {
-    // Mirrors `plonk2pil::{EXEC_MAGIC, EXEC_FORMAT_VERSION, EXEC_HEADER_WORDS}`, which write the
-    // header, and `exec_layout` in pil2-stark/src/starkpil/exec_layout.hpp, which reads it. Spelled
-    // out rather than imported: the prover does not depend on the setup crate.
-    // Header: [magic|version, n_adds, map_rows, map_cols].
-    const EXEC_MAGIC: u64 = 0x5058_4543_0000_0000; // "PXEC" in the high half
-    const EXEC_FORMAT_VERSION: u64 = 2;
-    const EXEC_HEADER_WORDS: usize = 4;
+    // The header is `exec_format`'s version 2, [magic|version, n_adds, map_rows, map_cols], which
+    // `exec_layout` in pil2-stark/src/starkpil/recursion_trace/exec_layout.hpp also reads. No other
+    // version reaches here: `load_exec_file` refuses them, BN128's version 3 by name. One that did
+    // would get the full width, as a buffer without a header does.
     if !gpu {
         return n_cols;
     }
@@ -1594,7 +1658,8 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
         .max(setups.setup_vadcop_final.as_ref().unwrap().prover_buffer_size)
         // Absent when the key was built without the compressed final stage, which contributes
         // nothing to the buffer it never fills.
-        .max(setups.setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.prover_buffer_size));
+        .max(setups.setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.prover_buffer_size))
+        .max(setups.setup_recursivef.as_ref().map_or(0, |s| s.prover_buffer_size));
 
     Ok(max_prover_size as usize)
 }
@@ -1823,6 +1888,46 @@ mod arity_tests {
                     "arity={arity} n_leaves={n_leaves}"
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod stride_tests {
+    use super::recursion_trace_stride;
+    use proofman_common::exec_format::{EXEC_FORMAT_VERSION, EXEC_FORMAT_VERSION_WIDE, EXEC_MAGIC};
+
+    /// A version 2 header narrows the GPU fill to its map's width. Any other is not read for one,
+    /// BN128's version 3 included, and the fill keeps the air's width.
+    #[test]
+    fn only_a_version_2_header_narrows_the_gpu_fill() {
+        // magic|version, n_adds, map_rows, map_cols, and version 3's coefficient width and n_vars.
+        let exec = |version| [EXEC_MAGIC | version, 0, 4, 3, 4, 16];
+        assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION), 8, true), 3);
+        assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION), 8, false), 8, "the CPU keeps the air's width");
+        assert_eq!(recursion_trace_stride(&exec(EXEC_FORMAT_VERSION_WIDE), 8, true), 8);
+        assert_eq!(recursion_trace_stride(&[], 8, true), 8, "no exec file");
+    }
+}
+
+#[cfg(test)]
+mod recursivef_gl_zkin_tests {
+    use super::recursivef_gl_zkin;
+
+    /// The zkin is the root, then the proof's publics and proof, of exactly the vadcop_final's words:
+    /// a proof of more or fewer, or none, is refused.
+    #[test]
+    fn a_vadcop_final_proof_of_other_than_its_words_is_refused() {
+        let root = [1, 2, 3, 4];
+        // Two publics, 10 and 11, and a proof of 3 words; then one word too many.
+        let proof = [2, 10, 11, 20, 21, 22, 23];
+        assert_eq!(recursivef_gl_zkin(&root, &proof[..6], 5).unwrap(), [1, 2, 3, 4, 10, 11, 20, 21, 22]);
+        for (proof, words) in [(&proof[..5], 4), (&proof[..], 6), (&proof[..1], 0), (&[][..], 0)] {
+            let refused = recursivef_gl_zkin(&root, proof, 5).expect_err("refused");
+            assert!(
+                refused.to_string().contains(&format!("of 5 words (its publics and proof), and this one has {words}")),
+                "{refused}"
+            );
         }
     }
 }

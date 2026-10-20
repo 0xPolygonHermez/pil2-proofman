@@ -1,9 +1,11 @@
-//! What the passes need to know about the backend they run for: the field and how the constraint
-//! degree is bounded.
+//! What the passes need to know about the backend they run for
+//! (pilfflonk/docs/README.md#setup-pilfflonk): the field, how the constraint degree is bounded and
+//! how the committed polynomials are opened.
 //!
-//! The STARK runs the passes over Goldilocks with its cubic extension; a field large enough to need
-//! no extension, such as the BN128 scalar field, makes every value of dimension 1. This is a
-//! run-time value, not a cargo feature, so that one binary can host setups over several fields.
+//! The STARK runs the passes over Goldilocks with its cubic extension and opens with its low-degree
+//! test, FRI or STIR, on the DEEP polynomial; pilfflonk runs them over the BN128 scalar field, with
+//! no extension, and opens with SHPLONK. This is a run-time value, not a cargo feature, because
+//! `proofman-setup` hosts both setups in one binary.
 
 use num_bigint::BigUint;
 
@@ -16,6 +18,10 @@ const BN128_R_BE: [u8; 32] = [
     0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d, 0x28, 0x33, 0xe8,
     0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
 ];
+
+/// The largest constraint degree pilfflonk's search tries unless told otherwise, as pil-stark
+/// (pilfflonk/docs/protocol.md#degree-search).
+pub const DEFAULT_MAX_CONSTRAINT_DEGREE: usize = 9;
 
 /// The field the passes compute over.
 ///
@@ -62,20 +68,83 @@ impl FieldCfg {
     }
 }
 
+/// How the degree search that picks the intermediate polynomials is bounded and scored.
+///
+/// Both policies run the same search: for every maximum degree `d` from 2 up to the bound, find the
+/// intermediate polynomials that bring the constraint polynomial down to degree `d`, and keep the
+/// cheapest `d` (the lowest one on ties).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DegreePolicy {
+    /// The STARK's: the quotient is committed in pieces of degree `N` over a domain
+    /// `2^blowup_bits` times larger (`blowup_bits = nBitsExt − nBits`), so the bound is
+    /// `2^blowup_bits + 1`, and the cost of a degree is the base-field columns it adds.
+    FromBlowup { blowup_bits: usize },
+    /// pilfflonk's (pilfflonk/docs/protocol.md#degree-search): the bound is `max`, and the cost of
+    /// a degree is `nImPols + qDeg`.
+    Search { max: usize },
+}
+
+impl DegreePolicy {
+    /// The largest constraint degree the search tries.
+    pub fn max_constraint_degree(&self) -> usize {
+        match *self {
+            DegreePolicy::FromBlowup { blowup_bits } => (1usize << blowup_bits) + 1,
+            DegreePolicy::Search { max } => max,
+        }
+    }
+
+    /// The cost of a candidate degree: `n_im_pols` intermediate polynomials adding `im_cols`
+    /// base-field columns, and a quotient of degree `q_deg` and dimension `q_dim`.
+    pub(crate) fn cost(&self, n_im_pols: usize, im_cols: usize, q_deg: i64, q_dim: usize) -> i64 {
+        match self {
+            DegreePolicy::FromBlowup { .. } => q_deg * q_dim as i64 + im_cols as i64,
+            DegreePolicy::Search { .. } => n_im_pols as i64 + q_deg,
+        }
+    }
+}
+
+/// How the committed polynomials are opened, which decides what code generation adds after the
+/// constraint polynomial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opening {
+    /// The STARK's: the DEEP polynomial (`deepExpId`, its challenges `std_vf1`/`std_vf2` and the
+    /// `queryVerifier`), which its low-degree test, FRI or STIR, runs on, and the quotient's pieces
+    /// in the `evMap`, whose evaluations the verifier receives and checks against `Q(ξ)`.
+    Deep,
+    /// pilfflonk's: the prover opens the committed polynomials with SHPLONK outside these passes,
+    /// and the verifier computes `Q(ξ)` rather than receiving it
+    /// (pilfflonk/docs/protocol.md#constraint-polynomial), so there is neither a DEEP polynomial nor
+    /// a quotient in the `evMap`.
+    Shplonk,
+}
+
 /// The configuration of the passes for one backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PilInfoCfg {
     pub field: FieldCfg,
-    /// The largest constraint degree the search for intermediate polynomials tries.
-    pub max_constraint_degree: usize,
+    pub degree_policy: DegreePolicy,
+    pub opening: Opening,
 }
 
 impl PilInfoCfg {
     /// The STARK's configuration for an AIR whose extended domain is `2^blowup_bits` times its
-    /// trace (`blowup_bits = nBitsExt − nBits`): the quotient is committed in pieces of degree `N`
-    /// over that domain, so the constraint degree is bounded by `2^blowup_bits + 1`.
+    /// trace (`blowup_bits = nBitsExt − nBits`).
     pub fn goldilocks(blowup_bits: usize) -> Self {
-        Self { field: FieldCfg::goldilocks(), max_constraint_degree: (1usize << blowup_bits) + 1 }
+        Self {
+            field: FieldCfg::goldilocks(),
+            degree_policy: DegreePolicy::FromBlowup { blowup_bits },
+            opening: Opening::Deep,
+        }
+    }
+
+    /// pilfflonk's configuration, with the default search bound; `--max-constraint-degree`
+    /// replaces `degree_policy`.
+    pub fn bn128() -> Self {
+        Self {
+            field: FieldCfg::bn128(),
+            degree_policy: DegreePolicy::Search { max: DEFAULT_MAX_CONSTRAINT_DEGREE },
+            opening: Opening::Shplonk,
+        }
     }
 }
 
@@ -106,9 +175,35 @@ mod tests {
     #[test]
     fn the_starks_bound_is_the_blowup_plus_one() {
         // The bound pil2-stark-setup computed as (1 << (nBitsExt - nBits)) + 1.
-        assert_eq!(PilInfoCfg::goldilocks(1).max_constraint_degree, 3);
-        assert_eq!(PilInfoCfg::goldilocks(2).max_constraint_degree, 5);
-        assert_eq!(PilInfoCfg::goldilocks(3).max_constraint_degree, 9);
+        assert_eq!(PilInfoCfg::goldilocks(1).degree_policy.max_constraint_degree(), 3);
+        assert_eq!(PilInfoCfg::goldilocks(2).degree_policy.max_constraint_degree(), 5);
+        assert_eq!(PilInfoCfg::goldilocks(3).degree_policy.max_constraint_degree(), 9);
         assert_eq!(PilInfoCfg::goldilocks(2).field, FieldCfg::goldilocks());
+    }
+
+    #[test]
+    fn search_bound_is_its_max() {
+        assert_eq!(DegreePolicy::Search { max: 4 }.max_constraint_degree(), 4);
+        assert_eq!(PilInfoCfg::bn128().degree_policy.max_constraint_degree(), DEFAULT_MAX_CONSTRAINT_DEGREE);
+    }
+
+    #[test]
+    fn costs_follow_each_policy() {
+        // Two extension-field im pols (6 columns) and a quotient of degree 2 in the extension.
+        assert_eq!(DegreePolicy::FromBlowup { blowup_bits: 1 }.cost(2, 6, 2, 3), 12);
+        // pilfflonk counts polynomials, not columns.
+        assert_eq!(DegreePolicy::Search { max: 9 }.cost(2, 2, 2, 1), 4);
+    }
+
+    #[test]
+    fn constructors_pair_each_field_with_its_opening() {
+        let stark = PilInfoCfg::goldilocks(2);
+        assert_eq!(stark.field, FieldCfg::goldilocks());
+        assert_eq!(stark.degree_policy, DegreePolicy::FromBlowup { blowup_bits: 2 });
+        assert_eq!(stark.opening, Opening::Deep);
+
+        let fflonk = PilInfoCfg::bn128();
+        assert_eq!(fflonk.field, FieldCfg::bn128());
+        assert_eq!(fflonk.opening, Opening::Shplonk);
     }
 }

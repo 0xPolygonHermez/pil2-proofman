@@ -55,7 +55,7 @@ pub struct CompressedFinalConfig<'a> {
 /// Ports `genCompressedFinalSetup()` from `generateCompressedFinalSetup.js`.
 pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tracker: &WitnessTracker) -> Result<()> {
     if config.low_degree_test == Some(crate::types::stark_struct::LowDegreeTestKind::Stir)
-        && proofman_common::hash_family::supports_snark(config.hash)
+        && proofman_common::hash_family::has_bn128_recursivef(config.hash)
     {
         bail!(
             "{} compressed proofs go into the BN128 wrap, which verifies FRI only: build this compressed final with FRI",

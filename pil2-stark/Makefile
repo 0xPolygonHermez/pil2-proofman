@@ -116,6 +116,8 @@ TARGET_SETUP := fflonkSetup
 TARGET_STARKS_LIB_GPU := libstarksgpu.a
 TARGET_SETUP_PLONK := plonkSetup
 TARGET_PROVE_PLONK := plonkProve
+TARGET_PILFFLONK_TEST := pilfflonkTest
+TARGET_PILFFLONK_GPU_TEST := pilfflonkGpuTest
 TARGET_STIR_TEST := stirTests
 TARGET_POLYNOMIAL_TEST := polynomialTests
 
@@ -222,15 +224,15 @@ endif
 # Define source files based on platform
 ifeq ($(UNAME_S),Darwin)
     # macOS - exclude assembly files (.asm)
-    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
+    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/api/pilfflonk_api.* ./src/pilfflonk ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
 SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/% ./src/starkpil/expressions/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
 else
     # Linux - include all files including assembly
-    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
+    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/api/pilfflonk_api.* ./src/pilfflonk ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
 SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/% ./src/starkpil/expressions/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
 endif
 SRCS_STARKS_LIB := $(filter-out %_gpu.cpp %_gpu.cc,$(SRCS_STARKS_LIB))
-SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
+SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/api/pilfflonk_api.* ./src/pilfflonk ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
 SRCS_STARKS_LIB_GPU := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/% ./src/starkpil/expressions/tests/%,$(SRCS_STARKS_LIB_GPU))  # gtest sources are not library sources
 # Sppark utility for GPU (provides gpu_props function)
 SPPARK_GPU_OBJ := $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o
@@ -298,6 +300,19 @@ OBJS_PROVE_PLONK := $(filter-out $(BUILD_DIR)/src/main.cpp.o, $(OBJS_PROVE_PLONK
 OBJS_PROVE_PLONK := $(filter-out $(BUILD_DIR)/src/main_test.cpp.o, $(OBJS_PROVE_PLONK)) # Exclude main.cpp from test build
 DEPS_PROVE_PLONK := $(OBJS_PROVE_PLONK:.o=.d)
 
+# Plain-assert tests for pilfflonk, linked against the same archive the Rust bindings link.
+SRCS_PILFFLONK_TEST := $(shell find ./test/pilfflonk -name "*.cpp")
+OBJS_PILFFLONK_TEST := $(SRCS_PILFFLONK_TEST:%=$(BUILD_DIR)/%.o)
+DEPS_PILFFLONK_TEST := $(OBJS_PILFFLONK_TEST:.o=.d)
+# The same tests against the GPU archive (pilfflonk/docs/performance.md#gpu), with __USE_CUDA__:
+# they compare the GPU's MSMs, NTTs and proofs with the CPU's where there is a GPU, and skip that
+# without one. Linked as provers/starks-lib-c/build.rs links the GPU archive: the static CUDA runtime
+# and blst.
+OBJS_PILFFLONK_GPU_TEST := $(SRCS_PILFFLONK_TEST:%=$(BUILD_DIR_GPU)/%.o)
+DEPS_PILFFLONK_GPU_TEST := $(OBJS_PILFFLONK_GPU_TEST:.o=.d)
+CUDA_LIB_DIR ?= /usr/local/cuda/lib64
+LDFLAGS_PILFFLONK_GPU_TEST := -L$(CUDA_LIB_DIR) -lcudart_static -ldl -lrt -L./external/blst -lblst
+
 all: $(BUILD_DIR)/$(TARGET_STARKS_LIB) $(GPU_TARGETS)
 
 starks_lib: $(LIB_DIR)/$(TARGET_STARKS_LIB)
@@ -314,6 +329,12 @@ fflonk_setup: $(BUILD_DIR)/$(TARGET_SETUP)
 plonk_setup: $(BUILD_DIR)/$(TARGET_SETUP_PLONK)
 
 plonk_prove: $(BUILD_DIR)/$(TARGET_PROVE_PLONK)
+
+pilfflonk_test: $(BUILD_DIR)/$(TARGET_PILFFLONK_TEST)
+	$(BUILD_DIR)/$(TARGET_PILFFLONK_TEST)
+
+pilfflonk_gpu_test: $(BUILD_DIR_GPU)/$(TARGET_PILFFLONK_GPU_TEST)
+	$(BUILD_DIR_GPU)/$(TARGET_PILFFLONK_GPU_TEST)
 
 stir_test: $(BUILD_DIR)/$(TARGET_STIR_TEST)
 
@@ -385,6 +406,13 @@ $(BUILD_DIR)/$(TARGET_SETUP_PLONK): $(OBJS_SETUP_PLONK)
 $(BUILD_DIR)/$(TARGET_PROVE_PLONK): $(OBJS_PROVE_PLONK)
 	$(CXX) $(OBJS_PROVE_PLONK) $(CXXFLAGS) $(CXXFLAGS_EXT) -o $@ $(LDFLAGS) $(LDFLAGS_EXT) $(CFLAGS) $(CPPFLAGS) $(CXXFLAGS) $(CXXFLAGS_EXT)
 
+$(BUILD_DIR)/$(TARGET_PILFFLONK_TEST): $(OBJS_PILFFLONK_TEST) $(LIB_DIR)/$(TARGET_STARKS_LIB)
+	$(CXX) $(OBJS_PILFFLONK_TEST) $(LIB_DIR)/$(TARGET_STARKS_LIB) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS)
+
+$(BUILD_DIR_GPU)/$(TARGET_PILFFLONK_GPU_TEST): $(OBJS_PILFFLONK_GPU_TEST) $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
+	$(CXX) $(OBJS_PILFFLONK_GPU_TEST) $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU) $(CXXFLAGS) -o $@ $(LDFLAGS) \
+	    $(LDFLAGS_PILFFLONK_GPU_TEST) $(CFLAGS) $(CPPFLAGS)
+
 # assembly
 $(BUILD_DIR)/%.asm.o: %.asm
 	$(MKDIR_P) $(dir $@)
@@ -429,7 +457,7 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean clean_cpu clean_gpu stir_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu
+.PHONY: clean clean_cpu clean_gpu pilfflonk_test pilfflonk_gpu_test stir_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
@@ -444,6 +472,8 @@ clean_gpu:
 -include $(DEPS_SETUP)
 -include $(DEPS_SETUP_PLONK)
 -include $(DEPS_PROVE_PLONK)
+-include $(DEPS_PILFFLONK_TEST)
+-include $(DEPS_PILFFLONK_GPU_TEST)
 -include $(DEPS_BCT)
 -include $(DEPS_STARKS_LIB)
 -include $(DEPS_STARKS_LIB_GPU)
