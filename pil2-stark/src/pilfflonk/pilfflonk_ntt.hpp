@@ -3,7 +3,7 @@
 
 #include <cstdint>
 #include <memory>
-#include <x86intrin.h>
+#include "pilfflonk_carry.hpp"
 
 #include "pilfflonk_fr.hpp"
 

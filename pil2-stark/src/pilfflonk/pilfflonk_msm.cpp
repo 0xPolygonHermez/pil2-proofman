@@ -1,7 +1,7 @@
 #include "pilfflonk_msm.hpp"
 
 #include <omp.h>
-#include <x86intrin.h>
+#include "pilfflonk_carry.hpp"
 
 #include <algorithm>
 #include <cstdlib>
