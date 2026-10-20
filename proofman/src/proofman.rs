@@ -3357,7 +3357,12 @@ where
             }
 
             self.cancellation_info.write_recover().reset();
-            self.reset_unguarded()?;
+            // Collective: whether a short buffer pool fails the job depends on each rank's own
+            // `cancelled` flag, so ranks can disagree and the ones that go on hang in the next MPI
+            // exchange. Every rank learns every rank's outcome before any of them goes on.
+            let local = self.reset_unguarded();
+            let all_ok = self.mpi_ctx.all_finished_ok(local.is_ok());
+            agree_on_reset(local, all_ok)?;
             self.pctx.dctx_reset();
         } else {
             // No reset runs on this path, so a preceding snark's carve is undone here.
@@ -6827,6 +6832,12 @@ where
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id)?;
         let setup = sctx.get_setup(airgroup_id, air_id)?;
         let p_setup: *mut c_void = (&setup.p_setup).into();
+        // Checked before the commit so a stale setup fails without touching the trace.
+        let circuit_type = setup.stark_info.circuit_type.ok_or_else(|| {
+            ProofmanError::InvalidSetup(format!(
+                "air [{airgroup_id}:{air_id}] has no circuitType in its starkinfo: regenerate the setup"
+            ))
+        })?;
 
         let air_values = &pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id)?;
 
@@ -6892,7 +6903,9 @@ where
             .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
             .unwrap_or(0);
 
-        let size = 2 * n_field_elements + n_airvalues;
+        // [rootC | root1 | circuitType | stage-1 airvalues], as CalculateStage1Hash absorbs it.
+        let n_header = 2 * n_field_elements + 1;
+        let size = n_header + n_airvalues;
 
         let mut values_hash = vec![F::ZERO; size];
 
@@ -6900,13 +6913,15 @@ where
         for (i, value) in values_hash.iter_mut().enumerate().take(n_field_elements) {
             *value = F::from_u64(vk[i]);
         }
+        // rootC alone does not name the air: airs with equal fixed columns share it.
+        values_hash[2 * n_field_elements] = F::from_u64(circuit_type);
 
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
         let mut p = 0;
         let mut count = 0;
         for air_value in airvalues_map {
             if air_value.stage == 1 {
-                values_hash[2 * n_field_elements + count] = air_values[p];
+                values_hash[n_header + count] = air_values[p];
                 count += 1;
                 p += 1;
             }
@@ -6925,9 +6940,27 @@ where
     }
 }
 
+/// A rank's reset outcome once every rank's is known: its own error if it has one, else a peer's
+/// failure, so that no rank starts a job the others have abandoned.
+fn agree_on_reset(local: ProofmanResult<()>, all_ok: bool) -> ProofmanResult<()> {
+    match local {
+        Err(e) => Err(e),
+        Ok(()) if all_ok => Ok(()),
+        Ok(()) => Err(ProofmanError::MpiCancellation("a peer rank failed to reset before the job".into())),
+    }
+}
+
 #[cfg(test)]
 mod thread_budget_tests {
     use super::*;
+
+    #[test]
+    fn a_rank_whose_peer_failed_its_reset_fails_too() {
+        assert!(agree_on_reset(Ok(()), true).is_ok());
+        assert!(matches!(agree_on_reset(Ok(()), false), Err(ProofmanError::MpiCancellation(_))));
+        let own = agree_on_reset(Err(ProofmanError::Cancelled), false);
+        assert!(matches!(own, Err(ProofmanError::Cancelled)), "a rank keeps its own error");
+    }
 
     #[test]
     fn table_ids_past_32_bits_are_caught() {

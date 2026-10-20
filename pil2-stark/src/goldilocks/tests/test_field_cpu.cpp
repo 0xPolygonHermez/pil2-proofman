@@ -117,9 +117,10 @@ TEST(GOLDILOCKS_TEST, add_avx)
     free(c);
 }
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 TEST(GOLDILOCKS_TEST, add_avx512)
 {
+    if (!Goldilocks::hasAvx512()) GTEST_SKIP() << "CPU lacks AVX-512";
     uint64_t in1 = 3;
     int32_t in2 = 9;
     std::string in3 = "92233720347072921606"; // GOLDILOCKS_PRIME * 5 + 1
@@ -295,9 +296,10 @@ TEST(GOLDILOCKS_TEST, sub_avx)
     free(c);
 }
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 TEST(GOLDILOCKS_TEST, sub_avx512)
 {
+    if (!Goldilocks::hasAvx512()) GTEST_SKIP() << "CPU lacks AVX-512";
     uint64_t in1 = 3;
     int32_t in2 = 9;
     std::string in3 = "92233720347072921606"; // GOLDILOCKS_PRIME * 5 + 1
@@ -442,9 +444,10 @@ TEST(GOLDILOCKS_TEST, mul_avx)
     free(c);
 }
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 TEST(GOLDILOCKS_TEST, mul_avx512)
 {
+    if (!Goldilocks::hasAvx512()) GTEST_SKIP() << "CPU lacks AVX-512";
     uint64_t in1 = 3;
     int32_t in2 = 9;
     std::string in3 = "92233720347072921606"; // GOLDILOCKS_PRIME * 5 + 1
@@ -563,9 +566,10 @@ TEST(GOLDILOCKS_TEST, mul_avx_8)
     free(c);
 }
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 TEST(GOLDILOCKS_TEST, mul_avx512_8)
 {
+    if (!Goldilocks::hasAvx512()) GTEST_SKIP() << "CPU lacks AVX-512";
     int32_t in1 = 3;
     int32_t in2 = 9;
     int32_t in3 = 9;
@@ -671,9 +675,10 @@ TEST(GOLDILOCKS_TEST, square_avx)
     free(c);
 }
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 TEST(GOLDILOCKS_TEST, square_avx512)
 {
+    if (!Goldilocks::hasAvx512()) GTEST_SKIP() << "CPU lacks AVX-512";
     uint64_t in1 = 3;
     int32_t in2 = 9;
     std::string in3 = "92233720347072921606"; // GOLDILOCKS_PRIME * 5 + 1
@@ -816,9 +821,10 @@ TEST(GOLDILOCKS_TEST, dot_avx)
     free(b);
 }
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 TEST(GOLDILOCKS_TEST, dot_avx512)
 {
+    if (!Goldilocks::hasAvx512()) GTEST_SKIP() << "CPU lacks AVX-512";
     uint64_t in1 = 3;
     int32_t in2 = 9;
     std::string in3 = "92233720347072921606"; // GOLDILOCKS_PRIME * 5 + 1
@@ -978,9 +984,10 @@ TEST(GOLDILOCKS_TEST, dot_avx512)
     free(b2);
 }*/
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 TEST(GOLDILOCKS_TEST, mult_avx512_4x12)
 {
+    if (!Goldilocks::hasAvx512()) GTEST_SKIP() << "CPU lacks AVX-512";
     uint64_t in1 = 3;
     int32_t in2 = 9;
     std::string in3 = "92233720347072921606"; // GOLDILOCKS_PRIME * 5 + 1
@@ -1258,9 +1265,10 @@ TEST(GOLDILOCKS_TEST, mult_avx512_4x12)
     free(b);
 }*/
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 TEST(GOLDILOCKS_TEST, mmult_avx512)
 {
+    if (!Goldilocks::hasAvx512()) GTEST_SKIP() << "CPU lacks AVX-512";
     uint64_t in1 = 3;
     int32_t in2 = 9;
     std::string in3 = "92233720347072921606"; // GOLDILOCKS_PRIME * 5 + 1

@@ -177,6 +177,14 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         }
         transcript.put(&root[0], nFieldElements);
     } else {
+        if constexpr (!std::is_same<ElementType, Goldilocks::Element>::value) {
+            zklog.error("starkVerify: basic-air (vadcop) proofs are Goldilocks only");
+            return false;
+        }
+        if (!starkInfo.hasCircuitType || starkInfo.nStages < 2) {
+            zklog.error("starkVerify: a basic air needs a circuitType and stage 2 to absorb it after; regenerate the setup");
+            return false;
+        }
         transcript.put(globalChallenge, FIELD_EXTENSION);
     }
 
@@ -186,6 +194,13 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         for(uint64_t i = 0; i < nChallenges; ++i) {
             transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
             c++;
+        }
+        // The air's identity, after the stage-2 (bus) challenges every air shares.
+        if constexpr (std::is_same<ElementType, Goldilocks::Element>::value) {
+            if (challengesVadcop && s == 2) {
+                Goldilocks::Element circuitType = Goldilocks::fromU64(starkInfo.circuitType);
+                transcript.put(&circuitType, 1);
+            }
         }
         ElementType root[nFieldElements];
         if(nFieldElements == 1) {

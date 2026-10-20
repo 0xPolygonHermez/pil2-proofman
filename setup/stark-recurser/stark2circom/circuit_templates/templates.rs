@@ -20,7 +20,7 @@ use tera::{Context as TeraCtx, Tera};
 use super::get_sha256_inputs::gen_get_sha256_inputs;
 use super::stark_inputs::{assign_stark_inputs, define_stark_inputs, EnableInput, StarkInputOptions};
 use super::vadcop_inputs::{
-    agg_types_consistency, agg_vadcop_inputs, assign_vadcop_inputs, basic_circuit_type, define_vadcop_inputs,
+    agg_types_consistency, agg_vadcop_inputs, air_id_vars, assign_vadcop_inputs, define_vadcop_inputs,
     init_vadcop_inputs, AggVadcopOptions, AssignVadcopOptions, VadcopSignals,
 };
 use super::calculate_hashes::gen_calculate_hashes;
@@ -115,6 +115,8 @@ pub fn gen_recursion_final(
     ctx.insert("stark_signals", &stark_signals);
     ctx.insert("stark_assign", &stark_assign);
     ctx.insert("n_publics_proof", &n_publics_proof);
+    // Only a proof with room for a program VK can be a recurser aggregate.
+    ctx.insert("has_program_vk", &(n_publics_proof >= 4));
 
     render(FINAL_TMPL, &ctx)
 }
@@ -305,6 +307,7 @@ pub fn gen_compressor(
     let mut ctx = TeraCtx::new();
     ctx.insert("verifier_filenames", verifier_filenames);
     ctx.insert("calculate_hashes", &gen_calculate_hashes(stark_info, vadcop_info));
+    ctx.insert("air_id_vars", &air_id_vars(stark_info));
     ctx.insert("has_publics", &(n_publics > 0));
     ctx.insert("n_publics", &n_publics);
     ctx.insert("has_proof_values", &(num_proof_values > 0));
@@ -346,6 +349,7 @@ pub fn gen_recursive1(
         "calculate_hashes",
         &if !has_compressor { gen_calculate_hashes(stark_info, vadcop_info) } else { String::new() },
     );
+    ctx.insert("air_id_vars", &air_id_vars(stark_info));
     ctx.insert("has_publics", &(n_publics > 0));
     ctx.insert("n_publics", &n_publics);
     ctx.insert("has_proof_values", &(num_proof_values > 0));
@@ -420,7 +424,6 @@ pub fn gen_recursive1(
         );
         let agg_opts = AggVadcopOptions { own_circuit_type: true, force_null: true };
         ctx.insert("agg_vadcop", &agg_vadcop_inputs(vadcop_info, airgroup_id, &prefixes, "sv", &agg_opts));
-        ctx.insert("circuit_type", &basic_circuit_type(stark_info, vadcop_info));
         RECURSIVE1_BATCHED_TMPL
     };
 
@@ -536,6 +539,7 @@ pub fn gen_recursive2(
     ctx.insert("slots", &slots);
     ctx.insert("agg_types_consistency", &agg_types_consistency(vadcop_info, airgroup_id, &slot_prefixes, false));
     ctx.insert("sel_fn", sel_fn);
+    ctx.insert("airgroup_id", &airgroup_id);
     ctx.insert("agg_vadcop", &agg_vadcop_inputs(vadcop_info, airgroup_id, &slot_prefixes, "sv", &Default::default()));
     ctx.insert("n_publics_minus_4", &(n_publics_raw - 4));
     ctx.insert("pub_names", &pub_names.join(", "));
@@ -611,7 +615,7 @@ pub fn gen_vadcop_final(
         section.push_str(&vk_lines);
         section.push('\n');
         section.push_str(&format!(
-            "    sV{i}.rootC <== {sel_fn}({airs_i_len})(s{i}_sv_circuitType, s{i}_sv_rootCBasics, s{i}_sv_rootCAgg);\n"
+            "    sV{i}.rootC <== {sel_fn}({airs_i_len}, {i})(s{i}_sv_circuitType, s{i}_sv_rootCBasics, s{i}_sv_rootCAgg);\n"
         ));
         section.push_str(&format!(
             "    for (var i = 0; i < 4; i++) {{\n        sV{i}.publics[{} + i] <== s{i}_sv_rootCAgg[i];\n    }}\n",
@@ -928,7 +932,7 @@ mod recursive1_batch_tests {
 
     fn stark_info() -> Value {
         serde_json::json!({
-            "airId": 1, "airgroupId": 0, "nStages": 2, "nPublics": 12, "nConstants": 2,
+            "airId": 1, "airgroupId": 0, "circuitType": 5, "nStages": 2, "nPublics": 12, "nConstants": 2,
             "mapSectionsN": { "cm1": 3, "cm2": 6, "cm3": 3 },
             "customCommits": [], "evMap": [{}], "airValuesMap": [], "challengesMap": [],
             "starkStruct": {
@@ -999,8 +1003,46 @@ mod recursive1_batch_tests {
     #[test]
     fn the_fold_keeps_the_airs_circuit_type() {
         let out = gen(2, false);
-        assert!(out.contains("sv_circuitType <== 3;"), "airId 1 + 2 in a multi-air group\n{out}");
+        assert!(out.contains("var circuitType = circuitTypeOf(airgroupId, airId + 1);"), "{out}");
+        assert!(out.contains("include \"circuit_type.circom\";"), "{out}");
+        assert!(out.contains("sv_circuitType <== circuitType;"), "the air's own type\n{out}");
         assert!(!out.contains("sv_circuitType <== 1;"), "must not claim the aggregated type");
+    }
+
+    /// Each recursive2 accepts only its own airgroup's types, and so does each final slot.
+    #[test]
+    fn recursive2_and_final_select_by_airgroup() {
+        let vadcop = serde_json::json!({
+            "aggTypes": [[{"aggType": 0, "stage": 2}], [{"aggType": 0, "stage": 2}]], "air_groups": ["g0", "g1"],
+            "airs": [[{"name": "a"}, {"name": "b"}], [{"name": "c"}]], "curve": "None", "latticeSize": 368,
+            "nPublics": 2, "numProofValues": [0], "hash": "blake3"
+        });
+        let opts = CircomGenOptions {
+            airgroup_id: Some(1),
+            has_compressor: false,
+            has_recursion: true,
+            is_final: false,
+            agg_arity: 2,
+            batch_size: 1,
+        };
+        let vk = vec!["1".to_string(), "2".into(), "3".into(), "4".into()];
+        let rec2 =
+            gen_recursive2(&stark_info(), &["v.circom".into()], &vadcop, 1, std::slice::from_ref(&vk), &opts).unwrap();
+        assert!(rec2.contains("var airgroupId = 1;"), "{rec2}");
+        assert!(rec2.contains("var circuitType = circuitTypeOf(airgroupId, 0);"), "{rec2}");
+        assert!(rec2.contains(", airgroupId)("), "{rec2}");
+
+        let fin = gen_vadcop_final(
+            &[stark_info(), stark_info()],
+            &["v0.circom".into(), "v1.circom".into()],
+            &vadcop,
+            &[vec![vk.clone(), vk.clone()], vec![vk.clone()]],
+            &[vk.clone(), vk],
+            &opts,
+        )
+        .unwrap();
+        assert!(fin.contains("SelectVerificationKeyNull(2, 0)("), "{fin}");
+        assert!(fin.contains("SelectVerificationKeyNull(1, 1)("), "{fin}");
     }
 
     /// A short batch has to prove, so the fold is null-aware and the count comes from the flags.
@@ -1052,6 +1094,48 @@ mod recursive1_batch_tests {
 #[cfg(test)]
 mod solidity_version_tests {
     use super::*;
+
+    fn recursion_final(n_publics: u64) -> String {
+        let stark_info = serde_json::json!({
+            "airId": 0, "airgroupId": 0, "nStages": 2, "nPublics": n_publics, "nConstants": 2,
+            "mapSectionsN": { "cm1": 3, "cm2": 6, "cm3": 3 },
+            "customCommits": [], "evMap": [{}], "airValuesMap": [], "challengesMap": [],
+            "starkStruct": {
+                "nBits": 10, "nBitsExt": 11, "merkleTreeArity": 2, "transcriptArity": 2,
+                "merkleTreeCustom": false, "verificationHashType": "BN128",
+                "lastLevelVerification": 4, "hashCommits": true,
+                "foldingFactors": [6], "logDegrees": [10, 4], "logDomainSizes": [11, 5],
+                "numQueries": 8, "grindingBitsQueries": 24
+            }
+        });
+        let opts = CircomGenOptions {
+            airgroup_id: None,
+            has_compressor: false,
+            has_recursion: false,
+            is_final: true,
+            agg_arity: 0,
+            batch_size: 1,
+        };
+        gen_recursion_final(&stark_info, &["v.circom".into()], None, &opts).unwrap()
+    }
+
+    /// An aggregate (flag 0) must declare as its program VK the key it was verified under, or a
+    /// fold over a child verified under its own declared key would wrap under the recurser's key.
+    #[test]
+    fn recursion_final_binds_an_aggregate_program_vk_to_its_root_c() {
+        let out = recursion_final(73);
+        assert!(
+            out.contains("(1 - is_vadcop_final_proof) * (rootC[i] - publics[5 + i]) === 0;"),
+            "aggregate program VK not bound to rootC:\n{out}"
+        );
+    }
+
+    /// Fewer than four real publics leave no program VK to bind, and publics[5 + i] would not exist.
+    #[test]
+    fn recursion_final_without_room_for_a_program_vk_emits_no_binding() {
+        let out = recursion_final(4 + 1 + 3);
+        assert!(!out.contains("rootC[i] - publics[5 + i]"), "{out}");
+    }
 
     fn zisk_publics() -> Value {
         serde_json::json!({

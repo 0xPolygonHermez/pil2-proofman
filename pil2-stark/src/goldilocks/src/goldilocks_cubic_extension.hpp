@@ -25,7 +25,7 @@ public:
 #ifdef __AVX2__
     typedef __m256i Element_avx[FIELD_EXTENSION];
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
     typedef __m512i Element_avx512[FIELD_EXTENSION];
 #endif   
 
@@ -368,7 +368,7 @@ public:
     static void op_avx(uint64_t op, Element_avx &c_, const Element_avx &a_, const Element_avx &b_);
     static void op_31_avx(uint64_t op, Element_avx &c_, const Element_avx &a_, const __m256i &b_);
 #endif    
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 
     /* AVX512 operations */
     static void copy_avx512(Element_avx512 c_, Element_avx512 a_);

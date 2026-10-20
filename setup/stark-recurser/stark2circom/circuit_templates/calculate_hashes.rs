@@ -1,8 +1,9 @@
 //! Rust port of `vadcop/helpers/templates/calculate_hashes.circom.ejs`.
 //!
 //! Generates the `CalculateStage1Hash` circom template which computes a
-//! Poseidon2 hash of `rootC + root1 + airValues` producing either an elliptic-
-//! curve point (when `vadcopInfo.curve != "None"`) or a lattice vector.
+//! Poseidon2 hash of `rootC + root1 + circuitType + airValues` (`circuitType` is a
+//! template parameter) producing either an elliptic-curve point (when
+//! `vadcopInfo.curve != "None"`) or a lattice vector.
 //!
 //! Implementation: the order-dependent `Transcript` state machine drives the
 //! Poseidon2 chain in Rust, and the resulting code + collected output fields
@@ -28,7 +29,7 @@ struct ChainRound {
 
 /// Port of `calculate_hashes.circom.ejs`.
 ///
-/// Returns the complete `template CalculateStage1Hash() { ... }` block as a string.
+/// Returns the complete `template CalculateStage1Hash(circuitType) { ... }` block as a string.
 pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     let arity = stark_info["starkStruct"]["merkleTreeArity"].as_u64().unwrap_or(2) as usize;
     let curve = vadcop_info["curve"].as_str().unwrap_or("None");
@@ -48,6 +49,8 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     let mut transcript = Transcript::new(None, hash_family);
     transcript.put("rootC", 4);
     transcript.put("root1", 4);
+    // rootC alone does not name the air: airs with equal fixed columns share it.
+    transcript.put_single("circuitType");
     for (j, av) in air_values_map.iter().enumerate() {
         if av["stage"].as_u64() == Some(1) {
             transcript.put_single(&format!("airValues[{j}][0]"));
@@ -181,13 +184,15 @@ mod tests {
         });
         let out = gen_calculate_hashes(&stark, &vadcop);
 
-        assert!(out.contains("template CalculateStage1Hash()"));
+        assert!(out.contains("template CalculateStage1Hash(circuitType)"));
         assert!(out.contains("signal output values[32]"));
         assert!(!out.contains("signal input airValues"));
         // Poseidon2 family must emit the Poseidon2 template, never the (undefined-here) Poseidon1 one.
         assert!(out.contains("Poseidon2(4, 16)("), "out:\n{out}");
         assert!(!out.contains("<== Poseidon(16)("), "must not emit Poseidon1 template:\n{out}");
         assert!(out.contains("values[0] <=="));
+        // The air's identity follows root1, so airs sharing a rootC hash apart.
+        assert!(out.contains("root1[3],circuitType,0"), "circuitType not absorbed:\n{out}");
         // out_w = 16 → first round fills values[0..16]
         assert!(out.contains("values[15] <=="));
         assert!(!out.contains("HashToCurve"));

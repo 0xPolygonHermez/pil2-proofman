@@ -2,6 +2,7 @@ pragma circom 2.1.0;
 pragma custom_templates;
 
 include "iszero.circom";
+include "circuit_type.circom";
 include "agg_values.circom";
 include "acc_points.circom";
 {% for vf in verifier_filenames %}include "{{ vf }}";
@@ -10,7 +11,7 @@ include "acc_points.circom";
 {{ calculate_hashes }}
 {% endif %}
 template Recursive1() {
-
+{{ air_id_vars }}
 {{ vadcop_define_sv }}
 {% if has_publics %}    signal input publics[{{ n_publics }}];
 {% endif %}
@@ -39,7 +40,7 @@ template Recursive1() {
     noProofs === 0;
 
     // The air's own type: the aggregated one would make recursive2 select rootCAgg.
-    sv_circuitType <== {{ circuit_type }};
+    sv_circuitType <== circuitType;
 }
 
 component main {public [{{ pub_names }}]} = Recursive1();

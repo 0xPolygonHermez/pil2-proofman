@@ -25,6 +25,7 @@ pub mod packed_info;
 pub mod error_manager;
 pub mod exec_format;
 pub mod final_witness;
+pub mod circuit_type;
 
 pub use air_instance::*;
 pub use verbose_mode::*;
@@ -37,6 +38,7 @@ pub use setup::*;
 pub use setup_ctx::*;
 pub use stark_info::*;
 pub use std_mode::*;
+pub use circuit_type::*;
 pub use publics::*;
 pub use utils::*;
 pub use distribution_ctx::*;

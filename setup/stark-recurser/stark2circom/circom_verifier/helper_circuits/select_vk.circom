@@ -3,15 +3,14 @@ pragma circom 2.1.0;
 include "mux1.circom";
 include "mux2.circom";
 include "iszero.circom";
+include "circuit_type.circom";
 
 // Given a circuit type, return the corresponding verification key
-template SelectVerificationKeyNull(nBasics) {
+template SelectVerificationKeyNull(nBasics, airgroupId) {
 
     // 0 -> Null
-    // 1 -> Aggregated
-    // 2 -> Basic1 (Basic)
-    // 3 -> Basic2 (Basic)
-    // ...
+    // circuitTypeOf(airgroupId, 0) -> Aggregated
+    // circuitTypeOf(airgroupId, i + 1) -> Basic i
     signal input circuitType;
 
     // Basic verification keys;
@@ -29,7 +28,8 @@ template SelectVerificationKeyNull(nBasics) {
     signal isType[nBasics + 2];
     var isValidType = 0;
     for(var i = 0; i < nBasics + 2; i++) {
-        isType[i] <== IsZero()(i - circuitType);
+        var expectedType = i == 0 ? 0 : circuitTypeOf(airgroupId, i - 1);
+        isType[i] <== IsZero()(expectedType - circuitType);
         isValidType += isType[i];
     }
 
@@ -61,12 +61,10 @@ template SelectVerificationKeyNull(nBasics) {
 }
 
 // Given a circuit type, return the corresponding verification key
-template SelectVerificationKey(nBasic) {
+template SelectVerificationKey(nBasic, airgroupId) {
 
-    // 0 -> Aggregated
-    // 1 -> Basic1 (Basic)
-    // 2 -> Basic2 (Basic)
-    // ...
+    // circuitTypeOf(airgroupId, 0) -> Aggregated
+    // circuitTypeOf(airgroupId, i + 1) -> Basic i
 
     signal input circuitType;
     
@@ -85,7 +83,7 @@ template SelectVerificationKey(nBasic) {
     signal isType[nBasic + 1];
     var isValidType = 0;
     for(var i = 0; i < nBasic + 1; i++) {
-        isType[i] <== IsZero()(i - circuitType);
+        isType[i] <== IsZero()(circuitTypeOf(airgroupId, i) - circuitType);
         isValidType += isType[i];
     }
 

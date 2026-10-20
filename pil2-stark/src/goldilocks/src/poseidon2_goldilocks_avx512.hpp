@@ -1,9 +1,12 @@
 #ifndef POSEIDON2_GOLDILOCKS_AVX512
 #define POSEIDON2_GOLDILOCKS_AVX512
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 #include "poseidon2_goldilocks.hpp"
 #include "goldilocks_base_field.hpp"
 #include <immintrin.h>
+// Scoped AVX-512 codegen, opened after the includes so they stay baseline.
+#pragma GCC push_options
+#pragma GCC target("avx512f")
 
 
 template<uint32_t SPONGE_WIDTH_T>
@@ -88,5 +91,6 @@ inline void Poseidon2Goldilocks<SPONGE_WIDTH_T>::pow7add_avx512(__m512i *x, cons
     }
 }
 
+#pragma GCC pop_options
 #endif
 #endif

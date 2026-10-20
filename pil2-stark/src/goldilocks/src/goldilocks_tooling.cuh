@@ -107,6 +107,8 @@ struct AirInstanceInfo {
     uint64_t customPolsPackedWords = 0;
 
     Goldilocks::Element *verkeyRoot;
+    // Basic airs: the circuitType their transcript absorbs, on device so a graph replay reads it.
+    Goldilocks::Element *d_circuitType = nullptr;
 
     bool is_packed = false;
     uint64_t num_packed_words = 0;
@@ -204,6 +206,12 @@ struct AirInstanceInfo {
             CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
             CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
             verkeyRoot = d_verkeyRoot;
+        }
+
+        if (setupCtx->starkInfo.hasCircuitType) {
+            Goldilocks::Element circuitType = Goldilocks::fromU64(setupCtx->starkInfo.circuitType);
+            CHECKCUDAERR(cudaMalloc(&d_circuitType, sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMemcpy(d_circuitType, &circuitType, sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
         }
 
         CHECKCUDAERR(cudaMalloc(&d_num_packed_words, sizeof(uint64_t)));
@@ -314,6 +322,8 @@ struct AirInstanceInfo {
         if (verkeyRoot != nullptr) {
             CHECKCUDAERR(cudaFree(verkeyRoot));
         }
+
+        if (d_circuitType != nullptr) CHECKCUDAERR(cudaFree(d_circuitType));
 
         delete expressions_gpu;
 

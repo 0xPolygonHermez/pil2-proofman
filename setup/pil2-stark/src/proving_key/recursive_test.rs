@@ -245,6 +245,8 @@ pub fn gen_recursive_test_setup(
         &ldt,
         0,
         0,
+        // The test circuit is proven as air 0 of airgroup 0.
+        Some(proofman_common::circuit_type_of(0, 1)),
         NAME_FILE,
         pil_info_result.c_exp_id,
         pil_info_result.deep_exp_id,

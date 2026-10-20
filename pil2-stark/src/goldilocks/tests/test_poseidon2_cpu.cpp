@@ -259,7 +259,8 @@ static void merkletreeModeEquivalence(uint64_t arity, uint64_t nrows, uint64_t n
             << "Auto!=AvxBatch at W=" << W << " arity=" << arity << " ncols=" << ncols;
     }
 
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
+    if (!Goldilocks::hasAvx512()) return;
     Goldilocks::Element r_avx512batch[4];
     rootOf(Poseidon2Mode::Avx512Batch, r_avx512batch);
     for (int i = 0; i < 4; ++i)

@@ -28,6 +28,7 @@ pub fn build_starkinfo_output(
     ldt: &LowDegreeTest,
     airgroup_id: usize,
     air_id: usize,
+    circuit_type: Option<u64>,
     air_name: &str,
     c_exp_id: usize,
     deep_exp_id: usize,
@@ -290,6 +291,7 @@ pub fn build_starkinfo_output(
         map_sections_n,
         air_id,
         airgroup_id,
+        circuit_type,
         n_constants: setup.n_constants,
         n_publics: setup.n_publics,
         air_group_values,
@@ -401,6 +403,21 @@ mod tests {
     #[test]
     fn basic_air_schedule_needs_no_more_queries_after_round_0() {
         solve_low_degree_test(&stir(22, 1, 4, &[24]), 200);
+    }
+
+    /// The setup writes a basic air's circuitType and proofman reads the same value back.
+    #[test]
+    fn starkinfo_output_carries_circuit_type() {
+        // proofman requires a security section, which the default leaves out.
+        let security = Some(SecurityInfo { proximity_gap: 0.0, proximity_parameter: 0.0, regime: "JBR".into() });
+        let with = StarkInfoOutput { circuit_type: Some(4), security: security.clone(), ..Default::default() };
+        let json = crate::output::json::to_json_string(&with).unwrap();
+        assert!(json.contains("\"circuitType\": 4") || json.contains("\"circuitType\":4"), "{json}");
+        assert_eq!(proofman_common::StarkInfo::from_json(&json).circuit_type, Some(4));
+
+        let without = crate::output::json::to_json_string(&StarkInfoOutput { security, ..Default::default() }).unwrap();
+        assert!(!without.contains("circuitType"), "{without}");
+        assert_eq!(proofman_common::StarkInfo::from_json(&without).circuit_type, None);
     }
 
     /// The GPU sizes its query buffers for round 0; a schedule that needs more later fails at setup.

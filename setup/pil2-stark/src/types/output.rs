@@ -21,6 +21,9 @@ pub struct StarkInfoOutput {
     pub map_sections_n: serde_json::Map<String, serde_json::Value>,
     pub air_id: usize,
     pub airgroup_id: usize,
+    /// Basic airs only: what their transcript and stage-1 contribution absorb.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub circuit_type: Option<u64>,
     pub n_constants: usize,
     pub n_publics: usize,
     pub air_group_values: Vec<serde_json::Value>,

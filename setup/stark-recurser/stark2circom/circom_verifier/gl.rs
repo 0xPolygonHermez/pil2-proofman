@@ -677,11 +677,22 @@ fn build_tera_context(
         t.put("globalChallenge", 3);
     }
 
+    // A basic air's identity, absorbed once the shared stage-2 (bus) challenges are out.
+    let basic_circuit_type = if opts.input_challenges {
+        assert!(n_stages >= 2, "a basic air needs stage 2 to absorb its circuitType after (nStages = {n_stages})");
+        Some(si["circuitType"].as_u64().expect("starkInfo.circuitType missing: regenerate the setup"))
+    } else {
+        None
+    };
+
     for i in 1..n_stages {
         let stage = (i + 1) as u64;
         let cnt = challenges_map.iter().filter(|c| c["stage"].as_u64() == Some(stage)).count();
         for j in 0..cnt {
             t.get_field(&format!("challengesStage{stage}[{j}]"));
+        }
+        if let (Some(circuit_type), 2) = (basic_circuit_type, stage) {
+            t.put_single(&circuit_type.to_string());
         }
         t.put(&format!("root{stage}"), 4);
         for (j, av) in air_values_map.iter().enumerate() {
@@ -1092,6 +1103,49 @@ mod tests {
             }
             assert!(!line.contains("[4]") && !line.contains("[5]"), "{sig} reads past the digest: {line}");
         }
+    }
+
+    fn basic_air_stark_info() -> Value {
+        let mut si = minimal_stark_info(2, 10, 8);
+        si["circuitType"] = json!(37);
+        si["challengesMap"] = json!([{"name": "std_alpha", "stage": 2, "stageId": 0}]);
+        si
+    }
+
+    fn render(si: &Value, input_challenges: bool) -> String {
+        let opts = Pil2CircomOptions { hash: "Poseidon2".to_string(), input_challenges, ..Default::default() };
+        gen_stark_verifier_gl(None, si, &minimal_verifier_info(), &opts).unwrap()
+    }
+
+    /// The bus challenges are shared by every air, so the air's identity goes in after them.
+    #[test]
+    fn basic_transcript_binds_circuit_type_after_stage2_challenges() {
+        let out = render(&basic_air_stark_info(), true);
+        let challenge = out.find("challengesStage2[0]").unwrap_or_else(|| panic!("no stage-2 challenge:\n{out}"));
+        let absorb = out.find("37,root2[0]").unwrap_or_else(|| panic!("circuitType not absorbed before root2:\n{out}"));
+        assert!(challenge < absorb, "circuitType absorbed before the stage-2 challenges:\n{out}");
+    }
+
+    #[test]
+    fn recursive_transcript_has_no_circuit_type() {
+        let out = render(&basic_air_stark_info(), false);
+        assert!(!out.contains("37,"), "{out}");
+    }
+
+    #[test]
+    #[should_panic(expected = "nStages")]
+    fn basic_transcript_needs_stage2() {
+        let mut si = basic_air_stark_info();
+        si["nStages"] = json!(1);
+        render(&si, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "circuitType")]
+    fn basic_transcript_needs_circuit_type() {
+        let mut si = basic_air_stark_info();
+        si.as_object_mut().unwrap().remove("circuitType");
+        render(&si, true);
     }
 
     /// Stage 1 airgroupvalue absorbs only limb 0 (and limbs 1, 2 are pinned to zero); stage 2
