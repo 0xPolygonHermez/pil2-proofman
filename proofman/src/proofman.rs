@@ -5773,11 +5773,18 @@ where
                     if stage_first {
                         pctx_clone.dispatch_deferred[instance_id].store(true, Ordering::SeqCst);
                     }
-                    if let Err(e) =
-                        wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref())
-                    {
-                        cancellation_info_clone.write_recover().cancel(Some(e));
-                    }
+                    let computed = match wcm.calculate_witness(
+                        1,
+                        &[instance_id],
+                        n_threads_witness,
+                        memory_handler_clone.as_ref(),
+                    ) {
+                        Ok(()) => true,
+                        Err(e) => {
+                            cancellation_info_clone.write_recover().cancel(Some(e));
+                            false
+                        }
+                    };
                     // The staging below is an H2D wait, not CPU work: give the tokens and the
                     // admission slot back first so the next witness can start.
                     drop(tokens);
@@ -5786,15 +5793,20 @@ where
                     let (slot, wake) = if stage_first {
                         let wake = slot.wake.clone();
                         drop(slot);
-                        match Self::stage_for_commit(
-                            &pctx_clone,
-                            &zone_airs,
-                            memory_handler_clone.as_ref(),
-                            &slot_airs,
-                            instance_id,
-                        ) {
-                            Ok(s) => pctx_clone.witness_staged[instance_id].store(s, Ordering::Release),
-                            Err(e) => cancellation_info_clone.write_recover().cancel(Some(e)),
+                        // Only a witness computed in full has a trace to upload, and a cancelled job commits
+                        // nothing: a failed witness can leave its instance a trace pointer to no live
+                        // buffer, and copying from it ended the process (SIGSEGV in the H2D copy).
+                        if computed && !cancellation_info_clone.read_recover().token.is_cancelled() {
+                            match Self::stage_for_commit(
+                                &pctx_clone,
+                                &zone_airs,
+                                memory_handler_clone.as_ref(),
+                                &slot_airs,
+                                instance_id,
+                            ) {
+                                Ok(s) => pctx_clone.witness_staged[instance_id].store(s, Ordering::Release),
+                                Err(e) => cancellation_info_clone.write_recover().cancel(Some(e)),
+                            }
                         }
                         pctx_clone.end_deferred_dispatch(instance_id);
                         (None, Some(wake))
