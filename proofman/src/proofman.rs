@@ -3346,13 +3346,13 @@ where
         // The witness components' `end` runs on every exit of the proving path, success or error,
         // as it does on the constraint-check paths: a component that still holds something for
         // the proof (zisk's executor keeps the memory-ops window until its memory witnesses are
-        // done) hands it back here instead of at the next job. The std components act only in
-        // debug mode, which the proving path never sets.
+        // done) hands it back here instead of at the next job. The std components act in `end`
+        // only in debug mode: they get a non-debug `DebugInfo`, not the context's, which a debug
+        // command run earlier on this prover may have left in debug mode.
         struct EndOnExit<'a, F: PrimeField64>(&'a WitnessManager<F>);
         impl<F: PrimeField64> Drop for EndOnExit<'_, F> {
             fn drop(&mut self) {
-                let debug_info = self.0.get_pctx().debug_info.read().unwrap().clone();
-                if let Err(e) = self.0.end(&debug_info) {
+                if let Err(e) = self.0.end(&DebugInfo::default()) {
                     tracing::warn!("a witness component's end failed: {e}");
                 }
             }
