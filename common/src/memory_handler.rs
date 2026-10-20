@@ -1,7 +1,9 @@
 use crossbeam_channel::{bounded, Sender, Receiver};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::ffi::c_void;
+use std::mem::MaybeUninit;
 use std::sync::{Arc, LazyLock, Mutex};
+use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use crate::ProofCtx;
@@ -122,6 +124,48 @@ fn register_pool<F: PrimeField64>(buffers: &[Vec<F>]) -> Vec<usize> {
     registered
 }
 
+/// Transparent huge page size: what `MADV_HUGEPAGE` maps a pool buffer with.
+const HUGE_PAGE: usize = 2 << 20;
+
+/// A pool buffer of `len` zeros, written from every rayon thread and, on Linux, on transparent huge
+/// pages. One thread zeroing 4 KB pages, then pinning them one by one, took ~1 s per GB: the
+/// basic-trace pool (56 GB on one rank of an 8-GPU host) held the worker's start for 56 s. On huge
+/// pages written in parallel it takes ~2 s, pinning included (512 times fewer pages to lock).
+fn zeroed_buffer<F: PrimeField64 + Send + Sync>(len: usize) -> Vec<F> {
+    let mut buffer: Vec<F> = Vec::with_capacity(len);
+    advise_huge_pages(buffer.as_mut_ptr() as usize, len * std::mem::size_of::<F>());
+    let per_page = (HUGE_PAGE / std::mem::size_of::<F>().max(1)).max(1);
+    buffer.spare_capacity_mut()[..len].par_chunks_mut(per_page).for_each(|page| page.fill(MaybeUninit::new(F::ZERO)));
+    // SAFETY: the first `len` elements were all just written.
+    unsafe { buffer.set_len(len) };
+    buffer
+}
+
+/// Ask for transparent huge pages on the whole 2 MB pages inside `[ptr, ptr + bytes)`, before they
+/// are first touched. Best effort: with THP off (or not built in) the kernel refuses and the
+/// buffer stays on 4 KB pages.
+fn advise_huge_pages(ptr: usize, bytes: usize) {
+    #[cfg(target_os = "linux")]
+    {
+        let start = (ptr + HUGE_PAGE - 1) & !(HUGE_PAGE - 1);
+        let end = (ptr + bytes) & !(HUGE_PAGE - 1);
+        if end > start {
+            // SAFETY: the range lies inside a live allocation of this process; the advice changes
+            // how its pages are backed, never their contents.
+            let rc = unsafe { libc::madvise(start as *mut c_void, end - start, libc::MADV_HUGEPAGE) };
+            if rc != 0 {
+                tracing::debug!(
+                    "madvise(MADV_HUGEPAGE) on {} MB refused: {}",
+                    (end - start) >> 20,
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (ptr, bytes);
+}
+
 /// Single fixed-size buffer pool over a bounded channel (internal to `MemoryHandlerRecursive`).
 /// `take()` waits on the channel with a backoff timeout so the abort path (`cancelled`) can wake it.
 struct Pool<F: PrimeField64 + Send + Sync + 'static> {
@@ -151,7 +195,7 @@ struct Pool<F: PrimeField64 + Send + Sync + 'static> {
 impl<F: PrimeField64 + Send + Sync + 'static> Pool<F> {
     fn new(name: &'static str, n_buffers: usize, buffer_size: usize, pin: bool, cancelled: Arc<AtomicBool>) -> Self {
         let (sender, receiver) = bounded(n_buffers);
-        let buffers: Vec<Vec<F>> = (0..n_buffers).map(|_| vec![F::ZERO; buffer_size]).collect();
+        let buffers: Vec<Vec<F>> = (0..n_buffers).map(|_| zeroed_buffer(buffer_size)).collect();
         // A zero-sized pool has nothing to pin: an empty Vec's pointer is dangling, not a page.
         let registered_buffers: Vec<usize> = if pin && buffer_size > 0 { register_pool(&buffers) } else { Vec::new() };
         // Record our own buffers by pointer; they're never reallocated, so the pointers stay stable.
@@ -914,6 +958,16 @@ mod tests {
         h.release_buffer_trace(fresh).unwrap(); // unpooled: dropped, never pooled
                                                 // A clean reset (the escapee's slot still missing) keeps reporting it.
         assert!(h.reset().is_err());
+    }
+
+    #[test]
+    fn a_pool_buffer_is_all_zeros_whatever_its_length() {
+        let per_page = HUGE_PAGE / std::mem::size_of::<F>();
+        for len in [0, 1, per_page - 1, per_page, per_page + 1, 3 * per_page + 7] {
+            let buffer: Vec<F> = zeroed_buffer(len);
+            assert_eq!(buffer.len(), len);
+            assert!(buffer.iter().all(|x| *x == F::ZERO), "length {len}");
+        }
     }
 
     #[test]
