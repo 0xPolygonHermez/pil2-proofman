@@ -3,11 +3,10 @@
 // proof minus its sibling blocks, `MULTIPROOF_TAG` after the publics, then each tree's kept
 // siblings by level, parent and child. Every other word is canonical: one wire form per proof.
 
-use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use proofman_fields::{CubicExtensionField, Goldilocks, Hash, PrimeField64, TranscriptLike};
+use proofman_fields::{CubicExtensionField, Field, Goldilocks, Hash, PrimeField64, TranscriptLike};
 
 use crate::layout::{sibling_words, LowDegreeLayout, ProofLayout, Segment};
 use crate::replay::{fri_transcript, prefix_transcript, stir_transcript};
@@ -69,7 +68,7 @@ fn supported(layout: &ProofLayout) -> bool {
     ldt_ok
         && layout.n_stages == 2
         && layout.num_vals.len() > layout.n_stages as usize
-        && layout.arity >= 2
+        && (2..=MAX_ARITY as u64).contains(&layout.arity)
         && trees(layout).iter().all(|&(width, _, _)| width > 0)
 }
 
@@ -197,41 +196,67 @@ fn tree_indices<T: TranscriptLike<Goldilocks>>(
     Some(out)
 }
 
-/// Known nodes grouped by parent: (parent, a query through it, which children are known).
-fn group_by_parent(known: &BTreeMap<u64, usize>, arity: u64) -> Vec<(u64, usize, Vec<bool>)> {
-    let mut out: Vec<(u64, usize, Vec<bool>)> = Vec::new();
-    for (&pos, &q) in known {
-        let parent = pos / arity;
-        if out.last().is_none_or(|(p, _, _)| *p != parent) {
-            out.push((parent, q, vec![false; arity as usize]));
-        }
-        out.last_mut().unwrap().2[(pos % arity) as usize] = true;
-    }
-    out
-}
+/// Widest node the codec walks: a node hash takes `arity` four-word digests in a state of at most 16.
+const MAX_ARITY: usize = 4;
 
 /// The slot of child `j` in the sibling list of a node at child position `curr`.
-fn slot(j: u64, curr: u64) -> usize {
-    (if j < curr { j } else { j - 1 }) as usize
+fn slot(j: usize, curr: usize) -> usize {
+    if j < curr {
+        j
+    } else {
+        j - 1
+    }
+}
+
+/// A level's known nodes, sorted and distinct, and for each query the index of its node in them.
+fn leaves(idx: &[u64]) -> (Vec<u64>, Vec<usize>) {
+    let mut nodes = idx.to_vec();
+    nodes.sort_unstable();
+    nodes.dedup();
+    let node_of = idx.iter().map(|i| nodes.binary_search(i).unwrap()).collect();
+    (nodes, node_of)
+}
+
+/// The known nodes of a level split into runs that share a parent: `(first node, end)`.
+fn parent_runs(nodes: &[u64], arity: u64) -> Vec<(usize, usize)> {
+    let mut runs = Vec::new();
+    let mut start = 0;
+    for i in 1..=nodes.len() {
+        if i == nodes.len() || nodes[i] / arity != nodes[start] / arity {
+            runs.push((start, i));
+            start = i;
+        }
+    }
+    runs
 }
 
 fn prune_tree(idx: &[u64], n_levels: usize, arity: u64, sibs: &[u64], out: &mut Vec<u64>) {
-    let w = sibling_words(arity);
-    let mut known: BTreeMap<u64, usize> = BTreeMap::new();
-    for (q, &i) in idx.iter().enumerate() {
-        known.entry(i).or_insert(q);
+    let (a, w) = (arity as usize, sibling_words(arity));
+    let (mut nodes, node_of) = leaves(idx);
+    // A query whose path runs through each node, to copy its siblings from.
+    let mut rep = vec![usize::MAX; nodes.len()];
+    for (q, &n) in node_of.iter().enumerate().rev() {
+        rep[n] = q;
     }
     for level in 0..n_levels {
-        let mut next = BTreeMap::new();
-        for (parent, q, present) in group_by_parent(&known, arity) {
-            let curr = (idx[q] / arity.pow(level as u32)) % arity;
-            for j in (0..arity).filter(|&j| !present[j as usize]) {
+        let runs = parent_runs(&nodes, arity);
+        let mut next_nodes = Vec::with_capacity(runs.len());
+        let mut next_rep = Vec::with_capacity(runs.len());
+        for &(first, end) in &runs {
+            let mut known = [false; MAX_ARITY];
+            for &n in &nodes[first..end] {
+                known[(n % arity) as usize] = true;
+            }
+            let (q, curr) = (rep[first], (nodes[first] % arity) as usize);
+            for j in (0..a).filter(|&j| !known[j]) {
                 let at = (q * n_levels + level) * w + slot(j, curr) * 4;
                 out.extend_from_slice(&sibs[at..at + 4]);
             }
-            next.insert(parent, q);
+            next_nodes.push(nodes[first] / arity);
+            next_rep.push(q);
         }
-        known = next;
+        nodes = next_nodes;
+        rep = next_rep;
     }
 }
 
@@ -244,53 +269,56 @@ fn expand_tree<NH: Hash<Goldilocks>>(
     kept: &[u64],
     kp: &mut usize,
 ) -> Option<Vec<u64>> {
-    let a = arity as usize;
-    let w = sibling_words(arity);
+    let (a, w) = (arity as usize, sibling_words(arity));
     let mut out = vec![0u64; idx.len() * n_levels * w];
-
-    let mut known: BTreeMap<u64, usize> = BTreeMap::new();
-    let mut digest: BTreeMap<u64, [Goldilocks; 4]> = BTreeMap::new();
-    for (q, &i) in idx.iter().enumerate() {
-        known.entry(i).or_insert(q);
-        digest.entry(i).or_insert(leaf_digests[q]);
+    let (mut nodes, mut node_of) = leaves(idx);
+    // Duplicate indices keep the first query's leaf; a different second one fails its own path.
+    let mut digest = vec![[Goldilocks::ZERO; 4]; nodes.len()];
+    for (q, &n) in node_of.iter().enumerate().rev() {
+        digest[n] = leaf_digests[q];
     }
-    let mut pos = idx.to_vec();
     for level in 0..n_levels {
-        let mut next_known = BTreeMap::new();
-        let mut next_digest = BTreeMap::new();
-        let mut children: BTreeMap<u64, Vec<[Goldilocks; 4]>> = BTreeMap::new();
-        for (parent, q, present) in group_by_parent(&known, arity) {
-            let mut ch = Vec::with_capacity(a);
+        let runs = parent_runs(&nodes, arity);
+        let mut next_nodes = Vec::with_capacity(runs.len());
+        let mut next_digest = Vec::with_capacity(runs.len());
+        let mut children = Vec::with_capacity(runs.len());
+        let mut run_of = vec![0usize; nodes.len()];
+        for (r, &(first, end)) in runs.iter().enumerate() {
+            let mut ch: [Option<[Goldilocks; 4]>; MAX_ARITY] = [None; MAX_ARITY];
+            for n in first..end {
+                ch[(nodes[n] % arity) as usize] = Some(digest[n]);
+                run_of[n] = r;
+            }
+            let mut full = [[Goldilocks::ZERO; 4]; MAX_ARITY];
             let mut state = NH::State::default();
             for j in 0..a {
-                let node = if present[j] {
-                    digest[&(parent * arity + j as u64)]
-                } else {
-                    let words = kept.get(*kp..*kp + 4)?;
-                    *kp += 4;
-                    core::array::from_fn(|i| Goldilocks::new(words[i]))
+                full[j] = match ch[j] {
+                    Some(d) => d,
+                    None => {
+                        let words = kept.get(*kp..*kp + 4)?;
+                        *kp += 4;
+                        core::array::from_fn(|i| Goldilocks::new(words[i]))
+                    }
                 };
-                state.as_mut()[j * 4..j * 4 + 4].copy_from_slice(&node);
-                ch.push(node);
+                state.as_mut()[j * 4..j * 4 + 4].copy_from_slice(&full[j]);
             }
             NH::hash(&mut state);
             let s = state.as_ref();
-            next_digest.insert(parent, [s[0], s[1], s[2], s[3]]);
-            next_known.insert(parent, q);
-            children.insert(parent, ch);
+            next_nodes.push(nodes[first] / arity);
+            next_digest.push([s[0], s[1], s[2], s[3]]);
+            children.push(full);
         }
-        for (q, p) in pos.iter_mut().enumerate() {
-            let ch = &children[&(*p / arity)];
-            let curr = *p % arity;
-            for j in (0..arity).filter(|&j| j != curr) {
+        for (q, n) in node_of.iter_mut().enumerate() {
+            let (ch, curr) = (&children[run_of[*n]], (nodes[*n] % arity) as usize);
+            for j in (0..a).filter(|&j| j != curr) {
                 let at = (q * n_levels + level) * w + slot(j, curr) * 4;
-                for (o, x) in out[at..at + 4].iter_mut().zip(ch[j as usize]) {
+                for (o, x) in out[at..at + 4].iter_mut().zip(ch[j]) {
                     *o = x.as_canonical_u64();
                 }
             }
-            *p /= arity;
+            *n = run_of[*n];
         }
-        known = next_known;
+        nodes = next_nodes;
         digest = next_digest;
     }
     Some(out)
