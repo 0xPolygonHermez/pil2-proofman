@@ -23,6 +23,8 @@ pub struct FriConfig {
     pub log_folding_factors: Vec<u32>,
     /// The maximum number of grinding bits allowed.
     pub max_grinding_bits_query: u64,
+    /// Grinding the protocol can do before each non-query challenge, at most (0: none).
+    pub max_grinding_bits_non_query: u64,
     /// Whether to use the maximum number of grinding bits.
     pub use_max_grinding_bits_query: bool,
     /// The arity of the Merkle tree used in FRI.
@@ -145,29 +147,37 @@ impl Fri {
         }
     }
 
-    /// Search for the smallest gap-widening `alpha` whose query schedule
-    /// split meets the target on every phase.
+    /// Search for the smallest gap-widening `alpha` whose query schedule split meets the target on
+    /// every phase: by the gap alone first, then with grinding outside the queries, within budget.
     fn solve(&self) -> (FriSecurityParams, f64) {
-        let mut alpha: f64 = 0.0;
-        loop {
-            let regime = self.cfg.regime.instantiate(self.cfg.field_size, alpha);
-            let sec_params = self.compute_security_params(regime.as_ref());
-            if self.meets_security_target(regime.as_ref(), &sec_params) {
-                return (sec_params, alpha);
+        let budget = self.cfg.max_grinding_bits_non_query;
+        let budgets: &[u64] = if budget == 0 { &[0] } else { &[0, budget] };
+        for &budget in budgets {
+            let mut alpha: f64 = 0.0;
+            loop {
+                let regime = self.cfg.regime.instantiate(self.cfg.field_size, alpha);
+                if !regime.admits(&self.cfg.rate) {
+                    break;
+                }
+                let sec_params = self.compute_security_params(regime.as_ref(), budget);
+                if self.meets_security_target(regime.as_ref(), &sec_params) {
+                    return (sec_params, alpha);
+                }
+                alpha += 0.1;
             }
-
-            // Security not met -- widen the gap by increasing alpha.
-            alpha += 0.1;
-            assert!(alpha < 100.0, "Alpha loop did not converge");
         }
+        panic!(
+            "FRI cannot reach {} bits at any gap the regime admits, with {} bits of grinding outside the queries",
+            self.cfg.target_security_bits, self.cfg.max_grinding_bits_non_query
+        );
     }
 
     /// Compute the security parameters (query count, grinding split) for a given regime.
-    fn compute_security_params(&self, regime: &dyn ProximityGapsRegime) -> FriSecurityParams {
+    fn compute_security_params(&self, regime: &dyn ProximityGapsRegime, budget: u64) -> FriSecurityParams {
         let target = self.cfg.target_security_bits;
 
-        // Non-query stages: grinding fills whatever is missing to the target.
-        let deficit = |error: f64| target.saturating_sub(bits_of_security_from_error(error) as u64) as u32;
+        // Non-query stages: grinding fills whatever is missing to the target, within `budget`.
+        let deficit = |error: f64| target.saturating_sub(bits_of_security_from_error(error) as u64).min(budget) as u32;
 
         // Batching grinding.
         let grinding_bits_batching = if self.cfg.batch_size > 1 { deficit(self.batching_error(regime, 0)) } else { 0 };
@@ -472,6 +482,7 @@ mod tests {
             log_folding_factors: folding_bits,
             max_grinding_bits_query,
             use_max_grinding_bits_query: true,
+            max_grinding_bits_non_query: 0,
             tree_arity: 4,
             hash_size_bits: 256,
             target_security_bits: 128,
@@ -534,28 +545,54 @@ mod tests {
         assert_eq!(sec.grinding_bits_folding, vec![0; 6]);
     }
 
+    /// At |F| = 2^150 no gap brings batching to 128 bits: only grinding can.
+    fn small_field(budget: u64) -> FriConfig {
+        FriConfig {
+            field_size: 2f64.powi(150),
+            max_grinding_bits_non_query: budget,
+            ..test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23)
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "FRI cannot reach 128 bits")]
+    fn without_a_budget_an_unreachable_target_panics() {
+        Fri::new(small_field(0));
+    }
+
+    #[test]
+    fn the_gap_comes_first_then_the_budget() {
+        let fri = Fri::new(FriConfig {
+            max_grinding_bits_non_query: 40,
+            ..test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23)
+        });
+        assert_eq!((fri.alpha(), fri.security_params().grinding_bits_batching), (0.1, 0));
+        assert!(Fri::new(small_field(40)).security_params().grinding_bits_batching > 0);
+    }
+
     #[test]
     fn test_keccakf_params() {
         let fri = Fri::new(test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23));
-        assert_eq!(fri.alpha(), 0.0);
+        // The batching term misses the target at the base gap, and there is no batching grinding.
+        assert_eq!(fri.alpha(), 0.1);
 
-        assert_eq!(fri.num_merkle_openings(), 852);
-        assert_eq!(fri.total_query_hashes().round(), 20_874.0);
+        assert_eq!(fri.num_merkle_openings(), 856);
+        assert_eq!(fri.total_query_hashes().round(), 20_972.0);
 
         let levels = fri.security_levels();
         let level = |name: &str| levels.iter().find(|(k, _)| k == name).unwrap().1;
         assert_eq!(level("batching"), 128);
-        assert_eq!(level("fold(i=0)"), 139);
-        assert_eq!(level("fold(i=1)"), 142);
-        assert_eq!(level("fold(i=2)"), 145);
-        assert_eq!(level("fold(i=3)"), 148);
+        assert_eq!(level("fold(i=0)"), 140);
+        assert_eq!(level("fold(i=1)"), 143);
+        assert_eq!(level("fold(i=2)"), 146);
+        assert_eq!(level("fold(i=3)"), 149);
         assert_eq!(level("query"), 128);
         assert_eq!(fri.total_security_bits(), 128);
 
         let sec = fri.security_params();
-        assert_eq!(sec.n_queries, 213, "nQueries mismatch: got {}", sec.n_queries);
+        assert_eq!(sec.n_queries, 214, "nQueries mismatch: got {}", sec.n_queries);
         assert_eq!(sec.grinding_bits_query, 23);
-        assert_eq!(sec.grinding_bits_batching, 1);
+        assert_eq!(sec.grinding_bits_batching, 0);
         assert_eq!(sec.grinding_bits_folding, vec![0; 4]);
     }
 
@@ -683,6 +720,7 @@ mod tests {
                         log_folding_factors: crate::output::stark_info::compute_log_folding_factors(&ss),
                         max_grinding_bits_query: ss.low_degree_test.expect_fri("test").grinding_bits_queries as u64,
                         use_max_grinding_bits_query: true,
+                        max_grinding_bits_non_query: 0,
                         tree_arity: ss.merkle_tree_arity as u64,
                         hash_size_bits: 256,
                         target_security_bits: 128,

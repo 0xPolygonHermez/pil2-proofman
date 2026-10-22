@@ -345,6 +345,8 @@ pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> Low
                 log_folding_factors,
                 max_grinding_bits_query: fri.grinding_bits_queries as u64,
                 use_max_grinding_bits_query: true,
+                // The prover grinds only before the queries are drawn.
+                max_grinding_bits_non_query: 0,
                 tree_arity: stark_struct.merkle_tree_arity as u64,
                 hash_size_bits: 256,
                 target_security_bits: 128,
@@ -361,6 +363,8 @@ pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> Low
                 log_folding_factors,
                 max_grinding_bits_queries: stir.grinding_bits_queries.iter().map(|&g| g as u64).collect(),
                 use_max_grinding_bits_query: true,
+                // The prover grinds only before each round's queries are drawn.
+                max_grinding_bits_non_query: 0,
                 tree_arity: stark_struct.merkle_tree_arity as u64,
                 hash_size_bits: 256,
                 base_field_bits: 64,
