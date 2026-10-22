@@ -28,6 +28,8 @@ use proofman_fields::{
     TranscriptLike,
 };
 
+use crate::layout::{merkle_proof_levels, sibling_words};
+use crate::replay::{prefix_transcript, stir_transcript};
 use crate::verifier::{deep_query_eval, Boundary, FriEvalGroup};
 
 type E3 = CubicExtensionField<Goldilocks>;
@@ -47,6 +49,7 @@ fn embed(x: Goldilocks) -> E3 {
 
 /// Parameters of one STIR execution plus the commitment geometry it shares with the STARK —
 /// the counterpart of the C++ `StirParams`.
+#[derive(Clone, Debug)]
 pub struct StirParams {
     /// kᵢ in bits: iteration i folds by 2^{kᵢ} (length M).
     pub folding_factors: Vec<u64>,
@@ -133,83 +136,9 @@ pub struct StirVerifierInfo {
     pub stir: StirParams,
 }
 
-/// Merkle path levels one query publishes: the tree's depth less the levels the published last
-/// level replaces (the GL case of the C++ `merkleProofLevels`).
-fn merkle_proof_levels(n_bits: u64, arity: u64, last_level_verification: u64) -> usize {
-    if n_bits == 0 {
-        return 0;
-    }
-    let levels = ((n_bits as f64) / (arity as f64).log2()).ceil() as u64;
-    levels.saturating_sub(last_level_verification) as usize
-}
-
-/// The u64 words the flat proof buffer spends on the STIR section — the GL case of the C++
-/// `StarkInfo::stirProofSectionSize`, which is exactly what `Proofs::proof2pointer` writes.
-pub fn stir_section_size_words(params: &StirParams) -> usize {
-    let m = params.m();
-    let n_sibs_per_level = ((params.arity - 1) * 4) as usize;
-    let num_nodes_level = if params.last_level_verification == 0 {
-        0
-    } else {
-        params.arity.pow(params.last_level_verification as u32) as usize
-    };
-
-    let mut size = m * 4; // roots of T_0..T_{M−1}
-    for i in 0..m {
-        let k = 1usize << params.folding_factors[i];
-        let log_leaves = params.log_domain_sizes[i] - params.folding_factors[i];
-        let n_sibs = merkle_proof_levels(log_leaves, params.arity, params.last_level_verification);
-        size += params.num_queries[i] as usize * k * 3; // opened cosets
-        size += params.num_queries[i] as usize * n_sibs * n_sibs_per_level; // their Merkle paths
-        size += num_nodes_level * 4; // published last level
-    }
-    size += (m - 1) * 3; // β (s = 1)
-    size += (1usize << params.log_degrees[m]) * 3; // p, in coefficients
-    size += m; // one nonce per query message
-    for i in 1..m {
-        size += 2 * (1 + params.num_queries[i - 1] as usize) * 3; // Âns and shake coefficients, zero-padded
-    }
-    size
-}
-
+/// The flat proof's size in bytes, publics excluded.
 pub fn expected_stir_proof_size_bytes(info: &StirVerifierInfo) -> usize {
-    // The shared prefix, sized like `expected_proof_size_bytes` with n_queries = t₀ — every
-    // stage-level consumer of a STIR proof keys on the round-1 query count.
-    let log_arity = (info.stir.arity as f64).log2();
-    let n_siblings =
-        (((info.n_bits_ext as f64 / log_arity).ceil()) as u64).saturating_sub(info.stir.last_level_verification);
-    let n_siblings_per_level = (info.stir.arity - 1) * 4;
-    let n_queries = info.stir.num_queries[0];
-    let num_nodes_level = info.stir.arity.pow(info.stir.last_level_verification as u32) * 4;
-    let last_level_extra = if info.stir.last_level_verification > 0 { num_nodes_level } else { 0 };
-
-    let mut p: u64 = 0;
-
-    // roots: (n_stages + 1) groups of 4
-    p += 4 * (info.n_stages as u64 + 1);
-
-    // evals: n_evals cubic extension elements (3 each)
-    p += 3 * info.n_evals;
-
-    // s0 vals: n_queries * n_constants
-    p += n_queries * info.n_constants;
-
-    // s0 siblings: n_queries * n_siblings * n_siblings_per_level
-    p += n_queries * n_siblings * n_siblings_per_level;
-
-    // s0 last level
-    p += last_level_extra;
-
-    // stage queries: n_stages + 1 iterations
-    for i in 0..(info.n_stages as u64 + 1) {
-        let num_vals_i = info.num_vals[i as usize];
-        p += n_queries * num_vals_i;
-        p += n_queries * n_siblings * n_siblings_per_level;
-        p += last_level_extra;
-    }
-
-    // The STIR section replaces FRI's roots/steps/final-pol/nonce tail entirely.
-    (p as usize + stir_section_size_words(&info.stir)) * 8
+    info.proof_layout().flat_proof_words() * 8
 }
 
 /// The parsed STIR section of a flat proof buffer, in `proof2pointer` order.
@@ -519,28 +448,13 @@ fn check_grinding<GrindingHash: Hash<Goldilocks>>(challenge: &E3, nonce: u64, bi
 // The STIR argument (`STIR::verify`)
 // ---------------------------------------------------------------------------------------------
 
-/// Re-derive iteration i's shift queries as uniform indices of Lᵢ₋₁ — the prover's
-/// `sampleShiftQueries`, with the grinding checked instead of searched.
-fn derive_shift_queries<TranscriptT, GrindingHash>(
-    transcript: &mut TranscriptT,
-    params: &StirParams,
-    i: usize,
-    nonce: u64,
-) -> Option<Vec<u64>>
-where
-    TranscriptT: TranscriptLike<Goldilocks>,
-    GrindingHash: Hash<Goldilocks>,
-{
-    let mut c = e3_zero();
-    transcript.get_field(&mut c.value);
-    if !check_grinding::<GrindingHash>(&c, nonce, params.grinding_bits_queries[i - 1]) {
+/// Whether `nonce` grinds iteration i's query message (the prover's `sampleShiftQueries`).
+fn check_query_grinding<GrindingHash: Hash<Goldilocks>>(params: &StirParams, i: usize, query: &E3, nonce: u64) -> bool {
+    if !check_grinding::<GrindingHash>(query, nonce, params.grinding_bits_queries[i - 1]) {
         v_error!("Invalid grinding in STIR iteration {}", i);
-        return None;
+        return false;
     }
-    let mut transcript_queries: TranscriptT = TranscriptT::new_transcript();
-    transcript_queries.put(&c.value);
-    transcript_queries.put(&[Goldilocks::new(nonce)]);
-    Some(transcript_queries.get_permutations(params.num_queries[i - 1], params.log_domain_sizes[i - 1]))
+    true
 }
 
 /// Read query q of iteration i out of T_{i−1} and recompute
@@ -669,35 +583,33 @@ where
     // directly, not as a quotient.
     let mut ctx: Vec<QuotientContext> = (0..m).map(|_| QuotientContext::new()).collect();
 
-    // ---- Initial commitment and the first folding challenge ----------------------------------
-    transcript.put(&section.roots[0]);
-    let mut r_fold = e3_zero();
-    transcript.get_field(&mut r_fold.value);
+    let challenges = stir_transcript(
+        transcript,
+        params,
+        &section.roots,
+        &section.betas,
+        &section.ans_coeffs,
+        &section.shake_coeffs,
+        &section.final_pol,
+        &section.nonces,
+    );
+    let mut r_fold = challenges.r_fold0;
 
     // ---- Main loop: iterations i = 1, …, M−1 --------------------------------------------------
-    for i in 1..m {
-        transcript.put(&section.roots[i]);
-
+    for (i, round) in (1..m).zip(&challenges.rounds) {
         // 2(b)  r_out ← F \ Lᵢ (s = 1): one squeeze; the prover aborts if it lands in Lᵢ.
-        let mut r_out = e3_zero();
-        transcript.get_field(&mut r_out.value);
+        let r_out = round.r_out;
         if domain_contains(shift, params.log_domain_sizes[i], r_out) {
             v_error!("r_out lands in L_{}", i);
             return false;
         }
 
-        // 2(c)  the prover's β.
-        transcript.put(&section.betas[i - 1].value);
-
-        // 2(d)  r_foldᵢ, r_combᵢ, r_shift.
-        let mut r_fold_next = e3_zero();
-        transcript.get_field(&mut r_fold_next.value);
-        let mut r_comb = e3_zero();
-        transcript.get_field(&mut r_comb.value);
-        let Some(raw) = derive_shift_queries::<TranscriptT, GrindingHash>(transcript, params, i, section.nonces[i - 1])
-        else {
+        // 2(c)  the prover's β; 2(d)  r_foldᵢ, r_combᵢ, r_shift.
+        let r_comb = round.r_comb;
+        if !check_query_grinding::<GrindingHash>(params, i, &round.query, section.nonces[i - 1]) {
             return false;
-        };
+        }
+        let raw = &round.queries;
 
         // 2(e)  build (Gᵢ, Ansᵢ): the out-of-domain claim, plus the fold values the verifier
         //       recomputes itself from T_{i−1}. No equality is checked here — the binding is what
@@ -739,40 +651,22 @@ where
             return false;
         }
         cur.set_ans(ans);
-        for c in ans.iter().chain(sh.iter()) {
-            transcript.put(&c.value);
-        }
-        let mut rho = e3_zero();
-        transcript.get_field(&mut rho.value);
-        if !cur.check_shake(sh, rho) {
+        if !cur.check_shake(sh, round.rho) {
             v_error!("Âns does not interpolate G in STIR iteration {}", i);
             return false;
         }
 
-        r_fold = r_fold_next;
+        r_fold = round.r_fold;
     }
 
     // ---- Final step ---------------------------------------------------------------------------
     // p in the clear, then the only explicit equality check of the whole protocol:
     //   Fold(f_{M−1}, k_{M−1}, r_fold_{M−1})(r_shift) = p(r_shift).
     // p arrives as d_M coefficients, so its degree bound is structural — no INTT check needed.
-    if !params.hash_commits {
-        for coeff in &section.final_pol {
-            transcript.put(&coeff.value);
-        }
-    } else {
-        let mut transcript_final_pol: TranscriptT = TranscriptT::new_transcript();
-        for coeff in &section.final_pol {
-            transcript_final_pol.put(&coeff.value);
-        }
-        let hash = transcript_final_pol.get_state();
-        transcript.put(&hash[0..4]);
-    }
-
-    let Some(raw) = derive_shift_queries::<TranscriptT, GrindingHash>(transcript, params, m, section.nonces[m - 1])
-    else {
+    if !check_query_grinding::<GrindingHash>(params, m, &challenges.final_query, section.nonces[m - 1]) {
         return false;
-    };
+    }
+    let raw = &challenges.final_queries;
     let log_k = params.folding_factors[m - 1];
     let log_lprev_k = params.log_domain_sizes[m - 1] - log_k;
     let shift_k = shift.exp_power_of_2(log_k as usize);
@@ -829,20 +723,21 @@ where
     let params = &verifier_info.stir;
 
     // ---- Proof parsing: the shared prefix, kept in sync with `stark_verify`, at t₀ queries ----
-    let n_siblings: u64 = (((verifier_info.n_bits_ext as f64 / (params.arity as f64).log2()).ceil()) as u64)
-        .saturating_sub(params.last_level_verification);
-    let n_siblings_per_level = (params.arity - 1) * 4;
+    let n_siblings = merkle_proof_levels(verifier_info.n_bits_ext, params.arity, params.last_level_verification) as u64;
+    let n_siblings_per_level = sibling_words(params.arity) as u64;
 
     let root_c = [Goldilocks::new(vk[0]), Goldilocks::new(vk[1]), Goldilocks::new(vk[2]), Goldilocks::new(vk[3])];
 
     let mut p: usize = 0;
 
-    let n_publics = proof[p];
+    // `try_from`, not `as`: on a 32-bit target a count of 2^32 + k would truncate to k.
+    let Ok(n_publics) = usize::try_from(proof[p]) else {
+        return false;
+    };
     p += 1;
 
-    let Some(expected_total) = 1usize
-        .checked_add(n_publics as usize)
-        .and_then(|s| s.checked_add(expected_stir_proof_size_bytes(verifier_info) / 8))
+    let Some(expected_total) =
+        1usize.checked_add(n_publics).and_then(|s| s.checked_add(expected_stir_proof_size_bytes(verifier_info) / 8))
     else {
         return false;
     };
@@ -853,7 +748,7 @@ where
     // Pin the publics to one encoding: verification only ever compares field
     // elements, so `x` and `x + p` pass identically, but a caller reading the raw
     // words back as outputs would see two different values.
-    let mut publics = Vec::with_capacity(n_publics as usize);
+    let mut publics = Vec::with_capacity(n_publics);
     for i in 0..n_publics {
         let word = proof[p];
         if word >= Goldilocks::ORDER_U64 {
@@ -974,46 +869,25 @@ where
     // ---- The STIR section replaces FRI's roots/steps/final-pol/nonce tail ---------------------
     let section = parse_stir_section(proof, &mut p, params);
 
-    // ---- Transcript replay: the shared prefix, kept in sync with `stark_verify` ---------------
+    // ---- Transcript replay: the shared prefix -------------------------------------------------
+    // 2-stage AIRs with 6 stage challenges only: else a root goes unabsorbed or xi/vf1/vf2 read zero.
+    if verifier_info.n_stages != 2 || verifier_info.n_challenges != 6 || verifier_info.n_challenges_total < 6 {
+        v_error!(
+            "verifier only supports 2-stage AIRs with 6 stage challenges, got n_stages = {}, n_challenges = {}",
+            verifier_info.n_stages,
+            verifier_info.n_challenges
+        );
+        return false;
+    }
     let mut challenges = vec![e3_zero(); verifier_info.n_challenges_total as usize];
-
-    let mut transcript: TranscriptT = TranscriptT::new_transcript();
-    transcript.put(&root_c);
-    if n_publics > 0 {
-        if !params.hash_commits {
-            transcript.put(&publics);
-        } else {
-            let mut transcript_publics: TranscriptT = TranscriptT::new_transcript();
-            transcript_publics.put(&publics);
-            let hash = transcript_publics.get_state();
-            transcript.put(&hash[0..4]);
-        }
-    }
-    transcript.put(&roots[0]);
-    transcript.get_field(&mut challenges[0].value);
-    transcript.get_field(&mut challenges[1].value);
-
-    transcript.put(&roots[1]);
-    transcript.get_field(&mut challenges[2].value);
-    transcript.put(&roots[2]);
-
-    transcript.get_field(&mut challenges[3].value);
-
-    if !params.hash_commits {
-        for i in 0..verifier_info.n_evals {
-            transcript.put(&evals[i as usize].value);
-        }
-    } else {
-        let mut transcript_evals: TranscriptT = TranscriptT::new_transcript();
-        for i in 0..verifier_info.n_evals {
-            transcript_evals.put(&evals[i as usize].value);
-        }
-        let hash = transcript_evals.get_state();
-        transcript.put(&hash[0..4]);
-    }
-
-    transcript.get_field(&mut challenges[4].value);
-    transcript.get_field(&mut challenges[5].value);
+    let (mut transcript, prefix) = prefix_transcript::<TranscriptT>(
+        &root_c,
+        &publics,
+        &[roots[0], roots[1], roots[2]],
+        &evals,
+        params.hash_commits,
+    );
+    challenges[..prefix.len()].copy_from_slice(&prefix);
 
     // ---- The STIR rounds own the transcript from here. The round-1 shift queries come back as
     // uniform indices of L_0 and become the shared query set of the whole STARK; T_0's claims

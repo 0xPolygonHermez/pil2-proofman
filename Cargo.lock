@@ -1569,6 +1569,7 @@ dependencies = [
  "proofman-macros",
  "proofman-starks-lib-c",
  "proofman-util",
+ "proofman-verifier",
  "rayon",
  "serde",
  "serde_json",

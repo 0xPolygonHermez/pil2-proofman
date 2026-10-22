@@ -31,9 +31,7 @@ pub struct StarkSettings {
     /// hurt most.
     #[serde(default)]
     pub grinding_bits_queries: Option<Vec<usize>>,
-    /// STIR only: the folds `kᵢ` in bits, in place of folding by `initialFoldingFactor` down to
-    /// `finalDegree`; the final degree is what they leave. Proof size is not monotonic in the
-    /// schedule, so it is picked by measurement rather than derived.
+    /// The folds `kᵢ` in bits, in place of the derived schedule; the final degree is what they leave.
     #[serde(default)]
     pub folding_factors: Option<Vec<usize>>,
     #[serde(default)]
@@ -602,9 +600,19 @@ pub fn generate_stark_struct(settings: &StarkSettings, n_bits: usize, hash: &str
                 settings.grinding_bits_queries.is_none(),
                 "grindingBitsQueries is per-iteration and STIR-only; FRI has a single query phase, use grindingBits"
             );
-            assert!(settings.folding_factors.is_none(), "foldingFactors is STIR-only");
             let final_degree = final_degree.min(n_bits);
-            if proofman_common::hash_family::uses_optimal_fri_schedule(hash) {
+            if let Some(folds) = &settings.folding_factors {
+                let mut steps = vec![n_bits_ext];
+                for &k in folds {
+                    let last = *steps.last().unwrap();
+                    assert!(
+                        k >= 1 && k + initial_blowup_factor <= last,
+                        "FRI folds {folds:?} fold a 2^{n_bits_ext} domain below its blowup"
+                    );
+                    steps.push(last - k);
+                }
+                LowDegreeTest::Fri(fri_schedule_from_domain_sizes(steps, initial_blowup_factor, pow_bits))
+            } else if proofman_common::hash_family::uses_optimal_fri_schedule(hash) {
                 // The solved schedule walks committed DOMAIN sizes down to a terminal domain; the
                 // final polynomial's degree bound is that terminal minus the (constant) log rate.
                 let steps = optimal_fri_steps(
@@ -1059,10 +1067,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "foldingFactors is STIR-only")]
-    fn explicit_folds_are_refused_under_fri() {
-        let settings = StarkSettings { folding_factors: Some(vec![4, 3, 3]), ..Default::default() };
-        generate_stark_struct(&settings, 18, "blake3");
+    fn explicit_folds_set_the_fri_domains() {
+        let settings = StarkSettings {
+            initial_blowup_factor: Some(5),
+            folding_factors: Some(vec![4, 3, 3, 3, 3]),
+            ..Default::default()
+        };
+        let fri = generate_stark_struct(&settings, 18, "blake3").low_degree_test.expect_fri("test").clone();
+        assert_eq!(fri.log_domain_sizes, vec![23, 19, 16, 13, 10, 7]);
+        assert_eq!(fri.log_degrees, vec![18, 14, 11, 8, 5, 2]);
     }
 
     /// Selecting STIR must not disturb the FRI output, and vice versa: the default

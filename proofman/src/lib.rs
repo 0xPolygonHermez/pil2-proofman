@@ -1,4 +1,5 @@
 mod scheduler;
+mod compressed_proof;
 mod proofman;
 mod recursion;
 mod utils;
@@ -10,6 +11,7 @@ mod snark_wrapper;
 mod pilfflonk_wrap;
 
 pub use scheduler::*;
+pub use compressed_proof::*;
 pub use proofman::*;
 pub use recursion::*;
 pub use utils::*;

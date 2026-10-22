@@ -314,6 +314,7 @@ pub fn build_starkinfo_output(
             proximity_parameter: ldt.proximity_parameter(),
             regime: ldt.regime_identifier().to_string(),
         }),
+        multiproof: false,
     }
 }
 

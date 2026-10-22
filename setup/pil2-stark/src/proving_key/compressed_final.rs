@@ -46,7 +46,7 @@ pub struct CompressedFinalConfig<'a> {
     pub std_pil_path: &'a str,
     pub recurser_pil_path: &'a str,
     pub circom_helpers_dir: &'a str,
-    /// Low-degree test of the compressed proof; `None` is FRI.
+    /// Low-degree test of the compressed proof; `None` is the family's (`compressed_final_stir`).
     pub low_degree_test: Option<crate::types::stark_struct::LowDegreeTestKind>,
 }
 
@@ -54,14 +54,6 @@ pub struct CompressedFinalConfig<'a> {
 ///
 /// Ports `genCompressedFinalSetup()` from `generateCompressedFinalSetup.js`.
 pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tracker: &WitnessTracker) -> Result<()> {
-    if config.low_degree_test == Some(crate::types::stark_struct::LowDegreeTestKind::Stir)
-        && proofman_common::hash_family::has_bn128_recursivef(config.hash)
-    {
-        bail!(
-            "{} compressed proofs go into the BN128 wrap, which verifies FRI only: build this compressed final with FRI",
-            config.hash
-        );
-    }
     let template = "vadcop_final_compressed";
     let verifier_name = "vadcop_final_stark.verifier.circom";
     let build_dir = PathBuf::from(config.build_dir);
@@ -172,7 +164,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
 
     let plonk_opts = PlonkOptions {
         airgroup_name: Some("VadcopFinalCompressed".to_string()),
-        // blake3 follows the blowup, as vadcop_final does; poseidon keeps the packer default its wrap encodes.
+        // blake3 follows the blowup, as vadcop_final does; poseidon keeps the packer default.
         max_constraint_degree: (config.hash == "blake3").then(|| {
             proofman_common::hash_family::max_constraint_degree_for_blowup(
                 proofman_common::hash_family::compressed_final_blowup_factor(config.hash),
@@ -223,30 +215,62 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
     let plonk_n_rows = 1usize << plonk_result.n_bits;
     let plonk_n_fixed = plonk_result.fixed_pols.len();
 
-    // Compressed final stark struct settings
-    // Poseidon: arity, llv and final_degree are this circuit's own geometry, set for the BN128 wrap.
-    // blake3: no wrap reads it, so llv and the terminal are proof-size knobs (hash_family).
-    let stir_schedule = (config.low_degree_test == Some(crate::types::stark_struct::LowDegreeTestKind::Stir))
+    // Compressed final stark struct settings: no wrap reads this proof, so its geometry is a proof-size knob.
+    use crate::types::stark_struct::LowDegreeTestKind;
+    let low_degree_test =
+        config.low_degree_test.unwrap_or(if proofman_common::hash_family::compressed_final_stir(config.hash) {
+            LowDegreeTestKind::Stir
+        } else {
+            LowDegreeTestKind::Fri
+        });
+    let multiproof = proofman_common::hash_family::compressed_final_multiproof(config.hash);
+    // A pinned schedule applies only at the air size and blowup it was measured at.
+    let here = (plonk_result.n_bits, proofman_common::hash_family::compressed_final_blowup_factor(config.hash));
+    let pinned = |measured: (usize, usize)| {
+        if measured != here {
+            tracing::warn!(
+                "compressed final at (2^n, blowup) {here:?}: schedule pinned for {measured:?}, deriving one"
+            );
+        }
+        measured == here
+    };
+    let stir_schedule = (low_degree_test == LowDegreeTestKind::Stir)
         .then(|| proofman_common::hash_family::compressed_final_stir_schedule(config.hash))
-        .flatten();
+        .flatten()
+        .filter(|(measured, ..)| pinned(*measured));
+    let fri_folds = (low_degree_test == LowDegreeTestKind::Fri)
+        .then(|| proofman_common::hash_family::compressed_final_fri_folds(config.hash))
+        .flatten()
+        .filter(|(measured, _)| pinned(*measured));
     let compressed_settings = crate::types::stark_struct::StarkSettings {
         initial_blowup_factor: Some(proofman_common::hash_family::compressed_final_blowup_factor(config.hash)),
         initial_folding_factor: Some(if config.hash == "blake3" { 4 } else { 3 }),
         grinding_bits: Some(proofman_common::hash_family::compressed_final_grinding_bits(config.hash)),
         merkle_tree_arity: (config.hash != "blake3").then_some(2),
-        last_level_verification: proofman_common::hash_family::compressed_final_last_level_verification(config.hash),
+        last_level_verification: if multiproof {
+            Some(0)
+        } else {
+            proofman_common::hash_family::compressed_final_last_level_verification(config.hash)
+        },
         // final_degree is a log degree here; the helper gives the terminal FRI domain.
         final_degree: Some(
             proofman_common::hash_family::compressed_final_fri_terminal_degree(config.hash)
                 - proofman_common::hash_family::compressed_final_blowup_factor(config.hash),
         ),
-        low_degree_test: config.low_degree_test,
-        folding_factors: stir_schedule.as_ref().map(|(folds, _)| folds.clone()),
-        grinding_bits_queries: stir_schedule.as_ref().map(|(_, grinding)| grinding.clone()),
+        low_degree_test: Some(low_degree_test),
+        folding_factors: stir_schedule
+            .as_ref()
+            .map(|(_, folds, _)| folds.clone())
+            .or(fri_folds.map(|(_, folds)| folds)),
+        grinding_bits_queries: stir_schedule.as_ref().map(|(_, _, grinding)| grinding.clone()),
         ..Default::default()
     };
     let compressed_stark_struct =
         crate::types::stark_struct::generate_stark_struct(&compressed_settings, plonk_result.n_bits, config.hash);
+    let (mta, ta) = (compressed_stark_struct.merkle_tree_arity, compressed_stark_struct.transcript_arity);
+    if multiproof && !proofman_common::hash_family::has_multiproof_codec(config.hash, mta as u64, ta as u64) {
+        bail!("no {} multiproof codec at tree arity {mta}, transcript arity {ta}", config.hash);
+    }
 
     // Run real starkSetup via pil_info on the compiled compressed final pilout
     let starkinfo_path = files_dir.join(format!("{}.starkinfo.json", template));
@@ -271,7 +295,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         pil_info_result.pil_code.fri_batch_size.max(1) as u64,
     );
 
-    let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
+    let mut starkinfo_output = crate::output::stark_info::build_starkinfo_output(
         &pil_info_result.setup,
         &compressed_stark_struct,
         &pil_info_result.pil_code,
@@ -285,6 +309,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
     );
+    starkinfo_output.multiproof = multiproof;
     tracing::info!(
         "Circuit '{}' low-degree test: {}",
         template,
@@ -384,8 +409,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
 
 #[cfg(test)]
 mod tests {
-    /// Poseidon's compressed geometry is what its BN128 wrap encodes, so deriving blowup and grinding
-    /// from the family table must reproduce exactly what it was hardcoded to and shipped with.
+    /// Deriving Poseidon's blowup and grinding from the family table reproduces what it shipped with.
     #[test]
     fn the_derived_settings_match_the_shipped_geometry() {
         for fam in ["Poseidon1", "Poseidon2"] {
