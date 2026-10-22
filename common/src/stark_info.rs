@@ -2,6 +2,8 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Deserializer};
 
+pub use proofman_verifier::{LowDegreeLayout, ProofLayout, StirParams};
+
 #[allow(dead_code)]
 #[derive(Deserialize, Debug, Clone)]
 pub struct Boundary {
@@ -299,6 +301,9 @@ pub struct StarkInfo {
     /// 0 on keys older than the field.
     #[serde(default, rename = "friBatchSize")]
     pub fri_batch_size: u64,
+    /// The proof travels as a Merkle multiproof; false on keys older than the field.
+    #[serde(default)]
+    pub multiproof: bool,
 
     #[serde(rename = "customCommits")]
     pub custom_commits: Vec<CustomCommits>,
@@ -334,6 +339,39 @@ pub struct StarkInfo {
 impl StarkInfo {
     pub fn from_json(stark_info_json: &str) -> Self {
         serde_json::from_str(stark_info_json).expect("Failed to parse JSON file")
+    }
+
+    /// The flat proof's geometry, shared by the prover, the CLI and the generated verifiers.
+    pub fn proof_layout(&self) -> ProofLayout {
+        let ss = &self.stark_struct;
+        let ldt = match &ss.low_degree_test {
+            LowDegreeTest::Stir(stir) => LowDegreeLayout::Stir(StirParams {
+                folding_factors: stir.folding_factors.clone(),
+                log_degrees: stir.log_degrees.clone(),
+                log_domain_sizes: stir.log_domain_sizes.clone(),
+                num_queries: stir.num_queries.clone(),
+                grinding_bits_queries: stir.grinding_bits_queries.clone(),
+                arity: ss.merkle_tree_arity,
+                last_level_verification: ss.last_level_verification,
+                hash_commits: ss.hash_commits,
+            }),
+            LowDegreeTest::Fri(fri) => {
+                LowDegreeLayout::Fri { steps: fri.log_domain_sizes.clone(), n_queries: fri.num_queries }
+            }
+        };
+        ProofLayout {
+            n_stages: self.n_stages,
+            n_constants: self.n_constants,
+            n_evals: self.ev_map.len() as u64,
+            n_bits_ext: ss.n_bits_ext,
+            num_vals: (0..=self.n_stages)
+                .map(|i| self.map_sections_n.get(&format!("cm{}", i + 1)).copied().unwrap_or(0))
+                .collect(),
+            arity: ss.merkle_tree_arity,
+            last_level_verification: ss.last_level_verification,
+            hash_commits: ss.hash_commits,
+            ldt,
+        }
     }
 }
 

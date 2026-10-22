@@ -71,6 +71,10 @@ pub struct StarkInfo {
     pub c_exp_id: u64,
 
     pub map_sections_n: HashMap<String, u64>,
+    /// The proof travels as a Merkle multiproof.
+    pub multiproof: bool,
+    /// `proofman_common::StarkInfo::proof_layout`, or why the json is not a full starkinfo.
+    pub layout: Option<std::result::Result<proofman_common::ProofLayout, String>>,
 }
 
 /// Expression code block as loaded from expressionsInfo JSON.
@@ -304,6 +308,12 @@ impl StarkInfo {
             deep_exp_id: get_u64(j, "deepExpId"),
             c_exp_id: get_u64(j, "cExpId"),
             map_sections_n,
+            multiproof: get_bool(j, "multiproof"),
+            layout: Some(
+                serde_json::from_value::<proofman_common::StarkInfo>(j.clone())
+                    .map(|si| si.proof_layout())
+                    .map_err(|e| e.to_string()),
+            ),
         })
     }
 }

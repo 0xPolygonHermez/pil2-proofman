@@ -290,7 +290,7 @@ struct SetupCompressedFinalArgs {
     #[arg(short = 'b', long)]
     build_dir: String,
 
-    /// Low-degree test of the compressed proof: FRI (default) or STIR
+    /// Low-degree test of the compressed proof: FRI or STIR (default: the family's, STIR for all)
     #[arg(long)]
     low_degree_test: Option<String>,
 }

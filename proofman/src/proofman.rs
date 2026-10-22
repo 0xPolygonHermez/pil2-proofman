@@ -144,6 +144,7 @@ use tokio_util::sync::CancellationToken;
 
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
 use proofman_verifier::VadcopFinalProof;
+use crate::{expand_compressed_proof, prune_compressed_proof};
 use crate::{
     check_const_paths, check_const_paths_vadcop, needs_regeneration_fixed, needs_regeneration_vadcop_fixed,
     schedule_key,
@@ -2649,8 +2650,17 @@ where
             &self.const_tree,
         )?;
 
-        VadcopFinalProof::new_from_proof(&vadcop_final_proof_compressed.proof, true, self.pctx.global_info.hash.clone())
+        let wire = self.compressed_proof_wire(&vadcop_final_proof_compressed.proof)?;
+        VadcopFinalProof::new_from_proof(&wire, true, self.pctx.global_info.hash.clone())
             .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to create VadcopFinalProof: {}", e)))
+    }
+
+    /// A compressed proof (`[n_publics, publics…, proof…]`) in the form it leaves proofman in.
+    fn compressed_proof_wire(&self, proof: &[u64]) -> ProofmanResult<Vec<u64>> {
+        let setup = self.setups.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
+            ProofmanError::InvalidConfiguration("the proving key has no vadcop_final_compressed".to_string())
+        })?;
+        prune_compressed_proof(proof, &setup.stark_info, &setup.get_vk(), &self.pctx.global_info.hash)
     }
 
     /// The final SNARK of `vadcop_final_proof`, the wrap of `snark_wrapper`, as the proving key's hash
@@ -4801,8 +4811,20 @@ where
 
                     let proof = vadcop_final_proof.as_ref().unwrap();
                     let publics: Vec<F> = proof.public_values.iter().map(|&x| F::from_u64(x)).collect();
+                    let expanded;
+                    let body: &[u64] = if options.compressed && setup.stark_info.multiproof {
+                        expanded = expand_compressed_proof(
+                            &proof.proof_with_publics(),
+                            &setup.stark_info,
+                            &setup.get_vk(),
+                            &self.pctx.global_info.hash,
+                        )?;
+                        &expanded[1 + proof.public_values.len()..]
+                    } else {
+                        &proof.proof
+                    };
                     let valid_proofs = verify_proof::<F>(
-                        &proof.proof,
+                        body,
                         base.clone() + ".starkinfo.json",
                         base.clone() + ".verifier.bin",
                         base + ".verkey.json",
@@ -5189,7 +5211,9 @@ where
                         &self.const_tree,
                     )?;
 
-                    return Ok(Some(vec![AggProofs::new(0, vadcop_final_proof_compressed.proof, vec![])]));
+                    // Pruned here so every caller, the distributed one too, gets the wire form.
+                    let wire = self.compressed_proof_wire(&vadcop_final_proof_compressed.proof)?;
+                    return Ok(Some(vec![AggProofs::new(0, wire, vec![])]));
                 } else {
                     return Ok(Some(vec![AggProofs::new(0, vadcop_proof_final.proof, vec![])]));
                 }

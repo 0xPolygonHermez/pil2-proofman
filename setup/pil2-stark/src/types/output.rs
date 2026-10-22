@@ -44,6 +44,9 @@ pub struct StarkInfoOutput {
     pub fri_batch_size: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security: Option<SecurityInfo>,
+    /// The proof travels as a Merkle multiproof; absent on flat keys.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub multiproof: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

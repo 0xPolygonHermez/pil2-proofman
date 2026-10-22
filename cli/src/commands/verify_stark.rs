@@ -1,9 +1,9 @@
 // extern crate env_logger;
 use clap::Parser;
 use proofman_verifier::VadcopFinalProof;
-use proofman_common::{hash_family, initialize_logger};
+use proofman_common::{hash_family, initialize_logger, StarkInfo};
 use proofman_fields::{Goldilocks, PrimeField64};
-use proofman::verify_proof;
+use proofman::{expand_compressed_proof, verify_proof};
 use colored::Colorize;
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
@@ -60,10 +60,25 @@ impl VerifyStark {
         }
         proofman_starks_lib_c::set_hash_family_c(&proof.hash);
 
+        // The C++ verifier reads the flat proof.
+        let stark_info: Option<StarkInfo> = match proof.compressed {
+            true => Some(serde_json::from_str(&std::fs::read_to_string(base.clone() + ".starkinfo.json")?)?),
+            false => None,
+        };
+        let expanded;
+        let body: &[u64] = match &stark_info {
+            Some(stark_info) if stark_info.multiproof => {
+                let verkey: Vec<u64> = serde_json::from_str(&std::fs::read_to_string(base.clone() + ".verkey.json")?)?;
+                expanded = expand_compressed_proof(&proof.proof_with_publics(), stark_info, &verkey, &proof.hash)?;
+                &expanded[1 + proof.public_values.len()..]
+            }
+            _ => &proof.proof,
+        };
+
         timer_start_info!(VERIFY_STARK);
         let publics: Vec<Goldilocks> = proof.public_values.iter().map(|&x| Goldilocks::from_u64(x)).collect();
         let valid = verify_proof::<Goldilocks>(
-            &proof.proof,
+            body,
             base.clone() + ".starkinfo.json",
             base.clone() + ".verifier.bin",
             base + ".verkey.json",

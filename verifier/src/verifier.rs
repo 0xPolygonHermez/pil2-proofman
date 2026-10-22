@@ -5,6 +5,8 @@ use alloc::vec::Vec;
 #[allow(unused)]
 use num_traits::Float;
 
+use crate::layout::{merkle_proof_levels, sibling_words};
+use crate::replay::{fri_transcript, prefix_transcript};
 use proofman_fields::{
     intt_tiny, partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Hash, PrimeField64,
     TranscriptLike,
@@ -44,64 +46,9 @@ pub struct VerifierInfo {
     pub fri_ev_groups: Vec<FriEvalGroup>,
 }
 
+/// The flat proof's size in bytes, publics excluded.
 pub fn expected_proof_size_bytes(info: &VerifierInfo) -> usize {
-    let log_arity = (info.arity as f64).log2();
-    // Saturating, as the prover's `merkleProofLevels` is: llv can exceed a short tree's depth.
-    let n_siblings =
-        (((info.n_bits_ext as f64 / log_arity).ceil()) as u64).saturating_sub(info.last_level_verification);
-    let n_siblings_per_level = (info.arity - 1) * 4;
-    let n_queries = info.n_fri_queries;
-    let num_nodes_level = info.arity.pow(info.last_level_verification as u32) * 4;
-    let last_level_extra = if info.last_level_verification > 0 { num_nodes_level } else { 0 };
-
-    let mut p: u64 = 0;
-
-    // roots: (n_stages + 1) groups of 4
-    p += 4 * (info.n_stages as u64 + 1);
-
-    // evals: n_evals cubic extension elements (3 each)
-    p += 3 * info.n_evals;
-
-    // s0 vals: n_queries * n_constants
-    p += n_queries * info.n_constants;
-
-    // s0 siblings: n_queries * n_siblings * n_siblings_per_level
-    p += n_queries * n_siblings * n_siblings_per_level;
-
-    // s0 last level
-    p += last_level_extra;
-
-    // stage queries: n_stages + 1 iterations
-    for i in 0..(info.n_stages as u64 + 1) {
-        let num_vals_i = info.num_vals[i as usize];
-        p += n_queries * num_vals_i;
-        p += n_queries * n_siblings * n_siblings_per_level;
-        p += last_level_extra;
-    }
-
-    // fri roots: (n_fri_steps - 1) groups of 4
-    p += 4 * (info.n_fri_steps - 1);
-
-    // fri data: (n_fri_steps - 1) iterations
-    for i in 1..info.n_fri_steps {
-        let vals_size = (1u64 << (info.fri_steps[(i - 1) as usize] - info.fri_steps[i as usize])) * 3;
-        p += n_queries * vals_size;
-
-        let n_siblings_fri = (((info.fri_steps[i as usize] as f64 / log_arity).ceil()) as u64)
-            .saturating_sub(info.last_level_verification);
-        p += n_queries * n_siblings_fri * n_siblings_per_level;
-
-        p += last_level_extra;
-    }
-
-    // final polynomial
-    let final_pol_capacity = 1u64 << info.fri_steps[(info.n_fri_steps - 1) as usize];
-    p += 3 * final_pol_capacity;
-
-    // nonce
-    p += 1;
-
-    (p as usize) * 8
+    info.proof_layout().flat_proof_words() * 8
 }
 
 /// One opened column that the FRI polynomial reads at a query point.
@@ -206,21 +153,33 @@ where
     if proof.is_empty() || vk.len() < 4 {
         return false;
     }
+    // The size check reads the step list, the parser the step count.
+    if verifier_info.fri_steps.len() as u64 != verifier_info.n_fri_steps || verifier_info.fri_steps.is_empty() {
+        v_error!(
+            "verifier_info is inconsistent: {} FRI steps listed, {} declared",
+            verifier_info.fri_steps.len(),
+            verifier_info.n_fri_steps
+        );
+        return false;
+    }
 
-    let n_siblings: u64 = (((verifier_info.n_bits_ext as f64 / (verifier_info.arity as f64).log2()).ceil()) as u64)
-        .saturating_sub(verifier_info.last_level_verification);
-    let n_siblings_per_level = (verifier_info.arity - 1) * 4;
+    let n_siblings =
+        merkle_proof_levels(verifier_info.n_bits_ext, verifier_info.arity, verifier_info.last_level_verification)
+            as u64;
+    let n_siblings_per_level = sibling_words(verifier_info.arity) as u64;
 
     let root_c = [Goldilocks::new(vk[0]), Goldilocks::new(vk[1]), Goldilocks::new(vk[2]), Goldilocks::new(vk[3])];
 
     let mut p = 0;
 
-    let n_publics = proof[p as usize];
+    // `try_from`, not `as`: on a 32-bit target a count of 2^32 + k would truncate to k.
+    let Ok(n_publics) = usize::try_from(proof[p as usize]) else {
+        return false;
+    };
     p += 1;
 
-    let Some(expected_total) = 1usize
-        .checked_add(n_publics as usize)
-        .and_then(|s| s.checked_add(expected_proof_size_bytes(verifier_info) / 8))
+    let Some(expected_total) =
+        1usize.checked_add(n_publics).and_then(|s| s.checked_add(expected_proof_size_bytes(verifier_info) / 8))
     else {
         return false;
     };
@@ -231,7 +190,7 @@ where
     // Pin the publics to one encoding: verification only ever compares field
     // elements, so `x` and `x + p` pass identically, but a caller reading the raw
     // words back as outputs would see two different values.
-    let mut publics = Vec::with_capacity(n_publics as usize);
+    let mut publics = Vec::with_capacity(n_publics);
     for i in 0..n_publics {
         let word = proof[p as usize];
         if word >= Goldilocks::ORDER_U64 {
@@ -347,6 +306,11 @@ where
         }
     }
 
+    if verifier_info.last_level_verification == 0 {
+        // `check_query` indexes a last level per tree even when there is none.
+        s0_last_levels.resize(n_stages_plus_2, Vec::new());
+    }
+
     let n_fri_steps_minus_1 = (verifier_info.n_fri_steps - 1) as usize;
     let mut roots_fri = Vec::with_capacity(n_fri_steps_minus_1);
     for _ in 1..verifier_info.n_fri_steps {
@@ -364,7 +328,6 @@ where
         (0..n_queries).map(|_| Vec::with_capacity(n_fri_steps_minus_1)).collect();
     let mut last_levels_fri: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_fri_steps_minus_1);
 
-    let log_arity = (verifier_info.arity as f64).log2();
     let n_siblings_per_level_fri = ((verifier_info.arity - 1) * 4) as usize;
 
     for i in 1..verifier_info.n_fri_steps {
@@ -380,8 +343,11 @@ where
             val_fri.push(vals);
         }
 
-        let n_siblings_fri = (((verifier_info.fri_steps[i as usize] as f64 / log_arity).ceil()) as usize)
-            .saturating_sub(verifier_info.last_level_verification as usize);
+        let n_siblings_fri = merkle_proof_levels(
+            verifier_info.fri_steps[i as usize],
+            verifier_info.arity,
+            verifier_info.last_level_verification,
+        );
 
         for query_siblings in siblings_fri.iter_mut() {
             let mut siblings = Vec::with_capacity(n_siblings_fri);
@@ -406,6 +372,10 @@ where
         }
     }
 
+    if verifier_info.last_level_verification == 0 {
+        last_levels_fri.resize(n_fri_steps_minus_1, Vec::new());
+    }
+
     let final_pol_capacity = 1usize << verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize];
     let mut final_pol = Vec::with_capacity(final_pol_capacity);
     for _ in 0..final_pol_capacity {
@@ -422,26 +392,6 @@ where
 
     let nonce = Goldilocks::new(proof[p as usize]);
 
-    let mut challenges = vec![
-        CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
-        verifier_info.n_challenges_total as usize
-    ];
-
-    let mut xdivxsub: Vec<Vec<CubicExtensionField<Goldilocks>>> = Vec::with_capacity(n_queries);
-    let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
-
-    let mut transcript: TranscriptT = TranscriptT::new_transcript();
-    transcript.put(&root_c);
-    if n_publics > 0 {
-        if !verifier_info.hash_commits {
-            transcript.put(&publics);
-        } else {
-            let mut transcript_publics: TranscriptT = TranscriptT::new_transcript();
-            transcript_publics.put(&publics);
-            let hash = transcript_publics.get_state();
-            transcript.put(&hash[0..4]);
-        }
-    }
     // Everything below is hardcoded for a 2-stage AIR (root1, root2, rootQ) and challenge
     // slots 0..=5: a different stage count would leave the Q root unabsorbed (forgeable) or
     // index `roots` out of bounds. Reject rather than mis-verify.
@@ -450,73 +400,46 @@ where
         return false;
     }
 
-    transcript.put(&roots[0]);
-    transcript.get_field(&mut challenges[0].value);
-    transcript.get_field(&mut challenges[1].value);
+    let mut challenges = vec![
+        CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
+        verifier_info.n_challenges_total as usize
+    ];
 
-    transcript.put(&roots[1]);
-    transcript.get_field(&mut challenges[2].value);
-    transcript.put(&roots[2]);
+    let mut xdivxsub: Vec<Vec<CubicExtensionField<Goldilocks>>> = Vec::with_capacity(n_queries);
+    let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
 
-    transcript.get_field(&mut challenges[3].value);
+    let (mut transcript, prefix) = prefix_transcript::<TranscriptT>(
+        &root_c,
+        &publics,
+        &[roots[0], roots[1], roots[2]],
+        &evals,
+        verifier_info.hash_commits,
+    );
+    let fri = fri_transcript(
+        &mut transcript,
+        &roots_fri,
+        &final_pol,
+        nonce,
+        &verifier_info.fri_steps,
+        verifier_info.n_fri_queries,
+        verifier_info.hash_commits,
+    );
 
-    if !verifier_info.hash_commits {
-        for i in 0..verifier_info.n_evals {
-            transcript.put(&evals[i as usize].value);
-        }
-    } else {
-        let mut transcript_evals: TranscriptT = TranscriptT::new_transcript();
-        for i in 0..verifier_info.n_evals {
-            transcript_evals.put(&evals[i as usize].value);
-        }
-        let hash = transcript_evals.get_state();
-        transcript.put(&hash[0..4]);
-    }
-
-    transcript.get_field(&mut challenges[4].value);
-    transcript.get_field(&mut challenges[5].value);
-
-    let mut c = 6;
-    // r^fold_{i-1} is drawn after the root of f_{i-1}; nothing precedes f_0's root.
-    for i in 0..verifier_info.n_fri_steps {
-        if i > 0 {
-            transcript.get_field(&mut challenges[c].value);
-            c += 1;
-        }
-        if i < verifier_info.n_fri_steps - 1 {
-            transcript.put(&roots_fri[i as usize]);
-        } else {
-            let final_pol_size = 1 << verifier_info.fri_steps[i as usize];
-            if !verifier_info.hash_commits {
-                for j in 0..final_pol_size {
-                    transcript.put(&final_pol[j as usize].value);
-                }
-            } else {
-                let mut transcript_final_pol: TranscriptT = TranscriptT::new_transcript();
-                for j in 0..final_pol_size {
-                    transcript_final_pol.put(&final_pol[j as usize].value);
-                }
-                let hash = transcript_final_pol.get_state();
-                transcript.put(&hash[0..4]);
-            }
-        }
-    }
-
-    // The grinding hash and the query indices below are read from the LAST challenge slot, and the
-    // loop above wrote slot `c`. Those must be the same slot: were they to diverge, the queries
-    // would come from an all-zero challenge the prover can predict. It holds iff
-    // n_challenges_total == challenges_map.len() + n_fri_steps (6 + n for the 2-stage AIRs this
-    // verifier handles), as the generator emits it; nothing else states it.
-    let last_challenge_index = challenges.len() - 1;
-    if c != last_challenge_index {
+    // Every declared slot is written (6 stage challenges, the folds, the query challenge): an unwritten
+    // one stays zero, which the prover can predict.
+    let n_written = prefix.len() + fri.folds.len() + 1;
+    if verifier_info.n_challenges as usize != prefix.len() || n_written != challenges.len() {
         v_error!(
             "verifier_info is inconsistent: the transcript writes {} challenges but {} are declared",
-            c + 1,
+            n_written,
             challenges.len()
         );
         return false;
     }
-    transcript.get_field(&mut challenges[c].value);
+    let last_challenge_index = challenges.len() - 1;
+    challenges[..prefix.len()].copy_from_slice(&prefix);
+    challenges[prefix.len()..last_challenge_index].copy_from_slice(&fri.folds);
+    challenges[last_challenge_index] = fri.query;
     // Proof-of-work grinding hash. Uses its own fixed-width hash (Poseidon2_8 for
     // Poseidon2, Poseidon1_8 for Poseidon1), independent of the transcript/Merkle
     // widths. The input `[c0, c1, c2, nonce]` is written into a zero-padded state
@@ -524,9 +447,9 @@ where
     let mut pow_state = <GrindingHash as Hash<Goldilocks>>::State::default();
     {
         let state = pow_state.as_mut();
-        state[0] = challenges[last_challenge_index].value[0];
-        state[1] = challenges[last_challenge_index].value[1];
-        state[2] = challenges[last_challenge_index].value[2];
+        state[0] = fri.query.value[0];
+        state[1] = fri.query.value[1];
+        state[2] = fri.query.value[2];
         state[3] = nonce;
     }
     <GrindingHash as Hash<Goldilocks>>::hash(&mut pow_state);
@@ -535,10 +458,7 @@ where
         v_error!("Proof of work verification failed");
         return false;
     }
-    let mut transcript_permutation: TranscriptT = TranscriptT::new_transcript();
-    transcript_permutation.put(&challenges[last_challenge_index].value);
-    transcript_permutation.put(&[nonce]);
-    let fri_queries = transcript_permutation.get_permutations(verifier_info.n_fri_queries, verifier_info.fri_steps[0]);
+    let fri_queries = fri.queries;
 
     let xi_challenge = challenges[verifier_info.n_challenges as usize - 3];
 

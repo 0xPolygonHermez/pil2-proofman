@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::fs;
 
-use proofman_common::hash_family;
+use proofman_common::{hash_family, LowDegreeLayout};
 use crate::io::parser_args::get_parser_args;
 use crate::types::stark_info::{StarkInfo, VerifierInfo};
 use crate::types::stark_struct::LowDegreeTest;
@@ -86,7 +86,7 @@ fn prepare_verifier_rust(
     } else {
         lines.push("use crate::{stark_verify, Boundary, FriEvalGroup, FriEvalRef, VerifierInfo};".to_string());
     }
-    if vadcop_final_proof {
+    if vadcop_final_proof || stark_info.multiproof {
         lines.push("use crate::VadcopFinalProof;".to_string());
     }
     lines.push(String::new());
@@ -108,13 +108,6 @@ fn prepare_verifier_rust(
     lines.push(String::new());
 
     // The shared STARK geometry, identical for both low-degree tests.
-
-    let mut num_vals: Vec<String> = Vec::new();
-    for i in 0..stark_info.n_stages + 1 {
-        let key = format!("cm{}", i + 1);
-        let val = stark_info.map_sections_n.get(&key).copied().unwrap_or(0);
-        num_vals.push(val.to_string());
-    }
 
     let opening_points_str: Vec<String> = stark_info.opening_points.iter().map(|p| p.to_string()).collect();
 
@@ -182,34 +175,36 @@ fn prepare_verifier_rust(
         0
     };
 
-    let vec_str = |v: &[usize]| -> String { v.iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", ") };
+    let layout = match &stark_info.layout {
+        Some(Ok(layout)) => layout,
+        Some(Err(e)) => anyhow::bail!("starkinfo does not give a proof layout: {e}"),
+        None => anyhow::bail!("starkinfo has no proof layout"),
+    };
+    let num_vals: Vec<String> = layout.num_vals.iter().map(|v| v.to_string()).collect();
+    let vec_str = |v: &[u64]| -> String { v.iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", ") };
 
     // verifier_info function
     lines.push("#[rustfmt::skip]".to_string());
-    match &stark_info.stark_struct.low_degree_test {
-        LowDegreeTest::Fri(fri) => {
+    match (&stark_info.stark_struct.low_degree_test, &layout.ldt) {
+        (LowDegreeTest::Fri(fri), LowDegreeLayout::Fri { steps, n_queries }) => {
             lines.push("fn verifier_info() -> VerifierInfo {".to_string());
             lines.push("    VerifierInfo {".to_string());
             lines.push(format!("        n_stages: {},", stark_info.n_stages));
-            lines.push(format!("        n_constants: {},", stark_info.n_constants));
-            lines.push(format!("        n_evals: {},", stark_info.ev_map.len()));
+            lines.push(format!("        n_constants: {},", layout.n_constants));
+            lines.push(format!("        n_evals: {},", layout.n_evals));
             lines.push(format!("        n_bits: {},", stark_info.stark_struct.n_bits));
-            lines.push(format!("        n_bits_ext: {},", stark_info.stark_struct.n_bits_ext));
-            lines.push(format!("        arity: {},", merkle_arity));
-            lines.push(format!("        n_fri_queries: {},", fri.num_queries));
-            lines.push(format!("        n_fri_steps: {},", fri.log_domain_sizes.len()));
+            lines.push(format!("        n_bits_ext: {},", layout.n_bits_ext));
+            lines.push(format!("        arity: {},", layout.arity));
+            lines.push(format!("        n_fri_queries: {},", n_queries));
+            lines.push(format!("        n_fri_steps: {},", steps.len()));
             lines.push(format!("        n_challenges: {},", stark_info.challenges_map.len()));
             // Stage challenges, one r^fold per fold (M = domains − 1) and the query seed.
-            lines.push(format!(
-                "        n_challenges_total: {},",
-                stark_info.challenges_map.len() + fri.log_domain_sizes.len()
-            ));
+            lines.push(format!("        n_challenges_total: {},", stark_info.challenges_map.len() + steps.len()));
 
-            lines.push(format!("        fri_steps: vec![{}],", vec_str(&fri.log_domain_sizes)));
+            lines.push(format!("        fri_steps: vec![{}],", vec_str(steps)));
 
-            lines.push(format!("        hash_commits: {},", stark_info.stark_struct.hash_commits));
-            lines
-                .push(format!("        last_level_verification: {},", stark_info.stark_struct.last_level_verification));
+            lines.push(format!("        hash_commits: {},", layout.hash_commits));
+            lines.push(format!("        last_level_verification: {},", layout.last_level_verification));
             lines.push(format!("        pow_bits: {},", fri.grinding_bits_queries));
             lines.push(fri_ev_groups_str.clone());
 
@@ -222,15 +217,15 @@ fn prepare_verifier_rust(
             lines.push("    }".to_string());
             lines.push("}\n".to_string());
         }
-        LowDegreeTest::Stir(stir) => {
-            let m = stir.num_iterations();
+        (LowDegreeTest::Stir(_), LowDegreeLayout::Stir(stir)) => {
+            let m = stir.m();
             lines.push("fn verifier_info() -> StirVerifierInfo {".to_string());
             lines.push("    StirVerifierInfo {".to_string());
             lines.push(format!("        n_stages: {},", stark_info.n_stages));
-            lines.push(format!("        n_constants: {},", stark_info.n_constants));
-            lines.push(format!("        n_evals: {},", stark_info.ev_map.len()));
+            lines.push(format!("        n_constants: {},", layout.n_constants));
+            lines.push(format!("        n_evals: {},", layout.n_evals));
             lines.push(format!("        n_bits: {},", stark_info.stark_struct.n_bits));
-            lines.push(format!("        n_bits_ext: {},", stark_info.stark_struct.n_bits_ext));
+            lines.push(format!("        n_bits_ext: {},", layout.n_bits_ext));
             lines.push(format!("        n_challenges: {},", stark_info.challenges_map.len()));
             // r_fold_0, then (r_out, r_fold, r_comb) per iteration 1..M−1, then the M query
             // challenges — `num_ldt_challenges` in common/src/stark_info.rs.
@@ -252,23 +247,34 @@ fn prepare_verifier_rust(
             lines.push(format!("            log_domain_sizes: vec![{}],", vec_str(&stir.log_domain_sizes)));
             lines.push(format!("            num_queries: vec![{}],", vec_str(&stir.num_queries)));
             lines.push(format!("            grinding_bits_queries: vec![{}],", vec_str(&stir.grinding_bits_queries)));
-            lines.push(format!("            arity: {},", merkle_arity));
-            lines.push(format!(
-                "            last_level_verification: {},",
-                stark_info.stark_struct.last_level_verification
-            ));
-            lines.push(format!("            hash_commits: {},", stark_info.stark_struct.hash_commits));
+            lines.push(format!("            arity: {},", stir.arity));
+            lines.push(format!("            last_level_verification: {},", stir.last_level_verification));
+            lines.push(format!("            hash_commits: {},", stir.hash_commits));
             lines.push("        },".to_string());
 
             lines.push("    }".to_string());
             lines.push("}\n".to_string());
         }
+        _ => anyhow::bail!("starkinfo and its proof layout disagree on the low-degree test"),
     }
 
     // verify function. Generics: leaf, compression, transcript, grinding hashes.
     let generics = format!("{merkle_hash_type}, {merkle_hash_type}, {transcript_type}, {grinding_type}");
     let verify_fn = if is_stir { "stark_verify_stir" } else { "stark_verify" };
-    if vadcop_final_proof {
+    if stark_info.multiproof {
+        lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".to_string());
+        lines.push("    verify_u64(&proof.proof_with_publics(), vk)".to_string());
+        lines.push("}\n".to_string());
+        lines.push("pub fn verify_u64(proof: &[u64], vk: &[u64]) -> bool {".to_string());
+        lines.push("    let info = verifier_info();".to_string());
+        lines.push(format!(
+            "    let Some(flat) = crate::expand_proof::<{merkle_hash_type}, {merkle_hash_type}, {transcript_type}>(proof, vk, &info.proof_layout()) else {{"
+        ));
+        lines.push("        return false;".to_string());
+        lines.push("    };".to_string());
+        lines.push(format!("    {verify_fn}::<{generics}>(&flat, vk, &info, q_verify)"));
+        lines.push("}\n".to_string());
+    } else if vadcop_final_proof {
         lines.push("pub fn verify(proof: &VadcopFinalProof, vk: &[u64]) -> bool {".to_string());
         lines.push(format!(
             "    {verify_fn}::<{generics}>(&proof.proof_with_publics(), vk, &verifier_info(), q_verify)"
@@ -284,8 +290,14 @@ fn prepare_verifier_rust(
     }
 
     let expected_fn = if is_stir { "expected_stir_proof_size_bytes" } else { "expected_proof_size_bytes" };
-    lines.push("pub fn expected_proof_bytes() -> usize {".to_string());
-    lines.push(format!("    crate::{expected_fn}(&verifier_info())"));
+    if stark_info.multiproof {
+        lines.push("/// Upper bound: a multiproof never outgrows the flat proof by more than its tag.".to_string());
+        lines.push("pub fn max_proof_bytes() -> usize {".to_string());
+        lines.push(format!("    crate::{expected_fn}(&verifier_info()) + 8"));
+    } else {
+        lines.push("pub fn expected_proof_bytes() -> usize {".to_string());
+        lines.push(format!("    crate::{expected_fn}(&verifier_info())"));
+    }
     lines.push("}\n".to_string());
 
     Ok(lines.join("\n"))

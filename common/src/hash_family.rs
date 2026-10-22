@@ -193,8 +193,7 @@ pub fn max_constraint_degree_for_blowup(blowup: usize) -> usize {
 
 /// Whether the pipeline builds the `vadcop_final_compressed` stage by default.
 ///
-/// The stage exists to shrink the final proof before whatever consumes it: the BN128 wrap for
-/// poseidon, the shipped proof itself for blake3, which has no snark stage.
+/// The stage shrinks the final proof that ships; the BN128 wrap reads the uncompressed vadcop_final.
 ///
 /// Off is not the same as unavailable: `proofman-setup setup-compressed-final` adds the stage to an
 /// existing proving key, so a key built without it can gain it later.
@@ -206,7 +205,7 @@ pub fn compressed_final_by_default(_family: &str) -> bool {
 ///
 /// blake3's compressed proof is the one that ships, so it trades prover memory (~2x per step) for
 /// proof size; it is proven once per block, so the memory is not held next to anything else.
-/// Poseidon keeps the final air's blowup, which its BN128 wrap encodes.
+/// Poseidon keeps the final air's blowup.
 pub fn compressed_final_blowup_factor(family: &str) -> usize {
     match family {
         "blake3" => 5,
@@ -227,11 +226,23 @@ pub fn compressed_final_grinding_bits(family: &str) -> usize {
     }
 }
 
-/// Merkle levels the blake3 `vadcop_final_compressed` proof carries outright, and the FRI degree it stops at.
-///
-/// Nothing verifies this proof in a circuit, so both are pure proof-size knobs: against the family's
-/// 5 and 2^7, 6 and 2^8 are each ~1% smaller and the pair ~2% (modelled on the setup's proof-size formula);
-/// 7 and 2^9 are both larger again.
+/// Whether proofman has a multiproof codec for `family` at this tree and transcript arity
+/// (`proofman::compressed_proof`, which dispatches on exactly this).
+pub fn has_multiproof_codec(family: &str, merkle_arity: u64, transcript_arity: u64) -> bool {
+    matches!((family, merkle_arity, transcript_arity), ("blake3", 2, _) | ("Poseidon1" | "Poseidon2", 2, 4))
+}
+
+/// Whether the `vadcop_final_compressed` proof travels as a Merkle multiproof. Fibonacci STIR:
+/// blake3 249,359 B against 264,935 flat, Poseidon2 201,826 against 220,282.
+pub fn compressed_final_multiproof(family: &str) -> bool {
+    match family {
+        "blake3" | "Poseidon1" | "Poseidon2" => true,
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+
+/// Merkle levels a flat `vadcop_final_compressed` proof carries outright (a multiproof carries none:
+/// it shares the tree tops already), and the FRI terminal domain where no folds are pinned.
 pub fn compressed_final_last_level_verification(family: &str) -> Option<usize> {
     match family {
         "blake3" => Some(6),
@@ -247,18 +258,41 @@ pub fn compressed_final_fri_terminal_degree(family: &str) -> usize {
     }
 }
 
+/// Whether the `vadcop_final_compressed` proof is built with STIR when no test is asked for.
+/// Fibonacci: blake3 249,359 B against 274,719 FRI (both multiproofs), Poseidon2 201,826 against 254,826.
+pub fn compressed_final_stir(family: &str) -> bool {
+    match family {
+        "blake3" | "Poseidon1" | "Poseidon2" => true,
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+
+/// FRI folds of the `vadcop_final_compressed` proof, picked for multiproof size at the (air size,
+/// blowup) given; under other parameters, or `None`, the solver's schedule. blake3 at 2^18: 272,927 B mean against
+/// 277,812 for [4,4,4,3].
+pub fn compressed_final_fri_folds(family: &str) -> Option<((usize, usize), Vec<usize>)> {
+    match family {
+        "blake3" => Some(((18, 5), vec![4, 3, 3, 3, 3])),
+        "Poseidon1" | "Poseidon2" => None,
+        fam => panic!("Unknown hash family: {fam}"),
+    }
+}
+
+/// ((air size, blowup) measured at, folds, per-round grinding).
+pub type StirSchedule = ((usize, usize), Vec<usize>, Vec<usize>);
+
 /// Folds and per-round grinding of the `vadcop_final_compressed` proof when it is built with STIR
 /// (`setup-compressed-final --low-degree-test STIR`), or `None` for the generic schedule.
 ///
 /// blake3, measured on fibonacci over nine schedules: [4,3,3] (degree 2^18 to 2^8) is the smallest,
 /// against 277,015 B for the generic [4,4,4,3] and 295,511 for FRI. Round 2 keeps 26 queries from 26
 /// to 29 bits. Round 3 grinds 23: 22 queries, 264,935 B (27 bits would keep it at 21, 264,359 B).
-/// The folds are absolute, measured with the compressed air at 2^18: at another size they land on
-/// another final degree, so a change of size (lanes, verifier) wants the sweep run again.
-pub fn compressed_final_stir_schedule(family: &str) -> Option<(Vec<usize>, Vec<usize>)> {
+/// The first entry is the (air size, blowup) it was measured at; under others the generic one is used.
+pub fn compressed_final_stir_schedule(family: &str) -> Option<StirSchedule> {
     match family {
-        "blake3" => Some((vec![4, 3, 3], vec![27, 26, 23])),
-        "Poseidon1" | "Poseidon2" => None,
+        "blake3" => Some(((18, 5), vec![4, 3, 3], vec![27, 26, 23])),
+        // At 2^15 with the family's 22 bits a round: the smallest of 1–4 rounds of 1–7 bits, flat or multiproof.
+        "Poseidon1" | "Poseidon2" => Some(((15, 4), vec![3, 4], vec![22, 22])),
         fam => panic!("Unknown hash family: {fam}"),
     }
 }
