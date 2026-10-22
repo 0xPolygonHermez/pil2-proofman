@@ -69,11 +69,13 @@ impl StirVerifierInfo {
 
 pub(crate) enum Segment {
     Data(usize),
-    /// `n_queries` leaves of `width` words, then their paths of `n_levels` levels.
+    /// `n_queries` leaves of `width` words out of `2^leaf_bits`, then their paths of `n_levels`
+    /// levels.
     Tree {
         width: usize,
         n_queries: usize,
         n_levels: usize,
+        leaf_bits: u64,
     },
 }
 
@@ -81,7 +83,7 @@ impl Segment {
     fn words(&self, arity: u64) -> usize {
         match *self {
             Segment::Data(n) => n,
-            Segment::Tree { width, n_queries, n_levels } => n_queries * (width + n_levels * sibling_words(arity)),
+            Segment::Tree { width, n_queries, n_levels, .. } => n_queries * (width + n_levels * sibling_words(arity)),
         }
     }
 }
@@ -114,10 +116,12 @@ fn stir_segments(params: &StirParams, segs: &mut Vec<Segment>) {
     segs.push(Segment::Data(4 * m));
     for i in 0..m {
         let k = params.folding_factors[i];
+        let leaf_bits = params.log_domain_sizes[i] - k;
         segs.push(Segment::Tree {
             width: (1usize << k) * 3,
             n_queries: params.num_queries[i] as usize,
-            n_levels: merkle_proof_levels(params.log_domain_sizes[i] - k, params.arity, params.last_level_verification),
+            n_levels: merkle_proof_levels(leaf_bits, params.arity, params.last_level_verification),
+            leaf_bits,
         });
         segs.push(Segment::Data(last_level));
     }
@@ -140,6 +144,7 @@ impl ProofLayout {
             width: width as usize,
             n_queries: n_queries as usize,
             n_levels: merkle_proof_levels(n_bits, self.arity, self.last_level_verification),
+            leaf_bits: n_bits,
         };
 
         let mut segs = vec![
@@ -175,5 +180,32 @@ impl ProofLayout {
     /// The flat proof's size in u64 words, publics and their count excluded.
     pub fn flat_proof_words(&self) -> usize {
         self.segments(0).iter().skip(1).map(|s| s.words(self.arity)).sum()
+    }
+
+    /// The expected size in u64 words of the proof as a multiproof, publics and their count
+    /// excluded: the flat proof without its siblings, the tag, and each tree's kept siblings for
+    /// uniform query indices. A proof's own size varies with how its paths overlap; it never
+    /// exceeds `flat_proof_words() + 1`.
+    pub fn expected_multiproof_words(&self) -> f64 {
+        let arity = self.arity as f64;
+        // Expected distinct nodes among `q` uniform picks of `m`.
+        let distinct = |m: f64, q: f64| m * (1.0 - (1.0 - 1.0 / m).powf(q));
+        let mut words = 1.0;
+        for seg in self.segments(0).iter().skip(1) {
+            match *seg {
+                Segment::Data(n) => words += n as f64,
+                Segment::Tree { width, n_queries, n_levels, leaf_bits } => {
+                    let q = n_queries as f64;
+                    words += q * width as f64;
+                    let mut nodes = (1u64 << leaf_bits) as f64;
+                    for _ in 0..n_levels {
+                        let parents = (nodes / arity).ceil();
+                        words += 4.0 * (arity * distinct(parents, q) - distinct(nodes, q));
+                        nodes = parents;
+                    }
+                }
+            }
+        }
+        words
     }
 }
