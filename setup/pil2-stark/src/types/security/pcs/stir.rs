@@ -24,6 +24,8 @@ pub struct StirConfig {
     /// Grinding and queries buy the same bits, so a per-round budget shifts
     /// prover proof-of-work to the rounds where queries are expensive.
     pub max_grinding_bits_queries: Vec<u64>,
+    /// Grinding the protocol can do before each non-query challenge, at most (0: none).
+    pub max_grinding_bits_non_query: u64,
     /// Whether to use the maximum number of grinding bits.
     pub use_max_grinding_bits_query: bool,
     /// The arity of the Merkle trees used in STIR.
@@ -193,31 +195,39 @@ impl Stir {
         }
     }
 
-    /// Search for the smallest gap-widening `alpha` whose query schedule
-    /// meets the target on every component.
+    /// Search for the smallest gap-widening `alpha` whose query schedule meets the target on every
+    /// component: by the gap alone first, then with grinding outside the queries, within budget.
     fn solve(&self) -> (StirSecurityParams, f64) {
-        let mut alpha: f64 = 0.0;
-        loop {
-            let regime = self.cfg.regime.instantiate(self.cfg.field_size, alpha);
-            let sec_params = self.compute_security_params(regime.as_ref());
-            if self.meets_security_target(regime.as_ref(), &sec_params) {
-                return (sec_params, alpha);
+        let budget = self.cfg.max_grinding_bits_non_query;
+        let budgets: &[u64] = if budget == 0 { &[0] } else { &[0, budget] };
+        for &budget in budgets {
+            let mut alpha: f64 = 0.0;
+            loop {
+                let regime = self.cfg.regime.instantiate(self.cfg.field_size, alpha);
+                if !(0..self.num_rounds).all(|i| regime.admits(&self.code_for(i, false).0)) {
+                    break;
+                }
+                let sec_params = self.compute_security_params(regime.as_ref(), budget);
+                if self.meets_security_target(regime.as_ref(), &sec_params) {
+                    return (sec_params, alpha);
+                }
+                alpha += 0.1;
             }
-
-            // Security not met -- widen the gap by increasing alpha.
-            alpha += 0.1;
-            assert!(alpha < 100.0, "Alpha loop did not converge");
         }
+        panic!(
+            "STIR cannot reach {} bits at any gap the regime admits, with {} bits of grinding outside the queries",
+            self.cfg.target_security_bits, self.cfg.max_grinding_bits_non_query
+        );
     }
 
     /// Compute the security parameters for a given regime.
-    fn compute_security_params(&self, regime: &dyn ProximityGapsRegime) -> StirSecurityParams {
+    fn compute_security_params(&self, regime: &dyn ProximityGapsRegime, budget: u64) -> StirSecurityParams {
         let m = self.num_rounds;
         let target = self.cfg.target_security_bits;
         let num_ood_samples = vec![1u64; m - 1];
 
-        // Non-query stages: grinding fills whatever is missing to the target.
-        let deficit = |error: f64| target.saturating_sub(bits_of_security_from_error(error) as u64) as u32;
+        // Non-query stages: grinding fills whatever is missing to the target, within `budget`.
+        let deficit = |error: f64| target.saturating_sub(bits_of_security_from_error(error) as u64).min(budget) as u32;
 
         // Batching grinding.
         let grinding_bits_batching = if self.cfg.batch_size > 1 { deficit(self.batch_error(regime, 0)) } else { 0 };
@@ -635,6 +645,7 @@ mod tests {
             log_folding_factors: folding_factors,
             max_grinding_bits_queries,
             use_max_grinding_bits_query: true,
+            max_grinding_bits_non_query: 0,
             tree_arity: 4,
             hash_size_bits: 256,
             base_field_bits: 64,
@@ -701,15 +712,41 @@ mod tests {
         assert_eq!(stir.security_params().num_queries[0], 228);
     }
 
+    /// At |F| = 2^150 no gap brings batching to 128 bits: only grinding can.
+    fn small_field(budget: u64) -> StirConfig {
+        StirConfig {
+            field_size: 2f64.powi(150),
+            max_grinding_bits_non_query: budget,
+            ..test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23)
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "STIR cannot reach 128 bits")]
+    fn without_a_budget_an_unreachable_target_panics() {
+        Stir::new(small_field(0));
+    }
+
+    #[test]
+    fn the_gap_comes_first_then_the_budget() {
+        let stir = Stir::new(StirConfig {
+            max_grinding_bits_non_query: 40,
+            ..test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23)
+        });
+        assert_eq!((stir.alpha(), stir.security_params().grinding_bits_batching), (0.1, 0));
+        assert!(Stir::new(small_field(40)).security_params().grinding_bits_batching > 0);
+    }
+
     #[test]
     fn test_keccakf_params() {
         let stir = Stir::new(test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23));
-        assert_eq!(stir.alpha(), 0.0);
+        // The batching term misses the target at the base gap, and there is no batching grinding.
+        assert_eq!(stir.alpha(), 0.1);
         assert_all_components_reach_target(&stir);
 
         let sec = stir.security_params();
-        assert_eq!(sec.num_queries[0], 213);
-        assert_eq!(sec.grinding_bits_batching, 1, "batching deficit should be 1 bit");
+        assert_eq!(sec.num_queries[0], 214);
+        assert_eq!(sec.grinding_bits_batching, 0);
         assert_eq!(sec.grinding_bits_queries, vec![23; 4]);
     }
 

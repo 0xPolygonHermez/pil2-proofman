@@ -32,6 +32,9 @@ pub trait ProximityGapsRegime {
     /// The gap between the decoding radius and the proximity parameter.
     fn gap(&self, rate: &f64) -> f64;
 
+    /// Whether the gap is admissible at `rate`; `gap` panics where it is not.
+    fn admits(&self, rate: &f64) -> bool;
+
     /// Returns the maximum delta for this regime, based on the rate
     /// and the dimension of the code.
     fn proximity_parameter(&self, rate: &f64) -> f64 {
@@ -73,6 +76,11 @@ impl UniqueDecodingRegime {
     pub fn new(field_size: f64, alpha: f64) -> Self {
         Self { field_size, alpha }
     }
+
+    /// Something small that makes γ ∈ [δ/3, δ/2 - η] (see [BCHKS25] Corollary 1.4), widened by alpha.
+    fn widened_gap(&self, rate: &f64) -> f64 {
+        (1.0 - rate) / 20.0 * (1.0 + self.alpha)
+    }
 }
 
 impl ProximityGapsRegime for UniqueDecodingRegime {
@@ -90,14 +98,13 @@ impl ProximityGapsRegime for UniqueDecodingRegime {
     }
 
     fn gap(&self, rate: &f64) -> f64 {
-        // Something small that makes γ ∈ [δ/3, δ/2 - η] (see [BCHKS25] Corollary 1.4).
-        let minimum_distance = 1.0 - rate;
-        let base_correction = minimum_distance / 20.0;
-        let gap = base_correction * (1.0 + self.alpha);
+        assert!(self.admits(rate), "Gap must be smaller than δ/6 in UDR");
+        self.widened_gap(rate)
+    }
 
-        // γ ∈ [δ/3, δ/2 - η] <=> δ/2 - η > δ/3 <=> η < δ/6
-        assert!(gap < minimum_distance / 6.0, "Gap must be smaller than δ/6 in UDR");
-        gap
+    fn admits(&self, rate: &f64) -> bool {
+        // γ ∈ [δ/3, δ/2 - η] <=> δ/2 - η > δ/3 <=> η < δ/6, where δ = 1 - ρ.
+        self.widened_gap(rate) < (1.0 - rate) / 6.0
     }
 
     fn max_list_size(&self, _rate: &f64, _dimension: u32) -> u64 {
@@ -126,6 +133,12 @@ impl JohnsonBoundRegime {
         Self { field_size, alpha }
     }
 
+    /// Something small that makes γ ∈ [δ/2, 1 - √(1-δ) - η] (see [BCHKS25] Corollary 1.4), widened
+    /// by alpha.
+    fn widened_gap(&self) -> f64 {
+        1.0 / 300.0 * (1.0 + self.alpha)
+    }
+
     /// The multiplicity parameter `m` of the Guruswami–Sudan list decoder
     /// from the gap.
     fn get_mul_from_gap(&self, rate: &f64, gap: f64) -> u64 {
@@ -152,16 +165,13 @@ impl ProximityGapsRegime for JohnsonBoundRegime {
     }
 
     fn gap(&self, rate: &f64) -> f64 {
-        // Something small that makes γ ∈ [δ/2, 1 - √(1-δ) - η] (see [BCHKS25] Corollary 1.4),
-        // where δ = 1 - ρ is the minimum distance of the code.
-        let base_correction = 1.0 / 300.0;
-        let gap = base_correction * (1.0 + self.alpha);
+        assert!(self.admits(rate), "Gap must be smaller than 1 - √(1-δ) - δ/2 in JBR");
+        self.widened_gap()
+    }
 
-        // γ ∈ [δ/2, 1 - √(1-δ) - η] <=> 1 - √(1-δ) - η > δ/2 <=> η < 1 - √(1-δ) - δ/2
-        let minimum_distance = 1.0 - rate;
-        let delta_half = minimum_distance / 2.0;
-        assert!(gap < self.decoding_radius(rate) - delta_half, "Gap must be smaller than 1 - √(1-δ) - δ/2 in JBR");
-        gap
+    fn admits(&self, rate: &f64) -> bool {
+        // γ ∈ [δ/2, 1 - √(1-δ) - η] <=> η < 1 - √(1-δ) - δ/2, where δ = 1 - ρ.
+        self.widened_gap() < self.decoding_radius(rate) - (1.0 - rate) / 2.0
     }
 
     fn max_list_size(&self, rate: &f64, _dimension: u32) -> u64 {
