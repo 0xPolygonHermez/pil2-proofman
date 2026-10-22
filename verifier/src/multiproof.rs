@@ -47,7 +47,7 @@ fn trees(layout: &ProofLayout) -> Vec<(usize, usize, usize)> {
         .segments(0)
         .into_iter()
         .filter_map(|s| match s {
-            Segment::Tree { width, n_queries, n_levels } => Some((width, n_queries, n_levels)),
+            Segment::Tree { width, n_queries, n_levels, .. } => Some((width, n_queries, n_levels)),
             Segment::Data(_) => None,
         })
         .collect()
@@ -93,7 +93,7 @@ fn split<'a>(layout: &ProofLayout, proof: &'a [u64], flat: bool) -> Option<(Spli
                 split.dense.extend_from_slice(proof.get(p..p + n)?);
                 p += n;
             }
-            Segment::Tree { width, n_queries, n_levels } => {
+            Segment::Tree { width, n_queries, n_levels, .. } => {
                 let n = n_queries * width;
                 split.leaves.push(split.dense.len());
                 split.dense.extend_from_slice(proof.get(p..p + n)?);

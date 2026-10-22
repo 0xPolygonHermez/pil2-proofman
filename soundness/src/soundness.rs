@@ -101,7 +101,10 @@ pub struct AirInfoSoundness {
     #[serde(flatten)]
     pub low_degree_test: LowDegreeTestSoundness,
     pub gap_to_radius: f64,
+    /// A multiproof's expected size; its size varies per proof, up to `proof_size_max`.
     pub proof_size: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof_size_max: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -276,6 +279,15 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
         .filter(|(k, _)| k.as_str() != "const" && k.as_str() != "cm3")
         .map(|(_, n)| n)
         .sum::<u64>();
+    // `setup.proof_size` is the flat proof with its publics; a multiproof drops the siblings that
+    // other queries' paths yield.
+    let flat_words = setup.proof_size as f64;
+    let proof_words = if setup.stark_info.multiproof {
+        let layout = setup.stark_info.proof_layout();
+        flat_words - layout.flat_proof_words() as f64 + layout.expected_multiproof_words()
+    } else {
+        flat_words
+    };
     (
         setup.air_name.clone(),
         AirInfoSoundness {
@@ -291,7 +303,8 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             power_batching: true,
             low_degree_test: low_degree_test_soundness(&setup.stark_info.stark_struct),
             gap_to_radius: setup.stark_info.security.proximity_gap,
-            proof_size: format_bytes(setup.proof_size as f64 * 8.0),
+            proof_size: format_bytes(proof_words * 8.0),
+            proof_size_max: setup.stark_info.multiproof.then(|| format_bytes(flat_words * 8.0 + 8.0)),
         },
     )
 }

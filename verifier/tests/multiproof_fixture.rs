@@ -80,6 +80,21 @@ fn check(name: &str, layout: ProofLayout, flat_len: usize, flat_digest: [u64; 4]
     assert!(expand(&w, &other).is_none());
 }
 
+/// The expected wire size is within a few percent of a real proof's, and below the flat one's.
+fn check_expected_size(name: &str, layout: ProofLayout) {
+    let w = wire(name);
+    let actual = (w.len() - 1 - w[0] as usize) as f64;
+    let expected = layout.expected_multiproof_words();
+    assert!((expected - actual).abs() / actual < 0.02, "{name}: expected {expected:.0} words, got {actual}");
+    assert!(expected < layout.flat_proof_words() as f64);
+}
+
+#[test]
+fn the_expected_multiproof_size_matches_the_fixtures() {
+    check_expected_size("multiproof_stir.bin", stir());
+    check_expected_size("multiproof_fri.bin", fri());
+}
+
 #[test]
 fn stir_fixture_round_trips() {
     check(
