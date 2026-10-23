@@ -102,12 +102,12 @@ public:
     // cooperative launch. False, without failing, where CUDA finds no device or no driver.
     static bool available();
 
-    // A copy of `bytes` bytes from host `src` to device `dst`, which returns once src may change.
-    using Upload = std::function<void(void *dst, const void *src, uint64_t bytes)>;
-    // A copy on the device of the n points (n >= 1) at `points`, the powers [τ^i]₁ of an SRS, copied
-    // by `upload` (a GpuKey's pinned Staging, which counts them). Throws std::invalid_argument if
-    // !available(), points is null or n is 0.
-    Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload, void *at = nullptr);
+    // Writes `bytes` bytes of the points to device `dst`, returning once they are there.
+    using Fill = std::function<void(void *dst, uint64_t bytes)>;
+    // A copy on the device of n points (n >= 1), the powers [τ^i]₁ of an SRS, that `fill` writes
+    // there (a GpuKey's pinned Staging, which counts them). Throws std::invalid_argument if
+    // !available() or n is 0.
+    Gpu(uint64_t n, const Fill &fill, void *at = nullptr);
     ~Gpu();
     Gpu(const Gpu &) = delete;
     Gpu &operator=(const Gpu &) = delete;

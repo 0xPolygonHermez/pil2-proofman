@@ -72,12 +72,9 @@ DeviceScope::~DeviceScope() {
 
 bool Gpu::available() { return cuda_available(); }
 
-Gpu::Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload, void *at) {
+Gpu::Gpu(uint64_t n, const Fill &fill, void *at) {
     if (!available()) {
         throw invalid("Gpu", "no GPU: CUDA sees no device of compute capability 7.0 or above (or no driver)");
-    }
-    if (points == nullptr) {
-        throw invalid("Gpu", "points is null");
     }
     if (n == 0) {
         throw invalid("Gpu", "no points");
@@ -90,7 +87,7 @@ Gpu::Gpu(const G1PointAffine *points, uint64_t n, const Upload &upload, void *at
         devicePoints = at;
     }
     nDevicePoints = n;
-    upload(devicePoints, points, n * sizeof(G1PointAffine));
+    fill(devicePoints, n * sizeof(G1PointAffine));
 }
 
 Gpu::~Gpu() {

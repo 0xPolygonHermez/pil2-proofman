@@ -2689,6 +2689,7 @@ where
             return snark_wrapper.generate_final_snark_proof(vadcop_final_proof, verkey_override);
         }
         self.check_wrapper_recursivef(snark_wrapper)?;
+        snark_wrapper.prefetch_key();
         let recursivef_proof = self.recursivef_proof(vadcop_final_proof, verkey_override)?;
         snark_wrapper.generate_final_snark_proof(&recursivef_proof, verkey_override)
     }

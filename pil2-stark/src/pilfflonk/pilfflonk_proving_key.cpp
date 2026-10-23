@@ -77,11 +77,34 @@ AirKey::ConstantsBytes ownedConstants(FileBytes file) {
     return bytes;
 }
 
-// A file's bytes, read by every thread at once, a chunk each: a .const holds N rows of every fixed
-// column, GBs at large N, which one thread copies from the page cache at a fraction of the speed of
-// several, and the buffer is not cleared before (its pages are first touched by the threads that
-// fill them).
-// The bytes of the file at path past its first `skip`, which it must have.
+// `bytes` bytes of the open file `fd`, from byte `offset`, into `out`, by every thread at once, a
+// chunk each: a .const or a .coefs holds GBs at large N, which one thread copies from the page cache at
+// a fraction of the speed of several. Throws IoError, naming `what` and `path`.
+void preadInParallel(int fd, uint8_t *out, uint64_t bytes, uint64_t offset, const char *what,
+                     const std::string &path) {
+    constexpr uint64_t CHUNK = uint64_t(1) << 23;
+    const uint64_t nChunks = (bytes + CHUNK - 1) / CHUNK;
+    bool failed = false;
+#pragma omp parallel for schedule(dynamic) reduction(|| : failed)
+    for (uint64_t c = 0; c < nChunks; ++c) {
+        const uint64_t end = std::min(bytes, (c + 1) * CHUNK);
+        for (uint64_t at = c * CHUNK; at < end && !failed;) {
+            const ssize_t n = ::pread(fd, out + at, end - at, static_cast<off_t>(offset + at));
+            if (n > 0) {
+                at += static_cast<uint64_t>(n);
+            } else if (n == 0 || errno != EINTR) {
+                // An error, or the end of a file that shrank since fstat.
+                failed = true;
+            }
+        }
+    }
+    if (failed) {
+        throw IoError(std::string(what) + ": cannot read " + path);
+    }
+}
+
+// The bytes of the file at path past its first `skip`, which it must have (the buffer is not cleared
+// before: its pages are first touched by the threads that fill them).
 FileBytes readBytes(const std::string &path, const char *what, uint64_t skip = 0) {
     const int fd = ::open(path.c_str(), O_RDONLY);
     if (fd < 0) {
@@ -99,27 +122,13 @@ FileBytes readBytes(const std::string &path, const char *what, uint64_t skip = 0
     FileBytes bytes;
     bytes.size = static_cast<uint64_t>(status.st_size) - skip;
     bytes.data.reset(new uint8_t[bytes.size]);
-    constexpr uint64_t CHUNK = uint64_t(1) << 23;
-    const uint64_t nChunks = (bytes.size + CHUNK - 1) / CHUNK;
-    uint8_t *out = bytes.data.get();
-    bool failed = false;
-#pragma omp parallel for schedule(dynamic) reduction(|| : failed)
-    for (uint64_t c = 0; c < nChunks; ++c) {
-        const uint64_t end = std::min(bytes.size, (c + 1) * CHUNK);
-        for (uint64_t at = c * CHUNK; at < end && !failed;) {
-            const ssize_t n = ::pread(fd, out + at, end - at, static_cast<off_t>(skip + at));
-            if (n > 0) {
-                at += static_cast<uint64_t>(n);
-            } else if (n == 0 || errno != EINTR) {
-                // An error, or the end of a file that shrank since fstat.
-                failed = true;
-            }
-        }
+    try {
+        preadInParallel(fd, bytes.data.get(), bytes.size, skip, what, path);
+    } catch (...) {
+        ::close(fd);
+        throw;
     }
     ::close(fd);
-    if (failed) {
-        throw IoError(std::string(what) + ": cannot read " + path);
-    }
     return bytes;
 }
 
@@ -131,19 +140,44 @@ struct Coefs {
     KeyDigest digest;
 };
 
-Coefs readCoefs(const std::string &path) {
-    uint8_t header[PRECOMPUTED_HEADER_BYTES];
-    const int fd = ::open(path.c_str(), O_RDONLY);
-    if (fd < 0) {
+// An <air>.coefs, open: the GPU key reads its coefficients a range at a time (ConstantsBytes::read).
+struct CoefsFile {
+    std::string path;
+    int fd = -1;
+    uint64_t size = 0; // of its coefficients, past the header
+    KeyDigest digest;
+    ~CoefsFile() {
+        if (fd >= 0) {
+            ::close(fd);
+        }
+    }
+};
+
+std::shared_ptr<CoefsFile> openCoefs(const std::string &path) {
+    auto file = std::make_shared<CoefsFile>();
+    file->path = path;
+    file->fd = ::open(path.c_str(), O_RDONLY);
+    if (file->fd < 0) {
         throw IoError("coefs: cannot open " + path);
     }
-    const ssize_t got = ::pread(fd, header, sizeof(header), 0);
-    ::close(fd);
-    if (got != static_cast<ssize_t>(sizeof(header))) {
+    uint8_t header[PRECOMPUTED_HEADER_BYTES];
+    struct stat status;
+    if (::pread(file->fd, header, sizeof(header), 0) != static_cast<ssize_t>(sizeof(header)) ||
+        ::fstat(file->fd, &status) != 0 || static_cast<uint64_t>(status.st_size) < sizeof(header)) {
         throw FormatError("coefs: " + path + " is shorter than its header");
     }
-    const KeyDigest digest = precomputedDigest(header, COEFS_MAGIC, path);
-    return Coefs{readBytes(path, "coefs", PRECOMPUTED_HEADER_BYTES), digest};
+    file->digest = precomputedDigest(header, COEFS_MAGIC, path);
+    file->size = static_cast<uint64_t>(status.st_size) - sizeof(header);
+    return file;
+}
+
+Coefs readCoefs(const std::string &path) {
+    const std::shared_ptr<CoefsFile> file = openCoefs(path);
+    FileBytes bytes;
+    bytes.size = file->size;
+    bytes.data.reset(new uint8_t[bytes.size]);
+    preadInParallel(file->fd, bytes.data.get(), bytes.size, PRECOMPUTED_HEADER_BYTES, "coefs", path);
+    return Coefs{std::move(bytes), file->digest};
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -696,7 +730,7 @@ AirKey::AirKey(PilfflonkInfo _info, ExpressionsBin _bin, const std::string &name
 void AirKey::loadFixed(const ConstantsSource &constants, GpuKey *gpu) {
     const uint64_t N = n(), nConstants = pilfflonkInfo.nConstants;
 #ifdef __USE_CUDA__
-    // On the device first what does not need the fixed columns, while the .coefs may still be read.
+    // On the device first what does not need the fixed columns.
     if (gpu != nullptr) {
         deviceKey = std::make_unique<GpuAirKey>(*gpu, *this);
     }
@@ -707,6 +741,21 @@ void AirKey::loadFixed(const ConstantsSource &constants, GpuKey *gpu) {
                              " fixed columns of " + std::to_string(N) + " coefficients have " +
                              std::to_string(nConstants * N * FR_BYTES));
     }
+#ifdef __USE_CUDA__
+    if (deviceKey != nullptr && bytes.read) {
+        // Read and checked a half of the staging at a time, each half a whole number of coefficients.
+        deviceKey->loadFixedFrom([&](uint8_t *half, uint64_t at, uint64_t length) {
+            bytes.read(half, at, length);
+            const uint64_t count = length / FR_BYTES, first = firstNonCanonicalFr(half, count);
+            if (first < count) {
+                const uint64_t k = at / FR_BYTES + first;
+                failAir(airName, ".coefs: the coefficient " + std::to_string(k % N) + " of the fixed column " +
+                                     std::to_string(k / N) + " is not below r");
+            }
+        });
+        return;
+    }
+#endif
     const uint64_t total = nConstants * N;
     const uint64_t first = firstNonCanonicalFr(bytes.data, total);
     if (first < total) {
@@ -1015,27 +1064,33 @@ std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device devi
     }
     GlobalInfo info = GlobalInfo::load(dir + "/" + GLOBAL_INFO_FILE);
     const std::vector<AirFiles> files = airFilesOf(dir, info);
-    // Each AIR's .coefs on a thread of its own: the first one's from now, while the SRS is read and
-    // copied to the device, and each next one's from when the AIR before it reads its own, while that
-    // AIR's key is built (pilfflonk/docs/performance.md#loading-a-key-on-the-gpu).
+    // On the CPU each AIR's .coefs on a thread of its own: the first one's from now, while the SRS is
+    // read, and each next one's from when the AIR before it reads its own, while that AIR's key is built.
     auto readConstants = [&files](uint64_t i) {
         const std::string path = files[i].base + ".coefs";
         return std::async(std::launch::async, [path] { return readCoefs(path); });
     };
     std::future<Coefs> pending;
-    if (!files.empty()) {
+    if (!files.empty() && device != Device::Gpu) {
         pending = readConstants(0);
     }
     std::optional<KeyDigest> digest;
+    const std::string srsPath = srsPathOf(dir, info);
     TimerStart(PILFFLONK_LOAD_SRS);
     // Its points checked only on demand (pilfflonk_ctx_check_srs): the setup made it from a checked ptau.
-    Srs srs = Srs::load(srsPathOf(dir, info), false);
+    // On the GPU its powers [τ^i]₁ go from the file to the device, through the pinned staging: the host
+    // keeps only its header and [τ^i]₂.
+    std::unique_ptr<SrsPowersFile> powers;
+    if (device == Device::Gpu) {
+        powers = std::make_unique<SrsPowersFile>(srsPath);
+    }
+    Srs srs = powers ? Srs::loadWithoutG1(*powers) : Srs::load(srsPath, false);
     TimerStopAndLog(PILFFLONK_LOAD_SRS);
     std::shared_ptr<GpuKey> gpu;
 #ifdef __USE_CUDA__
     if (device == Device::Gpu) {
         TimerStart(PILFFLONK_GPU_SRS);
-        gpu = std::make_shared<GpuKey>(srs, options);
+        gpu = std::make_shared<GpuKey>(srs, options, powers.get());
         KeyDigest shiftDigest;
         gpu->addShiftSums(readShiftSums(shiftSumsPathOf(dir, info), &shiftDigest));
         digest = shiftDigest;
@@ -1049,18 +1104,32 @@ std::unique_ptr<ProvingKey> ProvingKey::load(const std::string &dir, Device devi
     for (uint64_t i = 0; i < files.size(); ++i) {
         PilfflonkInfo airInfo = PilfflonkInfo::load(files[i].base + ".pilfflonkinfo.json");
         ExpressionsBin bin = ExpressionsBin::load(files[i].base + ".bin");
-        const AirKey::ConstantsSource source = [&] {
+        const AirKey::ConstantsSource source = [&]() -> AirKey::ConstantsBytes {
+            const auto agree = [&](const KeyDigest &own) {
+                // Every precomputed file of one setup's: one digest.
+                if (!digest) {
+                    digest = own;
+                } else if (*digest != own) {
+                    throw FormatError(files[i].base + ".coefs and the key's other precomputed files (the shift sums or "
+                                                      "another AIR's .coefs) were made for different vkeys: rerun "
+                                                      "setup-pilfflonk");
+                }
+            };
+            if (device == Device::Gpu) {
+                const std::shared_ptr<CoefsFile> file = openCoefs(files[i].base + ".coefs");
+                agree(file->digest);
+                AirKey::ConstantsBytes bytes;
+                bytes.size = file->size;
+                bytes.read = [file](uint8_t *out, uint64_t at, uint64_t n) {
+                    preadInParallel(file->fd, out, n, PRECOMPUTED_HEADER_BYTES + at, "coefs", file->path);
+                };
+                return bytes;
+            }
             Coefs constants = pending.get();
             if (i + 1 < files.size()) {
                 pending = readConstants(i + 1);
             }
-            // Every precomputed file of one setup's: one digest.
-            if (!digest) {
-                digest = constants.digest;
-            } else if (*digest != constants.digest) {
-                throw FormatError(files[i].base + ".coefs and the key's other precomputed files (the shift sums or "
-                                                  "another AIR's .coefs) were made for different vkeys: rerun setup-pilfflonk");
-            }
+            agree(constants.digest);
             return ownedConstants(std::move(constants.bytes));
         };
         airs[files[i].airgroup].push_back(

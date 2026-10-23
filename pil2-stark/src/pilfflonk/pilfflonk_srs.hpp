@@ -5,12 +5,19 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "alt_bn128.hpp"
 
+namespace BinFileUtils {
+class BinFile;
+}
+
 namespace PilFflonk {
+
+class SrsPowersFile;
 
 using FrElement = AltBn128::Engine::FrElement;
 using G1Point = AltBn128::Engine::G1Point;
@@ -106,7 +113,15 @@ public:
     // Without `checkPoints`, its points are trusted (fromPtau checked them as the setup made it):
     // check() checks them later.
     static Srs load(const std::string &path, bool checkPoints = true);
-    void check(const std::string &source) const { checkPoints(source); }
+    // The SRS of `powers`' file without its powers [τ^i]₁, which a key on the GPU reads off the file
+    // straight into the device (GpuKey): g1(), commit() and save() throw std::logic_error on it, and
+    // check() reads them off the file. Throws as load does.
+    static Srs loadWithoutG1(const SrsPowersFile &powers);
+    // Its points' check (load's checkPoints); of an SRS without its powers [τ^i]₁, from the file.
+    void check(const std::string &source) const;
+
+    // Tells this SRS from any other, whatever moves it: a GpuKey's holds().
+    uint64_t serial() const { return id; }
 
     // The nG1 of the pilfflonk.srs.bin at `path`, from its header, checked as load checks it: no point
     // is read. Throws as load does.
@@ -120,7 +135,10 @@ public:
     uint64_t nG1() const { return nPowers; }
 
     // [τ^i]₁, for i < nG1().
-    const G1PointAffine &g1(uint64_t i) const { return g1Powers[i]; }
+    const G1PointAffine &g1(uint64_t i) const {
+        requireG1("g1");
+        return g1Powers[i];
+    }
 
     // [τ^i]₂, for i < N_G2.
     const G2PointAffine &g2(uint64_t i) const { return g2Powers[i]; }
@@ -138,6 +156,15 @@ public:
 
 private:
     explicit Srs(uint64_t nG1);
+    // Of nG1 powers [τ^i]₁ it does not hold.
+    Srs(uint64_t nG1, std::nullptr_t);
+
+    void requireG1(const char *function) const {
+        if (!g1Powers) {
+            throw std::logic_error(std::string("Srs::") + function +
+                                   ": this SRS's powers [τ^i]₁ are on the GPU only (loadWithoutG1)");
+        }
+    }
 
     // Throws std::invalid_argument, as commit() does, unless nCoefs <= nG1() and coefs is not null.
     void checkCommit(const FrElement *coefs, uint64_t nCoefs) const;
@@ -153,6 +180,32 @@ private:
     // it only reads them.
     std::unique_ptr<G1PointAffine[]> g1Powers;
     G2PointAffine g2Powers[N_G2];
+    // The file it was read from, which check() rereads without the powers [τ^i]₁.
+    std::string path;
+    uint64_t id;
+};
+
+// The powers [τ^i]₁ of a pilfflonk.srs.bin, read a range at a time: a key on the GPU reads them off
+// the file into its pinned staging, rather than through a host copy of all of them. Its header is
+// checked as Srs::load checks it. Throws as Srs::load does.
+class SrsPowersFile {
+public:
+    explicit SrsPowersFile(const std::string &path);
+    ~SrsPowersFile();
+    SrsPowersFile(const SrsPowersFile &) = delete;
+    SrsPowersFile &operator=(const SrsPowersFile &) = delete;
+
+    uint64_t nG1() const { return n; }
+    const std::string &filePath() const { return path; }
+    // `bytes` bytes of the powers, from byte `offset` of them, into `out`, on every OpenMP thread.
+    void read(void *out, uint64_t offset, uint64_t bytes) const;
+    // Its [1]₂ and [τ]₂.
+    void readG2(G2PointAffine *out) const;
+
+private:
+    std::string path;
+    uint64_t n = 0;
+    std::unique_ptr<BinFileUtils::BinFile> file;
 };
 
 // The ratio h of the GPU's shifted MSMs (GpuKey::commit): its i-th scalar is shifted by h^(i+1).

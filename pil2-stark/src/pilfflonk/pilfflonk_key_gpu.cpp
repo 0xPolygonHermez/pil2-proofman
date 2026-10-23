@@ -6,7 +6,9 @@
 #include <omp.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
+#include <new>
 #include <stdexcept>
 #include <utility>
 
@@ -223,6 +225,12 @@ void Staging::afterDefaultStream() {
 }
 
 void Staging::toDevice(void *dst, const void *src, uint64_t bytes) {
+    toDeviceFrom(dst, bytes, [src](uint8_t *half, uint64_t at, uint64_t n) {
+        hostCopy(half, static_cast<const uint8_t *>(src) + at, n);
+    });
+}
+
+void Staging::toDeviceFrom(void *dst, uint64_t bytes, const Fill &fill) {
     if (bytes == 0) {
         return;
     }
@@ -234,7 +242,7 @@ void Staging::toDevice(void *dst, const void *src, uint64_t bytes) {
         const uint64_t h = chunk & 1;
         // The half's previous copy is done before it is written again.
         pilfflonk_gpu_event_sync(done[h]);
-        hostCopy(halves[h], static_cast<const uint8_t *>(src) + at, n);
+        fill(halves[h], at, n);
         gpu_plonk_memcpy_h2d_async(static_cast<uint8_t *>(dst) + at, halves[h], n, stream);
         pilfflonk_gpu_event_record(done[h], stream);
     }
@@ -393,6 +401,7 @@ GpuBudget gpuBudget(const AirKey &air, uint32_t multiprocessors) {
     // What sppark's MSM allocates for the largest of a proof's MSMs (GpuKey::commit).
     for (uint64_t n : air.msmLengths()) {
         budget.transient = std::max(budget.transient, spparkMsmBytes(n, multiprocessors));
+        budget.longestMsm = std::max(budget.longestMsm, n);
     }
     budget.loading = loadScratchBytes(air);
     return budget;
@@ -472,7 +481,7 @@ uint64_t GpuKey::powersAndTablesBytes(uint64_t nG1) {
     return nG1 * sizeof(G1PointAffine) + (shiftBlocks(nG1) + 256) * sizeof(FrElement) + 2 * sizeof(uint64_t);
 }
 
-GpuKey::GpuKey(const Srs &srs, GpuKeyOptions _options) : options(_options) {
+GpuKey::GpuKey(const Srs &srs, GpuKeyOptions _options, const SrsPowersFile *powersFile) : options(_options) {
     if (!Gpu::available()) {
         throw std::invalid_argument("GpuKey: no GPU: CUDA sees no device of compute capability 7.0 or above (or no "
                                     "driver)");
@@ -494,10 +503,17 @@ GpuKey::GpuKey(const Srs &srs, GpuKeyOptions _options) : options(_options) {
     if (options.exclusive) {
         powersMemory = DeviceBuffer(powersBytes);
     }
+    // From the file, or from the Srs's own copy of them.
+    const Staging::Fill read = [&](uint8_t *half, uint64_t at, uint64_t length) {
+        if (powersFile != nullptr) {
+            powersFile->read(half, at, length);
+        } else {
+            hostCopy(half, reinterpret_cast<const uint8_t *>(&srs.g1(0)) + at, length);
+        }
+    };
     powers = std::make_unique<Gpu>(
-        &srs.g1(0), n, [this](void *dst, const void *src, uint64_t size) { transfers->toDevice(dst, src, size); },
-        powersMemory.data());
-    hostPowers = &srs.g1(0);
+        n, [&](void *dst, uint64_t size) { transfers->toDeviceFrom(dst, size, read); }, powersMemory.data());
+    srsSerial = srs.serial();
     tables = DeviceBuffer(bytes - powersBytes);
     hBlocks = tables.data();
     hPowers = tables.data() + nBlocks * sizeof(FrElement);
@@ -509,29 +525,33 @@ GpuKey::GpuKey(const Srs &srs, GpuKeyOptions _options) : options(_options) {
     held = bytes;
 }
 
-GpuKey::~GpuKey() {
-    if (image != nullptr) {
-        gpu_plonk_free_pinned_buffer(image);
-    }
-}
+GpuKey::~GpuKey() = default;
 
 void GpuKey::snapshot() const {
     if (!options.exclusive || !options.restorable) {
         return;
     }
+    // Not under a proof of the key: the Staging is one thread's at a time.
+    std::unique_lock<std::mutex> guard(leaseLock);
+    leaseFree.wait(guard, [this] { return !leased; });
     const DeviceScope device;
     gpu_plonk_cuda_device_sync();
-    if (image != nullptr) {
-        gpu_plonk_free_pinned_buffer(image);
-        image = nullptr;
-    }
+    image.reset();
     imageBytes = pool.bottom;
     TimerStart(PILFFLONK_GPU_SNAPSHOT);
-    gpu_plonk_cuda_malloc_pinned_buffer(&image, imageBytes);
-    gpu_plonk_memcpy_d2h(image, pool.base, imageBytes);
+    // Not on huge pages: faulted in after a proof, they compact memory synchronously (THP's defrag),
+    // which took 27-58 s for 4.3 GB. The staging's copy faults the 4 KB pages in on every thread.
+    void *bytes = std::malloc(imageBytes);
+    if (bytes == nullptr) {
+        throw std::bad_alloc();
+    }
+    image.reset(static_cast<uint8_t *>(bytes));
+    transfers->toHost(image.get(), pool.base, imageBytes);
     TimerStopAndLog(PILFFLONK_GPU_SNAPSHOT);
-    zklog.trace("pilfflonk: a pinned copy of the key's " + std::to_string(imageBytes) + " bytes in its buffer");
+    zklog.trace("pilfflonk: a copy of the key's " + std::to_string(imageBytes) + " bytes in its buffer");
 }
+
+void GpuKey::ImageFree::operator()(uint8_t *bytes) const { std::free(bytes); }
 
 void GpuKey::restore() const {
     if (image == nullptr) {
@@ -545,8 +565,8 @@ void GpuKey::restore() const {
     leaseFree.wait(guard, [this] { return !leased; });
     const DeviceScope device;
     TimerStart(PILFFLONK_GPU_RESTORE);
-    gpu_plonk_memcpy_h2d(pool.base, image, imageBytes);
-    volume.addToDevice(imageBytes);
+    transfers->toDevice(pool.base, image.get(), imageBytes);
+    gpu_plonk_cuda_device_sync();
     TimerStopAndLog(PILFFLONK_GPU_RESTORE);
 }
 
@@ -561,6 +581,30 @@ uint64_t GpuKey::available() const {
     return free;
 }
 
+namespace {
+// The fewest points an MSM is split into parts of: below, sppark's MSMs slow down by a third or more
+// (2^23 took 45% longer than one MSM of 2^25 on the blake3 wrap, 2^24 8%).
+constexpr uint64_t MSM_PART_BITS_MIN = 22;
+} // namespace
+
+uint64_t GpuKey::msmPartsFitting(const std::string &air, const GpuBudget &budget, uint64_t free) const {
+    if (budget.transient <= free || budget.longestMsm == 0) {
+        return 0;
+    }
+    for (uint64_t bits = 63 - static_cast<uint64_t>(__builtin_clzll(budget.longestMsm)); bits >= MSM_PART_BITS_MIN;
+         --bits) {
+        const uint64_t points = uint64_t(1) << bits;
+        if (points < budget.longestMsm && spparkMsmBytes(points, smCount) <= free) {
+            zklog.info("pilfflonk: " + air + "'s MSMs in parts of 2^" + std::to_string(bits) + " points: " +
+                       std::to_string(spparkMsmBytes(points, smCount)) + " bytes beside the buffer, of the " +
+                       std::to_string(free) + " free (the longest's whole " + std::to_string(budget.transient) +
+                       ")");
+            return points;
+        }
+    }
+    return 0;
+}
+
 void GpuKey::reserve(const std::string &air, const GpuBudget &budget) {
     if (arenaGiven() && budget.arena > options.arenaBytes) {
         throw std::invalid_argument(air + ": a proof on the GPU needs an arena of " + std::to_string(budget.arena) +
@@ -570,7 +614,14 @@ void GpuKey::reserve(const std::string &air, const GpuBudget &budget) {
     const uint64_t growth = !arenaGiven() && budget.arena > arenaBytes ? budget.arena - arenaBytes : 0;
     // With an arena given, the loading's scratch is beside it while the AIR loads.
     const uint64_t loading = arenaGiven() ? budget.loading : 0;
-    transient = std::max(transient, budget.transient);
+    // A proof's MSMs in parts where the scratch of the longest does not fit beside what is held.
+    const uint64_t others = options.exclusive ? 0 : budget.resident + growth + loading;
+    const uint64_t room = options.exclusive ? gpuFreeBytes() : available();
+    const uint64_t parts = msmPartsFitting(air, budget, room > others ? room - others : 0);
+    if (parts != 0) {
+        msmMostPoints = msmMostPoints == 0 ? parts : std::min(msmMostPoints, parts);
+    }
+    transient = std::max(transient, parts != 0 ? spparkMsmBytes(parts, smCount) : budget.transient);
     if (options.exclusive) {
         // In the buffer: the AIR's own and the arena's growth; beside it, a proof's transient.
         requireDeviceMemory(air + " (its fixed columns, bytecode and tables, " + std::to_string(budget.resident) +
@@ -621,12 +672,21 @@ G1Point GpuKey::commit(const void *base, const uint64_t *offsets, uint64_t k, ui
         throw std::logic_error("GpuKey::commit: no shift sum for MSMs of " + std::to_string(n) + " scalars");
     }
     pilfflonk_gpu_pack_shift(work, n, base, offsets, k, length, hBlocks, hPowers);
-    G1Point shifted = msmOnDevice(powers->devicePowers(), work, n);
     Engine &E = Engine::engine;
-    if (E.g1.isZero(shifted) && !allZero(work, n)) {
-        throw std::runtime_error("GpuKey::commit: the GPU's MSM of " + std::to_string(n) +
-                                 " points gave the point at infinity for shifted scalars that are not all zero: "
-                                 "msm_bn128_gpu_dev_ptr failed (or τ is a root of the shifted polynomial)");
+    // In parts of msmMostPoints where the device does not hold the longest's scratch (reserve). Each
+    // part's point at infinity is sppark's failure unless its own scalars are all zero.
+    const uint64_t most = msmMostPoints == 0 ? n : msmMostPoints;
+    G1Point shifted = E.g1.zero();
+    for (uint64_t at = 0; at < n; at += most) {
+        const uint64_t length = std::min(most, n - at);
+        void *scalars = static_cast<FrElement *>(work) + at;
+        G1Point part = msmOnDevice(static_cast<const G1PointAffine *>(powers->devicePowers()) + at, scalars, length);
+        if (E.g1.isZero(part) && !allZero(scalars, length)) {
+            throw std::runtime_error("GpuKey::commit: the GPU's MSM of " + std::to_string(length) +
+                                     " points gave the point at infinity for shifted scalars that are not all zero: "
+                                     "msm_bn128_gpu_dev_ptr failed (or τ is a root of the shifted polynomial)");
+        }
+        E.g1.add(shifted, shifted, part);
     }
     G1Point sum = shiftSum->second, result;
     E.g1.sub(result, shifted, sum);
@@ -745,6 +805,10 @@ GpuAirKey::GpuAirKey(GpuKey &_key, const AirKey &_air) : key(_key), air(_air), l
 GpuAirKey::~GpuAirKey() = default;
 
 void GpuAirKey::loadFixed(const uint8_t *coefficients) {
+    loadFixedFrom([coefficients](uint8_t *half, uint64_t at, uint64_t n) { hostCopy(half, coefficients + at, n); });
+}
+
+void GpuAirKey::loadFixedFrom(const Staging::Fill &fill) {
     if (fixedLoaded) {
         throw std::logic_error("GpuAirKey::loadFixed: " + air.name() + "'s fixed columns are loaded already");
     }
@@ -754,7 +818,7 @@ void GpuAirKey::loadFixed(const uint8_t *coefficients) {
         TimerStart(PILFFLONK_FIXED_UPLOAD);
         uint8_t *coefs = resident.data() + fixedOffset;
         Staging &staging = key.staging();
-        staging.toDevice(coefs, coefficients, nConstants * N * sizeof(FrElement));
+        staging.toDeviceFrom(coefs, nConstants * N * sizeof(FrElement), fill);
         pilfflonk_gpu_to_montgomery(coefs, nConstants * N);
         // Their counts only: the coefficients stay on the device, and go to the host on demand
         // (fixedToHost).
