@@ -201,6 +201,7 @@ struct GpuBudget {
     uint64_t loading = 0;   // the scratch of the AIR's loading (loadScratchBytes): in the arena, or
                             // beside it while the AIR loads if the arena is given
     uint64_t longestMsm = 0; // the points of its longest MSM, of which `transient` is the scratch
+    uint64_t leastTransient = 0; // `transient` with the MSMs in the smallest parts (GpuKey::msmPartsFitting)
 };
 
 // The budget of `air` on a device of `multiprocessors` SMs. `resident` counts the device memory of its
@@ -216,8 +217,8 @@ uint64_t loadScratchBytes(const AirKey &air);
 // needs on a device of `multiprocessors` SMs, as GpuKey and its AIRs (GpuAirKey) reserve it
 // (DeviceBytes): the arena of the largest proof, and beside a given arena the most the key holds and
 // allocates as each AIR loads, the SRS's powers and tables (GpuKey::powersAndTablesBytes), the
-// resident bytes of the AIRs so far, the loading's scratch of the AIR and the most a proof of them
-// allocates besides (GpuBudget), what GpuKey::reserve checks against the free memory.
+// resident bytes of the AIRs so far, the loading's scratch of the AIR and the least a proof of them
+// allocates besides (GpuBudget::leastTransient), what GpuKey::reserve checks against the free memory.
 DeviceBytes deviceBytesOf(uint64_t nG1, const std::vector<const AirKey *> &airs, uint32_t multiprocessors);
 
 // The multiprocessors of the device a GpuKey uses, device 0, and its free memory in bytes

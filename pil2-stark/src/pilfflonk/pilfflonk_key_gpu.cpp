@@ -400,6 +400,12 @@ uint64_t spparkMsmBytes(uint64_t n, uint32_t multiprocessors) {
     return pooled(blob) + pooled(temp);
 }
 
+namespace {
+// The fewest points an MSM is split into parts of: below, sppark's MSMs slow down by a third or more
+// (2^23 took 45% longer than one MSM of 2^25 on the blake3 wrap, 2^24 8%).
+constexpr uint64_t MSM_PART_BITS_MIN = 22;
+} // namespace
+
 GpuBudget gpuBudget(const AirKey &air, uint32_t multiprocessors) {
     GpuBudget budget;
     budget.resident = residentLayout(air).bytes + ExpressionsGpu::deviceBytesOf(air.bin(), air.info(), multiprocessors);
@@ -409,6 +415,8 @@ GpuBudget gpuBudget(const AirKey &air, uint32_t multiprocessors) {
         budget.transient = std::max(budget.transient, spparkMsmBytes(n, multiprocessors));
         budget.longestMsm = std::max(budget.longestMsm, n);
     }
+    budget.leastTransient =
+        spparkMsmBytes(std::min(budget.longestMsm, uint64_t(1) << MSM_PART_BITS_MIN), multiprocessors);
     budget.loading = loadScratchBytes(air);
     return budget;
 }
@@ -417,15 +425,16 @@ uint64_t loadScratchBytes(const AirKey &air) { return aligned(air.info().nConsta
 
 DeviceBytes deviceBytesOf(uint64_t nG1, const std::vector<const AirKey *> &airs, uint32_t multiprocessors) {
     // AIR after AIR, as a key on a given arena checks each before it loads (GpuKey::reserve): what it
-    // holds, and the AIR's resident bytes, its loading's scratch and the most a proof allocates
-    // besides, of the AIRs so far.
+    // holds, and the AIR's resident bytes, its loading's scratch and the least a proof allocates
+    // besides (its MSMs in the smallest parts, which reserve splits them into if no larger fits), of
+    // the AIRs so far.
     DeviceBytes bytes;
     uint64_t held = GpuKey::powersAndTablesBytes(nG1), transient = 0;
     bytes.beside = held;
     for (const AirKey *air : airs) {
         const GpuBudget budget = gpuBudget(*air, multiprocessors);
         bytes.arena = std::max(bytes.arena, budget.arena);
-        transient = std::max(transient, budget.transient);
+        transient = std::max(transient, budget.leastTransient);
         bytes.beside = std::max(bytes.beside, held + budget.resident + budget.loading + transient);
         held += budget.resident;
     }
@@ -586,12 +595,6 @@ uint64_t GpuKey::available() const {
     }
     return free;
 }
-
-namespace {
-// The fewest points an MSM is split into parts of: below, sppark's MSMs slow down by a third or more
-// (2^23 took 45% longer than one MSM of 2^25 on the blake3 wrap, 2^24 8%).
-constexpr uint64_t MSM_PART_BITS_MIN = 22;
-} // namespace
 
 uint64_t GpuKey::msmPartsFitting(const std::string &air, const GpuBudget &budget, uint64_t free) const {
     if (budget.transient <= free || budget.longestMsm == 0) {

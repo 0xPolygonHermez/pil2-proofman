@@ -63,7 +63,7 @@ struct GpuKeyOptions {
 // allocates beside that buffer: the SRS's powers and the tables of the MSMs' shift, each AIR's fixed
 // columns' coefficients, bytecode and interpreter, the scratch of an AIR's loading (which it
 // allocates while the AIR loads, as it never writes a given arena then) and what a proof allocates
-// besides (sppark's MSM). A key loads on a given arena with a memoryLimit (or free memory) of
+// besides (sppark's MSM, in the smallest parts GpuKey splits it into). A key loads on a given arena with a memoryLimit (or free memory) of
 // `beside`, and not of one byte less; on its own arena, which holds its loading's scratch, with
 // arena + beside at most.
 struct DeviceBytes {

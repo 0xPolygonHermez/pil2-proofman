@@ -384,7 +384,7 @@ Srs Srs::loadWithoutG1(const SrsPowersFile &powers) {
 
 void Srs::check(const std::string &source) const {
     if (!g1Powers) {
-        // Its powers are the file's, which load checks.
+        // Its powers went from the file at `path` to the device: the file's are checked, not the device's.
         (void)Srs::load(path, true);
         return;
     }
