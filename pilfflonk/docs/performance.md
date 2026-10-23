@@ -435,12 +435,12 @@ In `prove-snark` with pilfflonk on the GPU, the key's device memory is in the wr
   where pilfflonk proves. The wrap runs under proofman's process-wide `PROVING`, so no proofman job
   runs meanwhile, and drops the streams' cached const pols there after it. The recursivef of a
   poseidon key carves the buffer from its start, as for PLONK, its BN128 trees' nodes included, over
-  the key: a preloaded key keeps a pinned host copy of its part and writes it back while the host
+  the key: a preloaded key keeps a host copy of its part (pageable memory) and writes it back while the host
   computes the wrap's witness, after the recursivef. The wrapper re-uploads the STARK's fixed columns
   the recursivef overwrote (`reload_fixed_pols_gpu`): the flag is set as each wrap's proof ends,
   whatever its outcome, as a proof that fails may have written the buffer too. Beside the buffer
   there is only sppark's MSM pool, within proofman's one post-allocation headroom
-  (`POST_ALLOC_HEADROOM_BYTES`, 756 MiB);
+  (`POST_ALLOC_HEADROOM_BYTES`, 1 GiB);
 - without (`prove-snark`): the key's proofs keep their arena in the recursivef's prover buffer
   (`pilfflonk_wrap::wrap_arena`), as rapidsnark's PLONK prover is carved out of it by
   `pre_allocate_final_snark_prover_c`, which the wrapper now holds for its life, grown to the arena

@@ -87,7 +87,15 @@ Gpu::Gpu(uint64_t n, const Fill &fill, void *at) {
         devicePoints = at;
     }
     nDevicePoints = n;
-    fill(devicePoints, n * sizeof(G1PointAffine));
+    try {
+        fill(devicePoints, n * sizeof(G1PointAffine));
+    } catch (...) {
+        // A constructor that throws runs no destructor.
+        if (owned) {
+            gpu_plonk_cuda_free(devicePoints);
+        }
+        throw;
+    }
 }
 
 Gpu::~Gpu() {
