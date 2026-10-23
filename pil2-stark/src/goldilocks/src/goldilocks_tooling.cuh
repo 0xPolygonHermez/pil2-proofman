@@ -799,7 +799,7 @@ struct DeviceCommitBuffers
     // The headroom is kept free after the unified buffer (PROOFMAN_GPU_HEADROOM_MB overrides it): the
     // allocations after it, and a final SNARK's sppark MSM pool (pilfflonk's key is in the buffer).
     static constexpr uint64_t MOPS_FLOOR_BYTES = 6ull << 30;
-    static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 756ull << 20;
+    static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 1024ull << 20;
 
     // Witness prefetch zone, one per GPU (the unified buffer's prefetch region): a witness is
     // uploaded on the zone's copy stream ahead of its commit or proof, which consumes it with one

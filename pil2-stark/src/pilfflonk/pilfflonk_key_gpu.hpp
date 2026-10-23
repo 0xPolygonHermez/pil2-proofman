@@ -16,6 +16,7 @@
 
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -86,7 +87,7 @@ private:
 // below a MiB) while the other half's copy to or from the device runs. Each copy waits for the work
 // the default stream has before it, and the default stream's work after an upload waits for the
 // upload. Every copy is counted in `volume`. Not safe from several threads at once: the holder of a
-// GpuKey's Lease, or the key's loading, uses it.
+// GpuKey's Lease, the key's loading, or its snapshot or restore (which wait for no Lease) uses it.
 class Staging {
 public:
     Staging(uint64_t halfBytes, CopyVolume &volume);
@@ -96,6 +97,11 @@ public:
 
     // `bytes` bytes from host `src` to device `dst`. Returns once src may change.
     void toDevice(void *dst, const void *src, uint64_t bytes);
+    // Writes `n` bytes of the source, from byte `at` of it, into the pinned half `half`.
+    using Fill = std::function<void(uint8_t *half, uint64_t at, uint64_t n)>;
+    // toDevice of `bytes` bytes that `fill` writes a half at a time, while the other half's copy to
+    // the device runs: a source read straight into the pinned halves (SrsPowersFile).
+    void toDeviceFrom(void *dst, uint64_t bytes, const Fill &fill);
     // `bytes` bytes from device `src` to host `dst`. Returns once they are there.
     void toHost(void *dst, const void *src, uint64_t bytes);
 
@@ -194,6 +200,7 @@ struct GpuBudget {
     uint64_t transient = 0; // what a proof allocates besides, while it runs
     uint64_t loading = 0;   // the scratch of the AIR's loading (loadScratchBytes): in the arena, or
                             // beside it while the AIR loads if the arena is given
+    uint64_t longestMsm = 0; // the points of its longest MSM, of which `transient` is the scratch
 };
 
 // The budget of `air` on a device of `multiprocessors` SMs. `resident` counts the device memory of its
@@ -258,7 +265,9 @@ public:
     // Copies the powers [τ^i]₁ of `srs` to the device, through the pinned Staging, and builds the
     // shift's tables. Throws std::invalid_argument if there is no GPU (Gpu::available) or they do not
     // fit in its memory.
-    explicit GpuKey(const Srs &srs, GpuKeyOptions options = GpuKeyOptions());
+    // With `powers`, of an SRS without its powers [τ^i]₁ on the host (Srs::loadWithoutG1): they go
+    // from its file through the pinned Staging, a half at a time.
+    explicit GpuKey(const Srs &srs, GpuKeyOptions options = GpuKeyOptions(), const SrsPowersFile *powers = nullptr);
     ~GpuKey();
     GpuKey(const GpuKey &) = delete;
     GpuKey &operator=(const GpuKey &) = delete;
@@ -270,7 +279,7 @@ public:
     uint64_t nPowers() const { return powers->nPoints(); }
     // Whether these are the powers [τ^i]₁ of `srs`: the key was made from it (or from the Srs it was
     // moved from), whose powers it copied.
-    bool holds(const Srs &srs) const { return &srs.g1(0) == hostPowers; }
+    bool holds(const Srs &srs) const { return srs.serial() == srsSerial; }
     uint32_t multiprocessors() const { return smCount; }
     CopyVolume &copies() const { return volume; }
     // The bytes the key holds on the device, its arena included if it is its own.
@@ -285,6 +294,9 @@ public:
     // not the memory (requireDeviceMemory), or the arena given in the options is smaller than a
     // proof's.
     void reserve(const std::string &air, const GpuBudget &budget);
+    // The points of the parts `air`'s MSMs split into, so that their scratch fits `free` bytes, 0 if
+    // the longest's whole does (or none of at least 2^MSM_PART_BITS_MIN does: reserve then refuses).
+    uint64_t msmPartsFitting(const std::string &air, const GpuBudget &budget, uint64_t free) const;
     // While the key loads: the shift's sums Σ_{i<n} ρ_i·[τ^i]₁ of commit's MSMs, the setup's.
     void addShiftSums(const std::map<uint64_t, G1Point> &sums) { shiftSums.insert(sums.begin(), sums.end()); }
     bool hasShiftSum(uint64_t n) const { return shiftSums.count(n) != 0; }
@@ -350,12 +362,20 @@ private:
     mutable CopyVolume volume;
     uint32_t smCount = 0;
     uint64_t held = 0;
-    uint64_t transient = 0; // the most of the AIRs' GpuBudget::transient
+    uint64_t transient = 0; // the most of the AIRs' GpuBudget::transient, or of their MSMs' parts
+    // The most points of an MSM, 0 for no bound: MSMs in parts of that many where the device does not
+    // hold the scratch of the longest (reserve).
+    uint64_t msmMostPoints = 0;
     DeviceBuffer powersMemory; // of an exclusive buffer
-    mutable void *image = nullptr; // snapshot's pinned copy of the pool's own bytes
+    // The snapshot's copy of the pool's own bytes, in pageable memory: its copies go through the
+    // pinned Staging, and a restore runs while the host computes the witness, which hides it.
+    struct ImageFree {
+        void operator()(uint8_t *bytes) const;
+    };
+    mutable std::unique_ptr<uint8_t, ImageFree> image;
     mutable uint64_t imageBytes = 0;
     std::unique_ptr<Gpu> powers;
-    const G1PointAffine *hostPowers = nullptr; // those of the Srs it copied
+    uint64_t srsSerial = 0; // of the Srs it copied
     DeviceBuffer tables;    // h^(256·b), h^t, then a 64-bit 0 (an offset) and a 64-bit count
     const void *hBlocks = nullptr;
     const void *hPowers = nullptr;
@@ -412,6 +432,8 @@ public:
     // the device, where they stay, in Montgomery form, and the counts of their coefficients back.
     // Throws std::logic_error if called twice.
     void loadFixed(const uint8_t *coefficients);
+    // loadFixed of coefficients that `fill` writes into the pinned staging, a half at a time.
+    void loadFixedFrom(const Staging::Fill &fill);
 
     const GpuKey &gpuKey() const { return key; }
     const AirKey &airKey() const { return air; }

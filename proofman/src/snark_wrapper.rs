@@ -538,6 +538,10 @@ impl<F: PrimeField64> PoseidonWrap<F> {
         // One proof at a time (`proving`), until this one is out. A proof that panicked poisons the
         // lock, and the next one takes it all the same: each proof writes its buffers afresh.
         let pilfflonk_prover = self.proving.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Not preloaded, the key loads after the recursivef: its files come into the page cache meanwhile.
+        if let (FinalSnarkKey::Pilfflonk(pilfflonk_key), None) = (&self.final_snark_key, pilfflonk_prover.as_ref()) {
+            pilfflonk_wrap::prefetch_key_files(pilfflonk_key, &self.setup_snark_path);
+        }
         // On a shared buffer the caller, ProofMan::generate_final_snark_proof, holds the process-wide
         // PROVING throughout: no ProofMan job or reset runs while recursiveF and the snark write it.
 
@@ -835,15 +839,18 @@ impl Blake3Wrap {
         .map_err(|e| ProofmanError::InvalidProof(e.to_string()))?;
         // The caller, ProofMan::generate_final_snark_proof, holds the process-wide PROVING throughout.
         let _aux = pilfflonk_wrap::AuxAreaUse::new(self.d_buffers);
-        let loaded;
-        let prover = match &self.prover {
-            Some(prover) => prover,
-            None => {
-                loaded = self.load(false)?;
-                &loaded
+        let (snark_proof_bytes, snark_publics_bytes) = match &self.prover {
+            Some(prover) => prover.prove_zkin(&zkin)?,
+            // On the GPU the key loads while the host computes the witness.
+            None if self.gpu => {
+                let buffer = self.d_buffers.map(pilfflonk_wrap::unified_buffer).transpose()?;
+                // SAFETY: as `load`'s: proofman's buffer is idle while this proof runs.
+                unsafe {
+                    pilfflonk_wrap::load_and_prove_zkin(&self.setup_snark_path, &self.pilfflonk_key, buffer, &zkin)
+                }?
             }
+            None => self.load(false)?.prove_zkin(&zkin)?,
         };
-        let (snark_proof_bytes, snark_publics_bytes) = prover.prove_zkin(&zkin)?;
         let vadcop_publics = recursivef_proof.public_values.get(4..).unwrap_or_default();
         let verkey = verkey_override.unwrap_or(&self.vadcop_final_verkey);
         check_snark_public_digest(&self.publics_info, vadcop_publics, verkey, &snark_publics_bytes)?;
@@ -921,6 +928,16 @@ impl<F: PrimeField64> SnarkWrapper<F> {
             .ok()
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
             .is_some_and(|si| si["starkStruct"]["verificationHashType"].as_str() == Some("GL"))
+    }
+
+    /// Of a blake3 key not preloaded, its pilfflonk key's files into the page cache, on a thread of
+    /// their own, while the caller proves the recursivef the SNARK wraps.
+    pub(crate) fn prefetch_key(&self) {
+        if let Wrap::Blake3(wrap) = &self.inner {
+            if wrap.prover.is_none() {
+                pilfflonk_wrap::prefetch_key_files(&wrap.pilfflonk_key, &wrap.setup_snark_path);
+            }
+        }
     }
 
     /// Of a blake3 key, the starkinfo and the verkey of the recursivef its SNARK's circuit verifies.

@@ -649,10 +649,8 @@ void testTheGpuIsTheCpu() {
     }
 
     // What a Gpu refuses, before it copies anything.
-    Engine::G1PointAffine generator = E.g1.oneAffine();
-    const Gpu::Upload none = [](void *, const void *, uint64_t) { assert(false); };
-    expectInvalid([&] { Gpu(nullptr, 1, none); }, "Gpu::Gpu: points is null");
-    expectInvalid([&] { Gpu(&generator, 0, none); }, "Gpu::Gpu: no points");
+    const Gpu::Fill none = [](void *, uint64_t) { assert(false); };
+    expectInvalid([&] { Gpu(0, none); }, "Gpu::Gpu: no points");
 #else
     // A library built without the GPU: nothing to compare (pilfflonk_gpu_test.cpp tests the refusal).
     assert(!PilFflonk::gpuAvailable());

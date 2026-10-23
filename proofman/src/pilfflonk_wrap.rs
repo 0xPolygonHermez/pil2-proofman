@@ -22,7 +22,7 @@
 use std::ffi::c_void;
 use std::path::Path;
 
-use pilfflonk_wrap_witness::{WrapArtifacts, WrapWitness};
+use pilfflonk_wrap_witness::{DeviceWitness, WrapArtifacts, WrapWitness};
 use proofman_common::{ProofmanError, ProofmanResult};
 use proofman_pilfflonk::{
     gpu_device_bytes, gpu_free_bytes, js_verifier, prove, prove_exec, Device, DeviceBytes, FrBytes, JsonFile, Proof,
@@ -231,11 +231,7 @@ impl PilfflonkWrapProver {
         let shape = key.witness_shape().map_err(|e| invalid_key(proving_key, e))?;
         let witness = witness?;
         if on_gpu {
-            // The parts every proof's witness shares, on the device once; then all of the key is there.
-            if let (Some(exec), [air]) = (witness.exec_static(), shape.airs()) {
-                let air = proofman_pilfflonk::AirInstanceRef { airgroup_id: air.airgroup_id, air_id: air.air_id };
-                key.set_exec(air, &exec).map_err(|e| invalid_key(proving_key, e))?;
-            }
+            set_exec(&key, &witness, &shape, proving_key)?;
             if restorable {
                 key.snapshot_device().map_err(|e| invalid_key(proving_key, e))?;
             }
@@ -270,12 +266,7 @@ impl PilfflonkWrapProver {
                 ProofmanError::InvalidProof(format!("The pilfflonk wrap's witness cannot be computed: {e}"))
             })?;
             timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
-            timer_start_info!(CALCULATE_FINAL_PROOF);
-            let output =
-                prove_exec(&self.key, device.air, device.exec(), device.publics.clone(), &ProveOptions::default())
-                    .map_err(|e| ProofmanError::InvalidProof(format!("The pilfflonk prover failed: {e}")))?;
-            timer_stop_and_log_info!(CALCULATE_FINAL_PROOF);
-            return Ok((output.proof.to_bytes(), publics_to_bytes(&output.publics)));
+            return prove_device(&self.key, &device);
         }
         timer_start_info!(CALCULATE_FINAL_WITNESS);
         let witness = self.witness.witness_from_zkin(&self.shape, zkin).map_err(|e| {
@@ -342,6 +333,109 @@ pub(crate) unsafe fn check_wrap_witness(
         .map_err(|e| invalid_key(proving_key, e))?;
     wrap_witness(&load_wrap_witness(setup_snark_path)?, &shape, recursivef_proof)?;
     Ok(())
+}
+
+/// The pilfflonk proof of the zkin `zkin`, on the GPU, of the key at `proving_key` not preloaded: the
+/// key loads into `buffer` (or into memory of its own) while, on a thread of its own, the host reads
+/// the wrap's witness files and computes the witness, which takes only the key's files (its shape).
+///
+/// # Safety
+///
+/// As [`PilfflonkWrapProver::load_on`]'s `buffer`, which this proof uses until it returns.
+pub(crate) unsafe fn load_and_prove_zkin(
+    setup_snark_path: &Path,
+    proving_key: &Path,
+    buffer: Option<WrapArena>,
+    zkin: &serde_json::Value,
+) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
+    timer_start_info!(INITIALIZING_FINAL_SNARK_PROVER);
+    let files = ProvingKeyFiles::read(proving_key).map_err(|e| invalid_key(proving_key, e))?;
+    let shape = files.witness_shape().map_err(|e| invalid_key(proving_key, e))?;
+    let (key, witness) = std::thread::scope(|scope| {
+        let witness = scope.spawn(|| {
+            let witness = load_wrap_witness(setup_snark_path)?;
+            timer_start_info!(CALCULATE_FINAL_WITNESS);
+            let device = witness.device_witness(&shape, zkin).map_err(|e| {
+                ProofmanError::InvalidProof(format!("The pilfflonk wrap's witness cannot be computed: {e}"))
+            })?;
+            timer_stop_and_log_info!(CALCULATE_FINAL_WITNESS);
+            Ok::<_, ProofmanError>((witness, device))
+        });
+        let key = match buffer {
+            // SAFETY: the caller's, as this function's contract says.
+            Some(b) => unsafe { files.load_in_device_buffer(b.buffer, b.bytes, false) },
+            None => files.load_on(Device::Gpu),
+        }
+        .map_err(|e| invalid_key(proving_key, e));
+        (key, witness.join().expect("the wrap witness's thread panicked"))
+    });
+    let key = key?;
+    let (witness, device) = witness?;
+    set_exec(&key, &witness, &shape, proving_key)?;
+    timer_stop_and_log_info!(INITIALIZING_FINAL_SNARK_PROVER);
+    prove_device(&key, &device)
+}
+
+/// The parts every proof's witness of a blake3 wrap shares, on the device once: then all of the key is
+/// there.
+fn set_exec(key: &ProvingKey, witness: &WrapWitness, shape: &WitnessShape, proving_key: &Path) -> ProofmanResult<()> {
+    if let (Some(exec), [air]) = (witness.exec_static(), shape.airs()) {
+        let air = proofman_pilfflonk::AirInstanceRef { airgroup_id: air.airgroup_id, air_id: air.air_id };
+        key.set_exec(air, &exec).map_err(|e| invalid_key(proving_key, e))?;
+    }
+    Ok(())
+}
+
+/// The proof, on the GPU, of the witness `device` built from its parts: its bytes and its publics'.
+fn prove_device(key: &ProvingKey, device: &DeviceWitness) -> ProofmanResult<(Vec<u8>, Vec<u8>)> {
+    timer_start_info!(CALCULATE_FINAL_PROOF);
+    let output = prove_exec(key, device.air, device.exec(), device.publics.clone(), &ProveOptions::default())
+        .map_err(|e| ProofmanError::InvalidProof(format!("The pilfflonk prover failed: {e}")))?;
+    timer_stop_and_log_info!(CALCULATE_FINAL_PROOF);
+    Ok((output.proof.to_bytes(), publics_to_bytes(&output.publics)))
+}
+
+/// Reads, on a thread of its own, the files a load of the pilfflonk key at `pilfflonk_key` and of
+/// the wrap's witness at `setup_snark_path` reads, into the page cache: the proof before a wrap
+/// evicts them, and a load would read them off the disk. Called before the recursivef, which takes
+/// longer than the reading. Not the `.const`s, which only the setup reads.
+pub(crate) fn prefetch_key_files(pilfflonk_key: &Path, setup_snark_path: &Path) {
+    fn collect(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let (Ok(kind), path) = (entry.file_type(), entry.path()) else { continue };
+            // Not through a symlinked directory, which could loop.
+            if kind.is_dir() {
+                collect(&path, files);
+            } else if path.is_file() && path.extension().is_none_or(|ext| ext != "const") {
+                files.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    collect(pilfflonk_key, &mut files);
+    let witness = WrapArtifacts::with_stem(setup_snark_path);
+    files.extend([witness.witness_calculator, witness.dat, witness.exec]);
+    let spawned = std::thread::Builder::new().name("pilfflonk-prefetch".into()).spawn(move || {
+        use std::io::Read;
+        let start = std::time::Instant::now();
+        let mut buffer = vec![0u8; 16 << 20];
+        let mut bytes = 0u64;
+        for path in files {
+            let Ok(mut file) = std::fs::File::open(&path) else { continue };
+            while let Ok(n @ 1..) = file.read(&mut buffer) {
+                bytes += n as u64;
+            }
+        }
+        tracing::debug!(
+            "pilfflonk: {} MB of the key's files prefetched in {:.3} s",
+            bytes >> 20,
+            start.elapsed().as_secs_f64()
+        );
+    });
+    if let Err(e) = spawned {
+        tracing::warn!("the pilfflonk key's files are not prefetched: {e}");
+    }
 }
 
 /// The witness calculator and exec of the stem `setup_snark_path`.

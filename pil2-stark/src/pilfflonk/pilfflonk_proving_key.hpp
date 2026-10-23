@@ -175,6 +175,9 @@ public:
         const uint8_t *data = nullptr;
         uint64_t size = 0;
         std::unique_ptr<uint8_t[]> owner;
+        // Instead of `data`, on the GPU: writes `n` of the `size` bytes, from byte `at`, into `out`, the
+        // .coefs read straight into the pinned staging rather than through a host copy of all of it.
+        std::function<void(uint8_t *out, uint64_t at, uint64_t n)> read;
     };
     using ConstantsSource = std::function<ConstantsBytes()>;
 
@@ -349,12 +352,11 @@ public:
     // The vkey is not read: the digest the transcript absorbs is the orchestrator's
     // (pilfflonk/docs/protocol.md#transcript), which reads and checks the vkey. Throws IoError and
     // FormatError, and FormatError if an AIR's layout needs more powers [τ^i]₁ than the SRS holds
-    // or its pilfflonkinfo is not the globalInfo's AIR. On Device::Gpu, the SRS's powers [τ^i]₁ are
-    // copied to the GPU once they are read, each AIR's key is on it (AirKey's `gpu`) with `options`,
-    // and its proofs run there; the proofs are the same bit for bit.
-    // Each AIR's .const is read on a thread of its own, from the SRS's read on, the next one's while
-    // an AIR's key is built (AirKey's ConstantsSource): it overlaps the SRS's copy to the device and,
-    // on the GPU, the AIR's work before its fixed columns (pilfflonk/docs/performance.md#loading-a-key-on-the-gpu).
+    // or its pilfflonkinfo is not the globalInfo's AIR. On Device::Gpu, each AIR's key is on the GPU
+    // (AirKey's `gpu`) with `options`, and its proofs run there; the proofs are the same bit for bit.
+    // There the SRS's powers [τ^i]₁ and each AIR's .coefs go from their files to the device through
+    // the pinned staging, a half at a time, with no host copy of them; on the CPU each .coefs is read
+    // on a thread of its own, the next one's while an AIR's key is built (AirKey's ConstantsSource).
     // Throws std::invalid_argument before it reads anything if there is no GPU (gpuAvailable()), in
     // a library built without one or on a machine without one, and as AirKey's constructor if the
     // device has not the memory of the key and a proof of each AIR, or the arena given in `options` is

@@ -7,6 +7,7 @@
 #include <omp.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -105,7 +106,8 @@ void readSection(BinFile &file, const std::string &path, uint32_t id, void *out,
 // section up and preads into its buffer, writing nothing of the BinFile, so the chunks are read
 // together; a chunk's failure is caught in its thread (where readSectionToParallel would abort the
 // process) and rethrown here, the lowest chunk's.
-void readSectionInParallel(BinFile &file, const std::string &path, uint32_t id, void *out, uint64_t bytes) {
+void readSectionInParallel(BinFile &file, const std::string &path, uint32_t id, void *out, uint64_t bytes,
+                           uint64_t from = 0) {
     constexpr uint64_t CHUNK = uint64_t(1) << 23;
     const uint64_t nChunks = (bytes + CHUNK - 1) / CHUNK;
     uint64_t failedChunk = nChunks;
@@ -114,7 +116,8 @@ void readSectionInParallel(BinFile &file, const std::string &path, uint32_t id, 
     for (uint64_t c = 0; c < nChunks; ++c) {
         const uint64_t offset = c * CHUNK;
         try {
-            readSection(file, path, id, static_cast<uint8_t *>(out) + offset, std::min(CHUNK, bytes - offset), offset);
+            readSection(file, path, id, static_cast<uint8_t *>(out) + offset, std::min(CHUNK, bytes - offset),
+                        from + offset);
         } catch (...) {
 #pragma omp critical(pilfflonk_srs_read)
             if (c < failedChunk) {
@@ -314,7 +317,16 @@ PtauHeader readPtauHeader(const std::string &path) {
 #endif
 }
 
-Srs::Srs(uint64_t nG1) : nPowers(nG1), g1Powers(new G1PointAffine[nG1]) {}
+namespace {
+uint64_t nextSerial() {
+    static std::atomic<uint64_t> serials{0};
+    return ++serials;
+}
+} // namespace
+
+Srs::Srs(uint64_t nG1) : nPowers(nG1), g1Powers(new G1PointAffine[nG1]), id(nextSerial()) {}
+
+Srs::Srs(uint64_t nG1, std::nullptr_t) : nPowers(nG1), id(nextSerial()) {}
 
 Srs Srs::fromPtau(const std::string &ptauPath, uint64_t nG1) {
     if (nG1 == 0) {
@@ -355,11 +367,51 @@ Srs Srs::load(const std::string &path, bool checkPoints) {
     Srs srs(nG1);
     readSectionInParallel(*file, path, SRS_G1_SECTION, srs.g1Powers.get(), nG1 * SRS_G1_BYTES);
     readSection(*file, path, SRS_G2_SECTION, srs.g2Powers, N_G2 * SRS_G2_BYTES);
+    srs.path = path;
     if (checkPoints) {
         srs.checkPoints(path);
     }
     return srs;
 #endif
+}
+
+Srs Srs::loadWithoutG1(const SrsPowersFile &powers) {
+    Srs srs(powers.nG1(), nullptr);
+    powers.readG2(srs.g2Powers);
+    srs.path = powers.filePath();
+    return srs;
+}
+
+void Srs::check(const std::string &source) const {
+    if (!g1Powers) {
+        // Its powers are the file's, which load checks.
+        (void)Srs::load(path, true);
+        return;
+    }
+    checkPoints(source);
+}
+
+SrsPowersFile::SrsPowersFile(const std::string &_path) : path(_path) {
+#ifndef __USE_ASSEMBLY__
+    throw std::runtime_error("the SRS needs ffiasm's assembly backend, not built on this platform");
+#else
+    file = openBinFile(path, SRS_TYPE, SRS_VERSION);
+    n = checkedSrsHeader(*file, path);
+#endif
+}
+
+SrsPowersFile::~SrsPowersFile() = default;
+
+void SrsPowersFile::read(void *out, uint64_t offset, uint64_t bytes) const {
+    if (offset + bytes > n * SRS_G1_BYTES) {
+        throw std::invalid_argument("SrsPowersFile::read: bytes [" + std::to_string(offset) + ", " +
+                                    std::to_string(offset + bytes) + ") of " + std::to_string(n * SRS_G1_BYTES));
+    }
+    readSectionInParallel(*file, path, SRS_G1_SECTION, out, bytes, offset);
+}
+
+void SrsPowersFile::readG2(G2PointAffine *out) const {
+    readSection(*file, path, SRS_G2_SECTION, out, Srs::N_G2 * SRS_G2_BYTES);
 }
 
 uint64_t Srs::powersIn(const std::string &path) {
@@ -372,6 +424,7 @@ uint64_t Srs::powersIn(const std::string &path) {
 }
 
 void Srs::save(const std::string &path) const {
+    requireG1("save");
     const std::string temporary = path + ".tmp";
     // BinFileWriter never checks the std::ofstream it writes to, so it cannot fail. The file is
     // created here first, where a failure comes with an errno, and its size checked once written:
@@ -426,6 +479,7 @@ void Srs::save(const std::string &path) const {
 }
 
 void Srs::checkPoints(const std::string &source) const {
+    requireG1("checkPoints");
     Engine &E = Engine::engine;
     const uint64_t invalidG1 = firstInvalidG1(g1Powers.get(), nPowers);
     if (invalidG1 < nPowers) {
@@ -480,6 +534,7 @@ G2Error checkG2(const G2PointAffine &p) {
 }
 
 void Srs::checkCommit(const FrElement *coefs, uint64_t nCoefs) const {
+    requireG1("commit");
     if (nCoefs > nPowers) {
         throw invalid("commit", std::to_string(nCoefs) + " coefficients exceed the " + std::to_string(nPowers) +
                                     " powers [τ^i]₁ of the SRS");

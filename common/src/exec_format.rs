@@ -417,7 +417,7 @@ pub struct ExecFile<F> {
     pub bands: Vec<ExecGateBand>,
 }
 
-impl<F: ExecField> ExecFile<F> {
+impl<F: ExecField + Send> ExecFile<F> {
     /// Reads an exec file from its words, as plonk2pil returns them.
     pub fn from_words(words: &[u64]) -> ProofmanResult<Self> {
         Self::parse(words).map_err(|e| ProofmanError::InvalidSetup(format!("exec buffer {e}")))
@@ -431,7 +431,7 @@ impl<F: ExecField> ExecFile<F> {
         if bytes.len() % 8 != 0 {
             return Err(invalid(format!("is {} bytes, not a multiple of 8", bytes.len())));
         }
-        let words: Vec<u64> = bytes.as_chunks::<8>().0.iter().map(|word| u64::from_le_bytes(*word)).collect();
+        let words: Vec<u64> = bytes.as_chunks::<8>().0.par_iter().map(|word| u64::from_le_bytes(*word)).collect();
         Self::parse(&words).map_err(invalid)
     }
 
@@ -460,27 +460,40 @@ impl<F: ExecField> ExecFile<F> {
             ));
         }
 
-        let additions = words[layout.header_words()..layout.map_at()]
-            .chunks_exact(layout.addition_words())
+        // In parallel; on a refusal, the first refused addition's error, as a serial pass gives.
+        let addition_words = &words[layout.header_words()..layout.map_at()];
+        let parse_addition = |(i, add): (usize, &[u64])| {
+            let wire = |k: usize| {
+                u32::try_from(add[k])
+                    .map_err(|_| format!("has addition {i} reading wire {}, which does not fit 32 bits", add[k]))
+            };
+            let coeff = |k: usize| {
+                let at = 2 + k * F::COEF_WORDS;
+                F::read_exec_words(&add[at..at + F::COEF_WORDS])
+                    .ok_or_else(|| format!("has addition {i} with a coefficient that is not an element of {}", F::NAME))
+            };
+            Ok(ExecAddition { wires: [wire(0)?, wire(1)?], coeffs: [coeff(0)?, coeff(1)?] })
+        };
+        let additions = match addition_words
+            .par_chunks_exact(layout.addition_words())
             .enumerate()
-            .map(|(i, add)| {
-                let wire = |k: usize| {
-                    u32::try_from(add[k])
-                        .map_err(|_| format!("has addition {i} reading wire {}, which does not fit 32 bits", add[k]))
-                };
-                let coeff = |k: usize| {
-                    let at = 2 + k * F::COEF_WORDS;
-                    F::read_exec_words(&add[at..at + F::COEF_WORDS]).ok_or_else(|| {
-                        format!("has addition {i} with a coefficient that is not an element of {}", F::NAME)
-                    })
-                };
-                Ok(ExecAddition { wires: [wire(0)?, wire(1)?], coeffs: [coeff(0)?, coeff(1)?] })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+            .map(|add| parse_addition(add).ok())
+            .collect::<Option<Vec<_>>>()
+        {
+            Some(additions) => additions,
+            None => addition_words
+                .chunks_exact(layout.addition_words())
+                .enumerate()
+                .map(parse_addition)
+                .collect::<Result<Vec<_>, String>>()?,
+        };
 
         let map_at = layout.map_at();
         let entries = layout.map_rows * layout.map_cols;
-        let map = (0..entries).map(|entry| (words[map_at + entry / 2] >> (32 * (entry % 2))) as u32).collect();
+        let map = (0..entries)
+            .into_par_iter()
+            .map(|entry| (words[map_at + entry / 2] >> (32 * (entry % 2))) as u32)
+            .collect();
         // An odd count leaves the high half of the last word unused, and the writer leaves it zero.
         if entries % 2 == 1 {
             let padding = words[map_at + entries / 2] >> 32;
@@ -732,6 +745,22 @@ mod tests {
             let err = ExecFile::<Bn128>::from_words(&exec).unwrap_err().to_string();
             assert!(err.contains(why), "expected \"{why}\", got: {err}");
         }
+    }
+
+    /// Of several refused additions, the error names the first, however the parse is split.
+    #[test]
+    fn the_first_refused_addition_is_the_one_named() {
+        let n_adds = 10_000;
+        let layout = ExecLayout::new::<Goldilocks>(4, n_adds, 0, 0);
+        let mut words = vec![0u64; layout.header_words()];
+        layout.write_header(&mut words);
+        for i in 0..n_adds {
+            let wire = if i == 4_321 || i == 9_876 { 1 << 32 } else { 1 };
+            words.extend([wire, 2, 3, 5]);
+        }
+        words.extend([GATE_BAND_FORMAT_VERSION, 0, 0]);
+        let err = ExecFile::<Goldilocks>::from_words(&words).unwrap_err().to_string();
+        assert!(err.contains("has addition 4321 reading wire 4294967296"), "{err}");
     }
 
     /// A file is read only in the version of its field: a version 3 header of one-word coefficients
