@@ -402,10 +402,12 @@ fn prove_device(key: &ProvingKey, device: &DeviceWitness) -> ProofmanResult<(Vec
 pub(crate) fn prefetch_key_files(pilfflonk_key: &Path, setup_snark_path: &Path) {
     fn collect(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
-        for path in entries.flatten().map(|entry| entry.path()) {
-            if path.is_dir() {
+        for entry in entries.flatten() {
+            let (Ok(kind), path) = (entry.file_type(), entry.path()) else { continue };
+            // Not through a symlinked directory, which could loop.
+            if kind.is_dir() {
                 collect(&path, files);
-            } else if path.extension().is_none_or(|ext| ext != "const") {
+            } else if path.is_file() && path.extension().is_none_or(|ext| ext != "const") {
                 files.push(path);
             }
         }

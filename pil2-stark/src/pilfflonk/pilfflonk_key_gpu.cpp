@@ -237,14 +237,20 @@ void Staging::toDeviceFrom(void *dst, uint64_t bytes, const Fill &fill) {
     afterDefaultStream();
     uint8_t *halves[2] = {static_cast<uint8_t *>(pinned), static_cast<uint8_t *>(pinned) + half};
     uint64_t chunk = 0;
-    for (uint64_t at = 0; at < bytes; at += half, ++chunk) {
-        const uint64_t n = std::min(half, bytes - at);
-        const uint64_t h = chunk & 1;
-        // The half's previous copy is done before it is written again.
-        pilfflonk_gpu_event_sync(done[h]);
-        fill(halves[h], at, n);
-        gpu_plonk_memcpy_h2d_async(static_cast<uint8_t *>(dst) + at, halves[h], n, stream);
-        pilfflonk_gpu_event_record(done[h], stream);
+    try {
+        for (uint64_t at = 0; at < bytes; at += half, ++chunk) {
+            const uint64_t n = std::min(half, bytes - at);
+            const uint64_t h = chunk & 1;
+            // The half's previous copy is done before it is written again.
+            pilfflonk_gpu_event_sync(done[h]);
+            fill(halves[h], at, n);
+            gpu_plonk_memcpy_h2d_async(static_cast<uint8_t *>(dst) + at, halves[h], n, stream);
+            pilfflonk_gpu_event_record(done[h], stream);
+        }
+    } catch (...) {
+        // The queued copies are done before the caller unwinds and frees `dst`.
+        gpu_plonk_sync_cuda_stream(stream);
+        throw;
     }
     // The stream is in order: the last copy's event is every copy's.
     pilfflonk_gpu_stream_wait_event(nullptr, done[(chunk - 1) & 1]);
