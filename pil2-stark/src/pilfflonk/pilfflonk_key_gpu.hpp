@@ -298,6 +298,9 @@ public:
     // The points of the parts `air`'s MSMs split into, so that their scratch fits `free` bytes, 0 if
     // the longest's whole does (or none of at least 2^MSM_PART_BITS_MIN does: reserve then refuses).
     uint64_t msmPartsFitting(const std::string &air, const GpuBudget &budget, uint64_t free) const;
+    // The points of commit's parts for an MSM of n, from the memory free now: at most reserve's
+    // (msmMostPoints), halved down to 2^MSM_PART_BITS_MIN while their scratch does not fit.
+    uint64_t msmPart(uint64_t n) const;
     // While the key loads: the shift's sums Σ_{i<n} ρ_i·[τ^i]₁ of commit's MSMs, the setup's.
     void addShiftSums(const std::map<uint64_t, G1Point> &sums) { shiftSums.insert(sums.begin(), sums.end()); }
     bool hasShiftSum(uint64_t n) const { return shiftSums.count(n) != 0; }
