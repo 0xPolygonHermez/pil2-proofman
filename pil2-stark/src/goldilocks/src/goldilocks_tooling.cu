@@ -1,6 +1,7 @@
 #include "goldilocks_tooling.cuh"
 #include "cuda_utils.cuh"
 #include "goldilocks_trace_layout.cuh"
+#include "stream_commit.cuh"
 
 // When the source is already host-pinned (e.g. via register_host_memory) and
 // large, skip the pinned-staging double-buffer and issue a single direct H2D.
@@ -51,6 +52,10 @@ void fromRowMajorToColMajor(
     cudaStream_t stream
 ) {
     if (nCols == 0 || nRows == 0) return;
+    if (layout == Layout::ColMajor && nCols > 64) {
+        scTransposePacked((const uint64_t *)src, (uint64_t *)dst, nRows, nCols, stream);
+        return;
+    }
     dim3 block(TILE_HEIGHT, TILE_WIDTH);
     dim3 grid((nRows + block.x - 1) / block.x,
               (nCols + block.y - 1) / block.y);

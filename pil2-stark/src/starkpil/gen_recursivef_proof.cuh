@@ -225,7 +225,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
     TimerStopCategoryGPU(timer, EVALS);
-    computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, (gl64_t*) d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("lev_helper", false)], d_LEv, timer, stream);
+    computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, (gl64_t*) d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("lev_helper", false)], d_LEv, timer, stream);
     evmap_inplace(setupCtx, h_params, air_instance_info, (Goldilocks::Element*)d_LEv, timer, stream);
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         d_transcript.put(h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream, &timer);
