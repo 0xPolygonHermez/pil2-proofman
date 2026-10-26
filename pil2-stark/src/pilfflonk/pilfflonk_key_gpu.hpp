@@ -361,6 +361,13 @@ private:
     // Whether the n scalars at `scalars` on the device are all zero.
     bool allZero(const void *scalars, uint64_t n) const;
 
+    // The key's whole life, from before it allocates to after it frees: setGpuDevice keeps the device.
+    struct DeviceHold {
+        DeviceHold() { holdGpuDevice(); }
+        ~DeviceHold() { releaseGpuDevice(); }
+        DeviceHold(const DeviceHold &) = delete;
+        DeviceHold &operator=(const DeviceHold &) = delete;
+    } deviceHold;
     GpuKeyOptions options;
     DevicePool pool;
     mutable CopyVolume volume;

@@ -157,7 +157,7 @@ void transformOnDevice(void *data, uint64_t bits, bool inverse);
 // CUDA does not have, or for another device while a GpuKey lives (holdGpuDevice). Only a library built
 // with the GPU defines it.
 void setGpuDevice(int device);
-// A GpuKey's whole life, from the end of its construction to its destruction: setGpuDevice keeps the device.
+// A GpuKey's whole life (GpuKey::DeviceHold): setGpuDevice keeps the device.
 void holdGpuDevice();
 void releaseGpuDevice();
 
