@@ -29,6 +29,9 @@ use proofman_starks_lib_c::{
 };
 use proofman_util::DeviceBuffer;
 
+/// The smallest GPU headroom a short card falls back to (the default is the C++ POST_ALLOC_HEADROOM_BYTES).
+const POST_ALLOC_HEADROOM_MIN_BYTES: f64 = (512u64 << 20) as f64;
+
 #[derive(Debug)]
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -1445,18 +1448,10 @@ impl<F: PrimeField64> ProofCtx<F> {
             sctx.max_n_bits_ext as u32,
         )));
 
-        let mut free_memory_gpu = match gpu {
+        let free_memory_device = match gpu {
             true => check_device_memory_c(self.mpi_ctx.node_rank as u32, self.mpi_ctx.node_n_processes as u32) as f64,
             false => 0.0,
         };
-
-        if gpu {
-            // The one headroom for everything allocated after the unified buffer, the final SNARK's
-            // sppark pool included.
-            let reserve = get_post_alloc_headroom_bytes_c() as f64;
-            free_memory_gpu = (free_memory_gpu - reserve).max(0.0);
-            tracing::info!("Reserving {} of GPU memory for other device consumers", format_bytes(reserve));
-        }
 
         self.mpi_ctx.barrier();
 
@@ -1474,18 +1469,12 @@ impl<F: PrimeField64> ProofCtx<F> {
             false => 1,
         };
 
-        free_memory_gpu /= n_partitions as f64;
-
-        let mut total_const_area = 0;
-        let mut total_const_area_aggregation = 0;
-
         // Basic fixed: the planner decides whether they are resident (else read from host memory).
         let basic_fixed_words = if gpu { sctx.total_const_pols_size as u64 } else { 0 };
         // The planner sizes the const cache; without one (prove-air) the aggregation area is resident.
         let cache_on = gpu && aggregation && setups_vadcop.cache_normal_words > 0;
-        if gpu && aggregation && !cache_on {
-            total_const_area_aggregation += setups_vadcop.total_const_pols_size as u64;
-        }
+        let resident_aggregation_area =
+            if gpu && aggregation && !cache_on { setups_vadcop.total_const_pols_size as u64 } else { 0 };
 
         // Wrapping here would carve streams out of a budget the card does not have, and only fail
         // later inside cudaMalloc.
@@ -1494,15 +1483,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         // The first stream must hold one slot, or the carve drops the slots.
         let slot_floor =
             if gpu && n_slots > 0 { slot_bytes.next_multiple_of(UBL_AUX_ALIGN_BYTES).div_ceil(8) } else { 0 };
-        let max_size_buffer = ((free_memory_gpu / 8.0).floor() as u64)
-            .checked_sub(total_const_area + total_const_area_aggregation + late_area)
-            .ok_or_else(|| {
-                ProofmanError::InvalidConfiguration(format!(
-                    "Fixed polynomials + late region need {} but only {} is free on the GPU",
-                    format_bytes((total_const_area + total_const_area_aggregation + late_area) as f64 * 8.0),
-                    format_bytes(free_memory_gpu),
-                ))
-            })?;
 
         // Non-recursive streams also take compressor/vadcop_final launches, which floors their classes.
         let recursive_capable_size = setups_vadcop.max_prover_recursive_buffer_size.max(slot_floor as usize);
@@ -1523,46 +1503,103 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let basic_sizes: Vec<usize> = sctx.prover_buffer_sizes.iter().map(|(_, size)| *size).collect();
 
-        // Prefetch first, then the const cache, then the streams (see buffer_plan.rs).
-        let plan_input = BufferPlanInput {
-            free_words: (free_memory_gpu / 8.0).floor() as u64,
-            fixed_words: total_const_area + total_const_area_aggregation + late_area,
-            budget_words: max_size_buffer,
-            min_stream_words: (sctx
-                .max_prover_buffer_size
-                .max(recursive_capable_size)
-                .max(max_prover_recursive2_buffer_size)) as u64,
-            prefetch_unit_words: if gpu { prefetch_unit_words } else { 0 },
-            basic_fixed_words,
-            cache: cache_on.then(|| CacheInput {
-                slot0_words: setups_vadcop.cache_big_words,
-                normal_words: setups_vadcop.cache_normal_words,
-                rec2_words: setups_vadcop.rec2_words,
-                rec2_fits_lru: setups_vadcop.rec2_fits_lru,
-                finals_words: setups_vadcop.finals_pin_words,
-                rec2_sets: setups_vadcop.rec2_sets,
-                finals_sets: setups_vadcop.finals_sets,
-                slots_cap: CONST_CACHE_SLOTS_PLAN_MAX.min(setups_vadcop.cache_n_lru_keys.max(2)),
-            }),
+        // The plan for `free_memory_gpu` (per partition); no side effects, so a shortfall can retry.
+        let plan_with = |free_memory_gpu: f64| -> ProofmanResult<(BufferPlanInput, BufferPlan, u64, StreamLayout)> {
+            let max_size_buffer = ((free_memory_gpu / 8.0).floor() as u64)
+                .checked_sub(resident_aggregation_area + late_area)
+                .ok_or_else(|| {
+                    ProofmanError::InvalidConfiguration(format!(
+                        "Fixed polynomials + late region need {} but only {} is free on the GPU",
+                        format_bytes((resident_aggregation_area + late_area) as f64 * 8.0),
+                        format_bytes(free_memory_gpu),
+                    ))
+                })?;
+
+            // Prefetch first, then the const cache, then the streams (see buffer_plan.rs).
+            let plan_input = BufferPlanInput {
+                free_words: (free_memory_gpu / 8.0).floor() as u64,
+                fixed_words: resident_aggregation_area + late_area,
+                budget_words: max_size_buffer,
+                min_stream_words: (sctx
+                    .max_prover_buffer_size
+                    .max(recursive_capable_size)
+                    .max(max_prover_recursive2_buffer_size)) as u64,
+                prefetch_unit_words: if gpu { prefetch_unit_words } else { 0 },
+                basic_fixed_words,
+                cache: cache_on.then(|| CacheInput {
+                    slot0_words: setups_vadcop.cache_big_words,
+                    normal_words: setups_vadcop.cache_normal_words,
+                    rec2_words: setups_vadcop.rec2_words,
+                    rec2_fits_lru: setups_vadcop.rec2_fits_lru,
+                    finals_words: setups_vadcop.finals_pin_words,
+                    rec2_sets: setups_vadcop.rec2_sets,
+                    finals_sets: setups_vadcop.finals_sets,
+                    slots_cap: CONST_CACHE_SLOTS_PLAN_MAX.min(setups_vadcop.cache_n_lru_keys.max(2)),
+                }),
+            };
+            let plan = if gpu {
+                plan_buffer(&plan_input)?
+            } else {
+                BufferPlan {
+                    prefetch_units: 0,
+                    cache_slots: 0,
+                    pin_rec2: false,
+                    pin_finals: false,
+                    basic_resident: true,
+                    relaxed: false,
+                }
+            };
+            let max_size_buffer = max_size_buffer
+                - plan.basic_words(&plan_input)
+                - plan.prefetch_words(prefetch_unit_words)
+                - plan.cache_words(&plan_input);
+
+            let layout = match gpu {
+                true => plan_stream_layout(
+                    max_size_buffer as usize,
+                    &basic_sizes,
+                    recursive_capable_size,
+                    max_prover_recursive2_buffer_size,
+                    max_number_streams_gpu,
+                    if aggregation { max_number_recursive_streams_gpu } else { 0 },
+                )
+                .ok_or_else(|| ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()))?,
+                // No device streams to carve: one nominal stream, sized for the largest proof.
+                false => StreamLayout {
+                    basic: vec![StreamClass { size: sctx.max_prover_buffer_size.max(recursive_capable_size), count: 1 }],
+                    recursive: StreamClass { size: max_prover_recursive2_buffer_size, count: 0 },
+                    aggregation_workers: 0,
+                    unused: 0,
+                },
+            };
+            Ok((plan_input, plan, max_size_buffer, layout))
         };
-        let plan = if gpu {
-            plan_buffer(&plan_input)?
-        } else {
-            BufferPlan {
-                prefetch_units: 0,
-                cache_slots: 0,
-                pin_rec2: false,
-                pin_finals: false,
-                basic_resident: true,
-                relaxed: false,
+
+        // The headroom for everything allocated after the unified buffer, the final SNARK's sppark pool
+        // included. A card the default does not fit retries at the minimum.
+        let free_after = |reserve: f64| (free_memory_device - reserve).max(0.0) / n_partitions as f64;
+        let mut reserve = if gpu { get_post_alloc_headroom_bytes_c() as f64 } else { 0.0 };
+        let (plan_input, plan, max_size_buffer, layout) = match plan_with(free_after(reserve)) {
+            Err(e) if gpu => {
+                tracing::warn!(
+                    "{e}; retrying with {} free after the unified buffer instead of {} (a final SNARK may run out of device memory)",
+                    format_bytes(POST_ALLOC_HEADROOM_MIN_BYTES),
+                    format_bytes(reserve),
+                );
+                reserve = POST_ALLOC_HEADROOM_MIN_BYTES;
+                plan_with(free_after(reserve))?
             }
+            planned => planned?,
         };
-        total_const_area = plan.basic_words(&plan_input);
+        if gpu {
+            tracing::info!("Reserving {} of GPU memory for other device consumers", format_bytes(reserve));
+        }
+
+        let total_const_area = plan.basic_words(&plan_input);
         self.basic_fixed_on_host = gpu && !plan.basic_resident;
         set_basic_fixed_on_host_c(d_buffers.get_ptr(), self.basic_fixed_on_host);
         let prefetch_region_area = plan.prefetch_words(prefetch_unit_words);
-        let cache_words = plan.cache_words(&plan_input);
-        total_const_area_aggregation += cache_words;
+        let total_const_area_aggregation = resident_aggregation_area + plan.cache_words(&plan_input);
         self.prefetch_units = plan.prefetch_units;
         self.const_cache_lru_slots = plan.cache_slots;
         self.const_cache_pin_rec2 = plan.pin_rec2;
@@ -1575,7 +1612,6 @@ impl<F: PrimeField64> ProofCtx<F> {
                 if plan.pin_rec2 { "pinned" } else { "through the LRU" },
             );
         }
-        let max_size_buffer = max_size_buffer - total_const_area - prefetch_region_area - cache_words;
         if gpu {
             tracing::info!(
                 "Buffer plan: basic fixed {}, {} prefetch units ({}), {} const cache LRU slots{}, {} left for the streams",
@@ -1587,25 +1623,6 @@ impl<F: PrimeField64> ProofCtx<F> {
                 format_bytes(max_size_buffer as f64 * 8.0),
             );
         }
-
-        let layout = match gpu {
-            true => plan_stream_layout(
-                max_size_buffer as usize,
-                &basic_sizes,
-                recursive_capable_size,
-                max_prover_recursive2_buffer_size,
-                max_number_streams_gpu,
-                if aggregation { max_number_recursive_streams_gpu } else { 0 },
-            )
-            .ok_or_else(|| ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()))?,
-            // No device streams to carve: one nominal stream, sized for the largest proof.
-            false => StreamLayout {
-                basic: vec![StreamClass { size: sctx.max_prover_buffer_size.max(recursive_capable_size), count: 1 }],
-                recursive: StreamClass { size: max_prover_recursive2_buffer_size, count: 0 },
-                aggregation_workers: 0,
-                unused: 0,
-            },
-        };
 
         // Phase B splits the single basic stream in two halves that host recursion and every basic
         // that fits them (the big ones ran in phase A). The stream is grown into all the slack the
