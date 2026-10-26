@@ -1566,7 +1566,10 @@ impl<F: PrimeField64> ProofCtx<F> {
                 .ok_or_else(|| ProofmanError::InvalidConfiguration("Not enough GPU memory to run the proof".into()))?,
                 // No device streams to carve: one nominal stream, sized for the largest proof.
                 false => StreamLayout {
-                    basic: vec![StreamClass { size: sctx.max_prover_buffer_size.max(recursive_capable_size), count: 1 }],
+                    basic: vec![StreamClass {
+                        size: sctx.max_prover_buffer_size.max(recursive_capable_size),
+                        count: 1,
+                    }],
                     recursive: StreamClass { size: max_prover_recursive2_buffer_size, count: 0 },
                     aggregation_workers: 0,
                     unused: 0,
