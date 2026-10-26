@@ -1403,25 +1403,6 @@ void reserve_custom_commit_slot_gpu(uint64_t airgroupId, uint64_t airId, char *p
 // Stage `trace` into the cursor slot on the copy stream and tag it for `instanceId`.
 static bool isPhaseAAlias(DeviceCommitBuffers* d_buffers, const StreamData &sd);
 
-// Headroom kept free after the unified buffer: DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES, or
-// PROOFMAN_GPU_HEADROOM_MB when set (a full-string integer; anything else falls back to the
-// default, loudly). Read once.
-static uint64_t postAllocHeadroomBytes() {
-    static const uint64_t bytes = [] {
-        const char *e = getenv("PROOFMAN_GPU_HEADROOM_MB");
-        if (e == nullptr || *e == '\0') return DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES;
-        char *end = nullptr;
-        const unsigned long long mb = strtoull(e, &end, 10);
-        if (end == e || *end != '\0') {
-            zklog.warning("PROOFMAN_GPU_HEADROOM_MB='" + std::string(e) + "' is not an integer; using the default headroom");
-            return DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES;
-        }
-        zklog.info("GPU post-allocation headroom overridden: " + std::to_string(mb) + " MB (PROOFMAN_GPU_HEADROOM_MB)");
-        return (uint64_t)mb << 20;
-    }();
-    return bytes;
-}
-
 // A const-cached set's reuse identity on a stream (StreamData::adoptFixedSlot's recurser key).
 static std::string constCacheReuseId(const AirInstanceInfo *air) { return "cache:" + std::to_string(air->constKey); }
 
@@ -4137,7 +4118,7 @@ uint64_t get_mops_floor_bytes_gpu() {
 // The headroom the allocations after the unified buffer need (see POST_ALLOC_HEADROOM_BYTES); the
 // Rust side reserves it up front on every path.
 uint64_t get_post_alloc_headroom_bytes_gpu() {
-    return postAllocHeadroomBytes();
+    return DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES;
 }
 
 
