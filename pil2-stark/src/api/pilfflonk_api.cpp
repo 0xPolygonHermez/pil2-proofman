@@ -577,6 +577,14 @@ int pilfflonk_gpu_free_bytes(uint64_t *out_free) {
     });
 }
 
+int pilfflonk_gpu_set_device(int device) {
+    const char *function = __func__;
+    return guard(function, [&] {
+        PilFflonk::ProvingKey::setDevice(device);
+        return static_cast<int>(PILFFLONK_OK);
+    });
+}
+
 int pilfflonk_gpu_available(void) {
     clearLastError();
     return PilFflonk::gpuAvailable() ? 1 : 0;

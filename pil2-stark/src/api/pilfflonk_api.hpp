@@ -50,7 +50,7 @@ extern "C" {
     // pilfflonk/docs/performance.md#gpu). The proofs are the same, bit for bit, on either.
     enum pilfflonk_device {
         PILFFLONK_DEVICE_CPU = 0, // ffiasm's MSM and FFT
-        PILFFLONK_DEVICE_GPU = 1, // the GPU's MSM and NTT of src/bn128/src/{msm,ntt}, on CUDA device 0
+        PILFFLONK_DEVICE_GPU = 1, // the GPU's MSM and NTT of src/bn128/src/{msm,ntt}, on pilfflonk_gpu_set_device's
     };
 
     // Why the most recent other pilfflonk_* call on the calling thread failed; empty if it
@@ -199,8 +199,8 @@ extern "C" {
     //   pilfflonk_opening_open), pilfflonk_instance_new is refused with PILFFLONK_ERR_INVALID_ARGUMENT,
     //   as it would wait for itself: an instance that moved to another thread is held there from its
     //   first such call there.
-    //   Every call runs on CUDA device 0, whatever the calling thread's current device, which it leaves
-    //   as it was.
+    //   Every call runs on the GPU's CUDA device (pilfflonk_gpu_set_device, device 0 by default),
+    //   whatever the calling thread's current device, which it leaves as it was.
     // ---------------------------------------------------------------------------------------------
 
     // The proving key at proving_key_dir, the provingKey/ setup-pilfflonk writes
@@ -230,7 +230,7 @@ extern "C" {
     void *pilfflonk_ctx_new_on(const char *proving_key_dir, uint32_t device);
 
     // pilfflonk_ctx_new_on(proving_key_dir, PILFFLONK_DEVICE_GPU), with its proofs' device memory (their
-    // arena) in the caller's device_buffer, device_buffer_bytes bytes on CUDA device 0: a wrap's
+    // arena) in the caller's device_buffer, device_buffer_bytes bytes on the GPU's device: a wrap's
     // pre-reserved buffer, such as proofman's unified buffer, which others use between the proofs. The
     // ctx writes it only while one of its instances lives (one at a time), never while it loads,
     // synchronises the device before and after, and never frees it: it must outlive the ctx. Its other
@@ -288,11 +288,17 @@ extern "C" {
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL.
     int pilfflonk_ctx_precomputed_digest(const void *ctx, uint8_t *out_digest);
 
-    // Writes to *out_free the free memory of CUDA device 0, in bytes (cudaMemGetInfo), what a ctx's
+    // Writes to *out_free the free memory of the GPU's CUDA device, in bytes (cudaMemGetInfo), what a ctx's
     // load on the GPU checks pilfflonk_gpu_device_bytes's needs against: for a caller that reserves
     // device memory before it loads a ctx, as a wrap does. PILFFLONK_ERR_INVALID_ARGUMENT if out_free
     // is NULL or there is no GPU (as pilfflonk_ctx_new_on).
     int pilfflonk_gpu_free_bytes(uint64_t *out_free);
+
+    // Makes `device` the CUDA device of every later GPU call, device 0 until set: before any ctx loads
+    // on the GPU, as a wrap puts it on the device of proofman's unified buffer. A ctx's device memory
+    // stays on the device it loaded on. PILFFLONK_ERR_INVALID_ARGUMENT if there is no GPU (as
+    // pilfflonk_ctx_new_on), CUDA has no such device, or a ctx is loaded on the GPU on another one.
+    int pilfflonk_gpu_set_device(int device);
 
     // 1 if this library has the GPU path (it was built with nvcc: libstarksgpu.a) and sees a GPU it
     // can use (compute capability 7.0 or above), 0 otherwise: in a library built without it, and

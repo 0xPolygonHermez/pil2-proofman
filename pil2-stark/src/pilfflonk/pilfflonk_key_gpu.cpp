@@ -538,9 +538,10 @@ GpuKey::GpuKey(const Srs &srs, GpuKeyOptions _options, const SrsPowersFile *powe
                                             &msmShiftRatio(), 256, static_cast<uint32_t>(nBlocks), nullptr);
     pilfflonk_gpu_memset_zero(zeroOffset, sizeof(uint64_t));
     held = bytes;
+    holdGpuDevice();
 }
 
-GpuKey::~GpuKey() = default;
+GpuKey::~GpuKey() { releaseGpuDevice(); }
 
 void GpuKey::snapshot() const {
     if (!options.exclusive || !options.restorable) {

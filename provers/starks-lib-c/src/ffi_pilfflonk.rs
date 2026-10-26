@@ -293,7 +293,7 @@ pub enum PilFflonkDevice {
     /// ffiasm's MSM and FFT.
     #[default]
     Cpu,
-    /// The GPU's MSM and NTT of `pil2-stark/src/bn128/src/{msm,ntt}`, on CUDA device 0: a library
+    /// The GPU's MSM and NTT of `pil2-stark/src/bn128/src/{msm,ntt}`, on [`pilfflonk_gpu_set_device_c`]'s: a library
     /// built with CUDA ([`pilfflonk_gpu_available_c`]).
     Gpu,
 }
@@ -343,7 +343,7 @@ pub fn pilfflonk_precompute_c(dir: &Path, vkey_digest: &[u8; 32]) -> Result<(), 
     check_status(unsafe { pilfflonk_precompute(path.as_ptr(), vkey_digest.as_ptr()) })
 }
 
-/// The free memory of CUDA device 0, in bytes: what a [`PilFflonkProverCtx`]'s load on the GPU checks
+/// The free memory of the GPU's CUDA device ([`pilfflonk_gpu_set_device_c`]), in bytes: what a [`PilFflonkProverCtx`]'s load on the GPU checks
 /// [`pilfflonk_gpu_device_bytes_c`]'s needs against, for a caller that reserves device memory before
 /// it loads a context (the wrap's). Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument)
 /// without a GPU ([`pilfflonk_gpu_available_c`]).
@@ -352,6 +352,15 @@ pub fn pilfflonk_gpu_free_bytes_c() -> Result<u64, PilFflonkError> {
     // SAFETY: the out pointer is a u64 the call writes.
     check_status(unsafe { pilfflonk_gpu_free_bytes(&mut free) })?;
     Ok(free)
+}
+
+/// Makes `device` the CUDA device of every later GPU call, device 0 until set: before any context
+/// loads on the GPU, as a context's device memory stays where it loaded. Fails with
+/// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) without a GPU, for a device CUDA does not have, or for another device while a context is loaded on
+/// the GPU.
+pub fn pilfflonk_gpu_set_device_c(device: u32) -> Result<(), PilFflonkError> {
+    // SAFETY: no pointers.
+    check_status(unsafe { pilfflonk_gpu_set_device(device as ::std::os::raw::c_int) })
 }
 
 /// The proving key of the prover (pilfflonk/docs/protocol.md#proof-sequence, step 1), owned by the
@@ -365,7 +374,7 @@ pub fn pilfflonk_gpu_free_bytes_c() -> Result<u64, PilFflonkError> {
 /// [`PilFflonkInstance::new`] then waits while an instance of another thread holds it, and fails with
 /// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) while one holds it whose latest call was
 /// on this thread, which it would wait for (pilfflonk_api.hpp, the concurrent instances). Its calls
-/// run on CUDA device 0 and leave the thread's current device as it was.
+/// run on the GPU's device ([`pilfflonk_gpu_set_device_c`]) and leave the thread's current device as it was.
 #[derive(Debug)]
 pub struct PilFflonkProverCtx {
     handle: NonNull<c_void>,
@@ -403,7 +412,7 @@ impl PilFflonkProverCtx {
     ///
     /// # Safety
     ///
-    /// `buffer` must be `bytes` bytes of device memory on CUDA device 0, which outlive the context,
+    /// `buffer` must be `bytes` bytes of device memory on the GPU's device ([`pilfflonk_gpu_set_device_c`]), which outlive the context,
     /// and which nothing else uses while an instance of the context lives.
     pub unsafe fn load_on_device_buffer(dir: &Path, buffer: *mut c_void, bytes: u64) -> Result<Self, PilFflonkError> {
         let path = c_path("pilfflonk_ctx_new_on_device_buffer", dir)?;
@@ -419,7 +428,7 @@ impl PilFflonkProverCtx {
     ///
     /// # Safety
     ///
-    /// `buffer` must be `bytes` bytes of device memory on CUDA device 0, which outlive the context,
+    /// `buffer` must be `bytes` bytes of device memory on the GPU's device ([`pilfflonk_gpu_set_device_c`]), which outlive the context,
     /// and which nothing else uses while it loads, while an instance of it lives, and (without
     /// `restorable`) at all while it lives.
     pub unsafe fn load_in_device_buffer(

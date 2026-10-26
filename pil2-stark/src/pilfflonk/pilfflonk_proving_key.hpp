@@ -382,16 +382,21 @@ public:
     // loading it, as GpuKey and its AIRs reserve it: what a buffer given as its arena
     // (GpuKeyOptions::arena) must hold, and the most the key needs beside it, its loading's scratch
     // included: with a memoryLimit (or free memory) of `beside`, a key on a given arena always loads.
-    // It reads device 0's number of multiprocessors (sppark's MSM's memory depends on it), and leaves
+    // It reads the GPU's device's number of multiprocessors (sppark's MSM's memory depends on it), and leaves
     // the calling thread's current device as it was. Throws std::invalid_argument as load does without
     // a GPU, and IoError and FormatError as load does for those files.
     static DeviceBytes requiredDeviceBytes(const std::string &dir);
 
-    // The free memory of device 0, in bytes, what a key's load on the GPU checks its needs against
+    // The free memory of the GPU's device, in bytes, what a key's load on the GPU checks its needs against
     // (requiredDeviceBytes), for a caller that reserves device memory before it loads a key (the
     // wrap's): cudaMemGetInfo's, the calling thread's current device left as it was. Throws
     // std::invalid_argument as load does without a GPU.
     static uint64_t freeDeviceBytes();
+
+    // The CUDA device of the GPU path from now on (setGpuDevice), before any key loads on the GPU.
+    // Throws std::invalid_argument as load does without a GPU, for a device CUDA does not have, and for
+    // another device while a key is loaded on the GPU.
+    static void setDevice(int device);
 
     ProvingKey(const ProvingKey &) = delete;
     ProvingKey &operator=(const ProvingKey &) = delete;

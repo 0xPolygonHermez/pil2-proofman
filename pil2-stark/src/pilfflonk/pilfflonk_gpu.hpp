@@ -43,7 +43,7 @@ struct GpuKeyOptions {
     // The most device memory the key may hold and leave for a proof, in bytes, or 0 for what the
     // device has free.
     uint64_t memoryLimit = 0;
-    // A device buffer of arenaBytes bytes on device 0 for the arena of its proofs, in place of one the
+    // A device buffer of arenaBytes bytes on the GPU's device for the arena of its proofs, in place of one the
     // key allocates: a wrap's pre-reserved memory, which others use between the proofs (proofman's
     // unified buffer). The key writes it only while a proof holds it (GpuKey::Lease), never while it
     // loads, and never frees it: it must outlive the key.
@@ -88,7 +88,7 @@ struct DeviceBytes {
 // form (limbs below r), and a commitment leaves the prover in affine coordinates: the results are
 // those of ffiasm's MSM and FFT bit for bit.
 //
-// Device 0, the PLONK GPU prover's default, whatever the calling thread's current device: every
+// The GPU's device (setGpuDevice, device 0 by default), whatever the calling thread's current device: every
 // function of the GPU path a caller reaches makes it current while it runs (DeviceScope). Only a
 // library built with the GPU
 // (provers/starks-lib-c/build.rs found nvcc: libstarksgpu.a, its sources compiled with __USE_CUDA__)
@@ -122,13 +122,13 @@ private:
     bool owned = true; // not given at construction
 };
 
-// While it lives, the GPU's device (device 0, Gpu's) is the calling thread's current CUDA device;
+// While it lives, the GPU's device (setGpuDevice, Gpu's) is the calling thread's current CUDA device;
 // then the one the thread had before is again. Every function of the GPU path that a caller reaches
 // holds one while it runs (a key's load, an instance's and an opening's calls, their device memory's
 // and streams' release, ProvingKey::requiredDeviceBytes), as the repo's other GPU entry points set
 // their device (gen_recursive_proof_final_gpu): a thread whose current device is another, as one of
-// a multi-GPU process may be, proves on device 0 and keeps its own. Only a library built with the
-// GPU defines it, in pilfflonk_gpu.cpp.
+// a multi-GPU process may be, proves on the GPU's device and keeps its own. Only a library built with
+// the GPU defines it, in pilfflonk_gpu.cpp.
 class DeviceScope {
 public:
     DeviceScope();
@@ -138,6 +138,7 @@ public:
 
 private:
     int previous;
+    int device;
 };
 
 // Σ_{i<n} scalars[i]·points[i] for n >= 1 scalars in Montgomery form and n points [τ^i]₁, all on the
@@ -150,6 +151,15 @@ G1Point msmOnDevice(const void *points, const void *scalars, uint64_t n);
 // place and in natural order: ntt_bn128_gpu_dev_ptr or intt_bn128_gpu_dev_ptr after the device is
 // synchronised. Nothing for bits = 0, a value being its own transform. bits <= 28.
 void transformOnDevice(void *data, uint64_t bits, bool inverse);
+
+// The CUDA device of the GPU path from now on, device 0 until set: before any key loads on the GPU, as
+// one key's device memory stays on the device it loaded on. Throws std::invalid_argument for a device
+// CUDA does not have, or for another device while a GpuKey lives (holdGpuDevice). Only a library built
+// with the GPU defines it.
+void setGpuDevice(int device);
+// A GpuKey's whole life, from the end of its construction to its destruction: setGpuDevice keeps the device.
+void holdGpuDevice();
+void releaseGpuDevice();
 
 // Gpu::available() in a library built with the GPU, and false in one built without.
 inline bool gpuAvailable() {

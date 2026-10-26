@@ -168,6 +168,12 @@ extern "C" int pilfflonk_gpu_current_device() {
     return device;
 }
 
+extern "C" int pilfflonk_gpu_device_count() {
+    int count = 0;
+    CHECKCUDAERR(cudaGetDeviceCount(&count));
+    return count;
+}
+
 extern "C" void *pilfflonk_gpu_event_create() {
     cudaEvent_t event;
     CHECKCUDAERR(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));
