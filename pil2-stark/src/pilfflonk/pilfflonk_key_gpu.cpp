@@ -614,6 +614,21 @@ uint64_t GpuKey::msmPartsFitting(const std::string &air, const GpuBudget &budget
     return 0;
 }
 
+uint64_t GpuKey::msmPart(uint64_t n) const {
+    // What reserve saw free may since have gone to lazily loaded kernels or CUDA graphs.
+    const uint64_t free = options.exclusive ? gpuFreeBytes() : available();
+    const uint64_t most = msmMostPoints == 0 ? n : std::min(n, msmMostPoints);
+    uint64_t part = most;
+    while (part > (uint64_t(1) << MSM_PART_BITS_MIN) && spparkMsmBytes(part, smCount) > free) {
+        part = uint64_t(1) << (63 - __builtin_clzll(part - 1));
+    }
+    if (part < most) {
+        zklog.warning("pilfflonk: an MSM of " + std::to_string(n) + " points in parts of " + std::to_string(part) +
+                      " instead of " + std::to_string(most) + ": " + std::to_string(free) + " bytes free");
+    }
+    return part;
+}
+
 void GpuKey::reserve(const std::string &air, const GpuBudget &budget) {
     if (arenaGiven() && budget.arena > options.arenaBytes) {
         throw std::invalid_argument(air + ": a proof on the GPU needs an arena of " + std::to_string(budget.arena) +
@@ -682,9 +697,9 @@ G1Point GpuKey::commit(const void *base, const uint64_t *offsets, uint64_t k, ui
     }
     pilfflonk_gpu_pack_shift(work, n, base, offsets, k, length, hBlocks, hPowers);
     Engine &E = Engine::engine;
-    // In parts of msmMostPoints where the device does not hold the longest's scratch (reserve). Each
-    // part's point at infinity is sppark's failure unless its own scalars are all zero.
-    const uint64_t most = msmMostPoints == 0 ? n : msmMostPoints;
+    // In parts where the device does not hold the whole's scratch (msmPart). Each part's point at
+    // infinity is sppark's failure unless its own scalars are all zero.
+    const uint64_t most = msmPart(n);
     G1Point shifted = E.g1.zero();
     for (uint64_t at = 0; at < n; at += most) {
         const uint64_t length = std::min(most, n - at);
