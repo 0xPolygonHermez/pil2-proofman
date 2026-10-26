@@ -1585,7 +1585,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let (plan_input, plan, max_size_buffer, layout) = match plan_with(free_after(reserve)) {
             Err(e) if gpu => {
                 tracing::warn!(
-                    "{e}; retrying with {} free after the unified buffer instead of {} (a final SNARK may run out of device memory)",
+                    "{e}; retrying with {} free after the unified buffer instead of {} (a final SNARK runs its MSMs in smaller parts)",
                     format_bytes(POST_ALLOC_HEADROOM_MIN_BYTES),
                     format_bytes(reserve),
                 );
