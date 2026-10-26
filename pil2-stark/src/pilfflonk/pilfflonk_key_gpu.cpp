@@ -538,10 +538,9 @@ GpuKey::GpuKey(const Srs &srs, GpuKeyOptions _options, const SrsPowersFile *powe
                                             &msmShiftRatio(), 256, static_cast<uint32_t>(nBlocks), nullptr);
     pilfflonk_gpu_memset_zero(zeroOffset, sizeof(uint64_t));
     held = bytes;
-    holdGpuDevice();
 }
 
-GpuKey::~GpuKey() { releaseGpuDevice(); }
+GpuKey::~GpuKey() = default;
 
 void GpuKey::snapshot() const {
     if (!options.exclusive || !options.restorable) {
@@ -616,6 +615,11 @@ uint64_t GpuKey::msmPartsFitting(const std::string &air, const GpuBudget &budget
 }
 
 uint64_t GpuKey::msmPart(uint64_t n) const {
+    // The previous MSM's scratch is back in the device's pool only after a synchronisation.
+    {
+        const DeviceScope device;
+        gpu_plonk_cuda_device_sync();
+    }
     // What reserve saw free may since have gone to lazily loaded kernels or CUDA graphs.
     const uint64_t free = options.exclusive ? gpuFreeBytes() : available();
     const uint64_t most = msmMostPoints == 0 ? n : std::min(n, msmMostPoints);

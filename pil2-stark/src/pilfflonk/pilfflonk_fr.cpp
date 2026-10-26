@@ -89,7 +89,8 @@ bool isCanonicalFq(const uint8_t bytes[FQ_BYTES]) {
 uint64_t firstNonCanonicalFr(const uint8_t *bytes, uint64_t n) {
 #ifdef __USE_ASSEMBLY__
     uint64_t first = n;
-#pragma omp parallel for reduction(min : first)
+    // Serial below a few thousand: a caller checking each block's few elements would fork the team per block.
+#pragma omp parallel for reduction(min : first) if (n >= 4096)
     for (uint64_t i = 0; i < n; ++i) {
         if (!isBelow(bytes + i * FR_BYTES, Fr_rawq)) {
             first = i < first ? i : first;
