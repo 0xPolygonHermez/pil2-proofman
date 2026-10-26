@@ -482,7 +482,9 @@ static __device__ __forceinline__ void levBlockProd3(Goldilocks3GPU::Element &m,
 }
 
 // Per chunk: local prefix of a_m (a_0 = 1, a_m = g^m - 1) into dA, its total into dTot, its M(y) share into dM.
-__global__ void levChunkScan(gl64_t *dA, gl64_t *dTot, gl64_t *dM, uint64_t N, uint64_t g_, const gl64_t *dXi, uint64_t invShift_)
+// A single chunk has nothing to chain: y and M(y) go straight to dYM.
+__global__ void levChunkScan(gl64_t *dA, gl64_t *dTot, gl64_t *dM, uint64_t N, uint64_t g_, const gl64_t *dXi, uint64_t invShift_,
+                             gl64_t *dYM)
 {
     extern __shared__ Goldilocks3GPU::Element levShared[];
     const uint64_t base = (uint64_t)blockIdx.x * LEV_CHUNK + (uint64_t)threadIdx.x * LEV_SCAN_BATCH;
@@ -505,7 +507,13 @@ __global__ void levChunkScan(gl64_t *dA, gl64_t *dTot, gl64_t *dM, uint64_t N, u
     gl64_t total;
     const gl64_t ex = levBlockScan(run, total, levShared);
     levBlockProd3(m, levShared);
-    if (threadIdx.x == 0) {
+    if (threadIdx.x == 0 && gridDim.x == 1) {
+        dTot[0] = one;
+        for (uint32_t k = 0; k < FIELD_EXTENSION; k++) {
+            dYM[k] = y[k];
+            dYM[FIELD_EXTENSION + k] = m[k];
+        }
+    } else if (threadIdx.x == 0) {
         dTot[blockIdx.x] = total;
         for (uint32_t k = 0; k < FIELD_EXTENSION; k++) dM[blockIdx.x * FIELD_EXTENSION + k] = m[k];
     }
@@ -636,8 +644,10 @@ static void levLaunch(const gl64_t *dXi, uint64_t nBits, uint64_t nBitsExt, gl64
     gl64_t *plane0 = d_LEv, *plane1 = d_LEv + N, *plane2 = d_LEv + 2 * N;
     const size_t scanShared = (LEV_THREADS / 32 + 1) * sizeof(Goldilocks3GPU::Element);
     const size_t chainShared = (LEV_CHAIN_THREADS / 32 + 1) * sizeof(Goldilocks3GPU::Element);
-    levChunkScan<<<(unsigned)nChunks, LEV_THREADS, scanShared, stream>>>(plane1, plane2, plane0, N, g, dXi, invShift);
-    levChainChunks<<<1, LEV_CHAIN_THREADS, chainShared, stream>>>(plane2, plane0, nChunks, dXi, invShift, dYM);
+    // Several chunks mean N > LEV_CHUNK, so their M(y) shares always fit plane 0.
+    levChunkScan<<<(unsigned)nChunks, LEV_THREADS, scanShared, stream>>>(plane1, plane2, plane0, N, g, dXi, invShift, dYM);
+    if (nChunks > 1)
+        levChainChunks<<<1, LEV_CHAIN_THREADS, chainShared, stream>>>(plane2, plane0, nChunks, dXi, invShift, dYM);
     const uint64_t denRows = (uint64_t)LEV_THREADS * LEV_SCAN_BATCH;
     levNodeDen<<<(unsigned)((N + denRows - 1) / denRows), LEV_THREADS, 0, stream>>>(plane0, plane1, plane2, N, nBitsExt, g,
                                                                                    Goldilocks::inv(Goldilocks::w(nBitsExt)).fe);
@@ -649,11 +659,6 @@ static void levLaunch(const gl64_t *dXi, uint64_t nBits, uint64_t nBitsExt, gl64
 void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nBitsExt, gl64_t *d_yM, gl64_t *d_LEv, TimerGPU &timer, cudaStream_t stream)
 {
     TimerStartCategoryGPU(timer, LEV);
-    const uint64_t N = 1ull << nBits;
-    if (FIELD_EXTENSION * ((N + LEV_CHUNK - 1) / LEV_CHUNK) > N) {
-        zklog.error("computeLEv_inplace: domain 2^" + std::to_string(nBits) + " too small for the LEv scratch");
-        exitProcess();
-    }
     levLaunch((const gl64_t *)d_xiChallenge, nBits, nBitsExt, d_yM, d_LEv, stream);
     TimerStopCategoryGPU(timer, LEV);
     CHECKCUDAERR(cudaGetLastError());
