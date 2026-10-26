@@ -29,7 +29,7 @@ use proofman_starks_lib_c::{
 };
 use proofman_util::DeviceBuffer;
 
-/// The smallest GPU headroom a short card falls back to (the default is the C++ POST_ALLOC_HEADROOM_BYTES).
+/// The smallest GPU headroom a short card falls back to, in steps of 256 MiB from PROOFMAN_GPU_HEADROOM_MB.
 const POST_ALLOC_HEADROOM_MIN_BYTES: f64 = (512u64 << 20) as f64;
 
 #[derive(Debug)]
@@ -1578,22 +1578,30 @@ impl<F: PrimeField64> ProofCtx<F> {
             Ok((plan_input, plan, max_size_buffer, layout))
         };
 
-        // The headroom for everything allocated after the unified buffer, the final SNARK's sppark pool
-        // included. A card the default does not fit retries at the minimum.
+        // The headroom for everything allocated after the unified buffer ( ):
+        // the final SNARK's sppark pool, the per-air tables and lazily loaded kernels, and the CUDA
+        // graphs above PROOFMAN_GPU_MIN_HEADROOM_MB. A card it does not fit retries at the next
+        // multiple of 256 MiB below, down to the minimum.
         let free_after = |reserve: f64| (free_memory_device - reserve).max(0.0) / n_partitions as f64;
         let mut reserve = if gpu { get_post_alloc_headroom_bytes_c() as f64 } else { 0.0 };
-        let (plan_input, plan, max_size_buffer, layout) = match plan_with(free_after(reserve)) {
-            Err(e) if gpu => {
+        let mut planned = plan_with(free_after(reserve));
+        if gpu {
+            const STEP: f64 = (256u64 << 20) as f64;
+            while let Err(e) = &planned {
+                if reserve <= POST_ALLOC_HEADROOM_MIN_BYTES {
+                    break;
+                }
+                let next = (((reserve - 1.0) / STEP).floor() * STEP).max(POST_ALLOC_HEADROOM_MIN_BYTES);
                 tracing::warn!(
-                    "{e}; retrying with {} free after the unified buffer instead of {} (a final SNARK runs its MSMs in smaller parts)",
-                    format_bytes(POST_ALLOC_HEADROOM_MIN_BYTES),
+                    "{e}; retrying with {} free after the unified buffer instead of {}",
+                    format_bytes(next),
                     format_bytes(reserve),
                 );
-                reserve = POST_ALLOC_HEADROOM_MIN_BYTES;
-                plan_with(free_after(reserve))?
+                reserve = next;
+                planned = plan_with(free_after(reserve));
             }
-            planned => planned?,
-        };
+        }
+        let (plan_input, plan, max_size_buffer, layout) = planned?;
         if gpu {
             tracing::info!("Reserving {} of GPU memory for other device consumers", format_bytes(reserve));
         }
@@ -1818,6 +1826,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             late_region_bytes,
             n_slots,
             slot_bytes,
+            reserve as u64,
         );
 
         self.d_buffers = d_buffers;

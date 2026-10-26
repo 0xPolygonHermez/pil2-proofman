@@ -707,6 +707,7 @@ extern "C" {
         lateRegionBytes: u64,
         nSlots: u64,
         slotBytes: u64,
+        headroomBytes: u64,
     );
 
     pub fn configure_prefetch_zone(d_buffers_: *mut ::std::os::raw::c_void, witnessBytes: u64, nUnits: u32);

@@ -796,10 +796,10 @@ struct DeviceCommitBuffers
     // device memory witness and 1 GiB of dynamic room. On the phase-B layout the basic stream
     // takes all the slack anyway and the floor only binds when the slack is short of it; the
     // window a block actually gets is reported by "GPU mops used".
-    // The headroom is kept free after the unified buffer (the Rust plan falls back to 512 MiB): the
-    // allocations after it, and a final SNARK's sppark MSM pool (pilfflonk's key is in the buffer).
+    // The headroom kept free after the unified buffer is PROOFMAN_GPU_HEADROOM_MB (starks_api.cu;
+    // the Rust plan falls back to 512 MiB): the allocations after it, a final SNARK's sppark MSM
+    // pool (pilfflonk's key is in the buffer), and the CUDA graphs above PROOFMAN_GPU_MIN_HEADROOM_MB.
     static constexpr uint64_t MOPS_FLOOR_BYTES = 6ull << 30;
-    static constexpr uint64_t POST_ALLOC_HEADROOM_BYTES = 1024ull << 20;
 
     // Witness prefetch zone, one per GPU (the unified buffer's prefetch region): a witness is
     // uploaded on the zone's copy stream ahead of its commit or proof, which consumes it with one
