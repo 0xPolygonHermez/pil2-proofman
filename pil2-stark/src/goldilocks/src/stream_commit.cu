@@ -110,8 +110,8 @@ __global__ static void scTransposePackedKernel(const uint64_t *__restrict__ src,
     }
 }
 
-static void scTransposePacked(const uint64_t *src, uint64_t *dst, uint64_t nRows,
-                              uint64_t wordsPerRow, cudaStream_t stream) {
+void scTransposePacked(const uint64_t *src, uint64_t *dst, uint64_t nRows,
+                       uint64_t wordsPerRow, cudaStream_t stream) {
     const dim3 blk(SC_TR_TILE, 8);
     const dim3 grid((uint32_t)((nRows + SC_TR_TILE - 1) / SC_TR_TILE),
                     (uint32_t)((wordsPerRow + SC_TR_TILE - 1) / SC_TR_TILE));

@@ -396,25 +396,6 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
     }
 }
 
-// Opening 0's shifted point z = xi / s and its factor (1 - z^N) / N, for fillLEvDirectBatched.
-__global__ void evalXiShifted(gl64_t *d_shiftedValues, gl64_t *d_xiChallenge, uint64_t invShift_, uint64_t nBits, uint64_t domainInv_)
-{
-    Goldilocks3GPU::Element xi, xiN, factor, one;
-    gl64_t invShift(invShift_);
-    Goldilocks3GPU::mul(xi, *((Goldilocks3GPU::Element *)d_xiChallenge), invShift);
-    Goldilocks3GPU::copy(xiN, xi);
-    for (uint64_t bit = 0; bit < nBits; ++bit)
-        Goldilocks3GPU::mul(xiN, xiN, xiN);
-    Goldilocks3GPU::one(one);
-    Goldilocks3GPU::sub(factor, one, xiN);
-    gl64_t domainInv(domainInv_);
-    Goldilocks3GPU::mul(factor, factor, domainInv);
-    for (uint32_t k = 0; k < FIELD_EXTENSION; ++k) {
-        d_shiftedValues[k] = xi[k];
-        d_shiftedValues[FIELD_EXTENSION + k] = factor[k];
-    }
-}
-
 // Field exponentiation with a 64-bit exponent 
 static __device__ __forceinline__ gl64_t gl64Pow(gl64_t base, uint64_t e)
 {
@@ -433,48 +414,195 @@ static __device__ __forceinline__ void storeLEv(gl64_t *d_LEv, uint64_t row, uin
     for (uint32_t k = 0; k < FIELD_EXTENSION; ++k) d_LEv[k * N + row] = v[k];
 }
 
-// Direct (barycentric) Lagrange-kernel fill: LEv[row] = factor / (1 - z*w^{-row}) with
-// factor = (1 - z^N)/N precomputed (see evalXiShifted), which equals
-// L_row(z) by the closed form (z^N - 1) w^row / (N (z - w^row)). Each thread owns BATCH
-// consecutive rows and inverts their denominators with ONE cubic inversion (Montgomery
-// prefix trick), so the inversion cost is amortized BATCH ways.
-// factor == 0 means z^N = 1, i.e. z landed exactly on a domain node (negligible-probability
-// challenge, but exact): LEv is then the indicator vector of the matching row.
-template<uint32_t BATCH>
-__global__ void fillLEvDirectBatched(gl64_t *d_LEv, uint64_t N, gl64_t *d_shiftedValues, uint64_t rootInv_)
-{
-    const uint64_t batch = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    const uint64_t row0 = batch * BATCH;
-    if (row0 >= N) return;
+// LEv over the first N extended rows x_j = s g^j, contiguous so the evals read whole sectors:
+// L_j(y) = M(y) / ((y - g^j) D_j), M = prod_k (y - g^k), D_j = (-1)^(N-1-j) g^(j(j-1)/2 + j(N-1-j)) A_j A_(N-1-j),
+// A_m = prod_{t=1..m} (g^t - 1). LEV_FILL_BATCH = 4: 8 spills more than its shared inversion saves.
+constexpr uint32_t LEV_THREADS = 256, LEV_SCAN_BATCH = 8, LEV_FILL_BATCH = 4, LEV_CHAIN_THREADS = 1024;
+constexpr uint64_t LEV_CHUNK = (uint64_t)LEV_THREADS * LEV_SCAN_BATCH;
 
-    const uint32_t count = (uint32_t)min((uint64_t)BATCH, N - row0);
-    Goldilocks3GPU::Element xi, factor;
-    for (uint32_t k = 0; k < FIELD_EXTENSION; ++k) {
-        xi[k] = d_shiftedValues[k];
-        factor[k] = d_shiftedValues[FIELD_EXTENSION + k];
-    }
-    const bool factorZero = factor[0].is_zero() && factor[1].is_zero() && factor[2].is_zero();
-    gl64_t rootInv(rootInv_);
-    gl64_t root = gl64Pow(rootInv, row0);
-    gl64_t roots[BATCH];
-    Goldilocks3GPU::Element prefix[BATCH], scaled, den, one;
-    Goldilocks3GPU::one(one);
+// y = xi / s, the opening point in the nodes' frame.
+static __device__ __forceinline__ void levY(Goldilocks3GPU::Element &y, const gl64_t *dXi, uint64_t invShift_)
+{
+    Goldilocks3GPU::Element xi = {dXi[0], dXi[1], dXi[2]};
+    Goldilocks3GPU::mul(y, xi, gl64_t(invShift_));
+}
+
+// Product scans over a warp and a block; a shift fills lane 0 with one.
+static __device__ __forceinline__ gl64_t levShflUp(gl64_t v, uint32_t off, uint32_t lane)
+{
+    gl64_t o;
+    o[0] = (uint64_t)__shfl_up_sync(0xffffffffu, (unsigned long long)v[0], off);
+    return lane >= off ? o : gl64_t(uint64_t(1));
+}
+
+static __device__ __forceinline__ gl64_t levWarpScan(gl64_t v, uint32_t lane)
+{
     #pragma unroll
-    for (uint32_t b = 0; b < BATCH; ++b) {
-        if (b >= count) break;
-        roots[b] = root;
-        Goldilocks3GPU::mul(scaled, xi, root);
-        Goldilocks3GPU::sub(den, one, scaled);
-        if (b == 0) Goldilocks3GPU::copy(prefix[0], den);
-        else Goldilocks3GPU::mul(prefix[b], prefix[b - 1], den);
-        root *= rootInv;
+    for (uint32_t off = 1; off < 32; off <<= 1) v *= levShflUp(v, off, lane);
+    return v;
+}
+
+// Exclusive block prefix product; every thread gets the total. sh: blockDim/32 + 1 elements.
+static __device__ __forceinline__ gl64_t levBlockScan(gl64_t v, gl64_t &total, Goldilocks3GPU::Element *sh)
+{
+    const uint32_t lane = threadIdx.x & 31, warp = threadIdx.x >> 5, nWarps = blockDim.x >> 5;
+    const gl64_t inc = levWarpScan(v, lane);
+    if (lane == 31) sh[warp][0] = inc;
+    __syncthreads();
+    if (warp == 0) {
+        const gl64_t w = lane < nWarps ? sh[lane][0] : gl64_t(uint64_t(1));
+        const gl64_t wInc = levWarpScan(w, lane);
+        const gl64_t wEx = levShflUp(wInc, 1, lane);
+        if (lane < nWarps) sh[lane][0] = wEx;
+        if (lane == nWarps - 1) sh[nWarps][0] = wInc;
     }
-    if (factorZero) {
-        Goldilocks3GPU::Element out;
-        for (uint32_t b = 0; b < count; ++b) {
-            Goldilocks3GPU::mul(scaled, xi, roots[b]);
-            Goldilocks3GPU::sub(den, one, scaled);
-            const bool match = den[0].is_zero() && den[1].is_zero() && den[2].is_zero();
+    __syncthreads();
+    const gl64_t ex = sh[warp][0] * levShflUp(inc, 1, lane);
+    total = sh[nWarps][0];
+    __syncthreads();
+    return ex;
+}
+
+// Product of m over the block, valid in thread 0. sh holds blockDim/32 elements.
+static __device__ __forceinline__ void levBlockProd3(Goldilocks3GPU::Element &m, Goldilocks3GPU::Element *sh)
+{
+    const uint32_t lane = threadIdx.x & 31, warp = threadIdx.x >> 5, nWarps = blockDim.x >> 5;
+    Goldilocks3GPU::Element o;
+    #pragma unroll
+    for (uint32_t off = 16; off > 0; off >>= 1) {
+        for (uint32_t k = 0; k < FIELD_EXTENSION; k++)
+            o[k][0] = (uint64_t)__shfl_down_sync(0xffffffffu, (unsigned long long)m[k][0], off);
+        if (lane + off < 32) Goldilocks3GPU::mul(m, m, o);
+    }
+    if (lane == 0) Goldilocks3GPU::copy(sh[warp], m);
+    __syncthreads();
+    if (threadIdx.x == 0)
+        for (uint32_t w = 1; w < nWarps; w++) Goldilocks3GPU::mul(m, m, sh[w]);
+    __syncthreads();
+}
+
+// Per chunk: local prefix of a_m (a_0 = 1, a_m = g^m - 1) into dA, its total into dTot, its M(y) share into dM.
+// A single chunk has nothing to chain: y and M(y) go straight to dYM.
+__global__ void levChunkScan(gl64_t *dA, gl64_t *dTot, gl64_t *dM, uint64_t N, uint64_t g_, const gl64_t *dXi, uint64_t invShift_,
+                             gl64_t *dYM)
+{
+    extern __shared__ Goldilocks3GPU::Element levShared[];
+    const uint64_t base = (uint64_t)blockIdx.x * LEV_CHUNK + (uint64_t)threadIdx.x * LEV_SCAN_BATCH;
+    Goldilocks3GPU::Element y, m, d;
+    levY(y, dXi, invShift_);
+    const gl64_t g(g_), one(uint64_t(1));
+    gl64_t gm = gl64Pow(g, base), run = one, pre[LEV_SCAN_BATCH];
+    Goldilocks3GPU::one(m);
+    #pragma unroll
+    for (uint32_t b = 0; b < LEV_SCAN_BATCH; b++) {
+        if (base + b < N) {
+            run *= (base + b == 0) ? one : (gm - one);
+            Goldilocks3GPU::copy(d, y);
+            d[0] = d[0] - gm;
+            Goldilocks3GPU::mul(m, m, d);
+        }
+        pre[b] = run;
+        gm *= g;
+    }
+    gl64_t total;
+    const gl64_t ex = levBlockScan(run, total, levShared);
+    levBlockProd3(m, levShared);
+    if (threadIdx.x == 0 && gridDim.x == 1) {
+        dTot[0] = one;
+        for (uint32_t k = 0; k < FIELD_EXTENSION; k++) {
+            dYM[k] = y[k];
+            dYM[FIELD_EXTENSION + k] = m[k];
+        }
+    } else if (threadIdx.x == 0) {
+        dTot[blockIdx.x] = total;
+        for (uint32_t k = 0; k < FIELD_EXTENSION; k++) dM[blockIdx.x * FIELD_EXTENSION + k] = m[k];
+    }
+    #pragma unroll
+    for (uint32_t b = 0; b < LEV_SCAN_BATCH; b++)
+        if (base + b < N) dA[base + b] = ex * pre[b];
+}
+
+// One block chains the chunks (dTot becomes exclusive prefixes) and writes y, M(y) into dYM.
+__global__ void __launch_bounds__(LEV_CHAIN_THREADS) levChainChunks(gl64_t *dTot, const gl64_t *dM, uint64_t nChunks, const gl64_t *dXi, uint64_t invShift_,
+                               gl64_t *dYM)
+{
+    extern __shared__ Goldilocks3GPU::Element levShared[];
+    const uint64_t per = (nChunks + blockDim.x - 1) / blockDim.x;
+    const uint64_t c0 = (uint64_t)threadIdx.x * per, c1 = min(c0 + per, nChunks);
+    gl64_t run(uint64_t(1));
+    Goldilocks3GPU::Element m, p;
+    Goldilocks3GPU::one(m);
+    for (uint64_t c = c0; c < c1; c++) {
+        run *= dTot[c];
+        for (uint32_t k = 0; k < FIELD_EXTENSION; k++) p[k] = dM[c * FIELD_EXTENSION + k];
+        Goldilocks3GPU::mul(m, m, p);
+    }
+    gl64_t total;
+    gl64_t acc = levBlockScan(run, total, levShared);
+    for (uint64_t c = c0; c < c1; c++) {
+        const gl64_t v = dTot[c];
+        dTot[c] = acc;
+        acc *= v;
+    }
+    levBlockProd3(m, levShared);
+    if (threadIdx.x == 0) {
+        Goldilocks3GPU::Element y;
+        levY(y, dXi, invShift_);
+        for (uint32_t k = 0; k < FIELD_EXTENSION; k++) {
+            dYM[k] = y[k];
+            dYM[FIELD_EXTENSION + k] = m[k];
+        }
+    }
+}
+
+// D_j, LEV_SCAN_BATCH rows per thread: e_j steps by N-2-j, so one power per thread, then two muls per row.
+__global__ void levNodeDen(gl64_t *dD, const gl64_t *dA, const gl64_t *dTot, uint64_t N, uint64_t lgNExt, uint64_t g_,
+                           uint64_t gInv_)
+{
+    const uint64_t j0 = ((uint64_t)blockIdx.x * blockDim.x + threadIdx.x) * LEV_SCAN_BATCH;
+    if (j0 >= N) return;
+    const uint64_t mask = (1ull << lgNExt) - 1;
+    const gl64_t g(g_), gInv(gInv_);
+    // Exponents mod NExt (g's order); j(j-1) is 0 at j = 0 despite the wrap.
+    gl64_t gE = gl64Pow(g, (j0 * (j0 - 1) / 2 + j0 * (N - 1 - j0)) & mask);
+    gl64_t step = gl64Pow(g, (N - 2 - j0) & mask);
+    #pragma unroll
+    for (uint32_t b = 0; b < LEV_SCAN_BATCH; b++) {
+        const uint64_t j = j0 + b;
+        if (j >= N) break;
+        const uint64_t r = N - 1 - j;
+        gl64_t D = gE * (dA[j] * dTot[j / LEV_CHUNK]) * (dA[r] * dTot[r / LEV_CHUNK]);
+        if (r & 1) D = gl64_t(uint64_t(0)) - D;
+        dD[j] = D;
+        gE *= step;
+        step *= gInv;
+    }
+}
+
+// LEv[j] = M(y) / ((y - g^j) D_j), D_j from plane 0 (own rows only); M(y) == 0: y is a node, LEv its indicator.
+template<uint32_t BATCH>
+__global__ void fillLEvContiguous(gl64_t *d_LEv, uint64_t N, const gl64_t *dYM, uint64_t g_)
+{
+    const uint64_t row0 = ((uint64_t)blockIdx.x * blockDim.x + threadIdx.x) * BATCH;
+    if (row0 >= N) return;
+    const uint32_t count = (uint32_t)min((uint64_t)BATCH, N - row0);
+    Goldilocks3GPU::Element y = {dYM[0], dYM[1], dYM[2]}, M = {dYM[3], dYM[4], dYM[5]};
+    const bool mZero = M[0].is_zero() && M[1].is_zero() && M[2].is_zero();
+    const gl64_t g(g_);
+    gl64_t gj = gl64Pow(g, row0), roots[BATCH], D[BATCH];
+    Goldilocks3GPU::Element prefix[BATCH], diff, den, out;
+    #pragma unroll
+    for (uint32_t b = 0; b < BATCH; b++) {
+        if (b >= count) break;
+        roots[b] = gj;
+        D[b] = d_LEv[row0 + b];
+        gj *= g;
+    }
+    if (mZero) {
+        for (uint32_t b = 0; b < count; b++) {
+            Goldilocks3GPU::copy(diff, y);
+            diff[0] = diff[0] - roots[b];
+            const bool match = diff[0].is_zero() && diff[1].is_zero() && diff[2].is_zero();
             out[0] = match ? gl64_t(uint64_t(1)) : gl64_t(uint64_t(0));
             out[1] = gl64_t(uint64_t(0));
             out[2] = gl64_t(uint64_t(0));
@@ -482,46 +610,62 @@ __global__ void fillLEvDirectBatched(gl64_t *d_LEv, uint64_t N, gl64_t *d_shifte
         }
         return;
     }
-    // Montgomery unwind: inv = (prod of remaining dens)^{-1}; each step peels one den
-    // (recomputed rather than stored -- one cubic mul against BATCH extra registers).
-    Goldilocks3GPU::Element inv, weight, out;
+    #pragma unroll
+    for (uint32_t b = 0; b < BATCH; b++) {
+        if (b >= count) break;
+        Goldilocks3GPU::copy(diff, y);
+        diff[0] = diff[0] - roots[b];
+        Goldilocks3GPU::mul(den, diff, D[b]);
+        if (b == 0) Goldilocks3GPU::copy(prefix[0], den);
+        else Goldilocks3GPU::mul(prefix[b], prefix[b - 1], den);
+    }
+    Goldilocks3GPU::Element inv, weight;
     Goldilocks3GPU::inv(inv, prefix[count - 1]);
     for (uint32_t b = count - 1; b > 0; --b) {
         Goldilocks3GPU::mul(weight, inv, prefix[b - 1]);
-        Goldilocks3GPU::mul(out, factor, weight);
+        Goldilocks3GPU::mul(out, M, weight);
         storeLEv(d_LEv, row0 + b, N, out);
-        Goldilocks3GPU::mul(scaled, xi, roots[b]);
-        Goldilocks3GPU::sub(den, one, scaled);
+        Goldilocks3GPU::copy(diff, y);
+        diff[0] = diff[0] - roots[b];
+        Goldilocks3GPU::mul(den, diff, D[b]);
         Goldilocks3GPU::mul(inv, inv, den);
     }
-    Goldilocks3GPU::mul(out, factor, inv);
+    Goldilocks3GPU::mul(out, M, inv);
     storeLEv(d_LEv, row0, N, out);
 }
 
-// Opening 0's Lagrange vector, which serves every opening (evmap_inplace). d_shiftedValues takes
-// 2 * FIELD_EXTENSION elements.
-void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, gl64_t *d_shiftedValues, gl64_t *d_LEv, TimerGPU &timer, cudaStream_t stream)
+// The four passes, given the domain sizes; dXi is the challenge, dYM receives y and M(y).
+static void levLaunch(const gl64_t *dXi, uint64_t nBits, uint64_t nBitsExt, gl64_t *dYM, gl64_t *d_LEv, cudaStream_t stream)
+{
+    const uint64_t N = 1ull << nBits;
+    const uint64_t nChunks = (N + LEV_CHUNK - 1) / LEV_CHUNK;
+    const uint64_t invShift = Goldilocks::inv(Goldilocks::shift()).fe;
+    const uint64_t g = Goldilocks::w(nBitsExt).fe;
+    gl64_t *plane0 = d_LEv, *plane1 = d_LEv + N, *plane2 = d_LEv + 2 * N;
+    const size_t scanShared = (LEV_THREADS / 32 + 1) * sizeof(Goldilocks3GPU::Element);
+    const size_t chainShared = (LEV_CHAIN_THREADS / 32 + 1) * sizeof(Goldilocks3GPU::Element);
+    // Several chunks mean N > LEV_CHUNK, so their M(y) shares always fit plane 0.
+    levChunkScan<<<(unsigned)nChunks, LEV_THREADS, scanShared, stream>>>(plane1, plane2, plane0, N, g, dXi, invShift, dYM);
+    if (nChunks > 1)
+        levChainChunks<<<1, LEV_CHAIN_THREADS, chainShared, stream>>>(plane2, plane0, nChunks, dXi, invShift, dYM);
+    const uint64_t denRows = (uint64_t)LEV_THREADS * LEV_SCAN_BATCH;
+    levNodeDen<<<(unsigned)((N + denRows - 1) / denRows), LEV_THREADS, 0, stream>>>(plane0, plane1, plane2, N, nBitsExt, g,
+                                                                                   Goldilocks::inv(Goldilocks::w(nBitsExt)).fe);
+    const uint64_t fillRows = (uint64_t)LEV_THREADS * LEV_FILL_BATCH;
+    fillLEvContiguous<LEV_FILL_BATCH><<<(unsigned)((N + fillRows - 1) / fillRows), LEV_THREADS, 0, stream>>>(d_LEv, N, dYM, g);
+}
+
+// Opening 0's LEv, shared by every opening; d_yM gets y and M(y), the LEv planes are the scratch.
+void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nBitsExt, gl64_t *d_yM, gl64_t *d_LEv, TimerGPU &timer, cudaStream_t stream)
 {
     TimerStartCategoryGPU(timer, LEV);
-    uint64_t N = 1 << nBits;
-    Goldilocks::Element invShift = Goldilocks::inv(Goldilocks::shift());
-    Goldilocks::Element domainInv = Goldilocks::inv(Goldilocks::fromU64(N));
-    evalXiShifted<<<1, 1, 0, stream>>>(d_shiftedValues, (gl64_t*)d_xiChallenge, invShift.fe, nBits, domainInv.fe);
-
-    // BATCH = 4: measured optimum (BATCH = 8 amortizes the per-thread inversion further
-    // but the extra cubic registers cost more than it saves: 31.4 vs 22.0 ms per phase).
-    constexpr uint32_t directBatch = 4;
-    dim3 nThreads(256);
-    dim3 nBlocks((N + nThreads.x * directBatch - 1) / (nThreads.x * directBatch));
-    Goldilocks::Element rootInv = Goldilocks::inv(Goldilocks::w(nBits));
-    fillLEvDirectBatched<directBatch><<<nBlocks, nThreads, 0, stream>>>(d_LEv, N, d_shiftedValues, rootInv.fe);
+    levLaunch((const gl64_t *)d_xiChallenge, nBits, nBitsExt, d_yM, d_LEv, stream);
     TimerStopCategoryGPU(timer, LEV);
     CHECKCUDAERR(cudaGetLastError());
 }
 
-// Opening evaluations p(xi w^o). Every opening point is z = xi / s shifted by a power of the trace
-// root w, so L_j(z w^o) = L_{j-o}(z) and p(xi w^o) = SUM_i L_i(z) * p[(i + o) mod N]: opening 0's
-// Lagrange vector serves every opening, and a group reads its column once for all its openings.
+// p(xi w^o) = SUM_i L_i(y) ext[(i + o*b) mod NExt] (w = g^b): opening 0's weights serve every opening,
+// and a group reads its column once for all its openings.
 // grid (groups, stripes); each eval's stripe partial goes to partials[evalPos][stripe].
 __global__ void computeEvalsShifted(uint64_t N, uint64_t extendBits, const EvalGroup *d_groups,
                                     const gl64_t *d_cmPols, const gl64_t *d_customCommits,
@@ -545,7 +689,7 @@ __global__ void computeEvalsShifted(uint64_t N, uint64_t extendBits, const EvalG
         #pragma unroll
         for (uint32_t o = 0; o < EVALS_GROUP_OPENINGS; o++) {
             if (o >= nOpen) break;
-            const uint64_t row = ((i + shift[o]) & (N - 1)) << extendBits;
+            const uint64_t row = (i + (shift[o] << extendBits)) & (NExt - 1);
             Goldilocks3GPU::Element res;
             if (dim == 1) {
                 gl64_t v = pol[row];

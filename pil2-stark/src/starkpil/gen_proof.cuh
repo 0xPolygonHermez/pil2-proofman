@@ -389,7 +389,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
     cudagraph::run(cudagraph::key(0x4556414cULL, graphCtxId), countId, stream, [&] {
-    computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("lev_helper", false)], d_LEv, timer, stream);
+    computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("lev_helper", false)], d_LEv, timer, stream);
     evmap_inplace(setupCtx, h_params, air_instance_info, (Goldilocks::Element*)d_LEv, timer, stream);
     
     TimerStartCategoryGPU(timer, TRANSCRIPT);

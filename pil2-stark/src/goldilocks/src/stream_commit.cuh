@@ -4,6 +4,9 @@
 #include <cuda_runtime.h>
 #include <cstdint>
 
+// Row-major -> column-major (dst[w * nRows + r] = src[r * wordsPerRow + w]) through 32x32 shared tiles.
+void scTransposePacked(const uint64_t *src, uint64_t *dst, uint64_t nRows, uint64_t wordsPerRow, cudaStream_t stream);
+
 class gl64_t;
 class TimerGPU;
 

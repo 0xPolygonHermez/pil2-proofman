@@ -71,7 +71,7 @@ __global__ void moduleQueries(uint64_t* d_queriesL0, uint64_t nQueries, uint64_t
 void unpack_trace(AirInstanceInfo *air_instance_info, uint64_t* src, uint64_t* dst, uint64_t nCols, uint64_t nRows, cudaStream_t stream, TimerGPU &timer);
 void unpack_fixed(uint64_t* num_packed_words,uint64_t* d_unpack_info,uint64_t* src,uint64_t* dst,uint64_t nCols,uint64_t nRows,cudaStream_t stream,TimerGPU &timer);
 
-void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, gl64_t *d_shiftedValues, gl64_t *d_LEv, TimerGPU &timer, cudaStream_t stream);
+void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nBitsExt, gl64_t *d_yM, gl64_t *d_LEv, TimerGPU &timer, cudaStream_t stream);
 
 
 void commitStage_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL**treesGL, gl64_t *d_witness, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg = 0);

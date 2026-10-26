@@ -753,7 +753,7 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
     LEvSize += N * FIELD_EXTENSION;
     if(gpu) {
-        // Opening 0's shifted point and factor (computeLEv_inplace), then the stripe partials.
+        // Opening 0's point y = xi / s and M(y) (computeLEv_inplace), then the stripe partials.
         mapOffsets[std::make_pair("lev_helper", false)] = LEvSize;
         LEvSize += 2 * FIELD_EXTENSION;
         mapOffsets[std::make_pair("evals_partials", false)] = LEvSize;
