@@ -20,6 +20,8 @@ using Engine = AltBn128::Engine;
 
 // The device of the GPU path (setGpuDevice): device 0, the PLONK GPU prover's default, until set.
 std::atomic<int> gpuDevice{0};
+// The GpuKeys alive (holdGpuDevice): their memory is on gpuDevice, which then stays.
+std::atomic<int> gpuKeys{0};
 
 constexpr InvalidArgument invalid("Gpu::");
 
@@ -65,8 +67,16 @@ void setGpuDevice(int device) {
         throw std::invalid_argument("setGpuDevice: CUDA has no device " + std::to_string(device) + " (it sees " +
                                     std::to_string(count) + ")");
     }
+    if (device != gpuDevice.load() && gpuKeys.load() > 0) {
+        throw std::invalid_argument("setGpuDevice: a key is loaded on device " + std::to_string(gpuDevice.load()) +
+                                    ", and its memory cannot follow to device " + std::to_string(device));
+    }
     gpuDevice.store(device);
 }
+
+void holdGpuDevice() { gpuKeys.fetch_add(1); }
+
+void releaseGpuDevice() { gpuKeys.fetch_sub(1); }
 
 DeviceScope::DeviceScope() : previous(pilfflonk_gpu_current_device()), device(gpuDevice.load()) {
     if (previous != device) {

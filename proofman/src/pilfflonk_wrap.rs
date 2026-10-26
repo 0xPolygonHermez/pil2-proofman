@@ -96,6 +96,9 @@ pub(crate) fn wrap_arena(
     if !gpu {
         return Ok(None);
     }
+    // Without proofman's buffers the recursivef's prover buffer is on device 0.
+    gpu_set_device(0)
+        .map_err(|e| ProofmanError::InvalidConfiguration(format!("pilfflonk cannot prove on CUDA device 0: {e}")))?;
     let needed = gpu_device_bytes(proving_key).map_err(|e| invalid_key(proving_key, e))?;
     match reserve_recursivef_aux_trace_c(d_buffers_recursivef, needed.arena) {
         Ok((buffer, bytes)) => {

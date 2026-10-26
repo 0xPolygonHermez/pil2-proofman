@@ -394,7 +394,8 @@ public:
     static uint64_t freeDeviceBytes();
 
     // The CUDA device of the GPU path from now on (setGpuDevice), before any key loads on the GPU.
-    // Throws std::invalid_argument as load does without a GPU, and for a device CUDA does not have.
+    // Throws std::invalid_argument as load does without a GPU, for a device CUDA does not have, and for
+    // another device while a key is loaded on the GPU.
     static void setDevice(int device);
 
     ProvingKey(const ProvingKey &) = delete;

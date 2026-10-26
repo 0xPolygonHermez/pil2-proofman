@@ -297,7 +297,7 @@ extern "C" {
     // Makes `device` the CUDA device of every later GPU call, device 0 until set: before any ctx loads
     // on the GPU, as a wrap puts it on the device of proofman's unified buffer. A ctx's device memory
     // stays on the device it loaded on. PILFFLONK_ERR_INVALID_ARGUMENT if there is no GPU (as
-    // pilfflonk_ctx_new_on) or CUDA has no such device.
+    // pilfflonk_ctx_new_on), CUDA has no such device, or a ctx is loaded on the GPU on another one.
     int pilfflonk_gpu_set_device(int device);
 
     // 1 if this library has the GPU path (it was built with nvcc: libstarksgpu.a) and sees a GPU it

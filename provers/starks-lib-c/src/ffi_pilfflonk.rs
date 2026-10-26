@@ -356,7 +356,8 @@ pub fn pilfflonk_gpu_free_bytes_c() -> Result<u64, PilFflonkError> {
 
 /// Makes `device` the CUDA device of every later GPU call, device 0 until set: before any context
 /// loads on the GPU, as a context's device memory stays where it loaded. Fails with
-/// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) without a GPU or for a device CUDA does not have.
+/// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) without a GPU, for a device CUDA does not have, or for another device while a context is loaded on
+/// the GPU.
 pub fn pilfflonk_gpu_set_device_c(device: u32) -> Result<(), PilFflonkError> {
     // SAFETY: no pointers.
     check_status(unsafe { pilfflonk_gpu_set_device(device as ::std::os::raw::c_int) })
@@ -373,7 +374,7 @@ pub fn pilfflonk_gpu_set_device_c(device: u32) -> Result<(), PilFflonkError> {
 /// [`PilFflonkInstance::new`] then waits while an instance of another thread holds it, and fails with
 /// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) while one holds it whose latest call was
 /// on this thread, which it would wait for (pilfflonk_api.hpp, the concurrent instances). Its calls
-/// run on CUDA device 0 and leave the thread's current device as it was.
+/// run on the GPU's device ([`pilfflonk_gpu_set_device_c`]) and leave the thread's current device as it was.
 #[derive(Debug)]
 pub struct PilFflonkProverCtx {
     handle: NonNull<c_void>,
@@ -411,7 +412,7 @@ impl PilFflonkProverCtx {
     ///
     /// # Safety
     ///
-    /// `buffer` must be `bytes` bytes of device memory on CUDA device 0, which outlive the context,
+    /// `buffer` must be `bytes` bytes of device memory on the GPU's device ([`pilfflonk_gpu_set_device_c`]), which outlive the context,
     /// and which nothing else uses while an instance of the context lives.
     pub unsafe fn load_on_device_buffer(dir: &Path, buffer: *mut c_void, bytes: u64) -> Result<Self, PilFflonkError> {
         let path = c_path("pilfflonk_ctx_new_on_device_buffer", dir)?;
@@ -427,7 +428,7 @@ impl PilFflonkProverCtx {
     ///
     /// # Safety
     ///
-    /// `buffer` must be `bytes` bytes of device memory on CUDA device 0, which outlive the context,
+    /// `buffer` must be `bytes` bytes of device memory on the GPU's device ([`pilfflonk_gpu_set_device_c`]), which outlive the context,
     /// and which nothing else uses while it loads, while an instance of it lives, and (without
     /// `restorable`) at all while it lives.
     pub unsafe fn load_in_device_buffer(

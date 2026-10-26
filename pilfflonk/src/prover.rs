@@ -273,7 +273,7 @@ impl ProvingKeyFiles {
     ///
     /// # Safety
     ///
-    /// `buffer` must be `bytes` bytes of device memory on CUDA device 0, which outlive the key, and
+    /// `buffer` must be `bytes` bytes of device memory on the GPU's device ([`gpu_set_device`]), which outlive the key, and
     /// which nothing else uses while a proof of the key runs.
     pub unsafe fn load_on_device_buffer(self, buffer: *mut c_void, bytes: u64) -> PilfflonkResult<ProvingKey> {
         self.one_air()?;
@@ -289,7 +289,7 @@ impl ProvingKeyFiles {
     ///
     /// # Safety
     ///
-    /// `buffer` must be `bytes` bytes of device memory on CUDA device 0, which outlive the key, and
+    /// `buffer` must be `bytes` bytes of device memory on the GPU's device ([`gpu_set_device`]), which outlive the key, and
     /// which nothing else uses while it loads, while a proof runs, and (without `restorable`) at all
     /// while the key lives.
     pub unsafe fn load_in_device_buffer(
@@ -353,7 +353,7 @@ pub fn gpu_free_bytes() -> PilfflonkResult<u64> {
 
 /// Makes `device` the CUDA device of every later GPU call, device 0 until set: before any key loads on
 /// the GPU (a key's device memory stays where it loaded). Refused without a GPU ([`gpu_available`])
-/// or for a device CUDA does not have.
+/// for a device CUDA does not have, or for another device while a key is loaded on the GPU.
 pub fn gpu_set_device(device: u32) -> PilfflonkResult<()> {
     pilfflonk_gpu_set_device_c(device).map_err(native("setting the GPU's device"))
 }

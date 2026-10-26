@@ -154,8 +154,12 @@ void transformOnDevice(void *data, uint64_t bits, bool inverse);
 
 // The CUDA device of the GPU path from now on, device 0 until set: before any key loads on the GPU, as
 // one key's device memory stays on the device it loaded on. Throws std::invalid_argument for a device
-// CUDA does not have. Only a library built with the GPU defines it.
+// CUDA does not have, or for another device while a GpuKey lives (holdGpuDevice). Only a library built
+// with the GPU defines it.
 void setGpuDevice(int device);
+// A GpuKey's whole life, from the end of its construction to its destruction: setGpuDevice keeps the device.
+void holdGpuDevice();
+void releaseGpuDevice();
 
 // Gpu::available() in a library built with the GPU, and false in one built without.
 inline bool gpuAvailable() {
