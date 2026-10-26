@@ -6,7 +6,7 @@
 // library built with the GPU (__USE_CUDA__) has it, in pilfflonk_key_gpu.cpp; the classes that
 // use it hold it under __USE_CUDA__.
 //
-// The device is device 0, as for Gpu: every function here that a caller reaches makes it the calling
+// The device is the GPU's (setGpuDevice), as for Gpu: every function here that a caller reaches makes it the calling
 // thread's current device while it runs (DeviceScope; ProofCall for a proof's), and so does the
 // release of what holds device memory, a stream or an event (DeviceBuffer, Staging, Gpu), wherever
 // it is released. Kernels run on the legacy default stream, copies to and from
@@ -221,7 +221,7 @@ uint64_t loadScratchBytes(const AirKey &air);
 // allocates besides (GpuBudget::leastTransient), what GpuKey::reserve checks against the free memory.
 DeviceBytes deviceBytesOf(uint64_t nG1, const std::vector<const AirKey *> &airs, uint32_t multiprocessors);
 
-// The multiprocessors of the device a GpuKey uses, device 0, and its free memory in bytes
+// The multiprocessors of the device a GpuKey uses, the GPU's (setGpuDevice), and its free memory in bytes
 // (cudaMemGetInfo), whatever the calling thread's current device (DeviceScope).
 uint32_t gpuMultiprocessors();
 uint64_t gpuFreeBytes();

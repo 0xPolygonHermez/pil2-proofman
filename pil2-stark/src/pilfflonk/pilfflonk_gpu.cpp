@@ -4,6 +4,7 @@
 // plonk_prover_gpu.c.cuh does, and has no kernel of its own.
 #include "pilfflonk_gpu.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -17,8 +18,8 @@ namespace {
 
 using Engine = AltBn128::Engine;
 
-// The PLONK GPU prover's default device.
-constexpr int DEVICE = 0;
+// The device of the GPU path (setGpuDevice): device 0, the PLONK GPU prover's default, until set.
+std::atomic<int> gpuDevice{0};
 
 constexpr InvalidArgument invalid("Gpu::");
 
@@ -58,14 +59,23 @@ void transformOnDevice(void *data, uint64_t bits, bool inverse) {
     }
 }
 
-DeviceScope::DeviceScope() : previous(pilfflonk_gpu_current_device()) {
-    if (previous != DEVICE) {
-        gpu_plonk_set_device(DEVICE);
+void setGpuDevice(int device) {
+    const int count = pilfflonk_gpu_device_count();
+    if (device < 0 || device >= count) {
+        throw std::invalid_argument("setGpuDevice: CUDA has no device " + std::to_string(device) + " (it sees " +
+                                    std::to_string(count) + ")");
+    }
+    gpuDevice.store(device);
+}
+
+DeviceScope::DeviceScope() : previous(pilfflonk_gpu_current_device()), device(gpuDevice.load()) {
+    if (previous != device) {
+        gpu_plonk_set_device(device);
     }
 }
 
 DeviceScope::~DeviceScope() {
-    if (previous != DEVICE) {
+    if (previous != device) {
         gpu_plonk_set_device(previous);
     }
 }

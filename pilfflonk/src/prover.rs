@@ -47,9 +47,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use proofman_starks_lib_c::{
-    pilfflonk_gpu_available_c, pilfflonk_gpu_device_bytes_c, pilfflonk_gpu_free_bytes_c, PilFflonkError,
-    PilFflonkErrorKind, PilFflonkInstance, PilFflonkInstanceInputs, PilFflonkOpening, PilFflonkProverCtx,
-    PilFflonkTranscript,
+    pilfflonk_gpu_available_c, pilfflonk_gpu_device_bytes_c, pilfflonk_gpu_free_bytes_c, pilfflonk_gpu_set_device_c,
+    PilFflonkError, PilFflonkErrorKind, PilFflonkInstance, PilFflonkInstanceInputs, PilFflonkOpening,
+    PilFflonkProverCtx, PilFflonkTranscript,
 };
 pub use proofman_starks_lib_c::{
     pilfflonk_wrap_block as WrapBlock, PilFflonkExecStatic as ExecStatic, PilFflonkExecWitness as ExecWitness,
@@ -94,7 +94,7 @@ pub(crate) fn native(context: &'static str) -> impl FnOnce(PilFflonkError) -> Pi
 /// On [`Device::Gpu`], it proves one proof at a time, in the device memory it holds for one: [`prove`]
 /// and [`stage_columns`] hold it from their instance's creation to its end, and another one's on this
 /// thread meanwhile fails (`proofman_starks_lib_c::PilFflonkProverCtx`, which says what a C++ caller
-/// sharing it between threads sees). Its calls run on CUDA device 0, whatever the thread's current
+/// sharing it between threads sees). Its calls run on the GPU's CUDA device ([`gpu_set_device`]), whatever the thread's current
 /// device, which they leave as it was. On [`Device::Cpu`], proofs of one key are independent.
 #[derive(Debug)]
 pub struct ProvingKey {
@@ -343,12 +343,19 @@ pub fn gpu_device_bytes(dir: &Path) -> PilfflonkResult<DeviceBytes> {
     pilfflonk_gpu_device_bytes_c(dir).map_err(native("reading the device memory of the provingKey/"))
 }
 
-/// The free memory of CUDA device 0, in bytes, what a key's load on the GPU checks
+/// The free memory of the GPU's CUDA device ([`gpu_set_device`]), in bytes, what a key's load on the GPU checks
 /// [`gpu_device_bytes`] against: for a caller that reserves device memory before it loads a key (the
 /// wrap's, pilfflonk/docs/performance.md#the-wraps-device-buffer). Refused without a GPU
 /// ([`gpu_available`]).
 pub fn gpu_free_bytes() -> PilfflonkResult<u64> {
     pilfflonk_gpu_free_bytes_c().map_err(native("reading the GPU's free memory"))
+}
+
+/// Makes `device` the CUDA device of every later GPU call, device 0 until set: before any key loads on
+/// the GPU (a key's device memory stays where it loaded). Refused without a GPU ([`gpu_available`])
+/// or for a device CUDA does not have.
+pub fn gpu_set_device(device: u32) -> PilfflonkResult<()> {
+    pilfflonk_gpu_set_device_c(device).map_err(native("setting the GPU's device"))
 }
 
 /// Runs `f` between the two lines the C++ core's timers log at -vv (TimerStart and

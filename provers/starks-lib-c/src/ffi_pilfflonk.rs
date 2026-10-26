@@ -293,7 +293,7 @@ pub enum PilFflonkDevice {
     /// ffiasm's MSM and FFT.
     #[default]
     Cpu,
-    /// The GPU's MSM and NTT of `pil2-stark/src/bn128/src/{msm,ntt}`, on CUDA device 0: a library
+    /// The GPU's MSM and NTT of `pil2-stark/src/bn128/src/{msm,ntt}`, on [`pilfflonk_gpu_set_device_c`]'s: a library
     /// built with CUDA ([`pilfflonk_gpu_available_c`]).
     Gpu,
 }
@@ -343,7 +343,7 @@ pub fn pilfflonk_precompute_c(dir: &Path, vkey_digest: &[u8; 32]) -> Result<(), 
     check_status(unsafe { pilfflonk_precompute(path.as_ptr(), vkey_digest.as_ptr()) })
 }
 
-/// The free memory of CUDA device 0, in bytes: what a [`PilFflonkProverCtx`]'s load on the GPU checks
+/// The free memory of the GPU's CUDA device ([`pilfflonk_gpu_set_device_c`]), in bytes: what a [`PilFflonkProverCtx`]'s load on the GPU checks
 /// [`pilfflonk_gpu_device_bytes_c`]'s needs against, for a caller that reserves device memory before
 /// it loads a context (the wrap's). Fails with [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument)
 /// without a GPU ([`pilfflonk_gpu_available_c`]).
@@ -352,6 +352,14 @@ pub fn pilfflonk_gpu_free_bytes_c() -> Result<u64, PilFflonkError> {
     // SAFETY: the out pointer is a u64 the call writes.
     check_status(unsafe { pilfflonk_gpu_free_bytes(&mut free) })?;
     Ok(free)
+}
+
+/// Makes `device` the CUDA device of every later GPU call, device 0 until set: before any context
+/// loads on the GPU, as a context's device memory stays where it loaded. Fails with
+/// [`InvalidArgument`](PilFflonkErrorKind::InvalidArgument) without a GPU or for a device CUDA does not have.
+pub fn pilfflonk_gpu_set_device_c(device: u32) -> Result<(), PilFflonkError> {
+    // SAFETY: no pointers.
+    check_status(unsafe { pilfflonk_gpu_set_device(device as ::std::os::raw::c_int) })
 }
 
 /// The proving key of the prover (pilfflonk/docs/protocol.md#proof-sequence, step 1), owned by the

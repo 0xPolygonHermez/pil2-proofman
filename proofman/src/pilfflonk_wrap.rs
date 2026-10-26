@@ -25,8 +25,9 @@ use std::path::Path;
 use pilfflonk_wrap_witness::{DeviceWitness, WrapArtifacts, WrapWitness};
 use proofman_common::{ProofmanError, ProofmanResult};
 use proofman_pilfflonk::{
-    gpu_device_bytes, gpu_free_bytes, js_verifier, prove, prove_exec, Device, DeviceBytes, FrBytes, JsonFile, Proof,
-    ProofJson, ProofNames, ProveOptions, ProvingKey, ProvingKeyFiles, Publics, Vkey, Witness, WitnessShape,
+    gpu_device_bytes, gpu_free_bytes, gpu_set_device, js_verifier, prove, prove_exec, Device, DeviceBytes, FrBytes,
+    JsonFile, Proof, ProofJson, ProofNames, ProveOptions, ProvingKey, ProvingKeyFiles, Publics, Vkey, Witness,
+    WitnessShape,
 };
 use proofman_starks_lib_c::{
     get_first_gpu_buffer_c, get_first_gpu_id_c, get_layout_offset_c, invalidate_stream_contexts_c,
@@ -38,25 +39,24 @@ use proofman_util::{timer_start_info, timer_stop_and_log_info};
 const PUBLIC_BYTES: usize = 32;
 
 /// The device memory of the pilfflonk wrap's proofs on the GPU (their arena): `bytes` bytes at
-/// `buffer` on CUDA device 0, of the wrap's ([`wrap_arena`]).
+/// `buffer` on pilfflonk's CUDA device, of the wrap's ([`wrap_arena`], [`unified_buffer`]).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WrapArena {
     pub(crate) buffer: *mut c_void,
     pub(crate) bytes: u64,
 }
 
-/// The aux area of proofman's unified buffer of `d_buffers` on device 0, `[auxBase, aggBase)` of its
+/// The aux area of proofman's unified buffer of `d_buffers` on its first GPU, `[auxBase, aggBase)` of its
 /// layout: the streaming-commit slots and the proof streams, which hold nothing proofman keeps across
 /// proofs but the streams' cached const pols ([`AuxAreaUse`] drops them), as for the const trees
 /// proofman builds there (`const_tree_scratch`). The basic fixed pols and the late region below it,
 /// and the aggregation const cache above it, stay as they are, so the wrap leaves nothing to reload.
 pub(crate) fn unified_buffer(d_buffers: *mut c_void) -> ProofmanResult<WrapArena> {
+    // pilfflonk proves where the buffer is: an MPI rank's first GPU need not be device 0.
     let gpu_id = get_first_gpu_id_c(d_buffers);
-    if gpu_id != 0 {
-        return Err(ProofmanError::InvalidConfiguration(format!(
-            "pilfflonk proves on CUDA device 0, and proofman's unified buffer is on device {gpu_id}"
-        )));
-    }
+    gpu_set_device(gpu_id).map_err(|e| {
+        ProofmanError::InvalidConfiguration(format!("pilfflonk cannot prove on CUDA device {gpu_id}: {e}"))
+    })?;
     // The first GPU's buffer: not the calling thread's current device's. Every GPU has the same layout.
     let aux_base = get_layout_offset_c(d_buffers, LayoutBoundary::AuxBase);
     let agg_base = get_layout_offset_c(d_buffers, LayoutBoundary::AggBase);
@@ -182,7 +182,7 @@ impl PilfflonkWrapProver {
     ///
     /// # Safety
     ///
-    /// An `arena` must be device memory of its bytes on device 0 that outlives the prover, and that
+    /// An `arena` must be device memory of its bytes on pilfflonk's device that outlives the prover, and that
     /// nothing else uses while it proves.
     pub(crate) unsafe fn load(
         setup_snark_path: &Path,
@@ -206,7 +206,7 @@ impl PilfflonkWrapProver {
     ///
     /// # Safety
     ///
-    /// A `buffer` must be device memory of its bytes on device 0 that outlives the prover, and that
+    /// A `buffer` must be device memory of its bytes on pilfflonk's device that outlives the prover, and that
     /// nothing else uses while the prover lives.
     pub(crate) unsafe fn load_on(
         setup_snark_path: &Path,

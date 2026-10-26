@@ -152,6 +152,8 @@ extern "C" {
 
     pub fn pilfflonk_gpu_free_bytes(out_free: *mut u64) -> ::std::os::raw::c_int;
 
+    pub fn pilfflonk_gpu_set_device(device: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
+
     pub fn pilfflonk_gpu_available() -> ::std::os::raw::c_int;
 
     pub fn pilfflonk_ctx_free(ctx: *mut ::std::os::raw::c_void);

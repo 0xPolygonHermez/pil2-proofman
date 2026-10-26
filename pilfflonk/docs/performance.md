@@ -431,8 +431,8 @@ In `prove-snark` with pilfflonk on the GPU, the key's device memory is in the wr
   the key, its SRS's powers, fixed coefficients and proofs' arena, is in the buffer's aux area,
   `[auxBase, aggBase)` of its layout (`pilfflonk_wrap::unified_buffer`, `load_poseidon_wrap` for a
   poseidon key), which the key refuses, as a GPU without the memory ([no
-  fallback](#rules-of-the-device-path)), if it holds less; the unified buffer must be on device 0,
-  where pilfflonk proves. The wrap runs under proofman's process-wide `PROVING`, so no proofman job
+  fallback](#rules-of-the-device-path)), if it holds less; pilfflonk proves on the buffer's GPU, the
+  process's first (`gpu_set_device`), which an MPI rank's need not be device 0. The wrap runs under proofman's process-wide `PROVING`, so no proofman job
   runs meanwhile, and drops the streams' cached const pols there after it. The recursivef of a
   poseidon key carves the buffer from its start, as for PLONK, its BN128 trees' nodes included, over
   the key: a preloaded key keeps a host copy of its part (pageable memory) and writes it back while the host

@@ -57,8 +57,9 @@ void pilfflonk_gpu_count_coefficients(uint64_t *counts, const void *base, const 
 void pilfflonk_gpu_memory(uint64_t *freeBytes, uint64_t *totalBytes);
 uint32_t pilfflonk_gpu_multiprocessors();
 
-// The calling thread's current device (cudaGetDevice).
+// The calling thread's current device (cudaGetDevice), and the devices CUDA sees (cudaGetDeviceCount).
 int pilfflonk_gpu_current_device();
+int pilfflonk_gpu_device_count();
 
 // Events without timing, to order a non-blocking stream with the default one (a null stream).
 void *pilfflonk_gpu_event_create();

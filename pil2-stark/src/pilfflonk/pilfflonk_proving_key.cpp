@@ -1232,6 +1232,15 @@ uint64_t ProvingKey::freeDeviceBytes() {
 #endif
 }
 
+void ProvingKey::setDevice(int device) {
+    requireGpu("ProvingKey::setDevice");
+#ifdef __USE_CUDA__
+    setGpuDevice(device);
+#else
+    (void)device;
+#endif
+}
+
 const AirKey &ProvingKey::air(uint64_t airgroupId, uint64_t airId) const {
     if (airgroupId >= airKeys.size() || airId >= airKeys[airgroupId].size()) {
         throw std::invalid_argument("the provingKey has no air " + std::to_string(airId) + " in airgroup " +
