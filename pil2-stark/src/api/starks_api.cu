@@ -1,4 +1,5 @@
 #include "bn128.cuh"
+#include "cuda_graph_cache.cuh"
 #include "zkglobals.hpp"
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
@@ -61,6 +62,8 @@ using PrefetchZone = DeviceCommitBuffers::PrefetchZone;
 // Process-global handle for stream_commit_pause: the gpu-mops borrower calls
 // it from zisk's MO runner thread, which has no DeviceCommitBuffers pointer.
 static std::atomic<DeviceCommitBuffers *> gStreamCommitBuffers{nullptr};
+// Defined with the headroom getter below; the unified-buffer allocation sizes the graph budget from it.
+static uint64_t minHeadroomBytes();
 
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive = false, bool force_recursive = false);
@@ -411,7 +414,7 @@ void register_instruction_table_gpu(void *d_buffers_, uint64_t airgroupId, uint6
 }
 
 // Non-recursive areas are sized per stream from d_buffers->aux_trace_sizes, not one uniform size.
-void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset, uint64_t lateRegionBytes, uint64_t nSlots, uint64_t slotBytes) {
+void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset, uint64_t lateRegionBytes, uint64_t nSlots, uint64_t slotBytes, uint64_t headroomBytes) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint64_t constPolsSize = totalConstPols * sizeof(Goldilocks::Element);
     uint64_t constPolsAggregationSize = totalConstPolsAggregation * sizeof(Goldilocks::Element);
@@ -534,6 +537,21 @@ void alloc_device_large_buffers_gpu(void *d_buffers_, uint64_t auxTraceRecursive
         zklog.info("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) +
                    ": Allocated " + std::to_string(totalGpuMemoryPerGpu / (1024.0 * 1024.0 * 1024.0)) +
                    " GB unified (const pols and floor padding included)");
+
+        // The CUDA graphs' share of the headroom the plan was made with: headroom - min headroom.
+        {
+            const uint64_t minHeadroom = minHeadroomBytes();
+            const uint64_t graphBudget = headroomBytes > minHeadroom ? headroomBytes - minHeadroom : 0;
+            cudagraph::setBudget((int)d_buffers->my_gpu_ids[i], graphBudget);
+            const std::string what = " (headroom " + std::to_string(headroomBytes >> 20) + " MB, min headroom " +
+                                     std::to_string(minHeadroom >> 20) + " MB)";
+            if (graphBudget == 0)
+                zklog.warning("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + ": no room for CUDA graphs" + what +
+                              "; every region runs directly");
+            else
+                zklog.info("GPU " + std::to_string(d_buffers->my_gpu_ids[i]) + ": CUDA graph budget " +
+                           std::to_string(graphBudget >> 20) + " MB" + what);
+        }
 
         uint8_t *b = (uint8_t *)gpuMemoryBlock;
         auto at = [&](uint64_t off) { return (gl64_t *)(b + off); };
@@ -796,6 +814,7 @@ void free_device_buffers_gpu(void *d_buffers_)
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
         
         // All other GPU pointers point into this single large block, so free it once via the base pointer.
+        cudagraph::clearBudget((int)d_buffers->my_gpu_ids[i]);
         if (d_buffers->gpuMemoryBuffer != nullptr && d_buffers->gpuMemoryBuffer[i] != nullptr) {
             CHECKCUDAERR(cudaFree(d_buffers->gpuMemoryBuffer[i]));
         }
@@ -4115,10 +4134,32 @@ uint64_t get_mops_floor_bytes_gpu() {
     return DeviceCommitBuffers::MOPS_FLOOR_BYTES;
 }
 
-// The headroom the allocations after the unified buffer need (see POST_ALLOC_HEADROOM_BYTES); the
-// Rust side reserves it up front on every path.
+// `name` as megabytes (a full-string integer), else `defaultBytes` with a warning.
+static uint64_t envMegabytes(const char *name, uint64_t defaultBytes) {
+    const char *e = getenv(name);
+    if (e == nullptr || *e == '\0') return defaultBytes;
+    char *end = nullptr;
+    const unsigned long long mb = strtoull(e, &end, 10);
+    if (end == e || *end != '\0') {
+        zklog.warning(std::string(name) + "='" + e + "' is not an integer; using the default");
+        return defaultBytes;
+    }
+    return (uint64_t)mb << 20;
+}
+
+// The headroom kept free after the unified buffer: PROOFMAN_GPU_HEADROOM_MB, default 1536 MiB. The
+// Rust side reserves it up front (and falls back to less when the plan does not fit).
 uint64_t get_post_alloc_headroom_bytes_gpu() {
-    return DeviceCommitBuffers::POST_ALLOC_HEADROOM_BYTES;
+    static const uint64_t bytes = envMegabytes("PROOFMAN_GPU_HEADROOM_MB", 1536ull << 20);
+    return bytes;
+}
+
+// The part of the headroom everything but the CUDA graphs needs: PROOFMAN_GPU_MIN_HEADROOM_MB,
+// default 1024 MiB. Only compared with the headroom the plan was made with: the graphs get the
+// difference, or nothing.
+static uint64_t minHeadroomBytes() {
+    static const uint64_t bytes = envMegabytes("PROOFMAN_GPU_MIN_HEADROOM_MB", 1024ull << 20);
+    return bytes;
 }
 
 

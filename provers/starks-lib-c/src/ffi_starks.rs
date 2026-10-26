@@ -1499,6 +1499,8 @@ pub fn alloc_device_large_buffers_c(
     // Streaming-commit slots, carved at the bottom of the aux area; the size is rounded up to 1 MiB.
     n_slots: u64,
     slot_bytes: u64,
+    // The headroom the plan was made with; the CUDA graphs get what it holds above PROOFMAN_GPU_MIN_HEADROOM_MB.
+    headroom_bytes: u64,
 ) {
     unsafe {
         alloc_device_large_buffers(
@@ -1512,6 +1514,7 @@ pub fn alloc_device_large_buffers_c(
             late_region_bytes,
             n_slots,
             slot_bytes,
+            headroom_bytes,
         );
     }
 }
