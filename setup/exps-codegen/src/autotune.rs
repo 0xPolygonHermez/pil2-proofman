@@ -49,6 +49,16 @@ pub(crate) fn resource_usage(obj: &Path) -> anyhow::Result<HashMap<String, i64>>
         .arg(obj)
         .output()
         .with_context(|| format!("running cuobjdump on {}", obj.display()))?;
+    // A failed run must not pass as "no kernels, no local memory": the tuners and the audit
+    // trust this map.
+    if !out.status.success() {
+        anyhow::bail!(
+            "cuobjdump -res-usage failed on {} ({}): {}",
+            obj.display(),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
     let text = String::from_utf8_lossy(&out.stdout);
     let mut usage: HashMap<String, i64> = HashMap::new();
     let mut cur: Option<String> = None;
