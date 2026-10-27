@@ -1,9 +1,9 @@
 //! Setup-recursivef command: the recursivef of a blake3 proving key, a Goldilocks STARK in the
-//! family's own geometry that verifies one vadcop_final proof, in `provingKey/<name>/recursivef/`.
+//! family's own geometry that verifies one vadcop_final proof, in `provingKeySnark/recursivef/`.
 //! proofman proves it after the vadcop_final, before the final SNARK.
 //!
 //! The poseidon families have their recursivef in `setup-snark` instead: a BN128 STARK, the bridge
-//! to the final SNARK's circuit, in `provingKeySnark/recursivef/`. blake3 has no hash to switch to
+//! to the final SNARK's circuit, in the same place. blake3 has no hash to switch to
 //! (the final circuit hashes blake3 as the recursivef does), so its recursivef is one more layer of
 //! the Goldilocks chain, which shortens the proof the final circuit verifies.
 
@@ -153,7 +153,8 @@ pub fn run_setup_recursivef(opts: &SetupRecursivefOptions) -> Result<()> {
         recurser_pil_path: &recurser_pil_path,
         circom_helpers_dir: &circom_helpers_dir,
     };
-    let recursivef_dir = proving_key_dir.join("recursivef");
+    let recursivef_dir = PathBuf::from(build_dir).join("provingKeySnark").join("recursivef");
+    fs::create_dir_all(&recursivef_dir)?;
     tracing::info!(
         "Running the {hash} recursivef setup for '{name}' in {}: {:?}, {} lane(s)",
         recursivef_dir.display(),

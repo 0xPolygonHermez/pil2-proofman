@@ -133,8 +133,8 @@ impl ProveCmd {
         if self.gpu {
             options.gpu();
         }
-        if wraps_a_proof {
-            options.final_snark();
+        if let Some(key) = self.proving_key_snark.as_ref().filter(|_| wraps_a_proof) {
+            options.final_snark(key.clone());
         }
         options.verbose_mode(self.verbose.into());
 

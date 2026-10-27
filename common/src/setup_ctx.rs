@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{expressions_bin_new_c, expressions_bin_free_c};
@@ -157,13 +157,14 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         )
     }
 
-    /// `final_snark`: the run makes final SNARKs, so a blake3 key's recursivef is loaded.
+    /// `final_snark`: the provingKeySnark/ of the run's final SNARKs, whose recursivef a blake3 key's
+    /// run loads.
     pub fn new(
         global_info: &GlobalInfo,
         verify_constraints: bool,
         aggregation: bool,
         gpu: bool,
-        final_snark: bool,
+        final_snark: Option<&Path>,
     ) -> ProofmanResult<Self> {
         let custom_commits_fixed = &HashMap::new();
         if aggregation {
@@ -206,9 +207,11 @@ impl<F: PrimeField64> SetupsVadcop<F> {
 
             // A Goldilocks STARK of the key's own family, the layer after the vadcop_final; the
             // poseidon families' recursivef is setup-snark's (BN128) and the SnarkWrapper's.
-            let path = global_info.get_setup_path("recursivef");
-            let has_recursivef = PathBuf::from(format!("{}.starkinfo.json", path.display())).exists();
-            let setup_recursivef = if final_snark && global_info.hash == "blake3" && has_recursivef {
+            let path = final_snark
+                .filter(|_| global_info.hash == "blake3")
+                .map(|snark| snark.join("recursivef").join("recursivef"))
+                .filter(|path| PathBuf::from(format!("{}.starkinfo.json", path.display())).exists());
+            let setup_recursivef = if let Some(path) = path {
                 Some(Setup::new(
                     &path,
                     0,

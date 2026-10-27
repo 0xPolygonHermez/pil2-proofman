@@ -85,8 +85,8 @@ cargo run --bin proofman-setup -- setup-snark \
 ```
 
 By default the final SNARK is pilfflonk, which wraps the blake3 key's recursivef
-(`provingKey/build/recursivef/`): `setup-snark` sets that up first, as `setup-recursivef` does, if the
-key has none. The ptau needs 15,204,438 powers `[τ^i]₁`: the official
+(`provingKeySnark/recursivef/`): `setup-snark` sets that up first, as `setup-recursivef` does, if there
+is none. The ptau needs 15,204,438 powers `[τ^i]₁`: the official
 `powersOfTau28_hez_final_23.ptau` or a larger one (`pilfflonk/tests/download-ptau.sh 23` downloads
 it). The wrap's AIR is compiled over BN128 by a pil2-compiler that has `--field`, as
 `setup/pil2-stark`'s does.

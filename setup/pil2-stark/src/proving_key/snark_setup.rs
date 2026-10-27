@@ -183,15 +183,10 @@ pub fn gen_snark_setup(
     fs::write(snark_dir.join("vadcop_final.verkey.json"), serde_json::to_string_pretty(&const_root_json)?)?;
 
     // ── Phase 1: recursivef ───────────────────────────────────────────────────
-    // blake3's recursivef is a Goldilocks layer of its proving key (setup-recursivef), which
-    // proofman proves: the final circuit verifies it as it is. The poseidon families'
-    // is the BN128 bridge, set up here.
+    // blake3's recursivef is one more Goldilocks layer (setup-recursivef), which proofman proves:
+    // the final circuit verifies it as it is. The poseidon families' is the BN128 bridge, set up here.
     let blake3 = !proofman_common::hash_family::has_bn128_recursivef(config.hash);
-    let recursivef_dir = if blake3 {
-        build_dir.join("provingKey").join(config.name).join("recursivef")
-    } else {
-        snark_dir.join("recursivef")
-    };
+    let recursivef_dir = snark_dir.join("recursivef");
     let starkinfo_rf_json = if blake3 {
         let path = recursivef_dir.join("recursivef.starkinfo.json");
         fs::read_to_string(&path).with_context(|| {
@@ -391,16 +386,9 @@ fn gen_final_snark(
         bail!("final.r1cs not found at {}: circom compilation may have failed", r1cs_final.display());
     }
 
-    // The prover of a blake3 key lays the zkin of its recursivef proof out from it, and tells the
-    // key's hash by it: a poseidon setup removes an earlier blake3 one's. With the verkey, what
-    // proofman checks the key's recursivef against: the circuit has its root.
-    let rf_starkinfo = final_dir.join("recursivef.starkinfo.json");
-    let rf_verkey = final_dir.join("recursivef.verkey.json");
-    if blake3 {
-        fs::write(&rf_starkinfo, starkinfo_rf_json)?;
-        fs::copy(verkey_rf_path, &rf_verkey)?;
-    } else {
-        for stale in [&rf_starkinfo, &rf_verkey].into_iter().filter(|f| f.exists()) {
+    // Copies an earlier setup made beside the final circuit, when the recursivef was elsewhere.
+    for stale in ["recursivef.starkinfo.json", "recursivef.verkey.json"].map(|f| final_dir.join(f)) {
+        if stale.exists() {
             fs::remove_file(stale)?;
         }
     }

@@ -1190,7 +1190,7 @@ where
 
         let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx, gpu)?;
 
-        let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, gpu, true)?);
+        let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, gpu, None)?);
 
         let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, gpu)?;
 
@@ -2680,8 +2680,8 @@ where
         let (_computing, _proving) = self.acquire_computing("generate_final_snark_proof");
         if self.setups.setup_recursivef.is_none() && self.pctx.global_info.hash == "blake3" {
             return Err(ProofmanError::InvalidConfiguration(
-                "a blake3 key's final SNARK needs its recursivef: a ProofMan made with options.final_snark, of a key \
-                 with setup-recursivef"
+                "a blake3 key's final SNARK needs its recursivef: a ProofMan made with options.final_snark, of a \
+                 provingKeySnark/ with setup-recursivef"
                     .to_string(),
             ));
         }
@@ -2694,17 +2694,21 @@ where
         snark_wrapper.generate_final_snark_proof(&recursivef_proof, verkey_override)
     }
 
-    /// That `snark_wrapper`'s circuit verifies this key's recursivef, its shape and its root: the
-    /// provingKeySnark/ of another setup would take its proofs and fail in the wrap's witness, or later.
+    /// That `snark_wrapper`'s circuit verifies the recursivef this run proves, its shape and its root:
+    /// another provingKeySnark/ would take its proofs and fail in the wrap's witness, or later.
     fn check_wrapper_recursivef(&self, snark_wrapper: &SnarkWrapper<F>) -> ProofmanResult<()> {
-        let stem = self.pctx.global_info.get_setup_path("recursivef").display().to_string();
+        let Some(setup) = self.setups.setup_recursivef.as_ref() else {
+            return Ok(());
+        };
+        let stem = setup.setup_path.display().to_string();
         let own = |ext: &str| -> Option<serde_json::Value> {
             std::fs::read_to_string(format!("{stem}.{ext}.json")).ok().and_then(|text| serde_json::from_str(&text).ok())
         };
         match (own("starkinfo"), own("verkey"), snark_wrapper.blake3_recursivef()) {
             (Some(starkinfo), Some(verkey), Some(wrapped)) if (&starkinfo, &verkey) == wrapped => Ok(()),
             _ => Err(ProofmanError::InvalidSetup(format!(
-                "the final SNARK's key is not of this key's recursivef ({stem}): rerun setup-snark after setup-recursivef"
+                "the final SNARK's key is not of the recursivef this run proves ({stem}): the ProofMan and the \
+                 SnarkWrapper take another provingKeySnark/, or setup-snark was not rerun after setup-recursivef"
             ))),
         }
     }
@@ -6352,7 +6356,7 @@ where
             options.verify_constraints,
             options.aggregation,
             options.gpu,
-            options.final_snark,
+            options.final_snark.as_deref(),
         )?);
 
         pctx.set_weights(&sctx, &setups_vadcop)?;
@@ -6418,7 +6422,7 @@ where
             options.gpu,
             options.max_number_streams,
             options.max_number_recursive_streams,
-            options.final_snark,
+            options.final_snark.is_some(),
             unit_words,
             late_region_bytes,
             // Verify-constraints and debug-info commit nothing, so they carve no slots.

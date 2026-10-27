@@ -1,5 +1,5 @@
 use proofman_common::{
-    format_bytes, GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup,
+    format_bytes, GlobalInfoAir, ProofmanError, ProofmanResult, ProofType, PublicsInfo, Setup, calculate_fixed_tree,
     calculate_fixed_tree_snark, load_const_pols_recursivef, load_const_pols_tree, MemoryHandlerRecursive, VerboseMode,
     initialize_logger,
 };
@@ -726,11 +726,10 @@ fn check_snark_public_digest(
     Ok(())
 }
 
-/// The recursivef's starkinfo setup-snark puts beside the final circuit of a blake3 key, from which
-/// the zkin of a recursivef proof is laid out.
-pub const BLAKE3_RECURSIVEF_STARKINFO: &str = "recursivef.starkinfo.json";
-/// Its verkey, beside it: the root the final circuit verifies the recursivef with.
-pub const BLAKE3_RECURSIVEF_VERKEY: &str = "recursivef.verkey.json";
+/// The recursivef's files in a provingKeySnark/, of every hash: its starkinfo, from which the zkin of a
+/// blake3 recursivef proof is laid out, and its verkey, the root the final circuit verifies it with.
+const RECURSIVEF_STARKINFO: &str = "recursivef/recursivef.starkinfo.json";
+const RECURSIVEF_VERKEY: &str = "recursivef/recursivef.verkey.json";
 
 /// [`SnarkWrapper`] of a blake3 key: its recursivef, a Goldilocks STARK of the proving key, is proved
 /// before it (`ProofMan::generate_final_snark_proof`), and this proves the final SNARK of the
@@ -775,8 +774,8 @@ impl Blake3Wrap {
                 .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
                 .map_err(|e| ProofmanError::InvalidSetup(format!("Failed to read {}: {e}", path.display())))
         }
-        let starkinfo = read(&final_dir.join(BLAKE3_RECURSIVEF_STARKINFO))?;
-        let verkey = read(&final_dir.join(BLAKE3_RECURSIVEF_VERKEY))?;
+        let starkinfo = read(&proving_key_snark.join(RECURSIVEF_STARKINFO))?;
+        let verkey = read(&proving_key_snark.join(RECURSIVEF_VERKEY))?;
         let mut wrap = Self {
             setup_snark_path,
             pilfflonk_key,
@@ -920,10 +919,9 @@ impl<F: PrimeField64> SnarkWrapper<F> {
         Ok(Self { inner })
     }
 
-    /// Whether `proving_key_snark` is a blake3 key's: setup-snark puts its recursivef's starkinfo,
-    /// a Goldilocks STARK's, in it.
+    /// Whether `proving_key_snark` is a blake3 key's: its recursivef is a Goldilocks STARK.
     pub fn is_blake3_key(proving_key_snark: &Path) -> bool {
-        let path = proving_key_snark.join("final").join(BLAKE3_RECURSIVEF_STARKINFO);
+        let path = proving_key_snark.join(RECURSIVEF_STARKINFO);
         std::fs::read_to_string(path)
             .ok()
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
@@ -996,7 +994,12 @@ pub fn check_setup_snark<F: PrimeField64>(
         false,
     )?;
 
-    calculate_fixed_tree_snark(&setup_recursivef);
+    // blake3's is a Goldilocks STARK, the poseidon families' a BN128 one.
+    if setup_recursivef.stark_info.stark_struct.verification_hash_type == "GL" {
+        calculate_fixed_tree(&setup_recursivef);
+    } else {
+        calculate_fixed_tree_snark(&setup_recursivef);
+    }
 
     Ok(())
 }

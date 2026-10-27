@@ -41,7 +41,7 @@ enum Commands {
     /// provingKey/<name>/vadcop_final/. Useful for iterating on this stage.
     SetupCompressedFinal(SetupCompressedFinalArgs),
     /// Set up the recursivef of a blake3 proving key (a Goldilocks STARK that verifies one
-    /// vadcop_final proof) in provingKey/<name>/recursivef/, which proofman proves before a blake3 key's final SNARK.
+    /// vadcop_final proof) in provingKeySnark/recursivef/, which proofman proves before a blake3 key's final SNARK.
     /// setup-snark runs it, at its defaults, on a blake3 key that has none.
     SetupRecursivef(SetupRecursivefArgs),
     /// Set up a test recursive circuit from a user-provided circom file.
@@ -224,7 +224,7 @@ struct SetupSnarkArgs {
 
     /// CUDA arch spec of the Q kernels (.exps.so), pilfflonk's wrap's and a blake3 key's recursivef's
     /// when setup-snark sets it up: auto | major | "89,120" | sm_120. No kernel without nvcc.
-    #[arg(long, default_value = "auto")]
+    #[arg(long, default_value = "major")]
     exps_arch: String,
 
     /// What the generated verifier contract's VERSION() returns (default: this tool's version)
@@ -320,7 +320,7 @@ struct SetupRecursivefArgs {
     terminal: usize,
     /// CUDA arch spec of its Q kernel (.exps.so): auto | major | "89,120" | sm_120. No kernel
     /// without nvcc.
-    #[arg(long, default_value = "auto")]
+    #[arg(long, default_value = "major")]
     exps_arch: String,
 }
 

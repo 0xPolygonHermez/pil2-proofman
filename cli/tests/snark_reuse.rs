@@ -45,7 +45,7 @@ fn a_proof_after_the_wrap_verifies_and_wraps_again() {
 
     let mut options = ProofmanOptions::new();
     options.gpu();
-    options.final_snark();
+    options.final_snark(proving_key_snark.clone());
     options.custom_commits_fixed(custom_commits.clone());
     let proofman = ProofMan::<Goldilocks>::new(proving_key, options).unwrap();
     proofman.register_custom_commits(custom_commits).unwrap();

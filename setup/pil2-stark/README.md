@@ -110,11 +110,11 @@ proofman-setup setup-snark \
 Requires `vadcop_final/vadcop_final.{starkinfo,verifierinfo,verkey}.json` to
 already exist.
 
-The `recursivef` depends on the key's hash family. A poseidon key's is a BN128
-STARK that `setup-snark` sets up in `provingKeySnark/recursivef/`, for any final
-SNARK. A blake3 key's, the default, is a Goldilocks STARK of the proving key, in
-`provingKey/<name>/recursivef/`, whose verifier only the pilfflonk wrap has:
-`setup-snark` reuses it if the key has one, and otherwise sets it up first, as
+The `recursivef`, in `provingKeySnark/recursivef/`, depends on the key's hash
+family. A poseidon key's is a BN128 STARK that `setup-snark` sets up, for any final
+SNARK. A blake3 key's, the default, is one more Goldilocks STARK after the
+vadcop_final, whose verifier only the pilfflonk wrap has:
+`setup-snark` reuses it if there is one, and otherwise sets it up first, as
 `setup-recursivef -b <build dir>` does with its defaults. Run `setup-recursivef`
 first for another geometry (`--blowup`, `--lanes`, `--grinding`, ...).
 

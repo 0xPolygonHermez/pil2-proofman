@@ -98,7 +98,7 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
     }
 
     if !proofman_common::hash_family::has_bn128_recursivef(&hash) {
-        set_up_recursivef_if_missing(opts, &name, &hash)?;
+        set_up_recursivef_if_missing(opts, &hash)?;
     }
 
     let const_root_json: Value = serde_json::from_str(&fs::read_to_string(&const_root_path)?)?;
@@ -171,11 +171,11 @@ pub fn run_setup_snark(opts: &SetupSnarkOptions) -> Result<()> {
     Ok(())
 }
 
-/// The recursivef of a blake3 key, in `provingKey/<name>/recursivef/`, which its final circuit
-/// verifies: reused if the key has one (its `recursivef.starkinfo.json`, which proofman looks for),
+/// The recursivef of a blake3 key, in `provingKeySnark/recursivef/`, which its final circuit
+/// verifies: reused if there is one (its `recursivef.starkinfo.json`, which proofman looks for),
 /// and otherwise set up by setup-recursivef's step at that command's defaults.
-fn set_up_recursivef_if_missing(opts: &SetupSnarkOptions, name: &str, hash: &str) -> Result<()> {
-    let recursivef_dir = PathBuf::from(&opts.build_dir).join("provingKey").join(name).join("recursivef");
+fn set_up_recursivef_if_missing(opts: &SetupSnarkOptions, hash: &str) -> Result<()> {
+    let recursivef_dir = PathBuf::from(&opts.build_dir).join("provingKeySnark").join("recursivef");
     if recursivef_dir.join("recursivef.starkinfo.json").exists() {
         tracing::info!("setup-snark: reusing the {hash} key's recursivef in {}", recursivef_dir.display());
         return Ok(());

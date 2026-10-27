@@ -82,7 +82,7 @@ impl ProveSnarkCmd {
         if self.gpu {
             options.gpu();
         }
-        options.final_snark();
+        options.final_snark(self.proving_key_snark.clone());
         options.verbose_mode(self.verbose.into());
         let proofman = ProofMan::<Goldilocks>::new(proving_key, options)?;
         let (aux_trace, d_buffers, reload_fixed_pols_gpu) = proofman.get_preallocated_buffers();

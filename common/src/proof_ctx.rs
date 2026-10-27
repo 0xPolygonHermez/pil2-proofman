@@ -196,8 +196,8 @@ pub struct ProofmanOptions {
     pub gpu: bool,
     pub packed: bool,
     pub packed_info: HashMap<(usize, usize), PackedInfo>,
-    /// This run produces a final SNARK
-    pub final_snark: bool,
+    /// The provingKeySnark/ of the final SNARKs this run produces
+    pub final_snark: Option<PathBuf>,
     /// Custom-commit name -> packed file, known up front: the const buffer then reserves each commit's
     /// real packed width instead of one word per column. Same map `register_custom_commits` takes.
     pub custom_commits_fixed: HashMap<String, PathBuf>,
@@ -227,7 +227,7 @@ impl Default for ProofmanOptions {
             aggregation: true,
             verbose_mode: VerboseMode::Info,
             packed_info: HashMap::new(),
-            final_snark: false,
+            final_snark: None,
             custom_commits_fixed: HashMap::new(),
             self_contained: false,
             std_owned_tables: Vec::new(),
@@ -261,11 +261,12 @@ impl ProofmanOptions {
         self.packed = true;
     }
 
-    /// Declare that this run will produce a final SNARK (plonk/fflonk wrapper). Gates the
-    /// unified-buffer snark floor (GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES): runs without a wrapper never
-    /// borrow the buffer at that size, so they skip the padding and keep the layout slack free.
-    pub fn final_snark(&mut self) {
-        self.final_snark = true;
+    /// Declare that this run will produce final SNARKs with the key at `proving_key_snark`, whose
+    /// recursivef a blake3 key's run proves. Gates the unified-buffer snark floor
+    /// (GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES): runs without a wrapper never borrow the buffer at that
+    /// size, so they skip the padding and keep the layout slack free.
+    pub fn final_snark(&mut self, proving_key_snark: impl Into<PathBuf>) {
+        self.final_snark = Some(proving_key_snark.into());
     }
 
     /// Undoes `gpu()`'s implied packing. Without this `--no-packed` relies on `packed_info` being

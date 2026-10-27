@@ -335,7 +335,7 @@ impl ProveAirCmd {
         // set_device_buffers only allocates under aggregation=true -- hence an empty SetupsVadcop
         // patched with this AIR's const sizes, then set_device_buffers(aggregation: true).
         let mut setups_vadcop: SetupsVadcop<Goldilocks> =
-            SetupsVadcop::new(&pctx.global_info, false, false, self.gpu, false)?;
+            SetupsVadcop::new(&pctx.global_info, false, false, self.gpu, None)?;
         setups_vadcop.total_const_pols_size = setup.const_pols_size_packed;
         pctx.set_device_buffers(&sctx, &setups_vadcop, true, self.gpu, 1, 1, false, 0, 0, 0, 0)?;
 

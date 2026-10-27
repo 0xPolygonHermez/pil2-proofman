@@ -14,9 +14,8 @@
 //!   blake3 key or a poseidon one (CI's), and `verify-snark` on its proof, with the same refusals;
 //!   the publics the Solidity verifier hashes are the vadcop_final proof's, as for PLONK and FFLONK.
 //!   It takes its inputs from the environment: `PROVE_SNARK_PROVING_KEY`, the `provingKeySnark/`,
-//!   beside the key's `provingKey/` (the recursivef's `.consttree` is written if it is not: in
-//!   `provingKey/<name>/recursivef/` for a blake3 key, in `provingKeySnark/recursivef/` for a
-//!   poseidon one), and `PROVE_SNARK_PROOF`, the `vadcop_final_proof.bin`.
+//!   beside the key's `provingKey/` (the recursivef's `.consttree` is written in its
+//!   `recursivef/` if it is not), and `PROVE_SNARK_PROOF`, the `vadcop_final_proof.bin`.
 //!
 //! Both are `#[ignore]`d:
 //!

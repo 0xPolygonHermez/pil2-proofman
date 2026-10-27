@@ -36,7 +36,7 @@ fn blake3_build_dir(dir: &Path, recursivef: bool) {
         fs::write(vadcop_final.join(format!("vadcop_final.{file}.json")), "{}").unwrap();
     }
     if recursivef {
-        let recursivef = proving_key.join("fibo/recursivef");
+        let recursivef = dir.join("provingKeySnark/recursivef");
         fs::create_dir_all(&recursivef).unwrap();
         fs::write(recursivef.join("recursivef.starkinfo.json"), "{}").unwrap();
     }
