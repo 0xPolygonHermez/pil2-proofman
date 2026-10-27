@@ -143,10 +143,10 @@ pub fn verify_fold(
     idx: u64,
     vals: &[Goldilocks],
 ) -> Vec<Goldilocks> {
-    let mut shift = Goldilocks::new(Goldilocks::SHIFT);
+    let mut shift_inv = Goldilocks::new(Goldilocks::SHIFT_INV);
 
     for _ in 0..(n_bits_ext - prev_bits) {
-        shift = shift * shift;
+        shift_inv = shift_inv * shift_inv;
     }
 
     let n_x = 1 << (prev_bits - current_bits);
@@ -154,7 +154,8 @@ pub fn verify_fold(
     assert_eq!(vals.len(), n_x * 3, "vals length {} does not match expected nX {}", vals.len(), n_x);
 
     let w = Goldilocks::new(Goldilocks::W[prev_bits as usize]);
-    let sinv = (shift * w.exp_u64(idx)).inverse();
+    // w has order 2^prev_bits, so w^-idx = w^(-idx mod 2^prev_bits): no field inversion.
+    let sinv = shift_inv * w.exp_u64(idx.wrapping_neg() & ((1u64 << prev_bits) - 1));
 
     let mut ppar_c = vec![Goldilocks::ZERO; n_x * 3];
     ppar_c[..(n_x * 3)].copy_from_slice(&vals[..(n_x * 3)]);

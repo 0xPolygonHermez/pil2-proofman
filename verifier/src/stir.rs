@@ -29,8 +29,9 @@ use proofman_fields::{
 };
 
 use crate::layout::{merkle_proof_levels, sibling_words};
+use crate::multiproof::expand_proof_checked;
 use crate::replay::{prefix_transcript, stir_transcript};
-use crate::verifier::{deep_query_eval, Boundary, FriEvalGroup};
+use crate::verifier::{deep_denominators_inv, Boundary, DeepQueryConsts, FriEvalGroup};
 
 type E3 = CubicExtensionField<Goldilocks>;
 
@@ -147,8 +148,8 @@ pub struct StirSection {
     pub roots: Vec<[Goldilocks; 4]>,
     /// cosets[i][q]: the opened coset of T_i at query q, 2^{kᵢ} extension elements flat.
     pub cosets: Vec<Vec<Vec<Goldilocks>>>,
-    /// siblings[i][q]: the Merkle path of that opening.
-    pub siblings: Vec<Vec<Vec<Vec<Goldilocks>>>>,
+    /// siblings[i][q]: the Merkle path of that opening, levels flat (`sibling_words` each).
+    pub siblings: Vec<Vec<Vec<Goldilocks>>>,
     /// last_levels[i]: the published bottom level of T_i (empty when lastLevelVerification = 0).
     pub last_levels: Vec<Vec<Goldilocks>>,
     /// β_{i,1}, i = 1..M−1 (s = 1).
@@ -185,7 +186,7 @@ pub fn parse_stir_section(proof: &[u64], p: &mut usize, params: &StirParams) -> 
     }
 
     let mut cosets: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(m);
-    let mut siblings: Vec<Vec<Vec<Vec<Goldilocks>>>> = Vec::with_capacity(m);
+    let mut siblings: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(m);
     let mut last_levels: Vec<Vec<Goldilocks>> = Vec::with_capacity(m);
     for i in 0..m {
         let k = 1usize << params.folding_factors[i];
@@ -206,16 +207,9 @@ pub fn parse_stir_section(proof: &[u64], p: &mut usize, params: &StirParams) -> 
 
         let mut tree_siblings = Vec::with_capacity(t);
         for _ in 0..t {
-            let mut path = Vec::with_capacity(n_sibs);
-            for _ in 0..n_sibs {
-                let mut level = Vec::with_capacity(n_sibs_per_level);
-                for _ in 0..n_sibs_per_level {
-                    level.push(Goldilocks::new(proof[*p]));
-                    *p += 1;
-                }
-                path.push(level);
-            }
-            tree_siblings.push(path);
+            let n = n_sibs * n_sibs_per_level;
+            tree_siblings.push(proof[*p..][..n].iter().map(|&x| Goldilocks::new(x)).collect::<Vec<_>>());
+            *p += n;
         }
         siblings.push(tree_siblings);
 
@@ -274,6 +268,29 @@ pub fn parse_stir_section(proof: &[u64], p: &mut usize, params: &StirParams) -> 
 // ---------------------------------------------------------------------------------------------
 // The polynomial arithmetic (`stir_math.hpp`)
 // ---------------------------------------------------------------------------------------------
+
+/// Horner at a base-field point: each step is three base products, not an extension product.
+fn eval_pol_base(coeffs: &[E3], x: Goldilocks) -> E3 {
+    let mut out = e3_zero();
+    for c in coeffs.iter().rev() {
+        out = out * x + *c;
+    }
+    out
+}
+
+/// The coefficients of ∏_{a∈points}(X − a), lowest degree first.
+fn vanishing_poly(points: &[E3]) -> Vec<E3> {
+    let mut v = vec![e3_one()];
+    for a in points {
+        // v ← v·(X − a): descending so v[m] is still the old value when it moves up.
+        v.push(e3_zero());
+        for m in (1..v.len()).rev() {
+            v[m] = v[m - 1] - v[m] * *a;
+        }
+        v[0] = e3_zero() - v[0] * *a;
+    }
+    v
+}
 
 /// Horner evaluation of Σⱼ coeffs[j]·Xʲ at x ∈ F.
 fn eval_pol_e3(coeffs: &[E3], x: E3) -> E3 {
@@ -337,12 +354,21 @@ struct QuotientContext {
     points: Vec<E3>,
     values: Vec<E3>,
     ans_coeffs: Vec<E3>,
+    /// ∏_{a∈G}(X − a) expanded, set with Âns: `apply` then evaluates it per point in O(|G|) base
+    /// products instead of multiplying |G| extension factors.
+    vanishing: Vec<E3>,
     r_comb: E3,
 }
 
 impl QuotientContext {
     fn new() -> Self {
-        QuotientContext { points: Vec::new(), values: Vec::new(), ans_coeffs: Vec::new(), r_comb: e3_zero() }
+        QuotientContext {
+            points: Vec::new(),
+            values: Vec::new(),
+            ans_coeffs: Vec::new(),
+            vanishing: Vec::new(),
+            r_comb: e3_zero(),
+        }
     }
 
     fn size(&self) -> usize {
@@ -353,6 +379,7 @@ impl QuotientContext {
         self.points.clear();
         self.values.clear();
         self.ans_coeffs.clear();
+        self.vanishing.clear();
         self.r_comb = r_comb;
     }
 
@@ -369,12 +396,14 @@ impl QuotientContext {
     #[cfg(test)]
     fn build(&mut self) {
         self.ans_coeffs = interpolate(&self.points, &self.values);
+        self.vanishing = vanishing_poly(&self.points);
     }
 
     /// Âns from the prover's hint: its first |G| coefficients. The caller checks the padding
     /// beyond |G| and, through `check_shake`, that the hint interpolates G.
     fn set_ans(&mut self, coeffs: &[E3]) {
         self.ans_coeffs = coeffs[..self.size()].to_vec();
+        self.vanishing = vanishing_poly(&self.points);
     }
 
     /// The shake check (stir_math.hpp `checkShake`): with the prover's Âns and Sh, at the random ρ
@@ -400,14 +429,16 @@ impl QuotientContext {
     /// The denominator is non-zero because G ∩ L = ∅ for every domain this runs on: the
     /// out-of-domain samples are rejected if they land in Lᵢ and the shift queries live in
     /// Lᵢ₋₁^{kᵢ₋₁}, disjoint from Lᵢ by Remark 5.3 (checked in `validate`).
-    fn apply(&self, gx: E3, x: E3) -> E3 {
-        let ans = eval_pol_e3(&self.ans_coeffs, x);
-        let mut denom = e3_one();
-        for a in &self.points {
-            denom *= x - *a;
+    fn apply(&self, gx: E3, x: Goldilocks) -> E3 {
+        let ans = eval_pol_base(&self.ans_coeffs, x);
+        let denom = eval_pol_base(&self.vanishing, x);
+        // geometric_sum's own division folded into this one: a single inversion.
+        let y = self.r_comb * x;
+        let one = e3_one();
+        if y == one {
+            return (gx - ans) * denom.inverse() * geometric_sum(y, self.size() as u64);
         }
-        let geo = geometric_sum(self.r_comb * x, self.size() as u64);
-        (gx - ans) * denom.inverse() * geo
+        (gx - ans) * (one - y.pow(self.size() as u64 + 1)) * (denom * (one - y)).inverse()
     }
 }
 
@@ -475,6 +506,7 @@ fn fold_at_query<LeafHash, CompressionHash>(
     raw: u64,
     r_fold: E3,
     check_f0: &mut dyn FnMut(usize, u64, E3) -> bool,
+    proven: Option<&[u64]>,
 ) -> Option<E3>
 where
     LeafHash: Hash<Goldilocks>,
@@ -487,15 +519,22 @@ where
     let leaf = raw % n_leaves;
     let vals = &section.cosets[tree][q];
 
-    if !verify_mt::<Goldilocks, LeafHash, CompressionHash>(
-        &section.roots[tree],
-        &section.last_levels[tree],
-        &section.siblings[tree][q],
-        leaf,
-        vals,
-        params.arity,
-        params.last_level_verification,
-    ) {
+    // `proven`: the multiproof expansion already checked T_{i−1}'s openings against its root, at
+    // the indices its own transcript replay gave. Both replays read the same words, so this only
+    // guards against the two drifting apart; the binding is the expansion's root check.
+    let opened = match proven {
+        Some(ix) => ix.get(q) == Some(&leaf),
+        None => verify_mt::<Goldilocks, LeafHash, CompressionHash>(
+            &section.roots[tree],
+            &section.last_levels[tree],
+            &section.siblings[tree][q],
+            leaf,
+            vals,
+            params.arity,
+            params.last_level_verification,
+        ),
+    };
+    if !opened {
         v_error!("Merkle verification of T_{} failed at query {}", tree, q);
         return None;
     }
@@ -506,7 +545,7 @@ where
         let k = 1usize << log_k;
         let mut fvals = vec![Goldilocks::ZERO; k * 3];
         for j in 0..k {
-            let x = embed(domain_point(shift, log_l_prev, leaf + j as u64 * n_leaves));
+            let x = domain_point(shift, log_l_prev, leaf + j as u64 * n_leaves);
             let gx = CubicExtensionField { value: [vals[j * 3], vals[j * 3 + 1], vals[j * 3 + 2]] };
             let fx = ctx.apply(gx, x);
             fvals[j * 3..j * 3 + 3].copy_from_slice(&fx.value);
@@ -551,7 +590,29 @@ where
     TranscriptT: TranscriptLike<Goldilocks>,
     GrindingHash: Hash<Goldilocks>,
 {
+    stir_verify_impl::<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
+        transcript, section, params, check_f0, None,
+    )
+}
+
+/// [`stir_verify`], with `proven[i]` the leaves of T_i a multiproof expansion already checked.
+fn stir_verify_impl<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
+    transcript: &mut TranscriptT,
+    section: &StirSection,
+    params: &StirParams,
+    check_f0: &mut dyn FnMut(usize, u64, E3) -> bool,
+    proven: Option<&[Vec<u64>]>,
+) -> bool
+where
+    LeafHash: Hash<Goldilocks>,
+    CompressionHash: Hash<Goldilocks>,
+    TranscriptT: TranscriptLike<Goldilocks>,
+    GrindingHash: Hash<Goldilocks>,
+{
     if !params.validate() {
+        return false;
+    }
+    if proven.is_some_and(|p| p.len() != params.m()) {
         return false;
     }
     let m = params.m();
@@ -623,9 +684,18 @@ where
         let shift_k = shift.exp_power_of_2(log_k as usize);
         let prev_ctx = if i == 1 { None } else { Some(&done[i - 1]) };
         for (q, &raw_q) in raw.iter().enumerate() {
-            let Some(v) =
-                fold_at_query::<LeafHash, CompressionHash>(section, params, prev_ctx, i, q, raw_q, r_fold, check_f0)
-            else {
+            let tree_proven = proven.map(|p| p[i - 1].as_slice());
+            let Some(v) = fold_at_query::<LeafHash, CompressionHash>(
+                section,
+                params,
+                prev_ctx,
+                i,
+                q,
+                raw_q,
+                r_fold,
+                check_f0,
+                tree_proven,
+            ) else {
                 return false;
             };
             let pt = embed(domain_point(shift_k, log_lprev_k, raw_q % (1u64 << log_lprev_k)));
@@ -672,9 +742,18 @@ where
     let shift_k = shift.exp_power_of_2(log_k as usize);
     let prev_ctx = if m == 1 { None } else { Some(&ctx[m - 1]) };
     for (q, &raw_q) in raw.iter().enumerate() {
-        let Some(v) =
-            fold_at_query::<LeafHash, CompressionHash>(section, params, prev_ctx, m, q, raw_q, r_fold, check_f0)
-        else {
+        let tree_proven = proven.map(|p| p[m - 1].as_slice());
+        let Some(v) = fold_at_query::<LeafHash, CompressionHash>(
+            section,
+            params,
+            prev_ctx,
+            m,
+            q,
+            raw_q,
+            r_fold,
+            check_f0,
+            tree_proven,
+        ) else {
             return false;
         };
         let x = embed(domain_point(shift_k, log_lprev_k, raw_q % (1u64 << log_lprev_k)));
@@ -700,12 +779,67 @@ pub fn stark_verify_stir<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
-    q_verify: fn(
-        &[CubicExtensionField<Goldilocks>],
-        &[CubicExtensionField<Goldilocks>],
-        &[Goldilocks],
-        &[CubicExtensionField<Goldilocks>],
-    ) -> CubicExtensionField<Goldilocks>,
+    q_verify: QVerify,
+) -> bool
+where
+    LeafHash: Hash<Goldilocks>,
+    CompressionHash: Hash<Goldilocks>,
+    TranscriptT: TranscriptLike<Goldilocks>,
+    GrindingHash: Hash<Goldilocks>,
+{
+    stark_verify_stir_impl::<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
+        proof,
+        vk,
+        verifier_info,
+        q_verify,
+        None,
+    )
+}
+
+/// [`stark_verify_stir`] of a multiproof (`wire`, as [`crate::prune_proof`] writes it): the expansion
+/// checks every tree's openings against its root once, sharing the nodes the queries' paths
+/// have in common, so the verifier does not hash them a second time.
+pub fn verify_multiproof_stir<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
+    wire: &[u64],
+    vk: &[u64],
+    verifier_info: &StirVerifierInfo,
+    q_verify: QVerify,
+) -> bool
+where
+    LeafHash: Hash<Goldilocks>,
+    CompressionHash: Hash<Goldilocks>,
+    TranscriptT: TranscriptLike<Goldilocks>,
+    GrindingHash: Hash<Goldilocks>,
+{
+    let Some((flat, proven)) =
+        expand_proof_checked::<LeafHash, CompressionHash, TranscriptT>(wire, vk, &verifier_info.proof_layout())
+    else {
+        return false;
+    };
+    stark_verify_stir_impl::<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
+        &flat,
+        vk,
+        verifier_info,
+        q_verify,
+        Some(&proven),
+    )
+}
+
+type QVerify = fn(
+    &[CubicExtensionField<Goldilocks>],
+    &[CubicExtensionField<Goldilocks>],
+    &[Goldilocks],
+    &[CubicExtensionField<Goldilocks>],
+) -> CubicExtensionField<Goldilocks>;
+
+/// `proven`: per tree (stage trees, then T_0 … T_{M−1}), the leaves already checked against the
+/// tree's root by the multiproof expansion.
+fn stark_verify_stir_impl<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
+    proof: &[u64],
+    vk: &[u64],
+    verifier_info: &StirVerifierInfo,
+    q_verify: QVerify,
+    proven: Option<&[Vec<u64>]>,
 ) -> bool
 where
     LeafHash: Hash<Goldilocks>,
@@ -784,7 +918,7 @@ where
     let n_sibs_per_lvl = n_siblings_per_level as usize;
 
     let mut s0_vals: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_queries);
-    let mut s0_siblings: Vec<Vec<Vec<Vec<Goldilocks>>>> = Vec::with_capacity(n_queries);
+    let mut s0_siblings: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_queries);
     let mut s0_last_levels: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_stages_plus_2);
 
     for _q in 0..n_queries {
@@ -800,15 +934,9 @@ where
 
     for _q in 0..n_queries {
         let mut query_siblings = Vec::with_capacity(n_stages_plus_2);
-        let mut siblings = Vec::with_capacity(n_sibs);
-        for _ in 0..n_sibs {
-            let mut sibling = Vec::with_capacity(n_sibs_per_lvl);
-            for _ in 0..n_sibs_per_lvl {
-                sibling.push(Goldilocks::new(proof[p]));
-                p += 1;
-            }
-            siblings.push(sibling);
-        }
+        let siblings: Vec<Goldilocks> =
+            proof[p..][..n_sibs * n_sibs_per_lvl].iter().map(|&x| Goldilocks::new(x)).collect();
+        p += n_sibs * n_sibs_per_lvl;
         query_siblings.push(siblings);
         s0_siblings.push(query_siblings);
     }
@@ -838,15 +966,9 @@ where
         }
 
         for query_siblings in s0_siblings.iter_mut() {
-            let mut siblings = Vec::with_capacity(n_sibs);
-            for _ in 0..n_sibs {
-                let mut sibling = Vec::with_capacity(n_sibs_per_lvl);
-                for _ in 0..n_sibs_per_lvl {
-                    sibling.push(Goldilocks::new(proof[p]));
-                    p += 1;
-                }
-                siblings.push(sibling);
-            }
+            let siblings: Vec<Goldilocks> =
+                proof[p..][..n_sibs * n_sibs_per_lvl].iter().map(|&x| Goldilocks::new(x)).collect();
+            p += n_sibs * n_sibs_per_lvl;
             query_siblings.push(siblings);
         }
 
@@ -900,11 +1022,16 @@ where
             f0_claims[q] = claim;
             true
         };
-        if !stir_verify::<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
+        let n_stage_trees = verifier_info.n_stages as usize + 2;
+        if proven.is_some_and(|p| p.len() != n_stage_trees + params.m()) {
+            return false;
+        }
+        if !stir_verify_impl::<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
             &mut transcript,
             &section,
             params,
             &mut record_f0,
+            proven.map(|p| &p[n_stage_trees..]),
         ) {
             v_error!("STIR verification failed");
             return false;
@@ -914,31 +1041,16 @@ where
     // ---- Shared machinery at the round-1 query set: kept in sync with `stark_verify` ----------
     let xi_challenge = challenges[verifier_info.n_challenges as usize - 3];
 
-    let w_ext = Goldilocks::new(Goldilocks::W[verifier_info.n_bits_ext as usize]);
-    let w_bits = Goldilocks::new(Goldilocks::W[verifier_info.n_bits as usize]);
-    let n_opening_points = verifier_info.opening_points.len();
-
-    let mut xdivxsub: Vec<Vec<CubicExtensionField<Goldilocks>>> = Vec::with_capacity(n_queries);
-    for &query in queries_l0.iter() {
-        let mut query_xdivxsub = Vec::with_capacity(n_opening_points);
-        let x = CubicExtensionField {
-            value: [Goldilocks::new(Goldilocks::SHIFT) * w_ext.exp_u64(query), Goldilocks::ZERO, Goldilocks::ZERO],
-        };
-        for o in 0..n_opening_points {
-            let mut wi = Goldilocks::ONE;
-            let abs_opening = verifier_info.opening_points[o].unsigned_abs();
-            for _ in 0..abs_opening {
-                wi *= w_bits;
-            }
-
-            if verifier_info.opening_points[o] < 0 {
-                wi = wi.inverse();
-            }
-
-            query_xdivxsub.push((x - (xi_challenge * wi)).inverse());
-        }
-        xdivxsub.push(query_xdivxsub);
-    }
+    let Some(xdivxsub) = deep_denominators_inv(
+        &queries_l0,
+        &verifier_info.opening_points,
+        xi_challenge,
+        verifier_info.n_bits,
+        verifier_info.n_bits_ext,
+    ) else {
+        v_error!("DEEP denominator x - xi * w^o is zero");
+        return false;
+    };
 
     let x_n = xi_challenge.pow(1 << verifier_info.n_bits);
 
@@ -957,32 +1069,48 @@ where
 
     v_debug!("Verifying proof");
 
+    let deep_consts =
+        DeepQueryConsts::new(&verifier_info.fri_ev_groups, verifier_info.n_challenges, &challenges, &evals);
+
+    // The stage trees open at the round-1 queries; the expansion replayed the same transcript, so
+    // its indices can only differ if the two replays drift apart. The binding is its root check.
+    if let Some(p) = proven {
+        if p[..verifier_info.n_stages as usize + 2].iter().any(|ix| *ix != queries_l0) {
+            v_error!("multiproof expansion opened the stage trees at other rows");
+            return false;
+        }
+    }
+
     let check_query = |q: usize| -> bool {
         // 1) Fixed MT
-        if !verify_mt::<Goldilocks, LeafHash, CompressionHash>(
-            &root_c,
-            &s0_last_levels[0],
-            &s0_siblings[q][0],
-            queries_l0[q],
-            &s0_vals[q][0],
-            params.arity,
-            params.last_level_verification,
-        ) {
+        if proven.is_none()
+            && !verify_mt::<Goldilocks, LeafHash, CompressionHash>(
+                &root_c,
+                &s0_last_levels[0],
+                &s0_siblings[q][0],
+                queries_l0[q],
+                &s0_vals[q][0],
+                params.arity,
+                params.last_level_verification,
+            )
+        {
             v_error!("Fixed MT verification failed for query {}", q);
             return false;
         }
 
         // 2) stage MTs
         for (s, root) in roots.iter().enumerate().take(verifier_info.n_stages as usize + 1) {
-            if !verify_mt::<Goldilocks, LeafHash, CompressionHash>(
-                root,
-                &s0_last_levels[s + 1],
-                &s0_siblings[q][s + 1],
-                queries_l0[q],
-                &s0_vals[q][s + 1],
-                params.arity,
-                params.last_level_verification,
-            ) {
+            if proven.is_none()
+                && !verify_mt::<Goldilocks, LeafHash, CompressionHash>(
+                    root,
+                    &s0_last_levels[s + 1],
+                    &s0_siblings[q][s + 1],
+                    queries_l0[q],
+                    &s0_vals[q][s + 1],
+                    params.arity,
+                    params.last_level_verification,
+                )
+            {
                 v_error!("Stage MT verification failed for query {}", q);
                 return false;
             }
@@ -990,14 +1118,7 @@ where
 
         // 3) DEEP consistency: the recomputed DEEP polynomial at this row must equal what T_0's
         //    leaf claimed for f_0 there — the STIR counterpart of FRI's s1_vals comparison.
-        let deep = deep_query_eval(
-            &verifier_info.fri_ev_groups,
-            verifier_info.n_challenges,
-            &challenges,
-            &evals,
-            &s0_vals[q],
-            &xdivxsub[q],
-        );
+        let deep = deep_consts.eval(&verifier_info.fri_ev_groups, &s0_vals[q], &xdivxsub[q]);
         if deep != f0_claims[q] {
             v_error!("DEEP/f_0 consistency check failed for query {}", q);
             return false;
@@ -1006,12 +1127,6 @@ where
         true
     };
 
-    #[cfg(feature = "parallel")]
-    let all_valid = {
-        use rayon::prelude::*;
-        (0..n_queries).into_par_iter().all(check_query)
-    };
-    #[cfg(not(feature = "parallel"))]
     let all_valid = (0..n_queries).all(check_query);
 
     if !all_valid {
@@ -1119,12 +1234,23 @@ mod tests {
         assert_eq!(eval_pol_e3(&ctx.ans_coeffs, e(5, 0, 0)), e(7, 0, 0));
 
         // apply is the paper's formula: ((g(x) − Âns(x)) / ∏(x − a)) · Σ_{j=0}^{|G|} (r_comb·x)ʲ.
-        let x = e(11, 3, 2);
+        let x = e(11, 0, 0);
         let gx = e(100, 50, 25);
         let ans = eval_pol_e3(&ctx.ans_coeffs, x);
         let denom = (x - e(1, 0, 0)) * (x - e(5, 0, 0));
         let expected = (gx - ans) * denom.inverse() * geometric_sum(ctx.r_comb * x, 2);
-        assert_eq!(ctx.apply(gx, x), expected);
+        assert_eq!(ctx.apply(gx, Goldilocks::new(11)), expected);
+    }
+
+    #[test]
+    fn vanishing_poly_is_the_product_of_its_roots() {
+        let points = [e(1, 2, 3), e(5, 0, 7), e(9, 4, 0), e(13, 1, 1)];
+        let v = vanishing_poly(&points);
+        assert_eq!(v.len(), points.len() + 1);
+        for x in [Goldilocks::new(11), Goldilocks::new(1 << 40), Goldilocks::new(3)] {
+            let direct = points.iter().fold(e3_one(), |acc, a| acc * (embed(x) - *a));
+            assert_eq!(eval_pol_base(&v, x), direct);
+        }
     }
 
     /// The shake polynomial of a small G, built by hand as Σ (Âns − y)/(X − a): the check must

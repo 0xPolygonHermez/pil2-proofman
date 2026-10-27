@@ -1,4 +1,4 @@
-use crate::Field;
+use crate::{DotAcc, Field, Goldilocks};
 use core::array;
 use core::fmt::{Display, Formatter, Result};
 use core::iter::{Product, Sum};
@@ -52,7 +52,7 @@ impl<F: Field> CubicExtensionField<F> {
 
     #[inline(always)]
     pub fn square(&self) -> Self {
-        Self { value: cubic_square(&self.value).to_vec().try_into().unwrap() }
+        Self { value: cubic_square(&self.value) }
     }
 
     #[inline]
@@ -76,7 +76,7 @@ impl<F: Field> CubicExtensionField<F> {
     }
 
     pub fn inverse(&self) -> Self {
-        Self { value: cubic_inv(&self.value).to_vec().try_into().unwrap() }
+        Self { value: cubic_inv(&self.value) }
     }
 
     pub fn from_array(arr: &[F]) -> Self {
@@ -186,7 +186,7 @@ impl<F: Field> Mul for CubicExtensionField<F> {
     fn mul(self, rhs: Self) -> Self {
         let a = self.value;
         let b = rhs.value;
-        Self { value: cubic_mul(&a, &b).to_vec().try_into().unwrap() }
+        Self { value: cubic_mul(&a, &b) }
     }
 }
 
@@ -235,7 +235,7 @@ impl<F: Field> Div for CubicExtensionField<F> {
     fn div(self, rhs: Self) -> Self::Output {
         let a = self.value;
         let b_inv = cubic_inv(&rhs.value);
-        Self { value: cubic_mul(&a, &b_inv).to_vec().try_into().unwrap() }
+        Self { value: cubic_mul(&a, &b_inv) }
     }
 }
 
@@ -262,11 +262,37 @@ fn cubic_square<F: Field>(a: &[F]) -> [F; 3] {
     [c0, c1, c2]
 }
 
+/// `a * b` under `x^3 = x + 1`, as the `(a index, b index)` products of each output coordinate.
+/// The one place the relation lives: `cubic_mul` and [`cubic_mul_acc`] both read it.
+const CUBIC_C0: [(usize, usize); 3] = [(0, 0), (2, 1), (1, 2)];
+const CUBIC_C1: [(usize, usize); 5] = [(1, 0), (0, 1), (2, 1), (1, 2), (2, 2)];
+const CUBIC_C2: [(usize, usize); 4] = [(2, 0), (1, 1), (0, 2), (2, 2)];
+
+fn gather<F: Copy, const N: usize>(terms: &[(usize, usize); N], a: &[F], b: &[F]) -> ([F; N], [F; N]) {
+    (terms.map(|(i, _)| a[i]), terms.map(|(_, j)| b[j]))
+}
+
+/// `acc += a * b`, the reduction deferred to `DotAcc::finish` with whatever else is summed in.
+pub fn cubic_mul_acc(acc: &mut [DotAcc; 3], a: &[Goldilocks; 3], b: &[Goldilocks; 3]) {
+    for &(i, j) in &CUBIC_C0 {
+        acc[0].add(a[i], b[j]);
+    }
+    for &(i, j) in &CUBIC_C1 {
+        acc[1].add(a[i], b[j]);
+    }
+    for &(i, j) in &CUBIC_C2 {
+        acc[2].add(a[i], b[j]);
+    }
+}
+
 #[inline]
 fn cubic_mul<F: Field>(a: &[F], b: &[F]) -> [F; 3] {
-    let c0 = a[0] * b[0] + a[2] * b[1] + a[1] * b[2];
-    let c1 = a[1] * b[0] + a[0] * b[1] + a[2] * b[1] + a[1] * b[2] + a[2] * b[2];
-    let c2 = a[2] * b[0] + a[1] * b[1] + a[0] * b[2] + a[2] * b[2];
+    let (a0, b0) = gather(&CUBIC_C0, a, b);
+    let (a1, b1) = gather(&CUBIC_C1, a, b);
+    let (a2, b2) = gather(&CUBIC_C2, a, b);
+    let c0 = F::dot(a0, b0);
+    let c1 = F::dot(a1, b1);
+    let c2 = F::dot(a2, b2);
 
     [c0, c1, c2]
 }
@@ -290,9 +316,10 @@ fn cubic_inv<F: Field>(a: &[F]) -> [F; 3] {
 
     let t = abc + abc + abc + abb - aaa - aac - aac - acc - bbb + bcc - ccc;
 
-    let i0 = (bc + bb - aa - ac - ac - cc) * t.inverse();
-    let i1 = (ba - cc) * t.inverse();
-    let i2 = (ac + cc - bb) * t.inverse();
+    let t_inv = t.inverse();
+    let i0 = (bc + bb - aa - ac - ac - cc) * t_inv;
+    let i1 = (ba - cc) * t_inv;
+    let i2 = (ac + cc - bb) * t_inv;
 
     [i0, i1, i2]
 }

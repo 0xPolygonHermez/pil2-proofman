@@ -1693,7 +1693,6 @@ dependencies = [
  "bincode",
  "num-traits",
  "proofman-fields",
- "rayon",
  "serde",
  "tracing",
 ]

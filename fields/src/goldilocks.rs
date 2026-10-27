@@ -18,6 +18,8 @@ impl Goldilocks {
     const P: u64 = 0xFFFF_FFFF_0000_0001;
     const NEG_ORDER: u64 = 0xFFFF_FFFF;
     pub const SHIFT: u64 = 7;
+    /// `SHIFT^-1`, so coset points invert without a field inversion.
+    pub const SHIFT_INV: u64 = 2635249152773512046;
 
     pub const W: [u64; 33] = [
         1,
@@ -181,12 +183,43 @@ impl QuotientMap<i64> for Goldilocks {
     }
 }
 
+/// A sum of products reduced once, at [`DotAcc::finish`]: the 128-bit products accumulate with
+/// their overflows counted, and each overflow is 2^128 = -2^32 (mod p). Exact for under 2^32 terms.
+#[derive(Clone, Copy, Default)]
+pub struct DotAcc {
+    lo: u128,
+    carries: u64,
+}
+
+impl DotAcc {
+    #[inline(always)]
+    pub fn add(&mut self, a: Goldilocks, b: Goldilocks) {
+        let (sum, over) = self.lo.overflowing_add(u128::from(a.0) * u128::from(b.0));
+        self.lo = sum;
+        self.carries += u64::from(over);
+    }
+
+    #[inline(always)]
+    pub fn finish(self) -> Goldilocks {
+        Goldilocks(reduce128(self.lo)) - Goldilocks(self.carries << 32)
+    }
+}
+
 impl Field for Goldilocks {
     const ZERO: Self = Self::new(0);
     const ONE: Self = Self::new(1);
     const TWO: Self = Self::new(2);
     const NEG_ONE: Self = Self::new(Self::ORDER_U64 - 1);
     const GENERATOR: Self = Self::new(7);
+
+    #[inline(always)]
+    fn dot<const N: usize>(a: [Self; N], b: [Self; N]) -> Self {
+        let mut acc = DotAcc::default();
+        for i in 0..N {
+            acc.add(a[i], b[i]);
+        }
+        acc.finish()
+    }
 
     fn inverse(&self) -> Self {
         let mut t: u64 = 0;
@@ -334,6 +367,30 @@ mod tests {
                     return Goldilocks::from_u64(next_u64);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn shift_inv_is_the_inverse_of_shift() {
+        assert_eq!(Goldilocks::new(Goldilocks::SHIFT) * Goldilocks::new(Goldilocks::SHIFT_INV), Goldilocks::ONE);
+    }
+
+    /// Near-p operands make every product overflow-prone, so the carry path is exercised.
+    #[test]
+    fn dot_matches_the_naive_sum() {
+        let top = |k: u64| Goldilocks::from_u64(Goldilocks::ORDER_U64 - 1 - k);
+        let naive =
+            |a: &[Goldilocks], b: &[Goldilocks]| a.iter().zip(b).fold(Goldilocks::ZERO, |s, (x, y)| s + *x * *y);
+        let a5: [Goldilocks; 5] = core::array::from_fn(|i| top(i as u64));
+        let b5: [Goldilocks; 5] = core::array::from_fn(|i| top(3 * i as u64));
+        assert_eq!(Goldilocks::dot(a5, b5), naive(&a5, &b5));
+        let a64: [Goldilocks; 64] = core::array::from_fn(|i| top(i as u64));
+        assert_eq!(Goldilocks::dot(a64, a64), naive(&a64, &a64));
+        let mut rng = rand::rng();
+        for _ in 0..1000 {
+            let a: [Goldilocks; 5] = core::array::from_fn(|_| rng.random());
+            let b: [Goldilocks; 5] = core::array::from_fn(|_| rng.random());
+            assert_eq!(Goldilocks::dot(a, b), naive(&a, &b));
         }
     }
 

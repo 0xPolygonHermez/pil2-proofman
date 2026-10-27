@@ -126,6 +126,102 @@ fn words_from_le_bytes(bytes: &[u8; BLOCK_LEN]) -> [u32; 16] {
     core::array::from_fn(|i| u32::from_le_bytes([bytes[4 * i], bytes[4 * i + 1], bytes[4 * i + 2], bytes[4 * i + 3]]))
 }
 
+/// [`compress`] over u64 lanes: `cv` is `[u32; 8]` and `block` `[u32; 16]` read little-endian in
+/// pairs, which is the precompile's own operand layout, so the guest packs nothing.
+#[inline]
+fn compress64(cv: &[u64; 4], block: &[u64; 8], counter: u64, block_len: u32, flags: u32) -> [u64; 8] {
+    let iv = |i: usize| IV[2 * i] as u64 | (IV[2 * i + 1] as u64) << 32;
+    let mut s = [cv[0], cv[1], cv[2], cv[3], iv(0), iv(1), counter, block_len as u64 | (flags as u64) << 32];
+    permute7_64(&mut s, block);
+    for i in 0..4 {
+        s[i] ^= s[i + 4];
+        s[i + 4] ^= cv[i];
+    }
+    s
+}
+
+/// [`permute7`] on the precompile's operand layout. Only this differs between guest and host, so
+/// the state layout and feedforward above are what `compress64_matches_compress` tests.
+#[inline]
+fn permute7_64(s: &mut [u64; 8], block: &[u64; 8]) {
+    #[cfg(all(target_os = "zkvm", target_vendor = "zisk"))]
+    unsafe {
+        syscall_blake3f(s, block)
+    };
+    #[cfg(not(all(target_os = "zkvm", target_vendor = "zisk")))]
+    {
+        let mut v: [u32; 16] = core::array::from_fn(|i| (s[i / 2] >> (32 * (i % 2))) as u32);
+        let m: [u32; 16] = core::array::from_fn(|i| (block[i / 2] >> (32 * (i % 2))) as u32);
+        permute7(&mut v, &m);
+        *s = core::array::from_fn(|i| v[2 * i] as u64 | (v[2 * i + 1] as u64) << 32);
+    }
+}
+
+#[inline]
+fn first4(v: &[u64; 8]) -> [u64; 4] {
+    [v[0], v[1], v[2], v[3]]
+}
+
+/// BLAKE3-256 of `n` u64 words, `word(i)` each, absorbed as little-endian bytes: the first four
+/// digest words. One-shot, so no byte buffering and no XOF machinery.
+pub fn hash_le64_words(n: usize, word: impl Fn(usize) -> u64) -> [u64; 4] {
+    const CHUNK_WORDS: usize = CHUNK_LEN / 8;
+    const IV64: [u64; 4] = [
+        IV[0] as u64 | (IV[1] as u64) << 32,
+        IV[2] as u64 | (IV[3] as u64) << 32,
+        IV[4] as u64 | (IV[5] as u64) << 32,
+        IV[6] as u64 | (IV[7] as u64) << 32,
+    ];
+
+    // The chunk's last block, still unapplied: (cv, block, counter, block_len, flags).
+    let chunk_tail = |start: usize, end: usize, counter: u64| {
+        let n_blocks = (end - start).div_ceil(8).max(1);
+        let mut cv = IV64;
+        for b in 0..n_blocks {
+            let at = start + 8 * b;
+            let block: [u64; 8] = core::array::from_fn(|k| if at + k < end { word(at + k) } else { 0 });
+            let flags = if b == 0 { CHUNK_START } else { 0 };
+            if b + 1 < n_blocks {
+                cv = first4(&compress64(&cv, &block, counter, BLOCK_LEN as u32, flags));
+            } else {
+                return (cv, block, counter, ((end - at) * 8) as u32, flags | CHUNK_END);
+            }
+        }
+        unreachable!()
+    };
+    let parent = |l: &[u64; 4], r: &[u64; 4]| [l[0], l[1], l[2], l[3], r[0], r[1], r[2], r[3]];
+
+    let n_chunks = n.div_ceil(CHUNK_WORDS).max(1);
+    // Uninitialised for the reason `Hasher::cv_stack` is: a one-chunk hash never touches it.
+    let mut stack = [MaybeUninit::<[u64; 4]>::uninit(); CV_STACK_LEN];
+    let mut depth = 0;
+    for c in 0..n_chunks - 1 {
+        let (cv, block, counter, len, flags) = chunk_tail(c * CHUNK_WORDS, (c + 1) * CHUNK_WORDS, c as u64);
+        let mut cv = first4(&compress64(&cv, &block, counter, len, flags));
+        // Same merge rule as `Hasher::push_cv`: a trailing zero bit closes a full left subtree.
+        let mut total = c as u64 + 1;
+        while total & 1 == 0 {
+            depth -= 1;
+            // SAFETY: entries below `depth` were written before `depth` was raised past them.
+            let left = unsafe { stack[depth].assume_init() };
+            cv = first4(&compress64(&IV64, &parent(&left, &cv), 0, BLOCK_LEN as u32, PARENT));
+            total >>= 1;
+        }
+        stack[depth] = MaybeUninit::new(cv);
+        depth += 1;
+    }
+
+    let last = n_chunks - 1;
+    let (mut cv, mut block, mut counter, mut len, mut flags) = chunk_tail(last * CHUNK_WORDS, n, last as u64);
+    for i in (0..depth).rev() {
+        let right = first4(&compress64(&cv, &block, counter, len, flags));
+        // SAFETY: i < depth.
+        let left = unsafe { stack[i].assume_init() };
+        (cv, block, counter, len, flags) = (IV64, parent(&left, &right), 0, BLOCK_LEN as u32, PARENT);
+    }
+    first4(&compress64(&cv, &block, counter, len, flags | ROOT))
+}
+
 /// Kept unapplied so the root can be squeezed at any output block.
 #[derive(Clone, Copy)]
 struct Output {
@@ -342,6 +438,41 @@ mod tests {
         {
             let input = bytes(n);
             assert_eq!(ours(&input, 0, 32), reference(&input, 0, 32), "digest differs at {n} bytes");
+        }
+    }
+
+    /// The u64-lane compression against the u32 one it must equal, on every flag combination.
+    #[test]
+    fn compress64_matches_compress() {
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        for flags in [0, CHUNK_START, CHUNK_END, CHUNK_START | CHUNK_END, PARENT, CHUNK_END | ROOT, PARENT | ROOT] {
+            let cv: [u64; 4] = core::array::from_fn(|_| next());
+            let block: [u64; 8] = core::array::from_fn(|_| next());
+            let (counter, len) = (next(), (next() % 65) as u32);
+            let cv32: [u32; 8] = core::array::from_fn(|i| (cv[i / 2] >> (32 * (i % 2))) as u32);
+            let block32: [u32; 16] = core::array::from_fn(|i| (block[i / 2] >> (32 * (i % 2))) as u32);
+            let want = compress(&cv32, &block32, counter, len, flags);
+            let want: [u64; 8] = core::array::from_fn(|i| want[2 * i] as u64 | (want[2 * i + 1] as u64) << 32);
+            assert_eq!(compress64(&cv, &block, counter, len, flags), want, "flags {flags:#x}");
+        }
+    }
+
+    /// Word counts straddling the block (8) and chunk (128) boundaries, and unbalanced chunk merges.
+    #[test]
+    fn hash_le64_words_matches_the_reference_crate() {
+        for n in [0usize, 1, 7, 8, 9, 15, 16, 17, 127, 128, 129, 255, 256, 257, 384, 385, 1000, 2048, 2049, 3000] {
+            let words: Vec<u64> = (0..n as u64).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (i << 7)).collect();
+            let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+            let want = ::blake3::hash(&bytes);
+            let want: [u64; 4] =
+                core::array::from_fn(|i| u64::from_le_bytes(want.as_bytes()[8 * i..8 * i + 8].try_into().unwrap()));
+            assert_eq!(hash_le64_words(n, |i| words[i]), want, "digest differs at {n} words");
         }
     }
 

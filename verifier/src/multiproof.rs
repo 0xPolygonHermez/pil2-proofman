@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 
 use proofman_fields::{CubicExtensionField, Field, Goldilocks, Hash, PrimeField64, TranscriptLike};
 
-use crate::layout::{sibling_words, LowDegreeLayout, ProofLayout, Segment};
+use crate::layout::{last_level_words, sibling_words, LowDegreeLayout, ProofLayout, Segment};
 use crate::replay::{fri_transcript, prefix_transcript, stir_transcript};
 
 type E3 = CubicExtensionField<Goldilocks>;
@@ -260,7 +260,14 @@ fn prune_tree(idx: &[u64], n_levels: usize, arity: u64, sibs: &[u64], out: &mut 
     }
 }
 
+/// What a tree's recomputed top must equal: its root, or the published last level.
+enum Top<'a> {
+    Root([Goldilocks; 4]),
+    LastLevel(&'a [u64]),
+}
+
 /// One tree's flat sibling block, from its leaf digests and the kept siblings at `kept[*kp..]`.
+/// With `top`, it is also the multiproof check: every leaf against the tree's root.
 fn expand_tree<NH: Hash<Goldilocks>>(
     idx: &[u64],
     n_levels: usize,
@@ -268,14 +275,19 @@ fn expand_tree<NH: Hash<Goldilocks>>(
     leaf_digests: &[[Goldilocks; 4]],
     kept: &[u64],
     kp: &mut usize,
+    top: Option<Top<'_>>,
 ) -> Option<Vec<u64>> {
     let (a, w) = (arity as usize, sibling_words(arity));
     let mut out = vec![0u64; idx.len() * n_levels * w];
     let (mut nodes, mut node_of) = leaves(idx);
-    // Duplicate indices keep the first query's leaf; a different second one fails its own path.
+    // Duplicate indices keep the first query's leaf; a different second one fails its own path,
+    // or, when this is the check, here.
     let mut digest = vec![[Goldilocks::ZERO; 4]; nodes.len()];
     for (q, &n) in node_of.iter().enumerate().rev() {
         digest[n] = leaf_digests[q];
+    }
+    if top.is_some() && node_of.iter().enumerate().any(|(q, &n)| digest[n] != leaf_digests[q]) {
+        return None;
     }
     for level in 0..n_levels {
         let runs = parent_runs(&nodes, arity);
@@ -321,7 +333,15 @@ fn expand_tree<NH: Hash<Goldilocks>>(
         nodes = next_nodes;
         digest = next_digest;
     }
-    Some(out)
+    let top_ok = match top {
+        None => true,
+        Some(Top::Root(root)) => nodes == [0] && digest[0] == root,
+        Some(Top::LastLevel(level)) => nodes.iter().zip(&digest).all(|(&n, d)| {
+            let at = n as usize * 4;
+            level.get(at..at + 4).is_some_and(|w| w.iter().zip(d).all(|(&w, x)| w == x.as_canonical_u64()))
+        }),
+    };
+    top_ok.then_some(out)
 }
 
 /// The wire form of a flat proof (`[n_publics, publics…, proof…]`); `vk` seeds the transcript.
@@ -348,6 +368,30 @@ where
     NH: Hash<Goldilocks>,
     T: TranscriptLike<Goldilocks>,
 {
+    expand::<LH, NH, T>(wire, vk, layout, false).map(|(flat, _)| flat)
+}
+
+/// [`expand_proof`] that also checks every tree's openings against its root (or published last
+/// level), and returns per tree the leaves it proved. `None` if any check fails.
+pub fn expand_proof_checked<LH, NH, T>(
+    wire: &[u64],
+    vk: &[u64],
+    layout: &ProofLayout,
+) -> Option<(Vec<u64>, Vec<Vec<u64>>)>
+where
+    LH: Hash<Goldilocks>,
+    NH: Hash<Goldilocks>,
+    T: TranscriptLike<Goldilocks>,
+{
+    expand::<LH, NH, T>(wire, vk, layout, true)
+}
+
+fn expand<LH, NH, T>(wire: &[u64], vk: &[u64], layout: &ProofLayout, check: bool) -> Option<(Vec<u64>, Vec<Vec<u64>>)>
+where
+    LH: Hash<Goldilocks>,
+    NH: Hash<Goldilocks>,
+    T: TranscriptLike<Goldilocks>,
+{
     if vk.len() < 4 {
         return None;
     }
@@ -364,6 +408,30 @@ where
     let kept = &pruned[split.dense.len()..];
     let indices = tree_indices::<T>(layout, &split, vk)?;
 
+    // Tree t's top: data segments run publics, roots, evals, then each tree's last level, with
+    // the low-degree test's roots between the stage trees' and its own.
+    let n_stage_trees = layout.n_stages as usize + 2;
+    let roots = check.then(|| {
+        (
+            split.roots(split.data[1], layout.n_stages as usize + 1),
+            split.roots(split.data[3 + n_stage_trees], indices.len() - n_stage_trees),
+        )
+    });
+    let top = |tree: usize| -> Option<Top<'_>> {
+        let (stage_roots, ldt_roots) = roots.as_ref()?;
+        Some(if layout.last_level_verification > 0 {
+            let at = split.data[if tree < n_stage_trees { 3 + tree } else { 4 + tree }];
+            let n = last_level_words(layout.arity, layout.last_level_verification);
+            Top::LastLevel(&split.dense[at..at + n])
+        } else if tree == 0 {
+            Top::Root(core::array::from_fn(|i| Goldilocks::new(vk[i])))
+        } else if tree < n_stage_trees {
+            Top::Root(stage_roots[tree - 1])
+        } else {
+            Top::Root(ldt_roots[tree - n_stage_trees])
+        })
+    };
+
     let mut out = Vec::with_capacity(pruned.len() * 2);
     let mut dp = 0usize;
     let mut kp = 0usize;
@@ -374,14 +442,15 @@ where
             .map(|leaf| LH::linear_hash(&leaf.iter().map(|&w| Goldilocks::new(w)).collect::<Vec<_>>()))
             .collect();
         out.extend_from_slice(&split.dense[dp..leaves_end]);
-        out.extend(expand_tree::<NH>(idx, n_levels, layout.arity, &digests, kept, &mut kp)?);
+        let top = top(tree);
+        out.extend(expand_tree::<NH>(idx, n_levels, layout.arity, &digests, kept, &mut kp, top)?);
         dp = leaves_end;
     }
     if kp != kept.len() {
         return None;
     }
     out.extend_from_slice(&split.dense[dp..]);
-    Some(out)
+    Some((out, indices))
 }
 
 #[cfg(test)]
@@ -436,11 +505,39 @@ mod tests {
         prune_tree(idx, n_levels, arity, &flat, &mut pruned);
         let digests: Vec<_> = idx.iter().map(|&i| leaves[i as usize]).collect();
         let mut kp = 0;
-        assert_eq!(expand_tree::<NH>(idx, n_levels, arity, &digests, &pruned, &mut kp), Some(flat));
+        assert_eq!(expand_tree::<NH>(idx, n_levels, arity, &digests, &pruned, &mut kp, None), Some(flat));
         assert_eq!(kp, pruned.len(), "every kept sibling is consumed");
         // One word short is rejected, not read past.
         let mut kp = 0;
-        assert_eq!(expand_tree::<NH>(idx, n_levels, arity, &digests, &pruned[..pruned.len() - 1], &mut kp), None);
+        assert_eq!(expand_tree::<NH>(idx, n_levels, arity, &digests, &pruned[..pruned.len() - 1], &mut kp, None), None);
+
+        // As the multiproof check: the honest top passes, a wrong one does not.
+        let level_words = |l: &[[Goldilocks; 4]]| l.iter().flatten().map(|x| x.as_canonical_u64()).collect::<Vec<_>>();
+        let check = |digests: &[[Goldilocks; 4]], top: Top<'_>| {
+            let mut kp = 0;
+            expand_tree::<NH>(idx, n_levels, arity, digests, &pruned, &mut kp, Some(top)).is_some()
+        };
+        let mut bad_level = level_words(&levels[n_levels]);
+        bad_level[0] ^= 1;
+        if n_levels + 1 == levels.len() {
+            let root = levels[n_levels][0];
+            assert!(check(&digests, Top::Root(root)), "honest root rejected");
+            let mut bad = root;
+            bad[0] += Goldilocks::ONE;
+            assert!(!check(&digests, Top::Root(bad)), "wrong root accepted");
+        } else {
+            assert!(check(&digests, Top::LastLevel(&level_words(&levels[n_levels]))), "honest last level rejected");
+            assert!(!check(&digests, Top::LastLevel(&bad_level)), "wrong last level accepted");
+        }
+        // A repeated index whose second opening differs: no path is hashed for it, so only the
+        // duplicate check catches it.
+        if let Some(dup) = (1..idx.len()).find(|&q| idx[..q].contains(&idx[q])) {
+            let mut forged = digests.clone();
+            forged[dup][0] += Goldilocks::ONE;
+            let root = Top::Root(levels.last().unwrap()[0]);
+            let top = if n_levels + 1 == levels.len() { root } else { Top::LastLevel(&bad_level) };
+            assert!(!check(&forged, top), "a differing duplicate opening was accepted");
+        }
         pruned.len()
     }
 
