@@ -3,12 +3,14 @@
 //! from the start size.
 
 use anyhow::Context;
-use crate::emit::emit_air;
-use crate::ir::{plan_chunks, Ir};
+use crate::emit::{chunked_program, emit_air, emit_exprs_chunked_tu, ChunkedExpr, ChunkedPick, ExprKey, SLOTS_CAP};
+use crate::ir::{plan_chunks, plan_chunks_ops_pinned, ChunkPlan, Ir};
 use crate::toolchain::Toolchain;
 use rayon::prelude::*;
 use regex::Regex;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 // No-spill bisection bounds.
 const CHUNK_MAX: usize = 512; // start chunk
@@ -31,41 +33,64 @@ fn is_recursion_phase(sym: &str) -> bool {
     ["compressor_", "recursive_", "final_"].iter().any(|p| sym.starts_with(p))
 }
 
-/// Max STACK (spill) bytes across an object's per-arch entries. 0 = no spill;
-/// -1 = cuobjdump could not be run (the caller bails with actionable guidance).
-pub(crate) fn max_stack(obj: &Path) -> i64 {
-    let out =
-        match std::process::Command::new(crate::toolchain::cuda_bin("cuobjdump")).arg("-res-usage").arg(obj).output() {
-            Ok(o) => o,
-            Err(_) => return -1,
-        };
+/// `cuobjdump -res-usage` lines: a function header and its resource line.
+static RE_FUNCTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"Function\s+(\S+?):\s*$").unwrap());
+static RE_STACK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"STACK:(\d+)").unwrap());
+/// The once-per-launch table kernel (`*_pow`, one thread runs the hoisted-invariants program
+/// straight-line) and its slices, by mangled name: `..._powPK11StepsParams...` / `..._pow_s3PK...`.
+static RE_POW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"_pow(?:_s\d+)?(?:PK|P\d|\(|:|\s|$)").unwrap());
+
+/// Per-function STACK (local memory bytes per thread) of an object or library, the max across
+/// its per-arch entries (the autotuners gate on every arch they compile for). Keys are the
+/// mangled names as `cuobjdump -res-usage` prints them.
+pub(crate) fn resource_usage(obj: &Path) -> anyhow::Result<HashMap<String, i64>> {
+    let out = std::process::Command::new(crate::toolchain::cuda_bin("cuobjdump"))
+        .arg("-res-usage")
+        .arg(obj)
+        .output()
+        .with_context(|| format!("running cuobjdump on {}", obj.display()))?;
+    // A failed run must not pass as "no kernels, no local memory": the tuners and the audit
+    // trust this map.
+    if !out.status.success() {
+        anyhow::bail!(
+            "cuobjdump -res-usage failed on {} ({}): {}",
+            obj.display(),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
     let text = String::from_utf8_lossy(&out.stdout);
-    // Per function: the once-per-launch table kernel (`*_pow`, one thread runs
-    // the hoisted-invariants program straight-line) may spill freely; its
-    // stack must not gate the per-row chunk kernels -- it made the autotuner
-    // reject Main at every chunk size ("still spills at CHUNK_MIN").
-    // names are mangled: `..._powPK11StepsParams...` / `..._pow_s3PK...` (table kernel, slices) vs
-    // `..._c12PK11StepsParams...` (chunk kernels) / `..._kernelPK...`
-    let re_fn = Regex::new(r"Function\s+(\S+?):\s*$").unwrap();
-    let re_pow = Regex::new(r"_pow(?:_s\d+)?(?:PK|P\d|\(|:|\s|$)").unwrap();
-    let re_st = Regex::new(r"STACK:(\d+)").unwrap();
-    let mut best = 0i64;
-    let mut skip = false;
+    let mut usage: HashMap<String, i64> = HashMap::new();
+    let mut cur: Option<String> = None;
     for line in text.lines() {
-        if let Some(c) = re_fn.captures(line) {
-            skip = re_pow.is_match(&c[1]);
+        if let Some(c) = RE_FUNCTION.captures(line) {
+            cur = Some(c[1].to_string());
             continue;
         }
-        if skip {
-            continue;
-        }
-        if let Some(c) = re_st.captures(line) {
-            if let Ok(v) = c[1].parse::<i64>() {
-                best = best.max(v);
-            }
+        if let (Some(f), Some(c)) = (&cur, RE_STACK.captures(line)) {
+            let st: i64 = c[1].parse().unwrap_or(0);
+            let e = usage.entry(f.clone()).or_insert(0);
+            *e = (*e).max(st);
         }
     }
-    best
+    Ok(usage)
+}
+
+/// Max STACK (spill) bytes across an object's per-row kernels. 0 = no spill; -1 = cuobjdump
+/// could not be run (the caller bails with actionable guidance). The table kernel is left out:
+/// it may spill freely, and gating on it made the Q autotuner reject Main at every chunk size
+/// ("still spills at CHUNK_MIN").
+pub(crate) fn max_stack(obj: &Path) -> i64 {
+    match resource_usage(obj) {
+        Ok(usage) => usage.iter().filter(|(f, _)| !RE_POW.is_match(f)).map(|(_, &st)| st).max().unwrap_or(0),
+        Err(_) => -1,
+    }
+}
+
+/// Whether a bisection bracket (clean `lo`, spilling `hi`) is still worth probing: stop when it
+/// is within ~1/8 of `lo`, the slot/grid payoff below that is noise.
+fn bracket_open(lo: usize, hi: usize) -> bool {
+    hi - lo > (lo / 8).max(8)
 }
 
 /// Returns the largest chunk size (halving from the start size) that compiles
@@ -131,7 +156,7 @@ fn tune_inner(
             anyhow::bail!(
                 "cuobjdump could not read register usage for {sym} (not found or failed to run). \
                  Install CUDA binutils so the no-spill autotuner can verify STACK=0, \
-                 or pass --chunk <N> to skip autotuning."
+                 which the generator needs to prove every kernel free of local memory."
             );
         }
         Ok(((Some(stacks.into_iter().max().unwrap_or(0)), objs), files.len()))
@@ -180,8 +205,7 @@ fn refine_up(
         return Ok((lo, lo_objs)); // first probe was clean: nothing above it to try
     };
     let (mut lo, mut lo_objs) = (lo, lo_objs);
-    // stop when the bracket is within ~1/8 of lo: the slot/grid payoff below that is noise
-    while hi - lo > (lo / 8).max(8) {
+    while bracket_open(lo, hi) {
         let mid = (lo + hi) / 2;
         let ((st, objs), _) = compile_at(mid)?;
         match st {
@@ -203,8 +227,265 @@ fn refine_up(
     Ok((lo, lo_objs))
 }
 
+/// Of `candidates` (the generic kernels a part TU holds), those whose straight-line kernel
+/// `gen_<sym>_<tag>` keeps local memory in `usage`.
+pub(crate) fn spilling_exprs(usage: &HashMap<String, i64>, sym: &str, candidates: &[ExprKey]) -> Vec<ExprKey> {
+    let re = Regex::new(&format!(r"gen_{}_(xp?\d+(?:_\d+)?)PK", regex::escape(sym))).unwrap();
+    let stack_by_tag = max_stack_by_tag(usage, &re);
+    candidates.iter().copied().filter(|k| stack_by_tag.get(&k.tag()).is_some_and(|&st| st > 0)).collect()
+}
+
+/// Max STACK per kernel tag (the first capture of `re` on the mangled name), over `usage`.
+fn max_stack_by_tag(usage: &HashMap<String, i64>, re: &Regex) -> HashMap<String, i64> {
+    let mut out: HashMap<String, i64> = HashMap::new();
+    for (f, &st) in usage {
+        if let Some(c) = re.captures(f) {
+            let e = out.entry(c[1].to_string()).or_insert(0);
+            *e = (*e).max(st);
+        }
+    }
+    out
+}
+
+// Chunk bounds of the generic kernels: smaller programs than Q, so the start is lower, and the
+// floor keeps a 1024-op kernel under 32 launches per wave.
+const GENERIC_CHUNK_START: usize = 256;
+const GENERIC_CHUNK_MIN: usize = 32;
+
+/// Bisection state of one chunked generic kernel: `lo` the largest chunk seen clean, `hi` the
+/// smallest seen spilling, `cur` the size the next round compiles. Finished with `lo` = None
+/// means dropped (spills down to the floor, or a cut wider than `SLOTS_CAP`).
+struct Trial {
+    lo: Option<usize>,
+    hi: Option<usize>,
+    cur: usize,
+    done: bool,
+}
+
+impl Trial {
+    fn new(cur: usize) -> Self {
+        Trial { lo: None, hi: None, cur, done: false }
+    }
+    fn dropped(&self) -> bool {
+        self.done && self.lo.is_none()
+    }
+    /// Record the probe at `cur` and pick the next size: halve while nothing is clean, then
+    /// bisect the bracket (the Q tuner's `refine_up` rule).
+    fn step(&mut self, spilled: bool) {
+        if spilled {
+            self.hi = Some(self.cur);
+        } else {
+            self.lo = Some(self.cur);
+        }
+        match (self.lo, self.hi) {
+            (None, Some(hi)) => {
+                if hi / 2 < GENERIC_CHUNK_MIN {
+                    self.done = true;
+                } else {
+                    self.cur = hi / 2;
+                }
+            }
+            (Some(_), None) => self.done = true, // first probe clean: nothing above it to try
+            (Some(lo), Some(hi)) => {
+                if bracket_open(lo, hi) {
+                    self.cur = (lo + hi) / 2;
+                } else {
+                    self.done = true;
+                }
+            }
+            (None, None) => unreachable!("a probe records lo or hi"),
+        }
+    }
+}
+
+/// Re-emit the generic kernels in `keys` chunked and tune each one's chunk size until every
+/// chunk kernel shows STACK=0 (all archs): halving from `GENERIC_CHUNK_START`, then bisecting up
+/// between the largest clean and the smallest spilling size. A kernel still spilling at
+/// `GENERIC_CHUNK_MIN`, or whose cut is wider than `SLOTS_CAP`, is dropped (left to the interpreter). Each round compiles one TU, `gen_<sym>_cexprs_sp.cu` in `work`,
+/// holding every surviving kernel -- the finished ones at their clean size -- so the last
+/// object compiled is the one linked. Returns the chunked kernels and the dropped keys.
+pub fn tune_exprs(
+    tc: &Toolchain,
+    work: &Path,
+    sym: &str,
+    xitems: &[(i64, Ir, u64)],
+    keys: &[ExprKey],
+) -> anyhow::Result<(Vec<ChunkedPick>, Vec<ExprKey>)> {
+    let ir_by_id: HashMap<i64, &Ir> = xitems.iter().map(|(id, ir, _)| (*id, ir)).collect();
+    let mut items: Vec<ChunkedExpr> = Vec::new();
+    let mut excluded: Vec<ExprKey> = Vec::new();
+    for &key in keys {
+        let ce = match key {
+            ExprKey::Single(id) => ir_by_id.get(&id).map(|ir| chunked_program(key, ir, None)),
+            ExprKey::Pair(n, d) => {
+                ir_by_id.get(&n).zip(ir_by_id.get(&d)).map(|(num, den)| chunked_program(key, num, Some(den)))
+            }
+        };
+        match ce {
+            Some(ce) => items.push(ce),
+            None => {
+                eprintln!("  [tune-generic] {sym} {}: its IR is not among the x items; excluded", key.tag());
+                excluded.push(key);
+            }
+        }
+    }
+    let cu = work.join(format!("gen_{sym}_cexprs_sp.cu"));
+    let obj = cu.with_extension("o");
+    let mut trials: Vec<Trial> =
+        items.iter().map(|ce| Trial::new(GENERIC_CHUNK_START.min(ce.ir.instrs.len()))).collect();
+    let plan_of = |ce: &ChunkedExpr, size: usize| {
+        plan_chunks_ops_pinned(&ce.ir.instrs, size, &format!("{sym} {}", ce.key.tag()), &ce.pinned())
+    };
+    // The plans of a round: every kernel at its current size (the finished ones at their clean
+    // size, so the last object compiled holds the final set), None for a dropped one.
+    let plans_of = |trials: &[Trial]| -> anyhow::Result<Vec<Option<ChunkPlan>>> {
+        items
+            .iter()
+            .zip(trials)
+            .map(|(ce, t)| match if t.done { t.lo } else { Some(t.cur) } {
+                Some(size) => plan_of(ce, size).map(Some),
+                None => Ok(None),
+            })
+            .collect()
+    };
+    // Compile the round's kernels; per kernel its max STACK over its chunk kernels.
+    let re_chunk = Regex::new(&format!(r"gen_{}_(xp?\d+(?:_\d+)?)_c\d+PK", regex::escape(sym))).unwrap();
+    let compile_at = |plans: &[Option<ChunkPlan>]| -> anyhow::Result<Vec<Option<i64>>> {
+        let active: Vec<(&ChunkedExpr, &ChunkPlan)> =
+            items.iter().zip(plans).filter_map(|(ce, p)| p.as_ref().map(|p| (ce, p))).collect();
+        if active.is_empty() {
+            return Ok(vec![None; items.len()]);
+        }
+        std::fs::write(&cu, emit_exprs_chunked_tu(sym, &active))?;
+        let (ok, log) = tc.compile_tu(&cu, &obj, Some(work))?;
+        if !ok {
+            anyhow::bail!("nvcc failed for {}: {log}", cu.display());
+        }
+        let stack_of = max_stack_by_tag(&resource_usage(&obj)?, &re_chunk);
+        Ok(items
+            .iter()
+            .zip(plans)
+            .map(|(ce, p)| {
+                let plan = p.as_ref()?;
+                let tag = ce.key.tag();
+                let st = stack_of.get(&tag).copied().unwrap_or(0);
+                eprintln!(
+                    "  [tune-generic] {sym} {tag} ops={} chunk={} ({} chunks, {} slots) -> STACK={st}",
+                    ce.ir.instrs.len(),
+                    plan.bounds.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(0),
+                    plan.n_chunks,
+                    plan.total_slots
+                );
+                Some(st)
+            })
+            .collect())
+    };
+    let mut last_plans: Vec<Option<ChunkPlan>> = Vec::new();
+    let mut last_was_final = false;
+    while trials.iter().any(|t| !t.done) {
+        let mut plans = plans_of(&trials)?;
+        // A cut wider than SLOTS_CAP (Q's bound too) is dropped before spending a compile on it.
+        for ((ce, t), plan) in items.iter().zip(trials.iter_mut()).zip(plans.iter_mut()) {
+            if !t.done && plan.as_ref().is_some_and(|p| p.total_slots > SLOTS_CAP) {
+                eprintln!(
+                    "  [tune-generic] {sym} {}: cut wider than {SLOTS_CAP} slots; left to the interpreter",
+                    ce.key.tag()
+                );
+                t.done = true;
+                *plan = None;
+            }
+        }
+        let stacks = compile_at(&plans)?;
+        last_was_final = true;
+        for (t, st) in trials.iter_mut().zip(&stacks) {
+            if let (false, Some(st)) = (t.done, st) {
+                t.step(*st > 0);
+                last_was_final &= *st == 0;
+            }
+        }
+        last_plans = plans;
+    }
+    // The last round compiled every finished kernel at its clean size unless one of the probes
+    // in it spilled (its kernel then sits at a spilling size): re-emit the final set once.
+    let plans = if last_was_final {
+        last_plans
+    } else {
+        let plans = plans_of(&trials)?;
+        compile_at(&plans)?;
+        plans
+    };
+    let mut picks: Vec<ChunkedPick> = Vec::new();
+    for ((ce, t), plan) in items.iter().zip(&trials).zip(plans) {
+        match (t.lo, plan) {
+            (Some(lo), Some(plan)) => picks.push((ce.key, plan.total_slots, lo)),
+            _ => {
+                if t.dropped() && t.hi.is_some() {
+                    eprintln!(
+                        "  [tune-generic] {sym} {}: still spills at chunk {}; left to the interpreter",
+                        ce.key.tag(),
+                        GENERIC_CHUNK_MIN
+                    );
+                }
+                excluded.push(ce.key);
+            }
+        }
+    }
+    if picks.is_empty() {
+        let _ = std::fs::remove_file(&cu);
+        let _ = std::fs::remove_file(&obj);
+    }
+    Ok((picks, excluded))
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// The bracket walk of one chunked generic kernel: halve while spilling, then bisect between
+    /// the largest clean and the smallest spilling size until the gap is within ~1/8 of the clean
+    /// one; a first clean probe ends it; spilling all the way down to the floor drops it.
+    #[test]
+    fn trial_halves_then_bisects_upward() {
+        let mut t = Trial::new(256);
+        t.step(true); // 256 spills
+        assert_eq!((t.lo, t.hi, t.cur), (None, Some(256), 128));
+        t.step(false); // 128 clean -> bisect 128..256
+        assert_eq!((t.lo, t.hi, t.cur), (Some(128), Some(256), 192));
+        t.step(false); // 192 clean -> 192..256
+        assert_eq!((t.lo, t.cur), (Some(192), 224));
+        t.step(true); // 224 spills -> 192..224, gap 32 > 24 -> 208
+        assert_eq!((t.hi, t.cur), (Some(224), 208));
+        t.step(true); // 208 spills -> 192..208, gap 16 <= 24 -> done at 192
+        assert!(t.done && !t.dropped());
+        assert_eq!(t.lo, Some(192));
+
+        let mut first_clean = Trial::new(256);
+        first_clean.step(false);
+        assert!(first_clean.done && first_clean.lo == Some(256));
+
+        let mut sink = Trial::new(64);
+        sink.step(true); // 64 spills -> 32
+        assert_eq!(sink.cur, 32);
+        sink.step(true); // 32 spills -> below the floor: dropped
+        assert!(sink.dropped());
+    }
+
+    /// The spill readout finds a candidate by its straight-line kernel's mangled name (singles,
+    /// pairs) and is not fooled by a chunk kernel of the chunked TU (`_c<k>`) or by a prefix.
+    #[test]
+    fn spilling_exprs_matches_straight_line_kernel_names() {
+        let sym = "basic_a0_36_b21_e22924";
+        let mut usage: HashMap<String, i64> = HashMap::new();
+        usage.insert("_Z33gen_basic_a0_36_b21_e22924_x18389PK11StepsParamsP6gl64_tmmmmmmmmmmj".into(), 256);
+        usage.insert("_Z37gen_basic_a0_36_b21_e22924_xp22004_18389PK11StepsParamsP6gl64_tmmmmmm".into(), 256);
+        usage.insert("_Z33gen_basic_a0_36_b21_e22924_x17736PK11StepsParamsP6gl64_tmmmmmmmmmmj".into(), 0);
+        usage.insert("_Z36gen_basic_a0_36_b21_e22924_x1773_c0PK11StepsParamsP6gl64_tmmmmmmmmmmj".into(), 512);
+        usage.insert("_Z31gen_basic_a0_36_b21_e22924_powPK11StepsParamsP6gl64_t".into(), 264);
+        let candidates =
+            [ExprKey::Single(18389), ExprKey::Single(17736), ExprKey::Single(1773), ExprKey::Pair(22004, 18389)];
+        let got = spilling_exprs(&usage, sym, &candidates);
+        assert_eq!(got, vec![ExprKey::Single(18389), ExprKey::Pair(22004, 18389)]);
+    }
     /// The recursion phases take the smaller start chunk; a basic AIR keeps the old bounds. Pinned
     /// because the discriminator is the `sym` prefix, which `make_sym` builds from `proof_phase` --
     /// rename a phase there and this silently stops firing.

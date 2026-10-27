@@ -1,4 +1,5 @@
 #include "expressions_gpu.cuh"
+#include <atomic>
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "goldilocks_tooling.cuh"
@@ -80,6 +81,8 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     exprCoveredFn = (void *)ek.exprCovered;
     exprLaunchFn = (void *)ek.exprLaunch;
     exprPairLaunchFn = (void *)ek.exprPairLaunch;
+    expsScratchOff = ek.scratchOff;
+    expsScratchElems = ek.scratchElems;
     // Claim module code + kernel pools while VRAM is free (see expsWarmup); skip = warn only.
     if (!expsWarmup(setupCtx, ek)) {
         zklog.warning("ExpressionsGPU: exps module warmup skipped (low VRAM); first generated-kernel launches stay lazy for this air");
@@ -159,24 +162,44 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     // expression, or the hint pair (numerator x denominator^{-1}) fused as two
     // passes (write, then multiply-by-inverse in the store). Anything else
     // falls through to the bytecode interpreter below.
-    if (!constraints && !domainExtended && dest.dest_gpu != nullptr && exprLaunchFn != nullptr) {
+    // The generated kernels write their scratch in [expsScratchOff, +expsScratchElems), so they
+    // run only for a destination provably outside it: a caller that did not state where its
+    // dest lives, or one inside the scratch, goes to the interpreter. A launcher that returns 0
+    // did not launch (scratch cannot hold one wave): interpreter as well.
+    const bool generated = !constraints && !domainExtended && dest.dest_gpu != nullptr && exprLaunchFn != nullptr;
+    const bool destKnown = dest.auxKnown();
+    const bool destClear = dest.outsideAux() ||
+        (destKnown && (dest.aux_offset + dest.aux_span <= expsScratchOff || dest.aux_offset >= expsScratchOff + expsScratchElems));
+    if (generated && !destClear) {
+        // Warn once per process (this object is shared by every stream proving the air).
+        static std::atomic<bool> warned{false};
+        if (!warned.exchange(true)) zklog.warning("ExpressionsGPU: generated expression kernels skipped for a destination " + std::string(destKnown ? "overlapping" : "of unknown position relative to") + " the expression scratch; interpreter used");
+    }
+    if (generated && destClear) {
         auto exprCovered = (ExprCoveredFn)exprCoveredFn;
         auto exprLaunch = (ExprLaunchFn)exprLaunchFn;
+        auto exprPairLaunch = (ExprPairLaunchFn)exprPairLaunchFn;
         auto offc = [&](const char *sec) -> uint64_t {
             auto it = setupCtx.starkInfo.mapOffsets.find(std::make_pair(std::string(sec), false));
             return it != setupCtx.starkInfo.mapOffsets.end() ? it->second : 0;
         };
         const uint64_t o1 = offc("cm1"), o2 = offc("cm2"), o3 = offc("cm3");
         const uint32_t dExpr = dest.expr ? 1u : 0u;
+        auto launch = [&](uint64_t expId, uint64_t mode, uint64_t scalar) -> bool {
+            return exprLaunch(expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize, o1, o2, o3, mode, scalar,
+                              dest.stagePos, dest.stageCols, dest.dim, dExpr, expsScratchOff, expsScratchElems, stream) != 0;
+        };
+        auto launchPair = [&](uint64_t numId, uint64_t denId) -> bool {
+            return exprPairLaunch(numId, denId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize, o1, o2, o3,
+                                  dest.stagePos, dest.stageCols, dest.dim, dExpr, expsScratchOff, expsScratchElems, stream) != 0;
+        };
         bool handled = false;
         if (dest.params.size() == 1) {
             Params &p0 = dest.params[0];
             if (p0.op == opType::tmp && !p0.inverse && exprCovered(p0.expId)) {
                 TimerStartCategoryGPU(timer, EXPRESSIONS);
-                exprLaunch(p0.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
-                        o1, o2, o3, EXPR_MODE_WRITE, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                handled = launch(p0.expId, EXPR_MODE_WRITE, 0);
                 TimerStopCategoryGPU(timer, EXPRESSIONS);
-                handled = true;
             }
         } else if (dest.params.size() == 2) {
             Params &p0 = dest.params[0];
@@ -191,20 +214,15 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
                         const char *e = getenv("PROOFMAN_EXPS_PAIR");
                         return e == nullptr || e[0] != '0';
                     }();
-                    auto pairLaunch=(ExprPairLaunchFn)exprPairLaunchFn;
-                    bool paired=pairEnabled && pairLaunch && pairLaunch(p0.expId,p1.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
-                    if (!paired) {
-                        exprLaunch(p0.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,EXPR_MODE_WRITE,0,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
-                        exprLaunch(p1.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,EXPR_MODE_MUL_INV,0,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
-                    }
+                    const bool paired = pairEnabled && launchPair(p0.expId, p1.expId);
+                    // Unpaired: write, then multiply by the inverse. Both must launch, and the
+                    // second cannot be undone, so it is only attempted once the first ran.
+                    handled = paired || (launch(p0.expId, EXPR_MODE_WRITE, 0) && launch(p1.expId, EXPR_MODE_MUL_INV, 0));
                     TimerStopCategoryGPU(timer, EXPRESSIONS);
-                    handled = true;
                 } else if (p0.op == opType::number && !p0.inverse) {
                     TimerStartCategoryGPU(timer, EXPRESSIONS);
-                    exprLaunch(p1.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
-                            o1, o2, o3, EXPR_MODE_WRITE_INV, p0.value, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                    handled = launch(p1.expId, EXPR_MODE_WRITE_INV, p0.value);
                     TimerStopCategoryGPU(timer, EXPRESSIONS);
-                    handled = true;
                 }
             }
         }

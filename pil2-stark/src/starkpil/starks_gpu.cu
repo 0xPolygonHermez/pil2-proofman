@@ -1128,8 +1128,11 @@ void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU* expressionsC
             Goldilocks::Element* pAddress = step == 1 ? h_params.trace : h_params.aux_trace;
             Dest destStruct(NULL, domainSize, setupCtx.starkInfo.cmPolsMap[i].stagePos, setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)], false);
             destStruct.addParams(setupCtx.starkInfo.cmPolsMap[i].expId, setupCtx.starkInfo.cmPolsMap[i].dim, false);
-            uint64_t offset_aux_trace = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)];
+            const std::string section = "cm" + to_string(step);
+            uint64_t offset_aux_trace = setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)];
             destStruct.dest_gpu = (Goldilocks::Element *)(pAddress + offset_aux_trace);
+            if (step == 1) destStruct.setOutsideAux();  // the trace buffer, not aux_trace
+            else destStruct.setAuxRange(offset_aux_trace, domainSize * setupCtx.starkInfo.mapSectionsN[section]);
             countId++;
             expressionsCtx->calculateExpressions_gpu(d_params, destStruct, domainSize, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
         }

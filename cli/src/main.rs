@@ -94,7 +94,7 @@ fn main() {
         .expect("main thread panicked");
 
     if let Err(e) = result {
-        tracing::error!("{}", e);
+        eprintln!("Error: {e:#}");
         exit(1);
     }
 

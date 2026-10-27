@@ -439,6 +439,18 @@ pub fn plan_chunks(ir: &Ir, chunk_req: usize, sym: &str) -> anyhow::Result<Chunk
 
 /// [`plan_chunks`] over an explicit op sequence (the Q program, or the table program).
 pub fn plan_chunks_ops(instrs: &[Instr], chunk_req: usize, sym: &str) -> anyhow::Result<ChunkPlan> {
+    plan_chunks_ops_pinned(instrs, chunk_req, sym, &[])
+}
+
+/// [`plan_chunks_ops`] with `pinned` temps kept live to the end of the program: the chunked
+/// non-Q kernels consume their result temps in the final store, which is not an op of the
+/// program, so a result produced before the last chunk must cross every cut after it.
+pub fn plan_chunks_ops_pinned(
+    instrs: &[Instr],
+    chunk_req: usize,
+    sym: &str,
+    pinned: &[u64],
+) -> anyhow::Result<ChunkPlan> {
     let n_ops = instrs.len();
 
     // tmp liveness. SSA is assumed (each temp written once); fail loud otherwise,
@@ -460,6 +472,12 @@ pub fn plan_chunks_ops(instrs: &[Instr], chunk_req: usize, sym: &str) -> anyhow:
                 last_use.insert(tid, i);
                 dim_of.insert(tid, tdim);
             }
+        }
+    }
+
+    for &t in pinned {
+        if def_idx.contains_key(&t) && n_ops > 0 {
+            last_use.insert(t, n_ops - 1);
         }
     }
 
