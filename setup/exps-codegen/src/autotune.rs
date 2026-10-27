@@ -168,12 +168,11 @@ fn tune_inner(
         let ((st, objs), n_files) = compile_at(chunk)?;
         let Some(st) = st else { return Ok(None) };
         eprintln!("  [tune] {sym} chunk={chunk} ({n_files} TUs) -> STACK={st}");
-        // A single-kernel AIR (chunk covers every op) may keep a few bytes of
-        // local memory: splitting it in two costs a launch plus cross-chunk
-        // slots, which measured worse (VirtualTableZisk1: 8-byte spill at 280
-        // ops -> 2 chunks -> +30% kernel time). Chunked kernels stay at zero.
-        const SINGLE_SPILL_TOL: i64 = 32;
-        if st == 0 || (chunk >= n_ops && st <= SINGLE_SPILL_TOL) {
+        // Zero, nothing else: any local memory, even the 8 bytes a single-kernel Q once
+        // kept (VirtualTableZisk1, whose split costs +30% of a sub-millisecond kernel), makes
+        // the driver grow the context's local-memory pool, and the post-link audit would
+        // reject the library.
+        if st == 0 {
             // Halving overshoots: a spill of a few bytes at one size costs the whole
             // next size down, and with it double the cross-chunk slots. Bisect upward
             // between this clean size and the last spilling one; keep the largest clean.
