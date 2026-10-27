@@ -90,6 +90,18 @@ struct Dest {
     uint64_t dim = 1;
     uint64_t domainSize;
     std::vector<Params> params;
+    // Where `dest_gpu` lies, in elements of aux_trace: `[aux_offset, aux_offset + aux_span)`,
+    // or an empty span (`setOutsideAux`) for a buffer that is not aux_trace, or AUX_UNKNOWN when
+    // the caller did not say. The GPU generated-kernel path runs only when this proves the
+    // destination outside its scratch; unknown is not proven, and the interpreter runs instead.
+    static constexpr uint64_t AUX_UNKNOWN = UINT64_MAX;
+    uint64_t aux_offset = AUX_UNKNOWN;
+    uint64_t aux_span = 0;
+
+    void setAuxRange(uint64_t offset_, uint64_t span_) { aux_offset = offset_; aux_span = span_; }
+    void setOutsideAux() { setAuxRange(0, 0); }
+    bool auxKnown() const { return aux_offset != AUX_UNKNOWN; }
+    bool outsideAux() const { return auxKnown() && aux_span == 0; }
 
     Dest(Goldilocks::Element *dest_, uint64_t domainSize_, uint64_t offset_, int64_t expId_ = -1) : dest(dest_), expId(expId_), offset(offset_), domainSize(domainSize_) {}
 

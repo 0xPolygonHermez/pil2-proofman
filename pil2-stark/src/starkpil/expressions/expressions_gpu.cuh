@@ -59,9 +59,16 @@ public:
     uint32_t qStepLgUsed = 0;
     // Set once tryLaunchExpsQ's first-call sentinel has proven this air's Q kernel runs.
     bool qLaunchVerified = false;
+    // Generic expression kernels (exps_generic_* in expressions_codegen.cuh). Null when the library
+    // has none, or when the memory map does not prove the expression scratch dead in stage 2;
+    // the interpreter evaluates them then.
     void *exprCoveredFn = nullptr;
     void *exprLaunchFn = nullptr;
     void *exprPairLaunchFn = nullptr;
+    // The expression scratch those kernels may write: [expsScratchOff, +expsScratchElems) in
+    // elements of aux_trace, i.e. tmp1 up to the end of the buffer, the region Q uses too.
+    uint64_t expsScratchOff = 0;
+    uint64_t expsScratchElems = 0;
 
     ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPU();

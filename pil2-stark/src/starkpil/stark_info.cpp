@@ -880,7 +880,9 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
         mapBuffHelper += destVals;
     }
 
-    // Everything past mem_exps is dead while the quotient runs: the generated Q kernel may use all of it.
+    // Everything past mem_exps is dead while the quotient runs and during the stage-2 expressions:
+    // the generated kernels (Q, and the chunked generic ones) use it as scratch, up to the end of
+    // the buffer, and fall back to the interpreter when it cannot hold one wave of theirs.
     if(gpu && !verify) {
         mapOffsets[std::make_pair("mem_exps_end", false)] = std::max(mapBuffHelper, mapTotalN);
     }
