@@ -18,18 +18,13 @@ const IV: [u32; 8] = [0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F
 /// Stack depth is `popcount(chunks)`, so this bounds it at 2^54 chunks (the reference's figure).
 const CV_STACK_LEN: usize = 54;
 
-/// ZisK's `SyscallBlake3fParams`. It reads both `[u64; 8]` as `[u32; 16]`, so `pack` is a
-/// little-endian view rather than a conversion.
-#[cfg(all(target_os = "zkvm", target_vendor = "zisk"))]
-#[repr(C)]
-struct SyscallBlake3fParams {
-    state: *mut [u64; 8],
-    input: *const [u64; 8],
-}
-
+/// ZisK's `syscall_blake3f(state, input)`: two direct operands. It reads both `[u64; 8]` as
+/// `[u32; 16]`, so `pack` is a little-endian view rather than a conversion. The symbol links by
+/// name alone, so a signature that drifts from ZisK's is not a build error: it runs the precompile
+/// on the wrong addresses.
 #[cfg(all(target_os = "zkvm", target_vendor = "zisk"))]
 extern "C" {
-    fn syscall_blake3f(params: *mut SyscallBlake3fParams);
+    fn syscall_blake3f(state: *mut [u64; 8], input: *const [u64; 8]);
 }
 
 #[cfg(all(target_os = "zkvm", target_vendor = "zisk"))]
@@ -47,8 +42,7 @@ fn permute7(v: &mut [u32; 16], m: &[u32; 16]) {
         // Packed into owned buffers, not cast in place: `[u32; 16]` is 4-aligned, `[u64; 8]` is 8.
         let mut state = pack(v);
         let input = pack(m);
-        let mut params = SyscallBlake3fParams { state: &mut state, input: &input };
-        unsafe { syscall_blake3f(&mut params) };
+        unsafe { syscall_blake3f(&mut state, &input) };
         for i in 0..8 {
             v[2 * i] = state[i] as u32;
             v[2 * i + 1] = (state[i] >> 32) as u32;
