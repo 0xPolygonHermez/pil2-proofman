@@ -98,6 +98,10 @@ pub struct AirInfoSoundness {
     pub opening_points: u64,
     pub batch_size: u64,
     pub power_batching: bool,
+    /// Base field columns of each tree committed before the low-degree test: const, cm1, cm2, …
+    pub initial_tree_widths: Vec<u64>,
+    /// Out-of-domain evaluations sent in the proof.
+    pub num_evals: u64,
     #[serde(flatten)]
     pub low_degree_test: LowDegreeTestSoundness,
     pub gap_to_radius: f64,
@@ -282,9 +286,9 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
         .sum::<u64>();
     // `setup.proof_size` is the flat proof with its publics; a multiproof drops the siblings that
     // other queries' paths yield.
+    let layout = setup.stark_info.proof_layout();
     let flat_words = setup.proof_size as f64;
     let proof_words = if setup.stark_info.multiproof {
-        let layout = setup.stark_info.proof_layout();
         flat_words - layout.flat_proof_words() as f64 + layout.expected_multiproof_words()
     } else {
         flat_words
@@ -302,6 +306,11 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             opening_points: setup.stark_info.opening_points.len() as u64,
             batch_size: setup.stark_info.fri_batch_size.max(setup.stark_info.ev_map.len() as u64),
             power_batching: true,
+            initial_tree_widths: std::iter::once(layout.n_constants)
+                .chain(layout.num_vals.iter().copied())
+                .take(layout.n_stages as usize + 2)
+                .collect(),
+            num_evals: layout.n_evals,
             low_degree_test: low_degree_test_soundness(&setup.stark_info.stark_struct),
             gap_to_radius: setup.stark_info.security.proximity_gap,
             proof_size: format_bytes(proof_words * 8.0),
