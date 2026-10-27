@@ -2744,8 +2744,25 @@ where
             &self.const_tree,
             verkey_override,
         )?;
-        VadcopFinalProof::new_from_proof(&recursivef_proof.proof, false, self.pctx.global_info.hash.clone())
-            .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to create the recursivef proof: {}", e)))
+        let proof = VadcopFinalProof::new_from_proof(&recursivef_proof.proof, false, self.pctx.global_info.hash.clone())
+            .map_err(|e| ProofmanError::InvalidConfiguration(format!("Failed to create the recursivef proof: {}", e)))?;
+        // A bad recursivef otherwise surfaces only as an assert in the wrap's witness.
+        let base = self.pctx.global_info.get_setup_path("recursivef").display().to_string();
+        timer_start_info!(VERIFYING_RECURSIVEF_PROOF);
+        let valid = verify_proof::<F>(
+            &proof.proof,
+            base.clone() + ".starkinfo.json",
+            base.clone() + ".verifier.bin",
+            base + ".verkey.json",
+            Some(proof.public_values.iter().map(|&x| F::from_u64(x)).collect()),
+            None,
+            None,
+        );
+        timer_stop_and_log_info!(VERIFYING_RECURSIVEF_PROOF);
+        if !valid {
+            return Err(ProofmanError::InvalidProof("The recursivef proof was not verified".into()));
+        }
+        Ok(proof)
     }
 
     #[allow(clippy::too_many_arguments)]
