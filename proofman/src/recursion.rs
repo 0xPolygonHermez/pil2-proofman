@@ -1261,6 +1261,11 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
     d_buffers: *mut c_void,
     recurser_id: &str,
 ) -> ProofmanResult<Vec<u64>> {
+    // Phase B: a cluster worker never runs VadcopFinal, so its last job can leave the two halves
+    // open, and the recurser fits neither. Hand the basic stream back, as the final layers do.
+    if setup.gpu {
+        let _ = set_phase_b_c(d_buffers, 2);
+    }
     timer_start_info!(GENERATE_RECURSER_AGGREGATOR);
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
