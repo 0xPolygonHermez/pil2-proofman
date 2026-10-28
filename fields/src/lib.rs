@@ -3,6 +3,7 @@
 extern crate alloc;
 
 mod goldilocks;
+mod bn128;
 mod integers;
 mod goldilocks_quintic_extension;
 mod field;
@@ -24,6 +25,7 @@ mod poseidon1_constants;
 mod utils;
 
 pub use goldilocks::*;
+pub use bn128::*;
 pub use integers::*;
 pub use goldilocks_quintic_extension::*;
 pub use field::*;

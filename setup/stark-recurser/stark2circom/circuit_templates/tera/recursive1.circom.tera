@@ -2,6 +2,7 @@ pragma circom 2.1.0;
 pragma custom_templates;
 
 include "iszero.circom";
+include "circuit_type.circom";
 {% for vf in verifier_filenames %}include "{{ vf }}";
 {% endfor %}
 {% if not has_compressor %}include "elliptic_curve.circom";
@@ -9,7 +10,7 @@ include "iszero.circom";
 {{ calculate_hashes }}
 {% endif %}
 template Recursive1() {
-
+{{ air_id_vars }}
 {{ vadcop_define }}
 {{ stark_signals }}
 {% if has_publics %}    signal input publics[{{ n_publics }}];

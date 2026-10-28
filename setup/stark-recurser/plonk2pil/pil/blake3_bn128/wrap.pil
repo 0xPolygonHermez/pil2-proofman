@@ -1,0 +1,314 @@
+require "std_constants.pil";
+require "std_connection.pil";
+require "std_lookup.pil";
+
+require "circuits/common.pil";
+require "circuits/blake3.pil";
+require "circuits/plonk.pil";
+require "circuits/num2bytes.pil";
+
+// ============================================================================
+// BLAKE3 BN128 WRAP
+//
+// The AIR of the final SNARK wrap of a blake3 proving key, over BN128, proved with pilfflonk: the
+// circom verifier of the blake3 recursivef (`final.circom`) as PLONK gates and the custom gates
+// `Blake3Node`, `Blake3Compress(flags, isParent)` and `Num2Bytes(nBits)`.
+//
+// pilfflonk pays for every opening of a column (an evaluation, and k roots of its f), so every
+// column is opened at its row alone but the state st, at its row and the next. A BLAKE3 compression
+// is a block of 64 rows:
+//
+//   row      | st[16] (before the row) | lane columns           | a[0..17]
+//   ---------+------------------------+------------------------+-----------------------------------
+//   0..55    | v, then each G's       | G (8r + g) of round r  | 0..7: the block's input words;
+//            | output in place        |                        | 8..55: the band
+//   56..63   | the final state        | the feedforward of     | out[2k], out[2k+1] (a Node: its
+//            |                        | out[2k], out[2k+1]     | digest word k and its `over` bit)
+//
+// - G g of a round reads its four words of S through the one-hot selectors G[g] and writes them back
+//   on the next row: st is a register, which is what keeps every other column at one opening;
+// - the message: round 0 binds x, y to the row's input cells, and the other rounds read them back
+//   off a bus, keyed by the fixed MSG_KEY_X/Y (16 * block + the word's index);
+// - the band: PLONK rows (six gates, one coefficient set C) and range-check rows (three Num2Bytes
+//   uses of one number of chunks, weights in C), on the rows a block leaves free and after the
+//   blocks; the publics after it.
+//
+// Every fixed column but blake3Tables' and the std's is plonk2pil's (`#pragma fixed_external`).
+// ============================================================================
+airtemplate Wrap (const int N, const int nPublics) {
+    const int RANGE_CHECKER_ID = 250;
+    const int BLAKE3_MSG_ID = 500;
+    const int BLAKE3_TABLE_ID = 1000;
+    const int GOLDILOCKS_P = 0xFFFFFFFF00000001;
+
+    col witness a[18];
+    // The state before the row's G: the block's initial state on row 0, the final one on 56..63.
+    col witness st[16];
+
+    #pragma fixed_external
+    col fixed S[18];
+    // [qM, qL, qR, qO, qC] on a PLONK row; on a range-check row, its chunk weights.
+    #pragma fixed_external
+    col fixed C[5];
+    #pragma fixed_external
+    col fixed PLONK;
+    #pragma fixed_external
+    col fixed RANGE_CHECK;
+
+    // G g of a round, on its 7 rows of a block; their sum is every G row.
+    #pragma fixed_external
+    col fixed G[8];
+    // Rows 56..62 of a block, where st holds the final state.
+    #pragma fixed_external
+    col fixed HOLD;
+    // Row 0 of a block of each kind, and rows 0..7.
+    #pragma fixed_external
+    col fixed INIT_NODE;
+    #pragma fixed_external
+    col fixed INIT_CHUNK;
+    #pragma fixed_external
+    col fixed INIT_PARENT;
+    #pragma fixed_external
+    col fixed IN_NODE;
+    #pragma fixed_external
+    col fixed IN_CHUNK;
+    #pragma fixed_external
+    col fixed IN_PARENT;
+    // Row 2 of a Compress block, where vd is st[14] = blockLen.
+    #pragma fixed_external
+    col fixed BLOCKLEN_ROW;
+    // st[15], the block's flags, on its row 0.
+    #pragma fixed_external
+    col fixed FLAGS;
+    // The message bus: the keys of x and y, and 6 on round 0, -1 on rounds 1..6.
+    #pragma fixed_external
+    col fixed MSG_KEY_X;
+    #pragma fixed_external
+    col fixed MSG_KEY_Y;
+    #pragma fixed_external
+    col fixed MSG_MUL;
+    // Feedforward row k (56 + k) of a block, for the words it outputs; a Node's; a chunk's rows
+    // 60..63, whose cv is in a[2], a[3]; and the IV a parent's rows 60..63 XOR in.
+    #pragma fixed_external
+    col fixed FF[8];
+    #pragma fixed_external
+    col fixed FF_NODE;
+    #pragma fixed_external
+    col fixed FF_CV;
+    #pragma fixed_external
+    col fixed FF_IV[2];
+
+    // The G's columns. On the feedforward rows the byte columns hold its operands instead.
+    col witness va[2];
+    col witness vc;
+    col witness vb[4];
+    col witness vd[4];
+    col witness x[2];
+    col witness y[2];
+    col witness va_p[4];
+    col witness vd_p[4];
+    col witness vc_p[4];
+    col witness vb_p_s[4][2];
+    col witness va_pp[4];
+    col witness vd_pp[4];
+    col witness vc_pp[4];
+    col witness vb_pp_xor[4];
+    col witness vb_pp_t;
+    // 1/(y - (2^32 - 1)) on an input row of Goldilocks words: blake3SplitCanonicalGadget.
+    col witness d_inv;
+
+    // ── The band ────────────────────────────────────────────────────────────────
+    const expr q[5] = [C[0], C[1], C[2], C[3], C[4]];
+    for (int g = 0; g < 6; g++) {
+        plonk([a[3*g], a[3*g + 1], a[3*g + 2]], q, PLONK);
+    }
+    for (int s = 0; s < 3; s++) {
+        const expr chunks[NUM2BYTES_CHUNKS];
+        for (int k = 0; k < NUM2BYTES_CHUNKS; k++) {
+            chunks[k] = a[6*s + 1 + k];
+        }
+        num2bytesChunks(RANGE_CHECKER_ID, a[6*s], chunks, q, RANGE_CHECK);
+    }
+
+    // ── G ───────────────────────────────────────────────────────────────────────
+    // (va, vb, vc, vd) of G g: four column mixes, then four diagonal ones.
+    const int IDX[8][4];
+    IDX[0] = [0, 4, 8, 12];
+    IDX[1] = [1, 5, 9, 13];
+    IDX[2] = [2, 6, 10, 14];
+    IDX[3] = [3, 7, 11, 15];
+    IDX[4] = [0, 5, 10, 15];
+    IDX[5] = [1, 6, 11, 12];
+    IDX[6] = [2, 7, 8, 13];
+    IDX[7] = [3, 4, 9, 14];
+    expr SEL_G = 0;
+    expr sel_v[4];
+    for (int r = 0; r < 4; r++) {
+        sel_v[r] = 0;
+    }
+    for (int g = 0; g < 8; g++) {
+        SEL_G += G[g];
+        for (int r = 0; r < 4; r++) {
+            sel_v[r] += G[g] * st[IDX[g][r]];
+        }
+    }
+
+    const expr va_packed = pack(va, 16);
+    const expr vb_packed = pack_bytes(vb);
+    const expr vd_packed = pack_bytes(vd);
+    const expr x_packed = pack(x, 16);
+    const expr y_packed = pack(y, 16);
+    SEL_G * va_packed - sel_v[0] === 0;
+    SEL_G * vb_packed - sel_v[1] === 0;
+    SEL_G * vc - sel_v[2] === 0;
+    SEL_G * vd_packed - sel_v[3] === 0;
+
+    // va and the message limbs: every add's operands are below 2^32, vb and vd by their bytes.
+    for (int i = 0; i < 2; i++) {
+        blake3RangeCheck16(RANGE_CHECKER_ID, SEL_G, va[i], 1);
+        blake3RangeCheck16(RANGE_CHECKER_ID, SEL_G, x[i], 1);
+        blake3RangeCheck16(RANGE_CHECKER_ID, SEL_G, y[i], 1);
+    }
+
+    // va' = va + vb + x;  vd' = (vd ^ va') >>> 16
+    const expr va_p_packed = pack_bytes(va_p);
+    blake3Add3Check(va_packed, vb_packed, x_packed, va_p_packed, SEL_G);
+    for (int i = 0; i < 4; i++) {
+        blake3XorRotr(BLAKE3_TABLE_ID, SEL_G, vd[i], va_p[i], 0, vd_p[(i + 2) % 4], 0, 1);
+    }
+    // vc' = vc + vd';  vb' = (vb ^ vc') >>> 12, in the table's two byte pieces
+    const expr vc_p_packed = pack_bytes(vc_p);
+    blake3Add2Check(vc, pack_bytes(vd_p), vc_p_packed, SEL_G);
+    for (int i = 0; i < 4; i++) {
+        blake3XorRotr(BLAKE3_TABLE_ID, SEL_G, vb[i], vc_p[i], 12, vb_p_s[i][0], vb_p_s[i][1], 1);
+    }
+    const expr vb_p[4];
+    vb_p[0] = vb_p_s[1][1] + vb_p_s[2][0];
+    vb_p[1] = vb_p_s[2][1] + vb_p_s[3][0];
+    vb_p[2] = vb_p_s[0][0] + vb_p_s[3][1];
+    vb_p[3] = vb_p_s[0][1] + vb_p_s[1][0];
+    // va'' = va' + vb' + y;  vd'' = (vd' ^ va'') >>> 8;  vc'' = vc' + vd''
+    const expr va_pp_packed = pack_bytes(va_pp);
+    blake3Add3Check(va_p_packed, pack_bytes(vb_p), y_packed, va_pp_packed, SEL_G);
+    for (int i = 0; i < 4; i++) {
+        blake3XorRotr(BLAKE3_TABLE_ID, SEL_G, vd_p[i], va_pp[i], 0, vd_pp[(i + 3) % 4], 0, 1);
+    }
+    const expr vd_pp_packed = pack_bytes(vd_pp);
+    const expr vc_pp_packed = pack_bytes(vc_pp);
+    blake3Add2Check(vc_p_packed, vd_pp_packed, vc_pp_packed, SEL_G);
+    // vb'' = (vb' ^ vc'') >>> 7 = rotl1(rotr8(z)), z = vb' ^ vc'': 2·rotr8(z) mod 2^32 + its top bit.
+    // A wrong bit leaves vb'' outside [0, 2^32), which its readers' bytes refuse.
+    for (int i = 0; i < 4; i++) {
+        blake3XorRotr(BLAKE3_TABLE_ID, SEL_G, vb_p[i], vc_pp[i], 0, vb_pp_xor[i], 0, 1);
+    }
+    SEL_G * vb_pp_t * (1 - vb_pp_t) === 0;
+    const expr vb_pp_rotr8 = pack_bytes([vb_pp_xor[1], vb_pp_xor[2], vb_pp_xor[3], vb_pp_xor[0]]);
+    const expr vb_pp_packed = 2 * vb_pp_rotr8 - P2_32 * vb_pp_t + vb_pp_t;
+
+    // ── The state register ──────────────────────────────────────────────────────
+    // A G row writes its four words back; a feedforward row holds; row 63 is free (the next block's
+    // row 0 is its initial state).
+    const expr out_v[4] = [va_pp_packed, vb_pp_packed, vc_pp_packed, vd_pp_packed];
+    for (int j = 0; j < 16; j++) {
+        expr updated = 0;
+        for (int g = 0; g < 8; g++) {
+            for (int r = 0; r < 4; r++) {
+                if (IDX[g][r] == j) {
+                    updated += G[g] * (out_v[r] - st[j]);
+                }
+            }
+        }
+        (SEL_G + HOLD) * (st[j]' - st[j]) - updated === 0;
+    }
+
+    // ── The message ─────────────────────────────────────────────────────────────
+    lookup(BLAKE3_MSG_ID, [MSG_KEY_X, x_packed], mul: MSG_MUL);
+    lookup(BLAKE3_MSG_ID, [MSG_KEY_Y, y_packed], mul: MSG_MUL);
+
+    // Round 0, row t: a Node's word t is in[t] or, with its path bit a[2], in[(t + 4) % 8] (a[1]); a
+    // chunk's is in[8 + t]; a parent's two u32 words are in[2t], in[2t + 1].
+    IN_NODE * ((1 - a[2]) * a[0] + a[2] * a[1] - x_packed - P2_32 * y_packed) === 0;
+    IN_CHUNK * (a[0] - x_packed - P2_32 * y_packed) === 0;
+    IN_PARENT * (a[0] - x_packed) === 0;
+    IN_PARENT * (a[1] - y_packed) === 0;
+    blake3SplitCanonicalGadget(x_packed, y_packed, d_inv, IN_NODE + IN_CHUNK);
+    INIT_NODE * a[2] * (1 - a[2]) === 0;
+
+    // ── The initial state, on row 0 ─────────────────────────────────────────────
+    // st = cv, IV[0..4], counterLo, 0, blockLen, flags. A chunk's cv is a[3..10], its blockLen a[11]
+    // and counterLo a[12], as a parent's; a Node's are 64 and 0. The rows' bytes bound every word.
+    for (int j = 0; j < 8; j++) {
+        (INIT_NODE + INIT_PARENT) * (st[j] - BLAKE3_IV[j]) === 0;
+        INIT_CHUNK * (st[j] - a[3 + j]) === 0;
+    }
+    const expr INIT = INIT_NODE + INIT_CHUNK + INIT_PARENT;
+    for (int j = 0; j < 4; j++) {
+        INIT * (st[8 + j] - BLAKE3_IV[j]) === 0;
+    }
+    INIT * st[13] === 0;
+    INIT * (st[15] - FLAGS) === 0;
+    INIT_NODE * st[12] === 0;
+    INIT_NODE * (st[14] - 64) === 0;
+    (INIT_CHUNK + INIT_PARENT) * (st[12] - a[12]) === 0;
+    (INIT_CHUNK + INIT_PARENT) * (st[14] - a[11]) === 0;
+    // blockLen is a byte of BLAKE3's state: vd is st[14] on row 2.
+    for (int i = 1; i < 4; i++) {
+        BLOCKLEN_ROW * vd[i] === 0;
+    }
+
+    // ── The feedforward, rows 56..63 ────────────────────────────────────────────
+    // out[i] = st[i] ^ st[i + 8], out[8 + i] = st[8 + i] ^ cv[i]: row 56 + k XORs words 2k and
+    // 2k + 1 with their partners, A0 ^ B0 = C0 in vb, vd, va_p and A1 ^ B1 = C1 in vd_p, vc_p, va_pp.
+    expr FF_ANY = 0;
+    expr ff_a[2] = [0, 0];
+    expr ff_b[2] = [0, 0];
+    for (int k = 0; k < 8; k++) {
+        FF_ANY += FF[k];
+        for (int h = 0; h < 2; h++) {
+            ff_a[h] += FF[k] * st[2*k + h];
+            if (k < 4) {
+                ff_b[h] += FF[k] * st[2*k + h + 8];
+            }
+        }
+    }
+    for (int h = 0; h < 2; h++) {
+        ff_b[h] += FF_CV * a[2 + h] + FF_IV[h];
+    }
+    FF_ANY * vb_packed - ff_a[0] === 0;
+    FF_ANY * vd_packed - ff_b[0] === 0;
+    FF_ANY * pack_bytes(vd_p) - ff_a[1] === 0;
+    FF_ANY * vc_p_packed - ff_b[1] === 0;
+    for (int i = 0; i < 4; i++) {
+        blake3XorRotr(BLAKE3_TABLE_ID, FF_ANY, vb[i], vd[i], 0, va_p[i], 0, 1);
+        blake3XorRotr(BLAKE3_TABLE_ID, FF_ANY, vd_p[i], vc_p[i], 0, va_pp[i], 0, 1);
+    }
+    // A Compress's outputs are the u32 words. A Node's digest word k is the Goldilocks packing
+    // C = C0 + 2^32·C1 reduced mod p, less p when `over`, a[1], and canonical: over exactly when
+    // C >= p, i.e. C1 = 2^32 - 1 and C0 != 0 (d_inv, free on these rows, inverts C0 or C1 - (2^32 - 1)).
+    (FF_ANY - FF_NODE) * (a[0] - va_p_packed) === 0;
+    (FF_ANY - FF_NODE) * (a[1] - va_pp_packed) === 0;
+    FF_NODE * (a[0] - va_p_packed - P2_32 * va_pp_packed + a[1] * GOLDILOCKS_P) === 0;
+    FF_NODE * a[1] * (1 - a[1]) === 0;
+    FF_NODE * a[1] * (va_pp_packed - (P2_32 - 1)) === 0;
+    FF_NODE * a[1] * (va_p_packed * d_inv - 1) === 0;
+    blake3SplitCanonicalGadget(va_p_packed, va_pp_packed, d_inv, FF_NODE * (1 - a[1]));
+
+    // After every lookup of the lanes: mul_table and mul_range are the trace's last two columns.
+    blake3Tables(N, BLAKE3_TABLE_ID, RANGE_CHECKER_ID);
+
+    // ── Publics and the connection ──────────────────────────────────────────────
+    if (nPublics > 0) {
+        const int nPublicRows = (nPublics + 17) / 18;
+        #pragma fixed_external
+        col fixed PUBLICS_ROW[nPublicRows];
+        for (int i = 0; i < nPublics; i++) {
+            PUBLICS_ROW[i / 18] * (a[i % 18] - publics[i]) === 0;
+        }
+    }
+
+    const expr A[18];
+    for (int i = 0; i < 18; i++) {
+        A[i] = a[i];
+    }
+    connection(1, A, S, PIOP_BUS_PROD);
+}

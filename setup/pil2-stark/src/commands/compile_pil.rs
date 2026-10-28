@@ -11,6 +11,7 @@ use anyhow::{bail, Context, Result};
 use crate::proving_key::recursive::ensure_pil2com_exec;
 
 /// Options for the `compile-pil` subcommand.
+#[derive(Default)]
 pub struct CompilePilOptions {
     /// Path to the entry `.pil` file (e.g. `pil/zisk.pil`).
     pub pil_path: String,
@@ -20,6 +21,9 @@ pub struct CompilePilOptions {
     pub include_paths: Vec<String>,
     /// Optional `-u` directory for fixed columns.
     pub fixed_dir: Option<String>,
+    /// Optional `--field` of pil2com, the prime field it compiles over:
+    /// `goldilocks` (its default) or `bn128`.
+    pub field: Option<String>,
     /// Pass `-O fixed-to-file` to write fixed columns to disk.
     pub fixed_to_file: bool,
     /// Pass `-O no-proto-fixed-data` to omit fixed-column values from the
@@ -48,6 +52,9 @@ pub fn run_compile_pil(opts: &CompilePilOptions) -> Result<()> {
 
     if let Some(fixed_dir) = &opts.fixed_dir {
         cmd.arg("-u").arg(fixed_dir);
+    }
+    if let Some(field) = &opts.field {
+        cmd.arg("--field").arg(field);
     }
     if opts.fixed_to_file {
         cmd.arg("-O").arg("fixed-to-file");

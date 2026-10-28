@@ -55,12 +55,12 @@ struct StarksBackend {
     void (*free_device_buffers)(void *d_buffers);
     void *(*gen_device_buffers_recursivef)(void *pSetupCtx_, uint64_t proverBufferSize, void *d_commit_buffers, char* verkey);
     void (*free_device_buffers_recursivef)(void *d_buffers);
-    void (*upload_custom_commit_packed)(uint64_t airgroupId, uint64_t airId, char *proofType, char *customFile, uint64_t wordsPerRow, void *pSetupCtx_, void *d_buffers_);
+    void (*upload_custom_commit_packed)(uint64_t airgroupId, uint64_t airId, char *proofType, char *customFile, uint64_t wordsPerRow, void *pSetupCtx_, void *d_buffers_, bool onlyFirstGPU);
     void (*reserve_custom_commit_slot)(uint64_t airgroupId, uint64_t airId, char *proofType, uint64_t offset, uint64_t reservedWords, void *d_buffers_, bool onlyFirstGPU);
     void (*load_device_const_pols)(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char* proofType, bool onlyFirstGPU, bool alreadyLoaded);
     void (*load_device_setup)(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_, void *packedInfo, uint64_t *execData, uint64_t execWords);
     uint64_t (*gen_device_streams)(void *d_buffers_, uint64_t n_streams, uint64_t n_recursive_streams, const uint64_t *auxTraceSizes, uint64_t maxSizeProverBufferAggregation, uint64_t maxProofSize, uint64_t merkleTreeArity);
-    void (*alloc_device_large_buffers)(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset);
+    void (*alloc_device_large_buffers)(void *d_buffers_, uint64_t auxTraceRecursiveArea, uint64_t totalConstPols, uint64_t totalConstPolsAggregation, uint64_t unifiedBufferPadArea, uint64_t prefetchRegionArea, uint64_t phaseAAliasOffset, uint64_t lateRegionBytes, uint64_t nSlots, uint64_t slotBytes, uint64_t headroomBytes);
     void (*reset_device_streams)(void *d_buffers_);
     uint64_t (*check_device_memory)(uint32_t node_rank, uint32_t node_size);
     uint64_t (*get_num_gpus)();
@@ -71,25 +71,29 @@ struct StarksBackend {
     uint32_t (*is_first_gpu_buffer_borrowed)(void *d_buffers_);
     uint32_t (*get_first_gpu_id)(void *d_buffers_);
     void *(*get_first_gpu_buffer)(void *d_buffers_);
-    uint64_t (*get_const_pols_aggregation_offset)(void *d_buffers_);
+    uint64_t (*get_layout_offset)(void *d_buffers_, uint32_t which);
+    void (*restore_after_carve)(void *d_buffers_);
+    void (*debug_clobber_unified)(void *d_buffers_);
+    void (*invalidate_stream_contexts)(void *d_buffers_);
     uint64_t (*get_stream_commit_slots)(void *d_buffers_);
-    uint64_t (*get_stream_commit_floor)(void *d_buffers_);
-    uint64_t (*stream_commit_slot_bytes)(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow);
-    void (*configure_stream_commit_slots)(void *d_buffers_, uint64_t nSlots, uint64_t slotBytes);
-    void (*configure_prefetch_zone)(void *d_buffers_, uint64_t witnessBytes, uint64_t fixedTreeBytes, uint64_t packedConstBytes, uint64_t recWitnessBytes);
-    uint32_t (*get_prefetch_witness_slots)();
+    uint64_t (*get_stream_commit_gpus)(void *d_buffers_);
+    uint64_t (*stream_commit_slot_bytes)(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, uint64_t inputBytes, uint64_t packed, uint64_t indexed);
+    void (*configure_stream_commit_slots)(void *d_buffers_);
+    void (*configure_prefetch_zone)(void *d_buffers_, uint64_t witnessBytes, uint32_t nUnits);
+    int64_t (*stage_witness)(void *d_buffers_, uint64_t instanceId, void *trace, uint64_t total_size, bool hostSync);
+    void (*release_staged_witness)(void *d_buffers_, uint64_t instanceId);
     uint64_t (*get_mops_floor_bytes)();
     uint64_t (*get_post_alloc_headroom_bytes)();
-    void (*configure_const_slot_cache)(void *d_buffers_, uint64_t baseOffset, uint64_t slotElems, uint32_t nSlots);
-    void (*load_host_const_pols)(uint64_t airgroupId, uint64_t airId, char *proofType, char *constFilename, uint64_t constSize, void *d_buffers_, bool onlyFirstGPU);
+    uint64_t (*configure_const_slot_cache)(void *d_buffers_, uint64_t bigElems, uint64_t normalElems, uint32_t nLru);
+    uint64_t (*pin_const_slot)(void *d_buffers_, int64_t key, uint64_t elems);
+    void (*set_basic_fixed_on_host)(void *d_buffers_, bool onHost);
+    void (*load_host_const_pols)(uint64_t airgroupId, uint64_t airId, char *proofType, int64_t key, char *constFilename, uint64_t constSize, void *d_buffers_);
     void (*set_pipeline_mode)(void *d_buffers_, bool enable);
     void (*configure_phase_b)(void *d_buffers_);
     int64_t (*set_phase_b)(void *d_buffers_, uint32_t state);
     void (*harvest_pipeline)(void *d_buffers_);
     void (*dump_pipeline_state)(void *d_buffers_);
-    int64_t (*prefetch_witness)(void *pSetupCtx_, void *d_buffers_, uint64_t instanceId,
-                                uint64_t airgroupId, uint64_t airId, void *trace);
-    int64_t (*commit_witness_streaming)(void *d_buffers_, uint64_t slotIdx, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root);
+    int64_t (*commit_witness_streaming)(void *d_buffers_, uint64_t slotIdx, uint64_t instanceId, uint64_t airgroupId, uint64_t airId, void *packed, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t wordsPerRow, void *colWidths, void *root, void *params_);
     void (*stream_commit_pause)();
     void *(*get_unified_buffer_gpu_for_recursivef)(void *d_buffers_, void *d_buffers_recursivef_);
     void (*load_fixed_pols_recursivef)(void *pSetupCtx_, void *pConstTree, void *d_buffers_);
@@ -97,12 +101,17 @@ struct StarksBackend {
     // Final SNARK
     void *(*init_final_snark_prover)(char* zkeyFile, void* d_buffers_recursivef);
     void (*free_final_snark_prover)(void *snark_prover);
+    uint64_t (*get_snark_protocol_id)(void *snark_prover);
     void (*gen_final_snark_proof)(void *snark_prover, void *circomWitnessFinal, uint8_t* proof, uint8_t* publicsSnark, void* d_buffers_recursivef);
     void (*pre_allocate_final_snark_prover)(void *snark_prover, void* unified_buffer_gpu, void* d_buffers_recursivef);
+    void *(*reserve_recursivef_aux_trace)(void *d_buffers_recursivef, uint64_t bytes, uint64_t *out_bytes);
 };
 
 // Active backend pointer — set via set_gpu_mode()
 extern std::atomic<StarksBackend*> active_backend;
+
+// True when the GPU backend is active, as opposed to merely compiled in.
+bool starks_gpu_mode_active();
 
 // CPU backend (always available)
 extern StarksBackend cpu_backend;

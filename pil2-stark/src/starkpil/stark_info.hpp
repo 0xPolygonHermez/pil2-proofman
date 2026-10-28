@@ -55,10 +55,28 @@ public:
     uint64_t offsetMax;
 };
 
-class StepStruct
+/// The low-degree test run on the batched DEEP polynomial f_0.
+enum class LowDegreeTestKind
+{
+    FRI,
+    STIR, // Arnon–Chiesa–Fenzi–Yogev, ePrint 2024/390
+};
+
+/// STIR schedule, in the notation of the paper (Construction 5.2). Iteration i folds f_i by
+/// 2^{k_i} and commits g_{i+1} on the next domain L_{i+1}, of half the size.
+struct StirLayout;
+
+class StirStruct
 {
 public:
-    uint64_t nBits;
+    vector<uint64_t> foldingFactors; // k_i, in bits (length M)
+    vector<uint64_t> logDegrees;     // log2 d_i, degree bound of f_i (length M+1)
+    vector<uint64_t> logDomainSizes; // log2 |L_i| (length M+1)
+    uint64_t numOodSamples = 1;      // s, out-of-domain samples per iteration — always 1, no longer on the wire
+    vector<uint64_t> numQueries;     // t_i, shift queries into f_i (length M)
+    vector<uint64_t> grindingBitsQueries; // grinding on iteration i's query message (length M)
+
+    uint64_t numIterations() const { return foldingFactors.size(); }
 };
 
 class StarkStruct
@@ -66,15 +84,20 @@ class StarkStruct
 public:
     uint64_t nBits;
     uint64_t nBitsExt;
-    uint64_t nQueries;
     bool hashCommits;
     string verificationHashType;
     uint64_t lastLevelVerification;
     uint64_t merkleTreeArity;
     bool merkleTreeCustom;
     uint64_t transcriptArity;
-    vector<StepStruct> steps;
-    uint64_t powBits;
+    uint64_t grindingBitsQueries = 0; // FRI-only grinding (proof-of-work) budget on the query phase; 0 for STIR (see stir.grindingBitsQueries)
+
+    // Which low-degree test the stark info selects. FRI's schedule is `logDomainSizes` (log2|L_i|
+    // per round, STIR notation) + `numQueries`, STIR's is `stir`; the other one is left empty.
+    LowDegreeTestKind lowDegreeTest = LowDegreeTestKind::FRI;
+    uint64_t nQueries = 0;
+    vector<uint64_t> logDomainSizes;
+    StirStruct stir;
 };
 
 /// Merkle path levels one query publishes: the tree's depth less the levels the published last
@@ -135,14 +158,8 @@ public:
     }
 };
 
-// Opening points are processed in batches of at most this many per LEv build /
-// evaluation pass. Used by the proof drivers' batching loops, the per-air EvalInfo
-// tables, the lev/lev_helper arena sizing and the helper-offset arithmetic -- they
-// must all agree, so never hardcode the value at a call site.
-static constexpr uint64_t EVALS_OPENING_BATCH = 4;
-
-// Row-stripe count of the evaluations reduction (computeEvals_v2 grid.y). Shared with
-// setMapOffsets, which sizes the "lev_helper" region for the reduction partials.
+// Row-stripe count of the GPU evaluations (computeEvalsShifted grid.y). Shared with
+// setMapOffsets, which sizes the "evals_partials" region for the reduction partials.
 static constexpr uint64_t EVALS_HELPER_CHUNKS = 16;
 
 class StarkInfo
@@ -153,6 +170,10 @@ public:
 
     uint64_t airgroupId;
     uint64_t airId;
+
+    // Basic airs only: absorbed by the transcript after the stage-2 challenges.
+    bool hasCircuitType = false;
+    uint64_t circuitType = 0;
 
     uint64_t nPublics;
     uint64_t nConstants;
@@ -183,7 +204,7 @@ public:
 
     uint64_t nConstraints;
 
-    uint64_t friExpId;
+    uint64_t deepExpId;
     uint64_t cExpId;
 
     std::map<std::string, uint64_t> mapSectionsN;
@@ -192,6 +213,10 @@ public:
     std::map<std::pair<std::string, bool>, uint64_t> mapOffsets;
     
     bool recursive = false;
+    // GPU basic airs extend cm1/cm2 over their small traces (recursive airs need the cm1 root first).
+    bool inplaceStageCommit = false;
+    // GPU GL commit trees (cm*, const) are stored from level 1; queries rehash level 0.
+    bool dropLeafLevel = false;
     bool verify_constraints = false;
     bool verify = false;
     bool gpu = false;
@@ -199,7 +224,6 @@ public:
     bool calculateFixedExtended = false;
 
     uint64_t mapTotalN;
-    uint64_t mapTotalNContributions;
     uint64_t mapTotalNCustomCommitsFixed;
     
     uint64_t maxNBlocks, nrowsPack;
@@ -213,11 +237,25 @@ public:
     /* Constructor */
     StarkInfo(string file, bool recursive_final = false, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false);
     StarkInfo() {};
+
+    uint64_t getTraceLandingOffset();
+    uint64_t getNumNodesMTCommit(uint64_t height);
+    /* Offset in a commit tree's stored nodes of the level last_levels copies, and its node count */
+    uint64_t getLastLevelOffset(uint64_t height, uint64_t &nNodes);
     
     /* Loads data from a json object */
     void load (json j);
 
+    /// Number of Merkle trees the low-degree test commits, and the leaf width of each.
+    uint64_t numLowDegreeTestTrees() const;
+    uint64_t lowDegreeTestTreeWidth(uint64_t i) const;
+
+    /// u64 the flat proof buffer spends on the STIR section.
+    uint64_t stirProofSectionSize() const;
+
     void setMapOffsets();
+    StirLayout stirLayout() const; // valid after setMapOffsets on a GPU STIR stark info
+    uint64_t stirBase = 0;         // where setMapOffsets placed the STIR regions
 
     void setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3);
 

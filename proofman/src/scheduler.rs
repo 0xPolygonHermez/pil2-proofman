@@ -10,12 +10,15 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ffi::c_void;
 use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use proofman_fields::PrimeField64;
-use proofman_common::{MemoryHandlerRecursive, Proof, ProofType};
+use proofman_common::{MemoryHandlerRecursive, Proof, ProofType, WitnessPriority};
 
 use crate::Ledger;
-use proofman_starks_lib_c::{release_stream_reservation_c, reserve_best_stream_nonblock_c, reserve_stream_if_free_c};
+use proofman_starks_lib_c::{
+    release_stream_reservation_c, reserve_best_stream_nonblock_c, reserve_stream_if_free_c, STREAM_NEVER_FITS,
+};
 
 /// Warm-affinity key: launches sharing it can reuse a resident const-tree.
 type Key = (usize, usize, ProofType);
@@ -50,7 +53,7 @@ pub struct StreamReservation {
 unsafe impl Send for StreamReservation {}
 
 impl StreamReservation {
-    fn new(d_buffers: usize, stream_id: u32) -> Self {
+    pub(crate) fn new(d_buffers: usize, stream_id: u32) -> Self {
         Self { d_buffers, stream_id, armed: true }
     }
 
@@ -118,6 +121,8 @@ pub struct RecursiveScheduler<F: PrimeField64> {
     /// choose among equally-warm free streams, and a `HashMap`'s arbitrary order would make that
     /// choice — and so the whole stream assignment — differ between otherwise identical runs.
     stream_warm: BTreeMap<usize, Key>,
+    /// First key no stream could ever hold, and since when without any reservation succeeding.
+    never_fits: Option<(Key, Instant)>,
 }
 
 // `Send` is derived, not asserted: `d_buffers` is stored as a `usize` (the opaque handle is only
@@ -133,6 +138,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             last_prefetch_key: None,
             big_keys: HashMap::new(),
             stream_warm: BTreeMap::new(),
+            never_fits: None,
         }
     }
 
@@ -214,6 +220,13 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         if let Some((w, s)) = self.next_of_types(&[ProofType::Compressor], false) {
             return Some(WorkerPick::Recursive(w, s));
         }
+        // A ready recursive2 ahead of the basics (unless a ranked basic waits): aggregation left
+        // behind the basics drains at the end with little parallelism.
+        if !self.ranked_basic_ready() {
+            if let Some((w, s)) = self.next_of_types(&[ProofType::Recursive2], false) {
+                return Some(WorkerPick::Recursive(w, s));
+            }
+        }
         if let Some((id, s)) = self.next_basic() {
             return Some(WorkerPick::Basic(id, s));
         }
@@ -221,6 +234,11 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             return Some(WorkerPick::Recursive(w, s));
         }
         None
+    }
+
+    /// True while a ranked basic (see `big_keys`) is queued.
+    fn ranked_basic_ready(&self) -> bool {
+        self.basic_queue.iter().any(|(k, q)| !q.is_empty() && self.big_keys.contains_key(k))
     }
 
     /// Pick + reserve a stream for the next stored basic → `(instance_id, stream)`.
@@ -310,6 +328,11 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         // Pass 1 — REUSE: a stream already holding this key, free right now.
         for &key in candidates {
             let (ag, air, t) = key;
+            // Recursive2's const pols are resident on every GPU: reuse saves nothing and would stack
+            // recursive2 proofs on one GPU, so let the cold scan spread them.
+            if t == ProofType::Recursive2 {
+                continue;
+            }
             let type_str: &'static str = t.into();
             for (&s, &k) in self.stream_warm.iter() {
                 if k == key && reserve_stream_if_free_c(d, s as u32, ag as u64, air as u64, type_str, force_recursive) {
@@ -319,7 +342,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         }
         // Pass 2 — FRESH.
         for &key in candidates {
-            if self.is_warm_somewhere(key) {
+            if self.is_warm_somewhere(key) && key.2 != ProofType::Recursive2 {
                 continue; // loaded somewhere → not fresh
             }
             if let Some(s) = self.reserve_best(key, force_recursive) {
@@ -333,6 +356,12 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             }
         }
         None
+    }
+
+    /// A queued key no stream can ever hold, once nothing has been placed for `after`: the worker
+    /// fails the job instead of parking forever.
+    pub fn never_fits_for(&self, after: Duration) -> Option<Key> {
+        self.never_fits.filter(|(_, since)| since.elapsed() >= after).map(|(key, _)| key)
     }
 
     /// Reserve the best free stream for `key` (today's C selection), recording the
@@ -349,9 +378,17 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             is_aggregation(t),
             force_recursive,
         );
+        if s == STREAM_NEVER_FITS {
+            // A forced request sees only the recursive pool; the basic stream may still take it.
+            if !force_recursive {
+                self.never_fits.get_or_insert((key, Instant::now()));
+            }
+            return None;
+        }
         if s == u32::MAX {
             return None;
         }
+        self.never_fits = None;
         self.stream_warm.insert(s as usize, key);
         Some(StreamReservation::new(self.d_buffers, s))
     }
@@ -365,6 +402,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
     /// it is the smallest) and leaves the pool-integrity check in `reset()` short. Only safe once
     /// every producer and consumer is joined — otherwise a live worker can push right after.
     pub fn drain_all(&mut self) -> (Vec<Proof<F>>, Vec<usize>) {
+        self.never_fits = None;
         let witnesses: Vec<Proof<F>> = self.queues.drain().flat_map(|(_, q)| q.into_iter()).collect();
         let basics: Vec<usize> = self.basic_queue.drain().flat_map(|(_, q)| q.into_iter()).collect();
         (witnesses, basics)
@@ -426,6 +464,37 @@ pub fn witness_slot_cap(eligible: usize, n_classes: usize) -> usize {
         return usize::MAX;
     }
     eligible + 1
+}
+
+/// Bands admission may draw from. `Last` is a barrier, not a tie-break: it opens only once the
+/// phase's other instances have finished. An empty pool cannot stand in for that -- the urgent
+/// pools run dry constantly while collectors still feed them -- hence the count, which is
+/// `usize::MAX` until the phase publishes it.
+pub fn bands_in_scope(done: usize, non_last_total: usize) -> usize {
+    if done >= non_last_total {
+        WitnessPriority::BANDS
+    } else {
+        WitnessPriority::Last.index()
+    }
+}
+
+/// `(pool, index)` of the instance to admit next: in the most urgent band with an admissible
+/// entry, the one with the largest `cost` (ties by arrival). `admissible` outranks the band: it
+/// carries the slot cap, the reason this pools at all. So a band held back by the cap yields to a
+/// less urgent one -- which is why a barrier band has to be kept out of `pools` by the caller, not
+/// ranked last here.
+pub(crate) fn next_admission(
+    pools: &[VecDeque<usize>],
+    admissible: impl Fn(usize) -> bool,
+    cost: impl Fn(usize) -> u64,
+) -> Option<(usize, usize)> {
+    pools.iter().enumerate().find_map(|(band, pool)| {
+        pool.iter()
+            .enumerate()
+            .filter(|&(_, &id)| admissible(id))
+            .min_by_key(|&(pos, &id)| (std::cmp::Reverse(cost(id)), pos))
+            .map(|(pos, _)| (band, pos))
+    })
 }
 
 /// Sort key for the basic-proof schedule: `priority_tier` (front-load stored / has-compressor
@@ -518,6 +587,7 @@ mod tests {
 mod drain_tests {
     use super::*;
     use crate::{DeviceBuffersPtr, DeviceCompletions};
+    use tokio_util::sync::CancellationToken;
     use proofman_fields::{Field, Goldilocks};
     use proofman_common::MemoryHandlerRecursive;
 
@@ -561,7 +631,11 @@ mod drain_tests {
         let (w2, b2) = s.drain_all();
         assert!(w2.is_empty() && b2.is_empty());
 
-        recover_drained_witnesses(witnesses, &h, &DeviceCompletions::new().acquire(null_ptr()).ledger());
+        recover_drained_witnesses(
+            witnesses,
+            &h,
+            &DeviceCompletions::new().acquire(null_ptr(), CancellationToken::new()).ledger(),
+        );
     }
 
     fn null_ptr() -> DeviceBuffersPtr {
@@ -579,7 +653,7 @@ mod drain_tests {
         // Both compressor buffers are out of the pool now; a drop here would lose them for good.
         let (witnesses, _) = s.drain_all();
 
-        let owner = DeviceCompletions::new().acquire(null_ptr());
+        let owner = DeviceCompletions::new().acquire(null_ptr(), CancellationToken::new());
         assert_eq!(recover_drained_witnesses(witnesses, &h, &owner.ledger()), 2);
 
         // Every buffer is back in the pool it came from, so the integrity check passes. This is the
@@ -590,7 +664,7 @@ mod drain_tests {
     #[test]
     fn recovery_settles_the_units_armed_at_hand_off() {
         let h = handler();
-        let owner = DeviceCompletions::new().acquire(null_ptr());
+        let owner = DeviceCompletions::new().acquire(null_ptr(), CancellationToken::new());
         let ledger = owner.ledger();
 
         let mut s = scheduler();
@@ -612,7 +686,7 @@ mod drain_tests {
         // Guards the key pairing: a drained compressor must settle (id, Compressor), never the basic
         // unit that shares its numeric id and is still legitimately in flight.
         let h = handler();
-        let owner = DeviceCompletions::new().acquire(null_ptr());
+        let owner = DeviceCompletions::new().acquire(null_ptr(), CancellationToken::new());
         let ledger = owner.ledger();
         ledger.arm(7, ProofType::Basic.as_usize()).commit();
         ledger.arm(7, ProofType::Compressor.as_usize()).commit();
@@ -639,7 +713,11 @@ mod drain_tests {
         s.push(Proof::new_witness(ProofType::Recursive1, 0, 0, None, buf, Vec::new(), 1));
 
         let (witnesses, _) = s.drain_all();
-        recover_drained_witnesses(witnesses, &h, &DeviceCompletions::new().acquire(null_ptr()).ledger());
+        recover_drained_witnesses(
+            witnesses,
+            &h,
+            &DeviceCompletions::new().acquire(null_ptr(), CancellationToken::new()).ledger(),
+        );
         h.reset().expect("buffer returned even with no unit to settle");
     }
 
@@ -677,7 +755,8 @@ mod drain_tests {
 
 #[cfg(test)]
 mod admission_tests {
-    use super::{eligible_stream_count, witness_slot_cap};
+    use super::{bands_in_scope, eligible_stream_count, next_admission, witness_slot_cap, WitnessPriority};
+    use std::collections::VecDeque;
 
     /// Measured carve: one 7.42 GB class and two 6.24 GB (MiB).
     const CLASSES: [usize; 3] = [7598, 6390, 6390];
@@ -707,6 +786,87 @@ mod admission_tests {
         assert_eq!(eligible_stream_count(6133, &[]), 0);
         assert_eq!(witness_slot_cap(0, 3), usize::MAX);
         assert_eq!(witness_slot_cap(1, 0), usize::MAX);
+    }
+
+    /// The handler's arrival pools, in band order.
+    fn pools(pairs: &[(usize, WitnessPriority)]) -> [VecDeque<usize>; WitnessPriority::BANDS] {
+        let mut out: [VecDeque<usize>; WitnessPriority::BANDS] = Default::default();
+        for &(id, band) in pairs {
+            out[band.index()].push_back(id);
+        }
+        out
+    }
+
+    /// Arrivals that all took the default band.
+    fn normal(ids: &[usize]) -> [VecDeque<usize>; WitnessPriority::BANDS] {
+        pools(&ids.iter().map(|&id| (id, WitnessPriority::Normal)).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn nothing_to_admit_admits_nothing() {
+        assert_eq!(next_admission(&normal(&[]), |_| true, |_| 0), None, "no pool has anything");
+        assert_eq!(next_admission(&normal(&[7, 2]), |_| false, |_| 0), None, "every candidate is at its cap");
+    }
+
+    /// Within a band, equal-cost arrivals are FIFO, and the band still outranks arrival order.
+    #[test]
+    fn arrival_order_decides_within_a_band() {
+        assert_eq!(next_admission(&normal(&[7, 2, 9]), |_| true, |_| 0), Some((1, 0)));
+        let pending = pools(&[(7, WitnessPriority::Normal), (2, WitnessPriority::First), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&pending, |_| true, |_| 0), Some((0, 0)));
+        assert_eq!(pending[0][0], 2, "the earlier First arrival wins its band");
+    }
+
+    /// The production shape: one band, the head's air at its cap, another air behind it. Without
+    /// this, narrowing the scan to the head alone would pass every other test and stall the pool.
+    #[test]
+    fn a_capped_head_does_not_block_the_rest_of_its_pool() {
+        assert_eq!(next_admission(&normal(&[7, 2]), |id| id != 7, |_| 0), Some((1, 1)));
+    }
+
+    /// The band replaces the priority channel, and the walk runs the whole way down. 7 arrives
+    /// first but sits in the least urgent band; 9 arrives last in the most urgent.
+    #[test]
+    fn bands_outrank_arrival_order() {
+        let all = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal), (9, WitnessPriority::First)]);
+        assert_eq!(next_admission(&all, |_| true, |_| 0), Some((0, 0)));
+        assert_eq!(all[0][0], 9, "the pools must come back untouched");
+        let no_first = pools(&[(7, WitnessPriority::Last), (2, WitnessPriority::Normal)]);
+        assert_eq!(next_admission(&no_first, |_| true, |_| 0), Some((1, 0)));
+        let only_last = pools(&[(7, WitnessPriority::Last)]);
+        assert_eq!(next_admission(&only_last, |_| true, |_| 0), Some((2, 0)));
+    }
+
+    /// The case band ordering alone got wrong: a ready `Last`, alone in the pools, must still wait.
+    #[test]
+    fn last_stays_out_of_scope_until_the_phase_owes_nothing() {
+        let pending = pools(&[(7, WitnessPriority::Last)]);
+        let scope = |done, total| next_admission(&pending[..bands_in_scope(done, total)], |_| true, |_| 0);
+        assert_eq!(scope(0, usize::MAX), None, "unarmed: shut, so nothing slips through on startup");
+        assert_eq!(scope(1, 2), None, "one of two done: ready, alone, and still held");
+        assert_eq!(scope(2, 2), Some((2, 0)), "the last one lands and the band opens");
+        assert_eq!(scope(0, 0), Some((2, 0)), "a phase of only Last instances must not deadlock");
+        assert_eq!(scope(3, 2), Some((2, 0)), "an eviction recompute overshoots; the gate stays open");
+    }
+
+    /// The slot cap outranks the band: holding an air back is why this pools at all.
+    #[test]
+    fn the_slot_cap_outranks_the_band() {
+        let pending = pools(&[(7, WitnessPriority::First), (2, WitnessPriority::Normal), (9, WitnessPriority::Last)]);
+        assert_eq!(next_admission(&pending, |id| id != 7, |_| 0), Some((1, 0)), "a capped First yields to Normal");
+        assert_eq!(next_admission(&pending, |id| id != 7 && id != 2, |_| 0), Some((2, 0)), "and Normal to Last");
+    }
+
+    /// Within a band the largest air goes first, so the long witnesses start early.
+    #[test]
+    fn the_largest_air_goes_first_within_a_band() {
+        let cost = |id: usize| if id == 9 { 100 } else { 10 };
+        assert_eq!(next_admission(&normal(&[7, 2, 9]), |_| true, cost), Some((1, 2)));
+        // Still below the band: a First instance goes ahead of a larger Normal one.
+        let pending = pools(&[(7, WitnessPriority::First), (9, WitnessPriority::Normal)]);
+        assert_eq!(next_admission(&pending, |_| true, cost), Some((0, 0)));
+        // And below the slot cap.
+        assert_eq!(next_admission(&normal(&[7, 2, 9]), |id| id != 9, cost), Some((1, 0)));
     }
 }
 

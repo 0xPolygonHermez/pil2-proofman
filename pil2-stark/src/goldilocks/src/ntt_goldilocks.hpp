@@ -7,6 +7,7 @@
 #include <omp.h>
 #define NUM_PHASES 3
 #define NUM_BLOCKS 1
+#define LDE_BLOCK_COLS 32
 
 struct DeviceCommitBuffers;
 
@@ -36,7 +37,7 @@ private:
             return res;
         }
     }
-    void NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *src, uint64_t size, uint64_t offset_cols, uint64_t ncols, uint64_t ncols_all, uint64_t nphase, Goldilocks::Element *aux, bool inverse, bool extend);
+    void NTT_iters(Goldilocks::Element *dst, Goldilocks::Element *src, uint64_t size, uint64_t offset_cols, uint64_t ncols, uint64_t ncols_all, uint64_t nphase, Goldilocks::Element *aux, bool inverse, bool extend, uint64_t strideSrc = 0, uint64_t offsetSrc = 0, Goldilocks::Element *final = NULL, uint64_t strideFinal = 0, uint64_t offsetFinal = 0);
     inline int intt_idx(int i, int N)
     {
         return i == 0 ? 0 : N - i;
@@ -182,6 +183,11 @@ public:
     void NTT(Goldilocks::Element *dst, Goldilocks::Element *src, uint64_t size, uint64_t ncols = 1, Goldilocks::Element *buffer = NULL, uint64_t nphase = NUM_PHASES, uint64_t nblock = NUM_BLOCKS, bool inverse = false, bool extend = false);
     inline void INTT(Goldilocks::Element *dst, Goldilocks::Element *src, uint64_t size, uint64_t ncols = 1, Goldilocks::Element *buffer = NULL, uint64_t nphase = NUM_PHASES, uint64_t nblock = NUM_BLOCKS, bool extend = false);    
     void LDE(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t N_Extended, uint64_t N, uint64_t ncols, Goldilocks::Element *buffer = NULL, uint64_t nphase = NUM_PHASES, uint64_t nblock = NUM_BLOCKS);
+    void LDEBlocked(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t N_Extended, uint64_t N, uint64_t ncols, Goldilocks::Element *scratch);
+    static uint64_t LDEBlockedScratchSize(uint64_t N_Extended, uint64_t ncols)
+    {
+        return ncols <= LDE_BLOCK_COLS ? N_Extended * ncols : 2 * N_Extended * LDE_BLOCK_COLS;
+    }
 };
 
 // extend parameter is used to indicate tha the polinomial will be extended after the INTT

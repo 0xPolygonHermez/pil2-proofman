@@ -76,9 +76,9 @@ pub fn ref_operand(r: &Value, is_dest: bool, initialized: &[u64], ctx: &UnrollCt
             if stage == ctx.q_stage {
                 Ok("challengeQ".into())
             } else if stage == ctx.evals_stage {
-                Ok("challengeXi".into())
+                Ok("challengeOut".into())
             } else if stage == ctx.fri_stage {
-                Ok(format!("challengesFRI[{stage_id}]"))
+                Ok(format!("challengesDeep[{stage_id}]"))
             } else {
                 Ok(format!("challengesStage{stage}[{stage_id}]"))
             }
@@ -87,7 +87,7 @@ pub fn ref_operand(r: &Value, is_dest: bool, initialized: &[u64], ctx: &UnrollCt
             let id = r["id"].as_u64().unwrap_or(0);
             Ok(format!("publics[{id}]"))
         }
-        "x" => Ok("challengeXi".into()),
+        "x" => Ok("challengeOut".into()),
         "Zi" => {
             let boundary_id = r["boundaryId"].as_u64().unwrap_or(0) as usize;
             let boundary = ctx
@@ -499,15 +499,15 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
             if stage == ctx.q_stage {
                 Ok("challengeQ".into())
             } else if stage == ctx.evals_stage {
-                Ok("challengeXi".into())
+                Ok("challengeOut".into())
             } else if stage == ctx.fri_stage {
-                Ok(format!("challengesFRI[{stage_id}]"))
+                Ok(format!("challengesDeep[{stage_id}]"))
             } else {
                 Ok(format!("challengesStage{stage}[{stage_id}]"))
             }
         }
         "public" => Ok(format!("publics[{}]", r["id"].as_u64().unwrap_or(0))),
-        "x" => Ok("challengeXi".into()),
+        "x" => Ok("challengeOut".into()),
         "Zi" => {
             let boundary_id = r["boundaryId"].as_u64().unwrap_or(0) as usize;
             let boundary = ctx
@@ -601,13 +601,23 @@ fn resolve_add_sub_pair(
     const_cnt: &mut usize,
     value_cnt: &mut usize,
 ) -> Result<(String, String)> {
+    // A zero against a dim-3 operand is a dim-3 zero: the wrap below leaves zeros alone, which
+    // would hand a GLConst(0) scalar to a GLC op.
+    let zero_vs3 = |s: &Value, d: u64, other: u64| {
+        s["type"].as_str() == Some("number")
+            && d == 1
+            && other == 3
+            && normalise_gl_number(s["value"].as_str().unwrap_or("0")) == 0
+    };
     let raw0 = if s0["type"].as_str() == Some("number") {
-        emit_const_inner(s0["value"].as_str().unwrap_or("0"), d0, out, const_signals, const_cnt)
+        let dim = if zero_vs3(s0, d0, d1) { 3 } else { d0 };
+        emit_const_inner(s0["value"].as_str().unwrap_or("0"), dim, out, const_signals, const_cnt)
     } else {
         ref_operand_bn128(s0, ctx)?
     };
     let raw1 = if s1["type"].as_str() == Some("number") {
-        emit_const_inner(s1["value"].as_str().unwrap_or("0"), d1, out, const_signals, const_cnt)
+        let dim = if zero_vs3(s1, d1, d0) { 3 } else { d1 };
+        emit_const_inner(s1["value"].as_str().unwrap_or("0"), dim, out, const_signals, const_cnt)
     } else {
         ref_operand_bn128(s1, ctx)?
     };

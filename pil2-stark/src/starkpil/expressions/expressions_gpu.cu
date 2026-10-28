@@ -1,4 +1,5 @@
 #include "expressions_gpu.cuh"
+#include <atomic>
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "goldilocks_tooling.cuh"
@@ -75,10 +76,13 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     ExpsKernel ek = expsOpenForAir(setupCtx);
     expsLib = ek.lib;
     qLaunchFn = (void *)ek.qLaunch;
+    qLaunchStepFn = (void *)ek.qLaunchStep;
     qMinScratch = ek.qMinScratch;
     exprCoveredFn = (void *)ek.exprCovered;
     exprLaunchFn = (void *)ek.exprLaunch;
     exprPairLaunchFn = (void *)ek.exprPairLaunch;
+    expsScratchOff = ek.scratchOff;
+    expsScratchElems = ek.scratchElems;
     // Claim module code + kernel pools while VRAM is free (see expsWarmup); skip = warn only.
     if (!expsWarmup(setupCtx, ek)) {
         zklog.warning("ExpressionsGPU: exps module warmup skipped (low VRAM); first generated-kernel launches stay lazy for this air");
@@ -142,30 +146,60 @@ static void stageExpsSlot(Goldilocks::Element *pinned_exps_params, Goldilocks::E
     CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, argsSlot, sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 }
 
+// A dest param's expression. Only a tmp param has one; the others (cm, const, number...) get an empty
+// entry. Never operator[]: this map is shared by every stream proving the air, so an insert on a
+// missing id is a data race that corrupts it.
+static const ParserParams &parserParamsOf(SetupCtx &setupCtx, const Params &p, bool constraints) {
+    static const ParserParams none{};
+    if (p.op != opType::tmp) return none;
+    return constraints ? setupCtx.expressionsBin.constraintsInfoDebug.at(p.expId)
+                       : setupCtx.expressionsBin.expressionsInfo.at(p.expId);
+}
+
 void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool constraints)
 {
     // Generated-kernel fast path for trace-domain dests: a single covered
     // expression, or the hint pair (numerator x denominator^{-1}) fused as two
     // passes (write, then multiply-by-inverse in the store). Anything else
     // falls through to the bytecode interpreter below.
-    if (!constraints && !domainExtended && dest.dest_gpu != nullptr && exprLaunchFn != nullptr) {
+    // The generated kernels write their scratch in [expsScratchOff, +expsScratchElems), so they
+    // run only for a destination provably outside it: a caller that did not state where its
+    // dest lives, or one inside the scratch, goes to the interpreter. A launcher that returns 0
+    // did not launch (scratch cannot hold one wave): interpreter as well.
+    const bool generated = !constraints && !domainExtended && dest.dest_gpu != nullptr && exprLaunchFn != nullptr;
+    const bool destKnown = dest.auxKnown();
+    const bool destClear = dest.outsideAux() ||
+        (destKnown && (dest.aux_offset + dest.aux_span <= expsScratchOff || dest.aux_offset >= expsScratchOff + expsScratchElems));
+    if (generated && !destClear) {
+        // Warn once per process (this object is shared by every stream proving the air).
+        static std::atomic<bool> warned{false};
+        if (!warned.exchange(true)) zklog.warning("ExpressionsGPU: generated expression kernels skipped for a destination " + std::string(destKnown ? "overlapping" : "of unknown position relative to") + " the expression scratch; interpreter used");
+    }
+    if (generated && destClear) {
         auto exprCovered = (ExprCoveredFn)exprCoveredFn;
         auto exprLaunch = (ExprLaunchFn)exprLaunchFn;
+        auto exprPairLaunch = (ExprPairLaunchFn)exprPairLaunchFn;
         auto offc = [&](const char *sec) -> uint64_t {
             auto it = setupCtx.starkInfo.mapOffsets.find(std::make_pair(std::string(sec), false));
             return it != setupCtx.starkInfo.mapOffsets.end() ? it->second : 0;
         };
         const uint64_t o1 = offc("cm1"), o2 = offc("cm2"), o3 = offc("cm3");
         const uint32_t dExpr = dest.expr ? 1u : 0u;
+        auto launch = [&](uint64_t expId, uint64_t mode, uint64_t scalar) -> bool {
+            return exprLaunch(expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize, o1, o2, o3, mode, scalar,
+                              dest.stagePos, dest.stageCols, dest.dim, dExpr, expsScratchOff, expsScratchElems, stream) != 0;
+        };
+        auto launchPair = [&](uint64_t numId, uint64_t denId) -> bool {
+            return exprPairLaunch(numId, denId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize, o1, o2, o3,
+                                  dest.stagePos, dest.stageCols, dest.dim, dExpr, expsScratchOff, expsScratchElems, stream) != 0;
+        };
         bool handled = false;
         if (dest.params.size() == 1) {
             Params &p0 = dest.params[0];
             if (p0.op == opType::tmp && !p0.inverse && exprCovered(p0.expId)) {
                 TimerStartCategoryGPU(timer, EXPRESSIONS);
-                exprLaunch(p0.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
-                        o1, o2, o3, EXPR_MODE_WRITE, 0, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                handled = launch(p0.expId, EXPR_MODE_WRITE, 0);
                 TimerStopCategoryGPU(timer, EXPRESSIONS);
-                handled = true;
             }
         } else if (dest.params.size() == 2) {
             Params &p0 = dest.params[0];
@@ -180,20 +214,15 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
                         const char *e = getenv("PROOFMAN_EXPS_PAIR");
                         return e == nullptr || e[0] != '0';
                     }();
-                    auto pairLaunch=(ExprPairLaunchFn)exprPairLaunchFn;
-                    bool paired=pairEnabled && pairLaunch && pairLaunch(p0.expId,p1.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
-                    if (!paired) {
-                        exprLaunch(p0.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,EXPR_MODE_WRITE,0,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
-                        exprLaunch(p1.expId,d_params,(gl64_t*)dest.dest_gpu,domainSize,dest.domainSize,o1,o2,o3,EXPR_MODE_MUL_INV,0,dest.stagePos,dest.stageCols,dest.dim,dExpr,stream);
-                    }
+                    const bool paired = pairEnabled && launchPair(p0.expId, p1.expId);
+                    // Unpaired: write, then multiply by the inverse. Both must launch, and the
+                    // second cannot be undone, so it is only attempted once the first ran.
+                    handled = paired || (launch(p0.expId, EXPR_MODE_WRITE, 0) && launch(p1.expId, EXPR_MODE_MUL_INV, 0));
                     TimerStopCategoryGPU(timer, EXPRESSIONS);
-                    handled = true;
                 } else if (p0.op == opType::number && !p0.inverse) {
                     TimerStartCategoryGPU(timer, EXPRESSIONS);
-                    exprLaunch(p1.expId, d_params, (gl64_t *)dest.dest_gpu, domainSize, dest.domainSize,
-                            o1, o2, o3, EXPR_MODE_WRITE_INV, p0.value, dest.stagePos, dest.stageCols, dest.dim, dExpr, stream);
+                    handled = launch(p1.expId, EXPR_MODE_WRITE_INV, p0.value);
                     TimerStopCategoryGPU(timer, EXPRESSIONS);
-                    handled = true;
                 }
             }
         }
@@ -228,9 +257,7 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
-        ParserParams &parserParams = constraints 
-            ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[k].expId]
-            : setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
+        const ParserParams &parserParams = parserParamsOf(setupCtx, dest.params[k], constraints);
         if (parserParams.nTemp1*h_expsArgs.nRowsPack > h_expsArgs.maxTemp1Size) {
             h_expsArgs.maxTemp1Size = parserParams.nTemp1*h_expsArgs.nRowsPack;
         }
@@ -255,9 +282,7 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
 
-        ParserParams &parserParams = constraints 
-            ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[j].expId]
-            : setupCtx.expressionsBin.expressionsInfo[dest.params[j].expId];
+        const ParserParams &parserParams = parserParamsOf(setupCtx, dest.params[j], constraints);
         h_dest_params[j].dim = dest.params[j].dim;
         h_dest_params[j].stage = dest.params[j].stage;
         h_dest_params[j].stagePos = dest.params[j].stagePos;
@@ -291,17 +316,20 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
 
-void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream)
+uint32_t ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg)
 {
     // Generated Q kernel first: it takes everything by value, so the interpreter's
     // pinned-slot staging below is dead weight on this path (and poisons graph capture).
     if (dest.dest_gpu != nullptr && qLaunchFn != nullptr) {
         TimerStartCategoryGPU(timer, EXPRESSIONS);
-        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream, &qLaunchVerified);
+        uint32_t used = 0;
+        bool computed = tryLaunchExpsQ(setupCtx, (ExpsQLaunchFn)qLaunchFn, qMinScratch, d_params, (gl64_t*)dest.dest_gpu, stream, &qLaunchVerified,
+                                       (ExpsQLaunchStepFn)qLaunchStepFn, qStepLg, &used);
         TimerStopCategoryGPU(timer, EXPRESSIONS);
         if (computed) {
             CHECKCUDAERR(cudaGetLastError());
-            return;
+            qStepLgUsed = used;
+            return used;
         }
     }
 
@@ -330,7 +358,7 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
 
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
-        ParserParams &parserParams = setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
+        const ParserParams &parserParams = parserParamsOf(setupCtx, dest.params[k], false);
         if (parserParams.nTemp1*h_expsArgs.nRowsPack > h_expsArgs.maxTemp1Size) {
             h_expsArgs.maxTemp1Size = parserParams.nTemp1*h_expsArgs.nRowsPack;
         }
@@ -356,7 +384,7 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     DestParamsGPU* h_dest_params = new DestParamsGPU[h_expsArgs.dest_nParams];
     for (uint64_t j = 0; j < h_expsArgs.dest_nParams; ++j){
 
-        ParserParams &parserParams = setupCtx.expressionsBin.expressionsInfo[dest.params[j].expId];
+        const ParserParams &parserParams = parserParamsOf(setupCtx, dest.params[j], false);
         h_dest_params[j].dim = dest.params[j].dim;
         h_dest_params[j].stage = dest.params[j].stage;
         h_dest_params[j].stagePos = dest.params[j].stagePos;
@@ -390,6 +418,8 @@ void ExpressionsGPU::calculateExpressionsQ_gpu(StepsParams *d_params, Dest dest,
     computeExpression_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
     CHECKCUDAERR(cudaGetLastError());
     TimerStopCategoryGPU(timer, EXPRESSIONS);
+    qStepLgUsed = 0;
+    return 0;
 }
 
 __device__ __forceinline__ void load__(
@@ -725,6 +755,32 @@ void op_31_gpu_p2(
     }
 }
 
+// Out of line: inside op_33_gpu_p2's switch, ptxas 12.8 -O1+ sank its "A - p" reductions into case 1 (stale register when A >= p).
+__device__ __noinline__ void op33_mul_(gl64_t *C, gl64_t A0, gl64_t A1, gl64_t A2, gl64_t B0, gl64_t B1, gl64_t B2)
+{
+    const gl64_t A01 = A0 + A1;
+    const gl64_t A02 = A0 + A2;
+    const gl64_t A12 = A1 + A2;
+
+    const gl64_t B01 = B0 + B1;
+    const gl64_t B02 = B0 + B2;
+    const gl64_t B12 = B1 + B2;
+
+    const gl64_t D = A0 * B0;
+    const gl64_t E = A1 * B1;
+    const gl64_t F = A2 * B2;
+
+    const gl64_t G = D - E;
+
+    const gl64_t R0 = A12 * B12;
+    const gl64_t R1 = A01 * B01;
+    const gl64_t R2 = A02 * B02;
+
+    C[threadIdx.x] = (R0 + G) - F;
+    C[blockDim.x + threadIdx.x] = ((R1 + R0) - E - E) - D;
+    C[2 * blockDim.x + threadIdx.x] = R2 - G;
+}
+
 __device__ __forceinline__
 void op_33_gpu_p2(
     uint64_t op,
@@ -762,30 +818,8 @@ void op_33_gpu_p2(
         return;
 
     case 2:
-    {
-        const gl64_t A01 = A0 + A1;
-        const gl64_t A02 = A0 + A2;
-        const gl64_t A12 = A1 + A2;
-
-        const gl64_t B01 = B0 + B1;
-        const gl64_t B02 = B0 + B2;
-        const gl64_t B12 = B1 + B2;
-
-        const gl64_t D = A0 * B0;
-        const gl64_t E = A1 * B1;
-        const gl64_t F = A2 * B2;
-
-        const gl64_t G = D - E;
-
-        const gl64_t R0 = A12 * B12;
-        const gl64_t R1 = A01 * B01;
-        const gl64_t R2 = A02 * B02;
-
-        C[threadIdx.x] = (R0 + G) - F;
-        C[blockDim.x + threadIdx.x] = ((R1 + R0) - E - E) - D;
-        C[2 * blockDim.x + threadIdx.x] = R2 - G;
+        op33_mul_(C, A0, A1, A2, B0, B1, B2);
         return;
-    }
 
     case 3:
         C[threadIdx.x] = B0 - A0;

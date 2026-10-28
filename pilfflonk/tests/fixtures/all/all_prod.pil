@@ -1,0 +1,12 @@
+// The `all` of all.pil on the std's product bus (a grand product), in STD_MODE_ONE_INSTANCE, with
+// the std's default MAX_CONSTRAINT_DEGREE (3): its ten terms take a chain of im_col columns
+// (std_prod.pil, piop_gprod_air, im_low), each reading the one before. The third takes the whole
+// ratio of the row, and the fourth is its inverse, so that gprod accumulates the ratio squared
+// (pilfflonk/docs/README.md#std-product-bus): it still balances, at 1.
+require "all.pil"
+
+set_std_mode(STD_MODE_ONE_INSTANCE);
+
+airgroup All {
+    All(bus_type: PIOP_BUS_PROD);
+}

@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use crate::io::bin_file_writer::BinFileWriter;
 use crate::io::parser_args::{get_parser_args, ExpsInfo};
+use crate::types::goldilocks_u64;
 use crate::types::stark_info::{ExpressionsInfo, Hint, OpType, StarkInfo, VerifierInfo};
 
 const CHELPERS_NSECTIONS: u32 = 3;
@@ -91,7 +92,7 @@ fn prepare_expressions_bin(
 
         // Check if dest should be redirected to tmp
         let is_special = exp_code.exp_id == stark_info.c_exp_id
-            || exp_code.exp_id == stark_info.fri_exp_id
+            || exp_code.exp_id == stark_info.deep_exp_id
             || stark_info.cm_pols_map.iter().any(|c| c.exp_id == exp_code.exp_id);
 
         if is_special {
@@ -171,7 +172,7 @@ fn prepare_verifier_expressions_bin(
     let query_result =
         get_parser_args(stark_info, &verifier_info.query_verifier.code, &mut numbers_exps, false, true, None, "")?;
     let mut query_code = query_result.exps_info;
-    query_code.exp_id = stark_info.fri_exp_id;
+    query_code.exp_id = stark_info.deep_exp_id;
     query_code.stage = stark_info.n_stages + 2;
     query_code.line = String::new();
 
@@ -265,8 +266,7 @@ fn write_expressions_section(
 
     // Write numbers as u64 LE
     for num_str in numbers_exps {
-        let num: u64 = num_str.parse().unwrap_or(0);
-        writer.write_u64(num)?;
+        writer.write_u64(goldilocks_u64(num_str)?)?;
     }
 
     writer.end_write_section()?;
@@ -335,8 +335,7 @@ fn write_constraints_section(
         writer.write_u16(*arg)?;
     }
     for num_str in numbers_constraints {
-        let num: u64 = num_str.parse().unwrap_or(0);
-        writer.write_u64(num)?;
+        writer.write_u64(goldilocks_u64(num_str)?)?;
     }
 
     writer.end_write_section()?;

@@ -25,22 +25,41 @@ use anyhow::{bail, Context, Result};
 /// Scoped by family rather than lowered for everyone because the recursive grinding bits pin a
 /// query count that the committed poseidon native verifiers and circom fixtures already encode.
 ///
-/// blake3's COMPRESSOR runs at 1, alone among the templates: it matches nothing, where recursive1
-/// and recursive2 must be the same air and so share one blowup. Measured on the recursion air at
-/// 2^19/LANES=4, maxDeg 5/blowup 2 against maxDeg 3/blowup 1: stage2 117 -> 308 and total columns
-/// 385 -> 570, because `std_sum` packs `maxDeg - 1` bus terms per im pol; but on a domain half the
-/// size, and prover memory follows the product, 7.50 -> 5.28 GB.
-///
-/// The cost lands elsewhere: rate 1/2 instead of 1/4 takes the solved query count from 106 to 211,
-/// and those queries are Merkle paths the PINNED recursive1 verifies. A compressor is proved once
-/// per air that needs one; recursive1 is shared. Deliberate, not overlooked.
+/// blake3's compressor takes the recursion's 2 as well. Measured on the test-recursive circuit, 2^20/
+/// LANES=3 at blowup 1 against the 2^19/LANES=4 the compressor now picks at blowup 2: degree 3
+/// inflated stage2 (252 columns against 114) and doubled the queries (209 against 104), so blowup 2
+/// proved 33% faster in 31% less GPU memory, with half the proof its recursive1 verifies.
 pub fn recursive_blowup(template: RecursiveTemplate, hash: &str) -> usize {
-    match template {
-        RecursiveTemplate::Compressor if hash == "blake3" => 1,
-        RecursiveTemplate::Compressor => 2,
-        _ if hash == "blake3" => 2,
-        _ => 3,
+    if hash == "blake3" || template == RecursiveTemplate::Compressor {
+        2
+    } else {
+        3
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BatchFit {
+    pub k: usize,
+    pub per_proof: u64,
+    pub capacity: u64,
+    /// Lanes the capacity was computed at, since it scales with them.
+    pub lanes: usize,
+    pub n_queries: u64,
+}
+
+/// Proofs of `inner_si`'s shape a `2^n_bits` aggregator fits, by hash count; the build loop corrects a band-bound air.
+fn recursion_batch_fit(hash: &str, n_bits: usize, lanes: usize, inner_si: &Value) -> Option<BatchFit> {
+    if hash != "blake3" {
+        return None;
+    }
+    let geom = crate::verifier_hashes::geometry_from_starkinfo(inner_si).ok()?;
+    let per_proof = crate::verifier_hashes::verifier_hashes(&geom, hash).total();
+    if per_proof == 0 {
+        return None;
+    }
+    let capacity = pil2_stark_recurser::plonk2pil::setups::blake3::blake3_capacity(1usize << n_bits, lanes) as u64;
+    let k = capacity / per_proof;
+    Some(BatchFit { k: (k as usize).max(1), per_proof, capacity, lanes, n_queries: geom.n_queries })
 }
 
 /// Merkle levels a proof carries outright, per TEMPLATE.
@@ -50,15 +69,8 @@ pub fn recursive_blowup(template: RecursiveTemplate, hash: &str) -> usize {
 /// `hash_family::recursive_last_level_verification`). So the compressor's llv sizes the recursive1
 /// above it, and recursive1's own llv sizes recursive2.
 ///
-/// The compressor takes 6 because its consumer has no room to spare, and 6 is the only value that
-/// fits: measured on ZisK's Keccakf, whose recursive1 at compressor-llv 5 needed 9539 hashing blocks
-/// against a capacity of 9361. Level 6 moves one compression per opening (1688 of them) out of the
-/// hashing and 54016 rows into the band, landing at 9340 of 9361; level 7 doubles the gates again and
-/// the band overflows instead, at 11591. A knife-edge, and deliberately chosen as such.
-///
-/// Everything else takes the family value: 5 for blake3, one above the size-based default of 4 at
-/// arity 2. So the compressor sits one level above the recursion pair, which sits one above the
-/// basic airs.
+/// The compressor takes 6, one above blake3's 5: each level trades a recursive1 compression per
+/// opening for twice the SelectValue gates.
 pub fn recursive_last_level_verification(template: RecursiveTemplate, hash: &str) -> Option<usize> {
     match template {
         RecursiveTemplate::Compressor if hash == "blake3" => Some(6),
@@ -66,9 +78,10 @@ pub fn recursive_last_level_verification(template: RecursiveTemplate, hash: &str
     }
 }
 
+/// The compressor grinds 27 so two Keccakf compressor proofs fit one recursive1 (at 25: 2 x 4728 of 9361 blocks).
 pub fn recursive_grinding_bits(template: RecursiveTemplate, hash: &str) -> usize {
     match template {
-        RecursiveTemplate::Compressor if hash == "blake3" => 25,
+        RecursiveTemplate::Compressor if hash == "blake3" => 27,
         _ => proofman_common::hash_family::recursive_grinding_bits(hash),
     }
 }
@@ -81,10 +94,15 @@ pub fn recursive_grinding_bits(template: RecursiveTemplate, hash: &str) -> usize
 /// Kept separate from the floor check in `gen_recursive_setup` so their precedence is testable. It
 /// is load-bearing: an air over the threshold is exactly what a compressor fixes, and letting the
 /// floor bail first turns that into a fatal "cannot be reconciled".
-fn needs_compressor(template: RecursiveTemplate, has_compressor: bool, n_bits_natural: usize, hash: &str) -> bool {
-    template == RecursiveTemplate::Recursive1
-        && !has_compressor
-        && n_bits_natural > proofman_common::hash_family::recursive_bits_threshold(hash)
+///
+/// Against the recursion's domain, so a larger `--recursive-n-bits` asks for fewer compressors.
+fn needs_compressor(
+    template: RecursiveTemplate,
+    has_compressor: bool,
+    n_bits_natural: usize,
+    domain_bits: usize,
+) -> bool {
+    template == RecursiveTemplate::Recursive1 && !has_compressor && n_bits_natural > domain_bits
 }
 
 /// Sentinel error returned when recursive1 detects that a compressor is required.
@@ -105,32 +123,6 @@ impl std::fmt::Display for NeedsCompressorError {
 
 impl std::error::Error for NeedsCompressorError {}
 
-/// Sentinel error returned when a has-compressor recursive1 packs BELOW the shared
-/// 2^(THRESHOLD-1) domain. The caller catches this, bumps the compressor's nQueries
-/// (which enlarges recursive1's verifier), re-runs the compressor, and retries — so
-/// every recursive1 in an airgroup lands at the same nBits and shares one setup.
-/// Bailed BEFORE the const-tree build so the caller can resize before any const file
-/// is written against a mismatched (reused) starkInfo.
-#[derive(Debug)]
-pub struct RecursiveTooSmallError {
-    /// recursive1's n_bits from plonk2pil (below the threshold).
-    pub n_bits: usize,
-    /// recursive1's n_used (rows before padding) — drives the compressor nQueries bump.
-    pub n_used: usize,
-}
-
-impl std::fmt::Display for RecursiveTooSmallError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "Recursive1 packs to 2^{} (n_used={}) below the shared recursive domain; \
-             compressor nQueries must grow",
-            self.n_bits, self.n_used
-        )
-    }
-}
-
-impl std::error::Error for RecursiveTooSmallError {}
 use serde_json::Value;
 
 use pil2_pilout::pilout_proxy::PilOutProxy;
@@ -147,6 +139,64 @@ pub enum RecursiveTemplate {
     Compressor,
     Recursive1,
     Recursive2,
+}
+
+/// The stark settings of a recursion circuit — the configuration the whole recursion tree is
+/// built from. There is no per-circuit config file: the defaults below are per template and
+/// family, and `user` — the starkstructs `"recursion"` entry, see
+/// `StarkStructsConfig::recursion_settings` — overlays the low-degree-test knobs on top of them
+/// (`lowDegreeTest`, `initialFoldingFactor`, `grindingBits`, `grindingBitsQueries`,
+/// `finalDegree`). An explicit `starkStruct` override only ever raises the query count, see
+/// `gen_recursive_setup`.
+///
+/// FRI is the default low-degree test of compressor, recursive1 and recursive2, for every
+/// family: the STIR schedules tried so far put blake3's recursive2 past the 2^19 every recursion
+/// circuit shares (the quotient machinery outweighs the queries it saves), so STIR is opt-in
+/// through `lowDegreeTest: "STIR"` in the recursion entry until a parameter set fits. The
+/// vadcop-final layers are FRI regardless: their proofs are checked by the committed native Rust
+/// verifiers, which are FRI builds.
+pub fn recursive_stark_settings(
+    template: RecursiveTemplate,
+    hash: &str,
+    user: &crate::types::stark_struct::StarkSettings,
+) -> crate::types::stark_struct::StarkSettings {
+    let low_degree_test = user.low_degree_test.unwrap_or(crate::types::stark_struct::LowDegreeTestKind::Fri);
+    let blowup = recursive_blowup(template, hash);
+    // finalDegree is the final polynomial's log-degree bound, for both tests.
+    //
+    // FRI: the family's `fri_terminal_degree` is the log2 of the last committed DOMAIN -- the
+    // `finalPol` the verifier evaluates at every query, which is what the constant was sized
+    // on -- so the degree bound is that minus the (constant) log rate.
+    //
+    // STIR: the constant is taken as the degree bound d_M itself. Every quotient round needs
+    // |Gᵢ| = tᵢ₋₁ + 1 < dᵢ, and the last one is the tight spot: with d_M = 2^5 the last fold
+    // (≥ 1 bit) leaves d_{M−1} ≥ 64 against |G| ≈ 25–35 at these rates, at every trace size a
+    // recursion circuit takes — a smaller bound breaks whenever the schedule needs a shortened
+    // last fold (e.g. a compressor at 2^19). 32 coefficients in the clear cost nothing.
+    let default_final_degree = || {
+        let terminal = proofman_common::hash_family::fri_terminal_degree(hash);
+        match low_degree_test {
+            crate::types::stark_struct::LowDegreeTestKind::Fri => terminal.saturating_sub(blowup),
+            crate::types::stark_struct::LowDegreeTestKind::Stir => terminal,
+        }
+    };
+    crate::types::stark_struct::StarkSettings {
+        low_degree_test: Some(low_degree_test),
+        initial_blowup_factor: Some(blowup),
+        initial_folding_factor: Some(user.initial_folding_factor.unwrap_or(match low_degree_test {
+            crate::types::stark_struct::LowDegreeTestKind::Fri => 3,
+            crate::types::stark_struct::LowDegreeTestKind::Stir => 4,
+        })),
+        final_degree: Some(user.final_degree.unwrap_or_else(default_final_degree)),
+        // The grinding budget; under STIR every round grinds it unless grindingBitsQueries
+        // sets a per-round one. The solver derives every query count from it.
+        grinding_bits: Some(user.grinding_bits.unwrap_or_else(|| recursive_grinding_bits(template, hash))),
+        // STIR only: a per-round budget overriding the seed (generate_stark_struct rejects it for FRI).
+        grinding_bits_queries: user.grinding_bits_queries.clone(),
+        folding_factors: user.folding_factors.clone(),
+        last_level_verification: recursive_last_level_verification(template, hash),
+        ..Default::default()
+    }
 }
 
 impl RecursiveTemplate {
@@ -188,28 +238,16 @@ pub struct RecursiveSetupConfig<'a> {
     pub verification_keys: &'a [Vec<Vec<String>>],
     pub stark_info: &'a Value,
     pub verifier_info: &'a Value,
-    pub stark_struct: Option<&'a Value>,
     pub has_compressor: bool,
     pub hash: &'a str,
+    /// The user's knobs on the recursion tree's own low-degree test (the starkstructs
+    /// `"recursion"` entry), overlaid on `recursive_stark_settings`' defaults.
+    pub recursion_settings: &'a crate::types::stark_struct::StarkSettings,
     /// Number of proofs the `recursive2` circuit aggregates. Ignored by the
     /// compressor and recursive1 templates.
     pub agg_arity: usize,
     /// Pin this air to 2^N rows (see the --recursive-n-bits flag).
     pub recursive_n_bits: Option<usize>,
-
-    /// When `Some`, the path to the original air's `{air_name}.starkinfo.json` on disk.
-    /// Used by the A2 nQueries adjustment: if the recursive1 circuit is smaller than
-    /// 2^recursive_bits_threshold, the starkInfo is updated with `minimumQueriesRequired`
-    /// and written back to this path so the change is persisted for re-runs.
-    pub stark_info_path: Option<&'a std::path::Path>,
-
-    /// When true, skip the (expensive) witness-library generation for this run and instead
-    /// return its parameters in `RecursiveSetupResult::witness_lib_params`. Used by the
-    /// compressor→recursive1 resize loop: intermediate compressor attempts that will be
-    /// superseded by a nQueries bump would otherwise generate a witness lib that is thrown
-    /// away. The caller generates the winning compressor's witness lib exactly once after
-    /// the loop converges.
-    pub defer_witness_lib: bool,
 
     /// Optional pre-computed pil_info result to reuse instead of running starkSetup again.
     /// When provided, the pil_info computation (starkInfo / verifierInfo / expressionsInfo)
@@ -243,14 +281,8 @@ pub struct RecursiveSetupResult {
     /// n_bits from plonk2pil (log2 of circuit rows).  Exposed so the caller
     /// can validate size without re-reading the starkInfo JSON.
     pub n_bits: usize,
-    /// n_used from plonk2pil (rows actually used before power-of-2 padding).  Exposed
-    /// so the caller can compute how much a compressor's nQueries must grow to fill a
-    /// has-compressor recursive1 up to the shared 2^(THRESHOLD-1) target.
-    pub n_used: usize,
-    /// Set only when the config requested `defer_witness_lib`: the `(name_filename,
-    /// files_dir)` needed to generate the witness library later, once this run is known
-    /// to be the final (non-superseded) one. `None` when the witness lib was generated inline.
-    pub witness_lib_params: Option<(String, String)>,
+    /// Proofs this circuit verifies; reaches globalInfo.json from here for the prover.
+    pub batch_size: usize,
 }
 
 /// Run the recursive setup for a single air/template combination.
@@ -296,18 +328,10 @@ pub fn gen_recursive_setup(
     fs::create_dir_all(&pil_dir)?;
     fs::create_dir_all(&files_dir)?;
 
-    // Prepare inputs that may change if an A2 nQueries adjustment is needed.
     let const_root_circuit: [String; 4] = if config.const_root.iter().all(|s| s.is_empty()) {
         ["0".to_string(), "0".to_string(), "0".to_string(), "0".to_string()]
     } else {
         config.const_root.clone()
-    };
-    let pil2circom_opts = crate::io::recurser::Pil2CircomOptions {
-        skip_main: true,
-        verkey_input,
-        enable_input,
-        input_challenges,
-        hash: config.hash.to_string(),
     };
     let verifier_path = circom_dir.join(&verifier_name);
     let verifier_filenames = vec![verifier_name.clone()];
@@ -323,6 +347,8 @@ pub fn gen_recursive_setup(
         RecursiveTemplate::Recursive2 => "Recursive2".to_string(),
         _ => airgroup_pil_name.clone(),
     };
+    let recursive_bits_threshold = proofman_common::hash_family::recursive_bits_threshold(config.hash);
+    let domain_bits = config.recursive_n_bits.unwrap_or(recursive_bits_threshold);
     let mut plonk_opts = PlonkOptions {
         airgroup_name: Some(plonk_airgroup_name),
         max_constraint_degree: None,
@@ -337,38 +363,29 @@ pub fn gen_recursive_setup(
             recursive_blowup(template, config.hash),
         ));
     }
-    // This air will reuse an existing starkSetup, so it has to compile to that setup's row count.
-    // Sizing itself to its own gate count instead produces a const file the reused starkinfo cannot
-    // describe, which the C++ const-tree builder rejects by killing the process.
-    if let Some((existing_si, _, _)) = config.existing_pil_info.as_ref() {
-        if let Some(nb) = existing_si["starkStruct"]["nBits"].as_u64() {
-            plonk_opts.min_n_bits = Some(nb as usize);
-        }
-    }
-    // An explicit pin outranks the reuse-derived floor: the caller is stating the size the whole
-    // recursion runs at, which is the only thing the fixpoint between recursive1 and recursive2
-    // can be built on.
-    //
-    // Not a compressor: it is not part of that fixpoint, and pinning it made the floor check below
-    // reject any compressor whose own search lands above the pin.
-    if let Some(pinned) = config.recursive_n_bits {
-        if template != RecursiveTemplate::Compressor {
-            plonk_opts.min_n_bits = Some(pinned);
-        }
+    // recursive1 and recursive2 share one starkSetup, so both pad to the domain; the compressor sizes itself.
+    if template != RecursiveTemplate::Compressor {
+        plonk_opts.min_n_bits = Some(domain_bits);
     }
     let type_compressor = match template {
         RecursiveTemplate::Compressor => "compressor",
         _ => "aggregation",
     };
 
-    // Macro-like helper: run pil2circom + gen_circom + compile + copy .dat + plonk2pil
-    // for a given (possibly adjusted) stark_info.  We call this once; if the A2
-    // nQueries adjustment is needed we call the relevant sub-steps again.
-    let run_circom_and_plonk = |effective_si: &serde_json::Value| -> Result<PlonkResult> {
+    // pil2circom + gen_circom + compile + copy .dat + plonk2pil, for one batch size.
+    let run_circom_and_plonk = |effective_si: &serde_json::Value, batch_size: usize| -> Result<PlonkResult> {
         // Generate verifier circom via pil2circom
         // Each template step generates its own verifier. For recursive1 with compressor,
         // the verifier is generated from the compressor's starkInfo/verifierInfo (passed
         // via config), and written to {air}_compressor.verifier.circom.
+        // Batched slots switch off through `enable`, so the verifier needs that input.
+        let pil2circom_opts = crate::io::recurser::Pil2CircomOptions {
+            skip_main: true,
+            verkey_input,
+            enable_input: enable_input || batch_size > 1,
+            input_challenges,
+            hash: config.hash.to_string(),
+        };
         let verifier_circom =
             crate::io::recurser::pil2circom(&const_root_circuit, effective_si, config.verifier_info, &pil2circom_opts)
                 .context("pil2circom failed in recursive setup")?;
@@ -381,6 +398,7 @@ pub fn gen_recursive_setup(
             has_recursion: false,
             is_final: false,
             agg_arity: config.agg_arity,
+            batch_size,
         };
         let gen_input = crate::io::recurser::GenCircomInput {
             template_name: template.ejs_template(),
@@ -399,7 +417,8 @@ pub fn gen_recursive_setup(
         tracing::info!("Compiling {}...", name_filename);
         let compile_status = std::process::Command::new(config.circom_exec)
             .args([
-                "--O2",
+                // plonk2pil merges the linear constraints itself: --O2 yields the same air, slower.
+                "--O1",
                 "--r1cs",
                 "--prime",
                 "goldilocks",
@@ -432,158 +451,120 @@ pub fn gen_recursive_setup(
         plonk2pil::plonk2pil(&r1cs_data, type_compressor, &plonk_opts).context("plonk2pil failed in recursive setup")
     };
 
-    // First pass: compile and run plonk2pil with the original stark_info.
-    let mut plonk_result = run_circom_and_plonk(config.stark_info)?;
+    // Budgets are affine in k, so the largest k that fits also fills the domain.
+    let lanes = pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES;
+    let fit = (template != RecursiveTemplate::Compressor)
+        .then(|| recursion_batch_fit(config.hash, domain_bits, lanes, config.stark_info))
+        .flatten();
+    // Logged before compiling, so a run that bails still shows it.
+    if let Some(fit) = fit {
+        let head = format!(
+            "Batch fit ({}): one verification of this shape costs {} compressions at {} queries, \
+             {:.1}% of the {} a 2^{} aggregator hosts at LANES {}",
+            template_str,
+            fit.per_proof,
+            fit.n_queries,
+            100.0 * fit.per_proof as f64 / fit.capacity as f64,
+            fit.capacity,
+            domain_bits,
+            fit.lanes,
+        );
+        let packed = |n: usize| 100.0 * (n as u64 * fit.per_proof) as f64 / fit.capacity as f64;
+        if template == RecursiveTemplate::Recursive2 {
+            tracing::info!(
+                "{head} -> aggregates {} of them ({:.1}% packed); {} would fit",
+                config.agg_arity,
+                packed(config.agg_arity),
+                fit.k
+            );
+        } else {
+            tracing::info!("{head} -> will verify {} ({:.1}% packed)", fit.k, packed(fit.k));
+        }
+    }
 
-    let recursive_bits_threshold = proofman_common::hash_family::recursive_bits_threshold(config.hash);
+    // recursive2's fit is its self-fit: fail with the cause, not just a size.
+    if template == RecursiveTemplate::Recursive2 {
+        if let Some(fit) = fit {
+            if fit.k < config.agg_arity {
+                bail!(
+                    "recursive2 at LANES {} fits {} proof(s) of its own shape in 2^{} but aggregates {}: \
+                     one verification costs {} of the {} compressions available. RAISE the aggregator's LANES \
+                     (capacity grows faster than the widened trace costs), lower --agg-arity, or \
+                     raise --recursive-n-bits.",
+                    fit.lanes,
+                    fit.k,
+                    domain_bits,
+                    config.agg_arity,
+                    fit.per_proof,
+                    fit.capacity
+                );
+            }
+        }
+    }
+    let mut batch = if template == RecursiveTemplate::Recursive1 {
+        fit.map_or(1, |f| f.k).min(pil2_stark_recurser::stark2circom::circuit_templates::MAX_RECURSIVE1_BATCH)
+    } else {
+        1
+    };
 
-    // Too big for the shared recursion: hand it back so the caller retries with a compressor. Early,
-    // before the expensive pil_info steps, and before the floor check further down -- see the comment
-    // there for why that order is load-bearing.
-    if needs_compressor(template, config.has_compressor, plonk_result.n_bits_natural, config.hash) {
+    let plonk_result = loop {
+        let r = run_circom_and_plonk(config.stark_info, batch)?;
+        if r.n_bits_natural <= domain_bits || batch == 1 {
+            break r;
+        }
+        // The band binds, not the hashing. `n_used` is affine in k, so scale, not decrement.
+        let scaled = (batch as u64).saturating_mul(1u64 << domain_bits) / (r.n_used as u64).max(1);
+        let next = (scaled as usize).clamp(1, batch - 1);
+        tracing::info!(
+            "Recursive1 for air '{}' at k={} packs to 2^{} (n_used={}), past 2^{}; retrying at k={}",
+            config.air_name,
+            batch,
+            r.n_bits_natural,
+            r.n_used,
+            domain_bits,
+            next
+        );
+        batch = next;
+    };
+    if batch > 1 {
+        tracing::info!("Recursive1 for air '{}' verifies {} proofs per circuit", config.air_name, batch);
+    }
+
+    // Too big even alone: ask for a compressor, before the floor check makes it fatal.
+    if needs_compressor(template, config.has_compressor, plonk_result.n_bits_natural, domain_bits) {
         tracing::warn!(
             "Recursive1 for air '{}' has n_bits={} > {} — compressor needed",
             config.air_name,
             plonk_result.n_bits_natural,
-            recursive_bits_threshold
+            domain_bits
         );
         return Err(anyhow::Error::new(NeedsCompressorError { n_bits: plonk_result.n_bits }));
     }
 
-    // A2 nQueries adjustment: recursive1 only, and only where no compressor carries the knob.
-    if template == RecursiveTemplate::Recursive1 && !config.has_compressor {
-        // Also the circuit's own size: a pin says how big the recursion runs, not how much room
-        // this circuit has. The fill target stays at the threshold -- a pin does not raise it, so
-        // an air pinned larger keeps whatever queries its own size earns.
-        if plonk_result.n_bits_natural < recursive_bits_threshold {
-            // A2: small circuit — adjust nQueries in the input starkInfo so the verifier
-            // circuit fills close to 2^(THRESHOLD-1) rows, matching JS isCompressorNeeded.
-            //
-            // JS formula:
-            //   nRowsPerFri = NUsed / starkInfo.starkStruct.nQueries
-            //   minimumQueriesRequired = ceil((2^(recursiveBits-1) + 2^12) / nRowsPerFri)
-            let current_n_queries = config
-                .stark_info
-                .get("starkStruct")
-                .and_then(|s| s.get("nQueries"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            if current_n_queries > 0 {
-                // Use integer ceil to avoid f64 precision loss:
-                // ceil(numer / nRowsPerFri) = ceil(numer * nQueries / NUsed)
-                //                          = (numer * nQueries + NUsed - 1) / NUsed
-                let numer = (1u64 << (recursive_bits_threshold - 1)) + (1u64 << 12);
-                let n_used = plonk_result.n_used as u64;
-                let min_queries = (numer * current_n_queries).div_ceil(n_used);
-                tracing::info!(
-                    "Air '{}' recursive1: n_bits={}, n_used={}, nQueries={}, \
-                     minimumQueriesRequired={}",
-                    config.air_name,
-                    plonk_result.n_bits,
-                    plonk_result.n_used,
-                    current_n_queries,
-                    min_queries
-                );
-                if min_queries > current_n_queries {
-                    tracing::info!(
-                        "A2: adjusting nQueries for air '{}' recursive1: {} → {}",
-                        config.air_name,
-                        current_n_queries,
-                        min_queries
-                    );
-                    // Build adjusted copy of stark_info with updated nQueries.
-                    let mut adjusted_si = config.stark_info.clone();
-                    if let Some(ss) = adjusted_si.get_mut("starkStruct") {
-                        if let Some(obj) = ss.as_object_mut() {
-                            obj.insert("nQueries".to_string(), serde_json::json!(min_queries));
-                        }
-                    }
-                    // Persist the adjusted starkInfo so subsequent re-runs pick it up.
-                    if let Some(si_path) = config.stark_info_path {
-                        fs::write(si_path, crate::output::json::to_json_string(&adjusted_si)?)?;
-                        tracing::info!("A2: wrote adjusted starkInfo (nQueries={}) to {:?}", min_queries, si_path);
-                    }
-                    // Re-compile with the adjusted starkInfo.
-                    tracing::info!(
-                        "A2: recompiling recursive1 for air '{}' with nQueries={}",
-                        config.air_name,
-                        min_queries
-                    );
-                    plonk_result = run_circom_and_plonk(&adjusted_si)?;
-                }
-            }
-        }
-    }
-
-    // Too big for the setup it shares -- checked HERE, after the compressor decision and after A2.
-    //
-    // Order matters twice. Before the threshold check above, this bail pre-empted the compressor:
-    // an air whose recursive1 exceeds the threshold is exactly what a compressor fixes, and bailing
-    // first turned that into a fatal "cannot be reconciled" (ZisK's Keccakf, natural 2^21 against a
-    // 2^19 pin, died here and never got the compressor it needed). After A2, because A2 re-runs
-    // plonk2pil with more queries and can only grow the circuit -- checking before it would pass an
-    // air that the re-run then pushes over the floor.
-    //
-    // What reaches this point is genuinely unreconcilable: a compressor was already applied (or the
-    // template cannot have one) and the air is still too big, and a floor can only pad up.
+    // Unreconcilable: a compressor is already applied, the batch is 1, and a floor only pads up.
     if let Some(floor) = plonk_opts.min_n_bits {
         if plonk_result.n_bits > floor {
             let why = if config.has_compressor {
                 "this air already has a compressor and is still too big, so the compressor is not \
                  the answer here: either raise the pin, or take rows out of the air."
-            } else if config.recursive_n_bits == Some(floor) {
-                "--recursive-n-bits pins the recursion to that size. Either raise the pin, or take \
-                 rows out of this air -- for blake3 the gate rows placed outside the blake3 bands \
-                 are the slack, since a band leaves the plonk columns free on all but its first \
-                 LANES rows."
             } else {
-                "the airgroup's first air sets the size every later air reuses, so it has to be the \
-                 largest; here a later air is bigger. Ordering the airs largest-first, or giving \
-                 this air its own starkSetup, are the two ways out."
+                "the recursion runs at that size (--recursive-n-bits, or the family threshold). \
+                 Either raise it, or take rows out of this air -- for blake3 the gate rows placed \
+                 outside the blake3 bands are the slack, since a band leaves the plonk columns free \
+                 on all but its first LANES rows."
             };
             bail!("{} compiles to 2^{} rows but must be 2^{}: {}", name_filename, plonk_result.n_bits, floor, why);
         }
     }
 
-    // Has-compressor recursive1: the A2 nQueries knob above is the compressor's, not
-    // this circuit's starkInfo, so we can't fix the size here. Instead bail early (before
-    // the const-tree build, which would otherwise crash with a size mismatch against the
-    // reused/shared starkInfo) and let the caller bump the compressor's nQueries and retry.
-    // All recursive1 in an airgroup share one setup, so they must all reach 2^(THRESHOLD-1).
-    if template == RecursiveTemplate::Recursive1
-        && config.has_compressor
-        && plonk_result.n_bits < recursive_bits_threshold
-    {
-        tracing::warn!(
-            "Recursive1 for air '{}' (has compressor) packs to n_bits={} < {} (n_used={}); \
-             requesting a compressor nQueries bump",
-            config.air_name,
-            plonk_result.n_bits,
-            recursive_bits_threshold,
-            plonk_result.n_used
-        );
-        return Err(anyhow::Error::new(RecursiveTooSmallError {
-            n_bits: plonk_result.n_bits,
-            n_used: plonk_result.n_used,
-        }));
-    }
-
-    // Generate witness library (background) — done AFTER the threshold / A2 check
-    // so the compiled output is from the final (possibly adjusted) circom. When
-    // `defer_witness_lib` is set (compressor inside the resize loop), skip it here and
-    // hand the params back so the caller generates it once for the winning attempt.
-    let witness_lib_params = if config.defer_witness_lib {
-        Some((name_filename.clone(), files_dir.to_string_lossy().into_owned()))
-    } else {
-        witness_tracker.run_witness_library_generation(
-            config.build_dir,
-            files_dir.to_str().unwrap_or(""),
-            &name_filename,
-            template_str,
-            config.circom_helpers_dir,
-        );
-        None
-    };
+    // Generate witness library (background) — after the size checks, so from the winning circom.
+    witness_tracker.run_witness_library_generation(
+        config.build_dir,
+        files_dir.to_str().unwrap_or(""),
+        &name_filename,
+        template_str,
+        config.circom_helpers_dir,
+    );
 
     // Write fixed polynomials binary
     let fixed_bin_path = build_dir_path.join(format!("{}.fixed.bin", name_filename));
@@ -639,6 +620,25 @@ pub fn gen_recursive_setup(
             // We still need to write the JSON and binary files for this air's
             // directory (the const tree needs a starkinfo.json on disk).
             let stark_info_loaded = crate::types::stark_info::StarkInfo::from_json(existing_si)?;
+            tracing::info!(
+                "Air '{}' {} low-degree test (reused): {}",
+                config.air_name,
+                template_str,
+                stark_info_loaded.stark_struct.low_degree_test.describe()
+            );
+
+            // The reused setup assumes every air's circuit has the same shape; a mismatch
+            // would otherwise surface as a bare exit inside the C++ const-tree loader.
+            if (1u64 << stark_info_loaded.stark_struct.n_bits) != (1u64 << plonk_result.n_bits) {
+                bail!(
+                    "{} for air '{}' has 2^{} rows but the reused setup expects 2^{} — the \
+                     recursive circuits are not uniform (query-count equalization failed?)",
+                    template_str,
+                    config.air_name,
+                    plonk_result.n_bits,
+                    stark_info_loaded.stark_struct.n_bits,
+                );
+            }
 
             // Write const file: load pilout to get inline selector polynomial values
             {
@@ -708,89 +708,45 @@ pub fn gen_recursive_setup(
             let n_bits_air = if num_rows_air > 0 { (num_rows_air as f64).log2() as usize } else { plonk_result.n_bits };
 
             // Generate stark struct for this recursive circuit.
-            let make_recursive_settings = || {
-                let blowup = recursive_blowup(template, config.hash);
-                crate::types::stark_struct::StarkSettings {
-                    blowup_factor: Some(blowup),
-                    folding_factor: Some(3),
-                    // The terminal the schedule stops at. For a family whose FRI steps are solved
-                    // for rather than folded uniformly, this is the ceiling the solver works under
-                    // rather than the exact degree it lands on.
-                    final_degree: Some(proofman_common::hash_family::fri_terminal_degree(config.hash)),
-                    pow_bits: Some(recursive_grinding_bits(template, config.hash)),
-                    last_level_verification: recursive_last_level_verification(template, config.hash),
-                    ..Default::default()
-                }
-            };
-            let stark_struct = if let Some(ss_val) = config.stark_struct {
-                serde_json::from_value::<crate::types::stark_struct::StarkStruct>(ss_val.clone()).unwrap_or_else(|_| {
-                    crate::types::stark_struct::generate_stark_struct(
-                        &make_recursive_settings(),
-                        n_bits_air,
-                        config.hash,
-                    )
-                })
-            } else {
-                crate::types::stark_struct::generate_stark_struct(&make_recursive_settings(), n_bits_air, config.hash)
-            };
+            let stark_struct = crate::types::stark_struct::generate_stark_struct(
+                &recursive_stark_settings(template, config.hash, config.recursion_settings),
+                n_bits_air,
+                config.hash,
+            );
 
             // Run pil_info to get real starkinfo/expressionsinfo/verifierinfo
-            let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default());
+            let pil_info_result = crate::pil::info::pil_info(pilout, 0, 0, &stark_struct, &Default::default())?;
 
             // Build JSON representations using the same helpers as the non-recursive path
             let opening_points = crate::output::stark_info::collect_opening_points(&pil_info_result.setup);
-            let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(&stark_struct);
-            let ev_map_len = pil_info_result.pil_code.ev_map.len();
-            let field_size = crate::types::security::goldilocks_safe_extension_field_size();
-            let regime = crate::types::security::regimes::DecodingRegime::Jbr;
-            let fri_config = crate::types::security::pcs::FriConfig {
-                field_size,
-                trace_length: 1u32 << stark_struct.n_bits,
-                rate: 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64,
-                batch_size: ev_map_len.max(1) as u64,
-                batching: crate::types::security::pcs::Batching::Powers,
-                log_folding_factors,
-                max_grinding_bits_query: stark_struct.pow_bits as u64,
-                use_max_grinding_bits_query: true,
-                tree_arity: stark_struct.merkle_tree_arity as u64,
-                hash_size_bits: 256,
-                target_security_bits: 128,
-                regime,
-            };
-            let mut fri = crate::types::security::pcs::Fri::new(fri_config);
-
-            // An explicit starkStruct override (config.stark_struct) may request MORE queries
-            // than the security-optimal count — this is how the caller sizes a has-compressor
-            // recursive1 up to the shared domain (more compressor queries → bigger recursive1
-            // verifier). Honor it, but never go BELOW the security floor, so soundness only ever
-            // strengthens. The solver otherwise discards the override entirely.
-            let override_q = stark_struct.n_queries as u64;
-            if config.stark_struct.is_some() {
-                let security_floor = fri.security_params().n_queries;
-                if fri.raise_n_queries(override_q) {
-                    tracing::info!(
-                        "Honoring nQueries override for {}: {} → {} (security floor {})",
-                        template_str,
-                        security_floor,
-                        override_q,
-                        security_floor
-                    );
-                }
-            }
+            let ldt = crate::output::stark_info::solve_low_degree_test(
+                &stark_struct,
+                pil_info_result.pil_code.fri_batch_size.max(1) as u64,
+            );
 
             let starkinfo_output = crate::output::stark_info::build_starkinfo_output(
                 &pil_info_result.setup,
                 &stark_struct,
                 &pil_info_result.pil_code,
                 &opening_points,
-                &fri,
+                &ldt,
                 config.airgroup_id,
                 config.air_id,
+                None,
                 &airgroup_pil_name,
                 pil_info_result.c_exp_id,
-                pil_info_result.fri_exp_id,
+                pil_info_result.deep_exp_id,
                 pil_info_result.q_deg,
             );
+
+            // Say which low-degree test this circuit runs, with the solved schedule
+            // (recursive2 is one circuit per airgroup, the others one per air).
+            let circuit = match template {
+                RecursiveTemplate::Recursive2 => format!("Airgroup '{}' recursive2", config.airgroup_name),
+                _ => format!("Air '{}' {}", config.air_name, template_str),
+            };
+            tracing::info!("{} low-degree test: {}", circuit, starkinfo_output.stark_struct.low_degree_test.describe());
+
             let verifier_info_ref = &pil_info_result.pil_code.verifier_info;
             let expressions_info_ref = &pil_info_result.pil_code.expressions_info;
             let si_json = serde_json::to_value(&starkinfo_output)?;
@@ -813,14 +769,14 @@ pub fn gen_recursive_setup(
                     crate::output::json::to_json_string(expressions_info_ref)?,
                 )?;
 
-                let expressions_loaded = crate::types::stark_info::ExpressionsInfo::from(expressions_info_ref);
+                let expressions_loaded = crate::types::stark_info::ExpressionsInfo::try_from(expressions_info_ref)?;
                 crate::io::bin_file::write_expressions_bin_file(
                     files_dir.join(format!("{}.bin", template_str)).to_str().unwrap(),
                     &stark_info_loaded,
                     &expressions_loaded,
                 )?;
 
-                let verifier_loaded = crate::types::stark_info::VerifierInfo::from(verifier_info_ref);
+                let verifier_loaded = crate::types::stark_info::VerifierInfo::try_from(verifier_info_ref)?;
                 crate::io::bin_file::write_verifier_expressions_bin_file(
                     files_dir.join(format!("{}.verifier.bin", template_str)).to_str().unwrap(),
                     &stark_info_loaded,
@@ -933,8 +889,7 @@ pub fn gen_recursive_setup(
         verifier_info: setup_verifier_info,
         expressions_info: setup_expressions_info,
         n_bits: plonk_result.n_bits,
-        n_used: plonk_result.n_used,
-        witness_lib_params,
+        batch_size: batch,
     })
 }
 
@@ -1034,9 +989,7 @@ pub fn compile_pil(pil_path: &str, output_path: &str, std_pil_path: &str, recurs
         pil_path: pil_path.to_string(),
         output_path: output_path.to_string(),
         include_paths: vec![std_pil_path.to_string(), recurser_pil_path.to_string()],
-        fixed_dir: None,
-        fixed_to_file: false,
-        no_proto_fixed_data: false,
+        ..Default::default()
     };
     run_compile_pil(&opts)
 }
@@ -1181,31 +1134,27 @@ mod blowup_tests {
     fn over_the_threshold_asks_for_a_compressor_before_the_floor_complains() {
         // Keccakf's real numbers: natural 2^21, blake3 threshold 19.
         assert!(
-            super::needs_compressor(RecursiveTemplate::Recursive1, false, 21, "blake3"),
+            super::needs_compressor(RecursiveTemplate::Recursive1, false, 21, 19),
             "an air 2 bits over the threshold must ask for a compressor"
         );
         // Already compressed and still too big: nothing left to try, so the floor bail is correct.
-        assert!(!super::needs_compressor(RecursiveTemplate::Recursive1, true, 21, "blake3"));
+        assert!(!super::needs_compressor(RecursiveTemplate::Recursive1, true, 21, 19));
         // recursive2 cannot have a compressor, so it never asks for one.
         for t in [RecursiveTemplate::Recursive2, RecursiveTemplate::Compressor] {
-            assert!(!super::needs_compressor(t, false, 21, "blake3"), "{t:?} must not ask");
+            assert!(!super::needs_compressor(t, false, 21, 19), "{t:?} must not ask");
         }
-        // At or below the threshold the air fits the shared recursion and needs nothing.
+        // Against the domain: a larger pin needs no compressor.
+        assert!(!super::needs_compressor(RecursiveTemplate::Recursive1, false, 21, 21));
+        // At or below the domain the air fits the shared recursion and needs nothing.
         for n in 0..=19 {
-            assert!(!super::needs_compressor(RecursiveTemplate::Recursive1, false, n, "blake3"), "n_bits {n}");
+            assert!(!super::needs_compressor(RecursiveTemplate::Recursive1, false, n, 19), "n_bits {n}");
         }
         // Poseidon's threshold is lower, so the same air crosses it earlier.
-        assert!(super::needs_compressor(RecursiveTemplate::Recursive1, false, 18, "Poseidon1"));
-        assert!(!super::needs_compressor(RecursiveTemplate::Recursive1, false, 17, "Poseidon1"));
+        assert!(super::needs_compressor(RecursiveTemplate::Recursive1, false, 18, 17));
+        assert!(!super::needs_compressor(RecursiveTemplate::Recursive1, false, 17, 17));
     }
 
     /// The compressor keeps one more Merkle level than the recursion pair, and only the compressor.
-    ///
-    /// Measured, not guessed: at llv 5 Keccakf's recursive1 needed 9539 hashing blocks against a
-    /// capacity of 9361 while its band used only 8215. Level 6 moves one compression per opening out
-    /// of the hashing (1688 of them, since 52328 selval gates / (2^5 - 1) = 1688 openings = 211
-    /// queries x 8 trees) and doubles the gates that buy it. It does NOT change the compressor's own
-    /// FRI schedule or query count -- both are invariant to llv at this geometry.
     #[test]
     fn only_the_compressor_keeps_the_extra_merkle_level() {
         assert_eq!(recursive_last_level_verification(RecursiveTemplate::Compressor, "blake3"), Some(6));
@@ -1227,22 +1176,80 @@ mod blowup_tests {
         for t in [RecursiveTemplate::Recursive1, RecursiveTemplate::Recursive2] {
             assert_eq!(recursive_blowup(t, "blake3"), 2, "blake3 {t:?} is built at degree 5");
         }
-        // The compressor is the one template free to go lower: it matches nothing, where recursive1
-        // and recursive2 must be the same air. 1 -> maxDeg 3, which costs stage2 columns and buys a
-        // domain half the size; see recursive_blowup's table.
-        assert_eq!(recursive_blowup(RecursiveTemplate::Compressor, "blake3"), 1);
-        assert_eq!(
-            proofman_common::hash_family::max_constraint_degree_for_blowup(recursive_blowup(
-                RecursiveTemplate::Compressor,
-                "blake3"
-            )),
-            3,
-            "blowup 1 must derive maxDeg 3, not leave the packer's default of 5"
-        );
+        assert_eq!(recursive_blowup(RecursiveTemplate::Compressor, "blake3"), 2, "measured: see recursive_blowup");
         for h in ["Poseidon1", "Poseidon2"] {
             assert_eq!(recursive_blowup(RecursiveTemplate::Compressor, h), 2);
             assert_eq!(recursive_blowup(RecursiveTemplate::Recursive1, h), 3, "{h} aggregator is degree 8");
             assert_eq!(recursive_blowup(RecursiveTemplate::Recursive2, h), 3, "{h} aggregator is degree 8");
         }
+    }
+}
+
+#[cfg(test)]
+mod batch_fit_tests {
+    use super::*;
+
+    /// One committed stage, no custom commits, one FRI step.
+    fn si(n_queries: u64) -> Value {
+        serde_json::json!({
+            "nStages": 1, "nConstants": 1, "nPublics": 0,
+            "mapSectionsN": { "cm1": 1, "cm2": 1 },
+            "evMap": [{}], "challengesMap": [{"stage": 2}], "airValuesMap": [],
+            "starkStruct": {
+                "nBits": 8, "nBitsExt": 9, "merkleTreeArity": 2, "transcriptArity": 2,
+                "merkleTreeCustom": false, "verificationHashType": "GL",
+                "lastLevelVerification": 4, "hashCommits": true,
+                "foldingFactors": [4], "logDegrees": [8, 4], "logDomainSizes": [9, 5],
+                "numQueries": n_queries, "grindingBitsQueries": 24
+            }
+        })
+    }
+
+    const L: usize = pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES;
+
+    /// The recurser's own, so a block-geometry change moves test and code together.
+    fn capacity(n_bits: usize) -> u64 {
+        pil2_stark_recurser::plonk2pil::setups::blake3::blake3_capacity(1usize << n_bits, L) as u64
+    }
+
+    #[test]
+    fn k_is_the_hashing_budget_divided_by_one_verification() {
+        let fit = recursion_batch_fit("blake3", 19, L, &si(40)).unwrap();
+        assert_eq!(fit.capacity, capacity(19));
+        assert_eq!(fit.n_queries, 40);
+        // Floors: a partial slot is a slot that does not fit.
+        assert_eq!(fit.k as u64, fit.capacity / fit.per_proof);
+        assert!(fit.k as u64 * fit.per_proof <= fit.capacity, "k proofs must fit the budget");
+        assert!((fit.k as u64 + 1) * fit.per_proof > fit.capacity, "k must be the LARGEST count that fits");
+    }
+
+    /// A circuit that does not fit at all is `NeedsCompressorError`'s problem, not this one's.
+    #[test]
+    fn k_is_at_least_one_even_when_nothing_fits() {
+        let huge = recursion_batch_fit("blake3", 12, L, &si(600)).unwrap();
+        assert_eq!(huge.k, 1);
+    }
+
+    /// The poseidon aggregators are laid out differently and need their own budget.
+    #[test]
+    fn no_estimate_for_a_family_without_a_block_model() {
+        assert!(recursion_batch_fit("Poseidon1", 17, L, &si(40)).is_none());
+        assert!(recursion_batch_fit("Poseidon2", 17, L, &si(40)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::types::stark_struct::{LowDegreeTestKind, StarkSettings};
+
+    #[test]
+    fn recursion_settings_keep_explicit_stir_folds() {
+        let user = StarkSettings {
+            low_degree_test: Some(LowDegreeTestKind::Stir),
+            folding_factors: Some(vec![4, 3, 3]),
+            ..Default::default()
+        };
+        let s = super::recursive_stark_settings(super::RecursiveTemplate::Recursive2, "blake3", &user);
+        assert_eq!(s.folding_factors, Some(vec![4, 3, 3]));
     }
 }

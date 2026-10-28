@@ -161,10 +161,6 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n(p_stark_info) }
 }
 
-pub fn get_map_totaln_contributions_c(p_stark_info: *mut c_void) -> u64 {
-    unsafe { get_map_total_n_contributions(p_stark_info) }
-}
-
 pub fn get_tree_size_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_tree_size(p_stark_info) }
 }
@@ -1093,8 +1089,12 @@ pub fn gen_recursive_proof_c(
     }
 }
 
+/// [`reserve_best_stream_nonblock_c`]: no stream in the current phase can ever hold the launch.
+pub const STREAM_NEVER_FITS: u32 = u32::MAX - 1;
+
 /// Scheduler: reserve the best free stream for this key without blocking.
-/// Returns `u32::MAX` when nothing is free right now (caller retries).
+/// Returns `u32::MAX` when nothing is free right now (caller retries), [`STREAM_NEVER_FITS`] when
+/// nothing ever will be.
 pub fn reserve_best_stream_nonblock_c(
     d_buffers: *mut c_void,
     airgroup_id: u64,
@@ -1124,10 +1124,10 @@ pub fn reserve_stream_if_free_c(
     unsafe { reserve_stream_if_free(d_buffers, stream_id, airgroup_id, air_id, proof_type_ptr, force_recursive) != 0 }
 }
 
-/// Scheduler: give back a reservation the caller never launched on. A reserved stream reads as busy
-/// to every selection pass, so failing between reserve and launch without this would strand the slot
-/// for the process lifetime. Only releases a stream still in the reserved state, so it is safe to
-/// call unconditionally on an error path.
+/// Give back a reservation the caller bailed out of. A reserved stream reads as busy to every
+/// selection pass, so failing without this would strand the slot for the process lifetime. Work
+/// already queued on the stream drains before it is reused. Only releases a stream still in the
+/// reserved state, so it is safe to call unconditionally on an error path.
 pub fn release_stream_reservation_c(d_buffers: *mut c_void, stream_id: u32) {
     unsafe { release_stream_reservation(d_buffers, stream_id) }
 }
@@ -1183,38 +1183,7 @@ pub fn gen_recursive_proof_final_c(
     }
 }
 
-/// Gathers the circom witness into the committed-polynomial trace, zeroing every cell the
-/// exec file's map does not cover.
-///
-/// `exec_data` must come from `load_exec_file`, which is what rejects a header this build
-/// cannot read and a map wider than the trace. Passing an unvalidated buffer yields a
-/// zero-filled trace at best.
-#[allow(clippy::too_many_arguments)]
-pub fn get_committed_pols_c(
-    circomWitness: *mut u8,
-    exec_data: *mut u64,
-    witness: *mut u8,
-    pPublics: *mut u8,
-    sizeWitness: u64,
-    N: u64,
-    nPublics: u64,
-    nCols: u64,
-) {
-    unsafe {
-        get_committed_pols(
-            circomWitness as *mut std::os::raw::c_void,
-            exec_data,
-            witness as *mut std::os::raw::c_void,
-            pPublics as *mut std::os::raw::c_void,
-            sizeWitness,
-            N,
-            nPublics,
-            nCols,
-        );
-    }
-}
-
-/// Fills the trace cells `get_committed_pols_c` leaves unmapped, from the boundary cells it
+/// Fills the trace cells the witness scatter (`getWitnessTrace`) leaves unmapped, from the boundary cells it
 /// placed. No-op when the setup's exec file carries no band section, so it is safe to call
 /// unconditionally. Returns the number of bands expanded.
 pub fn expand_gate_bands_c(witness: *mut u8, exec_data: *mut u64, n_cols: u64, exec_words: u64, n: u64) -> u64 {
@@ -1259,6 +1228,26 @@ pub fn pre_allocate_final_snark_prover_c(
     d_buffers_recursivef: *mut c_void,
 ) {
     unsafe { pre_allocate_final_snark_prover(snark_prover, unified_buffer_gpu, d_buffers_recursivef) }
+}
+
+/// The recursivef's device prover buffer of `d_buffers_recursivef`, grown to `bytes` if it holds
+/// fewer and is its own, for a final SNARK prover that proves in it after the recursivef, as
+/// [`pre_allocate_final_snark_prover_c`] does PLONK's: `Ok((buffer, its bytes))`. `Err(most)` if it
+/// cannot grow, `most` the bytes it could hold; `Err(0)` if it is not its own (carved from proofman's
+/// unified buffer) or there are none (the CPU).
+pub fn reserve_recursivef_aux_trace_c(
+    d_buffers_recursivef: *mut c_void,
+    bytes: u64,
+) -> Result<(*mut c_void, u64), u64> {
+    let mut held = 0u64;
+    // SAFETY: `d_buffers_recursivef` is null or the recursivef's device buffers, as the C side
+    // takes them, and `held` a u64 it writes.
+    let buffer = unsafe { reserve_recursivef_aux_trace(d_buffers_recursivef, bytes, &mut held) };
+    if buffer.is_null() {
+        Err(held)
+    } else {
+        Ok((buffer, held))
+    }
 }
 
 pub fn gen_final_snark_proof_c(
@@ -1500,6 +1489,7 @@ pub fn gen_device_streams_c(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn alloc_device_large_buffers_c(
     d_buffers: *mut ::std::os::raw::c_void,
     aux_trace_recursive_area: u64,
@@ -1509,6 +1499,12 @@ pub fn alloc_device_large_buffers_c(
     prefetch_region_area: u64,
     // Phase-A recursion alias offset (elements) over the basic stream, 0 = none.
     phase_a_alias_offset: u64,
+    late_region_bytes: u64,
+    // Streaming-commit slots, carved at the bottom of the aux area; the size is rounded up to 1 MiB.
+    n_slots: u64,
+    slot_bytes: u64,
+    // The headroom the plan was made with; the CUDA graphs get what it holds above PROOFMAN_GPU_MIN_HEADROOM_MB.
+    headroom_bytes: u64,
 ) {
     unsafe {
         alloc_device_large_buffers(
@@ -1519,25 +1515,51 @@ pub fn alloc_device_large_buffers_c(
             unified_buffer_pad_area,
             prefetch_region_area,
             phase_a_alias_offset,
+            late_region_bytes,
+            n_slots,
+            slot_bytes,
+            headroom_bytes,
         );
     }
 }
 
-pub fn configure_prefetch_zone_c(
-    d_buffers: *mut ::std::os::raw::c_void,
-    witness_bytes: u64,
-    fixed_tree_bytes: u64,
-    packed_const_bytes: u64,
-    rec_witness_bytes: u64,
-) {
-    unsafe {
-        configure_prefetch_zone(d_buffers, witness_bytes, fixed_tree_bytes, packed_const_bytes, rec_witness_bytes)
-    }
+pub fn configure_prefetch_zone_c(d_buffers: *mut ::std::os::raw::c_void, witness_bytes: u64, n_units: u32) {
+    unsafe { configure_prefetch_zone(d_buffers, witness_bytes, n_units) }
 }
 
-pub fn get_prefetch_witness_slots_c() -> u32 {
-    unsafe { get_prefetch_witness_slots() }
+/// Stage a witness into the prefetch zone ahead of its commit. Returns the zone's GPU, or -1 when
+/// there is no zone or no free run; the commit then uploads for itself. `host_sync` waits for the
+/// H2D, which a caller about to recycle `trace` needs; otherwise the commit waits for it on device.
+#[cfg(not(feature = "cpu-only"))]
+pub fn stage_witness_c(
+    d_buffers: *mut c_void,
+    instance_id: u64,
+    trace: *mut c_void,
+    total_size: u64,
+    host_sync: bool,
+) -> i64 {
+    unsafe { stage_witness(d_buffers, instance_id, trace, total_size, host_sync) }
 }
+
+#[cfg(feature = "cpu-only")]
+pub fn stage_witness_c(
+    _d_buffers: *mut c_void,
+    _instance_id: u64,
+    _trace: *mut c_void,
+    _total_size: u64,
+    _host_sync: bool,
+) -> i64 {
+    -1
+}
+
+/// Drop a staging whose commit already ran, so its slot goes back to the zone.
+#[cfg(not(feature = "cpu-only"))]
+pub fn release_staged_witness_c(d_buffers: *mut c_void, instance_id: u64) {
+    unsafe { release_staged_witness(d_buffers, instance_id) }
+}
+
+#[cfg(feature = "cpu-only")]
+pub fn release_staged_witness_c(_d_buffers: *mut c_void, _instance_id: u64) {}
 
 pub fn get_mops_floor_bytes_c() -> u64 {
     unsafe { get_mops_floor_bytes() }
@@ -1547,23 +1569,36 @@ pub fn get_post_alloc_headroom_bytes_c() -> u64 {
     unsafe { get_post_alloc_headroom_bytes() }
 }
 
+/// Carves the aggregation const cache's LRU slots; returns its end offset (elements).
 pub fn configure_const_slot_cache_c(
     d_buffers: *mut ::std::os::raw::c_void,
-    base_offset: u64,
-    slot_elems: u64,
-    n_slots: u32,
-) {
-    unsafe { configure_const_slot_cache(d_buffers, base_offset, slot_elems, n_slots) }
+    big_elems: u64,
+    normal_elems: u64,
+    n_lru: u32,
+) -> u64 {
+    unsafe { configure_const_slot_cache(d_buffers, big_elems, normal_elems, n_lru) }
 }
 
+/// Appends a pinned slot for the set `key`; returns the cache's new end offset (elements).
+pub fn pin_const_slot_c(d_buffers: *mut ::std::os::raw::c_void, key: i64, elems: u64) -> u64 {
+    unsafe { pin_const_slot(d_buffers, key, elems) }
+}
+
+/// Basic fixed pols stay in pinned host memory and are read in place (they did not fit the GPU).
+pub fn set_basic_fixed_on_host_c(d_buffers: *mut ::std::os::raw::c_void, on_host: bool) {
+    unsafe { set_basic_fixed_on_host(d_buffers, on_host) }
+}
+
+/// Keeps a set's packed const pols in pinned host memory for the const cache under `key`, the set's
+/// identity (see `const_set_key`), and marks the air cached.
 pub fn load_host_const_pols_c(
     airgroup_id: u64,
     air_id: u64,
     proof_type: &str,
+    key: i64,
     const_filename: &str,
     const_size: u64,
     d_buffers: *mut ::std::os::raw::c_void,
-    only_first_gpu: bool,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let const_filename_name = CString::new(const_filename).unwrap();
@@ -1572,10 +1607,10 @@ pub fn load_host_const_pols_c(
             airgroup_id,
             air_id,
             proof_type_name.as_ptr() as *mut c_char,
+            key,
             const_filename_name.as_ptr() as *mut c_char,
             const_size,
             d_buffers,
-            only_first_gpu,
         )
     }
 }
@@ -1598,17 +1633,6 @@ pub fn dump_pipeline_state_c(d_buffers: *mut ::std::os::raw::c_void) {
 
 pub fn harvest_pipeline_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe { harvest_pipeline(d_buffers) }
-}
-
-pub fn prefetch_witness_c(
-    p_setup_ctx: *mut ::std::os::raw::c_void,
-    d_buffers: *mut ::std::os::raw::c_void,
-    instance_id: u64,
-    airgroup_id: u64,
-    air_id: u64,
-    trace: *mut ::std::os::raw::c_void,
-) -> i64 {
-    unsafe { prefetch_witness(p_setup_ctx, d_buffers, instance_id, airgroup_id, air_id, trace) }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1660,9 +1684,37 @@ pub fn get_first_gpu_buffer_c(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::
     unsafe { get_first_gpu_buffer(d_buffers) }
 }
 
-/// Byte offset of the aggregation const-pols region within the first GPU's unified buffer.
-pub fn get_const_pols_aggregation_offset_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
-    unsafe { get_const_pols_aggregation_offset(d_buffers) }
+/// A carve boundary of the unified buffer, numbered as `get_layout_offset_gpu`'s switch reads it.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug)]
+pub enum LayoutBoundary {
+    Late = 0,
+    Prefetch = 1,
+    AuxBase = 2,
+    MopsBase = 3,
+    AggBase = 4,
+    End = 5,
+    RecursiveBase = 6,
+}
+
+/// Byte offset of a carve boundary in each GPU's unified buffer (0 on the CPU backend).
+pub fn get_layout_offset_c(d_buffers: *mut ::std::os::raw::c_void, which: LayoutBoundary) -> u64 {
+    unsafe { get_layout_offset(d_buffers, which as u32) }
+}
+
+/// After a snark's carve of GPU 0: drop its const-cache tags, late region and every stream's cached consts.
+pub fn restore_after_carve_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { restore_after_carve(d_buffers) }
+}
+
+/// Test knob: fill GPU 0's whole unified buffer with 0xFF, as a snark carve would leave it.
+pub fn debug_clobber_unified_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { debug_clobber_unified(d_buffers) }
+}
+
+/// Drop every stream's const-reuse identity, so its next proof reloads the constants cached in aux.
+pub fn invalidate_stream_contexts_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { invalidate_stream_contexts(d_buffers) }
 }
 
 pub fn stream_commit_pause_c() {
@@ -1673,22 +1725,53 @@ pub fn get_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 
     unsafe { get_stream_commit_slots(d_buffers) }
 }
 
-pub fn get_stream_commit_floor_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
-    unsafe { get_stream_commit_floor(d_buffers) }
+/// GPUs this process drives (not the node's device count).
+pub fn get_stream_commit_gpus_c(d_buffers: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_stream_commit_gpus(d_buffers) }
 }
 
-pub fn stream_commit_slot_bytes_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, words_per_row: u64) -> u64 {
-    unsafe { stream_commit_slot_bytes(n_bits, n_bits_ext, n_cols, words_per_row) }
+/// One air's slot bytes (its commit area with the col-major tail, then its scratch). None when no
+/// slot can commit the air. `input_bytes`: a GPU-witness air's staged-input bound (0 otherwise).
+#[allow(clippy::too_many_arguments)]
+pub fn stream_commit_slot_bytes_c(
+    p_setup: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    n_bits: u64,
+    n_bits_ext: u64,
+    n_cols: u64,
+    words_per_row: u64,
+    input_bytes: u64,
+    packed: bool,
+    indexed: bool,
+) -> Option<u64> {
+    let bytes = unsafe {
+        stream_commit_slot_bytes(
+            p_setup,
+            airgroup_id,
+            air_id,
+            n_bits,
+            n_bits_ext,
+            n_cols,
+            words_per_row,
+            input_bytes,
+            packed as u64,
+            indexed as u64,
+        )
+    };
+    (bytes != 0).then_some(bytes)
 }
 
-pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void, n_slots: u64, slot_bytes: u64) {
-    unsafe { configure_stream_commit_slots(d_buffers, n_slots, slot_bytes) }
+/// Enable the slots `alloc_device_large_buffers_c` carved.
+pub fn configure_stream_commit_slots_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe { configure_stream_commit_slots(d_buffers) }
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn commit_witness_streaming_c(
     d_buffers: *mut ::std::os::raw::c_void,
     slot_idx: u64,
+    instance_id: u64,
     airgroup_id: u64,
     air_id: u64,
     packed: *mut ::std::os::raw::c_void,
@@ -1698,11 +1781,15 @@ pub fn commit_witness_streaming_c(
     words_per_row: u64,
     col_widths: *mut ::std::os::raw::c_void,
     root: *mut ::std::os::raw::c_void,
+    // StepsParams: the slot stages publics and value pools from it. Null fails the commit of an air
+    // with values whose lookups or hints are evaluated on the slot.
+    params: *mut ::std::os::raw::c_void,
 ) -> i64 {
     unsafe {
         commit_witness_streaming(
             d_buffers,
             slot_idx,
+            instance_id,
             airgroup_id,
             air_id,
             packed,
@@ -1712,6 +1799,7 @@ pub fn commit_witness_streaming_c(
             words_per_row,
             col_widths,
             root,
+            params,
         )
     }
 }
@@ -1771,7 +1859,7 @@ pub fn load_device_setup_c(
     }
 }
 
-/// Upload an air's packed custom commit into its reserved const-buffer slot. Once per air per GPU.
+/// Upload an air's packed custom commit into its reserved const-buffer slot, on every GPU or the first.
 #[allow(clippy::too_many_arguments)]
 pub fn upload_custom_commit_packed_c(
     airgroup_id: u64,
@@ -1781,6 +1869,7 @@ pub fn upload_custom_commit_packed_c(
     words_per_row: u64,
     p_setup_ctx: *mut c_void,
     d_buffers: *mut ::std::os::raw::c_void,
+    only_first_gpu: bool,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let custom_file_name = CString::new(custom_file).unwrap();
@@ -1793,6 +1882,7 @@ pub fn upload_custom_commit_packed_c(
             words_per_row,
             p_setup_ctx,
             d_buffers,
+            only_first_gpu,
         );
     }
 }
@@ -1853,5 +1943,345 @@ pub fn load_device_const_pols_c(
             only_first_gpu,
             already_loaded,
         );
+    }
+}
+
+// ---- Prover-side multiplicities -------------------------------------------------------------
+// Geometry is registered once; the host accumulator pointer is passed per call and never retained
+// on the C++ side, so Rust stays free to reallocate or reset its accumulator.
+pub fn register_mul_vt_c(
+    airgroup_id: u64,
+    air_id: u64,
+    num_rows: u64,
+    num_cols: u64,
+    table_ids: &[u64],
+    acc_bases: &[u64],
+) {
+    assert_eq!(table_ids.len(), acc_bases.len(), "register_mul_vt_c: one acc base per table id");
+    unsafe {
+        register_mul_vt(
+            airgroup_id,
+            air_id,
+            num_rows,
+            num_cols,
+            table_ids.as_ptr(),
+            acc_bases.as_ptr(),
+            table_ids.len() as u64,
+        );
+    }
+}
+
+/// A witness kernel's entry point, as `ZISK_GPU_WITNESS_ENTRIES` generates it.
+///
+/// Enqueue-only: no allocation, no synchronisation, one launch on `stream`; anything else breaks
+/// the CUDA graph capture of the commit path. Arguments: device inputs, their count, commit slot,
+/// device id (-1 = current) and `cudaStream_t`. Returns 0 on success.
+///
+/// Declared here because this crate is below proofman-common, which re-exports it.
+pub type GpuWitnessFillFn = unsafe extern "C" fn(
+    d_ops: *const c_void,
+    num_ops: u64,
+    d_dst: *mut u64,
+    device_id: i32,
+    stream: *mut c_void,
+) -> i32;
+
+/// Forget every registered kernel, so a later prover in the process does not inherit them.
+pub fn gpu_witness_clear_c(d_buffers: *mut c_void) {
+    unsafe { gpu_witness_clear(d_buffers) }
+}
+
+/// Whether a kernel is registered for this air, i.e. the prover produces its witness on the
+/// device. The single source of truth for staging kernel inputs vs filling a trace.
+pub fn gpu_witness_is_registered_c(d_buffers: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { gpu_witness_is_registered(d_buffers, airgroup_id, air_id) == 1 }
+}
+
+/// Declare that this air's stage-1 witness comes from `fill`, not a host upload.
+pub fn gpu_witness_register_c(
+    d_buffers: *mut c_void,
+    airgroup_id: u64,
+    air_id: u64,
+    bytes_per_op: u64,
+    input_bytes_max: u64,
+    emits: i32,
+    fill: GpuWitnessFillFn,
+) {
+    unsafe { gpu_witness_register(d_buffers, airgroup_id, air_id, bytes_per_op, input_bytes_max, emits, fill) }
+}
+
+/// How many airs the C++ side has registered.
+pub fn gpu_witness_count_c(d_buffers: *mut c_void) -> u64 {
+    unsafe { gpu_witness_count(d_buffers) }
+}
+
+/// Virtual range-check tables the prover can compute itself, as (table id, bias) pairs.
+pub fn mul_register_range_tables_c(table_ids: &[u64], biases: &[i64]) {
+    assert_eq!(table_ids.len(), biases.len(), "mul_register_range_tables_c: one bias per table id");
+    unsafe { mul_register_range_tables(table_ids.as_ptr(), biases.as_ptr(), table_ids.len() as u64) }
+}
+/// Hand down an exact-match key->row map.
+pub fn mul_register_table_map_c(table_id: u64, kv: &[u64], n_key: usize, slots: u64) {
+    unsafe { mul_register_table_map(table_id, kv.as_ptr(), kv.len() as u64, slots, n_key as u64) }
+}
+
+pub fn mul_migrated_tables_c() -> Vec<u64> {
+    // The C side returns the total and writes at most `cap`: size first, then fill.
+    let mut out = Vec::new();
+    loop {
+        let n = unsafe { mul_migrated_tables(out.as_mut_ptr(), out.len() as u64) } as usize;
+        if n <= out.len() {
+            out.truncate(n);
+            return out;
+        }
+        out.resize(n, 0);
+    }
+}
+
+/// The C registry's name for an air (`mulAirKey`): air ids repeat across airgroups.
+fn mul_air_key(airgroup_id: u64, air_id: u64) -> u64 {
+    (airgroup_id << 32) | air_id
+}
+
+/// Whether the prover counts any table of the air. An air where it counts none needs no host
+/// accumulator at all.
+pub fn mul_air_has_owned_c(airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { mul_air_has_owned(mul_air_key(airgroup_id, air_id)) != 0 }
+}
+
+/// Allow the device to export table traces by itself. Only sound when no cross-rank reduction is
+/// needed, since the device accumulator holds this process's counts alone.
+pub fn mul_set_device_export_c(enabled: bool) {
+    unsafe { mul_set_device_export(enabled as u64) }
+}
+
+/// Whether the device owns every table of the air, so the host must not build its trace.
+pub fn mul_air_device_owned_c(airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { mul_air_device_owned(mul_air_key(airgroup_id, air_id)) != 0 }
+}
+
+/// `mul_sync_commits_c`: whether the prover's counts can be trusted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MulSync {
+    Ok,
+    Short,      // fewer commits than instances before the deadline
+    Extra,      // more: one counted twice
+    OutOfTable, // lookups decoded outside their table, or a selector >= 2^32
+    Unknown(u64),
+}
+
+/// Check, once every instance has launched its scatter, that the counts can be used. The table's
+/// own commit reads the accumulator on the device, so this is the ordering point that makes it
+/// complete.
+pub fn mul_sync_commits_c(expected_commits: u64) -> MulSync {
+    match unsafe { mul_sync_commits(expected_commits) } {
+        0 => MulSync::Ok,
+        1 => MulSync::Short,
+        2 => MulSync::Extra,
+        3 => MulSync::OutOfTable,
+        s => MulSync::Unknown(s),
+    }
+}
+
+/// Instances that have counted their lookups this proof.
+pub fn mul_commit_count_c() -> u64 {
+    unsafe { mul_commit_count() }
+}
+
+/// Call after `mul_sync_commits_c`.
+///
+/// # Safety
+/// `host_acc` must point to at least the registered `nCounters` u64 for this air, valid for the
+/// duration of the call. The C++ side does not retain it.
+pub unsafe fn mul_fold_c(airgroup_id: u64, air_id: u64, host_acc: *mut u64) {
+    unsafe { mul_fold(mul_air_key(airgroup_id, air_id), host_acc) }
+}
+
+/// # Safety
+/// `d_buffers` must be the live device-buffers pointer.
+pub unsafe fn mul_alloc_c(d_buffers: *mut c_void) {
+    unsafe { mul_alloc(d_buffers) }
+}
+
+/// Count one instance's lookups straight from its filled witness, for paths that never commit
+/// (verify-constraints, debug), where the commit hook does not run. `aux_ready`: stage 2 and the
+/// im-pols are computed.
+/// # Safety
+/// `p_setup` and `steps_params` must be live for the duration of the call; neither is retained.
+pub unsafe fn mul_scatter_c(
+    p_setup: *mut c_void,
+    steps_params: *mut u8,
+    airgroup_id: u64,
+    air_id: u64,
+    aux_ready: bool,
+) {
+    unsafe { mul_scatter(p_setup, steps_params as *mut c_void, airgroup_id, air_id, aux_ready as u64) }
+}
+
+/// Whether the air looks up any table the prover counts.
+pub fn mul_air_has_jobs_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { mul_air_has_jobs(p_setup, airgroup_id, air_id) != 0 }
+}
+
+/// Late-region bytes per GPU (the multiplicity mirrors; the slot scratch lives in the slots).
+pub fn late_region_bytes_c(with_peers: bool) -> u64 {
+    unsafe { late_region_bytes(with_peers as u64) }
+}
+
+/// Why the air's lookups into prover-owned tables cannot be counted, if they cannot.
+pub fn mul_air_plan_error_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> Option<String> {
+    let n = unsafe { mul_air_plan_error(p_setup, airgroup_id, air_id, std::ptr::null_mut(), 0) } as usize;
+    if n == 0 {
+        return None;
+    }
+    let mut buf = vec![0u8; n];
+    unsafe { mul_air_plan_error(p_setup, airgroup_id, air_id, buf.as_mut_ptr() as *mut c_char, n as u64) };
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Whether such a lookup reads a stage-2 or im-pol value.
+pub fn mul_air_reads_aux_c(p_setup: *mut c_void, airgroup_id: u64, air_id: u64) -> bool {
+    unsafe { mul_air_reads_aux(p_setup, airgroup_id, air_id) != 0 }
+}
+
+/// Per proves-side lookup of a table air, in hint order: the stage-1 column its multiplicity is
+/// (`None` when it is not a plain one) and its tuple length.
+pub fn mul_proves_hints_c(p_setup: *mut c_void) -> Vec<(Option<usize>, usize)> {
+    let n = unsafe { mul_proves_hints(p_setup, std::ptr::null_mut(), std::ptr::null_mut(), 0) } as usize;
+    let (mut cols, mut lens) = (vec![0i64; n], vec![0u64; n]);
+    unsafe { mul_proves_hints(p_setup, cols.as_mut_ptr(), lens.as_mut_ptr(), n as u64) };
+    cols.into_iter().zip(lens).map(|(c, l)| (usize::try_from(c).ok(), l as usize)).collect()
+}
+
+/// Rows `r0..r0 + bus.len()` of proves-side lookup `k`, evaluated from the air's row-major fixed
+/// columns: bus ids into `bus`, the leading `len` tuple elements row-major into `tuple`. False when
+/// a field does not compile or reads anything but fixed columns.
+pub fn mul_eval_proves_hint_c(
+    p_setup: *mut c_void,
+    k: usize,
+    const_pols: &[u64],
+    r0: usize,
+    bus: &mut [u64],
+    tuple: &mut [u64],
+    len: usize,
+) -> bool {
+    assert_eq!(tuple.len(), bus.len() * len, "mul_eval_proves_hint_c: one tuple per bus id");
+    unsafe {
+        mul_eval_proves_hint(
+            p_setup,
+            k as u64,
+            const_pols.as_ptr(),
+            const_pols.len() as u64,
+            r0 as u64,
+            (r0 + bus.len()) as u64,
+            bus.as_mut_ptr(),
+            tuple.as_mut_ptr(),
+            len as u64,
+        ) != 0
+    }
+}
+
+pub fn mul_reset_c() {
+    unsafe { mul_reset() }
+}
+
+/// Forget every multiplicity registration; only before any proof allocated from it.
+pub fn mul_clear_registry_c() {
+    unsafe { mul_clear_registry() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::snark_proof_bytes_to_json_c;
+
+    /// The protocol ids of `snark_proof_bytes_to_json` (pil2-stark/src/rapidsnark/zkey.hpp).
+    const PLONK_PROTOCOL_ID: i32 = 2;
+    const FFLONK_PROTOCOL_ID: i32 = 10;
+
+    /// BN128's base field modulus q and scalar field modulus r, most significant limb first.
+    const Q: [u64; 4] = [0x30644e72e131a029, 0xb85045b68181585d, 0x97816a916871ca8d, 0x3c208c16d87cfd47];
+    const R: [u64; 4] = [0x30644e72e131a029, 0xb85045b68181585d, 0x2833e84879b97091, 0x43e1f593f0000001];
+
+    /// q − 1, r and r − 1 in decimal. Read in Fr, as the coordinates were, q − 1 printed as
+    /// 147946756881789318990833708069417712965 and r as 0.
+    const Q_MINUS_1: &str = "21888242871839275222246405745257275088696311157297823662689037894645226208582";
+    const R_DEC: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
+    const R_MINUS_1: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
+
+    /// `limbs` minus `sub`, as the 32 big-endian bytes `SnarkProof::toBytes` writes an element in.
+    fn be(limbs: [u64; 4], sub: u64) -> Vec<u8> {
+        assert!(limbs[3] >= sub);
+        let mut limbs = limbs;
+        limbs[3] -= sub;
+        limbs.iter().flat_map(|limb| limb.to_be_bytes()).collect()
+    }
+
+    /// A small element, big-endian.
+    fn small(value: u64) -> Vec<u8> {
+        be([0, 0, 0, value], 0)
+    }
+
+    /// The bytes of a proof with `n_commitments` points and `n_evaluations` evaluations: the first
+    /// point `(q − 1, r)`, both coordinates in [r, q), the second `(r − 1, 1)`, the others and the
+    /// evaluations small, and the first evaluation r − 1; and their JSON, `[x, y, "1"]` per point.
+    fn proof(n_commitments: usize, n_evaluations: usize) -> (Vec<u8>, Vec<[String; 3]>, Vec<String>) {
+        let mut bytes = Vec::new();
+        let mut points = Vec::new();
+        for i in 0..n_commitments as u64 {
+            let (x, y, json) = match i {
+                0 => (be(Q, 1), be(R, 0), [Q_MINUS_1.to_string(), R_DEC.to_string()]),
+                1 => (be(R, 1), small(1), [R_MINUS_1.to_string(), "1".to_string()]),
+                _ => (small(i + 1), small(2 * i + 2), [(i + 1).to_string(), (2 * i + 2).to_string()]),
+            };
+            bytes.extend(x);
+            bytes.extend(y);
+            let [x, y] = json;
+            points.push([x, y, "1".to_string()]);
+        }
+        let mut evaluations = Vec::new();
+        for j in 0..n_evaluations as u64 {
+            let (bytes_j, json) =
+                if j == 0 { (be(R, 1), R_MINUS_1.to_string()) } else { (small(j + 7), (j + 7).to_string()) };
+            bytes.extend(bytes_j);
+            evaluations.push(json);
+        }
+        (bytes, points, evaluations)
+    }
+
+    fn point_json(key: &str, point: &[String; 3]) -> String {
+        format!("\"{key}\":[\"{}\",\"{}\",\"{}\"]", point[0], point[1], point[2])
+    }
+
+    /// The coordinates of a commitment are elements of Fq, not Fr: one in [r, q) prints whole, as
+    /// snarkjs reads it, and one below r, as every coordinate of most proofs, prints as before.
+    /// The evaluations and the publics are elements of Fr.
+    #[test]
+    fn a_proof_prints_its_coordinates_in_the_base_field() {
+        let publics = [be(R, 1), small(5)].concat();
+        let commitments = ["A", "B", "C", "Z", "T1", "T2", "T3", "Wxi", "Wxiw"];
+        let evaluation_keys = ["eval_a", "eval_b", "eval_c", "eval_s1", "eval_s2", "eval_zw"];
+        let (bytes, points, evaluations) = proof(commitments.len(), evaluation_keys.len());
+        let (json, publics_json) = snark_proof_bytes_to_json_c(&bytes, &publics, PLONK_PROTOCOL_ID);
+        assert_eq!(publics_json, format!("[\"{R_MINUS_1}\",\"5\"]"));
+        for (key, point) in commitments.iter().zip(&points) {
+            assert!(json.contains(&point_json(key, point)), "{key}: {json}");
+        }
+        for (key, value) in evaluation_keys.iter().zip(&evaluations) {
+            assert!(json.contains(&format!("\"{key}\":\"{value}\"")), "{key}: {json}");
+        }
+        assert!(json.contains("\"protocol\":\"plonk\"") && json.contains("\"curve\":\"bn128\""), "{json}");
+
+        // FFLONK's, under "polynomials" and "evaluations".
+        let commitments = ["C1", "C2", "W1", "W2"];
+        let evaluation_keys =
+            ["ql", "qr", "qm", "qo", "qc", "s1", "s2", "s3", "a", "b", "c", "z", "zw", "t1w", "t2w", "inv"];
+        let (bytes, points, evaluations) = proof(commitments.len(), evaluation_keys.len());
+        let (json, _) = snark_proof_bytes_to_json_c(&bytes, &publics, FFLONK_PROTOCOL_ID);
+        let polynomials: Vec<String> = commitments.iter().zip(&points).map(|(key, p)| point_json(key, p)).collect();
+        assert!(json.contains(&format!("\"polynomials\":{{{}}}", polynomials.join(","))), "{json}");
+        let mut by_key: Vec<_> = evaluation_keys.iter().zip(&evaluations).collect();
+        by_key.sort();
+        let evaluations: Vec<String> = by_key.iter().map(|(key, value)| format!("\"{key}\":\"{value}\"")).collect();
+        assert!(json.contains(&format!("\"evaluations\":{{{}}}", evaluations.join(","))), "{json}");
     }
 }

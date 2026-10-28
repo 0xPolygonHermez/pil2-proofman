@@ -113,6 +113,7 @@ void Blake3Goldilocks::merkletreeReduce(Goldilocks::Element *root, Goldilocks::E
 
 void Blake3Goldilocks::grinding(uint64_t &nonce, const uint64_t *in, const uint32_t n_bits)
 {
+    if (n_bits == 0) { nonce = 0; return; } // every nonce passes (and 1 << 64 below is UB)
     constexpr uint64_t security = 128;
     const uint64_t level = uint64_t(1) << (64 - n_bits);
     const double eps   = std::ldexp(1.0, -int(n_bits));

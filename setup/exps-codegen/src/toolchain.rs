@@ -114,6 +114,11 @@ impl Toolchain {
         if !stark_dir.join("src").is_dir() {
             bail!("pil2-stark source not found at {} (pass --stark-src)", stark_dir.display());
         }
+        // Every path reads `cuobjdump -res-usage`: the chunk autotuners gate on STACK=0 and the
+        // post-link audit proves no kernel keeps local memory. Fail here, not after nvcc has run.
+        if !cuda_bin("cuobjdump").is_file() {
+            bail!("cuobjdump not found (PATH, $CUDA_HOME/bin, /usr/local/cuda/bin); install the CUDA binutils");
+        }
 
         let arch_list = resolve_archs(archspec);
         if arch_list.is_empty() {

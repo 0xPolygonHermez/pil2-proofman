@@ -214,7 +214,14 @@ public:
     /*
         AVX512 operations
     */
-#ifdef __AVX512__ 
+#ifdef GOLDILOCKS_AVX512_PATHS 
+
+    // Runtime gate for the always-compiled AVX-512 paths. Probed once.
+    static inline bool hasAvx512()
+    {
+        static const bool supported = __builtin_cpu_supports("avx512f");
+        return supported;
+    }
 
     static void load_avx512(__m512i &a_, const Goldilocks::Element *a8);
     static void load_avx512(__m512i &a, const Goldilocks::Element *a8_a, uint64_t stride);
@@ -284,7 +291,7 @@ inline Goldilocks::Element operator+(const Goldilocks::Element &in1) { return in
 #include "goldilocks_base_field_scalar.hpp"
 #include "goldilocks_base_field_avx.hpp"
 #include "goldilocks_base_field_pack.hpp"
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 #include "goldilocks_base_field_avx512.hpp"
 #endif
 

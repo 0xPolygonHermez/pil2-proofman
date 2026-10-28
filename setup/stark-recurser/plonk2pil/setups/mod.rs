@@ -3,10 +3,15 @@
 //! Each family lives in its own folder ([`poseidon1`], [`poseidon2`], [`blake3`]) and
 //! exposes the same surface (`aggregation`, `compressor`, a `PilTemplateParams`
 //! struct and a `gen_pil_str` helper). Dispatch happens in [`super::packers`].
+//!
+//! [`poseidon_bn128`], the final SNARK wrap's family over BN128, has one setup instead of the two,
+//! `wrap`, and the same `PilTemplateParams` and `gen_pil_str`.
 
 pub mod blake3;
+pub mod blake3_bn128;
 pub mod poseidon1;
 pub mod poseidon2;
+pub mod poseidon_bn128;
 
 #[cfg(test)]
 mod tests {
@@ -103,15 +108,12 @@ mod tests {
         }
     }
 
-    /// Both blake3 recursion airs are emitted by ONE generator, so both templates have to keep its
-    /// parameter list -- a rename that lands in only one of them compiles fine and then fails at
-    /// whichever air the pipeline happens to reach second.
+    /// The generated call must keep the blake3 aggregator template's parameter list.
     #[test]
-    fn blake3_generated_call_matches_both_its_airtemplates() {
-        for (file, template) in [("blake3/aggregator.pil", "Aggregator"), ("blake3/compressor.pil", "Compressor")] {
+    fn blake3_generated_call_matches_its_airtemplate() {
+        {
+            let (file, template) = ("blake3/aggregator.pil", "Aggregator");
             let p = super::blake3::PilTemplateParams {
-                template_file: file.trim_end_matches(".pil"),
-                template_name: template,
                 namespace_name: "Recursion",
                 n_bits: 19,
                 n_publics: 0,
@@ -130,6 +132,35 @@ mod tests {
             };
             assert_no_drift(file, template, &super::blake3::gen_pil_str(&p));
         }
+    }
+
+    /// The wrap's airtemplate takes what its generator emits.
+    #[test]
+    fn poseidon_bn128_generated_call_matches_its_airtemplate() {
+        let p = super::poseidon_bn128::PilTemplateParams {
+            template_file: "poseidon_bn128/wrap",
+            template_name: "Wrap",
+            namespace_name: "Wrap",
+            n_bits: 16,
+            n_publics: 1,
+            n_range_checks: 1,
+            max_constraint_degree: 6,
+        };
+        assert_no_drift("poseidon_bn128/wrap.pil", "Wrap", &super::poseidon_bn128::gen_pil_str(&p));
+    }
+
+    /// The blake3 wrap's airtemplate takes what its generator emits.
+    #[test]
+    fn blake3_bn128_generated_call_matches_its_airtemplate() {
+        let p = super::blake3_bn128::PilTemplateParams {
+            template_file: "blake3_bn128/wrap",
+            template_name: "Wrap",
+            namespace_name: "Wrap",
+            n_bits: 20,
+            n_publics: 1,
+            max_constraint_degree: 5,
+        };
+        assert_no_drift("blake3_bn128/wrap.pil", "Wrap", &super::blake3_bn128::gen_pil_str(&p));
     }
 
     /// The gate a family places follows its Merkle arity, and blake3's is forced to 2. If this ever

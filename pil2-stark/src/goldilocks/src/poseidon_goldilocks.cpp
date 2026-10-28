@@ -200,6 +200,7 @@ template<uint32_t SPONGE_WIDTH_T>
 void PoseidonGoldilocks<SPONGE_WIDTH_T>::grinding(
     uint64_t &nonce, const uint64_t *in, const uint32_t n_bits)
 {
+    if (n_bits == 0) { nonce = 0; return; } // every nonce passes (and 1 << 64 below is UB)
     // Total hashes needed for S-bit security at n_bits target difficulty:
     //   N = -S · ln(2) / ln(1 - 2^-n_bits).  Same formula as the GPU path;
     // log1p/ldexp keep precision for small 2^-n_bits.
@@ -445,7 +446,10 @@ inline void element_pow7_avx(__m256i &x) {
     Goldilocks::mult_avx(x, x3, x4);
 }
 #endif
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
+// Scoped AVX-512 codegen; a global -mavx512f would leak EVEX library-wide.
+#pragma GCC push_options
+#pragma GCC target("avx512f")
 inline void element_pow7_avx512(__m512i &x) {
     __m512i x2, x3, x4;
     Goldilocks::square_avx512(x2, x);
@@ -453,6 +457,7 @@ inline void element_pow7_avx512(__m512i &x) {
     Goldilocks::square_avx512(x4, x2);
     Goldilocks::mult_avx512(x, x3, x4);
 }
+#pragma GCC pop_options
 #endif
 } // namespace
 
@@ -712,7 +717,10 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(
 // AVX512 (8-sponge batch only).
 // ---------------------------------------------------------------------------
 
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
+// Scoped AVX-512 codegen; a global -mavx512f would leak EVEX library-wide.
+#pragma GCC push_options
+#pragma GCC target("avx512f")
 
 // 8-sponge AVX512 batch permute. 12 __m512i state registers, each holding one
 // state element across 8 sponges (strided layout).
@@ -956,7 +964,8 @@ void PoseidonGoldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(
     }
 }
 
-#endif // __AVX512__
+#pragma GCC pop_options
+#endif // GOLDILOCKS_AVX512_PATHS
 
 // ---------------------------------------------------------------------------
 // Explicit template instantiation.

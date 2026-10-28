@@ -154,6 +154,8 @@ public:
                         cudaStream_t stream);
 
     // In-house ColMajor LDE
+    // Builds the current device's ColMajor twiddle tables now instead of on the first transform.
+    static void warmTables();
     void ldeColMajor(gl64_t* d_dst_, gl64_t* d_src_, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols,
                  cudaStream_t stream, bool preserve_src = false, gl64_t* preserve_scratch = nullptr,
                  size_t scratch_elems = 0);
@@ -163,20 +165,22 @@ public:
     void computeQ(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                   Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                   uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper,
-                  TimerGPU &timer, cudaStream_t stream);
+                  TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg = 0);
     // legacy tiled backend (ColMajorTiled): pure kernels (graph-capturable).
     void computeQTiled(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                              Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
                              uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, cudaStream_t stream);
+    // qStepLg: q holds the quotient at every 2^qStepLg-th extended point only, compactly.
     void computeQColMajor(uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim,
                           Goldilocks::Element shiftIn, uint64_t nBits, uint64_t nBitsExt,
-                          uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream);
+                          uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream, uint32_t qStepLg = 0);
 
     void NTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
 
     void INTT(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
     void inttTiled(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);  // ColMajorTiled (legacy)
     void inttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);
+    void nttColMajor(gl64_t *dst, uint64_t nBits, uint64_t nCols, cudaStream_t stream);   // forward twin; no nBits >= 8 floor, unlike NTT
 
     // Allocates the static twiddle/coset tables (16B * 2^maxLogDomainSize per GPU) used ONLY by the
     // legacy tiled backend and NTT(). The prover never calls this anymore -- the ColMajor engine

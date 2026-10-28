@@ -1,6 +1,7 @@
 pragma circom 2.1.0;
+pragma custom_templates;
 
-include "../bitifyT.circom";
+include "rangecheck.circom";
 include "lessthangl.circom";
 include "utils.circom";
 
@@ -16,7 +17,7 @@ template GLNorm() {
 
     var maxQuotientBits = log2((in.maxNum - 1) \ p) + 1;
 
-    _ <== Num2BitsT(maxQuotientBits)(k);
+    RangeCheck(maxQuotientBits)(k);
     out <== LessThanGoldilocks()(value);
 }
 
@@ -72,7 +73,7 @@ template GLMul() {
     var maxQuotientBits = log2((ina.maxNum * inb.maxNum - 1) \ p) + 1;
 
 
-    _ <== Num2BitsT(maxQuotientBits)(k);
+    RangeCheck(maxQuotientBits)(k);
     out <== LessThan64Bits()(mul);
 
 }
@@ -152,7 +153,7 @@ template GLCMulAdd() {
     //      = a0b2 + a2b0 + a2b2 + a1b1 -> 4*ina.maxNum * inb.maxNum
 
     //Since all the elements of the array takes the same tag value, we set as the max value 5*ina.maxNum * inb.maxNum
-    var maxQuotientBits = log2((5*ina.maxNum * inb.maxNum - 1) \ p) + 1;
+    var maxQuotientBits = log2((5*ina.maxNum * inb.maxNum + inc.maxNum - 1) \ p) + 1;
 
     signal k[3];
 
@@ -169,7 +170,7 @@ template GLCMulAdd() {
     out.maxNum = 0xFFFFFFFFFFFFFFFF;
 
     for (var i = 0; i<3; i++) {
-        _ <== Num2BitsT(maxQuotientBits)(k[i]);
+        RangeCheck(maxQuotientBits)(k[i]);
         out[i] <== LessThan64Bits()(muladd[i]);
     }
 }

@@ -16,6 +16,7 @@ use commands::verify_snark::VerifySnark;
 use commands::prove_air::ProveAirCmd;
 use commands::execute::ExecuteCmd;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
+use commands::pilfflonk::{PilfflonkSubcommands, PilfflonkCmd};
 use commands::setup::CheckSetupCmd;
 use commands::setup_snark::CheckSetupSnarkCmd;
 use commands::soundness::SoundnessCmd;
@@ -32,6 +33,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     Pilout(PiloutCmd),
+    Pilfflonk(PilfflonkCmd),
     CheckSetup(CheckSetupCmd),
     CheckSetupSnark(CheckSetupSnarkCmd),
     Soundness(SoundnessCmd),
@@ -64,6 +66,12 @@ fn main() {
             Commands::Pilout(args) => match &args.pilout_commands {
                 PiloutSubcommands::Inspect(args) => args.run(),
             },
+            Commands::Pilfflonk(args) => match &args.pilfflonk_commands {
+                PilfflonkSubcommands::Prove(args) => args.run(),
+                PilfflonkSubcommands::Verify(args) => args.run(),
+                PilfflonkSubcommands::Check(args) => args.run(),
+                PilfflonkSubcommands::Calldata(args) => args.run(),
+            },
             Commands::CheckSetup(args) => args.run(),
             Commands::CheckSetupSnark(args) => args.run(),
             Commands::Soundness(args) => args.run(),
@@ -86,7 +94,7 @@ fn main() {
         .expect("main thread panicked");
 
     if let Err(e) = result {
-        tracing::error!("{}", e);
+        eprintln!("Error: {e:#}");
         exit(1);
     }
 

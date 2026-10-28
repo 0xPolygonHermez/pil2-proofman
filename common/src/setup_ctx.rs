@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
+use std::path::{Path, PathBuf};
 
 use proofman_fields::PrimeField64;
 use proofman_starks_lib_c::{expressions_bin_new_c, expressions_bin_free_c};
@@ -7,6 +8,7 @@ use proofman_starks_lib_c::{expressions_bin_new_c, expressions_bin_free_c};
 use crate::format_bytes;
 use crate::load_const_pols;
 use crate::{GlobalInfo, GlobalInfoAir};
+use crate::useful_lru_slots;
 use crate::ProofmanError;
 use crate::ProofmanResult;
 use crate::Setup;
@@ -19,6 +21,9 @@ use crate::ProofType;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FixedGroup {
     pub owner: (usize, usize),
+    /// Words the slot reserves for custom commits: the largest member's, since members register
+    /// their own files into it. `None` = the air's own reservation (a group of one).
+    pub custom_words: Option<usize>,
 }
 
 /// Columns the recursion's HOST trace buffer needs for one air.
@@ -45,6 +50,10 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub sctx_recursive2: Option<SetupCtx<F>>,
     pub setup_vadcop_final: Option<Setup<F>>,
     pub setup_vadcop_final_compressed: Option<Setup<F>>,
+    /// The key's recursivef (setup-recursivef, blake3): loaded when the key's hash is blake3 and it
+    /// has one, as the key's other setups are; the final SNARK wraps it
+    /// (`ProofMan::generate_final_snark_proof`).
+    pub setup_recursivef: Option<Setup<F>>,
     pub max_compact_trace_size: usize,
     pub max_const_size: usize,
     pub max_const_tree_size: usize,
@@ -53,20 +62,111 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_prover_recursive2_buffer_size: usize,
     pub max_pinned_proof_size: usize,
     pub max_n_bits_ext: usize,
+    /// Resident aggregation const area, for callers without the const cache (prove-air sets it); 0
+    /// otherwise: the planner sizes the cache.
     pub total_const_pols_size: usize,
-    pub recurser_const_slot_size: usize,
+    /// Const cache slot 0 (largest set it can take) and normal (recursive1-sized) slots, in words.
+    pub cache_big_words: u64,
+    pub cache_normal_words: u64,
+    /// LRU slots the sets that always use the LRU can keep busy (see useful_lru_slots).
+    pub cache_n_lru_keys: usize,
+    /// recursive2 pins, all airgroups; each set fits slot 0, so they can go through the LRU instead.
+    pub rec2_words: u64,
+    pub rec2_fits_lru: bool,
+    /// Final pins the planner takes when it has room.
+    pub finals_pin_words: u64,
+    /// Pinned slots each pin kind takes.
+    pub rec2_sets: usize,
+    pub finals_sets: usize,
 }
 
 unsafe impl<F: PrimeField64> Send for SetupsVadcop<F> {}
 unsafe impl<F: PrimeField64> Sync for SetupsVadcop<F> {}
 
+/// How an aggregation const set uses the GPU const cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheSetKind {
+    /// Recursive1 and compressor sets: always through the LRU slots.
+    Lru,
+    /// Pinned, one slot per airgroup.
+    Recursive2,
+    /// vadcop_final, its compressed variant and a blake3 key's recursivef: pinned when the planner
+    /// has room, else LRU.
+    Final,
+}
+
+/// One aggregation const set: the cache sizing and the loader walk the same list.
+pub struct CacheSet<'a, F: PrimeField64> {
+    pub setup: &'a Setup<F>,
+    pub airgroup_id: usize,
+    pub air_id: usize,
+    pub kind: CacheSetKind,
+}
+
+fn cache_sets<'a, F: PrimeField64>(
+    global_info: &GlobalInfo,
+    recursive1: &'a SetupCtx<F>,
+    compressor: &'a SetupCtx<F>,
+    recursive2: &'a SetupCtx<F>,
+    vadcop_final: &'a Setup<F>,
+    vadcop_final_compressed: Option<&'a Setup<F>>,
+    recursivef: Option<&'a Setup<F>>,
+) -> ProofmanResult<Vec<CacheSet<'a, F>>> {
+    let mut sets = Vec::new();
+    for (ag, group) in global_info.airs.iter().enumerate() {
+        for air in 0..group.len() {
+            sets.push(CacheSet {
+                setup: recursive1.get_setup(ag, air)?,
+                airgroup_id: ag,
+                air_id: air,
+                kind: CacheSetKind::Lru,
+            });
+            if global_info.get_air_has_compressor(ag, air) {
+                sets.push(CacheSet {
+                    setup: compressor.get_setup(ag, air)?,
+                    airgroup_id: ag,
+                    air_id: air,
+                    kind: CacheSetKind::Lru,
+                });
+            }
+        }
+        sets.push(CacheSet {
+            setup: recursive2.get_setup(ag, 0)?,
+            airgroup_id: ag,
+            air_id: 0,
+            kind: CacheSetKind::Recursive2,
+        });
+    }
+    for setup in std::iter::once(vadcop_final).chain(vadcop_final_compressed).chain(recursivef) {
+        sets.push(CacheSet { setup, airgroup_id: 0, air_id: 0, kind: CacheSetKind::Final });
+    }
+    Ok(sets)
+}
+
 impl<F: PrimeField64> SetupsVadcop<F> {
+    /// The aggregation const sets in cache order (aggregation runs only).
+    pub fn cache_sets(&self, global_info: &GlobalInfo) -> ProofmanResult<Vec<CacheSet<'_, F>>> {
+        cache_sets(
+            global_info,
+            self.sctx_recursive1.as_ref().unwrap(),
+            self.sctx_compressor.as_ref().unwrap(),
+            self.sctx_recursive2.as_ref().unwrap(),
+            self.setup_vadcop_final.as_ref().unwrap(),
+            self.setup_vadcop_final_compressed.as_ref(),
+            self.setup_recursivef.as_ref(),
+        )
+    }
+
+    /// `final_snark`: the provingKeySnark/ of the run's final SNARKs, whose recursivef a blake3 key's
+    /// run loads.
     pub fn new(
         global_info: &GlobalInfo,
         verify_constraints: bool,
         aggregation: bool,
         gpu: bool,
+        final_snark: Option<&Path>,
     ) -> ProofmanResult<Self> {
+        let custom_commits_fixed = &HashMap::new();
         if aggregation {
             let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, gpu)?;
             let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints, gpu)?;
@@ -80,6 +180,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 verify_constraints,
                 gpu,
                 None,
+                custom_commits_fixed,
+                false,
             )?;
 
             // Only if the key says it carries the stage. `Setup::new` reads the starkinfo from disk
@@ -96,43 +198,94 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                     verify_constraints,
                     gpu,
                     None,
+                    custom_commits_fixed,
+                    false,
                 )?)
             } else {
                 None
             };
 
-            let recurser_const_slot_size = if gpu {
-                let n_constants = setup_vadcop_final.stark_info.n_constants as usize;
-                let n_rows = 1usize << setup_vadcop_final.stark_info.stark_struct.n_bits;
+            // A Goldilocks STARK of the key's own family, the layer after the vadcop_final; the
+            // poseidon families' recursivef is setup-snark's (BN128) and the SnarkWrapper's.
+            let path = final_snark
+                .filter(|_| global_info.hash == "blake3")
+                .map(|snark| snark.join("recursivef").join("recursivef"))
+                .filter(|path| PathBuf::from(format!("{}.starkinfo.json", path.display())).exists());
+            let setup_recursivef = if let Some(path) = path {
+                Some(Setup::new(
+                    &path,
+                    0,
+                    0,
+                    &GlobalInfoAir::new("RecursiveF".to_string()),
+                    &ProofType::RecursiveF,
+                    verify_constraints,
+                    gpu,
+                    None,
+                    custom_commits_fixed,
+                    false,
+                )?)
+            } else {
+                None
+            };
+            let finals = || [setup_vadcop_final_compressed.as_ref(), setup_recursivef.as_ref()].into_iter().flatten();
+
+            let sets = cache_sets(
+                global_info,
+                &sctx_recursive1,
+                &sctx_compressor,
+                &sctx_recursive2,
+                &setup_vadcop_final,
+                setup_vadcop_final_compressed.as_ref(),
+                setup_recursivef.as_ref(),
+            )?;
+            let words_of = |kind: CacheSetKind| {
+                sets.iter().filter(move |s| s.kind == kind).map(|s| s.setup.const_pols_size_packed as u64)
+            };
+            let lru_sizes: Vec<u64> = words_of(CacheSetKind::Lru).collect();
+            let rec2_words: u64 = words_of(CacheSetKind::Recursive2).sum();
+            let finals_pin_words: u64 = words_of(CacheSetKind::Final).sum();
+            let rec2_sets = words_of(CacheSetKind::Recursive2).count();
+            let finals_sets = words_of(CacheSetKind::Final).count();
+            let cache_normal_words = sctx_recursive1.max_const_pols_size_packed as u64;
+            // A recurser has vadcop_final's shape but its own constants, so its packed size is only
+            // bounded by the unpacked worst case; it always uses the LRU, so slot 0 keeps room for it.
+            let recurser_words = if gpu {
+                let n_constants = setup_vadcop_final.stark_info.n_constants;
+                let n_rows = 1u64 << setup_vadcop_final.stark_info.stark_struct.n_bits;
                 1 + n_constants + n_rows * n_constants
             } else {
                 0
             };
-
-            let total_const_pols_size = sctx_compressor.total_const_pols_size
-                + sctx_recursive1.total_const_pols_size
-                + sctx_recursive2.total_const_pols_size
-                + setup_vadcop_final.const_pols_size_packed
-                + setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.const_pols_size_packed)
-                + recurser_const_slot_size;
+            // Unpinned finals land in the LRU, so slot 0 holds them too.
+            let cache_big_words = lru_sizes
+                .iter()
+                .copied()
+                .chain(words_of(CacheSetKind::Final))
+                .fold(cache_normal_words.max(recurser_words), u64::max);
+            let cache_n_lru_keys = useful_lru_slots(&lru_sizes, cache_normal_words);
+            let rec2_fits_lru = words_of(CacheSetKind::Recursive2).all(|w| w <= cache_big_words);
+            drop(sets);
+            // The planner sizes the const cache; this resident area is for callers without one (prove-air).
+            let total_const_pols_size = 0;
 
             let max_const_size = sctx_compressor
                 .max_const_size
                 .max(sctx_recursive1.max_const_size)
                 .max(sctx_recursive2.max_const_size)
-                .max(setup_vadcop_final.const_pols_size);
+                .max(setup_vadcop_final.const_pols_size)
+                .max(setup_recursivef.as_ref().map_or(0, |s| s.const_pols_size));
             let max_const_tree_size = sctx_compressor
                 .max_const_tree_size
                 .max(sctx_recursive1.max_const_tree_size)
                 .max(sctx_recursive2.max_const_tree_size)
                 .max(setup_vadcop_final.const_tree_size)
-                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.const_tree_size));
+                .max(finals().map(|s| s.const_tree_size).max().unwrap_or(0));
             let max_prover_buffer_size = sctx_compressor
                 .max_prover_buffer_size
                 .max(sctx_recursive1.max_prover_buffer_size)
                 .max(sctx_recursive2.max_prover_buffer_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize)
-                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |s| s.prover_buffer_size as usize));
+                .max(finals().map(|s| s.prover_buffer_size as usize).max().unwrap_or(0));
 
             // Recursive-capable buffers = prover buffer (mapTotalN) + witness tail: the room past the
             // proof layout where the recursive proof's COMPACT host trace lands (staging cols x N:
@@ -148,6 +301,9 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             let vadcop_final_compressed_tail = setup_vadcop_final_compressed
                 .as_ref()
                 .map_or(0, |s| (recursion_staging_cols(s, gpu) * (1 << s.stark_info.stark_struct.n_bits)) as usize);
+            let recursivef_tail = setup_recursivef
+                .as_ref()
+                .map_or(0, |s| (recursion_staging_cols(s, gpu) * (1 << s.stark_info.stark_struct.n_bits)) as usize);
             let max_prover_recursive2_buffer_size = (sctx_recursive2.max_prover_buffer_size
                 + sctx_recursive2.max_compact_trace_size)
                 .max(sctx_recursive1.max_prover_buffer_size + sctx_recursive1.max_compact_trace_size);
@@ -161,7 +317,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                     setup_vadcop_final_compressed
                         .as_ref()
                         .map_or(0, |c| c.prover_buffer_size as usize + vadcop_final_compressed_tail),
-                );
+                )
+                .max(setup_recursivef.as_ref().map_or(0, |c| c.prover_buffer_size as usize + recursivef_tail));
 
             // This floors every non-recursive GPU stream class, so which term dominates decides
             // whether a regular class fits at all.
@@ -184,13 +341,14 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_pinned_proof_size)
                 .max(sctx_recursive2.max_pinned_proof_size)
                 .max(setup_vadcop_final.proof_size as usize)
-                .max(setup_vadcop_final_compressed.as_ref().map_or(0, |c| c.proof_size as usize));
+                .max(finals().map(|c| c.proof_size as usize).max().unwrap_or(0));
 
             let max_n_bits_ext = sctx_compressor
                 .max_n_bits_ext
                 .max(sctx_recursive1.max_n_bits_ext)
                 .max(sctx_recursive2.max_n_bits_ext)
-                .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize);
+                .max(setup_vadcop_final.stark_info.stark_struct.n_bits_ext as usize)
+                .max(setup_recursivef.as_ref().map_or(0, |s| s.stark_info.stark_struct.n_bits_ext as usize));
 
             // Largest compact (staging-width) trace over every recursive proof kind, compressor
             // included: they share one host pool (see MemoryHandlerRecursive::trace), and it is also
@@ -203,7 +361,8 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 // buffer's and stays full. Sizing the shared pool from it put every buffer at the
                 // air's full width, which is what made the pool 7x what it holds.
                 .max(vadcop_final_tail)
-                .max(vadcop_final_compressed_tail);
+                .max(vadcop_final_compressed_tail)
+                .max(recursivef_tail);
 
             Ok(SetupsVadcop {
                 sctx_compressor: Some(sctx_compressor),
@@ -211,6 +370,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 sctx_recursive2: Some(sctx_recursive2),
                 setup_vadcop_final: Some(setup_vadcop_final),
                 setup_vadcop_final_compressed,
+                setup_recursivef,
                 max_const_tree_size,
                 max_const_size,
                 max_prover_buffer_size,
@@ -220,7 +380,14 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_n_bits_ext,
                 max_compact_trace_size,
                 total_const_pols_size,
-                recurser_const_slot_size,
+                cache_big_words,
+                cache_normal_words,
+                cache_n_lru_keys,
+                rec2_words,
+                rec2_fits_lru,
+                finals_pin_words,
+                rec2_sets,
+                finals_sets,
             })
         } else {
             Ok(SetupsVadcop {
@@ -229,8 +396,16 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 sctx_recursive2: None,
                 setup_vadcop_final: None,
                 setup_vadcop_final_compressed: None,
+                setup_recursivef: None,
                 total_const_pols_size: 0,
-                recurser_const_slot_size: 0,
+                cache_big_words: 0,
+                cache_normal_words: 0,
+                cache_n_lru_keys: 0,
+                rec2_words: 0,
+                rec2_fits_lru: false,
+                finals_pin_words: 0,
+                rec2_sets: 0,
+                finals_sets: 0,
                 max_const_tree_size: 0,
                 max_const_size: 0,
                 max_prover_buffer_size: 0,
@@ -260,8 +435,13 @@ impl<F: PrimeField64> SetupsVadcop<F> {
         {
             sizes.extend(sctx.total_signal_nos());
         }
-        for setup in
-            [self.setup_vadcop_final.as_ref(), self.setup_vadcop_final_compressed.as_ref()].into_iter().flatten()
+        for setup in [
+            self.setup_vadcop_final.as_ref(),
+            self.setup_vadcop_final_compressed.as_ref(),
+            self.setup_recursivef.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             if let Some(n) = setup.total_signal_no {
                 sizes.push(n as usize);
@@ -281,6 +461,11 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             ProofType::VadcopFinalCompressed => self.setup_vadcop_final_compressed.as_ref().ok_or_else(|| {
                 ProofmanError::InvalidSetup("Proving key was built without the vadcop_final_compressed stage".into())
             }),
+            ProofType::RecursiveF => self.setup_recursivef.as_ref().ok_or_else(|| {
+                ProofmanError::InvalidSetup(
+                    "the proving key has no recursivef: a blake3 key's comes from setup-recursivef".into(),
+                )
+            }),
             _ => Err(ProofmanError::InvalidSetup("Invalid setup type".into())),
         }
     }
@@ -293,7 +478,6 @@ pub struct SetupRepository<F: PrimeField64> {
     max_const_size: usize,
     max_prover_buffer_size: usize,
     prover_buffer_sizes: Vec<((usize, usize), usize)>,
-    max_prover_contributions_size: usize,
     max_pinned_proof_size: usize,
     max_compact_trace_size: usize,
     total_const_pols_size: usize,
@@ -303,7 +487,6 @@ pub struct SetupRepository<F: PrimeField64> {
     global_info_file: String,
     max_n_bits_ext: usize,
     max_const_pols_size_packed: usize,
-    const_slot_cache_slots: usize,
 }
 
 unsafe impl<F: PrimeField64> Send for SetupRepository<F> {}
@@ -323,6 +506,8 @@ impl<F: PrimeField64> SetupRepository<F> {
         setup_type: &ProofType,
         verify_constraints: bool,
         gpu: bool,
+        custom_commits_fixed: &HashMap<String, PathBuf>,
+        self_contained: bool,
     ) -> ProofmanResult<Self> {
         let mut setups = HashMap::new();
 
@@ -341,7 +526,6 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_const_tree_size = 0;
         let mut max_const_size = 0;
         let mut max_n_bits_ext = 0;
-        let mut max_prover_contributions_size = 0;
         let mut max_prover_buffer_size = 0;
         let mut prover_buffer_sizes: Vec<((usize, usize), usize)> = Vec::new();
         let mut max_pinned_proof_size = 0;
@@ -349,7 +533,6 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut total_custom_commits_reserved_words = 0;
         let mut max_compact_trace_size = 0;
         let mut max_const_pols_size_packed = 0;
-        let mut n_const_slots = 0;
 
         // Airs in the order load_device_const_pols walks them, and the slot each verkey maps to.
         let mut sized_airs: Vec<(usize, usize)> = Vec::new();
@@ -369,6 +552,8 @@ impl<F: PrimeField64> SetupRepository<F> {
                     verify_constraints,
                     gpu,
                     Some(&global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2)),
+                    custom_commits_fixed,
+                    self_contained,
                 )?;
                 if setup_type != &ProofType::Compressor || global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let n = 1 << setup.stark_info.stark_struct.n_bits;
@@ -383,9 +568,6 @@ impl<F: PrimeField64> SetupRepository<F> {
                         max_prover_buffer_size = setup.prover_buffer_size;
                     }
                     prover_buffer_sizes.push(((airgroup_id, air_id), setup.prover_buffer_size as usize));
-                    if max_prover_contributions_size < setup.contributions_size {
-                        max_prover_contributions_size = setup.contributions_size;
-                    }
                     if setup.gpu {
                         sized_airs.push((airgroup_id, air_id));
                         if !setup.verkey.is_empty() {
@@ -412,31 +594,35 @@ impl<F: PrimeField64> SetupRepository<F> {
         // one slot per group, in the same order the loader assigns offsets -- must not drift.
         let mut fixed_groups: HashMap<(usize, usize), FixedGroup> = HashMap::new();
         let mut sized_slots: HashSet<(usize, usize)> = HashSet::new();
+        let owner_of = |air: &(usize, usize)| groups.get(&setups[air].get_vk()).copied().unwrap_or(*air);
+        let mut group_custom_words: HashMap<(usize, usize), usize> = HashMap::new();
+        for air in &sized_airs {
+            let words = group_custom_words.entry(owner_of(air)).or_insert(0);
+            *words = (*words).max(setups[air].custom_commits_reserved_words);
+        }
         let mut shared_airs = 0;
         let mut saved = 0;
         for air in sized_airs {
             let setup = &setups[&air];
-            let group = match groups.get(&setup.get_vk()) {
-                Some(&owner) => FixedGroup { owner },
-                // Nothing to fingerprint with (no verkey): the air is its own group.
-                None => FixedGroup { owner: air },
-            };
+            // No verkey to fingerprint with: the air is its own group.
+            let owner = owner_of(&air);
+            let group = FixedGroup { owner, custom_words: Some(group_custom_words[&owner]) };
             fixed_groups.insert(air, group);
             max_const_pols_size_packed = max_const_pols_size_packed.max(setup.const_pols_size_packed);
             if sized_slots.insert(group.owner) {
-                n_const_slots += 1;
                 total_const_pols_size += setup.const_pols_size_packed;
                 // Custom commits ride the same buffer; the slot is filled later, when
                 // register_custom_commits supplies the file path.
-                total_const_pols_size += setup.custom_commits_reserved_words;
-                total_custom_commits_reserved_words += setup.custom_commits_reserved_words;
+                total_const_pols_size += group_custom_words[&owner];
+                total_custom_commits_reserved_words += group_custom_words[&owner];
             } else {
                 shared_airs += 1;
                 saved += setup.const_pols_size_packed;
                 saved += setup.custom_commits_reserved_words;
             }
         }
-        if shared_airs > 0 {
+        // Only basic airs share a const slot; aggregation sets go through the const cache per air.
+        if shared_airs > 0 && *setup_type == ProofType::Basic {
             let proof_type: &str = (*setup_type).into();
             tracing::info!(
                 "Sharing GPU const pols: {shared_airs} {proof_type} airs reuse another air's fixed columns, \
@@ -447,22 +633,15 @@ impl<F: PrimeField64> SetupRepository<F> {
 
         prover_buffer_sizes.sort_by(|(ka, sa), (kb, sb)| sb.cmp(sa).then(ka.cmp(kb)));
 
-        // Recursive1 const pols are not resident per setup: the loader carves a slot cache of
-        // RECURSIVE1_CONST_SLOTS (or fewer when there are fewer setups) slots of the largest packed
-        // set, filled at launch from host pinned copies (see DeviceCommitBuffers::constCache). The
-        // custom commits of this repository would need resident slots; the recursion setups have
-        // none, which is asserted here rather than assumed.
-        let const_slot_cache_slots = if gpu && *setup_type == ProofType::Recursive1 && n_const_slots > 0 {
+        // Aggregation sets live in the const slot cache (host pinned copies, see
+        // DeviceCommitBuffers::constCache), which has no room for custom commits.
+        if gpu && *setup_type != ProofType::Basic {
             assert!(
                 total_custom_commits_reserved_words == 0,
-                "recursive1 setups with custom commits cannot use the const slot cache"
+                "aggregation setups with custom commits cannot use the const slot cache"
             );
-            RECURSIVE1_CONST_SLOTS.min(n_const_slots)
-        } else {
-            0
-        };
-        if const_slot_cache_slots > 0 {
-            total_const_pols_size = const_slot_cache_slots * max_const_pols_size_packed;
+            // Nor do they take basic-area words (prove-air passes this repository as its basic one).
+            total_const_pols_size = 0;
         }
 
         Ok(Self {
@@ -472,7 +651,6 @@ impl<F: PrimeField64> SetupRepository<F> {
             global_info_file,
             max_const_tree_size,
             max_const_size,
-            max_prover_contributions_size: max_prover_contributions_size as usize,
             max_prover_buffer_size: max_prover_buffer_size as usize,
             prover_buffer_sizes,
             max_pinned_proof_size: max_pinned_proof_size as usize,
@@ -481,7 +659,6 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_compact_trace_size,
             max_n_bits_ext: max_n_bits_ext as usize,
             max_const_pols_size_packed,
-            const_slot_cache_slots,
         })
     }
 }
@@ -492,7 +669,6 @@ pub struct SetupCtx<F: PrimeField64> {
     setup_repository: SetupRepository<F>,
     pub max_const_tree_size: usize,
     pub max_const_size: usize,
-    pub max_prover_contributions_size: usize,
     pub max_prover_buffer_size: usize,
     /// Per-air prover buffer size, largest first. See `SetupRepository::prover_buffer_sizes`.
     pub prover_buffer_sizes: Vec<((usize, usize), usize)>,
@@ -505,26 +681,39 @@ pub struct SetupCtx<F: PrimeField64> {
     pub total_custom_commits_reserved_words: usize,
     /// Largest packed const-pols set of the repository (elements): the slot size of the const cache.
     pub max_const_pols_size_packed: usize,
-    /// Slots of the const slot cache this repository uses (recursive1 on GPU), 0 = resident slots.
-    pub const_slot_cache_slots: usize,
     setup_type: ProofType,
 }
 
-/// Slots of the recursive1 const slot cache: a block uses ~20 distinct recursive1 setups, so 20
-/// makes the second use of an air within a block a hit while freeing (44 - 20) x 100 MiB.
-pub const RECURSIVE1_CONST_SLOTS: usize = 20;
-
 impl<F: PrimeField64> SetupCtx<F> {
+    /// Every custom commit reserves its worst case. Use `new_with_commit_files` when the caller
+    /// already knows the packed files: only then can the const buffer reserve their real width.
     pub fn new(
         global_info: &GlobalInfo,
         setup_type: &ProofType,
         verify_constraints: bool,
         gpu: bool,
     ) -> ProofmanResult<Self> {
-        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints, gpu)?;
+        Self::new_with_commit_files(global_info, setup_type, verify_constraints, gpu, &HashMap::new(), false)
+    }
+
+    pub fn new_with_commit_files(
+        global_info: &GlobalInfo,
+        setup_type: &ProofType,
+        verify_constraints: bool,
+        gpu: bool,
+        custom_commits_fixed: &HashMap<String, PathBuf>,
+        self_contained: bool,
+    ) -> ProofmanResult<Self> {
+        let setup_repository = SetupRepository::new(
+            global_info,
+            setup_type,
+            verify_constraints,
+            gpu,
+            custom_commits_fixed,
+            self_contained,
+        )?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
-        let max_prover_contributions_size = setup_repository.max_prover_contributions_size;
         let max_prover_buffer_size = setup_repository.max_prover_buffer_size;
         let prover_buffer_sizes = setup_repository.prover_buffer_sizes.clone();
         let max_pinned_proof_size = setup_repository.max_pinned_proof_size;
@@ -533,12 +722,10 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_compact_trace_size = setup_repository.max_compact_trace_size;
         let max_n_bits_ext = setup_repository.max_n_bits_ext;
         let max_const_pols_size_packed = setup_repository.max_const_pols_size_packed;
-        let const_slot_cache_slots = setup_repository.const_slot_cache_slots;
         Ok(SetupCtx {
             setup_repository,
             max_const_tree_size,
             max_const_size,
-            max_prover_contributions_size,
             max_prover_buffer_size,
             prover_buffer_sizes,
             max_compact_trace_size,
@@ -547,7 +734,6 @@ impl<F: PrimeField64> SetupCtx<F> {
             total_const_pols_size,
             total_custom_commits_reserved_words,
             max_const_pols_size_packed,
-            const_slot_cache_slots,
             setup_type: *setup_type,
         })
     }

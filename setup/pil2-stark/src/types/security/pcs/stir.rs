@@ -20,8 +20,12 @@ pub struct StirConfig {
     pub batch_size: u64,
     /// Per-iteration folding factors `kᵢ`, in bits: iteration `i` folds by `2^kᵢ`.
     pub log_folding_factors: Vec<u32>,
-    /// The maximum number of grinding bits allowed.
-    pub max_grinding_bits_query: u64,
+    /// The grinding budget for each iteration's query message (length `M`).
+    /// Grinding and queries buy the same bits, so a per-round budget shifts
+    /// prover proof-of-work to the rounds where queries are expensive.
+    pub max_grinding_bits_queries: Vec<u64>,
+    /// Grinding the protocol can do before each non-query challenge, at most (0: none).
+    pub max_grinding_bits_non_query: u64,
     /// Whether to use the maximum number of grinding bits.
     pub use_max_grinding_bits_query: bool,
     /// The arity of the Merkle trees used in STIR.
@@ -78,6 +82,7 @@ impl Stir {
     pub fn new(cfg: StirConfig) -> Self {
         let mut stir = Self::validate(cfg);
         let (sec_params, alpha) = stir.solve();
+        stir.validate_query_counts(&sec_params);
         stir.sec_params = sec_params;
         stir.alpha = alpha;
         stir
@@ -93,13 +98,39 @@ impl Stir {
         assert_eq!(sec_params.grinding_bits_queries.len(), m, "Expected one query grinding entry per iteration");
         assert_eq!(sec_params.grinding_bits_ood.len(), m - 1, "Expected M-1 OOD grinding entries");
 
+        stir.validate_query_counts(&sec_params);
         stir.sec_params = sec_params;
         stir
+    }
+
+    /// STIR is only meaningful while the quotient keeps a positive degree bound: every quotient
+    /// round i = 1..M-1 divides by ∏_{a∈G_i}(X − a) with |G_i| = t_{i-1} + s_i, so it needs
+    /// |G_i| < d_i.
+    fn validate_query_counts(&self, sec_params: &StirSecurityParams) {
+        for i in 1..self.num_rounds {
+            let d_i = 1u64 << self.log_round_dimensions[i];
+            let n_g = sec_params.num_queries[i - 1] + sec_params.num_ood_samples[i - 1];
+            assert!(
+                n_g < d_i,
+                "STIR schedule is invalid for this air: iteration {i} quotients over |G| = {n_g} \
+                 points (t_{} = {} queries + {} out-of-domain samples) but the degree folds down \
+                 to d_{i} = {d_i}. The trace is too small for STIR at this security target — \
+                 raise finalDegree, lower foldingFactor, or keep FRI for this air.",
+                i - 1,
+                sec_params.num_queries[i - 1],
+                sec_params.num_ood_samples[i - 1],
+            );
+        }
     }
 
     /// Structural validation shared by both constructors.
     fn validate(cfg: StirConfig) -> Self {
         let num_rounds = cfg.log_folding_factors.len();
+
+        assert_eq!(cfg.max_grinding_bits_queries.len(), num_rounds, "Expected one query grinding budget per iteration");
+        for &g in &cfg.max_grinding_bits_queries {
+            assert!(g < 64, "A grinding budget of {g} bits does not fit the 64-bit proof-of-work check");
+        }
 
         // ρ = 2^-k.
         let k = -cfg.rate.log2();
@@ -164,31 +195,39 @@ impl Stir {
         }
     }
 
-    /// Search for the smallest gap-widening `alpha` whose query schedule
-    /// meets the target on every component.
+    /// Search for the smallest gap-widening `alpha` whose query schedule meets the target on every
+    /// component: by the gap alone first, then with grinding outside the queries, within budget.
     fn solve(&self) -> (StirSecurityParams, f64) {
-        let mut alpha: f64 = 0.0;
-        loop {
-            let regime = self.cfg.regime.instantiate(self.cfg.field_size, alpha);
-            let sec_params = self.compute_security_params(regime.as_ref());
-            if self.meets_security_target(regime.as_ref(), &sec_params) {
-                return (sec_params, alpha);
+        let budget = self.cfg.max_grinding_bits_non_query;
+        let budgets: &[u64] = if budget == 0 { &[0] } else { &[0, budget] };
+        for &budget in budgets {
+            let mut alpha: f64 = 0.0;
+            loop {
+                let regime = self.cfg.regime.instantiate(self.cfg.field_size, alpha);
+                if !(0..self.num_rounds).all(|i| regime.admits(&self.code_for(i, false).0)) {
+                    break;
+                }
+                let sec_params = self.compute_security_params(regime.as_ref(), budget);
+                if self.meets_security_target(regime.as_ref(), &sec_params) {
+                    return (sec_params, alpha);
+                }
+                alpha += 0.1;
             }
-
-            // Security not met -- widen the gap by increasing alpha.
-            alpha += 0.1;
-            assert!(alpha < 100.0, "Alpha loop did not converge");
         }
+        panic!(
+            "STIR cannot reach {} bits at any gap the regime admits, with {} bits of grinding outside the queries",
+            self.cfg.target_security_bits, self.cfg.max_grinding_bits_non_query
+        );
     }
 
     /// Compute the security parameters for a given regime.
-    fn compute_security_params(&self, regime: &dyn ProximityGapsRegime) -> StirSecurityParams {
+    fn compute_security_params(&self, regime: &dyn ProximityGapsRegime, budget: u64) -> StirSecurityParams {
         let m = self.num_rounds;
         let target = self.cfg.target_security_bits;
         let num_ood_samples = vec![1u64; m - 1];
 
-        // Non-query stages: grinding fills whatever is missing to the target.
-        let deficit = |error: f64| target.saturating_sub(bits_of_security_from_error(error) as u64) as u32;
+        // Non-query stages: grinding fills whatever is missing to the target, within `budget`.
+        let deficit = |error: f64| target.saturating_sub(bits_of_security_from_error(error) as u64).min(budget) as u32;
 
         // Batching grinding.
         let grinding_bits_batching = if self.cfg.batch_size > 1 { deficit(self.batch_error(regime, 0)) } else { 0 };
@@ -213,9 +252,9 @@ impl Stir {
             let hash_per_query = self.query_num_hashes(i);
             let max_efficient_grinding = hash_per_query.log2().floor() as u64;
             let g = if self.cfg.use_max_grinding_bits_query {
-                self.cfg.max_grinding_bits_query
+                self.cfg.max_grinding_bits_queries[i]
             } else {
-                max_efficient_grinding.min(self.cfg.max_grinding_bits_query)
+                max_efficient_grinding.min(self.cfg.max_grinding_bits_queries[i])
             } as u32;
 
             // Queries needed for the (1 − δᵢ)^{tᵢ} term alone.
@@ -434,7 +473,7 @@ impl Stir {
 
     /// The code of iteration i as a `(rate, dimension)` pair:
     /// - `folded = false`: Cᵢ = RS[F, Lᵢ, 2^{mᵢ}], the code fᵢ is checked against;
-    /// - `folded = true`: RS[F, Lᵢ^{(2^{kᵢ})}, 2^{mᵢ−kᵢ}], the code of Fold(fᵢ, r).
+    /// - `folded = true`: RS[F, Lᵢ^{(2^{kᵢ})}, 2^{mᵢ−kᵢ}], the code of Fold(fᵢ, kᵢ, r).
     ///
     /// Both have rate 2^{−μᵢ}, since degree and domain shrink by the same factor.
     fn code_for(&self, iteration: usize, folded: bool) -> (f64, u32) {
@@ -473,6 +512,22 @@ impl Stir {
     /// The deduced (or pinned) security parameters.
     pub fn security_params(&self) -> &StirSecurityParams {
         &self.sec_params
+    }
+
+    /// Raise the round-1 query count `t₀` to `num_queries` if that is more than the solver
+    /// found necessary — the STIR twin of `Fri::raise_n_queries`, for callers that size a
+    /// wrapping circuit by the query count (more queries only ever add security). Later rounds
+    /// keep their solved counts; the |G₁| < d₁ requirement is re-checked since `t₀` feeds `G₁`.
+    /// Returns whether anything changed.
+    pub fn raise_num_queries(&mut self, num_queries: u64) -> bool {
+        if num_queries > self.sec_params.num_queries[0] {
+            let mut raised = self.sec_params.clone();
+            raised.num_queries[0] = num_queries;
+            self.validate_query_counts(&raised);
+            self.sec_params = raised;
+            return true;
+        }
+        false
     }
 
     /// The deduced gap-widening factor.
@@ -580,6 +635,7 @@ mod tests {
         folding_factors: Vec<u32>,
         max_grinding_bits_query: u64,
     ) -> StirConfig {
+        let max_grinding_bits_queries = vec![max_grinding_bits_query; folding_factors.len()];
         StirConfig {
             field_size: goldilocks_safe_extension_field_size(),
             trace_length,
@@ -587,8 +643,9 @@ mod tests {
             batching: Batching::Powers,
             batch_size,
             log_folding_factors: folding_factors,
-            max_grinding_bits_query,
+            max_grinding_bits_queries,
             use_max_grinding_bits_query: true,
+            max_grinding_bits_non_query: 0,
             tree_arity: 4,
             hash_size_bits: 256,
             base_field_bits: 64,
@@ -655,15 +712,41 @@ mod tests {
         assert_eq!(stir.security_params().num_queries[0], 228);
     }
 
+    /// At |F| = 2^150 no gap brings batching to 128 bits: only grinding can.
+    fn small_field(budget: u64) -> StirConfig {
+        StirConfig {
+            field_size: 2f64.powi(150),
+            max_grinding_bits_non_query: budget,
+            ..test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23)
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "STIR cannot reach 128 bits")]
+    fn without_a_budget_an_unreachable_target_panics() {
+        Stir::new(small_field(0));
+    }
+
+    #[test]
+    fn the_gap_comes_first_then_the_budget() {
+        let stir = Stir::new(StirConfig {
+            max_grinding_bits_non_query: 40,
+            ..test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23)
+        });
+        assert_eq!((stir.alpha(), stir.security_params().grinding_bits_batching), (0.1, 0));
+        assert!(Stir::new(small_field(40)).security_params().grinding_bits_batching > 0);
+    }
+
     #[test]
     fn test_keccakf_params() {
         let stir = Stir::new(test_config(1 << 17, 0.5, 4065, vec![3, 3, 3, 3], 23));
-        assert_eq!(stir.alpha(), 0.0);
+        // The batching term misses the target at the base gap, and there is no batching grinding.
+        assert_eq!(stir.alpha(), 0.1);
         assert_all_components_reach_target(&stir);
 
         let sec = stir.security_params();
-        assert_eq!(sec.num_queries[0], 213);
-        assert_eq!(sec.grinding_bits_batching, 1, "batching deficit should be 1 bit");
+        assert_eq!(sec.num_queries[0], 214);
+        assert_eq!(sec.grinding_bits_batching, 0);
         assert_eq!(sec.grinding_bits_queries, vec![23; 4]);
     }
 
@@ -685,7 +768,7 @@ mod tests {
 
     #[test]
     fn test_final_params() {
-        let stir = Stir::new(test_config(1 << 16, 0.03125, 139, vec![4, 4, 4, 4], 22));
+        let stir = Stir::new(test_config(1 << 16, 0.03125, 139, vec![4, 4, 4], 22));
         assert_eq!(stir.alpha(), 0.0);
         assert_all_components_reach_target(&stir);
         assert_eq!(stir.security_params().num_queries[0], 43);
@@ -741,5 +824,47 @@ mod tests {
         let pinned = Stir::with_security_params(cfg, solved.security_params().clone());
         assert_eq!(pinned.security_levels(), solved.security_levels());
         assert_eq!(pinned.proof_size_bits(), solved.proof_size_bits());
+    }
+
+    /// An air too small for its query schedule must be rejected at setup time, not left for the
+    /// prover to trip over: with d_0 = 2^8 at 128 bits the solver wants hundreds of queries, and
+    /// one fold drops the degree below them.
+    #[test]
+    #[should_panic(expected = "too small for STIR")]
+    fn schedules_that_fold_below_the_query_count_are_rejected() {
+        Stir::new(test_config(1 << 8, 0.5, 10, vec![3, 3], 16));
+    }
+
+    /// Per-round grinding budgets: each round's query count comes from its own
+    /// budget, since grinding and queries buy the same bits. Zeroing one round's
+    /// budget must raise that round's query count and leave the others alone.
+    #[test]
+    fn per_round_grinding_budgets_trade_against_that_rounds_queries() {
+        let uniform = Stir::new(test_config(1 << 17, 0.25, 182, vec![3, 3, 3, 3, 2], 16));
+
+        let mut cfg = test_config(1 << 17, 0.25, 182, vec![3, 3, 3, 3, 2], 16);
+        cfg.max_grinding_bits_queries[2] = 0;
+        let skewed = Stir::new(cfg);
+
+        let t_uniform = &uniform.security_params().num_queries;
+        let t_skewed = &skewed.security_params().num_queries;
+        assert!(
+            t_skewed[2] > t_uniform[2],
+            "round 2 lost its grinding, so it must query more: {t_skewed:?} vs {t_uniform:?}"
+        );
+        for i in [0, 1, 3, 4] {
+            assert_eq!(t_skewed[i], t_uniform[i], "round {i} kept its budget, so its query count must not move");
+        }
+        assert_eq!(skewed.security_params().grinding_bits_queries[2], 0);
+        assert_all_components_reach_target(&skewed);
+    }
+
+    /// The budgets are per round, so their count must match the schedule.
+    #[test]
+    #[should_panic(expected = "one query grinding budget per iteration")]
+    fn budget_count_must_match_the_schedule() {
+        let mut cfg = test_config(1 << 17, 0.25, 182, vec![3, 3, 3, 3, 2], 16);
+        cfg.max_grinding_bits_queries.pop();
+        Stir::new(cfg);
     }
 }

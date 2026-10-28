@@ -19,7 +19,7 @@ witness: $(WITNESS_DIR)/$(WITNESS_FILE)
 clean:
 	$(RM) -r $(BUILD_DIR)
 
-SRCS_WITNESS_LIB := calcwit.cpp fr.cpp fr.asm main.cpp verifier.cpp
+SRCS_WITNESS_LIB := calcwit.cpp fr.cpp fr.asm main.cpp verifier.cpp custom_gates_bn128.cpp
 OBJS_WITNESS_LIB := $(SRCS_WITNESS_LIB:%=$(BUILD_DIR)/%.o)
 DEPS_WITNESS_LIB := $(OBJS_WITNESS_LIB:.o=.d)
 

@@ -92,25 +92,22 @@ __global__ void _b3GetState(Goldilocks::Element* output, uint64_t nOutputs, Blak
     for (uint64_t i = 0; i < nOutputs; i++) output[i].fe = xof[i];
 }
 
-__global__ void _b3GetPermutations(uint64_t* res, uint64_t n, uint64_t nBits,
-                                   Goldilocks::Element* fields, Blake3TrxStateGPU* b3)
+__global__ void _b3GetPermutationFields(uint64_t n, uint64_t nBits, Goldilocks::Element* fields, Blake3TrxStateGPU* b3)
 {
     const uint64_t NFields = (n * nBits + 62) / 63;
     for (uint64_t i = 0; i < NFields; i++) fields[i] = b3GetFields1(b3);
+}
 
-    uint64_t curField = 0, curBit = 0;
-    gl64_t* fields_ = (gl64_t*)fields;
-    for (uint64_t i = 0; i < n; i++)
-    {
-        uint64_t a = 0;
-        for (uint64_t j = 0; j < nBits; j++)
-        {
-            if ((uint64_t(fields_[curField]) >> curBit) & 1) a += (1ULL << j);
-            curBit++;
-            if (curBit == 63) { curBit = 0; curField++; }
-        }
-        res[i] = a;
-    }
+// Query i is bits [i·nBits, (i+1)·nBits) of the 63-bit field stream, LSB first (TranscriptGL::getPermutations).
+__global__ void _permutationBits(uint64_t* res, uint64_t n, uint64_t nBits, const Goldilocks::Element* fields)
+{
+    const uint64_t i = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
+    if (i >= n) return;
+    const gl64_t* fields_ = (const gl64_t*)fields;
+    uint64_t a = 0, bit = i * nBits;
+    for (uint64_t j = 0; j < nBits; j++, bit++)
+        if ((uint64_t(fields_[bit / 63]) >> (bit % 63)) & 1) a |= 1ULL << j;
+    res[i] = a;
 }
 
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily)
@@ -269,7 +266,7 @@ __global__ void __getState(Goldilocks::Element* output, uint64_t nOutputs, Goldi
     }
 }
 
-__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* fields, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily){
+__global__ void __getPermutationFields(uint64_t n, uint64_t nBits, Goldilocks::Element* fields, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily){
 
     uint64_t totalBits = n * nBits;
 
@@ -278,27 +275,6 @@ __global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Gol
     for (uint64_t i = 0; i < NFields; i++)
     {
         fields[i] = _getFields1(state, pending, out, pending_cursor, out_cursor, arity, hashFamily);
-    }
-
-    uint64_t curField = 0;
-    uint64_t curBit = 0;
-    gl64_t* fields_ = (gl64_t*)fields;
-    for (uint64_t i = 0; i < n; i++)
-    {
-        uint64_t a = 0;
-        for (uint64_t j = 0; j < nBits; j++)
-        {
-            uint64_t bit = (uint64_t(fields_[curField]) >> curBit) & 1;
-            if (bit)
-                a = a + (1ULL << j);
-            curBit++;
-            if (curBit == 63)
-            {
-                curBit = 0;
-                curField++;
-            }
-        }
-        res[i] = a;
     }
 }
 
@@ -474,7 +450,7 @@ __global__ void __getStateWarp(Goldilocks::Element* output, uint64_t nOutputs, G
     }
 }
 
-__global__ void __getPermutationsWarp(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* fields, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily)
+__global__ void __getPermutationFieldsWarp(uint64_t n, uint64_t nBits, Goldilocks::Element* fields, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily)
 {
     const uint32_t lane = threadIdx.x;
     const uint32_t transcriptOutSize = TRX_OUT_SIZE(arity);
@@ -494,29 +470,6 @@ __global__ void __getPermutationsWarp(uint64_t *res, uint64_t n, uint64_t nBits,
             *out_cursor = *out_cursor - 1;
         }
         __syncwarp();
-    }
-
-    if (lane == 0) {
-        uint64_t curField = 0;
-        uint64_t curBit = 0;
-        gl64_t* fields_ = (gl64_t*)fields;
-        for (uint64_t i = 0; i < n; i++)
-        {
-            uint64_t a = 0;
-            for (uint64_t j = 0; j < nBits; j++)
-            {
-                uint64_t bit = (uint64_t(fields_[curField]) >> curBit) & 1;
-                if (bit)
-                    a = a + (1ULL << j);
-                curBit++;
-                if (curBit == 63)
-                {
-                    curBit = 0;
-                    curField++;
-                }
-            }
-            res[i] = a;
-        }
     }
 }
 
@@ -640,11 +593,12 @@ void TranscriptGL_GPU::getState(Goldilocks::Element* output, uint64_t nOutputs, 
 void TranscriptGL_GPU::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* perm_scratch, cudaStream_t stream)
 {
     if (get_hash_family() == HashFamily::Blake3) {
-        _b3GetPermutations<<<1, 1, 0, stream>>>(res, n, nBits, perm_scratch, b3);
-        return;
+        _b3GetPermutationFields<<<1, 1, 0, stream>>>(n, nBits, perm_scratch, b3);
+    } else if (parallel) {
+        __getPermutationFieldsWarp<<<1, 32, 0, stream>>>(n, nBits, perm_scratch, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
+    } else {
+        __getPermutationFields<<<1, 1, 0, stream>>>(n, nBits, perm_scratch, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
     }
-    if (parallel)
-        __getPermutationsWarp<<<1, 32, 0, stream>>>(res, n, nBits, perm_scratch, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
-    else
-        __getPermutations<<<1, 1, 0, stream>>>(res, n, nBits, perm_scratch, state, pending, out, pending_cursor, out_cursor, arity, static_cast<uint8_t>(get_hash_family()));
+    // The squeeze is sequential; the bit extraction is one thread per query.
+    if (n > 0) _permutationBits<<<(uint32_t)((n + 255) / 256), 256, 0, stream>>>(res, n, nBits, perm_scratch);
 }

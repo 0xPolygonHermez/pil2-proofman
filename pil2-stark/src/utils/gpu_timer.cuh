@@ -6,6 +6,8 @@
 #include <string>
 #include <cuda_runtime.h>
 #include <vector>
+#include <map>
+#include <mutex>
 #ifndef __GOLDILOCKS_ENV__
 #include "zklog.hpp"
 #endif
@@ -36,7 +38,51 @@ public:
 
     void init(cudaStream_t s) { stream = s; }
 
+    // Per-device event pool reused across timers: cudaEventCreate/Destroy take the driver lock.
+    static std::mutex& eventPoolMutex() { static std::mutex m; return m; }
+    static std::map<int, std::vector<cudaEvent_t>>& eventPool() {
+        static std::map<int, std::vector<cudaEvent_t>> p;
+        return p;
+    }
+    int device = -1;
+
+    // Fill the current device's pool up front, so the first job creates none on its hot path.
+    static void prewarmEvents(size_t n) {
+        int dev = 0;
+        if (cudaGetDevice(&dev) != cudaSuccess) return;
+        std::lock_guard<std::mutex> lk(eventPoolMutex());
+        auto& v = eventPool()[dev];
+        while (v.size() < n) {
+            cudaEvent_t e;
+            if (cudaEventCreate(&e) != cudaSuccess) return;
+            v.push_back(e);
+        }
+    }
+
+    // Pooled only once its last record completed: a pending one could be re-recorded by another
+    // stream. cudaEventDestroy defers the release of a pending event itself. Both run in the
+    // event's own context: teardown may reach here with another GPU current.
+    void releaseEvent(cudaEvent_t event) {
+        if (event == nullptr) return;
+        int prev = -1;
+        const bool switched = device >= 0 && cudaGetDevice(&prev) == cudaSuccess && prev != device &&
+                              cudaSetDevice(device) == cudaSuccess;
+        if (device >= 0 && cudaEventQuery(event) == cudaSuccess) {
+            std::lock_guard<std::mutex> lk(eventPoolMutex());
+            eventPool()[device].push_back(event);
+        } else {
+            cudaEventDestroy(event);
+        }
+        if (switched) cudaSetDevice(prev);
+    }
+
     bool createEvent(cudaEvent_t& event) {
+        if (device < 0 && cudaGetDevice(&device) != cudaSuccess) device = -1;
+        if (device >= 0) {
+            std::lock_guard<std::mutex> lk(eventPoolMutex());
+            auto& v = eventPool()[device];
+            if (!v.empty()) { event = v.back(); v.pop_back(); return true; }
+        }
         cudaError_t err = cudaEventCreate(&event);
         if (err != cudaSuccess) {
 #ifndef __GOLDILOCKS_ENV__
@@ -217,8 +263,8 @@ public:
     void clearCategories() {
         for (auto& [_, entries] : multiTimers) {
             for (auto& entry : entries) {
-                cudaEventDestroy(entry.start);
-                cudaEventDestroy(entry.stop);
+                releaseEvent(entry.start);
+                releaseEvent(entry.stop);
             }
         }
         multiTimers.clear();
@@ -227,8 +273,8 @@ public:
 
     void clear() {
         for (auto& [_, entry] : timers) {
-            cudaEventDestroy(entry.start);
-            cudaEventDestroy(entry.stop);
+            releaseEvent(entry.start);
+            releaseEvent(entry.stop);
         }
         timers.clear();
         order.clear();
@@ -236,12 +282,17 @@ public:
 
         for (auto& [_, entries] : multiTimers) {
             for (auto& entry : entries) {
-                cudaEventDestroy(entry.start);
-                cudaEventDestroy(entry.stop);
+                releaseEvent(entry.start);
+                releaseEvent(entry.stop);
             }
         }
         multiTimers.clear();
         activeCategoryTimers.clear();
+    }
+
+    // Copy/wait categories, reported apart from SM work.
+    static bool isTransferCategory(const std::string& c) {
+        return c == "H2D_COPY" || c == "D2H_COPY" || c == "STAGED_WAIT" || c == "STAGED_D2D" || c == "LOAD_TREE_WAIT";
     }
 
     void logCategoryContributions(const std::string& total_name) {
@@ -253,21 +304,35 @@ public:
         // recorded during the load phase used to be divided by the proof's own span.
         double time_total = getTimeSec(total_name);
         if (multiTimers.empty()) return;
-        zklog.trace("     KERNELS CONTRIBUTIONS:");
 
-        std::vector<std::pair<std::string, double>> category_times;
+        std::vector<std::pair<std::string, double>> kernel_times, transfer_times;
         for (const auto& [category, entries] : multiTimers) {
-            category_times.emplace_back(category, getCategoryTotalTimeSec(category));
+            double t = getCategoryTotalTimeSec(category);
+            (isTransferCategory(category) ? transfer_times : kernel_times).emplace_back(category, t);
         }
 
-        std::sort(category_times.begin(), category_times.end(),
-                  [](const auto& a, const auto& b) { return a.second > b.second; });
+        auto byDesc = [](const auto& a, const auto& b) { return a.second > b.second; };
+        std::sort(kernel_times.begin(), kernel_times.end(), byDesc);
+        std::sort(transfer_times.begin(), transfer_times.end(), byDesc);
+
         std::ostringstream oss;
-        for (const auto& [category, total_sec] : category_times) {
-           oss << std::fixed << std::setprecision(4) << total_sec << "s (" << std::setprecision(2) << (total_sec / time_total) * 100.0 << "%)";
-            zklog.trace("        " + category + std::string(15 - std::min<size_t>(15, category.size()), ' ') + ":  " + oss.str());
-            oss.str("");
-            oss.clear();
+        auto dump = [&](const std::vector<std::pair<std::string, double>>& v) {
+            for (const auto& [category, total_sec] : v) {
+               oss << std::fixed << std::setprecision(4) << total_sec << "s (" << std::setprecision(2) << (total_sec / time_total) * 100.0 << "%)";
+                zklog.trace("        " + category + std::string(15 - std::min<size_t>(15, category.size()), ' ') + ":  " + oss.str());
+                oss.str("");
+                oss.clear();
+            }
+        };
+        if (!kernel_times.empty()) {
+            zklog.trace("     KERNELS CONTRIBUTIONS:");
+            dump(kernel_times);
+        }
+        // Printed apart: copy engine and stalls on it. Counted in the percentages, but not added to
+        // kernel time.
+        if (!transfer_times.empty()) {
+            zklog.trace("     TRANSFERS / STALLS (copy engine, not GPU compute):");
+            dump(transfer_times);
         }
 #endif
     }

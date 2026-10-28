@@ -176,6 +176,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_seq(Goldilocks::Element *tr
 template<uint32_t SPONGE_WIDTH_T>
 void Poseidon2Goldilocks<SPONGE_WIDTH_T>::grinding(uint64_t &nonce, const uint64_t* in, const uint32_t n_bits)
 {
+    if (n_bits == 0) { nonce = 0; return; } // every nonce passes (and 1 << 64 below is UB)
     // Total hashes needed for S-bit security at n_bits target difficulty:
     //   N = -S · ln(2) / ln(1 - 2^-n_bits).  Same formula as the GPU path;
     // log1p/ldexp keep precision for small 2^-n_bits.
@@ -552,7 +553,10 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx(Goldilocks::Eleme
 }
 #endif
 
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
+// Scoped AVX-512 codegen; a global -mavx512f would leak EVEX library-wide.
+#pragma GCC push_options
+#pragma GCC target("avx512f")
 
 
 template<uint32_t SPONGE_WIDTH_T>
@@ -710,6 +714,7 @@ void Poseidon2Goldilocks<SPONGE_WIDTH_T>::merkletree_batch_avx512(Goldilocks::El
     }
 }
 
+#pragma GCC pop_options
 #endif
 
 // Explicit template instantiations

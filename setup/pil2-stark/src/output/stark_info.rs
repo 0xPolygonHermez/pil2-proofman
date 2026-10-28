@@ -1,17 +1,21 @@
-//! Build the various JSON output structures for starkinfo, expressionsinfo, and verifierinfo.
+//! Build the starkinfo JSON output structure (expressionsinfo and verifierinfo are built by
+//! `pil_info::output::expressions_info`).
 //!
 //! per-AIR child-process pipeline in `setup_cmd.rs` and from the recursive/final
 //! setup modules.
 
 use serde_json::json;
 
-use crate::pil::gen_code::{PilCodeResult, ProcessedHintField};
-use crate::types::pilout_info::{SetupResult, FIELD_EXTENSION};
+use crate::pil::gen_code::PilCodeResult;
+use crate::types::pilout_info::SetupResult;
+use crate::types::FIELD_EXTENSION;
 use crate::types::security;
-use crate::types::stark_struct::StarkStruct;
+use crate::types::security::pcs::{Batching, LowDegreeTest, Pcs};
+use crate::types::security::regimes::DecodingRegime;
+use crate::types::stark_struct::{FriStruct, StarkStruct, StirStruct};
 use crate::types::output::{
-    BoundaryOutput, ChallengeMapEntryOutput, CodeEntry, CodeRef, EvMapEntry, NameStageEntry, PolMapEntry,
-    PublicMapEntry, SecurityInfo, StarkInfoOutput, StarkStructOutput, StepOutput,
+    BoundaryOutput, ChallengeMapEntryOutput, EvMapEntry, NameStageEntry, PolMapEntry, PublicMapEntry, SecurityInfo,
+    StarkInfoOutput, StarkStructOutput,
 };
 
 /// Build the StarkInfoOutput for JSON serialization from internal types.
@@ -21,29 +25,51 @@ pub fn build_starkinfo_output(
     stark_struct: &StarkStruct,
     pil_code: &PilCodeResult,
     opening_points: &[i64],
-    fri: &security::pcs::Fri,
+    ldt: &LowDegreeTest,
     airgroup_id: usize,
     air_id: usize,
+    circuit_type: Option<u64>,
     air_name: &str,
     c_exp_id: usize,
-    fri_exp_id: usize,
+    deep_exp_id: usize,
     q_deg: i64,
 ) -> StarkInfoOutput {
-    let steps: Vec<StepOutput> = stark_struct.steps.iter().map(|s| StepOutput { n_bits: s.n_bits }).collect();
-
-    let fri_security = fri.security_params();
+    // The query counts and grinding bits are the solved values, not the settings.
+    let low_degree_test = match (ldt, &stark_struct.low_degree_test) {
+        (LowDegreeTest::Fri(fri), crate::types::stark_struct::LowDegreeTest::Fri(schedule)) => {
+            let sec = fri.security_params();
+            let solved = FriStruct {
+                num_queries: sec.n_queries as usize,
+                grinding_bits_queries: sec.grinding_bits_query as usize,
+                ..schedule.clone()
+            };
+            crate::types::stark_struct::LowDegreeTest::Fri(solved)
+        }
+        (LowDegreeTest::Stir(stir), crate::types::stark_struct::LowDegreeTest::Stir(schedule)) => {
+            let sec = stir.security_params();
+            let solved = StirStruct {
+                num_queries: sec.num_queries.iter().map(|&t| t as usize).collect(),
+                grinding_bits_queries: sec.grinding_bits_queries.iter().map(|&g| g as usize).collect(),
+                ..schedule.clone()
+            };
+            crate::types::stark_struct::LowDegreeTest::Stir(solved)
+        }
+        (ldt, schedule) => panic!(
+            "solved low-degree test {} does not match the stark struct's {:?}",
+            ldt.identifier(),
+            schedule.kind()
+        ),
+    };
     let stark_struct_out = StarkStructOutput {
         n_bits: stark_struct.n_bits,
         merkle_tree_arity: stark_struct.merkle_tree_arity,
         transcript_arity: stark_struct.transcript_arity,
         merkle_tree_custom: stark_struct.merkle_tree_custom,
         last_level_verification: stark_struct.last_level_verification,
-        pow_bits: fri_security.grinding_bits_query as usize,
         hash_commits: stark_struct.hash_commits,
         n_bits_ext: stark_struct.n_bits_ext,
         verification_hash_type: stark_struct.verification_hash_type.clone(),
-        steps,
-        n_queries: fri_security.n_queries as usize,
+        low_degree_test,
     };
 
     let boundaries: Vec<BoundaryOutput> = {
@@ -265,6 +291,7 @@ pub fn build_starkinfo_output(
         map_sections_n,
         air_id,
         airgroup_id,
+        circuit_type,
         n_constants: setup.n_constants,
         n_publics: setup.n_publics,
         air_group_values,
@@ -280,12 +307,14 @@ pub fn build_starkinfo_output(
         n_constraints: setup.constraints.len(),
         n_commitments_stage1,
         ev_map,
-        fri_exp_id,
+        deep_exp_id,
+        fri_batch_size: pil_code.fri_batch_size,
         security: Some(SecurityInfo {
-            proximity_gap: fri.proximity_gap(),
-            proximity_parameter: fri.proximity_parameter(),
-            regime: "JBR".to_string(),
+            proximity_gap: ldt.proximity_gap(),
+            proximity_parameter: ldt.proximity_parameter(),
+            regime: ldt.regime_identifier().to_string(),
         }),
+        multiproof: false,
     }
 }
 
@@ -294,365 +323,112 @@ pub fn collect_opening_points(setup: &SetupResult) -> Vec<i64> {
 }
 
 pub fn compute_log_folding_factors(stark_struct: &StarkStruct) -> Vec<u32> {
-    let steps = &stark_struct.steps;
-    let mut factors = Vec::new();
-    for i in 0..steps.len() - 1 {
-        factors.push((steps[i].n_bits - steps[i + 1].n_bits) as u32);
-    }
-    factors
+    stark_struct.low_degree_test.log_folding_factors()
 }
 
-/// Build the expressionsinfo JSON structure.
-pub fn build_expressions_info_json(info: &crate::pil::gen_code::ExpressionsInfo) -> serde_json::Value {
-    let expressions_code: Vec<serde_json::Value> = info
-        .expressions_code
-        .iter()
-        .map(|e| {
-            let mut obj = serde_json::Map::new();
-            obj.insert("tmpUsed".to_string(), json!(e.tmp_used));
-            obj.insert("code".to_string(), code_entries_to_json(&e.code));
-            obj.insert("expId".to_string(), json!(e.exp_id));
-            obj.insert("stage".to_string(), json!(e.stage));
-            if let Some(ref dest) = e.dest {
-                obj.insert(
-                    "dest".to_string(),
-                    json!({
-                        "op": dest.op,
-                        "stage": dest.stage,
-                        "stageId": dest.stage_id,
-                        "id": dest.id,
-                    }),
+/// Solve the security parameters (query counts, grinding) of the low-degree
+/// test the stark struct selects, for a DEEP polynomial batching `batch_size`
+/// openings. The 128-bit JBR target and the geometry (rate, tree arity, pow
+/// bits) come from the stark struct, as the FRI-only callers always did.
+pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> LowDegreeTest {
+    let field_size = security::goldilocks_safe_extension_field_size();
+    let rate = 1.0 / (1u64 << (stark_struct.n_bits_ext - stark_struct.n_bits)) as f64;
+    let log_folding_factors = compute_log_folding_factors(stark_struct);
+    match &stark_struct.low_degree_test {
+        crate::types::stark_struct::LowDegreeTest::Fri(fri) => {
+            LowDegreeTest::Fri(security::pcs::Fri::new(security::pcs::FriConfig {
+                field_size,
+                trace_length: 1u32 << stark_struct.n_bits,
+                rate,
+                batch_size,
+                batching: Batching::Powers,
+                log_folding_factors,
+                max_grinding_bits_query: fri.grinding_bits_queries as u64,
+                use_max_grinding_bits_query: true,
+                // The prover grinds only before the queries are drawn.
+                max_grinding_bits_non_query: 0,
+                tree_arity: stark_struct.merkle_tree_arity as u64,
+                hash_size_bits: 256,
+                target_security_bits: 128,
+                regime: DecodingRegime::Jbr,
+            }))
+        }
+        crate::types::stark_struct::LowDegreeTest::Stir(stir) => {
+            let solved = security::pcs::Stir::new(security::pcs::StirConfig {
+                field_size,
+                trace_length: 1u32 << stark_struct.n_bits,
+                rate,
+                batch_size,
+                batching: Batching::Powers,
+                log_folding_factors,
+                max_grinding_bits_queries: stir.grinding_bits_queries.iter().map(|&g| g as u64).collect(),
+                use_max_grinding_bits_query: true,
+                // The prover grinds only before each round's queries are drawn.
+                max_grinding_bits_non_query: 0,
+                tree_arity: stark_struct.merkle_tree_arity as u64,
+                hash_size_bits: 256,
+                base_field_bits: 64,
+                target_security_bits: 128,
+                regime: DecodingRegime::Jbr,
+            });
+            // The GPU prover sizes every query buffer for round 1's count.
+            let t = &solved.security_params().num_queries;
+            if let Some(i) = t.iter().position(|&ti| ti > t[0]) {
+                panic!(
+                    "STIR schedule needs {} queries in round {i} but {} in round 0 (queries {t:?}, grinding {:?}); \
+                     every round must need at most round 0's queries: raise the later rounds' grindingBitsQueries",
+                    t[i], t[0], stir.grinding_bits_queries
                 );
             }
-            obj.insert("line".to_string(), json!(e.line));
-            serde_json::Value::Object(obj)
-        })
-        .collect();
-
-    let constraints: Vec<serde_json::Value> = info
-        .constraints
-        .iter()
-        .map(|c| {
-            let mut obj = serde_json::Map::new();
-            obj.insert("tmpUsed".to_string(), json!(c.tmp_used));
-            obj.insert("code".to_string(), code_entries_to_json(&c.code));
-            obj.insert("boundary".to_string(), json!(c.boundary));
-            if let Some(ref line) = c.line {
-                obj.insert("line".to_string(), json!(line));
-            }
-            obj.insert("imPol".to_string(), json!(c.im_pol));
-            obj.insert("stage".to_string(), json!(c.stage));
-            if let Some(omin) = c.offset_min {
-                obj.insert("offsetMin".to_string(), json!(omin));
-            }
-            if let Some(omax) = c.offset_max {
-                obj.insert("offsetMax".to_string(), json!(omax));
-            }
-            serde_json::Value::Object(obj)
-        })
-        .collect();
-
-    let hints_info: Vec<serde_json::Value> = info
-        .hints_info
-        .iter()
-        .map(|h| {
-            json!({
-                "name": h.name,
-                "fields": h.fields.iter().map(|f| {
-                    json!({
-                        "name": f.name,
-                        "values": f.values.iter().map(|v| {
-                            hint_value_to_json(v)
-                        }).collect::<Vec<_>>(),
-                    })
-                }).collect::<Vec<serde_json::Value>>(),
-            })
-        })
-        .collect();
-
-    // Build with explicit ordering matching golden: hintsInfo, expressionsCode, constraints
-    let mut result = serde_json::Map::new();
-    result.insert("hintsInfo".to_string(), serde_json::Value::Array(hints_info));
-    result.insert("expressionsCode".to_string(), serde_json::Value::Array(expressions_code));
-    result.insert("constraints".to_string(), serde_json::Value::Array(constraints));
-    serde_json::Value::Object(result)
-}
-
-/// Build the verifierinfo JSON structure.
-pub fn build_verifier_info_json(info: &crate::pil::gen_code::VerifierInfo) -> serde_json::Value {
-    // qVerifier: {tmpUsed, code, line: ""}
-    let mut qv = serde_json::Map::new();
-    qv.insert("tmpUsed".to_string(), json!(info.q_verifier.tmp_used));
-    qv.insert("code".to_string(), code_entries_to_json(&info.q_verifier.code));
-    qv.insert("line".to_string(), json!(""));
-
-    // queryVerifier: {tmpUsed, code, expId, stage, line}
-    let mut qr = serde_json::Map::new();
-    qr.insert("tmpUsed".to_string(), json!(info.query_verifier.tmp_used));
-    qr.insert("code".to_string(), code_entries_to_json(&info.query_verifier.code));
-    qr.insert("expId".to_string(), json!(info.query_verifier.exp_id));
-    qr.insert("stage".to_string(), json!(info.query_verifier.stage));
-    qr.insert("line".to_string(), json!(info.query_verifier.line));
-
-    let mut result = serde_json::Map::new();
-    result.insert("qVerifier".to_string(), serde_json::Value::Object(qv));
-    result.insert("queryVerifier".to_string(), serde_json::Value::Object(qr));
-    serde_json::Value::Object(result)
-}
-
-/// Serialize a hint field value to JSON matching golden field order per op type.
-///
-/// Field order per op type (matching JS object spread behavior):
-///   string:         op, string, pos
-///   number:         op, value, pos
-///   tmp:            op, id, dim, pos
-///   cm/custom/const: op, id, stageId, rowOffset, stage, dim, [commitId,] rowOffsetIndex, pos
-///   challenge/public/airgroupvalue/airvalue/proofvalue:
-///                   op, id, dim, stage, [stageId,] [airgroupId,] pos
-pub(crate) fn hint_value_to_json(v: &ProcessedHintField) -> serde_json::Value {
-    let mut obj = serde_json::Map::new();
-    obj.insert("op".to_string(), json!(v.op));
-    match v.op.as_str() {
-        "string" => {
-            if let Some(ref val) = v.value {
-                obj.insert("string".to_string(), json!(val));
-            }
-            obj.insert("pos".to_string(), json!(v.pos));
-        }
-        "number" => {
-            if let Some(ref val) = v.value {
-                obj.insert("value".to_string(), json!(val));
-            }
-            obj.insert("pos".to_string(), json!(v.pos));
-        }
-        "tmp" => {
-            if let Some(id) = v.id {
-                obj.insert("id".to_string(), json!(id));
-            }
-            if let Some(dim) = v.dim {
-                obj.insert("dim".to_string(), json!(dim));
-            }
-            obj.insert("pos".to_string(), json!(v.pos));
-        }
-        "cm" | "custom" | "const" => {
-            if let Some(id) = v.id {
-                obj.insert("id".to_string(), json!(id));
-            }
-            if let Some(sid) = v.stage_id {
-                obj.insert("stageId".to_string(), json!(sid));
-            }
-            if let Some(ro) = v.row_offset {
-                obj.insert("rowOffset".to_string(), json!(ro));
-            }
-            if let Some(stage) = v.stage {
-                obj.insert("stage".to_string(), json!(stage));
-            }
-            if let Some(dim) = v.dim {
-                obj.insert("dim".to_string(), json!(dim));
-            }
-            if let Some(cid) = v.commit_id {
-                obj.insert("commitId".to_string(), json!(cid));
-            }
-            if let Some(roi) = v.row_offset_index {
-                obj.insert("rowOffsetIndex".to_string(), json!(roi));
-            }
-            obj.insert("pos".to_string(), json!(v.pos));
-        }
-        "challenge" => {
-            if let Some(stage) = v.stage {
-                obj.insert("stage".to_string(), json!(stage));
-            }
-            if let Some(sid) = v.stage_id {
-                obj.insert("stageId".to_string(), json!(sid));
-            }
-            if let Some(id) = v.id {
-                obj.insert("id".to_string(), json!(id));
-            }
-            if let Some(dim) = v.dim {
-                obj.insert("dim".to_string(), json!(dim));
-            }
-            obj.insert("pos".to_string(), json!(v.pos));
-        }
-        "airgroupvalue" => {
-            if let Some(id) = v.id {
-                obj.insert("id".to_string(), json!(id));
-            }
-            if let Some(agid) = v.airgroup_id {
-                obj.insert("airgroupId".to_string(), json!(agid));
-            }
-            if let Some(dim) = v.dim {
-                obj.insert("dim".to_string(), json!(dim));
-            }
-            if let Some(stage) = v.stage {
-                obj.insert("stage".to_string(), json!(stage));
-            }
-            obj.insert("pos".to_string(), json!(v.pos));
-        }
-        "public" => {
-            if let Some(id) = v.id {
-                obj.insert("id".to_string(), json!(id));
-            }
-            if let Some(stage) = v.stage {
-                obj.insert("stage".to_string(), json!(stage));
-            }
-            obj.insert("pos".to_string(), json!(v.pos));
-        }
-        _ => {
-            // airvalue, proofvalue
-            if let Some(id) = v.id {
-                obj.insert("id".to_string(), json!(id));
-            }
-            if let Some(stage) = v.stage {
-                obj.insert("stage".to_string(), json!(stage));
-            }
-            if let Some(dim) = v.dim {
-                obj.insert("dim".to_string(), json!(dim));
-            }
-            obj.insert("pos".to_string(), json!(v.pos));
+            LowDegreeTest::Stir(solved)
         }
     }
-    serde_json::Value::Object(obj)
 }
 
-pub fn code_entries_to_json(entries: &[CodeEntry]) -> serde_json::Value {
-    let arr: Vec<serde_json::Value> = entries
-        .iter()
-        .map(|e| {
-            json!({
-                "op": e.op,
-                "dest": code_ref_to_json(&e.dest),
-                "src": e.src.iter().map(code_ref_to_json).collect::<Vec<_>>(),
-            })
-        })
-        .collect();
-    serde_json::Value::Array(arr)
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::stark_struct::{generate_stark_struct, LowDegreeTest as Ldt, LowDegreeTestKind, StarkSettings};
 
-/// Serialize a code ref to JSON matching the golden field order per type.
-///
-/// Each type has its own property order matching the JS object construction
-/// order in codegen.js. The patterns are:
-///   tmp (from binary op):  type, id, dim
-///   tmp (from exp ref):    type, [expId,] id, prime, dim
-///   cm/const/custom:       type, id, prime, dim, [commitId]
-///   eval:                  type, id, dim
-///   challenge:             type, id, stageId, dim, stage
-///   public:                type, id, dim
-///   proofvalue:            type, id, stage, dim
-///   number:                type, value, dim
-///   airgroupvalue/airvalue: type, id, stage, dim, [airgroupId]
-///   xDivXSubXi:            type, id, opening, dim
-///   Zi:                    type, boundaryId, dim
-pub fn code_ref_to_json(r: &CodeRef) -> serde_json::Value {
-    let mut obj = serde_json::Map::new();
-    obj.insert("type".to_string(), json!(r.ref_type));
-    match r.ref_type.as_str() {
-        "tmp" => {
-            // Three tmp patterns based on JS object construction order:
-            //   1. Binary op dest:       type, id, dim (no prime, no expId)
-            //   2. pilCodeGen wrapper:    type, prime, id, dim (prime present, no expId)
-            //   3. evalExp exp ref:       type, expId, id, prime, dim
-            if let Some(eid) = r.exp_id {
-                obj.insert("expId".to_string(), json!(eid));
-                obj.insert("id".to_string(), json!(r.id));
-                if let Some(prime) = r.prime {
-                    obj.insert("prime".to_string(), json!(prime));
-                }
-            } else if let Some(prime) = r.prime {
-                obj.insert("prime".to_string(), json!(prime));
-                obj.insert("id".to_string(), json!(r.id));
-            } else {
-                obj.insert("id".to_string(), json!(r.id));
-            }
-            obj.insert("dim".to_string(), json!(r.dim));
+    fn stir(n_bits: usize, blowup: usize, fold: usize, grinding: &[usize]) -> StarkStruct {
+        let settings = StarkSettings {
+            low_degree_test: Some(LowDegreeTestKind::Stir),
+            initial_blowup_factor: Some(blowup),
+            initial_folding_factor: Some(fold),
+            ..Default::default()
+        };
+        let mut ss = generate_stark_struct(&settings, n_bits, "blake3");
+        if let Ldt::Stir(s) = &mut ss.low_degree_test {
+            s.grinding_bits_queries =
+                grinding.iter().copied().chain(std::iter::repeat(0)).take(s.folding_factors.len()).collect();
         }
-        "cm" | "const" | "custom" => {
-            // For ImPol cm refs, expId comes before id (matching JS object
-            // property insertion order from evalExp where r starts as
-            // {type: "exp", expId, id, ...} then fixCommitPol changes type/id)
-            if let Some(eid) = r.exp_id {
-                obj.insert("expId".to_string(), json!(eid));
-            }
-            obj.insert("id".to_string(), json!(r.id));
-            obj.insert("prime".to_string(), json!(r.prime.unwrap_or(0)));
-            obj.insert("dim".to_string(), json!(r.dim));
-            if let Some(cid) = r.commit_id {
-                obj.insert("commitId".to_string(), json!(cid));
-            }
-        }
-        "number" => {
-            if let Some(ref value) = r.value {
-                obj.insert("value".to_string(), json!(value));
-            }
-            obj.insert("dim".to_string(), json!(r.dim));
-        }
-        "challenge" => {
-            obj.insert("id".to_string(), json!(r.id));
-            if let Some(sid) = r.stage_id {
-                obj.insert("stageId".to_string(), json!(sid));
-            }
-            obj.insert("dim".to_string(), json!(r.dim));
-            if let Some(stage) = r.stage {
-                obj.insert("stage".to_string(), json!(stage));
-            }
-        }
-        "eval" => {
-            if let Some(eid) = r.exp_id {
-                obj.insert("expId".to_string(), json!(eid));
-            }
-            obj.insert("id".to_string(), json!(r.id));
-            obj.insert("dim".to_string(), json!(r.dim));
-            if let Some(cid) = r.commit_id {
-                obj.insert("commitId".to_string(), json!(cid));
-            }
-        }
-        "public" => {
-            obj.insert("id".to_string(), json!(r.id));
-            obj.insert("dim".to_string(), json!(r.dim));
-        }
-        "proofvalue" => {
-            obj.insert("id".to_string(), json!(r.id));
-            if let Some(stage) = r.stage {
-                obj.insert("stage".to_string(), json!(stage));
-            }
-            obj.insert("dim".to_string(), json!(r.dim));
-        }
-        "airgroupvalue" | "airvalue" => {
-            obj.insert("id".to_string(), json!(r.id));
-            if let Some(stage) = r.stage {
-                obj.insert("stage".to_string(), json!(stage));
-            }
-            obj.insert("dim".to_string(), json!(r.dim));
-            if let Some(agid) = r.airgroup_id {
-                obj.insert("airgroupId".to_string(), json!(agid));
-            }
-        }
-        "xDivXSubXi" => {
-            obj.insert("id".to_string(), json!(r.id));
-            if let Some(opening) = r.opening {
-                obj.insert("opening".to_string(), json!(opening));
-            }
-            obj.insert("dim".to_string(), json!(r.dim));
-        }
-        "Zi" => {
-            if let Some(bid) = r.boundary_id {
-                obj.insert("boundaryId".to_string(), json!(bid));
-            }
-            obj.insert("dim".to_string(), json!(r.dim));
-        }
-        _ => {
-            obj.insert("id".to_string(), json!(r.id));
-            obj.insert("dim".to_string(), json!(r.dim));
-            if let Some(prime) = r.prime {
-                obj.insert("prime".to_string(), json!(prime));
-            }
-            if let Some(ref value) = r.value {
-                obj.insert("value".to_string(), json!(value));
-            }
-            if let Some(stage) = r.stage {
-                obj.insert("stage".to_string(), json!(stage));
-            }
-        }
+        ss
     }
-    serde_json::Value::Object(obj)
+
+    #[test]
+    fn basic_air_schedule_needs_no_more_queries_after_round_0() {
+        solve_low_degree_test(&stir(22, 1, 4, &[24]), 200);
+    }
+
+    /// The setup writes a basic air's circuitType and proofman reads the same value back.
+    #[test]
+    fn starkinfo_output_carries_circuit_type() {
+        // proofman requires a security section, which the default leaves out.
+        let security = Some(SecurityInfo { proximity_gap: 0.0, proximity_parameter: 0.0, regime: "JBR".into() });
+        let with = StarkInfoOutput { circuit_type: Some(4), security: security.clone(), ..Default::default() };
+        let json = crate::output::json::to_json_string(&with).unwrap();
+        assert!(json.contains("\"circuitType\": 4") || json.contains("\"circuitType\":4"), "{json}");
+        assert_eq!(proofman_common::StarkInfo::from_json(&json).circuit_type, Some(4));
+
+        let without = crate::output::json::to_json_string(&StarkInfoOutput { security, ..Default::default() }).unwrap();
+        assert!(!without.contains("circuitType"), "{without}");
+        assert_eq!(proofman_common::StarkInfo::from_json(&without).circuit_type, None);
+    }
+
+    /// The GPU sizes its query buffers for round 0; a schedule that needs more later fails at setup.
+    #[test]
+    #[should_panic(expected = "every round must need at most round 0's queries")]
+    fn later_round_needing_more_queries_is_refused() {
+        solve_low_degree_test(&stir(20, 4, 2, &[30]), 200);
+    }
 }

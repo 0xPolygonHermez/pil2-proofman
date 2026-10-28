@@ -1,0 +1,30 @@
+[package]
+name = "pilfflonk-setup"
+description = "Setup for the pilfflonk backend (PIL2 over BN128 with fflonk): validation, grouping, bytecode and keys"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+[dependencies]
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+num-bigint = { workspace = true }
+prost = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The Solidity verifier's template (`solidity`), as `pil2-stark-recurser` renders its own.
+tera = "1"
+tracing = { workspace = true }
+pil2-pilout = { workspace = true }
+pil-info = { workspace = true }
+proofman-pilfflonk = { workspace = true }
+proofman-starks-lib-c = { workspace = true }
+
+[dev-dependencies]
+# The Rust oracle, which the fixtures of the C++ interpreter's tests and of the JS verifier's
+# (tests/js_fixtures.rs) are computed with.
+proofman-pilfflonk = { workspace = true, features = ["oracle"] }

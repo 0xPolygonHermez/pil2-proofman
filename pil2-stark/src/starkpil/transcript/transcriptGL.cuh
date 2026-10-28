@@ -28,15 +28,14 @@ __global__ void _b3Add2(Goldilocks::Element* input1, uint64_t size1,
                         Goldilocks::Element* input2, uint64_t size2, Blake3TrxStateGPU* b3);
 __global__ void _b3GetField(uint64_t* output, Blake3TrxStateGPU* b3);
 __global__ void _b3GetState(Goldilocks::Element* output, uint64_t nOutputs, Blake3TrxStateGPU* b3);
-__global__ void _b3GetPermutations(uint64_t* res, uint64_t n, uint64_t nBits,
-                                   Goldilocks::Element* fields, Blake3TrxStateGPU* b3);
+__global__ void _b3GetPermutationFields(uint64_t n, uint64_t nBits, Goldilocks::Element* fields, Blake3TrxStateGPU* b3);
 
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
 __device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
 __global__ void _add(Goldilocks::Element* input, uint64_t size, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
 __global__ void _getField(uint64_t* output, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
 __global__ void __getState(Goldilocks::Element* output, uint64_t nOutputs, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity);
-__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* fields, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily);
+__global__ void __getPermutationFields(uint64_t n, uint64_t nBits, Goldilocks::Element* fields, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint32_t arity, uint8_t hashFamily);
 
 class TranscriptGL_GPU
 {
