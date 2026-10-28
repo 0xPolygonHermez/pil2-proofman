@@ -102,7 +102,7 @@ pub(crate) fn merkle_proof_levels(n_bits: u64, arity: u64, last_level_verificati
     levels.saturating_sub(last_level_verification) as usize
 }
 
-fn last_level_words(arity: u64, last_level_verification: u64) -> usize {
+pub(crate) fn last_level_words(arity: u64, last_level_verification: u64) -> usize {
     match last_level_verification {
         0 => 0,
         llv => (arity.pow(llv as u32) * 4) as usize,

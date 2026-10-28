@@ -110,8 +110,6 @@ impl<F: PrimeField64> Hash<F> for Poseidon1_16 {
 
 // ── BLAKE3 ───────────────────────────────────────────────────────────────────
 
-use crate::Blake3Transcript;
-
 /// BLAKE3 as this tree's hash, at the one width the Merkle geometry needs.
 ///
 /// Eight field elements is a 64-byte BLAKE3 block, and at arity 2 a Merkle node is exactly two
@@ -130,10 +128,24 @@ pub struct Blake3_8;
 /// BLAKE3-256 of `input` as canonical little-endian u64 words, first four words of the digest.
 /// Mirrors `blake3core::hash_le64` + `pack4`, canonicalisation included.
 fn blake3_hash_le64<F: PrimeField64>(input: &[F]) -> [F; 4] {
-    let mut t = Blake3Transcript::<F>::new();
-    t.put(input);
-    let s = t.get_state();
-    [s[0], s[1], s[2], s[3]]
+    #[cfg(all(target_os = "zkvm", target_vendor = "zisk"))]
+    let digest = crate::blake3_core::hash_le64_words(input.len(), |i| input[i].as_canonical_u64());
+    #[cfg(not(all(target_os = "zkvm", target_vendor = "zisk")))]
+    let digest = {
+        // Whole chunks per `update`: the crate's per-call overhead dominates 8-byte updates.
+        let mut h = ::blake3::Hasher::new();
+        let mut buf = [0u8; 1024];
+        for part in input.chunks(128) {
+            for (i, x) in part.iter().enumerate() {
+                buf[8 * i..8 * i + 8].copy_from_slice(&x.as_canonical_u64().to_le_bytes());
+            }
+            h.update(&buf[..8 * part.len()]);
+        }
+        let out = h.finalize();
+        let b = out.as_bytes();
+        core::array::from_fn::<u64, 4, _>(|i| u64::from_le_bytes(b[8 * i..8 * i + 8].try_into().unwrap()))
+    };
+    digest.map(|w| F::from_u64(crate::blake3_transcript::canon(w)))
 }
 
 impl<F: PrimeField64> Hash<F> for Blake3_8 {
@@ -235,8 +247,8 @@ mod blake3_tests {
         assert_eq!(root_krate, root_core, "merkle roots differ between the backends");
 
         // Same starting digest and siblings through each backend.
-        let mp: Vec<Vec<Goldilocks>> =
-            (0..4).map(|lvl| elems(4).iter().map(|x| *x + Goldilocks::from_u64(lvl)).collect()).collect();
+        let mp: Vec<Goldilocks> =
+            (0..4).flat_map(|lvl| elems(4).into_iter().map(move |x| x + Goldilocks::from_u64(lvl))).collect();
         let start: [Goldilocks; 8] = core::array::from_fn(|i| if i < 4 { leaves[i] } else { Goldilocks::ZERO });
 
         let mut v_krate = start;

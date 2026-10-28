@@ -8,12 +8,9 @@ use num_traits::Float;
 use crate::layout::{merkle_proof_levels, sibling_words};
 use crate::replay::{fri_transcript, prefix_transcript};
 use proofman_fields::{
-    intt_tiny, partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Hash, PrimeField64,
-    TranscriptLike,
+    cubic_mul_acc, intt_tiny, DotAcc, partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field,
+    Goldilocks, Hash, PrimeField64, TranscriptLike,
 };
-
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -87,6 +84,53 @@ pub fn fri_query_verify(
     deep_query_eval(&info.fri_ev_groups, info.n_challenges, challenges, evals, vals, xdivxsub)
 }
 
+/// `1 / (x_q - xi * w^o)` for every query `q` and opening point `o`, one row per query. The
+/// `xi * w^o` terms do not depend on the query, and the whole table shares one inversion
+/// (Montgomery's trick). `None` if any denominator is zero.
+pub(crate) fn deep_denominators_inv(
+    queries: &[u64],
+    opening_points: &[i64],
+    xi: CubicExtensionField<Goldilocks>,
+    n_bits: u64,
+    n_bits_ext: u64,
+) -> Option<Vec<Vec<CubicExtensionField<Goldilocks>>>> {
+    let w_ext = Goldilocks::new(Goldilocks::W[n_bits_ext as usize]);
+    let w_bits = Goldilocks::new(Goldilocks::W[n_bits as usize]);
+    let xi_wi: Vec<CubicExtensionField<Goldilocks>> = opening_points
+        .iter()
+        // w has order 2^n_bits, so its exponents work mod 2^n_bits: a negative o needs no inversion.
+        .map(|&o| xi * w_bits.exp_u64(o as u64 & ((1u64 << n_bits) - 1)))
+        .collect();
+
+    let n_open = opening_points.len();
+    if n_open == 0 {
+        return Some(vec![Vec::new(); queries.len()]);
+    }
+    let mut den = Vec::with_capacity(queries.len() * n_open);
+    for &q in queries {
+        let x = Goldilocks::new(Goldilocks::SHIFT) * w_ext.exp_u64(q);
+        den.extend(xi_wi.iter().map(|&s| CubicExtensionField { value: [x, Goldilocks::ZERO, Goldilocks::ZERO] } - s));
+    }
+
+    // prefix[i] = den[0] * ... * den[i-1]
+    let mut prefix = Vec::with_capacity(den.len());
+    let mut acc = CubicExtensionField::<Goldilocks>::one();
+    for &d in &den {
+        prefix.push(acc);
+        acc *= d;
+    }
+    if acc.is_zero() {
+        return None;
+    }
+    let mut inv = acc.inverse();
+    for i in (0..den.len()).rev() {
+        let d = den[i];
+        den[i] = inv * prefix[i];
+        inv *= d;
+    }
+    Some(den.chunks(n_open).map(|c| c.to_vec()).collect())
+}
+
 /// The DEEP polynomial at one query point from its `FriEvalGroup` table: FRI's first-layer value
 /// and STIR's f_0 alike (both are the setup's `deepExpId`).
 pub fn deep_query_eval(
@@ -97,39 +141,83 @@ pub fn deep_query_eval(
     vals: &[Vec<Goldilocks>],
     xdivxsub: &[CubicExtensionField<Goldilocks>],
 ) -> CubicExtensionField<Goldilocks> {
-    let vf1 = challenges[n_challenges as usize - 2];
-    let vf2 = challenges[n_challenges as usize - 1];
+    let consts = DeepQueryConsts::new(fri_ev_groups, n_challenges, challenges, evals);
+    consts.eval(fri_ev_groups, vals, xdivxsub)
+}
 
-    let n_cols = fri_ev_groups.iter().flat_map(|g| g.refs.iter()).map(|e| e.col as usize + 1).max().unwrap_or(0);
-    let mut vf2_pow = Vec::with_capacity(n_cols);
-    let mut p = CubicExtensionField { value: [Goldilocks::ONE, Goldilocks::ZERO, Goldilocks::ZERO] };
-    for _ in 0..n_cols {
-        vf2_pow.push(p);
-        p *= vf2;
-    }
+/// The query-independent half of [`deep_query_eval`], built once per proof.
+pub(crate) struct DeepQueryConsts {
+    vf1: CubicExtensionField<Goldilocks>,
+    vf2_pow: Vec<CubicExtensionField<Goldilocks>>,
+    /// Per group, `sum(eval * vf2^col)`: the evals are the same at every query.
+    group_evals: Vec<CubicExtensionField<Goldilocks>>,
+}
 
-    // ev_map is sorted by opening point, so the groups walk `evals` in order.
-    let mut eval_idx = 0;
-    let mut fri = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
-    for (g, group) in fri_ev_groups.iter().enumerate() {
-        let mut acc = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
-        for e in &group.refs {
-            let leaf = &vals[e.bucket as usize];
-            let off = e.offset as usize;
-            let eval = evals[eval_idx];
-            eval_idx += 1;
-            // sub_from_scalar(v) is v - self, i.e. col - eval.
-            let term = if e.dim == 1 {
-                eval.sub_from_scalar(leaf[off])
-            } else {
-                CubicExtensionField { value: [leaf[off], leaf[off + 1], leaf[off + 2]] } - eval
-            };
-            acc += term * vf2_pow[e.col as usize];
+impl DeepQueryConsts {
+    pub(crate) fn new(
+        fri_ev_groups: &[FriEvalGroup],
+        n_challenges: u64,
+        challenges: &[CubicExtensionField<Goldilocks>],
+        evals: &[CubicExtensionField<Goldilocks>],
+    ) -> Self {
+        let vf1 = challenges[n_challenges as usize - 2];
+        let vf2 = challenges[n_challenges as usize - 1];
+
+        let n_cols = fri_ev_groups.iter().flat_map(|g| g.refs.iter()).map(|e| e.col as usize + 1).max().unwrap_or(0);
+        let mut vf2_pow = Vec::with_capacity(n_cols);
+        let mut p = CubicExtensionField::<Goldilocks>::one();
+        for _ in 0..n_cols {
+            vf2_pow.push(p);
+            p *= vf2;
         }
-        let scaled = acc * xdivxsub[group.opening as usize];
-        fri = if g == 0 { scaled } else { fri * vf1 + scaled };
+
+        // ev_map is sorted by opening point, so the groups walk `evals` in order.
+        let mut eval_idx = 0;
+        let group_evals = fri_ev_groups
+            .iter()
+            .map(|group| {
+                let mut acc = CubicExtensionField::<Goldilocks>::zero();
+                for e in &group.refs {
+                    acc += evals[eval_idx] * vf2_pow[e.col as usize];
+                    eval_idx += 1;
+                }
+                acc
+            })
+            .collect();
+
+        Self { vf1, vf2_pow, group_evals }
     }
-    fri
+
+    /// `sum((col - eval) * vf2^col)` split as `sum(col * vf2^col) - group_evals`, so a base-field
+    /// column costs a base-by-extension product instead of a full extension one.
+    pub(crate) fn eval(
+        &self,
+        fri_ev_groups: &[FriEvalGroup],
+        vals: &[Vec<Goldilocks>],
+        xdivxsub: &[CubicExtensionField<Goldilocks>],
+    ) -> CubicExtensionField<Goldilocks> {
+        let mut fri = CubicExtensionField::<Goldilocks>::zero();
+        for (g, group) in fri_ev_groups.iter().enumerate() {
+            // One reduction per coordinate per group, not per term.
+            let mut acc = [DotAcc::default(); 3];
+            for e in &group.refs {
+                let leaf = &vals[e.bucket as usize];
+                let off = e.offset as usize;
+                let p = self.vf2_pow[e.col as usize].value;
+                if e.dim == 1 {
+                    for (acc, p) in acc.iter_mut().zip(p) {
+                        acc.add(leaf[off], p);
+                    }
+                } else {
+                    cubic_mul_acc(&mut acc, &[leaf[off], leaf[off + 1], leaf[off + 2]], &p);
+                }
+            }
+            let acc = CubicExtensionField { value: [acc[0].finish(), acc[1].finish(), acc[2].finish()] };
+            let scaled = (acc - self.group_evals[g]) * xdivxsub[group.opening as usize];
+            fri = if g == 0 { scaled } else { fri * self.vf1 + scaled };
+        }
+        fri
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -230,7 +318,7 @@ where
     let n_sibs_per_lvl = n_siblings_per_level as usize;
 
     let mut s0_vals: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_queries);
-    let mut s0_siblings: Vec<Vec<Vec<Vec<Goldilocks>>>> = Vec::with_capacity(n_queries);
+    let mut s0_siblings: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_queries);
     let mut s0_last_levels: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_stages_plus_2);
 
     for _q in 0..n_queries {
@@ -246,15 +334,9 @@ where
 
     for _q in 0..n_queries {
         let mut query_siblings = Vec::with_capacity(n_stages_plus_2);
-        let mut siblings = Vec::with_capacity(n_sibs);
-        for _ in 0..n_sibs {
-            let mut sibling = Vec::with_capacity(n_sibs_per_lvl);
-            for _ in 0..n_sibs_per_lvl {
-                sibling.push(Goldilocks::new(proof[p as usize]));
-                p += 1;
-            }
-            siblings.push(sibling);
-        }
+        let siblings: Vec<Goldilocks> =
+            proof[p as usize..][..n_sibs * n_sibs_per_lvl].iter().map(|&x| Goldilocks::new(x)).collect();
+        p += (n_sibs * n_sibs_per_lvl) as u64;
         query_siblings.push(siblings);
         s0_siblings.push(query_siblings);
     }
@@ -284,15 +366,9 @@ where
         }
 
         for query_siblings in s0_siblings.iter_mut() {
-            let mut siblings = Vec::with_capacity(n_sibs);
-            for _ in 0..n_sibs {
-                let mut sibling = Vec::with_capacity(n_sibs_per_lvl);
-                for _ in 0..n_sibs_per_lvl {
-                    sibling.push(Goldilocks::new(proof[p as usize]));
-                    p += 1;
-                }
-                siblings.push(sibling);
-            }
+            let siblings: Vec<Goldilocks> =
+                proof[p as usize..][..n_sibs * n_sibs_per_lvl].iter().map(|&x| Goldilocks::new(x)).collect();
+            p += (n_sibs * n_sibs_per_lvl) as u64;
             query_siblings.push(siblings);
         }
 
@@ -322,7 +398,7 @@ where
         roots_fri.push(root);
     }
 
-    let mut siblings_fri: Vec<Vec<Vec<Vec<Goldilocks>>>> =
+    let mut siblings_fri: Vec<Vec<Vec<Goldilocks>>> =
         (0..n_queries).map(|_| Vec::with_capacity(n_fri_steps_minus_1)).collect();
     let mut vals_fri: Vec<Vec<Vec<Goldilocks>>> =
         (0..n_queries).map(|_| Vec::with_capacity(n_fri_steps_minus_1)).collect();
@@ -350,15 +426,9 @@ where
         );
 
         for query_siblings in siblings_fri.iter_mut() {
-            let mut siblings = Vec::with_capacity(n_siblings_fri);
-            for _ in 0..n_siblings_fri {
-                let mut sibling = Vec::with_capacity(n_siblings_per_level_fri);
-                for _ in 0..n_siblings_per_level_fri {
-                    sibling.push(Goldilocks::new(proof[p as usize]));
-                    p += 1;
-                }
-                siblings.push(sibling);
-            }
+            let n = n_siblings_fri * n_siblings_per_level_fri;
+            let siblings: Vec<Goldilocks> = proof[p as usize..][..n].iter().map(|&x| Goldilocks::new(x)).collect();
+            p += n as u64;
             query_siblings.push(siblings);
         }
 
@@ -405,7 +475,6 @@ where
         verifier_info.n_challenges_total as usize
     ];
 
-    let mut xdivxsub: Vec<Vec<CubicExtensionField<Goldilocks>>> = Vec::with_capacity(n_queries);
     let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
 
     let (mut transcript, prefix) = prefix_transcript::<TranscriptT>(
@@ -462,30 +531,19 @@ where
 
     let xi_challenge = challenges[verifier_info.n_challenges as usize - 3];
 
-    let w_ext = Goldilocks::new(Goldilocks::W[verifier_info.n_bits_ext as usize]);
-    let w_bits = Goldilocks::new(Goldilocks::W[verifier_info.n_bits as usize]);
-    let n_opening_points = verifier_info.opening_points.len();
-
-    for &fri_query in fri_queries.iter().take(n_queries) {
-        let mut query_xdivxsub = Vec::with_capacity(n_opening_points);
-        let x = CubicExtensionField {
-            value: [Goldilocks::new(Goldilocks::SHIFT) * w_ext.exp_u64(fri_query), Goldilocks::ZERO, Goldilocks::ZERO],
-        };
-        for o in 0..n_opening_points {
-            let mut wi = Goldilocks::ONE;
-            let abs_opening = verifier_info.opening_points[o].unsigned_abs();
-            for _ in 0..abs_opening {
-                wi *= w_bits;
-            }
-
-            if verifier_info.opening_points[o] < 0 {
-                wi = wi.inverse();
-            }
-
-            query_xdivxsub.push((x - (xi_challenge * wi)).inverse());
+    let xdivxsub = match deep_denominators_inv(
+        &fri_queries[..n_queries.min(fri_queries.len())],
+        &verifier_info.opening_points,
+        xi_challenge,
+        verifier_info.n_bits,
+        verifier_info.n_bits_ext,
+    ) {
+        Some(t) => t,
+        None => {
+            v_error!("DEEP denominator x - xi * w^o is zero");
+            return false;
         }
-        xdivxsub.push(query_xdivxsub);
-    }
+    };
 
     let x_n = xi_challenge.pow(1 << verifier_info.n_bits);
 
@@ -507,6 +565,9 @@ where
     }
 
     v_debug!("Verifying proof");
+
+    let deep_consts =
+        DeepQueryConsts::new(&verifier_info.fri_ev_groups, verifier_info.n_challenges, &challenges, &evals);
 
     let check_query = |q: usize| -> bool {
         // 1) Fixed MT
@@ -541,7 +602,7 @@ where
 
         // 3) FRI Query
         let idx = fri_queries[q] % (1 << verifier_info.fri_steps[0]);
-        let query_fri = fri_query_verify(verifier_info, &challenges, &evals, &s0_vals[q], &xdivxsub[q]);
+        let query_fri = deep_consts.eval(&verifier_info.fri_ev_groups, &s0_vals[q], &xdivxsub[q]);
 
         let valid_query = if verifier_info.n_fri_steps > 1 {
             let group_idx = (idx / (1 << verifier_info.fri_steps[1])) as usize;
@@ -602,9 +663,6 @@ where
         true
     };
 
-    #[cfg(feature = "parallel")]
-    let all_valid = (0..n_queries).into_par_iter().all(check_query);
-    #[cfg(not(feature = "parallel"))]
     let all_valid = (0..n_queries).all(check_query);
 
     if !all_valid {
