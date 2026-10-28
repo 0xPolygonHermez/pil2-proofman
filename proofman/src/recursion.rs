@@ -640,6 +640,12 @@ pub unsafe fn generate_recursive_proof<F: PrimeField64>(
         "",
         reserved_stream, // scheduler-reserved stream, or u64::MAX for one-off internal selection
     );
+    if stream_id == u64::MAX {
+        return Err(ProofmanError::ProofmanError(format!(
+            "no GPU stream can hold the {:?} proof [{airgroup_id}:{air_id}]",
+            witness.proof_type
+        )));
+    }
 
     // Trace H2D is async: gate reuse on the stream's commit event so a concurrent take() can't
     // overwrite `trace` mid-copy. Must finish before the lease drops at scope exit and pools the trace.
@@ -1366,6 +1372,11 @@ pub fn generate_recurser_aggregator_proof<F: PrimeField64>(
         recurser_id, // disambiguates recurser setups sharing (0,0,"recursive2")
         u64::MAX,    // one-off launch: reserve stream internally
     );
+    if stream_id == u64::MAX {
+        memory_handler_recursive_witness.release_buffer_trace(trace)?;
+        timer_stop_and_log_info!(GENERATE_RECURSER_AGGREGATOR);
+        return Err(ProofmanError::ProofmanError(format!("no GPU stream can hold recurser '{recurser_id}'")));
+    }
 
     // Trace H2D is async: gate reuse on the commit event, as `generate_recursive_proof` does.
     if setup.gpu {

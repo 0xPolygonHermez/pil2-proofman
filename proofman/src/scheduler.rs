@@ -10,12 +10,15 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ffi::c_void;
 use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use proofman_fields::PrimeField64;
 use proofman_common::{MemoryHandlerRecursive, Proof, ProofType, WitnessPriority};
 
 use crate::Ledger;
-use proofman_starks_lib_c::{release_stream_reservation_c, reserve_best_stream_nonblock_c, reserve_stream_if_free_c};
+use proofman_starks_lib_c::{
+    release_stream_reservation_c, reserve_best_stream_nonblock_c, reserve_stream_if_free_c, STREAM_NEVER_FITS,
+};
 
 /// Warm-affinity key: launches sharing it can reuse a resident const-tree.
 type Key = (usize, usize, ProofType);
@@ -118,6 +121,8 @@ pub struct RecursiveScheduler<F: PrimeField64> {
     /// choose among equally-warm free streams, and a `HashMap`'s arbitrary order would make that
     /// choice — and so the whole stream assignment — differ between otherwise identical runs.
     stream_warm: BTreeMap<usize, Key>,
+    /// First key no stream could ever hold, and since when without any reservation succeeding.
+    never_fits: Option<(Key, Instant)>,
 }
 
 // `Send` is derived, not asserted: `d_buffers` is stored as a `usize` (the opaque handle is only
@@ -133,6 +138,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             last_prefetch_key: None,
             big_keys: HashMap::new(),
             stream_warm: BTreeMap::new(),
+            never_fits: None,
         }
     }
 
@@ -352,6 +358,12 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
         None
     }
 
+    /// A queued key no stream can ever hold, once nothing has been placed for `after`: the worker
+    /// fails the job instead of parking forever.
+    pub fn never_fits_for(&self, after: Duration) -> Option<Key> {
+        self.never_fits.filter(|(_, since)| since.elapsed() >= after).map(|(key, _)| key)
+    }
+
     /// Reserve the best free stream for `key` (today's C selection), recording the
     /// assignment so future launches of `key` target this stream and stale entries for a
     /// repurposed stream are overwritten. Returns the reserved stream or `None`.
@@ -366,9 +378,17 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
             is_aggregation(t),
             force_recursive,
         );
+        if s == STREAM_NEVER_FITS {
+            // A forced request sees only the recursive pool; the basic stream may still take it.
+            if !force_recursive {
+                self.never_fits.get_or_insert((key, Instant::now()));
+            }
+            return None;
+        }
         if s == u32::MAX {
             return None;
         }
+        self.never_fits = None;
         self.stream_warm.insert(s as usize, key);
         Some(StreamReservation::new(self.d_buffers, s))
     }
@@ -382,6 +402,7 @@ impl<F: PrimeField64> RecursiveScheduler<F> {
     /// it is the smallest) and leaves the pool-integrity check in `reset()` short. Only safe once
     /// every producer and consumer is joined — otherwise a live worker can push right after.
     pub fn drain_all(&mut self) -> (Vec<Proof<F>>, Vec<usize>) {
+        self.never_fits = None;
         let witnesses: Vec<Proof<F>> = self.queues.drain().flat_map(|(_, q)| q.into_iter()).collect();
         let basics: Vec<usize> = self.basic_queue.drain().flat_map(|(_, q)| q.into_iter()).collect();
         (witnesses, basics)
