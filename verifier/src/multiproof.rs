@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use proofman_fields::{CubicExtensionField, Field, Goldilocks, Hash, PrimeField64, TranscriptLike};
 
 use crate::layout::{last_level_words, sibling_words, LowDegreeLayout, ProofLayout, Segment};
-use crate::replay::{fri_transcript, prefix_transcript, stir_transcript};
+use crate::replay::{fri_transcript, prefix_transcript, stir_transcript, StirTranscript};
 
 type E3 = CubicExtensionField<Goldilocks>;
 
@@ -112,15 +112,25 @@ fn split<'a>(layout: &ProofLayout, proof: &'a [u64], flat: bool) -> Option<(Spli
     Some((split, sibling_blocks))
 }
 
-/// Per tree, the leaf each query opens.
+/// What a checked expansion hands the STIR verifier: per tree (stage trees, then T_0 … T_{M−1}) the
+/// leaves it checked against the root, and the transcript it replayed to find them.
+pub(crate) struct Proven {
+    pub leaves: Vec<Vec<u64>>,
+    pub prefix: [E3; 6],
+    pub stir: StirTranscript,
+}
+
+type Replay = Option<([E3; 6], StirTranscript)>;
+
+/// Per tree, the leaf each query opens; for STIR also the replayed transcript.
 fn tree_indices<T: TranscriptLike<Goldilocks>>(
     layout: &ProofLayout,
     split: &Split,
     vk: &[u64],
-) -> Option<Vec<Vec<u64>>> {
+) -> Option<(Vec<Vec<u64>>, Replay)> {
     let root_c: [Goldilocks; 4] = core::array::from_fn(|i| Goldilocks::new(vk[i]));
     let roots = split.roots(split.data[1], 3);
-    let (mut t, _) = prefix_transcript::<T>(
+    let (mut t, prefix) = prefix_transcript::<T>(
         &root_c,
         &split.gl(1, split.dense[0] as usize),
         &[roots[0], roots[1], roots[2]],
@@ -132,7 +142,7 @@ fn tree_indices<T: TranscriptLike<Goldilocks>>(
     let n_stage_trees = layout.n_stages as usize + 2;
     let ldt_roots = split.data[3 + n_stage_trees];
     let tail = *split.data.last()?;
-    let (round1, ldt_trees): (Vec<u64>, Vec<Vec<u64>>) = match &layout.ldt {
+    let (round1, ldt_trees, replay): (Vec<u64>, Vec<Vec<u64>>, Replay) = match &layout.ldt {
         LowDegreeLayout::Fri { steps, n_queries } => {
             let n = steps.len();
             let n_final = 1usize << steps[n - 1];
@@ -146,7 +156,7 @@ fn tree_indices<T: TranscriptLike<Goldilocks>>(
                 layout.hash_commits,
             );
             let folded = steps[1..].iter().map(|&bits| fri.queries.iter().map(|q| q % (1 << bits)).collect()).collect();
-            (fri.queries, folded)
+            (fri.queries, folded, None)
         }
         LowDegreeLayout::Stir(stir) => {
             // The tail: β_1 … β_{M−1}, p, the nonces, then Âns and Sh.
@@ -178,8 +188,8 @@ fn tree_indices<T: TranscriptLike<Goldilocks>>(
                 &split.dense[nonces..nonces + m],
             );
             // Round i's queries index L_{i−1}; T_{i−1}'s leaves are their cosets.
-            let raw: Vec<Vec<u64>> =
-                st.rounds.into_iter().map(|r| r.queries).chain(core::iter::once(st.final_queries)).collect();
+            let raw: Vec<&Vec<u64>> =
+                st.rounds.iter().map(|r| &r.queries).chain(core::iter::once(&st.final_queries)).collect();
             let folded = raw
                 .iter()
                 .enumerate()
@@ -188,12 +198,12 @@ fn tree_indices<T: TranscriptLike<Goldilocks>>(
                     q.iter().map(|r| r % n_leaves).collect()
                 })
                 .collect();
-            (raw[0].clone(), folded)
+            (raw[0].clone(), folded, Some((prefix, st)))
         }
     };
     let mut out = vec![round1; n_stage_trees];
     out.extend(ldt_trees);
-    Some(out)
+    Some((out, replay))
 }
 
 /// Widest node the codec walks: a node hash takes `arity` four-word digests in a state of at most 16.
@@ -267,7 +277,8 @@ enum Top<'a> {
 }
 
 /// One tree's flat sibling block, from its leaf digests and the kept siblings at `kept[*kp..]`.
-/// With `top`, it is also the multiproof check: every leaf against the tree's root.
+/// With `top`, it is instead the multiproof check (every leaf against the tree's root) and the
+/// block stays zero: the verifier then reads no path.
 fn expand_tree<NH: Hash<Goldilocks>>(
     idx: &[u64],
     n_levels: usize,
@@ -280,6 +291,7 @@ fn expand_tree<NH: Hash<Goldilocks>>(
     let (a, w) = (arity as usize, sibling_words(arity));
     let mut out = vec![0u64; idx.len() * n_levels * w];
     let (mut nodes, mut node_of) = leaves(idx);
+    let write = top.is_none();
     // Duplicate indices keep the first query's leaf; a different second one fails its own path,
     // or, when this is the check, here.
     let mut digest = vec![[Goldilocks::ZERO; 4]; nodes.len()];
@@ -320,7 +332,7 @@ fn expand_tree<NH: Hash<Goldilocks>>(
             next_digest.push([s[0], s[1], s[2], s[3]]);
             children.push(full);
         }
-        for (q, n) in node_of.iter_mut().enumerate() {
+        for (q, n) in node_of.iter_mut().enumerate().filter(|_| write) {
             let (ch, curr) = (&children[run_of[*n]], (nodes[*n] % arity) as usize);
             for j in (0..a).filter(|&j| j != curr) {
                 let at = (q * n_levels + level) * w + slot(j, curr) * 4;
@@ -350,7 +362,7 @@ pub fn prune_proof<T: TranscriptLike<Goldilocks>>(proof: &[u64], vk: &[u64], lay
         return None;
     }
     let (split, sibling_blocks) = split(layout, proof, true)?;
-    let indices = tree_indices::<T>(layout, &split, vk)?;
+    let (indices, _) = tree_indices::<T>(layout, &split, vk)?;
     let body = 1 + split.dense[0] as usize;
     let mut out = split.dense[..body].to_vec();
     out.push(MULTIPROOF_TAG);
@@ -368,25 +380,44 @@ where
     NH: Hash<Goldilocks>,
     T: TranscriptLike<Goldilocks>,
 {
-    expand::<LH, NH, T>(wire, vk, layout, false).map(|(flat, _)| flat)
+    expand::<LH, NH, T>(wire, vk, layout, false).map(|(flat, _, _)| flat)
 }
 
-/// [`expand_proof`] that also checks every tree's openings against its root (or published last
-/// level), and returns per tree the leaves it proved. `None` if any check fails.
-pub fn expand_proof_checked<LH, NH, T>(
-    wire: &[u64],
-    vk: &[u64],
-    layout: &ProofLayout,
-) -> Option<(Vec<u64>, Vec<Vec<u64>>)>
+/// Checks every tree's openings of `wire` against its root (or published last level) and returns,
+/// per tree, the leaves it proved. `None` if any check fails. Merkle only, not a verifier: use
+/// [`crate::verify_multiproof_stir`].
+pub fn check_multiproof<LH, NH, T>(wire: &[u64], vk: &[u64], layout: &ProofLayout) -> Option<Vec<Vec<u64>>>
 where
     LH: Hash<Goldilocks>,
     NH: Hash<Goldilocks>,
     T: TranscriptLike<Goldilocks>,
 {
-    expand::<LH, NH, T>(wire, vk, layout, true)
+    expand::<LH, NH, T>(wire, vk, layout, true).map(|(_, leaves, _)| leaves)
 }
 
-fn expand<LH, NH, T>(wire: &[u64], vk: &[u64], layout: &ProofLayout, check: bool) -> Option<(Vec<u64>, Vec<Vec<u64>>)>
+/// [`check_multiproof`] of a STIR proof, for `stark_verify_stir`: the flat proof with its sibling
+/// blocks left zero (it reads no path), and the transcript the check replayed.
+pub(crate) fn expand_stir_checked<LH, NH, T>(
+    wire: &[u64],
+    vk: &[u64],
+    layout: &ProofLayout,
+) -> Option<(Vec<u64>, Proven)>
+where
+    LH: Hash<Goldilocks>,
+    NH: Hash<Goldilocks>,
+    T: TranscriptLike<Goldilocks>,
+{
+    let (flat, leaves, replay) = expand::<LH, NH, T>(wire, vk, layout, true)?;
+    let (prefix, stir) = replay?;
+    Some((flat, Proven { leaves, prefix, stir }))
+}
+
+fn expand<LH, NH, T>(
+    wire: &[u64],
+    vk: &[u64],
+    layout: &ProofLayout,
+    check: bool,
+) -> Option<(Vec<u64>, Vec<Vec<u64>>, Replay)>
 where
     LH: Hash<Goldilocks>,
     NH: Hash<Goldilocks>,
@@ -406,7 +437,7 @@ where
     let pruned: Vec<u64> = wire[..tag_at].iter().chain(&wire[tag_at + 1..]).copied().collect();
     let (split, _) = split(layout, &pruned, false)?;
     let kept = &pruned[split.dense.len()..];
-    let indices = tree_indices::<T>(layout, &split, vk)?;
+    let (indices, replay) = tree_indices::<T>(layout, &split, vk)?;
 
     // Tree t's top: data segments run publics, roots, evals, then each tree's last level, with
     // the low-degree test's roots between the stage trees' and its own.
@@ -450,7 +481,7 @@ where
         return None;
     }
     out.extend_from_slice(&split.dense[dp..]);
-    Some((out, indices))
+    Some((out, indices, replay))
 }
 
 #[cfg(test)]

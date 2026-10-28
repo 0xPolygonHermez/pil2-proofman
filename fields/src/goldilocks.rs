@@ -225,7 +225,8 @@ impl Field for Goldilocks {
         let mut t: u64 = 0;
         let mut r = Self::P;
         let mut newt = 1;
-        let mut newr = self.0;
+        // Canonical first: Euclid on the non-canonical zero `P` would return 1.
+        let mut newr = self.as_canonical_u64();
 
         let mut q: u64;
         let mut aux1: u64;
@@ -367,6 +368,15 @@ mod tests {
                     return Goldilocks::from_u64(next_u64);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn inverse_reads_the_canonical_value() {
+        let p = Goldilocks::ORDER_U64;
+        assert_eq!(Goldilocks(p).inverse().as_canonical_u64(), 0);
+        for k in [1u64, 2, 12345, u64::MAX - p] {
+            assert_eq!(Goldilocks(p + k).inverse(), Goldilocks::new(k).inverse());
         }
     }
 

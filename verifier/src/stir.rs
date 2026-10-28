@@ -29,8 +29,8 @@ use proofman_fields::{
 };
 
 use crate::layout::{merkle_proof_levels, sibling_words};
-use crate::multiproof::expand_proof_checked;
-use crate::replay::{prefix_transcript, stir_transcript};
+use crate::multiproof::{expand_stir_checked, Proven};
+use crate::replay::{prefix_transcript, stir_transcript, StirTranscript};
 use crate::verifier::{deep_denominators_inv, Boundary, DeepQueryConsts, FriEvalGroup};
 
 type E3 = CubicExtensionField<Goldilocks>;
@@ -146,11 +146,11 @@ pub fn expected_stir_proof_size_bytes(info: &StirVerifierInfo) -> usize {
 pub struct StirSection {
     /// Roots of T_0..T_{M−1}. Unlike FRI, the first one is a commitment of its own (to f_0).
     pub roots: Vec<[Goldilocks; 4]>,
-    /// cosets[i][q]: the opened coset of T_i at query q, 2^{kᵢ} extension elements flat.
+    /// `cosets[i][q]`: the opened coset of T_i at query q, 2^{kᵢ} extension elements flat.
     pub cosets: Vec<Vec<Vec<Goldilocks>>>,
-    /// siblings[i][q]: the Merkle path of that opening, levels flat (`sibling_words` each).
+    /// `siblings[i][q]`: the Merkle path of that opening, levels flat (`sibling_words` each).
     pub siblings: Vec<Vec<Vec<Goldilocks>>>,
-    /// last_levels[i]: the published bottom level of T_i (empty when lastLevelVerification = 0).
+    /// `last_levels[i]`: the published bottom level of T_i (empty when lastLevelVerification = 0).
     pub last_levels: Vec<Vec<Goldilocks>>,
     /// β_{i,1}, i = 1..M−1 (s = 1).
     pub betas: Vec<E3>,
@@ -167,6 +167,11 @@ pub struct StirSection {
 /// Walk the STIR section out of `proof` starting at `*p`, which the caller has length-checked
 /// against `stir_section_size_words`.
 pub fn parse_stir_section(proof: &[u64], p: &mut usize, params: &StirParams) -> StirSection {
+    parse_stir_section_impl(proof, p, params, true)
+}
+
+/// [`parse_stir_section`]; without `with_siblings` the Merkle paths are stepped over, `siblings` empty.
+fn parse_stir_section_impl(proof: &[u64], p: &mut usize, params: &StirParams, with_siblings: bool) -> StirSection {
     let m = params.m();
     let n_sibs_per_level = ((params.arity - 1) * 4) as usize;
     let num_nodes_level = if params.last_level_verification == 0 {
@@ -205,13 +210,17 @@ pub fn parse_stir_section(proof: &[u64], p: &mut usize, params: &StirParams) -> 
         }
         cosets.push(tree_cosets);
 
-        let mut tree_siblings = Vec::with_capacity(t);
-        for _ in 0..t {
-            let n = n_sibs * n_sibs_per_level;
-            tree_siblings.push(proof[*p..][..n].iter().map(|&x| Goldilocks::new(x)).collect::<Vec<_>>());
-            *p += n;
+        let n = n_sibs * n_sibs_per_level;
+        if with_siblings {
+            let mut tree_siblings = Vec::with_capacity(t);
+            for _ in 0..t {
+                tree_siblings.push(proof[*p..][..n].iter().map(|&x| Goldilocks::new(x)).collect::<Vec<_>>());
+                *p += n;
+            }
+            siblings.push(tree_siblings);
+        } else {
+            *p += t * n;
         }
-        siblings.push(tree_siblings);
 
         let mut level = Vec::with_capacity(num_nodes_level * 4);
         for _ in 0..num_nodes_level * 4 {
@@ -519,9 +528,8 @@ where
     let leaf = raw % n_leaves;
     let vals = &section.cosets[tree][q];
 
-    // `proven`: the multiproof expansion already checked T_{i−1}'s openings against its root, at
-    // the indices its own transcript replay gave. Both replays read the same words, so this only
-    // guards against the two drifting apart; the binding is the expansion's root check.
+    // `proven`: the multiproof check already bound T_{i−1}'s openings to its root; this pins its
+    // leaf indices to ours.
     let opened = match proven {
         Some(ix) => ix.get(q) == Some(&leaf),
         None => verify_mt::<Goldilocks, LeafHash, CompressionHash>(
@@ -590,23 +598,34 @@ where
     TranscriptT: TranscriptLike<Goldilocks>,
     GrindingHash: Hash<Goldilocks>,
 {
-    stir_verify_impl::<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
-        transcript, section, params, check_f0, None,
-    )
+    if !params.validate() {
+        return false;
+    }
+    let challenges = stir_transcript(
+        transcript,
+        params,
+        &section.roots,
+        &section.betas,
+        &section.ans_coeffs,
+        &section.shake_coeffs,
+        &section.final_pol,
+        &section.nonces,
+    );
+    stir_verify_impl::<LeafHash, CompressionHash, GrindingHash>(section, params, &challenges, check_f0, None)
 }
 
-/// [`stir_verify`], with `proven[i]` the leaves of T_i a multiproof expansion already checked.
-fn stir_verify_impl<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
-    transcript: &mut TranscriptT,
+/// [`stir_verify`] given the STIR rounds' challenges, with `proven[i]` the leaves of T_i a multiproof
+/// expansion already checked.
+fn stir_verify_impl<LeafHash, CompressionHash, GrindingHash>(
     section: &StirSection,
     params: &StirParams,
+    challenges: &StirTranscript,
     check_f0: &mut dyn FnMut(usize, u64, E3) -> bool,
     proven: Option<&[Vec<u64>]>,
 ) -> bool
 where
     LeafHash: Hash<Goldilocks>,
     CompressionHash: Hash<Goldilocks>,
-    TranscriptT: TranscriptLike<Goldilocks>,
     GrindingHash: Hash<Goldilocks>,
 {
     if !params.validate() {
@@ -643,17 +662,10 @@ where
     // gᵢ into the corresponding value of the virtual fᵢ. ctx[0] is unused — f_0 is committed
     // directly, not as a quotient.
     let mut ctx: Vec<QuotientContext> = (0..m).map(|_| QuotientContext::new()).collect();
-
-    let challenges = stir_transcript(
-        transcript,
-        params,
-        &section.roots,
-        &section.betas,
-        &section.ans_coeffs,
-        &section.shake_coeffs,
-        &section.final_pol,
-        &section.nonces,
-    );
+    // A replay of another schedule would have the zip below skip rounds.
+    if challenges.rounds.len() + 1 != m {
+        return false;
+    }
     let mut r_fold = challenges.r_fold0;
 
     // ---- Main loop: iterations i = 1, …, M−1 --------------------------------------------------
@@ -812,7 +824,7 @@ where
     GrindingHash: Hash<Goldilocks>,
 {
     let Some((flat, proven)) =
-        expand_proof_checked::<LeafHash, CompressionHash, TranscriptT>(wire, vk, &verifier_info.proof_layout())
+        expand_stir_checked::<LeafHash, CompressionHash, TranscriptT>(wire, vk, &verifier_info.proof_layout())
     else {
         return false;
     };
@@ -832,14 +844,14 @@ type QVerify = fn(
     &[CubicExtensionField<Goldilocks>],
 ) -> CubicExtensionField<Goldilocks>;
 
-/// `proven`: per tree (stage trees, then T_0 … T_{M−1}), the leaves already checked against the
-/// tree's root by the multiproof expansion.
+/// `proven`: what the multiproof check already did — each tree's leaves checked against its root,
+/// and the transcript replayed from the same words this parses.
 fn stark_verify_stir_impl<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
     proof: &[u64],
     vk: &[u64],
     verifier_info: &StirVerifierInfo,
     q_verify: QVerify,
-    proven: Option<&[Vec<u64>]>,
+    proven: Option<&Proven>,
 ) -> bool
 where
     LeafHash: Hash<Goldilocks>,
@@ -847,6 +859,7 @@ where
     TranscriptT: TranscriptLike<Goldilocks>,
     GrindingHash: Hash<Goldilocks>,
 {
+    let leaves = proven.map(|p| p.leaves.as_slice());
     if proof.is_empty() || vk.len() < 4 {
         return false;
     }
@@ -932,13 +945,14 @@ where
         s0_vals.push(query_vals);
     }
 
+    // With `proven` the paths are never read: step over them.
+    let sib_words = n_sibs * n_sibs_per_lvl;
     for _q in 0..n_queries {
-        let mut query_siblings = Vec::with_capacity(n_stages_plus_2);
-        let siblings: Vec<Goldilocks> =
-            proof[p..][..n_sibs * n_sibs_per_lvl].iter().map(|&x| Goldilocks::new(x)).collect();
-        p += n_sibs * n_sibs_per_lvl;
-        query_siblings.push(siblings);
-        s0_siblings.push(query_siblings);
+        if proven.is_none() {
+            let siblings = proof[p..][..sib_words].iter().map(|&x| Goldilocks::new(x)).collect();
+            s0_siblings.push(vec![siblings]);
+        }
+        p += sib_words;
     }
 
     let num_nodes_level = params.arity.pow(params.last_level_verification as u32) * 4;
@@ -965,11 +979,11 @@ where
             query_vals.push(vals);
         }
 
-        for query_siblings in s0_siblings.iter_mut() {
-            let siblings: Vec<Goldilocks> =
-                proof[p..][..n_sibs * n_sibs_per_lvl].iter().map(|&x| Goldilocks::new(x)).collect();
-            p += n_sibs * n_sibs_per_lvl;
-            query_siblings.push(siblings);
+        for q in 0..n_queries {
+            if let Some(query_siblings) = s0_siblings.get_mut(q) {
+                query_siblings.push(proof[p..][..sib_words].iter().map(|&x| Goldilocks::new(x)).collect());
+            }
+            p += sib_words;
         }
 
         if params.last_level_verification > 0 {
@@ -989,7 +1003,7 @@ where
     }
 
     // ---- The STIR section replaces FRI's roots/steps/final-pol/nonce tail ---------------------
-    let section = parse_stir_section(proof, &mut p, params);
+    let section = parse_stir_section_impl(proof, &mut p, params, proven.is_none());
 
     // ---- Transcript replay: the shared prefix -------------------------------------------------
     // 2-stage AIRs with 6 stage challenges only: else a root goes unabsorbed or xi/vf1/vf2 read zero.
@@ -1002,13 +1016,29 @@ where
         return false;
     }
     let mut challenges = vec![e3_zero(); verifier_info.n_challenges_total as usize];
-    let (mut transcript, prefix) = prefix_transcript::<TranscriptT>(
-        &root_c,
-        &publics,
-        &[roots[0], roots[1], roots[2]],
-        &evals,
-        params.hash_commits,
-    );
+    let replayed;
+    let (prefix, stir_challenges) = if let Some(p) = proven {
+        (p.prefix, &p.stir)
+    } else {
+        let (mut transcript, prefix) = prefix_transcript::<TranscriptT>(
+            &root_c,
+            &publics,
+            &[roots[0], roots[1], roots[2]],
+            &evals,
+            params.hash_commits,
+        );
+        replayed = stir_transcript(
+            &mut transcript,
+            params,
+            &section.roots,
+            &section.betas,
+            &section.ans_coeffs,
+            &section.shake_coeffs,
+            &section.final_pol,
+            &section.nonces,
+        );
+        (prefix, &replayed)
+    };
     challenges[..prefix.len()].copy_from_slice(&prefix);
 
     // ---- The STIR rounds own the transcript from here. The round-1 shift queries come back as
@@ -1023,15 +1053,15 @@ where
             true
         };
         let n_stage_trees = verifier_info.n_stages as usize + 2;
-        if proven.is_some_and(|p| p.len() != n_stage_trees + params.m()) {
+        if leaves.is_some_and(|l| l.len() != n_stage_trees + params.m()) {
             return false;
         }
-        if !stir_verify_impl::<LeafHash, CompressionHash, TranscriptT, GrindingHash>(
-            &mut transcript,
+        if !stir_verify_impl::<LeafHash, CompressionHash, GrindingHash>(
             &section,
             params,
+            stir_challenges,
             &mut record_f0,
-            proven.map(|p| &p[n_stage_trees..]),
+            leaves.map(|l| &l[n_stage_trees..]),
         ) {
             v_error!("STIR verification failed");
             return false;
@@ -1072,10 +1102,9 @@ where
     let deep_consts =
         DeepQueryConsts::new(&verifier_info.fri_ev_groups, verifier_info.n_challenges, &challenges, &evals);
 
-    // The stage trees open at the round-1 queries; the expansion replayed the same transcript, so
-    // its indices can only differ if the two replays drift apart. The binding is its root check.
-    if let Some(p) = proven {
-        if p[..verifier_info.n_stages as usize + 2].iter().any(|ix| *ix != queries_l0) {
+    // The multiproof check opened the stage trees at its own round-1 indices: pin them to ours.
+    if let Some(l) = leaves {
+        if l[..verifier_info.n_stages as usize + 2].iter().any(|ix| *ix != queries_l0) {
             v_error!("multiproof expansion opened the stage trees at other rows");
             return false;
         }

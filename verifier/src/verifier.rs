@@ -98,11 +98,8 @@ pub(crate) fn deep_denominators_inv(
     let w_bits = Goldilocks::new(Goldilocks::W[n_bits as usize]);
     let xi_wi: Vec<CubicExtensionField<Goldilocks>> = opening_points
         .iter()
-        .map(|&o| {
-            // w has order 2^n_bits, so w^-k = w^(-k mod 2^n_bits): no field inversion.
-            let k = if o < 0 { o.unsigned_abs().wrapping_neg() & ((1u64 << n_bits) - 1) } else { o as u64 };
-            xi * w_bits.exp_u64(k)
-        })
+        // w has order 2^n_bits, so its exponents work mod 2^n_bits: a negative o needs no inversion.
+        .map(|&o| xi * w_bits.exp_u64(o as u64 & ((1u64 << n_bits) - 1)))
         .collect();
 
     let n_open = opening_points.len();

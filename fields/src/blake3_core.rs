@@ -162,64 +162,53 @@ fn first4(v: &[u64; 8]) -> [u64; 4] {
     [v[0], v[1], v[2], v[3]]
 }
 
+const CHUNK_WORDS: usize = CHUNK_LEN / 8;
+const IV64: [u64; 4] = [
+    IV[0] as u64 | (IV[1] as u64) << 32,
+    IV[2] as u64 | (IV[3] as u64) << 32,
+    IV[4] as u64 | (IV[5] as u64) << 32,
+    IV[6] as u64 | (IV[7] as u64) << 32,
+];
+
+/// A compression not applied yet, so the root flag can still be added: (cv, block, counter, len, flags).
+type Pending = ([u64; 4], [u64; 8], u64, u32, u32);
+
+fn apply(p: Pending) -> [u64; 4] {
+    first4(&compress64(&p.0, &p.1, p.2, p.3, p.4))
+}
+
 /// BLAKE3-256 of `n` u64 words, `word(i)` each, absorbed as little-endian bytes: the first four
 /// digest words. One-shot, so no byte buffering and no XOF machinery.
 pub fn hash_le64_words(n: usize, word: impl Fn(usize) -> u64) -> [u64; 4] {
-    const CHUNK_WORDS: usize = CHUNK_LEN / 8;
-    const IV64: [u64; 4] = [
-        IV[0] as u64 | (IV[1] as u64) << 32,
-        IV[2] as u64 | (IV[3] as u64) << 32,
-        IV[4] as u64 | (IV[5] as u64) << 32,
-        IV[6] as u64 | (IV[7] as u64) << 32,
-    ];
-
-    // The chunk's last block, still unapplied: (cv, block, counter, block_len, flags).
-    let chunk_tail = |start: usize, end: usize, counter: u64| {
-        let n_blocks = (end - start).div_ceil(8).max(1);
-        let mut cv = IV64;
-        for b in 0..n_blocks {
-            let at = start + 8 * b;
-            let block: [u64; 8] = core::array::from_fn(|k| if at + k < end { word(at + k) } else { 0 });
-            let flags = if b == 0 { CHUNK_START } else { 0 };
-            if b + 1 < n_blocks {
-                cv = first4(&compress64(&cv, &block, counter, BLOCK_LEN as u32, flags));
-            } else {
-                return (cv, block, counter, ((end - at) * 8) as u32, flags | CHUNK_END);
-            }
-        }
-        unreachable!()
-    };
-    let parent = |l: &[u64; 4], r: &[u64; 4]| [l[0], l[1], l[2], l[3], r[0], r[1], r[2], r[3]];
-
-    let n_chunks = n.div_ceil(CHUNK_WORDS).max(1);
-    // Uninitialised for the reason `Hasher::cv_stack` is: a one-chunk hash never touches it.
-    let mut stack = [MaybeUninit::<[u64; 4]>::uninit(); CV_STACK_LEN];
-    let mut depth = 0;
-    for c in 0..n_chunks - 1 {
-        let (cv, block, counter, len, flags) = chunk_tail(c * CHUNK_WORDS, (c + 1) * CHUNK_WORDS, c as u64);
-        let mut cv = first4(&compress64(&cv, &block, counter, len, flags));
-        // Same merge rule as `Hasher::push_cv`: a trailing zero bit closes a full left subtree.
-        let mut total = c as u64 + 1;
-        while total & 1 == 0 {
-            depth -= 1;
-            // SAFETY: entries below `depth` were written before `depth` was raised past them.
-            let left = unsafe { stack[depth].assume_init() };
-            cv = first4(&compress64(&IV64, &parent(&left, &cv), 0, BLOCK_LEN as u32, PARENT));
-            total >>= 1;
-        }
-        stack[depth] = MaybeUninit::new(cv);
-        depth += 1;
-    }
-
-    let last = n_chunks - 1;
-    let (mut cv, mut block, mut counter, mut len, mut flags) = chunk_tail(last * CHUNK_WORDS, n, last as u64);
-    for i in (0..depth).rev() {
-        let right = first4(&compress64(&cv, &block, counter, len, flags));
-        // SAFETY: i < depth.
-        let left = unsafe { stack[i].assume_init() };
-        (cv, block, counter, len, flags) = (IV64, parent(&left, &right), 0, BLOCK_LEN as u32, PARENT);
-    }
+    let (cv, block, counter, len, flags) = subtree(&word, n, 0, n.div_ceil(CHUNK_WORDS).max(1));
     first4(&compress64(&cv, &block, counter, len, flags | ROOT))
+}
+
+/// Chunks `[c0, c0 + nc)` of the input, as their pending top compression.
+fn subtree<W: Fn(usize) -> u64>(word: &W, n: usize, c0: usize, nc: usize) -> Pending {
+    if nc == 1 {
+        return chunk_tail(word, c0 * CHUNK_WORDS, ((c0 + 1) * CHUNK_WORDS).min(n), c0 as u64);
+    }
+    // The spec's split: the left subtree takes the largest power of two chunks below `nc`.
+    let left = 1usize << (usize::BITS - 1 - (nc - 1).leading_zeros());
+    let (l, r) = (apply(subtree(word, n, c0, left)), apply(subtree(word, n, c0 + left, nc - left)));
+    (IV64, [l[0], l[1], l[2], l[3], r[0], r[1], r[2], r[3]], 0, BLOCK_LEN as u32, PARENT)
+}
+
+/// Words `[start, end)` as one chunk: every block but the last applied.
+fn chunk_tail<W: Fn(usize) -> u64>(word: &W, start: usize, end: usize, counter: u64) -> Pending {
+    let n_blocks = (end - start).div_ceil(8).max(1);
+    let mut cv = IV64;
+    for b in 0..n_blocks {
+        let at = start + 8 * b;
+        let block: [u64; 8] = core::array::from_fn(|k| if at + k < end { word(at + k) } else { 0 });
+        let flags = if b == 0 { CHUNK_START } else { 0 };
+        if b + 1 == n_blocks {
+            return (cv, block, counter, ((end - at) * 8) as u32, flags | CHUNK_END);
+        }
+        cv = apply((cv, block, counter, BLOCK_LEN as u32, flags));
+    }
+    unreachable!()
 }
 
 /// Kept unapplied so the root can be squeezed at any output block.
@@ -463,10 +452,11 @@ mod tests {
         }
     }
 
-    /// Word counts straddling the block (8) and chunk (128) boundaries, and unbalanced chunk merges.
+    /// Word counts straddling the block (8) and chunk (128) boundaries, and unbalanced subtrees.
     #[test]
     fn hash_le64_words_matches_the_reference_crate() {
-        for n in [0usize, 1, 7, 8, 9, 15, 16, 17, 127, 128, 129, 255, 256, 257, 384, 385, 1000, 2048, 2049, 3000] {
+        let around_chunks = (1..=40).flat_map(|k| [128 * k - 1, 128 * k, 128 * k + 1]);
+        for n in [0usize, 1, 7, 8, 9, 15, 16, 17, 1000, 3000].into_iter().chain(around_chunks) {
             let words: Vec<u64> = (0..n as u64).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (i << 7)).collect();
             let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
             let want = ::blake3::hash(&bytes);

@@ -274,14 +274,10 @@ fn gather<F: Copy, const N: usize>(terms: &[(usize, usize); N], a: &[F], b: &[F]
 
 /// `acc += a * b`, the reduction deferred to `DotAcc::finish` with whatever else is summed in.
 pub fn cubic_mul_acc(acc: &mut [DotAcc; 3], a: &[Goldilocks; 3], b: &[Goldilocks; 3]) {
-    for &(i, j) in &CUBIC_C0 {
-        acc[0].add(a[i], b[j]);
-    }
-    for &(i, j) in &CUBIC_C1 {
-        acc[1].add(a[i], b[j]);
-    }
-    for &(i, j) in &CUBIC_C2 {
-        acc[2].add(a[i], b[j]);
+    for (acc, terms) in acc.iter_mut().zip([&CUBIC_C0[..], &CUBIC_C1, &CUBIC_C2]) {
+        for &(i, j) in terms {
+            acc.add(a[i], b[j]);
+        }
     }
 }
 
@@ -290,11 +286,7 @@ fn cubic_mul<F: Field>(a: &[F], b: &[F]) -> [F; 3] {
     let (a0, b0) = gather(&CUBIC_C0, a, b);
     let (a1, b1) = gather(&CUBIC_C1, a, b);
     let (a2, b2) = gather(&CUBIC_C2, a, b);
-    let c0 = F::dot(a0, b0);
-    let c1 = F::dot(a1, b1);
-    let c2 = F::dot(a2, b2);
-
-    [c0, c1, c2]
+    [F::dot(a0, b0), F::dot(a1, b1), F::dot(a2, b2)]
 }
 
 fn cubic_inv<F: Field>(a: &[F]) -> [F; 3] {

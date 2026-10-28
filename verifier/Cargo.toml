@@ -19,7 +19,6 @@ tracing = { workspace = true, optional = true }
 [features]
 default = ["std"]
 std = ["dep:tracing", "dep:bincode", "serde/std"]
-# Serial since the Merkle checks moved into the (serial) multiproof expansion: rayon's pool
-# hand-off cost ~0.2 ms per verify, more than the query loop it parallelised. Kept as a no-op so
+# A no-op since rayon was dropped (its ~0.2 ms pool hand-off outweighed the query loop); kept so
 # dependants that enable it still build.
 parallel = ["std"]

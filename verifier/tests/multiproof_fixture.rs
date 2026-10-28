@@ -3,7 +3,7 @@
 
 use proofman_fields::{Blake3Transcript, Blake3_8, Goldilocks, Hash, PrimeField64};
 use proofman_verifier::{
-    expand_proof, expand_proof_checked, prune_proof, LowDegreeLayout, ProofLayout, StirParams, VadcopFinalProof,
+    check_multiproof, expand_proof, prune_proof, LowDegreeLayout, ProofLayout, StirParams, VadcopFinalProof,
     MULTIPROOF_TAG,
 };
 
@@ -106,17 +106,16 @@ fn stir_fixture_round_trips() {
     );
 }
 
-/// The checked expansion on the real proof: honest passes with one index set per tree, and a
+/// The multiproof check on the real proof: honest passes with one index set per tree, and a
 /// flipped leaf word (absorbed nowhere, so only the Merkle check sees it), kept sibling or root
 /// is refused there, before any verifier runs.
 #[test]
-fn checked_expansion_accepts_the_stir_fixture_and_refuses_tampering() {
+fn the_multiproof_check_accepts_the_stir_fixture_and_refuses_tampering() {
     let w = wire("multiproof_stir.bin");
     let layout = stir();
-    let checked = |w: &[u64]| expand_proof_checked::<Blake3_8, Blake3_8, T>(w, &VK, &layout);
+    let checked = |w: &[u64]| check_multiproof::<Blake3_8, Blake3_8, T>(w, &VK, &layout);
 
-    let (flat, proven) = checked(&w).expect("honest proof");
-    assert_eq!(flat, expand(&w, &layout).unwrap());
+    let proven = checked(&w).expect("honest proof");
     assert_eq!(proven.iter().map(Vec::len).collect::<Vec<_>>(), [41, 41, 41, 41, 41, 26, 22]);
 
     let tag_at = 1 + w[0] as usize;
