@@ -2087,6 +2087,11 @@ where
             pctx.get_device_buffers_ptr(),
             &custom_commits_fixed_path,
         );
+        if stream_id == u64::MAX {
+            return Err(ProofmanError::ProofmanError(format!(
+                "no GPU stream can hold instance {instance_id} [{airgroup_id}:{air_id}]"
+            )));
+        }
 
         pctx.set_instance_stream_id(instance_id, stream_id);
         // Returns the stream if anything bails before the check launches on it: a stranded
@@ -4327,6 +4332,19 @@ where
                                     break Some((id, Some(sid)));
                                 }
                                 None => {
+                                    // Falls through to the cancellation cleanup below.
+                                    if cancellation_info_clone.read_recover().token.is_cancelled() {
+                                        break None;
+                                    }
+                                    if let Some((ag, air, t)) = guard.never_fits_for(std::time::Duration::from_secs(6))
+                                    {
+                                        cancellation_info_clone.write_recover().cancel(Some(
+                                            ProofmanError::ProofmanError(format!(
+                                                "no GPU stream can ever hold the {t:?} proof [{ag}:{air}]"
+                                            )),
+                                        ));
+                                        break None;
+                                    }
                                     // Exit only once everything is drained. Non-force workers
                                     // also own the basic queue, so they must wait for it too.
                                     if proofs_finished_clone.load(Ordering::Relaxed)
@@ -6302,6 +6320,11 @@ where
             &custom_commits_fixed_path,
             self_contained,
         );
+        if proof_stream_id == u64::MAX {
+            return Err(ProofmanError::ProofmanError(format!(
+                "no GPU stream can hold the proof of instance {instance_id} [{airgroup_id}:{air_id}]"
+            )));
+        }
 
         if !pctx.gpu {
             launch_callback_c(instance_id as u64, "basic");

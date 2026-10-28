@@ -65,6 +65,8 @@ static std::atomic<DeviceCommitBuffers *> gStreamCommitBuffers{nullptr};
 // Defined with the headroom getter below; the unified-buffer allocation sizes the graph budget from it.
 static uint64_t minHeadroomBytes();
 
+// reserve_best_stream_nonblock_gpu's "never fits" answer; mirrored by STREAM_NEVER_FITS in ffi_starks.rs.
+static constexpr uint32_t STREAM_NEVER_FITS = UINT32_MAX - 1;
 
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive = false, bool force_recursive = false);
 void reserveStreamLocked(DeviceCommitBuffers* d_buffers, uint32_t streamId);
@@ -1706,6 +1708,7 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     if (streamId_ == UINT64_MAX) {
         // No reservation supplied (one-off / non-scheduler caller): select internally.
         streamId = selectStream(d_buffers, airgroupId, airId, proofType, false, false);
+        if (streamId == UINT32_MAX) return UINT64_MAX;
     } else {
         // The scheduler already reserved this stream (status=1).
         streamId = (uint32_t)streamId_;
@@ -1932,6 +1935,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint32_t streamId = selectStream(d_buffers, airgroupId, airId, proofType, false);
+    if (streamId == UINT32_MAX) return UINT64_MAX;
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
     cudaSetDevice(gpuId);
@@ -2343,6 +2347,7 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     uint32_t streamId = (streamId_ == UINT64_MAX)
         ? selectStream(d_buffers, airgroupId, airId, proofType, aggregation, force_recursive_stream)
         : (uint32_t)streamId_;
+    if (streamId == UINT32_MAX) return UINT64_MAX;
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
 
@@ -2519,6 +2524,8 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint32_t streamId = selectStream(d_buffers, airgroupId, airId, proofType, false, false);
+    // Unplaceable (logged): the proof launch builds the tree itself, or fails and reports it.
+    if (streamId == UINT32_MAX) return;
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint32_t gpuLocalId = d_buffers->gpus_g2l[gpuId];
 
@@ -4349,12 +4356,17 @@ static uint64_t largestBasicCapacity(DeviceCommitBuffers* d_buffers){
 // publics, airgroupvalues, airvalues and proofvalues, so a stream sized below mapTotalN lets those
 // writes run past its slice into the next stream's buffer -- observed as a contribution-challenge
 // mismatch, not a crash. Any narrower bound must cover every one of those sections.
-// Under-counts compressor/recursive launches by their trace, which only ever land on classes the
-// Rust carve floored high enough (plan_stream_layout), so they always fit.
+// A compact recursive witness also needs its tail past mapTotalN (see gen_recursive_proof_gpu): a
+// recurser registers after the carve, so a phase-B half can hold mapTotalN and still not the tail.
 static uint64_t requiredAuxTrace(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, const std::string &proofType){
     const AirInstanceInfo *air = requestedAirInstance(d_buffers, airgroupId, airId, proofType);
     if (air == nullptr || air->setupCtx == nullptr) return 0;
-    return air->setupCtx->starkInfo.mapTotalN;
+    const StarkInfo &starkInfo = air->setupCtx->starkInfo;
+    const uint64_t mapCols = air->witness_map_cols;
+    const bool compactWitness = proofType != "basic" && proofType != "witness" && mapCols > 0 &&
+                                mapCols < starkInfo.mapSectionsN.at("cm1");
+    const uint64_t N = 1ULL << starkInfo.starkStruct.nBits;
+    return starkInfo.mapTotalN + (compactWitness ? N * mapCols : 0);
 }
 
 // What `stream` must hold for this launch. An unknown requirement falls back to the largest class on
@@ -4499,33 +4511,47 @@ uint32_t reserve_best_stream_scan(DeviceCommitBuffers* d_buffers, uint64_t airgr
     return selectedStreamId;
 }
 
+// Streams that could ever hold `need` in the current phase, busy or not; `largest` gets the biggest
+// eligible capacity. A pending phase-B switch leaves none eligible for a moment, so callers only take
+// 0 as permanent when `switching` is false.
+static uint32_t streamsThatFit(DeviceCommitBuffers* d_buffers, uint64_t need, bool force_recursive, uint64_t &largest, bool &switching){
+    switching = d_buffers->phaseBClosing.load(std::memory_order_acquire);
+    uint32_t eligible = 0;
+    largest = 0;
+    for (uint32_t i = 0; i < d_buffers->n_total_streams; ++i) {
+        const StreamData &sd = d_buffers->streamsData[i];
+        if (!phaseBEligible(d_buffers, sd)) continue;
+        if (force_recursive && hasRecursivePool(d_buffers) && !sd.recursive) continue;
+        largest = std::max(largest, sd.auxTraceCapacity);
+        if (sd.auxTraceCapacity >= requirementFor(d_buffers, sd, need)) eligible++;
+    }
+    return eligible;
+}
+
 // Blocking wrapper: retry the scan until a stream is reserved. Used by the paths that
-// select internally (contributions/commit/setup, and one-off recursive launches).
+// select internally (contributions/commit/setup, and one-off recursive launches). Returns
+// UINT32_MAX when no stream can ever hold the launch; the caller must fail rather than proceed.
 uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint64_t airId, std::string proofType, bool recursive, bool force_recursive){
-    for (uint64_t spins = 0;; ++spins) {
+    for (uint64_t spins = 1;; ++spins) {
         uint32_t s = reserve_best_stream_scan(d_buffers, airgroupId, airId, proofType, recursive, force_recursive);
         if (s != UINT32_MAX) return s;
-        // Two very different causes spin here: no stream is large enough (permanent -- this would
-        // spin forever), or every eligible stream is merely busy (transient, and a sign the class is
-        // under-provisioned). Reported once; both keep retrying.
-        if (spins == 20000) {
+        // Two very different causes spin here: no stream is large enough (permanent), or every
+        // eligible stream is merely busy (transient, and a sign the class is under-provisioned).
+        if (spins % 20000 == 0) {
             const uint64_t need = requiredAuxTrace(d_buffers, airgroupId, airId, proofType);
-            uint32_t eligible = 0;
-            uint64_t largest = 0;
-            for (uint32_t i = 0; i < d_buffers->n_total_streams; ++i) {
-                const StreamData &sd = d_buffers->streamsData[i];
-                if (!phaseBEligible(d_buffers, sd)) continue;
-                if (force_recursive && hasRecursivePool(d_buffers) && !sd.recursive) continue;
-                largest = std::max(largest, sd.auxTraceCapacity);
-                if (sd.auxTraceCapacity >= requirementFor(d_buffers, sd, need)) eligible++;
-            }
+            uint64_t largest;
+            bool switching;
+            const uint32_t eligible = streamsThatFit(d_buffers, need, force_recursive, largest, switching);
             const double gb = sizeof(Goldilocks::Element) / (1024.0 * 1024.0 * 1024.0);
             const std::string what = proofType + " [" + std::to_string(airgroupId) + ":" +
                                      std::to_string(airId) + "] (needs " + std::to_string(need * gb) + " GB)";
-            if (eligible == 0) {
+            if (eligible == 0 && !switching) {
                 zklog.error("selectStream: " + what + " exceeds every stream -- largest holds " +
-                            std::to_string(largest * gb) + " GB, so this can never be placed");
-            } else {
+                            std::to_string(largest * gb) + " GB (phase B state " +
+                            std::to_string(d_buffers->phaseBState.load()) + "), so this can never be placed");
+                return UINT32_MAX;
+            }
+            if (eligible > 0 && spins == 20000) {
                 zklog.warning("selectStream: " + what + " starved 6s behind " + std::to_string(eligible) +
                               " eligible stream(s) -- that class may be under-provisioned");
             }
@@ -4535,10 +4561,20 @@ uint32_t selectStream(DeviceCommitBuffers* d_buffers, uint64_t airgroupId, uint6
 }
 
 // GPU backend entry for the Rust scheduler: reserve a stream, then pass it to
-// gen_*_proof(..., streamId_). Returns UINT32_MAX when nothing is free (caller retries).
+// gen_*_proof(..., streamId_). Returns UINT32_MAX when nothing is free (caller retries), and
+// STREAM_NEVER_FITS when no stream in the current phase can hold the launch at all.
 uint32_t reserve_best_stream_nonblock_gpu(void* d_buffers_, uint64_t airgroupId, uint64_t airId, char* proofType, bool recursive, bool force_recursive){
     DeviceCommitBuffers* d_buffers = (DeviceCommitBuffers*)d_buffers_;
-    return reserve_best_stream_scan(d_buffers, airgroupId, airId, std::string(proofType), recursive, force_recursive);
+    const std::string type(proofType);
+    const uint32_t s = reserve_best_stream_scan(d_buffers, airgroupId, airId, type, recursive, force_recursive);
+    if (s != UINT32_MAX) return s;
+    uint64_t largest;
+    bool switching;
+    const uint64_t need = requiredAuxTrace(d_buffers, airgroupId, airId, type);
+    if (streamsThatFit(d_buffers, need, force_recursive, largest, switching) == 0 && !switching) {
+        return STREAM_NEVER_FITS;
+    }
+    return UINT32_MAX;
 }
 
 // Is some other free non-recursive stream on this GPU a tighter fit for `need` than `cap`? Advisory:

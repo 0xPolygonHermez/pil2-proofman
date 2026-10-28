@@ -1089,8 +1089,12 @@ pub fn gen_recursive_proof_c(
     }
 }
 
+/// [`reserve_best_stream_nonblock_c`]: no stream in the current phase can ever hold the launch.
+pub const STREAM_NEVER_FITS: u32 = u32::MAX - 1;
+
 /// Scheduler: reserve the best free stream for this key without blocking.
-/// Returns `u32::MAX` when nothing is free right now (caller retries).
+/// Returns `u32::MAX` when nothing is free right now (caller retries), [`STREAM_NEVER_FITS`] when
+/// nothing ever will be.
 pub fn reserve_best_stream_nonblock_c(
     d_buffers: *mut c_void,
     airgroup_id: u64,
