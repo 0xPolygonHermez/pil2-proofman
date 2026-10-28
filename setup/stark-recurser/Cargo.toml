@@ -27,5 +27,6 @@ rand = { workspace = true }
 serde_json = { workspace = true }
 # The BN128 wrap's tests (tests/poseidon_bn128_wrap.rs) set up, check and prove its AIR with
 # pilfflonk, on the official ptau of the tests.
-pilfflonk-setup = { workspace = true }
-proofman-pilfflonk = { workspace = true }
+# Internal dev-deps are path only: cargo drops them on publish.
+pilfflonk-setup = { path = "../pilfflonk" }
+proofman-pilfflonk = { path = "../../pilfflonk" }
