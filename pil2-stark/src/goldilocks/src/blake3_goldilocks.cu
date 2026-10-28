@@ -5,6 +5,7 @@
 #include "blake3_goldilocks.cuh"
 #include "goldilocks_trace_layout.cuh"   // getBufferOffset (layout-aware), Layout enum
 #include "cuda_utils.cuh"                // CHECKCUDAERR
+#include "grinding_gpu.cuh"
 
 #define TPB_B3 128
 
@@ -105,12 +106,12 @@ __device__ void b3_hash_row(const uint64_t *in, uint32_t nCols, uint64_t row, ui
 }
 
 __global__ void b3_linearHashKernel(uint64_t *__restrict__ out, const uint64_t *__restrict__ in,
-                                    uint32_t num_cols, uint32_t num_rows, Layout layout)
+                                    uint32_t num_cols, uint32_t num_rows, Layout layout, uint64_t ld)
 {
     uint64_t row = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
     if (row >= num_rows) return;
     uint64_t dig[4];
-    b3_hash_row(in, num_cols, row, num_rows, layout, dig);
+    b3_hash_row(in, num_cols, row, ld, layout, dig);
     uint64_t *o = out + row * 4ull;
 #pragma unroll
     for (int i = 0; i < 4; ++i) o[i] = dig[i];
@@ -137,73 +138,32 @@ __global__ void b3_merkleNodeKernel(uint64_t *cursor, uint64_t nextN, uint64_t n
     for (int i = 0; i < 4; ++i) o[i] = dig[i];
 }
 
-__global__ void b3_grindingKernel(uint64_t *nonce, uint64_t *__restrict__ nonceBlock,
-                                  uint64_t *__restrict__ input, uint64_t n_bits,
-                                  uint64_t hashes_per_thread, uint64_t nonces_offset)
+// Grinding hash: [c0, c1, c2, nonce, 0, 0, 0, 0] -> first output word.
+struct B3GrindHash
 {
-    uint64_t *shared_nonces = (uint64_t *)&scratchpad[0];
-
-    if (nonces_offset != 0 && nonce[0] != UINT64_MAX) return;
-
-    if (threadIdx.x == 0)
+    static constexpr uint32_t ROUNDS = 4;   // one round per atomic is atomic-bound at blake3 speed
+    uint64_t c0, c1, c2;
+    __device__ explicit B3GrindHash(const uint64_t *in) : c0(in[0]), c1(in[1]), c2(in[2]) {}
+    __device__ uint64_t operator()(uint64_t n) const
     {
-        shared_nonces[0] = UINT64_MAX;
-        if (blockIdx.x == 0) nonce[0] = UINT64_MAX;
-        if (nonces_offset != 0)
-        {
-            for (int i = 0; i < (int)gridDim.x; ++i)
-                if (nonceBlock[i] != UINT64_MAX)
-                {
-                    shared_nonces[0] = nonceBlock[i];
-                    if (blockIdx.x == 0) nonce[0] = nonceBlock[i];
-                    break;
-                }
-        }
-    }
-    __syncthreads();
-    if (shared_nonces[0] != UINT64_MAX) return;
-
-    nonceBlock[blockIdx.x] = UINT64_MAX;
-
-    const uint64_t idx   = nonces_offset + ((uint64_t)blockIdx.x * blockDim.x + threadIdx.x) * hashes_per_thread;
-    const uint64_t level = 1ULL << (64 - n_bits);
-    uint64_t locId = UINT64_MAX;
-
-    uint64_t in8[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-    uint64_t out8[8];
-    for (uint64_t k = 0; k < hashes_per_thread; ++k)
-    {
-        uint64_t idx_k = idx + k;
-        in8[0] = input[0]; in8[1] = input[1]; in8[2] = input[2]; in8[3] = idx_k;
+        uint64_t in8[8] = {c0, c1, c2, n, 0, 0, 0, 0}, out8[8];
         blake3core::permute8(in8, out8);
-        if (out8[0] < level) { locId = idx_k; break; }
+        return out8[0];
     }
-
-    shared_nonces[threadIdx.x] = locId;
-    __syncthreads();
-    uint32_t alive = blockDim.x >> 1;
-    while (alive > 0)
-    {
-        if (threadIdx.x < alive && shared_nonces[threadIdx.x + alive] < shared_nonces[threadIdx.x])
-            shared_nonces[threadIdx.x] = shared_nonces[threadIdx.x + alive];
-        __syncthreads();
-        alive >>= 1;
-    }
-    if (threadIdx.x == 0) nonceBlock[blockIdx.x] = shared_nonces[0];
-}
+};
 
 // ---------------------------------------------------------------------------
 // Host API
 // ---------------------------------------------------------------------------
 void Blake3GoldilocksGPU::linearHash(uint64_t *d_hash_output, uint64_t *d_trace,
                                      uint64_t num_cols, uint64_t num_rows,
-                                     Layout layout, cudaStream_t stream)
+                                     Layout layout, cudaStream_t stream, uint64_t ld)
 {
     if (num_rows == 0) return;
     uint32_t tpb = (num_rows < TPB_B3) ? (uint32_t)num_rows : TPB_B3;
     uint32_t blks = (uint32_t)((num_rows + TPB_B3 - 1) / TPB_B3);
     b3_linearHashKernel<<<blks, tpb, 0, stream>>>(
-        d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows, layout);
+        d_hash_output, d_trace, (uint32_t)num_cols, (uint32_t)num_rows, layout, ld ? ld : num_rows);
     CHECKCUDAERR(cudaGetLastError());
 }
 
@@ -213,9 +173,22 @@ void Blake3GoldilocksGPU::merkletree(uint32_t arity, uint64_t *d_tree, uint64_t 
 {
     if (num_rows == 0) return;
     linearHash(d_tree, d_input, num_cols, num_rows, layout, stream);
+    reduceLevels(arity, d_tree, num_rows, stream);
+}
 
-    uint64_t pending = num_rows;
-    uint64_t nextN = (pending + (arity - 1)) / arity;
+// `pending` digests (a multiple of arity) at d_nodes -> their parents, written right after them.
+void Blake3GoldilocksGPU::reduceOneLevel(uint32_t arity, uint64_t *d_nodes, uint64_t pending, cudaStream_t stream)
+{
+    const uint64_t nextN = pending / arity;
+    uint32_t tpb = (nextN < TPB_B3) ? (uint32_t)nextN : TPB_B3;
+    uint32_t blks = (nextN < TPB_B3) ? 1u : (uint32_t)(nextN / TPB_B3 + 1);
+    b3_merkleNodeKernel<<<blks, tpb, 0, stream>>>(d_nodes, nextN, 0, pending, arity);
+    CHECKCUDAERR(cudaGetLastError());
+}
+
+// Every level above the `pending` digests at the start of d_tree.
+void Blake3GoldilocksGPU::reduceLevels(uint32_t arity, uint64_t *d_tree, uint64_t pending, cudaStream_t stream)
+{
     uint64_t nextIndex = 0;
     while (pending > 1)
     {
@@ -223,17 +196,10 @@ void Blake3GoldilocksGPU::merkletree(uint32_t arity, uint64_t *d_tree, uint64_t 
         if (extraZeros > 0)
             CHECKCUDAERR(cudaMemsetAsync(d_tree + nextIndex + pending * CAPACITY, 0,
                                          extraZeros * CAPACITY * sizeof(uint64_t), stream));
-
-        uint32_t tpb = (nextN < TPB_B3) ? (uint32_t)nextN : TPB_B3;
-        uint32_t blks = (nextN < TPB_B3) ? 1u : (uint32_t)(nextN / TPB_B3 + 1);
-        b3_merkleNodeKernel<<<blks, tpb, 0, stream>>>(d_tree, nextN, nextIndex,
-                                                      pending + extraZeros, arity);
-
+        reduceOneLevel(arity, d_tree + nextIndex, pending + extraZeros, stream);
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;
-        nextN = (pending + (arity - 1)) / arity;
     }
-    CHECKCUDAERR(cudaGetLastError());
 }
 
 void Blake3GoldilocksGPU::merkletreeReduce(uint64_t *d_root, uint64_t *d_input,
@@ -286,29 +252,5 @@ void Blake3GoldilocksGPU::grinding(uint64_t *d_nonce, uint64_t *d_nonceBlock,
                                    const uint64_t *d_in, const uint32_t n_bits,
                                    cudaStream_t stream)
 {
-    uint64_t log_launch_iters = 7;
-    uint64_t launch_iters = 1ULL << log_launch_iters;
-    uint64_t log_N = BLAKE3_GRIND_BITS;
-    uint64_t N = 1ULL << log_N;
-    uint64_t security = 128;
-
-    double eps                 = ldexp(1.0, -int(n_bits));
-    double totalHashesRequired = -double(security) * log(2.0) / log1p(-eps);
-    uint64_t log_totalHashesRequired = (uint64_t)ceil(log2(totalHashesRequired));
-    uint64_t log_hashesPerThread = (log_totalHashesRequired > log_launch_iters + log_N)
-                                   ? log_totalHashesRequired - log_launch_iters - log_N : 0;
-    uint64_t hashesPerThread = 1ULL << log_hashesPerThread;
-
-    dim3 blockSize(BLAKE3_GRIND_BLOCKS);
-    dim3 gridSize(BLAKE3_GRIND_GRID);
-    size_t shared_mem_size = blockSize.x * sizeof(uint64_t);
-
-    uint64_t nonces_offset = 0;
-    uint64_t nonces_per_iteration = N * hashesPerThread;
-    for (uint64_t i = 0; i < launch_iters; ++i)
-    {
-        b3_grindingKernel<<<gridSize, blockSize, shared_mem_size, stream>>>(
-            d_nonce, d_nonceBlock, (uint64_t *)d_in, n_bits, hashesPerThread, nonces_offset);
-        nonces_offset += nonces_per_iteration;
-    }
+    grindMin<B3GrindHash>(d_nonce, d_nonceBlock, d_in, n_bits, stream);
 }

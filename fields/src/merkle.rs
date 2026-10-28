@@ -4,7 +4,6 @@
 //! the `H` / `LH` / `NH` type parameters.
 
 use alloc::vec;
-use alloc::vec::Vec;
 
 use crate::PrimeField64;
 
@@ -42,15 +41,18 @@ pub fn linear_hash_seq<F: PrimeField64, H: crate::Hash<F>>(input: &[F]) -> H::St
 /// merkle-node compression hash.
 pub fn calculate_root_from_proof<F: PrimeField64, H: crate::Hash<F>>(
     value: &mut H::State,
-    mp: &[Vec<F>],
+    mp: &[F],
     idx: &mut u64,
     offset: u64,
     arity: u64,
 ) {
     debug_assert_eq!(arity as usize * 4, H::WIDTH, "arity ({}) * 4 must equal H::WIDTH ({})", arity, H::WIDTH);
-    if offset == mp.len() as u64 {
+    // `mp` is the path flat: level `offset` is `mp[offset * stride..][..stride]`.
+    let stride = (arity as usize - 1) * 4;
+    if offset as usize * stride >= mp.len() {
         return;
     }
+    let level = &mp[offset as usize * stride..][..stride];
 
     let curr_idx = *idx % arity;
     *idx /= arity;
@@ -64,7 +66,7 @@ pub fn calculate_root_from_proof<F: PrimeField64, H: crate::Hash<F>>(
                 continue;
             }
             for j in 0..4 {
-                in_slot[(i * 4 + j) as usize] = mp[offset as usize][4 * p + j as usize];
+                in_slot[(i * 4 + j) as usize] = level[4 * p + j as usize];
             }
             p += 1;
         }
@@ -149,7 +151,7 @@ pub fn partial_merkle_tree<F: PrimeField64, H: crate::Hash<F>>(input: &[F], num_
 pub fn verify_mt<F, LH, NH>(
     root: &[F],
     last_level: &[F],
-    mp: &[Vec<F>],
+    mp: &[F],
     idx: u64,
     v: &[F],
     arity: u64,

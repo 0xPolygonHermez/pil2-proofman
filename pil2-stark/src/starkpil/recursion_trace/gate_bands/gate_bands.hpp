@@ -3,7 +3,7 @@
 
 // Rebuilding a hash gate's interior trace cells from its boundary cells.
 //
-// `getCommitedPols` can only place values the circom witness carries. A gate's interiors are a
+// `getWitnessTrace` can only place values the circom witness carries. A gate's interiors are a
 // pure function of its inputs, and those inputs are boundary cells the map already places, so
 // they are recomputed here rather than routed through the witness.
 //
@@ -135,7 +135,7 @@ constexpr int band_rows(uint64_t kind) {
 }
 
 // Layout version of the band section; `band_section` refuses one it does not know. Bump on any
-// layout change. Mirrored by GATE_BAND_FORMAT_VERSION in plonk2pil/mod.rs, which writes it.
+// layout change. Mirrored by GATE_BAND_FORMAT_VERSION in common/src/exec_format.rs.
 //
 // This cannot reach a reader that predates the section entirely -- such a reader stops at the
 // map. That case is safe anyway: a key with bands has no interior placements, so a prover that

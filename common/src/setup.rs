@@ -6,6 +6,7 @@ use std::io::{ErrorKind, Read};
 use libloading::{Library, Symbol};
 use std::ffi::CString;
 use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
 
 pub type GetWitnessTraceFunc = unsafe extern "C" fn(
     zkin: *mut u64,
@@ -36,15 +37,15 @@ unsafe impl Sync for CircomState {}
 use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
-    get_map_totaln_custom_commits_fixed_c, get_map_totaln_contributions_c, get_proof_size_c, get_max_n_tmp1_c,
-    get_max_n_tmp3_c, get_const_tree_size_c, get_proof_pinned_size_c, get_operations_quotient_c,
-    calculate_words_per_row_c, load_device_setup_c,
+    get_map_totaln_custom_commits_fixed_c, get_proof_size_c, get_max_n_tmp1_c, get_max_n_tmp3_c, get_const_tree_size_c,
+    get_proof_pinned_size_c, get_operations_quotient_c, calculate_words_per_row_c, load_device_setup_c,
 };
 
-use crate::{custom_commit_reserved_words, GlobalInfoAir, ProofmanError};
+use crate::{custom_commit_reserved_words, custom_commit_words_per_row, GlobalInfoAir, ProofmanError};
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::ProofmanResult;
+use crate::exec_format::{EXEC_FORMAT_VERSION, EXEC_FORMAT_VERSION_WIDE, EXEC_HEADER_WORDS, EXEC_MAGIC, EXEC_MAGIC_MASK};
 
 pub type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
@@ -87,11 +88,13 @@ pub struct Setup<F: PrimeField64> {
     pub const_pols_size: usize,
     pub const_pols_size_packed: usize,
     pub custom_commits_reserved_words: usize,
+    /// Packed `words_per_row` reserved per custom commit (column count if unresolved at sizing).
+    /// `initialize_custom_commits` refuses a wider file, which would overrun the const buffer.
+    pub custom_commits_words_per_row: Vec<u64>,
     pub const_tree_size: usize,
     pub const_pols_path: String,
     pub const_pols_tree_path: String,
     pub prover_buffer_size: u64,
-    pub contributions_size: u64,
     pub custom_commits_fixed_buffer_size: u64,
     pub proof_size: u64,
     pub pinned_proof_size: u64,
@@ -132,13 +135,6 @@ impl<F: PrimeField64> Drop for Setup<F> {
     }
 }
 
-/// Magic and layout version of the `.exec` file, mirroring `EXEC_MAGIC` / `EXEC_FORMAT_VERSION`
-/// in stark-recurser's plonk2pil, which writes them, and `exec_layout.hpp`, which also reads them.
-const EXEC_MAGIC: u64 = 0x5058_4543_0000_0000;
-const EXEC_MAGIC_MASK: u64 = 0xFFFF_FFFF_0000_0000;
-const EXEC_FORMAT_VERSION: u64 = 2;
-const EXEC_HEADER_WORDS: usize = 4;
-
 /// Dimensions from a loaded `.exec` buffer's header.
 pub struct ExecHeader {
     pub n_adds: u64,
@@ -160,9 +156,11 @@ pub fn exec_header(exec: &[u64]) -> ExecHeader {
 
 /// Reads a whole `.exec` file into memory and validates its header.
 ///
-/// The layout is `exec_layout.hpp`'s: magic and version, `n_adds`, then the map's row and column
-/// extent, then the additions, the map as u32 pairs, and a gate-band section. This reads to the
-/// end of the file rather than to the map's length, so the band section comes along.
+/// The layout is version 2 of [`exec_format`](crate::exec_format), Goldilocks', the only one the
+/// STARK prover reads: magic and version, `n_adds`, then the map's row and column extent, then the
+/// additions, the map as u32 pairs, and a gate-band section. This reads to the end of the file
+/// rather than to the map's length, so the band section comes along. A version 3 file, the BN128
+/// exec of the pilfflonk wrap, is refused as one.
 pub fn load_exec_file(exec_filename: &str, n_cols: u64) -> ProofmanResult<Vec<u64>> {
     let mut file = File::open(exec_filename)?;
 
@@ -194,6 +192,12 @@ pub fn load_exec_file(exec_filename: &str, n_cols: u64) -> ProofmanResult<Vec<u6
         )));
     }
     let version = header[0] & !EXEC_MAGIC_MASK;
+    if version == EXEC_FORMAT_VERSION_WIDE {
+        return Err(ProofmanError::InvalidSetup(format!(
+            "exec file {exec_filename} is format version {version}, the BN128 exec plonk2pil writes for \
+             the pilfflonk wrap; the STARK prover reads only version {EXEC_FORMAT_VERSION}, over Goldilocks"
+        )));
+    }
     if version != EXEC_FORMAT_VERSION {
         return Err(ProofmanError::InvalidSetup(format!(
             "exec file {exec_filename} is format version {version}, but this build reads version \
@@ -295,6 +299,12 @@ impl<F: PrimeField64> Setup<F> {
         verify_constraints: bool,
         gpu: bool,
         starkinfo_source_path: Option<&PathBuf>,
+        // Commit name -> packed file, when the caller knows them before the const buffer is
+        // sized. Empty reserves each custom commit's worst case.
+        custom_commits_fixed: &HashMap<String, PathBuf>,
+        // Proved with no global challenge (prove-air): the cm1 root enters the transcript before
+        // stage 2, so the StarkInfo is built as recursive to keep it off the in-place commit.
+        self_contained: bool,
     ) -> ProofmanResult<Self> {
         let starkinfo_borrow_path = match setup_type {
             ProofType::Recursive1 => Some(
@@ -339,7 +349,6 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_size_packed,
             const_tree_size,
             prover_buffer_size,
-            contributions_size,
             custom_commits_fixed_buffer_size,
             proof_size,
             pinned_proof_size,
@@ -362,15 +371,17 @@ impl<F: PrimeField64> Setup<F> {
                 0,
                 0,
                 0,
-                0,
             )
         } else {
             // Otherwise, initialize the pointers with their respective values
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
                 .unwrap_or_else(|_| panic!("Failed to read file {}", stark_info_path));
             let stark_info = StarkInfo::from_json(&stark_info_json);
-            let recursive = setup_type != &ProofType::Basic;
+            let recursive = setup_type != &ProofType::Basic || self_contained;
             let recursive_final = setup_type == &ProofType::RecursiveF;
+            // The poseidon families' recursivef is a BN128 STARK, with a prover of its own (the
+            // SnarkWrapper's); blake3's is a Goldilocks one, a setup as the vadcop_final's.
+            let bn128_recursive_final = recursive_final && stark_info.stark_struct.verification_hash_type == "BN128";
             let p_stark_info =
                 stark_info_new_c(stark_info_path.as_str(), recursive_final, recursive, verify_constraints, false, gpu);
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
@@ -378,7 +389,6 @@ impl<F: PrimeField64> Setup<F> {
             let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);
             set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
             let prover_buffer_size = get_map_totaln_c(p_stark_info);
-            let contributions_size = get_map_totaln_contributions_c(p_stark_info);
             let custom_commits_fixed_buffer_size = get_map_totaln_custom_commits_fixed_c(p_stark_info);
             let proof_size = get_proof_size_c(p_stark_info);
             let pinned_proof_size = get_proof_pinned_size_c(p_stark_info);
@@ -390,7 +400,7 @@ impl<F: PrimeField64> Setup<F> {
 
             let verkey_file = setup_path.display().to_string() + ".verkey.json";
 
-            let verkey = if setup_type == &ProofType::RecursiveF {
+            let verkey = if bn128_recursive_final {
                 vec![]
             } else {
                 let mut file = File::open(&verkey_file).unwrap_or_else(|e| {
@@ -415,7 +425,6 @@ impl<F: PrimeField64> Setup<F> {
                     0,
                     const_tree_size,
                     prover_buffer_size,
-                    contributions_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
                     pinned_proof_size,
@@ -424,7 +433,7 @@ impl<F: PrimeField64> Setup<F> {
                 )
             } else {
                 let mut const_pols_size_packed = 0;
-                if gpu && setup_type != &ProofType::RecursiveF {
+                if gpu && !bn128_recursive_final {
                     let mut header = [0u8; 8];
                     let words_per_row: u64 =
                         match File::open(&const_pols_path).and_then(|mut f| f.read_exact(&mut header)) {
@@ -452,7 +461,6 @@ impl<F: PrimeField64> Setup<F> {
                     const_pols_size_packed,
                     const_tree_size,
                     prover_buffer_size,
-                    contributions_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
                     pinned_proof_size,
@@ -533,17 +541,49 @@ impl<F: PrimeField64> Setup<F> {
                 (None, None, None, None, None, None)
             };
 
-        // Worst case (words_per_row == n_cols): the real value is in the commit file, which is
-        // registered long after the const buffer is sized.
+        // Packed width comes from the commit file header when the caller named it; otherwise
+        // reserve the worst case (one word per column). Registration must not exceed this.
+        let mut custom_commits_words_per_row: Vec<u64> = Vec::new();
         let custom_commits_reserved_words = match gpu {
-            true => custom_commit_reserved_words(
-                stark_info.stark_struct.n_bits as u32,
-                &stark_info
+            true => {
+                let widths: Vec<u64> = stark_info
                     .custom_commits
                     .iter()
                     .map(|c| c.stage_widths.first().copied().unwrap_or(0) as u64)
-                    .collect::<Vec<_>>(),
-            ),
+                    .collect();
+                let n = 1u64 << stark_info.stark_struct.n_bits;
+                let n_extended = 1u64 << stark_info.stark_struct.n_bits_ext;
+                let arity = stark_info.stark_struct.merkle_tree_arity;
+                let packed: Vec<Option<u64>> = stark_info
+                    .custom_commits
+                    .iter()
+                    .zip(&widths)
+                    .map(|(commit, &n_cols)| {
+                        if n_cols == 0 {
+                            return None;
+                        }
+                        let path = custom_commits_fixed.get(&commit.name)?;
+                        match custom_commit_words_per_row(path, n, n_extended, n_cols, arity) {
+                            Ok(words) => Some(words),
+                            // Not fatal: registration validates the file and reports errors.
+                            Err(e) => {
+                                tracing::debug!("custom commit '{}' not sized from its file: {e}", commit.name);
+                                None
+                            }
+                        }
+                    })
+                    .collect();
+                custom_commits_words_per_row = widths
+                    .iter()
+                    .zip(&packed)
+                    .map(|(&n_cols, resolved)| resolved.filter(|&p| p > 0 && p <= n_cols).unwrap_or(n_cols))
+                    .collect();
+                custom_commit_reserved_words(
+                    stark_info.stark_struct.n_bits as u32,
+                    &widths,
+                    &custom_commits_words_per_row.iter().copied().map(Some).collect::<Vec<_>>(),
+                )
+            }
             false => 0,
         };
 
@@ -555,12 +595,12 @@ impl<F: PrimeField64> Setup<F> {
             const_pols_size,
             const_pols_size_packed,
             custom_commits_reserved_words,
+            custom_commits_words_per_row,
             const_tree_size,
             verkey,
             verkey_file,
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
-            contributions_size,
             proof_size,
             pinned_proof_size,
             total_signal_no,
@@ -580,6 +620,12 @@ impl<F: PrimeField64> Setup<F> {
             n_operations_quotient,
             gpu,
         })
+    }
+
+    /// The poseidon families' recursivef: a BN128 STARK, which the SnarkWrapper proves with its own
+    /// buffers and const tree. blake3's recursivef is a Goldilocks setup like any other.
+    pub fn is_bn128_recursivef(&self) -> bool {
+        self.setup_type == ProofType::RecursiveF && self.stark_info.stark_struct.verification_hash_type == "BN128"
     }
 
     pub fn get_vk(&self) -> Vec<u64> {

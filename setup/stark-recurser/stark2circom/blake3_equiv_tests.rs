@@ -102,6 +102,7 @@ fn build(tag: &str, src: &str, driver_src: &str) -> (PathBuf, PathBuf) {
     let root = repo_root();
     let circuits = manifest().join("stark2circom/circom_verifier/circuits.gl");
     let blake3 = circuits.join("hash/blake3");
+    let helpers = manifest().join("stark2circom/circom_verifier/helper_circuits");
     let support = root.join("setup/circom");
     let goldilocks = root.join("pil2-stark/src/goldilocks/src");
 
@@ -119,7 +120,7 @@ fn build(tag: &str, src: &str, driver_src: &str) -> (PathBuf, PathBuf) {
         .current_dir(&circuits)
         .args([circuit.to_str().unwrap(), "--c", "--O2", "--prime", "goldilocks", "-o"])
         .arg(&dir)
-        .args(["-l", circuits.to_str().unwrap(), "-l", blake3.to_str().unwrap()])
+        .args(["-l", circuits.to_str().unwrap(), "-l", blake3.to_str().unwrap(), "-l", helpers.to_str().unwrap()])
         .output()
         .expect("failed to run circom");
     assert!(
@@ -652,4 +653,32 @@ fn key_bit_is_exactly_a_half_swap() {
         "key=1 is not a plain half-swap, so blake3OrderByKey's formula is wrong\n  \
          key=1:      {with_key:?}\n  pre-swapped: {pre_swapped:?}"
     );
+}
+
+/// `circuitTypeOf` is the circom mirror of `proofman_common::circuit_type_of`: the
+/// selects compare children against it while every other site uses the Rust value.
+#[test]
+fn circom_circuit_type_matches_rust() {
+    if let Some(why) = missing_prerequisite() {
+        eprintln!("SKIP circom_circuit_type_matches_rust: {why}");
+        return;
+    }
+    const N: u64 = 6;
+    let mut body = String::new();
+    for g in 0..N {
+        for s in 0..N {
+            body.push_str(&format!("    out[{}] <== circuitTypeOf({g}, {s});\n", g * N + s));
+        }
+    }
+    let src = format!(
+        "pragma circom 2.1.0;\npragma custom_templates;\ninclude \"circuit_type.circom\";\n\n\
+         template Probe() {{\n    signal output out[{}];\n{body}}}\n\ncomponent main = Probe();\n",
+        N * N
+    );
+    let got = run_circuit("circuit_type", &src, &[], (N * N) as usize);
+    for g in 0..N {
+        for s in 0..N {
+            assert_eq!(got[(g * N + s) as usize], proofman_common::circuit_type_of(g, s), "circuitTypeOf({g}, {s})");
+        }
+    }
 }

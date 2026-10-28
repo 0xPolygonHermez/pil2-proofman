@@ -131,3 +131,37 @@ template FFT(nBits, inv) {
         }
     }
 }
+// FFT without reducing its outputs: each is the linear combination Σ_j ws·in[j] itself, bounded by
+// the tag. For outputs that only feed Horner (EvalPol) or a subtraction, whose own reduction absorbs it.
+template FFTLazy(nBits, inv) {
+
+    var p = 0xFFFFFFFF00000001;
+    var N = 1<<nBits;
+
+    signal input {maxNum} in[N][3];
+    signal output {maxNum} out[N][3];
+
+    var w;
+    var ws[N];
+    if (inv) {
+        w = invroots(nBits);
+        ws[0] = _inv1(N);
+    } else {
+        w = roots(nBits);
+        ws[0] = 1;
+    }
+    for (var i=1; i<N; i++) {
+        ws[i] = ( ws[i-1] * w ) % p;
+    }
+
+    out.maxNum = N * (p - 1) * in.maxNum;
+    for (var i=0; i<N; i++) {
+        for (var e=0; e<3; e++) {
+            var sum = 0;
+            for (var j=0; j<N; j++) {
+                sum = sum + ws[(i*j)%N] * in[j][e];
+            }
+            out[i][e] <== sum;
+        }
+    }
+}

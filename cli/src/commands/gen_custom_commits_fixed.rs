@@ -59,19 +59,20 @@ impl GenCustomCommitsFixedCmd {
         tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");
 
+        // This command generates the commit files, so it cannot size from them: worst case.
         let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, self.gpu)?);
 
         init_gpu_setup(&pctx.global_info.hash, self.gpu)?;
 
-        let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, self.gpu)?);
-        pctx.set_device_buffers(&sctx, &setups_vadcop, false, self.gpu, 1, 1, false, 0)?;
+        let setups_vadcop = Arc::new(SetupsVadcop::new(&pctx.global_info, false, false, self.gpu, None)?);
+        pctx.set_device_buffers(&sctx, &setups_vadcop, false, self.gpu, 1, 1, false, 0, 0, 0, 0)?;
         pctx.initialize_custom_commits(custom_commits_map, &sctx, CustomCommitValidation::Skip)?;
+
+        // Before wcm, so that it is dropped after it: wcm holds what the library made.
+        let library = unsafe { Library::new(&self.witness_lib)? };
 
         let pctx = Arc::new(pctx);
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
-
-        // Load the witness computation dynamic library
-        let library = unsafe { Library::new(&self.witness_lib)? };
 
         let witness_lib: Symbol<WitnessLibInitFn<Goldilocks>> = unsafe { library.get(b"init_library")? };
         let mut witness_lib = witness_lib(self.verbose.into(), None)?;

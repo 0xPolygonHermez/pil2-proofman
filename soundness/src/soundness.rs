@@ -98,12 +98,91 @@ pub struct AirInfoSoundness {
     pub opening_points: u64,
     pub batch_size: u64,
     pub power_batching: bool,
-    pub num_queries: u64,
-    pub fri_folding_factors: Vec<u64>,
-    pub fri_early_stop_degree: u64,
-    pub grinding_query_phase: u64,
+    /// Base field columns of each tree committed before the low-degree test: const, cm1, cm2, …
+    pub initial_tree_widths: Vec<u64>,
+    /// Out-of-domain evaluations sent in the proof.
+    pub num_evals: u64,
+    #[serde(flatten)]
+    pub low_degree_test: LowDegreeTestSoundness,
     pub gap_to_radius: f64,
+    /// A multiproof's expected size; its size varies per proof, up to `proof_size_max`.
     pub proof_size: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof_size_max: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(untagged)]
+pub enum LowDegreeTestSoundness {
+    Fri {
+        num_queries: u64,
+        fri_folding_factors: Vec<u64>,
+        fri_early_stop_degree: u64,
+        grinding_query_phase: u64,
+    },
+    Stir {
+        /// `log₂(1/ρ₀)`
+        log_inv_rate: u64,
+        /// `M`
+        num_iterations: u64,
+        /// `kᵢ`, in bits
+        folding_factors: Vec<u64>,
+        /// `log₂ d₀`
+        log_degree: u64,
+        /// `tᵢ`
+        num_queries: Vec<u64>,
+        /// `s`, per iteration `1..M-1`
+        num_ood_samples: Vec<u64>,
+        /// Grinding.
+        grinding_batching_phase: u64,
+        grinding_bits_folding: u64,
+        grinding_bits_queries: Vec<u64>,
+        grinding_bits_ood: Vec<u64>,
+    },
+}
+
+impl LowDegreeTestSoundness {
+    pub fn protocol_family(&self) -> &'static str {
+        match self {
+            LowDegreeTestSoundness::Fri { .. } => "FRI_STARK",
+            LowDegreeTestSoundness::Stir { .. } => "STIR",
+        }
+    }
+
+    /// Queries into the first oracle: FRI's single count, STIR's `t₀`.
+    fn num_queries_summary(&self) -> u64 {
+        match self {
+            LowDegreeTestSoundness::Fri { num_queries, .. } => *num_queries,
+            LowDegreeTestSoundness::Stir { num_queries, .. } => num_queries.first().copied().unwrap_or(0),
+        }
+    }
+
+    fn folding_factors_summary(&self) -> String {
+        match self {
+            LowDegreeTestSoundness::Fri { fri_folding_factors, .. } => format!("{fri_folding_factors:?}"),
+            LowDegreeTestSoundness::Stir { folding_factors, .. } => {
+                format!("{:?}", folding_factors.iter().map(|k| 1u64 << k).collect::<Vec<_>>())
+            }
+        }
+    }
+
+    fn final_degree_summary(&self) -> u64 {
+        match self {
+            LowDegreeTestSoundness::Fri { fri_early_stop_degree, .. } => *fri_early_stop_degree,
+            LowDegreeTestSoundness::Stir { log_degree, folding_factors, .. } => {
+                1 << (log_degree - folding_factors.iter().sum::<u64>())
+            }
+        }
+    }
+
+    fn grinding_summary(&self) -> u64 {
+        match self {
+            LowDegreeTestSoundness::Fri { grinding_query_phase, .. } => *grinding_query_phase,
+            LowDegreeTestSoundness::Stir { grinding_bits_queries, .. } => {
+                grinding_bits_queries.first().copied().unwrap_or(0)
+            }
+        }
+    }
 }
 
 impl AirTableRow {
@@ -122,10 +201,10 @@ impl AirTableRow {
             opening_points: air.opening_points,
             batch_size: air.batch_size,
             power_batching: air.power_batching,
-            num_queries: air.num_queries,
-            fri_folding_factors: format!("{:?}", air.fri_folding_factors),
-            fri_early_stop_degree: air.fri_early_stop_degree,
-            grinding_query_phase: air.grinding_query_phase,
+            num_queries: air.low_degree_test.num_queries_summary(),
+            fri_folding_factors: air.low_degree_test.folding_factors_summary(),
+            fri_early_stop_degree: air.low_degree_test.final_degree_summary(),
+            grinding_query_phase: air.low_degree_test.grinding_summary(),
             gap_to_radius: air.gap_to_radius,
             proof_size: air.proof_size.clone(),
         }
@@ -169,6 +248,34 @@ pub fn print_soundness_table(soundness: &SoundnessToml) {
     }
 }
 
+fn low_degree_test_soundness(stark_struct: &proofman_common::StarkStruct) -> LowDegreeTestSoundness {
+    use proofman_common::LowDegreeTest;
+    match &stark_struct.low_degree_test {
+        LowDegreeTest::Fri(fri) => LowDegreeTestSoundness::Fri {
+            num_queries: fri.num_queries,
+            fri_folding_factors: fri.folding_factors.iter().map(|&k| 1 << k).collect(),
+            // |L_M|, not d_M: soundcalc folds D = trace_length / rho down to this value
+            fri_early_stop_degree: 1 << fri.log_domain_sizes.last().unwrap(),
+            grinding_query_phase: fri.grinding_bits_queries,
+        },
+        LowDegreeTest::Stir(stir) => {
+            let m = stir.num_iterations();
+            LowDegreeTestSoundness::Stir {
+                log_inv_rate: stark_struct.n_bits_ext - stark_struct.n_bits,
+                num_iterations: m as u64,
+                folding_factors: stir.folding_factors.clone(),
+                log_degree: stark_struct.n_bits,
+                num_queries: stir.num_queries.clone(),
+                num_ood_samples: vec![1; m.saturating_sub(1)],
+                grinding_batching_phase: 0,
+                grinding_bits_folding: 0,
+                grinding_bits_queries: stir.grinding_bits_queries.clone(),
+                grinding_bits_ood: vec![0; m.saturating_sub(1)],
+            }
+        }
+    }
+}
+
 pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, AirInfoSoundness) {
     let witness_cols = setup
         .stark_info
@@ -177,6 +284,15 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
         .filter(|(k, _)| k.as_str() != "const" && k.as_str() != "cm3")
         .map(|(_, n)| n)
         .sum::<u64>();
+    // `setup.proof_size` is the flat proof with its publics; a multiproof drops the siblings that
+    // other queries' paths yield.
+    let layout = setup.stark_info.proof_layout();
+    let flat_words = setup.proof_size as f64;
+    let proof_words = if setup.stark_info.multiproof {
+        flat_words - layout.flat_proof_words() as f64 + layout.expected_multiproof_words()
+    } else {
+        flat_words
+    };
     (
         setup.air_name.clone(),
         AirInfoSoundness {
@@ -188,20 +304,17 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             num_columns_witness: witness_cols,
             num_constraints: setup.stark_info.n_constraints,
             opening_points: setup.stark_info.opening_points.len() as u64,
-            batch_size: setup.stark_info.ev_map.len() as u64,
+            batch_size: setup.stark_info.fri_batch_size.max(setup.stark_info.ev_map.len() as u64),
             power_batching: true,
-            num_queries: setup.stark_info.stark_struct.n_queries,
-            fri_folding_factors: setup
-                .stark_info
-                .stark_struct
-                .steps
-                .windows(2)
-                .map(|pair| 1 << (pair[0].n_bits - pair[1].n_bits))
+            initial_tree_widths: std::iter::once(layout.n_constants)
+                .chain(layout.num_vals.iter().copied())
+                .take(layout.n_stages as usize + 2)
                 .collect(),
-            fri_early_stop_degree: 1 << setup.stark_info.stark_struct.steps.last().unwrap().n_bits,
-            grinding_query_phase: setup.stark_info.stark_struct.pow_bits,
+            num_evals: layout.n_evals,
+            low_degree_test: low_degree_test_soundness(&setup.stark_info.stark_struct),
             gap_to_radius: setup.stark_info.security.proximity_gap,
-            proof_size: format_bytes(setup.proof_size as f64 * 8.0),
+            proof_size: format_bytes(proof_words * 8.0),
+            proof_size_max: setup.stark_info.multiproof.then(|| format_bytes(flat_words * 8.0 + 8.0)),
         },
     )
 }
@@ -319,7 +432,7 @@ pub fn soundness_info<F: PrimeField64>(
 
     let pctx = ProofCtx::<F>::create_ctx(proving_key_path, aggregation, verbose_mode, mpi_ctx, false)?;
 
-    let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false)?);
+    let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, None)?);
 
     let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, false)?;
 
@@ -332,7 +445,7 @@ pub fn soundness_info<F: PrimeField64>(
             let lookup_info = get_bus_air_info(&pctx, setup)?;
             circuits.push(TomlCircuit {
                 name: air_name,
-                protocol_family: "FRI_STARK".to_string(),
+                protocol_family: air_info.low_degree_test.protocol_family().to_string(),
                 group: "basic".to_string(),
                 air: air_info,
                 lookups: lookup_info,
@@ -350,7 +463,7 @@ pub fn soundness_info<F: PrimeField64>(
                     let lookup_info = get_bus_air_info(&pctx, setup)?;
                     circuits.push(TomlCircuit {
                         name: format!("{}-compressor", air_name),
-                        protocol_family: "FRI_STARK".to_string(),
+                        protocol_family: air_info.low_degree_test.protocol_family().to_string(),
                         group: "compression".to_string(),
                         air: air_info,
                         lookups: lookup_info,
@@ -368,7 +481,7 @@ pub fn soundness_info<F: PrimeField64>(
                 let lookup_info = get_bus_air_info(&pctx, setup)?;
                 circuits.push(TomlCircuit {
                     name: format!("Recursive2 - Airgroup_{}", airgroup),
-                    protocol_family: "FRI_STARK".to_string(),
+                    protocol_family: air_info.low_degree_test.protocol_family().to_string(),
                     group: "aggregation".to_string(),
                     air: air_info,
                     lookups: lookup_info,
@@ -380,7 +493,7 @@ pub fn soundness_info<F: PrimeField64>(
             let lookup_info = get_bus_air_info(&pctx, setup)?;
             circuits.push(TomlCircuit {
                 name: "Recursive2".to_string(),
-                protocol_family: "FRI_STARK".to_string(),
+                protocol_family: air_info.low_degree_test.protocol_family().to_string(),
                 group: "aggregation".to_string(),
                 air: air_info,
                 lookups: lookup_info,
@@ -392,7 +505,7 @@ pub fn soundness_info<F: PrimeField64>(
         let lookup_info = get_bus_air_info(&pctx, setup_final_circuit)?;
         circuits.push(TomlCircuit {
             name: "Final".to_string(),
-            protocol_family: "FRI_STARK".to_string(),
+            protocol_family: final_air_info.low_degree_test.protocol_family().to_string(),
             group: "final".to_string(),
             air: final_air_info,
             lookups: lookup_info,
@@ -403,7 +516,7 @@ pub fn soundness_info<F: PrimeField64>(
         let lookup_info_c = get_bus_air_info(&pctx, setup_final_compressed_circuit)?;
         circuits.push(TomlCircuit {
             name: "Final_Compressed".to_string(),
-            protocol_family: "FRI_STARK".to_string(),
+            protocol_family: final_compressed_air_info.low_degree_test.protocol_family().to_string(),
             group: "final_compressed".to_string(),
             air: final_compressed_air_info,
             lookups: lookup_info_c,

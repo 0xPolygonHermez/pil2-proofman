@@ -1,4 +1,5 @@
 #include "starks.hpp"
+#include "stir/stir.hpp"
 #include "starks_api_internal.hpp"
 
 void calculateWitnessExpr(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx) {
@@ -117,14 +118,25 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
             }
         }
     } else {
+        if (!setupCtx.starkInfo.hasCircuitType || setupCtx.starkInfo.nStages < 2) {
+            zklog.error("genProof: a basic air needs a circuitType and stage 2 to absorb it after; regenerate the setup");
+            exitProcess();
+        }
         starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
     }
 
     TimerStopAndLog(STARK_STEP_0);
 
+    const bool inplace = setupCtx.starkInfo.inplaceStageCommit;
+    if (selfContained && inplace) {
+        zklog.error("genProof: a self-contained proof needs the cm1 root before stage 2, which the in-place commit defers");
+        exitProcess();
+    }
     TimerStart(STARK_STEP_1);
     calculateWitnessExpr(setupCtx, params, expressionsCtx);
-    starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_1"));
+    if (!inplace) {
+        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_1"));
+    }
     if(selfContained) {
         starks.addTranscript(transcript, &proof.proof.roots[0][0], HASH_SIZE);
     }
@@ -137,6 +149,11 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
         }
     }
+    // The air's identity, after the stage-2 (bus) challenges every air shares.
+    if (!selfContained) {
+        Goldilocks::Element circuitType = Goldilocks::fromU64(setupCtx.starkInfo.circuitType);
+        starks.addTranscriptGL(transcript, &circuitType, 1);
+    }
 
     calculateImHints(setupCtx, params, expressionsCtx);
     calculateWitnessSTD(setupCtx, params, expressionsCtx, true);
@@ -146,6 +163,12 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStart(CALCULATE_IM_POLS);
     starks.calculateImPolsExpressions(2, params, expressionsCtx);
     TimerStopAndLog(CALCULATE_IM_POLS);
+
+    if (inplace) {
+        TimerStart(STARK_COMMIT_STAGE_1);
+        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_1"));
+        TimerStopAndLog(STARK_COMMIT_STAGE_1);
+    }
 
     TimerStart(STARK_COMMIT_STAGE_2);
     starks.commitStage(2, nullptr, params.aux_trace, proof, ntt, buffHelper("buff_helper_fft_2"));
@@ -205,16 +228,8 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
     Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("lev", false)]];
 
-    for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += 4) {
-        std::vector<int64_t> openingPoints;
-        for(uint64_t j = 0; j < 4; ++j) {
-            if(i + j < setupCtx.starkInfo.openingPoints.size()) {
-                openingPoints.push_back(setupCtx.starkInfo.openingPoints[i + j]);
-            }
-        }
-        starks.computeLEv(xiChallenge, LEv, openingPoints, ntt);
-        starks.computeEvals(params ,LEv, proof, openingPoints);
-    }
+    starks.computeLEv(xiChallenge, LEv, ntt);
+    starks.computeEvals(params ,LEv, proof);
     
 
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
@@ -224,7 +239,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         starks.calculateHash(hash, params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
         starks.addTranscript(transcript, hash, HASH_SIZE);
     }
-    // Challenges for FRI polynomial
+    // Challenges for the DEEP polynomial
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 3) {
@@ -239,61 +254,84 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     //--------------------------------
     TimerStart(STARK_STEP_FRI);
 
-    TimerStart(COMPUTE_FRI_POLYNOMIAL);
-    starks.calculateFRIPolynomial(params, expressionsCtx);
-    TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
+    TimerStart(COMPUTE_DEEP_POLYNOMIAL);
+    starks.calculateDeepPolynomial(params, expressionsCtx);
+    TimerStopAndLog(COMPUTE_DEEP_POLYNOMIAL);
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
-    Goldilocks::Element *friPol = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]];
+    Goldilocks::Element *deepPol = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]];
     
+    // FRI's single grinding nonce. STIR grinds once per query message instead, keeping its nonces
+    // in the proof's STIR section, so this stays zero there.
+    uint64_t nonce = 0;
+
+    if (setupCtx.starkInfo.starkStruct.lowDegreeTest == LowDegreeTestKind::STIR)
+    {
+        // STIR (Construction 5.2) replaces the whole folding + query phase. Everything before it —
+        // the stages, the DEEP quotient and so the polynomial `deepPol` = f_0 — is shared with FRI.
+        TimerStart(STARK_STIR);
+        StirParams stirParams = stirParamsFromStarkInfo(setupCtx.starkInfo);
+        uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
+        STIR<Goldilocks::Element>::prove(
+            proof.proof.stir, stirParams, deepPol, transcript, proof.proof.fri.trees, starks.treesGL, nTrees,
+            [](uint64_t &nonce_, const uint64_t *c, uint32_t grindingBits) { runGrinding(nonce_, c, grindingBits); });
+        TimerStopAndLog(STARK_STIR);
+    }
+    else
+    {
     TimerStart(STARK_FRI_FOLDING);
-    uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
-    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size(); step++)
-    {   
-        uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
-        uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        FRI<Goldilocks::Element>::fold(step, friPol, challenge, nBitsExt, prevBits, currentBits);
-        if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
+        uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.logDomainSizes[0];
+        // Commit f_0 (the DEEP polynomial), then for step = 1..M draw r^fold_{step-1}, fold f_{step-1}
+        // into f_step and commit it; f_M is sent in clear. A last squeeze seeds the query phase.
+        for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size(); step++)
         {
-            FRI<Goldilocks::Element>::merkelize(step, proof, friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
-            starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], HASH_SIZE);
-        }
-        else
-        {
-            if(!setupCtx.starkInfo.starkStruct.hashCommits) {
-                starks.addTranscriptGL(transcript, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
-            } else {
-                Goldilocks::Element hash[HASH_SIZE];
-                starks.calculateHash(hash, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
-                starks.addTranscript(transcript, hash, HASH_SIZE);
-            } 
-            
+            uint64_t currentBits = setupCtx.starkInfo.starkStruct.logDomainSizes[step];
+            if (step > 0)
+            {
+                starks.getChallenge(transcript, *challenge);
+                FRI<Goldilocks::Element>::fold(step, deepPol, challenge, nBitsExt, setupCtx.starkInfo.starkStruct.logDomainSizes[step - 1], currentBits);
+            }
+            if (step < setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1)
+            {
+                FRI<Goldilocks::Element>::merkelize(step, proof, deepPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.logDomainSizes[step + 1]);
+                starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], HASH_SIZE);
+            }
+            else
+            {
+                if(!setupCtx.starkInfo.starkStruct.hashCommits) {
+                    starks.addTranscriptGL(transcript, deepPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION);
+                } else {
+                    Goldilocks::Element hash[HASH_SIZE];
+                    starks.calculateHash(hash, deepPol, (1 << setupCtx.starkInfo.starkStruct.logDomainSizes[step]) * FIELD_EXTENSION);
+                    starks.addTranscript(transcript, hash, HASH_SIZE);
+                } 
+                
+            }
         }
         starks.getChallenge(transcript, *challenge);
+        TimerStopAndLog(STARK_FRI_FOLDING);
+        TimerStart(STARK_FRI_QUERIES);
+
+        uint64_t queriesL0[setupCtx.starkInfo.starkStruct.nQueries];
+
+        runGrinding(nonce, (uint64_t *)challenge, setupCtx.starkInfo.starkStruct.grindingBitsQueries);
+
+        TranscriptGL transcriptPermutation(setupCtx.starkInfo.starkStruct.transcriptArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
+        starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
+        starks.addTranscriptGL(transcriptPermutation, (Goldilocks::Element *)&nonce, 1);
+        transcriptPermutation.getPermutations(queriesL0, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.logDomainSizes[0]);
+
+        uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
+        FRI<Goldilocks::Element>::proveQueries(queriesL0, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees);
+
+        for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.logDomainSizes.size(); ++step) {
+
+            FRI<Goldilocks::Element>::proveFRIQueries(queriesL0, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.logDomainSizes[step], proof, starks.treesFRI[step - 1]);
+        }
+
+        FRI<Goldilocks::Element>::setFinalPol(proof, deepPol, setupCtx.starkInfo.starkStruct.logDomainSizes[setupCtx.starkInfo.starkStruct.logDomainSizes.size() - 1]);
+        TimerStopAndLog(STARK_FRI_QUERIES);
     }
-    TimerStopAndLog(STARK_FRI_FOLDING);
-    TimerStart(STARK_FRI_QUERIES);
-
-    uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
-
-    uint64_t nonce;
-    runGrinding(nonce, (uint64_t *)challenge, setupCtx.starkInfo.starkStruct.powBits);
-
-    TranscriptGL transcriptPermutation(setupCtx.starkInfo.starkStruct.transcriptArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
-    starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
-    starks.addTranscriptGL(transcriptPermutation, (Goldilocks::Element *)&nonce, 1);
-    transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
-
-    uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    FRI<Goldilocks::Element>::proveQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees);
-
-    for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
-
-        FRI<Goldilocks::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, proof, starks.treesFRI[step - 1]);
-    }
-
-    FRI<Goldilocks::Element>::setFinalPol(proof, friPol, setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits);
-    TimerStopAndLog(STARK_FRI_QUERIES);
 
     TimerStopAndLog(STARK_STEP_FRI);
 

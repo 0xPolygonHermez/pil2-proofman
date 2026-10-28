@@ -5,8 +5,15 @@
 //! * the Q (cExp) kernel -- register-bounded, chunk size autotuned to zero
 //!   register spill;
 //! * one small trace-domain kernel per other covered expression (hint fields,
-//!   im columns, ...), dispatched by expId via `exps_expr_covered` /
-//!   `exps_launch_expr` (see `emit_exprs_tu`).
+//!   im columns, ...), dispatched by expId via `exps_generic_covered` /
+//!   `exps_generic_launch` (see `emit_exprs_parts`); the ones whose straight-line
+//!   kernel spills are re-emitted as register-bounded chunks over the same
+//!   scratch, chunk size autotuned to zero spill like Q (`autotune::tune_exprs`).
+//!
+//! No kernel of a generated library keeps local memory (STACK=0 on every arch,
+//! audited after linking): a spilling kernel makes the driver size the context's
+//! local-memory pool for every thread the device can hold, outside the prover's
+//! planned buffers, at its first launch.
 //!
 //! The prover `dlopen`s the library by convention and falls back to the
 //! bytecode interpreter for anything absent: missing `.so`, missing symbol,
@@ -17,6 +24,7 @@
 //! * [`generate_all`]  — a provingKey dir -> every AIR's `.exps.so`.
 
 mod autotune;
+mod bn128;
 mod check;
 mod emit;
 mod field;
@@ -36,7 +44,6 @@ use toolchain::Toolchain;
 
 const DEFAULT_CAP: usize = 40000; // skip an AIR whose Q has more ops than this
 const DEFAULT_CHUNK: usize = 512; // fixed ops/chunk when autotuning is off
-const SLOTS_CAP: u64 = 1000; // skip an AIR whose cross-chunk cut exceeds this
 
 /// Codegen configuration (the CLI defaults: cap 60000, autotune on, arch auto, optimizer on).
 #[derive(Debug, Clone)]
@@ -117,6 +124,11 @@ struct Placement {
 
 /// Recursively collect `*.starkinfo.json` paths under `root`, sorted.
 fn find_starkinfos(root: &Path) -> Vec<PathBuf> {
+    find_suffix(root, ".starkinfo.json")
+}
+
+/// Recursively collect the paths under `root` whose name ends in `suffix`, sorted.
+fn find_suffix(root: &Path, suffix: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -125,7 +137,7 @@ fn find_starkinfos(root: &Path) -> Vec<PathBuf> {
             let p = e.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.file_name().and_then(|s| s.to_str()).is_some_and(|s| s.ends_with(".starkinfo.json")) {
+            } else if p.file_name().and_then(|s| s.to_str()).is_some_and(|s| s.ends_with(suffix)) {
                 out.push(p);
             }
         }
@@ -232,6 +244,14 @@ pub fn generate_all(proving_key: &Path, cfg: &GenConfig) -> Result<GenSummary> {
     }
 
     let mut summary = run_pipeline(&tc, work.path(), &candidates, &placements, cfg)?;
+    for info in find_suffix(proving_key, ".pilfflonkinfo.json") {
+        let name = info.strip_prefix(proving_key).unwrap_or(&info).display().to_string();
+        match generate_pilfflonk(&tc, work.path(), &info, cfg) {
+            Ok(Some(_)) => summary.placed += 1,
+            Ok(None) => {}
+            Err(e) => skipped.push((name, format!("pilfflonk: {e:#}"))),
+        }
+    }
     summary.skipped.extend(skipped);
     summary.skipped.sort();
     print_summary(&summary, cfg);
@@ -274,6 +294,66 @@ pub fn generate_air(air_dir: &Path, cfg: &GenConfig) -> Result<PathBuf> {
         let why = summary.skipped.first().map(|(_, w)| w.clone()).unwrap_or_else(|| "unknown".into());
         anyhow::bail!("{}: not generated ({why})", candidate.name)
     }
+}
+
+/// The pilfflonk (BN128) target for one AIR: `<base>.pilfflonkinfo.json` + `<base>.bin` ->
+/// `<base>.exps.so` next to them, covering Q (cExpId). `Ok(None)` when the dry run leaves no
+/// library. The prover falls back to its interpreter for whatever the library does not cover.
+fn generate_pilfflonk(tc: &Toolchain, work: &Path, info_path: &Path, cfg: &GenConfig) -> Result<Option<PathBuf>> {
+    let dir = info_path.parent().context("pilfflonkinfo without a directory")?;
+    let fname = info_path.file_name().unwrap().to_string_lossy();
+    let base = fname.strip_suffix(".pilfflonkinfo.json").context("not a pilfflonkinfo")?.to_string();
+    let info: bn128::PilfflonkInfo = serde_json::from_slice(&std::fs::read(info_path)?)
+        .with_context(|| format!("parsing {}", info_path.display()))?;
+    let bin = bn128::read_bin(&dir.join(format!("{base}.bin")))?;
+    if bin.n_stages as u64 != info.n_stages {
+        anyhow::bail!("{base}.bin has {} stages, its pilfflonkinfo {}", bin.n_stages, info.n_stages);
+    }
+    let sym = format!("pf_{}_b{}_e{}", info.name, info.n_bits, info.c_exp_id);
+    let nums = field::Bn128Numbers::new();
+    let q = bn128::build_ir(&bin, info.c_exp_id as u32, info.n_bits, &nums)?;
+    let q = if cfg.optimize {
+        let (o, st) = opt::optimize(&q);
+        if let Err(e) = check::equivalent(&q, &o, 3) {
+            anyhow::bail!("optimized IR mismatch: {e}");
+        }
+        eprintln!(
+            "[exps-codegen] {sym}: ops {} -> {} (+{} hoisted, {} table words), max live {} -> {}, horner terms {}, inner chains {}, ltd {}/{}",
+            st.ops_before,
+            st.ops_after,
+            st.tab_ops,
+            o.table_words(),
+            st.max_live_before,
+            st.max_live_after,
+            st.horner_terms,
+            st.inner_chains,
+            st.ltd_terms,
+            st.ltd_atoms
+        );
+        o
+    } else {
+        q
+    };
+    let cu = work.join(format!("gen_{sym}.cu"));
+    std::fs::write(&cu, bn128::emit_tu(&[(info.c_exp_id as u32, q)], &nums))?;
+    if cfg.dry_run {
+        return Ok(None);
+    }
+    let obj = cu.with_extension("o");
+    let t0 = std::time::Instant::now();
+    let (ok, log) = tc.compile_tu(&cu, &obj, Some(work))?;
+    if !ok {
+        anyhow::bail!("nvcc failed for {}:\n{log}", cu.display());
+    }
+    eprintln!(
+        "[exps-codegen] {sym}: compiled in {:.1}s, stack {} bytes",
+        t0.elapsed().as_secs_f64(),
+        autotune::max_stack(&obj)
+    );
+    let dest = dir.join(format!("{base}.exps.so"));
+    tc.link_objs(&[obj], &dest)?;
+    eprintln!("[exps-codegen] {sym}: -> {}", dest.display());
+    Ok(Some(dest))
 }
 
 /// Optimize the Q IR and prove the result equivalent to the original on random
@@ -446,7 +526,7 @@ fn run_pipeline(
                 continue;
             }
         };
-        if plan.total_slots > SLOTS_CAP {
+        if plan.total_slots > emit::SLOTS_CAP {
             skipped.push((c.name.clone(), format!("slots {} > SLOTS_CAP (wide cut)", plan.total_slots)));
             continue;
         }
@@ -454,16 +534,13 @@ fn run_pipeline(
             std::fs::write(work.join(&fname), text)?;
         }
         // With autotune on, the table and generic-expression TUs were emitted and compiled in
-        // phase 2; otherwise they are written here and compiled with everything else in phase 3b.
+        // phase 2; otherwise the table TU is written here (compiled in phase 3b) and the generic
+        // kernels are built the same way as under autotune: only Q's chunk depends on `--chunk`.
         if !autotune {
             for (fname, text) in emit::emit_pow_tu(&c.sym, ir) {
                 std::fs::write(work.join(fname), text)?;
             }
-            if !xitems.is_empty() {
-                for (fname, text) in emit::emit_exprs_tus(&c.sym, xitems, &c.expr_info.quotient_pairs()) {
-                    std::fs::write(work.join(fname), text)?;
-                }
-            }
+            build_exprs_tus(tc, work, &c.sym, xitems, &c.expr_info.quotient_pairs())?;
         }
         let n_ext = 1u64 << c.stark_info.stark_struct.n_bits_ext;
         max_scratch = max_scratch.max(plan.total_slots * n_ext);
@@ -520,13 +597,46 @@ fn run_pipeline(
     }
 
     // Phase 4: link one self-contained .so per placement whose sym was generated (parallel).
-    let placed: Vec<&Placement> = placements.iter().filter(|p| slots_by_sym.contains_key(&p.sym)).collect();
+    let mut placed: Vec<&Placement> = placements.iter().filter(|p| slots_by_sym.contains_key(&p.sym)).collect();
     write_gen_log(work, &placed, &slots_by_sym)?;
     if !cfg.dry_run {
-        placed.par_iter().try_for_each(|p| -> Result<()> {
-            let dest = p.air_dir.join(format!("{}.exps.so", p.base));
-            link_one(tc, work, &p.sym, &dest)
-        })?;
+        // Link, then audit the library for local memory: a kernel with STACK>0 would make the
+        // driver grow the context's local-memory pool at its first launch, outside the prover's
+        // planned buffers, so such a library is not shipped (the AIR stays on the interpreter).
+        // Placements of one sym link the same objects, so a hit rejects the sym.
+        let audits: Vec<Vec<(String, i64)>> = placed
+            .par_iter()
+            .map(|p| -> Result<Vec<(String, i64)>> {
+                let dest = p.air_dir.join(format!("{}.exps.so", p.base));
+                link_one(tc, work, &p.sym, &dest)?;
+                let mut bad: Vec<(String, i64)> =
+                    autotune::resource_usage(&dest)?.into_iter().filter(|(_, st)| *st > 0).collect();
+                bad.sort();
+                if !bad.is_empty() {
+                    std::fs::remove_file(&dest).with_context(|| format!("removing {}", dest.display()))?;
+                }
+                Ok(bad)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let mut rejected: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (p, bad) in placed.iter().zip(audits) {
+            if bad.is_empty() {
+                continue;
+            }
+            for (f, st) in &bad {
+                eprintln!("  STACK {:38} {st:>6} B  {f}", p.name);
+            }
+            skipped.push((
+                p.name.clone(),
+                format!("{} kernel(s) with local memory after link; library removed", bad.len()),
+            ));
+            rejected.insert(p.sym.clone());
+        }
+        generated.retain(|g| !rejected.contains(&g.sym));
+        placed.retain(|p| !rejected.contains(&p.sym));
+        if rejected.is_empty() && !placed.is_empty() {
+            eprintln!("spill audit: no kernel with local memory (STACK=0 everywhere)");
+        }
     }
 
     generated.sort_by(|a, b| a.name.cmp(&b.name));
@@ -549,10 +659,9 @@ fn link_one(tc: &Toolchain, work: &Path, sym: &str, dest: &Path) -> Result<()> {
 /// only; anything odd (zerofier use, non-canonical output shape, oversized) is left out and
 /// stays on the interpreter. Returns (expId, ir, out_dim) per covered expression.
 fn build_x_items(c: &Candidate, cfg: &GenConfig) -> Vec<(i64, ir::Ir, u64)> {
-    const EXPR_CAP: usize = 512;
     let mut items: Vec<(i64, ir::Ir, u64)> = Vec::new();
     for ec in &c.expr_info.expressions_code {
-        if ec.exp_id == c.cexp || ec.code.is_empty() || ec.code.len() > EXPR_CAP {
+        if ec.exp_id == c.cexp || ec.code.is_empty() {
             continue;
         }
         let Ok(eir) = ir::build_ir_expr(&c.stark_info, &c.expr_info, ec.exp_id, false) else {
@@ -588,8 +697,12 @@ fn build_x_items(c: &Candidate, cfg: &GenConfig) -> Vec<(i64, ir::Ir, u64)> {
     items
 }
 
-/// Emit the generic-expression TUs of one AIR into `work` and compile them (parallel). A failed
-/// compile is a generator bug and fails the run, as it did when phase 3b compiled these.
+/// Emit the generic-expression kernel parts of one AIR into `work`, compile them (parallel), read
+/// their local-memory usage, re-emit every spilling kernel chunked (`autotune::tune_exprs`) and
+/// write the dispatch TU (compiled in phase 3b). A failed compile is a generator bug and fails
+/// the run. The goal is STACK=0 across the whole `.so`: a spilling kernel makes the driver grow
+/// the context's local-memory pool (stack bytes x every thread the device can hold) outside the
+/// prover's planned buffers.
 fn build_exprs_tus(
     tc: &Toolchain,
     work: &Path,
@@ -600,18 +713,77 @@ fn build_exprs_tus(
     if xitems.is_empty() {
         return Ok(());
     }
-    let mut cus: Vec<PathBuf> = Vec::new();
-    for (fname, text) in emit::emit_exprs_tus(sym, xitems, pairs) {
-        let cu = work.join(fname);
-        std::fs::write(&cu, text)?;
-        cus.push(cu);
-    }
-    cus.par_iter().try_for_each(|cu| -> Result<()> {
-        match tc.compile_tu(cu, &cu.with_extension("o"), Some(work))? {
-            (true, _) => Ok(()),
-            (false, log) => anyhow::bail!("nvcc failed for {}: {log}", cu.display()),
-        }
-    })
+    // Write and compile part TUs (parallel); with `read_usage`, each object's local-memory usage.
+    let compile_parts =
+        |files: Vec<(String, String)>, read_usage: bool| -> Result<std::collections::HashMap<String, i64>> {
+            let mut cus: Vec<PathBuf> = Vec::new();
+            for (fname, text) in files {
+                let cu = work.join(fname);
+                std::fs::write(&cu, text)?;
+                cus.push(cu);
+            }
+            let usages: Vec<std::collections::HashMap<String, i64>> = cus
+                .par_iter()
+                .map(|cu| -> Result<_> {
+                    let obj = cu.with_extension("o");
+                    match tc.compile_tu(cu, &obj, Some(work))? {
+                        (true, _) if read_usage => autotune::resource_usage(&obj),
+                        (true, _) => Ok(Default::default()),
+                        (false, log) => anyhow::bail!("nvcc failed for {}: {log}", cu.display()),
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(usages.into_iter().flatten().collect())
+        };
+    // Oversized programs never get a straight-line kernel; the rest are tried and chunked on spill.
+    let big = emit::oversized_keys(xitems, pairs);
+    let parts = emit::emit_exprs_parts(sym, xitems, pairs, &big);
+    let n_parts = parts.len();
+    let usage = compile_parts(parts, true)?;
+    let candidates: Vec<emit::ExprKey> = xitems
+        .iter()
+        .map(|(id, _, _)| emit::ExprKey::Single(*id))
+        .chain(pairs.iter().map(|&(n, d)| emit::ExprKey::Pair(n, d)))
+        .filter(|k| !big.contains(k))
+        .collect();
+    let spilling = autotune::spilling_exprs(&usage, sym, &candidates);
+    let mut to_chunk: Vec<emit::ExprKey> = big.clone();
+    to_chunk.extend(spilling.iter().copied());
+    // The spilling straight-line kernels are dead now (chunked or excluded): drop them from
+    // their parts, so the linked library holds no kernel with local memory at all. Only the
+    // parts that lost a kernel are recompiled, alongside the chunk tuning they do not depend on.
+    let mut touched: Vec<usize> = spilling
+        .iter()
+        .filter_map(|k| match k {
+            emit::ExprKey::Single(id) | emit::ExprKey::Pair(id, _) => emit::exprs_part_of(xitems, *id),
+        })
+        .collect();
+    touched.sort_unstable();
+    touched.dedup();
+    let (tuned, recompiled) = rayon::join(
+        || autotune::tune_exprs(tc, work, sym, xitems, &to_chunk),
+        || {
+            compile_parts(
+                touched.iter().map(|&k| emit::emit_exprs_part(sym, xitems, pairs, &to_chunk, k)).collect(),
+                false,
+            )
+        },
+    );
+    let (chunked, excluded) = tuned?;
+    recompiled?;
+    let summary: Vec<String> = chunked.iter().map(|(k, slots, chunk)| format!("{}@{chunk}/{slots}", k.tag())).collect();
+    eprintln!(
+        "[exps-codegen] {sym}: {} generic kernels in {n_parts} parts, {} spilling + {} oversized -> {} chunked [{}], {} excluded [{}]",
+        candidates.len() + big.len(),
+        spilling.len(),
+        big.len(),
+        chunked.len(),
+        summary.join(" "),
+        excluded.len(),
+        excluded.iter().map(|k| k.tag()).collect::<Vec<_>>().join(" ")
+    );
+    std::fs::write(work.join(format!("gen_{sym}_cexprs.cu")), emit::emit_exprs_dispatch(sym, n_parts, &chunked))?;
+    Ok(())
 }
 
 /// Emit the per-launch table TU of one AIR (if it has one) into `work` and compile it.

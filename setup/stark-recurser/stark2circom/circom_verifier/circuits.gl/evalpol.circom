@@ -98,3 +98,27 @@ template EvalPol(n) {
         out <== evs4[0].out;
     }
 }
+
+/*
+    Evaluate a polynomial with coefficients in Fp³ at a point x of the BASE field Fp, with Horner's rule.
+    With x ∈ Fp the three coordinates never mix, so each Horner step is three independent products
+        acc[e] <-- acc[e]·x + pol[i][e],    e = 0, 1, 2
+    i.e. 3(n−1) plain constraints in all.
+*/
+template EvalPolBase(n) {
+    assert(n >= 1);
+    signal input pol[n][3];
+    signal input x;
+    signal output out[3];
+
+    // acc[i] holds the evaluation of the polynomial formed by the i+1 highest coefficients
+    signal acc[n][3];
+    acc[0] <== pol[n-1];
+    for (var i = 1; i < n; i++) {
+        for (var e = 0; e < 3; e++) {
+            acc[i][e] <== acc[i-1][e] * x + pol[n-1-i][e];
+        }
+    }
+
+    out <== acc[n-1];
+}

@@ -20,7 +20,7 @@ use serde_json::Value;
 
 pub use templates::{
     gen_recursivef, gen_recursion_final, gen_solidity, gen_iverifier, gen_final_compressed, gen_compressor,
-    gen_recursive1, gen_recursive2, gen_vadcop_final,
+    gen_recursive1, gen_recursive2, gen_vadcop_final, SnarkVerifier,
 };
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -36,7 +36,12 @@ pub struct CircomGenOptions {
     /// anything unsupported; others pass 0. Deliberately no `Default` — an unstated arity is
     /// how a wrong one would reach the circuit unnoticed.
     pub agg_arity: usize,
+    /// Proofs one recursive1 verifies. 1 is the unbatched circuit.
+    pub batch_size: usize,
 }
+
+/// Most proofs one recursive1 verifies. A deliberate cap, below the 26 the letter-named slots allow.
+pub const MAX_RECURSIVE1_BATCH: usize = 3;
 
 /// All inputs for a [`gen_circom_circuit`] call (mirrors `gencircom.js` parameters).
 pub struct GenCircomCircuitInput<'a> {

@@ -1,4 +1,7 @@
 #include "zkglobals.hpp"
+#include "starks_backend.hpp"
+#include "multiplicity.hpp"
+#include "multiplicity_cpu.hpp"
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
 #include "global_constraints.hpp"
@@ -10,7 +13,6 @@
 #include "setup_ctx.hpp"
 #include "stark_verify.hpp"
 #include "recursion_trace/gate_bands/gate_bands_cpu.hpp"
-#include "recursion_trace/exec_file.hpp"
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 #include "starks_api_internal.hpp"
@@ -320,10 +322,6 @@ uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
     return ((StarkInfo *)pStarkInfo)->mapTotalNCustomCommitsFixed;
 }
 
-uint64_t get_map_total_n_contributions(void *pStarkInfo)
-{
-    return ((StarkInfo *)pStarkInfo)->mapTotalNContributions;
-}
 
 void stark_info_free(void *pStarkInfo)
 {
@@ -736,25 +734,29 @@ uint64_t commit_witness_cpu(void *pSetupCtx_, void *params_, uint64_t instanceId
     PackedInfoCPU *packed_info = d_buffers->getPackedInfo(airgroupId, airId);
     // The witness buffer is only num_packed_words wide, so read the unpacked cm1 where it lands.
     StepsParams paramsUnpacked = *params;
-    // mt1 is smaller than the LDE's N_Extended*nCols scratch, so the scratch runs into cm1(false).
-    // Harmless while the source is the caller's buffer; not once it IS cm1(false).
-    Goldilocks::Element *ldeScratch = &auxTraceGL[offset_mt];
     if (packed_info != nullptr && packed_info->is_packed) {
         unpack_cm1_cpu(d_buffers, airgroupId, airId, packed_info, (uint64_t *)params->trace,
                        (uint64_t *)&auxTraceGL[offset_src], N, nCols);
         paramsUnpacked.trace = &auxTraceGL[offset_src];
-        auto it = setupCtx->starkInfo.mapOffsets.find(std::make_pair(std::string("buff_helper_fft_1"), false));
-        // Starts exactly past the unpacked cm1 and is sized for the LDE; null makes the NTT malloc.
-        ldeScratch = it == setupCtx->starkInfo.mapOffsets.end() ? nullptr : &auxTraceGL[it->second];
     }
+    Goldilocks::Element *ldeScratch = &auxTraceGL[setupCtx->starkInfo.mapOffsets[std::make_pair("buff_helper_fft_1", false)]];
 
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(*setupCtx, &proverHelpers);
 
     calculateWitnessExpr(*setupCtx, paramsUnpacked, expressionsCtx);
 
+    // Prover-side multiplicities, at the point the GPU backend scatters (witness filled, untransformed).
+    // Gated on the active backend, not __USE_CUDA__: the CUDA build also proves on the CPU.
+
+    if (!starks_gpu_mode_active()) {
+        mul_cpu_alloc();   // idempotent; the accumulators are not allocated on a CPU run otherwise
+        mul_scatter_cpu(*setupCtx, paramsUnpacked, airgroupId, airId, false);
+        mul_note_commit();
+    }
+
     NTT_Goldilocks ntt(N);
-    ntt.LDE(&auxTraceGL[offset_dst], paramsUnpacked.trace, NExtended, N, nCols, ldeScratch);
+    ntt.LDEBlocked(&auxTraceGL[offset_dst], paramsUnpacked.trace, NExtended, N, nCols, ldeScratch);
     mt.setSource(&auxTraceGL[offset_dst]);
     mt.setNodes(&auxTraceGL[offset_mt]);
     mt.merkelize();
@@ -978,9 +980,6 @@ void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint
 
 
 
-void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
-    getCommitedPols((Goldilocks::Element *)circomWitness, execData, (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
-}
 
 uint64_t expand_gate_bands(void *witness, uint64_t* execData, uint64_t nCommitedPols, uint64_t execWords, uint64_t N) {
     gate_bands::ExpandResult res =
@@ -995,9 +994,7 @@ uint64_t expand_gate_bands(void *witness, uint64_t* execData, uint64_t nCommited
                         "buffer of " + std::to_string(execWords) + " words; the proving key is corrupt");
             break;
         case gate_bands::ExpandStatus::UnsupportedExecFormat:
-            zklog.error("expand_gate_bands: the exec file's format version is not the version " +
-                        std::to_string(exec_layout::EXEC_FORMAT_VERSION) + " this build reads; "
-                        "regenerate the proving key with a matching setup");
+            zklog.error("expand_gate_bands: " + exec_layout::refused_version(res.version));
             break;
         case gate_bands::ExpandStatus::UnsupportedVersion:
             zklog.error("expand_gate_bands: gate-band section is format version " +
@@ -1035,7 +1032,7 @@ void *load_zkey(char* zkeyFile) {
     return zkey.get();
 }
 
-uint64_t get_snark_protocol_id(void *snark_prover) {
+uint64_t get_snark_protocol_id_cpu(void *snark_prover) {
     FinalSnark* finalSnarkProver = (FinalSnark*)snark_prover;
     return finalSnarkProver->protocolId;
 }
@@ -1099,9 +1096,19 @@ void snark_proof_bytes_to_json(
     char** proof_json_out,
     char** publics_json_out
 ) {
-    auto [proof_json, publics_json] = snark_proof_to_json(
-        proof_bytes, proof_size, public_bytes, public_size, protocol_id
-    );
+    // An exception must not cross the C boundary, where it aborts the process. On failure both
+    // outputs stay null, which the Rust side reports as an error.
+    *proof_json_out = nullptr;
+    *publics_json_out = nullptr;
+    std::string proof_json, publics_json;
+    try {
+        std::tie(proof_json, publics_json) = snark_proof_to_json(
+            proof_bytes, proof_size, public_bytes, public_size, protocol_id
+        );
+    } catch (const std::exception &e) {
+        zklog.error("snark_proof_bytes_to_json: " + std::string(e.what()));
+        return;
+    }
     
     *proof_json_out = (char*)malloc(proof_json.size() + 1);
     *publics_json_out = (char*)malloc(publics_json.size() + 1);

@@ -1,0 +1,20 @@
+[package]
+name = "pilfflonk-wrap-witness-lib"
+description = "The pilfflonk wrap's witness as a pilfflonk witness library, for `pilfflonk prove -w`"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
+[lib]
+# Its own crate: the entry point it exports would otherwise be in every cdylib that links the wrap.
+crate-type = ["cdylib"]
+
+[dependencies]
+pilfflonk-wrap-witness = { workspace = true }
+proofman-pilfflonk = { workspace = true }
+# The logger of `pilfflonk_witness_library!`.
+proofman-common = { workspace = true }

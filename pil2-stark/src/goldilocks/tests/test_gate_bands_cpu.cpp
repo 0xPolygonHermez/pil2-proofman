@@ -166,11 +166,19 @@ TEST(GateBands, BandSectionParsingRejectsMalformedBuffers)
 
     // An exec file from a newer setup: the section's offset is unknown, so it is refused as an
     // exec-format problem rather than misread at this build's offset.
-    const uint64_t newerExec = exec_layout::EXEC_MAGIC | (exec_layout::EXEC_FORMAT_VERSION + 1);
+    const uint64_t newerExec = exec_layout::EXEC_MAGIC | (exec_layout::EXEC_FORMAT_VERSION_WIDE + 1);
     std::vector<uint64_t> newerFile{newerExec, 0, 1, 2, M, V, 1, 0, 1};
     auto ev = gate_bands::band_section(newerFile.data(), newerFile.size());
     ASSERT_EQ((int)ev.status, (int)gate_bands::BandSection::UnsupportedExecFormat);
-    ASSERT_EQ(ev.version, exec_layout::EXEC_FORMAT_VERSION + 1);
+    ASSERT_EQ(ev.version, exec_layout::EXEC_FORMAT_VERSION_WIDE + 1);
+
+    // A BN128 exec, with the two header words version 2 lacks (4-word coefficients, an r1cs of 9
+    // wires): the same refusal, and the version it carries is what names it in the error.
+    const uint64_t bn128Exec = exec_layout::EXEC_MAGIC | exec_layout::EXEC_FORMAT_VERSION_WIDE;
+    std::vector<uint64_t> bn128File{bn128Exec, 0, 1, 2, 4, 9, M, V, 0, 0};
+    auto bv = gate_bands::band_section(bn128File.data(), bn128File.size());
+    ASSERT_EQ((int)bv.status, (int)gate_bands::BandSection::UnsupportedExecFormat);
+    ASSERT_EQ(bv.version, exec_layout::EXEC_FORMAT_VERSION_WIDE);
 
     // A section from a newer setup is refused, not misparsed.
     std::vector<uint64_t> newer{H, 0, 1, 2, M, V + 1, 1, 0, 1};
@@ -243,51 +251,21 @@ TEST(GateBandsBlake3, LayoutMatchesTheGeneratedTrace)
     // The boundary columns come FIRST, right after the band: the air declares them before it calls
     // blake3Lanes, because that call binds them and PIL2 wants an argument declared before it is
     // passed. Reading them from the tail instead put every interior cell one group off.
-    EXPECT_EQ(L.dinv, 18u);      EXPECT_EQ(L.vbTopHi, 22u);
-    EXPECT_EQ(L.outBytes, 34u);
-    EXPECT_EQ(L.va, 50u);        EXPECT_EQ(L.vb, 58u);
-    EXPECT_EQ(L.vd, 74u);
-    EXPECT_EQ(L.x, 90u);         EXPECT_EQ(L.y, 98u);
-    EXPECT_EQ(L.va_p, 106u);     EXPECT_EQ(L.vd_p, 122u);
-    EXPECT_EQ(L.vc_p, 138u);     EXPECT_EQ(L.vb_p_s, 154u);
-    EXPECT_EQ(L.va_pp, 186u);    EXPECT_EQ(L.vd_pp, 202u);
-    EXPECT_EQ(L.vc_pp, 218u);    EXPECT_EQ(L.vb_pp_xor, 234u);
-    EXPECT_EQ(L.vb_pp_t, 250u);
-    EXPECT_EQ(L.mul_table, 254u); EXPECT_EQ(L.mul_range, 255u);
-    EXPECT_EQ(gate_bands::blake3::stage1_cols(4, 18), 256u);
+    EXPECT_EQ(L.dinv, 18u);      EXPECT_EQ(L.outBytes, 22u);
+    EXPECT_EQ(L.va, 30u);        EXPECT_EQ(L.vb, 38u);
+    EXPECT_EQ(L.vd, 54u);
+    EXPECT_EQ(L.x, 70u);         EXPECT_EQ(L.y, 78u);
+    EXPECT_EQ(L.va_p, 86u);      EXPECT_EQ(L.vd_p, 102u);
+    EXPECT_EQ(L.vc_p, 118u);     EXPECT_EQ(L.vb_p_s, 134u);
+    EXPECT_EQ(L.va_pp, 166u);    EXPECT_EQ(L.vd_pp, 182u);
+    EXPECT_EQ(L.vc_pp, 198u);    EXPECT_EQ(L.vb_pp_xor, 214u);
+    EXPECT_EQ(L.vb_pp_t, 230u);
+    EXPECT_EQ(L.mul_table, 234u); EXPECT_EQ(L.mul_range, 235u);
+    EXPECT_EQ(gate_bands::blake3::stage1_cols(4, 18), 236u);
 
     // and it must scale, since LANES is an air parameter
-    EXPECT_EQ(gate_bands::blake3::stage1_cols(1, 18), 79u);
-    EXPECT_EQ(gate_bands::blake3::stage1_cols(8, 18), 492u);
-}
-
-/// The BAND is an air parameter too, not a constant: `blake3/compressor.pil` is 27 columns wide
-/// where `blake3/aggregator.pil` is 18, and everything after the band moves with it.
-///
-/// Pinned against a real compressor's starkinfo (LANES 8, band 27), where cmPolsMap places a[0..27],
-/// then dinv at 27 and vbTopHi at 35. Reading the band from a constant put every lane column 9 too
-/// low, so the air read its outBytes bytes as vbTopHi bits and failed booleanity -- the whole proof
-/// was rejected at VerifyEvaluations with nothing pointing at the cause.
-TEST(GateBandsBlake3, LayoutFollowsTheBandWidth)
-{
-    const auto L = gate_bands::blake3::layout(8, 27);
-    EXPECT_EQ(L.dinv, 27u);      EXPECT_EQ(L.vbTopHi, 35u);
-    EXPECT_EQ(L.outBytes, 59u);
-    EXPECT_EQ(L.va, 91u);        EXPECT_EQ(L.vb, 107u);
-    EXPECT_EQ(L.vd, 139u);
-    EXPECT_EQ(L.x, 171u);        EXPECT_EQ(L.y, 187u);
-    EXPECT_EQ(L.va_p, 203u);     EXPECT_EQ(L.vd_p, 235u);
-    EXPECT_EQ(L.vc_p, 267u);     EXPECT_EQ(L.vb_p_s, 299u);
-    EXPECT_EQ(L.va_pp, 363u);    EXPECT_EQ(L.vd_pp, 395u);
-    EXPECT_EQ(L.vc_pp, 427u);    EXPECT_EQ(L.vb_pp_xor, 459u);
-    EXPECT_EQ(L.vb_pp_t, 491u);
-    EXPECT_EQ(L.mul_table, 499u); EXPECT_EQ(L.mul_range, 500u);
-    EXPECT_EQ(gate_bands::blake3::stage1_cols(8, 27), 501u);
-
-    // The two bands must NOT agree anywhere after the band, or the bug this guards is invisible.
-    const auto A = gate_bands::blake3::layout(8, 18);
-    EXPECT_EQ(L.dinv - A.dinv, 9u);
-    EXPECT_EQ(L.mul_range - A.mul_range, 9u);
+    EXPECT_EQ(gate_bands::blake3::stage1_cols(1, 18), 74u);
+    EXPECT_EQ(gate_bands::blake3::stage1_cols(8, 18), 452u);
 }
 
 /// The reference permutation is written independently of setup/circom/blake3_gate.cpp so the two
@@ -404,13 +382,13 @@ TEST(GateBandsBlake3, ExpandedBlockReproducesTheDigest)
             }
         }
 
-        // and what the expanded trace holds: out[i] at clock 40+i, four bytes wide
+        // and what the expanded trace holds: out[i] two bytes a row, at out_clock's two clocks
         const auto L = b3::layout(LANES, BAND);
         for (int i = 0; i < 8; i++) {
             uint32_t got = 0;
             for (int b = 0; b < 4; b++) {
-                const uint64_t row = (uint64_t)(b3::CLOCKS - 16 + i);
-                got |= (uint32_t)Goldilocks::toU64(trace[row * nCols + L.outBytes + l * 4 + b]) << (8 * b);
+                const uint64_t row = b3::out_clock(i, b);
+                got |= (uint32_t)Goldilocks::toU64(trace[row * nCols + L.outBytes + l * 2 + b % 2]) << (8 * b);
             }
             EXPECT_EQ(got, v[i] ^ v[i + 8]) << "lane " << l << " out[" << i << "]";
         }

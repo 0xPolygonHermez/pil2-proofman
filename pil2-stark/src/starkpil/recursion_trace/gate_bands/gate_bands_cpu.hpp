@@ -3,7 +3,7 @@
 
 // CPU expander: fills every band's interior cells from its boundary cells.
 //
-// Runs after getCommitedPols has placed the boundary -- a band's input at its first row, key
+// Runs after getWitnessTrace has placed the boundary -- a band's input at its first row, key
 // alongside, output at its last. This file parses the exec file's band section, validates it, and
 // hands the whole list to the one back-end that owns it; the reconstruction lives per family in
 // gate_bands_<family>_cpu.hpp. Adding a family means a back-end and an arm in the switch below.

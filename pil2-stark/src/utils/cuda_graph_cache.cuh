@@ -11,6 +11,8 @@
 #include <cstdlib>
 #include <cerrno>
 #include <climits>
+#include <atomic>
+#include <mutex>
 
 class CudaGraphCache;
 
@@ -26,6 +28,65 @@ namespace cudagraph {
             return e == nullptr || e[0] != '0';
         }();
         return v;
+    }
+
+    // ---- Per-device graph memory budget: PROOFMAN_GPU_HEADROOM_MB - PROOFMAN_GPU_MIN_HEADROOM_MB.
+    // Graph executables are driver allocations that live until the stream caches are freed; the
+    // unified-buffer allocation sets what they may hold on each device (setBudget), every
+    // instantiated graph is charged what cudaMemGetInfo saw it take, and once the next one does not
+    // fit the device stops capturing for good and warns once.
+    constexpr int MAX_DEVICES = 64;
+
+    struct DeviceBudget {
+        std::atomic<uint64_t> budget{0};     // bytes the graphs may hold on this device; 0 = none
+        std::atomic<uint64_t> used{0};       // bytes charged; equal to budget once spent, for good
+        std::mutex instantiate;              // one instantiation at a time per device: the charge is a memory delta
+    };
+
+    inline DeviceBudget& deviceBudget(int dev) {
+        static DeviceBudget table[MAX_DEVICES];
+        if (dev < 0 || dev >= MAX_DEVICES) {
+            fprintf(stderr, "[cudaGraph] device ordinal %d is outside the budget table (%d devices)\n", dev, MAX_DEVICES);
+            abort();
+        }
+        return table[dev];
+    }
+
+    inline void setBudget(int dev, uint64_t bytes) {
+        DeviceBudget &b = deviceBudget(dev);
+        b.used.store(0, std::memory_order_relaxed);
+        b.budget.store(bytes, std::memory_order_release);
+    }
+
+    // The buffer is gone: so are the caches that held the graphs.
+    inline void clearBudget(int dev) { setBudget(dev, 0); }
+
+    inline bool captureAllowed() {
+        int dev = 0;
+        (void)cudaGetDevice(&dev);
+        const DeviceBudget &b = deviceBudget(dev);
+        return b.used.load(std::memory_order_acquire) < b.budget.load(std::memory_order_acquire);
+    }
+
+    // Charge an instantiated executable (under the device's `instantiate` mutex): `bytes` is what
+    // the device lost across the cudaGraphInstantiate. True when it fits. The budget is spent for
+    // good once it is full, by an exact fill or by a graph that does not fit (the caller destroys
+    // that one, so the budget is never exceeded); the device warns once, at that moment.
+    inline bool chargeGraph(int dev, uint64_t bytes) {
+        DeviceBudget &b = deviceBudget(dev);
+        const uint64_t budget = b.budget.load(std::memory_order_relaxed);
+        const uint64_t used = b.used.load(std::memory_order_relaxed);
+        if (used >= budget) return false;   // already spent: a capture that was in flight when it closed
+        const bool fits = used + bytes <= budget;
+        const uint64_t now = fits ? used + bytes : budget;
+        b.used.store(now, std::memory_order_release);
+        if (now >= budget) {
+            fprintf(stderr, "[cudaGraph] GPU %d: graph budget spent (%llu of %llu MiB used%s): no more graphs are captured "
+                            "on this device, further regions run directly (PROOFMAN_GPU_HEADROOM_MB - PROOFMAN_GPU_MIN_HEADROOM_MB)\n",
+                    dev, (unsigned long long)((fits ? now : used) >> 20), (unsigned long long)(budget >> 20),
+                    fits ? "" : ", the next graph did not fit");
+        }
+        return fits;
     }
 }
 
@@ -160,11 +221,29 @@ public:
         }
 
         cudaGraphExec_t exec = nullptr;
+        int dev = 0;
+        (void)cudaGetDevice(&dev);
+        {
+            // One instantiation at a time per device, so the free-memory delta is this graph's (plus
+            // whatever another stream allocated meanwhile: an overcharge, never an undercharge).
+            std::lock_guard<std::mutex> lk(cudagraph::deviceBudget(dev).instantiate);
+            size_t freeBefore = 0, freeAfter = 0, total = 0;
+            const bool measured = cudaMemGetInfo(&freeBefore, &total) == cudaSuccess;
 #if CUDART_VERSION >= 12000
-        err = cudaGraphInstantiate(&exec, graph, 0);
+            err = cudaGraphInstantiate(&exec, graph, 0);
 #else
-        err = cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0);
+            err = cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0);
 #endif
+            const bool measuredAfter = measured && cudaMemGetInfo(&freeAfter, &total) == cudaSuccess;
+            const uint64_t charged = measuredAfter && freeBefore > freeAfter ? freeBefore - freeAfter : 0;
+            // Not kept when its cost is unknown (a failed memory query) or over budget: the region
+            // runs directly (over budget: from now on, the device is closed).
+            if (err == cudaSuccess && (!measuredAfter || !cudagraph::chargeGraph(dev, charged))) {
+                cudaGraphExecDestroy(exec);
+                cudaGraphDestroy(graph);
+                return false;
+            }
+        }
         if (err != cudaSuccess) {
             fprintf(stderr, "[cudaGraph] instantiate failed key=%llx: %s -- key blacklisted\n",
                     (unsigned long long)pending_key_, cudaGetErrorString(err));
@@ -245,7 +324,7 @@ namespace cudagraph {
         CudaGraphCache *gc = enabled() ? current() : nullptr;
         if (gc) {
             if (gc->tryLaunch(key, stream)) return;
-            if (gc->shouldCapture(key) && gc->beginCapture(key, stream)) {
+            if (gc->shouldCapture(key) && captureAllowed() && gc->beginCapture(key, stream)) {
                 uint64_t countIdSnap = countId;
                 body();
                 if (gc->endCaptureAndLaunch(stream)) return;
@@ -269,6 +348,8 @@ namespace cudagraph {
 
 namespace cudagraph {
     inline bool enabled() { return false; }
+    inline void setBudget(int, uint64_t) {}
+    inline void clearBudget(int) {}
     inline uint64_t key(uint64_t, uint64_t = 0, uint64_t = 0, uint64_t = 0,
                         uint64_t = 0, uint64_t = 0, uint64_t = 0) { return 0; }
     template <typename Body>

@@ -16,8 +16,15 @@ extern crate alloc;
 #[macro_use]
 mod log;
 
+mod layout;
+mod multiproof;
 mod proof;
+mod replay;
+mod stir;
 mod verifier;
 
+pub use layout::*;
+pub use multiproof::*;
 pub use proof::*;
+pub use stir::*;
 pub use verifier::*;

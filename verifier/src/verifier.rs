@@ -5,13 +5,12 @@ use alloc::vec::Vec;
 #[allow(unused)]
 use num_traits::Float;
 
+use crate::layout::{merkle_proof_levels, sibling_words};
+use crate::replay::{fri_transcript, prefix_transcript};
 use proofman_fields::{
-    intt_tiny, partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field, Goldilocks, Hash, PrimeField64,
-    TranscriptLike,
+    cubic_mul_acc, intt_tiny, DotAcc, partial_merkle_tree, verify_fold, verify_mt, CubicExtensionField, Field,
+    Goldilocks, Hash, PrimeField64, TranscriptLike,
 };
-
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -44,64 +43,9 @@ pub struct VerifierInfo {
     pub fri_ev_groups: Vec<FriEvalGroup>,
 }
 
+/// The flat proof's size in bytes, publics excluded.
 pub fn expected_proof_size_bytes(info: &VerifierInfo) -> usize {
-    let log_arity = (info.arity as f64).log2();
-    // Saturating, as the prover's `merkleProofLevels` is: llv can exceed a short tree's depth.
-    let n_siblings =
-        (((info.n_bits_ext as f64 / log_arity).ceil()) as u64).saturating_sub(info.last_level_verification);
-    let n_siblings_per_level = (info.arity - 1) * 4;
-    let n_queries = info.n_fri_queries;
-    let num_nodes_level = info.arity.pow(info.last_level_verification as u32) * 4;
-    let last_level_extra = if info.last_level_verification > 0 { num_nodes_level } else { 0 };
-
-    let mut p: u64 = 0;
-
-    // roots: (n_stages + 1) groups of 4
-    p += 4 * (info.n_stages as u64 + 1);
-
-    // evals: n_evals cubic extension elements (3 each)
-    p += 3 * info.n_evals;
-
-    // s0 vals: n_queries * n_constants
-    p += n_queries * info.n_constants;
-
-    // s0 siblings: n_queries * n_siblings * n_siblings_per_level
-    p += n_queries * n_siblings * n_siblings_per_level;
-
-    // s0 last level
-    p += last_level_extra;
-
-    // stage queries: n_stages + 1 iterations
-    for i in 0..(info.n_stages as u64 + 1) {
-        let num_vals_i = info.num_vals[i as usize];
-        p += n_queries * num_vals_i;
-        p += n_queries * n_siblings * n_siblings_per_level;
-        p += last_level_extra;
-    }
-
-    // fri roots: (n_fri_steps - 1) groups of 4
-    p += 4 * (info.n_fri_steps - 1);
-
-    // fri data: (n_fri_steps - 1) iterations
-    for i in 1..info.n_fri_steps {
-        let vals_size = (1u64 << (info.fri_steps[(i - 1) as usize] - info.fri_steps[i as usize])) * 3;
-        p += n_queries * vals_size;
-
-        let n_siblings_fri = (((info.fri_steps[i as usize] as f64 / log_arity).ceil()) as u64)
-            .saturating_sub(info.last_level_verification);
-        p += n_queries * n_siblings_fri * n_siblings_per_level;
-
-        p += last_level_extra;
-    }
-
-    // final polynomial
-    let final_pol_capacity = 1u64 << info.fri_steps[(info.n_fri_steps - 1) as usize];
-    p += 3 * final_pol_capacity;
-
-    // nonce
-    p += 1;
-
-    (p as usize) * 8
+    info.proof_layout().flat_proof_words() * 8
 }
 
 /// One opened column that the FRI polynomial reads at a query point.
@@ -111,11 +55,13 @@ pub struct FriEvalRef {
     pub bucket: u16,
     pub offset: u16,
     pub dim: u8,
+    /// vf2's exponent: the polynomial's first appearance in the evaluation map.
+    pub col: u16,
 }
 
 impl FriEvalRef {
-    pub const fn new(bucket: u16, offset: u16, dim: u8) -> Self {
-        Self { bucket, offset, dim }
+    pub const fn new(bucket: u16, offset: u16, dim: u8, col: u16) -> Self {
+        Self { bucket, offset, dim, col }
     }
 }
 
@@ -127,8 +73,7 @@ pub struct FriEvalGroup {
 }
 
 /// Evaluates the FRI polynomial at one query point, mirroring the setup's
-/// `fri_poly.rs`: Horner on `vf2` within an opening point, scale by
-/// `xDivXSubXi`, then Horner on `vf1` across opening points.
+/// `fri_poly.rs`: terms weighted by vf2^col, scaled by `xDivXSubXi`, Horner on `vf1` across openings.
 pub fn fri_query_verify(
     info: &VerifierInfo,
     challenges: &[CubicExtensionField<Goldilocks>],
@@ -136,31 +81,143 @@ pub fn fri_query_verify(
     vals: &[Vec<Goldilocks>],
     xdivxsub: &[CubicExtensionField<Goldilocks>],
 ) -> CubicExtensionField<Goldilocks> {
-    let vf1 = challenges[info.n_challenges as usize - 2];
-    let vf2 = challenges[info.n_challenges as usize - 1];
+    deep_query_eval(&info.fri_ev_groups, info.n_challenges, challenges, evals, vals, xdivxsub)
+}
 
-    // ev_map is sorted by opening point, so the groups walk `evals` in order.
-    let mut eval_idx = 0;
-    let mut fri = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
-    for (g, group) in info.fri_ev_groups.iter().enumerate() {
-        let mut acc = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
-        for (k, e) in group.refs.iter().enumerate() {
-            let leaf = &vals[e.bucket as usize];
-            let off = e.offset as usize;
-            let eval = evals[eval_idx];
-            eval_idx += 1;
-            // sub_from_scalar(v) is v - self, i.e. col - eval.
-            let term = if e.dim == 1 {
-                eval.sub_from_scalar(leaf[off])
-            } else {
-                CubicExtensionField { value: [leaf[off], leaf[off + 1], leaf[off + 2]] } - eval
-            };
-            acc = if k == 0 { term } else { acc * vf2 + term };
-        }
-        let scaled = acc * xdivxsub[group.opening as usize];
-        fri = if g == 0 { scaled } else { fri * vf1 + scaled };
+/// `1 / (x_q - xi * w^o)` for every query `q` and opening point `o`, one row per query. The
+/// `xi * w^o` terms do not depend on the query, and the whole table shares one inversion
+/// (Montgomery's trick). `None` if any denominator is zero.
+pub(crate) fn deep_denominators_inv(
+    queries: &[u64],
+    opening_points: &[i64],
+    xi: CubicExtensionField<Goldilocks>,
+    n_bits: u64,
+    n_bits_ext: u64,
+) -> Option<Vec<Vec<CubicExtensionField<Goldilocks>>>> {
+    let w_ext = Goldilocks::new(Goldilocks::W[n_bits_ext as usize]);
+    let w_bits = Goldilocks::new(Goldilocks::W[n_bits as usize]);
+    let xi_wi: Vec<CubicExtensionField<Goldilocks>> = opening_points
+        .iter()
+        // w has order 2^n_bits, so its exponents work mod 2^n_bits: a negative o needs no inversion.
+        .map(|&o| xi * w_bits.exp_u64(o as u64 & ((1u64 << n_bits) - 1)))
+        .collect();
+
+    let n_open = opening_points.len();
+    if n_open == 0 {
+        return Some(vec![Vec::new(); queries.len()]);
     }
-    fri
+    let mut den = Vec::with_capacity(queries.len() * n_open);
+    for &q in queries {
+        let x = Goldilocks::new(Goldilocks::SHIFT) * w_ext.exp_u64(q);
+        den.extend(xi_wi.iter().map(|&s| CubicExtensionField { value: [x, Goldilocks::ZERO, Goldilocks::ZERO] } - s));
+    }
+
+    // prefix[i] = den[0] * ... * den[i-1]
+    let mut prefix = Vec::with_capacity(den.len());
+    let mut acc = CubicExtensionField::<Goldilocks>::one();
+    for &d in &den {
+        prefix.push(acc);
+        acc *= d;
+    }
+    if acc.is_zero() {
+        return None;
+    }
+    let mut inv = acc.inverse();
+    for i in (0..den.len()).rev() {
+        let d = den[i];
+        den[i] = inv * prefix[i];
+        inv *= d;
+    }
+    Some(den.chunks(n_open).map(|c| c.to_vec()).collect())
+}
+
+/// The DEEP polynomial at one query point from its `FriEvalGroup` table: FRI's first-layer value
+/// and STIR's f_0 alike (both are the setup's `deepExpId`).
+pub fn deep_query_eval(
+    fri_ev_groups: &[FriEvalGroup],
+    n_challenges: u64,
+    challenges: &[CubicExtensionField<Goldilocks>],
+    evals: &[CubicExtensionField<Goldilocks>],
+    vals: &[Vec<Goldilocks>],
+    xdivxsub: &[CubicExtensionField<Goldilocks>],
+) -> CubicExtensionField<Goldilocks> {
+    let consts = DeepQueryConsts::new(fri_ev_groups, n_challenges, challenges, evals);
+    consts.eval(fri_ev_groups, vals, xdivxsub)
+}
+
+/// The query-independent half of [`deep_query_eval`], built once per proof.
+pub(crate) struct DeepQueryConsts {
+    vf1: CubicExtensionField<Goldilocks>,
+    vf2_pow: Vec<CubicExtensionField<Goldilocks>>,
+    /// Per group, `sum(eval * vf2^col)`: the evals are the same at every query.
+    group_evals: Vec<CubicExtensionField<Goldilocks>>,
+}
+
+impl DeepQueryConsts {
+    pub(crate) fn new(
+        fri_ev_groups: &[FriEvalGroup],
+        n_challenges: u64,
+        challenges: &[CubicExtensionField<Goldilocks>],
+        evals: &[CubicExtensionField<Goldilocks>],
+    ) -> Self {
+        let vf1 = challenges[n_challenges as usize - 2];
+        let vf2 = challenges[n_challenges as usize - 1];
+
+        let n_cols = fri_ev_groups.iter().flat_map(|g| g.refs.iter()).map(|e| e.col as usize + 1).max().unwrap_or(0);
+        let mut vf2_pow = Vec::with_capacity(n_cols);
+        let mut p = CubicExtensionField::<Goldilocks>::one();
+        for _ in 0..n_cols {
+            vf2_pow.push(p);
+            p *= vf2;
+        }
+
+        // ev_map is sorted by opening point, so the groups walk `evals` in order.
+        let mut eval_idx = 0;
+        let group_evals = fri_ev_groups
+            .iter()
+            .map(|group| {
+                let mut acc = CubicExtensionField::<Goldilocks>::zero();
+                for e in &group.refs {
+                    acc += evals[eval_idx] * vf2_pow[e.col as usize];
+                    eval_idx += 1;
+                }
+                acc
+            })
+            .collect();
+
+        Self { vf1, vf2_pow, group_evals }
+    }
+
+    /// `sum((col - eval) * vf2^col)` split as `sum(col * vf2^col) - group_evals`, so a base-field
+    /// column costs a base-by-extension product instead of a full extension one.
+    pub(crate) fn eval(
+        &self,
+        fri_ev_groups: &[FriEvalGroup],
+        vals: &[Vec<Goldilocks>],
+        xdivxsub: &[CubicExtensionField<Goldilocks>],
+    ) -> CubicExtensionField<Goldilocks> {
+        let mut fri = CubicExtensionField::<Goldilocks>::zero();
+        for (g, group) in fri_ev_groups.iter().enumerate() {
+            // One reduction per coordinate per group, not per term.
+            let mut acc = [DotAcc::default(); 3];
+            for e in &group.refs {
+                let leaf = &vals[e.bucket as usize];
+                let off = e.offset as usize;
+                let p = self.vf2_pow[e.col as usize].value;
+                if e.dim == 1 {
+                    for (acc, p) in acc.iter_mut().zip(p) {
+                        acc.add(leaf[off], p);
+                    }
+                } else {
+                    cubic_mul_acc(&mut acc, &[leaf[off], leaf[off + 1], leaf[off + 2]], &p);
+                }
+            }
+            let acc = CubicExtensionField { value: [acc[0].finish(), acc[1].finish(), acc[2].finish()] };
+            let scaled = (acc - self.group_evals[g]) * xdivxsub[group.opening as usize];
+            fri = if g == 0 { scaled } else { fri * self.vf1 + scaled };
+        }
+        fri
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -184,21 +241,33 @@ where
     if proof.is_empty() || vk.len() < 4 {
         return false;
     }
+    // The size check reads the step list, the parser the step count.
+    if verifier_info.fri_steps.len() as u64 != verifier_info.n_fri_steps || verifier_info.fri_steps.is_empty() {
+        v_error!(
+            "verifier_info is inconsistent: {} FRI steps listed, {} declared",
+            verifier_info.fri_steps.len(),
+            verifier_info.n_fri_steps
+        );
+        return false;
+    }
 
-    let n_siblings: u64 = (((verifier_info.n_bits_ext as f64 / (verifier_info.arity as f64).log2()).ceil()) as u64)
-        .saturating_sub(verifier_info.last_level_verification);
-    let n_siblings_per_level = (verifier_info.arity - 1) * 4;
+    let n_siblings =
+        merkle_proof_levels(verifier_info.n_bits_ext, verifier_info.arity, verifier_info.last_level_verification)
+            as u64;
+    let n_siblings_per_level = sibling_words(verifier_info.arity) as u64;
 
     let root_c = [Goldilocks::new(vk[0]), Goldilocks::new(vk[1]), Goldilocks::new(vk[2]), Goldilocks::new(vk[3])];
 
     let mut p = 0;
 
-    let n_publics = proof[p as usize];
+    // `try_from`, not `as`: on a 32-bit target a count of 2^32 + k would truncate to k.
+    let Ok(n_publics) = usize::try_from(proof[p as usize]) else {
+        return false;
+    };
     p += 1;
 
-    let Some(expected_total) = 1usize
-        .checked_add(n_publics as usize)
-        .and_then(|s| s.checked_add(expected_proof_size_bytes(verifier_info) / 8))
+    let Some(expected_total) =
+        1usize.checked_add(n_publics).and_then(|s| s.checked_add(expected_proof_size_bytes(verifier_info) / 8))
     else {
         return false;
     };
@@ -209,7 +278,7 @@ where
     // Pin the publics to one encoding: verification only ever compares field
     // elements, so `x` and `x + p` pass identically, but a caller reading the raw
     // words back as outputs would see two different values.
-    let mut publics = Vec::with_capacity(n_publics as usize);
+    let mut publics = Vec::with_capacity(n_publics);
     for i in 0..n_publics {
         let word = proof[p as usize];
         if word >= Goldilocks::ORDER_U64 {
@@ -249,7 +318,7 @@ where
     let n_sibs_per_lvl = n_siblings_per_level as usize;
 
     let mut s0_vals: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_queries);
-    let mut s0_siblings: Vec<Vec<Vec<Vec<Goldilocks>>>> = Vec::with_capacity(n_queries);
+    let mut s0_siblings: Vec<Vec<Vec<Goldilocks>>> = Vec::with_capacity(n_queries);
     let mut s0_last_levels: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_stages_plus_2);
 
     for _q in 0..n_queries {
@@ -265,15 +334,9 @@ where
 
     for _q in 0..n_queries {
         let mut query_siblings = Vec::with_capacity(n_stages_plus_2);
-        let mut siblings = Vec::with_capacity(n_sibs);
-        for _ in 0..n_sibs {
-            let mut sibling = Vec::with_capacity(n_sibs_per_lvl);
-            for _ in 0..n_sibs_per_lvl {
-                sibling.push(Goldilocks::new(proof[p as usize]));
-                p += 1;
-            }
-            siblings.push(sibling);
-        }
+        let siblings: Vec<Goldilocks> =
+            proof[p as usize..][..n_sibs * n_sibs_per_lvl].iter().map(|&x| Goldilocks::new(x)).collect();
+        p += (n_sibs * n_sibs_per_lvl) as u64;
         query_siblings.push(siblings);
         s0_siblings.push(query_siblings);
     }
@@ -303,15 +366,9 @@ where
         }
 
         for query_siblings in s0_siblings.iter_mut() {
-            let mut siblings = Vec::with_capacity(n_sibs);
-            for _ in 0..n_sibs {
-                let mut sibling = Vec::with_capacity(n_sibs_per_lvl);
-                for _ in 0..n_sibs_per_lvl {
-                    sibling.push(Goldilocks::new(proof[p as usize]));
-                    p += 1;
-                }
-                siblings.push(sibling);
-            }
+            let siblings: Vec<Goldilocks> =
+                proof[p as usize..][..n_sibs * n_sibs_per_lvl].iter().map(|&x| Goldilocks::new(x)).collect();
+            p += (n_sibs * n_sibs_per_lvl) as u64;
             query_siblings.push(siblings);
         }
 
@@ -325,6 +382,11 @@ where
         }
     }
 
+    if verifier_info.last_level_verification == 0 {
+        // `check_query` indexes a last level per tree even when there is none.
+        s0_last_levels.resize(n_stages_plus_2, Vec::new());
+    }
+
     let n_fri_steps_minus_1 = (verifier_info.n_fri_steps - 1) as usize;
     let mut roots_fri = Vec::with_capacity(n_fri_steps_minus_1);
     for _ in 1..verifier_info.n_fri_steps {
@@ -336,13 +398,12 @@ where
         roots_fri.push(root);
     }
 
-    let mut siblings_fri: Vec<Vec<Vec<Vec<Goldilocks>>>> =
+    let mut siblings_fri: Vec<Vec<Vec<Goldilocks>>> =
         (0..n_queries).map(|_| Vec::with_capacity(n_fri_steps_minus_1)).collect();
     let mut vals_fri: Vec<Vec<Vec<Goldilocks>>> =
         (0..n_queries).map(|_| Vec::with_capacity(n_fri_steps_minus_1)).collect();
     let mut last_levels_fri: Vec<Vec<Goldilocks>> = Vec::with_capacity(n_fri_steps_minus_1);
 
-    let log_arity = (verifier_info.arity as f64).log2();
     let n_siblings_per_level_fri = ((verifier_info.arity - 1) * 4) as usize;
 
     for i in 1..verifier_info.n_fri_steps {
@@ -358,19 +419,16 @@ where
             val_fri.push(vals);
         }
 
-        let n_siblings_fri = (((verifier_info.fri_steps[i as usize] as f64 / log_arity).ceil()) as usize)
-            .saturating_sub(verifier_info.last_level_verification as usize);
+        let n_siblings_fri = merkle_proof_levels(
+            verifier_info.fri_steps[i as usize],
+            verifier_info.arity,
+            verifier_info.last_level_verification,
+        );
 
         for query_siblings in siblings_fri.iter_mut() {
-            let mut siblings = Vec::with_capacity(n_siblings_fri);
-            for _ in 0..n_siblings_fri {
-                let mut sibling = Vec::with_capacity(n_siblings_per_level_fri);
-                for _ in 0..n_siblings_per_level_fri {
-                    sibling.push(Goldilocks::new(proof[p as usize]));
-                    p += 1;
-                }
-                siblings.push(sibling);
-            }
+            let n = n_siblings_fri * n_siblings_per_level_fri;
+            let siblings: Vec<Goldilocks> = proof[p as usize..][..n].iter().map(|&x| Goldilocks::new(x)).collect();
+            p += n as u64;
             query_siblings.push(siblings);
         }
 
@@ -382,6 +440,10 @@ where
             }
             last_levels_fri.push(last_level_nodes);
         }
+    }
+
+    if verifier_info.last_level_verification == 0 {
+        last_levels_fri.resize(n_fri_steps_minus_1, Vec::new());
     }
 
     let final_pol_capacity = 1usize << verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize];
@@ -400,91 +462,53 @@ where
 
     let nonce = Goldilocks::new(proof[p as usize]);
 
+    // Everything below is hardcoded for a 2-stage AIR (root1, root2, rootQ) and challenge
+    // slots 0..=5: a different stage count would leave the Q root unabsorbed (forgeable) or
+    // index `roots` out of bounds. Reject rather than mis-verify.
+    if verifier_info.n_stages != 2 {
+        v_error!("verifier only supports 2-stage AIRs, got n_stages = {}", verifier_info.n_stages);
+        return false;
+    }
+
     let mut challenges = vec![
         CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
         verifier_info.n_challenges_total as usize
     ];
 
-    let mut xdivxsub: Vec<Vec<CubicExtensionField<Goldilocks>>> = Vec::with_capacity(n_queries);
     let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
 
-    let mut transcript: TranscriptT = TranscriptT::new_transcript();
-    transcript.put(&root_c);
-    if n_publics > 0 {
-        if !verifier_info.hash_commits {
-            transcript.put(&publics);
-        } else {
-            let mut transcript_publics: TranscriptT = TranscriptT::new_transcript();
-            transcript_publics.put(&publics);
-            let hash = transcript_publics.get_state();
-            transcript.put(&hash[0..4]);
-        }
-    }
-    transcript.put(&roots[0]);
-    transcript.get_field(&mut challenges[0].value);
-    transcript.get_field(&mut challenges[1].value);
+    let (mut transcript, prefix) = prefix_transcript::<TranscriptT>(
+        &root_c,
+        &publics,
+        &[roots[0], roots[1], roots[2]],
+        &evals,
+        verifier_info.hash_commits,
+    );
+    let fri = fri_transcript(
+        &mut transcript,
+        &roots_fri,
+        &final_pol,
+        nonce,
+        &verifier_info.fri_steps,
+        verifier_info.n_fri_queries,
+        verifier_info.hash_commits,
+    );
 
-    transcript.put(&roots[1]);
-    transcript.get_field(&mut challenges[2].value);
-    transcript.put(&roots[2]);
-
-    transcript.get_field(&mut challenges[3].value);
-
-    if !verifier_info.hash_commits {
-        for i in 0..verifier_info.n_evals {
-            transcript.put(&evals[i as usize].value);
-        }
-    } else {
-        let mut transcript_evals: TranscriptT = TranscriptT::new_transcript();
-        for i in 0..verifier_info.n_evals {
-            transcript_evals.put(&evals[i as usize].value);
-        }
-        let hash = transcript_evals.get_state();
-        transcript.put(&hash[0..4]);
-    }
-
-    transcript.get_field(&mut challenges[4].value);
-    transcript.get_field(&mut challenges[5].value);
-
-    let mut c = 6;
-    for i in 0..verifier_info.n_fri_steps {
-        if i > 0 {
-            transcript.get_field(&mut challenges[c].value);
-        }
-        c += 1;
-        if i < verifier_info.n_fri_steps - 1 {
-            transcript.put(&roots_fri[i as usize]);
-        } else {
-            let final_pol_size = 1 << verifier_info.fri_steps[i as usize];
-            if !verifier_info.hash_commits {
-                for j in 0..final_pol_size {
-                    transcript.put(&final_pol[j as usize].value);
-                }
-            } else {
-                let mut transcript_final_pol: TranscriptT = TranscriptT::new_transcript();
-                for j in 0..final_pol_size {
-                    transcript_final_pol.put(&final_pol[j as usize].value);
-                }
-                let hash = transcript_final_pol.get_state();
-                transcript.put(&hash[0..4]);
-            }
-        }
-    }
-
-    // The grinding hash and the query indices below are read from the LAST challenge slot, and the
-    // loop above wrote slot `c`. Those must be the same slot: were they to diverge, the queries
-    // would come from an all-zero challenge the prover can predict. It holds iff
-    // n_challenges_total == 7 + n_fri_steps, which nothing else states.
-    let last_challenge_index = challenges.len() - 1;
-    if c != last_challenge_index {
+    // Every declared slot is written (6 stage challenges, the folds, the query challenge): an unwritten
+    // one stays zero, which the prover can predict.
+    let n_written = prefix.len() + fri.folds.len() + 1;
+    if verifier_info.n_challenges as usize != prefix.len() || n_written != challenges.len() {
         v_error!(
             "verifier_info is inconsistent: the transcript writes {} challenges but {} are declared",
-            c + 1,
+            n_written,
             challenges.len()
         );
         return false;
     }
-    transcript.get_field(&mut challenges[c].value);
+    let last_challenge_index = challenges.len() - 1;
+    challenges[..prefix.len()].copy_from_slice(&prefix);
+    challenges[prefix.len()..last_challenge_index].copy_from_slice(&fri.folds);
+    challenges[last_challenge_index] = fri.query;
     // Proof-of-work grinding hash. Uses its own fixed-width hash (Poseidon2_8 for
     // Poseidon2, Poseidon1_8 for Poseidon1), independent of the transcript/Merkle
     // widths. The input `[c0, c1, c2, nonce]` is written into a zero-padded state
@@ -492,47 +516,34 @@ where
     let mut pow_state = <GrindingHash as Hash<Goldilocks>>::State::default();
     {
         let state = pow_state.as_mut();
-        state[0] = challenges[last_challenge_index].value[0];
-        state[1] = challenges[last_challenge_index].value[1];
-        state[2] = challenges[last_challenge_index].value[2];
+        state[0] = fri.query.value[0];
+        state[1] = fri.query.value[1];
+        state[2] = fri.query.value[2];
         state[3] = nonce;
     }
     <GrindingHash as Hash<Goldilocks>>::hash(&mut pow_state);
-    if pow_state.as_ref()[0].as_canonical_u64() >= 1 << (64 - verifier_info.pow_bits) {
+    // At 0 bits every nonce passes (and the shift below would overflow).
+    if verifier_info.pow_bits > 0 && pow_state.as_ref()[0].as_canonical_u64() >= 1 << (64 - verifier_info.pow_bits) {
         v_error!("Proof of work verification failed");
         return false;
     }
-    let mut transcript_permutation: TranscriptT = TranscriptT::new_transcript();
-    transcript_permutation.put(&challenges[last_challenge_index].value);
-    transcript_permutation.put(&[nonce]);
-    let fri_queries = transcript_permutation.get_permutations(verifier_info.n_fri_queries, verifier_info.fri_steps[0]);
+    let fri_queries = fri.queries;
 
     let xi_challenge = challenges[verifier_info.n_challenges as usize - 3];
 
-    let w_ext = Goldilocks::new(Goldilocks::W[verifier_info.n_bits_ext as usize]);
-    let w_bits = Goldilocks::new(Goldilocks::W[verifier_info.n_bits as usize]);
-    let n_opening_points = verifier_info.opening_points.len();
-
-    for &fri_query in fri_queries.iter().take(n_queries) {
-        let mut query_xdivxsub = Vec::with_capacity(n_opening_points);
-        let x = CubicExtensionField {
-            value: [Goldilocks::new(Goldilocks::SHIFT) * w_ext.exp_u64(fri_query), Goldilocks::ZERO, Goldilocks::ZERO],
-        };
-        for o in 0..n_opening_points {
-            let mut wi = Goldilocks::ONE;
-            let abs_opening = verifier_info.opening_points[o].unsigned_abs();
-            for _ in 0..abs_opening {
-                wi *= w_bits;
-            }
-
-            if verifier_info.opening_points[o] < 0 {
-                wi = wi.inverse();
-            }
-
-            query_xdivxsub.push((x - (xi_challenge * wi)).inverse());
+    let xdivxsub = match deep_denominators_inv(
+        &fri_queries[..n_queries.min(fri_queries.len())],
+        &verifier_info.opening_points,
+        xi_challenge,
+        verifier_info.n_bits,
+        verifier_info.n_bits_ext,
+    ) {
+        Some(t) => t,
+        None => {
+            v_error!("DEEP denominator x - xi * w^o is zero");
+            return false;
         }
-        xdivxsub.push(query_xdivxsub);
-    }
+    };
 
     let x_n = xi_challenge.pow(1 << verifier_info.n_bits);
 
@@ -554,6 +565,9 @@ where
     }
 
     v_debug!("Verifying proof");
+
+    let deep_consts =
+        DeepQueryConsts::new(&verifier_info.fri_ev_groups, verifier_info.n_challenges, &challenges, &evals);
 
     let check_query = |q: usize| -> bool {
         // 1) Fixed MT
@@ -588,7 +602,7 @@ where
 
         // 3) FRI Query
         let idx = fri_queries[q] % (1 << verifier_info.fri_steps[0]);
-        let query_fri = fri_query_verify(verifier_info, &challenges, &evals, &s0_vals[q], &xdivxsub[q]);
+        let query_fri = deep_consts.eval(&verifier_info.fri_ev_groups, &s0_vals[q], &xdivxsub[q]);
 
         let valid_query = if verifier_info.n_fri_steps > 1 {
             let group_idx = (idx / (1 << verifier_info.fri_steps[1])) as usize;
@@ -623,7 +637,7 @@ where
                 verifier_info.n_bits_ext,
                 verifier_info.fri_steps[s as usize + 1],
                 verifier_info.fri_steps[s as usize],
-                challenges[verifier_info.n_challenges as usize + s as usize + 1],
+                challenges[verifier_info.n_challenges as usize + s as usize], // r^fold_s
                 idx,
                 &vals_fri[q][s as usize],
             );
@@ -649,9 +663,6 @@ where
         true
     };
 
-    #[cfg(feature = "parallel")]
-    let all_valid = (0..n_queries).into_par_iter().all(check_query);
-    #[cfg(not(feature = "parallel"))]
     let all_valid = (0..n_queries).all(check_query);
 
     if !all_valid {
@@ -792,8 +803,8 @@ mod tests {
         }
     }
 
-    fn r(bucket: u16, offset: u16, dim: u8) -> FriEvalRef {
-        FriEvalRef { bucket, offset, dim }
+    fn r(bucket: u16, offset: u16, dim: u8, col: u16) -> FriEvalRef {
+        FriEvalRef { bucket, offset, dim, col }
     }
 
     // challenges[4] = vf1, challenges[5] = vf2 for n_challenges = 6.
@@ -804,7 +815,7 @@ mod tests {
     /// A single opened column contributes `(col - eval) * xDivXSubXi`.
     #[test]
     fn scales_a_single_opened_column_by_its_opening_weight() {
-        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 2, 1)] }]);
+        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 2, 1, 0)] }]);
         let vals = vec![vec![], vec![Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::new(7)]];
 
         let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3)], &vals, &[gl(5)]);
@@ -812,37 +823,52 @@ mod tests {
         assert_eq!(got, gl((7 - 3) * 5));
     }
 
-    /// Columns sharing an opening point accumulate in a Horner chain on vf2.
+    /// Each column is weighted by vf2 to the power of its global index.
     #[test]
-    fn accumulates_columns_of_one_opening_point_on_vf2() {
-        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 0, 1), r(1, 1, 1)] }]);
+    fn weights_columns_by_vf2_to_their_index() {
+        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 0, 1, 0), r(1, 1, 1, 1)] }]);
         let vals = vec![vec![], vec![Goldilocks::new(7), Goldilocks::new(9)]];
 
         let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3), gl(4)], &vals, &[gl(1)]);
 
-        // acc = (7-3); acc = acc*2 + (9-4) = 8 + 5
-        assert_eq!(got, gl(13));
+        // (7-3)*2^0 + (9-4)*2^1
+        assert_eq!(got, gl(14));
+    }
+
+    /// A column keeps its vf2 power at every opening.
+    #[test]
+    fn a_column_keeps_its_vf2_power_across_openings() {
+        let i = info(vec![
+            FriEvalGroup { opening: 0, refs: vec![r(1, 0, 1, 0), r(1, 1, 1, 1)] },
+            FriEvalGroup { opening: 1, refs: vec![r(1, 1, 1, 1)] },
+        ]);
+        let vals = vec![vec![], vec![Goldilocks::new(7), Goldilocks::new(9)]];
+
+        let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3), gl(4), gl(6)], &vals, &[gl(1), gl(1)]);
+
+        // group0 = 4 + 5*2 = 14, group1 = (9-6)*2 = 6, fri = 14*10 + 6
+        assert_eq!(got, gl(146));
     }
 
     /// Distinct opening points combine in a Horner chain on vf1.
     #[test]
     fn combines_opening_points_on_vf1() {
         let i = info(vec![
-            FriEvalGroup { opening: 0, refs: vec![r(1, 0, 1)] },
-            FriEvalGroup { opening: 1, refs: vec![r(1, 1, 1)] },
+            FriEvalGroup { opening: 0, refs: vec![r(1, 0, 1, 0)] },
+            FriEvalGroup { opening: 1, refs: vec![r(1, 1, 1, 1)] },
         ]);
         let vals = vec![vec![], vec![Goldilocks::new(7), Goldilocks::new(9)]];
 
         let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3), gl(4)], &vals, &[gl(1), gl(1)]);
 
-        // group0 = 4, group1 = 5, fri = 4*10 + 5
-        assert_eq!(got, gl(45));
+        // group0 = 4, group1 = 5*2 (col 1), fri = 4*10 + 10
+        assert_eq!(got, gl(50));
     }
 
     /// An extension-field column reads three consecutive slots of its leaf.
     #[test]
     fn reads_three_slots_for_an_extension_column() {
-        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 0, 3)] }]);
+        let i = info(vec![FriEvalGroup { opening: 0, refs: vec![r(1, 0, 3, 0)] }]);
         let vals = vec![vec![], vec![Goldilocks::new(1), Goldilocks::new(2), Goldilocks::new(3)]];
         let eval = CubicExtensionField { value: [Goldilocks::new(1), Goldilocks::new(1), Goldilocks::new(1)] };
 
@@ -854,7 +880,7 @@ mod tests {
     /// Empty opening points are skipped, so the index is recorded, not positional.
     #[test]
     fn uses_the_recorded_opening_index_not_the_group_position() {
-        let i = info(vec![FriEvalGroup { opening: 2, refs: vec![r(1, 0, 1)] }]);
+        let i = info(vec![FriEvalGroup { opening: 2, refs: vec![r(1, 0, 1, 0)] }]);
         let vals = vec![vec![], vec![Goldilocks::new(7)]];
 
         let got = fri_query_verify(&i, &challenges(10, 2), &[gl(3)], &vals, &[gl(0), gl(0), gl(5)]);

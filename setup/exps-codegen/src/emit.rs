@@ -1,7 +1,7 @@
 //! CUDA source emission: the straight-line / chunked kernel text for one AIR's
 //! Q expression, one trace-domain kernel per other covered expression
 //! (hint fields, im columns, ... -- `emit_exprs_tu`, dispatched by expId via
-//! `exps_expr_covered` / `exps_launch_expr`), the shared `gen_common.cuh`
+//! `exps_generic_covered` / `exps_generic_launch`), the shared `gen_common.cuh`
 //! header, and the fixed C-ABI
 //! exports. The template whitespace is deliberate — the emitted `.cu` is what
 //! nvcc compiles, so treat these strings as code, not free-form text.
@@ -11,6 +11,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// CUDA threads/block of the generated kernels (single source of truth, baked into each launcher).
 pub const GEN_BLK: u64 = 256;
+/// Widest cross-chunk cut a chunked kernel may have, in scratch words per row: wider cuts cost
+/// more scratch traffic than they save, and the launcher's one wave would outgrow the scratch.
+pub const SLOTS_CAP: u64 = 1000;
 /// Grid cap for the trace-domain expression launchers (singles AND pairs — same work class, same
 /// prologue-vs-rows tradeoff, one policy). Empirical, not a hardware bound: challenge powers are
 /// rebuilt per THREAD, so a bigger grid trades rows per thread against redundant prologue work.
@@ -117,6 +120,21 @@ fn cm_layout(_n_bits: u64, _n_cols: u64) -> &'static str {
 /// const-tree build.
 const CONST_LAYOUT: &str = "Layout::ColMajor";
 
+/// The operand pointers every generated kernel opens with; `cst` is the const section the kernel
+/// reads: the extended one (Q, over the extended domain) or the small one (trace-domain kernels).
+fn operand_ptrs(cst_field: &str) -> String {
+    format!(
+        "  const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->{cst_field};
+  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
+  const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
+  [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;"
+    )
+}
+/// Prologue of a trace-domain kernel: `NExt`/`MASK` over the trace rows, then the pointers.
+fn trace_prologue() -> String {
+    format!("  const uint64_t NExt = N; const uint64_t MASK = N-1;\n{}", operand_ptrs("pConstPolsAddress"))
+}
+
 fn rowexpr(stride: i64) -> String {
     if stride == 0 {
         "row".to_string()
@@ -130,15 +148,16 @@ fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
     match opnd {
         Operand::Num(v) => vec![format!("  gl64_t {name}(uint64_t({v}ull));")],
         Operand::Zi => vec![format!("  gl64_t {name} = aux[off_zi + row];")],
+        Operand::Zb { .. } => unreachable!("Zb is the BN128 target's"),
         Operand::Pub { id } => vec![format!("  gl64_t {name} = pub[{id}];")],
-        Operand::Ch { base } => {
+        Operand::Ch { base, .. } => {
             let i = *base;
             vec![format!("  g3 {name}; {name}.a=ch[{i}]; {name}.b=ch[{}]; {name}.c=ch[{}];", i + 1, i + 2)]
         }
-        Operand::Pow { base, j } if ir.pow_in_regs => {
+        Operand::Pow { base, j, .. } if ir.pow_in_regs => {
             vec![format!("  g3 {name} = pwreg_{base}_{j};")]
         }
-        Operand::Pow { base, j } => {
+        Operand::Pow { base, j, .. } => {
             let i = ir.pow_offset(*base) + 3 * *j;
             vec![format!("  g3 {name}; {name}.a=pw[{i}]; {name}.b=pw[{}]; {name}.c=pw[{}];", i + 1, i + 2)]
         }
@@ -255,9 +274,9 @@ fn store_qq(out_dim: u64) -> &'static str {
     // q (the cmQ output) is ColMajor like everything else (resolveLayout) -- matches how the cmQ
     // commit/Merkle reads it back.
     if out_dim == 3 {
-        "    q[OFF(row,0,NExt,3,Layout::ColMajor)]=qq.a; q[OFF(row,1,NExt,3,Layout::ColMajor)]=qq.b; q[OFF(row,2,NExt,3,Layout::ColMajor)]=qq.c;"
+        "    q[OFF(jq,0,NQ,3,Layout::ColMajor)]=qq.a; q[OFF(jq,1,NQ,3,Layout::ColMajor)]=qq.b; q[OFF(jq,2,NQ,3,Layout::ColMajor)]=qq.c;"
     } else {
-        "    q[OFF(row,0,NExt,3,Layout::ColMajor)]=qq; q[OFF(row,1,NExt,3,Layout::ColMajor)]=gl64_t(uint64_t(0)); q[OFF(row,2,NExt,3,Layout::ColMajor)]=gl64_t(uint64_t(0));"
+        "    q[OFF(jq,0,NQ,3,Layout::ColMajor)]=qq; q[OFF(jq,1,NQ,3,Layout::ColMajor)]=gl64_t(uint64_t(0)); q[OFF(jq,2,NQ,3,Layout::ColMajor)]=gl64_t(uint64_t(0));"
     }
 }
 
@@ -288,10 +307,16 @@ fn c_abi_exports(sym: &str, n_slots: u64, ir: &Ir) -> String {
     format!(
         r#"extern "C" void exps_launch(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
     uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, cudaStream_t stream) {{
-    launch_gen_{sym}(d_params, q, scratch, scratchElems, NExt, off_cm1, off_cm2, off_cm3, off_zi, stream);
+    launch_gen_{sym}(d_params, q, scratch, scratchElems, NExt, off_cm1, off_cm2, off_cm3, off_zi, 0u, stream);
 }}
-extern "C" unsigned long long exps_min_scratch() {{ return {n_slots} * {GEN_BLK}ull + {}ull; }}"#,
-        pow_region_words(ir, sym)
+// Q at every 2^qs-th row of the extended domain only, written compactly (NExt >> qs rows): enough
+// whenever qDeg * N <= NExt >> qs, and the caller's iNTT must then run over NExt >> qs.
+extern "C" void exps_launch_step(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
+    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs, cudaStream_t stream) {{
+    launch_gen_{sym}(d_params, q, scratch, scratchElems, NExt, off_cm1, off_cm2, off_cm3, off_zi, qs, stream);
+}}
+extern "C" unsigned long long exps_min_scratch() {{ return {}ull; }}"#,
+        q_min_scratch(ir, sym, n_slots)
     )
 }
 
@@ -539,7 +564,7 @@ fn single_kernel_tu(sym: &str, kernel: &str, launcher_body: &str, ir: &Ir) -> St
 {pow_decl}
 {kernel}
 void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
-    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, cudaStream_t stream) {{
+    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs, cudaStream_t stream) {{
 {guard}
 {prologue}
 {launcher_body}
@@ -561,8 +586,8 @@ fn chunk_tu(sym: &str, lo: usize, hi: usize, kernels: &[String]) -> String {
         parts.push(format!(
             r#"extern "C" void run_{sym}_c{i}(uint64_t grid, uint64_t blk, cudaStream_t stream, StepsParams* d_params,
     gl64_t* q, gl64_t* scratch, const gl64_t* pw, uint64_t NExt, uint64_t base,
-    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi) {{
-  gen_{sym}_c{i}<<<grid,blk,0,stream>>>(d_params,q,scratch,pw,NExt,base,off_cm1,off_cm2,off_cm3,off_zi);
+    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs) {{
+  gen_{sym}_c{i}<<<grid,blk,0,stream>>>(d_params,q,scratch,pw,NExt,base,off_cm1,off_cm2,off_cm3,off_zi,qs);
 }}"#
         ));
     }
@@ -583,13 +608,13 @@ fn launcher_tu(sym: &str, n_chunks: usize, total_slots: u64, ir: &Ir) -> String 
     let decls: Vec<String> = (0..n_chunks)
         .map(|i| {
             format!(
-                "extern \"C\" void run_{sym}_c{i}(uint64_t, uint64_t, cudaStream_t, StepsParams*, gl64_t*, gl64_t*, const gl64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);"
+                "extern \"C\" void run_{sym}_c{i}(uint64_t, uint64_t, cudaStream_t, StepsParams*, gl64_t*, gl64_t*, const gl64_t*, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint32_t);"
             )
         })
         .collect();
     let calls: Vec<String> = (0..n_chunks)
         .map(|i| {
-            format!("    run_{sym}_c{i}(grid, BLK, stream, d_params, q, scratch, pw, NExt, base, off_cm1, off_cm2, off_cm3, off_zi);")
+            format!("    run_{sym}_c{i}(grid, BLK, stream, d_params, q, scratch, pw, NExt, base, off_cm1, off_cm2, off_cm3, off_zi, qs);")
         })
         .collect();
     let (pow_decl, prologue) = pow_glue(sym, ir);
@@ -601,29 +626,91 @@ fn launcher_tu(sym: &str, n_chunks: usize, total_slots: u64, ir: &Ir) -> String 
 // adaptive grid: shrink so total_slots*grid*BLK <= scratchElems (per-wave scratch fits the tmp region);
 // each chunk kernel computes WAVE=gridDim*blockDim at runtime, so any grid is correct.
 void launch_gen_{sym}(StepsParams* d_params, gl64_t* q, gl64_t* scratch, uint64_t scratchElems, uint64_t NExt,
-    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, cudaStream_t stream) {{
+    uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs, cudaStream_t stream) {{
   const uint64_t BLK = {GEN_BLK}ull;
 {guard}
 {prologue}
   // Grid sets how many WAVES the domain is split into, and each wave waits for the previous one
   // (shared scratch). Occupancy saturates well below the scratch limit, so take what the scratch
   // allows but never more blocks than there is work for: extra waves only add serialization.
-  uint64_t grid = {total_slots}ull ? (scratchElems / ({total_slots}ull*BLK)) : 512ull;
-  const uint64_t need = (NExt + BLK - 1) / BLK;
-  if (grid > need) grid = need;
-  if (grid < 1ull) grid = 1ull;
-  const uint64_t WAVE = grid * BLK;
-  for (uint64_t base=0; base<NExt; base+=WAVE) {{
+  const uint64_t NQ = NExt >> qs;
+{}
+  for (uint64_t base=0; base<NQ; base+=WAVE) {{
 {}
   }}
 }}
 {}
 "#,
         decls.join("\n"),
+        wave_grid(total_slots, "NQ"),
         calls.join("\n"),
         c_abi_exports(sym, total_slots, ir),
         guard = scratch_guard(sym, pow_region_words(ir, sym), total_slots),
     )
+}
+
+/// Body lines of chunk `chunk_idx` of a chunked program: loads of the cut temps entering it
+/// (`scratch[slot*WAVE + lo_]`), the ops, then the stores of the cut temps it produces. Shared by
+/// the Q chunk kernels and the chunked non-Q kernels, so both park temps the same way.
+/// `epilogue_uses` are temps the caller's code after the body reads (a pair kernel's final store
+/// consumes results produced in earlier chunks): loaded like any other live-in when cut.
+fn chunk_body(ir: &Ir, plan: &ChunkPlan, chunk_idx: usize, epilogue_uses: &[u64]) -> Vec<String> {
+    let (lo_op, hi_op) = plan.range(chunk_idx);
+    let chunk_ops = &ir.instrs[lo_op..hi_op];
+
+    let mut used_temps: HashSet<u64> = epilogue_uses.iter().copied().collect();
+    for instr in chunk_ops {
+        for opnd in [&instr.a, &instr.b] {
+            if let Some((tid, _)) = opnd.as_tmp() {
+                used_temps.insert(tid);
+            }
+        }
+    }
+    let mut live_in: Vec<u64> = used_temps
+        .iter()
+        .copied()
+        .filter(|t| plan.cut_temps.contains(t) && plan.chunk_of(plan.def_idx[t]) < chunk_idx)
+        .collect();
+    live_in.sort_unstable();
+    let mut live_out: Vec<u64> =
+        plan.cut_temps.iter().copied().filter(|t| plan.chunk_of(plan.def_idx[t]) == chunk_idx).collect();
+    live_out.sort_unstable();
+
+    let mut declared: HashSet<u64> = HashSet::new();
+    let mut lines: Vec<String> = Vec::new();
+    for &t in &live_in {
+        let slot_base = plan.slot_index(t);
+        if plan.dim_of[&t] == 1 {
+            lines.push(format!("  gl64_t t{t} = scratch[{slot_base}ull*WAVE + lo_];"));
+        } else {
+            lines.push(format!(
+                "  g3 t{t}; t{t}.a=scratch[{slot_base}ull*WAVE+lo_]; t{t}.b=scratch[{}ull*WAVE+lo_]; t{t}.c=scratch[{}ull*WAVE+lo_];",
+                slot_base + 1,
+                slot_base + 2
+            ));
+        }
+        declared.insert(t);
+    }
+    for instr in chunk_ops {
+        let (op_lines, is_out) = emit_op(instr, ir, &declared);
+        lines.extend(op_lines);
+        if !is_out {
+            declared.insert(instr.dst_id.unwrap());
+        }
+    }
+    for &t in &live_out {
+        let slot_base = plan.slot_index(t);
+        if plan.dim_of[&t] == 1 {
+            lines.push(format!("  scratch[{slot_base}ull*WAVE + lo_] = t{t};"));
+        } else {
+            lines.push(format!(
+                "  scratch[{slot_base}ull*WAVE+lo_]=t{t}.a; scratch[{}ull*WAVE+lo_]=t{t}.b; scratch[{}ull*WAVE+lo_]=t{t}.c;",
+                slot_base + 1,
+                slot_base + 2
+            ));
+        }
+    }
+    lines
 }
 
 /// Emit the per-AIR TU source files. Returns `(filename, contents)` pairs:
@@ -643,22 +730,21 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
         }
         let kernel = format!(
             r#"__global__ void gen_{sym}_kernel(const StepsParams* __restrict__ P, gl64_t* __restrict__ q, [[maybe_unused]] const gl64_t* __restrict__ pw,
-    uint64_t NExt, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi) {{
-  const uint64_t MASK = NExt-1;
-  const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsExtendedTreeAddress;
-  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
-  const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
-  [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;
-  for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<NExt; row+=gridDim.x*blockDim.x) {{
+    uint64_t NExt, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs) {{
+  const uint64_t MASK = NExt-1; const uint64_t NQ = NExt >> qs;
+{Q_PTRS}
+  for (uint64_t jq=blockIdx.x*blockDim.x+threadIdx.x; jq<NQ; jq+=gridDim.x*blockDim.x) {{
+  const uint64_t row = jq << qs;
 {}
 {}
   }}
 }}"#,
             body.join("\n"),
-            store_qq(plan.out_dim)
+            store_qq(plan.out_dim),
+            Q_PTRS = operand_ptrs("pConstPolsExtendedTreeAddress")
         );
         let launcher_body = format!(
-            "  (void)scratchElems; gen_{sym}_kernel<<<512,256,0,stream>>>(d_params,q,pw,NExt,off_cm1,off_cm2,off_cm3,off_zi);"
+            "  (void)scratchElems; gen_{sym}_kernel<<<512,256,0,stream>>>(d_params,q,pw,NExt,off_cm1,off_cm2,off_cm3,off_zi,qs);"
         );
         return vec![(format!("gen_{sym}.cu"), single_kernel_tu(sym, &kernel, &launcher_body, ir))];
     }
@@ -666,78 +752,23 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
     // chunked (tiled): one register-bounded kernel per chunk.
     let mut kernels: Vec<String> = Vec::with_capacity(plan.n_chunks);
     for chunk_idx in 0..plan.n_chunks {
-        let (lo_op, hi_op) = plan.range(chunk_idx);
-        let chunk_ops = &ir.instrs[lo_op..hi_op];
-
-        let mut used_temps: HashSet<u64> = HashSet::new();
-        for instr in chunk_ops {
-            for opnd in [&instr.a, &instr.b] {
-                if let Some((tid, _)) = opnd.as_tmp() {
-                    used_temps.insert(tid);
-                }
-            }
-        }
-        let mut live_in: Vec<u64> = used_temps
-            .iter()
-            .copied()
-            .filter(|t| plan.cut_temps.contains(t) && plan.chunk_of(plan.def_idx[t]) < chunk_idx)
-            .collect();
-        live_in.sort_unstable();
-        let mut live_out: Vec<u64> =
-            plan.cut_temps.iter().copied().filter(|t| plan.chunk_of(plan.def_idx[t]) == chunk_idx).collect();
-        live_out.sort_unstable();
-
-        let mut declared: HashSet<u64> = HashSet::new();
-        let mut lines: Vec<String> = Vec::new();
-        for &t in &live_in {
-            let slot_base = plan.slot_index(t);
-            if plan.dim_of[&t] == 1 {
-                lines.push(format!("  gl64_t t{t} = scratch[{slot_base}ull*WAVE + lo_];"));
-            } else {
-                lines.push(format!(
-                    "  g3 t{t}; t{t}.a=scratch[{slot_base}ull*WAVE+lo_]; t{t}.b=scratch[{}ull*WAVE+lo_]; t{t}.c=scratch[{}ull*WAVE+lo_];",
-                    slot_base + 1,
-                    slot_base + 2
-                ));
-            }
-            declared.insert(t);
-        }
-        for instr in chunk_ops {
-            let (op_lines, is_out) = emit_op(instr, ir, &declared);
-            lines.extend(op_lines);
-            if !is_out {
-                declared.insert(instr.dst_id.unwrap());
-            }
-        }
-        for &t in &live_out {
-            let slot_base = plan.slot_index(t);
-            if plan.dim_of[&t] == 1 {
-                lines.push(format!("  scratch[{slot_base}ull*WAVE + lo_] = t{t};"));
-            } else {
-                lines.push(format!(
-                    "  scratch[{slot_base}ull*WAVE+lo_]=t{t}.a; scratch[{}ull*WAVE+lo_]=t{t}.b; scratch[{}ull*WAVE+lo_]=t{t}.c;",
-                    slot_base + 1,
-                    slot_base + 2
-                ));
-            }
-        }
+        let mut lines = chunk_body(ir, plan, chunk_idx, &[]);
         if chunk_idx == plan.n_chunks - 1 {
             lines.push(store_qq(plan.out_dim).to_string());
         }
         kernels.push(format!(
             r#"__global__ void gen_{sym}_c{chunk_idx}(const StepsParams* __restrict__ P, gl64_t* __restrict__ q, gl64_t* __restrict__ scratch,
     [[maybe_unused]] const gl64_t* __restrict__ pw,
-    uint64_t NExt, uint64_t tileBase, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi) {{
-  const uint64_t MASK = NExt-1; const uint64_t WAVE = (uint64_t)gridDim.x*blockDim.x;
-  const uint64_t lo_ = blockIdx.x*blockDim.x + threadIdx.x; const uint64_t row = tileBase + lo_;
-  if (row >= NExt) return;
-  const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsExtendedTreeAddress;
-  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
-  const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
-  [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;
+    uint64_t NExt, uint64_t tileBase, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs) {{
+  const uint64_t MASK = NExt-1; const uint64_t WAVE = (uint64_t)gridDim.x*blockDim.x; const uint64_t NQ = NExt >> qs;
+  const uint64_t lo_ = blockIdx.x*blockDim.x + threadIdx.x; const uint64_t jq = tileBase + lo_;
+  if (jq >= NQ) return;
+  const uint64_t row = jq << qs;
+{Q_PTRS}
 {}
 }}"#,
             lines.join("\n"),
+            Q_PTRS = operand_ptrs("pConstPolsExtendedTreeAddress")
         ));
     }
 
@@ -757,7 +788,7 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
 // ---------------------------------------------------------------------------
 // Generic (non-Q) expression kernels: one small straight-line kernel per
 // covered expression id, evaluated over the TRACE domain, plus the C-ABI
-// per-expId dispatch (`exps_expr_covered` / `exps_launch_expr`) the loader
+// per-expId dispatch (`exps_generic_covered` / `exps_generic_launch`) the loader
 // dlsym's. Store semantics are mode-parameterized (write / mul-inverse /
 // scalar-times-inverse) so two-parameter hint dests (num x den^-1) fuse the
 // combine into the second kernel's store — no scratch, no pair kernels.
@@ -769,82 +800,431 @@ pub fn emit_air(ir: &Ir, plan: &ChunkPlan, sym: &str) -> Vec<(String, String)> {
 /// 1454 -> 2719 core-seconds, once the run was CPU-bound).
 pub const EXPRS_PER_TU: usize = 128;
 
-/// Emit the generic-expression TUs for `items` = (expId, ir, out_dim): `gen_<sym>_cexprs.cu`
-/// alone when they fit one part, else `gen_<sym>_cexprs_p<k>.cu` per part (kernels + part-local
-/// dispatch) and `gen_<sym>_cexprs.cu` as the C-ABI dispatch chaining the parts.
-pub fn emit_exprs_tus(sym: &str, items: &[(i64, crate::ir::Ir, u64)], pairs: &[(i64, i64)]) -> Vec<(String, String)> {
-    let dispatch = format!("gen_{sym}_cexprs.cu");
-    if items.len() <= EXPRS_PER_TU {
-        return vec![(dispatch, exprs_part(sym, items, items, pairs, None))];
+/// Programs above this many ops are never tried straight-line: one function that size compiles
+/// slowly (cicc is superlinear in function size) and all but certainly spills. The autotuned path
+/// chunks them directly (`lib::build_exprs_tus`, every generation path).
+pub const GENERIC_STRAIGHT_MAX: usize = 1024;
+
+/// A chunked generic kernel as tuned: (key, scratch words per row, ops per chunk).
+pub type ChunkedPick = (ExprKey, u64, usize);
+
+/// Identity of a generic-expression kernel: one expression, or a hint pair `num x den^-1`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExprKey {
+    Single(i64),
+    Pair(i64, i64),
+}
+
+impl ExprKey {
+    /// Kernel-name suffix: `x<id>` / `xp<num>_<den>`; the kernel is `gen_<sym>_<tag>`.
+    pub fn tag(&self) -> String {
+        match self {
+            ExprKey::Single(id) => format!("x{id}"),
+            ExprKey::Pair(n, d) => format!("xp{n}_{d}"),
+        }
     }
-    let parts: Vec<&[(i64, crate::ir::Ir, u64)]> = items.chunks(EXPRS_PER_TU).collect();
-    let mut files: Vec<(String, String)> = parts
+}
+
+/// Elements of scratch one wave of the Q launcher needs (`exps_min_scratch`): the cross-chunk
+/// slots of one wave plus the per-launch table.
+pub fn q_min_scratch(ir: &Ir, sym: &str, total_slots: u64) -> u64 {
+    total_slots * GEN_BLK + pow_region_words(ir, sym)
+}
+
+/// The keys among `items` / `pairs` whose program exceeds `GENERIC_STRAIGHT_MAX` ops (a pair counts both).
+pub fn oversized_keys(items: &[(i64, Ir, u64)], pairs: &[(i64, i64)]) -> Vec<ExprKey> {
+    let ops: HashMap<i64, usize> = items.iter().map(|(id, ir, _)| (*id, ir.instrs.len())).collect();
+    let mut big: Vec<ExprKey> = items
         .iter()
-        .enumerate()
-        .map(|(k, part)| (format!("gen_{sym}_cexprs_p{k}.cu"), exprs_part(sym, part, items, pairs, Some(k))))
+        .filter(|(_, ir, _)| ir.instrs.len() > GENERIC_STRAIGHT_MAX)
+        .map(|(id, _, _)| ExprKey::Single(*id))
         .collect();
-    let n = parts.len();
-    let decls: String = (0..n)
+    big.extend(
+        pairs
+            .iter()
+            .filter(|(n, d)| ops.get(n).unwrap_or(&0) + ops.get(d).unwrap_or(&0) > GENERIC_STRAIGHT_MAX)
+            .map(|&(n, d)| ExprKey::Pair(n, d)),
+    );
+    big
+}
+
+/// Index of the part (`EXPRS_PER_TU` items each) holding expression `exp_id`'s kernel; a pair
+/// kernel lives in its numerator's part.
+pub fn exprs_part_of(items: &[(i64, Ir, u64)], exp_id: i64) -> Option<usize> {
+    items.iter().position(|(id, _, _)| *id == exp_id).map(|i| i / EXPRS_PER_TU)
+}
+
+/// Part `k` of the generic expressions (`gen_<sym>_cexprs_p<k>.cu`): its `EXPRS_PER_TU` items'
+/// kernels and the pair kernels whose numerator is among them, with `_p<k>`-suffixed dispatch
+/// functions over them. `drop` leaves those kernels out (the ones re-emitted chunked, or
+/// excluded): the part keeps its index and the other kernels keep their part, so only the parts
+/// that lost a kernel change.
+pub fn emit_exprs_part(
+    sym: &str,
+    items: &[(i64, Ir, u64)],
+    pairs: &[(i64, i64)],
+    drop: &[ExprKey],
+    k: usize,
+) -> (String, String) {
+    let part = &items[k * EXPRS_PER_TU..((k + 1) * EXPRS_PER_TU).min(items.len())];
+    (format!("gen_{sym}_cexprs_p{k}.cu"), exprs_part(sym, part, items, pairs, drop, k))
+}
+
+/// Every part, see [`emit_exprs_part`].
+pub fn emit_exprs_parts(
+    sym: &str,
+    items: &[(i64, Ir, u64)],
+    pairs: &[(i64, i64)],
+    drop: &[ExprKey],
+) -> Vec<(String, String)> {
+    (0..items.len().div_ceil(EXPRS_PER_TU)).map(|k| emit_exprs_part(sym, items, pairs, drop, k)).collect()
+}
+
+/// A generic-expression kernel re-emitted as register-bounded chunks (its straight-line kernel
+/// spilled, or was never tried). `ir` is the whole program -- for a pair the numerator followed by
+/// the denominator, temps renumbered apart -- ending in temps, and `results` the temps the final
+/// store consumes (one per expression, with its dim).
+pub struct ChunkedExpr {
+    pub key: ExprKey,
+    pub ir: Ir,
+    pub results: Vec<(u64, u64)>,
+}
+
+impl ChunkedExpr {
+    /// The result temps, pinned live to the end of the program for the chunk plan.
+    pub fn pinned(&self) -> Vec<u64> {
+        self.results.iter().map(|&(t, _)| t).collect()
+    }
+}
+
+/// Largest tmp id used or defined in `ir`, plus one (0 for a tmp-free program).
+fn tmp_bound(ir: &Ir) -> u64 {
+    ir.instrs
+        .iter()
+        .flat_map(|i| [i.a.as_tmp().map(|t| t.0), i.b.as_tmp().map(|t| t.0), i.dst_id.filter(|_| i.dst_is_tmp)])
+        .flatten()
+        .max()
+        .map_or(0, |m| m + 1)
+}
+
+/// Append `src` to `instrs` with its temps shifted by `off`. A trailing non-tmp store (the
+/// explicit output of the setup's program) becomes a fresh tmp so every result is a temp the
+/// chunked store can consume; returns that result temp and its dim.
+fn append_program(src: &Ir, off: u64, instrs: &mut Vec<Instr>, fresh: &mut u64) -> (u64, u64) {
+    let shift = |o: &Operand| match o {
+        Operand::Tmp { id, dim } => Operand::Tmp { id: id + off, dim: *dim },
+        other => other.clone(),
+    };
+    let n = src.instrs.len();
+    let mut result = (0u64, 0u64);
+    for (k, i) in src.instrs.iter().enumerate() {
+        let last = k + 1 == n;
+        let (dst_is_tmp, dst_id) = if i.dst_is_tmp {
+            (true, i.dst_id.map(|d| d + off))
+        } else if last {
+            let id = *fresh;
+            *fresh += 1;
+            (true, Some(id))
+        } else {
+            (false, i.dst_id)
+        };
+        if last {
+            result = (dst_id.expect("result tmp"), i.ddim);
+        }
+        let idx = instrs.len();
+        instrs.push(Instr { op: i.op.clone(), a: shift(&i.a), b: shift(&i.b), dst_is_tmp, dst_id, ddim: i.ddim, idx });
+    }
+    result
+}
+
+/// The challenge-power regions of two programs merged: per challenge base the larger exponent
+/// count, sorted by base (the order `Ir::pow` keeps).
+fn merge_pows(a: &[(u64, u64)], b: &[(u64, u64)]) -> Vec<(u64, u64)> {
+    let mut powers: BTreeMap<u64, u64> = BTreeMap::new();
+    for &(base, n) in a.iter().chain(b.iter()) {
+        powers.entry(base).and_modify(|old| *old = (*old).max(n)).or_insert(n);
+    }
+    powers.into_iter().collect()
+}
+
+/// The chunked program of one generic kernel: `num` alone, or `num` then `den` with the
+/// denominator's temps renumbered above the numerator's, powers merged, no table (register
+/// powers, as the straight-line kernels).
+pub fn chunked_program(key: ExprKey, num: &Ir, den: Option<&Ir>) -> ChunkedExpr {
+    let off_den = tmp_bound(num);
+    let mut fresh = off_den + den.map_or(0, tmp_bound);
+    let mut instrs: Vec<Instr> = Vec::with_capacity(num.instrs.len() + den.map_or(0, |d| d.instrs.len()));
+    let mut results = vec![append_program(num, 0, &mut instrs, &mut fresh)];
+    if let Some(d) = den {
+        results.push(append_program(d, off_den, &mut instrs, &mut fresh));
+    }
+    let ir = Ir {
+        instrs,
+        ncols: num.ncols.clone(),
+        n_constants: num.n_constants,
+        n_bits: num.n_bits,
+        pow: merge_pows(&num.pow, den.map_or(&[][..], |d| &d.pow)),
+        tab: Vec::new(),
+        tab_out: Vec::new(),
+        tab_words: 0,
+        pow_in_regs: true,
+        field: num.field.clone(),
+    };
+    ChunkedExpr { key, ir, results }
+}
+
+/// `g3 <name>` from the value `expr` of dim `dim` (a base-field value is padded to the cubic one).
+fn result_to_g3(name: &str, expr: &str, dim: u64) -> String {
+    if dim == 3 {
+        format!("g3 {name}={expr};")
+    } else {
+        format!("g3 {name}; {name}.a={expr}; {name}.b=gl64_t(uint64_t(0)); {name}.c=gl64_t(uint64_t(0));")
+    }
+}
+
+/// The store of one row's value `expr` (dim `dim`) through the mode-parameterized
+/// `exps_expr_store`, the same text for the straight-line and the chunked kernels.
+fn store_single(expr: &str, dim: u64) -> String {
+    format!(
+        "  {{ {} exps_expr_store(dest,row,destDomain,stagePos,stageCols,destDim,destExpr,mode,scalar,v_,{dim}); }}",
+        result_to_g3("v_", expr, dim)
+    )
+}
+
+/// The store of one row's `num x den^-1` through `exps_expr_store_pair`.
+fn store_pair(num: &str, num_dim: u64, den: &str, den_dim: u64) -> String {
+    format!(
+        "  {{ {} {} exps_expr_store_pair(dest,row,destDomain,stagePos,stageCols,destDim,destExpr,num_,{num_dim},den_,{den_dim}); }}",
+        result_to_g3("num_", num, num_dim),
+        result_to_g3("den_", den, den_dim)
+    )
+}
+
+/// The C-ABI parameter lists of the generic-expression launchers, each written once. The parts'
+/// own launchers (`exps_launch_expr_p<k>`, straight-line kernels: `GENERIC_LAUNCH_SIG` single,
+/// `GENERIC_PAIR_LAUNCH_SIG` pair) take no scratch; the exported ones (`exps_generic_launch` = expId +
+/// `GENERIC_SCRATCH_SIG`, `exps_generic_launch_pair` = `GENERIC_PAIR_SCRATCH_SIG`, the loader's `ExprLaunchFn` /
+/// `ExprPairLaunchFn` in expressions_codegen.cuh) carry the expression scratch (offset inside
+/// aux_trace, elements). `GENERIC_SCRATCH_SIG` is also the chunked launcher's (`run_<sym>_<tag>`, single and
+/// pair alike).
+const GENERIC_LAUNCH_SIG: &str = "unsigned long long expId, StepsParams* P, gl64_t* dest, unsigned long long N, unsigned long long destDomain, unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, unsigned long long mode, unsigned long long scalar, unsigned long long stagePos, unsigned long long stageCols, unsigned long long destDim, unsigned int destExpr, cudaStream_t stream";
+const GENERIC_PAIR_LAUNCH_SIG: &str = "unsigned long long numId, unsigned long long denId, StepsParams* P, gl64_t* dest, unsigned long long N, unsigned long long destDomain, unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, unsigned long long stagePos, unsigned long long stageCols, unsigned long long destDim, unsigned int destExpr, cudaStream_t stream";
+const GENERIC_SCRATCH_SIG: &str = "StepsParams* P, gl64_t* dest, unsigned long long N, unsigned long long destDomain, unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, unsigned long long mode, unsigned long long scalar, unsigned long long stagePos, unsigned long long stageCols, unsigned long long destDim, unsigned int destExpr, unsigned long long scratchOff, unsigned long long scratchElems, cudaStream_t stream";
+const GENERIC_PAIR_SCRATCH_SIG: &str = "unsigned long long numId, unsigned long long denId, StepsParams* P, gl64_t* dest, unsigned long long N, unsigned long long destDomain, unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, unsigned long long stagePos, unsigned long long stageCols, unsigned long long destDim, unsigned int destExpr, unsigned long long scratchOff, unsigned long long scratchElems, cudaStream_t stream";
+
+/// Parameters of a straight-line generic kernel (single); the pair kernel has no mode/scalar.
+const GENERIC_KERNEL_SIG: &str = "(const StepsParams* __restrict__ P, gl64_t* __restrict__ dest,\n    uint64_t N, uint64_t destDomain, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3,\n    uint64_t mode, uint64_t scalar, uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr";
+const GENERIC_PAIR_KERNEL_SIG: &str = "(const StepsParams* __restrict__ P, gl64_t* __restrict__ dest, uint64_t N, uint64_t destDomain, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr)";
+
+/// The adaptive wave grid of a scratch-bounded launcher: as many blocks as the scratch holds
+/// cross-chunk slots for (`slots x BLK` words per block), never more than the rows need, at
+/// least one. Each wave then covers `WAVE = grid x BLK` rows and waits for the previous one.
+fn wave_grid(slots: u64, rows: &str) -> String {
+    format!(
+        r#"  const uint64_t need = ({rows} + BLK - 1) / BLK;
+  uint64_t grid = {slots}ull ? scratchElems / ({slots}ull*BLK) : need;
+  if (grid > need) grid = need;
+  if (grid < 1ull) grid = 1ull;
+  const uint64_t WAVE = grid * BLK;"#
+    )
+}
+
+/// The chunked generic kernels of one AIR in one TU (`gen_<sym>_cexprs_sp.cu`): per item its
+/// chunk kernels `gen_<sym>_<tag>_c<k>` (Q-style: cut temps parked in scratch at
+/// `slot*WAVE + lo_`, one row per thread per wave) and the host launcher `run_<sym>_<tag>`
+/// (adaptive grid from the scratch size, wave loop, 0 when the scratch cannot hold one wave).
+/// Scratch is `aux_trace + scratchOff`, computed on the device so the loader passes offsets only.
+pub fn emit_exprs_chunked_tu(sym: &str, items: &[(&ChunkedExpr, &ChunkPlan)]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (ce, plan) in items {
+        let tag = ce.key.tag();
+        let pw = pwregs_lines(&ce.ir);
+        let store = match ce.key {
+            ExprKey::Single(_) => {
+                let (t, dim) = ce.results[0];
+                store_single(&format!("t{t}"), dim)
+            }
+            ExprKey::Pair(_, _) => {
+                let (tn, dn) = ce.results[0];
+                let (td, dd) = ce.results[1];
+                store_pair(&format!("t{tn}"), dn, &format!("t{td}"), dd)
+            }
+        };
+        let pinned = ce.pinned();
+        for k in 0..plan.n_chunks {
+            let last = k + 1 == plan.n_chunks;
+            let mut lines = chunk_body(&ce.ir, plan, k, if last { &pinned } else { &[] });
+            if last {
+                lines.push(store.clone());
+            }
+            parts.push(format!(
+                r#"__global__ void gen_{sym}_{tag}_c{k}{GENERIC_KERNEL_SIG},
+    uint64_t scratchOff, uint64_t tileBase) {{
+  const uint64_t WAVE = (uint64_t)gridDim.x*blockDim.x;
+  const uint64_t lo_ = blockIdx.x*blockDim.x + threadIdx.x; const uint64_t row = tileBase + lo_;
+  if (row >= N) return;
+{TRACE_PROLOGUE}
+  gl64_t* scratch = (gl64_t*)P->aux_trace + scratchOff;
+{pw}{}
+}}"#,
+                lines.join("\n"),
+                TRACE_PROLOGUE = trace_prologue()
+            ));
+        }
+        let calls: Vec<String> = (0..plan.n_chunks)
+            .map(|k| format!("    gen_{sym}_{tag}_c{k}<<<grid,BLK,0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,mode,scalar,stagePos,stageCols,destDim,destExpr,scratchOff,base);"))
+            .collect();
+        parts.push(format!(
+            r#"// {tag}: {} chunks, {slots} cross-chunk scratch words per row
+extern "C" int run_{sym}_{tag}({GENERIC_SCRATCH_SIG}) {{
+  const uint64_t BLK = {GEN_BLK}ull;
+  if (scratchElems < {slots}ull*BLK) return 0;
+{}
+  for (uint64_t base = 0; base < N; base += WAVE) {{
+{}
+  }}
+  return 1;
+}}"#,
+            plan.n_chunks,
+            wave_grid(plan.total_slots, "N"),
+            calls.join("\n"),
+            slots = plan.total_slots
+        ));
+    }
+    format!(
+        r#"// AUTO-GENERATED chunked generic expression kernels for {sym} ({} kernels)
+#include "gen_common.cuh"
+#define OFF(r,c,nr,nc,lyt) getBufferOffset((uint64_t)(r),(uint64_t)(c),(uint64_t)(nr),(uint64_t)(nc),(lyt))
+{}
+#undef OFF
+"#,
+        items.len(),
+        parts.join("\n")
+    )
+}
+
+/// The C-ABI dispatch TU (`gen_<sym>_cexprs.cu`) over `n_parts` kernel parts and the `chunked`
+/// kernels of `gen_<sym>_cexprs_sp.cu`: `exps_generic_covered` / `exps_generic_launch` / `exps_generic_launch_pair`
+/// (the loader's `ExprCoveredFn` / `ExprLaunchFn` / `ExprPairLaunchFn`), carrying the expression
+/// scratch (offset inside aux_trace, elements). A chunked kernel is routed to its launcher, which
+/// returns 0 when the scratch cannot hold one wave; everything else chains the parts, whose
+/// straight-line kernels need no scratch. A chunked or excluded expression is in no part
+/// (`emit_exprs_part`'s `drop`), so an uncovered one reports 0 and the prover's interpreter runs.
+pub fn emit_exprs_dispatch(sym: &str, n_parts: usize, chunked: &[ChunkedPick]) -> String {
+    let mut decls: String = (0..n_parts)
         .map(|k| {
             format!(
                 r#"extern "C" int exps_expr_covered_p{k}(unsigned long long);
-extern "C" int exps_launch_expr_p{k}(unsigned long long, StepsParams*, gl64_t*, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned int, cudaStream_t);
-extern "C" int exps_launch_expr_pair_p{k}(unsigned long long, unsigned long long, StepsParams*, gl64_t*, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned long long, unsigned int, cudaStream_t);
+extern "C" int exps_launch_expr_p{k}({GENERIC_LAUNCH_SIG});
+extern "C" int exps_launch_expr_pair_p{k}({GENERIC_PAIR_LAUNCH_SIG});
 "#
             )
         })
         .collect();
     let chain = |call: &dyn Fn(usize) -> String| -> String {
-        (0..n).map(|k| format!("  if ({}) return 1;\n", call(k))).collect()
+        (0..n_parts).map(|k| format!("  if ({}) return 1;\n", call(k))).collect()
     };
-    let covered = chain(&|k| format!("exps_expr_covered_p{k}(expId)"));
-    let launch = chain(&|k| {
+    let run = |tag: &str, mode: &str| {
+        format!("run_{sym}_{tag}(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,{mode},stagePos,stageCols,destDim,destExpr,scratchOff,scratchElems,stream)")
+    };
+    // The chunked kernels first (a pair launcher gets mode/scalar 0, unused), then the parts.
+    let (mut covered, mut launch, mut pair) = (String::new(), String::new(), String::new());
+    for &(key, _, _) in chunked {
+        let tag = key.tag();
+        decls.push_str(&format!("extern \"C\" int run_{sym}_{tag}({GENERIC_SCRATCH_SIG});\n"));
+        match key {
+            ExprKey::Single(id) => {
+                covered.push_str(&format!("  if (expId == {id}ull) return 1;\n"));
+                launch.push_str(&format!("  if (expId == {id}ull) return {};\n", run(&tag, "mode,scalar")));
+            }
+            ExprKey::Pair(n, d) => {
+                pair.push_str(&format!(
+                    "  if (numId == {n}ull && denId == {d}ull) return {};\n",
+                    run(&tag, "0ull,0ull")
+                ));
+            }
+        }
+    }
+    covered.push_str(&chain(&|k| format!("exps_expr_covered_p{k}(expId)")));
+    launch.push_str(&chain(&|k| {
         format!("exps_launch_expr_p{k}(expId,P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,mode,scalar,stagePos,stageCols,destDim,destExpr,stream)")
-    });
-    let pair = chain(&|k| {
+    }));
+    pair.push_str(&chain(&|k| {
         format!("exps_launch_expr_pair_p{k}(numId,denId,P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,stagePos,stageCols,destDim,destExpr,stream)")
-    });
-    files.push((
-        dispatch,
-        format!(
-            r#"// AUTO-GENERATED generic expression dispatch for {sym} ({} expressions in {n} parts)
+    }));
+    format!(
+        r#"// AUTO-GENERATED generic expression dispatch for {sym} ({n_parts} parts, {} chunked)
 #include "gen_common.cuh"
-{decls}extern "C" int exps_expr_covered(unsigned long long expId) {{
+{decls}extern "C" int exps_generic_covered(unsigned long long expId) {{
 {covered}  return 0;
 }}
-extern "C" int exps_launch_expr(unsigned long long expId, StepsParams* P, gl64_t* dest,
-    unsigned long long N, unsigned long long destDomain,
-    unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3,
-    unsigned long long mode, unsigned long long scalar,
-    unsigned long long stagePos, unsigned long long stageCols,
-    unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
-{launch}  return 0;
+extern "C" int exps_generic_launch(unsigned long long expId, {GENERIC_SCRATCH_SIG}) {{
+{launch}  (void)scratchOff; (void)scratchElems;
+  return 0;
 }}
-extern "C" int exps_launch_expr_pair(unsigned long long numId, unsigned long long denId, StepsParams* P, gl64_t* dest, unsigned long long N, unsigned long long destDomain, unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, unsigned long long stagePos, unsigned long long stageCols, unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
-{pair}  return 0;
+extern "C" int exps_generic_launch_pair({GENERIC_PAIR_SCRATCH_SIG}) {{
+{pair}  (void)scratchOff; (void)scratchElems;
+  return 0;
 }}
 "#,
-            items.len()
-        ),
-    ));
-    files
+        chunked.len()
+    )
 }
 
-/// One generic-expression TU: the kernels of `items` (+ the pair kernels whose numerator is among
-/// them; `all_items` resolves the denominators) and the dispatch functions -- the public C-ABI
-/// names when `part` is None, `_p<k>`-suffixed part-local ones otherwise.
+/// Challenge powers `pwreg_<base>_<j>` for `pow` regions, computed once per thread in a kernel
+/// prologue by repeated cg_mul33 from the challenge, the same arithmetic as the Q table so the
+/// folded chains stay exact. Empty when no region needs a power above the first.
+fn pwregs_lines_for(pow: &[(u64, u64)]) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for &(base, n) in pow {
+        if n < 2 {
+            continue;
+        }
+        lines.push(format!(
+            "  [[maybe_unused]] g3 pwreg_{base}_1; pwreg_{base}_1.a=ch[{base}]; pwreg_{base}_1.b=ch[{}]; pwreg_{base}_1.c=ch[{}];",
+            base + 1,
+            base + 2
+        ));
+        for j in 2..n {
+            lines.push(format!(
+                "  [[maybe_unused]] g3 pwreg_{base}_{j} = cg_mul33(pwreg_{base}_{}, pwreg_{base}_1);",
+                j - 1
+            ));
+        }
+    }
+    if lines.is_empty() {
+        String::new()
+    } else {
+        lines.join("\n") + "\n"
+    }
+}
+
+/// The register-resident powers of a `pow_in_regs` kernel (see [`pwregs_lines_for`]).
+fn pwregs_lines(ir: &Ir) -> String {
+    if ir.pow_in_regs {
+        pwregs_lines_for(&ir.pow)
+    } else {
+        String::new()
+    }
+}
+
+/// One generic-expression part TU: the kernels of `part_items` (+ the pair kernels whose
+/// numerator is among them; `all_items` resolves the denominators) except the `drop`ped ones,
+/// and the `_p<part>`-suffixed dispatch functions over them.
 fn exprs_part(
     sym: &str,
-    items: &[(i64, crate::ir::Ir, u64)],
-    all_items: &[(i64, crate::ir::Ir, u64)],
+    part_items: &[(i64, Ir, u64)],
+    all_items: &[(i64, Ir, u64)],
     pairs: &[(i64, i64)],
-    part: Option<usize>,
+    drop: &[ExprKey],
+    part: usize,
 ) -> String {
-    let sfx = part.map_or(String::new(), |k| format!("_p{k}"));
-    let mut kernels: Vec<String> = Vec::new();
-    let mut cases_launch: Vec<String> = Vec::new();
-    let mut cases_covered: Vec<String> = Vec::new();
-    for (exp_id, ir, out_dim) in items {
+    let sfx = format!("_p{part}");
+    let items: Vec<&(i64, Ir, u64)> =
+        part_items.iter().filter(|(id, _, _)| !drop.contains(&ExprKey::Single(*id))).collect();
+    // The per-row evaluation of a program as a lambda: the result lives in the last
+    // instruction's destination, `qq` for an explicit output store, `t<id>` for a tmp.
+    let eval_lambda = |ir: &Ir, name: &str, vt: &str| -> String {
         let mut body: Vec<String> = Vec::new();
         let mut declared: HashSet<u64> = HashSet::new();
         for instr in &ir.instrs {
@@ -854,145 +1234,62 @@ fn exprs_part(
                 declared.insert(instr.dst_id.unwrap());
             }
         }
-        // The result lives in the last instruction's destination: `qq` for an
-        // explicit output store, `t<id>` when the expression ends in a tmp.
         let last = ir.instrs.last().unwrap();
         let result = if last.dst_is_tmp { format!("t{}", last.dst_id.unwrap()) } else { "qq".to_string() };
-        // Value type of this expression and how the plain store receives it.
-        let (vt, vdim) = if *out_dim == 3 { ("g3", 3) } else { ("gl64_t", 1) };
-        let to_g3 = if *out_dim == 3 {
-            "g3 v_=ev_;".to_string()
-        } else {
-            "g3 v_; v_.a=ev_; v_.b=gl64_t(uint64_t(0)); v_.c=gl64_t(uint64_t(0));".to_string()
-        };
-        let store = format!("    {{ {to_g3} exps_expr_store(dest,row,destDomain,stagePos,stageCols,destDim,destExpr,mode,scalar,v_,{vdim}); }}");
-        // Challenge powers for this kernel, computed once per thread into registers
-        // (the kernel has no scratch table; a thread serves many rows, so the few
-        // cubic multiplies amortize). Same arithmetic as the Q table: repeated
-        // cg_mul33 from the challenge, so the folded chains stay exact.
-        let pwregs: String = if ir.pow_in_regs {
-            let mut lines: Vec<String> = Vec::new();
-            for &(base, n) in &ir.pow {
-                if n < 2 {
-                    continue;
-                }
-                lines.push(format!(
-                    "  [[maybe_unused]] g3 pwreg_{base}_1; pwreg_{base}_1.a=ch[{base}]; pwreg_{base}_1.b=ch[{}]; pwreg_{base}_1.c=ch[{}];",
-                    base + 1,
-                    base + 2
-                ));
-                for j in 2..n {
-                    lines.push(format!(
-                        "  [[maybe_unused]] g3 pwreg_{base}_{j} = cg_mul33(pwreg_{base}_{}, pwreg_{base}_1);",
-                        j - 1
-                    ));
-                }
-            }
-            lines.join("\n") + "\n"
-        } else {
-            String::new()
-        };
-        // Per-row evaluation shared by the kernel body.
-        let prologue = format!(
-            r#"  const uint64_t NExt = N; const uint64_t MASK = N-1;
-  const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsAddress;
-  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues;
-  const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs;
-  [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;
-{pwregs}  auto eval_ = [&](uint64_t row) -> {vt} {{
-{}
-    return {result};
-  }};"#,
-            body.join("\n")
-        );
-        let sig = "(const StepsParams* __restrict__ P, gl64_t* __restrict__ dest,\n    uint64_t N, uint64_t destDomain, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3,\n    uint64_t mode, uint64_t scalar, uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr)";
+        format!("  auto {name} = [&](uint64_t row) -> {vt} {{\n{}\n    return {result};\n  }};", body.join("\n"))
+    };
+    let vtype = |dim: u64| if dim == 3 { "g3" } else { "gl64_t" };
+    let mut kernels: Vec<String> = Vec::new();
+    let mut cases_launch: Vec<String> = Vec::new();
+    let mut cases_covered: Vec<String> = Vec::new();
+    for (exp_id, ir, out_dim) in &items {
+        let tag = ExprKey::Single(*exp_id).tag();
+        let vt = vtype(*out_dim);
         kernels.push(format!(
-            r#"__global__ void gen_{sym}_x{exp_id}{sig} {{
-{prologue}
+            r#"__global__ void gen_{sym}_{tag}{GENERIC_KERNEL_SIG}) {{
+{TRACE_PROLOGUE}
+{}{}
   for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<N; row+=(uint64_t)gridDim.x*blockDim.x) {{
     {vt} ev_ = eval_(row);
-{store}
+  {}
   }}
-}}"#
+}}"#,
+            pwregs_lines(ir),
+            eval_lambda(ir, "eval_", vt),
+            store_single("ev_", *out_dim),
+            TRACE_PROLOGUE = trace_prologue()
         ));
-        cases_launch.push(format!("    case {exp_id}ull: gen_{sym}_x{exp_id}<<<grid,{GEN_BLK},0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,mode,scalar,stagePos,stageCols,destDim,destExpr); return 1;"));
+        cases_launch.push(format!("    case {exp_id}ull: gen_{sym}_{tag}<<<grid,{GEN_BLK},0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,mode,scalar,stagePos,stageCols,destDim,destExpr); return 1;"));
         cases_covered.push(format!("    case {exp_id}ull: return 1;"));
     }
-    let item_by_id: HashMap<i64, (&crate::ir::Ir, u64)> =
-        all_items.iter().map(|(id, ir, dim)| (*id, (ir, *dim))).collect();
+    let item_by_id: HashMap<i64, (&Ir, u64)> = all_items.iter().map(|(id, ir, dim)| (*id, (ir, *dim))).collect();
     let mut pair_kernels = Vec::new();
     let mut pair_cases = Vec::new();
     for &(num_id, den_id) in pairs {
-        if !items.iter().any(|(id, _, _)| *id == num_id) {
-            continue; // emitted by the part holding the numerator
+        if drop.contains(&ExprKey::Pair(num_id, den_id)) || !part_items.iter().any(|(id, _, _)| *id == num_id) {
+            continue; // dropped, or emitted by the part holding the numerator
         }
         let (Some(&(num_ir, num_dim)), Some(&(den_ir, den_dim))) = (item_by_id.get(&num_id), item_by_id.get(&den_id))
         else {
             continue;
         };
-        let emit_eval = |ir: &crate::ir::Ir, tag: &str| -> (String, String) {
-            let mut body = Vec::new();
-            let mut declared = HashSet::new();
-            for instr in &ir.instrs {
-                let (ls, out) = emit_op(instr, ir, &declared);
-                body.extend(ls);
-                if !out {
-                    declared.insert(instr.dst_id.unwrap());
-                }
-            }
-            let last = ir.instrs.last().unwrap();
-            let result = if last.dst_is_tmp { format!("t{}", last.dst_id.unwrap()) } else { "qq".to_string() };
-            let vt = if ir.out_dim() == Some(3) { "g3" } else { "gl64_t" };
-            (
-                format!(
-                    "  auto eval_{tag}_ = [&](uint64_t row) -> {vt} {{\n{}\n    return {result};\n  }};",
-                    body.join("\n")
-                ),
-                vt.to_string(),
-            )
-        };
-        let (num_eval, num_vt) = emit_eval(num_ir, "num");
-        let (den_eval, den_vt) = emit_eval(den_ir, "den");
-        let mut powers: BTreeMap<u64, u64> = BTreeMap::new();
-        for &(base, n) in num_ir.pow.iter().chain(den_ir.pow.iter()) {
-            powers.entry(base).and_modify(|old| *old = (*old).max(n)).or_insert(n);
-        }
-        let mut pw = Vec::new();
-        for (base, n) in powers {
-            if n < 2 {
-                continue;
-            }
-            pw.push(format!("  [[maybe_unused]] g3 pwreg_{base}_1; pwreg_{base}_1.a=ch[{base}]; pwreg_{base}_1.b=ch[{}]; pwreg_{base}_1.c=ch[{}];",base+1,base+2));
-            for j in 2..n {
-                pw.push(format!(
-                    "  [[maybe_unused]] g3 pwreg_{base}_{j}=cg_mul33(pwreg_{base}_{},pwreg_{base}_1);",
-                    j - 1
-                ));
-            }
-        }
-        let num_to = if num_vt == "g3" {
-            "g3 num_=eval_num_(row);".to_string()
-        } else {
-            "gl64_t nv_=eval_num_(row); g3 num_; num_.a=nv_; num_.b=gl64_t(uint64_t(0)); num_.c=gl64_t(uint64_t(0));"
-                .to_string()
-        };
-        let den_to = if den_vt == "g3" {
-            "g3 den_=eval_den_(row);".to_string()
-        } else {
-            "gl64_t dv_=eval_den_(row); g3 den_; den_.a=dv_; den_.b=gl64_t(uint64_t(0)); den_.c=gl64_t(uint64_t(0));"
-                .to_string()
-        };
-        let sig="(const StepsParams* __restrict__ P, gl64_t* __restrict__ dest, uint64_t N, uint64_t destDomain, uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t stagePos, uint64_t stageCols, uint64_t destDim, uint32_t destExpr)";
-        pair_kernels.push(format!(r#"__global__ void gen_{sym}_xp{num_id}_{den_id}{sig} {{
-  const uint64_t NExt=N; const uint64_t MASK=N-1;
-  const gl64_t* __restrict__ aux=(const gl64_t*)P->aux_trace; const gl64_t* __restrict__ cst=(const gl64_t*)P->pConstPolsAddress;
-  const gl64_t* __restrict__ ch=(const gl64_t*)P->challenges; const gl64_t* __restrict__ av=(const gl64_t*)P->airValues; const gl64_t* __restrict__ agv=(const gl64_t*)P->airgroupValues; const gl64_t* __restrict__ pub=(const gl64_t*)P->publicInputs; [[maybe_unused]] const gl64_t* __restrict__ ccf=(const gl64_t*)P->pCustomCommitsFixed;
+        let tag = ExprKey::Pair(num_id, den_id).tag();
+        pair_kernels.push(format!(
+            r#"__global__ void gen_{sym}_{tag}{GENERIC_PAIR_KERNEL_SIG} {{
+{TRACE_PROLOGUE}
+{}{}
 {}
-{num_eval}
-{den_eval}
-  for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<N; row+=(uint64_t)gridDim.x*blockDim.x) {{ {num_to} {den_to} exps_expr_store_pair(dest,row,destDomain,stagePos,stageCols,destDim,destExpr,num_,{num_dim},den_,{den_dim}); }}
-}}"#,pw.join("\n")));
-        pair_cases.push(format!("  if (numId=={num_id}ull && denId=={den_id}ull) {{ gen_{sym}_xp{num_id}_{den_id}<<<grid,{GEN_BLK},0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,stagePos,stageCols,destDim,destExpr); return 1; }}"));
+  for (uint64_t row=blockIdx.x*blockDim.x+threadIdx.x; row<N; row+=(uint64_t)gridDim.x*blockDim.x) {{
+  {}
+  }}
+}}"#,
+            pwregs_lines_for(&merge_pows(&num_ir.pow, &den_ir.pow)),
+            eval_lambda(num_ir, "eval_num_", vtype(num_dim)),
+            eval_lambda(den_ir, "eval_den_", vtype(den_dim)),
+            store_pair("eval_num_(row)", num_dim, "eval_den_(row)", den_dim),
+            TRACE_PROLOGUE = trace_prologue()
+        ));
+        pair_cases.push(format!("  if (numId=={num_id}ull && denId=={den_id}ull) {{ gen_{sym}_{tag}<<<grid,{GEN_BLK},0,stream>>>(P,dest,N,destDomain,off_cm1,off_cm2,off_cm3,stagePos,stageCols,destDim,destExpr); return 1; }}"));
     }
     format!(
         r#"// AUTO-GENERATED generic expression kernels for {sym} ({} expressions)
@@ -1006,12 +1303,7 @@ extern "C" int exps_expr_covered{sfx}(unsigned long long expId) {{
     default: return 0;
   }}
 }}
-extern "C" int exps_launch_expr{sfx}(unsigned long long expId, StepsParams* P, gl64_t* dest,
-    unsigned long long N, unsigned long long destDomain,
-    unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3,
-    unsigned long long mode, unsigned long long scalar,
-    unsigned long long stagePos, unsigned long long stageCols,
-    unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
+extern "C" int exps_launch_expr{sfx}({GENERIC_LAUNCH_SIG}) {{
   // Cap rationale: see EXPR_GRID_CAP in emit.rs (shared with the pair launcher below).
   uint64_t grid = (N + {GEN_BLK}ull - 1) / {GEN_BLK}ull;
   if (grid > {EXPR_GRID_CAP}ull) grid = {EXPR_GRID_CAP}ull;
@@ -1021,7 +1313,7 @@ extern "C" int exps_launch_expr{sfx}(unsigned long long expId, StepsParams* P, g
     default: return 0;
   }}
 }}
-extern "C" int exps_launch_expr_pair{sfx}(unsigned long long numId, unsigned long long denId, StepsParams* P, gl64_t* dest, unsigned long long N, unsigned long long destDomain, unsigned long long off_cm1, unsigned long long off_cm2, unsigned long long off_cm3, unsigned long long stagePos, unsigned long long stageCols, unsigned long long destDim, unsigned int destExpr, cudaStream_t stream) {{
+extern "C" int exps_launch_expr_pair{sfx}({GENERIC_PAIR_LAUNCH_SIG}) {{
   uint64_t grid=(N+{GEN_BLK}ull-1)/{GEN_BLK}ull; if(grid>{EXPR_GRID_CAP}ull)grid={EXPR_GRID_CAP}ull; if(grid<1ull)grid=1ull;
 {}
   return 0;
@@ -1035,4 +1327,80 @@ extern "C" int exps_launch_expr_pair{sfx}(unsigned long long numId, unsigned lon
         cases_launch.join("\n"),
         pair_cases.join("\n")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::field::Field;
+
+    fn ir(instrs: Vec<Instr>, pow: Vec<(u64, u64)>) -> Ir {
+        Ir {
+            instrs,
+            ncols: HashMap::new(),
+            n_constants: 0,
+            n_bits: 4,
+            pow,
+            tab: Vec::new(),
+            tab_out: Vec::new(),
+            tab_words: 0,
+            pow_in_regs: true,
+            field: Field::Goldilocks,
+        }
+    }
+    fn op(idx: usize, a: Operand, b: Operand, dst: Option<u64>) -> Instr {
+        Instr { op: "add".into(), a, b, dst_is_tmp: dst.is_some(), dst_id: dst, ddim: 1, idx }
+    }
+    fn tmp(id: u64) -> Operand {
+        Operand::Tmp { id, dim: 1 }
+    }
+
+    /// A pair program is the numerator then the denominator with the denominator's temps moved
+    /// above the numerator's, a trailing output store turned into a fresh temp, op indices
+    /// renumbered, and the powers merged by max exponent.
+    #[test]
+    fn chunked_program_merges_a_pair() {
+        // num: t0 = n1 + n2; t1 = t0 + n3            (ends in a tmp)
+        let num = ir(
+            vec![op(0, Operand::Num(1), Operand::Num(2), Some(0)), op(1, tmp(0), Operand::Num(3), Some(1))],
+            vec![(0, 3)],
+        );
+        // den: t0 = n4 + n5; out = t0 + n6            (ends in an output store)
+        let den = ir(
+            vec![op(0, Operand::Num(4), Operand::Num(5), Some(0)), op(1, tmp(0), Operand::Num(6), None)],
+            vec![(0, 5), (3, 2)],
+        );
+        let ce = chunked_program(ExprKey::Pair(7, 8), &num, Some(&den));
+        let ids: Vec<Option<u64>> = ce.ir.instrs.iter().map(|i| i.dst_id).collect();
+        assert_eq!(ids, vec![Some(0), Some(1), Some(2), Some(3)]);
+        assert!(ce.ir.instrs.iter().all(|i| i.dst_is_tmp));
+        assert_eq!(ce.ir.instrs[3].a, tmp(2), "den's t0 reads as t2 after the shift");
+        assert_eq!(ce.ir.instrs.iter().map(|i| i.idx).collect::<Vec<_>>(), vec![0, 1, 2, 3]);
+        assert_eq!(ce.results, vec![(1, 1), (3, 1)]);
+        assert_eq!(ce.pinned(), vec![1, 3]);
+        assert_eq!(ce.ir.pow, vec![(0, 5), (3, 2)]);
+        assert_eq!(ce.key.tag(), "xp7_8");
+    }
+
+    /// Pinning keeps a result produced early alive across every later cut, so the last chunk
+    /// loads it from scratch.
+    #[test]
+    fn pinned_result_crosses_the_cuts() {
+        let num = ir(vec![op(0, Operand::Num(1), Operand::Num(2), Some(0))], vec![]);
+        let den = ir(
+            vec![
+                op(0, Operand::Num(4), Operand::Num(5), Some(0)),
+                op(1, tmp(0), Operand::Num(6), Some(1)),
+                op(2, tmp(1), Operand::Num(6), Some(2)),
+            ],
+            vec![],
+        );
+        let ce = chunked_program(ExprKey::Pair(1, 2), &num, Some(&den));
+        let plan = crate::ir::plan_chunks_ops_pinned(&ce.ir.instrs, 2, "t", &ce.pinned()).unwrap();
+        assert!(plan.n_chunks >= 2);
+        assert!(plan.cut_temps.contains(&0), "num result t0 must be a cut temp");
+        let last = plan.n_chunks - 1;
+        let body = chunk_body(&ce.ir, &plan, last, &ce.pinned()).join("\n");
+        assert!(body.contains("gl64_t t0 = scratch["), "last chunk loads the pinned numerator: {body}");
+    }
 }

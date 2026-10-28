@@ -259,9 +259,10 @@ TEST(PoseidonV1, merkletree_binary_fib128x64_avxbatch)
 }
 #endif
 
-#ifdef __AVX512__
+#ifdef GOLDILOCKS_AVX512_PATHS
 TEST(PoseidonV1, merkletree_binary_fib128x64_avx512batch)
 {
+    if (!Goldilocks::hasAvx512()) GTEST_SKIP() << "CPU lacks AVX-512";
     const uint64_t ncols = NCOLS_HASH, nrows = NROWS_HASH;
     std::vector<GL> cols(ncols * nrows);
     buildMerkleInput(cols.data(), ncols, nrows);
@@ -396,20 +397,3 @@ TEST(PoseidonV1, permute_W16_self_consistency)
         ASSERT_EQ(Goldilocks::toU64(out[i]), PERMUTE_W16_POSEIDON1_GOLDEN[i])
             << "lane " << i;
 }
-
-#ifdef __AVX2__
-#endif
-
-#ifdef __AVX512__
-#endif
-
-// ---------------------------------------------------------------------------
-// W=16 mode parity — Scalar ≡ AvxBatch (≡ Avx512Batch when available).
-// Validates the W-generic batch_avx[512] paths produce the same merkle root
-// as merkletree_seq.
-// ---------------------------------------------------------------------------
-#ifdef __AVX2__
-#endif
-
-#ifdef __AVX512__
-#endif

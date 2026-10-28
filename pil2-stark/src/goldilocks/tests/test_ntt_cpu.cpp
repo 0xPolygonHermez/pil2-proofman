@@ -492,3 +492,74 @@ TEST(GOLDILOCKS_TEST, intt_standalone_roundtrip)
         ASSERT_EQ(Goldilocks::toU64(a[i]), Goldilocks::toU64(orig[i]))
             << "INTT(NTT(x)) ≠ x at i=" << i;
 }
+
+// Column blocks bound the scratch to NExt x ceil(ncols / nblock), and a source in the last N rows of
+// the output survives: the INTT reads it once and writes rows below N only. Both match the plain LDE.
+TEST(GOLDILOCKS_TEST, LDE_blocked_and_in_place)
+{
+    struct Case { uint64_t N, blowupBits, ncols, nblock; };
+    const Case cases[] = {
+        {1 << 10, 1, 1, 1},
+        {1 << 10, 1, 37, 5},
+        {1 << 10, 2, 37, 37},
+        {1 << 12, 1, 64, 2},
+        {1 << 9, 3, 13, 4},
+    };
+    const uint64_t CANARY = 0xDEADBEEFCAFEull;
+    for (const auto &c : cases) {
+        const uint64_t N = c.N, NExt = N << c.blowupBits, ncols = c.ncols;
+        std::vector<Goldilocks::Element> input(N * ncols);
+        for (uint64_t i = 0; i < N * ncols; ++i) input[i] = Goldilocks::fromU64(i * 2654435761ull + 17);
+
+        NTT_Goldilocks ntt(N);
+        std::vector<Goldilocks::Element> ref(NExt * ncols);
+        ntt.LDE(ref.data(), input.data(), NExt, N, ncols);
+
+        const uint64_t width = (ncols + c.nblock - 1) / c.nblock;
+        std::vector<Goldilocks::Element> scratch(NExt * width + 1);
+        scratch.back() = Goldilocks::fromU64(CANARY);
+        std::vector<Goldilocks::Element> blocked(NExt * ncols);
+        ntt.LDE(blocked.data(), input.data(), NExt, N, ncols, scratch.data(), NUM_PHASES, c.nblock);
+        ASSERT_EQ(Goldilocks::toU64(scratch.back()), CANARY) << "scratch overrun, ncols=" << ncols;
+
+        std::vector<Goldilocks::Element> inplace(NExt * ncols);
+        Goldilocks::Element *landing = inplace.data() + (NExt - N) * ncols;
+        std::memcpy(landing, input.data(), N * ncols * sizeof(Goldilocks::Element));
+        ntt.LDE(inplace.data(), landing, NExt, N, ncols, scratch.data(), NUM_PHASES, c.nblock);
+
+        for (uint64_t i = 0; i < NExt * ncols; ++i) {
+            ASSERT_EQ(Goldilocks::toU64(blocked[i]), Goldilocks::toU64(ref[i])) << "blocked, i=" << i << " ncols=" << ncols;
+            ASSERT_EQ(Goldilocks::toU64(inplace[i]), Goldilocks::toU64(ref[i])) << "in place, i=" << i << " ncols=" << ncols;
+        }
+    }
+}
+
+// LDEBlocked matches LDE across the one-block and many-block paths, out of place and in place, and
+// stays inside LDEBlockedScratchSize.
+TEST(GOLDILOCKS_TEST, LDE_blocked_copy)
+{
+    const uint64_t CANARY = 0xDEADBEEFCAFEull;
+    for (uint64_t ncols : std::vector<uint64_t>{1, 7, LDE_BLOCK_COLS, LDE_BLOCK_COLS + 1, 3 * LDE_BLOCK_COLS + 5}) {
+        for (uint64_t blowupBits : std::vector<uint64_t>{1, 2}) {
+            const uint64_t N = 1 << 10, NExt = N << blowupBits;
+            std::vector<Goldilocks::Element> input(N * ncols);
+            for (uint64_t i = 0; i < N * ncols; ++i) input[i] = Goldilocks::fromU64(i * 40503ull + 11);
+            NTT_Goldilocks ntt(N);
+            std::vector<Goldilocks::Element> ref(NExt * ncols);
+            ntt.LDE(ref.data(), input.data(), NExt, N, ncols);
+
+            std::vector<Goldilocks::Element> scratch(NTT_Goldilocks::LDEBlockedScratchSize(NExt, ncols) + 1);
+            scratch.back() = Goldilocks::fromU64(CANARY);
+            std::vector<Goldilocks::Element> out(NExt * ncols), inplace(NExt * ncols);
+            ntt.LDEBlocked(out.data(), input.data(), NExt, N, ncols, scratch.data());
+            // In place, the trace is the start of its extension (the stage layout).
+            std::memcpy(inplace.data(), input.data(), N * ncols * sizeof(Goldilocks::Element));
+            ntt.LDEBlocked(inplace.data(), inplace.data(), NExt, N, ncols, scratch.data());
+            ASSERT_EQ(Goldilocks::toU64(scratch.back()), CANARY) << "scratch overrun, ncols=" << ncols;
+            for (uint64_t i = 0; i < NExt * ncols; ++i) {
+                ASSERT_EQ(Goldilocks::toU64(out[i]), Goldilocks::toU64(ref[i])) << "i=" << i << " ncols=" << ncols;
+                ASSERT_EQ(Goldilocks::toU64(inplace[i]), Goldilocks::toU64(ref[i])) << "in place, i=" << i << " ncols=" << ncols;
+            }
+        }
+    }
+}

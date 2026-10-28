@@ -13,16 +13,20 @@ categories = { workspace = true }
 path = "lib.rs"
 
 [dependencies]
-proofman-fields = { workspace = true, features = ["verify"] }
+proofman-fields = { workspace = true }
 proofman-common = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 num-bigint = { workspace = true }
-num-traits = { workspace = true }
 tera = "1"
 
 [dev-dependencies]
 rand = { workspace = true }
 serde_json = { workspace = true }
+# The BN128 wrap's tests (tests/poseidon_bn128_wrap.rs) set up, check and prove its AIR with
+# pilfflonk, on the official ptau of the tests.
+# Internal dev-deps are path only: cargo drops them on publish.
+pilfflonk-setup = { path = "../pilfflonk" }
+proofman-pilfflonk = { path = "../../pilfflonk" }

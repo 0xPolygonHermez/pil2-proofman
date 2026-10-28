@@ -24,13 +24,15 @@ use proofman_starks_lib_c::{
     clear_proof_done_callback_c, get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c,
     CompletionMsg,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::CancellationInfo;
 
 /// Poll cadence while draining outstanding units — unchanged from the previous busy-poll wait.
 const POLL_INTERVAL: Duration = Duration::from_micros(100);
-/// How long `Drop` pumps the non-blocking harvest for stragglers before giving up. Bounded because
-/// on a cancelled job they may never complete; a late straggler is a no-op (idempotent settling).
+/// How long `Drop` pumps the non-blocking harvest for stragglers before giving up. A cancelled job's
+/// units never complete, so its owner does not wait at all; a late straggler is a no-op (idempotent
+/// settling).
 const DRAIN_BUDGET: Duration = Duration::from_secs(5);
 /// How long [`SlotToken::take`] waits before warning that the capability is still held. Only a
 /// call-site ordering bug gets it here, and that would otherwise present as a silent hang.
@@ -65,7 +67,9 @@ impl DeviceCompletions {
     /// enforced invariant (the callers are already sequential, so it never really contends).
     ///
     /// `d_buffers` is used by the owner's `Drop` for the final blocking harvest; null on the CPU backend.
-    pub fn acquire(&self, d_buffers: DeviceBuffersPtr) -> CompletionOwner {
+    /// `cancelled` is the job's token: once it fires, `Drop` stops waiting for units that will never
+    /// settle.
+    pub fn acquire(&self, d_buffers: DeviceBuffersPtr, cancelled: CancellationToken) -> CompletionOwner {
         let slot = SlotToken::take(&self.slot);
         let epoch = self.next_epoch.fetch_add(1, Ordering::Relaxed);
         let ledger = Arc::new(Ledger::new(epoch));
@@ -75,7 +79,7 @@ impl DeviceCompletions {
         let (tx, rx) = unbounded::<CompletionMsg>();
         register_proof_done_callback_c(tx);
 
-        CompletionOwner { ledger, rx, d_buffers, _slot: slot }
+        CompletionOwner { ledger, rx, d_buffers, cancelled, _slot: slot }
     }
 }
 
@@ -267,6 +271,8 @@ pub struct CompletionOwner {
     rx: Receiver<CompletionMsg>,
     /// Used by `Drop` to run the final blocking harvest before releasing the registration.
     d_buffers: DeviceBuffersPtr,
+    /// The job's cancellation: `Drop` does not wait for the units of a cancelled job.
+    cancelled: CancellationToken,
     _slot: SlotToken,
 }
 
@@ -306,13 +312,14 @@ impl CompletionOwner {
 impl Drop for CompletionOwner {
     /// Drain, **then** release — in that order. Releasing first would drop still-in-flight
     /// completions (the lost-decrement bug); centralizing the order here means no call site can get
-    /// it wrong. The drain is bounded because a cancelled job's units may never complete; giving up
-    /// is safe because [`Ledger::settle`] is idempotent, so a late straggler is a no-op.
+    /// it wrong. The drain is bounded, and skipped for a cancelled job, whose units never complete:
+    /// it used to wait the whole budget on every cancel during recursion. Giving up is safe because
+    /// [`Ledger::settle`] is idempotent, so a late straggler is a no-op.
     fn drop(&mut self) {
         // (1) Give outstanding completions a bounded chance to land, pumping the non-blocking
         //     harvest so the GPU side can deliver them.
         let start = std::time::Instant::now();
-        while self.ledger.remaining() > 0 && start.elapsed() < DRAIN_BUDGET {
+        while self.ledger.remaining() > 0 && start.elapsed() < DRAIN_BUDGET && !self.cancelled.is_cancelled() {
             if !self.d_buffers.0.is_null() {
                 get_stream_proofs_non_blocking_c(self.d_buffers.0);
             }
@@ -381,7 +388,18 @@ mod tests {
     /// A CPU-backend owner: a null device pointer makes `Drop`'s harvest a no-op, so these tests
     /// exercise the ledger without touching the GPU.
     fn owner() -> CompletionOwner {
-        DeviceCompletions::new().acquire(DeviceBuffersPtr(std::ptr::null_mut()))
+        DeviceCompletions::new().acquire(DeviceBuffersPtr(std::ptr::null_mut()), CancellationToken::new())
+    }
+
+    #[test]
+    fn a_cancelled_jobs_owner_drops_without_waiting_for_its_units() {
+        let cancelled = CancellationToken::new();
+        let o = DeviceCompletions::new().acquire(DeviceBuffersPtr(std::ptr::null_mut()), cancelled.clone());
+        o.ledger().arm(7, BASIC).commit();
+        cancelled.cancel();
+        let start = std::time::Instant::now();
+        drop(o);
+        assert!(start.elapsed() < Duration::from_secs(1), "waited {:?} for a unit that never settles", start.elapsed());
     }
 
     #[test]
@@ -476,10 +494,10 @@ mod tests {
     fn the_capability_is_exclusive() {
         let completions = DeviceCompletions::new();
         let null = DeviceBuffersPtr(std::ptr::null_mut());
-        let first = completions.acquire(null);
+        let first = completions.acquire(null, CancellationToken::new());
         let epoch = first.epoch();
         drop(first);
-        let second = completions.acquire(null);
+        let second = completions.acquire(null, CancellationToken::new());
         assert!(second.epoch() > epoch, "each owner gets a fresh epoch");
     }
 }

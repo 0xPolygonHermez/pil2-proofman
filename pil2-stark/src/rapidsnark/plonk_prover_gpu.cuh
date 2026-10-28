@@ -77,6 +77,11 @@ namespace PlonkGPU {
         std::thread asyncTransferPolsBatch1;  // zkey batch 1 (QC,S1,S2,S3 coefs → slot 8)
         std::thread asyncTransferPolsBatch2;  // zkey batch 2 (QM,QL,QR,QO coefs → slot 6)
         std::thread asyncEvalNTT;             // evalConstPols=true: H2D + NTT for 9 eval polys
+        // Joins the threads above that are still running, and waits for the device work they and
+        // round0 queued. prove() joins them as it goes; without this, a prover freed or pre-allocated
+        // again with no prove() in between (a final witness that failed) frees what they still write,
+        // or assigns over a joinable std::thread, which calls std::terminate.
+        void joinAsyncThreads();
         size_t pinnedSize = 0;
         void* pinnedS = nullptr;
         void* pinnedQ = nullptr;

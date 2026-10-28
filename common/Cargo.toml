@@ -17,8 +17,11 @@ proofman-util = { workspace = true }
 libloading.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+num-bigint.workspace = true
 tracing.workspace = true
 proofman-fields.workspace = true
+proofman-verifier.workspace = true
 proofman-macros.workspace = true
 rayon.workspace = true
 sysinfo.workspace = true

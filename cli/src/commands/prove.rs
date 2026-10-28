@@ -9,7 +9,7 @@ use proofman_fields::Goldilocks;
 
 use proofman::SnarkWrapper;
 use proofman::ProofMan;
-use proofman::ProvePhaseResult;
+use proofman::{ProvePhase, ProvePhaseInputs, ProvePhaseResult};
 use proofman_common::{ModeName, ProofOptions, ProofmanOptions};
 
 #[derive(Parser)]
@@ -85,9 +85,19 @@ pub struct ProveCmd {
 
     #[clap(short = 'g', long, default_value_t = false)]
     pub gpu: bool,
+
+    /// Prove N times in one process and report per-run timings (run 1 is the cold one).
+    #[clap(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+    pub repeat: u32,
 }
 
 impl ProveCmd {
+    /// Whether the run wraps a proof in the final SNARK of `-s`: only one that aggregates (`-a`) and
+    /// does not verify constraints (`-d`) makes a vadcop_final proof.
+    fn wraps_a_proof(&self, verify_constraints: bool) -> bool {
+        self.proving_key_snark.is_some() && self.aggregation && !verify_constraints
+    }
+
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         println!("{} Prove", format!("{: >12}", "Command").bright_green().bold());
         println!();
@@ -99,6 +109,7 @@ impl ProveCmd {
         };
 
         let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
+        let wraps_a_proof = self.wraps_a_proof(verify_constraints);
 
         let mut options = ProofmanOptions::new();
 
@@ -122,9 +133,10 @@ impl ProveCmd {
         if self.gpu {
             options.gpu();
         }
+        if let Some(key) = self.proving_key_snark.as_ref().filter(|_| wraps_a_proof) {
+            options.final_snark(key.clone());
+        }
         options.verbose_mode(self.verbose.into());
-
-        let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
 
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
         for commit in &self.custom_commits {
@@ -134,7 +146,29 @@ impl ProveCmd {
                 eprintln!("Invalid commit format: {commit:?}");
             }
         }
+        // Before the constructor: the const buffer reserves each custom commit's real
+        // packed width only when sizing knows the file.
+        options.custom_commits_fixed(custom_commits_map.clone());
+
+        let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
         proofman.register_custom_commits(custom_commits_map)?;
+        // The final SNARK's wrapper of a run that wraps a proof, on proofman's buffers, as ZisK builds
+        // it: loaded now, while they are idle, and proving after the vadcop_final.
+        let snark_wrapper = match &self.proving_key_snark {
+            Some(key) if wraps_a_proof => {
+                let (aux_trace, d_buffers, reload_fixed_pols_gpu) = proofman.get_preallocated_buffers();
+                Some(SnarkWrapper::<Goldilocks>::new_with_preallocated_buffers(
+                    key,
+                    self.verbose.into(),
+                    Some(aux_trace),
+                    self.gpu.then_some(d_buffers),
+                    Some(reload_fixed_pols_gpu),
+                    true,
+                    self.gpu,
+                )?)
+            }
+            _ => None,
+        };
 
         let proof_options = ProofOptions::new(
             false,
@@ -156,28 +190,64 @@ impl ProveCmd {
             };
         } else {
             proofman.set_barrier();
-            let result = match self.field {
-                Field::Goldilocks => proofman.generate_proof(
-                    self.witness_lib.clone(),
-                    self.public_inputs.clone(),
-                    None,
-                    self.verbose.into(),
-                    proof_options.clone(),
-                )?,
-            };
+            let mut times = Vec::with_capacity(self.repeat as usize);
+            for run in 0..self.repeat {
+                let started = std::time::Instant::now();
+                let result = match self.field {
+                    // Later runs reuse the registered library: registering it again duplicates its components.
+                    Field::Goldilocks if run > 0 => {
+                        proofman.set_partition(1, vec![0], 0)?;
+                        proofman.generate_proof_from_lib(
+                            ProvePhaseInputs::Full(),
+                            proof_options.clone(),
+                            ProvePhase::Full,
+                        )?
+                    }
+                    Field::Goldilocks => proofman.generate_proof(
+                        self.witness_lib.clone(),
+                        self.public_inputs.clone(),
+                        None,
+                        self.verbose.into(),
+                        proof_options.clone(),
+                    )?,
+                };
 
-            if let ProvePhaseResult::Full(_, Some(vadcop_final_proof)) = result {
-                // Save the vadcop final proof using the struct's save method
-                vadcop_final_proof.save(self.output_dir.join("vadcop_final_proof.bin"))?;
+                if let ProvePhaseResult::Full(_, Some(vadcop_final_proof)) = result {
+                    // Save the vadcop final proof using the struct's save method
+                    vadcop_final_proof.save(self.output_dir.join("vadcop_final_proof.bin"))?;
 
-                if let Some(proving_key_snark) = &self.proving_key_snark {
-                    let snark_wrapper: SnarkWrapper<Goldilocks> =
-                        SnarkWrapper::new(proving_key_snark, self.verbose.into(), true, self.gpu)?;
-                    snark_wrapper.generate_final_snark_proof(&vadcop_final_proof, None)?;
+                    if let Some(wrapper) = &snark_wrapper {
+                        let snark_proof = proofman.generate_final_snark_proof(wrapper, &vadcop_final_proof, None)?;
+                        snark_proof.save(self.output_dir.join("snark_proof.bin"))?;
+                    }
                 }
+                times.push(started.elapsed());
+            }
+            if self.repeat > 1 {
+                super::prove_air::report_repeat("prove", &times);
             }
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::ProveCmd;
+
+    fn prove(args: &[&str]) -> ProveCmd {
+        ProveCmd::try_parse_from(["prove", "-w", "libwitness.so", "-k", "provingKey"].iter().chain(args)).unwrap()
+    }
+
+    /// The final SNARK's wrapper is built only for a run that makes a vadcop_final proof to wrap.
+    #[test]
+    fn only_an_aggregated_proof_is_wrapped() {
+        assert!(prove(&["-s", "provingKeySnark", "-a"]).wraps_a_proof(false));
+        assert!(!prove(&["-s", "provingKeySnark", "-a"]).wraps_a_proof(true), "verify constraints");
+        assert!(!prove(&["-s", "provingKeySnark"]).wraps_a_proof(false), "no aggregation");
+        assert!(!prove(&["-a"]).wraps_a_proof(false), "no -s");
     }
 }

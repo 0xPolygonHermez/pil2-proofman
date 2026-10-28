@@ -66,7 +66,7 @@ After compiling the PIL files, generate the setup:
 ```bash
 cargo run --bin proofman-setup -- setup \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build2 -r -u ./examples/fibonacci-square/build/fixed
+     -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed
 ```
 
 Additionally, to run the snark setup:
@@ -74,8 +74,13 @@ Additionally, to run the snark setup:
 ```bash
 cargo run --bin proofman-setup -- setup-snark \
      -b ./examples/fibonacci-square/build \
-     --final-snark plonk --publics-info examples/fibonacci-square/src/publics_info.json --powers-of-tau <powers_of_tau>
+     --publics-info examples/fibonacci-square/src/publics_info.json --powers-of-tau <powers_of_tau>
 ```
+
+With the defaults, the key's hash is blake3 and the final SNARK pilfflonk; `setup-snark` sets up the
+key's recursivef first if it has none. For PLONK or FFLONK, run `setup` with `--hash Poseidon1` or
+`--hash Poseidon2` and `setup-snark` with `--final-snark plonk` or `--final-snark fflonk`
+([examples/fibonacci-square/README.md](../../examples/fibonacci-square/README.md#22-generate-setup)).
 
 If only wants to generate the recursive final for debugging purposes, run:
 

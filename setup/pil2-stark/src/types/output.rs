@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::types::stark_struct::LowDegreeTest;
 
 /// Matches the starkinfo.json format read by proofman-common StarkInfo.
 /// Fields use camelCase to match JS JSON.stringify output.
@@ -20,6 +21,9 @@ pub struct StarkInfoOutput {
     pub map_sections_n: serde_json::Map<String, serde_json::Value>,
     pub air_id: usize,
     pub airgroup_id: usize,
+    /// Basic airs only: what their transcript and stage-1 contribution absorb.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub circuit_type: Option<u64>,
     pub n_constants: usize,
     pub n_publics: usize,
     pub air_group_values: Vec<serde_json::Value>,
@@ -35,9 +39,14 @@ pub struct StarkInfoOutput {
     pub n_constraints: usize,
     pub n_commitments_stage1: usize,
     pub ev_map: Vec<EvMapEntry>,
-    pub fri_exp_id: usize,
+    pub deep_exp_id: usize,
+    /// See `DeepPolyResult::batch_size`.
+    pub fri_batch_size: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub security: Option<SecurityInfo>,
+    /// The proof travels as a Merkle multiproof; absent on flat keys.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub multiproof: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -49,18 +58,11 @@ pub struct StarkStructOutput {
     pub merkle_tree_custom: bool,
     #[serde(default)]
     pub last_level_verification: usize,
-    pub pow_bits: usize,
     pub hash_commits: bool,
     pub n_bits_ext: usize,
     pub verification_hash_type: String,
-    pub steps: Vec<StepOutput>,
-    pub n_queries: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StepOutput {
-    pub n_bits: usize,
+    #[serde(flatten)]
+    pub low_degree_test: LowDegreeTest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,158 +143,4 @@ pub struct SecurityInfo {
     pub regime: String,
 }
 
-/// Code block used in expressionsinfo.json and verifierinfo.json
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodeOutput {
-    pub tmp_used: usize,
-    pub code: Vec<CodeEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodeEntry {
-    pub op: String,
-    pub dest: CodeRef,
-    pub src: Vec<CodeRef>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CodeRef {
-    #[serde(rename = "type")]
-    pub ref_type: String,
-    pub id: usize,
-    pub dim: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prime: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub value: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stage: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stage_id: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub commit_id: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub opening: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub boundary_id: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub airgroup_id: Option<usize>,
-    /// Original expression id, preserved when an `exp` ref is converted to
-    /// `tmp` via fixExpression (matches JS `expId` property).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exp_id: Option<usize>,
-}
-
-impl serde::Serialize for CodeRef {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let mut map = s.serialize_map(None)?;
-        map.serialize_entry("type", &self.ref_type)?;
-        match self.ref_type.as_str() {
-            "tmp" => {
-                if let Some(eid) = self.exp_id {
-                    // Pattern 3: expId before id
-                    map.serialize_entry("expId", &eid)?;
-                    map.serialize_entry("id", &self.id)?;
-                    if let Some(prime) = self.prime {
-                        map.serialize_entry("prime", &prime)?;
-                    }
-                } else if let Some(prime) = self.prime {
-                    // Pattern 2: prime before id
-                    map.serialize_entry("prime", &prime)?;
-                    map.serialize_entry("id", &self.id)?;
-                } else {
-                    // Pattern 1: just id
-                    map.serialize_entry("id", &self.id)?;
-                }
-                map.serialize_entry("dim", &self.dim)?;
-            }
-            "cm" | "const" | "custom" => {
-                if let Some(eid) = self.exp_id {
-                    map.serialize_entry("expId", &eid)?;
-                }
-                map.serialize_entry("id", &self.id)?;
-                map.serialize_entry("prime", &self.prime.unwrap_or(0))?;
-                map.serialize_entry("dim", &self.dim)?;
-                if let Some(cid) = self.commit_id {
-                    map.serialize_entry("commitId", &cid)?;
-                }
-            }
-            "number" => {
-                if let Some(ref value) = self.value {
-                    map.serialize_entry("value", value)?;
-                }
-                map.serialize_entry("dim", &self.dim)?;
-            }
-            "challenge" => {
-                map.serialize_entry("id", &self.id)?;
-                if let Some(sid) = self.stage_id {
-                    map.serialize_entry("stageId", &sid)?;
-                }
-                map.serialize_entry("dim", &self.dim)?;
-                if let Some(stage) = self.stage {
-                    map.serialize_entry("stage", &stage)?;
-                }
-            }
-            "eval" => {
-                if let Some(eid) = self.exp_id {
-                    map.serialize_entry("expId", &eid)?;
-                }
-                map.serialize_entry("id", &self.id)?;
-                map.serialize_entry("dim", &self.dim)?;
-                if let Some(cid) = self.commit_id {
-                    map.serialize_entry("commitId", &cid)?;
-                }
-            }
-            "public" => {
-                map.serialize_entry("id", &self.id)?;
-                map.serialize_entry("dim", &self.dim)?;
-            }
-            "proofvalue" => {
-                map.serialize_entry("id", &self.id)?;
-                if let Some(stage) = self.stage {
-                    map.serialize_entry("stage", &stage)?;
-                }
-                map.serialize_entry("dim", &self.dim)?;
-            }
-            "airgroupvalue" | "airvalue" => {
-                map.serialize_entry("id", &self.id)?;
-                if let Some(stage) = self.stage {
-                    map.serialize_entry("stage", &stage)?;
-                }
-                map.serialize_entry("dim", &self.dim)?;
-                if let Some(agid) = self.airgroup_id {
-                    map.serialize_entry("airgroupId", &agid)?;
-                }
-            }
-            "xDivXSubXi" => {
-                map.serialize_entry("id", &self.id)?;
-                if let Some(opening) = self.opening {
-                    map.serialize_entry("opening", &opening)?;
-                }
-                map.serialize_entry("dim", &self.dim)?;
-            }
-            "Zi" => {
-                if let Some(bid) = self.boundary_id {
-                    map.serialize_entry("boundaryId", &bid)?;
-                }
-                map.serialize_entry("dim", &self.dim)?;
-            }
-            _ => {
-                map.serialize_entry("id", &self.id)?;
-                map.serialize_entry("dim", &self.dim)?;
-                if let Some(prime) = self.prime {
-                    map.serialize_entry("prime", &prime)?;
-                }
-                if let Some(ref value) = self.value {
-                    map.serialize_entry("value", value)?;
-                }
-                if let Some(stage) = self.stage {
-                    map.serialize_entry("stage", &stage)?;
-                }
-            }
-        }
-        map.end()
-    }
-}
+pub use pil_info::types::output::{CodeEntry, CodeOutput, CodeRef};

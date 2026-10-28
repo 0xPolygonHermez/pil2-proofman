@@ -116,12 +116,16 @@ pub struct GlobalInfoAir {
     #[serde(rename = "hasCompressor", default)]
     pub has_compressor: Option<bool>,
 
+    /// Proofs this air's recursive1 verifies in one circuit. Absent means 1.
+    #[serde(rename = "r1BatchSize", default)]
+    pub r1_batch_size: Option<usize>,
+
     pub num_rows: usize,
 }
 
 impl GlobalInfoAir {
     pub fn new(name: String) -> Self {
-        Self { name, has_compressor: None, num_rows: 0 }
+        Self { name, has_compressor: None, r1_batch_size: None, num_rows: 0 }
     }
 }
 
@@ -219,6 +223,8 @@ impl GlobalInfo {
             ProofType::Compressor => "compressor",
             ProofType::Recursive1 => "recursive1",
             ProofType::Recursive2 => "recursive2",
+            ProofType::VadcopFinal => return self.get_setup_path("vadcop_final"),
+            ProofType::VadcopFinalCompressed => return self.get_setup_path("vadcop_final_compressed"),
             _ => panic!(),
         };
 
@@ -286,6 +292,11 @@ impl GlobalInfo {
 
     pub fn get_air_has_compressor(&self, airgroup_id: usize, air_id: usize) -> bool {
         self.airs[airgroup_id][air_id].has_compressor.unwrap_or(false)
+    }
+
+    /// Proofs this air's recursive1 verifies in one circuit; 1 for the unbatched circuit.
+    pub fn get_air_r1_batch_size(&self, airgroup_id: usize, air_id: usize) -> usize {
+        self.airs[airgroup_id][air_id].r1_batch_size.unwrap_or(1).max(1)
     }
 
     pub fn get_n_airs_for_airgroup(&self, airgroup_id: usize) -> usize {
@@ -396,8 +407,8 @@ mod aggregation_arity_tests {
         });
         let gi: GlobalInfo = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(gi.setup_version, None);
-        json["setupVersion"] = serde_json::json!("1.3.2");
+        json["setupVersion"] = serde_json::json!("1.4.0");
         let gi: GlobalInfo = serde_json::from_value(json).unwrap();
-        assert_eq!(gi.setup_version.as_deref(), Some("1.3.2"));
+        assert_eq!(gi.setup_version.as_deref(), Some("1.4.0"));
     }
 }

@@ -15,6 +15,7 @@
 #include "wtns_utils.hpp"
 #include "plonk_prover.hpp"
 #include "fflonk_prover.hpp"
+#include "final_snark_proof.hpp"
 #include "groth16.hpp"
 #include "zkey.hpp"
 #include "logger.hpp"
@@ -88,7 +89,9 @@ void plonkProve(BinFileUtils::BinFile *zkey, BinFileUtils::BinFile *wtns, std::s
 {
     auto prover = new Plonk::PlonkProver<AltBn128::Engine>(AltBn128::Engine::engine);
 
-    auto [proofJson, publicSignalsJson] = prover->prove(zkey, wtns);
+    auto [proof, publicSignals] = prover->prove(zkey, wtns);
+    auto [proofJson, publicSignalsJson] = snark_proof_to_json(proof.data(), proof.size(), publicSignals.data(),
+                                                              publicSignals.size(), Zkey::PLONK_PROTOCOL_ID);
 
     std::ofstream file;
     file.open(proofFilename);
@@ -103,7 +106,9 @@ void plonkProve(BinFileUtils::BinFile *zkey, BinFileUtils::BinFile *wtns, std::s
 void fflonkProve(BinFileUtils::BinFile *zkey, BinFileUtils::BinFile *wtns, std::string proofFilename, std::string publicFilename) {
     auto prover = new Fflonk::FflonkProver<AltBn128::Engine>(AltBn128::Engine::engine);
 
-    auto [proofJson, publicSignalsJson] = prover->prove(zkey, wtns);
+    auto [proof, publicSignals] = prover->prove(zkey, wtns);
+    auto [proofJson, publicSignalsJson] = snark_proof_to_json(proof.data(), proof.size(), publicSignals.data(),
+                                                              publicSignals.size(), Zkey::FFLONK_PROTOCOL_ID);
 
     std::ofstream file;
     file.open(proofFilename);

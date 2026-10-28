@@ -1,5 +1,6 @@
 pragma circom 2.1.0;
-
+{% if custom_templates %}pragma custom_templates;
+{% endif %}
 {% for vf in verifier_filenames %}    include "{{ vf }}";
 {% endfor %}
 {{ sha256_template }}
@@ -20,7 +21,12 @@ template Main() {
     signal is_vadcop_final_proof;
     is_vadcop_final_proof <== publics[4];
     is_vadcop_final_proof * (1 - is_vadcop_final_proof) === 0;
-
+{% if has_program_vk %}
+    // An aggregate's program VK (slots 5..9) is the key it verified under, not a key it chose.
+    for (var i = 0; i < 4; i++) {
+        (1 - is_vadcop_final_proof) * (rootC[i] - publics[5 + i]) === 0;
+    }
+{% endif %}
     signal publicsProof[{{ n_publics_proof }}];
     for (var i = 0; i < {{ n_publics_proof }}; i++) {
         publicsProof[i] <== publics[i + 5];

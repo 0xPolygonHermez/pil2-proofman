@@ -1,5 +1,5 @@
 [workspace.package]
-version = "1.3.2-alpha"
+version = "1.4.0-alpha"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 keywords = ["pil2-proofman", "prover", "zero-knowledge"]
@@ -27,6 +27,11 @@ members = [
   "setup/stark-recurser",
   "setup/pil2-stark",
   "setup/exps-codegen",
+  "setup/pil-info",
+  "setup/pilfflonk",
+  "pilfflonk",
+  "wrap-witness",
+  "wrap-witness/lib",
 
   # PIL2 components library
   "pil2-components/lib/std/rs",
@@ -43,6 +48,11 @@ members = [
   "pil2-components/test/special/rs",
   "pil2-components/test/virtual_tables/rs",
   "pil2-components/test/common/rs",
+
+  # pilfflonk witness-library tests (pilfflonk/docs/README.md#fixtures)
+  "pilfflonk/tests/fixtures/fibonacci/rs",
+  "pilfflonk/tests/fixtures/connection/rs",
+  "pilfflonk/tests/fixtures/all/rs",
 
   # Examples
   "examples/fibonacci-square",
@@ -69,37 +79,45 @@ default-members = [
   "setup/stark-recurser",
   "setup/pil2-stark",
   "setup/exps-codegen",
+  "setup/pil-info",
   "pil2-components/lib/std/rs",
 ]
 
 resolver = "2"
 
 [workspace.dependencies]
-proofman-macros = { path = "macros", version = "1.3.2-alpha" }
-proofman = { path = "proofman", version = "1.3.2-alpha" }
-proofman-common = { path = "common", version = "1.3.2-alpha" }
-proofman-starks-lib-c = { path = "provers/starks-lib-c", version = "1.3.2-alpha" }
-proofman-starks-src = { path = "pil2-stark", version = "1.3.2-alpha" }
-proofman-hints = { path = "hints", version = "1.3.2-alpha" }
-proofman-soundness = { path = "soundness", version = "1.3.2-alpha" }
-proofman-verifier = { path = "verifier", version = "1.3.2-alpha" }
-proofman-util = { path = "util", version = "1.3.2-alpha" }
-proofman-cli = { path = "cli", version = "1.3.2-alpha" }
-pil2-std-lib = { path = "pil2-components/lib/std/rs", version = "1.3.2-alpha" }
-proofman-witness = { path = "witness", version = "1.3.2-alpha" }
-proofman-curves = { path = "curves", version = "1.3.2-alpha" }
-pil2-pilout = { path = "pilout", version = "1.3.2-alpha" }
-pil2-stark-setup = { path = "setup/pil2-stark", version = "1.3.2-alpha" }
-pil2-stark-recurser = { path = "setup/stark-recurser", version = "1.3.2-alpha" }
-proofman-exps-codegen = { path = "setup/exps-codegen", version = "1.3.2-alpha" }
-common = { path = "pil2-components/test/common/rs", version = "1.3.2-alpha" }
-proofman-fields = { path = "fields", version = "1.3.2-alpha" }
+proofman-macros = { path = "macros", version = "1.4.0-alpha" }
+proofman = { path = "proofman", version = "1.4.0-alpha" }
+proofman-common = { path = "common", version = "1.4.0-alpha" }
+proofman-starks-lib-c = { path = "provers/starks-lib-c", version = "1.4.0-alpha" }
+proofman-starks-src = { path = "pil2-stark", version = "1.4.0-alpha" }
+proofman-hints = { path = "hints", version = "1.4.0-alpha" }
+proofman-soundness = { path = "soundness", version = "1.4.0-alpha" }
+proofman-verifier = { path = "verifier", version = "1.4.0-alpha" }
+proofman-util = { path = "util", version = "1.4.0-alpha" }
+proofman-cli = { path = "cli", version = "1.4.0-alpha" }
+pil2-std-lib = { path = "pil2-components/lib/std/rs", version = "1.4.0-alpha" }
+proofman-witness = { path = "witness", version = "1.4.0-alpha" }
+proofman-curves = { path = "curves", version = "1.4.0-alpha" }
+pil2-pilout = { path = "pilout", version = "1.4.0-alpha" }
+pil2-stark-setup = { path = "setup/pil2-stark", version = "1.4.0-alpha" }
+pil-info = { path = "setup/pil-info", version = "1.4.0-alpha" }
+proofman-pilfflonk = { path = "pilfflonk", version = "1.4.0-alpha" }
+pilfflonk-setup = { path = "setup/pilfflonk", version = "1.4.0-alpha" }
+pilfflonk-wrap-witness = { path = "wrap-witness", version = "1.4.0-alpha" }
+pilfflonk-wrap-witness-lib = { path = "wrap-witness/lib", version = "1.4.0-alpha" }
+pil2-stark-recurser = { path = "setup/stark-recurser", version = "1.4.0-alpha" }
+proofman-exps-codegen = { path = "setup/exps-codegen", version = "1.4.0-alpha" }
+common = { path = "pil2-components/test/common/rs", version = "1.4.0-alpha" }
+proofman-fields = { path = "fields", version = "1.4.0-alpha" }
 
 log = { version = "0.4", default-features = false }
 env_logger = "0.11"
 bytes = "1.11.1"
 prost = "0.13"
 num-bigint = "0.4"
+sha2 = "0.10"
+tempfile = "3.27"
 prost-build = "0.13"
 num-traits = "0.2"
 mpi = "0.8.2"
