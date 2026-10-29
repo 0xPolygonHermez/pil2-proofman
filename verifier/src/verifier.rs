@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 #[allow(unused)]
 use num_traits::Float;
 
-use crate::domain::zi_vector;
+use crate::domain::zerofiers;
 use crate::layout::{merkle_proof_levels, sibling_words};
 use crate::replay::{fri_transcript, prefix_transcript};
 use proofman_fields::{
@@ -13,18 +13,37 @@ use proofman_fields::{
     Goldilocks, Hash, PrimeField64, TranscriptLike,
 };
 
-/// A starkinfo boundary: `{"name":"everyRow"}` (always boundary 0) or
-/// `{"name":"domain","cycleBits","offsets","complement"}`, the rows `offsets` of each cycle of
-/// `2^cycleBits` (the other rows if `complement`).
+/// A starkinfo boundary: everyRow (boundary 0), or rows `offsets` of each `2^cycle_bits` cycle (or the rest).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(try_from = "BoundaryJson")]
 pub struct Boundary {
     pub name: String,
-    #[serde(default, rename = "cycleBits")]
     pub cycle_bits: u64,
-    #[serde(default)]
     pub offsets: Vec<u64>,
-    #[serde(default)]
     pub complement: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct BoundaryJson {
+    name: String,
+    #[serde(rename = "cycleBits")]
+    cycle_bits: Option<u64>,
+    offsets: Option<Vec<u64>>,
+    complement: Option<bool>,
+}
+
+// a domain must spell out its rows, as C++ requires: no field defaults to the all-rows domain
+impl TryFrom<BoundaryJson> for Boundary {
+    type Error = String;
+    fn try_from(j: BoundaryJson) -> Result<Self, String> {
+        match (j.name.as_str(), j.cycle_bits, j.offsets, j.complement) {
+            ("domain", Some(cycle_bits), Some(offsets), Some(complement)) => {
+                Ok(Boundary { name: j.name, cycle_bits, offsets, complement })
+            }
+            ("domain", ..) => Err(String::from("a domain boundary needs cycleBits, offsets and complement")),
+            _ => Ok(Boundary { name: j.name, cycle_bits: 0, offsets: Vec::new(), complement: false }),
+        }
+    }
 }
 
 pub struct VerifierInfo {
@@ -550,12 +569,8 @@ where
         }
     };
 
-    let (x_n, zi) = match zi_vector(xi_challenge, verifier_info.n_bits as u32, &verifier_info.boundaries) {
-        Ok(z) => (z.x_n, z.zi),
-        Err(e) => {
-            v_error!("Zerofiers: {}", e);
-            return false;
-        }
+    let Some((x_n, zi)) = zerofiers(xi_challenge, verifier_info.n_bits, &verifier_info.boundaries) else {
+        return false;
     };
 
     let mut final_pol_vals: Vec<Goldilocks> = Vec::with_capacity(final_pol.len() * 3);

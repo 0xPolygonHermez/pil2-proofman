@@ -24,7 +24,7 @@ mod replay;
 mod stir;
 mod verifier;
 
-pub use domain::{domain_zi, validate_boundaries, zi_vector, Zerofiers, ZiError};
+pub use domain::{validate_boundaries, zi_vector, Zerofiers, ZiError};
 pub use layout::*;
 pub use multiproof::*;
 pub use proof::*;

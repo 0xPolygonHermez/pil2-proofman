@@ -31,7 +31,7 @@ use proofman_fields::{
 use crate::layout::{merkle_proof_levels, sibling_words};
 use crate::multiproof::{expand_stir_checked, Proven};
 use crate::replay::{prefix_transcript, stir_transcript, StirTranscript};
-use crate::domain::zi_vector;
+use crate::domain::zerofiers;
 use crate::verifier::{deep_denominators_inv, Boundary, DeepQueryConsts, FriEvalGroup};
 
 type E3 = CubicExtensionField<Goldilocks>;
@@ -1083,12 +1083,8 @@ where
         return false;
     };
 
-    let (x_n, zi) = match zi_vector(xi_challenge, verifier_info.n_bits as u32, &verifier_info.boundaries) {
-        Ok(z) => (z.x_n, z.zi),
-        Err(e) => {
-            v_error!("Zerofiers: {}", e);
-            return false;
-        }
+    let Some((x_n, zi)) = zerofiers(xi_challenge, verifier_info.n_bits, &verifier_info.boundaries) else {
+        return false;
     };
 
     v_debug!("Verifying proof");

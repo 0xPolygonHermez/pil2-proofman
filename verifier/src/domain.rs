@@ -1,5 +1,6 @@
 //! The boundary zerofiers `Zi_b(ξ)` the verifier passes to `q_verify`.
 
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -10,29 +11,10 @@ use crate::verifier::Boundary;
 
 type Ext = CubicExtensionField<Goldilocks>;
 
-/// Why the zerofiers cannot be evaluated; `Display` gives C++ `validateBoundaries`'s messages.
+/// Why the zerofiers cannot be evaluated; `Invalid` carries C++ `validateBoundaries`'s message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ZiError {
-    NotEveryRowFirst,
-    Unknown {
-        index: usize,
-        name: String,
-    },
-    CycleTooLong {
-        index: usize,
-        cycle_bits: u64,
-        n_bits: u32,
-    },
-    NoOffsets {
-        index: usize,
-    },
-    OffsetOutsideCycle {
-        index: usize,
-        offset: u64,
-    },
-    OffsetsNotIncreasing {
-        index: usize,
-    },
+    Invalid(String),
     /// `Zh(ξ) = 0`, which also covers every `V_O(ξ) = 0` since each `V_O` divides `Zh`.
     ZhIsZero,
 }
@@ -40,18 +22,7 @@ pub enum ZiError {
 impl fmt::Display for ZiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ZiError::NotEveryRowFirst => write!(f, "boundary 0 must be everyRow"),
-            ZiError::Unknown { index, name } => write!(f, "boundary {index}: unknown boundary {name}"),
-            ZiError::CycleTooLong { index, cycle_bits, n_bits } => {
-                write!(f, "boundary {index}: cycle 2^{cycle_bits} exceeds N=2^{n_bits}")
-            }
-            ZiError::NoOffsets { index } => write!(f, "boundary {index}: a domain without offsets"),
-            ZiError::OffsetOutsideCycle { index, offset } => {
-                write!(f, "boundary {index}: offset {offset} is outside the cycle")
-            }
-            ZiError::OffsetsNotIncreasing { index } => {
-                write!(f, "boundary {index}: offsets must be strictly increasing")
-            }
+            ZiError::Invalid(m) => f.write_str(m),
             ZiError::ZhIsZero => write!(f, "Zh(xi) is zero"),
         }
     }
@@ -59,22 +30,23 @@ impl fmt::Display for ZiError {
 
 /// Boundary `index` as a domain: a cycle within N, sorted distinct offsets inside it.
 fn validate_domain(index: usize, b: &Boundary, n_bits: u32) -> Result<(), ZiError> {
+    let err = |m: String| Err(ZiError::Invalid(format!("boundary {index}: {m}")));
     if b.name != "domain" {
-        return Err(ZiError::Unknown { index, name: b.name.clone() });
+        return err(format!("unknown boundary {}", b.name));
     }
     if b.cycle_bits > n_bits as u64 {
-        return Err(ZiError::CycleTooLong { index, cycle_bits: b.cycle_bits, n_bits });
+        return err(format!("cycle 2^{} exceeds N=2^{n_bits}", b.cycle_bits));
     }
     if b.offsets.is_empty() {
-        return Err(ZiError::NoOffsets { index });
+        return err(String::from("a domain without offsets"));
     }
     for (k, &offset) in b.offsets.iter().enumerate() {
         if offset >= 1 << b.cycle_bits {
-            return Err(ZiError::OffsetOutsideCycle { index, offset });
+            return err(format!("offset {offset} is outside the cycle"));
         }
         // a repeated offset squares a factor of V_O, and Zh/V_O is no longer a polynomial
         if k > 0 && offset <= b.offsets[k - 1] {
-            return Err(ZiError::OffsetsNotIncreasing { index });
+            return err(String::from("offsets must be strictly increasing"));
         }
     }
     Ok(())
@@ -83,7 +55,7 @@ fn validate_domain(index: usize, b: &Boundary, n_bits: u32) -> Result<(), ZiErro
 /// C++ `validateBoundaries`: everyRow first, then domains.
 pub fn validate_boundaries(boundaries: &[Boundary], n_bits: u32) -> Result<(), ZiError> {
     if boundaries.first().is_none_or(|b| b.name != "everyRow") {
-        return Err(ZiError::NotEveryRowFirst);
+        return Err(ZiError::Invalid(String::from("boundary 0 must be everyRow")));
     }
     boundaries.iter().enumerate().skip(1).try_for_each(|(i, b)| validate_domain(i, b, n_bits))
 }
@@ -114,26 +86,6 @@ fn zi_from_chain(pows: &[Ext], n_bits: u32, zh: Ext, b: &Boundary) -> Ext {
     }
 }
 
-/// `ξ^N` and `Zh(ξ)`, rejecting `Zh(ξ) = 0`.
-fn chain_and_zh(xi: Ext, n_bits: u32) -> Result<(Vec<Ext>, Ext), ZiError> {
-    let pows = pow2_chain(xi, n_bits);
-    let zh = pows[n_bits as usize] - Goldilocks::ONE;
-    if zh.is_zero() {
-        return Err(ZiError::ZhIsZero);
-    }
-    Ok((pows, zh))
-}
-
-/// `Zi_b(ξ)`: `Zh(ξ)⁻¹` for everyRow, `Zh(ξ)/V_O(ξ)` for a domain, `V_O(ξ)` for its complement, with
-/// `V_O(X) = ∏_{o∈O} (X^m − w(c)^o)` and `m = N/2^c`.
-pub fn domain_zi(xi: Ext, n_bits: u32, b: &Boundary) -> Result<Ext, ZiError> {
-    if b.name != "everyRow" {
-        validate_domain(0, b, n_bits)?;
-    }
-    let (pows, zh) = chain_and_zh(xi, n_bits)?;
-    Ok(zi_from_chain(&pows, n_bits, zh, b))
-}
-
 /// What `q_verify` and the quotient check read at ξ.
 pub struct Zerofiers {
     /// `ξ^N`.
@@ -142,12 +94,27 @@ pub struct Zerofiers {
     pub zi: Vec<Ext>,
 }
 
-/// Every boundary's `Zi_b(ξ)`, from one `ξ^(2^j)` chain.
+/// `Zi_b(ξ)`: `Zh⁻¹` (everyRow), `Zh/V_O` (domain), `V_O` (complement); `V_O(X) = ∏ (X^(N/2^c) − w(c)^o)`.
 pub fn zi_vector(xi: Ext, n_bits: u32, boundaries: &[Boundary]) -> Result<Zerofiers, ZiError> {
     validate_boundaries(boundaries, n_bits)?;
-    let (pows, zh) = chain_and_zh(xi, n_bits)?;
+    let pows = pow2_chain(xi, n_bits);
+    let zh = pows[n_bits as usize] - Goldilocks::ONE;
+    if zh.is_zero() {
+        return Err(ZiError::ZhIsZero);
+    }
     let zi = boundaries.iter().map(|b| zi_from_chain(&pows, n_bits, zh, b)).collect();
     Ok(Zerofiers { x_n: pows[n_bits as usize], zi })
+}
+
+/// `(ξ^N, Zi)`, or `None`, logged, when they cannot be evaluated.
+pub(crate) fn zerofiers(xi: Ext, n_bits: u64, boundaries: &[Boundary]) -> Option<(Ext, Vec<Ext>)> {
+    match zi_vector(xi, n_bits as u32, boundaries) {
+        Ok(z) => Some((z.x_n, z.zi)),
+        Err(_e) => {
+            v_error!("Zerofiers: {}", _e);
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -177,7 +144,7 @@ mod tests {
     }
 
     /// The C++ gtest's domains: FIRST, LAST, !FIRST, LIMITS_16, ODD, !ODD.
-    fn task4_boundaries() -> Vec<Boundary> {
+    fn vector_boundaries() -> Vec<Boundary> {
         vec![
             every_row(),
             domain(6, &[0], false),
@@ -187,41 +154,6 @@ mod tests {
             domain(1, &[1], false),
             domain(1, &[1], true),
         ]
-    }
-
-    fn in_domain(b: &Boundary, row: u64) -> bool {
-        if b.name == "everyRow" {
-            return true;
-        }
-        b.offsets.contains(&(row & ((1 << b.cycle_bits) - 1))) != b.complement
-    }
-
-    /// The definition: `Zh(ξ) / ∏_{h ∈ H_b} (ξ − g^h)`, `H_b` the rows `b` holds on; `Zh(ξ)⁻¹` for everyRow.
-    fn brute_force(xi: Ext, b: &Boundary) -> Ext {
-        let n = 1u64 << N_BITS;
-        let zh = xi.pow(n) - Goldilocks::ONE;
-        if b.name == "everyRow" {
-            return zh.inverse();
-        }
-        let g = Goldilocks::new(Goldilocks::W[N_BITS as usize]);
-        let mut den = Ext::one();
-        for h in (0..n).filter(|&h| in_domain(b, h)) {
-            den *= xi - g.exp_u64(h);
-        }
-        zh * den.inverse()
-    }
-
-    #[test]
-    fn domain_matches_brute_force() {
-        let xi = ext([0x9e3779b97f4a7c15, 0xbf58476d1ce4e5b9, 0x94d049bb133111eb]);
-        let boundaries = task4_boundaries();
-        let all = zi_vector(xi, N_BITS, &boundaries).expect("ξ is off H");
-        assert_eq!(canon(all.x_n), canon(xi.pow(1 << N_BITS)));
-        for (i, b) in boundaries.iter().enumerate() {
-            let want = canon(brute_force(xi, b));
-            assert_eq!(canon(domain_zi(xi, N_BITS, b).unwrap()), want, "boundary {i}");
-            assert_eq!(canon(all.zi[i]), want, "boundary {i} in zi_vector");
-        }
     }
 
     #[derive(Deserialize)]
@@ -246,7 +178,7 @@ mod tests {
     fn domain_matches_cpp_point() {
         let v: Vectors =
             serde_json::from_str(include_str!("../tests/data/domain_zi_vectors.json")).expect("vector file");
-        assert_eq!(v.boundaries.len(), task4_boundaries().len());
+        assert_eq!(v.boundaries.len(), vector_boundaries().len());
         assert!(v.points.iter().any(|p| p.xi[1] != 0 || p.xi[2] != 0), "no point off the base field");
         assert!(v.points.iter().any(|p| p.reject), "no rejected point");
         for p in &v.points {
@@ -261,11 +193,22 @@ mod tests {
     }
 
     #[test]
+    fn a_domain_without_its_rows_is_refused() {
+        let ok: Vec<Boundary> = serde_json::from_str(r#"[{"name":"everyRow"},{"name":"firstRow"}]"#).unwrap();
+        assert_eq!(ok[1].name, "firstRow");
+        for bad in [
+            r#"{"name":"domain","offsets":[0],"complement":false}"#,
+            r#"{"name":"domain","cycleBits":1,"offsets":[0]}"#,
+        ] {
+            assert!(serde_json::from_str::<Boundary>(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
     fn domain_rejects_a_point_on_a_domain() {
         // g^3 is a root of ODD's V_O
         let g3 = ext([Goldilocks::new(Goldilocks::W[N_BITS as usize]).exp_u64(3).as_canonical_u64(), 0, 0]);
-        assert_eq!(zi_vector(g3, N_BITS, &task4_boundaries()).err(), Some(ZiError::ZhIsZero));
-        assert_eq!(domain_zi(g3, N_BITS, &domain(1, &[1], false)), Err(ZiError::ZhIsZero));
+        assert_eq!(zi_vector(g3, N_BITS, &vector_boundaries()).err(), Some(ZiError::ZhIsZero));
     }
 
     /// The messages of the C++ gtest `DomainZerofier.ValidateBoundaries`.
@@ -288,10 +231,7 @@ mod tests {
         assert_eq!(msg(&[er.clone(), domain(7, &[0], false)]).unwrap(), "boundary 1: cycle 2^7 exceeds N=2^6");
         assert_eq!(msg(&[er.clone(), domain(4, &[], false)]).unwrap(), "boundary 1: a domain without offsets");
         let frame = Boundary { name: "everyFrame".to_string(), ..every_row() };
-        assert_eq!(msg(&[er.clone(), frame.clone()]).unwrap(), "boundary 1: unknown boundary everyFrame");
-        assert_eq!(validate_boundaries(&task4_boundaries(), N_BITS), Ok(()));
-        // domain_zi refuses rather than panics
-        assert!(domain_zi(xi, N_BITS, &frame).is_err());
-        assert!(domain_zi(xi, N_BITS, &domain(7, &[0], false)).is_err());
+        assert_eq!(msg(&[er.clone(), frame]).unwrap(), "boundary 1: unknown boundary everyFrame");
+        assert_eq!(validate_boundaries(&vector_boundaries(), N_BITS), Ok(()));
     }
 }
