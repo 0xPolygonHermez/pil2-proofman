@@ -149,44 +149,24 @@ test("the code it refuses, with the reason", () => {
     }
 });
 
-// Z_D(ξ) = Π_{j ∈ D} (ξ − ω^j), over the rows of D: independent of computeZi's closed forms.
-function zerofierByRows(rows, xi, nBits) {
-    const Fr = curve.Fr;
-    const omega = rootOfUnity(curve, BigInt(2 ** nBits));
-    return rows.reduce((z, j) => Fr.mul(z, Fr.sub(xi, Fr.exp(omega, BigInt(j)))), Fr.one);
-}
-
-test("Zi of every domain: 1/Z_H(ξ) for everyRow and Z_H(ξ)/Z_D(ξ) for the others", () => {
+test("Zi of everyRow is 1/Z_H(ξ), and any other domain is refused", () => {
     const Fr = curve.Fr;
     const nBits = 3;
-    const N = 8;
-    const range = (a, b) => Array.from({ length: b - a }, (_, i) => a + i);
-    const boundaries = [
-        [{ name: "everyRow" }, range(0, N)],
-        [{ name: "firstRow" }, [0]],
-        [{ name: "lastRow" }, [N - 1]],
-        [{ name: "everyFrame", offsetMin: 1, offsetMax: 2 }, range(1, N - 2)],
-        [{ name: "everyFrame", offsetMin: 0, offsetMax: 3 }, range(0, N - 3)],
-        [{ name: "everyFrame", offsetMin: 2, offsetMax: 0 }, range(2, N)],
-    ];
+    const omega = rootOfUnity(curve, 8n);
+    const rows = Array.from({ length: 8 }, (_, j) => j);
     for (const xi of [rand.fr(), rand.fr(), Fr.neg(Fr.e(3))]) {
-        const zi = computeZi(
-            curve,
-            boundaries.map(([b]) => b),
-            nBits,
-            xi,
-        );
-        const zh = zerofierByRows(range(0, N), xi, nBits);
-        assert.ok(Fr.eq(Fr.mul(zi[0], zh), Fr.one), "everyRow");
-        boundaries.slice(1).forEach(([b, rows], i) => {
-            const zd = zerofierByRows(rows, xi, nBits);
-            assert.ok(Fr.eq(Fr.mul(zi[i + 1], zd), zh), JSON.stringify(b));
-        });
+        const [zi] = computeZi(curve, [{ name: "everyRow" }], nBits, xi);
+        // Z_H(ξ) = Π_j (ξ − ω^j), over the rows rather than by ξ^N − 1
+        const zh = rows.reduce((z, j) => Fr.mul(z, Fr.sub(xi, Fr.exp(omega, BigInt(j)))), Fr.one);
+        assert.ok(Fr.eq(Fr.mul(zi, zh), Fr.one));
+    }
+    for (const name of ["firstRow", "lastRow", "everyFrame"]) {
+        assert.throws(() => computeZi(curve, [{ name }], nBits, rand.fr()), /is not everyRow/);
     }
 });
 
 // The interpreter's fixture, written by setup/pilfflonk/tests/bytecode/interpreter.rs with the Rust
-// oracle's values: its Zi at ξ for everyRow, firstRow, lastRow and everyFrame {1, 2}, which the C++
+// oracle's values: its Zi at ξ for everyRow, which the C++
 // zerofiersAt reproduces (pil2-stark/test/pilfflonk/pilfflonk_expressions_test.cpp).
 const INTERPRETER_FIXTURE = new URL(
     "../../../setup/pilfflonk/tests/fixtures/bytecode/Sample.expected.json",
@@ -195,7 +175,7 @@ const INTERPRETER_FIXTURE = new URL(
 
 test("Zi at the ξ of the interpreter's fixture: the Rust oracle's and the C++'s", () => {
     const fixture = JSON.parse(readFileSync(INTERPRETER_FIXTURE, "utf8"));
-    assert.deepEqual(fixture.boundaries.map((b) => b.name), ["everyRow", "firstRow", "lastRow", "everyFrame"]);
+    assert.deepEqual(fixture.boundaries.map((b) => b.name), ["everyRow"]);
     const zi = computeZi(curve, fixture.boundaries, fixture.nBits, curve.Fr.e(BigInt(fixture.xi)));
     assert.deepEqual(zi.map((z) => curve.Fr.toString(z, 10)), fixture.expected.xiZerofiers);
 });

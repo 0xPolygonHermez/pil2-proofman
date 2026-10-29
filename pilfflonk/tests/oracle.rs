@@ -1,28 +1,26 @@
-//! The Rust oracle (pilfflonk/docs/README.md#tests) on a pilout built in code: the four constraint
-//! domains (pilfflonk/docs/protocol.md#constraint-polynomial), every kind of operand, signed
-//! offsets that wrap around, im pols, and what it refuses. The Fibonacci fixture compiled by
-//! pil2com is in `tests/fibonacci.rs`.
+//! The Rust oracle (pilfflonk/docs/README.md#tests) on a pilout built in code: every kind of
+//! operand, signed offsets that wrap around, im pols, and what it refuses (domain constraints
+//! among it). The Fibonacci fixture compiled by pil2com is in `tests/fibonacci.rs`.
 //!
-//! The AIR, of `N = 8` rows, has the witness columns `a` and `b`, a fixed column `K`, a periodic
-//! column `P` of cycle `[1, 2]`, a public `p0`, a stage-1 air value `av`, a stage-1 proof value
-//! `pv` and a stage-2 challenge `ch`:
+//! The AIR, of `N = 8` rows, has the witness columns `a` and `b`, a fixed column `K` (which sums to
+//! 0), a periodic column `P` of cycle `[1, 2]`, a public `p0`, a stage-1 air value `av`, a stage-1
+//! proof value `pv` and a stage-2 challenge `ch`. All its constraints are `everyRow`:
 //!
-//! | # | Domain | Constraint |
-//! |---|---|---|
-//! | 0 | `firstRow` | `a − p0 − pv` |
-//! | 1 | `lastRow` | `a − ch·av` |
-//! | 2 | `everyFrame {1, 2}` (rows 1 … 5) | `a' − a − K` |
-//! | 3 | `everyFrame {1, 0}` (rows 1 … 7) | `(−a(−1) + a − K(−1))·1` |
-//! | 4 | `everyRow` | `b + (r − 1)·(a·P)` |
+//! | # | Constraint |
+//! |---|---|
+//! | 0 | `a' − a − K` |
+//! | 1 | `(−a(−1) + a − K(−1))·1` |
+//! | 2 | `p0 + pv − ch·av` |
+//! | 3 | `b + (r − 1)·(a·P)` |
 //!
-//! so a satisfying witness has `a[i] = a[i−1] + K[i−1]` from `a[0] = p0 + pv` to `a[7] = ch·av`,
-//! and `b = a·P`.
+//! so a satisfying witness has `a[i] = a[i−1] + K[i−1]` around the cycle, `b = a·P` and
+//! `p0 = ch·av − pv`.
 
 use std::collections::BTreeSet;
 
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
-use proofman_pilfflonk::oracle::{omega, AirOracle, ColumnRef, Domain, Failure, Fr, Values};
+use proofman_pilfflonk::oracle::{omega, AirOracle, ColumnRef, Failure, Fr, Values};
 use proofman_pilfflonk::{
     oracle, AirInstanceRef, AirShape, FrBytes, InstanceWitness, Stage1Witness, Witness, WitnessShape, BN128_R,
 };
@@ -109,13 +107,17 @@ fn symbol(name: &str, kind: SymbolType, id: u32, stage: u32) -> pb::Symbol {
     pb::Symbol { name: name.into(), r#type: kind as i32, id, stage: Some(stage), ..Default::default() }
 }
 
-/// `K`, with a value of every size: small ones and `r − 1`.
+/// `K`, with a value of every size: small ones and `r − 1`, and summing to 0.
 fn k_values() -> Vec<Fr> {
-    [3, 1, 4, 1, 5, 0, 2, 6].iter().enumerate().map(|(i, v)| if i == 5 { -&fr(1) } else { fr(*v) }).collect()
+    let mut k: Vec<Fr> =
+        [3, 1, 4, 1, 5, 0, 2].iter().enumerate().map(|(i, v)| if i == 5 { -&fr(1) } else { fr(*v) }).collect();
+    let sum = k.iter().fold(Fr::zero(), |acc, v| &acc + v);
+    k.push(-&sum);
+    k
 }
 
 /// The expression of `a·P`, an im pol candidate.
-const A_TIMES_P: usize = 10;
+const A_TIMES_P: usize = 9;
 
 fn pilout() -> pb::PilOut {
     let mut e = Exprs::default();
@@ -124,55 +126,29 @@ fn pilout() -> pb::PilOut {
     let ch = op(operand::Operand::Challenge(operand::Challenge { stage: 2, idx: 0 }));
     let av = op(operand::Operand::AirValue(operand::AirValue { idx: 0 }));
 
-    let e0 = e.sub(a(0), p0);
-    e.sub(e0, pv);
-    let c0 = e.last();
-    let ch_av = e.mul(ch, av);
-    e.sub(a(0), ch_av);
-    let c1 = e.last();
     let next = e.sub(a(1), a(0));
     e.sub(next, k(0));
-    let c2 = e.last();
+    let c0 = e.last();
     let prev = e.neg(a(-1));
     let diff = e.add(prev, a(0));
     let diff = e.sub(diff, k(-1));
     e.mul(diff, constant(&BigUint::from(1u32)));
-    let c3 = e.last();
+    let c1 = e.last();
+    let public_sum = e.add(p0, pv);
+    let ch_av = e.mul(ch, av);
+    e.sub(public_sum, ch_av);
+    let c2 = e.last();
     let a_p = e.mul(a(0), p());
     assert_eq!(e.last() as usize, A_TIMES_P);
     let scaled = e.mul(constant(&(r() - 1u32)), a_p);
     e.add(b(), scaled);
-    let c4 = e.last();
+    let c3 = e.last();
 
     use constraint::Constraint as C;
-    let domain_rows = |domain_idx, e, line: &str| {
-        C::DomainRows(constraint::DomainRows {
-            domain_idx,
-            expression_idx: expression_idx(e),
-            debug_line: Some(line.into()),
-        })
+    let every_row = |e, line: &str| {
+        C::AllRows(constraint::AllRows { expression_idx: expression_idx(e), debug_line: Some(line.into()) })
     };
-    let complement_rows = |domain_idx, e, line: &str| {
-        C::ComplementDomainRows(constraint::ComplementDomainRows {
-            domain_idx,
-            expression_idx: expression_idx(e),
-            debug_line: Some(line.into()),
-        })
-    };
-    // first row, last row, everyFrame {1, 2}, everyFrame {1, 0}, every row
-    let domains = vec![
-        pb::Domain { cycle_bits: 3, offsets: vec![0] },
-        pb::Domain { cycle_bits: 3, offsets: vec![7] },
-        pb::Domain { cycle_bits: 3, offsets: vec![0, 6, 7] },
-        pb::Domain { cycle_bits: 3, offsets: vec![0] },
-    ];
-    let constraints = vec![
-        domain_rows(0, c0, "c0"),
-        domain_rows(1, c1, "c1"),
-        complement_rows(2, c2, "c2"),
-        complement_rows(3, c3, "c3"),
-        C::AllRows(constraint::AllRows { expression_idx: expression_idx(c4), debug_line: Some("c4".into()) }),
-    ];
+    let constraints = vec![every_row(c0, "c0"), every_row(c1, "c1"), every_row(c2, "c2"), every_row(c3, "c3")];
     let bytes = |v: &Fr| v.as_biguint().to_bytes_be();
     let air = pb::Air {
         name: Some("Synthetic".into()),
@@ -182,7 +158,6 @@ fn pilout() -> pb::PilOut {
         stage_widths: vec![2],
         expressions: e.0,
         constraints: constraints.into_iter().map(|c| pb::Constraint { constraint: Some(c) }).collect(),
-        domains,
         air_values: vec![pb::AirValue { stage: 1 }],
         ..Default::default()
     };
@@ -215,14 +190,13 @@ const CH: u64 = 4;
 fn good_witness() -> Witness {
     let k = k_values();
     let p = [fr(1), fr(2)];
-    // a[7] = ch·av and a[i] = a[i−1] + K[i−1]: a[0] = ch·av − Σ_{j<7} K[j], and p0 = a[0] − pv.
-    let sum_k = k[..N - 1].iter().fold(Fr::zero(), |acc, v| &acc + v);
-    let mut col_a = vec![&(&fr(CH) * &fr(AV)) - &sum_k];
+    // a[i] = a[i−1] + K[i−1] from a[0] = 9, which closes the cycle as K sums to 0; p0 = ch·av − pv.
+    let mut col_a = vec![fr(9)];
     for i in 1..N {
         col_a.push(&col_a[i - 1] + &k[i - 1]);
     }
     let col_b: Vec<Fr> = col_a.iter().enumerate().map(|(i, v)| v * &p[i % 2]).collect();
-    let p0 = &col_a[0] - &fr(PV);
+    let p0 = &(&fr(CH) * &fr(AV)) - &fr(PV);
     let to_bytes = |col: &[Fr]| col.iter().map(Fr::to_bytes).collect::<Vec<FrBytes>>();
     let stage1 = Stage1Witness::from_columns(N, &[to_bytes(&col_a), to_bytes(&col_b)], vec![FrBytes::from_u64(AV)]);
     Witness {
@@ -270,17 +244,7 @@ fn the_shape_and_the_values_come_from_the_pilout() {
     assert_eq!((oracle.n_bits(), oracle.n_rows()), (3, N));
     assert_eq!(oracle.omega(), &omega(3).unwrap());
     assert_eq!(oracle.fixed(0).unwrap(), k_values());
-    let domains: Vec<Domain> = oracle.constraints().iter().map(|c| c.domain).collect();
-    assert_eq!(
-        domains,
-        [
-            Domain::FirstRow,
-            Domain::LastRow,
-            Domain::EveryFrame { offset_min: 1, offset_max: 2 },
-            Domain::EveryFrame { offset_min: 1, offset_max: 0 },
-            Domain::EveryRow
-        ]
-    );
+    assert_eq!(oracle.constraints().len(), 4);
     assert_eq!(oracle.constraints()[3].debug_line, "c3");
 
     let values = oracle.values(&good_witness(), 0).unwrap();
@@ -293,36 +257,26 @@ fn the_shape_and_the_values_come_from_the_pilout() {
 }
 
 #[test]
-fn a_good_witness_satisfies_every_constraint_on_its_domain_only() {
+fn a_good_witness_satisfies_every_constraint_on_every_row() {
     let oracle = AirOracle::new(&pilout(), 0, 0).unwrap();
     let values = good_values(&oracle);
     assert_eq!(oracle.check(&values).unwrap(), []);
-
-    // Out of their domains, the boundary constraints are not 0: the domains are what makes them
-    // hold.
     let numerators = oracle.numerators(&values).unwrap();
-    let zero_rows = |c: usize| (0..N).filter(|&row| numerators[c][row].is_zero()).collect::<Vec<_>>();
-    assert_eq!(zero_rows(0), [0]);
-    assert_eq!(zero_rows(1), [7]);
-    assert_eq!(zero_rows(2), [0, 1, 2, 3, 4, 5, 6], "a' − a − K holds on row 0 too, but not across the wrap");
-    assert_eq!(zero_rows(3), [1, 2, 3, 4, 5, 6, 7]);
-    assert_eq!(zero_rows(4), (0..N).collect::<Vec<_>>());
+    assert!(numerators.iter().all(|rows| rows.len() == N && rows.iter().all(Fr::is_zero)));
 }
 
 #[test]
-fn a_mutated_cell_fails_the_constraints_that_read_it_on_the_rows_of_their_domains() {
+fn a_mutated_cell_fails_the_constraints_that_read_it() {
     let oracle = AirOracle::new(&pilout(), 0, 0).unwrap();
-    let cases: [Mutation; 5] = [
-        // a[3]: c2 on rows 2 and 3, c3 on rows 3 and 4, c4 on row 3.
-        (0, 3, &[(2, 2), (2, 3), (3, 3), (3, 4), (4, 3)]),
-        // a[0]: c0 and c4 on row 0, c3 on row 1; c2 on row 0 and c3 on row 0 are out of their domains.
-        (0, 0, &[(0, 0), (3, 1), (4, 0)]),
-        // a[7]: c1, c3 and c4 on row 7; c3 on row 0 reads a[7] at offset −1 but is out of its domain.
-        (0, 7, &[(1, 7), (3, 7), (4, 7)]),
-        // a[6]: c2 on row 5 (row 6 is out of its domain), c3 on rows 6 and 7, c4 on row 6.
-        (0, 6, &[(2, 5), (3, 6), (3, 7), (4, 6)]),
-        // b[2]: c4 on row 2 only.
-        (1, 2, &[(4, 2)]),
+    let cases: [Mutation; 4] = [
+        // a[3]: c0 on rows 2 and 3, c1 on rows 3 and 4, c3 on row 3.
+        (0, 3, &[(0, 2), (0, 3), (1, 3), (1, 4), (3, 3)]),
+        // a[0]: c0 on rows 7 and 0, c1 on rows 0 and 1, c3 on row 0: the wrap reads a[7] and a[0].
+        (0, 0, &[(0, 7), (0, 0), (1, 0), (1, 1), (3, 0)]),
+        // a[7]: c0 on rows 6 and 7, c1 on rows 7 and 0, c3 on row 7.
+        (0, 7, &[(0, 6), (0, 7), (1, 7), (1, 0), (3, 7)]),
+        // b[2]: c3 on row 2 only.
+        (1, 2, &[(3, 2)]),
     ];
     for (col, row, expected) in cases {
         let mut values = good_values(&oracle);
@@ -333,21 +287,22 @@ fn a_mutated_cell_fails_the_constraints_that_read_it_on_the_rows_of_their_domain
     // A failure carries the value of the numerator.
     let mut values = good_values(&oracle);
     values.witness[0][1][2] = &values.witness[0][1][2] + &fr(5);
-    assert_eq!(oracle.check(&values).unwrap(), [Failure { constraint: 4, row: 2, value: fr(5) }]);
+    assert_eq!(oracle.check(&values).unwrap(), [Failure { constraint: 3, row: 2, value: fr(5) }]);
 
-    // The scalars: the public, the proof value, the air value and the challenge.
+    // The scalars: the public, the proof value, the air value and the challenge fail c2 on every row.
+    let c2: Vec<(usize, usize)> = (0..N).map(|row| (2, row)).collect();
     let mut values = good_values(&oracle);
     values.publics[0] = &values.publics[0] + &fr(1);
-    assert_eq!(failures(&oracle, &values), set(&[(0, 0)]));
+    assert_eq!(failures(&oracle, &values), set(&c2));
     let mut values = good_values(&oracle);
     values.proof_values[0] = Some(fr(PV + 1));
-    assert_eq!(failures(&oracle, &values), set(&[(0, 0)]));
+    assert_eq!(failures(&oracle, &values), set(&c2));
     let mut values = good_values(&oracle);
     values.air_values[0] = Some(fr(AV + 1));
-    assert_eq!(failures(&oracle, &values), set(&[(1, 7)]));
+    assert_eq!(failures(&oracle, &values), set(&c2));
     let mut values = good_values(&oracle);
     values.challenges[1][0] = fr(CH + 1);
-    assert_eq!(failures(&oracle, &values), set(&[(1, 7)]));
+    assert_eq!(failures(&oracle, &values), set(&c2));
 }
 
 #[test]
@@ -385,11 +340,10 @@ fn q_at_a_point_is_the_polynomial_of_the_exact_divisions() {
     for z in [z(), fr(2), -&fr(3)] {
         assert_eq!(oracle.q_at(&values, &[], &std_vc, &z).unwrap(), q.evaluate(&z), "at {z}");
     }
-    // Each quotient has degree 6 at most: a column has degree 7, over X − 1 or X − ω^7 for c0
-    // and c1, and a·P has degree 7 + 4 (P = 3/2 − X^4/2) over X^8 − 1 for c4.
-    assert!(!q.coefficients.is_empty() && q.coefficients.len() <= 7, "{} coefficients", q.coefficients.len());
+    // Each quotient has degree 3 at most: a·P has degree 7 + 4 (P = 3/2 − X^4/2) over X^8 − 1.
+    assert!(!q.coefficients.is_empty() && q.coefficients.len() <= 4, "{} coefficients", q.coefficients.len());
 
-    // The last term of the fold gets std_vc^0: with std_vc = 0, Q(z) = c4(z)/(z^N − 1).
+    // The last term of the fold gets std_vc^0: with std_vc = 0, Q(z) = c3(z)/(z^N − 1).
     let z = z();
     let at = |col, offset| oracle.column_at(&values, col, offset, &z).unwrap();
     let (a_z, b_z, p_z) = (
@@ -397,8 +351,8 @@ fn q_at_a_point_is_the_polynomial_of_the_exact_divisions() {
         at(ColumnRef::Witness { stage: 1, idx: 1 }, 0),
         at(ColumnRef::Periodic(0), 0),
     );
-    let c4 = &b_z - &(&a_z * &p_z);
-    let expected = &c4 * &(&z.pow_u64(N as u64) - &Fr::one()).inv().unwrap();
+    let c3 = &b_z - &(&a_z * &p_z);
+    let expected = &c3 * &(&z.pow_u64(N as u64) - &Fr::one()).inv().unwrap();
     assert_eq!(oracle.q_at(&values, &[], &Fr::zero(), &z).unwrap(), expected);
     assert_eq!(oracle.q_polynomial(&values, &[], &Fr::zero()).unwrap().evaluate(&z), expected);
 }
@@ -411,7 +365,7 @@ fn a_mutated_witness_does_not_make_q_a_polynomial() {
     let std_vc = fr(11);
     let q = oracle.q_polynomial(&values, &[], &std_vc).unwrap();
     let terms: Vec<usize> = q.remainders.iter().map(|(term, _)| *term).collect();
-    assert_eq!(terms, [2, 3, 4], "the constraints that fail on some row of their domain");
+    assert_eq!(terms, [0, 1, 3], "the constraints that fail on some row");
     let z = z();
     assert_ne!(oracle.q_at(&values, &[], &std_vc, &z).unwrap(), q.evaluate(&z));
 }
@@ -426,14 +380,15 @@ fn im_pols_change_the_fold_but_not_what_it_proves() {
     assert!(with_im.is_exact());
     assert_eq!(oracle.q_at(&values, &[A_TIMES_P], &std_vc, &z).unwrap(), with_im.evaluate(&z));
     let without = oracle.q_polynomial(&values, &[], &std_vc).unwrap();
-    assert_ne!(with_im.coefficients, without.coefficients, "another fold, with one more term");
+    // Here the im pol is b on H, so the only non-zero quotient is the same with or without it.
+    assert_eq!(with_im.coefficients, without.coefficients);
 
-    // Its own term, im − a·P, is exact whatever b is; with b mutated c4 is not.
+    // Its own term, im − a·P, is exact whatever b is; with b mutated c3 is not.
     let mut values = good_values(&oracle);
     values.witness[0][1][4] = &values.witness[0][1][4] + &fr(1);
     let terms: Vec<usize> =
         oracle.q_polynomial(&values, &[A_TIMES_P], &std_vc).unwrap().remainders.iter().map(|(t, _)| *t).collect();
-    assert_eq!(terms, [4]);
+    assert_eq!(terms, [3]);
 }
 
 #[test]
@@ -458,15 +413,29 @@ fn the_oracle_refuses_what_it_cannot_evaluate() {
     rows.air_groups[0].airs[0].num_rows = Some(6);
     assert!(err(AirOracle::new(&rows, 0, 0)).contains("not a power of two"));
 
-    let mut frame = pilout();
-    frame.air_groups[0].airs[0].domains[2].offsets = (0..8).collect();
-    assert!(err(AirOracle::new(&frame, 0, 0)).contains("no row of 8 is left"));
+    let refuses_domain = |constraint: constraint::Constraint| {
+        let mut domain = pilout();
+        let air = &mut domain.air_groups[0].airs[0];
+        air.domains = vec![pb::Domain { cycle_bits: 3, offsets: vec![0] }];
+        air.constraints[1].constraint = Some(constraint);
+        err(AirOracle::new(&domain, 0, 0)).contains("domain constraints are not supported by pilfflonk (constraint 1)")
+    };
+    assert!(refuses_domain(constraint::Constraint::DomainRows(constraint::DomainRows {
+        domain_idx: 0,
+        expression_idx: expression_idx(0),
+        debug_line: None,
+    })));
+    assert!(refuses_domain(constraint::Constraint::ComplementDomainRows(constraint::ComplementDomainRows {
+        domain_idx: 0,
+        expression_idx: expression_idx(0),
+        debug_line: None,
+    })));
 
     let mut dangling = pilout();
-    if let Some(constraint::Constraint::AllRows(c)) = &mut dangling.air_groups[0].airs[0].constraints[4].constraint {
+    if let Some(constraint::Constraint::AllRows(c)) = &mut dangling.air_groups[0].airs[0].constraints[3].constraint {
         c.expression_idx = expression_idx(99);
     }
-    assert!(err(AirOracle::new(&dangling, 0, 0)).contains("constraint 4 has no expression"));
+    assert!(err(AirOracle::new(&dangling, 0, 0)).contains("constraint 3 has no expression"));
 
     // On evaluation: a missing challenge, a custom column, a cycle, z in H, an im pol twice.
     let oracle = AirOracle::new(&pilout(), 0, 0).unwrap();

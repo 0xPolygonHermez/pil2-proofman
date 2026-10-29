@@ -16,14 +16,12 @@
 //              nStages + 1, xiSeed (std_xi) for nStages + 2
 //              (pilfflonk/docs/protocol.md#transcript); its id, the position in the AIR's
 //              challengesMap, must agree
-//   Zi         Zi(boundaries[boundaryId]) at ξ: 1/Z_H(ξ) for everyRow, which is boundary 0, and
-//              Z_H(ξ)/Z_D(ξ) for any other domain D
+//   Zi         Zi(boundaries[boundaryId]) at ξ: 1/Z_H(ξ) for everyRow, the only boundary, 0
 // Air values, airgroup values and proof values do not exist in v1, nor custom commits
 // (pilfflonk/docs/README.md#scope); xDivXSubXi is FRI's. A vkey whose code has any other op or
 // operand is refused as malformed.
 
 import { PilFflonkInputError, decimalFromObject, isPlainObject, show } from "./elements.js";
-import { rootOfUnity } from "./shplonk.js";
 
 const BINARY_OPS = new Set(["add", "sub", "mul"]);
 
@@ -119,39 +117,21 @@ export function checkQVerifier(curve, qVerifier, shape) {
     return { tmpUsed, code: checked };
 }
 
-// Zi(D) at ξ for each boundary D (pilfflonk/docs/protocol.md#constraint-polynomial), N = 2^nBits:
-// 1/Z_H(ξ) for everyRow, and Z_H(ξ)/Z_D(ξ) otherwise, in closed form: Z_H(ξ)/(ξ - 1) for firstRow,
-// Z_H(ξ)/(ξ - ω^(N-1)) for lastRow, and Π_j (ξ - ω^j) over the rows j an everyFrame excludes, the
-// first offsetMin and the last offsetMax. ξ must not be in H: Z_H(ξ) ≠ 0, which also keeps ξ off
-// every other domain.
+// Zi at ξ for each boundary (pilfflonk/docs/protocol.md#constraint-polynomial), N = 2^nBits: pilfflonk
+// has only everyRow, whose Zi is 1/Z_H(ξ). ξ must not be in H: Z_H(ξ) ≠ 0.
 export function computeZi(curve, boundaries, nBits, xi) {
     const Fr = curve.Fr;
-    const N = 2 ** nBits;
-    const omega = rootOfUnity(curve, BigInt(N));
-    const zh = Fr.sub(Fr.exp(xi, BigInt(N)), Fr.one);
+    const zh = Fr.sub(Fr.exp(xi, BigInt(2 ** nBits)), Fr.one);
     if (Fr.isZero(zh)) {
         throw new PilFflonkInputError("ξ is in H: Z_H(ξ) = 0 and Q(ξ) is not defined");
     }
-    const minusRow = (j) => Fr.sub(xi, Fr.exp(omega, BigInt(j)));
     return boundaries.map((b) => {
-        switch (b.name) {
-            case "everyRow":
-                return Fr.inv(zh);
-            case "firstRow":
-                return Fr.div(zh, minusRow(0));
-            case "lastRow":
-                return Fr.div(zh, minusRow(N - 1));
-            case "everyFrame": {
-                let zi = Fr.one;
-                for (let j = 0; j < b.offsetMin; j++) zi = Fr.mul(zi, minusRow(j));
-                for (let j = N - b.offsetMax; j < N; j++) zi = Fr.mul(zi, minusRow(j));
-                return zi;
-            }
-            default:
-                throw new PilFflonkInputError(
-                    `boundary ${show(b.name)} is not a domain (pilfflonk/docs/protocol.md#constraint-polynomial)`,
-                );
+        if (b.name !== "everyRow") {
+            throw new PilFflonkInputError(
+                `boundary ${show(b.name)} is not everyRow (pilfflonk/docs/protocol.md#constraint-polynomial)`,
+            );
         }
+        return Fr.inv(zh);
     });
 }
 

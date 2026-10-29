@@ -9,17 +9,15 @@
 //! 2. compiles the verifier with solc (no warning, and within EIP-170's 24576 bytes);
 //! 3. proves a witness with a fixed blinding seed, and encodes its calldata with the encoder of
 //!    `proofman-cli pilfflonk calldata` (`proofman_pilfflonk::Calldata`): the proof's bytes and the
-//!    auxiliary inverses of `firstRow` and `lastRow` (pilfflonk/docs/formats.md#calldata), of the
-//!    `ξ` of the transcript it replays (pilfflonk/docs/protocol.md#transcript), which must be the
-//!    prover's;
+//!    publics (pilfflonk/docs/formats.md#calldata);
 //! 4. makes the cases: the proof; the proof with an evaluation, a commitment, a public or `W'`
 //!    changed, the first three also "fixed up" (`fixup` of `pilfflonk/tests/data/mutations.rs`,
-//!    which the differential fuzzer shares: `invZh`, `inv` and the auxiliary inverses recomputed
+//!    which the differential fuzzer shares: `invZh` and `inv` recomputed
 //!    for the changed transcript, as an attacker would), so that they get to the pairing, or to
 //!    `checkQPieces` if `Q` is split; split, the pieces of `Q` changed with their sum kept (to the
 //!    pairing) and one changed (to `checkQPieces`); points off the curve or that the transcript
-//!    refuses; and values only the calldata can hold (a coordinate `≥ q`, a scalar `≥ r`, a wrong
-//!    auxiliary inverse, calldata a word short);
+//!    refuses; and values only the calldata can hold (a coordinate `≥ q`, a scalar `≥ r`, calldata a
+//!    word short);
 //! 5. asks the JS verifier about each case (`js_verifier::verify`), and runs Foundry on all of them
 //!    (`pilfflonk/solidity`, copied to a directory of its own; `pilfflonk/tests/data/foundry.rs`):
 //!    `verifyProof` must return what the JS verifier says, `false` for every calldata-only case but
@@ -49,8 +47,6 @@ mod all;
 #[path = "../../../pilfflonk/tests/data/connection.rs"]
 mod connection;
 #[allow(dead_code)]
-#[path = "../../../pilfflonk/tests/data/domains.rs"]
-mod domains;
 #[allow(dead_code)]
 #[path = "../../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
@@ -85,7 +81,6 @@ use pilfflonk_setup::digest::seal_vkey;
 use pilfflonk_setup::solidity::{export_verifier_sol, VERIFIER_SOL_FILE};
 use pilfflonk_setup::keys::{load_srs, write_srs, x_2};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
-use prost::Message;
 use proofman_pilfflonk::calldata::SELECTOR_BYTES;
 use proofman_pilfflonk::{
     js_verifier, prove, verifier_challenges, Calldata, CalldataLayout, FqBytes, FrBytes, G1Affine, JsonFile,
@@ -138,7 +133,7 @@ fn output(out: &std::process::Output) -> String {
     format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
 }
 
-/// A program of the tests: a compiled fixture, or a pilout of `domains.rs`, built in code.
+/// A program of the tests: a compiled fixture.
 #[derive(Clone, Copy, Debug)]
 enum Program {
     Fibonacci,
@@ -149,7 +144,6 @@ enum Program {
     Signed,
     /// `all` on the std's sum bus: stage 2, a bus, 9 `f`.
     AllSum,
-    Domains(domains::Air),
 }
 
 impl Program {
@@ -159,10 +153,6 @@ impl Program {
             Program::Packed => "pilfflonk/tests/fixtures/packed/packed.pil",
             Program::Signed => "pilfflonk/tests/fixtures/signed/signed.pil",
             Program::AllSum => "pilfflonk/tests/fixtures/all/all_sum.pil",
-            Program::Domains(air) => {
-                fs::write(pilout, domains::pilout(air).encode_to_vec()).unwrap();
-                return;
-            }
         };
         let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
         let out = Command::new(compiler)
@@ -182,7 +172,6 @@ impl Program {
             Program::Packed => packed::witness(5),
             Program::Signed => signed::witness([3, 5]),
             Program::AllSum => all::witness(),
-            Program::Domains(air) => domains::witness(air),
         }
     }
 
@@ -190,7 +179,7 @@ impl Program {
     fn ptau_powers(self) -> usize {
         match self {
             Program::AllSum => 4096,
-            Program::Fibonacci | Program::Packed | Program::Signed | Program::Domains(_) => 1024,
+            Program::Fibonacci | Program::Packed | Program::Signed => 1024,
         }
     }
 }
@@ -245,19 +234,19 @@ impl Key {
 
 /// The calldata of `proof` and `publics` (pilfflonk/docs/formats.md#calldata), ABI-encoded as
 /// `proofman-cli pilfflonk calldata --format hex` writes it: `Calldata::encode`, the proof's bytes
-/// and the auxiliary inverses of its own `ξ`, and the publics.
+/// and the publics.
 fn calldata(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> Vec<u8> {
     Calldata::encode(vkey, proof, publics).unwrap().to_abi_bytes().unwrap()
 }
 
 /// The calldata of a proof the encoder refuses, because the transcript refuses one of its points
-/// (pilfflonk/docs/protocol.md#transcript), which it names: the proof has no `ξ`, and its auxiliary
-/// inverses are 0 (the verifier refuses the point first).
+/// (pilfflonk/docs/protocol.md#transcript), which it names: the proof has no `ξ`, so its calldata is
+/// built from the proof's bytes (the verifier refuses the point first).
 fn calldata_without_xi(vkey: &Vkey, proof: &Proof, publics: &[FrBytes], point: &str) -> Vec<u8> {
     let err = Calldata::encode(vkey, proof, publics).unwrap_err().to_string();
     assert!(err.contains(&format!("{point} of the proof is not a point the transcript absorbs")), "{err}");
-    let zeros = vec![FrBytes::ZERO; CalldataLayout::of(vkey).aux_rows.len()];
-    Calldata::with_auxiliary_inverses(vkey, proof, publics, &zeros).unwrap().to_abi_bytes().unwrap()
+    let words = proof.to_bytes().as_chunks::<32>().0.to_vec();
+    Calldata { proof: words, pub_signals: publics.to_vec() }.to_abi_bytes().unwrap()
 }
 
 /// What the JS verifier says of the proof and publics files in `dir`.
@@ -309,7 +298,7 @@ fn verify_on_foundry(tools: &Tools, setup: &Setup) {
     let mut evaluation = proof.clone();
     evaluation.evaluations[0] = plus_one(&evaluation.evaluations[0]);
     add("mutated evaluation", &evaluation, publics, false, None);
-    // With invZh, inv and the auxiliary inverses of its own transcript: to the pairing if Q is
+    // With invZh and inv of its own transcript: to the pairing if Q is
     // whole, to checkQPieces if it is split (Q(ξ) is not the pieces').
     add("mutated evaluation, fixed up", &fixup(vkey, evaluation, publics), publics, false, None);
     // Another point of the curve, whose coordinates the transcript absorbs: W.
@@ -351,7 +340,7 @@ fn verify_on_foundry(tools: &Tools, setup: &Setup) {
     add("commitment (1, 2)", &short, publics, false, Some(&first));
 
     // What only the calldata can hold, which is no proof (the proof's bytes are canonical): a
-    // coordinate x + q, a scalar e + r and, when there are any, a wrong auxiliary inverse, which
+    // coordinate x + q, a scalar e + r, which
     // verifyProof refuses with false; and calldata one word short, which the ABI decoder reverts.
     let layout = CalldataLayout::of(vkey);
     let good = cases[0].calldata.clone();
@@ -365,13 +354,6 @@ fn verify_on_foundry(tools: &Tools, setup: &Setup) {
     };
     calldata_only("coordinate x + q", 0, &q());
     calldata_only("evaluation + r", layout.first_scalar(), &r());
-    if !layout.aux_rows.is_empty() {
-        // 1/(ξ − ω^j) + 1 mod r: below r, and not the inverse.
-        let at = word_at(layout.proof_words());
-        let aux = BigUint::from_bytes_be(&good[at..at + 32]);
-        let one = if aux == r() - 1u32 { r() - aux } else { BigUint::from(1u32) };
-        calldata_only("wrong auxiliary inverse", layout.proof_words(), &one);
-    }
     let mut short_calldata = good.clone();
     short_calldata.truncate(good.len() - 32);
     cases.push(Case {
@@ -389,7 +371,7 @@ fn verify_on_foundry(tools: &Tools, setup: &Setup) {
         layout.words()
     );
     let gas = check_on_foundry(tools, &key.dir.0, &key.sol, &title, &cases);
-    // The fixed-up cases get past invZh, inv and the auxiliary inverses: the one that reaches the
+    // The fixed-up cases get past invZh and inv: the one that reaches the
     // pairing costs about what the proof does.
     let deep = if piece_position(vkey, 1).is_some() {
         "Q pieces rebalanced, fixed up"
@@ -427,39 +409,6 @@ fn foundry_verifies_the_proofs_of_the_fixtures_as_the_js_verifier_does() {
         Setup { name: "signed_q_split", program: Program::Signed, no_packing: false, max_q_degree: 1 },
         Setup { name: "all_sum", program: Program::AllSum, no_packing: false, max_q_degree: DEFAULT_MAX_Q_DEGREE },
         Setup { name: "all_sum_q_split", program: Program::AllSum, no_packing: false, max_q_degree: 1 },
-    ];
-    for setup in &setups {
-        verify_on_foundry(&tools, setup);
-    }
-}
-
-/// The zerofiers of every domain (pilfflonk/docs/protocol.md#constraint-polynomial): one rule of
-/// each, `firstRow` and `lastRow` among them, whose calldata has auxiliary inverses; and six
-/// `everyFrame`, at offsets −1 and 1, with `--no-packing` too.
-#[test]
-#[ignore = "needs PILFFLONK_FORGE, PILFFLONK_SOLC and Node.js"]
-fn foundry_verifies_the_proofs_of_every_domain() {
-    let _cpp = cpp_core();
-    let tools = Tools::from_env();
-    let setups = [
-        Setup {
-            name: "domains",
-            program: Program::Domains(domains::Air::All),
-            no_packing: false,
-            max_q_degree: DEFAULT_MAX_Q_DEGREE,
-        },
-        Setup {
-            name: "frames",
-            program: Program::Domains(domains::Air::Frames),
-            no_packing: false,
-            max_q_degree: DEFAULT_MAX_Q_DEGREE,
-        },
-        Setup {
-            name: "frames_no_packing",
-            program: Program::Domains(domains::Air::Frames),
-            no_packing: true,
-            max_q_degree: DEFAULT_MAX_Q_DEGREE,
-        },
     ];
     for setup in &setups {
         verify_on_foundry(&tools, setup);

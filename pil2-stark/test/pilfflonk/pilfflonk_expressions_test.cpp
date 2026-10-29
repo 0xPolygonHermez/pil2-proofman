@@ -5,7 +5,7 @@
 // they compute:
 //
 // - Sample.bin: the bytecode of sample() in bytecode.rs, whose every field testReadsTheRustSample
-//   checks, its hints (revision 3) too; Sample.expected.json: inputs for its codes, and what the
+//   checks, its hints (revision 4) too; Sample.expected.json: inputs for its codes, and what the
 //   Rust evaluator (num-bigint) gives them.
 // - fibonacci/: the Fibonacci (pilfflonk/tests/data/fibonacci.rs) as setup-pilfflonk writes it, its
 //   witness, the qVerifier as a bytecode, and the oracle's evaluations and Q at a point.
@@ -39,8 +39,6 @@ namespace PilFflonkTest {
 namespace {
 
 using json = nlohmann::json;
-using PilFflonk::Boundary;
-using PilFflonk::BoundaryType;
 using PilFflonk::Expressions;
 using PilFflonk::ExpressionsBin;
 using PilFflonk::ExpressionsDomain;
@@ -103,18 +101,6 @@ std::string thrown(Call call) {
 
 bool contains(const std::string &text, const std::string &part) { return text.find(part) != std::string::npos; }
 
-std::vector<Boundary> boundariesOf(const json &boundaries) {
-    std::vector<Boundary> out;
-    for (const json &b : boundaries) {
-        const std::string name = b["name"];
-        if (name == "everyRow") out.push_back({BoundaryType::EveryRow, 0, 0});
-        else if (name == "firstRow") out.push_back({BoundaryType::FirstRow, 0, 0});
-        else if (name == "lastRow") out.push_back({BoundaryType::LastRow, 0, 0});
-        else out.push_back({BoundaryType::EveryFrame, b["offsetMin"].get<uint64_t>(), b["offsetMax"].get<uint64_t>()});
-    }
-    return out;
-}
-
 // ---------------------------------------------------------------------------------------------
 // The reader
 // ---------------------------------------------------------------------------------------------
@@ -158,7 +144,7 @@ void testReadsTheRustSample() {
                 {Op{2, 0, 1, 0, 3, 1, 1, 2}, Op{0, 1, 0, 0, 1, 6, 0, 0}, Op{1, 0, 6, 1, 0, 9, 0, 0}});
     expectEntry(bin.expression(7), e, 3, 3, 3, "",
                 {Op{2, 0, 2, 0, 2, 13, 0, 0}, Op{1, 1, 8, 1, 0, 10, 0, 0}, Op{0, 0, 6, 0, 0, 6, 1, 0},
-                 Op{0, 1, 9, 1, 0, 9, 2, 0}, Op{2, 0, 6, 0, 0, 6, 1, 0}, Op{2, 2, 4, 2, 0, 1, 1, 4},
+                 Op{0, 1, 9, 1, 0, 9, 2, 0}, Op{2, 0, 6, 0, 0, 6, 1, 0}, Op{2, 2, 4, 1, 0, 1, 1, 4},
                  Op{0, 0, 6, 0, 0, 6, 2, 0}, Op{2, 0, 4, 1, 0, 6, 0, 0}});
     expectEntry(bin.expression(9), e, 1, 2, 11, "a hint's expression",
                 {Op{3, 0, 11, 1, 0, 12, 0, 0}, Op{2, 1, 6, 0, 0, 8, 0, 0}, Op{2, 0, 6, 1, 0, 9, 0, 0}});
@@ -168,9 +154,8 @@ void testReadsTheRustSample() {
     const std::vector<ParserParams> &cs = bin.constraintsInfoDebug;
     assert(cs.size() == 4 && c.ops.size() == 11 && c.args.size() == 88);
     assert((numbers(c) == std::vector<std::string>{WIDE, R_MINUS_ONE, "0"}));
-    const uint32_t rows[4][3] = {{0, 8, 0}, {0, 1, 0}, {7, 8, 0}, {1, 6, 1}};
     for (size_t i = 0; i < 4; ++i) {
-        assert(cs[i].firstRow == rows[i][0] && cs[i].lastRow == rows[i][1] && cs[i].imPol == (rows[i][2] == 1));
+        assert(cs[i].imPol == (i == 3));
     }
     expectEntry(cs[0], c, 1, 1, 0, "sample.pil:10 a' - a * b === 0",
                 {Op{2, 0, 1, 0, 2, 1, 1, 2}, Op{1, 0, 1, 0, 3, 6, 0, 0}});
@@ -255,7 +240,7 @@ void testRefusesWhatIsNotRevision3() {
     // A revision-2 file: its version, and its prefix's.
     std::vector<uint8_t> revision2 = patched(4, {2, 0, 0x66, 0x70});
     std::copy_n(revision2.begin() + 4, 4, revision2.begin() + section1);
-    refused(revision2, "version 0x70660002, and pilfflonk's is 0x70660003: not a pilfflonk bytecode of revision 3");
+    refused(revision2, "version 0x70660002, and pilfflonk's is 0x70660004: not a pilfflonk bytecode of revision 4");
 
     // The hints, section 3, the last of the file: its last value is the number r − 1 of no position.
     const size_t tail = bytes.size() - 4 - 32;
@@ -331,7 +316,7 @@ void testSampleGivesTheRustEvaluatorsValues() {
     info.nBits = j["nBits"];
     info.nStages = 2;
     info.openingPoints = j["openingPoints"].get<std::vector<int64_t>>();
-    info.boundaries = boundariesOf(j["boundaries"]);
+    assert(j["boundaries"].size() == PilFflonk::N_BOUNDARIES);
     const Expressions expressions(bin, info);
     const json &expected = j["expected"];
     const uint64_t nBits = j["nBits"], nBitsExt = j["nBitsExt"];
@@ -363,11 +348,9 @@ void testSampleGivesTheRustEvaluatorsValues() {
 
     // On the coset: Zi, and Q (7).
     const Columns cosetColumns(j["coset"]);
-    const ExpressionsDomain coset = ExpressionsDomain::coset(nBits, nBitsExt, info.boundaries);
-    assert(coset.size() == 16 && coset.extendBits() == 1 && coset.nZerofiers() == 4);
-    for (uint64_t b = 0; b < 4; ++b) {
-        expectValues(zerofierValues(coset, b), expected["cosetZerofiers"][b], "Zi on the coset");
-    }
+    const ExpressionsDomain coset = ExpressionsDomain::coset(nBits, nBitsExt);
+    assert(coset.size() == 16 && coset.extendBits() == 1 && coset.nZerofiers() == PilFflonk::N_BOUNDARIES);
+    expectValues(zerofierValues(coset, 0), expected["cosetZerofiers"][0], "Zi on the coset");
     out.resize(coset.size());
     expressions.calculateExpression(7, coset, proverValues(cosetColumns), out.data());
     expectValues(out, expected["expressions"]["7"], "expression 7 on the coset");
@@ -375,7 +358,7 @@ void testSampleGivesTheRustEvaluatorsValues() {
     // At ξ: Zi, and the code of evaluations (11).
     const FrElement xi = fr(j["xi"]);
     PointValues point;
-    point.zerofiers = PilFflonk::zerofiersAt(nBits, info.boundaries, xi);
+    point.zerofiers = PilFflonk::zerofiersAt(nBits, xi);
     expectValues(point.zerofiers, expected["xiZerofiers"], "Zi at ξ");
     point.evals = frs(j["evals"]);
     point.publics = frs(j["publics"]);
@@ -409,9 +392,6 @@ void testSampleGivesTheRustEvaluatorsValues() {
     PilfflonkInfo fewer = info;
     fewer.openingPoints.pop_back();
     assert(contains(thrown<FormatError>([&] { (void)Expressions(bin, fewer); }), "at opening point 4"));
-    PilfflonkInfo oneBoundary = info;
-    oneBoundary.boundaries.resize(1);
-    assert(contains(thrown<FormatError>([&] { (void)Expressions(bin, oneBoundary); }), "Zi of boundary 1"));
     PilfflonkInfo oneStage = info;
     oneStage.nStages = 1;
     assert(contains(thrown<FormatError>([&] { (void)Expressions(bin, oneStage); }), "of 2 stages"));
@@ -421,9 +401,8 @@ void testSampleGivesTheRustEvaluatorsValues() {
 // Zi
 // ---------------------------------------------------------------------------------------------
 
-// Zi on the coset against a direct computation of its closed forms
-// (pilfflonk/docs/protocol.md#constraint-polynomial), one inversion per point, for every kind of
-// boundary, with ffiasm's FFT's roots.
+// Zi on the coset against a direct computation, 1/(x^N − 1) one inversion per point, with ffiasm's
+// FFT's roots (pilfflonk/docs/protocol.md#constraint-polynomial): everyRow is the only boundary.
 void testZerofiersOnTheCoset() {
     const uint64_t nBits = 3, nBitsExt = 5, n = 8, m = 32;
     FFT<Engine::Fr> fft(m);
@@ -435,62 +414,29 @@ void testZerofiersOnTheCoset() {
     for (int i = 0; i < 27; ++i) F().mul(w28, w28, w28);
     assert(eq(w28, fr(std::string("21888242871839275222246405745257275088548364400416034343698204186575808495616"))));
 
-    const std::vector<Boundary> boundaries = {{BoundaryType::EveryRow, 0, 0},
-                                              {BoundaryType::FirstRow, 0, 0},
-                                              {BoundaryType::LastRow, 0, 0},
-                                              {BoundaryType::EveryFrame, 1, 2},
-                                              {BoundaryType::EveryFrame, 0, 0}};
-    const ExpressionsDomain coset = ExpressionsDomain::coset(nBits, nBitsExt, boundaries);
-    assert(coset.size() == m && coset.extendBits() == 2 && coset.nZerofiers() == boundaries.size());
-    // everyRow's Zi, 1/Z_H, repeats every 2^extendBits points, and is kept as those values only.
+    const ExpressionsDomain coset = ExpressionsDomain::coset(nBits, nBitsExt);
+    assert(coset.size() == m && coset.extendBits() == 2 && coset.nZerofiers() == PilFflonk::N_BOUNDARIES);
+    // 1/Z_H repeats every 2^extendBits points, and is kept as those values only.
     assert(coset.zerofier(0).size() == 4 && coset.zerofierMask(0) == 3);
-    std::vector<std::vector<FrElement>> zi;
-    for (uint64_t b = 0; b < boundaries.size(); ++b) {
-        assert(b == 0 || coset.zerofierMask(b) == m - 1);
-        zi.push_back(zerofierValues(coset, b));
-    }
+    const std::vector<FrElement> zi = zerofierValues(coset, 0);
 
     FrElement x = fromUI(5); // g
-    const FrElement lastRoot = power(wN, n - 1);
-    bool lastIsNotFirst = false;
     for (uint64_t i = 0; i < m; ++i) {
-        FrElement zh, d;
+        FrElement zh;
         F().sub(zh, power(x, n), F().one());
-        const FrElement everyRow = inverse(zh);
-        F().sub(d, x, F().one());
-        const FrElement firstRow = F().mul(zh, inverse(d));
-        // X − ω^(N−1), not X − ω^N = X − 1 (pilfflonk/docs/README.md#stark-lastrow-zerofier)
-        F().sub(d, x, lastRoot);
-        const FrElement lastRow = F().mul(zh, inverse(d));
-        FrElement frame = F().one();
-        for (uint64_t j : {uint64_t(0), n - 1, n - 2}) {
-            F().sub(d, x, power(wN, j));
-            F().mul(frame, frame, d);
-        }
-        assert(eq(zi[0][i], everyRow));
-        assert(eq(zi[1][i], firstRow));
-        assert(eq(zi[2][i], lastRow));
-        assert(eq(zi[3][i], frame));
-        assert(eq(zi[4][i], F().one())); // an everyFrame that excludes nothing: Z_D = Z_H
-        lastIsNotFirst = lastIsNotFirst || !eq(lastRow, firstRow);
+        assert(eq(zi[i], inverse(zh)));
         // The same at the point, by zerofiersAt.
-        const std::vector<FrElement> at = PilFflonk::zerofiersAt(nBits, boundaries, x);
-        for (size_t b = 0; b < boundaries.size(); ++b) assert(eq(at[b], zi[b][i]));
+        const std::vector<FrElement> at = PilFflonk::zerofiersAt(nBits, x);
+        assert(at.size() == 1 && eq(at[0], zi[i]));
         F().mul(x, x, w);
     }
-    assert(lastIsNotFirst);
 
     // H, and domains and boundaries there are none of.
     assert(ExpressionsDomain::trace(nBits).nZerofiers() == 0 && ExpressionsDomain::trace(nBits).size() == n);
-    assert(contains(thrown<std::invalid_argument>([&] { PilFflonk::zerofiersAt(nBits, boundaries, power(wN, 3)); }),
-                    "in H"));
-    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::coset(4, 3, boundaries); }),
+    assert(contains(thrown<std::invalid_argument>([&] { PilFflonk::zerofiersAt(nBits, power(wN, 3)); }), "in H"));
+    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::coset(4, 3); }), "nBits <= nBitsExt <= 28"));
+    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::coset(3, 29); }),
                     "nBits <= nBitsExt <= 28"));
-    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::coset(3, 29, boundaries); }),
-                    "nBits <= nBitsExt <= 28"));
-    assert(contains(thrown<std::invalid_argument>(
-                        [&] { ExpressionsDomain::coset(3, 4, {{BoundaryType::EveryFrame, 5, 4}}); }),
-                    "everyFrame excludes 5 + 4 rows of 8"));
     assert(contains(thrown<std::invalid_argument>([] { PilFflonk::rootOfUnity(29); }), "order 2^29"));
 
     // The coset in parts (pilfflonk/docs/protocol.md#q-in-parts): point i of part p of 2^partBits
@@ -499,27 +445,22 @@ void testZerofiersOnTheCoset() {
     for (uint64_t partBits = nBits; partBits <= nBitsExt; ++partBits) {
         const uint64_t S = uint64_t(1) << partBits, nParts = m / S;
         for (uint64_t part = 0; part < nParts; ++part) {
-            const ExpressionsDomain piece = ExpressionsDomain::cosetPart(nBits, nBitsExt, partBits, part, boundaries);
+            const ExpressionsDomain piece = ExpressionsDomain::cosetPart(nBits, nBitsExt, partBits, part);
             assert(piece.size() == S && piece.nBits() == nBits && piece.extendBits() == partBits - nBits);
-            assert(piece.nZerofiers() == boundaries.size());
-            for (size_t b = 0; b < boundaries.size(); ++b) {
-                for (uint64_t i = 0; i < S; ++i) {
-                    const FrElement &whole = zi[b][part + nParts * i];
-                    const FrElement &inPiece = piece.zerofier(b)[i & piece.zerofierMask(b)];
-                    assert(std::memcmp(&inPiece, &whole, sizeof(FrElement)) == 0);
-                }
+            assert(piece.nZerofiers() == PilFflonk::N_BOUNDARIES);
+            for (uint64_t i = 0; i < S; ++i) {
+                const FrElement &whole = zi[part + nParts * i];
+                const FrElement &inPiece = piece.zerofier(0)[i & piece.zerofierMask(0)];
+                assert(std::memcmp(&inPiece, &whole, sizeof(FrElement)) == 0);
             }
         }
     }
-    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::cosetPart(3, 5, 2, 0, boundaries); }),
+    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::cosetPart(3, 5, 2, 0); }),
                     "nBits <= partBits <= nBitsExt <= 28"));
-    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::cosetPart(3, 5, 6, 0, boundaries); }),
+    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::cosetPart(3, 5, 6, 0); }),
                     "nBits <= partBits <= nBitsExt <= 28"));
-    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::cosetPart(3, 5, 4, 2, boundaries); }),
+    assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::cosetPart(3, 5, 4, 2); }),
                     "part 2 of the 2 of 2^4 points"));
-    assert(contains(thrown<std::invalid_argument>(
-                        [&] { ExpressionsDomain::cosetPart(3, 4, 3, 0, {{BoundaryType::EveryFrame, 5, 4}}); }),
-                    "everyFrame excludes 5 + 4 rows of 8"));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -605,7 +546,7 @@ std::vector<FrElement> qCoefficients(const Fibonacci &fib, const Expressions &ex
     extend(fixed, fixedCoset);
     extend(stage1, stage1Coset);
 
-    const ExpressionsDomain coset = ExpressionsDomain::coset(fib.info.nBits, nBitsExt, fib.info.boundaries);
+    const ExpressionsDomain coset = ExpressionsDomain::coset(fib.info.nBits, nBitsExt);
     std::vector<FrElement> q(m);
     expressions.calculateExpression(fib.info.cExpId, coset, fib.values(fixedCoset, stage1Coset), q.data());
     const FrElement *qe = q.data();
@@ -636,9 +577,8 @@ void testTheFibonaccisQIsAPolynomialOfItsDegree() {
         expressions.calculateExpression(fib.imExpId, trace, v, stage1[fib.imPos].data());
         std::vector<FrElement> numerator(fib.n);
         for (uint64_t c = 0; c < fib.bin.constraintsInfoDebug.size(); ++c) {
-            const ParserParams &p = fib.bin.constraintsInfoDebug[c];
             expressions.calculateConstraint(c, trace, v, numerator.data());
-            for (uint64_t i = p.firstRow; i < p.lastRow; ++i) assert(F().isZero(numerator[i]));
+            for (uint64_t i = 0; i < fib.n; ++i) assert(F().isZero(numerator[i]));
         }
     }
 
@@ -686,7 +626,7 @@ void testTheFibonaccisQVerifierIsTheOracles() {
     const FrElement xi = fr(fib.oracle["xi"]);
 
     PointValues point;
-    point.zerofiers = PilFflonk::zerofiersAt(fib.info.nBits, fib.info.boundaries, xi);
+    point.zerofiers = PilFflonk::zerofiersAt(fib.info.nBits, xi);
     expectValues(point.zerofiers, fib.oracle["zerofiers"], "Zi at ξ");
     point.evals = frs(fib.oracle["evals"]);
     point.publics = frs(fib.oracle["publics"]);

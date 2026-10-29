@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 use num_bigint::BigUint;
 use pil2_pilout::pilout as pb;
 use pil2_pilout::pilout_proxy::PilOutProxy;
-use proofman_pilfflonk::oracle::{self, AirOracle, Domain, Fr, Values};
+use proofman_pilfflonk::oracle::{self, AirOracle, Fr, Values};
 use proofman_pilfflonk::{
     AirInstanceRef, AirShape, FileWitnessSource, FrBytes, Witness, WitnessShape, WitnessSource, BN128_R,
 };
@@ -191,16 +191,15 @@ fn the_pilout_has_the_shape_and_fixed_columns_of_the_fixture() {
     assert_eq!(oracle.fixed(1).unwrap(), unit(N - 1), "LLAST");
     assert!(oracle.fixed(2).is_none());
 
-    let constraints: Vec<(Domain, &str)> =
-        oracle.constraints().iter().map(|c| (c.domain, c.debug_line.as_str())).collect();
+    let constraints: Vec<&str> = oracle.constraints().iter().map(|c| c.debug_line.as_str()).collect();
     assert_eq!(
         constraints,
         [
-            (Domain::EveryRow, "fibonacci.pil:24 (l2'-l1)*(1-Fibonacci.LLAST)"),
-            (Domain::EveryRow, "fibonacci.pil:27 (l1'-((l1*l1)+(l2*l2)))*(1-Fibonacci.LLAST)"),
-            (Domain::EveryRow, "fibonacci.pil:29 Fibonacci.L1*(l2-in1)"),
-            (Domain::EveryRow, "fibonacci.pil:30 Fibonacci.L1*(l1-in2)"),
-            (Domain::EveryRow, "fibonacci.pil:31 Fibonacci.LLAST*(l1-out)"),
+            "fibonacci.pil:24 (l2'-l1)*(1-Fibonacci.LLAST)",
+            "fibonacci.pil:27 (l1'-((l1*l1)+(l2*l2)))*(1-Fibonacci.LLAST)",
+            "fibonacci.pil:29 Fibonacci.L1*(l2-in1)",
+            "fibonacci.pil:30 Fibonacci.L1*(l1-in2)",
+            "fibonacci.pil:31 Fibonacci.LLAST*(l1-out)",
         ]
     );
     assert_eq!(oracle.constraints()[1].expression, L1_NEXT_MINUS_NEXT + 2, "(l1' − next)·(1 − LLAST)");

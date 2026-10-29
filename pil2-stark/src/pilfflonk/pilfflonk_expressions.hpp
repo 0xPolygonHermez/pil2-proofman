@@ -17,33 +17,21 @@ namespace PilFflonk {
 // - Prover: a code block on every point of a domain (ExpressionsDomain), by blocks of rows run in
 //   parallel with OpenMP. The domain is H for the intermediate polynomials, the other expressions
 //   and the constraints, and the extended coset g·H' for Q (cExpId).
-// - Verifier: a code block at one point ξ, from the evaluations of the evMap, Z_D(ξ) and the
+// - Verifier: a code block at one point ξ, from the evaluations of the evMap, Z_H(ξ) and the
 //   scalars. The JS verifier is the real one; this is for tests.
 //
 // A column at the opening point o = openingPoints[arg2], on point i of a domain of M = 2^e·N points,
 // is its value at point (i + 2^e·o) mod M: rows are cyclic.
 //
 // As in the STARK, an op may write a temporary one of its sources reads: the allocation lets it.
-// Unlike the STARK prover's, Zi of lastRow is Z_H(X)/(X − ω^(N−1)), not Z_H(X)/(X − ω^N)
-// (pilfflonk/docs/README.md#stark-lastrow-zerofier).
+// pilfflonk has only everyRow constraints: its one Zi, boundary 0, is 1/Z_H.
 //
 // Elements are in ffiasm's Montgomery form. Everything is checked before anything is written: a
 // bad argument throws std::invalid_argument; a bytecode that does not fit the AIR, FormatError.
 
-// Zi of each boundary at a point x ∉ H (pilfflonk/docs/protocol.md#constraint-polynomial):
-// 1/Z_H(x) for everyRow, and Z_H(x)/Z_D(x) for any other, with Z_H(x) = x^N − 1, Z_D(x) = x − 1
-// (firstRow), x − ω^(N−1) (lastRow) and Z_H(x)/Π_j (x − ω^j) over the rows j an everyFrame
-// excludes. Throws std::invalid_argument if x is in H.
-std::vector<FrElement> zerofiersAt(uint64_t nBits, const std::vector<Boundary> &boundaries, const FrElement &x);
-
-// The rows an everyFrame excludes, ω_N^j for its first offsetMin rows and its last offsetMax, in the
-// order of the STARK's buildFrameZerofierInv: its Zi is Π_j (X − ω_N^j). Throws
-// std::invalid_argument if they are more than N.
-std::vector<FrElement> excludedRoots(uint64_t nBits, const Boundary &boundary);
-
-// The row a firstRow or lastRow boundary excludes: ω_N^0 = 1, or ω_N^(N−1)
-// (pilfflonk/docs/protocol.md#constraint-polynomial).
-FrElement oneRowRoot(uint64_t nBits, BoundaryType type);
+// Zi at a point x ∉ H (pilfflonk/docs/protocol.md#constraint-polynomial): the one of the AIR's only
+// boundary, everyRow, 1/Z_H(x) with Z_H(x) = x^N − 1. Throws std::invalid_argument if x is in H.
+std::vector<FrElement> zerofiersAt(uint64_t nBits, const FrElement &x);
 
 // The points of a part of the extended coset (ExpressionsDomain::cosetPart), c·ω_S^i for i < S =
 // 2^partBits, and Z_H on them, which repeats every e = S/N points: what cosetPart computes Zi from,
@@ -56,10 +44,8 @@ struct CosetPart {
 };
 
 // Those of part `part` of 2^partBits points of the coset of 2^nBitsExt. Throws as
-// ExpressionsDomain::cosetPart, for its arguments and its boundaries, and std::logic_error if Z_H
-// vanishes on the coset.
-CosetPart cosetPartPoints(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
-                          const std::vector<Boundary> &boundaries);
+// ExpressionsDomain::cosetPart, for its arguments, and std::logic_error if Z_H vanishes on the coset.
+CosetPart cosetPartPoints(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part);
 
 // The points of the prover mode, in their order, and the zerofier terms Zi on them.
 class ExpressionsDomain {
@@ -69,11 +55,10 @@ public:
     static ExpressionsDomain trace(uint64_t nBits);
 
     // The extended coset g·H', g·ω_{N'}^i for N' = 2^nBitsExt and g = COSET_SHIFT (5), the points
-    // of Lde::extendCoset. Zi of each boundary on it, computed as zerofiersAt says, with batch
-    // inversions: 32·N' bytes per boundary but an everyRow, whose Zi, 1/Z_H, repeats every
+    // of Lde::extendCoset. Zi on it, as zerofiersAt says, with batch inversions: 1/Z_H repeats every
     // 2^extendBits() points and has those values only. Throws std::invalid_argument unless
-    // nBits <= nBitsExt <= 28, or for an everyFrame that excludes more than N rows.
-    static ExpressionsDomain coset(uint64_t nBits, uint64_t nBitsExt, const std::vector<Boundary> &boundaries);
+    // nBits <= nBitsExt <= 28.
+    static ExpressionsDomain coset(uint64_t nBits, uint64_t nBitsExt);
 
     // Part `part` of that coset (pilfflonk/docs/protocol.md#q-in-parts), the points of
     // Lde::extendCosetPart: its 2^partBits points g·ω_{N'}^(part + (N'/2^partBits)·i), in that
@@ -81,19 +66,17 @@ public:
     // coset(). nBits <= partBits <= nBitsExt, and extendBits() is partBits − nBits: a column at
     // opening point o is read o rows later in the part, as on the whole coset. coset() is the one
     // part of partBits = nBitsExt. Throws std::invalid_argument unless
-    // nBits <= partBits <= nBitsExt <= 28 and part < N'/2^partBits, or for an everyFrame that
-    // excludes more than N rows.
-    static ExpressionsDomain cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
-                                       const std::vector<Boundary> &boundaries);
+    // nBits <= partBits <= nBitsExt <= 28 and part < N'/2^partBits.
+    static ExpressionsDomain cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part);
 
     uint64_t nBits() const { return nBits_; }
     uint64_t size() const { return uint64_t(1) << (nBits_ + extendBits_); }
     // e: the domain has 2^e points per row of the trace.
     uint64_t extendBits() const { return extendBits_; }
-    // The boundaries Zi is defined for: 0 on H.
+    // The Zi defined: 0 on H, 1 on the coset.
     uint64_t nZerofiers() const { return zerofiers_.size(); }
     // Zi of boundary b: at point i, zerofier(b)[i & zerofierMask(b)], as on the device
-    // (ExpressionsDomainGpu): size() values, or 2^extendBits() for an everyRow.
+    // (ExpressionsDomainGpu): the 2^extendBits() values of 1/Z_H.
     const std::vector<FrElement> &zerofier(uint64_t b) const { return zerofiers_.at(b); }
     uint64_t zerofierMask(uint64_t b) const { return zerofiers_.at(b).size() - 1; }
 
@@ -127,7 +110,7 @@ const std::vector<FrElement> *proverScalars(const OperandTypes &types, uint32_t 
 // What the operands of the verifier mode read: no columns, but their evaluations.
 struct PointValues {
     std::vector<FrElement> evals;     // evMap order
-    std::vector<FrElement> zerofiers; // Zi of each boundary at the point: zerofiersAt
+    std::vector<FrElement> zerofiers; // Zi at the point: zerofiersAt
     std::vector<FrElement> publics;
     std::vector<FrElement> challenges;
     std::vector<FrElement> airValues;
@@ -137,8 +120,8 @@ struct PointValues {
 
 class Expressions {
 public:
-    // The code of `bin` for the AIR `info` describes: every column operand's opening point and
-    // every Zi's boundary must be the AIR's, and bin's stages its stages, or it throws FormatError.
+    // The code of `bin` for the AIR `info` describes: every column operand's opening point must be
+    // the AIR's, every Zi's boundary 0, and bin's stages its stages, or it throws FormatError.
     // It keeps a reference to `bin`, which must outlive it; of `info` it copies what it needs.
     Expressions(const ExpressionsBin &bin, const PilfflonkInfo &info);
 

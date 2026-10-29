@@ -27,8 +27,6 @@ static_assert(sizeof(FrElement) == OPERAND_BYTES, "an operand is one element");
 
 namespace {
 
-// The blocks of gpu_plonk_precompute_omega_tables_async's tables, ω^(256·b) and ω^t for t < 256.
-constexpr uint64_t TABLE_BLOCK = 256;
 // The scalar types, publics() … challenges().
 constexpr uint32_t N_SCALAR_TYPES = 6;
 // The blocks of a launch whose temporaries are in device memory, per multiprocessor: as many as the
@@ -39,38 +37,20 @@ constexpr uint64_t MAX_BLOCKS = uint64_t(1) << 20;
 
 uint64_t aligned8(uint64_t bytes) { return (bytes + 7) & ~uint64_t(7); }
 
-// Where cosetPart keeps its tables and its Zi in its workspace, in elements: the tables of ω_S,
-// then zh, zhInv and the roots of each everyFrame one after another, as they go up in one copy, and
-// then the S values of each boundary's Zi but an everyRow's, which is zhInv.
+// Where cosetPart keeps its tables in its workspace, in elements: Z_H on the part's points and its
+// inverse, which is the Zi of everyRow, e = S/N values each, repeated every e points.
 struct PartLayout {
-    uint64_t bases = 0;
-    uint64_t powers = 0;
     uint64_t zh = 0;
     uint64_t zhInv = 0;
-    std::vector<uint64_t> roots;  // by boundary
-    std::vector<uint64_t> values; // by boundary
     uint64_t elements = 0;
 };
 
-PartLayout partLayout(uint64_t nBits, uint64_t partBits, const std::vector<Boundary> &boundaries) {
-    const uint64_t S = uint64_t(1) << partBits;
-    const uint64_t e = S >> nBits;
+PartLayout partLayout(uint64_t nBits, uint64_t partBits) {
+    const uint64_t e = (uint64_t(1) << partBits) >> nBits;
     PartLayout l;
-    auto take = [&](uint64_t n) {
-        const uint64_t start = l.elements;
-        l.elements += n;
-        return start;
-    };
-    l.bases = take(S / TABLE_BLOCK + 1);
-    l.powers = take(TABLE_BLOCK);
-    l.zh = take(e);
-    l.zhInv = take(e);
-    for (const Boundary &b : boundaries) {
-        l.roots.push_back(take(b.type == BoundaryType::EveryFrame ? b.offsetMin + b.offsetMax : 0));
-    }
-    for (const Boundary &b : boundaries) {
-        l.values.push_back(b.type == BoundaryType::EveryRow ? l.zhInv : take(S));
-    }
+    l.zh = 0;
+    l.zhInv = e;
+    l.elements = 2 * e;
     return l;
 }
 
@@ -96,55 +76,26 @@ ExpressionsDomainGpu ExpressionsDomainGpu::trace(uint64_t nBits) {
     return ExpressionsDomainGpu(h.nBits(), h.extendBits());
 }
 
-uint64_t ExpressionsDomainGpu::cosetPartBytes(uint64_t nBits, uint64_t partBits,
-                                              const std::vector<Boundary> &boundaries) {
-    return partLayout(nBits, partBits, boundaries).elements * sizeof(FrElement);
+uint64_t ExpressionsDomainGpu::cosetPartBytes(uint64_t nBits, uint64_t partBits) {
+    return partLayout(nBits, partBits).elements * sizeof(FrElement);
 }
 
 ExpressionsDomainGpu ExpressionsDomainGpu::cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits,
-                                                     uint64_t part, const std::vector<Boundary> &boundaries,
-                                                     void *workspace) {
-    const CosetPart points = cosetPartPoints(nBits, nBitsExt, partBits, part, boundaries);
+                                                     uint64_t part, void *workspace) {
+    const CosetPart points = cosetPartPoints(nBits, nBitsExt, partBits, part);
     if (workspace == nullptr) {
         throw std::invalid_argument("ExpressionsDomainGpu::cosetPart: workspace is null");
     }
-    const uint64_t S = uint64_t(1) << partBits;
     const uint64_t e = points.zh.size();
-    const PartLayout l = partLayout(nBits, partBits, boundaries);
+    const PartLayout l = partLayout(nBits, partBits);
     std::vector<FrElement> tables(points.zh);
     tables.insert(tables.end(), points.zhInv.begin(), points.zhInv.end());
-    for (const Boundary &b : boundaries) {
-        if (b.type == BoundaryType::EveryFrame) {
-            const std::vector<FrElement> roots = excludedRoots(nBits, b);
-            tables.insert(tables.end(), roots.begin(), roots.end());
-        }
-    }
     FrElement *w = static_cast<FrElement *>(workspace);
     gpu_plonk_memcpy_h2d(w + l.zh, tables.data(), tables.size() * sizeof(FrElement));
-    gpu_plonk_precompute_omega_tables_async(w + l.bases, w + l.powers, &points.root, TABLE_BLOCK,
-                                            static_cast<uint32_t>(S / TABLE_BLOCK + 1), nullptr);
 
     ExpressionsDomainGpu domain(nBits, partBits - nBits);
-    for (size_t b = 0; b < boundaries.size(); ++b) {
-        const Boundary &boundary = boundaries[b];
-        FrElement *zi = w + l.values[b];
-        switch (boundary.type) {
-        case BoundaryType::EveryRow:
-            break;
-        case BoundaryType::FirstRow:
-        case BoundaryType::LastRow: {
-            const FrElement root = oneRowRoot(nBits, boundary.type);
-            pilfflonk_gpu_one_row_zerofier(zi, S, &points.shift, w + l.bases, w + l.powers, &root, w + l.zh, e - 1);
-            break;
-        }
-        case BoundaryType::EveryFrame:
-            pilfflonk_gpu_frame_zerofier(zi, S, &points.shift, w + l.bases, w + l.powers, w + l.roots[b],
-                                         boundary.offsetMin + boundary.offsetMax);
-            break;
-        }
-        domain.zerofiers_.push_back(zi);
-        domain.masks_.push_back(boundary.type == BoundaryType::EveryRow ? e - 1 : S - 1);
-    }
+    domain.zerofiers_.push_back(w + l.zhInv);
+    domain.masks_.push_back(e - 1);
     return domain;
 }
 
@@ -152,7 +103,7 @@ ExpressionsDomainGpu ExpressionsDomainGpu::cosetPart(uint64_t nBits, uint64_t nB
 // The operand tables
 // ---------------------------------------------------------------------------------------------
 
-OperandLayout operandLayout(const ExpressionsBin &bin, uint64_t nOpenings, uint64_t nBoundaries) {
+OperandLayout operandLayout(const ExpressionsBin &bin, uint64_t nOpenings) {
     const OperandTypes types = bin.types();
     OperandLayout l;
     std::vector<uint64_t> nColumns(types.zi(), 0);
@@ -176,7 +127,7 @@ OperandLayout operandLayout(const ExpressionsBin &bin, uint64_t nOpenings, uint6
         l.columnStart.push_back(static_cast<uint32_t>(l.columnStart.back() + n));
     }
     l.nShifts = nOpenings;
-    l.nZerofiers = nBoundaries;
+    l.nZerofiers = N_BOUNDARIES;
 
     uint64_t nValues = 0;
     for (uint64_t n : l.nScalars) {
@@ -192,8 +143,8 @@ OperandLayout operandLayout(const ExpressionsBin &bin, uint64_t nOpenings, uint6
     l.scalars = take(N_SCALAR_TYPES * sizeof(void *));
     l.columns = take(uint64_t(l.columnStart.back()) * sizeof(void *));
     l.shifts = take(nOpenings * sizeof(uint64_t));
-    l.zerofiers = take(nBoundaries * sizeof(void *));
-    l.masks = take(nBoundaries * sizeof(uint64_t));
+    l.zerofiers = take(N_BOUNDARIES * sizeof(void *));
+    l.masks = take(N_BOUNDARIES * sizeof(uint64_t));
     l.columnStarts = take(l.columnStart.size() * sizeof(uint32_t));
     l.bytes = end;
     return l;
@@ -316,7 +267,7 @@ void GeneratedExpressions::launch(uint64_t expId, const ExpressionLaunch &l, voi
 ExpressionsGpu::ExpressionsGpu(const ExpressionsBin &bin, const PilfflonkInfo &info, DeviceCode expressions,
                                uint64_t _sharedBytes)
     : host(bin, info), types(bin.types()), expressionsCode(expressions),
-      layout(operandLayout(bin, info.openingPoints.size(), info.boundaries.size())), sharedBytes(_sharedBytes) {
+      layout(operandLayout(bin, info.openingPoints.size())), sharedBytes(_sharedBytes) {
     if (sharedBytes > MAX_SHARED_BYTES) {
         throw std::invalid_argument("ExpressionsGpu: " + std::to_string(sharedBytes) +
                                     " bytes of shared memory per block, and a block may take " +
@@ -339,7 +290,7 @@ ExpressionsGpu::ExpressionsGpu(const ExpressionsBin &bin, const PilfflonkInfo &i
 
 uint64_t ExpressionsGpu::deviceBytesOf(const ExpressionsBin &bin, const PilfflonkInfo &info, uint32_t multiprocessors,
                                        uint64_t sharedBytes) {
-    return operandLayout(bin, info.openingPoints.size(), info.boundaries.size()).bytes +
+    return operandLayout(bin, info.openingPoints.size()).bytes +
            uint64_t(multiprocessors) * TEMPORARY_BLOCKS_PER_SM * temporaryBytesPerBlock(bin, sharedBytes) +
            GeneratedExpressions(bin.path).scratchBytes();
 }

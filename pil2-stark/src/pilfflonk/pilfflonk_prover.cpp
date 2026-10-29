@@ -605,7 +605,7 @@ std::vector<G1Point> Instance::commitQOnHost(uint64_t partBits) {
         TimerStopAndLogExpr(PILFFLONK_Q_EXTEND, part);
         TimerStartExpr(PILFFLONK_Q_DOMAIN, part);
         const ExpressionsDomain domain =
-            ExpressionsDomain::cosetPart(info.nBits, nBitsExt, partBits, part, info.boundaries);
+            ExpressionsDomain::cosetPart(info.nBits, nBitsExt, partBits, part);
         TimerStopAndLogExpr(PILFFLONK_Q_DOMAIN, part);
         TimerStartExpr(PILFFLONK_Q_EVALUATE, part);
         FrElement *dest = nParts > 1 ? qPart.data() : qValues.get();
@@ -780,12 +780,11 @@ std::vector<ConstraintCheck> Instance::check(uint64_t maxRows, const std::vector
     std::vector<FrElement> numerator(key.n());
     std::vector<ConstraintCheck> checks(constraints.size());
     for (uint64_t c = 0; c < constraints.size(); ++c) {
-        // AirKey checked that its rows lie in H: lastRow <= N.
-        const uint64_t firstRow = constraints[c].firstRow, lastRow = constraints[c].lastRow;
+        const uint64_t n = key.n();
         key.expressions().calculateConstraint(c, trace, values, numerator.data());
         uint64_t failed = 0;
 #pragma omp parallel for reduction(+ : failed)
-        for (uint64_t i = firstRow; i < lastRow; ++i) {
+        for (uint64_t i = 0; i < n; ++i) {
             if (!fr.isZero(numerator[i])) {
                 ++failed;
             }
@@ -794,7 +793,7 @@ std::vector<ConstraintCheck> Instance::check(uint64_t maxRows, const std::vector
         result.nFailed = failed;
         const uint64_t kept = std::min(failed, maxRows);
         result.rows.reserve(kept);
-        for (uint64_t i = firstRow; result.rows.size() < kept; ++i) {
+        for (uint64_t i = 0; result.rows.size() < kept; ++i) {
             if (!fr.isZero(numerator[i])) {
                 result.rows.push_back(FailedRow{i, numerator[i]});
             }

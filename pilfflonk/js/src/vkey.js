@@ -10,8 +10,8 @@
 // checks of snarkjs' steps 1-3 on its points (elements.js) and those the verifier needs to run:
 //   - numChallenges has one entry per stage, and stage 1 none: the transcript squeezes no challenge
 //     before the commitments of stage 1 (pilfflonk/docs/protocol.md#transcript);
-//   - boundaries[0] is everyRow, whose Zi is 1/Z_H
-//     (pilfflonk/docs/protocol.md#constraint-polynomial), and an everyFrame leaves a row;
+//   - boundaries is only everyRow, whose Zi is 1/Z_H
+//     (pilfflonk/docs/protocol.md#constraint-polynomial);
 //   - the qVerifier is code the verifier can run (qverifier.js);
 //   - the names of the evaluations (names.js) do not collide;
 //   - maxQDegree is 0 unless it splits Q (layout.rs, split_max_q_degree), and split, the pieces of Q
@@ -115,16 +115,8 @@ export function qPieces(qDeg, maxQDegree) {
 function readBoundary(b, i) {
     const what = `boundaries[${i}]`;
     if (!isPlainObject(b)) fail(`${what} is not an object`);
-    if (b.name === "everyFrame") {
-        checkKeys(b, ["name", "offsetMin", "offsetMax"], what);
-        return {
-            name: b.name,
-            offsetMin: count(b.offsetMin, `${what}.offsetMin`),
-            offsetMax: count(b.offsetMax, `${what}.offsetMax`),
-        };
-    }
-    if (!["everyRow", "firstRow", "lastRow"].includes(b.name)) {
-        fail(`${what} is ${show(b.name)}, not a domain (pilfflonk/docs/protocol.md#constraint-polynomial)`);
+    if (b.name !== "everyRow") {
+        fail(`${what} is ${show(b.name)}, not everyRow (pilfflonk/docs/protocol.md#constraint-polynomial)`);
     }
     checkKeys(b, ["name"], what);
     return { name: b.name };
@@ -193,7 +185,7 @@ function checkLayoutOf(curve, vk) {
 //   X2            {one: [1]₂, tau: [τ]₂}
 //   evMap         [{type, id, prime, openingPos, name}]: name, the evaluation's in the proof
 //   layout        [{stage, pols: [{id, name}], k, offsets, degree}], f_i at position i
-//   boundaries    [{name, offsetMin?, offsetMax?}]
+//   boundaries    [{name}]
 //   fixedCommitments  [f_i]₁ of the fixed f_i, the first of the layout
 //   commitmentNames   the proof's names of the other f_i, in the global order
 //                     (pilfflonk/docs/protocol.md#global-order)
@@ -287,16 +279,9 @@ export function fromObjectVk(curve, vkObject) {
     vk.challenges = challengesMap(vk.numChallenges, vk.nStages);
 
     vk.boundaries = array(vkObject.boundaries, "boundaries").map(readBoundary);
-    if (vk.boundaries.length === 0 || vk.boundaries[0].name !== "everyRow") {
-        fail("boundaries[0] is not everyRow, whose Zi is 1/Z_H (pilfflonk/docs/protocol.md#constraint-polynomial)");
+    if (vk.boundaries.length !== 1) {
+        fail("boundaries must be only everyRow, whose Zi is 1/Z_H (pilfflonk/docs/protocol.md#constraint-polynomial)");
     }
-    vk.boundaries.forEach((b, i) => {
-        const same = (c) => c.name === b.name && c.offsetMin === b.offsetMin && c.offsetMax === b.offsetMax;
-        if (vk.boundaries.slice(0, i).some(same)) fail(`boundary ${show(b)} is there twice`);
-        if (b.name === "everyFrame" && b.offsetMin + b.offsetMax >= vk.N) {
-            fail(`boundaries[${i}] is everyFrame {${b.offsetMin}, ${b.offsetMax}}: no row of ${vk.N} is left`);
-        }
-    });
 
     const nFixed = vk.layout.filter((f) => f.stage === 0).length;
     const fixedKeys = Object.keys(vkObject).filter((k) => FIXED_KEY.test(k));

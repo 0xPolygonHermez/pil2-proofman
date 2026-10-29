@@ -238,7 +238,7 @@ ExpressionsBin ExpressionsBin::parse(const uint8_t *data, uint64_t size, const s
     const uint32_t version = file.u32();
     if (version != EXPRESSIONS_BIN_VERSION) {
         file.fail("version " + hex(version) + ", and pilfflonk's is " + hex(EXPRESSIONS_BIN_VERSION) +
-                  ": not a pilfflonk bytecode of revision 3");
+                  ": not a pilfflonk bytecode of revision 4");
     }
     if (file.u32() != EXPRESSIONS_BIN_N_SECTIONS) {
         file.fail("it does not have 3 sections");
@@ -263,7 +263,7 @@ ExpressionsBin ExpressionsBin::parse(const uint8_t *data, uint64_t size, const s
     if (prefixVersion != EXPRESSIONS_BIN_VERSION || n8 != FR_BYTES ||
         std::memcmp(modulus, FR_MODULUS_LE, FR_BYTES) != 0) {
         r1.fail("section 1 starts with version " + hex(prefixVersion) + " and n8 " + std::to_string(n8) +
-                ", not those of a revision-3 bytecode over BN128");
+                ", not those of a revision-4 bytecode over BN128");
     }
     bin.nStages = r1.u32();
     if (bin.nStages > EXPRESSIONS_BIN_MAX_N_STAGES) {
@@ -304,14 +304,11 @@ ExpressionsBin ExpressionsBin::parse(const uint8_t *data, uint64_t size, const s
         ParserParams p;
         p.stage = r2.u32();
         p.destId = r2.u32();
-        p.firstRow = r2.u32();
-        p.lastRow = r2.u32();
         readCodeFields(r2, p);
         const uint32_t imPol = r2.u32();
         p.line = r2.string();
-        if (p.firstRow > p.lastRow || imPol > 1) {
-            r2.fail("constraint " + std::to_string(i) + ": rows " + std::to_string(p.firstRow) + ".." +
-                    std::to_string(p.lastRow) + ", imPol " + std::to_string(imPol));
+        if (imPol > 1) {
+            r2.fail("constraint " + std::to_string(i) + ": imPol " + std::to_string(imPol));
         }
         p.imPol = imPol == 1;
         bin.constraintsInfoDebug.push_back(std::move(p));

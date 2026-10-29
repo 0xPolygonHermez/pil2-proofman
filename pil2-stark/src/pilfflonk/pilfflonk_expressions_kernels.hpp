@@ -88,17 +88,6 @@ extern "C" {
 // Expressions::calculate computes it, and the value of the last op into dest.
 void pilfflonk_gpu_calculate_expression(const PilFflonk::ExpressionLaunch *launch);
 
-// Zi of a firstRow or lastRow boundary on the `size` points x_i = shift·ω^i of a part of the coset
-// (ExpressionsDomain::cosetPart): out[i] = zh[i & zhMask]·(x_i − root)^−1, with ω^i =
-// bases[i >> 8]·powers[i & 255] (gpu_plonk_precompute_omega_tables_async's tables of ω, blocks of
-// 256). shift and root are host pointers to an element.
-void pilfflonk_gpu_one_row_zerofier(void *out, uint64_t size, const void *shift, const void *bases,
-                                    const void *powers, const void *root, const void *zh, uint64_t zhMask);
-
-// Zi of an everyFrame on those points: out[i] = Π_{j<nRoots} (x_i − roots[j]), in that order.
-void pilfflonk_gpu_frame_zerofier(void *out, uint64_t size, const void *shift, const void *bases, const void *powers,
-                                  const void *roots, uint64_t nRoots);
-
 } // extern "C"
 
 #endif

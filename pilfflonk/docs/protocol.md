@@ -22,35 +22,28 @@ What the setup, the prover and the verifiers compute, normatively. The file form
 For each AIR, with its `n` constraints `c_i` in the pilout's order:
 
 ```
-Q(X) = Σ_{i=0..n−1} std_vc^(n−1−i) · c_i(X) / Z_{D_i}(X)
+Q(X) = Σ_{i=0..n−1} std_vc^(n−1−i) · c_i(X) / Z_H(X)
 ```
 
 This is the STARK's Horner fold (`setup/pil2-stark/src/pil/constraint_poly.rs`): `acc = acc·std_vc +
-c_i·(Z_H/Z_{D_i})`, divided by `Z_H` at the end. The first constraint gets the highest power.
+c_i`, divided by `Z_H` at the end. The first constraint gets the highest power.
 
-| Domain | `Z_D(X)` |
-|---|---|
-| `everyRow` | `X^N − 1` |
-| `firstRow` | `X − 1` |
-| `lastRow` | `X − ω^(N−1)` |
-| `everyFrame{min, max}` | `X^N − 1` divided by the factors `X − ω^j` of the rows it leaves out |
+Every constraint is `everyRow`, so its zerofier is `Z_H(X) = X^N − 1`. A domain constraint (pilout v2) is
+refused at setup: "domain constraints are not supported by pilfflonk".
 
-The code of `Q` and the `qVerifier` read the zerofiers as `Zi` operands, one per entry of the AIR's
-`boundaries` (`everyRow` first): `Zi(everyRow) = 1/Z_H(X)`, and `Zi(D) = Z_H(X)/Z_D(X)` for any other
-boundary `D`. `Q`'s code ends by multiplying by `Zi(everyRow)`.
+The code of `Q` and the `qVerifier` read the zerofier as the `Zi` operand of the AIR's only boundary,
+`everyRow`: `Zi = 1/Z_H(X)`. `Q`'s code ends by multiplying by it.
 
-The compiler emits only `everyRow` constraints: it parses `when` but does not execute it. Programs
-express their boundaries with fixed columns such as `L1`, and the other three domains are exercised
-with pilouts built in code.
+The compiler's `when` is not executed, so programs express their boundaries with fixed columns
+such as `L1`.
 
 Without pieces the verifier never receives `Q(ξ)`: it computes it from the evaluations and the
-`Z_D(ξ)`, with the `qVerifier`.
+`Z_H(ξ)`, with the `qVerifier`.
 
 ## Degree search
 
-`qDeg = max_i(deg c_i + δ_i) − 1`, in units of `N`, after the intermediate polynomials (im pols) are
-introduced, where `δ_i` is 1 if constraint `i` is not `everyRow` and 0 if it is: the factor
-`Z_H/Z_{D_i}` adds almost `N` to its degree. If no constraint depends on a column, `qDeg` would be
+`qDeg = max_i(deg c_i) − 1`, in units of `N`, after the intermediate polynomials (im pols) are
+introduced. If no constraint depends on a column, `qDeg` would be
 negative, and the setup refuses the pilout.
 
 The setup chooses the im pols with the search of `pil-info` (`PilInfoCfg::bn128()`, degree policy
@@ -436,7 +429,7 @@ coset of `H` (`S = N`). For each part the prover:
 1. extends every column `Q` reads to the part (`Lde::extendCosetPart`): coefficient `j` is multiplied
    by `c^j` and folded onto `j mod S`, then an FFT of `S` points;
 2. builds the part's domain (`ExpressionsDomain::cosetPart`): its `Zi`, those of the whole coset at
-   the same points, from the part's points; an `everyRow`'s, `1/Z_H`, repeats every `S/N` points and
+   the same points, from the part's points; `1/Z_H` repeats every `S/N` points and
    is kept as those values only;
 3. evaluates `Q` there with the interpreter, in blocks of 128 rows as the STARK's
    (`NROWS_PACK`); a column at offset `o` is read `o·S/N` points further within the part;

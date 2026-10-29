@@ -471,8 +471,7 @@ extern "C" {
     // The check (pilfflonk/docs/README.md#pilfflonk-check): the witness of an instance against the
     // constraints of its AIR, row by row, proving nothing. The constraints are section 2 of the
     // AIR's <air>.bin: the pilout's, in its order, then one per intermediate polynomial, im − e.
-    // Constraint c holds on the rows first_row <= i < last_row where its numerator, the value of
-    // its code, is 0.
+    // Constraint c holds on every row where its numerator, the value of its code, is 0.
     //
     //   n = pilfflonk_ctx_n_constraints(ctx, …)
     //   pilfflonk_ctx_constraint(ctx, …, c, …), pilfflonk_ctx_constraint_line(ctx, …, c, …), c < n
@@ -488,13 +487,12 @@ extern "C" {
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no such AIR.
     int pilfflonk_ctx_n_constraints(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t *out);
 
-    // Constraint `index` of that AIR: its stage, the rows first_row <= i < last_row it holds on, 1 in
+    // Constraint `index` of that AIR: its stage, 1 in
     // im_pol if it is an intermediate polynomial's and 0 if not, and in line_len the bytes of its line,
     // the PIL it comes from (pilfflonk_ctx_constraint_line).
     // PILFFLONK_ERR_INVALID_ARGUMENT if a pointer is NULL or there is no such AIR or constraint.
     int pilfflonk_ctx_constraint(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t index,
-                                 uint64_t *stage, uint64_t *first_row, uint64_t *last_row, uint32_t *im_pol,
-                                 uint64_t *line_len);
+                                 uint64_t *stage, uint32_t *im_pol, uint64_t *line_len);
 
     // Writes to out the line of that constraint, as the setup wrote it (UTF-8,
     // pilfflonk/docs/formats.md#bytecode): its n bytes, with no NUL. n must be its line_len; out

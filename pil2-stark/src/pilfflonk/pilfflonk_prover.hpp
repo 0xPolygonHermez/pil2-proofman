@@ -45,7 +45,7 @@ struct FailedRow {
 
 // What Instance::check finds of one constraint.
 struct ConstraintCheck {
-    // The rows firstRow <= i < lastRow of the constraint where its numerator is not 0.
+    // The rows of the constraint where its numerator is not 0.
     uint64_t nFailed = 0;
     // The first min(nFailed, maxRows) of them, in increasing order.
     std::vector<FailedRow> rows;

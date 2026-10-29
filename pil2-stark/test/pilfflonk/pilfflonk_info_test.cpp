@@ -26,7 +26,6 @@ namespace PilFflonkTest {
 
 namespace {
 
-using PilFflonk::BoundaryType;
 using PilFflonk::FormatError;
 using PilFflonk::IoError;
 using PilFflonk::PilfflonkInfo;
@@ -105,11 +104,6 @@ void testReadsWhatRustWrites() {
     assert(info.mapSectionsN == sections);
     assert((info.openingPoints == std::vector<int64_t>{-1, 0, 1}));
 
-    assert(info.boundaries.size() == 3);
-    assert(info.boundaries[0].type == BoundaryType::EveryRow);
-    assert(info.boundaries[1].type == BoundaryType::FirstRow);
-    assert(info.boundaries[2].type == BoundaryType::EveryFrame);
-    assert(info.boundaries[2].offsetMin == 1 && info.boundaries[2].offsetMax == 2);
 
     struct Ev {
         PolType type;
@@ -201,10 +195,9 @@ void testRefusesWhatIsNotAPilfflonkinfo() {
     expectFormatError(mutated(text, "\"prime\": -1", "\"prime\": -1.5"), "evMap[0].prime: must be an integer");
     expectFormatError(mutated(text, "\"openingPos\": 0", "\"openingPos\": 1"), "evMap[0].openingPos");
     expectFormatError(mutated(text, "\"openingPos\": 0", "\"openingPos\": 7"), "evMap[0].openingPos");
-    expectFormatError(mutated(text, "\"name\": \"firstRow\"", "\"name\": \"someRow\""), "is not a boundary");
+    expectFormatError(mutated(text, "\"name\": \"everyRow\"", "\"name\": \"firstRow\""), "is not everyRow");
     expectFormatError(mutated(text, "\"name\": \"everyRow\"", "\"name\": \"everyRow\", \"offsetMin\": 0"),
-                      "only everyFrame has offsets");
-    expectFormatError(mutated(text, "\"offsetMin\": 1,", ""), "has no field \"offsetMin\"");
+                      "offsetMin");
     expectFormatError(mutated(text, "\"k\": 3", "\"k\": 2"), "layout[0].k");
     expectFormatError(mutated(text, "\"id\": 6,", "\"id\": 9,"), "layout[4].pols[0]");
     expectFormatError(mutated(text, "\"id\": 6,", "\"id\": 5,"), "layout[4].pols[0]");

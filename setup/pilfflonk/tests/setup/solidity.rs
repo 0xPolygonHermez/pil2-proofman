@@ -11,7 +11,7 @@ use pilfflonk_setup::digest::seal_vkey;
 use pilfflonk_setup::solidity::{export_verifier_sol, verifier_sol, VERIFIER_SOL_FILE};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupError, SetupPilfflonkOptions};
 use prost::Message;
-use proofman_pilfflonk::{Boundary, CalldataLayout, FqBytes, G1Affine, G2Affine, JsonFile, PilfflonkGlobalInfo, Vkey};
+use proofman_pilfflonk::{CalldataLayout, FqBytes, G1Affine, G2Affine, JsonFile, PilfflonkGlobalInfo, Vkey};
 
 use crate::common::*;
 use crate::ptau;
@@ -84,12 +84,9 @@ fn solidity_writes_the_verifier_next_to_the_vkey_and_changes_nothing_else() {
     assert_eq!(fs::read_to_string(&exported).unwrap(), sol);
 
     // The contract of snarkjs's interface, of the vkey's sizes: 3 commitments (a, b and Q), W and W',
-    // the evaluations of the evMap, inv and invZh; no auxiliary inverse (everyRow only); 2 publics.
+    // the evaluations of the evMap, inv and invZh; 2 publics.
     let layout = CalldataLayout::of(&vkey);
-    assert_eq!(
-        layout,
-        CalldataLayout { n_commitments: 3, n_evaluations: vkey.ev_map.len() as u64, n_q_pieces: 0, aux_rows: vec![] }
-    );
+    assert_eq!(layout, CalldataLayout { n_commitments: 3, n_evaluations: vkey.ev_map.len() as u64, n_q_pieces: 0 });
     assert_eq!(layout.words(), 2 * (3 + 2) + vkey.ev_map.len() as u64 + 2);
     assert!(
         sol.starts_with("// SPDX-License-Identifier: MIT OR Apache-2.0\npragma solidity >=0.7.0 <0.9.0;\n"),
@@ -149,27 +146,6 @@ fn the_verifier_of_a_vkey_the_js_verifier_accepts_nothing_of_is_refused() {
     invalid.power_w = 2;
     let err = refused(&seal_vkey(invalid).unwrap());
     assert!(err.contains("powerW"), "{err}");
-}
-
-/// The calldata's auxiliary inverses (pilfflonk/docs/formats.md#calldata): `1/(ξ − ω^j)`, one per
-/// `firstRow` (`j = 0`) or `lastRow` (`j = N − 1`) boundary, in the order of the boundaries, after
-/// the proof's words; none for `everyRow` and `everyFrame`.
-#[test]
-fn the_calldata_has_an_inverse_per_first_row_and_last_row_boundary() {
-    let _cpp = cpp_core();
-    let dir = TestDir::new("solidity_calldata");
-    let (_, vkey) = vkey_of(&setup(&dir, "build", false));
-    let mut domains = vkey.clone();
-    domains.boundaries = vec![
-        Boundary::EveryRow,
-        Boundary::LastRow,
-        Boundary::EveryFrame { offset_min: 1, offset_max: 2 },
-        Boundary::FirstRow,
-    ];
-    let layout = CalldataLayout::of(&domains);
-    assert_eq!(layout.aux_rows, [N as u64 - 1, 0]);
-    assert_eq!(layout.words(), CalldataLayout::of(&vkey).words() + 2);
-    assert_eq!(layout.proof_words(), CalldataLayout::of(&vkey).proof_words());
 }
 
 /// X_2 as the JS verifier reads it (elements.js, g2FromObject;

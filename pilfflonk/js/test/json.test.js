@@ -82,7 +82,7 @@ test("changing any field changes the digest", () => {
         "evMap[1].prime": (v) => (v.evMap[1].prime = -2),
         "evMap[2].openingPos": (v) => (v.evMap[2].openingPos = 0),
         "layout[2].degree": (v) => (v.layout[2].degree = 22),
-        boundaries: (v) => v.boundaries.push({ name: "firstRow" }),
+        boundaries: (v) => v.boundaries.push({ name: "everyRow" }),
         f0: (v) => (v.f0 = ["1", "21888242871839275222246405745257275088696311157297823662689037894645226208581"]),
         qDeg: (v) => (v.qDeg = 3),
         maxQDegree: (v) => (v.maxQDegree = 1),

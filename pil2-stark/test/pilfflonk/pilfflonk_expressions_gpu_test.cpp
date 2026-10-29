@@ -3,8 +3,8 @@
 // extended coset of 2^partBits points for partBits = nBits, nBits + 1 and nBitsExt, against
 // Expressions::calculateExpression byte for byte, with their temporaries in shared memory and in
 // device memory, into a strided dest on the parts (as Q goes into the coset's order); the errors
-// too, which are the CPU's word for word; and the Zi of every kind of boundary
-// (ExpressionsDomainGpu) against ExpressionsDomain::cosetPart. The columns and scalars are random,
+// too, which are the CPU's word for word; and the Zi (ExpressionsDomainGpu) against
+// ExpressionsDomain::cosetPart. The columns and scalars are random,
 // from a fixed seed, with 0, 1 and r − 1 among them: the code does not need a witness that satisfies
 // it to be computed the same. The device runs the expressions only (section 1: the hints, the im pols
 // and Q); the constraints of section 2 are the check's, on the host.
@@ -56,8 +56,6 @@ namespace {
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
-using PilFflonk::Boundary;
-using PilFflonk::BoundaryType;
 using PilFflonk::DeviceBuffer;
 using PilFflonk::DeviceCode;
 using PilFflonk::Expressions;
@@ -145,7 +143,7 @@ Air loadAir(const std::string &binPath, const std::string &infoPath) {
 }
 
 // Sample.bin, sample() of setup/pilfflonk/tests/bytecode.rs, with the AIR of Sample.expected.json:
-// two stages and a boundary of every kind.
+// two stages and its one boundary, everyRow.
 Air sampleAir() {
     const std::string path = fixture("Sample.bin");
     std::ifstream file(fixture("Sample.expected.json"));
@@ -155,13 +153,7 @@ Air sampleAir() {
     air.info.nBits = j["nBits"];
     air.info.nStages = 2;
     air.info.openingPoints = j["openingPoints"].get<std::vector<int64_t>>();
-    for (const json &b : j["boundaries"]) {
-        const std::string name = b["name"];
-        if (name == "everyRow") air.info.boundaries.push_back({BoundaryType::EveryRow, 0, 0});
-        else if (name == "firstRow") air.info.boundaries.push_back({BoundaryType::FirstRow, 0, 0});
-        else if (name == "lastRow") air.info.boundaries.push_back({BoundaryType::LastRow, 0, 0});
-        else air.info.boundaries.push_back({BoundaryType::EveryFrame, b["offsetMin"], b["offsetMax"]});
-    }
+    assert(j["boundaries"].size() == PilFflonk::N_BOUNDARIES);
     return air;
 }
 
@@ -200,19 +192,8 @@ std::vector<BytecodeFiles> keysUnderTest() {
     return keys;
 }
 
-// The rows of the domains `air` is tested on: its own, or 2^TEST_NBITS if it has more and its
-// everyFrames fit there.
-uint64_t testBits(const Air &air) {
-    if (air.info.nBits <= TEST_NBITS) {
-        return air.info.nBits;
-    }
-    for (const Boundary &b : air.info.boundaries) {
-        if (b.type == BoundaryType::EveryFrame && b.offsetMin + b.offsetMax > (uint64_t(1) << TEST_NBITS)) {
-            return air.info.nBits;
-        }
-    }
-    return TEST_NBITS;
-}
+// The rows of the domains `air` is tested on: its own, or 2^TEST_NBITS if it has more.
+uint64_t testBits(const Air &air) { return std::min<uint64_t>(air.info.nBits, TEST_NBITS); }
 
 // A code block of the bytecode: an expression's or a constraint's.
 struct Code {
@@ -321,7 +302,7 @@ Column throughTheTables(const ParserParams &params, const ParserArgs &args, cons
 }
 
 // A domain the code is tested on: the CPU's, the device's, and the Zi the host reads through the
-// tables (an everyRow's as its e values, as the device keeps it).
+// tables (1/Z_H as its e values, as the device keeps it).
 struct Domain {
     ExpressionsDomain cpu;
     std::vector<ExpressionsDomainGpu> gpu; // one, where there is a GPU
@@ -339,18 +320,14 @@ Domain traceDomain(uint64_t nBits, bool gpu) {
 }
 
 Domain partDomain(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
-                  const std::vector<Boundary> &boundaries, std::vector<DeviceBuffer> &workspaces, bool gpu) {
-    Domain d{ExpressionsDomain::cosetPart(nBits, nBitsExt, partBits, part, boundaries), {}, {}, {}, {}};
-    d.zhInv = PilFflonk::cosetPartPoints(nBits, nBitsExt, partBits, part, boundaries).zhInv;
-    for (uint64_t b = 0; b < boundaries.size(); ++b) {
-        const bool table = boundaries[b].type == BoundaryType::EveryRow;
-        d.hostZerofiers.push_back(table ? d.zhInv.data() : d.cpu.zerofier(b).data());
-        d.hostMasks.push_back(table ? d.zhInv.size() - 1 : d.cpu.size() - 1);
-    }
+                  std::vector<DeviceBuffer> &workspaces, bool gpu) {
+    Domain d{ExpressionsDomain::cosetPart(nBits, nBitsExt, partBits, part), {}, {}, {}, {}};
+    d.zhInv = PilFflonk::cosetPartPoints(nBits, nBitsExt, partBits, part).zhInv;
+    d.hostZerofiers.push_back(d.zhInv.data());
+    d.hostMasks.push_back(d.zhInv.size() - 1);
     if (gpu) {
-        workspaces.emplace_back(ExpressionsDomainGpu::cosetPartBytes(nBits, partBits, boundaries));
-        d.gpu.push_back(ExpressionsDomainGpu::cosetPart(nBits, nBitsExt, partBits, part, boundaries,
-                                                        workspaces.back().data()));
+        workspaces.emplace_back(ExpressionsDomainGpu::cosetPartBytes(nBits, partBits));
+        d.gpu.push_back(ExpressionsDomainGpu::cosetPart(nBits, nBitsExt, partBits, part, workspaces.back().data()));
     }
     return d;
 }
@@ -373,7 +350,7 @@ void testAnAir(const Air &air, Random &random, bool gpu) {
     const Expressions cpu(air.bin, air.info);
     const OperandTypes types = air.bin.types();
     const OperandLayout layout =
-        PilFflonk::operandLayout(air.bin, air.info.openingPoints.size(), air.info.boundaries.size());
+        PilFflonk::operandLayout(air.bin, air.info.openingPoints.size());
     const uint64_t nBits = testBits(air);
     const uint64_t nBitsExt = nBits + (air.nBitsExt - air.info.nBits);
     const uint64_t NExt = uint64_t(1) << nBitsExt;
@@ -391,7 +368,7 @@ void testAnAir(const Air &air, Random &random, bool gpu) {
     domains[0].push_back(traceDomain(nBits, gpu));
     for (uint64_t s = 1; s < sizes.size(); ++s) {
         for (uint64_t part = 0; part < (NExt >> sizes[s]); ++part) {
-            domains[s].push_back(partDomain(nBits, nBitsExt, sizes[s], part, air.info.boundaries, workspaces, gpu));
+            domains[s].push_back(partDomain(nBits, nBitsExt, sizes[s], part, workspaces, gpu));
             if (gpu) {
                 expectTheCpusZerofiers(domains[s].back().cpu, domains[s].back().gpu[0]);
             }
@@ -497,13 +474,13 @@ void testAnAir(const Air &air, Random &random, bool gpu) {
 void testTheTablesOfTheSample() {
     const Air air = sampleAir();
     const OperandTypes types = air.bin.types();
-    const OperandLayout layout = PilFflonk::operandLayout(air.bin, 5, 4);
+    const OperandLayout layout = PilFflonk::operandLayout(air.bin, 5);
     assert((layout.columnStart == std::vector<uint32_t>{0, 1, 4, 5, 5}));
     assert((layout.nScalars == std::vector<uint64_t>{2, 0, 1, 2, 1, 1}));
-    assert(layout.nShifts == 5 && layout.nZerofiers == 4);
+    assert(layout.nShifts == 5 && layout.nZerofiers == 1);
     assert(layout.values == 0 && layout.scalars == 7 * 32 && layout.columns == layout.scalars + 6 * 8);
     assert(layout.shifts == layout.columns + 5 * 8 && layout.zerofiers == layout.shifts + 5 * 8);
-    assert(layout.masks == layout.zerofiers + 4 * 8 && layout.columnStarts == layout.masks + 4 * 8);
+    assert(layout.masks == layout.zerofiers + 1 * 8 && layout.columnStarts == layout.masks + 1 * 8);
     assert(layout.bytes == layout.columnStarts + 5 * 4 + 4);
 
     // Distinct addresses for every column, Zi and number, to see which one each operand reads.
@@ -518,11 +495,10 @@ void testTheTablesOfTheSample() {
     values.airgroupValues = random.column(1);
     values.challenges = random.column(1);
     const void *numbers = reinterpret_cast<const void *>(0x5000);
-    const std::vector<const void *> zerofiers = {reinterpret_cast<const void *>(0x6000),
-                                                 reinterpret_cast<const void *>(0x7000)};
+    const std::vector<const void *> zerofiers = {reinterpret_cast<const void *>(0x6000)};
     std::vector<uint64_t> table((layout.bytes + 7) / 8);
     uint8_t *bytes = reinterpret_cast<uint8_t *>(table.data());
-    PilFflonk::encodeOperands(layout, types, values, numbers, {3, 5, 0, 11, 13}, zerofiers, {1, 15}, bytes, bytes);
+    PilFflonk::encodeOperands(layout, types, values, numbers, {3, 5, 0, 11, 13}, zerofiers, {1}, bytes, bytes);
     const OperandTables t = PilFflonk::operandTables(layout, types, bytes, 16);
     assert(t.mask == 15 && t.ziType == types.zi() && t.scalarsType == types.publics());
     auto address = [&](uint32_t type, uint32_t arg1, uint32_t arg2, uint64_t i) {
@@ -532,9 +508,8 @@ void testTheTablesOfTheSample() {
     assert(address(0, 0, 0, 0) == 0x1000 + 3 * 32 && address(0, 0, 1, 12) == 0x1000 + 1 * 32);
     assert(address(1, 1, 4, 7) == 0x3000 + 4 * 32 && address(2, 0, 3, 9) == 0x4000 + 4 * 32);
     assert(address(1, 2, 2, 0) == 0);
-    // Zi: the everyRow's e = 2 values, the other's 16; boundaries the domain has not, null.
-    assert(address(types.zi(), 1, 0, 13) == 0x6000 + 1 * 32 && address(types.zi(), 2, 0, 13) == 0x7000 + 13 * 32);
-    assert(t.zerofiers[2] == nullptr && t.zerofiers[3] == nullptr);
+    // Zi: the e = 2 values of 1/Z_H.
+    assert(address(types.zi(), 1, 0, 13) == 0x6000 + 1 * 32);
     // Scalars: their values in the tables, the numbers the code's.
     auto value = [&](uint32_t type, uint32_t arg1) -> const FrElement & {
         return *static_cast<const FrElement *>(PilFflonk::operandAddress(t, type, arg1, 0, 5));
@@ -550,34 +525,18 @@ void testTheTablesOfTheSample() {
     assert(same(&value(types.challenges(), 0), &values.challenges[0], 1));
 }
 
-// The device's Zi of a part, of every kind of boundary, is cosetPart's: on parts of fewer points
-// than a warp, of one block and of many, everyFrames that exclude nothing, a few rows or all of
-// them; and both refuse alike.
+// The device's Zi of a part is cosetPart's: on parts of fewer points than a warp, of one block and of
+// many; and both refuse alike.
 void testTheZerofiersOnTheDevice() {
     for (uint64_t nBits : {uint64_t(1), uint64_t(2), uint64_t(3), uint64_t(5), uint64_t(8), uint64_t(11)}) {
-        const uint64_t N = uint64_t(1) << nBits;
-        std::vector<Boundary> boundaries = {{BoundaryType::EveryRow, 0, 0},
-                                            {BoundaryType::FirstRow, 0, 0},
-                                            {BoundaryType::LastRow, 0, 0},
-                                            {BoundaryType::EveryFrame, 0, 0}};
-        if (N >= 4) {
-            boundaries.push_back({BoundaryType::EveryFrame, 1, 2});
-            boundaries.push_back({BoundaryType::EveryFrame, 3, 0});
-        }
-        // Every row, on domains where the CPU's product of N factors per point is quick.
-        if (nBits <= 5) {
-            boundaries.push_back({BoundaryType::EveryFrame, N / 2, N / 2});
-            boundaries.push_back({BoundaryType::EveryFrame, 1, N - 1});
-        }
         for (uint64_t ext : {uint64_t(0), uint64_t(1), uint64_t(3)}) {
             const uint64_t nBitsExt = nBits + ext;
             for (uint64_t partBits = nBits; partBits <= nBitsExt; ++partBits) {
                 for (uint64_t part = 0; part < (uint64_t(1) << (nBitsExt - partBits)); ++part) {
-                    const DeviceBuffer workspace(ExpressionsDomainGpu::cosetPartBytes(nBits, partBits, boundaries));
-                    const ExpressionsDomain cpu =
-                        ExpressionsDomain::cosetPart(nBits, nBitsExt, partBits, part, boundaries);
+                    const DeviceBuffer workspace(ExpressionsDomainGpu::cosetPartBytes(nBits, partBits));
+                    const ExpressionsDomain cpu = ExpressionsDomain::cosetPart(nBits, nBitsExt, partBits, part);
                     const ExpressionsDomainGpu gpu =
-                        ExpressionsDomainGpu::cosetPart(nBits, nBitsExt, partBits, part, boundaries, workspace.data());
+                        ExpressionsDomainGpu::cosetPart(nBits, nBitsExt, partBits, part, workspace.data());
                     assert(gpu.nBits() == nBits);
                     expectTheCpusZerofiers(cpu, gpu);
                 }
@@ -585,18 +544,15 @@ void testTheZerofiersOnTheDevice() {
         }
     }
     const DeviceBuffer workspace(1024);
-    const std::vector<Boundary> tooMany = {{BoundaryType::EveryFrame, 5, 4}};
     // nBits, nBitsExt, partBits and part.
     for (const std::array<uint64_t, 4> &a :
-         std::vector<std::array<uint64_t, 4>>{{3, 5, 2, 0}, {3, 5, 6, 0}, {3, 5, 4, 2}, {3, 4, 3, 0}}) {
-        const std::vector<Boundary> &boundaries = a[1] == 4 ? tooMany : std::vector<Boundary>{};
-        const std::string expected = outcome([&] { ExpressionsDomain::cosetPart(a[0], a[1], a[2], a[3], boundaries); });
+         std::vector<std::array<uint64_t, 4>>{{3, 5, 2, 0}, {3, 5, 6, 0}, {3, 5, 4, 2}}) {
+        const std::string expected = outcome([&] { ExpressionsDomain::cosetPart(a[0], a[1], a[2], a[3]); });
         assert(!expected.empty());
-        assert(outcome([&] {
-                   ExpressionsDomainGpu::cosetPart(a[0], a[1], a[2], a[3], boundaries, workspace.data());
-               }) == expected);
+        assert(outcome([&] { ExpressionsDomainGpu::cosetPart(a[0], a[1], a[2], a[3], workspace.data()); }) ==
+               expected);
     }
-    assert(outcome([&] { ExpressionsDomainGpu::cosetPart(3, 4, 3, 0, {}, nullptr); }) ==
+    assert(outcome([&] { ExpressionsDomainGpu::cosetPart(3, 4, 3, 0, nullptr); }) ==
            "invalid_argument: ExpressionsDomainGpu::cosetPart: workspace is null");
     assert(outcome([] { ExpressionsDomainGpu::trace(29); }) == outcome([] { ExpressionsDomain::trace(29); }));
 }
@@ -613,7 +569,7 @@ void testWhatTheDeviceRefuses() {
     const ExpressionsGpu gpu(air.bin, air.info, e);
     const ExpressionsDomainGpu trace = ExpressionsDomainGpu::trace(air.info.nBits);
     Random random(61);
-    const Values values(PilFflonk::operandLayout(air.bin, 5, 4), air.bin.types(), 8, random, true);
+    const Values values(PilFflonk::operandLayout(air.bin, 5), air.bin.types(), 8, random, true);
     const DeviceBuffer dest(8 * sizeof(FrElement));
     FrElement *d = reinterpret_cast<FrElement *>(dest.data());
     assert(outcome([&] { gpu.calculateExpression(3, trace, values.device, d, 0); }) ==
@@ -666,15 +622,13 @@ void timeQ(const std::string &dir) {
             host.columns[c.type][c.index] = columns.back().data();
             device.columns[c.type][c.index] = reinterpret_cast<const FrElement *>(deviceColumns.back().data());
         }
-        randomScalars(PilFflonk::operandLayout(air.bin, air.info.openingPoints.size(), air.info.boundaries.size()),
-                      types, random, host, device);
+        randomScalars(PilFflonk::operandLayout(air.bin, air.info.openingPoints.size()), types, random, host, device);
 
         Clock::duration onGpu{}, onCpu{};
         Column expected(NExt), part(S);
-        const DeviceBuffer workspace(ExpressionsDomainGpu::cosetPartBytes(nBits, partBits, air.info.boundaries));
+        const DeviceBuffer workspace(ExpressionsDomainGpu::cosetPartBytes(nBits, partBits));
         for (uint64_t p = 0; p < nParts; ++p) {
-            const ExpressionsDomainGpu domain = ExpressionsDomainGpu::cosetPart(nBits, air.nBitsExt, partBits, p,
-                                                                                air.info.boundaries, workspace.data());
+            const ExpressionsDomainGpu domain = ExpressionsDomainGpu::cosetPart(nBits, air.nBitsExt, partBits, p, workspace.data());
             gpu_plonk_cuda_device_sync();
             const Clock::time_point start = Clock::now();
             gpu.calculateExpression(air.info.cExpId, domain, device, reinterpret_cast<FrElement *>(dest.data()) + p,
@@ -684,7 +638,7 @@ void timeQ(const std::string &dir) {
 
             const Clock::time_point cpuStart = Clock::now();
             const ExpressionsDomain cpuDomain =
-                ExpressionsDomain::cosetPart(nBits, air.nBitsExt, partBits, p, air.info.boundaries);
+                ExpressionsDomain::cosetPart(nBits, air.nBitsExt, partBits, p);
             cpu.calculateExpression(air.info.cExpId, cpuDomain, host, part.data());
             onCpu += Clock::now() - cpuStart;
             for (uint64_t i = 0; i < S; ++i) {

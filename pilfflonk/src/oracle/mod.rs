@@ -25,26 +25,22 @@
 //! - **Rows.** Row `i` of a trace of `N = 2^nBits` rows is the point `ω^i`, with `ω = ω_N` the
 //!   generator of `H` that ffiasm and ffjavascript use ([`omega`]). A column read at offset `s`
 //!   on row `i` is its value at row `(i + s) mod N`: rows are cyclic.
-//! - **Constraints.** `check` evaluates every constraint of the pilout on every row of its domain
-//!   and returns those that are not 0. Domains: `everyRow` is every row, `firstRow` row 0,
-//!   `lastRow` row `N − 1`, and `everyFrame { offsetMin, offsetMax }` every row but the first
-//!   `offsetMin` and the last `offsetMax`, as the STARK's zerofier excludes them
-//!   (`pil2-stark/src/starkpil/setup_ctx.hpp`, `buildFrameZerofierInv`) and `Boundary::EveryFrame`
-//!   says. The compiler of `develop-0.15.0` only emits `everyRow`
-//!   (pilfflonk/docs/protocol.md#constraint-polynomial); the other three are exercised with pilouts
-//!   built in code.
+//! - **Constraints.** `check` evaluates every constraint of the pilout on every row and returns
+//!   those that are not 0. Only `everyRow` constraints are accepted, as the compiler of
+//!   `develop-0.15.0` emits (pilfflonk/docs/protocol.md#constraint-polynomial): a domain
+//!   constraint is an error.
 //! - **Points.** A column at offset `s` at a point `z` is its interpolant over `H` at `z·ω^s`, by
 //!   barycentric interpolation.
-//! - **`Q`.** `Q(X) = Σ_{i<n} std_vc^(n−1−i)·c_i(X)/Z_{D_i}(X)` over the `n` terms of the fold: the
+//! - **`Q`.** `Q(X) = Σ_{i<n} std_vc^(n−1−i)·c_i(X)/Z_H(X)` over the `n` terms of the fold: the
 //!   pilout's constraints in its order, then, if the setup chose im pols, one term
 //!   `im_k − e_k` for each of them in the order given (the STARK's fold,
 //!   `pil-info/src/pil/{constraint_poly,im_polynomials}.rs`). With im pols, every operand that
 //!   refers to the expression of an im pol reads its column instead, the interpolant of the
 //!   expression's values on `H`; the expression `e_k` of its own term does not.
-//!   - `q_at` computes it at a point `z ∉ H`, from the barycentric evaluations and `Z_D(z)` in
+//!   - `q_at` computes it at a point `z ∉ H`, from the barycentric evaluations and `Z_H(z)` in
 //!     closed form, as a verifier does;
 //!   - `q_polynomial` computes it as a polynomial: each numerator in coefficient form, divided by
-//!     `Z_D = Π_{j ∈ D}(X − ω^j)`. It is exact, and so `Q` a polynomial, if and only if every
+//!     `Z_H = Π_j (X − ω^j)`. It is exact, and so `Q` a polynomial, if and only if every
 //!     constraint holds on every row of its domain; `QPolynomial` keeps the remainders.
 //!
 //! - **The std's prover hints** (pilfflonk/docs/protocol.md#hint-columns). The columns of stage 2
@@ -79,7 +75,6 @@ mod fr;
 mod poly;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ops::Range;
 
 use pil2_pilout::pilout::{self as pb, constraint, SymbolType};
 
@@ -104,98 +99,23 @@ pub enum ColumnRef {
     Im(usize),
 }
 
-/// The domain of a constraint: the rows it holds on (see the module).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Domain {
-    EveryRow,
-    FirstRow,
-    LastRow,
-    EveryFrame { offset_min: usize, offset_max: usize },
+/// `Z_H(z) = z^N − 1`, the zerofier of every constraint (pilfflonk/docs/protocol.md#constraint-polynomial).
+fn zerofier_at(z: &Fr, n_bits: u32) -> Fr {
+    &z.pow_u64(1u64 << n_bits) - &Fr::one()
 }
 
-/// The legacy domain of the pilout domain `idx` (`complement` or not) of a trace of `2^n_bits`
-/// rows, for constraint `i`: only first row, last row and prefix-plus-suffix frames are expressible.
-fn domain_of(air: &pb::Air, i: usize, idx: u32, complement: bool, n_bits: u32) -> PilfflonkResult<Domain> {
-    let Some(d) = air.domains.get(idx as usize) else {
-        return invalid!("constraint {i} uses domain {idx}, which the air does not have");
-    };
-    match domain_from_offsets(d.cycle_bits, &d.offsets, complement, n_bits) {
-        None => invalid!("domain constraint not supported by pilfflonk (constraint {i})"),
-        Some(Domain::EveryFrame { offset_min, offset_max }) if offset_min + offset_max >= 1 << n_bits => {
-            invalid!(
-                "constraint {i} is everyFrame {{{offset_min}, {offset_max}}}: no row of {} is left",
-                1usize << n_bits
-            )
-        }
-        Some(domain) => Ok(domain),
-    }
+/// `Z_H` as a polynomial, `Π_j (X − ω^j)`: built from the rows, not from the closed form of
+/// `zerofier_at`, so that the two check each other.
+fn zerofier(n_bits: u32) -> PilfflonkResult<Vec<Fr>> {
+    let w = omega(n_bits)?;
+    let roots: Vec<Fr> = (0..1u64 << n_bits).map(|j| w.pow_u64(j)).collect();
+    Ok(poly::from_roots(&roots))
 }
 
-fn domain_from_offsets(cycle_bits: u32, offsets: &[u32], complement: bool, n_bits: u32) -> Option<Domain> {
-    if cycle_bits != n_bits {
-        return None;
-    }
-    let n = 1usize << n_bits;
-    let mut offs: Vec<usize> = offsets.iter().map(|&o| o as usize).collect();
-    offs.sort_unstable();
-    offs.dedup();
-    if !complement {
-        return match offs[..] {
-            [0] => Some(Domain::FirstRow),
-            [o] if o == n - 1 => Some(Domain::LastRow),
-            _ => None,
-        };
-    }
-    let k = offs.iter().enumerate().take_while(|(i, &o)| o == *i).count();
-    let j = offs[k..].iter().rev().enumerate().take_while(|(i, &o)| o == n - 1 - *i).count();
-    (k + j == offs.len() && !offs.is_empty()).then_some(Domain::EveryFrame { offset_min: k, offset_max: j })
-}
-
-impl Domain {
-    /// Its rows, of a trace of `n` rows.
-    pub fn rows(&self, n: usize) -> Range<usize> {
-        match *self {
-            Domain::EveryRow => 0..n,
-            Domain::FirstRow => 0..1,
-            Domain::LastRow => n.saturating_sub(1)..n,
-            Domain::EveryFrame { offset_min, offset_max } => offset_min..n.saturating_sub(offset_max),
-        }
-    }
-
-    /// `Z_D(z)` as the table of zerofiers writes it
-    /// (pilfflonk/docs/protocol.md#constraint-polynomial), for a trace of `2^n_bits` rows: `z^N − 1`,
-    /// `z − 1`, `z − ω^(N−1)`, and `(z^N − 1)/Π_j (z − ω^j)` over the rows `j` an `everyFrame`
-    /// excludes.
-    pub fn zerofier_at(&self, z: &Fr, n_bits: u32) -> PilfflonkResult<Fr> {
-        let w = omega(n_bits)?;
-        let n = 1u64 << n_bits;
-        let z_h = &z.pow_u64(n) - &Fr::one();
-        Ok(match *self {
-            Domain::EveryRow => z_h,
-            Domain::FirstRow => z - &Fr::one(),
-            Domain::LastRow => z - &w.pow_u64(n - 1),
-            Domain::EveryFrame { offset_min, offset_max } => {
-                let excluded = (0..offset_min as u64).chain(n.saturating_sub(offset_max as u64)..n);
-                let product = excluded.fold(Fr::one(), |acc, j| &acc * &(z - &w.pow_u64(j)));
-                &z_h * &product.inv()?
-            }
-        })
-    }
-
-    /// `Z_D` as a polynomial, `Π_{j ∈ D}(X − ω^j)`: built from the rows, not from the closed
-    /// forms of `zerofier_at`, so that the two check each other.
-    fn zerofier(&self, n_bits: u32) -> PilfflonkResult<Vec<Fr>> {
-        let w = omega(n_bits)?;
-        let roots: Vec<Fr> = self.rows(1 << n_bits).map(|j| w.pow_u64(j as u64)).collect();
-        Ok(poly::from_roots(&roots))
-    }
-}
-
-/// A constraint of the pilout: its expression must be 0 on the rows of its domain.
+/// A constraint of the pilout: its expression must be 0 on every row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Constraint {
     pub expression: usize,
-    pub domain: Domain,
     pub debug_line: String,
 }
 
@@ -465,13 +385,11 @@ impl AirOracle {
         let mut constraints = Vec::with_capacity(air.constraints.len());
         for (i, c) in air.constraints.iter().enumerate() {
             use constraint::Constraint as C;
-            let (expression, domain, debug_line) = match &c.constraint {
-                Some(C::AllRows(c)) => (&c.expression_idx, Domain::EveryRow, &c.debug_line),
-                Some(C::DomainRows(c)) => {
-                    (&c.expression_idx, domain_of(air, i, c.domain_idx, false, n_bits)?, &c.debug_line)
-                }
-                Some(C::ComplementDomainRows(c)) => {
-                    (&c.expression_idx, domain_of(air, i, c.domain_idx, true, n_bits)?, &c.debug_line)
+            let (expression, debug_line) = match &c.constraint {
+                Some(C::AllRows(c)) => (&c.expression_idx, &c.debug_line),
+                // strict, unlike the setup, which accepts a domain of every row as everyRow
+                Some(C::DomainRows(_) | C::ComplementDomainRows(_)) => {
+                    return invalid!("domain constraints are not supported by pilfflonk (constraint {i})")
                 }
                 None => return invalid!("constraint {i} is empty"),
             };
@@ -479,7 +397,7 @@ impl AirOracle {
             else {
                 return invalid!("constraint {i} has no expression of the AIR");
             };
-            constraints.push(Constraint { expression, domain, debug_line: debug_line.clone().unwrap_or_default() });
+            constraints.push(Constraint { expression, debug_line: debug_line.clone().unwrap_or_default() });
         }
 
         Ok(Self {
@@ -667,21 +585,21 @@ impl AirOracle {
     }
 
     /// The expression of every constraint on every row, in the pilout's order: `[constraint][row]`,
-    /// on all the rows, those out of its domain too.
+    /// on every row.
     pub fn numerators(&self, values: &Values) -> PilfflonkResult<Vec<Vec<Fr>>> {
         let none = BTreeMap::new();
         let mut rows = self.rows(values, &none);
         self.constraints.iter().map(|c| rows.expression(c.expression)).collect()
     }
 
-    /// The constraints that do not hold, on the rows of their domains where they do not, by
+    /// The constraints that do not hold, on the rows where they do not, by
     /// constraint and then by row: empty if and only if the witness satisfies the AIR.
     pub fn check(&self, values: &Values) -> PilfflonkResult<Vec<Failure>> {
         let mut failures = Vec::new();
-        for (constraint, (c, rows)) in self.constraints.iter().zip(self.numerators(values)?).enumerate() {
-            for row in c.domain.rows(self.n) {
-                if !rows[row].is_zero() {
-                    failures.push(Failure { constraint, row, value: rows[row].clone() });
+        for (constraint, rows) in self.numerators(values)?.into_iter().enumerate() {
+            for (row, value) in rows.iter().enumerate() {
+                if !value.is_zero() {
+                    failures.push(Failure { constraint, row, value: value.clone() });
                 }
             }
         }
@@ -719,9 +637,9 @@ impl AirOracle {
     }
 
     /// The terms of the fold (see the module).
-    fn terms(&self, im_pols: &[usize]) -> Vec<(Term, Domain)> {
-        let constraints = self.constraints.iter().enumerate().map(|(i, c)| (Term::Constraint(i), c.domain));
-        constraints.chain(im_pols.iter().map(|&idx| (Term::Im(idx), Domain::EveryRow))).collect()
+    fn terms(&self, im_pols: &[usize]) -> Vec<Term> {
+        let constraints = (0..self.constraints.len()).map(Term::Constraint);
+        constraints.chain(im_pols.iter().map(|&idx| Term::Im(idx))).collect()
     }
 
     fn numerator<A: Algebra>(&self, ev: &mut Evaluator<'_, A>, term: Term) -> PilfflonkResult<A::V> {
@@ -736,7 +654,7 @@ impl AirOracle {
     }
 
     /// `Q(z)` for `z ∉ H` (see the module): the fold of the numerators at `z`, each divided by
-    /// `Z_D(z)`.
+    /// `Z_H(z)`.
     pub fn q_at(&self, values: &Values, im_pols: &[usize], std_vc: &Fr, z: &Fr) -> PilfflonkResult<Fr> {
         if z.pow_u64(self.n as u64) == Fr::one() {
             return invalid!("Q is not defined on H, and {z} is in H");
@@ -750,9 +668,9 @@ impl AirOracle {
         };
         let mut ev = Evaluator::new(point, &self.expressions, values, im.keys().copied().collect());
         let mut acc = Fr::zero();
-        for (term, domain) in self.terms(im_pols) {
+        for term in self.terms(im_pols) {
             let numerator = self.numerator(&mut ev, term)?;
-            let quotient = &numerator * &domain.zerofier_at(z, self.n_bits)?.inv()?;
+            let quotient = &numerator * &zerofier_at(z, self.n_bits).inv()?;
             acc = &(&acc * std_vc) + &quotient;
         }
         Ok(acc)
@@ -779,9 +697,9 @@ impl AirOracle {
         }
         let mut ev = Evaluator::new(Given { values }, &self.expressions, scalars, im_pols.iter().copied().collect());
         let mut acc = Fr::zero();
-        for (term, domain) in self.terms(im_pols) {
+        for term in self.terms(im_pols) {
             let numerator = self.numerator(&mut ev, term)?;
-            let quotient = &numerator * &domain.zerofier_at(z, self.n_bits)?.inv()?;
+            let quotient = &numerator * &zerofier_at(z, self.n_bits).inv()?;
             acc = &(&acc * std_vc) + &quotient;
         }
         Ok(acc)
@@ -796,16 +714,12 @@ impl AirOracle {
             interpolants: BTreeMap::new(),
         };
         let mut ev = Evaluator::new(coefficients, &self.expressions, values, im.keys().copied().collect());
-        let mut zerofiers: Vec<(Domain, Vec<Fr>)> = Vec::new();
+        let zerofier = zerofier(self.n_bits)?;
         let mut acc = Vec::new();
         let mut remainders = Vec::new();
-        for (i, (term, domain)) in self.terms(im_pols).into_iter().enumerate() {
+        for (i, term) in self.terms(im_pols).into_iter().enumerate() {
             let numerator = self.numerator(&mut ev, term)?;
-            if !zerofiers.iter().any(|(d, _)| *d == domain) {
-                zerofiers.push((domain, domain.zerofier(self.n_bits)?));
-            }
-            let zerofier = zerofiers.iter().find(|(d, _)| *d == domain).map(|(_, z)| z.as_slice()).unwrap_or_default();
-            let (quotient, remainder) = poly::div_rem(&numerator, zerofier)?;
+            let (quotient, remainder) = poly::div_rem(&numerator, &zerofier)?;
             if !remainder.is_empty() {
                 remainders.push((i, remainder));
             }
@@ -832,52 +746,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_closed_forms_of_the_zerofiers_are_the_products_over_their_rows() {
-        let z = Fr::from_u64(987654321);
-        let domains = [
-            Domain::EveryRow,
-            Domain::FirstRow,
-            Domain::LastRow,
-            Domain::EveryFrame { offset_min: 0, offset_max: 0 },
-            Domain::EveryFrame { offset_min: 2, offset_max: 1 },
-            Domain::EveryFrame { offset_min: 0, offset_max: 3 },
-        ];
-        for domain in domains {
-            let product = poly::evaluate(&domain.zerofier(3).unwrap(), &z);
-            assert_eq!(domain.zerofier_at(&z, 3).unwrap(), product, "{domain:?}");
-        }
-        assert_eq!(Domain::EveryFrame { offset_min: 2, offset_max: 1 }.rows(8), 2..7);
-        assert_eq!(Domain::LastRow.rows(8), 7..8);
-        let w = omega(3).unwrap();
-        assert!(Domain::FirstRow.zerofier_at(&Fr::one(), 3).unwrap().is_zero());
-        assert!(Domain::LastRow.zerofier_at(&w.pow_u64(7), 3).unwrap().is_zero());
-        assert!(!Domain::LastRow.zerofier_at(&w.pow_u64(6), 3).unwrap().is_zero());
-    }
-}
-
-#[cfg(test)]
-mod domain_tests {
-    use super::*;
-
-    #[test]
-    fn maps_each_expressible_domain() {
-        assert_eq!(domain_from_offsets(3, &[0], false, 3), Some(Domain::FirstRow));
-        assert_eq!(domain_from_offsets(3, &[7], false, 3), Some(Domain::LastRow));
-        assert_eq!(
-            domain_from_offsets(3, &[7, 0, 6], true, 3),
-            Some(Domain::EveryFrame { offset_min: 1, offset_max: 2 })
-        );
-        assert_eq!(domain_from_offsets(3, &[0], true, 3), Some(Domain::EveryFrame { offset_min: 1, offset_max: 0 }));
-    }
-
-    #[test]
-    fn refuses_the_rest() {
-        assert_eq!(domain_from_offsets(2, &[0], false, 3), None);
-        assert_eq!(domain_from_offsets(3, &[3], false, 3), None);
-        assert_eq!(domain_from_offsets(3, &[0, 3], true, 3), None);
-        assert_eq!(domain_from_offsets(3, &[], true, 3), None);
-        let air = pb::Air { domains: vec![pb::Domain { cycle_bits: 2, offsets: vec![1] }], ..Default::default() };
-        let err = domain_of(&air, 4, 0, false, 3).unwrap_err().to_string();
-        assert!(err.contains("domain constraint not supported by pilfflonk") && err.contains("constraint 4"), "{err}");
+    fn the_closed_form_of_the_zerofier_is_the_product_over_the_rows() {
+        let z = Fr::from_u64(12345);
+        let product = poly::evaluate(&zerofier(3).unwrap(), &z);
+        assert_eq!(zerofier_at(&z, 3), product);
+        assert!(zerofier_at(&omega(3).unwrap().pow_u64(5), 3).is_zero());
     }
 }

@@ -18,6 +18,10 @@ pub enum PilInfoError {
     #[error("invalid domain: {0}")]
     InvalidDomain(String),
 
+    /// A domain constraint in a pilout for pilfflonk, which has only everyRow constraints.
+    #[error("domain constraints are not supported by pilfflonk")]
+    DomainConstraintsUnsupported,
+
     /// A hint field with neither an operand, a string nor an array of fields.
     #[error("invalid pilout: a field of hint `{hint}` has no value")]
     HintFieldWithoutValue { hint: String },

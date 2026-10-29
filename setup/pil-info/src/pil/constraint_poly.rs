@@ -20,7 +20,7 @@ pub struct ConstraintPolyResult {
     pub initial_q_degree: i64,
 }
 
-/// Normalizes each constraint's domain (`name_of(i)` names it in errors); the STARK caps its vanishing factors.
+/// Normalizes each constraint's domain (`name_of(i)` names it); the STARK caps its factors, pilfflonk refuses it.
 pub fn normalize_constraint_domains(
     constraints: &mut [ConstraintInfo],
     n_bits: u32,
@@ -36,14 +36,17 @@ pub fn normalize_constraint_domains(
             None => {
                 let name = name_of(i);
                 let b = normalize(declared, n_bits, &name)?;
-                match (&b, opening) {
-                    (Boundary::Domain(d), Opening::Deep) if d.offsets.len() > MAX_DOMAIN_FACTORS => {
-                        return Err(PilInfoError::InvalidDomain(format!(
-                            "{name}: the domain needs {} vanishing factors, above the limit of {MAX_DOMAIN_FACTORS}; use a fixed selector column",
-                            d.offsets.len()
-                        )));
+                if let Boundary::Domain(d) = &b {
+                    match opening {
+                        Opening::Deep if d.offsets.len() > MAX_DOMAIN_FACTORS => {
+                            return Err(PilInfoError::InvalidDomain(format!(
+                                "{name}: the domain needs {} vanishing factors, above the limit of {MAX_DOMAIN_FACTORS}; use a fixed selector column",
+                                d.offsets.len()
+                            )));
+                        }
+                        Opening::Deep => {}
+                        Opening::Shplonk => return Err(PilInfoError::DomainConstraintsUnsupported),
                     }
-                    _ => {}
                 }
                 normalized.insert(declared.clone(), b.clone());
                 b
@@ -65,7 +68,6 @@ pub fn normalize_constraint_domains(
 pub fn generate_constraint_polynomial(
     n_stages: usize,
     n_bits: u32,
-    opening: Opening,
     expressions: &mut Vec<Expression>,
     symbols: &mut Vec<SymbolInfo>,
     constraints: &[ConstraintInfo],
@@ -129,10 +131,9 @@ pub fn generate_constraint_polynomial(
                 op: "Zi".to_string(),
                 boundary_id: Some(find_or_add_boundary(boundaries, boundary)),
                 boundary: Some(boundary.name().to_string()),
-                // pilfflonk's blinded columns exceed degree N-1, so there its zerofier always adds 1
                 zi_domain: match boundary {
-                    Boundary::Domain(d) if opening == Opening::Deep => Some((d.clone(), n_bits)),
-                    _ => None,
+                    Boundary::Domain(d) => Some((d.clone(), n_bits)),
+                    Boundary::EveryRow => None,
                 },
                 ..Default::default()
             };
@@ -370,6 +371,27 @@ mod tests {
     }
 
     #[test]
+    fn only_the_stark_accepts_domain_constraints() {
+        let domain = |offsets: Vec<u32>| {
+            vec![ConstraintInfo {
+                boundary: Boundary::Domain(Domain { cycle_bits: 3, offsets, complement: false }),
+                e: 0,
+                line: None,
+                stage: None,
+                im_pol: false,
+            }]
+        };
+        let mut cs = domain(vec![0]);
+        normalize_constraint_domains(&mut cs, 3, Opening::Deep, |_| "T".into()).unwrap();
+        let err = normalize_constraint_domains(&mut domain(vec![0]), 3, Opening::Shplonk, |_| "T".into());
+        assert_eq!(err.unwrap_err().to_string(), "domain constraints are not supported by pilfflonk");
+        // a domain of every row is everyRow, for pilfflonk too
+        let mut all = domain((0..8).collect());
+        normalize_constraint_domains(&mut all, 3, Opening::Shplonk, |_| "T".into()).unwrap();
+        assert_eq!(all[0].boundary, Boundary::EveryRow);
+    }
+
+    #[test]
     fn test_calculate_exp_deg_leaf() {
         let exprs = vec![Expression { op: "number".to_string(), value: Some("42".to_string()), ..Default::default() }];
         assert_eq!(calculate_exp_deg(&exprs, 0, &[], false).unwrap(), 0);
@@ -402,7 +424,6 @@ mod tests {
         let result = generate_constraint_polynomial(
             1,
             8,
-            Opening::Deep,
             &mut expressions,
             &mut symbols,
             &constraints,
@@ -440,7 +461,6 @@ mod tests {
         let result = generate_constraint_polynomial(
             1,
             8,
-            Opening::Deep,
             &mut expressions,
             &mut symbols,
             &constraints,
@@ -469,7 +489,6 @@ mod tests {
             let result = generate_constraint_polynomial(
                 1,
                 8,
-                Opening::Deep,
                 &mut expressions,
                 &mut symbols,
                 &constraints,
@@ -503,7 +522,6 @@ mod tests {
         let result = generate_constraint_polynomial(
             1,
             8,
-            Opening::Deep,
             &mut expressions,
             &mut symbols,
             &constraints,

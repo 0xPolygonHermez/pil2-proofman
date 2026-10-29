@@ -52,7 +52,7 @@ at the first check that fails.
   ([formats.md#digest](formats.md#digest)); in Solidity the vkey is the contract's constants. The
   commitments, `W` and `W'` are affine points of G1 with coordinates below `q`, not `(0, 0)`, on
   `y² = x³ + 3`; the points the transcript absorbs (the commitments and `W`) have no coordinate below
-  `2^192`; the evaluations, the pieces of `Q`, `inv`, `invZh`, the auxiliary inverses and the
+  `2^192`; the evaluations, the pieces of `Q`, `inv`, `invZh` and the
   publics are below `r`; the proof holds exactly the values the vkey names.
 - **4. Transcript** (`challenges.js`, `computeChallenges`). The
   [transcript](protocol.md#transcript), replayed. In Solidity it is a buffer in memory: each squeeze
@@ -61,8 +61,7 @@ at the first check that fails.
   `calldatacopy`, from the first scalar: the first evaluation or, if there is none, the first piece
   of `Q` in the order of the layout, which is not always `Q0`.
 - **5. `Q(ξ)`** (`qverifier.js`; Solidity: `computeZh`, `computeZi`, `computeQ`, `checkQPieces`).
-  `ξ = xiSeed^powerW`, `Z_H(ξ)·invZh = 1`, the `Zi` of each boundary (with the auxiliary inverses in
-  Solidity), `Q(ξ)` from the `qVerifier` (in Solidity, unrolled: one Yul instruction per entry, the
+  `ξ = xiSeed^powerW`, `Z_H(ξ)·invZh = 1`, the `Zi` of the only boundary, `everyRow`, `Q(ξ)` from the `qVerifier` (in Solidity, unrolled: one Yul instruction per entry, the
   temporaries in memory), and, if `Q` is split, `Σ_i ξ^(i·M·N)·Q_i(ξ) = Q(ξ)` (`joinQPieces`).
 - **6. Inverses** (`shplonk.js`; Solidity: `computeRoots`, `computeInversions`). `xiSeed ≠ 0`; the
   roots of each distinct `(k, offsets)`; `Z_{T_i}(y) ≠ 0`; the denominators `inv` inverts, in the
@@ -175,18 +174,16 @@ snarkjs's `zkey export soliditycalldata` gives those of its `FflonkVerifier`; it
   validated and its digest checked. The proof has exactly the values the vkey names
   (`ProofNames::of_vkey`); it is the JSON view or, if the file name ends in `.bin`, the bytes. There
   are `nPublic` publics, below `r`. Unlike snarkjs, which reads only the proof and the publics, it
-  needs the vkey: the shape of the proof and the auxiliary inverses depend on it.
+  needs the vkey: the shape of the proof depends on it.
 - **What it does.** It replays the transcript on the proof, step by step as `computeChallenges`, with
   the C++ core's `Keccak256Transcript`, the prover's (`verifier_challenges`), takes
-  `ξ = xiSeed^powerW`, and computes the auxiliary inverses `1/(ξ − ω^j)` with `ω = 5^((r−1)/N)` in
-  `Bn128`. It replays the transcript even without inverses, so it refuses the same for every key.
+  `ξ = xiSeed^powerW`, so it refuses the same for every key.
 - **What it refuses**, with exit status 1, a message and no file written: a vkey that does not read or
   whose digest is not its content's; a proof of another key, or bytes of another length; publics of
   another number or not below `r`; a proof with a commitment or a `W` the transcript does not absorb
   (off the curve, the point at infinity, or a coordinate below `2^192`), which it names. Such a proof
   has no `ξ`, and both verifiers refuse it. `W'` is not absorbed, so the encoder does not check it: that
-  is the verifier's job. With inverses, it also refuses a `ξ` that is a row of the domain, where
-  `Z_H(ξ) = 0`.
+  is the verifier's job.
 - **Output.** `--format solidity`, the default, writes the list of arguments as snarkjs prints it,
   `[0x…,0x…],[0x…]`, each word `0x` and 64 hexadecimal digits, `proof`'s first and `pubSignals`'
   after; with no publics only `[…]`; no spaces. `--format hex` writes the ABI-encoded call: the
@@ -197,8 +194,7 @@ snarkjs's `zkey export soliditycalldata` gives those of its `FflonkVerifier`; it
   after the header `proofman-cli` always prints.
 
 `Calldata::read` reads the files, `Calldata::encode` works from the values, `Calldata::to_solidity` and
-`Calldata::to_hex` write the result, and `Calldata::with_auxiliary_inverses` makes a calldata with the
-inverses it is given, for tests.
+`Calldata::to_hex` write the result.
 
 ## Gas
 
@@ -211,7 +207,7 @@ then costs 2,500 more, the address cold (EIP-2929): the end-to-end test measures
 each key, and the fuzzer runs Foundry without isolation; both give the same gas. The calldata costs 16
 per non-zero byte and 4 per zero byte (EIP-2028), and depends on the proof's values.
 
-**Per key.** The 73 keys of the fixtures, by family (`foundry_accepts_the_proof_of_every_fixture`
+**Per key.** The 52 keys of the fixtures, by family (`foundry_accepts_the_proof_of_every_fixture`
 prints each key's):
 
 | Family | Keys | `f` | Words of `proof` | Code (bytes) | Gas of `verifyProof` | Gas of the calldata |
@@ -219,7 +215,6 @@ prints each key's):
 | Fibonacci | 3 | 3–6 | 18–22 | 5,124–5,290 | 170,869 (`--extra-muls 0`) – 185,168 (`--no-packing`) | 10,036–12,108 |
 | `packed` | 2 | 6–19 | 44–57 | 8,787–10,094 | 229,280 – 301,425 (`--no-packing`) | 22,920–29,528 |
 | `signed` | 9 | 6–20 | 40–61 | 9,820–12,662 | 236,264 – 313,881 (`--no-packing`, degree 2) | 21,264–32,016 |
-| `domains.rs` | 21 | 5–15 | 19–54 | 4,030–9,303 | 174,065 (`firstRow`) – 269,241 (`Frames`, degree 2, `--no-packing`) | 10,060–27,640 |
 | The std's buses | 9 | 6–11 | 26–38 | 6,064–8,153 | 191,791 (`prod_bus`) – 232,387 (`prod_bus_im`, `--no-packing`) | 13,480–19,600 |
 | The pil-fflonk examples | 29 | 5–31 | 24–82 | 5,902–15,474 | 186,580 (`permutation_prod`) – 406,897 (`all_sum`, `--no-packing`) | 12,316–42,300 |
 
@@ -236,7 +231,7 @@ grouped with large `k` (`packed`, `signed`, `all`) spend a third of their gas th
 cost about 160–210 per word of calldata, `Q(ξ)` about 75 per `qVerifier` entry, the transcript 1,175
 to 3,548 (with the growth of memory), the call and the ABI 596 to 756.
 
-**Model.** Least squares over the 73 keys:
+**Model.** Least squares over the 73 keys, measured before the domain fixtures were removed:
 
 ```
 gas of verifyProof ≈ 132,900 + 6,710·f + 1,300·roots + 100·Horner + 106·(qVerifier entries)
@@ -277,22 +272,21 @@ there. Nothing is built in the repository.
 
 - `setup/pilfflonk/tests/solidity.rs`: the contracts of 11 keys accept their proofs and refuse them
   mutated (an evaluation, a commitment, a public or `W'` changed; a point off the curve or one the
-  transcript does not absorb; a coordinate `x + q`, a scalar `e + r`, a wrong auxiliary inverse), with
-  the same verdict as the JS verifier on each. Mutations are repeated *fixed up*, with `invZh`, `inv`
-  and the auxiliary inverses recomputed for the new transcript (`pilfflonk/tests/data/mutations.rs`), so
+  transcript does not absorb; a coordinate `x + q`, a scalar `e + r`), with
+  the same verdict as the JS verifier on each. Mutations are repeated *fixed up*, with `invZh` and `inv`
+  recomputed for the new transcript (`pilfflonk/tests/data/mutations.rs`), so
   that they reach the pairing or `checkQPieces`.
-- `cli/tests/pilfflonk_prove.rs`, `foundry_accepts_the_proof_of_every_fixture`: 73 keys, every fixture
+- `cli/tests/pilfflonk_prove.rs`, `foundry_accepts_the_proof_of_every_fixture`: 52 keys, every fixture
   with the setups of its end-to-end test (grouped, `--no-packing`, its degrees and `--extra-muls`, and
   `Q` split where `qDeg ≥ 2` allows). For each, `pilfflonk-solidity` writes the verifier, solc compiles
   it with no warning and below EIP-170, `pilfflonk prove` proves (from the witness library where the
   fixture has one), `pilfflonk verify` accepts, `pilfflonk calldata` encodes, and Foundry accepts the
   proof and refuses it with an evaluation changed, a commitment replaced by `W` and a public changed:
-  73 proofs accepted and 192 refused.
+  every proof accepted and every mutated one refused.
 - Without the tools (the workspace's `cargo test`): `setup/pilfflonk/tests/setup/solidity.rs` and
   `setup/pil2-stark/tests/setup_pilfflonk.rs` check that `--solidity` changes no other file, that
   `pilfflonk-solidity` writes the same bytes, what is refused and the shape of the calldata;
-  `cli/tests/pilfflonk_calldata.rs` checks the calldata of keys with and without auxiliary inverses and
-  publics.
+  `cli/tests/pilfflonk_calldata.rs` checks the calldata of keys with and without publics.
 
 ### Differential fuzzer
 
@@ -300,21 +294,19 @@ there. Nothing is built in the repository.
 `pilfflonk/tests/data/fuzz.rs`) mutates honest proofs and checks that the JS verifier and the contract
 agree on every case.
 
-- **Keys.** 13 of the 73 (`FUZZ_KEYS`): the Fibonacci, `packed` and `signed` with `Q` in three pieces,
-  each grouped and unpacked; `Domains` (the auxiliary inverses of `firstRow` and `lastRow`), grouped
-  and, split, unpacked; `sum_bus` grouped and `prod_bus` unpacked; `all` split on the sum bus (two
+- **Keys.** 11 of the 52 (`FUZZ_KEYS`): the Fibonacci, `packed` and `signed` with `Q` in three pieces,
+  each grouped and unpacked; `sum_bus` grouped and `prod_bus` unpacked; `all` split on the sum bus (two
   pieces) and the product bus (three), and `all_sum` unpacked, the most expensive.
 - **Cases.** A few honest proofs per key (two, and one more per 400 cases of the key). Each mutation
   takes one at random, with a fixed seed (`FUZZ_SEED`; `PILFFLONK_FUZZ_SEED` changes it). 25 families:
   any word changed (a bit, a random value, a boundary value of the fields: 0, 1, `r − 1`, `r`, `r + 1`,
   `q − 1`, `q`, `2^256 − 1`); a point replaced by another point of G1, by one off the curve, by
   `(0, 0)` or by `(1, ±2)`; two scalars or two points swapped; a public (`+ 1`, random, `p + r`, `r`,
-  any 256 bits); each value with a check of its own (`W`, `W'`, `inv`, `invZh`, an auxiliary inverse, a
+  any 256 bits); each value with a check of its own (`W`, `W'`, `inv`, `invZh`, a
   piece of `Q`); the length of the calldata; and the fixed-up mutations, including the pieces of `Q`
   rebalanced and the forgery `W' = y⁻¹·(E + J − F)`.
 - **What is compared.** The JS verdict (`verify()` of `verify.js`, in batches, one Node process per
-  round: `pilfflonk/tests/data/js_batch.mjs`), the checks only the calldata has (each auxiliary inverse
-  `1/(ξ − ω^j)` and below `r`; short calldata reverts), what `verifyProof` does on Foundry (`true`,
+  round: `pilfflonk/tests/data/js_batch.mjs`), the check only the calldata has (short calldata reverts), what `verifyProof` does on Foundry (`true`,
   `false`, or a revert only for short calldata), and **the check that refuses each case**, which the JS
   message and a probe of the contract must name alike. The probe is an instrumented copy of the
   generated contract that the test writes (never the generator): each `fail` says where it is, and the

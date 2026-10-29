@@ -32,8 +32,8 @@ pub const DIGEST_DOMAIN: &[u8] = b"pilfflonk-v1";
 /// Format version 1 holds one AIR (the v1 scope, pilfflonk/docs/README.md#scope): its evMap,
 /// layout, degrees and code are the AIR's, and `power` is its `nBits`.
 ///
-/// It also holds the AIR's `boundaries`: the `qVerifier` code refers to the zerofiers `Z_D(ξ)` by
-/// their index in them (its `Zi` operands), and the verifier cannot compute `Q(ξ)` without them.
+/// It also holds the AIR's `boundaries`: the `qVerifier` code refers to the zerofier by its
+/// index in them (its `Zi` operands).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Vkey {
@@ -54,8 +54,8 @@ pub struct Vkey {
     pub num_challenges: Vec<u64>,
     pub ev_map: Vec<EvMapEntry>,
     pub layout: Layout,
-    /// The AIR's boundaries: `everyRow` first, whose `Zi` is `1/Z_H`
-    /// (pilfflonk/docs/protocol.md#constraint-polynomial), and each `everyFrame` leaving a row.
+    /// The AIR's boundaries: only `everyRow`, whose `Zi` is `1/Z_H`
+    /// (pilfflonk/docs/protocol.md#constraint-polynomial).
     pub boundaries: Vec<Boundary>,
     /// The commitments of the fixed `f_i`, the AIR's verkey: keys `f0`, `f1`, … as in snarkjs's
     /// and pil-fflonk's vkeys, `f<i>` for layout entry `i`, which in a proof of one AIR is also its
@@ -287,23 +287,10 @@ impl JsonFile for Vkey {
                 self.num_challenges
             );
         }
-        if self.boundaries.first() != Some(&Boundary::EveryRow) {
+        if self.boundaries.len() != 1 {
             return invalid!(
-                "boundaries[0] must be everyRow, whose Zi is 1/Z_H (pilfflonk/docs/protocol.md#constraint-polynomial)"
+                "boundaries must be only everyRow, whose Zi is 1/Z_H (pilfflonk/docs/protocol.md#constraint-polynomial)"
             );
-        }
-        let n_rows = 1u64 << self.power;
-        for (i, b) in self.boundaries.iter().enumerate() {
-            if self.boundaries[..i].contains(b) {
-                return invalid!("boundary {b:?} is there twice");
-            }
-            if let Boundary::EveryFrame { offset_min, offset_max } = *b {
-                if offset_min.checked_add(offset_max).is_none_or(|excluded| excluded >= n_rows) {
-                    return invalid!(
-                        "boundaries[{i}] is everyFrame {{{offset_min}, {offset_max}}}: no row of {n_rows} is left"
-                    );
-                }
-            }
         }
         check_q_verifier(
             &self.q_verifier,

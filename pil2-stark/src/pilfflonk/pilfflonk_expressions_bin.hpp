@@ -12,7 +12,7 @@ namespace PilFflonk {
 
 using FrElement = AltBn128::Engine::FrElement;
 
-// <air>.bin, revision 3 (pilfflonk/docs/formats.md#bytecode): the prover's bytecode over Fr, and
+// <air>.bin, revision 4 (pilfflonk/docs/formats.md#bytecode): the prover's bytecode over Fr, and
 // its hints. The Rust crate pilfflonk-setup writes it (setup/pilfflonk/src/bytecode.rs, which
 // documents the format field by field) and has the reference reader. The format is the STARK's
 // prover .bin, the one pil2-stark/src/starkpil/expressions/expressions_bin.cpp reads, with every
@@ -26,7 +26,7 @@ using FrElement = AltBn128::Engine::FrElement;
 // This reader is as strict as the Rust one: whatever the file breaks, it throws FormatError, naming
 // the file and what is wrong; IoError if the file cannot be read. It never exits.
 
-constexpr uint32_t EXPRESSIONS_BIN_VERSION = 0x70660003; // "pf" and revision 3
+constexpr uint32_t EXPRESSIONS_BIN_VERSION = 0x70660004; // "pf" and revision 4
 constexpr uint32_t EXPRESSIONS_BIN_EXPRESSIONS_SECTION = 1;
 constexpr uint32_t EXPRESSIONS_BIN_CONSTRAINTS_SECTION = 2;
 constexpr uint32_t EXPRESSIONS_BIN_HINTS_SECTION = 3;
@@ -68,7 +68,7 @@ struct OperandTypes {
 constexpr uint32_t EXPRESSIONS_BIN_MAX_N_STAGES = UINT32_MAX - 12;
 
 // An expression (section 1) or a constraint (section 2): the STARK's ParserParams without destDim
-// and nTemp3. expId is an expression's; firstRow, lastRow and imPol a constraint's.
+// and nTemp3. expId is an expression's; imPol a constraint's.
 struct ParserParams {
     uint32_t stage = 0;
     uint32_t expId = 0;
@@ -77,8 +77,6 @@ struct ParserParams {
     uint32_t opsOffset = 0;
     uint32_t nArgs = 0;
     uint32_t argsOffset = 0;
-    uint32_t firstRow = 0; // the rows it holds on: firstRow <= i < lastRow
-    uint32_t lastRow = 0;
     uint32_t destId = 0; // the temporary the value is in after the last op
     bool imPol = false;
     std::string line;

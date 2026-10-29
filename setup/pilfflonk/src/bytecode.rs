@@ -5,7 +5,7 @@
 //! which constraint fails on which row. [`write_air_bin`] writes it from what
 //! `pil_info::run(…, &PilInfoCfg::bn128(), …)` returns, and [`Bytecode::read`] reads it back.
 //!
-//! # Format, revision 3
+//! # Format, revision 4
 //!
 //! The file follows the STARK's prover `.bin` field by field, with every value of dimension 1.
 //! That is the file that `setup/pil2-stark/src/io/bin_file.rs` writes, with the ops and args of
@@ -22,14 +22,14 @@
 //! - **A copy is written as `add(a, 0)`.** The STARK writes a copy as an add without its second
 //!   operand, three args short, and its interpreter, which reads 8 args per op, cannot run that.
 //!
-//! Revision 2 had no hints: its section 3 was `nHints = 0`. Revision 3 writes them.
+//! Revision 2 had no hints: its section 3 was `nHints = 0`. Revision 3 writes them; revision 4 drops the per-constraint row range.
 //!
 //! Every integer is little-endian. The container is the STARK's `"chps"` binfile, written with
 //! `pil-info`'s `BinFileWriter`, with the STARK's three sections:
 //!
 //! ```text
 //! "chps"      4 bytes
-//! version     u32     0x7066_0003: "pf" in the high half, revision 3 in the low half
+//! version     u32     0x7066_0004: "pf" in the high half, revision 4 in the low half
 //! nSections   u32     3
 //! 3 × { id u32, size u64, payload }, in the order 1, 2, 3
 //! ```
@@ -45,7 +45,7 @@
 //! and that of `Q` by `cExpId` (`pilfflonkinfo.json`).
 //!
 //! ```text
-//! version      u32    0x7066_0003, the container's                    ┐
+//! version      u32    0x7066_0004, the container's                    ┐
 //! n8           u32    32, the bytes of an element                     │ pilfflonk's prefix
 //! r            32 bytes, the modulus of Fr                            │
 //! nStages      u32    the AIR's: the operand types depend on it       ┘
@@ -81,8 +81,6 @@
 //! nConstraints × {
 //!   stage      u32
 //!   destId     u32
-//!   firstRow   u32    the rows it holds on, firstRow ≤ i < lastRow: everyRow 0 and N,
-//!   lastRow    u32    firstRow 0 and 1, lastRow N − 1 and N, everyFrame offsetMin and N − offsetMax
 //!   nTemp, nOps, opsOffset, nArgs, argsOffset   u32
 //!   imPol      u32    1 for the constraint that defines an intermediate polynomial, 0 otherwise
 //!   line       string
@@ -176,11 +174,8 @@
 //!   constraint, runs over `H`, row by row.
 //! - **Row offsets.** On a domain of `M = 2^e·N` points (`e = 0` on `H`), a column at the opening
 //!   point `o = openingPoints[arg2]` is read at point `(i + 2^e·o) mod M`.
-//! - **Zerofiers.** `Zi` of boundary 0 (`everyRow`) is `1/Z_H(X)`. For any other boundary `D` it is
-//!   `Z_H(X)/Z_D(X)`, with `Z_D` the zerofier of `D`
-//!   (pilfflonk/docs/protocol.md#constraint-polynomial): for `lastRow` that is `X − ω^(N−1)`, not
-//!   the STARK prover's `X − ω^N` (pilfflonk/docs/README.md#stark-lastrow-zerofier). `X` is the
-//!   point of the domain.
+//! - **Zerofiers.** `Zi` of boundary 0 (`everyRow`), the only one, is `1/Z_H(X)`
+//!   (pilfflonk/docs/protocol.md#constraint-polynomial); `X` is the point of the domain.
 //! - **Q.** `Q`'s code is `(Horner fold of the constraints) · Zi(everyRow)`, so it already divides
 //!   by `Z_H`.
 //!
@@ -231,15 +226,13 @@ use pil_info::{FieldCfg, PilInfoResult};
 use proofman_pilfflonk::field::{FrBytes, FIELD_BYTES};
 
 use crate::validate::{SUPPORTED_PROVER_HINTS, WITNESS_AND_DEBUG_HINTS};
-use crate::air_info::domain_boundary;
 use pil_info::pil::domain::Boundary as PassesBoundary;
-use proofman_pilfflonk::Boundary;
 
 /// The container's type, the STARK's.
 pub const BIN_FILE_TYPE: &str = "chps";
 
 /// pilfflonk's version of the container: `"pf"` in the high half, the revision in the low half.
-pub const BIN_VERSION: u32 = 0x7066_0003;
+pub const BIN_VERSION: u32 = 0x7066_0004;
 
 /// The STARK's sections (`CHELPERS_*_SECTION`).
 pub const EXPRESSIONS_SECTION: u32 = 1;
@@ -327,9 +320,6 @@ pub struct ExpressionBin {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstraintBin {
     pub stage: u32,
-    /// The rows it holds on: `first_row ≤ i < last_row`.
-    pub first_row: u32,
-    pub last_row: u32,
     /// It defines an intermediate polynomial.
     pub im_pol: bool,
     pub line: String,
@@ -621,7 +611,6 @@ impl Bytecode {
         let info = &result.pil_code.expressions_info;
         let expressions =
             info.expressions_code.iter().map(|e| expression_bin(e, result, &context)).collect::<BytecodeResult<_>>()?;
-        let n = 1u64 << result.setup.pil_power;
         if info.constraints.len() != result.setup.constraints.len() {
             return encode_error(format!(
                 "{} constraint code blocks for {} constraints",
@@ -633,7 +622,7 @@ impl Bytecode {
             .constraints
             .iter()
             .enumerate()
-            .map(|(i, c)| constraint_bin(i, c, n, &context))
+            .map(|(i, c)| constraint_bin(i, c, &context))
             .collect::<BytecodeResult<_>>()?;
         let mut hints = Vec::new();
         for hint in &info.hints_info {
@@ -747,34 +736,15 @@ fn expression_bin(
     })
 }
 
-fn constraint_bin(
-    index: usize,
-    entry: &ConstraintCodeEntry,
-    n: u64,
-    context: &CodeContext,
-) -> BytecodeResult<ConstraintBin> {
+fn constraint_bin(index: usize, entry: &ConstraintCodeEntry, context: &CodeContext) -> BytecodeResult<ConstraintBin> {
     let what = format!("constraint {index}");
     let code = &entry.code;
-    let boundary = match &entry.boundary {
-        PassesBoundary::EveryRow => Some(Boundary::EveryRow),
-        PassesBoundary::Domain(d) => domain_boundary(d, n.trailing_zeros()),
-    };
-    let (first_row, last_row) = match boundary {
-        Some(Boundary::EveryRow) => (0, n),
-        Some(Boundary::FirstRow) => (0, 1),
-        Some(Boundary::LastRow) => (n - 1, n),
-        Some(Boundary::EveryFrame { offset_min, offset_max }) => (offset_min, n - offset_max),
-        None => {
-            return encode_error(format!(
-                "{what}: domain constraint not supported by pilfflonk: {:?} on {n} rows",
-                entry.boundary
-            ))
-        }
-    };
+    // pil-info refuses domain constraints for pilfflonk, so every constraint holds on all N rows
+    if !matches!(entry.boundary, PassesBoundary::EveryRow) {
+        return encode_error(format!("{what}: domain constraints are not supported by pilfflonk"));
+    }
     Ok(ConstraintBin {
         stage: to_u32(entry.stage, &what)?,
-        first_row: to_u32(first_row, format!("{what}: first row"))?,
-        last_row: to_u32(last_row, format!("{what}: last row"))?,
         im_pol: entry.im_pol != 0,
         line: entry.line.clone().unwrap_or_default(),
         code: lower(code, context, None, &what)?,
@@ -1135,9 +1105,6 @@ impl Bytecode {
         let Some(types) = Types::new(self.n_stages) else {
             return encode_error(format!("{} stages", self.n_stages));
         };
-        if let Some((i, c)) = self.constraints.iter().enumerate().find(|(_, c)| c.first_row > c.last_row) {
-            return encode_error(format!("constraint {i}: rows {}..{}", c.first_row, c.last_row));
-        }
         if let Some(exp_id) = repeated_exp_id(&self.expressions) {
             return encode_error(format!("expression {exp_id} is there twice"));
         }
@@ -1155,23 +1122,12 @@ impl Bytecode {
                 (&e.code, fields)
             }),
         )?;
-        // Per constraint: stage, destId, firstRow, lastRow, nTemp, nOps, opsOffset, nArgs,
-        // argsOffset, imPol, line.
+        // Per constraint: stage, destId, nTemp, nOps, opsOffset, nArgs, argsOffset, imPol, line.
         let constraints = CodeTable::new(
             types,
             self.constraints.iter().map(|c| {
                 let fields = move |out: &mut Vec<u8>, [n_temp, n_ops, ops_offset, n_args, args_offset]: [u32; 5]| {
-                    for w in [
-                        c.stage,
-                        c.code.dest_id,
-                        c.first_row,
-                        c.last_row,
-                        n_temp,
-                        n_ops,
-                        ops_offset,
-                        n_args,
-                        args_offset,
-                    ] {
+                    for w in [c.stage, c.code.dest_id, n_temp, n_ops, ops_offset, n_args, args_offset] {
                         put_u32(out, w);
                     }
                     put_u32(out, u32::from(c.im_pol));
@@ -1520,25 +1476,20 @@ impl Bytecode {
         let [n_ops, n_args, n_numbers, n_constraints] = r2.words()?;
         let mut headers = Vec::new();
         for _ in 0..n_constraints {
-            let [stage, dest_id, first_row, last_row] = r2.words()?;
+            let [stage, dest_id] = r2.words()?;
             let code = r2.words()?;
             let [im_pol] = r2.words()?;
-            headers.push(EntryHeader {
-                fields: [stage, first_row, last_row, im_pol],
-                code,
-                dest_id,
-                line: r2.string()?,
-            });
+            headers.push(EntryHeader { fields: [stage, im_pol], code, dest_id, line: r2.string()? });
         }
         let constraints =
             read_code(&mut r2, types, headers, [n_ops, n_args, n_numbers], &mut maxima, "the constraints")?
                 .into_iter()
                 .enumerate()
-                .map(|(i, ([stage, first_row, last_row, im_pol], line, code))| {
-                    if first_row > last_row || im_pol > 1 {
-                        return format_error(format!("constraint {i}: rows {first_row}..{last_row}, imPol {im_pol}"));
+                .map(|(i, ([stage, im_pol], line, code))| {
+                    if im_pol > 1 {
+                        return format_error(format!("constraint {i}: imPol {im_pol}"));
                     }
-                    Ok(ConstraintBin { stage, first_row, last_row, im_pol: im_pol == 1, line, code })
+                    Ok(ConstraintBin { stage, im_pol: im_pol == 1, line, code })
                 })
                 .collect::<BytecodeResult<Vec<_>>>()?;
         if (max_temp, max_args, max_ops) != (maxima.temp, maxima.args, maxima.ops) {

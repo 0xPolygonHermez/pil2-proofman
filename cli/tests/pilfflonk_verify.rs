@@ -200,19 +200,10 @@ fn it_verifies_a_proof_of_the_fibonacci_and_rejects_every_change() {
             js: "numChallenges has 2 stages, and the layout 1",
         },
         Refusal {
-            name: "another boundary first",
-            change: |v| v["boundaries"] = json!([{"name": "firstRow"}, {"name": "everyRow"}]),
-            rust: "boundaries[0] must be everyRow",
-            js: "boundaries[0] is not everyRow",
-        },
-        Refusal {
-            name: "an everyFrame that leaves no row",
-            change: |v| {
-                let every_frame = json!({"name": "everyFrame", "offsetMin": 128, "offsetMax": 128});
-                v["boundaries"].as_array_mut().unwrap().push(every_frame);
-            },
-            rust: "no row of 256 is left",
-            js: "no row of 256 is left",
+            name: "a second boundary",
+            change: |v| v["boundaries"].as_array_mut().unwrap().push(json!({"name": "everyRow"})),
+            rust: "boundaries must be only everyRow",
+            js: "boundaries must be only everyRow",
         },
         Refusal {
             name: "an op the verifier does not run",

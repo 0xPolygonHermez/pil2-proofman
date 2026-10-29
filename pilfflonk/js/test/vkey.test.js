@@ -155,25 +155,18 @@ test("every vkey the verifier refuses, with the reason", () => {
             (v) => (v.numChallenges = [1]),
             /stage 1 has challenges, which the transcript never squeezes/,
         ],
-        "no boundary": [(v) => (v.boundaries = []), /boundaries\[0\] is not everyRow/],
-        "a first boundary that is not everyRow": [
-            (v) => v.boundaries.unshift({ name: "lastRow" }),
-            /boundaries\[0\] is not everyRow/,
-        ],
-        "a boundary twice": [(v) => v.boundaries.push({ name: "everyRow" }), /is there twice/],
-        "an everyFrame that leaves no row": [
-            (v) => v.boundaries.push({ name: "everyFrame", offsetMin: 4, offsetMax: 4 }),
-            /no row of 8 is left/,
-        ],
-        "an everyFrame without offsets": [
-            (v) => v.boundaries.push({ name: "everyFrame" }),
-            /has no offsetMin, offsetMax/,
-        ],
-        "a firstRow with offsets": [
-            (v) => v.boundaries.push({ name: "firstRow", offsetMin: 1 }),
+        "no boundary": [(v) => (v.boundaries = []), /boundaries must be only everyRow/],
+        "a boundary twice": [(v) => v.boundaries.push({ name: "everyRow" }), /boundaries must be only everyRow/],
+        "an everyRow with offsets": [
+            (v) => (v.boundaries[0].offsetMin = 1),
             /has the unknown fields offsetMin/,
         ],
-        "another domain": [(v) => v.boundaries.push({ name: "someRow" }), /"someRow", not a domain/],
+        "a firstRow": [(v) => (v.boundaries[0] = { name: "firstRow" }), /"firstRow", not everyRow/],
+        "a lastRow": [(v) => (v.boundaries[0] = { name: "lastRow" }), /"lastRow", not everyRow/],
+        "an everyFrame": [
+            (v) => (v.boundaries[0] = { name: "everyFrame", offsetMin: 1, offsetMax: 2 }),
+            /"everyFrame", not everyRow/,
+        ],
         "two evaluations of the same name": [
             (v) => (v.layout[2].pols[0].name = "aw-1"),
             /two values of the proof are named "aw-1"/,

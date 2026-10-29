@@ -85,29 +85,7 @@ const std::vector<FrElement> *proverScalars(const OperandTypes &types, uint32_t 
     return nullptr;
 }
 
-std::vector<FrElement> excludedRoots(uint64_t nBits, const Boundary &b) {
-    const uint64_t n = uint64_t(1) << nBits;
-    if (b.offsetMin > n || b.offsetMax > n - b.offsetMin) {
-        throw std::invalid_argument("everyFrame excludes " + std::to_string(b.offsetMin) + " + " +
-                                    std::to_string(b.offsetMax) + " rows of " + std::to_string(n));
-    }
-    const FrElement w = rootOfUnity(nBits);
-    std::vector<FrElement> roots;
-    for (uint64_t j = 0; j < b.offsetMin; ++j) {
-        roots.push_back(power(w, j));
-    }
-    for (uint64_t k = 0; k < b.offsetMax; ++k) {
-        roots.push_back(power(w, n - k - 1));
-    }
-    return roots;
-}
-
-FrElement oneRowRoot(uint64_t nBits, BoundaryType type) {
-    const uint64_t n = uint64_t(1) << nBits;
-    return type == BoundaryType::FirstRow ? Engine::engine.fr.one() : power(rootOfUnity(nBits), n - 1);
-}
-
-std::vector<FrElement> zerofiersAt(uint64_t nBits, const std::vector<Boundary> &boundaries, const FrElement &x) {
+std::vector<FrElement> zerofiersAt(uint64_t nBits, const FrElement &x) {
     Engine::Fr &fr = Engine::engine.fr;
     if (nBits > MAX_NBITS_EXT) {
         throw std::invalid_argument("zerofiersAt: nBits = " + std::to_string(nBits) + " exceeds 28");
@@ -117,33 +95,9 @@ std::vector<FrElement> zerofiersAt(uint64_t nBits, const std::vector<Boundary> &
     if (fr.isZero(zh)) {
         throw std::invalid_argument("zerofiersAt: the point is in H, where Z_H vanishes");
     }
-    std::vector<FrElement> out;
-    for (const Boundary &b : boundaries) {
-        FrElement zi;
-        switch (b.type) {
-        case BoundaryType::EveryRow:
-            fr.inv(zi, zh);
-            break;
-        case BoundaryType::FirstRow:
-        case BoundaryType::LastRow: {
-            FrElement den, denInv;
-            fr.sub(den, x, oneRowRoot(nBits, b.type));
-            fr.inv(denInv, den);
-            fr.mul(zi, zh, denInv);
-            break;
-        }
-        case BoundaryType::EveryFrame:
-            zi = fr.one();
-            for (const FrElement &root : excludedRoots(nBits, b)) {
-                FrElement factor;
-                fr.sub(factor, x, root);
-                fr.mul(zi, zi, factor);
-            }
-            break;
-        }
-        out.push_back(zi);
-    }
-    return out;
+    FrElement zi;
+    fr.inv(zi, zh);
+    return {zi};
 }
 
 ExpressionsDomain ExpressionsDomain::trace(uint64_t nBits) {
@@ -153,16 +107,15 @@ ExpressionsDomain ExpressionsDomain::trace(uint64_t nBits) {
     return ExpressionsDomain(nBits, 0);
 }
 
-ExpressionsDomain ExpressionsDomain::coset(uint64_t nBits, uint64_t nBitsExt, const std::vector<Boundary> &boundaries) {
+ExpressionsDomain ExpressionsDomain::coset(uint64_t nBits, uint64_t nBitsExt) {
     if (nBitsExt > MAX_NBITS_EXT || nBits > nBitsExt) {
         throw std::invalid_argument("ExpressionsDomain::coset: needs nBits <= nBitsExt <= 28, and they are " +
                                     std::to_string(nBits) + " and " + std::to_string(nBitsExt));
     }
-    return cosetPart(nBits, nBitsExt, nBitsExt, 0, boundaries);
+    return cosetPart(nBits, nBitsExt, nBitsExt, 0);
 }
 
-CosetPart cosetPartPoints(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
-                          const std::vector<Boundary> &boundaries) {
+CosetPart cosetPartPoints(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part) {
     if (nBitsExt > MAX_NBITS_EXT || nBits > partBits || partBits > nBitsExt) {
         throw std::invalid_argument("ExpressionsDomain::cosetPart: needs nBits <= partBits <= nBitsExt <= 28, and "
                                     "they are " +
@@ -173,11 +126,6 @@ CosetPart cosetPartPoints(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, 
         throw std::invalid_argument("ExpressionsDomain::cosetPart: part " + std::to_string(part) + " of the " +
                                     std::to_string(uint64_t(1) << (nBitsExt - partBits)) + " of 2^" +
                                     std::to_string(partBits) + " points");
-    }
-    for (const Boundary &b : boundaries) {
-        if (b.type == BoundaryType::EveryFrame) {
-            excludedRoots(nBits, b); // throws if it excludes too many rows
-        }
     }
     Engine::Fr &fr = Engine::engine.fr;
     const uint64_t n = uint64_t(1) << nBits;
@@ -207,83 +155,10 @@ CosetPart cosetPartPoints(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, 
     return points;
 }
 
-ExpressionsDomain ExpressionsDomain::cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
-                                               const std::vector<Boundary> &boundaries) {
-    const CosetPart points = cosetPartPoints(nBits, nBitsExt, partBits, part, boundaries);
-    Engine::Fr &fr = Engine::engine.fr;
+ExpressionsDomain ExpressionsDomain::cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part) {
+    CosetPart points = cosetPartPoints(nBits, nBitsExt, partBits, part);
     ExpressionsDomain domain(nBits, partBits - nBits);
-    const uint64_t m = uint64_t(1) << partBits;
-    const uint64_t e = points.zh.size();
-
-    // The part's points c·ω_m^i, each thread's chunk from c·ω_m^begin: only if a boundary other than
-    // everyRow reads them, whose Zi is the e values of 1/Z_H.
-    const FrElement &c = points.shift;
-    const FrElement &w = points.root;
-    const bool readsPoints = std::any_of(boundaries.begin(), boundaries.end(),
-                                         [](const Boundary &b) { return b.type != BoundaryType::EveryRow; });
-    std::vector<FrElement> x(readsPoints ? m : 0);
-    if (readsPoints) {
-#pragma omp parallel
-        {
-            const uint64_t nThreads = omp_get_num_threads();
-            const uint64_t chunk = (m + nThreads - 1) / nThreads;
-            const uint64_t begin = std::min(m, omp_get_thread_num() * chunk);
-            const uint64_t end = std::min(m, begin + chunk);
-            if (begin < end) {
-                FrElement point;
-                fr.mul(point, c, power(w, begin));
-                for (uint64_t i = begin; i < end; ++i) {
-                    x[i] = point;
-                    fr.mul(point, point, w);
-                }
-            }
-        }
-    }
-
-    std::vector<FrElement> den;
-    for (const Boundary &b : boundaries) {
-        if (b.type == BoundaryType::EveryRow) {
-            domain.zerofiers_.push_back(points.zhInv);
-            continue;
-        }
-        std::vector<FrElement> zi(m);
-        switch (b.type) {
-        case BoundaryType::EveryRow: // its e values, above
-            break;
-        case BoundaryType::FirstRow:
-        case BoundaryType::LastRow: {
-            const FrElement root = oneRowRoot(nBits, b.type);
-            den.resize(m);
-#pragma omp parallel for schedule(static)
-            for (uint64_t i = 0; i < m; ++i) {
-                fr.sub(den[i], x[i], root);
-            }
-            if (!batchInverse(zi.data(), den.data(), m)) {
-                throw std::logic_error("ExpressionsDomain::cosetPart: a point of the coset is a row of H");
-            }
-#pragma omp parallel for schedule(static)
-            for (uint64_t i = 0; i < m; ++i) {
-                fr.mul(zi[i], points.zh[i & (e - 1)], zi[i]);
-            }
-            break;
-        }
-        case BoundaryType::EveryFrame: {
-            const std::vector<FrElement> roots = excludedRoots(nBits, b);
-#pragma omp parallel for schedule(static)
-            for (uint64_t i = 0; i < m; ++i) {
-                FrElement acc = fr.one();
-                for (const FrElement &root : roots) {
-                    FrElement f;
-                    fr.sub(f, x[i], root);
-                    fr.mul(acc, acc, f);
-                }
-                zi[i] = acc;
-            }
-            break;
-        }
-        }
-        domain.zerofiers_.push_back(std::move(zi));
-    }
+    domain.zerofiers_.push_back(std::move(points.zhInv));
     return domain;
 }
 
@@ -304,9 +179,9 @@ Expressions::Expressions(const ExpressionsBin &_bin, const PilfflonkInfo &info)
                                       std::to_string(arg2) + ", and the AIR has " +
                                       std::to_string(openingPoints.size()));
                 }
-                if (type == types.zi() && arg1 - 1 >= info.boundaries.size()) {
+                if (type == types.zi() && arg1 - 1 >= N_BOUNDARIES) {
                     throw FormatError("<air>.bin: " + what + " reads Zi of boundary " + std::to_string(arg1 - 1) +
-                                      ", and the AIR has " + std::to_string(info.boundaries.size()));
+                                      ", and the AIR has " + std::to_string(N_BOUNDARIES));
                 }
             }
         }

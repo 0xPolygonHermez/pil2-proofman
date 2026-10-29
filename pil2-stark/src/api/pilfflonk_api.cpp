@@ -997,15 +997,13 @@ int pilfflonk_ctx_n_constraints(const void *ctx, uint64_t airgroup_id, uint64_t 
 }
 
 int pilfflonk_ctx_constraint(const void *ctx, uint64_t airgroup_id, uint64_t air_id, uint64_t index,
-                             uint64_t *stage, uint64_t *first_row, uint64_t *last_row, uint32_t *im_pol,
-                             uint64_t *line_len) {
+                             uint64_t *stage, uint32_t *im_pol, uint64_t *line_len) {
     const char *function = __func__;
     return guard(function, [&] {
         const struct {
             const void *pointer;
             const char *name;
-        } arguments[] = {{ctx, "ctx"},           {stage, "stage"},   {first_row, "first_row"},
-                         {last_row, "last_row"}, {im_pol, "im_pol"}, {line_len, "line_len"}};
+        } arguments[] = {{ctx, "ctx"}, {stage, "stage"}, {im_pol, "im_pol"}, {line_len, "line_len"}};
         for (const auto &argument : arguments) {
             if (argument.pointer == nullptr) {
                 return fail(PILFFLONK_ERR_INVALID_ARGUMENT, function, "%s is NULL", argument.name);
@@ -1013,8 +1011,6 @@ int pilfflonk_ctx_constraint(const void *ctx, uint64_t airgroup_id, uint64_t air
         }
         const PilFflonk::ParserParams &constraint = constraintOf(ctx, airgroup_id, air_id, index);
         *stage = constraint.stage;
-        *first_row = constraint.firstRow;
-        *last_row = constraint.lastRow;
         *im_pol = constraint.imPol ? 1 : 0;
         *line_len = constraint.line.size();
         return static_cast<int>(PILFFLONK_OK);

@@ -282,8 +282,6 @@ extern "C" {
         air_id: u64,
         index: u64,
         stage: *mut u64,
-        first_row: *mut u64,
-        last_row: *mut u64,
         im_pol: *mut u32,
         line_len: *mut u64,
     ) -> ::std::os::raw::c_int;

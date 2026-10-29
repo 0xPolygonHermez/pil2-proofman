@@ -18,8 +18,8 @@ use serde_json::{json, Value};
 
 // ---------------------------------------------------------------------------------------------
 // Samples. The pilfflonkinfo is a made-up AIR of 16 rows and two stages that uses every field
-// and every optional one: an array column, an im pol, a negative offset, the four kinds of
-// boundary but lastRow, air and airgroup values, and an f of each stage.
+// and every optional one: an array column, an im pol, a negative offset, air and airgroup values,
+// and an f of each stage.
 // ---------------------------------------------------------------------------------------------
 
 fn pol(stage: u64, name: &str, id: u64, stage_id: u64, lengths: &[u64]) -> PolMapEntry {
@@ -90,7 +90,7 @@ fn sample_info() -> PilfflonkInfo {
             .map(|(k, v)| (k.to_string(), v))
             .collect(),
         opening_points: vec![-1, 0, 1],
-        boundaries: vec![Boundary::EveryRow, Boundary::FirstRow, Boundary::EveryFrame { offset_min: 1, offset_max: 2 }],
+        boundaries: vec![Boundary::EveryRow],
         ev_map: vec![
             ev(Cm, 4, -1, 0),
             ev(Cm, 5, -1, 0),
@@ -487,7 +487,7 @@ fn the_pilfflonkinfo_refuses_unknown_fields_and_stark_ones() {
         ("\"type\": \"const\"", "\"type\": \"custom\""),
         ("\"prime\": 1,", "\"prime\": 1, \"commitId\": 0,"),
         ("\"name\": \"everyRow\"", "\"name\": \"everyRow\", \"offsetMin\": 0"),
-        ("\"name\": \"firstRow\"", "\"name\": \"someRow\""),
+        ("\"name\": \"everyRow\"", "\"name\": \"firstRow\""),
         ("\"nBits\": 4", "\"nBits\": -4"),
         ("\"degree\": 50", "\"degree\": 50.5"),
     ] {
@@ -551,7 +551,7 @@ fn the_vkey_refuses_what_does_not_match_its_layout() {
 
 /// What the JS verifier refuses in a vkey the layout alone allows (`pilfflonk/js/src/vkey.js`,
 /// `fromObjectVk`), refused here too, with the reason: neither read nor written. The sample has
-/// two stages, 16 rows and the boundaries everyRow, firstRow and everyFrame {1, 2}.
+/// two stages, 16 rows and the boundary everyRow.
 #[test]
 fn the_vkey_refuses_what_the_verifier_refuses() {
     let with = |change: &dyn Fn(&mut Vkey)| {
@@ -593,22 +593,14 @@ fn the_vkey_refuses_what_the_verifier_refuses() {
         (with(&|v| v.num_challenges = vec![0]), "numChallenges has 1 stages, and the layout 2"),
         (with(&|v| v.num_challenges = vec![0, 2, 0]), "numChallenges has 3 stages, and the layout 2"),
         (with(&|v| v.num_challenges = vec![1, 2]), "the transcript squeezes no challenge of stage 1"),
-        (with(&|v| v.boundaries.clear()), "boundaries[0] must be everyRow"),
-        (with(&|v| v.boundaries.swap(0, 1)), "boundaries[0] must be everyRow"),
-        (
-            with(&|v| v.boundaries.push(Boundary::EveryFrame { offset_min: 8, offset_max: 8 })),
-            "boundaries[3] is everyFrame {8, 8}: no row of 16 is left",
-        ),
-        (
-            with(&|v| v.boundaries[2] = Boundary::EveryFrame { offset_min: u64::MAX, offset_max: 1 }),
-            "no row of 16 is left",
-        ),
+        (with(&|v| v.boundaries.clear()), "boundaries must be only everyRow"),
+        (with(&|v| v.boundaries.push(Boundary::EveryRow)), "boundaries must be only everyRow"),
         (with(&|v| v.q_verifier = json!({"tmpUsed": 1, "code": []})), "qVerifier: no code"),
         (with(&|v| v.q_verifier = code(json!({"type": "eval", "id": 13, "dim": 1}))), "eval 13 is not one of the 13"),
         (with(&|v| v.q_verifier = code(json!({"type": "public", "id": 2, "dim": 1}))), "public 2 is not one of the 2"),
         (
-            with(&|v| v.q_verifier = code(json!({"type": "Zi", "id": 0, "boundaryId": 3, "dim": 1}))),
-            "Zi of boundary 3, and there are 3",
+            with(&|v| v.q_verifier = code(json!({"type": "Zi", "id": 0, "boundaryId": 1, "dim": 1}))),
+            "Zi of boundary 1, and there are 1",
         ),
         // std_vc is challenge 2 of challengesMap [0, 2]: after the two of stage 2.
         (
@@ -625,9 +617,7 @@ fn the_vkey_refuses_what_the_verifier_refuses() {
         assert!(vkey.to_json_string().is_err(), "{reason}: it is not written");
     }
 
-    // What they allow: an everyFrame that leaves one row, and every challenge at its position.
-    let everyframe = with(&|v| v.boundaries.push(Boundary::EveryFrame { offset_min: 8, offset_max: 7 }));
-    assert!(everyframe.validate().is_ok());
+    // What they allow: every challenge at its position.
     for (id, stage, stage_id) in [(0, 2, 0), (1, 2, 1), (2, 3, 0), (3, 4, 0)] {
         let challenge = json!({"type": "challenge", "id": id, "stage": stage, "stageId": stage_id, "dim": 1});
         assert!(with(&|v| v.q_verifier = code(challenge.clone())).validate().is_ok(), "challenge {id}");
@@ -637,7 +627,7 @@ fn the_vkey_refuses_what_the_verifier_refuses() {
     let text = sample_vkey().to_json_string().unwrap();
     for (from, to) in [
         ("\"numChallenges\": [\n  0,\n  2\n ]", "\"numChallenges\": [1, 2]"),
-        ("\"boundaries\": [\n  {\n   \"name\": \"everyRow\"\n  },", "\"boundaries\": ["),
+        ("\"boundaries\": [\n  {\n   \"name\": \"everyRow\"\n  }\n ]", "\"boundaries\": []"),
         ("\"name\": \"everyRow\"", "\"name\": \"everyRow\", \"offsetMin\": null"),
         ("\"op\": \"mul\"", "\"op\": \"div\""),
     ] {

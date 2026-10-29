@@ -28,8 +28,8 @@ Out of scope, and refused by the setup ([What the setup refuses](#what-the-setup
 - more than one AIR, or more than one instance of it;
 - air values, airgroup values, proof values and global constraints;
 - custom commits, periodic columns and public tables;
-- the constraint domains of pilout v2. The four of pilout v1 are supported: `everyRow`, `firstRow`,
-  `lastRow` and `everyFrame`.
+- the constraint domains of pilout v2: only `everyRow` constraints are supported, and the setup
+  refuses a domain constraint with "domain constraints are not supported by pilfflonk".
 
 The formats leave room for several instances (the transcript absorbs the number of instances, and
 the proof names have scope prefixes), but nothing implements them. There is no native verifier, as
@@ -492,8 +492,7 @@ with `im_low` on the product bus), each with its hint.
 - `mixed_bus/`: both buses of the std in one AIR, the Connection on the product bus and the Plookup on
   the sum bus, as plonk2pil's BN128 wrap has its connection and its range checks' lookup. Each closes
   on its own.
-- `pilfflonk/tests/data/domains.rs`: pilouts built in code with `prost`, for the domains the compiler
-  does not emit (`firstRow`, `lastRow` and `everyFrame`).
+- `pilfflonk/tests/data/domains.rs`: `everyRow` pilouts built in code with `prost`.
 - `std_bn128/`: the std's connections over BN128, against `bn128.pil`.
 - `packed/packed_external.pil` and `connection/connection_external.pil`: `packed.pil` and
   `connection_prod.pil` with fixed columns declared `#pragma fixed_external` (`K[4]` and `S`;
@@ -525,13 +524,6 @@ with line numbers, the lines are those of the version below.
 
 Defects found in code pilfflonk uses but does not own. None is fixed here unless it says so;
 pilfflonk works around them.
-
-### STARK lastRow zerofier
-
-`pil2-stark/src/starkpil/setup_ctx.hpp:104` calls `buildOneRowZerofierInv(..., N)`, which would use
-the root `ω^N = 1`, where `:47-56` uses `ω^(N−1)`; and `:57` seems to test `everyRow` where it means
-`everyFrame`. Not verified: the compiler only emits `everyRow`, so no real AIR reaches it. pilfflonk's
-`lastRow` zerofier is `X − ω^(N−1)`.
 
 ### rapidsnark and ffiasm
 

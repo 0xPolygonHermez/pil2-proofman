@@ -356,7 +356,7 @@ FrElement qVerifierAt(const Fibonacci &fib, const std::vector<FrElement> &evalua
     const ExpressionsBin qVerifier = ExpressionsBin::load(fixture("Fibonacci.qverifier.bin"));
     const Expressions expressions(qVerifier, fib.air().info());
     PointValues point;
-    point.zerofiers = PilFflonk::zerofiersAt(fib.air().info().nBits, fib.air().info().boundaries, xi);
+    point.zerofiers = PilFflonk::zerofiersAt(fib.air().info().nBits, xi);
     // The evMap order: the Fibonacci's has its const entries first, as the proof's order.
     point.evals = evaluations;
     point.publics = fib.publics;
@@ -1107,7 +1107,7 @@ void testCheckReadsTheConstraints() {
     assert(constraints.size() == N_CONSTRAINTS);
     for (uint64_t c = 0; c < N_CONSTRAINTS; ++c) {
         assert(constraints[c].line == FIBONACCI_LINES[c]);
-        assert(constraints[c].stage == 1 && constraints[c].firstRow == 0 && constraints[c].lastRow == 256);
+        assert(constraints[c].stage == 1);
         assert(constraints[c].imPol == (c == 5));
     }
     // The generator's witness satisfies them all, im pol's included.
@@ -1215,14 +1215,14 @@ void testCheckLeavesTheProofAsItWas() {
     assert((failures(inst->check(10, {})) == Failures{{0, 100}, {1, 99}, {1, 100}}));
 }
 
-// The offset in a .bin of word `word` (0 stage, 1 destId, 2 firstRow, 3 lastRow) of the entry of
+// The offset in a .bin of word `word` (0 stage, 1 destId) of the entry of
 // constraint c in section 2 (the format: setup/pilfflonk/src/bytecode.rs).
 uint64_t constraintWord(const std::vector<uint8_t> &bin, uint64_t c, uint64_t word) {
     uint64_t size1 = 0;
     std::memcpy(&size1, bin.data() + 12 + 4, sizeof(size1)); // after "chps", version, nSections, id 1
     uint64_t at = 12 + 12 + size1 + 12 + 16;                  // section 2's entries, after its four counts
     for (uint64_t i = 0; i < c; ++i) {
-        at += 10 * 4; // stage … argsOffset, imPol
+        at += 8 * 4; // stage … argsOffset, imPol
         at = std::find(bin.begin() + at, bin.end(), uint8_t(0)) - bin.begin() + 1;
     }
     return at + 4 * word;
@@ -1238,10 +1238,9 @@ void testCheckRefusals() {
     {
         KeyFiles files;
         for (uint64_t c = 0; c < N_CONSTRAINTS; ++c) {
-            uint32_t stage = 0, lastRow = 0;
+            uint32_t stage = 0;
             std::memcpy(&stage, files.bin.data() + constraintWord(files.bin, c, 0), sizeof(stage));
-            std::memcpy(&lastRow, files.bin.data() + constraintWord(files.bin, c, 3), sizeof(lastRow));
-            assert(stage == 1 && lastRow == 256);
+            assert(stage == 1);
         }
         setWord(files.bin, constraintWord(files.bin, 1, 0), 2);
         const KeyDir dir(files);
@@ -1258,11 +1257,6 @@ void testCheckRefusals() {
             }
         }
     }
-    // A constraint's rows beyond the trace: the key is refused.
-    KeyFiles files;
-    setWord(files.bin, constraintWord(files.bin, 4, 3), 257);
-    expectRefused(files, PILFFLONK_ERR_FORMAT,
-                  "Fibonacci: .bin: constraint 4 holds on the rows 0 <= i < 257, and the trace has 256");
 }
 
 void testCheckCApi() {
@@ -1275,11 +1269,11 @@ void testCheckCApi() {
     assert(pilfflonk_ctx_n_constraints(nullptr, 0, 0, &n) == PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(pilfflonk_ctx_n_constraints(ctx, 0, 0, nullptr) == PILFFLONK_ERR_INVALID_ARGUMENT);
 
-    uint64_t stage = 0, firstRow = 0, lastRow = 0, lineLen = 0;
+    uint64_t stage = 0, lineLen = 0;
     uint32_t imPol = 2;
     for (uint64_t c = 0; c < N_CONSTRAINTS; ++c) {
-        assert(pilfflonk_ctx_constraint(ctx, 0, 0, c, &stage, &firstRow, &lastRow, &imPol, &lineLen) == PILFFLONK_OK);
-        assert(stage == 1 && firstRow == 0 && lastRow == 256 && imPol == (c == 5 ? 1 : 0));
+        assert(pilfflonk_ctx_constraint(ctx, 0, 0, c, &stage, &imPol, &lineLen) == PILFFLONK_OK);
+        assert(stage == 1 && imPol == (c == 5 ? 1 : 0));
         assert(lineLen == std::strlen(FIBONACCI_LINES[c]));
         std::vector<uint8_t> line(lineLen);
         assert(pilfflonk_ctx_constraint_line(ctx, 0, 0, c, line.data(), lineLen) == PILFFLONK_OK);
@@ -1288,14 +1282,14 @@ void testCheckCApi() {
         assert(contains(pilfflonk_last_error(), "and the line of constraint " + std::to_string(c) + " has " +
                                                     std::to_string(lineLen) + " bytes"));
     }
-    assert(pilfflonk_ctx_constraint(ctx, 0, 0, 6, &stage, &firstRow, &lastRow, &imPol, &lineLen) ==
+    assert(pilfflonk_ctx_constraint(ctx, 0, 0, 6, &stage, &imPol, &lineLen) ==
            PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(contains(pilfflonk_last_error(), "Fibonacci has no constraint 6, of 6"));
-    assert(pilfflonk_ctx_constraint(ctx, 1, 0, 0, &stage, &firstRow, &lastRow, &imPol, &lineLen) ==
+    assert(pilfflonk_ctx_constraint(ctx, 1, 0, 0, &stage, &imPol, &lineLen) ==
            PILFFLONK_ERR_INVALID_ARGUMENT);
-    assert(pilfflonk_ctx_constraint(ctx, 0, 0, 0, &stage, &firstRow, nullptr, &imPol, &lineLen) ==
+    assert(pilfflonk_ctx_constraint(ctx, 0, 0, 0, &stage, nullptr, &lineLen) ==
            PILFFLONK_ERR_INVALID_ARGUMENT);
-    assert(contains(pilfflonk_last_error(), "last_row is NULL"));
+    assert(contains(pilfflonk_last_error(), "im_pol is NULL"));
     assert(pilfflonk_ctx_constraint_line(ctx, 0, 0, 6, nullptr, 0) == PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(pilfflonk_ctx_constraint_line(ctx, 0, 0, 0, nullptr, 3) == PILFFLONK_ERR_INVALID_ARGUMENT);
     assert(pilfflonk_ctx_constraint_line(nullptr, 0, 0, 0, nullptr, 0) == PILFFLONK_ERR_INVALID_ARGUMENT);

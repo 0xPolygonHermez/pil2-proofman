@@ -60,13 +60,8 @@ struct EvMapEntry {
     uint64_t openingPos; // openingPoints[openingPos] == prime
 };
 
-enum class BoundaryType { EveryRow, FirstRow, LastRow, EveryFrame };
-
-struct Boundary {
-    BoundaryType type;
-    uint64_t offsetMin; // EveryFrame only, 0 otherwise
-    uint64_t offsetMax; // EveryFrame only, 0 otherwise
-};
+// The Zi of an AIR: pilfflonk has only everyRow constraints, whose Zi, boundary 0, is 1/Z_H.
+constexpr uint64_t N_BOUNDARIES = 1;
 
 struct LayoutPol {
     uint64_t id; // in constPolsMap for an f of stage 0, in cmPolsMap otherwise
@@ -106,7 +101,6 @@ public:
     std::vector<NameStageEntry> airgroupValuesMap;
     std::map<std::string, uint64_t> mapSectionsN;
     std::vector<int64_t> openingPoints;
-    std::vector<Boundary> boundaries;
     std::vector<EvMapEntry> evMap;
     uint64_t qDeg;
     uint64_t qDim; // 1

@@ -70,7 +70,7 @@ impl Cursor<'_> {
     }
 }
 
-const BIN_VERSION: u32 = 0x7066_0003;
+const BIN_VERSION: u32 = 0x7066_0004;
 
 pub fn read_bin(path: &Path) -> Result<Bin> {
     let d = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;

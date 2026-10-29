@@ -142,31 +142,14 @@ EvMapEntry evMapEntry(const json &value, const std::string &where) {
     return e;
 }
 
-Boundary boundary(const json &value, const std::string &where) {
-    const json &j = object(value, where, {"name"}, {"offsetMin", "offsetMax"});
+// The name of a boundary: pilfflonk has only everyRow.
+std::string boundaryName(const json &value, const std::string &where) {
+    const json &j = object(value, where, {"name"});
     const std::string name = pilfflonkinfo.str(j["name"], at(where, "name"));
-    const bool hasOffsets = j.contains("offsetMin") || j.contains("offsetMax");
-    Boundary b{BoundaryType::EveryRow, 0, 0};
-    if (name == "everyFrame") {
-        object(j, where, {"name", "offsetMin", "offsetMax"});
-        b.type = BoundaryType::EveryFrame;
-        b.offsetMin = pilfflonkinfo.u64(j["offsetMin"], at(where, "offsetMin"));
-        b.offsetMax = pilfflonkinfo.u64(j["offsetMax"], at(where, "offsetMax"));
-        return b;
+    if (name != "everyRow") {
+        pilfflonkinfo.fail(at(where, "name"), "\"" + name + "\" is not everyRow, the only boundary of pilfflonk");
     }
-    if (name == "everyRow") {
-        b.type = BoundaryType::EveryRow;
-    } else if (name == "firstRow") {
-        b.type = BoundaryType::FirstRow;
-    } else if (name == "lastRow") {
-        b.type = BoundaryType::LastRow;
-    } else {
-        pilfflonkinfo.fail(at(where, "name"), "\"" + name + "\" is not a boundary");
-    }
-    if (hasOffsets) {
-        pilfflonkinfo.fail(where, "only everyFrame has offsets");
-    }
-    return b;
+    return name;
 }
 
 LayoutEntry layoutEntry(const json &value, const std::string &where) {
@@ -288,7 +271,9 @@ PilfflonkInfo PilfflonkInfo::parse(const std::string &text) {
         info.mapSectionsN[it.key()] = pilfflonkinfo.u64(it.value(), at("mapSectionsN", it.key().c_str()));
     }
     info.openingPoints = list<int64_t>(j["openingPoints"], "openingPoints", i64);
-    info.boundaries = list<Boundary>(j["boundaries"], "boundaries", boundary);
+    if (list<std::string>(j["boundaries"], "boundaries", boundaryName).size() != 1) {
+        pilfflonkinfo.fail("boundaries", "must be only everyRow");
+    }
     info.evMap = list<EvMapEntry>(j["evMap"], "evMap", evMapEntry);
     info.qDeg = pilfflonkinfo.u64(j["qDeg"], "qDeg");
     info.qDim = pilfflonkinfo.u64(j["qDim"], "qDim");

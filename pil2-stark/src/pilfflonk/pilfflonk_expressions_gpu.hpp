@@ -4,13 +4,13 @@
 // The prover mode of the interpreter on the device (pilfflonk/docs/performance.md#gpu): the code of
 // an AIR's <air>.bin on columns in device memory, into device memory, by the kernels of
 // pilfflonk_expressions.cu; and the domains it runs on, H and the parts of the extended coset, with
-// their Zi computed on the device. Only a library built with the GPU (__USE_CUDA__) has it, in
+// their Zi on the device. Only a library built with the GPU (__USE_CUDA__) has it, in
 // pilfflonk_expressions_gpu.cpp.
 //
 // Every value is the CPU's bit for bit (Expressions, ExpressionsDomain): the same field operations
 // on the same elements, in sppark's arithmetic, which keeps every element fully reduced as ffiasm
-// does; the host math they share (cosetPartPoints, excludedRoots, oneRowRoot,
-// Expressions::shifts); and the CPU's own checks, with its errors, before anything is computed.
+// does; the host math they share (cosetPartPoints, Expressions::shifts); and the CPU's own checks,
+// with its errors, before anything is computed.
 // Everything runs on the legacy default stream, after what the caller has queued there.
 
 #include <cstdint>
@@ -25,23 +25,22 @@
 namespace PilFflonk {
 
 // A domain of the prover mode on the device (ExpressionsDomain): H, or a part of the extended coset
-// and Zi of each boundary on its points, in device memory.
+// and Zi on its points, in device memory.
 class ExpressionsDomainGpu {
 public:
     // H, as ExpressionsDomain::trace, which throws as it does.
     static ExpressionsDomainGpu trace(uint64_t nBits);
 
     // ExpressionsDomain::cosetPart on the device: its arguments checked, and Z_H on its points
-    // computed, by cosetPartPoints, and then Zi of each boundary on the device into `workspace`,
-    // cosetPartBytes() bytes of device memory, which must outlive the domain and the evaluations on
-    // it. Zi of an everyRow, 1/Z_H, repeats every e = S/N points, and has its e values only. Throws
-    // as cosetPart, and std::invalid_argument if workspace is null. Returns before the kernels
-    // finish: the default stream runs them before the evaluations on the domain.
+    // computed, by cosetPartPoints, and copied into `workspace`, cosetPartBytes() bytes of device
+    // memory, which must outlive the domain and the evaluations on it. Zi, 1/Z_H, repeats every
+    // e = S/N points, and has its e values only. Throws as cosetPart, and std::invalid_argument if
+    // workspace is null.
     static ExpressionsDomainGpu cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
-                                          const std::vector<Boundary> &boundaries, void *workspace);
+                                          void *workspace);
 
-    // The workspace of cosetPart, in bytes, for boundaries it accepts.
-    static uint64_t cosetPartBytes(uint64_t nBits, uint64_t partBits, const std::vector<Boundary> &boundaries);
+    // The workspace of cosetPart, in bytes.
+    static uint64_t cosetPartBytes(uint64_t nBits, uint64_t partBits);
 
     uint64_t nBits() const { return nBits_; }
     uint64_t size() const { return uint64_t(1) << (nBits_ + extendBits_); }
@@ -69,7 +68,7 @@ struct DeviceCode {
 
 // Where the operand tables of an evaluation (OperandTables) go in the bytes encodeOperands writes:
 // room for every column and scalar the code of a bytecode reads, in both its sections, and for
-// every opening point and boundary of its AIR. Offsets in bytes.
+// every opening point of its AIR and its N_BOUNDARIES Zi. Offsets in bytes.
 struct OperandLayout {
     std::vector<uint32_t> columnStart; // by column type, 0 … zi() − 1, then their entries in all
     std::vector<uint64_t> nScalars;    // by scalar type − publics(): 1 + the largest arg1 read; 0 for the numbers
@@ -85,7 +84,7 @@ struct OperandLayout {
     uint64_t bytes = 0;
 };
 
-OperandLayout operandLayout(const ExpressionsBin &bin, uint64_t nOpenings, uint64_t nBoundaries);
+OperandLayout operandLayout(const ExpressionsBin &bin, uint64_t nOpenings);
 
 // The tables of an evaluation, as `layout` places them in layout.bytes bytes at `out`, to be read at
 // `base` (where they will be copied, or out itself): the columns of `values` (pointers, kept as they

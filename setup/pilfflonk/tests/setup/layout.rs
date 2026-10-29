@@ -7,7 +7,7 @@
 use num_bigint::BigUint;
 use pil2_pilout::pilout::{self as pb, constraint, operand, SymbolType};
 use pil_info::PilInfoError;
-use pilfflonk_setup::air_info::{air_setup, domain_boundary, q_piece_name, AirRef, AirSetup};
+use pilfflonk_setup::air_info::{air_setup, q_piece_name, AirRef, AirSetup};
 use pilfflonk_setup::global_info::global_info;
 use pilfflonk_setup::grouping::GroupingError;
 use pilfflonk_setup::layout::{
@@ -17,8 +17,8 @@ use pilfflonk_setup::passes::run_passes;
 use pilfflonk_setup::validate::validate;
 use pilfflonk_setup::SetupError;
 use proofman_pilfflonk::{
-    Boundary, EvMapEntry, JsonFile, Layout, LayoutEntry, LayoutPol, PilfflonkInfo, PolMapEntry, PolType, ProofNames,
-    SetupParams, WitnessShape,
+    EvMapEntry, JsonFile, Layout, LayoutEntry, LayoutPol, PilfflonkInfo, PolMapEntry, PolType, ProofNames, SetupParams,
+    WitnessShape,
 };
 
 use crate::common::*;
@@ -260,78 +260,42 @@ fn what_the_passes_refuse_is_an_error() {
     assert!(err.to_string().starts_with("the symbolic passes (pil-info) failed: invalid pilout: "), "{err}");
 }
 
-/// A domain that is not first/last row or everyFrame (here the odd rows) has no pilfflonk boundary.
+/// pilfflonk has only everyRow constraints: any domain that does not select every row is refused
+/// with pil-info's error, whichever it is; one that selects every row is everyRow.
 #[test]
 fn pilfflonk_rejects_domains() {
-    let mut pilout = offsets_pilout();
-    let air = the_air(&mut pilout);
-    air.domains = vec![pb::Domain { cycle_bits: 1, offsets: vec![1] }];
-    air.constraints = vec![pb::Constraint {
-        constraint: Some(constraint::Constraint::DomainRows(constraint::DomainRows {
+    let with_domain = |cycle_bits: u32, offsets: Vec<u32>, complement: bool| {
+        let mut pilout = offsets_pilout();
+        let air = the_air(&mut pilout);
+        air.domains = vec![pb::Domain { cycle_bits, offsets }];
+        let rows = constraint::DomainRows {
             domain_idx: 0,
             expression_idx: Some(operand::Expression { idx: 0 }),
             debug_line: None,
-        })),
-    }];
-    let err = setup_air(&pilout, 9).unwrap_err();
-    assert!(
-        matches!(&err, SetupError::PassesOutput(m) if m.contains("domain constraint not supported by pilfflonk")),
-        "{err}"
-    );
-}
-
-/// pil-info's normalized domains map to pilfflonk's boundaries, whichever side normalization kept.
-#[test]
-fn normalized_domains_map_to_pilfflonk_boundaries() {
-    use pil_info::pil::domain::{normalize, Boundary as PassesBoundary, Domain};
-    let map = |cycle_bits, offsets: &[u32], complement| {
-        let declared = Domain { cycle_bits, offsets: offsets.to_vec(), complement };
-        let PassesBoundary::Domain(d) = normalize(&declared, 3, "T").unwrap() else { panic!("every row") };
-        domain_boundary(&d, 3)
+        };
+        air.constraints = vec![pb::Constraint {
+            constraint: Some(if complement {
+                constraint::Constraint::ComplementDomainRows(constraint::ComplementDomainRows {
+                    domain_idx: rows.domain_idx,
+                    expression_idx: rows.expression_idx,
+                    debug_line: None,
+                })
+            } else {
+                constraint::Constraint::DomainRows(rows)
+            }),
+        }];
+        setup_air(&pilout, 9)
     };
-    let frame = |offset_min, offset_max| Some(Boundary::EveryFrame { offset_min, offset_max });
-    assert_eq!(map(3, &[0], false), Some(Boundary::FirstRow));
-    assert_eq!(map(3, &[7], false), Some(Boundary::LastRow));
-    assert_eq!(map(3, &[0, 6, 7], true), frame(1, 2));
-    assert_eq!(map(3, &[1, 2, 3, 4, 5, 6, 7], true), Some(Boundary::FirstRow)); // flipped to [0]
-    assert_eq!(map(3, &[1, 2, 3, 4, 5], false), frame(1, 2)); // flipped to !{0, 6, 7}
-    assert_eq!(map(3, &[2, 3], false), frame(2, 4));
-    assert_eq!(map(1, &[1], false), None); // odd rows
-    assert_eq!(map(3, &[0, 3], true), None);
-}
-
-/// pilfflonk has no vanishing-factor cap: frames of more than 32 excluded or held rows map to
-/// EveryFrame, where the STARK refuses them.
-#[test]
-fn wide_frames_are_not_capped_for_pilfflonk() {
-    use pil_info::pil::constraint_poly::normalize_constraint_domains;
-    use pil_info::pil::domain::{Boundary as PassesBoundary, Domain};
-    use pil_info::types::pilout_info::ConstraintInfo;
-    use pil_info::Opening;
-    let n_bits = 7;
-    let frame = |min: u32, max: u32| {
-        let offsets = (0..min).chain((1 << n_bits) - max..1 << n_bits).collect();
-        vec![ConstraintInfo {
-            boundary: PassesBoundary::Domain(Domain { cycle_bits: n_bits, offsets, complement: true }),
-            e: 0,
-            line: None,
-            stage: None,
-            im_pol: false,
-        }]
-    };
-    // {20, 20} keeps 40 excluded offsets; {40, 40} flips to its 48 held rows
-    for (min, max) in [(20, 20), (40, 40)] {
-        let mut cs = frame(min, max);
-        normalize_constraint_domains(&mut cs, n_bits, Opening::Shplonk, |_| "T".into()).unwrap();
-        let PassesBoundary::Domain(d) = &cs[0].boundary else { panic!("every row") };
-        assert!(d.offsets.len() > 32, "{d:?}");
-        assert_eq!(
-            domain_boundary(d, n_bits),
-            Some(Boundary::EveryFrame { offset_min: u64::from(min), offset_max: u64::from(max) })
-        );
-        let err = normalize_constraint_domains(&mut frame(min, max), n_bits, Opening::Deep, |_| "T".into());
-        assert!(err.unwrap_err().to_string().contains("fixed selector column"));
+    // odd rows, the first row, the last row, a frame
+    for (cycle_bits, offsets, complement) in
+        [(1, vec![1], false), (4, vec![0], false), (4, vec![15], false), (4, vec![0, 15], true)]
+    {
+        let err = with_domain(cycle_bits, offsets, complement).unwrap_err();
+        assert!(matches!(&err, SetupError::Passes(PilInfoError::DomainConstraintsUnsupported)), "{err}");
+        assert!(err.to_string().ends_with("domain constraints are not supported by pilfflonk"), "{err}");
     }
+    // every row, declared as a domain
+    assert!(with_domain(1, vec![0, 1], false).is_ok());
 }
 
 /// Expressions that refer to each other in a cycle are refused by the passes with an

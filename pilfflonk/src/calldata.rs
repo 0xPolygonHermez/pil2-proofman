@@ -8,14 +8,7 @@
 //! `pubSignals` if it is 0) and `W` the words of [`CalldataLayout`]:
 //! - the proof's bytes ([`Proof::to_bytes`], pilfflonk/docs/formats.md#proof) as 32-byte words: the
 //!   commitments of the non-fixed `f`, `W`, `W'`, the evaluations, the `Q_i(ξ)` if `Q` is split,
-//!   `inv` and `invZh`;
-//! - one auxiliary inverse `1/(ξ − ω^j)` per `firstRow` (`j = 0`) or `lastRow` (`j = N − 1`)
-//!   boundary, in the order of the boundaries. The `Zi` of those boundaries is `Z_H(ξ)/(ξ − ω^j)`
-//!   (pilfflonk/docs/protocol.md#constraint-polynomial), the only division of the verifier that
-//!   neither `inv` nor `invZh` covers; the contract checks `(ξ − ω^j)·aux = 1` and `aux < r`, so
-//!   that a proof has one calldata. They are of the calldata only: the proof's format does not
-//!   change, and a vkey without those boundaries, as that of every compiled PIL2 program (the
-//!   compiler emits only `everyRow`), has none.
+//!   `inv` and `invZh`.
 //!
 //! `ξ = xiSeed^powerW`, and `xiSeed` is the transcript's (pilfflonk/docs/protocol.md#transcript):
 //! [`verifier_challenges`] replays the transcript on the proof as the verifier does
@@ -27,14 +20,12 @@
 
 use std::path::Path;
 
-use proofman_fields::{Bn128, Field};
 use proofman_starks_lib_c::{pilfflonk_keccak256_c, PilFflonkErrorKind};
 
 use crate::error::{invalid, PilfflonkError, PilfflonkResult};
 use crate::field::{FrBytes, G1Affine, FIELD_BYTES};
 use crate::json::JsonFile;
 use crate::names::{commitment_name, W};
-use crate::pilfflonk_info::Boundary;
 use crate::proof::{Proof, ProofNames, Publics};
 use crate::prover::{native, Transcript};
 use crate::vkey::Vkey;
@@ -55,30 +46,16 @@ pub struct CalldataLayout {
     pub n_evaluations: u64,
     /// The pieces `Q_i(ξ)` of a split `Q`, and 0 if it is whole.
     pub n_q_pieces: u64,
-    /// The rows `j` of the auxiliary inverses `1/(ξ − ω^j)` after the proof: one per `firstRow`
-    /// (`0`) and `lastRow` (`N − 1`) boundary, in the order of the boundaries.
-    pub aux_rows: Vec<u64>,
 }
 
 impl CalldataLayout {
     pub fn of(vkey: &Vkey) -> Self {
         let n_fixed = vkey.layout.n_fixed() as u64;
-        let n_rows = 1u64 << vkey.power;
         let n_q = vkey.layout.q_entries().map(|f| f.k).sum::<u64>();
-        let aux_rows = vkey
-            .boundaries
-            .iter()
-            .filter_map(|b| match b {
-                Boundary::FirstRow => Some(0),
-                Boundary::LastRow => Some(n_rows - 1),
-                Boundary::EveryRow | Boundary::EveryFrame { .. } => None,
-            })
-            .collect();
         CalldataLayout {
             n_commitments: vkey.layout.0.len() as u64 - n_fixed,
             n_evaluations: vkey.ev_map.len() as u64,
             n_q_pieces: if n_q > 1 { n_q } else { 0 },
-            aux_rows,
         }
     }
 
@@ -89,9 +66,9 @@ impl CalldataLayout {
         2 * (self.n_commitments + 2) + self.n_evaluations + self.n_q_pieces + 2
     }
 
-    /// The words of the `proof` argument: the proof's and the auxiliary inverses.
+    /// The words of the `proof` argument: the proof's.
     pub fn words(&self) -> u64 {
-        self.proof_words() + self.aux_rows.len() as u64
+        self.proof_words()
     }
 
     /// The word of the first scalar, the first evaluation (or, with none, the first piece of `Q`).
@@ -205,34 +182,10 @@ pub fn verifier_challenges(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> P
     Ok(VerifierChallenges { stages, std_vc, xi_seed, alpha, y })
 }
 
-/// The auxiliary inverses of the calldata of a proof of `vkey` whose `xiSeed` is `xi_seed`:
-/// `1/(ξ − ω^j)` for each row `j` of [`CalldataLayout::aux_rows`], with `ξ = xiSeed^powerW` and `ω`
-/// the root of unity of the domain, `5^((r − 1)/N)` (`Bn128::W`, `shplonk.js`'s `rootOfUnity`).
-/// Refuses a `ξ` that is a row of the domain: then `Z_H(ξ) = 0`, and the verifier rejects the proof
-/// for its `invZh`.
-pub fn auxiliary_inverses(vkey: &Vkey, xi_seed: &FrBytes) -> PilfflonkResult<Vec<FrBytes>> {
-    let rows = CalldataLayout::of(vkey).aux_rows;
-    if rows.is_empty() {
-        return Ok(Vec::new());
-    }
-    let Some(omega) = usize::try_from(vkey.power).ok().and_then(|power| Bn128::W.get(power)) else {
-        return invalid!("power {} is above the 2-adicity of r − 1, {}", vkey.power, Bn128::TWO_ADICITY);
-    };
-    let xi = Bn128::from(*xi_seed).exp_u64(vkey.power_w);
-    rows.iter()
-        .map(|&j| match (xi - omega.exp_u64(j)).try_inverse() {
-            Some(inverse) => Ok(FrBytes::from(inverse)),
-            None => invalid!(
-                "ξ = ω^{j} is a row of the domain: Z_H(ξ) = 0, and the verifier rejects the proof for its invZh"
-            ),
-        })
-        .collect()
-}
-
 /// The arguments of `verifyProof` for a proof (see the module).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Calldata {
-    /// The words of `proof`: the proof's bytes, then the auxiliary inverses.
+    /// The words of `proof`: the proof's bytes.
     pub proof: Vec<Word>,
     /// `pubSignals`: the publics, in the order of `publics.json`.
     pub pub_signals: Vec<FrBytes>,
@@ -259,40 +212,13 @@ impl Calldata {
     }
 
     /// The calldata of `proof` and `publics`, a proof of `vkey`: the proof's bytes and the
-    /// auxiliary inverses of its own `ξ` ([`verifier_challenges`], [`auxiliary_inverses`]), and the
-    /// publics. Refuses a proof or publics not of the vkey's shape, a proof whose transcript cannot
-    /// be replayed (a point the transcript refuses) and, if the calldata has auxiliary inverses, a
-    /// `ξ` that is a row of the domain: the verifier rejects each.
+    /// publics. Refuses a proof or publics not of the vkey's shape, and a proof whose transcript
+    /// cannot be replayed (a point the transcript refuses): the verifier rejects each.
     pub fn encode(vkey: &Vkey, proof: &Proof, publics: &[FrBytes]) -> PilfflonkResult<Self> {
-        let challenges = verifier_challenges(vkey, proof, publics)?;
-        let aux = auxiliary_inverses(vkey, &challenges.xi_seed)?;
-        Self::with_auxiliary_inverses(vkey, proof, publics, &aux)
-    }
-
-    /// The calldata of `proof` and `publics`, a proof of `vkey`, with the auxiliary inverses `aux`,
-    /// whatever they are: for tests of what the verifier does with calldata that [`encode`] does not
-    /// give (a proof whose transcript cannot be replayed, a wrong inverse). Refuses a proof,
-    /// publics or inverses not of the vkey's shape.
-    ///
-    /// [`encode`]: Calldata::encode
-    pub fn with_auxiliary_inverses(
-        vkey: &Vkey,
-        proof: &Proof,
-        publics: &[FrBytes],
-        aux: &[FrBytes],
-    ) -> PilfflonkResult<Self> {
+        verifier_challenges(vkey, proof, publics)?;
         check_shape(vkey, proof, publics)?;
         let layout = CalldataLayout::of(vkey);
-        if aux.len() != layout.aux_rows.len() {
-            return invalid!(
-                "{} auxiliary inverses, and the calldata of the vkey has {}",
-                aux.len(),
-                layout.aux_rows.len()
-            );
-        }
-        let bytes = proof.to_bytes();
-        let mut words: Vec<Word> = bytes.as_chunks::<FIELD_BYTES>().0.to_vec();
-        words.extend(aux.iter().map(FrBytes::to_be_bytes));
+        let words: Vec<Word> = proof.to_bytes().as_chunks::<FIELD_BYTES>().0.to_vec();
         if words.len() as u64 != layout.words() {
             return invalid!("the calldata has {} words, and the vkey's {}", words.len(), layout.words());
         }

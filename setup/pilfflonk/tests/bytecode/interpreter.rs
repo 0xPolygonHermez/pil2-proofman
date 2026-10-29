@@ -4,8 +4,7 @@
 //! - `Sample.expected.json`: inputs for the codes of [`sample`] on the trace domain, on the
 //!   extended coset and at a point, and the values the Rust evaluator here gives them over `Fr`
 //!   (`num-bigint`, through the oracle's `Fr`). It also has the zerofier terms on the coset and at
-//!   the point, from the closed forms of the zerofiers (`Domain::zerofier_at`,
-//!   pilfflonk/docs/protocol.md#constraint-polynomial).
+//!   the point, `1/Z_H` (pilfflonk/docs/protocol.md#constraint-polynomial).
 //! - `fibonacci/`: the Fibonacci, `N = 256`. It has what `setup-pilfflonk --no-packing` writes for
 //!   it (`Fibonacci.bin`, `.pilfflonkinfo.json`, `.const`), the stage-1 trace of its generator for
 //!   `[1, 2]` (`Fibonacci.witness.bin`, the `instance_0_0_0.bin` of its witness directory), the
@@ -34,7 +33,7 @@ use serde_json::{json, Value};
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::passes;
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
-use proofman_pilfflonk::oracle::{self, omega, AirOracle, ColumnRef, Domain, Fr};
+use proofman_pilfflonk::oracle::{self, omega, AirOracle, ColumnRef, Fr};
 use proofman_pilfflonk::{
     AirFile, Boundary, EvMapEntry, FileWitnessSource, JsonFile, PilfflonkGlobalInfo, PilfflonkInfo, PolType,
 };
@@ -167,25 +166,10 @@ impl Inputs {
     }
 }
 
-fn domain(b: &Boundary) -> Domain {
-    match *b {
-        Boundary::EveryRow => Domain::EveryRow,
-        Boundary::FirstRow => Domain::FirstRow,
-        Boundary::LastRow => Domain::LastRow,
-        Boundary::EveryFrame { offset_min, offset_max } => {
-            Domain::EveryFrame { offset_min: offset_min as usize, offset_max: offset_max as usize }
-        }
-    }
-}
-
-/// `Zi` of `boundary` at `x ∉ H`: `1/Z_H(x)` for everyRow, `Z_H(x)/Z_D(x)` for any other
+/// `Zi` at `x ∉ H`: `1/Z_H(x)`, the zerofier of the only boundary, everyRow
 /// (pilfflonk/docs/protocol.md#constraint-polynomial).
-fn zerofier_term(boundary: &Boundary, x: &Fr, n_bits: u32) -> Fr {
-    let z_h = &x.pow_u64(1 << n_bits) - &Fr::one();
-    match boundary {
-        Boundary::EveryRow => z_h.inv().unwrap(),
-        other => &z_h * &domain(other).zerofier_at(x, n_bits).unwrap().inv().unwrap(),
-    }
+fn zerofier_term(_: &Boundary, x: &Fr, n_bits: u32) -> Fr {
+    (&x.pow_u64(1 << n_bits) - &Fr::one()).inv().unwrap()
 }
 
 /// The points of the extended coset `g·H'`, `g·ω_{N'}^i`.
@@ -201,15 +185,8 @@ fn coset_points(n_bits_ext: u32) -> Vec<Fr> {
         .collect()
 }
 
-fn boundary_json(b: &Boundary) -> Value {
-    match b {
-        Boundary::EveryRow => json!({"name": "everyRow"}),
-        Boundary::FirstRow => json!({"name": "firstRow"}),
-        Boundary::LastRow => json!({"name": "lastRow"}),
-        Boundary::EveryFrame { offset_min, offset_max } => {
-            json!({"name": "everyFrame", "offsetMin": offset_min, "offsetMax": offset_max})
-        }
-    }
+fn boundary_json(_: &Boundary) -> Value {
+    json!({"name": "everyRow"})
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -240,12 +217,7 @@ const SAMPLE_N_BITS: u32 = 3;
 const SAMPLE_N_BITS_EXT: u32 = 4;
 
 fn sample_boundaries() -> Vec<Boundary> {
-    vec![
-        Boundary::EveryRow,
-        Boundary::FirstRow,
-        Boundary::LastRow,
-        Boundary::EveryFrame { offset_min: 1, offset_max: 2 },
-    ]
+    vec![Boundary::EveryRow]
 }
 
 /// What [`sample`]'s codes give, on the trace domain (the intermediate polynomial 3, the value 9
@@ -336,14 +308,14 @@ fn the_rust_evaluator_computes_the_codes_as_written() {
     let fr = |v: &Value| Fr::reduce(&BigUint::parse_bytes(v.as_str().unwrap().as_bytes(), 10).unwrap());
     let scalar = |name: &str, i: usize| fr(&expected[name][i]);
 
-    // Q (7) at point 0 of the coset: ((c·challenge0 + (public1 − airvalue0))·(2^253 + 5) + Zi1·b[+2])·Zi0.
+    // Q (7) at point 0 of the coset: ((c·challenge0 + (public1 − airvalue0))·(2^253 + 5) + Zi0·b[+2])·Zi0.
     let (m, e) = (1usize << SAMPLE_N_BITS_EXT, SAMPLE_N_BITS_EXT - SAMPLE_N_BITS);
     let at = |offset: i64| (offset << e).rem_euclid(m as i64) as usize;
     let col = |ty: usize, pos: usize, offset: i64| fr(&expected["coset"][ty][pos][at(offset)]);
     let zi = |b: usize| fr(&expected["expected"]["cosetZerofiers"][b][0]);
     let inner = &(&col(2, 0, 0) * &scalar("challenges", 0)) + &(&scalar("publics", 1) - &scalar("airValues", 0));
     let wide = Fr::from(&FrBytes::from_decimal(WIDE_254).unwrap());
-    let q = &(&(&inner * &wide) + &(&zi(1) * &col(1, 1, 2))) * &zi(0);
+    let q = &(&(&inner * &wide) + &(&zi(0) * &col(1, 1, 2))) * &zi(0);
     assert_eq!(fr(&expected["expected"]["expressions"]["7"][0]), q);
 
     // The value (9) on any row, a sub_swap among its ops: (airgroupvalue0 − proofvalue1)·public0·(r − 1).

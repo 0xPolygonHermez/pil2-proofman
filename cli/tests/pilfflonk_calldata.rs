@@ -1,9 +1,8 @@
 //! `proofman-cli pilfflonk calldata` (pilfflonk/docs/verifier.md#calldata-encoder): the arguments
 //! of the Solidity verifier's `verifyProof` for a proof, as snarkjs's
 //! `zkey export soliditycalldata` prints them, on the synthetic pilouts of
-//! `pilfflonk/tests/data/domains.rs`, built in code: `Domains`, whose `firstRow` and `lastRow` give
-//! its calldata two auxiliary inverses, and `Frames`, whose `everyFrame` give none and which has no
-//! publics.
+//! `pilfflonk/tests/data/domains.rs`, built in code: `Squares`, which has two publics, and `Scaled`,
+//! which has none.
 //!
 //! The keys are set up with the official ptau of the tests (pilfflonk/docs/README.md#tests), and
 //! the proofs are the prover's, with a fixed blinding seed;
@@ -26,13 +25,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use num_bigint::BigUint;
 use pilfflonk_setup::command::{DEFAULT_EXTRA_MULS, DEFAULT_MAX_CONSTRAINT_DEGREE, DEFAULT_MAX_Q_DEGREE, PROVING_KEY_DIR};
 use pilfflonk_setup::{run_setup_pilfflonk, SetupPilfflonkOptions};
 use prost::Message;
 use proofman_pilfflonk::{
-    prove, Calldata, CalldataLayout, FrBytes, JsonFile, PilfflonkGlobalInfo, ProofOutput, ProveOptions, ProvingKey,
-    Vkey, BN128_R,
+    prove, Calldata, CalldataLayout, JsonFile, PilfflonkGlobalInfo, ProofOutput, ProveOptions, ProvingKey, Vkey,
+    BN128_R,
 };
 use serde_json::{json, Value};
 
@@ -72,7 +70,7 @@ fn output(out: &Output) -> String {
     format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
 }
 
-/// A key of a domains AIR and the prover's proof of its witness, written as `pilfflonk prove`
+/// A key of a synthetic AIR and the prover's proof of its witness, written as `pilfflonk prove`
 /// writes it (`proof.json`, `publics.json`), and as its bytes (`proof.bin`).
 struct Fixture {
     dir: TestDir,
@@ -147,14 +145,6 @@ fn written(f: &Fixture, proof: &Path, format: &str) -> String {
     line.to_string()
 }
 
-fn r() -> BigUint {
-    BigUint::parse_bytes(BN128_R.as_bytes(), 10).unwrap()
-}
-
-fn big(value: &FrBytes) -> BigUint {
-    BigUint::from_bytes_le(&value.to_le_bytes())
-}
-
 /// The words of a calldata in snarkjs's form, `[0x…,…],[0x…,…]`, as 64 hexadecimal digits each:
 /// those of `proof` and those of `pubSignals`, which is absent if there are no publics.
 fn solidity_words(text: &str) -> Vec<Vec<String>> {
@@ -177,13 +167,12 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// That the command's calldata of `f`'s proof is `selector`, the proof's bytes, `aux` and the
+/// That the command's calldata of `f`'s proof is `selector`, the proof's bytes and the
 /// publics, in both forms, from `proof.json` and from `proof.bin`, and printed without `-o`; and that
 /// it is the library's (`Calldata::read`).
-fn writes_the_calldata(f: &Fixture, selector: &str, aux: &[FrBytes]) {
+fn writes_the_calldata(f: &Fixture, selector: &str) {
     let words = |bytes: &[u8]| bytes.chunks(32).map(hex).collect::<Vec<_>>();
-    let proof_words: Vec<String> =
-        words(&f.out.proof.to_bytes()).into_iter().chain(aux.iter().map(|a| hex(&a.to_be_bytes()))).collect();
+    let proof_words: Vec<String> = words(&f.out.proof.to_bytes());
     let public_words: Vec<String> = f.out.publics.0.iter().map(|p| hex(&p.to_be_bytes())).collect();
     assert_eq!(proof_words.len() as u64, CalldataLayout::of(&f.vkey).words());
 
@@ -208,39 +197,23 @@ fn writes_the_calldata(f: &Fixture, selector: &str, aux: &[FrBytes]) {
     assert_eq!((library.to_hex().unwrap(), library.to_solidity()), (abi, solidity));
 }
 
-/// `Domains`: `boundaries` everyRow, firstRow, lastRow and everyFrame {1, 2}, `N = 16`, two
-/// publics. Its calldata is the proof's 26 words, `1/(ξ − 1)` and `1/(ξ − ω^15)` for the prover's
-/// `ξ`, and the publics: `verifyProof(bytes32[28],uint256[2])`, whose selector solc gives as
-/// `0x556e1ba3`.
+/// `Squares`: two publics. Its calldata is the proof's words and the publics:
+/// `verifyProof(bytes32[18],uint256[2])`, whose selector solc gives as `0x92b69348`.
 #[test]
-fn the_calldata_is_the_proof_and_an_inverse_per_first_row_and_last_row() {
-    let f = fixture("domains", domains::Air::All);
-    let layout = CalldataLayout::of(&f.vkey);
-    let n = 1u64 << f.vkey.power;
-    assert_eq!((layout.aux_rows.as_slice(), layout.proof_words(), f.out.publics.0.len()), (&[0, n - 1][..], 26, 2));
-
-    // 1/(ξ − ω^j), with ξ = xiSeed^powerW of the prover and ω = 5^((r − 1)/N): each times ξ − ω^j is 1.
-    let r = r();
-    let xi = big(&f.out.challenges.xi_seed).modpow(&BigUint::from(f.vkey.power_w), &r);
-    let omega = BigUint::from(5u32).modpow(&((&r - 1u32) / n), &r);
-    let aux: Vec<FrBytes> = proofman_pilfflonk::auxiliary_inverses(&f.vkey, &f.out.challenges.xi_seed).unwrap();
-    for (&j, a) in layout.aux_rows.iter().zip(&aux) {
-        let row = omega.modpow(&BigUint::from(j), &r);
-        assert_eq!((&xi + &r - row) % &r * big(a) % &r, BigUint::from(1u32), "the inverse of row {j}");
-    }
-    writes_the_calldata(&f, "556e1ba3", &aux);
+fn the_calldata_is_the_proof_and_the_publics() {
+    let f = fixture("squares", domains::Air::Squares);
+    assert_eq!((CalldataLayout::of(&f.vkey).words(), f.out.publics.0.len()), (18, 2));
+    writes_the_calldata(&f, "92b69348");
 }
 
-/// `Frames`: six `everyFrame`, no `firstRow` nor `lastRow`, and no publics. Its calldata is the
-/// proof's bytes and nothing else, and `verifyProof` has no `pubSignals`:
-/// `verifyProof(bytes32[34])`, whose selector solc gives as `0xf85fc817`.
+/// `Scaled`: no publics. Its calldata is the proof's bytes and nothing else, and `verifyProof` has no
+/// `pubSignals`: `verifyProof(bytes32[19])`, whose selector solc gives as `0x239ae03a`.
 #[test]
-fn the_calldata_of_a_key_without_first_or_last_row_is_the_proof() {
-    let f = fixture("frames", domains::Air::Frames);
-    assert!(CalldataLayout::of(&f.vkey).aux_rows.is_empty());
+fn the_calldata_of_a_key_without_publics_is_the_proof() {
+    let f = fixture("scaled", domains::Air::Scaled);
     assert!(f.out.publics.0.is_empty());
-    assert_eq!(CalldataLayout::of(&f.vkey).words(), 34);
-    writes_the_calldata(&f, "f85fc817", &[]);
+    assert_eq!(CalldataLayout::of(&f.vkey).words(), 19);
+    writes_the_calldata(&f, "239ae03a");
     assert!(!written(&f, &f.proof_json, "solidity").contains("],["));
 }
 
@@ -251,8 +224,8 @@ fn the_calldata_of_a_key_without_first_or_last_row_is_the_proof() {
 /// not absorb (off the curve, or with a coordinate below 2^192), and a file that is not there.
 #[test]
 fn the_calldata_of_inputs_that_do_not_go_together_is_refused() {
-    let f = fixture("refused", domains::Air::All);
-    let other = fixture("refused_other", domains::Air::Frames);
+    let f = fixture("refused", domains::Air::Squares);
+    let other = fixture("refused_other", domains::Air::Scaled);
     let file = |name: &str, text: String| {
         let path = f.dir.file(name);
         fs::write(&path, text).unwrap();

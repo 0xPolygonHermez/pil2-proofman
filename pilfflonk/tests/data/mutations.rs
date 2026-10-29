@@ -84,8 +84,7 @@ pub fn roots(vkey: &Vkey, k: u64, offsets: &[i64], xi_seed: &BigUint) -> Vec<Big
 
 /// `proof` with `invZh` and `inv` recomputed for its own transcript
 /// (pilfflonk/docs/protocol.md#inverses; `shplonk.js`, `computeZerofiers` and
-/// `computeInverseDenominators`, as an attacker would), so that a mutated proof, with the auxiliary
-/// inverses of its `ξ` (`Calldata::encode`), gets past those checks to the deeper ones:
+/// `computeInverseDenominators`, as an attacker would), so that a mutated proof gets past those checks to the deeper ones:
 /// `checkQPieces` and the pairing.
 pub fn fixup(vkey: &Vkey, mut proof: Proof, publics: &[FrBytes]) -> Proof {
     let ch = verifier_challenges(vkey, &proof, publics).expect("a proof whose points the transcript absorbs");

@@ -76,7 +76,7 @@ function run(dir) {
         change("layout offsets", (v) => (v.layout[4].offsets = [0, 1]));
         change("layout degree", (v) => (v.layout[4].degree += 1));
         change("layout k", (v) => (v.layout[0].k = 1));
-        change("boundaries", (v) => v.boundaries.push({ name: "firstRow" }));
+        change("boundaries", (v) => v.boundaries.push({ name: "everyRow" }));
         change("f0", (v) => (v.f0 = ["0", "0"]));
         change("f1", (v) => (v.f1 = ["1", "2"]));
         change("qDeg", (v) => (v.qDeg = 2));

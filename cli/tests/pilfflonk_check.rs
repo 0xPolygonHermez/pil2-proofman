@@ -4,9 +4,7 @@
 //! (`proofman_pilfflonk::check`) and the CLI, whose output is `verify-constraints`'s. And on the
 //! fixture of the signed offsets, whose constraints read the rows −1 to 2 around each row, across
 //! the wrap too, with the im pols the setup chooses for each `--max-constraint-degree`. And on the
-//! pilouts of `tests/data/domains.rs`, built in code: each constraint is checked on the rows of its
-//! domain only, `firstRow ≤ i < lastRow`, and a witness that breaks it at the edge row of its
-//! domain is found there. And on the stage-2 fixtures of the std's buses, with and without
+//! stage-2 fixtures of the std's buses, with and without
 //! `im_col`, whose challenges of stage 2 the check takes from a transcript of fixed elements, as
 //! the STARK's `verify-constraints` does, committing nothing: its columns, the `im_col` ones too,
 //! are the oracle's with them, and a witness that breaks the bus fails the last row of its running
@@ -19,8 +17,7 @@
 //! not there, and the flags that do not go together.
 //!
 //! Pilouts are not versioned: the test compiles the fixture with the compiler `PIL2C_EXEC` names,
-//! which must have `--field`, and is `#[ignore]` without it. Those of the domains build their
-//! pilouts in code, and always run:
+//! which must have `--field`, and is `#[ignore]` without it:
 //!
 //! ```text
 //! PIL2C_EXEC=<pil2-compiler>/src/pil.js cargo test -p proofman-cli --features proofman-starks-lib-c/cpu-only \
@@ -40,8 +37,6 @@
 mod all;
 #[path = "../../pilfflonk/tests/data/connection.rs"]
 mod connection;
-#[path = "../../pilfflonk/tests/data/domains.rs"]
-mod domains;
 #[path = "../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
 #[path = "../../pilfflonk/tests/data/permutation.rs"]
@@ -77,7 +72,6 @@ use proofman_pilfflonk::{
     BN128_R,
 };
 use proofman_starks_lib_c::PilFflonkTranscript;
-use prost::Message;
 use witness_libraries::built_library;
 
 const N: usize = 256;
@@ -119,7 +113,6 @@ fn output(out: &Output) -> String {
 #[derive(Clone, Copy, Debug)]
 enum Program {
     Pil(&'static str),
-    Domains(domains::Air),
 }
 
 const FIBONACCI: Program = Program::Pil("pilfflonk/tests/fixtures/fibonacci/fibonacci.pil");
@@ -140,11 +133,10 @@ const ALL_SUM: Program = Program::Pil("pilfflonk/tests/fixtures/all/all_sum.pil"
 const ALL_PROD: Program = Program::Pil("pilfflonk/tests/fixtures/all/all_prod.pil");
 
 impl Program {
-    /// The name of its pilout file: that of the PIL, or `domains`.
+    /// The name of its pilout file: that of the PIL.
     fn pilout_file(self) -> String {
         match self {
             Program::Pil(pil) => format!("{}.pilout", Path::new(pil).file_stem().unwrap().to_str().unwrap()),
-            Program::Domains(_) => "domains.pilout".to_string(),
         }
     }
 }
@@ -153,10 +145,6 @@ impl Program {
 fn compile(program: Program, pilout: &Path) {
     let pil = match program {
         Program::Pil(pil) => pil,
-        Program::Domains(air) => {
-            fs::write(pilout, domains::pilout(air).encode_to_vec()).unwrap();
-            return;
-        }
     };
     let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
     let out = Command::new(compiler)
@@ -261,7 +249,7 @@ fn the_check_finds_what_the_oracle_does() {
     assert!(report.holds() && report.failures().next().is_none());
     assert_eq!((report.air_name.as_str(), report.constraints.len()), ("Fibonacci", 6));
     for (c, constraint) in report.constraints.iter().enumerate() {
-        assert_eq!((c, constraint.stage, constraint.first_row, constraint.last_row), (constraint.index, 1, 0, 256));
+        assert_eq!((c, constraint.stage), (constraint.index, 1));
         assert_eq!(constraint.im_pol, c == 5);
         if c < 5 {
             assert_eq!(constraint.line, format!("{} == 0", oracle.constraints()[c].debug_line));
@@ -592,99 +580,6 @@ fn the_cli_says_which_rows_the_signed_offsets_break() {
         assert!(!text.contains(holds), "{holds} without -v:\n{text}");
     }
     println!("{text}");
-}
-
-/// The domain AIRs of `tests/data/domains.rs`, with no im pols (the default) and with one per
-/// rule (`--max-constraint-degree 2`, where the whole constraint of each rule is an im pol),
-/// grouped and with `--no-packing`: every constraint is checked on the rows of its domain, and the
-/// witness, which breaks each rule on every row out of its domain, passes; a witness that breaks a
-/// rule at the first or the last row of its domain, and nowhere else, fails there, with the
-/// oracle's value.
-#[test]
-fn the_check_finds_the_edge_rows_of_every_domain() {
-    use domains::{Air, Edge};
-    for air in [Air::FirstRow, Air::LastRow, Air::Frames, Air::All] {
-        let rules = air.rules();
-        let n = 1usize << domains::N_BITS;
-        for (degree, no_packing, n_im_pols) in [(9, false, 0), (2, false, rules.len()), (2, true, rules.len())] {
-            let name = format!("{}_{degree}_{no_packing}", air.name());
-            let f = fixture_of(&name, Program::Domains(air), domains::witness(air), degree, no_packing);
-            let pk = ProvingKey::load(&f.proving_key).unwrap();
-            let pilout = PilOutProxy::new(f.pilout.to_str().unwrap()).unwrap().pilout;
-            let oracle = AirOracle::new(&pilout, 0, 0).unwrap();
-
-            // The rules' constraints, on their rows; y − x0·K and the im pols' on every row.
-            let report = check(&pk, &f.witness, &CheckOptions::default()).unwrap();
-            assert!(report.holds(), "{name}");
-            assert_eq!(report.constraints.len(), rules.len() + 1 + n_im_pols, "{name}");
-            for (c, constraint) in report.constraints.iter().enumerate() {
-                let rows = rules.get(c).map_or(0..n, |rule| rule.rows());
-                assert_eq!(
-                    (constraint.first_row, constraint.last_row),
-                    (rows.start as u64, rows.end as u64),
-                    "{name}: {c}"
-                );
-                assert_eq!(constraint.im_pol, c > rules.len(), "{name}: {c}");
-            }
-            // Each rule's expression is not 0 on any row out of its domain: the check reads its
-            // domain's rows and no other.
-            let numerators = oracle.numerators(&oracle.values(&f.witness, 0).unwrap()).unwrap();
-            for (j, rule) in rules.iter().enumerate() {
-                let out: Vec<usize> = (0..n).filter(|i| !rule.rows().contains(i)).collect();
-                assert!(out.iter().all(|&i| !numerators[j][i].is_zero()), "{name}: rule {j} out of {:?}", rule.rows());
-            }
-
-            for (j, _) in rules.iter().enumerate() {
-                for edge in [Edge::First, Edge::Last] {
-                    let (witness, row) = domains::broken(air, j, edge);
-                    let report = check(&pk, &witness, &CheckOptions { max_rows: n }).unwrap();
-                    let expected: BTreeSet<(usize, usize, String)> = oracle
-                        .check(&oracle.values(&witness, 0).unwrap())
-                        .unwrap()
-                        .into_iter()
-                        .map(|failure| (failure.constraint, failure.row, failure.value.to_bytes().to_decimal()))
-                        .collect();
-                    assert_eq!(expected.iter().map(|(c, r, _)| (*c, *r)).collect::<Vec<_>>(), [(j, row)], "{name}");
-                    assert_eq!(found(&report), expected, "{name}: rule {j}, {edge:?}");
-                }
-            }
-        }
-    }
-}
-
-/// The CLI names the constraint of a domain and its edge row: `Domains`, with `x0·x0 − p0` on
-/// `firstRow` broken at row 0 and `x2' − x2·x2 − K` on `everyFrame {1, 2}` at its last row, N − 3.
-#[test]
-fn the_cli_names_the_edge_row_of_a_domain() {
-    use domains::{Air, Edge};
-    let f = fixture_of("domains_cli", Program::Domains(Air::All), domains::witness(Air::All), 9, false);
-    let shape = ProvingKey::load(&f.proving_key).unwrap().witness_shape().unwrap();
-    let out = check_cli(&f.proving_key, &f.witness_dir, &[]);
-    assert!(out.status.success(), "{}", output(&out));
-
-    for (rule, edge, expected) in [
-        (
-            0,
-            Edge::First,
-            ["Constraint #0 (stage 1) has 1 invalid rows -> Domains: x0*x0 - p0 == 0", "Failed at row 0 "],
-        ),
-        (
-            2,
-            Edge::Last,
-            ["Constraint #2 (stage 1) has 1 invalid rows -> Domains: x2' - x2*x2 - K == 0", "Failed at row 13 "],
-        ),
-    ] {
-        let (witness, _) = domains::broken(Air::All, rule, edge);
-        let dir = f.dir.file(&format!("broken_{rule}"));
-        witness.write(&dir, &shape).unwrap();
-        let out = check_cli(&f.proving_key, &dir, &[]);
-        let text = output(&out);
-        assert_eq!(out.status.code(), Some(1), "{text}");
-        for expected in expected {
-            assert!(text.contains(expected), "{expected:?} not in:\n{text}");
-        }
-        assert_eq!(text.matches("Failed at row").count(), 1, "{text}");
-    }
 }
 
 /// The challenges of stage 2 of `check`, by hand (pilfflonk/docs/README.md#pilfflonk-check,

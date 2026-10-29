@@ -63,7 +63,7 @@ pub mod witness_library;
 #[cfg(feature = "oracle")]
 pub mod oracle;
 
-pub use calldata::{auxiliary_inverses, verifier_challenges, Calldata, CalldataLayout, VerifierChallenges};
+pub use calldata::{verifier_challenges, Calldata, CalldataLayout, VerifierChallenges};
 pub use check::{
     check, check_challenges, check_columns, CheckOptions, CheckReport, ConstraintCheck, FailedRow, DEFAULT_MAX_ROWS,
 };

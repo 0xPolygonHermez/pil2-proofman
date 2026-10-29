@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::error::{invalid, PilfflonkResult};
 use crate::global_info::MAX_NBITS;
@@ -138,66 +138,36 @@ pub struct EvMapEntry {
     pub opening_pos: u64,
 }
 
-/// The domain of a constraint (pilfflonk/docs/protocol.md#constraint-polynomial). JSON:
-/// `{"name": "everyRow"}`, `{"name": "firstRow"}`, `{"name": "lastRow"}` and
-/// `{"name": "everyFrame", "offsetMin": a, "offsetMax": b}`, as in the starkinfo.
+/// The domain of a constraint (pilfflonk/docs/protocol.md#constraint-polynomial): pilfflonk has
+/// only `everyRow` constraints. JSON: `{"name": "everyRow"}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "BoundaryRepr", into = "BoundaryRepr")]
 pub enum Boundary {
     EveryRow,
-    FirstRow,
-    LastRow,
-    /// Every row but the first `offset_min` and the last `offset_max`.
-    EveryFrame {
-        offset_min: u64,
-        offset_max: u64,
-    },
 }
 
 /// A boundary as JSON has it. serde's internally tagged enums let a unit variant carry any other
 /// field, so the strict form goes through this.
 #[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct BoundaryRepr {
     name: String,
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
-    offset_min: Option<u64>,
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
-    offset_max: Option<u64>,
-}
-
-/// An offset that may be left out but is not `null`: serde reads `null` as an absent `Option`, and
-/// the JS verifier refuses it (vkey.js, readBoundary).
-fn present<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
-    u64::deserialize(deserializer).map(Some)
 }
 
 impl TryFrom<BoundaryRepr> for Boundary {
     type Error = String;
 
     fn try_from(repr: BoundaryRepr) -> Result<Self, String> {
-        match (repr.name.as_str(), repr.offset_min, repr.offset_max) {
-            ("everyRow", None, None) => Ok(Boundary::EveryRow),
-            ("firstRow", None, None) => Ok(Boundary::FirstRow),
-            ("lastRow", None, None) => Ok(Boundary::LastRow),
-            ("everyFrame", Some(offset_min), Some(offset_max)) => Ok(Boundary::EveryFrame { offset_min, offset_max }),
-            (name, _, _) => Err(format!(
-                "{name:?} is not a boundary: everyRow, firstRow and lastRow have no offsets, and everyFrame has \
-                 offsetMin and offsetMax"
-            )),
+        match repr.name.as_str() {
+            "everyRow" => Ok(Boundary::EveryRow),
+            name => Err(format!("{name:?} is not a boundary: only everyRow")),
         }
     }
 }
 
 impl From<Boundary> for BoundaryRepr {
-    fn from(boundary: Boundary) -> Self {
-        let (name, offset_min, offset_max) = match boundary {
-            Boundary::EveryRow => ("everyRow", None, None),
-            Boundary::FirstRow => ("firstRow", None, None),
-            Boundary::LastRow => ("lastRow", None, None),
-            Boundary::EveryFrame { offset_min, offset_max } => ("everyFrame", Some(offset_min), Some(offset_max)),
-        };
-        BoundaryRepr { name: name.to_string(), offset_min, offset_max }
+    fn from(Boundary::EveryRow: Boundary) -> Self {
+        BoundaryRepr { name: "everyRow".to_string() }
     }
 }
 
@@ -379,16 +349,11 @@ mod tests {
 
     #[test]
     fn boundaries_are_tagged_by_name() {
-        let every_frame = Boundary::EveryFrame { offset_min: 1, offset_max: 2 };
         assert_eq!(serde_json::to_string(&Boundary::EveryRow).unwrap(), r#"{"name":"everyRow"}"#);
-        assert_eq!(
-            serde_json::to_string(&every_frame).unwrap(),
-            r#"{"name":"everyFrame","offsetMin":1,"offsetMax":2}"#
-        );
-        assert_eq!(serde_json::from_str::<Boundary>(r#"{"name":"lastRow"}"#).unwrap(), Boundary::LastRow);
-        assert!(serde_json::from_str::<Boundary>(r#"{"name":"lastRow","offsetMin":1}"#).is_err());
-        assert!(serde_json::from_str::<Boundary>(r#"{"name":"everyFrame","offsetMin":1}"#).is_err());
-        assert!(serde_json::from_str::<Boundary>(r#"{"name":"someRow"}"#).is_err());
+        assert!(serde_json::from_str::<Boundary>(r#"{"name":"everyRow","offsetMin":1}"#).is_err());
+        for name in ["firstRow", "lastRow", "everyFrame", "someRow"] {
+            assert!(serde_json::from_str::<Boundary>(&format!(r#"{{"name":"{name}"}}"#)).is_err());
+        }
     }
 
     #[test]

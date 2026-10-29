@@ -15,8 +15,7 @@
 //!    is a copy of the verifier, instrumented here ([`Probe`]), that returns the check that refused
 //!    the case (each `fail()` of the contract is a site) and the gas left after each step;
 //! 4. compares: the reference outcome is the JS verifier's verdict and, for the calldata only, the
-//!    auxiliary inverses (they must be `1/(ξ − ω^j)`, each below `r`) and its length (shorter
-//!    reverts); the contract's must be the same, and so must the check that refused the case, as the
+//!    length (shorter reverts); the contract's must be the same, and so must the check that refused the case, as the
 //!    JS verifier's messages name it and as the probe's site does. Each family names the checks its
 //!    cases must reach ([`FuzzCase::targets`]); a case refused by the pairing must cost at least
 //!    90 % of the gas of the honest proof.
@@ -43,8 +42,8 @@ use num_bigint::BigUint;
 use proofman_pilfflonk::calldata::{Word, SELECTOR_BYTES};
 use proofman_pilfflonk::names::{INV, INV_ZH, W, WP};
 use proofman_pilfflonk::{
-    auxiliary_inverses, js_verifier, verifier_challenges, Calldata, CalldataLayout, FqBytes, FrBytes, G1Affine,
-    JsonFile, Proof, ProofNames, Publics, Vkey,
+    js_verifier, verifier_challenges, Calldata, CalldataLayout, FqBytes, FrBytes, G1Affine, JsonFile, Proof,
+    ProofNames, Publics, Vkey,
 };
 use rand::rngs::Xoshiro256PlusPlus;
 use rand::{RngExt, SeedableRng};
@@ -79,12 +78,10 @@ pub enum Check {
     /// A point the transcript absorbs with a coordinate below `2^192` (`checkAbsorbed`;
     /// `transcript.js`, pilfflonk/docs/protocol.md#transcript).
     ShortCoordinate,
-    /// A scalar, an auxiliary inverse or a public not below `r` (`checkFields`; `frFromObject`).
+    /// A scalar or a public not below `r` (`checkFields`; `frFromObject`).
     ScalarNotBelowR,
     /// `Z_H(ξ)·invZh ≠ 1` (`computeZh`).
     InvZh,
-    /// `(ξ − ω^j)·aux ≠ 1` (`computeZi`): the calldata's only, which the JS verifier does not see.
-    AuxiliaryInverse,
     /// `Σ_i ξ^(i·M·N)·Q_i(ξ) ≠ Q(ξ)` (`checkQPieces`; `joinQPieces`).
     QPieces,
     /// `xiSeed = 0` (`computeZ`; `checkOpening`).
@@ -111,7 +108,6 @@ impl Check {
             Check::ShortCoordinate => "coordinate < 2^192",
             Check::ScalarNotBelowR => "scalar >= r",
             Check::InvZh => "invZh",
-            Check::AuxiliaryInverse => "auxiliary inverse",
             Check::QPieces => "checkQPieces",
             Check::XiSeedZero => "xiSeed = 0",
             Check::ZeroZerofier => "Z_T(y) = 0",
@@ -160,7 +156,6 @@ fn site_check(function: &str, ordinal: usize) -> Check {
         ("checkAbsorbed", 0) => Check::ShortCoordinate,
         ("checkFields", 0) => Check::ScalarNotBelowR,
         ("computeZh", 0) => Check::InvZh,
-        ("computeZi", _) => Check::AuxiliaryInverse,
         ("checkQPieces", 0) => Check::QPieces,
         ("computeZ", 0) => Check::XiSeedZero,
         ("computeInversions", _) => Check::ZeroZerofier,
@@ -385,8 +380,6 @@ pub enum Family {
     Inv,
     /// `invZh` changed, as `inv`.
     InvZh,
-    /// An auxiliary inverse changed, as `inv`.
-    Aux,
     /// A piece of a split `Q` changed, as `inv`.
     QPiece,
     /// The calldata cut short (which reverts) or with bytes after its arguments (which are not
@@ -414,7 +407,7 @@ pub enum Family {
 }
 
 impl Family {
-    pub const ALL: [Family; 26] = [
+    pub const ALL: [Family; 25] = [
         Family::Honest,
         Family::BitFlip,
         Family::RandomWord,
@@ -430,7 +423,6 @@ impl Family {
         Family::Wp,
         Family::Inv,
         Family::InvZh,
-        Family::Aux,
         Family::QPiece,
         Family::Length,
         Family::FixedEvaluation,
@@ -460,7 +452,6 @@ impl Family {
             Family::Wp => "W'",
             Family::Inv => "inv",
             Family::InvZh => "invZh",
-            Family::Aux => "auxiliary inverse",
             Family::QPiece => "piece of Q",
             Family::Length => "calldata length",
             Family::FixedEvaluation => "fixed up: evaluation",
@@ -478,7 +469,6 @@ impl Family {
     fn applies(self, shape: &Shape) -> bool {
         match self {
             Family::Public | Family::FixedPublic => shape.n_public > 0,
-            Family::Aux => !shape.layout.aux_rows.is_empty(),
             Family::QPiece | Family::FixedRebalance | Family::FixedQPiece => shape.split(),
             Family::FixedSwap => shape.n_evaluations >= 2 || shape.layout.n_commitments >= 2,
             _ => true,
@@ -503,7 +493,7 @@ pub struct FuzzCase {
     pub label: String,
     /// The honest proof it mutates.
     pub base: usize,
-    /// The words of `proof`: the proof's, then the auxiliary inverses.
+    /// The words of `proof`: the proof's.
     pub proof: Vec<Word>,
     pub publics: Vec<Word>,
     pub length: Length,
@@ -586,8 +576,6 @@ impl Shape {
             format!("{}.{}", points[w / 2], if w.is_multiple_of(2) { "x" } else { "y" })
         } else if w < self.proof_words() {
             scalars[w - self.first_scalar()].to_string()
-        } else if w < self.layout.words() as usize {
-            format!("aux[{}]", w - self.proof_words())
         } else {
             format!("publics[{}]", w - self.layout.words() as usize)
         }
@@ -908,14 +896,11 @@ impl Generator<'_> {
                 publics[i] = be_word(&value);
                 self.raw(family, format!("publics[{i}] {what}"), base, proof, publics, vec![target])
             }
-            Family::Inv | Family::InvZh | Family::Aux | Family::QPiece => {
+            Family::Inv | Family::InvZh | Family::QPiece => {
                 let (base, mut proof, publics) = self.honest_base();
                 let (w, canonical) = match family {
                     Family::Inv => (shape.inv(), Check::Inv),
                     Family::InvZh => (shape.inv_zh(), Check::InvZh),
-                    Family::Aux => {
-                        (shape.proof_words() + self.index(shape.layout.aux_rows.len()), Check::AuxiliaryInverse)
-                    }
                     _ => {
                         let piece = self.index(shape.layout.n_q_pieces as usize);
                         (shape.first_scalar() + shape.n_evaluations + piece, Check::QPieces)
@@ -1254,27 +1239,16 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The reference outcome of a case: the JS verifier's verdict on its proof and publics and, if it
-/// accepts them, the calldata's own checks: each auxiliary inverse below `r` and `1/(ξ − ω^j)` of
-/// the proof's `ξ`; and a calldata shorter than the arguments reverts.
-fn reference(key: &FuzzKey, shape: &Shape, case: &FuzzCase, js: &JsVerdict) -> Option<Check> {
+/// The reference outcome of a case: the JS verifier's verdict on its proof and publics; and a
+/// calldata shorter than the arguments reverts.
+fn reference(case: &FuzzCase, js: &JsVerdict) -> Option<Check> {
     if let Length::Truncated(_) = case.length {
         return Some(Check::Revert);
     }
     if !js.verdict {
         return js.check();
     }
-    let aux = &case.proof[shape.proof_words()..];
-    if aux.iter().any(|a| int(a) >= r()) {
-        return Some(Check::ScalarNotBelowR);
-    }
-    let bytes: Vec<u8> = case.proof[..shape.proof_words()].iter().flatten().copied().collect();
-    let proof = Proof::from_bytes(&bytes, &key.names.shape()).expect("a proof the JS verifier accepts is canonical");
-    let publics: Vec<FrBytes> = case.publics.iter().map(|w| FrBytes::from_be_bytes(*w).unwrap()).collect();
-    let xi_seed = verifier_challenges(key.vkey, &proof, &publics).unwrap().xi_seed;
-    let expected: Vec<Word> =
-        auxiliary_inverses(key.vkey, &xi_seed).unwrap().iter().map(FrBytes::to_be_bytes).collect();
-    Some(if aux == expected.as_slice() { Check::Accepted } else { Check::AuxiliaryInverse })
+    Some(Check::Accepted)
 }
 
 /// The cases of the honest proofs of a key, and `n` more of the families that apply to it, by
@@ -1451,7 +1425,7 @@ pub fn run_key(tools: &Tools, key: &FuzzKey, honest: &[Honest], n: usize, seed: 
                     Check::Revert
                 }
             };
-            let expected = reference(key, &shape, case, js);
+            let expected = reference(case, js);
             let mut problems = Vec::new();
             match expected {
                 None => problems.push("a message of the JS verifier names no check"),

@@ -155,14 +155,6 @@
  "boundaries": [
   {
    "name": "everyRow"
-  },
-  {
-   "name": "firstRow"
-  },
-  {
-   "name": "everyFrame",
-   "offsetMin": 1,
-   "offsetMax": 2
   }
  ],
  "evMap": [

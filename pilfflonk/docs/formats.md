@@ -76,7 +76,7 @@ dimension 1, and the layout. In order:
 - `challengesMap`, `airValuesMap`, `airgroupValuesMap`;
 - `mapSectionsN`: the width of `const` and of `cm1 … cm<nStages+1>`;
 - `openingPoints`: every offset some column is opened at, increasing;
-- `boundaries`: `everyRow` first, then each other domain; the `Zi` operands index them;
+- `boundaries`: only `everyRow`; the `Zi` operands index it;
 - `evMap`: the evaluations of the proof, in its order: each `(column, offset)` the layout opens,
   but `Q`'s ([protocol.md#evaluation-map](protocol.md#evaluation-map));
 - `qDeg`, `qDim` (1), `maxQDegree` (0 unless `Q` is split, [protocol.md#q-pieces](protocol.md#q-pieces)),
@@ -99,7 +99,7 @@ code that computes `Q(ξ)` from the evaluations, and no `queryVerifier`. The set
 
 ## Bytecode
 
-`<air>.bin`, revision 3: the code the prover runs over `Fr` (the im pols, `Q`, and the expressions the
+`<air>.bin`, revision 4: the code the prover runs over `Fr` (the im pols, `Q`, and the expressions the
 hints refer to), the constraints for `pilfflonk check`, and the prover hints. It is the STARK's prover
 `.bin` field by field (`setup/pil2-stark/src/io/bin_file.rs`, read by `expressions_bin.cpp` and run by
 `expressions_pack.hpp`), every value of dimension 1, and it departs from it only where BN128 and
@@ -118,7 +118,7 @@ reads it. Every integer is little-endian.
 
 ```
 "chps"       4 bytes
-version      u32   0x7066_0003: "pf" in the high half, revision 3 in the low half
+version      u32   0x7066_0004: "pf" in the high half, revision 4 in the low half
 nSections    u32   3
 3 × { id u32, size u64, payload }, in the order 1, 2, 3
 ```
@@ -136,11 +136,9 @@ check for equality, which refuses a STARK `.bin`. A key of revision 2, which had
 `cmPolsMap` entry, and `Q`'s by `cExpId`.
 
 **Section 2, constraints** (for `pilfflonk check`): `nOps`, `nArgs`, `nNumbers`, `nConstraints`; for
-each `stage`, `destId`, `firstRow`, `lastRow`, `nTemp`, `nOps`, `opsOffset`, `nArgs`, `argsOffset`,
-`imPol` and `line`; then `ops`, `args` and `numbers`. A constraint holds on the rows
-`firstRow ≤ i < lastRow`, and its code's value at a row is its numerator. When the degree search
-promotes a constraint's whole expression to an im pol (a domain other than `everyRow` adds 1 to its
-degree), `pil-info` leaves its debug code empty; the encoder writes it as a copy of the im pol's
+each `stage`, `destId`, `nTemp`, `nOps`, `opsOffset`, `nArgs`, `argsOffset`,
+`imPol` and `line`; then `ops`, `args` and `numbers`. Every constraint holds on every row, and its code's value at a row is its numerator. When the degree search
+promotes a constraint's whole expression to an im pol (it is over the degree bound), `pil-info` leaves its debug code empty; the encoder writes it as a copy of the im pol's
 column at the row.
 
 **Section 3, hints**: `nHints u32` and, for each prover hint the setup supports (`im_col`,
@@ -180,7 +178,7 @@ custom commits). Where the STARK multiplies an index by 3, the dimension, here i
 **Semantics.** `Q`'s code (`cExpId`) runs point by point on the extended coset; every other
 expression, and every constraint, row by row on `H`. On a domain of `M = 2^e·N` points, a column at
 `o = openingPoints[arg2]` is read at point `(i + 2^e·o) mod M`. `Zi` of boundary 0 (`everyRow`) is
-`1/Z_H(X)`, and of any other boundary `D`, `Z_H(X)/Z_D(X)` ([protocol.md#constraint-polynomial](protocol.md#constraint-polynomial));
+`1/Z_H(X)` ([protocol.md#constraint-polynomial](protocol.md#constraint-polynomial));
 `Q`'s code ends by multiplying by `Zi(everyRow)`. The last op of an im pol's code or of `Q`'s writes a
 new temporary (`tmpUsed`), as in the STARK. The encoding is deterministic.
 
@@ -411,13 +409,7 @@ The arguments of the Solidity verifier's
 - `proof`: the proof's bytes as 32-byte words, `2·(n_f + 2) + n_evals + n_pieces + 2` of them: the
   commitments of the non-fixed `f` (`x`, `y`), `W`, `W'`, the evaluations, the `Q_i(ξ)` if `Q` is
   split, `inv` and `invZh`;
-- then one **auxiliary inverse** per `firstRow` or `lastRow` boundary, in the order of the boundaries:
-  `1/(ξ − ω^j)`, with `j = 0` or `j = N − 1`. The `Zi` of those boundaries is `Z_H(ξ)/(ξ − ω^j)`, the
-  only division of the verifier that neither `inv` nor `invZh` covers. The contract checks
-  `(ξ − ω^j)·aux = 1` and refuses `aux ≥ r`, as it does `inv`, so a proof has one calldata. `invZh`
-  gives `Zi(everyRow)`, and `everyFrame` is a product;
 - `pubSignals`: the publics, in the order of `publics.json`.
 
-The auxiliary inverses are of the calldata only: the proof does not change, and a vkey without those
-boundaries, as that of every compiled PIL2 program, has none, and its calldata is the proof.
-`proofman-cli pilfflonk calldata` computes them ([verifier.md#calldata-encoder](verifier.md#calldata-encoder)).
+The calldata is the proof's words and the publics. `invZh` gives `Zi`, the only boundary's zerofier.
+`proofman-cli pilfflonk calldata` encodes it ([verifier.md#calldata-encoder](verifier.md#calldata-encoder)).

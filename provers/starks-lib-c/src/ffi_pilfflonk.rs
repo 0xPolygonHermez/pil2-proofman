@@ -880,9 +880,6 @@ fn mut_ptr_or_null<T, U>(slice: &mut [T]) -> *mut U {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PilFflonkConstraint {
     pub stage: u64,
-    /// It holds on the rows `first_row ≤ i < last_row`.
-    pub first_row: u64,
-    pub last_row: u64,
     /// The constraint of an intermediate polynomial, which the prover computes.
     pub im_pol: bool,
     /// The PIL it comes from.
@@ -901,7 +898,7 @@ impl PilFflonkProverCtx {
     }
 
     fn constraint(&self, airgroup_id: u64, air_id: u64, index: u64) -> Result<PilFflonkConstraint, PilFflonkError> {
-        let (mut stage, mut first_row, mut last_row, mut im_pol, mut line_len) = (0u64, 0u64, 0u64, 0u32, 0u64);
+        let (mut stage, mut im_pol, mut line_len) = (0u64, 0u32, 0u64);
         // SAFETY: the handle is live and each output is a value of the type the call writes.
         check_status(unsafe {
             pilfflonk_ctx_constraint(
@@ -910,8 +907,6 @@ impl PilFflonkProverCtx {
                 air_id,
                 index,
                 &mut stage,
-                &mut first_row,
-                &mut last_row,
                 &mut im_pol,
                 &mut line_len,
             )
@@ -932,7 +927,7 @@ impl PilFflonkProverCtx {
             kind: PilFflonkErrorKind::Format,
             message: format!("pilfflonk_ctx_constraint_line: the line of constraint {index} is not UTF-8"),
         })?;
-        Ok(PilFflonkConstraint { stage, first_row, last_row, im_pol: im_pol == 1, line })
+        Ok(PilFflonkConstraint { stage, im_pol: im_pol == 1, line })
     }
 }
 

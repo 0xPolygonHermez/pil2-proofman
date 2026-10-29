@@ -47,7 +47,6 @@ use std::collections::BTreeMap;
 
 use pil2_pilout::pilout as pb;
 use pil_info::pil::constraint_poly::Boundary as PassesBoundary;
-use pil_info::pil::domain::Domain;
 use pil_info::types::pilout_info::SymbolInfo;
 use pil_info::PilInfoResult;
 use proofman_pilfflonk::layout::{q_pieces, split_max_q_degree};
@@ -283,37 +282,12 @@ fn challenges_map(result: &PilInfoResult) -> Result<Vec<ChallengeMapEntry>, Setu
         .collect()
 }
 
-fn boundary(b: &PassesBoundary, n_bits: u32) -> Result<Boundary, SetupError> {
+fn boundary(b: &PassesBoundary) -> Result<Boundary, SetupError> {
     match b {
         PassesBoundary::EveryRow => Ok(Boundary::EveryRow),
-        PassesBoundary::Domain(d) => domain_boundary(d, n_bits)
-            .map_or_else(|| passes_output(format!("domain constraint not supported by pilfflonk ({d:?})")), Ok),
+        // pil-info refuses domain constraints for pilfflonk before the boundaries exist
+        PassesBoundary::Domain(d) => passes_output(format!("domain boundary {d:?} after pil-info refused them")),
     }
-}
-
-/// pilfflonk's boundary for a normalized domain of `2^n_bits` rows: the first row, the last row or
-/// a frame (all rows but a prefix and a suffix); `None` for any other domain.
-pub fn domain_boundary(d: &Domain, n_bits: u32) -> Option<Boundary> {
-    if d.cycle_bits != n_bits {
-        return None;
-    }
-    let n = 1u64 << n_bits;
-    let offs: Vec<u64> = d.offsets.iter().map(|&o| u64::from(o)).collect();
-    if !d.complement {
-        // a frame holding at most half the rows normalizes to its rows
-        return match offs[..] {
-            [0] => Some(Boundary::FirstRow),
-            [o] if o == n - 1 => Some(Boundary::LastRow),
-            [first, ..] if offs[offs.len() - 1] - first + 1 == offs.len() as u64 => {
-                Some(Boundary::EveryFrame { offset_min: first, offset_max: n - offs[offs.len() - 1] - 1 })
-            }
-            _ => None,
-        };
-    }
-    let k = offs.iter().enumerate().take_while(|(i, &o)| o == *i as u64).count();
-    let j = offs[k..].iter().rev().enumerate().take_while(|(i, &o)| o == n - 1 - *i as u64).count();
-    (k + j == offs.len() && !offs.is_empty())
-        .then_some(Boundary::EveryFrame { offset_min: k as u64, offset_max: j as u64 })
 }
 
 fn ev_map(result: &PilInfoResult) -> Result<Vec<EvMapEntry>, SetupError> {
@@ -384,7 +358,7 @@ pub fn air_setup(
         airgroup_values_map: name_stage_entries(&setup.airgroup_values_map, "airgroupValuesMap")?,
         map_sections_n,
         opening_points: setup.opening_points.clone(),
-        boundaries: result.boundaries.iter().map(|b| boundary(b, n_bits as u32)).collect::<Result<_, _>>()?,
+        boundaries: result.boundaries.iter().map(boundary).collect::<Result<_, _>>()?,
         ev_map,
         q_deg,
         q_dim: 1,

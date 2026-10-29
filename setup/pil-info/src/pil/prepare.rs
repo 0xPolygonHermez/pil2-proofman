@@ -112,7 +112,6 @@ pub fn prepare_pil(
     let constraint_poly = generate_constraint_polynomial(
         setup.n_stages,
         n_bits,
-        opening,
         &mut expressions,
         &mut symbols,
         &constraints,

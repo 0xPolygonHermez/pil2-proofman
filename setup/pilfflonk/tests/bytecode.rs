@@ -1,4 +1,4 @@
-//! `<air>.bin` (pilfflonk/docs/formats.md#bytecode; revision 3: the STARK's `.bin` with dimension
+//! `<air>.bin` (pilfflonk/docs/formats.md#bytecode; revision 4: the STARK's `.bin` with dimension
 //! 1, and its hints): the encoder, the reader and the fixture the C++ reader's tests read.
 //!
 //! Every round trip checks two things. Encoding and decoding gives back the same [`Bytecode`]. And
@@ -284,18 +284,8 @@ fn assert_is_the_code_of(bytecode: &Bytecode, result: &PilInfoResult) {
         assert_same_code(&e.code, &bin.code, &context);
     }
     assert_eq!(bytecode.constraints.len(), info.constraints.len());
-    let n = 1u32 << result.setup.pil_power;
     for (bin, c) in bytecode.constraints.iter().zip(&info.constraints) {
-        // the rows a supported domain holds on are one contiguous range
-        let rows = match &c.boundary {
-            PassesBoundary::EveryRow => (0, n),
-            PassesBoundary::Domain(d) => {
-                let held: Vec<u32> =
-                    (0..n).filter(|r| d.offsets.contains(&(r % (1 << d.cycle_bits))) != d.complement).collect();
-                (held[0], held[held.len() - 1] + 1)
-            }
-        };
-        assert_eq!((bin.first_row, bin.last_row), rows, "{:?}", c.boundary);
+        assert!(matches!(c.boundary, PassesBoundary::EveryRow), "{:?}", c.boundary);
         assert_eq!(bin.stage as usize, c.stage);
         assert_eq!(bin.im_pol, c.im_pol == 1);
         assert_eq!(bin.line, c.line.clone().unwrap_or_default());
@@ -319,14 +309,7 @@ fn small_code_round_trips() {
     let bytecode = Bytecode {
         n_stages: 1,
         expressions: vec![ExpressionBin { exp_id: 5, stage: 1, line: "Small.ImPol".into(), code: code.clone() }],
-        constraints: vec![ConstraintBin {
-            stage: 1,
-            first_row: 0,
-            last_row: 16,
-            im_pol: true,
-            line: String::new(),
-            code,
-        }],
+        constraints: vec![ConstraintBin { stage: 1, im_pol: true, line: String::new(), code }],
         hints: Vec::new(),
     };
     let (read, bytes) = write_and_read(&bytecode, "small.bin");
@@ -398,8 +381,6 @@ fn the_layout_is_the_documented_one() {
         }],
         constraints: vec![ConstraintBin {
             stage: 1,
-            first_row: 255,
-            last_row: 256,
             im_pol: false,
             line: String::new(),
             code: Code {
@@ -446,11 +427,11 @@ fn the_layout_is_the_documented_one() {
     };
     let mut expected: Vec<u8> = Vec::new();
     expected.extend_from_slice(b"chps");
-    u32s(&mut expected, &[0x7066_0003, 3]);
+    u32s(&mut expected, &[0x7066_0004, 3]);
 
     // With one stage, bs = 5: Zi is type 3 and a number type 8.
     let mut expressions = Vec::new();
-    u32s(&mut expressions, &[0x7066_0003, 32]); // version, n8
+    u32s(&mut expressions, &[0x7066_0004, 32]); // version, n8
     expressions.extend_from_slice(&modulus().to_bytes_le()); // r
     u32s(&mut expressions, &[1]); // nStages
                                   // maxTmp, maxArgs, maxOps, nOps, nArgs, nNumbers, nExpressions.
@@ -467,8 +448,8 @@ fn the_layout_is_the_documented_one() {
     let mut constraints = Vec::new();
     // nOps, nArgs, nNumbers, nConstraints.
     u32s(&mut constraints, &[1, 8, 1, 1]);
-    // stage, destId, firstRow, lastRow, nTemp, nOps, opsOffset, nArgs, argsOffset, imPol, line.
-    u32s(&mut constraints, &[1, 0, 255, 256, 1, 1, 0, 8, 0, 0]);
+    // stage, destId, nTemp, nOps, opsOffset, nArgs, argsOffset, imPol, line.
+    u32s(&mut constraints, &[1, 0, 1, 1, 0, 8, 0, 0]);
     constraints.push(0);
     constraints.push(0);
     // add, into 0, Zi of boundary 2 (arg1 3), number 0.
@@ -499,7 +480,7 @@ fn the_layout_is_the_documented_one() {
     u32s(&mut hints, &[2, 1, 3]);
     section(&mut expected, 3, &hints);
     assert_eq!(bytes, expected);
-    assert_eq!(BIN_VERSION, 0x7066_0003);
+    assert_eq!(BIN_VERSION, 0x7066_0004);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -559,12 +540,6 @@ fn a_bytecode_the_reader_would_refuse_is_not_written() {
     };
 
     let good = one_op(op(Opcode::Add, 0, cm(1), cm(1)), 1);
-    let reversed_rows =
-        ConstraintBin { stage: 1, first_row: 2, last_row: 1, im_pol: false, line: String::new(), code: good.clone() };
-    refused(
-        Bytecode { n_stages: 1, expressions: Vec::new(), constraints: vec![reversed_rows], hints: Vec::new() },
-        "rows 2..1",
-    );
     // A hint of an expression section 1 does not have, and one whose strings would not read back.
     let hint = |operand: HintOperand, field: &str| HintBin {
         name: "gsum_col".into(),
@@ -657,7 +632,7 @@ fn a_file_that_is_not_this_bytecode_is_refused() {
     // A revision-2 file: its version, and its prefix's.
     let mut revision_2 = patched(4, &0x7066_0002u32.to_le_bytes());
     revision_2[SECTION_1..SECTION_1 + 4].copy_from_slice(&0x7066_0002u32.to_le_bytes());
-    assert!(format_error(&revision_2).contains("version 0x70660002, and pilfflonk's is 0x70660003"));
+    assert!(format_error(&revision_2).contains("version 0x70660002, and pilfflonk's is 0x70660004"));
 
     // The hints (section 3, the last of the file): the sample's last hint ends with the value
     // `number` r − 1 of no position, and before it its op.
@@ -839,31 +814,23 @@ fn the_passes_code_round_trips() {
     assert_eq!(first, second);
 }
 
-/// One BN128 air of 16 rows: `a·a − b` on `firstRow` (a public-free stand-in for `x·x − p`) and
-/// `b − a` on `everyRow`. With its `Zi`, the first has degree 3; with `--max-constraint-degree 2`
-/// the search promotes its whole expression to an im pol, whose code `pil-info` leaves empty for
-/// the constraint (it marks the im pols as computed before it generates the constraints' code).
+/// One BN128 air of 16 rows: `a·a − b` and `(a·a − b)·(a·a − b)`, both on `everyRow`. The second has
+/// degree 4, so with `--max-constraint-degree 2` the search promotes `a·a − b` to an im pol, which
+/// is the whole expression of the first constraint: `pil-info` leaves its code empty (it marks the
+/// im pols as computed before it generates the constraints' code).
 fn im_pol_constraint_pilout() -> pb::PilOut {
     use expression::{Mul, Operation, Sub};
     let expressions = vec![
         binary(Operation::Mul(Mul { lhs: witness(0, 0), rhs: witness(0, 0) })), // 0
         binary(Operation::Sub(Sub { lhs: exp(0), rhs: witness(1, 0) })),        // 1: a·a − b
-        binary(Operation::Sub(Sub { lhs: witness(1, 0), rhs: witness(0, 0) })), // 2: b − a
+        binary(Operation::Mul(Mul { lhs: exp(1), rhs: exp(1) })),               // 2: (a·a − b)²
     ];
-    let first_row = pb::Constraint {
-        constraint: Some(constraint::Constraint::DomainRows(constraint::DomainRows {
-            domain_idx: 0,
-            expression_idx: Some(operand::Expression { idx: 1 }),
-            debug_line: Some("a*a - b".to_string()),
-        })),
-    };
     let air = pb::Air {
         name: Some("Synthetic".to_string()),
         num_rows: Some(16),
         stage_widths: vec![2],
         expressions,
-        constraints: vec![first_row, every_row(2)],
-        domains: vec![pb::Domain { cycle_bits: 4, offsets: vec![0] }],
+        constraints: vec![every_row(1), every_row(2)],
         ..Default::default()
     };
     pb::PilOut {
@@ -900,7 +867,7 @@ fn a_constraint_that_is_an_im_pol_is_a_copy_of_its_column() {
     let stage_pos = context.cm_pols[im].1;
     let at_0 = setup.opening_points.iter().position(|&p| p == 0).unwrap() as u32;
     let c = &bytecode.constraints[0];
-    assert_eq!((c.first_row, c.last_row, c.im_pol, c.line.as_str()), (0, 1, false, "a*a - b == 0"));
+    assert_eq!((c.im_pol, c.line.as_str()), (false, "constraint on expression 1 == 0"));
     let copy = bin_op(Opcode::Add, 0, cm(1, stage_pos, at_0), Operand::Number(FrBytes::ZERO));
     assert_eq!(c.code, Code { ops: vec![copy], n_temp: 1, dest_id: 0 });
     // The other constraints are pil-info's code, the im pol's too.
@@ -954,7 +921,6 @@ fn fibonacci_fixture_round_trips() {
     assert_eq!(result.setup.cm_pols_map[2].exp_id, Some(6));
     assert_eq!(bytecode.n_stages, 1);
     assert_eq!(bytecode.constraints.len(), 6);
-    assert!(bytecode.constraints.iter().all(|c| (c.first_row, c.last_row) == (0, 256)));
     assert_eq!(bytecode.constraints.iter().filter(|c| c.im_pol).count(), 1);
     assert!(result.pil_code.expressions_info.hints_info.is_empty());
 
@@ -1313,8 +1279,8 @@ fn cm(stage: u32, stage_pos: u32, opening: u32) -> Operand {
 
 /// An AIR of `N = 8` rows and 2 stages, with opening points −2, −1, 0, 1 and 2 (indices 0 to 4).
 /// Its columns are `a`, `b` and the intermediate polynomial `im` of stage 1 (`stagePos` 0, 1 and
-/// 2, `cmPolsMap` 0 to 2), and `c` of stage 2 (`cmPolsMap` 3). It has constraints on the rows of
-/// everyRow, firstRow, lastRow and `everyFrame{1, 2}`. The sample has every opcode, every operand
+/// 2, `cmPolsMap` 0 to 2), and `c` of stage 2 (`cmPolsMap` 3). It has four
+/// everyRow constraints. The sample has every opcode, every operand
 /// type, every opening, temporaries written by the op that reads them, a copy (an add of 0), and
 /// numbers of 254 bits, some twice in a section. Its two hints have every kind of value, an array
 /// field of two dimensions and one of one, and the `gsum_col` fields of the std.
@@ -1346,7 +1312,7 @@ fn sample() -> Bytecode {
                     2,
                 ),
             },
-            // Q = ((c · challenge0 + (public1 − airvalue0)) · ((2^253 + 5) + 0) + Zi1 · b[+2]) · Zi0
+            // Q = ((c · challenge0 + (public1 − airvalue0)) · ((2^253 + 5) + 0) + Zi0 · b[+2]) · Zi0
             ExpressionBin {
                 exp_id: 7,
                 stage: 3,
@@ -1358,7 +1324,7 @@ fn sample() -> Bytecode {
                         bin_op(Add, 0, t0, t1),
                         bin_op(Add, 1, wide, zero),
                         bin_op(Mul, 0, t0, t1),
-                        bin_op(Mul, 2, Operand::Zi { boundary: 1 }, cm(1, 1, at_2)),
+                        bin_op(Mul, 2, Operand::Zi { boundary: 0 }, cm(1, 1, at_2)),
                         bin_op(Add, 0, t0, t2),
                         bin_op(Mul, 0, Operand::Zi { boundary: 0 }, t0),
                     ],
@@ -1397,17 +1363,13 @@ fn sample() -> Bytecode {
             // a' − a · b, everyRow
             ConstraintBin {
                 stage: 1,
-                first_row: 0,
-                last_row: 8,
                 im_pol: false,
                 line: "sample.pil:10 a' - a * b === 0".into(),
                 code: code(vec![bin_op(Mul, 0, cm(1, 0, at_0), cm(1, 1, at_0)), bin_op(Sub, 0, cm(1, 0, at_1), t0)], 1),
             },
-            // const0 · (a − public0), firstRow
+            // const0 · (a − public0)
             ConstraintBin {
                 stage: 1,
-                first_row: 0,
-                last_row: 1,
                 im_pol: false,
                 line: "sample.pil:11 L1 * (a - in1) === 0".into(),
                 code: code(
@@ -1418,20 +1380,16 @@ fn sample() -> Bytecode {
                     1,
                 ),
             },
-            // b − (2^253 + 5), lastRow
+            // b − (2^253 + 5)
             ConstraintBin {
                 stage: 1,
-                first_row: 7,
-                last_row: 8,
                 im_pol: false,
                 line: "sample.pil:12 b - (2**253 + 5) === 0".into(),
                 code: code(vec![bin_op(Sub, 0, cm(1, 1, at_0), wide)], 1),
             },
-            // im − (a' · b + const0[−1] − (r − 1)) + (c[−2] + 0), everyFrame{1, 2}
+            // im − (a' · b + const0[−1] − (r − 1)) + (c[−2] + 0)
             ConstraintBin {
                 stage: 2,
-                first_row: 1,
-                last_row: 6,
                 im_pol: true,
                 line: "Sample.ImPol".into(),
                 code: code(

@@ -17,11 +17,7 @@
 //! **Calldata.** `verifyProof(bytes32[W] calldata proof, uint256[P] calldata pubSignals)`, as
 //! snarkjs's `FflonkVerifier`, with `P = nPublic` (no `pubSignals` if it is 0) and `W` the words of
 //! [`CalldataLayout`]: the proof's bytes (`Proof::to_bytes`, pilfflonk/docs/formats.md#proof) as
-//! 32-byte words, followed by one auxiliary inverse `1/(ξ − ω^j)` for each `firstRow` (`j = 0`) or
-//! `lastRow` (`j = N − 1`) boundary, in the order of the boundaries
-//! (pilfflonk/docs/formats.md#calldata). The contract checks each, as it checks `inv` and `invZh`.
-//! A vkey without those boundaries, as every compiled PIL2 program
-//! (pilfflonk/docs/protocol.md#constraint-polynomial), has none, and the calldata is the proof.
+//! 32-byte words (pilfflonk/docs/formats.md#calldata).
 //! `proofman_pilfflonk::calldata` encodes it for a proof, and `proofman-cli pilfflonk calldata`
 //! prints it.
 
@@ -33,7 +29,7 @@ use num_bigint::BigUint;
 use proofman_pilfflonk::calldata::SELECTOR_BYTES;
 use proofman_pilfflonk::field::r;
 use proofman_pilfflonk::names::evaluation_name;
-use proofman_pilfflonk::{Boundary, CalldataLayout, FrBytes, JsonFile, PolType, Vkey};
+use proofman_pilfflonk::{CalldataLayout, FrBytes, JsonFile, PolType, Vkey};
 use serde::Serialize;
 use serde_json::Value;
 use tera::{Context as TeraContext, Tera};
@@ -69,11 +65,6 @@ fn fr_pow(base: &BigUint, exponent: u64) -> BigUint {
 
 fn fr_inv(a: &BigUint) -> BigUint {
     a.modpow(&(r() - 2u32), r())
-}
-
-/// `r − a`, the negation of `a < r`, as the contract adds it: `addmod(x, r − a, r) = x − a`.
-fn fr_neg(a: &BigUint) -> BigUint {
-    (r() - a) % r()
 }
 
 /// `5^((r−1)/n)`, a primitive `n`-th root of unity for `n | r − 1` (`shplonk.js`, `rootOfUnity`).
@@ -193,17 +184,12 @@ struct FixedCommitment {
     y: String,
 }
 
-/// `Zi(D)` at `ξ` for a boundary `D` (`qverifier.js`, `computeZi`).
+/// `Zi` at `ξ` of a boundary (`qverifier.js`, `computeZi`): `1/Z_H(ξ)`, the proof's `invZh`, of the
+/// only boundary, `everyRow`.
 #[derive(Serialize)]
 struct Zi {
     index: usize,
-    kind: &'static str,
     slot: String,
-    /// `firstRow`, `lastRow`: the calldata's auxiliary inverse, and `−ω^j` of its row.
-    aux: Option<String>,
-    neg_root: Option<String>,
-    /// `everyFrame`: `−ω^j` of each row it excludes.
-    neg_rows: Vec<String>,
     comment: String,
 }
 
@@ -628,16 +614,6 @@ impl Context {
             "inv = 1/(prod_i Z_T_i(y), i >= 1, times the Lagrange denominators)".into(),
         );
         cd_slot("pInvZh".into(), after_pieces + 1, "invZh = 1/Z_H(xi)".into());
-        let aux_slots: Vec<String> = cd
-            .aux_rows
-            .iter()
-            .enumerate()
-            .map(|(a, row)| {
-                let comment = format!("1/(xi - w^{row}), auxiliary: not of the proof");
-                cd_slot(format!("pAux{a}"), cd.proof_words() + a as u64, comment)
-            })
-            .collect();
-        let mut aux_slots = aux_slots.into_iter();
         let p_public = calldata_offset(cd.words());
         let public: Vec<String> = (0..vkey.n_public).map(|i| at("pPublic", WORD * i)).collect();
 
@@ -657,7 +633,6 @@ impl Context {
         mem.alloc("pY".into(), 1, "y".into());
         mem.alloc("pXi".into(), 1, "xi = xiSeed^powerW".into());
         mem.alloc("pXiN".into(), 1, "xi^N".into());
-        mem.alloc("pZh".into(), 1, "Z_H(xi) = xi^N - 1".into());
         let zi_slots: Vec<String> = vkey
             .boundaries
             .iter()
@@ -799,31 +774,15 @@ impl Context {
         t.squeeze("pY");
 
         // --- Zi (qverifier.js, computeZi) -----------------------------------------------------
-        let neg_row = |j: u64| fr_neg(&fr_pow(&omega_n, j)).to_str_radix(10);
-        let mut zi = Vec::with_capacity(vkey.boundaries.len());
-        for (b, boundary) in vkey.boundaries.iter().enumerate() {
-            let slot = zi_slots[b].clone();
-            let (kind, aux, neg_root, neg_rows, comment) = match *boundary {
-                Boundary::EveryRow => ("everyRow", None, None, vec![], "1/Z_H(xi): the proof's invZh".to_string()),
-                Boundary::FirstRow => {
-                    ("firstRow", aux_slots.next(), Some(neg_row(0)), vec![], "Z_H(xi)/(xi - 1)".to_string())
-                }
-                Boundary::LastRow => (
-                    "lastRow",
-                    aux_slots.next(),
-                    Some(neg_row(n_rows - 1)),
-                    vec![],
-                    format!("Z_H(xi)/(xi - w^{})", n_rows - 1),
-                ),
-                Boundary::EveryFrame { offset_min, offset_max } => {
-                    let rows: Vec<u64> = (0..offset_min).chain(n_rows - offset_max..n_rows).collect();
-                    let comment =
-                        format!("everyFrame {{{offset_min}, {offset_max}}}: prod of (xi - w^j) over rows {rows:?}");
-                    ("everyFrame", None, None, rows.into_iter().map(neg_row).collect(), comment)
-                }
-            };
-            zi.push(Zi { index: b, kind, slot, aux, neg_root, neg_rows, comment: sanitize(&comment) });
-        }
+        let zi: Vec<Zi> = zi_slots
+            .iter()
+            .enumerate()
+            .map(|(index, slot)| Zi {
+                index,
+                slot: slot.clone(),
+                comment: "everyRow, 1/Z_H(xi): the proof's invZh".into(),
+            })
+            .collect();
 
         // --- The qVerifier (qverifier.js, executeCode) ----------------------------------------
         let (q_code, n_tmp) = q_code(
@@ -1054,10 +1013,8 @@ mod tests {
         // 5 or 7 do not divide r − 1: no root of those orders.
         assert!(root_of_unity(&BigUint::from(5u32)).is_err());
         assert!(root_of_unity(&BigUint::ZERO).is_err());
-        // ω^(−s) is the inverse of ω^s, and −a + a = 0.
+        // ω^(−s) is the inverse of ω^s.
         let (w, w_inv) = (signed_pow(&omega, 3), signed_pow(&omega, -3));
         assert_eq!((w * w_inv) % r(), BigUint::from(1u32));
-        assert_eq!((fr_neg(&omega) + &omega) % r(), BigUint::ZERO);
-        assert_eq!(fr_neg(&BigUint::ZERO), BigUint::ZERO);
     }
 }

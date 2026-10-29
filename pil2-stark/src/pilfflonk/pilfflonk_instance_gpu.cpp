@@ -240,7 +240,7 @@ uint64_t InstanceGpu::computeQ(uint64_t partBits, const QValues &valuesOn) {
         TimerStopAndLogExpr(PILFFLONK_Q_EXTEND, p);
         TimerStartExpr(PILFFLONK_Q_DOMAIN, p);
         const ExpressionsDomainGpu domain = ExpressionsDomainGpu::cosetPart(
-            info.nBits, key.degrees().nBitsExt, partBits, p, info.boundaries, zerofiers);
+            info.nBits, key.degrees().nBitsExt, partBits, p, zerofiers);
         phaseDone();
         TimerStopAndLogExpr(PILFFLONK_Q_DOMAIN, p);
         TimerStartExpr(PILFFLONK_Q_EVALUATE, p);

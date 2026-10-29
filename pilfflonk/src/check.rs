@@ -7,7 +7,7 @@
 //! polynomial, `im − e`, which holds by construction since the prover computes `im` from `e`. The
 //! C++ core computes the intermediate polynomials of stage 1 as the prover does, then each
 //! constraint's numerator on the trace with the bytecode, and reports the rows
-//! `firstRow ≤ i < lastRow` where it is not 0.
+//! where it is not 0.
 //!
 //! **Stages ≥ 2**. Their columns are those the std's prover hints give with the stage's
 //! challenges. As the STARK's `verify-constraints` does (`proofman/src/proofman.rs`,
@@ -87,9 +87,6 @@ pub struct ConstraintCheck {
     /// Its index in the `<air>.bin`: the pilout's constraints, then the im pols'.
     pub index: usize,
     pub stage: u64,
-    /// It holds on the rows `first_row ≤ i < last_row`.
-    pub first_row: u64,
-    pub last_row: u64,
     /// The constraint of an intermediate polynomial.
     pub im_pol: bool,
     /// The PIL it comes from.
@@ -155,8 +152,6 @@ pub fn check(pk: &ProvingKey, witness: &impl WitnessSource, options: &CheckOptio
             Ok(ConstraintCheck {
                 index,
                 stage: constraint.stage,
-                first_row: constraint.first_row,
-                last_row: constraint.last_row,
                 im_pol: constraint.im_pol,
                 line: constraint.line,
                 n_failed_rows: found.n_failed,
@@ -190,8 +185,6 @@ mod tests {
         ConstraintCheck {
             index,
             stage: 1,
-            first_row: 0,
-            last_row: 8,
             im_pol: false,
             line: format!("c{index}"),
             n_failed_rows,

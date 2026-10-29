@@ -134,7 +134,7 @@ fn the_digest_changes_with_every_field() {
         |v| v.ev_map[1].prime = -2,
         |v| v.ev_map[2].opening_pos = 0,
         |v| v.layout.0[2].degree = 22,
-        |v| v.boundaries.push(Boundary::FirstRow),
+        |v| v.boundaries.clear(),
         |v| v.fixed_commitments.0[0] = multiple_of_g(2),
         |v| v.q_deg = 3,
         |v| v.max_q_degree = 1,

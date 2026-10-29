@@ -18,9 +18,7 @@ pragma solidity >=0.7.0 <0.9.0;
 /// @dev    It accepts exactly the proofs the JS verifier (pilfflonk/js, verify.js) accepts, and its
 ///         steps are the JS's. Calldata: `proof` is the proof's bytes (the commitments of the
 ///         non-fixed f_i, W, W', the evaluations, the Q_i(xi) if Q is split, inv and invZh) as
-///         {{ proof_words }} big-endian words{% if words > proof_words %}, followed by
-///         {{ words - proof_words }} auxiliary inverses of the calldata, 1/(xi - w^j) of the firstRow and lastRow
-///         boundaries{% endif %}; `pubSignals`, the publics.
+///         {{ proof_words }} big-endian words; `pubSignals`, the publics.
 contract PilfflonkVerifier {
     uint32 constant n = {{ n }}; // Domain size, N = 2^{{ power }}
 
@@ -107,8 +105,8 @@ contract PilfflonkVerifier {
             }
 
             // STEPS 1-3 (verify.js; proof.js, fromObjectProof and fromObjectPublics): the
-            // commitments, W and W' in G1; the evaluations, the pieces of Q, inv, invZh (and the
-            // auxiliary inverses) and the publics in Fr. The lengths are the vkey's, fixed by the
+            // commitments, W and W' in G1; the evaluations, the pieces of Q, inv, invZh and the
+            // publics in Fr. The lengths are the vkey's, fixed by the
             // types of the arguments; the vkey is this contract's constants.
             function checkInput() {
 {%- for p in check_points %}
@@ -159,39 +157,16 @@ contract PilfflonkVerifier {
 {%- endfor %}
                 mstore(pXiN, xin)
                 let zh := addmod(xin, sub(q, 1), q)
-                mstore(pZh, zh)
                 if iszero(eq(mulmod(zh, calldataload(pInvZh), q), 1)) {
                     fail()
                 }
             }
 
-            // STEP 5: qverifier.js, computeZi, Zi(D) at xi for each boundary D:
-            // 1/Z_H(xi) for everyRow, Z_H(xi)/Z_D(xi) for the others.
+            // STEP 5: qverifier.js, computeZi, Zi at xi of the only boundary, everyRow: 1/Z_H(xi).
             function computeZi() {
-                let xi := mload(pXi)
-                let zh := mload(pZh)
 {%- for b in zi %}
-                // boundaries[{{ b.index }}], {{ b.kind }}: {{ b.comment }}
-{%- if b.kind == "everyRow" %}
+                // boundaries[{{ b.index }}]: {{ b.comment }}
                 mstore({{ b.slot }}, calldataload(pInvZh))
-{%- elif b.kind == "everyFrame" %}
-                {
-                    let z := 1
-{%- for neg in b.neg_rows %}
-                    z := mulmod(z, addmod(xi, {{ neg }}, q), q)
-{%- endfor %}
-                    mstore({{ b.slot }}, z)
-                }
-{%- else %}
-                {
-                    // The calldata's 1/(xi - w^j), checked as inv is.
-                    let a := calldataload({{ b.aux }})
-                    if iszero(eq(mulmod(addmod(xi, {{ b.neg_root }}, q), a, q), 1)) {
-                        fail()
-                    }
-                    mstore({{ b.slot }}, mulmod(zh, a, q))
-                }
-{%- endif %}
 {%- endfor %}
             }
 
