@@ -117,11 +117,6 @@ fn share_with_children((start, len): (usize, usize)) {
     let _ = (start, len);
 }
 
-/// Register a pool with all-or-nothing pinning: all buffers' pages pin (GPU) or none (CPU no-op);
-/// a partial result (a `cudaHostRegister` failed) leaves an unpinned buffer in a pinned pool, so we
-/// panic. Returns the distinct base pages (unregister each once on Drop); a registered buffer must
-/// never be reallocated — registration pins a specific address (see `reset`). Dedups the base page
-/// because `cudaHostRegister` rejects an already-registered one.
 /// Pin a long-lived host buffer so H2D can DMA straight out of it instead of taking the staging path.
 /// Returns the page base for [`unregister_host_buffer`]. Registration is not cheap: reused buffers only.
 pub fn register_host_buffer<T>(buffer: &[T]) -> Option<usize> {
@@ -135,27 +130,34 @@ pub fn unregister_host_buffer(base: usize) {
     unregister_host_memory_c(base as *mut c_void);
 }
 
+/// `buffers`' page ranges, overlaps merged: `cudaHostRegister` rejects a page already registered.
+fn pool_page_ranges<F>(buffers: &[Vec<F>]) -> Option<Vec<(usize, usize)>> {
+    let mut ranges: Vec<(usize, usize)> = Vec::with_capacity(buffers.len());
+    for buffer in buffers {
+        ranges.push(aligned_host_range(buffer.as_ptr() as usize, std::mem::size_of_val(buffer.as_slice()))?);
+    }
+    ranges.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+    for (base, size) in ranges {
+        match merged.last_mut() {
+            Some((b, s)) if base < *b + *s => *s = (*s).max(base + size - *b),
+            _ => merged.push((base, size)),
+        }
+    }
+    Some(merged)
+}
+
+/// All-or-nothing pinning of a pool whose buffers are never reallocated; returns the bases to unregister on Drop.
+/// Overlaps are merged within the pool only: a page shared with another pinned registration still fails.
 fn register_pool<F: PrimeField64>(buffers: &[Vec<F>]) -> Vec<usize> {
     let mut registered: Vec<usize> = Vec::with_capacity(buffers.len());
-    let mut covered: HashSet<usize> = HashSet::with_capacity(buffers.len());
-    let mut all_covered = true;
-    for buffer in buffers.iter() {
-        // Compute the page range once and use that exact base for both the dedup
-        // check and the registration, so the two can never diverge.
-        let bytes = buffer.len().saturating_mul(std::mem::size_of::<F>());
-        match aligned_host_range(buffer.as_ptr() as usize, bytes) {
-            // Page already pinned by an earlier buffer in this pool — skip the
-            // duplicate cudaHostRegister; it is covered.
-            Some((base, _)) if covered.contains(&base) => {}
-            Some((base, size)) => {
-                if register_host_memory_c(base as *mut c_void, size as u64) {
-                    covered.insert(base);
-                    registered.push(base);
-                } else {
-                    all_covered = false;
-                }
-            }
-            None => all_covered = false,
+    let ranges = pool_page_ranges(buffers);
+    let mut all_covered = ranges.is_some();
+    for &(base, size) in ranges.iter().flatten() {
+        if register_host_memory_c(base as *mut c_void, size as u64) {
+            registered.push(base);
+        } else {
+            all_covered = false;
         }
     }
     // Partial pinning is fatal, but unregister what we did pin before aborting — else those pages
@@ -165,10 +167,10 @@ fn register_pool<F: PrimeField64>(buffers: &[Vec<F>]) -> Vec<usize> {
             unregister_host_memory_c(*ptr as *mut c_void);
         }
         panic!(
-            "MemoryHandler: host-memory pinning is all-or-nothing, but only {} of {} buffers' pages pinned. \
-             The GPU backend is active and a cudaHostRegister failed — refusing to run with a \
+            "MemoryHandler: host-memory pinning is all-or-nothing, but only {} of the {} buffers' page ranges \
+             pinned. The GPU backend is active and a cudaHostRegister failed — refusing to run with a \
              partially-pinned pool.",
-            covered.len(),
+            registered.len(),
             buffers.len()
         );
     }
@@ -943,6 +945,24 @@ mod tests {
 
     fn candidate(cost: u64, instance_id: usize) -> ReleaseCandidate {
         ReleaseCandidate { cost: std::cmp::Reverse(cost), instance_id, generation: 0 }
+    }
+
+    /// Sub-page buffers sit side by side on the heap and share pages; each page must be pinned once.
+    #[test]
+    fn pool_page_ranges_are_disjoint_and_cover_every_buffer() {
+        let buffers: Vec<Vec<F>> = (0..8).map(|_| zeroed_buffer(600)).collect();
+        let ranges = pool_page_ranges(&buffers).unwrap();
+        for w in ranges.windows(2) {
+            assert!(w[0].0 + w[0].1 <= w[1].0, "overlapping ranges {w:?}");
+        }
+        for b in &buffers {
+            let (base, size) = aligned_host_range(b.as_ptr() as usize, std::mem::size_of_val(b.as_slice())).unwrap();
+            assert!(
+                ranges.iter().any(|&(rb, rs)| rb <= base && base + size <= rb + rs),
+                "buffer at {base:#x} not covered"
+            );
+        }
+        assert!(pool_page_ranges(&[Vec::<F>::new()]).is_none());
     }
 
     #[test]
