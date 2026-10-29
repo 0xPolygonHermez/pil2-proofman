@@ -60,9 +60,6 @@ struct EvMapEntry {
     uint64_t openingPos; // openingPoints[openingPos] == prime
 };
 
-// The Zi of an AIR: pilfflonk has only everyRow constraints, whose Zi, boundary 0, is 1/Z_H.
-constexpr uint64_t N_BOUNDARIES = 1;
-
 struct LayoutPol {
     uint64_t id; // in constPolsMap for an f of stage 0, in cmPolsMap otherwise
     std::string name;

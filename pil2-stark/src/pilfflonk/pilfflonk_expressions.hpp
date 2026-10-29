@@ -29,9 +29,8 @@ namespace PilFflonk {
 // Elements are in ffiasm's Montgomery form. Everything is checked before anything is written: a
 // bad argument throws std::invalid_argument; a bytecode that does not fit the AIR, FormatError.
 
-// Zi at a point x ∉ H (pilfflonk/docs/protocol.md#constraint-polynomial): the one of the AIR's only
-// boundary, everyRow, 1/Z_H(x) with Z_H(x) = x^N − 1. Throws std::invalid_argument if x is in H.
-std::vector<FrElement> zerofiersAt(uint64_t nBits, const FrElement &x);
+// Zi at x ∉ H, everyRow's 1/Z_H(x) (pilfflonk/docs/protocol.md#constraint-polynomial); throws if x is in H.
+FrElement zhInvAt(uint64_t nBits, const FrElement &x);
 
 // The points of a part of the extended coset (ExpressionsDomain::cosetPart), c·ω_S^i for i < S =
 // 2^partBits, and Z_H on them, which repeats every e = S/N points: what cosetPart computes Zi from,
@@ -55,7 +54,7 @@ public:
     static ExpressionsDomain trace(uint64_t nBits);
 
     // The extended coset g·H', g·ω_{N'}^i for N' = 2^nBitsExt and g = COSET_SHIFT (5), the points
-    // of Lde::extendCoset. Zi on it, as zerofiersAt says, with batch inversions: 1/Z_H repeats every
+    // of Lde::extendCoset. Zi on it, as zhInvAt says, with batch inversions: 1/Z_H repeats every
     // 2^extendBits() points and has those values only. Throws std::invalid_argument unless
     // nBits <= nBitsExt <= 28.
     static ExpressionsDomain coset(uint64_t nBits, uint64_t nBitsExt);
@@ -73,19 +72,17 @@ public:
     uint64_t size() const { return uint64_t(1) << (nBits_ + extendBits_); }
     // e: the domain has 2^e points per row of the trace.
     uint64_t extendBits() const { return extendBits_; }
-    // The Zi defined: 0 on H, 1 on the coset.
-    uint64_t nZerofiers() const { return zerofiers_.size(); }
-    // Zi of boundary b: at point i, zerofier(b)[i & zerofierMask(b)], as on the device
-    // (ExpressionsDomainGpu): the 2^extendBits() values of 1/Z_H.
-    const std::vector<FrElement> &zerofier(uint64_t b) const { return zerofiers_.at(b); }
-    uint64_t zerofierMask(uint64_t b) const { return zerofiers_.at(b).size() - 1; }
+    // Whether Zi is defined: not on H.
+    bool hasZi() const { return !zhInv_.empty(); }
+    // Zi at point i is zhInv()[i & (zhInv().size() − 1)]: the 2^extendBits() values of 1/Z_H.
+    const std::vector<FrElement> &zhInv() const { return zhInv_; }
 
 private:
     ExpressionsDomain(uint64_t nBits, uint64_t extendBits) : nBits_(nBits), extendBits_(extendBits) {}
 
     uint64_t nBits_;
     uint64_t extendBits_;
-    std::vector<std::vector<FrElement>> zerofiers_;
+    std::vector<FrElement> zhInv_;
 };
 
 // What the operands of the prover mode read.
@@ -110,7 +107,7 @@ const std::vector<FrElement> *proverScalars(const OperandTypes &types, uint32_t 
 // What the operands of the verifier mode read: no columns, but their evaluations.
 struct PointValues {
     std::vector<FrElement> evals;     // evMap order
-    std::vector<FrElement> zerofiers; // Zi at the point: zerofiersAt
+    FrElement zhInv; // Zi at the point: zhInvAt
     std::vector<FrElement> publics;
     std::vector<FrElement> challenges;
     std::vector<FrElement> airValues;
@@ -136,15 +133,15 @@ public:
     // Verifier mode: expression expId at one point.
     FrElement evaluateExpressionAt(uint64_t expId, const PointValues &values) const;
 
-    // The code calculateExpression runs for expId on a domain with nZerofiers Zi, once it has checked
+    // The code calculateExpression runs for expId on a domain with Zi (hasZi) or without, once it has checked
     // what it checks before it computes anything: that there is such an expression, that dest is not
     // null, and every operand the code reads against `values` and the domain. It throws what
     // calculateExpression throws then. For the device's prover mode (ExpressionsGpu), whose values
     // have the same operands.
-    const ParserParams &checkedExpression(uint64_t expId, uint64_t nZerofiers, const ProverValues &values,
+    const ParserParams &checkedExpression(uint64_t expId, bool hasZi, const ProverValues &values,
                                           const void *dest) const;
     // The same of calculateConstraint, for constraint `index` of section 2.
-    const ParserParams &checkedConstraint(uint64_t index, uint64_t nZerofiers, const ProverValues &values,
+    const ParserParams &checkedConstraint(uint64_t index, bool hasZi, const ProverValues &values,
                                           const void *dest) const;
 
     // Each opening point's shift on a domain of `size` points, 2^extendBits per row of the trace: the
@@ -155,7 +152,7 @@ public:
     static constexpr uint64_t BLOCK_ROWS = 128;
 
 private:
-    void checkOperands(const ParserParams &params, const ParserArgs &args, uint64_t nZerofiers,
+    void checkOperands(const ParserParams &params, const ParserArgs &args, bool hasZi,
                        const ProverValues &values, const void *dest, const char *what) const;
     void calculate(const ParserParams &params, const ParserArgs &args, const ExpressionsDomain &domain,
                    const ProverValues &values, FrElement *dest) const;

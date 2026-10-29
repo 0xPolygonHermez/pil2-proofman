@@ -14,7 +14,7 @@
 //!   - `number`, a canonical decimal string below `r`;
 //!   - `challenge`, a `(stage, stageId)` of the AIR's challenges, with its position among them as
 //!     its `id` ([`challenge_position`]);
-//!   - `Zi`, the index `boundaryId` of a boundary.
+//!   - `Zi`, of boundary 0 (`boundaryId`), everyRow: the only one.
 //!
 //! Air values, airgroup values and proof values do not exist in format version 1, nor do custom
 //! commits (pilfflonk/docs/README.md#scope), and `xDivXSubXi` is the DEEP opening's: any other
@@ -34,7 +34,6 @@ pub(crate) struct QVerifierShape<'a> {
     /// The entries of the evMap.
     pub n_evaluations: usize,
     pub n_public: u64,
-    pub n_boundaries: usize,
     /// The vkey's `numChallenges`, one entry per stage.
     pub num_challenges: &'a [u64],
 }
@@ -172,14 +171,10 @@ fn check_operand(value: &Value, at: &str, written: &HashSet<u64>, shape: &QVerif
             }
         }
         Some("Zi") => {
-            if is_index(field("boundaryId"), shape.n_boundaries as u64) {
+            if is_index(field("boundaryId"), 1) {
                 Ok(())
             } else {
-                invalid!(
-                    "qVerifier: {at}: Zi of boundary {}, and there are {}",
-                    show(field("boundaryId")),
-                    shape.n_boundaries
-                )
+                invalid!("qVerifier: {at}: Zi of boundary {}, and there are 1", show(field("boundaryId")))
             }
         }
         Some(kind @ ("airvalue" | "airgroupvalue" | "proofvalue")) => {
@@ -216,7 +211,7 @@ mod tests {
     /// `SHAPE` of `pilfflonk/js/test/qverifier.test.js`: challenges `[0, 2]` of two stages.
     const NUM_CHALLENGES: [u64; 2] = [0, 2];
     const SHAPE: QVerifierShape<'static> =
-        QVerifierShape { n_evaluations: 3, n_public: 2, n_boundaries: 2, num_challenges: &NUM_CHALLENGES };
+        QVerifierShape { n_evaluations: 3, n_public: 2, num_challenges: &NUM_CHALLENGES };
 
     fn check(tmp_used: u64, code: Vec<Value>) -> PilfflonkResult<()> {
         check_q_verifier(&json!({"tmpUsed": tmp_used, "code": code}), &SHAPE)
@@ -251,7 +246,7 @@ mod tests {
             entry("add", 0, &[eval(0), operand("public", json!({"id": 1}))]),
             entry("sub", 1, &[tmp(0), operand("number", json!({"value": "7"}))]),
             entry("mul", 2, &[tmp(1), operand("challenge", json!({"id": 1, "stage": 2, "stageId": 1}))]),
-            entry("copy", 3, &[operand("Zi", json!({"id": 0, "boundaryId": 1}))]),
+            entry("copy", 3, &[operand("Zi", json!({"id": 0, "boundaryId": 0}))]),
             entry("mul", 3, &[tmp(3), tmp(2)]),
             entry("sub", 4, &[operand("challenge", json!({"id": 2, "stage": 3, "stageId": 0})), eval(2)]),
             entry("add", 5, &[tmp(3), tmp(4)]),
@@ -326,7 +321,7 @@ mod tests {
             (
                 "a Zi of no boundary",
                 vec![entry("copy", 0, &[operand("Zi", json!({"boundaryId": 2}))])],
-                "Zi of boundary 2, and there are 2",
+                "Zi of boundary 2, and there are 1",
             ),
             (
                 "an air value",

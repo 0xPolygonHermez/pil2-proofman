@@ -297,7 +297,6 @@ impl JsonFile for Vkey {
             &QVerifierShape {
                 n_evaluations: self.ev_map.len(),
                 n_public: self.n_public,
-                n_boundaries: self.boundaries.len(),
                 num_challenges: &self.num_challenges,
             },
         )

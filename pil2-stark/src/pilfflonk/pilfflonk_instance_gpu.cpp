@@ -219,7 +219,7 @@ uint64_t InstanceGpu::computeQ(uint64_t partBits, const QValues &valuesOn) {
     uint8_t *arena = air.gpuKey().arena();
     const uint64_t S = uint64_t(1) << partBits, M = key.lde().extendedSize(), nParts = M / S;
     const QPartLayout part = qPartLayout(key, partBits);
-    void *zerofiers = arena + layout.qPart + part.zerofiers;
+    void *zhInv = arena + layout.qPart + part.zhInv;
     FrElement *columns = elements(arena, layout.qPart + part.columns);
     FrElement *q = elements(arena, layout.q);
     const LdeGpu lde(air, partBits, columns);
@@ -240,7 +240,7 @@ uint64_t InstanceGpu::computeQ(uint64_t partBits, const QValues &valuesOn) {
         TimerStopAndLogExpr(PILFFLONK_Q_EXTEND, p);
         TimerStartExpr(PILFFLONK_Q_DOMAIN, p);
         const ExpressionsDomainGpu domain = ExpressionsDomainGpu::cosetPart(
-            info.nBits, key.degrees().nBitsExt, partBits, p, zerofiers);
+            info.nBits, key.degrees().nBitsExt, partBits, p, zhInv);
         phaseDone();
         TimerStopAndLogExpr(PILFFLONK_Q_DOMAIN, p);
         TimerStartExpr(PILFFLONK_Q_EVALUATE, p);

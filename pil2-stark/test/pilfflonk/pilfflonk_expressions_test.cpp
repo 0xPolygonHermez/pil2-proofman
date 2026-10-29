@@ -291,10 +291,10 @@ struct Columns {
     }
 };
 
-// Zi of boundary b of `domain` at each of its points.
-std::vector<FrElement> zerofierValues(const ExpressionsDomain &domain, uint64_t b) {
+// Zi of `domain` at each of its points.
+std::vector<FrElement> ziValues(const ExpressionsDomain &domain) {
     std::vector<FrElement> values(domain.size());
-    for (uint64_t i = 0; i < values.size(); ++i) values[i] = domain.zerofier(b)[i & domain.zerofierMask(b)];
+    for (uint64_t i = 0; i < values.size(); ++i) values[i] = domain.zhInv()[i & (domain.zhInv().size() - 1)];
     return values;
 }
 
@@ -316,7 +316,7 @@ void testSampleGivesTheRustEvaluatorsValues() {
     info.nBits = j["nBits"];
     info.nStages = 2;
     info.openingPoints = j["openingPoints"].get<std::vector<int64_t>>();
-    assert(j["boundaries"].size() == PilFflonk::N_BOUNDARIES);
+    assert(j["boundaries"].size() == 1);
     const Expressions expressions(bin, info);
     const json &expected = j["expected"];
     const uint64_t nBits = j["nBits"], nBitsExt = j["nBitsExt"];
@@ -349,8 +349,8 @@ void testSampleGivesTheRustEvaluatorsValues() {
     // On the coset: Zi, and Q (7).
     const Columns cosetColumns(j["coset"]);
     const ExpressionsDomain coset = ExpressionsDomain::coset(nBits, nBitsExt);
-    assert(coset.size() == 16 && coset.extendBits() == 1 && coset.nZerofiers() == PilFflonk::N_BOUNDARIES);
-    expectValues(zerofierValues(coset, 0), expected["cosetZerofiers"][0], "Zi on the coset");
+    assert(coset.size() == 16 && coset.extendBits() == 1 && coset.hasZi());
+    expectValues(ziValues(coset), expected["cosetZerofiers"][0], "Zi on the coset");
     out.resize(coset.size());
     expressions.calculateExpression(7, coset, proverValues(cosetColumns), out.data());
     expectValues(out, expected["expressions"]["7"], "expression 7 on the coset");
@@ -358,8 +358,8 @@ void testSampleGivesTheRustEvaluatorsValues() {
     // At ξ: Zi, and the code of evaluations (11).
     const FrElement xi = fr(j["xi"]);
     PointValues point;
-    point.zerofiers = PilFflonk::zerofiersAt(nBits, xi);
-    expectValues(point.zerofiers, expected["xiZerofiers"], "Zi at ξ");
+    point.zhInv = PilFflonk::zhInvAt(nBits, xi);
+    expectValues({point.zhInv}, expected["xiZerofiers"], "Zi at ξ");
     point.evals = frs(j["evals"]);
     point.publics = frs(j["publics"]);
     point.challenges = frs(j["challenges"]);
@@ -415,25 +415,24 @@ void testZerofiersOnTheCoset() {
     assert(eq(w28, fr(std::string("21888242871839275222246405745257275088548364400416034343698204186575808495616"))));
 
     const ExpressionsDomain coset = ExpressionsDomain::coset(nBits, nBitsExt);
-    assert(coset.size() == m && coset.extendBits() == 2 && coset.nZerofiers() == PilFflonk::N_BOUNDARIES);
+    assert(coset.size() == m && coset.extendBits() == 2 && coset.hasZi());
     // 1/Z_H repeats every 2^extendBits points, and is kept as those values only.
-    assert(coset.zerofier(0).size() == 4 && coset.zerofierMask(0) == 3);
-    const std::vector<FrElement> zi = zerofierValues(coset, 0);
+    assert(coset.zhInv().size() == 4);
+    const std::vector<FrElement> zi = ziValues(coset);
 
     FrElement x = fromUI(5); // g
     for (uint64_t i = 0; i < m; ++i) {
         FrElement zh;
         F().sub(zh, power(x, n), F().one());
         assert(eq(zi[i], inverse(zh)));
-        // The same at the point, by zerofiersAt.
-        const std::vector<FrElement> at = PilFflonk::zerofiersAt(nBits, x);
-        assert(at.size() == 1 && eq(at[0], zi[i]));
+        // The same at the point, by zhInvAt.
+        assert(eq(PilFflonk::zhInvAt(nBits, x), zi[i]));
         F().mul(x, x, w);
     }
 
     // H, and domains and boundaries there are none of.
-    assert(ExpressionsDomain::trace(nBits).nZerofiers() == 0 && ExpressionsDomain::trace(nBits).size() == n);
-    assert(contains(thrown<std::invalid_argument>([&] { PilFflonk::zerofiersAt(nBits, power(wN, 3)); }), "in H"));
+    assert(!ExpressionsDomain::trace(nBits).hasZi() && ExpressionsDomain::trace(nBits).size() == n);
+    assert(contains(thrown<std::invalid_argument>([&] { PilFflonk::zhInvAt(nBits, power(wN, 3)); }), "in H"));
     assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::coset(4, 3); }), "nBits <= nBitsExt <= 28"));
     assert(contains(thrown<std::invalid_argument>([&] { ExpressionsDomain::coset(3, 29); }),
                     "nBits <= nBitsExt <= 28"));
@@ -447,10 +446,10 @@ void testZerofiersOnTheCoset() {
         for (uint64_t part = 0; part < nParts; ++part) {
             const ExpressionsDomain piece = ExpressionsDomain::cosetPart(nBits, nBitsExt, partBits, part);
             assert(piece.size() == S && piece.nBits() == nBits && piece.extendBits() == partBits - nBits);
-            assert(piece.nZerofiers() == PilFflonk::N_BOUNDARIES);
+            assert(piece.hasZi());
             for (uint64_t i = 0; i < S; ++i) {
                 const FrElement &whole = zi[part + nParts * i];
-                const FrElement &inPiece = piece.zerofier(0)[i & piece.zerofierMask(0)];
+                const FrElement &inPiece = piece.zhInv()[i & (piece.zhInv().size() - 1)];
                 assert(std::memcmp(&inPiece, &whole, sizeof(FrElement)) == 0);
             }
         }
@@ -626,8 +625,8 @@ void testTheFibonaccisQVerifierIsTheOracles() {
     const FrElement xi = fr(fib.oracle["xi"]);
 
     PointValues point;
-    point.zerofiers = PilFflonk::zerofiersAt(fib.info.nBits, xi);
-    expectValues(point.zerofiers, fib.oracle["zerofiers"], "Zi at ξ");
+    point.zhInv = PilFflonk::zhInvAt(fib.info.nBits, xi);
+    expectValues({point.zhInv}, fib.oracle["zerofiers"], "Zi at ξ");
     point.evals = frs(fib.oracle["evals"]);
     point.publics = frs(fib.oracle["publics"]);
     point.challenges = frs(fib.oracle["challenges"]);

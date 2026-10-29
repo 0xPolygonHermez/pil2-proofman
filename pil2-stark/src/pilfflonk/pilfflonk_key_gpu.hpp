@@ -171,10 +171,10 @@ struct ArenaLayout {
 ArenaLayout arenaLayout(const AirKey &air);
 
 // Where a part of 2^partBits points of the coset keeps its data at ArenaLayout::qPart: Zi of the
-// part (ExpressionsDomainGpu::cosetPart's workspace) at `zerofiers`, and column r of AirKey::qReads
+// part (ExpressionsDomainGpu::cosetPart's workspace) at `zhInv`, and column r of AirKey::qReads
 // at `columns` + r·2^partBits elements; byte offsets from qPart, and `bytes` in all.
 struct QPartLayout {
-    uint64_t zerofiers = 0;
+    uint64_t zhInv = 0;
     uint64_t columns = 0;
     uint64_t bytes = 0;
 };

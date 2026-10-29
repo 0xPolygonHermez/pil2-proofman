@@ -37,23 +37,6 @@ constexpr uint64_t MAX_BLOCKS = uint64_t(1) << 20;
 
 uint64_t aligned8(uint64_t bytes) { return (bytes + 7) & ~uint64_t(7); }
 
-// Where cosetPart keeps its tables in its workspace, in elements: Z_H on the part's points and its
-// inverse, which is the Zi of everyRow, e = S/N values each, repeated every e points.
-struct PartLayout {
-    uint64_t zh = 0;
-    uint64_t zhInv = 0;
-    uint64_t elements = 0;
-};
-
-PartLayout partLayout(uint64_t nBits, uint64_t partBits) {
-    const uint64_t e = (uint64_t(1) << partBits) >> nBits;
-    PartLayout l;
-    l.zh = 0;
-    l.zhInv = e;
-    l.elements = 2 * e;
-    return l;
-}
-
 // The bytes of a block's temporaries in device memory for the code of `bin`: 0 if they fit in
 // sharedBytes of shared memory.
 uint64_t temporaryBytesPerBlock(const ExpressionsBin &bin, uint64_t sharedBytes) {
@@ -77,7 +60,8 @@ ExpressionsDomainGpu ExpressionsDomainGpu::trace(uint64_t nBits) {
 }
 
 uint64_t ExpressionsDomainGpu::cosetPartBytes(uint64_t nBits, uint64_t partBits) {
-    return partLayout(nBits, partBits).elements * sizeof(FrElement);
+    // 1/Z_H on the part's points: e = S/N values, repeated every e points
+    return ((uint64_t(1) << partBits) >> nBits) * sizeof(FrElement);
 }
 
 ExpressionsDomainGpu ExpressionsDomainGpu::cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits,
@@ -86,16 +70,10 @@ ExpressionsDomainGpu ExpressionsDomainGpu::cosetPart(uint64_t nBits, uint64_t nB
     if (workspace == nullptr) {
         throw std::invalid_argument("ExpressionsDomainGpu::cosetPart: workspace is null");
     }
-    const uint64_t e = points.zh.size();
-    const PartLayout l = partLayout(nBits, partBits);
-    std::vector<FrElement> tables(points.zh);
-    tables.insert(tables.end(), points.zhInv.begin(), points.zhInv.end());
-    FrElement *w = static_cast<FrElement *>(workspace);
-    gpu_plonk_memcpy_h2d(w + l.zh, tables.data(), tables.size() * sizeof(FrElement));
-
+    gpu_plonk_memcpy_h2d(workspace, points.zhInv.data(), points.zhInv.size() * sizeof(FrElement));
     ExpressionsDomainGpu domain(nBits, partBits - nBits);
-    domain.zerofiers_.push_back(w + l.zhInv);
-    domain.masks_.push_back(e - 1);
+    domain.zhInv_ = workspace;
+    domain.zhMask_ = points.zhInv.size() - 1;
     return domain;
 }
 
@@ -127,7 +105,6 @@ OperandLayout operandLayout(const ExpressionsBin &bin, uint64_t nOpenings) {
         l.columnStart.push_back(static_cast<uint32_t>(l.columnStart.back() + n));
     }
     l.nShifts = nOpenings;
-    l.nZerofiers = N_BOUNDARIES;
 
     uint64_t nValues = 0;
     for (uint64_t n : l.nScalars) {
@@ -143,17 +120,13 @@ OperandLayout operandLayout(const ExpressionsBin &bin, uint64_t nOpenings) {
     l.scalars = take(N_SCALAR_TYPES * sizeof(void *));
     l.columns = take(uint64_t(l.columnStart.back()) * sizeof(void *));
     l.shifts = take(nOpenings * sizeof(uint64_t));
-    l.zerofiers = take(N_BOUNDARIES * sizeof(void *));
-    l.masks = take(N_BOUNDARIES * sizeof(uint64_t));
     l.columnStarts = take(l.columnStart.size() * sizeof(uint32_t));
     l.bytes = end;
     return l;
 }
 
 void encodeOperands(const OperandLayout &layout, const OperandTypes &types, const ProverValues &values,
-                    const void *numbers, const std::vector<uint64_t> &shifts,
-                    const std::vector<const void *> &zerofiers, const std::vector<uint64_t> &zerofierMasks,
-                    uint8_t *out, const void *base) {
+                    const void *numbers, const std::vector<uint64_t> &shifts, uint8_t *out, const void *base) {
     std::memset(out, 0, layout.bytes);
     auto put = [&](uint64_t offset, const void *src, uint64_t bytes) {
         if (bytes > 0) {
@@ -183,20 +156,18 @@ void encodeOperands(const OperandLayout &layout, const OperandTypes &types, cons
         }
     }
     put(layout.shifts, shifts.data(), std::min<uint64_t>(shifts.size(), layout.nShifts) * sizeof(uint64_t));
-    const uint64_t nZerofiers = std::min<uint64_t>(zerofiers.size(), layout.nZerofiers);
-    put(layout.zerofiers, zerofiers.data(), nZerofiers * sizeof(void *));
-    put(layout.masks, zerofierMasks.data(), nZerofiers * sizeof(uint64_t));
     put(layout.columnStarts, layout.columnStart.data(), layout.columnStart.size() * sizeof(uint32_t));
 }
 
-OperandTables operandTables(const OperandLayout &layout, const OperandTypes &types, const void *base, uint64_t size) {
+OperandTables operandTables(const OperandLayout &layout, const OperandTypes &types, const void *base, uint64_t size,
+                            const void *zhInv, uint64_t zhMask) {
     const uint8_t *at = static_cast<const uint8_t *>(base);
     OperandTables t;
     t.columns = reinterpret_cast<const void *const *>(at + layout.columns);
     t.columnStart = reinterpret_cast<const uint32_t *>(at + layout.columnStarts);
     t.shifts = reinterpret_cast<const uint64_t *>(at + layout.shifts);
-    t.zerofiers = reinterpret_cast<const void *const *>(at + layout.zerofiers);
-    t.zerofierMasks = reinterpret_cast<const uint64_t *>(at + layout.masks);
+    t.zhInv = zhInv;
+    t.zhMask = zhMask;
     t.scalars = reinterpret_cast<const void *const *>(at + layout.scalars);
     t.mask = size - 1;
     t.ziType = types.zi();
@@ -210,7 +181,7 @@ OperandTables operandTables(const OperandLayout &layout, const OperandTypes &typ
 
 namespace {
 // setup/exps-codegen/src/bn128.rs's PFEXPS_ABI.
-constexpr unsigned GENERATED_ABI = 1;
+constexpr unsigned GENERATED_ABI = 2;
 } // namespace
 
 GeneratedExpressions::GeneratedExpressions(const std::string &binPath) {
@@ -297,14 +268,14 @@ uint64_t ExpressionsGpu::deviceBytesOf(const ExpressionsBin &bin, const Pilfflon
 
 void ExpressionsGpu::calculateExpression(uint64_t expId, const ExpressionsDomainGpu &domain, const ProverValues &values,
                                          FrElement *dest, uint64_t stride) const {
-    const ParserParams &params = host.checkedExpression(expId, domain.nZerofiers(), values, dest);
+    const ParserParams &params = host.checkedExpression(expId, domain.hasZi(), values, dest);
     if (stride == 0) {
         throw std::invalid_argument("ExpressionsGpu::calculateExpression: a stride of 0");
     }
     const DeviceCode &code = expressionsCode;
     std::vector<uint8_t> bytes(layout.bytes);
-    encodeOperands(layout, types, values, code.numbers, host.shifts(domain.size(), domain.extendBits()),
-                   domain.zerofiers(), domain.zerofierMasks(), bytes.data(), tables.data());
+    encodeOperands(layout, types, values, code.numbers, host.shifts(domain.size(), domain.extendBits()), bytes.data(),
+                   tables.data());
     // Ordered after the evaluations before, which read the tables.
     gpu_plonk_memcpy_h2d(tables.data(), bytes.data(), bytes.size());
 
@@ -320,7 +291,7 @@ void ExpressionsGpu::calculateExpression(uint64_t expId, const ExpressionsDomain
     launch.dest = dest;
     launch.stride = stride;
     launch.temporaries = inShared ? nullptr : temporaries.data();
-    launch.tables = operandTables(layout, types, tables.data(), domain.size());
+    launch.tables = operandTables(layout, types, tables.data(), domain.size(), domain.zhInv(), domain.zhMask());
     if (generated->covers(expId)) {
         generated->launch(expId, launch, generatedScratch.data());
         return;

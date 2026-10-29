@@ -153,7 +153,7 @@ Air sampleAir() {
     air.info.nBits = j["nBits"];
     air.info.nStages = 2;
     air.info.openingPoints = j["openingPoints"].get<std::vector<int64_t>>();
-    assert(j["boundaries"].size() == PilFflonk::N_BOUNDARIES);
+    assert(j["boundaries"].size() == 1);
     return air;
 }
 
@@ -306,13 +306,11 @@ Column throughTheTables(const ParserParams &params, const ParserArgs &args, cons
 struct Domain {
     ExpressionsDomain cpu;
     std::vector<ExpressionsDomainGpu> gpu; // one, where there is a GPU
-    std::vector<const void *> hostZerofiers;
-    std::vector<uint64_t> hostMasks;
     std::vector<FrElement> zhInv;
 };
 
 Domain traceDomain(uint64_t nBits, bool gpu) {
-    Domain d{ExpressionsDomain::trace(nBits), {}, {}, {}, {}};
+    Domain d{ExpressionsDomain::trace(nBits), {}, {}};
     if (gpu) {
         d.gpu.push_back(ExpressionsDomainGpu::trace(nBits));
     }
@@ -321,10 +319,8 @@ Domain traceDomain(uint64_t nBits, bool gpu) {
 
 Domain partDomain(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part,
                   std::vector<DeviceBuffer> &workspaces, bool gpu) {
-    Domain d{ExpressionsDomain::cosetPart(nBits, nBitsExt, partBits, part), {}, {}, {}, {}};
+    Domain d{ExpressionsDomain::cosetPart(nBits, nBitsExt, partBits, part), {}, {}};
     d.zhInv = PilFflonk::cosetPartPoints(nBits, nBitsExt, partBits, part).zhInv;
-    d.hostZerofiers.push_back(d.zhInv.data());
-    d.hostMasks.push_back(d.zhInv.size() - 1);
     if (gpu) {
         workspaces.emplace_back(ExpressionsDomainGpu::cosetPartBytes(nBits, partBits));
         d.gpu.push_back(ExpressionsDomainGpu::cosetPart(nBits, nBitsExt, partBits, part, workspaces.back().data()));
@@ -332,15 +328,15 @@ Domain partDomain(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t
     return d;
 }
 
-// Zi of each boundary of `gpu`, downloaded and read at every point through its mask, is cpu's.
+// Zi of `gpu`, downloaded and read at every point through its mask, is cpu's.
 void expectTheCpusZerofiers(const ExpressionsDomain &cpu, const ExpressionsDomainGpu &gpu) {
-    assert(gpu.nZerofiers() == cpu.nZerofiers() && gpu.size() == cpu.size() && gpu.extendBits() == cpu.extendBits());
-    for (uint64_t b = 0; b < cpu.nZerofiers(); ++b) {
-        const uint64_t mask = gpu.zerofierMasks()[b];
-        const Column values = download(gpu.zerofiers()[b], mask + 1);
-        for (uint64_t i = 0; i < cpu.size(); ++i) {
-            assert(same(&values[i & mask], &cpu.zerofier(b)[i & cpu.zerofierMask(b)], 1));
-        }
+    assert(gpu.hasZi() == cpu.hasZi() && gpu.size() == cpu.size() && gpu.extendBits() == cpu.extendBits());
+    if (!cpu.hasZi()) return;
+    const uint64_t mask = gpu.zhMask();
+    assert(mask + 1 == cpu.zhInv().size());
+    const Column values = download(gpu.zhInv(), mask + 1);
+    for (uint64_t i = 0; i < cpu.size(); ++i) {
+        assert(same(&values[i & mask], &cpu.zhInv()[i & mask], 1));
     }
 }
 
@@ -420,12 +416,13 @@ void testAnAir(const Air &air, Random &random, bool gpu) {
                     expected[part + nParts * i] = out[i];
                 }
                 const ParserParams &params =
-                    code.constraint ? cpu.checkedConstraint(code.id, d.cpu.nZerofiers(), values.host, out.data())
-                                    : cpu.checkedExpression(code.id, d.cpu.nZerofiers(), values.host, out.data());
+                    code.constraint ? cpu.checkedConstraint(code.id, d.cpu.hasZi(), values.host, out.data())
+                                    : cpu.checkedExpression(code.id, d.cpu.hasZi(), values.host, out.data());
                 PilFflonk::encodeOperands(layout, types, values.host, args.numbers.data(),
-                                          cpu.shifts(size, d.cpu.extendBits()), d.hostZerofiers, d.hostMasks, tables,
-                                          tables);
-                const OperandTables t = PilFflonk::operandTables(layout, types, tables, size);
+                                          cpu.shifts(size, d.cpu.extendBits()), tables, tables);
+                const OperandTables t = PilFflonk::operandTables(layout, types, tables, size,
+                                                                 d.zhInv.empty() ? nullptr : d.zhInv.data(),
+                                                                 d.zhInv.empty() ? 0 : d.zhInv.size() - 1);
                 assert(same(throughTheTables(params, args, t, types.tmp(), size).data(), out.data(), size));
             }
             // The device runs the expressions alone.
@@ -477,10 +474,9 @@ void testTheTablesOfTheSample() {
     const OperandLayout layout = PilFflonk::operandLayout(air.bin, 5);
     assert((layout.columnStart == std::vector<uint32_t>{0, 1, 4, 5, 5}));
     assert((layout.nScalars == std::vector<uint64_t>{2, 0, 1, 2, 1, 1}));
-    assert(layout.nShifts == 5 && layout.nZerofiers == 1);
+    assert(layout.nShifts == 5);
     assert(layout.values == 0 && layout.scalars == 7 * 32 && layout.columns == layout.scalars + 6 * 8);
-    assert(layout.shifts == layout.columns + 5 * 8 && layout.zerofiers == layout.shifts + 5 * 8);
-    assert(layout.masks == layout.zerofiers + 1 * 8 && layout.columnStarts == layout.masks + 1 * 8);
+    assert(layout.shifts == layout.columns + 5 * 8 && layout.columnStarts == layout.shifts + 5 * 8);
     assert(layout.bytes == layout.columnStarts + 5 * 4 + 4);
 
     // Distinct addresses for every column, Zi and number, to see which one each operand reads.
@@ -495,11 +491,10 @@ void testTheTablesOfTheSample() {
     values.airgroupValues = random.column(1);
     values.challenges = random.column(1);
     const void *numbers = reinterpret_cast<const void *>(0x5000);
-    const std::vector<const void *> zerofiers = {reinterpret_cast<const void *>(0x6000)};
     std::vector<uint64_t> table((layout.bytes + 7) / 8);
     uint8_t *bytes = reinterpret_cast<uint8_t *>(table.data());
-    PilFflonk::encodeOperands(layout, types, values, numbers, {3, 5, 0, 11, 13}, zerofiers, {1}, bytes, bytes);
-    const OperandTables t = PilFflonk::operandTables(layout, types, bytes, 16);
+    PilFflonk::encodeOperands(layout, types, values, numbers, {3, 5, 0, 11, 13}, bytes, bytes);
+    const OperandTables t = PilFflonk::operandTables(layout, types, bytes, 16, reinterpret_cast<const void *>(0x6000), 1);
     assert(t.mask == 15 && t.ziType == types.zi() && t.scalarsType == types.publics());
     auto address = [&](uint32_t type, uint32_t arg1, uint32_t arg2, uint64_t i) {
         return reinterpret_cast<uint64_t>(PilFflonk::operandAddress(t, type, arg1, arg2, i));

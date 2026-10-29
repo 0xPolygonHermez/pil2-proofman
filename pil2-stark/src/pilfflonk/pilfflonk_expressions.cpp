@@ -85,19 +85,19 @@ const std::vector<FrElement> *proverScalars(const OperandTypes &types, uint32_t 
     return nullptr;
 }
 
-std::vector<FrElement> zerofiersAt(uint64_t nBits, const FrElement &x) {
+FrElement zhInvAt(uint64_t nBits, const FrElement &x) {
     Engine::Fr &fr = Engine::engine.fr;
     if (nBits > MAX_NBITS_EXT) {
-        throw std::invalid_argument("zerofiersAt: nBits = " + std::to_string(nBits) + " exceeds 28");
+        throw std::invalid_argument("zhInvAt: nBits = " + std::to_string(nBits) + " exceeds 28");
     }
     FrElement zh;
     fr.sub(zh, power(x, uint64_t(1) << nBits), fr.one());
     if (fr.isZero(zh)) {
-        throw std::invalid_argument("zerofiersAt: the point is in H, where Z_H vanishes");
+        throw std::invalid_argument("zhInvAt: the point is in H, where Z_H vanishes");
     }
     FrElement zi;
     fr.inv(zi, zh);
-    return {zi};
+    return zi;
 }
 
 ExpressionsDomain ExpressionsDomain::trace(uint64_t nBits) {
@@ -158,7 +158,7 @@ CosetPart cosetPartPoints(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, 
 ExpressionsDomain ExpressionsDomain::cosetPart(uint64_t nBits, uint64_t nBitsExt, uint64_t partBits, uint64_t part) {
     CosetPart points = cosetPartPoints(nBits, nBitsExt, partBits, part);
     ExpressionsDomain domain(nBits, partBits - nBits);
-    domain.zerofiers_.push_back(std::move(points.zhInv));
+    domain.zhInv_ = std::move(points.zhInv);
     return domain;
 }
 
@@ -179,9 +179,9 @@ Expressions::Expressions(const ExpressionsBin &_bin, const PilfflonkInfo &info)
                                       std::to_string(arg2) + ", and the AIR has " +
                                       std::to_string(openingPoints.size()));
                 }
-                if (type == types.zi() && arg1 - 1 >= N_BOUNDARIES) {
+                if (type == types.zi() && arg1 != 1) {
                     throw FormatError("<air>.bin: " + what + " reads Zi of boundary " + std::to_string(arg1 - 1) +
-                                      ", and the AIR has " + std::to_string(N_BOUNDARIES));
+                                      ", and pilfflonk has everyRow only");
                 }
             }
         }
@@ -196,31 +196,31 @@ Expressions::Expressions(const ExpressionsBin &_bin, const PilfflonkInfo &info)
 
 void Expressions::calculateExpression(uint64_t expId, const ExpressionsDomain &domain, const ProverValues &values,
                                       FrElement *dest) const {
-    calculate(checkedExpression(expId, domain.nZerofiers(), values, dest), bin.expressionsBinArgsExpressions, domain,
+    calculate(checkedExpression(expId, domain.hasZi(), values, dest), bin.expressionsBinArgsExpressions, domain,
               values, dest);
 }
 
 void Expressions::calculateConstraint(uint64_t index, const ExpressionsDomain &domain, const ProverValues &values,
                                       FrElement *dest) const {
-    calculate(checkedConstraint(index, domain.nZerofiers(), values, dest), bin.expressionsBinArgsConstraints, domain,
+    calculate(checkedConstraint(index, domain.hasZi(), values, dest), bin.expressionsBinArgsConstraints, domain,
               values, dest);
 }
 
-const ParserParams &Expressions::checkedExpression(uint64_t expId, uint64_t nZerofiers, const ProverValues &values,
+const ParserParams &Expressions::checkedExpression(uint64_t expId, bool hasZi, const ProverValues &values,
                                                    const void *dest) const {
     const ParserParams &params = bin.expression(expId);
-    checkOperands(params, bin.expressionsBinArgsExpressions, nZerofiers, values, dest, "calculateExpression");
+    checkOperands(params, bin.expressionsBinArgsExpressions, hasZi, values, dest, "calculateExpression");
     return params;
 }
 
-const ParserParams &Expressions::checkedConstraint(uint64_t index, uint64_t nZerofiers, const ProverValues &values,
+const ParserParams &Expressions::checkedConstraint(uint64_t index, bool hasZi, const ProverValues &values,
                                                    const void *dest) const {
     if (index >= bin.constraintsInfoDebug.size()) {
         throw invalid("calculateConstraint", "no constraint " + std::to_string(index) + " of " +
                                                  std::to_string(bin.constraintsInfoDebug.size()));
     }
     const ParserParams &params = bin.constraintsInfoDebug[index];
-    checkOperands(params, bin.expressionsBinArgsConstraints, nZerofiers, values, dest, "calculateConstraint");
+    checkOperands(params, bin.expressionsBinArgsConstraints, hasZi, values, dest, "calculateConstraint");
     return params;
 }
 
@@ -236,7 +236,7 @@ std::vector<uint64_t> Expressions::shifts(uint64_t size, uint64_t extendBits) co
 }
 
 // Every operand, against what the values and the domain have: nothing is computed before.
-void Expressions::checkOperands(const ParserParams &params, const ParserArgs &args, uint64_t nZerofiers,
+void Expressions::checkOperands(const ParserParams &params, const ParserArgs &args, bool hasZi,
                                 const ProverValues &values, const void *dest, const char *what) const {
     if (dest == nullptr) {
         throw invalid(what, "dest is null");
@@ -256,9 +256,8 @@ void Expressions::checkOperands(const ParserParams &params, const ParserArgs &ar
                                             ", which the values do not have");
                 }
             } else if (type == types.zi()) {
-                if (arg1 - 1 >= nZerofiers) {
-                    throw invalid(what, "the code reads Zi of boundary " + std::to_string(arg1 - 1) +
-                                            ", which the domain does not have (on H, none)");
+                if (!hasZi) {
+                    throw invalid(what, "the code reads Zi, which the domain does not have (on H, none)");
                 }
             } else if (type == types.evals()) {
                 throw invalid(what, "the code reads evaluations, which only the verifier mode has");
@@ -279,13 +278,6 @@ void Expressions::calculate(const ParserParams &params, const ParserArgs &args, 
     const uint64_t m = domain.size();
     const uint32_t *code = &args.args[params.argsOffset];
     const std::vector<uint64_t> openingShifts = shifts(m, domain.extendBits());
-
-    std::vector<const FrElement *> zerofiers(domain.nZerofiers());
-    std::vector<uint64_t> zerofierMasks(domain.nZerofiers());
-    for (uint64_t b = 0; b < zerofiers.size(); ++b) {
-        zerofiers[b] = domain.zerofier(b).data();
-        zerofierMasks[b] = domain.zerofierMask(b);
-    }
 
     const uint64_t blockRows = std::min(BLOCK_ROWS, m);
     const uint64_t nBlocks = m / blockRows;
@@ -318,8 +310,8 @@ void Expressions::calculate(const ParserParams &params, const ParserArgs &args, 
             if (type == types.zi()) {
                 // Zi at point i is zi[i & mask]: one value for every point, or a block of its own
                 // unless it repeats within the block.
-                const FrElement *zi = zerofiers[arg1 - 1];
-                const uint64_t mask = zerofierMasks[arg1 - 1];
+                const FrElement *zi = domain.zhInv().data();
+                const uint64_t mask = domain.zhInv().size() - 1;
                 if (mask == 0) {
                     return {zi, true};
                 }
@@ -384,7 +376,7 @@ FrElement Expressions::evaluateExpressionAt(uint64_t expId, const PointValues &v
         if (types.isColumn(type)) {
             throw invalid("evaluateExpressionAt", "the code reads a column: at a point, it reads evaluations");
         }
-        if (type == types.zi()) return at(values.zerofiers, "Zi of boundary");
+        if (type == types.zi()) return values.zhInv;
         if (type == types.tmp()) return tmp[arg1];
         if (type == types.publics()) return at(values.publics, "public");
         if (type == types.numbers()) return at(args.numbers, "number");
@@ -397,15 +389,8 @@ FrElement Expressions::evaluateExpressionAt(uint64_t expId, const PointValues &v
 
     for (uint64_t k = 0; k < params.nOps; ++k) {
         const uint32_t *op = &args.args[params.argsOffset + k * ARGS_PER_OP];
-        // Zi's arg1 is 1 + its boundary.
-        uint32_t sources[2][3] = {{op[2], op[3], op[4]}, {op[5], op[6], op[7]}};
-        for (auto &source : sources) {
-            if (source[0] == types.zi()) {
-                source[1] -= 1;
-            }
-        }
-        const FrElement x = value(sources[0]);
-        const FrElement y = value(sources[1]);
+        const FrElement x = value(op + 2);
+        const FrElement y = value(op + 5);
         FrElement &res = tmp[op[1]];
         switch (op[0]) {
         case OP_ADD:

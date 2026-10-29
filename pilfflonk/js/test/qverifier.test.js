@@ -167,7 +167,7 @@ test("Zi of everyRow is 1/Z_H(ξ), and any other domain is refused", () => {
 
 // The interpreter's fixture, written by setup/pilfflonk/tests/bytecode/interpreter.rs with the Rust
 // oracle's values: its Zi at ξ for everyRow, which the C++
-// zerofiersAt reproduces (pil2-stark/test/pilfflonk/pilfflonk_expressions_test.cpp).
+// zhInvAt reproduces (pil2-stark/test/pilfflonk/pilfflonk_expressions_test.cpp).
 const INTERPRETER_FIXTURE = new URL(
     "../../../setup/pilfflonk/tests/fixtures/bytecode/Sample.expected.json",
     import.meta.url,

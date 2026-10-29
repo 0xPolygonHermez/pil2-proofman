@@ -37,8 +37,8 @@ struct OperandTables {
     const void *const *columns;   // column (type, arg1) is columns[columnStart[type] + arg1]
     const uint32_t *columnStart;  // by type, 0 … ziType − 1
     const uint64_t *shifts;       // by opening point: the column is read shifts[arg2] points later
-    const void *const *zerofiers; // by boundary arg1 − 1, Zi at point i at zerofiers[b][i & zerofierMasks[b]]
-    const uint64_t *zerofierMasks;
+    const void *zhInv;            // Zi (everyRow's 1/Z_H) at point i is zhInv[i & zhMask]
+    uint64_t zhMask;
     const void *const *scalars;   // by type − scalarsType: publics, numbers, air values, proof values,
                                   // airgroup values and challenges, their arg1-th element
     uint64_t mask;                // the domain's size − 1: columns are read cyclically
@@ -55,8 +55,8 @@ PILFFLONK_HOST_DEVICE const void *operandAddress(const OperandTables &t, uint32_
         base = t.columns[t.columnStart[type] + arg1];
         index = (i + t.shifts[arg2]) & t.mask;
     } else if (type == t.ziType) {
-        base = t.zerofiers[arg1 - 1];
-        index = i & t.zerofierMasks[arg1 - 1];
+        base = t.zhInv;
+        index = i & t.zhMask;
     } else {
         base = t.scalars[type - t.scalarsType];
         index = arg1;

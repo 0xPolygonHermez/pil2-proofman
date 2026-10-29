@@ -356,7 +356,7 @@ FrElement qVerifierAt(const Fibonacci &fib, const std::vector<FrElement> &evalua
     const ExpressionsBin qVerifier = ExpressionsBin::load(fixture("Fibonacci.qverifier.bin"));
     const Expressions expressions(qVerifier, fib.air().info());
     PointValues point;
-    point.zerofiers = PilFflonk::zerofiersAt(fib.air().info().nBits, xi);
+    point.zhInv = PilFflonk::zhInvAt(fib.air().info().nBits, xi);
     // The evMap order: the Fibonacci's has its const entries first, as the proof's order.
     point.evals = evaluations;
     point.publics = fib.publics;

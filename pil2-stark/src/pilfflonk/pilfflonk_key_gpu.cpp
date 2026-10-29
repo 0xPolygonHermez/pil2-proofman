@@ -352,7 +352,7 @@ ArenaLayout arenaLayout(const AirKey &air) {
 QPartLayout qPartLayout(const AirKey &air, uint64_t partBits) {
     Carver carver;
     QPartLayout l;
-    l.zerofiers = carver.take(ExpressionsDomainGpu::cosetPartBytes(air.info().nBits, partBits));
+    l.zhInv = carver.take(ExpressionsDomainGpu::cosetPartBytes(air.info().nBits, partBits));
     l.columns = carver.take(air.qReads().size() * (uint64_t(1) << partBits) * sizeof(FrElement));
     l.bytes = carver.size();
     return l;

@@ -280,10 +280,8 @@ impl JsonFile for PilfflonkInfo {
         if self.opening_points.windows(2).any(|w| w[0] >= w[1]) {
             return invalid!("openingPoints {:?} must be increasing", self.opening_points);
         }
-        for (i, b) in self.boundaries.iter().enumerate() {
-            if self.boundaries[..i].contains(b) {
-                return invalid!("boundary {b:?} is there twice");
-            }
+        if self.boundaries.len() > 1 {
+            return invalid!("boundaries must be only everyRow, once");
         }
 
         for (i, e) in self.ev_map.iter().enumerate() {

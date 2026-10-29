@@ -19,7 +19,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-pub const PFEXPS_ABI: u32 = 1;
+pub const PFEXPS_ABI: u32 = 2;
 /// Threads per block of the generated row kernels.
 const BLK: u64 = 128;
 
@@ -135,7 +135,9 @@ pub fn build_ir(bin: &Bin, exp_id: u32, n_bits: u64, nums: &std::sync::Arc<Bn128
                 0 => Operand::Const { id: a1 as u64, stride: a2 as i64 },
                 s if s <= ns + 1 => Operand::Cm { stage: s as u64, pos: a1 as u64, dim: 1, stride: a2 as i64 },
                 t if t == zi && a1 == 1 => Operand::Zi,
-                t if t == zi && a1 > 1 => Operand::Zb { boundary: a1 as u64 - 1 },
+                t if t == zi => {
+                    bail!("expression {exp_id} reads Zi of boundary {}: pilfflonk has everyRow only", a1 - 1)
+                }
                 t if t == tmp => Operand::Tmp { id: *cur.get(&a1).context("read of an unwritten temporary")?, dim: 1 },
                 t if t == tmp + 2 => Operand::Pub { id: a1 as u64 },
                 t if t == tmp + 3 => {
@@ -204,9 +206,9 @@ const SC_CH: usize = 5;
 /// The operand reads of one kernel, resolved once in its prologue.
 #[derive(Default)]
 struct Prologue {
-    types: HashSet<u64>,     // column types whose columnStart is read
-    shifts: HashSet<i64>,    // opening indices
-    zerofiers: HashSet<u64>, // boundaries
+    types: HashSet<u64>,  // column types whose columnStart is read
+    shifts: HashSet<i64>, // opening indices
+    zi: bool,
     scalars: HashSet<usize>, // scalar tables
 }
 
@@ -221,12 +223,8 @@ impl Prologue {
                 self.types.insert(*stage);
                 self.shifts.insert(*stride);
             }
-            Operand::Zi => {
-                self.zerofiers.insert(0);
-            }
-            Operand::Zb { boundary } => {
-                self.zerofiers.insert(*boundary);
-            }
+            Operand::Zi => self.zi = true,
+            Operand::Zb { .. } => unreachable!("build_ir refuses a Zi but everyRow's"),
             Operand::Pub { .. } => {
                 self.scalars.insert(SC_PUB);
             }
@@ -259,10 +257,11 @@ impl Prologue {
             for k in sh {
                 l.push(format!("  const uint64_t sh{k} = t.shifts[{k}];"));
             }
-            for b in sorted(&self.zerofiers) {
-                l.push(format!(
-                    "  const Element* __restrict__ zi{b} = (const Element*)t.zerofiers[{b}]; const uint64_t zm{b} = t.zerofierMasks[{b}];"
-                ));
+            if self.zi {
+                l.push(
+                    "  const Element* __restrict__ zi = (const Element*)t.zhInv; const uint64_t zm = t.zhMask;"
+                        .to_string(),
+                );
             }
         }
         let mut sc: Vec<usize> = self.scalars.iter().copied().collect();
@@ -286,8 +285,8 @@ fn load(o: &Operand, ir: &Ir, nums: &Bn128Numbers) -> String {
     match o {
         Operand::Const { id, stride } => col(0, *id, *stride),
         Operand::Cm { stage, pos, stride, .. } => col(*stage, *pos, *stride),
-        Operand::Zi => "zi0[row & zm0]".to_string(),
-        Operand::Zb { boundary } => format!("zi{boundary}[row & zm{boundary}]"),
+        Operand::Zi => "zi[row & zm]".to_string(),
+        Operand::Zb { .. } => unreachable!("build_ir refuses a Zi but everyRow's"),
         Operand::Pub { id } => format!("sc{SC_PUB}[{id}]"),
         Operand::Av { pos, .. } => format!("sc{SC_AV}[{pos}]"),
         Operand::Agv { pos, .. } => format!("sc{SC_AGV}[{pos}]"),

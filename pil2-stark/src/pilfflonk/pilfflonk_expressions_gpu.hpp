@@ -45,18 +45,18 @@ public:
     uint64_t nBits() const { return nBits_; }
     uint64_t size() const { return uint64_t(1) << (nBits_ + extendBits_); }
     uint64_t extendBits() const { return extendBits_; }
-    uint64_t nZerofiers() const { return zerofiers_.size(); }
-    // Zi of boundary b at point i is zerofiers()[b][i & zerofierMasks()[b]], on the device.
-    const std::vector<const void *> &zerofiers() const { return zerofiers_; }
-    const std::vector<uint64_t> &zerofierMasks() const { return masks_; }
+    bool hasZi() const { return zhInv_ != nullptr; }
+    // Zi at point i is zhInv()[i & zhMask()], on the device.
+    const void *zhInv() const { return zhInv_; }
+    uint64_t zhMask() const { return zhMask_; }
 
 private:
     ExpressionsDomainGpu(uint64_t nBits, uint64_t extendBits) : nBits_(nBits), extendBits_(extendBits) {}
 
     uint64_t nBits_;
     uint64_t extendBits_;
-    std::vector<const void *> zerofiers_;
-    std::vector<uint64_t> masks_;
+    const void *zhInv_ = nullptr;
+    uint64_t zhMask_ = 0;
 };
 
 // The device's copy of the code of the expressions of <air>.bin (its section 1, ParserArgs): its
@@ -68,18 +68,15 @@ struct DeviceCode {
 
 // Where the operand tables of an evaluation (OperandTables) go in the bytes encodeOperands writes:
 // room for every column and scalar the code of a bytecode reads, in both its sections, and for
-// every opening point of its AIR and its N_BOUNDARIES Zi. Offsets in bytes.
+// every opening point of its AIR. Offsets in bytes.
 struct OperandLayout {
     std::vector<uint32_t> columnStart; // by column type, 0 … zi() − 1, then their entries in all
     std::vector<uint64_t> nScalars;    // by scalar type − publics(): 1 + the largest arg1 read; 0 for the numbers
     uint64_t nShifts = 0;
-    uint64_t nZerofiers = 0;
     uint64_t values = 0;  // the scalars' values, nScalars[k] of each type k one after another
     uint64_t scalars = 0; // OperandTables::scalars
     uint64_t columns = 0;
     uint64_t shifts = 0;
-    uint64_t zerofiers = 0;
-    uint64_t masks = 0;
     uint64_t columnStarts = 0;
     uint64_t bytes = 0;
 };
@@ -89,16 +86,15 @@ OperandLayout operandLayout(const ExpressionsBin &bin, uint64_t nOpenings);
 // The tables of an evaluation, as `layout` places them in layout.bytes bytes at `out`, to be read at
 // `base` (where they will be copied, or out itself): the columns of `values` (pointers, kept as they
 // are, null past what it has), its scalars (their values, which the tables point to, 0 past what it
-// has), the code's numbers at `numbers`, the shifts of the opening points (Expressions::shifts) and
-// the domain's Zi (ExpressionsDomainGpu::zerofiers and zerofierMasks). The code must have been
+// has), the code's numbers at `numbers`, the shifts of the opening points (Expressions::shifts).
+// The code must have been
 // checked against the values (Expressions::checkedExpression): it reads nothing they do not have.
 void encodeOperands(const OperandLayout &layout, const OperandTypes &types, const ProverValues &values,
-                    const void *numbers, const std::vector<uint64_t> &shifts,
-                    const std::vector<const void *> &zerofiers, const std::vector<uint64_t> &zerofierMasks,
-                    uint8_t *out, const void *base);
+                    const void *numbers, const std::vector<uint64_t> &shifts, uint8_t *out, const void *base);
 
-// Those tables at `base`, on a domain of `size` points.
-OperandTables operandTables(const OperandLayout &layout, const OperandTypes &types, const void *base, uint64_t size);
+// Those tables at `base`, on a domain of `size` points whose Zi is zhInv[i & zhMask] (null on H).
+OperandTables operandTables(const OperandLayout &layout, const OperandTypes &types, const void *base, uint64_t size,
+                            const void *zhInv, uint64_t zhMask);
 
 // <air>.exps.so, next to <air>.bin: kernels generated at setup for some expressions
 // (setup/exps-codegen, `gen-exps`), over the same operand tables as the interpreter's kernel and
