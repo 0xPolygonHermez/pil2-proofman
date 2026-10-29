@@ -1484,10 +1484,11 @@ pub fn recursion_trace_stride(exec: &[u64], n_cols: u64, gpu: bool) -> u64 {
     }
 }
 
-/// When `PIL2_DUMP_ZKIN` names this proof type (or `all`), writes `zkin` under the name `prove-air --proof`
-/// parses: a recursion input, or for `basic` the proof as returned. A diagnostic: errors are only logged.
+/// Writes `zkin` (for `basic`, the proof) where `prove-air --proof` finds it, when `PIL2_DUMP_ZKIN` names its type.
 pub(crate) fn dump_zkin_if_requested<F: PrimeField64>(setup: &Setup<F>, instance_id: usize, zkin: &[u64]) {
-    let Ok(want) = std::env::var("PIL2_DUMP_ZKIN") else {
+    // read once: this runs per proof in the verify loop
+    static WANT: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let Some(want) = WANT.get_or_init(|| std::env::var("PIL2_DUMP_ZKIN").ok()) else {
         return;
     };
     // The canonical spelling, so the dump round-trips through `ProofType::from_str`.
