@@ -87,6 +87,11 @@ pub(crate) fn max_stack(obj: &Path) -> i64 {
     }
 }
 
+/// The smallest Q chunk probed: an expression shorter than `CHUNK_MIN` ops is probed once, whole.
+pub(crate) fn q_chunk_floor(n_ops: usize) -> usize {
+    CHUNK_MIN.min(n_ops.max(1))
+}
+
 /// Whether a bisection bracket (clean `lo`, spilling `hi`) is still worth probing: stop when it
 /// is within ~1/8 of `lo`, the slot/grid payoff below that is noise.
 fn bracket_open(lo: usize, hi: usize) -> bool {
@@ -164,7 +169,7 @@ fn tune_inner(
 
     let mut chunk = n_ops.min(start);
     let mut last_spill: Option<usize> = None;
-    while chunk >= CHUNK_MIN {
+    while chunk >= q_chunk_floor(n_ops) {
         let ((st, objs), n_files) = compile_at(chunk)?;
         let Some(st) = st else { return Ok(None) };
         eprintln!("  [tune] {sym} chunk={chunk} ({n_files} TUs) -> STACK={st}");
@@ -467,6 +472,13 @@ mod tests {
         assert_eq!(sink.cur, 32);
         sink.step(true); // 32 spills -> below the floor: dropped
         assert!(sink.dropped());
+    }
+
+    /// A Q shorter than the floor used to be skipped unprobed ("still spills at CHUNK_MIN").
+    #[test]
+    fn a_short_q_is_probed_whole() {
+        assert_eq!(q_chunk_floor(19), 19);
+        assert_eq!(q_chunk_floor(5000), CHUNK_MIN);
     }
 
     /// The spill readout finds a candidate by its straight-line kernel's mangled name (singles,

@@ -482,7 +482,9 @@ fn run_pipeline(
                     (Err(e), _) | (_, Err(e)) => return Some(Err(e)),
                     (Ok(Some(why)), _) => Err(why),
                     (Ok(None), Ok(Some(ck))) => Ok(ck),
-                    (Ok(None), Ok(None)) => Err(format!("{} ops: still spills at CHUNK_MIN", c.n_ops)),
+                    (Ok(None), Ok(None)) => {
+                        Err(format!("{} ops: still spills at chunk {}", c.n_ops, autotune::q_chunk_floor(c.n_ops)))
+                    }
                 };
                 Some(Ok((c.sym.clone(), verdict)))
             })
