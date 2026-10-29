@@ -280,6 +280,9 @@ jobs:
       - name: C++ tests (CPU)
         run: make -C pil2-stark -j"$(nproc)" pilfflonk_test
 
+      - name: Domain zerofier tests (C++, against the native verifier's vectors)
+        run: make -C pil2-stark -j"$(nproc)" domain_zerofier_test && ./pil2-stark/build/domainZerofierTest
+
       - name: JS verifier tests
         working-directory: pilfflonk/js
         run: |
