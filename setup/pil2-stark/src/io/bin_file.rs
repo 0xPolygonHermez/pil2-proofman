@@ -3,7 +3,7 @@ use anyhow::Result;
 use crate::io::bin_file_writer::BinFileWriter;
 use crate::io::parser_args::{get_parser_args, ExpsInfo};
 use crate::types::goldilocks_u64;
-use crate::types::stark_info::{ExpCode, ExpressionsInfo, Hint, OpType, StarkInfo, VerifierInfo};
+use crate::types::stark_info::{ExpressionsInfo, Hint, OpType, StarkInfo, VerifierInfo};
 
 const CHELPERS_NSECTIONS: u32 = 3;
 /// 2: constraints carry a boundaryId instead of a firstRow/lastRow window (EXPRESSIONS_BIN_VERSION in C++).
@@ -36,21 +36,6 @@ struct PreparedVerifierBin {
     max_ops: u64,
 }
 
-/// The constraint's `boundaryId` names a starkinfo boundary with the constraint's very rows.
-fn check_constraint_boundary(stark_info: &StarkInfo, c: &ExpCode) -> Result<()> {
-    let boundary = stark_info.boundaries.get(c.boundary_id as usize);
-    if boundary != Some(&c.boundary) {
-        anyhow::bail!(
-            "constraint {}: boundary {} is {:?} in the starkinfo, but the constraint holds on {:?}",
-            c.line,
-            c.boundary_id,
-            boundary,
-            c.boundary
-        );
-    }
-    Ok(())
-}
-
 fn prepare_expressions_bin(
     stark_info: &StarkInfo,
     expressions_info: &ExpressionsInfo,
@@ -67,7 +52,12 @@ fn prepare_expressions_bin(
 
     // Process constraints
     for constraint_code in &expressions_info.constraints {
-        check_constraint_boundary(stark_info, constraint_code)?;
+        anyhow::ensure!(
+            (constraint_code.boundary_id as usize) < stark_info.boundaries.len(),
+            "constraint {}: boundaryId {} is not a starkinfo boundary",
+            constraint_code.line,
+            constraint_code.boundary_id
+        );
 
         let result =
             get_parser_args(stark_info, &constraint_code.code, &mut numbers_constraints, false, false, None, "")?;
@@ -467,42 +457,4 @@ pub fn write_verifier_expressions_bin_file(
 
     writer.close()?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::stark_info::Boundary;
-
-    fn domain(cycle_bits: u64, offsets: &[u64], complement: bool) -> Boundary {
-        Boundary { name: "domain".to_string(), cycle_bits: Some(cycle_bits), offsets: offsets.to_vec(), complement }
-    }
-
-    fn constraint(boundary: Boundary, boundary_id: u64) -> ExpCode {
-        ExpCode {
-            exp_id: 0,
-            stage: 1,
-            tmp_used: 0,
-            code: Vec::new(),
-            line: "c".to_string(),
-            boundary,
-            boundary_id,
-            im_pol: 0,
-        }
-    }
-
-    /// Two domains share the name "domain": a boundaryId pointing at the other one is refused.
-    #[test]
-    fn a_boundary_id_naming_another_domain_is_refused() {
-        let every_row = Boundary { name: "everyRow".to_string(), ..Default::default() };
-        let stark_info = StarkInfo {
-            boundaries: vec![every_row.clone(), domain(10, &[0], false), domain(10, &[0], true)],
-            ..Default::default()
-        };
-        check_constraint_boundary(&stark_info, &constraint(domain(10, &[0], true), 2)).unwrap();
-        check_constraint_boundary(&stark_info, &constraint(every_row, 0)).unwrap();
-        let err = check_constraint_boundary(&stark_info, &constraint(domain(10, &[0], true), 1)).unwrap_err();
-        assert!(err.to_string().contains("constraint c: boundary 1"), "{err}");
-        assert!(check_constraint_boundary(&stark_info, &constraint(domain(1, &[0], false), 3)).is_err());
-    }
 }

@@ -574,8 +574,7 @@ fn get_dim(r: &CodeRef, tmp_dim: &[usize], ext_dim: usize) -> usize {
     }
 }
 
-/// Code that copies the committed column of the intermediate polynomial `exp_id` into a tmp: the
-/// value of a constraint whose whole expression the im-pol search promoted (pil_code_gen emits nothing).
+/// Copies im pol `exp_id`'s column into a tmp: a constraint promoted whole has no other code.
 pub fn im_pol_copy_code(
     ctx: &mut CodeGenCtx,
     symbols: &[SymbolInfo],

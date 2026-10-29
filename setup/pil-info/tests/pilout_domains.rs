@@ -1,7 +1,4 @@
-//! The pilout v2 ingest: each constraint kind maps to its boundary and, for the domain kinds, to
-//! the `Domain` of the air's `domains` it points at. Fixtures come from pil2-compiler
-//! `test/features/domain{,_multi}.pil`; the others from the `.pil` beside them. Regenerate with the v2
-//! compiler: `node src/pil.js <pil> -o tests/fixtures/<name>.pilout` (checkout at `.superpowers/pil2-compiler-domains`).
+//! pilout v2 constraint kinds to boundaries; fixtures: `node src/pil.js <pil> -o tests/fixtures/<name>.pilout`.
 
 use pil2_pilout::pilout::{self as pb, constraint};
 use pil_info::pil::constraint_poly::Boundary;

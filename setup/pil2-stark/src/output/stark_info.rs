@@ -15,8 +15,8 @@ use crate::types::security::pcs::{Batching, LowDegreeTest, Pcs};
 use crate::types::security::regimes::DecodingRegime;
 use crate::types::stark_struct::{FriStruct, StarkStruct, StirStruct};
 use crate::types::output::{
-    BoundaryOutput, ChallengeMapEntryOutput, EvMapEntry, NameStageEntry, PolMapEntry, PublicMapEntry, SecurityInfo,
-    StarkInfoOutput, StarkStructOutput,
+    ChallengeMapEntryOutput, EvMapEntry, NameStageEntry, PolMapEntry, PublicMapEntry, SecurityInfo, StarkInfoOutput,
+    StarkStructOutput,
 };
 
 /// Build the StarkInfoOutput for JSON serialization from internal types.
@@ -74,7 +74,7 @@ pub fn build_starkinfo_output(
         low_degree_test,
     };
 
-    let boundaries: Vec<BoundaryOutput> = boundaries.iter().map(boundary_output).collect();
+    let boundaries = boundaries.to_vec();
 
     // Build evMap from verifier code context
     let ev_map: Vec<EvMapEntry> = pil_code
@@ -369,34 +369,10 @@ pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> Low
     }
 }
 
-/// A boundary as the starkinfo lists it.
-fn boundary_output(b: &Boundary) -> BoundaryOutput {
-    let mut out = BoundaryOutput { name: b.name().to_string(), cycle_bits: None, offsets: None, complement: None };
-    match b {
-        Boundary::Domain(d) => {
-            out.cycle_bits = Some(d.cycle_bits);
-            out.offsets = Some(d.offsets.clone());
-            out.complement = Some(d.complement);
-        }
-        Boundary::EveryRow => {}
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::stark_struct::{generate_stark_struct, LowDegreeTest as Ldt, LowDegreeTestKind, StarkSettings};
-
-    #[test]
-    fn boundaries_serialize_as_the_starkinfo_lists_them() {
-        let d = pil_info::pil::domain::Domain { cycle_bits: 4, offsets: vec![0, 15], complement: true };
-        let json = serde_json::to_string(
-            &[Boundary::EveryRow, Boundary::Domain(d)].iter().map(boundary_output).collect::<Vec<_>>(),
-        )
-        .unwrap();
-        assert_eq!(json, r#"[{"name":"everyRow"},{"name":"domain","cycleBits":4,"offsets":[0,15],"complement":true}]"#);
-    }
 
     fn stir(n_bits: usize, blowup: usize, fold: usize, grinding: &[usize]) -> StarkStruct {
         let settings = StarkSettings {

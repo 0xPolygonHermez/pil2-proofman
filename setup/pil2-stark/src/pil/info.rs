@@ -272,11 +272,7 @@ pub fn pil_info(
 
 /// The GPU zi region (`StarkInfo::ziSize`): one period of each boundary's zerofier.
 fn zi_size(boundaries: &[Boundary], n_bits: u32, n_bits_ext: u32) -> u64 {
-    let period_bits = |b: &Boundary| match b {
-        Boundary::EveryRow => n_bits_ext - n_bits,
-        Boundary::Domain(d) => d.period_bits(n_bits, n_bits_ext),
-    };
-    boundaries.iter().map(|b| 1u64 << period_bits(b)).sum()
+    boundaries.iter().map(|b| 1u64 << b.period_bits(n_bits, n_bits_ext)).sum()
 }
 
 fn get_num_nodes_mt(height: u64, merkle_tree_arity: usize) -> u64 {

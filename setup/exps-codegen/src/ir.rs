@@ -138,8 +138,7 @@ pub struct Ir {
     pub zi: ZiLayout,
 }
 
-/// The zi region as the prover lays it out (`StarkInfo::ziOffsets`/`ziMasks`, `ziLayout` in
-/// stark_info.hpp): boundary b's value at extended row r is `zi[tables[b].0 + (r & tables[b].1)]`.
+/// The prover's zi region (`ziLayout`, stark_info.hpp): boundary b at row r is `zi[tables[b].0 + (r & tables[b].1)]`.
 #[derive(Debug, Clone, Default)]
 pub struct ZiLayout {
     /// `(offset, mask)` per boundary.
@@ -153,11 +152,14 @@ impl ZiLayout {
         let mut tables = Vec::with_capacity(boundaries.len());
         let mut off = 0u64;
         for (i, b) in boundaries.iter().enumerate() {
-            let every_row = b.name == "everyRow";
-            if !every_row && (b.name != "domain" || b.cycle_bits > n_bits) {
-                anyhow::bail!("boundary {i}: unsupported boundary {} (cycleBits {})", b.name, b.cycle_bits);
-            }
-            let p = 1u64 << (n_bits_ext - n_bits + if every_row { 0 } else { b.cycle_bits });
+            let cycle_bits = match b {
+                Boundary::EveryRow => 0,
+                Boundary::Domain { cycle_bits, .. } if *cycle_bits <= n_bits => *cycle_bits,
+                Boundary::Domain { cycle_bits, .. } => {
+                    anyhow::bail!("boundary {i}: cycleBits {cycle_bits} > nBits {n_bits}")
+                }
+            };
+            let p = 1u64 << (n_bits_ext - n_bits + cycle_bits);
             tables.push((off, p - 1));
             off += p;
         }
@@ -177,13 +179,15 @@ pub fn boundary_layout_hash(boundaries: &[Boundary], n_bits: u64, n_bits_ext: u6
     // the tables' offsets and masks depend on the blowup too
     word(n_bits_ext - n_bits);
     for b in boundaries {
-        let domain = b.name != "everyRow";
-        word(domain as u64);
-        word(if domain { b.cycle_bits } else { 0 });
-        word((domain && b.complement) as u64);
-        word(if domain { b.offsets.len() as u64 } else { 0 });
-        if domain {
-            b.offsets.iter().for_each(|&o| word(o));
+        match b {
+            Boundary::EveryRow => (0..4).for_each(|_| word(0)),
+            Boundary::Domain { cycle_bits, offsets, complement } => {
+                word(1);
+                word(*cycle_bits);
+                word(*complement as u64);
+                word(offsets.len() as u64);
+                offsets.iter().for_each(|&o| word(o));
+            }
         }
     }
     h

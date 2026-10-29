@@ -707,9 +707,7 @@ pub fn format_global_constraints(constraints: &[pb::GlobalConstraint]) -> Vec<Gl
         .collect()
 }
 
-/// Refuses a constraint whose expression (of `exprs`, in constraint order) is not one of the
-/// `n_expressions` of its air, or of the pilout for the global constraints; `whose` says which in
-/// the error.
+/// Refuses a constraint expression outside the `n_expressions` of its air (or pilout); `whose` names it.
 pub fn check_constraint_expressions(
     exprs: impl IntoIterator<Item = usize>,
     n_expressions: usize,

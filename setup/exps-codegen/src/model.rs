@@ -60,18 +60,14 @@ pub struct StarkInfo {
     pub boundaries: Vec<Boundary>,
 }
 
-/// A starkinfo boundary: `everyRow` (boundary 0), or the rows `o + k*2^cycleBits` for `o` in `offsets`
-/// (all other rows if `complement`).
+/// A starkinfo boundary: everyRow (boundary 0), or rows `o + k*2^cycleBits`, `o` in `offsets` (or the rest).
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Boundary {
-    pub name: String,
-    #[serde(default)]
-    pub cycle_bits: u64,
-    #[serde(default)]
-    pub offsets: Vec<u64>,
-    #[serde(default)]
-    pub complement: bool,
+#[serde(tag = "name")]
+pub enum Boundary {
+    #[serde(rename = "everyRow")]
+    EveryRow,
+    #[serde(rename = "domain", rename_all = "camelCase")]
+    Domain { cycle_bits: u64, offsets: Vec<u64>, complement: bool },
 }
 
 /// A custom (preprocessed) commit declaration, e.g. zisk's `rom`.

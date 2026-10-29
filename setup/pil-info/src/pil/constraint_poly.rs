@@ -6,7 +6,7 @@ use crate::expr::expression::{mul_deg, ExprChild, Expression};
 use crate::expr::helpers::{add_info_expression_inline, add_info_expressions, get_exp_dim};
 use crate::cfg::Opening;
 pub use crate::pil::domain::Boundary;
-use crate::pil::domain::{check_vanishing_factors, normalize, Domain};
+use crate::pil::domain::{normalize, Domain, MAX_DOMAIN_FACTORS};
 use crate::types::pilout_info::{ConstraintInfo, SymbolInfo};
 
 /// Result of constraint polynomial generation, attached to the setup result.
@@ -20,9 +20,7 @@ pub struct ConstraintPolyResult {
     pub initial_q_degree: i64,
 }
 
-/// Rewrites each domain constraint's boundary to its normalized domain, or to everyRow when the
-/// domain is every row; `name_of(i)` names the domain of constraint `i` in errors. The STARK
-/// (`Opening::Deep`) also caps its vanishing factors.
+/// Normalizes each constraint's domain (`name_of(i)` names it in errors); the STARK caps its vanishing factors.
 pub fn normalize_constraint_domains(
     constraints: &mut [ConstraintInfo],
     n_bits: u32,
@@ -38,8 +36,14 @@ pub fn normalize_constraint_domains(
             None => {
                 let name = name_of(i);
                 let b = normalize(declared, n_bits, &name)?;
-                if let (Boundary::Domain(d), Opening::Deep) = (&b, opening) {
-                    check_vanishing_factors(d, &name)?;
+                match (&b, opening) {
+                    (Boundary::Domain(d), Opening::Deep) if d.offsets.len() > MAX_DOMAIN_FACTORS => {
+                        return Err(PilInfoError::InvalidDomain(format!(
+                            "{name}: the domain needs {} vanishing factors, above the limit of {MAX_DOMAIN_FACTORS}; use a fixed selector column",
+                            d.offsets.len()
+                        )));
+                    }
+                    _ => {}
                 }
                 normalized.insert(declared.clone(), b.clone());
                 b
@@ -512,5 +516,19 @@ mod tests {
         assert_eq!(boundaries, vec![Boundary::EveryRow, Boundary::Domain(first)]);
         // Degree should be 2 (cm * Zi): one row + degree 1 never exceeds N
         assert_eq!(result.initial_q_degree, 2);
+    }
+
+    #[test]
+    fn a_stark_domain_with_too_many_factors_is_refused() {
+        let offsets: Vec<u32> = (0..33).map(|i| i * 7).collect();
+        let mut constraints = vec![ConstraintInfo {
+            boundary: Boundary::Domain(Domain { cycle_bits: 8, offsets, complement: false }),
+            e: 0,
+            line: None,
+            stage: None,
+            im_pol: false,
+        }];
+        let e = normalize_constraint_domains(&mut constraints, 10, Opening::Deep, |_| "T".into()).unwrap_err();
+        assert!(e.to_string().contains("fixed selector column"), "{e}");
     }
 }

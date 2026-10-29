@@ -1,10 +1,11 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::types::stark_struct::{LowDegreeTest, StarkStruct};
 use crate::types::{goldilocks_u64, GOLDILOCKS_MODULUS};
 
+pub use pil_info::pil::domain::Boundary;
 pub use pil_info::types::code::{CodeOperation, CodeType, OpType};
 
 /// Polynomial map entry, shared by cmPolsMap, constPolsMap, challengesMap, etc.
@@ -35,16 +36,6 @@ pub struct EvMap {
 #[derive(Debug, Clone)]
 pub struct CustomCommit {
     pub name: String,
-}
-
-/// Boundary descriptor.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Boundary {
-    pub name: String,
-    /// A `"domain"` boundary's rows: `offsets` of each cycle of `2^cycle_bits`, or the others if `complement`.
-    pub cycle_bits: Option<u64>,
-    pub offsets: Vec<u64>,
-    pub complement: bool,
 }
 
 /// Mirrors the C++ StarkInfo loaded from starkinfo.json.
@@ -87,8 +78,6 @@ pub struct ExpCode {
     pub tmp_used: u64,
     pub code: Vec<CodeOperation>,
     pub line: String,
-    /// A constraint's rows, as the starkinfo's `boundaries` describe them; empty for an expression.
-    pub boundary: Boundary,
     /// A constraint's index in the starkinfo's `boundaries`.
     pub boundary_id: u64,
     pub im_pol: u64,
@@ -268,7 +257,10 @@ impl StarkInfo {
             .map(|arr| arr.iter().map(|v| v.as_i64().unwrap_or(0)).collect())
             .unwrap_or_default();
 
-        let boundaries = parse_boundaries(j)?;
+        let boundaries = match j.get("boundaries") {
+            Some(b) => serde_json::from_value(b.clone()).context("starkinfo boundaries")?,
+            None => Vec::new(),
+        };
 
         let mut map_sections_n: HashMap<String, u64> = HashMap::new();
         if let Some(msn) = j.get("mapSectionsN").and_then(|v| v.as_object()) {
@@ -309,33 +301,6 @@ impl StarkInfo {
     }
 }
 
-/// The starkinfo's `boundaries`.
-fn parse_boundaries(j: &Value) -> Result<Vec<Boundary>> {
-    let Some(arr) = j.get("boundaries").and_then(|a| a.as_array()) else { return Ok(Vec::new()) };
-    arr.iter()
-        .enumerate()
-        .map(|(i, b)| parse_boundary(get_str(b, "name"), b).with_context(|| format!("starkinfo boundary {i}")))
-        .collect()
-}
-
-/// A boundary named `name` whose domain fields (`cycleBits`, `offsets`, `complement`) are in `v`.
-fn parse_boundary(name: &str, v: &Value) -> Result<Boundary> {
-    let cycle_bits = v.get("cycleBits").and_then(|x| x.as_u64());
-    if name == "domain" && cycle_bits.is_none() {
-        bail!("a domain boundary without cycleBits");
-    }
-    Ok(Boundary {
-        name: name.to_string(),
-        cycle_bits,
-        offsets: v
-            .get("offsets")
-            .and_then(|a| a.as_array())
-            .map(|a| a.iter().filter_map(|x| x.as_u64()).collect())
-            .unwrap_or_default(),
-        complement: v.get("complement").and_then(|x| x.as_bool()).unwrap_or(false),
-    })
-}
-
 fn parse_exp_code(v: &Value) -> Result<ExpCode> {
     let code: Vec<CodeOperation> = match v.get("code").and_then(|c| c.as_array()) {
         Some(arr) => arr.iter().map(parse_code_operation).collect::<Result<_>>()?,
@@ -348,22 +313,18 @@ fn parse_exp_code(v: &Value) -> Result<ExpCode> {
         tmp_used: get_u64(v, "tmpUsed"),
         code,
         line: get_str(v, "line").to_string(),
-        boundary: Boundary::default(),
         boundary_id: 0,
         im_pol: get_u64(v, "imPol"),
     })
 }
 
-/// An air constraint: its boundary and `boundaryId` are required.
+/// An air constraint: its `boundaryId` is required.
 fn parse_constraint_code(v: &Value) -> Result<ExpCode> {
     let mut c = parse_exp_code(v)?;
-    let line = get_str(v, "line");
     c.boundary_id = v
         .get("boundaryId")
         .and_then(|x| x.as_u64())
-        .with_context(|| format!("constraint {line}: no boundaryId; regenerate the setup"))?;
-    let name = v.get("boundary").and_then(|x| x.as_str()).with_context(|| format!("constraint {line}: no boundary"))?;
-    c.boundary = parse_boundary(name, v).with_context(|| format!("constraint {line}"))?;
+        .with_context(|| format!("constraint {}: no boundaryId; regenerate the setup", get_str(v, "line")))?;
     Ok(c)
 }
 
@@ -481,7 +442,6 @@ fn expression_entry_to_exp_code(e: &crate::pil::gen_code::ExpressionCodeEntry) -
         tmp_used: e.tmp_used as u64,
         code: code_to_operations(&e.code).with_context(|| format!("the code of expression {}", e.exp_id))?,
         line: e.line.clone(),
-        boundary: Boundary::default(),
         boundary_id: 0,
         im_pol: 0,
     })
@@ -495,17 +455,6 @@ fn constraint_entry_to_exp_code(c: &crate::pil::gen_code::ConstraintCodeEntry) -
         tmp_used: c.tmp_used as u64,
         code: code_to_operations(&c.code).with_context(|| format!("the code of constraint {line}"))?,
         line,
-        boundary: match &c.boundary {
-            pil_info::pil::domain::Boundary::EveryRow => {
-                Boundary { name: "everyRow".to_string(), ..Default::default() }
-            }
-            pil_info::pil::domain::Boundary::Domain(d) => Boundary {
-                name: "domain".to_string(),
-                cycle_bits: Some(d.cycle_bits as u64),
-                offsets: d.offsets.iter().map(|&o| o as u64).collect(),
-                complement: d.complement,
-            },
-        },
         boundary_id: c.boundary_id as u64,
         im_pol: c.im_pol as u64,
     })
@@ -709,21 +658,6 @@ mod tests {
         assert!(format!("{err:#}").ends_with(&not_goldilocks("18446744073709551621")), "{err:#}");
     }
 
-    /// A `"domain"` boundary without its cycle is refused, not read as no domain.
-    #[test]
-    fn a_domain_boundary_without_cycle_bits_is_refused() {
-        let ok = serde_json::json!({"boundaries": [
-            {"name": "everyRow"},
-            {"name": "domain", "cycleBits": 4, "offsets": [0, 15], "complement": true},
-        ]});
-        let bs = parse_boundaries(&ok).unwrap();
-        assert_eq!((bs[1].cycle_bits, &bs[1].offsets, bs[1].complement), (Some(4), &vec![0, 15], true));
-
-        let missing = serde_json::json!({"boundaries": [{"name": "domain", "offsets": [0]}]});
-        let err = parse_boundaries(&missing).unwrap_err();
-        assert_eq!(format!("{err:#}"), "starkinfo boundary 0: a domain boundary without cycleBits");
-    }
-
     /// A constraint read back from its JSON must say which boundary it holds on: no silent everyRow.
     #[test]
     fn a_constraint_without_boundary_id_is_refused() {
@@ -735,28 +669,27 @@ mod tests {
         let err = ExpressionsInfo::from_json(&constraint(serde_json::json!({}))).unwrap_err();
         assert!(format!("{err:#}").contains("constraint c: no boundaryId"), "{err:#}");
         let ei = ExpressionsInfo::from_json(&constraint(serde_json::json!({"boundaryId": 0}))).unwrap();
-        assert_eq!(ei.constraints[0].boundary.name, "everyRow");
+        assert_eq!(ei.constraints[0].boundary_id, 0);
     }
 
-    /// A domain constraint's JSON carries its rows, and reads back to the starkinfo's boundary.
+    /// A domain constraint's JSON carries only its boundary's name and `boundaryId`.
     #[test]
     fn a_domain_constraint_round_trips_through_its_json() {
         let d = pil_info::pil::domain::Domain { cycle_bits: 4, offsets: vec![0, 15], complement: true };
         let entry = gen_code::ConstraintCodeEntry {
             tmp_used: 0,
             code: Vec::new(),
-            boundary: pil_info::pil::domain::Boundary::Domain(d),
+            boundary: Boundary::Domain(d),
             boundary_id: 2,
             line: Some("c".to_string()),
             im_pol: 0,
             stage: 1,
         };
         let json = serde_json::to_value(&entry).unwrap();
-        let from_json = parse_constraint_code(&json).unwrap();
-        let in_memory = constraint_entry_to_exp_code(&entry).unwrap();
-        let want = Boundary { name: "domain".to_string(), cycle_bits: Some(4), offsets: vec![0, 15], complement: true };
-        assert_eq!((&from_json.boundary, from_json.boundary_id), (&want, 2));
-        assert_eq!((&in_memory.boundary, in_memory.boundary_id), (&want, 2));
+        assert_eq!(json["boundary"], "domain");
+        assert!(json.get("cycleBits").is_none());
+        assert_eq!(parse_constraint_code(&json).unwrap().boundary_id, 2);
+        assert_eq!(constraint_entry_to_exp_code(&entry).unwrap().boundary_id, 2);
     }
 
     /// The same refusal when the code is read back from its JSON (the recursive setups).

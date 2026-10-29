@@ -31,7 +31,7 @@ pub struct StarkInfoOutput {
     pub custom_commits: Vec<serde_json::Value>,
     pub custom_commits_map: Vec<serde_json::Value>,
     pub stark_struct: StarkStructOutput,
-    pub boundaries: Vec<BoundaryOutput>,
+    pub boundaries: Vec<pil_info::pil::domain::Boundary>,
     pub opening_points: Vec<i64>,
     pub c_exp_id: usize,
     pub q_dim: usize,
@@ -63,18 +63,6 @@ pub struct StarkStructOutput {
     pub verification_hash_type: String,
     #[serde(flatten)]
     pub low_degree_test: LowDegreeTest,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BoundaryOutput {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cycle_bits: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub offsets: Option<Vec<u32>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub complement: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -967,7 +967,7 @@ mod domain_tests {
         assert_eq!(zb.count(), 1, "the domain factor stays in the body");
     }
 
-    /// The same vectors as the C++ BoundaryLayoutHashKnownAnswer (test_interpreter_gpu.cu).
+    /// The same vectors as the C++ BoundaryLayoutHashKnownAnswer (test_domain_zerofier.cpp).
     #[test]
     fn boundary_layout_hash_known_answer() {
         use crate::ir::boundary_layout_hash;

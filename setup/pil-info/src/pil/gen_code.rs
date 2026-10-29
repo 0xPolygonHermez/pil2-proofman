@@ -71,41 +71,23 @@ pub struct ExpressionCodeEntry {
     pub line: String,
 }
 
-/// A constraint code block with boundary and debug metadata.
-/// Serialized in field declaration order, with a domain's `cycleBits`, `offsets` and `complement`
-/// right after its `boundary` name.
-#[derive(Debug, Clone)]
+/// A constraint code block; its JSON names the boundary, and `boundaryId` indexes the starkinfo's `boundaries`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConstraintCodeEntry {
     pub tmp_used: usize,
     pub code: Vec<crate::types::output::CodeEntry>,
+    #[serde(serialize_with = "boundary_name")]
     pub boundary: Boundary,
-    /// Index of `boundary` in the starkinfo's `boundaries`.
     pub boundary_id: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<String>,
     pub im_pol: usize,
     pub stage: usize,
 }
 
-impl Serialize for ConstraintCodeEntry {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let mut m = s.serialize_map(None)?;
-        m.serialize_entry("tmpUsed", &self.tmp_used)?;
-        m.serialize_entry("code", &self.code)?;
-        m.serialize_entry("boundary", self.boundary.name())?;
-        if let Boundary::Domain(d) = &self.boundary {
-            m.serialize_entry("cycleBits", &d.cycle_bits)?;
-            m.serialize_entry("offsets", &d.offsets)?;
-            m.serialize_entry("complement", &d.complement)?;
-        }
-        m.serialize_entry("boundaryId", &self.boundary_id)?;
-        if let Some(line) = &self.line {
-            m.serialize_entry("line", line)?;
-        }
-        m.serialize_entry("imPol", &self.im_pol)?;
-        m.serialize_entry("stage", &self.stage)?;
-        m.end()
-    }
+fn boundary_name<S: serde::Serializer>(b: &Boundary, s: S) -> std::result::Result<S::Ok, S::Error> {
+    s.serialize_str(b.name())
 }
 
 /// A processed hint field value (leaf node).

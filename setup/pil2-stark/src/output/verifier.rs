@@ -294,27 +294,29 @@ fn prepare_verifier_rust(
     Ok(lines.join("\n"))
 }
 
-/// The boundaries as the native verifier validates them, so a legacy or malformed one fails here.
+/// `b` as the native verifier's `Boundary`.
+fn native_boundary(b: &Boundary) -> proofman_common::Boundary {
+    let (cycle_bits, offsets, complement) = match b {
+        Boundary::EveryRow => (0, Vec::new(), false),
+        Boundary::Domain(d) => (d.cycle_bits as u64, d.offsets.iter().map(|&o| o as u64).collect(), d.complement),
+    };
+    proofman_common::Boundary { name: b.name().to_string(), cycle_bits, offsets, complement }
+}
+
+/// The boundaries as the native verifier validates them, so a malformed one fails here.
 fn check_boundaries(boundaries: &[Boundary], n_bits: usize) -> Result<()> {
-    let native: Vec<proofman_common::Boundary> = boundaries
-        .iter()
-        .map(|b| proofman_common::Boundary {
-            name: b.name.clone(),
-            cycle_bits: b.cycle_bits.unwrap_or(0),
-            offsets: b.offsets.clone(),
-            complement: b.complement,
-        })
-        .collect();
+    let native: Vec<proofman_common::Boundary> = boundaries.iter().map(native_boundary).collect();
     proofman_common::validate_boundaries(&native, u32::try_from(n_bits)?).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// `b` as a `proofman_verifier::Boundary` literal.
 fn boundary_literal(b: &Boundary) -> String {
+    let b = native_boundary(b);
     let offsets: Vec<String> = b.offsets.iter().map(|o| o.to_string()).collect();
     format!(
         "Boundary {{ name: \"{}\".to_string(), cycle_bits: {}, offsets: vec![{}], complement: {} }}",
         b.name,
-        b.cycle_bits.unwrap_or(0),
+        b.cycle_bits,
         offsets.join(", "),
         b.complement
     )
@@ -324,34 +326,30 @@ fn boundary_literal(b: &Boundary) -> String {
 mod tests {
     use super::{boundary_literal, check_boundaries};
     use crate::types::stark_info::Boundary;
+    use pil_info::pil::domain::Domain;
+
+    fn domain(cycle_bits: u32, offsets: &[u32], complement: bool) -> Boundary {
+        Boundary::Domain(Domain { cycle_bits, offsets: offsets.to_vec(), complement })
+    }
 
     #[test]
     fn boundary_literals_carry_the_domain() {
-        let every_row = Boundary { name: "everyRow".into(), ..Default::default() };
         assert_eq!(
-            boundary_literal(&every_row),
+            boundary_literal(&Boundary::EveryRow),
             "Boundary { name: \"everyRow\".to_string(), cycle_bits: 0, offsets: vec![], complement: false }"
         );
-        let not_limits =
-            Boundary { name: "domain".into(), cycle_bits: Some(4), offsets: vec![0, 15], complement: true };
         assert_eq!(
-            boundary_literal(&not_limits),
+            boundary_literal(&domain(4, &[0, 15], true)),
             "Boundary { name: \"domain\".to_string(), cycle_bits: 4, offsets: vec![0, 15], complement: true }"
         );
     }
 
     #[test]
-    fn legacy_or_malformed_boundaries_are_refused() {
-        let every_row = Boundary { name: "everyRow".into(), ..Default::default() };
-        let first_row = Boundary { name: "firstRow".into(), ..Default::default() };
-        let err = check_boundaries(&[every_row.clone(), first_row], 10).unwrap_err().to_string();
-        assert!(err.contains("boundary 1: unknown boundary firstRow"), "{err}");
-        let repeated = Boundary { name: "domain".into(), cycle_bits: Some(4), offsets: vec![3, 3], complement: false };
-        let err = check_boundaries(&[every_row.clone(), repeated], 10).unwrap_err().to_string();
+    fn malformed_boundaries_are_refused() {
+        let err = check_boundaries(&[Boundary::EveryRow, domain(4, &[3, 3], false)], 10).unwrap_err().to_string();
         assert!(err.contains("strictly increasing"), "{err}");
         let err = check_boundaries(&[], 10).unwrap_err().to_string();
         assert!(err.contains("boundary 0 must be everyRow"), "{err}");
-        let limits = Boundary { name: "domain".into(), cycle_bits: Some(4), offsets: vec![0, 15], complement: false };
-        check_boundaries(&[every_row, limits], 10).unwrap();
+        check_boundaries(&[Boundary::EveryRow, domain(4, &[0, 15], false)], 10).unwrap();
     }
 }
