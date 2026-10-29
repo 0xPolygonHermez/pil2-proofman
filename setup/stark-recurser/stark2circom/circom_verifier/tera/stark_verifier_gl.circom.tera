@@ -169,9 +169,7 @@ template {{ verify_fri_name }}(nBitsExt, prevStepBits, currStepBits, nextStepBit
 {% endif %}{% if n_proof_values > 0 %}    signal input proofvalues[{{ n_proof_values }}][3];
 {% endif %}
     signal input Zh[3];
-{% if has_first_row %}    signal input Zfirst[3];
-{% endif %}{% if has_last_row %}    signal input Zlast[3];
-{% endif %}{% for frame in every_frames %}    signal input Zframe{{ frame.idx }}[{{ frame.size }}][3];
+{% for d in domains %}    signal input Zd{{ d.k }}[3];
 {% endfor %}
 {% for inp in chunk.inputs %}{% if inp.dim == 1 %}    signal input tmp_{{ inp.id }};
 {% else %}    signal input tmp_{{ inp.id }}[3];
@@ -202,28 +200,7 @@ template parallel {{ verify_evaluations_name }}() {
 {% endif %}{% if n_proof_values > 0 %}    signal input proofvalues[{{ n_proof_values }}][3];
 {% endif %}    signal input {binary} enable;
 
-    // zMul stores all the powers of z (which is stored in challengeOut) up to nBits, i.e, [z, z^2, ..., z^nBits]
-    signal zMul[{{ n_bits }}][3];
-    for (var i = 0; i < {{ n_bits }}; i++) {
-        if(i==0){
-            zMul[i] <== CMul()(challengeOut, challengeOut);
-        } else {
-            zMul[i] <== CMul()(zMul[i-1], zMul[i-1]);
-        }
-    }
-
-    // Store the vanishing polynomial Zh(x) = x^nBits - 1 evaluated at z
-    signal Z[3] <== [zMul[{{ n_bits - 1 }}][0] - 1, zMul[{{ n_bits - 1 }}][1], zMul[{{ n_bits - 1 }}][2]];
-    signal Zh[3] <== CInv()(Z);
-
-{% if has_first_row %}    signal Zfirst[3] <== CInv()([challengeOut[0] - 1, challengeOut[1], challengeOut[2]]);
-{% endif %}
-{% if has_last_row %}    signal Zlast[3] <== CInv()([challengeOut[0] - {{ zlast_root }}, challengeOut[1], challengeOut[2]]);
-{% endif %}
-{% for frame in every_frames %}    signal Zframe{{ frame.idx }}[{{ frame.size }}][3];
-{% for op in frame.ops %}{% if op.is_first %}    Zframe{{ frame.idx }}[{{ op.c }}] <== CMul()(Zh, [challengeOut[0] - {{ op.root }}, challengeOut[1], challengeOut[2]]);
-{% else %}    Zframe{{ frame.idx }}[{{ op.c }}] <== CMul()(Zframe{{ frame.idx }}, [challengeOut[0] - {{ op.root }}, challengeOut[1], challengeOut[2]]);
-{% endif %}{% endfor %}{% endfor %}
+{% include "domain_zi" %}
     // Using the evaluations committed and the challenges,
     // calculate the sum of q_i, i.e, q_0(X) + challenge * q_1(X) + challenge^2 * q_2(X) +  ... + challenge^(l-1) * q_l-1(X) evaluated at z 
 {% for chunk in eval_p_chunks %}{% for out in chunk.outputs %}{% if out.dim == 1 %}    signal tmp_{{ out.id }};

@@ -1,0 +1,30 @@
+    var q = 0xFFFFFFFFFFFFFFFF;
+
+    // zMul stores all the powers of z (which is stored in challengeOut) up to nBits, i.e, [z, z^2, ..., z^nBits]
+    signal {maxNum} zMul[{{ n_bits }}][3];
+    zMul.maxNum = q;
+    for (var i=0; i< {{ n_bits }} ; i++) {
+        if(i==0){
+            zMul[i] <== GLCMul()(challengeOut, challengeOut);
+        } else {
+            zMul[i] <== GLCMul()(zMul[i-1], zMul[i-1]);
+        }
+    }
+
+    signal {maxNum} oneGL[3];
+    oneGL.maxNum = 1;
+    oneGL <== [1,0,0];
+
+    // Store the vanishing polynomial Zh = x^nBits - 1 evaluated at z
+    signal {maxNum} Z[3] <== GLCSub()(zMul[{{ n_bits - 1 }}], oneGL);
+    signal {maxNum} Zh[3] <== GLCInv()(Z);
+{% for d in domains %}
+    // Domain {{ d.k }}: V = prod_o (z^m - w^o); Zd = Z / V, or V when complemented
+{% for f in d.factors %}    signal {maxNum} Zd{{ d.k }}R{{ f.i }}[3];
+    Zd{{ d.k }}R{{ f.i }}.maxNum = {{ f.root }};
+    Zd{{ d.k }}R{{ f.i }} <== [{{ f.root }}, 0, 0];
+{% if f.i == 0 %}    signal {maxNum} Zd{{ d.k }}V0[3] <== GLCSub()({{ d.zm }}, Zd{{ d.k }}R0);
+{% else %}    signal {maxNum} Zd{{ d.k }}V{{ f.i }}[3] <== GLCMul()(Zd{{ d.k }}V{{ f.i - 1 }}, GLCSub()({{ d.zm }}, Zd{{ d.k }}R{{ f.i }}));
+{% endif %}{% endfor %}{% if d.complement %}    signal {maxNum} Zd{{ d.k }}[3] <== Zd{{ d.k }}V{{ d.last }};
+{% else %}    signal {maxNum} Zd{{ d.k }}[3] <== GLCMul()(Z, GLCInv()(Zd{{ d.k }}V{{ d.last }}));
+{% endif %}{% endfor %}

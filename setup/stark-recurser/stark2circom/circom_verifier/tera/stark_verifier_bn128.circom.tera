@@ -191,46 +191,7 @@ template parallel VerifyEvaluations() {
 {% endif %}{% if n_air_group_values > 0 %}    signal input airgroupvalues[{{ n_air_group_values }}][3];
 {% endif %}    signal input {binary} enable;
 
-    var q = 0xFFFFFFFFFFFFFFFF;
-
-    // zMul stores all the powers of z (which is stored in challengeOut) up to nBits, i.e, [z, z^2, ..., z^nBits]
-    signal {maxNum} zMul[{{ n_bits }}][3];
-    zMul.maxNum = q;
-    for (var i=0; i< {{ n_bits }} ; i++) {
-        if(i==0){
-            zMul[i] <== GLCMul()(challengeOut, challengeOut);
-        } else {
-            zMul[i] <== GLCMul()(zMul[i-1], zMul[i-1]);
-        }
-    }
-
-    signal {maxNum} oneGL[3];
-    oneGL.maxNum = 1;
-    oneGL <== [1,0,0];
-
-    // Store the vanishing polynomial Zh = x^nBits - 1 evaluated at z
-    signal {maxNum} Z[3] <== GLCSub()(zMul[{{ n_bits - 1 }}], oneGL);
-    signal {maxNum} Zh[3] <== GLCInv()(Z);
-
-{% if has_first_row %}    signal {maxNum} Zf[3] <== GLCSub()(challengeOut, oneGL);
-    signal {maxNum} Zfirst[3] <== GLCInv()(Zf);
-{% endif %}
-{% if has_last_row %}    signal {maxNum} rootGL[3];
-    rootGL.maxNum = {{ zlast_root }};
-    rootGL <== [{{ zlast_root }},0,0];
-
-    signal {maxNum} Zl[3] <== GLCSub()(challengeOut, rootGL);
-    signal {maxNum} Zlast[3] <== GLCInv()(Zl);
-{% endif %}
-{% for frame in every_frames %}    signal {maxNum} Zframe{{ frame.idx }}[{{ frame.size }}][3];
-    signal {maxNum} Zf{{ frame.idx }}[{{ frame.size }}][3];
-    signal {maxNum} root{{ frame.idx }}GL[{{ frame.size }}][3];
-    root{{ frame.idx }}GL.maxNum = q;
-{% for op in frame.ops %}    root{{ frame.idx }}GL[{{ op.c }}] <== [{{ op.root }},0,0];
-    Zf{{ frame.idx }}[{{ op.c }}] <== GLCSub()(challengeOut, root{{ frame.idx }}GL[{{ op.c }}]);
-{% if op.is_first %}    Zframe{{ frame.idx }}[{{ op.c }}] <== GLCMul()(Zh, Zf{{ frame.idx }}[{{ op.c }}]);
-{% else %}    Zframe{{ frame.idx }}[{{ op.c }}] <== GLCMul()(Zframe{{ frame.idx }}[{{ op.c - 1 }}], Zf{{ frame.idx }}[{{ op.c }}]);
-{% endif %}{% endfor %}{% endfor %}
+{% include "domain_zi" %}
     // Using the evaluations committed and the challenges,
     // calculate the sum of q_i evaluated at z
 {{ eval_p_code }}

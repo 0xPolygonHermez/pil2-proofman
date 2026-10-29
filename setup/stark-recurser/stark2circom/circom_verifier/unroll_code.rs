@@ -52,7 +52,7 @@ pub struct UnrollCtx<'a> {
     pub custom_commits: &'a [Value],
     /// `starkInfo.customCommitsMap` — array of arrays (per-commit).
     pub custom_commits_map: &'a [Value],
-    /// `starkInfo.boundaries` array (for Zi boundary name / offsetMin / offsetMax).
+    /// `starkInfo.boundaries` array (Zi boundary → `Zh` / `Zd{k}`).
     pub boundaries: &'a [Value],
 }
 
@@ -88,36 +88,7 @@ pub fn ref_operand(r: &Value, is_dest: bool, initialized: &[u64], ctx: &UnrollCt
             Ok(format!("publics[{id}]"))
         }
         "x" => Ok("challengeOut".into()),
-        "Zi" => {
-            let boundary_id = r["boundaryId"].as_u64().unwrap_or(0) as usize;
-            let boundary = ctx
-                .boundaries
-                .get(boundary_id)
-                .ok_or_else(|| anyhow::anyhow!("Zi: invalid boundaryId {boundary_id}"))?;
-            let name = boundary["name"].as_str().unwrap_or("");
-            match name {
-                "everyRow" => Ok("Zh".into()),
-                "firstRow" => Ok("Zfirst".into()),
-                "lastRow" => Ok("Zlast".into()),
-                "everyFrame" => {
-                    // Find the index among everyFrame boundaries that matches
-                    // offsetMin + offsetMax of this particular boundary entry.
-                    let offset_min = boundary["offsetMin"].as_u64().unwrap_or(0);
-                    let offset_max = boundary["offsetMax"].as_u64().unwrap_or(0);
-                    let frame_id = ctx
-                        .boundaries
-                        .iter()
-                        .filter(|b| b["name"].as_str() == Some("everyFrame"))
-                        .position(|b| {
-                            b["offsetMin"].as_u64() == Some(offset_min) && b["offsetMax"].as_u64() == Some(offset_max)
-                        })
-                        .ok_or_else(|| anyhow::anyhow!("Zi everyFrame: no matching boundary"))?;
-                    let idx = offset_min + offset_max - 1;
-                    Ok(format!("Zframe{frame_id}[{idx}]"))
-                }
-                other => bail!("Zi: unknown boundary name '{other}'"),
-            }
-        }
+        "Zi" => super::domain_zi::zi_signal(ctx.boundaries, r["boundaryId"].as_u64().unwrap_or(0) as usize),
         "xDivXSubXi" => {
             let id = r["id"].as_u64().unwrap_or(0);
             Ok(format!("xDivXSubXi[{id}]"))
@@ -508,34 +479,7 @@ fn ref_operand_bn128(r: &Value, ctx: &UnrollCtx<'_>) -> Result<String> {
         }
         "public" => Ok(format!("publics[{}]", r["id"].as_u64().unwrap_or(0))),
         "x" => Ok("challengeOut".into()),
-        "Zi" => {
-            let boundary_id = r["boundaryId"].as_u64().unwrap_or(0) as usize;
-            let boundary = ctx
-                .boundaries
-                .get(boundary_id)
-                .ok_or_else(|| anyhow::anyhow!("Zi: invalid boundaryId {boundary_id}"))?;
-            let name = boundary["name"].as_str().unwrap_or("");
-            match name {
-                "everyRow" => Ok("Zh".into()),
-                "firstRow" => Ok("Zfirst".into()),
-                "lastRow" => Ok("Zlast".into()),
-                "everyFrame" => {
-                    let offset_min = boundary["offsetMin"].as_u64().unwrap_or(0);
-                    let offset_max = boundary["offsetMax"].as_u64().unwrap_or(0);
-                    let frame_id = ctx
-                        .boundaries
-                        .iter()
-                        .filter(|b| b["name"].as_str() == Some("everyFrame"))
-                        .position(|b| {
-                            b["offsetMin"].as_u64() == Some(offset_min) && b["offsetMax"].as_u64() == Some(offset_max)
-                        })
-                        .ok_or_else(|| anyhow::anyhow!("Zi everyFrame: no matching boundary"))?;
-                    let idx = offset_min + offset_max - 1;
-                    Ok(format!("Zframe{frame_id}[{idx}]"))
-                }
-                other => bail!("Zi: unknown boundary name '{other}'"),
-            }
-        }
+        "Zi" => super::domain_zi::zi_signal(ctx.boundaries, r["boundaryId"].as_u64().unwrap_or(0) as usize),
         "xDivXSubXi" => Ok(format!("xDivXSubXi[{}]", r["id"].as_u64().unwrap_or(0))),
         "tmp" => {
             let id = r["id"].as_u64().unwrap_or(0);

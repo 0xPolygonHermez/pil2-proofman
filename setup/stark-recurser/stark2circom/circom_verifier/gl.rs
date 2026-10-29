@@ -13,7 +13,6 @@ use std::collections::HashSet;
 
 use anyhow::{bail, Result};
 use serde_json::Value;
-use tera::Tera;
 
 use super::expressions_chunks::{get_expressions_chunks, get_expressions_chunks_ext, split_query_independent};
 use super::gl_field::{gl_exp, gl_inv, GL_INV_W, GL_SHIFT, GL_W};
@@ -67,7 +66,7 @@ pub fn gen_stark_verifier_gl(
     }
 
     let tera_ctx = build_tera_context(stark_info, verifier_info, opts, const_root)?;
-    Tera::one_off(TEMPLATE_GL, &tera_ctx, false).map_err(|e| anyhow::anyhow!("Tera render error: {e}"))
+    super::domain_zi::render_with_fragment(TEMPLATE_GL, super::domain_zi::FRAGMENT_GL, &tera_ctx)
 }
 
 // ── Tera context builder ──────────────────────────────────────────────────────
@@ -147,6 +146,9 @@ fn build_tera_context(
     let max_deg_bits = n_last_bits.saturating_sub((n_bits_ext - n_bits) as u64);
     let n_publics = si["nPublics"].as_u64().unwrap_or(0);
     let n_constants = si["nConstants"].as_u64().unwrap_or(0);
+    if n_constants == 0 {
+        bail!("gen_stark_verifier_gl: the air has no fixed columns (nConstants = 0); the recursive verifier needs at least one");
+    }
     let ev_map_len = si["evMap"].as_array().map_or(0, |a| a.len());
     let n_air_group_values = si["airgroupValuesMap"].as_array().map_or(0, |a| a.len());
     let n_air_values = si["airValuesMap"].as_array().map_or(0, |a| a.len());
@@ -426,57 +428,7 @@ fn build_tera_context(
         .collect();
     let stir_shift_inv = gl_inv(GL_SHIFT).to_string();
 
-    // ── Boundary flags ────────────────────────────────────────────────────────
-    let has_first_row = boundaries_json.iter().any(|b| b["name"].as_str() == Some("firstRow"));
-    let has_last_row = boundaries_json.iter().any(|b| b["name"].as_str() == Some("lastRow"));
-    let zlast_root: String = if has_last_row {
-        let mut root: u64 = 1;
-        for _ in 0..((1u64 << n_bits) - 1) {
-            root = gl_mul(root, GL_W[n_bits]);
-        }
-        root.to_string()
-    } else {
-        "0".to_string()
-    };
-
-    // ── everyFrame boundaries ─────────────────────────────────────────────────
-    let every_frames: Vec<serde_json::Value> = boundaries_json
-        .iter()
-        .filter(|b| b["name"].as_str() == Some("everyFrame"))
-        .enumerate()
-        .map(|(i, frame)| {
-            let offset_min = frame["offsetMin"].as_u64().unwrap_or(0);
-            let offset_max = frame["offsetMax"].as_u64().unwrap_or(0);
-            let size = offset_min + offset_max;
-            let mut ops: Vec<serde_json::Value> = Vec::new();
-            let mut c = 0u64;
-            for j in 0..offset_min {
-                let mut root: u64 = 1;
-                for _ in 0..j {
-                    root = gl_mul(root, GL_W[n_bits]);
-                }
-                ops.push(serde_json::json!({
-                    "c": c, "is_first": c == 0, "root": root.to_string()
-                }));
-                c += 1;
-            }
-            let back_exp = (1u64 << n_bits).saturating_sub(i as u64 + 1);
-            let mut back_root: u64 = 1;
-            for _ in 0..back_exp {
-                back_root = gl_mul(back_root, GL_W[n_bits]);
-            }
-            for _ in 0..offset_max {
-                ops.push(serde_json::json!({
-                    "c": c, "is_first": c == 0, "root": back_root.to_string()
-                }));
-                c += 1;
-            }
-            serde_json::json!({
-                "idx": i, "offset_min": offset_min,
-                "offset_max": offset_max, "size": size, "ops": ops,
-            })
-        })
-        .collect();
+    let domains = super::domain_zi::domains_ctx(&boundaries_json, n_bits)?;
 
     // ── Opening points ────────────────────────────────────────────────────────
     let opening_points: Vec<serde_json::Value> = opening_points_json
@@ -562,14 +514,8 @@ fn build_tera_context(
         inputs_p.push("proofvalues".into());
     }
     inputs_p.push("Zh".into());
-    if has_first_row {
-        inputs_p.push("Zfirst".into());
-    }
-    if has_last_row {
-        inputs_p.push("Zlast".into());
-    }
-    for fi in 0..every_frames.len() {
-        inputs_p.push(format!("Zframe{fi}"));
+    for k in 0..domains.len() {
+        inputs_p.push(format!("Zd{k}"));
     }
 
     // ── inputsQ — for CalculateDeepPolChunks calls ─────────────────────────────
@@ -973,9 +919,6 @@ fn build_tera_context(
     ctx.insert("last_batch_size", &last_batch_size);
     ctx.insert("last_batch_size_safe", &last_batch_size_safe);
     ctx.insert("n_fields", &n_fields);
-    ctx.insert("has_first_row", &has_first_row);
-    ctx.insert("has_last_row", &has_last_row);
-    ctx.insert("zlast_root", &zlast_root);
     ctx.insert("q_pol_ev_id", &q_pol_ev_id);
     ctx.insert("last_dest_id_p", &last_dest_id_p);
     ctx.insert("last_dest_id_q", &last_dest_id_q);
@@ -1030,7 +973,7 @@ fn build_tera_context(
     ctx.insert("stir_shift_inv", &stir_shift_inv);
     ctx.insert("calculate_stir_queries_name", &mk("calculateStirQueries"));
     ctx.insert("opening_points", &opening_points);
-    ctx.insert("every_frames", &every_frames);
+    ctx.insert("domains", &domains);
 
     Ok(ctx)
 }
@@ -1069,7 +1012,7 @@ mod tests {
             "proofValuesMap": [],
             "mapSectionsN": {},
             "openingPoints": [],
-            "nConstants": 0,
+            "nConstants": 1,
             "qDeg": 1,
         })
     }
@@ -1103,6 +1046,40 @@ mod tests {
             }
             assert!(!line.contains("[4]") && !line.contains("[5]"), "{sig} reads past the digest: {line}");
         }
+    }
+
+    /// Direct domains divide Z by V; complements are V itself; z^m comes off the zMul chain.
+    #[test]
+    fn domain_zi_signals() {
+        let mut si = minimal_stark_info(2, 10, 8);
+        si["boundaries"] = json!([
+            {"name": "everyRow"},
+            {"name": "domain", "cycleBits": 1, "offsets": [1], "complement": false},
+            {"name": "domain", "cycleBits": 16, "offsets": [0, 3], "complement": true},
+        ]);
+        let out = gen_stark_verifier_gl(None, &si, &minimal_verifier_info(), &Pil2CircomOptions::default()).unwrap();
+        let w1 = super::super::gl_field::GL_W[1];
+        assert!(out.contains(&format!("signal Zd0V0[3] <== [zMul[14][0] - {w1}, zMul[14][1], zMul[14][2]];")), "{out}");
+        assert!(out.contains("signal Zd0[3] <== CDiv()(Z, Zd0V0);"), "{out}");
+        assert!(out.contains("signal Zd1V1[3] <== CMul()(Zd1V0, [challengeOut[0] - "), "{out}");
+        assert!(out.contains("signal Zd1[3] <== Zd1V1;"), "{out}");
+        assert!(!out.contains("Zfirst") && !out.contains("Zlast") && !out.contains("Zframe"), "{out}");
+    }
+
+    #[test]
+    #[should_panic(expected = "no fixed columns")]
+    fn zero_fixed_columns_rejected() {
+        let mut si = minimal_stark_info(2, 10, 8);
+        si["nConstants"] = json!(0);
+        gen_stark_verifier_gl(None, &si, &minimal_verifier_info(), &Pil2CircomOptions::default()).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "expected a domain")]
+    fn legacy_boundary_rejected() {
+        let mut si = minimal_stark_info(2, 10, 8);
+        si["boundaries"] = json!([{"name": "everyRow"}, {"name": "firstRow"}]);
+        gen_stark_verifier_gl(None, &si, &minimal_verifier_info(), &Pil2CircomOptions::default()).unwrap();
     }
 
     fn basic_air_stark_info() -> Value {
@@ -1326,7 +1303,7 @@ mod tests {
             "proofValuesMap": [],
             "mapSectionsN": {},
             "openingPoints": [],
-            "nConstants": 0,
+            "nConstants": 1,
             "qDeg": 1,
         })
     }

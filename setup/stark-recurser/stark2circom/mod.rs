@@ -18,6 +18,10 @@ pub(crate) mod transcript;
 #[cfg(test)]
 mod blake3_equiv_tests;
 
+/// Compiles the emitted domain-Zi circom (GL and BN128) against the native vectors.
+#[cfg(test)]
+mod domain_zi_tests;
+
 /// Circuit-level template generators (port of `gencircom.js`).
 pub mod circuit_templates;
 

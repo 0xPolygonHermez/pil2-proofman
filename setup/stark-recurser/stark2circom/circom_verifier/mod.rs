@@ -17,6 +17,7 @@ pub(crate) mod expressions_chunks;
 pub(crate) mod transcript_bn128;
 pub(crate) mod gl;
 pub(crate) mod bn128;
+pub(crate) mod domain_zi;
 
 use anyhow::{bail, Result};
 use serde_json::Value;

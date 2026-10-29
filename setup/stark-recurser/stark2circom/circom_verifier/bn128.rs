@@ -16,7 +16,6 @@
 
 use anyhow::{bail, Result};
 use serde_json::Value;
-use tera::Tera;
 
 use super::gl_field::{gl_exp, gl_inv, gl_mul, GL_SHIFT, GL_W};
 use super::gl::Pil2CircomOptions;
@@ -43,7 +42,7 @@ pub fn gen_stark_verifier_bn128(
     }
 
     let ctx = build_tera_context_bn128(stark_info, verifier_info, opts, const_root, false)?;
-    Tera::one_off(TEMPLATE_BN128, &ctx, false).map_err(|e| anyhow::anyhow!("Tera render error (BN128): {e}"))
+    super::domain_zi::render_with_fragment(TEMPLATE_BN128, super::domain_zi::FRAGMENT_BN128, &ctx)
 }
 
 /// The BN128 verifier of a Goldilocks STARK hashed with blake3: the recursivef of a blake3 key,
@@ -83,7 +82,7 @@ pub fn gen_stark_verifier_bn128_blake3(
         bail!("gen_stark_verifier_bn128_blake3: the blake3 gates are custom templates (merkleTreeCustom)");
     }
     let ctx = build_tera_context_bn128(stark_info, verifier_info, opts, const_root, true)?;
-    Tera::one_off(TEMPLATE_BN128, &ctx, false).map_err(|e| anyhow::anyhow!("Tera render error (BN128 blake3): {e}"))
+    super::domain_zi::render_with_fragment(TEMPLATE_BN128, super::domain_zi::FRAGMENT_BN128, &ctx)
 }
 
 /// Whether the BN128 verifier of `stark_info` is written with circom custom templates, the ones of
@@ -139,6 +138,9 @@ fn build_tera_context_bn128(
     let max_deg_size: usize = 1 << max_deg_bits;
     let n_publics = si["nPublics"].as_u64().unwrap_or(0) as usize;
     let n_constants = si["nConstants"].as_u64().unwrap_or(0) as usize;
+    if n_constants == 0 {
+        bail!("gen_stark_verifier_bn128: the air has no fixed columns (nConstants = 0); the recursive verifier needs at least one");
+    }
     let ev_map_len = si["evMap"].as_array().map_or(0, |a| a.len());
     let n_air_group_values = si["airgroupValuesMap"].as_array().map_or(0, |a| a.len());
     // Only the GL transcript binds airgroupvalues.
@@ -167,58 +169,7 @@ fn build_tera_context_bn128(
         (((step0_bits - 1) / n_bits_arity) + 1).saturating_sub(last_level_verification)
     };
 
-    // ── Boundary flags ─────────────────────────────────────────────────────
-    let has_first_row = boundaries_json.iter().any(|b| b["name"].as_str() == Some("firstRow"));
-    let has_last_row = boundaries_json.iter().any(|b| b["name"].as_str() == Some("lastRow"));
-
-    let zlast_root: String = if has_last_row {
-        let mut root: u64 = 1;
-        for _ in 0..((1u64 << n_bits) - 1) {
-            root = gl_mul(root, GL_W[n_bits]);
-        }
-        root.to_string()
-    } else {
-        "0".to_string()
-    };
-
-    // ── everyFrame boundaries ───────────────────────────────────────────────
-    let every_frames: Vec<serde_json::Value> = boundaries_json
-        .iter()
-        .filter(|b| b["name"].as_str() == Some("everyFrame"))
-        .enumerate()
-        .map(|(i, frame)| {
-            let offset_min = frame["offsetMin"].as_u64().unwrap_or(0) as usize;
-            let offset_max = frame["offsetMax"].as_u64().unwrap_or(0) as usize;
-            let size = offset_min + offset_max;
-            let mut ops: Vec<serde_json::Value> = Vec::new();
-            let mut c = 0usize;
-            for j in 0..offset_min {
-                let mut root: u64 = 1;
-                for _ in 0..j {
-                    root = gl_mul(root, GL_W[n_bits]);
-                }
-                ops.push(serde_json::json!({
-                    "c": c, "is_first": c == 0, "root": root.to_string()
-                }));
-                c += 1;
-            }
-            let back_exp = (1u64 << n_bits).saturating_sub((i + 1) as u64);
-            let mut back_root: u64 = 1;
-            for _ in 0..back_exp {
-                back_root = gl_mul(back_root, GL_W[n_bits]);
-            }
-            for _ in 0..offset_max {
-                ops.push(serde_json::json!({
-                    "c": c, "is_first": c == 0, "root": back_root.to_string()
-                }));
-                c += 1;
-            }
-            serde_json::json!({
-                "idx": i, "offset_min": offset_min,
-                "offset_max": offset_max, "size": size, "ops": ops,
-            })
-        })
-        .collect();
+    let domains = super::domain_zi::domains_ctx(&boundaries_json, n_bits)?;
 
     // ── Per-stage challenge counts ──────────────────────────────────────────
     let challenges_per_stage: Vec<serde_json::Value> = (1..=n_stages)
@@ -642,9 +593,6 @@ fn build_tera_context_bn128(
     ctx.insert("max_deg_bits", &max_deg_bits);
     ctx.insert("max_deg_size", &max_deg_size);
     ctx.insert("n_fields", &n_fields);
-    ctx.insert("has_first_row", &has_first_row);
-    ctx.insert("has_last_row", &has_last_row);
-    ctx.insert("zlast_root", &zlast_root);
     ctx.insert("q_pol_ev_id", &q_pol_ev_id);
     ctx.insert("const_root_str", &const_root_str);
     ctx.insert("gl_shift", &GL_SHIFT.to_string());
@@ -681,7 +629,7 @@ fn build_tera_context_bn128(
     ctx.insert("custom_commits", &custom_commits);
     ctx.insert("fri_steps_info", &fri_steps_info);
     ctx.insert("opening_points", &opening_points);
-    ctx.insert("every_frames", &every_frames);
+    ctx.insert("domains", &domains);
 
     Ok(ctx)
 }
@@ -829,7 +777,7 @@ mod tests {
             "proofValuesMap": [],
             "mapSectionsN": {},
             "openingPoints": [],
-            "nConstants": 0,
+            "nConstants": 1,
             "qDeg": 1,
         })
     }
@@ -885,6 +833,29 @@ mod tests {
         let opts = Pil2CircomOptions::default();
         let out = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap();
         assert!(out.contains("sha256/sha256.circom"), "out:\n{out}");
+    }
+
+    #[test]
+    #[should_panic(expected = "no fixed columns")]
+    fn zero_fixed_columns_rejected() {
+        let mut si = minimal_stark_info(2, 10, 8);
+        si["nConstants"] = json!(0);
+        gen_stark_verifier_bn128(None, &si, &minimal_verifier_info(), &Pil2CircomOptions::default()).unwrap();
+    }
+
+    #[test]
+    fn domain_zi_signals() {
+        let mut si = minimal_stark_info(2, 10, 8);
+        si["boundaries"] = json!([
+            {"name": "everyRow"},
+            {"name": "domain", "cycleBits": 1, "offsets": [1], "complement": false},
+            {"name": "domain", "cycleBits": 2, "offsets": [0], "complement": true},
+        ]);
+        let out = gen_stark_verifier_bn128(None, &si, &minimal_verifier_info(), &Pil2CircomOptions::default()).unwrap();
+        assert!(out.contains("signal {maxNum} Zd0V0[3] <== GLCSub()(zMul[14], Zd0R0);"), "{out}");
+        assert!(out.contains("signal {maxNum} Zd0[3] <== GLCMul()(Z, GLCInv()(Zd0V0));"), "{out}");
+        assert!(out.contains("signal {maxNum} Zd1V0[3] <== GLCSub()(zMul[13], Zd1R0);"), "{out}");
+        assert!(out.contains("signal {maxNum} Zd1[3] <== Zd1V0;"), "{out}");
     }
 
     #[test]

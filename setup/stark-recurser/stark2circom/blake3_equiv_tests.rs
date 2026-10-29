@@ -37,7 +37,7 @@ use super::transcript::Transcript;
 
 /// Runs the compiled circuit and prints the first `n_out` witness cells after
 /// the leading constant 1, i.e. the main component's outputs.
-const DRIVER_CPP: &str = r#"
+pub(super) const DRIVER_CPP: &str = r#"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -66,11 +66,11 @@ int main(int argc, char **argv) {
 }
 "#;
 
-fn manifest() -> PathBuf {
+pub(super) fn manifest() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn repo_root() -> PathBuf {
+pub(super) fn repo_root() -> PathBuf {
     manifest().join("..").join("..")
 }
 
@@ -80,7 +80,7 @@ fn have(cmd: &str, args: &[&str]) -> bool {
 
 /// The pipeline needs the goldilocks circom fork, a C++ compiler, and the
 /// witness-side sources. Report what is missing rather than failing.
-fn missing_prerequisite() -> Option<String> {
+pub(super) fn missing_prerequisite() -> Option<String> {
     if !have("circom", &["--version"]) {
         return Some("circom not on PATH".into());
     }
@@ -98,7 +98,7 @@ fn missing_prerequisite() -> Option<String> {
 /// evaluated on `inputs`.
 /// Compile `src` with circom, link `driver_src` against the generated witness
 /// code and the real custom-gate implementation, and return (build dir, exe).
-fn build(tag: &str, src: &str, driver_src: &str) -> (PathBuf, PathBuf) {
+pub(super) fn build(tag: &str, src: &str, driver_src: &str) -> (PathBuf, PathBuf) {
     let root = repo_root();
     let circuits = manifest().join("stark2circom/circom_verifier/circuits.gl");
     let blake3 = circuits.join("hash/blake3");
