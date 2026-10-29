@@ -143,12 +143,20 @@ fn rowexpr(stride: i64) -> String {
     }
 }
 
+/// Boundary `b`'s zerofier at this row: one period per boundary, at its offset in the zi region.
+fn zi_load(name: &str, b: u64, ir: &Ir) -> Vec<String> {
+    let (off, mask) = ir.zi.tables[b as usize];
+    vec![format!(
+        "  gl64_t {name}; {{ constexpr uint64_t zo{b} = {off}ull, zm{b} = {mask}ull; {name} = aux[off_zi + zo{b} + (row & zm{b})]; }}"
+    )]
+}
+
 /// Lines that materialize a non-tmp operand into the local `name`.
 fn load_lines(opnd: &Operand, name: &str, ir: &Ir) -> Vec<String> {
     match opnd {
         Operand::Num(v) => vec![format!("  gl64_t {name}(uint64_t({v}ull));")],
-        Operand::Zi => vec![format!("  gl64_t {name} = aux[off_zi + row];")],
-        Operand::Zb { .. } => unreachable!("Zb is the BN128 target's"),
+        Operand::Zi => zi_load(name, 0, ir),
+        Operand::Zb { boundary } => zi_load(name, *boundary, ir),
         Operand::Pub { id } => vec![format!("  gl64_t {name} = pub[{id}];")],
         Operand::Ch { base, .. } => {
             let i = *base;
@@ -315,8 +323,11 @@ extern "C" void exps_launch_step(StepsParams* d_params, gl64_t* q, gl64_t* scrat
     uint64_t off_cm1, uint64_t off_cm2, uint64_t off_cm3, uint64_t off_zi, uint32_t qs, cudaStream_t stream) {{
     launch_gen_{sym}(d_params, q, scratch, scratchElems, NExt, off_cm1, off_cm2, off_cm3, off_zi, qs, stream);
 }}
-extern "C" unsigned long long exps_min_scratch() {{ return {}ull; }}"#,
-        q_min_scratch(ir, sym, n_slots)
+extern "C" unsigned long long exps_min_scratch() {{ return {}ull; }}
+// The boundaries the zi reads above were generated for; the loader refuses a library whose hash differs.
+extern "C" uint64_t boundary_layout_hash() {{ return {}ull; }}"#,
+        q_min_scratch(ir, sym, n_slots),
+        ir.zi.hash
     )
 }
 
@@ -969,6 +980,7 @@ pub fn chunked_program(key: ExprKey, num: &Ir, den: Option<&Ir>) -> ChunkedExpr 
         tab_words: 0,
         pow_in_regs: true,
         field: num.field.clone(),
+        zi: num.zi.clone(),
     };
     ChunkedExpr { key, ir, results }
 }
@@ -1346,6 +1358,7 @@ mod tests {
             tab_words: 0,
             pow_in_regs: true,
             field: Field::Goldilocks,
+            zi: Default::default(),
         }
     }
     fn op(idx: usize, a: Operand, b: Operand, dst: Option<u64>) -> Instr {

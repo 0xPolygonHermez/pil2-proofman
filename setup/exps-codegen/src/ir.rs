@@ -5,7 +5,7 @@
 //! assignment is fully deterministic, independent of hash-map iteration order.
 
 use crate::field::Field;
-use crate::model::{ExpressionsInfo, StarkInfo};
+use crate::model::{Boundary, ExpressionsInfo, StarkInfo};
 use std::collections::{HashMap, HashSet};
 
 /// A resolved source operand. `dim()` is the field-extension degree (1 = base
@@ -34,8 +34,9 @@ pub enum Operand {
         ncols: u64,
         stride: i64,
     },
+    /// Zi of boundary 0 (everyRow, `Zh^-1`): the factor Q's constraint sum is stripped of and re-multiplied by.
     Zi,
-    /// Zi of boundary `boundary` >= 1 (BN128 target only; boundary 0 is `Zi`).
+    /// Zi of domain boundary `boundary` >= 1, a factor inside the constraint sum.
     Zb {
         boundary: u64,
     },
@@ -133,6 +134,59 @@ pub struct Ir {
     pub pow_in_regs: bool,
     /// The field the IR computes in: how numbers fold, and the challenges' dimension.
     pub field: Field,
+    /// Where each boundary's zerofier table sits in the zi region (Goldilocks target).
+    pub zi: ZiLayout,
+}
+
+/// The zi region as the prover lays it out (`StarkInfo::ziOffsets`/`ziMasks`, `ziLayout` in
+/// stark_info.hpp): boundary b's value at extended row r is `zi[tables[b].0 + (r & tables[b].1)]`.
+#[derive(Debug, Clone, Default)]
+pub struct ZiLayout {
+    /// `(offset, mask)` per boundary.
+    pub tables: Vec<(u64, u64)>,
+    /// [`boundary_layout_hash`] of the boundaries, exported by the generated library.
+    pub hash: u64,
+}
+
+impl ZiLayout {
+    pub fn new(boundaries: &[Boundary], n_bits: u64, n_bits_ext: u64) -> anyhow::Result<Self> {
+        let mut tables = Vec::with_capacity(boundaries.len());
+        let mut off = 0u64;
+        for (i, b) in boundaries.iter().enumerate() {
+            let every_row = b.name == "everyRow";
+            if !every_row && (b.name != "domain" || b.cycle_bits > n_bits) {
+                anyhow::bail!("boundary {i}: unsupported boundary {} (cycleBits {})", b.name, b.cycle_bits);
+            }
+            let p = 1u64 << (n_bits_ext - n_bits + if every_row { 0 } else { b.cycle_bits });
+            tables.push((off, p - 1));
+            off += p;
+        }
+        Ok(ZiLayout { tables, hash: boundary_layout_hash(boundaries, n_bits, n_bits_ext) })
+    }
+}
+
+/// `boundaryLayoutHash` (stark_info.hpp): integers, not JSON, which the two sides serialize differently.
+pub fn boundary_layout_hash(boundaries: &[Boundary], n_bits: u64, n_bits_ext: u64) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut word = |w: u64| {
+        for byte in w.to_le_bytes() {
+            h ^= byte as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    // the tables' offsets and masks depend on the blowup too
+    word(n_bits_ext - n_bits);
+    for b in boundaries {
+        let domain = b.name != "everyRow";
+        word(domain as u64);
+        word(if domain { b.cycle_bits } else { 0 });
+        word((domain && b.complement) as u64);
+        word(if domain { b.offsets.len() as u64 } else { 0 });
+        if domain {
+            b.offsets.iter().for_each(|&o| word(o));
+        }
+    }
+    h
 }
 
 impl Ir {
@@ -150,7 +204,8 @@ impl Ir {
     }
 
     pub fn uses_zi(&self) -> bool {
-        self.instrs.iter().any(|i| matches!(i.a, Operand::Zi) || matches!(i.b, Operand::Zi))
+        let zi = |o: &Operand| matches!(o, Operand::Zi | Operand::Zb { .. });
+        self.instrs.iter().any(|i| zi(&i.a) || zi(&i.b))
     }
 
     /// Output dimension of the expression: the final instruction's value (for
@@ -241,6 +296,7 @@ pub fn build_ir_expr(
     let opening = &stark_info.opening_points;
     let blowup = if extended { stark_info.blowup() } else { 1 };
     let n_constants = stark_info.n_constants;
+    let zi = ZiLayout::new(&stark_info.boundaries, stark_info.stark_struct.n_bits, stark_info.stark_struct.n_bits_ext)?;
 
     // ncols[stage] = number of committed columns at that stage, for stages 1..=nStages+1.
     let mut ncols = HashMap::new();
@@ -296,7 +352,13 @@ pub fn build_ir_expr(
                     stride: stride(src.prime.unwrap_or(0))?,
                 }
             }
-            "Zi" => Operand::Zi,
+            "Zi" => match src.boundary_id.ok_or_else(|| anyhow::anyhow!("Zi operand without boundaryId"))? {
+                b if b as usize >= zi.tables.len() => {
+                    anyhow::bail!("Zi of boundary {b}, but the starkinfo has {} boundaries", zi.tables.len())
+                }
+                0 => Operand::Zi,
+                boundary => Operand::Zb { boundary },
+            },
             "challenge" => Operand::Ch { base: 3 * src.id.unwrap(), dim: 3 },
             "airvalue" => Operand::Av { pos: pos_of(src.id.unwrap(), &stark_info.air_values_map), dim },
             "airgroupvalue" => Operand::Agv { pos: pos_of(src.id.unwrap(), &stark_info.airgroup_values_map), dim },
@@ -338,6 +400,7 @@ pub fn build_ir_expr(
         tab_words: 0,
         pow_in_regs: false,
         field: Field::Goldilocks,
+        zi,
     })
 }
 

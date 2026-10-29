@@ -31,6 +31,11 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t 
     h_deviceArgs.bufferCommitSize = bufferCommitSize;
     
     h_deviceArgs.zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
+    const uint64_t nBoundaries = setupCtx.starkInfo.boundaries.size();
+    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.ziOffsets, nBoundaries * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.ziMasks, nBoundaries * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMemcpy(h_deviceArgs.ziOffsets, setupCtx.starkInfo.ziOffsets.data(), nBoundaries * sizeof(uint64_t), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(h_deviceArgs.ziMasks, setupCtx.starkInfo.ziMasks.data(), nBoundaries * sizeof(uint64_t), cudaMemcpyHostToDevice));
 
     CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapOffsets, ns * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapOffsetsExtended, ns * sizeof(uint64_t)));
@@ -99,6 +104,8 @@ ExpressionsGPU::~ExpressionsGPU()
     CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsetsCustomFixedExtended));
     CHECKCUDAERR(cudaFree(h_deviceArgs.mapSectionsN));
     CHECKCUDAERR(cudaFree(h_deviceArgs.mapSectionsNCustomFixed));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.ziOffsets));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.ziMasks));
     CHECKCUDAERR(cudaFree(h_deviceArgs.numbers));
     CHECKCUDAERR(cudaFree(h_deviceArgs.ops));
     CHECKCUDAERR(cudaFree(h_deviceArgs.args));
@@ -536,10 +543,9 @@ __device__ __forceinline__ void load__(
         }
     }
 
-    // Special case: zi
+    // Special case: zi (argIdx = boundaryId + 1), one period per boundary
     if (type == 4) {
-        //return &dParams->aux_trace[dArgs->zi_offset + (argIdx - 1) * domainSize + row];
-        out0 = (gl64_t*)&dParams->aux_trace[dArgs->zi_offset + (argIdx - 1) * domainSize + row + threadIdx.x];
+        out0 = (gl64_t*)&dParams->aux_trace[dArgs->zi_offset + dArgs->ziOffsets[argIdx - 1] + (r & dArgs->ziMasks[argIdx - 1])];
         out1 = nullptr;
         out2 = nullptr;
         return;

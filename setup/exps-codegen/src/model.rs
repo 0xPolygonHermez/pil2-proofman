@@ -56,6 +56,22 @@ pub struct StarkInfo {
     pub custom_commits: Vec<CustomCommit>,
     #[serde(default)]
     pub custom_commits_map: Vec<Vec<CustomPol>>,
+    #[serde(default)]
+    pub boundaries: Vec<Boundary>,
+}
+
+/// A starkinfo boundary: `everyRow` (boundary 0), or the rows `o + k*2^cycleBits` for `o` in `offsets`
+/// (all other rows if `complement`).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Boundary {
+    pub name: String,
+    #[serde(default)]
+    pub cycle_bits: u64,
+    #[serde(default)]
+    pub offsets: Vec<u64>,
+    #[serde(default)]
+    pub complement: bool,
 }
 
 /// A custom (preprocessed) commit declaration, e.g. zisk's `rom`.
@@ -90,8 +106,9 @@ pub struct Src {
     pub prime: Option<i64>,
     #[serde(default)]
     pub commit_id: Option<u64>,
-    // Note: a `Zi` operand also carries `boundaryId`, but the emitted load uses a
-    // single zerofier (`aux[off_zi + row]`) and ignores it.
+    /// A `Zi` operand's boundary (index into the starkinfo's `boundaries`).
+    #[serde(default)]
+    pub boundary_id: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -181,6 +181,7 @@ pub fn build_ir(bin: &Bin, exp_id: u32, n_bits: u64, nums: &std::sync::Arc<Bn128
         tab_words: 0,
         pow_in_regs: false,
         field: Field::Bn128(nums.clone()),
+        zi: Default::default(),
     })
 }
 

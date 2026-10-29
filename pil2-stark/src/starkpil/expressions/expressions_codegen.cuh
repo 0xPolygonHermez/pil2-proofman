@@ -88,7 +88,7 @@ inline bool expsCheckScratchLayout(SetupCtx& sc) {
     };
     if (tmp1 < 0 || end < 0 || q < 0) return fail("tmp1/mem_exps_end/q missing from the map");
     if (end < tmp1 || (uint64_t)end > si.mapTotalN) return fail("scratch not within tmp1 .. mapTotalN");
-    const uint64_t qZoneEnd = zi >= 0 ? (uint64_t)zi + si.boundaries.size() * NExt : (uint64_t)q + 3 * NExt;
+    const uint64_t qZoneEnd = zi >= 0 ? (uint64_t)zi + si.ziSize : (uint64_t)q + 3 * NExt;
     if (qZoneEnd > (uint64_t)tmp1) return fail("q/zi zone reaches into the scratch");
     if ((uint64_t)q + 3 * N > (uint64_t)tmp1) return fail("hint temporaries at q reach into the scratch");
     for (uint64_t stage = 1; stage <= si.nStages; ++stage) {
@@ -121,6 +121,13 @@ inline uint64_t expsScratchAvail(SetupCtx& sc) {
     return (od - o1) + 2ull * 3 * sc.starkInfo.nrowsPack * sc.starkInfo.maxNBlocks;
 }
 
+// Empty if the library's zerofier reads (baked from the boundaries at gen-exps time) match this starkinfo.
+inline std::string expsBoundaryLayoutError(void* lib, const StarkInfo& si) {
+    auto fn = (uint64_t (*)())dlsym(lib, "boundary_layout_hash");
+    if (fn != nullptr && fn() == boundaryLayoutHash(si.boundaries, si.starkStruct.nBits, si.starkStruct.nBitsExt)) return "";
+    return "stale .exps.so: boundary layout changed, rerun gen-exps";
+}
+
 // Called once per ExpressionsGPU (in its constructor). Resolve this AIR's expression kernel.
 inline ExpsKernel expsOpenForAir(SetupCtx& sc) {
     ExpsKernel r;
@@ -133,6 +140,12 @@ inline ExpsKernel expsOpenForAir(SetupCtx& sc) {
     auto qLaunch = (ExpsQLaunchFn)dlsym(h, "exps_launch");
     auto minf = (unsigned long long (*)())dlsym(h, "exps_min_scratch");
     if (!qLaunch || !minf) { fprintf(stderr, "[EXPS] missing symbols in %s\n", path.c_str()); dlclose(h); return r; }
+    // An .exps.so reads zi with the offsets and masks of the boundaries it was generated from.
+    std::string layoutError = expsBoundaryLayoutError(h, sc.starkInfo);
+    if (!layoutError.empty()) {
+        fprintf(stderr, "[EXPS] %s: %s\n", path.c_str(), layoutError.c_str());
+        exitProcess();
+    }
     r.lib = h; r.qLaunch = qLaunch; r.qMinScratch = (uint64_t)minf();
     r.qLaunchStep = (ExpsQLaunchStepFn)dlsym(h, "exps_launch_step");
     r.scratchOff = sc.starkInfo.mapOffsets[std::make_pair("tmp1", false)];

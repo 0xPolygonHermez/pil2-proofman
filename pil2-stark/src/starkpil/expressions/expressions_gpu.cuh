@@ -17,6 +17,9 @@ struct DeviceArguments
     uint32_t bufferCommitSize;
     
     uint64_t zi_offset;
+    // Per boundary: its zerofier table's offset inside zi and its period mask (StarkInfo::ziOffsets/ziMasks).
+    uint64_t *ziOffsets;
+    uint64_t *ziMasks;
 
     uint64_t *mapOffsets;  //rick: passar a uint32_t
     uint64_t *mapOffsetsExtended;

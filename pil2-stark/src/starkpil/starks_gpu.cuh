@@ -64,7 +64,15 @@ __device__ void genMerkleProof_(gl64_t *nodes, gl64_t *proof, uint64_t idx, uint
 
 __global__ void genMerkleProof(gl64_t *d_nodes, uint64_t sizeLeaves, uint64_t *d_queriesL0, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, uint64_t maxTreeWidth, uint64_t nFieldElements, uint64_t arity, uint64_t lastLevel, bool dropLeaves = false);
 
-__global__ void buildZHInv_kernel(gl64_t *d_zi, uint64_t extend, uint64_t NExtended, Goldilocks::Element sn, Goldilocks::Element w);
+// One boundary's zerofier table: P entries, by value (MAX_DOMAIN_FACTORS roots at most).
+constexpr uint32_t MAX_ZEROFIER_ROOTS = 32;
+struct ZerofierTable {
+    uint64_t P, cycleBits, shiftM, wP;
+    uint32_t nRoots;
+    bool everyRow, complement;
+    uint64_t roots[MAX_ZEROFIER_ROOTS];
+};
+__global__ void buildZerofier_kernel(gl64_t *d_zi, ZerofierTable t);
 
 __global__ void moduleQueries(uint64_t* d_queriesL0, uint64_t nQueries, uint64_t currentBits);
 
@@ -80,7 +88,7 @@ void extendAndMerkelizeSection(uint64_t nCols, uint64_t nBits, uint64_t nBitsExt
 void extendAndMerkelizeFixed(SetupCtx&, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream);
 void computeQ_MerkleTree_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, TimerGPU &timer, cudaStream_t stream, uint32_t qStepLg = 0);
 
-void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt, cudaStream_t stream);
+void computeZerofier(Goldilocks::Element *d_zi, StarkInfo &starkInfo, cudaStream_t stream);
 
 void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, AirInstanceInfo *air_instance_info, Goldilocks::Element *d_LEv, TimerGPU &timer, cudaStream_t stream);
 

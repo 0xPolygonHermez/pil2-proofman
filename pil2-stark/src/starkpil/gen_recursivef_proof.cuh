@@ -203,7 +203,7 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         }
     }
     uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
-    computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
+    computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo, stream);
     TimerStartGPU(timer, STARK_QUOTIENT_POLYNOMIAL);
     calculateExpressionQ(setupCtx,air_instance_info->expressions_gpu, d_params, h_params.aux_trace + offsetQ, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     TimerStopGPU(timer, STARK_QUOTIENT_POLYNOMIAL);

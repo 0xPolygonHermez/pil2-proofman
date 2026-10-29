@@ -911,3 +911,74 @@ impl Drop for WorkDir {
         }
     }
 }
+
+/// Domain zerofiers in the Goldilocks codegen: a `Zi` of boundary b >= 1 reads its own periodic table.
+#[cfg(test)]
+mod domain_tests {
+    use crate::emit::emit_air;
+    use crate::ir::{build_ir, plan_chunks, Operand};
+    use crate::model::{ExpressionsInfo, StarkInfo};
+    use serde_json::json;
+
+    /// N = 2^4, blowup 2; boundaries everyRow, FIRST, ODD. Q = ((cm0 * Zi{2}) * ch0 + cm1) * Zi{0}.
+    fn fixture() -> (StarkInfo, ExpressionsInfo) {
+        let si = json!({
+            "openingPoints": [0], "starkStruct": {"nBits": 4, "nBitsExt": 5, "merkleTreeArity": 4},
+            "nConstants": 0, "nStages": 2, "mapSectionsN": {"cm1": 2, "cm2": 0, "cm3": 0},
+            "cmPolsMap": [{"stage": 1, "stagePos": 0, "dim": 1}, {"stage": 1, "stagePos": 1, "dim": 1}],
+            "airValuesMap": [], "cExpId": 0, "airgroupId": 0, "airId": 0,
+            "boundaries": [{"name": "everyRow"}, {"name": "domain", "cycleBits": 4, "offsets": [0], "complement": false},
+                           {"name": "domain", "cycleBits": 1, "offsets": [1], "complement": false}]
+        });
+        let cm = |id: u64| json!({"type": "cm", "id": id, "dim": 1, "prime": 0});
+        let zi = |b: u64| json!({"type": "Zi", "boundaryId": b, "dim": 1});
+        let tmp = |id: u64, dim: u64| json!({"type": "tmp", "id": id, "dim": dim});
+        let ei = json!({"expressionsCode": [{"expId": 0, "code": [
+            {"op": "mul", "src": [cm(0), zi(2)], "dest": {"type": "tmp", "id": 0, "dim": 1}},
+            {"op": "mul", "src": [tmp(0, 1), {"type": "challenge", "id": 0, "dim": 3}], "dest": {"type": "tmp", "id": 1, "dim": 3}},
+            {"op": "add", "src": [tmp(1, 3), cm(1)], "dest": {"type": "tmp", "id": 2, "dim": 3}},
+            {"op": "mul", "src": [tmp(2, 3), zi(0)], "dest": {"type": "q", "dim": 3}}
+        ]}]});
+        (serde_json::from_value(si).unwrap(), serde_json::from_value(ei).unwrap())
+    }
+
+    #[test]
+    fn codegen_emits_masked_zb() {
+        let (si, ei) = fixture();
+        let ir = build_ir(&si, &ei).unwrap();
+        let plan = plan_chunks(&ir, 1000, "t").unwrap();
+        let src: String = emit_air(&ir, &plan, "t").into_iter().map(|(_, text)| text).collect();
+        // ODD's table is one period of 2^(1 + 1) entries after everyRow's 2 and FIRST's 32
+        assert!(src.contains("zo2 = 34ull, zm2 = 3ull"), "{src}");
+        assert!(src.contains("aux[off_zi + zo2 + (row & zm2)]"), "{src}");
+        assert!(src.contains("aux[off_zi + zo0 + (row & zm0)]"), "{src}");
+        assert!(!src.contains("off_zi + row"), "an unmasked zi read: {src}");
+    }
+
+    #[test]
+    fn strip_zi_keeps_domain_factor() {
+        let (si, ei) = fixture();
+        let ir = build_ir(&si, &ei).unwrap();
+        let (opt, _) = crate::opt::optimize(&ir);
+        crate::check::equivalent(&ir, &opt, 3).unwrap();
+        let last = opt.instrs.last().unwrap();
+        assert!(last.op == "mul" && (last.a == Operand::Zi || last.b == Operand::Zi), "Q ends in * Zi{{0}}: {last:?}");
+        let zb = opt.instrs.iter().filter(|i| i.a == Operand::Zb { boundary: 2 } || i.b == Operand::Zb { boundary: 2 });
+        assert_eq!(zb.count(), 1, "the domain factor stays in the body");
+    }
+
+    /// The same vectors as the C++ BoundaryLayoutHashKnownAnswer (test_interpreter_gpu.cu).
+    #[test]
+    fn boundary_layout_hash_known_answer() {
+        use crate::ir::boundary_layout_hash;
+        let b = |v: serde_json::Value| serde_json::from_value::<crate::model::Boundary>(v).unwrap();
+        let dom = |c: u64, o: &[u64], comp: bool| {
+            b(json!({"name": "domain", "cycleBits": c, "offsets": o, "complement": comp}))
+        };
+        assert_eq!(boundary_layout_hash(&[b(json!({"name": "everyRow"}))], 6, 7), 0xa23a_9542_7e23_c1a4);
+        let all = [b(json!({"name": "everyRow"})), dom(6, &[0], false), dom(4, &[0, 15], false), dom(1, &[1], true)];
+        assert_eq!(boundary_layout_hash(&all, 6, 7), 0xd35b_499a_d3ad_58cb);
+        // same boundaries, blowup 4: other zi offsets and masks
+        assert_eq!(boundary_layout_hash(&all, 6, 8), 0xf12a_0e58_3190_8168);
+    }
+}

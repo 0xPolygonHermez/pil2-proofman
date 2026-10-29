@@ -14,14 +14,45 @@ __device__ __forceinline__ bool isGoldilocksZero(uint64_t val) {
 }
 
 
+// A boundary's rows, by value for the kernel: a row is checked iff its offset in the cycle is listed, xor complement.
+struct DomainRows {
+    uint64_t cycleMask;
+    uint32_t nOffsets;
+    uint32_t offsets[32];
+    bool complement;
+};
+
+static DomainRows domainRows(const Boundary &b) {
+    DomainRows d = {0, 0, {0}, false};
+    if (b.name == "everyRow") {
+        d.complement = true; // no offsets, complemented: every row
+        return d;
+    }
+    if (b.name != "domain" || b.offsets.size() > 32) {
+        zklog.error("verifyConstraintsGPU: unsupported boundary " + b.name);
+        exitProcess();
+    }
+    d.cycleMask = (uint64_t(1) << b.cycleBits) - 1;
+    d.nOffsets = b.offsets.size();
+    for (uint64_t k = 0; k < b.offsets.size(); k++) d.offsets[k] = b.offsets[k];
+    d.complement = b.complement;
+    return d;
+}
+
+__device__ __forceinline__ bool inDomainGPU(const DomainRows &d, uint64_t row) {
+    uint64_t r = row & d.cycleMask;
+    bool hit = false;
+    for (uint32_t k = 0; k < d.nOffsets; k++) hit |= (d.offsets[k] == r);
+    return hit != d.complement;
+}
+
 // Collects up to maxSample invalid rows of one constraint: the first maxSample/2 in arrival order,
 // the rest as a ring over the remaining slots.
 template<int DIM>
 __global__ void verifyConstraintKernel(
     const Goldilocks::Element* __restrict__ dest,
     uint64_t N,
-    uint64_t firstRow,
-    uint64_t lastRow,
+    DomainRows domain,
     uint32_t* __restrict__ d_totalInvalid,
     uint32_t* __restrict__ d_invalidRows,
     uint64_t* __restrict__ d_invalidValues,
@@ -38,7 +69,7 @@ __global__ void verifyConstraintKernel(
     __syncthreads();
 
     uint64_t row = blockIdx.x * blockDim.x + threadIdx.x;
-    bool outOfRange = (row >= N || row < firstRow || row > lastRow);
+    bool outOfRange = (row >= N || !inDomainGPU(domain, row));
 
     uint64_t v0 = 0, v1 = 0, v2 = 0;
     bool invalid = false;
@@ -192,6 +223,11 @@ void verifyConstraintsGPU(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stre
         constraintsInfo[i].stage = dbg.stage;
         constraintsInfo[i].imPol = dbg.imPol;
         if (constraintsInfo[i].skip) continue;
+        if (dbg.boundaryId >= setupCtx.starkInfo.boundaries.size()) {
+            zklog.error("verifyConstraintsGPU: constraint " + std::to_string(i) + " has unknown boundary " + std::to_string(dbg.boundaryId));
+            exitProcess();
+        }
+        const DomainRows domain = domainRows(setupCtx.starkInfo.boundaries[dbg.boundaryId]);
 
         CHECKCUDAERR(cudaMemsetAsync(pBufferGPU, 0, N * FIELD_EXTENSION * sizeof(Goldilocks::Element), stream));
         Dest constraintDest(NULL, N, 0, 0, true, i);
@@ -203,9 +239,9 @@ void verifyConstraintsGPU(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stre
         uint32_t *rows = d_rows + i * maxSample;
         uint64_t *vals = d_vals + 3 * i * maxSample;
         if (dbg.destDim == 1) {
-            verifyConstraintKernel<1><<<numBlocks, blockSize, 0, stream>>>(pBufferGPU, N, dbg.firstRow, dbg.lastRow, d_counts + i, rows, vals, (uint32_t)maxSample);
+            verifyConstraintKernel<1><<<numBlocks, blockSize, 0, stream>>>(pBufferGPU, N, domain, d_counts + i, rows, vals, (uint32_t)maxSample);
         } else {
-            verifyConstraintKernel<3><<<numBlocks, blockSize, 0, stream>>>(pBufferGPU, N, dbg.firstRow, dbg.lastRow, d_counts + i, rows, vals, (uint32_t)maxSample);
+            verifyConstraintKernel<3><<<numBlocks, blockSize, 0, stream>>>(pBufferGPU, N, domain, d_counts + i, rows, vals, (uint32_t)maxSample);
         }
         CHECKCUDAERR(cudaGetLastError());
     }

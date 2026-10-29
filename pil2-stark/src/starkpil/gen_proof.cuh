@@ -353,7 +353,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
     // The zerofier is what the Q expression divides by, and it spans the extended domain.
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
+    computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo, stream);
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 
     if (fixedTreePending) {

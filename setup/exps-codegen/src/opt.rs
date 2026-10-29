@@ -1426,6 +1426,7 @@ fn linearize(
         tab_words,
         pow_in_regs: false,
         field: template.field.clone(),
+        zi: template.zi.clone(),
     }
 }
 
@@ -1691,5 +1692,6 @@ fn linearize_identity(ir: &Ir) -> Ir {
         tab_words: 0,
         pow_in_regs: false,
         field: ir.field.clone(),
+        zi: ir.zi.clone(),
     }
 }
