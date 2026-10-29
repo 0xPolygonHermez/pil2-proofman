@@ -2169,7 +2169,7 @@ where
         air_name: &str,
         verbose_mode: VerboseMode,
         verify: bool,
-    ) -> ProofmanResult<()> {
+    ) -> ProofmanResult<Vec<Vec<u64>>> {
         if !witness_lib_path.exists() {
             return Err(ProofmanError::InvalidParameters(format!(
                 "Witness computation dynamic library not found at path: {witness_lib_path:?}"
@@ -2202,7 +2202,8 @@ where
         self.generate_air_proof_from_lib(air_name, verify)
     }
 
-    pub fn generate_air_proof_from_lib(&self, air_name: &str, verify: bool) -> ProofmanResult<()> {
+    /// Each instance's proof as the native Rust verifier reads it: `[nPublics, publics…, proof…]`.
+    pub fn generate_air_proof_from_lib(&self, air_name: &str, verify: bool) -> ProofmanResult<Vec<Vec<u64>>> {
         // A self-contained proof absorbs the cm1 root before stage 2, which the GPU's in-place
         // stage commit (stage 2 first) cannot do.
         if self.pctx.gpu {
@@ -2245,6 +2246,7 @@ where
             )));
         }
 
+        let mut proofs = Vec::with_capacity(targets.len());
         for &(instance_id, airgroup_id, air_id) in targets.iter() {
             tracing::info!("··· Proving {air_name} (instance #{instance_id}) standalone, without global challenge");
 
@@ -2317,10 +2319,15 @@ where
                 );
             }
 
-            drop(proof);
+            let publics = self.pctx.get_publics();
+            let mut words = Vec::with_capacity(1 + publics.len() + proof.proof.len());
+            words.push(publics.len() as u64);
+            words.extend(publics.iter().map(|p| p.as_canonical_u64()));
+            words.extend_from_slice(&proof.proof);
+            proofs.push(words);
         }
 
-        Ok(())
+        Ok(proofs)
     }
 
     pub fn generate_proof(
@@ -5434,6 +5441,7 @@ where
 
             let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(*instance_id)?;
             let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+            crate::recursion::dump_zkin_if_requested(setup, *instance_id, &proof.as_ref().unwrap().proof);
             let n_airgroup_values = setup.stark_info.airgroupvalues_map.as_ref().map(|map| map.len() * 3).unwrap_or(0);
 
             let airgroup_values: Vec<F> = proof

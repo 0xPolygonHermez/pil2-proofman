@@ -1,0 +1,18 @@
+// No std: a std bus adds its challenges and an airgroupvalue to every air of the pilout, which the
+// native Rust verifier does not replay. See README.md.
+
+// Stage 2 is the im pol the degree-4 !Q1 constraint needs, driven by alpha and beta.
+airtemplate DomNative(const int N = 2**10) {
+    col fixed PHASE = [0..3]...;
+    col witness a, b;
+    challenge stage(2) alpha;
+    challenge stage(2) beta;
+    domain Q1 = [1,0,0,0];
+    domain ODD = [0,1];
+    (a - PHASE) * (a + alpha) * (b + beta) === 0 domain !Q1;
+    b === 0 domain ODD;
+}
+
+airgroup DomainNative {
+    DomNative(N: 2**10);
+}

@@ -1,0 +1,3 @@
+{
+    "airs": ["DomFirst", "DomLast", "DomNotFirst", "DomNotLast", "DomOdd", "DomLimits16", "DomNotQuarter", "DomMixed"]
+}

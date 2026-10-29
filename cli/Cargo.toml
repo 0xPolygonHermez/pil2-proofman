@@ -58,6 +58,11 @@ pilfflonk-fibonacci = { path = "../pilfflonk/tests/fixtures/fibonacci/rs" }
 pilfflonk-connection = { path = "../pilfflonk/tests/fixtures/connection/rs" }
 pilfflonk-all = { path = "../pilfflonk/tests/fixtures/all/rs" }
 fibonacci-square = { path = "../examples/fibonacci-square" }
+# The domains example's setup and witness library (tests/domains_e2e.rs).
+pil2-stark-setup = { path = "../setup/pil2-stark" }
+domains = { path = "../examples/domains" }
+# The native-verifier domain example (tests/domain_native_e2e.rs).
+domain_native = { path = "../examples/domain-native" }
 
 # The inputs of the pilfflonk benchmark (pilfflonk/bench/bench.sh,
 # pilfflonk/docs/performance.md#reproducing): the witnesses of its programs, from the fixtures'

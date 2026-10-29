@@ -1,0 +1,82 @@
+require "std_permutation.pil"
+
+// Balanced std permutation: gives stage 2 and __L1__, constrains nothing.
+private function self_permutation(const int opid, expr e) {
+    permutation_assumes(opid, [e], 1);
+    permutation_proves(opid, [e], 1);
+}
+
+// Direct domain, full cycle, one offset.
+airtemplate DomFirst(const int N = 2**10) {
+    col witness a;
+    domain FIRST = [1,0...];
+    a === 1 domain FIRST;
+    self_permutation(1, a);
+}
+
+// Direct domain, full cycle, offset N-1.
+airtemplate DomLast(const int N = 2**10) {
+    col witness b;
+    domain LAST = [0...,1];
+    b === 0 domain LAST;
+    self_permutation(2, b);
+}
+
+// Complement of a full-cycle domain: row 0 (which reads the wrap) is excluded. Degree 2 on 1023 rows
+// exceeds N, so the zerofier adds no degree.
+airtemplate DomNotFirst(const int N = 2**10) {
+    col witness a;
+    domain FIRST = [1,0...];
+    (a - 'a - 1) * (a - 'a - 1) === 0 domain !FIRST;
+    self_permutation(3, a);
+}
+
+// Complement of a full-cycle domain: the wrap row N-1 is excluded.
+airtemplate DomNotLast(const int N = 2**10) {
+    col witness a;
+    domain LAST = [0...,1];
+    a' === a + 1 domain !LAST;
+    self_permutation(4, a);
+}
+
+// Direct periodic domain, cycle 2.
+airtemplate DomOdd(const int N = 2**10) {
+    col witness t;
+    domain ODD = [0,1];
+    t === 0 domain ODD;
+    self_permutation(5, t);
+}
+
+// Direct periodic domain, cycle 16, two offsets; degree 4 on 128 rows, so the constraint is an im pol.
+airtemplate DomLimits16(const int N = 2**10) {
+    col witness s;
+    domain LIMITS_16 = [1,0:14,1];
+    s * s * (1 - s) === 0 domain LIMITS_16;
+    self_permutation(6, s);
+}
+
+// Complement of a periodic domain: 3 rows of 4, which stays a complement after normalization.
+airtemplate DomNotQuarter(const int N = 2**10) {
+    col witness u;
+    domain Q1 = [1,0,0,0];
+    u === 7 domain !Q1;
+    self_permutation(7, u);
+}
+
+// Several domains in one air: EVEN and EVEN4 are one boundary; a degree-3 constraint on FIRST
+// (needs an im pol) and on !FIRST (absorbs the zerofier); one everyRow constraint. EVEN4 uses the
+// block form.
+airtemplate DomMixed(const int N = 2**10) {
+    col witness x, w, e, f, v;
+    domain FIRST = [1,0...];
+    domain EVEN = [1,0];
+    domain EVEN4 = [1,0,1,0];
+    x * x * x === 8 domain FIRST;
+    x * x * x === w domain !FIRST;
+    e === 0 domain EVEN;
+    domain EVEN4 {
+        f === 0;
+    }
+    v === x + w;
+    self_permutation(8, x);
+}

@@ -74,6 +74,7 @@ pub struct ProveAirCmd {
     /// passes between stages. That is the same shape `--proof` reads and the test-recursive fixtures
     /// hold, so a proof produced here can be fed to the next stage's setup -- which is how a stage is
     /// tested against a proof known to be good rather than against whatever the pipeline handed it.
+    /// In `--witness-lib` mode it is the native Rust verifier's input: `[nPublics, publics…, proof…]`.
     #[clap(long)]
     pub save_proof: Option<PathBuf>,
 
@@ -158,9 +159,10 @@ impl ProveAirCmd {
         let proofman = ProofMan::<Goldilocks>::new(self.proving_key.clone(), options)?;
         // ProofMan owns witness generation, so a repeat here times witness + proof together.
         let mut times = Vec::with_capacity(self.repeat as usize);
+        let mut proofs = Vec::new();
         for _ in 0..self.repeat {
             let started = std::time::Instant::now();
-            proofman.generate_air_proof(
+            proofs = proofman.generate_air_proof(
                 witness_lib.to_path_buf(),
                 self.public_inputs.clone(),
                 air,
@@ -171,6 +173,17 @@ impl ProveAirCmd {
         }
         if self.repeat > 1 {
             report_repeat("witness+proof", &times);
+        }
+        if let Some(path) = &self.save_proof {
+            let [proof] = &proofs[..] else {
+                return Err(Box::new(ProofmanError::InvalidParameters(format!(
+                    "--save-proof needs one instance of {air}, got {}",
+                    proofs.len()
+                ))));
+            };
+            let bytes: Vec<u8> = proof.iter().flat_map(|w| w.to_le_bytes()).collect();
+            std::fs::write(path, &bytes)?;
+            tracing::info!("Saved proof ({} words) to {}", proof.len(), path.display());
         }
 
         Ok(())

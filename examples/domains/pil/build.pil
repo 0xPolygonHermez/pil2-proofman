@@ -1,0 +1,13 @@
+require "domains.pil"
+
+// One domain shape per AIR, so a failure points at one shape.
+airgroup Domains {
+    DomFirst(N: 2**10);
+    DomLast(N: 2**10);
+    DomNotFirst(N: 2**10);
+    DomNotLast(N: 2**10);
+    DomOdd(N: 2**10);
+    DomLimits16(N: 2**10);
+    DomNotQuarter(N: 2**10);
+    DomMixed(N: 2**10);
+}
