@@ -25,8 +25,7 @@ those AIRs, for example `{"airs": ["DomOdd"]}`.
 
 `DOMAINS_TAMPER="<Air>:<col>:<row>:<value>"` overwrites one cell after the witness is filled.
 
-`cli/tests/domains_e2e.rs` runs the commands below in stages, one stage per task that adds
-domain support (see that file).
+`cli/tests/domains_e2e.rs` runs the commands below.
 
 The native Rust verifier is tested on `examples/domain-native` instead: the std bus gives every AIR here
 challenges and an airgroupvalue that it does not replay.
