@@ -109,6 +109,7 @@ template <typename ElementType>
 void FRI<ElementType>::proveQueries(uint64_t* friQueries, uint64_t nQueries, FRIProof<ElementType> &fproof, MerkleTreeType **trees, uint64_t nTrees) {
     uint64_t maxBuffSize = 0;
     for(uint64_t i = 0; i < nTrees; ++i) {
+        if (trees[i] == nullptr) continue;
         uint64_t buffSize = trees[i]->getMerkleTreeWidth() + trees[i]->getMerkleProofSize();
         if(buffSize > maxBuffSize) {
             maxBuffSize = buffSize;
@@ -149,6 +150,11 @@ vector<MerkleProof<ElementType>> FRI<ElementType>::queryPol(MerkleTreeType *tree
     vMkProof.reserve(nTrees);
     for (uint i = 0; i < nTrees; i++)
     {
+        // the empty const slot keeps its index
+        if (trees[i] == nullptr) {
+            vMkProof.push_back(MerkleProof<ElementType>(0, 0, 0, &buff[0]));
+            continue;
+        }
         trees[i]->getGroupProof(&buff[0], idx);
 
         MerkleProof<ElementType> mkProof(trees[i]->getMerkleTreeWidth(), trees[i]->getMerkleProofLength(), trees[i]->getNumSiblings(), &buff[0]);

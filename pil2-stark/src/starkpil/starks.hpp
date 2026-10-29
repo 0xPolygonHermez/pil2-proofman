@@ -41,7 +41,9 @@ public:
         uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
         treesGL = new MerkleTreeType*[setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2];
-        if (pConstPolsExtendedTreeAddress != nullptr) {
+        if (!setupCtx.starkInfo.hasConstants()) {
+            treesGL[setupCtx.starkInfo.nStages + 1] = nullptr;
+        } else if (pConstPolsExtendedTreeAddress != nullptr) {
             treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress, NExtended, setupCtx.starkInfo.nConstants);
         } else {
             treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity,  setupCtx.starkInfo.starkStruct.lastLevelVerification, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, setupCtx.starkInfo.nConstants, allocateTrees, allocateNodes);

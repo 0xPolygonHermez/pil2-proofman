@@ -60,6 +60,9 @@ pub fn write_fixed_cols_bin<F: PrimeField64>(
 }
 
 pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
+    if !setup.has_constants() {
+        return;
+    }
     let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
     let const_pols_tree_size = setup.const_tree_size;
 
@@ -146,6 +149,9 @@ pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
 }
 
 pub fn calculate_fixed_tree_snark<F: PrimeField64>(setup: &Setup<F>) {
+    if !setup.has_constants() {
+        return;
+    }
     let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
     let const_pols_tree_size = setup.const_tree_size;
 
@@ -229,6 +235,9 @@ pub fn calculate_fixed_tree_snark<F: PrimeField64>(setup: &Setup<F>) {
 }
 
 pub fn load_const_pols<F: PrimeField64>(setup: &Setup<F>, const_pols: &mut [F]) {
+    if !setup.has_constants() {
+        return;
+    }
     let const_pols_path = setup.setup_path.display().to_string() + ".const";
     let const_pols_size = setup.const_pols_size;
     load_const_pols_c(const_pols.as_mut_ptr() as *mut u8, const_pols_path.as_str(), const_pols_size as u64 * 8);
@@ -242,6 +251,9 @@ pub fn load_const_pols_recursivef<F: PrimeField64>(setup: &Setup<F>, const_pols:
 }
 
 pub fn load_const_pols_tree<F: PrimeField64>(setup: &Setup<F>, const_tree: &mut [F]) {
+    if !setup.has_constants() {
+        return;
+    }
     let const_pols_tree_path = &setup.const_pols_tree_path;
     let const_pols_tree_size = setup.const_tree_size;
 

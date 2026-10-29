@@ -363,12 +363,20 @@ fn prover_key(gpu: bool) -> &'static Path {
 }
 
 fn verify_constraints_passes(gpu: bool) {
-    assert_ok(&verify_constraints(prover_key(gpu), &all_inputs(), gpu, None), "verify-constraints");
+    let out = verify_constraints(prover_key(gpu), &all_inputs(), gpu, None);
+    assert_ok(&out, "verify-constraints");
+    let text = output(&out);
+    assert!(text.contains("All global constraints were successfully verified"), "{text}");
+    for air in AIRS.into_iter().chain([RANGE_TABLE]) {
+        assert!(text.contains(&format!(" of {air} were verified")), "{air}: constraints not verified:\n{text}");
+    }
 }
 
 fn proves_all_airs_in_one_run(gpu: bool) {
     let dir = TestDir::new(if gpu { "domains_e2e_gpu_prove_all" } else { "domains_e2e_prove_all" });
-    assert_ok(&prove(prover_key(gpu), &all_inputs(), &dir.path("all"), gpu_flag(gpu), &[]), "prove of every AIR");
+    let out = prove(prover_key(gpu), &all_inputs(), &dir.path("all"), gpu_flag(gpu), &[]);
+    assert_ok(&out, "prove of every AIR");
+    assert!(output(&out).contains("All proofs were successfully verified"), "{}", output(&out));
 }
 
 fn tamper_inside_a_domain_is_caught(gpu: bool) {
@@ -399,6 +407,141 @@ fn tamper_outside_every_domain_still_verifies(gpu: bool) {
 #[test]
 fn stage1_cpu_verify_constraints_passes() {
     verify_constraints_passes(false);
+}
+
+/// `src` copied to `dst`.
+fn copy_dir(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).unwrap();
+    for path in fs::read_dir(src).unwrap().map(|e| e.unwrap().path()) {
+        let to = dst.join(path.file_name().unwrap());
+        if path.is_dir() {
+            copy_dir(&path, &to);
+        } else {
+            fs::copy(&path, &to).unwrap();
+        }
+    }
+}
+
+/// A copy of the stage 0-2 key in `dir`, and the directory holding `air`'s files in it.
+fn key_copy(dir: &TestDir, air: &str) -> (PathBuf, PathBuf) {
+    let copy = dir.path("provingKey");
+    copy_dir(key(), &copy);
+    let files = find_file(&copy, &format!("{air}.starkinfo.json")).unwrap().parent().unwrap().to_path_buf();
+    (copy, files)
+}
+
+#[test]
+fn stage1_stale_verkey_for_zero_fixed_air_is_rejected() {
+    let dir = TestDir::new("domains_e2e_stale_verkey");
+    let (key, files) = key_copy(&dir, "DomFirst");
+    fs::write(files.join("DomFirst.verkey.json"), "[1,2,3,4]").unwrap();
+    let out = verify_constraints(&key, &all_inputs(), false, None);
+    assert_rejected(&out, "verify-constraints with a stale verkey", "stale verkey for DomFirst");
+}
+
+#[test]
+fn stage1_short_verkey_for_air_with_constants_is_rejected() {
+    let dir = TestDir::new("domains_e2e_short_verkey");
+    let (key, files) = key_copy(&dir, RANGE_TABLE);
+    fs::write(files.join(format!("{RANGE_TABLE}.verkey.json")), "[1,2,3]").unwrap();
+    let out = verify_constraints(&key, &all_inputs(), false, None);
+    assert_rejected(&out, "verify-constraints with a 3-word verkey", "3 words, expected 4");
+    assert!(output(&out).contains(&format!("for {RANGE_TABLE}")), "{}", output(&out));
+}
+
+#[test]
+fn stage1_missing_verkey_for_air_with_constants_is_rejected() {
+    let dir = TestDir::new("domains_e2e_missing_verkey");
+    let (key, files) = key_copy(&dir, RANGE_TABLE);
+    fs::remove_file(files.join(format!("{RANGE_TABLE}.verkey.json"))).unwrap();
+    let out = verify_constraints(&key, &all_inputs(), false, None);
+    assert_rejected(&out, "verify-constraints without a verkey", "missing verkey");
+    assert!(output(&out).contains(&format!("for {RANGE_TABLE}")), "{}", output(&out));
+}
+
+/// `prove-air --air <air>` of the CPU, saved as `[nPublics, publics…, proof…]` words.
+fn prove_air(lib: &Path, key: &Path, air: &str, proof: &Path) -> Vec<u64> {
+    let (lib, key, out) = (lib.display().to_string(), key.display().to_string(), proof.display().to_string());
+    let args = ["prove-air", "--witness-lib", &lib, "--air", air, "--proving-key", &key, "--save-proof", &out];
+    assert_ok(&cli(&args, &[]), &format!("prove-air of {air}"));
+    fs::read(proof).unwrap().as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect()
+}
+
+/// Whether the C++ verifier accepts saved `prove-air` words under `air`'s files in `key`.
+fn verify_saved(words: &[u64], key: &Path, air: &str) -> bool {
+    use proofman_fields::{Goldilocks, PrimeField64};
+    proofman_starks_lib_c::set_hash_family_c(proofman_common::hash_family::DEFAULT_HASH_ID);
+    let n = words[0] as usize;
+    let publics: Vec<Goldilocks> = words[1..1 + n].iter().map(|&w| Goldilocks::from_u64(w)).collect();
+    let starkinfo = find_file(key, &format!("{air}.starkinfo.json")).unwrap().display().to_string();
+    let stem = starkinfo.strip_suffix(".starkinfo.json").unwrap();
+    proofman::verify_proof::<Goldilocks>(
+        &words[1 + n..],
+        starkinfo.clone(),
+        format!("{stem}.verifier.bin"),
+        format!("{stem}.verkey.json"),
+        Some(publics),
+        None,
+        None,
+    )
+}
+
+/// DomFirst's self-contained proof, made once per test process.
+fn dom_first_saved() -> &'static [u64] {
+    static WORDS: OnceLock<Vec<u64>> = OnceLock::new();
+    WORDS.get_or_init(|| {
+        let dir = TestDir::new("domains_e2e_prove_air");
+        prove_air(&witness_lib(), key(), "DomFirst", &dir.path("p.bin"))
+    })
+}
+
+#[test]
+fn stage1_cpu_prove_air_self_contained_round_trip() {
+    assert!(verify_saved(dom_first_saved(), key(), "DomFirst"), "DomFirst's self-contained proof does not verify");
+    // the control has constants
+    let dir = TestDir::new("domains_e2e_prove_air_native");
+    let native = common::setup(&repo_root().join("examples/domain-native/pil/build.pilout"), &dir.path("dn"), false);
+    let lib = witness_libraries::built_library("domain_native");
+    let words = prove_air(&lib, &native, "DomNative", &dir.path("p.bin"));
+    assert!(verify_saved(&words, &native, "DomNative"), "DomNative's self-contained proof does not verify");
+}
+
+/// `DomFirstTwin` is `DomFirst`'s PIL: only the circuitType the seed absorbs tells them apart.
+#[test]
+fn stage1_self_contained_proof_does_not_verify_under_twin_air() {
+    let words = dom_first_saved();
+    assert!(verify_saved(words, key(), "DomFirst"));
+    assert!(!verify_saved(words, key(), "DomFirstTwin"), "DomFirst's proof verifies as DomFirstTwin's");
+}
+
+/// A const segment for a 0-column tree, spliced in before cm1's or appended, does not verify:
+/// the verifier parses with its own const-free layout and takes exactly proofSize words.
+#[test]
+fn stage1_spliced_const_segment_is_rejected() {
+    use pil2_stark_setup::types::stark_info::StarkInfo;
+    use proofman_verifier::LowDegreeLayout;
+
+    let words = dom_first_saved();
+    let info = json_of(key(), "DomFirst.starkinfo.json");
+    let layout = StarkInfo::from_json(&info).unwrap().layout.unwrap().unwrap();
+    let LowDegreeLayout::Fri { n_queries, .. } = layout.ldt else { panic!("DomFirst is not FRI") };
+    let mut one = layout.clone();
+    one.n_constants = 1;
+    // a 1-column const segment less its one value per query: the siblings and the last level
+    let spliced = one.flat_proof_words() - layout.flat_proof_words() - n_queries as usize;
+    let len = |k: &str| info[k].as_array().unwrap().len();
+    let n_publics = info["nPublics"].as_u64().unwrap() as usize;
+    let at = 1
+        + n_publics
+        + 3 * (len("airgroupValuesMap") + len("airValuesMap"))
+        + 4 * (layout.n_stages as usize + 1)
+        + 3 * layout.n_evals as usize;
+    let mut bad = words.to_vec();
+    bad.splice(at..at, std::iter::repeat_n(0, spliced));
+    assert!(verify_saved(words, key(), "DomFirst"));
+    assert!(!verify_saved(&bad, key(), "DomFirst"), "a spliced const segment verifies");
+    let appended: Vec<u64> = words.iter().copied().chain(std::iter::repeat_n(0, spliced)).collect();
+    assert!(!verify_saved(&appended, key(), "DomFirst"), "an appended const segment verifies");
 }
 
 #[test]

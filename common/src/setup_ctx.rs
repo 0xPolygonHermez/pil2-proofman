@@ -616,6 +616,10 @@ impl<F: PrimeField64> SetupRepository<F> {
                 total_const_pols_size += group_custom_words[&owner];
                 total_custom_commits_reserved_words += group_custom_words[&owner];
             } else {
+                debug_assert!(
+                    setups[&owner].const_pols_size_packed > 0,
+                    "{air:?} shares the const slot of {owner:?}, which has none"
+                );
                 shared_airs += 1;
                 saved += setup.const_pols_size_packed;
                 saved += setup.custom_commits_reserved_words;

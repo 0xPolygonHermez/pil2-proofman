@@ -331,6 +331,7 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
         uint64_t maxBuffSize = 0;
         for (uint64_t t = 0; t < nStageTrees; t++)
         {
+            if (stageTrees[t] == nullptr) continue;
             maxBuffSize = std::max(maxBuffSize, stageTrees[t]->getMerkleTreeWidth() + stageTrees[t]->getMerkleProofSize());
         }
         std::vector<ElementType> buff(maxBuffSize);
@@ -340,6 +341,11 @@ void STIR<ElementType>::prove(StirProof<ElementType> &proof, const StirParams &p
             openings.reserve(nStageTrees);
             for (uint64_t t = 0; t < nStageTrees; t++)
             {
+                // the empty const slot keeps its index
+                if (stageTrees[t] == nullptr) {
+                    openings.push_back(MerkleProof<ElementType>(0, 0, 0, buff.data()));
+                    continue;
+                }
                 openings.push_back(open(*stageTrees[t], round1RawIndices[j], buff.data())[0]);
             }
             stageQueries.polQueries[j] = openings;

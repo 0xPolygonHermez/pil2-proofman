@@ -856,7 +856,7 @@ uint64_t gen_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uin
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
     uint64_t offsetCm1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    if (d_buffers->airgroupId != airgroupId || d_buffers->airId != airId || d_buffers->proofType != "basic") {
+    if (setupCtx->starkInfo.hasConstants() && (d_buffers->airgroupId != airgroupId || d_buffers->airId != airId || d_buffers->proofType != "basic")) {
         uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
         uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
         loadFileParallel(params->pConstPolsAddress, constPolsPath, sizeConstPols);
@@ -921,6 +921,11 @@ uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t 
     (void)streamId_;  // CPU backend has no streams
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
+
+    if (!setupCtx->starkInfo.hasConstants()) {
+        zklog.error("gen_recursive_proof: " + string(proofType) + " air has no fixed columns; recursion airs always have them");
+        exitProcess();
+    }
 
     if (d_buffers->airgroupId != airgroupId || d_buffers->airId != airId || d_buffers->proofType != string(proofType)) {
         uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);

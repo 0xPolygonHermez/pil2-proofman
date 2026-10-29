@@ -233,7 +233,8 @@ public:
 
                 for(uint64_t i = 0; i < 1 + nStages + nCustomCommits; i++)
                 {
-                    last_levels[i] = new ElementType[nFieldElements * num_nodes];
+                    bool constSlot = i == nStages && !starkInfo_.hasConstants();
+                    last_levels[i] = constSlot ? nullptr : new ElementType[nFieldElements * num_nodes];
                 }
             }
 

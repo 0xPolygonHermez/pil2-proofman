@@ -39,10 +39,13 @@ fn print_challenges<F: PrimeField64>(pctx: &ProofCtx<F>, roots_contributions: &I
     }
 }
 
+/// An instance's stage-1 contribution header and values, with the offset its root1 goes at.
+pub(crate) type ValuesContribution<F> = (usize, Vec<F>);
+
 pub fn calculate_internal_contributions<F>(
     pctx: &ProofCtx<F>,
     roots_contributions: &InstanceRoots<F>,
-    values_contributions: &[Mutex<Vec<F>>],
+    values_contributions: &[Mutex<ValuesContribution<F>>],
     print: bool,
 ) -> Vec<Vec<u64>>
 where
@@ -66,9 +69,9 @@ where
         // SAFETY: every commit of this proof has completed.
         let root_contribution = unsafe { roots_contributions.get(*instance_id) };
 
-        let mut values_to_hash =
+        let (root1_at, mut values_to_hash) =
             values_contributions[*instance_id].lock().expect("Missing values_contribution").clone();
-        values_to_hash[4..8].copy_from_slice(&root_contribution[..4]);
+        values_to_hash[root1_at..root1_at + 4].copy_from_slice(&root_contribution[..4]);
 
         let mut hash = new_transcript::<F>(&pctx.global_info.hash);
         hash.put(&values_to_hash);

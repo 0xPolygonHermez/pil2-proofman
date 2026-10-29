@@ -547,7 +547,7 @@ fn const_gpu_older_than_source(const_path: &Path, const_gpu_path: &Path) -> bool
 }
 
 pub fn needs_const_pols_gpu_regeneration<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<bool> {
-    if !setup.gpu {
+    if !setup.gpu || !setup.has_constants() {
         return Ok(false);
     }
 
@@ -586,7 +586,7 @@ pub fn needs_const_pols_gpu_regeneration<F: PrimeField64>(setup: &Setup<F>) -> P
 }
 
 pub fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()> {
-    if !setup.gpu {
+    if !setup.gpu || !setup.has_constants() {
         return Ok(());
     }
 
@@ -1056,17 +1056,19 @@ fn load_const_pols_slot<F: PrimeField64>(
         shared = shared_slot.is_some(),
         "Loading const pols in GPU"
     );
-    load_device_const_pols_c(
-        airgroup_id as u64,
-        air_id as u64,
-        slot_offset,
-        d_buffers,
-        &setup.const_pols_path,
-        setup.const_pols_size_packed as u64,
-        proof_type,
-        only_first_gpu,
-        shared_slot.is_some(),
-    );
+    if setup.const_pols_size_packed > 0 {
+        load_device_const_pols_c(
+            airgroup_id as u64,
+            air_id as u64,
+            slot_offset,
+            d_buffers,
+            &setup.const_pols_path,
+            setup.const_pols_size_packed as u64,
+            proof_type,
+            only_first_gpu,
+            shared_slot.is_some(),
+        );
+    }
 
     // Every air, shared or not: a slot-sharing air must learn the offset too. Must mirror the
     // order SetupRepository::new sizes them in -- const pols, then custom commits.

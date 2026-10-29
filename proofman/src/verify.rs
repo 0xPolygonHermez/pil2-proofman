@@ -83,16 +83,15 @@ pub fn verify_proof<F: PrimeField64>(
     let proof_size = get_proof_size_c(p_stark_info) as usize;
     let n_publics = get_n_publics_c(p_stark_info) as usize;
     let n_publics_given = publics.as_ref().map_or(0, |p| p.len());
-    // Short is a read past the end; long only means the caller handed us a pooled or padded
-    // buffer, which the verifier ignores -- so only short is rejected.
-    let too_short = if proof.len() < proof_size {
+    // Exact: short reads past the end, and unread trailing words would make the proof malleable.
+    let mismatch = if proof.len() != proof_size {
         Some(format!("proof has {} words but the setup's proofSize is {proof_size}", proof.len()))
     } else if n_publics_given < n_publics {
         Some(format!("{n_publics_given} publics were given but the setup declares {n_publics}"))
     } else {
         None
     };
-    if let Some(reason) = too_short {
+    if let Some(reason) = mismatch {
         tracing::error!(
             "··· {}",
             format!("\u{2717} Proof does not match {stark_info_path}: {reason}").bright_red().bold()

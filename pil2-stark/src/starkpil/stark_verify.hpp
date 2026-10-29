@@ -96,7 +96,9 @@ template <typename ElementType>
 bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsBin, string verkeyFile, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* globalChallenge) {
 
     json verkeyJson;
-    file2json(verkeyFile, verkeyJson);
+    if (starkInfo.hasConstants()) {
+        file2json(verkeyFile, verkeyJson);
+    }
 
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
 
@@ -105,7 +107,9 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     uint64_t nFieldElements = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
 
     ElementType verkey[nFieldElements];
-    if(starkInfo.starkStruct.verificationHashType == "GL") {
+    if(!starkInfo.hasConstants()) {
+        // no rootC, and no verkey file to read it from
+    } else if(starkInfo.starkStruct.verificationHashType == "GL") {
         for(uint64_t i = 0; i < nFieldElements; i++) {
             verkey[i] = fromString<ElementType>(verkeyJson[i].dump());
         }
@@ -154,7 +158,20 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     TranscriptType transcript(starkInfo.starkStruct.transcriptArity, starkInfo.starkStruct.merkleTreeCustom);
     if(!challengesVadcop) {
-        transcript.put(&verkey[0], nFieldElements);
+        if (starkInfo.hasConstants()) {
+            transcript.put(&verkey[0], nFieldElements);
+        } else if constexpr (std::is_same<ElementType, Goldilocks::Element>::value) {
+            // no rootC to name the air: its circuitType does, as genProof absorbs it
+            if (!starkInfo.hasCircuitType) {
+                zklog.error("starkVerify: an air without fixed columns needs a circuitType; regenerate the setup");
+                return false;
+            }
+            Goldilocks::Element circuitType = Goldilocks::fromU64(starkInfo.circuitType);
+            transcript.put(&circuitType, 1);
+        } else {
+            zklog.error("starkVerify: an air without fixed columns is Goldilocks only");
+            return false;
+        }
         if(starkInfo.nPublics > 0) {
             if(!starkInfo.starkStruct.hashCommits) {
                 transcript.put(&publics[0], starkInfo.nPublics);
@@ -390,7 +407,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     }
 
-    Goldilocks::Element constPolsVals[starkInfo.nConstants * starkInfo.starkStruct.nQueries];
+    std::vector<Goldilocks::Element> constPolsVals(starkInfo.nConstants * starkInfo.starkStruct.nQueries);
 #pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
         for(uint64_t i = 0; i < starkInfo.nConstants; ++i) {
@@ -483,7 +500,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         .airValues = airValues,
         .evals = evals,
         .xDivXSub = xDivXSub,
-        .pConstPolsAddress = constPolsVals,
+        .pConstPolsAddress = constPolsVals.data(),
         .pConstPolsExtendedTreeAddress = nullptr,
         .pCustomCommitsFixed = trace_custom_commits_fixed,
     };
@@ -613,7 +630,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
 
             std::vector<std::vector<ElementType>> siblings(
-                nSiblings, 
+                nSiblings,
                 std::vector<ElementType>(nSiblingsPerLevel)
             );
 
@@ -634,61 +651,63 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         }
     }
 
-    zklog.trace("Verifying constant Merkle tree");
-    MerkleTreeType treeC(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
+    if (starkInfo.hasConstants()) {
+        zklog.trace("Verifying constant Merkle tree");
+        MerkleTreeType treeC(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
 
-    ElementType levelC[nFieldElements * numNodesLevel];
-    if(nFieldElements == 1) {
-        for(uint64_t i = 0; i < numNodesLevel; ++i) {
-            levelC[i] = fromString<ElementType>(jproof["s0_last_levelsC"][i]);
-        }
-    } else {
-        for(uint64_t i = 0; i < numNodesLevel; ++i) {
-            for (uint64_t j = 0; j < nFieldElements; ++j) {
-                levelC[i * nFieldElements + j] = fromString<ElementType>(jproof["s0_last_levelsC"][i][j]);
+        ElementType levelC[nFieldElements * numNodesLevel];
+        if(nFieldElements == 1) {
+            for(uint64_t i = 0; i < numNodesLevel; ++i) {
+                levelC[i] = fromString<ElementType>(jproof["s0_last_levelsC"][i]);
+            }
+        } else {
+            for(uint64_t i = 0; i < numNodesLevel; ++i) {
+                for (uint64_t j = 0; j < nFieldElements; ++j) {
+                    levelC[i * nFieldElements + j] = fromString<ElementType>(jproof["s0_last_levelsC"][i][j]);
+                }
             }
         }
-    }
 
-    if (starkInfo.starkStruct.lastLevelVerification > 0) {   
-        bool isValidRootC = MerkleTreeType::verifyMerkleRoot(verkey, levelC, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeArity, nFieldElements);
+        if (starkInfo.starkStruct.lastLevelVerification > 0) {
+            bool isValidRootC = MerkleTreeType::verifyMerkleRoot(verkey, levelC, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeArity, nFieldElements);
 
-        if (!isValidRootC) {
-            zklog.error("Constant Merkle Tree root verification failed");
+            if (!isValidRootC) {
+                zklog.error("Constant Merkle Tree root verification failed");
+                isValid = false;
+            }
+        }
+
+        bool isValidConstantMT = true;
+#pragma omp parallel for
+        for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
+            std::vector<Goldilocks::Element> values(starkInfo.nConstants);
+            for (uint64_t i = 0; i < starkInfo.nConstants; ++i) {
+                values[i] = Goldilocks::fromString(jproof["s0_valsC"][q][i]);
+            }
+
+            uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.nBitsExt, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
+            uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
+
+            std::vector<std::vector<ElementType>> siblings(
+                nSiblings,
+                std::vector<ElementType>(nSiblingsPerLevel)
+            );
+
+            for (uint64_t i = 0; i < nSiblings; ++i) {
+                for (uint64_t j = 0; j < nSiblingsPerLevel; ++j) {
+                    siblings[i][j] = fromString<ElementType>(jproof["s0_siblingsC"][q][i][j]);
+                }
+            }
+
+            bool res = treeC.verifyGroupProof(verkey, levelC, siblings, queriesL0[q], values);
+            if(!res) {
+                isValidConstantMT = false;
+            }
+        }
+        if(!isValidConstantMT) {
+            zklog.error("Constant Merkle Tree verification failed");
             isValid = false;
         }
-    }
-
-    bool isValidConstantMT = true;
-#pragma omp parallel for
-    for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
-        std::vector<Goldilocks::Element> values(starkInfo.nConstants);
-        for (uint64_t i = 0; i < starkInfo.nConstants; ++i) {
-            values[i] = Goldilocks::fromString(jproof["s0_valsC"][q][i]);
-        }
-
-        uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.nBitsExt, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
-        uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
-
-        std::vector<std::vector<ElementType>> siblings(
-            nSiblings, 
-            std::vector<ElementType>(nSiblingsPerLevel)
-        );
-
-        for (uint64_t i = 0; i < nSiblings; ++i) {
-            for (uint64_t j = 0; j < nSiblingsPerLevel; ++j) {
-                siblings[i][j] = fromString<ElementType>(jproof["s0_siblingsC"][q][i][j]);
-            }
-        }
-
-        bool res = treeC.verifyGroupProof(verkey, levelC, siblings, queriesL0[q], values);
-        if(!res) {
-            isValidConstantMT = false;
-        }
-    }
-    if(!isValidConstantMT) {
-        zklog.error("Constant Merkle Tree verification failed");
-        isValid = false;
     }
 
     for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
@@ -734,7 +753,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
             
             std::vector<std::vector<ElementType>> siblings(
-                nSiblings, 
+                nSiblings,
                 std::vector<ElementType>(nSiblingsPerLevel)
             );
 

@@ -166,7 +166,9 @@ use std::{
 };
 
 use proofman_witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
-use crate::challenge_accumulation::{aggregate_contributions, calculate_global_challenge, calculate_internal_contributions};
+use crate::challenge_accumulation::{
+    aggregate_contributions, calculate_global_challenge, calculate_internal_contributions, ValuesContribution,
+};
 use crate::{
     calculate_max_witness_trace_size, check_tree_paths_vadcop, gen_recursive_proof_size, load_device_setups,
     load_device_const_pols, const_set_key,
@@ -712,7 +714,7 @@ pub struct ProofMan<F: PrimeField64> {
     recursive2_proofs: Arc<Vec<RwLock<Vec<Proof<F>>>>>,
     recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>>,
     roots_contributions: Arc<InstanceRoots<F>>,
-    values_contributions: Arc<Vec<Mutex<Vec<F>>>>,
+    values_contributions: Arc<Vec<Mutex<ValuesContribution<F>>>>,
     aux_trace: Arc<Vec<F>>,
     const_pols: Arc<Vec<F>>,
     const_tree: Arc<Vec<F>>,
@@ -1443,6 +1445,9 @@ where
     ) -> ProofmanResult<Vec<RowInfo>> {
         let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(instance_id)?;
         let setup = self.sctx.get_setup(airgroup_id, air_id)?;
+        if !setup.has_constants() {
+            return Ok(Vec::new());
+        }
 
         let mut const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size);
         load_const_pols(setup, &mut const_pols);
@@ -2287,7 +2292,7 @@ where
             if verify {
                 timer_start_info!(VERIFYING_AIR_PROOF);
                 let setup_path = self.pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic);
-                // global_challenge = None: the verifier reseeds from verkey + publics, matching
+                // global_challenge = None: the verifier reseeds from rootC (else circuitType) + publics, matching
                 // the self-contained prover transcript.
                 let valid = verify_proof::<F>(
                     &proof.proof,
@@ -2904,8 +2909,8 @@ where
         };
         tracing::info!("Using {num_threads_per_witness} threads per witness computation");
 
-        let values_contributions: Arc<Vec<Mutex<Vec<F>>>> =
-            Arc::new((0..MAX_INSTANCES).map(|_| Mutex::new(Vec::<F>::new())).collect());
+        let values_contributions: Arc<Vec<Mutex<ValuesContribution<F>>>> =
+            Arc::new((0..MAX_INSTANCES).map(|_| Mutex::new((0, Vec::<F>::new()))).collect());
 
         let roots_contributions = Arc::new(InstanceRoots::new(MAX_INSTANCES as usize));
 
@@ -3146,6 +3151,9 @@ where
             .map(|(ag, ai, setup)| {
                 let mut h = blake3::Hasher::new();
                 for ext in [".bin", ".starkinfo.json", ".verkey.bin"] {
+                    if ext == ".verkey.bin" && !setup.has_constants() {
+                        continue;
+                    }
                     let p = setup.setup_path.display().to_string() + ext;
                     let bytes =
                         std::fs::read(&p).map_err(|e| ProofmanError::InvalidSetup(format!("cannot read {p}: {e}")))?;
@@ -6917,7 +6925,7 @@ where
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
         roots_contributions: &InstanceRoots<F>,
-        values_contributions: &[Mutex<Vec<F>>],
+        values_contributions: &[Mutex<ValuesContribution<F>>],
         instance_id: usize,
         aux_trace: &mut [F],
         const_pols: &mut [F],
@@ -7005,17 +7013,21 @@ where
             .unwrap_or(0);
 
         // [rootC | root1 | circuitType | stage-1 airvalues], as CalculateStage1Hash absorbs it.
-        let n_header = 2 * n_field_elements + 1;
+        let root_c = setup.verkey_root();
+        // no fixed columns: no rootC; circuitType still names the air
+        let root1_at = if root_c.is_some() { n_field_elements } else { 0 };
+        let n_header = root1_at + n_field_elements + 1;
         let size = n_header + n_airvalues;
 
         let mut values_hash = vec![F::ZERO; size];
 
-        let vk = setup.get_vk();
-        for (i, value) in values_hash.iter_mut().enumerate().take(n_field_elements) {
-            *value = F::from_u64(vk[i]);
+        if let Some(root_c) = root_c {
+            for (value, &limb) in values_hash.iter_mut().zip(&root_c[..n_field_elements]) {
+                *value = F::from_u64(limb);
+            }
         }
         // rootC alone does not name the air: airs with equal fixed columns share it.
-        values_hash[2 * n_field_elements] = F::from_u64(circuit_type);
+        values_hash[n_header - 1] = F::from_u64(circuit_type);
 
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
         let mut p = 0;
@@ -7028,7 +7040,7 @@ where
             }
         }
 
-        *values_contributions[instance_id].lock().unwrap() = values_hash;
+        *values_contributions[instance_id].lock().unwrap() = (root1_at, values_hash);
 
         timer_stop_and_log_debug!(
             GET_CONTRIBUTION_AIR,

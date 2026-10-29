@@ -102,12 +102,24 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         }
     }
 
-    starks.treesGL[setupCtx.starkInfo.nStages + 1]->getLevel(&proof.proof.last_levels[setupCtx.starkInfo.nStages + 1][0]);
+    if (setupCtx.starkInfo.hasConstants()) {
+        starks.treesGL[setupCtx.starkInfo.nStages + 1]->getLevel(&proof.proof.last_levels[setupCtx.starkInfo.nStages + 1][0]);
+    }
 
     if(selfContained) {
-        Goldilocks::Element verkey[HASH_SIZE];
-        starks.treesGL[setupCtx.starkInfo.nStages + 1]->getRoot(verkey);
-        starks.addTranscript(transcript, &verkey[0], HASH_SIZE);
+        if (setupCtx.starkInfo.hasConstants()) {
+            Goldilocks::Element verkey[HASH_SIZE];
+            starks.treesGL[setupCtx.starkInfo.nStages + 1]->getRoot(verkey);
+            starks.addTranscript(transcript, &verkey[0], HASH_SIZE);
+        } else {
+            // no rootC to name the air: its circuitType does
+            if (!setupCtx.starkInfo.hasCircuitType) {
+                zklog.error("genProof: a self-contained air without fixed columns needs a circuitType; regenerate the setup");
+                exitProcess();
+            }
+            Goldilocks::Element circuitType = Goldilocks::fromU64(setupCtx.starkInfo.circuitType);
+            starks.addTranscriptGL(transcript, &circuitType, 1);
+        }
         if(setupCtx.starkInfo.nPublics > 0) {
             if(!setupCtx.starkInfo.starkStruct.hashCommits) {
                 starks.addTranscriptGL(transcript, &params.publicInputs[0], setupCtx.starkInfo.nPublics);

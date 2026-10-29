@@ -283,7 +283,7 @@ impl<F: PrimeField64> Setup<F> {
             proof_type,
             (&self.p_setup).into(),
             d_buffers,
-            self.verkey.as_ptr() as *mut u8,
+            if self.verkey.is_empty() { std::ptr::null_mut() } else { self.verkey.as_ptr() as *mut u8 },
             packed_info,
             exec_ptr,
             exec_words,
@@ -402,13 +402,32 @@ impl<F: PrimeField64> Setup<F> {
 
             let verkey = if bn128_recursive_final {
                 vec![]
+            } else if !stark_info.has_constants() {
+                let verkey_bin = setup_path.display().to_string() + ".verkey.bin";
+                if Path::new(&verkey_file).exists() || Path::new(&verkey_bin).exists() {
+                    return Err(ProofmanError::InvalidSetup(format!(
+                        "stale verkey for {}, which has no fixed columns: rerun setup",
+                        air_info.name
+                    )));
+                }
+                vec![]
             } else {
-                let mut file = File::open(&verkey_file).unwrap_or_else(|e| {
-                    panic!("Unable to open verkey file {verkey_file} (setup_type {setup_type:?}): {e}")
-                });
-                let mut json_str = String::new();
-                file.read_to_string(&mut json_str).expect("Unable to read file");
-                let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
+                let json_str = std::fs::read_to_string(&verkey_file).map_err(|e| {
+                    ProofmanError::InvalidSetup(format!(
+                        "missing verkey {verkey_file} for {} (setup_type {setup_type:?}): {e}",
+                        air_info.name
+                    ))
+                })?;
+                let vk: Vec<u64> = serde_json::from_str(&json_str).map_err(|e| {
+                    ProofmanError::InvalidSetup(format!("malformed verkey {verkey_file} for {}: {e}", air_info.name))
+                })?;
+                if vk.len() != 4 {
+                    return Err(ProofmanError::InvalidSetup(format!(
+                        "malformed verkey {verkey_file} for {}: {} words, expected 4",
+                        air_info.name,
+                        vk.len()
+                    )));
+                }
                 vk.iter().map(|&x| F::from_u64(x)).collect::<Vec<F>>()
             };
 
@@ -433,7 +452,7 @@ impl<F: PrimeField64> Setup<F> {
                 )
             } else {
                 let mut const_pols_size_packed = 0;
-                if gpu && !bn128_recursive_final {
+                if gpu && !bn128_recursive_final && stark_info.has_constants() {
                     let mut header = [0u8; 8];
                     let words_per_row: u64 =
                         match File::open(&const_pols_path).and_then(|mut f| f.read_exact(&mut header)) {
@@ -635,10 +654,31 @@ impl<F: PrimeField64> Setup<F> {
     pub fn get_vk(&self) -> Vec<u64> {
         self.verkey.iter().map(|x| x.as_canonical_u64()).collect()
     }
+
+    /// The const-tree root (rootC); `None` for an air with no fixed columns.
+    pub fn verkey_root(&self) -> Option<[u64; 4]> {
+        verkey_root_of(self.has_constants(), &self.get_vk())
+    }
+
     /// GPU airs merkelize const pols on device; only CPU and BN128/RecursiveF ever read the
     /// tree file back.
     pub fn needs_const_tree_file(&self) -> bool {
         let goldilocks = self.stark_info.stark_struct.verification_hash_type == "GL";
-        !self.gpu || !goldilocks
+        self.has_constants() && (!self.gpu || !goldilocks)
+    }
+}
+
+fn verkey_root_of(has_constants: bool, vk: &[u64]) -> Option<[u64; 4]> {
+    has_constants.then(|| vk.try_into().unwrap_or_else(|_| panic!("a verkey has 4 words, not {}", vk.len())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verkey_root_of;
+
+    #[test]
+    fn verkey_root_absent_iff_no_constants() {
+        assert_eq!(verkey_root_of(false, &[]), None);
+        assert_eq!(verkey_root_of(true, &[1, 2, 3, 4]), Some([1, 2, 3, 4]));
     }
 }
