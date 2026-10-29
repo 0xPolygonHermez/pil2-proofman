@@ -221,8 +221,7 @@ TEST(DomainZerofierGpu, GpuZerofierMatchesCpu) {
     }
 }
 
-// Zi{b} * ch[0] through the interpreter's Zi load, over every extended row, against the CPU pack's read
-// zi[ziOffsets[b] + (row & ziMasks[b])] (expressions_pack.hpp).
+// Zi{b} * ch[0] via the interpreter on every extended row vs the CPU read zi[ziOffsets[b] + (row & ziMasks[b])].
 TEST(DomainZerofierGpu, InterpreterReadsDomainZi) {
     const uint64_t nBits = 6, nBitsExt = 7, NExt = 1ull << nBitsExt;
     static_assert(ROWS == 128, "one block spans the whole extended domain");
@@ -317,14 +316,8 @@ TEST(DomainZerofierGpu, InterpreterReadsDomainZi) {
         cudaFree(ptr);
 }
 
-// The hash both the codegen (setup/exps-codegen boundary_layout_hash) and the loader compute.
-TEST(DomainZerofierGpu, BoundaryLayoutHashKnownAnswer) {
-    const std::vector<Boundary> all = {everyRowB(), domainB(6, {0}, false), domainB(4, {0, 15}, false), domainB(1, {1}, true)};
-    EXPECT_EQ(boundaryLayoutHash({everyRowB()}, 6, 7), 0xa23a95427e23c1a4ull);
-    EXPECT_EQ(boundaryLayoutHash(all, 6, 7), 0xd35b499ad3ad58cbull);
-    // same boundaries, blowup 4: other zi offsets and masks
-    EXPECT_EQ(boundaryLayoutHash(all, 6, 8), 0xf12a0e5831908168ull);
-    // the hash baked into exps_fixtures/match.exps.so (Makefile)
+// The hash baked into exps_fixtures/match.exps.so (Makefile); the known answers are in test_domain_zerofier.cpp.
+TEST(DomainZerofierGpu, FixtureLayoutHash) {
     StarkInfo si = zerofierStarkInfo(6, 7);
     EXPECT_EQ(boundaryLayoutHash(si.boundaries, 6, 7), 0xfb1d2cc6ab8792b6ull);
 }

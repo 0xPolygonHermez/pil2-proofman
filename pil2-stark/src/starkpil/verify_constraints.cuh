@@ -18,7 +18,7 @@ __device__ __forceinline__ bool isGoldilocksZero(uint64_t val) {
 struct DomainRows {
     uint64_t cycleMask;
     uint32_t nOffsets;
-    uint32_t offsets[32];
+    uint32_t offsets[MAX_DOMAIN_OFFSETS];
     bool complement;
 };
 
@@ -27,10 +27,6 @@ static DomainRows domainRows(const Boundary &b) {
     if (b.name == "everyRow") {
         d.complement = true; // no offsets, complemented: every row
         return d;
-    }
-    if (b.name != "domain" || b.offsets.size() > 32) {
-        zklog.error("verifyConstraintsGPU: unsupported boundary " + b.name);
-        exitProcess();
     }
     d.cycleMask = (uint64_t(1) << b.cycleBits) - 1;
     d.nOffsets = b.offsets.size();
@@ -223,10 +219,6 @@ void verifyConstraintsGPU(SetupCtx& setupCtx, gl64_t *d_aux_trace, uint32_t stre
         constraintsInfo[i].stage = dbg.stage;
         constraintsInfo[i].imPol = dbg.imPol;
         if (constraintsInfo[i].skip) continue;
-        if (dbg.boundaryId >= setupCtx.starkInfo.boundaries.size()) {
-            zklog.error("verifyConstraintsGPU: constraint " + std::to_string(i) + " has unknown boundary " + std::to_string(dbg.boundaryId));
-            exitProcess();
-        }
         const DomainRows domain = domainRows(setupCtx.starkInfo.boundaries[dbg.boundaryId]);
 
         CHECKCUDAERR(cudaMemsetAsync(pBufferGPU, 0, N * FIELD_EXTENSION * sizeof(Goldilocks::Element), stream));

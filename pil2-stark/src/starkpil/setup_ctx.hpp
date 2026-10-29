@@ -122,26 +122,28 @@ class ProverHelpers {
         uint64_t pBits = periodBits(boundary, nBits, nBitsExt);
         uint64_t P = uint64_t(1) << pBits;
         uint64_t c = boundary.cycleBits;
-        Goldilocks::Element shiftM = Goldilocks::shift();
-        for (uint64_t i = 0; i < nBits - c; i++) Goldilocks::square(shiftM, shiftM);
-        std::vector<Goldilocks::Element> roots;
-        for (uint64_t o : boundary.offsets) roots.push_back(Goldilocks::exp(Goldilocks::w(c), o));
+        Goldilocks::Element roots[MAX_DOMAIN_OFFSETS];
+        Goldilocks::Element shiftM = domainRoots(boundary, nBits, roots);
 
     #pragma omp parallel for
         for (uint64_t k = 0; k < P; k += 4096) {
+            uint64_t n = std::min(k + 4096, P) - k;
+            std::vector<Goldilocks::Element> zh(boundary.complement ? 0 : n);
             Goldilocks::Element xm = shiftM * Goldilocks::exp(Goldilocks::w(pBits), k);
-            for (uint64_t i = k; i < std::min(k + 4096, P); ++i) {
+            for (uint64_t i = 0; i < n; ++i) {
                 Goldilocks::Element v = Goldilocks::one();
-                for (const Goldilocks::Element &r : roots) v = v * (xm - r);
-                if (boundary.complement) {
-                    dst[i] = v;
-                } else {
-                    Goldilocks::Element zh = xm;
-                    for (uint64_t j = 0; j < c; j++) Goldilocks::square(zh, zh);
-                    dst[i] = (zh - Goldilocks::one()) * Goldilocks::inv(v);
+                for (uint64_t r = 0; r < boundary.offsets.size(); r++) v = v * (xm - roots[r]);
+                dst[k + i] = v;
+                if (!boundary.complement) {
+                    Goldilocks::Element z = xm;
+                    for (uint64_t j = 0; j < c; j++) Goldilocks::square(z, z);
+                    zh[i] = z - Goldilocks::one();
                 }
                 xm = xm * Goldilocks::w(pBits);
             }
+            if (boundary.complement) continue;
+            Goldilocks::batchInverse(dst + k, dst + k, n);
+            for (uint64_t i = 0; i < n; ++i) dst[k + i] = zh[i] * dst[k + i];
         }
     }
 
@@ -158,7 +160,14 @@ public:
     StarkInfo &starkInfo;
     ExpressionsBin &expressionsBin;
     
-    SetupCtx(StarkInfo &_starkInfo, ExpressionsBin& _expressionsBin) : starkInfo(_starkInfo), expressionsBin(_expressionsBin)  {};
+    SetupCtx(StarkInfo &_starkInfo, ExpressionsBin& _expressionsBin) : starkInfo(_starkInfo), expressionsBin(_expressionsBin) {
+        for (uint64_t i = 0; i < expressionsBin.constraintsInfoDebug.size(); i++) {
+            if (expressionsBin.constraintsInfoDebug[i].boundaryId >= starkInfo.boundaries.size()) {
+                zklog.error("SetupCtx: constraint " + std::to_string(i) + " has unknown boundary " + std::to_string(expressionsBin.constraintsInfoDebug[i].boundaryId));
+                exitProcess();
+            }
+        }
+    };
 };
 
 #endif

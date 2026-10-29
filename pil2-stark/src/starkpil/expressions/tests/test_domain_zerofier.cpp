@@ -1,5 +1,4 @@
-// Domain zerofiers: the prover's periodic tables and the verifier's point value, against the
-// definition Zi_b(x) = (x^N - 1) / prod_{h in H_b} (x - g^h), H_b the rows boundary b holds on.
+// Prover tables and verifier point values against Zi_b(x) = (x^N - 1) / prod_{h in H_b} (x - g^h).
 #include <gtest/gtest.h>
 #include <array>
 #include <fstream>
@@ -43,7 +42,7 @@ Goldilocks::Element bruteForce(const Boundary &b, Goldilocks::Element x) {
     if (b.name == "everyRow") return Goldilocks::inv(zh);
     Goldilocks::Element den = Goldilocks::one();
     for (uint64_t h = 0; h < N; ++h) {
-        if (inDomain(b, h, NBITS)) den = den * (x - Goldilocks::exp(Goldilocks::w(NBITS), h));
+        if (inDomain(b, h)) den = den * (x - Goldilocks::exp(Goldilocks::w(NBITS), h));
     }
     return zh * Goldilocks::inv(den);
 }
@@ -57,7 +56,7 @@ void bruteForce3(const Boundary &b, Goldilocks3::Element &z, Goldilocks3::Elemen
     if (b.name == "everyRow") { Goldilocks3::inv(&res, &zh); return; }
     Goldilocks3::Element den = {Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero()};
     for (uint64_t h = 0; h < N; ++h) {
-        if (!inDomain(b, h, NBITS)) continue;
+        if (!inDomain(b, h)) continue;
         Goldilocks3::Element f;
         Goldilocks3::sub(f, z, Goldilocks::exp(Goldilocks::w(NBITS), h));
         Goldilocks3::mul(den, den, f);
@@ -72,11 +71,11 @@ TEST(DomainZerofier, InDomain) {
     Boundary limits = domain(4, {0, 15}, false);
     Boundary notLimits = domain(4, {0, 15}, true);
     for (uint64_t row : {0, 15, 16, 31}) {
-        EXPECT_TRUE(inDomain(limits, row, 10)) << row;
-        EXPECT_FALSE(inDomain(notLimits, row, 10)) << row;
+        EXPECT_TRUE(inDomain(limits, row)) << row;
+        EXPECT_FALSE(inDomain(notLimits, row)) << row;
     }
-    EXPECT_FALSE(inDomain(limits, 1, 10));
-    EXPECT_TRUE(inDomain(notLimits, 1, 10));
+    EXPECT_FALSE(inDomain(limits, 1));
+    EXPECT_TRUE(inDomain(notLimits, 1));
     EXPECT_EQ(periodBits(limits, 10, 11), 5u);
     EXPECT_EQ(periodBits(everyRow(), 10, 11), 1u);
 }
@@ -141,10 +140,21 @@ TEST(DomainZerofier, ValidateBoundaries) {
     EXPECT_EQ(validateBoundaries({everyRow(), domain(4, {}, false)}, NBITS), "boundary 1: a domain without offsets");
     Boundary frame; frame.name = "everyFrame";
     EXPECT_EQ(validateBoundaries({everyRow(), frame}, NBITS), "boundary 1: unknown boundary everyFrame");
+    std::vector<uint64_t> many(33);
+    for (uint64_t k = 0; k < many.size(); k++) many[k] = k;
+    EXPECT_EQ(validateBoundaries({everyRow(), domain(6, many, false)}, NBITS), "boundary 1: more than 32 offsets");
 }
 
-// The native Rust verifier's vectors (verifier/src/domain.rs reads them): ProverHelpers(si, z) at each z.
-// Writes the file DOMAIN_ZI_VECTORS names when set, else checks DOMAIN_ZI_VECTORS_FILE (set by the Makefile).
+// The hash both the codegen (setup/exps-codegen boundary_layout_hash) and the .exps.so loader compute.
+TEST(DomainZerofier, BoundaryLayoutHashKnownAnswer) {
+    const std::vector<Boundary> all = {everyRow(), domain(6, {0}, false), domain(4, {0, 15}, false), domain(1, {1}, true)};
+    EXPECT_EQ(boundaryLayoutHash({everyRow()}, 6, 7), 0xa23a95427e23c1a4ull);
+    EXPECT_EQ(boundaryLayoutHash(all, 6, 7), 0xd35b499ad3ad58cbull);
+    // same boundaries, blowup 4: other zi offsets and masks
+    EXPECT_EQ(boundaryLayoutHash(all, 6, 8), 0xf12a0e5831908168ull);
+}
+
+// ProverHelpers(si, z) vs verifier/tests/data/domain_zi_vectors.json; DOMAIN_ZI_VECTORS=<file> rewrites it.
 TEST(DomainZerofier, VerifierVectors) {
     StarkInfo si = starkInfo();
     json out;

@@ -56,15 +56,23 @@ struct Boundary
     bool complement = false;
 };
 
-// log2 of the period of the boundary's zerofier on the extended domain.
+// pil-info's MAX_DOMAIN_FACTORS: the GPU passes a domain's offsets by value.
+constexpr uint64_t MAX_DOMAIN_OFFSETS = 32;
+
+// log2 of the period of a validated boundary's zerofier on the extended domain.
 inline uint64_t periodBits(const Boundary &b, uint64_t nBits, uint64_t nBitsExt)
 {
-    if (b.name == "everyRow") return nBitsExt - nBits;
-    if (b.cycleBits > nBits) {
-        zklog.error("periodBits: domain cycle 2^" + std::to_string(b.cycleBits) + " exceeds N=2^" + std::to_string(nBits));
-        exitProcess();
-    }
-    return nBitsExt - nBits + b.cycleBits;
+    return nBitsExt - nBits + (b.name == "everyRow" ? 0 : b.cycleBits);
+}
+
+// shift^(N/2^c), the x^m of the zerofier's first extended row (c = 0 for everyRow), and the roots w(c)^o of V_O.
+inline Goldilocks::Element domainRoots(const Boundary &b, uint64_t nBits, Goldilocks::Element *roots)
+{
+    if (b.name == "everyRow") return Goldilocks::exp(Goldilocks::shift(), uint64_t(1) << nBits);
+    Goldilocks::Element shiftM = Goldilocks::shift();
+    for (uint64_t i = 0; i < nBits - b.cycleBits; i++) Goldilocks::square(shiftM, shiftM);
+    for (uint64_t k = 0; k < b.offsets.size(); k++) roots[k] = Goldilocks::exp(Goldilocks::w(b.cycleBits), b.offsets[k]);
+    return shiftM;
 }
 
 // Empty if boundaries is a valid starkinfo list: everyRow first, then domains with sorted, distinct offsets in the cycle.
@@ -77,6 +85,7 @@ inline std::string validateBoundaries(const std::vector<Boundary> &boundaries, u
         if (b.name != "domain") return where + "unknown boundary " + b.name;
         if (b.cycleBits > nBits) return where + "cycle 2^" + std::to_string(b.cycleBits) + " exceeds N=2^" + std::to_string(nBits);
         if (b.offsets.empty()) return where + "a domain without offsets";
+        if (b.offsets.size() > MAX_DOMAIN_OFFSETS) return where + "more than " + std::to_string(MAX_DOMAIN_OFFSETS) + " offsets";
         for (uint64_t k = 0; k < b.offsets.size(); k++) {
             if (b.offsets[k] >= (uint64_t(1) << b.cycleBits)) return where + "offset " + std::to_string(b.offsets[k]) + " is outside the cycle";
             // a repeated offset squares a factor of V_O, and Zh/V_O is no longer a polynomial
@@ -86,7 +95,7 @@ inline std::string validateBoundaries(const std::vector<Boundary> &boundaries, u
     return "";
 }
 
-inline bool inDomain(const Boundary &b, uint64_t row, uint64_t /*nBits*/)
+inline bool inDomain(const Boundary &b, uint64_t row)
 {
     if (b.name == "everyRow") return true;
     uint64_t r = row & ((uint64_t(1) << b.cycleBits) - 1);

@@ -64,13 +64,12 @@ __device__ void genMerkleProof_(gl64_t *nodes, gl64_t *proof, uint64_t idx, uint
 
 __global__ void genMerkleProof(gl64_t *d_nodes, uint64_t sizeLeaves, uint64_t *d_queriesL0, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, uint64_t maxTreeWidth, uint64_t nFieldElements, uint64_t arity, uint64_t lastLevel, bool dropLeaves = false);
 
-// One boundary's zerofier table: P entries, by value (MAX_DOMAIN_FACTORS roots at most).
-constexpr uint32_t MAX_ZEROFIER_ROOTS = 32;
+// One boundary's zerofier table: P entries, by value.
 struct ZerofierTable {
     uint64_t P, cycleBits, shiftM, wP;
     uint32_t nRoots;
     bool everyRow, complement;
-    uint64_t roots[MAX_ZEROFIER_ROOTS];
+    uint64_t roots[MAX_DOMAIN_OFFSETS];
 };
 __global__ void buildZerofier_kernel(gl64_t *d_zi, ZerofierTable t);
 

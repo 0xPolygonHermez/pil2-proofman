@@ -16,12 +16,12 @@ struct ConstraintInfo {
     ConstraintRowInfo *rows;
 };
 
-std::tuple<bool, ConstraintRowInfo> checkConstraint(Goldilocks::Element* dest, ParserParams& parserParams, const Boundary& boundary, uint64_t nBits, uint64_t row) {
+std::tuple<bool, ConstraintRowInfo> checkConstraint(Goldilocks::Element* dest, ParserParams& parserParams, const Boundary& boundary, uint64_t row) {
     bool isValid = true;
     ConstraintRowInfo rowInfo;
     rowInfo.row = row;
     rowInfo.dim = parserParams.destDim;
-    if(!inDomain(boundary, row, nBits)) {
+    if(!inDomain(boundary, row)) {
             rowInfo.value[0] = 0;
             rowInfo.value[1] = 0;
             rowInfo.value[2] = 0;
@@ -52,19 +52,14 @@ void verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t co
 
     uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
     uint64_t N = (1 << nBits);
-    uint64_t boundaryId = setupCtx.expressionsBin.constraintsInfoDebug[constraintId].boundaryId;
-    if(boundaryId >= setupCtx.starkInfo.boundaries.size()) {
-        zklog.error("verifyConstraint: constraint " + std::to_string(constraintId) + " has unknown boundary " + std::to_string(boundaryId));
-        exitProcess();
-    }
-    const Boundary &boundary = setupCtx.starkInfo.boundaries[boundaryId];
+    const Boundary &boundary = setupCtx.starkInfo.boundaries[setupCtx.expressionsBin.constraintsInfoDebug[constraintId].boundaryId];
 
     std::vector<ConstraintRowInfo> constraintInvalidRows;
     std::vector<bool> invalidRow(N, false);
 
 #pragma omp parallel for
     for(uint64_t i = 0; i < N; ++i) {
-        auto [isValid, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], boundary, nBits, i);
+        auto [isValid, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], boundary, i);
         if (!isValid) {
             invalidRow[i] = true;
             #pragma omp atomic
@@ -79,7 +74,7 @@ void verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t co
     uint64_t found = 0;
     while (num_rows > h) {
         if (invalidRow[count]) {
-            auto [_, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], boundary, nBits, count);
+            auto [_, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], boundary, count);
             constraintInfo.rows[found++] = rowInfo;
             num_rows--;
         }
@@ -89,7 +84,7 @@ void verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t co
     count = N - 1;
     while(num_rows > 0) {
         if (invalidRow[count]) {
-            auto [_, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], boundary, nBits, count);
+            auto [_, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], boundary, count);
             constraintInfo.rows[found++] = rowInfo;
             num_rows--;
         }

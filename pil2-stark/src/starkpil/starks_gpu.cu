@@ -203,6 +203,9 @@ void unpack_trace(
     CHECKCUDAERR(cudaGetLastError());
 }
 
+// Entries per thread of buildZerofier_kernel: one inversion each (Montgomery's trick).
+#define ZEROFIER_BATCH 8
+
 void computeZerofier(Goldilocks::Element *d_zi, StarkInfo &starkInfo, cudaStream_t stream) {
     uint64_t nBits = starkInfo.starkStruct.nBits;
     uint64_t nBitsExt = starkInfo.starkStruct.nBitsExt;
@@ -210,22 +213,17 @@ void computeZerofier(Goldilocks::Element *d_zi, StarkInfo &starkInfo, cudaStream
         const Boundary &boundary = starkInfo.boundaries[b];
         ZerofierTable t = {};
         t.everyRow = boundary.name == "everyRow";
-        t.cycleBits = t.everyRow ? 0 : boundary.cycleBits;
         t.complement = boundary.complement;
-        t.nRoots = t.everyRow ? 0 : boundary.offsets.size();
-        if (t.nRoots > MAX_ZEROFIER_ROOTS) {
-            zklog.error("computeZerofier: boundary " + std::to_string(b) + " has " + std::to_string(t.nRoots) + " offsets, more than " + std::to_string(MAX_ZEROFIER_ROOTS));
-            exitProcess();
-        }
         uint64_t pBits = periodBits(boundary, nBits, nBitsExt);
         t.P = uint64_t(1) << pBits;
-        Goldilocks::Element shiftM = Goldilocks::shift();
-        for (uint64_t i = 0; i < nBits - t.cycleBits; i++) Goldilocks::square(shiftM, shiftM);
-        t.shiftM = Goldilocks::toU64(shiftM);
         t.wP = Goldilocks::toU64(Goldilocks::w(pBits));
-        for (uint32_t k = 0; k < t.nRoots; k++) t.roots[k] = Goldilocks::toU64(Goldilocks::exp(Goldilocks::w(t.cycleBits), boundary.offsets[k]));
+        t.cycleBits = t.everyRow ? 0 : boundary.cycleBits;
+        t.nRoots = t.everyRow ? 0 : boundary.offsets.size();
+        Goldilocks::Element roots[MAX_DOMAIN_OFFSETS];
+        t.shiftM = Goldilocks::toU64(domainRoots(boundary, nBits, roots));
+        for (uint32_t k = 0; k < t.nRoots; k++) t.roots[k] = Goldilocks::toU64(roots[k]);
         dim3 threads(256);
-        dim3 blocks((t.P + threads.x - 1) / threads.x);
+        dim3 blocks((t.P + threads.x * ZEROFIER_BATCH - 1) / (threads.x * ZEROFIER_BATCH));
         buildZerofier_kernel<<<blocks, threads, 0, stream>>>((gl64_t *)d_zi + starkInfo.ziOffsets[b], t);
     }
     CHECKCUDAERR(cudaGetLastError());
@@ -233,24 +231,37 @@ void computeZerofier(Goldilocks::Element *d_zi, StarkInfo &starkInfo, cudaStream
 
 // ProverHelpers::buildZHInv / buildDomainZerofier at x^m = shift^m * w(log P)^i, stored canonical.
 __global__ void buildZerofier_kernel(gl64_t *d_zi, ZerofierTable t) {
-    uint64_t i = threadIdx.x + blockIdx.x * blockDim.x;
-    if (i >= t.P) return;
-    uint64_t *out = (uint64_t *)d_zi;
+    uint64_t i0 = (threadIdx.x + blockIdx.x * (uint64_t)blockDim.x) * ZEROFIER_BATCH;
+    if (i0 >= t.P) return;
+    uint32_t n = (uint32_t)min((uint64_t)ZEROFIER_BATCH, t.P - i0);
+    uint64_t *out = (uint64_t *)d_zi + i0;
     gl64_t one(uint64_t(1));
-    gl64_t xm = gl64_t(t.shiftM) * (gl64_t(t.wP) ^ (uint32_t)i);
-    if (t.everyRow) {
-        out[i] = (uint64_t)(xm - one).reciprocal();
-        return;
+    gl64_t xm = gl64_t(t.shiftM) * (gl64_t(t.wP) ^ (uint32_t)i0);
+    gl64_t num[ZEROFIER_BATCH], den[ZEROFIER_BATCH], prefix[ZEROFIER_BATCH];
+    gl64_t acc = one;
+    for (uint32_t j = 0; j < n; j++) {
+        if (t.everyRow) {
+            num[j] = one;
+            den[j] = xm - one;
+        } else {
+            gl64_t v = one;
+            for (uint32_t k = 0; k < t.nRoots; k++) v = v * (xm - gl64_t(t.roots[k]));
+            gl64_t zh = xm;
+            for (uint64_t c = 0; c < t.cycleBits; c++) zh = zh * zh;
+            num[j] = zh - one;
+            den[j] = v;
+        }
+        if (t.complement) out[j] = (uint64_t)den[j];
+        prefix[j] = acc;
+        acc = acc * den[j];
+        xm = xm * gl64_t(t.wP);
     }
-    gl64_t v = one;
-    for (uint32_t k = 0; k < t.nRoots; k++) v = v * (xm - gl64_t(t.roots[k]));
-    if (t.complement) {
-        out[i] = (uint64_t)v;
-        return;
+    if (t.complement) return;
+    gl64_t inv = acc.reciprocal();
+    for (int j = (int)n - 1; j >= 0; j--) {
+        out[j] = (uint64_t)(num[j] * (inv * prefix[j]));
+        inv = inv * den[j];
     }
-    gl64_t zh = xm;
-    for (uint64_t j = 0; j < t.cycleBits; j++) zh = zh * zh;
-    out[i] = (uint64_t)((zh - one) * v.reciprocal());
 }
 
 __global__ void setProdIdentity3(gl64_t *pol) {
