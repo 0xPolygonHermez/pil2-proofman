@@ -1,9 +1,10 @@
 //! Emitted domain-Zi circom (GL, BN128) vs the native `domain_zi_vectors.json`; Zh(ξ)=0 has no witness.
 
 use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::blake3_equiv_tests::{build, manifest, missing_prerequisite, repo_root, DRIVER_CPP};
@@ -12,55 +13,42 @@ use super::circom_verifier::gl_field::{gl_exp, GL_W};
 
 const P: u64 = 0xFFFF_FFFF_0000_0001;
 
-/// (ξ, expected Zi per boundary), or None when the point must be rejected.
-type Point = ([u64; 3], Option<Vec<[u64; 3]>>);
-
-struct Vectors {
-    boundaries: Vec<Value>,
-    n_bits: usize,
-    points: Vec<Point>,
+/// The vector file's point; `zi` is empty when it must be rejected.
+#[derive(Deserialize)]
+struct Point {
+    xi: [u64; 3],
+    #[serde(default)]
+    zi: Vec<[u64; 3]>,
+    #[serde(default)]
+    reject: bool,
 }
 
-fn ext(v: &Value) -> [u64; 3] {
-    let a = v.as_array().expect("ext element");
-    [0, 1, 2].map(|i| a[i].as_u64().expect("u64 limb"))
+#[derive(Deserialize)]
+struct Vectors {
+    #[serde(rename = "nBits")]
+    n_bits: usize,
+    boundaries: Vec<Value>,
+    points: Vec<Point>,
 }
 
 fn vectors() -> Vectors {
     let path = repo_root().join("verifier/tests/data/domain_zi_vectors.json");
-    let v: Value = serde_json::from_str(&fs::read_to_string(&path).expect("vector file")).unwrap();
-    let points = v["points"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| {
-            let zi = if p["reject"].as_bool() == Some(true) {
-                None
-            } else {
-                Some(p["zi"].as_array().unwrap().iter().map(ext).collect())
-            };
-            (ext(&p["xi"]), zi)
-        })
-        .collect();
-    let mut vs = Vectors {
-        boundaries: v["boundaries"].as_array().unwrap().clone(),
-        n_bits: v["nBits"].as_u64().unwrap() as usize,
-        points,
-    };
-    vs.points.push(([zh_only_root(&vs), 0, 0], None));
-    vs
+    let mut v: Vectors = serde_json::from_str(&fs::read_to_string(&path).expect("vector file")).unwrap();
+    let root = zh_only_root(&v);
+    v.points.push(Point { xi: [root, 0, 0], zi: Vec::new(), reject: true });
+    v
 }
 
 /// A row g^i where every domain's V is nonzero, so only Zh's CInv can reject it.
 fn zh_only_root(v: &Vectors) -> u64 {
+    let bs: Vec<proofman_common::Boundary> = serde_json::from_value(Value::Array(v.boundaries.clone())).unwrap();
     let n = 1u64 << v.n_bits;
     (1..n)
         .map(|i| gl_exp(GL_W[v.n_bits], i))
         .find(|&x| {
-            v.boundaries[1..].iter().all(|b| {
-                let c = b["cycleBits"].as_u64().unwrap() as usize;
-                let xm = gl_exp(x, n >> c);
-                b["offsets"].as_array().unwrap().iter().all(|o| xm != gl_exp(GL_W[c], o.as_u64().unwrap()))
+            bs[1..].iter().all(|b| {
+                let xm = gl_exp(x, n >> b.cycle_bits);
+                b.offsets.iter().all(|&o| xm != gl_exp(GL_W[b.cycle_bits as usize], o))
             })
         })
         .expect("no row outside every domain")
@@ -75,9 +63,26 @@ fn output_wiring(n_boundaries: usize) -> String {
     s
 }
 
-fn assert_matches(field: &str, xi: [u64; 3], got: &[u64], want: &[[u64; 3]]) {
-    let want: Vec<u64> = want.iter().flatten().copied().collect();
-    assert_eq!(got, want.as_slice(), "{field}: Zi mismatch at xi={xi:?}");
+/// Runs the circuit on each point (`run(i, ξ)`) and checks its Zi outputs, read mod p, or its rejection.
+fn check_points(field: &str, v: &Vectors, run: impl Fn(usize, [u64; 3]) -> Output, rejected: impl Fn(&Output)) {
+    for (i, p) in v.points.iter().enumerate() {
+        let out = run(i, p.xi);
+        let xi = p.xi;
+        if p.reject {
+            assert!(!out.status.success(), "{field} circuit accepted xi={xi:?} where Zh(xi) = 0");
+            rejected(&out);
+            continue;
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{field} witness failed at xi={xi:?}:\n{err}");
+        // BN128 Zd may be an unreduced GLCSub output
+        let got: Vec<u64> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| (l.trim().parse::<u128>().unwrap() % P as u128) as u64)
+            .collect();
+        let want: Vec<u64> = p.zi.iter().flatten().copied().collect();
+        assert_eq!(got, want, "{field}: Zi mismatch at xi={xi:?}");
+    }
 }
 
 #[test]
@@ -96,30 +101,17 @@ fn circom_domain_zi_matches_native() {
         output_wiring(nb)
     );
     let (dir, exe) = build("domain_zi_gl", &src, DRIVER_CPP);
-
-    for (i, (xi, want)) in v.points.iter().enumerate() {
+    let run = |i: usize, xi: [u64; 3]| {
         let input = dir.join(format!("in{i}.txt"));
         fs::write(&input, xi.iter().map(u64::to_string).collect::<Vec<_>>().join("\n")).unwrap();
-        let out = Command::new(&exe)
+        Command::new(&exe)
             .arg(dir.join("c_cpp/c.dat"))
             .arg(&input)
             .arg((3 * nb).to_string())
             .output()
-            .expect("failed to run witness driver");
-        match want {
-            Some(want) => {
-                assert!(
-                    out.status.success(),
-                    "GL witness failed at xi={xi:?}:\n{}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-                let got: Vec<u64> =
-                    String::from_utf8_lossy(&out.stdout).lines().map(|l| l.trim().parse().unwrap()).collect();
-                assert_matches("GL", *xi, &got, want);
-            }
-            None => assert!(!out.status.success(), "GL circuit accepted xi={xi:?} where Zh(xi) = 0"),
-        }
-    }
+            .expect("failed to run witness driver")
+    };
+    check_points("GL", &v, run, |_| {});
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -135,6 +127,26 @@ builder(fs.readFileSync(process.argv[3]))
     })
     .catch((e) => { console.error(e.message || e); process.exit(1); });
 "#;
+
+fn compile_wasm(dir: &Path, src: &str, circomlib: &Path) {
+    let circuits = manifest().join("stark2circom/circom_verifier/circuits.bn128");
+    let _ = fs::remove_dir_all(dir);
+    fs::create_dir_all(dir).unwrap();
+    fs::write(dir.join("c.circom"), src).unwrap();
+    let out = Command::new("circom")
+        .arg(dir.join("c.circom"))
+        .args(["--wasm", "--O2", "-o"])
+        .arg(dir)
+        .arg("-l")
+        .arg(&circuits)
+        .arg("-l")
+        .arg(circomlib)
+        .output()
+        .expect("failed to run circom");
+    let text = format!("{}\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(out.status.success(), "circom failed:\n{text}");
+    fs::write(dir.join("driver.js"), WASM_DRIVER_JS).unwrap();
+}
 
 #[test]
 fn circom_domain_zi_matches_native_bn128() {
@@ -161,61 +173,23 @@ fn circom_domain_zi_matches_native_bn128() {
          {frag}\n{}}}\ncomponent main = T();\n",
         output_wiring(nb)
     );
-
-    let circuits = manifest().join("stark2circom/circom_verifier/circuits.bn128");
-    let dir: PathBuf = std::env::temp_dir().join("domain_zi_bn128");
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("c.circom"), &src).unwrap();
-    let out = Command::new("circom")
-        .arg(dir.join("c.circom"))
-        .args(["--wasm", "--O2", "-o"])
-        .arg(&dir)
-        .arg("-l")
-        .arg(&circuits)
-        .arg("-l")
-        .arg(&circomlib)
-        .output()
-        .expect("failed to run circom");
-    assert!(
-        out.status.success(),
-        "circom failed:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    fs::write(dir.join("driver.js"), WASM_DRIVER_JS).unwrap();
-
-    for (i, (xi, want)) in v.points.iter().enumerate() {
+    let dir: PathBuf = std::env::temp_dir().join(format!("domain_zi_bn128_{}", std::process::id()));
+    compile_wasm(&dir, &src, &circomlib);
+    let run = |i: usize, xi: [u64; 3]| {
         let input = dir.join(format!("in{i}.json"));
         fs::write(&input, format!("{{\"in\": [\"{}\", \"{}\", \"{}\"]}}", xi[0], xi[1], xi[2])).unwrap();
-        let out = Command::new("node")
+        Command::new("node")
             .arg(dir.join("driver.js"))
             .arg(dir.join("c_js/witness_calculator.js"))
             .arg(dir.join("c_js/c.wasm"))
             .arg(&input)
             .arg((3 * nb).to_string())
             .output()
-            .expect("failed to run node");
-        match want {
-            Some(want) => {
-                assert!(
-                    out.status.success(),
-                    "BN128 witness failed at xi={xi:?}:\n{}",
-                    String::from_utf8_lossy(&out.stderr)
-                );
-                // BN128 Zd may be an unreduced GLCSub output; compare mod p.
-                let got: Vec<u64> = String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .map(|l| (l.trim().parse::<u128>().unwrap() % P as u128) as u64)
-                    .collect();
-                assert_matches("BN128", *xi, &got, want);
-            }
-            None => {
-                let err = String::from_utf8_lossy(&out.stderr);
-                assert!(!out.status.success(), "BN128 circuit accepted xi={xi:?} where Zh(xi) = 0");
-                assert!(err.contains("GLCInv"), "BN128 rejected xi={xi:?} outside GLCInv:\n{err}");
-            }
-        }
-    }
+            .expect("failed to run node")
+    };
+    check_points("BN128", &v, run, |out| {
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("GLCInv"), "BN128 rejected outside GLCInv:\n{err}");
+    });
     let _ = fs::remove_dir_all(&dir);
 }

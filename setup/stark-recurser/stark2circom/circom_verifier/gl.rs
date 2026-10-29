@@ -1075,11 +1075,25 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "expected a domain")]
+    #[should_panic(expected = "boundary 1: unknown boundary firstRow")]
     fn legacy_boundary_rejected() {
         let mut si = minimal_stark_info(2, 10, 8);
         si["boundaries"] = json!([{"name": "everyRow"}, {"name": "firstRow"}]);
         gen_stark_verifier_gl(None, &si, &minimal_verifier_info(), &Pil2CircomOptions::default()).unwrap();
+    }
+
+    #[test]
+    fn malformed_domains_rejected() {
+        for (b, want) in [
+            (json!({"name": "domain", "cycleBits": 4, "offsets": [3, 3], "complement": false}), "strictly increasing"),
+            (json!({"name": "domain", "cycleBits": 4, "offsets": [3]}), "needs cycleBits, offsets and complement"),
+        ] {
+            let mut si = minimal_stark_info(2, 10, 8);
+            si["boundaries"] = json!([{"name": "everyRow"}, b]);
+            let err = gen_stark_verifier_gl(None, &si, &minimal_verifier_info(), &Pil2CircomOptions::default());
+            let err = format!("{:#}", err.unwrap_err());
+            assert!(err.contains(want), "{err}");
+        }
     }
 
     fn basic_air_stark_info() -> Value {
