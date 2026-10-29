@@ -31,6 +31,7 @@ use proofman_fields::{
 use crate::layout::{merkle_proof_levels, sibling_words};
 use crate::multiproof::{expand_stir_checked, Proven};
 use crate::replay::{prefix_transcript, stir_transcript, StirTranscript};
+use crate::domain::zi_vector;
 use crate::verifier::{deep_denominators_inv, Boundary, DeepQueryConsts, FriEvalGroup};
 
 type E3 = CubicExtensionField<Goldilocks>;
@@ -1082,20 +1083,13 @@ where
         return false;
     };
 
-    let x_n = xi_challenge.pow(1 << verifier_info.n_bits);
-
-    let z_n = x_n - Goldilocks::ONE;
-    let z_n_inv = z_n.inverse();
-    let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
-    zi.push(z_n_inv);
-    for boundary in &verifier_info.boundaries {
-        if boundary.name == "everyRow" {
-            continue;
+    let (x_n, zi) = match zi_vector(xi_challenge, verifier_info.n_bits as u32, &verifier_info.boundaries) {
+        Ok(z) => (z.x_n, z.zi),
+        Err(e) => {
+            v_error!("Zerofiers: {}", e);
+            return false;
         }
-
-        // Handling for boundaries other than "everyRow" is intentionally deferred.
-        // If support for additional boundary types is required, implement logic here.
-    }
+    };
 
     v_debug!("Verifying proof");
 

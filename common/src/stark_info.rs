@@ -2,18 +2,7 @@
 use std::collections::HashMap;
 use serde::{Deserialize, Deserializer};
 
-pub use proofman_verifier::{LowDegreeLayout, ProofLayout, StirParams};
-
-#[allow(dead_code)]
-#[derive(Deserialize, Debug, Clone)]
-pub struct Boundary {
-    #[serde(rename = "name")]
-    pub name: String,
-    #[serde(rename = "offsetMin")]
-    pub offset_min: Option<u64>,
-    #[serde(rename = "offsetMax")]
-    pub offset_max: Option<u64>,
-}
+pub use proofman_verifier::{validate_boundaries, Boundary, LowDegreeLayout, ProofLayout, StirParams};
 
 #[allow(dead_code)]
 #[derive(Default, Deserialize, Debug, Clone)]

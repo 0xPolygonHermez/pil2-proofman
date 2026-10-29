@@ -16,6 +16,7 @@ extern crate alloc;
 #[macro_use]
 mod log;
 
+mod domain;
 mod layout;
 mod multiproof;
 mod proof;
@@ -23,6 +24,7 @@ mod replay;
 mod stir;
 mod verifier;
 
+pub use domain::{domain_zi, validate_boundaries, zi_vector, Zerofiers, ZiError};
 pub use layout::*;
 pub use multiproof::*;
 pub use proof::*;

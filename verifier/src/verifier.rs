@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 #[allow(unused)]
 use num_traits::Float;
 
+use crate::domain::zi_vector;
 use crate::layout::{merkle_proof_levels, sibling_words};
 use crate::replay::{fri_transcript, prefix_transcript};
 use proofman_fields::{
@@ -12,12 +13,18 @@ use proofman_fields::{
     Goldilocks, Hash, PrimeField64, TranscriptLike,
 };
 
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
+/// A starkinfo boundary: `{"name":"everyRow"}` (always boundary 0) or
+/// `{"name":"domain","cycleBits","offsets","complement"}`, the rows `offsets` of each cycle of
+/// `2^cycleBits` (the other rows if `complement`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct Boundary {
     pub name: String,
-    pub offset_min: Option<u64>,
-    pub offset_max: Option<u64>,
+    #[serde(default, rename = "cycleBits")]
+    pub cycle_bits: u64,
+    #[serde(default)]
+    pub offsets: Vec<u64>,
+    #[serde(default)]
+    pub complement: bool,
 }
 
 pub struct VerifierInfo {
@@ -475,8 +482,6 @@ where
         verifier_info.n_challenges_total as usize
     ];
 
-    let mut zi = Vec::with_capacity(verifier_info.boundaries.len() + 1);
-
     let (mut transcript, prefix) = prefix_transcript::<TranscriptT>(
         &root_c,
         &publics,
@@ -545,19 +550,13 @@ where
         }
     };
 
-    let x_n = xi_challenge.pow(1 << verifier_info.n_bits);
-
-    let z_n = x_n - Goldilocks::ONE;
-    let z_n_inv = z_n.inverse();
-    zi.push(z_n_inv);
-    for boundary in &verifier_info.boundaries {
-        if boundary.name == "everyRow" {
-            continue;
+    let (x_n, zi) = match zi_vector(xi_challenge, verifier_info.n_bits as u32, &verifier_info.boundaries) {
+        Ok(z) => (z.x_n, z.zi),
+        Err(e) => {
+            v_error!("Zerofiers: {}", e);
+            return false;
         }
-
-        // Handling for boundaries other than "everyRow" is intentionally deferred.
-        // If support for additional boundary types is required, implement logic here.
-    }
+    };
 
     let mut final_pol_vals: Vec<Goldilocks> = Vec::with_capacity(final_pol.len() * 3);
     for pol in &final_pol {
