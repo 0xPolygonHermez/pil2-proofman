@@ -1,6 +1,7 @@
 require "std_permutation.pil"
+require "std_range_check.pil"
 
-// Balanced std permutation: gives stage 2 and __L1__, constrains nothing.
+// Balanced std permutation: gives stage 2 (no fixed column), constrains nothing.
 private function self_permutation(const int opid, expr e) {
     permutation_assumes(opid, [e], 1);
     permutation_proves(opid, [e], 1);
@@ -8,6 +9,14 @@ private function self_permutation(const int opid, expr e) {
 
 // Direct domain, full cycle, one offset.
 airtemplate DomFirst(const int N = 2**10) {
+    col witness a;
+    domain FIRST = [1,0...];
+    a === 1 domain FIRST;
+    self_permutation(1, a);
+}
+
+// Exact copy of DomFirst (same opid): two AIRs with identical PIL, told apart only by circuitType.
+airtemplate DomFirstTwin(const int N = 2**10) {
     col witness a;
     domain FIRST = [1,0...];
     a === 1 domain FIRST;
@@ -79,4 +88,6 @@ airtemplate DomMixed(const int N = 2**10) {
     }
     v === x + w;
     self_permutation(8, x);
+    // feeds the std range-check table AIR, the one AIR here that keeps fixed columns
+    range_check(x, 0, 255);
 }

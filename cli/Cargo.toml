@@ -63,6 +63,8 @@ pil2-stark-setup = { path = "../setup/pil2-stark" }
 domains = { path = "../examples/domains" }
 # The native-verifier domain example (tests/domain_native_e2e.rs).
 domain_native = { path = "../examples/domain-native" }
+# The std's cyclic gsum on a Q-degree-0 AIR (tests/cyclic_sum_e2e.rs).
+cyclic-sum = { path = "../pil2-components/test/cyclic_sum/rs" }
 
 # The inputs of the pilfflonk benchmark (pilfflonk/bench/bench.sh,
 # pilfflonk/docs/performance.md#reproducing): the witnesses of its programs, from the fixtures'

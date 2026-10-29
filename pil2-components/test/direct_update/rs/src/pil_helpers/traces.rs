@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "238e0d7292b034d1084df581f2ee911540cb2209a980471700ec89b95557d2c6";
+pub const PILOUT_HASH: &str = "a472eb3e47c88b94d6e8f1a848e7005a3f36a959368684ad1808536b3beb2f9b";
 
 //AIRGROUP CONSTANTS
 
@@ -112,21 +112,11 @@ trace_row!(DirectUpdateProdGlobalTraceRow<F> {
 
 pub type DirectUpdateProdGlobalTrace<F> = GenericTrace<DirectUpdateProdGlobalTraceRow<F>, 16, 0, 1>;
 
-trace_row!(DirectUpdateSumLocalFixedRow<F> {
- __L1__: F,
-});
-pub type DirectUpdateSumLocalFixed<F> = GenericTrace<DirectUpdateSumLocalFixedRow<F>, 32, 1, 0>;
-
 trace_row!(DirectUpdateSumLocalTraceRow<F> {
  a:[F; 2], b:[F; 2], c:[F; 2], perform_operation:F,
 });
 
 pub type DirectUpdateSumLocalTrace<F> = GenericTrace<DirectUpdateSumLocalTraceRow<F>, 32, 1, 0>;
-
-trace_row!(DirectUpdateSumGlobalFixedRow<F> {
- __L1__: F,
-});
-pub type DirectUpdateSumGlobalFixed<F> = GenericTrace<DirectUpdateSumGlobalFixedRow<F>, 32, 1, 1>;
 
 trace_row!(DirectUpdateSumGlobalTraceRow<F> {
  c:[F; 2], d:[F; 2], perform_operation:F,

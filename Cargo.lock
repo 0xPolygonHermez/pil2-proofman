@@ -492,6 +492,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef8ae57c4978a2acd8b869ce6b9ca1dfe817bff704c220209fdef2c0b75a01b9"
 
 [[package]]
+name = "cyclic-sum"
+version = "1.4.0-alpha"
+dependencies = [
+ "common",
+ "num-bigint",
+ "pil2-stark-setup",
+ "pil2-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-fields",
+ "proofman-macros",
+ "proofman-witness",
+ "rand 0.10.3",
+ "rayon",
+ "serde",
+ "serde_arrays",
+ "tracing",
+]
+
+[[package]]
 name = "deunicode"
 version = "1.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1548,6 +1569,7 @@ dependencies = [
  "clap",
  "colored",
  "convert_case",
+ "cyclic-sum",
  "domain_native",
  "domains",
  "fibonacci-square",

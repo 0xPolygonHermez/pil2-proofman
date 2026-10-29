@@ -226,15 +226,15 @@ endif
 ifeq ($(UNAME_S),Darwin)
     # macOS - exclude assembly files (.asm)
     SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/api/pilfflonk_api.* ./src/pilfflonk ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/* ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.cc")
-SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/% ./src/starkpil/expressions/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
+SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/% ./src/starkpil/expressions/tests/% ./src/starkpil/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
 else
     # Linux - include all files including assembly
     SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/api/pilfflonk_api.* ./src/pilfflonk ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc")
-SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/% ./src/starkpil/expressions/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
+SRCS_STARKS_LIB := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/% ./src/starkpil/expressions/tests/% ./src/starkpil/tests/%,$(SRCS_STARKS_LIB))  # gtest sources are not library sources
 endif
 SRCS_STARKS_LIB := $(filter-out %_gpu.cpp %_gpu.cc,$(SRCS_STARKS_LIB))
 SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/api/starks_backend.* ./src/api/pilfflonk_api.* ./src/pilfflonk ./src/bctree/build_const_tree.cpp ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/bn128/src/poseidon ./src/bn128/src/msm ./src/bn128/src/ntt ./src/rapidsnark/*  ./src/bn128/src/ffiasm ./src/utils -name "*.cpp" -or -name "*.c" -or -name "*.asm" -or -name "*.cc" -or -name "*.cu")
-SRCS_STARKS_LIB_GPU := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/% ./src/starkpil/expressions/tests/%,$(SRCS_STARKS_LIB_GPU))  # gtest sources are not library sources
+SRCS_STARKS_LIB_GPU := $(filter-out ./src/starkpil/stir/tests/% ./src/rapidsnark/polynomial/tests/% ./src/starkpil/expressions/tests/% ./src/starkpil/tests/%,$(SRCS_STARKS_LIB_GPU))  # gtest sources are not library sources
 # Sppark utility for GPU (provides gpu_props function)
 SPPARK_GPU_OBJ := $(BUILD_DIR_GPU)/external/sppark/util/all_gpus.o
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
@@ -361,6 +361,11 @@ stir_test_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_STIR_TEST_GPU)
 TARGET_INTERP_TEST_GPU := interpreterTestsGpu
 interp_test_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_INTERP_TEST_GPU)
 
+# The cyclic gsum correction, CPU against GPU (gtest).
+TARGET_HINTS_TEST_GPU := hintsTestsGpu
+hints_test_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_HINTS_TEST_GPU)
+	$(BUILD_DIR_GPU)/$(TARGET_HINTS_TEST_GPU)
+
 # Low-degree-test benchmarks (all DISABLED_; run with --gtest_also_run_disabled_tests).
 TARGET_STIR_BENCH_GPU := stirBenchGpu
 stir_bench_gpu: starks_lib_gpu $(BUILD_DIR_GPU)/$(TARGET_STIR_BENCH_GPU)
@@ -400,6 +405,9 @@ $(BUILD_DIR_GPU)/exps_fixtures/%.exps.so: src/starkpil/expressions/tests/exps_fi
 	$(CC) -shared -fPIC $(FIXTURE_HASH) $< -o $@
 
 $(BUILD_DIR_GPU)/$(TARGET_INTERP_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/expressions/tests/test_interpreter_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU) $(EXPS_FIXTURES)
+	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
+
+$(BUILD_DIR_GPU)/$(TARGET_HINTS_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/tests/test_hints_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
 
 $(BUILD_DIR_GPU)/$(TARGET_STIR_BENCH_GPU): $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/bench_stir_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
@@ -477,7 +485,7 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean clean_cpu clean_gpu domain_zerofier_test pilfflonk_test pilfflonk_gpu_test stir_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu
+.PHONY: clean clean_cpu clean_gpu domain_zerofier_test pilfflonk_test pilfflonk_gpu_test stir_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu hints_test_gpu
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)

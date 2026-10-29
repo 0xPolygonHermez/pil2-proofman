@@ -70,12 +70,17 @@ pub fn scratch(name: &str) -> PathBuf {
 
 /// `proofman-setup setup -a <pilout> -b <build> [-r]` with the CLI's defaults; returns the proving key.
 pub fn setup(pilout: &Path, build: &Path, recursive: bool) -> PathBuf {
+    setup_with_fixed_dir(pilout, build, recursive, None)
+}
+
+/// `setup`, with `-u <fixed_dir>` when given.
+pub fn setup_with_fixed_dir(pilout: &Path, build: &Path, recursive: bool, fixed_dir: Option<&Path>) -> PathBuf {
     let _ = fs::remove_dir_all(build);
     let jobs = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let opts = SetupOptions {
         airout_path: pilout.display().to_string(),
         build_dir: build.display().to_string(),
-        fixed_dir: None,
+        fixed_dir: fixed_dir.map(|d| d.display().to_string()),
         stark_structs_path: None,
         recursive,
         recursive_jobs: jobs.min(2),

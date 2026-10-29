@@ -622,6 +622,26 @@ uint64_t getHintId(SetupCtx& setupCtx, uint64_t hintId, std::string name) {
     return hintField->values[0].id;
 }
 
+// A cyclic gsum (std_sum.pil, hint field `cyclic`): vals[i] -= (i+1)·S/N with S = vals[N-1], so vals[N-1] = 0.
+void cyclicSumCorrection(Goldilocks::Element* vals, uint64_t N, uint64_t dim) {
+    const uint64_t stride = dim == 1 ? 1 : FIELD_EXTENSION;
+    const Goldilocks::Element nInv = Goldilocks::fromU64(GOLDILOCKS_PRIME - (GOLDILOCKS_PRIME - 1) / N);
+    Goldilocks::Element k[FIELD_EXTENSION];
+    for(uint64_t d = 0; d < dim; ++d) k[d] = vals[(N - 1) * stride + d] * nInv;
+#pragma omp parallel for
+    for(uint64_t i = 0; i < N; ++i) {
+        const Goldilocks::Element f = Goldilocks::fromU64(i + 1);
+        for(uint64_t d = 0; d < dim; ++d) vals[i * stride + d] = vals[i * stride + d] - f * k[d];
+    }
+}
+
+bool isCyclicSumHint(SetupCtx& setupCtx, uint64_t hintId) {
+    const Hint &hint = setupCtx.expressionsBin.hints[hintId];
+    return std::any_of(hint.fields.begin(), hint.fields.end(), [](const HintField& f) {
+        return f.name == "cyclic" && !f.values.empty() && f.values[0].operand == opType::number && f.values[0].value != 0;
+    });
+}
+
 void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add) {
     
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
@@ -643,6 +663,15 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
     expressionsCtx.calculateExpressions(params, destStruct, N, false, false);
+    // A base-field quotient (e.g. the number 0 of a gsum with no row terms) widened to the column's dim
+    if(destStruct.dim < dim) {
+        for(uint64_t i = N; i-- > 0;) {
+            const Goldilocks::Element v = vals[i];
+            vals[i * FIELD_EXTENSION] = v;
+            vals[i * FIELD_EXTENSION + 1] = Goldilocks::zero();
+            vals[i * FIELD_EXTENSION + 2] = Goldilocks::zero();
+        }
+    }
     for(uint64_t i = 1; i < N; ++i) {
         if(add) {
             if(dim == 1) {
@@ -658,10 +687,11 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
             }
         }
     }
-    setHintField(setupCtx, params, vals, hintId, hintFieldNameDest);
     if (hintFieldNameAirgroupVal != "") {
         setHintField(setupCtx, params, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal);
     }
+    if(add && isCyclicSumHint(setupCtx, hintId)) cyclicSumCorrection(vals, N, dim);
+    setHintField(setupCtx, params, vals, hintId, hintFieldNameDest);
 
     if(setupCtx.starkInfo.verify_constraints) {
         delete[] vals;

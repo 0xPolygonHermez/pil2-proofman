@@ -327,7 +327,10 @@ private function gsum_update_air_constraint_data(const int type, const expr sel,
 private function piop_gsum_air() {
     use air.std.gsum;
 
-    const expr L1 = get_L1(); // [1,0,...]
+    // BN128 keeps __L1__: pilfflonk's fixtures and tests assume its last-row constraint
+    const int CYCLIC = ACTIVE_FIELD != FIELD_BN128;
+    expr L1 = 0;
+    if (!CYCLIC) L1 = get_L1(); // [1,0,...]
 
     col witness stage(2) gsum;
 
@@ -338,9 +341,12 @@ private function piop_gsum_air() {
     /*
     We need to check the constraint:
                                            selᵢ
-        gsum === 'gsum * (1 - L1) + ∑ᵢ ----------
-                                         (fᵢ + ɣ)
-    where degree(gsum),degree(L1) = 1.
+        gsum === 'gsum + ∑ᵢ ---------- - K,   K = (result - direct) / N
+                          (fᵢ + ɣ)
+    on every row, wrap included (a cyclic accumulator: no __L1__). Summed over the
+    N rows, gsum telescopes away and ∑ᵢ selᵢ/(fᵢ + ɣ) === result - direct.
+    On BN128 it is instead gsum === 'gsum * (1 - L1) + ∑ᵢ selᵢ/(fᵢ + ɣ), and
+    L1' * (result - gsum - direct) === 0.
 
     For optimization purposes, we perform the reduction:
            sel1         sel2               selN           sel              
@@ -482,9 +488,10 @@ private function piop_gsum_air() {
             }
 
             // Check constraints:
-            //   - 2 + new_den_deg <= MAX_CONSTRAINT_DEGREE (left side of final constraint)
+            //   - 1 + new_den_deg <= MAX_CONSTRAINT_DEGREE (left side, (gsum - 'gsum) * den; 2 + with L1):
+            //     the cyclic form's other factors (direct_vals_*, im_direct, result, N_INV) are degree 0
             //   - new_num_deg <= MAX_CONSTRAINT_DEGREE (right side)
-            if (2 + new_den_deg <= MAX_CONSTRAINT_DEGREE && new_num_deg <= MAX_CONSTRAINT_DEGREE) {
+            if (2 - CYCLIC + new_den_deg <= MAX_CONSTRAINT_DEGREE && new_num_deg <= MAX_CONSTRAINT_DEGREE) {
                 direct_terms[direct_terms_count] = i;
                 direct_terms_count++;
                 curr_den_deg = new_den_deg;
@@ -605,20 +612,22 @@ private function piop_gsum_air() {
     }
 
     //  At this point, the constraint has been transformed to:
-    //       gsum === 'gsum * (1 - L1) + ∑ⱼ imⱼ + direct_num / direct_den
-    //  check that the constraint is satisfied
-    (gsum - 'gsum * (1 - L1) - sum_ims) * direct_den - direct_num === 0;
+    //       gsum === 'gsum + ∑ⱼ imⱼ + direct_num / direct_den - K
+    //  and it is emitted below, once K is known.
+    if (!CYCLIC) {
+        (gsum - 'gsum * (1 - L1) - sum_ims) * direct_den - direct_num === 0;
+    }
 
     /*
-    At the very last row, it should be satisfied that:
-                                     selᵢ
-        gsum_result === gsum + ∑ᵢ --------
-                                    fᵢ + ɣ
+    The direct terms are row-independent:
+                     selᵢ
+        direct = ∑ᵢ --------
+                    fᵢ + ɣ
     where both selᵢ and fᵢ are field elements, for all ᵢ.
 
     We also transform some of the rational constraint to a polynomial one by 
     substituting all the rational terms by individual terms:
-          gsum_result === gsum + ∑ⱼ imⱼ
+          direct = ∑ⱼ imⱼ + direct_vals_num / direct_vals_den
     */
 
     // Compute the direct terms numerator and denominator
@@ -702,9 +711,26 @@ private function piop_gsum_air() {
     } else {
         result = gsum_result;
     }
-    @gsum_col{reference: gsum, numerator_air: sum_ims * direct_den + direct_num, denominator_air: direct_den, 
-                               numerator_direct: direct_sum_ims * direct_vals_den + direct_vals_num, denominator_direct: direct_vals_den, result: result};
-    L1' * ((result - gsum - direct_sum_ims) * direct_vals_den - direct_vals_num) === 0;
+    // `cyclic` tells the prover to emit the cyclic accumulator, not the prefix sum
+    if (CYCLIC) {
+        @gsum_col{reference: gsum, numerator_air: sum_ims * direct_den + direct_num, denominator_air: direct_den,
+                                   numerator_direct: direct_sum_ims * direct_vals_den + direct_vals_num, denominator_direct: direct_vals_den, result: result,
+                                   cyclic: 1};
+    } else {
+        @gsum_col{reference: gsum, numerator_air: sum_ims * direct_den + direct_num, denominator_air: direct_den, 
+                                   numerator_direct: direct_sum_ims * direct_vals_den + direct_vals_num, denominator_direct: direct_vals_den, result: result};
+    }
+    if (CYCLIC) {
+        // N^-1 mod p: N | p-1, and 1/N would be integer division
+        const int N_INV = PRIME - (PRIME - 1) / N;
+        if ((N * N_INV) % PRIME != 1) error(`N_INV is not the inverse of N = ${N}`);
+
+        //  (gsum - 'gsum - ∑ⱼ imⱼ + K) * direct_den - direct_num === 0, K = (result - direct) / N, times direct_vals_den
+        ((gsum - 'gsum - sum_ims) * direct_vals_den + ((result - direct_sum_ims) * direct_vals_den - direct_vals_num) * N_INV) * direct_den
+            - direct_num * direct_vals_den === 0;
+    } else {
+        L1' * ((result - gsum - direct_sum_ims) * direct_vals_den - direct_vals_num) === 0;
+    }
 
     // Store the airgroup and air ids for global hints
     proof.std.gsum.airgroup_ids[proof.std.gsum.air_count] = AIRGROUP_ID;

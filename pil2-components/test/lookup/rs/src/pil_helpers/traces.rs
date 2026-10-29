@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "cec3a664ede780abbb9ef5fbdd94ea7229294eab2166c303b430c5885d710113";
+pub const PILOUT_HASH: &str = "2f15caf358bd9dbea338fd6e7103ccc2c89aa05c5fa34d9e663c5a46fda3ed4d";
 
 //AIRGROUP CONSTANTS
 
@@ -37,21 +37,11 @@ pub const LOOKUP_2_15_AIR_IDS: &[usize] = &[4];
 pub const LOOKUP_3_AIR_IDS: &[usize] = &[5];
 
   
-trace_row!(Lookup0FixedRow<F> {
- __L1__: F,
-});
-pub type Lookup0Fixed<F> = GenericTrace<Lookup0FixedRow<F>, 1024, 0, 0>;
-
 trace_row!(Lookup0TraceRow<F> {
  f:[F; 4], t:[F; 4], sel:[F; 2], mul:[F; 2],
 });
 
 pub type Lookup0Trace<F> = GenericTrace<Lookup0TraceRow<F>, 1024, 0, 0>;
-
-trace_row!(Lookup1FixedRow<F> {
- __L1__: F,
-});
-pub type Lookup1Fixed<F> = GenericTrace<Lookup1FixedRow<F>, 1024, 0, 1>;
 
 trace_row!(Lookup1TraceRow<F> {
  f:[F; 2], t:F, sel:[F; 2], mul:F,
@@ -59,21 +49,11 @@ trace_row!(Lookup1TraceRow<F> {
 
 pub type Lookup1Trace<F> = GenericTrace<Lookup1TraceRow<F>, 1024, 0, 1>;
 
-trace_row!(Lookup2_12FixedRow<F> {
- __L1__: F,
-});
-pub type Lookup2_12Fixed<F> = GenericTrace<Lookup2_12FixedRow<F>, 4096, 0, 2>;
-
 trace_row!(Lookup2_12TraceRow<F> {
  a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, mul:F,
 });
 
 pub type Lookup2_12Trace<F> = GenericTrace<Lookup2_12TraceRow<F>, 4096, 0, 2>;
-
-trace_row!(Lookup2_13FixedRow<F> {
- __L1__: F,
-});
-pub type Lookup2_13Fixed<F> = GenericTrace<Lookup2_13FixedRow<F>, 8192, 0, 3>;
 
 trace_row!(Lookup2_13TraceRow<F> {
  a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, mul:F,
@@ -81,21 +61,11 @@ trace_row!(Lookup2_13TraceRow<F> {
 
 pub type Lookup2_13Trace<F> = GenericTrace<Lookup2_13TraceRow<F>, 8192, 0, 3>;
 
-trace_row!(Lookup2_15FixedRow<F> {
- __L1__: F,
-});
-pub type Lookup2_15Fixed<F> = GenericTrace<Lookup2_15FixedRow<F>, 32768, 0, 4>;
-
 trace_row!(Lookup2_15TraceRow<F> {
  a1:F, b1:F, a2:F, b2:F, a3:F, b3:F, a4:F, b4:F, c1:F, d1:F, c2:F, d2:F, sel1:F, sel2:F, mul:F,
 });
 
 pub type Lookup2_15Trace<F> = GenericTrace<Lookup2_15TraceRow<F>, 32768, 0, 4>;
-
-trace_row!(Lookup3FixedRow<F> {
- __L1__: F,
-});
-pub type Lookup3Fixed<F> = GenericTrace<Lookup3FixedRow<F>, 16384, 0, 5>;
 
 trace_row!(Lookup3TraceRow<F> {
  c1:F, d1:F, c2:F, d2:F, mul1:F, mul2:F,

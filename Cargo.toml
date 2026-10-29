@@ -42,6 +42,7 @@ members = [
   "pil2-components/test/direct_update/rs",
   "pil2-components/test/lookup/rs",
   "pil2-components/test/one_instance/rs",
+  "pil2-components/test/cyclic_sum/rs",
   "pil2-components/test/permutation/rs",
   "pil2-components/test/range_check/rs",
   "pil2-components/test/simple/rs",

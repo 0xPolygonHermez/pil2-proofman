@@ -1,20 +1,31 @@
 # Domains Example
 
-Eight AIRs in one airgroup `Domains`, all at `N = 2^10`, each exercising one shape of domain
+Nine AIRs in one airgroup `Domains`, all at `N = 2^10`, each exercising one shape of domain
 constraint (`expr === expr domain NAME;`, `domain !NAME`, `domain NAME { ... }`). Each AIR also carries a
-self-balancing std permutation (`self_permutation` in `pil/domains.pil`), only to give it stage 2 and a
-fixed column; it touches no domain constraint, so a failure still points at one domain shape.
+self-balancing std permutation (`self_permutation` in `pil/domains.pil`), only to give it stage 2; it
+touches no domain constraint of the AIR, so a failure still points at one domain shape.
+
+The std's grand sum is a cyclic accumulator, one everyRow constraint with no `__L1__` fixed column and no
+domain (on BN128 it keeps `__L1__`). No AIR declares a fixed column, so all nine have no constants at all.
+
+`DomMixed` also range-checks `x` in `[0, 255]`. That brings in the std range-check table AIR
+`SpecifiedRanges`, whose table is fixed columns: it is the one AIR with constants in this pilout, the
+control next to the zero-fixed ones, and `DomMixed` feeds a table the prover owns.
+
+`DomFirstTwin` is an exact copy of `DomFirst`: two AIRs with identical PIL, told apart only by their
+`circuitType`.
 
 | AIR | Domain shape | Constraint |
 |---|---|---|
 | `DomFirst` | direct, full cycle, 1 offset | `a === 1 domain FIRST` |
+| `DomFirstTwin` | `DomFirst`'s twin | `a === 1 domain FIRST` |
 | `DomLast` | direct, full cycle, offset N−1 | `b === 0 domain LAST` |
 | `DomNotFirst` | complement, full cycle, degree 2 (zerofier adds no degree) | `(a - 'a - 1) * (a - 'a - 1) === 0 domain !FIRST` |
 | `DomNotLast` | complement, wrap row excluded | `a' === a + 1 domain !LAST` |
 | `DomOdd` | direct, cycle 2 | `t === 0 domain ODD` |
 | `DomLimits16` | direct, cycle 16, 2 offsets (degree 4 on 128 rows, so an im pol) | `s * s * (1 - s) === 0 domain LIMITS_16` |
 | `DomNotQuarter` | complement of a periodic domain | `u === 7 domain !Q1` (`Q1 = [1,0,0,0]`) |
-| `DomMixed` | several domains, dedup, degree 3 on FIRST and !FIRST, one everyRow, a `domain EVEN4 { ... }` block | see `pil/domains.pil` |
+| `DomMixed` | several domains, dedup, degree 3 on FIRST and !FIRST, one everyRow, a `domain EVEN4 { ... }` block, a range check | see `pil/domains.pil` |
 
 The witness of each AIR breaks its constraint outside the domain, so a proof that verifies shows
 that the rows outside the domain are not constrained. `DomNotFirst` and `DomNotLast` do this on the

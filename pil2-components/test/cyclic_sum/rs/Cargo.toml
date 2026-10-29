@@ -1,0 +1,41 @@
+[package]
+name = "cyclic-sum"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+publish = false
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+pil2-std-lib = { workspace = true }
+
+proofman.workspace = true
+proofman-common.workspace = true
+proofman-macros.workspace = true
+proofman-cli.workspace = true
+proofman-witness.workspace = true
+tracing.workspace = true
+rand.workspace = true
+num-bigint.workspace = true
+proofman-fields.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_arrays.workspace = true
+
+[build-dependencies]
+proofman-cli.workspace = true
+pil2-stark-setup = { workspace = true }
+
+[dev-dependencies]
+common = { workspace = true }
+
+[features]
+default = []
+diagnostic = ["proofman-macros/diagnostic"]
+debug = []

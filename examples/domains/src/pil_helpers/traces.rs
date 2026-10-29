@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "5c5acfd933d29a5e930de5da9fa07c2fe51eb70d7b8b08137067aae2fbf0737d";
+pub const PILOUT_HASH: &str = "11f8233c4feaad7b0f4ea49dad0d1bdd62c4566b66352bf59af23b32b5943625";
 
 //AIRGROUP CONSTANTS
 
@@ -26,110 +26,95 @@ pub const DOMAINS_AIRGROUP_ID: usize = 0;
 
 pub const DOM_FIRST_AIR_IDS: &[usize] = &[0];
 
-pub const DOM_LAST_AIR_IDS: &[usize] = &[1];
+pub const DOM_FIRST_TWIN_AIR_IDS: &[usize] = &[1];
 
-pub const DOM_NOT_FIRST_AIR_IDS: &[usize] = &[2];
+pub const DOM_LAST_AIR_IDS: &[usize] = &[2];
 
-pub const DOM_NOT_LAST_AIR_IDS: &[usize] = &[3];
+pub const DOM_NOT_FIRST_AIR_IDS: &[usize] = &[3];
 
-pub const DOM_ODD_AIR_IDS: &[usize] = &[4];
+pub const DOM_NOT_LAST_AIR_IDS: &[usize] = &[4];
 
-pub const DOM_LIMITS_16_AIR_IDS: &[usize] = &[5];
+pub const DOM_ODD_AIR_IDS: &[usize] = &[5];
 
-pub const DOM_NOT_QUARTER_AIR_IDS: &[usize] = &[6];
+pub const DOM_LIMITS_16_AIR_IDS: &[usize] = &[6];
 
-pub const DOM_MIXED_AIR_IDS: &[usize] = &[7];
+pub const DOM_NOT_QUARTER_AIR_IDS: &[usize] = &[7];
+
+pub const DOM_MIXED_AIR_IDS: &[usize] = &[8];
+
+pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[9];
 
   
-trace_row!(DomFirstFixedRow<F> {
- __L1__: F,
-});
-pub type DomFirstFixed<F> = GenericTrace<DomFirstFixedRow<F>, 1024, 0, 0>;
-
 trace_row!(DomFirstTraceRow<F> {
  a:F,
 });
 
 pub type DomFirstTrace<F> = GenericTrace<DomFirstTraceRow<F>, 1024, 0, 0>;
 
-trace_row!(DomLastFixedRow<F> {
- __L1__: F,
+trace_row!(DomFirstTwinTraceRow<F> {
+ a:F,
 });
-pub type DomLastFixed<F> = GenericTrace<DomLastFixedRow<F>, 1024, 0, 1>;
+
+pub type DomFirstTwinTrace<F> = GenericTrace<DomFirstTwinTraceRow<F>, 1024, 0, 1>;
 
 trace_row!(DomLastTraceRow<F> {
  b:F,
 });
 
-pub type DomLastTrace<F> = GenericTrace<DomLastTraceRow<F>, 1024, 0, 1>;
-
-trace_row!(DomNotFirstFixedRow<F> {
- __L1__: F,
-});
-pub type DomNotFirstFixed<F> = GenericTrace<DomNotFirstFixedRow<F>, 1024, 0, 2>;
+pub type DomLastTrace<F> = GenericTrace<DomLastTraceRow<F>, 1024, 0, 2>;
 
 trace_row!(DomNotFirstTraceRow<F> {
  a:F,
 });
 
-pub type DomNotFirstTrace<F> = GenericTrace<DomNotFirstTraceRow<F>, 1024, 0, 2>;
-
-trace_row!(DomNotLastFixedRow<F> {
- __L1__: F,
-});
-pub type DomNotLastFixed<F> = GenericTrace<DomNotLastFixedRow<F>, 1024, 0, 3>;
+pub type DomNotFirstTrace<F> = GenericTrace<DomNotFirstTraceRow<F>, 1024, 0, 3>;
 
 trace_row!(DomNotLastTraceRow<F> {
  a:F,
 });
 
-pub type DomNotLastTrace<F> = GenericTrace<DomNotLastTraceRow<F>, 1024, 0, 3>;
-
-trace_row!(DomOddFixedRow<F> {
- __L1__: F,
-});
-pub type DomOddFixed<F> = GenericTrace<DomOddFixedRow<F>, 1024, 0, 4>;
+pub type DomNotLastTrace<F> = GenericTrace<DomNotLastTraceRow<F>, 1024, 0, 4>;
 
 trace_row!(DomOddTraceRow<F> {
  t:F,
 });
 
-pub type DomOddTrace<F> = GenericTrace<DomOddTraceRow<F>, 1024, 0, 4>;
-
-trace_row!(DomLimits16FixedRow<F> {
- __L1__: F,
-});
-pub type DomLimits16Fixed<F> = GenericTrace<DomLimits16FixedRow<F>, 1024, 0, 5>;
+pub type DomOddTrace<F> = GenericTrace<DomOddTraceRow<F>, 1024, 0, 5>;
 
 trace_row!(DomLimits16TraceRow<F> {
  s:F,
 });
 
-pub type DomLimits16Trace<F> = GenericTrace<DomLimits16TraceRow<F>, 1024, 0, 5>;
-
-trace_row!(DomNotQuarterFixedRow<F> {
- __L1__: F,
-});
-pub type DomNotQuarterFixed<F> = GenericTrace<DomNotQuarterFixedRow<F>, 1024, 0, 6>;
+pub type DomLimits16Trace<F> = GenericTrace<DomLimits16TraceRow<F>, 1024, 0, 6>;
 
 trace_row!(DomNotQuarterTraceRow<F> {
  u:F,
 });
 
-pub type DomNotQuarterTrace<F> = GenericTrace<DomNotQuarterTraceRow<F>, 1024, 0, 6>;
-
-trace_row!(DomMixedFixedRow<F> {
- __L1__: F,
-});
-pub type DomMixedFixed<F> = GenericTrace<DomMixedFixedRow<F>, 1024, 0, 7>;
+pub type DomNotQuarterTrace<F> = GenericTrace<DomNotQuarterTraceRow<F>, 1024, 0, 7>;
 
 trace_row!(DomMixedTraceRow<F> {
  x:F, w:F, e:F, f:F, v:F,
 });
 
-pub type DomMixedTrace<F> = GenericTrace<DomMixedTraceRow<F>, 1024, 0, 7>;
+pub type DomMixedTrace<F> = GenericTrace<DomMixedTraceRow<F>, 1024, 0, 8>;
+
+trace_row!(SpecifiedRangesFixedRow<F> {
+ OPID: [F; 1], VALS: [F; 1],
+});
+pub type SpecifiedRangesFixed<F> = GenericTrace<SpecifiedRangesFixedRow<F>, 256, 0, 9>;
+
+trace_row!(SpecifiedRangesTraceRow<F> {
+ mul:[F; 1],
+});
+
+pub type SpecifiedRangesTrace<F> = GenericTrace<SpecifiedRangesTraceRow<F>, 256, 0, 9>;
 
 values!(DomFirstAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(DomFirstTwinAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
@@ -161,6 +146,10 @@ values!(DomMixedAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
+values!(SpecifiedRangesAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 ];
 
@@ -168,11 +157,13 @@ pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 /// PILOUT. Lets code resolve an AIR name without a loaded setup/`GlobalInfo`.
 pub const AIR_NAMES: &[(usize, usize, &str)] = &[
     (0, 0, "DomFirst"),
-    (0, 1, "DomLast"),
-    (0, 2, "DomNotFirst"),
-    (0, 3, "DomNotLast"),
-    (0, 4, "DomOdd"),
-    (0, 5, "DomLimits16"),
-    (0, 6, "DomNotQuarter"),
-    (0, 7, "DomMixed"),
+    (0, 1, "DomFirstTwin"),
+    (0, 2, "DomLast"),
+    (0, 3, "DomNotFirst"),
+    (0, 4, "DomNotLast"),
+    (0, 5, "DomOdd"),
+    (0, 6, "DomLimits16"),
+    (0, 7, "DomNotQuarter"),
+    (0, 8, "DomMixed"),
+    (0, 9, "SpecifiedRanges"),
 ];

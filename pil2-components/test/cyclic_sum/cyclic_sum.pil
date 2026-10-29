@@ -1,0 +1,46 @@
+require "std_constants.pil"
+require "std_lookup.pil"
+require "std_direct.pil"
+
+// The std's cyclic gsum (std_sum.pil) on an AIR whose bus terms all have constant denominators:
+// its one constraint is degree 1, so Q is degree 0, floored to one piece by setup. The airval
+// `count` is a direct term, so the prover's correction K = -direct/N is not 0.
+set_std_mode(STD_MODE_ONE_INSTANCE);
+
+const int BUS = 700;
+const int OPID = 777;
+
+public k;
+
+airtemplate CyclicSumQ0(const int N = 2**8) {
+    // Until AIRs without fixed columns load (zero-fixed AIRs), one that no constraint reads.
+    col fixed KEEP = [1,0...];
+
+    col witness mul;
+    airval count;
+
+    lookup_proves(BUS, [OPID, k], mul: mul);
+    direct_update_assumes(BUS, [OPID, k], sel: count);
+}
+
+const int BUS_DIRECT = 701;
+const int OPID_DIRECT = 778;
+
+// A gsum with direct terms only: its quotient is the number 0, a base-field value the prover widens
+// to the column's dimension.
+airtemplate CyclicSumDirect(const int N = 2**8) {
+    col fixed KEEP = [1,0...];
+
+    col witness x;
+    x === 0;
+
+    airval proved, assumed;
+
+    direct_update_proves(BUS_DIRECT, [OPID_DIRECT, k], sel: proved);
+    direct_update_assumes(BUS_DIRECT, [OPID_DIRECT, k], sel: assumed);
+}
+
+airgroup CyclicSum {
+    CyclicSumQ0();
+    CyclicSumDirect();
+}

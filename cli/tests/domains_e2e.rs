@@ -13,16 +13,28 @@ use std::sync::OnceLock;
 use common::{find_file, gpu_lock, gpu_ready, output, repo_root, scratch, TestDir};
 use serde_json::{json, Value};
 
-const AIRS: [&str; 8] =
-    ["DomFirst", "DomLast", "DomNotFirst", "DomNotLast", "DomOdd", "DomLimits16", "DomNotQuarter", "DomMixed"];
+const AIRS: [&str; 9] = [
+    "DomFirst",
+    "DomFirstTwin",
+    "DomLast",
+    "DomNotFirst",
+    "DomNotLast",
+    "DomOdd",
+    "DomLimits16",
+    "DomNotQuarter",
+    "DomMixed",
+];
+
+/// The std range-check table AIR that `DomMixed`'s `range_check` brings in: the one AIR with fixed columns.
+const RANGE_TABLE: &str = "SpecifiedRanges";
 
 /// `(cycleBits, offsets, complement)` of a normalized domain boundary (N = 2^10).
 type Shape = (u64, &'static [u64], bool);
 
-/// Each AIR's domain boundaries after `everyRow`, as setup normalizes and deduplicates them.
+/// Each AIR's domain boundaries after `everyRow`, as setup normalizes and deduplicates them (std's gsum adds none).
 fn expected_domains(air: &str) -> Vec<Shape> {
     match air {
-        "DomFirst" => vec![(10, &[0], false)],
+        "DomFirst" | "DomFirstTwin" => vec![(10, &[0], false)],
         "DomLast" => vec![(10, &[1023], false)],
         "DomNotFirst" => vec![(10, &[0], true)],
         "DomNotLast" => vec![(10, &[1023], true)],
@@ -31,6 +43,7 @@ fn expected_domains(air: &str) -> Vec<Shape> {
         "DomNotQuarter" => vec![(2, &[0], true)],
         // EVEN = [1,0] and EVEN4 = [1,0,1,0] are one boundary.
         "DomMixed" => vec![(10, &[0], false), (10, &[0], true), (1, &[0], false)],
+        RANGE_TABLE => vec![],
         _ => unreachable!("{air}"),
     }
 }
@@ -38,7 +51,9 @@ fn expected_domains(air: &str) -> Vec<Shape> {
 /// `(qDeg, im pols)` of each AIR at blowup 1; every AIR's gsum adds an im pol unless qDeg is 2.
 fn expected_q_deg_and_im_pols(air: &str) -> (u64, usize) {
     match air {
-        "DomFirst" | "DomLast" | "DomNotLast" | "DomOdd" | "DomNotQuarter" | "DomNotFirst" => (1, 1),
+        "DomFirst" | "DomFirstTwin" | "DomLast" | "DomNotLast" | "DomOdd" | "DomNotQuarter" | "DomNotFirst" => (1, 1),
+        // its gsum, (gsum - 'gsum) * (table + ɣ) - mul, is degree 2
+        RANGE_TABLE => (1, 0),
         // degree 3 on 128 rows is 4, past qDeg 2: the constraint itself is the im pol
         "DomLimits16" => (2, 1),
         // x^3 on FIRST is degree 4 (an im pol); on !FIRST it stays 3
@@ -214,7 +229,7 @@ fn assert_names_rows(tamper: &str, text: &str, constraint: &str, rows: &[u64]) {
 #[test]
 fn stage0_setup_emits_each_domain_boundary_and_its_q_degree() {
     let key = key();
-    for air in AIRS {
+    for air in AIRS.into_iter().chain([RANGE_TABLE]) {
         let info = json_of(key, &format!("{air}.starkinfo.json"));
         let boundaries = info["boundaries"].as_array().unwrap_or_else(|| panic!("{air}: no boundaries"));
         assert_eq!(boundaries[0], json!({ "name": "everyRow" }), "{air}: boundary 0");
@@ -233,16 +248,51 @@ fn stage0_setup_emits_each_domain_boundary_and_its_q_degree() {
         // DomMixed's EVEN4 constraint, in block form, is a domain constraint too
         let constraints = json_of(key, &format!("{air}.expressionsinfo.json"))["constraints"].clone();
         let n_domain = constraints.as_array().unwrap().iter().filter(|c| c["boundary"] == "domain").count();
-        assert_eq!(n_domain, if air == "DomMixed" { 4 } else { 1 }, "{air}: domain constraints");
+        let own = match air {
+            "DomMixed" => 4,
+            RANGE_TABLE => 0,
+            _ => 1,
+        };
+        assert_eq!(n_domain, own, "{air}: domain constraints");
 
-        // the self-permutation gives every AIR stage 2 and the `__L1__` fixed column
+        // the self-permutation gives every AIR stage 2
         assert_eq!(info["nStages"].as_u64(), Some(2), "{air}: nStages");
-        assert!(info["nConstants"].as_u64().unwrap() >= 1, "{air}: nConstants");
+        let zero_fixed = air != RANGE_TABLE;
+        assert_eq!(info["nConstants"].as_u64() == Some(0), zero_fixed, "{air}: nConstants");
+        let verkey = find_file(key, &format!("{air}.verkey.json")).is_some();
+        assert_eq!(verkey, !zero_fixed, "{air}: .verkey.json");
 
         let im_pols =
             info["cmPolsMap"].as_array().unwrap().iter().filter(|p| p["imPol"].as_bool() == Some(true)).count();
         let q_deg = info["qDeg"].as_u64().unwrap();
         assert_eq!((q_deg, im_pols), expected_q_deg_and_im_pols(air), "{air}: (qDeg, im pols)");
+    }
+}
+
+#[test]
+fn stage0_zero_fixed_airs_have_no_constants_group() {
+    let key = key();
+    for air in AIRS {
+        let info = json_of(key, &format!("{air}.starkinfo.json"));
+        assert_eq!(info["nConstants"].as_u64(), Some(0), "{air}: nConstants");
+        assert_eq!(info["mapSectionsN"]["const"].as_u64(), Some(0), "{air}: mapSectionsN.const");
+        assert_eq!(info["nStages"].as_u64(), Some(2), "{air}: nStages");
+        assert!(info["circuitType"].is_u64(), "{air}: circuitType");
+        let ev_map = info["evMap"].as_array().unwrap();
+        assert!(!ev_map.iter().any(|e| e["type"] == "const"), "{air}: evMap has a const entry");
+        for ext in ["const", "verkey.json", "verkey.bin", "consttree"] {
+            assert!(find_file(key, &format!("{air}.{ext}")).is_none(), "{air}: has a .{ext}");
+        }
+    }
+}
+
+#[test]
+fn stage0_control_air_keeps_constants() {
+    let key = key();
+    let info = json_of(key, &format!("{RANGE_TABLE}.starkinfo.json"));
+    assert!(info["nConstants"].as_u64().unwrap() >= 1, "{RANGE_TABLE}: nConstants");
+    for ext in ["verkey.json", "verkey.bin"] {
+        assert!(find_file(key, &format!("{RANGE_TABLE}.{ext}")).is_some(), "{RANGE_TABLE}: no .{ext}");
     }
 }
 

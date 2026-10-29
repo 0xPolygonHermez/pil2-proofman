@@ -292,6 +292,26 @@ void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParam
     }
 }
 
+// Rows 0..N-2 only: they all read row N-1 (S), which the memset then zeroes, (N-1+1)·S/N = S.
+__global__ void cyclicSumCorrection_(gl64_t *vals, uint64_t N, uint32_t dim, uint64_t nInv) {
+    uint64_t i = blockIdx.x * (uint64_t)blockDim.x + threadIdx.x;
+    if (i >= N - 1) return;
+    gl64_t f = gl64_t(uint64_t(i + 1)) * gl64_t(nInv);
+    for (uint32_t d = 0; d < dim; ++d) {
+        vals[i * dim + d] = vals[i * dim + d] - f * vals[(N - 1) * dim + d];
+    }
+}
+
+// The GPU twin of cyclicSumCorrection (hints.cpp).
+void cyclicSumCorrectionGPU(gl64_t *vals, uint64_t N, uint32_t dim, cudaStream_t stream) {
+    const uint64_t nInv = GOLDILOCKS_PRIME - (GOLDILOCKS_PRIME - 1) / N;
+    if (N > 1) {
+        cyclicSumCorrection_<<<(N - 1 + 255) / 256, 256, 0, stream>>>(vals, N, dim, nInv);
+    }
+    CHECKCUDAERR(cudaMemsetAsync(vals + (N - 1) * dim, 0, dim * sizeof(gl64_t), stream));
+    CHECKCUDAERR(cudaGetLastError());
+}
+
 void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_params, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     Hint hint = setupCtx.expressionsBin.hints[hintId];
@@ -316,12 +336,20 @@ void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
     
     // copy vals to the GPU
     Goldilocks::Element* helpers = h_params.aux_trace + offsetAuxTrace + dim*N;    
+    // A base-field quotient (e.g. the number 0 of a gsum with no row terms) widened to the column's dim, as on the CPU
+    if (destStruct.dim < dim) {
+        CHECKCUDAERR(cudaMemcpyAsync(helpers, vals_gpu, N * sizeof(Goldilocks::Element), cudaMemcpyDeviceToDevice, stream));
+        CHECKCUDAERR(cudaMemsetAsync(vals_gpu, 0, dim * N * sizeof(Goldilocks::Element), stream));
+        CHECKCUDAERR(cudaMemcpy2DAsync(vals_gpu, dim * sizeof(Goldilocks::Element), helpers, sizeof(Goldilocks::Element),
+                                       sizeof(Goldilocks::Element), N, cudaMemcpyDeviceToDevice, stream));
+    }
     accOperationGPU((gl64_t *)vals_gpu, N, add, dim, (gl64_t *)helpers, stream);
 
-    setHintFieldGPU(setupCtx, h_params, vals_gpu, hintId, hintFieldNameDest,stream);
     if (hintFieldNameAirgroupVal != "") {
         setHintFieldGPU(setupCtx, h_params, &vals_gpu[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal, stream);
     }
+    if (add && isCyclicSumHint(setupCtx, hintId)) cyclicSumCorrectionGPU((gl64_t *)vals_gpu, N, dim, stream);
+    setHintFieldGPU(setupCtx, h_params, vals_gpu, hintId, hintFieldNameDest,stream);
 }
 
 uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
