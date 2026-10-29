@@ -1201,7 +1201,7 @@ void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::
         }
     }
 
-    if (lastLevelVerification > 0) {
+    if (lastLevelVerification > 0 && setupCtx.starkInfo.hasConstants()) {
         Goldilocks::Element *nodes = h_const_tree + NExtended * setupCtx.starkInfo.nConstants;
         uint64_t n = commitLastLevelCount;
         uint64_t offset = commitLastLevelOffset;
@@ -1329,8 +1329,9 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
 
     uint64_t treeHeaderStride = HASH_SIZE + (lastLevelVerification > 0 ? lastLevelWords : 0);
     Goldilocks::Element *rootsBase = proof_buffer_pinned;
+    const bool hasConstants = starkInfo.hasConstants();
     Goldilocks::Element *constLastLevel = lastLevelVerification > 0 ? rootsBase + nStages * treeHeaderStride : nullptr;
-    Goldilocks::Element *customLastBase = rootsBase + nStages * treeHeaderStride + (lastLevelVerification > 0 ? lastLevelWords : 0);
+    Goldilocks::Element *customLastBase = rootsBase + nStages * treeHeaderStride + (lastLevelVerification > 0 && hasConstants ? lastLevelWords : 0);
 
     uint64_t customLastLevelCount = 0;
     if (lastLevelVerification > 0) {
@@ -1380,10 +1381,12 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, ui
     emit(evals, starkInfo.evMap.size() * FIELD_EXTENSION);
 
     // Constants tree openings + siblings (+ last level).
-    uint64_t constantsTree = starkInfo.nStages + 1;
-    for (uint64_t q = 0; q < nQueries; ++q) emit(queryBase(constantsTree, q), starkInfo.nConstants);
-    for (uint64_t q = 0; q < nQueries; ++q) emit(queryBase(constantsTree, q) + starkInfo.maxTreeWidth, siblingWords);
-    if (lastLevelVerification != 0) emit(constLastLevel, lastLevelWords);
+    if (hasConstants) {
+        uint64_t constantsTree = starkInfo.nStages + 1;
+        for (uint64_t q = 0; q < nQueries; ++q) emit(queryBase(constantsTree, q), starkInfo.nConstants);
+        for (uint64_t q = 0; q < nQueries; ++q) emit(queryBase(constantsTree, q) + starkInfo.maxTreeWidth, siblingWords);
+        if (lastLevelVerification != 0) emit(constLastLevel, lastLevelWords);
+    }
 
     // Custom commit trees.
     uint64_t customLastIndex = 0;

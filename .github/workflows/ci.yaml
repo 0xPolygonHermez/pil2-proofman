@@ -283,6 +283,9 @@ jobs:
       - name: Domain zerofier tests (C++, against the native verifier's vectors)
         run: make -C pil2-stark -j"$(nproc)" domain_zerofier_test && ./pil2-stark/build/domainZerofierTest
 
+      - name: Zero-fixed-air layout tests (C++)
+        run: make -C pil2-stark -j"$(nproc)" zero_constants_layout_test && ./pil2-stark/build/zeroConstantsLayoutTest
+
       - name: JS verifier tests
         working-directory: pilfflonk/js
         run: |

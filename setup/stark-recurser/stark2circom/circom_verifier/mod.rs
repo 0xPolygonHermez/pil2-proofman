@@ -27,6 +27,14 @@ pub(crate) use gl::gen_stark_verifier_gl;
 pub(crate) use bn128::gen_stark_verifier_bn128;
 pub use bn128::gen_stark_verifier_bn128_blake3;
 
+/// Whether the air has a fixed-column group. A starkinfo without `nConstants` is malformed, not zero-fixed.
+pub fn has_constants(si: &Value) -> Result<bool> {
+    match si["nConstants"].as_u64() {
+        Some(n) => Ok(n > 0),
+        None => bail!("starkinfo has no numeric nConstants"),
+    }
+}
+
 /// Generate a stark verifier circom (GL or BN128, selected by
 /// `stark_info.starkStruct.verificationHashType`).
 ///
@@ -42,5 +50,18 @@ pub fn gen_stark_verifier(
         "GL" => gen_stark_verifier_gl(const_root, stark_info, verifier_info, opts),
         "BN128" => gen_stark_verifier_bn128(const_root, stark_info, verifier_info, opts),
         other => bail!("gen_stark_verifier: unsupported hash type '{other}'"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_constants;
+    use serde_json::json;
+
+    #[test]
+    fn has_constants_requires_the_key() {
+        assert!(!has_constants(&json!({"nConstants": 0})).unwrap());
+        assert!(has_constants(&json!({"nConstants": 2})).unwrap());
+        assert!(has_constants(&json!({})).is_err());
     }
 }

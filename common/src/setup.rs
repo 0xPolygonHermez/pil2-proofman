@@ -628,6 +628,10 @@ impl<F: PrimeField64> Setup<F> {
         self.setup_type == ProofType::RecursiveF && self.stark_info.stark_struct.verification_hash_type == "BN128"
     }
 
+    pub fn has_constants(&self) -> bool {
+        self.stark_info.has_constants()
+    }
+
     pub fn get_vk(&self) -> Vec<u64> {
         self.verkey.iter().map(|x| x.as_canonical_u64()).collect()
     }

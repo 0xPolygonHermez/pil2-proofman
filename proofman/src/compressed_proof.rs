@@ -19,6 +19,9 @@ fn codec_layout(stark_info: &StarkInfo) -> ProofmanResult<ProofLayout> {
     if !stark_info.custom_commits.is_empty() {
         return Err(refuse("a multiproof carries no custom commits"));
     }
+    if !stark_info.has_constants() {
+        return Err(refuse("a multiproof needs the const tree"));
+    }
     Ok(stark_info.proof_layout())
 }
 

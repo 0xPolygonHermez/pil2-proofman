@@ -336,6 +336,10 @@ public:
     /* Loads data from a json object */
     void load (json j);
 
+    bool hasConstants() const { return nConstants > 0; }
+    /// Trees opened at the first query layer: stages 1..nStages+1, the const tree if any, custom commits.
+    uint64_t numInitialTrees() const { return nStages + 1 + (hasConstants() ? 1 : 0) + customCommits.size(); }
+
     /// Number of Merkle trees the low-degree test commits, and the leaf width of each.
     uint64_t numLowDegreeTestTrees() const;
     uint64_t lowDegreeTestTreeWidth(uint64_t i) const;

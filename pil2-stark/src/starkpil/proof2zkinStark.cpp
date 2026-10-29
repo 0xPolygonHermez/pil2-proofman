@@ -52,34 +52,36 @@ json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
         }
     }
     
-    j["s0_valsC"] = json::array();
-    for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-        j["s0_valsC"][i] = json::array();
-        for(uint64_t l = 0; l < starkInfo.nConstants; l++) {
-            j["s0_valsC"][i][l] = std::to_string(pointer[p++]);
-        }
-    }
-
     uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.nBitsExt, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
     uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * 4;
 
-    j["s0_siblingsC"] = json::array();
-    for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-        j["s0_siblingsC"][i] = json::array();
-        for(uint64_t l = 0; l < nSiblings; ++l) {
-            j["s0_siblingsC"][i][l] = json::array();
-            for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
-                j["s0_siblingsC"][i][l][k] = std::to_string(pointer[p++]);
+    if (starkInfo.hasConstants()) {
+        j["s0_valsC"] = json::array();
+        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+            j["s0_valsC"][i] = json::array();
+            for(uint64_t l = 0; l < starkInfo.nConstants; l++) {
+                j["s0_valsC"][i][l] = std::to_string(pointer[p++]);
             }
         }
-    }
 
-    if (starkInfo.starkStruct.lastLevelVerification != 0) {
-        for (uint64_t k = 0; k < std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification); k++)
-        {
-            for (uint64_t l = 0; l < 4; l++)
+        j["s0_siblingsC"] = json::array();
+        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+            j["s0_siblingsC"][i] = json::array();
+            for(uint64_t l = 0; l < nSiblings; ++l) {
+                j["s0_siblingsC"][i][l] = json::array();
+                for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
+                    j["s0_siblingsC"][i][l][k] = std::to_string(pointer[p++]);
+                }
+            }
+        }
+
+        if (starkInfo.starkStruct.lastLevelVerification != 0) {
+            for (uint64_t k = 0; k < std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification); k++)
             {
-                j["s0_last_levelsC"][k][l] = std::to_string(pointer[p++]);
+                for (uint64_t l = 0; l < 4; l++)
+                {
+                    j["s0_last_levelsC"][k][l] = std::to_string(pointer[p++]);
+                }
             }
         }
     }
@@ -336,8 +338,10 @@ json joinzkin(json &zkin1, json &zkin2, json &verKey, StarkInfo &starkInfo)
     zkinOut["a_" + rootQ] = zkin1[rootQ];
 
     zkinOut["a_evals"] = zkin1["evals"];
-    zkinOut["a_s0_valsC"] = zkin1["s0_valsC"];
-    zkinOut["a_s0_siblingsC"] = zkin1["s0_siblingsC"];
+    if (starkInfo.hasConstants()) {
+        zkinOut["a_s0_valsC"] = zkin1["s0_valsC"];
+        zkinOut["a_s0_siblingsC"] = zkin1["s0_siblingsC"];
+    }
     for(uint64_t stage = 1; stage <= nStages; ++stage) {
         if(starkInfo.mapSectionsN["cm" + to_string(stage)] > 0) {
             zkinOut["a_s0_vals" + to_string(stage)] = zkin1["s0_vals" + to_string(stage)];
@@ -362,8 +366,10 @@ json joinzkin(json &zkin1, json &zkin2, json &verKey, StarkInfo &starkInfo)
     zkinOut["b_" + rootQ] = zkin2[rootQ];
 
     zkinOut["b_evals"] = zkin2["evals"];
-    zkinOut["b_s0_valsC"] = zkin2["s0_valsC"];
-    zkinOut["b_s0_siblingsC"] = zkin2["s0_siblingsC"];
+    if (starkInfo.hasConstants()) {
+        zkinOut["b_s0_valsC"] = zkin2["s0_valsC"];
+        zkinOut["b_s0_siblingsC"] = zkin2["s0_siblingsC"];
+    }
     for(uint64_t stage = 1; stage <= nStages; ++stage) {
         if(starkInfo.mapSectionsN["cm" + to_string(stage)] > 0) {
             zkinOut["b_s0_vals" + to_string(stage)] = zkin2["s0_vals" + to_string(stage)];
@@ -505,8 +511,10 @@ json joinzkinfinal(json& globalInfo, Goldilocks::Element* publics, Goldilocks::E
             }
         }
         
-        zkinFinal["s" + to_string(i) + "_s0_valsC"] = zkin["s0_valsC"];
-        zkinFinal["s" + to_string(i) + "_s0_siblingsC"] = zkin["s0_siblingsC"];
+        if (starkInfo.hasConstants()) {
+            zkinFinal["s" + to_string(i) + "_s0_valsC"] = zkin["s0_valsC"];
+            zkinFinal["s" + to_string(i) + "_s0_siblingsC"] = zkin["s0_siblingsC"];
+        }
 
         zkinFinal["s" + to_string(i) + "_evals"] = zkin["evals"];
 
@@ -574,11 +582,13 @@ json joinzkinrecursive2(json& globalInfo, uint64_t airgroupId, Goldilocks::Eleme
         }
     }
     
-    zkinRecursive2["a_s0_valsC"] = zkin1["s0_valsC"];
-    zkinRecursive2["b_s0_valsC"] = zkin2["s0_valsC"];
+    if (starkInfo.hasConstants()) {
+        zkinRecursive2["a_s0_valsC"] = zkin1["s0_valsC"];
+        zkinRecursive2["b_s0_valsC"] = zkin2["s0_valsC"];
 
-    zkinRecursive2["a_s0_siblingsC"] = zkin1["s0_siblingsC"];
-    zkinRecursive2["b_s0_siblingsC"] = zkin2["s0_siblingsC"];
+        zkinRecursive2["a_s0_siblingsC"] = zkin1["s0_siblingsC"];
+        zkinRecursive2["b_s0_siblingsC"] = zkin2["s0_siblingsC"];
+    }
     
     zkinRecursive2["a_evals"] = zkin1["evals"];
     zkinRecursive2["b_evals"] = zkin2["evals"];

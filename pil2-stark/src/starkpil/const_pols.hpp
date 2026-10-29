@@ -18,6 +18,7 @@ public:
 
     uint64_t getConstTreeSizeBN128(StarkInfo& starkInfo)
     {   
+        if (!starkInfo.hasConstants()) return 0;
         uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
         MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
         return (NExtended * starkInfo.nConstants) + mt.numNodes * (sizeof(RawFr::Element) / sizeof(Goldilocks::Element));
@@ -25,6 +26,7 @@ public:
 
     uint64_t getConstTreeSizeGL(StarkInfo& starkInfo)
     {   
+        if (!starkInfo.hasConstants()) return 0;
         uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
         MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
         return (NExtended * starkInfo.nConstants) + mt.numNodes;

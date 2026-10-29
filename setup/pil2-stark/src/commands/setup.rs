@@ -235,11 +235,23 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                 // only fail at prove time.
                 let air = &pilout.air_groups[item.ag_idx].airs[item.air_idx];
                 let fixed_file = fixed_dir.as_ref().map(|fd| Path::new(fd).join(format!("{}.fixed", item.air_name)));
-                if let Some(src) = fixed_file.as_ref().filter(|src| src.exists()) {
-                    fs::copy(src, &const_path)?;
-                } else if air.fixed_cols.is_empty() {
+                let existing_fixed_file = fixed_file.as_ref().filter(|src| src.exists());
+                if air.fixed_cols.is_empty() {
+                    // compile-pil --fixed-to-file writes an empty .fixed for such an air.
+                    if let Some(src) = existing_fixed_file {
+                        if fs::metadata(src)?.len() != 0 {
+                            anyhow::bail!(
+                                "Air '{}' has no fixed columns, but its fixed file {} is not empty",
+                                item.air_name,
+                                src.display()
+                            );
+                        }
+                        tracing::debug!("Air '{}': ignoring empty {}", item.air_name, src.display());
+                    }
                     tracing::debug!("Air '{}': no fixed columns — skipping .const generation", item.air_name);
                     drop_stale_const("the air has no fixed columns")?;
+                } else if let Some(src) = existing_fixed_file {
+                    fs::copy(src, &const_path)?;
                 } else if air.fixed_cols.iter().all(|fc| !fc.values.is_empty()) {
                     crate::io::fixed_cols::write_const_file(
                         const_path.to_str().unwrap_or(""),
@@ -275,6 +287,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     crate::pil::info::pil_info(&pilout, item.ag_idx, item.air_idx, &stark_struct, &prepare_opts)?;
                 let setup_result = &pil_result.setup;
                 let pil_code = &pil_result.pil_code;
+                crate::pil::info::assert_no_const_refs(setup_result, pil_code, &item.air_name)?;
 
                 let opening_points = collect_opening_points(setup_result);
                 let ldt = solve_low_degree_test(&stark_struct, pil_code.fri_batch_size.max(1) as u64);

@@ -264,6 +264,10 @@ where
     TranscriptT: TranscriptLike<Goldilocks>,
     GrindingHash: Hash<Goldilocks>,
 {
+    if verifier_info.n_constants == 0 {
+        v_error!("native verifier: zero-fixed airs are not supported");
+        return false;
+    }
     if proof.is_empty() || vk.len() < 4 {
         return false;
     }
@@ -815,6 +819,62 @@ mod tests {
             pow_bits: 0,
             fri_ev_groups: groups,
         }
+    }
+
+    #[test]
+    fn native_verifier_refuses_zero_constants() {
+        use proofman_fields::{Blake3Transcript, Blake3_8};
+        let mut i = info(vec![]);
+        i.fri_steps = vec![1];
+        assert_eq!(i.n_constants, 0);
+        type E = CubicExtensionField<Goldilocks>;
+        fn q(_: &[E], _: &[E], _: &[Goldilocks], _: &[E]) -> E {
+            gl(0)
+        }
+        let errors = capture_errors(|| {
+            assert!(!stark_verify::<Blake3_8, Blake3_8, Blake3Transcript<Goldilocks>, Blake3_8>(
+                &[0; 64], &[0; 4], &i, q
+            ));
+        });
+        assert_eq!(errors, vec!["native verifier: zero-fixed airs are not supported".to_string()]);
+    }
+
+    /// The messages of the error events `f` logs.
+    fn capture_errors(f: impl FnOnce()) -> Vec<String> {
+        use std::sync::{Arc, Mutex};
+        use tracing::field::{Field, Visit};
+        struct Msg(String);
+        impl Visit for Msg {
+            fn record_debug(&mut self, field: &Field, value: &dyn core::fmt::Debug) {
+                if field.name() == "message" {
+                    self.0 = format!("{value:?}");
+                }
+            }
+        }
+        struct Capture(Arc<Mutex<Vec<String>>>);
+        impl tracing::Subscriber for Capture {
+            fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+                true
+            }
+            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                tracing::span::Id::from_u64(1)
+            }
+            fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+            fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+            fn event(&self, event: &tracing::Event<'_>) {
+                if *event.metadata().level() == tracing::Level::ERROR {
+                    let mut m = Msg(String::new());
+                    event.record(&mut m);
+                    self.0.lock().unwrap().push(m.0);
+                }
+            }
+            fn enter(&self, _: &tracing::span::Id) {}
+            fn exit(&self, _: &tracing::span::Id) {}
+        }
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        tracing::subscriber::with_default(Capture(errors.clone()), f);
+        let errors = errors.lock().unwrap().clone();
+        errors
     }
 
     fn r(bucket: u16, offset: u16, dim: u8, col: u16) -> FriEvalRef {

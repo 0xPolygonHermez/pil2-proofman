@@ -128,6 +128,8 @@ fn tree_indices<T: TranscriptLike<Goldilocks>>(
     split: &Split,
     vk: &[u64],
 ) -> Option<(Vec<Vec<u64>>, Replay)> {
+    // vk is the const root and tree 0 the const tree: only vadcop_final (always fixed) gets here.
+    debug_assert!(layout.has_constants());
     let root_c: [Goldilocks; 4] = core::array::from_fn(|i| Goldilocks::new(vk[i]));
     let roots = split.roots(split.data[1], 3);
     let (mut t, prefix) = prefix_transcript::<T>(

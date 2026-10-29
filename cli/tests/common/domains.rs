@@ -75,6 +75,17 @@ pub fn setup(pilout: &Path, build: &Path, recursive: bool) -> PathBuf {
 
 /// `setup`, with `-u <fixed_dir>` when given.
 pub fn setup_with_fixed_dir(pilout: &Path, build: &Path, recursive: bool, fixed_dir: Option<&Path>) -> PathBuf {
+    try_setup_with_fixed_dir(pilout, build, recursive, fixed_dir)
+        .unwrap_or_else(|e| panic!("setup of {} failed: {e}", build.display()))
+}
+
+/// `setup_with_fixed_dir`, returning setup's error instead of panicking.
+pub fn try_setup_with_fixed_dir(
+    pilout: &Path,
+    build: &Path,
+    recursive: bool,
+    fixed_dir: Option<&Path>,
+) -> Result<PathBuf, String> {
     let _ = fs::remove_dir_all(build);
     let jobs = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let opts = SetupOptions {
@@ -104,8 +115,7 @@ pub fn setup_with_fixed_dir(pilout: &Path, build: &Path, recursive: bool, fixed_
         .unwrap()
         .join()
         .unwrap();
-    result.unwrap_or_else(|e| panic!("setup of {} failed: {e}", build.display()));
-    build.join("provingKey")
+    result.map(|_| build.join("provingKey"))
 }
 
 /// `gen-exps`'s arch: `DOMAINS_CUDA_ARCH`, else the first GPU's compute capability (12.0 -> sm_120).

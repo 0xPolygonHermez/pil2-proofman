@@ -861,6 +861,10 @@ where
     GrindingHash: Hash<Goldilocks>,
 {
     let leaves = proven.map(|p| p.leaves.as_slice());
+    if verifier_info.n_constants == 0 {
+        v_error!("native verifier: zero-fixed airs are not supported");
+        return false;
+    }
     if proof.is_empty() || vk.len() < 4 {
         return false;
     }

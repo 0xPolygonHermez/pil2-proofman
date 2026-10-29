@@ -35,6 +35,18 @@ pub struct ProofLayout {
     pub ldt: LowDegreeLayout,
 }
 
+impl ProofLayout {
+    pub fn has_constants(&self) -> bool {
+        self.n_constants > 0
+    }
+
+    /// Widths of the trees opened at the first query layer: the const tree if any, then cm1 … cm{n_stages+1}.
+    pub fn initial_tree_widths(&self) -> Vec<u64> {
+        let consts = self.has_constants().then_some(self.n_constants);
+        consts.into_iter().chain(self.num_vals.iter().copied().take(self.n_stages as usize + 1)).collect()
+    }
+}
+
 impl VerifierInfo {
     pub fn proof_layout(&self) -> ProofLayout {
         ProofLayout {
@@ -156,8 +168,7 @@ impl ProofLayout {
             LowDegreeLayout::Fri { n_queries, .. } => *n_queries,
             LowDegreeLayout::Stir(stir) => stir.num_queries[0],
         };
-        let widths = core::iter::once(self.n_constants).chain(self.num_vals.iter().copied());
-        for width in widths.take(self.n_stages as usize + 2) {
+        for width in self.initial_tree_widths() {
             segs.push(tree(width, t0, self.n_bits_ext));
             segs.push(Segment::Data(last_level));
         }
@@ -207,5 +218,36 @@ impl ProofLayout {
             }
         }
         words
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn layout(n_constants: u64) -> ProofLayout {
+        ProofLayout {
+            n_stages: 2,
+            n_constants,
+            n_evals: 7,
+            n_bits_ext: 11,
+            num_vals: vec![4, 6, 3],
+            arity: 4,
+            last_level_verification: 2,
+            hash_commits: true,
+            ldt: LowDegreeLayout::Fri { steps: vec![11, 8, 5], n_queries: 10 },
+        }
+    }
+
+    #[test]
+    fn zero_constants_drops_const_segments() {
+        let (with, without) = (layout(5), layout(0));
+        assert!(!without.has_constants() && with.has_constants());
+        let n_levels = merkle_proof_levels(11, 4, 2);
+        let const_words = 10 * (5 + n_levels * sibling_words(4)) + last_level_words(4, 2);
+        assert_eq!(with.flat_proof_words() - without.flat_proof_words(), const_words);
+        assert_eq!(with.segments(0).len() - without.segments(0).len(), 2);
+        assert_eq!(without.initial_tree_widths(), vec![4, 6, 3]);
+        assert_eq!(with.initial_tree_widths(), vec![5, 4, 6, 3]);
     }
 }

@@ -330,6 +330,10 @@ impl StarkInfo {
         serde_json::from_str(stark_info_json).expect("Failed to parse JSON file")
     }
 
+    pub fn has_constants(&self) -> bool {
+        self.n_constants > 0
+    }
+
     /// The flat proof's geometry, shared by the prover, the CLI and the generated verifiers.
     pub fn proof_layout(&self) -> ProofLayout {
         let ss = &self.stark_struct;
@@ -383,6 +387,19 @@ mod tests {
         assert_eq!(fri.log_domain_sizes, vec![19, 16, 13]);
         assert!(ss.low_degree_test.stir().is_none());
         assert_eq!(fri.grinding_bits_queries, 24);
+    }
+
+    #[test]
+    fn has_constants_follows_n_constants() {
+        let si = |n: u64| {
+            StarkInfo::from_json(&format!(
+                r#"{{"starkStruct": {{{COMMON}, "foldingFactors": [3], "logDegrees": [17, 14], "logDomainSizes": [19, 16], "numQueries": 1, "grindingBitsQueries": 0}}, "nPublics": 0,
+                "nConstants": {n}, "customCommitsMap": [], "evMap": [], "customCommits": [], "openingPoints": [0],
+                "qDeg": 1, "qDim": 3, "deepExpId": 0, "cExpId": 0, "mapSectionsN": {{}}, "security": {{"regime": "x"}}}}"#
+            ))
+        };
+        assert!(!si(0).has_constants());
+        assert!(si(3).has_constants());
     }
 
     /// A STIR stark struct is recognised by its marker and carries the paper's schedule.

@@ -211,6 +211,10 @@ fn parse_pol_map_array(v: &Value, key: &str) -> Vec<PolMap> {
 }
 
 impl StarkInfo {
+    pub fn has_constants(&self) -> bool {
+        self.n_constants > 0
+    }
+
     /// Parse a StarkInfo from a serde_json::Value (the parsed starkinfo.json).
     pub fn from_json(j: &Value) -> Result<Self> {
         let ss = j.get("starkStruct").unwrap_or(&Value::Null);

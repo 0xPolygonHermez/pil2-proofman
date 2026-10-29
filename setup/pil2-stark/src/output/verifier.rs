@@ -22,6 +22,11 @@ pub fn write_verifier_rust_file(
         return Ok(());
     }
 
+    // D1: the native verifier opens tree 0 as the const tree and seeds its transcript with rootC.
+    anyhow::ensure!(
+        stark_info.has_constants(),
+        "{path}: the native Rust verifier does not support airs without fixed columns"
+    );
     // The native verifier parses no custom-commit openings; fail here, not at verification.
     anyhow::ensure!(
         stark_info.custom_commits.is_empty(),
@@ -342,6 +347,15 @@ mod tests {
             boundary_literal(&domain(4, &[0, 15], true)),
             "Boundary { name: \"domain\".to_string(), cycle_bits: 4, offsets: vec![0, 15], complement: true }"
         );
+    }
+
+    #[test]
+    fn rust_verifier_generator_refuses_zero_constants() {
+        let si = crate::types::stark_info::StarkInfo { n_stages: 2, ..Default::default() };
+        let vi = crate::types::stark_info::VerifierInfo::from_json(&serde_json::json!({})).unwrap();
+        let err =
+            super::write_verifier_rust_file("Air.verifier.rs", &si, &vi, false, "blake3").unwrap_err().to_string();
+        assert!(err.contains("without fixed columns"), "{err}");
     }
 
     #[test]

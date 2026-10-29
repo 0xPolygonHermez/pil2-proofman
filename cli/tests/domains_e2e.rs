@@ -296,6 +296,62 @@ fn stage0_control_air_keeps_constants() {
     }
 }
 
+#[test]
+fn stage0_nonempty_fixed_file_for_zero_fixed_air_is_rejected() {
+    let dir = TestDir::new("domains_e2e_fixed_dir");
+    let fixed = dir.path("fixed");
+    fs::create_dir_all(&fixed).unwrap();
+    let pilout = example().join("pil/build.pilout");
+    let run = || common::try_setup_with_fixed_dir(&pilout, &dir.path("build"), false, Some(&fixed));
+
+    fs::write(fixed.join("DomFirst.fixed"), [0u8; 16]).unwrap();
+    let err = run().expect_err("setup accepted a non-empty .fixed for a zero-fixed air");
+    assert!(err.contains("DomFirst") && err.contains("no fixed columns"), "{err}");
+
+    // the empty file compile-pil --fixed-to-file writes is ignored
+    fs::write(fixed.join("DomFirst.fixed"), []).unwrap();
+    let key = run().unwrap();
+    assert!(find_file(&key, "DomFirst.starkinfo.json").is_some());
+    assert!(find_file(&key, "DomFirst.const").is_none(), "DomFirst: an empty .fixed became a .const");
+}
+
+fn starkinfos(dir: &Path, out: &mut Vec<PathBuf>) {
+    for path in fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()) {
+        if path.is_dir() {
+            starkinfos(&path, out);
+        } else if path.to_string_lossy().ends_with(".starkinfo.json") {
+            out.push(path);
+        }
+    }
+}
+
+/// The C++ flat proof size is the Rust layout's plus the air(group) values, with and without constants.
+#[test]
+fn stage0_proof_size_parity_cpp_vs_rust() {
+    use pil2_stark_setup::types::stark_info::StarkInfo;
+    use proofman_starks_lib_c::{get_proof_size_c, stark_info_free_c, stark_info_new_c};
+
+    let dir = TestDir::new("domains_e2e_parity");
+    let native = common::setup(&repo_root().join("examples/domain-native/pil/build.pilout"), &dir.path("dn"), false);
+    let mut files = Vec::new();
+    starkinfos(key(), &mut files);
+    starkinfos(&native, &mut files);
+    let names: Vec<String> = files.iter().map(|f| f.file_name().unwrap().to_string_lossy().into_owned()).collect();
+    for air in AIRS.into_iter().chain([RANGE_TABLE, "DomNative"]) {
+        assert!(names.contains(&format!("{air}.starkinfo.json")), "{air}: no starkinfo");
+    }
+    for file in &files {
+        let json: Value = serde_json::from_str(&fs::read_to_string(file).unwrap()).unwrap();
+        let layout = StarkInfo::from_json(&json).unwrap().layout.unwrap().unwrap();
+        let values =
+            json["airgroupValuesMap"].as_array().unwrap().len() + json["airValuesMap"].as_array().unwrap().len();
+        let si = stark_info_new_c(file.to_str().unwrap(), false, false, false, true, false);
+        let cpp = get_proof_size_c(si);
+        stark_info_free_c(si);
+        assert_eq!(cpp as usize, 3 * values + layout.flat_proof_words(), "{}", file.display());
+    }
+}
+
 // ---------------------------------------------------------------- Stages 1 (CPU) and 2 (GPU): no aggregation
 
 fn prover_key(gpu: bool) -> &'static Path {

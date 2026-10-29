@@ -138,7 +138,7 @@ fn build_tera_context_bn128(
     let max_deg_size: usize = 1 << max_deg_bits;
     let n_publics = si["nPublics"].as_u64().unwrap_or(0) as usize;
     let n_constants = si["nConstants"].as_u64().unwrap_or(0) as usize;
-    if n_constants == 0 {
+    if !super::has_constants(si)? {
         bail!("gen_stark_verifier_bn128: the air has no fixed columns (nConstants = 0); the recursive verifier needs at least one");
     }
     let ev_map_len = si["evMap"].as_array().map_or(0, |a| a.len());

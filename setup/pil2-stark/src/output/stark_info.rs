@@ -36,6 +36,11 @@ pub fn build_starkinfo_output(
     q_deg: i64,
     boundaries: &[Boundary],
 ) -> StarkInfoOutput {
+    // Without rootC, circuitType is the only identity a zero-fixed air's transcript can absorb.
+    assert!(
+        setup.n_constants > 0 || circuit_type.is_some(),
+        "Air '{air_name}' has no fixed columns and no circuitType"
+    );
     // The query counts and grinding bits are the solved values, not the settings.
     let low_degree_test = match (ldt, &stark_struct.low_degree_test) {
         (LowDegreeTest::Fri(fri), crate::types::stark_struct::LowDegreeTest::Fri(schedule)) => {

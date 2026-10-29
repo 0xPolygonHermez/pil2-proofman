@@ -306,10 +306,7 @@ pub fn get_soundness_air_info<F: PrimeField64>(setup: &Setup<F>) -> (String, Air
             opening_points: setup.stark_info.opening_points.len() as u64,
             batch_size: setup.stark_info.fri_batch_size.max(setup.stark_info.ev_map.len() as u64),
             power_batching: true,
-            initial_tree_widths: std::iter::once(layout.n_constants)
-                .chain(layout.num_vals.iter().copied())
-                .take(layout.n_stages as usize + 2)
-                .collect(),
+            initial_tree_widths: layout.initial_tree_widths(),
             num_evals: layout.n_evals,
             low_degree_test: low_degree_test_soundness(&setup.stark_info.stark_struct),
             gap_to_radius: setup.stark_info.security.proximity_gap,

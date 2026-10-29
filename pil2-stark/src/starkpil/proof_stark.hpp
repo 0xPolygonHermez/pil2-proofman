@@ -334,24 +334,26 @@ public:
         uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.nBitsExt, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
         uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
 
-        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-            for(uint64_t l = 0; l < starkInfo.nConstants; l++) {
-                pointer[p++] = Goldilocks::toU64(fri.trees.polQueries[i][starkInfo.nStages + 1].v[l][0]);
-            }
-        }
-
-        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-            for(uint64_t l = 0; l < nSiblings; ++l) {
-                for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
-                    pointer[p++] = toU64(fri.trees.polQueries[i][starkInfo.nStages + 1].mp[l][k]);
+        if (starkInfo.hasConstants()) {
+            for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+                for(uint64_t l = 0; l < starkInfo.nConstants; l++) {
+                    pointer[p++] = Goldilocks::toU64(fri.trees.polQueries[i][starkInfo.nStages + 1].v[l][0]);
                 }
             }
-        }
 
-        if (starkInfo.starkStruct.lastLevelVerification != 0) {
-            for (uint64_t k = 0; k < std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification) * nFieldElements; k++)
-            {
-                pointer[p++] = toU64(last_levels[starkInfo.nStages + 1][k]);
+            for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+                for(uint64_t l = 0; l < nSiblings; ++l) {
+                    for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
+                        pointer[p++] = toU64(fri.trees.polQueries[i][starkInfo.nStages + 1].mp[l][k]);
+                    }
+                }
+            }
+
+            if (starkInfo.starkStruct.lastLevelVerification != 0) {
+                for (uint64_t k = 0; k < std::pow(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification) * nFieldElements; k++)
+                {
+                    pointer[p++] = toU64(last_levels[starkInfo.nStages + 1][k]);
+                }
             }
         }
 
@@ -467,6 +469,7 @@ public:
                 }
             }
 
+            checkProofSize(p);
             return pointer;
         }
 
@@ -509,7 +512,14 @@ public:
 
         pointer[p++] = nonce;
 
+        checkProofSize(p);
         return pointer;
+    }
+
+    void checkProofSize(uint64_t p) const {
+        if (p != starkInfo.proofSize) {
+            throw std::runtime_error("proof2pointer wrote " + std::to_string(p) + " u64, expected proofSize " + std::to_string(starkInfo.proofSize));
+        }
     }
 
     json proof2json()
@@ -563,8 +573,10 @@ public:
         }
 
         
-        j["s0_valsC"] = json::array();
-        j["s0_siblingsC"] = json::array();
+        if (starkInfo.hasConstants()) {
+            j["s0_valsC"] = json::array();
+            j["s0_siblingsC"] = json::array();
+        }
 
         for(uint64_t i = 0; i < starkInfo.nStages + 1; ++i) {
             uint64_t stage = i + 1;
@@ -581,14 +593,16 @@ public:
             uint64_t nSiblings = merkleProofLevels(starkInfo.starkStruct.nBitsExt, starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.lastLevelVerification, starkInfo.starkStruct.verificationHashType == std::string("BN128"));
             uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
 
-            j["s0_valsC"][i] = json::array();
-            j["s0_siblingsC"][i] = json::array();
-            for(uint64_t l = 0; l < starkInfo.nConstants; l++) {
-                j["s0_valsC"][i][l] = Goldilocks::toString(fri.trees.polQueries[i][starkInfo.nStages + 1].v[l][0]);
-            }
-            for(uint64_t l = 0; l < nSiblings; ++l) {
-                for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
-                    j["s0_siblingsC"][i][l][k] = toString(fri.trees.polQueries[i][starkInfo.nStages + 1].mp[l][k]);
+            if (starkInfo.hasConstants()) {
+                j["s0_valsC"][i] = json::array();
+                j["s0_siblingsC"][i] = json::array();
+                for(uint64_t l = 0; l < starkInfo.nConstants; l++) {
+                    j["s0_valsC"][i][l] = Goldilocks::toString(fri.trees.polQueries[i][starkInfo.nStages + 1].v[l][0]);
+                }
+                for(uint64_t l = 0; l < nSiblings; ++l) {
+                    for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
+                        j["s0_siblingsC"][i][l][k] = toString(fri.trees.polQueries[i][starkInfo.nStages + 1].mp[l][k]);
+                    }
                 }
             }
 
@@ -640,7 +654,7 @@ public:
             for (uint64_t s = 0; s < nStages; ++s) {
                 emitLastLevels("s0_last_levels" + to_string(s + 1), last_levels[s]);
             }
-            emitLastLevels("s0_last_levelsC", last_levels[starkInfo.nStages + 1]);
+            if (starkInfo.hasConstants()) emitLastLevels("s0_last_levelsC", last_levels[starkInfo.nStages + 1]);
             for (uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
                 emitLastLevels("s0_last_levels_" + starkInfo.customCommits[c].name + "_0", last_levels[starkInfo.nStages + 2 + c]);
             }

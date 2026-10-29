@@ -121,6 +121,7 @@ TARGET_PILFFLONK_GPU_TEST := pilfflonkGpuTest
 TARGET_STIR_TEST := stirTests
 TARGET_POLYNOMIAL_TEST := polynomialTests
 TARGET_DOMAIN_ZEROFIER_TEST := domainZerofierTest
+TARGET_ZERO_CONSTANTS_TEST := zeroConstantsLayoutTest
 
 BUILD_DIR := ./build
 BUILD_DIR_GPU := ./build-gpu
@@ -265,6 +266,10 @@ DEPS_DOMAIN_ZEROFIER_TEST := $(OBJS_DOMAIN_ZEROFIER_TEST:.o=.d)
 # The native Rust verifier's vectors, which the gtest checks (or writes, with DOMAIN_ZI_VECTORS set).
 $(OBJS_DOMAIN_ZEROFIER_TEST): CPPFLAGS += -DDOMAIN_ZI_VECTORS_FILE=\"$(abspath ../verifier/tests/data/domain_zi_vectors.json)\"
 
+# Zero-fixed-air layout tests (gtest), against the CPU archive.
+OBJS_ZERO_CONSTANTS_TEST := $(BUILD_DIR)/./src/starkpil/tests/test_zero_constants_layout.cpp.o
+DEPS_ZERO_CONSTANTS_TEST := $(OBJS_ZERO_CONSTANTS_TEST:.o=.d)
+
 # rapidsnark Polynomial tests (gtest). The polynomials are header-only templates over ffiasm's
 # BN128 engine, so this links ffiasm and the Keccak of the tests' digests rather than the library.
 SRCS_POLYNOMIAL_TEST := $(shell find ./src/rapidsnark/polynomial/tests ./src/rapidsnark/keccak_wrapper.cpp ./src/XKCP -name "*.cpp")
@@ -347,6 +352,8 @@ stir_test: $(BUILD_DIR)/$(TARGET_STIR_TEST)
 
 domain_zerofier_test: $(BUILD_DIR)/$(TARGET_DOMAIN_ZEROFIER_TEST)
 
+zero_constants_layout_test: $(BUILD_DIR)/$(TARGET_ZERO_CONSTANTS_TEST)
+
 ifeq ($(UNAME_S),Darwin)
 polynomial_test:
 	$(error polynomial_test needs ffiasm's assembly field arithmetic, which macOS builds without)
@@ -422,6 +429,9 @@ $(BUILD_DIR)/$(TARGET_STIR_TEST): $(OBJS_STIR_TEST)
 $(BUILD_DIR)/$(TARGET_DOMAIN_ZEROFIER_TEST): $(OBJS_DOMAIN_ZEROFIER_TEST) $(LIB_DIR)/$(TARGET_STARKS_LIB)
 	$(CXX) $(OBJS_DOMAIN_ZEROFIER_TEST) $(LIB_DIR)/$(TARGET_STARKS_LIB) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
 
+$(BUILD_DIR)/$(TARGET_ZERO_CONSTANTS_TEST): $(OBJS_ZERO_CONSTANTS_TEST) $(LIB_DIR)/$(TARGET_STARKS_LIB)
+	$(CXX) $(OBJS_ZERO_CONSTANTS_TEST) $(LIB_DIR)/$(TARGET_STARKS_LIB) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
+
 $(BUILD_DIR)/$(TARGET_POLYNOMIAL_TEST): $(OBJS_POLYNOMIAL_TEST)
 	$(CXX) $(OBJS_POLYNOMIAL_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
 
@@ -485,7 +495,7 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean clean_cpu clean_gpu domain_zerofier_test pilfflonk_test pilfflonk_gpu_test stir_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu hints_test_gpu
+.PHONY: clean clean_cpu clean_gpu domain_zerofier_test zero_constants_layout_test pilfflonk_test pilfflonk_gpu_test stir_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu hints_test_gpu
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
@@ -509,5 +519,6 @@ clean_gpu:
 -include $(DEPS_STIR_TEST)
 -include $(DEPS_POLYNOMIAL_TEST)
 -include $(DEPS_DOMAIN_ZEROFIER_TEST)
+-include $(DEPS_ZERO_CONSTANTS_TEST)
 
 MKDIR_P ?= mkdir -p

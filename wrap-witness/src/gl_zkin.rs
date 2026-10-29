@@ -37,6 +37,9 @@ pub fn gl_proof_zkin(stark_info: &Value, proof: &[u64], publics: &[u64]) -> Wrap
     let n_stages = num(&stark_info["nStages"], "nStages")?;
     let n_evals = stark_info["evMap"].as_array().map_or(0, Vec::len);
     let n_constants = num(&stark_info["nConstants"], "nConstants")? as usize;
+    if n_constants == 0 {
+        return Err(bad("the wrapped air has no fixed columns; recursivef always has them".into()));
+    }
 
     // Sibling levels below the last `llv`, which the proof gives whole.
     let levels = |n_bits: u64| -> usize {

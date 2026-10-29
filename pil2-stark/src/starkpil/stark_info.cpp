@@ -1,4 +1,5 @@
 #include "stark_info.hpp"
+#include <algorithm>
 #include "utils.hpp"
 #include "timer.hpp"
 #include "zklog.hpp"
@@ -307,6 +308,14 @@ void StarkInfo::load(json j)
         evMap.push_back(map);
     }
 
+    if (!hasConstants()) {
+        bool constEv = std::any_of(evMap.begin(), evMap.end(), [](const EvMap &e) { return e.type == EvMap::eType::_const; });
+        if (!constPolsMap.empty() || constEv) {
+            zklog.error("StarkInfo::load() nConstants is 0 but constPolsMap or evMap references a fixed column");
+            exitProcess();
+        }
+    }
+
     for (auto it = j["mapSectionsN"].begin(); it != j["mapSectionsN"].end(); it++)  
     {
         mapSectionsN[it.key()] = it.value();
@@ -444,8 +453,10 @@ void StarkInfo::getProofSize() {
     uint64_t nSiblings = merkleProofLevels(starkStruct.nBitsExt, starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.verificationHashType == std::string("BN128"));
     uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
 
-    proofSize += starkStruct.nQueries * nConstants; // Constants Values
-    proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel; // Siblings Constants Values
+    if (hasConstants()) {
+        proofSize += starkStruct.nQueries * nConstants; // Constants Values
+        proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel; // Siblings Constants Values
+    }
 
     for(uint64_t i = 0; i < customCommits.size(); ++i) {
         proofSize += starkStruct.nQueries * mapSectionsN[customCommits[i].name + "0"]; // Custom Commits Values
@@ -460,7 +471,7 @@ void StarkInfo::getProofSize() {
     if(starkStruct.lowDegreeTest == LowDegreeTestKind::STIR) {
         if(starkStruct.lastLevelVerification > 0) {
             uint64_t numNodesLevel = std::pow(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification);
-            proofSize += (nStages + 2 + customCommits.size()) * numNodesLevel * 4;
+            proofSize += numInitialTrees() * numNodesLevel * 4;
         }
         proofSize += stirProofSectionSize();
         return;
@@ -471,7 +482,7 @@ void StarkInfo::getProofSize() {
     if(starkStruct.lastLevelVerification > 0) {
         uint64_t numNodesLevel = std::pow(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification);
         proofSize += (starkStruct.logDomainSizes.size() - 1) * numNodesLevel * 4;
-        proofSize += (nStages + 2 + customCommits.size()) * numNodesLevel * 4;
+        proofSize += numInitialTrees() * numNodesLevel * 4;
     }
 
     for(uint64_t i = 1; i < starkStruct.logDomainSizes.size(); ++i) {
@@ -497,7 +508,7 @@ uint64_t StarkInfo::getPinnedProofSize() {
 
     if(starkStruct.lastLevelVerification > 0) {
         uint64_t numNodesLevel = std::pow(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification);
-        pinnedProofSize += (nStages + 2 + customCommits.size()) * numNodesLevel * 4;
+        pinnedProofSize += numInitialTrees() * numNodesLevel * 4;
         pinnedProofSize += nLdtTrees * numNodesLevel * 4;
     }
     
@@ -584,15 +595,11 @@ void StarkInfo::setMapOffsets() {
     uint64_t numNodes = getNumNodesMTCommit(NExtended);
 
     if(gpu) {
+        // Zero-fixed airs keep the key (looked up by operator[]) as a zero-width region.
         mapOffsets[std::make_pair("const", true)] = mapTotalN;
-        MerkleTreeGL mt(starkStruct.merkleTreeArity, starkStruct.lastLevelVerification, starkStruct.merkleTreeCustom, NExtended, nConstants);
-        uint64_t constTreeSize = (NExtended * nConstants) + numNodes;
-        mapTotalN += alignRegion(constTreeSize);
-
-        // This air's const tree is rebuilt on device (unpack + extend + merkelize from the
-        // resident packed pols). No consttree file is ever read on GPU, so this is false only
-        // for airs with no constants at all.
-        if (nConstants > 0) {
+        if (hasConstants()) {
+            // Rebuilt on device from the resident packed pols; no consttree file is read on GPU.
+            mapTotalN += alignRegion((NExtended * nConstants) + numNodes);
             calculateFixedExtended = true;
         }
     }

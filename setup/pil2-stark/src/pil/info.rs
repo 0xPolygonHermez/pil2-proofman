@@ -34,6 +34,45 @@ pub struct PilInfoResult {
     pub boundaries: Vec<Boundary>,
 }
 
+/// A zero-fixed air must not reference a fixed column: provers and verifiers would read an absent const section.
+pub(crate) fn assert_no_const_refs(setup: &SetupResult, pil_code: &PilCodeResult, air_name: &str) -> Result<()> {
+    if setup.n_constants > 0 {
+        return Ok(());
+    }
+    let refuse = |what: String| -> Result<()> {
+        bail!("Air '{air_name}' has no fixed columns, but {what} references a fixed column")
+    };
+    if let Some(p) = setup.const_pols_map.first() {
+        return refuse(format!("constPolsMap entry '{}'", p.name));
+    }
+    if let Some(n) = setup.map_sections_n.get("const").filter(|n| **n != 0) {
+        return refuse(format!("mapSectionsN.const = {n}"));
+    }
+    if let Some(e) = pil_code.ev_map.iter().find(|e| e.entry_type == "const") {
+        return refuse(format!("evMap entry (id {}, prime {})", e.id, e.prime));
+    }
+    let ei = &pil_code.expressions_info;
+    let vi = &pil_code.verifier_info;
+    let blocks = ei
+        .expressions_code
+        .iter()
+        .map(|e| ("expression", &e.code))
+        .chain(ei.constraints.iter().map(|c| ("constraint", &c.code)))
+        .chain(std::iter::once(&vi.q_verifier).chain(vi.query_verifier.as_ref()).map(|e| ("verifier", &e.code)));
+    for (kind, code) in blocks {
+        let refs = code.iter().flat_map(|c| std::iter::once(&c.dest).chain(c.src.iter()));
+        if let Some(r) = refs.into_iter().find(|r| r.ref_type == "const") {
+            return refuse(format!("a {kind} code operand (const id {})", r.id));
+        }
+    }
+    for h in &ei.hints_info {
+        if h.fields.iter().any(|f| f.values.iter().any(|v| v.op == "const")) {
+            return refuse(format!("hint '{}'", h.name));
+        }
+    }
+    Ok(())
+}
+
 /// Main entry point: assemble pil info for a single air.
 ///
 /// Steps:
@@ -340,9 +379,9 @@ fn get_prover_memory(
     };
     let num_nodes = num_nodes_commit(n_ext);
 
-    // Constant tree, then the constants on the small domain
+    // Constant tree, then the constants on the small domain; a zero-fixed air has no tree (hasConstants())
     let n_constants = setup.n_constants as u64;
-    let mut total = align(n_ext * n_constants + num_nodes);
+    let mut total = if n_constants > 0 { align(n_ext * n_constants + num_nodes) } else { 0 };
     total += n * n_constants;
 
     let mut custom_fixed = 0u64;
@@ -443,6 +482,53 @@ mod tests {
         let dom = |c: u32| Boundary::Domain(Domain { cycle_bits: c, offsets: vec![0], complement: false });
         assert_eq!(zi_size(&[Boundary::EveryRow], 10, 11), 2);
         assert_eq!(zi_size(&[Boundary::EveryRow, dom(10), dom(1)], 10, 11), 2 + 2048 + 4);
+    }
+
+    /// pil_info of the zero-fixed `DomFirst` from the committed examples/domains pilout.
+    fn zero_fixed_air() -> PilInfoResult {
+        use prost::Message;
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/domains/pil/build.pilout");
+        let pilout = pb::PilOut::decode(std::fs::read(path).unwrap().as_slice()).unwrap();
+        let (ag, air) = pilout
+            .air_groups
+            .iter()
+            .enumerate()
+            .find_map(|(g, ag)| ag.airs.iter().position(|a| a.name.as_deref() == Some("DomFirst")).map(|a| (g, a)))
+            .unwrap();
+        let n_bits = pilout.air_groups[ag].airs[air].num_rows.unwrap().trailing_zeros() as usize;
+        let ss = crate::types::stark_struct::generate_basic_stark_struct(&Default::default(), n_bits, "blake3");
+        let r = pil_info(&pilout, ag, air, &ss, &PrepareOptions::default()).unwrap();
+        assert_eq!(r.setup.n_constants, 0);
+        r
+    }
+
+    fn const_err(r: &PilInfoResult) -> String {
+        format!("{:#}", assert_no_const_refs(&r.setup, &r.pil_code, "DomFirst").unwrap_err())
+    }
+
+    #[test]
+    fn zero_constants_accepts_clean_code() {
+        let r = zero_fixed_air();
+        assert_no_const_refs(&r.setup, &r.pil_code, "DomFirst").unwrap();
+    }
+
+    #[test]
+    fn zero_constants_rejects_const_ev_ref() {
+        let mut r = zero_fixed_air();
+        let mut e = r.pil_code.ev_map[0].clone();
+        e.entry_type = "const".into();
+        r.pil_code.ev_map.push(e);
+        let err = const_err(&r);
+        assert!(err.contains("references a fixed column") && err.contains("DomFirst"), "{err}");
+    }
+
+    #[test]
+    fn zero_constants_rejects_const_code_operand() {
+        let mut r = zero_fixed_air();
+        let c = serde_json::from_value(serde_json::json!({"type": "const", "id": 0, "dim": 1})).unwrap();
+        r.pil_code.verifier_info.q_verifier.code[0].src.push(c);
+        let err = const_err(&r);
+        assert!(err.contains("references a fixed column") && err.contains("verifier code operand"), "{err}");
     }
 
     /// What the passes refuse, which they used to `panic!` on, is an error of the STARK setup.
