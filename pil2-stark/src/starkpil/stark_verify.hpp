@@ -410,6 +410,10 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     }
 
     ProverHelpers proverHelpers(starkInfo, xiChallenge);
+    if (proverHelpers.zeroDenominator) {
+        zklog.error("starkVerify: Zh(xi) is zero: xi lies on the trace domain");
+        return false;
+    }
 
     SetupCtx setupCtx(starkInfo, expressionsBin);
 

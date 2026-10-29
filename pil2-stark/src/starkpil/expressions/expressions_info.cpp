@@ -198,14 +198,12 @@ void ExpressionsInfo::load(json j, bool global, bool verifier)
         if(j["constraints"][i].contains("stage")) constraintInfo.stage = j["constraints"][i]["stage"];
         if(j["constraints"][i].contains("line")) constraintInfo.line = j["constraints"][i]["line"];
         if(j["constraints"][i].contains("imPol")) constraintInfo.imPol = j["constraints"][i]["imPol"];
-        if(j["constraints"][i].contains("boundary")) {
-            Boundary b;
-            b.name = j["constraints"][i]["boundary"];
-            if(b.name == string("everyFrame")) {
-                b.offsetMin = j["constraints"][i]["offsetMin"];
-                b.offsetMax = j["constraints"][i]["offsetMax"];
+        if(!global) {
+            if(!j["constraints"][i].contains("boundaryId")) {
+                zklog.error("ExpressionsInfo: constraint " + to_string(i) + " has no boundaryId; regenerate the setup");
+                exitProcess();
             }
-            constraintInfo.boundary = b;
+            constraintInfo.boundaryId = j["constraints"][i]["boundaryId"];
         }
         constraintInfo.tmpUsed = j["constraints"][i]["tmpUsed"];
 
@@ -659,35 +657,16 @@ void ExpressionsInfo::prepareVerifierExpressionsBin() {
 }
 
 void ExpressionsInfo::prepareExpressionsBin() {
-    uint64_t N = (1 << starkInfo.starkStruct.nBits);
-
     for(uint64_t j = 0; j < constraintsCode.size(); ++j) {
         ExpInfo constraint = constraintsCode[j];
-        uint64_t firstRow;
-        uint64_t lastRow;
-
-        if(constraint.boundary.name == "everyRow") {
-            firstRow = 0;
-            lastRow = N;
-        } else if(constraint.boundary.name == "lastRow") {
-            firstRow = N - 1;
-            lastRow = N;
-        } else if(constraint.boundary.name == "firstRow" || constraint.boundary.name == "finalProof") {
-            firstRow = 0;
-            lastRow = 1;
-        } else if(constraint.boundary.name == "everyFrame") {
-            firstRow = constraint.boundary.offsetMin;
-            lastRow = constraint.boundary.offsetMax;
-        } else {
-            zklog.error("Invalid boundary=" + constraint.boundary.name);
+        if(constraint.boundaryId >= starkInfo.boundaries.size()) {
+            zklog.error("Invalid boundaryId=" + to_string(constraint.boundaryId));
             exitProcess();
-            exit(-1);
         }
 
         ExpInfoBin constraintInfo = getParserArgs(constraint.code, constraint.tmpUsed, numbersConstraints, false);
         constraintInfo.stage = constraint.stage;
-        constraintInfo.firstRow = firstRow;
-        constraintInfo.lastRow = lastRow;
+        constraintInfo.boundaryId = constraint.boundaryId;
         constraintInfo.line = constraint.line;
         constraintInfo.imPol = constraint.imPol;
         constraintsInfo.push_back(constraintInfo);

@@ -122,7 +122,12 @@ public:
 #if DEBUG
                     if(print) printf("Expression debug zi\n");
 #endif
-                    return &proverHelpers->zi[(boundary - 1)*domainSize  + row];
+                    uint64_t offsetZi = setupCtx.starkInfo.ziOffsets[boundary - 1];
+                    uint64_t maskZi = setupCtx.starkInfo.ziMasks[boundary - 1];
+                    for(uint64_t j = 0; j < nrowsPack; ++j) {
+                        value[j] = proverHelpers->zi[offsetZi + ((row + j) & maskZi)];
+                    }
+                    return value;
                 }
             }
         } else if (type == setupCtx.starkInfo.nStages + 3) {

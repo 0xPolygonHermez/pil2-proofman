@@ -120,6 +120,7 @@ TARGET_PILFFLONK_TEST := pilfflonkTest
 TARGET_PILFFLONK_GPU_TEST := pilfflonkGpuTest
 TARGET_STIR_TEST := stirTests
 TARGET_POLYNOMIAL_TEST := polynomialTests
+TARGET_DOMAIN_ZEROFIER_TEST := domainZerofierTest
 
 BUILD_DIR := ./build
 BUILD_DIR_GPU := ./build-gpu
@@ -258,6 +259,12 @@ OBJS_STIR_TEST := $(SRCS_STIR_TEST:%=$(BUILD_DIR)/%.o)
 DEPS_STIR_TEST := $(OBJS_STIR_TEST:.o=.d)
 DEPS_BCT := $(OBJS_BCT:.o=.d)
 
+# Domain zerofier tests (gtest), against the CPU archive.
+OBJS_DOMAIN_ZEROFIER_TEST := $(BUILD_DIR)/./src/starkpil/expressions/tests/test_domain_zerofier.cpp.o
+DEPS_DOMAIN_ZEROFIER_TEST := $(OBJS_DOMAIN_ZEROFIER_TEST:.o=.d)
+# The native Rust verifier's vectors, which the gtest checks (or writes, with DOMAIN_ZI_VECTORS set).
+$(OBJS_DOMAIN_ZEROFIER_TEST): CPPFLAGS += -DDOMAIN_ZI_VECTORS_FILE=\"$(abspath ../verifier/tests/data/domain_zi_vectors.json)\"
+
 # rapidsnark Polynomial tests (gtest). The polynomials are header-only templates over ffiasm's
 # BN128 engine, so this links ffiasm and the Keccak of the tests' digests rather than the library.
 SRCS_POLYNOMIAL_TEST := $(shell find ./src/rapidsnark/polynomial/tests ./src/rapidsnark/keccak_wrapper.cpp ./src/XKCP -name "*.cpp")
@@ -338,6 +345,8 @@ pilfflonk_gpu_test: $(BUILD_DIR_GPU)/$(TARGET_PILFFLONK_GPU_TEST)
 
 stir_test: $(BUILD_DIR)/$(TARGET_STIR_TEST)
 
+domain_zerofier_test: $(BUILD_DIR)/$(TARGET_DOMAIN_ZEROFIER_TEST)
+
 ifeq ($(UNAME_S),Darwin)
 polynomial_test:
 	$(error polynomial_test needs ffiasm's assembly field arithmetic, which macOS builds without)
@@ -382,7 +391,15 @@ DEPS_STIR_GPU := $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/test_stir_gpu.cu.d $
 $(BUILD_DIR_GPU)/$(TARGET_STIR_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/test_stir_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
 
-$(BUILD_DIR_GPU)/$(TARGET_INTERP_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/expressions/tests/test_interpreter_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
+# Fake .exps.so files for StaleExpsSoRejected, next to the binary: the layout hash of its starkinfo, another, none.
+EXPS_FIXTURES := $(addprefix $(BUILD_DIR_GPU)/exps_fixtures/,match.exps.so stale.exps.so nohash.exps.so)
+$(BUILD_DIR_GPU)/exps_fixtures/match.exps.so: FIXTURE_HASH := -DLAYOUT_HASH=0xfb1d2cc6ab8792b6ull
+$(BUILD_DIR_GPU)/exps_fixtures/stale.exps.so: FIXTURE_HASH := -DLAYOUT_HASH=0xfb1d2cc6ab8792b7ull
+$(BUILD_DIR_GPU)/exps_fixtures/%.exps.so: src/starkpil/expressions/tests/exps_fixture.c
+	$(MKDIR_P) $(dir $@)
+	$(CC) -shared -fPIC $(FIXTURE_HASH) $< -o $@
+
+$(BUILD_DIR_GPU)/$(TARGET_INTERP_TEST_GPU): $(BUILD_DIR_GPU)/./src/starkpil/expressions/tests/test_interpreter_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU) $(EXPS_FIXTURES)
 	$(NVCC) $(NVCCFLAGS) -o $@ $< -lgtest_main -lgtest -L$(LIB_DIR_GPU) -lstarksgpu -lgomp $(LDFLAGS_GPU) -Lexternal/blst -lblst -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi -lgmpxx -lcrypto -ldl -lrt
 
 $(BUILD_DIR_GPU)/$(TARGET_STIR_BENCH_GPU): $(BUILD_DIR_GPU)/./src/starkpil/stir/tests/bench_stir_gpu.cu.o $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
@@ -393,6 +410,9 @@ $(BUILD_DIR)/$(TARGET_BCT): $(OBJS_BCT)
 
 $(BUILD_DIR)/$(TARGET_STIR_TEST): $(OBJS_STIR_TEST)
 	$(CXX) $(OBJS_STIR_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
+
+$(BUILD_DIR)/$(TARGET_DOMAIN_ZEROFIER_TEST): $(OBJS_DOMAIN_ZEROFIER_TEST) $(LIB_DIR)/$(TARGET_STARKS_LIB)
+	$(CXX) $(OBJS_DOMAIN_ZEROFIER_TEST) $(LIB_DIR)/$(TARGET_STARKS_LIB) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
 
 $(BUILD_DIR)/$(TARGET_POLYNOMIAL_TEST): $(OBJS_POLYNOMIAL_TEST)
 	$(CXX) $(OBJS_POLYNOMIAL_TEST) $(CXXFLAGS) -o $@ $(LDFLAGS) $(CFLAGS) $(CPPFLAGS) -lgtest -lgtest_main
@@ -457,7 +477,7 @@ $(SPPARK_GPU_OBJ): ./external/sppark/util/all_gpus.cpp
 	$(MKDIR_P) $(dir $@)
 	$(NVCC) -D__USE_CUDA__ $(NVCCFLAGS) $(CPPFLAGS) -x cu -c $< -o $@
 
-.PHONY: clean clean_cpu clean_gpu pilfflonk_test pilfflonk_gpu_test stir_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu
+.PHONY: clean clean_cpu clean_gpu domain_zerofier_test pilfflonk_test pilfflonk_gpu_test stir_test stir_test_gpu stir_bench_gpu polynomial_test interp_test_gpu
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
@@ -480,5 +500,6 @@ clean_gpu:
 -include $(DEPS_STIR_GPU)
 -include $(DEPS_STIR_TEST)
 -include $(DEPS_POLYNOMIAL_TEST)
+-include $(DEPS_DOMAIN_ZEROFIER_TEST)
 
 MKDIR_P ?= mkdir -p

@@ -35,6 +35,7 @@ namespace BinFileUtils
         Section *readingSection;
 
     public:
+        uint32_t getVersion() const { return version; }
         BinFile(void *data, uint64_t size, std::string type, uint32_t maxVersion);
         BinFile(std::string fileName, std::string type, uint32_t maxVersion);
         BinFile(std::string fileName, std::string type, uint32_t maxVersion, bool directRead);

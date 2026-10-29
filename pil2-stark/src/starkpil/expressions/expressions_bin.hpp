@@ -21,6 +21,8 @@ const int EXPRESSIONS_SECTION = 1;
 const int CONSTRAINTS_SECTION = 2;
 const int HINTS_SECTION = 3;
 const int N_SECTIONS = 3;
+// 2: constraints carry a boundaryId instead of a firstRow/lastRow window.
+const uint32_t EXPRESSIONS_BIN_VERSION = 2;
 
 const int GLOBAL_CONSTRAINTS_SECTION = 1;
 const int GLOBAL_HINTS_SECTION = 2;
@@ -60,8 +62,7 @@ struct ParserParams
     uint32_t opsOffset = 0;
     uint32_t nArgs = 0;
     uint32_t argsOffset = 0;
-    uint32_t firstRow = 0;
-    uint32_t lastRow = 0;
+    uint32_t boundaryId = 0;
     uint32_t destDim = 0;
     uint32_t destId = 0;
     bool imPol = false;
@@ -119,6 +120,7 @@ public:
     };
 
     /* Constructor */
+    ExpressionsBin() = default; // an empty bin (loader tests)
     ExpressionsBin(string file, bool globalBin = false, bool verifierBin = false);
 
     ExpressionsBin(string starkInfoFile, string expressionsInfoFile, string expressionsBinFile, bool globalBin = false, bool verifierBin = false);

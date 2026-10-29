@@ -2,7 +2,12 @@
 
 ExpressionsBin::ExpressionsBin(string file, bool globalBin, bool verifierBin) {
     binFile = file;
-    std::unique_ptr<BinFileUtils::BinFile> bin = BinFileUtils::openExisting(file, "chps", 1);
+    bool exprsBin = !globalBin && !verifierBin;
+    std::unique_ptr<BinFileUtils::BinFile> bin = BinFileUtils::openExisting(file, "chps", exprsBin ? EXPRESSIONS_BIN_VERSION : 1);
+    if(exprsBin && bin->getVersion() != EXPRESSIONS_BIN_VERSION) {
+        zklog.error(file + ": expressions bin version " + std::to_string(bin->getVersion()) + ", this prover reads version " + std::to_string(EXPRESSIONS_BIN_VERSION) + "; regenerate the setup");
+        exitProcess();
+    }
 
     if(globalBin) {
         loadGlobalBin(bin.get());
@@ -39,7 +44,7 @@ void ExpressionsBin::writeGlobalExpressionsBin(string binFile, ExpressionsInfo& 
 
 
 void ExpressionsBin::writeExpressionsBin(string binFile, ExpressionsInfo& expsInfo) {
-    BinFileUtils::BinFileWriter fdBinFile(binFile, "chps", 1, N_SECTIONS);
+    BinFileUtils::BinFileWriter fdBinFile(binFile, "chps", EXPRESSIONS_BIN_VERSION, N_SECTIONS);
 
     // Write ExpressionsSection
     writeExpressionsSection(fdBinFile, EXPRESSIONS_SECTION, expsInfo.expressionsInfo, expsInfo.numbersExps, expsInfo.maxTmp1, expsInfo.maxTmp3, expsInfo.maxArgs, expsInfo.maxOps);
@@ -166,8 +171,7 @@ void ExpressionsBin::writeConstraintsSection(BinFileUtils::BinFileWriter &binFil
         binFile.writeU32LE(constraintInfo.stage);
         binFile.writeU32LE(constraintInfo.destDim);
         binFile.writeU32LE(constraintInfo.destId);
-        binFile.writeU32LE(constraintInfo.firstRow);
-        binFile.writeU32LE(constraintInfo.lastRow);
+        binFile.writeU32LE(constraintInfo.boundaryId);
         binFile.writeU32LE(constraintInfo.nTemp1);
         binFile.writeU32LE(constraintInfo.nTemp3);
 
@@ -441,8 +445,7 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
         parserParamsConstraint.destDim = expressionsBin->readU32LE();
         parserParamsConstraint.destId = expressionsBin->readU32LE();
 
-        parserParamsConstraint.firstRow = expressionsBin->readU32LE();
-        parserParamsConstraint.lastRow = expressionsBin->readU32LE();
+        parserParamsConstraint.boundaryId = expressionsBin->readU32LE();
 
         parserParamsConstraint.nTemp1 = expressionsBin->readU32LE();
         parserParamsConstraint.nTemp3 = expressionsBin->readU32LE();

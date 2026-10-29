@@ -47,13 +47,90 @@ public:
     vector<uint32_t> publicValues;
 };
 
-class Boundary
+// everyRow, or the rows o + k*2^cycleBits for o in offsets (all other rows if complement).
+struct Boundary
 {
-public:
     std::string name;
-    uint64_t offsetMin;
-    uint64_t offsetMax;
+    uint64_t cycleBits = 0;
+    std::vector<uint64_t> offsets;
+    bool complement = false;
 };
+
+// log2 of the period of the boundary's zerofier on the extended domain.
+inline uint64_t periodBits(const Boundary &b, uint64_t nBits, uint64_t nBitsExt)
+{
+    if (b.name == "everyRow") return nBitsExt - nBits;
+    if (b.cycleBits > nBits) {
+        zklog.error("periodBits: domain cycle 2^" + std::to_string(b.cycleBits) + " exceeds N=2^" + std::to_string(nBits));
+        exitProcess();
+    }
+    return nBitsExt - nBits + b.cycleBits;
+}
+
+// Empty if boundaries is a valid starkinfo list: everyRow first, then domains with sorted, distinct offsets in the cycle.
+inline std::string validateBoundaries(const std::vector<Boundary> &boundaries, uint64_t nBits)
+{
+    if (boundaries.empty() || boundaries[0].name != "everyRow") return "boundary 0 must be everyRow";
+    for (uint64_t i = 1; i < boundaries.size(); i++) {
+        const Boundary &b = boundaries[i];
+        std::string where = "boundary " + std::to_string(i) + ": ";
+        if (b.name != "domain") return where + "unknown boundary " + b.name;
+        if (b.cycleBits > nBits) return where + "cycle 2^" + std::to_string(b.cycleBits) + " exceeds N=2^" + std::to_string(nBits);
+        if (b.offsets.empty()) return where + "a domain without offsets";
+        for (uint64_t k = 0; k < b.offsets.size(); k++) {
+            if (b.offsets[k] >= (uint64_t(1) << b.cycleBits)) return where + "offset " + std::to_string(b.offsets[k]) + " is outside the cycle";
+            // a repeated offset squares a factor of V_O, and Zh/V_O is no longer a polynomial
+            if (k > 0 && b.offsets[k] <= b.offsets[k - 1]) return where + "offsets must be strictly increasing";
+        }
+    }
+    return "";
+}
+
+inline bool inDomain(const Boundary &b, uint64_t row, uint64_t /*nBits*/)
+{
+    if (b.name == "everyRow") return true;
+    uint64_t r = row & ((uint64_t(1) << b.cycleBits) - 1);
+    bool hit = false;
+    for (uint64_t o : b.offsets) hit |= (o == r);
+    return hit != b.complement;
+}
+
+// Places each boundary's zerofier table (one period) in the zi buffer; returns its size.
+inline uint64_t ziLayout(const std::vector<Boundary> &boundaries, uint64_t nBits, uint64_t nBitsExt, std::vector<uint64_t> &offsets, std::vector<uint64_t> &masks)
+{
+    offsets.clear();
+    masks.clear();
+    uint64_t size = 0;
+    for (const Boundary &b : boundaries) {
+        uint64_t P = uint64_t(1) << periodBits(b, nBits, nBitsExt);
+        offsets.push_back(size);
+        masks.push_back(P - 1);
+        size += P;
+    }
+    return size;
+}
+
+// FNV-1a of LE u64s: nBitsExt - nBits, then per boundary (isDomain, cycleBits, complement, |O|, O...). Matches exps-codegen.
+inline uint64_t boundaryLayoutHash(const std::vector<Boundary> &boundaries, uint64_t nBits, uint64_t nBitsExt)
+{
+    uint64_t h = 0xcbf29ce484222325ull;
+    auto word = [&h](uint64_t w) {
+        for (int i = 0; i < 8; i++) {
+            h ^= (w >> (8 * i)) & 0xff;
+            h *= 0x100000001b3ull;
+        }
+    };
+    word(nBitsExt - nBits);
+    for (const Boundary &b : boundaries) {
+        const bool domain = b.name != "everyRow";
+        word(domain);
+        word(domain ? b.cycleBits : 0);
+        word(domain && b.complement);
+        word(domain ? b.offsets.size() : 0);
+        if (domain) for (uint64_t o : b.offsets) word(o);
+    }
+    return h;
+}
 
 /// The low-degree test run on the batched DEEP polynomial f_0.
 enum class LowDegreeTestKind
@@ -198,6 +275,10 @@ public:
     
     vector<int64_t> openingPoints;
     vector<Boundary> boundaries;
+    // Boundary b's zerofier at extended row r is zi[ziOffsets[b] + (r & ziMasks[b])].
+    vector<uint64_t> ziOffsets;
+    vector<uint64_t> ziMasks;
+    uint64_t ziSize = 0;
 
     uint64_t qDeg;
     uint64_t qDim;

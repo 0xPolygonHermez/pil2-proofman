@@ -111,7 +111,7 @@ public:
     uint64_t tmpUsed;
     CodeType dest;
     vector<CodeOperation> code;
-    Boundary boundary;
+    uint64_t boundaryId = 0;
     uint64_t imPol;
     string line;
 };
@@ -126,8 +126,7 @@ public:
     uint64_t expId;
     uint64_t destDim;
     uint64_t destId;
-    uint64_t firstRow;
-    uint64_t lastRow;
+    uint64_t boundaryId = 0;
     uint64_t stage;
     uint64_t imPol;
     string line;

@@ -138,12 +138,21 @@ void StarkInfo::load(json j)
     for(uint64_t i = 0; i < j["boundaries"].size(); i++) {
         Boundary b;
         b.name = j["boundaries"][i]["name"];
-        if(b.name == string("everyFrame")) {
-            b.offsetMin = j["boundaries"][i]["offsetMin"];
-            b.offsetMax = j["boundaries"][i]["offsetMax"];
+        if(b.name == string("domain")) {
+            b.cycleBits = j["boundaries"][i]["cycleBits"];
+            for(uint64_t k = 0; k < j["boundaries"][i]["offsets"].size(); k++) {
+                b.offsets.push_back(j["boundaries"][i]["offsets"][k]);
+            }
+            b.complement = j["boundaries"][i]["complement"];
         }
         boundaries.push_back(b);
     }
+    std::string boundariesError = validateBoundaries(boundaries, starkStruct.nBits);
+    if(!boundariesError.empty()) {
+        zklog.error("StarkInfo::load() " + boundariesError);
+        exitProcess();
+    }
+    ziSize = ziLayout(boundaries, starkStruct.nBits, starkStruct.nBitsExt, ziOffsets, ziMasks);
 
     for (uint64_t i = 0; i < j["challengesMap"].size(); i++) 
     {
@@ -741,7 +750,7 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t maxSizeHelper = 0;
     if(gpu) {
-        maxSizeHelper += boundaries.size() * NExtended;
+        maxSizeHelper += ziSize;
         mapOffsets[std::make_pair("zi", true)] = mapTotalN;
     }
     
