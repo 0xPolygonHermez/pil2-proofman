@@ -29,7 +29,7 @@ function prod(const int name = PIOP_NAME_DEFAULT, const int surname = PIOP_SURNA
         error("Cannot use the prod bus in a virtual table context.");
     }
 
-    assert(type == PROD_TYPE_ASSUMES || type == PROD_TYPE_PROVES || type == PROD_TYPE_FREE);
+    if (type == PROD_TYPE_FREE) error("A free-selector product bus is unsound until ONE_HALF is a field inverse; use the sum bus"); assert(type == PROD_TYPE_ASSUMES || type == PROD_TYPE_PROVES);
     assert(update_type == PROD_UPDATE_TYPE_LOCAL_DEFAULT || update_type == PROD_UPDATE_TYPE_LOCAL_AIRVAL || update_type == PROD_UPDATE_TYPE_GLOBAL);
     update_piop_prod(name, surname, type, opid, sel, expressions, update_type);
 }
