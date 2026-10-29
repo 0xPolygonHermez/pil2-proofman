@@ -28,7 +28,7 @@ fn mul(lhs: Option<pb::Operand>, rhs: Option<pb::Operand>) -> pb::Expression {
 
 fn every_row(idx: u32) -> pb::Constraint {
     pb::Constraint {
-        constraint: Some(constraint::Constraint::EveryRow(constraint::EveryRow {
+        constraint: Some(constraint::Constraint::AllRows(constraint::AllRows {
             expression_idx: Some(operand::Expression { idx }),
             debug_line: None,
         })),

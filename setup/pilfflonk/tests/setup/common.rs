@@ -97,7 +97,7 @@ pub fn neg(value: Option<pb::Operand>) -> pb::Expression {
 
 pub fn every_row(idx: u32) -> pb::Constraint {
     pb::Constraint {
-        constraint: Some(constraint::Constraint::EveryRow(constraint::EveryRow {
+        constraint: Some(constraint::Constraint::AllRows(constraint::AllRows {
             expression_idx: Some(operand::Expression { idx }),
             debug_line: Some(format!("constraint on expression {idx}")),
         })),

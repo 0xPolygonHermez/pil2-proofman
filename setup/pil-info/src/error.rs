@@ -14,6 +14,10 @@ pub enum PilInfoError {
     #[error("invalid pilout: {0}")]
     InvalidPilout(String),
 
+    /// A constraint domain the passes cannot use.
+    #[error("invalid domain: {0}")]
+    InvalidDomain(String),
+
     /// A hint field with neither an operand, a string nor an array of fields.
     #[error("invalid pilout: a field of hint `{hint}` has no value")]
     HintFieldWithoutValue { hint: String },
@@ -41,9 +45,6 @@ pub enum PilInfoError {
     // --- An invariant of the passes broken: a bug of pil-info, not of the pilout -------------
     #[error("{pass}: unknown expression op `{op}`")]
     UnknownOp { pass: &'static str, op: String },
-
-    #[error("constraint boundary `{0}` is not supported")]
-    UnsupportedBoundary(String),
 
     #[error("an evaluation of a `{0}`, which is neither a cm, a const nor a custom column")]
     UnknownEvaluation(String),

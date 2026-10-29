@@ -3,7 +3,7 @@ use std::fs;
 
 use proofman_common::{hash_family, LowDegreeLayout};
 use crate::io::parser_args::get_parser_args;
-use crate::types::stark_info::{StarkInfo, VerifierInfo};
+use crate::types::stark_info::{Boundary, StarkInfo, VerifierInfo};
 use crate::types::stark_struct::LowDegreeTest;
 
 pub fn write_verifier_rust_file(
@@ -27,6 +27,8 @@ pub fn write_verifier_rust_file(
         stark_info.custom_commits.is_empty(),
         "{path}: the native Rust verifier does not support custom commits"
     );
+    check_boundaries(&stark_info.boundaries, stark_info.stark_struct.n_bits)
+        .map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
     // Its transcript replay (stark_verify and stark_verify_stir) is laid out for three roots.
     anyhow::ensure!(
         stark_info.n_stages == 2,
@@ -113,18 +115,7 @@ fn prepare_verifier_rust(
 
     let mut boundary_strs: Vec<String> = Vec::new();
     for b in &stark_info.boundaries {
-        let offset_min = match b.offset_min {
-            Some(v) => v.to_string(),
-            None => "None".to_string(),
-        };
-        let offset_max = match b.offset_max {
-            Some(v) => v.to_string(),
-            None => "None".to_string(),
-        };
-        boundary_strs.push(format!(
-            "Boundary {{ name: \"{}\".to_string(), offset_min: {}, offset_max: {} }}",
-            b.name, offset_min, offset_max
-        ));
+        boundary_strs.push(boundary_literal(b));
     }
 
     // The FRI query polynomial is structural, so the verifier evaluates it from
@@ -301,4 +292,66 @@ fn prepare_verifier_rust(
     lines.push("}\n".to_string());
 
     Ok(lines.join("\n"))
+}
+
+/// The boundaries as the native verifier validates them, so a legacy or malformed one fails here.
+fn check_boundaries(boundaries: &[Boundary], n_bits: usize) -> Result<()> {
+    let native: Vec<proofman_common::Boundary> = boundaries
+        .iter()
+        .map(|b| proofman_common::Boundary {
+            name: b.name.clone(),
+            cycle_bits: b.cycle_bits.unwrap_or(0),
+            offsets: b.offsets.clone(),
+            complement: b.complement,
+        })
+        .collect();
+    proofman_common::validate_boundaries(&native, u32::try_from(n_bits)?).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// `b` as a `proofman_verifier::Boundary` literal.
+fn boundary_literal(b: &Boundary) -> String {
+    let offsets: Vec<String> = b.offsets.iter().map(|o| o.to_string()).collect();
+    format!(
+        "Boundary {{ name: \"{}\".to_string(), cycle_bits: {}, offsets: vec![{}], complement: {} }}",
+        b.name,
+        b.cycle_bits.unwrap_or(0),
+        offsets.join(", "),
+        b.complement
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{boundary_literal, check_boundaries};
+    use crate::types::stark_info::Boundary;
+
+    #[test]
+    fn boundary_literals_carry_the_domain() {
+        let every_row = Boundary { name: "everyRow".into(), ..Default::default() };
+        assert_eq!(
+            boundary_literal(&every_row),
+            "Boundary { name: \"everyRow\".to_string(), cycle_bits: 0, offsets: vec![], complement: false }"
+        );
+        let not_limits =
+            Boundary { name: "domain".into(), cycle_bits: Some(4), offsets: vec![0, 15], complement: true };
+        assert_eq!(
+            boundary_literal(&not_limits),
+            "Boundary { name: \"domain\".to_string(), cycle_bits: 4, offsets: vec![0, 15], complement: true }"
+        );
+    }
+
+    #[test]
+    fn legacy_or_malformed_boundaries_are_refused() {
+        let every_row = Boundary { name: "everyRow".into(), ..Default::default() };
+        let first_row = Boundary { name: "firstRow".into(), ..Default::default() };
+        let err = check_boundaries(&[every_row.clone(), first_row], 10).unwrap_err().to_string();
+        assert!(err.contains("boundary 1: unknown boundary firstRow"), "{err}");
+        let repeated = Boundary { name: "domain".into(), cycle_bits: Some(4), offsets: vec![3, 3], complement: false };
+        let err = check_boundaries(&[every_row.clone(), repeated], 10).unwrap_err().to_string();
+        assert!(err.contains("strictly increasing"), "{err}");
+        let err = check_boundaries(&[], 10).unwrap_err().to_string();
+        assert!(err.contains("boundary 0 must be everyRow"), "{err}");
+        let limits = Boundary { name: "domain".into(), cycle_bits: Some(4), offsets: vec![0, 15], complement: false };
+        check_boundaries(&[every_row, limits], 10).unwrap();
+    }
 }

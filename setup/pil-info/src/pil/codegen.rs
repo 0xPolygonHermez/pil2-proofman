@@ -574,6 +574,28 @@ fn get_dim(r: &CodeRef, tmp_dim: &[usize], ext_dim: usize) -> usize {
     }
 }
 
+/// Code that copies the committed column of the intermediate polynomial `exp_id` into a tmp: the
+/// value of a constraint whose whole expression the im-pol search promoted (pil_code_gen emits nothing).
+pub fn im_pol_copy_code(
+    ctx: &mut CodeGenCtx,
+    symbols: &[SymbolInfo],
+    expressions: &[Expression],
+    exp_id: usize,
+) -> Result<()> {
+    let exp = Expression {
+        op: "exp".to_string(),
+        id: Some(exp_id),
+        row_offset: Some(0),
+        dim: expressions[exp_id].dim,
+        ..Default::default()
+    };
+    let src = eval_exp(ctx, symbols, expressions, &exp, 0)?;
+    let dest = make_ref("tmp", ctx.tmp_used, src.dim);
+    ctx.tmp_used += 1;
+    ctx.code.push(CodeEntry { op: "copy".to_string(), dest, src: vec![src] });
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // buildCode
 // ---------------------------------------------------------------------------

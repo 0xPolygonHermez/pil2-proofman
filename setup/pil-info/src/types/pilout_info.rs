@@ -9,6 +9,7 @@ use pil2_pilout::pilout::{
 use crate::cfg::FieldCfg;
 use crate::error::{PilInfoError, Result};
 use crate::expr::expression::{ExprChild, Expression, ExpressionArena};
+use crate::pil::domain::{Boundary, Domain};
 
 // ---------------------------------------------------------------------------
 // Intermediate result types
@@ -17,13 +18,19 @@ use crate::expr::expression::{ExprChild, Expression, ExpressionArena};
 /// A formatted constraint extracted from the protobuf.
 #[derive(Debug, Clone)]
 pub struct ConstraintInfo {
-    pub boundary: String,
+    /// A domain is as the pilout declares it until `normalize_constraint_domains` normalizes it.
+    pub boundary: Boundary,
     pub e: usize,
     pub line: Option<String>,
-    pub offset_min: Option<u32>,
-    pub offset_max: Option<u32>,
     pub stage: Option<usize>,
     pub im_pol: bool,
+}
+
+/// A global constraint: it holds on the final proof.
+#[derive(Debug, Clone)]
+pub struct GlobalConstraintInfo {
+    pub e: usize,
+    pub line: Option<String>,
 }
 
 /// A formatted symbol extracted from the protobuf.
@@ -690,32 +697,27 @@ pub fn format_global_expressions(
 /// Format global constraints from pilout.
 ///
 /// Each global constraint has an expression index and a debug line.
-/// Boundary is always "finalProof" for global constraints.
-pub fn format_global_constraints(constraints: &[pb::GlobalConstraint]) -> Vec<ConstraintInfo> {
+pub fn format_global_constraints(constraints: &[pb::GlobalConstraint]) -> Vec<GlobalConstraintInfo> {
     constraints
         .iter()
         .filter_map(|c| {
             let expr_idx = c.expression_idx.as_ref()?.idx as usize;
-            Some(ConstraintInfo {
-                boundary: "finalProof".to_string(),
-                e: expr_idx,
-                line: c.debug_line.clone(),
-                offset_min: None,
-                offset_max: None,
-                stage: None,
-                im_pol: false,
-            })
+            Some(GlobalConstraintInfo { e: expr_idx, line: c.debug_line.clone() })
         })
         .collect()
 }
 
-/// Refuses a constraint of `constraints` whose expression is not one of the `n_expressions` of
-/// its air, or of the pilout for the global constraints; `whose` says which in the error.
-pub fn check_constraint_expressions(constraints: &[ConstraintInfo], n_expressions: usize, whose: &str) -> Result<()> {
-    match constraints.iter().enumerate().find(|(_, c)| c.e >= n_expressions) {
-        Some((i, c)) => Err(PilInfoError::InvalidPilout(format!(
-            "constraint {i} of {whose} is expression {}, and there are {n_expressions}",
-            c.e
+/// Refuses a constraint whose expression (of `exprs`, in constraint order) is not one of the
+/// `n_expressions` of its air, or of the pilout for the global constraints; `whose` says which in
+/// the error.
+pub fn check_constraint_expressions(
+    exprs: impl IntoIterator<Item = usize>,
+    n_expressions: usize,
+    whose: &str,
+) -> Result<()> {
+    match exprs.into_iter().enumerate().find(|&(_, e)| e >= n_expressions) {
+        Some((i, e)) => Err(PilInfoError::InvalidPilout(format!(
+            "constraint {i} of {whose} is expression {e}, and there are {n_expressions}"
         ))),
         None => Ok(()),
     }
@@ -1160,50 +1162,40 @@ fn convert_global_operand_to_expression(
 // format_constraints
 // ---------------------------------------------------------------------------
 
-/// Format constraints from protobuf, mirroring JS `formatConstraints`.
-pub fn format_constraints(constraints: &[pb::Constraint]) -> Vec<ConstraintInfo> {
+/// Format constraints from protobuf; the domain kinds are resolved against the air's `domains`.
+pub fn format_constraints(constraints: &[pb::Constraint], domains: &[pb::Domain]) -> Result<Vec<ConstraintInfo>> {
     constraints
         .iter()
-        .filter_map(|c| {
-            let inner = c.constraint.as_ref()?;
-            match inner {
-                constraint::Constraint::FirstRow(fr) => Some(ConstraintInfo {
-                    boundary: "firstRow".to_string(),
-                    e: fr.expression_idx.as_ref().map(|e| e.idx as usize).unwrap_or(0),
-                    line: fr.debug_line.clone(),
-                    offset_min: None,
-                    offset_max: None,
-                    stage: None,
-                    im_pol: false,
-                }),
-                constraint::Constraint::LastRow(lr) => Some(ConstraintInfo {
-                    boundary: "lastRow".to_string(),
-                    e: lr.expression_idx.as_ref().map(|e| e.idx as usize).unwrap_or(0),
-                    line: lr.debug_line.clone(),
-                    offset_min: None,
-                    offset_max: None,
-                    stage: None,
-                    im_pol: false,
-                }),
-                constraint::Constraint::EveryRow(er) => Some(ConstraintInfo {
-                    boundary: "everyRow".to_string(),
-                    e: er.expression_idx.as_ref().map(|e| e.idx as usize).unwrap_or(0),
-                    line: er.debug_line.clone(),
-                    offset_min: None,
-                    offset_max: None,
-                    stage: None,
-                    im_pol: false,
-                }),
-                constraint::Constraint::EveryFrame(ef) => Some(ConstraintInfo {
-                    boundary: "everyFrame".to_string(),
-                    e: ef.expression_idx.as_ref().map(|e| e.idx as usize).unwrap_or(0),
-                    line: ef.debug_line.clone(),
-                    offset_min: Some(ef.offset_min),
-                    offset_max: Some(ef.offset_max),
-                    stage: None,
-                    im_pol: false,
-                }),
-            }
+        .enumerate()
+        .map(|(i, c)| {
+            let inner = c
+                .constraint
+                .as_ref()
+                .ok_or_else(|| PilInfoError::InvalidPilout(format!("constraint has no kind (constraint {i})")))?;
+            let (domain, expr, line, complement) = match inner {
+                constraint::Constraint::AllRows(r) => (None, &r.expression_idx, &r.debug_line, false),
+                constraint::Constraint::DomainRows(r) => (Some(r.domain_idx), &r.expression_idx, &r.debug_line, false),
+                constraint::Constraint::ComplementDomainRows(r) => {
+                    (Some(r.domain_idx), &r.expression_idx, &r.debug_line, true)
+                }
+            };
+            let boundary = match domain {
+                None => Boundary::EveryRow,
+                Some(idx) => {
+                    let d = domains.get(idx as usize).ok_or_else(|| {
+                        PilInfoError::InvalidPilout(format!(
+                            "constraint {i} uses domain {idx}, but the air has {} domains",
+                            domains.len()
+                        ))
+                    })?;
+                    Boundary::Domain(Domain { cycle_bits: d.cycle_bits, offsets: d.offsets.clone(), complement })
+                }
+            };
+            let e = expr
+                .as_ref()
+                .map(|e| e.idx as usize)
+                .ok_or_else(|| PilInfoError::InvalidPilout(format!("constraint {i} has no expression")))?;
+            Ok(ConstraintInfo { boundary, e, line: line.clone(), stage: None, im_pol: false })
         })
         .collect()
 }
@@ -1690,8 +1682,8 @@ pub fn get_pilout_info(
     let num_rows = air.num_rows.unwrap_or(0);
     let pil_power = if num_rows > 0 { (num_rows as f64).log2() as u32 } else { 0 };
 
-    let constraints = format_constraints(&air.constraints);
-    check_constraint_expressions(&constraints, air.expressions.len(), &format!("air {air_name}"))?;
+    let constraints = format_constraints(&air.constraints, &air.domains)?;
+    check_constraint_expressions(constraints.iter().map(|c| c.e), air.expressions.len(), &format!("air {air_name}"))?;
 
     let mut expressions = format_expressions(
         &air.expressions,

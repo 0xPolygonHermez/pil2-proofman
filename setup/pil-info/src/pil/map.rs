@@ -511,20 +511,16 @@ mod tests {
         let symbols = vec![make_witness_symbol("a", 1, 0, 1)];
         let mut res = make_setup_result("test", 1, symbols);
         res.constraints.push(ConstraintInfo {
-            boundary: "everyRow".to_string(),
+            boundary: crate::pil::domain::Boundary::EveryRow,
             e: 0,
             line: Some("test.ImPol".to_string()),
-            offset_min: None,
-            offset_max: None,
             stage: None,
             im_pol: false,
         });
         res.constraints.push(ConstraintInfo {
-            boundary: "everyRow".to_string(),
+            boundary: crate::pil::domain::Boundary::EveryRow,
             e: 1,
             line: Some("some other constraint".to_string()),
-            offset_min: None,
-            offset_max: None,
             stage: None,
             im_pol: false,
         });

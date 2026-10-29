@@ -145,22 +145,33 @@ fn pilout() -> pb::PilOut {
     let c4 = e.last();
 
     use constraint::Constraint as C;
+    let domain_rows = |domain_idx, e, line: &str| {
+        C::DomainRows(constraint::DomainRows {
+            domain_idx,
+            expression_idx: expression_idx(e),
+            debug_line: Some(line.into()),
+        })
+    };
+    let complement_rows = |domain_idx, e, line: &str| {
+        C::ComplementDomainRows(constraint::ComplementDomainRows {
+            domain_idx,
+            expression_idx: expression_idx(e),
+            debug_line: Some(line.into()),
+        })
+    };
+    // first row, last row, everyFrame {1, 2}, everyFrame {1, 0}, every row
+    let domains = vec![
+        pb::Domain { cycle_bits: 3, offsets: vec![0] },
+        pb::Domain { cycle_bits: 3, offsets: vec![7] },
+        pb::Domain { cycle_bits: 3, offsets: vec![0, 6, 7] },
+        pb::Domain { cycle_bits: 3, offsets: vec![0] },
+    ];
     let constraints = vec![
-        C::FirstRow(constraint::FirstRow { expression_idx: expression_idx(c0), debug_line: Some("c0".into()) }),
-        C::LastRow(constraint::LastRow { expression_idx: expression_idx(c1), debug_line: Some("c1".into()) }),
-        C::EveryFrame(constraint::EveryFrame {
-            expression_idx: expression_idx(c2),
-            offset_min: 1,
-            offset_max: 2,
-            debug_line: Some("c2".into()),
-        }),
-        C::EveryFrame(constraint::EveryFrame {
-            expression_idx: expression_idx(c3),
-            offset_min: 1,
-            offset_max: 0,
-            debug_line: Some("c3".into()),
-        }),
-        C::EveryRow(constraint::EveryRow { expression_idx: expression_idx(c4), debug_line: Some("c4".into()) }),
+        domain_rows(0, c0, "c0"),
+        domain_rows(1, c1, "c1"),
+        complement_rows(2, c2, "c2"),
+        complement_rows(3, c3, "c3"),
+        C::AllRows(constraint::AllRows { expression_idx: expression_idx(c4), debug_line: Some("c4".into()) }),
     ];
     let bytes = |v: &Fr| v.as_biguint().to_bytes_be();
     let air = pb::Air {
@@ -171,6 +182,7 @@ fn pilout() -> pb::PilOut {
         stage_widths: vec![2],
         expressions: e.0,
         constraints: constraints.into_iter().map(|c| pb::Constraint { constraint: Some(c) }).collect(),
+        domains,
         air_values: vec![pb::AirValue { stage: 1 }],
         ..Default::default()
     };
@@ -447,13 +459,11 @@ fn the_oracle_refuses_what_it_cannot_evaluate() {
     assert!(err(AirOracle::new(&rows, 0, 0)).contains("not a power of two"));
 
     let mut frame = pilout();
-    if let Some(constraint::Constraint::EveryFrame(c)) = &mut frame.air_groups[0].airs[0].constraints[2].constraint {
-        c.offset_max = 7;
-    }
+    frame.air_groups[0].airs[0].domains[2].offsets = (0..8).collect();
     assert!(err(AirOracle::new(&frame, 0, 0)).contains("no row of 8 is left"));
 
     let mut dangling = pilout();
-    if let Some(constraint::Constraint::EveryRow(c)) = &mut dangling.air_groups[0].airs[0].constraints[4].constraint {
+    if let Some(constraint::Constraint::AllRows(c)) = &mut dangling.air_groups[0].airs[0].constraints[4].constraint {
         c.expression_idx = expression_idx(99);
     }
     assert!(err(AirOracle::new(&dangling, 0, 0)).contains("constraint 4 has no expression"));

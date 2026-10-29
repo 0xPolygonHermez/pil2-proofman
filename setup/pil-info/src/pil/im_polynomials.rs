@@ -4,8 +4,9 @@ use tracing::info;
 
 use crate::cfg::{DegreePolicy, FieldCfg};
 use crate::error::{PilInfoError, Result};
-use crate::expr::expression::{ExprChild, Expression};
+use crate::expr::expression::{mul_deg, ExprChild, Expression};
 use crate::expr::helpers::{add_info_expression_inline, get_exp_dim};
+use crate::pil::constraint_poly::Boundary;
 use crate::types::pilout_info::{ConstraintInfo, SymbolInfo};
 
 // ---------------------------------------------------------------------------
@@ -83,7 +84,7 @@ fn calc_deg_expr(
         "mul" => {
             let lhs = calc_deg_child(expressions, &exp.values[0], im_exps, cache_values, degree_cache)?;
             let rhs = calc_deg_child(expressions, &exp.values[1], im_exps, cache_values, degree_cache)?;
-            lhs + rhs
+            mul_deg(lhs, exp.values[1].resolve(expressions), rhs)
         }
         other => return Err(PilInfoError::UnknownOp { pass: "calculate_exp_deg", op: other.to_string() }),
     };
@@ -422,6 +423,25 @@ fn calc_im_pols_expr(
                 return (Some(im_pols.clone()), max_deg_here as i64);
             }
 
+            // A domain zerofier adds 0 or 1 by lhs's degree: try lhs at the full bound, then one below.
+            if rhs_expr.zi_domain.is_some() {
+                for l in [max_deg, max_deg.saturating_sub(1)] {
+                    let (e1, d1) = match &exp.values[0] {
+                        ExprChild::Id(id) => {
+                            calc_im_pols_inner(expressions, *id, im_pols, l, absolute_max, abs_max_d, memo)
+                        }
+                        ExprChild::Inline(e) => {
+                            calc_im_pols_expr(expressions, e, im_pols, l, absolute_max, abs_max_d, memo)
+                        }
+                    };
+                    let d = mul_deg(d1, rhs_expr, 1);
+                    if e1.is_some() && d <= max_deg as i64 {
+                        return (e1, d);
+                    }
+                }
+                return (None, -1);
+            }
+
             let mut eb: Option<BTreeSet<usize>> = None;
             let mut ed: i64 = -1;
 
@@ -532,7 +552,7 @@ pub fn add_im_polynomials(
     im_exps: &[usize],
     q_deg: i64,
     im_pols_stages: bool,
-    boundaries: &[(String, Option<i64>, Option<i64>)],
+    boundaries: &[Boundary],
     field: &FieldCfg,
 ) -> Result<usize> {
     let dim = field.ext_dim();
@@ -606,11 +626,9 @@ pub fn add_im_polynomials(
 
         constraints.push(ConstraintInfo {
             e: constraint_id,
-            boundary: "everyRow".to_string(),
+            boundary: Boundary::EveryRow,
             line: Some(format!("{}.ImPol", name)),
             stage: Some(expressions[exp_id].stage),
-            offset_min: None,
-            offset_max: None,
             im_pol: false,
         });
 
@@ -656,7 +674,7 @@ pub fn add_im_polynomials(
     // Q polynomial: cExp * zi(everyRow)
     // JS: let q = E.mul(expressions[res.cExpId], E.zi(...));
     // JS clones the cExp expression inline and uses inline zi - ONE push
-    let every_row_idx = boundaries.iter().position(|(bname, _, _)| bname == "everyRow").unwrap_or(0);
+    let every_row_idx = boundaries.iter().position(|b| *b == Boundary::EveryRow).unwrap_or(0);
 
     let c_exp_copy = expressions[*c_exp_id].clone();
     let zi_node = Expression {
@@ -1031,7 +1049,7 @@ mod tests {
         let mut symbols = Vec::new();
         let mut n_commitments: usize = 2;
         let mut c_exp_id: usize = 2;
-        let boundaries = vec![("everyRow".to_string(), None, None)];
+        let boundaries = vec![Boundary::EveryRow];
 
         let q_dim = add_im_polynomials(
             &mut expressions,
@@ -1077,7 +1095,7 @@ mod tests {
         let mut symbols = Vec::new();
         let mut n_commitments: usize = 3;
         let mut c_exp_id: usize = 5;
-        let boundaries = vec![("everyRow".to_string(), None, None)];
+        let boundaries = vec![Boundary::EveryRow];
 
         let _q_dim = add_im_polynomials(
             &mut expressions,
@@ -1107,7 +1125,7 @@ mod tests {
 
         // Should have added one constraint for the im polynomial
         assert_eq!(constraints.len(), 1);
-        assert_eq!(constraints[0].boundary, "everyRow");
+        assert_eq!(constraints[0].boundary, Boundary::EveryRow);
 
         // Expression for im_pol should be marked
         assert!(expressions[2].im_pol);

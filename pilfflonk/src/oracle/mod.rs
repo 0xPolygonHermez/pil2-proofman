@@ -113,6 +113,44 @@ pub enum Domain {
     EveryFrame { offset_min: usize, offset_max: usize },
 }
 
+/// The legacy domain of the pilout domain `idx` (`complement` or not) of a trace of `2^n_bits`
+/// rows, for constraint `i`: only first row, last row and prefix-plus-suffix frames are expressible.
+fn domain_of(air: &pb::Air, i: usize, idx: u32, complement: bool, n_bits: u32) -> PilfflonkResult<Domain> {
+    let Some(d) = air.domains.get(idx as usize) else {
+        return invalid!("constraint {i} uses domain {idx}, which the air does not have");
+    };
+    match domain_from_offsets(d.cycle_bits, &d.offsets, complement, n_bits) {
+        None => invalid!("domain constraint not supported by pilfflonk (constraint {i})"),
+        Some(Domain::EveryFrame { offset_min, offset_max }) if offset_min + offset_max >= 1 << n_bits => {
+            invalid!(
+                "constraint {i} is everyFrame {{{offset_min}, {offset_max}}}: no row of {} is left",
+                1usize << n_bits
+            )
+        }
+        Some(domain) => Ok(domain),
+    }
+}
+
+fn domain_from_offsets(cycle_bits: u32, offsets: &[u32], complement: bool, n_bits: u32) -> Option<Domain> {
+    if cycle_bits != n_bits {
+        return None;
+    }
+    let n = 1usize << n_bits;
+    let mut offs: Vec<usize> = offsets.iter().map(|&o| o as usize).collect();
+    offs.sort_unstable();
+    offs.dedup();
+    if !complement {
+        return match offs[..] {
+            [0] => Some(Domain::FirstRow),
+            [o] if o == n - 1 => Some(Domain::LastRow),
+            _ => None,
+        };
+    }
+    let k = offs.iter().enumerate().take_while(|(i, &o)| o == *i).count();
+    let j = offs[k..].iter().rev().enumerate().take_while(|(i, &o)| o == n - 1 - *i).count();
+    (k + j == offs.len() && !offs.is_empty()).then_some(Domain::EveryFrame { offset_min: k, offset_max: j })
+}
+
 impl Domain {
     /// Its rows, of a trace of `n` rows.
     pub fn rows(&self, n: usize) -> Range<usize> {
@@ -428,17 +466,12 @@ impl AirOracle {
         for (i, c) in air.constraints.iter().enumerate() {
             use constraint::Constraint as C;
             let (expression, domain, debug_line) = match &c.constraint {
-                Some(C::EveryRow(c)) => (&c.expression_idx, Domain::EveryRow, &c.debug_line),
-                Some(C::FirstRow(c)) => (&c.expression_idx, Domain::FirstRow, &c.debug_line),
-                Some(C::LastRow(c)) => (&c.expression_idx, Domain::LastRow, &c.debug_line),
-                Some(C::EveryFrame(c)) => {
-                    let (offset_min, offset_max) = (c.offset_min as usize, c.offset_max as usize);
-                    if offset_min + offset_max >= n {
-                        return invalid!(
-                            "constraint {i} is everyFrame {{{offset_min}, {offset_max}}}: no row of {n} is left"
-                        );
-                    }
-                    (&c.expression_idx, Domain::EveryFrame { offset_min, offset_max }, &c.debug_line)
+                Some(C::AllRows(c)) => (&c.expression_idx, Domain::EveryRow, &c.debug_line),
+                Some(C::DomainRows(c)) => {
+                    (&c.expression_idx, domain_of(air, i, c.domain_idx, false, n_bits)?, &c.debug_line)
+                }
+                Some(C::ComplementDomainRows(c)) => {
+                    (&c.expression_idx, domain_of(air, i, c.domain_idx, true, n_bits)?, &c.debug_line)
                 }
                 None => return invalid!("constraint {i} is empty"),
             };
@@ -819,5 +852,32 @@ mod tests {
         assert!(Domain::FirstRow.zerofier_at(&Fr::one(), 3).unwrap().is_zero());
         assert!(Domain::LastRow.zerofier_at(&w.pow_u64(7), 3).unwrap().is_zero());
         assert!(!Domain::LastRow.zerofier_at(&w.pow_u64(6), 3).unwrap().is_zero());
+    }
+}
+
+#[cfg(test)]
+mod domain_tests {
+    use super::*;
+
+    #[test]
+    fn maps_each_expressible_domain() {
+        assert_eq!(domain_from_offsets(3, &[0], false, 3), Some(Domain::FirstRow));
+        assert_eq!(domain_from_offsets(3, &[7], false, 3), Some(Domain::LastRow));
+        assert_eq!(
+            domain_from_offsets(3, &[7, 0, 6], true, 3),
+            Some(Domain::EveryFrame { offset_min: 1, offset_max: 2 })
+        );
+        assert_eq!(domain_from_offsets(3, &[0], true, 3), Some(Domain::EveryFrame { offset_min: 1, offset_max: 0 }));
+    }
+
+    #[test]
+    fn refuses_the_rest() {
+        assert_eq!(domain_from_offsets(2, &[0], false, 3), None);
+        assert_eq!(domain_from_offsets(3, &[3], false, 3), None);
+        assert_eq!(domain_from_offsets(3, &[0, 3], true, 3), None);
+        assert_eq!(domain_from_offsets(3, &[], true, 3), None);
+        let air = pb::Air { domains: vec![pb::Domain { cycle_bits: 2, offsets: vec![1] }], ..Default::default() };
+        let err = domain_of(&air, 4, 0, false, 3).unwrap_err().to_string();
+        assert!(err.contains("domain constraint not supported by pilfflonk") && err.contains("constraint 4"), "{err}");
     }
 }

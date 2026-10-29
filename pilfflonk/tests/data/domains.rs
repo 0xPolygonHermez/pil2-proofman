@@ -169,6 +169,7 @@ pub fn pilout(air: Air) -> pb::PilOut {
     let y = rules.len() as u32;
     let mut e = Exprs::default();
     let mut constraints = Vec::new();
+    let mut domains = Vec::new();
     let mut symbols = Vec::new();
     let mut n_publics = 0;
     for (j, rule) in rules.iter().enumerate() {
@@ -182,11 +183,13 @@ pub fn pilout(air: Air) -> pb::PilOut {
                 symbols.push(symbol(&format!("p{j}"), SymbolType::PublicValue, n_publics, None, false));
                 n_publics += 1;
                 let text = format!("x{j}*x{j} - p{j}");
-                if *rule == Rule::FirstRow {
-                    C::FirstRow(constraint::FirstRow { expression_idx: e.last(), debug_line: line(&text) })
-                } else {
-                    C::LastRow(constraint::LastRow { expression_idx: e.last(), debug_line: line(&text) })
-                }
+                let offset = if *rule == Rule::FirstRow { 0 } else { N as u32 - 1 };
+                domains.push(pb::Domain { cycle_bits: N_BITS, offsets: vec![offset] });
+                C::DomainRows(constraint::DomainRows {
+                    domain_idx: domains.len() as u32 - 1,
+                    expression_idx: e.last(),
+                    debug_line: line(&text),
+                })
             }
             Rule::Next { min, max } | Rule::Prev { min, max } => {
                 let (at, before) = if matches!(rule, Rule::Next { .. }) { (1, 0) } else { (0, -1) };
@@ -194,10 +197,12 @@ pub fn pilout(air: Air) -> pb::PilOut {
                 let step = e.sub(x(at), square);
                 e.sub(step, k());
                 let text = if at == 1 { format!("x{j}' - x{j}*x{j} - K") } else { format!("x{j} - 'x{j}*'x{j} - K") };
-                C::EveryFrame(constraint::EveryFrame {
+                // an everyFrame {min, max} is the complement of its first `min` and last `max` rows
+                let offsets = (0..min).chain(N as u32 - max..N as u32).collect();
+                domains.push(pb::Domain { cycle_bits: N_BITS, offsets });
+                C::ComplementDomainRows(constraint::ComplementDomainRows {
+                    domain_idx: domains.len() as u32 - 1,
                     expression_idx: e.last(),
-                    offset_min: min,
-                    offset_max: max,
                     debug_line: line(&text),
                 })
             }
@@ -206,7 +211,7 @@ pub fn pilout(air: Air) -> pb::PilOut {
     let x0_k = e.mul(witness_col(0, 0), k());
     e.sub(witness_col(y, 0), x0_k);
     let line = Some(format!("{}: y - x0*K", air.name()));
-    constraints.push(C::EveryRow(constraint::EveryRow { expression_idx: e.last(), debug_line: line }));
+    constraints.push(C::AllRows(constraint::AllRows { expression_idx: e.last(), debug_line: line }));
     symbols.push(symbol("y", SymbolType::WitnessCol, y, Some(1), true));
     symbols.push(symbol(&format!("{}.K", air.name()), SymbolType::FixedCol, 0, Some(0), true));
 
@@ -217,6 +222,7 @@ pub fn pilout(air: Air) -> pb::PilOut {
         stage_widths: vec![y + 1],
         expressions: e.0,
         constraints: constraints.into_iter().map(|c| pb::Constraint { constraint: Some(c) }).collect(),
+        domains,
         ..Default::default()
     };
     pb::PilOut {

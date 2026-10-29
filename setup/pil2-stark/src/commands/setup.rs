@@ -292,6 +292,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
                     pil_result.c_exp_id,
                     pil_result.deep_exp_id,
                     pil_result.q_deg,
+                    &pil_result.boundaries,
                 );
 
                 // Say which low-degree test this air runs, with the solved schedule.

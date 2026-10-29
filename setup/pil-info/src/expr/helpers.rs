@@ -1,6 +1,6 @@
 use crate::cfg::FieldCfg;
 use crate::error::{PilInfoError, Result};
-use crate::expr::expression::{ExprChild, Expression};
+use crate::expr::expression::{mul_deg, ExprChild, Expression};
 
 // ---------------------------------------------------------------------------
 // add_info_expressions
@@ -294,13 +294,14 @@ fn handle_binary_or_neg(expressions: &mut Vec<Expression>, idx: usize, field: &F
         let lhs = expressions[idx].values[0].resolve(expressions);
         (lhs.exp_deg, lhs.dim, lhs.stage, if lhs.rows_offsets.is_empty() { vec![0] } else { lhs.rows_offsets.clone() })
     };
-    let (rhs_deg, rhs_dim, rhs_stage, rhs_offsets) = {
+    let (mul_d, rhs_deg, rhs_dim, rhs_stage, rhs_offsets) = {
         let rhs = expressions[idx].values[1].resolve(expressions);
-        (rhs.exp_deg, rhs.dim, rhs.stage, if rhs.rows_offsets.is_empty() { vec![0] } else { rhs.rows_offsets.clone() })
+        let offsets = if rhs.rows_offsets.is_empty() { vec![0] } else { rhs.rows_offsets.clone() };
+        (mul_deg(lhs_deg, rhs, rhs.exp_deg), rhs.exp_deg, rhs.dim, rhs.stage, offsets)
     };
 
     let final_op = expressions[idx].op.clone();
-    expressions[idx].exp_deg = if final_op == "mul" { lhs_deg + rhs_deg } else { lhs_deg.max(rhs_deg) };
+    expressions[idx].exp_deg = if final_op == "mul" { mul_d } else { lhs_deg.max(rhs_deg) };
 
     expressions[idx].dim = lhs_dim.max(rhs_dim);
     expressions[idx].stage = lhs_stage.max(rhs_stage);
@@ -395,13 +396,14 @@ fn handle_binary_or_neg_inline(
         let lhs = expr.values[0].resolve(expressions);
         (lhs.exp_deg, lhs.dim, lhs.stage, if lhs.rows_offsets.is_empty() { vec![0] } else { lhs.rows_offsets.clone() })
     };
-    let (rhs_deg, rhs_dim, rhs_stage, rhs_offsets) = {
+    let (mul_d, rhs_deg, rhs_dim, rhs_stage, rhs_offsets) = {
         let rhs = expr.values[1].resolve(expressions);
-        (rhs.exp_deg, rhs.dim, rhs.stage, if rhs.rows_offsets.is_empty() { vec![0] } else { rhs.rows_offsets.clone() })
+        let offsets = if rhs.rows_offsets.is_empty() { vec![0] } else { rhs.rows_offsets.clone() };
+        (mul_deg(lhs_deg, rhs, rhs.exp_deg), rhs.exp_deg, rhs.dim, rhs.stage, offsets)
     };
 
     let final_op = expr.op.clone();
-    expr.exp_deg = if final_op == "mul" { lhs_deg + rhs_deg } else { lhs_deg.max(rhs_deg) };
+    expr.exp_deg = if final_op == "mul" { mul_d } else { lhs_deg.max(rhs_deg) };
 
     expr.dim = lhs_dim.max(rhs_dim);
     expr.stage = lhs_stage.max(rhs_stage);

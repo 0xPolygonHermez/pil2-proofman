@@ -61,12 +61,12 @@ values!({ project_name }PublicValues<F> \{
 values!({ project_name }ProofValues<F> \{
 {{ for column in proof_vals.values }} { column.name }: { column.type },{{ endfor }}
 });
-{{ endfor }} {{ for air_group in air_groups }}{{ for air in air_group.airs }}
+{{ endfor }} {{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ if air.fixed }}
 trace_row!({ air.name }FixedRow<F> \{
 {{ for column in air.fixed }} { column.name }: { column.type },{{ endfor }}
 });
 pub type { air.name }Fixed<F> = GenericTrace<{ air.name }FixedRow<F>, { air.num_rows }, { air_group.airgroup_id }, { air.id }>;
-
+{{ endif }}
 trace_row!({ air.name }TraceRow<F> \{
 {{ for column in air.columns }} { column.name }:{{ if air.has_packed }}{ column.type_packed }{{ else }}{ column.type }{{ endif }},{{ endfor }}
 });

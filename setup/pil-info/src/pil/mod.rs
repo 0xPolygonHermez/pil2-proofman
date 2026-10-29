@@ -2,6 +2,7 @@ pub mod codegen;
 pub mod constraint_poly;
 pub mod cse;
 pub mod deep_poly;
+pub mod domain;
 pub mod gen_code;
 pub mod im_polynomials;
 pub mod info;

@@ -1,8 +1,10 @@
 use pil2_pilout::pilout as pb;
 
-use crate::cfg::FieldCfg;
+use crate::cfg::PilInfoCfg;
 use crate::error::Result;
-use crate::pil::constraint_poly::{generate_constraint_polynomial, Boundary, ConstraintPolyResult};
+use crate::pil::constraint_poly::{
+    generate_constraint_polynomial, normalize_constraint_domains, Boundary, ConstraintPolyResult,
+};
 use crate::expr::expression::Expression;
 use crate::expr::helpers::add_info_expressions;
 use crate::types::pilout_info::{ConstraintInfo, HintInfo, SetupResult, SymbolInfo};
@@ -47,14 +49,15 @@ pub struct PreparePilResult {
 /// 4. Computes opening points
 /// 5. Calls generate_constraint_polynomial
 ///
-/// Every step computes over `field`; `pil_info` must then run with the same field. Fails on what
-/// `get_pilout_info` refuses and on what the passes cannot process.
+/// Every step computes over `cfg`'s field and opening; `pil_info` must then run with the same `cfg`.
+/// Fails on what `get_pilout_info` refuses and on what the passes cannot process.
 pub fn prepare_pil(
     pilout: &pb::PilOut,
     airgroup_id: usize,
     air_id: usize,
-    field: &FieldCfg,
+    cfg: &PilInfoCfg,
 ) -> Result<PreparePilResult> {
+    let (field, opening) = (&cfg.field, cfg.opening);
     let mut setup = crate::types::pilout_info::get_pilout_info(pilout, airgroup_id, air_id, field)?;
 
     // Set all expression stages to 1 (mirrors JS: pil.expressions[i].stage = 1)
@@ -73,6 +76,9 @@ pub fn prepare_pil(
     let mut constraints = std::mem::take(&mut setup.constraints);
     let mut symbols = std::mem::take(&mut setup.symbols);
     let hints = std::mem::take(&mut setup.hints);
+
+    let n_bits = setup.pil_power;
+    normalize_constraint_domains(&mut constraints, n_bits, opening, |i| domain_name(pilout, airgroup_id, air_id, i))?;
 
     // Run add_info_expressions on all constraints
     for i in 0..constraints.len() {
@@ -100,11 +106,13 @@ pub fn prepare_pil(
     opening_points_set.sort();
 
     // Initialize boundaries
-    let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
+    let mut boundaries = vec![Boundary::EveryRow];
 
     // Generate constraint polynomial
     let constraint_poly = generate_constraint_polynomial(
         setup.n_stages,
+        n_bits,
+        opening,
         &mut expressions,
         &mut symbols,
         &constraints,
@@ -113,4 +121,25 @@ pub fn prepare_pil(
     )?;
 
     Ok(PreparePilResult { setup, expressions, constraints, symbols, hints, boundaries, constraint_poly })
+}
+
+/// The name of the domain of constraint `i` of the air: its DOMAIN symbol, else `air:<name> domain#<idx>`.
+fn domain_name(pilout: &pb::PilOut, airgroup_id: usize, air_id: usize, i: usize) -> String {
+    use pb::constraint::Constraint as C;
+    let air = &pilout.air_groups[airgroup_id].airs[air_id];
+    let idx = match air.constraints.get(i).and_then(|c| c.constraint.as_ref()) {
+        Some(C::DomainRows(r)) => r.domain_idx,
+        Some(C::ComplementDomainRows(r)) => r.domain_idx,
+        _ => return format!("air:{} constraint#{i}", air.name.as_deref().unwrap_or_default()),
+    };
+    let symbol = pilout.symbols.iter().find(|s| {
+        s.r#type == pb::SymbolType::Domain as i32
+            && s.air_group_id == Some(airgroup_id as u32)
+            && s.air_id == Some(air_id as u32)
+            && s.id == idx
+    });
+    match symbol {
+        Some(s) => s.name.clone(),
+        None => format!("air:{} domain#{idx}", air.name.as_deref().unwrap_or_default()),
+    }
 }

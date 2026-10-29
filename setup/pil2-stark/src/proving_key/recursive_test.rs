@@ -251,6 +251,7 @@ pub fn gen_recursive_test_setup(
         pil_info_result.c_exp_id,
         pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
+        &pil_info_result.boundaries,
     );
     tracing::info!(
         "Circuit '{}' low-degree test: {}",

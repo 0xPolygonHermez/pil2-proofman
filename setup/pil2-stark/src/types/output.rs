@@ -66,12 +66,15 @@ pub struct StarkStructOutput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BoundaryOutput {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub offset_min: Option<i64>,
+    pub cycle_bits: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub offset_max: Option<i64>,
+    pub offsets: Option<Vec<u32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub complement: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

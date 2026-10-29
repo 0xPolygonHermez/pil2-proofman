@@ -1,7 +1,12 @@
+use std::collections::HashMap;
+
 use crate::cfg::FieldCfg;
 use crate::error::{PilInfoError, Result};
-use crate::expr::expression::{ExprChild, Expression};
-use crate::expr::helpers::{add_info_expression_inline, get_exp_dim};
+use crate::expr::expression::{mul_deg, ExprChild, Expression};
+use crate::expr::helpers::{add_info_expression_inline, add_info_expressions, get_exp_dim};
+use crate::cfg::Opening;
+pub use crate::pil::domain::Boundary;
+use crate::pil::domain::{check_vanishing_factors, normalize, Domain};
 use crate::types::pilout_info::{ConstraintInfo, SymbolInfo};
 
 /// Result of constraint polynomial generation, attached to the setup result.
@@ -15,12 +20,34 @@ pub struct ConstraintPolyResult {
     pub initial_q_degree: i64,
 }
 
-/// Boundary entry for the result.
-#[derive(Debug, Clone)]
-pub struct Boundary {
-    pub name: String,
-    pub offset_min: Option<u32>,
-    pub offset_max: Option<u32>,
+/// Rewrites each domain constraint's boundary to its normalized domain, or to everyRow when the
+/// domain is every row; `name_of(i)` names the domain of constraint `i` in errors. The STARK
+/// (`Opening::Deep`) also caps its vanishing factors.
+pub fn normalize_constraint_domains(
+    constraints: &mut [ConstraintInfo],
+    n_bits: u32,
+    opening: Opening,
+    name_of: impl Fn(usize) -> String,
+) -> Result<()> {
+    // constraints share few domains: normalize each distinct one once
+    let mut normalized: HashMap<Domain, Boundary> = HashMap::new();
+    for (i, c) in constraints.iter_mut().enumerate() {
+        let Boundary::Domain(declared) = &c.boundary else { continue };
+        let b = match normalized.get(declared) {
+            Some(b) => b.clone(),
+            None => {
+                let name = name_of(i);
+                let b = normalize(declared, n_bits, &name)?;
+                if let (Boundary::Domain(d), Opening::Deep) = (&b, opening) {
+                    check_vanishing_factors(d, &name)?;
+                }
+                normalized.insert(declared.clone(), b.clone());
+                b
+            }
+        };
+        c.boundary = b;
+    }
+    Ok(())
 }
 
 /// Generate the constraint polynomial by combining all constraints with a
@@ -30,8 +57,11 @@ pub struct Boundary {
 /// composite expressions are pushed to the expressions array. We match that
 /// by using `ExprChild::Inline` for helper nodes and only pushing the final
 /// composite mul/add expressions.
+#[allow(clippy::too_many_arguments)]
 pub fn generate_constraint_polynomial(
     n_stages: usize,
+    n_bits: u32,
+    opening: Opening,
     expressions: &mut Vec<Expression>,
     symbols: &mut Vec<SymbolInfo>,
     constraints: &[ConstraintInfo],
@@ -77,58 +107,43 @@ pub fn generate_constraint_polynomial(
     let mut c_exp_id: Option<usize> = None;
 
     for constraint in constraints {
+        // normalized by `normalize_constraint_domains`
         let boundary = &constraint.boundary;
-        if !["everyRow", "firstRow", "lastRow", "everyFrame"].contains(&boundary.as_str()) {
-            return Err(PilInfoError::UnsupportedBoundary(boundary.clone()));
-        }
 
-        // Build inline expression reference to the constraint's expression
-        let e = Expression {
-            op: "exp".to_string(),
-            id: Some(constraint.e),
-            row_offset: Some(0),
-            stage,
-            ..Default::default()
-        };
-
-        let constraint_id = if boundary == "everyFrame" {
-            let boundary_id =
-                find_or_add_boundary_every_frame(boundaries, constraint.offset_min, constraint.offset_max);
-            let zi = Expression {
-                op: "Zi".to_string(),
-                boundary_id: Some(boundary_id),
-                boundary: Some("everyFrame".to_string()),
-                ..Default::default()
-            };
-
-            // mul(e, zi) - one push, inline children (matches JS)
-            let mul_expr = Expression {
-                op: "mul".to_string(),
-                values: vec![ExprChild::Inline(Box::new(e)), ExprChild::Inline(Box::new(zi))],
-                ..Default::default()
-            };
-            expressions.push(mul_expr);
-            expressions.len() - 1
-        } else if boundary != "everyRow" {
-            let boundary_id = find_or_add_boundary(boundaries, boundary);
-            let zi = Expression {
-                op: "Zi".to_string(),
-                boundary_id: Some(boundary_id),
-                boundary: Some(boundary.clone()),
-                ..Default::default()
-            };
-
-            // mul(e, zi) - one push, inline children (matches JS)
-            let mul_expr = Expression {
-                op: "mul".to_string(),
-                values: vec![ExprChild::Inline(Box::new(e)), ExprChild::Inline(Box::new(zi))],
-                ..Default::default()
-            };
-            expressions.push(mul_expr);
-            expressions.len() - 1
-        } else {
-            // everyRow: use the original constraint expression directly
+        let constraint_id = if *boundary == Boundary::EveryRow {
             constraint.e
+        } else {
+            // Build inline expression reference to the constraint's expression
+            let e = Expression {
+                op: "exp".to_string(),
+                id: Some(constraint.e),
+                row_offset: Some(0),
+                stage,
+                ..Default::default()
+            };
+            let zi = Expression {
+                op: "Zi".to_string(),
+                boundary_id: Some(find_or_add_boundary(boundaries, boundary)),
+                boundary: Some(boundary.name().to_string()),
+                // pilfflonk's blinded columns exceed degree N-1, so there its zerofier always adds 1
+                zi_domain: match boundary {
+                    Boundary::Domain(d) if opening == Opening::Deep => Some((d.clone(), n_bits)),
+                    _ => None,
+                },
+                ..Default::default()
+            };
+
+            // mul(e, zi) - one push, inline children (matches JS)
+            let mul_expr = Expression {
+                op: "mul".to_string(),
+                values: vec![ExprChild::Inline(Box::new(e)), ExprChild::Inline(Box::new(zi))],
+                ..Default::default()
+            };
+            expressions.push(mul_expr);
+            let id = expressions.len() - 1;
+            // A lone constraint is never reached through the folding below, so its degree is set here.
+            add_info_expressions(expressions, id, field)?;
+            id
         };
 
         if let Some(prev_c_exp_id) = c_exp_id {
@@ -273,7 +288,7 @@ pub fn calculate_exp_deg(
                 ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, _cache_values)?,
             };
             if exp.op == "mul" {
-                lhs_deg + rhs_deg
+                mul_deg(lhs_deg, exp.values[1].resolve(expressions), rhs_deg)
             } else {
                 lhs_deg.max(rhs_deg)
             }
@@ -321,7 +336,7 @@ fn calculate_exp_deg_inline(
                 ExprChild::Inline(e) => calculate_exp_deg_inline(expressions, e, im_exps, cache_values)?,
             };
             if exp.op == "mul" {
-                lhs_deg + rhs_deg
+                mul_deg(lhs_deg, exp.values[1].resolve(expressions), rhs_deg)
             } else {
                 lhs_deg.max(rhs_deg)
             }
@@ -331,29 +346,12 @@ fn calculate_exp_deg_inline(
     Ok(deg)
 }
 
-/// Find or add a boundary by name. Returns the index.
-fn find_or_add_boundary(boundaries: &mut Vec<Boundary>, name: &str) -> usize {
-    if let Some(idx) = boundaries.iter().position(|b| b.name == name) {
-        return idx;
-    }
-    boundaries.push(Boundary { name: name.to_string(), offset_min: None, offset_max: None });
-    boundaries.len() - 1
-}
-
-/// Find or add an everyFrame boundary with matching offset_min/offset_max. Returns the index.
-fn find_or_add_boundary_every_frame(
-    boundaries: &mut Vec<Boundary>,
-    offset_min: Option<u32>,
-    offset_max: Option<u32>,
-) -> usize {
-    if let Some(idx) = boundaries
-        .iter()
-        .position(|b| b.name == "everyFrame" && b.offset_min == offset_min && b.offset_max == offset_max)
-    {
-        return idx;
-    }
-    boundaries.push(Boundary { name: "everyFrame".to_string(), offset_min, offset_max });
-    boundaries.len() - 1
+/// Index of `boundary` in `boundaries`, appending it if new.
+fn find_or_add_boundary(boundaries: &mut Vec<Boundary>, boundary: &Boundary) -> usize {
+    boundaries.iter().position(|b| b == boundary).unwrap_or_else(|| {
+        boundaries.push(boundary.clone());
+        boundaries.len() - 1
+    })
 }
 
 #[cfg(test)]
@@ -393,19 +391,14 @@ mod tests {
         let mut expressions = vec![cm]; // expression 0 is a cm
 
         let mut symbols = Vec::new();
-        let constraints = vec![ConstraintInfo {
-            boundary: "everyRow".to_string(),
-            e: 0,
-            line: None,
-            offset_min: None,
-            offset_max: None,
-            stage: None,
-            im_pol: false,
-        }];
-        let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
+        let constraints =
+            vec![ConstraintInfo { boundary: Boundary::EveryRow, e: 0, line: None, stage: None, im_pol: false }];
+        let mut boundaries = vec![Boundary::EveryRow];
 
         let result = generate_constraint_polynomial(
             1,
+            8,
+            Opening::Deep,
             &mut expressions,
             &mut symbols,
             &constraints,
@@ -435,29 +428,15 @@ mod tests {
 
         let mut symbols = Vec::new();
         let constraints = vec![
-            ConstraintInfo {
-                boundary: "everyRow".to_string(),
-                e: 0,
-                line: None,
-                offset_min: None,
-                offset_max: None,
-                stage: None,
-                im_pol: false,
-            },
-            ConstraintInfo {
-                boundary: "everyRow".to_string(),
-                e: 1,
-                line: None,
-                offset_min: None,
-                offset_max: None,
-                stage: None,
-                im_pol: false,
-            },
+            ConstraintInfo { boundary: Boundary::EveryRow, e: 0, line: None, stage: None, im_pol: false },
+            ConstraintInfo { boundary: Boundary::EveryRow, e: 1, line: None, stage: None, im_pol: false },
         ];
-        let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
+        let mut boundaries = vec![Boundary::EveryRow];
 
         let result = generate_constraint_polynomial(
             1,
+            8,
+            Opening::Deep,
             &mut expressions,
             &mut symbols,
             &constraints,
@@ -478,20 +457,15 @@ mod tests {
         for (field, dim) in [(FieldCfg::goldilocks(), 3), (FieldCfg::bn128(), 1)] {
             let mut expressions = vec![make_cm(0, 1), make_cm(1, 1)];
             let mut symbols = Vec::new();
-            let every_row = |e| ConstraintInfo {
-                boundary: "everyRow".to_string(),
-                e,
-                line: None,
-                offset_min: None,
-                offset_max: None,
-                stage: None,
-                im_pol: false,
-            };
+            let every_row =
+                |e| ConstraintInfo { boundary: Boundary::EveryRow, e, line: None, stage: None, im_pol: false };
             let constraints = vec![every_row(0), every_row(1)];
-            let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
+            let mut boundaries = vec![Boundary::EveryRow];
 
             let result = generate_constraint_polynomial(
                 1,
+                8,
+                Opening::Deep,
                 &mut expressions,
                 &mut symbols,
                 &constraints,
@@ -509,23 +483,23 @@ mod tests {
     }
 
     #[test]
-    fn test_boundary_firstrow() {
+    fn test_boundary_first_row_domain() {
         let cm0 = make_cm(0, 1);
         let mut expressions = vec![cm0];
         let mut symbols = Vec::new();
         let constraints = vec![ConstraintInfo {
-            boundary: "firstRow".to_string(),
+            boundary: Boundary::Domain(Domain { cycle_bits: 8, offsets: vec![0], complement: false }),
             e: 0,
             line: None,
-            offset_min: None,
-            offset_max: None,
             stage: None,
             im_pol: false,
         }];
-        let mut boundaries = vec![Boundary { name: "everyRow".to_string(), offset_min: None, offset_max: None }];
+        let mut boundaries = vec![Boundary::EveryRow];
 
         let result = generate_constraint_polynomial(
             1,
+            8,
+            Opening::Deep,
             &mut expressions,
             &mut symbols,
             &constraints,
@@ -534,32 +508,9 @@ mod tests {
         )
         .unwrap();
 
-        // Should have added "firstRow" boundary
-        assert!(boundaries.iter().any(|b| b.name == "firstRow"));
-        // Degree should be 2 (cm * Zi)
+        let first = Domain { cycle_bits: 8, offsets: vec![0], complement: false };
+        assert_eq!(boundaries, vec![Boundary::EveryRow, Boundary::Domain(first)]);
+        // Degree should be 2 (cm * Zi): one row + degree 1 never exceeds N
         assert_eq!(result.initial_q_degree, 2);
-    }
-
-    /// Was `panic!("Boundary {} not supported")`.
-    #[test]
-    fn a_constraint_of_an_unknown_boundary_is_an_error() {
-        let constraint = ConstraintInfo {
-            boundary: "everyOtherRow".to_string(),
-            e: 0,
-            line: None,
-            offset_min: None,
-            offset_max: None,
-            stage: None,
-            im_pol: false,
-        };
-        let result = generate_constraint_polynomial(
-            1,
-            &mut vec![make_cm(0, 1)],
-            &mut Vec::new(),
-            &[constraint],
-            &mut Vec::new(),
-            &FieldCfg::goldilocks(),
-        );
-        assert!(matches!(result, Err(PilInfoError::UnsupportedBoundary(b)) if b == "everyOtherRow"));
     }
 }

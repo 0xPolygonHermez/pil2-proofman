@@ -2,6 +2,9 @@ target
 tmp
 build*/
 *.pilout
+!setup/pil-info/tests/fixtures/*.pilout
+!examples/domains/pil/build.pilout
+!examples/domain-native/pil/build.pilout
 run.sh
 vendor
 .cargo

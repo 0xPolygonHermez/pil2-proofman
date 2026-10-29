@@ -549,6 +549,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "domain_native"
+version = "1.4.0-alpha"
+dependencies = [
+ "proofman",
+ "proofman-common",
+ "proofman-fields",
+ "proofman-macros",
+ "proofman-witness",
+]
+
+[[package]]
+name = "domains"
+version = "1.4.0-alpha"
+dependencies = [
+ "pil2-std-lib",
+ "proofman",
+ "proofman-common",
+ "proofman-fields",
+ "proofman-macros",
+ "proofman-witness",
+ "serde",
+]
+
+[[package]]
 name = "either"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1262,6 +1286,7 @@ dependencies = [
  "indexmap",
  "num-bigint",
  "pil2-pilout",
+ "prost",
  "serde",
  "serde_json",
  "thiserror",
@@ -1523,10 +1548,13 @@ dependencies = [
  "clap",
  "colored",
  "convert_case",
+ "domain_native",
+ "domains",
  "fibonacci-square",
  "libloading",
  "num-bigint",
  "pil2-pilout",
+ "pil2-stark-setup",
  "pilfflonk-all",
  "pilfflonk-connection",
  "pilfflonk-fibonacci",
@@ -1694,6 +1722,7 @@ dependencies = [
  "num-traits",
  "proofman-fields",
  "serde",
+ "serde_json",
  "tracing",
 ]
 

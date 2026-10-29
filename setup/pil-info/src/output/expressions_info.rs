@@ -1,86 +1,10 @@
-//! JSON for `expressionsinfo.json` and `verifierinfo.json`, and the code and hint serializers
-//! that `globalConstraints.json` shares.
+//! JSON for `verifierinfo.json`, and the code and hint serializers that `globalConstraints.json`
+//! shares.
 
 use serde_json::json;
 
 use crate::pil::gen_code::ProcessedHintField;
 use crate::types::output::{CodeEntry, CodeRef};
-
-/// Build the expressionsinfo JSON structure.
-pub fn build_expressions_info_json(info: &crate::pil::gen_code::ExpressionsInfo) -> serde_json::Value {
-    let expressions_code: Vec<serde_json::Value> = info
-        .expressions_code
-        .iter()
-        .map(|e| {
-            let mut obj = serde_json::Map::new();
-            obj.insert("tmpUsed".to_string(), json!(e.tmp_used));
-            obj.insert("code".to_string(), code_entries_to_json(&e.code));
-            obj.insert("expId".to_string(), json!(e.exp_id));
-            obj.insert("stage".to_string(), json!(e.stage));
-            if let Some(ref dest) = e.dest {
-                obj.insert(
-                    "dest".to_string(),
-                    json!({
-                        "op": dest.op,
-                        "stage": dest.stage,
-                        "stageId": dest.stage_id,
-                        "id": dest.id,
-                    }),
-                );
-            }
-            obj.insert("line".to_string(), json!(e.line));
-            serde_json::Value::Object(obj)
-        })
-        .collect();
-
-    let constraints: Vec<serde_json::Value> = info
-        .constraints
-        .iter()
-        .map(|c| {
-            let mut obj = serde_json::Map::new();
-            obj.insert("tmpUsed".to_string(), json!(c.tmp_used));
-            obj.insert("code".to_string(), code_entries_to_json(&c.code));
-            obj.insert("boundary".to_string(), json!(c.boundary));
-            if let Some(ref line) = c.line {
-                obj.insert("line".to_string(), json!(line));
-            }
-            obj.insert("imPol".to_string(), json!(c.im_pol));
-            obj.insert("stage".to_string(), json!(c.stage));
-            if let Some(omin) = c.offset_min {
-                obj.insert("offsetMin".to_string(), json!(omin));
-            }
-            if let Some(omax) = c.offset_max {
-                obj.insert("offsetMax".to_string(), json!(omax));
-            }
-            serde_json::Value::Object(obj)
-        })
-        .collect();
-
-    let hints_info: Vec<serde_json::Value> = info
-        .hints_info
-        .iter()
-        .map(|h| {
-            json!({
-                "name": h.name,
-                "fields": h.fields.iter().map(|f| {
-                    json!({
-                        "name": f.name,
-                        "values": f.values.iter().map(|v| {
-                            hint_value_to_json(v)
-                        }).collect::<Vec<_>>(),
-                    })
-                }).collect::<Vec<serde_json::Value>>(),
-            })
-        })
-        .collect();
-
-    // Build with explicit ordering matching golden: hintsInfo, expressionsCode, constraints
-    let mut result = serde_json::Map::new();
-    result.insert("hintsInfo".to_string(), serde_json::Value::Array(hints_info));
-    result.insert("expressionsCode".to_string(), serde_json::Value::Array(expressions_code));
-    result.insert("constraints".to_string(), serde_json::Value::Array(constraints));
-    serde_json::Value::Object(result)
-}
 
 /// Build the verifierinfo JSON structure.
 pub fn build_verifier_info_json(info: &crate::pil::gen_code::VerifierInfo) -> serde_json::Value {

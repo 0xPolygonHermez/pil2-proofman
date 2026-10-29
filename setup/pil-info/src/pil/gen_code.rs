@@ -10,11 +10,14 @@
 use crate::cfg::{FieldCfg, Opening};
 use crate::error::{PilInfoError, Result};
 use crate::pil::cse;
+use crate::pil::domain::Boundary;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::pil::codegen::{build_code, pil_code_gen, rebuild_ev_map_index, CalcEntry, CodeGenCtx, EvMapRef};
+use crate::pil::codegen::{
+    build_code, im_pol_copy_code, pil_code_gen, rebuild_ev_map_index, CalcEntry, CodeGenCtx, EvMapRef,
+};
 use crate::expr::expression::Expression;
 use crate::pil::deep_poly::{self, ChallengeMapEntry};
 use crate::expr::helpers::{add_info_expressions_symbols, EvMapItem};
@@ -69,21 +72,40 @@ pub struct ExpressionCodeEntry {
 }
 
 /// A constraint code block with boundary and debug metadata.
-/// Field declaration order matches JSON output order.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// Serialized in field declaration order, with a domain's `cycleBits`, `offsets` and `complement`
+/// right after its `boundary` name.
+#[derive(Debug, Clone)]
 pub struct ConstraintCodeEntry {
     pub tmp_used: usize,
     pub code: Vec<crate::types::output::CodeEntry>,
-    pub boundary: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boundary: Boundary,
+    /// Index of `boundary` in the starkinfo's `boundaries`.
+    pub boundary_id: usize,
     pub line: Option<String>,
     pub im_pol: usize,
     pub stage: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub offset_min: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub offset_max: Option<u32>,
+}
+
+impl Serialize for ConstraintCodeEntry {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut m = s.serialize_map(None)?;
+        m.serialize_entry("tmpUsed", &self.tmp_used)?;
+        m.serialize_entry("code", &self.code)?;
+        m.serialize_entry("boundary", self.boundary.name())?;
+        if let Boundary::Domain(d) = &self.boundary {
+            m.serialize_entry("cycleBits", &d.cycle_bits)?;
+            m.serialize_entry("offsets", &d.offsets)?;
+            m.serialize_entry("complement", &d.complement)?;
+        }
+        m.serialize_entry("boundaryId", &self.boundary_id)?;
+        if let Some(line) = &self.line {
+            m.serialize_entry("line", line)?;
+        }
+        m.serialize_entry("imPol", &self.im_pol)?;
+        m.serialize_entry("stage", &self.stage)?;
+        m.end()
+    }
 }
 
 /// A processed hint field value (leaf node).
@@ -332,10 +354,12 @@ pub struct CodeGenParams {
 /// Mirrors JS `generatePilCode(res, symbols, constraints, expressions, hints, debug)`. The opening
 /// hook: only `Opening::Deep` generates the DEEP polynomial, sets `deep_exp_id` and builds the
 /// `queryVerifier`.
+#[allow(clippy::too_many_arguments)]
 pub fn generate_pil_code(
     params: &mut CodeGenParams,
     symbols: &mut Vec<SymbolInfo>,
     constraints: &[ConstraintInfo],
+    boundaries: &[Boundary],
     expressions: &mut Vec<Expression>,
     hints: &[HintInfo],
     debug: bool,
@@ -436,7 +460,8 @@ pub fn generate_pil_code(
         }
     };
 
-    let constraints_code = generate_constraints_debug_code(params, symbols, constraints, expressions, &witness_index)?;
+    let constraints_code =
+        generate_constraints_debug_code(params, symbols, constraints, boundaries, expressions, &witness_index)?;
 
     let deep_exp_id = params.deep_exp_id;
 
@@ -598,6 +623,7 @@ fn generate_constraints_debug_code(
     params: &CodeGenParams,
     symbols: &[SymbolInfo],
     constraints: &[ConstraintInfo],
+    boundaries: &[Boundary],
     expressions: &[Expression],
     witness_index: &Arc<HashMap<(usize, usize, usize), usize>>,
 ) -> Result<Vec<ConstraintCodeEntry>> {
@@ -622,26 +648,29 @@ fn generate_constraints_debug_code(
         }
 
         pil_code_gen(&mut ctx, symbols, expressions, constraint.e, 0)?;
+        if ctx.code.is_empty() {
+            im_pol_copy_code(&mut ctx, symbols, expressions, constraint.e)?;
+        }
         let block = build_code(&mut ctx)?;
 
         let stage =
             if constraint.stage == Some(0) || constraint.stage.is_none() { 1 } else { constraint.stage.unwrap_or(1) };
 
-        let mut entry = ConstraintCodeEntry {
+        let boundary_id = boundaries.iter().position(|b| *b == constraint.boundary).ok_or_else(|| {
+            PilInfoError::InvalidDomain(format!(
+                "constraint {}: its boundary is not in the starkinfo's boundaries",
+                constraint.line.as_deref().unwrap_or("")
+            ))
+        })?;
+        let entry = ConstraintCodeEntry {
             tmp_used: block.tmp_used,
             code: block.code,
             boundary: constraint.boundary.clone(),
+            boundary_id,
             line: constraint.line.clone(),
             im_pol: if constraint.im_pol { 1 } else { 0 },
             stage,
-            offset_min: None,
-            offset_max: None,
         };
-
-        if constraint.boundary == "everyFrame" {
-            entry.offset_min = constraint.offset_min;
-            entry.offset_max = constraint.offset_max;
-        }
 
         result.push(entry);
     }
@@ -1028,11 +1057,9 @@ mod tests {
         let expressions = vec![make_number("1"), make_cm(0, 1), make_add(0, 1)];
         let symbols: Vec<SymbolInfo> = Vec::new();
         let constraints = vec![ConstraintInfo {
-            boundary: "everyRow".to_string(),
+            boundary: Boundary::EveryRow,
             e: 2,
             line: Some("test".to_string()),
-            offset_min: None,
-            offset_max: None,
             stage: Some(1),
             im_pol: false,
         }];
@@ -1052,9 +1079,12 @@ mod tests {
         };
 
         let wi2 = build_witness_index(&symbols, 0, 0);
-        let result = generate_constraints_debug_code(&params, &symbols, &constraints, &expressions, &wi2).unwrap();
+        let result =
+            generate_constraints_debug_code(&params, &symbols, &constraints, &[Boundary::EveryRow], &expressions, &wi2)
+                .unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].boundary, "everyRow");
+        assert_eq!(result[0].boundary, Boundary::EveryRow);
+        assert_eq!(result[0].boundary_id, 0);
         assert_eq!(result[0].stage, 1);
         assert!(!result[0].code.is_empty());
     }

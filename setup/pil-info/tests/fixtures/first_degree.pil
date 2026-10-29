@@ -1,0 +1,17 @@
+// Source of first_degree.pilout: one degree-2 constraint on FIRST and on !FIRST.
+airtemplate First(int N = 2**8) {
+    col witness a;
+    domain FIRST = [1,0...];
+    a * a - 1 === 0 domain FIRST;
+}
+
+airtemplate NotFirst(int N = 2**8) {
+    col witness a;
+    domain FIRST = [1,0...];
+    a * a - 1 === 0 domain !FIRST;
+}
+
+airgroup FirstDegree {
+    First();
+    NotFirst();
+}

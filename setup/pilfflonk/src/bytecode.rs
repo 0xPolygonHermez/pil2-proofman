@@ -34,8 +34,8 @@
 //! 3 × { id u32, size u64, payload }, in the order 1, 2, 3
 //! ```
 //!
-//! The version is pilfflonk's own and much larger than the STARK's (1), so the STARK's reader
-//! (`BinFileUtils::openExisting(…, "chps", 1)`) refuses this file. rapidsnark's `BinFile` only
+//! The version is pilfflonk's own and much larger than the STARK's (2), so the STARK's reader
+//! (`BinFileUtils::openExisting(…, "chps", 2)`) refuses this file. rapidsnark's `BinFile` only
 //! checks the version against a maximum and does not expose it, so section 1 repeats it for
 //! pilfflonk's reader to check for equality: with that check it refuses a STARK `.bin`.
 //!
@@ -231,6 +231,9 @@ use pil_info::{FieldCfg, PilInfoResult};
 use proofman_pilfflonk::field::{FrBytes, FIELD_BYTES};
 
 use crate::validate::{SUPPORTED_PROVER_HINTS, WITNESS_AND_DEBUG_HINTS};
+use crate::air_info::domain_boundary;
+use pil_info::pil::domain::Boundary as PassesBoundary;
+use proofman_pilfflonk::Boundary;
 
 /// The container's type, the STARK's.
 pub const BIN_FILE_TYPE: &str = "chps";
@@ -630,7 +633,7 @@ impl Bytecode {
             .constraints
             .iter()
             .enumerate()
-            .map(|(i, c)| constraint_bin(i, c, result, n, &context))
+            .map(|(i, c)| constraint_bin(i, c, n, &context))
             .collect::<BytecodeResult<_>>()?;
         let mut hints = Vec::new();
         for hint in &info.hints_info {
@@ -747,29 +750,24 @@ fn expression_bin(
 fn constraint_bin(
     index: usize,
     entry: &ConstraintCodeEntry,
-    result: &PilInfoResult,
     n: u64,
     context: &CodeContext,
 ) -> BytecodeResult<ConstraintBin> {
     let what = format!("constraint {index}");
-    let im_pol_code;
-    let code = if entry.code.is_empty() {
-        im_pol_code = im_pol_copy(index, result, &what)?;
-        &im_pol_code
-    } else {
-        &entry.code
+    let code = &entry.code;
+    let boundary = match &entry.boundary {
+        PassesBoundary::EveryRow => Some(Boundary::EveryRow),
+        PassesBoundary::Domain(d) => domain_boundary(d, n.trailing_zeros()),
     };
-    let (first_row, last_row) = match (entry.boundary.as_str(), entry.offset_min, entry.offset_max) {
-        ("everyRow", _, _) => (0, n),
-        ("firstRow", _, _) => (0, 1),
-        ("lastRow", _, _) => (n - 1, n),
-        ("everyFrame", Some(min), Some(max)) if u64::from(min) + u64::from(max) <= n => {
-            (u64::from(min), n - u64::from(max))
-        }
-        (boundary, min, max) => {
+    let (first_row, last_row) = match boundary {
+        Some(Boundary::EveryRow) => (0, n),
+        Some(Boundary::FirstRow) => (0, 1),
+        Some(Boundary::LastRow) => (n - 1, n),
+        Some(Boundary::EveryFrame { offset_min, offset_max }) => (offset_min, n - offset_max),
+        None => {
             return encode_error(format!(
-                "{what}: boundary {boundary} (offsets {min:?}, {max:?}) on {n} rows is none of \
-                 everyRow, firstRow, lastRow and everyFrame within the trace"
+                "{what}: domain constraint not supported by pilfflonk: {:?} on {n} rows",
+                entry.boundary
             ))
         }
     };
@@ -781,39 +779,6 @@ fn constraint_bin(
         line: entry.line.clone().unwrap_or_default(),
         code: lower(code, context, None, &what)?,
     })
-}
-
-/// The code of constraint `index` when its whole expression is an intermediate polynomial: a
-/// copy of the im pol's column at the row. `pil-info` leaves that code empty, since it marks the
-/// im pols' expressions as computed before it generates the constraints' (`gen_code.rs`,
-/// `generate_constraints_debug_code`). It happens to a constraint not on `everyRow` whose
-/// expression the search promotes, because its `Zi` adds 1 to its degree
-/// (pilfflonk/docs/protocol.md#degree-search): `x·x − p` on `firstRow` with
-/// `--max-constraint-degree 2` (the `FirstRow` pilout of `pilfflonk/tests/data/domains.rs`).
-fn im_pol_copy(index: usize, result: &PilInfoResult, what: &str) -> BytecodeResult<Vec<CodeEntry>> {
-    let setup = &result.setup;
-    let e = match setup.constraints.get(index) {
-        Some(c) => c.e,
-        None => return encode_error(format!("{what}: it is not a constraint of the AIR")),
-    };
-    let Some(cm) = setup.cm_pols_map.iter().position(|p| p.im_pol && p.exp_id == Some(e)) else {
-        return encode_error(format!("{what}: it has no ops, and its expression {e} is no intermediate polynomial"));
-    };
-    let reference = |ref_type: &str, id: usize| CodeRef {
-        ref_type: ref_type.to_string(),
-        id,
-        dim: 1,
-        prime: Some(0),
-        value: None,
-        stage: None,
-        stage_id: None,
-        commit_id: None,
-        opening: None,
-        boundary_id: None,
-        airgroup_id: None,
-        exp_id: None,
-    };
-    Ok(vec![CodeEntry { op: "copy".to_string(), dest: reference("tmp", 0), src: vec![reference("cm", cm)] }])
 }
 
 impl Code {

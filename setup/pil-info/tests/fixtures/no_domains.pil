@@ -1,0 +1,11 @@
+// Source of no_domains.pilout (v2 compiler, see pilout_domains.rs).
+airtemplate NoDom(int N = 2**4) {
+    col witness a;
+    col witness b;
+    a * (1 - a) === 0;
+    a === b;
+}
+
+airgroup G {
+    NoDom();
+}

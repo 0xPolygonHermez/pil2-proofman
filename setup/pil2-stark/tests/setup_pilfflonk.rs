@@ -118,7 +118,7 @@ fn pilout() -> pb::PilOut {
             })),
         }],
         constraints: vec![pb::Constraint {
-            constraint: Some(constraint::Constraint::EveryRow(constraint::EveryRow {
+            constraint: Some(constraint::Constraint::AllRows(constraint::AllRows {
                 expression_idx: Some(operand::Expression { idx: 0 }),
                 debug_line: None,
             })),

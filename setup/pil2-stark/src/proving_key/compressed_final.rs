@@ -308,6 +308,7 @@ pub fn gen_compressed_final_setup(config: &CompressedFinalConfig<'_>, witness_tr
         pil_info_result.c_exp_id,
         pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
+        &pil_info_result.boundaries,
     );
     starkinfo_output.multiproof = multiproof;
     tracing::info!(

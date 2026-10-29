@@ -1,3 +1,5 @@
+use crate::pil::domain::Domain;
+
 /// Index into the expression arena
 pub type ExprId = usize;
 
@@ -60,6 +62,8 @@ pub struct Expression {
     /// Set by `print_expression` and used by `generateExpressionsCode`.
     /// Mirrors the JS pattern where `exp.line` is set lazily.
     pub line: Option<String>,
+    /// On a domain `Zi`: its domain and the trace's `n_bits`, which its degree depends on.
+    pub zi_domain: Option<(Domain, u32)>,
 }
 
 impl Default for Expression {
@@ -85,7 +89,16 @@ impl Default for Expression {
             keep: None,
             info_computed: false,
             line: None,
+            zi_domain: None,
         }
+    }
+}
+
+/// Degree of `mul(lhs, rhs)`: a domain zerofier on the right adds 0 or 1 (`Domain::zi_extra_degree`).
+pub fn mul_deg(lhs_deg: i64, rhs: &Expression, rhs_deg: i64) -> i64 {
+    match &rhs.zi_domain {
+        Some((domain, n_bits)) => lhs_deg + domain.zi_extra_degree(*n_bits, lhs_deg),
+        None => lhs_deg + rhs_deg,
     }
 }
 

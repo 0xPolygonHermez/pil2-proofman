@@ -51,8 +51,7 @@ pub struct ExpsInfo {
     pub exp_id: u64,
     pub stage: u64,
     pub line: String,
-    pub first_row: u64,
-    pub last_row: u64,
+    pub boundary_id: u64,
     pub im_pol: u64,
 }
 

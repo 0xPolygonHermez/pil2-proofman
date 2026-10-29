@@ -7,6 +7,7 @@
 use serde_json::json;
 
 use crate::pil::gen_code::PilCodeResult;
+use pil_info::pil::constraint_poly::Boundary;
 use crate::types::pilout_info::SetupResult;
 use crate::types::FIELD_EXTENSION;
 use crate::types::security;
@@ -33,6 +34,7 @@ pub fn build_starkinfo_output(
     c_exp_id: usize,
     deep_exp_id: usize,
     q_deg: i64,
+    boundaries: &[Boundary],
 ) -> StarkInfoOutput {
     // The query counts and grinding bits are the solved values, not the settings.
     let low_degree_test = match (ldt, &stark_struct.low_degree_test) {
@@ -72,25 +74,7 @@ pub fn build_starkinfo_output(
         low_degree_test,
     };
 
-    let boundaries: Vec<BoundaryOutput> = {
-        let mut seen = Vec::new();
-        let mut result = Vec::new();
-        for c in &setup.constraints {
-            if !seen.contains(&c.boundary) {
-                seen.push(c.boundary.clone());
-                let b = BoundaryOutput {
-                    name: c.boundary.clone(),
-                    offset_min: c.offset_min.map(|v| v as i64),
-                    offset_max: c.offset_max.map(|v| v as i64),
-                };
-                result.push(b);
-            }
-        }
-        if result.is_empty() {
-            result.push(BoundaryOutput { name: "everyRow".to_string(), offset_min: None, offset_max: None });
-        }
-        result
-    };
+    let boundaries: Vec<BoundaryOutput> = boundaries.iter().map(boundary_output).collect();
 
     // Build evMap from verifier code context
     let ev_map: Vec<EvMapEntry> = pil_code
@@ -385,10 +369,34 @@ pub fn solve_low_degree_test(stark_struct: &StarkStruct, batch_size: u64) -> Low
     }
 }
 
+/// A boundary as the starkinfo lists it.
+fn boundary_output(b: &Boundary) -> BoundaryOutput {
+    let mut out = BoundaryOutput { name: b.name().to_string(), cycle_bits: None, offsets: None, complement: None };
+    match b {
+        Boundary::Domain(d) => {
+            out.cycle_bits = Some(d.cycle_bits);
+            out.offsets = Some(d.offsets.clone());
+            out.complement = Some(d.complement);
+        }
+        Boundary::EveryRow => {}
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::stark_struct::{generate_stark_struct, LowDegreeTest as Ldt, LowDegreeTestKind, StarkSettings};
+
+    #[test]
+    fn boundaries_serialize_as_the_starkinfo_lists_them() {
+        let d = pil_info::pil::domain::Domain { cycle_bits: 4, offsets: vec![0, 15], complement: true };
+        let json = serde_json::to_string(
+            &[Boundary::EveryRow, Boundary::Domain(d)].iter().map(boundary_output).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert_eq!(json, r#"[{"name":"everyRow"},{"name":"domain","cycleBits":4,"offsets":[0,15],"complement":true}]"#);
+    }
 
     fn stir(n_bits: usize, blowup: usize, fold: usize, grinding: &[usize]) -> StarkStruct {
         let settings = StarkSettings {

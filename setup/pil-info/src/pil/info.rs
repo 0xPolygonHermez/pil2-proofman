@@ -40,11 +40,11 @@ pub fn run(
     cfg: &PilInfoCfg,
     options: &PrepareOptions,
 ) -> Result<PilInfoResult> {
-    let prepared = prepare_pil(pilout, airgroup_id, air_id, &cfg.field)?;
+    let prepared = prepare_pil(pilout, airgroup_id, air_id, cfg)?;
     pil_info(prepared, airgroup_id, air_id, cfg, options)
 }
 
-/// Run the passes on the output of `prepare_pil`, which must have been prepared over `cfg.field`.
+/// Run the passes on the output of `prepare_pil`, which must have been prepared with `cfg`.
 ///
 /// Steps:
 /// 1. calculate_intermediate_polynomials, as `cfg.degree_policy` says
@@ -74,12 +74,6 @@ pub fn pil_info(
     let im_exps = im_result.im_exps;
     let q_deg = im_result.q_deg;
 
-    // Build boundary tuples for add_im_polynomials
-    let boundary_tuples: Vec<(String, Option<i64>, Option<i64>)> = boundaries
-        .iter()
-        .map(|b| (b.name.clone(), b.offset_min.map(|v| v as i64), b.offset_max.map(|v| v as i64)))
-        .collect();
-
     // Add intermediate polynomials
     let mut n_commitments = setup.n_commitments;
     let q_dim_final = add_im_polynomials(
@@ -95,7 +89,7 @@ pub fn pil_info(
         &im_exps,
         q_deg,
         options.im_pols_stages,
-        &boundary_tuples,
+        &boundaries,
         &cfg.field,
     )?;
     setup.n_commitments = n_commitments;
@@ -171,6 +165,7 @@ pub fn pil_info(
         &mut params,
         &mut symbols,
         &setup.constraints,
+        &boundaries,
         &mut expressions,
         &setup.hints,
         options.debug,

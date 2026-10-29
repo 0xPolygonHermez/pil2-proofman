@@ -29,7 +29,7 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut, field: &FieldCfg) -> R
         format_global_expressions(&pilout.expressions, &pilout.num_challenges, &pilout.air_groups, field)?;
 
     let constraints = format_global_constraints(&pilout.constraints);
-    check_constraint_expressions(&constraints, pilout.expressions.len(), "the global constraints")?;
+    check_constraint_expressions(constraints.iter().map(|c| c.e), pilout.expressions.len(), "the global constraints")?;
     let symbols = format_global_symbols(&pilout.symbols, &pilout.num_challenges, field);
 
     for constraint in &constraints {
@@ -189,7 +189,7 @@ pub fn build_global_constraints_json(pilout: &pb::PilOut, field: &FieldCfg) -> R
         let mut obj = serde_json::Map::new();
         obj.insert("tmpUsed".to_string(), json!(block.tmp_used));
         obj.insert("code".to_string(), code_entries_to_json(&block.code));
-        obj.insert("boundary".to_string(), json!(constraint.boundary));
+        obj.insert("boundary".to_string(), json!("finalProof"));
         obj.insert("line".to_string(), json!(line));
         constraints_json.push(serde_json::Value::Object(obj));
     }

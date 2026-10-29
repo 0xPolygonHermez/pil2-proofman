@@ -27,6 +27,7 @@ use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolTyp
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil_info::types::output::{CodeEntry, CodeRef};
 use pil_info::{DegreePolicy, PilInfoCfg, PilInfoResult};
+use pil_info::pil::domain::Boundary as PassesBoundary;
 use pil_info::pil::gen_code::{ProcessedHint, ProcessedHintField};
 use pilfflonk_setup::bytecode::{
     write_air_bin, Bytecode, BytecodeError, Code, CodeContext, ConstraintBin, ExpressionBin, HintBin, HintFieldBin,
@@ -285,13 +286,16 @@ fn assert_is_the_code_of(bytecode: &Bytecode, result: &PilInfoResult) {
     assert_eq!(bytecode.constraints.len(), info.constraints.len());
     let n = 1u32 << result.setup.pil_power;
     for (bin, c) in bytecode.constraints.iter().zip(&info.constraints) {
-        let rows = match c.boundary.as_str() {
-            "everyRow" => (0, n),
-            "firstRow" => (0, 1),
-            "lastRow" => (n - 1, n),
-            _ => (c.offset_min.unwrap(), n - c.offset_max.unwrap()),
+        // the rows a supported domain holds on are one contiguous range
+        let rows = match &c.boundary {
+            PassesBoundary::EveryRow => (0, n),
+            PassesBoundary::Domain(d) => {
+                let held: Vec<u32> =
+                    (0..n).filter(|r| d.offsets.contains(&(r % (1 << d.cycle_bits))) != d.complement).collect();
+                (held[0], held[held.len() - 1] + 1)
+            }
         };
-        assert_eq!((bin.first_row, bin.last_row), rows, "{}", c.boundary);
+        assert_eq!((bin.first_row, bin.last_row), rows, "{:?}", c.boundary);
         assert_eq!(bin.stage as usize, c.stage);
         assert_eq!(bin.im_pol, c.im_pol == 1);
         assert_eq!(bin.line, c.line.clone().unwrap_or_default());
@@ -724,7 +728,7 @@ fn binary(operation: expression::Operation) -> pb::Expression {
 
 fn every_row(idx: u32) -> pb::Constraint {
     pb::Constraint {
-        constraint: Some(constraint::Constraint::EveryRow(constraint::EveryRow {
+        constraint: Some(constraint::Constraint::AllRows(constraint::AllRows {
             expression_idx: Some(operand::Expression { idx }),
             debug_line: Some(format!("constraint on expression {idx}")),
         })),
@@ -847,7 +851,8 @@ fn im_pol_constraint_pilout() -> pb::PilOut {
         binary(Operation::Sub(Sub { lhs: witness(1, 0), rhs: witness(0, 0) })), // 2: b − a
     ];
     let first_row = pb::Constraint {
-        constraint: Some(constraint::Constraint::FirstRow(constraint::FirstRow {
+        constraint: Some(constraint::Constraint::DomainRows(constraint::DomainRows {
+            domain_idx: 0,
             expression_idx: Some(operand::Expression { idx: 1 }),
             debug_line: Some("a*a - b".to_string()),
         })),
@@ -858,6 +863,7 @@ fn im_pol_constraint_pilout() -> pb::PilOut {
         stage_widths: vec![2],
         expressions,
         constraints: vec![first_row, every_row(2)],
+        domains: vec![pb::Domain { cycle_bits: 4, offsets: vec![0] }],
         ..Default::default()
     };
     pb::PilOut {
@@ -883,7 +889,8 @@ fn a_constraint_that_is_an_im_pol_is_a_copy_of_its_column() {
     let setup = &result.setup;
     let im = setup.cm_pols_map.iter().position(|p| p.im_pol).expect("the search chooses an im pol");
     assert_eq!(setup.cm_pols_map[im].exp_id, Some(setup.constraints[0].e), "the whole constraint is the im pol");
-    assert!(result.pil_code.expressions_info.constraints[0].code.is_empty(), "pil-info leaves its code empty");
+    let code = &result.pil_code.expressions_info.constraints[0].code;
+    assert!(code.len() == 1 && code[0].op == "copy", "pil-info's code is the copy: {code:?}");
 
     let path = tmp_path("im_pol_constraint.bin");
     write_air_bin(&result, &path).unwrap();

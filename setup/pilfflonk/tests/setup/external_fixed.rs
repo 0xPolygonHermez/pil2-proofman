@@ -124,10 +124,9 @@ fn without_source_lines(mut pilout: pb::PilOut) -> pb::PilOut {
     let airs = pilout.air_groups.iter_mut().flat_map(|group| group.airs.iter_mut());
     for c in airs.flat_map(|air| air.constraints.iter_mut()).filter_map(|c| c.constraint.as_mut()) {
         match c {
-            constraint::Constraint::FirstRow(c) => c.debug_line = None,
-            constraint::Constraint::LastRow(c) => c.debug_line = None,
-            constraint::Constraint::EveryRow(c) => c.debug_line = None,
-            constraint::Constraint::EveryFrame(c) => c.debug_line = None,
+            constraint::Constraint::AllRows(c) => c.debug_line = None,
+            constraint::Constraint::DomainRows(c) => c.debug_line = None,
+            constraint::Constraint::ComplementDomainRows(c) => c.debug_line = None,
         }
     }
     pilout

@@ -381,6 +381,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
         pil_info_result.c_exp_id,
         pil_info_result.deep_exp_id,
         pil_info_result.q_deg,
+        &pil_info_result.boundaries,
     );
     tracing::info!(
         "Circuit 'vadcop_final' low-degree test: {}",

@@ -1,0 +1,10 @@
+// Source of big_cycle.pilout: a 16-row domain on an 8-row air.
+airtemplate Small(int N = 2**3) {
+    col witness a;
+    domain BIG = [1,0:15];
+    a === 0 domain BIG;
+}
+
+airgroup BigCycle {
+    Small();
+}

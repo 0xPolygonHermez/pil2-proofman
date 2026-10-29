@@ -1162,12 +1162,11 @@ fn a_domain_adds_one_to_the_degree_of_its_constraints() {
         let mut every_row = domains::pilout(air);
         for c in every_row.air_groups[0].airs[0].constraints.iter_mut() {
             let (expression_idx, debug_line) = match c.constraint.take().unwrap() {
-                C::FirstRow(c) => (c.expression_idx, c.debug_line),
-                C::LastRow(c) => (c.expression_idx, c.debug_line),
-                C::EveryFrame(c) => (c.expression_idx, c.debug_line),
-                C::EveryRow(c) => (c.expression_idx, c.debug_line),
+                C::DomainRows(c) => (c.expression_idx, c.debug_line),
+                C::ComplementDomainRows(c) => (c.expression_idx, c.debug_line),
+                C::AllRows(c) => (c.expression_idx, c.debug_line),
             };
-            c.constraint = Some(C::EveryRow(constraint::EveryRow { expression_idx, debug_line }));
+            c.constraint = Some(C::AllRows(constraint::AllRows { expression_idx, debug_line }));
         }
         for (what, pilout, [default, low]) in
             [("domains", domains::pilout(air), [(2, 0), (1, n_rules)]), ("everyRow", every_row, [(1, 0), (1, 0)])]

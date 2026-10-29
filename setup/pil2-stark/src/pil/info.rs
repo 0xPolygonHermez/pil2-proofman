@@ -10,8 +10,9 @@ use crate::types::pilout_info::SetupResult;
 use crate::pil::prepare::{prepare_pil, PrepareOptions};
 use crate::types::stark_struct::{LowDegreeTest, StarkStruct};
 use crate::types::FIELD_EXTENSION;
+use pil_info::pil::constraint_poly::Boundary;
 use pil_info::pil::info as passes;
-use pil_info::{FieldCfg, PilInfoCfg};
+use pil_info::PilInfoCfg;
 
 /// The assembled pil info result returned by `pil_info`.
 pub struct PilInfoResult {
@@ -29,6 +30,8 @@ pub struct PilInfoResult {
     pub deep_exp_id: usize,
     /// Polynomial Q degree.
     pub q_deg: i64,
+    /// The boundaries the `Zi` nodes' `boundaryId` index (everyRow first).
+    pub boundaries: Vec<Boundary>,
 }
 
 /// Main entry point: assemble pil info for a single air.
@@ -49,7 +52,9 @@ pub fn pil_info(
     options: &PrepareOptions,
 ) -> Result<PilInfoResult> {
     let passes_failed = || format!("the symbolic passes failed on air {air_id} of airgroup {airgroup_id}");
-    let prepared = prepare_pil(pilout, airgroup_id, air_id, &FieldCfg::goldilocks()).with_context(passes_failed)?;
+    // The degree bound comes from the blowup: (1 << (nBitsExt - nBits)) + 1.
+    let cfg = PilInfoCfg::goldilocks(stark_struct.n_bits_ext - stark_struct.n_bits);
+    let prepared = prepare_pil(pilout, airgroup_id, air_id, &cfg).with_context(passes_failed)?;
 
     // Validate starkStruct
     if !options.debug {
@@ -72,9 +77,6 @@ pub fn pil_info(
             );
         }
     }
-
-    // The degree bound comes from the blowup: (1 << (nBitsExt - nBits)) + 1.
-    let cfg = PilInfoCfg::goldilocks(stark_struct.n_bits_ext - stark_struct.n_bits);
 
     let passes::PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, deep_exp_id, q_deg, boundaries } =
         passes::pil_info(prepared, airgroup_id, air_id, &cfg, options).with_context(passes_failed)?;
@@ -244,7 +246,7 @@ pub fn pil_info(
         stark_struct,
         pil_code.ev_map.len(),
         opening_points.len(),
-        boundaries.len(),
+        zi_size(&boundaries, stark_struct.n_bits as u32, stark_struct.n_bits_ext as u32),
         q_deg as u64,
         options.inplace_stage_commit,
     );
@@ -264,7 +266,17 @@ pub fn pil_info(
         c_exp_id,
         deep_exp_id,
         q_deg,
+        boundaries,
     })
+}
+
+/// The GPU zi region (`StarkInfo::ziSize`): one period of each boundary's zerofier.
+fn zi_size(boundaries: &[Boundary], n_bits: u32, n_bits_ext: u32) -> u64 {
+    let period_bits = |b: &Boundary| match b {
+        Boundary::EveryRow => n_bits_ext - n_bits,
+        Boundary::Domain(d) => d.period_bits(n_bits, n_bits_ext),
+    };
+    boundaries.iter().map(|b| 1u64 << period_bits(b)).sum()
 }
 
 fn get_num_nodes_mt(height: u64, merkle_tree_arity: usize) -> u64 {
@@ -292,7 +304,7 @@ fn get_prover_memory(
     stark_struct: &StarkStruct,
     n_evals: usize,
     n_opening_points: usize,
-    n_boundaries: usize,
+    zi_size: u64,
     q_deg: u64,
     inplace_stage_commit: bool,
 ) -> String {
@@ -406,7 +418,7 @@ fn get_prover_memory(
     // Q, with the boundary helpers (zi) above it while the quotient is built
     let q_offset = total;
     total += n_ext * fe;
-    let mut max_total = total + n_boundaries as u64 * n_ext;
+    let mut max_total = total + zi_size;
     max_total = max_total.max(q_offset + n * fe + 2 * fe + n_evals as u64 * EVALS_HELPER_CHUNKS * fe);
     max_total = max_total.max(q_offset + n_ext * fe + n_ext * fe + q_deg);
 
@@ -427,6 +439,15 @@ fn get_prover_memory(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One period per boundary: 2^(ext - n) for everyRow, 2^(ext - n + c) for a domain of cycle 2^c.
+    #[test]
+    fn the_zi_region_is_one_period_per_boundary() {
+        use pil_info::pil::domain::Domain;
+        let dom = |c: u32| Boundary::Domain(Domain { cycle_bits: c, offsets: vec![0], complement: false });
+        assert_eq!(zi_size(&[Boundary::EveryRow], 10, 11), 2);
+        assert_eq!(zi_size(&[Boundary::EveryRow, dom(10), dom(1)], 10, 11), 2 + 2048 + 4);
+    }
 
     /// What the passes refuse, which they used to `panic!` on, is an error of the STARK setup.
     #[test]

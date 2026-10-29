@@ -74,7 +74,7 @@ fn neg(value: Option<pb::Operand>) -> pb::Expression {
 
 fn every_row(idx: u32) -> pb::Constraint {
     pb::Constraint {
-        constraint: Some(constraint::Constraint::EveryRow(constraint::EveryRow {
+        constraint: Some(constraint::Constraint::AllRows(constraint::AllRows {
             expression_idx: Some(operand::Expression { idx }),
             debug_line: Some(format!("constraint on expression {idx}")),
         })),
@@ -390,7 +390,7 @@ fn fibonacci_fixture_over_bn128() {
     assert_bn128_shape(&result);
     let user_constraints = result.setup.constraints.iter().filter(|c| !c.im_pol).count();
     assert_eq!(user_constraints, 5);
-    assert!(result.setup.constraints.iter().all(|c| c.boundary == "everyRow"));
+    assert!(result.setup.constraints.iter().all(|c| c.boundary == pil_info::pil::constraint_poly::Boundary::EveryRow));
     assert_eq!(result.setup.opening_points, [0, 1]);
     assert_eq!(im_pols(&result) as i64 + result.q_deg, 2, "the minimum nImPols + qDeg");
     assert_eq!((im_pols(&result), result.q_deg), (1, 1), "the lowest degree wins the tie");

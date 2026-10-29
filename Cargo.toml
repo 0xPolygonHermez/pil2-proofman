@@ -56,6 +56,8 @@ members = [
 
   # Examples
   "examples/fibonacci-square",
+  "examples/domains",
+  "examples/domain-native",
   "examples/hashes",
   "examples/test-recursive",
   "macros-test",
