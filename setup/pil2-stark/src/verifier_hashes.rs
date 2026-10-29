@@ -471,6 +471,13 @@ pub fn geometry_from_starkinfo(si: &serde_json::Value) -> anyhow::Result<Verifie
     })
 }
 
+impl VerifierGeometry {
+    /// Whether the air has a constant tree; a zero-fixed air has none to open.
+    pub fn has_constants(&self) -> bool {
+        self.n_constants > 0
+    }
+}
+
 /// Hashes the verifier performs for one air, under `family`.
 pub fn verifier_hashes(geom: &VerifierGeometry, family: &str) -> HashCounts {
     let mut counts = HashCounts::default();
@@ -486,7 +493,9 @@ pub fn verifier_hashes(geom: &VerifierGeometry, family: &str) -> HashCounts {
     for &width in &geom.stage_widths {
         open(width, geom.n_bits_ext, &mut counts.leaf, &mut counts.merkle);
     }
-    open(geom.n_constants, geom.n_bits_ext, &mut counts.leaf, &mut counts.merkle);
+    if geom.has_constants() {
+        open(geom.n_constants, geom.n_bits_ext, &mut counts.leaf, &mut counts.merkle);
+    }
     for &width in &geom.custom_commit_widths {
         open(width, geom.n_bits_ext, &mut counts.leaf, &mut counts.merkle);
     }
@@ -785,6 +794,17 @@ mod tests {
         assert_eq!(counts.leaf, 2, "one leaf hash per tree");
         assert_eq!(counts.merkle, 4, "two levels per tree");
         assert_eq!(counts.fri, 0, "a single FRI step has no folding tree");
+    }
+
+    /// A zero-fixed air has no constant tree, so the query opens one tree, not two.
+    #[test]
+    fn zero_constants_counts_no_const_openings() {
+        let mut geom = minimal_geometry();
+        geom.n_constants = 0;
+        let counts = verifier_hashes(&geom, "blake3");
+        let with = verifier_hashes(&minimal_geometry(), "blake3");
+        assert_eq!(counts.leaf * 2, with.leaf, "one leaf hash, not two");
+        assert_eq!(counts.merkle * 2, with.merkle, "one path, not two");
     }
 
     /// Doubling the queries doubles the query phase and leaves the transcript alone.

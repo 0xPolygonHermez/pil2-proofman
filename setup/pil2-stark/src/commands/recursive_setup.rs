@@ -130,7 +130,7 @@ pub(crate) fn run_recursive_setup(
             air_name: String,
             stark_info: serde_json::Value,
             verifier_info: serde_json::Value,
-            const_root_strings: [String; 4],
+            const_root_strings: Option<[String; 4]>,
             has_compressor: bool,
         }
 
@@ -164,8 +164,18 @@ pub(crate) fn run_recursive_setup(
 
             let stark_info: serde_json::Value = serde_json::from_str(&fs::read_to_string(&si_path)?)?;
             let verifier_info: serde_json::Value = serde_json::from_str(&fs::read_to_string(&vi_path)?)?;
-            let const_root_strings =
-                parse_verkey_json(&vk_path).with_context(|| format!("Failed to load verkey for air '{}'", air_name))?;
+            let const_root_strings = if pil2_stark_recurser::stark2circom::has_constants(&stark_info)? {
+                Some(
+                    parse_verkey_json(&vk_path)
+                        .with_context(|| format!("Failed to load verkey for air '{}'", air_name))?,
+                )
+            } else {
+                let vk_bin = files_dir.join(format!("{}.verkey.bin", air_name));
+                if vk_path.exists() || vk_bin.exists() {
+                    anyhow::bail!("stale verkey for {air_name}, which has no fixed columns: rerun setup");
+                }
+                None
+            };
 
             let has_compressor = settings_map.has_compressor(&airgroup_name, &air_name);
             if has_compressor {
@@ -230,7 +240,7 @@ pub(crate) fn run_recursive_setup(
                             air_id: item.air_idx,
                             air_name: &item.air_name,
                             global_info: &global_info,
-                            const_root: &item.const_root_strings,
+                            const_root: item.const_root_strings.as_ref(),
                             verification_keys: &[],
                             stark_info: &item.stark_info,
                             verifier_info: &item.verifier_info,
@@ -251,9 +261,8 @@ pub(crate) fn run_recursive_setup(
                     }
 
                     // Build r1 inputs from the compressor result (if any) or directly from item.
-                    let r1_const_root: [String; 4] = if let Some(ref cr) = compressor_result {
-                        let s: Vec<String> = cr.const_root.iter().map(|v| v.to_string()).collect();
-                        [s[0].clone(), s[1].clone(), s[2].clone(), s[3].clone()]
+                    let r1_const_root: Option<[String; 4]> = if let Some(ref cr) = compressor_result {
+                        Some(cr.const_root.map(|v| v.to_string()))
                     } else {
                         item.const_root_strings.clone()
                     };
@@ -276,7 +285,7 @@ pub(crate) fn run_recursive_setup(
                         air_id: item.air_idx,
                         air_name: &item.air_name,
                         global_info: &global_info,
-                        const_root: &r1_const_root,
+                        const_root: r1_const_root.as_ref(),
                         verification_keys: &[],
                         stark_info: r1_si,
                         verifier_info: r1_vi,
@@ -445,7 +454,7 @@ pub(crate) fn run_recursive_setup(
                 air_id: 0,
                 air_name: &first_air_name,
                 global_info: &global_info,
-                const_root: &const_root_strings,
+                const_root: Some(&const_root_strings),
                 verification_keys: &vkeys_nested,
                 stark_info: &r2_stark_info,
                 verifier_info: &r2_verifier_info,

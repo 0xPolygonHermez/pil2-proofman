@@ -38,7 +38,7 @@ impl Default for Pil2CircomOptions {
 
 /// Generate a stark verifier circom using the in-process Rust implementation.
 pub fn pil2circom(
-    const_root: &[String; 4],
+    const_root: Option<&[String; 4]>,
     stark_info: &Value,
     verifier_info: &Value,
     opts: &Pil2CircomOptions,
@@ -51,14 +51,14 @@ pub fn pil2circom(
         fri_queries_batch_size: None,
         hash: opts.hash.clone(),
     };
-    let root: Option<&[String; 4]> = if opts.verkey_input { None } else { Some(const_root) };
+    let root = if opts.verkey_input { None } else { const_root };
     gen_stark_verifier(root, stark_info, verifier_info, &rust_opts).context("gen_stark_verifier failed")
 }
 
 /// The BN128 verifier of a Goldilocks STARK hashed with blake3 (a blake3 key's recursivef), for the
 /// final SNARK's circuit: `pil2circom` over BN128, which the stark info alone does not select.
 pub fn pil2circom_bn128_blake3(
-    const_root: &[String; 4],
+    const_root: Option<&[String; 4]>,
     stark_info: &Value,
     verifier_info: &Value,
     opts: &Pil2CircomOptions,
@@ -71,7 +71,7 @@ pub fn pil2circom_bn128_blake3(
         fri_queries_batch_size: None,
         hash: opts.hash.clone(),
     };
-    let root: Option<&[String; 4]> = if opts.verkey_input { None } else { Some(const_root) };
+    let root = if opts.verkey_input { None } else { const_root };
     gen_stark_verifier_bn128_blake3(root, stark_info, verifier_info, &rust_opts)
         .context("gen_stark_verifier_bn128_blake3 failed")
 }

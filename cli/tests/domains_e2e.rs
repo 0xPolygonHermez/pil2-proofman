@@ -178,10 +178,16 @@ fn gpu_flag(gpu: bool) -> &'static [&'static str] {
 
 /// The basic proofs a `PIL2_DUMP_ZKIN=basic` run wrote into `dump`, by file name.
 fn dumped_proofs(dump: &Path) -> Vec<(String, Vec<u8>)> {
+    dumped_zkins(dump, "basic")
+}
+
+/// The `zkin_*_t<proof_type>.bin` files a `PIL2_DUMP_ZKIN` run wrote into `dump`, by file name.
+fn dumped_zkins(dump: &Path, proof_type: &str) -> Vec<(String, Vec<u8>)> {
+    let suffix = format!("_t{proof_type}.bin");
     let mut proofs: Vec<(String, Vec<u8>)> = fs::read_dir(dump)
         .unwrap()
         .map(|e| e.unwrap().path())
-        .filter(|p| p.file_name().unwrap().to_string_lossy().ends_with("_tbasic.bin"))
+        .filter(|p| p.file_name().unwrap().to_string_lossy().ends_with(&suffix))
         .map(|p| (p.file_name().unwrap().to_string_lossy().into_owned(), fs::read(&p).unwrap()))
         .collect();
     proofs.sort();
@@ -728,13 +734,29 @@ fn native_verify_final(proof: &Path) -> Output {
     Command::new(native_final_verifier()).arg(verkey).arg(proof).output().unwrap()
 }
 
+/// `prove --aggregation` once per process, the recursive1 inputs dumped into `<dir>/zkin`; returns `dir`.
+fn aggregated(gpu: bool) -> &'static Path {
+    static CPU: OnceLock<PathBuf> = OnceLock::new();
+    static GPU: OnceLock<PathBuf> = OnceLock::new();
+    let lock = if gpu { &GPU } else { &CPU };
+    lock.get_or_init(|| {
+        let key = if gpu { recursive_gpu_key() } else { recursive_key() };
+        let dir = scratch(if gpu { "domains_e2e_stage3_gpu" } else { "domains_e2e_stage3_cpu" });
+        let _ = fs::remove_dir_all(&dir);
+        let zkin = dir.join("zkin");
+        fs::create_dir_all(&zkin).unwrap();
+        let flags: &[&str] = if gpu { &["--gpu", "--aggregation"] } else { &["--aggregation"] };
+        let envs = [("PIL2_DUMP_ZKIN", "recursive1"), ("TMPDIR", zkin.to_str().unwrap())];
+        assert_ok(&prove(key, &all_inputs(), &dir, flags, &envs), "prove --aggregation");
+        dir
+    })
+}
+
 /// `prove --aggregation`, then `verify-stark` and the native verifier accept the proof and reject a flipped word.
 fn aggregates_and_verifies(gpu: bool) {
     let key = if gpu { recursive_gpu_key() } else { recursive_key() };
-    let dir = TestDir::new(if gpu { "domains_e2e_stage3_gpu" } else { "domains_e2e_stage3_cpu" });
-    let flags: &[&str] = if gpu { &["--gpu", "--aggregation"] } else { &["--aggregation"] };
-    assert_ok(&prove(key, &all_inputs(), &dir.0, flags, &[]), "prove --aggregation");
-    let proof = dir.path("vadcop_final_proof.bin");
+    let dir = aggregated(gpu);
+    let proof = dir.join("vadcop_final_proof.bin");
     let verkey = key.join("build/vadcop_final/vadcop_final.verkey.bin");
     let verify_stark = |proof: &Path| {
         cli(&["verify-stark", "--proof", proof.to_str().unwrap(), "--verkey", verkey.to_str().unwrap()], &[])
@@ -745,10 +767,32 @@ fn aggregates_and_verifies(gpu: bool) {
     let mut bytes = fs::read(&proof).unwrap();
     let mid = bytes.len() / 16 * 8;
     bytes[mid] ^= 1;
-    let bad = dir.path("vadcop_final_proof_flipped.bin");
+    let bad = dir.join("vadcop_final_proof_flipped.bin");
     fs::write(&bad, bytes).unwrap();
     assert!(!verify_stark(&bad).status.success(), "verify-stark accepts a flipped proof word");
     assert_eq!(native_verify_final(&bad).status.code(), Some(1), "the native verifier accepts a flipped proof word");
+}
+
+/// The recursive1 circom of a zero-fixed air has no const section; the control's keeps it.
+#[test]
+#[ignore = "setup -r takes minutes: cargo test --release -p proofman-cli --test domains_e2e -- --ignored"]
+fn stage3_setup_recursive_zero_fixed() {
+    let build = recursive_key().parent().unwrap();
+    let circom = |air: &str| {
+        let path =
+            find_file(build, &format!("{air}_recursive1.circom")).unwrap_or_else(|| panic!("no {air} recursive1"));
+        let text = fs::read_to_string(path).unwrap();
+        let calls: Vec<String> =
+            text.lines().filter(|l| l.contains("CalculateStage1Hash(circuitType)(")).map(String::from).collect();
+        assert!(!calls.is_empty(), "{air}: no CalculateStage1Hash call");
+        (text, calls)
+    };
+    let (text, calls) = circom("DomFirst");
+    assert!(!text.contains("s0_valsC"), "DomFirst's recursive1 opens a const tree");
+    assert!(calls.iter().all(|c| !c.contains("rootC")), "DomFirst's stage-1 hash takes a rootC: {calls:?}");
+    let (text, calls) = circom(RANGE_TABLE);
+    assert!(text.contains("s0_valsC"), "{RANGE_TABLE}'s recursive1 lost its const tree");
+    assert!(calls.iter().all(|c| c.contains(".rootC, ")), "{RANGE_TABLE}'s stage-1 hash lost its rootC: {calls:?}");
 }
 
 #[test]
@@ -783,5 +827,104 @@ fn stage3_gpu_recursive1_enforces_domains() {
     for tamper in TAMPER_OUTSIDE {
         let dir = TestDir::new(&format!("domains_e2e_stage3_out_{}", tamper.replace(':', "_")));
         assert_ok(&prove(key, &all_inputs(), &dir.0, &flags, &tamper_env(Some(tamper))), tamper);
+    }
+}
+
+/// The recursive1 inputs, which hold the basic proofs, are the same bytes on CPU and GPU.
+/// The recursion layers are not compared: GPU recursive2 pairs its inputs in completion order.
+#[test]
+#[ignore = "setup -r takes minutes, and a GPU: cargo test --release -p proofman-cli --test domains_e2e -- --ignored"]
+fn stage3_cpu_gpu_byte_equal() {
+    if !gpu_ready("stage3_cpu_gpu_byte_equal") {
+        return;
+    }
+    let cpu = dumped_zkins(&aggregated(false).join("zkin"), "recursive1");
+    let gpu = dumped_zkins(&aggregated(true).join("zkin"), "recursive1");
+    assert_eq!(cpu.len(), AIRS.len() + 1, "one recursive1 per air: {:?}", cpu.iter().map(|z| &z.0).collect::<Vec<_>>());
+    assert_eq!(cpu.iter().map(|z| &z.0).collect::<Vec<_>>(), gpu.iter().map(|z| &z.0).collect::<Vec<_>>());
+    for ((name, c), (_, g)) in cpu.iter().zip(&gpu) {
+        assert!(c == g, "GPU recursive1 input {name} differs from the CPU one");
+    }
+}
+
+/// A recursive1 input malformed by a const segment spliced into a DomFirst proof is rejected
+/// (the shifted sections fail the first check that reads them).
+#[test]
+#[ignore = "setup -r takes minutes: cargo test --release -p proofman-cli --test domains_e2e -- --ignored"]
+fn stage3_recursive1_rejects_spliced_const_segment() {
+    use pil2_stark_setup::types::stark_info::StarkInfo;
+    use proofman_verifier::LowDegreeLayout;
+
+    let key = recursive_key();
+    let zkins = dumped_zkins(&aggregated(false).join("zkin"), "recursive1");
+    // DomFirst is air 0 of the only airgroup
+    let (name, bytes) = zkins.iter().find(|z| z.0.starts_with("zkin_ag0_air0_")).expect("no DomFirst recursive1 input");
+    let words: Vec<u64> = bytes.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect();
+
+    let global = json_of(key, "pilout.globalInfo.json");
+    let k = global["airs"][0][0]["r1BatchSize"].as_u64().unwrap_or(1) as usize;
+    let proof_values: u64 = global["numProofValues"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap()).sum();
+    let publics_circom = (global["nPublics"].as_u64().unwrap() + 3 * proof_values) as usize + 3 + 4;
+    let proof_len = (words.len() - publics_circom - k) / k;
+    let zkin = proofman::batched_zkin(k, proof_len, publics_circom, true);
+    assert_eq!(zkin.total, words.len(), "{name} is not a {k}-slot recursive1 input");
+
+    let info = json_of(key, "DomFirst.starkinfo.json");
+    let layout = StarkInfo::from_json(&info).unwrap().layout.unwrap().unwrap();
+    let LowDegreeLayout::Fri { n_queries, .. } = layout.ldt else { panic!("DomFirst is not FRI") };
+    let mut one = layout.clone();
+    one.n_constants = 1;
+    let spliced = one.flat_proof_words() - layout.flat_proof_words() - n_queries as usize;
+    let len = |k: &str| info[k].as_array().unwrap().len();
+    let body = zkin.slot_body[0];
+    let at = body
+        + 3 * (len("airgroupValuesMap") + len("airValuesMap"))
+        + 4 * (layout.n_stages as usize + 1)
+        + 3 * layout.n_evals as usize;
+    // same length: the slot's tail gives way, so the other slots and the null flags stay put
+    let mut bad = words.clone();
+    bad.splice(at..at, std::iter::repeat_n(0, spliced));
+    bad.drain(body + proof_len..body + proof_len + spliced);
+    assert_eq!(bad.len(), words.len());
+
+    let dir = TestDir::new("domains_e2e_stage3_splice");
+    let as_bytes = |w: &[u64]| w.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>();
+    assert_ok(&prove_air_zkin(&dir, "ok", name, &as_bytes(&words)), "prove-air of the untouched recursive1 input");
+    let out = prove_air_zkin(&dir, "bad", name, &as_bytes(&bad));
+    let text = output(&out);
+    assert!(!out.status.success(), "recursive1 accepts a spliced const segment:\n{text}");
+    assert!(text.contains("Error generating witness") || text.contains("NOT verified"), "{text}");
+}
+
+/// `prove-air -p` of `bytes`, saved as `<dir>/<sub>/<name>`: the name says which recursive1 proves it.
+fn prove_air_zkin(dir: &TestDir, sub: &str, name: &str, bytes: &[u8]) -> Output {
+    let path = dir.path(sub).join(name);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, bytes).unwrap();
+    cli(&["prove-air", "-p", path.to_str().unwrap(), "-k", recursive_key().to_str().unwrap()], &[])
+}
+
+/// DomFirstTwin is DomFirst's PIL: with no rootC, only circuitType keeps each recursive1 from
+/// accepting the other air's proofs.
+#[test]
+#[ignore = "setup -r takes minutes: cargo test --release -p proofman-cli --test domains_e2e -- --ignored"]
+fn stage3_recursive1_rejects_twin_air_input() {
+    let zkins = dumped_zkins(&aggregated(false).join("zkin"), "recursive1");
+    // DomFirst is air 0 and DomFirstTwin air 1 of the only airgroup
+    let input = |air: usize| {
+        let prefix = format!("zkin_ag0_air{air}_");
+        &zkins.iter().find(|z| z.0.starts_with(&prefix)).unwrap_or_else(|| panic!("no air {air} input")).1
+    };
+    let name = |air: usize| format!("zkin_ag0_air{air}_trecursive1.bin");
+    let dir = TestDir::new("domains_e2e_stage3_twin");
+    for air in [0, 1] {
+        assert_ok(
+            &prove_air_zkin(&dir, &format!("own{air}"), &name(air), input(air)),
+            &format!("air {air}'s own input"),
+        );
+    }
+    for (from, to) in [(0, 1), (1, 0)] {
+        let out = prove_air_zkin(&dir, &format!("swap{from}{to}"), &name(to), input(from));
+        assert_rejected(&out, &format!("air {to}'s recursive1 on air {from}'s input"), "Error generating witness");
     }
 }

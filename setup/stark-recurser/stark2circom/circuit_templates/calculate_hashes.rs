@@ -1,7 +1,7 @@
 //! Rust port of `vadcop/helpers/templates/calculate_hashes.circom.ejs`.
 //!
 //! Generates the `CalculateStage1Hash` circom template which computes a
-//! Poseidon2 hash of `rootC + root1 + circuitType + airValues` (`circuitType` is a
+//! Poseidon2 hash of `[rootC +] root1 + circuitType + airValues` (`circuitType` is a
 //! template parameter) producing either an elliptic-curve point (when
 //! `vadcopInfo.curve != "None"`) or a lattice vector.
 //!
@@ -30,7 +30,7 @@ struct ChainRound {
 /// Port of `calculate_hashes.circom.ejs`.
 ///
 /// Returns the complete `template CalculateStage1Hash(circuitType) { ... }` block as a string.
-pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
+pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> anyhow::Result<String> {
     let arity = stark_info["starkStruct"]["merkleTreeArity"].as_u64().unwrap_or(2) as usize;
     let curve = vadcop_info["curve"].as_str().unwrap_or("None");
     let lattice_size = vadcop_info["latticeSize"].as_u64().unwrap_or(0) as usize;
@@ -46,8 +46,12 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
     let hash_family = vadcop_info.get("hash").and_then(|v| v.as_str()).unwrap_or("Poseidon2");
 
     // ── Drive the transcript (this part must stay imperative) ─────────────────
+    let has_constants = super::stark_inputs::has_constants(stark_info)?;
     let mut transcript = Transcript::new(None, hash_family);
-    transcript.put("rootC", 4);
+    // the prover's contribution header (`challenge_accumulation.rs`) has no rootC slot without constants
+    if has_constants {
+        transcript.put("rootC", 4);
+    }
     transcript.put("root1", 4);
     // rootC alone does not name the air: airs with equal fixed columns share it.
     transcript.put_single("circuitType");
@@ -134,6 +138,7 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
 
     // ── Build Tera context ───────────────────────────────────────────────────
     let mut ctx = TeraCtx::new();
+    ctx.insert("has_constants", &has_constants);
     ctx.insert("has_stage1_air_values", &has_stage1_air_values);
     ctx.insert("air_values_len", &air_values_len);
     ctx.insert("is_ec", &is_ec);
@@ -159,7 +164,7 @@ pub fn gen_calculate_hashes(stark_info: &Value, vadcop_info: &Value) -> String {
         ctx.insert("chain", &chain);
     }
 
-    super::templates::render(CALCULATE_HASHES_TMPL, &ctx).expect("calculate_hashes template render")
+    super::templates::render(CALCULATE_HASHES_TMPL, &ctx)
 }
 
 #[cfg(test)]
@@ -171,6 +176,7 @@ mod tests {
         json!({
             "starkStruct": { "merkleTreeArity": arity },
             "airValuesMap": air_values_map,
+            "nConstants": 1,
         })
     }
 
@@ -182,7 +188,7 @@ mod tests {
             "latticeSize": 32,
             "hash": "Poseidon2",
         });
-        let out = gen_calculate_hashes(&stark, &vadcop);
+        let out = gen_calculate_hashes(&stark, &vadcop).unwrap();
 
         assert!(out.contains("template CalculateStage1Hash(circuitType)"));
         assert!(out.contains("signal output values[32]"));
@@ -198,6 +204,18 @@ mod tests {
         assert!(!out.contains("HashToCurve"));
     }
 
+    /// The prover's header without constants is `[root1 | circuitType | stage-1 airvalues]`.
+    #[test]
+    fn calculate_hashes_without_constants_omits_rootc() {
+        let mut stark = stark_info(2, json!([]));
+        stark["nConstants"] = json!(0);
+        let vadcop = json!({ "curve": "None", "latticeSize": 32, "hash": "Poseidon2" });
+        let out = gen_calculate_hashes(&stark, &vadcop).unwrap();
+        assert!(!out.contains("rootC"), "{out}");
+        assert!(out.contains("signal input root1[4];"), "{out}");
+        assert!(out.contains("[root1[0],root1[1],root1[2],root1[3],circuitType,0"), "root1 then circuitType:\n{out}");
+    }
+
     #[test]
     fn lattice_no_air_values_poseidon1() {
         let stark = stark_info(2, json!([]));
@@ -206,7 +224,7 @@ mod tests {
             "latticeSize": 32,
             "hash": "Poseidon1",
         });
-        let out = gen_calculate_hashes(&stark, &vadcop);
+        let out = gen_calculate_hashes(&stark, &vadcop).unwrap();
 
         // Poseidon1 family emits the bare `Poseidon(nOuts)` template.
         assert!(out.contains("Poseidon(16)("), "out:\n{out}");
@@ -228,7 +246,7 @@ mod tests {
             "curve": "None",
             "latticeSize": 32,
         });
-        let out = gen_calculate_hashes(&stark, &vadcop);
+        let out = gen_calculate_hashes(&stark, &vadcop).unwrap();
 
         assert!(out.contains("signal input airValues[4][3]"));
         // Drains: indices 1 and 3 (stage != 1) get drain lines; 0 and 2 do not.
@@ -255,7 +273,7 @@ mod tests {
         const LATTICE: usize = 368;
         let stark = stark_info(2, json!([]));
         let vadcop = json!({ "curve": "None", "latticeSize": LATTICE, "hash": "blake3" });
-        let out = gen_calculate_hashes(&stark, &vadcop);
+        let out = gen_calculate_hashes(&stark, &vadcop).unwrap();
 
         // One Blake3Permute8 per round, and the prover runs contributions_size / w - 1.
         let rounds = out.matches("Blake3Permute8()(").count();
@@ -275,7 +293,7 @@ mod tests {
     fn lattice_not_a_multiple_of_the_round_width_is_rejected() {
         let stark = stark_info(2, json!([]));
         let vadcop = json!({ "curve": "None", "latticeSize": 12, "hash": "blake3" });
-        let _ = gen_calculate_hashes(&stark, &vadcop);
+        let _ = gen_calculate_hashes(&stark, &vadcop).unwrap();
     }
 
     #[test]
@@ -292,7 +310,7 @@ mod tests {
                 "C2": "21, 22, 23, 24, 25"
             }
         });
-        let out = gen_calculate_hashes(&stark, &vadcop);
+        let out = gen_calculate_hashes(&stark, &vadcop).unwrap();
 
         assert!(out.contains("signal output P[2][5];"));
         assert!(out.contains("signal x[5] <== ["));

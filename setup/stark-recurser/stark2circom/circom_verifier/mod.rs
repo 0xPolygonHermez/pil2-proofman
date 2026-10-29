@@ -35,6 +35,19 @@ pub fn has_constants(si: &Value) -> Result<bool> {
     }
 }
 
+/// `has_constants(si)`, once a zero-fixed air is known to be verified in vadcop (`input_challenges`) mode with no rootC.
+pub(crate) fn check_const_root(si: &Value, const_root: Option<&[String; 4]>, opts: &Pil2CircomOptions) -> Result<bool> {
+    let has = has_constants(si)?;
+    // the self-contained transcript seeds with rootC, so a zero-fixed air is verified only in vadcop mode
+    if !has && (const_root.is_some() || opts.verkey_input || !opts.input_challenges) {
+        bail!(
+            "the air has no fixed columns (nConstants = 0): its verifier needs input_challenges, \
+             no const root and no verkey input"
+        );
+    }
+    Ok(has)
+}
+
 /// Generate a stark verifier circom (GL or BN128, selected by
 /// `stark_info.starkStruct.verificationHashType`).
 ///

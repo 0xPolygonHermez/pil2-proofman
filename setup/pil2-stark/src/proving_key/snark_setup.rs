@@ -315,9 +315,14 @@ fn gen_final_snark(
         hash: config.hash.to_string(),
     };
     let verifier_circom_final = if blake3 {
-        pil2circom_bn128_blake3(&rf_const_root_str, &starkinfo_rf_val, &verifierinfo_rf_val, &pil2circom_opts_final)
+        pil2circom_bn128_blake3(
+            Some(&rf_const_root_str),
+            &starkinfo_rf_val,
+            &verifierinfo_rf_val,
+            &pil2circom_opts_final,
+        )
     } else {
-        pil2circom(&rf_const_root_str, &starkinfo_rf_val, &verifierinfo_rf_val, &pil2circom_opts_final)
+        pil2circom(Some(&rf_const_root_str), &starkinfo_rf_val, &verifierinfo_rf_val, &pil2circom_opts_final)
     }
     .context("pil2circom failed for final")?;
     fs::write(circom_dir.join(verifier_name_final), &verifier_circom_final)?;
@@ -461,7 +466,7 @@ pub fn gen_recursivef_setup(
         input_challenges: false,
         hash: config.hash.to_string(),
     };
-    let verifier_circom_rf = pil2circom(&const_root_str, stark_info, verifier_info, &pil2circom_opts)
+    let verifier_circom_rf = pil2circom(Some(&const_root_str), stark_info, verifier_info, &pil2circom_opts)
         .context("pil2circom failed for recursivef")?;
     fs::write(circom_dir.join(verifier_name_rf), &verifier_circom_rf)?;
 

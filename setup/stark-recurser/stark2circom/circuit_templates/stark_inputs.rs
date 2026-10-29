@@ -32,6 +32,13 @@ pub fn arity_pow(arity: usize, power: usize) -> usize {
     arity.pow(power as u32)
 }
 
+/// `has_constants`, naming the air when its starkinfo lacks `nConstants`.
+pub(crate) fn has_constants(stark_info: &Value) -> anyhow::Result<bool> {
+    use anyhow::Context;
+    crate::stark2circom::circom_verifier::has_constants(stark_info)
+        .with_context(|| format!("air {}", stark_info["name"].as_str().unwrap_or("?")))
+}
+
 // ── define_stark_inputs ───────────────────────────────────────────────────────
 
 /// Options controlling signal generation (mirrors the JS `options` object
@@ -58,7 +65,7 @@ pub struct StarkInputOptions {
 /// * `prefix`     – signal name prefix (empty string for the root circuit,
 ///   `"a_sv"` etc. for recursive2 multi-instance).
 /// * `opts`       – generation options.
-pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOptions) -> String {
+pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOptions) -> anyhow::Result<String> {
     let mut out = String::new();
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
 
@@ -127,23 +134,23 @@ pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOp
 
     // ── evals / s0 vals and siblings ─────────────────────────────────────────
     out.push_str(&format!("    signal input {prefix_}evals[{ev_map_len}][3];\n\n"));
-    out.push_str(&format!("    signal input {prefix_}s0_valsC[{n_queries}][{n_constants}];\n"));
-
-    // s0_siblingsC
-    if is_bn128 {
-        let d = siblings_depth_bn128(steps[0] as usize, arity, llv);
-        out.push_str(&format!("    signal input {prefix_}s0_siblingsC[{n_queries}][{d}][{arity}];\n"));
-        if llv > 0 {
-            let last_count = arity_pow(arity, llv);
-            out.push_str(&format!("    signal input {prefix_}s0_last_levelsC[{last_count}];\n"));
-        }
-    } else {
-        let d = siblings_depth_gl(steps[0] as usize, arity, llv);
-        let leaf_w = (arity - 1) * 4;
-        out.push_str(&format!("    signal input {prefix_}s0_siblingsC[{n_queries}][{d}][{leaf_w}];\n"));
-        if llv > 0 {
-            let last_count = arity_pow(arity, llv);
-            out.push_str(&format!("    signal input {prefix_}s0_last_mt_levelsC[{last_count}][4];\n"));
+    if has_constants(stark_info)? {
+        out.push_str(&format!("    signal input {prefix_}s0_valsC[{n_queries}][{n_constants}];\n"));
+        if is_bn128 {
+            let d = siblings_depth_bn128(steps[0] as usize, arity, llv);
+            out.push_str(&format!("    signal input {prefix_}s0_siblingsC[{n_queries}][{d}][{arity}];\n"));
+            if llv > 0 {
+                let last_count = arity_pow(arity, llv);
+                out.push_str(&format!("    signal input {prefix_}s0_last_levelsC[{last_count}];\n"));
+            }
+        } else {
+            let d = siblings_depth_gl(steps[0] as usize, arity, llv);
+            let leaf_w = (arity - 1) * 4;
+            out.push_str(&format!("    signal input {prefix_}s0_siblingsC[{n_queries}][{d}][{leaf_w}];\n"));
+            if llv > 0 {
+                let last_count = arity_pow(arity, llv);
+                out.push_str(&format!("    signal input {prefix_}s0_last_mt_levelsC[{last_count}][4];\n"));
+            }
         }
     }
 
@@ -273,7 +280,7 @@ pub fn define_stark_inputs(stark_info: &Value, prefix: &str, opts: &StarkInputOp
         }
     }
 
-    out
+    Ok(out)
 }
 
 // ── assign_stark_inputs ───────────────────────────────────────────────────────
@@ -307,7 +314,7 @@ pub fn assign_stark_inputs(
     stark_info: &Value,
     opts: &StarkInputOptions,
     enable: &EnableInput,
-) -> String {
+) -> anyhow::Result<String> {
     let mut out = String::new();
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
 
@@ -371,14 +378,15 @@ pub fn assign_stark_inputs(
 
     out.push_str(&format!("    {component_name}.evals <== {prefix_}evals;\n"));
 
-    // s0_valsC / s0_siblingsC
-    out.push_str(&format!("    {component_name}.s0_valsC <== {prefix_}s0_valsC;\n"));
-    out.push_str(&format!("    {component_name}.s0_siblingsC <== {prefix_}s0_siblingsC;\n"));
-    if llv > 0 {
-        if is_bn128 {
-            out.push_str(&format!("    {component_name}.s0_last_levelsC <== {prefix_}s0_last_levelsC;\n"));
-        } else {
-            out.push_str(&format!("    {component_name}.s0_last_mt_levelsC <== {prefix_}s0_last_mt_levelsC;\n"));
+    if has_constants(stark_info)? {
+        out.push_str(&format!("    {component_name}.s0_valsC <== {prefix_}s0_valsC;\n"));
+        out.push_str(&format!("    {component_name}.s0_siblingsC <== {prefix_}s0_siblingsC;\n"));
+        if llv > 0 {
+            if is_bn128 {
+                out.push_str(&format!("    {component_name}.s0_last_levelsC <== {prefix_}s0_last_levelsC;\n"));
+            } else {
+                out.push_str(&format!("    {component_name}.s0_last_mt_levelsC <== {prefix_}s0_last_mt_levelsC;\n"));
+            }
         }
     }
 
@@ -482,7 +490,7 @@ pub fn assign_stark_inputs(
         EnableInput::Expr(e) => out.push_str(&format!("    {component_name}.enable <== {e};\n")),
     }
 
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -526,7 +534,8 @@ mod tests {
             &si,
             "",
             &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
-        );
+        )
+        .unwrap();
         assert!(out.contains("signal input s0_siblingsC[4][3][4];"), "out:\n{out}");
         assert!(out.contains("signal input s0_last_levelsC[16];"), "out:\n{out}");
         assert!(out.contains("signal input s0_last_levels1[16];"), "out:\n{out}");
@@ -540,7 +549,8 @@ mod tests {
             &si,
             "",
             &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
-        );
+        )
+        .unwrap();
         assert!(out.contains("signal input s0_siblingsC[4][5][4];"), "out:\n{out}");
         assert!(!out.contains("last_levels"), "out:\n{out}");
     }
@@ -554,12 +564,31 @@ mod tests {
             &si,
             &StarkInputOptions { add_publics: false, is_final: true, parallel: false, shared_publics: false },
             &EnableInput::None,
-        );
+        )
+        .unwrap();
         assert!(out.contains("sV.s0_last_levelsC <== s0_last_levelsC;"), "out:\n{out}");
         assert!(out.contains("sV.s0_last_levels1 <== s0_last_levels1;"), "out:\n{out}");
         assert!(out.contains("sV.s1_last_levels <== s1_last_levels;"), "out:\n{out}");
         // GL naming must NOT appear for BN128
         assert!(!out.contains("last_mt_levels"), "out:\n{out}");
+    }
+
+    #[test]
+    fn stark_inputs_zero_constants_omits_const_inputs() {
+        let mut si = bn128_stark_info(2);
+        si["starkStruct"]["verificationHashType"] = json!("GL");
+        si["nConstants"] = json!(0);
+        let opts = StarkInputOptions::default();
+        let define = define_stark_inputs(&si, "", &opts).unwrap();
+        let assign = assign_stark_inputs("sV", "", &si, &opts, &EnableInput::None).unwrap();
+        for out in [&define, &assign] {
+            for absent in ["s0_valsC", "s0_siblingsC", "s0_last_mt_levelsC", "s0_last_levelsC"] {
+                assert!(!out.contains(absent), "`{absent}` without constants:\n{out}");
+            }
+            assert!(out.contains("s0_vals1"), "{out}");
+        }
+        si["nConstants"] = json!(3);
+        assert!(define_stark_inputs(&si, "", &opts).unwrap().contains("s0_last_mt_levelsC"));
     }
 
     /// A recursive1 folding k proofs of one air shares the template's publics; the ZisK recurser
@@ -570,7 +599,7 @@ mod tests {
         si["nPublics"] = json!(3);
         let assign = |shared| {
             let opts = StarkInputOptions { add_publics: true, shared_publics: shared, ..Default::default() };
-            assign_stark_inputs("vA", "a_sv", &si, &opts, &EnableInput::None)
+            assign_stark_inputs("vA", "a_sv", &si, &opts, &EnableInput::None).unwrap()
         };
         assert!(assign(false).contains("vA.publics[i] <== a_sv_publics[i];"), "{}", assign(false));
         assert!(assign(true).contains("vA.publics[i] <== publics[i];"), "{}", assign(true));

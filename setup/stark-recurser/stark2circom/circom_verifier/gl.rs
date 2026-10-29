@@ -146,9 +146,7 @@ fn build_tera_context(
     let max_deg_bits = n_last_bits.saturating_sub((n_bits_ext - n_bits) as u64);
     let n_publics = si["nPublics"].as_u64().unwrap_or(0);
     let n_constants = si["nConstants"].as_u64().unwrap_or(0);
-    if !super::has_constants(si)? {
-        bail!("gen_stark_verifier_gl: the air has no fixed columns (nConstants = 0); the recursive verifier needs at least one");
-    }
+    let has_constants = super::check_const_root(si, const_root, opts)?;
     let ev_map_len = si["evMap"].as_array().map_or(0, |a| a.len());
     let n_air_group_values = si["airgroupValuesMap"].as_array().map_or(0, |a| a.len());
     let n_air_values = si["airValuesMap"].as_array().map_or(0, |a| a.len());
@@ -526,7 +524,9 @@ fn build_tera_context(
         }
     }
     inputs_q.push(format!("cm{q_stage}"));
-    inputs_q.push("consts".into());
+    if has_constants {
+        inputs_q.push("consts".into());
+    }
     for cc in &custom_commits_json {
         let name = cc["name"].as_str().unwrap_or("");
         inputs_q.push(format!("custom_{name}_0"));
@@ -581,8 +581,9 @@ fn build_tera_context(
         vi["qVerifier"]["code"].as_array().and_then(|a| a.last()).and_then(|i| i["dest"]["id"].as_u64()).unwrap_or(0);
     let last_dest_id_q = query_code.last().and_then(|i| i["dest"]["id"].as_u64()).unwrap_or(0);
 
-    // ── constRoot string ──────────────────────────────────────────────────────
-    let const_root_str = const_root.map(|r| r.join(",")).unwrap_or_else(|| "0,0,0,0".to_string());
+    // ── constRoot string (only an air with constants has one) ─────────────────
+    let const_root_str: Option<String> =
+        has_constants.then(|| const_root.map(|r| r.join(",")).unwrap_or_else(|| "0,0,0,0".to_string()));
 
     // ── Transcript code strings ───────────────────────────────────────────────
     let calculate_fri_queries_code = if is_stir {
@@ -770,7 +771,9 @@ fn build_tera_context(
         }
     }
     query_vals_list.push(format!("s0_vals{q_stage}"));
-    query_vals_list.push("s0_valsC".into());
+    if has_constants {
+        query_vals_list.push("s0_valsC".into());
+    }
     for cc in &custom_commits_json {
         let name = cc["name"].as_str().unwrap_or("");
         query_vals_list.push(format!("s0_vals_{name}_0"));
@@ -872,6 +875,7 @@ fn build_tera_context(
     ctx.insert("hash", &opts.hash);
     ctx.insert("n_publics", &n_publics);
     ctx.insert("n_constants", &n_constants);
+    ctx.insert("has_constants", &has_constants);
     ctx.insert("ev_map_len", &ev_map_len);
     ctx.insert("n_air_group_values", &n_air_group_values);
     // Stage-1 values use limb 0 only; limbs 1 and 2 are pinned to zero in the circuit.
@@ -913,7 +917,9 @@ fn build_tera_context(
     ctx.insert("siblings_width", &siblings_width);
     ctx.insert("merkle_levels_s0", &merkle_levels_s0);
     ctx.insert("gl_shift", &GL_SHIFT.to_string());
-    ctx.insert("const_root_str", &const_root_str);
+    if let Some(root) = &const_root_str {
+        ctx.insert("const_root_str", root);
+    }
     ctx.insert("batch_size", &batch_size);
     ctx.insert("full_batch_count", &full_batch_count);
     ctx.insert("last_batch_size", &last_batch_size);
@@ -1066,12 +1072,40 @@ mod tests {
         assert!(!out.contains("Zfirst") && !out.contains("Zlast") && !out.contains("Zframe"), "{out}");
     }
 
-    #[test]
-    #[should_panic(expected = "no fixed columns")]
-    fn zero_fixed_columns_rejected() {
-        let mut si = minimal_stark_info(2, 10, 8);
+    fn zero_constants_stark_info() -> Value {
+        let mut si = basic_air_stark_info();
         si["nConstants"] = json!(0);
-        gen_stark_verifier_gl(None, &si, &minimal_verifier_info(), &Pil2CircomOptions::default()).unwrap();
+        si
+    }
+
+    #[test]
+    fn gl_zero_constants_has_no_const_section() {
+        let out = render(&zero_constants_stark_info(), true);
+        for absent in ["rootC", "s0_valsC", "s0_siblingsC", "s0_last_mt_levelsC", "consts["] {
+            assert!(!out.contains(absent), "`{absent}` in a zero-constant verifier:\n{out}");
+        }
+        let with = render(&basic_air_stark_info(), true);
+        for present in ["signal output rootC[4]", "s0_valsC", "s0_siblingsC", "consts["] {
+            assert!(with.contains(present), "`{present}` missing with constants");
+        }
+    }
+
+    #[test]
+    fn gl_zero_constants_rejects_self_contained_mode() {
+        let opts = Pil2CircomOptions { hash: "Poseidon2".to_string(), ..Default::default() };
+        let err = gen_stark_verifier_gl(None, &zero_constants_stark_info(), &minimal_verifier_info(), &opts);
+        assert!(format!("{:#}", err.unwrap_err()).contains("no fixed columns"));
+    }
+
+    #[test]
+    fn gl_zero_constants_rejects_const_root() {
+        let root = ["1".to_string(), "2".to_string(), "3".to_string(), "4".to_string()];
+        let opts = Pil2CircomOptions { hash: "Poseidon2".to_string(), input_challenges: true, ..Default::default() };
+        let err = gen_stark_verifier_gl(Some(&root), &zero_constants_stark_info(), &minimal_verifier_info(), &opts);
+        assert!(format!("{:#}", err.unwrap_err()).contains("no fixed columns"));
+        let opts = Pil2CircomOptions { verkey_input: true, ..opts };
+        let err = gen_stark_verifier_gl(None, &zero_constants_stark_info(), &minimal_verifier_info(), &opts);
+        assert!(format!("{:#}", err.unwrap_err()).contains("no fixed columns"));
     }
 
     #[test]

@@ -236,11 +236,11 @@ template parallel {{ verify_evaluations_name }}() {
     f_0(x) at one query point, out of that query's opened leaves: the arithmetic of the DEEP
     combination whose formula and cross-check live in {{ verify_query_name }} below.
 
-    The leaves arrive as the flat sections the Merkle trees store (cm1..cm{{ q_stage }}, consts{% if custom_commits %},
+    The leaves arrive as the flat sections the Merkle trees store (cm1..cm{{ q_stage }}{% if has_constants %}, consts{% endif %}{% if custom_commits %},
     custom_*{% endif %}), and `mapValues` splits them into one signal per committed polynomial: dim 1 for a
     base-field polynomial, dim 3 for an extension one — which is why a dim-1 value is
-    subtracted from limb 0 of its `evals` entry alone. Fixed polynomials are always dim 1 and
-    are read straight out of `consts`.
+    subtracted from limb 0 of its `evals` entry alone.{% if has_constants %} Fixed polynomials are always dim 1 and
+    are read straight out of `consts`.{% endif %}
 
     The emitted code is a nested Horner. Within one opening point g^s·z the differences
     (pol(x) - pol(g^s·z)) are folded with challengesDeep[1] = vf2, the result is multiplied by
@@ -257,8 +257,8 @@ template parallel {{ verify_evaluations_name }}() {
 
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input cm{{ stage.stage }}[{{ stage.cm_section_len }}];
 {% endif %}{% endfor %}    signal input cm{{ q_stage }}[{{ q_stage_cm_section_len }}];
-    signal input consts[{{ n_constants }}];
-{% for cc in custom_commits %}    signal input custom_{{ cc.name }}_0[{{ cc.section_len_0 }}];
+{% if has_constants %}    signal input consts[{{ n_constants }}];
+{% endif %}{% for cc in custom_commits %}    signal input custom_{{ cc.name }}_0[{{ cc.section_len_0 }}];
 {% endfor %}
     signal input xDivXSubXi[{{ opening_points | length }}][3];
 
@@ -315,8 +315,8 @@ template {{ verify_query_name }}(currStepBits, nextStepBits) {
     signal input evals[{{ ev_map_len }}][3];
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input cm{{ stage.stage }}[{{ stage.cm_section_len }}];
 {% endif %}{% endfor %}    signal input cm{{ q_stage }}[{{ q_stage_cm_section_len }}];
-    signal input consts[{{ n_constants }}];
-{% for cc in custom_commits %}    signal input custom_{{ cc.name }}_0[{{ cc.section_len_0 }}];
+{% if has_constants %}    signal input consts[{{ n_constants }}];
+{% endif %}{% for cc in custom_commits %}    signal input custom_{{ cc.name }}_0[{{ cc.section_len_0 }}];
 {% endfor %}
     signal input s1_vals[1 << nextStep][3];
     signal input {binary} enable;
@@ -444,15 +444,15 @@ template {{ verify_single_query_name }}() {
     signal input s0_vals{{ q_stage }}_p[{{ q_stage_cm_section_len }}][1];
     signal input s0_siblings{{ q_stage }}[{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
 
-    signal input s0_valsC[{{ n_constants }}];
+{% if has_constants %}    signal input s0_valsC[{{ n_constants }}];
     signal input s0_valsC_p[{{ n_constants }}][1];
     signal input s0_siblingsC[{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
 
-{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ q_stage }}[{{ s0_last_mt_size }}][4];
-    signal input s0_last_mt_levelsC[{{ s0_last_mt_size }}][4];
-{% else %}    signal input root{{ q_stage }}[4];
-    signal input rootC[4];
-{% endif %}
+{% endif %}{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ q_stage }}[{{ s0_last_mt_size }}][4];
+{% if has_constants %}    signal input s0_last_mt_levelsC[{{ s0_last_mt_size }}][4];
+{% endif %}{% else %}    signal input root{{ q_stage }}[4];
+{% if has_constants %}    signal input rootC[4];
+{% endif %}{% endif %}
 {% for cc in custom_commits %}    signal input s0_vals_{{ cc.name }}_0[{{ cc.section_len_0 }}];
     signal input s0_vals_{{ cc.name }}_0_p[{{ cc.section_len_0 }}][1];
     signal input root_{{ cc.name }}_0[4];
@@ -488,10 +488,10 @@ template {{ verify_single_query_name }}() {
 {% else %}    VerifyMerkleHash(1, {{ stage.cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals{{ stage.stage }}_p, s0_siblings{{ stage.stage }}, queriesL0Bits, root{{ stage.stage }}, enable);
 {% endif %}{% endif %}{% endfor %}
 {% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ q_stage_cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesL0Bits, s0_last_mt_levels{{ q_stage }}, enable);
-    VerifyMerkleHashUntilLevel(1, {{ n_constants }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_valsC_p, s0_siblingsC, queriesL0Bits, s0_last_mt_levelsC, enable);
-{% else %}    VerifyMerkleHash(1, {{ q_stage_cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesL0Bits, root{{ q_stage }}, enable);
-    VerifyMerkleHash(1, {{ n_constants }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_valsC_p, s0_siblingsC, queriesL0Bits, rootC, enable);
-{% endif %}
+{% if has_constants %}    VerifyMerkleHashUntilLevel(1, {{ n_constants }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_valsC_p, s0_siblingsC, queriesL0Bits, s0_last_mt_levelsC, enable);
+{% endif %}{% else %}    VerifyMerkleHash(1, {{ q_stage_cm_section_len }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals{{ q_stage }}_p, s0_siblings{{ q_stage }}, queriesL0Bits, root{{ q_stage }}, enable);
+{% if has_constants %}    VerifyMerkleHash(1, {{ n_constants }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_valsC_p, s0_siblingsC, queriesL0Bits, rootC, enable);
+{% endif %}{% endif %}
 {% for cc in custom_commits %}{% if last_level_verification_gt0 %}    VerifyMerkleHashUntilLevel(1, {{ cc.section_len_0 }}, {{ arity }}, {{ merkle_levels_s0 - last_level_verification }}, {{ last_level_verification }}, {{ n_bits_ext_size }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesL0Bits, s0_last_mt_levels_{{ cc.name }}_0, enable);
 {% else %}    VerifyMerkleHash(1, {{ cc.section_len_0 }}, {{ arity }}, {{ merkle_levels_s0 }})(s0_vals_{{ cc.name }}_0_p, s0_siblings_{{ cc.name }}_0, queriesL0Bits, root_{{ cc.name }}_0, enable);
 {% endif %}{% endfor %}
@@ -567,15 +567,15 @@ template parallel {{ verify_queries_batch_name }}(nQueries) {
     signal input s0_vals{{ q_stage }}_p[nQueries][{{ q_stage_cm_section_len }}][1];
     signal input s0_siblings{{ q_stage }}[nQueries][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
 
-    signal input s0_valsC[nQueries][{{ n_constants }}];
+{% if has_constants %}    signal input s0_valsC[nQueries][{{ n_constants }}];
     signal input s0_valsC_p[nQueries][{{ n_constants }}][1];
     signal input s0_siblingsC[nQueries][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
 
-{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ q_stage }}[{{ s0_last_mt_size }}][4];
-    signal input s0_last_mt_levelsC[{{ s0_last_mt_size }}][4];
-{% else %}    signal input root{{ q_stage }}[4];
-    signal input rootC[4];
-{% endif %}
+{% endif %}{% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ q_stage }}[{{ s0_last_mt_size }}][4];
+{% if has_constants %}    signal input s0_last_mt_levelsC[{{ s0_last_mt_size }}][4];
+{% endif %}{% else %}    signal input root{{ q_stage }}[4];
+{% if has_constants %}    signal input rootC[4];
+{% endif %}{% endif %}
 {% for cc in custom_commits %}    signal input s0_vals_{{ cc.name }}_0[nQueries][{{ cc.section_len_0 }}];
     signal input s0_vals_{{ cc.name }}_0_p[nQueries][{{ cc.section_len_0 }}][1];
     signal input root_{{ cc.name }}_0[4];
@@ -611,14 +611,14 @@ template parallel {{ verify_queries_batch_name }}(nQueries) {
 {% endif %}{% endif %}{% endfor %}            s0_vals{{ q_stage }}[q],
             s0_vals{{ q_stage }}_p[q],
             s0_siblings{{ q_stage }}[q],
-            s0_valsC[q],
+{% if has_constants %}            s0_valsC[q],
             s0_valsC_p[q],
             s0_siblingsC[q],
-{% if last_level_verification_gt0 %}            s0_last_mt_levels{{ q_stage }},
-            s0_last_mt_levelsC,
-{% else %}            root{{ q_stage }},
-            rootC,
-{% endif %}{% for cc in custom_commits %}            s0_vals_{{ cc.name }}_0[q],
+{% endif %}{% if last_level_verification_gt0 %}            s0_last_mt_levels{{ q_stage }},
+{% if has_constants %}            s0_last_mt_levelsC,
+{% endif %}{% else %}            root{{ q_stage }},
+{% if has_constants %}            rootC,
+{% endif %}{% endif %}{% for cc in custom_commits %}            s0_vals_{{ cc.name }}_0[q],
             s0_vals_{{ cc.name }}_0_p[q],
             root_{{ cc.name }}_0,
             s0_siblings_{{ cc.name }}_0[q],
@@ -666,11 +666,11 @@ template {{ verifier_name }}() {
 {% endif %}{% for stage in stages_info %}{% if stage.stage <= n_stages %}    signal input root{{ stage.stage }}[4]; // Commitment to witness polynomials of stage {{ stage.stage }}
 {% endif %}{% endfor %}    signal input root{{ q_stage }}[4]; // Commitment to the quotient polynomial Q
 
-{% if verkey_input %}    signal input rootC[4]; // Commitment to fixed polynomials
+{% if has_constants %}{% if verkey_input %}    signal input rootC[4]; // Commitment to fixed polynomials
 {% else %}{% if input_challenges %}    signal output rootC[4] <== [{{ const_root_str }} ]; // Commitment to fixed polynomials
 {% else %}    signal rootC[4] <== [{{ const_root_str }} ]; // Commitment to fixed polynomials
 {% endif %}{% endif %}
-{% for cc in custom_commits %}    signal root_{{ cc.name }}_0[4] <== [publics[{{ cc.public_values[0] }}], publics[{{ cc.public_values[1] }}], publics[{{ cc.public_values[2] }}], publics[{{ cc.public_values[3] }}]]; // Commitment to the custom commit '{{ cc.name }}', bound through the publics
+{% endif %}{% for cc in custom_commits %}    signal root_{{ cc.name }}_0[4] <== [publics[{{ cc.public_values[0] }}], publics[{{ cc.public_values[1] }}], publics[{{ cc.public_values[2] }}], publics[{{ cc.public_values[3] }}]]; // Commitment to the custom commit '{{ cc.name }}', bound through the publics
 {% endfor %}    
     signal input evals[{{ ev_map_len }}][3]; // Evaluations of commited polynomials at the out-of-domain sample point z and shifts gˢ·z
 
@@ -679,8 +679,8 @@ template {{ verifier_name }}() {
 {% endfor %}    // Leaf values of the merkle tree used to check all the queries
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    signal input s0_vals{{ stage.stage }}[{{ n_queries }}][{{ stage.cm_section_len }}];
 {% endif %}{% endfor %}    signal input s0_vals{{ q_stage }}[{{ n_queries }}][{{ q_stage_cm_section_len }}];
-    signal input s0_valsC[{{ n_queries }}][{{ n_constants }}];
-
+{% if has_constants %}    signal input s0_valsC[{{ n_queries }}][{{ n_constants }}];
+{% endif %}
 {% for cc in custom_commits %}    signal input s0_vals_{{ cc.name }}_0[{{ n_queries }}][{{ cc.section_len_0 }}];
 {% endfor %}
     // Merkle proofs for each of the evaluations
@@ -688,9 +688,9 @@ template {{ verifier_name }}() {
 {% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ stage.stage }}[{{ s0_last_mt_size }}][4];
 {% endif %}{% endif %}{% endfor %}    signal input s0_siblings{{ q_stage }}[{{ n_queries }}][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
 {% if last_level_verification_gt0 %}    signal input s0_last_mt_levels{{ q_stage }}[{{ s0_last_mt_size }}][4];
-{% endif %}    signal input s0_siblingsC[{{ n_queries }}][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
-{% if last_level_verification_gt0 %}    signal input s0_last_mt_levelsC[{{ s0_last_mt_size }}][4];
-{% endif %}{% for cc in custom_commits %}    signal input s0_siblings_{{ cc.name }}_0[{{ n_queries }}][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% endif %}{% if has_constants %}    signal input s0_siblingsC[{{ n_queries }}][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
+{% endif %}{% if last_level_verification_gt0 %}{% if has_constants %}    signal input s0_last_mt_levelsC[{{ s0_last_mt_size }}][4];
+{% endif %}{% endif %}{% for cc in custom_commits %}    signal input s0_siblings_{{ cc.name }}_0[{{ n_queries }}][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
 {% if last_level_verification_gt0 %}    signal input s0_last_mt_levels_{{ cc.name }}_0[{{ s0_last_mt_size }}][4];
 {% endif %}{% endfor %}
 {% if is_stir %}    // Contains the root of the DEEP polynomial and of every folded oracle.
@@ -805,8 +805,8 @@ template {{ verifier_name }}() {
     // anonymous component call needs each argument to already have the parameter's shape.
 {% for stage in stages_info %}{% if stage.has_cm and stage.stage <= n_stages %}    var s0_vals{{ stage.stage }}_p[{{ n_queries }}][{{ stage.cm_section_len }}][1];
 {% endif %}{% endfor %}    var s0_vals{{ q_stage }}_p[{{ n_queries }}][{{ q_stage_cm_section_len }}][1];
-    var s0_valsC_p[{{ n_queries }}][{{ n_constants }}][1];
-{% for cc in custom_commits %}    var s0_vals_{{ cc.name }}_0_p[{{ n_queries }}][{{ cc.section_len_0 }}][1];
+{% if has_constants %}    var s0_valsC_p[{{ n_queries }}][{{ n_constants }}][1];
+{% endif %}{% for cc in custom_commits %}    var s0_vals_{{ cc.name }}_0_p[{{ n_queries }}][{{ cc.section_len_0 }}][1];
 {% endfor %}{% if is_stir %}{% for r in stir_rounds %}    var s{{ r.tree }}_vals_p[{{ r.t }}][{{ r.coset_size }}][3];
 {% endfor %}{% else %}{% for step in fri_steps_info %}    var s{{ step.s }}_vals_p[{{ n_queries }}][{{ step.exponent }}][3]; 
 {% endfor %}{% endif %}
@@ -817,10 +817,10 @@ template {{ verifier_name }}() {
 {% endif %}{% endfor %}        for (var i = 0; i < {{ q_stage_cm_section_len }}; i++) {
             s0_vals{{ q_stage }}_p[q][i][0] = s0_vals{{ q_stage }}[q][i];
         }
-        for (var i = 0; i < {{ n_constants }}; i++) {
+{% if has_constants %}        for (var i = 0; i < {{ n_constants }}; i++) {
             s0_valsC_p[q][i][0] = s0_valsC[q][i];
         }
-{% for cc in custom_commits %}        for (var i = 0; i < {{ cc.section_len_0 }}; i++) {
+{% endif %}{% for cc in custom_commits %}        for (var i = 0; i < {{ cc.section_len_0 }}; i++) {
             s0_vals_{{ cc.name }}_0_p[q][i][0] = s0_vals_{{ cc.name }}_0[q][i];
         }
 {% endfor %}
@@ -864,10 +864,10 @@ template {{ verifier_name }}() {
     signal batch_work_s0_vals{{ q_stage }}[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ q_stage_cm_section_len }}];
     signal batch_work_s0_vals{{ q_stage }}_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ q_stage_cm_section_len }}][1];
     signal batch_work_s0_siblings{{ q_stage }}[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
-    signal batch_work_s0_valsC[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ n_constants }}];
+{% if has_constants %}    signal batch_work_s0_valsC[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ n_constants }}];
     signal batch_work_s0_valsC_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ n_constants }}][1];
     signal batch_work_s0_siblingsC[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
-
+{% endif %}
 {% for cc in custom_commits %}    signal batch_work_s0_vals_{{ cc.name }}_0[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ cc.section_len_0 }}];
     signal batch_work_s0_vals_{{ cc.name }}_0_p[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ cc.section_len_0 }}][1];
     signal batch_work_s0_siblings_{{ cc.name }}_0[N_FULL_BATCHES][QUERIES_BATCH_SIZE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
@@ -908,15 +908,15 @@ template {{ verifier_name }}() {
                 batch_work_s0_vals{{ q_stage }}[b][q][i] <== s0_vals{{ q_stage }}[batchStart + q][i];
                 batch_work_s0_vals{{ q_stage }}_p[b][q][i][0] <== s0_vals{{ q_stage }}_p[batchStart + q][i][0];
             }
-            for (var i = 0; i < {{ n_constants }}; i++) {
+{% if has_constants %}            for (var i = 0; i < {{ n_constants }}; i++) {
                 batch_work_s0_valsC[b][q][i] <== s0_valsC[batchStart + q][i];
                 batch_work_s0_valsC_p[b][q][i][0] <== s0_valsC_p[batchStart + q][i][0];
             }
-            for (var j = 0; j < {{ merkle_levels_s0 - last_level_verification }}; j++) {
+{% endif %}            for (var j = 0; j < {{ merkle_levels_s0 - last_level_verification }}; j++) {
                 for (var k = 0; k < {{ siblings_width }}; k++) {
                     batch_work_s0_siblings{{ q_stage }}[b][q][j][k] <== s0_siblings{{ q_stage }}[batchStart + q][j][k];
-                    batch_work_s0_siblingsC[b][q][j][k] <== s0_siblingsC[batchStart + q][j][k];
-                }
+{% if has_constants %}                    batch_work_s0_siblingsC[b][q][j][k] <== s0_siblingsC[batchStart + q][j][k];
+{% endif %}                }
             }
         }
 
@@ -974,14 +974,14 @@ template {{ verifier_name }}() {
 {% endif %}{% endif %}{% endfor %}            batch_work_s0_vals{{ q_stage }}[b],
             batch_work_s0_vals{{ q_stage }}_p[b],
             batch_work_s0_siblings{{ q_stage }}[b],
-            batch_work_s0_valsC[b],
+{% if has_constants %}            batch_work_s0_valsC[b],
             batch_work_s0_valsC_p[b],
             batch_work_s0_siblingsC[b],
-{% if last_level_verification_gt0 %}            s0_last_mt_levels{{ q_stage }},
-            s0_last_mt_levelsC,
-{% else %}            root{{ q_stage }},
-            rootC,
-{% endif %}{% for cc in custom_commits %}            batch_work_s0_vals_{{ cc.name }}_0[b],
+{% endif %}{% if last_level_verification_gt0 %}            s0_last_mt_levels{{ q_stage }},
+{% if has_constants %}            s0_last_mt_levelsC,
+{% endif %}{% else %}            root{{ q_stage }},
+{% if has_constants %}            rootC,
+{% endif %}{% endif %}{% for cc in custom_commits %}            batch_work_s0_vals_{{ cc.name }}_0[b],
             batch_work_s0_vals_{{ cc.name }}_0_p[b],
             root_{{ cc.name }}_0,
             batch_work_s0_siblings_{{ cc.name }}_0[b],
@@ -1024,24 +1024,24 @@ template {{ verifier_name }}() {
     signal remainder_s0_vals{{ q_stage }}[LAST_BATCH_SIZE_SAFE][{{ q_stage_cm_section_len }}];
     signal remainder_s0_vals{{ q_stage }}_p[LAST_BATCH_SIZE_SAFE][{{ q_stage_cm_section_len }}][1];
     signal remainder_s0_siblings{{ q_stage }}[LAST_BATCH_SIZE_SAFE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
-    signal remainder_s0_valsC[LAST_BATCH_SIZE_SAFE][{{ n_constants }}];
+{% if has_constants %}    signal remainder_s0_valsC[LAST_BATCH_SIZE_SAFE][{{ n_constants }}];
     signal remainder_s0_valsC_p[LAST_BATCH_SIZE_SAFE][{{ n_constants }}][1];
     signal remainder_s0_siblingsC[LAST_BATCH_SIZE_SAFE][{{ merkle_levels_s0 - last_level_verification }}][{{ siblings_width }}];
-
+{% endif %}
     for (var q = 0; q < LAST_BATCH_SIZE; q++) {
         for (var i = 0; i < {{ q_stage_cm_section_len }}; i++) {
             remainder_s0_vals{{ q_stage }}[q][i] <== s0_vals{{ q_stage }}[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
             remainder_s0_vals{{ q_stage }}_p[q][i][0] <== s0_vals{{ q_stage }}_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i][0];
         }
-        for (var i = 0; i < {{ n_constants }}; i++) {
+{% if has_constants %}        for (var i = 0; i < {{ n_constants }}; i++) {
             remainder_s0_valsC[q][i] <== s0_valsC[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i];
             remainder_s0_valsC_p[q][i][0] <== s0_valsC_p[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][i][0];
         }
-        for (var j = 0; j < {{ merkle_levels_s0 - last_level_verification }}; j++) {
+{% endif %}        for (var j = 0; j < {{ merkle_levels_s0 - last_level_verification }}; j++) {
             for (var k = 0; k < {{ siblings_width }}; k++) {
                 remainder_s0_siblings{{ q_stage }}[q][j][k] <== s0_siblings{{ q_stage }}[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
-                remainder_s0_siblingsC[q][j][k] <== s0_siblingsC[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
-            }
+{% if has_constants %}                remainder_s0_siblingsC[q][j][k] <== s0_siblingsC[N_FULL_BATCHES * QUERIES_BATCH_SIZE + q][j][k];
+{% endif %}            }
         }
     }
 
@@ -1107,14 +1107,14 @@ template {{ verifier_name }}() {
 {% endif %}{% endif %}{% endfor %}            remainder_s0_vals{{ q_stage }},
             remainder_s0_vals{{ q_stage }}_p,
             remainder_s0_siblings{{ q_stage }},
-            remainder_s0_valsC,
+{% if has_constants %}            remainder_s0_valsC,
             remainder_s0_valsC_p,
             remainder_s0_siblingsC,
-{% if last_level_verification_gt0 %}            s0_last_mt_levels{{ q_stage }},
-            s0_last_mt_levelsC,
-{% else %}            root{{ q_stage }},
-            rootC,
-{% endif %}{% for cc in custom_commits %}            remainder_s0_vals_{{ cc.name }}_0,
+{% endif %}{% if last_level_verification_gt0 %}            s0_last_mt_levels{{ q_stage }},
+{% if has_constants %}            s0_last_mt_levelsC,
+{% endif %}{% else %}            root{{ q_stage }},
+{% if has_constants %}            rootC,
+{% endif %}{% endif %}{% for cc in custom_commits %}            remainder_s0_vals_{{ cc.name }}_0,
             remainder_s0_vals_{{ cc.name }}_0_p,
             root_{{ cc.name }}_0,
             remainder_s0_siblings_{{ cc.name }}_0,
@@ -1338,9 +1338,9 @@ template {{ verifier_name }}() {
 {% endif %}{% endfor %}
     VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ n_bits_ext_size }})(s0_last_mt_levels{{ q_stage }}, root{{ q_stage }}, enabled);
 
-    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ n_bits_ext_size }})(s0_last_mt_levelsC, rootC, enabled);
+{% if has_constants %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ n_bits_ext_size }})(s0_last_mt_levelsC, rootC, enabled);
 
-{% for cc in custom_commits %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ n_bits_ext_size }})(s0_last_mt_levels_{{ cc.name }}_0, root_{{ cc.name }}_0, enabled);
+{% endif %}{% for cc in custom_commits %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ n_bits_ext_size }})(s0_last_mt_levels_{{ cc.name }}_0, root_{{ cc.name }}_0, enabled);
 {% endfor %}
 {% if is_stir %}{% for r in stir_rounds %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ r.mt_size }})(s{{ r.tree }}_last_levels, s{{ r.tree }}_root, enabled);
 {% endfor %}{% else %}{% for step in fri_steps_info %}{% if step.s > 0 %}    VerifyMerkleRoot({{ last_level_verification }}, {{ arity }}, {{ step.mt_size }})(s{{ step.s }}_last_mt_levels, s{{ step.s }}_root, enabled);

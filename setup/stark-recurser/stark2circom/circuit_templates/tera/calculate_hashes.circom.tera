@@ -1,6 +1,6 @@
 template CalculateStage1Hash(circuitType) {
-    signal input rootC[4];
-    signal input root1[4];
+{% if has_constants %}    signal input rootC[4];
+{% endif %}    signal input root1[4];
 {%- if has_stage1_air_values %}
     signal input airValues[{{ air_values_len }}][3];
 {%- endif %}

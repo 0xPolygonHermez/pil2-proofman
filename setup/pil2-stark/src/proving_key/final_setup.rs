@@ -166,7 +166,7 @@ pub fn gen_final_setup(config: &FinalSetupConfig<'_>, witness_tracker: &WitnessT
             ..Default::default()
         };
 
-        let verifier_circom = pil2circom(&const_root, si, vi, &pil2circom_opts)
+        let verifier_circom = pil2circom(Some(&const_root), si, vi, &pil2circom_opts)
             .context("pil2circom failed generating recursive2 verifier for final setup")?;
 
         let verifier_path = circom_dir.join(&verifier_names[i]);

@@ -238,11 +238,10 @@ impl ProveAirCmd {
         // A recursive-test key holds its single AIR in the Basic slot, so fall back to that -- but
         // only if it exists, else a missing setup silently proves a different circuit.
         let has_setup = |t: &ProofType| {
-            Path::new(&format!(
-                "{}.starkinfo.json",
-                pctx.global_info.get_air_setup_path(airgroup_id, air_id, t).display()
-            ))
-            .exists()
+            let path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, t);
+            // recursive1 borrows recursive2's starkinfo (one shared starkSetup): look for its own exec
+            let own_file = if *t == ProofType::Recursive1 { "exec" } else { "starkinfo.json" };
+            Path::new(&format!("{}.{own_file}", path.display())).exists()
         };
         let setup_proof_type = if has_setup(proof_type) {
             *proof_type
@@ -446,8 +445,13 @@ impl ProveAirCmd {
 
         // challenges=None: the verifier reseeds from rootC (else circuitType) + publics, as the prover did.
         timer_start_info!(VERIFY_RECURSIVE_PROOF);
-        let stark_info_path = setup.setup_path.display().to_string() + ".starkinfo.json";
-        let expressions_bin_path = setup.setup_path.display().to_string() + ".verifier.bin";
+        // recursive1 borrows recursive2's starkinfo and verifier: they share one starkSetup
+        let info_stem = match setup_proof_type {
+            ProofType::Recursive1 => pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2),
+            _ => setup.setup_path.clone(),
+        };
+        let stark_info_path = info_stem.display().to_string() + ".starkinfo.json";
+        let expressions_bin_path = info_stem.display().to_string() + ".verifier.bin";
         let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
         let valid = verify_proof::<Goldilocks>(
             &proof_buffer[publics_aggregation..],

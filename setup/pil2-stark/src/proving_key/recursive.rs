@@ -234,7 +234,7 @@ pub struct RecursiveSetupConfig<'a> {
     pub air_id: usize,
     pub air_name: &'a str,
     pub global_info: &'a Value,
-    pub const_root: &'a [String; 4],
+    pub const_root: Option<&'a [String; 4]>,
     pub verification_keys: &'a [Vec<Vec<String>>],
     pub stark_info: &'a Value,
     pub verifier_info: &'a Value,
@@ -328,11 +328,13 @@ pub fn gen_recursive_setup(
     fs::create_dir_all(&pil_dir)?;
     fs::create_dir_all(&files_dir)?;
 
-    let const_root_circuit: [String; 4] = if config.const_root.iter().all(|s| s.is_empty()) {
-        ["0".to_string(), "0".to_string(), "0".to_string(), "0".to_string()]
-    } else {
-        config.const_root.clone()
-    };
+    let const_root_circuit: Option<[String; 4]> = config.const_root.map(|r| {
+        if r.iter().all(|s| s.is_empty()) {
+            ["0".to_string(), "0".to_string(), "0".to_string(), "0".to_string()]
+        } else {
+            r.clone()
+        }
+    });
     let verifier_path = circom_dir.join(&verifier_name);
     let verifier_filenames = vec![verifier_name.clone()];
     let circom_out_path = circom_dir.join(format!("{}.circom", name_filename));
@@ -386,9 +388,13 @@ pub fn gen_recursive_setup(
             input_challenges,
             hash: config.hash.to_string(),
         };
-        let verifier_circom =
-            crate::io::recurser::pil2circom(&const_root_circuit, effective_si, config.verifier_info, &pil2circom_opts)
-                .context("pil2circom failed in recursive setup")?;
+        let verifier_circom = crate::io::recurser::pil2circom(
+            const_root_circuit.as_ref(),
+            effective_si,
+            config.verifier_info,
+            &pil2circom_opts,
+        )
+        .context("pil2circom failed in recursive setup")?;
         fs::write(&verifier_path, &verifier_circom)?;
 
         // Generate recursive circom via gen_circom

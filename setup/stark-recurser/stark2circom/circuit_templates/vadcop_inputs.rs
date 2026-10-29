@@ -262,7 +262,7 @@ pub fn init_vadcop_inputs(
     vadcop_info: &Value,
     // Binary signal that is 1 when this slot carries no proof; None for a slot always full.
     is_null: Option<&str>,
-) -> String {
+) -> anyhow::Result<String> {
     let mut out = String::new();
     let prefix_ = if prefix.is_empty() { String::new() } else { format!("{prefix}_") };
     let prefix_stark_ = if prefix_stark.is_empty() { String::new() } else { format!("{prefix_stark}_") };
@@ -283,7 +283,7 @@ pub fn init_vadcop_inputs(
     out.push_str(&format!("    {component_name}.globalChallenge <== globalChallenge;\n\n"));
     out.push_str("    // --> Assign the VADCOP data\n");
 
-    // The verifier's compile-time rootC fixes the air, so an empty slot may report 0.
+    // The verifier's compile-time constraints and circuitType fix the air, so an empty slot may report 0.
     match is_null {
         None => out.push_str(&format!("    {prefix_}circuitType <== circuitType;\n")),
         Some(n) => out.push_str(&format!(
@@ -311,17 +311,22 @@ pub fn init_vadcop_inputs(
 
     // stage1Hash — computed via CalculateStage1Hash
     let air_values_map_len = stark_info["airValuesMap"].as_array().map(|a| a.len()).unwrap_or(0);
+    let root_c = if super::stark_inputs::has_constants(stark_info)? {
+        format!("{component_name}.rootC, ")
+    } else {
+        String::new()
+    };
     if air_values_stage1_len > 0 && air_values_map_len > 0 {
         out.push_str(&format!(
-            "    {prefix_}stage1Hash <== CalculateStage1Hash(circuitType)({component_name}.rootC, {prefix_stark_}root1, {prefix_stark_}airvalues);\n"
+            "    {prefix_}stage1Hash <== CalculateStage1Hash(circuitType)({root_c}{prefix_stark_}root1, {prefix_stark_}airvalues);\n"
         ));
     } else {
         out.push_str(&format!(
-            "    {prefix_}stage1Hash <== CalculateStage1Hash(circuitType)({component_name}.rootC, {prefix_stark_}root1);\n"
+            "    {prefix_}stage1Hash <== CalculateStage1Hash(circuitType)({root_c}{prefix_stark_}root1);\n"
         ));
     }
 
-    out
+    Ok(out)
 }
 
 // ── agg_vadcop_inputs ─────────────────────────────────────────────────────────
@@ -588,5 +593,23 @@ mod fold_tests {
     #[should_panic(expected = "circuitType")]
     fn air_id_vars_reject_a_circuit_type_that_disagrees_with_the_ids() {
         air_id_vars(&serde_json::json!({ "airgroupId": 0, "airId": 1, "circuitType": 99 }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::init_vadcop_inputs;
+    use serde_json::json;
+
+    #[test]
+    fn vadcop_inputs_zero_constants_stage1_hash_call_has_no_rootc() {
+        let vadcop = json!({ "aggTypes": [[]], "latticeSize": 16 });
+        let mut si = json!({ "airValuesMap": [], "nConstants": 0 });
+        let call = |si: &serde_json::Value| init_vadcop_inputs("sV", "sv", "", 0, si, &vadcop, None).unwrap();
+        let out = call(&si);
+        assert!(out.contains("sv_stage1Hash <== CalculateStage1Hash(circuitType)(root1);"), "{out}");
+        si["nConstants"] = json!(2);
+        let out = call(&si);
+        assert!(out.contains("CalculateStage1Hash(circuitType)(sV.rootC, root1);"), "{out}");
     }
 }

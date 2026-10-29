@@ -71,8 +71,8 @@ pub(super) fn render(template_src: &str, ctx: &TeraCtx) -> Result<String> {
 /// Port of `src/recursion/templates/recursivef.circom.ejs`.
 pub fn gen_recursivef(stark_info: &Value, verifier_filenames: &[String], _opts: &CircomGenOptions) -> Result<String> {
     let def_opts = StarkInputOptions { add_publics: true, is_final: false, parallel: false, shared_publics: false };
-    let stark_signals = define_stark_inputs(stark_info, "", &def_opts);
-    let stark_assign = assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None);
+    let stark_signals = define_stark_inputs(stark_info, "", &def_opts)?;
+    let stark_assign = assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None)?;
     let n_publics = stark_info["nPublics"].as_u64().unwrap_or(0);
 
     let mut ctx = TeraCtx::new();
@@ -94,8 +94,8 @@ pub fn gen_recursion_final(
     _opts: &CircomGenOptions,
 ) -> Result<String> {
     let def_opts = StarkInputOptions { add_publics: true, is_final: true, parallel: false, shared_publics: false };
-    let stark_signals = define_stark_inputs(stark_info, "", &def_opts);
-    let stark_assign = assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None);
+    let stark_signals = define_stark_inputs(stark_info, "", &def_opts)?;
+    let stark_assign = assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None)?;
 
     // The circuit includes the recursivef's verifier: when that one uses custom templates, circom
     // wants the pragma here too, and the publics hash takes the verifier's LessThanGoldilocks.
@@ -273,8 +273,8 @@ pub fn gen_final_compressed(
 
     let mut ctx = TeraCtx::new();
     ctx.insert("verifier_filenames", verifier_filenames);
-    ctx.insert("stark_signals", &define_stark_inputs(stark_info, "", &def_opts));
-    ctx.insert("stark_assign", &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None));
+    ctx.insert("stark_signals", &define_stark_inputs(stark_info, "", &def_opts)?);
+    ctx.insert("stark_assign", &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None)?);
     ctx.insert("has_publics", &has_publics);
     ctx.insert("n_publics", &n_publics);
     ctx.insert("n_publics_real", &n_publics_real);
@@ -306,16 +306,16 @@ pub fn gen_compressor(
 
     let mut ctx = TeraCtx::new();
     ctx.insert("verifier_filenames", verifier_filenames);
-    ctx.insert("calculate_hashes", &gen_calculate_hashes(stark_info, vadcop_info));
+    ctx.insert("calculate_hashes", &gen_calculate_hashes(stark_info, vadcop_info)?);
     ctx.insert("air_id_vars", &air_id_vars(stark_info));
     ctx.insert("has_publics", &(n_publics > 0));
     ctx.insert("n_publics", &n_publics);
     ctx.insert("has_proof_values", &(num_proof_values > 0));
     ctx.insert("num_proof_values", &num_proof_values);
-    ctx.insert("stark_signals", &define_stark_inputs(stark_info, "", &def_opts));
+    ctx.insert("stark_signals", &define_stark_inputs(stark_info, "", &def_opts)?);
     ctx.insert("vadcop_define", &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", VadcopSignals::Output, None));
-    ctx.insert("stark_assign", &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None));
-    ctx.insert("vadcop_init", &init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None));
+    ctx.insert("stark_assign", &assign_stark_inputs("sV", "", stark_info, &def_opts, &EnableInput::None)?);
+    ctx.insert("vadcop_init", &init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None)?);
     ctx.insert("pub_names", &pub_names.join(", "));
 
     render(COMPRESSOR_TMPL, &ctx)
@@ -347,7 +347,7 @@ pub fn gen_recursive1(
     ctx.insert("has_compressor", &has_compressor);
     ctx.insert(
         "calculate_hashes",
-        &if !has_compressor { gen_calculate_hashes(stark_info, vadcop_info) } else { String::new() },
+        &if !has_compressor { gen_calculate_hashes(stark_info, vadcop_info)? } else { String::new() },
     );
     ctx.insert("air_id_vars", &air_id_vars(stark_info));
     ctx.insert("has_publics", &(n_publics > 0));
@@ -363,12 +363,12 @@ pub fn gen_recursive1(
             "vadcop_define",
             &define_vadcop_inputs(vadcop_info, airgroup_id, "sv", outer, Some(&mut publics_names)),
         );
-        ctx.insert("stark_signals", &define_stark_inputs(stark_info, "", &def_opts));
-        ctx.insert("stark_assign", &assign_stark_inputs("sV", "", stark_info, &assign_opts, &EnableInput::None));
+        ctx.insert("stark_signals", &define_stark_inputs(stark_info, "", &def_opts)?);
+        ctx.insert("stark_assign", &assign_stark_inputs("sV", "", stark_info, &assign_opts, &EnableInput::None)?);
         ctx.insert(
             "vadcop_init_or_assign",
             &if !has_compressor {
-                init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None)
+                init_vadcop_inputs("sV", "sv", "", airgroup_id, stark_info, vadcop_info, None)?
             } else {
                 let av_opts = AssignVadcopOptions { add_prefix_agg_types: true, ..Default::default() };
                 assign_vadcop_inputs("sV", vadcop_info, airgroup_id, "sv", "", &av_opts)
@@ -404,19 +404,19 @@ pub fn gen_recursive1(
                         stark_info,
                         vadcop_info,
                         Some(&format!("{l}_isNull")),
-                    )
+                    )?
                 };
-                serde_json::json!({
+                Ok(serde_json::json!({
                     "lower": l,
                     "upper": l.to_uppercase(),
                     "prefix": pfx,
                     "vadcop_define": vadcop_define,
-                    "stark_signals": define_stark_inputs(stark_info, l, &def_opts),
-                    "stark_assign": assign_stark_inputs(&comp, l, stark_info, &assign_opts, &enable),
+                    "stark_signals": define_stark_inputs(stark_info, l, &def_opts)?,
+                    "stark_assign": assign_stark_inputs(&comp, l, stark_info, &assign_opts, &enable)?,
                     "vadcop_assign": vadcop_assign,
-                })
+                }))
             })
-            .collect();
+            .collect::<Result<_>>()?;
         ctx.insert("slots", &slots);
         ctx.insert(
             "agg_types_consistency",
@@ -525,17 +525,17 @@ pub fn gen_recursive2(
         .map(|(name, prefix)| {
             let upper = name.to_uppercase();
             let comp = format!("v{upper}");
-            serde_json::json!({
+            Ok(serde_json::json!({
                 "lower": name,
                 "upper": upper,
                 "prefix": prefix,
                 "vadcop_define": define_vadcop_inputs(vadcop_info, airgroup_id, prefix, VadcopSignals::Input, None),
-                "stark_signals": define_stark_inputs(stark_info, name, &def_opts),
-                "stark_assign": assign_stark_inputs(&comp, name, stark_info, &par_opts, &EnableInput::None),
+                "stark_signals": define_stark_inputs(stark_info, name, &def_opts)?,
+                "stark_assign": assign_stark_inputs(&comp, name, stark_info, &par_opts, &EnableInput::None)?,
                 "vadcop_assign": assign_vadcop_inputs(&comp, vadcop_info, airgroup_id, prefix, name, &av_opts),
-            })
+            }))
         })
-        .collect();
+        .collect::<Result<_>>()?;
     ctx.insert("slots", &slots);
     ctx.insert("agg_types_consistency", &agg_types_consistency(vadcop_info, airgroup_id, &slot_prefixes, false));
     ctx.insert("sel_fn", sel_fn);
@@ -579,7 +579,7 @@ pub fn gen_vadcop_final(
 
         let mut section = String::new();
         section.push_str(&define_vadcop_inputs(vadcop_info, i, &format!("s{i}_sv"), VadcopSignals::Input, None));
-        section.push_str(&define_stark_inputs(si, &format!("s{i}"), &def_opts));
+        section.push_str(&define_stark_inputs(si, &format!("s{i}"), &def_opts)?);
         define_sections.push(section);
 
         let n_pub_raw = si["nPublics"].as_u64().unwrap_or(0) as usize;
@@ -601,7 +601,7 @@ pub fn gen_vadcop_final(
             .join("\n");
 
         let mut section = String::new();
-        section.push_str(&assign_stark_inputs(&format!("sV{i}"), &format!("s{i}"), si, &def_opts, &EnableInput::None));
+        section.push_str(&assign_stark_inputs(&format!("sV{i}"), &format!("s{i}"), si, &def_opts, &EnableInput::None)?);
         section.push_str(&assign_vadcop_inputs(
             &format!("sV{i}"),
             vadcop_info,
