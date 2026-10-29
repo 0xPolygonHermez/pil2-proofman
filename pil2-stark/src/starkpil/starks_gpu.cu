@@ -349,6 +349,10 @@ void extendAndMerkelizeSection(uint64_t nCols, uint64_t nBits, uint64_t nBitsExt
 }
 
 void extendAndMerkelizeFixed(SetupCtx& setupCtx, Goldilocks::Element *d_fixedPols, Goldilocks::Element *d_fixedPolsExtended, bool preserve_src, TimerGPU &timer, cudaStream_t stream) {
+    if (!setupCtx.starkInfo.hasConstants()) {
+        zklog.error("extendAndMerkelizeFixed: the air has no fixed columns");
+        exitProcess();
+    }
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     extendAndMerkelizeSection(setupCtx.starkInfo.nConstants, setupCtx.starkInfo.starkStruct.nBits,
                               setupCtx.starkInfo.starkStruct.nBitsExt,
@@ -1036,6 +1040,7 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
 
     for (uint k = 0; k < nTrees; k++)
     {
+        if (trees[k] == nullptr) continue;  // the empty const slot of a zero-fixed air
         dim3 nThreads(32, 32);
         dim3 nBlocks((trees[k]->getMerkleTreeWidth() + nThreads.x - 1) / nThreads.x, (nQueries + nThreads.y - 1) / nThreads.y);
         if (k < nStages + 1)
@@ -1088,11 +1093,13 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
     }
     CHECKCUDAERR(cudaGetLastError());
 
-    leafSiblings(nStages + 1, d_constTree, fixedLayout());
-    dim3 nthreads(64);
-    dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
-    genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[nStages + 1]->get_nodes_ptr(), trees[nStages + 1]->getMerkleTreeHeight(), d_queriesL0, nQueries, d_queries_buff + (nStages + 1) * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification, dropLeaves);
-    CHECKCUDAERR(cudaGetLastError());
+    if (trees[nStages + 1] != nullptr) {
+        leafSiblings(nStages + 1, d_constTree, fixedLayout());
+        dim3 nthreads(64);
+        dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
+        genMerkleProof<<<nblocks, nthreads, 0, stream>>>((gl64_t *)trees[nStages + 1]->get_nodes_ptr(), trees[nStages + 1]->getMerkleTreeHeight(), d_queriesL0, nQueries, d_queries_buff + (nStages + 1) * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE, setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.lastLevelVerification, dropLeaves);
+        CHECKCUDAERR(cudaGetLastError());
+    }
 
     if(nTrees > nStages + 2){
         dim3 nthreads(64);

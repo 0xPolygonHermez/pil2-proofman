@@ -574,6 +574,45 @@ fn stage2_gpu_verify_constraints_passes() {
     }
 }
 
+/// What the GPU stream commit logs when it refuses an air for want of its const pols.
+const NO_CONST_POLS: &str = "no accumulator or const pols";
+
+/// `{"airs": airs, "instances": n}`.
+fn inputs_n(dir: &TestDir, airs: &[&str], n: usize) -> PathBuf {
+    let path = dir.path(&format!("inputs_{}_x{n}.json", airs.join("_")));
+    fs::write(&path, json!({ "airs": airs, "instances": n }).to_string()).unwrap();
+    path
+}
+
+/// Several instances of every AIR prove and verify on the GPU.
+#[test]
+fn stage2_gpu_prove_verify_proofs() {
+    if !gpu_ready("stage2_gpu_prove_verify_proofs") {
+        return;
+    }
+    let dir = TestDir::new("domains_e2e_gpu_prove_n");
+    let out = prove(gpu_key(), &inputs_n(&dir, &AIRS, 3), &dir.path("out"), &["--gpu"], &[]);
+    assert_ok(&out, "prove --gpu of 3 instances per AIR");
+    let text = output(&out);
+    assert!(text.contains("All proofs were successfully verified"), "{text}");
+    assert!(!text.contains(NO_CONST_POLS), "{text}");
+}
+
+/// Zero-fixed and with-constants proofs interleave on one stream (the slot-reuse rule: test_fixed_slot_cpu.cpp).
+#[test]
+fn stage2_gpu_zero_fixed_after_fixed_on_one_stream() {
+    if !gpu_ready("stage2_gpu_zero_fixed_after_fixed_on_one_stream") {
+        return;
+    }
+    let dir = TestDir::new("domains_e2e_gpu_one_stream");
+    let inputs = inputs_n(&dir, &["DomFirst", "DomMixed"], 4);
+    let out = prove(gpu_key(), &inputs, &dir.path("out"), &["--gpu", "-t", "1"], &[]);
+    assert_ok(&out, "prove --gpu -t 1");
+    let text = output(&out);
+    assert!(text.contains("All proofs were successfully verified"), "{text}");
+    assert!(!text.contains(NO_CONST_POLS), "{text}");
+}
+
 #[test]
 fn stage2_gpu_proves_all_airs_in_one_run() {
     if gpu_ready("stage2_gpu_proves_all_airs_in_one_run") {

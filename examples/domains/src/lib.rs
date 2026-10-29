@@ -16,10 +16,11 @@ use serde::Deserialize;
 
 witness_library!(WitnessLib, Goldilocks);
 
-/// The public inputs: which AIRs get an instance (all of them when absent).
+/// The public inputs: which AIRs get instances (all of them when absent), and how many each (1 when absent).
 #[derive(Default, Deserialize)]
 struct DomainsInputs {
     airs: Option<Vec<String>>,
+    instances: Option<usize>,
 }
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
@@ -27,16 +28,18 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx(), true)?;
         register_std(wcm, &std_lib);
         let inputs: DomainsInputs = load_from_json(&wcm.get_public_inputs_path());
+        let n = inputs.instances.unwrap_or(1);
+        assert!(n > 0, "\"instances\" must be at least 1");
         let components: [(&str, Arc<dyn WitnessComponent<F>>); 9] = [
-            ("DomFirst", dom_first::DomFirst::new(std_lib.clone())),
-            ("DomFirstTwin", dom_first_twin::DomFirstTwin::new(std_lib.clone())),
-            ("DomLast", dom_last::DomLast::new(std_lib.clone())),
-            ("DomNotFirst", dom_not_first::DomNotFirst::new(std_lib.clone())),
-            ("DomNotLast", dom_not_last::DomNotLast::new(std_lib.clone())),
-            ("DomOdd", dom_odd::DomOdd::new(std_lib.clone())),
-            ("DomLimits16", dom_limits_16::DomLimits16::new(std_lib.clone())),
-            ("DomNotQuarter", dom_not_quarter::DomNotQuarter::new(std_lib.clone())),
-            ("DomMixed", dom_mixed::DomMixed::new(std_lib.clone())),
+            ("DomFirst", dom_first::DomFirst::new(std_lib.clone(), n)),
+            ("DomFirstTwin", dom_first_twin::DomFirstTwin::new(std_lib.clone(), n)),
+            ("DomLast", dom_last::DomLast::new(std_lib.clone(), n)),
+            ("DomNotFirst", dom_not_first::DomNotFirst::new(std_lib.clone(), n)),
+            ("DomNotLast", dom_not_last::DomNotLast::new(std_lib.clone(), n)),
+            ("DomOdd", dom_odd::DomOdd::new(std_lib.clone(), n)),
+            ("DomLimits16", dom_limits_16::DomLimits16::new(std_lib.clone(), n)),
+            ("DomNotQuarter", dom_not_quarter::DomNotQuarter::new(std_lib.clone(), n)),
+            ("DomMixed", dom_mixed::DomMixed::new(std_lib.clone(), n)),
         ];
         if let Some(airs) = &inputs.airs {
             if let Some(unknown) = airs.iter().find(|a| !components.iter().any(|(name, _)| name == a)) {

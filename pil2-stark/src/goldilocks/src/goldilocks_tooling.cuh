@@ -13,6 +13,7 @@
 #ifndef __GOLDILOCKS_ENV__
 #include "gpu_timer.cuh"
 #include "const_slot_table.hpp"
+#include "fixed_slot.hpp"
 #include "unified_buffer_layout.hpp"  // PINNED_AUX_VALUES_MAX
 #include <mutex>
 #include <condition_variable>
@@ -74,7 +75,7 @@ struct AirInstanceInfo {
     uint64_t airgroupId;
     uint64_t airId;
 
-    uint64_t const_pols_offset;
+    uint64_t const_pols_offset = UINT64_MAX;
     // The packed const pols are not resident: they live in host pinned memory and take a slot of
     // DeviceCommitBuffers::constCache at launch (const_pols_offset is UINT64_MAX).
     bool constCached = false;
@@ -368,7 +369,7 @@ struct AirInstanceInfo {
 // main streams and the recursiveF buffer so the single bound matches every allocation.
 #define PINNED_EXPS_SLOTS 40000
 
-struct StreamData{
+struct StreamData : FixedSlotState {
 
     //const data
     cudaStream_t stream;
@@ -440,19 +441,6 @@ struct StreamData{
     string proofType;
     uint64_t arity;
 
-    // Which fixed columns this stream's aux trace holds, not which air it last served: airs
-    // with identical fixed share a const-pols slot, so the offset is the key. constAggBuffer
-    // separates the two const buffers (unrelated offsets); constRecurserId holds a const-cached
-    // set's "cache:<key>" (its offset is UINT64_MAX). custom_fixed is per-air and stays keyed on the air.
-    uint64_t constPolsOffset = UINT64_MAX; // UINT64_MAX = nothing cached
-    // Where the unpacked pols land in the aux trace. Part of the key because two airs can in
-    // principle share a slot yet lay out ("const", false) differently.
-    uint64_t constAuxOffset = 0;
-    bool constAggBuffer = false;
-    string constRecurserId;
-    // ("const", true) holds this slot's tree. Separate from the pols because the
-    // constraint-verification path unpacks the pols without loading the tree.
-    bool constTreeResident = false;
 
     bool recursive;
 
@@ -593,19 +581,6 @@ struct StreamData{
         constPolsOffset = UINT64_MAX;
         constRecurserId = "";
         constTreeResident = false;
-    }
-
-    // Claim this slot; true if it was already claimed, i.e. the unpacked const pols still
-    // apply -- even to a different air sharing them. A change also drops constTreeResident.
-    bool adoptFixedSlot(uint64_t offset, uint64_t auxOffset, bool aggBuffer, const string &recurser){
-        if (constPolsOffset == offset && constAuxOffset == auxOffset && constAggBuffer == aggBuffer
-            && constRecurserId == recurser) return true;
-        constPolsOffset = offset;
-        constAuxOffset = auxOffset;
-        constAggBuffer = aggBuffer;
-        constRecurserId = recurser;
-        constTreeResident = false;
-        return false;
     }
 
     void free(){

@@ -1033,6 +1033,7 @@ void load_device_setup_gpu(uint64_t airgroupId, uint64_t airId, char *proofType,
 }
 
 void load_device_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers_, char *constFilename, uint64_t constSize, char *proofType, bool onlyFirstGPU, bool alreadyLoaded) {
+    if (constSize == 0) return;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint64_t sizeConstPols = constSize * sizeof(Goldilocks::Element);
 
@@ -1269,7 +1270,11 @@ static void releaseConstSlot(DeviceCommitBuffers *d_buffers, uint32_t gpuLocalId
 
 // Host mode reads the pinned blob in place (device-accessible under UVA); else the resident copy.
 static inline gl64_t *basicConstPols(DeviceCommitBuffers *d, uint32_t gpu, AirInstanceInfo *air) {
+    if (air->setupCtx != nullptr && !air->setupCtx->starkInfo.hasConstants()) return nullptr;
     return d->basicFixedOnHost ? (gl64_t *)air->hostConstPols : d->d_constPols[gpu] + air->const_pols_offset;
+}
+static inline bool constPolsResident(const AirInstanceInfo *air) {
+    return constPolsResident(air->const_pols_offset, air->setupCtx == nullptr || air->setupCtx->starkInfo.hasConstants());
 }
 static inline gl64_t *basicCustomPols(DeviceCommitBuffers *d, uint32_t gpu, AirInstanceInfo *air) {
     return d->basicFixedOnHost ? (gl64_t *)air->hostCustomPols : d->d_constPols[gpu] + air->custom_pols_offset;
@@ -1697,6 +1702,12 @@ static bool gpuWitnessFillTrace(DeviceCommitBuffers *d_buffers, StepsParams *par
 
 
 uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint64_t streamId_, char *constPolsPath,  char *constTreePath, char *customCommitsFixedPath, bool selfContained) {
+    // Before any stream or device work: the self-contained seed absorbs the verkey root.
+    if (selfContained && !((SetupCtx *)pSetupCtx_)->starkInfo.hasConstants()) {
+        zklog.error("gen_proof_gpu: a self-contained GPU proof needs a verkey root, and air " + std::to_string(airgroupId) +
+                    ":" + std::to_string(airId) + " has no fixed columns");
+        exitProcess();
+    }
 
     auto key = std::make_pair(airgroupId, airId);
     std::string proofType = "basic";
@@ -1738,8 +1749,9 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
     // per-air.
     StreamData &sd = d_buffers->streamsData[streamId];
     bool reuse_custom_fixed = sd.airgroupId == airgroupId && sd.airId == airId && sd.proofType == string("basic");
-    bool reuse_constants = sd.adoptFixedSlot(air_instance_info->const_pols_offset,
-                                             setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], false, "");
+    const bool hasConstants = setupCtx->starkInfo.hasConstants();
+    bool reuse_constants = sd.claimBasicFixedSlot(hasConstants, air_instance_info->const_pols_offset,
+                                                  setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)]);
     bool reuse_const_tree = reuse_constants && sd.constTreeResident;
 
     sd.pSetupCtx = pSetupCtx_;
@@ -1765,22 +1777,22 @@ uint64_t gen_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, ui
                     " has no aux const-tree slot");
         exitProcess();
     }
-    gl64_t *d_const_tree = d_aux_trace + itConstTree->second;
+    gl64_t *d_const_tree = hasConstants ? d_aux_trace + itConstTree->second : nullptr;
 
     // No proof reads the consttree file: every GPU air with constants rebuilds its tree on
     // device (calculateFixedExtended). Reaching here without that flag means the tree slot
     // would stay uninitialised, which used to be masked by a silent file upload.
-    if (!setupCtx->starkInfo.calculateFixedExtended) {
+    if (hasConstants && !setupCtx->starkInfo.calculateFixedExtended) {
         zklog.error("air " + std::to_string(airgroupId) + ":" + std::to_string(airId) +
                     " has no on-device const-tree rebuild (calculateFixedExtended is false)"
                     " -- nothing would initialise (\"const\", true)");
         exitProcess();
     }
-    sd.constTreeResident = true;
+    if (hasConstants) sd.constTreeResident = true;
 
     // Fixed pols rebuild on the lane, overlapping the witness upload below.
     bool fixedPrebuilt = false;
-    if (!reuse_const_tree && setupCtx->starkInfo.calculateFixedExtended) {
+    if (hasConstants && !reuse_const_tree && setupCtx->starkInfo.calculateFixedExtended) {
         prebuildFixedTree(setupCtx, d_aux_trace, d_const_pols, d_const_tree, sd, timer);
         fixedPrebuilt = true;
     }
@@ -1957,8 +1969,9 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     // constTreeResident; adoptFixedSlot clears it on a slot change and leaves it otherwise.
     StreamData &sd = d_buffers->streamsData[streamId];
     bool reuse_custom_fixed = sd.airgroupId == airgroupId && sd.airId == airId && sd.proofType == string("basic");
-    bool reuse_constants = sd.adoptFixedSlot(air_instance_info->const_pols_offset,
-                                             setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)], false, "");
+    const bool hasConstants = setupCtx->starkInfo.hasConstants();
+    bool reuse_constants = sd.claimBasicFixedSlot(hasConstants, air_instance_info->const_pols_offset,
+                                                  setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)]);
 
     sd.pSetupCtx = pSetupCtx_;
     sd.airgroupId = airgroupId;
@@ -2042,7 +2055,7 @@ uint64_t initialize_instance_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
     
     uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
     Goldilocks::Element *d_const_pols_unpacked = (Goldilocks::Element *)d_aux_trace + offsetConstPols;
-    if (!reuse_constants) {
+    if (hasConstants && !reuse_constants) {
         unpack_fixed((uint64_t*)d_const_pols, (uint64_t*)(d_const_pols + 1), (uint64_t*)(d_const_pols + 1 + setupCtx->starkInfo.nConstants), (uint64_t*)d_const_pols_unpacked, setupCtx->starkInfo.nConstants, N, stream, timer);
         CHECKCUDAERR(cudaGetLastError());
     }
@@ -2337,6 +2350,10 @@ void get_stream_id_proof_gpu(void *d_buffers_, uint64_t streamId) {
 
 uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, char *constPolsPath, char *constTreePath, char *proofType, bool force_recursive_stream, char *recurser_id, uint64_t streamId_)
 {
+    if (!((SetupCtx *)pSetupCtx_)->starkInfo.hasConstants()) {
+        zklog.error("gen_recursive_proof_gpu: air " + std::to_string(airgroupId) + ":" + std::to_string(airId) + " has no fixed columns");
+        exitProcess();
+    }
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     bool aggregation = false;
     if(string(proofType) == "recursive1" || string(proofType) == "recursive2") {
@@ -2522,6 +2539,10 @@ uint64_t gen_recursive_proof_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t
 }
 
 void calculate_const_tree_fixed_gpu(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, char *proofType, void *d_buffers_) {
+    if (!((SetupCtx *)pSetupCtx_)->starkInfo.hasConstants()) {
+        zklog.error("calculate_const_tree_fixed_gpu: air " + std::to_string(airgroupId) + ":" + std::to_string(airId) + " has no fixed columns");
+        exitProcess();
+    }
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint32_t streamId = selectStream(d_buffers, airgroupId, airId, proofType, false, false);
     // Unplaceable (logged): the proof launch builds the tree itself, or fails and reports it.
@@ -3765,7 +3786,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
             return -23;
         }
     }
-    if (needsCount && (mulAcc == nullptr || aii->const_pols_offset == UINT64_MAX)) {
+    if (needsCount && (mulAcc == nullptr || !constPolsResident(aii))) {
         releaseRegion();
         return -22;  // countable but no accumulator / const pols on this device
     }
@@ -3788,7 +3809,7 @@ int64_t commit_witness_streaming_gpu(void *d_buffers_, uint64_t slotIdx,
     // Only for an air that reads them: an air that feeds no prover-owned table and has no hints
     // would pay a full unpack for nothing.
     const bool wantConst = (needsCount || nHintOps != 0)
-                        && aii != nullptr && aii->const_pols_offset != UINT64_MAX;
+                        && aii != nullptr && constPolsResident(aii);
     if (wantConst) {
         const uint64_t nConst = aii->setupCtx->starkInfo.nConstants;
         if (nConst > 0) {
@@ -4052,7 +4073,7 @@ static void streamCommitWarmupOn(DeviceCommitBuffers *d_buffers, uint32_t gl, st
             counts = mulPackedProgramFor(*p, mulCtx, airgroupId, airId, gpu).ok;
             if (!counts) refused += tag + " (lookups cannot be read from the packed rows)";
             countReadsCustom = counts && (p->srcMask & (1u << MUL_SRC_CUSTOM)) != 0;
-            if (mulAcc == nullptr || aii->const_pols_offset == UINT64_MAX)
+            if (mulAcc == nullptr || !constPolsResident(aii))
                 refused += tag + " (no accumulator or const pols on this gpu)";
         }
         if ((hints || needsCount) && n > PINNED_AUX_VALUES_MAX)
