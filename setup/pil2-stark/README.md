@@ -52,6 +52,9 @@ proofman-setup setup \
 Without `--recursive`, only the per-AIR artifacts are produced
 (`<airgroup>/airs/<air>/air/<air>.{starkinfo,verifierinfo,expressionsinfo,verkey}.json`,
 plus `.const`, `.consttree`, `.bin`, `.verifier.bin`, `.verifier.rs`).
+An AIR with no fixed columns (`nConstants == 0`) has no constants group: setup writes no `.const`,
+`.consttree` or verkey for it and deletes stale ones, and its proofs carry no const openings. The native
+Rust verifier refuses such an AIR; the C++ verifier and the aggregation (recursive1) circom accept it.
 
 With `--recursive`, the recursive layers are added under
 `<airgroup>/airs/<air>/{compressor,recursive1}/`,

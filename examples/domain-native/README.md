@@ -21,7 +21,8 @@ The native verifier replays a transcript with exactly two stage-2 challenges and
 (`verifier/src/replay.rs`, `prefix_transcript`). Challenges are global to a pilout. In `examples/domains`
 every AIR uses a std permutation, which gives each AIR `std_alpha`, `std_gamma` and the
 `Domains.gsum_result` airgroupvalue. A `DomNative` there would have four stage-2 challenges, and its
-`alpha`/`beta` would also change the challenge map of the other eight AIRs.
+`alpha`/`beta` would also change the challenge map of the other AIRs. And every AIR there has no fixed
+columns, which the native verifier refuses; `PHASE` gives `DomNative` a constants group.
 
 ## Commands
 

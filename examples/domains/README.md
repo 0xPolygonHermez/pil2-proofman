@@ -36,10 +36,16 @@ those AIRs, for example `{"airs": ["DomOdd"]}`.
 
 `DOMAINS_TAMPER="<Air>:<col>:<row>:<value>"` overwrites one cell after the witness is filled.
 
-`cli/tests/domains_e2e.rs` runs the commands below.
+`cli/tests/domains_e2e.rs` runs the commands below. Its stage-3 tests run `setup -r`, which takes
+minutes, so they are `#[ignore]`d. Its GPU tests skip without a GPU, a CUDA build or nvcc;
+`DOMAINS_GPU=1` turns the skip into a failure, and `DOMAINS_CUDA_ARCH` (e.g. `sm_120`) sets `gen-exps`'s arch:
 
-The native Rust verifier is tested on `examples/domain-native` instead: the std bus gives every AIR here
-challenges and an airgroupvalue that it does not replay.
+```bash
+DOMAINS_GPU=1 DOMAINS_CUDA_ARCH=sm_120 cargo test --release -p proofman-cli --test domains_e2e -- --include-ignored
+```
+
+The native Rust verifier refuses an AIR with no fixed columns, so it is tested on `examples/domain-native`
+instead. Its one AIR has a fixed column and no std bus.
 
 All commands run from the repository root, with
 `export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi)`.
@@ -125,3 +131,16 @@ cargo run --release --bin proofman-cli verify-stark \
      --proof ./examples/domains/build-recursive/proofs/vadcop_final_proof.bin \
      --verkey ./examples/domains/build-recursive/provingKey/build/vadcop_final/vadcop_final.verkey.bin
 ```
+
+## Known gaps
+
+- **Compressor:** no end-to-end test aggregates a zero-fixed AIR through a compressor.
+- **GPU aggregation is not byte-reproducible:** recursive2 pairs its inputs in completion order
+  (the recursive workers in `proofman.rs`). The CPU/GPU byte checks cover the basic proofs and the recursive1
+  inputs only.
+- **Tiny AIRs on the GPU:** FRI aborts at launch when the extended domain has fewer than 256 rows
+  (`starks_gpu.cu`). Every AIR here is large enough.
+- **BN128:** the std keeps `__L1__` there, so pilfflonk AIRs keep their fixed column.
+- **Keys:** the std's grand sum changed, so every proving key must be set up again, including its
+  `.exps.so` (`gen-exps`) and the emitted verifiers. The recursion AIRs changed too. A key that has a
+  verkey for an AIR without fixed columns fails to load with "stale verkey".

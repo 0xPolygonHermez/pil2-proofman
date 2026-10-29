@@ -143,9 +143,7 @@ impl Program {
 
 /// Compiles `program` over BN128 to `pilout` with `PIL2C_EXEC`, or writes the pilout it builds.
 fn compile(program: Program, pilout: &Path) {
-    let pil = match program {
-        Program::Pil(pil) => pil,
-    };
+    let Program::Pil(pil) = program;
     let compiler = std::env::var("PIL2C_EXEC").expect("PIL2C_EXEC must name a pil2com that has `--field`");
     let out = Command::new(compiler)
         .current_dir(repo_root())

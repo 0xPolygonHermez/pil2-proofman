@@ -47,7 +47,6 @@ mod all;
 #[path = "../../../pilfflonk/tests/data/connection.rs"]
 mod connection;
 #[allow(dead_code)]
-#[allow(dead_code)]
 #[path = "../../../pilfflonk/tests/data/fibonacci.rs"]
 mod fibonacci;
 #[allow(dead_code)]
