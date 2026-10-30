@@ -162,6 +162,8 @@ pub fn calculate_intermediate_polynomials(
             info!("Infeasible: no valid intermediate split exists at this degree");
             continue;
         };
+        // The STARK's Q has at least one piece: its prover and verifiers do not handle an empty stage Q
+        let q_deg_p = if matches!(policy, DegreePolicy::FromBlowup { .. }) { q_deg_p.max(1) } else { q_deg_p };
         let new_added = calculate_cost(policy, d, expressions, &im_exps_p, q_deg_p, q_dim);
         let no_intermediates = im_exps_p.is_empty();
 
@@ -1001,6 +1003,17 @@ mod tests {
 
         assert_eq!((stark.im_exps.len(), stark.q_deg), (2, 2));
         assert_eq!((fflonk.im_exps.len(), fflonk.q_deg), (0, 3));
+    }
+
+    /// A degree-1 constraint polynomial (e.g. a cyclic gsum whose terms all have constant
+    /// denominators) has Q degree 0: the STARK's is floored at 1, so its stage Q is never empty;
+    /// pilfflonk's (`Search`) keeps 0, which it proves.
+    #[test]
+    fn test_stark_q_deg_is_at_least_one() {
+        let exprs = vec![make_cm(0, 1)];
+        let q_deg = |policy| calculate_intermediate_polynomials(&exprs, 0, &policy, 3, &[]).unwrap().q_deg;
+        assert_eq!(q_deg(DegreePolicy::FromBlowup { blowup_bits: 1 }), 1);
+        assert_eq!(q_deg(DegreePolicy::Search { max: 3 }), 0);
     }
 
     // -----------------------------------------------------------------------
