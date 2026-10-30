@@ -135,6 +135,7 @@ static __global__ void computeFRIExpression(uint64_t domainSize, uint64_t nOpeni
                                             gl64_t *d_fri)
 {
     const uint64_t r = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (r >= domainSize) return;
     const uint64_t mask = domainSize - 1;
     auto at = [](gl64_t *v, uint64_t i) -> Goldilocks3GPU::Element & { return *(Goldilocks3GPU::Element *)(v + i * FIELD_EXTENSION); };
 

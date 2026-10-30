@@ -1478,7 +1478,8 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
         domainSize, Goldilocks::shift().fe, wExt.fe, wDen.fe, Goldilocks::inv(wDen).fe, (gl64_t*)d_xiChallenge, d_den);
     CHECKCUDAERR(cudaGetLastError());
     const uint32_t nThreads = 256;
-    computeFRIExpression<<<domainSize / nThreads, nThreads, 0, stream>>>(
+    // ceil: an extended domain under 256 rows would otherwise launch 0 blocks
+    computeFRIExpression<<<(domainSize + nThreads - 1) / nThreads, nThreads, 0, stream>>>(
         domainSize, nOpenings, si.starkStruct.nBitsExt - si.starkStruct.nBits, air_instance_info->opening_points, d_den,
         air_instance_info->nFriGroups, air_instance_info->friColStart, air_instance_info->friCols,
         air_instance_info->friOpStart, air_instance_info->friOpGroups, d_b, d_a, d_k, (gl64_t*)h_params.aux_trace,

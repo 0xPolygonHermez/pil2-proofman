@@ -58,6 +58,9 @@ pilfflonk-fibonacci = { path = "../pilfflonk/tests/fixtures/fibonacci/rs" }
 pilfflonk-connection = { path = "../pilfflonk/tests/fixtures/connection/rs" }
 pilfflonk-all = { path = "../pilfflonk/tests/fixtures/all/rs" }
 fibonacci-square = { path = "../examples/fibonacci-square" }
+# The std `simple` test's setup and witness library (tests/gpu_small_domain.rs).
+pil2-stark-setup = { workspace = true }
+simple = { path = "../pil2-components/test/simple/rs" }
 
 # The inputs of the pilfflonk benchmark (pilfflonk/bench/bench.sh,
 # pilfflonk/docs/performance.md#reproducing): the witnesses of its programs, from the fixtures'
