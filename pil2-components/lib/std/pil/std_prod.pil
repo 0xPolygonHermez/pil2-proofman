@@ -11,7 +11,7 @@ const int PROD_UPDATE_TYPE_LOCAL_DEFAULT = 0;
 const int PROD_UPDATE_TYPE_LOCAL_AIRVAL = 1;
 const int PROD_UPDATE_TYPE_GLOBAL = 2;
 
-const int ONE_HALF = 1/2;
+const int ONE_HALF = (PRIME + 1) / 2; if ((2 * ONE_HALF) % PRIME != 1) error(`ONE_HALF = ${ONE_HALF} is not the inverse of 2 mod ${PRIME}`); // 1/2 is integer division
 
 // Control how the expressions are grouped
 int PROD_EXPRESSIONS_IM_NON_REDUCED = 0; // Set to -1 to non-reduce all the terms

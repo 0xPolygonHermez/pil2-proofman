@@ -28,10 +28,21 @@ airtemplate Permutation2(const int N = 2**9) {
     permutation_proves(4, [c2, d2], sel, bus_type: PIOP_BUS_PROD);
 };
 
+// A free selector on the product bus: sel = 1 assumes, sel = -1 proves, sel = 0 skips.
+airtemplate PermutationFree(const int N = 2**6) {
+
+    col witness a,b;
+    col witness sel;
+
+    permutation(5, [a, b], sel, bus_type: PIOP_BUS_PROD);
+};
+
 airgroup Permutation {
     Permutation1() alias `Permutation1_6`;
     Permutation1(N: 2**7) alias "Permutation1_7";
     Permutation1(N: 2**8) alias "Permutation1_8";
 
     Permutation2()  alias "Permutation2_6";
+
+    PermutationFree();
 }
