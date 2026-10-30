@@ -306,6 +306,15 @@ message Symbol {
     repeated uint32 lengths = 8;
     optional uint32 commitId = 9;
     optional string debugLine = 10;
+    optional LaneSymbol lane = 11;    // absent: a column of the air itself
+}
+
+// A column of an inlined template (a lane), `laneName[laneIndex].name` in the PIL. A lane's
+// stage-1 columns are contiguous, and an array's lanes follow each other in laneIndex order.
+message LaneSymbol {
+    string laneName = 1;              // the alias, or the template if it has none
+    string name = 2;                  // the column's name inside the template
+    optional uint32 laneIndex = 3;    // absent: a single inline; i: element i of an inlined array
 }
 
 // ================ Hints ================

@@ -159,6 +159,7 @@ fn symbol(name: &str, kind: SymbolType, id: u32, stage: Option<u32>, air: bool) 
         lengths: vec![],
         commit_id: None,
         debug_line: None,
+        lane: None,
     }
 }
 

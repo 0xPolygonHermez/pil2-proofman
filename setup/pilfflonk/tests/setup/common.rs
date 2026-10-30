@@ -116,6 +116,7 @@ pub fn symbol(name: &str, r#type: SymbolType, id: u32, stage: Option<u32>, air: 
         lengths: vec![],
         commit_id: None,
         debug_line: None,
+        lane: None,
     }
 }
 

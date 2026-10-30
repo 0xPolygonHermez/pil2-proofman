@@ -13,15 +13,22 @@
 // `@instr` column, one entry holds one lane's instruction, and the row carries one index per
 // lane. `COL_LANE` names the lane whose index selects a tagged column's entry, which is what
 // lets one row mix columns from several entries.
+//
+// A row with lanes has one array of lanes, the steps, whose fields hold the `@instr` columns;
+// its compact row is the index header then the runtime columns in the row's order.
+
+use std::collections::{HashMap, HashSet};
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{braced, parse_macro_input, Ident, Result, Token};
 
-use crate::packed_row::packed_row_impl;
+use crate::lanes::{flat_field, flatten, lane_items};
+use crate::packed_row::{element_bits, packed_layout, packed_row_impl, PackedGroup};
 use crate::trace_row::{
-    collect_dimensions, compute_total_bits, contains_generic, is_array, parse_bit_type, BitType, TraceField,
+    collect_dimensions, compute_total_bits, contains_generic, is_array, parse_items, BitType, LaneItem, RowItem,
+    TraceField,
 };
 use crate::trait_row::{generic_tokens, rust_type_for_bits};
 
@@ -31,8 +38,9 @@ const INDEX_BITS: u64 = 32;
 struct IndexedInput {
     name: Ident,
     generic: Option<Ident>,
-    /// Each field with a flag: `true` = `@instr` (instruction-derived / table column).
-    fields: Vec<(TraceField, bool)>,
+    items: Vec<RowItem>,
+    /// Row-level names of the `@instr` (instruction-derived / table) columns.
+    instr: HashSet<String>,
 }
 
 impl Parse for IndexedInput {
@@ -49,43 +57,34 @@ impl Parse for IndexedInput {
 
         let content;
         let _brace = braced!(content in input);
-
-        let mut fields = vec![];
-        while !content.is_empty() {
-            let name: Ident = content.parse()?;
-            let _colon: Token![:] = content.parse()?;
-            let ty = parse_bit_type(&content, generic.as_ref())?;
-            let mut instr = false;
-            if content.peek(Token![@]) {
-                let _at: Token![@] = content.parse()?;
-                let tag: Ident = content.parse()?;
-                if tag == "instr" {
-                    instr = true;
-                } else {
-                    return Err(syn::Error::new_spanned(tag, "unknown tag; expected `@instr`"));
-                }
-            }
-            fields.push((TraceField { name, ty }, instr));
-            if content.peek(Token![,]) {
-                let _comma: Token![,] = content.parse()?;
-            }
-        }
-        Ok(IndexedInput { name, generic, fields })
+        let (items, instr) = parse_items(&content, generic.as_ref(), true)?;
+        Ok(IndexedInput { name, generic, items, instr })
     }
 }
 
 pub fn indexed_trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let inp = parse_macro_input!(input as IndexedInput);
+    let is_instr = |f: &TraceField| inp.instr.contains(&f.name.to_string());
 
-    let lanes = match infer_lanes(&inp.fields) {
-        Ok(lanes) => lanes,
+    // A lane's fields, as the row's `[_; n]`, reuse the field-major row's accessors and table logic.
+    let steps = match step_lanes(&inp) {
+        Ok(steps) => steps,
         Err(e) => return e.to_compile_error().into(),
+    };
+    let fields: Vec<(TraceField, bool)> =
+        flatten(&inp.items).0.into_iter().map(|f| (f.clone(), is_instr(&f))).collect();
+    let lanes = match steps {
+        Some(lane) => lane.count.unwrap_or(1),
+        None => match infer_lanes(&fields) {
+            Ok(lanes) => lanes,
+            Err(e) => return e.to_compile_error().into(),
+        },
     };
 
     // The row trait declares no accessors for GENERIC array columns, so a generic `@instr`
     // array would reach the descriptor with no way to write its table entry -- the columns
     // would unpack to whatever the unwritten entry holds. Refuse it where it is spelled.
-    for (f, instr) in &inp.fields {
+    for (f, instr) in &fields {
         if *instr && is_array(&f.ty) && contains_generic(&f.ty) {
             return syn::Error::new_spanned(
                 &f.name,
@@ -111,7 +110,7 @@ pub fn indexed_trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
         ty: BitType::Array(Box::new(BitType::Bit(INDEX_BITS as usize)), lanes),
     }];
     let mut table_fields = vec![];
-    for (f, instr) in &inp.fields {
+    for (f, instr) in &fields {
         if *instr {
             table_fields.push(TraceField { name: f.name.clone(), ty: strip_lane(&f.ty) });
         } else {
@@ -119,27 +118,87 @@ pub fn indexed_trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
         }
     }
 
-    let indexed_struct = packed_row_impl(&indexed_name, generic, &runtime_fields);
-    let table_struct = packed_row_impl(&table_name, generic, &table_fields);
-    let ops_impl = indexed_ops_impl(&trait_name, &indexed_name, generic, &inp.fields);
-    let table_ops = table_ops_impl(&trait_name, &table_name, generic, &inp.fields, lanes);
+    // The steps' runtime fields are one packed group; the header stays put (index l at l * INDEX_BITS).
+    let mut groups = vec![];
+    if let Some(lane) = steps {
+        let in_lane = |f: &TraceField| lane.fields.iter().any(|lf| flat_field(lane, lf).name == f.name);
+        if let Some(first) = runtime_fields.iter().position(in_lane) {
+            let len = runtime_fields.iter().filter(|f| in_lane(f)).count();
+            groups.push(PackedGroup { name: lane.name.clone(), first, len, count: lanes });
+        }
+    }
+    let indexed_struct = packed_row_impl(&indexed_name, generic, &runtime_fields, &groups, 1, false);
+    let table_struct = packed_row_impl(&table_name, generic, &table_fields, &[], 0, false);
+    // Padding after a runtime field in the compact row; table columns have none.
+    let layout = packed_layout(&runtime_fields, &groups, 1);
+    let pad: HashMap<String, u64> =
+        runtime_fields.iter().zip(&layout.pads).map(|(f, &p)| (f.name.to_string(), p as u64)).collect();
+    let ops_impl = indexed_ops_impl(&trait_name, &indexed_name, generic, &fields);
+    let table_ops = table_ops_impl(&trait_name, &table_name, generic, &fields, lanes);
 
-    // Per output column (arrays expanded), in declaration order. A field's columns are
-    // lane-major, so within its block of `cols` columns each lane owns a run of
-    // `cols / lanes`. Runtime columns select no entry, so their lane is 0.
+    // Per output column (arrays expanded). Runtime columns select no entry, so their lane is 0.
     let mut col_source: Vec<u8> = vec![];
     let mut col_lane: Vec<u8> = vec![];
-    for (f, instr) in &inp.fields {
-        let cols = flat_cols(&f.ty);
-        col_source.extend(std::iter::repeat_n(if *instr { 1u8 } else { 0u8 }, cols));
-        if *instr {
-            let per_lane = cols / lanes;
-            col_lane.extend((0..cols).map(|k| (k / per_lane) as u8));
-        } else {
-            col_lane.extend(std::iter::repeat_n(0u8, cols));
+    let mut unpack_info: Vec<u64> = vec![];
+    if steps.is_some() {
+        // In the row's order, an array lane by lane; only the steps' fields are `@instr`.
+        let mut push = |f: &TraceField, flat: &TraceField, lane: Option<usize>| {
+            let cols = flat_cols(&f.ty);
+            col_source.extend(std::iter::repeat_n(u8::from(lane.is_some()), cols));
+            col_lane.extend(std::iter::repeat_n(lane.unwrap_or(0) as u8, cols));
+            unpack_info.extend(std::iter::repeat_n(element_bits(&f.ty) as u64, cols));
+            if lane.is_none() {
+                *unpack_info.last_mut().unwrap() += pad[&flat.name.to_string()];
+            }
+        };
+        for item in &inp.items {
+            match item {
+                RowItem::Field(f) => push(f, f, None),
+                RowItem::Lane(lane) => {
+                    for l in 0..lane.count.unwrap_or(1) {
+                        for f in &lane.fields {
+                            let flat = flat_field(lane, f);
+                            push(f, &flat, is_instr(&flat).then_some(l));
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // In declaration order. A field's columns are lane-major, so within its block of
+        // `cols` columns each lane owns a run of `cols / lanes`.
+        for (f, instr) in &fields {
+            let cols = flat_cols(&f.ty);
+            unpack_info.extend(std::iter::repeat_n(element_bits(&f.ty) as u64, cols));
+            col_source.extend(std::iter::repeat_n(if *instr { 1u8 } else { 0u8 }, cols));
+            if *instr {
+                let per_lane = cols / lanes;
+                col_lane.extend((0..cols).map(|k| (k / per_lane) as u8));
+            } else {
+                col_lane.extend(std::iter::repeat_n(0u8, cols));
+            }
         }
     }
     let n_cols = col_source.len();
+    // `F` columns are not packed, so a row with any has no widths to give.
+    let unpack_info_const = fields.iter().all(|(f, _)| !contains_generic(&f.ty)).then(|| {
+        let generics = generic_tokens(generic).0;
+        quote! {
+            /// Each column's bits in the compact row (a table column's in its entry).
+            pub const UNPACK_INFO: [u64; #n_cols] = [ #(#unpack_info),* ];
+
+            /// The prover's descriptor of the compact row, all from this row's own layout.
+            pub fn packed_info() -> proofman_common::PackedInfo {
+                proofman_common::PackedInfo::new(true, Self::PACKED_WORDS as u64, Self::UNPACK_INFO.to_vec()).with_indexed(
+                    Self::COL_SOURCE.to_vec(),
+                    Self::COL_LANE.to_vec(),
+                    Self::INDEX_BITS,
+                    <#table_name #generics>::PACKED_WORDS as u64,
+                    Self::LANES as u64,
+                )
+            }
+        }
+    });
     let source_lits = col_source.iter().map(|&s| quote! { #s });
     let lane_lits = col_lane.iter().map(|&l| quote! { #l });
 
@@ -156,6 +215,7 @@ pub fn indexed_trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
             pub const COL_SOURCE: [u8; #n_cols] = [ #(#source_lits),* ];
             /// Per output column: which lane's index selects its table entry (0 for runtime).
             pub const COL_LANE: [u8; #n_cols] = [ #(#lane_lits),* ];
+            #unpack_info_const
             /// Width of one instruction index in the compact row's header (bits).
             pub const INDEX_BITS: u64 = #INDEX_BITS;
             /// Execution steps packed into one row; the header carries one index each.
@@ -176,6 +236,31 @@ pub fn indexed_trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macr
 
 /// COL_LANE names a lane in a u8, so ids 0..=255. Mirrors `packed_info::MAX_LANES`.
 const MAX_LANES: usize = u8::MAX as usize + 1;
+
+/// The row's one array of lanes, the steps, holding every `@instr` column; `None` without lanes.
+fn step_lanes(inp: &IndexedInput) -> Result<Option<&LaneItem>> {
+    let lanes = lane_items(&inp.items);
+    if lanes.is_empty() {
+        return Ok(None);
+    }
+    let arrays: Vec<&LaneItem> = lanes.iter().copied().filter(|l| l.count.is_some()).collect();
+    let [steps] = arrays[..] else {
+        return Err(syn::Error::new_spanned(
+            &inp.name,
+            "indexed_trace_row!: a row with lanes has exactly one array of lanes, the steps",
+        ));
+    };
+    if steps.count.unwrap() > MAX_LANES {
+        let msg = format!("indexed_trace_row!: at most {MAX_LANES} lanes (COL_LANE names one in a u8)");
+        return Err(syn::Error::new_spanned(&steps.name, msg));
+    }
+    let flat: HashSet<String> = steps.fields.iter().map(|f| flat_field(steps, f).name.to_string()).collect();
+    if let Some(name) = inp.instr.iter().find(|n| !flat.contains(*n)) {
+        let msg = format!("indexed_trace_row!: `@instr` column `{name}` is not a field of the steps' lanes");
+        return Err(syn::Error::new_spanned(&steps.name, msg));
+    }
+    Ok(Some(steps))
+}
 
 /// Lane count: the outer dimension of the `@instr` columns, which all of them must share.
 /// Scalar instruction columns mean a single-lane row.

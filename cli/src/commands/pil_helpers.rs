@@ -4,6 +4,7 @@ use pil2_pilout::{
     pilout::{SymbolType},
     pilout_proxy::PilOutProxy,
 };
+use pil2_pilout::lanes::{air_lanes, LaneGroup};
 use pil2_pilout::pilout::hint_field::Value::HintFieldArray;
 use pil2_pilout::pilout::hint_field::Value::StringValue;
 use pil2_pilout::pilout::hint_field::Value::Operand;
@@ -38,9 +39,8 @@ pub struct PilHelpersCmd {
 struct PackInfo {
     airgroup_id: usize,
     air_id: usize,
-    is_packed: bool,
-    num_packed_words: u64,
-    unpack_info: String,
+    /// The packed row, whose `PACKED_WORDS` and `UNPACK_INFO` the macro lays out.
+    row: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -114,6 +114,84 @@ struct Column64Ctx {
 struct StageColumnCtx {
     stage_id: usize,
     columns: Vec<ColumnCtx>,
+}
+
+/// The row's stage-1 fields in column order, a group of lanes as one `x: [lane { .. }; n]` field
+/// at its lane 0.
+fn stage1_columns(
+    mut stage1: Vec<(&pil2_pilout::pilout::Symbol, ColumnCtx)>,
+    groups: &[LaneGroup],
+) -> Result<Vec<ColumnCtx>, String> {
+    stage1.sort_by_key(|(s, _)| s.id);
+    let ctx_of = |symbol: &str| stage1.iter().find(|(s, _)| s.name == symbol).map(|(_, c)| c);
+
+    let (mut columns, mut plain) = (vec![], vec![]);
+    for (s, ctx) in &stage1 {
+        let Some(lane) = &s.lane else {
+            columns.push(ctx.clone());
+            plain.push(ctx.name.clone());
+            continue;
+        };
+        let group = groups.iter().find(|g| g.name == lane.lane_name).expect("the lanes were validated");
+        // All lanes share one type.
+        let field = group.fields.iter().find(|f| f.name == lane.name).expect("the lanes were validated");
+        let lane0 = ctx_of(&field.symbol).expect("lane 0 is a stage-1 column");
+        if lane0.type_packed != ctx.type_packed {
+            return Err(format!(
+                "column `{}` of lane `{}` packs as `{}` in one lane and `{}` in another",
+                lane.name, lane.lane_name, lane0.type_packed, ctx.type_packed
+            ));
+        }
+        if s.id as usize != group.start {
+            continue;
+        }
+        let lane_fields = |ty: fn(&ColumnCtx) -> &String| {
+            let fields: Vec<String> =
+                group.fields.iter().map(|f| format!("{}: {}", f.name, ty(ctx_of(&f.symbol).unwrap()))).collect();
+            match group.count {
+                Some(n) => format!("[lane {{ {} }}; {n}]", fields.join(", ")),
+                None => format!("lane {{ {} }}", fields.join(", ")),
+            }
+        };
+        columns.push(ColumnCtx {
+            name: lane.lane_name.clone(),
+            r#type: lane_fields(|c| &c.r#type),
+            type_packed: lane_fields(|c| &c.type_packed),
+        });
+    }
+    check_lane_names(&plain, groups)?;
+    Ok(columns)
+}
+
+/// Lane names the generated Rust would reject: `{Row}{Lane}` taken by the row's own types, or a
+/// row field or flattened accessor (`{lane}_{column}`) defined twice.
+fn check_lane_names(plain: &[String], groups: &[LaneGroup]) -> Result<(), String> {
+    // As the macro names a lane's struct: each `_`-separated word capitalised.
+    let pascal = |s: &str| -> String {
+        s.split('_')
+            .map(|w| w.chars().take(1).flat_map(char::to_uppercase).chain(w.chars().skip(1)).collect::<String>())
+            .collect()
+    };
+    if let Some(g) =
+        groups.iter().find(|g| ["Ops", "Packed", "PackedIndexed", "InstrTable"].contains(&pascal(&g.name).as_str()))
+    {
+        return Err(format!("lane `{}` would name the row's own `{}` type", g.name, pascal(&g.name)));
+    }
+    let lanes: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    let flat = groups.iter().flat_map(|g| g.fields.iter().map(move |f| format!("{}_{}", g.name, f.name)));
+    let mut names: Vec<String> = plain.iter().cloned().chain(lanes.iter().map(|l| l.to_string())).collect();
+    let mut accessors: Vec<String> = plain.iter().cloned().chain(flat).collect();
+    let mut types: Vec<String> = lanes.iter().map(|l| pascal(l)).collect();
+    let mut consts: Vec<String> = lanes.iter().map(|l| format!("{}_LANE_WORDS", l.to_uppercase())).collect();
+    for (what, list) in
+        [("field", &mut names), ("accessor", &mut accessors), ("lane type", &mut types), ("constant", &mut consts)]
+    {
+        list.sort();
+        if let Some(w) = list.windows(2).find(|w| w[0] == w[1]) {
+            return Err(format!("its row would define {what} `{}` twice", w[0]));
+        }
+    }
+    Ok(())
 }
 
 /// Whether `pilout` is over BN128's `Fr` rather than Goldilocks: whether its `baseField`, a big-endian
@@ -358,8 +436,19 @@ impl PilHelpersCmd {
                     })
                     .collect();
 
+                let air_pb = &pilout.air_groups[airgroup_id].airs[air_id];
+                let air_name = air_pb.name.clone().unwrap_or_default();
+                let groups = air_lanes(
+                    air_pb,
+                    pilout
+                        .symbols
+                        .iter()
+                        .filter(|s| s.air_group_id == Some(airgroup_id as u32) && s.air_id == Some(air_id as u32)),
+                )
+                .map_err(|e| format!("air {air_name} breaks the layout of its lanes: {e}"))?;
+
                 // Search symbols where airgroup_id == airgroup_id && air_id == air_id && type == WitnessCol
-                let mut vec_bits = vec![];
+                let mut stage1 = vec![];
                 pilout
                     .symbols
                     .iter()
@@ -449,8 +538,6 @@ impl PilHelpersCmd {
                                     _ => format!("ubit({bits})"), // dynamically include bits
                                 };
 
-                                let total_lengths = symbol.lengths.iter().product::<u32>();
-                                vec_bits.extend(vec![bits as u64; total_lengths as usize]);
                                 if symbol.lengths.is_empty() {
                                     type_bits.to_string()
                                 } else {
@@ -464,9 +551,6 @@ impl PilHelpersCmd {
                                 // Column in a packed air with no `witness_bits` hint
                                 // (e.g. std range-check columns like `mul_range`):
                                 // pack it as a full 64-bit word.
-                                let bits = 64u64;
-                                let total_lengths = symbol.lengths.iter().product::<u32>();
-                                vec_bits.extend(vec![bits; total_lengths as usize]);
                                 if symbol.lengths.is_empty() {
                                     "u64".to_string()
                                 } else {
@@ -492,7 +576,7 @@ impl PilHelpersCmd {
                         };
                         if symbol.r#type == SymbolType::WitnessCol as i32 {
                             if symbol.stage.unwrap() == 1 {
-                                air.columns.push(ColumnCtx { name: name.to_owned(), r#type, type_packed });
+                                stage1.push((symbol, ColumnCtx { name: name.to_owned(), r#type, type_packed }));
                             } else {
                                 air.stages_columns[symbol.stage.unwrap() as usize - 2].stage_id =
                                     symbol.stage.unwrap() as usize;
@@ -546,10 +630,10 @@ impl PilHelpersCmd {
                             });
                         }
                     });
+                let air = &mut wcctxs[airgroup_id].airs[air_id];
+                air.columns = stage1_columns(stage1, &groups).map_err(|e| format!("air {air_name}: {e}"))?;
                 if is_packed {
-                    let num_packed_words = vec_bits.iter().sum::<u64>().div_ceil(64);
-                    let unpack_info = vec_bits.iter().map(|b| b.to_string()).collect::<Vec<String>>().join(", ");
-                    packed_info.push(PackInfo { airgroup_id, air_id, is_packed: true, num_packed_words, unpack_info });
+                    packed_info.push(PackInfo { airgroup_id, air_id, row: format!("{}TraceRowPacked", air.name) });
                 }
             }
         }
@@ -761,5 +845,57 @@ mod tests {
         let traces = pil_helpers(&dir, &pilout).unwrap();
         assert!(traces.contains("trace_row!(MainTraceRow<F> {\n a:u8, b:[u64; 2],\n});"), "{traces}");
         assert!(traces.contains("pub type MainTrace<R> = GenericTrace<R, 8, 0, 0>;"), "{traces}");
+    }
+
+    /// `Main`'s stage-1 columns: `a`, `bin` (one inline of `x[2]`), `hi[2]`, symbols out of order.
+    fn lanes_pilout() -> pb::PilOut {
+        let mut pilout = pilout(BigUint::from(GOLDILOCKS).to_bytes_be());
+        pilout.air_groups[0].airs[0].stage_widths = vec![7];
+        let lane = |name: &str, id: u32, lane_name: &str, lane_index: Option<u32>| pb::Symbol {
+            id,
+            lane: Some(pb::LaneSymbol { lane_name: lane_name.into(), name: "x".into(), lane_index }),
+            ..symbol(name, SymbolType::WitnessCol, 1, &[2])
+        };
+        pilout.symbols[1] = lane("Main.hi__1__x", 5, "hi", Some(1));
+        pilout.symbols.push(lane("Main.bin__x", 1, "bin", None));
+        pilout.symbols.push(lane("Main.hi__0__x", 3, "hi", Some(0)));
+        pilout.hints.push(witness_bits());
+        pilout
+    }
+
+    #[test]
+    fn lanes_are_fields_of_the_row() {
+        let dir = TempDir::new("lanes");
+        let traces = pil_helpers(&dir, &lanes_pilout()).unwrap();
+        let row = "trace_row!(MainTraceRow<F> {\n a:u8, bin:lane { x: [u64; 2] }, hi:[lane { x: [u64; 2] }; 2],\n});";
+        assert!(traces.contains(row), "{traces}");
+        // The macro lays the packed row out.
+        assert!(
+            traces.contains("unpack_info: &MainTraceRowPacked::<proofman_fields::Goldilocks>::UNPACK_INFO,"),
+            "{traces}"
+        );
+    }
+
+    /// Names the generated row could not hold are refused, not left to fail compiling.
+    #[test]
+    fn lane_names_that_clash_are_refused() {
+        let dir = TempDir::new("lane_names");
+        // `bin_x` next to `bin.x`.
+        let mut pilout = lanes_pilout();
+        pilout.symbols[0].name = "Main.bin_x".into();
+        let err = pil_helpers(&dir, &pilout).unwrap_err();
+        assert!(err.contains("accessor `bin_x` twice"), "{err}");
+        // A lane named as the row's own trait.
+        let mut pilout = lanes_pilout();
+        for s in pilout.symbols.iter_mut().filter_map(|s| s.lane.as_mut()).filter(|l| l.lane_name == "bin") {
+            s.lane_name = "ops".into();
+        }
+        let err = pil_helpers(&dir, &pilout).unwrap_err();
+        assert!(err.contains("lane `ops` would name the row's own `Ops` type"), "{err}");
+        // A column named as a lane.
+        let mut pilout = lanes_pilout();
+        pilout.symbols[0].name = "Main.bin".into();
+        let err = pil_helpers(&dir, &pilout).unwrap_err();
+        assert!(err.contains("field `bin` twice"), "{err}");
     }
 }

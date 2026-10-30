@@ -12,6 +12,34 @@ use crate::unpacked_row::unpacked_row_impl;
 pub struct TraceRowInput {
     pub name: Ident,
     pub generic: Option<Ident>,
+    pub items: Vec<RowItem>,
+}
+
+impl TraceRowInput {
+    /// The fields of a row without lanes.
+    pub fn fields(&self) -> Option<Vec<TraceField>> {
+        self.items
+            .iter()
+            .map(|item| match item {
+                RowItem::Field(f) => Some(f.clone()),
+                RowItem::Lane(_) => None,
+            })
+            .collect()
+    }
+}
+
+/// A field of a row, or an inlined template instance: `x: lane { .. }` or `x: [lane { .. }; n]`.
+#[derive(Clone)]
+pub enum RowItem {
+    Field(TraceField),
+    Lane(LaneItem),
+}
+
+/// One lane's fields; `count` is `None` for a single inline.
+#[derive(Clone)]
+pub struct LaneItem {
+    pub name: Ident,
+    pub count: Option<usize>,
     pub fields: Vec<TraceField>,
 }
 
@@ -45,19 +73,99 @@ impl Parse for TraceRowInput {
 
         let content;
         let _brace_token = braced!(content in input);
-
-        let mut fields = vec![];
-        while !content.is_empty() {
-            let name = content.parse()?;
-            let _colon_token: Token![:] = content.parse()?;
-            let ty = parse_bit_type(&content, generic.as_ref())?;
-            fields.push(TraceField { name, ty });
-            if content.peek(Token![,]) {
-                let _comma: Token![,] = content.parse()?;
-            }
-        }
-        Ok(TraceRowInput { name, generic, fields })
+        let (items, _) = parse_items(&content, generic.as_ref(), false)?;
+        Ok(TraceRowInput { name, generic, items })
     }
+}
+
+/// The name a lane's field has in its row: `{lane}_{field}`.
+pub fn flat_name(lane: &Ident, field: &Ident) -> Ident {
+    format_ident!("{}_{}", lane, field)
+}
+
+/// A row's items and the row-level names tagged `@instr` (only with `tags`).
+pub fn parse_items(
+    content: ParseStream,
+    generic: Option<&Ident>,
+    tags: bool,
+) -> Result<(Vec<RowItem>, std::collections::HashSet<String>)> {
+    let mut items = vec![];
+    let mut instr = std::collections::HashSet::new();
+    while !content.is_empty() {
+        let name: Ident = content.parse()?;
+        let _colon_token: Token![:] = content.parse()?;
+        if let Some((count, lane)) = parse_lane(content)? {
+            let (inner, lane_instr) = parse_items(&lane, generic, tags)?;
+            let fields = inner
+                .into_iter()
+                .map(|item| match item {
+                    RowItem::Field(f) => Ok(f),
+                    RowItem::Lane(l) => Err(syn::Error::new_spanned(l.name, "lanes do not nest")),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if fields.is_empty() {
+                return Err(syn::Error::new_spanned(name, "a lane has at least one field"));
+            }
+            instr.extend(lane_instr.iter().map(|f| format!("{name}_{f}")));
+            items.push(RowItem::Lane(LaneItem { name, count, fields }));
+        } else {
+            let ty = parse_bit_type(content, generic)?;
+            if parse_tag(content, tags)? {
+                instr.insert(name.to_string());
+            }
+            items.push(RowItem::Field(TraceField { name, ty }));
+        }
+        if content.peek(Token![,]) {
+            let _comma: Token![,] = content.parse()?;
+        }
+    }
+    Ok((items, instr))
+}
+
+fn parse_tag(content: ParseStream, tags: bool) -> Result<bool> {
+    if !content.peek(Token![@]) {
+        return Ok(false);
+    }
+    let at: Token![@] = content.parse()?;
+    let tag: Ident = content.parse()?;
+    if !tags {
+        return Err(syn::Error::new_spanned(at, "tags are for `indexed_trace_row!`"));
+    }
+    if tag != "instr" {
+        return Err(syn::Error::new_spanned(tag, "unknown tag; expected `@instr`"));
+    }
+    Ok(true)
+}
+
+/// `lane { .. }` or `[lane { .. }; n]`: the lanes (`None` for one) and the lane's fields.
+fn parse_lane<'a>(content: ParseStream<'a>) -> Result<Option<(Option<usize>, syn::parse::ParseBuffer<'a>)>> {
+    let is_lane = |input: ParseStream| input.peek(Ident) && input.fork().parse::<Ident>().is_ok_and(|i| i == "lane");
+    if is_lane(content) {
+        let _: Ident = content.parse()?;
+        let fields;
+        braced!(fields in content);
+        return Ok(Some((None, fields)));
+    }
+    if content.peek(token::Bracket) {
+        let fork = content.fork();
+        let inner;
+        syn::bracketed!(inner in fork);
+        if !is_lane(&inner) {
+            return Ok(None);
+        }
+        let array;
+        syn::bracketed!(array in content);
+        let _: Ident = array.parse()?;
+        let fields;
+        braced!(fields in array);
+        let _semi: Token![;] = array.parse()?;
+        let n: syn::LitInt = array.parse()?;
+        return match n.base10_parse::<usize>()? {
+            0 => Err(syn::Error::new_spanned(n, "an array of lanes has at least 1 lane")),
+            n => Ok(Some((Some(n), fields))),
+        };
+    }
+    Ok(None)
 }
 
 pub fn parse_bit_type(input: ParseStream, generic: Option<&Ident>) -> Result<BitType> {
@@ -133,6 +241,9 @@ pub fn get_bit_count(input: &syn::parse::ParseBuffer<'_>, field_type: &str, min:
 /// Main trace_row macro function
 pub fn trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let trace_input = parse_macro_input!(input as TraceRowInput);
+    let Some(fields) = trace_input.fields() else {
+        return proc_macro::TokenStream::from(crate::lanes::lane_row_impl(&trace_input));
+    };
 
     // Generate struct names and trait name
     let packed_name = format_ident!("{}Packed", trace_input.name);
@@ -140,9 +251,10 @@ pub fn trace_row_entrypoint(input: proc_macro::TokenStream) -> proc_macro::Token
     let trait_name = format_ident!("{}Ops", trace_input.name);
 
     // Generate both packed and unpacked structs, plus the shared trait
-    let packed_tokens = packed_row_impl(&packed_name, &trace_input.generic, &trace_input.fields);
-    let unpacked_tokens = unpacked_row_impl(&unpacked_name, &trace_input.generic, &trace_input.fields);
-    let trait_tokens = trait_impl(&trait_name, &unpacked_name, &packed_name, &trace_input.generic, &trace_input.fields);
+    let packed_tokens = packed_row_impl(&packed_name, &trace_input.generic, &fields, &[], 0, true);
+    let unpacked_tokens = unpacked_row_impl(&unpacked_name, &trace_input.generic, &fields);
+    let trait_tokens =
+        trait_impl(&trait_name, &unpacked_name, Some(&packed_name), &trace_input.generic, &fields, quote! {});
 
     let combined = quote! {
         #packed_tokens

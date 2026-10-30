@@ -1,6 +1,7 @@
 use indexmap::IndexMap;
 use num_bigint::BigUint;
 
+use pil2_pilout::lanes::pil_name;
 use pil2_pilout::pilout::{
     self as pb, constraint, expression as expr_mod, global_expression as gexpr_mod, global_operand, hint_field,
     operand, SymbolType,
@@ -1230,6 +1231,14 @@ pub fn format_symbols(
         if stype == SymbolType::ImCol as i32 {
             continue;
         }
+        // A lane's column goes by its PIL name, `x[i].col`.
+        let renamed;
+        let s = if s.lane.is_some() {
+            renamed = pb::Symbol { name: pil_name(s), ..s.clone() };
+            &renamed
+        } else {
+            s
+        };
 
         if stype == SymbolType::FixedCol as i32
             || stype == SymbolType::WitnessCol as i32
