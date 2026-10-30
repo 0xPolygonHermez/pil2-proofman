@@ -229,7 +229,13 @@ pub fn get_parser_args(
     let (count1d, count3d) = get_id_maps(maxid, &mut id1d, &mut id3d, code_info_code, FIELD_EXTENSION)?;
 
     for r in code_info_code {
-        let (op, _dest_dim_val, sorted_src, src0_dim, src1_dim) = get_operation(r, verify);
+        let (op, _dest_dim_val, mut sorted_src, src0_dim, mut src1_dim) = get_operation(r, verify);
+        // The C++ reads 8 args per op (6 global): a copy is `src + 0`.
+        let pads_copy = r.op == "copy";
+        if pads_copy {
+            sorted_src.push(CodeType { op_type: OpType::Number, dim: 1, ..Default::default() });
+            src1_dim = "dim1".to_string();
+        }
         args.push(operation_type_code(&op));
 
         push_args(
@@ -263,19 +269,13 @@ pub fn get_parser_args(
             )?;
         }
 
-        // Copy ops always use ops_index 0 (matching JS where operationsTypeMap["copy"]
-        // is undefined -> 0, and the src1_dim lookup would also fall through to 0).
-        if r.op == "copy" {
-            ops.push(0);
-        } else {
-            let dest_dim_str = dim_str(r.dest.dim);
-            let ops_index = OPERATIONS.iter().position(|entry| {
-                entry.dest_type == dest_dim_str && entry.src0_type == src0_dim && entry.src1_type == src1_dim
-            });
-            match ops_index {
-                Some(idx) => ops.push(idx as u64),
-                None => bail!("Operation not considered: dest={} src0={} src1={}", dest_dim_str, src0_dim, src1_dim),
-            }
+        let dest_dim_str = dim_str(r.dest.dim);
+        let ops_index = OPERATIONS.iter().position(|entry| {
+            entry.dest_type == dest_dim_str && entry.src0_type == src0_dim && entry.src1_type == src1_dim
+        });
+        match ops_index {
+            Some(idx) => ops.push(idx as u64),
+            None => bail!("Operation not considered: dest={} src0={} src1={}", dest_dim_str, src0_dim, src1_dim),
         }
     }
 
@@ -847,6 +847,7 @@ fn push_args(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::stark_info::PolMap;
 
     #[test]
     fn test_operation_type_code() {
@@ -854,5 +855,42 @@ mod tests {
         assert_eq!(operation_type_code("sub"), 1);
         assert_eq!(operation_type_code("mul"), 2);
         assert_eq!(operation_type_code("sub_swap"), 3);
+    }
+
+    fn copy_op(dest_dim: u64, src: CodeType) -> CodeOperation {
+        let dest = CodeType { op_type: OpType::Tmp, id: 0, dim: dest_dim, ..Default::default() };
+        CodeOperation { op: "copy".to_string(), dest, src: vec![src] }
+    }
+
+    fn parse(code: &[CodeOperation], global: bool) -> (ExpsInfo, Vec<String>) {
+        let info = StarkInfo {
+            n_stages: 2,
+            opening_points: vec![0],
+            cm_pols_map: vec![PolMap { stage: 1, stage_pos: 0, dim: 1, ..Default::default() }],
+            ..Default::default()
+        };
+        let mut numbers = Vec::new();
+        let res = get_parser_args(&info, code, &mut numbers, global, false, None, "f").unwrap();
+        (res.exps_info, numbers)
+    }
+
+    // A copy is `src + 0`: the C++ strides 8 args per op (6 global), so a 1-operand copy would desync it.
+    #[test]
+    fn copy_serializes_as_src_plus_zero() {
+        let cm = CodeType { op_type: OpType::Cm, id: 0, dim: 1, ..Default::default() };
+        let (exps, numbers) = parse(&[copy_op(1, cm)], false);
+        assert_eq!((exps.ops.as_slice(), exps.args.len()), (&[0][..], 8));
+        assert_eq!(numbers[exps.args[6] as usize], "0");
+
+        // dim3 source: the (dim3, dim3, dim1) op
+        let cm3 = CodeType { op_type: OpType::Cm, id: 0, dim: 3, ..Default::default() };
+        let (exps, numbers) = parse(&[copy_op(3, cm3)], false);
+        assert_eq!((exps.ops.as_slice(), exps.args.len()), (&[1][..], 8));
+        assert_eq!(numbers[exps.args[6] as usize], "0");
+
+        let five = CodeType { op_type: OpType::Number, dim: 1, value: 5, ..Default::default() };
+        let (exps, numbers) = parse(&[copy_op(1, five)], true);
+        assert_eq!((exps.ops.as_slice(), exps.args.len()), (&[0][..], 6));
+        assert_eq!((numbers[exps.args[3] as usize].as_str(), numbers[exps.args[5] as usize].as_str()), ("5", "0"));
     }
 }
