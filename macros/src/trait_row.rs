@@ -22,9 +22,10 @@ use crate::trace_row::{TraceField, collect_dimensions, compute_total_bits, conta
 pub fn trait_impl(
     trait_name: &Ident,
     unpacked_name: &Ident,
-    packed_name: &Ident,
+    packed_name: Option<&Ident>,
     generic: &Option<Ident>,
     fields: &[TraceField],
+    provided: TokenStream,
 ) -> TokenStream {
     let (generics, packed_bounds) = generic_tokens(generic);
     let (trait_bounds, unpacked_bounds) = match generic {
@@ -38,20 +39,26 @@ pub fn trait_impl(
 
     let trait_methods = trait_method_signatures(fields);
     let unpacked_fwd = forwarding_methods(unpacked_name, fields);
-    let packed_fwd = forwarding_methods(packed_name, fields);
+    let packed_impl = packed_name.map(|packed_name| {
+        let packed_fwd = forwarding_methods(packed_name, fields);
+        quote! {
+            impl #packed_bounds #trait_name #generics for #packed_name #generics {
+                #(#packed_fwd)*
+            }
+        }
+    });
 
     quote! {
         pub trait #trait_name #trait_bounds: proofman_common::trace::TraceRow + Default + Copy + Send + Sync + std::fmt::Debug + 'static {
             #(#trait_methods)*
+            #provided
         }
 
         impl #unpacked_bounds #trait_name #generics for #unpacked_name #generics {
             #(#unpacked_fwd)*
         }
 
-        impl #packed_bounds #trait_name #generics for #packed_name #generics {
-            #(#packed_fwd)*
-        }
+        #packed_impl
     }
 }
 

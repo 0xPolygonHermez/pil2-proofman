@@ -353,8 +353,7 @@ pub fn map(res: &mut SetupResult, recursion: bool) {
     res.im_pols_info = (base_field_info, extended_field_info);
 
     // nCommitmentsStage1: count of stage-1 witness columns that are NOT imPols
-    res.n_commitments_stage1 =
-        res.cm_pols_map.iter().filter(|p| p.stage == Some(1) && !p.name.ends_with(".ImPol")).count();
+    res.n_commitments_stage1 = res.cm_pols_map.iter().filter(|p| p.stage == Some(1) && p.name != im_pol_marker).count();
 }
 
 // ---------------------------------------------------------------------------

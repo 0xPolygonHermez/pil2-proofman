@@ -6,11 +6,104 @@ use syn::Ident;
 
 use crate::trace_row::{TraceField, BitType, contains_generic, compute_total_bits, is_array, collect_dimensions};
 
-pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceField]) -> TokenStream {
-    // Calculate bits needed for non-generic fields (these go in the packed array)
-    let packed_bits: usize =
-        fields.iter().filter(|f| !contains_generic(&f.ty)).map(|f| compute_total_bits(&f.ty)).sum();
+/// An array of lanes: fields `first..first + len`, each `[_; count]`, laid out lane by lane.
+#[derive(Clone)]
+pub struct PackedGroup {
+    pub first: usize,
+    pub len: usize,
+    pub count: usize,
+}
+
+/// Each field's first bit (lane 0's in a group) and lane stride, and the row's bits.
+pub struct PackedLayout {
+    pub start: Vec<usize>,
+    pub lane_bits: Vec<Option<usize>>,
+    pub bits: usize,
+}
+
+/// Each element's width.
+pub fn element_bits(ty: &BitType) -> usize {
+    if is_array(ty) {
+        collect_dimensions(ty).0
+    } else {
+        compute_total_bits(ty)
+    }
+}
+
+/// Fields in order, a group's lane by lane; `F` fields take no bits.
+pub fn packed_layout(fields: &[TraceField], groups: &[PackedGroup]) -> PackedLayout {
+    let bits = |j: usize| compute_total_bits(&fields[j].ty);
+    let mut start = vec![0; fields.len()];
+    let mut lane_bits = vec![None; fields.len()];
+    let (mut offset, mut i) = (0, 0);
+    while i < fields.len() {
+        let Some(g) = groups.iter().find(|g| g.first == i) else {
+            start[i] = offset;
+            offset += bits(i);
+            i += 1;
+            continue;
+        };
+        let lane: usize = (i..i + g.len).map(|j| bits(j) / g.count).sum();
+        let mut at = offset;
+        for j in i..i + g.len {
+            (start[j], lane_bits[j]) = (at, Some(lane));
+            at += bits(j) / g.count;
+        }
+        offset += g.count * lane;
+        i += g.len;
+    }
+    PackedLayout { start, lane_bits, bits: offset }
+}
+
+/// Each column's bits in `UNPACK_INFO` order, a group lane by lane.
+pub fn unpack_widths(fields: &[TraceField], groups: &[PackedGroup]) -> Vec<u64> {
+    let mut widths = vec![];
+    let mut push = |j: usize, lanes: usize| {
+        let w = element_bits(&fields[j].ty);
+        let elements = compute_total_bits(&fields[j].ty).checked_div(w).unwrap_or(0) / lanes;
+        widths.extend(std::iter::repeat_n(w as u64, elements));
+    };
+    let mut i = 0;
+    while i < fields.len() {
+        match groups.iter().find(|g| g.first == i) {
+            Some(g) => {
+                for _ in 0..g.count {
+                    (i..i + g.len).for_each(|j| push(j, g.count));
+                }
+                i += g.len;
+            }
+            None => {
+                push(i, 1);
+                i += 1;
+            }
+        }
+    }
+    widths
+}
+
+/// With `unpack`, the row also has `UNPACK_INFO`, its columns' bits for the prover's unpack.
+pub fn packed_row_impl(
+    name: &Ident,
+    generic: &Option<Ident>,
+    fields: &[TraceField],
+    groups: &[PackedGroup],
+    unpack: bool,
+) -> TokenStream {
+    if !groups.is_empty() {
+        // Generic fields sit outside the packed words.
+        if let Some(f) = fields.iter().find(|f| contains_generic(&f.ty)) {
+            let msg = format!("field `{}` of a packed row with lanes must have a bit width", f.name);
+            return quote! { compile_error!(#msg); };
+        }
+    }
+    let layout = packed_layout(fields, groups);
+    let packed_bits = layout.bits;
     let packed_words = packed_bits.div_ceil(64);
+    let unpack_info = (unpack && fields.iter().all(|f| !contains_generic(&f.ty))).then(|| {
+        let widths = unpack_widths(fields, groups);
+        let n = widths.len();
+        quote! { pub const UNPACK_INFO: [u64; #n] = [#(#widths),*]; }
+    });
 
     // Count generic F fields (these are stored separately, each takes one u64)
     let generic_field_count: usize =
@@ -31,7 +124,7 @@ pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceFie
     };
 
     let generic_fields = get_packed_fields(fields);
-    let setter_getters = get_packed_setters_getters(fields);
+    let setter_getters = get_packed_setters_getters(fields, &layout);
 
     let default_field_exprs = get_default_field_exprs(fields);
 
@@ -55,6 +148,7 @@ pub fn packed_row_impl(name: &Ident, generic: &Option<Ident>, fields: &[TraceFie
         impl #generics_with_bounds #name #generics {
             pub const PACKED_BITS: usize = #packed_bits;
             pub const PACKED_WORDS: usize = #packed_words;
+            #unpack_info
             #(#setter_getters)*
         }
 
@@ -90,27 +184,21 @@ fn get_packed_fields(fields: &[TraceField]) -> Vec<TokenStream> {
     packed_fields
 }
 
-fn get_packed_setters_getters(fields: &[TraceField]) -> Vec<TokenStream> {
-    let mut offset = 0usize;
+fn get_packed_setters_getters(fields: &[TraceField], layout: &PackedLayout) -> Vec<TokenStream> {
     let mut setter_getters = vec![];
-
-    for f in fields.iter() {
+    for (i, f) in fields.iter().enumerate() {
         if contains_generic(&f.ty) {
             // For generic fields, only generate setters/getters for non-array fields
             // Array fields can be accessed directly
             if !is_array(&f.ty) {
                 add_generic_setter_getter(&f.name, &mut setter_getters);
             }
+        } else if is_array(&f.ty) {
+            add_packed_array_setter_getter(&f.name, &f.ty, layout.start[i], layout.lane_bits[i], &mut setter_getters);
         } else {
-            // For non-generic fields, generate packed accessors
-            if is_array(&f.ty) {
-                add_packed_array_setter_getter(&f.name, &f.ty, &mut offset, &mut setter_getters);
-            } else {
-                add_packed_setter_getter(&f.name, &f.ty, &mut offset, &mut setter_getters);
-            }
+            add_packed_setter_getter(&f.name, &f.ty, layout.start[i], &mut setter_getters);
         }
     }
-
     setter_getters
 }
 
@@ -134,16 +222,14 @@ fn add_generic_setter_getter(field_name: &Ident, setter_getters: &mut Vec<TokenS
 fn add_packed_setter_getter(
     field_name: &Ident,
     field_type: &BitType,
-    offset: &mut usize,
+    start: usize,
     setter_getters: &mut Vec<TokenStream>,
 ) {
     let bit_width = compute_total_bits(field_type);
     let rust_type = type_for_bitwidth(bit_width);
 
-    // Compute where the field starts and ends in the packed array
-    let start = *offset;
-    let end = *offset + bit_width;
-    *offset = end;
+    // Where the field ends in the packed array
+    let end = start + bit_width;
 
     let word_start = start / 64;
     let word_end = (end - 1) / 64;
@@ -161,22 +247,41 @@ fn add_packed_setter_getter(
     setter_getters.push(tokens);
 }
 
+/// With `lane_bits`, `dims[0]` is the lane and lane `i0` sits `i0 * lane_bits` bits further.
 fn add_packed_array_setter_getter(
     field_name: &Ident,
     field_type: &BitType,
-    offset: &mut usize,
+    base_offset: usize,
+    lane_bits: Option<usize>,
     setter_getters: &mut Vec<TokenStream>,
 ) {
     let (bit_width, dims, acc_dims) = collect_dimensions(field_type);
     let total_len: usize = dims.iter().product();
-    let base_offset = *offset;
-    *offset += bit_width * total_len;
+    let lane_len = if lane_bits.is_some() { total_len / dims[0] } else { total_len };
     let rust_type = type_for_bitwidth(bit_width);
+    let element_start = |flat_idx: usize| match lane_bits {
+        Some(lb) => base_offset + (flat_idx / lane_len) * lb + (flat_idx % lane_len) * bit_width,
+        None => base_offset + flat_idx * bit_width,
+    };
 
     // Runtime params: i0: usize, ...
     let runtime_idents: Vec<Ident> = dims.iter().enumerate().map(|(i, _)| format_ident!("i{}", i)).collect();
 
-    let runtime_flat = flatten_index_expr(&runtime_idents, &acc_dims);
+    let bit_offset_expr = match lane_bits {
+        Some(lb) => {
+            let lane = &runtime_idents[0];
+            let inner = if dims.len() > 1 {
+                flatten_index_expr(&runtime_idents[1..], &acc_dims[1..])
+            } else {
+                quote! { 0usize }
+            };
+            quote! { #base_offset + #lane * #lb + (#inner) * #bit_width }
+        }
+        None => {
+            let runtime_flat = flatten_index_expr(&runtime_idents, &acc_dims);
+            quote! { #base_offset + (#runtime_flat) * #bit_width }
+        }
+    };
 
     let setter_name = format_ident!("set_{}", field_name);
     let getter_name = format_ident!("get_{}", field_name);
@@ -227,7 +332,7 @@ fn add_packed_array_setter_getter(
     let mut word_clear_masks: std::collections::BTreeMap<usize, u64> = std::collections::BTreeMap::new();
 
     for flat_idx in 0..total_len {
-        let start = base_offset + flat_idx * bit_width;
+        let start = element_start(flat_idx);
         let end = start + bit_width;
         let word_start = start / 64;
         let word_end = (end - 1) / 64;
@@ -330,8 +435,7 @@ fn add_packed_array_setter_getter(
                 "Value out of range for field {} (setter: {}): value={}, bit_width={}, max_value={}",
                 stringify!(#field_name), stringify!(#setter_name), value as u128, #bit_width, (1u128 << #bit_width) - 1
             );
-            let flat: usize = #runtime_flat;
-            let bit_offset: usize = #base_offset + flat * #bit_width;
+            let bit_offset: usize = #bit_offset_expr;
             let word: usize = bit_offset / 64;
             let bit_start: usize = bit_offset % 64;
             if bit_start + #bit_width <= 64 {
@@ -354,8 +458,7 @@ fn add_packed_array_setter_getter(
         #[inline(always)]
         pub fn #getter_name(&self, #(#runtime_idents: usize),*) -> #rust_type {
             #(#bounds_checks)*
-            let flat: usize = #runtime_flat;
-            let bit_offset: usize = #base_offset + flat * #bit_width;
+            let bit_offset: usize = #bit_offset_expr;
             let word: usize = bit_offset / 64;
             let bit_start: usize = bit_offset % 64;
             let raw_value: u64 = if bit_start + #bit_width <= 64 {

@@ -91,9 +91,9 @@ values!({ air.name }AirGroupValues<F> \{
 {{ endfor }}{{ endfor }}{{ endfor }}{{ if not is_bn128 }}
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[{{ for item in packed_info }}
     ({ item.airgroup_id }, { item.air_id }, PackedInfoConst \{
-        is_packed: { item.is_packed },
-        num_packed_words: { item.num_packed_words },
-        unpack_info: &[{ item.unpack_info }],
+        is_packed: true,
+        num_packed_words: { item.row }::<proofman_fields::Goldilocks>::PACKED_WORDS as u64,
+        unpack_info: &{ item.row }::<proofman_fields::Goldilocks>::UNPACK_INFO,
     }),{{ endfor }}
 ];
 {{ endif }}
