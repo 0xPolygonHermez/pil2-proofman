@@ -9,9 +9,6 @@ use crate::PermutationFreeTrace;
 
 define_wc!(PermutationFree, "PermFree");
 
-/// Set: the free-selector product bus is unbalanced (one assumed value has no matching proof).
-pub const TAMPER: &str = "PERMUTATION_FREE_TAMPER";
-
 impl<F: PrimeField64> WitnessComponent<F> for PermutationFree {
     execute!(PermutationFreeTrace, 1);
 
@@ -40,9 +37,6 @@ impl<F: PrimeField64> WitnessComponent<F> for PermutationFree {
                 let sel = if i % 4 == 3 { F::ZERO } else { F::ONE };
                 trace[i].sel = sel;
                 trace[j].sel = -sel;
-            }
-            if std::env::var_os(TAMPER).is_some() {
-                trace[0].b += F::ONE;
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

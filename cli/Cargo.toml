@@ -58,9 +58,6 @@ pilfflonk-fibonacci = { path = "../pilfflonk/tests/fixtures/fibonacci/rs" }
 pilfflonk-connection = { path = "../pilfflonk/tests/fixtures/connection/rs" }
 pilfflonk-all = { path = "../pilfflonk/tests/fixtures/all/rs" }
 fibonacci-square = { path = "../examples/fibonacci-square" }
-# The std `permutation` test's setup and witness library (tests/permutation_free_e2e.rs).
-pil2-stark-setup = { workspace = true }
-permutation = { path = "../pil2-components/test/permutation/rs" }
 
 # The inputs of the pilfflonk benchmark (pilfflonk/bench/bench.sh,
 # pilfflonk/docs/performance.md#reproducing): the witnesses of its programs, from the fixtures'
