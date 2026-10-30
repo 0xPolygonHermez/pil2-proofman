@@ -16,7 +16,7 @@ use std::fmt;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "023c28a88a59dd50cd47cfbccc04eed991ca0a59a6ac87628c00a6f8729cec44";
+pub const PILOUT_HASH: &str = "50154e3e3674bfdc1f7b9979e9150c4034dbad8751bd0ab7f1efd7cb305eaa10";
 
 //AIRGROUP CONSTANTS
 
@@ -31,6 +31,8 @@ pub const PERMUTATION_1_7_AIR_IDS: &[usize] = &[1];
 pub const PERMUTATION_1_8_AIR_IDS: &[usize] = &[2];
 
 pub const PERMUTATION_2_6_AIR_IDS: &[usize] = &[3];
+
+pub const PERMUTATION_FREE_AIR_IDS: &[usize] = &[4];
 
   
 trace_row!(Permutation1_6FixedRow<F> {
@@ -77,6 +79,17 @@ trace_row!(Permutation2_6TraceRow<F> {
 
 pub type Permutation2_6Trace<F> = GenericTrace<Permutation2_6TraceRow<F>, 512, 0, 3>;
 
+trace_row!(PermutationFreeFixedRow<F> {
+ __L1__: F,
+});
+pub type PermutationFreeFixed<F> = GenericTrace<PermutationFreeFixedRow<F>, 64, 0, 4>;
+
+trace_row!(PermutationFreeTraceRow<F> {
+ a:F, b:F, sel:F,
+});
+
+pub type PermutationFreeTrace<F> = GenericTrace<PermutationFreeTraceRow<F>, 64, 0, 4>;
+
 values!(Permutation1_6AirGroupValues<F> {
  gsum_result: FieldExtension<F>, gprod_result: FieldExtension<F>,
 });
@@ -93,6 +106,10 @@ values!(Permutation2_6AirGroupValues<F> {
  gsum_result: FieldExtension<F>, gprod_result: FieldExtension<F>,
 });
 
+values!(PermutationFreeAirGroupValues<F> {
+ gsum_result: FieldExtension<F>, gprod_result: FieldExtension<F>,
+});
+
 pub const PACKED_INFO: &[(usize, usize, PackedInfoConst)] = &[
 ];
 
@@ -103,4 +120,5 @@ pub const AIR_NAMES: &[(usize, usize, &str)] = &[
     (0, 1, "Permutation1_7"),
     (0, 2, "Permutation1_8"),
     (0, 3, "Permutation2_6"),
+    (0, 4, "PermutationFree"),
 ];

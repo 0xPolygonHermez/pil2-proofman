@@ -5,7 +5,7 @@ use proofman_witness::{witness_library, WitnessLibrary, WitnessManager};
 use proofman_fields::PrimeField64;
 use proofman_fields::Goldilocks;
 
-use crate::{Permutation1_6, Permutation1_7, Permutation1_8, Permutation2};
+use crate::{Permutation1_6, Permutation1_7, Permutation1_8, Permutation2, PermutationFree};
 use proofman::register_std;
 
 witness_library!(WitnessLib, Goldilocks);
@@ -18,6 +18,7 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         wcm.register_component(Permutation1_7::new());
         wcm.register_component(Permutation1_8::new());
         wcm.register_component(Permutation2::new());
+        wcm.register_component(PermutationFree::new());
         Ok(())
     }
 }
