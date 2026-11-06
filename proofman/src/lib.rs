@@ -1,3 +1,4 @@
+mod multilinear;
 mod scheduler;
 mod compressed_proof;
 mod proofman;
@@ -10,6 +11,7 @@ mod challenge_accumulation;
 mod snark_wrapper;
 mod pilfflonk_wrap;
 
+pub use multilinear::*;
 pub use scheduler::*;
 pub use compressed_proof::*;
 pub use proofman::*;

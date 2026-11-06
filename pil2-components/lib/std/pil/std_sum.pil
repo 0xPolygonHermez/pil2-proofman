@@ -131,8 +131,8 @@ private function update_piop_sum(const int name, const int surname, const int ty
             if (STD_MODE == STD_MODE_ONE_INSTANCE) {
                 error("Updating the global constraint is not allowed in one instance mode");
             }
-
             gsum_update_global_constraint_data(type, sel, exprs_compressed);
+
         case SUM_UPDATE_TYPE_LOCAL_DEFAULT, SUM_UPDATE_TYPE_LOCAL_AIRVAL:
             gsum_update_air_constraint_data(type, sel, exprs_compressed, update_type);
 
@@ -143,6 +143,7 @@ private function update_piop_sum(const int name, const int surname, const int ty
             if (STD_MODE != STD_MODE_ONE_INSTANCE) {
                 on final airgroup piop_gsum_airgroup();
             }
+
         default:
             error(`Invalid update type: ${update_type}`);
     }
@@ -325,6 +326,67 @@ private function gsum_update_air_constraint_data(const int type, const expr sel,
 
 // Deferred functions
 private function piop_gsum_air() {
+    if (GKR_SUM_BUS == 1) {
+        piop_gsum_air_gkr();
+    } else {
+        piop_gsum_air_plain();
+    }
+}
+
+/*
+    LogUp-GKR mode: the fractional sum
+
+                sᵢ
+        ∑ᵢ ∑ᵣₒᵥᵥ ---------   (+ direct terms)
+                (eᵢ + ɣ)
+
+    is proven by the multilinear prover with the GKR protocol over a
+    fraction-addition tree https://eprint.iacr.org/2023/1284.pdf.
+*/
+private function piop_gsum_air_gkr() {
+    use air.std.gsum;
+
+    if (!defined(std_gamma)) {
+        challenge stage(2) std_gamma;
+    }
+
+    // Row terms: one hint each. Constant terms are routed to the direct
+    // (instance-level) part, mirroring the plain mode.
+    int num_row_terms = 0;
+    for (int i = 0; i < gsum_nargs; i++) {
+        if (degree(gsum_s[i]) == 0 && degree(gsum_e[i]) == 0) {
+            direct_gsum_s[direct_gsum_nargs] = gsum_s[i];
+            direct_gsum_e[direct_gsum_nargs] = gsum_e[i];
+            direct_gsum_nargs++;
+        } else {
+            @gkr_sum_term{numerator: gsum_s[i], denominator: gsum_e[i] + std_gamma,
+                          deg_num: degree(gsum_s[i]), deg_den: degree(gsum_e[i] + std_gamma)};
+            num_row_terms++;
+        }
+    }
+
+    // Direct (instance-level) terms.
+    for (int i = 0; i < direct_gsum_nargs; i++) {
+        @gkr_sum_direct_term{numerator: direct_gsum_s[i], denominator: direct_gsum_e[i] + std_gamma};
+    }
+
+    const expr result;
+    if (STD_MODE == STD_MODE_ONE_INSTANCE) {
+        result = 0;
+    } else {
+        airgroupval aggregate(sum) default(0) gsum_result;
+        result = gsum_result;
+    }
+    @gkr_sum_bus{num_terms: num_row_terms, num_direct_terms: direct_gsum_nargs, result: result};
+
+    // Store the airgroup and air ids for global hints
+    proof.std.gsum.airgroup_ids[proof.std.gsum.air_count] = AIRGROUP_ID;
+    proof.std.gsum.air_ids[proof.std.gsum.air_count] = AIR_ID;
+    proof.std.gsum.std_mode[proof.std.gsum.air_count] = STD_MODE;
+    proof.std.gsum.air_count++;
+}
+
+private function piop_gsum_air_plain() {
     use air.std.gsum;
 
     const expr L1 = get_L1(); // [1,0,...]

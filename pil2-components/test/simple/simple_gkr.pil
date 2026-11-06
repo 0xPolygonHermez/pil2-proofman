@@ -1,0 +1,8 @@
+// The `simple` test system compiled with the LogUp-GKR sum bus: no stage-2
+// gsum/im columns are committed; the bus terms are emitted as @gkr_* hints
+// and proven by the multilinear prover (see std_constants.pil).
+require "std_constants.pil"
+
+enable_gkr_sum_bus();
+
+require "simple.pil"

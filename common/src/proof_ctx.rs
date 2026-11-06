@@ -76,6 +76,16 @@ const PHASE_A_ALIAS_HEADROOM_MB: u64 = 512;
 /// Padded from the layout's unused slack only, so it never eats into the reserve.
 const GPU_UNIFIED_BUFFER_MIN_SNARK_BYTES: u64 = 30_386_893_620;
 
+/// Which proving system `ProofMan::generate_proof` dispatches to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProofSystem {
+    /// Univariate STARK.
+    #[default]
+    Univariate,
+    /// Multilinear STARK.
+    Multilinear,
+}
+
 #[derive(Clone)]
 pub struct ProofOptions {
     pub verify_constraints: bool,
@@ -84,6 +94,8 @@ pub struct ProofOptions {
     pub compressed: bool,
     pub verify_proofs: bool,
     pub minimal_memory: bool,
+    /// Proving system to use. Defaults to [`ProofSystem::Univariate`].
+    pub proof_system: ProofSystem,
 }
 
 impl BorshSerialize for ProofOptions {
@@ -94,6 +106,11 @@ impl BorshSerialize for ProofOptions {
         BorshSerialize::serialize(&self.compressed, writer)?;
         BorshSerialize::serialize(&self.verify_proofs, writer)?;
         BorshSerialize::serialize(&self.minimal_memory, writer)?;
+        let proof_system: u8 = match self.proof_system {
+            ProofSystem::Univariate => 0,
+            ProofSystem::Multilinear => 1,
+        };
+        BorshSerialize::serialize(&proof_system, writer)?;
         Ok(())
     }
 }
@@ -106,8 +123,18 @@ impl BorshDeserialize for ProofOptions {
         let compressed = bool::deserialize_reader(reader)?;
         let verify_proofs = bool::deserialize_reader(reader)?;
         let minimal_memory = bool::deserialize_reader(reader)?;
+        let proof_system = match u8::deserialize_reader(reader)? {
+            0 => ProofSystem::Univariate,
+            1 => ProofSystem::Multilinear,
+            other => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("invalid ProofSystem discriminant {other}"),
+                ))
+            }
+        };
 
-        Ok(Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory })
+        Ok(Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory, proof_system })
     }
 }
 
@@ -155,6 +182,7 @@ impl Default for ProofOptions {
             compressed: false,
             verify_proofs: false,
             minimal_memory: false,
+            proof_system: ProofSystem::Univariate,
         }
     }
 }
@@ -169,7 +197,15 @@ impl ProofOptions {
         verify_proofs: bool,
         minimal_memory: bool,
     ) -> Self {
-        Self { verify_constraints, aggregation, rma, compressed, verify_proofs, minimal_memory }
+        Self {
+            verify_constraints,
+            aggregation,
+            rma,
+            compressed,
+            verify_proofs,
+            minimal_memory,
+            proof_system: ProofSystem::Univariate,
+        }
     }
 
     pub fn minimal_memory(&mut self) {
@@ -178,6 +214,11 @@ impl ProofOptions {
 
     pub fn compressed(&mut self) {
         self.compressed = true;
+    }
+
+    /// Select the multilinear (Basefold) proving system.
+    pub fn multilinear(&mut self) {
+        self.proof_system = ProofSystem::Multilinear;
     }
 }
 
@@ -1229,7 +1270,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         let mut challenges_guard = self.challenges.values.write().unwrap();
 
         let initial_pos = self.global_info.n_challenges.iter().take(stage - 1).sum::<usize>();
-        let num_challenges = self.global_info.n_challenges[stage - 1];
+        let num_challenges = self.global_info.n_challenges.get(stage - 1).copied().unwrap_or(0);
         for i in 0..num_challenges {
             transcript.get_field(&mut challenges_guard[(initial_pos + i) * 3..(initial_pos + i) * 3 + 3]);
         }

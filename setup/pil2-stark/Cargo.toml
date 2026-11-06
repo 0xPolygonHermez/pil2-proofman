@@ -20,6 +20,7 @@ default = []
 [dependencies]
 proofman-starks-lib-c = { workspace = true }
 proofman-fields = { workspace = true }
+proofman-multilinear = { workspace = true }
 proofman-common = { workspace = true }
 pil2-stark-recurser = { workspace = true }
 pil2-pilout = { workspace = true }

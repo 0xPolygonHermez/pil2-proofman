@@ -12,7 +12,8 @@ use prost::Message;
 use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
 use crate::pil::prepare::PrepareOptions;
 use crate::commands::recursive_setup::run_recursive_setup;
-use crate::types::stark_struct::{generate_basic_stark_struct, StarkStructsConfig};
+use crate::types::security;
+use crate::types::stark_struct::{generate_basic_stark_struct, StarkStruct, StarkStructsConfig};
 use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, solve_low_degree_test};
 
 /// Setup options parsed from CLI args.
@@ -142,6 +143,18 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
     }
 
     tracing::info!("Processing {} AIRs", work_items.len());
+
+    // Hash family for the multilinear artifacts, taken from the same setting as
+    // the univariate/recursion layer so the transcripts and Merkle trees agree.
+    // Not every family has a multilinear implementation (blake3 does not): then the setup simply
+    // writes no multilinear artifacts.
+    let ml_hash = match proofman_multilinear::MlHashFamily::from_id(&opts.hash) {
+        Ok(h) => Some(h),
+        Err(e) => {
+            tracing::info!("No multilinear artifacts: {e}");
+            None
+        }
+    };
 
     let pilout = Arc::new(pilout);
     let settings_map = Arc::new(settings_map);
@@ -303,6 +316,40 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
 
                 let starkinfo_json = crate::output::json::to_json_string(&starkinfo_output)?;
                 fs::write(&starkinfo_path, &starkinfo_json)?;
+
+                // Multilinear prover artifact.
+                let mlinfo_path = files_dir.join(format!("{}.mlinfo.bin", item.air_name));
+                let mlconst_path = files_dir.join(format!("{}.mlconst.bin", item.air_name));
+                let air_ir = match ml_hash {
+                    Some(h) => crate::output::mlinfo::build_air_ir(
+                        setup_result,
+                        n_bits as u32,
+                        proofman_multilinear::MlParams::default(),
+                    )
+                    .map(|ir| (ir, h)),
+                    None => Err(anyhow::anyhow!("hash family '{}' has no multilinear prover", opts.hash)),
+                };
+                match air_ir {
+                    Ok((mut air_ir, ml_hash)) => {
+                        air_ir.params = ml_params(&stark_struct, n_bits, air_ir.total_cols(), ml_hash);
+                        air_ir
+                            .save(&mlinfo_path)
+                            .map_err(|e| anyhow::anyhow!("writing {}: {e}", mlinfo_path.display()))?;
+                        // Prebuild the fixed-column commitment.
+                        let status = write_mlconst(&air_ir, &const_path, &mlconst_path)?;
+                        tracing::info!("Air '{}': {status}", item.air_name);
+                    }
+                    Err(e) => {
+                        tracing::info!("Air '{}': not provable with the multilinear prover ({e})", item.air_name);
+                        // Never leave a stale artifact from a previous setup
+                        if mlinfo_path.exists() {
+                            fs::remove_file(&mlinfo_path)?;
+                        }
+                        if mlconst_path.exists() {
+                            fs::remove_file(&mlconst_path)?;
+                        }
+                    }
+                }
 
                 fs::write(
                     files_dir.join(format!("{}.expressionsinfo.json", item.air_name)),
@@ -469,6 +516,183 @@ fn log2_usize(n: usize) -> usize {
     (usize::BITS - 1 - n.leading_zeros()) as usize
 }
 
+/// Soundness-driven multilinear (PCS) parameters for one AIR.
+pub(crate) fn ml_params(
+    stark_struct: &StarkStruct,
+    n_bits: usize,
+    total_cols: usize,
+    hash: proofman_multilinear::MlHashFamily,
+) -> proofman_multilinear::MlParams {
+    const TARGET_SECURITY_BITS: usize = 128;
+    const N_OOD_SAMPLES: usize = 1;
+
+    // Rate: reuse the AIR's configured blowup (at least 1).
+    let log_blowup = (stark_struct.n_bits_ext - stark_struct.n_bits).max(1);
+    // Experiment knob: ML_SKIP_BITS univariate-skip bits (default 0).
+    let univariate_skip_bits: usize = std::env::var("ML_SKIP_BITS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+
+    // Fold schedule.
+    let step_bits: Vec<usize> = stark_struct.low_degree_test.log_folding_factors().iter().map(|&b| b as usize).collect();
+    let (fold_bits, log_final_poly_len) = if !step_bits.is_empty() && step_bits.iter().sum::<usize>() <= n_bits {
+        let total: usize = step_bits.iter().sum();
+        (step_bits, n_bits - total)
+    } else {
+        panic!(
+            "the low-degree test's folding factors must be non-empty and sum to ≤ n_bits ({} > {})",
+            step_bits.iter().sum::<usize>(),
+            n_bits
+        )
+    };
+    let n_rounds = fold_bits.len();
+
+    // Solve for the security parameters.
+    let field_size = security::goldilocks_safe_extension_field_size();
+    let regime = security::regimes::DecodingRegime::Jbr;
+    let grinding_bits = match (stark_struct.low_degree_test.fri(), stark_struct.low_degree_test.stir()) {
+        (Some(fri), _) => fri.grinding_bits_queries,
+        (None, Some(stir)) => stir.grinding_bits_queries[0],
+        (None, None) => unreachable!("a low-degree test is either FRI or STIR"),
+    };
+    let whir = security::pcs::Whir::new(security::pcs::WhirConfig {
+        field_size,
+        trace_length: 1u32 << n_bits,
+        rate: 1.0 / (1u64 << log_blowup) as f64,
+        log_folding_factors: fold_bits.iter().map(|&b| b as u32).collect(),
+        batch_size: total_cols.max(1) as u64, // columns batched by δ into Φ
+        batching: security::pcs::Batching::Powers,
+        constraint_degree: 3, // ŵ(Z,X) = Z·(deg-1 in X) ⇒ d* = 1+1+1 = 3
+        max_grinding_bits_query: grinding_bits as u64,
+        use_max_grinding_bits_query: true,
+        tree_arity: 4,
+        hash_size_bits: 256,
+        base_field_bits: 64,
+        target_security_bits: TARGET_SECURITY_BITS as u64,
+        regime,
+    });
+    let solved = whir.security_params();
+
+    // Pin only what the runtime implements, and fail/warn on the rest so the
+    // deduced security level cannot silently rely on unimplemented phases.
+    let query_schedule: Vec<usize> = solved.num_queries.iter().map(|&t| t as usize).collect();
+    assert_eq!(query_schedule.len(), n_rounds, "solver iteration count must match the fold schedule");
+    // Uniform fallback / display value: block 0 is the query-hungriest.
+    let n_queries = query_schedule[0];
+    assert!(
+        solved.num_ood_samples.iter().all(|&w| w == N_OOD_SAMPLES as u64),
+        "solver requires {:?} OOD samples but the runtime draws exactly {N_OOD_SAMPLES} per block",
+        solved.num_ood_samples,
+    );
+    assert!(
+        solved.grinding_bits_queries.iter().all(|&g| g == grinding_bits as u32),
+        "solver requires query grinding {:?} but the runtime grinds {grinding_bits} bits per block",
+        solved.grinding_bits_queries,
+    );
+    if solved.grinding_bits_batching != 0
+        || solved.grinding_bits_folding.iter().flatten().any(|&g| g != 0)
+        || solved.grinding_bits_ood.iter().any(|&g| g != 0)
+    {
+        tracing::warn!(
+            "WHIR solver prescribes batching/folding/OOD grinding (batching {}, folding {:?}, ood {:?}) that the \
+             runtime does not implement; the achieved security is below the solver's accounting. n_bits={n_bits}.",
+            solved.grinding_bits_batching,
+            solved.grinding_bits_folding,
+            solved.grinding_bits_ood,
+        );
+    }
+    let achieved = security::pcs::Pcs::total_security_bits(&whir) as i64;
+    if achieved < TARGET_SECURITY_BITS as i64 {
+        tracing::warn!(
+            "WHIR PCS soundness for this AIR is {achieved} bits (< {TARGET_SECURITY_BITS}); \
+             the list-decoding (non-query) terms cap it — increase blowup (currently 2^-{log_blowup}) \
+             or add grinding. n_bits={n_bits}, cols={total_cols}, queries={n_queries}."
+        );
+    }
+
+    proofman_multilinear::MlParams {
+        log_blowup,
+        n_queries,
+        whir_query_schedule: query_schedule,
+        whir_fold_schedule: fold_bits,
+        log_final_poly_len,
+        grinding_bits,
+        univariate_skip_bits,
+        target_security_bits: TARGET_SECURITY_BITS,
+        n_ood_samples: N_OOD_SAMPLES,
+        hash,
+    }
+}
+
+/// WHIR per-block query counts for an arbitrary fold schedule (same solver config as `ml_params`).
+pub(crate) fn whir_query_schedule(
+    n_vars: usize,
+    log_blowup: usize,
+    fold_bits: &[usize],
+    batch_size: usize,
+    grinding_bits: usize,
+) -> Vec<usize> {
+    let whir = security::pcs::Whir::new(security::pcs::WhirConfig {
+        field_size: security::goldilocks_safe_extension_field_size(),
+        trace_length: 1u32 << n_vars,
+        rate: 1.0 / (1u64 << log_blowup) as f64,
+        log_folding_factors: fold_bits.iter().map(|&b| b as u32).collect(),
+        batch_size: batch_size.max(1) as u64,
+        batching: security::pcs::Batching::Powers,
+        constraint_degree: 3,
+        max_grinding_bits_query: grinding_bits as u64,
+        use_max_grinding_bits_query: true,
+        tree_arity: 4,
+        hash_size_bits: 256,
+        base_field_bits: 64,
+        target_security_bits: 128,
+        regime: security::regimes::DecodingRegime::Jbr,
+    });
+    whir.security_params().num_queries.iter().map(|&t| t as usize).collect()
+}
+
+/// Build the multilinear prover's fixed-column commitment `<AIR>.mlconst.bin`
+/// from the just-written raw `.const` file.
+///
+/// The univariate `.consttree` can't be reused: it commits a different object
+/// (row-major leaves, univariate FRI order, its own arity/hash) and the PCS
+/// opening also needs the raw RS codewords.
+fn write_mlconst(air_ir: &proofman_multilinear::AirIr, const_path: &Path, out_path: &Path) -> Result<String> {
+    use proofman_fields::Goldilocks;
+
+    let n_const_cols = air_ir.n_const_cols as usize;
+    let n_rows = 1usize << air_ir.n_bits;
+
+    if n_const_cols == 0 || !const_path.exists() {
+        if out_path.exists() {
+            fs::remove_file(out_path)?;
+        }
+        return Ok("no fixed columns — no mlconst artifact".to_string());
+    }
+
+    // Raw `.const`: headerless little-endian u64s, row-major (n_rows × n_cols).
+    let bytes = fs::read(const_path).map_err(|e| anyhow::anyhow!("reading {}: {e}", const_path.display()))?;
+    let expected = n_const_cols * n_rows * 8;
+    anyhow::ensure!(
+        bytes.len() == expected,
+        "{}: expected {expected} bytes ({n_const_cols} cols × {n_rows} rows), found {}",
+        const_path.display(),
+        bytes.len()
+    );
+    let mut cols = vec![vec![Goldilocks::new(0); n_rows]; n_const_cols];
+    for row in 0..n_rows {
+        for (c, col) in cols.iter_mut().enumerate() {
+            let off = (row * n_const_cols + c) * 8;
+            col[row] = Goldilocks::new(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
+        }
+    }
+
+    let refs: Vec<&[Goldilocks]> = cols.iter().map(|c| c.as_slice()).collect();
+    use proofman_multilinear::{MlPcs, Pcs};
+    let matrix = Pcs::commit(&refs, &air_ir.params);
+    Pcs::save_commitment(&matrix, out_path).map_err(|e| anyhow::anyhow!("writing {}: {e}", out_path.display()))?;
+
+    Ok(format!("committed {n_const_cols} fixed columns ({n_rows} rows)"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,6 +726,36 @@ mod tests {
         assert_eq!(o.exps_arch, "auto");
         assert_eq!(o.exps_cap, 60000);
         assert!(o.exps_chunk.is_none());
+    }
+
+    #[test]
+    fn ml_params_query_schedule_decreases_with_rate() {
+        // Rate 1/2 (blowup 1), folds [3,3,3,3] (steps 22→19→16→13→10),
+        // grinding 16, target 128: the per-block rates are 2^-1, 2^-3, 2^-5,
+        // 2^-7, so the schedule must match the security module's pinned
+        // solver values [228, 76, 46, 33].
+        let stark_struct = crate::types::stark_struct::StarkStruct {
+            n_bits: 22,
+            n_bits_ext: 23,
+            merkle_tree_arity: 4,
+            transcript_arity: 4,
+            merkle_tree_custom: false,
+            hash_commits: false,
+            verification_hash_type: "GL".to_string(),
+            last_level_verification: 0,
+            pow_bits: 16,
+            steps: [22, 19, 16, 13, 10]
+                .into_iter()
+                .map(|n_bits| crate::types::stark_struct::StarkStep { n_bits })
+                .collect(),
+            n_queries: 0,
+        };
+        let params = ml_params(&stark_struct, 22, 32, proofman_multilinear::MlHashFamily::Poseidon2);
+        assert_eq!(params.log_blowup, 1);
+        assert_eq!(params.whir_fold_schedule, vec![3, 3, 3, 3]);
+        assert_eq!(params.whir_query_schedule, vec![228, 76, 46, 33]);
+        assert_eq!(params.n_queries, 228);
+        assert_eq!(params.grinding_bits, 16);
     }
 
     #[test]

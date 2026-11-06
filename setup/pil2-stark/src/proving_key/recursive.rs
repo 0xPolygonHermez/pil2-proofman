@@ -355,7 +355,10 @@ pub fn gen_recursive_setup(
         hash_id: config.hash.to_string(),
         merge_copies: true,
         // blake3 chooses LANES in its own setup; None takes the air's default of 4.
-        blake3_lanes: None,
+        // Experiment knob: PIL2_BLAKE3_LANES pins the recursion aggregator's lanes.
+        blake3_lanes: (template != RecursiveTemplate::Compressor)
+            .then(|| std::env::var("PIL2_BLAKE3_LANES").ok().and_then(|v| v.parse().ok()))
+            .flatten(),
         min_n_bits: None,
     };
     if template == RecursiveTemplate::Compressor {
@@ -452,7 +455,10 @@ pub fn gen_recursive_setup(
     };
 
     // Budgets are affine in k, so the largest k that fits also fills the domain.
-    let lanes = pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES;
+    let lanes = std::env::var("PIL2_BLAKE3_LANES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES);
     let fit = (template != RecursiveTemplate::Compressor)
         .then(|| recursion_batch_fit(config.hash, domain_bits, lanes, config.stark_info))
         .flatten();

@@ -1,10 +1,11 @@
 use crate::{DotAcc, Field, Goldilocks};
 use core::array;
+use alloc::vec::Vec;
 use core::fmt::{Display, Formatter, Result};
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Index, IndexMut, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CubicExtensionField<F: Display> {
     pub value: [F; 3],
 }
@@ -33,6 +34,15 @@ impl<F: Display> Display for CubicExtensionField<F> {
 }
 
 impl<F: Field> CubicExtensionField<F> {
+    pub const ZERO: Self = Self { value: [F::ZERO, F::ZERO, F::ZERO] };
+    pub const ONE: Self = Self { value: [F::ONE, F::ZERO, F::ZERO] };
+    pub const TWO: Self = Self { value: [F::TWO, F::ZERO, F::ZERO] };
+    pub const NEG_ONE: Self = Self { value: [F::NEG_ONE, F::ZERO, F::ZERO] };
+
+    pub fn double(&self) -> Self {
+        *self + *self
+    }
+
     pub fn zero() -> Self {
         Self { value: field_to_array(F::ZERO) }
     }
@@ -77,6 +87,14 @@ impl<F: Field> CubicExtensionField<F> {
 
     pub fn inverse(&self) -> Self {
         Self { value: cubic_inv(&self.value) }
+    }
+
+    pub fn from_base(x: F) -> Self {
+        Self { value: [x, F::ZERO, F::ZERO] }
+    }
+
+    pub fn from_base_batch(arr: &[F]) -> Vec<Self> {
+        arr.iter().map(|&x| Self::from_base(x)).collect()
     }
 
     pub fn from_array(arr: &[F]) -> Self {

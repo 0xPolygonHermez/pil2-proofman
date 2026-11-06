@@ -192,6 +192,15 @@ struct StatsArgs {
     /// Lanes the blake3 recursion is built at; only affects needsCompressor.
     #[arg(long)]
     blake3_lanes: Option<usize>,
+
+    /// Report the multilinear prover's view (committed columns, zerocheck,
+    /// LogUp-GKR bus, estimated proof size and prover memory)
+    #[arg(long)]
+    multilinear: bool,
+
+    /// With --proving-key: also price every circuit under STIR, plain and stacked by opening set
+    #[arg(long)]
+    stack_stir: bool,
 }
 
 #[derive(Parser)]
@@ -568,6 +577,8 @@ fn main() -> anyhow::Result<()> {
                 blake3_lanes: args
                     .blake3_lanes
                     .unwrap_or(pil2_stark_recurser::plonk2pil::setups::blake3::DEFAULT_LANES),
+                multilinear: args.multilinear,
+                stack_stir: args.stack_stir,
             };
             // Expression trees in large AIRs (e.g. ZisK) can be thousands of levels deep,
             // which overflows the default 8 MB main-thread stack. Run on a thread with the

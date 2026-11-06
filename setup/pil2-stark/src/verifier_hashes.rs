@@ -65,6 +65,9 @@ pub struct VerifierGeometry {
     pub stage_air_values: Vec<u64>,
     /// Coefficients of the final polynomial FRI sends in clear, each a field-extension element.
     pub final_pol_size: u64,
+    /// Extra height of each committed tree (stages, const, customs) over `n_bits_ext`; empty = 0.
+    /// Non-zero only for stacked commitments.
+    pub tree_extra_bits: Vec<u64>,
 }
 
 /// One STIR round's tree geometry, straight off the solved schedule.
@@ -212,28 +215,23 @@ impl TranscriptSim {
     }
 }
 
-/// Build the geometry from what the stats pipeline already has. Everything family-dependent
-/// reaches it through `stark_struct` (the arity, and through it the FRI query count).
-pub fn geometry_for_family(
+/// The low-degree test's solved geometry: (queries, grinding bits, FRI step sizes, STIR rounds,
+/// final polynomial size), from the same security solver the setup uses.
+pub fn ldt_geometry(
     stark_struct: &crate::types::stark_struct::StarkStruct,
-    setup: &crate::types::pilout_info::SetupResult,
-    n_evals: usize,
     fri_batch_size: usize,
-) -> VerifierGeometry {
+) -> (u64, u64, Vec<u64>, Vec<StirRoundGeometry>, u64) {
     use crate::types::security;
     use crate::types::security::pcs::{Batching, Fri, FriConfig};
     use crate::types::security::regimes::DecodingRegime;
-
     use crate::types::stark_struct::LowDegreeTest;
 
-    // The arity the setup actually builds: only blake3 has it forced, so any other family can be
-    // configured away from the family default and the whole geometry moves with it.
     let arity = stark_struct.merkle_tree_arity as u64;
     let log_folding_factors = crate::output::stark_info::compute_log_folding_factors(stark_struct);
 
     // Same configuration `build_starkinfo_output` uses: the query counts and grinding bits come
     // out of the security analysis, not out of the settings.
-    let (n_queries, pow_bits, step_n_bits, stir_rounds, final_pol_size) = match &stark_struct.low_degree_test {
+    match &stark_struct.low_degree_test {
         LowDegreeTest::Fri(fri_struct) => {
             let fri = Fri::new(FriConfig {
                 field_size: security::goldilocks_safe_extension_field_size(),
@@ -295,7 +293,21 @@ pub fn geometry_for_family(
                 1u64 << stir_struct.log_degrees.last().copied().unwrap_or(0),
             )
         }
-    };
+    }
+}
+
+/// Build the geometry from what the stats pipeline already has. Everything family-dependent
+/// reaches it through `stark_struct` (the arity, and through it the FRI query count).
+pub fn geometry_for_family(
+    stark_struct: &crate::types::stark_struct::StarkStruct,
+    setup: &crate::types::pilout_info::SetupResult,
+    n_evals: usize,
+    fri_batch_size: usize,
+) -> VerifierGeometry {
+    // The arity the setup actually builds: only blake3 has it forced, so any other family can be
+    // configured away from the family default and the whole geometry moves with it.
+    let arity = stark_struct.merkle_tree_arity as u64;
+    let (n_queries, pow_bits, step_n_bits, stir_rounds, final_pol_size) = ldt_geometry(stark_struct, fri_batch_size);
 
     let width = |section: &str| setup.map_sections_n.get(section).copied().unwrap_or(0) as u64;
 
@@ -322,6 +334,7 @@ pub fn geometry_for_family(
             .map(|s| setup.air_values_map.iter().filter(|v| v.stage == Some(s)).count() as u64)
             .collect(),
         final_pol_size,
+        tree_extra_bits: vec![],
     }
 }
 
@@ -386,6 +399,7 @@ pub fn geometry_from_stark_info(si: &proofman_common::StarkInfo) -> VerifierGeom
         stage_challenges: per_stage(&si.challenges_map),
         stage_air_values: per_stage(&si.airvalues_map),
         final_pol_size,
+        tree_extra_bits: vec![],
     }
 }
 
@@ -468,6 +482,7 @@ pub fn geometry_from_starkinfo(si: &serde_json::Value) -> anyhow::Result<Verifie
         stage_challenges: (2..=n_stages + 1).map(|s| count_stage("challengesMap", s)).collect(),
         stage_air_values: (2..=n_stages + 1).map(|s| count_stage("airValuesMap", s)).collect(),
         final_pol_size,
+        tree_extra_bits: vec![],
     })
 }
 
@@ -483,12 +498,14 @@ pub fn verifier_hashes(geom: &VerifierGeometry, family: &str) -> HashCounts {
         *merkle += root_reduction_hashes(geom.arity, geom.last_level_verification, n_bits_height);
     };
 
-    for &width in &geom.stage_widths {
-        open(width, geom.n_bits_ext, &mut counts.leaf, &mut counts.merkle);
+    let height = |tree: usize| geom.n_bits_ext + geom.tree_extra_bits.get(tree).copied().unwrap_or(0);
+    let n_stages = geom.stage_widths.len();
+    for (i, &width) in geom.stage_widths.iter().enumerate() {
+        open(width, height(i), &mut counts.leaf, &mut counts.merkle);
     }
-    open(geom.n_constants, geom.n_bits_ext, &mut counts.leaf, &mut counts.merkle);
-    for &width in &geom.custom_commit_widths {
-        open(width, geom.n_bits_ext, &mut counts.leaf, &mut counts.merkle);
+    open(geom.n_constants, height(n_stages), &mut counts.leaf, &mut counts.merkle);
+    for (i, &width) in geom.custom_commit_widths.iter().enumerate() {
+        open(width, height(n_stages + 1 + i), &mut counts.leaf, &mut counts.merkle);
     }
 
     if geom.stir_rounds.is_empty() {
@@ -619,6 +636,28 @@ fn transcript_hashes(geom: &VerifierGeometry, family: &str) -> u64 {
     }
 
     t.hashes + query_hashes
+}
+
+/// Grouped stacking: every tree commits one stacked polynomial per group of columns sharing the
+/// same opening set (`tree_groups[t]` = group sizes in base columns, trees ordered stages, const,
+/// customs). A query opens one value per group; a tree grows by log2(its largest group) levels;
+/// `ldt` is the low-degree test solved at the stacked degree. Groups of different heights are
+/// counted as one leaf (an MMCS injects them at their own level: a few compressions more).
+pub fn stacked_by_opening(base: &VerifierGeometry, tree_groups: &[Vec<u64>], ldt: &VerifierGeometry) -> VerifierGeometry {
+    let n_stages = base.stage_widths.len();
+    assert_eq!(tree_groups.len(), n_stages + 1 + base.custom_commit_widths.len(), "one group list per tree");
+    let lc = |g: &Vec<u64>| g.iter().map(|&m| m.next_power_of_two().trailing_zeros() as u64).max().unwrap_or(0);
+    let mut g = base.clone();
+    g.stage_widths = tree_groups[..n_stages].iter().map(|t| t.len() as u64).collect();
+    g.n_constants = tree_groups[n_stages].len() as u64;
+    g.custom_commit_widths = tree_groups[n_stages + 1..].iter().map(|t| t.len() as u64).collect();
+    g.tree_extra_bits = tree_groups.iter().map(lc).collect();
+    g.n_queries = ldt.n_queries;
+    g.pow_bits = ldt.pow_bits;
+    g.step_n_bits = ldt.step_n_bits.clone();
+    g.stir_rounds = ldt.stir_rounds.clone();
+    g.final_pol_size = ldt.final_pol_size;
+    g
 }
 
 /// Blocks the recursive1 verifying this air needs, against what the pinned recursion holds: one
@@ -841,6 +880,7 @@ mod tests {
             stage_challenges: vec![2, 1],
             stage_air_values: vec![0, 0],
             final_pol_size: 1 << 5,
+            tree_extra_bits: vec![],
         };
         let counts = verifier_hashes(&geom, "blake3");
 
@@ -881,6 +921,7 @@ mod tests {
             stage_challenges: vec![2, 1],
             stage_air_values: vec![0, 0],
             final_pol_size: 1 << 5,
+            tree_extra_bits: vec![],
         };
 
         for family in ["Poseidon1", "Poseidon2"] {

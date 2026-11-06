@@ -1827,14 +1827,45 @@ where
 
         self.register_witness(&mut *witness_lib, library)?;
 
-        self._verify_proof_constraints(debug_info)
+        self._verify_proof_constraints(debug_info, None)
     }
 
     pub fn verify_proof_constraints_from_lib(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
-        self._verify_proof_constraints(debug_info)
+        self._verify_proof_constraints(debug_info, None)
     }
 
-    fn _verify_proof_constraints(&self, debug_info: &DebugInfo) -> ProofmanResult<()> {
+    /// Multilinear proofs over the verify-constraints witness flow (CPU): see [`crate::MlRun`].
+    pub fn generate_multilinear_proof(
+        &self,
+        witness_lib_path: PathBuf,
+        public_inputs_path: Option<PathBuf>,
+        verify_proofs: bool,
+        verbose_mode: VerboseMode,
+    ) -> ProofmanResult<Vec<(String, u32, f64, f64, usize)>> {
+        if !witness_lib_path.exists() {
+            return Err(ProofmanError::InvalidParameters(format!(
+                "Witness computation dynamic library not found at path: {witness_lib_path:?}"
+            )));
+        }
+        let library = unsafe { Library::new(&witness_lib_path)? };
+        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+        let mut witness_lib = witness_lib(verbose_mode, Some(self.get_rank_info()))?;
+        self.wcm.set_public_inputs_path(public_inputs_path);
+        self.register_witness(&mut *witness_lib, library)?;
+
+        let run = Arc::new(crate::MlRun::new(verify_proofs));
+        timer_start_info!(GENERATING_MULTILINEAR_PROOFS);
+        self._verify_proof_constraints(&DebugInfo::default(), Some(run.clone()))?;
+        timer_stop_and_log_info!(GENERATING_MULTILINEAR_PROOFS);
+        let stats = std::mem::take(&mut *run.stats.lock().unwrap());
+        Ok(stats)
+    }
+
+    fn _verify_proof_constraints(
+        &self,
+        debug_info: &DebugInfo,
+        ml: Option<Arc<crate::MlRun<F>>>,
+    ) -> ProofmanResult<()> {
         timer_start_info!(VERIFYING_PROOF_CONSTRAINTS);
 
         let _computing = self.acquire_computing("_verify_proof_constraints");
@@ -1888,6 +1919,7 @@ where
             // process-wide `const_scratch` so its single-writer check spans every writer.
             let aux_trace_arc = self.aux_trace.clone();
             let const_scratch = self.const_scratch.clone();
+            let ml = ml.clone();
             let contribution_handle = std::thread::spawn(move || loop {
                 match contributions_rx_clone.recv_timeout(CONTRIB_CANCEL_POLL) {
                     Ok(instance_id) => {
@@ -1908,6 +1940,7 @@ where
                             airgroup_values_air_instances.clone(),
                             &const_scratch,
                             &aux_trace_arc,
+                            ml.as_deref(),
                         ) {
                             cancellation_info_clone.write_recover().cancel(Some(e));
                             break;
@@ -1991,6 +2024,10 @@ where
 
         self.check_cancel(true)?;
 
+        if let Some(run) = &ml {
+            run.pool.install(|| crate::ml_prove_jobs(&self.pctx, &self.sctx, run))?;
+        }
+
         self.wcm.end(debug_info)?;
 
         let check_global_constraints = !debug_info.skip_prover_instances
@@ -2066,6 +2103,7 @@ where
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
         const_scratch: &SharedScratch<F>,
         aux_trace: &Arc<Vec<F>>,
+        ml: Option<&crate::MlRun<F>>,
     ) -> ProofmanResult<()> {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id)?;
         Self::initialize_air_instance(pctx, sctx, instance_id, true, true, Some(const_scratch), Some(aux_trace))?;
@@ -2142,11 +2180,21 @@ where
             };
         }
 
-        let valid =
-            verify_constraints_proof(pctx, sctx, instance_id, debug_info.n_print_constraints as u64, reservation)?;
+        if let Some(run) = ml {
+            // Multilinear mode captures the instance instead of checking it; the reservation is
+            // released on drop.
+            drop(reservation);
+            run.pool.install(|| crate::ml_capture_instance(pctx, setup, instance_id, run)).inspect_err(|e| {
+                // The witness phase blocks on this instance's buffer, so a later report would never come.
+                tracing::error!("multilinear capture of instance {instance_id} failed: {e}")
+            })?;
+        } else {
+            let valid =
+                verify_constraints_proof(pctx, sctx, instance_id, debug_info.n_print_constraints as u64, reservation)?;
 
-        if !valid {
-            valid_constraints.fetch_and(valid, Ordering::Relaxed);
+            if !valid {
+                valid_constraints.fetch_and(valid, Ordering::Relaxed);
+            }
         }
 
         let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
