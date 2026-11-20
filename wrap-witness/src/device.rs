@@ -183,8 +183,8 @@ pub(crate) fn blocks_of(
             } else {
                 let key = if node { cell(base, A + 2)? } else { 0 };
                 if !node {
-                    for j in 0..8 {
-                        blk.cv[j] = u32_cell(base, A + 3 + j)?;
+                    for (j, cv) in blk.cv.iter_mut().enumerate() {
+                        *cv = u32_cell(base, A + 3 + j)?;
                     }
                 }
                 for t in 0..8 {

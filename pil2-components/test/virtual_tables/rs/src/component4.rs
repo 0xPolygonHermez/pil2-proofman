@@ -39,12 +39,9 @@ impl<F: PrimeField64> WitnessComponent<F> for Component4<F> {
             let id = self.std_lib.get_virtual_table_id(4)?;
 
             // Assumes
-            let t = trace[0].a.len();
             for i in 0..num_rows {
                 let val = rng.random_range(0..num_rows) as u64;
-                for j in 0..t {
-                    trace[i].a[j] = F::from_u64(val);
-                }
+                trace[i].a.fill(F::from_u64(val));
 
                 // Update the virtual table rows
                 let row = Table4::calculate_table_row(val);

@@ -315,8 +315,8 @@ impl Whir {
         // Sumcheck: kᵢ univariate polynomials per iteration, each of degree
         // < d, sent as d − 1 evaluations (Gruen 2024 §3.1: the verifier
         // recovers h(1) from the running claim h(0) + h(1)).
-        for i in 0..self.num_rounds {
-            size += (self.cfg.log_folding_factors[i] as u64 * (d - 1) * ext_bits) as f64;
+        for &log_folding_factor in &self.cfg.log_folding_factors[..self.num_rounds] {
+            size += (log_folding_factor as u64 * (d - 1) * ext_bits) as f64;
         }
 
         // Inner iterations: one root and the OOD replies each.

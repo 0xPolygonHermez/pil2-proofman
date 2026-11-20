@@ -36,7 +36,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Component2<F> {
             let id_3 = self.std_lib.get_virtual_table_id(62)?;
 
             // Assumes
-            let t = trace[0].a.len();
             for i in 0..num_rows {
                 let (val, row, id) = if i % 3 == 0 {
                     let val = rng.random_range(0..Table2_1::N);
@@ -55,9 +54,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Component2<F> {
                     (val, row, id_3)
                 };
 
-                for j in 0..t {
-                    trace[i].a[j] = F::from_u64(val);
-                }
+                trace[i].a.fill(F::from_u64(val));
 
                 // Update the virtual table rows
                 self.std_lib.inc_virtual_row_one(id, row);

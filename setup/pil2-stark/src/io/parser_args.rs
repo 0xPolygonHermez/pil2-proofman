@@ -761,8 +761,8 @@ fn push_args(
             }
             args.push(buffer_size + 4);
             let mut air_value_pos: u64 = 0;
-            for i in 0..r.id as usize {
-                air_value_pos += if stark_info.air_values_map[i].stage == 1 { 1 } else { FIELD_EXTENSION };
+            for air_value in &stark_info.air_values_map[..r.id as usize] {
+                air_value_pos += if air_value.stage == 1 { 1 } else { FIELD_EXTENSION };
             }
             args.push(air_value_pos);
             if !global {
@@ -807,15 +807,14 @@ fn push_args(
             }
             if !global {
                 let mut airgroup_value_pos: u64 = 0;
-                for i in 0..r.id as usize {
-                    airgroup_value_pos +=
-                        if stark_info.airgroup_values_map[i].stage == 1 { 1 } else { FIELD_EXTENSION };
+                for airgroup_value in &stark_info.airgroup_values_map[..r.id as usize] {
+                    airgroup_value_pos += if airgroup_value.stage == 1 { 1 } else { FIELD_EXTENSION };
                 }
                 args.push(airgroup_value_pos);
             } else if let Some(gi) = global_info {
                 let mut offset: u64 = 0;
-                for i in 0..r.airgroup_id as usize {
-                    offset += FIELD_EXTENSION * gi.agg_types[i].len() as u64;
+                for agg_types in &gi.agg_types[..r.airgroup_id as usize] {
+                    offset += FIELD_EXTENSION * agg_types.len() as u64;
                 }
                 args.push(offset + FIELD_EXTENSION * r.id);
             }

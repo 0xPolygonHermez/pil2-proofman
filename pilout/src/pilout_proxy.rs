@@ -107,8 +107,8 @@ impl PilOutProxy {
         }
 
         tracing::trace!("    Challenges: {}", self.pilout.num_challenges.len());
-        for i in 0..self.pilout.num_challenges.len() {
-            tracing::trace!("      stage {}: {}", i, self.pilout.num_challenges[i]);
+        for (i, num_challenges) in self.pilout.num_challenges.iter().enumerate() {
+            tracing::trace!("      stage {}: {}", i, num_challenges);
         }
 
         tracing::trace!(
