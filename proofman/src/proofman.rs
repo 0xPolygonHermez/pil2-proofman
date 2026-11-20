@@ -140,9 +140,8 @@ static DEBUG_CHALLENGES: LazyLock<bool> =
     LazyLock::new(|| std::env::var("PROOFMAN_DEBUG_CHALLENGES").map(|v| v == "1").unwrap_or(false));
 use csv::Writer;
 
-use tokio_util::sync::CancellationToken;
-
 use proofman_common::{ProofmanResult, ProofmanError, Setup};
+pub use proofman_common::{CancellationInfo, CancellationInfoExt};
 use proofman_verifier::VadcopFinalProof;
 use crate::{expand_compressed_proof, prune_compressed_proof};
 use crate::{
@@ -523,46 +522,6 @@ impl Drop for WitnessGuard {
         for h in handles {
             let _ = h.join();
         }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct CancellationInfo {
-    pub token: CancellationToken,
-    pub error: Option<ProofmanError>,
-}
-
-impl CancellationInfo {
-    pub fn cancel(&mut self, error: Option<ProofmanError>) {
-        self.token.cancel();
-        if self.error.is_some() {
-            return;
-        }
-        if let Some(err) = error {
-            self.error = Some(err);
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.token = CancellationToken::new();
-        self.error = None;
-    }
-}
-
-/// Poison-tolerant access to the shared cancellation hub: recovering the guard avoids a poison
-/// storm aborting teardown on every thread. Safe because `token` is atomic and `error` a plain
-/// field, so the worst a reader sees after a mid-write panic is a stale error, never UB.
-pub trait CancellationInfoExt {
-    fn read_recover(&self) -> std::sync::RwLockReadGuard<'_, CancellationInfo>;
-    fn write_recover(&self) -> std::sync::RwLockWriteGuard<'_, CancellationInfo>;
-}
-
-impl CancellationInfoExt for RwLock<CancellationInfo> {
-    fn read_recover(&self) -> std::sync::RwLockReadGuard<'_, CancellationInfo> {
-        self.read().unwrap_or_else(|e| e.into_inner())
-    }
-    fn write_recover(&self) -> std::sync::RwLockWriteGuard<'_, CancellationInfo> {
-        self.write().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -2914,6 +2873,9 @@ where
         let received_agg_proofs = Arc::new(RwLock::new((0..n_airgroups).map(|_| Vec::new()).collect::<Vec<Vec<_>>>()));
         let received_agg_proof_count = Arc::new(RwLock::new(vec![0usize; n_airgroups]));
 
+        // The one the witness components read through `ProofCtx::is_cancelled`.
+        let cancellation_info = pctx.cancellation_info();
+
         let proofman = Self {
             pctx,
             sctx,
@@ -2965,7 +2927,7 @@ where
             handle_contributions: Arc::new(Mutex::new(Vec::new())),
             outer_agg_proofs_finished: Arc::new(AtomicBool::new(true)),
             worker_contributions: Arc::new(RwLock::new(Vec::new())),
-            cancellation_info: Arc::new(RwLock::new(CancellationInfo::default())),
+            cancellation_info,
             options,
             witness_info: RwLock::new(WitnessInfo::default()),
             computing: Mutex::new(()),
