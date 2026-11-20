@@ -62,9 +62,7 @@ impl<F: PrimeField64, H: SpongeHash<F>> Transcript<F, H> {
         }
         H::hash(&mut inputs);
         self.out_cursor = H::WIDTH;
-        for i in 0..H::RATE {
-            self.pending[i] = F::ZERO;
-        }
+        self.pending.fill(F::ZERO);
         self.pending_cursor = 0;
         self.state = inputs;
         self.out = inputs;

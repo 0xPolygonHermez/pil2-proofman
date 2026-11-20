@@ -1303,13 +1303,13 @@ impl DistributionCtx {
         let mut average_partition_weight = 0.0;
         let mut max_partition_weight = 0;
         let mut min_partition_weight = u64::MAX;
-        for i in 0..self.n_partitions {
-            average_partition_weight += self.partition_weight[i] as f64;
-            if self.partition_weight[i] > max_partition_weight {
-                max_partition_weight = self.partition_weight[i];
+        for &weight in &self.partition_weight[..self.n_partitions] {
+            average_partition_weight += weight as f64;
+            if weight > max_partition_weight {
+                max_partition_weight = weight;
             }
-            if self.partition_weight[i] < min_partition_weight {
-                min_partition_weight = self.partition_weight[i];
+            if weight < min_partition_weight {
+                min_partition_weight = weight;
             }
         }
         average_partition_weight /= self.n_partitions as f64;
@@ -1323,13 +1323,13 @@ impl DistributionCtx {
         let mut max_process_weight = 0;
         let mut min_process_weight = u64::MAX;
 
-        for i in 0..self.n_processes {
-            average_process_weight += self.process_weight[i] as f64;
-            if self.process_weight[i] > max_process_weight {
-                max_process_weight = self.process_weight[i];
+        for &weight in &self.process_weight[..self.n_processes] {
+            average_process_weight += weight as f64;
+            if weight > max_process_weight {
+                max_process_weight = weight;
             }
-            if self.process_weight[i] < min_process_weight {
-                min_process_weight = self.process_weight[i];
+            if weight < min_process_weight {
+                min_process_weight = weight;
             }
         }
         average_process_weight /= self.n_processes as f64;

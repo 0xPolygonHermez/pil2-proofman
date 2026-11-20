@@ -145,8 +145,8 @@ impl Sponge {
         }
 
         self.out = (0..out_w).map(|i| format!("{sig}[{i}]")).collect();
-        for i in 0..4 {
-            self.state[i] = format!("{sig}[{i}]");
+        for (i, state) in self.state.iter_mut().enumerate() {
+            *state = format!("{sig}[{i}]");
         }
 
         self.h_cnt += 1;

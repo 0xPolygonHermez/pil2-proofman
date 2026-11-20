@@ -578,11 +578,7 @@ pub fn needs_const_pols_gpu_regeneration<F: PrimeField64>(setup: &Setup<F>) -> P
     }
 
     let source = setup.setup_path.display().to_string() + ".const";
-    if const_gpu_older_than_source(Path::new(&source), Path::new(&setup.const_pols_path)) {
-        return Ok(true);
-    }
-
-    Ok(false)
+    Ok(const_gpu_older_than_source(Path::new(&source), Path::new(&setup.const_pols_path)))
 }
 
 pub fn check_const_pols_gpu<F: PrimeField64>(setup: &Setup<F>) -> ProofmanResult<()> {
