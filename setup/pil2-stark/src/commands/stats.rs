@@ -7,6 +7,7 @@ use anyhow::Result;
 use pil2_pilout::pilout as pb;
 use prost::Message;
 
+use crate::commands::common::push_im_pols_stats;
 use crate::pil::prepare::PrepareOptions;
 use crate::types::stark_struct::{generate_basic_stark_struct, StarkStructsConfig};
 
@@ -148,19 +149,7 @@ pub fn run_stats(opts: &StatsOptions) -> Result<()> {
             }
 
             let (base_field, extended_field) = &pil_result.im_pols_info;
-            if !base_field.is_empty() {
-                stats_lines.push("Intermediate polynomials baseField:".to_string());
-                for pol in base_field {
-                    stats_lines.push(format!("    {}", pol));
-                }
-            }
-            if !extended_field.is_empty() {
-                stats_lines.push("Intermediate polynomials extendedField:".to_string());
-                for pol in extended_field {
-                    stats_lines.push(format!("    {}", pol));
-                }
-            }
-            stats_lines.push(String::new());
+            push_im_pols_stats(&mut stats_lines, base_field, extended_field);
         }
     }
 

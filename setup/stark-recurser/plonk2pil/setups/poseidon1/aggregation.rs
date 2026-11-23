@@ -6,7 +6,7 @@
 use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
 use crate::plonk2pil::r1cs::types::{GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
 use crate::plonk2pil::utils::{
-    bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, log2, public_rows,
+    bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, log2, public_rows, rand_hex,
 };
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use super::{gen_pil_str, PilTemplateParams};
@@ -20,11 +20,6 @@ const POSEIDON_ROWS: usize = 5;
 const CMUL_PER_ROW: usize = 2;
 const TREESEL_ROWS: usize = 2; // TreeSelector8 now spans 2 rows (a[0..14] + a[0..14]')
 const POSEIDON_WIDTH: usize = 16;
-
-fn rand_hex() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    format!("{:x}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64)
-}
 
 type PR = (usize, usize, usize); // (row, n_used, max_used)
 

@@ -1,3 +1,4 @@
+pub(crate) mod common;
 pub mod compile_pil;
 pub mod gen_exps;
 pub mod rebuild_witness;

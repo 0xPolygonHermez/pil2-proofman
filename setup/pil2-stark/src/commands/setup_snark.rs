@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use crate::output::witness_gen::WitnessTracker;
 use crate::proving_key::snark_setup::{gen_snark_setup, FinalSnark, SnarkSetupConfig};
+use crate::commands::common::parse_const_root;
 use crate::commands::recursive_setup::{resolve_circom_exec, resolve_path_env};
 use crate::commands::setup_recursivef::{
     run_setup_recursivef, RecursivefGeometry, SetupRecursivefOptions, RECURSIVEF_LANES,
@@ -191,20 +192,6 @@ fn set_up_recursivef_if_missing(opts: &SetupSnarkOptions, hash: &str) -> Result<
         exps_arch: opts.exps_arch.clone(),
     })
     .with_context(|| format!("setup-recursivef's step on the {hash} key"))
-}
-
-/// Parse a vadcop_final.verkey.json array ([[u64;4]]) into [u64;4].
-pub(crate) fn parse_const_root(json: &Value) -> Result<[u64; 4]> {
-    let arr = json.as_array().ok_or_else(|| anyhow::anyhow!("verkey.json is not an array"))?;
-    if arr.len() < 4 {
-        bail!("verkey.json has {} elements, expected 4", arr.len());
-    }
-    let parse_one = |v: &Value, idx: usize| -> Result<u64> {
-        v.as_u64()
-            .or_else(|| v.as_str()?.parse::<u64>().ok())
-            .ok_or_else(|| anyhow::anyhow!("verkey.json element {} is not a valid u64: {}", idx, v))
-    };
-    Ok([parse_one(&arr[0], 0)?, parse_one(&arr[1], 1)?, parse_one(&arr[2], 2)?, parse_one(&arr[3], 3)?])
 }
 
 #[cfg(test)]

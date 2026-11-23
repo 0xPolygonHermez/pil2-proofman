@@ -38,16 +38,13 @@ use crate::plonk2pil::r1cs::to_plonk::{
 use crate::plonk2pil::field::PlonkField;
 use crate::plonk2pil::r1cs::to_plonk::CustomGatesInfo;
 use crate::plonk2pil::r1cs::types::{CustomGateUse, FixedPol, GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
-use crate::plonk2pil::utils::{bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, public_rows};
+use crate::plonk2pil::utils::{
+    bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, public_rows, rand_hex,
+};
 use proofman_common::hash_family::GateRole;
 use num_bigint::BigUint;
 use proofman_fields::{Field, Goldilocks, PrimeField, QuotientMap};
 use std::collections::{BTreeMap, HashMap};
-
-fn rand_hex() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    format!("{:x}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64)
-}
 
 /// Plonk gates on one row of the `a[0..17]` band: six, at three wires each.
 pub const PLONK_GATES_PER_ROW: usize = 6;
