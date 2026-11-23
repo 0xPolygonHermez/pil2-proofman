@@ -14,7 +14,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
 use crate::commands::recursive_setup::{resolve_circom_exec, resolve_path_env};
-use crate::commands::setup_snark::parse_const_root;
+use crate::commands::common::parse_const_root;
 use crate::output::witness_gen::WitnessTracker;
 use crate::proving_key::snark_setup::{gen_recursivef_setup, RecursivefSetupConfig};
 use crate::types::stark_struct::StarkSettings;

@@ -11,6 +11,7 @@ use pil2_pilout::pilout::{self as pb};
 use prost::Message;
 use crate::output::global_info::{build_global_info_json, write_global_constraints, write_global_info_json};
 use crate::pil::prepare::PrepareOptions;
+use crate::commands::common::push_im_pols_stats;
 use crate::commands::recursive_setup::run_recursive_setup;
 use crate::types::stark_struct::{generate_basic_stark_struct, StarkStructsConfig};
 use crate::output::stark_info::{build_starkinfo_output, collect_opening_points, solve_low_degree_test};
@@ -364,19 +365,7 @@ pub fn run_setup(opts: &SetupOptions) -> Result<()> {
         for (_, _, airgroup_name, air_name, summary, (base_field, extended_field)) in &stats_entries {
             stats_lines.push(format!("Airgroup: {} Air: {}", airgroup_name, air_name));
             stats_lines.push(format!("Summary: {}", summary));
-            if !base_field.is_empty() {
-                stats_lines.push("Intermediate polynomials baseField:".to_string());
-                for pol in base_field {
-                    stats_lines.push(format!("    {}", pol));
-                }
-            }
-            if !extended_field.is_empty() {
-                stats_lines.push("Intermediate polynomials extendedField:".to_string());
-                for pol in extended_field {
-                    stats_lines.push(format!("    {}", pol));
-                }
-            }
-            stats_lines.push(String::new());
+            push_im_pols_stats(&mut stats_lines, base_field, extended_field);
         }
 
         fs::write(stats_path, stats_lines.join("\n"))?;

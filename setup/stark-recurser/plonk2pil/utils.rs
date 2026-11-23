@@ -200,6 +200,12 @@ impl PlonkBand {
     }
 }
 
+/// Time-derived hex suffix for scratch file names.
+pub fn rand_hex() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    format!("{:x}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{bind_public_signals, fft4_constants, public_rows};

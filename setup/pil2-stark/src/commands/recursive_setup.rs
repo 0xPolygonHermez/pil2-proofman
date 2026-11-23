@@ -9,6 +9,7 @@ use anyhow::{Context, Result};
 use pil2_pilout::pilout as pb;
 
 use crate::proving_key::recursive::{RecursiveSetupConfig, RecursiveTemplate};
+use crate::commands::common::parse_const_root;
 use crate::commands::setup::SetupOptions;
 use crate::types::stark_struct::StarkStructsConfig;
 use crate::output::witness_gen::WitnessTracker;
@@ -551,23 +552,9 @@ pub(crate) fn run_recursive_setup(
 
 /// Parse a verkey.json file and return exactly 4 u64 limb strings.
 pub(crate) fn parse_verkey_json(path: &Path) -> Result<[String; 4]> {
-    if !path.exists() {
-        anyhow::bail!("verkey.json not found: {:?}", path);
-    }
     let content = fs::read_to_string(path).with_context(|| format!("Failed to read verkey file: {:?}", path))?;
-    let vk: Vec<serde_json::Value> =
-        serde_json::from_str(&content).with_context(|| format!("Failed to parse verkey JSON: {:?}", path))?;
-    if vk.len() != 4 {
-        anyhow::bail!("verkey.json has {} entries, expected exactly 4: {:?}", vk.len(), path);
-    }
-    let mut limbs = [String::new(), String::new(), String::new(), String::new()];
-    for i in 0..4 {
-        limbs[i] = vk[i]
-            .as_u64()
-            .ok_or_else(|| anyhow::anyhow!("verkey.json limb {} is not a valid u64: {:?} in {:?}", i, vk[i], path))?
-            .to_string();
-    }
-    Ok(limbs)
+    let json = serde_json::from_str(&content).with_context(|| format!("Failed to parse verkey JSON: {:?}", path))?;
+    Ok(parse_const_root(&json)?.map(|limb| limb.to_string()))
 }
 
 /// Update (or insert) `"hasCompressor": true` for `air_name` in a starkstructs JSON file.

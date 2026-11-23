@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
+use crate::commands::common::parse_const_root;
 use crate::commands::recursive_setup::{resolve_circom_exec, resolve_path_env};
 use crate::output::witness_gen::WitnessTracker;
 use crate::proving_key::compressed_final::{gen_compressed_final_setup, CompressedFinalConfig};
@@ -107,17 +108,4 @@ pub fn run_setup_compressed_final(opts: &SetupCompressedFinalOptions) -> Result<
     witness_tracker.await_all()?;
     tracing::info!("Compressed final setup complete");
     Ok(())
-}
-
-fn parse_const_root(json: &Value) -> Result<[u64; 4]> {
-    let arr = json.as_array().ok_or_else(|| anyhow::anyhow!("verkey.json is not an array"))?;
-    if arr.len() < 4 {
-        bail!("verkey.json has {} elements, expected 4", arr.len());
-    }
-    let parse_one = |v: &Value, idx: usize| -> Result<u64> {
-        v.as_u64()
-            .or_else(|| v.as_str()?.parse::<u64>().ok())
-            .ok_or_else(|| anyhow::anyhow!("verkey.json element {} is not a valid u64: {}", idx, v))
-    };
-    Ok([parse_one(&arr[0], 0)?, parse_one(&arr[1], 1)?, parse_one(&arr[2], 2)?, parse_one(&arr[3], 3)?])
 }

@@ -6,7 +6,7 @@
 use crate::plonk2pil::r1cs::to_plonk::{ckey, filter_fft4_gate_uses, filter_gate_uses, get_custom_gates_info};
 use crate::plonk2pil::r1cs::types::{GateBand, GateBandKind, PlonkOptions, R1csFile, SetupResult};
 use crate::plonk2pil::utils::{
-    bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, log2, public_rows, PlonkBand,
+    bind_public_signals, build_fixed_pols, build_s_polynomials, fft4_constants, log2, public_rows, rand_hex, PlonkBand,
 };
 use crate::plonk2pil::merge_copies::{apply_remap_to_s_map, r1cs2plonk_merged, verify_merge_soundness};
 use super::{gen_pil_str, PilTemplateParams};
@@ -28,11 +28,6 @@ const G_PR: u16 = 0x33F; // gates 0..5 + 8,9 — PR row (a[18..23] = overflow an
 const G_Q1: u16 = 0x3C0; // gates 6..9 — INIT / FINAL / TreeSelector4 rows
 const G_EVPOL: u16 = 0x380; // gates 7..9 — EvPol4 rows (gate 6 = resEVPOL a[18..20])
 const G_SELVAL: u16 = 0x300; // gates 8,9 — SelectValueArity4 rows (a[0..21] used)
-
-fn rand_hex() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    format!("{:x}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64)
-}
 
 // (row, n_used, max_used)
 type PR = (usize, usize, usize);
