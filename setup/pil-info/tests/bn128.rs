@@ -14,14 +14,12 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use num_bigint::BigUint;
-use pil2_pilout::pilout::{self as pb, constraint, expression, operand, SymbolType};
+use pil2_pilout::pilout as pb;
 use pil2_pilout::pilout_proxy::PilOutProxy;
 use pil_info::output::expressions_info::build_verifier_info_json;
 use pil_info::types::output::CodeEntry;
 use pil_info::{DegreePolicy, PilInfoCfg, PilInfoResult};
 
-const R: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
 const R_MINUS_ONE: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495616";
 const R_MINUS_TWO: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495615";
 /// 2^200 + 7.
@@ -29,104 +27,9 @@ const WIDE: &str = "160693804425899027554196209234116260252220299378279283530138
 /// Goldilocks p − 1: what a `neg` became before the passes were parameterised.
 const GOLDILOCKS_NEG_ONE: &str = "18446744069414584320";
 
-// ---------------------------------------------------------------------------
-// Pilouts built in code
-// ---------------------------------------------------------------------------
+mod common;
 
-fn big_be(decimal: &str) -> Vec<u8> {
-    BigUint::parse_bytes(decimal.as_bytes(), 10).expect("a decimal constant").to_bytes_be()
-}
-
-fn op(operand: operand::Operand) -> Option<pb::Operand> {
-    Some(pb::Operand { operand: Some(operand) })
-}
-
-fn witness(col_idx: u32, row_offset: i32) -> Option<pb::Operand> {
-    op(operand::Operand::WitnessCol(operand::WitnessCol { stage: 1, col_idx, row_offset }))
-}
-
-fn fixed(idx: u32) -> Option<pb::Operand> {
-    op(operand::Operand::FixedCol(operand::FixedCol { idx, row_offset: 0 }))
-}
-
-fn constant(decimal: &str) -> Option<pb::Operand> {
-    op(operand::Operand::Constant(operand::Constant { value: big_be(decimal) }))
-}
-
-fn exp(idx: u32) -> Option<pb::Operand> {
-    op(operand::Operand::Expression(operand::Expression { idx }))
-}
-
-fn add(lhs: Option<pb::Operand>, rhs: Option<pb::Operand>) -> pb::Expression {
-    pb::Expression { operation: Some(expression::Operation::Add(expression::Add { lhs, rhs })) }
-}
-
-fn sub(lhs: Option<pb::Operand>, rhs: Option<pb::Operand>) -> pb::Expression {
-    pb::Expression { operation: Some(expression::Operation::Sub(expression::Sub { lhs, rhs })) }
-}
-
-fn mul(lhs: Option<pb::Operand>, rhs: Option<pb::Operand>) -> pb::Expression {
-    pb::Expression { operation: Some(expression::Operation::Mul(expression::Mul { lhs, rhs })) }
-}
-
-fn neg(value: Option<pb::Operand>) -> pb::Expression {
-    pb::Expression { operation: Some(expression::Operation::Neg(expression::Neg { value })) }
-}
-
-fn every_row(idx: u32) -> pb::Constraint {
-    pb::Constraint {
-        constraint: Some(constraint::Constraint::EveryRow(constraint::EveryRow {
-            expression_idx: Some(operand::Expression { idx }),
-            debug_line: Some(format!("constraint on expression {idx}")),
-        })),
-    }
-}
-
-fn column_symbol(name: &str, kind: SymbolType, stage: u32, id: u32) -> pb::Symbol {
-    pb::Symbol {
-        name: name.to_string(),
-        air_group_id: Some(0),
-        air_id: Some(0),
-        r#type: kind as i32,
-        id,
-        stage: Some(stage),
-        ..Default::default()
-    }
-}
-
-/// One BN128 air of 16 rows with one stage (`numChallenges = [0]`), as pil2com emits it.
-fn pilout(
-    witness_names: &[&str],
-    fixed_names: &[&str],
-    expressions: Vec<pb::Expression>,
-    constraints: Vec<pb::Constraint>,
-) -> pb::PilOut {
-    let mut symbols: Vec<pb::Symbol> = fixed_names
-        .iter()
-        .enumerate()
-        .map(|(i, name)| column_symbol(name, SymbolType::FixedCol, 0, i as u32))
-        .collect();
-    symbols.extend(
-        witness_names.iter().enumerate().map(|(i, name)| column_symbol(name, SymbolType::WitnessCol, 1, i as u32)),
-    );
-    let air = pb::Air {
-        name: Some("Synthetic".to_string()),
-        num_rows: Some(16),
-        fixed_cols: fixed_names.iter().map(|_| pb::FixedCol { values: Vec::new() }).collect(),
-        stage_widths: vec![witness_names.len() as u32],
-        expressions,
-        constraints,
-        ..Default::default()
-    };
-    pb::PilOut {
-        name: Some("synthetic".to_string()),
-        base_field: big_be(R),
-        air_groups: vec![pb::AirGroup { name: Some("Synthetic".to_string()), airs: vec![air], ..Default::default() }],
-        num_challenges: vec![0],
-        symbols,
-        ..Default::default()
-    }
-}
+use common::*;
 
 /// Wide constants and negations: `L1·(a − (2^200 + 7))`, `L1·(b − (r − 2))`, `(−a)·b + b'` and
 /// `−(a'·a) + b`.

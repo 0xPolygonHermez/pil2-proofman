@@ -1,1 +1,201 @@
 //! Typed Expr, ConstraintSystem, the only traversal and degree.
+
+use std::collections::BTreeMap;
+
+use num_bigint::BigUint;
+use pil2_pilout::pilout as pb;
+
+use crate::cfg::{FieldCfg, Opening};
+
+/// Index into the pilout expression table (input-determined, never an arena push order).
+pub type ExprId = u32;
+/// A field element, reduced mod the field's modulus.
+pub type Fe = BigUint;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ColType {
+    Witness,
+    Fixed,
+    Custom,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Expr {
+    Add(Box<Expr>, Box<Expr>),
+    Sub(Box<Expr>, Box<Expr>),
+    Mul(Box<Expr>, Box<Expr>),
+    Neg(Box<Expr>),
+    Const(BigUint),
+    /// `id` is the stage-offset column id (witness/custom) or the fixed index; `commit_id` is set for custom.
+    Col {
+        col: ColType,
+        commit_id: Option<u32>,
+        id: u32,
+        offset: i64,
+    },
+    Challenge {
+        stage: u32,
+        stage_id: u32,
+    },
+    Public(u32),
+    ProofValue(u32),
+    AirValue(u32),
+    /// `airgroup` is None in an air's expressions (its own airgroup) and set in global ones.
+    AirgroupValue {
+        airgroup: Option<u32>,
+        id: u32,
+    },
+    /// Named sub-expression of the pilout; resolved by `im::substitute`.
+    Ref(ExprId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Boundary {
+    EveryRow,
+    FirstRow,
+    LastRow,
+    EveryFrame { min: u32, max: u32 },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Constraint {
+    pub e: Expr,
+    pub boundary: Boundary,
+    pub label: String,
+}
+
+/// A column in pilout order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Column {
+    pub name: String,
+    pub stage: u32,
+    pub dim: u32,
+    pub id: u32,
+}
+
+/// A pilout hint, passed through untyped until a task needs its fields.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hint {
+    pub name: String,
+    pub fields: Vec<pb::HintField>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConstraintSystem {
+    pub field: FieldCfg,
+    pub opening: Opening,
+    pub n_stages: u32,
+    pub n_rows_bits: u32,
+    pub exprs: Vec<Expr>,
+    pub constraints: Vec<Constraint>,
+    pub witness: Vec<Column>,
+    pub fixed: Vec<Column>,
+    pub custom: Vec<Vec<Column>>,
+    pub challenges: Vec<(u32, u32, String)>,
+    pub publics: Vec<String>,
+    pub proof_values: Vec<(u32, String)>,
+    pub air_values: Vec<(u32, String)>,
+    pub airgroup_values: Vec<(u32, String)>,
+    pub hints: Vec<Hint>,
+}
+
+/// Values for `eval_expr`; a missing entry reads as 0.
+#[derive(Clone, Debug, Default)]
+pub struct Env {
+    pub cols: BTreeMap<(ColType, Option<u32>, u32, i64), Fe>,
+    pub challenges: BTreeMap<(u32, u32), Fe>,
+    pub publics: BTreeMap<u32, Fe>,
+    pub proof_values: BTreeMap<u32, Fe>,
+    pub air_values: BTreeMap<u32, Fe>,
+    pub airgroup_values: BTreeMap<(Option<u32>, u32), Fe>,
+}
+
+/// THE degree function: columns 1, constants/challenges/values 0, `Ref` = degree of its target.
+pub fn degree(cs: &ConstraintSystem, e: &Expr) -> u32 {
+    degree_in(cs, e, &mut BTreeMap::new())
+}
+
+fn degree_in(cs: &ConstraintSystem, e: &Expr, memo: &mut BTreeMap<ExprId, u32>) -> u32 {
+    match e {
+        Expr::Add(a, b) | Expr::Sub(a, b) => degree_in(cs, a, memo).max(degree_in(cs, b, memo)),
+        Expr::Mul(a, b) => degree_in(cs, a, memo).saturating_add(degree_in(cs, b, memo)),
+        Expr::Neg(a) => degree_in(cs, a, memo),
+        Expr::Col { .. } => 1,
+        Expr::Const(_)
+        | Expr::Challenge { .. }
+        | Expr::Public(_)
+        | Expr::ProofValue(_)
+        | Expr::AirValue(_)
+        | Expr::AirgroupValue { .. } => 0,
+        Expr::Ref(id) => {
+            if let Some(d) = memo.get(id) {
+                return *d;
+            }
+            memo.insert(*id, 0); // a cycle (rejected at ingestion) reads as 0 rather than looping
+            let d = cs.exprs.get(*id as usize).map_or(0, |t| degree_in(cs, t, memo));
+            memo.insert(*id, d);
+            d
+        }
+    }
+}
+
+/// THE traversal: pre-order; `f` returning `Some` replaces the node (its result is not revisited).
+pub fn map_expr(e: &Expr, f: &mut impl FnMut(&Expr) -> Option<Expr>) -> Expr {
+    if let Some(r) = f(e) {
+        return r;
+    }
+    match e {
+        Expr::Add(a, b) => Expr::Add(Box::new(map_expr(a, f)), Box::new(map_expr(b, f))),
+        Expr::Sub(a, b) => Expr::Sub(Box::new(map_expr(a, f)), Box::new(map_expr(b, f))),
+        Expr::Mul(a, b) => Expr::Mul(Box::new(map_expr(a, f)), Box::new(map_expr(b, f))),
+        Expr::Neg(a) => Expr::Neg(Box::new(map_expr(a, f))),
+        leaf => leaf.clone(),
+    }
+}
+
+/// Pre-order read-only walk over every node.
+pub fn visit(e: &Expr, f: &mut impl FnMut(&Expr)) {
+    f(e);
+    match e {
+        Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => {
+            visit(a, f);
+            visit(b, f);
+        }
+        Expr::Neg(a) => visit(a, f),
+        _ => {}
+    }
+}
+
+/// Reference evaluator over the field (tests only); a cyclic `Ref` reads as 0.
+pub fn eval_expr(cs: &ConstraintSystem, e: &Expr, env: &Env) -> Fe {
+    eval_in(cs, e, env, &mut BTreeMap::new())
+}
+
+fn eval_in(cs: &ConstraintSystem, e: &Expr, env: &Env, memo: &mut BTreeMap<ExprId, Fe>) -> Fe {
+    let p = cs.field.modulus();
+    let get = |m: &BTreeMap<u32, Fe>, k: &u32| m.get(k).cloned().unwrap_or_default();
+    match e {
+        Expr::Add(a, b) => (eval_in(cs, a, env, memo) + eval_in(cs, b, env, memo)) % p,
+        Expr::Sub(a, b) => (eval_in(cs, a, env, memo) + p - eval_in(cs, b, env, memo) % p) % p,
+        Expr::Mul(a, b) => (eval_in(cs, a, env, memo) * eval_in(cs, b, env, memo)) % p,
+        Expr::Neg(a) => (p - eval_in(cs, a, env, memo) % p) % p,
+        Expr::Const(c) => c % p,
+        Expr::Col { col, commit_id, id, offset } => {
+            env.cols.get(&(*col, *commit_id, *id, *offset)).cloned().unwrap_or_default()
+        }
+        Expr::Challenge { stage, stage_id } => env.challenges.get(&(*stage, *stage_id)).cloned().unwrap_or_default(),
+        Expr::Public(i) => get(&env.publics, i),
+        Expr::ProofValue(i) => get(&env.proof_values, i),
+        Expr::AirValue(i) => get(&env.air_values, i),
+        Expr::AirgroupValue { airgroup, id } => env.airgroup_values.get(&(*airgroup, *id)).cloned().unwrap_or_default(),
+        Expr::Ref(id) => {
+            if let Some(v) = memo.get(id) {
+                return v.clone();
+            }
+            memo.insert(*id, Fe::default());
+            let v = cs.exprs.get(*id as usize).map_or_else(Fe::default, |t| eval_in(cs, t, env, memo));
+            memo.insert(*id, v.clone());
+            v
+        }
+    }
+}
