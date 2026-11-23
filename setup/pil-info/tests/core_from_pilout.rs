@@ -12,10 +12,6 @@ use pil_info::pil::prepare::prepare_pil;
 use pil_info::{FieldCfg, Opening};
 use std::collections::HashMap;
 
-fn gl() -> FieldCfg {
-    FieldCfg::goldilocks()
-}
-
 fn col(id: u32, offset: i64) -> Expr {
     Expr::Col { col: ColType::Witness, commit_id: None, id, offset }
 }
@@ -187,31 +183,21 @@ fn lower_matches_old_prepare() {
 
 #[test]
 fn real_pilouts_lower_and_match_old_degrees() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-components/test");
-    let mut loaded = 0;
-    for d in std::fs::read_dir(&root).expect("pil2-components/test").flatten() {
-        let Ok(files) = std::fs::read_dir(d.path().join("build")) else { continue };
-        for f in files.flatten().map(|e| e.path()).filter(|f| f.extension().is_some_and(|e| e == "pilout")) {
-            let Ok(proxy) = pil2_pilout::pilout_proxy::PilOutProxy::new(f.to_str().unwrap()) else { continue };
-            let p = proxy.pilout;
-            loaded += 1;
-            pil_info::core::global::global_from_pilout(&p, &gl()).unwrap_or_else(|e| panic!("{f:?} global: {e}"));
-            for (g, ag) in p.air_groups.iter().enumerate() {
-                for a in 0..ag.airs.len() {
-                    let cs =
-                        from_pilout(&p, g, a, &gl(), Opening::Deep).unwrap_or_else(|e| panic!("{f:?} {g}/{a}: {e}"));
-                    let old = prepare_pil(&p, g, a, &gl()).unwrap();
-                    let mut cache = HashMap::new();
-                    assert_eq!(cs.constraints.len(), old.constraints.len());
-                    for (c, o) in cs.constraints.iter().zip(&old.constraints) {
-                        let want = calculate_exp_deg(&old.expressions, o.e, &[], false, &mut cache).unwrap();
-                        assert_eq!(degree(&cs, &c.e) as i64, want, "{f:?} {g}/{a}");
-                    }
+    for (f, p) in real_pilouts() {
+        pil_info::core::global::global_from_pilout(&p, &gl()).unwrap_or_else(|e| panic!("{f:?} global: {e}"));
+        for (g, ag) in p.air_groups.iter().enumerate() {
+            for a in 0..ag.airs.len() {
+                let cs = from_pilout(&p, g, a, &gl(), Opening::Deep).unwrap_or_else(|e| panic!("{f:?} {g}/{a}: {e}"));
+                let old = prepare_pil(&p, g, a, &gl()).unwrap();
+                let mut cache = HashMap::new();
+                assert_eq!(cs.constraints.len(), old.constraints.len());
+                for (c, o) in cs.constraints.iter().zip(&old.constraints) {
+                    let want = calculate_exp_deg(&old.expressions, o.e, &[], false, &mut cache).unwrap();
+                    assert_eq!(degree(&cs, &c.e) as i64, want, "{f:?} {g}/{a}");
                 }
             }
         }
     }
-    assert!(loaded > 0, "no pilout under {root:?}");
 }
 
 fn rejects(p: &pb::PilOut) {

@@ -112,7 +112,12 @@ pub struct Env {
 
 /// THE degree function: columns 1, constants/challenges/values 0, `Ref` = degree of its target.
 pub fn degree(cs: &ConstraintSystem, e: &Expr) -> u32 {
-    degree_in(cs, e, &mut BTreeMap::new())
+    degree_with(cs, e, &[])
+}
+
+/// `degree` with each `promoted` Ref read as a column (degree 1), without inlining the DAG.
+pub fn degree_with(cs: &ConstraintSystem, e: &Expr, promoted: &[ExprId]) -> u32 {
+    degree_in(cs, e, &mut promoted.iter().map(|&id| (id, 1)).collect())
 }
 
 fn degree_in(cs: &ConstraintSystem, e: &Expr, memo: &mut BTreeMap<ExprId, u32>) -> u32 {
@@ -133,6 +138,46 @@ fn degree_in(cs: &ConstraintSystem, e: &Expr, memo: &mut BTreeMap<ExprId, u32>) 
             }
             memo.insert(*id, 0); // a cycle (rejected at ingestion) reads as 0 rather than looping
             let d = cs.exprs.get(*id as usize).map_or(0, |t| degree_in(cs, t, memo));
+            memo.insert(*id, d);
+            d
+        }
+    }
+}
+
+/// Dimension of `e`: the largest of its leaves (witness/values by stage, challenges extension); memoised like `degree`.
+pub fn dim(cs: &ConstraintSystem, e: &Expr) -> u32 {
+    let mut witness = Vec::new();
+    for c in &cs.witness {
+        let i = c.id as usize;
+        if witness.len() <= i {
+            witness.resize(i + 1, 1);
+        }
+        witness[i] = c.dim;
+    }
+    dim_in(cs, e, &witness, &mut BTreeMap::new())
+}
+
+fn dim_in(cs: &ConstraintSystem, e: &Expr, witness: &[u32], memo: &mut BTreeMap<ExprId, u32>) -> u32 {
+    let ext = cs.field.ext_dim() as u32;
+    let by_stage = |s: Option<&(u32, String)>| if s.is_some_and(|v| v.0 == 1) { 1 } else { ext };
+    match e {
+        Expr::Add(a, b) | Expr::Sub(a, b) | Expr::Mul(a, b) => {
+            dim_in(cs, a, witness, memo).max(dim_in(cs, b, witness, memo))
+        }
+        Expr::Neg(a) => dim_in(cs, a, witness, memo),
+        Expr::Col { col: ColType::Witness, id, .. } => witness.get(*id as usize).copied().unwrap_or(1),
+        // fixed and custom columns are stage 0 (custom of another stage is rejected at ingestion)
+        Expr::Col { .. } | Expr::Const(_) | Expr::Public(_) => 1,
+        Expr::Challenge { .. } | Expr::AirgroupValue { airgroup: Some(_), .. } => ext,
+        Expr::AirValue(i) => by_stage(cs.air_values.get(*i as usize)),
+        Expr::ProofValue(i) => by_stage(cs.proof_values.get(*i as usize)),
+        Expr::AirgroupValue { airgroup: None, id } => by_stage(cs.airgroup_values.get(*id as usize)),
+        Expr::Ref(id) => {
+            if let Some(d) = memo.get(id) {
+                return *d;
+            }
+            memo.insert(*id, 1);
+            let d = cs.exprs.get(*id as usize).map_or(1, |t| dim_in(cs, t, witness, memo));
             memo.insert(*id, d);
             d
         }

@@ -165,3 +165,24 @@ pub fn gconstraint(idx: Option<u32>) -> pb::GlobalConstraint {
         debug_line: Some("global".to_string()),
     }
 }
+
+// ---- real pilouts ----
+pub fn gl() -> pil_info::FieldCfg {
+    pil_info::FieldCfg::goldilocks()
+}
+
+/// The example pilouts built under `pil2-components/test/*/build` (the loaded pilout and its path).
+pub fn real_pilouts() -> Vec<(std::path::PathBuf, pb::PilOut)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-components/test");
+    let mut out = Vec::new();
+    for d in std::fs::read_dir(&root).expect("pil2-components/test").flatten() {
+        let Ok(files) = std::fs::read_dir(d.path().join("build")) else { continue };
+        for f in files.flatten().map(|e| e.path()).filter(|f| f.extension().is_some_and(|e| e == "pilout")) {
+            let Some(path) = f.to_str() else { continue };
+            let Ok(proxy) = pil2_pilout::pilout_proxy::PilOutProxy::new(path) else { continue };
+            out.push((f, proxy.pilout));
+        }
+    }
+    assert!(!out.is_empty(), "no pilout under {root:?}");
+    out
+}
