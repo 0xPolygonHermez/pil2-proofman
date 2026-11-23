@@ -735,7 +735,6 @@ pub fn gen_recursive_setup(
                 None,
                 &airgroup_pil_name,
                 pil_info_result.c_exp_id,
-                pil_info_result.deep_exp_id,
                 pil_info_result.q_deg,
             );
 

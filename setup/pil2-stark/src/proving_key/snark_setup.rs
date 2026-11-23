@@ -610,7 +610,6 @@ pub fn gen_recursivef_setup(
         None,
         "Recursivef",
         pil_result_rf.c_exp_id,
-        pil_result_rf.deep_exp_id,
         pil_result_rf.q_deg,
     );
     tracing::info!("Circuit 'recursivef' low-degree test: {}", starkinfo_rf.stark_struct.low_degree_test.describe());

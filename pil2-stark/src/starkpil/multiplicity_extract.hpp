@@ -119,7 +119,7 @@ inline bool mulCompileBytecode(SetupCtx& setupCtx, const MulByteCode& bc, MulPro
         }
         if (!mulIsUniformType(type, bc.base) && type >= bc.base + 2) return bail("challenge/eval operand");
         const bool custom = type >= bc.base - nCustom && type < bc.base;   // mulTermToDev resolves it
-        if (!mulIsUniformType(type, bc.base) && !custom && type > bc.nSections) return bail("zi / xDivXSub operand");
+        if (!mulIsUniformType(type, bc.base) && !custom && type > bc.nSections) return bail("zi / reserved-slot operand");
         o.kind = MUL_OPND_COL;
         if (!mulTermToDev(setupCtx, MulLinTerm{ type, argIdx, argOff }, o.term))
             return bail("operand address not resolvable");

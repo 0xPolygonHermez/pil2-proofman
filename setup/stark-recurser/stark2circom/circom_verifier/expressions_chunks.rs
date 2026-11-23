@@ -7,12 +7,12 @@
 //! chunks).
 //!
 //! This exactly mirrors the JS split so that:
-//!   - Each `VerifyEvaluationsChunks{i}` / `CalculateDeepPolChunks{i}` template
+//!   - Each `VerifyEvaluationsChunks{i}` template
 //!     receives the right `signal input tmp_*` / `signal output tmp_*` declarations.
 //!   - Cross-chunk wiring (the `(out1, out2, ...) <== ChunkI()(inputs...)` call
 //!     sites) uses the correct sorted id lists.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
@@ -167,36 +167,6 @@ pub fn get_expressions_chunks_ext(code: &[Value], external: &[(u64, u64)], keep:
     }
 
     ChunkedCode { chunks, tmps }
-}
-
-/// Splits the FRI query code into the ops that only read FRI challenges, evals, numbers and each other (the same
-/// for every query, so computed once) and the rest, with the (id, dim) of the shared tmps the rest reads.
-pub fn split_query_independent(code: &[Value], fri_stage: u64) -> (Vec<Value>, Vec<Value>, Vec<(u64, u64)>) {
-    let mut shared: HashMap<u64, u64> = HashMap::new();
-    let (mut once, mut per_query) = (Vec::new(), Vec::new());
-    for inst in code {
-        let independent = inst["src"].as_array().is_some_and(|srcs| {
-            srcs.iter().all(|s| match s["type"].as_str() {
-                Some("eval") | Some("number") => true,
-                Some("challenge") => s["stage"].as_u64() == Some(fri_stage),
-                Some("tmp") => s["id"].as_u64().is_some_and(|id| shared.contains_key(&id)),
-                _ => false,
-            })
-        });
-        if independent {
-            shared.insert(inst["dest"]["id"].as_u64().unwrap(), inst["dest"]["dim"].as_u64().unwrap());
-            once.push(inst.clone());
-        } else {
-            per_query.push(inst.clone());
-        }
-    }
-    let read: BTreeMap<u64, u64> = per_query
-        .iter()
-        .flat_map(|inst| inst["src"].as_array().into_iter().flatten())
-        .filter(|s| s["type"].as_str() == Some("tmp"))
-        .filter_map(|s| s["id"].as_u64().and_then(|id| shared.get(&id).map(|&dim| (id, dim))))
-        .collect();
-    (once, per_query, read.into_iter().collect())
 }
 
 #[cfg(test)]

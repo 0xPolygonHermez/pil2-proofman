@@ -3,7 +3,6 @@
 //! Produces code blocks for:
 //! - Expression computations (witness polynomials, intermediate polynomials)
 //! - Constraint polynomial (Q stage)
-//! - DEEP polynomial (the DEEP opening only)
 //! - Verifier evaluations
 //! - Hint computations
 
@@ -225,23 +224,17 @@ pub struct ProcessedHint {
     pub fields: Vec<ProcessedHintFieldEntry>,
 }
 
-/// Verifier code blocks.
-/// Uses custom Serialize because qVerifier and queryVerifier emit different subsets of fields.
+/// Verifier code blocks: the quotient's, evaluated at xi. The DEEP polynomial is computed natively.
 #[derive(Debug, Clone)]
 pub struct VerifierInfo {
     pub q_verifier: ExpressionCodeEntry,
-    /// The DEEP polynomial's code, evaluated at each query: `None` unless the opening is DEEP.
-    pub query_verifier: Option<ExpressionCodeEntry>,
 }
 
 impl Serialize for VerifierInfo {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
-        let mut map = s.serialize_map(Some(1 + usize::from(self.query_verifier.is_some())))?;
+        let mut map = s.serialize_map(Some(1))?;
         map.serialize_entry("qVerifier", &QVerifierView(&self.q_verifier))?;
-        if let Some(query_verifier) = &self.query_verifier {
-            map.serialize_entry("queryVerifier", &QueryVerifierView(query_verifier))?;
-        }
         map.end()
     }
 }
@@ -254,20 +247,6 @@ impl Serialize for QVerifierView<'_> {
         map.serialize_entry("tmpUsed", &self.0.tmp_used)?;
         map.serialize_entry("code", &self.0.code)?;
         map.serialize_entry("line", "")?;
-        map.end()
-    }
-}
-
-struct QueryVerifierView<'a>(&'a ExpressionCodeEntry);
-impl Serialize for QueryVerifierView<'_> {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let mut map = s.serialize_map(Some(5))?;
-        map.serialize_entry("tmpUsed", &self.0.tmp_used)?;
-        map.serialize_entry("code", &self.0.code)?;
-        map.serialize_entry("expId", &self.0.exp_id)?;
-        map.serialize_entry("stage", &self.0.stage)?;
-        map.serialize_entry("line", &self.0.line)?;
         map.end()
     }
 }
@@ -289,12 +268,9 @@ pub struct PilCodeResult {
     pub verifier_info: VerifierInfo,
     /// The evaluation map built during verifier code generation.
     pub ev_map: Vec<EvMapRef>,
-    /// The DEEP polynomial expression ID (may differ from c_exp_id): `None` unless the opening is
-    /// DEEP.
-    pub deep_exp_id: Option<usize>,
-    /// Updated challenges map (with FRI challenges appended; empty unless the opening is DEEP).
+    /// The DEEP challenges, which go after the setup's (empty unless the opening is DEEP).
     pub challenges_map: Vec<ChallengeMapEntry>,
-    /// See `DeepPolyResult::batch_size`.
+    /// See `deep_poly::fri_batch_size`.
     pub fri_batch_size: usize,
 }
 
@@ -309,8 +285,6 @@ pub struct CodeGenParams {
     pub airgroup_id: usize,
     pub n_stages: usize,
     pub c_exp_id: usize,
-    /// Set by `generate_pil_code`: the DEEP polynomial's expression, `None` unless the opening is DEEP.
-    pub deep_exp_id: Option<usize>,
     pub q_deg: usize,
     pub q_dim: usize,
     pub opening_points: Vec<i64>,
@@ -318,7 +292,7 @@ pub struct CodeGenParams {
     pub custom_commits_count: usize,
     /// The field the code computes over.
     pub field: FieldCfg,
-    /// How the committed polynomials are opened: the DEEP opening adds the DEEP polynomial and the
+    /// How the committed polynomials are opened: the DEEP opening adds the DEEP challenges and the
     /// quotient's evaluations.
     pub opening: Opening,
 }
@@ -330,8 +304,8 @@ pub struct CodeGenParams {
 /// Orchestrate code generation for all stages.
 ///
 /// Mirrors JS `generatePilCode(res, symbols, constraints, expressions, hints, debug)`. The opening
-/// hook: only `Opening::Deep` generates the DEEP polynomial, sets `deep_exp_id` and builds the
-/// `queryVerifier`.
+/// hook: only `Opening::Deep` registers the DEEP challenges and sizes its batching; the DEEP
+/// polynomial itself is computed natively from starkinfo.
 pub fn generate_pil_code(
     params: &mut CodeGenParams,
     symbols: &mut Vec<SymbolInfo>,
@@ -348,7 +322,7 @@ pub fn generate_pil_code(
     // Pre-compute witness symbol index for O(1) lookups in fix_commit_pol
     let witness_index = build_witness_index(symbols, params.air_id, params.airgroup_id);
 
-    // In non-debug mode: generate verifier code, then, for the DEEP opening, the DEEP polynomial
+    // In non-debug mode: generate verifier code, then, for the DEEP opening, its challenges
     let q_verifier = if !debug {
         let qv = generate_constraint_polynomial_verifier_code(
             params,
@@ -358,105 +332,43 @@ pub fn generate_pil_code(
             &witness_index,
         )?;
 
-        params.deep_exp_id = match params.opening {
-            Opening::Deep => {
-                // Generate the DEEP polynomial (mirrors JS: generateFRIPolynomial(res, symbols, expressions))
-                let ev_map_for_fri: Vec<EvMapItem> = ev_map_items
-                    .iter()
-                    .map(|e| EvMapItem {
-                        entry_type: e.entry_type.clone(),
-                        id: e.id,
-                        prime: e.prime,
-                        commit_id: e.commit_id,
-                    })
-                    .collect();
-
-                let fri_result = deep_poly::generate_deep_polynomial(
-                    params.n_stages,
-                    expressions,
-                    symbols,
-                    &ev_map_for_fri,
-                    &params.opening_points,
-                    &mut challenges_map,
-                    &params.field,
-                )?;
-                fri_batch_size = fri_result.batch_size;
-                Some(fri_result.deep_exp_id)
-            }
-            Opening::Shplonk => None,
-        };
+        if params.opening == Opening::Deep {
+            let ev_map: Vec<EvMapItem> = ev_map_items
+                .iter()
+                .map(|e| EvMapItem {
+                    entry_type: e.entry_type.clone(),
+                    id: e.id,
+                    prime: e.prime,
+                    commit_id: e.commit_id,
+                })
+                .collect();
+            deep_poly::check_unique_evaluations(symbols, &ev_map)?;
+            challenges_map = deep_poly::register_deep_challenges(params.n_stages, symbols, &params.field);
+            fri_batch_size = deep_poly::fri_batch_size(&ev_map, &params.opening_points);
+        }
 
         qv
     } else {
-        // Debug mode builds no DEEP polynomial; for the DEEP opening, cExpId stands in for it (as in the
-        // JS setup).
-        params.deep_exp_id = match params.opening {
-            Opening::Deep => Some(params.c_exp_id),
-            Opening::Shplonk => None,
-        };
         ExpressionCodeEntry { tmp_used: 0, code: Vec::new(), exp_id: 0, stage: 0, dest: None, line: String::new() }
     };
 
     let hints_info = add_hints_info(params, expressions, hints, false, print_ctx)?;
 
-    let mut expressions_code = generate_expressions_code(params, symbols, expressions, &witness_index)?;
-
-    // Build query_verifier from the FRI expression code entry.
-    // In JS, `find` returns a reference, so modifying the found element also
-    // modifies the `expressionsCode` array. We replicate this by modifying
-    // the entry in-place in `expressions_code` first, then cloning.
-    let query_verifier = match params.deep_exp_id {
-        None => None,
-        Some(deep_exp_id) => {
-            let fri_entry_idx = expressions_code
-                .iter()
-                .position(|e| e.exp_id == deep_exp_id)
-                .ok_or(PilInfoError::DeepCodeMissing(deep_exp_id))?;
-
-            // Overwrite last dest to be a tmp with the extension's dim (in-place)
-            let fri_entry = &mut expressions_code[fri_entry_idx];
-            if let Some(last) = fri_entry.code.last_mut() {
-                last.dest = CodeRef {
-                    ref_type: "tmp".to_string(),
-                    id: fri_entry.tmp_used - 1,
-                    dim: params.field.ext_dim(),
-                    prime: None,
-                    value: None,
-                    stage: None,
-                    stage_id: None,
-                    commit_id: None,
-                    opening: None,
-                    boundary_id: None,
-                    airgroup_id: None,
-                    exp_id: None,
-                };
-            }
-
-            Some(fri_entry.clone())
-        }
-    };
+    let expressions_code = generate_expressions_code(params, symbols, expressions, &witness_index)?;
 
     let constraints_code = generate_constraints_debug_code(params, symbols, constraints, expressions, &witness_index)?;
 
-    let deep_exp_id = params.deep_exp_id;
-
-    // Verifier entries only: these feed the Rust/C++ verifiers and the circom
-    // recursion circuit, none of which is the prover's cExp.
+    // The verifier entry only: it feeds the Rust/C++ verifiers and the circom recursion circuit,
+    // none of which is the prover's cExp.
     let mut q_verifier = q_verifier;
-    let mut query_verifier = query_verifier;
-    let verifier_entries = std::iter::once(("qVerifier", &mut q_verifier))
-        .chain(query_verifier.as_mut().map(|entry| ("queryVerifier", entry)));
-    for (name, entry) in verifier_entries {
-        let result = cse::cse_code(&entry.code);
-        tracing::debug!("CSE {name}: {} -> {} ops", entry.code.len(), result.code.len());
-        entry.code = result.code;
-    }
+    let result = cse::cse_code(&q_verifier.code);
+    tracing::debug!("CSE qVerifier: {} -> {} ops", q_verifier.code.len(), result.code.len());
+    q_verifier.code = result.code;
 
     Ok(PilCodeResult {
         expressions_info: ExpressionsInfo { hints_info, expressions_code, constraints: constraints_code },
-        verifier_info: VerifierInfo { q_verifier, query_verifier },
+        verifier_info: VerifierInfo { q_verifier },
         ev_map: ev_map_items,
-        deep_exp_id,
         challenges_map,
         fri_batch_size,
     })
@@ -466,7 +378,7 @@ pub fn generate_pil_code(
 // generateExpressionsCode
 // ---------------------------------------------------------------------------
 
-/// Generate code blocks for all kept/imPol/cExp/friExp expressions.
+/// Generate code blocks for all kept/imPol/cExp expressions.
 ///
 /// Mirrors JS `generateExpressionsCode(res, symbols, expressions)`.
 fn generate_expressions_code(
@@ -479,21 +391,16 @@ fn generate_expressions_code(
 
     for j in 0..expressions.len() {
         let exp = &expressions[j];
-        let is_deep_exp = params.deep_exp_id == Some(j);
-        let dominated = !exp.keep.unwrap_or(false) && !exp.im_pol && j != params.c_exp_id && !is_deep_exp;
+        let dominated = !exp.keep.unwrap_or(false) && !exp.im_pol && j != params.c_exp_id;
         if dominated {
             continue;
         }
 
-        let dom = if j == params.c_exp_id || is_deep_exp { "ext" } else { "n" };
+        let dom = if j == params.c_exp_id { "ext" } else { "n" };
 
         let mut ctx =
             CodeGenCtx::new(params.air_id, params.airgroup_id, exp.stage, dom, false, Vec::new(), &params.field);
         ctx.witness_by_exp_id = Arc::clone(witness_index);
-
-        if is_deep_exp {
-            ctx.opening_points = params.opening_points.clone();
-        }
 
         if j == params.c_exp_id {
             // Pre-mark imPol expressions as calculated (cm=true) for all opening points
@@ -536,7 +443,6 @@ fn generate_expressions_code(
                     stage: None,
                     stage_id: None,
                     commit_id: None,
-                    opening: None,
                     boundary_id: None,
                     airgroup_id: None,
                     exp_id: None,
@@ -544,29 +450,7 @@ fn generate_expressions_code(
             }
         }
 
-        if is_deep_exp {
-            if let Some(last) = block.code.last_mut() {
-                last.dest = CodeRef {
-                    ref_type: "f".to_string(),
-                    id: 0,
-                    dim: params.field.ext_dim(),
-                    prime: None,
-                    value: None,
-                    stage: None,
-                    stage_id: None,
-                    commit_id: None,
-                    opening: None,
-                    boundary_id: None,
-                    airgroup_id: None,
-                    exp_id: None,
-                };
-            }
-        }
-
-        // Match JS `expInfo.stage = exp.stage || 0`:
-        // In JS, the FRI expression ends up with stage=NaN (due to eval/xDivXSubXi
-        // nodes lacking a stage property), and NaN||0 gives 0.  Replicate this by
-        // clamping stages beyond nStages+1 (the Q stage) to 0.
+        // Stages beyond the Q stage (nStages + 1) are reported as 0, as the JS setup did.
         let entry_stage = if exp.stage > params.n_stages + 1 { 0 } else { exp.stage };
 
         // Copy the cached line from the expression (set by printExpressions
@@ -949,7 +833,6 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 2,
-            deep_exp_id: Some(3),
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
@@ -977,7 +860,6 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 999, // not matching any expr
-            deep_exp_id: Some(998),
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],
@@ -1041,7 +923,6 @@ mod tests {
             airgroup_id: 0,
             n_stages: 1,
             c_exp_id: 2,
-            deep_exp_id: Some(999),
             q_deg: 1,
             q_dim: 1,
             opening_points: vec![0],

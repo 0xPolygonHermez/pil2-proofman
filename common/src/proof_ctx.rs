@@ -1316,7 +1316,6 @@ impl<F: PrimeField64> ProofCtx<F> {
             airgroup_values: air_instance.get_airgroup_values_ptr(),
             airvalues: air_instance.get_airvalues_ptr(),
             evals: air_instance.get_evals_ptr(),
-            xdivxsub: std::ptr::null_mut(),
             p_const_pols: const_pols,
             p_const_tree: std::ptr::null_mut(),
             custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),

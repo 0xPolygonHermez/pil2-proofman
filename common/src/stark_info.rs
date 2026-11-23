@@ -232,8 +232,8 @@ pub struct CustomCommits {
 }
 
 #[allow(dead_code)]
-#[derive(Default, Deserialize, Debug, Clone)]
-enum EvMapEType {
+#[derive(Default, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EvMapEType {
     #[serde(rename = "cm")]
     #[default]
     Cm,
@@ -255,10 +255,15 @@ where
 #[derive(Default, Deserialize, Debug, Clone)]
 pub struct EvMap {
     #[serde(rename = "type")]
-    type_: EvMapEType,
-    id: u64,
+    pub type_: EvMapEType,
+    pub id: u64,
     #[serde(deserialize_with = "deserialize_bool_from_int")]
-    prime: bool,
+    pub prime: bool,
+    /// Index into `openingPoints`; `prime` cannot tell -1 from +1.
+    #[serde(rename = "openingPos")]
+    pub opening_pos: usize,
+    #[serde(default, rename = "commitId")]
+    pub commit_id: u64,
 }
 
 #[allow(dead_code)]
@@ -319,8 +324,6 @@ pub struct StarkInfo {
     #[serde(rename = "qDim")]
     pub q_dim: u64,
 
-    #[serde(rename = "deepExpId")]
-    pub deep_exp_id: u64,
     #[serde(rename = "cExpId")]
     pub c_exp_id: u64,
 

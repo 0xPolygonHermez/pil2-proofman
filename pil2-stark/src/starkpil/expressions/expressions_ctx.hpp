@@ -140,7 +140,6 @@ public:
     SetupCtx &setupCtx;
     ProverHelpers *proverHelpers;
 
-    Goldilocks::Element *xis;
     int64_t *nextStrides;
     int64_t *nextStridesExtended;
     uint64_t *mapOffsets;
@@ -149,7 +148,6 @@ public:
     uint64_t *mapOffsetsCustomFixed;
     uint64_t *mapOffsetsCustomFixedExtended;
     uint64_t *mapSectionsNCustomFixed;
-    uint64_t mapOffsetFriPol;
     uint64_t nrowsPack_;
     uint64_t minRow;
     uint64_t maxRow;
@@ -197,8 +195,6 @@ public:
         mapOffsetsExtended[0] = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
         mapSectionsN[0] = setupCtx.starkInfo.mapSectionsN["const"];
 
-        mapOffsetFriPol = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
-        
         for(uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; ++i) {
             mapSectionsN[i + 1] = setupCtx.starkInfo.mapSectionsN["cm" + std::to_string(i + 1)];
             mapOffsets[i + 1] = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + std::to_string(i + 1), false)];
@@ -211,6 +207,7 @@ public:
             mapOffsetsCustomFixedExtended[i] = setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[i].name + "0", true)];
         }
 
+        // Slot nStages + 3 stays reserved (was xDivXSubXi): custom commits are nStages + 4 + c in the .bin.
         bufferCommitsSize = 1 + setupCtx.starkInfo.nStages + 3 + setupCtx.starkInfo.customCommits.size();
         nStages = setupCtx.starkInfo.nStages;
         nPublics = setupCtx.starkInfo.nPublics;
@@ -237,7 +234,7 @@ public:
         if (compilation_time) {
             domainSize = 1;
             domainExtended = false;
-        } else if(expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.deepExpId) {
+        } else if(expressionId == setupCtx.starkInfo.cExpId) {
             setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
             domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
             domainExtended = true;
@@ -248,10 +245,6 @@ public:
         Dest destStruct(dest, domainSize, 0, expressionId);
         destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
         calculateExpressions(params, destStruct, domainSize, domainExtended, compilation_time);
-    }
-
-    void setXi(Goldilocks::Element *xi) {
-        xis = xi;
     }
 };
 

@@ -1468,7 +1468,8 @@ void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params, AirInstan
 
     computeFRIConstants(nOpenings, air_instance_info->nFriPols, air_instance_info->opening_points,
                         Goldilocks::w(si.starkStruct.nBits).fe, air_instance_info->friTermStart, air_instance_info->friTerms,
-                        (gl64_t*)h_params.evals, challenges + 4 * FIELD_EXTENSION, challenges + 5 * FIELD_EXTENSION, d_b,
+                        (gl64_t*)h_params.evals, challenges + air_instance_info->deepVf1Idx * FIELD_EXTENSION,
+                        challenges + air_instance_info->deepVf2Idx * FIELD_EXTENSION, d_b,
                         d_a, d_k, stream);
     // 1/(x - xi) once over the domain: dead zi/helper space behind q, overwritten by the first fold (fri_1).
     gl64_t *d_den = (gl64_t*)h_params.aux_trace + si.mapOffsets[std::make_pair("fri_denominators", true)];

@@ -27,7 +27,7 @@ fn operations_map_value(key: &str) -> u64 {
         "number" => 3,
         "airvalue1" => 4,
         "proofvalue1" => 5,
-        "custom3" | "commit3" | "xDivXSubXi" => 6,
+        "custom3" | "commit3" => 6,
         "tmp3" => 7,
         "airvalue3" => 8,
         "airgroupvalue" => 9,
@@ -93,7 +93,6 @@ fn get_type_key(r: &CodeType, verify: bool) -> String {
         OpType::Custom if r.dim == 1 => "custom1".to_string(),
         OpType::Custom if r.dim == FIELD_EXTENSION => "custom3".to_string(),
         OpType::Custom => format!("custom{}", r.dim),
-        OpType::XDivXSubXi => "commit3".to_string(),
         OpType::Tmp => format!("tmp{}", r.dim),
         OpType::Airvalue => format!("airvalue{}", r.dim),
         OpType::Proofvalue => format!("proofvalue{}", r.dim),
@@ -189,7 +188,6 @@ fn get_operation_verify(r: &CodeType, id1d: &[i64], id3d: &[i64], stark_info: &S
         OpType::Proofvalue => format!("proof_values[{}]", r.id),
         OpType::Airgroupvalue => format!("airgroup_values[{}]", r.id),
         OpType::Zi => format!("zi[{}]", r.boundary_id),
-        OpType::XDivXSubXi => format!("xdivxsub[{}]", r.id),
         OpType::X => "xi_challenge".to_string(),
         _ => panic!("Invalid type for verify: {:?}", r.op_type),
     }
@@ -292,7 +290,6 @@ pub fn get_parser_args(
             vals: bool,
             publics: bool,
             zi: bool,
-            xdivxsub: bool,
             air_values: bool,
             proof_values: bool,
             airgroup_values: bool,
@@ -311,7 +308,6 @@ pub fn get_parser_args(
                 OpType::Const | OpType::Cm | OpType::Custom => refs.vals = true,
                 OpType::Public => refs.publics = true,
                 OpType::Zi => refs.zi = true,
-                OpType::XDivXSubXi => refs.xdivxsub = true,
                 OpType::Airvalue => refs.air_values = true,
                 OpType::Proofvalue => refs.proof_values = true,
                 OpType::Airgroupvalue => refs.airgroup_values = true,
@@ -404,7 +400,6 @@ pub fn get_parser_args(
                     used.vals |= r.vals;
                     used.publics |= r.publics;
                     used.zi |= r.zi;
-                    used.xdivxsub |= r.xdivxsub;
                     used.air_values |= r.air_values;
                     used.proof_values |= r.proof_values;
                     used.airgroup_values |= r.airgroup_values;
@@ -448,9 +443,6 @@ pub fn get_parser_args(
                     }
                     if used.zi {
                         params.push("zi: &[CubicExtensionField<Goldilocks>]");
-                    }
-                    if used.xdivxsub {
-                        params.push("xdivxsub: &[CubicExtensionField<Goldilocks>]");
                     }
                     if used.air_values {
                         params.push("air_values: &[CubicExtensionField<Goldilocks>]");
@@ -515,7 +507,6 @@ pub fn get_parser_args(
                     used.vals |= r.vals;
                     used.publics |= r.publics;
                     used.zi |= r.zi;
-                    used.xdivxsub |= r.xdivxsub;
                     used.air_values |= r.air_values;
                     used.proof_values |= r.proof_values;
                     used.airgroup_values |= r.airgroup_values;
@@ -544,9 +535,6 @@ pub fn get_parser_args(
                     }
                     if used.zi {
                         call_args.push("zi".to_string());
-                    }
-                    if used.xdivxsub {
-                        call_args.push("xdivxsub".to_string());
                     }
                     if used.air_values {
                         call_args.push("air_values".to_string());
@@ -822,14 +810,6 @@ fn push_args(
             if !global {
                 args.push(0);
             }
-        }
-        OpType::XDivXSubXi => {
-            if global {
-                bail!("xDivXSub should not appear in a global constraint");
-            }
-            args.push(stark_info.n_stages + 3);
-            args.push(r.id);
-            args.push(0);
         }
         OpType::Zi => {
             if global {

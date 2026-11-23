@@ -67,7 +67,6 @@ pub struct StarkInfo {
 
     pub q_deg: u64,
     pub q_dim: u64,
-    pub deep_exp_id: u64,
     pub c_exp_id: u64,
 
     pub map_sections_n: HashMap<String, u64>,
@@ -75,6 +74,8 @@ pub struct StarkInfo {
     pub multiproof: bool,
     /// `proofman_common::StarkInfo::proof_layout`, or why the json is not a full starkinfo.
     pub layout: Option<std::result::Result<proofman_common::ProofLayout, String>>,
+    /// The same json as `proofman_common::StarkInfo`, or why it does not parse.
+    pub common: Option<std::result::Result<proofman_common::StarkInfo, String>>,
 }
 
 /// Expression code block as loaded from expressionsInfo JSON.
@@ -131,7 +132,6 @@ pub struct ExpressionsInfo {
 #[derive(Debug, Clone)]
 pub struct VerifierInfo {
     pub q_verifier: ExpCode,
-    pub query_verifier: ExpCode,
 }
 
 /// Global constraints info loaded from JSON.
@@ -288,6 +288,8 @@ impl StarkInfo {
             }
         }
 
+        let common = serde_json::from_value::<proofman_common::StarkInfo>(j.clone()).map_err(|e| e.to_string());
+
         Ok(StarkInfo {
             stark_struct,
             n_stages: get_u64(j, "nStages"),
@@ -305,15 +307,11 @@ impl StarkInfo {
             boundaries,
             q_deg: get_u64(j, "qDeg"),
             q_dim: get_u64(j, "qDim"),
-            deep_exp_id: get_u64(j, "deepExpId"),
             c_exp_id: get_u64(j, "cExpId"),
             map_sections_n,
             multiproof: get_bool(j, "multiproof"),
-            layout: Some(
-                serde_json::from_value::<proofman_common::StarkInfo>(j.clone())
-                    .map(|si| si.proof_layout())
-                    .map_err(|e| e.to_string()),
-            ),
+            layout: Some(common.as_ref().map(|si| si.proof_layout()).map_err(Clone::clone)),
+            common: Some(common),
         })
     }
 }
@@ -393,8 +391,7 @@ impl VerifierInfo {
     /// Parse from the verifierInfo JSON.
     pub fn from_json(j: &Value) -> Result<Self> {
         let q_verifier = parse_exp_code(j.get("qVerifier").unwrap_or(&Value::Null))?;
-        let query_verifier = parse_exp_code(j.get("queryVerifier").unwrap_or(&Value::Null))?;
-        Ok(VerifierInfo { q_verifier, query_verifier })
+        Ok(VerifierInfo { q_verifier })
     }
 }
 
@@ -521,21 +518,12 @@ impl TryFrom<&crate::pil::gen_code::ExpressionsInfo> for ExpressionsInfo {
     }
 }
 
-/// Fails on a number that is not a Goldilocks element, on an operand of an unknown type, and on the
-/// verifier code of a backend that does not open with FRI: the STARK verifier needs the
-/// `queryVerifier`.
+/// Fails on a number that is not a Goldilocks element and on an operand of an unknown type.
 impl TryFrom<&crate::pil::gen_code::VerifierInfo> for VerifierInfo {
     type Error = anyhow::Error;
 
     fn try_from(vi: &crate::pil::gen_code::VerifierInfo) -> Result<Self> {
-        let query_verifier = vi
-            .query_verifier
-            .as_ref()
-            .ok_or_else(|| anyhow!("the STARK verifier needs a queryVerifier, which only the DEEP opening has"))?;
-        Ok(VerifierInfo {
-            q_verifier: expression_entry_to_exp_code(&vi.q_verifier).context("the qVerifier")?,
-            query_verifier: expression_entry_to_exp_code(query_verifier).context("the queryVerifier")?,
-        })
+        Ok(VerifierInfo { q_verifier: expression_entry_to_exp_code(&vi.q_verifier).context("the qVerifier")? })
     }
 }
 
@@ -558,7 +546,6 @@ mod tests {
             stage: None,
             stage_id: None,
             commit_id: None,
-            opening: None,
             boundary_id: None,
             airgroup_id: None,
             exp_id: None,

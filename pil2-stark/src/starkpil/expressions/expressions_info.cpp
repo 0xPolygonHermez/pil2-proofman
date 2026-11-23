@@ -72,47 +72,7 @@ void ExpressionsInfo::load(json j, bool global, bool verifier)
 
         expressionsCode.push_back(qExpInfo);
 
-        ExpInfo queryExpInfo;
-        queryExpInfo.expId = starkInfo.deepExpId;
-        queryExpInfo.stage = starkInfo.nStages + 2;
-        queryExpInfo.line = "";
-        queryExpInfo.tmpUsed = j["queryVerifier"]["tmpUsed"];
-
-        for(uint64_t k = 0; k < j["queryVerifier"]["code"].size(); ++k) {
-            CodeOperation c;
-            c.setOperation(j["queryVerifier"]["code"][k]["op"]);
-            c.dest.type = string2opType(j["queryVerifier"]["code"][k]["dest"]["type"]);
-
-            if(j["queryVerifier"]["code"][k]["dest"].contains("id")) c.dest.id = j["queryVerifier"]["code"][k]["dest"]["id"];  
-            if(j["queryVerifier"]["code"][k]["dest"].contains("prime")) c.dest.prime = j["queryVerifier"]["code"][k]["dest"]["prime"];  
-            if(j["queryVerifier"]["code"][k]["dest"].contains("dim")) c.dest.dim = j["queryVerifier"]["code"][k]["dest"]["dim"];  
-            if(j["queryVerifier"]["code"][k]["dest"].contains("commitId")) c.dest.commitId = j["queryVerifier"]["code"][k]["dest"]["commitId"];  
-            for (uint64_t l = 0; l < j["queryVerifier"]["code"][k]["src"].size(); l++) {
-                CodeType src;
-                src.type = string2opType(j["queryVerifier"]["code"][k]["src"][l]["type"]);
-                if(j["queryVerifier"]["code"][k]["src"][l].contains("id")) src.id = j["queryVerifier"]["code"][k]["src"][l]["id"];  
-                if(j["queryVerifier"]["code"][k]["src"][l].contains("prime")) src.prime = j["queryVerifier"]["code"][k]["src"][l]["prime"];  
-                if(j["queryVerifier"]["code"][k]["src"][l].contains("dim")) src.dim = j["queryVerifier"]["code"][k]["src"][l]["dim"];  
-                if(j["queryVerifier"]["code"][k]["src"][l].contains("value")) src.value = std::stoull(j["queryVerifier"]["code"][k]["src"][l]["value"].get<std::string>());
-                if(j["queryVerifier"]["code"][k]["src"][l].contains("commitId")) src.commitId = j["queryVerifier"]["code"][k]["src"][l]["commitId"];
-                if(j["queryVerifier"]["code"][k]["src"][l].contains("boundaryId")) src.boundaryId = j["queryVerifier"]["code"][k]["src"][l]["boundaryId"];
-                if(j["queryVerifier"]["code"][k]["src"][l].contains("airgroupId")) src.airgroupId = j["queryVerifier"]["code"][k]["src"][l]["airgroupId"];
-                c.src.push_back(src);
-            }
-            queryExpInfo.code.push_back(c);
-        }
-
-        if(j["queryVerifier"].contains("dest")) {
-            queryExpInfo.dest.type = string2opType(j["queryVerifier"]["dest"]["op"]);
-            if(j["queryVerifier"]["dest"].contains("id")) queryExpInfo.dest.id = j["queryVerifier"]["dest"]["id"];  
-            if(j["queryVerifier"]["dest"].contains("prime")) queryExpInfo.dest.prime = j["queryVerifier"]["dest"]["prime"];  
-            if(j["queryVerifier"]["dest"].contains("dim")) queryExpInfo.dest.dim = j["queryVerifier"]["dest"]["dim"];  
-            if(j["queryVerifier"]["dest"].contains("commitId")) queryExpInfo.dest.commitId = j["queryVerifier"]["dest"]["commitId"];  
-        }
-
-        expressionsCode.push_back(queryExpInfo);
-        
-        cout << "Loaded qVerifier and queryVerifier expressions" << endl;
+        cout << "Loaded qVerifier expression" << endl;
         return;
     }
     
@@ -385,7 +345,6 @@ CodeOperation getOperation(CodeOperation &r) {
         {"proofvalue1",5},
         {"custom3", 6},
         {"commit3", 6},
-        {"xDivXSubXi", 6},
         {"tmp3", 7},
         {"airvalue3", 8},
         {"airgroupvalue", 9},
@@ -572,11 +531,6 @@ void ExpressionsInfo::pushArgs(vector<uint64_t> &args, CodeType &r, vector<int64
             args.push_back(offset + 3*r.id);
         }
     } 
-    else if (r.type == opType::xDivXSubXi) {
-        args.push_back(starkInfo.nStages + 3);
-        args.push_back(r.id);
-        args.push_back(0);
-    } 
     else if (r.type == opType::Zi) {
         args.push_back(starkInfo.nStages + 2);
         args.push_back(1 + r.boundaryId);
@@ -708,7 +662,7 @@ void ExpressionsInfo::prepareExpressionsBin() {
             }
         }
 
-        if(expCode.expId == starkInfo.cExpId || expCode.expId == starkInfo.deepExpId || expr) {
+        if(expCode.expId == starkInfo.cExpId || expr) {
             expCode.code[expCode.code.size() - 1].dest.type = opType::tmp;
             expCode.code[expCode.code.size() - 1].dest.id = expCode.tmpUsed++;
         }

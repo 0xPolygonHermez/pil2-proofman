@@ -5,6 +5,7 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include <memory>
 #include "zkassert.hpp"
 #include "goldilocks_base_field.hpp"
 #include "zklog.hpp"
@@ -33,9 +34,7 @@ typedef enum
     x = 11,
     Zi = 12,
     eval = 13,
-    xDivXSubXi = 14,
     q = 15,
-    f = 16,
 } opType;
 
 
@@ -162,6 +161,8 @@ public:
 // setMapOffsets, which sizes the "evals_partials" region for the reduction partials.
 static constexpr uint64_t EVALS_HELPER_CHUNKS = 16;
 
+struct DeepTables;
+
 class StarkInfo
 {
 public:
@@ -204,7 +205,6 @@ public:
 
     uint64_t nConstraints;
 
-    uint64_t deepExpId;
     uint64_t cExpId;
 
     std::map<std::string, uint64_t> mapSectionsN;
@@ -233,6 +233,9 @@ public:
     uint64_t airValuesSize;
     uint64_t airgroupValuesSize;
     uint64_t proofValuesSize;
+
+    // DEEP term tables (deep.hpp), built once per prover/verifier setup; null for verify_constraints setups.
+    std::shared_ptr<const DeepTables> deepTables;
 
     /* Constructor */
     StarkInfo(string file, bool recursive_final = false, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false);

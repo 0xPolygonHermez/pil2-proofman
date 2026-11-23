@@ -72,7 +72,6 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
         .challenges = challenges,
         .airgroupValues = nullptr,
         .evals = evals,
-        .xDivXSub = nullptr,
         .pConstPolsAddress = pConstPols,
         .pConstPolsExtendedTreeAddress = pConstTree,
         .pCustomCommitsFixed = nullptr,
@@ -161,16 +160,14 @@ void *genRecursiveProofBN128(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t a
 
     TimerStart(STARK_STEP_EVALS);
 
-    uint64_t xiChallengeIndex = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 2) {
-            if(setupCtx.starkInfo.challengesMap[i].stageId == 0) xiChallengeIndex = i;
             starks.getChallenge(transcript, challenges[i * FIELD_EXTENSION]);
         }
     }
 
-    Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
+    Goldilocks::Element *xiChallenge = &challenges[setupCtx.starkInfo.deepTables->xiIdx * FIELD_EXTENSION];
     Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("lev", false)]];
 
     starks.computeLEv(xiChallenge, LEv, ntt);

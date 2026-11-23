@@ -1,0 +1,51 @@
+// simple.pil plus one extra stage-2 challenge, so xi/vf1/vf2 are not at the challengesMap
+// positions they take in simple.pil. Same airs and columns: reuses the simple witness lib.
+
+require "std_permutation.pil"
+require "std_lookup.pil"
+require "std_range_check.pil"
+
+set_max_u8_bits(7);
+set_max_u16_bits(14);
+set_max_specified_bits(6);
+
+airtemplate SimpleLeft(const int N = 2**3) {
+
+    col witness a,b,c,d;
+    col witness e,f,g,h;
+
+    permutation_assumes(1, [a, b]);
+    permutation_proves(1, [c, d]);
+
+    permutation_assumes(2, [e, f]);
+
+    col witness mul;
+    lookup(3, [g, h], mul);
+
+    col witness k[7];
+    range_check(k[0], 0, 2**8-1, predefined: 1);
+    range_check(k[1], 0, 2**16-1, predefined: 1);
+    range_check(k[2], 1, 2**8-1, predefined: 1); // two U8
+    range_check(k[3], 0, 2**8, predefined: 1); // two U16
+    range_check(k[4], 0, 2**8-1, predefined: 0);
+    range_check(k[5], -2**7, -1, predefined: 0);
+    range_check(k[6], -2**7-1, 2**7-1, predefined: 0);
+};
+
+airtemplate SimpleRight(const int N = 2**3) {
+
+    col witness a,b,c,d;
+    col witness mul;
+
+    permutation(2, [a, b], sel: 1);
+
+    challenge stage(2) extra;
+    (b - a - 1) * extra === 0;
+
+    lookup_proves(3, [c, d], mul);
+};
+
+airgroup Simple {
+    SimpleLeft();
+    SimpleRight();
+}

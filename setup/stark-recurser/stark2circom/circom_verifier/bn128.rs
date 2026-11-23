@@ -22,7 +22,6 @@ use super::gl_field::{gl_exp, gl_inv, gl_mul, GL_SHIFT, GL_W};
 use super::gl::Pil2CircomOptions;
 use super::transcript_bn128::TranscriptBn128;
 use crate::stark2circom::transcript::Transcript;
-use super::expressions_chunks::split_query_independent;
 use super::unroll_code::{unroll_code_bn128, UnrollCtx};
 
 // ── Top-level entry-point ─────────────────────────────────────────────────────
@@ -109,7 +108,6 @@ fn build_tera_context_bn128(
     let n_stages = si["nStages"].as_u64().unwrap_or(0) as usize;
     let q_stage = n_stages + 1;
     let evals_stage = q_stage + 1;
-    let fri_stage = evals_stage + 1;
     let arity = ss["merkleTreeArity"].as_u64().unwrap_or(16) as usize;
     let custom = uses_custom_templates(si);
     let transcript_arity = if custom { arity } else { 16usize };
@@ -372,7 +370,6 @@ fn build_tera_context_bn128(
     let unroll_ctx = UnrollCtx {
         q_stage: q_stage as u64,
         evals_stage: evals_stage as u64,
-        fri_stage: fri_stage as u64,
         cm_pols_map: &cm_pols_map,
         custom_commits: &custom_commits_json,
         custom_commits_map: &custom_commits_map_json,
@@ -385,22 +382,40 @@ fn build_tera_context_bn128(
     let eval_p_last = unroll_code_bn128(&q_verifier_code, &[], &unroll_ctx, &mut eval_p_lines)?;
     let eval_p_code = eval_p_lines.join("\n");
 
-    // ── Eval Q code (VerifyQuery inline) ────────────────────────────────────
-    let query_verifier_code: Vec<Value> = vi["queryVerifier"]["code"].as_array().map_or(vec![], |a| a.clone());
-    let (fri_once_code, query_code, fri_consts) = split_query_independent(&query_verifier_code, (q_stage + 2) as u64);
-    let mut fri_once_lines: Vec<String> = Vec::new();
-    unroll_code_bn128(&fri_once_code, &[], &unroll_ctx, &mut fri_once_lines)?;
-    let fri_once_code = fri_once_lines.join("\n");
-    let mut eval_q_lines: Vec<String> = Vec::new();
-    let consts_ids: Vec<u64> = fri_consts.iter().map(|&(id, _)| id).collect();
-    let eval_q_last = unroll_code_bn128(&query_code, &consts_ids, &unroll_ctx, &mut eval_q_lines)?;
-    let eval_q_code = eval_q_lines.join("\n");
-    // friConsts: challengesDeep, then the query-independent tmps the queries read.
-    let fri_consts_json: Vec<Value> = fri_consts
+    // ── DEEP polynomial, from the opening groups ───────────────────────────
+    let deep = super::deep::plan(si)?;
+    // xDivXSubXi only for the openings with evaluations, indexed by their rank there.
+    let opening_points: Vec<serde_json::Value> = deep
+        .openings
         .iter()
         .enumerate()
-        .map(|(i, &(id, dim))| serde_json::json!({ "idx": i + 2, "id": id, "dim": dim }))
+        .map(|(rank, &o)| {
+            let mut p = opening_points[o].clone();
+            p["rank"] = rank.into();
+            p
+        })
         .collect();
+    let deep_once_code = super::deep::render_bn128(&deep.once);
+    let deep_const_assign: String = deep
+        .const_outputs
+        .iter()
+        .enumerate()
+        .map(|(i, o)| {
+            // The output is reduced: maxNum tags live on whole signals, hence the base name.
+            let tag = o.name.split('[').next().unwrap_or(&o.name);
+            match (o.name.as_str(), o.dim) {
+                ("1", _) => format!("    friConsts[{i}] <== [1, 0, 0];\n"),
+                (x, 1) => format!(
+                    "    friConsts[{i}][0] <== GLNorm()({x});\n    friConsts[{i}][1] <== 0;\n    friConsts[{i}][2] <== 0;\n"
+                ),
+                (x, _) => format!(
+                    "    if ({tag}.maxNum > q) {{\n        friConsts[{i}] <== GLCNorm()({x});\n    }} else {{\n        friConsts[{i}] <== {x};\n    }}\n"
+                ),
+            }
+        })
+        .collect();
+    let deep_query_code = super::deep::render_bn128(&deep.query);
+    let deep_result = deep.result.name.clone();
 
     // ── Q polynomial ev_id ──────────────────────────────────────────────────
     let ev_map: Vec<Value> = si["evMap"].as_array().map_or(vec![], |a| a.clone());
@@ -669,11 +684,11 @@ fn build_tera_context_bn128(
     ctx.insert("transcript_code_fri_mid", &transcript_code_fri_mid);
     ctx.insert("eval_p_code", &eval_p_code);
     ctx.insert("eval_p_last", &eval_p_last);
-    ctx.insert("eval_q_code", &eval_q_code);
-    ctx.insert("fri_once_code", &fri_once_code);
-    ctx.insert("fri_consts", &fri_consts_json);
-    ctx.insert("n_fri_consts", &(fri_consts.len() + 2));
-    ctx.insert("eval_q_last", &eval_q_last);
+    ctx.insert("deep_once_code", &deep_once_code);
+    ctx.insert("deep_const_assign", &deep_const_assign);
+    ctx.insert("deep_query_code", &deep_query_code);
+    ctx.insert("deep_result", &deep_result);
+    ctx.insert("n_fri_consts", &deep.n_fri_consts());
     // Iterables
     ctx.insert("challenges_per_stage", &challenges_per_stage);
     ctx.insert("stages_info", &stages_info);
@@ -818,7 +833,7 @@ mod tests {
             },
             "nStages": n_stages,
             "nPublics": 0,
-            "evMap": [],
+            "evMap": [{"type": "const", "id": 0, "prime": 0, "openingPos": 0}],
             "cmPolsMap": [],
             "customCommits": [],
             "customCommitsMap": [],
@@ -828,17 +843,55 @@ mod tests {
             "airValuesMap": [],
             "proofValuesMap": [],
             "mapSectionsN": {},
-            "openingPoints": [],
-            "nConstants": 0,
+            "openingPoints": [0],
+            "nConstants": 1,
             "qDeg": 1,
         })
     }
 
     fn minimal_verifier_info() -> Value {
         json!({
-            "qVerifier": { "code": [] },
-            "queryVerifier": { "code": [] }
+            "qVerifier": { "code": [] }
         })
+    }
+
+    /// A starkinfo with opening groups (opening 1 empty).
+    fn deep_stark_info() -> Value {
+        let mut si = minimal_stark_info(2, 10, 8);
+        let sample = super::super::deep::tests::sample_stark_info();
+        for k in ["nStages", "openingPoints", "cmPolsMap", "customCommits", "customCommitsMap", "evMap"] {
+            si[k] = sample[k].clone();
+        }
+        si["customCommits"][0]["publicValues"] = json!([{"idx": 0}, {"idx": 1}, {"idx": 2}, {"idx": 3}]);
+        si["nPublics"] = json!(4);
+        si["nConstants"] = json!(1);
+        si["mapSectionsN"] = json!({"cm1": 1, "cm2": 3, "cm3": 3, "rom0": 1});
+        si
+    }
+
+    #[test]
+    fn no_evaluations_is_an_error() {
+        let mut si = deep_stark_info();
+        si["evMap"] = json!([]);
+        let vi = json!({ "qVerifier": { "code": [] } });
+        let opts = Pil2CircomOptions { hash: "Poseidon".to_string(), ..Default::default() };
+        let err = gen_stark_verifier_bn128(None, &si, &vi, &opts).unwrap_err();
+        assert!(err.to_string().contains("no evaluations"), "{err}");
+    }
+
+    #[test]
+    fn deep_from_groups_renders() {
+        let vi = json!({ "qVerifier": { "code": [] } });
+        let opts = Pil2CircomOptions { hash: "Poseidon".to_string(), ..Default::default() };
+        let out = gen_stark_verifier_bn128(None, &deep_stark_info(), &vi, &opts).unwrap();
+        assert!(out.contains("template CalculateFRIConstants("), "no CalculateFRIConstants template:\n{out}");
+        assert!(!out.contains("CalculateDeepPolChunks"), "chunked DEEP code is back:\n{out}");
+        let assigned = |r: usize| out.matches(&format!("xDivXSubXi[{r}] <==")).count();
+        assert_eq!((assigned(0), assigned(1), assigned(2)), (1, 1, 0), "one xDivXSubXi per non-empty opening");
+        assert!(out.contains("xDivXSubXi[2][3];"), "declared only for the non-empty openings:\n{out}");
+        // friConsts = [vf1, vf2, vf2^0..vf2^4, vf1^e x2, K x2]
+        assert!(out.contains("friConsts[11][3]"), "friConsts size:\n{out}");
+        assert!(out.contains("mapValues.custom_rom_0_0"), "custom column not read:\n{out}");
     }
 
     #[test]

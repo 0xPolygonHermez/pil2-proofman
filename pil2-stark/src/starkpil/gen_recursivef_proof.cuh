@@ -117,7 +117,6 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
         airgroupValues : (Goldilocks::Element *)d_aux_trace + offsetAirgroupValues,
         airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
         evals : (Goldilocks::Element *)d_aux_trace + offsetEvals,
-        xDivXSub : nullptr,
         pConstPolsAddress: (Goldilocks::Element *)d_aux_trace + offsetConstPols,
         pConstPolsExtendedTreeAddress:d_constTree,
         pCustomCommitsFixed: pCustomCommitsFixed,
@@ -213,15 +212,13 @@ void *genRecursiveProofBN128_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64
     TimerStartGPU(timer, STARK_STEP_EVALS);
     TimerStartCategoryGPU(timer, EVALS);
 
-    uint64_t xiChallengeIndex = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 2) {
-            if(setupCtx.starkInfo.challengesMap[i].stageId == 0) xiChallengeIndex = i;
             d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
-    Goldilocks::Element *d_xiChallenge = &h_params.challenges[xiChallengeIndex * FIELD_EXTENSION];
+    Goldilocks::Element *d_xiChallenge = &h_params.challenges[setupCtx.starkInfo.deepTables->xiIdx * FIELD_EXTENSION];
     gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
     TimerStopCategoryGPU(timer, EVALS);

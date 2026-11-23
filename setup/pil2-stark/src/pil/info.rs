@@ -25,8 +25,6 @@ pub struct PilInfoResult {
     pub im_pols_info: (Vec<String>, Vec<String>),
     /// Constraint polynomial expression ID.
     pub c_exp_id: usize,
-    /// DEEP polynomial expression ID (distinct from c_exp_id).
-    pub deep_exp_id: usize,
     /// Polynomial Q degree.
     pub q_deg: i64,
 }
@@ -76,9 +74,8 @@ pub fn pil_info(
     // The degree bound comes from the blowup: (1 << (nBitsExt - nBits)) + 1.
     let cfg = PilInfoCfg::goldilocks(stark_struct.n_bits_ext - stark_struct.n_bits);
 
-    let passes::PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, deep_exp_id, q_deg, boundaries } =
+    let passes::PilInfoResult { setup, pil_code, im_pols_info, c_exp_id, q_deg, boundaries } =
         passes::pil_info(prepared, airgroup_id, air_id, &cfg, options).with_context(passes_failed)?;
-    let deep_exp_id = deep_exp_id.context("the DEEP opening yielded no deepExpId")?;
     let n_stages = setup.n_stages;
     let opening_points = &setup.opening_points;
 
@@ -255,16 +252,7 @@ pub fn pil_info(
     println!("SUMMARY | {} | {}", setup.name, summary);
     println!("------------------------------------------------------------");
 
-    Ok(PilInfoResult {
-        setup,
-        pil_code,
-        summary,
-        prover_memory: prover_memory_str,
-        im_pols_info,
-        c_exp_id,
-        deep_exp_id,
-        q_deg,
-    })
+    Ok(PilInfoResult { setup, pil_code, summary, prover_memory: prover_memory_str, im_pols_info, c_exp_id, q_deg })
 }
 
 fn get_num_nodes_mt(height: u64, merkle_tree_arity: usize) -> u64 {

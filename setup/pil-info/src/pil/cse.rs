@@ -31,7 +31,6 @@ struct LeafKey {
     stage: Option<usize>,
     stage_id: Option<usize>,
     commit_id: Option<usize>,
-    opening: Option<i64>,
     boundary_id: Option<usize>,
     airgroup_id: Option<usize>,
 }
@@ -49,7 +48,6 @@ fn operand(r: &CodeRef) -> Operand {
         stage: r.stage,
         stage_id: r.stage_id,
         commit_id: r.commit_id,
-        opening: r.opening,
         boundary_id: r.boundary_id,
         airgroup_id: r.airgroup_id,
     }))
@@ -112,7 +110,6 @@ mod tests {
             stage: None,
             stage_id: None,
             commit_id: None,
-            opening: None,
             boundary_id: None,
             airgroup_id: None,
             exp_id: None,

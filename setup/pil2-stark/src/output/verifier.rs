@@ -34,11 +34,29 @@ pub fn write_verifier_rust_file(
         stark_info.n_stages
     );
 
+    check_deep_challenges_last(stark_info).map_err(|e| anyhow::anyhow!("{path}: {e}"))?;
+
     println!("> Writing rust verifier file");
 
     let rust_verifier = prepare_verifier_rust(stark_info, verifier_info, vadcop_final_proof, hash_id)?;
     fs::write(path, rust_verifier)?;
 
+    Ok(())
+}
+
+/// The native verifier reads vf1/vf2 as the last two challenges (`DeepQueryConsts::new`).
+fn check_deep_challenges_last(stark_info: &StarkInfo) -> Result<()> {
+    let fri_stage = stark_info.n_stages + 3;
+    let n = stark_info.challenges_map.len();
+    let is = |i: usize, stage_id: u64| {
+        i < n && stark_info.challenges_map[i].stage == fri_stage && stark_info.challenges_map[i].stage_id == stage_id
+    };
+    anyhow::ensure!(
+        n >= 2 && is(n - 2, 0) && is(n - 1, 1),
+        "the native Rust verifier needs vf1/vf2 (stage {fri_stage}, stageId 0/1) as the last two challengesMap \
+         entries, but challengesMap ends with {:?}",
+        stark_info.challenges_map.iter().rev().take(2).rev().map(|c| (c.stage, c.stage_id)).collect::<Vec<_>>()
+    );
     Ok(())
 }
 
@@ -129,41 +147,22 @@ fn prepare_verifier_rust(
 
     // The FRI query polynomial is structural, so the verifier evaluates it from
     // the evaluation map instead of an unrolled per-air function.
-    let mut group_strs: Vec<String> = Vec::new();
-    let mut next_eval = 0usize;
-    // vf2's exponent: each polynomial's first appearance in the eval map (fri_poly.rs).
-    let mut pol_index: std::collections::HashMap<(String, u64, u64), usize> = std::collections::HashMap::new();
-    for ev in &stark_info.ev_map {
-        let n = pol_index.len();
-        pol_index.entry((ev.ev_type.clone(), ev.commit_id, ev.id)).or_insert(n);
-    }
-    for (o, opening) in stark_info.opening_points.iter().enumerate() {
-        let mut ref_strs: Vec<String> = Vec::new();
-        for (i, ev) in stark_info.ev_map.iter().enumerate() {
-            if ev.prime != *opening {
-                continue;
-            }
-            let (bucket, offset, dim) = match ev.ev_type.as_str() {
-                "const" => (0u64, ev.id, 1u64),
-                "cm" => {
-                    let pol = &stark_info.cm_pols_map[ev.id as usize];
-                    (pol.stage, pol.stage_pos, pol.dim)
-                }
-                "custom" => (stark_info.n_stages + 1 + ev.commit_id, ev.id, 1u64),
-                other => panic!("Unknown evMap type: {other}"),
-            };
-            // The runtime indexes `evals` with a running counter.
-            assert_eq!(i, next_eval, "evMap is not ordered by opening point");
-            next_eval += 1;
-            let col = pol_index[&(ev.ev_type.clone(), ev.commit_id, ev.id)];
-            ref_strs.push(format!("FriEvalRef::new({bucket}, {offset}, {dim}, {col})"));
-        }
-        // Opening points from hint expressions have no evaluations.
-        if ref_strs.is_empty() {
-            continue;
-        }
-        group_strs.push(format!("FriEvalGroup {{ opening: {o}, refs: vec![{}] }}", ref_strs.join(", ")));
-    }
+    let common = match &stark_info.common {
+        Some(Ok(common)) => common,
+        Some(Err(e)) => anyhow::bail!("starkinfo does not parse as a proofman StarkInfo: {e}"),
+        None => anyhow::bail!("starkinfo has no proofman StarkInfo"),
+    };
+    let group_strs: Vec<String> = proofman_common::deep::fri_ev_groups(common)
+        .iter()
+        .map(|g| {
+            let refs: Vec<String> = g
+                .refs
+                .iter()
+                .map(|r| format!("FriEvalRef::new({}, {}, {}, {})", r.bucket, r.offset, r.dim, r.col))
+                .collect();
+            format!("FriEvalGroup {{ opening: {}, refs: vec![{}] }}", g.opening, refs.join(", "))
+        })
+        .collect();
     let fri_ev_groups_str =
         format!("        fri_ev_groups: vec![\n            {}\n        ],", group_strs.join(",\n            "));
 
@@ -301,4 +300,29 @@ fn prepare_verifier_rust(
     lines.push("}\n".to_string());
 
     Ok(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::stark_info::PolMap;
+
+    fn si(challenges: &[(u64, u64)]) -> StarkInfo {
+        let challenges_map =
+            challenges.iter().map(|&(stage, stage_id)| PolMap { stage, stage_id, ..Default::default() }).collect();
+        StarkInfo { n_stages: 2, challenges_map, ..Default::default() }
+    }
+
+    #[test]
+    fn deep_challenges_last_accepts_vf1_vf2_tail() {
+        check_deep_challenges_last(&si(&[(1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (5, 1)])).unwrap();
+    }
+
+    #[test]
+    fn deep_challenges_last_rejects_other_orders() {
+        for bad in [&[(5, 0), (5, 1), (2, 0)][..], &[(5, 1), (5, 0)], &[(4, 0), (5, 1)], &[(5, 0)], &[]] {
+            let err = check_deep_challenges_last(&si(bad)).unwrap_err();
+            assert!(err.to_string().contains("last two challengesMap"), "{err}");
+        }
+    }
 }

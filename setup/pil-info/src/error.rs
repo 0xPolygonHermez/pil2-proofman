@@ -56,9 +56,6 @@ pub enum PilInfoError {
     #[error("a hint field of op `{0}`, which no hint holds")]
     UnknownHintOp(String),
 
-    #[error("no code was generated for the DEEP polynomial, expression {0}")]
-    DeepCodeMissing(usize),
-
     /// Verifier code whose ops all write temporaries, as `fix_dimensions_verifier` requires.
     #[error(
         "verifier code: op {index} is a `{op}` into a `{dest}`, and verifier code only adds, subtracts, multiplies \

@@ -264,32 +264,18 @@ template parallel VerifyEvaluations() {
     enable * normC[2] === 0;
 }
 
-// The DEEP polynomial terms that are the same for every query: challengesDeep, then the tmps the queries read.
+// The DEEP terms that are the same for every query, reduced:
+//   friConsts = [vf1, vf2, vf2^0..vf2^(nPols-1), vf1^e_o per opening, K_o per opening]
+// over the openings with evaluations (e_o = openings after o, K_o = sum of vf2^c * eval at o).
 template CalculateFRIConstants() {
     signal input {maxNum} challengesDeep[2][3];
     signal input {maxNum} evals[{{ ev_map_len }}][3];
     signal output {maxNum} friConsts[{{ n_fri_consts }}][3];
 
-{{ fri_once_code }}
-
+{{ deep_once_code }}
     var q = 0xFFFFFFFFFFFFFFFF;
     friConsts.maxNum = q;
-    for (var i = 0; i < 2; i++) {
-        if (challengesDeep.maxNum > q) {
-            friConsts[i] <== GLCNorm()(challengesDeep[i]);
-        } else {
-            friConsts[i] <== challengesDeep[i];
-        }
-    }
-{% for c in fri_consts %}{% if c.dim == 1 %}    friConsts[{{ c.idx }}][0] <== GLNorm()(tmp_{{ c.id }});
-    friConsts[{{ c.idx }}][1] <== 0;
-    friConsts[{{ c.idx }}][2] <== 0;
-{% else %}    if (tmp_{{ c.id }}.maxNum > q) {
-        friConsts[{{ c.idx }}] <== GLCNorm()(tmp_{{ c.id }});
-    } else {
-        friConsts[{{ c.idx }}] <== tmp_{{ c.id }};
-    }
-{% endif %}{% endfor %}}
+{{ deep_const_assign }}}
 
 /* 
     Verify that the DEEP polynomial is built properly
@@ -356,27 +342,16 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
 {% endif %}{% endfor %}    signal {maxNum} W{{ op.idx }}[3] <== GLC3()(w{{ op.idx }}[{{ op.abs_opening }}]);
     signal {maxNum} mul{{ op.idx }}[3] <== GLCMul()(challengeOut, W{{ op.idx }});
     signal {maxNum} sub{{ op.idx }}[3] <== GLCSub()(X, mul{{ op.idx }});
-    xDivXSubXi[{{ op.idx }}] <== GLCInv()(sub{{ op.idx }});
+    xDivXSubXi[{{ op.rank }}] <== GLCInv()(sub{{ op.idx }});
 {% else %}    signal {maxNum} sub{{ op.idx }}[3] <== GLCSub()(X, challengeOut);
-    xDivXSubXi[{{ op.idx }}] <== GLCInv()(sub{{ op.idx }});
+    xDivXSubXi[{{ op.rank }}] <== GLCInv()(sub{{ op.idx }});
 {% endif %}{% endfor %}
 
-    // The query-independent terms, computed once by CalculateFRIConstants.
-    signal {maxNum} challengesDeep[2][3];
-    challengesDeep.maxNum = friConsts.maxNum;
-    challengesDeep[0] <== friConsts[0];
-    challengesDeep[1] <== friConsts[1];
-{% for c in fri_consts %}{% if c.dim == 1 %}    signal {maxNum} tmp_{{ c.id }};
-    tmp_{{ c.id }}.maxNum = friConsts.maxNum;
-    tmp_{{ c.id }} <== friConsts[{{ c.idx }}][0];
-{% else %}    signal {maxNum} tmp_{{ c.id }}[3];
-    tmp_{{ c.id }}.maxNum = friConsts.maxNum;
-    tmp_{{ c.id }} <== friConsts[{{ c.idx }}];
-{% endif %}{% endfor %}
-{{ eval_q_code }}
-
+    // f_0(x) = sum_G S_G * (sum_{o in G} A_o) - sum_o A_o * K_o, A_o = vf1^e_o * xDivXSubXi[rank of o],
+    // S_G = sum of vf2^c * p(x) over the polynomials opened at exactly the openings G.
+{{ deep_query_code }}
     // Final Normalization
-    signal queryVals[3] <== GLCNorm()({{ eval_q_last }});
+    signal queryVals[3] <== GLCNorm()({{ deep_result }});
 
     signal {binary} s0_keys_lowValues[nextStep];
     for(var i = 0; i < nextStep; i++) {
@@ -385,7 +360,7 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
 
     signal {maxNum} lowValues[3] <== TreeSelector(nextStep, 3)(s1_vals, s0_keys_lowValues);
 
-    signal {maxNum} valsDiff[3] <== GLCSub()({{ eval_q_last }}, lowValues);
+    signal {maxNum} valsDiff[3] <== GLCSub()({{ deep_result }}, lowValues);
     signal {maxNum} normDiff[3] <== GLCNorm()(valsDiff);
 
     enable * normDiff[0] === 0;

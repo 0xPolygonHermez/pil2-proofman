@@ -947,7 +947,6 @@ uint64_t gen_recursive_proof_cpu(void *pSetupCtx, uint64_t airgroupId, uint64_t 
         .challenges = challenges,
         .airgroupValues = airgroupValues,
         .evals = evals,
-        .xDivXSub = nullptr,
         .pConstPolsAddress = (Goldilocks::Element *)pConstPols,
         .pConstPolsExtendedTreeAddress = (Goldilocks::Element *)pConstTree,
         .pCustomCommitsFixed = nullptr,

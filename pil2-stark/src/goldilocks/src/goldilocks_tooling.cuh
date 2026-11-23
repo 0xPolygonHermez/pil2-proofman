@@ -23,6 +23,7 @@
 #include "transcriptGL.cuh"
 #include "expressions_gpu.cuh"
 #include "eval_groups.hpp"
+#include "deep.hpp"
 #include <limits.h>
 #include "fr.hpp"
 #endif
@@ -97,6 +98,7 @@ struct AirInstanceInfo {
     uint32_t *friColStart = nullptr, *friOpStart = nullptr, *friOpGroups = nullptr;
     uint32_t nFriGroups = 0;
     uint64_t nFriPols = 0;
+    uint64_t deepVf1Idx = 0, deepVf2Idx = 0;  // challengesMap indices of vf1/vf2
     
     SetupCtx *setupCtx;
 
@@ -224,8 +226,6 @@ struct AirInstanceInfo {
             CHECKCUDAERR(cudaMemcpy(evalGroups, groups.data(), nEvalGroups * sizeof(EvalGroup), cudaMemcpyHostToDevice));
         }
 
-        uint64_t nOpeningPoints = setupCtx->starkInfo.openingPoints.size();
-
         // mapOffsets is a std::map, so a missing key silently reads back as offset 0 --
         // calculateFRIExpression would scribble the head of the arena rather than fail.
         // Checked here because that call site sits inside a cudagraph capture region.
@@ -243,46 +243,41 @@ struct AirInstanceInfo {
             }
         }
 
-        // Each opening's terms; vf2's exponent is the polynomial's first appearance in the eval map (fri_poly.rs).
-        const uint64_t NExt = 1ULL << setupCtx->starkInfo.starkStruct.nBitsExt;
-        std::vector<std::vector<FriTerm>> byOpening(nOpeningPoints);
-        std::map<std::tuple<int, uint64_t, uint64_t>, uint32_t> polIndex;
-        for (uint64_t i = 0; i < setupCtx->starkInfo.evMap.size(); i++) {
-            const EvMap &ev = setupCtx->starkInfo.evMap[i];
-            const uint64_t commitKey = ev.type == EvMap::eType::custom ? ev.commitId : 0;
-            const uint32_t vf2Exp = polIndex.emplace(std::make_tuple((int)ev.type, commitKey, ev.id), (uint32_t)polIndex.size()).first->second;
-            const uint16_t src = ev.type == EvMap::eType::cm ? 0 : ev.type == EvMap::eType::custom ? 1 : 2;
-            const PolMap &pol = src == 0 ? setupCtx->starkInfo.cmPolsMap[ev.id]
-                              : src == 1 ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id]
-                                         : setupCtx->starkInfo.constPolsMap[ev.id];
-            const std::string stage = src == 0 ? "cm" + to_string(pol.stage)
-                                    : src == 1 ? setupCtx->starkInfo.customCommits[pol.commitId].name + "0"
-                                               : "const";
-            const Layout layout = src == 0 ? resolveLayout(setupCtx->starkInfo.starkStruct.nBits, setupCtx->starkInfo.mapSectionsN[stage])
-                                           : fixedLayout();
-            if (layout != Layout::ColMajor) {
-                zklog.error("AirInstanceInfo: FRI terms need ColMajor sections");
-                exitProcess();
+        // The DEEP terms come from the host tables (deep.hpp); here they only gain their device column.
+        // No tables (verify-constraints) means no FRI: the DEEP buffers stay null.
+        if (setupCtx->starkInfo.deepTables) {
+            const DeepTables &deep = *setupCtx->starkInfo.deepTables;
+            deepVf1Idx = deep.vf1Idx;
+            deepVf2Idx = deep.vf2Idx;
+            const uint64_t NExt = 1ULL << setupCtx->starkInfo.starkStruct.nBitsExt;
+            std::vector<FriTerm> terms;
+            terms.reserve(deep.terms.size());
+            for (const DeepTerm &t : deep.terms) {
+                const uint16_t src = t.type == EvMap::eType::cm ? 0 : t.type == EvMap::eType::custom ? 1 : 2;
+                const std::string stage = src == 0 ? "cm" + to_string(t.stage)
+                                        : src == 1 ? setupCtx->starkInfo.customCommits[t.commitId].name + "0"
+                                                   : "const";
+                const Layout layout = src == 0 ? resolveLayout(setupCtx->starkInfo.starkStruct.nBits, setupCtx->starkInfo.mapSectionsN[stage])
+                                               : fixedLayout();
+                if (layout != Layout::ColMajor) {
+                    zklog.error("AirInstanceInfo: FRI terms need ColMajor sections");
+                    exitProcess();
+                }
+                terms.push_back(FriTerm{setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)] + t.stagePos * NExt,
+                                        t.evalPos, src, (uint16_t)t.dim, t.vf2Exp});
             }
-            byOpening[ev.openingPos].push_back(FriTerm{setupCtx->starkInfo.mapOffsets[std::make_pair(stage, true)] + pol.stagePos * NExt,
-                                                       (uint32_t)i, src, (uint16_t)pol.dim, vf2Exp});
-        }
-        std::vector<FriTerm> terms;
-        std::vector<uint64_t> termStart{0};
-        for (const auto &opening : byOpening) {
-            terms.insert(terms.end(), opening.begin(), opening.end());
-            termStart.push_back(terms.size());
-        }
-        const FriColGroups g = buildFriColGroups(terms, termStart, polIndex.size());
-        nFriPols = polIndex.size();
-        nFriGroups = g.colStart.size() - 1;
-        friCols = uploadVec(g.cols);
-        friColStart = uploadVec(g.colStart);
-        friOpStart = uploadVec(g.opStart);
-        friOpGroups = uploadVec(g.opGroups);
+            const std::vector<uint64_t> &termStart = deep.termStart;
+            const FriColGroups g = buildFriColGroups(terms, termStart, deep.nPols);
+            nFriPols = deep.nPols;
+            nFriGroups = g.colStart.size() - 1;
+            friCols = uploadVec(g.cols);
+            friColStart = uploadVec(g.colStart);
+            friOpStart = uploadVec(g.opStart);
+            friOpGroups = uploadVec(g.opGroups);
 
-        friTerms = uploadVec(terms);
-        friTermStart = uploadVec(termStart);
+            friTerms = uploadVec(terms);
+            friTermStart = uploadVec(termStart);
+        }
 
         if (packedInfo != nullptr) {
             is_packed = packedInfo->is_packed;
